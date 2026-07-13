@@ -1,0 +1,37 @@
+# Não copiar pro build context: reduz imagem e evita vazar segredos/coisas pesadas.
+node_modules
+npm-debug.log*
+
+# Dados em runtime — NUNCA dentro da imagem (volume cuida disso em produção).
+# Se entrar na imagem, sobrescreveria o conteúdo do volume na 1ª boot.
+data/
+.data*
+
+# Variáveis de ambiente locais
+.env
+.env.local
+.env.*.local
+
+# Git
+.git
+.gitignore
+
+# Tooling / IDE
+.vscode/
+.idea/
+.claude/
+.DS_Store
+Thumbs.db
+
+# Tests / coverage
+coverage/
+.nyc_output/
+
+# Bundles gerados
+public/js/app.min.js
+public/js/app.min.js.map
+
+# Docs internas
+.Documentação/
+logs.log
+*.log

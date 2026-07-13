@@ -1,0 +1,2291 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kastor — Gestão de Demandas</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css?v=20260713a">
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-logo"><img src="/Kastor_branco.svg" alt="Kastor"></div>
+    <div class="login-sub">Gestão de Demandas de Marketing</div>
+    <input type="text" id="login-username" placeholder="Usuário" autocomplete="username" onkeydown="if(event.key==='Enter'){event.preventDefault();$('login-password').focus();}">
+    <input type="password" id="login-password" placeholder="Senha" autocomplete="current-password" onkeydown="if(event.key==='Enter'){event.preventDefault();doLogin();}">
+    <div class="login-error" id="login-error"></div>
+    <button onclick="doLogin()">Entrar</button>
+    <a href="#" class="login-forgot" onclick="event.preventDefault();showForgotPassword()">Esqueci minha senha</a>
+    <div class="login-hint">Acessos são criados internamente pela equipe.</div>
+  </div>
+</div>
+
+<!-- RESET DE SENHA — exibido quando a URL é /reset/<token> -->
+<div id="reset-screen" style="display:none">
+  <div class="login-box">
+    <div class="login-logo"><img src="/Kastor_branco.svg" alt="Kastor"></div>
+    <div class="login-sub">Definir nova senha</div>
+    <input type="password" id="reset-new-pass" placeholder="Nova senha (mín. 6 caracteres)" autocomplete="new-password">
+    <input type="password" id="reset-confirm-pass" placeholder="Confirmar nova senha" autocomplete="new-password" onkeydown="if(event.key==='Enter'){event.preventDefault();doResetPassword();}">
+    <div class="login-error" id="reset-error"></div>
+    <button onclick="doResetPassword()">Definir nova senha</button>
+    <a href="#" class="login-forgot" onclick="event.preventDefault();location.href='/'">Voltar ao login</a>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app">
+  <!-- Backdrop atrás da sidebar quando aberta em mobile -->
+  <div class="menu-backdrop" id="menu-backdrop" onclick="closeSidebar()"></div>
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <!-- 3 variantes do logo — visibilidade controlada por CSS (tema + collapse):
+           expanded+dark  → branco; expanded+light → preto; collapsed → K icon -->
+      <img src="/Kastor_branco.svg" alt="Kastor" class="sidebar-logo sidebar-logo-full-white">
+      <img src="/Kastor_preto.svg"  alt="Kastor" class="sidebar-logo sidebar-logo-full-black">
+      <img src="/Kastor_logo.svg"   alt="Kastor" class="sidebar-logo sidebar-logo-icon">
+    </div>
+    <div class="ws-switch" id="ws-switch">
+      <label class="filter-label">Workspace</label>
+      <div class="filter-cdrop ws-cdrop" id="ws-cdrop">
+        <button type="button" class="filter-cdrop-trigger" onclick="toggleFilterCdrop(this.parentElement)">
+          <span class="ws-trigger-letter" id="ws-trigger-letter">?</span>
+          <span class="pill-dot ws-trigger-dot" id="ws-trigger-dot"></span>
+          <span class="filter-cdrop-label" id="ws-trigger-label">—</span>
+          <i data-lucide="chevron-down" class="ic-xs ws-trigger-chevron"></i>
+        </button>
+        <div class="filter-cdrop-menu" id="ws-cdrop-menu"></div>
+      </div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section">Visão Geral</div>
+      <div class="nav-item active" data-page="dashboard" onclick="goPage('dashboard')">
+        <svg viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="6" height="6" rx="1.5" fill="currentColor" opacity=".5"/><rect x="9" y="1" width="6" height="6" rx="1.5" fill="currentColor"/><rect x="1" y="9" width="6" height="6" rx="1.5" fill="currentColor"/><rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" opacity=".5"/></svg>
+        Dashboard
+      </div>
+
+      <div class="nav-section">Execução</div>
+      <div class="nav-item" data-page="list" onclick="goPage('list')">
+        <svg viewBox="0 0 16 16" fill="none"><path d="M2 4h12M2 8h12M2 12h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Demandas
+      </div>
+      <div class="nav-item" data-page="mine" onclick="goPage('mine')">
+        <svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="5" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M2.5 14c.8-2.6 3-4 5.5-4s4.7 1.4 5.5 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Minhas Demandas
+      </div>
+      <div class="nav-item" data-page="agenda" onclick="goPage('agenda')">
+        <svg viewBox="0 0 16 16" fill="none"><rect x="2" y="3.5" width="12" height="11" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M5 1.5v3M11 1.5v3M2 6.5h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Agenda
+      </div>
+
+      <div class="nav-section">Acompanhamento</div>
+      <div class="nav-item" data-page="capacity" onclick="goPage('capacity')">
+        <svg viewBox="0 0 16 16" fill="none"><path d="M2 13V8m4 5V5m4 8V3m4 10v-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Capacidade
+      </div>
+      <div class="nav-item" data-page="clients" onclick="goPage('clients')">
+        <svg viewBox="0 0 16 16" fill="none"><path d="M3 14V3.5a1 1 0 011-1h4a1 1 0 011 1V14M9 6.5h3a1 1 0 011 1V14M2 14h12M5.5 5.5v1M5.5 8.5v1M5.5 11.5v1M10.5 8.5v1M10.5 11.5v1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Clientes
+      </div>
+
+      <div class="nav-section">Processos</div>
+      <div class="nav-item" data-page="recurring" onclick="goPage('recurring')">
+        <svg viewBox="0 0 16 16" fill="none"><path d="M3 4h10M3 8h10M3 12h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="0.5" y="2.5" width="2" height="2" rx="0.5" stroke="currentColor" stroke-width="1.2"/><rect x="0.5" y="6.5" width="2" height="2" rx="0.5" stroke="currentColor" stroke-width="1.2"/><rect x="0.5" y="10.5" width="2" height="2" rx="0.5" stroke="currentColor" stroke-width="1.2"/></svg>
+        Listas de tarefas
+      </div>
+      <div class="nav-item" data-page="flows" id="nav-flows" onclick="goPage('flows')">
+        <svg viewBox="0 0 16 16" fill="none"><circle cx="3" cy="8" r="1.8" stroke="currentColor" stroke-width="1.5"/><circle cx="13" cy="3.5" r="1.8" stroke="currentColor" stroke-width="1.5"/><circle cx="13" cy="12.5" r="1.8" stroke="currentColor" stroke-width="1.5"/><path d="M4.7 7.2l6.5-3M4.7 8.8l6.5 3" stroke="currentColor" stroke-width="1.5"/></svg>
+        Fluxos de Demanda
+      </div>
+      <div class="nav-item" data-page="templates" onclick="goPage('templates')">
+        <svg viewBox="0 0 16 16" fill="none"><rect x="2.5" y="1.5" width="9" height="13" rx="1" stroke="currentColor" stroke-width="1.5"/><path d="M5 5h4M5 8h4M5 11h2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M13.5 3.5v10a1 1 0 01-1 1H11" stroke="currentColor" stroke-width="1.5"/></svg>
+        Templates
+      </div>
+
+      <div class="nav-section">Configurações</div>
+      <div class="nav-item" data-page="integrations" id="nav-integrations" onclick="goPage('integrations')">
+        <svg viewBox="0 0 16 16" fill="none"><path d="M4 8h2.5a2 2 0 002-2V3.5M12 8H9.5a2 2 0 00-2 2v2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="3" cy="8" r="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="13" cy="8" r="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="7.5" cy="3.5" r="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="7.5" cy="12.5" r="1.5" stroke="currentColor" stroke-width="1.5"/></svg>
+        Integrações
+      </div>
+      <div class="nav-item" data-page="workspaces" id="nav-workspaces" onclick="goPage('workspaces')">
+        <svg viewBox="0 0 16 16" fill="none"><rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M1.5 6h13" stroke="currentColor" stroke-width="1.5"/></svg>
+        Workspaces
+      </div>
+      <div class="nav-item" data-page="users" id="nav-users" onclick="goPage('users')">
+        <svg viewBox="0 0 16 16" fill="none"><circle cx="5.5" cy="5" r="2.5" stroke="currentColor" stroke-width="1.5"/><path d="M1.5 13c.6-2.2 2.2-3.3 4-3.3s3.4 1.1 4 3.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="11.5" cy="5.5" r="2" stroke="currentColor" stroke-width="1.5"/><path d="M11 9.8c1.8.1 3 1.1 3.5 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Usuários
+      </div>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="sidebar-user" onclick="goPage('profile')" title="Abrir perfil">
+        <div class="avatar" id="sidebar-avatar">A</div>
+        <div class="sidebar-user-name" id="sidebar-uname">Usuário</div>
+      </div>
+      <div class="sidebar-footer-actions">
+        <button class="sidebar-icon-btn" id="theme-toggle-btn" onclick="toggleTheme()" title="Alternar tema">
+          <svg class="theme-icon-sun" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="3" fill="currentColor"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          <svg class="theme-icon-moon" viewBox="0 0 16 16" fill="none"><path d="M13 9.5A5.5 5.5 0 016.5 3a5.5 5.5 0 105.5 6.5 4.5 4.5 0 01-1 1 4.5 4.5 0 002-1z" fill="currentColor"/></svg>
+        </button>
+        <button class="sidebar-icon-btn" id="sidebar-collapse-btn" onclick="toggleSidebarCollapse()" title="Compactar / expandir sidebar">
+          <svg class="collapse-icon-collapse" viewBox="0 0 16 16" fill="none"><path d="M10.5 3.5L6 8l4.5 4.5M13 3.5L8.5 8l4.5 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <svg class="collapse-icon-expand" viewBox="0 0 16 16" fill="none"><path d="M5.5 3.5L10 8l-4.5 4.5M3 3.5L7.5 8 3 12.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main">
+    <div class="topbar">
+      <button class="menu-toggle" id="menu-toggle" onclick="toggleSidebar()" aria-label="Abrir menu">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 6h14M3 10h14M3 14h14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+      </button>
+      <div class="topbar-title" id="topbar-title">Dashboard</div>
+      <div class="topbar-actions">
+        <button class="btn btn-ghost btn-icon-only zen-toggle-btn" id="zen-toggle-btn" onclick="toggleZenMode()" title="Modo focar (esconde sidebar e topbar)">
+          <i data-lucide="maximize-2" class="ic-sm"></i>
+        </button>
+        <div class="notif-wrap">
+          <button class="btn btn-ghost notif-bell" onclick="toggleNotifPanel()" title="Notificações">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1.5A4.5 4.5 0 003.5 6v2.5l-1.2 2a.75.75 0 00.65 1.13h10.1a.75.75 0 00.65-1.13l-1.2-2V6A4.5 4.5 0 008 1.5z" stroke="currentColor" stroke-width="1.4"/><path d="M6 11.63a2 2 0 004 0" stroke="currentColor" stroke-width="1.4"/></svg>
+            <span class="notif-badge" id="notif-badge" style="display:none">0</span>
+          </button>
+          <div class="notif-panel" id="notif-panel">
+            <div class="notif-panel-header">
+              <span class="notif-panel-title">Notificações</span>
+              <button class="btn btn-ghost btn-sm" onclick="markAllRead()">Marcar tudo como lido</button>
+            </div>
+            <div class="notif-list" id="notif-list"></div>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="openNewDemand()">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <span>Nova Demanda</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ── DASHBOARD ── -->
+    <div class="page active" id="page-dashboard">
+      <div class="page-body">
+        <div class="section-head" style="margin-bottom:14px">
+          <div class="section-title">Visão Geral</div>
+        </div>
+        <div class="filters-bar" style="margin-bottom:22px">
+          <div class="filter-group">
+            <label class="filter-label">Usuário</label>
+            <select class="filter-select" id="dash-f-user" onchange="renderDashboard()"></select>
+          </div>
+          <div class="filter-group">
+            <label class="filter-label">Cliente</label>
+            <select class="filter-select" id="dash-f-client" onchange="renderDashboard()"></select>
+          </div>
+          <div class="filter-group">
+            <label class="filter-label">Período (prazo)</label>
+            <select class="filter-select" id="dash-f-period" onchange="renderDashboard()">
+              <option value="">Todo o período</option>
+              <option value="today">Hoje</option>
+              <option value="7">Próximos 7 dias</option>
+              <option value="month">Este mês</option>
+              <option value="lastmonth">Mês passado</option>
+              <option value="90">Últimos 90 dias</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label class="filter-label">Tipo de demanda</label>
+            <select class="filter-select" id="dash-f-type" onchange="renderDashboard()"></select>
+          </div>
+          <div class="filter-group" style="justify-content:flex-end">
+            <label class="filter-label">&nbsp;</label>
+            <button class="btn btn-ghost btn-icon-only" onclick="clearDashFilters()" title="Limpar filtros"><i data-lucide="brush-cleaning" class="ic-sm"></i></button>
+          </div>
+        </div>
+
+        <!-- Row 2+3 · Grid 2/3 esquerda (KPIs + operacional + throughput) | 1/3 direita (analítico) -->
+        <div class="dash-grid">
+          <div class="dash-col dash-col-left">
+            <div class="dash-kpis" id="dash-kpis"></div>
+
+            <div class="dash-widget">
+              <div class="dash-widget-head">
+                <div class="dash-widget-title">Próximos 7 dias</div>
+                <div class="dash-widget-sub" id="dash-next7-sub"></div>
+              </div>
+              <div class="dash-next7-grid" id="dash-next7"></div>
+            </div>
+
+            <div class="dash-widget">
+              <div class="dash-widget-head">
+                <div class="dash-widget-title">Em atraso</div>
+                <div class="dash-widget-sub" id="dash-overdue-sub"></div>
+              </div>
+              <div id="dash-overdue"></div>
+            </div>
+
+            <div class="dash-widget">
+              <div class="dash-widget-head">
+                <div class="dash-widget-title">Throughput</div>
+                <div class="dash-widget-sub">Últimas 12 semanas — entregas no prazo vs. atrasadas</div>
+              </div>
+              <div id="dash-chart"></div>
+            </div>
+          </div>
+
+          <div class="dash-col dash-col-right">
+            <div class="dash-widget">
+              <div class="dash-widget-head">
+                <div class="dash-widget-title">Radar de projetos</div>
+                <div class="dash-widget-sub" id="dash-radar-sub"></div>
+              </div>
+              <div class="dash-radar-grid" id="dash-radar"></div>
+            </div>
+
+            <div class="dash-widget">
+              <div class="dash-widget-head">
+                <div class="dash-widget-title">Top responsáveis · mês</div>
+                <div class="dash-widget-sub">Entregas no mês corrente</div>
+              </div>
+              <div id="dash-top-owners"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Apontamento de horas (mantido) -->
+        <div class="section-head" style="margin-top:28px">
+          <div class="section-title">Apontamento de Horas</div>
+          <select class="filter-select" id="hours-f-period" onchange="renderDashboard()" style="max-width:180px">
+            <option value="">Todo o período</option>
+            <option value="today">Hoje</option>
+            <option value="7">Últimos 7 dias</option>
+            <option value="month">Este mês</option>
+            <option value="lastmonth">Mês passado</option>
+            <option value="90">Últimos 90 dias</option>
+          </select>
+        </div>
+        <div class="hours-board" id="hours-board"></div>
+      </div>
+    </div>
+
+    <!-- ── DEMANDAS ── -->
+    <div class="page" id="page-list">
+      <div class="page-body">
+        <div class="bulk-actions-bar" id="bulk-actions-bar">
+          <span class="bulk-count" id="bulk-count">0 selecionadas</span>
+          <button class="btn btn-ghost btn-sm" onclick="openBulkOwnerPicker()" title="Alterar responsável"><i data-lucide="user" class="ic-sm"></i> Responsável</button>
+          <button class="btn btn-ghost btn-sm" onclick="openBulkStagePicker()" title="Mover etapa"><i data-lucide="git-pull-request-arrow" class="ic-sm"></i> Mover etapa</button>
+          <button class="btn btn-ghost btn-sm" onclick="openBulkPriorityPicker()" title="Alterar prioridade"><i data-lucide="flag" class="ic-sm"></i> Prioridade</button>
+          <button class="btn btn-ghost btn-sm bulk-danger" onclick="bulkDelete()" title="Excluir selecionadas"><i data-lucide="trash-2" class="ic-sm"></i> Excluir</button>
+          <button class="btn btn-ghost btn-sm" onclick="clearBulkSelection()" title="Limpar seleção" style="margin-left:auto"><i data-lucide="x" class="ic-sm"></i></button>
+        </div>
+        <div class="filters-bar">
+          <div class="filter-input-wrap">
+            <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+            <input class="filter-input filter-input--with-icon" id="search-input" placeholder="Buscar pelo nome da demanda…" oninput="renderListDebounced()">
+          </div>
+          <select class="filter-select" id="filter-user" onchange="renderList()"></select>
+          <select class="filter-select" id="filter-project" onchange="renderList()"><option value="">Todos os projetos</option></select>
+          <select class="filter-select" id="filter-flow" onchange="renderList()"><option value="">Todos os fluxos</option></select>
+          <select class="filter-select" id="filter-period" onchange="renderList()">
+            <option value="">Todo o período</option>
+            <option value="today">Hoje</option>
+            <option value="7">Próximos 7 dias</option>
+            <option value="month">Este mês</option>
+            <option value="lastmonth">Mês passado</option>
+            <option value="90">Últimos 90 dias</option>
+          </select>
+          <select class="filter-select" id="filter-quick" onchange="renderList()">
+            <option value="">Todos</option>
+            <option value="late">Apenas atrasadas</option>
+            <option value="open">Em andamento</option>
+            <option value="done">Concluídas</option>
+          </select>
+          <div class="list-view-toggle">
+            <button class="btn btn-ghost btn-sm active" id="list-view-table" onclick="setListView('table')" title="Lista"><i data-lucide="list" class="ic-sm"></i></button>
+            <button class="btn btn-ghost btn-sm" id="list-view-kanban" onclick="setListView('kanban')" title="Kanban"><i data-lucide="kanban-square" class="ic-sm"></i></button>
+            <button class="btn btn-ghost btn-sm" id="list-view-cal" onclick="setListView('cal')" title="Calendário"><i data-lucide="calendar" class="ic-sm"></i></button>
+          </div>
+        </div>
+
+        <!-- Chip visível quando ?due=YYYY-MM-DD tá aplicado (deep-link do dashboard) -->
+        <div id="due-filter-chip-wrap" style="display:none;margin-bottom:12px"></div>
+
+        <div class="list-views-container">
+          <div id="list-table-view">
+            <div class="table-wrap table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th class="col-bulk-check"><input type="checkbox" class="bulk-check-all" id="bulk-check-all" onclick="toggleBulkSelectAll(this.checked)" title="Selecionar todas"></th>
+                    <th style="cursor:pointer" onclick="sortList('name')">Demanda <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                    <th style="cursor:pointer" onclick="sortList('project')">Projeto <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                    <th style="cursor:pointer" onclick="sortList('client')">Cliente <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                    <th style="cursor:pointer" onclick="sortList('type')">Tipo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                    <th style="cursor:pointer" onclick="sortList('status')">Status <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                    <th style="cursor:pointer" onclick="sortList('owner')">Responsável <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                    <th style="cursor:pointer" onclick="sortList('deadline')">Prazo da etapa <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                    <th style="cursor:pointer" onclick="sortList('priority')">Prioridade <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                    <th style="cursor:pointer" onclick="sortList('qty')" title="Peças · Artes · Variações">Entregáveis <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                    <th style="cursor:pointer" onclick="sortList('completed')">Concluído em <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                  </tr>
+                </thead>
+                <tbody id="list-table-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div id="list-cal-view" style="display:none">
+            <div class="calendar-nav">
+              <button class="btn btn-ghost" onclick="calNav('all',-1)">&#8592;</button>
+              <div class="cal-title" id="cal-all-title"></div>
+              <button class="btn btn-ghost" onclick="calNav('all',1)">&#8594;</button>
+              <button class="btn btn-ghost" style="margin-left:auto" onclick="calToday('all')">Hoje</button>
+            </div>
+            <div class="cal-grid">
+              <div class="cal-dow cal-dow--weekend">Dom</div><div class="cal-dow">Seg</div><div class="cal-dow">Ter</div><div class="cal-dow">Qua</div><div class="cal-dow">Qui</div><div class="cal-dow">Sex</div><div class="cal-dow cal-dow--weekend">Sáb</div>
+            </div>
+            <div class="cal-grid" id="cal-all-body" style="margin-top:4px"></div>
+          </div>
+
+          <div id="list-kanban-view" style="display:none">
+            <div class="kanban-board" id="kanban-board"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── MINHAS DEMANDAS ── -->
+    <div class="page" id="page-mine">
+      <div class="page-body">
+        <div class="section-head">
+          <div class="section-title">Minha Lista</div>
+          <select class="filter-select" id="mine-f-quick" onchange="renderMine()">
+            <option value="">Todas</option>
+            <option value="late">Atrasadas</option>
+            <option value="open">Em andamento</option>
+            <option value="done">Concluídas</option>
+          </select>
+        </div>
+        <div class="table-wrap table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th style="cursor:pointer" onclick="sortMine('name')">Demanda <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortMine('project')">Projeto <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortMine('status')">Status <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th title="Peças · Artes · Variações">Entregáveis</th>
+                <th style="cursor:pointer" onclick="sortMine('deadline')">Prazo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+              </tr>
+            </thead>
+            <tbody id="mine-table-body"></tbody>
+          </table>
+        </div>
+
+        <div class="section-head" style="margin-top:28px">
+          <div class="section-title">Minha Agenda</div>
+          <div class="agenda-week-nav">
+            <button class="btn btn-ghost btn-sm" onclick="agendaPrevWeek()" title="Semana anterior"><i data-lucide="chevron-left" class="ic-sm"></i></button>
+            <span class="agenda-week-label" id="mine-agenda-week-label">—</span>
+            <button class="btn btn-ghost btn-sm" onclick="agendaNextWeek()" title="Próxima semana"><i data-lucide="chevron-right" class="ic-sm"></i></button>
+            <button class="btn btn-ghost btn-sm" onclick="agendaThisWeek()">Hoje</button>
+            <div class="agenda-view-toggle" style="margin-left:8px">
+              <button class="btn btn-ghost btn-sm agenda-view-btn active" data-view="2" onclick="setAgendaView(2)">2 semanas</button>
+              <button class="btn btn-ghost btn-sm agenda-view-btn" data-view="1" onclick="setAgendaView(1)">1 semana</button>
+            </div>
+          </div>
+        </div>
+        <div class="agenda-hint">Arraste em um horário vazio pra criar um bloco. Arraste um bloco existente pra mover. Arraste a borda inferior pra redimensionar.</div>
+        <div class="agenda-grid-wrap" id="mine-agenda-grid-wrap"></div>
+
+        <div class="section-head" style="margin-top:28px">
+          <div class="section-title">Meu Calendário</div>
+        </div>
+        <div class="calendar-nav">
+          <button class="btn btn-ghost" onclick="calNav('mine',-1)">&#8592;</button>
+          <div class="cal-title" id="cal-mine-title"></div>
+          <button class="btn btn-ghost" onclick="calNav('mine',1)">&#8594;</button>
+          <button class="btn btn-ghost" style="margin-left:auto" onclick="calToday('mine')">Hoje</button>
+        </div>
+        <div class="cal-grid">
+          <div class="cal-dow cal-dow--weekend">Dom</div><div class="cal-dow">Seg</div><div class="cal-dow">Ter</div><div class="cal-dow">Qua</div><div class="cal-dow">Qui</div><div class="cal-dow">Sex</div><div class="cal-dow cal-dow--weekend">Sáb</div>
+        </div>
+        <div class="cal-grid" id="cal-mine-body" style="margin-top:4px"></div>
+      </div>
+    </div>
+
+    <!-- ── CAPACIDADE ── -->
+    <div class="page" id="page-capacity">
+      <div class="page-body">
+        <div class="section-head">
+          <div class="section-title" id="capacity-heading">Capacidade da Equipe</div>
+          <select class="filter-select" id="capacity-period" onchange="renderCapacity()" style="max-width:200px">
+            <option value="7">Últimos / Próximos 7 dias</option>
+            <option value="14">Últimos / Próximos 14 dias</option>
+            <option value="30">Últimos / Próximos 30 dias</option>
+            <option value="month">Este mês</option>
+          </select>
+        </div>
+        <div class="capacity-view-toggle">
+          <button class="btn btn-ghost btn-sm active" id="capacity-view-team" onclick="setCapacityView('team')"><i data-lucide="users" class="ic-sm"></i> Equipe</button>
+          <button class="btn btn-ghost btn-sm" id="capacity-view-project" onclick="setCapacityView('project')"><i data-lucide="folder" class="ic-sm"></i> Projeto</button>
+          <button class="btn btn-ghost btn-sm" id="capacity-view-client" onclick="setCapacityView('client')"><i data-lucide="briefcase" class="ic-sm"></i> Cliente</button>
+        </div>
+        <div class="capacity-hint" id="capacity-hint">Distribuição de demandas em aberto por responsável. Carga estimada com base nas demandas atribuídas e nas horas já apontadas.</div>
+        <div id="capacity-list"></div>
+      </div>
+    </div>
+
+    <!-- ── AGENDA ── -->
+    <div class="page" id="page-agenda">
+      <div class="page-body">
+        <div class="agenda-toolbar">
+          <div class="agenda-user-pick">
+            <label class="form-label" style="margin-right:8px">Usuário</label>
+            <select class="form-control" id="agenda-user" onchange="onAgendaUserChange()"></select>
+          </div>
+          <div class="agenda-week-nav">
+            <button class="btn btn-ghost btn-sm" onclick="agendaPrevWeek()" title="Semana anterior"><i data-lucide="chevron-left" class="ic-sm"></i></button>
+            <span class="agenda-week-label" id="agenda-week-label">—</span>
+            <button class="btn btn-ghost btn-sm" onclick="agendaNextWeek()" title="Próxima semana"><i data-lucide="chevron-right" class="ic-sm"></i></button>
+            <button class="btn btn-ghost btn-sm" onclick="agendaThisWeek()">Hoje</button>
+          </div>
+          <div class="agenda-spacer"></div>
+          <div class="agenda-view-toggle">
+            <button class="btn btn-ghost btn-sm agenda-view-btn active" data-view="2" onclick="setAgendaView(2)">2 semanas</button>
+            <button class="btn btn-ghost btn-sm agenda-view-btn" data-view="1" onclick="setAgendaView(1)">1 semana</button>
+          </div>
+        </div>
+        <div class="agenda-hint">Arraste em um horário vazio pra criar um bloco. Arraste um bloco existente pra mover. Arraste a borda inferior pra redimensionar. Clique pra abrir a demanda.</div>
+        <div class="agenda-grid-wrap" id="agenda-grid-wrap"></div>
+      </div>
+    </div>
+
+    <!-- ── TEMPLATES ── -->
+    <div class="page" id="page-templates">
+      <div class="page-body">
+        <div class="section-head">
+          <div class="section-title">Templates de Demanda</div>
+        </div>
+        <div class="capacity-hint">Templates aceleram a criação de demandas recorrentes. Preencha uma vez e reaproveite quantas vezes precisar.</div>
+        <div class="table-wrap table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th style="cursor:pointer" onclick="sortTplBy('name')">Template <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortTplBy('project')">Projeto <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortTplBy('flow')">Fluxo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortTplBy('hours')">Horas estimadas <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="width:120px"></th>
+              </tr>
+            </thead>
+            <tbody id="templates-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── RECORRENTES (demandas mensais) ── -->
+    <div class="page" id="page-recurring">
+      <!-- Tabs no topo (DEMANDAS ativo, LISTAS placeholder) -->
+      <div class="rec-tabs">
+        <button class="rec-tab is-active" data-tab="demandas" onclick="setRecurringTab('demandas')">DEMANDAS</button>
+        <button class="rec-tab" data-tab="listas" onclick="setRecurringTab('listas')">LISTAS</button>
+      </div>
+      <!-- Layout 2-col: lista de clientes (esquerda) + conteúdo do cliente selecionado (direita) -->
+      <div class="rec-layout">
+        <!-- Coluna esquerda: cards de cliente -->
+        <aside class="rec-clients-col" id="rec-clients-col"></aside>
+        <!-- Coluna direita: conteúdo por tab -->
+        <section class="rec-content-col">
+          <!-- Aba DEMANDAS -->
+          <div id="rec-tab-demandas" class="rec-tab-panel">
+            <div class="rec-controls-bar">
+              <div class="filter-input-wrap rec-search-wrap">
+                <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+                <input class="filter-input filter-input--with-icon" id="rec-search" placeholder="Buscar" oninput="renderRecurring()">
+              </div>
+              <div class="rec-groupby">
+                <button class="rec-groupby-btn is-active" data-groupby="project" onclick="setRecurringGroupBy('project')">Projeto</button>
+                <button class="rec-groupby-btn" data-groupby="role" onclick="setRecurringGroupBy('role')">Função</button>
+                <button class="rec-groupby-btn" data-groupby="owner" onclick="setRecurringGroupBy('owner')">Responsável</button>
+              </div>
+            </div>
+            <div id="rec-content-body"></div>
+          </div>
+          <!-- Aba LISTAS -->
+          <div id="rec-tab-listas" class="rec-tab-panel" style="display:none">
+            <div class="rec-controls-bar">
+              <div class="filter-input-wrap rec-search-wrap">
+                <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+                <input class="filter-input filter-input--with-icon" id="listas-search" placeholder="Buscar" oninput="renderListasContent()">
+              </div>
+              <div class="rec-groupby" id="listas-groupby">
+                <button class="rec-groupby-btn is-active" data-listas-groupby="client" onclick="setListasGroupBy('client')">Cliente</button>
+                <button class="rec-groupby-btn" data-listas-groupby="project" onclick="setListasGroupBy('project')">Projeto</button>
+                <button class="rec-groupby-btn" data-listas-groupby="role" onclick="setListasGroupBy('role')">Função</button>
+                <button class="rec-groupby-btn" data-listas-groupby="owner" onclick="setListasGroupBy('owner')">Responsável</button>
+              </div>
+              <button class="btn btn-primary" onclick="openNovaListaModal()" style="margin-left:auto"><i data-lucide="plus" class="ic-sm"></i> Nova lista</button>
+            </div>
+            <div id="listas-content-body"></div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- ── INTEGRAÇÕES (WEBHOOKS) ── -->
+    <div class="page" id="page-integrations">
+      <div class="page-body">
+        <div class="section-head">
+          <div class="section-title">Integrações · Webhooks</div>
+          <button class="btn btn-primary admin-only" onclick="openWebhookModal()">+ Nova Integração</button>
+        </div>
+        <div class="capacity-hint">Webhooks notificam serviços externos (como Discord, Slack, Make, n8n) quando eventos acontecem nas demandas. Use o formato Discord para postar embeds formatados direto em um canal.</div>
+        <div class="table-wrap table-scroll">
+          <table>
+            <thead>
+              <tr><th>Integração</th><th>URL</th><th>Formato</th><th>Eventos</th><th>Status</th><th style="width:140px"></th></tr>
+            </thead>
+            <tbody id="webhooks-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── CLIENTES (substitui Projetos no menu) ── -->
+    <div class="page" id="page-clients">
+      <div class="page-body">
+
+        <!-- VIEW A: grid de clientes -->
+        <div id="clients-view-grid">
+          <div class="filters-bar" style="margin-bottom:18px">
+            <div class="filter-input-wrap">
+              <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+              <input class="filter-input filter-input--with-icon" id="client-search" placeholder="Buscar cliente…" oninput="renderClients()">
+            </div>
+            <select class="filter-select" id="client-f-ws" onchange="renderClients()"><option value="">Todos os workspaces</option></select>
+            <div class="filter-group-label">
+              <span class="filter-group-label-text">Situação</span>
+              <div class="client-status-toggle">
+                <button class="btn btn-ghost btn-sm client-status-btn active" data-status="all" onclick="setClientStatusFilter('all')">Todos</button>
+                <button class="btn btn-ghost btn-sm client-status-btn" data-status="active" onclick="setClientStatusFilter('active')">Ativos</button>
+                <button class="btn btn-ghost btn-sm client-status-btn" data-status="archived" onclick="setClientStatusFilter('archived')">Arquivados</button>
+              </div>
+            </div>
+            <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="openClientModal()"><i data-lucide="plus" class="ic-sm"></i> Novo Cliente</button>
+          </div>
+          <div class="section-title" style="margin-bottom:16px">Clientes Cadastrados</div>
+          <div class="flow-grid" id="clients-grid"></div>
+        </div>
+
+        <!-- VIEW B: detalhe de um cliente -->
+        <div id="clients-view-detail" style="display:none">
+          <div class="filters-bar" style="margin-bottom:18px;gap:10px">
+            <button class="btn btn-ghost btn-sm" onclick="closeClientDetail()"><i data-lucide="chevron-left" class="ic-sm"></i> Voltar</button>
+            <div style="flex:1"></div>
+            <button class="btn btn-ghost btn-sm" onclick="openClientReport()"><i data-lucide="file-text" class="ic-sm"></i> Relatório mensal</button>
+            <button class="btn btn-primary btn-sm" id="client-detail-new-project" onclick="openProjectModalForCurrentClient()"><i data-lucide="plus" class="ic-sm"></i> Novo Projeto</button>
+            <button class="btn btn-ghost btn-icon-only" title="Editar cliente" onclick="openClientModalEdit()"><i data-lucide="settings" class="ic-sm"></i></button>
+          </div>
+          <div class="section-title" id="client-detail-breadcrumb" style="margin-bottom:18px"></div>
+
+          <div class="client-detail-section">
+            <div class="client-detail-section-label">PROJETOS</div>
+            <div class="flow-grid" id="client-detail-projects"></div>
+          </div>
+
+          <div class="client-detail-section" style="margin-top:32px">
+            <div class="client-detail-section-label">SOBRE</div>
+            <div class="client-info-card">
+              <div class="client-info-field">
+                <div class="client-info-label">DESCRIÇÃO</div>
+                <div class="client-info-value" id="client-detail-description"></div>
+              </div>
+              <div class="client-info-grid-2">
+                <div class="client-info-field">
+                  <div class="client-info-label">LINK DO DRIVE</div>
+                  <div class="client-info-value" id="client-detail-drive"></div>
+                </div>
+                <div class="client-info-field">
+                  <div class="client-info-label">ATIVOS</div>
+                  <div class="client-info-value" id="client-detail-assets"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="client-detail-two-col" style="margin-top:32px">
+            <div class="client-detail-section">
+              <div class="client-detail-section-label">PESSOAS</div>
+              <div id="client-detail-people"></div>
+            </div>
+
+            <div class="client-detail-section">
+              <div class="client-detail-section-label">TEMPO DEDICADO</div>
+              <div class="client-time-head">
+                <div class="client-time-total">
+                  <span class="client-time-label">HORAS APONTADAS</span>
+                  <span class="client-time-value" id="client-time-value">0h</span>
+                </div>
+                <div class="client-time-periods">
+                  <button class="btn btn-ghost btn-sm client-time-period" data-period="7" onclick="setClientTimePeriod('7')">Últimos 7 dias</button>
+                  <button class="btn btn-ghost btn-sm client-time-period" data-period="14" onclick="setClientTimePeriod('14')">Últimos 14 dias</button>
+                  <button class="btn btn-ghost btn-sm client-time-period" data-period="30" onclick="setClientTimePeriod('30')">Últimos 30 dias</button>
+                  <button class="btn btn-ghost btn-sm client-time-period active" data-period="90" onclick="setClientTimePeriod('90')">Últimos 90 dias</button>
+                  <button class="btn btn-ghost btn-sm client-time-period" data-period="all" onclick="setClientTimePeriod('all')">Desde o início</button>
+                </div>
+              </div>
+              <div id="client-time-rows" style="margin-top:14px"></div>
+            </div>
+          </div>
+
+          <div class="client-detail-section" style="margin-top:24px">
+            <div id="client-time-chart"></div>
+          </div>
+        </div>
+
+        <!-- VIEW C: detalhe de um projeto (compartilha layout com detalhe do cliente) -->
+        <div id="projects-view-detail" style="display:none">
+          <div class="filters-bar" style="margin-bottom:18px;gap:10px">
+            <button class="btn btn-ghost btn-sm" onclick="closeProjectDetail()"><i data-lucide="chevron-left" class="ic-sm"></i> Voltar</button>
+            <div style="flex:1"></div>
+            <button class="btn btn-ghost btn-sm" onclick="openProjectReport()"><i data-lucide="file-text" class="ic-sm"></i> Relatório mensal</button>
+            <button class="btn btn-ghost btn-icon-only" title="Editar projeto" onclick="openProjectModalEdit()"><i data-lucide="settings" class="ic-sm"></i></button>
+          </div>
+          <div class="section-title" id="project-detail-breadcrumb" style="margin-bottom:18px"></div>
+
+          <div class="client-detail-section">
+            <div class="client-detail-section-label">SOBRE</div>
+            <div class="client-info-card">
+              <div class="client-info-field">
+                <div class="client-info-label">DESCRIÇÃO</div>
+                <div class="client-info-value" id="project-detail-description"></div>
+              </div>
+              <div class="client-info-grid-2">
+                <div class="client-info-field">
+                  <div class="client-info-label">LINK DO DRIVE</div>
+                  <div class="client-info-value" id="project-detail-drive"></div>
+                </div>
+                <div class="client-info-field">
+                  <div class="client-info-label">ATIVOS</div>
+                  <div class="client-info-value" id="project-detail-assets"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="client-detail-two-col" style="margin-top:32px">
+            <div class="client-detail-section">
+              <div class="client-detail-section-label">PESSOAS</div>
+              <div class="client-info-hint" id="project-detail-people-hint">
+                Herdado do cliente ao criar o projeto. Edições aqui não afetam o cliente nem outros projetos.
+              </div>
+              <div id="project-detail-people"></div>
+            </div>
+
+            <div class="client-detail-section">
+              <div class="client-detail-section-label">TEMPO DEDICADO</div>
+              <div class="client-time-head">
+                <div class="client-time-total">
+                  <span class="client-time-label">HORAS APONTADAS</span>
+                  <span class="client-time-value" id="project-time-value">0h</span>
+                </div>
+                <div class="client-time-periods">
+                  <button class="btn btn-ghost btn-sm project-time-period" data-period="7" onclick="setProjectTimePeriod('7')">Últimos 7 dias</button>
+                  <button class="btn btn-ghost btn-sm project-time-period" data-period="14" onclick="setProjectTimePeriod('14')">Últimos 14 dias</button>
+                  <button class="btn btn-ghost btn-sm project-time-period" data-period="30" onclick="setProjectTimePeriod('30')">Últimos 30 dias</button>
+                  <button class="btn btn-ghost btn-sm project-time-period active" data-period="90" onclick="setProjectTimePeriod('90')">Últimos 90 dias</button>
+                  <button class="btn btn-ghost btn-sm project-time-period" data-period="all" onclick="setProjectTimePeriod('all')">Desde o início</button>
+                </div>
+              </div>
+              <div id="project-time-rows" style="margin-top:14px"></div>
+            </div>
+          </div>
+
+          <div class="client-detail-section" style="margin-top:24px">
+            <div id="project-time-chart"></div>
+          </div>
+        </div>
+
+        <!-- VIEW D: Relatório mensal do cliente (print-friendly) -->
+        <div id="client-report-view" style="display:none">
+          <div class="filters-bar report-toolbar no-print" style="margin-bottom:18px;gap:10px">
+            <button class="btn btn-ghost btn-sm" onclick="closeClientReport()"><i data-lucide="chevron-left" class="ic-sm"></i> Voltar</button>
+            <div style="flex:1"></div>
+            <div class="month-picker" id="report-month-picker">
+              <button class="month-picker-trigger" type="button" onclick="toggleMp('client', event)">
+                <i data-lucide="calendar" class="ic-sm"></i>
+                <span class="month-picker-label" id="mp-label">—</span>
+                <i data-lucide="chevron-down" class="ic-sm month-picker-chevron"></i>
+              </button>
+              <div class="month-picker-popover" id="mp-popover">
+                <div class="month-picker-year-nav">
+                  <button type="button" class="mp-year-btn" onclick="mpChangeYear(-1)" title="Ano anterior"><i data-lucide="chevron-left" class="ic-sm"></i></button>
+                  <div class="month-picker-year" id="mp-year">—</div>
+                  <button type="button" class="mp-year-btn" onclick="mpChangeYear(1)" title="Próximo ano"><i data-lucide="chevron-right" class="ic-sm"></i></button>
+                </div>
+                <div class="month-picker-grid" id="mp-months"></div>
+                <div class="month-picker-actions">
+                  <button type="button" class="btn btn-ghost btn-sm" onclick="mpJumpToday()">Este mês</button>
+                </div>
+              </div>
+            </div>
+            <button class="btn btn-ghost btn-sm" onclick="downloadClientReport()"><i data-lucide="download" class="ic-sm"></i> Baixar PDF</button>
+          </div>
+          <div id="report-content">
+            <!-- Cabeçalho do relatório (visível na impressão também) -->
+            <div class="report-header">
+              <div class="report-header-brand">
+                <img src="/Kastor_logo.svg" alt="Kastor" class="report-header-logo">
+              </div>
+              <div class="report-header-titles">
+                <div class="report-header-eyebrow">RELATÓRIO MENSAL</div>
+                <div class="report-header-title" id="report-client-name"></div>
+                <div class="report-header-sub" id="report-period-label"></div>
+              </div>
+            </div>
+
+            <div class="report-kpis" id="report-kpis"></div>
+
+            <div class="report-section">
+              <div class="report-section-title">DEMANDAS ENTREGUES</div>
+              <div id="report-delivered"></div>
+            </div>
+
+            <div class="report-grid-2">
+              <div class="report-section">
+                <div class="report-section-title">HORAS POR FUNÇÃO</div>
+                <div id="report-hours-role"></div>
+              </div>
+              <div class="report-section">
+                <div class="report-section-title">HORAS POR RESPONSÁVEL</div>
+                <div id="report-hours-user"></div>
+              </div>
+            </div>
+
+            <div class="report-footer">
+              Gerado em <span id="report-generated-at"></span> · Kastor
+            </div>
+          </div>
+        </div>
+
+        <!-- VIEW E: Relatório mensal do projeto -->
+        <div id="project-report-view" style="display:none">
+          <div class="filters-bar report-toolbar no-print" style="margin-bottom:18px;gap:10px">
+            <button class="btn btn-ghost btn-sm" onclick="closeProjectReport()"><i data-lucide="chevron-left" class="ic-sm"></i> Voltar</button>
+            <div style="flex:1"></div>
+            <div class="month-picker" id="preport-month-picker">
+              <button class="month-picker-trigger" type="button" onclick="toggleMp('project', event)">
+                <i data-lucide="calendar" class="ic-sm"></i>
+                <span class="month-picker-label" id="pmp-label">—</span>
+                <i data-lucide="chevron-down" class="ic-sm month-picker-chevron"></i>
+              </button>
+              <div class="month-picker-popover" id="pmp-popover">
+                <div class="month-picker-year-nav">
+                  <button type="button" class="mp-year-btn" onclick="mpChangeYear(-1)"><i data-lucide="chevron-left" class="ic-sm"></i></button>
+                  <div class="month-picker-year" id="pmp-year">—</div>
+                  <button type="button" class="mp-year-btn" onclick="mpChangeYear(1)"><i data-lucide="chevron-right" class="ic-sm"></i></button>
+                </div>
+                <div class="month-picker-grid" id="pmp-months"></div>
+                <div class="month-picker-actions">
+                  <button type="button" class="btn btn-ghost btn-sm" onclick="mpJumpToday()">Este mês</button>
+                </div>
+              </div>
+            </div>
+            <button class="btn btn-ghost btn-sm" onclick="downloadProjectReport()"><i data-lucide="download" class="ic-sm"></i> Baixar PDF</button>
+          </div>
+          <div id="preport-content">
+            <div class="report-header">
+              <div class="report-header-brand">
+                <img src="/Kastor_logo.svg" alt="Kastor" class="report-header-logo">
+              </div>
+              <div class="report-header-titles">
+                <div class="report-header-eyebrow" id="preport-eyebrow">RELATÓRIO MENSAL · PROJETO</div>
+                <div class="report-header-title" id="preport-title"></div>
+                <div class="report-header-sub" id="preport-period-label"></div>
+              </div>
+            </div>
+
+            <div class="report-kpis" id="preport-kpis"></div>
+
+            <div class="report-section">
+              <div class="report-section-title">DEMANDAS ENTREGUES</div>
+              <div id="preport-delivered"></div>
+            </div>
+
+            <div class="report-grid-2">
+              <div class="report-section">
+                <div class="report-section-title">HORAS POR FUNÇÃO</div>
+                <div id="preport-hours-role"></div>
+              </div>
+              <div class="report-section">
+                <div class="report-section-title">HORAS POR RESPONSÁVEL</div>
+                <div id="preport-hours-user"></div>
+              </div>
+            </div>
+
+            <div class="report-footer">
+              Gerado em <span id="preport-generated-at"></span> · Kastor
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ── PROJETOS (legado — mantido por compat, não acessível pelo menu) ── -->
+    <div class="page" id="page-projects">
+      <div class="page-body">
+        <div class="section-head">
+          <div class="section-title">Projetos Cadastrados</div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <button class="btn btn-ghost btn-sm" id="proj-archive-toggle" onclick="toggleArchivedProjects()">Ver arquivados</button>
+            <button class="btn btn-primary btn-sm" onclick="goPage('clients')" title="Projetos são criados dentro do cliente">+ Novo Projeto</button>
+          </div>
+        </div>
+        <div class="filters-bar" style="margin-bottom:12px">
+          <input class="filter-input" id="proj-search" placeholder="Buscar projeto…" oninput="renderProjects()">
+          <select class="filter-select" id="proj-f-client" onchange="renderProjects()"><option value="">Todos os clientes</option></select>
+          <select class="filter-select" id="proj-f-status" onchange="renderProjects()">
+            <option value="">Todas as situações</option>
+            <option value="active">Ativos</option>
+            <option value="archived">Arquivados</option>
+          </select>
+        </div>
+        <div class="table-wrap table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th style="cursor:pointer" onclick="sortProjects('name')">Projeto <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortProjects('client')">Cliente <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortProjects('flow')">Fluxo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortProjects('demands')">Demandas <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortProjects('status')">Situação <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="width:140px"></th>
+              </tr>
+            </thead>
+            <tbody id="projects-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── FLUXOS (admin) ── -->
+    <div class="page" id="page-flows">
+      <div class="page-body">
+
+        <!-- VIEW A: grid de clientes -->
+        <div id="flows-view-clients">
+          <div class="filters-bar" style="margin-bottom:18px">
+            <div class="filter-input-wrap">
+              <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+              <input class="filter-input filter-input--with-icon" id="flow-search" placeholder="Buscar cliente…" oninput="renderFlows()">
+            </div>
+            <select class="filter-select" id="flow-f-client" onchange="renderFlows()"><option value="">Todos os clientes</option></select>
+          </div>
+          <div class="section-title" style="margin-bottom:16px">Fluxos de Demanda</div>
+          <div class="flow-grid" id="flow-clients-grid"></div>
+        </div>
+
+        <!-- VIEW B: fluxos de um cliente específico -->
+        <div id="flows-view-detail" style="display:none">
+          <div class="filters-bar" style="margin-bottom:18px;gap:10px">
+            <button class="btn btn-ghost btn-sm" onclick="closeClientFlows()"><i data-lucide="chevron-left" class="ic-sm"></i> Voltar</button>
+            <div class="filter-input-wrap">
+              <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+              <input class="filter-input filter-input--with-icon" id="flow-detail-search" placeholder="Buscar fluxo…" oninput="renderClientFlows(currentClientView)">
+            </div>
+            <select class="filter-select" id="flow-detail-type" onchange="renderClientFlows(currentClientView)"><option value="">Todos os tipos</option></select>
+            <div class="filter-group-label">
+              <span class="filter-group-label-text">Ordenar</span>
+              <button class="btn btn-ghost btn-sm flow-sort-btn" data-sort="name" onclick="setClientFlowSort('name')">Nome</button>
+              <button class="btn btn-ghost btn-sm flow-sort-btn" data-sort="type" onclick="setClientFlowSort('type')">Tipo</button>
+              <button class="btn btn-ghost btn-sm flow-sort-btn" data-sort="modified" onclick="setClientFlowSort('modified')">Modificação</button>
+            </div>
+            <button class="btn btn-primary btn-sm admin-only" style="margin-left:auto" onclick="openFlowModalForClient(currentClientView)"><i data-lucide="plus" class="ic-sm"></i> Novo Fluxo</button>
+          </div>
+          <div class="section-title" id="flow-detail-breadcrumb" style="margin-bottom:16px"></div>
+          <div class="flow-grid" id="flow-detail-grid"></div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ── WORKSPACES (admin) ── -->
+    <div class="page" id="page-workspaces">
+      <div class="page-body">
+        <div class="section-head">
+          <div class="section-title">Workspaces (Squads)</div>
+          <button class="btn btn-primary btn-sm admin-only" onclick="openWsModal()">+ Novo Workspace</button>
+        </div>
+        <div class="table-wrap table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th style="cursor:pointer" onclick="sortWsBy('name')">Workspace <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortWsBy('projects')">Projetos <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortWsBy('members')">Membros <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="width:120px"></th>
+              </tr>
+            </thead>
+            <tbody id="ws-table-body"></tbody>
+          </table>
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:14px;line-height:1.6">
+          Cada squad trabalha em um workspace com projetos e fluxos próprios. Defina quem acessa cada workspace na aba <strong>Usuários</strong>.
+        </div>
+      </div>
+    </div>
+
+    <!-- ── USUÁRIOS (admin) ── -->
+    <div class="page" id="page-users">
+      <div class="page-body">
+        <div class="section-head">
+          <div class="section-title">Usuários da Equipe</div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <button class="btn btn-ghost btn-sm" id="user-archive-toggle" onclick="toggleArchivedUsers()">Ver desativados</button>
+            <button class="btn btn-primary btn-sm admin-only" onclick="openUserModal()">+ Cadastrar Usuário</button>
+          </div>
+        </div>
+        <div class="table-wrap table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th style="cursor:pointer" onclick="sortUsersBy('name')">Nome <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortUsersBy('username')">Usuário <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortUsersBy('role')">Função <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortUsersBy('ws')">Workspaces <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortUsersBy('admin')">Permissão <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortUsersBy('active')">Situação <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="width:120px"></th>
+              </tr>
+            </thead>
+            <tbody id="users-table-body"></tbody>
+          </table>
+        </div>
+
+        <div class="section-head" style="margin-top:36px">
+          <div class="section-title">Funções da Equipe</div>
+          <button class="btn btn-primary btn-sm admin-only" onclick="openRoleModal()">+ Nova Função</button>
+        </div>
+        <div class="table-wrap table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th style="cursor:pointer" onclick="sortRolesBy('name')">Função <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortRolesBy('count')">Usuários <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="width:120px"></th>
+              </tr>
+            </thead>
+            <tbody id="roles-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── PERFIL ── -->
+    <div class="page" id="page-profile">
+      <div class="page-body">
+        <div class="profile-layout">
+          <div class="profile-card">
+            <div class="avatar avatar-lg" id="profile-avatar">A</div>
+            <div class="profile-name" id="profile-name-display">—</div>
+            <div class="profile-role" id="profile-role-display">—</div>
+            <div class="profile-username" id="profile-username-display">—</div>
+            <div class="upload-btn-wrap">
+              <input type="file" id="avatar-file" accept="image/*" style="display:none" onchange="handleAvatarUpload(event)">
+              <button class="btn btn-ghost" onclick="document.getElementById('avatar-file').click()">Enviar foto de perfil</button>
+              <button class="btn btn-ghost btn-sm" id="avatar-remove-btn" style="margin-top:8px;display:none" onclick="removeAvatar()">Remover foto</button>
+            </div>
+          </div>
+          <div>
+            <div class="panel">
+              <div class="panel-title">Informações do Perfil</div>
+              <div class="form-grid">
+                <div class="form-group">
+                  <label class="form-label">Nome de exibição</label>
+                  <input class="form-control" id="profile-f-name">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Função</label>
+                  <select class="form-control" id="profile-f-role"></select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Nome de usuário (login)</label>
+                  <input class="form-control" id="profile-f-username" placeholder="ex: ana.lima">
+                </div>
+              </div>
+              <div style="margin-top:16px;text-align:right">
+                <button class="btn btn-primary" onclick="saveProfile()">Salvar Perfil</button>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-title">Notificações por E-mail</div>
+              <div id="profile-email-smtp-warning" class="webhook-hint" style="display:none;margin-bottom:12px;border-left:3px solid var(--warn);color:var(--warn)">
+                ⚠️ O servidor não tem SMTP configurado. Mesmo cadastrando um e-mail, nenhuma mensagem será enviada até que o administrador configure as variáveis de ambiente <code>SMTP_HOST</code>, <code>SMTP_USER</code>, <code>SMTP_PASS</code> e <code>SMTP_FROM</code>.
+              </div>
+              <div class="form-grid">
+                <div class="form-group full">
+                  <label class="form-label">E-mail</label>
+                  <input class="form-control" id="profile-f-email" type="email" placeholder="ex: voce@empresa.com" autocomplete="email">
+                </div>
+                <div class="form-group full">
+                  <label class="form-label">Receber e-mail quando…</label>
+                  <div class="email-prefs">
+                    <label class="form-check"><input type="checkbox" id="profile-pref-assigned"> Eu for atribuído como responsável (manual)</label>
+                    <label class="form-check"><input type="checkbox" id="profile-pref-stage_assigned"> Eu for responsável da nova etapa (atribuição automática)</label>
+                    <label class="form-check"><input type="checkbox" id="profile-pref-mention"> Eu for mencionado em um comentário</label>
+                  </div>
+                </div>
+              </div>
+              <div style="margin-top:16px;display:flex;justify-content:flex-end;gap:8px">
+                <button class="btn btn-ghost" onclick="sendEmailTest()"><i data-lucide="send" class="ic-sm"></i> Enviar teste</button>
+                <button class="btn btn-primary" onclick="saveEmailSettings()">Salvar preferências</button>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-title">Integração com Discord</div>
+              <div class="form-grid">
+                <div class="form-group full">
+                  <label class="form-label">ID do usuário no Discord</label>
+                  <input class="form-control" id="profile-f-discord-id" placeholder="Ex: 123456789012345678" autocomplete="off">
+                  <div class="webhook-hint" style="margin-top:8px">
+                    Cole aqui o seu <strong>ID de usuário do Discord</strong> para receber menção quando virar responsável por uma demanda.<br>
+                    Como obter: Configurações do Discord → <strong>Avançado</strong> → ative <strong>Modo Desenvolvedor</strong> → no chat, clique com o botão direito sobre seu nome → <strong>Copiar ID do Usuário</strong>.
+                  </div>
+                </div>
+              </div>
+              <div style="margin-top:16px;text-align:right">
+                <button class="btn btn-primary" onclick="saveDiscordId()">Salvar ID do Discord</button>
+              </div>
+            </div>
+            <div class="panel" id="profile-google-panel">
+              <div class="panel-title">Google Calendar</div>
+              <div id="profile-google-body">
+                <div class="webhook-hint">Carregando…</div>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-title">Alterar Senha</div>
+              <div class="form-grid">
+                <div class="form-group">
+                  <label class="form-label">Senha atual</label>
+                  <input class="form-control" id="profile-f-pass-current" type="password" autocomplete="current-password">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Nova senha (mín. 6 caracteres)</label>
+                  <input class="form-control" id="profile-f-pass-new" type="password" autocomplete="new-password">
+                </div>
+              </div>
+              <div style="margin-top:16px;text-align:right">
+                <button class="btn btn-primary" onclick="changePassword()">Alterar Senha</button>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-title">Sessão</div>
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap">
+                <div style="color:var(--text-muted);font-size:13px">Encerra a sua sessão atual neste dispositivo.</div>
+                <button class="btn btn-danger" onclick="doLogout()"><i data-lucide="log-out" class="ic-sm"></i> Sair da conta</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- MODAL: NOVA/EDITAR DEMANDA — wizard de 4 steps em NOVA, form direto em EDITAR -->
+<div class="modal-overlay" id="demand-modal">
+  <div class="modal modal-lg demand-wizard-modal">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-title">Nova demanda</div>
+      <button class="modal-close" onclick="closeModal('demand-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+
+      <!-- STEP 1 — selecionar cliente -->
+      <div class="wizard-step" id="dw-step-1" style="display:none">
+        <div class="wizard-step-title">SELECIONE O CLIENTE</div>
+        <div class="filter-input-wrap wizard-search">
+          <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+          <input class="filter-input filter-input--with-icon" id="dw-client-search" placeholder="Pesquisar" oninput="renderWizardClients()">
+        </div>
+        <div class="wizard-card-grid" id="dw-clients-grid"></div>
+      </div>
+
+      <!-- STEP 2 — selecionar projeto -->
+      <div class="wizard-step" id="dw-step-2" style="display:none">
+        <div class="wizard-step-title">SELECIONE O PROJETO</div>
+        <div class="filter-input-wrap wizard-search">
+          <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+          <input class="filter-input filter-input--with-icon" id="dw-project-search" placeholder="Pesquisar" oninput="renderWizardProjects()">
+        </div>
+        <div class="wizard-card-grid" id="dw-projects-grid"></div>
+      </div>
+
+      <!-- STEP 3 — selecionar fluxo (com filtro de tipo) -->
+      <div class="wizard-step" id="dw-step-3" style="display:none">
+        <div class="wizard-step-title">SELECIONE O TIPO DE DEMANDA</div>
+        <div class="wizard-search-row">
+          <select class="filter-select" id="dw-flow-type" onchange="renderWizardFlows()">
+            <option value="">Todos os tipos</option>
+          </select>
+          <div class="filter-input-wrap wizard-search" style="flex:1">
+            <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+            <input class="filter-input filter-input--with-icon" id="dw-flow-search" placeholder="Pesquisar" oninput="renderWizardFlows()">
+          </div>
+        </div>
+        <div class="wizard-card-grid" id="dw-flows-grid"></div>
+      </div>
+
+      <!-- STEP 4 — formulário tradicional -->
+      <div class="wizard-step" id="dw-step-4" style="display:none">
+        <div class="wizard-breadcrumb" id="dw-breadcrumb"></div>
+        <div class="form-grid">
+        <!-- 1. NOME DA DEMANDA — floating label -->
+        <div class="form-group form-group-float full">
+          <input class="form-control" id="f-name" placeholder=" ">
+          <label for="f-name">Nome da Demanda</label>
+        </div>
+        <!-- Selects de PROJETO/FLUXO ocultos — selecionados via wizard -->
+        <div class="form-group" style="display:none">
+          <label class="form-label">Projeto</label>
+          <select class="form-control" id="f-project" onchange="onDemandProjectChange()"></select>
+        </div>
+        <div class="form-group" style="display:none">
+          <label class="form-label">Fluxo</label>
+          <select class="form-control" id="f-flow" onchange="syncStatusOptions()"></select>
+        </div>
+        <!-- 3. DESCRIÇÃO -->
+        <div class="form-group full">
+          <label class="form-label">Descrição</label>
+          <textarea class="form-control" id="f-description" rows="5" placeholder="Detalhe o que precisa ser feito, referências, contexto…"></textarea>
+        </div>
+        <!-- 4. LINK DO BRIEFING — floating label -->
+        <div class="form-group form-group-float full">
+          <input class="form-control" id="f-briefing" type="url" placeholder=" ">
+          <label for="f-briefing">Link do Briefing</label>
+        </div>
+        <!-- 5. ANEXOS (acima do checklist) -->
+        <div class="form-group full">
+          <label class="form-label">Anexos</label>
+          <div class="demand-att-buttons">
+            <input type="file" id="f-att-file-input" multiple style="display:none" onchange="handleDemandAttachmentFiles(event, 'f-attachments-list')">
+            <button type="button" class="demand-att-btn" onclick="$('f-att-file-input').click()"><i data-lucide="paperclip" class="ic-sm"></i><span>Arquivo</span></button>
+            <input type="file" id="f-att-img-input" accept="image/*" multiple style="display:none" onchange="handleDemandAttachmentImages(event, 'f-attachments-list')">
+            <button type="button" class="demand-att-btn" onclick="$('f-att-img-input').click()"><i data-lucide="image" class="ic-sm"></i><span>Imagem</span></button>
+            <button type="button" class="demand-att-btn" onclick="addDemandAttachmentLink('f-attachments-list')"><i data-lucide="link" class="ic-sm"></i><span>Link</span></button>
+          </div>
+          <div class="demand-att-list" id="f-attachments-list" style="margin-top:10px"></div>
+        </div>
+        <!-- 6. CHECKLIST (vem do flow.defaultChecklist, editável antes de salvar) -->
+        <div class="form-group full" id="f-checklist-group" style="display:none">
+          <label class="form-label">Checklist <span class="qty-cell-hint" title="Itens herdados do fluxo. Você pode editar, remover ou adicionar antes de salvar.">?</span></label>
+          <div class="flow-checklist-list" id="f-checklist-list"></div>
+          <button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="addDemandChecklistItem()"><i data-lucide="plus" class="ic-sm"></i> Adicionar item</button>
+        </div>
+        <!-- ENTREGÁVEIS (peças, artes, variações + atribuir a) — 4 campos do mesmo tamanho em 1 linha -->
+        <div class="form-group full">
+          <label class="form-label">Entregáveis</label>
+          <div class="qty-grid qty-grid-4">
+            <div class="qty-cell">
+              <input class="form-control" id="f-qty-pieces" type="number" min="0" step="1" placeholder="0">
+              <span class="qty-cell-label">Peças <span class="qty-cell-hint" title="Peças únicas. Ex.: 1 criativo + 1 carrossel = 2">?</span></span>
+            </div>
+            <div class="qty-cell">
+              <input class="form-control" id="f-qty-arts" type="number" min="0" step="1" placeholder="0">
+              <span class="qty-cell-label">Artes <span class="qty-cell-hint" title="Total de artes individuais. Ex.: 1 criativo + carrossel de 3 telas = 4 artes">?</span></span>
+            </div>
+            <div class="qty-cell">
+              <input class="form-control" id="f-qty-variations" type="number" min="0" step="1" placeholder="0">
+              <span class="qty-cell-label">Variações <span class="qty-cell-hint" title="Exportações/formatos. Ex.: 1 criativo em 3 formatos = 3 variações">?</span></span>
+            </div>
+            <div class="qty-cell">
+              <select class="form-control" id="f-deliverable-user">
+                <option value="">— Responsável atual —</option>
+              </select>
+              <span class="qty-cell-label">Atribuir a <span class="qty-cell-hint" title="Quem efetivamente executou as artes. Se vazio, conta pro responsável atual da demanda.">?</span></span>
+            </div>
+          </div>
+        </div>
+        <!-- 6. PRIORIDADE | RESPONSÁVEL ATUAL -->
+        <div class="form-group">
+          <label class="form-label">Prioridade</label>
+          <select class="form-control" id="f-priority">
+            <option value="1">Imediato</option>
+            <option value="2">Alta</option>
+            <option value="3" selected>Média</option>
+            <option value="4">Baixa</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Responsável Atual</label>
+          <div id="f-owner-select"></div>
+        </div>
+        </div><!-- /form-grid -->
+
+        <!-- Campos ocultos do form (mantidos pra compat de JS / dados padrão). -->
+        <div style="display:none" aria-hidden="true">
+          <div id="f-template-group"><select id="f-template"><option value="">— Em branco —</option></select></div>
+          <input id="f-deadline" type="date">
+          <select id="f-status"></select>
+          <input id="f-estimated" type="number" value="">
+          <input type="checkbox" id="f-rec-enabled">
+          <div id="f-rec-config">
+            <select id="f-rec-pattern"><option value="weekly" selected>Semanalmente</option></select>
+            <div id="f-rec-weekday-g"><select id="f-rec-weekday"><option value="1" selected>Segunda</option></select></div>
+            <div id="f-rec-monthday-g" style="display:none"><input id="f-rec-monthday" type="number" value="1"></div>
+            <input id="f-rec-end" type="date">
+          </div>
+        </div>
+      </div><!-- /dw-step-4 -->
+    </div><!-- /modal-body -->
+    <div class="modal-footer client-modal-foot demand-wizard-footer">
+      <div class="client-modal-foot-left">
+        <button class="btn btn-ghost" id="dw-back-btn" onclick="wizardBack()" style="display:none">Voltar</button>
+        <button class="btn btn-danger btn-sm" id="demand-delete-btn" style="display:none" onclick="deleteDemand()">Excluir</button>
+      </div>
+      <div class="client-modal-foot-right">
+        <button class="btn btn-ghost" id="save-as-template-btn" onclick="openSaveAsTemplate()" style="display:none">Salvar como template</button>
+        <button class="btn btn-primary" id="dw-next-btn" onclick="wizardNext()" disabled>Avançar</button>
+        <button class="btn btn-primary" id="dw-create-btn" onclick="withLoading(event, saveDemand)" style="display:none">Criar demanda</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: DETALHE DA DEMANDA -->
+<div class="modal-overlay" id="detail-modal">
+  <div class="modal modal-xl detail-modal-shell">
+    <div id="detail-content"></div>
+    <div class="detail-footer" id="detail-footer"></div>
+  </div>
+</div>
+
+<!-- MODAL: PROJETO -->
+<!-- ── MODAL: NOVO / EDITAR CLIENTE ── -->
+<div class="modal-overlay" id="client-modal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title" id="client-modal-title">Novo Cliente</div>
+      <button class="modal-close" onclick="closeModal('client-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <!-- Onboarding: aparece SÓ no modo Novo Cliente, esconde no Editar -->
+      <div id="c-template-bar" class="client-template-bar" style="display:none">
+        <div class="client-template-bar-icon"><i data-lucide="sparkles" class="ic-sm"></i></div>
+        <div class="client-template-bar-text">
+          <div class="client-template-bar-title">Começar a partir de um modelo</div>
+          <div class="client-template-bar-sub">Cria projetos e fluxos prontos junto com o cliente — 1 clique.</div>
+        </div>
+        <select class="form-control" id="c-template" style="max-width:280px"></select>
+      </div>
+      <div class="client-modal-grid">
+        <!-- Coluna esquerda: avatar grande -->
+        <div class="client-avatar-col">
+          <div class="client-avatar-big" id="c-avatar-preview"></div>
+          <input type="file" id="c-avatar-input" accept="image/*" style="display:none" onchange="handleClientAvatarUpload(event)">
+          <button type="button" class="btn btn-ghost btn-sm" onclick="$('c-avatar-input').click()" style="margin-top:10px;width:100%">Trocar foto</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="c-avatar-remove" onclick="removeClientAvatar()" style="display:none;margin-top:6px;width:100%">Remover foto</button>
+        </div>
+        <!-- Coluna direita: campos principais -->
+        <div class="client-fields-col">
+          <div class="form-group">
+            <label class="form-label">Nome do cliente</label>
+            <input class="form-control" id="c-name" placeholder="Ex: BRZ Empreendimentos" autocomplete="off">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Workspace</label>
+            <select class="form-control" id="c-workspace"></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Cor de identificação</label>
+            <button type="button" class="color-swatch-trigger" data-color-input="c-color" style="background:#7A00FF" onclick="openColorPickerForInput(this, 'c-color')" title="Escolher cor"></button>
+            <input id="c-color" type="color" value="#7A00FF" style="display:none">
+          </div>
+        </div>
+      </div>
+
+      <div class="form-grid" style="margin-top:18px">
+        <div class="form-group full">
+          <label class="form-label">Segmento</label>
+          <input class="form-control" id="c-segment" placeholder="Ex: Imobiliário, Saúde, Educação..." list="client-segments-datalist">
+          <datalist id="client-segments-datalist"></datalist>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Arquivos do projeto</label>
+          <input class="form-control" id="c-drive-files" type="url" placeholder="Link do Drive / Notion / etc">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Ativos da marca</label>
+          <input class="form-control" id="c-brand-assets" type="url" placeholder="Link do Drive / Figma / etc">
+        </div>
+        <div class="form-group full">
+          <label class="form-label">Diretrizes e restrições</label>
+          <textarea class="form-control" id="c-guidelines" rows="4" placeholder="Anote tudo o que o time precisa saber sobre o cliente: tom de voz, restrições legais, marcas que não podem aparecer, etc."></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer client-modal-foot">
+      <div class="client-modal-foot-left" id="c-foot-left">
+        <button class="btn btn-ghost btn-sm client-modal-delete" id="c-delete-btn" onclick="openClientDeleteConfirm()" style="display:none">Excluir Cliente</button>
+        <div class="client-status-group" id="c-status-group" style="display:none">
+          <span style="font-size:12px;color:var(--text-muted)">Estado</span>
+          <button class="btn btn-ghost btn-sm client-status-pick" data-val="active" onclick="setClientModalStatus(true)">Ativo</button>
+          <button class="btn btn-ghost btn-sm client-status-pick" data-val="archived" onclick="setClientModalStatus(false)">Desativado</button>
+        </div>
+      </div>
+      <div class="client-modal-foot-right">
+        <button class="btn btn-ghost btn-sm" id="c-save-template-btn" onclick="openSaveClientTemplate()" style="display:none" title="Salvar este cliente como modelo reutilizável (projetos + fluxos)"><i data-lucide="bookmark" class="ic-sm"></i> Salvar como modelo</button>
+        <button class="btn btn-ghost" onclick="closeModal('client-modal')">Cancelar</button>
+        <button class="btn btn-primary" onclick="saveClient()">Salvar Cliente</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── MODAL: SALVAR CLIENTE COMO MODELO ── -->
+<div class="modal-overlay" id="client-template-save-modal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div class="modal-title">Salvar como modelo</div>
+      <button class="modal-close" onclick="closeModal('client-template-save-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <p style="margin:0 0 14px;font-size:13px;color:var(--text-dim);line-height:1.55" id="c-tpl-save-summary"></p>
+      <div class="form-group full">
+        <label class="form-label">Nome do modelo</label>
+        <input class="form-control" id="c-tpl-save-name" placeholder="Ex: Cliente padrão de Marketing Digital">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('client-template-save-modal')">Cancelar</button>
+      <button class="btn btn-primary" onclick="confirmSaveClientTemplate()">Salvar modelo</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── MODAL: CONFIRMAR EXCLUSÃO DE CLIENTE (digite o nome) ── -->
+<div class="modal-overlay" id="client-delete-modal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div class="modal-title" id="client-delete-title">Excluir cliente?</div>
+      <button class="modal-close" onclick="closeModal('client-delete-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <p style="margin:0 0 8px;font-size:13px;color:var(--text-dim);line-height:1.55">Essa ação não pode ser desfeita. Todos os dados do cliente serão removidos do sistema.</p>
+      <p style="margin:0 0 12px;font-size:13px;color:var(--text)" id="client-delete-confirm-text">Para confirmar, digite <strong></strong> abaixo:</p>
+      <input class="form-control" id="client-delete-input" placeholder="Digite o nome exato do cliente" autocomplete="off" oninput="updateClientDeleteBtnState()">
+      <div id="client-delete-warning" style="margin-top:10px;font-size:12px;color:var(--warn);line-height:1.5"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('client-delete-modal')">Cancelar</button>
+      <button class="btn btn-danger" id="client-delete-confirm-btn" onclick="confirmDeleteClient()" disabled>Excluir</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── MODAL: AGENDAR DEMANDA (bloco da agenda) ── -->
+<div class="modal-overlay" id="schedule-modal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div class="modal-title" id="schedule-modal-title">Agendar bloco</div>
+      <button class="modal-close" onclick="closeModal('schedule-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group full">
+          <label class="form-label">Demanda</label>
+          <select class="form-control" id="sch-demand"></select>
+        </div>
+        <div class="form-group full">
+          <label class="form-label">Quando</label>
+          <div id="sch-when" style="font-size:13px;color:var(--text-dim)"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Início</label>
+          <input class="form-control" id="sch-start" type="time" step="900">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Fim</label>
+          <input class="form-control" id="sch-end" type="time" step="900">
+        </div>
+        <div class="form-group full">
+          <label class="form-label">Data</label>
+          <input class="form-control" id="sch-date" type="date">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer client-modal-foot">
+      <div class="client-modal-foot-left">
+        <button class="btn btn-danger btn-sm" id="sch-delete-btn" style="display:none" onclick="deleteScheduleFromModal()">Excluir</button>
+      </div>
+      <div class="client-modal-foot-right">
+        <button class="btn btn-ghost" onclick="closeModal('schedule-modal')">Cancelar</button>
+        <button class="btn btn-primary" onclick="saveSchedule()">Salvar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="project-modal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title" id="project-modal-title">Novo Projeto</div>
+      <button class="modal-close" onclick="closeModal('project-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="client-modal-grid">
+        <!-- Coluna esquerda: avatar grande -->
+        <div class="client-avatar-col">
+          <div class="client-avatar-big" id="p-avatar-preview" style="cursor:pointer" onclick="$('p-avatar-input').click()" title="Clique para alterar a imagem"></div>
+          <input type="file" id="p-avatar-input" accept="image/*" style="display:none" onchange="handleProjectAvatar(event)">
+          <button type="button" class="btn btn-ghost btn-sm" onclick="$('p-avatar-input').click()" style="margin-top:10px;width:100%">Trocar foto</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="p-avatar-remove" onclick="removeProjectAvatar()" style="display:none;margin-top:6px;width:100%">Remover foto</button>
+        </div>
+        <!-- Coluna direita: campos principais -->
+        <div class="client-fields-col">
+          <div class="form-group">
+            <label class="form-label">Nome do projeto</label>
+            <input class="form-control" id="p-name" placeholder="Ex: Campanha Verão 2026" autocomplete="off">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Cor de identificação</label>
+            <button type="button" class="color-swatch-trigger" data-color-input="p-color" style="background:#7A00FF" onclick="openColorPickerForInput(this, 'p-color')" title="Escolher cor"></button>
+            <input id="p-color" type="color" value="#7A00FF" style="display:none">
+          </div>
+        </div>
+      </div>
+
+      <div class="form-grid" style="margin-top:18px">
+        <div class="form-group">
+          <label class="form-label">Arquivos do projeto</label>
+          <input class="form-control" id="p-drive-files" type="url" placeholder="Link do Drive / Notion / etc">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Ativos da marca</label>
+          <input class="form-control" id="p-brand-assets" type="url" placeholder="Link do Drive / Figma / etc">
+        </div>
+        <div class="form-group full">
+          <label class="form-label">Diretrizes e restrições</label>
+          <textarea class="form-control" id="p-guidelines" rows="4" placeholder="Anote o que o time precisa saber sobre este projeto: prazos especiais, formatos preferidos, restrições específicas, etc."></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer client-modal-foot">
+      <div class="client-modal-foot-left" id="p-foot-left">
+        <button class="btn btn-ghost btn-sm client-modal-delete" id="p-delete-btn" onclick="openProjectDeleteConfirm()" style="display:none">Excluir Projeto</button>
+        <div class="client-status-group" id="p-status-group" style="display:none">
+          <span style="font-size:12px;color:var(--text-muted)">Estado</span>
+          <button class="btn btn-ghost btn-sm client-status-pick" data-pval="active" onclick="setProjectModalStatus(true)">Ativo</button>
+          <button class="btn btn-ghost btn-sm client-status-pick" data-pval="archived" onclick="setProjectModalStatus(false)">Desativado</button>
+        </div>
+      </div>
+      <div class="client-modal-foot-right">
+        <button class="btn btn-ghost" onclick="closeModal('project-modal')">Cancelar</button>
+        <button class="btn btn-primary" onclick="saveProject()">Salvar Projeto</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── MODAL: CONFIRMAR EXCLUSÃO DE PROJETO (digite o nome) ── -->
+<div class="modal-overlay" id="project-delete-modal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div class="modal-title" id="project-delete-title">Excluir projeto?</div>
+      <button class="modal-close" onclick="closeModal('project-delete-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <p style="margin:0 0 8px;font-size:13px;color:var(--text-dim);line-height:1.55">Essa ação não pode ser desfeita. O projeto e tudo vinculado a ele será removido do sistema.</p>
+      <p style="margin:0 0 12px;font-size:13px;color:var(--text)" id="project-delete-confirm-text">Para confirmar, digite <strong></strong> abaixo:</p>
+      <input class="form-control" id="project-delete-input" placeholder="Digite o nome exato do projeto" autocomplete="off" oninput="updateProjectDeleteBtnState()">
+      <div id="project-delete-warning" style="margin-top:10px;font-size:12px;color:var(--warn);line-height:1.5"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('project-delete-modal')">Cancelar</button>
+      <button class="btn btn-danger" id="project-delete-confirm-btn" onclick="confirmDeleteProjectTyped()" disabled>Excluir</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: FLUXO -->
+<div class="modal-overlay" id="flow-modal">
+  <div class="modal modal-xl">
+    <div class="modal-header flow-modal-head">
+      <div>
+        <div class="modal-title" id="flow-modal-title">Novo fluxo</div>
+        <div class="flow-modal-subtitle" id="flow-modal-subtitle">Cliente</div>
+      </div>
+      <div class="flow-modal-head-right">
+        <button type="button" class="flow-icon-picker" id="fl-icon-picker" onclick="openFlowIconPicker()" title="Escolher ícone da biblioteca">
+          <input type="file" id="fl-icon-input" accept="image/*" style="display:none" onchange="handleFlowIconUpload(event)">
+          <div id="fl-icon-preview" class="flow-icon-preview">
+            <span class="flow-icon-label">ícone</span>
+          </div>
+        </button>
+        <button class="modal-close" onclick="attemptCloseModal('flow-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+      </div>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid" style="margin-bottom:16px">
+        <div class="form-group">
+          <label class="form-label">Fluxo</label>
+          <input class="form-control" id="fl-name" placeholder="Ex: Fluxo de mídias sociais" oninput="flowModalDirty=true">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Tipo de Demanda</label>
+          <input class="form-control" id="fl-type" placeholder="Ex: Social Media" list="flowtypes-datalist" oninput="flowModalDirty=true">
+          <datalist id="flowtypes-datalist"></datalist>
+        </div>
+        <!-- Projeto vinculado fica como campo opcional avançado, escondido por padrão -->
+        <div class="form-group full" id="fl-project-group" style="display:none">
+          <label class="form-label">Projeto (deixar vazio para todos os projetos do cliente)</label>
+          <select class="form-control" id="fl-project" onchange="flowModalDirty=true"></select>
+        </div>
+      </div>
+      <!-- Defaults aplicados às novas demandas deste fluxo (antes das etapas) -->
+      <div class="form-group full" style="margin-bottom:18px">
+        <label class="form-label">Descrição padrão</label>
+        <textarea class="form-control" id="fl-default-desc" rows="3" placeholder="Texto que aparecerá pré-preenchido na descrição de toda demanda criada neste fluxo (editável depois)." oninput="flowModalDirty=true"></textarea>
+      </div>
+      <div class="form-group full" style="margin-bottom:24px">
+        <label class="form-label">Checklist padrão</label>
+        <div class="flow-checklist-list" id="fl-default-checklist"></div>
+        <button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addFlowChecklistItem()"><i data-lucide="plus" class="ic-sm"></i> Adicionar item</button>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:8px;line-height:1.5">
+          Itens listados aparecerão no checklist de toda demanda nova deste fluxo. Quem cria pode editar ou remover antes de salvar.
+        </div>
+      </div>
+
+      <!-- Etapas (vêm depois dos padrões) -->
+      <div style="margin-top:8px;padding-top:20px;border-top:1px solid var(--hairline)">
+        <label class="form-label" style="display:block;margin-bottom:8px">Etapas</label>
+        <div class="stage-list" id="stage-list" oninput="flowModalDirty=true"></div>
+        <button class="btn btn-ghost btn-sm flow-add-stage-btn" onclick="addStageRow();flowModalDirty=true"><i data-lucide="plus" class="ic-sm"></i> Adicionar nova etapa</button>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:12px;line-height:1.6">
+          <strong>Prazo (dias)</strong> começa a contar quando a demanda entra na etapa. <strong>Responsável</strong> assume a demanda ao chegar nela.
+          Marque <strong>"Conclui"</strong> nas etapas que encerram a demanda. Se uma etapa em uso for removida, as demandas dela voltam à primeira etapa.
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer flow-modal-foot">
+      <label class="flow-apply-toggle" id="fl-apply-toggle-wrap">
+        <input type="checkbox" id="fl-apply-all">
+        <span class="flow-toggle-track"><span class="flow-toggle-thumb"></span></span>
+        <span class="flow-toggle-label">Aplicar a todos os projetos</span>
+      </label>
+      <div class="flow-modal-foot-right">
+        <button class="btn btn-ghost" onclick="attemptCloseModal('flow-modal')">Cancelar</button>
+        <button class="btn btn-primary" onclick="saveFlow()">Salvar Fluxo</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: NOVA/EDITAR DEMANDA RECORRENTE -->
+<div class="modal-overlay" id="recurring-modal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title" id="recurring-modal-title">Nova Recorrente</div>
+      <button class="modal-close" onclick="closeModal('recurring-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group full">
+          <label class="form-label">Nome da Demanda</label>
+          <input class="form-control" id="rec-name" placeholder="Ex.: Posts Instagram do mês">
+        </div>
+        <div class="form-group rec-structural-field" id="rec-client-group">
+          <label class="form-label">Cliente</label>
+          <select class="form-control" id="rec-client" onchange="onRecurringClientChange()"></select>
+        </div>
+        <div class="form-group rec-structural-field" id="rec-project-group">
+          <label class="form-label">Projeto</label>
+          <select class="form-control" id="rec-project" onchange="onRecurringProjectChange()"></select>
+        </div>
+        <div class="form-group rec-structural-field" id="rec-flow-group">
+          <label class="form-label">Fluxo</label>
+          <select class="form-control" id="rec-flow"></select>
+        </div>
+        <div class="form-group rec-structural-field" id="rec-role-group">
+          <label class="form-label">Função</label>
+          <select class="form-control" id="rec-role"><option value="">— Sem função —</option></select>
+        </div>
+        <div class="form-group rec-structural-field" id="rec-owner-group">
+          <label class="form-label">Responsável Padrão</label>
+          <select class="form-control" id="rec-owner"></select>
+        </div>
+        <div class="form-group rec-structural-field" id="rec-dom-group">
+          <label class="form-label">Dia do Mês (opcional)</label>
+          <input class="form-control" id="rec-dom" type="number" min="1" max="31" placeholder="Ex.: 5">
+        </div>
+        <div class="form-group full">
+          <label class="form-label">Descrição</label>
+          <textarea class="form-control" id="rec-desc" rows="4" placeholder="Descrição padrão da demanda ao ser gerada."></textarea>
+        </div>
+        <div class="form-group full">
+          <label class="form-label">Link do Briefing</label>
+          <input class="form-control" id="rec-briefing" type="url" placeholder="https://...">
+        </div>
+        <div class="form-group full">
+          <label class="form-label">Entregáveis</label>
+          <div class="qty-grid qty-grid-4">
+            <div class="qty-cell">
+              <input class="form-control" id="rec-qty-pieces" type="number" min="0" step="1" placeholder="0">
+              <span class="qty-cell-label">Peças</span>
+            </div>
+            <div class="qty-cell">
+              <input class="form-control" id="rec-qty-arts" type="number" min="0" step="1" placeholder="0">
+              <span class="qty-cell-label">Artes</span>
+            </div>
+            <div class="qty-cell">
+              <input class="form-control" id="rec-qty-variations" type="number" min="0" step="1" placeholder="0">
+              <span class="qty-cell-label">Variações</span>
+            </div>
+            <div class="qty-cell">
+              <select class="form-control" id="rec-deliverable-user">
+                <option value="">— Responsável atual —</option>
+              </select>
+              <span class="qty-cell-label">Atribuir a</span>
+            </div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Prioridade</label>
+          <select class="form-control" id="rec-priority">
+            <option value="1">Imediato</option>
+            <option value="2">Alta</option>
+            <option value="3" selected>Média</option>
+            <option value="4">Baixa</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Status</label>
+          <label class="flow-apply-toggle" style="height:40px">
+            <input type="checkbox" id="rec-active" checked>
+            <span class="flow-toggle-track"><span class="flow-toggle-thumb"></span></span>
+            <span class="flow-toggle-label">Ativo (aparece na lista de geração mensal)</span>
+          </label>
+        </div>
+        <div class="form-group full">
+          <label class="form-label">Checklist <span class="qty-cell-hint" title="Itens herdados pelo checklist da demanda ao gerar.">?</span></label>
+          <div class="flow-checklist-list" id="rec-checklist-list"></div>
+          <button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="addRecurringChecklistItem()"><i data-lucide="plus" class="ic-sm"></i> Adicionar item</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger" id="rec-delete-btn" style="display:none;margin-right:auto" onclick="deleteRecurring()">Excluir</button>
+      <button class="btn btn-ghost" onclick="closeModal('recurring-modal')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveRecurring()" id="rec-save-btn">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: DUPLICAR FLUXO -->
+<!-- MODAL: NOVA DEMANDA PERSONALIZADA (2 steps: flow picker → form) -->
+<!-- MODAL: ADICIONAR LISTA (a um projeto na aba Demandas) -->
+<div class="modal-overlay" id="adicionar-lista-modal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div class="modal-title">Adicionar lista</div>
+      <button class="modal-close" onclick="closeModal('adicionar-lista-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="filter-input-wrap" style="max-width:none;width:100%">
+        <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+        <input class="filter-input filter-input--with-icon" id="al-search" placeholder="Selecione a lista" oninput="filterAdicionarListaOptions()" style="max-width:none;width:100%">
+      </div>
+      <div class="al-options" id="al-options"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('adicionar-lista-modal')">Voltar</button>
+      <div style="flex:1"></div>
+      <button class="btn btn-primary" id="al-add-btn" onclick="withLoading(event, saveAdicionarLista)" disabled>Adicionar lista</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: DUPLICAR LISTA -->
+<div class="modal-overlay" id="duplicar-lista-modal">
+  <div class="modal modal-lg">
+    <div class="modal-header" style="flex-direction:column;align-items:center;text-align:center;gap:8px">
+      <div class="modal-title" id="duplicar-lista-title">Duplicar</div>
+      <div style="font-size:12px;color:var(--text-muted);max-width:420px">Preencha só o que quiser alterar — deixe em branco pra manter os valores originais.</div>
+      <button class="modal-close" onclick="closeModal('duplicar-lista-modal')" style="position:absolute;top:14px;right:14px"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group full">
+          <label class="form-label">Novo Nome</label>
+          <input class="form-control" id="dl-name" placeholder="">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Cliente</label>
+          <select class="form-control" id="dl-client" onchange="onDuplicarListaClientChange()"></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Projeto</label>
+          <select class="form-control" id="dl-project"></select>
+        </div>
+        <div class="form-group full">
+          <label class="form-label">Detalhes</label>
+          <textarea class="form-control" id="dl-desc" rows="5" placeholder="Adicione uma descrição"></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('duplicar-lista-modal')">Cancelar</button>
+      <div style="flex:1"></div>
+      <button class="btn btn-primary" onclick="withLoading(event, saveDuplicarLista)">Duplicar lista</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: NOVA/EDITAR LISTA DE DEMANDAS -->
+<div class="modal-overlay" id="nova-lista-modal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title" id="nova-lista-title">Nova lista de demandas</div>
+      <button class="modal-close" onclick="closeModal('nova-lista-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group full">
+          <label class="form-label">Nome da Lista</label>
+          <input class="form-control" id="nl-name" placeholder="Ex: Fluxo de mídias sociais">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Cliente <span class="form-label-hint">(Opcional)</span></label>
+          <select class="form-control" id="nl-client" onchange="onNovaListaClientChange()"></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Projeto <span class="form-label-hint">(Opcional)</span></label>
+          <select class="form-control" id="nl-project"></select>
+        </div>
+        <div class="form-group full">
+          <label class="form-label">Detalhes</label>
+          <textarea class="form-control" id="nl-desc" rows="5" placeholder="Adicione uma descrição"></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('nova-lista-modal')">Voltar</button>
+      <div style="flex:1"></div>
+      <button class="btn btn-ghost" onclick="closeModal('nova-lista-modal')">Cancelar</button>
+      <button class="btn btn-primary" id="nl-save-btn" onclick="saveNovaLista()">Criar lista</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="personalizada-modal">
+  <div class="modal modal-lg persona-modal">
+    <div class="modal-header persona-header">
+      <div class="persona-header-left">
+        <div class="modal-title" id="persona-title">Nova demanda personalizada</div>
+        <div class="persona-subtitle" id="persona-subtitle" style="display:none"></div>
+      </div>
+      <div class="persona-header-right">
+        <button type="button" class="persona-flow-pill" id="persona-flow-pill" onclick="personaGoTo(1)" style="display:none" title="Clique pra trocar o fluxo">FLUXO</button>
+        <button class="modal-close" onclick="closeModal('personalizada-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+      </div>
+    </div>
+    <div class="modal-body">
+      <!-- STEP 1: Flow picker -->
+      <div class="persona-step" id="persona-step-1">
+        <div class="persona-step-title">Selecione o fluxo</div>
+        <div class="filter-input-wrap wizard-search" style="margin-bottom:20px">
+          <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+          <input class="filter-input filter-input--with-icon" id="persona-flow-search" placeholder="Buscar" oninput="renderPersonaFlows()">
+        </div>
+        <div class="persona-flow-section" id="persona-flows-recent-wrap" style="display:none">
+          <div class="persona-flow-section-head">
+            <span class="persona-flow-section-title">Recentes</span>
+            <span class="persona-flow-section-sep"></span>
+          </div>
+          <div class="wizard-card-grid" id="persona-flows-recent"></div>
+        </div>
+        <div class="persona-flow-section">
+          <div class="persona-flow-section-head">
+            <span class="persona-flow-section-title">Todos os fluxos</span>
+            <span class="persona-flow-section-sep"></span>
+          </div>
+          <div class="wizard-card-grid" id="persona-flows-all"></div>
+        </div>
+      </div>
+      <!-- STEP 2: Form -->
+      <div class="persona-step" id="persona-step-2" style="display:none">
+        <div class="persona-breadcrumb" id="persona-breadcrumb"></div>
+        <div class="form-grid">
+          <div class="form-group full">
+            <label class="form-label">Nome da Demanda</label>
+            <input class="form-control" id="persona-name" placeholder="Nome descritivo">
+          </div>
+          <div class="form-group full">
+            <label class="form-label">Descrição</label>
+            <textarea class="form-control" id="persona-desc" rows="4" placeholder="Adicione uma descrição"></textarea>
+          </div>
+          <div class="form-group full">
+            <label class="form-label">Link do Briefing</label>
+            <input class="form-control" id="persona-briefing" type="url" placeholder="https://...">
+          </div>
+          <div class="form-group full">
+            <label class="form-label">Anexos</label>
+            <div class="demand-att-buttons">
+              <input type="file" id="persona-att-file" multiple style="display:none" onchange="handleDemandAttachmentFiles(event, 'persona-attachments-list')">
+              <button type="button" class="demand-att-btn" onclick="$('persona-att-file').click()"><i data-lucide="paperclip" class="ic-sm"></i><span>Arquivo</span></button>
+              <input type="file" id="persona-att-img" accept="image/*" multiple style="display:none" onchange="handleDemandAttachmentImages(event, 'persona-attachments-list')">
+              <button type="button" class="demand-att-btn" onclick="$('persona-att-img').click()"><i data-lucide="image" class="ic-sm"></i><span>Imagem</span></button>
+              <button type="button" class="demand-att-btn" onclick="addDemandAttachmentLink('persona-attachments-list')"><i data-lucide="link" class="ic-sm"></i><span>Link</span></button>
+            </div>
+            <div class="demand-att-list" id="persona-attachments-list" style="margin-top:10px"></div>
+          </div>
+          <div class="form-group full">
+            <label class="form-label">Checklist Inicial</label>
+            <div class="flow-checklist-list" id="persona-checklist-list"></div>
+            <button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="addPersonaChecklistItem()"><i data-lucide="plus" class="ic-sm"></i> Adicionar item</button>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Prioridade</label>
+            <select class="form-control" id="persona-priority">
+              <option value="1">Imediato</option>
+              <option value="2">Alta</option>
+              <option value="3" selected>Média</option>
+              <option value="4">Baixa</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Responsável Atual</label>
+            <select class="form-control" id="persona-owner"></select>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="persona-back-btn" onclick="personaGoTo(1)" style="display:none">Voltar</button>
+      <div style="flex:1"></div>
+      <button class="btn btn-ghost" onclick="closeModal('personalizada-modal')">Cancelar</button>
+      <button class="btn btn-primary" id="persona-next-btn" onclick="personaGoTo(2)" disabled>Avançar</button>
+      <button class="btn btn-primary" id="persona-create-btn" onclick="withLoading(event, savePersonalizada)" style="display:none">Criar demanda</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: NOVA DEMANDA EM LISTA (adicionar item ao template — aba Listas) -->
+<div class="modal-overlay" id="nova-demanda-lista-modal">
+  <div class="modal modal-lg persona-modal">
+    <div class="modal-header persona-header">
+      <div class="persona-header-left">
+        <div class="modal-title" id="ndl-title">Nova demanda</div>
+        <div class="persona-subtitle" id="ndl-subtitle"></div>
+      </div>
+      <div class="persona-header-right">
+        <button type="button" class="persona-flow-pill" id="ndl-flow-pill" onclick="ndlGoTo(1)" style="display:none" title="Clique pra trocar o fluxo">FLUXO</button>
+        <button class="modal-close" onclick="closeModal('nova-demanda-lista-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+      </div>
+    </div>
+    <div class="modal-body">
+      <!-- STEP 1: Flow picker (reusa CSS do persona) -->
+      <div class="persona-step" id="ndl-step-1">
+        <div class="persona-step-title">Selecione o fluxo</div>
+        <div class="filter-input-wrap wizard-search" style="margin-bottom:20px">
+          <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+          <input class="filter-input filter-input--with-icon" id="ndl-flow-search" placeholder="Buscar" oninput="renderNdlFlows()">
+        </div>
+        <div class="persona-flow-section" id="ndl-flows-recent-wrap" style="display:none">
+          <div class="persona-flow-section-head">
+            <span class="persona-flow-section-title">Recentes</span>
+            <span class="persona-flow-section-sep"></span>
+          </div>
+          <div class="wizard-card-grid" id="ndl-flows-recent"></div>
+        </div>
+        <div class="persona-flow-section">
+          <div class="persona-flow-section-head">
+            <span class="persona-flow-section-title">Todos os fluxos</span>
+            <span class="persona-flow-section-sep"></span>
+          </div>
+          <div class="wizard-card-grid" id="ndl-flows-all"></div>
+        </div>
+      </div>
+      <!-- STEP 2: Form -->
+      <div class="persona-step" id="ndl-step-2" style="display:none">
+        <div class="form-grid">
+          <div class="form-group full">
+            <label class="form-label">Nome da Demanda</label>
+            <input class="form-control" id="ndl-name" placeholder="Nome descritivo">
+          </div>
+          <div class="form-group full">
+            <label class="form-label">Descrição</label>
+            <textarea class="form-control" id="ndl-desc" rows="4" placeholder="Adicione uma descrição"></textarea>
+          </div>
+          <div class="form-group full">
+            <label class="form-label">Link do Briefing</label>
+            <input class="form-control" id="ndl-briefing" type="url" placeholder="https://...">
+          </div>
+          <div class="form-group full">
+            <label class="form-label">Anexos</label>
+            <div class="demand-att-buttons">
+              <input type="file" id="ndl-att-file" multiple style="display:none" onchange="handleDemandAttachmentFiles(event, 'ndl-attachments-list')">
+              <button type="button" class="demand-att-btn" onclick="$('ndl-att-file').click()"><i data-lucide="paperclip" class="ic-sm"></i><span>Arquivo</span></button>
+              <input type="file" id="ndl-att-img" accept="image/*" multiple style="display:none" onchange="handleDemandAttachmentImages(event, 'ndl-attachments-list')">
+              <button type="button" class="demand-att-btn" onclick="$('ndl-att-img').click()"><i data-lucide="image" class="ic-sm"></i><span>Imagem</span></button>
+              <button type="button" class="demand-att-btn" onclick="addDemandAttachmentLink('ndl-attachments-list')"><i data-lucide="link" class="ic-sm"></i><span>Link</span></button>
+            </div>
+            <div class="demand-att-list" id="ndl-attachments-list" style="margin-top:10px"></div>
+          </div>
+          <div class="form-group full">
+            <label class="form-label">Checklist Inicial</label>
+            <div class="flow-checklist-list" id="ndl-checklist-list"></div>
+            <button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="addNdlChecklistItem()"><i data-lucide="plus" class="ic-sm"></i> Adicionar item</button>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Prioridade</label>
+            <select class="form-control" id="ndl-priority">
+              <option value="1">Imediato</option>
+              <option value="2">Alta</option>
+              <option value="3" selected>Média</option>
+              <option value="4">Baixa</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Responsável Atual</label>
+            <select class="form-control" id="ndl-owner"></select>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="ndl-back-btn" onclick="ndlGoTo(1)" style="display:none">Voltar</button>
+      <div style="flex:1"></div>
+      <button class="btn btn-ghost" onclick="closeModal('nova-demanda-lista-modal')">Cancelar</button>
+      <button class="btn btn-primary" id="ndl-next-btn" onclick="ndlGoTo(2)" disabled>Avançar</button>
+      <button class="btn btn-primary" id="ndl-create-btn" onclick="withLoading(event, saveNovaDemandaLista)" style="display:none">Criar demanda</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: EDITAR DEMANDA DE LISTA APLICADA (só campos permitidos) -->
+<div class="modal-overlay" id="editar-demanda-aplicada-modal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title" id="eda-title">Editar demanda</div>
+      <button class="modal-close" onclick="closeModal('editar-demanda-aplicada-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group full">
+          <label class="form-label">Nome da Demanda</label>
+          <input class="form-control" id="eda-name">
+        </div>
+        <div class="form-group full">
+          <label class="form-label">Descrição</label>
+          <textarea class="form-control" id="eda-desc" rows="4"></textarea>
+        </div>
+        <div class="form-group full">
+          <label class="form-label">Link do Briefing</label>
+          <input class="form-control" id="eda-briefing" type="url" placeholder="https://...">
+        </div>
+        <div class="form-group full">
+          <label class="form-label">Anexos</label>
+          <div class="demand-att-buttons">
+            <input type="file" id="eda-att-file" multiple style="display:none" onchange="handleDemandAttachmentFiles(event, 'eda-attachments-list')">
+            <button type="button" class="demand-att-btn" onclick="$('eda-att-file').click()"><i data-lucide="paperclip" class="ic-sm"></i><span>Arquivo</span></button>
+            <input type="file" id="eda-att-img" accept="image/*" multiple style="display:none" onchange="handleDemandAttachmentImages(event, 'eda-attachments-list')">
+            <button type="button" class="demand-att-btn" onclick="$('eda-att-img').click()"><i data-lucide="image" class="ic-sm"></i><span>Imagem</span></button>
+            <button type="button" class="demand-att-btn" onclick="addDemandAttachmentLink('eda-attachments-list')"><i data-lucide="link" class="ic-sm"></i><span>Link</span></button>
+          </div>
+          <div class="demand-att-list" id="eda-attachments-list" style="margin-top:10px"></div>
+        </div>
+        <div class="form-group full">
+          <label class="form-label">Checklist</label>
+          <div class="flow-checklist-list" id="eda-checklist-list"></div>
+          <button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="addEdaChecklistItem()"><i data-lucide="plus" class="ic-sm"></i> Adicionar item</button>
+        </div>
+        <div class="form-group full">
+          <label class="form-label">Prioridade</label>
+          <select class="form-control" id="eda-priority">
+            <option value="1">Imediato</option>
+            <option value="2">Alta</option>
+            <option value="3" selected>Média</option>
+            <option value="4">Baixa</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('editar-demanda-aplicada-modal')">Cancelar</button>
+      <div style="flex:1"></div>
+      <button class="btn btn-primary" onclick="withLoading(event, saveEditarDemandaAplicada)">Salvar alterações</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: BIBLIOTECA DE ÍCONES LUCIDE (picker pra ícone do fluxo) -->
+<div class="modal-overlay" id="lucide-picker-modal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">Biblioteca de Ícones</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Powered by Lucide</div>
+      </div>
+      <button class="modal-close" onclick="closeModal('lucide-picker-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="filter-input-wrap" style="margin-bottom:14px;max-width:none">
+        <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+        <input class="filter-input filter-input--with-icon" id="lucide-search" placeholder="Buscar ícone (ex.: rocket, calendar, user)…" oninput="filterLucidePicker()" style="max-width:none;width:100%">
+      </div>
+      <div id="lucide-picker-grid" class="lucide-picker-grid"></div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <span><span id="lucide-result-count">0</span> ícones encontrados</span>
+        <label style="cursor:pointer;color:var(--accent-text);text-decoration:underline">
+          ou enviar imagem própria
+          <input type="file" id="lucide-fallback-upload" accept="image/*" style="display:none" onchange="handleLucidePickerUpload(event)">
+        </label>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="dupflow-modal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div class="modal-title">Duplicar Fluxo</div>
+      <button class="modal-close" onclick="closeModal('dupflow-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Copiar este fluxo para o projeto</label>
+        <select class="form-control" id="dup-project"></select>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:10px;line-height:1.6">
+        Uma cópia independente do fluxo será criada e vinculada ao projeto escolhido.
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('dupflow-modal')">Cancelar</button>
+      <button class="btn btn-primary" onclick="confirmDuplicateFlow()">Duplicar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: WORKSPACE -->
+<div class="modal-overlay" id="ws-modal">
+  <div class="modal modal-md">
+    <div class="modal-header">
+      <div class="modal-title" id="ws-modal-title">Novo Workspace</div>
+      <button class="modal-close" onclick="closeModal('ws-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">Nome do Workspace *</label>
+          <input class="form-control" id="ws-name" placeholder="Ex: Squad Imobiliário">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Cor</label>
+          <button type="button" class="color-swatch-trigger" data-color-input="ws-color" style="background:#7A00FF" onclick="openColorPickerForInput(this, 'ws-color')" title="Escolher cor"></button>
+          <input id="ws-color" type="color" value="#7A00FF" style="display:none">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('ws-modal')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveWs()">Salvar Workspace</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: USUÁRIO (ADMIN) -->
+<div class="modal-overlay" id="user-modal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title" id="user-modal-title">Cadastrar Usuário</div>
+      <button class="modal-close" onclick="closeModal('user-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">Nome completo *</label>
+          <input class="form-control" id="u-name" placeholder="Ex: Ana Lima">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Função</label>
+          <select class="form-control" id="u-role"></select>
+        </div>
+        <div class="form-group" id="u-username-group">
+          <label class="form-label">Nome de usuário (login) *</label>
+          <input class="form-control" id="u-username" placeholder="Ex: ana.lima" autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label class="form-label" id="u-password-label">Senha inicial *</label>
+          <input class="form-control" id="u-password" type="text" placeholder="Mín. 6 caracteres" autocomplete="off">
+        </div>
+        <div class="form-group full">
+          <label class="form-label">E-mail (opcional)</label>
+          <input class="form-control" id="u-email" type="email" placeholder="ex: ana.lima@empresa.com" autocomplete="off">
+          <div class="webhook-hint" style="margin-top:6px">Para receber notificações por e-mail sobre demandas e menções. A pessoa pode ajustar suas próprias preferências no perfil.</div>
+        </div>
+        <div class="form-group full">
+          <label class="form-label">ID do Discord (opcional)</label>
+          <input class="form-control" id="u-discord-id" placeholder="Ex: 123456789012345678" autocomplete="off">
+          <div class="webhook-hint" style="margin-top:6px">Necessário para receber menção no Discord quando virar responsável por uma demanda.</div>
+        </div>
+        <div class="form-group full">
+          <label class="form-label">Acesso aos workspaces</label>
+          <div class="ws-checklist" id="u-workspaces"></div>
+        </div>
+        <div class="form-group full">
+          <label class="form-check"><input type="checkbox" id="u-admin"> Administrador (gerencia workspaces, usuários e fluxos)</label>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:10px;line-height:1.6">
+        Crie o acesso e envie usuário + senha para a pessoa. Ela poderá trocar a senha no próprio perfil.
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('user-modal')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveUser()">Salvar Usuário</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: FUNÇÃO -->
+<div class="modal-overlay" id="role-modal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div class="modal-title" id="role-modal-title">Nova Função</div>
+      <button class="modal-close" onclick="closeModal('role-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Nome da Função *</label>
+        <input class="form-control" id="role-name" placeholder="Ex: Gestor de Tráfego">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('role-modal')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveRole()">Salvar Função</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: CONFIRMAÇÃO GENÉRICA -->
+<div class="modal-overlay" id="confirm-modal">
+  <div class="modal modal-sm" data-no-outside-close="1">
+    <div class="modal-header">
+      <div class="modal-title" id="confirm-title">Confirmar ação</div>
+      <button class="modal-close" onclick="confirmCancel()"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body" style="text-align:center;display:flex;flex-direction:column;align-items:center">
+      <div id="confirm-message" style="font-size:13px;line-height:1.6;color:var(--text-dim)"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="confirmCancel()">Cancelar</button>
+      <button class="btn btn-primary" id="confirm-ok-btn" onclick="confirmAccept()">Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div id="toast-container"></div>
+
+<script src="/vendor/lucide.min.js"></script>
+<script src="/js/app.js?v=20260713a"></script>
+  <!-- ── MODAL DE WEBHOOK ── -->
+  <div class="modal-overlay" id="webhook-modal">
+    <div class="modal modal-md">
+      <div class="modal-header">
+        <div class="modal-title" id="webhook-modal-title">Nova Integração</div>
+        <button class="modal-close" onclick="closeModal('webhook-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-group full">
+            <label class="form-label">Nome da integração *</label>
+            <input class="form-control" id="wh-name" placeholder="Ex: Canal #demandas no Discord">
+          </div>
+          <div class="form-group full">
+            <label class="form-label">URL do webhook *</label>
+            <input class="form-control" id="wh-url" type="url" placeholder="https://discord.com/api/webhooks/...">
+            <div class="webhook-hint">Para Discord: <strong>Configurações do canal → Integrações → Webhooks → Novo webhook → Copiar URL</strong></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Formato</label>
+            <select class="form-control" id="wh-format">
+              <option value="discord">Discord (embed formatado)</option>
+              <option value="raw">Raw JSON (Slack/Make/n8n/custom)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Status</label>
+            <select class="form-control" id="wh-active">
+              <option value="true">Ativo</option>
+              <option value="false">Pausado</option>
+            </select>
+          </div>
+          <div class="form-group full">
+            <label class="form-label">Usuário alvo (opcional)</label>
+            <select class="form-control" id="wh-target-user">
+              <option value="">— Todos os usuários (sem filtro) —</option>
+            </select>
+            <div class="webhook-hint">Quando definido, este webhook só dispara para eventos relacionados a esse usuário: quando ele se tornar responsável por uma demanda (criação, atribuição manual ou por etapa) ou quando for mencionado em um comentário. Demais eventos são ignorados.</div>
+          </div>
+          <div class="form-group full">
+            <label class="form-label">Eventos *</label>
+            <div class="wh-events" id="wh-events"></div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="wh-test-btn" onclick="testWebhook()" style="margin-right:auto;display:none"><i data-lucide="send" class="ic-sm"></i> Enviar teste</button>
+        <button class="btn btn-ghost" onclick="closeModal('webhook-modal')">Cancelar</button>
+        <button class="btn btn-primary" onclick="saveWebhook()">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Date / Datetime Picker Customizado ── -->
+  <div id="fluxo-datepicker" class="fdp" style="display:none">
+    <div class="fdp-head">
+      <button type="button" class="fdp-nav" data-act="prev" title="Mês anterior"><i data-lucide="chevron-left" class="ic-sm"></i></button>
+      <button type="button" class="fdp-title" data-act="title"></button>
+      <button type="button" class="fdp-nav" data-act="next" title="Próximo mês"><i data-lucide="chevron-right" class="ic-sm"></i></button>
+    </div>
+    <div class="fdp-dow">
+      <span>D</span><span>S</span><span>T</span><span>Q</span><span>Q</span><span>S</span><span>S</span>
+    </div>
+    <div class="fdp-grid" id="fdp-grid"></div>
+    <div class="fdp-years" id="fdp-years" style="display:none"></div>
+    <div class="fdp-time" id="fdp-time" style="display:none">
+      <div class="fdp-time-label">Hora</div>
+      <div class="fdp-time-row">
+        <div class="fdp-time-unit">
+          <button type="button" class="fdp-time-step" data-act="h-down" title="Diminuir hora"><i data-lucide="chevron-left" class="ic-xs"></i></button>
+          <input type="text" inputmode="numeric" maxlength="2" id="fdp-h" value="00">
+          <button type="button" class="fdp-time-step" data-act="h-up" title="Aumentar hora"><i data-lucide="chevron-right" class="ic-xs"></i></button>
+        </div>
+        <span class="fdp-time-sep">:</span>
+        <div class="fdp-time-unit">
+          <button type="button" class="fdp-time-step" data-act="m-down" title="Diminuir minutos"><i data-lucide="chevron-left" class="ic-xs"></i></button>
+          <input type="text" inputmode="numeric" maxlength="2" id="fdp-m" value="00">
+          <button type="button" class="fdp-time-step" data-act="m-up" title="Aumentar minutos"><i data-lucide="chevron-right" class="ic-xs"></i></button>
+        </div>
+      </div>
+    </div>
+    <div class="fdp-foot">
+      <button type="button" class="fdp-foot-btn" data-act="clear">Limpar</button>
+      <div class="fdp-foot-right">
+        <button type="button" class="fdp-foot-btn" data-act="today">Hoje</button>
+        <button type="button" class="fdp-foot-btn primary" data-act="ok" id="fdp-ok" style="display:none">OK</button>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

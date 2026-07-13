@@ -1,0 +1,32 @@
+# Dependências
+node_modules/
+
+# Dados em runtime — NUNCA commitar
+# Contém banco, credenciais criptografadas, anexos enviados pelos usuários.
+data/
+
+# Logs
+npm-debug.log*
+*.log
+
+# Variáveis de ambiente (SMTP_PASS, FLUXO_SECRET, etc)
+.env
+.env.local
+.env.*.local
+
+# Bundles gerados (se rodar `npm run build`)
+public/js/app.min.js
+public/js/app.min.js.map
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+
+# Tests temporários
+coverage/
+.nyc_output/

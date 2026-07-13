@@ -1,0 +1,133 @@
+# ────────────────────────────────────────────────────────────────
+# Kastor — Stack docker-compose pra Docker Swarm (via Portainer)
+#
+# ⚠️ IMPORTANTE — este arquivo é pra SWARM em produção.
+#
+# Regras que o Swarm impõe (respeitadas aqui):
+# 1. `build: .` é IGNORADO pelo Swarm — a imagem TEM que vir de um registry.
+#    A pipeline em .github/workflows/deploy.yml faz o build e publica no GHCR
+#    a cada push na main.
+# 2. `replicas: 1` é obrigatório enquanto o banco for SQLite (arquivo local).
+#    Escalar horizontalmente exige migrar pra Postgres/MySQL antes.
+# 3. `placement.constraints: node.role == manager` garante que o container
+#    sempre roda no mesmo nó onde o volume `kastor_data` mora. Sem isso, se o
+#    Swarm reagendar o container em outro nó, ele perde acesso ao banco.
+#
+# Como usar no Portainer:
+#   1. Stacks > Add stack
+#   2. Name: kastor
+#   3. Build method: Repository → cola URL do GitHub (Portainer clona o repo
+#      pra pegar o docker-compose.yml, mas NÃO faz build da imagem — usa a
+#      que a Action publicou no GHCR).
+#   4. Environment variables: cole as vars listadas em DEPLOY.md.
+#   5. Deploy the stack.
+#
+# Variáveis sensíveis (FLUXO_SECRET, SMTP_PASS, GOOGLE_CLIENT_SECRET) vêm da
+# aba "Environment variables" do Portainer. NUNCA commite .env.
+# ────────────────────────────────────────────────────────────────
+version: '3.8'
+
+services:
+  kastor:
+    # Imagem publicada pelo GitHub Actions no GitHub Container Registry.
+    # O tag :latest sempre aponta pro build mais recente da main.
+    # Pra congelar em um SHA específico, troque por :abc123def...
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/kastor:latest
+
+    # Bloco `deploy:` só faz sentido em modo Swarm (compose CLI simples ignora).
+    # É a especificação oficial de como o serviço se comporta no cluster.
+    deploy:
+      replicas: 1  # ← SQLite não suporta multi-writer. Não aumente sem migrar de banco.
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 5
+        window: 60s
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: stop-first  # SQLite não permite dois writers no mesmo arquivo — para antes de subir novo.
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+        order: stop-first
+      placement:
+        constraints:
+          - node.role == manager  # ← Fixa no nó onde o volume nomeado vive.
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+
+    ports:
+      - "${HOST_PORT:-8080}:3000"
+
+    environment:
+      # ── Runtime ─────────────────────────────────────────
+      NODE_ENV: production
+      PORT: 3000
+      # Onde o app guarda kastor.db, secret.bin e uploads/.
+      # Bate com o volume montado abaixo — não mude sem mudar lá.
+      KASTOR_DATA_DIR: /app/data
+
+      # ── Segurança ───────────────────────────────────────
+      # Chave hex de 64 chars pra criptografar tokens em disco.
+      # Gere uma vez com:  openssl rand -hex 32
+      # SE NÃO definir, o app gera e salva em data/secret.bin (funciona, mas
+      # se trocar o volume perde as sessões).
+      FLUXO_SECRET: ${FLUXO_SECRET:-}
+      KASTOR_SESSION_DAYS: ${KASTOR_SESSION_DAYS:-30}
+
+      # ── URL pública (pra emails de reset de senha, callbacks OAuth) ─
+      PUBLIC_URL: ${PUBLIC_URL:-}
+
+      # ── SMTP (opcional — sem isso "esqueci senha" não envia email) ─
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_FROM: ${SMTP_FROM:-}
+
+      # ── Google Calendar (integração one-way, opcional) ──────────
+      # Redirect URI DEVE ser o URL público HTTPS + /api/google/callback
+      # e precisa estar cadastrado no Google Cloud Console.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
+
+    volumes:
+      # Volume nomeado — sobrevive a rebuilds/updates. Contém banco SQLite,
+      # uploads dos usuários e secret.key. BACKUP DISSO É CRÍTICO.
+      # No Swarm, o volume fica no nó fixado pela placement constraint acima.
+      - kastor_data:/app/data
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  kastor_data:
+    # Driver local — vive no filesystem do nó manager fixado.
+    # Pra backup automatizado, ver seção "Backup" no DEPLOY.md.
+
+# ────────────────────────────────────────────────────────────────
+# BACKUP / RESTORE do volume (rodar no nó manager onde o volume mora):
+#
+#   # Backup diário — tar.gz com todo o conteúdo de /app/data
+#   docker run --rm -v kastor_kastor_data:/data -v $(pwd):/backup \
+#     alpine tar czf /backup/kastor-$(date +%F).tar.gz -C /data .
+#
+#   # Restore (com o serviço parado)
+#   docker service scale kastor_kastor=0
+#   docker run --rm -v kastor_kastor_data:/data -v $(pwd):/backup \
+#     alpine sh -c "cd /data && tar xzf /backup/kastor-XXXX.tar.gz"
+#   docker service scale kastor_kastor=1
+#
+# O nome do volume na prática é <STACK>_kastor_data. Confira com:
+#   docker volume ls | grep kastor
+# ────────────────────────────────────────────────────────────────

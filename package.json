@@ -1,0 +1,20 @@
+{
+  "name": "fluxo-gestao-demandas",
+  "version": "2.0.0",
+  "description": "Kastor — Gestão de Demandas de Marketing (multiusuário, persistente)",
+  "main": "server.js",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test tests/smoke.test.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "google-auth-library": "^10.9.0",
+    "googleapis": "^173.0.0",
+    "lucide": "^1.18.0",
+    "nodemailer": "^9.0.1"
+  }
+}

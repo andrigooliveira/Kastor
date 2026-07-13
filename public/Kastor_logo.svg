@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Camada_2" data-name="Camada 2" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1159.5 1470.47">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: url(#Gradiente_sem_nome_272);
+      }
+
+      .cls-2 {
+        fill: url(#Gradiente_sem_nome_265);
+      }
+
+      .cls-3 {
+        fill: url(#Gradiente_sem_nome_272-2);
+      }
+    </style>
+    <linearGradient id="Gradiente_sem_nome_272" data-name="Gradiente sem nome 272" x1="460.39" y1="1695.65" x2="1439.22" y2="-186.27" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7a00ff"/>
+      <stop offset="1" stop-color="#9057ff"/>
+    </linearGradient>
+    <linearGradient id="Gradiente_sem_nome_265" data-name="Gradiente sem nome 265" x1="-72" y1="408.34" x2="778.85" y2="558.37" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7a00ff"/>
+      <stop offset="1" stop-color="#2c0066"/>
+    </linearGradient>
+    <linearGradient id="Gradiente_sem_nome_272-2" data-name="Gradiente sem nome 272" x1="152.58" y1="1535.55" x2="1131.41" y2="-346.37" xlink:href="#Gradiente_sem_nome_272"/>
+  </defs>
+  <g id="Camada_1-2" data-name="Camada 1">
+    <g>
+      <rect class="cls-1" x="760.36" width="399.14" height="1470.47"/>
+      <polygon class="cls-2" points="708.33 422.34 708.33 958.3 664.65 1028.12 407.5 686.55 0 144.94 0 0 390.43 0 415.63 33.44 634.39 324.02 708.33 422.34"/>
+      <polygon class="cls-3" points="708.33 422.34 708.33 958.3 664.65 1028.12 387.84 1470.47 0 1470.47 0 1337.66 122.1 1142.68 407.5 686.55 430.81 649.34 634.39 324.02 708.33 422.34"/>
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,155 @@
+KASTOR — Gestão de Demandas de Marketing
+========================================
+
+Guia rápido pra quem vai USAR ou HOSPEDAR o sistema. Pra desenvolver,
+leia README.md desta mesma pasta.
+
+
+COMO RODAR (localmente, pra teste/dev)
+---------------------------------------
+1. Instale o Node.js versão 22.5 ou maior (https://nodejs.org).
+2. Abra a pasta do projeto no terminal:
+     cd caminho\para\kastor
+3. Primeira vez:
+     npm install
+4. Iniciar:
+     npm start
+5. Abrir no navegador:  http://localhost:3000
+
+
+PRIMEIRO ACESSO
+---------------
+Usuário: admin
+Senha:   admin123
+→ Troque a senha em "Meu Perfil" logo no primeiro acesso.
+→ Crie os acessos da equipe em "Usuários".
+
+
+ONDE FICAM OS DADOS
+-------------------
+Persistência em SQLite. Tudo dentro de data/:
+
+  data/kastor.db      → banco principal (demandas, clientes, projetos, etc.)
+  data/kastor.db-wal  → journal do WAL (temporário, não copiar sozinho)
+  data/kastor.db-shm  → shared memory do WAL (idem)
+  data/auth.enc       → credenciais criptografadas
+  data/secret.key     → chave-mestra (se FLUXO_SECRET não setado)
+  data/uploads/       → anexos e avatares
+
+BACKUP:
+  Método simples — parar o servidor e copiar a pasta data/ inteira.
+
+  Método "ao vivo" (sem parar) — usando sqlite3:
+    sqlite3 data/kastor.db ".backup data/backup-$(date +%F).db"
+
+
+HOSPEDAR EM PRODUÇÃO
+--------------------
+O jeito recomendado é Docker Swarm gerenciado pelo Portainer, com CI/CD via
+GitHub Actions publicando a imagem no GHCR. Passo a passo completo:
+
+  → Ver DEPLOY.md na raiz do projeto.
+
+Resumo dos ingredientes:
+  - VPS com Docker Swarm ativo + Portainer
+  - GitHub repo privado com o código
+  - Domínio apontando pra VPS
+  - Proxy reverso (Nginx Proxy Manager ou Traefik) pra HTTPS
+
+Também roda em Render, Railway ou qualquer plataforma Node.js — só precisa
+de disco persistente montado em /app/data.
+
+
+NOTIFICAÇÃO POR E-MAIL (SMTP)
+-----------------------------
+Cada usuário pode receber e-mails quando:
+  - Virar responsável por uma demanda (manual ou pela etapa)
+  - For mencionado em comentário
+
+Precisa configurar SMTP nas variáveis de ambiente:
+
+  SMTP_HOST     → host do servidor (ex: smtp.gmail.com)
+  SMTP_USER     → usuário/login
+  SMTP_PASS     → senha ou "App Password" (NUNCA senha normal do Gmail)
+  SMTP_PORT     → padrão 587 (465 para SSL puro)
+  SMTP_SECURE   → "true" força SSL (padrão: detecta pela porta)
+  SMTP_FROM     → remetente exibido (ex: "Kastor <noreply@empresa.com>")
+
+Depois cada pessoa vai em "Meu Perfil → Notificações por E-mail":
+  1. Cadastra o próprio e-mail
+  2. Marca os eventos desejados
+  3. Clica "Enviar teste" pra validar
+
+
+INTEGRAÇÃO COM GOOGLE CALENDAR
+-------------------------------
+Cada usuário conecta a própria conta Google e escolhe quais calendários
+sincronizar. Os eventos aparecem em azul na tela de Agenda, lado a lado
+com os blocos de trabalho da plataforma. É integração ONE-WAY (só leitura)
+— a plataforma nunca escreve de volta no Google.
+
+Precisa configurar OAuth no Google Cloud (uma vez, admin):
+  1. console.cloud.google.com → criar projeto
+  2. APIs & Services → ativar "Google Calendar API"
+  3. OAuth consent screen → External (ou Internal com Google Workspace)
+  4. Credentials → OAuth Client ID → Web application
+  5. Redirect URI: <URL-do-Kastor>/api/google/callback
+
+E setar variáveis de ambiente:
+  GOOGLE_CLIENT_ID
+  GOOGLE_CLIENT_SECRET
+  GOOGLE_REDIRECT_URI
+
+Uso pelo usuário:
+  Meu Perfil → Google Calendar → Conectar → autorizar no Google → escolher
+  calendários → agenda mostra os eventos automaticamente.
+
+
+INTEGRAÇÃO COM DISCORD
+----------------------
+Webhooks por workspace pra notificar equipe em canais do Discord quando
+demandas mudam (criadas, movidas de etapa, concluídas, mencionadas).
+
+Configuração em: Integrações → Nova Integração → cola URL do webhook do
+Discord → escolhe eventos.
+
+Cada usuário pode cadastrar seu ID do Discord no perfil pra ser mencionado
+individualmente nas notificações.
+
+
+VARIÁVEIS DE AMBIENTE — REFERÊNCIA RÁPIDA
+-----------------------------------------
+  PORT                  porta do server (padrão 3000)
+  PUBLIC_URL            URL pública do app (usada em emails e OAuth)
+  FLUXO_SECRET          chave hex 64 chars pra criptografia do auth.enc
+                        Recomendado em produção. Gera com:
+                          openssl rand -hex 32
+  KASTOR_DATA_DIR       diretório de dados (padrão ./data)
+  KASTOR_SESSION_DAYS   tempo de vida da sessão em dias (padrão 30)
+
+  SMTP_HOST / SMTP_USER / SMTP_PASS / SMTP_PORT / SMTP_SECURE / SMTP_FROM
+                        veja seção "NOTIFICAÇÃO POR E-MAIL"
+
+  GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REDIRECT_URI
+                        veja seção "GOOGLE CALENDAR"
+
+Todas opcionais. Sem elas o sistema roda, mas com features desligadas.
+
+
+SEGURANÇA — NOTAS
+-----------------
+- Sessão por cookie httpOnly (kastor_session). JS no browser não lê o token.
+- Rate limit no /api/login: 5 tentativas erradas por minuto por IP.
+- Reset de senha via email requer SMTP configurado. Token expira em 1h.
+- Headers de segurança em todas respostas: CSP, X-Frame-Options,
+  X-Content-Type-Options, Referrer-Policy, Permissions-Policy.
+- Cookie Secure automático quando atrás de HTTPS.
+- Google Calendar: refresh_token NUNCA vai pro frontend.
+
+
+TESTES
+------
+  npm test
+
+Smoke tests (~12 testes, 1s). Usa node:test built-in — sem dependência.
+Roda em diretório temporário, não toca dados reais.

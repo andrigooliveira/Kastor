@@ -1,0 +1,60 @@
+# ────────────────────────────────────────────────────────────────
+# Kastor — build da imagem Docker e push pro GHCR (GitHub Container Registry)
+#
+# Dispara em todo push na main. A imagem publicada é a que o docker-compose.yml
+# em produção referencia (ghcr.io/<owner>/kastor:latest).
+#
+# Permissões:
+#   - contents: read      → clonar o repo
+#   - packages: write     → publicar no ghcr.io (usa GITHUB_TOKEN automático)
+#
+# Cache:
+#   - type=gha (GitHub Actions cache) — camadas do Docker sobrevivem entre runs,
+#     builds seguintes ficam em ~30-60s (só reinstala npm se package.json mudou).
+# ────────────────────────────────────────────────────────────────
+name: Build and Push to GHCR
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # GHCR exige o path em lowercase. Se o dono do repo tem letra maiúscula
+      # no username/org, ${GITHUB_REPOSITORY} traz maiúsculas e o push falha.
+      # Downcase antes de usar.
+      - name: Downcase Repository Name
+        run: |
+          echo "REPO_NAME=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ env.REPO_NAME }}:latest
+            ghcr.io/${{ env.REPO_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
