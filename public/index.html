@@ -109,6 +109,10 @@
       </div>
 
       <div class="nav-section">Configurações</div>
+      <div class="nav-item" data-page="docs" onclick="goPage('docs')">
+        <svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.25" stroke="currentColor" stroke-width="1.5"/><path d="M8 11V7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="5.25" r=".75" fill="currentColor"/></svg>
+        Documentação
+      </div>
       <div class="nav-item" data-page="integrations" id="nav-integrations" onclick="goPage('integrations')">
         <svg viewBox="0 0 16 16" fill="none"><path d="M4 8h2.5a2 2 0 002-2V3.5M12 8H9.5a2 2 0 00-2 2v2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="3" cy="8" r="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="13" cy="8" r="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="7.5" cy="3.5" r="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="7.5" cy="12.5" r="1.5" stroke="currentColor" stroke-width="1.5"/></svg>
         Integrações
@@ -169,6 +173,19 @@
           <span>Nova Demanda</span>
         </button>
       </div>
+    </div>
+
+    <!-- Banner de boas-vindas — só primeiro login (dispensável, persiste em localStorage). -->
+    <div class="welcome-banner" id="welcome-banner" hidden>
+      <span class="welcome-banner-emoji" aria-hidden="true">👋</span>
+      <div class="welcome-banner-text">
+        <strong>Bem-vindo ao Kastor!</strong>
+        <span>Confira o Manual do Usuário para descobrir tudo que a plataforma oferece.</span>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="openDocsFromWelcome()">Abrir manual</button>
+      <button class="welcome-banner-close" onclick="dismissWelcomeBanner()" title="Fechar" aria-label="Fechar">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
     </div>
 
     <!-- ── DASHBOARD ── -->
@@ -536,6 +553,12 @@
           </div>
         </section>
       </div>
+    </div>
+
+    <!-- ── DOCUMENTAÇÃO (Manual do Usuário) ── -->
+    <div class="page" id="page-docs">
+      <iframe id="docs-frame" src="/docs/Manual-do-Usuario.html" title="Manual do Usuário"
+        style="width:100%;height:calc(100vh - 60px);border:0;display:block;background:transparent"></iframe>
     </div>
 
     <!-- ── INTEGRAÇÕES (WEBHOOKS) ── -->

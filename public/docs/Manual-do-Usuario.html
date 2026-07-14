@@ -1,0 +1,1309 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kastor — Manual do Usuário</title>
+<style>
+  :root {
+    --bg: #0B0B10;
+    --surface: #14141C;
+    --surface-2: #1B1B26;
+    --surface-3: #22222F;
+    --hairline: rgba(255,255,255,0.08);
+    --border: rgba(255,255,255,0.14);
+    --text: #ECECF1;
+    --text-dim: #B4B4C0;
+    --text-muted: #7C7C8A;
+    --accent: #7A00FF;
+    --accent-2: #9B4BFF;
+    --accent-soft: rgba(122,0,255,0.14);
+    --danger: #F26D6D;
+    --success: #22D3A5;
+    --warn: #F59E0B;
+    --info: #38BDF8;
+    --priority-1: #F26D6D;
+    --priority-2: #F59E0B;
+    --priority-3: #F7C948;
+    --priority-4: #38BDF8;
+    --radius: 10px;
+    --radius-lg: 14px;
+    --shadow: 0 4px 24px rgba(0,0,0,0.35);
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #F7F7FB;
+      --surface: #FFFFFF;
+      --surface-2: #F1F1F6;
+      --surface-3: #E8E8F0;
+      --hairline: rgba(0,0,0,0.06);
+      --border: rgba(0,0,0,0.14);
+      --text: #14141C;
+      --text-dim: #4B4B58;
+      --text-muted: #7C7C8A;
+      --accent-soft: rgba(122,0,255,0.10);
+      --shadow: 0 4px 20px rgba(0,0,0,0.08);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 15px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  .layout {
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    min-height: 100vh;
+  }
+  aside.toc {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    background: var(--surface);
+    border-right: 1px solid var(--hairline);
+    padding: 28px 20px 40px;
+  }
+  aside.toc header {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 6px;
+  }
+  aside.toc .logo {
+    width: 34px; height: 34px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-weight: 800; font-size: 15px;
+    box-shadow: 0 4px 14px rgba(122,0,255,0.35);
+  }
+  aside.toc h1 { font-size: 15px; margin: 0; letter-spacing: -0.01em; }
+  aside.toc .subtitle {
+    color: var(--text-muted); font-size: 12px; margin: 0 0 22px 0;
+  }
+  aside.toc nav ol { list-style: none; padding: 0; margin: 0; counter-reset: sec; }
+  aside.toc nav li { counter-increment: sec; margin: 2px 0; }
+  aside.toc nav > ol > li > a::before {
+    content: counter(sec, decimal-leading-zero);
+    color: var(--text-muted);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    margin-right: 8px;
+    letter-spacing: 0.02em;
+  }
+  aside.toc nav a {
+    display: block;
+    padding: 6px 10px;
+    color: var(--text-dim);
+    text-decoration: none;
+    font-size: 13px;
+    border-radius: 6px;
+    border-left: 2px solid transparent;
+    cursor: pointer;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  aside.toc nav a:hover { background: var(--surface-2); color: var(--text); }
+  aside.toc nav a.active {
+    background: var(--accent-soft);
+    color: var(--text);
+    border-left-color: var(--accent);
+  }
+  aside.toc nav ol ol {
+    list-style: none;
+    padding: 0 0 4px 22px;
+    margin: 0;
+    counter-reset: subsec;
+  }
+  aside.toc nav ol ol li { counter-increment: subsec; }
+  aside.toc nav ol ol li a { font-size: 12.5px; padding: 3px 10px; color: var(--text-muted); }
+  aside.toc nav ol ol li a::before {
+    content: "";
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--surface-3);
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+  aside.toc nav ol ol li a.active::before { background: var(--accent); }
+
+  main { padding: 60px min(80px, 6vw) 120px; max-width: 920px; }
+  main .kicker {
+    display: inline-block;
+    padding: 4px 10px;
+    background: var(--accent-soft);
+    color: var(--accent-2);
+    border-radius: 100px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+  main h1.doc-title {
+    font-size: 42px;
+    line-height: 1.1;
+    margin: 0 0 12px;
+    letter-spacing: -0.02em;
+  }
+  main .lead {
+    font-size: 17px;
+    color: var(--text-dim);
+    max-width: 640px;
+    margin: 0 0 40px;
+  }
+  section {
+    padding-top: 48px;
+    margin-top: 24px;
+    border-top: 1px solid var(--hairline);
+    scroll-margin-top: 20px;
+  }
+  section.no-divider {
+    border-top: none;
+    padding-top: 32px;
+    margin-top: 12px;
+  }
+  h2 {
+    font-size: 28px;
+    letter-spacing: -0.015em;
+    margin: 0 0 8px;
+  }
+  h2 .num {
+    display: inline-block;
+    color: var(--accent-2);
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 500;
+    margin-right: 14px;
+    vertical-align: middle;
+    letter-spacing: 0.04em;
+  }
+  section .section-intro { color: var(--text-dim); margin: 0 0 24px; }
+  h3 { font-size: 19px; margin: 34px 0 8px; letter-spacing: -0.01em; scroll-margin-top: 20px; }
+  h4 {
+    font-size: 13px;
+    margin: 22px 0 6px;
+    color: var(--text);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  p { margin: 10px 0 14px; }
+  ul, ol { padding-left: 22px; margin: 10px 0 18px; }
+  li { margin: 4px 0; }
+  li > strong { color: var(--text); }
+  code {
+    font-family: var(--mono);
+    font-size: 0.88em;
+    background: var(--surface-2);
+    padding: 1px 6px;
+    border-radius: 4px;
+    color: var(--text);
+  }
+  kbd {
+    font-family: var(--mono);
+    font-size: 0.82em;
+    background: var(--surface-3);
+    border: 1px solid var(--border);
+    border-bottom-width: 2px;
+    padding: 1px 6px;
+    border-radius: 5px;
+    color: var(--text);
+    white-space: nowrap;
+  }
+  .callout {
+    display: flex;
+    gap: 12px;
+    padding: 14px 16px;
+    border-radius: var(--radius);
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    margin: 18px 0;
+    font-size: 14px;
+  }
+  .callout .ic {
+    flex-shrink: 0;
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 13px;
+    margin-top: 1px;
+  }
+  .callout.tip { border-color: rgba(34,211,165,0.28); background: rgba(34,211,165,0.06); }
+  .callout.tip .ic { background: var(--success); color: #06251A; }
+  .callout.warn { border-color: rgba(245,158,11,0.32); background: rgba(245,158,11,0.06); }
+  .callout.warn .ic { background: var(--warn); color: #3D1D00; }
+  .callout.info { border-color: rgba(56,189,248,0.32); background: rgba(56,189,248,0.06); }
+  .callout.info .ic { background: var(--info); color: #052939; }
+  .callout.admin { border-color: rgba(122,0,255,0.35); background: var(--accent-soft); }
+  .callout.admin .ic { background: var(--accent); color: #fff; }
+  .callout .body { min-width: 0; }
+  .callout .body strong { display: block; margin-bottom: 2px; }
+
+  .grid-2 {
+    display: grid; gap: 14px;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    margin: 18px 0;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+  }
+  .card h4 { margin: 0 0 6px; text-transform: none; letter-spacing: -0.01em; font-size: 14px; }
+  .card p { margin: 0; font-size: 13.5px; color: var(--text-dim); }
+
+  .step-list { counter-reset: step; list-style: none; padding: 0; margin: 18px 0; }
+  .step-list li {
+    counter-increment: step;
+    position: relative;
+    padding: 12px 14px 12px 46px;
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    background: var(--surface);
+    margin: 8px 0;
+  }
+  .step-list li::before {
+    content: counter(step);
+    position: absolute;
+    left: 12px; top: 12px;
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent-2);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 12px; font-weight: 600;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 13.5px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--hairline);
+    vertical-align: top;
+  }
+  th {
+    color: var(--text-dim);
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    background: var(--surface);
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 100px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    background: var(--surface-3);
+    color: var(--text-dim);
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .badge.admin { background: var(--accent-soft); color: var(--accent-2); }
+  .badge.new { background: rgba(34,211,165,0.14); color: var(--success); }
+
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 100px; font-size: 11.5px; font-weight: 600; margin: 0 2px; }
+  .pill.p1 { background: rgba(242,109,109,0.15); color: var(--priority-1); }
+  .pill.p2 { background: rgba(245,158,11,0.15); color: var(--priority-2); }
+  .pill.p3 { background: rgba(247,201,72,0.15); color: var(--priority-3); }
+  .pill.p4 { background: rgba(56,189,248,0.15); color: var(--priority-4); }
+
+  a.anchor-link {
+    color: var(--accent-2);
+    text-decoration: none;
+    border-bottom: 1px dashed var(--accent-soft);
+  }
+  a.anchor-link:hover { border-bottom-style: solid; }
+
+  .mini-index {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    padding: 12px 16px;
+    margin: 18px 0 26px;
+    font-size: 13px;
+  }
+  .mini-index strong { color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .mini-index ul { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-wrap: wrap; gap: 6px 14px; }
+  .mini-index a { color: var(--accent-2); text-decoration: none; font-size: 12.5px; }
+  .mini-index a:hover { text-decoration: underline; }
+
+  footer.doc-foot {
+    margin-top: 80px;
+    padding-top: 26px;
+    border-top: 1px solid var(--hairline);
+    color: var(--text-muted);
+    font-size: 12px;
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 12px;
+  }
+
+  .toc-toggle {
+    display: none;
+    position: fixed;
+    top: 14px; right: 14px;
+    z-index: 30;
+    background: var(--accent);
+    color: #fff; border: none;
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    font-family: inherit; font-size: 13px; font-weight: 600;
+    cursor: pointer;
+    box-shadow: var(--shadow);
+  }
+
+  @media (max-width: 960px) {
+    .layout { grid-template-columns: 1fr; }
+    aside.toc {
+      position: fixed;
+      inset: 0;
+      height: 100vh;
+      z-index: 25;
+      transform: translateX(-100%);
+      transition: transform .25s ease;
+      width: min(320px, 88vw);
+    }
+    aside.toc.open { transform: translateX(0); }
+    .toc-toggle { display: inline-flex; align-items: center; gap: 6px; }
+    main { padding: 60px 22px 90px; }
+    main h1.doc-title { font-size: 32px; }
+    body::after {
+      content: "";
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.5);
+      opacity: 0; pointer-events: none;
+      transition: opacity .2s;
+      z-index: 20;
+    }
+    body.toc-open::after { opacity: 1; pointer-events: all; }
+  }
+</style>
+</head>
+<body>
+
+<button class="toc-toggle" onclick="document.body.classList.toggle('toc-open'); document.querySelector('aside.toc').classList.toggle('open');">☰ Índice</button>
+
+<div class="layout">
+
+<aside class="toc">
+  <header>
+    <div class="logo">K</div>
+    <h1>Kastor</h1>
+  </header>
+  <p class="subtitle">Manual do usuário</p>
+  <nav>
+    <ol>
+      <li><a href="#bem-vindo">Bem-vindo ao Kastor</a></li>
+      <li><a href="#primeiros-passos">Primeiros passos</a>
+        <ol>
+          <li><a href="#login">Entrar na plataforma</a></li>
+          <li><a href="#tour">Um tour pela tela</a></li>
+          <li><a href="#trocar-senha">Trocar a senha inicial</a></li>
+        </ol>
+      </li>
+      <li><a href="#conceitos">Conceitos fundamentais</a></li>
+      <li><a href="#perfil">Meu Perfil</a>
+        <ol>
+          <li><a href="#perfil-info">Foto, nome e função</a></li>
+          <li><a href="#perfil-email">Notificações por e-mail</a></li>
+          <li><a href="#perfil-discord">Discord pessoal</a></li>
+          <li><a href="#perfil-google">Google Calendar</a></li>
+          <li><a href="#perfil-senha">Alterar senha e sair</a></li>
+        </ol>
+      </li>
+      <li><a href="#clientes">Clientes</a>
+        <ol>
+          <li><a href="#cliente-criar">Criar um cliente</a></li>
+          <li><a href="#cliente-abas">Explorando o cliente</a></li>
+          <li><a href="#cliente-arquivar">Arquivar vs excluir</a></li>
+          <li><a href="#cliente-relatorio">Relatório mensal em PDF</a></li>
+        </ol>
+      </li>
+      <li><a href="#projetos">Projetos</a></li>
+      <li><a href="#fluxos">Fluxos de Demanda</a>
+        <ol>
+          <li><a href="#fluxo-criar">Montar um fluxo</a></li>
+          <li><a href="#fluxo-etapas">Configurar etapas</a></li>
+          <li><a href="#fluxo-defaults">Descrição e checklist padrão</a></li>
+          <li><a href="#fluxo-duplicar">Duplicar para outro projeto</a></li>
+        </ol>
+      </li>
+      <li><a href="#demandas">Demandas — o coração do sistema</a>
+        <ol>
+          <li><a href="#criar-demanda">Criar uma demanda (wizard)</a></li>
+          <li><a href="#detalhe-demanda">Anatomia do detalhe</a></li>
+          <li><a href="#pipeline">O pipeline visual</a></li>
+          <li><a href="#etapas-desta">Etapas desta demanda</a></li>
+          <li><a href="#prioridade">Prioridade e prazos</a></li>
+          <li><a href="#entregaveis">Entregáveis</a></li>
+          <li><a href="#checklist">Checklist</a></li>
+          <li><a href="#anexos">Anexos e arquivos</a></li>
+          <li><a href="#comentarios">Comentários, menções, reações</a></li>
+          <li><a href="#horas">Apontamento de horas</a></li>
+          <li><a href="#historico">Histórico da demanda</a></li>
+          <li><a href="#visualizacoes">Lista, Kanban, Calendário</a></li>
+          <li><a href="#filtros">Filtros e buscas</a></li>
+          <li><a href="#acoes-massa">Ações em massa</a></li>
+        </ol>
+      </li>
+      <li><a href="#minhas-demandas">Minhas Demandas</a></li>
+      <li><a href="#agenda">Agenda semanal</a></li>
+      <li><a href="#dashboard">Dashboard</a></li>
+      <li><a href="#capacidade">Capacidade</a></li>
+      <li><a href="#recorrentes">Recorrentes e Listas</a>
+        <ol>
+          <li><a href="#recorrentes-como">Demandas recorrentes</a></li>
+          <li><a href="#listas-como">Listas-modelo</a></li>
+        </ol>
+      </li>
+      <li><a href="#templates">Templates e Modelos</a></li>
+      <li><a href="#notificacoes">Notificações in-app</a></li>
+      <li><a href="#produtividade">Atalhos e produtividade</a></li>
+      <li><a href="#boas-praticas">Boas práticas</a></li>
+      <li><a href="#faq">Perguntas frequentes</a></li>
+    </ol>
+  </nav>
+</aside>
+
+<main>
+  <span class="kicker">Manual do Usuário</span>
+  <h1 class="doc-title">Kastor — Gestão de Demandas de Marketing</h1>
+  <p class="lead">Guia completo para quem está começando. Você vai aprender o que cada tela faz, os detalhes que fazem diferença no dia a dia, e boas práticas para manter tudo organizado — sem virar refém do sistema.</p>
+
+  <!-- ============================================================ -->
+  <section id="bem-vindo" class="no-divider">
+    <h2><span class="num">01</span>Bem-vindo ao Kastor</h2>
+    <p>O Kastor é uma plataforma para organizar a operação de um time de marketing: <strong>clientes</strong>, <strong>projetos</strong>, <strong>demandas</strong>, <strong>prazos</strong>, <strong>responsáveis</strong>, <strong>apontamento de horas</strong> e <strong>agenda semanal</strong> — tudo em um lugar só.</p>
+    <p>Se você já usou ferramentas como Trello, Asana ou Monday, muita coisa vai parecer familiar. Se nunca usou nenhuma, tudo bem — este manual assume que você está começando do zero.</p>
+    <div class="grid-2">
+      <div class="card"><h4>Para quem executa</h4><p>Ver suas demandas do dia, apontar horas, mover etapas, conversar no detalhe e planejar a semana na Agenda.</p></div>
+      <div class="card"><h4>Para quem gerencia</h4><p>Distribuir demandas, montar fluxos, ver capacidade da equipe, priorizar e gerar relatórios mensais em PDF.</p></div>
+      <div class="card"><h4>Para administradores</h4><p>Criar usuários, definir workspaces, funções, permissões e integrações. Poucas pessoas precisam ser admin.</p></div>
+    </div>
+    <div class="callout tip">
+      <div class="ic">✓</div>
+      <div class="body"><strong>Dica de leitura:</strong> se você está com pressa, leia as seções <a class="anchor-link" href="#conceitos">03 Conceitos fundamentais</a>, <a class="anchor-link" href="#demandas">08 Demandas</a> e <a class="anchor-link" href="#boas-praticas">18 Boas práticas</a>. Cobrem 80% do dia a dia.</div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <section id="primeiros-passos">
+    <h2><span class="num">02</span>Primeiros passos</h2>
+
+    <h3 id="login">Entrar na plataforma</h3>
+    <p>Abra o endereço fornecido pela sua equipe (por exemplo, <code>https://kastor.suaempresa.com</code>) e informe <strong>usuário</strong> e <strong>senha</strong>. Se o administrador ainda não criou seu acesso, avise-o: contas são cadastradas internamente pela equipe.</p>
+    <p><strong>Esqueceu a senha?</strong> Clique em <em>Esqueci minha senha</em>, informe o e-mail cadastrado no seu perfil e você vai receber um link para definir uma nova senha (o link expira em 1 hora).</p>
+    <div class="callout info">
+      <div class="ic">i</div>
+      <div class="body"><strong>Sem e-mail no perfil?</strong> A recuperação depende do e-mail estar cadastrado no seu perfil dentro do sistema. Se acabou de entrar e ainda não informou um, peça ao administrador para redefinir sua senha manualmente.</div>
+    </div>
+
+    <h3 id="tour">Um tour pela tela</h3>
+    <p>A interface é dividida em três regiões:</p>
+    <ul>
+      <li><strong>Sidebar à esquerda</strong> — navegação entre as páginas. No <em>topo</em> tem o seletor de <strong>Workspace</strong> (o "espaço" que você está vendo); no <em>rodapé</em>, seu avatar (abre <em>Meu Perfil</em>), alternador de tema (claro/escuro) e o botão para <strong>compactar</strong> a sidebar.</li>
+      <li><strong>Topbar</strong> — mostra o título da página atual, o botão <strong>Modo focar</strong> (esconde sidebar e topbar), o sino de <strong>Notificações</strong> com contador e o botão <strong>+ Nova Demanda</strong>.</li>
+      <li><strong>Conteúdo</strong> — a página em si (Dashboard, Demandas, Clientes, etc.).</li>
+    </ul>
+    <p>As seções da sidebar são agrupadas por finalidade:</p>
+    <table>
+      <thead><tr><th>Grupo</th><th>Páginas</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Visão Geral</strong></td><td>Dashboard</td></tr>
+        <tr><td><strong>Execução</strong></td><td>Demandas, Minhas Demandas, Agenda</td></tr>
+        <tr><td><strong>Acompanhamento</strong></td><td>Capacidade, Clientes</td></tr>
+        <tr><td><strong>Processos</strong></td><td>Listas de tarefas, Fluxos de Demanda, Templates</td></tr>
+        <tr><td><strong>Configurações</strong> <span class="badge admin">admin</span></td><td>Integrações, Workspaces, Usuários</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="trocar-senha">Trocar a senha inicial</h3>
+    <p>No <em>primeiro acesso</em>, entre em <strong>Meu Perfil</strong> (clique no seu avatar no rodapé da sidebar) e vá até <strong>Alterar Senha</strong>. Informe a senha atual e uma nova (mínimo 6 caracteres). É uma boa hora também para adicionar seu e-mail, sua foto e escolher o tema (claro ou escuro).</p>
+  </section>
+
+  <!-- ============================================================ -->
+  <section id="conceitos">
+    <h2><span class="num">03</span>Conceitos fundamentais</h2>
+    <p class="section-intro">Antes de sair criando coisas, entenda como as peças se encaixam:</p>
+    <table>
+      <thead><tr><th style="width:170px">Conceito</th><th>O que é</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Workspace</strong></td><td>Espaço isolado (um squad, uma unidade, uma marca) que contém seus próprios clientes, projetos e fluxos. Cada usuário pode ter acesso a um ou mais workspaces.</td></tr>
+        <tr><td><strong>Cliente</strong></td><td>A conta que sua equipe atende. Guarda ativos da marca, diretrizes, link do Drive e os projetos daquele cliente.</td></tr>
+        <tr><td><strong>Projeto</strong></td><td>Um recorte de trabalho dentro do cliente (ex.: "Instagram", "Blog", "Campanha Q3"). Toda demanda pertence a um projeto.</td></tr>
+        <tr><td><strong>Fluxo</strong></td><td>Um "esqueleto" de etapas por onde a demanda passa (ex.: <em>Backlog → Copywrite → Design → Revisão → Concluída</em>). Cada etapa tem cor, prazo em dias e responsável (pessoa ou função).</td></tr>
+        <tr><td><strong>Demanda</strong></td><td>O trabalho em si — um post, uma peça, uma landing, um vídeo. Nasce em um fluxo, tem responsável, prazo, checklist, entregáveis, comentários e horas apontadas.</td></tr>
+        <tr><td><strong>Função</strong> (Role)</td><td>Cargo/especialidade da pessoa: <em>Designer, Copywriter, Gestor de Tráfego</em>, etc. Serve para atribuir etapas por "função" em vez de por pessoa fixa.</td></tr>
+        <tr><td><strong>Template</strong></td><td>Modelo de demanda pronto para reaproveitar (mesmo checklist, descrição e entregáveis).</td></tr>
+        <tr><td><strong>Modelo de cliente</strong></td><td>Cliente-molde que já vem com projetos e fluxos, para acelerar a criação de novos clientes semelhantes.</td></tr>
+      </tbody>
+    </table>
+    <div class="callout tip">
+      <div class="ic">✓</div>
+      <div class="body"><strong>Hierarquia mental:</strong> Workspace &rarr; Cliente &rarr; Projeto &rarr; Demanda (que segue um Fluxo). Guarde essa cadeia — ela aparece em toda parte, inclusive no wizard de criação.</div>
+    </div>
+    <h4>A cadeia do responsável</h4>
+    <p>Quando o sistema precisa descobrir "quem é o responsável desta etapa desta demanda?", ele percorre esta ordem:</p>
+    <ol>
+      <li>Se a demanda tem uma <strong>pessoa atribuída à etapa atual</strong>, é ela.</li>
+      <li>Se não, olha o <strong>responsável configurado no fluxo</strong> para essa etapa (pessoa fixa).</li>
+      <li>Se o fluxo aponta para uma <strong>função</strong> (ex.: "Designer"), o sistema busca a <strong>pessoa padrão dessa função no projeto</strong> (na aba <em>PESSOAS</em>).</li>
+      <li>Se não achou no projeto, cai para o <strong>padrão do cliente</strong>.</li>
+    </ol>
+    <p>Isso explica por que atribuir "por função" no fluxo é tão mais flexível do que amarrar em uma pessoa específica — se alguém mudar de time, você só ajusta a aba <em>PESSOAS</em> e todas as demandas seguem funcionando.</p>
+  </section>
+
+  <!-- ============================================================ -->
+  <section id="perfil">
+    <h2><span class="num">04</span>Meu Perfil</h2>
+    <p class="section-intro">Clique no seu avatar no rodapé da sidebar para abrir <strong>Meu Perfil</strong>. É onde você configura como o sistema se comunica com você e mantém seus dados atualizados.</p>
+
+    <h3 id="perfil-info">Foto, nome e função</h3>
+    <ul>
+      <li><strong>Foto de perfil</strong> — clique em <em>Enviar</em> para subir uma imagem (JPG/PNG), ou <em>Remover</em> para voltar à inicial. Ela aparece em toda menção, comentário, listagem e no canto da sidebar. Vale a pena colocar uma foto real: ajuda o time a te identificar visualmente nas listas cheias.</li>
+      <li><strong>Nome de exibição</strong> — como você aparece para o time. Pode ser só o primeiro nome (ex.: "Ana" em vez de "Ana Silva de Souza"), fica mais compacto nos comentários.</li>
+      <li><strong>Função</strong> — sua especialidade (ex.: <em>Designer</em>). É esta função que os fluxos usam quando dizem "responsável desta etapa: Designer".</li>
+      <li><strong>Nome de usuário</strong> — o login para entrar. Só o administrador pode alterar.</li>
+    </ul>
+
+    <h3 id="perfil-email">Notificações por e-mail</h3>
+    <p>Cadastre um e-mail e escolha em quais situações quer receber aviso:</p>
+    <ul>
+      <li>Quando <em>alguém te atribuir</em> como responsável manualmente;</li>
+      <li>Quando você virar <em>responsável automático</em> da nova etapa (o fluxo te atribuir);</li>
+      <li>Quando alguém <em>te mencionar</em> em um comentário.</li>
+    </ul>
+    <p>Clique <strong>Enviar teste</strong> para conferir se está chegando. Se aparecer aviso de "SMTP não configurado", peça ao administrador para ativar o servidor de e-mail — as opções continuam disponíveis, só não vão sair de fato.</p>
+    <div class="callout tip">
+      <div class="ic">✓</div>
+      <div class="body"><strong>Sugestão de configuração:</strong> ative <em>menção em comentário</em> e <em>responsável automático da nova etapa</em>. A atribuição manual costuma vir junto de uma conversa no Discord/WhatsApp — o e-mail vira ruído.</div>
+    </div>
+
+    <h3 id="perfil-discord">Discord pessoal</h3>
+    <p>Se sua equipe usa Discord, informe seu <strong>ID de usuário do Discord</strong>. Assim as notificações do canal vão te marcar (<code>@você</code>) quando você virar responsável ou for mencionado — o barulho chega em quem interessa, sem incomodar quem não é responsável.</p>
+    <div class="callout info">
+      <div class="ic">i</div>
+      <div class="body"><strong>Como pegar meu ID no Discord?</strong> No Discord, ative <em>Configurações &rarr; Avançado &rarr; Modo desenvolvedor</em>. Depois clique com o botão direito no seu nome (em qualquer mensagem sua) e escolha <em>Copiar ID do usuário</em>. Cola no campo do Kastor e salva.</div>
+    </div>
+
+    <h3 id="perfil-google">Google Calendar</h3>
+    <p>Conecte sua conta Google para ver seus compromissos pessoais junto com os blocos de trabalho da Agenda. É <strong>somente leitura</strong>: o Kastor nunca escreve no seu Google.</p>
+    <ol class="step-list">
+      <li>Clique em <strong>Conectar Google Calendar</strong> e autorize no Google.</li>
+      <li>Volta para o perfil, a lista de calendários aparece.</li>
+      <li>Marque os calendários que quer ver na Agenda e clique em <strong>Sincronizar agora</strong>.</li>
+      <li>Os eventos aparecem em <em>azul</em> na Agenda; clicar em um abre o link para o Google Calendar.</li>
+    </ol>
+    <p><strong>Atualizar lista</strong> re-pega a lista de calendários (útil se criou um novo no Google). <strong>Sincronizar agora</strong> re-busca os eventos. <strong>Desconectar</strong> remove a integração (o Kastor esquece seus tokens e apaga os eventos sincronizados).</p>
+
+    <h3 id="perfil-senha">Alterar senha e sair</h3>
+    <p>Em <strong>Alterar Senha</strong>, informe a senha atual e a nova (mínimo 6 caracteres, digite duas vezes). Recomendado trocar de tempos em tempos, especialmente se compartilhou tela em reunião.</p>
+    <p>No final da página tem <strong>Sair da conta</strong> — encerra sua sessão só neste navegador. Em outros dispositivos você continua logado (sessões duram 30 dias por padrão).</p>
+  </section>
+
+  <!-- ============================================================ -->
+  <section id="clientes">
+    <h2><span class="num">05</span>Clientes</h2>
+    <p class="section-intro">Página <strong>Clientes</strong>. Tudo começa aqui — sem cliente, não há projeto; sem projeto, não há demanda.</p>
+
+    <h3 id="cliente-criar">Criar um cliente</h3>
+    <ol class="step-list">
+      <li>Clique em <strong>Novo Cliente</strong>.</li>
+      <li>Se já existe um <strong>modelo de cliente</strong> parecido (um cliente-molde que alguém salvou antes), use a opção "Começar a partir de um modelo" — ele já traz projetos e fluxos prontos.</li>
+      <li>Preencha:
+        <ul>
+          <li><strong>Nome</strong> e <strong>Cor</strong> — a cor vira o "identificador visual" desse cliente em listas e cards;</li>
+          <li><strong>Foto/Avatar</strong> — geralmente o logo (opcional, mas ajuda a bater o olho);</li>
+          <li><strong>Descrição</strong> — sobre o cliente, tom de voz, contexto, história;</li>
+          <li><strong>Link do Drive</strong> — pasta de referências (Google Drive, Notion, OneDrive);</li>
+          <li><strong>Ativos da marca</strong> — link do Figma ou Drive com logos, tipografia, paleta, fontes;</li>
+          <li><strong>Diretrizes e restrições</strong> — o que pode e o que não pode fazer (ex.: "não usar amarelo", "sempre incluir tag do produto").</li>
+        </ul>
+      </li>
+      <li>Em <strong>PESSOAS</strong>, defina os <strong>responsáveis padrão por função</strong>: "Designer deste cliente = Ana", "Copywriter = João". Todo projeto novo criado dentro desse cliente vai herdar essas atribuições.</li>
+      <li>Salve. O cliente aparece no grid, colorido com a cor escolhida.</li>
+    </ol>
+
+    <h3 id="cliente-abas">Explorando o cliente</h3>
+    <p>Clique no cliente no grid para abrir a página dele. Você vai encontrar quatro abas:</p>
+    <div class="grid-2">
+      <div class="card"><h4>SOBRE</h4><p>Descrição, link do drive, ativos da marca e diretrizes — tudo o que você preencheu na criação. Serve como "briefing perpétuo".</p></div>
+      <div class="card"><h4>PROJETOS</h4><p>Lista dos projetos desse cliente. Botão <em>Novo Projeto</em> aqui dentro.</p></div>
+      <div class="card"><h4>PESSOAS</h4><p>Quem é o padrão de cada função <em>neste cliente</em>. Alterações aqui não retroagem em projetos já criados (ver caixa de aviso abaixo).</p></div>
+      <div class="card"><h4>TEMPO DEDICADO</h4><p>Gráfico com quantas horas o time apontou nas demandas desse cliente. Filtro por 7, 14, 30 e 90 dias.</p></div>
+    </div>
+    <p>No grid principal de clientes, use o toggle <strong>Todos / Ativos / Arquivados</strong> para filtrar. A engrenagem em cima abre <strong>Editar cliente</strong>.</p>
+
+    <h3 id="cliente-arquivar">Arquivar vs excluir</h3>
+    <p>Kastor te dá duas maneiras de "aposentar" um cliente:</p>
+    <ul>
+      <li><strong>Desativar/Arquivar</strong> — some das listas do dia a dia mas preserva histórico, relatórios, horas apontadas, tudo. É o caminho seguro. Para reativar, use o toggle <em>Arquivados</em> e restaure.</li>
+      <li><strong>Excluir</strong> — apaga o cliente. Só faça isso se realmente não vai mais precisar. Para evitar acidente, o sistema pede que você <strong>digite o nome exato</strong> do cliente antes de confirmar.</li>
+    </ul>
+    <div class="callout warn">
+      <div class="ic">!</div>
+      <div class="body"><strong>Prefira arquivar.</strong> Uma exclusão apaga junto todas as demandas, comentários e horas — impossível recuperar. Quando em dúvida, arquive.</div>
+    </div>
+
+    <h3 id="cliente-relatorio">Relatório mensal em PDF</h3>
+    <p>Botão <strong>Relatório mensal</strong> no topo do cliente. Escolhe o mês e o Kastor gera um PDF com:</p>
+    <ul>
+      <li>Header com nome do cliente, mês de referência;</li>
+      <li>Resumo do mês (demandas concluídas, em andamento, atrasadas);</li>
+      <li>Horas apontadas (total e por pessoa);</li>
+      <li>Lista das demandas do período.</li>
+    </ul>
+    <p>É o snapshot que muitos times enviam ao cliente ou levam para reunião de fechamento. O PDF é gerado no seu navegador (não sai nada do sistema), então funciona mesmo offline se você já carregou a página.</p>
+    <p>Existe versão análoga para <em>Projeto</em> — botão <strong>Relatório mensal</strong> dentro da página do projeto.</p>
+  </section>
+
+  <!-- ============================================================ -->
+  <section id="projetos">
+    <h2><span class="num">06</span>Projetos</h2>
+    <p class="section-intro">Projeto é o recorte dentro do cliente. Um cliente pode ter vários (Instagram, Blog, Ads, Campanha X).</p>
+
+    <h3>Criar um projeto</h3>
+    <p>Dentro da página do cliente, aba <strong>PROJETOS</strong>, clique <strong>Novo Projeto</strong>. Preencha nome, cor, avatar. <strong>Ativos, diretrizes e link do Drive são copiados do cliente automaticamente</strong>, mas você pode sobrescrever com valores específicos do projeto (por exemplo, um Drive só daquele projeto).</p>
+
+    <div class="callout info">
+      <div class="ic">i</div>
+      <div class="body"><strong>Herança &ne; sincronização.</strong> O que vem do cliente é copiado no momento da criação do projeto. Se depois você alterar dados no cliente, os projetos <em>não</em> são atualizados automaticamente — isso dá autonomia para cada projeto ter suas próprias diretrizes se precisar.</div>
+    </div>
+
+    <h3>Editar responsáveis padrão</h3>
+    <p>Na aba <strong>PESSOAS</strong> do projeto, defina quem é o padrão por função <em>naquele projeto</em>. Isso vira o "fallback" quando um fluxo diz "responsável = Designer" — o sistema procura pessoa atribuída na etapa &rarr; padrão do projeto &rarr; padrão do cliente.</p>
+
+    <h3>Arquivar ou excluir</h3>
+    <p>Assim como o cliente, o projeto pode ser <strong>Ativo / Desativado</strong>. Excluir exige digitar o nome exato. Prefira desativar quando o projeto acaba mas você quer manter o histórico e as horas.</p>
+  </section>
+
+  <!-- ============================================================ -->
+  <section id="fluxos">
+    <h2><span class="num">07</span>Fluxos de Demanda <span class="badge admin">admin</span></h2>
+    <p class="section-intro">O fluxo é o esqueleto: as etapas por onde toda demanda passa. Investir tempo aqui poupa muito trabalho depois — um bom fluxo automatiza responsáveis, prazos e defaults.</p>
+
+    <h3 id="fluxo-criar">Montar um fluxo</h3>
+    <ol class="step-list">
+      <li>Vá em <strong>Fluxos de Demanda</strong>. A tela mostra um grid de clientes; clique no cliente que vai receber o fluxo.</li>
+      <li>Clique <strong>+ Novo Fluxo</strong>.</li>
+      <li>Preencha o cabeçalho:
+        <ul>
+          <li><strong>Nome</strong> (ex.: "Post carrossel Instagram");</li>
+          <li><strong>Tipo de Demanda</strong> — categoria livre (Social Media, Vídeo, Landing Page, E-mail Marketing). Serve para filtros e organização;</li>
+          <li><strong>Projeto vinculado</strong> — vazio significa "vale para todos os projetos do cliente". Preencha se o fluxo é específico de um projeto;</li>
+          <li><strong>Ícone</strong> — escolha da biblioteca <em>Lucide</em> (centenas de ícones) ou envie um SVG/PNG próprio.</li>
+        </ul>
+      </li>
+    </ol>
+
+    <h3 id="fluxo-etapas">Configurar etapas</h3>
+    <p>Adicione as fases da produção (ex.: <em>Backlog, Copywrite, Design, Revisão, Aprovação, Concluída</em>). Cada etapa tem:</p>
+    <ul>
+      <li><strong>Nome</strong> — como aparece no pipeline e no Kanban;</li>
+      <li><strong>Cor</strong> — vira o "amarelo do Kastor" da etapa. Ajuda a bater o olho no board;</li>
+      <li><strong>Prazo</strong> em dias — começa a contar <em>no momento em que a demanda entra na etapa</em>. Se você bota 3 dias em "Design", a demanda que entrou hoje vai vencer daqui a 3 dias nessa etapa;</li>
+      <li><strong>Responsável</strong> — pode ser uma <em>pessoa fixa</em> (ex.: "Ana") ou uma <em>função</em> (ex.: "Designer"). <em>Recomendado usar função sempre que der.</em></li>
+      <li><strong>Conclui?</strong> — marque na etapa final. É essa marcação que diz ao sistema "quando a demanda entra aqui, tá pronta".</li>
+    </ul>
+    <p>Arraste as etapas para reordenar. Você pode ter quantas quiser, mas mais de 6-7 tende a virar labirinto.</p>
+
+    <div class="callout tip">
+      <div class="ic">✓</div>
+      <div class="body"><strong>Prefira "função" a "pessoa fixa"</strong> em quase todas as etapas. Assim, se o Copywriter mudar, você só troca em <em>PESSOAS</em> do cliente/projeto e todas as demandas seguem funcionando — sem precisar reeditar cada fluxo. Use pessoa fixa só para etapas de aprovação de alguém insubstituível (ex.: o Head).</div>
+    </div>
+
+    <h3 id="fluxo-defaults">Descrição e checklist padrão</h3>
+    <p>Dois campos poderosos e sub-utilizados:</p>
+    <ul>
+      <li><strong>Descrição padrão</strong> — texto que aparece pré-preenchido na descrição de <em>todas</em> as demandas novas desse fluxo. Ótimo para deixar instruções fixas ("Sempre incluir CTA no final", "Formato: 1080x1350");</li>
+      <li><strong>Checklist padrão</strong> — itens que já vêm marcados como pendentes em cada demanda nova. Ótimo para o "não esquece": aprovar copy, salvar em X pasta, agendar postagem, avisar cliente.</li>
+    </ul>
+    <p>Se você marcar <strong>Aplicar a todos os projetos</strong>, o fluxo passa a ser opção em qualquer projeto do cliente (não só naquele em que foi criado).</p>
+
+    <h3 id="fluxo-duplicar">Duplicar para outro projeto</h3>
+    <p>Botão <strong>Duplicar fluxo</strong> (dentro do fluxo). Escolha o cliente e projeto de destino. Todas as etapas, cores, prazos, descrição e checklist padrão são copiados. Serve tanto para replicar entre projetos do mesmo cliente como para clonar em outro cliente similar.</p>
+  </section>
+
+  <!-- ============================================================ -->
+  <section id="demandas">
+    <h2><span class="num">08</span>Demandas — o coração do sistema</h2>
+    <p class="section-intro">Demanda é a unidade de trabalho. Todo o dia a dia gira em torno dela. Esta é a seção mais longa do manual — vale ler com calma.</p>
+
+    <div class="mini-index">
+      <strong>Nesta seção</strong>
+      <ul>
+        <li><a href="#criar-demanda">Criar (wizard)</a></li>
+        <li><a href="#detalhe-demanda">Anatomia do detalhe</a></li>
+        <li><a href="#pipeline">O pipeline visual</a></li>
+        <li><a href="#etapas-desta">Etapas desta demanda</a></li>
+        <li><a href="#prioridade">Prioridade e prazos</a></li>
+        <li><a href="#entregaveis">Entregáveis</a></li>
+        <li><a href="#checklist">Checklist</a></li>
+        <li><a href="#anexos">Anexos</a></li>
+        <li><a href="#comentarios">Comentários</a></li>
+        <li><a href="#horas">Apontamento de horas</a></li>
+        <li><a href="#historico">Histórico</a></li>
+        <li><a href="#visualizacoes">Lista / Kanban / Calendário</a></li>
+        <li><a href="#filtros">Filtros</a></li>
+        <li><a href="#acoes-massa">Ações em massa</a></li>
+      </ul>
+    </div>
+
+    <h3 id="criar-demanda">Criar uma demanda (wizard)</h3>
+    <p>Clique <strong>+ Nova Demanda</strong> no topbar — ou pressione a tecla <kbd>n</kbd> em qualquer tela. Um wizard em 4 passos aparece:</p>
+    <ol class="step-list">
+      <li><strong>Selecione o cliente</strong> — só aparecem os do workspace atual. Use a busca para filtrar rápido.</li>
+      <li><strong>Selecione o projeto</strong> — só aparecem os do cliente escolhido.</li>
+      <li><strong>Selecione o tipo de demanda</strong> — na prática, o fluxo. Se o cliente tem muitos fluxos, use o filtro por tipo (Social Media / Vídeo / Landing / etc.).</li>
+      <li><strong>Preencha os detalhes</strong>:
+        <ul>
+          <li><strong>Nome</strong> da demanda — específico, sem "post 1", "post 2": "Reels de dica — Como escolher tênis" é 10x melhor;</li>
+          <li><strong>Descrição</strong> — o briefing (aceita Markdown básico: <code>**negrito**</code>, listas, links);</li>
+          <li><strong>Link do Briefing</strong> — se o briefing completo mora no Drive/Notion, cole o link aqui em vez de duplicar o conteúdo;</li>
+          <li><strong>Anexos</strong> — arquivo, imagem ou link de referência;</li>
+          <li><strong>Checklist</strong> — herdado do fluxo, você pode acrescentar itens específicos desta demanda;</li>
+          <li><strong>Entregáveis</strong> — quantas <em>Peças</em>, <em>Artes</em>, <em>Variações</em> e para quem atribuir (ver <a class="anchor-link" href="#entregaveis">seção específica</a>);</li>
+          <li><strong>Prioridade</strong> — <span class="pill p1">Imediato</span> <span class="pill p2">Alta</span> <span class="pill p3">Média</span> <span class="pill p4">Baixa</span> (ver <a class="anchor-link" href="#prioridade">seção específica</a>);</li>
+          <li><strong>Responsável Atual</strong> — quem começa. Pode deixar em branco para usar o padrão do fluxo.</li>
+        </ul>
+      </li>
+    </ol>
+    <p>Antes de finalizar, se essa demanda tem cara de "vou criar de novo várias vezes" (ex.: "Post carrossel semanal do cliente X"), clique <strong>Salvar como template</strong> antes de <em>Criar</em>. Na próxima vez, você começa da metade do caminho.</p>
+
+    <h3 id="detalhe-demanda">Anatomia do detalhe</h3>
+    <p>Clique em qualquer demanda para abrir o <strong>detalhe</strong> em um modal grande. Ele reúne tudo o que existe sobre aquela demanda:</p>
+    <ul>
+      <li><strong>Título</strong> no topo — clique nele para renomear direto (sem abrir outro modal).</li>
+      <li><strong>Pipeline visual</strong> — as etapas do fluxo aparecem em linha, a atual em destaque. Ver <a class="anchor-link" href="#pipeline">detalhe abaixo</a>.</li>
+      <li><strong>Meta grid</strong> — Fluxo, "Entrou na etapa em", "Criada em", "Concluída em" (se for o caso), Prioridade, Horas estimadas, Horas realizadas (com barra %).</li>
+      <li><strong>Responsável</strong>, <strong>Prazo da etapa atual</strong> e <strong>Prazo final</strong> — editáveis direto no card.</li>
+      <li><strong>Entregáveis</strong> — com botão <em>Salvar entregáveis</em>.</li>
+      <li><strong>Briefing</strong> (link) + <strong>Descrição</strong> (texto).</li>
+      <li><strong>Arquivos da Demanda</strong> — anexos.</li>
+      <li><strong>Checklist</strong> — com barra de progresso.</li>
+      <li><strong>Comentários</strong> — a conversa completa.</li>
+      <li><strong>Apontamentos de Horas</strong> — histórico + cronômetro.</li>
+      <li><strong>Rodapé fixo</strong> — Início / Término / Horas com <strong>cronômetro</strong> e botão <strong>Avançar etapa</strong>.</li>
+      <li><strong>Ícones no cabeçalho</strong>:
+        <ul>
+          <li>🗑 <strong>Excluir demanda</strong>;</li>
+          <li>⚙ <strong>Etapas desta demanda</strong> (ver <a class="anchor-link" href="#etapas-desta">abaixo</a>);</li>
+          <li>🕒 <strong>Histórico</strong> (ver <a class="anchor-link" href="#historico">abaixo</a>).</li>
+        </ul>
+      </li>
+    </ul>
+
+    <h3 id="pipeline">O pipeline visual</h3>
+    <p>No topo do detalhe, você vê todas as etapas do fluxo em sequência, com cores. A etapa <strong>atual</strong> aparece em destaque. Passar o mouse mostra o nome completo e o responsável dela.</p>
+    <p>Clicar em uma etapa <em>mais adiante</em> equivale a mover a demanda para lá (útil quando você pulou uma fase). Clicar em uma etapa <em>anterior</em> volta a demanda (útil quando descobriu que precisa refazer). O botão <strong>Avançar etapa</strong> no rodapé é o caminho mais comum: manda para a próxima na sequência.</p>
+
+    <h3 id="etapas-desta">Etapas desta demanda</h3>
+    <p>Esse recurso é subestimado. O ícone ⚙ (Etapas desta demanda) abre um painel onde você pode <strong>customizar as etapas só desta demanda</strong>, sem mexer no fluxo:</p>
+    <ul>
+      <li><strong>Pular etapa</strong> — marca como "não vai passar aqui" (ex.: uma demanda urgente que dispensa aprovação).</li>
+      <li><strong>Renomear</strong> — muda o nome só neste caso.</li>
+      <li><strong>Trocar o responsável específico da etapa</strong> — sem alterar o padrão do fluxo.</li>
+    </ul>
+    <div class="callout tip">
+      <div class="ic">✓</div>
+      <div class="body"><strong>Quando usar:</strong> exceções pontuais ("esse post o cliente já aprovou por WhatsApp, pula a fase de aprovação"). Se você está usando isso <em>toda vez</em>, é sinal de que o fluxo está errado — melhor ajustar o fluxo em si.</div>
+    </div>
+
+    <h3 id="prioridade">Prioridade e prazos</h3>
+    <p>Quatro níveis:</p>
+    <ul>
+      <li><span class="pill p1">Imediato</span> — precisa ser feita hoje/agora. Use com moderação: se tudo é imediato, nada é.</li>
+      <li><span class="pill p2">Alta</span> — importante, com prazo apertado.</li>
+      <li><span class="pill p3">Média</span> — o padrão. A maior parte das demandas nasce aqui.</li>
+      <li><span class="pill p4">Baixa</span> — pode esperar, "faz quando sobrar tempo".</li>
+    </ul>
+    <p>Sobre <strong>prazos</strong>, o Kastor lida com dois:</p>
+    <ul>
+      <li><strong>Prazo da etapa atual</strong> — quando essa etapa específica precisa ser concluída. Vem do fluxo (soma dos dias configurados). Pode ajustar manualmente.</li>
+      <li><strong>Prazo final</strong> — deadline da demanda como um todo (a entrega ao cliente). É este que geralmente sai no board para o cliente.</li>
+    </ul>
+    <p>Quando o prazo passa, a demanda ganha marca de <strong>atrasada</strong> nos filtros e no Dashboard.</p>
+
+    <h3 id="entregaveis">Entregáveis</h3>
+    <p>Três campos numéricos que dizem <em>o que</em> exatamente a demanda produz:</p>
+    <table>
+      <thead><tr><th style="width:120px">Campo</th><th>Significa</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Peças</strong></td><td>Quantos "itens finais" a demanda entrega. Ex.: um carrossel (mesmo com 5 slides) = 1 peça. Um post único = 1 peça. Uma campanha com 3 posts distintos = 3 peças.</td></tr>
+        <tr><td><strong>Artes</strong></td><td>Quantas <em>criações visuais distintas</em> compõem as peças. Um carrossel de 5 slides = 5 artes (uma por slide). Um post único com um layout = 1 arte.</td></tr>
+        <tr><td><strong>Variações</strong></td><td>Adaptações de uma mesma arte para formatos diferentes (feed, story, banner). Uma arte de post postada no feed e no story = 1 arte, 2 variações.</td></tr>
+      </tbody>
+    </table>
+    <p>Também tem um campo <strong>Atribuir a</strong> para dizer quem vai executar. Depois de mexer nos números, clique <strong>Salvar entregáveis</strong>.</p>
+    <p>Esses campos alimentam relatórios de produtividade — "quantas peças o time entregou no mês?" — e não têm efeito operacional na demanda em si.</p>
+
+    <h3 id="checklist">Checklist</h3>
+    <p>Lista de itens marcáveis. Aparece com barra de progresso (X/Y itens) e mostra <strong>quem</strong> marcou cada item quando concluído.</p>
+    <ul>
+      <li>Adicione itens digitando no campo de baixo + Enter;</li>
+      <li>Marque com o clique na caixinha;</li>
+      <li>Reordene arrastando o "handle" de cada item;</li>
+      <li>Delete pelo ícone de lixeira.</li>
+    </ul>
+    <p>Itens herdados do fluxo (<em>Checklist padrão</em>) vêm já na demanda desde o nascimento — você não precisa adicionar toda vez.</p>
+
+    <h3 id="anexos">Anexos e arquivos</h3>
+    <p>A seção <strong>Arquivos da Demanda</strong> aceita três tipos:</p>
+    <ul>
+      <li><strong>Arquivo</strong> — clique em anexar e escolha do computador (imagens, PDF, docs, etc., até 12MB);</li>
+      <li><strong>Imagem colada</strong> — no campo de <em>comentário</em>, faça <kbd>Ctrl</kbd>+<kbd>V</kbd> após copiar uma imagem (útil quando você tira print e cola direto);</li>
+      <li><strong>Link</strong> — cole uma URL (Google Drive, Figma, YouTube, qualquer coisa).</li>
+    </ul>
+    <p>Cada anexo tem miniatura clicável (para imagens) e ícone do tipo (para outros). Delete pelo botão de lixeira ao lado.</p>
+
+    <h3 id="comentarios">Comentários, menções e reações</h3>
+    <p>Toda conversa sobre a demanda mora aqui. Preserva contexto — melhor que Discord/WhatsApp para tudo que é decisão técnica.</p>
+
+    <h4>Menções (@)</h4>
+    <ul>
+      <li>Digite <kbd>@</kbd> — aparece um autocomplete com os usuários;</li>
+      <li>Digite letras para filtrar (<code>@an</code> → mostra Ana, Anderson);</li>
+      <li>Use <kbd>↑</kbd> <kbd>↓</kbd> para navegar, <kbd>Enter</kbd> para escolher, <kbd>Esc</kbd> para cancelar;</li>
+      <li>A pessoa mencionada recebe notificação in-app, e-mail (se ativado) e Discord (se configurado).</li>
+    </ul>
+
+    <h4>Anexar imagem no comentário</h4>
+    <p>Duas formas: <strong>colar</strong> (<kbd>Ctrl</kbd>+<kbd>V</kbd>) uma imagem já copiada; ou <strong>arrastar</strong> um arquivo direto no campo de comentário. A imagem sobe como anexo automaticamente.</p>
+
+    <h4>Reações emoji</h4>
+    <p>Passe o mouse sobre um comentário e clique no ícone de reação. Escolha entre <strong>👍 ❤️ 👀 ✅ 🎉</strong>. Serve como "ok, vi", "gostei", "estou olhando", "aprovado", "manda ver" — sem precisar escrever "ok!" e poluir a thread.</p>
+    <p>Clique de novo na mesma reação para remover a sua. Aparece o número de pessoas que reagiram e quem foi (passando o mouse).</p>
+
+    <h4>Editar / apagar</h4>
+    <p>Passe o mouse no seu próprio comentário: aparecem os ícones de <em>editar</em> e <em>excluir</em>. Só você pode editar seus comentários; admins podem excluir de qualquer um.</p>
+
+    <h3 id="horas">Apontamento de horas</h3>
+    <p>No rodapé do detalhe tem o <strong>cronômetro</strong> — a forma mais precisa de apontar:</p>
+    <ol class="step-list">
+      <li>Clique no botão de <em>iniciar</em> quando começar a trabalhar naquela demanda. O cronômetro começa a rodar.</li>
+      <li>Pode fechar o modal e continuar em outra tela — ele continua contando.</li>
+      <li>Quando pausar (café, reunião), clique em <em>pausar</em>. Retome quando voltar.</li>
+      <li>Quando terminar aquela sessão, clique em <em>parar</em>. Os minutos vão para a lista de <strong>Apontamentos de Horas</strong> automaticamente.</li>
+    </ol>
+    <p>Se esqueceu de ligar o cronômetro, use o <strong>apontamento manual</strong>: preenche <em>Início</em>, <em>Término</em> (ou <em>Horas</em>) e uma observação opcional. Salvar adiciona à lista.</p>
+    <p>Cada apontamento fica visível para o time e vira base do <strong>Capacidade</strong> e do <strong>Relatório mensal</strong>. Trate-o com respeito: um apontamento errado bagunça relatório de cliente.</p>
+
+    <div class="callout tip">
+      <div class="ic">✓</div>
+      <div class="body"><strong>Regra prática:</strong> aponta sempre no mesmo dia. Se deixar para "consolidar no fim da semana", você não lembra. Apontar 30 segundos por vez é indolor. Reconstruir 8h de sexta na segunda é um pesadelo.</div>
+    </div>
+
+    <h3 id="historico">Histórico da demanda</h3>
+    <p>O ícone 🕒 no cabeçalho abre o <strong>Histórico</strong>: linha do tempo de tudo que aconteceu com aquela demanda — quem criou, quem moveu de etapa, quem mudou responsável, quando o prazo foi alterado, quem apontou horas. Serve para investigar "quando isso mudou e por quem?" quando o cliente reclama de alguma coisa.</p>
+
+    <h3 id="visualizacoes">Lista, Kanban e Calendário</h3>
+    <p>No topo da página <strong>Demandas</strong>, escolha a visualização:</p>
+    <div class="grid-2">
+      <div class="card">
+        <h4>Lista</h4>
+        <p>Tabela densa. Ordene clicando nos cabeçalhos (Prazo, Prioridade, Responsável). Marque checkboxes para <a class="anchor-link" href="#acoes-massa">ações em massa</a>. É a melhor view para triagem/reorganização.</p>
+      </div>
+      <div class="card">
+        <h4>Kanban</h4>
+        <p>Cards em colunas por etapa do fluxo. <strong>Arraste um card</strong> entre colunas para mover a demanda de etapa (equivale a <em>Avançar etapa</em>). É a visão mais visual e a preferida de muitos executantes.</p>
+      </div>
+      <div class="card">
+        <h4>Calendário</h4>
+        <p>Demandas encaixadas nos prazos, mês a mês. Ajuda a bater o olho na carga do mês e identificar acúmulos.</p>
+      </div>
+    </div>
+
+    <h3 id="filtros">Filtros e buscas</h3>
+    <p>A barra superior da página <strong>Demandas</strong> tem várias formas de reduzir o barulho:</p>
+    <ul>
+      <li><strong>Busca</strong> por nome da demanda (foco rápido com a tecla <kbd>/</kbd>);</li>
+      <li><strong>Cliente / Projeto / Fluxo</strong> — filtros em cascata (escolher cliente restringe a lista de projetos);</li>
+      <li><strong>Responsável</strong> — todas as demandas de uma pessoa;</li>
+      <li><strong>Período</strong> — por prazo final ou por data de criação;</li>
+      <li><strong>Atalhos</strong>: <em>Todas</em>, <em>Apenas atrasadas</em>, <em>Em andamento</em>, <em>Concluídas</em>.</li>
+    </ul>
+    <p>Os filtros são <strong>persistidos por página</strong> — quando você voltar, encontra do jeito que deixou. Se estranhar "sumiu um monte de demanda", é o filtro anterior ainda ativo.</p>
+
+    <h3 id="acoes-massa">Ações em massa</h3>
+    <p>Na visualização em Lista, marque a checkbox de várias demandas ao mesmo tempo. Uma barra de ações aparece com:</p>
+    <ul>
+      <li><strong>Alterar Responsável</strong> — reatribui todas de uma vez (útil quando alguém sai de férias);</li>
+      <li><strong>Mover etapa</strong> — muda todas para a mesma etapa;</li>
+      <li><strong>Alterar Prioridade</strong> — reorganiza urgência em bloco;</li>
+      <li><strong>Excluir</strong> — apaga todas (com confirmação).</li>
+    </ul>
+    <p>Combina bem com filtros: filtre "todas do cliente X em Design" e reatribua tudo para outro Designer com dois cliques.</p>
+  </section>
+
+  <!-- ============================================================ -->
+  <section id="minhas-demandas">
+    <h2><span class="num">09</span>Minhas Demandas</h2>
+    <p class="section-intro">A página <strong>Minhas Demandas</strong> mostra só o que é seu. É a primeira parada da manhã para muita gente da execução.</p>
+    <p>Três seções empilhadas:</p>
+    <ul>
+      <li><strong>Minha Lista</strong> — tabela com o que está sob sua responsabilidade, ordenada por prazo (mais urgente no topo). Clique no nome para abrir o detalhe da demanda.</li>
+      <li><strong>Minha Agenda</strong> — grid semanal com os blocos de trabalho que você agendou. Igual à página <a class="anchor-link" href="#agenda">Agenda</a>, mas já filtrada para você.</li>
+      <li><strong>Meu Calendário</strong> — visão mensal com pontos indicando quantas demandas vencem em cada dia. Ótimo para planejar semanas cheias com antecedência.</li>
+    </ul>
+    <div class="callout tip">
+      <div class="ic">✓</div>
+      <div class="body"><strong>Ritual de manhã (5 min):</strong> abrir <em>Minhas Demandas</em>, revisar prazos do dia, encaixar na Agenda o que ainda não tem bloco, e só depois começar a trabalhar. Você entra no "modo produção" sabendo o que fazer e por qual ordem.</div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <section id="agenda">
+    <h2><span class="num">10</span>Agenda semanal</h2>
+    <p class="section-intro">A <strong>Agenda</strong> é a semana em blocos de tempo. Você "encaixa" cada demanda no horário em que planeja trabalhar nela. É uma ferramenta de <em>planejamento</em>, não de registro — o registro é o cronômetro.</p>
+
+    <h3>Escolher usuário e período</h3>
+    <p>No topo da Agenda:</p>
+    <ul>
+      <li><strong>Seletor de usuário</strong> — vê a semana de qualquer pessoa do time (útil para gestores). Por padrão vem em você.</li>
+      <li><strong>Navegação</strong> — setas ‹ › para mudar de semana; botão <strong>Hoje</strong> para voltar à semana atual;</li>
+      <li><strong>Toggle 1 / 2 semanas</strong> — expande a visão para 14 dias quando você está planejando algo mais longo.</li>
+    </ul>
+
+    <h3>Criar bloco</h3>
+    <ol class="step-list">
+      <li><strong>Arraste em um horário vazio</strong> para desenhar um bloco (do horário de início até o de término).</li>
+      <li>O modal <em>Agendar bloco</em> abre. Escolha a demanda, ajuste data, início e término.</li>
+      <li>Salve. O bloco aparece na grade com a cor do cliente.</li>
+    </ol>
+
+    <h3>Mover, redimensionar, abrir</h3>
+    <ul>
+      <li><strong>Arraste</strong> um bloco existente para mover para outro horário/dia;</li>
+      <li>Arraste a <strong>borda inferior</strong> para aumentar ou diminuir a duração;</li>
+      <li><strong>Clique</strong> em um bloco para abrir a demanda relacionada.</li>
+    </ul>
+
+    <h3>Eventos do Google (opcional)</h3>
+    <p>Se você conectou seu Google Calendar em <em>Meu Perfil</em>, seus compromissos pessoais aparecem em <strong>azul</strong> lado a lado com os blocos de trabalho. Eles são <em>somente leitura</em> — o Kastor não pode mover nem apagar. Clique em um evento azul para abrir no Google Calendar em nova aba.</p>
+    <p>Quando um bloco de trabalho e um evento do Google se sobrepõem, o Kastor coloca lado a lado (em "faixas") — nenhum some.</p>
+
+    <div class="callout tip">
+      <div class="ic">✓</div>
+      <div class="body"><strong>Ritual de segunda-feira (10 min):</strong> abra a Agenda vazia da semana. Pegue sua <em>Minha Lista</em> e vá bloqueando: "Isso são 2h na segunda de manhã", "aquilo são 4h quarta". Você planeja realista (o dia tem 8h úteis, não 20) e ainda vê onde tem folga para imprevistos.</div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <section id="dashboard">
+    <h2><span class="num">11</span>Dashboard</h2>
+    <p class="section-intro">Visão panorâmica do workspace. Ideal para gestores no início do dia, ou para todo mundo em reuniões de status.</p>
+
+    <div class="grid-2">
+      <div class="card"><h4>Visão Geral</h4><p>Números-chave do momento: total de demandas ativas, atrasadas, concluídas no mês. Bate o olho para saber "como estamos".</p></div>
+      <div class="card"><h4>Próximos 7 dias</h4><p>O que vence esta semana, agrupado por dia. Ajuda a antecipar semanas puxadas.</p></div>
+      <div class="card"><h4>Em atraso</h4><p>Demandas cuja prazo já passou. Preferido dos gestores. Uma lista longa aqui é sinal de que algo tem que mudar.</p></div>
+      <div class="card"><h4>Throughput</h4><p>Quantas demandas o time concluiu por semana nas últimas 12 semanas. Ajuda a ver tendência (subindo, caindo, estável) e prever quanto conseguem entregar no próximo trimestre.</p></div>
+      <div class="card"><h4>Radar de projetos</h4><p>Projetos com mais demandas ativas / atrasadas. Sinaliza onde a atenção precisa ir.</p></div>
+      <div class="card"><h4>Top responsáveis · mês</h4><p>Quem entregou mais no período. Bom para reconhecer, mas cuidado: quantidade &ne; qualidade. Complementa com apontamento de horas.</p></div>
+      <div class="card"><h4>Apontamento de Horas</h4><p>Quanto tempo foi apontado no total (workspace inteiro) no período.</p></div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <section id="capacidade">
+    <h2><span class="num">12</span>Capacidade</h2>
+    <p class="section-intro">A página <strong>Capacidade</strong> responde à pergunta: "quem está com quanto?"</p>
+    <p>Três abas:</p>
+    <ul>
+      <li><strong>Equipe</strong> — horas por pessoa. Barras mostram quem está sobrecarregado e quem tem folga. Base para redistribuir carga <em>antes</em> de virar problema.</li>
+      <li><strong>Projeto</strong> — horas por projeto. Se um projeto está consumindo mais do que o previsto (orçamento, escopo), dá para reagir cedo — antes de descobrir só na fatura.</li>
+      <li><strong>Cliente</strong> — horas por cliente. Ideal para cobrança e para saber quais contas dão mais trabalho de operação.</li>
+    </ul>
+    <p>Combine com <em>Relatório mensal</em> na página do cliente para tirar o snapshot para o cliente.</p>
+    <div class="callout info">
+      <div class="ic">i</div>
+      <div class="body"><strong>Interpretação:</strong> os números aqui vêm dos <em>apontamentos de horas</em>. Se o time não aponta, a página fica mentindo. Vale ter conversa recorrente com o time sobre o hábito de apontar — é o combustível de toda análise de capacidade.</div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <section id="recorrentes">
+    <h2><span class="num">13</span>Recorrentes e Listas</h2>
+    <p class="section-intro">Página <strong>Listas de tarefas</strong> tem duas abas: <strong>DEMANDAS</strong> (recorrentes) e <strong>LISTAS</strong> (listas-modelo). São duas ferramentas para você não ter que criar demanda repetitiva na mão.</p>
+
+    <h3 id="recorrentes-como">Demandas recorrentes</h3>
+    <p>Se a equipe faz "4 posts por semana, todo mês", ou "1 relatório toda sexta", não faz sentido criar cada demanda na mão. Configure uma <strong>Recorrente</strong>:</p>
+    <ol class="step-list">
+      <li>Clique <strong>Nova Recorrente</strong>. O modal abre.</li>
+      <li>Preencha:
+        <ul>
+          <li>Cliente, Projeto, Fluxo — igual à demanda normal;</li>
+          <li>Nome (ex.: "Post carrossel semanal");</li>
+          <li><strong>Frequência</strong> — Diariamente, Semanalmente ou Mensalmente;</li>
+          <li>Responsável, Prioridade, Prazo em dias;</li>
+          <li><strong>Ativo</strong> — checkbox "aparece na lista de geração mensal". Desative quando o cliente cancelar, sem precisar apagar tudo.</li>
+        </ul>
+      </li>
+      <li>Salve. A recorrente aparece na aba <strong>DEMANDAS</strong>.</li>
+    </ol>
+    <p>A visualização pode ser <strong>agrupada por Projeto, Função ou Responsável</strong> para dar a leitura que você precisa no momento.</p>
+
+    <h3 id="listas-como">Listas-modelo</h3>
+    <p>Uma <strong>lista-modelo</strong> é um checklist de várias demandas que você aplica a um projeto de uma vez. Exemplo clássico: um "kit de lançamento" que tem 12 peças pré-definidas (post feed, story teaser, story principal, e-mail marketing, blog, etc.).</p>
+    <ol class="step-list">
+      <li>Clique <strong>Nova lista</strong> e monte a lista uma vez, definindo cada demanda (nome, fluxo, checklist);</li>
+      <li>Depois, use <strong>Adicionar lista</strong> em qualquer projeto compatível — todas as demandas nascem de uma vez, ligadas àquele projeto;</li>
+      <li>Se quer variar levemente para outro cliente, <strong>Duplicar lista</strong> clona a lista atual (você ajusta o que muda).</li>
+    </ol>
+    <div class="callout tip">
+      <div class="ic">✓</div>
+      <div class="body"><strong>Recorrente x Lista-modelo:</strong> use <em>Recorrente</em> quando a demanda se repete no tempo ("todo mês, faça esse post"). Use <em>Lista-modelo</em> quando um conjunto grande de demandas nasce junto para um evento específico ("todo lançamento tem essas 12 peças").</div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <section id="templates">
+    <h2><span class="num">14</span>Templates e Modelos</h2>
+    <p class="section-intro">Dois níveis de reaproveitamento, para você não recriar a roda:</p>
+
+    <div class="grid-2">
+      <div class="card"><h4>Template de demanda</h4><p>Uma demanda-molde: nome, descrição, checklist, entregáveis pré-preenchidos. Aparece na página <strong>Templates</strong>. <em>Como criar:</em> no wizard de nova demanda, clique <em>Salvar como template</em> antes de finalizar. <em>Como usar:</em> na hora de criar uma nova, escolha o template no wizard.</p></div>
+      <div class="card"><h4>Modelo de cliente</h4><p>Um cliente inteiro, com projetos e fluxos, salvo como molde. Ao criar um novo cliente, "Começar a partir de um modelo" já pré-monta tudo. <em>Como criar:</em> dentro do cliente, botão <em>Salvar como modelo</em>.</p></div>
+    </div>
+
+    <div class="callout tip">
+      <div class="ic">✓</div>
+      <div class="body"><strong>Regra do 3&times;:</strong> se você já criou a mesma coisa 3 vezes, é hora de salvar como template ou modelo. Da quarta em diante, é 1 clique — e o time inteiro ganha padronização de graça.</div>
+    </div>
+
+    <h4>Manutenção dos templates</h4>
+    <p>Um template desatualizado é pior do que nenhum — as pessoas criam demandas com valores errados sem perceber. De tempos em tempos (a cada mês, por exemplo), revise os templates: prazos ainda fazem sentido? Checklist reflete a realidade atual? Descrição está em dia?</p>
+  </section>
+
+  <!-- ============================================================ -->
+  <section id="notificacoes">
+    <h2><span class="num">15</span>Notificações in-app</h2>
+    <p class="section-intro">O sino no topbar acumula tudo que aconteceu com você: menções, atribuições, respostas, mudanças de etapa. Clique para abrir o painel.</p>
+    <ul>
+      <li>Cada notificação mostra <strong>o que aconteceu, em qual demanda e quando</strong>. Clique para pular direto para o detalhe.</li>
+      <li>O <strong>contador vermelho</strong> no sino indica quantas ainda não foram vistas.</li>
+      <li><strong>Marcar tudo como lido</strong> zera o contador (não apaga o histórico).</li>
+      <li>Notificações mais antigas ficam na parte de baixo — role para ver o histórico.</li>
+    </ul>
+    <div class="callout tip">
+      <div class="ic">✓</div>
+      <div class="body"><strong>Dica:</strong> combine com as notificações por e-mail (para chegar fora do sistema) e Discord pessoal (para o alarme no celular via app do Discord). O sino é para quando você já está dentro do Kastor.</div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <section id="produtividade">
+    <h2><span class="num">16</span>Atalhos e produtividade</h2>
+    <p class="section-intro">O Kastor foi pensado para teclado. Se você usa o dia todo, aprender estes atalhos economiza minutos por dia — e faz uma diferença enorme ao longo da semana.</p>
+
+    <h3>Paleta de comandos</h3>
+    <p>O atalho mais importante: <kbd>Ctrl</kbd>+<kbd>K</kbd> (ou <kbd>⌘</kbd>+<kbd>K</kbd> no Mac). Abre uma caixa de busca universal:</p>
+    <ul>
+      <li>Digite o nome de qualquer coisa — <strong>cliente, projeto, demanda, lista, recorrente, fluxo, usuário</strong> — e ela aparece;</li>
+      <li>Navegue nos resultados com <kbd>↑</kbd> <kbd>↓</kbd>, escolha com <kbd>Enter</kbd>, cancele com <kbd>Esc</kbd>;</li>
+      <li>Também dispara <strong>ações</strong>: <em>Alternar tema</em>, <em>Mostrar atalhos de teclado</em>, e muitas outras;</li>
+      <li>É a maneira mais rápida de "achar aquela demanda" quando você lembra só de uma palavra do nome.</li>
+    </ul>
+
+    <h3>Atalhos de teclado</h3>
+    <table>
+      <thead><tr><th style="width:180px">Atalho</th><th>Ação</th></tr></thead>
+      <tbody>
+        <tr><td><kbd>Ctrl</kbd>+<kbd>K</kbd> / <kbd>⌘</kbd>+<kbd>K</kbd></td><td>Abrir a paleta de comandos.</td></tr>
+        <tr><td><kbd>?</kbd></td><td>Mostrar a lista de atalhos.</td></tr>
+        <tr><td><kbd>/</kbd></td><td>Focar no campo de busca da página atual.</td></tr>
+        <tr><td><kbd>n</kbd></td><td>Nova demanda (abre o wizard).</td></tr>
+        <tr><td><kbd>g</kbd> depois <kbd>d</kbd></td><td>Ir para Dashboard.</td></tr>
+        <tr><td><kbd>g</kbd> depois <kbd>l</kbd></td><td>Ir para Demandas (lista).</td></tr>
+        <tr><td><kbd>g</kbd> depois <kbd>m</kbd></td><td>Ir para Minhas Demandas.</td></tr>
+        <tr><td><kbd>g</kbd> depois <kbd>c</kbd></td><td>Ir para Capacidade.</td></tr>
+        <tr><td><kbd>g</kbd> depois <kbd>p</kbd></td><td>Ir para Projetos.</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Fechar modal / painel / paleta.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout info">
+      <div class="ic">i</div>
+      <div class="body">Atalhos não funcionam enquanto você está digitando em um campo — isso é proposital, para não "roubar" as teclas do texto. Se um atalho parece não funcionar, tire o foco do campo (clique fora ou aperte <kbd>Esc</kbd>) e tente de novo.</div>
+    </div>
+
+    <h3>Modo focar</h3>
+    <p>Botão na topbar (ícone de foco). Esconde sidebar e topbar para você concentrar em uma tela cheia — ótimo para quando está executando algo demorado ou fazendo apresentação. Um botão flutuante fica no canto para voltar. Também sai com <kbd>Esc</kbd>. A escolha é lembrada no navegador — se você fechar e voltar, continua no modo focar.</p>
+
+    <h3>Tema claro / escuro</h3>
+    <p>Botão no rodapé da sidebar (ícone de sol/lua). Alterna entre tema escuro (padrão) e claro. A preferência é salva no navegador — na próxima vez que abrir, o tema escolhido volta automaticamente.</p>
+
+    <h3>Sidebar compacta</h3>
+    <p>Botão de compactar (também no rodapé da sidebar). Reduz a barra lateral para só ícones, ganhando espaço horizontal para o conteúdo. Passe o mouse sobre um ícone para ver o nome. Também persistente entre sessões.</p>
+
+    <h3>Real-time silencioso</h3>
+    <p>O Kastor é multi-usuário: mudanças de outra pessoa aparecem para você em quase tempo real, sem precisar dar F5. Você vai perceber quando um colega mover uma demanda que você está olhando — o card atualiza sozinho. Se algo parece estranho, dar F5 nunca faz mal.</p>
+  </section>
+
+  <!-- ============================================================ -->
+  <section id="boas-praticas">
+    <h2><span class="num">17</span>Boas práticas</h2>
+    <p class="section-intro">Um pouco de disciplina compartilhada faz o Kastor render muito mais. Aqui vão princípios que times operacionais bem-sucedidos costumam adotar.</p>
+
+    <h3>Para quem executa</h3>
+    <ul>
+      <li><strong>Aponte horas no mesmo dia.</strong> Nem que seja no fim do dia. Reconstruir depois é impossível — vai chutar. Chute vira relatório de cliente errado.</li>
+      <li><strong>Comente antes de bater na mesa do colega.</strong> Registro no comentário é histórico; conversa no corredor evapora e some do <em>Histórico</em>.</li>
+      <li><strong>Marque o checklist conforme faz.</strong> É o sinal mais barato para o próximo saber que pode começar.</li>
+      <li><strong>Suba anexos no Kastor</strong>, não só no WhatsApp. O arquivo passa a viver com a demanda para sempre.</li>
+      <li><strong>Use o cronômetro.</strong> É melhor que apontar "estimado" no fim. Mais preciso e menos trabalho.</li>
+      <li><strong>Bloqueie sua Agenda no início da semana.</strong> Sem plano, o dia manda em você.</li>
+    </ul>
+
+    <h3>Para quem gerencia</h3>
+    <ul>
+      <li><strong>Priorize antes de distribuir.</strong> Se tudo é <span class="pill p1">Imediato</span>, nada é imediato — o time entra em pânico e você perde a moeda de "isso é urgente de verdade".</li>
+      <li><strong>Prazos por etapa &gt; prazo único.</strong> Configurar no fluxo automatiza pressão saudável em cada handoff — não deixa nada "parado silencioso" numa etapa.</li>
+      <li><strong>Use recorrentes para o feijão-com-arroz.</strong> Nada de criar as 8 demandas mensais no dia 1 na mão.</li>
+      <li><strong>Feche demandas.</strong> Ficar com 400 abertas mata a legibilidade dos KPIs. Termina, arquiva/conclui.</li>
+      <li><strong>Olhe Capacidade toda semana.</strong> Se alguém está sistematicamente sobrecarregado, o problema é de distribuição, não de esforço individual.</li>
+      <li><strong>Aja no "Em atraso" do Dashboard.</strong> Se acumula, é sinal de que os prazos estão irreais — ou o time está pequeno.</li>
+    </ul>
+
+    <h3>Para administradores</h3>
+    <ul>
+      <li><strong>Modele com "função", não com "pessoa".</strong> Turnover não deveria quebrar seu processo.</li>
+      <li><strong>Crie templates das demandas repetitivas.</strong> Cada template poupa erros e minutos por semana.</li>
+      <li><strong>Poucos admins.</strong> Admin muda fluxo, integrações e usuários. Bagunça se qualquer um mexe.</li>
+      <li><strong>Revise fluxos trimestralmente.</strong> Etapas obsoletas, checklists que ninguém marca, prazos que ninguém cumpre — tira ou ajusta.</li>
+      <li><strong>Backup.</strong> Combine com quem hospeda que <code>data/</code> seja copiado regularmente.</li>
+    </ul>
+
+    <h3>Higiene semanal (10 min, toda segunda)</h3>
+    <ol>
+      <li>Abra o <strong>Dashboard</strong> — veja "Em atraso" e "Próximos 7 dias".</li>
+      <li>Vá em <strong>Minhas Demandas</strong> e monte a semana na <strong>Agenda</strong>.</li>
+      <li>Confira sua caixa de <strong>Notificações</strong> (sino no topbar) e marque como lido.</li>
+      <li>Se alguma demanda perdeu o sentido — arquive ou cancele. Menos ruído.</li>
+    </ol>
+
+    <h3>Higiene mensal (30 min, primeira segunda do mês)</h3>
+    <ol>
+      <li>Rode <strong>Relatórios mensais</strong> dos clientes ativos (PDF).</li>
+      <li>Olhe <strong>Capacidade &rarr; Cliente</strong> — algum consumindo muito além do previsto?</li>
+      <li>Olhe <strong>Templates</strong> — algum desatualizado?</li>
+      <li>Olhe <strong>Recorrentes</strong> — alguma que devia ser desativada?</li>
+    </ol>
+  </section>
+
+  <!-- ============================================================ -->
+  <section id="faq">
+    <h2><span class="num">18</span>Perguntas frequentes</h2>
+
+    <h4>Não recebi o e-mail de recuperação de senha.</h4>
+    <p>Confira o spam. Se não chegar em ~5 min, provavelmente o servidor de e-mail não está configurado ou seu e-mail não está cadastrado no perfil. Peça ao administrador para redefinir sua senha manualmente.</p>
+
+    <h4>Uma pessoa saiu da equipe. E as demandas dela?</h4>
+    <p>Peça ao administrador para <strong>desativar</strong> (não excluir) a conta. O histórico fica preservado. Depois, use <strong>Ações em massa</strong> na página Demandas para reatribuir as abertas dela para outro responsável (filtre por responsável → marque tudo → Alterar Responsável).</p>
+
+    <h4>Como faço para acompanhar o esforço em um cliente específico?</h4>
+    <p>Duas rotas: abra o cliente e veja <strong>TEMPO DEDICADO</strong> (com filtro por 7/14/30/90 dias); ou vá em <strong>Capacidade &rarr; Cliente</strong> para comparar entre clientes. Para exportar, use <strong>Relatório mensal</strong>.</p>
+
+    <h4>O Google Calendar sincroniza para os dois lados?</h4>
+    <p>Não. É <strong>somente leitura</strong>: o Kastor lê seus eventos do Google para mostrar na Agenda, mas nunca escreve nada de volta no seu Google.</p>
+
+    <h4>Perdi uma demanda — onde procuro?</h4>
+    <p>Abra a paleta de comandos (<kbd>Ctrl</kbd>+<kbd>K</kbd>) e digite parte do nome. Busca em clientes, demandas, projetos, listas, recorrentes, fluxos e usuários ao mesmo tempo.</p>
+
+    <h4>Duas pessoas trabalhando ao mesmo tempo. Alguma trava?</h4>
+    <p>Não. As mudanças aparecem em quase tempo real para todo mundo com acesso — sem precisar dar F5. Se dois editam <em>o mesmo campo</em> ao mesmo tempo, a última salvamento vence (é raro, e o Histórico ajuda a resolver).</p>
+
+    <h4>Posso usar no celular?</h4>
+    <p>A interface é responsiva e funciona no celular para consultas rápidas e comentários, mas foi desenhada para desktop — a Agenda especialmente fica bem mais confortável em tela grande.</p>
+
+    <h4>Como faço para "sair" com segurança?</h4>
+    <p><strong>Meu Perfil &rarr; Sair da conta</strong>. Isso encerra sua sessão só neste navegador. Em outros dispositivos você continua logado (sessões duram 30 dias por padrão).</p>
+
+    <h4>Apontei uma hora errada por engano. Como corrijo?</h4>
+    <p>Na seção <strong>Apontamentos de Horas</strong> da demanda, cada linha tem um botão de editar (você só pode editar os seus). Ajuste início, término ou horas totais e salve. Admins podem editar/excluir apontamento de qualquer pessoa.</p>
+
+    <h4>Alterei uma coisa no cliente, mas os projetos antigos continuam com o valor antigo.</h4>
+    <p>Isso é intencional. Quando você cria um projeto, ele <em>copia</em> o que estava no cliente naquele momento. Mudanças posteriores no cliente não retroagem — cada projeto pode ter sua própria evolução. Se quer alinhar todos, edite projeto por projeto.</p>
+
+    <h4>Como jogo uma demanda para outro fluxo?</h4>
+    <p>Diretamente não dá — os fluxos são a "estrutura" da demanda. O caminho é: crie uma nova demanda no fluxo desejado (pode usar template para copiar rápido) e delete/arquive a antiga se não faz mais sentido.</p>
+  </section>
+
+  <footer class="doc-foot">
+    <span>Kastor — Manual do Usuário</span>
+    <span>Se ficou dúvida, procure o administrador da sua equipe.</span>
+  </footer>
+</main>
+
+</div>
+
+<script>
+  (function() {
+    const links = document.querySelectorAll('aside.toc nav a[href^="#"]');
+    const byId = new Map();
+    links.forEach(a => byId.set(a.getAttribute('href').slice(1), a));
+
+    // Clique explícito — força o scroll mesmo em contextos onde
+    // âncoras nativas não funcionam bem (previews, iframes, etc.)
+    links.forEach(a => a.addEventListener('click', (e) => {
+      const href = a.getAttribute('href');
+      if (!href || !href.startsWith('#')) return;
+      const id = href.slice(1);
+      const target = document.getElementById(id);
+      if (!target) return;
+      e.preventDefault();
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (history.pushState) history.pushState(null, '', '#' + id);
+      // Fecha o menu no mobile depois do clique
+      if (window.innerWidth <= 960) {
+        document.body.classList.remove('toc-open');
+        document.querySelector('aside.toc').classList.remove('open');
+      }
+    }));
+
+    // Marca o item ativo conforme a rolagem
+    const sections = document.querySelectorAll('main section[id], main h3[id]');
+    const io = new IntersectionObserver(entries => {
+      entries.forEach(e => {
+        if (!e.isIntersecting) return;
+        const id = e.target.id;
+        links.forEach(a => a.classList.remove('active'));
+        const link = byId.get(id);
+        if (link) {
+          link.classList.add('active');
+          const parentOl = link.closest('ol ol');
+          if (parentOl) {
+            const rootA = parentOl.closest('ol > li').querySelector(':scope > a');
+            if (rootA) rootA.classList.add('active');
+          }
+        }
+      });
+    }, { rootMargin: '-30% 0px -60% 0px', threshold: 0 });
+
+    sections.forEach(s => io.observe(s));
+
+    // Se abriu com hash na URL, rola pra ela
+    if (location.hash) {
+      const target = document.getElementById(location.hash.slice(1));
+      if (target) setTimeout(() => target.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+    }
+  })();
+</script>
+
+</body>
+</html>

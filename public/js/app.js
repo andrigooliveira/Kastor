@@ -83,7 +83,8 @@ const PAGE_TO_PATH = {
   workspaces:   '/workspaces',
   users:        '/users',
   integrations: '/integrations',
-  profile:      '/profile'
+  profile:      '/profile',
+  docs:         '/docs'
 };
 const PATH_TO_PAGE = Object.fromEntries(Object.entries(PAGE_TO_PATH).map(([k, v]) => [v, k]));
 let _routerSilent = false;   // true durante popstate → suprime push/replace
@@ -1059,6 +1060,7 @@ function cmdkActions() {
     { icon: 'list-checks',  label: 'Ir para Recorrentes · Listas',  kind: 'Navegar',  run: () => { goPage('recurring'); setTimeout(() => typeof setRecurringTab === 'function' && setRecurringTab('listas'), 30); } },
     { icon: 'file-text',    label: 'Ir para Templates',             kind: 'Navegar',  run: () => goPage('templates') },
     { icon: 'user-circle',  label: 'Ir para Perfil',                kind: 'Navegar',  run: () => goPage('profile') },
+    { icon: 'info',         label: 'Ir para Documentação',          kind: 'Navegar',  run: () => goPage('docs') },
   ];
   // Admin-only.
   if (me?.isAdmin) {
@@ -1266,10 +1268,23 @@ function initTooltips() {
 
   document.addEventListener('mouseover', e => {
     const t = e.target.closest('[data-tooltip], [title]');
-    if (!t || t === _tooltipHover) return;
+    if (t === _tooltipHover) return;
+    // Sempre limpa o alvo anterior quando o cursor mudou — inclusive quando
+    // vai pra área SEM tooltip. Cobre o caso do elemento ter saído do DOM
+    // (re-render por SSE, ação do usuário) sem disparar mouseout, o que
+    // deixava o tooltip travado apontando pra um elemento órfão.
+    if (_tooltipHover) {
+      if (_tooltipHover.dataset && _tooltipHover.dataset._tt !== undefined) {
+        _tooltipHover.setAttribute('title', _tooltipHover.dataset._tt);
+        delete _tooltipHover.dataset._tt;
+      }
+      _tooltipHover = null;
+      clearTimeout(_tooltipTimer);
+      hideTooltip();
+    }
+    if (!t) return;
     const text = t.getAttribute('data-tooltip') || t.getAttribute('title');
     if (!text || !text.trim()) return;
-    // Suprime tooltip nativo do navegador
     if (t.hasAttribute('title')) {
       t.dataset._tt = t.getAttribute('title');
       t.removeAttribute('title');
@@ -1296,6 +1311,9 @@ function initTooltips() {
 }
 function showTooltipFor(target, text) {
   if (!_tooltipEl) return;
+  // Não mostra tooltip pra elemento que já saiu do DOM entre o mouseover e
+  // o timer disparar (350ms de espera).
+  if (!target.isConnected) { _tooltipHover = null; return; }
   _tooltipEl.textContent = text;
   const r = target.getBoundingClientRect();
   const x = Math.max(8, Math.min(window.innerWidth - 8, r.left + r.width / 2));
@@ -1361,6 +1379,33 @@ function paintIcons() {
     try { lucide.createIcons(); } catch (e) {}
   }
 }
+/* Auto-paint de ícones Lucide.
+   Vários renderers montam HTML com <i data-lucide="X"> e às vezes esquecem
+   de chamar paintIcons() depois — o <i> fica sem conteúdo (invisível) mas o
+   onclick do wrapper continua funcionando. Este observer detecta inserções
+   e repinta automaticamente, debounced via rAF pra não repintar em rajada. */
+(function autoPaintIcons() {
+  if (typeof MutationObserver === 'undefined' || !document.body) return;
+  let scheduled = false;
+  const schedule = () => {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(() => { scheduled = false; paintIcons(); });
+  };
+  const obs = new MutationObserver(muts => {
+    for (const m of muts) {
+      for (const node of m.addedNodes) {
+        if (node.nodeType !== 1) continue;
+        if ((node.matches && node.matches('i[data-lucide]')) ||
+            (node.querySelector && node.querySelector('i[data-lucide]'))) {
+          schedule();
+          return;
+        }
+      }
+    }
+  });
+  obs.observe(document.body, { childList: true, subtree: true });
+})();
 
 /* ─── COLOR PICKER CUSTOM (16 swatches, design system) ─────────
    Substitui o input[type=color] nativo (que renderiza o picker do SO).
@@ -2096,6 +2141,30 @@ function forceLogout() {
   $('login-password').value = '';
 }
 
+/* ─── BANNER DE BOAS-VINDAS (primeiro login) ───
+   Aparece uma vez por usuário. Flag em localStorage — o usuário limpar cache
+   traz o banner de volta, o que é aceitável pra algo tão pequeno. */
+function _welcomeKey() { return me && me.id ? 'kastor-welcome-seen-' + me.id : null; }
+function maybeShowWelcomeBanner() {
+  const key = _welcomeKey();
+  const el = $('welcome-banner');
+  if (!key || !el) return;
+  let seen = false;
+  try { seen = localStorage.getItem(key) === '1'; } catch {}
+  if (seen) return;
+  el.hidden = false;
+}
+function dismissWelcomeBanner() {
+  const key = _welcomeKey();
+  const el = $('welcome-banner');
+  if (el) el.hidden = true;
+  if (key) { try { localStorage.setItem(key, '1'); } catch {} }
+}
+function openDocsFromWelcome() {
+  dismissWelcomeBanner();
+  goPage('docs');
+}
+
 /* ─── TEMA (light/dark) ─── */
 function applyTheme(theme) {
   const t = theme === 'light' ? 'light' : 'dark';
@@ -2214,6 +2283,7 @@ async function enterApp() {
   } else {
     applyRoute();
   }
+  maybeShowWelcomeBanner();
   await fetchNotifications();
   startNotifPoll();
   startRealtimeSync(); // SSE — substitui polling agressivo de dados
@@ -2269,7 +2339,9 @@ function renderWsSwitch() {
   }
   const menu = $('ws-cdrop-menu');
   if (menu) {
-    menu.innerHTML = workspaces.map(w => `
+    const sorted = [...workspaces].sort((a, b) =>
+      (a.name || '').localeCompare(b.name || '', 'pt-BR', { sensitivity: 'base' }));
+    menu.innerHTML = sorted.map(w => `
       <div class="filter-cdrop-item ${w.id === activeWs ? 'active' : ''}" onclick="switchWorkspace('${w.id}')">
         <span class="pill-dot" style="background:${w.color || 'var(--accent)'}"></span>
         <span>${esc(w.name)}</span>
@@ -2325,7 +2397,7 @@ const PAGE_TITLES = {
   clients: 'Clientes', projects: 'Projetos', flows: 'Fluxos de Demanda',
   workspaces: 'Workspaces', users: 'Usuários', profile: 'Meu Perfil',
   capacity: 'Capacidade', templates: 'Templates', integrations: 'Integrações', agenda: 'Agenda',
-  recurring: 'Listas de tarefas'
+  recurring: 'Listas de tarefas', docs: 'Documentação'
 };
 function goPage(page) {
   currentPage = page;
@@ -2367,6 +2439,7 @@ function renderCurrent() {
     case 'templates':  renderTemplates(); break;
     case 'recurring':  renderRecurring(); break;
     case 'integrations': renderIntegrations(); break;
+    case 'docs':       break; /* iframe estático — nada pra renderizar */
     case 'clients': {
       // Decide entre grid, detalhe de cliente ou detalhe de projeto sem perder estado
       // quando refreshData() roda com um modal aberto (URL temporariamente em /projects/<id>/edit).
@@ -9175,7 +9248,9 @@ function openUserModal(id) {
   $('u-discord-id').value = u?.discordId || '';
   $('u-admin').checked = !!u?.isAdmin;
   const selected = u ? (u.workspaces || []) : [activeWs];
-  $('u-workspaces').innerHTML = workspaces.map(w => `
+  $('u-workspaces').innerHTML = [...workspaces]
+    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt-BR', { sensitivity: 'base' }))
+    .map(w => `
     <label class="ws-chip-check ${selected.includes(w.id) ? 'on' : ''}">
       <input type="checkbox" value="${w.id}" ${selected.includes(w.id) ? 'checked' : ''}
              onchange="this.parentElement.classList.toggle('on', this.checked)">

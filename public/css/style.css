@@ -5,6 +5,46 @@
    A classe é alternada em body via renderSidebarUser(). */
 body.user-readonly .admin-only { display: none !important; }
 
+/* Banner de boas-vindas — aparece no primeiro login, dispensável.
+   Fica entre topbar e conteúdo, sem quebrar layout. */
+.welcome-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 12px 24px 0;
+  padding: 12px 16px;
+  background: linear-gradient(90deg, rgba(122,0,255,0.14), rgba(122,0,255,0.06));
+  border: 1px solid rgba(122,0,255,0.28);
+  border-radius: 10px;
+  font-size: 13.5px;
+  animation: welcomeBannerIn .35s cubic-bezier(.2,.9,.3,1);
+}
+.welcome-banner[hidden] { display: none !important; }
+.welcome-banner-emoji { font-size: 20px; line-height: 1; flex-shrink: 0; }
+.welcome-banner-text { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+.welcome-banner-text strong { color: var(--text); }
+.welcome-banner-text span { color: var(--text-dim); }
+.welcome-banner-close {
+  flex-shrink: 0;
+  width: 28px; height: 28px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .12s, color .12s;
+}
+.welcome-banner-close:hover { background: var(--surface-2); color: var(--text); }
+@keyframes welcomeBannerIn {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (max-width: 640px) {
+  .welcome-banner { margin: 8px 12px 0; flex-wrap: wrap; }
+  .welcome-banner-text { width: 100%; }
+}
+
 /* Light mode — sobrescreve as variáveis quando :root tem data-theme="light".
    Mantém o accent #7A00FF como brand; ajusta contrastes para fundo claro (WCAG AA). */
 :root[data-theme="light"] {
