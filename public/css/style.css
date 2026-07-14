@@ -906,6 +906,9 @@ tr:hover td { background: var(--surface-2); }
 }
 :root[data-theme="light"] .modal-overlay { background: rgba(0,0,0,.28); }
 .modal-overlay.open { opacity: 1; pointer-events: all; }
+/* Prompt e Confirm podem ser abertos ANTES do login (ex.: "Esqueci minha senha"),
+   por isso precisam ficar acima de #login-screen (9999) e #reset-screen (10000). */
+#prompt-modal, #confirm-modal { z-index: 10001; }
 .modal {
   background: var(--surface);
   border: 1px solid var(--hairline);
