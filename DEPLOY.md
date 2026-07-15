@@ -20,7 +20,8 @@ Guia completo pra subir o Kastor num cluster Docker Swarm gerenciado pelo Portai
 │   │  (HTTPS + Let's Encrypt)                           │   │
 │   └────────────────────────────────────────────────────┘   │
 │   Serviço "kastor" (replicas=1, node manager)              │
-│   Volume: kastor_data (SQLite + uploads)                    │
+│   Volume: kastor_data (uploads + auth.enc)                  │
+│   Banco: PostgreSQL externo (managed ou container)          │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -30,6 +31,7 @@ Guia completo pra subir o Kastor num cluster Docker Swarm gerenciado pelo Portai
 
 - VPS com **Docker Swarm ativo** (`docker swarm init` já rodado) e **Portainer** apontando pra ele.
 - **Nginx Proxy Manager** (ou Traefik) já rodando no cluster.
+- **PostgreSQL** acessível — pode ser managed (Neon, Supabase, RDS, Railway, Render) ou um container próprio na mesma VPS. Basta ter a `DATABASE_URL`.
 - Domínio/subdomínio apontando pra IP da VPS (ex.: `kastor.seudominio.com.br`).
 - Conta GitHub (o repo pode ser privado).
 
@@ -99,6 +101,10 @@ Em modo **Testing**? Adiciona todos os emails da equipe em **Test users** no OAu
    HOST_PORT=8080
    PUBLIC_URL=https://kastor.seudominio.com.br
    GITHUB_REPOSITORY_OWNER=seu-usuario-github
+
+   # OBRIGATÓRIO — connection string do Postgres.
+   # Managed (Neon/Supabase/RDS/Railway/Render): geralmente exige ?sslmode=require
+   DATABASE_URL=postgres://kastor:s3nh4@db.exemplo.com:5432/kastor?sslmode=require
 
    # Gera com: openssl rand -hex 32
    FLUXO_SECRET=cole-aqui-64-chars-hex
@@ -186,8 +192,8 @@ Com o serviço rodando:
 1. `git push` na main
 2. GitHub Actions builda + publica nova imagem em ~1-2 min
 3. Portainer → Stack **kastor** → **Update the stack** → marca **Re-pull image and redeploy**
-4. Swarm faz update com `stop-first` (para o antigo antes de subir o novo — SQLite exige um writer por vez)
-5. ~15s de downtime
+4. Swarm faz update com `start-first` (sobe o novo antes de derrubar o velho — Postgres externo aguenta ambos conectados)
+5. Downtime próximo de zero (novo container passa healthcheck antes do velho cair)
 
 Pra **rollback** rápido:
 - Portainer → Stack → clica no serviço `kastor_kastor` → **Rollback the service** (Swarm mantém a imagem anterior automaticamente)
@@ -196,15 +202,34 @@ Pra **rollback** rápido:
 
 ## Backup automático
 
-Cron no nó manager:
+Duas coisas pra fazer backup: o **banco** (crítico) e o **volume de uploads**.
+
+### Banco de dados (Postgres) — prioridade #1
+
+Se seu Postgres é managed (Neon, Supabase, RDS, Railway, Render), quase todos já fazem backup automático. **Confirme** no painel do provedor e teste um restore antes de confiar.
+
+Se é self-hosted, cron no nó manager:
 
 ```bash
 # Diário às 3AM — mantém 30 dias
-0 3 * * * docker run --rm \
+0 3 * * * pg_dump "$DATABASE_URL" | gzip > /home/backup/kastor-db-$(date +\%F).sql.gz && \
+  find /home/backup -name "kastor-db-*.sql.gz" -mtime +30 -delete
+```
+
+Restore:
+```bash
+gunzip < kastor-db-YYYY-MM-DD.sql.gz | psql "$DATABASE_URL"
+```
+
+### Uploads e auth.enc (volume Docker)
+
+```bash
+# Diário às 3:15AM — mantém 30 dias
+15 3 * * * docker run --rm \
   -v kastor_kastor_data:/data \
   -v /home/backup/kastor:/backup \
-  alpine tar czf /backup/kastor-$(date +\%F).tar.gz -C /data . && \
-  find /home/backup/kastor -name "kastor-*.tar.gz" -mtime +30 -delete
+  alpine tar czf /backup/kastor-uploads-$(date +\%F).tar.gz -C /data . && \
+  find /home/backup/kastor -name "kastor-uploads-*.tar.gz" -mtime +30 -delete
 ```
 
 Depois copia `/home/backup/kastor/` pra fora da VPS (Google Drive, S3, rsync pra outro servidor).
@@ -223,17 +248,20 @@ Depois copia `/home/backup/kastor/` pra fora da VPS (Google Drive, S3, rsync pra
 | Imagem não faz pull no Swarm | Pacote GHCR privado | Torna público (Package settings → Visibility → Public) OU `docker login ghcr.io` no nó manager |
 | `Error: docker.errors: manifest not found` | `GITHUB_REPOSITORY_OWNER` errado ou pacote não existe ainda | Confere que o workflow rodou verde e que o owner é lowercase |
 | Serviço fica em `pending` no Swarm | Nenhum nó atende à `placement.constraints: node.role == manager` | Confirma `docker node ls` — precisa de um manager. Em cluster single-node, o próprio nó é manager. |
-| `Database is locked` esporádico | Concorrência de writes num filesystem lento | `busy_timeout=5s` já cobre; se acontecer, é sinal pra migrar pra Postgres |
+| `ECONNREFUSED` no boot | `DATABASE_URL` errada ou Postgres inacessível da VPS | Testa `psql "$DATABASE_URL"` no nó manager. Se for managed, libera IP da VPS na allowlist do provedor. |
+| `password authentication failed` | Credenciais na `DATABASE_URL` erradas | Confere user/senha no provedor. Copia a URL de novo (às vezes tem caractere especial que precisa de URL-encode). |
+| `no pg_hba.conf entry for host` | Postgres self-hosted não aceita a origem | Adiciona regra em `pg_hba.conf` autorizando o IP/subnet da VPS |
+| `sslmode not supported` | Provedor exige SSL mas a URL não pediu | Adiciona `?sslmode=require` no final da `DATABASE_URL` |
 
 ---
 
 ## Escalar horizontalmente (roadmap futuro)
 
-Enquanto o banco for **SQLite**, `replicas: 1` é obrigatório — não tem como ter dois writers no mesmo arquivo. Se um dia precisar de HA (múltiplas réplicas atrás de load balancer):
+Com Postgres externo o app é stateless quanto ao banco — várias réplicas podem escrever ao mesmo tempo sem conflito. Os limites que ainda amarram a `replicas: 1`:
 
-1. Migrar `db-store.js` de SQLite pra Postgres/MySQL
-2. Adicionar serviço de banco no compose (ou usar RDS/Cloud SQL)
-3. Uploads: migrar `/app/data/uploads` pra S3 ou MinIO (volume local não é compartilhado entre réplicas em nós diferentes)
-4. Sessões: migrar `secure-store.js` pra Redis se o mesmo problema aparecer
+1. **Uploads no volume local** — arquivos vivem no filesystem do nó fixado. Réplicas em outros nós não veem. Fix: mover pra S3/MinIO ou pra coluna `bytea` no próprio Postgres.
+2. **Sessões em memória** — cada réplica tem seu Map de sessões. Login numa réplica não é reconhecido em outra. Fix: mover pra Redis.
 
-Esse trabalho é substancial (semanas, não dias). Sugestão: só encarar quando o app tiver 100+ usuários simultâneos ou SLA de disponibilidade formal.
+Depois desses dois, é subir `replicas: 2+` no compose e configurar o NPM/Traefik pra balancear entre elas.
+
+Esse trabalho é moderado (dias, não semanas). Sugestão: só encarar quando o app tiver 100+ usuários simultâneos ou SLA de disponibilidade formal.

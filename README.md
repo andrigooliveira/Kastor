@@ -2,13 +2,14 @@
 
 > Gestão de demandas de marketing — multiusuário, persistente, com integração Google Calendar.
 
-Aplicação web pra organizar fluxos de criação, prazos, equipe, apontamento de horas, relatórios e entregas de times de marketing. Stack enxuta: **Node.js + Express + SQLite + vanilla JS**. Zero build step, instalação em 2 comandos.
+Aplicação web pra organizar fluxos de criação, prazos, equipe, apontamento de horas, relatórios e entregas de times de marketing. Stack enxuta: **Node.js + Express + PostgreSQL + vanilla JS**. Zero build step, instalação em 2 comandos.
 
 ## Rodar localmente
 
-Pré-requisito: **Node.js 22.5+** (usa `node:sqlite` e `process.loadEnvFile` built-in).
+Pré-requisito: **Node.js 18+** e um **PostgreSQL** acessível (local, Docker ou managed).
 
 ```bash
+export DATABASE_URL="postgres://usuario:senha@localhost:5432/kastor"
 npm install
 npm start
 ```
@@ -18,10 +19,11 @@ Abrir [http://localhost:3000](http://localhost:3000) — login inicial: **admin 
 ## Testes
 
 ```bash
+export TEST_DATABASE_URL="postgres://usuario:senha@localhost:5432/kastor_test"
 npm test
 ```
 
-Smoke tests via `node:test` built-in. Sem dep externa.
+Smoke tests via `node:test` built-in. Sem `TEST_DATABASE_URL`, os testes são pulados com aviso.
 
 ## Documentação
 
@@ -35,17 +37,18 @@ Smoke tests via `node:test` built-in. Sem dep externa.
 ```
 .
 ├── server.js                    # Express app — rotas + lógica de negócio
-├── db-store.js                  # Persistência SQLite (WAL + busy_timeout)
+├── db-store.js                  # Persistência PostgreSQL (via `pg`, JSONB)
 ├── secure-store.js              # Credenciais criptografadas (scrypt + AES-256-GCM)
 ├── google-cal.js                # Integração Google Calendar (OAuth + sync)
 ├── Dockerfile                   # Node 22-alpine + healthcheck TCP
-├── docker-compose.yml           # Stack Docker Swarm (image do GHCR, replicas: 1)
+├── docker-compose.yml           # Stack Docker Swarm (image do GHCR)
 ├── .github/workflows/deploy.yml # CI/CD → build + push pra GHCR
-├── data/                        # Runtime (gitignored — banco + uploads + secrets)
+├── data/                        # Runtime (gitignored — uploads + auth.enc)
 ├── public/                      # Frontend (HTML/CSS/JS vanilla)
 │   ├── index.html
 │   ├── css/style.css
 │   ├── js/app.js
+│   ├── docs/                    # Manual do usuário (HTML)
 │   └── vendor/                  # jsPDF + Lucide
 ├── tests/smoke.test.js
 └── .Documentação/               # Docs completas
@@ -67,13 +70,16 @@ Smoke tests via `node:test` built-in. Sem dep externa.
 
 Roda em Docker Swarm gerenciado por Portainer com CI/CD via GitHub Actions publicando imagem no GHCR. Ver **[`DEPLOY.md`](DEPLOY.md)** pra guia completo.
 
-Variáveis essenciais (todas as opcionais em `.env.example`):
+Variáveis essenciais (todas em `.env.example`):
 
+- `DATABASE_URL` — connection string do Postgres (formato `postgres://user:pass@host:port/db`)
 - `FLUXO_SECRET` — chave hex 64 chars pra criptografia (`openssl rand -hex 32`)
 - `PUBLIC_URL` — URL pública HTTPS
-- `KASTOR_DATA_DIR` — em Docker, `/app/data`
+- `KASTOR_DATA_DIR` — em Docker, `/app/data` (uploads + auth.enc)
 
-⚠️ **Persistência**: banco + uploads vivem em `KASTOR_DATA_DIR`. Sem volume persistente, os dados somem a cada redeploy.
+⚠️ **Persistência**:
+- **Banco de dados** vive no PostgreSQL externo — backup é responsabilidade do provedor ou via `pg_dump`.
+- **Uploads e `auth.enc`** vivem em `KASTOR_DATA_DIR`. Sem volume persistente, uploads somem a cada redeploy.
 
 ## Licença
 

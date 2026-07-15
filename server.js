@@ -31,16 +31,19 @@ const { createStore, ENTITY_TYPES } = require('./db-store');
 const googleCal  = require('./google-cal');
 
 const PORT    = process.env.PORT || 3000;
-// KASTOR_DATA_DIR sobrescreve o diretório dos dados (útil pra testes isolados
-// ou pra apontar pra um disco persistente em prod). Padrão: ./data
+// KASTOR_DATA_DIR sobrescreve o diretório de uploads e do auth.enc.
+// (O banco de dados agora fica no PostgreSQL — ver DATABASE_URL.)
 const DATA_DIR = process.env.KASTOR_DATA_DIR || path.join(__dirname, 'data');
-const LEGACY_JSON_PATH = path.join(DATA_DIR, 'db.json');
 
-/* ─── BANCO ─── Persistência via SQLite (node:sqlite, built-in).
-   O objeto `db` em memória continua sendo a fonte de leitura/escrita do código
-   (compat com tudo que já existe). A cada mutação, saveDB() faz upsert
-   incremental no SQLite (escreve só o que mudou via dirty-tracking). */
-const store = createStore(DATA_DIR);
+/* ─── BANCO ─── Persistência via PostgreSQL (driver `pg`).
+   O objeto `db` em memória continua sendo a fonte de leitura/escrita do código.
+   A cada mutação, markDirty()/scheduleFlush() fazem upsert incremental no
+   Postgres (escreve só o que mudou via dirty-tracking, batched em transação).
+
+   Configuração:
+     - DATABASE_URL=postgres://user:pass@host:port/db
+     - Alternativa: variáveis PGHOST, PGUSER, PGPASSWORD, PGDATABASE, PGPORT. */
+const store = createStore();
 let db = null;
 let _dirtyEntities = new Map(); // key: `${type}|${id}` → { type, entity|id, op: 'upsert'|'remove' }
 
@@ -50,33 +53,28 @@ function defaultDB() {
   return obj;
 }
 
-function loadDB() {
-  // 1) Migração one-shot de db.json → SQLite (se existir e SQLite estiver vazio).
-  //    Faz backup do JSON em vez de deletar.
-  const usersCount = (store.listByType('users') || []).length;
-  if (usersCount === 0 && fs.existsSync(LEGACY_JSON_PATH)) {
-    try {
-      const legacy = JSON.parse(fs.readFileSync(LEGACY_JSON_PATH, 'utf8'));
-      const r = store.importJson(legacy);
-      console.log(`› Migração: ${r.imported} entidades importadas de db.json → SQLite`);
-      const backup = LEGACY_JSON_PATH + '.migrated-' + Date.now() + '.bak';
-      fs.renameSync(LEGACY_JSON_PATH, backup);
-      console.log(`› db.json renomeado pra ${path.basename(backup)} (backup)`);
-    } catch (e) {
-      console.error('Falha ao migrar db.json:', e.message);
-    }
-  }
-  // 2) Carrega cache em memória a partir do SQLite
-  db = store.loadAllToCache();
+/* Flag "primeira instalação concluída" — impede que qualquer seed inicial
+   (workspace "Geral", admin, fluxo padrão) recrie após o usuário ter modificado
+   ou deletado o inicial. Setada uma vez, no fim do primeiro boot. */
+async function isFirstInstall() { return !(await store.getKv('install:completed')); }
+async function markInstallComplete() { await store.setKv('install:completed', new Date().toISOString()); }
+
+async function loadDB() {
+  // Cria schema (idempotente) — CREATE TABLE IF NOT EXISTS.
+  await store.init();
+  // Carrega cache em memória a partir do Postgres.
+  db = await store.loadAllToCache();
   for (const t of ENTITY_TYPES) if (!Array.isArray(db[t])) db[t] = [];
   if (!Array.isArray(db.notifications)) db.notifications = [];
   auth.load();
-  migrate();
-  seed();
-  // 3) Extrai anexos/avatares base64 que ainda estejam dentro das entidades
-  //    pra arquivos em data/uploads. Idempotente — não toca quem já está em URL.
+  const firstInstall = await isFirstInstall();
+  migrate(firstInstall);
+  seed(firstInstall);
+  await markInstallComplete(); // idempotente — grava a flag no primeiro boot com esse código
+  // Extrai anexos/avatares base64 que ainda estejam dentro das entidades
+  // pra arquivos em data/uploads. Idempotente — não toca quem já está em URL.
   extractInlineBase64();
-  flushDirty(); // garante que entidades criadas no seed/migrate sejam persistidas
+  await flushDirty(); // garante que entidades criadas no seed/migrate sejam persistidas
 }
 
 /* Pós-migração: percorre entidades em memória, extrai data: URIs pra disco
@@ -132,22 +130,20 @@ function scheduleFlush() {
   saveTimer = setTimeout(() => { saveTimer = null; flushDirty(); }, 30);
   if (saveTimer.unref) saveTimer.unref();
 }
-function flushDirty() {
+async function flushDirty() {
   if (_dirtyEntities.size === 0) return;
   const items = [..._dirtyEntities.values()];
   _dirtyEntities.clear();
-  const raw = store._raw;
-  raw.exec('BEGIN');
   try {
-    for (const it of items) {
-      if (it.op === 'upsert') store.upsert(it.type, it.entity);
-      else store.remove(it.type, it.id);
-    }
-    raw.exec('COMMIT');
+    await store.applyBatch(items);
   } catch (e) {
-    raw.exec('ROLLBACK');
     console.error('flushDirty falhou:', e.message);
-    throw e;
+    // Re-enqueue pra tentar de novo no próximo flush em vez de perder writes.
+    // Se um item novo já veio pra mesma key nesse meio tempo, prevalece o novo.
+    for (const it of items) {
+      const key = `${it.type}|${it.entity?.id || it.id}`;
+      if (!_dirtyEntities.has(key)) _dirtyEntities.set(key, it);
+    }
   }
 }
 
@@ -174,12 +170,13 @@ function addDays(ymd, days) {
 }
 
 /* ─── MIGRAÇÃO de bases antigas ─── */
-function migrate() {
-  // Garante um workspace padrão
-  if (db.workspaces.length === 0) {
+function migrate(firstInstall) {
+  // Workspace padrão "Geral" — SÓ na primeira instalação. Depois, se o usuário
+  // renomear ou deletar, ele NÃO volta no próximo boot.
+  if (firstInstall && db.workspaces.length === 0) {
     db.workspaces.push({ id: uid(), name: 'Geral', color: '#7A00FF', createdAt: nowISO() });
   }
-  const defWs = db.workspaces[0].id;
+  const defWs = db.workspaces[0]?.id;
 
   db.users.forEach(u => {
     // Move senhas antigas (embutidas no usuário) para o cofre criptografado
@@ -335,8 +332,12 @@ function migrate() {
 }
 
 /* ─── SEED inicial ─── */
-function seed() {
-  // Marca como dirty pra persistir IMEDIATAMENTE no SQLite.
+function seed(firstInstall) {
+  // Depois da primeira instalação, NENHUM seed roda de novo — mesmo que o
+  // usuário tenha deletado o admin, o fluxo padrão ou o workspace inicial.
+  if (!firstInstall) return;
+
+  // Marca como dirty pra persistir IMEDIATAMENTE no Postgres.
   // Sem isso, se o container reinicia antes de qualquer ação do usuário,
   // o seed se perde e roda de novo no próximo boot (causando duplicação).
   if (db.workspaces.length > 0) markDirty('workspaces', db.workspaces[0], 'upsert');
@@ -566,9 +567,12 @@ function notify(targetUserId, type, data, triggerUserId, baseUrl) {
     commentText: data.commentText || null,
     read: false, createdAt: nowISO()
   };
-  store.insertNotification(n);
-  // Cap por usuário — store.trimNotificationsFor remove as mais antigas.
-  store.trimNotificationsFor(targetUserId, NOTIFICATIONS_MAX_PER_USER);
+  // Fire-and-forget: notify() é síncrono no chamador, mas a escrita no Postgres
+  // é async — não bloqueia o response. Erro é logado, o request não quebra.
+  store.insertNotification(n).catch(err => console.error('[notify] insert:', err.message));
+  // Cap por usuário — remove as mais antigas.
+  store.trimNotificationsFor(targetUserId, NOTIFICATIONS_MAX_PER_USER)
+    .catch(err => console.error('[notify] trim:', err.message));
   // Email opcional — depende de SMTP configurado, do usuário ter email e do tipo estar nas prefs
   if (mailEnabled() && user.email && EMAIL_EVENT_LABELS[type]) {
     const prefs = user.emailPrefs || defaultEmailPrefs();
@@ -986,7 +990,7 @@ app.post('/api/forgot-password', async (req, res) => {
   if (!mailEnabled()) {
     return res.status(503).json({ error: 'O servidor não tem SMTP configurado para enviar e-mails. Fale com a coordenação para que ela te ajude a redefinir a senha.' });
   }
-  store.cleanupResets();
+  await store.cleanupResets();
   const user = db.users.find(u =>
     u.email && u.email.toLowerCase() === String(email).trim().toLowerCase() && u.active !== false
   );
@@ -994,7 +998,7 @@ app.post('/api/forgot-password', async (req, res) => {
   if (!user) return res.json({ ok: true });
   const token = crypto.randomBytes(24).toString('hex');
   const expiresAt = Date.now() + 60 * 60 * 1000; // 1 hora
-  store.insertReset({ token, userId: user.id, expiresAt, used: false, createdAt: nowISO() });
+  await store.insertReset({ token, userId: user.id, expiresAt, used: false, createdAt: nowISO() });
   const baseUrl = appBaseUrl(req);
   const link = `${baseUrl}/reset/${token}`;
   const subject = '[Kastor] Redefinir sua senha';
@@ -1011,19 +1015,19 @@ app.post('/api/forgot-password', async (req, res) => {
   setImmediate(() => sendEmail(user.email, subject, html, text));
   res.json({ ok: true });
 });
-app.post('/api/reset-password', (req, res) => {
+app.post('/api/reset-password', async (req, res) => {
   const { token, newPassword } = req.body || {};
   if (!token || typeof newPassword !== 'string') return res.status(400).json({ error: 'Token e nova senha são obrigatórios.' });
   if (newPassword.length < 6) return res.status(400).json({ error: 'A nova senha deve ter pelo menos 6 caracteres.' });
-  store.cleanupResets();
-  const rec = store.getReset(String(token));
+  await store.cleanupResets();
+  const rec = await store.getReset(String(token));
   if (!rec || rec.used || rec.expiresAt < Date.now()) {
     return res.status(400).json({ error: 'Link inválido ou expirado. Solicite um novo reset.' });
   }
   const user = db.users.find(u => u.id === rec.userId && u.active !== false);
   if (!user) return res.status(400).json({ error: 'Usuário não encontrado.' });
   auth.setPassword(user.id, newPassword);
-  store.markResetUsed(String(token));
+  await store.markResetUsed(String(token));
   // Invalida sessões ativas daquele usuário — força re-login com nova senha.
   if (typeof auth.dropTokensFor === 'function') auth.dropTokensFor(user.id);
   res.json({ ok: true });
@@ -3568,24 +3572,24 @@ app.get('/api/metrics/sla', requireAuth, (req, res) => {
 });
 
 /* ── NOTIFICAÇÕES (por usuário) ── */
-// Persistência direto no SQLite (tabela dedicada, INDEX(user_id, created_at)).
-app.get('/api/notifications', requireAuth, (req, res) => {
-  res.json(store.listNotificationsFor(req.user.id, 100));
+// Persistência direto no Postgres (tabela dedicada, INDEX(user_id, created_at)).
+app.get('/api/notifications', requireAuth, async (req, res) => {
+  res.json(await store.listNotificationsFor(req.user.id, 100));
 });
 
-app.put('/api/notifications/:id/read', requireAuth, (req, res) => {
+app.put('/api/notifications/:id/read', requireAuth, async (req, res) => {
   // Verifica que a notificação é do usuário antes de marcar — evita user A
   // marcar notif de user B se souber o id.
-  const list = store.listNotificationsFor(req.user.id, 500);
+  const list = await store.listNotificationsFor(req.user.id, 500);
   const n = list.find(x => x.id === req.params.id);
   if (!n) return res.status(404).json({ error: 'Notificação não encontrada' });
-  store.markNotificationRead(req.params.id);
+  await store.markNotificationRead(req.params.id);
   n.read = true;
   res.json(n);
 });
 
-app.put('/api/notifications/read-all', requireAuth, (req, res) => {
-  store.markAllNotificationsReadFor(req.user.id);
+app.put('/api/notifications/read-all', requireAuth, async (req, res) => {
+  await store.markAllNotificationsReadFor(req.user.id);
   res.json({ ok: true });
 });
 
@@ -3728,21 +3732,30 @@ app.all(/^\/api\/.*/, (req, res) => {
 // (/dashboard, /demands/<id>, etc).
 app.get(/.*/, (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
-loadDB();
-// Auto-listen só quando o arquivo é executado diretamente. Quando require()d
-// (ex.: por testes), exporta o app pra quem importou orquestrar o listen.
+// Boot: aguarda loadDB (async por causa do Postgres) antes de aceitar tráfego.
+// Exporta o app pra testes; auto-listen só quando executado direto.
+const _boot = loadDB().catch(err => {
+  console.error('[boot] falha ao carregar banco:', err.message);
+  process.exit(1);
+});
+
 if (require.main === module) {
-  const server = app.listen(PORT, () => console.log(`\n  fluxo. rodando em  →  http://localhost:${PORT}\n`));
+  _boot.then(() => {
+    const server = app.listen(PORT, () => console.log(`\n  fluxo. rodando em  →  http://localhost:${PORT}\n`));
+    setupGracefulShutdown(server);
+  });
+}
 
-  /* ─── GRACEFUL SHUTDOWN ─────────────────────────────────────────
-     Docker Swarm envia SIGTERM antes de matar o container. Precisamos:
-     1. Parar de aceitar novas conexões HTTP
-     2. Encerrar SSE streams abertos (senão o server.close() nunca resolve)
-     3. Fechar SQLite (flush pending writes)
-     4. Sair com código 0
+/* ─── GRACEFUL SHUTDOWN ─────────────────────────────────────────
+   Docker Swarm envia SIGTERM antes de matar o container. Precisamos:
+   1. Parar de aceitar novas conexões HTTP
+   2. Encerrar SSE streams abertos (senão o server.close() nunca resolve)
+   3. Flush do buffer de writes pendentes + fechar pool do Postgres
+   4. Sair com código 0
 
-     Timeout de 15s como paraquedas — se algo travar, o kernel força kill
-     via SIGKILL do Swarm (default 10s após SIGTERM). */
+   Timeout de 15s como paraquedas — se algo travar, o kernel força kill
+   via SIGKILL do Swarm (default 10s após SIGTERM). */
+function setupGracefulShutdown(server) {
   let shuttingDown = false;
   async function gracefulShutdown(signal) {
     if (shuttingDown) return;
@@ -3776,14 +3789,14 @@ if (require.main === module) {
       });
     });
 
-    // 3) Flush do WAL e fecha SQLite
+    // 3) Flush do buffer de writes + fecha pool do Postgres
     try {
-      flushDirty(); // grava writes pendentes do buffer 30ms
+      await flushDirty(); // grava writes pendentes do buffer 30ms
       if (store && typeof store.close === 'function') {
-        store.close();
-        console.log('[shutdown] SQLite fechado');
+        await store.close();
+        console.log('[shutdown] Postgres pool fechado');
       }
-    } catch (e) { console.error('[shutdown] SQLite:', e.message); }
+    } catch (e) { console.error('[shutdown] Postgres:', e.message); }
 
     clearTimeout(hardKill);
     console.log('[shutdown] concluído');
@@ -3793,3 +3806,4 @@ if (require.main === module) {
   process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
 }
 module.exports = app;
+module.exports.ready = _boot;

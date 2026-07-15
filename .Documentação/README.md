@@ -2,7 +2,7 @@
 
 Referência técnica pra desenvolvedores. Pra usuários finais, ver [`LEIA-ME.txt`](LEIA-ME.txt). Pra deploy em produção, ver [`../DEPLOY.md`](../DEPLOY.md).
 
-Aplicação web multiusuário pra gerenciar demandas, fluxos, projetos, horas e integrações de equipes de marketing. SPA monolítico, sem build step, com persistência local (SQLite) e integração one-way com Google Calendar.
+Aplicação web multiusuário pra gerenciar demandas, fluxos, projetos, horas e integrações de equipes de marketing. SPA monolítico, sem build step, com persistência em PostgreSQL e integração one-way com Google Calendar.
 
 ---
 
@@ -15,7 +15,7 @@ Aplicação web multiusuário pra gerenciar demandas, fluxos, projetos, horas e 
 5. [Modelo de dados](#modelo-de-dados)
 6. [Referência da API](#referência-da-api)
 7. [Autenticação e segurança](#autenticação-e-segurança)
-8. [Persistência (SQLite)](#persistência-sqlite)
+8. [Persistência (PostgreSQL)](#persistência-postgresql)
 9. [Google Calendar (one-way)](#google-calendar-one-way)
 10. [Uploads e anexos](#uploads-e-anexos)
 11. [E-mail e Discord](#e-mail-e-discord)
@@ -31,8 +31,13 @@ Aplicação web multiusuário pra gerenciar demandas, fluxos, projetos, horas e 
 ## Quick start
 
 ```bash
-# Pré-requisito: Node.js 22.5+ (precisa de node:sqlite e process.loadEnvFile built-in)
-node --version   # esperado: v22.5+
+# Pré-requisitos:
+#  - Node.js 18+
+#  - PostgreSQL acessível
+node --version   # esperado: v18+
+
+# Configura conexão do banco
+export DATABASE_URL="postgres://usuario:senha@localhost:5432/kastor"
 
 # Instalação
 npm install
@@ -43,7 +48,7 @@ npm start
 
 Abrir [http://localhost:3000](http://localhost:3000) — login inicial: **admin / admin123** (trocar no primeiro acesso).
 
-Testes: `npm test` (smoke tests, ~1s, sem dep de teste).
+Testes: `TEST_DATABASE_URL=postgres://... npm test` (smoke tests via `node:test`).
 
 ---
 
@@ -51,9 +56,9 @@ Testes: `npm test` (smoke tests, ~1s, sem dep de teste).
 
 | Camada | Tecnologia | Notas |
 |---|---|---|
-| Runtime | Node.js 22.5+ | Usa `node:sqlite`, `process.loadEnvFile`, `node:test` — tudo built-in |
+| Runtime | Node.js 18+ | Usa `node:test` built-in |
 | HTTP | Express 4 | Único framework de servidor |
-| DB | SQLite via `node:sqlite` | WAL + busy_timeout 5s, sem dep externa |
+| DB | PostgreSQL via `pg` | Pool async, JSONB pro campo `data` |
 | Auth storage | scrypt + AES-256-GCM | Em `secure-store.js`, criptografa `data/auth.enc` |
 | Real-time | Server-Sent Events (SSE) | Rota `/api/stream`, sem WebSocket |
 | E-mail | Nodemailer (SMTP) | Opcional — reset de senha, notificações |
@@ -62,7 +67,7 @@ Testes: `npm test` (smoke tests, ~1s, sem dep de teste).
 | Frontend | HTML + CSS + JS vanilla | Sem framework, sem build |
 | Ícones | Lucide (vendor local) | ~400KB |
 
-Dependências em `package.json`: 4 produção (express, nodemailer, googleapis, google-auth-library). Lucide é vendorizado (`public/vendor/`).
+Dependências em `package.json`: 5 produção (express, pg, nodemailer, googleapis, google-auth-library). Lucide é vendorizado (`public/vendor/`).
 
 ---
 
@@ -71,18 +76,17 @@ Dependências em `package.json`: 4 produção (express, nodemailer, googleapis, 
 ```
 .
 ├── server.js                   # Express app — rotas + lógica de negócio (~4000 linhas)
-├── db-store.js                 # Persistência SQLite
+├── db-store.js                 # Persistência PostgreSQL (via `pg`)
 ├── secure-store.js             # Credenciais criptografadas (auth.enc)
 ├── google-cal.js               # Integração Google Calendar (OAuth + sync)
-├── package.json                # 4 deps de produção, 0 de dev
+├── package.json                # 5 deps de produção, 0 de dev
 ├── Dockerfile                  # Node 22-alpine + healthcheck TCP
-├── docker-compose.yml          # Stack pra Docker Swarm (image do GHCR, replicas: 1)
+├── docker-compose.yml          # Stack pra Docker Swarm (image do GHCR)
 ├── .github/workflows/deploy.yml # CI/CD → build + push pra GHCR
 ├── .env.example                # Template das variáveis de ambiente
 ├── DEPLOY.md                   # Guia de produção (Swarm + Portainer + NPM)
 ├── .dockerignore, .gitignore   # Exclusões
 ├── data/                       # RUNTIME — gitignored
-│   ├── kastor.db               # SQLite (WAL habilitado)
 │   ├── auth.enc                # Credenciais criptografadas (scrypt)
 │   ├── secret.bin              # Chave-mestra (só se FLUXO_SECRET não setado)
 │   └── uploads/                # Anexos + avatares
@@ -130,12 +134,12 @@ Dependências em `package.json`: 4 produção (express, nodemailer, googleapis, 
       ↓                                      ↓
 ┌───────────────┐                    ┌───────────────┐
 │  db-store.js  │                    │ secure-store.js│
-│  SQLite       │                    │  auth.enc      │
+│  PostgreSQL   │                    │  auth.enc      │
 │  (entities)   │                    │  (scrypt)      │
 └───────────────┘                    └───────────────┘
 ```
 
-**Persistência híbrida**: uma única tabela `entities` (type, id, workspace_id, data JSON) guarda quase tudo. Só notificações e password_resets têm tabela dedicada. Isso mantém o schema flexível durante evolução rápida sem migrations.
+**Persistência híbrida**: uma única tabela `entities` (type, id, workspace_id, data JSONB) guarda quase tudo. Só notificações e password_resets têm tabela dedicada. Isso mantém o schema flexível durante evolução rápida sem migrations.
 
 **Sem transpiler, sem build step**. O que você escreve em `server.js` roda direto no Node. O que você escreve em `public/js/app.js` roda direto no browser.
 
@@ -249,41 +253,37 @@ Toda rota exige autenticação (cookie httpOnly), exceto `/api/login`, `/api/res
 
 ---
 
-## Persistência (SQLite)
+## Persistência (PostgreSQL)
 
 **Uma tabela genérica** cobre 90% dos dados:
 
 ```sql
 CREATE TABLE entities (
-  type TEXT NOT NULL,
-  id TEXT NOT NULL,
-  workspace_id TEXT,
-  data TEXT NOT NULL,      -- JSON serializado
-  updated_at INTEGER NOT NULL,
+  type          TEXT   NOT NULL,
+  id            TEXT   NOT NULL,
+  workspace_id  TEXT,
+  data          JSONB  NOT NULL,
+  updated_at    BIGINT NOT NULL,
   PRIMARY KEY (type, id)
 );
-CREATE INDEX idx_entities_type_ws ON entities (type, workspace_id);
+CREATE INDEX idx_entities_type_ws       ON entities (type, workspace_id);
+CREATE INDEX idx_entities_type_updated  ON entities (type, updated_at DESC);
 ```
 
 **Tabelas dedicadas**:
 - `notifications` — escrita frequente, filtragem por user
 - `password_resets` — TTL diferente, cleanup periódico
-- `kv` — flags simples (versão de schema, etc.)
+- `kv` — flags simples (versão de schema, `install:completed`, etc.)
 
-**PRAGMAs** aplicados no boot:
-- `busy_timeout=5000` — tolerância a lock em disco lento (Docker Swarm em volume remoto)
-- `journal_mode=WAL` — reads concorrentes com writes
-- `synchronous=NORMAL` — fsync a cada checkpoint, não a cada write
-- `foreign_keys=ON`
-- `temp_store=MEMORY`
+**Conexão**: `pg.Pool` com `connectionString` lida de `DATABASE_URL`. Detecção automática de SSL pra provedores comuns (Neon, Supabase, RDS, Railway, Render). Pool default: 10 conexões, timeout 5s.
 
-**Dirty tracking**: cada mutação chama `saveEntity(type, entity)` que marca como sujo e agenda um flush em 30ms (batching de writes concorrentes numa transação única).
+**Dirty tracking**: cada mutação chama `saveEntity(type, entity)` que marca como sujo e agenda um flush em 30ms (batching de writes concorrentes numa única transação Postgres — `BEGIN … COMMIT` via cliente reservado do pool).
 
 **Graceful shutdown** (SIGTERM/SIGINT):
 1. Fecha SSE clients
 2. `server.close()` (para de aceitar novas conexões)
-3. `flushDirty()` (grava buffer pendente)
-4. `store.close()` (fecha SQLite limpo)
+3. `await flushDirty()` (grava buffer pendente)
+4. `await store.close()` (fecha pool do Postgres)
 
 Timeout hardkill de 15s como paraquedas.
 
@@ -347,7 +347,8 @@ Ver [`.env.example`](../.env.example) pra template completo. Resumo:
 | Var | Obrigatória? | Descrição |
 |---|---|---|
 | `PORT` | não | Default 3000 |
-| `KASTOR_DATA_DIR` | não | Onde SQLite + uploads vivem. Default `./data`. Em Docker: `/app/data` |
+| `DATABASE_URL` | **sim** | `postgres://user:pass@host:port/db`. Managed geralmente pede `?sslmode=require`. |
+| `KASTOR_DATA_DIR` | não | Onde uploads e `auth.enc` vivem. Default `./data`. Em Docker: `/app/data` |
 | `PUBLIC_URL` | sim em prod | URL pública sem barra final. Usada em emails de reset |
 | `FLUXO_SECRET` | recomendada | 64 hex chars (`openssl rand -hex 32`). Se ausente, gera em `data/secret.bin` |
 | `KASTOR_SESSION_DAYS` | não | TTL do cookie (default 30) |
@@ -383,7 +384,7 @@ npm test
 
 Smoke tests em `tests/smoke.test.js` cobrem:
 - Auth (login, sessão, logout)
-- Persistência (SQLite writes + reads)
+- Persistência (Postgres writes + reads)
 - Headers de segurança (CSP, X-Frame-Options, etc.)
 - Upload (multipart + tipo válido)
 - Rate limit em /login
@@ -399,11 +400,12 @@ Ver [`../DEPLOY.md`](../DEPLOY.md) pra guia completo (Docker Swarm + Portainer +
 **Resumo do fluxo**:
 1. Push na main → GitHub Actions builda Dockerfile + publica no GHCR
 2. Portainer Stack aponta pro compose no repo, usa imagem do GHCR
-3. Docker Swarm sobe com `replicas: 1` (obrigatório enquanto for SQLite)
+3. Docker Swarm sobe com `replicas: 1` (limitação atual é o volume local de uploads)
 4. NPM faz proxy reverso HTTPS pra `kastor:3000`
-5. Volume `kastor_data` persiste banco + uploads no nó manager
+5. Volume `kastor_data` persiste uploads + `auth.enc` no nó manager
+6. Banco de dados PostgreSQL roda EXTERNO (managed ou container separado)
 
-**Não escale horizontalmente** enquanto for SQLite. Ver seção "Escalar horizontalmente" no DEPLOY.md pro roadmap de migração.
+**Escalar horizontalmente**: com Postgres externo, o app é stateless quanto ao banco. O limite pra `replicas: 2+` é hoje o volume local de uploads — resolvido movendo pra storage compartilhado (NFS, S3/MinIO) ou pra colunas `bytea` no próprio Postgres.
 
 ---
 
@@ -421,14 +423,13 @@ Ver [`../DEPLOY.md`](../DEPLOY.md) pra guia completo (Docker Swarm + Portainer +
 ## Roadmap / Limitações
 
 **Limitações atuais**:
-- `replicas: 1` no Swarm (SQLite) — sem HA horizontal
+- `replicas: 1` no Swarm (só por conta do volume local de uploads)
 - Sessões em memória — restart do servidor desloga todo mundo
 - Uploads no filesystem local — não sobrevivem a mover pra outro nó
 - Google Calendar one-way — não escrevemos de volta no Google
 
 **Próximos passos naturais** (quando escalar):
-- Migrar SQLite → Postgres → suporta multi-writer
-- Sessões → Redis
-- Uploads → S3/MinIO
+- Sessões → Redis (permite `replicas: 2+` sem invalidar login)
+- Uploads → S3/MinIO ou coluna `bytea` no Postgres
 - Adicionar rate limiting mais robusto (agora é caseiro)
 - Testes de integração além dos smoke

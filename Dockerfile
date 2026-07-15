@@ -4,14 +4,13 @@
 # Multi-stage não faz sentido aqui: não temos passo de build (JS/CSS
 # são servidos direto de public/). Uma stage single-purpose enxuta.
 #
-# Base: Node 22.5 é o mínimo que suporta process.loadEnvFile() nativo,
-# usado pelo server.js. Uso 22-alpine pra imagem pequena (~180MB).
+# Base: Node 18+ (banco é PostgreSQL externo — driver `pg`).
+# Uso 22-alpine pra imagem pequena (~180MB) e consistência entre ambientes.
 # ────────────────────────────────────────────────────────────────
 FROM node:22-alpine
 
 # Alpine não vem com o /home/node populado; roda como root simplifica volumes
-# de dados (kastor-data mount) sem se preocupar com uid/gid. Se quiser hardening
-# depois, mude pra `USER node` e ajuste o volume.
+# de dados (uploads/auth.enc mount) sem se preocupar com uid/gid.
 WORKDIR /app
 
 # Copia manifests primeiro pra Docker cachear a camada de dependências —
@@ -27,7 +26,8 @@ RUN npm install --omit=dev --no-audit --no-fund
 COPY . .
 
 # Diretório de dados persistidos. Docker Compose monta um volume nomeado
-# aqui pra o SQLite + uploads sobreviverem a `docker compose down`.
+# aqui pra uploads dos usuários e auth.enc sobreviverem a `docker compose down`.
+# O banco de dados fica em Postgres EXTERNO (ver DATABASE_URL).
 RUN mkdir -p /app/data && chmod 755 /app/data
 
 # Porta interna do container. O host mapeia pra outra porta via compose

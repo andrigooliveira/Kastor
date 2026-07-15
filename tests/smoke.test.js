@@ -2,7 +2,18 @@
    KASTOR — Smoke tests
    Roda com: npm test
    Requer Node 18+ (usa fetch global e node:test built-in).
-   Isola dados em tmpdir via KASTOR_DATA_DIR — não toca o db real.
+
+   ATENÇÃO — banco de teste:
+   Como o Kastor usa PostgreSQL, os testes precisam de um banco dedicado.
+   Setar TEST_DATABASE_URL antes de rodar:
+
+     export TEST_DATABASE_URL="postgres://user:pass@localhost:5432/kastor_test"
+     npm test
+
+   Sem essa variável, os testes são pulados com aviso — não bloqueia CI
+   quando o banco não está disponível.
+
+   ⚠️ NUNCA aponte pro banco de produção. Os testes truncam tabelas.
    ─────────────────────────────────────────────────────────────── */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -10,25 +21,50 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-// CRÍTICO: definir env vars ANTES do require do server (caputrado no module load).
+const TEST_DB_URL = process.env.TEST_DATABASE_URL;
+if (!TEST_DB_URL) {
+  console.warn('\n⚠️  TEST_DATABASE_URL não definida — smoke tests pulados.');
+  console.warn('   Setar pra rodar: export TEST_DATABASE_URL="postgres://user:pass@host/db_de_teste"\n');
+  process.exit(0);
+}
+
+// CRÍTICO: definir env vars ANTES do require do server (capturado no module load).
 const TEST_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'kastor-test-'));
 process.env.KASTOR_DATA_DIR = TEST_DIR;
+process.env.DATABASE_URL = TEST_DB_URL;
 process.env.FLUXO_SECRET = 'test-secret-for-tests-only-not-prod';
 process.env.PORT = '0';
 
-const app = require('../server.js');
-let server, baseUrl;
+// Pool separado só pra limpar tabelas ANTES do server subir. Sem isso, o boot
+// pula o seed (flag install:completed já setada de execução anterior) e o
+// admin não existe pra login.
+const { Pool } = require('pg');
+const _cleanupPool = new Pool({ connectionString: TEST_DB_URL });
 
-test.before(() => new Promise((resolve) => {
-  server = app.listen(0, '127.0.0.1', () => {
-    const { port } = server.address();
-    baseUrl = `http://127.0.0.1:${port}`;
-    resolve();
+let app, server, baseUrl;
+
+test.before(async () => {
+  // Limpa tudo pra estado consistente entre execuções.
+  // DROP em vez de TRUNCATE porque queremos reset TOTAL — inclusive a flag
+  // install:completed do KV pra o seed do admin rodar de novo.
+  await _cleanupPool.query(
+    `DROP TABLE IF EXISTS entities, notifications, password_resets, kv CASCADE`
+  ).catch(() => {});
+  // Agora sim carrega o server. Init recria as tabelas, seed cria admin/etc.
+  app = require('../server.js');
+  await app.ready;
+  await new Promise((resolve) => {
+    server = app.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      baseUrl = `http://127.0.0.1:${port}`;
+      resolve();
+    });
   });
-}));
+});
 
-test.after(() => {
-  if (server) server.close();
+test.after(async () => {
+  if (server) await new Promise(r => server.close(r));
+  await _cleanupPool.end().catch(() => {});
   try { fs.rmSync(TEST_DIR, { recursive: true, force: true }); } catch {}
 });
 
@@ -121,7 +157,7 @@ test('POST /api/logout invalida o cookie', async () => {
   assert.equal(me.status, 401);
 });
 
-test('Persistência SQLite: criar projeto e ler de volta', async () => {
+test('Persistência Postgres: criar projeto e ler de volta', async () => {
   // Login e obtém cookie
   const login = await postJson('/api/login', { username: 'admin', password: 'admin123' });
   const cookie = (login.headers.get('set-cookie') || '').split(';')[0];
@@ -136,7 +172,8 @@ test('Persistência SQLite: criar projeto e ler de volta', async () => {
   const p = await postJson('/api/projects', { name: 'Projeto Teste', clientId: cli.body.id, workspaceId: wsId }, { headers: { Cookie: cookie } });
   assert.equal(p.status, 201);
   assert.equal(p.body.name, 'Projeto Teste');
-  // Lê e verifica
+  // Aguarda o flush do buffer (30ms + margem) antes de ler.
+  await new Promise(r => setTimeout(r, 200));
   const list = await req('/api/projects', { headers: { Cookie: cookie } });
   assert.equal(list.status, 200);
   assert.ok(list.body.some(x => x.id === p.body.id), 'projeto criado deve aparecer na listagem');

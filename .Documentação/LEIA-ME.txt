@@ -7,14 +7,18 @@ leia README.md desta mesma pasta.
 
 COMO RODAR (localmente, pra teste/dev)
 ---------------------------------------
-1. Instale o Node.js versão 22.5 ou maior (https://nodejs.org).
-2. Abra a pasta do projeto no terminal:
+1. Instale o Node.js 18 ou maior (https://nodejs.org).
+2. Tenha um PostgreSQL acessível (local ou managed) — crie um banco
+   dedicado pro Kastor (ex.: `createdb kastor`).
+3. Abra a pasta do projeto no terminal:
      cd caminho\para\kastor
-3. Primeira vez:
+4. Configure a variável do banco:
+     export DATABASE_URL="postgres://usuario:senha@localhost:5432/kastor"
+5. Primeira vez:
      npm install
-4. Iniciar:
+6. Iniciar:
      npm start
-5. Abrir no navegador:  http://localhost:3000
+7. Abrir no navegador:  http://localhost:3000
 
 
 PRIMEIRO ACESSO
@@ -27,37 +31,43 @@ Senha:   admin123
 
 ONDE FICAM OS DADOS
 -------------------
-Persistência em SQLite. Tudo dentro de data/:
+Banco de dados: PostgreSQL externo (informado via DATABASE_URL).
+Estrutura de tabelas criada automaticamente no primeiro boot.
 
-  data/kastor.db      → banco principal (demandas, clientes, projetos, etc.)
-  data/kastor.db-wal  → journal do WAL (temporário, não copiar sozinho)
-  data/kastor.db-shm  → shared memory do WAL (idem)
-  data/auth.enc       → credenciais criptografadas
-  data/secret.key     → chave-mestra (se FLUXO_SECRET não setado)
-  data/uploads/       → anexos e avatares
+Arquivos locais em data/:
+
+  data/auth.enc       → credenciais criptografadas (senhas, tokens)
+  data/secret.bin     → chave-mestra (se FLUXO_SECRET não setado)
+  data/uploads/       → anexos e avatares dos usuários
 
 BACKUP:
-  Método simples — parar o servidor e copiar a pasta data/ inteira.
+  Banco (prioridade #1):
+    pg_dump "$DATABASE_URL" > kastor-$(date +%F).sql
+    psql   "$DATABASE_URL" < kastor-YYYY-MM-DD.sql   # restore
+  (managed providers como Neon/Supabase têm backup automatizado.)
 
-  Método "ao vivo" (sem parar) — usando sqlite3:
-    sqlite3 data/kastor.db ".backup data/backup-$(date +%F).db"
+  Uploads e auth.enc:
+    Parar o servidor e copiar a pasta data/ inteira.
 
 
 HOSPEDAR EM PRODUÇÃO
 --------------------
 O jeito recomendado é Docker Swarm gerenciado pelo Portainer, com CI/CD via
-GitHub Actions publicando a imagem no GHCR. Passo a passo completo:
+GitHub Actions publicando a imagem no GHCR. O banco Postgres roda EXTERNO
+(managed ou container próprio). Passo a passo completo:
 
   → Ver DEPLOY.md na raiz do projeto.
 
 Resumo dos ingredientes:
   - VPS com Docker Swarm ativo + Portainer
+  - PostgreSQL acessível (managed ou container separado)
   - GitHub repo privado com o código
   - Domínio apontando pra VPS
   - Proxy reverso (Nginx Proxy Manager ou Traefik) pra HTTPS
 
 Também roda em Render, Railway ou qualquer plataforma Node.js — só precisa
-de disco persistente montado em /app/data.
+de PostgreSQL configurado (a maioria oferece Postgres embutido) e disco
+persistente pra data/uploads.
 
 
 NOTIFICAÇÃO POR E-MAIL (SMTP)
@@ -119,12 +129,15 @@ individualmente nas notificações.
 
 VARIÁVEIS DE AMBIENTE — REFERÊNCIA RÁPIDA
 -----------------------------------------
+  DATABASE_URL          OBRIGATÓRIA — postgres://user:pass@host:port/db
+                        Managed (Neon/Supabase/RDS): adicionar ?sslmode=require
+
   PORT                  porta do server (padrão 3000)
   PUBLIC_URL            URL pública do app (usada em emails e OAuth)
   FLUXO_SECRET          chave hex 64 chars pra criptografia do auth.enc
                         Recomendado em produção. Gera com:
                           openssl rand -hex 32
-  KASTOR_DATA_DIR       diretório de dados (padrão ./data)
+  KASTOR_DATA_DIR       diretório de uploads e auth.enc (padrão ./data)
   KASTOR_SESSION_DAYS   tempo de vida da sessão em dias (padrão 30)
 
   SMTP_HOST / SMTP_USER / SMTP_PASS / SMTP_PORT / SMTP_SECURE / SMTP_FROM
@@ -133,7 +146,8 @@ VARIÁVEIS DE AMBIENTE — REFERÊNCIA RÁPIDA
   GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REDIRECT_URI
                         veja seção "GOOGLE CALENDAR"
 
-Todas opcionais. Sem elas o sistema roda, mas com features desligadas.
+Só DATABASE_URL é obrigatória — todas as outras opcionais. Sem elas o
+sistema roda, mas com features desligadas.
 
 
 SEGURANÇA — NOTAS
@@ -149,7 +163,8 @@ SEGURANÇA — NOTAS
 
 TESTES
 ------
+  export TEST_DATABASE_URL="postgres://user:pass@host:port/kastor_test"
   npm test
 
-Smoke tests (~12 testes, 1s). Usa node:test built-in — sem dependência.
-Roda em diretório temporário, não toca dados reais.
+Smoke tests (~12 testes). Usa node:test built-in. Requer um banco Postgres
+de TESTE separado — os testes truncam tabelas antes de rodar.

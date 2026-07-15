@@ -7,11 +7,15 @@
 # 1. `build: .` é IGNORADO pelo Swarm — a imagem TEM que vir de um registry.
 #    A pipeline em .github/workflows/deploy.yml faz o build e publica no GHCR
 #    a cada push na main.
-# 2. `replicas: 1` é obrigatório enquanto o banco for SQLite (arquivo local).
-#    Escalar horizontalmente exige migrar pra Postgres/MySQL antes.
-# 3. `placement.constraints: node.role == manager` garante que o container
-#    sempre roda no mesmo nó onde o volume `kastor_data` mora. Sem isso, se o
-#    Swarm reagendar o container em outro nó, ele perde acesso ao banco.
+# 2. Com Postgres externo, o app é STATELESS pro banco. Você pode escalar
+#    `replicas` a partir de N=2 pra HA horizontal quando quiser — só cuide do
+#    volume de uploads (opções abaixo).
+#
+# Uploads (data/uploads + data/auth.enc):
+# - Enquanto rodar com replicas: 1 num nó fixo, o volume nomeado local funciona.
+# - Pra escalar horizontalmente, mova pra storage compartilhado (NFS, S3/MinIO
+#   com camada intermediária, etc.) ou refatore o server pra guardar uploads no
+#   próprio Postgres.
 #
 # Como usar no Portainer:
 #   1. Stacks > Add stack
@@ -19,11 +23,12 @@
 #   3. Build method: Repository → cola URL do GitHub (Portainer clona o repo
 #      pra pegar o docker-compose.yml, mas NÃO faz build da imagem — usa a
 #      que a Action publicou no GHCR).
-#   4. Environment variables: cole as vars listadas em DEPLOY.md.
+#   4. Environment variables: cole as vars listadas em DEPLOY.md
+#      (obrigatoriamente DATABASE_URL).
 #   5. Deploy the stack.
 #
-# Variáveis sensíveis (FLUXO_SECRET, SMTP_PASS, GOOGLE_CLIENT_SECRET) vêm da
-# aba "Environment variables" do Portainer. NUNCA commite .env.
+# Variáveis sensíveis (DATABASE_URL, FLUXO_SECRET, SMTP_PASS, GOOGLE_CLIENT_SECRET)
+# vêm da aba "Environment variables" do Portainer. NUNCA commite .env.
 # ────────────────────────────────────────────────────────────────
 version: '3.8'
 
@@ -35,9 +40,8 @@ services:
     image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/kastor:latest
 
     # Bloco `deploy:` só faz sentido em modo Swarm (compose CLI simples ignora).
-    # É a especificação oficial de como o serviço se comporta no cluster.
     deploy:
-      replicas: 1  # ← SQLite não suporta multi-writer. Não aumente sem migrar de banco.
+      replicas: 1  # Suba pra 2+ quando o volume de uploads virar compartilhado.
       restart_policy:
         condition: any
         delay: 5s
@@ -46,15 +50,14 @@ services:
       update_config:
         parallelism: 1
         delay: 10s
-        order: stop-first  # SQLite não permite dois writers no mesmo arquivo — para antes de subir novo.
+        order: start-first  # Postgres externo permite subir novo antes de derrubar velho.
         failure_action: rollback
       rollback_config:
         parallelism: 1
         delay: 10s
-        order: stop-first
       placement:
         constraints:
-          - node.role == manager  # ← Fixa no nó onde o volume nomeado vive.
+          - node.role == manager  # Fixa no nó onde o volume de uploads vive.
       resources:
         limits:
           memory: 512M
@@ -68,9 +71,15 @@ services:
       # ── Runtime ─────────────────────────────────────────
       NODE_ENV: production
       PORT: 3000
-      # Onde o app guarda kastor.db, secret.bin e uploads/.
-      # Bate com o volume montado abaixo — não mude sem mudar lá.
+      # Diretório onde vivem os uploads dos usuários e o auth.enc.
+      # Bate com o volume montado abaixo.
       KASTOR_DATA_DIR: /app/data
+
+      # ── Banco de dados (PostgreSQL) ─────────────────────
+      # Formato: postgres://user:pass@host:port/dbname[?sslmode=require]
+      # Managed (Neon/Supabase/RDS/Railway/Render) → geralmente exige sslmode=require.
+      # Self-hosted → pode ser postgres://kastor:senha@postgres.local:5432/kastor
+      DATABASE_URL: ${DATABASE_URL:-}
 
       # ── Segurança ───────────────────────────────────────
       # Chave hex de 64 chars pra criptografar tokens em disco.
@@ -99,8 +108,9 @@ services:
       GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
 
     volumes:
-      # Volume nomeado — sobrevive a rebuilds/updates. Contém banco SQLite,
-      # uploads dos usuários e secret.key. BACKUP DISSO É CRÍTICO.
+      # Volume nomeado — sobrevive a rebuilds/updates. Contém uploads dos
+      # usuários e secret.bin (criptografia local do auth). BACKUP DISSO
+      # continua importante, mas o CRÍTICO agora é o backup do Postgres.
       # No Swarm, o volume fica no nó fixado pela placement constraint acima.
       - kastor_data:/app/data
 
@@ -113,20 +123,20 @@ services:
 volumes:
   kastor_data:
     # Driver local — vive no filesystem do nó manager fixado.
-    # Pra backup automatizado, ver seção "Backup" no DEPLOY.md.
+    # Pra backup de uploads, ver seção "Backup" no DEPLOY.md.
+    # O banco em si (Postgres) tem backup próprio via provedor ou dump.
 
 # ────────────────────────────────────────────────────────────────
-# BACKUP / RESTORE do volume (rodar no nó manager onde o volume mora):
+# BACKUP / RESTORE
 #
-#   # Backup diário — tar.gz com todo o conteúdo de /app/data
-#   docker run --rm -v kastor_kastor_data:/data -v $(pwd):/backup \
-#     alpine tar czf /backup/kastor-$(date +%F).tar.gz -C /data .
+# Banco (Postgres) — SEMPRE prioridade #1:
+#   pg_dump "$DATABASE_URL" > kastor-$(date +%F).sql
+#   psql "$DATABASE_URL" < kastor-YYYY-MM-DD.sql   # restore
+# (managed providers como Neon/Supabase têm backup automatizado — confira.)
 #
-#   # Restore (com o serviço parado)
-#   docker service scale kastor_kastor=0
+# Uploads (volume kastor_data) — rodar no nó manager onde o volume mora:
 #   docker run --rm -v kastor_kastor_data:/data -v $(pwd):/backup \
-#     alpine sh -c "cd /data && tar xzf /backup/kastor-XXXX.tar.gz"
-#   docker service scale kastor_kastor=1
+#     alpine tar czf /backup/kastor-uploads-$(date +%F).tar.gz -C /data .
 #
 # O nome do volume na prática é <STACK>_kastor_data. Confira com:
 #   docker volume ls | grep kastor
