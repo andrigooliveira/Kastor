@@ -2090,6 +2090,47 @@ textarea.form-control { height: auto; min-height: 80px; padding: 11px 14px; }
 .detail-icon-btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--border); }
 .detail-icon-btn.danger:hover { color: var(--danger); border-color: var(--danger); background: rgba(239,68,68,.08); }
 .detail-icon-btn.on { background: var(--accent-dim); color: var(--accent-text); border-color: var(--accent); }
+/* Badge com contador de watchers no botão "Observar" — só aparece se count>0 */
+.detail-watch-count {
+  display: inline-block;
+  margin-left: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: var(--surface-3);
+  color: var(--text-dim);
+  line-height: 1;
+}
+.detail-icon-btn.on .detail-watch-count { background: rgba(255,255,255,0.22); color: #fff; }
+
+/* Preview inline de anexo (PDF, imagem, vídeo, áudio). Modal fullscreen sobre tudo. */
+.att-preview-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.82);
+  display: none;
+  z-index: 10050;
+  flex-direction: column;
+  padding: 12px 20px 20px;
+}
+.att-preview-overlay.open { display: flex; }
+.att-preview-head {
+  display: flex; align-items: center; gap: 10px;
+  color: #fff;
+  padding: 8px 4px 12px;
+}
+.att-preview-name { flex: 1; font-size: 14px; font-weight: 500; opacity: 0.92; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.att-preview-head .detail-icon-btn { color: rgba(255,255,255,0.85); border-color: transparent; }
+.att-preview-head .detail-icon-btn:hover { background: rgba(255,255,255,0.14); color: #fff; border-color: transparent; }
+.att-preview-body {
+  flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.02);
+}
+.att-preview-image { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; }
+.att-preview-frame { width: 100%; height: 100%; border: 0; background: #fff; border-radius: 6px; }
+.att-preview-video { max-width: 100%; max-height: 100%; border-radius: 6px; background: #000; }
+.att-preview-audio { width: min(560px, 90vw); }
 
 /* Editor de etapas por instância (sub-view do modal de demanda) */
 .stages-edit-hint {

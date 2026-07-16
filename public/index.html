@@ -327,6 +327,7 @@
             <button class="btn btn-ghost btn-sm" id="list-view-kanban" onclick="setListView('kanban')" title="Kanban"><i data-lucide="kanban-square" class="ic-sm"></i></button>
             <button class="btn btn-ghost btn-sm" id="list-view-cal" onclick="setListView('cal')" title="Calendário"><i data-lucide="calendar" class="ic-sm"></i></button>
           </div>
+          <button class="btn btn-ghost btn-sm" onclick="exportDemandsCsv()" title="Exportar CSV (respeita os filtros aplicados)"><i data-lucide="download" class="ic-sm"></i> Exportar CSV</button>
         </div>
 
         <!-- Chip visível quando ?due=YYYY-MM-DD tá aplicado (deep-link do dashboard) -->
@@ -451,6 +452,7 @@
           <button class="btn btn-ghost btn-sm active" id="capacity-view-team" onclick="setCapacityView('team')"><i data-lucide="users" class="ic-sm"></i> Equipe</button>
           <button class="btn btn-ghost btn-sm" id="capacity-view-project" onclick="setCapacityView('project')"><i data-lucide="folder" class="ic-sm"></i> Projeto</button>
           <button class="btn btn-ghost btn-sm" id="capacity-view-client" onclick="setCapacityView('client')"><i data-lucide="briefcase" class="ic-sm"></i> Cliente</button>
+          <button class="btn btn-ghost btn-sm" onclick="exportCapacityCsv()" title="Exportar visão atual em CSV" style="margin-left:auto"><i data-lucide="download" class="ic-sm"></i> Exportar CSV</button>
         </div>
         <div class="capacity-hint" id="capacity-hint">Distribuição de demandas em aberto por responsável. Carga estimada com base nas demandas atribuídas e nas horas já apontadas.</div>
         <div id="capacity-list"></div>
@@ -1063,6 +1065,9 @@
                     <label class="form-check"><input type="checkbox" id="profile-pref-assigned"> Eu for atribuído como responsável (manual)</label>
                     <label class="form-check"><input type="checkbox" id="profile-pref-stage_assigned"> Eu for responsável da nova etapa (atribuição automática)</label>
                     <label class="form-check"><input type="checkbox" id="profile-pref-mention"> Eu for mencionado em um comentário</label>
+                    <label class="form-check"><input type="checkbox" id="profile-pref-watch_stage"> Etapa mudar em demanda que estou observando</label>
+                    <label class="form-check"><input type="checkbox" id="profile-pref-watch_comment"> Novo comentário em demanda que estou observando</label>
+                    <label class="form-check"><input type="checkbox" id="profile-pref-daily_digest"> Resumo diário do dia (segunda a sexta, 8h)</label>
                   </div>
                 </div>
               </div>

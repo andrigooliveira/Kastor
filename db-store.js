@@ -205,6 +205,22 @@ function createStore(config = {}) {
   async function markNotificationRead(id) {
     await pool.query('UPDATE notifications SET is_read = TRUE WHERE id = $1', [id]);
   }
+  /* Marca UMA notificação como lida, mas só se pertencer ao usuário informado.
+     Retorna a notificação (com read=true) ou null se não achou / não é do usuário.
+     Evita o padrão "busca 500 pra validar 1 id" com uma query só. */
+  async function markNotificationReadIfOwner(id, userId) {
+    const r = await pool.query(
+      `UPDATE notifications SET is_read = TRUE
+       WHERE id = $1 AND user_id = $2
+       RETURNING id, data, is_read`,
+      [id, userId]
+    );
+    if (!r.rows.length) return null;
+    const row = r.rows[0];
+    const obj = row.data;
+    obj.read = !!row.is_read;
+    return obj;
+  }
   async function markAllNotificationsReadFor(userId) {
     await pool.query('UPDATE notifications SET is_read = TRUE WHERE user_id = $1', [userId]);
   }
@@ -269,7 +285,7 @@ function createStore(config = {}) {
     transaction,
     upsert, upsertMany, remove, get, listByType, listByWorkspace,
     loadAllToCache, applyBatch,
-    insertNotification, listNotificationsFor, markNotificationRead,
+    insertNotification, listNotificationsFor, markNotificationRead, markNotificationReadIfOwner,
     markAllNotificationsReadFor, trimNotificationsFor,
     insertReset, getReset, markResetUsed, cleanupResets,
     getKv, setKv,

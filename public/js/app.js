@@ -250,17 +250,47 @@ function restoreFilters(page) {
 
 /* ─── API ─── */
 async function api(path, method = 'GET', body) {
-  const res = await fetch('/api' + path, {
-    method,
-    credentials: 'same-origin', // envia o cookie httpOnly de sessão
-    headers: { 'Content-Type': 'application/json' },
-    body: body !== undefined ? JSON.stringify(body) : undefined
-  });
-  if (res.status === 401) { forceLogout(); throw new Error('Não autenticado'); }
+  let res;
+  try {
+    res = await fetch('/api' + path, {
+      method,
+      credentials: 'same-origin', // envia o cookie httpOnly de sessão
+      headers: { 'Content-Type': 'application/json' },
+      body: body !== undefined ? JSON.stringify(body) : undefined
+    });
+  } catch (netErr) {
+    // Sem conexão (offline, DNS, servidor caiu). Erro tipado pra o global handler.
+    const e = new Error('Sem conexão com o servidor. Tenta de novo em instantes.');
+    e._apiKind = 'network';
+    throw e;
+  }
+  if (res.status === 401) { forceLogout(); const e = new Error('Não autenticado'); e._apiSilent = true; throw e; }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Erro inesperado');
+  if (res.status === 429) {
+    const retry = res.headers.get('Retry-After');
+    const e = new Error(`Muitas tentativas. Aguarde ${retry || 'alguns'} segundos.`);
+    e._apiKind = 'ratelimit';
+    throw e;
+  }
+  if (!res.ok) {
+    const e = new Error(data.error || `Erro ${res.status}`);
+    e._apiKind = 'server';
+    throw e;
+  }
   return data;
 }
+
+/* Global fallback: se um Promise de api() rejeita SEM ninguém tratar, mostra
+   toast pra o usuário não ficar com botão "carregando…" pra sempre e sem feedback.
+   Callers que fazem `.catch(...)` explícito NÃO caem aqui — o padrão está preservado. */
+window.addEventListener('unhandledrejection', ev => {
+  const err = ev.reason;
+  if (!err || err._apiSilent) return;
+  if (typeof toast === 'function' && (err._apiKind || (err.message && err.message !== 'Não autenticado'))) {
+    toast(err.message || 'Erro inesperado', 'error');
+    ev.preventDefault(); // silencia o warning "Uncaught (in promise)"
+  }
+});
 
 /* ─── HELPERS ─── */
 const $ = id => document.getElementById(id);
@@ -902,6 +932,23 @@ function sparkline(values, opts = {}) {
   </svg>`;
 }
 
+/* Toast com botão "Desfazer" — usado após soft delete de demanda/cliente/projeto.
+   `undoFn` só é chamado se o usuário clicar antes do toast desaparecer (~8s).
+   Após ~7 dias o backend faz purge definitivo (config em UNDO_PURGE_MS). */
+function toastWithUndo(msg, undoFn) {
+  toast(msg, 'warn', {
+    label: 'Desfazer',
+    fn: async () => {
+      try {
+        await undoFn();
+        toast('Restaurado.', 'success');
+        if (typeof refreshData === 'function') await refreshData();
+      } catch (e) {
+        toast('Não foi possível desfazer: ' + (e.message || 'erro'), 'error');
+      }
+    }
+  });
+}
 function toast(msg, type = 'success', action = null) {
   const t = document.createElement('div');
   t.className = 'toast toast-' + type;
@@ -3132,6 +3179,94 @@ function setListView(v) {
   if (v === 'kanban') renderKanban();
 }
 
+/* ─── EXPORT CSV ─── */
+/* Escape RFC 4180: qualquer célula com `,`, `"` ou quebra de linha vira "…"
+   com aspas internas duplicadas. Números/null viram string vazia se nulos. */
+function csvCell(v) {
+  if (v === null || v === undefined) return '';
+  const s = String(v);
+  return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+function downloadCsv(headers, rows, filename) {
+  // BOM UTF-8 pra Excel abrir com acentos certos. \r\n é padrão CSV.
+  const bom = '﻿';
+  const lines = [headers.map(csvCell).join(',')];
+  for (const r of rows) lines.push(r.map(csvCell).join(','));
+  const csv = bom + lines.join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 500);
+}
+
+/* Exporta as demandas atualmente filtradas na página /demands. Respeita
+   busca, filtros e workspace ativo — o mesmo conjunto que aparece na tela. */
+function exportDemandsCsv() {
+  const list = listFilteredDemands();
+  if (!list.length) { toast('Não há demandas pra exportar com os filtros atuais.', 'warn'); return; }
+  const headers = [
+    'ID', 'Nome', 'Cliente', 'Projeto', 'Fluxo', 'Etapa atual',
+    'Responsável', 'Prioridade', 'Prazo etapa', 'Prazo final',
+    'Horas estimadas', 'Horas apontadas', 'Peças', 'Artes', 'Variações',
+    'Criada em', 'Concluída em', 'Status'
+  ];
+  const rows = list.map(d => {
+    const p = projectById(d.projectId);
+    const cl = p ? (clients.find(c => c.id === p.clientId)?.name || p.client || '') : '';
+    const f = flowById(d.flowId);
+    const st = stageOf(d);
+    const owner = userById(d.ownerId);
+    const totalHours = (d.timeEntries || []).reduce((s, e) => s + (Number(e.hours) || 0), 0);
+    return [
+      d.id, d.name, cl, p?.name || '', f?.name || '', st?.label || '',
+      owner?.name || '', priorityLabel(d.priority) || '',
+      d.stageDueDate || '', d.deadline || '',
+      d.estimatedHours ?? '', totalHours.toFixed(2),
+      d.qtyPieces ?? 0, d.qtyArts ?? 0, d.qtyVariations ?? 0,
+      (d.createdAt || '').slice(0, 10),
+      (d.completedAt || '').slice(0, 10),
+      d.completedAt ? 'Concluída' : (st?.done ? 'Concluída' : 'Em andamento')
+    ];
+  });
+  const ymd = new Date().toISOString().slice(0, 10);
+  downloadCsv(headers, rows, `kastor-demandas-${ymd}.csv`);
+  toast(`${list.length} demanda${list.length === 1 ? '' : 's'} exportada${list.length === 1 ? '' : 's'}.`);
+}
+
+/* Exporta a visão atual de Capacidade (Equipe / Projeto / Cliente).
+   Extrai as métricas direto do DOM renderizado (classes .capacity-row,
+   .capacity-user-name, .capacity-stat) — garante que o CSV bate 1-pra-1
+   com o que o usuário vê. Cada .capacity-stat gera 2 colunas (valor + label). */
+function exportCapacityCsv() {
+  const rowEls = document.querySelectorAll('#capacity-list .capacity-row');
+  if (!rowEls.length) { toast('Não há dados de capacidade pra exportar.', 'warn'); return; }
+  // Descobre quais métricas existem no primeiro row pra montar o header
+  const firstStats = rowEls[0].querySelectorAll('.capacity-stat');
+  const statLabels = [...firstStats].map(s => s.querySelector('.capacity-stat-label')?.textContent.trim() || 'métrica');
+  const isTeam = capacityView === 'team';
+  const nameCol = isTeam ? 'Usuário' : (capacityView === 'project' ? 'Projeto' : 'Cliente');
+  const subCol = isTeam ? 'Função' : 'Detalhe';
+  const headers = [nameCol, subCol, ...statLabels];
+  if (isTeam) headers.push('Utilização');
+  const rows = [];
+  rowEls.forEach(row => {
+    const name = row.querySelector('.capacity-user-name')?.textContent.trim() || '';
+    const sub = row.querySelector('.capacity-user-role')?.textContent.trim() || '';
+    const stats = [...row.querySelectorAll('.capacity-stat')].map(s => s.querySelector('.capacity-stat-value')?.textContent.trim() || '');
+    const util = row.querySelector('.capacity-bar-label')?.childNodes[0]?.textContent.trim() || '';
+    rows.push(isTeam ? [name, sub, ...stats, util] : [name, sub, ...stats]);
+  });
+  const ymd = new Date().toISOString().slice(0, 10);
+  const label = { team: 'equipe', project: 'projetos', client: 'clientes' }[capacityView] || 'capacidade';
+  downloadCsv(headers, rows, `kastor-capacidade-${label}-${ymd}.csv`);
+  toast(`${rows.length} linha${rows.length === 1 ? '' : 's'} exportada${rows.length === 1 ? '' : 's'}.`);
+}
+
 function listFilteredDemands() {
   const q  = norm($('search-input').value.trim());
   const fu = $('filter-user').value;
@@ -4316,11 +4451,12 @@ async function deleteDemand() {
   });
   if (!ok) return;
   try {
-    await api('/demands/' + editingId, 'DELETE');
+    const delId = editingId;
+    await api('/demands/' + delId, 'DELETE');
     closeModal('demand-modal');
     closeModal('detail-modal');
     detailId = null;
-    toast('Demanda excluída.', 'warn');
+    toastWithUndo('Demanda excluída.', () => api('/demands/' + delId + '/undelete', 'POST'));
     await refreshData();
   } catch (e) { toast(e.message, 'error'); }
 }
@@ -4339,6 +4475,7 @@ function showDetail(id) {
   detailId = id;
   detailView = 'main';
   renderDetail();             // render imediato com o que tem em cache
+  draftRestoreComment();       // restaura rascunho de comentário se houver
   openModal('detail-modal');
   navPush('/demands/' + id);  // URL compartilhável
   // Atualiza com a versão fresca do server (pega anexos/comentários que outros
@@ -4354,6 +4491,26 @@ function demandById(id) { return demands.find(x => x.id === id) || null; }
    sem precisar dar F5. Pausa enquanto o usuário está digitando pra
    não perder texto em meio a um comentário. */
 let _detailPollTimer = null;
+async function toggleWatchCurrent() {
+  if (!detailId) return;
+  const d = demandById(detailId);
+  if (!d) return;
+  const isWatching = Array.isArray(d.watchers) && d.watchers.includes(me?.id);
+  try {
+    const r = await api('/demands/' + detailId + (isWatching ? '/unwatch' : '/watch'), 'POST');
+    // Atualiza local + re-render sem esperar o refresh
+    d.watchers = d.watchers || [];
+    if (r.watching) {
+      if (!d.watchers.includes(me.id)) d.watchers.push(me.id);
+      toast('Observando esta demanda.', 'success');
+    } else {
+      d.watchers = d.watchers.filter(id => id !== me.id);
+      toast('Você parou de observar.', 'success');
+    }
+    renderDetail();
+  } catch (e) { toast(e.message || 'Erro', 'error'); }
+}
+
 async function refreshDetailDemand() {
   if (!detailId) return;
   const modal = document.getElementById('detail-modal');
@@ -4487,6 +4644,12 @@ function renderDetail() {
             </div>
           </div>
           <div class="detail-head-actions">
+            ${(() => {
+              const watching = Array.isArray(d.watchers) && d.watchers.includes(me?.id);
+              const cnt = (d.watchers || []).length;
+              const cntBadge = cnt > 0 ? ` <span class="detail-watch-count">${cnt}</span>` : '';
+              return `<button class="detail-icon-btn ${watching ? 'on' : ''}" title="${watching ? 'Você observa esta demanda · clique pra parar' : 'Observar esta demanda (receber notificações de comentários e mudanças de etapa)'}" onclick="toggleWatchCurrent()"><i data-lucide="${watching ? 'eye' : 'eye-off'}" class="ic-sm"></i>${cntBadge}</button>`;
+            })()}
             <button class="detail-icon-btn danger" title="Excluir demanda" onclick="confirmDeleteCurrentDemand()"><i data-lucide="trash-2" class="ic-sm"></i></button>
             <button class="detail-icon-btn ${hasCustomization ? 'on' : ''}" title="Etapas desta demanda" onclick="openDetailStages()"><i data-lucide="list-checks" class="ic-sm"></i></button>
             <button class="detail-icon-btn" title="Histórico" onclick="openDetailHistory()"><i data-lucide="history" class="ic-sm"></i></button>
@@ -4618,7 +4781,7 @@ function renderDetail() {
         <div class="detail-section-heading">Comentários</div>
         <div class="comment-list">${comments || '<div class="hours-empty">Nenhum comentário ainda. Use @ para marcar alguém da equipe.</div>'}</div>
         <div class="comment-compose">
-          <textarea class="form-control" id="comment-input" placeholder="Digite seu comentário — você pode colar (Ctrl+V) ou arrastar imagens aqui" oninput="mentionWatch(this)" onkeydown="mentionKeys(event)"></textarea>
+          <textarea class="form-control" id="comment-input" placeholder="Digite seu comentário — você pode colar (Ctrl+V) ou arrastar imagens aqui" oninput="mentionWatch(this); draftSaveComment(this)" onkeydown="mentionKeys(event)"></textarea>
           <div class="mention-pop" id="mention-pop"></div>
           <div class="comment-compose-bar">
             <div class="comment-attach-btns">
@@ -5360,10 +5523,11 @@ async function confirmDeleteCurrentDemand() {
   });
   if (!ok) return;
   try {
-    await api('/demands/' + d.id, 'DELETE');
+    const delId = d.id;
+    await api('/demands/' + delId, 'DELETE');
     closeModal('detail-modal');
     detailId = null;
-    toast('Demanda excluída.', 'warn');
+    toastWithUndo('Demanda excluída.', () => api('/demands/' + delId + '/undelete', 'POST'));
     await refreshData();
   } catch (e) { toast(e.message, 'error'); }
 }
@@ -5387,6 +5551,19 @@ async function confirmDeleteTimeEntry(eid) {
 }
 
 /* ─── Anexos de Demanda (arquivos, imagens, links) ─── */
+/* Classifica MIME em: image / pdf / video / audio / other. Usado pra decidir
+   se o preview inline vale a pena (image/pdf/video/audio) ou se só mostra ícone. */
+function attPreviewKind(type) {
+  const t = (type || '').toLowerCase();
+  if (t.startsWith('image/')) return 'image';
+  if (t === 'application/pdf') return 'pdf';
+  if (t.startsWith('video/')) return 'video';
+  if (t.startsWith('audio/')) return 'audio';
+  return 'other';
+}
+function attIcon(kind) {
+  return { image: 'image', pdf: 'file-text', video: 'video', audio: 'music', other: 'file' }[kind] || 'file';
+}
 function renderDemandAttList(list, withDelete) {
   if (!list || !list.length) return '<div class="hours-empty" style="text-align:left">Nenhum arquivo anexado.</div>';
   return list.map((a, i) => {
@@ -5398,15 +5575,74 @@ function renderDemandAttList(list, withDelete) {
         ${withDelete ? `<button class="detail-icon-btn danger" title="Remover" onclick="removeDetailAttachment('${esc(a.id)}')"><i data-lucide="x" class="ic-sm"></i></button>` : `<button class="detail-icon-btn danger" title="Remover" onclick="removeFormAttachment('${esc(a.id)}', 'f-attachments-list')"><i data-lucide="x" class="ic-sm"></i></button>`}
       </div>`;
     }
-    const isImg = (a.type || '').startsWith('image/');
-    const icon = isImg ? 'image' : 'file';
+    const kind = attPreviewKind(a.type);
+    const previewable = kind !== 'other';
+    const src = esc(a.data || a.url || '');
+    const nameEsc = esc(a.name);
+    const openCall = previewable
+      ? `openAttPreview('${src}', '${esc(a.type || '')}', '${esc(a.name || '')}')`
+      : null;
+    const thumbOrIcon = kind === 'image'
+      ? `<img src="${a.data || a.url}" class="demand-att-thumb" onclick="${openCall}" style="cursor:zoom-in">`
+      : `<i data-lucide="${attIcon(kind)}" class="ic-sm" style="color:var(--accent-text);${previewable ? 'cursor:pointer' : ''}" ${openCall ? `onclick="${openCall}"` : ''}></i>`;
+    const nameEl = previewable
+      ? `<a href="#" class="demand-att-name" onclick="event.preventDefault();${openCall}">${nameEsc}</a>`
+      : `<a href="${src}" download="${nameEsc}" class="demand-att-name">${nameEsc}</a>`;
     return `<div class="demand-att-item" data-id="${esc(a.id)}">
-      ${isImg ? `<img src="${a.data}" class="demand-att-thumb" onclick="window.open(this.src,'_blank')">` : `<i data-lucide="${icon}" class="ic-sm" style="color:var(--accent-text)"></i>`}
-      <a href="${a.data}" download="${esc(a.name)}" class="demand-att-name">${esc(a.name)}</a>
+      ${thumbOrIcon}
+      ${nameEl}
+      ${previewable ? `<a href="${src}" download="${nameEsc}" class="detail-icon-btn" title="Baixar"><i data-lucide="download" class="ic-sm"></i></a>` : ''}
       ${withDelete ? `<button class="detail-icon-btn danger" title="Remover" onclick="removeDetailAttachment('${esc(a.id)}')"><i data-lucide="x" class="ic-sm"></i></button>` : `<button class="detail-icon-btn danger" title="Remover" onclick="removeFormAttachment('${esc(a.id)}', 'f-attachments-list')"><i data-lucide="x" class="ic-sm"></i></button>`}
     </div>`;
   }).join('');
 }
+
+/* Modal fullscreen de preview — image/pdf/video/audio. Reusa uma <div> única,
+   criada on-demand. Fechar: clique fora, Esc ou botão X. */
+function openAttPreview(src, type, name) {
+  if (!src) return;
+  let el = document.getElementById('att-preview-modal');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'att-preview-modal';
+    el.className = 'att-preview-overlay';
+    el.addEventListener('click', ev => { if (ev.target === el) closeAttPreview(); });
+    document.body.appendChild(el);
+    document.addEventListener('keydown', ev => {
+      if (ev.key === 'Escape' && el.classList.contains('open')) closeAttPreview();
+    });
+  }
+  const kind = attPreviewKind(type);
+  let body = '';
+  if (kind === 'image') {
+    body = `<img src="${src}" alt="${esc(name)}" class="att-preview-image">`;
+  } else if (kind === 'pdf') {
+    body = `<iframe src="${src}" class="att-preview-frame" title="${esc(name)}"></iframe>`;
+  } else if (kind === 'video') {
+    body = `<video src="${src}" controls class="att-preview-video"></video>`;
+  } else if (kind === 'audio') {
+    body = `<audio src="${src}" controls class="att-preview-audio"></audio>`;
+  } else {
+    // fallback — abre em nova aba
+    window.open(src, '_blank'); return;
+  }
+  el.innerHTML = `
+    <div class="att-preview-head">
+      <span class="att-preview-name">${esc(name || 'Anexo')}</span>
+      <a href="${src}" download="${esc(name || '')}" class="detail-icon-btn" title="Baixar"><i data-lucide="download" class="ic-sm"></i></a>
+      <button class="detail-icon-btn" onclick="closeAttPreview()" title="Fechar"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="att-preview-body">${body}</div>`;
+  el.classList.add('open');
+  paintIcons();
+}
+function closeAttPreview() {
+  const el = document.getElementById('att-preview-modal');
+  if (!el) return;
+  el.classList.remove('open');
+  el.innerHTML = ''; // para vídeo/áudio pararem de tocar
+}
+
 function genAttId() { return 'a' + Math.random().toString(36).slice(2,10); }
 
 /* Form attachments (modal de nova demanda) — usa demandAttachments */
@@ -5848,10 +6084,40 @@ async function sendComment() {
   try {
     const upd = await api('/demands/' + detailId + '/comment', 'POST', { text, attachments: pendingAttachments });
     pendingAttachments = [];
+    draftClearComment(detailId); // rascunho salvou seu papel — pode sair
     patchDemand(upd);
     renderDetail();
     toast('Comentário enviado!');
   } catch (e) { toast(e.message, 'error'); }
+}
+
+/* ─── DRAFT DE COMENTÁRIO (autosave em localStorage) ───
+   Salva o rascunho debounced (300ms após parar de digitar) numa key por
+   demanda. Restaura ao abrir o detalhe. Limpa ao enviar ou explicitamente. */
+const _DRAFT_KEY = id => 'kastor-draft-comment-' + id;
+let _draftSaveTimer = null;
+function draftSaveComment(el) {
+  if (!detailId) return;
+  clearTimeout(_draftSaveTimer);
+  _draftSaveTimer = setTimeout(() => {
+    try {
+      if (el.value.trim()) localStorage.setItem(_DRAFT_KEY(detailId), el.value);
+      else localStorage.removeItem(_DRAFT_KEY(detailId));
+    } catch {}
+  }, 300);
+}
+function draftClearComment(id) {
+  try { localStorage.removeItem(_DRAFT_KEY(id)); } catch {}
+}
+function draftRestoreComment() {
+  if (!detailId) return;
+  const ta = document.getElementById('comment-input');
+  if (!ta) return;
+  let saved = '';
+  try { saved = localStorage.getItem(_DRAFT_KEY(detailId)) || ''; } catch {}
+  // Só restaura se o textarea estiver vazio (evita sobrescrever se o usuário
+  // já começou a digitar entre o render e o restore).
+  if (saved && !ta.value) ta.value = saved;
 }
 async function deleteComment(cid) {
   try {
@@ -6171,7 +6437,7 @@ async function confirmDeleteProject(id) {
   if (!ok) return;
   try {
     await api('/projects/' + id + '?force=1', 'DELETE');
-    toast('Projeto excluído definitivamente.', 'warn');
+    toastWithUndo('Projeto excluído (demandas incluídas).', () => api('/projects/' + id + '/undelete', 'POST'));
     await refreshData();
   } catch (e) { toast(e.message, 'error'); }
 }
@@ -6298,7 +6564,7 @@ async function confirmDeleteProjectTyped() {
     await api('/projects/' + id + '?force=1', 'DELETE');
     closeModal('project-delete-modal');
     closeModal('project-modal');
-    toast('Projeto excluído.', 'warn');
+    toastWithUndo('Projeto excluído (demandas incluídas).', () => api('/projects/' + id + '/undelete', 'POST'));
     const ctxClientId = currentClientId;
     await refreshData();
     if (ctxClientId) renderClientDetail(ctxClientId);
@@ -9309,10 +9575,13 @@ function renderProfile() {
   $('profile-f-username').value = me.username;
   $('profile-f-discord-id').value = me.discordId || '';
   $('profile-f-email').value = me.email || '';
-  const prefs = me.emailPrefs || { assigned: true, stage_assigned: true, mention: true };
+  const prefs = me.emailPrefs || { assigned: true, stage_assigned: true, mention: true, watch_stage: true, watch_comment: true, daily_digest: true };
   $('profile-pref-assigned').checked = prefs.assigned !== false;
   $('profile-pref-stage_assigned').checked = prefs.stage_assigned !== false;
   $('profile-pref-mention').checked = prefs.mention !== false;
+  if ($('profile-pref-watch_stage'))   $('profile-pref-watch_stage').checked = prefs.watch_stage !== false;
+  if ($('profile-pref-watch_comment')) $('profile-pref-watch_comment').checked = prefs.watch_comment !== false;
+  if ($('profile-pref-daily_digest'))  $('profile-pref-daily_digest').checked = prefs.daily_digest !== false;
   $('profile-email-smtp-warning').style.display = me._smtpEnabled === false ? '' : 'none';
   fillRoleSelect('profile-f-role', me.role || '');
   // Mesma lógica do sidebar: regex aguenta classes extras (presence-online, etc).
@@ -9506,6 +9775,9 @@ async function saveEmailSettings() {
     assigned: $('profile-pref-assigned').checked,
     stage_assigned: $('profile-pref-stage_assigned').checked,
     mention: $('profile-pref-mention').checked,
+    watch_stage: $('profile-pref-watch_stage')?.checked ?? true,
+    watch_comment: $('profile-pref-watch_comment')?.checked ?? true,
+    daily_digest: $('profile-pref-daily_digest')?.checked ?? true,
   };
   try {
     me = await api('/me', 'PUT', { email: email || null, emailPrefs });
@@ -9756,7 +10028,15 @@ async function bulkRun(op, data, confirmMsg) {
     clearBulkSelection();
     await refreshData();
     const skippedMsg = r.skipped ? ` · ${r.skipped} ignorada${r.skipped === 1 ? '' : 's'}` : '';
-    toast(`${r.updated} demanda${r.updated === 1 ? '' : 's'} atualizada${r.updated === 1 ? '' : 's'}${skippedMsg}`);
+    if (op === 'delete' && r.undoable && Array.isArray(r.deletedIds) && r.deletedIds.length) {
+      const dIds = r.deletedIds;
+      toastWithUndo(
+        `${r.updated} demanda${r.updated === 1 ? '' : 's'} excluída${r.updated === 1 ? '' : 's'}${skippedMsg}`,
+        () => Promise.all(dIds.map(id => api('/demands/' + id + '/undelete', 'POST').catch(() => {})))
+      );
+    } else {
+      toast(`${r.updated} demanda${r.updated === 1 ? '' : 's'} atualizada${r.updated === 1 ? '' : 's'}${skippedMsg}`);
+    }
   } catch (e) {
     toast(e.message || 'Erro ao aplicar ação em lote', 'error');
   }
@@ -11784,11 +12064,12 @@ function updateClientDeleteBtnState() {
 async function confirmDeleteClient() {
   if (!editingClientId) return;
   try {
-    await api('/clients/' + editingClientId, 'DELETE');
+    const delId = editingClientId;
+    await api('/clients/' + delId, 'DELETE');
     closeModal('client-delete-modal');
     closeModal('client-modal');
     editingClientId = null;
-    toast('Cliente excluído.', 'warn');
+    toastWithUndo('Cliente excluído.', () => api('/clients/' + delId + '/undelete', 'POST'));
     await refreshData();
     closeClientDetail();
   } catch (e) {
@@ -12510,8 +12791,19 @@ async function saveSchedule() {
    fechamento explícito (logout).
    Debounce: várias mudanças em rajada (ex.: bulk) viram 1 refetch. */
 let sseConnection = null;
-let _sseRefetchPending = new Set();
+let _sseEvents = []; // fila de eventos crus pra flush em janela curta
 let _sseRefetchTimer = null;
+
+// Mapa entity → { arr: nome da variável global (só pra doc), refetchList: () => Promise, singularPath: (id) => string }
+const SSE_ENTITY_MAP = {
+  demand:    { get: () => demands,     set: v => { demands = v; },     path: id => '/demands/' + id,    listPath: '/demands' },
+  schedule:  { get: () => schedules,   set: v => { schedules = v; },   path: id => '/schedules/' + id,  listPath: '/schedules' },
+  client:    { get: () => clients,     set: v => { clients = v; },     path: id => '/clients/' + id,    listPath: '/clients' },
+  project:   { get: () => projects,    set: v => { projects = v; },    path: id => '/projects/' + id,   listPath: '/projects' },
+  flow:      { get: () => flows,       set: v => { flows = v; },       path: id => '/flows/' + id,      listPath: '/flows' },
+  recurring: { get: () => recurrings,  set: v => { recurrings = v; },  path: id => '/recurrings/' + id, listPath: '/recurrings' },
+  lista:     { get: () => listas,      set: v => { listas = v; },      path: id => '/listas/' + id,     listPath: '/listas' },
+};
 
 function startRealtimeSync() {
   if (sseConnection) return; // já conectado
@@ -12536,30 +12828,63 @@ function stopRealtimeSync() {
 function onSseMessage(ev) {
   let data; try { data = JSON.parse(ev.data); } catch { return; }
   if (!data || !data.entity) return;
-  // Coalesce: várias mudanças em janela curta viram 1 refetch
-  _sseRefetchPending.add(data.entity);
+  _sseEvents.push(data);
   clearTimeout(_sseRefetchTimer);
   _sseRefetchTimer = setTimeout(flushSseRefetch, 250);
 }
 
+/* Aplicação granular:
+   - op=delete   → remove local (sem network)
+   - op=create/update com id → GET singular → substitui/adiciona no array
+   - op=bulk ou sem id → refetch lista inteira (fallback)
+   Coalesce: eventos com mesmo entity+id em janela curta são deduplicados. */
 async function flushSseRefetch() {
-  const pending = [..._sseRefetchPending];
-  _sseRefetchPending.clear();
+  const events = _sseEvents.slice();
+  _sseEvents.length = 0;
+  // Dedup — última operação por (entity,id) vence
+  const dedup = new Map();
+  const fullRefetch = new Set(); // entities que precisam refetch da lista inteira
+  let demandTouched = false;
+  for (const e of events) {
+    if (e.entity === 'demand') demandTouched = true;
+    const spec = SSE_ENTITY_MAP[e.entity];
+    if (!spec) continue;
+    if (!e.id || e.op === 'bulk') { fullRefetch.add(e.entity); continue; }
+    dedup.set(e.entity + ':' + e.id, e);
+  }
   const tasks = [];
-  for (const entity of pending) {
-    if (entity === 'demand')   tasks.push(api('/demands').then(d => { demands = d; }).catch(()=>{}));
-    if (entity === 'schedule') tasks.push(api('/schedules').then(s => { schedules = s; }).catch(()=>{}));
-    if (entity === 'client')   tasks.push(api('/clients').then(c => { clients = c; }).catch(()=>{}));
-    if (entity === 'project')  tasks.push(api('/projects').then(p => { projects = p; }).catch(()=>{}));
-    if (entity === 'flow')     tasks.push(api('/flows').then(f => { flows = f; }).catch(()=>{}));
-    if (entity === 'recurring') tasks.push(api('/recurrings').then(r => { recurrings = r; }).catch(()=>{}));
-    if (entity === 'lista') tasks.push(api('/listas').then(l => { listas = l; }).catch(()=>{}));
+  // 1) Refetches em lote (fallback pra bulk/sem-id)
+  for (const entity of fullRefetch) {
+    const spec = SSE_ENTITY_MAP[entity];
+    tasks.push(api(spec.listPath).then(v => spec.set(v)).catch(() => {}));
+  }
+  // 2) Operações granulares
+  for (const e of dedup.values()) {
+    const spec = SSE_ENTITY_MAP[e.entity];
+    if (e.op === 'delete') {
+      spec.set(spec.get().filter(x => x.id !== e.id));
+    } else {
+      tasks.push(
+        api(spec.path(e.id))
+          .then(entity => {
+            const arr = spec.get();
+            const idx = arr.findIndex(x => x.id === e.id);
+            if (idx >= 0) arr[idx] = entity;
+            else arr.push(entity);
+            spec.set(arr);
+          })
+          .catch(err => {
+            // Se o GET singular deu 404 (perdeu acesso ao workspace, por ex.), tira da lista local
+            if (String(err.message || '').match(/não encontrad/i)) {
+              spec.set(spec.get().filter(x => x.id !== e.id));
+            }
+          })
+      );
+    }
   }
   await Promise.all(tasks);
-  // Re-render só o que afeta a página atual — barato e correto
   renderCurrent();
-  // Se modal de detalhe da demanda está aberto, refresca também
-  if (pending.includes('demand') && detailId && document.getElementById('detail-modal')?.classList.contains('open')) {
+  if (demandTouched && detailId && document.getElementById('detail-modal')?.classList.contains('open')) {
     refreshDetailDemand();
   }
 }

@@ -59,6 +59,40 @@ function defaultDB() {
 async function isFirstInstall() { return !(await store.getKv('install:completed')); }
 async function markInstallComplete() { await store.setKv('install:completed', new Date().toISOString()); }
 
+/* ─── SOFT DELETE (com undo em ~10s no cliente) ───
+   Marca a entidade com deletedAt em vez de remover. Listagens filtram out.
+   `PurgeJob` remove definitivamente após UNDO_PURGE_MS.
+   Aplicado só em clients/projects/demands por enquanto — ações destrutivas
+   que o usuário mais reclama de "sem querer". */
+const UNDO_PURGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias
+function notDeleted(e) { return !e || !e.deletedAt; }
+function softDelete(type, entity, userId) {
+  entity.deletedAt = nowISO();
+  entity.deletedBy = userId || null;
+  saveEntity(type, entity);
+}
+function undelete(type, entity) {
+  delete entity.deletedAt;
+  delete entity.deletedBy;
+  saveEntity(type, entity);
+}
+function runSoftDeletePurge() {
+  const cutoff = Date.now() - UNDO_PURGE_MS;
+  let purged = 0;
+  for (const type of ['clients', 'projects', 'demands']) {
+    const arr = db[type] || [];
+    const toRemove = arr.filter(e => e.deletedAt && Date.parse(e.deletedAt) < cutoff);
+    for (const e of toRemove) {
+      removeEntity(type, e.id);
+      purged++;
+    }
+    if (toRemove.length) {
+      db[type] = arr.filter(e => !e.deletedAt || Date.parse(e.deletedAt) >= cutoff);
+    }
+  }
+  if (purged > 0) console.log(`  [soft-delete-purge] ${purged} entidade(s) removida(s) definitivamente após ${UNDO_PURGE_MS / 86400000}d`);
+}
+
 async function loadDB() {
   // Cria schema (idempotente) — CREATE TABLE IF NOT EXISTS.
   await store.init();
@@ -412,9 +446,12 @@ const EMAIL_EVENT_LABELS = {
   assigned:       'Atribuído como responsável',
   stage_assigned: 'Responsável por etapa (auto-atribuição)',
   mention:        'Mencionado em comentário',
+  watch_stage:    'Movimento de etapa em demanda que observo',
+  watch_comment:  'Novo comentário em demanda que observo',
+  daily_digest:   'Resumo diário (seg-sex, 8h) das minhas demandas',
 };
 function defaultEmailPrefs() {
-  return { assigned: true, stage_assigned: true, mention: true };
+  return { assigned: true, stage_assigned: true, mention: true, watch_stage: true, watch_comment: true, daily_digest: true };
 }
 function isValidEmail(e) {
   if (typeof e !== 'string') return false;
@@ -476,6 +513,16 @@ function buildEmailForNotification(type, ctx) {
       subject = `[Kastor] Mencionado em: ${demand.name}`;
       headline = '💬 Você foi mencionado';
       body = `<p style="margin:0 0 8px">${trigger ? `<strong>${escHtml(trigger.name)}</strong> mencionou você em <strong>${escHtml(demand.name)}</strong>:` : `Você foi mencionado em <strong>${escHtml(demand.name)}</strong>:`}</p><blockquote style="border-left:3px solid #7A00FF;padding:10px 14px;margin:12px 0;color:#444;background:#f5f3ff;border-radius:0 4px 4px 0">${escHtml((commentText || '').slice(0, 500))}</blockquote>`;
+      break;
+    case 'watch_stage':
+      subject = `[Kastor] Etapa avançou (você observa): ${demand.name}`;
+      headline = '👀 Movimento em demanda que você observa';
+      body = `<p style="margin:0 0 8px">A demanda <strong>${escHtml(demand.name)}</strong> avançou para a etapa <strong>${escHtml(stageName || '—')}</strong>.</p>`;
+      break;
+    case 'watch_comment':
+      subject = `[Kastor] Novo comentário (você observa): ${demand.name}`;
+      headline = '👀 Novo comentário em demanda que você observa';
+      body = `<p style="margin:0 0 8px">${trigger ? `<strong>${escHtml(trigger.name)}</strong> comentou em ` : 'Novo comentário em '}<strong>${escHtml(demand.name)}</strong>:</p><blockquote style="border-left:3px solid #7A00FF;padding:10px 14px;margin:12px 0;color:#444;background:#f5f3ff;border-radius:0 4px 4px 0">${escHtml((commentText || '').slice(0, 500))}</blockquote>`;
       break;
     default:
       return null;
@@ -783,6 +830,51 @@ function eventRelevantToTarget(event, ctx, targetUserId) {
   return false;
 }
 
+/* SSRF guard — bloqueia webhooks apontando pra rede interna ou metadata endpoints.
+   Cobre: loopback (127.0.0.0/8, ::1), link-local (169.254.0.0/16 → IMDS AWS), IPs
+   privados IPv4 (10.*, 172.16-31.*, 192.168.*), IPv6 unique-local (fc00::/7),
+   hostnames sem ponto (ex.: "postgres", "localhost", "redis"). */
+function isPrivateOrLocalHostname(hostname) {
+  if (!hostname) return true;
+  const h = hostname.toLowerCase();
+  if (h === 'localhost' || !h.includes('.')) return true; // "localhost", "redis", "postgres"…
+  // IPv4
+  const v4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const [a, b] = [parseInt(v4[1]), parseInt(v4[2])];
+    if (a === 127) return true;
+    if (a === 10) return true;
+    if (a === 169 && b === 254) return true; // link-local + IMDS AWS
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 0) return true;
+    return false;
+  }
+  // IPv6 abreviado
+  if (h === '::1' || h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe80')) return true;
+  return false;
+}
+function isSafeWebhookUrl(rawUrl) {
+  try {
+    const u = new URL(rawUrl);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    if (isPrivateOrLocalHostname(u.hostname)) return false;
+    return true;
+  } catch { return false; }
+}
+
+/* fetch com timeout via AbortController. Sem isso, um webhook lento segura
+   uma conexão do pool pra sempre. 10s cobre 99% dos casos legítimos. */
+async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function triggerWebhook(event, ctx) {
   if (!ctx.demand) return;
   const wsId = ctx.demand.workspaceId;
@@ -795,12 +887,18 @@ async function triggerWebhook(event, ctx) {
   );
   if (!hooks.length) return;
   for (const hook of hooks) {
+    if (!isSafeWebhookUrl(hook.url)) {
+      hook.lastError = 'URL bloqueada (rede interna, loopback ou protocolo inválido)';
+      hook.lastStatus = 0;
+      saveEntity('webhooks', hook);
+      continue;
+    }
     const hookCtx = { ...ctx, targetUserId: hook.targetUserId || null };
     const payload = hook.format === 'discord'
       ? buildDiscordPayload(event, hookCtx)
       : buildRawPayload(event, hookCtx);
     try {
-      const resp = await fetch(hook.url, {
+      const resp = await fetchWithTimeout(hook.url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -809,12 +907,13 @@ async function triggerWebhook(event, ctx) {
       hook.lastStatus = resp.status;
       hook.lastError = resp.ok ? null : `HTTP ${resp.status}`;
     } catch (e) {
-      hook.lastError = String(e.message || e).slice(0, 200);
+      const msg = e.name === 'AbortError' ? 'timeout (>10s)' : String(e.message || e);
+      hook.lastError = msg.slice(0, 200);
       hook.lastStatus = 0;
-      console.error(`[webhook] erro ao disparar ${event} → ${hook.url}: ${e.message}`);
+      console.error(`[webhook] erro ao disparar ${event} → ${hook.url}: ${msg}`);
     }
+    saveEntity('webhooks', hook);
   }
-  saveDB();
 }
 
 // Atalho assíncrono para disparar sem bloquear a request
@@ -897,23 +996,50 @@ app.use(express.static(path.join(__dirname, 'public'), {
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
+/* Whitelist estrita de MIMEs. NÃO inclui:
+   - text/html, application/xhtml+xml → XSS same-origin
+   - image/svg+xml → pode carregar <script>
+   - application/xml, text/xml → XXE em alguns viewers
+   Extensão do arquivo é DERIVADA do MIME (não confiar em user input),
+   evitando "envio evil.png com Content-Type text/html". */
+const ALLOWED_MIME_EXT = {
+  'image/png':  'png',
+  'image/jpeg': 'jpg',
+  'image/gif':  'gif',
+  'image/webp': 'webp',
+  'application/pdf': 'pdf',
+  'application/msword': 'doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.ms-excel': 'xls',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'application/vnd.ms-powerpoint': 'ppt',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+  'text/plain': 'txt',
+  'text/csv':   'csv',
+  'text/markdown': 'md',
+};
+const UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
+
 function saveUploadFromDataUri(dataUri, originalName) {
   if (typeof dataUri !== 'string') return null;
   const m = dataUri.match(/^data:([^;]+);base64,(.+)$/);
   if (!m) return null;
-  const mime = m[1];
+  const mime = m[1].toLowerCase();
+  const ext = ALLOWED_MIME_EXT[mime];
+  if (!ext) return null; // MIME não permitido
   const buf = Buffer.from(m[2], 'base64');
-  if (!buf.length || buf.length > 10 * 1024 * 1024) return null;
-  const safeName = String(originalName || 'file').replace(/[^\w.\-]/g, '_').slice(0, 80) || 'file';
-  // Adiciona extensão por MIME se o nome não trouxer
-  let withExt = safeName;
-  if (!/\.[a-z0-9]{2,5}$/i.test(safeName)) {
-    const ext = ({ 'image/jpeg':'.jpg','image/png':'.png','image/gif':'.gif','image/webp':'.webp','image/svg+xml':'.svg','application/pdf':'.pdf' })[mime] || '';
-    withExt = safeName + ext;
-  }
-  const filename = uid() + '-' + withExt;
+  if (!buf.length || buf.length > UPLOAD_MAX_BYTES) return null;
+  // Nome sanitizado + extensão FORÇADA pelo MIME (ignora extensão original).
+  const rawBase = String(originalName || 'file').replace(/\.[a-z0-9]{1,10}$/i, '');
+  const safeBase = rawBase.replace(/[^\w.\-]/g, '_').slice(0, 80) || 'file';
+  const filename = uid() + '-' + safeBase + '.' + ext;
   fs.writeFileSync(path.join(UPLOADS_DIR, filename), buf);
-  return { url: '/uploads/' + filename, name: originalName || withExt, type: mime, size: buf.length };
+  return {
+    url: '/uploads/' + filename,
+    name: originalName || (safeBase + '.' + ext),
+    type: mime,
+    size: buf.length
+  };
 }
 
 // POST /api/uploads — aceita { name, type, data: 'data:image/...;base64,...' }
@@ -921,7 +1047,11 @@ app.post('/api/uploads', (req, res, next) => requireAuth(req, res, next), (req, 
   const { name, data } = req.body || {};
   if (!data) return res.status(400).json({ error: 'data (data URI base64) é obrigatório' });
   const saved = saveUploadFromDataUri(data, name);
-  if (!saved) return res.status(400).json({ error: 'data URI inválido ou arquivo > 10MB' });
+  if (!saved) {
+    return res.status(400).json({
+      error: 'Arquivo inválido: tipo não permitido, tamanho maior que 10MB ou data URI mal formado.'
+    });
+  }
   res.json(saved);
 });
 
@@ -929,16 +1059,38 @@ app.post('/api/uploads', (req, res, next) => requireAuth(req, res, next), (req, 
 app.use('/uploads', requireAuth, express.static(UPLOADS_DIR, { index: false, dotfiles: 'deny' }));
 
 /* ── AUTENTICAÇÃO ── */
-/* Rate limit em memória para /api/login — 5 falhas por minuto por IP.
-   Reseta o contador em sucesso. Suficiente pra travar brute force comum
-   sem precisar de dep externa. Em deploys multi-instância seria preciso
-   migrar pra Redis, mas single-instance basta. */
+/* Rate limit em memória — 5 tentativas por minuto por IP.
+   Usado em /api/login (falha zera em sucesso), /api/forgot-password e
+   /api/reset-password (todas as tentativas contam). Em deploys multi-instância
+   seria preciso migrar pra Redis, mas single-instance basta. */
 const _loginAttempts = new Map(); // ip → { count, resetAt }
+const _pwResetAttempts = new Map(); // ip → { count, resetAt }
 const LOGIN_MAX_PER_MIN = 5;
+const PWRESET_MAX_PER_MIN = 5;
 function clientIp(req) {
   const fwd = (req.headers['x-forwarded-for'] || '').split(',')[0].trim();
   return fwd || req.ip || req.socket?.remoteAddress || 'unknown';
 }
+/* Middleware genérico de rate limit por IP. `bucket` = Map local.
+   Retorna 429 com Retry-After quando estoura; senão incrementa e chama next(). */
+function makeRateLimit(bucket, max, label = 'requisições') {
+  return (req, res, next) => {
+    const ip = clientIp(req);
+    const now = Date.now();
+    let rec = bucket.get(ip);
+    if (!rec || now > rec.resetAt) rec = { count: 0, resetAt: now + 60000 };
+    if (rec.count >= max) {
+      const retryAfter = Math.ceil((rec.resetAt - now) / 1000);
+      res.set('Retry-After', String(retryAfter));
+      bucket.set(ip, rec);
+      return res.status(429).json({ error: `Muitas ${label}. Aguarde ${retryAfter}s antes de tentar de novo.`, retryAfter });
+    }
+    rec.count++;
+    bucket.set(ip, rec);
+    next();
+  };
+}
+const rateLimitPwReset = makeRateLimit(_pwResetAttempts, PWRESET_MAX_PER_MIN, 'tentativas');
 app.post('/api/login', (req, res) => {
   const ip = clientIp(req);
   const now = Date.now();
@@ -984,7 +1136,7 @@ app.post('/api/logout', requireAuth, (req, res) => {
    Não vaza se o e-mail existe (sempre 200 ok) pra dificultar enumeração.
    Token expira em 1h, é uso único, e ao concluir invalida todas as
    sessões ativas daquele usuário (auth.dropTokensFor). */
-app.post('/api/forgot-password', async (req, res) => {
+app.post('/api/forgot-password', rateLimitPwReset, async (req, res) => {
   const { email } = req.body || {};
   if (!email || !isValidEmail(email)) return res.json({ ok: true });
   if (!mailEnabled()) {
@@ -1015,7 +1167,7 @@ app.post('/api/forgot-password', async (req, res) => {
   setImmediate(() => sendEmail(user.email, subject, html, text));
   res.json({ ok: true });
 });
-app.post('/api/reset-password', async (req, res) => {
+app.post('/api/reset-password', rateLimitPwReset, async (req, res) => {
   const { token, newPassword } = req.body || {};
   if (!token || typeof newPassword !== 'string') return res.status(400).json({ error: 'Token e nova senha são obrigatórios.' });
   if (newPassword.length < 6) return res.status(400).json({ error: 'A nova senha deve ter pelo menos 6 caracteres.' });
@@ -1102,7 +1254,7 @@ app.put('/api/me', requireAuth, (req, res) => {
     }
     auth.setPassword(u.id, newPassword);
   }
-  saveDB();
+  saveEntity('users', u);
   res.json(publicUser(u));
 });
 
@@ -1110,7 +1262,7 @@ app.put('/api/me', requireAuth, (req, res) => {
    apenas atualiza lastSeen pra que outros usuários vejam o dot verde. */
 app.post('/api/me/ping', requireAuth, (req, res) => {
   req.user.lastSeen = nowISO();
-  saveDB();
+  saveEntity('users', req.user);
   res.json({ ok: true, lastSeen: req.user.lastSeen });
 });
 
@@ -1357,9 +1509,12 @@ app.post('/api/workspaces', requireAuth, adminOnly, (req, res) => {
   if (!String(name || '').trim()) return res.status(400).json({ error: 'Nome do workspace é obrigatório' });
   const w = { id: uid(), name: String(name).trim(), color: color || '#7A00FF', createdAt: nowISO() };
   db.workspaces.push(w);
+  saveEntity('workspaces', w);
   // o admin que criou passa a ter acesso
-  if (!req.user.workspaces.includes(w.id)) req.user.workspaces.push(w.id);
-  saveDB();
+  if (!req.user.workspaces.includes(w.id)) {
+    req.user.workspaces.push(w.id);
+    saveEntity('users', req.user);
+  }
   res.status(201).json(w);
 });
 
@@ -1369,7 +1524,7 @@ app.put('/api/workspaces/:id', requireAuth, adminOnly, (req, res) => {
   const { name, color } = req.body || {};
   if (typeof name === 'string' && name.trim()) w.name = name.trim();
   if (color) w.color = color;
-  saveDB();
+  saveEntity('workspaces', w);
   res.json(w);
 });
 
@@ -1377,10 +1532,17 @@ app.delete('/api/workspaces/:id', requireAuth, adminOnly, (req, res) => {
   if (db.workspaces.length <= 1) return res.status(400).json({ error: 'É preciso manter pelo menos um workspace' });
   const hasProjects = db.projects.some(p => p.workspaceId === req.params.id);
   if (hasProjects) return res.status(409).json({ error: 'Este workspace possui projetos. Mova ou exclua-os antes.' });
+  const orphanFlows = db.flows.filter(f => f.workspaceId === req.params.id);
   db.workspaces = db.workspaces.filter(x => x.id !== req.params.id);
   db.flows = db.flows.filter(f => f.workspaceId !== req.params.id);
-  db.users.forEach(u => { u.workspaces = (u.workspaces || []).filter(id => id !== req.params.id); });
-  saveDB();
+  removeEntity('workspaces', req.params.id);
+  orphanFlows.forEach(f => removeEntity('flows', f.id));
+  db.users.forEach(u => {
+    if ((u.workspaces || []).includes(req.params.id)) {
+      u.workspaces = u.workspaces.filter(id => id !== req.params.id);
+      saveEntity('users', u);
+    }
+  });
   res.json({ ok: true });
 });
 
@@ -1414,7 +1576,7 @@ app.post('/api/users', requireAuth, adminOnly, (req, res) => {
   };
   db.users.push(user);
   auth.setPassword(user.id, password);
-  saveDB();
+  saveEntity('users', user);
   res.status(201).json(publicUser(user));
 });
 
@@ -1462,7 +1624,7 @@ app.put('/api/users/:id', requireAuth, adminOnly, (req, res) => {
     if (String(password).length < 6) return res.status(400).json({ error: 'A senha deve ter pelo menos 6 caracteres' });
     auth.setPassword(u.id, password);
   }
-  saveDB();
+  saveEntity('users', u);
   res.json(publicUser(u));
 });
 
@@ -1478,7 +1640,7 @@ app.post('/api/roles', requireAuth, adminOnly, (req, res) => {
   }
   const r = { id: uid(), name: trimmed, createdAt: nowISO() };
   db.roles.push(r);
-  saveDB();
+  saveEntity('roles', r);
   res.status(201).json(r);
 });
 
@@ -1494,9 +1656,14 @@ app.put('/api/roles/:id', requireAuth, adminOnly, (req, res) => {
     const oldName = r.name;
     r.name = trimmed;
     // Atualiza usuários que tinham a função antiga
-    db.users.forEach(u => { if (u.role === oldName) u.role = trimmed; });
+    db.users.forEach(u => {
+      if (u.role === oldName) {
+        u.role = trimmed;
+        saveEntity('users', u);
+      }
+    });
   }
-  saveDB();
+  saveEntity('roles', r);
   res.json(r);
 });
 
@@ -1504,7 +1671,7 @@ app.delete('/api/roles/:id', requireAuth, adminOnly, (req, res) => {
   const r = db.roles.find(x => x.id === req.params.id);
   if (!r) return res.status(404).json({ error: 'Função não encontrada' });
   db.roles = db.roles.filter(x => x.id !== req.params.id);
-  saveDB();
+  removeEntity('roles', req.params.id);
   res.json({ ok: true });
 });
 
@@ -1535,7 +1702,7 @@ app.post('/api/templates', requireAuth, (req, res) => {
     createdAt: nowISO()
   };
   db.templates.push(t);
-  saveDB();
+  saveEntity('templates', t);
   res.status(201).json(t);
 });
 
@@ -1552,7 +1719,7 @@ app.put('/api/templates/:id', requireAuth, (req, res) => {
   if (b.estimatedHours !== undefined) t.estimatedHours = Number(b.estimatedHours) > 0 ? Math.round(Number(b.estimatedHours) * 100) / 100 : null;
   if (b.priority !== undefined) t.priority = [1,2,3,4].includes(Number(b.priority)) ? Number(b.priority) : 3;
   if (b.attachments !== undefined) t.attachments = sanitizeAttachments(b.attachments);
-  saveDB();
+  saveEntity('templates', t);
   res.json(t);
 });
 
@@ -1560,7 +1727,7 @@ app.delete('/api/templates/:id', requireAuth, (req, res) => {
   const t = db.templates.find(x => x.id === req.params.id);
   if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Template não encontrado' });
   db.templates = db.templates.filter(x => x.id !== req.params.id);
-  saveDB();
+  removeEntity('templates', req.params.id);
   res.json({ ok: true });
 });
 
@@ -1570,7 +1737,12 @@ app.delete('/api/templates/:id', requireAuth, (req, res) => {
    projetos. Exclusão é protegida por digitação do nome no frontend. */
 app.get('/api/clients', requireAuth, (req, res) => {
   const ids = wsIdsFor(req.user);
-  res.json(db.clients.filter(c => ids.includes(c.workspaceId)));
+  res.json(db.clients.filter(c => ids.includes(c.workspaceId) && notDeleted(c)));
+});
+app.get('/api/clients/:id', requireAuth, (req, res) => {
+  const c = db.clients.find(x => x.id === req.params.id);
+  if (!c || !canAccessWs(req.user, c.workspaceId) || !notDeleted(c)) return res.status(404).json({ error: 'Cliente não encontrado' });
+  res.json(c);
 });
 
 function buildClientPayload(body, base) {
@@ -1671,18 +1843,24 @@ app.put('/api/clients/:id', requireAuth, (req, res) => {
 
 app.delete('/api/clients/:id', requireAuth, (req, res) => {
   const c = db.clients.find(x => x.id === req.params.id);
-  if (!c || !canAccessWs(req.user, c.workspaceId)) return res.status(404).json({ error: 'Cliente não encontrado' });
-  const linkedProjects = db.projects.filter(p => p.clientId === c.id);
+  if (!c || !canAccessWs(req.user, c.workspaceId) || !notDeleted(c)) return res.status(404).json({ error: 'Cliente não encontrado' });
+  const linkedProjects = db.projects.filter(p => p.clientId === c.id && notDeleted(p));
   if (linkedProjects.length) {
     return res.status(409).json({
       error: `Este cliente tem ${linkedProjects.length} projeto(s) vinculado(s). Exclua ou mova os projetos antes.`
     });
   }
-  const wsId = c.workspaceId;
-  db.clients = db.clients.filter(x => x.id !== c.id);
-  removeEntity('clients', c.id);
-  broadcastChange('client', 'delete', { id: c.id, workspaceId: wsId, byUserId: req.user.id });
-  res.json({ ok: true });
+  softDelete('clients', c, req.user.id);
+  broadcastChange('client', 'delete', { id: c.id, workspaceId: c.workspaceId, byUserId: req.user.id });
+  res.json({ ok: true, undoable: true, purgeAt: Date.parse(c.deletedAt) + UNDO_PURGE_MS });
+});
+app.post('/api/clients/:id/undelete', requireAuth, (req, res) => {
+  // Aceita entidade mesmo deletada — precisa achar pra restaurar.
+  const c = db.clients.find(x => x.id === req.params.id);
+  if (!c || !canAccessWs(req.user, c.workspaceId) || !c.deletedAt) return res.status(404).json({ error: 'Cliente não encontrado ou não estava excluído' });
+  undelete('clients', c);
+  broadcastChange('client', 'update', { id: c.id, workspaceId: c.workspaceId, byUserId: req.user.id });
+  res.json(c);
 });
 
 /* ── MODELOS DE CLIENTE (onboarding em 1 clique) ──
@@ -1833,7 +2011,12 @@ app.post('/api/clients/from-template', requireAuth, (req, res) => {
 /* ── PROJETOS (filtrados por workspace acessível) ── */
 app.get('/api/projects', requireAuth, (req, res) => {
   const ids = wsIdsFor(req.user);
-  res.json(db.projects.filter(p => ids.includes(p.workspaceId)));
+  res.json(db.projects.filter(p => ids.includes(p.workspaceId) && notDeleted(p)));
+});
+app.get('/api/projects/:id', requireAuth, (req, res) => {
+  const p = db.projects.find(x => x.id === req.params.id);
+  if (!p || !canAccessWs(req.user, p.workspaceId) || !notDeleted(p)) return res.status(404).json({ error: 'Projeto não encontrado' });
+  res.json(p);
 });
 
 app.post('/api/projects', requireAuth, (req, res) => {
@@ -1942,30 +2125,42 @@ app.put('/api/projects/:id', requireAuth, (req, res) => {
   }
   if (workspaceId && canAccessWs(req.user, workspaceId)) {
     p.workspaceId = workspaceId;
-    db.flows.forEach(f => { if (f.projectId === p.id) f.workspaceId = workspaceId; });
-    db.demands.forEach(d => { if (d.projectId === p.id) d.workspaceId = workspaceId; });
+    db.flows.forEach(f => { if (f.projectId === p.id) { f.workspaceId = workspaceId; saveEntity('flows', f); } });
+    db.demands.forEach(d => { if (d.projectId === p.id) { d.workspaceId = workspaceId; saveEntity('demands', d); } });
   }
-  saveDB();
+  saveEntity('projects', p);
   broadcastChange('project', 'update', { id: p.id, workspaceId: p.workspaceId, byUserId: req.user.id });
   res.json(p);
 });
 
 app.delete('/api/projects/:id', requireAuth, (req, res) => {
   const p = db.projects.find(x => x.id === req.params.id);
-  if (!p || !canAccessWs(req.user, p.workspaceId)) return res.status(404).json({ error: 'Projeto não encontrado' });
+  if (!p || !canAccessWs(req.user, p.workspaceId) || !notDeleted(p)) return res.status(404).json({ error: 'Projeto não encontrado' });
   const force = req.query.force === '1' || req.body?.force === true;
-  const linkedDemands = db.demands.filter(d => d.projectId === req.params.id);
+  const linkedDemands = db.demands.filter(d => d.projectId === req.params.id && notDeleted(d));
   if (linkedDemands.length && !force) {
     return res.status(409).json({ error: `Este projeto possui ${linkedDemands.length} demanda(s) vinculada(s).`, demands: linkedDemands.length });
   }
-  const wsId = p.workspaceId;
-  // Cascade: remove demandas, fluxos exclusivos e o próprio projeto
-  db.demands = db.demands.filter(d => d.projectId !== req.params.id);
-  db.flows = db.flows.filter(f => f.projectId !== req.params.id);
-  db.projects = db.projects.filter(x => x.id !== req.params.id);
-  saveDB();
-  broadcastChange('project', 'delete', { id: req.params.id, workspaceId: wsId, byUserId: req.user.id });
-  res.json({ ok: true, deleted: { demands: linkedDemands.length } });
+  // Soft delete em cascata: projeto + demandas vinculadas. Fluxos exclusivos ficam
+  // como estão (não deletamos hard) — reaparecem se o projeto for restaurado.
+  softDelete('projects', p, req.user.id);
+  linkedDemands.forEach(d => softDelete('demands', d, req.user.id));
+  broadcastChange('project', 'delete', { id: req.params.id, workspaceId: p.workspaceId, byUserId: req.user.id });
+  res.json({ ok: true, deleted: { demands: linkedDemands.length }, undoable: true, purgeAt: Date.parse(p.deletedAt) + UNDO_PURGE_MS });
+});
+app.post('/api/projects/:id/undelete', requireAuth, (req, res) => {
+  const p = db.projects.find(x => x.id === req.params.id);
+  if (!p || !canAccessWs(req.user, p.workspaceId) || !p.deletedAt) return res.status(404).json({ error: 'Projeto não encontrado ou não estava excluído' });
+  // Restaura projeto + demandas que caíram junto na mesma janela (~5s)
+  const projDelTs = Date.parse(p.deletedAt);
+  undelete('projects', p);
+  db.demands.forEach(d => {
+    if (d.projectId === p.id && d.deletedAt && Math.abs(Date.parse(d.deletedAt) - projDelTs) < 5000) {
+      undelete('demands', d);
+    }
+  });
+  broadcastChange('project', 'update', { id: p.id, workspaceId: p.workspaceId, byUserId: req.user.id });
+  res.json(p);
 });
 
 /* Duplicar projeto (+ fluxo exclusivo) */
@@ -1977,16 +2172,18 @@ app.post('/api/projects/:id/duplicate', requireAuth, (req, res) => {
     client: p.client, color: p.color, active: true, createdAt: nowISO()
   };
   db.projects.push(copy);
+  saveEntity('projects', copy);
   // duplica os fluxos exclusivos do projeto original
   db.flows.filter(f => f.projectId === p.id).forEach(f => {
-    db.flows.push({
+    const nf = {
       id: uid(), workspaceId: f.workspaceId, projectId: copy.id,
       name: f.name, demandType: f.demandType,
       stages: f.stages.map(s => ({ ...s, id: uid() })),
       createdAt: nowISO()
-    });
+    };
+    db.flows.push(nf);
+    saveEntity('flows', nf);
   });
-  saveDB();
   res.status(201).json(copy);
 });
 
@@ -1994,6 +2191,14 @@ app.post('/api/projects/:id/duplicate', requireAuth, (req, res) => {
 app.get('/api/flows', requireAuth, (req, res) => {
   const ids = wsIdsFor(req.user);
   res.json(db.flows.filter(f => ids.includes(f.workspaceId)));
+});
+
+/* GETs singulares — usados pelo SSE do cliente pra refetch pontual (não a lista inteira).
+   Cada um valida acesso ao workspace da entidade. */
+app.get('/api/flows/:id', requireAuth, (req, res) => {
+  const f = db.flows.find(x => x.id === req.params.id);
+  if (!f || !canAccessWs(req.user, f.workspaceId)) return res.status(404).json({ error: 'Fluxo não encontrado' });
+  res.json(f);
 });
 
 /* Lista de itens default de checklist do fluxo. Cada item só tem text. */
@@ -2173,7 +2378,11 @@ app.put('/api/flows/:id', requireAuth, adminOnly, (req, res) => {
   }
   if (typeof defaultDescription === 'string') f.defaultDescription = defaultDescription;
   if (defaultChecklist !== undefined) f.defaultChecklist = sanitizeChecklistTemplate(defaultChecklist);
-  saveDB();
+  saveEntity('flows', f);
+  // Se as stages mudaram, algumas demandas podem ter tido status/stageDueDate reassinalados no loop acima — persiste-as.
+  if (stages) {
+    db.demands.forEach(d => { if (d.flowId === f.id) saveEntity('demands', d); });
+  }
   broadcastChange('flow', 'update', { id: f.id, workspaceId: f.workspaceId, byUserId: req.user.id });
   res.json(f);
 });
@@ -2186,7 +2395,7 @@ app.delete('/api/flows/:id', requireAuth, adminOnly, (req, res) => {
   }
   const wsId = f.workspaceId;
   db.flows = db.flows.filter(x => x.id !== req.params.id);
-  saveDB();
+  removeEntity('flows', req.params.id);
   broadcastChange('flow', 'delete', { id: req.params.id, workspaceId: wsId, byUserId: req.user.id });
   res.json({ ok: true });
 });
@@ -2209,14 +2418,14 @@ app.post('/api/flows/:id/duplicate', requireAuth, adminOnly, (req, res) => {
     createdAt: nowISO()
   };
   db.flows.push(copy);
-  saveDB();
+  saveEntity('flows', copy);
   res.status(201).json(copy);
 });
 
 /* ── DEMANDAS ── */
 app.get('/api/demands', requireAuth, (req, res) => {
   const ids = wsIdsFor(req.user);
-  res.json(db.demands.filter(d => ids.includes(d.workspaceId)));
+  res.json(db.demands.filter(d => ids.includes(d.workspaceId) && notDeleted(d)));
 });
 
 function stageById(flow, id) { return flow ? flow.stages.find(s => s.id === id) : null; }
@@ -2341,11 +2550,11 @@ app.post('/api/demands', requireAuth, (req, res) => {
     addHistory(d, req.user.id, 'owner_set', { ownerId: d.ownerId });
   }
   db.demands.push(d);
+  saveEntity('demands', d);
   // Notifica o responsável que recebeu a demanda
   if (d.ownerId && d.ownerId !== req.user.id) {
     notify(d.ownerId, 'assigned', { demandId: d.id, demandName: d.name, stageName: stage.label }, req.user.id, appBaseUrl(req));
   }
-  saveDB();
   const reqBase = appBaseUrl(req);
   fireWebhook('demand.created', () => ({
     demand: d, project, flow, stage, user: req.user,
@@ -2358,7 +2567,8 @@ app.post('/api/demands', requireAuth, (req, res) => {
 
 function getDemand(req, res) {
   const d = db.demands.find(x => x.id === req.params.id);
-  if (!d || !canAccessWs(req.user, d.workspaceId)) { res.status(404).json({ error: 'Demanda não encontrada' }); return null; }
+  // notDeleted filtra soft-deleted — todas as rotas de mutação passam por aqui.
+  if (!d || !canAccessWs(req.user, d.workspaceId) || !notDeleted(d)) { res.status(404).json({ error: 'Demanda não encontrada' }); return null; }
   return d;
 }
 // Helper pra reduzir boilerplate de SSE nas subrotinas de demanda
@@ -2541,10 +2751,12 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
         }
       }
     }
+    // Notifica watchers da demanda sobre a mudança de etapa.
+    notifyWatchers(d, 'watch_stage', { demandId: d.id, demandName: d.name, stageName: stage.label }, req.user.id, appBaseUrl(req));
     if (stage.done && !d.completedAt) d.completedAt = nowISO();
     if (!stage.done) d.completedAt = null;
   }
-  saveDB();
+  saveEntity('demands', d);
   // Dispara webhooks acumulados
   const project = db.projects.find(p => p.id === d.projectId);
   const flow = db.flows.find(f => f.id === d.flowId);
@@ -2568,12 +2780,54 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
 
 app.delete('/api/demands/:id', requireAuth, (req, res) => {
   const d = getDemand(req, res); if (!d) return;
-  const wsId = d.workspaceId;
-  db.demands = db.demands.filter(x => x.id !== d.id);
-  saveDB();
-  broadcastChange('demand', 'delete', { id: d.id, workspaceId: wsId, byUserId: req.user.id });
-  res.json({ ok: true });
+  softDelete('demands', d, req.user.id);
+  broadcastChange('demand', 'delete', { id: d.id, workspaceId: d.workspaceId, byUserId: req.user.id });
+  res.json({ ok: true, undoable: true, purgeAt: Date.parse(d.deletedAt) + UNDO_PURGE_MS });
 });
+app.post('/api/demands/:id/undelete', requireAuth, (req, res) => {
+  const d = db.demands.find(x => x.id === req.params.id);
+  if (!d || !canAccessWs(req.user, d.workspaceId) || !d.deletedAt) return res.status(404).json({ error: 'Demanda não encontrada ou não estava excluída' });
+  undelete('demands', d);
+  broadcastChange('demand', 'update', { id: d.id, workspaceId: d.workspaceId, byUserId: req.user.id });
+  res.json(d);
+});
+
+/* ── WATCHERS (Observar demanda) ──
+   Usuário clica "Observar" no detalhe. Vira watcher, recebe notificações de
+   mudança de etapa e novos comentários dessa demanda, mesmo sem ser responsável.
+   POST /api/demands/:id/watch      → adiciona req.user aos watchers
+   POST /api/demands/:id/unwatch    → remove
+   O array `d.watchers` é criado on-demand. */
+app.post('/api/demands/:id/watch', requireAuth, (req, res) => {
+  const d = getDemand(req, res); if (!d) return;
+  if (!Array.isArray(d.watchers)) d.watchers = [];
+  if (!d.watchers.includes(req.user.id)) {
+    d.watchers.push(req.user.id);
+    saveEntity('demands', d);
+    emitDemand(req, d);
+  }
+  res.json({ watching: true, count: d.watchers.length });
+});
+app.post('/api/demands/:id/unwatch', requireAuth, (req, res) => {
+  const d = getDemand(req, res); if (!d) return;
+  if (Array.isArray(d.watchers) && d.watchers.includes(req.user.id)) {
+    d.watchers = d.watchers.filter(id => id !== req.user.id);
+    saveEntity('demands', d);
+    emitDemand(req, d);
+  }
+  res.json({ watching: false, count: (d.watchers || []).length });
+});
+/* Helper: notifica watchers da demanda pra um evento específico. Não notifica
+   quem originou (trigger), nem o ownerId (que já é notificado pelo notify normal).
+   Chamado dos handlers de stage change e comment. */
+function notifyWatchers(demand, type, data, triggerUserId, baseUrl) {
+  if (!demand || !Array.isArray(demand.watchers) || !demand.watchers.length) return;
+  for (const uid of demand.watchers) {
+    if (uid === triggerUserId) continue;
+    if (uid === demand.ownerId) continue; // já foi notificado pelo notify padrão
+    notify(uid, type, data, triggerUserId, baseUrl);
+  }
+}
 
 /* Operações em lote sobre múltiplas demandas. Aceita { ids: [...], op, data }.
    ops suportadas:
@@ -2591,12 +2845,14 @@ app.post('/api/demands/bulk', requireAuth, (req, res) => {
   let updated = 0, skipped = 0;
   const errors = [];
   if (op === 'delete') {
-    const okIds = new Set(targets.map(d => d.id));
-    db.demands = db.demands.filter(d => !okIds.has(d.id));
-    updated = okIds.size;
+    const wsIdForBroadcast = targets[0]?.workspaceId || null;
+    // Soft delete — o cliente mostra "N demandas excluídas · Desfazer".
+    // Retorna a lista de IDs pra o frontend poder chamar undelete de todos.
+    targets.forEach(d => softDelete('demands', d, req.user.id));
+    updated = targets.length;
     skipped = ids.length - updated;
-    saveDB();
-    return res.json({ updated, skipped, errors });
+    broadcastChange('demand', 'bulk', { workspaceId: wsIdForBroadcast, byUserId: req.user.id });
+    return res.json({ updated, skipped, errors, undoable: true, deletedIds: targets.map(d => d.id) });
   }
   for (const d of targets) {
     try {
@@ -2625,17 +2881,19 @@ app.post('/api/demands/bulk', requireAuth, (req, res) => {
         const targetStageId = String(data?.status || '');
         const flow = db.flows.find(f => f.id === d.flowId);
         const stage = flow && flow.stages.find(s => s.id === targetStageId);
+        let realStage;
         if (!stage) {
           // tenta casar por LABEL (kanban multi-fluxo agrupa por label)
           const wantLabel = String(data?.stageLabel || '').trim();
           const matchByLabel = flow && wantLabel ? flow.stages.find(s => s.label === wantLabel) : null;
           if (!matchByLabel) { skipped++; errors.push({ id: d.id, error: 'Etapa incompatível com o fluxo desta demanda.' }); continue; }
-          var realStage = matchByLabel;
+          realStage = matchByLabel;
         } else {
-          var realStage = stage;
+          realStage = stage;
         }
         if (realStage.id === d.status) { skipped++; continue; }
         const oldStageId = d.status;
+        const prevStage = flow ? flow.stages.find(s => s.id === oldStageId) : null;
         const prev = d.stageHistory[d.stageHistory.length - 1];
         if (prev && !prev.leftAt) prev.leftAt = nowISO();
         d.status = realStage.id;
@@ -2643,8 +2901,33 @@ app.post('/api/demands/bulk', requireAuth, (req, res) => {
         d.stageDueDate = realStage.deadlineDays ? addDays(today(), realStage.deadlineDays) : null;
         d.stageHistory.push({ stageId: realStage.id, enteredAt: nowISO(), dueDate: d.stageDueDate });
         addHistory(d, req.user.id, 'stage_changed', { fromId: oldStageId, toId: realStage.id });
+        const wasCompleted = !!d.completedAt;
         if (realStage.done && !d.completedAt) d.completedAt = nowISO();
         if (!realStage.done) d.completedAt = null;
+        // Auto-atribui responsável da nova etapa (mesma lógica do PUT individual)
+        const _bulkProj = db.projects.find(p => p.id === d.projectId);
+        const stageOwner = resolveStageOwner(realStage, _bulkProj);
+        if (stageOwner && stageOwner !== d.ownerId) {
+          const prevOwner = d.ownerId;
+          d.ownerId = stageOwner;
+          addHistory(d, req.user.id, 'owner_auto_assigned', { fromId: prevOwner, toId: d.ownerId, byStage: realStage.id });
+          if (d.ownerId && d.ownerId !== req.user.id) {
+            notify(d.ownerId, 'stage_assigned', { demandId: d.id, demandName: d.name, stageName: realStage.label }, req.user.id, appBaseUrl(req));
+          }
+        }
+        // Watchers também recebem notificação de mudança de etapa (bulk).
+        notifyWatchers(d, 'watch_stage', { demandId: d.id, demandName: d.name, stageName: realStage.label }, req.user.id, appBaseUrl(req));
+        // Webhooks — mesmo conjunto de eventos do PUT individual.
+        const owner = db.users.find(u => u.id === d.ownerId);
+        const _bulkReqBase = appBaseUrl(req);
+        fireWebhook('demand.stage_changed', () => ({
+          demand: d, project: _bulkProj, flow, stage: realStage, prevStage, user: req.user, owner, appBaseUrl: _bulkReqBase
+        }));
+        if (!wasCompleted && d.completedAt) {
+          fireWebhook('demand.completed', () => ({
+            demand: d, project: _bulkProj, flow, user: req.user, owner, appBaseUrl: _bulkReqBase
+          }));
+        }
         updated++;
       } else {
         errors.push({ id: d.id, error: 'Operação desconhecida.' });
@@ -2655,7 +2938,8 @@ app.post('/api/demands/bulk', requireAuth, (req, res) => {
       skipped++;
     }
   }
-  saveDB();
+  // Persistência incremental: só as demandas que efetivamente mudaram entram no batch.
+  targets.forEach(d => saveEntity('demands', d));
   // Mudanças em lote: dispara um único evento "bulk" (frontend refetcha todas)
   broadcastChange('demand', 'bulk', { workspaceId: req.user.isAdmin ? null : wsIdsFor(req.user)[0], byUserId: req.user.id });
   res.json({ updated, skipped, errors });
@@ -2759,7 +3043,7 @@ app.put('/api/demands/:id/skipped-stages', requireAuth, (req, res) => {
       orderChanged, labelChanges
     });
   }
-  saveDB();
+  saveEntity('demands', d);
   res.json(d);
 });
 
@@ -2777,7 +3061,7 @@ app.post('/api/demands/:id/time', requireAuth, (req, res) => {
   };
   d.timeEntries.push(entry);
   addHistory(d, req.user.id, 'time_added', { hours: entry.hours, stageId: entry.stageId });
-  saveDB();
+  saveEntity('demands', d);
   emitDemand(req, d);
   res.status(201).json(d);
 });
@@ -2799,7 +3083,7 @@ app.put('/api/demands/:id/time/:entryId', requireAuth, (req, res) => {
   if (b.note !== undefined) e.note = String(b.note || '');
   e.editedAt = nowISO();
   addHistory(d, req.user.id, 'time_edited', { hours: e.hours, oldHours, stageId: e.stageId });
-  saveDB();
+  saveEntity('demands', d);
   emitDemand(req, d);
   res.json(d);
 });
@@ -2812,7 +3096,7 @@ app.delete('/api/demands/:id/time/:entryId', requireAuth, (req, res) => {
   }
   if (e) addHistory(d, req.user.id, 'time_removed', { hours: e.hours, stageId: e.stageId });
   d.timeEntries = d.timeEntries.filter(x => x.id !== req.params.entryId);
-  saveDB();
+  saveEntity('demands', d);
   emitDemand(req, d);
   res.json(d);
 });
@@ -2821,7 +3105,7 @@ app.delete('/api/demands/:id/time/:entryId', requireAuth, (req, res) => {
 app.post('/api/demands/:id/comment', requireAuth, (req, res) => {
   const d = getDemand(req, res); if (!d) return;
   const text = String((req.body && req.body.text) || '').trim();
-  const attachments = Array.isArray(req.body?.attachments) ? req.body.attachments.slice(0, 10) : [];
+  const attachments = sanitizeAttachments(req.body?.attachments).slice(0, 10);
   if (!text && !attachments.length) return res.status(400).json({ error: 'Escreva algo ou anexe um arquivo' });
   // extrai menções @username válidas dentro do workspace
   const tokens = (text.match(/@([a-zA-Z0-9._-]+)/g) || []).map(t => t.slice(1).toLowerCase());
@@ -2836,7 +3120,15 @@ app.post('/api/demands/:id/comment', requireAuth, (req, res) => {
   mentions.forEach(mid => {
     notify(mid, 'mention', { demandId: d.id, demandName: d.name, commentText: text.slice(0, 120) }, req.user.id, _mentionsBaseUrl);
   });
-  saveDB();
+  // Watchers recebem notificação de novo comentário — sem duplicar quem já foi mencionado.
+  if (Array.isArray(d.watchers) && d.watchers.length) {
+    const alreadyNotified = new Set(mentions);
+    for (const uid of d.watchers) {
+      if (uid === req.user.id || uid === d.ownerId || alreadyNotified.has(uid)) continue;
+      notify(uid, 'watch_comment', { demandId: d.id, demandName: d.name, commentText: text.slice(0, 120) }, req.user.id, _mentionsBaseUrl);
+    }
+  }
+  saveEntity('demands', d);
   // Webhooks
   const project = db.projects.find(p => p.id === d.projectId);
   const flow = db.flows.find(f => f.id === d.flowId);
@@ -2862,7 +3154,9 @@ app.put('/api/demands/:id/comment/:cid', requireAuth, (req, res) => {
     return res.status(403).json({ error: 'Você só pode editar seus próprios comentários' });
   }
   const text = String((req.body && req.body.text) || '').trim();
-  const attachments = req.body?.attachments !== undefined ? (Array.isArray(req.body.attachments) ? req.body.attachments.slice(0, 10) : []) : c.attachments;
+  const attachments = req.body?.attachments !== undefined
+    ? sanitizeAttachments(req.body.attachments).slice(0, 10)
+    : c.attachments;
   if (!text && !(attachments && attachments.length)) return res.status(400).json({ error: 'O comentário não pode ficar vazio' });
   c.text = text;
   c.attachments = attachments || [];
@@ -2873,7 +3167,7 @@ app.put('/api/demands/:id/comment/:cid', requireAuth, (req, res) => {
     .filter(u => tokens.includes(u.username.toLowerCase()) && canAccessWs(u, d.workspaceId))
     .map(u => u.id);
   addHistory(d, req.user.id, 'comment_edited', { commentId: c.id });
-  saveDB();
+  saveEntity('demands', d);
   emitDemand(req, d);
   res.json(d);
 });
@@ -2886,7 +3180,7 @@ app.delete('/api/demands/:id/comment/:cid', requireAuth, (req, res) => {
   }
   if (c) addHistory(d, req.user.id, 'comment_removed', { commentId: c.id });
   d.comments = d.comments.filter(x => x.id !== req.params.cid);
-  saveDB();
+  saveEntity('demands', d);
   emitDemand(req, d);
   res.json(d);
 });
@@ -2906,7 +3200,7 @@ app.post('/api/demands/:id/comment/:cid/react', requireAuth, (req, res) => {
   else arr.push(req.user.id);
   if (arr.length === 0) delete c.reactions[emoji];
   else c.reactions[emoji] = arr;
-  saveDB();
+  saveEntity('demands', d);
   emitDemand(req, d);
   res.json(d);
 });
@@ -2924,7 +3218,7 @@ app.post('/api/demands/:id/checklist', requireAuth, (req, res) => {
   };
   d.checklist.push(item);
   addHistory(d, req.user.id, 'checklist_added', { itemId: item.id, text });
-  saveDB();
+  saveEntity('demands', d);
   emitDemand(req, d);
   res.status(201).json(d);
 });
@@ -2952,7 +3246,7 @@ app.put('/api/demands/:id/checklist/:itemId', requireAuth, (req, res) => {
       }));
     }
   }
-  saveDB();
+  saveEntity('demands', d);
   emitDemand(req, d);
   res.json(d);
 });
@@ -2961,7 +3255,7 @@ app.delete('/api/demands/:id/checklist/:itemId', requireAuth, (req, res) => {
   const item = (d.checklist || []).find(x => x.id === req.params.itemId);
   if (item) addHistory(d, req.user.id, 'checklist_removed', { itemId: item.id, text: item.text });
   d.checklist = (d.checklist || []).filter(x => x.id !== req.params.itemId);
-  saveDB();
+  saveEntity('demands', d);
   emitDemand(req, d);
   res.json(d);
 });
@@ -2993,6 +3287,11 @@ app.get('/api/schedules', requireAuth, (req, res) => {
     return true;
   });
   res.json(list);
+});
+app.get('/api/schedules/:id', requireAuth, (req, res) => {
+  const s = db.schedules.find(x => x.id === req.params.id);
+  if (!s || !canAccessWs(req.user, s.workspaceId)) return res.status(404).json({ error: 'Agendamento não encontrado' });
+  res.json(s);
 });
 app.post('/api/schedules', requireAuth, (req, res) => {
   const b = req.body || {};
@@ -3134,6 +3433,11 @@ app.get('/api/recurrings', requireAuth, (req, res) => {
   });
   res.json(list);
 });
+app.get('/api/recurrings/:id', requireAuth, (req, res) => {
+  const r = db.recurrings.find(x => x.id === req.params.id);
+  if (!r || !canAccessWs(req.user, r.workspaceId)) return res.status(404).json({ error: 'Recorrência não encontrada' });
+  res.json(r);
+});
 
 app.post('/api/recurrings', requireAuth, (req, res) => {
   const fields = sanitizeRecurringBody(req.body || {});
@@ -3259,7 +3563,7 @@ app.post('/api/recurrings/:id/generate', requireAuth, (req, res) => {
   r.generations.push({ ym, demandId: d.id, createdAt: nowISO(), createdBy: req.user.id });
   r.updatedAt = nowISO();
   saveEntity('recurrings', r);
-  saveDB();
+  saveEntity('demands', d);
   const reqBase = appBaseUrl(req);
   fireWebhook('demand.created', () => ({
     demand: d, project, flow, stage, user: req.user,
@@ -3314,6 +3618,11 @@ app.get('/api/listas', requireAuth, (req, res) => {
     return true;
   });
   res.json(list);
+});
+app.get('/api/listas/:id', requireAuth, (req, res) => {
+  const l = db.listas.find(x => x.id === req.params.id);
+  if (!l || !canAccessWs(req.user, l.workspaceId)) return res.status(404).json({ error: 'Lista não encontrada' });
+  res.json(l);
 });
 app.post('/api/listas', requireAuth, (req, res) => {
   const fields = sanitizeListaBody(req.body || {});
@@ -3391,7 +3700,7 @@ app.post('/api/webhooks', requireAuth, adminOnly, (req, res) => {
     lastTriggered: null, lastStatus: null, lastError: null
   };
   db.webhooks.push(h);
-  saveDB();
+  saveEntity('webhooks', h);
   res.status(201).json(h);
 });
 app.put('/api/webhooks/:id', requireAuth, adminOnly, (req, res) => {
@@ -3408,20 +3717,25 @@ app.put('/api/webhooks/:id', requireAuth, adminOnly, (req, res) => {
     if (!target.ok) return res.status(400).json({ error: target.error });
     h.targetUserId = target.value;
   }
-  saveDB();
+  saveEntity('webhooks', h);
   res.json(h);
 });
 app.delete('/api/webhooks/:id', requireAuth, adminOnly, (req, res) => {
   const h = (db.webhooks || []).find(x => x.id === req.params.id);
   if (!h || !canAccessWs(req.user, h.workspaceId)) return res.status(404).json({ error: 'Webhook não encontrado' });
   db.webhooks = db.webhooks.filter(x => x.id !== req.params.id);
-  saveDB();
+  removeEntity('webhooks', req.params.id);
   res.json({ ok: true });
 });
 app.post('/api/webhooks/:id/test', requireAuth, adminOnly, async (req, res) => {
   const h = (db.webhooks || []).find(x => x.id === req.params.id);
   if (!h || !canAccessWs(req.user, h.workspaceId)) return res.status(404).json({ error: 'Webhook não encontrado' });
-  // Cria um payload de teste
+  if (!isSafeWebhookUrl(h.url)) {
+    h.lastError = 'URL bloqueada (rede interna, loopback ou protocolo inválido)';
+    h.lastStatus = 0;
+    saveEntity('webhooks', h);
+    return res.status(400).json({ error: 'URL bloqueada: aponta pra rede interna, loopback ou usa protocolo não HTTP(S).' });
+  }
   const fakeDemand = {
     id: 'test', name: '🧪 Teste do webhook do Kastor',
     workspaceId: h.workspaceId, projectId: null, status: 'test',
@@ -3430,21 +3744,22 @@ app.post('/api/webhooks/:id/test', requireAuth, adminOnly, async (req, res) => {
   const ctx = { demand: fakeDemand, project: null, user: req.user, owner: req.user, appBaseUrl: appBaseUrl(req) };
   try {
     const payload = h.format === 'discord' ? buildDiscordPayload('demand.created', ctx) : buildRawPayload('demand.created', ctx);
-    const resp = await fetch(h.url, {
+    const resp = await fetchWithTimeout(h.url, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
     h.lastTriggered = nowISO();
     h.lastStatus = resp.status;
     h.lastError = resp.ok ? null : `HTTP ${resp.status}`;
-    saveDB();
+    saveEntity('webhooks', h);
     if (!resp.ok) return res.status(502).json({ error: `Endpoint retornou HTTP ${resp.status}`, status: resp.status });
     res.json({ ok: true, status: resp.status });
   } catch (e) {
-    h.lastError = String(e.message || e).slice(0, 200);
+    const msg = e.name === 'AbortError' ? 'timeout (>10s)' : String(e.message || e);
+    h.lastError = msg.slice(0, 200);
     h.lastStatus = 0;
-    saveDB();
-    res.status(502).json({ error: 'Falha ao contatar o endpoint: ' + (e.message || 'erro') });
+    saveEntity('webhooks', h);
+    res.status(502).json({ error: 'Falha ao contatar o endpoint: ' + msg });
   }
 });
 
@@ -3578,13 +3893,10 @@ app.get('/api/notifications', requireAuth, async (req, res) => {
 });
 
 app.put('/api/notifications/:id/read', requireAuth, async (req, res) => {
-  // Verifica que a notificação é do usuário antes de marcar — evita user A
-  // marcar notif de user B se souber o id.
-  const list = await store.listNotificationsFor(req.user.id, 500);
-  const n = list.find(x => x.id === req.params.id);
+  // UPDATE com WHERE id=... AND user_id=... — se não bater, 404. Evita
+  // vazar existência de IDs de outros usuários e evita buscar até 500 registros.
+  const n = await store.markNotificationReadIfOwner(req.params.id, req.user.id);
   if (!n) return res.status(404).json({ error: 'Notificação não encontrada' });
-  await store.markNotificationRead(req.params.id);
-  n.read = true;
   res.json(n);
 });
 
@@ -3647,12 +3959,13 @@ function runRecurrenceJob() {
       notify(copy.ownerId, 'assigned', { demandId: copy.id, demandName: copy.name, stageName: stage.label }, null);
     }
     db.demands.push(copy);
+    saveEntity('demands', copy);
     parent.recurrence.lastGeneratedDate = ymd;
+    saveEntity('demands', parent);
     count++;
   });
   if (count > 0) {
     console.log(`  [recorrência] ${count} demanda(s) gerada(s) automaticamente`);
-    saveDB();
   }
 }
 // Roda imediatamente ao subir + a cada hora. .unref() libera o event loop
@@ -3661,6 +3974,172 @@ const _recBoot = setTimeout(runRecurrenceJob, 5000);
 const _recInterval = setInterval(runRecurrenceJob, 60 * 60 * 1000);
 if (_recBoot.unref) _recBoot.unref();
 if (_recInterval.unref) _recInterval.unref();
+
+/* ── GC DE UPLOADS ÓRFÃOS ──
+   Varre data/uploads/ e apaga arquivos que nenhuma entidade referencia mais
+   (avatar de user/cliente/projeto, icon de fluxo, attachment de demanda,
+   attachment de comentário, template attachment, lista attachment).
+   Só apaga arquivos com mtime > MIN_AGE_MS pra evitar apagar upload recém-
+   criado que ainda não foi associado a nenhuma entidade (janela de segurança). */
+function collectReferencedUploads() {
+  const refs = new Set();
+  const addIfLocal = (v) => {
+    if (typeof v === 'string' && v.startsWith('/uploads/')) refs.add(v);
+  };
+  for (const u of (db.users || []))    addIfLocal(u.avatar);
+  for (const c of (db.clients || []))  addIfLocal(c.avatar);
+  for (const p of (db.projects || [])) addIfLocal(p.avatar);
+  for (const f of (db.flows || []))    addIfLocal(f.icon);
+  for (const d of (db.demands || [])) {
+    for (const a of (d.attachments || [])) addIfLocal(a.url);
+    for (const c of (d.comments || [])) {
+      for (const a of (c.attachments || [])) addIfLocal(a.url);
+    }
+  }
+  for (const t of (db.templates || [])) {
+    for (const a of (t.attachments || [])) addIfLocal(a.url);
+  }
+  for (const r of (db.recurrings || [])) {
+    for (const a of (r.attachments || [])) addIfLocal(a.url);
+  }
+  return refs;
+}
+function runUploadsGc() {
+  if (!fs.existsSync(UPLOADS_DIR)) return;
+  const MIN_AGE_MS = 24 * 60 * 60 * 1000; // 24h — evita apagar upload recém-criado
+  const now = Date.now();
+  const refs = collectReferencedUploads();
+  let deleted = 0, bytesFreed = 0;
+  let files;
+  try { files = fs.readdirSync(UPLOADS_DIR); } catch { return; }
+  for (const name of files) {
+    if (name.startsWith('.')) continue;
+    const url = '/uploads/' + name;
+    if (refs.has(url)) continue;
+    const full = path.join(UPLOADS_DIR, name);
+    let stat;
+    try { stat = fs.statSync(full); } catch { continue; }
+    if (!stat.isFile()) continue;
+    if (now - stat.mtimeMs < MIN_AGE_MS) continue; // recente — deixa quieto
+    try { fs.unlinkSync(full); deleted++; bytesFreed += stat.size; } catch (e) {
+      console.warn(`[uploads-gc] falha ao apagar ${name}: ${e.message}`);
+    }
+  }
+  if (deleted > 0) {
+    console.log(`  [uploads-gc] ${deleted} arquivo(s) órfão(s) apagado(s) (${Math.round(bytesFreed / 1024)}KB liberados)`);
+  }
+}
+// Roda 30 min após o boot e a cada 7 dias.
+const _gcBoot = setTimeout(runUploadsGc, 30 * 60 * 1000);
+const _gcInterval = setInterval(runUploadsGc, 7 * 24 * 60 * 60 * 1000);
+if (_gcBoot.unref) _gcBoot.unref();
+if (_gcInterval.unref) _gcInterval.unref();
+
+// Purge de soft-deletes vencidos — roda 5 min após boot e depois a cada hora.
+const _sdBoot = setTimeout(runSoftDeletePurge, 5 * 60 * 1000);
+const _sdInterval = setInterval(runSoftDeletePurge, 60 * 60 * 1000);
+if (_sdBoot.unref) _sdBoot.unref();
+if (_sdInterval.unref) _sdInterval.unref();
+
+/* ── DIGEST DIÁRIO DE E-MAIL ──
+   Seg-sex, ~8h local. Pra cada usuário com email + opt-in daily_digest:
+   - Demandas atrasadas
+   - Vencendo hoje
+   - Vencendo nos próximos 3 dias
+   - Notificações não lidas
+   Marca user._lastDigestSent = 'YYYY-MM-DD' pra não duplicar quando o interval
+   dispara múltiplas vezes na mesma manhã. */
+function digestBuildForUser(user) {
+  const todayYmd = today();
+  const in3days = addDays(todayYmd, 3);
+  const myDemands = db.demands.filter(d =>
+    notDeleted(d) && d.ownerId === user.id && !d.completedAt && canAccessWs(user, d.workspaceId)
+  );
+  const overdue = myDemands.filter(d => d.deadline && d.deadline < todayYmd);
+  const dueToday = myDemands.filter(d => d.deadline === todayYmd);
+  const dueSoon = myDemands.filter(d => d.deadline && d.deadline > todayYmd && d.deadline <= in3days);
+  return { overdue, dueToday, dueSoon };
+}
+async function digestSendForUser(user, baseUrl) {
+  const { overdue, dueToday, dueSoon } = digestBuildForUser(user);
+  // Notificações não lidas (via store — não vive em db em memória)
+  let unreadNotifs = [];
+  try {
+    const list = await store.listNotificationsFor(user.id, 50);
+    unreadNotifs = list.filter(n => !n.read);
+  } catch {}
+  // Se não há NADA relevante, não envia — evita spam diário vazio.
+  if (!overdue.length && !dueToday.length && !dueSoon.length && !unreadNotifs.length) return false;
+  const url = baseUrl || process.env.PUBLIC_URL || '';
+  const renderList = (items, empty) => items.length
+    ? `<ul style="margin:8px 0 0;padding-left:18px;color:#333;font-size:14px;line-height:1.7">${items.slice(0, 12).map(d => {
+        const client = (db.projects.find(p => p.id === d.projectId) || {}).client || '';
+        const link = url ? `<a href="${url}/demands/${d.id}" style="color:#7A00FF;text-decoration:none">${escHtml(d.name)}</a>` : escHtml(d.name);
+        const meta = [client, d.deadline].filter(Boolean).map(escHtml).join(' · ');
+        return `<li>${link}${meta ? ` <span style="color:#888;font-size:12px">(${meta})</span>` : ''}</li>`;
+      }).join('')}${items.length > 12 ? `<li style="color:#888;font-size:12px">…e mais ${items.length - 12}</li>` : ''}</ul>`
+    : `<div style="color:#888;font-size:13px;margin-top:6px">${empty}</div>`;
+  const notifBlock = unreadNotifs.length
+    ? `<h3 style="margin:24px 0 6px;font-size:15px;color:#222">🔔 Notificações não lidas (${unreadNotifs.length})</h3>${renderList(unreadNotifs.map(n => ({ id: n.demandId || '', name: n.demandName || n.type })), '')}`
+    : '';
+  const html = `<!doctype html><html><body style="margin:0;background:#f7f7fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+    <div style="max-width:600px;margin:24px auto;background:#fff;border-radius:12px;padding:28px 32px">
+      <div style="font-size:13px;font-weight:700;color:#7A00FF;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">Kastor · Resumo do dia</div>
+      <h2 style="margin:0 0 18px;font-size:22px;color:#222">Bom dia, ${escHtml(user.name.split(' ')[0])} 👋</h2>
+      <p style="margin:0 0 4px;color:#555;font-size:14px">Aqui está o que precisa da sua atenção hoje:</p>
+
+      <h3 style="margin:24px 0 6px;font-size:15px;color:#EF4444">🔥 Em atraso (${overdue.length})</h3>
+      ${renderList(overdue, 'Nada em atraso. Boa!')}
+
+      <h3 style="margin:24px 0 6px;font-size:15px;color:#F59E0B">📅 Vencem hoje (${dueToday.length})</h3>
+      ${renderList(dueToday, 'Nenhuma demanda com prazo pra hoje.')}
+
+      <h3 style="margin:24px 0 6px;font-size:15px;color:#38BDF8">⏭️ Próximos 3 dias (${dueSoon.length})</h3>
+      ${renderList(dueSoon, 'Sem demandas nos próximos 3 dias.')}
+
+      ${notifBlock}
+
+      <p style="margin:26px 0 0;color:#999;font-size:11px">Você recebe este resumo em dias úteis às 8h. Pra desativar, vá em <em>Meu Perfil → Notificações por e-mail</em>.</p>
+    </div></body></html>`;
+  const text = `Bom dia, ${user.name.split(' ')[0]}!\n\nEm atraso: ${overdue.length}\nVencem hoje: ${dueToday.length}\nPróximos 3 dias: ${dueSoon.length}\nNotificações não lidas: ${unreadNotifs.length}\n\nAbra: ${url}`;
+  try {
+    await sendEmail(user.email, `[Kastor] Resumo do dia — ${overdue.length + dueToday.length} pra hoje`, html, text);
+    return true;
+  } catch (e) {
+    console.error(`[digest] falha ao enviar pra ${user.email}: ${e.message}`);
+    return false;
+  }
+}
+async function runDailyDigest() {
+  if (!mailEnabled()) return;
+  const now = new Date();
+  const dow = now.getDay(); // 0 dom .. 6 sáb
+  if (dow === 0 || dow === 6) return; // só seg-sex
+  const hour = now.getHours();
+  if (hour < 8 || hour > 9) return; // janela de 8h-9h (tolera atraso do interval)
+  const ymd = now.toISOString().slice(0, 10);
+  let sent = 0, skipped = 0;
+  for (const u of db.users) {
+    if (!u.active || u.active === false) continue;
+    if (!u.email) continue;
+    const prefs = u.emailPrefs || defaultEmailPrefs();
+    if (prefs.daily_digest === false) continue;
+    if (u._lastDigestSent === ymd) { skipped++; continue; }
+    const didSend = await digestSendForUser(u, process.env.PUBLIC_URL);
+    if (didSend) sent++;
+    // Marca sempre (mesmo se digestSendForUser retornou false por falta de conteúdo)
+    // pra não reprocessar o mesmo user várias vezes na janela de 1h.
+    u._lastDigestSent = ymd;
+    saveEntity('users', u);
+  }
+  if (sent > 0) console.log(`  [digest] ${sent} resumo(s) enviado(s) · ${skipped} pulado(s)`);
+}
+// Roda a cada 15 min. runDailyDigest checa hora/dia/estado interno.
+const _digestInterval = setInterval(runDailyDigest, 15 * 60 * 1000);
+if (_digestInterval.unref) _digestInterval.unref();
+// Uma checagem 2 min após boot pra pegar caso o servidor tenha subido às 8h.
+const _digestBoot = setTimeout(runDailyDigest, 2 * 60 * 1000);
+if (_digestBoot.unref) _digestBoot.unref();
 
 /* ── REAL-TIME via Server-Sent Events ─────────────────────────────
    Cada cliente conectado mantém uma resposta HTTP aberta com
@@ -3671,6 +4150,11 @@ if (_recInterval.unref) _recInterval.unref();
    - HTTP/1.1 normal, atravessa proxies (Nginx Proxy Manager) sem upgrade
    - Reconnect automático no EventSource do browser */
 const sseClients = new Map(); // userId → Set<res>
+// Máximo de conexões SSE simultâneas por usuário. Múltiplas abas normais ficam
+// abaixo disso; excesso vira sinal de abuso ou de EventSource que reconecta em
+// loop sem fechar a antiga (bug de cliente). Fechar a mais antiga é seguro:
+// o browser vai reabrir automaticamente e ler o estado atual via loadAll.
+const SSE_MAX_PER_USER = 6;
 
 app.get('/api/stream', requireAuth, (req, res) => {
   res.set({
@@ -3684,7 +4168,15 @@ app.get('/api/stream', requireAuth, (req, res) => {
 
   const userId = req.user.id;
   if (!sseClients.has(userId)) sseClients.set(userId, new Set());
-  sseClients.get(userId).add(res);
+  const set = sseClients.get(userId);
+  // Cap: se já está no limite, fecha a conexão mais antiga (a que entrou primeiro no Set).
+  while (set.size >= SSE_MAX_PER_USER) {
+    const oldest = set.values().next().value;
+    if (!oldest) break;
+    try { oldest.end(); } catch {}
+    set.delete(oldest);
+  }
+  set.add(res);
 
   // Heartbeat a cada 25s pra evitar timeouts de proxy (Nginx default = 60s)
   const heartbeat = setInterval(() => {
