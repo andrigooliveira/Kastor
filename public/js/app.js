@@ -383,23 +383,37 @@ function activeStagesOf(d, flow) {
   if (!flow) return [];
   const skipped = new Set(Array.isArray(d.skippedStages) ? d.skippedStages : []);
   const labels = (d.stageLabels && typeof d.stageLabels === 'object') ? d.stageLabels : {};
-  // Aplica ordem customizada (se houver), preservando etapas novas no fim
-  let ordered;
+  const overrides = (d.stageOverrides && typeof d.stageOverrides === 'object') ? d.stageOverrides : {};
+  const additions = Array.isArray(d.stageAdditions) ? d.stageAdditions : [];
+  // Pool completo (originais + adicionadas) indexado por id.
+  const allById = new Map();
+  flow.stages.forEach(s => allById.set(s.id, s));
+  additions.forEach(s => allById.set(s.id, s));
+  // Ordem: se stageOrder existe, usa (contém IDs de originais E adicionadas).
+  // Senão, originais na ordem do fluxo + adicionadas no final.
+  let orderedIds;
   if (Array.isArray(d.stageOrder) && d.stageOrder.length) {
     const set = new Set(d.stageOrder);
-    const fromOrder = d.stageOrder.map(id => flow.stages.find(s => s.id === id)).filter(Boolean);
-    const remaining = flow.stages.filter(s => !set.has(s.id));
-    ordered = [...fromOrder, ...remaining];
+    orderedIds = [...d.stageOrder.filter(id => allById.has(id))];
+    // Pega o que ficou fora do stageOrder (segurança contra IDs novos)
+    flow.stages.forEach(s => { if (!set.has(s.id)) orderedIds.push(s.id); });
+    additions.forEach(s => { if (!set.has(s.id)) orderedIds.push(s.id); });
   } else {
-    ordered = flow.stages;
+    orderedIds = [...flow.stages.map(s => s.id), ...additions.map(s => s.id)];
   }
-  const base = ordered
-    .filter(s => !skipped.has(s.id))
-    .map(s => labels[s.id] ? { ...s, label: labels[s.id] } : s);
-  // Etapas adicionadas SÓ nesta instância (via wizard ou depois via edição).
-  // Vão no final da sequência — o usuário pode reordenar via stageOrder futuramente.
-  const additions = Array.isArray(d.stageAdditions) ? d.stageAdditions : [];
-  return [...base, ...additions];
+  // Aplica label + overrides (color/deadlineDays/done). Filtra puladas.
+  return orderedIds
+    .filter(id => !skipped.has(id))
+    .map(id => {
+      const base = allById.get(id);
+      if (!base) return null;
+      const ov = overrides[id];
+      let s = base;
+      if (labels[id]) s = { ...s, label: labels[id] };
+      if (ov) s = { ...s, ...(ov.color !== undefined ? { color: ov.color } : {}), ...(ov.deadlineDays !== undefined ? { deadlineDays: ov.deadlineDays } : {}), ...(ov.done !== undefined ? { done: ov.done } : {}) };
+      return s;
+    })
+    .filter(Boolean);
 }
 /* Responsável efetivo de uma etapa para uma demanda específica.
    Override por instância tem precedência sobre o padrão do fluxo. */
@@ -4416,7 +4430,9 @@ async function saveDemand() {
     if (c.skippedStages?.length)                 payload.skippedStages = c.skippedStages;
     if (c.stageResponsibles && Object.keys(c.stageResponsibles).length) payload.stageResponsibles = c.stageResponsibles;
     if (c.stageLabels && Object.keys(c.stageLabels).length) payload.stageLabels = c.stageLabels;
+    if (c.stageOverrides && Object.keys(c.stageOverrides).length) payload.stageOverrides = c.stageOverrides;
     if (c.stageAdditions?.length)                payload.stageAdditions = c.stageAdditions;
+    if (Array.isArray(c.stageOrder) && c.stageOrder.length) payload.stageOrder = c.stageOrder;
   }
   console.log('[saveDemand] entregáveis raw:', _rawQty, '→ payload:', { p: payload.qtyPieces, a: payload.qtyArts, v: payload.qtyVariations });
   try {
@@ -5450,19 +5466,21 @@ function renderDetailHistory(d) {
 }
 
 function renderDetailDirtyBadge() {
-  // Adiciona um botão flutuante de salvar próximo aos campos editados
+  // Barra "Alterações pendentes" — colada NA PARTE DE CIMA do footer sticky
+  // (o footer já é sticky bottom, então essa barra herda a mesma ancoragem).
   const existing = document.getElementById('detail-save-pending');
   if (Object.keys(detailDirty).length === 0) { if (existing) existing.remove(); return; }
   if (existing) return;
   const bar = document.createElement('div');
   bar.id = 'detail-save-pending';
-  bar.style.cssText = 'position:sticky;top:80px;background:var(--accent-dim);border:1px solid var(--accent);border-radius:var(--radius-sm);padding:10px 14px;display:flex;align-items:center;gap:12px;margin-bottom:18px;font-size:12px;color:var(--accent-text);font-weight:600;z-index:1';
+  bar.className = 'detail-pending-bar';
   bar.innerHTML = `
-    <span><i data-lucide="alert-triangle" class="ic-sm"></i> Alterações pendentes</span>
-    <button class="btn btn-primary btn-sm" onclick="commitDetailEdits()" style="margin-left:auto">Salvar</button>
+    <span class="detail-pending-msg"><i data-lucide="alert-triangle" class="ic-sm"></i> Alterações pendentes</span>
+    <button class="btn btn-primary btn-sm" onclick="commitDetailEdits()">Salvar</button>
     <button class="btn btn-ghost btn-sm" onclick="cancelDetailEdits()">Descartar</button>`;
-  const body = document.querySelector('.detail-body');
-  if (body) body.insertBefore(bar, body.firstChild);
+  const footer = document.getElementById('detail-footer');
+  if (footer) footer.insertBefore(bar, footer.firstChild);
+  paintIcons();
 }
 async function commitDetailEdits() {
   const d = demandById(detailId); if (!d) return;
@@ -10266,9 +10284,11 @@ function setClientStatusFilter(s) {
 
 function renderClients() {
   // Reseta pra view de grid. currentClientId já é tratado pelo dispatcher
-  // em renderCurrent('clients').
+  // em renderCurrent('clients'). hideAllDetailViews cobre TODAS as views
+  // alternativas (detalhe, modelos, relatórios) — evita duas views empilhadas
+  // depois de navegar de /clients/models pra /clients.
+  hideAllDetailViews();
   $('clients-view-grid').style.display = '';
-  $('clients-view-detail').style.display = 'none';
 
   // Popula select de workspace
   const fwSel = $('client-f-ws');
@@ -10395,21 +10415,29 @@ function renderClientsModels() {
     const projCount = (t.projects || []).length;
     const flowCount = (t.projects || []).reduce((s, p) => s + (p.flows || []).length, 0);
     const projectsHtml = (t.projects || []).map((p, pi) => {
-      const flowsHtml = (p.flows || []).map(f => `
+      const flowsHtml = (p.flows || []).map((f, fi) => `
         <div class="model-flow-row">
           <span class="pill-dot" style="background:${p.color || t.color || '#7A00FF'}"></span>
           <span class="model-flow-name">${esc(f.name)}</span>
           ${f.demandType ? `<span class="pill pill-muted">${esc(f.demandType)}</span>` : ''}
           <span class="model-flow-stages">${(f.stages || []).length} etapas</span>
+          <span class="model-flow-actions">
+            <button class="btn btn-ghost btn-sm" onclick="openTemplateFlowModal('${t.id}', ${pi}, ${fi})" title="Editar fluxo"><i data-lucide="pencil" class="ic-sm"></i></button>
+            <button class="btn btn-ghost btn-sm bulk-danger" onclick="confirmDeleteTemplateFlow('${t.id}', ${pi}, ${fi})" title="Excluir fluxo"><i data-lucide="trash-2" class="ic-sm"></i></button>
+          </span>
         </div>`).join('') || '<div class="hours-empty" style="text-align:left;padding:4px 0">Sem fluxos neste projeto</div>';
       return `<div class="model-proj-block">
         <div class="model-proj-head">
           <strong>${esc(p.name)}</strong>
-          <button class="btn btn-ghost btn-sm" onclick="openModelAddFlow('${t.id}', ${pi})"><i data-lucide="plus" class="ic-sm"></i> Adicionar fluxo</button>
+          <span class="model-proj-actions">
+            <button class="btn btn-ghost btn-sm" onclick="openTemplateFlowModal('${t.id}', ${pi}, null)"><i data-lucide="plus" class="ic-sm"></i> Adicionar fluxo</button>
+            <button class="btn btn-ghost btn-sm" onclick="renameTemplateProject('${t.id}', ${pi})" title="Renomear projeto"><i data-lucide="pencil" class="ic-sm"></i></button>
+            <button class="btn btn-ghost btn-sm bulk-danger" onclick="confirmDeleteTemplateProject('${t.id}', ${pi})" title="Excluir projeto"><i data-lucide="trash-2" class="ic-sm"></i></button>
+          </span>
         </div>
         <div class="model-flow-list">${flowsHtml}</div>
       </div>`;
-    }).join('') || '<div class="hours-empty" style="text-align:left">Sem projetos.</div>';
+    }).join('') || '<div class="hours-empty" style="text-align:left;padding:10px 4px">Sem projetos.</div>';
     return `<div class="model-card">
       <div class="model-card-head">
         <div class="model-card-title">
@@ -10419,8 +10447,9 @@ function renderClientsModels() {
           ${derivados > 0 ? `<span class="pill" style="background:var(--accent-soft);color:var(--accent-text)">${derivados} cliente${derivados === 1 ? '' : 's'} vinculado${derivados === 1 ? '' : 's'}</span>` : ''}
         </div>
         <div class="model-card-actions">
-          <button class="btn btn-ghost btn-sm" onclick="openModelEditName('${t.id}')" title="Renomear"><i data-lucide="pencil" class="ic-sm"></i></button>
-          <button class="btn btn-ghost btn-sm bulk-danger" onclick="confirmDeleteModel('${t.id}')" title="Excluir"><i data-lucide="trash-2" class="ic-sm"></i></button>
+          <button class="btn btn-ghost btn-sm" onclick="addTemplateProject('${t.id}')" title="Adicionar projeto"><i data-lucide="folder-plus" class="ic-sm"></i> Novo projeto</button>
+          <button class="btn btn-ghost btn-sm" onclick="openModelEditName('${t.id}')" title="Renomear modelo"><i data-lucide="pencil" class="ic-sm"></i></button>
+          <button class="btn btn-ghost btn-sm bulk-danger" onclick="confirmDeleteModel('${t.id}')" title="Excluir modelo"><i data-lucide="trash-2" class="ic-sm"></i></button>
         </div>
       </div>
       <div class="model-card-body">${projectsHtml}</div>
@@ -10466,49 +10495,265 @@ async function confirmDeleteModel(id) {
   } catch (e) { toast(e.message, 'error'); }
 }
 
-/* Modal inline pra adicionar um fluxo novo dentro de um projeto do modelo.
-   Backend replica automaticamente nos clientes que vieram desse modelo. */
-async function openModelAddFlow(tplId, pIdx) {
+/* ── CRIAR MODELO DO ZERO ── */
+function openNewModelModal() {
+  $('nm-name').value = '';
+  $('nm-color').value = '#7A00FF';
+  const wsSel = $('nm-workspace');
+  const accessibleWs = workspaces.filter(w => me.isAdmin || (me.workspaces || []).includes(w.id));
+  wsSel.innerHTML = accessibleWs
+    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt-BR', { sensitivity: 'base' }))
+    .map(w => `<option value="${w.id}">${esc(w.name)}</option>`).join('');
+  if (accessibleWs.some(w => w.id === activeWs)) wsSel.value = activeWs;
+  openModal('new-model-modal');
+  setTimeout(() => $('nm-name').focus(), 60);
+}
+async function saveNewModel() {
+  const name = $('nm-name').value.trim();
+  if (!name) { toast('Informe um nome pro modelo.', 'error'); return; }
+  const workspaceId = $('nm-workspace').value;
+  const color = $('nm-color').value || '#7A00FF';
+  try {
+    const tpl = await api('/client-templates', 'POST', { name, workspaceId, color });
+    clientTemplates.push(tpl);
+    closeModal('new-model-modal');
+    renderClientsModels();
+    toast('Modelo criado. Adicione projetos e fluxos.');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+/* ── PROJETO DO MODELO ── */
+async function addTemplateProject(tplId) {
   const t = clientTemplates.find(x => x.id === tplId);
   if (!t) return;
-  const proj = t.projects?.[pIdx];
-  if (!proj) return;
   const name = await showPrompt({
-    title: `Novo fluxo em "${proj.name}"`,
-    message: 'Nome do fluxo (você poderá refinar etapas depois em cada cliente):',
-    placeholder: 'Ex.: Post no Instagram',
-    okLabel: 'Continuar'
+    title: 'Novo projeto no modelo',
+    message: 'Nome do projeto (ex.: Social Media, Ads, Blog):',
+    placeholder: 'Nome do projeto',
+    okLabel: 'Adicionar'
   });
   if (!name || !name.trim()) return;
-  const demandType = await showPrompt({
-    title: 'Tipo de demanda',
-    message: 'Categoria do fluxo (Social Media, Vídeo, Landing…) — opcional:',
-    placeholder: 'Social Media',
-    okLabel: 'Criar fluxo com 3 etapas padrão'
-  });
-  // Cria com 3 stages padrão — "A fazer / Em andamento / Concluída". Usuário
-  // pode editar depois em cada cliente ou no próprio modelo (futuro).
-  const stages = [
-    { label: 'A fazer',    color: '#64748B', done: false, deadlineDays: null },
-    { label: 'Em andamento', color: '#38BDF8', done: false, deadlineDays: null },
-    { label: 'Concluída',  color: '#22D3A5', done: true,  deadlineDays: null }
-  ];
   try {
-    const r = await api(`/client-templates/${tplId}/projects/${pIdx}/flows`, 'POST', {
-      name: name.trim(),
-      demandType: (demandType || '').trim(),
-      stages
-    });
-    // Atualiza template local
-    Object.assign(t, r.template);
-    // Recarrega flows globais (novos foram criados nos clientes vinculados).
-    if (r.replicatedIn > 0) {
-      flows = await api('/flows');
-      toast(`Fluxo criado no modelo e replicado em ${r.replicatedIn} cliente${r.replicatedIn === 1 ? '' : 's'}.`);
-    } else {
-      toast('Fluxo criado no modelo. Nenhum cliente vinculado ainda.');
-    }
+    const upd = await api('/client-templates/' + tplId + '/projects', 'POST', { name: name.trim() });
+    Object.assign(t, upd);
     renderClientsModels();
+    toast('Projeto adicionado ao modelo.');
+  } catch (e) { toast(e.message, 'error'); }
+}
+async function renameTemplateProject(tplId, pIdx) {
+  const t = clientTemplates.find(x => x.id === tplId);
+  const proj = t?.projects?.[pIdx];
+  if (!proj) return;
+  const newName = await showPrompt({
+    title: 'Renomear projeto',
+    message: 'Novo nome do projeto:',
+    defaultValue: proj.name,
+    placeholder: 'Nome do projeto',
+    okLabel: 'Salvar'
+  });
+  if (!newName || !newName.trim() || newName.trim() === proj.name) return;
+  try {
+    const upd = await api(`/client-templates/${tplId}/projects/${pIdx}`, 'PUT', { name: newName.trim() });
+    Object.assign(t, upd);
+    renderClientsModels();
+  } catch (e) { toast(e.message, 'error'); }
+}
+async function confirmDeleteTemplateProject(tplId, pIdx) {
+  const t = clientTemplates.find(x => x.id === tplId);
+  const proj = t?.projects?.[pIdx];
+  if (!proj) return;
+  const flowCount = (proj.flows || []).length;
+  const ok = await showConfirm({
+    title: 'Excluir projeto do modelo?',
+    message: `O projeto "${proj.name}"${flowCount ? ` (e ${flowCount} fluxo${flowCount === 1 ? '' : 's'} dentro dele)` : ''} será removido do modelo. Clientes já criados a partir dele NÃO são afetados.`,
+    okLabel: 'Excluir', danger: true
+  });
+  if (!ok) return;
+  try {
+    const upd = await api(`/client-templates/${tplId}/projects/${pIdx}`, 'DELETE');
+    Object.assign(t, upd);
+    renderClientsModels();
+    toast('Projeto removido do modelo.', 'warn');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+/* ── EDITOR COMPLETO DE FLUXO DO MODELO ──
+   Um único modal (#template-flow-modal) usado pra criar E editar. Diferença
+   é só se fIdx === null (criar → POST) ou é número (editar → PUT). */
+let _tflCtx = null; // { tplId, pIdx, fIdx (null se novo), stages: [], checklist: [] }
+function openTemplateFlowModal(tplId, pIdx, fIdx) {
+  const t = clientTemplates.find(x => x.id === tplId);
+  const proj = t?.projects?.[pIdx];
+  if (!t || !proj) return;
+  const isEdit = fIdx !== null && fIdx !== undefined;
+  const flow = isEdit ? proj.flows?.[fIdx] : null;
+  if (isEdit && !flow) return;
+  _tflCtx = {
+    tplId, pIdx, fIdx: isEdit ? fIdx : null,
+    // Cópias locais editáveis — só persiste no Save.
+    stages: isEdit ? flow.stages.map(s => ({ ...s })) : [
+      { label: 'A fazer',      color: '#64748B', done: false, deadlineDays: null, responsibleRole: null },
+      { label: 'Em andamento', color: '#38BDF8', done: false, deadlineDays: null, responsibleRole: null },
+      { label: 'Concluída',    color: '#22D3A5', done: true,  deadlineDays: null, responsibleRole: null }
+    ],
+    checklist: isEdit ? [...(flow.defaultChecklist || [])] : []
+  };
+  $('tfl-title').textContent = isEdit ? `Editar fluxo em "${proj.name}"` : `Novo fluxo em "${proj.name}"`;
+  $('tfl-name').value = flow?.name || '';
+  $('tfl-type').value = flow?.demandType || '';
+  $('tfl-description').value = flow?.defaultDescription || '';
+  // datalist com tipos usados em outros fluxos do workspace
+  const types = [...new Set(flows.filter(f => f.workspaceId === t.workspaceId).map(f => f.demandType).filter(Boolean))].sort();
+  $('tfl-type-datalist').innerHTML = types.map(x => `<option value="${esc(x)}">`).join('');
+  $('tfl-delete-btn').style.display = isEdit ? '' : 'none';
+  renderTflStages();
+  renderTflChecklist();
+  openModal('template-flow-modal');
+}
+function renderTflStages() {
+  const wrap = $('tfl-stages-list');
+  if (!wrap || !_tflCtx) return;
+  const sortedRoles = (roles || []).slice()
+    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt-BR', { sensitivity: 'base' }));
+  wrap.innerHTML = _tflCtx.stages.map((s, i) => {
+    // Opções do select de role com selected inline (evita bugs de replace).
+    const cur = s.responsibleRole || '';
+    const roleOpts = [`<option value="" ${cur === '' ? 'selected' : ''}>— Sem função —</option>`]
+      .concat(sortedRoles.map(r => `<option value="${esc(r.name)}" ${cur === r.name ? 'selected' : ''}>${esc(r.name)}</option>`))
+      .join('');
+    const color = s.color || '#7A00FF';
+    return `<div class="tfl-stage-row" data-idx="${i}">
+      <label class="tfl-stage-color" style="background:${esc(color)}" title="Cor da etapa">
+        <input type="color" value="${esc(color)}" oninput="tflSetStage(${i}, 'color', this.value); this.parentElement.style.background = this.value;">
+      </label>
+      <input type="text" class="wizard-cust-name" placeholder="Nome da etapa" value="${esc(s.label || '')}" oninput="tflSetStage(${i}, 'label', this.value)">
+      <select class="wizard-cust-resp" onchange="tflSetStage(${i}, 'responsibleRole', this.value || null)">${roleOpts}</select>
+      <input type="number" class="wizard-cust-days" min="0" step="1" placeholder="—" value="${s.deadlineDays ?? ''}" oninput="tflSetStage(${i}, 'deadlineDays', this.value === '' ? null : Number(this.value))" title="Prazo em dias (opcional)">
+      <label class="wizard-cust-toggle" title="Marcar como etapa final (conclui a demanda)">
+        <input type="checkbox" ${s.done ? 'checked' : ''} onchange="tflSetStage(${i}, 'done', this.checked)"> <span class="tfl-stage-done-lbl">Final</span>
+      </label>
+      <button type="button" class="wizard-cust-remove" title="Remover etapa" onclick="tflRemoveStage(${i})"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>`;
+  }).join('');
+  paintIcons();
+}
+function tflSetStage(idx, field, value) {
+  if (!_tflCtx || !_tflCtx.stages[idx]) return;
+  _tflCtx.stages[idx][field] = value;
+  // Não re-renderiza — os inputs já refletem o próprio valor. Cor é atualizada
+  // inline via oninput no elemento (evita perder o foco enquanto edita).
+}
+function tflAddStage() {
+  if (!_tflCtx) return;
+  _tflCtx.stages.push({ label: '', color: '#7A00FF', done: false, deadlineDays: null, responsibleRole: null });
+  renderTflStages();
+}
+function tflRemoveStage(idx) {
+  if (!_tflCtx) return;
+  if (_tflCtx.stages.length <= 2) { toast('O fluxo precisa ter pelo menos 2 etapas.', 'warn'); return; }
+  _tflCtx.stages.splice(idx, 1);
+  renderTflStages();
+}
+function renderTflChecklist() {
+  const wrap = $('tfl-checklist-list');
+  if (!wrap || !_tflCtx) return;
+  wrap.innerHTML = _tflCtx.checklist.map((it, i) => `
+    <div class="flow-checklist-item">
+      <input type="text" class="form-control" placeholder="Ex.: Aprovar copy" value="${esc(it.text || '')}" oninput="tflSetChecklist(${i}, this.value)">
+      <button type="button" class="detail-icon-btn danger" onclick="tflRemoveChecklist(${i})" title="Remover"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>`).join('');
+  paintIcons();
+}
+function tflSetChecklist(idx, value) {
+  if (!_tflCtx || !_tflCtx.checklist[idx]) return;
+  _tflCtx.checklist[idx].text = value;
+}
+function tflAddChecklist() {
+  if (!_tflCtx) return;
+  _tflCtx.checklist.push({ text: '' });
+  renderTflChecklist();
+}
+function tflRemoveChecklist(idx) {
+  if (!_tflCtx) return;
+  _tflCtx.checklist.splice(idx, 1);
+  renderTflChecklist();
+}
+async function tflSave() {
+  if (!_tflCtx) return;
+  const name = $('tfl-name').value.trim();
+  if (!name) { toast('Nome do fluxo é obrigatório.', 'error'); return; }
+  const validStages = _tflCtx.stages.filter(s => (s.label || '').trim());
+  if (validStages.length < 2) { toast('O fluxo precisa de pelo menos 2 etapas com nome.', 'error'); return; }
+  const payload = {
+    name,
+    demandType: $('tfl-type').value.trim(),
+    defaultDescription: $('tfl-description').value,
+    defaultChecklist: _tflCtx.checklist.filter(it => (it.text || '').trim()),
+    stages: validStages.map(s => ({
+      label: (s.label || '').trim(),
+      color: /^#[0-9a-f]{6}$/i.test(s.color || '') ? s.color : '#7A00FF',
+      done: !!s.done,
+      deadlineDays: Number.isInteger(s.deadlineDays) ? s.deadlineDays : null,
+      responsibleRole: s.responsibleRole || null
+    }))
+  };
+  const { tplId, pIdx, fIdx } = _tflCtx;
+  const t = clientTemplates.find(x => x.id === tplId);
+  try {
+    if (fIdx === null) {
+      // Criar novo fluxo — endpoint replica em clientes vinculados.
+      const r = await api(`/client-templates/${tplId}/projects/${pIdx}/flows`, 'POST', payload);
+      Object.assign(t, r.template);
+      if (r.replicatedIn > 0) {
+        flows = await api('/flows');
+        toast(`Fluxo criado e replicado em ${r.replicatedIn} cliente${r.replicatedIn === 1 ? '' : 's'}.`);
+      } else {
+        toast('Fluxo criado no modelo.');
+      }
+    } else {
+      const upd = await api(`/client-templates/${tplId}/projects/${pIdx}/flows/${fIdx}`, 'PUT', payload);
+      Object.assign(t, upd);
+      toast('Fluxo atualizado. Clientes existentes NÃO recebem essa alteração — só fluxos novos são replicados.');
+    }
+    closeModal('template-flow-modal');
+    renderClientsModels();
+  } catch (e) { toast(e.message, 'error'); }
+}
+async function tflDelete() {
+  if (!_tflCtx || _tflCtx.fIdx === null) return;
+  const { tplId, pIdx, fIdx } = _tflCtx;
+  const t = clientTemplates.find(x => x.id === tplId);
+  const flow = t?.projects?.[pIdx]?.flows?.[fIdx];
+  if (!flow) return;
+  const ok = await showConfirm({
+    title: 'Excluir fluxo do modelo?',
+    message: `O fluxo "${flow.name}" será removido do modelo. Clientes já criados a partir dele NÃO são afetados.`,
+    okLabel: 'Excluir', danger: true
+  });
+  if (!ok) return;
+  try {
+    const upd = await api(`/client-templates/${tplId}/projects/${pIdx}/flows/${fIdx}`, 'DELETE');
+    Object.assign(t, upd);
+    closeModal('template-flow-modal');
+    renderClientsModels();
+    toast('Fluxo removido do modelo.', 'warn');
+  } catch (e) { toast(e.message, 'error'); }
+}
+async function confirmDeleteTemplateFlow(tplId, pIdx, fIdx) {
+  const t = clientTemplates.find(x => x.id === tplId);
+  const flow = t?.projects?.[pIdx]?.flows?.[fIdx];
+  if (!flow) return;
+  const ok = await showConfirm({
+    title: 'Excluir fluxo do modelo?',
+    message: `O fluxo "${flow.name}" será removido do modelo. Clientes já criados a partir dele NÃO são afetados.`,
+    okLabel: 'Excluir', danger: true
+  });
+  if (!ok) return;
+  try {
+    const upd = await api(`/client-templates/${tplId}/projects/${pIdx}/flows/${fIdx}`, 'DELETE');
+    Object.assign(t, upd);
+    renderClientsModels();
+    toast('Fluxo removido do modelo.', 'warn');
   } catch (e) { toast(e.message, 'error'); }
 }
 function showClientDetailView() {
@@ -13254,9 +13499,22 @@ function updateWizardNextEnabled() {
      skippedStages: [stageId]
      stageResponsibles: { stageId: userId | null }
      stageLabels: { stageId: 'nome custom' }
-     stageAdditions: [{ id, label, color, deadlineDays, responsibleId, insertAfter }] */
+     stageOverrides: { stageId: { color?, deadlineDays?, done? } }  ← override de etapas ORIGINAIS
+     stageAdditions: [{ id, label, color, deadlineDays, responsibleId, done }]
+     stageOrder: [stageId]  ← inclui originais + adicionadas na ordem final */
 function resetWizardCustomization() {
-  wizardState.customization = { skippedStages: [], stageResponsibles: {}, stageLabels: {}, stageAdditions: [] };
+  wizardState.customization = {
+    skippedStages: [], stageResponsibles: {}, stageLabels: {},
+    stageOverrides: {}, stageAdditions: [], stageOrder: null
+  };
+}
+/* Aplica valor efetivo de uma etapa considerando origem + overrides. Usado
+   pra renderizar o valor "atual" mesmo pras originais que sofreram override. */
+function _custEffectiveStageValue(stage, isAddition, field) {
+  if (isAddition) return stage[field];
+  const ov = wizardState.customization.stageOverrides[stage.id];
+  if (ov && ov[field] !== undefined) return ov[field];
+  return stage[field];
 }
 function renderWizardCustomization() {
   const wrap = $('dw-cust-list');
@@ -13264,53 +13522,173 @@ function renderWizardCustomization() {
   const flow = flowById(wizardState.flowId);
   if (!flow) { wrap.innerHTML = '<div class="hours-empty">Fluxo não encontrado.</div>'; return; }
   if (!wizardState.customization) resetWizardCustomization();
+  // Pré-popula checklist com o default do fluxo (só se ainda tá zerado —
+  // evita resetar edições feitas no step 4 se o usuário voltar pro cust).
+  if (!Array.isArray(demandChecklistDraft) || !demandChecklistDraft.length) {
+    demandChecklistDraft = Array.isArray(flow.defaultChecklist)
+      ? flow.defaultChecklist.map(it => ({ text: String(it.text || '') }))
+      : [];
+  }
   const cust = wizardState.customization;
+  const wsIdForUsers = wizardState.projectId ? projectById(wizardState.projectId)?.workspaceId : activeWs;
   const userOptions = users
-    .filter(u => u.active !== false && (u.isAdmin || (u.workspaces || []).includes(wizardState.projectId ? projectById(wizardState.projectId)?.workspaceId : activeWs)))
+    .filter(u => u.active !== false && (u.isAdmin || (u.workspaces || []).includes(wsIdForUsers)))
     .sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-  const rowHTML = (stage, isAddition) => {
-    const stageId = stage.id;
+
+  // Ordem efetiva: se stageOrder existe, usa; senão originais + adicionadas.
+  const allById = new Map();
+  flow.stages.forEach(s => allById.set(s.id, { stage: s, isAddition: false }));
+  cust.stageAdditions.forEach(s => allById.set(s.id, { stage: s, isAddition: true }));
+  let orderedIds;
+  if (Array.isArray(cust.stageOrder) && cust.stageOrder.length) {
+    const seen = new Set();
+    orderedIds = cust.stageOrder.filter(id => allById.has(id) && !seen.has(id) && seen.add(id));
+    // Garante que qualquer id novo (não no stageOrder) apareça no final
+    flow.stages.forEach(s => { if (!seen.has(s.id)) { orderedIds.push(s.id); seen.add(s.id); } });
+    cust.stageAdditions.forEach(s => { if (!seen.has(s.id)) { orderedIds.push(s.id); seen.add(s.id); } });
+  } else {
+    orderedIds = [...flow.stages.map(s => s.id), ...cust.stageAdditions.map(s => s.id)];
+  }
+
+  const rowHTML = (stageId) => {
+    const meta = allById.get(stageId);
+    if (!meta) return '';
+    const { stage, isAddition } = meta;
     const skipped = cust.skippedStages.includes(stageId);
     const label = cust.stageLabels[stageId] || stage.label;
+    const color = _custEffectiveStageValue(stage, isAddition, 'color') || '#7A00FF';
+    const days = _custEffectiveStageValue(stage, isAddition, 'deadlineDays');
+    const done = _custEffectiveStageValue(stage, isAddition, 'done');
     const respValue = (stageId in cust.stageResponsibles) ? cust.stageResponsibles[stageId]
-      : (isAddition ? stage.responsibleId : '');
-    const respSelect = `
-      <select class="wizard-cust-resp" onchange="wizardCustSetResp('${stageId}', this.value)">
-        <option value="">— Padrão do fluxo —</option>
-        ${userOptions.map(u => `<option value="${u.id}" ${respValue === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}
-      </select>`;
+      : (isAddition ? (stage.responsibleId || '') : '');
+    const roleOpts = `<option value="">— Padrão do fluxo —</option>` +
+      userOptions.map(u => `<option value="${u.id}" ${respValue === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
+    const badge = isAddition
+      ? '<span class="wizard-cust-badge is-added">Nova</span>'
+      : '<span class="wizard-cust-badge is-original">Original</span>';
     const removeBtn = isAddition
-      ? `<button type="button" class="wizard-cust-remove" title="Remover etapa" onclick="wizardCustRemoveAddition('${stageId}')"><i data-lucide="x" class="ic-sm"></i></button>`
-      : '<span></span>';
-    return `<div class="wizard-cust-row ${skipped ? 'is-skipped' : ''} ${isAddition ? 'is-added' : ''}">
-      <label class="wizard-cust-toggle" title="${skipped ? 'Habilitar' : 'Desabilitar (pular)'}">
-        <input type="checkbox" ${!skipped ? 'checked' : ''} ${isAddition ? 'disabled' : ''} onchange="wizardCustToggleSkip('${stageId}', this.checked)">
+      ? `<button type="button" class="wizard-cust-remove" title="Remover etapa" onclick="wizardCustRemoveAddition('${stageId}')"><i data-lucide="trash-2" class="ic-sm"></i></button>`
+      : '<span class="wizard-cust-remove-placeholder"></span>';
+    return `<div class="wizard-cust-row-v2 ${skipped ? 'is-skipped' : ''} ${isAddition ? 'is-added' : ''}" draggable="true" data-stage-id="${stageId}">
+      <span class="wizard-cust-drag" title="Arraste pra reordenar"><i data-lucide="grip-vertical" class="ic-sm"></i></span>
+      <label class="wizard-cust-color-lg" style="background:${esc(color)}" title="Cor da etapa">
+        <input type="color" value="${esc(color)}" oninput="wizardCustSetColor('${stageId}', this.value); this.parentElement.style.background = this.value;">
       </label>
-      <div class="wizard-cust-color" style="background:${stage.color || '#7A00FF'}"></div>
       <input type="text" class="wizard-cust-name" value="${esc(label)}" placeholder="Nome da etapa" oninput="wizardCustSetLabel('${stageId}', this.value)">
-      ${respSelect}
-      <input type="number" class="wizard-cust-days" min="0" step="1" value="${stage.deadlineDays ?? ''}" placeholder="—" ${!isAddition ? 'disabled' : ''} title="${isAddition ? 'Dias de prazo desta etapa' : 'Só edita nas etapas que você adiciona'}" oninput="wizardCustSetDays('${stageId}', this.value)">
+      ${badge}
+      <select class="wizard-cust-resp" onchange="wizardCustSetResp('${stageId}', this.value)">${roleOpts}</select>
+      <div class="wizard-cust-days-wrap">
+        <span class="wizard-cust-mini-label">Prazo (dias)</span>
+        <input type="number" class="wizard-cust-days" min="0" step="1" value="${days ?? ''}" placeholder="—" oninput="wizardCustSetDays('${stageId}', this.value)">
+      </div>
+      <label class="wizard-cust-toggle wizard-cust-done" title="Marcar como etapa que encerra a demanda">
+        <input type="checkbox" ${done ? 'checked' : ''} onchange="wizardCustSetDone('${stageId}', this.checked)"> <span>Conclui</span>
+      </label>
+      <label class="wizard-cust-toggle wizard-cust-active" title="${skipped ? 'Habilitar' : 'Pular esta etapa'}">
+        <input type="checkbox" ${!skipped ? 'checked' : ''} onchange="wizardCustToggleSkip('${stageId}', this.checked)"> <span>Ativa</span>
+      </label>
       ${removeBtn}
     </div>`;
   };
-  const originalRows = flow.stages.map(s => rowHTML(s, false)).join('');
-  const addedRows = cust.stageAdditions.map(s => rowHTML(s, true)).join('');
-  wrap.innerHTML = originalRows + addedRows;
+  wrap.innerHTML = orderedIds.map(rowHTML).join('');
+  _installCustDragDrop(wrap);
+  renderWizardCustChecklist();
   paintIcons();
 }
+function renderWizardCustChecklist() {
+  const wrap = $('dw-cust-checklist');
+  if (!wrap) return;
+  // Reusa demandChecklistDraft — o step 4 lê essa mesma variável no submit.
+  if (!Array.isArray(demandChecklistDraft)) demandChecklistDraft = [];
+  wrap.innerHTML = demandChecklistDraft.map((it, i) => `
+    <div class="wizard-cust-chk-item">
+      <input type="text" class="form-control" placeholder="Ex.: Aprovar copy com cliente" value="${esc(it.text || '')}" oninput="wizardCustSetChecklistText(${i}, this.value)">
+      <button type="button" class="detail-icon-btn danger" onclick="wizardCustRemoveChecklistItem(${i})" title="Remover"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>`).join('') || '<div class="hours-empty" style="text-align:left;padding:6px 0">Nenhum item ainda.</div>';
+  paintIcons();
+}
+function wizardCustSetChecklistText(idx, value) {
+  if (!demandChecklistDraft[idx]) return;
+  demandChecklistDraft[idx].text = value;
+}
+function wizardCustAddChecklistItem() {
+  if (!Array.isArray(demandChecklistDraft)) demandChecklistDraft = [];
+  demandChecklistDraft.push({ text: '' });
+  renderWizardCustChecklist();
+}
+function wizardCustRemoveChecklistItem(idx) {
+  demandChecklistDraft.splice(idx, 1);
+  renderWizardCustChecklist();
+}
+
+/* Drag & drop nativo pra reordenar etapas. Guarda a ordem em cust.stageOrder
+   (array de stageIds — mistura originais e adicionadas). */
+let _custDragId = null;
+function _installCustDragDrop(container) {
+  container.querySelectorAll('.wizard-cust-row-v2').forEach(row => {
+    row.addEventListener('dragstart', (e) => {
+      _custDragId = row.dataset.stageId;
+      row.classList.add('is-dragging');
+      // Alguns browsers precisam de setData pro drag funcionar
+      try { e.dataTransfer.setData('text/plain', _custDragId); } catch {}
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    row.addEventListener('dragend', () => {
+      row.classList.remove('is-dragging');
+      container.querySelectorAll('.wizard-cust-row-v2').forEach(r => r.classList.remove('drop-above', 'drop-below'));
+      _custDragId = null;
+    });
+    row.addEventListener('dragover', (e) => {
+      if (!_custDragId || _custDragId === row.dataset.stageId) return;
+      e.preventDefault();
+      const rect = row.getBoundingClientRect();
+      const above = (e.clientY - rect.top) < rect.height / 2;
+      row.classList.toggle('drop-above', above);
+      row.classList.toggle('drop-below', !above);
+    });
+    row.addEventListener('dragleave', () => {
+      row.classList.remove('drop-above', 'drop-below');
+    });
+    row.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (!_custDragId || _custDragId === row.dataset.stageId) return;
+      const rect = row.getBoundingClientRect();
+      const above = (e.clientY - rect.top) < rect.height / 2;
+      _reorderCust(_custDragId, row.dataset.stageId, above);
+    });
+  });
+}
+function _reorderCust(draggedId, targetId, above) {
+  const cust = wizardState.customization;
+  const flow = flowById(wizardState.flowId);
+  // Snapshot da ordem atual (inclui originais + adicionadas).
+  const current = Array.isArray(cust.stageOrder) && cust.stageOrder.length
+    ? [...cust.stageOrder]
+    : [...flow.stages.map(s => s.id), ...cust.stageAdditions.map(s => s.id)];
+  const fromIdx = current.indexOf(draggedId);
+  if (fromIdx < 0) return;
+  current.splice(fromIdx, 1);
+  let toIdx = current.indexOf(targetId);
+  if (toIdx < 0) return;
+  if (!above) toIdx += 1;
+  current.splice(toIdx, 0, draggedId);
+  cust.stageOrder = current;
+  renderWizardCustomization();
+}
+
 function wizardCustToggleSkip(stageId, enabled) {
   const cust = wizardState.customization;
   if (enabled) cust.skippedStages = cust.skippedStages.filter(id => id !== stageId);
   else if (!cust.skippedStages.includes(stageId)) cust.skippedStages.push(stageId);
+  // Re-render pra visual do skipped (opacity)
+  renderWizardCustomization();
 }
 function wizardCustSetLabel(stageId, value) {
   const cust = wizardState.customization;
   const v = (value || '').trim();
   const flow = flowById(wizardState.flowId);
-  // Se é etapa adicionada: atualiza no próprio objeto
   const addition = cust.stageAdditions.find(s => s.id === stageId);
   if (addition) { addition.label = v || 'Nova etapa'; return; }
-  // Etapa original: só grava label se for diferente do padrão do fluxo (economia).
   const orig = flow?.stages.find(s => s.id === stageId);
   if (orig && v && v !== orig.label) cust.stageLabels[stageId] = v;
   else delete cust.stageLabels[stageId];
@@ -13324,26 +13702,66 @@ function wizardCustSetResp(stageId, value) {
 }
 function wizardCustSetDays(stageId, value) {
   const cust = wizardState.customization;
+  const n = value === '' ? null : parseInt(value, 10);
+  const parsed = (n === null || (Number.isFinite(n) && n >= 0)) ? n : null;
   const addition = cust.stageAdditions.find(s => s.id === stageId);
-  if (!addition) return; // só editável em etapas adicionadas
-  const n = parseInt(value, 10);
-  addition.deadlineDays = Number.isFinite(n) && n >= 0 ? n : null;
+  if (addition) { addition.deadlineDays = parsed; return; }
+  // Etapa original — override. Só grava se diferente do padrão do fluxo.
+  const flow = flowById(wizardState.flowId);
+  const orig = flow?.stages.find(s => s.id === stageId);
+  const same = (orig?.deadlineDays ?? null) === (parsed ?? null);
+  _writeStageOverride(stageId, 'deadlineDays', same ? undefined : parsed);
+}
+function wizardCustSetColor(stageId, value) {
+  if (!/^#[0-9a-f]{6}$/i.test(value || '')) return;
+  const cust = wizardState.customization;
+  const addition = cust.stageAdditions.find(s => s.id === stageId);
+  if (addition) { addition.color = value; return; }
+  const flow = flowById(wizardState.flowId);
+  const orig = flow?.stages.find(s => s.id === stageId);
+  const same = (orig?.color || '').toLowerCase() === value.toLowerCase();
+  _writeStageOverride(stageId, 'color', same ? undefined : value);
+}
+function wizardCustSetDone(stageId, checked) {
+  const cust = wizardState.customization;
+  const addition = cust.stageAdditions.find(s => s.id === stageId);
+  if (addition) { addition.done = !!checked; return; }
+  const flow = flowById(wizardState.flowId);
+  const orig = flow?.stages.find(s => s.id === stageId);
+  const same = !!orig?.done === !!checked;
+  _writeStageOverride(stageId, 'done', same ? undefined : !!checked);
+}
+/* Grava/limpa override numa etapa original. undefined = remove override
+   (volta ao padrão do fluxo). Se o objeto de override fica vazio, remove todo. */
+function _writeStageOverride(stageId, field, value) {
+  const cust = wizardState.customization;
+  const ov = cust.stageOverrides[stageId] || {};
+  if (value === undefined) delete ov[field];
+  else ov[field] = value;
+  if (Object.keys(ov).length === 0) delete cust.stageOverrides[stageId];
+  else cust.stageOverrides[stageId] = ov;
 }
 function wizardAddCustStage() {
   if (!wizardState.customization) resetWizardCustomization();
-  wizardState.customization.stageAdditions.push({
+  const newStage = {
     id: 'add-' + Math.random().toString(36).slice(2, 10),
     label: 'Nova etapa',
     color: '#7A00FF',
     deadlineDays: null,
     responsibleId: null,
     done: false
-  });
+  };
+  wizardState.customization.stageAdditions.push(newStage);
+  // Se já tem stageOrder, adiciona no final pra manter consistência
+  if (Array.isArray(wizardState.customization.stageOrder)) {
+    wizardState.customization.stageOrder.push(newStage.id);
+  }
   renderWizardCustomization();
 }
 function wizardCustRemoveAddition(id) {
   const cust = wizardState.customization;
   cust.stageAdditions = cust.stageAdditions.filter(s => s.id !== id);
+  if (Array.isArray(cust.stageOrder)) cust.stageOrder = cust.stageOrder.filter(x => x !== id);
   renderWizardCustomization();
 }
 

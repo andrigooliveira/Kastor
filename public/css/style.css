@@ -50,6 +50,89 @@ body.user-moderator .full-admin-only { display: none !important; }
 }
 .wizard-cust-remove:hover { color: var(--danger); background: rgba(239,68,68,0.1); }
 
+/* Linha v2 do step "cust" — agora com drag, cor editável e diferenciação
+   visual entre etapas ORIGINAIS do fluxo e etapas NOVAS (adicionadas). */
+.wizard-cust-section-title {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+  color: var(--text-muted); text-transform: uppercase;
+  margin: 4px 0 10px;
+}
+.wizard-cust-chk-hint {
+  font-size: 12px; color: var(--text-dim);
+  margin-bottom: 10px;
+}
+.wizard-cust-chk-item {
+  display: flex; gap: 8px; align-items: center; margin-bottom: 6px;
+}
+.wizard-cust-chk-item .form-control { flex: 1; }
+
+.wizard-cust-row-v2 {
+  display: grid;
+  grid-template-columns: 22px 30px minmax(140px,1fr) 66px minmax(160px,1fr) 78px 84px 84px 30px;
+  gap: 8px; align-items: center;
+  padding: 8px 10px;
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+  transition: background .12s, border-color .12s, opacity .12s;
+}
+.wizard-cust-row-v2.is-skipped { opacity: 0.5; }
+.wizard-cust-row-v2.is-added {
+  background: rgba(122,0,255,0.06);
+  border-color: rgba(122,0,255,0.35);
+}
+.wizard-cust-row-v2.is-dragging { opacity: 0.4; }
+.wizard-cust-row-v2.drop-above { border-top: 2px solid var(--accent); }
+.wizard-cust-row-v2.drop-below { border-bottom: 2px solid var(--accent); }
+.wizard-cust-drag {
+  cursor: grab; color: var(--text-muted);
+  display: flex; align-items: center; justify-content: center;
+}
+.wizard-cust-drag:active { cursor: grabbing; }
+.wizard-cust-color-lg {
+  position: relative;
+  width: 26px; height: 26px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid var(--hairline);
+  overflow: hidden;
+}
+.wizard-cust-color-lg input[type="color"] {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  border: 0; padding: 0;
+  opacity: 0; cursor: pointer;
+}
+.wizard-cust-badge {
+  font-size: 10px; font-weight: 700;
+  padding: 2px 8px; border-radius: 100px;
+  letter-spacing: 0.03em; text-align: center;
+  white-space: nowrap;
+}
+.wizard-cust-badge.is-original {
+  background: var(--surface-3);
+  color: var(--text-muted);
+}
+.wizard-cust-badge.is-added {
+  background: var(--accent);
+  color: #fff;
+}
+.wizard-cust-done, .wizard-cust-active {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 11.5px; color: var(--text-dim);
+  cursor: pointer;
+  justify-content: flex-start;
+}
+.wizard-cust-remove-placeholder { display: block; }
+/* Wrapper do prazo com minilabel em cima (mesmo padrão do modal de fluxo). */
+.wizard-cust-days-wrap { display: flex; flex-direction: column; gap: 2px; }
+.wizard-cust-mini-label {
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.08em;
+  color: var(--text-muted); text-transform: uppercase;
+  line-height: 1;
+}
+.wizard-cust-days-wrap .wizard-cust-days { width: 100%; }
+
 /* Cabeçalho "RECENTES" / "TODOS" dentro do grid do wizard (clientes/fluxos). */
 .wizard-section-head {
   grid-column: 1 / -1;
@@ -100,6 +183,49 @@ body.user-moderator .full-admin-only { display: none !important; }
 .model-flow-row:hover { background: var(--surface-2); }
 .model-flow-name { color: var(--text); flex: 1; }
 .model-flow-stages { color: var(--text-muted); font-size: 11.5px; }
+.model-flow-actions,
+.model-proj-actions { display: flex; gap: 2px; }
+.model-flow-actions .btn,
+.model-proj-actions .btn { padding: 4px 8px; }
+.model-card-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+/* Editor completo de fluxo do modelo (#template-flow-modal). */
+.tfl-stage-row {
+  display: grid;
+  grid-template-columns: 32px 1fr 1fr 78px 82px 32px;
+  gap: 10px; align-items: center;
+  padding: 8px 12px;
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+}
+.tfl-stage-color {
+  position: relative;
+  width: 26px; height: 26px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid var(--hairline);
+  overflow: hidden;
+}
+.tfl-stage-color input[type="color"] {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  border: 0; padding: 0;
+  opacity: 0; cursor: pointer;
+}
+.tfl-stage-done-lbl {
+  font-size: 11px; color: var(--text-dim);
+  margin-left: 4px; vertical-align: middle;
+}
+#tfl-stages-list .wizard-cust-toggle {
+  gap: 4px;
+  justify-content: flex-start;
+}
+/* Item do checklist no editor de fluxo do modelo. */
+.flow-checklist-item {
+  display: flex; gap: 8px; align-items: center; margin-bottom: 6px;
+}
+.flow-checklist-item .form-control { flex: 1; }
 
 /* Banner de boas-vindas — aparece no primeiro login, dispensável.
    Fica entre topbar e conteúdo, sem quebrar layout. */
@@ -2380,6 +2506,20 @@ textarea.form-control { height: auto; min-height: 80px; padding: 11px 14px; }
   padding: 16px 28px; z-index: 2;
   display: grid; grid-template-columns: 1fr 1px 1fr; gap: 24px; align-items: stretch;
 }
+/* Barra "Alterações pendentes" — colada NA PARTE DE CIMA do footer sticky.
+   Como é filho do .detail-footer, herda a mesma posição sticky bottom sem
+   precisar calcular offset. Faz sentido visual: as ações rápidas (INÍCIO,
+   TÉRMINO, ETAPA) e o alerta ficam ancorados juntos. */
+.detail-pending-bar {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px; margin: -16px -28px 12px;
+  background: var(--accent-dim, var(--accent-soft, rgba(122,0,255,0.12)));
+  border-bottom: 1px solid var(--accent, #7A00FF);
+  color: var(--accent-text, var(--accent-2, #9B4BFF));
+  font-size: 13px; font-weight: 600;
+}
+.detail-pending-msg { display: inline-flex; align-items: center; gap: 6px; margin-right: auto; }
 .detail-footer-section { display: flex; gap: 14px; align-items: end; }
 .detail-footer-section:first-of-type { grid-column: 1; }
 .detail-footer-section.detail-footer-stage { grid-column: 3; }

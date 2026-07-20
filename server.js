@@ -1893,8 +1893,30 @@ app.post('/api/client-templates', requireAuth, (req, res) => {
   const b = req.body || {};
   const sourceClientId = b.sourceClientId;
   const tplName = String(b.name || '').trim();
-  if (!sourceClientId) return res.status(400).json({ error: 'sourceClientId é obrigatório.' });
   if (!tplName) return res.status(400).json({ error: 'Dê um nome ao modelo.' });
+
+  // MODO 2: criar modelo VAZIO (só nome + workspace). Usado quando o usuário
+  // constrói o modelo do zero na tela /clients/models, sem partir de cliente
+  // existente. Evita o "gap" de criar cliente, salvar como modelo, editar depois.
+  if (!sourceClientId) {
+    const wsId = b.workspaceId && canAccessWs(req.user, b.workspaceId) ? b.workspaceId : wsIdsFor(req.user)[0];
+    if (!wsId) return res.status(400).json({ error: 'Workspace inválido.' });
+    const tpl = {
+      id: uid(),
+      workspaceId: wsId,
+      name: tplName,
+      color: (typeof b.color === 'string' && /^#[0-9a-f]{6}$/i.test(b.color)) ? b.color : '#7A00FF',
+      segment: '', driveFiles: '', brandAssets: '', guidelines: '',
+      projects: [],
+      createdAt: nowISO(),
+      createdBy: req.user.id
+    };
+    db.clientTemplates.push(tpl);
+    saveEntity('clientTemplates', tpl);
+    return res.status(201).json(tpl);
+  }
+
+  // MODO 1 (original): snapshot de um cliente existente.
   const c = db.clients.find(x => x.id === sourceClientId);
   if (!c || !canAccessWs(req.user, c.workspaceId)) return res.status(404).json({ error: 'Cliente não encontrado.' });
 
@@ -1980,6 +2002,32 @@ app.post('/api/client-templates/:id/projects', requireAuth, (req, res) => {
   saveEntity('clientTemplates', t);
   res.json(t);
 });
+app.put('/api/client-templates/:id/projects/:pIdx', requireAuth, (req, res) => {
+  const t = db.clientTemplates.find(x => x.id === req.params.id);
+  if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Modelo não encontrado.' });
+  const pIdx = parseInt(req.params.pIdx, 10);
+  const ptpl = t.projects?.[pIdx];
+  if (!ptpl) return res.status(400).json({ error: 'Projeto inválido.' });
+  const b = req.body || {};
+  if (typeof b.name === 'string' && b.name.trim()) ptpl.name = b.name.trim();
+  if (typeof b.color === 'string' && /^#[0-9a-f]{6}$/i.test(b.color)) ptpl.color = b.color;
+  if (typeof b.driveFiles === 'string')  ptpl.driveFiles  = b.driveFiles;
+  if (typeof b.brandAssets === 'string') ptpl.brandAssets = b.brandAssets;
+  if (typeof b.guidelines === 'string')  ptpl.guidelines  = b.guidelines;
+  saveEntity('clientTemplates', t);
+  res.json(t);
+});
+app.delete('/api/client-templates/:id/projects/:pIdx', requireAuth, (req, res) => {
+  const t = db.clientTemplates.find(x => x.id === req.params.id);
+  if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Modelo não encontrado.' });
+  const pIdx = parseInt(req.params.pIdx, 10);
+  if (!Number.isInteger(pIdx) || pIdx < 0 || !Array.isArray(t.projects) || pIdx >= t.projects.length) {
+    return res.status(400).json({ error: 'Projeto inválido.' });
+  }
+  t.projects.splice(pIdx, 1);
+  saveEntity('clientTemplates', t);
+  res.json(t);
+});
 
 /* Adiciona um FLUXO novo dentro de um projeto do modelo E replica esse fluxo
    em todos os clientes existentes que foram criados A PARTIR desse modelo
@@ -2032,6 +2080,51 @@ app.post('/api/client-templates/:id/projects/:pIdx/flows', requireAuth, (req, re
     broadcastChange('flow', 'create', { id: flow.id, workspaceId: proj.workspaceId, byUserId: req.user.id });
   }
   res.json({ template: t, replicatedIn: replicated.length, skippedClients: skippedClients.length });
+});
+
+/* Edita um fluxo existente dentro de um projeto do modelo. Aceita name,
+   demandType, defaultDescription, defaultChecklist e stages completos.
+   Edição do modelo NÃO propaga automaticamente pros clientes existentes —
+   propagação é só na CRIAÇÃO de fluxos novos. Motivo: clientes podem ter
+   customizado fluxos antigos e sobrescrever silenciosamente seria destrutivo. */
+app.put('/api/client-templates/:id/projects/:pIdx/flows/:fIdx', requireAuth, (req, res) => {
+  const t = db.clientTemplates.find(x => x.id === req.params.id);
+  if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Modelo não encontrado.' });
+  const pIdx = parseInt(req.params.pIdx, 10);
+  const fIdx = parseInt(req.params.fIdx, 10);
+  const ptpl = t.projects?.[pIdx];
+  const ftpl = ptpl?.flows?.[fIdx];
+  if (!ftpl) return res.status(400).json({ error: 'Fluxo inválido.' });
+  const b = req.body || {};
+  if (typeof b.name === 'string' && b.name.trim()) ftpl.name = b.name.trim().slice(0, 120);
+  if (typeof b.demandType === 'string')        ftpl.demandType        = b.demandType.trim().slice(0, 60);
+  if (typeof b.defaultDescription === 'string') ftpl.defaultDescription = b.defaultDescription;
+  if (Array.isArray(b.defaultChecklist))       ftpl.defaultChecklist   = sanitizeChecklistTemplate(b.defaultChecklist);
+  if (Array.isArray(b.stages)) {
+    const clean = sanitizeStages(b.stages.map(s => ({ ...s, id: uid() })));
+    if (!clean) return res.status(400).json({ error: 'O fluxo precisa de pelo menos 2 etapas com nome.' });
+    // Grava SEM id — IDs são gerados a cada instância criada num cliente.
+    ftpl.stages = clean.map(s => ({
+      label: s.label, color: s.color, done: !!s.done,
+      responsibleRole: s.responsibleRole || null,
+      deadlineDays: s.deadlineDays || null
+    }));
+  }
+  saveEntity('clientTemplates', t);
+  res.json(t);
+});
+app.delete('/api/client-templates/:id/projects/:pIdx/flows/:fIdx', requireAuth, (req, res) => {
+  const t = db.clientTemplates.find(x => x.id === req.params.id);
+  if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Modelo não encontrado.' });
+  const pIdx = parseInt(req.params.pIdx, 10);
+  const fIdx = parseInt(req.params.fIdx, 10);
+  const ptpl = t.projects?.[pIdx];
+  if (!ptpl || !Array.isArray(ptpl.flows) || fIdx < 0 || fIdx >= ptpl.flows.length) {
+    return res.status(400).json({ error: 'Fluxo inválido.' });
+  }
+  ptpl.flows.splice(fIdx, 1);
+  saveEntity('clientTemplates', t);
+  res.json(t);
 });
 
 app.delete('/api/client-templates/:id', requireAuth, (req, res) => {
@@ -2664,6 +2757,7 @@ app.post('/api/demands', requireAuth, (req, res) => {
   // stageAdditions: etapas EXTRAS que existem só nessa demanda. Cada uma vira
   // um objeto shape-compatible com flow.stages (id/label/color/deadlineDays/done).
   const initStageAdditions = [];
+  const clientAdditionIdMap = {}; // id do cliente → id gerado no server (pra remap do stageOrder)
   if (Array.isArray(b.stageAdditions)) {
     for (const s of b.stageAdditions) {
       if (!s || typeof s !== 'object') continue;
@@ -2675,15 +2769,46 @@ app.post('/api/demands', requireAuth, (req, res) => {
         const u = db.users.find(x => x.id === s.responsibleId && x.active !== false);
         if (u && canAccessWs(u, project.workspaceId)) respId = u.id;
       }
+      const newId = uid();
+      if (typeof s.id === 'string' && s.id) clientAdditionIdMap[s.id] = newId;
       initStageAdditions.push({
-        id: uid(),
+        id: newId,
         label,
         color: typeof s.color === 'string' && /^#[0-9a-f]{6}$/i.test(s.color) ? s.color : '#7A00FF',
         deadlineDays: days,
         responsibleId: respId,
-        done: false
+        done: !!s.done
       });
     }
+  }
+  // stageOverrides: overrides de color/deadlineDays/done nas etapas ORIGINAIS do
+  // fluxo (não altera o fluxo em si — só esta demanda vê). Formato:
+  //   { stageId: { color?, deadlineDays?, done? } }
+  const initStageOverrides = {};
+  if (b.stageOverrides && typeof b.stageOverrides === 'object') {
+    for (const sid of Object.keys(b.stageOverrides)) {
+      if (!validStageIds.has(sid)) continue;
+      const raw = b.stageOverrides[sid] || {};
+      const out = {};
+      if (typeof raw.color === 'string' && /^#[0-9a-f]{6}$/i.test(raw.color)) out.color = raw.color;
+      if (raw.deadlineDays === null) out.deadlineDays = null;
+      else if (Number.isInteger(Number(raw.deadlineDays)) && Number(raw.deadlineDays) >= 0) out.deadlineDays = Number(raw.deadlineDays);
+      if (typeof raw.done === 'boolean') out.done = raw.done;
+      if (Object.keys(out).length) initStageOverrides[sid] = out;
+    }
+  }
+  // stageOrder: sequência final (originais + adicionadas) via IDs. Do lado do
+  // cliente, IDs de additions são temporários — precisam ser remapeados pros IDs
+  // definitivos gerados aqui (clientAdditionIdMap).
+  let initStageOrder = null;
+  if (Array.isArray(b.stageOrder) && b.stageOrder.length) {
+    const remapped = b.stageOrder
+      .map(id => clientAdditionIdMap[id] || id)
+      .filter(id => validStageIds.has(id) || initStageAdditions.some(a => a.id === id));
+    const seen = new Set();
+    initStageOrder = [];
+    for (const id of remapped) if (!seen.has(id)) { initStageOrder.push(id); seen.add(id); }
+    if (!initStageOrder.length) initStageOrder = null;
   }
 
   const d = {
@@ -2713,7 +2838,9 @@ app.post('/api/demands', requireAuth, (req, res) => {
     ...(initSkipped.length ? { skippedStages: initSkipped } : {}),
     ...(Object.keys(initStageResp).length ? { stageResponsibles: initStageResp } : {}),
     ...(Object.keys(initStageLabels).length ? { stageLabels: initStageLabels } : {}),
+    ...(Object.keys(initStageOverrides).length ? { stageOverrides: initStageOverrides } : {}),
     ...(initStageAdditions.length ? { stageAdditions: initStageAdditions } : {}),
+    ...(initStageOrder ? { stageOrder: initStageOrder } : {}),
     createdAt: nowISO(),
     completedAt: stage.done ? nowISO() : null
   };

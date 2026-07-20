@@ -614,6 +614,7 @@
           <div class="filters-bar" style="margin-bottom:18px;gap:10px">
             <button class="btn btn-ghost btn-sm" onclick="goPage('clients')"><i data-lucide="chevron-left" class="ic-sm"></i> Voltar aos clientes</button>
             <div style="flex:1"></div>
+            <button class="btn btn-primary btn-sm" onclick="openNewModelModal()"><i data-lucide="plus" class="ic-sm"></i> Novo Modelo</button>
           </div>
           <div class="section-title" style="margin-bottom:6px">Modelos de Cliente</div>
           <div class="capacity-hint" style="margin-bottom:18px">Modelos são snapshots reutilizáveis (metadados + projetos + fluxos). Ao adicionar um fluxo novo a um modelo, ele é <strong>replicado nos clientes existentes</strong> criados a partir dele.</div>
@@ -1142,7 +1143,7 @@
 
 <!-- MODAL: NOVA/EDITAR DEMANDA — wizard de 4 steps em NOVA, form direto em EDITAR -->
 <div class="modal-overlay" id="demand-modal">
-  <div class="modal modal-lg demand-wizard-modal">
+  <div class="modal modal-xl demand-wizard-modal">
     <div class="modal-header">
       <div class="modal-title" id="modal-title">Nova demanda</div>
       <button class="modal-close" onclick="closeModal('demand-modal')"><i data-lucide="x" class="ic-sm"></i></button>
@@ -1187,14 +1188,21 @@
       <!-- STEP 4 — formulário tradicional -->
       <!-- Customização de etapas POR INSTÂNCIA — não altera o fluxo original. -->
       <div class="wizard-step" id="dw-step-cust" style="display:none">
-        <div class="wizard-step-title">CUSTOMIZAR ETAPAS DESTA DEMANDA</div>
+        <div class="wizard-step-title">CUSTOMIZAR ESTA DEMANDA</div>
         <div class="wizard-cust-hint">
           Ajustes aplicados <strong>somente a esta demanda</strong>. O fluxo original permanece intacto.
-          Você pode renomear, trocar responsável, pular etapas ou adicionar novas.
+          Arraste pra reordenar, edite cor/prazo/responsável, marque "final" pra concluir, ou adicione novas etapas.
         </div>
+        <div class="wizard-cust-section-title">Etapas</div>
         <div class="wizard-cust-list" id="dw-cust-list"></div>
-        <button type="button" class="btn btn-ghost btn-sm" style="margin-top:14px" onclick="wizardAddCustStage()">
+        <button type="button" class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="wizardAddCustStage()">
           <i data-lucide="plus" class="ic-sm"></i> Adicionar etapa
+        </button>
+        <div class="wizard-cust-section-title" style="margin-top:26px">Checklist inicial</div>
+        <div class="wizard-cust-chk-hint">Itens do checklist que a demanda vai ter ao ser criada. Vem pré-preenchido do fluxo — você pode editar, adicionar ou remover.</div>
+        <div id="dw-cust-checklist"></div>
+        <button type="button" class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="wizardCustAddChecklistItem()">
+          <i data-lucide="plus" class="ic-sm"></i> Adicionar item
         </button>
       </div>
 
@@ -2125,6 +2133,84 @@
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('dupflow-modal')">Cancelar</button>
       <button class="btn btn-primary" onclick="confirmDuplicateFlow()">Duplicar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: NOVO MODELO (criar do zero, sem partir de cliente) -->
+<div class="modal-overlay" id="new-model-modal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div class="modal-title">Novo Modelo</div>
+      <button class="modal-close" onclick="closeModal('new-model-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Nome do modelo *</label>
+        <input class="form-control" id="nm-name" placeholder="Ex.: Cliente Padrão de Ads">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Workspace</label>
+        <select class="form-control" id="nm-workspace"></select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Cor</label>
+        <input class="form-control" id="nm-color" type="color" value="#7A00FF">
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:8px;line-height:1.55">
+        O modelo é criado vazio. Depois você adiciona projetos e fluxos completos na tela de Modelos.
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('new-model-modal')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveNewModel()">Criar modelo</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: EDITAR FLUXO DO MODELO -->
+<div class="modal-overlay" id="template-flow-modal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title" id="tfl-title">Editar fluxo do modelo</div>
+      <button class="modal-close" onclick="closeModal('template-flow-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">Nome do fluxo *</label>
+          <input class="form-control" id="tfl-name" placeholder="Ex.: Post no Instagram">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Tipo de demanda</label>
+          <input class="form-control" id="tfl-type" placeholder="Ex.: Social Media" list="tfl-type-datalist">
+          <datalist id="tfl-type-datalist"></datalist>
+        </div>
+        <div class="form-group full">
+          <label class="form-label">Descrição padrão <span class="qty-cell-hint" title="Aparece pré-preenchida na descrição de demandas novas criadas com este fluxo.">?</span></label>
+          <textarea class="form-control" id="tfl-description" rows="3" placeholder="Ex.: Sempre incluir CTA no final. Formato 1080x1350."></textarea>
+        </div>
+        <div class="form-group full">
+          <label class="form-label">Checklist padrão <span class="qty-cell-hint" title="Cada item já vai vir marcado como pendente em demandas novas.">?</span></label>
+          <div id="tfl-checklist-list"></div>
+          <button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="tflAddChecklist()"><i data-lucide="plus" class="ic-sm"></i> Adicionar item</button>
+        </div>
+        <div class="form-group full">
+          <label class="form-label">Etapas do fluxo *</label>
+          <div class="wizard-cust-hint">Cada etapa vira uma coluna no Kanban. Prazo em dias começa a contar quando a demanda entra na etapa.</div>
+          <div id="tfl-stages-list"></div>
+          <button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="tflAddStage()"><i data-lucide="plus" class="ic-sm"></i> Adicionar etapa</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <div class="client-modal-foot-left">
+        <button class="btn btn-danger btn-sm" id="tfl-delete-btn" style="display:none" onclick="tflDelete()">Excluir fluxo</button>
+      </div>
+      <div class="client-modal-foot-right">
+        <button class="btn btn-ghost" onclick="closeModal('template-flow-modal')">Cancelar</button>
+        <button class="btn btn-primary" onclick="tflSave()">Salvar fluxo</button>
+      </div>
     </div>
   </div>
 </div>
