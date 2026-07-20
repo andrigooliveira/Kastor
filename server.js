@@ -598,6 +598,13 @@ function adminOnly(req, res, next) {
   if (!req.user.isAdmin) return res.status(403).json({ error: 'Apenas administradores podem fazer isso' });
   next();
 }
+/* Moderador OU admin — usado em ações administrativas que NÃO envolvem
+   editar usuários nem workspaces (essas seguem sendo `adminOnly` estrito).
+   Moderador continua limitado ao conjunto de workspaces que o admin liberou. */
+function modOrAdmin(req, res, next) {
+  if (!req.user.isAdmin && !req.user.isModerator) return res.status(403).json({ error: 'Apenas moderadores ou administradores podem fazer isso' });
+  next();
+}
 
 /* ─── NOTIFICAÇÕES ─── */
 const NOTIFICATIONS_MAX_PER_USER = 500;
@@ -1550,7 +1557,7 @@ app.delete('/api/workspaces/:id', requireAuth, adminOnly, (req, res) => {
 app.get('/api/users', requireAuth, (req, res) => res.json(db.users.map(publicUser)));
 
 app.post('/api/users', requireAuth, adminOnly, (req, res) => {
-  const { username, password, name, role, isAdmin, workspaces, discordId, email } = req.body || {};
+  const { username, password, name, role, isAdmin, isModerator, workspaces, discordId, email } = req.body || {};
   const uname = String(username || '').trim().toLowerCase();
   if (!uname || !password) return res.status(400).json({ error: 'Usuário e senha são obrigatórios' });
   if (String(password).length < 6) return res.status(400).json({ error: 'A senha deve ter pelo menos 6 caracteres' });
@@ -1570,7 +1577,11 @@ app.post('/api/users', requireAuth, adminOnly, (req, res) => {
   const wsList = Array.isArray(workspaces) ? workspaces.filter(id => db.workspaces.some(w => w.id === id)) : [];
   const user = {
     id: uid(), username: uname, name: String(name || uname).trim(),
-    role: String(role || '').trim(), isAdmin: !!isAdmin, avatar: null,
+    role: String(role || '').trim(),
+    isAdmin: !!isAdmin,
+    // Moderador só faz sentido se não for admin (admin já tem tudo). Silenciosamente ignora.
+    isModerator: !isAdmin && !!isModerator,
+    avatar: null,
     active: true, workspaces: wsList, discordId: did, email: mail,
     emailPrefs: defaultEmailPrefs(), createdAt: nowISO()
   };
@@ -1583,7 +1594,7 @@ app.post('/api/users', requireAuth, adminOnly, (req, res) => {
 app.put('/api/users/:id', requireAuth, adminOnly, (req, res) => {
   const u = db.users.find(x => x.id === req.params.id);
   if (!u) return res.status(404).json({ error: 'Usuário não encontrado' });
-  const { name, role, isAdmin, active, password, workspaces, discordId, email } = req.body || {};
+  const { name, role, isAdmin, isModerator, active, password, workspaces, discordId, email } = req.body || {};
   if (typeof name === 'string' && name.trim()) u.name = name.trim();
   if (typeof role === 'string') u.role = role.trim();
   if (Array.isArray(workspaces)) {
@@ -1612,6 +1623,11 @@ app.put('/api/users/:id', requireAuth, adminOnly, (req, res) => {
       return res.status(400).json({ error: 'É preciso manter pelo menos um administrador ativo' });
     }
     u.isAdmin = isAdmin;
+    // Admin absorve moderador — não fazem sentido juntos.
+    if (isAdmin) u.isModerator = false;
+  }
+  if (typeof isModerator === 'boolean' && !u.isAdmin) {
+    u.isModerator = isModerator;
   }
   if (typeof active === 'boolean') {
     if (!active && u.isAdmin && db.users.filter(x => x.isAdmin && x.active !== false).length <= 1) {
@@ -1631,7 +1647,7 @@ app.put('/api/users/:id', requireAuth, adminOnly, (req, res) => {
 /* ── FUNÇÕES (roles) ── */
 app.get('/api/roles', requireAuth, (req, res) => res.json(db.roles));
 
-app.post('/api/roles', requireAuth, adminOnly, (req, res) => {
+app.post('/api/roles', requireAuth, modOrAdmin, (req, res) => {
   const { name } = req.body || {};
   if (!String(name || '').trim()) return res.status(400).json({ error: 'Nome da função é obrigatório' });
   const trimmed = String(name).trim();
@@ -1644,7 +1660,7 @@ app.post('/api/roles', requireAuth, adminOnly, (req, res) => {
   res.status(201).json(r);
 });
 
-app.put('/api/roles/:id', requireAuth, adminOnly, (req, res) => {
+app.put('/api/roles/:id', requireAuth, modOrAdmin, (req, res) => {
   const r = db.roles.find(x => x.id === req.params.id);
   if (!r) return res.status(404).json({ error: 'Função não encontrada' });
   const { name } = req.body || {};
@@ -1667,7 +1683,7 @@ app.put('/api/roles/:id', requireAuth, adminOnly, (req, res) => {
   res.json(r);
 });
 
-app.delete('/api/roles/:id', requireAuth, adminOnly, (req, res) => {
+app.delete('/api/roles/:id', requireAuth, modOrAdmin, (req, res) => {
   const r = db.roles.find(x => x.id === req.params.id);
   if (!r) return res.status(404).json({ error: 'Função não encontrada' });
   db.roles = db.roles.filter(x => x.id !== req.params.id);
@@ -1923,6 +1939,101 @@ app.post('/api/client-templates', requireAuth, (req, res) => {
   res.status(201).json(tpl);
 });
 
+app.get('/api/client-templates/:id', requireAuth, (req, res) => {
+  const t = db.clientTemplates.find(x => x.id === req.params.id);
+  if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Modelo não encontrado.' });
+  res.json(t);
+});
+
+/* Edita metadados do modelo — nome, cor, guidelines, drive/brand assets.
+   Pra edição de PROJETOS e FLUXOS do modelo, ver endpoints dedicados abaixo. */
+app.put('/api/client-templates/:id', requireAuth, (req, res) => {
+  const t = db.clientTemplates.find(x => x.id === req.params.id);
+  if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Modelo não encontrado.' });
+  const b = req.body || {};
+  if (typeof b.name === 'string' && b.name.trim()) t.name = b.name.trim();
+  if (typeof b.color === 'string' && /^#[0-9a-f]{6}$/i.test(b.color)) t.color = b.color;
+  if (typeof b.segment === 'string')    t.segment    = b.segment;
+  if (typeof b.driveFiles === 'string') t.driveFiles = b.driveFiles;
+  if (typeof b.brandAssets === 'string')t.brandAssets= b.brandAssets;
+  if (typeof b.guidelines === 'string') t.guidelines = b.guidelines;
+  saveEntity('clientTemplates', t);
+  res.json(t);
+});
+
+/* Adiciona/edita/remove um PROJETO dentro do modelo. */
+app.post('/api/client-templates/:id/projects', requireAuth, (req, res) => {
+  const t = db.clientTemplates.find(x => x.id === req.params.id);
+  if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Modelo não encontrado.' });
+  const b = req.body || {};
+  const name = String(b.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Nome do projeto é obrigatório.' });
+  if (!Array.isArray(t.projects)) t.projects = [];
+  t.projects.push({
+    name,
+    color: (typeof b.color === 'string' && /^#[0-9a-f]{6}$/i.test(b.color)) ? b.color : (t.color || '#7A00FF'),
+    driveFiles: String(b.driveFiles || ''),
+    brandAssets: String(b.brandAssets || ''),
+    guidelines: String(b.guidelines || ''),
+    flows: []
+  });
+  saveEntity('clientTemplates', t);
+  res.json(t);
+});
+
+/* Adiciona um FLUXO novo dentro de um projeto do modelo E replica esse fluxo
+   em todos os clientes existentes que foram criados A PARTIR desse modelo
+   (matching por client.fromClientTemplateId === template.id). O projeto
+   correspondente no cliente é achado por NOME — se ninguém renomeou funciona. */
+app.post('/api/client-templates/:id/projects/:pIdx/flows', requireAuth, (req, res) => {
+  const t = db.clientTemplates.find(x => x.id === req.params.id);
+  if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Modelo não encontrado.' });
+  const pIdx = parseInt(req.params.pIdx, 10);
+  if (!Number.isInteger(pIdx) || pIdx < 0 || !Array.isArray(t.projects) || pIdx >= t.projects.length) {
+    return res.status(400).json({ error: 'Projeto inválido no modelo.' });
+  }
+  const ptpl = t.projects[pIdx];
+  const b = req.body || {};
+  const name = String(b.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Nome do fluxo é obrigatório.' });
+  const stages = Array.isArray(b.stages) ? sanitizeStages(b.stages.map(s => ({ ...s, id: uid() }))) : null;
+  if (!stages) return res.status(400).json({ error: 'O fluxo precisa de pelo menos 2 etapas com nome.' });
+  const ftpl = {
+    name,
+    demandType: String(b.demandType || ''),
+    // Stages guardadas SEM id — id novo é gerado a cada instância criada.
+    stages: stages.map(s => ({ label: s.label, color: s.color, done: !!s.done,
+      responsibleRole: s.responsibleRole || null, deadlineDays: s.deadlineDays || null }))
+  };
+  if (!Array.isArray(ptpl.flows)) ptpl.flows = [];
+  ptpl.flows.push(ftpl);
+  saveEntity('clientTemplates', t);
+
+  // REPLICAÇÃO: pra cada cliente criado desse modelo, procura projeto com o mesmo
+  // nome e cria o fluxo lá. Se o projeto foi renomeado no cliente, skippa (log).
+  const replicated = [];
+  const skippedClients = [];
+  const targetClients = db.clients.filter(c => c.fromClientTemplateId === t.id && notDeleted(c));
+  for (const client of targetClients) {
+    const proj = db.projects.find(p => p.clientId === client.id && p.name === ptpl.name && notDeleted(p));
+    if (!proj) { skippedClients.push(client.id); continue; }
+    const flow = {
+      id: uid(), workspaceId: proj.workspaceId, projectId: proj.id,
+      clientId: client.id, client: client.name,
+      icon: null,
+      name: ftpl.name, demandType: ftpl.demandType,
+      // Regenera stages com IDs novos por instância.
+      stages: ftpl.stages.map(s => ({ ...s, id: uid() })),
+      createdAt: nowISO()
+    };
+    db.flows.push(flow);
+    saveEntity('flows', flow);
+    replicated.push({ clientId: client.id, flowId: flow.id });
+    broadcastChange('flow', 'create', { id: flow.id, workspaceId: proj.workspaceId, byUserId: req.user.id });
+  }
+  res.json({ template: t, replicatedIn: replicated.length, skippedClients: skippedClients.length });
+});
+
 app.delete('/api/client-templates/:id', requireAuth, (req, res) => {
   const t = db.clientTemplates.find(x => x.id === req.params.id);
   if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Modelo não encontrado.' });
@@ -1961,6 +2072,9 @@ app.post('/api/clients/from-template', requireAuth, (req, res) => {
     driveFiles: tpl.driveFiles || '',
     brandAssets: tpl.brandAssets || '',
     guidelines: tpl.guidelines || '',
+    // Rastreamento pra replicar fluxos novos do modelo neste cliente depois.
+    // Não é acoplamento forte: se o modelo for excluído, o cliente segue vivo.
+    fromClientTemplateId: tpl.id,
     active: true,
     createdAt: nowISO()
   };
@@ -2249,7 +2363,7 @@ function resolveStageOwner(stage, project) {
   return stage.responsibleId || null;
 }
 
-app.post('/api/flows', requireAuth, adminOnly, (req, res) => {
+app.post('/api/flows', requireAuth, modOrAdmin, (req, res) => {
   const { name, stages, demandType, projectId, workspaceId, client, clientId, icon, applyToAll, defaultDescription, defaultChecklist } = req.body || {};
   const defaultDesc = typeof defaultDescription === 'string' ? defaultDescription : '';
   const defaultChk = sanitizeChecklistTemplate(defaultChecklist);
@@ -2323,7 +2437,7 @@ app.post('/api/flows', requireAuth, adminOnly, (req, res) => {
   res.status(201).json(f);
 });
 
-app.put('/api/flows/:id', requireAuth, adminOnly, (req, res) => {
+app.put('/api/flows/:id', requireAuth, modOrAdmin, (req, res) => {
   const f = db.flows.find(x => x.id === req.params.id);
   if (!f || !canAccessWs(req.user, f.workspaceId)) return res.status(404).json({ error: 'Fluxo não encontrado' });
   const { name, stages, demandType, projectId, client, clientId, icon, defaultDescription, defaultChecklist } = req.body || {};
@@ -2387,7 +2501,7 @@ app.put('/api/flows/:id', requireAuth, adminOnly, (req, res) => {
   res.json(f);
 });
 
-app.delete('/api/flows/:id', requireAuth, adminOnly, (req, res) => {
+app.delete('/api/flows/:id', requireAuth, modOrAdmin, (req, res) => {
   const f = db.flows.find(x => x.id === req.params.id);
   if (!f || !canAccessWs(req.user, f.workspaceId)) return res.status(404).json({ error: 'Fluxo não encontrado' });
   if (db.demands.some(d => d.flowId === req.params.id)) {
@@ -2401,7 +2515,7 @@ app.delete('/api/flows/:id', requireAuth, adminOnly, (req, res) => {
 });
 
 /* Duplicar fluxo para outro projeto */
-app.post('/api/flows/:id/duplicate', requireAuth, adminOnly, (req, res) => {
+app.post('/api/flows/:id/duplicate', requireAuth, modOrAdmin, (req, res) => {
   const f = db.flows.find(x => x.id === req.params.id);
   if (!f || !canAccessWs(req.user, f.workspaceId)) return res.status(404).json({ error: 'Fluxo não encontrado' });
   const { projectId } = req.body || {};
@@ -2519,6 +2633,59 @@ app.post('/api/demands', requireAuth, (req, res) => {
       createdBy: req.user.id, createdAt: nowISO()
     })).filter(it => it.text);
   }
+  // ── Customização de etapas POR INSTÂNCIA (opcional, vem do step "cust" do wizard).
+  // Filtra o que faz sentido: só stageIds válidos, users acessíveis, etc.
+  const validStageIds = new Set(flow.stages.map(s => s.id));
+  const initSkipped = Array.isArray(b.skippedStages)
+    ? [...new Set(b.skippedStages.filter(id => typeof id === 'string' && validStageIds.has(id) && id !== stage.id))]
+    : [];
+  const initStageResp = {};
+  if (b.stageResponsibles && typeof b.stageResponsibles === 'object') {
+    for (const sid of Object.keys(b.stageResponsibles)) {
+      if (!validStageIds.has(sid)) continue;
+      const v = b.stageResponsibles[sid];
+      if (v === null) { initStageResp[sid] = null; continue; }
+      if (typeof v !== 'string' || !v) continue;
+      const u = db.users.find(x => x.id === v && x.active !== false);
+      if (u && canAccessWs(u, project.workspaceId)) initStageResp[sid] = u.id;
+    }
+  }
+  const initStageLabels = {};
+  if (b.stageLabels && typeof b.stageLabels === 'object') {
+    for (const sid of Object.keys(b.stageLabels)) {
+      if (!validStageIds.has(sid)) continue;
+      const v = b.stageLabels[sid];
+      if (typeof v !== 'string') continue;
+      const trimmed = v.trim().slice(0, 80);
+      const orig = flow.stages.find(s => s.id === sid);
+      if (trimmed && orig && trimmed !== orig.label) initStageLabels[sid] = trimmed;
+    }
+  }
+  // stageAdditions: etapas EXTRAS que existem só nessa demanda. Cada uma vira
+  // um objeto shape-compatible com flow.stages (id/label/color/deadlineDays/done).
+  const initStageAdditions = [];
+  if (Array.isArray(b.stageAdditions)) {
+    for (const s of b.stageAdditions) {
+      if (!s || typeof s !== 'object') continue;
+      const label = String(s.label || '').trim().slice(0, 80);
+      if (!label) continue;
+      const days = Number.isInteger(Number(s.deadlineDays)) && Number(s.deadlineDays) >= 0 ? Number(s.deadlineDays) : null;
+      let respId = null;
+      if (typeof s.responsibleId === 'string' && s.responsibleId) {
+        const u = db.users.find(x => x.id === s.responsibleId && x.active !== false);
+        if (u && canAccessWs(u, project.workspaceId)) respId = u.id;
+      }
+      initStageAdditions.push({
+        id: uid(),
+        label,
+        color: typeof s.color === 'string' && /^#[0-9a-f]{6}$/i.test(s.color) ? s.color : '#7A00FF',
+        deadlineDays: days,
+        responsibleId: respId,
+        done: false
+      });
+    }
+  }
+
   const d = {
     id: uid(), workspaceId: project.workspaceId, projectId: project.id,
     flowId: flow.id, name: String(b.name).trim(),
@@ -2535,13 +2702,18 @@ app.post('/api/demands', requireAuth, (req, res) => {
     qtyVariations: Number(b.qtyVariations) > 0 ? Math.floor(Number(b.qtyVariations)) : 0,
     deliverableUserId: b.deliverableUserId || null,
     status: stage.id,
-    ownerId: b.ownerId || resolveStageOwner(stage, project) || null,
+    ownerId: b.ownerId || (initStageResp[stage.id] !== undefined ? initStageResp[stage.id] : null) || resolveStageOwner(stage, project) || null,
     stageEnteredAt: nowISO(), stageDueDate: stageDue,
     stageHistory: [{ stageId: stage.id, enteredAt: nowISO(), dueDate: stageDue }],
     timeEntries: [], comments: [], history: [],
     checklist: initialChecklist,
     attachments: sanitizeAttachments(b.attachments),
     recurrence: sanitizeRecurrence(b.recurrence),
+    // Customização inicial (só grava campos com conteúdo — economiza espaço em JSONB).
+    ...(initSkipped.length ? { skippedStages: initSkipped } : {}),
+    ...(Object.keys(initStageResp).length ? { stageResponsibles: initStageResp } : {}),
+    ...(Object.keys(initStageLabels).length ? { stageLabels: initStageLabels } : {}),
+    ...(initStageAdditions.length ? { stageAdditions: initStageAdditions } : {}),
     createdAt: nowISO(),
     completedAt: stage.done ? nowISO() : null
   };
@@ -3306,12 +3478,19 @@ app.post('/api/schedules', requireAuth, (req, res) => {
   if (!canAccessWs(req.user, demand.workspaceId)) return res.status(403).json({ error: 'Sem acesso ao workspace da demanda' });
   const fields = sanitizeScheduleBody(b);
   if (!fields) return res.status(400).json({ error: 'Data e horários inválidos (endMin deve ser > startMin).' });
+  // Snapshot da cor da etapa atual da demanda no MOMENTO do agendamento.
+  // Se a demanda depois mudar de etapa, o bloco na agenda continua com
+  // a cor daquela etapa (o "estado" quando você planejou).
+  const _flowForColor = db.flows.find(f => f.id === demand.flowId);
+  const _stageForColor = _flowForColor ? _flowForColor.stages.find(st => st.id === demand.status) : null;
+  const stageColorSnapshot = _stageForColor?.color || null;
   const s = {
     id: uid(),
     workspaceId: demand.workspaceId,
     userId,
     demandId: demand.id,
     ...fields,
+    stageColorSnapshot,
     createdAt: nowISO(),
     createdBy: req.user.id
   };
@@ -3678,7 +3857,7 @@ function validateTargetUser(targetUserId, workspaceId) {
   if (!canAccessWs(u, workspaceId)) return { ok: false, error: 'Usuário alvo não tem acesso a este workspace' };
   return { ok: true, value: u.id };
 }
-app.post('/api/webhooks', requireAuth, adminOnly, (req, res) => {
+app.post('/api/webhooks', requireAuth, modOrAdmin, (req, res) => {
   const b = req.body || {};
   const ws = b.workspaceId && canAccessWs(req.user, b.workspaceId) ? b.workspaceId : wsIdsFor(req.user)[0];
   if (!ws) return res.status(400).json({ error: 'Workspace inválido' });
@@ -3703,7 +3882,7 @@ app.post('/api/webhooks', requireAuth, adminOnly, (req, res) => {
   saveEntity('webhooks', h);
   res.status(201).json(h);
 });
-app.put('/api/webhooks/:id', requireAuth, adminOnly, (req, res) => {
+app.put('/api/webhooks/:id', requireAuth, modOrAdmin, (req, res) => {
   const h = (db.webhooks || []).find(x => x.id === req.params.id);
   if (!h || !canAccessWs(req.user, h.workspaceId)) return res.status(404).json({ error: 'Webhook não encontrado' });
   const b = req.body || {};
@@ -3720,14 +3899,14 @@ app.put('/api/webhooks/:id', requireAuth, adminOnly, (req, res) => {
   saveEntity('webhooks', h);
   res.json(h);
 });
-app.delete('/api/webhooks/:id', requireAuth, adminOnly, (req, res) => {
+app.delete('/api/webhooks/:id', requireAuth, modOrAdmin, (req, res) => {
   const h = (db.webhooks || []).find(x => x.id === req.params.id);
   if (!h || !canAccessWs(req.user, h.workspaceId)) return res.status(404).json({ error: 'Webhook não encontrado' });
   db.webhooks = db.webhooks.filter(x => x.id !== req.params.id);
   removeEntity('webhooks', req.params.id);
   res.json({ ok: true });
 });
-app.post('/api/webhooks/:id/test', requireAuth, adminOnly, async (req, res) => {
+app.post('/api/webhooks/:id/test', requireAuth, modOrAdmin, async (req, res) => {
   const h = (db.webhooks || []).find(x => x.id === req.params.id);
   if (!h || !canAccessWs(req.user, h.workspaceId)) return res.status(404).json({ error: 'Webhook não encontrado' });
   if (!isSafeWebhookUrl(h.url)) {

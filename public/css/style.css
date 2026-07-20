@@ -4,6 +4,102 @@
 /* Usuários não-admin: oculta qualquer elemento marcado como admin-only.
    A classe é alternada em body via renderSidebarUser(). */
 body.user-readonly .admin-only { display: none !important; }
+/* Elementos marcados `.full-admin-only` são vistos SÓ por admin puro.
+   Moderador vê tudo com `.admin-only` mas não vê `.full-admin-only`. */
+body.user-readonly .full-admin-only,
+body.user-moderator .full-admin-only { display: none !important; }
+
+/* Step de customização de etapas no wizard de nova demanda. */
+.wizard-cust-hint {
+  font-size: 12.5px; line-height: 1.55; color: var(--text-dim);
+  background: var(--surface-2); border-left: 3px solid var(--accent);
+  padding: 12px 14px; border-radius: var(--radius-sm);
+  margin-bottom: 14px;
+}
+.wizard-cust-list { display: flex; flex-direction: column; gap: 8px; }
+.wizard-cust-row {
+  display: grid;
+  grid-template-columns: 28px 6px 1fr 1fr 96px 32px;
+  gap: 10px; align-items: center;
+  padding: 8px 12px;
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+}
+.wizard-cust-row.is-skipped { opacity: 0.5; }
+.wizard-cust-row.is-added { border-color: var(--accent); background: var(--accent-soft); }
+.wizard-cust-color {
+  width: 6px; height: 28px; border-radius: 3px;
+}
+.wizard-cust-toggle {
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+}
+.wizard-cust-name, .wizard-cust-resp, .wizard-cust-days {
+  background: var(--surface-2); border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 6px 10px; font-size: 13px;
+  color: var(--text); font-family: inherit;
+}
+.wizard-cust-name:focus, .wizard-cust-resp:focus, .wizard-cust-days:focus {
+  outline: none; border-color: var(--accent); background: var(--surface-3);
+}
+.wizard-cust-remove {
+  background: transparent; border: none;
+  color: var(--text-muted); cursor: pointer;
+  padding: 4px; border-radius: 4px;
+}
+.wizard-cust-remove:hover { color: var(--danger); background: rgba(239,68,68,0.1); }
+
+/* Cabeçalho "RECENTES" / "TODOS" dentro do grid do wizard (clientes/fluxos). */
+.wizard-section-head {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  padding: 8px 4px 4px;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 2px;
+}
+.wizard-section-head + .wizard-card { margin-top: 4px; }
+
+/* Cards de Modelos de Cliente (subtela /clients/models). */
+.model-card {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  margin-bottom: 14px;
+}
+.model-card-head {
+  display: flex; align-items: center; gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 12px;
+}
+.model-card-title { display: flex; align-items: center; gap: 10px; flex: 1; flex-wrap: wrap; }
+.model-card-title strong { font-size: 15px; color: var(--text); }
+.model-card-actions { display: flex; gap: 4px; }
+.model-proj-block {
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--hairline);
+}
+.model-proj-block:last-child { border-bottom: none; padding-bottom: 0; }
+.model-proj-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 6px;
+}
+.model-proj-head strong { font-size: 13.5px; color: var(--text-dim); }
+.model-flow-list { padding-left: 12px; display: flex; flex-direction: column; gap: 4px; }
+.model-flow-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+.model-flow-row:hover { background: var(--surface-2); }
+.model-flow-name { color: var(--text); flex: 1; }
+.model-flow-stages { color: var(--text-muted); font-size: 11.5px; }
 
 /* Banner de boas-vindas — aparece no primeiro login, dispensável.
    Fica entre topbar e conteúdo, sem quebrar layout. */
@@ -2704,7 +2800,19 @@ i[data-lucide]:not([class*=ic-]) { width: 16px; height: 16px; stroke-width: 2; }
    `document.elementFromPoint` enxergue a célula embaixo (em vez do próprio
    bloco). Sem isso, o resize só "subia" — não tinha como encolher porque o
    cursor passava por cima do bloco e nunca achava o slot alvo. */
-.agenda-block.dragging { cursor: grabbing; opacity: 0.6; z-index: 20; pointer-events: none; }
+.agenda-block.dragging { cursor: grabbing; opacity: 0.35; z-index: 20; pointer-events: none; filter: grayscale(0.4); }
+/* Ghost card — clone flutuante que segue o cursor com preview da posição alvo.
+   Sobrepõe o bloco original (que fica esmaecido) com borda tracejada e o
+   estilo da cor da etapa. */
+.agenda-block.agenda-block-ghost {
+  opacity: 0.85;
+  z-index: 25;
+  cursor: grabbing;
+  outline: 2px dashed rgba(255,255,255,0.9);
+  outline-offset: -3px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35), 0 0 0 1px rgba(0,0,0,0.15);
+  transition: none;
+}
 .agenda-block-name { font-weight: 600; line-height: 1.25; word-break: break-word; }
 .agenda-block-project { font-size: 10px; opacity: 0.85; line-height: 1.2; margin-top: 1px; }
 /* Handle de redimensionar — sempre visível, mais alto e descoberta clara */

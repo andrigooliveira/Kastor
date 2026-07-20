@@ -117,11 +117,11 @@
         <svg viewBox="0 0 16 16" fill="none"><path d="M4 8h2.5a2 2 0 002-2V3.5M12 8H9.5a2 2 0 00-2 2v2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="3" cy="8" r="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="13" cy="8" r="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="7.5" cy="3.5" r="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="7.5" cy="12.5" r="1.5" stroke="currentColor" stroke-width="1.5"/></svg>
         Integrações
       </div>
-      <div class="nav-item" data-page="workspaces" id="nav-workspaces" onclick="goPage('workspaces')">
+      <div class="nav-item admin-only full-admin-only" data-page="workspaces" id="nav-workspaces" onclick="goPage('workspaces')">
         <svg viewBox="0 0 16 16" fill="none"><rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M1.5 6h13" stroke="currentColor" stroke-width="1.5"/></svg>
         Workspaces
       </div>
-      <div class="nav-item" data-page="users" id="nav-users" onclick="goPage('users')">
+      <div class="nav-item admin-only full-admin-only" data-page="users" id="nav-users" onclick="goPage('users')">
         <svg viewBox="0 0 16 16" fill="none"><circle cx="5.5" cy="5" r="2.5" stroke="currentColor" stroke-width="1.5"/><path d="M1.5 13c.6-2.2 2.2-3.3 4-3.3s3.4 1.1 4 3.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="11.5" cy="5.5" r="2" stroke="currentColor" stroke-width="1.5"/><path d="M11 9.8c1.8.1 3 1.1 3.5 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         Usuários
       </div>
@@ -602,10 +602,22 @@
                 <button class="btn btn-ghost btn-sm client-status-btn" data-status="archived" onclick="setClientStatusFilter('archived')">Arquivados</button>
               </div>
             </div>
-            <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="openClientModal()"><i data-lucide="plus" class="ic-sm"></i> Novo Cliente</button>
+            <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="goPage('clientsModels')"><i data-lucide="layers" class="ic-sm"></i> Modelos</button>
+            <button class="btn btn-primary btn-sm" onclick="openClientModal()"><i data-lucide="plus" class="ic-sm"></i> Novo Cliente</button>
           </div>
           <div class="section-title" style="margin-bottom:16px">Clientes Cadastrados</div>
           <div class="flow-grid" id="clients-grid"></div>
+        </div>
+
+        <!-- VIEW C: modelos (client templates) — CRUD de modelos e fluxos que replicam. -->
+        <div id="clients-view-models" style="display:none">
+          <div class="filters-bar" style="margin-bottom:18px;gap:10px">
+            <button class="btn btn-ghost btn-sm" onclick="goPage('clients')"><i data-lucide="chevron-left" class="ic-sm"></i> Voltar aos clientes</button>
+            <div style="flex:1"></div>
+          </div>
+          <div class="section-title" style="margin-bottom:6px">Modelos de Cliente</div>
+          <div class="capacity-hint" style="margin-bottom:18px">Modelos são snapshots reutilizáveis (metadados + projetos + fluxos). Ao adicionar um fluxo novo a um modelo, ele é <strong>replicado nos clientes existentes</strong> criados a partir dele.</div>
+          <div id="clients-models-list"></div>
         </div>
 
         <!-- VIEW B: detalhe de um cliente -->
@@ -946,7 +958,7 @@
       <div class="page-body">
         <div class="section-head">
           <div class="section-title">Workspaces (Squads)</div>
-          <button class="btn btn-primary btn-sm admin-only" onclick="openWsModal()">+ Novo Workspace</button>
+          <button class="btn btn-primary btn-sm admin-only full-admin-only" onclick="openWsModal()">+ Novo Workspace</button>
         </div>
         <div class="table-wrap table-scroll">
           <table>
@@ -974,7 +986,7 @@
           <div class="section-title">Usuários da Equipe</div>
           <div style="display:flex;gap:6px;align-items:center">
             <button class="btn btn-ghost btn-sm" id="user-archive-toggle" onclick="toggleArchivedUsers()">Ver desativados</button>
-            <button class="btn btn-primary btn-sm admin-only" onclick="openUserModal()">+ Cadastrar Usuário</button>
+            <button class="btn btn-primary btn-sm admin-only full-admin-only" onclick="openUserModal()">+ Cadastrar Usuário</button>
           </div>
         </div>
         <div class="table-wrap table-scroll">
@@ -1173,6 +1185,19 @@
       </div>
 
       <!-- STEP 4 — formulário tradicional -->
+      <!-- Customização de etapas POR INSTÂNCIA — não altera o fluxo original. -->
+      <div class="wizard-step" id="dw-step-cust" style="display:none">
+        <div class="wizard-step-title">CUSTOMIZAR ETAPAS DESTA DEMANDA</div>
+        <div class="wizard-cust-hint">
+          Ajustes aplicados <strong>somente a esta demanda</strong>. O fluxo original permanece intacto.
+          Você pode renomear, trocar responsável, pular etapas ou adicionar novas.
+        </div>
+        <div class="wizard-cust-list" id="dw-cust-list"></div>
+        <button type="button" class="btn btn-ghost btn-sm" style="margin-top:14px" onclick="wizardAddCustStage()">
+          <i data-lucide="plus" class="ic-sm"></i> Adicionar etapa
+        </button>
+      </div>
+
       <div class="wizard-step" id="dw-step-4" style="display:none">
         <div class="wizard-breadcrumb" id="dw-breadcrumb"></div>
         <div class="form-grid">
@@ -2171,7 +2196,8 @@
           <div class="ws-checklist" id="u-workspaces"></div>
         </div>
         <div class="form-group full">
-          <label class="form-check"><input type="checkbox" id="u-admin"> Administrador (gerencia workspaces, usuários e fluxos)</label>
+          <label class="form-check"><input type="checkbox" id="u-admin" onchange="onUserAdminChange()"> Administrador (gerencia workspaces, usuários e fluxos)</label>
+          <label class="form-check" id="u-moderator-wrap"><input type="checkbox" id="u-moderator"> Moderador (gerencia fluxos, funções, webhooks e integrações — mas SÓ nos workspaces liberados acima, e não edita usuários)</label>
         </div>
       </div>
       <div style="font-size:11px;color:var(--text-muted);margin-top:10px;line-height:1.6">

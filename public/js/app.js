@@ -84,7 +84,8 @@ const PAGE_TO_PATH = {
   users:        '/users',
   integrations: '/integrations',
   profile:      '/profile',
-  docs:         '/docs'
+  docs:         '/docs',
+  clientsModels: '/clients/models'
 };
 const PATH_TO_PAGE = Object.fromEntries(Object.entries(PAGE_TO_PATH).map(([k, v]) => [v, k]));
 let _routerSilent = false;   // true durante popstate → suprime push/replace
@@ -217,7 +218,8 @@ window.addEventListener('popstate', applyRoute);
 const FILTER_KEYS = {
   list:      { storage: 'kastor-filters-list',      ids: ['search-input','filter-user','filter-project','filter-flow','filter-period','filter-quick'] },
   dashboard: { storage: 'kastor-filters-dashboard', ids: ['dash-f-user','dash-f-client','dash-f-period','dash-f-type'] },
-  capacity:  { storage: 'kastor-filters-capacity',  ids: ['capacity-period'] }
+  capacity:  { storage: 'kastor-filters-capacity',  ids: ['capacity-period'] },
+  clients:   { storage: 'kastor-filters-clients',   ids: ['client-search','client-f-ws'] }
 };
 // Restore só roda na PRIMEIRA pintura após entrar na página. Renders subsequentes
 // (provocados por onchange de filtro) NÃO restauram — senão a tecla que o usuário
@@ -391,9 +393,13 @@ function activeStagesOf(d, flow) {
   } else {
     ordered = flow.stages;
   }
-  return ordered
+  const base = ordered
     .filter(s => !skipped.has(s.id))
     .map(s => labels[s.id] ? { ...s, label: labels[s.id] } : s);
+  // Etapas adicionadas SÓ nesta instância (via wizard ou depois via edição).
+  // Vão no final da sequência — o usuário pode reordenar via stageOrder futuramente.
+  const additions = Array.isArray(d.stageAdditions) ? d.stageAdditions : [];
+  return [...base, ...additions];
 }
 /* Responsável efetivo de uma etapa para uma demanda específica.
    Override por instância tem precedência sobre o padrão do fluxo. */
@@ -2420,9 +2426,12 @@ function renderSidebarUser() {
   // se avatarHTML virar a incluir mais classes (ex.: anel de presença).
   const av = $('sidebar-avatar');
   if (av) av.outerHTML = avatarHTML(me, 'avatar').replace(/class="([^"]+)"/, 'class="$1" id="sidebar-avatar"');
-  // Todas as abas visíveis pra todos. Mutação fica gated por .admin-only
-  // (toggle global via classe body.user-readonly).
-  document.body.classList.toggle('user-readonly', !me.isAdmin);
+  // Classes de permissão no body pra gate visual das seções:
+  //   user-readonly     → nem admin nem moderador (esconde .admin-only)
+  //   user-moderator    → moderador (esconde .full-admin-only, mas vê .admin-only)
+  //   admin (nenhuma)   → vê tudo
+  document.body.classList.toggle('user-readonly', !me.isAdmin && !me.isModerator);
+  document.body.classList.toggle('user-moderator', !!me.isModerator && !me.isAdmin);
 }
 
 /* Sidebar collapse — estado persistido em localStorage. */
@@ -2444,7 +2453,7 @@ const PAGE_TITLES = {
   clients: 'Clientes', projects: 'Projetos', flows: 'Fluxos de Demanda',
   workspaces: 'Workspaces', users: 'Usuários', profile: 'Meu Perfil',
   capacity: 'Capacidade', templates: 'Templates', integrations: 'Integrações', agenda: 'Agenda',
-  recurring: 'Listas de tarefas', docs: 'Documentação'
+  recurring: 'Listas de tarefas', docs: 'Documentação', clientsModels: 'Modelos de Cliente'
 };
 function goPage(page) {
   currentPage = page;
@@ -2533,6 +2542,16 @@ function renderCurrent() {
       } else {
         renderClients();
       }
+      break;
+    }
+    case 'clientsModels': {
+      // Subtela dentro da página Clientes — mesmo container, view diferente.
+      // O nav ativa 'clients'; forçamos aqui pra o item da sidebar refletir.
+      document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.page === 'clients'));
+      document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-clients'));
+      $('topbar-title').textContent = 'Modelos de Cliente';
+      showClientsModelsView();
+      renderClientsModels();
       break;
     }
     case 'projects':   renderProjects(); break;
@@ -4298,8 +4317,9 @@ function openNewDemand() {
   demandAttachments = [];
   refreshFormAttList('f-attachments-list');
   applyPriorityDropdown('f-priority');
-  // Inicia o wizard no step 1 (cliente). Reset completo do estado.
+  // Inicia o wizard no step 1 (cliente). Reset completo do estado (inclui customização).
   wizardState = { step: 1, clientId: null, projectId: null, flowId: null };
+  resetWizardCustomization();
   wizardLastFlowApplied = null;
   wizardGoTo(1);
   openModal('demand-modal');
@@ -4389,6 +4409,15 @@ async function saveDemand() {
       endDate: $('f-rec-end').value || null
     } : { enabled: false }
   };
+  // Customização de etapas por instância (do step "cust" do wizard).
+  // Só envia em criação — edição segue por rotas dedicadas (/skipped-stages etc).
+  if (!editingId && wizardState.customization) {
+    const c = wizardState.customization;
+    if (c.skippedStages?.length)                 payload.skippedStages = c.skippedStages;
+    if (c.stageResponsibles && Object.keys(c.stageResponsibles).length) payload.stageResponsibles = c.stageResponsibles;
+    if (c.stageLabels && Object.keys(c.stageLabels).length) payload.stageLabels = c.stageLabels;
+    if (c.stageAdditions?.length)                payload.stageAdditions = c.stageAdditions;
+  }
   console.log('[saveDemand] entregáveis raw:', _rawQty, '→ payload:', { p: payload.qtyPieces, a: payload.qtyArts, v: payload.qtyVariations });
   try {
     let result;
@@ -9513,6 +9542,8 @@ function openUserModal(id) {
   $('u-email').value = u?.email || '';
   $('u-discord-id').value = u?.discordId || '';
   $('u-admin').checked = !!u?.isAdmin;
+  $('u-moderator').checked = !!u?.isModerator;
+  onUserAdminChange(); // atualiza estado do checkbox Moderador (esconde se admin)
   const selected = u ? (u.workspaces || []) : [activeWs];
   $('u-workspaces').innerHTML = [...workspaces]
     .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt-BR', { sensitivity: 'base' }))
@@ -9525,11 +9556,20 @@ function openUserModal(id) {
   openModal('user-modal');
   navPush(id ? '/users/' + id : '/users/new');
 }
+/* Admin absorve moderador: se marca admin, força moderator = false + esconde. */
+function onUserAdminChange() {
+  const isAdmin = $('u-admin').checked;
+  const modWrap = $('u-moderator-wrap');
+  if (modWrap) modWrap.style.display = isAdmin ? 'none' : '';
+  if (isAdmin) $('u-moderator').checked = false;
+}
 async function saveUser() {
   const wsSel = [...$('u-workspaces').querySelectorAll('input:checked')].map(i => i.value);
   const payload = {
     name: $('u-name').value, role: $('u-role').value,
-    isAdmin: $('u-admin').checked, workspaces: wsSel,
+    isAdmin: $('u-admin').checked,
+    isModerator: !$('u-admin').checked && $('u-moderator').checked,
+    workspaces: wsSel,
     discordId: ($('u-discord-id').value || '').trim() || null,
     email: ($('u-email').value || '').trim() || null
   };
@@ -10241,6 +10281,16 @@ function renderClients() {
     applyFilterDropdown('client-f-ws');
   }
 
+  // Restaura filtros persistidos (search + workspace). Só roda na 1ª pintura
+  // após entrar na página — em renders subsequentes, valores atuais prevalecem.
+  const wasFirstEnterClients = !_filtersRestored['clients'];
+  restoreFilters('clients');
+  // Default de primeiro acesso (sem filtro salvo): pré-seleciona o workspace ativo.
+  if (fwSel && wasFirstEnterClients && !fwSel.value && activeWs) {
+    fwSel.value = activeWs;
+    applyFilterDropdown('client-f-ws');
+  }
+
   // Filtra
   const q = norm(($('client-search').value || '').trim());
   const fw = fwSel ? fwSel.value : '';
@@ -10259,6 +10309,8 @@ function renderClients() {
     if (aa !== ba) return aa ? -1 : 1;
     return norm(a.name).localeCompare(norm(b.name));
   });
+
+  saveFilters('clients');
 
   const grid = $('clients-grid');
   if (!list.length) {
@@ -10310,8 +10362,154 @@ function closeClientDetail() {
 }
 // Helpers de switch de view — só uma view visível por vez.
 function hideAllDetailViews() {
-  const ids = ['clients-view-detail', 'projects-view-detail', 'client-report-view', 'project-report-view'];
+  const ids = ['clients-view-detail', 'clients-view-models', 'projects-view-detail', 'client-report-view', 'project-report-view'];
   ids.forEach(id => { const el = $(id); if (el) el.style.display = 'none'; });
+}
+function showClientsModelsView() {
+  $('clients-view-grid').style.display = 'none';
+  hideAllDetailViews();
+  const el = $('clients-view-models'); if (el) el.style.display = '';
+}
+
+/* ─── PÁGINA MODELOS DE CLIENTE ───
+   CRUD dos client templates (snapshots reutilizáveis). Adicionar um fluxo novo
+   a um modelo propaga o fluxo pros clientes existentes criados a partir dele
+   (endpoint /api/client-templates/:id/projects/:pIdx/flows no server). */
+function renderClientsModels() {
+  const wrap = $('clients-models-list');
+  if (!wrap) return;
+  const list = (clientTemplates || [])
+    .filter(t => me.isAdmin || (me.workspaces || []).includes(t.workspaceId))
+    .sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  if (!list.length) {
+    wrap.innerHTML = emptyState(
+      'Nenhum modelo criado',
+      'Crie um modelo salvando um cliente existente como modelo (botão "Salvar como modelo" dentro do cliente).',
+      'layers'
+    );
+    paintIcons();
+    return;
+  }
+  wrap.innerHTML = list.map(t => {
+    const derivados = (clients || []).filter(c => c.fromClientTemplateId === t.id).length;
+    const projCount = (t.projects || []).length;
+    const flowCount = (t.projects || []).reduce((s, p) => s + (p.flows || []).length, 0);
+    const projectsHtml = (t.projects || []).map((p, pi) => {
+      const flowsHtml = (p.flows || []).map(f => `
+        <div class="model-flow-row">
+          <span class="pill-dot" style="background:${p.color || t.color || '#7A00FF'}"></span>
+          <span class="model-flow-name">${esc(f.name)}</span>
+          ${f.demandType ? `<span class="pill pill-muted">${esc(f.demandType)}</span>` : ''}
+          <span class="model-flow-stages">${(f.stages || []).length} etapas</span>
+        </div>`).join('') || '<div class="hours-empty" style="text-align:left;padding:4px 0">Sem fluxos neste projeto</div>';
+      return `<div class="model-proj-block">
+        <div class="model-proj-head">
+          <strong>${esc(p.name)}</strong>
+          <button class="btn btn-ghost btn-sm" onclick="openModelAddFlow('${t.id}', ${pi})"><i data-lucide="plus" class="ic-sm"></i> Adicionar fluxo</button>
+        </div>
+        <div class="model-flow-list">${flowsHtml}</div>
+      </div>`;
+    }).join('') || '<div class="hours-empty" style="text-align:left">Sem projetos.</div>';
+    return `<div class="model-card">
+      <div class="model-card-head">
+        <div class="model-card-title">
+          <span class="pill-dot" style="background:${t.color || '#7A00FF'}"></span>
+          <strong>${esc(t.name)}</strong>
+          <span class="pill pill-muted">${projCount} projeto${projCount === 1 ? '' : 's'} · ${flowCount} fluxo${flowCount === 1 ? '' : 's'}</span>
+          ${derivados > 0 ? `<span class="pill" style="background:var(--accent-soft);color:var(--accent-text)">${derivados} cliente${derivados === 1 ? '' : 's'} vinculado${derivados === 1 ? '' : 's'}</span>` : ''}
+        </div>
+        <div class="model-card-actions">
+          <button class="btn btn-ghost btn-sm" onclick="openModelEditName('${t.id}')" title="Renomear"><i data-lucide="pencil" class="ic-sm"></i></button>
+          <button class="btn btn-ghost btn-sm bulk-danger" onclick="confirmDeleteModel('${t.id}')" title="Excluir"><i data-lucide="trash-2" class="ic-sm"></i></button>
+        </div>
+      </div>
+      <div class="model-card-body">${projectsHtml}</div>
+    </div>`;
+  }).join('');
+  paintIcons();
+}
+
+async function openModelEditName(id) {
+  const t = clientTemplates.find(x => x.id === id);
+  if (!t) return;
+  const newName = await showPrompt({
+    title: 'Renomear modelo',
+    message: 'Novo nome do modelo:',
+    defaultValue: t.name,
+    placeholder: 'Ex.: Cliente Padrão de Ads',
+    okLabel: 'Salvar'
+  });
+  if (!newName || !newName.trim() || newName.trim() === t.name) return;
+  try {
+    const upd = await api('/client-templates/' + id, 'PUT', { name: newName.trim() });
+    Object.assign(t, upd);
+    renderClientsModels();
+    toast('Modelo renomeado.');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function confirmDeleteModel(id) {
+  const t = clientTemplates.find(x => x.id === id);
+  if (!t) return;
+  const derivados = (clients || []).filter(c => c.fromClientTemplateId === t.id).length;
+  const ok = await showConfirm({
+    title: 'Excluir modelo?',
+    message: `O modelo "${t.name}" será excluído.${derivados > 0 ? ` Os ${derivados} cliente(s) vinculado(s) continuam existindo, mas perdem o vínculo (fluxos novos deixarão de ser replicados neles).` : ''}`,
+    okLabel: 'Excluir', danger: true
+  });
+  if (!ok) return;
+  try {
+    await api('/client-templates/' + id, 'DELETE');
+    clientTemplates = clientTemplates.filter(x => x.id !== id);
+    renderClientsModels();
+    toast('Modelo excluído.', 'warn');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+/* Modal inline pra adicionar um fluxo novo dentro de um projeto do modelo.
+   Backend replica automaticamente nos clientes que vieram desse modelo. */
+async function openModelAddFlow(tplId, pIdx) {
+  const t = clientTemplates.find(x => x.id === tplId);
+  if (!t) return;
+  const proj = t.projects?.[pIdx];
+  if (!proj) return;
+  const name = await showPrompt({
+    title: `Novo fluxo em "${proj.name}"`,
+    message: 'Nome do fluxo (você poderá refinar etapas depois em cada cliente):',
+    placeholder: 'Ex.: Post no Instagram',
+    okLabel: 'Continuar'
+  });
+  if (!name || !name.trim()) return;
+  const demandType = await showPrompt({
+    title: 'Tipo de demanda',
+    message: 'Categoria do fluxo (Social Media, Vídeo, Landing…) — opcional:',
+    placeholder: 'Social Media',
+    okLabel: 'Criar fluxo com 3 etapas padrão'
+  });
+  // Cria com 3 stages padrão — "A fazer / Em andamento / Concluída". Usuário
+  // pode editar depois em cada cliente ou no próprio modelo (futuro).
+  const stages = [
+    { label: 'A fazer',    color: '#64748B', done: false, deadlineDays: null },
+    { label: 'Em andamento', color: '#38BDF8', done: false, deadlineDays: null },
+    { label: 'Concluída',  color: '#22D3A5', done: true,  deadlineDays: null }
+  ];
+  try {
+    const r = await api(`/client-templates/${tplId}/projects/${pIdx}/flows`, 'POST', {
+      name: name.trim(),
+      demandType: (demandType || '').trim(),
+      stages
+    });
+    // Atualiza template local
+    Object.assign(t, r.template);
+    // Recarrega flows globais (novos foram criados nos clientes vinculados).
+    if (r.replicatedIn > 0) {
+      flows = await api('/flows');
+      toast(`Fluxo criado no modelo e replicado em ${r.replicatedIn} cliente${r.replicatedIn === 1 ? '' : 's'}.`);
+    } else {
+      toast('Fluxo criado no modelo. Nenhum cliente vinculado ainda.');
+    }
+    renderClientsModels();
+  } catch (e) { toast(e.message, 'error'); }
 }
 function showClientDetailView() {
   $('clients-view-grid').style.display = 'none';
@@ -12416,7 +12614,10 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days) {
     const demand = demands.find(x => x.id === s.demandId);
     const project = demand ? projects.find(p => p.id === demand.projectId) : null;
     const client = project && project.clientId ? clients.find(c => c.id === project.clientId) : null;
-    const color = project?.color || '#7A00FF';
+    // Prioridade: snapshot da cor da etapa NO MOMENTO da criação do bloco →
+    // cor do projeto → fallback. Assim o bloco "guarda" o estado planejado
+    // mesmo se a demanda avançar de etapa depois.
+    const color = s.stageColorSnapshot || project?.color || '#7A00FF';
     const layout = dayLayouts[s.date];
     const myCol = layout ? layout.assign['sched:' + s.id] : 0;
     const totalCols = layout ? layout.totalCols : 1;
@@ -12646,10 +12847,26 @@ function onAgendaBlockMouseDown(e, schedule, canEdit) {
     origDate: schedule.date,
     origStart: schedule.startMin,
     origEnd: schedule.endMin,
+    origGridRow: block.style.gridRow,
+    origGridColumn: block.style.gridColumn,
     block,
+    ghost: null,
     moved: false
   };
   block.classList.add('dragging');
+  // Ghost card: só faz sentido pra mover (o resize é preview no próprio bloco).
+  // Clona o bloco pra que o ghost tenha exatamente o mesmo visual, com styles
+  // do drag-ghost por cima (opacity/outline).
+  if (!isResize) {
+    const ghost = block.cloneNode(true);
+    ghost.classList.add('agenda-block-ghost');
+    ghost.classList.remove('dragging');
+    ghost.removeAttribute('data-schedule-id');
+    // Remove interações do ghost — ele é só visual.
+    ghost.style.pointerEvents = 'none';
+    block.parentElement.appendChild(ghost);
+    _agendaDrag.ghost = ghost;
+  }
   document.addEventListener('mousemove', onAgendaBlockMove);
   document.addEventListener('mouseup', onAgendaBlockUp, { once: true });
 }
@@ -12666,12 +12883,15 @@ function onAgendaBlockMove(e) {
     _agendaDrag.newStart = min;
     _agendaDrag.newEnd = Math.min(AGENDA_DAY_END_MIN, min + duration);
     _agendaDrag.moved = true;
-    // Preview no grid usando os mesmos grid-lines da célula alvo
+    // Bloco original fica onde está (com .dragging aplicando opacity).
+    // O ghost é que segue o cursor com preview da posição alvo.
     const startRowIdx = Math.floor((_agendaDrag.newStart - AGENDA_DAY_START_MIN) / AGENDA_SLOT_MIN) + 2;
     const endRowIdx = Math.ceil((_agendaDrag.newEnd - AGENDA_DAY_START_MIN) / AGENDA_SLOT_MIN) + 2;
-    _agendaDrag.block.style.gridRow = `${startRowIdx} / ${endRowIdx}`;
-    _agendaDrag.block.style.gridColumn = cell.style.gridColumn;
-  } else { // resize
+    if (_agendaDrag.ghost) {
+      _agendaDrag.ghost.style.gridRow = `${startRowIdx} / ${endRowIdx}`;
+      _agendaDrag.ghost.style.gridColumn = cell.style.gridColumn;
+    }
+  } else { // resize — sem ghost, preview no próprio bloco
     const newEnd = Math.max(_agendaDrag.origStart + AGENDA_SLOT_MIN, min + AGENDA_SLOT_MIN);
     if (newEnd === _agendaDrag.newEnd) return;
     _agendaDrag.newEnd = Math.min(AGENDA_DAY_END_MIN, newEnd);
@@ -12686,6 +12906,7 @@ async function onAgendaBlockUp() {
   if (!_agendaDrag) return;
   const drag = _agendaDrag;
   drag.block.classList.remove('dragging');
+  if (drag.ghost && drag.ghost.parentElement) drag.ghost.parentElement.removeChild(drag.ghost);
   _agendaDrag = null;
   if (!drag.moved) return; // click puro, deixa o click handler abrir o detalhe
   const payload = {};
@@ -12972,10 +13193,16 @@ let wizardState = { step: 1, clientId: null, projectId: null, flowId: null };
 // quando ele volta e re-seleciona o MESMO fluxo.
 let wizardLastFlowApplied = null;
 
+/* Sequência do wizard: 1 (cliente) → 2 (projeto) → 3 (fluxo) → 'cust' (customizar
+   etapas por instância — pular na edição) → 4 (detalhes finais). O step 'cust' é
+   novo e opcional na prática — o usuário pode só apertar "Avançar" sem tocar. */
+const WIZARD_STEPS = [1, 2, 3, 'cust', 4];
+function wizardStepIndex(s) { return WIZARD_STEPS.indexOf(s); }
+
 function wizardGoTo(n) {
   wizardState.step = n;
   // Mostra só o step ativo
-  [1, 2, 3, 4].forEach(s => {
+  WIZARD_STEPS.forEach(s => {
     const el = document.getElementById('dw-step-' + s);
     if (el) el.style.display = (s === n ? '' : 'none');
   });
@@ -12984,36 +13211,140 @@ function wizardGoTo(n) {
   const next = $('dw-next-btn');
   const create = $('dw-create-btn');
   const tpl = $('save-as-template-btn');
+  const isFinal = (n === 4);
+  const idx = wizardStepIndex(n);
   // Voltar: oculto no step 1 (na criação) e em modo edição (não tem wizard).
-  if (back) back.style.display = (n > 1 && !editingId) ? '' : 'none';
-  if (next) next.style.display = (n < 4) ? '' : 'none';
-  if (create) create.style.display = (n === 4) ? '' : 'none';
+  if (back) back.style.display = (idx > 0 && !editingId) ? '' : 'none';
+  if (next) next.style.display = isFinal ? 'none' : '';
+  if (create) create.style.display = isFinal ? '' : 'none';
   if (create) create.textContent = editingId ? 'Salvar Demanda' : 'Criar demanda';
-  if (tpl) tpl.style.display = (n === 4) ? '' : 'none';
+  if (tpl) tpl.style.display = isFinal ? '' : 'none';
   // Render do step ativo
   if (n === 1) renderWizardClients();
   else if (n === 2) renderWizardProjects();
   else if (n === 3) renderWizardFlows();
+  else if (n === 'cust') renderWizardCustomization();
   else if (n === 4) renderWizardStep4();
   updateWizardNextEnabled();
   paintIcons();
 }
 
 function wizardBack() {
-  if (wizardState.step <= 1) return;
-  wizardGoTo(wizardState.step - 1);
+  const idx = wizardStepIndex(wizardState.step);
+  if (idx <= 0) return;
+  wizardGoTo(WIZARD_STEPS[idx - 1]);
 }
 function wizardNext() {
-  if (wizardState.step < 4) wizardGoTo(wizardState.step + 1);
+  const idx = wizardStepIndex(wizardState.step);
+  if (idx < 0 || idx >= WIZARD_STEPS.length - 1) return;
+  wizardGoTo(WIZARD_STEPS[idx + 1]);
 }
 function updateWizardNextEnabled() {
   const btn = $('dw-next-btn');
   if (!btn) return;
-  let ok = false;
+  let ok = true; // cust e 4 sempre dá pra prosseguir
   if (wizardState.step === 1) ok = !!wizardState.clientId;
   else if (wizardState.step === 2) ok = !!wizardState.projectId;
   else if (wizardState.step === 3) ok = !!wizardState.flowId;
   btn.disabled = !ok;
+}
+
+/* Estado da customização inicial. Reset a cada abertura do wizard.
+   Estrutura reflete o que o backend aceita em /api/demands (POST):
+     skippedStages: [stageId]
+     stageResponsibles: { stageId: userId | null }
+     stageLabels: { stageId: 'nome custom' }
+     stageAdditions: [{ id, label, color, deadlineDays, responsibleId, insertAfter }] */
+function resetWizardCustomization() {
+  wizardState.customization = { skippedStages: [], stageResponsibles: {}, stageLabels: {}, stageAdditions: [] };
+}
+function renderWizardCustomization() {
+  const wrap = $('dw-cust-list');
+  if (!wrap) return;
+  const flow = flowById(wizardState.flowId);
+  if (!flow) { wrap.innerHTML = '<div class="hours-empty">Fluxo não encontrado.</div>'; return; }
+  if (!wizardState.customization) resetWizardCustomization();
+  const cust = wizardState.customization;
+  const userOptions = users
+    .filter(u => u.active !== false && (u.isAdmin || (u.workspaces || []).includes(wizardState.projectId ? projectById(wizardState.projectId)?.workspaceId : activeWs)))
+    .sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  const rowHTML = (stage, isAddition) => {
+    const stageId = stage.id;
+    const skipped = cust.skippedStages.includes(stageId);
+    const label = cust.stageLabels[stageId] || stage.label;
+    const respValue = (stageId in cust.stageResponsibles) ? cust.stageResponsibles[stageId]
+      : (isAddition ? stage.responsibleId : '');
+    const respSelect = `
+      <select class="wizard-cust-resp" onchange="wizardCustSetResp('${stageId}', this.value)">
+        <option value="">— Padrão do fluxo —</option>
+        ${userOptions.map(u => `<option value="${u.id}" ${respValue === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}
+      </select>`;
+    const removeBtn = isAddition
+      ? `<button type="button" class="wizard-cust-remove" title="Remover etapa" onclick="wizardCustRemoveAddition('${stageId}')"><i data-lucide="x" class="ic-sm"></i></button>`
+      : '<span></span>';
+    return `<div class="wizard-cust-row ${skipped ? 'is-skipped' : ''} ${isAddition ? 'is-added' : ''}">
+      <label class="wizard-cust-toggle" title="${skipped ? 'Habilitar' : 'Desabilitar (pular)'}">
+        <input type="checkbox" ${!skipped ? 'checked' : ''} ${isAddition ? 'disabled' : ''} onchange="wizardCustToggleSkip('${stageId}', this.checked)">
+      </label>
+      <div class="wizard-cust-color" style="background:${stage.color || '#7A00FF'}"></div>
+      <input type="text" class="wizard-cust-name" value="${esc(label)}" placeholder="Nome da etapa" oninput="wizardCustSetLabel('${stageId}', this.value)">
+      ${respSelect}
+      <input type="number" class="wizard-cust-days" min="0" step="1" value="${stage.deadlineDays ?? ''}" placeholder="—" ${!isAddition ? 'disabled' : ''} title="${isAddition ? 'Dias de prazo desta etapa' : 'Só edita nas etapas que você adiciona'}" oninput="wizardCustSetDays('${stageId}', this.value)">
+      ${removeBtn}
+    </div>`;
+  };
+  const originalRows = flow.stages.map(s => rowHTML(s, false)).join('');
+  const addedRows = cust.stageAdditions.map(s => rowHTML(s, true)).join('');
+  wrap.innerHTML = originalRows + addedRows;
+  paintIcons();
+}
+function wizardCustToggleSkip(stageId, enabled) {
+  const cust = wizardState.customization;
+  if (enabled) cust.skippedStages = cust.skippedStages.filter(id => id !== stageId);
+  else if (!cust.skippedStages.includes(stageId)) cust.skippedStages.push(stageId);
+}
+function wizardCustSetLabel(stageId, value) {
+  const cust = wizardState.customization;
+  const v = (value || '').trim();
+  const flow = flowById(wizardState.flowId);
+  // Se é etapa adicionada: atualiza no próprio objeto
+  const addition = cust.stageAdditions.find(s => s.id === stageId);
+  if (addition) { addition.label = v || 'Nova etapa'; return; }
+  // Etapa original: só grava label se for diferente do padrão do fluxo (economia).
+  const orig = flow?.stages.find(s => s.id === stageId);
+  if (orig && v && v !== orig.label) cust.stageLabels[stageId] = v;
+  else delete cust.stageLabels[stageId];
+}
+function wizardCustSetResp(stageId, value) {
+  const cust = wizardState.customization;
+  const addition = cust.stageAdditions.find(s => s.id === stageId);
+  if (addition) { addition.responsibleId = value || null; return; }
+  if (value === '') delete cust.stageResponsibles[stageId];
+  else cust.stageResponsibles[stageId] = value;
+}
+function wizardCustSetDays(stageId, value) {
+  const cust = wizardState.customization;
+  const addition = cust.stageAdditions.find(s => s.id === stageId);
+  if (!addition) return; // só editável em etapas adicionadas
+  const n = parseInt(value, 10);
+  addition.deadlineDays = Number.isFinite(n) && n >= 0 ? n : null;
+}
+function wizardAddCustStage() {
+  if (!wizardState.customization) resetWizardCustomization();
+  wizardState.customization.stageAdditions.push({
+    id: 'add-' + Math.random().toString(36).slice(2, 10),
+    label: 'Nova etapa',
+    color: '#7A00FF',
+    deadlineDays: null,
+    responsibleId: null,
+    done: false
+  });
+  renderWizardCustomization();
+}
+function wizardCustRemoveAddition(id) {
+  const cust = wizardState.customization;
+  cust.stageAdditions = cust.stageAdditions.filter(s => s.id !== id);
+  renderWizardCustomization();
 }
 
 /* Renderizadores dos 3 grids de seleção. Card click = seleciona; dblclick = avança. */
@@ -13022,6 +13353,54 @@ function _wizardCardHandlers(el, onSelect) {
   el.addEventListener('dblclick', () => onSelect(true));
 }
 
+/* Recentes — guarda os últimos IDs usados por (usuário × tipo) em localStorage.
+   MRU: recém-usado vai pra frente, cai fora da lista após WIZARD_RECENTS_MAX. */
+const WIZARD_RECENTS_MAX = 5;
+function _recentsKey(kind) { return `kastor-recents-${kind}-${me?.id || 'anon'}`; }
+function wizardGetRecents(kind) {
+  try {
+    const raw = localStorage.getItem(_recentsKey(kind));
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+}
+function wizardPushRecent(kind, id) {
+  if (!id) return;
+  let arr = wizardGetRecents(kind).filter(x => x !== id);
+  arr.unshift(id);
+  arr = arr.slice(0, WIZARD_RECENTS_MAX);
+  try { localStorage.setItem(_recentsKey(kind), JSON.stringify(arr)); } catch {}
+}
+/* Ordena a lista completa colocando os recentes primeiro (mesma ordem do MRU),
+   depois o resto na ordem original. Devolve um objeto separando pra que o render
+   possa exibir cabeçalho "Recentes" e "Todos". */
+function wizardSplitRecents(kind, fullList) {
+  const recentIds = wizardGetRecents(kind);
+  const byId = new Map(fullList.map(x => [x.id, x]));
+  const recents = recentIds.map(id => byId.get(id)).filter(Boolean);
+  const recentSet = new Set(recents.map(x => x.id));
+  const rest = fullList.filter(x => !recentSet.has(x.id));
+  return { recents, rest };
+}
+
+function _wizardClientCard(c) {
+  const card = document.createElement('div');
+  card.className = 'wizard-card' + (wizardState.clientId === c.id ? ' is-selected' : '');
+  const avatar = c.avatar
+    ? `<div class="wizard-card-avatar" style="background-image:url('${c.avatar}');background-size:cover;background-position:center"></div>`
+    : `<div class="wizard-card-avatar" style="background:${hexDim(c.color || '#7A00FF')};color:${c.color || '#7A00FF'}">${esc((c.name || 'C').charAt(0).toUpperCase())}</div>`;
+  card.innerHTML = `${avatar}<div class="wizard-card-name">${esc(c.name)}</div>`;
+  _wizardCardHandlers(card, (advance) => {
+    wizardState.clientId = c.id;
+    wizardPushRecent('client', c.id);
+    // Limpa downstream se mudou a seleção
+    wizardState.projectId = null; wizardState.flowId = null;
+    renderWizardClients();
+    updateWizardNextEnabled();
+    if (advance) wizardNext();
+  });
+  return card;
+}
 function renderWizardClients() {
   const wrap = $('dw-clients-grid');
   if (!wrap) return;
@@ -13036,23 +13415,25 @@ function renderWizardClients() {
     return;
   }
   wrap.innerHTML = '';
-  list.forEach(c => {
-    const card = document.createElement('div');
-    card.className = 'wizard-card' + (wizardState.clientId === c.id ? ' is-selected' : '');
-    const avatar = c.avatar
-      ? `<div class="wizard-card-avatar" style="background-image:url('${c.avatar}');background-size:cover;background-position:center"></div>`
-      : `<div class="wizard-card-avatar" style="background:${hexDim(c.color || '#7A00FF')};color:${c.color || '#7A00FF'}">${esc((c.name || 'C').charAt(0).toUpperCase())}</div>`;
-    card.innerHTML = `${avatar}<div class="wizard-card-name">${esc(c.name)}</div>`;
-    _wizardCardHandlers(card, (advance) => {
-      wizardState.clientId = c.id;
-      // Limpa downstream se mudou a seleção
-      wizardState.projectId = null; wizardState.flowId = null;
-      renderWizardClients();
-      updateWizardNextEnabled();
-      if (advance) wizardNext();
-    });
-    wrap.appendChild(card);
-  });
+  // Se não há busca, mostra "Recentes" no topo (se houver). Com busca, oculta pra
+  // não confundir — o usuário está procurando algo específico.
+  if (!q) {
+    const { recents, rest } = wizardSplitRecents('client', list);
+    if (recents.length) {
+      const head = document.createElement('div');
+      head.className = 'wizard-section-head';
+      head.textContent = 'RECENTES';
+      wrap.appendChild(head);
+      recents.forEach(c => wrap.appendChild(_wizardClientCard(c)));
+      const head2 = document.createElement('div');
+      head2.className = 'wizard-section-head';
+      head2.textContent = 'TODOS';
+      wrap.appendChild(head2);
+      rest.forEach(c => wrap.appendChild(_wizardClientCard(c)));
+      return;
+    }
+  }
+  list.forEach(c => wrap.appendChild(_wizardClientCard(c)));
 }
 
 function renderWizardProjects() {
@@ -13087,6 +13468,25 @@ function renderWizardProjects() {
   });
 }
 
+function _wizardFlowCard(f) {
+  const card = document.createElement('div');
+  card.className = 'wizard-card' + (wizardState.flowId === f.id ? ' is-selected' : '');
+  const iconHtml = !f.icon
+    ? `<div class="wizard-card-avatar wizard-card-avatar--icon"><i data-lucide="workflow" class="ic-sm"></i></div>`
+    : (typeof f.icon === 'string' && f.icon.startsWith('lucide:'))
+      ? `<div class="wizard-card-avatar wizard-card-avatar--icon"><i data-lucide="${esc(f.icon.slice(7))}" class="ic-md"></i></div>`
+      : `<div class="wizard-card-avatar" style="background-image:url('${f.icon}');background-size:cover;background-position:center"></div>`;
+  const sub = f.demandType ? `<div class="wizard-card-sub">${esc(f.demandType)}</div>` : '';
+  card.innerHTML = `${iconHtml}<div class="wizard-card-name">${esc(f.name)}</div>${sub}`;
+  _wizardCardHandlers(card, (advance) => {
+    wizardState.flowId = f.id;
+    wizardPushRecent('flow', f.id);
+    renderWizardFlows();
+    updateWizardNextEnabled();
+    if (advance) wizardNext();
+  });
+  return card;
+}
 function renderWizardFlows() {
   const wrap = $('dw-flows-grid');
   if (!wrap) return;
@@ -13111,24 +13511,25 @@ function renderWizardFlows() {
     return;
   }
   wrap.innerHTML = '';
-  list.forEach(f => {
-    const card = document.createElement('div');
-    card.className = 'wizard-card' + (wizardState.flowId === f.id ? ' is-selected' : '');
-    const iconHtml = !f.icon
-      ? `<div class="wizard-card-avatar wizard-card-avatar--icon"><i data-lucide="workflow" class="ic-sm"></i></div>`
-      : (typeof f.icon === 'string' && f.icon.startsWith('lucide:'))
-        ? `<div class="wizard-card-avatar wizard-card-avatar--icon"><i data-lucide="${esc(f.icon.slice(7))}" class="ic-md"></i></div>`
-        : `<div class="wizard-card-avatar" style="background-image:url('${f.icon}');background-size:cover;background-position:center"></div>`;
-    const sub = f.demandType ? `<div class="wizard-card-sub">${esc(f.demandType)}</div>` : '';
-    card.innerHTML = `${iconHtml}<div class="wizard-card-name">${esc(f.name)}</div>${sub}`;
-    _wizardCardHandlers(card, (advance) => {
-      wizardState.flowId = f.id;
-      renderWizardFlows();
-      updateWizardNextEnabled();
-      if (advance) wizardNext();
-    });
-    wrap.appendChild(card);
-  });
+  // Recentes só sem busca/filtro — evita confundir quando o usuário está procurando algo.
+  if (!q && !typeFilter) {
+    const { recents, rest } = wizardSplitRecents('flow', list);
+    if (recents.length) {
+      const head = document.createElement('div');
+      head.className = 'wizard-section-head';
+      head.textContent = 'RECENTES';
+      wrap.appendChild(head);
+      recents.forEach(f => wrap.appendChild(_wizardFlowCard(f)));
+      const head2 = document.createElement('div');
+      head2.className = 'wizard-section-head';
+      head2.textContent = 'TODOS';
+      wrap.appendChild(head2);
+      rest.forEach(f => wrap.appendChild(_wizardFlowCard(f)));
+      paintIcons();
+      return;
+    }
+  }
+  list.forEach(f => wrap.appendChild(_wizardFlowCard(f)));
   paintIcons();
 }
 
