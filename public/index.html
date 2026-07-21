@@ -7,7 +7,7 @@
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="apple-touch-icon" href="/favicon.png">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/css/style.css?v=20260720z">
+<link rel="stylesheet" href="/css/style.css?v=20260720ag">
 </head>
 <body>
 
@@ -157,9 +157,9 @@
         <div class="topbar-timer" id="topbar-timer" style="display:none">
           <button type="button" class="topbar-timer-name" id="topbar-timer-name" onclick="openActiveTimerDemand()" title="Abrir demanda">—</button>
           <span class="topbar-timer-clock" id="topbar-timer-clock">00:00:00</span>
-          <button type="button" class="topbar-timer-btn" id="topbar-timer-toggle" onclick="toggleTopbarTimer()" title="Pausar/retomar"><i data-lucide="pause" class="ic-sm"></i></button>
-          <button type="button" class="topbar-timer-btn is-primary" onclick="apontarFromTopbar()" title="Apontar horas"><i data-lucide="check" class="ic-sm"></i></button>
-          <button type="button" class="topbar-timer-btn is-danger" onclick="discardTopbarTimer()" title="Descartar"><i data-lucide="x" class="ic-sm"></i></button>
+          <button type="button" class="topbar-timer-btn" id="topbar-timer-toggle" onclick="toggleTopbarTimer()" title="Pausar/retomar"><i data-lucide="pause" class="ic-sm" width="16" height="16"></i></button>
+          <button type="button" class="topbar-timer-btn is-primary" onclick="apontarFromTopbar()" title="Apontar horas"><i data-lucide="check" class="ic-sm" width="16" height="16"></i></button>
+          <button type="button" class="topbar-timer-btn is-danger" onclick="discardTopbarTimer()" title="Descartar"><i data-lucide="x" class="ic-sm" width="16" height="16"></i></button>
         </div>
         <div class="notif-wrap">
           <button class="btn btn-ghost notif-bell" onclick="toggleNotifPanel()" title="Notificações">
@@ -315,6 +315,7 @@
             <i data-lucide="search" class="filter-input-icon ic-sm"></i>
             <input class="filter-input filter-input--with-icon" id="search-input" placeholder="Buscar demanda…" oninput="renderListDebounced()">
           </div>
+          <select class="filter-select" id="filter-workspace" onchange="renderList()"><option value="">Workspace</option></select>
           <select class="filter-select" id="filter-user" onchange="renderList()"></select>
           <select class="filter-select" id="filter-client" onchange="renderList()"><option value="">Cliente</option></select>
           <select class="filter-select" id="filter-project" onchange="renderList()"><option value="">Projeto</option></select>
@@ -374,6 +375,7 @@
                   <tr>
                     <th class="col-bulk-check"><input type="checkbox" class="bulk-check-all" id="bulk-check-all" onclick="toggleBulkSelectAll(this.checked)" title="Selecionar todas"></th>
                     <th style="cursor:pointer" onclick="sortList('name')">Demanda <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                    <th style="cursor:pointer" onclick="sortList('workspace')">Workspace <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                     <th style="cursor:pointer" onclick="sortList('project')">Projeto <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                     <th style="cursor:pointer" onclick="sortList('client')">Cliente <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                     <th style="cursor:pointer" onclick="sortList('type')">Tipo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
@@ -585,7 +587,7 @@
               </div>
               <div class="rec-groupby">
                 <button class="rec-groupby-btn is-active" data-groupby="project" onclick="setRecurringGroupBy('project')">Projeto</button>
-                <button class="rec-groupby-btn" data-groupby="role" onclick="setRecurringGroupBy('role')">Função</button>
+                <button class="rec-groupby-btn" data-groupby="role" onclick="setRecurringGroupBy('role')">Área</button>
                 <button class="rec-groupby-btn" data-groupby="owner" onclick="setRecurringGroupBy('owner')">Responsável</button>
               </div>
             </div>
@@ -601,7 +603,7 @@
               <div class="rec-groupby" id="listas-groupby">
                 <button class="rec-groupby-btn is-active" data-listas-groupby="client" onclick="setListasGroupBy('client')">Cliente</button>
                 <button class="rec-groupby-btn" data-listas-groupby="project" onclick="setListasGroupBy('project')">Projeto</button>
-                <button class="rec-groupby-btn" data-listas-groupby="role" onclick="setListasGroupBy('role')">Função</button>
+                <button class="rec-groupby-btn" data-listas-groupby="role" onclick="setListasGroupBy('role')">Área</button>
                 <button class="rec-groupby-btn" data-listas-groupby="owner" onclick="setListasGroupBy('owner')">Responsável</button>
               </div>
               <button class="btn btn-primary" onclick="openNovaListaModal()" style="margin-left:auto"><i data-lucide="plus" class="ic-sm"></i> Nova lista</button>
@@ -1065,7 +1067,8 @@
               <tr>
                 <th style="cursor:pointer" onclick="sortUsersBy('name')">Nome <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                 <th style="cursor:pointer" onclick="sortUsersBy('username')">Usuário <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                <th style="cursor:pointer" onclick="sortUsersBy('role')">Função <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortUsersBy('role')">Área <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortUsersBy('position')">Cargo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                 <th style="cursor:pointer" onclick="sortUsersBy('ws')">Workspaces <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                 <th style="cursor:pointer" onclick="sortUsersBy('admin')">Permissão <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                 <th style="cursor:pointer" onclick="sortUsersBy('active')">Situação <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
@@ -1076,21 +1079,45 @@
           </table>
         </div>
 
-        <div class="section-head" style="margin-top:36px">
-          <div class="section-title">Funções da Equipe</div>
-          <button class="btn btn-primary btn-sm admin-only" onclick="openRoleModal()">+ Nova Função</button>
-        </div>
-        <div class="table-wrap table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th style="cursor:pointer" onclick="sortRolesBy('name')">Função <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                <th style="cursor:pointer" onclick="sortRolesBy('count')">Usuários <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                <th style="width:120px"></th>
-              </tr>
-            </thead>
-            <tbody id="roles-table-body"></tbody>
-          </table>
+        <!-- Áreas + Cargos lado a lado. Áreas = função/especialidade (Criação);
+             Cargos = posição na hierarquia (Diretor de Arte). Usuário tem ambos. -->
+        <div class="roles-positions-grid">
+          <div class="roles-positions-col">
+            <div class="section-head" style="margin-top:36px">
+              <div class="section-title">Áreas da Equipe</div>
+              <button class="btn btn-primary btn-sm admin-only" onclick="openRoleModal()">+ Nova Área</button>
+            </div>
+            <div class="table-wrap table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th style="cursor:pointer" onclick="sortRolesBy('name')">Área <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                    <th style="cursor:pointer" onclick="sortRolesBy('count')">Usuários <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                    <th style="width:120px"></th>
+                  </tr>
+                </thead>
+                <tbody id="roles-table-body"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="roles-positions-col">
+            <div class="section-head" style="margin-top:36px">
+              <div class="section-title">Cargos</div>
+              <button class="btn btn-primary btn-sm admin-only" onclick="openPositionModal()">+ Novo Cargo</button>
+            </div>
+            <div class="table-wrap table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th style="cursor:pointer" onclick="sortPositionsBy('name')">Cargo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                    <th style="cursor:pointer" onclick="sortPositionsBy('count')">Usuários <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                    <th style="width:120px"></th>
+                  </tr>
+                </thead>
+                <tbody id="positions-table-body"></tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -1119,7 +1146,7 @@
                   <input class="form-control" id="profile-f-name">
                 </div>
                 <div class="form-group">
-                  <label class="form-label">Função</label>
+                  <label class="form-label">Área</label>
                   <select class="form-control" id="profile-f-role"></select>
                 </div>
                 <div class="form-group">
@@ -1778,7 +1805,7 @@
           <select class="form-control" id="rec-flow"></select>
         </div>
         <div class="form-group rec-structural-field" id="rec-role-group">
-          <label class="form-label">Função</label>
+          <label class="form-label">Área</label>
           <select class="form-control" id="rec-role"><option value="">— Sem função —</option></select>
         </div>
         <div class="form-group rec-structural-field" id="rec-owner-group">
@@ -2247,20 +2274,18 @@
       <button class="modal-close" onclick="closeModal('new-model-modal')"><i data-lucide="x" class="ic-sm"></i></button>
     </div>
     <div class="modal-body">
-      <div class="form-group">
-        <label class="form-label">Nome do modelo *</label>
-        <input class="form-control" id="nm-name" placeholder="Ex.: Cliente Padrão de Ads">
+      <div class="form-grid">
+        <div class="form-group full">
+          <label class="form-label">Nome do modelo *</label>
+          <input class="form-control" id="nm-name" placeholder="Ex.: Cliente Padrão de Ads">
+        </div>
+        <div class="form-group full">
+          <label class="form-label">Cor</label>
+          <button type="button" class="color-swatch-trigger" id="nm-color-trigger" style="background:#7A00FF" onclick="openColorPickerForInput(this, 'nm-color')" title="Escolher cor"></button>
+          <input type="hidden" id="nm-color" value="#7A00FF">
+        </div>
       </div>
-      <div class="form-group">
-        <label class="form-label">Workspace</label>
-        <select class="form-control" id="nm-workspace"></select>
-      </div>
-      <div class="form-group">
-        <label class="form-label">Cor</label>
-        <button type="button" class="color-swatch-trigger" id="nm-color-trigger" style="background:#7A00FF" onclick="openColorPickerForInput(this, 'nm-color')" title="Escolher cor"></button>
-        <input type="hidden" id="nm-color" value="#7A00FF">
-      </div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:8px;line-height:1.55">
+      <div style="font-size:11px;color:var(--text-muted);margin-top:12px;line-height:1.55">
         O modelo é criado vazio. Depois você adiciona projetos e fluxos completos na tela de Modelos.
       </div>
     </div>
@@ -2359,8 +2384,12 @@
           <input class="form-control" id="u-name" placeholder="Ex: Ana Lima">
         </div>
         <div class="form-group">
-          <label class="form-label">Função</label>
+          <label class="form-label">Área</label>
           <select class="form-control" id="u-role"></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Cargo</label>
+          <select class="form-control" id="u-position"></select>
         </div>
         <div class="form-group" id="u-username-group">
           <label class="form-label">Nome de usuário (login) *</label>
@@ -2400,22 +2429,42 @@
   </div>
 </div>
 
-<!-- MODAL: FUNÇÃO -->
+<!-- MODAL: ÁREA -->
 <div class="modal-overlay" id="role-modal">
   <div class="modal modal-sm">
     <div class="modal-header">
-      <div class="modal-title" id="role-modal-title">Nova Função</div>
+      <div class="modal-title" id="role-modal-title">Nova Área</div>
       <button class="modal-close" onclick="closeModal('role-modal')"><i data-lucide="x" class="ic-sm"></i></button>
     </div>
     <div class="modal-body">
       <div class="form-group">
-        <label class="form-label">Nome da Função *</label>
-        <input class="form-control" id="role-name" placeholder="Ex: Gestor de Tráfego">
+        <label class="form-label">Nome da Área *</label>
+        <input class="form-control" id="role-name" placeholder="Ex: Criação">
       </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('role-modal')">Cancelar</button>
-      <button class="btn btn-primary" onclick="saveRole()">Salvar Função</button>
+      <button class="btn btn-primary" onclick="saveRole()">Salvar Área</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: CARGO -->
+<div class="modal-overlay" id="position-modal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div class="modal-title" id="position-modal-title">Novo Cargo</div>
+      <button class="modal-close" onclick="closeModal('position-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Nome do Cargo *</label>
+        <input class="form-control" id="position-name" placeholder="Ex: Diretor de Arte">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('position-modal')">Cancelar</button>
+      <button class="btn btn-primary" onclick="savePosition()">Salvar Cargo</button>
     </div>
   </div>
 </div>
@@ -2441,7 +2490,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260720z"></script>
+<script src="/js/app.js?v=20260720ag"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

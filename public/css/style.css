@@ -1261,7 +1261,20 @@ tr:hover td { background: var(--surface-2); }
 .pill-late { background: var(--danger-dim); color: var(--danger); }
 .pill-muted { background: var(--surface-3); color: var(--text-dim); }
 .pill-admin { background: var(--accent-dim); color: var(--accent-text); }
+/* Moderador: mesma família visual do admin, mas em azul pra distinguir. */
+.pill-moderator { background: rgba(11, 87, 208, 0.18); color: #0b57d0; }
 .pill-success { background: var(--success-dim); color: var(--success); }
+
+/* Grid lado-a-lado de Áreas + Cargos na tela de Usuários. Colapsa em telas pequenas. */
+.roles-positions-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .roles-positions-grid { grid-template-columns: 1fr; }
+}
 
 /* ── FILTERS ── */
 /* ── Barra de filtros (padrão global compacto) ──
@@ -2646,8 +2659,7 @@ textarea.form-control { height: auto; min-height: 80px; padding: 11px 14px; }
 
 /* ─── NOTIFICAÇÕES ─── */
 .notif-wrap { position: relative; }
-/* Topbar: zen e notificações ficam com a mesma "caixa" 36x36 pra alinhar visualmente */
-.topbar-actions .zen-toggle-btn,
+/* Topbar: notificações com "caixa" 36x36 pra alinhar visualmente */
 .topbar-actions .notif-bell {
   width: 36px; height: 36px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
@@ -4923,31 +4935,64 @@ kbd {
 }
 .kanban-column-body { min-height: 30px; }
 
-/* ─── MODO ZEN (FOCAR) ─── */
-.zen-toggle-btn { /* sem nada especial — herda btn-ghost */ }
-body.zen-mode .sidebar,
-body.zen-mode .topbar { display: none !important; }
-body.zen-mode .main { margin-left: 0 !important; }
-body.zen-mode .page-body { padding-top: 20px; }
-body.zen-mode #app { padding: 0; }
-.zen-exit-floating {
-  position: fixed;
-  top: 16px; right: 16px;
-  z-index: 9998;
-  width: 36px; height: 36px;
-  display: inline-flex; align-items: center; justify-content: center;
-  background: var(--glass-strong);
-  backdrop-filter: saturate(180%) blur(20px);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
+/* ─── Widget de timer no topbar (substitui o antigo Modo Zen) ──
+   Card compacto com nome da demanda (clicável) + clock + pause/play + apontar. */
+.topbar-timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 4px 12px;
+  background: var(--surface);
   border: 1px solid var(--hairline);
-  color: var(--text);
-  border-radius: 50%;
-  box-shadow: var(--shadow-md);
-  cursor: pointer;
-  opacity: 0.3;
-  transition: opacity .2s var(--ease-out), transform .2s var(--ease-spring);
+  border-radius: var(--radius-pill);
+  transition: border-color .15s;
+  max-width: 460px;
 }
-.zen-exit-floating:hover { opacity: 1; transform: scale(1.05); }
+.topbar-timer.is-running {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(122,0,255,0.10);
+}
+.topbar-timer-name {
+  background: none; border: 0; padding: 0;
+  color: var(--text); font-family: inherit; font-size: 13px; font-weight: 500;
+  max-width: 220px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  cursor: pointer;
+  text-align: left;
+  transition: color .12s;
+}
+.topbar-timer-name:hover { color: var(--accent-text); text-decoration: underline; }
+.topbar-timer-clock {
+  font-variant-numeric: tabular-nums;
+  font-family: 'JetBrains Mono', 'Consolas', ui-monospace, monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  min-width: 70px;
+  text-align: center;
+  padding: 0 4px;
+}
+.topbar-timer.is-running .topbar-timer-clock { color: var(--accent-text); }
+.topbar-timer-btn {
+  width: 28px; height: 28px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface-2); border: 1px solid var(--hairline);
+  color: var(--text); cursor: pointer;
+  border-radius: 50%;
+  transition: background .12s, color .12s, border-color .12s;
+  padding: 0;
+}
+/* Força 16x16 nos ícones — sem isso lucide converte o <i> em <svg> com
+   width/height default (24) que ignora .ic-sm em alguns navegadores. */
+.topbar-timer-btn svg,
+.topbar-timer-btn i[data-lucide] {
+  width: 16px !important;
+  height: 16px !important;
+}
+.topbar-timer-btn:hover { background: var(--surface-3, var(--surface-2)); color: var(--accent-text); border-color: var(--accent); }
+.topbar-timer-btn.is-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.topbar-timer-btn.is-primary:hover { background: var(--accent-hover, var(--accent)); }
+.topbar-timer-btn.is-danger:hover { background: rgba(239,68,68,0.15); color: #EF4444; border-color: #EF4444; }
 
 /* ─── PRESENCE RING — anel ao redor da foto ─── */
 .avatar { position: relative; }

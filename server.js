@@ -1605,7 +1605,7 @@ app.delete('/api/workspaces/:id', requireAuth, adminOnly, (req, res) => {
 app.get('/api/users', requireAuth, (req, res) => res.json(db.users.map(publicUser)));
 
 app.post('/api/users', requireAuth, adminOnly, (req, res) => {
-  const { username, password, name, role, isAdmin, isModerator, workspaces, discordId, email } = req.body || {};
+  const { username, password, name, role, position, isAdmin, isModerator, workspaces, discordId, email } = req.body || {};
   const uname = String(username || '').trim().toLowerCase();
   if (!uname || !password) return res.status(400).json({ error: 'Usuário e senha são obrigatórios' });
   if (String(password).length < 6) return res.status(400).json({ error: 'A senha deve ter pelo menos 6 caracteres' });
@@ -1626,6 +1626,7 @@ app.post('/api/users', requireAuth, adminOnly, (req, res) => {
   const user = {
     id: uid(), username: uname, name: String(name || uname).trim(),
     role: String(role || '').trim(),
+    position: String(position || '').trim() || null,
     isAdmin: !!isAdmin,
     // Moderador só faz sentido se não for admin (admin já tem tudo). Silenciosamente ignora.
     isModerator: !isAdmin && !!isModerator,
@@ -1642,9 +1643,10 @@ app.post('/api/users', requireAuth, adminOnly, (req, res) => {
 app.put('/api/users/:id', requireAuth, adminOnly, (req, res) => {
   const u = db.users.find(x => x.id === req.params.id);
   if (!u) return res.status(404).json({ error: 'Usuário não encontrado' });
-  const { name, role, isAdmin, isModerator, active, password, workspaces, discordId, email } = req.body || {};
+  const { name, role, position, isAdmin, isModerator, active, password, workspaces, discordId, email } = req.body || {};
   if (typeof name === 'string' && name.trim()) u.name = name.trim();
   if (typeof role === 'string') u.role = role.trim();
+  if (typeof position === 'string') u.position = position.trim() || null;
   if (Array.isArray(workspaces)) {
     u.workspaces = workspaces.filter(id => db.workspaces.some(w => w.id === id));
   }
@@ -1736,6 +1738,55 @@ app.delete('/api/roles/:id', requireAuth, modOrAdmin, (req, res) => {
   if (!r) return res.status(404).json({ error: 'Função não encontrada' });
   db.roles = db.roles.filter(x => x.id !== req.params.id);
   removeEntity('roles', req.params.id);
+  res.json({ ok: true });
+});
+
+/* ── CARGOS (posições dentro de uma área) ──
+   Ortogonal a `roles` — usuário tem role/área (ex: Criação) + cargo (ex: Diretor
+   de Arte). Cargos são globais, não vinculados a área específica (por enquanto). */
+app.get('/api/positions', requireAuth, (req, res) => res.json(db.positions || []));
+
+app.post('/api/positions', requireAuth, modOrAdmin, (req, res) => {
+  const { name } = req.body || {};
+  if (!String(name || '').trim()) return res.status(400).json({ error: 'Nome do cargo é obrigatório' });
+  const trimmed = String(name).trim();
+  if (!Array.isArray(db.positions)) db.positions = [];
+  if (db.positions.some(p => p.name.toLowerCase() === trimmed.toLowerCase())) {
+    return res.status(409).json({ error: 'Esse cargo já existe' });
+  }
+  const p = { id: uid(), name: trimmed, createdAt: nowISO() };
+  db.positions.push(p);
+  saveEntity('positions', p);
+  res.status(201).json(p);
+});
+
+app.put('/api/positions/:id', requireAuth, modOrAdmin, (req, res) => {
+  if (!Array.isArray(db.positions)) db.positions = [];
+  const p = db.positions.find(x => x.id === req.params.id);
+  if (!p) return res.status(404).json({ error: 'Cargo não encontrado' });
+  const { name } = req.body || {};
+  if (typeof name === 'string' && name.trim()) {
+    const trimmed = name.trim();
+    if (db.positions.some(x => x.id !== p.id && x.name.toLowerCase() === trimmed.toLowerCase())) {
+      return res.status(409).json({ error: 'Esse cargo já existe' });
+    }
+    const oldName = p.name;
+    p.name = trimmed;
+    // Propaga rename pros usuários que tinham esse cargo
+    db.users.forEach(u => {
+      if (u.position === oldName) { u.position = trimmed; saveEntity('users', u); }
+    });
+  }
+  saveEntity('positions', p);
+  res.json(p);
+});
+
+app.delete('/api/positions/:id', requireAuth, modOrAdmin, (req, res) => {
+  if (!Array.isArray(db.positions)) db.positions = [];
+  const p = db.positions.find(x => x.id === req.params.id);
+  if (!p) return res.status(404).json({ error: 'Cargo não encontrado' });
+  db.positions = db.positions.filter(x => x.id !== req.params.id);
+  removeEntity('positions', req.params.id);
   res.json({ ok: true });
 });
 

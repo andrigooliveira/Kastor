@@ -22,7 +22,7 @@ const { Pool } = require('pg');
 
 const ENTITY_TYPES = [
   'workspaces', 'users', 'clients', 'projects', 'flows',
-  'demands', 'roles', 'templates', 'webhooks', 'schedules', 'clientTemplates',
+  'demands', 'roles', 'positions', 'templates', 'webhooks', 'schedules', 'clientTemplates',
   'recurrings', 'listas', 'googleEvents'
 ];
 

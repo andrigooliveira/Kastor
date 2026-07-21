@@ -16,6 +16,7 @@ let flows      = [];
 let demands    = [];
 let notifications = [];
 let roles      = [];
+let positions  = [];
 let templates  = [];
 let webhooks   = [];
 let schedules  = [];
@@ -216,7 +217,7 @@ window.addEventListener('popstate', applyRoute);
    no início do render correspondente — antes de capturar os valores atuais.
    Evita que o usuário tenha que re-aplicar filtros toda vez que volta. */
 const FILTER_KEYS = {
-  list:      { storage: 'kastor-filters-list',      ids: ['search-input','filter-user','filter-project','filter-client','filter-period','filter-period-start','filter-period-end','filter-quick'] },
+  list:      { storage: 'kastor-filters-list',      ids: ['search-input','filter-workspace','filter-user','filter-project','filter-client','filter-period','filter-period-start','filter-period-end','filter-quick'] },
   dashboard: { storage: 'kastor-filters-dashboard', ids: ['dash-f-user','dash-f-client','dash-f-period','dash-f-type'] },
   capacity:  { storage: 'kastor-filters-capacity',  ids: ['capacity-period'] },
   clients:   { storage: 'kastor-filters-clients',   ids: ['client-search','client-f-ws'] }
@@ -2390,7 +2391,7 @@ async function enterApp() {
   $('topbar-title').textContent = 'Dashboard';
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-dashboard'));
   if ($('metrics-grid')) $('metrics-grid').innerHTML = skeletonMetrics();
-  if ($('list-table-body')) $('list-table-body').innerHTML = skeletonTableRows(9, 6);
+  if ($('list-table-body')) $('list-table-body').innerHTML = skeletonTableRows(9, 7);
   if ($('sidebar-uname')) $('sidebar-uname').innerHTML = '<span class="skeleton skeleton-line sm" style="display:inline-block;width:80px;height:11px;vertical-align:middle"></span>';
 
   await loadAll();
@@ -2424,9 +2425,10 @@ async function loadAll() {
     api('/schedules').catch(() => []),
     api('/client-templates').catch(() => []),
     api('/recurrings').catch(() => []),
-    api('/listas').catch(() => [])
+    api('/listas').catch(() => []),
+    api('/positions').catch(() => [])
   ]);
-  [workspaces, users, clients, projects, flows, demands, roles, templates, webhooks, schedules, clientTemplates, recurrings, listas] = results;
+  [workspaces, users, clients, projects, flows, demands, roles, templates, webhooks, schedules, clientTemplates, recurrings, listas, positions] = results;
   const allowed = workspaces.map(w => w.id);
   if (!activeWs || !allowed.includes(activeWs)) activeWs = allowed[0] || null;
   localStorage.setItem('fluxo_ws', activeWs || '');
@@ -2647,8 +2649,15 @@ function fillSelect(sel, options, currentValue, firstLabel) {
 function fillRoleSelect(selId, currentValue) {
   const sel = $(selId);
   const sorted = roles.slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-  sel.innerHTML = '<option value="">— Sem função —</option>' +
+  sel.innerHTML = '<option value="">— Sem área —</option>' +
     sorted.map(r => `<option value="${esc(r.name)}" ${r.name === currentValue ? 'selected' : ''}>${esc(r.name)}</option>`).join('');
+}
+function fillPositionSelect(selId, currentValue) {
+  const sel = $(selId);
+  if (!sel) return;
+  const sorted = (positions || []).slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  sel.innerHTML = '<option value="">— Sem cargo —</option>' +
+    sorted.map(p => `<option value="${esc(p.name)}" ${p.name === currentValue ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
 }
 function matchPeriod(dateStr, period, range) {
   if (!period) return true;
@@ -3390,7 +3399,7 @@ function exportDemandsCsv() {
   const list = listFilteredDemands();
   if (!list.length) { toast('Não há demandas pra exportar com os filtros atuais.', 'warn'); return; }
   const headers = [
-    'ID', 'Nome', 'Cliente', 'Projeto', 'Fluxo', 'Etapa atual',
+    'ID', 'Nome', 'Workspace', 'Cliente', 'Projeto', 'Fluxo', 'Etapa atual',
     'Responsável', 'Prioridade', 'Prazo etapa', 'Prazo final',
     'Horas estimadas', 'Horas apontadas', 'Peças', 'Artes', 'Variações',
     'Criada em', 'Concluída em', 'Status'
@@ -3398,12 +3407,13 @@ function exportDemandsCsv() {
   const rows = list.map(d => {
     const p = projectById(d.projectId);
     const cl = p ? (clients.find(c => c.id === p.clientId)?.name || p.client || '') : '';
+    const ws = wsById(d.workspaceId);
     const f = flowById(d.flowId);
     const st = stageOf(d);
     const owner = userById(d.ownerId);
     const totalHours = (d.timeEntries || []).reduce((s, e) => s + (Number(e.hours) || 0), 0);
     return [
-      d.id, d.name, cl, p?.name || '', f?.name || '', st?.label || '',
+      d.id, d.name, ws?.name || '', cl, p?.name || '', f?.name || '', st?.label || '',
       owner?.name || '', priorityLabel(d.priority) || '',
       d.stageDueDate || '', d.deadline || '',
       d.estimatedHours ?? '', totalHours.toFixed(2),
@@ -3430,7 +3440,7 @@ function exportCapacityCsv() {
   const statLabels = [...firstStats].map(s => s.querySelector('.capacity-stat-label')?.textContent.trim() || 'métrica');
   const isTeam = capacityView === 'team';
   const nameCol = isTeam ? 'Usuário' : (capacityView === 'project' ? 'Projeto' : 'Cliente');
-  const subCol = isTeam ? 'Função' : 'Detalhe';
+  const subCol = isTeam ? 'Área' : 'Detalhe';
   const headers = [nameCol, subCol, ...statLabels];
   if (isTeam) headers.push('Utilização');
   const rows = [];
@@ -3656,6 +3666,7 @@ function syncDemandStatusChip() {
 
 function listFilteredDemands() {
   const q  = norm($('search-input').value.trim());
+  const fsq = $('filter-workspace')?.value || '';
   const fu = $('filter-user').value;
   const fp = $('filter-project').value;
   const fc = $('filter-client')?.value || '';
@@ -3665,17 +3676,20 @@ function listFilteredDemands() {
     : null;
   const fq = $('filter-quick').value;
   const due = currentDueFilter(); // ?due=YYYY-MM-DD via URL (deep-link do dashboard)
-  return wsDemands().filter(d => {
+  // Cross-workspace: todas as demandas acessíveis pro usuário logado, não deletadas.
+  // O filter-workspace é um recorte adicional pra ficar em 1 workspace específico.
+  return (demands || []).filter(d => {
+    if (d.deletedAt) return false;
+    if (!(me.isAdmin || (me.workspaces || []).includes(d.workspaceId))) return false;
+    if (fsq && d.workspaceId !== fsq) return false;
     if (q && !norm(d.name).includes(q)) return false;
     if (fu && d.ownerId !== fu) return false;
     if (fp && d.projectId !== fp) return false;
-    // Filtro por cliente: casa pelo clientId do projeto da demanda.
     if (fc) {
       const proj = projectById(d.projectId);
       if (!proj || proj.clientId !== fc) return false;
     }
     if (!matchPeriod(effDue(d), fd, fdRange)) return false;
-    // ?due tem precedência sobre o range de período — filtra pra exatamente aquele dia.
     if (due && effDue(d) !== due) return false;
     if (fq === 'late' && !isLate(d)) return false;
     if (fq === 'open' && isDone(d)) return false;
@@ -3688,18 +3702,37 @@ function renderList() {
   // Aplica filtros salvos da sessão anterior ANTES de capturar o valor atual
   // (o rebuild dos options abaixo respeita o value setado aqui via prevUser).
   restoreFilters('list');
-  // User filter with avatars
+  // Populações cross-workspace — todas as opções acessíveis pro usuário.
+  const accessibleWs = (workspaces || [])
+    .filter(w => me.isAdmin || (me.workspaces || []).includes(w.id))
+    .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  // Filtro Workspace: options = workspaces acessíveis, alpha; dot da cor via dotMap.
+  fillSelect($('filter-workspace'), accessibleWs.map(w => ({ value: w.id, label: w.name })), undefined, 'Workspace');
+
+  // Usuários acessíveis (todos ativos que o usuário logado enxerga em qualquer workspace).
   const prevUser = $('filter-user').value;
-  const userOpts = wsUsers().slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  const userOpts = (users || []).filter(u => u.active !== false &&
+    (me.isAdmin || (u.workspaces || []).some(wid => (me.workspaces || []).includes(wid))))
+    .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
   $('filter-user').innerHTML = '<option value="">Usuário</option>' +
     userOpts.map(u => `<option value="${esc(u.id)}" ${u.id === prevUser ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
-  fillSelect($('filter-project'), wsProjects().map(p => ({ value: p.id, label: p.name })), undefined, 'Projeto');
-  // Filtro de cliente do workspace atual (só ativos, ordenados alfabeticamente).
-  const wsClientList = (clients || [])
-    .filter(c => c.workspaceId === activeWs && c.active !== false)
-    .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-  fillSelect($('filter-client'), wsClientList.map(c => ({ value: c.id, label: c.name })), undefined, 'Cliente');
 
+  // Projetos acessíveis
+  const accProjects = (projects || [])
+    .filter(p => me.isAdmin || (me.workspaces || []).includes(p.workspaceId))
+    .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  fillSelect($('filter-project'), accProjects.map(p => ({ value: p.id, label: p.name })), undefined, 'Projeto');
+
+  // Clientes acessíveis (ativos)
+  const accClients = (clients || [])
+    .filter(c => c.active !== false && (me.isAdmin || (me.workspaces || []).includes(c.workspaceId)))
+    .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  fillSelect($('filter-client'), accClients.map(c => ({ value: c.id, label: c.name })), undefined, 'Cliente');
+
+  // Workspace com dots coloridos.
+  const wsDotMap = {};
+  accessibleWs.forEach(w => { wsDotMap[w.id] = w.color || 'var(--accent)'; });
+  applyFilterDropdown('filter-workspace', { dotMap: wsDotMap });
   applyFilterDropdown('filter-user', { userIcon: true });
   applyFilterDropdown('filter-client', { clientIcon: true });
   applyFilterDropdown('filter-project', { projectIcon: true });
@@ -3714,6 +3747,7 @@ function renderList() {
   const list = listFilteredDemands().slice().sort((a,b) => {
     let va, vb;
     if (sortKey === 'name')           { va = norm(a.name); vb = norm(b.name); }
+    else if (sortKey === 'workspace') { va = norm(wsById(a.workspaceId)?.name || ''); vb = norm(wsById(b.workspaceId)?.name || ''); }
     else if (sortKey === 'project')   { va = norm(projectById(a.projectId)?.name || ''); vb = norm(projectById(b.projectId)?.name || ''); }
     else if (sortKey === 'client')    { va = norm(projectById(a.projectId)?.client || ''); vb = norm(projectById(b.projectId)?.client || ''); }
     else if (sortKey === 'type')      { va = norm(demandType(a) || ''); vb = norm(demandType(b) || ''); }
@@ -3737,7 +3771,7 @@ function renderList() {
   }
 
   if (!list.length) {
-    $('list-table-body').innerHTML = `<tr><td colspan="11">${emptyState('Nenhuma demanda encontrada', 'Ajuste a busca ou os filtros para encontrar o que procura.', 'search')}</td></tr>`;
+    $('list-table-body').innerHTML = `<tr><td colspan="12">${emptyState('Nenhuma demanda encontrada', 'Ajuste a busca ou os filtros para encontrar o que procura.', 'search')}</td></tr>`;
     if (listView === 'kanban') renderKanban();
     if (listView === 'cal') renderCalendar('all');
     refreshBulkBar();
@@ -3746,11 +3780,16 @@ function renderList() {
   }
   $('list-table-body').innerHTML = list.map(d => {
     const p = projectById(d.projectId);
+    const ws = wsById(d.workspaceId);
+    const wsCell = ws
+      ? `<span class="pill" style="color:${ws.color || '#7A00FF'};background:${hexDim(ws.color)}"><span class="pill-dot" style="background:${ws.color || '#7A00FF'}"></span>${esc(ws.name)}</span>`
+      : '<span class="pill pill-muted">—</span>';
     const due = effDue(d);
     const sel = selectedDemandIds.has(d.id);
     return `<tr class="demand-row ${sel ? 'selected' : ''}" data-demand-id="${d.id}" onclick="onDemandRowClick(event, '${d.id}')">
       <td class="col-bulk-check"><input type="checkbox" class="bulk-check-row" ${sel ? 'checked' : ''} onclick="event.stopPropagation();toggleDemandSelection('${d.id}', this.checked)"></td>
       <td><span class="demand-name">${esc(d.name)}</span></td>
+      <td>${wsCell}</td>
       <td>${p ? esc(p.name) : '—'}</td>
       <td>${esc(p?.client || '—')}</td>
       <td>${esc(demandType(d) || '—')}</td>
@@ -6369,8 +6408,8 @@ function renderTopbarTimer() {
   clock.textContent = formatTimerClock(elapsed);
   wrap.classList.toggle('is-running', !!t.running);
   toggleBtn.innerHTML = t.running
-    ? '<i data-lucide="pause" class="ic-sm"></i>'
-    : '<i data-lucide="play" class="ic-sm"></i>';
+    ? '<i data-lucide="pause" class="ic-sm" width="16" height="16"></i>'
+    : '<i data-lucide="play" class="ic-sm" width="16" height="16"></i>';
   toggleBtn.title = t.running ? 'Pausar' : 'Retomar';
   paintIcons();
 }
@@ -6473,10 +6512,19 @@ function refreshTimerUI() {
   paintIcons();
 }
 function tickTimer() {
-  const t = detailId ? getTimer(detailId) : null;
-  if (!t || !t.running) return;
-  const clock = $('timer-clock');
-  if (clock) clock.textContent = formatTimerClock(timerElapsedMs(t));
+  // Atualiza o clock do modal (se aberto na demanda ativa) + o clock do topbar.
+  if (detailId) {
+    const t = timerState[detailId];
+    if (t && t.running) {
+      const clock = $('timer-clock');
+      if (clock) clock.textContent = formatTimerClock(timerElapsedMs(t));
+    }
+  }
+  const at = activeTimerId ? timerState[activeTimerId] : null;
+  if (at && at.running) {
+    const tbClock = $('topbar-timer-clock');
+    if (tbClock) tbClock.textContent = formatTimerClock(timerElapsedMs(at));
+  }
 }
 function ensureTimerInterval() {
   if (timerInterval) return;
@@ -6503,17 +6551,29 @@ function toggleTimer() {
     if (!$('time-start').value && t.startedAt) $('time-start').value = toLocal(new Date(t.startedAt));
     toast('Cronômetro pausado · ' + formatTimerClock(t.accumulatedMs));
   } else {
-    // Iniciar/retomar
+    // Iniciar/retomar. Só 1 timer rodando por vez — pausa outros ativos primeiro.
+    if (activeTimerId && activeTimerId !== detailId) {
+      const other = timerState[activeTimerId];
+      if (other && other.running) {
+        other.accumulatedMs += Date.now() - other.beginAt;
+        other.running = false;
+        other.beginAt = null;
+      }
+    }
     t.running = true;
     t.beginAt = Date.now();
     if (!t.startedAt) t.startedAt = Date.now();
+    activeTimerId = detailId;
     ensureTimerInterval();
     toast('Cronômetro iniciado');
   }
+  saveActiveTimer();
+  renderTopbarTimer();
   refreshTimerUI();
 }
 function resetTimer(demandId) {
   if (timerState[demandId]) delete timerState[demandId];
+  if (activeTimerId === demandId) { activeTimerId = null; saveActiveTimer(); renderTopbarTimer(); }
 }
 
 /* Converte um valor exibido (dd/mm/aaaa HH:MM ou ISO) para ISO datetime-local */
@@ -7597,8 +7657,8 @@ function renderStageRows() {
     const useDefault = !!s.responsibleRole && !s.responsibleId;
     const userId = s.responsibleId || '';
 
-    // Função dropdown
-    const fnOpts = `<option value="">— Sem função —</option>` +
+    // Área dropdown
+    const fnOpts = `<option value="">— Sem área —</option>` +
       allRoles.map(r => `<option value="${esc(r.name)}" ${r.name === roleFilter ? 'selected' : ''}>${esc(r.name)}</option>`).join('');
 
     // Responsável dropdown — filtrado pela função selecionada
@@ -7624,7 +7684,7 @@ function renderStageRows() {
       <div class="stage-grip" draggable="true" ondragstart="stageDragStart(event,${i})" title="Arraste para reordenar"><i data-lucide="grip-vertical" class="ic-sm"></i></div>
       <button type="button" class="color-swatch-trigger stage-color" style="background:${s.color}" onclick="openColorPicker(this, (c) => { stageRows[${i}].color = c; this.style.background = c; flowModalDirty = true; }, stageRows[${i}].color)" title="Cor da etapa"></button>
       <input class="form-control" value="${esc(s.label)}" placeholder="Nome da etapa" oninput="stageRows[${i}].label=this.value">
-      <select id="stage-role-${i}" class="form-control stage-role" title="Função desta etapa" onchange="setStageRoleFilter(${i}, this.value)">${fnOpts}</select>
+      <select id="stage-role-${i}" class="form-control stage-role" title="Área desta etapa" onchange="setStageRoleFilter(${i}, this.value)">${fnOpts}</select>
       <select id="stage-resp-${i}" class="form-control stage-resp" title="Responsável padrão da etapa" onchange="setStageResponsible(${i}, this.value)">${respHtml}</select>
       <div class="stage-days-wrap"><span class="stage-mini-label">Prazo (dias)</span><input class="form-control" type="number" min="1" placeholder="—" value="${s.deadlineDays || ''}" oninput="stageRows[${i}].deadlineDays=this.value?Number(this.value):null"></div>
       <label class="stage-done-toggle"><input type="checkbox" ${s.done ? 'checked' : ''} onchange="stageRows[${i}].done=this.checked"> Conclui</label>
@@ -7861,6 +7921,7 @@ function renderUsers() {
     if (userSortKey === 'name')     { va = norm(a.name); vb = norm(b.name); }
     else if (userSortKey === 'username') { va = norm(a.username); vb = norm(b.username); }
     else if (userSortKey === 'role')     { va = norm(a.role || ''); vb = norm(b.role || ''); }
+    else if (userSortKey === 'position') { va = norm(a.position || ''); vb = norm(b.position || ''); }
     else if (userSortKey === 'ws')       { va = (a.workspaces || []).length; vb = (b.workspaces || []).length; }
     else if (userSortKey === 'admin')    { va = a.isAdmin ? 0 : 1; vb = b.isAdmin ? 0 : 1; }
     else if (userSortKey === 'active')   { va = a.active !== false ? 0 : 1; vb = b.active !== false ? 0 : 1; }
@@ -7879,8 +7940,13 @@ function renderUsers() {
       <td>${cellUser(u)}</td>
       <td style="color:var(--text-dim)">${esc(u.username)}</td>
       <td>${esc(u.role || '—')}</td>
+      <td>${esc(u.position || '—')}</td>
       <td>${wsNames}</td>
-      <td>${u.isAdmin ? '<span class="pill pill-admin">Admin</span>' : '<span class="pill pill-muted">Equipe</span>'}</td>
+      <td>${u.isAdmin
+        ? '<span class="pill pill-admin">Admin</span>'
+        : (u.isModerator
+          ? '<span class="pill pill-moderator">Moderador</span>'
+          : '<span class="pill pill-muted">Equipe</span>')}</td>
       <td>${u.active !== false ? '<span class="pill pill-success">Ativo</span>' : '<span class="pill pill-muted">Desativado</span>'}</td>
       <td>${me.isAdmin ? `<div class="row-actions">
           <button class="detail-icon-btn" title="Editar" onclick="openUserModal('${u.id}')"><i data-lucide="pencil" class="ic-sm"></i></button>
@@ -7892,6 +7958,7 @@ function renderUsers() {
     </tr>`;
   }).join('');
   renderRoles();
+  renderPositions();
 }
 function toggleArchivedUsers() {
   showArchivedUsers = !showArchivedUsers;
@@ -7922,7 +7989,7 @@ function renderRoles() {
       <td>${count} ${count === 1 ? 'usuário' : 'usuários'}</td>
       <td>${actions}</td>
     </tr>`;
-  }).join('') : `<tr><td colspan="3">${emptyState('Nenhuma função cadastrada', 'Adicione funções para organizar a equipe.', 'users')}</td></tr>`;
+  }).join('') : `<tr><td colspan="3">${emptyState('Nenhuma área cadastrada', 'Adicione áreas para organizar a equipe.', 'users')}</td></tr>`;
 }
 function sortRolesBy(key) {
   if (roleSortKey === key) roleSortDir *= -1;
@@ -7931,11 +7998,94 @@ function sortRolesBy(key) {
 }
 function openRoleModal(id) {
   editingRoleId = id || null;
-  $('role-modal-title').textContent = id ? 'Editar Função' : 'Nova Função';
+  $('role-modal-title').textContent = id ? 'Editar Área' : 'Nova Área';
   const r = id ? roles.find(x => x.id === id) : null;
   $('role-name').value = r?.name || '';
   openModal('role-modal');
   setTimeout(() => $('role-name').focus(), 60);
+}
+
+/* ─── CARGOS (positions) — lista lado a lado das Áreas ── */
+let positionSortKey = 'name';
+let positionSortDir = 1;
+let editingPositionId = null;
+function renderPositions() {
+  const wrap = $('positions-table-body');
+  if (!wrap) return;
+  const sorted = (positions || []).slice().sort((a, b) => {
+    const ca = users.filter(u => u.position === a.name && u.active !== false).length;
+    const cb = users.filter(u => u.position === b.name && u.active !== false).length;
+    let va, vb;
+    if (positionSortKey === 'count') { va = ca; vb = cb; }
+    else { va = norm(a.name); vb = norm(b.name); }
+    return (va < vb ? -1 : va > vb ? 1 : 0) * positionSortDir;
+  });
+  wrap.innerHTML = sorted.length ? sorted.map(p => {
+    const count = users.filter(u => u.position === p.name && u.active !== false).length;
+    const actions = me.isAdmin ? `<div class="row-actions">
+          <button class="detail-icon-btn" title="Editar" onclick="openPositionModal('${p.id}')"><i data-lucide="pencil" class="ic-sm"></i></button>
+          <button class="detail-icon-btn danger" title="Excluir" onclick="deletePosition('${p.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
+        </div>` : '';
+    return `<tr class="row-hover-actions">
+      <td><strong>${esc(p.name)}</strong></td>
+      <td>${count} ${count === 1 ? 'usuário' : 'usuários'}</td>
+      <td>${actions}</td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="3">${emptyState('Nenhum cargo cadastrado', 'Adicione cargos (Diretor de Arte, Copywriter Sênior, etc).', 'briefcase')}</td></tr>`;
+}
+function sortPositionsBy(key) {
+  if (positionSortKey === key) positionSortDir *= -1;
+  else { positionSortKey = key; positionSortDir = 1; }
+  renderPositions();
+}
+function openPositionModal(id) {
+  editingPositionId = id || null;
+  $('position-modal-title').textContent = id ? 'Editar Cargo' : 'Novo Cargo';
+  const p = id ? (positions || []).find(x => x.id === id) : null;
+  $('position-name').value = p?.name || '';
+  openModal('position-modal');
+  setTimeout(() => $('position-name').focus(), 60);
+}
+async function savePosition() {
+  const name = $('position-name').value.trim();
+  if (!name) { toast('Informe o nome do cargo.', 'error'); return; }
+  try {
+    if (editingPositionId) {
+      const upd = await api('/positions/' + editingPositionId, 'PUT', { name });
+      const i = positions.findIndex(x => x.id === upd.id);
+      if (i >= 0) positions[i] = upd;
+      // Propaga rename local
+      users.forEach(u => { if (u.position && positions.some(p => p.id === upd.id && u.position === p.name)) u.position = upd.name; });
+      toast('Cargo atualizado!');
+    } else {
+      const p = await api('/positions', 'POST', { name });
+      positions.push(p);
+      toast('Cargo criado!');
+    }
+    closeModal('position-modal');
+    renderPositions();
+    renderUsers();
+  } catch (e) { toast(e.message, 'error'); }
+}
+async function deletePosition(id) {
+  const p = (positions || []).find(x => x.id === id);
+  if (!p) return;
+  const ok = await showConfirm({
+    title: 'Excluir cargo?',
+    message: `O cargo "${esc(p.name)}" será removido. Usuários que o tinham continuam existindo, mas ficam sem cargo definido.`,
+    okLabel: 'Excluir',
+    danger: true
+  });
+  if (!ok) return;
+  try {
+    await api('/positions/' + id, 'DELETE');
+    positions = positions.filter(x => x.id !== id);
+    // Limpa o campo em quem tinha esse cargo — feedback visual imediato.
+    users.forEach(u => { if (u.position === p.name) u.position = null; });
+    renderPositions();
+    renderUsers();
+    toast('Cargo excluído.', 'warn');
+  } catch (e) { toast(e.message, 'error'); }
 }
 
 /* ─── TEMPLATES ─── */
@@ -8357,8 +8507,8 @@ function renderRecurring() {
   }
 
   // Pills de group-by dinâmicas:
-  //   modo todos → Cliente | Projeto | Função | Responsável
-  //   modo cliente → Projeto | Função | Responsável
+  //   modo todos → Cliente | Projeto | Área | Responsável
+  //   modo cliente → Projeto | Área | Responsável
   syncRecurringGroupByPills(isAll);
 
   renderRecurringClientsCol(wsClients);
@@ -8375,8 +8525,8 @@ function syncRecurringGroupByPills(isAll) {
   // Modo "Todos os clientes" não tem 'Projeto' — a nested view por cliente
   // já cobre a hierarquia. Projeto flat agrega demais e confunde.
   const opts = isAll
-    ? [['client', 'Cliente'], ['role', 'Função'], ['owner', 'Responsável']]
-    : [['project', 'Projeto'], ['role', 'Função'], ['owner', 'Responsável']];
+    ? [['client', 'Cliente'], ['role', 'Área'], ['owner', 'Responsável']]
+    : [['project', 'Projeto'], ['role', 'Área'], ['owner', 'Responsável']];
   // Ajusta groupBy se o corrente não existir no set atual
   if (!opts.some(([k]) => k === _recGroupBy)) {
     _recGroupBy = isAll ? 'client' : 'project';
@@ -8452,7 +8602,7 @@ function renderRecurringSingleClient(client, ym, groupBy, q) {
   return headerHtml + (groupsHtml || emptyState('Sem grupos ainda', 'Adicione uma Lista ou uma recorrente personalizada abaixo.', 'default'));
 }
 
-/* Modo Todos os clientes — 4 opções de group-by (Cliente/Projeto/Função/Responsável). */
+/* Modo Todos os clientes — 4 opções de group-by (Cliente/Projeto/Área/Responsável). */
 function renderRecurringAllClients(wsRecurrings, ym, groupBy) {
   if (groupBy === 'client') {
     // Agrupa por cliente. Cada cliente é um card grande com sub-grupos (Geral/Projeto).
@@ -8470,11 +8620,11 @@ function renderRecurringAllClients(wsRecurrings, ym, groupBy) {
   const labelFor = (k) => {
     if (k === '__none__') {
       if (groupBy === 'project') return 'Sem projeto';
-      if (groupBy === 'role')    return 'Sem função';
+      if (groupBy === 'role')    return 'Sem área';
       return 'Sem responsável';
     }
     if (groupBy === 'project') return projectById(k)?.name || 'Projeto removido';
-    if (groupBy === 'role')    return roles.find(x => x.id === k)?.name || 'Função removida';
+    if (groupBy === 'role')    return roles.find(x => x.id === k)?.name || 'Área removida';
     return userById(k)?.name || 'Usuário removido';
   };
   for (const r of wsRecurrings) {
@@ -8571,13 +8721,13 @@ function collectRecurringGroups(groupBy, client, clientRecurrings) {
     const used = new Set(clientRecurrings.map(r => r.roleId || '__none__'));
     const groups = [];
     for (const rId of used) {
-      if (rId === '__none__') groups.push({ key: '__none__', label: 'Sem função', roleId: null });
+      if (rId === '__none__') groups.push({ key: '__none__', label: 'Sem área', roleId: null });
       else {
         const role = roles.find(x => x.id === rId);
         if (role) groups.push({ key: role.id, label: role.name, roleId: role.id });
       }
     }
-    if (!groups.length) groups.push({ key: '__none__', label: 'Sem função', roleId: null });
+    if (!groups.length) groups.push({ key: '__none__', label: 'Sem área', roleId: null });
     return groups.sort((a, b) => norm(a.label).localeCompare(norm(b.label)));
   }
   // owner
@@ -8594,7 +8744,7 @@ function collectRecurringGroups(groupBy, client, clientRecurrings) {
   return groups.sort((a, b) => norm(a.label).localeCompare(norm(b.label)));
 }
 
-/* Renderiza 1 grupo (Projeto/Função/Responsável) com suas Listas + Personalizada + botões. */
+/* Renderiza 1 grupo (Projeto/Área/Responsável) com suas Listas + Personalizada + botões. */
 function renderRecurringGroup(spec, clientRecurrings, ym, groupBy, client) {
   // Filtra recorrentes deste grupo
   const items = clientRecurrings.filter(r => {
@@ -8746,7 +8896,7 @@ function renderRecurringItem(r, ym, groupBy) {
   const role = r.roleId ? roles.find(x => x.id === r.roleId) : null;
   const owner = r.ownerId ? userById(r.ownerId) : null;
 
-  // Ordem definida pelo wireframe: Função → Responsável → Fluxo
+  // Ordem definida pelo wireframe: Área → Responsável → Fluxo
   const metaChips = [];
   if (role)  metaChips.push(`<span class="rec-meta-chip"><i data-lucide="user-cog" class="ic-xs"></i>${esc(role.name)}</span>`);
   if (owner) metaChips.push(`<span class="rec-meta-chip"><i data-lucide="user" class="ic-xs"></i>${esc(owner.name)}</span>`);
@@ -9180,7 +9330,7 @@ async function saveNovaDemandaLista() {
 
 /* ─── Modal Editar Demanda de Lista APLICADA (aba Demandas) ───
    Modal simplificado: só nome, descrição, briefing, anexos, checklist, prioridade.
-   Cliente/Projeto/Fluxo/Função/Responsável/Dia ficam bloqueados (herdados
+   Cliente/Projeto/Fluxo/Área/Responsável/Dia ficam bloqueados (herdados
    do contexto de aplicação). Editar uma demanda de lista aplicada NÃO afeta
    nenhuma outra instância nem o template original. */
 let _edaEditingId = null;
@@ -9333,7 +9483,7 @@ function renderListasContent() {
   // Sort pelo groupby — mantemos flat mas em ordem estável.
   // Cliente → ordena por cliente.name + lista.name.
   // Projeto → ordena por projeto.name (Geral primeiro) + lista.name.
-  // Função/Responsável → ordena pelo primeiro item da lista que tem esse campo.
+  // Área/Responsável → ordena pelo primeiro item da lista que tem esse campo.
   const withMeta = wsListas.map(l => {
     const client = l.clientId ? clientById(l.clientId) : null;
     const project = l.projectId ? projectById(l.projectId) : null;
@@ -9679,7 +9829,7 @@ function openRecurringModal(id) {
   $('rec-client').innerHTML = '<option value="">— Selecione —</option>' +
     wsClientList.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
   // Function options já vêm fixas no HTML como "Sem função"; preenche roles
-  $('rec-role').innerHTML = '<option value="">— Sem função —</option>' +
+  $('rec-role').innerHTML = '<option value="">— Sem área —</option>' +
     roles.slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)))
       .map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('');
   // Responsável: usuários do workspace
@@ -10062,12 +10212,12 @@ async function confirmDeleteTemplate(id) {
 
 async function saveRole() {
   const name = $('role-name').value.trim();
-  if (!name) { toast('Informe o nome da função.', 'error'); return; }
+  if (!name) { toast('Informe o nome da área.', 'error'); return; }
   try {
     if (editingRoleId) await api('/roles/' + editingRoleId, 'PUT', { name });
     else await api('/roles', 'POST', { name });
     closeModal('role-modal');
-    toast(editingRoleId ? 'Função atualizada!' : 'Função criada!');
+    toast(editingRoleId ? 'Área atualizada!' : 'Área criada!');
     await refreshData();
   } catch (e) { toast(e.message, 'error'); }
 }
@@ -10075,15 +10225,15 @@ async function deleteRole(id) {
   const r = roles.find(x => x.id === id);
   if (!r) return;
   const ok = await showConfirm({
-    title: 'Excluir função',
-    message: `Excluir a função <strong>${esc(r.name)}</strong>?<br><br>Os usuários que a possuem ficarão sem função definida.`,
+    title: 'Excluir área',
+    message: `Excluir a área <strong>${esc(r.name)}</strong>?<br><br>Os usuários que a possuem ficarão sem área definida.`,
     okLabel: 'Excluir',
     danger: true
   });
   if (!ok) return;
   try {
     await api('/roles/' + id, 'DELETE');
-    toast('Função excluída.', 'warn');
+    toast('Área excluída.', 'warn');
     await refreshData();
   } catch (e) { toast(e.message, 'error'); }
 }
@@ -10093,6 +10243,7 @@ function openUserModal(id) {
   const u = id ? userById(id) : null;
   $('u-name').value = u?.name || '';
   fillRoleSelect('u-role', u?.role || '');
+  fillPositionSelect('u-position', u?.position || '');
   $('u-username').value = u?.username || '';
   $('u-username').disabled = !!id;
   $('u-username-group').style.opacity = id ? .55 : 1;
@@ -10126,6 +10277,7 @@ async function saveUser() {
   const wsSel = [...$('u-workspaces').querySelectorAll('input:checked')].map(i => i.value);
   const payload = {
     name: $('u-name').value, role: $('u-role').value,
+    position: $('u-position') ? ($('u-position').value || '') : '',
     isAdmin: $('u-admin').checked,
     isModerator: !$('u-admin').checked && $('u-moderator').checked,
     workspaces: wsSel,
@@ -11147,25 +11299,22 @@ async function confirmDeleteModel(id) {
   } catch (e) { toast(e.message, 'error'); }
 }
 
-/* ── CRIAR MODELO DO ZERO ── */
+/* ── CRIAR MODELO DO ZERO ──
+   Workspace = activeWs (o do topbar switcher). Sem campo no modal — a página é
+   cross-workspace, então o contexto do "onde criar" é o próprio switcher. */
 function openNewModelModal() {
   $('nm-name').value = '';
   $('nm-color').value = '#7A00FF';
   const trg = $('nm-color-trigger');
   if (trg) trg.style.background = '#7A00FF';
-  const wsSel = $('nm-workspace');
-  const accessibleWs = workspaces.filter(w => me.isAdmin || (me.workspaces || []).includes(w.id));
-  wsSel.innerHTML = accessibleWs
-    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt-BR', { sensitivity: 'base' }))
-    .map(w => `<option value="${w.id}">${esc(w.name)}</option>`).join('');
-  if (accessibleWs.some(w => w.id === activeWs)) wsSel.value = activeWs;
   openModal('new-model-modal');
   setTimeout(() => $('nm-name').focus(), 60);
 }
 async function saveNewModel() {
   const name = $('nm-name').value.trim();
   if (!name) { toast('Informe um nome pro modelo.', 'error'); return; }
-  const workspaceId = $('nm-workspace').value;
+  const workspaceId = activeWs;
+  if (!workspaceId) { toast('Selecione um workspace no topo antes de criar o modelo.', 'error'); return; }
   const color = $('nm-color').value || '#7A00FF';
   try {
     const tpl = await api('/client-templates', 'POST', { name, workspaceId, color });
@@ -11272,7 +11421,7 @@ function renderTflStages() {
   wrap.innerHTML = _tflCtx.stages.map((s, i) => {
     // Opções do select de role com selected inline (evita bugs de replace).
     const cur = s.responsibleRole || '';
-    const roleOpts = [`<option value="" ${cur === '' ? 'selected' : ''}>— Sem função —</option>`]
+    const roleOpts = [`<option value="" ${cur === '' ? 'selected' : ''}>— Sem área —</option>`]
       .concat(sortedRoles.map(r => `<option value="${esc(r.name)}" ${cur === r.name ? 'selected' : ''}>${esc(r.name)}</option>`))
       .join('');
     const color = s.color || '#7A00FF';
@@ -11646,7 +11795,7 @@ function renderClientDetail(id) {
     (u.workspaces || []).includes(c.workspaceId) || u.isAdmin
   );
   if (!allRoles.length) {
-    peopleEl.innerHTML = `<div class="client-people-empty">Nenhuma função cadastrada. Crie funções em <a href="#" onclick="event.preventDefault(); goPage('users');">Usuários</a> para definir responsáveis padrão por cliente.</div>`;
+    peopleEl.innerHTML = `<div class="client-people-empty">Nenhuma área cadastrada. Crie áreas em <a href="#" onclick="event.preventDefault(); goPage('users');">Usuários</a> para definir responsáveis padrão por cliente.</div>`;
   } else {
     peopleEl.innerHTML = allRoles.map(role => {
       const candidates = wsUsers.filter(u => (u.role || '') === role.name);
@@ -11660,7 +11809,7 @@ function renderClientDetail(id) {
         <div class="client-person-role">${esc(role.name)}</div>
         <div class="client-person-name">${previewAvatar}</div>
         <select class="form-control" onchange="setClientRoleAssignment('${id}', '${esc(role.name).replace(/'/g, "\\'")}', this.value)" ${candidates.length ? '' : 'disabled'}>
-          ${candidates.length ? opts : `<option value="">Sem usuários nesta função</option>`}
+          ${candidates.length ? opts : `<option value="">Sem usuários nesta área</option>`}
         </select>
       </div>`;
     }).join('');
@@ -11890,7 +12039,7 @@ function renderProjectDetail(id) {
   const assigns = p.roleAssignments || {};
   const wsUsers = users.filter(u => (u.workspaces || []).includes(p.workspaceId) || u.isAdmin);
   if (!allRoles.length) {
-    peopleEl.innerHTML = `<div class="client-people-empty">Nenhuma função cadastrada. Crie funções em <a href="#" onclick="event.preventDefault(); goPage('users');">Usuários</a> para definir responsáveis padrão por projeto.</div>`;
+    peopleEl.innerHTML = `<div class="client-people-empty">Nenhuma área cadastrada. Crie áreas em <a href="#" onclick="event.preventDefault(); goPage('users');">Usuários</a> para definir responsáveis padrão por projeto.</div>`;
   } else {
     peopleEl.innerHTML = allRoles.map(role => {
       const candidates = wsUsers.filter(u => (u.role || '') === role.name);
@@ -11906,7 +12055,7 @@ function renderProjectDetail(id) {
         <div class="client-person-role">${esc(role.name)}</div>
         <div class="client-person-name">${previewAvatar}</div>
         <select class="form-control" onchange="setProjectRoleAssignment('${id}', '${esc(role.name).replace(/'/g, "\\'")}', this.value)" ${candidates.length ? '' : 'disabled'}>
-          ${candidates.length ? opts : `<option value="">Sem usuários nesta função</option>`}
+          ${candidates.length ? opts : `<option value="">Sem usuários nesta área</option>`}
         </select>
       </div>`;
     }).join('');
@@ -13369,14 +13518,9 @@ function onAgendaUserChange() {
 /* ── Modo Time (multi-user, 1 dia) ── */
 function setAgendaMode(mode) {
   agendaMode = mode === 'team' ? 'team' : 'individual';
-  // Default: me + 2 outros ativos no workspace. Se o user já tinha seleção, mantém.
+  // Default: só o próprio usuário selecionado. Se já tinha seleção prévia, mantém.
   if (agendaMode === 'team' && !agendaTeamUsers.length) {
-    const wsU = wsUsers().filter(u => u.active !== false).slice(0, 3);
-    agendaTeamUsers = wsU.map(u => u.id);
-    if (me?.id && !agendaTeamUsers.includes(me.id)) {
-      agendaTeamUsers.unshift(me.id);
-      agendaTeamUsers = agendaTeamUsers.slice(0, 6);
-    }
+    if (me?.id) agendaTeamUsers = [me.id];
   }
   if (agendaMode === 'team' && !agendaTeamDate) agendaTeamDate = new Date();
   document.querySelectorAll('.agenda-mode-btn').forEach(b => b.classList.toggle('is-active', b.dataset.mode === agendaMode));
@@ -13756,7 +13900,11 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
   const userSchedules = isTeam
     ? schedules.filter(s => agendaTeamUsers.includes(s.userId))
     : schedules.filter(s => s.userId === agendaUserIdLocal);
-  const userGoogleEvents = isTeam ? [] : (googleEventsForUser[agendaUserIdLocal] || []);
+  // Eventos Google por coluna: team → do dono da coluna; individual → do user primary.
+  const googleEventsForCol = (c) => {
+    const uid = c.type === 'user' ? c.user.id : agendaUserIdLocal;
+    return googleEventsForUser[uid] || [];
+  };
 
   // Chave do layout por coluna: individual usa "ymd", time usa "userId:ymd".
   const colKey = (c) => c.type === 'user' ? `${c.user.id}:${agendaYmd(c.day)}` : agendaYmd(c.day);
@@ -13769,7 +13917,7 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
     const inCol = userSchedules.filter(s => schedKey(s) === key).map(s => ({
       id: 'sched:' + s.id, startMin: s.startMin, endMin: s.endMin, kind: 'sched', ref: s
     }));
-    const dayGoogles = userGoogleEvents
+    const dayGoogles = googleEventsForCol(c)
       .map(ev => googleEventToBlock(ev, ymd))
       .filter(Boolean)
       .map(b => ({ ...b, id: 'gcal:' + b.id, kind: 'google', ref: b }));
@@ -13866,7 +14014,7 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
     const ymd = agendaYmd(c.day);
     const layout = dayLayouts[colKey(c)];
     if (!layout) return;
-    const dayEvents = userGoogleEvents
+    const dayEvents = googleEventsForCol(c)
       .map(ev => googleEventToBlock(ev, ymd))
       .filter(Boolean);
     dayEvents.forEach(gb => {
@@ -13911,7 +14059,12 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
   // Se ainda sem cache de eventos, dispara fetch async. O backend devolve []
   // se o usuário-alvo não tem Google conectado, então não custa nada tentar.
   // Re-render acontece dentro de refreshGoogleEventsForUser quando termina.
-  if (!googleEventsForUser[agendaUserIdLocal]) {
+  // Time: dispara pra CADA usuário selecionado (max 6, então N no máximo).
+  if (isTeam) {
+    agendaTeamUsers.forEach(uid => {
+      if (!googleEventsForUser[uid]) refreshGoogleEventsForUser(uid);
+    });
+  } else if (!googleEventsForUser[agendaUserIdLocal]) {
     refreshGoogleEventsForUser(agendaUserIdLocal);
   }
 }
