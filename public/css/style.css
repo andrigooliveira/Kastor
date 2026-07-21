@@ -89,19 +89,11 @@ body.user-moderator .full-admin-only { display: none !important; }
   display: flex; align-items: center; justify-content: center;
 }
 .wizard-cust-drag:active { cursor: grabbing; }
-.wizard-cust-color-lg {
-  position: relative;
-  width: 26px; height: 26px;
+/* Override .color-swatch-trigger — tamanho compacto que cabe no grid do wizard. */
+.color-swatch-trigger.wizard-cust-color-lg {
+  width: 28px; height: 28px;
   border-radius: 6px;
-  cursor: pointer;
-  border: 1px solid var(--hairline);
-  overflow: hidden;
-}
-.wizard-cust-color-lg input[type="color"] {
-  position: absolute; inset: 0;
-  width: 100%; height: 100%;
-  border: 0; padding: 0;
-  opacity: 0; cursor: pointer;
+  border-width: 1px;
 }
 .wizard-cust-badge {
   font-size: 10px; font-weight: 700;
@@ -146,48 +138,368 @@ body.user-moderator .full-admin-only { display: none !important; }
 }
 .wizard-section-head + .wizard-card { margin-top: 4px; }
 
-/* Cards de Modelos de Cliente (subtela /clients/models). */
+/* ── Widget "Meu dia" (topo do Dashboard) ──
+   3 cards horizontais com foco pessoal: prazo hoje, atrasadas, menções. */
+.my-day-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.my-day-card {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: 14px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.my-day-card.is-danger { border-color: rgba(239, 68, 68, 0.35); }
+.my-day-head {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.my-day-title {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 12.5px; font-weight: 600; color: var(--text);
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.my-day-title i { color: var(--accent-text); }
+.my-day-card.is-danger .my-day-title i { color: #EF4444; }
+.my-day-count {
+  font-size: 20px; font-weight: 700; color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.my-day-card.is-danger .my-day-count { color: #EF4444; }
+.my-day-items { display: flex; flex-direction: column; gap: 4px; }
+.my-day-row {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  padding: 8px 10px;
+  background: none; border: 0; color: var(--text);
+  font-family: inherit; text-align: left;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background .12s;
+  width: 100%;
+}
+.my-day-row:hover { background: var(--surface-2); }
+.my-day-row-name {
+  font-size: 13px; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 100%;
+}
+.my-day-row-sub {
+  font-size: 11.5px; color: var(--text-muted);
+}
+.my-day-more {
+  font-size: 11.5px; color: var(--text-muted);
+  padding: 4px 10px;
+}
+.my-day-empty {
+  font-size: 12.5px; color: var(--text-muted);
+  padding: 8px 4px;
+}
+
+/* ── Galeria de anexos (dentro de detalhe do cliente / projeto) ──
+   Agrega todos os anexos de demandas + comentários no escopo. Toolbar em cima
+   (busca + chips por tipo com contagem), grid embaixo. */
+.att-gallery { display: flex; flex-direction: column; gap: 14px; }
+.att-gal-toolbar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+.att-gal-search { flex: 0 1 320px; min-width: 200px; }
+.att-gal-chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.att-gal-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 10px;
+  background: var(--surface-2); border: 1px solid var(--hairline); color: var(--text-dim);
+  border-radius: var(--radius-pill);
+  font-size: 11.5px; font-family: inherit; cursor: pointer;
+  transition: border-color .12s, background .12s, color .12s;
+}
+.att-gal-chip:hover { color: var(--text); border-color: var(--text-muted); }
+.att-gal-chip.is-active { color: var(--accent-text); border-color: var(--accent); background: var(--accent-dim); }
+.att-gal-chip-count {
+  font-size: 10.5px; padding: 1px 6px;
+  background: rgba(255,255,255,0.04);
+  border-radius: var(--radius-pill);
+  font-variant-numeric: tabular-nums;
+}
+.att-gal-chip.is-active .att-gal-chip-count { background: rgba(122,0,255,0.18); }
+
+.att-gal-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+}
+.att-gal-tile {
+  display: flex; flex-direction: column;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--surface);
+  transition: border-color .12s, transform .12s;
+}
+.att-gal-tile:hover { border-color: var(--accent); }
+.att-gal-tile:active { transform: scale(0.98); }
+.att-gal-thumb {
+  aspect-ratio: 1 / 1;
+  width: 100%;
+  background-color: var(--surface-2);
+  background-size: cover;
+  background-position: center;
+  display: flex; align-items: center; justify-content: center;
+}
+.att-gal-thumb-icon i {
+  width: 42px; height: 42px;
+  color: var(--text-muted);
+  stroke-width: 1.5;
+}
+.att-gal-tile-body {
+  padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 2px;
+  min-width: 0;
+}
+.att-gal-tile-name {
+  font-size: 12.5px; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.att-gal-tile-demand {
+  background: none; border: 0; padding: 0;
+  font-size: 11px; color: var(--text-muted);
+  font-family: inherit; text-align: left;
+  cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: color .12s;
+}
+.att-gal-tile-demand:hover { color: var(--accent-text); }
+.att-gal-empty {
+  grid-column: 1 / -1;
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  border: 1px dashed var(--hairline);
+  border-radius: var(--radius-sm);
+}
+
+/* ── Página Modelos de Cliente (subtela /clients/models) ──
+   Redesign: toolbar padrão + lista de cards em acordeão. Header sempre
+   visível; body só quando expandido. Corpo tem 2 seções: PROJETOS (pill
+   cards) + FLUXOS (visual cards). Hover nos cards internos revela ações
+   centralizadas com backdrop-filter blur. */
+
 .model-card {
   background: var(--surface);
   border: 1px solid var(--hairline);
   border-radius: var(--radius);
-  padding: 14px 18px;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
+  overflow: hidden;
+  transition: box-shadow .15s;
 }
+.model-card.is-open { box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+
 .model-card-head {
-  display: flex; align-items: center; gap: 10px;
-  padding-bottom: 10px;
+  display: flex; align-items: center; gap: 12px;
+  padding: 16px 18px;
+  cursor: pointer;
+  user-select: none;
+}
+.model-card.is-open .model-card-head { border-bottom: 1px solid var(--hairline); }
+.model-card-chevron {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px;
+  color: var(--text-muted);
+  transition: transform .18s;
+}
+.model-card.is-open .model-card-chevron { transform: rotate(-90deg); }
+/* No estado fechado (padrão) o chevron aponta pra esquerda (como um "voltar"),
+   pra combinar com o mockup. Aberto rotaciona pra baixo. */
+.model-card-title { display: flex; align-items: center; gap: 10px; flex: 1; flex-wrap: wrap; min-width: 0; }
+.model-card-title strong { font-size: 15px; color: var(--text); }
+.model-card-badge {
+  font-size: 10.5px; letter-spacing: 0.06em; font-weight: 700;
+  padding: 3px 10px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.model-card-badge-derivados {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.model-card-actions {
+  display: flex; gap: 4px; flex-shrink: 0;
+}
+.model-card-actions .btn {
+  padding: 6px 8px;
+  min-width: 32px;
+  justify-content: center;
+}
+
+.model-card-body {
+  padding: 4px 18px 18px;
+  display: none;
+}
+.model-card.is-open .model-card-body { display: block; }
+
+.model-section {
+  padding: 14px 0;
   border-bottom: 1px solid var(--hairline);
+}
+.model-section:last-child { border-bottom: none; }
+.model-section-head {
+  display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 12px;
 }
-.model-card-title { display: flex; align-items: center; gap: 10px; flex: 1; flex-wrap: wrap; }
-.model-card-title strong { font-size: 15px; color: var(--text); }
-.model-card-actions { display: flex; gap: 4px; }
-.model-proj-block {
-  padding: 8px 0;
-  border-bottom: 1px dashed var(--hairline);
+.model-section-label {
+  font-size: 11px; letter-spacing: 0.1em; font-weight: 700;
+  color: var(--text-muted);
 }
-.model-proj-block:last-child { border-bottom: none; padding-bottom: 0; }
-.model-proj-head {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 6px;
+
+/* Grid de projetos — pill cards clicáveis (renomear no clique). */
+.model-projects-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
 }
-.model-proj-head strong { font-size: 13.5px; color: var(--text-dim); }
-.model-flow-list { padding-left: 12px; display: flex; flex-direction: column; gap: 4px; }
-.model-flow-row {
-  display: flex; align-items: center; gap: 8px;
-  padding: 4px 8px;
+.model-project-pill {
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+  min-height: 52px;
+  padding: 10px 16px;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13.5px;
+  cursor: pointer;
+  transition: border-color .15s;
+  text-align: center;
+  overflow: hidden;
+}
+.model-project-pill:hover { border-color: var(--accent); }
+.model-project-pill-name { font-weight: 500; }
+/* Overlay centralizado — só aparece no hover. Faz backdrop-filter blur pra
+   destacar as ações contra o conteúdo do card. pointer-events segue o mesmo
+   estado da opacity (só clicável quando visível). */
+.model-project-pill-actions {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  background: rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  border-radius: inherit;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s;
+}
+.model-project-pill:hover .model-project-pill-actions { opacity: 1; pointer-events: auto; }
+.model-project-pill-actions .btn {
+  padding: 6px 8px;
+  min-width: 32px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+}
+.model-project-pill-actions .btn:hover { background: var(--surface-2); }
+
+/* Grid de fluxos — cards visuais com ícone grande + nome + tipo. */
+.model-flows-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 12px;
+}
+.model-flow-card {
+  position: relative;
+  display: flex; flex-direction: column; align-items: center;
+  padding: 18px 12px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color .15s;
+  text-align: center;
+  overflow: hidden;
+}
+.model-flow-card:hover { border-color: var(--accent); }
+.model-flow-icon {
+  width: 52px; height: 52px;
+  border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 10px;
+  color: var(--accent);
+}
+.model-flow-card-name {
+  font-size: 13.5px; font-weight: 500; color: var(--text);
+  line-height: 1.25;
+  word-break: break-word;
+}
+.model-flow-card-type {
+  font-size: 12px; color: var(--text-muted);
+  margin-top: 2px;
+}
+/* Overlay igual ao das pill cards de projeto — blur central + botões
+   destacados. Cobre o card inteiro só no hover. */
+.model-flow-card-actions {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  background: rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  border-radius: inherit;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s;
+}
+.model-flow-card:hover .model-flow-card-actions { opacity: 1; pointer-events: auto; }
+.model-flow-card-actions .btn {
+  padding: 6px 8px;
+  min-width: 32px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+}
+.model-flow-card-actions .btn:hover { background: var(--surface-2); }
+.model-flow-card-proj {
+  position: absolute; left: 8px; top: 8px;
+  font-size: 10px; color: var(--text-muted);
+  padding: 2px 6px;
+  background: var(--surface-2);
+  border-radius: 6px;
+  max-width: calc(100% - 40px);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  z-index: 1;
+}
+
+/* Menu flutuante do "Novo Fluxo" quando há vários projetos. */
+.model-proj-picker {
+  position: absolute;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
-  font-size: 13px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  padding: 4px;
+  z-index: 200;
+  min-width: 180px;
+  max-height: 280px;
+  overflow-y: auto;
 }
-.model-flow-row:hover { background: var(--surface-2); }
-.model-flow-name { color: var(--text); flex: 1; }
-.model-flow-stages { color: var(--text-muted); font-size: 11.5px; }
-.model-flow-actions,
-.model-proj-actions { display: flex; gap: 2px; }
-.model-flow-actions .btn,
-.model-proj-actions .btn { padding: 4px 8px; }
-.model-card-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.model-proj-picker-item {
+  display: block; width: 100%;
+  padding: 8px 12px;
+  background: none; border: 0;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.model-proj-picker-item:hover { background: var(--surface-2); }
+.model-proj-picker-empty {
+  padding: 10px 12px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  text-align: center;
+}
 
 /* Editor completo de fluxo do modelo (#template-flow-modal). */
 .tfl-stage-row {
@@ -199,19 +511,11 @@ body.user-moderator .full-admin-only { display: none !important; }
   border-radius: var(--radius-sm);
   margin-bottom: 6px;
 }
-.tfl-stage-color {
-  position: relative;
-  width: 26px; height: 26px;
+/* Override .color-swatch-trigger — mesmo compacto do wizard cust. */
+.color-swatch-trigger.tfl-stage-color {
+  width: 28px; height: 28px;
   border-radius: 6px;
-  cursor: pointer;
-  border: 1px solid var(--hairline);
-  overflow: hidden;
-}
-.tfl-stage-color input[type="color"] {
-  position: absolute; inset: 0;
-  width: 100%; height: 100%;
-  border: 0; padding: 0;
-  opacity: 0; cursor: pointer;
+  border-width: 1px;
 }
 .tfl-stage-done-lbl {
   font-size: 11px; color: var(--text-dim);
@@ -960,7 +1264,43 @@ tr:hover td { background: var(--surface-2); }
 .pill-success { background: var(--success-dim); color: var(--success); }
 
 /* ── FILTERS ── */
-.filters-bar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; align-items: flex-end; }
+/* ── Barra de filtros (padrão global compacto) ──
+   Objetivo: caber em 1 linha em telas ≥1200px. Triggers menores, fontes 12px,
+   min-widths reduzidos. Em telas < 1080px cai pra wrap. Aplica em TODAS as
+   telas — Demandas, Clientes, Projetos, Fluxos, Recentes, etc. */
+.filters-bar { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: nowrap; align-items: center; }
+.filters-bar .filter-input-wrap { flex: 1 1 180px; min-width: 140px; max-width: 260px; }
+.filters-bar .filter-input,
+.filters-bar .filter-input-wrap .filter-input--with-icon {
+  height: 34px; font-size: 12px; padding: 0 10px;
+}
+.filters-bar .filter-input-wrap .filter-input--with-icon { padding-left: 42px; }
+.filters-bar .filter-input-icon { left: 12px; }
+.filters-bar .filter-cdrop { min-width: 0; flex-shrink: 1; }
+.filters-bar .filter-cdrop-trigger {
+  height: 34px; min-width: 110px; padding: 0 10px 0 12px; font-size: 12px; gap: 6px;
+}
+.filters-bar .filter-cdrop-avatar { width: 18px !important; height: 18px !important; font-size: 8px !important; }
+/* Native <select> raw (quando não passa por applyFilterDropdown) — mesma altura. */
+.filters-bar .filter-select { height: 34px; font-size: 12px; padding: 0 10px; }
+.filters-bar .filter-period-trigger {
+  height: 34px; min-width: 110px; padding: 0 10px 0 12px; font-size: 12px; gap: 6px;
+}
+.filters-bar .demand-status-toggle,
+.filters-bar .client-status-toggle { padding: 2px; }
+.filters-bar .demand-status-toggle .client-status-btn,
+.filters-bar .client-status-toggle .client-status-btn {
+  height: 28px; padding: 0 10px !important; font-size: 11.5px !important; line-height: 1;
+}
+.filters-bar .list-view-toggle { flex-shrink: 0; }
+.filters-bar .list-view-toggle .btn { height: 32px; width: 32px; padding: 0; }
+.filters-bar > .btn-icon-only { height: 32px; width: 32px; padding: 0; flex-shrink: 0; }
+
+/* Fallback: se não caber, quebra em linhas de forma limpa. */
+@media (max-width: 1080px) {
+  .filters-bar { flex-wrap: wrap; }
+  .filters-bar .filter-input-wrap { flex: 1 1 100%; max-width: none; }
+}
 /* Agrupa label+controles num cluster centrado verticalmente, evitando que
    o texto fique colado no fundo da filters-bar (que usa align-items: flex-end). */
 .filter-group-label { display: inline-flex; align-items: center; gap: 8px; }
@@ -1026,6 +1366,105 @@ tr:hover td { background: var(--surface-2); }
   transition: color .15s var(--ease-out);
 }
 .filter-input-wrap:focus-within .filter-input-icon { color: var(--accent-text); }
+/* ── Filtro "Período" — popover único (presets + calendário range) ──
+   Trigger visualmente igual ao .filter-select pra alinhar na filters-bar.
+   Popover flutua abaixo, presets em coluna, calendário e rodapé fixo. */
+.filter-period-picker { position: relative; display: inline-flex; }
+.filter-period-trigger {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--surface); border: 1px solid var(--hairline); color: var(--text);
+  padding: 0 12px 0 14px; height: 40px; border-radius: var(--radius-sm);
+  font-family: inherit; font-size: 13px; cursor: pointer;
+  outline: none;
+  transition: border-color .15s var(--ease-out), box-shadow .15s var(--ease-out);
+  min-width: 160px;
+  justify-content: space-between;
+}
+.filter-period-trigger:hover { border-color: var(--text-muted); }
+.filter-period-trigger.filtering { border-color: var(--accent); color: var(--accent-text); }
+.filter-period-trigger .ic-xs { color: var(--text-muted); flex-shrink: 0; }
+
+.pfp-popover {
+  position: absolute;
+  top: calc(100% + 6px); left: 0;
+  min-width: 300px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-xl);
+  z-index: 9999;
+  display: none;
+  overflow: hidden;
+}
+.pfp-popover.open { display: block; }
+.pfp-presets { display: flex; flex-direction: column; padding: 8px 0; }
+.pfp-preset-btn {
+  padding: 8px 18px;
+  background: none; border: 0; color: var(--text);
+  text-align: left; font-family: inherit; font-size: 13.5px;
+  cursor: pointer;
+  transition: background .12s;
+}
+.pfp-preset-btn:hover { background: var(--surface-2); }
+.pfp-preset-btn.active { color: var(--accent-text); font-weight: 600; }
+
+.pfp-cal {
+  padding: 12px 14px;
+  border-top: 1px solid var(--hairline);
+}
+.pfp-cal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px;
+}
+.pfp-cal-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.pfp-cal-nav {
+  background: none; border: 0; padding: 4px 6px;
+  color: var(--text-muted); cursor: pointer;
+  border-radius: 4px;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: color .12s, background .12s;
+}
+.pfp-cal-nav:hover { color: var(--accent); background: var(--surface-2); }
+.pfp-cal-dow {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px;
+  margin-bottom: 4px;
+}
+.pfp-cal-dow span {
+  text-align: center; font-size: 10.5px; color: var(--text-muted);
+  padding: 4px 0; font-weight: 600;
+}
+.pfp-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.pfp-day {
+  height: 32px; padding: 0;
+  border: 0; background: none; color: var(--text);
+  border-radius: 6px; font-family: inherit; font-size: 13px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .12s, color .12s;
+}
+.pfp-day:hover { background: var(--surface-2); }
+.pfp-day.other { color: var(--text-muted); opacity: 0.55; }
+.pfp-day.today { outline: 1px solid var(--accent); outline-offset: -1px; }
+/* Fundo do intervalo entre start e end — accent com alpha, visível em ambos os temas. */
+.pfp-day.range-mid { background: rgba(122, 0, 255, 0.22); color: var(--accent-text); border-radius: 4px; }
+.pfp-day.range-start,
+.pfp-day.range-end,
+.pfp-day.range-single {
+  background: var(--accent); color: #fff; font-weight: 600;
+}
+.pfp-footer {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 14px;
+  border-top: 1px solid var(--hairline);
+}
+.pfp-footer-btn {
+  background: none; border: 0; padding: 6px 10px;
+  color: var(--text-muted); font-size: 13px; font-family: inherit;
+  cursor: pointer; border-radius: 6px;
+  transition: color .12s, background .12s;
+}
+.pfp-footer-btn:hover { color: var(--accent); background: var(--surface-2); }
+
 .filter-label { font-size: 10px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; display: block; margin-bottom: 6px; }
 .filter-group { display: flex; flex-direction: column; }
 .filters-bar .btn { height: 36px; padding: 0 12px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }

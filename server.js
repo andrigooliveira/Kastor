@@ -2636,6 +2636,19 @@ app.get('/api/demands', requireAuth, (req, res) => {
 });
 
 function stageById(flow, id) { return flow ? flow.stages.find(s => s.id === id) : null; }
+/* Busca stage por ID considerando SÓ o fluxo (uso legado) OU o fluxo + as
+   etapas adicionadas por instância (`d.stageAdditions`). Necessário no PUT
+   e no bulk setStatus — o usuário pode avançar pra uma etapa que só existe
+   nesta demanda. */
+function stageByIdForDemand(flow, d, id) {
+  if (!id) return null;
+  const fromFlow = stageById(flow, id);
+  if (fromFlow) return fromFlow;
+  if (Array.isArray(d?.stageAdditions)) {
+    return d.stageAdditions.find(s => s.id === id) || null;
+  }
+  return null;
+}
 
 function normalizeUrlSrv(raw) {
   if (!raw) return '';
@@ -3019,10 +3032,11 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
   let stageChangeCtx = null;
   if (b.status && b.status !== d.status) {
     const flow = db.flows.find(f => f.id === d.flowId);
-    const stage = stageById(flow, b.status);
+    // Considera etapas adicionadas por instância (stageAdditions), não só flow.stages.
+    const stage = stageByIdForDemand(flow, d, b.status);
     if (!stage) return res.status(400).json({ error: 'Etapa inválida para este fluxo' });
     const oldStageId = d.status;
-    const prevStage = flow ? flow.stages.find(s => s.id === oldStageId) : null;
+    const prevStage = stageByIdForDemand(flow, d, oldStageId);
     stageChangeCtx = { prevStage, stage };
     // fecha a etapa anterior no histórico
     const prev = d.stageHistory[d.stageHistory.length - 1];
@@ -3179,12 +3193,15 @@ app.post('/api/demands/bulk', requireAuth, (req, res) => {
       } else if (op === 'setStatus') {
         const targetStageId = String(data?.status || '');
         const flow = db.flows.find(f => f.id === d.flowId);
-        const stage = flow && flow.stages.find(s => s.id === targetStageId);
+        // Considera etapas adicionadas por instância também (stageAdditions).
+        const stage = stageByIdForDemand(flow, d, targetStageId);
         let realStage;
         if (!stage) {
-          // tenta casar por LABEL (kanban multi-fluxo agrupa por label)
+          // tenta casar por LABEL (kanban multi-fluxo agrupa por label) — inclui
+          // adicionadas na busca por label.
           const wantLabel = String(data?.stageLabel || '').trim();
-          const matchByLabel = flow && wantLabel ? flow.stages.find(s => s.label === wantLabel) : null;
+          const pool = flow ? [...flow.stages, ...(d.stageAdditions || [])] : (d.stageAdditions || []);
+          const matchByLabel = wantLabel ? pool.find(s => s.label === wantLabel) : null;
           if (!matchByLabel) { skipped++; errors.push({ id: d.id, error: 'Etapa incompatível com o fluxo desta demanda.' }); continue; }
           realStage = matchByLabel;
         } else {
@@ -3192,7 +3209,7 @@ app.post('/api/demands/bulk', requireAuth, (req, res) => {
         }
         if (realStage.id === d.status) { skipped++; continue; }
         const oldStageId = d.status;
-        const prevStage = flow ? flow.stages.find(s => s.id === oldStageId) : null;
+        const prevStage = stageByIdForDemand(flow, d, oldStageId);
         const prev = d.stageHistory[d.stageHistory.length - 1];
         if (prev && !prev.leftAt) prev.leftAt = nowISO();
         d.status = realStage.id;
@@ -3228,6 +3245,35 @@ app.post('/api/demands/bulk', requireAuth, (req, res) => {
           }));
         }
         updated++;
+      } else if (op === 'setDeadline') {
+        // Novo prazo final (deadline). Aceita null/"" pra limpar OU YYYY-MM-DD.
+        const dl = data?.deadline;
+        if (dl !== null && dl !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(String(dl))) {
+          skipped++; errors.push({ id: d.id, error: 'Data inválida.' }); continue;
+        }
+        const normDl = (dl === null || dl === '') ? null : String(dl);
+        if (normDl !== d.deadline) {
+          const from = d.deadline;
+          d.deadline = normDl;
+          addHistory(d, req.user.id, 'deadline_changed', { from, to: normDl });
+          updated++;
+        } else skipped++;
+      } else if (op === 'setProject') {
+        // Muda projeto (mesmo workspace). Bloqueia cross-workspace pra não
+        // quebrar visibilidade/permissões.
+        const newPid = data?.projectId ? String(data.projectId) : null;
+        if (!newPid) { skipped++; errors.push({ id: d.id, error: 'Projeto obrigatório.' }); continue; }
+        const proj = db.projects.find(p => p.id === newPid && (req.user.isAdmin || wsIds.includes(p.workspaceId)));
+        if (!proj) { skipped++; errors.push({ id: d.id, error: 'Projeto inválido.' }); continue; }
+        if (proj.workspaceId !== d.workspaceId) {
+          skipped++; errors.push({ id: d.id, error: 'Projeto de outro workspace.' }); continue;
+        }
+        if (newPid !== d.projectId) {
+          const from = d.projectId;
+          d.projectId = newPid;
+          addHistory(d, req.user.id, 'project_changed', { from, to: newPid });
+          updated++;
+        } else skipped++;
       } else {
         errors.push({ id: d.id, error: 'Operação desconhecida.' });
         skipped++;
@@ -3254,7 +3300,10 @@ app.put('/api/demands/:id/skipped-stages', requireAuth, (req, res) => {
   const d = getDemand(req, res); if (!d) return;
   const flow = db.flows.find(f => f.id === d.flowId);
   if (!flow) return res.status(400).json({ error: 'Fluxo da demanda não encontrado' });
-  const validStageIds = new Set(flow.stages.map(s => s.id));
+  // Pool completo: etapas do fluxo + etapas adicionadas por instância.
+  // Sem isso, additions eram rejeitadas nas customizações (skip/rename/order/resp).
+  const additionIds = Array.isArray(d.stageAdditions) ? d.stageAdditions.map(s => s.id) : [];
+  const validStageIds = new Set([...flow.stages.map(s => s.id), ...additionIds]);
 
   // ── skippedStages ──
   const raw = Array.isArray(req.body?.skippedStages) ? req.body.skippedStages : [];
@@ -3301,7 +3350,8 @@ app.put('/api/demands/:id/skipped-stages', requireAuth, (req, res) => {
       if (typeof v !== 'string') continue;
       const trimmed = v.trim().slice(0, 80);
       if (!trimmed) continue;
-      const orig = flow.stages.find(s => s.id === sid);
+      // Original pode estar no fluxo OU nas etapas adicionadas por instância.
+      const orig = flow.stages.find(s => s.id === sid) || (d.stageAdditions || []).find(s => s.id === sid);
       if (orig && trimmed !== orig.label) stageLabels[sid] = trimmed;
     }
   }

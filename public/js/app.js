@@ -216,7 +216,7 @@ window.addEventListener('popstate', applyRoute);
    no início do render correspondente — antes de capturar os valores atuais.
    Evita que o usuário tenha que re-aplicar filtros toda vez que volta. */
 const FILTER_KEYS = {
-  list:      { storage: 'kastor-filters-list',      ids: ['search-input','filter-user','filter-project','filter-flow','filter-period','filter-quick'] },
+  list:      { storage: 'kastor-filters-list',      ids: ['search-input','filter-user','filter-project','filter-client','filter-period','filter-period-start','filter-period-end','filter-quick'] },
   dashboard: { storage: 'kastor-filters-dashboard', ids: ['dash-f-user','dash-f-client','dash-f-period','dash-f-type'] },
   capacity:  { storage: 'kastor-filters-capacity',  ids: ['capacity-period'] },
   clients:   { storage: 'kastor-filters-clients',   ids: ['client-search','client-f-ws'] }
@@ -373,7 +373,26 @@ function clientById(id) { return clients.find(c => c.id === id) || null; }
 
 function stageOf(d) {
   const f = flowById(d.flowId);
-  return f ? f.stages.find(s => s.id === d.status) || null : null;
+  if (!f) return null;
+  // Procura primeiro nas etapas originais do fluxo, depois nas adicionadas
+  // por instância (stageAdditions). Sem isso, listas/kanban/pills mostram "—"
+  // quando a demanda está numa etapa que só existe no escopo dela.
+  const additions = Array.isArray(d.stageAdditions) ? d.stageAdditions : [];
+  const base = f.stages.find(s => s.id === d.status) || additions.find(s => s.id === d.status);
+  if (!base) return null;
+  // Aplica overrides por instância (label/color/done/deadlineDays) — a mesma
+  // regra do activeStagesOf, sem o filtro de skipped (aqui é lookup direto).
+  const labels = (d.stageLabels && typeof d.stageLabels === 'object') ? d.stageLabels : {};
+  const ov = (d.stageOverrides && typeof d.stageOverrides === 'object') ? d.stageOverrides[d.status] : null;
+  let s = base;
+  if (labels[d.status]) s = { ...s, label: labels[d.status] };
+  if (ov) s = {
+    ...s,
+    ...(ov.color !== undefined ? { color: ov.color } : {}),
+    ...(ov.deadlineDays !== undefined ? { deadlineDays: ov.deadlineDays } : {}),
+    ...(ov.done !== undefined ? { done: ov.done } : {})
+  };
+  return s;
 }
 /* Etapas ativas para esta demanda — respeita a customização por instância:
    ordem (stageOrder), rótulos (stageLabels) e pulos (skippedStages).
@@ -577,6 +596,13 @@ function projectAvatarHTML(p, cls = 'avatar') {
   const letter = (p.name || 'P').charAt(0).toUpperCase();
   return `<div class="${cls}" style="background:${hexDim(p.color)};color:${p.color}">${esc(letter)}</div>`;
 }
+function clientAvatarHTML(c, cls = 'avatar') {
+  if (!c) return `<div class="${cls}">?</div>`;
+  if (c.avatar) return `<div class="${cls}" style="background-image:url('${c.avatar}');background-size:cover;background-position:center"></div>`;
+  const color = c.color || '#7A00FF';
+  const letter = (c.name || 'C').charAt(0).toUpperCase();
+  return `<div class="${cls}" style="background:${hexDim(color)};color:${color}">${esc(letter)}</div>`;
+}
 
 /* ── Universal filter dropdown ──
    Mantém o <select> nativo (para compatibilidade) e renderiza um .filter-cdrop sibling com a UI padronizada.
@@ -615,6 +641,9 @@ function applyFilterDropdown(selId, opts = {}) {
     } else if (opts.projectIcon && o.value) {
       const p = projectById(o.value);
       if (p) opt.avatar = projectAvatarHTML(p, 'avatar filter-cdrop-avatar');
+    } else if (opts.clientIcon && o.value) {
+      const c = (clients || []).find(x => x.id === o.value);
+      if (c) opt.avatar = clientAvatarHTML(c, 'avatar filter-cdrop-avatar');
     } else if (opts.dotMap && opts.dotMap[o.value]) {
       // Bola colorida por valor (ex.: prioridades). Estilo inline pra evitar
       // proliferar classes; .filter-cdrop-dot só padroniza tamanho/forma.
@@ -2037,7 +2066,7 @@ function confirmCancel() { closeModal('confirm-modal'); if (_confirmResolve) { _
 /* ── Prompt universal (entrada de texto) ── */
 let _promptResolve = null;
 function showPrompt(opts) {
-  const o = Object.assign({ title: 'Informar', message: '', placeholder: '', defaultValue: '', okLabel: 'OK' }, opts || {});
+  const o = Object.assign({ title: 'Informar', message: '', placeholder: '', defaultValue: '', okLabel: 'OK', type: 'text' }, opts || {});
   let p = document.getElementById('prompt-modal');
   if (!p) {
     p = document.createElement('div');
@@ -2059,12 +2088,38 @@ function showPrompt(opts) {
   $('prompt-title').textContent = o.title;
   $('prompt-message').textContent = o.message;
   const inp = $('prompt-input');
-  inp.placeholder = o.placeholder;
-  inp.value = o.defaultValue;
+  // Suporte a 'date' → converte pra fdp (fluxo-datepicker) e usa .value ISO.
+  // Se já estava convertido (data-fdp), só reseta valor. Se troca de type,
+  // remove marks anteriores e re-converte via fdpConvertAll().
+  if (o.type === 'date') {
+    if (inp.dataset.fdp !== 'date') {
+      // Reverte pra native <input type="date"> pra o fdpConvertAll fazer o resto.
+      delete inp.dataset.fdp;
+      inp.removeAttribute('readonly');
+      inp.type = 'date';
+      if (typeof fdpConvertAll === 'function') fdpConvertAll();
+    }
+    inp.value = o.defaultValue || '';
+  } else {
+    // Voltando pra text — se tava fdp, tem que restaurar comportamento normal.
+    if (inp.dataset.fdp) {
+      // Descarta o descriptor customizado revertendo pra native type="text"
+      delete inp.dataset.fdp;
+      inp.removeAttribute('readonly');
+      const desc = Object.getOwnPropertyDescriptor(inp, 'value');
+      if (desc && desc.configurable) {
+        try { delete inp.value; } catch {}
+        Object.defineProperty(inp, 'value', Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value'));
+      }
+      inp.type = 'text';
+    }
+    inp.placeholder = o.placeholder || '';
+    inp.value = o.defaultValue || '';
+  }
   $('prompt-ok-btn').textContent = o.okLabel;
   openModal('prompt-modal');
-  setTimeout(() => { inp.focus(); inp.select(); }, 80);
-  inp.onkeydown = ev => { if (ev.key === 'Enter') promptAccept(); };
+  setTimeout(() => { inp.focus(); if (o.type !== 'date') inp.select(); }, 80);
+  inp.onkeydown = ev => { if (ev.key === 'Enter' && o.type !== 'date') promptAccept(); };
   return new Promise(res => { _promptResolve = res; });
 }
 function promptAccept() {
@@ -2591,8 +2646,20 @@ function fillRoleSelect(selId, currentValue) {
   sel.innerHTML = '<option value="">— Sem função —</option>' +
     sorted.map(r => `<option value="${esc(r.name)}" ${r.name === currentValue ? 'selected' : ''}>${esc(r.name)}</option>`).join('');
 }
-function matchPeriod(dateStr, period) {
+function matchPeriod(dateStr, period, range) {
   if (!period) return true;
+  // 'custom' usa range { start, end } explícito — start/end podem ser vazios
+  // (só limita a extremidade preenchida). Sem nenhum dos dois → não filtra.
+  if (period === 'custom') {
+    const start = range?.start || '';
+    const end = range?.end || '';
+    if (!start && !end) return true;
+    if (!dateStr) return false;
+    const d = String(dateStr).slice(0, 10);
+    if (start && d < start) return false;
+    if (end && d > end) return false;
+    return true;
+  }
   if (!dateStr) return false;
   const d = String(dateStr).slice(0,10);
   const now = new Date();
@@ -2642,7 +2709,83 @@ function clearDashFilters() {
   ['dash-f-user','dash-f-period','dash-f-type','dash-f-client'].forEach(id => $(id).value = '');
   renderDashboard();
 }
+/* ─── Widget "Meu dia" ───
+   Foco pessoal no topo do dashboard: prazo hoje, atrasadas suas, menções não
+   lidas. Sempre relativo ao usuário logado. Não respeita os filtros da tela. */
+function renderMyDay() {
+  const wrap = $('my-day-grid');
+  if (!wrap || !me) return;
+  const today = todayStr();
+  // Escopo: demandas visíveis pro usuário (workspaces acessíveis), não deletadas,
+  // não concluídas. "Suas" = ownerId === me.id OU watcher.
+  const mine = (demands || []).filter(d => {
+    if (d.deletedAt) return false;
+    if (isDone(d)) return false;
+    if (!(me.isAdmin || (me.workspaces || []).includes(d.workspaceId))) return false;
+    if (d.ownerId === me.id) return true;
+    if (Array.isArray(d.watchers) && d.watchers.includes(me.id)) return true;
+    return false;
+  });
+  const dueToday = mine.filter(d => effDue(d) === today).slice(0, 20);
+  const overdue  = mine.filter(d => isLate(d)).slice(0, 20);
+  const mentionsUnread = (notifications || [])
+    .filter(n => !n.read && n.type === 'mention')
+    .slice(0, 20);
+
+  const anyContent = dueToday.length + overdue.length + mentionsUnread.length > 0;
+  // Se não há nada relevante, esconde totalmente — dashboard vira o de sempre.
+  if (!anyContent) { wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+  wrap.innerHTML = [
+    _myDayCard('Prazo hoje', 'calendar-check', dueToday, _myDayDemandRow, 'Você não tem entregas pra hoje.'),
+    _myDayCard('Atrasadas', 'alert-triangle', overdue, _myDayOverdueRow, 'Nada atrasado. ', 'danger'),
+    _myDayCard('Menções não lidas', 'at-sign', mentionsUnread, _myDayMentionRow, 'Nenhuma menção nova.')
+  ].join('');
+  paintIcons();
+}
+function _myDayCard(title, icon, items, rowFn, empty, tone) {
+  const rows = items.slice(0, 3).map(rowFn).join('');
+  const more = items.length > 3
+    ? `<div class="my-day-more">+ ${items.length - 3} mais</div>`
+    : '';
+  const body = items.length
+    ? `<div class="my-day-items">${rows}${more}</div>`
+    : `<div class="my-day-empty">${esc(empty)}</div>`;
+  return `<div class="my-day-card ${tone ? 'is-' + tone : ''}">
+    <div class="my-day-head">
+      <span class="my-day-title"><i data-lucide="${icon}" class="ic-sm"></i> ${esc(title)}</span>
+      <span class="my-day-count">${items.length}</span>
+    </div>
+    ${body}
+  </div>`;
+}
+function _myDayDemandRow(d) {
+  const p = projectById(d.projectId);
+  const proj = p ? esc(p.name) : '—';
+  return `<button type="button" class="my-day-row" onclick="showDetail('${esc(d.id)}')">
+    <span class="my-day-row-name">${esc(d.name)}</span>
+    <span class="my-day-row-sub">${proj}</span>
+  </button>`;
+}
+function _myDayOverdueRow(d) {
+  const due = effDue(d);
+  const days = due ? Math.max(1, Math.floor((Date.now() - new Date(due + 'T00:00:00').getTime()) / 86400000)) : 0;
+  return `<button type="button" class="my-day-row" onclick="showDetail('${esc(d.id)}')">
+    <span class="my-day-row-name">${esc(d.name)}</span>
+    <span class="my-day-row-sub">${days} dia${days === 1 ? '' : 's'} de atraso</span>
+  </button>`;
+}
+function _myDayMentionRow(n) {
+  const dName = n.demandName || 'demanda';
+  return `<button type="button" class="my-day-row" onclick="openNotif('${esc(n.id)}', '${esc(n.demandId || '')}')">
+    <span class="my-day-row-name">${esc(dName)}</span>
+    <span class="my-day-row-sub">${esc(fmtDateTime(n.createdAt))}</span>
+  </button>`;
+}
+
 function renderDashboard() {
+  // Widget pessoal no topo — recalculado a cada re-render.
+  renderMyDay();
   // selects de filtro (preservando seleção)
   fillSelect($('dash-f-user'), wsUsers().map(u => ({ value: u.id, label: u.name })), undefined, 'Todos os usuários');
   fillSelect($('dash-f-type'), dashDemandTypes().map(t => ({ value: t, label: t })), undefined, 'Todos os tipos');
@@ -3300,20 +3443,234 @@ function exportCapacityCsv() {
   toast(`${rows.length} linha${rows.length === 1 ? '' : 's'} exportada${rows.length === 1 ? '' : 's'}.`);
 }
 
+/* ─── Popover do filtro Período (pfp) ───
+   Substitui o select + inputs de data. Presets no topo + calendário com range
+   selecionável embaixo + rodapé (Limpar/Hoje). Estado persistido nos 3 hidden
+   inputs (#filter-period, #filter-period-start, #filter-period-end) — bate com
+   FILTER_KEYS['list'] e é consumido inalterado por listFilteredDemands. */
+const PFP_PRESETS = [
+  { val: '',          label: 'Todo o período' },
+  { val: 'today',     label: 'Hoje' },
+  { val: '7',         label: 'Próximos 7 dias' },
+  { val: 'month',     label: 'Este mês' },
+  { val: 'lastmonth', label: 'Mês passado' },
+  { val: '90',        label: 'Últimos 90 dias' }
+];
+const PFP_MONTHS = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+let _pfpOpen = false;
+let _pfpView = null; // { year, month } — mês visível no calendário
+
+function togglePfp(evt) {
+  if (evt) evt.stopPropagation();
+  if (_pfpOpen) closePfp(); else openPfp();
+}
+function openPfp() {
+  const pop = $('pfp-popover'); if (!pop) return;
+  // Ponto de partida do mês visível: o start (se custom) ou hoje.
+  const start = $('filter-period-start')?.value || '';
+  const base = start ? new Date(start + 'T00:00:00') : new Date();
+  _pfpView = { year: base.getFullYear(), month: base.getMonth() };
+  pop.classList.add('open');
+  _pfpOpen = true;
+  pfpRenderPresets();
+  pfpRenderCal();
+  paintIcons();
+}
+function closePfp() {
+  const pop = $('pfp-popover'); if (!pop) return;
+  pop.classList.remove('open');
+  _pfpOpen = false;
+}
+// Escuta cliques/Esc pra fechar. Cliques dentro do popover não fecham.
+document.addEventListener('click', (e) => {
+  if (!_pfpOpen) return;
+  const pop = $('pfp-popover');
+  const trg = $('pfp-trigger');
+  if (pop && pop.contains(e.target)) return;
+  if (trg && trg.contains(e.target)) return;
+  closePfp();
+});
+document.addEventListener('keydown', (e) => {
+  if (_pfpOpen && e.key === 'Escape') { e.preventDefault(); closePfp(); }
+});
+
+function pfpRenderPresets() {
+  const wrap = $('pfp-presets'); if (!wrap) return;
+  const cur = $('filter-period').value;
+  wrap.innerHTML = PFP_PRESETS.map(p => `
+    <button type="button" class="pfp-preset-btn ${p.val === cur && !pfpHasRange() ? 'active' : ''}" onclick="pfpPickPreset('${p.val}')">${esc(p.label)}</button>
+  `).join('');
+}
+function pfpHasRange() {
+  return !!($('filter-period-start')?.value || $('filter-period-end')?.value);
+}
+function pfpRenderCal() {
+  const grid = $('pfp-cal-grid');
+  const title = $('pfp-cal-title');
+  if (!grid || !title || !_pfpView) return;
+  const { year, month } = _pfpView;
+  title.textContent = `${PFP_MONTHS[month]} · ${year}`;
+
+  const firstDow = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const daysInPrev  = new Date(year, month, 0).getDate();
+
+  const startISO = $('filter-period-start').value || '';
+  const endISO   = $('filter-period-end').value || '';
+  const todayISO = todayStr();
+
+  // Monta 42 células (6 semanas) — leadings do mês anterior + mês atual + trailings.
+  const cells = [];
+  for (let i = firstDow - 1; i >= 0; i--) {
+    cells.push({ day: daysInPrev - i, month: month - 1, year: month === 0 ? year - 1 : year, other: true });
+  }
+  for (let d = 1; d <= daysInMonth; d++) cells.push({ day: d, month, year, other: false });
+  while (cells.length < 42) {
+    const last = cells[cells.length - 1];
+    const nxt = new Date(last.year, last.month, last.day + 1);
+    cells.push({ day: nxt.getDate(), month: nxt.getMonth(), year: nxt.getFullYear(), other: true });
+  }
+
+  grid.innerHTML = cells.map(c => {
+    const iso = `${c.year}-${String(c.month + 1).padStart(2, '0')}-${String(c.day).padStart(2, '0')}`;
+    const cls = ['pfp-day'];
+    if (c.other) cls.push('other');
+    if (iso === todayISO) cls.push('today');
+    if (startISO && endISO) {
+      if (iso === startISO && iso === endISO) cls.push('range-single');
+      else if (iso === startISO) cls.push('range-start');
+      else if (iso === endISO)   cls.push('range-end');
+      else if (iso > startISO && iso < endISO) cls.push('range-mid');
+    } else if (startISO && iso === startISO) {
+      cls.push('range-single');
+    }
+    return `<button type="button" class="${cls.join(' ')}" data-iso="${iso}" onclick="pfpPickDay('${iso}')">${c.day}</button>`;
+  }).join('');
+}
+function pfpNav(delta) {
+  if (!_pfpView) return;
+  _pfpView.month += delta;
+  if (_pfpView.month < 0)  { _pfpView.month = 11; _pfpView.year--; }
+  if (_pfpView.month > 11) { _pfpView.month = 0;  _pfpView.year++; }
+  pfpRenderCal();
+  paintIcons();
+}
+function pfpPickPreset(val) {
+  // Preset limpa o range custom (mutuamente exclusivos).
+  $('filter-period').value = val || '';
+  $('filter-period-start').value = '';
+  $('filter-period-end').value = '';
+  closePfp();
+  pfpUpdateTriggerLabel();
+  renderList();
+}
+function pfpPickDay(iso) {
+  const startEl = $('filter-period-start');
+  const endEl = $('filter-period-end');
+  const start = startEl.value, end = endEl.value;
+  // Ciclo: (1) nada selecionado → define start; (2) só start → define end (ou reinicia
+  // se o clique for antes do start); (3) range completo → reinicia com o novo start.
+  let newStart, newEnd, done = false;
+  if (!start || (start && end)) {
+    newStart = iso; newEnd = '';
+  } else if (iso < start) {
+    newStart = iso; newEnd = '';
+  } else {
+    newStart = start; newEnd = iso; done = true;
+  }
+  startEl.value = newStart;
+  endEl.value = newEnd;
+  $('filter-period').value = 'custom';
+  pfpRenderPresets();
+  pfpRenderCal();
+  pfpUpdateTriggerLabel();
+  if (done) closePfp();
+  renderList();
+}
+function pfpClear() {
+  $('filter-period').value = '';
+  $('filter-period-start').value = '';
+  $('filter-period-end').value = '';
+  pfpRenderPresets();
+  pfpRenderCal();
+  pfpUpdateTriggerLabel();
+  renderList();
+}
+function pfpToday() {
+  // Só volta o mês visível pra o atual — não altera filtro nem seleção.
+  const t = new Date();
+  _pfpView = { year: t.getFullYear(), month: t.getMonth() };
+  pfpRenderCal();
+  paintIcons();
+}
+function pfpUpdateTriggerLabel() {
+  const trg = $('pfp-trigger'); if (!trg) return;
+  const lbl = $('pfp-label');
+  const p = $('filter-period').value;
+  const s = $('filter-period-start').value;
+  const e = $('filter-period-end').value;
+  let text = 'Todo o período';
+  const isFiltering = !!p;
+  if (p === 'custom') {
+    if (s && e) text = `${fmtPfpShort(s)} → ${fmtPfpShort(e)}`;
+    else if (s)  text = `${fmtPfpShort(s)} → …`;
+    else         text = 'Personalizado';
+  } else if (p) {
+    text = PFP_PRESETS.find(x => x.val === p)?.label || 'Período';
+  }
+  if (lbl) lbl.textContent = text;
+  trg.classList.toggle('filtering', isFiltering);
+}
+function fmtPfpShort(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || '');
+  if (!m) return iso;
+  const mo = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'][parseInt(m[2],10)-1];
+  return `${parseInt(m[3], 10)} ${mo}`;
+}
+function pfpSyncFromInputs() {
+  pfpUpdateTriggerLabel();
+  if (_pfpOpen) { pfpRenderPresets(); pfpRenderCal(); }
+}
+
+/* Chip toggle "Status" (Abertas / Concluídas / Todas) da página Demandas.
+   O <input type="hidden" id="filter-quick"> é a fonte de verdade — mantém
+   compat com listFilteredDemands() e a persistência FILTER_KEYS['list']. */
+function setDemandStatusFilter(v) {
+  const inp = document.getElementById('filter-quick');
+  if (!inp) return;
+  inp.value = v || '';
+  syncDemandStatusChip();
+  renderList();
+}
+function syncDemandStatusChip() {
+  const inp = document.getElementById('filter-quick');
+  if (!inp) return;
+  const v = inp.value || '';
+  document.querySelectorAll('.demand-status-toggle .client-status-btn[data-status]')
+    .forEach(b => b.classList.toggle('active', b.dataset.status === v));
+}
+
 function listFilteredDemands() {
   const q  = norm($('search-input').value.trim());
   const fu = $('filter-user').value;
   const fp = $('filter-project').value;
-  const ff = $('filter-flow')?.value || '';
+  const fc = $('filter-client')?.value || '';
   const fd = $('filter-period').value;
+  const fdRange = fd === 'custom'
+    ? { start: $('filter-period-start')?.value || '', end: $('filter-period-end')?.value || '' }
+    : null;
   const fq = $('filter-quick').value;
   const due = currentDueFilter(); // ?due=YYYY-MM-DD via URL (deep-link do dashboard)
   return wsDemands().filter(d => {
     if (q && !norm(d.name).includes(q)) return false;
     if (fu && d.ownerId !== fu) return false;
     if (fp && d.projectId !== fp) return false;
-    if (ff && d.flowId !== ff) return false;
-    if (!matchPeriod(effDue(d), fd)) return false;
+    // Filtro por cliente: casa pelo clientId do projeto da demanda.
+    if (fc) {
+      const proj = projectById(d.projectId);
+      if (!proj || proj.clientId !== fc) return false;
+    }
+    if (!matchPeriod(effDue(d), fd, fdRange)) return false;
     // ?due tem precedência sobre o range de período — filtra pra exatamente aquele dia.
     if (due && effDue(d) !== due) return false;
     if (fq === 'late' && !isLate(d)) return false;
@@ -3330,16 +3687,24 @@ function renderList() {
   // User filter with avatars
   const prevUser = $('filter-user').value;
   const userOpts = wsUsers().slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-  $('filter-user').innerHTML = '<option value="">Todos os usuários</option>' +
+  $('filter-user').innerHTML = '<option value="">Usuário</option>' +
     userOpts.map(u => `<option value="${esc(u.id)}" ${u.id === prevUser ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
-  fillSelect($('filter-project'), wsProjects().map(p => ({ value: p.id, label: p.name })), undefined, 'Todos os projetos');
-  fillSelect($('filter-flow'), wsFlows().map(f => ({ value: f.id, label: f.name })), undefined, 'Todos os fluxos');
+  fillSelect($('filter-project'), wsProjects().map(p => ({ value: p.id, label: p.name })), undefined, 'Projeto');
+  // Filtro de cliente do workspace atual (só ativos, ordenados alfabeticamente).
+  const wsClientList = (clients || [])
+    .filter(c => c.workspaceId === activeWs && c.active !== false)
+    .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  fillSelect($('filter-client'), wsClientList.map(c => ({ value: c.id, label: c.name })), undefined, 'Cliente');
 
   applyFilterDropdown('filter-user', { userIcon: true });
+  applyFilterDropdown('filter-client', { clientIcon: true });
   applyFilterDropdown('filter-project', { projectIcon: true });
-  applyFilterDropdown('filter-flow');
-  applyFilterDropdown('filter-period');
-  applyFilterDropdown('filter-quick');
+  // filter-period agora é hidden input controlado pelo popover pfp — sincroniza
+  // label do trigger + estado visual do popover (caso esteja aberto).
+  pfpSyncFromInputs();
+  // filter-quick agora é um input hidden alimentado pelo chip toggle "Status".
+  // Sincroniza o .active dos botões a partir do value (importante após restore).
+  syncDemandStatusChip();
   renderDueFilterChip();
 
   const list = listFilteredDemands().slice().sort((a,b) => {
@@ -3348,7 +3713,7 @@ function renderList() {
     else if (sortKey === 'project')   { va = norm(projectById(a.projectId)?.name || ''); vb = norm(projectById(b.projectId)?.name || ''); }
     else if (sortKey === 'client')    { va = norm(projectById(a.projectId)?.client || ''); vb = norm(projectById(b.projectId)?.client || ''); }
     else if (sortKey === 'type')      { va = norm(demandType(a) || ''); vb = norm(demandType(b) || ''); }
-    else if (sortKey === 'status')    { const fa = flowById(a.flowId), fb = flowById(b.flowId); va = fa ? fa.stages.findIndex(s => s.id === a.status) : 0; vb = fb ? fb.stages.findIndex(s => s.id === b.status) : 0; }
+    else if (sortKey === 'status')    { const fa = flowById(a.flowId), fb = flowById(b.flowId); const ea = fa ? activeStagesOf(a, fa) : []; const eb = fb ? activeStagesOf(b, fb) : []; va = ea.findIndex(s => s.id === a.status); vb = eb.findIndex(s => s.id === b.status); if (va === -1) va = 999; if (vb === -1) vb = 999; }
     else if (sortKey === 'owner')     { va = norm(userById(a.ownerId)?.name || ''); vb = norm(userById(b.ownerId)?.name || ''); }
     else if (sortKey === 'completed') { va = a.completedAt || '9999'; vb = b.completedAt || '9999'; }
     else if (sortKey === 'priority')  { va = a.priority || 3; vb = b.priority || 3; }
@@ -4938,8 +5303,11 @@ function buildOwnerPicker(d, owner) {
 function buildStagePicker(d, flow) {
   const el = $('detail-stage-picker');
   if (!flow) { el.innerHTML = '<span style="color:var(--text-muted);font-size:12px">Sem fluxo</span>'; return; }
-  const cur = flow.stages.find(s => s.id === d.status);
   const stages = activeStagesOf(d, flow);
+  // Busca a etapa atual no pool completo (originais + stageAdditions) já
+  // com overrides aplicados — antes olhava só flow.stages, e o label caía
+  // pra "Selecionar etapa" quando d.status era uma etapa adicionada.
+  const cur = stages.find(s => s.id === d.status);
   el.innerHTML = `
     <div class="cdrop" id="stage-cdrop">
       <div class="cdrop-trigger" onclick="toggleCdrop('stage-cdrop', event)">
@@ -5014,17 +5382,25 @@ function backToDetailMain() {
 /* ── EDITOR DE ETAPAS (por instância da demanda) ──
    Permite (a) ativar/desativar etapas e (b) sobrescrever o responsável padrão da etapa
    APENAS nesta demanda. O fluxo original permanece intacto. */
+/* Constrói o "pool" de IDs válidos pra esta demanda: originais do fluxo +
+   as etapas adicionadas por instância (stageAdditions). Usado como fonte de
+   verdade em toda a UI e validação do editor "Etapas desta demanda". */
+function _demandStageIdPool(d) {
+  const flow = flowById(d.flowId);
+  const ids = flow ? flow.stages.map(s => s.id) : [];
+  const adds = Array.isArray(d.stageAdditions) ? d.stageAdditions.map(s => s.id) : [];
+  return [...ids, ...adds];
+}
 function openDetailStages() {
   const d = demandById(detailId); if (!d) return;
-  const flow = flowById(d.flowId);
-  // Ordem inicial: usa a custom existente + qualquer etapa nova do fluxo no fim
-  let initialOrder = [];
-  if (flow) {
-    const customOrder = Array.isArray(d.stageOrder) ? d.stageOrder.filter(id => flow.stages.some(s => s.id === id)) : [];
-    const set = new Set(customOrder);
-    const remaining = flow.stages.filter(s => !set.has(s.id)).map(s => s.id);
-    initialOrder = [...customOrder, ...remaining];
-  }
+  const poolIds = _demandStageIdPool(d);
+  const poolSet = new Set(poolIds);
+  // Ordem inicial: usa a custom existente + qualquer etapa NOVA (do fluxo ou
+  // das adicionadas por instância) no fim.
+  const customOrder = Array.isArray(d.stageOrder) ? d.stageOrder.filter(id => poolSet.has(id)) : [];
+  const set = new Set(customOrder);
+  const remaining = poolIds.filter(id => !set.has(id));
+  const initialOrder = customOrder.length ? [...customOrder, ...remaining] : poolIds;
   stagesEditDraft = {
     skipped: new Set(Array.isArray(d.skippedStages) ? d.skippedStages : []),
     responsibles: { ...(d.stageResponsibles && typeof d.stageResponsibles === 'object' ? d.stageResponsibles : {}) },
@@ -5055,8 +5431,10 @@ function setStageResponsibleDraft(stageId, value) {
 function setStageLabelDraft(stageId, value) {
   if (!stagesEditDraft) return;
   const d = demandById(detailId); if (!d) return;
-  const flow = flowById(d.flowId); if (!flow) return;
-  const orig = flow.stages.find(s => s.id === stageId);
+  // Pool: fluxo + adicionadas (as duas podem ser renomeadas)
+  const flow = flowById(d.flowId);
+  let orig = flow?.stages.find(s => s.id === stageId);
+  if (!orig) orig = (d.stageAdditions || []).find(s => s.id === stageId);
   if (!orig) return;
   const trimmed = (value || '').trim();
   if (!trimmed || trimmed === orig.label) delete stagesEditDraft.labels[stageId];
@@ -5079,20 +5457,19 @@ function refreshStagesEditButtons(d) {
 }
 function isStagesOrderCustomized(d) {
   if (!stagesEditDraft) return false;
-  const flow = flowById(d.flowId); if (!flow) return false;
-  const flowOrder = flow.stages.map(s => s.id);
-  if (stagesEditDraft.order.length !== flowOrder.length) return true;
-  return stagesEditDraft.order.some((id, i) => flowOrder[i] !== id);
+  // Ordem padrão = originais do fluxo + adicionadas (nessa ordem).
+  const baseOrder = _demandStageIdPool(d);
+  if (stagesEditDraft.order.length !== baseOrder.length) return true;
+  return stagesEditDraft.order.some((id, i) => baseOrder[i] !== id);
 }
 function resetStagesDraft() {
   if (!stagesEditDraft) return;
   const d = demandById(detailId);
-  const flow = d ? flowById(d.flowId) : null;
   stagesEditDraft = {
     skipped: new Set(),
     responsibles: {},
     labels: {},
-    order: flow ? flow.stages.map(s => s.id) : [],
+    order: d ? _demandStageIdPool(d) : [],
   };
   renderDetail();
 }
@@ -5133,9 +5510,10 @@ function isStagesDraftDirty(d) {
   for (const k of labelKeys) {
     if ((origLabels[k] || null) !== (stagesEditDraft.labels[k] || null)) return true;
   }
-  // order (compare against saved order, or against flow if no saved order)
-  const origOrder = Array.isArray(d.stageOrder) && d.stageOrder.length ? d.stageOrder
-    : (flowById(d.flowId)?.stages.map(s => s.id) || []);
+  // order — compara contra ordem salva; se não há, usa o pool default (fluxo + additions).
+  const origOrder = Array.isArray(d.stageOrder) && d.stageOrder.length
+    ? d.stageOrder
+    : _demandStageIdPool(d);
   if (origOrder.length !== stagesEditDraft.order.length) return true;
   if (stagesEditDraft.order.some((id, i) => origOrder[i] !== id)) return true;
   return false;
@@ -5174,18 +5552,34 @@ function stagesDragEnd() {
 }
 function renderDetailStages(d) {
   const flow = flowById(d.flowId);
+  // Pool completo de etapas visíveis pra essa demanda: originais do fluxo + as
+  // adicionadas por instância (stageAdditions). O draft trata os dois de forma
+  // uniforme — reordenação, rename e skip aplicam a qualquer uma.
+  const additions = Array.isArray(d.stageAdditions) ? d.stageAdditions : [];
+  const poolById = new Map();
+  if (flow) flow.stages.forEach(s => poolById.set(s.id, s));
+  additions.forEach(s => poolById.set(s.id, s));
   // Garante draft inicializado (caso entre direto pelo deep link, por ex.)
   if (!stagesEditDraft) {
-    const init = flow ? flow.stages.map(s => s.id) : [];
-    stagesEditDraft = { skipped: new Set(d.skippedStages || []), responsibles: { ...(d.stageResponsibles || {}) }, labels: { ...(d.stageLabels || {}) }, order: init };
+    // Ordem inicial: usa d.stageOrder se existir; senão originais + adicionadas.
+    let initOrder;
+    if (Array.isArray(d.stageOrder) && d.stageOrder.length) {
+      const seen = new Set();
+      initOrder = d.stageOrder.filter(id => poolById.has(id) && !seen.has(id) && seen.add(id));
+      // Segurança: qualquer id novo (não no stageOrder) vai no fim.
+      poolById.forEach((_, id) => { if (!seen.has(id)) initOrder.push(id); });
+    } else {
+      initOrder = [...(flow ? flow.stages.map(s => s.id) : []), ...additions.map(s => s.id)];
+    }
+    stagesEditDraft = { skipped: new Set(d.skippedStages || []), responsibles: { ...(d.stageResponsibles || {}) }, labels: { ...(d.stageLabels || {}) }, order: initOrder };
   }
   const draft = stagesEditDraft;
   const dirty = isStagesDraftDirty(d);
   const empty = draft.skipped.size === 0 && Object.keys(draft.responsibles).length === 0 && Object.keys(draft.labels).length === 0 && !isStagesOrderCustomized(d);
   const sortedUsers = wsUsers().slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
 
-  // Itera na ordem do draft, resolvendo cada ID na lista de etapas do fluxo
-  const rowsList = flow ? draft.order.map(id => flow.stages.find(s => s.id === id)).filter(Boolean) : [];
+  // Itera na ordem do draft, resolvendo cada ID no pool completo (fluxo + additions)
+  const rowsList = draft.order.map(id => poolById.get(id)).filter(Boolean);
 
   $('detail-content').innerHTML = `
     <div class="detail-content">
@@ -10135,6 +10529,39 @@ function bulkDelete() {
   const n = selectedDemandIds.size;
   bulkRun('delete', null, `Excluir definitivamente ${n} demanda${n === 1 ? '' : 's'}? Esta ação não pode ser desfeita.`);
 }
+async function openBulkDeadlinePicker() {
+  if (!selectedDemandIds.size) return;
+  // Usa showPrompt em modo date — retorna ISO YYYY-MM-DD ou vazio pra limpar.
+  const val = await showPrompt({
+    title: 'Alterar prazo final',
+    message: 'Novo prazo final. Deixe vazio pra remover o prazo das selecionadas.',
+    type: 'date',
+    okLabel: 'Aplicar'
+  });
+  if (val === null) return; // cancel
+  bulkRun('setDeadline', { deadline: val || null });
+}
+function openBulkProjectPicker() {
+  if (!selectedDemandIds.size) return;
+  // Só permite mudar entre projetos do MESMO workspace — as demandas
+  // selecionadas devem estar todas no mesmo. Se houver mistura, bloqueia.
+  const ids = [...selectedDemandIds];
+  const wsSet = new Set(ids.map(id => demandById(id)?.workspaceId).filter(Boolean));
+  if (wsSet.size !== 1) {
+    toast('As demandas selecionadas estão em workspaces diferentes — mude uma de cada vez.', 'error');
+    return;
+  }
+  const wsId = [...wsSet][0];
+  const projs = (projects || [])
+    .filter(p => p.workspaceId === wsId && p.active !== false)
+    .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  if (!projs.length) { toast('Nenhum projeto disponível no workspace.', 'error'); return; }
+  const opts = projs.map(p => ({
+    value: p.id,
+    label: p.client ? `${p.name} · ${p.client}` : p.name
+  }));
+  showCustomPicker('Mudar projeto', 'Selecione o novo projeto (mesmo workspace):', opts, (val) => bulkRun('setProject', { projectId: val }));
+}
 
 /* Picker dedicado — lista de botões. Reconstrói o conteúdo a cada chamada. */
 function showCustomPicker(title, message, options, onPick) {
@@ -10389,73 +10816,193 @@ function showClientsModelsView() {
   $('clients-view-grid').style.display = 'none';
   hideAllDetailViews();
   const el = $('clients-view-models'); if (el) el.style.display = '';
+  // Se abrir a página sem nada expandido, abre o primeiro modelo — evita
+  // impressão de "página vazia" e mostra logo o conteúdo típico.
+  if (_modelsExpanded.size === 0) {
+    const first = (clientTemplates || [])
+      .filter(t => me.isAdmin || (me.workspaces || []).includes(t.workspaceId))
+      .sort((a, b) => norm(a.name).localeCompare(norm(b.name)))[0];
+    if (first) _modelsExpanded.add(first.id);
+  }
+  const inp = $('models-search');
+  if (inp) inp.value = _modelsSearchQuery || '';
 }
 
 /* ─── PÁGINA MODELOS DE CLIENTE ───
    CRUD dos client templates (snapshots reutilizáveis). Adicionar um fluxo novo
    a um modelo propaga o fluxo pros clientes existentes criados a partir dele
-   (endpoint /api/client-templates/:id/projects/:pIdx/flows no server). */
+   (endpoint /api/client-templates/:id/projects/:pIdx/flows no server).
+
+   Layout: toolbar (voltar + busca + novo modelo) + acordeão de modelos.
+   Cada modelo expandido tem 2 subseções: PROJETOS (pill cards) + FLUXOS (cards
+   visuais achatados de todos os projetos do modelo). */
+let _modelsSearchQuery = '';
+const _modelsExpanded = new Set(); // ids de modelos abertos no acordeão
+
+function onModelsSearch(v) {
+  _modelsSearchQuery = (v || '').trim().toLowerCase();
+  renderClientsModels();
+}
+function toggleModelExpanded(id) {
+  if (_modelsExpanded.has(id)) _modelsExpanded.delete(id);
+  else _modelsExpanded.add(id);
+  renderClientsModels();
+}
+
 function renderClientsModels() {
   const wrap = $('clients-models-list');
   if (!wrap) return;
-  const list = (clientTemplates || [])
+  const q = _modelsSearchQuery;
+  let list = (clientTemplates || [])
     .filter(t => me.isAdmin || (me.workspaces || []).includes(t.workspaceId))
     .sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  if (q) {
+    list = list.filter(t => {
+      if ((t.name || '').toLowerCase().includes(q)) return true;
+      const projs = t.projects || [];
+      if (projs.some(p => (p.name || '').toLowerCase().includes(q))) return true;
+      return projs.some(p => (p.flows || []).some(f =>
+        (f.name || '').toLowerCase().includes(q) ||
+        (f.demandType || '').toLowerCase().includes(q)
+      ));
+    });
+  }
   if (!list.length) {
-    wrap.innerHTML = emptyState(
-      'Nenhum modelo criado',
-      'Crie um modelo salvando um cliente existente como modelo (botão "Salvar como modelo" dentro do cliente).',
-      'layers'
-    );
+    wrap.innerHTML = q
+      ? emptyState('Nenhum modelo encontrado', 'Tente refinar a busca ou limpar o filtro.', 'search-x')
+      : emptyState('Nenhum modelo criado', 'Clique em "Novo modelo" pra criar um snapshot reutilizável com projetos e fluxos.', 'layers');
     paintIcons();
     return;
   }
-  wrap.innerHTML = list.map(t => {
-    const derivados = (clients || []).filter(c => c.fromClientTemplateId === t.id).length;
-    const projCount = (t.projects || []).length;
-    const flowCount = (t.projects || []).reduce((s, p) => s + (p.flows || []).length, 0);
-    const projectsHtml = (t.projects || []).map((p, pi) => {
-      const flowsHtml = (p.flows || []).map((f, fi) => `
-        <div class="model-flow-row">
-          <span class="pill-dot" style="background:${p.color || t.color || '#7A00FF'}"></span>
-          <span class="model-flow-name">${esc(f.name)}</span>
-          ${f.demandType ? `<span class="pill pill-muted">${esc(f.demandType)}</span>` : ''}
-          <span class="model-flow-stages">${(f.stages || []).length} etapas</span>
-          <span class="model-flow-actions">
-            <button class="btn btn-ghost btn-sm" onclick="openTemplateFlowModal('${t.id}', ${pi}, ${fi})" title="Editar fluxo"><i data-lucide="pencil" class="ic-sm"></i></button>
-            <button class="btn btn-ghost btn-sm bulk-danger" onclick="confirmDeleteTemplateFlow('${t.id}', ${pi}, ${fi})" title="Excluir fluxo"><i data-lucide="trash-2" class="ic-sm"></i></button>
-          </span>
-        </div>`).join('') || '<div class="hours-empty" style="text-align:left;padding:4px 0">Sem fluxos neste projeto</div>';
-      return `<div class="model-proj-block">
-        <div class="model-proj-head">
-          <strong>${esc(p.name)}</strong>
-          <span class="model-proj-actions">
-            <button class="btn btn-ghost btn-sm" onclick="openTemplateFlowModal('${t.id}', ${pi}, null)"><i data-lucide="plus" class="ic-sm"></i> Adicionar fluxo</button>
-            <button class="btn btn-ghost btn-sm" onclick="renameTemplateProject('${t.id}', ${pi})" title="Renomear projeto"><i data-lucide="pencil" class="ic-sm"></i></button>
-            <button class="btn btn-ghost btn-sm bulk-danger" onclick="confirmDeleteTemplateProject('${t.id}', ${pi})" title="Excluir projeto"><i data-lucide="trash-2" class="ic-sm"></i></button>
-          </span>
-        </div>
-        <div class="model-flow-list">${flowsHtml}</div>
-      </div>`;
-    }).join('') || '<div class="hours-empty" style="text-align:left;padding:10px 4px">Sem projetos.</div>';
-    return `<div class="model-card">
-      <div class="model-card-head">
-        <div class="model-card-title">
-          <span class="pill-dot" style="background:${t.color || '#7A00FF'}"></span>
-          <strong>${esc(t.name)}</strong>
-          <span class="pill pill-muted">${projCount} projeto${projCount === 1 ? '' : 's'} · ${flowCount} fluxo${flowCount === 1 ? '' : 's'}</span>
-          ${derivados > 0 ? `<span class="pill" style="background:var(--accent-soft);color:var(--accent-text)">${derivados} cliente${derivados === 1 ? '' : 's'} vinculado${derivados === 1 ? '' : 's'}</span>` : ''}
-        </div>
-        <div class="model-card-actions">
-          <button class="btn btn-ghost btn-sm" onclick="addTemplateProject('${t.id}')" title="Adicionar projeto"><i data-lucide="folder-plus" class="ic-sm"></i> Novo projeto</button>
-          <button class="btn btn-ghost btn-sm" onclick="openModelEditName('${t.id}')" title="Renomear modelo"><i data-lucide="pencil" class="ic-sm"></i></button>
-          <button class="btn btn-ghost btn-sm bulk-danger" onclick="confirmDeleteModel('${t.id}')" title="Excluir modelo"><i data-lucide="trash-2" class="ic-sm"></i></button>
-        </div>
-      </div>
-      <div class="model-card-body">${projectsHtml}</div>
-    </div>`;
-  }).join('');
+  wrap.innerHTML = list.map(t => renderModelCard(t)).join('');
   paintIcons();
+}
+
+function renderModelCard(t) {
+  const isOpen = _modelsExpanded.has(t.id);
+  const derivados = (clients || []).filter(c => c.fromClientTemplateId === t.id).length;
+  const projs = t.projects || [];
+  const projCount = projs.length;
+  const flowCount = projs.reduce((s, p) => s + (p.flows || []).length, 0);
+  // Etiqueta do badge principal — "X PROJETOS · Y FLUXOS" em caixa alta compacta.
+  const badgeLbl = `${projCount} PROJETO${projCount === 1 ? '' : 'S'} · ${flowCount} FLUXO${flowCount === 1 ? '' : 'S'}`;
+
+  const projectsGrid = projCount
+    ? `<div class="model-projects-grid">${projs.map((p, pi) => `
+        <div class="model-project-pill" onclick="renameTemplateProject('${t.id}', ${pi})" title="${esc(p.name)}">
+          <span class="model-project-pill-name">${esc(p.name)}</span>
+          <span class="model-project-pill-actions">
+            <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); renameTemplateProject('${t.id}', ${pi})" title="Renomear projeto"><i data-lucide="pencil" class="ic-sm"></i></button>
+            <button class="btn btn-ghost btn-sm bulk-danger" onclick="event.stopPropagation(); confirmDeleteTemplateProject('${t.id}', ${pi})" title="Excluir projeto"><i data-lucide="trash-2" class="ic-sm"></i></button>
+          </span>
+        </div>`).join('')}</div>`
+    : '<div class="hours-empty" style="text-align:left;padding:6px 0">Nenhum projeto ainda.</div>';
+
+  // Flatten de todos os fluxos com referência ao projeto original — necessário
+  // pra editar/excluir (endpoints exigem pIdx + fIdx).
+  const flatFlows = [];
+  projs.forEach((p, pi) => (p.flows || []).forEach((f, fi) => flatFlows.push({ f, p, pi, fi })));
+  const flowsGrid = flatFlows.length
+    ? `<div class="model-flows-grid">${flatFlows.map(({ f, p, pi, fi }) => `
+        <div class="model-flow-card" onclick="openTemplateFlowModal('${t.id}', ${pi}, ${fi})" title="Editar fluxo">
+          ${projCount > 1 ? `<span class="model-flow-card-proj" title="${esc(p.name)}">${esc(p.name)}</span>` : ''}
+          <span class="model-flow-icon" style="background:${modelFlowIconBg(p.color || t.color)}">
+            <i data-lucide="workflow"></i>
+          </span>
+          <span class="model-flow-card-name">${esc(f.name || 'Fluxo sem nome')}</span>
+          ${f.demandType ? `<span class="model-flow-card-type">${esc(f.demandType)}</span>` : ''}
+          <span class="model-flow-card-actions">
+            <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); openTemplateFlowModal('${t.id}', ${pi}, ${fi})" title="Editar fluxo"><i data-lucide="pencil" class="ic-sm"></i></button>
+            <button class="btn btn-ghost btn-sm bulk-danger" onclick="event.stopPropagation(); confirmDeleteTemplateFlow('${t.id}', ${pi}, ${fi})" title="Excluir fluxo"><i data-lucide="trash-2" class="ic-sm"></i></button>
+          </span>
+        </div>`).join('')}</div>`
+    : '<div class="hours-empty" style="text-align:left;padding:6px 0">Nenhum fluxo ainda.</div>';
+
+  const projPickerBtn = projCount === 0
+    ? `<button class="btn btn-ghost btn-sm" onclick="toast('Adicione um projeto antes de criar um fluxo.', 'warn')" title="Adicione um projeto primeiro"><i data-lucide="plus" class="ic-sm"></i> Novo Fluxo</button>`
+    : projCount === 1
+      ? `<button class="btn btn-ghost btn-sm" onclick="openTemplateFlowModal('${t.id}', 0, null)"><i data-lucide="plus" class="ic-sm"></i> Novo Fluxo</button>`
+      : `<button class="btn btn-ghost btn-sm" onclick="openProjectPicker(event, '${t.id}')"><i data-lucide="plus" class="ic-sm"></i> Novo Fluxo</button>`;
+
+  const body = isOpen ? `
+    <div class="model-card-body">
+      <div class="model-section">
+        <div class="model-section-head">
+          <span class="model-section-label">PROJETOS</span>
+          <button class="btn btn-ghost btn-sm" onclick="addTemplateProject('${t.id}')"><i data-lucide="folder-plus" class="ic-sm"></i> Novo Projeto</button>
+        </div>
+        ${projectsGrid}
+      </div>
+      <div class="model-section">
+        <div class="model-section-head">
+          <span class="model-section-label">FLUXOS</span>
+          ${projPickerBtn}
+        </div>
+        ${flowsGrid}
+      </div>
+    </div>` : '';
+
+  const chevronIc = isOpen ? 'chevron-down' : 'chevron-left';
+  return `<div class="model-card ${isOpen ? 'is-open' : ''}" data-model-id="${t.id}">
+    <div class="model-card-head" onclick="toggleModelExpanded('${t.id}')">
+      <span class="model-card-chevron"><i data-lucide="${chevronIc}" class="ic-sm"></i></span>
+      <div class="model-card-title">
+        <strong>${esc(t.name)}</strong>
+        <span class="model-card-badge">${badgeLbl}</span>
+        ${derivados > 0 ? `<span class="model-card-badge model-card-badge-derivados">${derivados} CLIENTE${derivados === 1 ? '' : 'S'} VINCULADO${derivados === 1 ? '' : 'S'}</span>` : ''}
+      </div>
+      <div class="model-card-actions" onclick="event.stopPropagation()">
+        <button class="btn btn-ghost btn-sm" onclick="openModelEditName('${t.id}')" title="Renomear modelo"><i data-lucide="pencil" class="ic-sm"></i></button>
+        <button class="btn btn-ghost btn-sm bulk-danger" onclick="confirmDeleteModel('${t.id}')" title="Excluir modelo"><i data-lucide="trash-2" class="ic-sm"></i></button>
+      </div>
+    </div>
+    ${body}
+  </div>`;
+}
+
+/* Fundo do ícone do card de fluxo — tinta suave da cor do projeto/modelo.
+   Aceita hex #RRGGBB; qualquer outra coisa cai no tom padrão da accent. */
+function modelFlowIconBg(color) {
+  const hex = /^#[0-9a-f]{6}$/i.test(color || '') ? color : null;
+  if (!hex) return 'var(--accent-soft)';
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, 0.14)`;
+}
+
+/* Menu flutuante pra escolher em qual projeto criar o fluxo — só usado quando
+   o modelo tem 2+ projetos. Fecha ao clicar fora ou selecionar. */
+function openProjectPicker(evt, tplId) {
+  evt.stopPropagation();
+  document.querySelectorAll('.model-proj-picker').forEach(el => el.remove());
+  const t = clientTemplates.find(x => x.id === tplId);
+  const projs = t?.projects || [];
+  if (!projs.length) return;
+  const btn = evt.currentTarget;
+  const rect = btn.getBoundingClientRect();
+  const menu = document.createElement('div');
+  menu.className = 'model-proj-picker';
+  menu.innerHTML = `<div class="model-proj-picker-empty">Adicionar fluxo em…</div>` +
+    projs.map((p, pi) => `<button class="model-proj-picker-item" data-pi="${pi}">${esc(p.name)}</button>`).join('');
+  menu.style.top = (window.scrollY + rect.bottom + 4) + 'px';
+  menu.style.left = (window.scrollX + rect.right - 200) + 'px'; // alinha pela direita do botão
+  document.body.appendChild(menu);
+  const close = () => { menu.remove(); document.removeEventListener('click', outside, true); document.removeEventListener('keydown', esc, true); };
+  const outside = (e) => { if (!menu.contains(e.target)) close(); };
+  const esc = (e) => { if (e.key === 'Escape') close(); };
+  menu.querySelectorAll('.model-proj-picker-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const pi = Number(el.dataset.pi);
+      close();
+      openTemplateFlowModal(tplId, pi, null);
+    });
+  });
+  // adia o registro do handler de fora pra não capturar o mesmo click que abriu o menu
+  setTimeout(() => {
+    document.addEventListener('click', outside, true);
+    document.addEventListener('keydown', esc, true);
+  }, 0);
 }
 
 async function openModelEditName(id) {
@@ -10499,6 +11046,8 @@ async function confirmDeleteModel(id) {
 function openNewModelModal() {
   $('nm-name').value = '';
   $('nm-color').value = '#7A00FF';
+  const trg = $('nm-color-trigger');
+  if (trg) trg.style.background = '#7A00FF';
   const wsSel = $('nm-workspace');
   const accessibleWs = workspaces.filter(w => me.isAdmin || (me.workspaces || []).includes(w.id));
   wsSel.innerHTML = accessibleWs
@@ -10623,9 +11172,7 @@ function renderTflStages() {
       .join('');
     const color = s.color || '#7A00FF';
     return `<div class="tfl-stage-row" data-idx="${i}">
-      <label class="tfl-stage-color" style="background:${esc(color)}" title="Cor da etapa">
-        <input type="color" value="${esc(color)}" oninput="tflSetStage(${i}, 'color', this.value); this.parentElement.style.background = this.value;">
-      </label>
+      <button type="button" class="color-swatch-trigger tfl-stage-color" style="background:${esc(color)}" onclick="openColorPicker(this, (c) => { tflSetStage(${i}, 'color', c); this.style.background = c; }, '${esc(color)}')" title="Cor da etapa"></button>
       <input type="text" class="wizard-cust-name" placeholder="Nome da etapa" value="${esc(s.label || '')}" oninput="tflSetStage(${i}, 'label', this.value)">
       <select class="wizard-cust-resp" onchange="tflSetStage(${i}, 'responsibleRole', this.value || null)">${roleOpts}</select>
       <input type="number" class="wizard-cust-days" min="0" step="1" placeholder="—" value="${s.deadlineDays ?? ''}" oninput="tflSetStage(${i}, 'deadlineDays', this.value === '' ? null : Number(this.value))" title="Prazo em dias (opcional)">
@@ -10809,6 +11356,128 @@ function openProjectModalEdit() {
   openProjectModal(currentProjectId);
 }
 
+/* ─── Galeria de anexos (cliente + projeto) ───
+   Agrega anexos de demandas e comentários no escopo dado, com busca + chips
+   de filtro por tipo. Reusa openAttPreview pra visualização. */
+const _attGalState = {
+  client:  { search: '', kind: '' },
+  project: { search: '', kind: '' }
+};
+const _attGalKindLabels = [
+  { k: '',      label: 'Todos' },
+  { k: 'image', label: 'Imagens' },
+  { k: 'pdf',   label: 'PDFs' },
+  { k: 'video', label: 'Vídeos' },
+  { k: 'audio', label: 'Áudios' },
+  { k: 'link',  label: 'Links' },
+  { k: 'other', label: 'Outros' }
+];
+function attGalKindOf(a) {
+  if (a.kind === 'link') return 'link';
+  return attPreviewKind(a.type);
+}
+function collectClientAttachments(clientId) {
+  const projIds = new Set((projects || []).filter(p => p.clientId === clientId).map(p => p.id));
+  const dds = (demands || []).filter(d => projIds.has(d.projectId) && !d.deletedAt);
+  return collectAttachmentsFromDemands(dds);
+}
+function collectProjectAttachments(projectId) {
+  const dds = (demands || []).filter(d => d.projectId === projectId && !d.deletedAt);
+  return collectAttachmentsFromDemands(dds);
+}
+function collectAttachmentsFromDemands(dds) {
+  const items = [];
+  dds.forEach(d => {
+    (d.attachments || []).forEach(a => {
+      items.push({ ...a, demandId: d.id, demandName: d.name, addedAt: d.updatedAt || d.createdAt || '' });
+    });
+    (d.comments || []).forEach(c => {
+      (c.attachments || []).forEach(a => {
+        items.push({ ...a, demandId: d.id, demandName: d.name, addedAt: c.at || c.createdAt || '' });
+      });
+    });
+  });
+  // Ordem: mais recentes primeiro (fallback zero se sem timestamp).
+  return items.sort((a, b) => (b.addedAt || '').localeCompare(a.addedAt || ''));
+}
+function renderAttGallery(ctx) {
+  const wrap = $('att-gallery-' + ctx);
+  if (!wrap) return;
+  const items = ctx === 'client'
+    ? collectClientAttachments(currentClientId)
+    : collectProjectAttachments(currentProjectId);
+  const st = _attGalState[ctx];
+  const q = (st.search || '').toLowerCase();
+  const filtered = items.filter(a => {
+    if (st.kind && attGalKindOf(a) !== st.kind) return false;
+    if (q) {
+      const n = (a.name || '').toLowerCase();
+      const dn = (a.demandName || '').toLowerCase();
+      if (!n.includes(q) && !dn.includes(q)) return false;
+    }
+    return true;
+  });
+  // Contagem por tipo pra mostrar no chip.
+  const counts = { '': items.length };
+  items.forEach(a => {
+    const k = attGalKindOf(a);
+    counts[k] = (counts[k] || 0) + 1;
+  });
+  const chipsHtml = _attGalKindLabels.map(({ k, label }) => {
+    const n = counts[k] || 0;
+    if (k && n === 0) return ''; // esconde chip vazio (exceto "Todos")
+    return `<button type="button" class="att-gal-chip ${k === st.kind ? 'is-active' : ''}" onclick="attGalPickKind('${ctx}', '${k}')">${esc(label)}<span class="att-gal-chip-count">${n}</span></button>`;
+  }).join('');
+  const gridHtml = filtered.length
+    ? filtered.map(a => attGalTileHtml(a)).join('')
+    : `<div class="att-gal-empty">${items.length ? 'Nenhum anexo bate com o filtro.' : 'Nenhum anexo neste ' + (ctx === 'client' ? 'cliente' : 'projeto') + ' ainda.'}</div>`;
+  wrap.innerHTML = `
+    <div class="att-gal-toolbar">
+      <div class="filter-input-wrap att-gal-search">
+        <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+        <input class="filter-input filter-input--with-icon" placeholder="Buscar anexo ou demanda…" value="${esc(st.search)}" oninput="attGalSearch('${ctx}', this.value)">
+      </div>
+      <div class="att-gal-chips">${chipsHtml}</div>
+    </div>
+    <div class="att-gal-grid">${gridHtml}</div>
+  `;
+  paintIcons();
+}
+function attGalTileHtml(a) {
+  const kind = attGalKindOf(a);
+  const nameEsc = esc(a.name || (kind === 'link' ? (a.url || 'Link') : 'Arquivo'));
+  const demandEsc = esc(a.demandName || 'Demanda');
+  const src = a.data || a.url || '';
+  const srcEsc = esc(src);
+  const previewable = kind !== 'other' && kind !== 'link';
+  const openCall = kind === 'link'
+    ? `window.open('${esc(normalizeUrl(a.url || a.name))}', '_blank')`
+    : previewable
+      ? `openAttPreview('${srcEsc}', '${esc(a.type || '')}', '${esc(a.name || '')}')`
+      : `window.open('${srcEsc}', '_blank')`;
+  const openDemandCall = `event.stopPropagation();showDetail('${esc(a.demandId)}')`;
+  const thumb = kind === 'image' && src
+    ? `<div class="att-gal-thumb att-gal-thumb-image" style="background-image:url('${srcEsc}')"></div>`
+    : `<div class="att-gal-thumb att-gal-thumb-icon"><i data-lucide="${attIcon(kind)}"></i></div>`;
+  return `<div class="att-gal-tile" title="${nameEsc}" onclick="${openCall}">
+    ${thumb}
+    <div class="att-gal-tile-body">
+      <div class="att-gal-tile-name">${nameEsc}</div>
+      <button type="button" class="att-gal-tile-demand" title="Abrir demanda" onclick="${openDemandCall}">${demandEsc}</button>
+    </div>
+  </div>`;
+}
+function attGalSearch(ctx, val) {
+  _attGalState[ctx].search = val || '';
+  // Re-render debounced pra não rebuildar em cada tecla.
+  clearTimeout(_attGalState[ctx]._t);
+  _attGalState[ctx]._t = setTimeout(() => renderAttGallery(ctx), 120);
+}
+function attGalPickKind(ctx, kind) {
+  _attGalState[ctx].kind = kind || '';
+  renderAttGallery(ctx);
+}
+
 function renderClientDetail(id) {
   const c = clientById(id);
   if (!c) return;
@@ -10894,6 +11563,8 @@ function renderClientDetail(id) {
 
   // TEMPO DEDICADO
   renderClientTimeBlock(id);
+  // GALERIA DE ANEXOS
+  renderAttGallery('client');
   paintIcons();
 }
 
@@ -11137,6 +11808,8 @@ function renderProjectDetail(id) {
   }
 
   renderProjectTimeBlock(id);
+  // GALERIA DE ANEXOS
+  renderAttGallery('project');
   paintIcons();
 }
 
@@ -13571,9 +14244,7 @@ function renderWizardCustomization() {
       : '<span class="wizard-cust-remove-placeholder"></span>';
     return `<div class="wizard-cust-row-v2 ${skipped ? 'is-skipped' : ''} ${isAddition ? 'is-added' : ''}" draggable="true" data-stage-id="${stageId}">
       <span class="wizard-cust-drag" title="Arraste pra reordenar"><i data-lucide="grip-vertical" class="ic-sm"></i></span>
-      <label class="wizard-cust-color-lg" style="background:${esc(color)}" title="Cor da etapa">
-        <input type="color" value="${esc(color)}" oninput="wizardCustSetColor('${stageId}', this.value); this.parentElement.style.background = this.value;">
-      </label>
+      <button type="button" class="color-swatch-trigger wizard-cust-color-lg" style="background:${esc(color)}" onclick="openColorPicker(this, (c) => { wizardCustSetColor('${stageId}', c); this.style.background = c; }, '${esc(color)}')" title="Cor da etapa"></button>
       <input type="text" class="wizard-cust-name" value="${esc(label)}" placeholder="Nome da etapa" oninput="wizardCustSetLabel('${stageId}', this.value)">
       ${badge}
       <select class="wizard-cust-resp" onchange="wizardCustSetResp('${stageId}', this.value)">${roleOpts}</select>

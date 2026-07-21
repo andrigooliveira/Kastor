@@ -7,7 +7,7 @@
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="apple-touch-icon" href="/favicon.png">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/css/style.css?v=20260713a">
+<link rel="stylesheet" href="/css/style.css?v=20260720o">
 </head>
 <body>
 
@@ -194,6 +194,8 @@
         <div class="section-head" style="margin-bottom:14px">
           <div class="section-title">Visão Geral</div>
         </div>
+        <!-- Widget "Meu dia" — foco pessoal do usuário logado. Populado em renderMyDay(). -->
+        <div class="my-day-grid" id="my-day-grid" style="display:none"></div>
         <div class="filters-bar" style="margin-bottom:22px">
           <div class="filter-group">
             <label class="filter-label">Usuário</label>
@@ -297,37 +299,62 @@
           <button class="btn btn-ghost btn-sm" onclick="openBulkOwnerPicker()" title="Alterar responsável"><i data-lucide="user" class="ic-sm"></i> Responsável</button>
           <button class="btn btn-ghost btn-sm" onclick="openBulkStagePicker()" title="Mover etapa"><i data-lucide="git-pull-request-arrow" class="ic-sm"></i> Mover etapa</button>
           <button class="btn btn-ghost btn-sm" onclick="openBulkPriorityPicker()" title="Alterar prioridade"><i data-lucide="flag" class="ic-sm"></i> Prioridade</button>
+          <button class="btn btn-ghost btn-sm" onclick="openBulkDeadlinePicker()" title="Alterar prazo final"><i data-lucide="calendar" class="ic-sm"></i> Prazo</button>
+          <button class="btn btn-ghost btn-sm" onclick="openBulkProjectPicker()" title="Mudar projeto"><i data-lucide="folder-symlink" class="ic-sm"></i> Projeto</button>
           <button class="btn btn-ghost btn-sm bulk-danger" onclick="bulkDelete()" title="Excluir selecionadas"><i data-lucide="trash-2" class="ic-sm"></i> Excluir</button>
           <button class="btn btn-ghost btn-sm" onclick="clearBulkSelection()" title="Limpar seleção" style="margin-left:auto"><i data-lucide="x" class="ic-sm"></i></button>
         </div>
         <div class="filters-bar">
           <div class="filter-input-wrap">
             <i data-lucide="search" class="filter-input-icon ic-sm"></i>
-            <input class="filter-input filter-input--with-icon" id="search-input" placeholder="Buscar pelo nome da demanda…" oninput="renderListDebounced()">
+            <input class="filter-input filter-input--with-icon" id="search-input" placeholder="Buscar demanda…" oninput="renderListDebounced()">
           </div>
           <select class="filter-select" id="filter-user" onchange="renderList()"></select>
-          <select class="filter-select" id="filter-project" onchange="renderList()"><option value="">Todos os projetos</option></select>
-          <select class="filter-select" id="filter-flow" onchange="renderList()"><option value="">Todos os fluxos</option></select>
-          <select class="filter-select" id="filter-period" onchange="renderList()">
-            <option value="">Todo o período</option>
-            <option value="today">Hoje</option>
-            <option value="7">Próximos 7 dias</option>
-            <option value="month">Este mês</option>
-            <option value="lastmonth">Mês passado</option>
-            <option value="90">Últimos 90 dias</option>
-          </select>
-          <select class="filter-select" id="filter-quick" onchange="renderList()">
-            <option value="">Todos</option>
-            <option value="late">Apenas atrasadas</option>
-            <option value="open">Em andamento</option>
-            <option value="done">Concluídas</option>
-          </select>
+          <select class="filter-select" id="filter-client" onchange="renderList()"><option value="">Cliente</option></select>
+          <select class="filter-select" id="filter-project" onchange="renderList()"><option value="">Projeto</option></select>
+          <!-- Filtro de período: popover único com presets + calendário de range.
+               Estado persistido em 3 hidden inputs (period, period-start, period-end)
+               pra bater com FILTER_KEYS['list'] e com listFilteredDemands(). -->
+          <div class="filter-period-picker">
+            <button type="button" class="filter-period-trigger" id="pfp-trigger" onclick="togglePfp(event)">
+              <span id="pfp-label">Período</span>
+              <i data-lucide="chevron-down" class="ic-xs"></i>
+            </button>
+            <div class="pfp-popover" id="pfp-popover" onclick="event.stopPropagation()">
+              <div class="pfp-presets" id="pfp-presets"></div>
+              <div class="pfp-cal">
+                <div class="pfp-cal-head">
+                  <button type="button" class="pfp-cal-nav" onclick="pfpNav(-1)" title="Mês anterior"><i data-lucide="chevron-left" class="ic-sm"></i></button>
+                  <span class="pfp-cal-title" id="pfp-cal-title"></span>
+                  <button type="button" class="pfp-cal-nav" onclick="pfpNav(1)" title="Próximo mês"><i data-lucide="chevron-right" class="ic-sm"></i></button>
+                </div>
+                <div class="pfp-cal-dow"><span>D</span><span>S</span><span>T</span><span>Q</span><span>Q</span><span>S</span><span>S</span></div>
+                <div class="pfp-cal-grid" id="pfp-cal-grid"></div>
+              </div>
+              <div class="pfp-footer">
+                <button type="button" class="pfp-footer-btn" onclick="pfpClear()">Limpar</button>
+                <button type="button" class="pfp-footer-btn" onclick="pfpToday()">Hoje</button>
+              </div>
+            </div>
+          </div>
+          <input type="hidden" id="filter-period" value="">
+          <input type="hidden" id="filter-period-start" value="">
+          <input type="hidden" id="filter-period-end" value="">
+          <div class="client-status-toggle demand-status-toggle">
+            <button type="button" class="btn btn-ghost btn-sm client-status-btn" data-status="" onclick="setDemandStatusFilter('')">Todas</button>
+            <button type="button" class="btn btn-ghost btn-sm client-status-btn active" data-status="open" onclick="setDemandStatusFilter('open')">Abertas</button>
+            <button type="button" class="btn btn-ghost btn-sm client-status-btn" data-status="late" onclick="setDemandStatusFilter('late')" title="Apenas atrasadas">Atrasadas</button>
+            <button type="button" class="btn btn-ghost btn-sm client-status-btn" data-status="done" onclick="setDemandStatusFilter('done')">Concluídas</button>
+          </div>
+          <!-- Backing value pro filtro — mantém compat com listFilteredDemands()
+               e persistência via FILTER_KEYS['list']. -->
+          <input type="hidden" id="filter-quick" value="open">
           <div class="list-view-toggle">
             <button class="btn btn-ghost btn-sm active" id="list-view-table" onclick="setListView('table')" title="Lista"><i data-lucide="list" class="ic-sm"></i></button>
             <button class="btn btn-ghost btn-sm" id="list-view-kanban" onclick="setListView('kanban')" title="Kanban"><i data-lucide="kanban-square" class="ic-sm"></i></button>
             <button class="btn btn-ghost btn-sm" id="list-view-cal" onclick="setListView('cal')" title="Calendário"><i data-lucide="calendar" class="ic-sm"></i></button>
           </div>
-          <button class="btn btn-ghost btn-sm" onclick="exportDemandsCsv()" title="Exportar CSV (respeita os filtros aplicados)"><i data-lucide="download" class="ic-sm"></i> Exportar CSV</button>
+          <button class="btn btn-ghost btn-sm btn-icon-only" onclick="exportDemandsCsv()" title="Exportar CSV (respeita os filtros aplicados)"><i data-lucide="download" class="ic-sm"></i></button>
         </div>
 
         <!-- Chip visível quando ?due=YYYY-MM-DD tá aplicado (deep-link do dashboard) -->
@@ -613,8 +640,12 @@
         <div id="clients-view-models" style="display:none">
           <div class="filters-bar" style="margin-bottom:18px;gap:10px">
             <button class="btn btn-ghost btn-sm" onclick="goPage('clients')"><i data-lucide="chevron-left" class="ic-sm"></i> Voltar aos clientes</button>
+            <div class="filter-input-wrap">
+              <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+              <input id="models-search" class="filter-input filter-input--with-icon" type="text" placeholder="Buscar pelo nome do modelo…" oninput="onModelsSearch(this.value)">
+            </div>
             <div style="flex:1"></div>
-            <button class="btn btn-primary btn-sm" onclick="openNewModelModal()"><i data-lucide="plus" class="ic-sm"></i> Novo Modelo</button>
+            <button class="btn btn-primary btn-sm" onclick="openNewModelModal()"><i data-lucide="plus" class="ic-sm"></i> Novo modelo</button>
           </div>
           <div class="section-title" style="margin-bottom:6px">Modelos de Cliente</div>
           <div class="capacity-hint" style="margin-bottom:18px">Modelos são snapshots reutilizáveis (metadados + projetos + fluxos). Ao adicionar um fluxo novo a um modelo, ele é <strong>replicado nos clientes existentes</strong> criados a partir dele.</div>
@@ -685,6 +716,11 @@
           <div class="client-detail-section" style="margin-top:24px">
             <div id="client-time-chart"></div>
           </div>
+
+          <div class="client-detail-section att-gallery-section" style="margin-top:32px">
+            <div class="client-detail-section-label">ANEXOS</div>
+            <div class="att-gallery" id="att-gallery-client"></div>
+          </div>
         </div>
 
         <!-- VIEW C: detalhe de um projeto (compartilha layout com detalhe do cliente) -->
@@ -747,6 +783,11 @@
 
           <div class="client-detail-section" style="margin-top:24px">
             <div id="project-time-chart"></div>
+          </div>
+
+          <div class="client-detail-section att-gallery-section" style="margin-top:32px">
+            <div class="client-detail-section-label">ANEXOS</div>
+            <div class="att-gallery" id="att-gallery-project"></div>
           </div>
         </div>
 
@@ -2155,7 +2196,8 @@
       </div>
       <div class="form-group">
         <label class="form-label">Cor</label>
-        <input class="form-control" id="nm-color" type="color" value="#7A00FF">
+        <button type="button" class="color-swatch-trigger" id="nm-color-trigger" style="background:#7A00FF" onclick="openColorPickerForInput(this, 'nm-color')" title="Escolher cor"></button>
+        <input type="hidden" id="nm-color" value="#7A00FF">
       </div>
       <div style="font-size:11px;color:var(--text-muted);margin-top:8px;line-height:1.55">
         O modelo é criado vazio. Depois você adiciona projetos e fluxos completos na tela de Modelos.
@@ -2338,7 +2380,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260713a"></script>
+<script src="/js/app.js?v=20260720o"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
