@@ -210,8 +210,33 @@ function normalizeEvent(raw, calendarId, calendarColor) {
     htmlLink: raw.htmlLink || null,
     recurringEventId: raw.recurringEventId || null,
     backgroundColor: calendarColor || '#4285F4',
+    // Fonte pro cliente exibir botão "Entrar na reunião" com ícone correto.
+    // Prioridade: hangoutLink (Meet nativo) → conferenceData.entryPoints (Meet/Zoom
+    // configurado via conference) → location → description (regex de URL).
+    meeting: detectMeeting(raw),
     updated: raw.updated || null
   };
+}
+
+function detectMeeting(raw) {
+  if (raw.hangoutLink) return { url: raw.hangoutLink, kind: 'meet' };
+  const eps = (raw.conferenceData && raw.conferenceData.entryPoints) || [];
+  const video = eps.find(e => e && e.entryPointType === 'video' && e.uri);
+  if (video) return { url: video.uri, kind: detectKindFromUrl(video.uri) };
+  // Scan location + description por URLs conhecidas
+  const text = (raw.location || '') + '\n' + (raw.description || '');
+  const urls = text.match(/https?:\/\/[^\s<>"'\)]+/gi) || [];
+  for (const url of urls) {
+    const k = detectKindFromUrl(url);
+    if (k !== 'other') return { url: url.replace(/[.,;)]+$/, ''), kind: k };
+  }
+  return null;
+}
+function detectKindFromUrl(url) {
+  if (/meet\.google\.com/i.test(url)) return 'meet';
+  if (/zoom\.us/i.test(url)) return 'zoom';
+  if (/teams\.microsoft\.com|teams\.live\.com/i.test(url)) return 'teams';
+  return 'other';
 }
 
 module.exports = {

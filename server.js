@@ -976,7 +976,8 @@ app.use((req, res, next) => {
 });
 
 // Limite generoso só onde realmente há upload (anexos/avatares); resto é 200kb.
-const jsonLg = express.json({ limit: '12mb' });
+// 75mb comporta arquivos até ~50MB depois do overhead do base64 (~33%) + metadados.
+const jsonLg = express.json({ limit: '75mb' });
 const jsonSm = express.json({ limit: '200kb' });
 app.use((req, res, next) => {
   const isUpload = /^\/api\/(uploads|demands(\/[^/]+(\/comment)?)?$|me$|users(\/[^/]+)?$|projects(\/[^/]+)?$)/.test(req.path);
@@ -1396,20 +1397,36 @@ app.put('/api/google/calendars', requireAuth, (req, res) => {
 app.post('/api/google/sync', requireAuth, async (req, res) => {
   const u = req.user;
   if (!u.googleTokens) return res.status(400).json({ error: 'Google Calendar não conectado' });
-  const selected = (u.googleCalendars || []).filter(c => c.selected);
-  if (!selected.length) return res.json({ ok: true, upserted: 0, deleted: 0, message: 'Nenhum calendário selecionado' });
+  try {
+    const r = await syncGoogleForUser(u);
+    if (r.noSelection) return res.json({ ok: true, upserted: 0, deleted: 0, message: 'Nenhum calendário selecionado' });
+    res.json({
+      ok: true,
+      upserted: r.upserted,
+      deleted: r.deleted,
+      lastSyncAt: u.googleLastSyncAt,
+      errors: r.errors.length ? r.errors : undefined
+    });
+  } catch (e) {
+    console.error('[google/sync] fatal:', e);
+    res.status(500).json({ error: e.message || 'Falha ao sincronizar' });
+  }
+});
 
+/* Roda o sync de UM usuário — extraído do handler HTTP pra reuso pelo job
+   automático. Idempotente: `syncToken` do Google evita re-fazer trabalho. */
+async function syncGoogleForUser(u) {
+  const selected = (u.googleCalendars || []).filter(c => c.selected);
+  if (!selected.length) return { upserted: 0, deleted: 0, errors: [], noSelection: true };
   const syncTokens = { ...(u.googleSyncTokens || {}) };
   const onTokenRefresh = (newTokens) => { u.googleTokens = newTokens; saveEntity('users', u); };
-  let totalUpserted = 0, totalDeleted = 0;
+  let upserted = 0, deleted = 0;
   const errors = [];
-
   for (const calMeta of selected) {
     try {
       let { events, nextSyncToken, expired } = await googleCal.syncCalendar(
         u.googleTokens, calMeta.id, syncTokens[calMeta.id], onTokenRefresh
       );
-      // syncToken caducou → limpa e refaz full sync uma única vez.
       if (expired) {
         delete syncTokens[calMeta.id];
         const retry = await googleCal.syncCalendar(u.googleTokens, calMeta.id, null, onTokenRefresh);
@@ -1417,7 +1434,6 @@ app.post('/api/google/sync', requireAuth, async (req, res) => {
         nextSyncToken = retry.nextSyncToken;
       }
       if (nextSyncToken) syncTokens[calMeta.id] = nextSyncToken;
-
       for (const raw of events) {
         const compositeId = raw.id + '@' + u.id;
         if (raw.status === 'cancelled') {
@@ -1425,42 +1441,74 @@ app.post('/api/google/sync', requireAuth, async (req, res) => {
           if (idx >= 0) {
             db.googleEvents.splice(idx, 1);
             markDirty('googleEvents', compositeId, 'remove');
-            totalDeleted++;
+            deleted++;
           }
           continue;
         }
         const normalized = googleCal.normalizeEvent(raw, calMeta.id, calMeta.backgroundColor);
-        // Se veio evento sem start (ex: incremental de metadados), pula.
         if (!normalized.start) continue;
-        const entity = {
-          ...normalized,
-          id: compositeId,
-          userId: u.id,
-          lastSyncedAt: nowISO()
-        };
+        const entity = { ...normalized, id: compositeId, userId: u.id, lastSyncedAt: nowISO() };
         const existing = db.googleEvents.find(e => e.id === compositeId);
         if (existing) Object.assign(existing, entity);
         else db.googleEvents.push(entity);
         markDirty('googleEvents', entity, 'upsert');
-        totalUpserted++;
+        upserted++;
       }
     } catch (e) {
-      console.error(`[google/sync] calendario ${calMeta.id}:`, e.message);
+      console.error(`[google/sync] user=${u.id} cal=${calMeta.id}:`, e.message);
       errors.push({ calendarId: calMeta.id, error: e.message });
     }
   }
-
   u.googleSyncTokens = syncTokens;
   u.googleLastSyncAt = nowISO();
   saveEntity('users', u);
-  res.json({
-    ok: true,
-    upserted: totalUpserted,
-    deleted: totalDeleted,
-    lastSyncAt: u.googleLastSyncAt,
-    errors: errors.length ? errors : undefined
-  });
-});
+  return { upserted, deleted, errors };
+}
+
+/* Job automático — a cada 5min sincroniza Google Calendar dos usuários
+   ativos (lastSeen < 30min). Filtro protege quota: 150 usuários * 12 syncs/h
+   = 1800/h no pico, cai bem quando ninguém tá logado.
+   Sequencial (await no loop) pra não estourar rate limit da Google em
+   picos simultâneos. */
+const GOOGLE_AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+const GOOGLE_AUTO_SYNC_ACTIVE_WINDOW_MS = 30 * 60 * 1000;
+let _googleSyncRunning = false;
+async function runGoogleAutoSync() {
+  if (_googleSyncRunning) return; // reentrada bloqueada (tick anterior ainda rodando)
+  _googleSyncRunning = true;
+  const startedAt = Date.now();
+  let synced = 0, skipped = 0;
+  try {
+    const now = Date.now();
+    // Snapshot da lista pra evitar surpresa se db.users mudar durante o loop.
+    const candidates = (db.users || []).filter(u => {
+      if (!u.googleTokens) return false;
+      if (!(u.googleCalendars || []).some(c => c.selected)) return false;
+      const seen = u.lastSeen ? Date.parse(u.lastSeen) : 0;
+      if (!Number.isFinite(seen)) return false;
+      return (now - seen) <= GOOGLE_AUTO_SYNC_ACTIVE_WINDOW_MS;
+    });
+    for (const u of candidates) {
+      try {
+        const r = await syncGoogleForUser(u);
+        synced++;
+        if ((r.upserted + r.deleted) > 0) {
+          console.log(`[google/auto] user=${u.username || u.id} +${r.upserted} -${r.deleted}`);
+        }
+      } catch (e) {
+        console.error('[google/auto] user=' + u.id + ':', e.message);
+      }
+    }
+    skipped = (db.users || []).length - candidates.length;
+  } finally {
+    _googleSyncRunning = false;
+    const took = Date.now() - startedAt;
+    if (synced > 0) console.log(`[google/auto] tick ${synced} sync, ${skipped} skipped, ${took}ms`);
+  }
+}
+// 1º tick 2min após boot (dá tempo do banco carregar), depois a cada 5min.
+const _googleAutoBoot = setTimeout(runGoogleAutoSync, 2 * 60 * 1000);
+const _googleAutoInterval = setInterval(runGoogleAutoSync, GOOGLE_AUTO_SYNC_INTERVAL_MS);
 
 // Lista eventos Google do usuário — filtra por range de datas pra render eficiente.
 // Só devolve os próprios eventos (privacidade), exceto admin que pode ver de outros
@@ -3642,6 +3690,15 @@ app.get('/api/schedules/:id', requireAuth, (req, res) => {
   if (!s || !canAccessWs(req.user, s.workspaceId)) return res.status(404).json({ error: 'Agendamento não encontrado' });
   res.json(s);
 });
+// Kinds válidos pros blocos livres — decide ícone/cor default no cliente.
+const SCHEDULE_FREE_KINDS = ['meeting', 'focus', 'off', 'other'];
+function sanitizeFreeBlockFields(b) {
+  const title = String(b.title || '').trim().slice(0, 200);
+  if (!title) return null;
+  const kind = SCHEDULE_FREE_KINDS.includes(b.kind) ? b.kind : 'other';
+  const color = /^#[0-9a-f]{6}$/i.test(b.color || '') ? b.color : null;
+  return { title, kind, color };
+}
 app.post('/api/schedules', requireAuth, (req, res) => {
   const b = req.body || {};
   const userId = b.userId || req.user.id;
@@ -3650,27 +3707,54 @@ app.post('/api/schedules', requireAuth, (req, res) => {
   }
   const user = db.users.find(u => u.id === userId);
   if (!user) return res.status(400).json({ error: 'Usuário inválido' });
-  const demand = db.demands.find(d => d.id === b.demandId);
-  if (!demand) return res.status(400).json({ error: 'Demanda inválida' });
-  if (!canAccessWs(req.user, demand.workspaceId)) return res.status(403).json({ error: 'Sem acesso ao workspace da demanda' });
   const fields = sanitizeScheduleBody(b);
   if (!fields) return res.status(400).json({ error: 'Data e horários inválidos (endMin deve ser > startMin).' });
-  // Snapshot da cor da etapa atual da demanda no MOMENTO do agendamento.
-  // Se a demanda depois mudar de etapa, o bloco na agenda continua com
-  // a cor daquela etapa (o "estado" quando você planejou).
-  const _flowForColor = db.flows.find(f => f.id === demand.flowId);
-  const _stageForColor = _flowForColor ? _flowForColor.stages.find(st => st.id === demand.status) : null;
-  const stageColorSnapshot = _stageForColor?.color || null;
-  const s = {
-    id: uid(),
-    workspaceId: demand.workspaceId,
-    userId,
-    demandId: demand.id,
-    ...fields,
-    stageColorSnapshot,
-    createdAt: nowISO(),
-    createdBy: req.user.id
-  };
+
+  // Duas variantes: bloco VINCULADO A DEMANDA (com demandId) ou LIVRE (com title).
+  // Livre precisa de workspaceId explícito porque não herda de demanda.
+  const isFree = !b.demandId;
+  let s;
+  if (isFree) {
+    const free = sanitizeFreeBlockFields(b);
+    if (!free) return res.status(400).json({ error: 'Título é obrigatório em blocos livres.' });
+    const wsId = String(b.workspaceId || '');
+    if (!wsId || !canAccessWs(req.user, wsId)) {
+      return res.status(400).json({ error: 'Workspace inválido pro bloco livre.' });
+    }
+    s = {
+      id: uid(),
+      workspaceId: wsId,
+      userId,
+      demandId: null,
+      title: free.title,
+      kind: free.kind,
+      color: free.color,
+      ...fields,
+      stageColorSnapshot: null,
+      createdAt: nowISO(),
+      createdBy: req.user.id
+    };
+  } else {
+    const demand = db.demands.find(d => d.id === b.demandId);
+    if (!demand) return res.status(400).json({ error: 'Demanda inválida' });
+    if (!canAccessWs(req.user, demand.workspaceId)) return res.status(403).json({ error: 'Sem acesso ao workspace da demanda' });
+    // Snapshot da cor da etapa atual da demanda no MOMENTO do agendamento.
+    // Se a demanda depois mudar de etapa, o bloco na agenda continua com
+    // a cor daquela etapa (o "estado" quando você planejou).
+    const _flowForColor = db.flows.find(f => f.id === demand.flowId);
+    const _stageForColor = _flowForColor ? _flowForColor.stages.find(st => st.id === demand.status) : null;
+    const stageColorSnapshot = _stageForColor?.color || null;
+    s = {
+      id: uid(),
+      workspaceId: demand.workspaceId,
+      userId,
+      demandId: demand.id,
+      ...fields,
+      stageColorSnapshot,
+      createdAt: nowISO(),
+      createdBy: req.user.id
+    };
+  }
   db.schedules.push(s);
   saveEntity('schedules', s);
   broadcastChange('schedule', 'create', { id: s.id, workspaceId: s.workspaceId, byUserId: req.user.id });
@@ -3681,11 +3765,27 @@ app.put('/api/schedules/:id', requireAuth, (req, res) => {
   if (!s || !canAccessWs(req.user, s.workspaceId)) return res.status(404).json({ error: 'Agendamento não encontrado' });
   if (!canEditSchedule(req.user, s)) return res.status(403).json({ error: 'Você só edita os próprios agendamentos.' });
   const b = req.body || {};
+  // Troca demanda ou converte livre → demanda
   if (b.demandId && b.demandId !== s.demandId) {
     const d = db.demands.find(x => x.id === b.demandId);
     if (!d) return res.status(400).json({ error: 'Demanda inválida' });
     s.demandId = d.id;
     s.workspaceId = d.workspaceId;
+    // Ao virar bloco vinculado, limpa campos exclusivos de livre.
+    s.title = null; s.kind = null; s.color = null;
+  }
+  // Update campos do bloco livre (só faz sentido se s é livre, ou se está
+  // sendo convertido demanda → livre passando b.demandId = null explicitamente).
+  if (b.demandId === null || (!s.demandId && (b.title !== undefined || b.kind !== undefined || b.color !== undefined))) {
+    const src = { title: b.title !== undefined ? b.title : s.title,
+                  kind:  b.kind  !== undefined ? b.kind  : s.kind,
+                  color: b.color !== undefined ? b.color : s.color };
+    const free = sanitizeFreeBlockFields(src);
+    if (!free) return res.status(400).json({ error: 'Título é obrigatório em blocos livres.' });
+    s.demandId = null;
+    s.title = free.title; s.kind = free.kind; s.color = free.color;
+    s.stageColorSnapshot = null;
+    if (b.workspaceId && canAccessWs(req.user, b.workspaceId)) s.workspaceId = b.workspaceId;
   }
   // Aceita mudança parcial (apenas data, só horário, etc) — só re-valida se vier
   if (b.date || b.startMin !== undefined || b.endMin !== undefined) {

@@ -3425,13 +3425,130 @@ i[data-lucide]:not([class*=ic-]) { width: 16px; height: 16px; stroke-width: 2; }
 .agenda-block-action:hover { background: rgba(0,0,0,0.6); }
 .agenda-block-action.danger:hover { background: var(--danger); }
 
-/* Ghost durante drag-to-create */
-.agenda-ghost {
-  position: absolute; left: 2px; right: 2px;
-  background: var(--accent-dim);
-  border: 1px dashed var(--accent-text);
+/* ── Toggle Modo (Individual / Time) na toolbar da Agenda ── */
+.agenda-mode-toggle {
+  display: inline-flex;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
-  z-index: 6; pointer-events: none;
+  padding: 2px;
+  gap: 2px;
+  margin-right: 8px;
+}
+.agenda-mode-btn {
+  padding: 5px 10px !important;
+  font-size: 12px !important;
+  border-radius: 5px !important;
+}
+.agenda-mode-btn.is-active {
+  background: var(--surface) !important;
+  color: var(--accent-text) !important;
+  box-shadow: var(--shadow-xs);
+}
+
+/* Header de usuário no modo Time — avatar + nome + capacidade. */
+.agenda-cell.is-user-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px;
+  justify-content: flex-start !important;
+}
+.agenda-user-head-name {
+  font-size: 12.5px; font-weight: 600; color: var(--text);
+  flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.avatar.avatar-sm { width: 22px !important; height: 22px !important; font-size: 10px !important; flex-shrink: 0; }
+
+/* Picker de usuários pro modo Time. */
+.agenda-team-picker-list {
+  display: flex; flex-direction: column; gap: 4px;
+  max-height: 400px; overflow-y: auto;
+}
+.agenda-team-picker-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background .12s;
+}
+.agenda-team-picker-item:hover { background: var(--surface-2); }
+.agenda-team-picker-item input { margin: 0; }
+.agenda-team-picker-item span { font-size: 13px; color: var(--text); }
+
+/* ── Modal Agendar: toggle Demanda/Livre + chips de tipo ──
+   Livre = bloqueio sem vincular demanda (reunião, foco, off, almoço). */
+.sch-mode-toggle {
+  display: inline-flex;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  gap: 2px;
+}
+.sch-mode-btn {
+  padding: 6px 14px;
+  background: none; border: 0; color: var(--text-dim);
+  font-family: inherit; font-size: 12.5px; font-weight: 500;
+  border-radius: 5px; cursor: pointer;
+  transition: color .12s, background .12s;
+}
+.sch-mode-btn:hover { color: var(--text); }
+.sch-mode-btn.is-active {
+  background: var(--surface);
+  color: var(--accent-text);
+  box-shadow: var(--shadow-xs);
+}
+.sch-kind-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.sch-kind-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
+  background: var(--surface-2); border: 1px solid var(--hairline);
+  color: var(--text-dim);
+  border-radius: var(--radius-pill);
+  font-family: inherit; font-size: 12.5px; cursor: pointer;
+  transition: border-color .12s, background .12s, color .12s;
+}
+.sch-kind-chip i { color: var(--kind-color, var(--text-muted)); }
+.sch-kind-chip:hover { color: var(--text); border-color: var(--text-muted); }
+.sch-kind-chip.is-active {
+  border-color: var(--kind-color);
+  color: var(--text);
+  background: color-mix(in srgb, var(--kind-color) 14%, transparent);
+}
+
+/* Bloco livre na agenda — mesma cor do kind, mas com faixa tracejada
+   pra distinguir visualmente de blocos vinculados a demanda. */
+.agenda-block--free {
+  border-left: 3px dashed rgba(255,255,255,0.65);
+}
+.agenda-block-free-icon {
+  width: 11px !important; height: 11px !important;
+  margin-right: 4px;
+  flex-shrink: 0;
+  vertical-align: -1px;
+}
+.agenda-block--free .agenda-block-name {
+  display: flex; align-items: center;
+}
+
+/* Ghost durante drag-to-create — preview do bloco antes do modal abrir.
+   Mesmo estilo dos blocos reais (padding, radius, sombra) + cor da accent
+   com opacidade e borda tracejada pra indicar "em criação". Mostra a
+   faixa de horário live (ex: "09:00 → 10:30") pra confirmação visual. */
+.agenda-ghost {
+  background: rgba(122, 0, 255, 0.28);
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-sm);
+  margin: 0 2px;
+  padding: 4px 8px;
+  z-index: 6;
+  pointer-events: none;
+  color: var(--accent-text);
+  font-size: 11px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 12px rgba(122, 0, 255, 0.25);
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .agenda-empty {
@@ -3995,19 +4112,119 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   font-variant-numeric: tabular-nums;
 }
 
-/* Bloco Google na agenda — read-only, azul, cursor pointer sem drag.
+/* Bloco Google na agenda — read-only, azul #0b57d0 fixo, cursor pointer.
    `is-laned` = tem overlap com outros → posicionamento absoluto + width%. */
 .agenda-block--google {
   cursor: pointer;
   color: #fff;
+  background: #0b57d0 !important;
   border-left: 3px solid rgba(255,255,255,0.4);
 }
-.agenda-block--google:hover { box-shadow: 0 4px 12px rgba(66, 133, 244, 0.35); }
+.agenda-block--google:hover { box-shadow: 0 4px 12px rgba(11, 87, 208, 0.45); }
 .agenda-block--google .agenda-block-name {
   display: flex; align-items: center; gap: 5px;
   font-weight: 600; font-size: 11px;
 }
 .agenda-block-google-icon { flex-shrink: 0; }
+.agenda-block-meet-icon {
+  width: 12px; height: 12px;
+  flex-shrink: 0;
+  margin-left: auto;
+  opacity: 0.9;
+}
+
+/* Linha do horário atual — sobreposta na coluna de hoje.
+   Posicionamento: dentro do row correto do slot, com --now-y (percentual)
+   indicando a sub-posição dentro do slot de 15min. */
+.agenda-now-line {
+  position: relative;
+  pointer-events: none;
+  z-index: 20;
+}
+.agenda-now-line::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0;
+  top: var(--now-y, 0);
+  height: 2px;
+  background: #EF4444;
+  box-shadow: 0 0 4px rgba(239, 68, 68, 0.5);
+}
+.agenda-now-line::after {
+  content: '';
+  position: absolute;
+  left: -4px;
+  top: calc(var(--now-y, 0) - 4px);
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: #EF4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+}
+
+/* Popup de lembrete de reunião — bottom-right, empilha múltiplos. */
+#event-reminder-wrap {
+  position: fixed;
+  right: 20px; bottom: 20px;
+  display: flex; flex-direction: column; gap: 10px;
+  z-index: 10000;
+  pointer-events: none;
+}
+.event-reminder-card {
+  width: 340px;
+  max-width: calc(100vw - 40px);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-left: 4px solid #0b57d0;
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  box-shadow: var(--shadow-xl);
+  pointer-events: auto;
+  animation: eventReminderIn .18s ease-out;
+}
+@keyframes eventReminderIn {
+  from { transform: translateY(8px); opacity: 0; }
+  to   { transform: none; opacity: 1; }
+}
+.event-reminder-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px;
+}
+.event-reminder-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 700;
+  color: #0b57d0;
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.event-reminder-close {
+  background: none; border: 0; color: var(--text-muted);
+  cursor: pointer; padding: 4px; border-radius: 4px;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: color .12s, background .12s;
+}
+.event-reminder-close:hover { color: var(--text); background: var(--surface-2); }
+.event-reminder-title {
+  font-size: 14px; font-weight: 600; color: var(--text);
+  margin-bottom: 4px;
+  line-height: 1.3;
+}
+.event-reminder-time {
+  font-size: 12px; color: var(--text-muted);
+  margin-bottom: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.event-reminder-actions { display: flex; gap: 8px; }
+.event-reminder-actions .btn {
+  display: inline-flex; align-items: center; gap: 6px;
+}
+
+/* Botão "Entrar" no modal do evento Google. */
+.gcal-modal-meeting {
+  margin-top: 12px;
+  display: flex; justify-content: center;
+}
+.gcal-meet-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+}
 /* Google e schedule laned: usam position absolute pra dividir espaço horizontal.
    O grid ainda controla altura (via grid-row) porque o item filho herda o cell. */
 .agenda-block.is-laned {

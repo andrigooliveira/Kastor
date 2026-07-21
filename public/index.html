@@ -7,7 +7,7 @@
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="apple-touch-icon" href="/favicon.png">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/css/style.css?v=20260720o">
+<link rel="stylesheet" href="/css/style.css?v=20260720z">
 </head>
 <body>
 
@@ -152,9 +152,15 @@
       </button>
       <div class="topbar-title" id="topbar-title">Dashboard</div>
       <div class="topbar-actions">
-        <button class="btn btn-ghost btn-icon-only zen-toggle-btn" id="zen-toggle-btn" onclick="toggleZenMode()" title="Modo focar (esconde sidebar e topbar)">
-          <i data-lucide="maximize-2" class="ic-sm"></i>
-        </button>
+        <!-- Widget de timer ativo — persiste entre demandas. Nome da demanda clicável
+             abre o modal correspondente. Só visível quando há um timer rodando ou pausado. -->
+        <div class="topbar-timer" id="topbar-timer" style="display:none">
+          <button type="button" class="topbar-timer-name" id="topbar-timer-name" onclick="openActiveTimerDemand()" title="Abrir demanda">—</button>
+          <span class="topbar-timer-clock" id="topbar-timer-clock">00:00:00</span>
+          <button type="button" class="topbar-timer-btn" id="topbar-timer-toggle" onclick="toggleTopbarTimer()" title="Pausar/retomar"><i data-lucide="pause" class="ic-sm"></i></button>
+          <button type="button" class="topbar-timer-btn is-primary" onclick="apontarFromTopbar()" title="Apontar horas"><i data-lucide="check" class="ic-sm"></i></button>
+          <button type="button" class="topbar-timer-btn is-danger" onclick="discardTopbarTimer()" title="Descartar"><i data-lucide="x" class="ic-sm"></i></button>
+        </div>
         <div class="notif-wrap">
           <button class="btn btn-ghost notif-bell" onclick="toggleNotifPanel()" title="Notificações">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1.5A4.5 4.5 0 003.5 6v2.5l-1.2 2a.75.75 0 00.65 1.13h10.1a.75.75 0 00.65-1.13l-1.2-2V6A4.5 4.5 0 008 1.5z" stroke="currentColor" stroke-width="1.4"/><path d="M6 11.63a2 2 0 004 0" stroke="currentColor" stroke-width="1.4"/></svg>
@@ -408,27 +414,49 @@
     <div class="page" id="page-mine">
       <div class="page-body">
         <div class="section-head">
-          <div class="section-title">Minha Lista</div>
-          <select class="filter-select" id="mine-f-quick" onchange="renderMine()">
-            <option value="">Todas</option>
-            <option value="late">Atrasadas</option>
-            <option value="open">Em andamento</option>
-            <option value="done">Concluídas</option>
-          </select>
+          <div class="section-title" id="mine-view-title">Minha Lista</div>
+          <div style="display:flex;gap:8px;align-items:center;margin-left:auto">
+            <select class="filter-select" id="mine-f-quick" onchange="renderMine()">
+              <option value="">Todas</option>
+              <option value="late">Atrasadas</option>
+              <option value="open">Em andamento</option>
+              <option value="done">Concluídas</option>
+            </select>
+            <div class="list-view-toggle">
+              <button class="btn btn-ghost btn-sm active" id="mine-view-list-btn" onclick="setMineView('list')" title="Lista"><i data-lucide="list" class="ic-sm"></i></button>
+              <button class="btn btn-ghost btn-sm" id="mine-view-cal-btn" onclick="setMineView('cal')" title="Calendário"><i data-lucide="calendar" class="ic-sm"></i></button>
+            </div>
+          </div>
         </div>
-        <div class="table-wrap table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th style="cursor:pointer" onclick="sortMine('name')">Demanda <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                <th style="cursor:pointer" onclick="sortMine('project')">Projeto <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                <th style="cursor:pointer" onclick="sortMine('status')">Status <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                <th title="Peças · Artes · Variações">Entregáveis</th>
-                <th style="cursor:pointer" onclick="sortMine('deadline')">Prazo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-              </tr>
-            </thead>
-            <tbody id="mine-table-body"></tbody>
-          </table>
+        <div id="mine-view-list">
+          <div class="table-wrap table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th style="cursor:pointer" onclick="sortMine('name')">Demanda <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                  <th style="cursor:pointer" onclick="sortMine('workspace')">Workspace <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                  <th style="cursor:pointer" onclick="sortMine('client')">Cliente <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                  <th style="cursor:pointer" onclick="sortMine('project')">Projeto <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                  <th style="cursor:pointer" onclick="sortMine('status')">Etapa <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                  <th title="Peças · Artes · Variações">Entregáveis</th>
+                  <th style="cursor:pointer" onclick="sortMine('deadline')">Prazo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                </tr>
+              </thead>
+              <tbody id="mine-table-body"></tbody>
+            </table>
+          </div>
+        </div>
+        <div id="mine-view-cal" style="display:none">
+          <div class="calendar-nav">
+            <button class="btn btn-ghost" onclick="calNav('mine',-1)">&#8592;</button>
+            <div class="cal-title" id="cal-mine-title"></div>
+            <button class="btn btn-ghost" onclick="calNav('mine',1)">&#8594;</button>
+            <button class="btn btn-ghost" style="margin-left:auto" onclick="calToday('mine')">Hoje</button>
+          </div>
+          <div class="cal-grid">
+            <div class="cal-dow cal-dow--weekend">Dom</div><div class="cal-dow">Seg</div><div class="cal-dow">Ter</div><div class="cal-dow">Qua</div><div class="cal-dow">Qui</div><div class="cal-dow">Sex</div><div class="cal-dow cal-dow--weekend">Sáb</div>
+          </div>
+          <div class="cal-grid" id="cal-mine-body" style="margin-top:4px"></div>
         </div>
 
         <div class="section-head" style="margin-top:28px">
@@ -446,20 +474,6 @@
         </div>
         <div class="agenda-hint">Arraste em um horário vazio pra criar um bloco. Arraste um bloco existente pra mover. Arraste a borda inferior pra redimensionar.</div>
         <div class="agenda-grid-wrap" id="mine-agenda-grid-wrap"></div>
-
-        <div class="section-head" style="margin-top:28px">
-          <div class="section-title">Meu Calendário</div>
-        </div>
-        <div class="calendar-nav">
-          <button class="btn btn-ghost" onclick="calNav('mine',-1)">&#8592;</button>
-          <div class="cal-title" id="cal-mine-title"></div>
-          <button class="btn btn-ghost" onclick="calNav('mine',1)">&#8594;</button>
-          <button class="btn btn-ghost" style="margin-left:auto" onclick="calToday('mine')">Hoje</button>
-        </div>
-        <div class="cal-grid">
-          <div class="cal-dow cal-dow--weekend">Dom</div><div class="cal-dow">Seg</div><div class="cal-dow">Ter</div><div class="cal-dow">Qua</div><div class="cal-dow">Qui</div><div class="cal-dow">Sex</div><div class="cal-dow cal-dow--weekend">Sáb</div>
-        </div>
-        <div class="cal-grid" id="cal-mine-body" style="margin-top:4px"></div>
       </div>
     </div>
 
@@ -490,18 +504,32 @@
     <div class="page" id="page-agenda">
       <div class="page-body">
         <div class="agenda-toolbar">
-          <div class="agenda-user-pick">
+          <!-- Modo Individual (1 user, N semanas) ↔ Time (N users, 1 dia) -->
+          <div class="agenda-mode-toggle">
+            <button class="btn btn-ghost btn-sm agenda-mode-btn is-active" data-mode="individual" onclick="setAgendaMode('individual')" title="Um usuário, semana toda"><i data-lucide="user" class="ic-sm"></i> Individual</button>
+            <button class="btn btn-ghost btn-sm agenda-mode-btn" data-mode="team" onclick="setAgendaMode('team')" title="Vários usuários, um dia"><i data-lucide="users" class="ic-sm"></i> Time</button>
+          </div>
+          <div class="agenda-user-pick" id="agenda-user-pick-single">
             <label class="form-label" style="margin-right:8px">Usuário</label>
             <select class="form-control" id="agenda-user" onchange="onAgendaUserChange()"></select>
           </div>
-          <div class="agenda-week-nav">
+          <div class="agenda-user-pick" id="agenda-user-pick-team" style="display:none">
+            <button class="btn btn-ghost btn-sm" onclick="openAgendaTeamPicker()"><i data-lucide="users" class="ic-sm"></i> <span id="agenda-team-btn-lbl">Escolher pessoas</span></button>
+          </div>
+          <div class="agenda-week-nav" id="agenda-nav-week">
             <button class="btn btn-ghost btn-sm" onclick="agendaPrevWeek()" title="Semana anterior"><i data-lucide="chevron-left" class="ic-sm"></i></button>
             <span class="agenda-week-label" id="agenda-week-label">—</span>
             <button class="btn btn-ghost btn-sm" onclick="agendaNextWeek()" title="Próxima semana"><i data-lucide="chevron-right" class="ic-sm"></i></button>
             <button class="btn btn-ghost btn-sm" onclick="agendaThisWeek()">Hoje</button>
           </div>
+          <div class="agenda-week-nav" id="agenda-nav-day" style="display:none">
+            <button class="btn btn-ghost btn-sm" onclick="agendaPrevDay()" title="Dia anterior"><i data-lucide="chevron-left" class="ic-sm"></i></button>
+            <span class="agenda-week-label" id="agenda-day-label">—</span>
+            <button class="btn btn-ghost btn-sm" onclick="agendaNextDay()" title="Próximo dia"><i data-lucide="chevron-right" class="ic-sm"></i></button>
+            <button class="btn btn-ghost btn-sm" onclick="agendaTodayDay()">Hoje</button>
+          </div>
           <div class="agenda-spacer"></div>
-          <div class="agenda-view-toggle">
+          <div class="agenda-view-toggle" id="agenda-view-toggle-weeks">
             <button class="btn btn-ghost btn-sm agenda-view-btn active" data-view="2" onclick="setAgendaView(2)">2 semanas</button>
             <button class="btn btn-ghost btn-sm agenda-view-btn" data-view="1" onclick="setAgendaView(1)">1 semana</button>
           </div>
@@ -1494,6 +1522,24 @@
 </div>
 
 <!-- ── MODAL: AGENDAR DEMANDA (bloco da agenda) ── -->
+<!-- Picker de usuários pro modo Time da agenda. -->
+<div class="modal-overlay" id="agenda-team-picker-modal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div class="modal-title">Escolher pessoas</div>
+      <button class="modal-close" onclick="closeModal('agenda-team-picker-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <div id="agenda-team-picker-list" class="agenda-team-picker-list"></div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:10px">Máximo 6 pessoas por vez pra caber na tela.</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('agenda-team-picker-modal')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveAgendaTeamPicker()">Aplicar</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="schedule-modal">
   <div class="modal modal-sm">
     <div class="modal-header">
@@ -1502,9 +1548,24 @@
     </div>
     <div class="modal-body">
       <div class="form-grid">
+        <!-- Toggle Demanda / Livre (bloqueio sem demanda: reunião, foco, off, etc) -->
         <div class="form-group full">
+          <div class="sch-mode-toggle" role="tablist">
+            <button type="button" class="sch-mode-btn is-active" id="sch-mode-demand" onclick="setScheduleMode('demand')">Demanda</button>
+            <button type="button" class="sch-mode-btn" id="sch-mode-free" onclick="setScheduleMode('free')">Livre</button>
+          </div>
+        </div>
+        <div class="form-group full" id="sch-demand-row">
           <label class="form-label">Demanda</label>
           <select class="form-control" id="sch-demand"></select>
+        </div>
+        <div class="form-group full" id="sch-title-row" style="display:none">
+          <label class="form-label">Título</label>
+          <input class="form-control" id="sch-title" type="text" maxlength="200" placeholder="Ex.: Reunião de squad, Foco, Almoço…">
+        </div>
+        <div class="form-group full" id="sch-kind-row" style="display:none">
+          <label class="form-label">Tipo</label>
+          <div class="sch-kind-chips" id="sch-kind-chips"></div>
         </div>
         <div class="form-group full">
           <label class="form-label">Quando</label>
@@ -2380,7 +2441,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260720o"></script>
+<script src="/js/app.js?v=20260720z"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

@@ -1455,6 +1455,10 @@ function closeModal(id) {
   if (id === 'detail-modal' && location.hash.startsWith('#demand-')) {
     history.replaceState(null, '', location.pathname + location.search);
   }
+  // Silent refresh do fundo — sem isso, mudanças feitas dentro do modal (responsável,
+  // etapa, prazo, etc) só apareciam na lista/kanban/calendário após reload manual.
+  // renderCurrent() é barato: re-render puro sem fetch nem toast.
+  if (id === 'detail-modal' && typeof renderCurrent === 'function') renderCurrent();
   // Modais com rota própria → ao fechar reescreve URL pro destino apropriado.
   // Se ainda houver outro modal roteado por trás (ex.: editou uma demanda
   // a partir do detalhe), volta pra URL desse modal. Senão, URL da página.
@@ -4143,8 +4147,38 @@ function nowIsoLocal() { return new Date().toISOString(); }
 
 /* ─── MINHAS DEMANDAS ─── */
 let mineSortKey = 'deadline', mineSortAsc = true;
-function myDemands() { return wsDemands().filter(d => d.ownerId === me.id); }
+let mineView = 'list'; // 'list' | 'cal' — persistido em localStorage
+try { mineView = localStorage.getItem('kastor-mine-view') || 'list'; } catch {}
+
+function setMineView(v) {
+  if (v !== 'list' && v !== 'cal') v = 'list';
+  mineView = v;
+  try { localStorage.setItem('kastor-mine-view', v); } catch {}
+  const listEl = $('mine-view-list');
+  const calEl  = $('mine-view-cal');
+  if (listEl) listEl.style.display = v === 'list' ? '' : 'none';
+  if (calEl)  calEl.style.display  = v === 'cal'  ? '' : 'none';
+  $('mine-view-list-btn')?.classList.toggle('active', v === 'list');
+  $('mine-view-cal-btn')?.classList.toggle('active', v === 'cal');
+  const title = $('mine-view-title');
+  if (title) title.textContent = v === 'list' ? 'Minha Lista' : 'Meu Calendário';
+  // Re-render pra garantir que a view alvo esteja fresca ao ser exibida.
+  if (v === 'cal') renderCalendar('mine');
+}
+/* Escopo: TODAS as demandas atribuídas ao usuário logado, através de todos
+   os workspaces a que ele tem acesso (não só o workspace ativo). Ignora
+   soft-deleted. */
+function myDemands() {
+  return (demands || []).filter(d => {
+    if (d.deletedAt) return false;
+    if (d.ownerId !== me.id) return false;
+    if (!(me.isAdmin || (me.workspaces || []).includes(d.workspaceId))) return false;
+    return true;
+  });
+}
 function renderMine() {
+  // Aplica a view salva (list/cal) — importante pra 1ª pintura + após navegar.
+  setMineView(mineView);
   const fq = $('mine-f-quick').value;
   applyFilterDropdown('mine-f-quick');
   const list = myDemands().filter(d => {
@@ -4154,22 +4188,33 @@ function renderMine() {
     return true;
   }).sort((a,b) => {
     let va, vb;
-    if (mineSortKey === 'name')        { va = norm(a.name); vb = norm(b.name); }
-    else if (mineSortKey === 'project') { va = norm(projectById(a.projectId)?.name || ''); vb = norm(projectById(b.projectId)?.name || ''); }
-    else if (mineSortKey === 'status')  { const fa = flowById(a.flowId), fb = flowById(b.flowId); va = fa ? fa.stages.findIndex(s => s.id === a.status) : 0; vb = fb ? fb.stages.findIndex(s => s.id === b.status) : 0; }
-    else                                { va = effDue(a) || '9999'; vb = effDue(b) || '9999'; }
+    if (mineSortKey === 'name')            { va = norm(a.name); vb = norm(b.name); }
+    else if (mineSortKey === 'workspace')  { va = norm(wsById(a.workspaceId)?.name || ''); vb = norm(wsById(b.workspaceId)?.name || ''); }
+    else if (mineSortKey === 'client')     { va = norm(projectById(a.projectId)?.client || ''); vb = norm(projectById(b.projectId)?.client || ''); }
+    else if (mineSortKey === 'project')    { va = norm(projectById(a.projectId)?.name || ''); vb = norm(projectById(b.projectId)?.name || ''); }
+    else if (mineSortKey === 'status')     { const fa = flowById(a.flowId), fb = flowById(b.flowId); const ea = fa ? activeStagesOf(a, fa) : []; const eb = fb ? activeStagesOf(b, fb) : []; va = ea.findIndex(s => s.id === a.status); vb = eb.findIndex(s => s.id === b.status); if (va === -1) va = 999; if (vb === -1) vb = 999; }
+    else                                   { va = effDue(a) || '9999'; vb = effDue(b) || '9999'; }
     return (va < vb ? -1 : va > vb ? 1 : 0) * (mineSortAsc ? 1 : -1);
   });
 
-  $('mine-table-body').innerHTML = list.length ? list.map(d => `
-    <tr class="demand-row" onclick="showDetail('${d.id}')">
+  $('mine-table-body').innerHTML = list.length ? list.map(d => {
+    const p = projectById(d.projectId);
+    const ws = wsById(d.workspaceId);
+    // Pill de workspace com cor — mesmo padrão usado na tela de Workspaces.
+    const wsCell = ws
+      ? `<span class="pill" style="color:${ws.color || '#7A00FF'};background:${hexDim(ws.color)}"><span class="pill-dot" style="background:${ws.color || '#7A00FF'}"></span>${esc(ws.name)}</span>`
+      : '<span class="pill pill-muted">—</span>';
+    return `<tr class="demand-row" onclick="showDetail('${d.id}')">
       <td><span class="demand-name">${esc(d.name)}</span></td>
-      <td>${esc(projectById(d.projectId)?.name || '—')}</td>
+      <td>${wsCell}</td>
+      <td>${esc(p?.client || '—')}</td>
+      <td>${esc(p?.name || '—')}</td>
       <td>${statusPill(d)}</td>
       <td>${qtyCell(d)}</td>
       <td class="${isLate(d) ? 'deadline-late' : ''}">${fmtDate(effDue(d))}</td>
-    </tr>`).join('')
-    : `<tr><td colspan="5">${emptyState('Nenhuma demanda encontrada', 'Você não tem demandas neste filtro.', 'inbox')}</td></tr>`;
+    </tr>`;
+  }).join('')
+    : `<tr><td colspan="7">${emptyState('Nenhuma demanda encontrada', 'Você não tem demandas neste filtro.', 'inbox')}</td></tr>`;
   // Calendário e Agenda embed ficam sempre visíveis abaixo da tabela em
   // "Minhas Demandas". Re-render junto pra refletir mudanças imediato.
   if ($('cal-mine-body')) renderCalendar('mine');
@@ -5107,25 +5152,6 @@ function renderDetail() {
           <div class="detail-field">
             <div class="detail-field-label">Prioridade</div>
             <div class="detail-field-value">${priorityPill(d.priority)}</div>
-          </div>
-          <div class="detail-field">
-            <div class="detail-field-label">Horas estimadas</div>
-            <div class="detail-field-value" style="display:flex;align-items:center;gap:8px">
-              ${d.estimatedHours ? esc(fmtHours(d.estimatedHours)) : '<span style="color:var(--text-muted)">—</span>'}
-              <button class="detail-icon-btn" title="Editar estimativa" onclick="editEstimatedInline()"><i data-lucide="pencil" class="ic-sm"></i></button>
-            </div>
-          </div>
-          <div class="detail-field">
-            <div class="detail-field-label">Horas realizadas</div>
-            <div class="detail-field-value">
-              ${(() => {
-                const total = (d.timeEntries || []).reduce((a,e) => a + (Number(e.hours)||0), 0);
-                if (!d.estimatedHours) return total > 0 ? esc(fmtHours(total)) : '<span style="color:var(--text-muted)">—</span>';
-                const pct = Math.round(total / d.estimatedHours * 100);
-                const cls = pct > 100 ? 'deadline-late' : '';
-                return `<span class="${cls}">${esc(fmtHours(total))} <span style="color:var(--text-muted);font-size:11px">(${pct}%)</span></span>`;
-              })()}
-            </div>
           </div>
         </div>
 
@@ -6093,7 +6119,7 @@ function refreshFormAttList(listId) {
 }
 function readDemandFiles(files, isImage, listId) {
   [...files].forEach(file => {
-    if (file.size > 5 * 1024 * 1024) { toast('Arquivo "' + file.name + '" excede 5 MB.', 'error'); return; }
+    if (file.size > 50 * 1024 * 1024) { toast('Arquivo "' + file.name + '" excede 50 MB.', 'error'); return; }
     const reader = new FileReader();
     reader.onload = e => {
       const finish = (data, type) => {
@@ -6135,7 +6161,7 @@ function removeFormAttachment(id, listId) {
 async function handleDetailAttachmentFiles(ev) {
   const d = demandById(detailId); if (!d) return;
   for (const file of ev.target.files) {
-    if (file.size > 5 * 1024 * 1024) { toast('Arquivo "' + file.name + '" excede 5 MB.', 'error'); continue; }
+    if (file.size > 50 * 1024 * 1024) { toast('Arquivo "' + file.name + '" excede 50 MB.', 'error'); continue; }
     await new Promise(resolve => {
       const reader = new FileReader();
       reader.onload = async e => {
@@ -6156,7 +6182,7 @@ async function handleDetailAttachmentFiles(ev) {
 async function handleDetailAttachmentImages(ev) {
   const d = demandById(detailId); if (!d) return;
   for (const file of ev.target.files) {
-    if (file.size > 5 * 1024 * 1024) { toast('Arquivo "' + file.name + '" excede 5 MB.', 'error'); continue; }
+    if (file.size > 50 * 1024 * 1024) { toast('Arquivo "' + file.name + '" excede 50 MB.', 'error'); continue; }
     await new Promise(resolve => {
       const reader = new FileReader();
       reader.onload = e => {
@@ -6290,6 +6316,127 @@ async function moveStage(dir) {
    re-renderize. O cronômetro corre via setInterval atualizando o display. */
 let timerState = {}; // { [demandId]: { running, startedAt, accumulatedMs, beginAt } }
 let timerInterval = null;
+// activeTimerId = a demanda cujo timer aparece no topbar. Nunca há 2 rodando.
+let activeTimerId = null;
+const TIMER_STORE_KEY = 'kastor-active-timer';
+
+function saveActiveTimer() {
+  try {
+    if (!activeTimerId || !timerState[activeTimerId]) {
+      localStorage.removeItem(TIMER_STORE_KEY);
+      return;
+    }
+    localStorage.setItem(TIMER_STORE_KEY, JSON.stringify({
+      demandId: activeTimerId,
+      state: timerState[activeTimerId]
+    }));
+  } catch {}
+}
+function restoreActiveTimer() {
+  try {
+    const raw = localStorage.getItem(TIMER_STORE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !parsed.demandId || !parsed.state) return;
+    activeTimerId = parsed.demandId;
+    timerState[parsed.demandId] = parsed.state;
+    if (parsed.state.running) ensureTimerInterval();
+    renderTopbarTimer();
+  } catch {}
+}
+function _topbarTimerElapsed() {
+  if (!activeTimerId) return 0;
+  const t = timerState[activeTimerId];
+  if (!t) return 0;
+  return timerElapsedMs(t);
+}
+function renderTopbarTimer() {
+  const wrap = $('topbar-timer');
+  const clock = $('topbar-timer-clock');
+  const nameEl = $('topbar-timer-name');
+  const toggleBtn = $('topbar-timer-toggle');
+  if (!wrap || !clock || !nameEl || !toggleBtn) return;
+  const t = activeTimerId ? timerState[activeTimerId] : null;
+  const elapsed = t ? timerElapsedMs(t) : 0;
+  const hasContent = !!t && (t.running || elapsed > 0);
+  if (!hasContent) {
+    wrap.style.display = 'none';
+    return;
+  }
+  wrap.style.display = '';
+  const d = demandById(activeTimerId);
+  nameEl.textContent = d?.name || '(demanda removida)';
+  clock.textContent = formatTimerClock(elapsed);
+  wrap.classList.toggle('is-running', !!t.running);
+  toggleBtn.innerHTML = t.running
+    ? '<i data-lucide="pause" class="ic-sm"></i>'
+    : '<i data-lucide="play" class="ic-sm"></i>';
+  toggleBtn.title = t.running ? 'Pausar' : 'Retomar';
+  paintIcons();
+}
+function toggleTopbarTimer() {
+  if (!activeTimerId) return;
+  const t = timerState[activeTimerId];
+  if (!t) return;
+  if (t.running) {
+    t.accumulatedMs += Date.now() - t.beginAt;
+    t.running = false;
+    t.beginAt = null;
+  } else {
+    t.running = true;
+    t.beginAt = Date.now();
+    if (!t.startedAt) t.startedAt = Date.now();
+    ensureTimerInterval();
+  }
+  saveActiveTimer();
+  renderTopbarTimer();
+  // Se o modal da demanda estiver aberto no ativo, sincroniza UI dele também.
+  if (detailId === activeTimerId) refreshTimerUI();
+}
+function openActiveTimerDemand() {
+  if (!activeTimerId) return;
+  const d = demandById(activeTimerId);
+  if (!d) { toast('Demanda não encontrada.', 'error'); return; }
+  showDetail(activeTimerId);
+}
+async function apontarFromTopbar() {
+  if (!activeTimerId) return;
+  const d = demandById(activeTimerId);
+  if (!d) { toast('Demanda não encontrada.', 'error'); return; }
+  const t = timerState[activeTimerId];
+  const ms = timerElapsedMs(t);
+  const hours = Math.round((ms / 3600000) * 100) / 100;
+  if (!(hours > 0)) { toast('Sem tempo pra apontar.', 'warn'); return; }
+  const startIso = t.startedAt ? new Date(t.startedAt).toISOString().slice(0, 16) : null;
+  const endIso = new Date().toISOString().slice(0, 16);
+  try {
+    const upd = await api('/demands/' + d.id + '/time', 'POST', { hours, start: startIso, end: endIso });
+    patchDemand(upd);
+    resetTimer(d.id);
+    activeTimerId = null;
+    saveActiveTimer();
+    renderTopbarTimer();
+    if (detailId === d.id) renderDetail();
+    toast(`Apontadas ${hours.toFixed(2).replace('.', ',')}h em "${d.name}".`);
+  } catch (e) { toast(e.message, 'error'); }
+}
+async function discardTopbarTimer() {
+  if (!activeTimerId) return;
+  const ok = await showConfirm({
+    title: 'Descartar timer?',
+    message: 'O tempo acumulado será perdido. Deseja continuar?',
+    okLabel: 'Descartar',
+    danger: true
+  });
+  if (!ok) return;
+  const id = activeTimerId;
+  resetTimer(id);
+  activeTimerId = null;
+  saveActiveTimer();
+  renderTopbarTimer();
+  if (detailId === id) refreshTimerUI();
+  toast('Timer descartado.', 'warn');
+}
 
 function getTimer(demandId) {
   if (!timerState[demandId]) {
@@ -6583,7 +6730,7 @@ function renderPendingFiles() {
 function removePending(i) { pendingAttachments.splice(i, 1); renderPendingFiles(); }
 function readFilesAsBase64(files, isImage) {
   [...files].forEach(file => {
-    if (file.size > 5 * 1024 * 1024) { toast('Arquivo "' + file.name + '" excede 5 MB.', 'error'); return; }
+    if (file.size > 50 * 1024 * 1024) { toast('Arquivo "' + file.name + '" excede 50 MB.', 'error'); return; }
     const reader = new FileReader();
     reader.onload = e => {
       if (isImage) {
@@ -6715,7 +6862,7 @@ function removeEditAtt(cid, idx) {
 function handleEditFiles(ev, cid) {
   const el = document.getElementById('comment-' + cid);
   [...ev.target.files].forEach(file => {
-    if (file.size > 5 * 1024 * 1024) { toast('"' + file.name + '" excede 5 MB.', 'error'); return; }
+    if (file.size > 50 * 1024 * 1024) { toast('"' + file.name + '" excede 50 MB.', 'error'); return; }
     const reader = new FileReader();
     reader.onload = e => {
       const atts = JSON.parse(el.dataset.editAtts || '[]');
@@ -6736,7 +6883,7 @@ function handleEditFiles(ev, cid) {
 function handleEditImages(ev, cid) {
   const el = document.getElementById('comment-' + cid);
   [...ev.target.files].forEach(file => {
-    if (file.size > 5 * 1024 * 1024) { toast('"' + file.name + '" excede 5 MB.', 'error'); return; }
+    if (file.size > 50 * 1024 * 1024) { toast('"' + file.name + '" excede 50 MB.', 'error'); return; }
     const reader = new FileReader();
     reader.onload = e => {
       const img = new Image();
@@ -10641,56 +10788,14 @@ function startPresence() {
   _presencePingTimer = setInterval(pingPresence, 60000); // 1 min
 }
 
-/* ─── MODO ZEN (FOCAR) ─── */
-function isZenMode() { return document.body.classList.contains('zen-mode'); }
-function toggleZenMode() {
-  const on = !isZenMode();
-  document.body.classList.toggle('zen-mode', on);
-  localStorage.setItem('kastor-zen', on ? '1' : '0');
-  const btn = $('zen-toggle-btn');
-  if (btn) {
-    btn.setAttribute('title', on ? 'Sair do modo focar (Esc)' : 'Modo focar (esconde sidebar e topbar)');
-    btn.innerHTML = on
-      ? '<i data-lucide="minimize-2" class="ic-sm"></i>'
-      : '<i data-lucide="maximize-2" class="ic-sm"></i>';
-    paintIcons();
-  }
-  // Garante botão flutuante de saída
-  let exit = document.getElementById('zen-exit-floating');
-  if (on && !exit) {
-    exit = document.createElement('button');
-    exit.id = 'zen-exit-floating';
-    exit.className = 'zen-exit-floating';
-    exit.setAttribute('data-tooltip', 'Sair do modo focar (Esc)');
-    exit.innerHTML = '<i data-lucide="minimize-2" class="ic-sm"></i>';
-    exit.onclick = toggleZenMode;
-    document.body.appendChild(exit);
-    paintIcons();
-  } else if (!on && exit) {
-    exit.remove();
-  }
-}
-function applyZenFromStorage() {
-  if (localStorage.getItem('kastor-zen') === '1') toggleZenMode();
-}
-
-// Ganchos no boot — aplicar zen guardado + iniciar presence depois do me carregar.
-// Como boot() já roda no fim do arquivo, expomos via window e chamamos no enterApp.
+// Presence do usuário — heartbeat pra dot verde. Chamado no boot.
 const _origEnterApp = enterApp;
 enterApp = async function patchedEnterApp() {
   await _origEnterApp.apply(this, arguments);
-  applyZenFromStorage();
+  // Restaura o timer ativo salvo (localStorage) — se estava rodando, retoma.
+  restoreActiveTimer();
   startPresence();
 };
-
-/* Esc também sai do modo zen (além de fechar modal/painel) */
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && isZenMode()) {
-    // Só sai se não há modal/popover aberto que vai capturar Esc primeiro
-    const anyModal = document.querySelector('.modal-overlay.open, #cmdk.open, #shortcuts-help.open');
-    if (!anyModal) { e.preventDefault(); toggleZenMode(); }
-  }
-});
 
 /* ─── CLIENTES — Página, detalhe e modais ─── */
 let currentClientId = null;
@@ -13064,7 +13169,7 @@ function refreshClientAvatarPreview() {
 function handleClientAvatarUpload(ev) {
   const file = ev.target.files && ev.target.files[0];
   if (!file) return;
-  if (file.size > 5 * 1024 * 1024) { toast('Imagem excede 5MB.', 'error'); ev.target.value = ''; return; }
+  if (file.size > 50 * 1024 * 1024) { toast('Imagem excede 50 MB.', 'error'); ev.target.value = ''; return; }
   const reader = new FileReader();
   reader.onload = (e) => { clientAvatarData = e.target.result; refreshClientAvatarPreview(); };
   reader.readAsDataURL(file);
@@ -13212,6 +13317,10 @@ let agendaWeekStart = null;       // segunda da semana atual visualizada
 let agendaWeeks = 2;              // 1 ou 2 semanas lado a lado
 let editingScheduleId = null;     // id do bloco sendo editado no modal
 let _agendaDrag = null;           // estado interno de drag
+// Modo Individual (1 user, N semanas) vs Time (M users, 1 dia).
+let agendaMode = 'individual';    // 'individual' | 'team'
+let agendaTeamUsers = [];         // userIds selecionados no modo Time
+let agendaTeamDate = null;        // Date do dia visualizado no modo Time
 
 function agendaWeekStartFor(d) {
   const x = new Date(d);
@@ -13257,10 +13366,82 @@ function onAgendaUserChange() {
   agendaUserId = $('agenda-user').value || null;
   renderAgenda();
 }
+/* ── Modo Time (multi-user, 1 dia) ── */
+function setAgendaMode(mode) {
+  agendaMode = mode === 'team' ? 'team' : 'individual';
+  // Default: me + 2 outros ativos no workspace. Se o user já tinha seleção, mantém.
+  if (agendaMode === 'team' && !agendaTeamUsers.length) {
+    const wsU = wsUsers().filter(u => u.active !== false).slice(0, 3);
+    agendaTeamUsers = wsU.map(u => u.id);
+    if (me?.id && !agendaTeamUsers.includes(me.id)) {
+      agendaTeamUsers.unshift(me.id);
+      agendaTeamUsers = agendaTeamUsers.slice(0, 6);
+    }
+  }
+  if (agendaMode === 'team' && !agendaTeamDate) agendaTeamDate = new Date();
+  document.querySelectorAll('.agenda-mode-btn').forEach(b => b.classList.toggle('is-active', b.dataset.mode === agendaMode));
+  const single = $('agenda-user-pick-single');
+  const team = $('agenda-user-pick-team');
+  const navW = $('agenda-nav-week');
+  const navD = $('agenda-nav-day');
+  const viewTog = $('agenda-view-toggle-weeks');
+  if (single) single.style.display = agendaMode === 'individual' ? '' : 'none';
+  if (team)   team.style.display   = agendaMode === 'team' ? '' : 'none';
+  if (navW)   navW.style.display   = agendaMode === 'individual' ? '' : 'none';
+  if (navD)   navD.style.display   = agendaMode === 'team' ? '' : 'none';
+  if (viewTog) viewTog.style.display = agendaMode === 'individual' ? '' : 'none';
+  updateAgendaTeamBtnLabel();
+  renderAgenda();
+}
+function updateAgendaTeamBtnLabel() {
+  const lbl = $('agenda-team-btn-lbl');
+  if (!lbl) return;
+  const n = agendaTeamUsers.length;
+  lbl.textContent = n ? `${n} pessoa${n === 1 ? '' : 's'}` : 'Escolher pessoas';
+}
+function agendaPrevDay() {
+  const d = new Date(agendaTeamDate || new Date());
+  d.setDate(d.getDate() - 1);
+  agendaTeamDate = d; renderAgenda();
+}
+function agendaNextDay() {
+  const d = new Date(agendaTeamDate || new Date());
+  d.setDate(d.getDate() + 1);
+  agendaTeamDate = d; renderAgenda();
+}
+function agendaTodayDay() { agendaTeamDate = new Date(); renderAgenda(); }
 
-/* Lista de dias úteis (seg-sex) no período visualizado */
+function openAgendaTeamPicker() {
+  const wrap = $('agenda-team-picker-list');
+  const wsU = wsUsers().filter(u => u.active !== false)
+    .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  wrap.innerHTML = wsU.map(u => `
+    <label class="agenda-team-picker-item">
+      <input type="checkbox" data-uid="${esc(u.id)}" ${agendaTeamUsers.includes(u.id) ? 'checked' : ''}>
+      ${avatarHTML(u, 'avatar avatar-sm')}
+      <span>${esc(u.name)}${u.id === me?.id ? ' (você)' : ''}</span>
+    </label>`).join('');
+  openModal('agenda-team-picker-modal');
+}
+function saveAgendaTeamPicker() {
+  const wrap = $('agenda-team-picker-list');
+  const boxes = wrap.querySelectorAll('input[type="checkbox"][data-uid]');
+  const picked = [...boxes].filter(b => b.checked).map(b => b.dataset.uid);
+  if (!picked.length) { toast('Escolha pelo menos uma pessoa.', 'warn'); return; }
+  if (picked.length > 6) { toast('Máximo 6 pessoas por vez.', 'warn'); return; }
+  agendaTeamUsers = picked;
+  updateAgendaTeamBtnLabel();
+  closeModal('agenda-team-picker-modal');
+  renderAgenda();
+}
+
+/* Lista de dias úteis (seg-sex) no período visualizado.
+   Modo Time: só 1 dia (agendaTeamDate), todos os dias da semana. */
 function agendaDays() {
   agendaInit();
+  if (agendaMode === 'team') {
+    return agendaTeamDate ? [new Date(agendaTeamDate)] : [new Date()];
+  }
   const days = [];
   const totalDays = 7 * agendaWeeks;
   const base = new Date(agendaWeekStart);
@@ -13274,14 +13455,27 @@ function agendaDays() {
   return days;
 }
 
-/* Layout das colunas: insere uma "coluna gap" entre semanas 1 e 2 na view de 2.
-   Retorna {cols, gridTemplate, dayColsCount} — cada `col` tem
-   { type:'day'|'gap', gridCol:number, day?:Date, dayIdx?:number }. */
+/* Layout das colunas.
+   Individual: 1 col por dia útil, gap entre semanas quando 2 semanas.
+   Time: 1 col por usuário selecionado (todos no mesmo agendaTeamDate).
+   Retorna {cols, gridTemplate, days}. Cada col tem
+   { type:'day'|'gap'|'user', gridCol, day?, user?, dayIdx? }. */
 function agendaColumnsLayout() {
-  const days = agendaDays();
   const cols = [];
   const tmpl = ['60px']; // coluna de tempo (HORÁRIO)
   let gridCol = 2;
+  if (agendaMode === 'team') {
+    const day = agendaTeamDate || new Date();
+    agendaTeamUsers.forEach((uid, i) => {
+      const user = userById(uid);
+      if (!user) return;
+      cols.push({ type: 'user', user, day: new Date(day), dayIdx: i, gridCol });
+      tmpl.push('minmax(130px, 1fr)');
+      gridCol++;
+    });
+    return { cols, gridTemplate: tmpl.join(' '), days: [new Date(day)] };
+  }
+  const days = agendaDays();
   days.forEach((d, i) => {
     // Antes do 6º dia (segunda da semana 2) insere a divisória
     if (agendaWeeks === 2 && i === 5) {
@@ -13356,8 +13550,28 @@ function googleEventToBlock(ev, dayYmd) {
     endMin: Math.max(startMin + 15, endMin), // duração mínima visível
     summary: ev.summary || '(Sem título)',
     htmlLink: ev.htmlLink || null,
-    backgroundColor: ev.backgroundColor || '#4285F4'
+    // Cor padrão de eventos Google no Kastor — fixa em #0b57d0 pra que TODOS
+    // os eventos externos fiquem visualmente identificáveis, independente da
+    // cor do calendário de origem.
+    backgroundColor: '#0b57d0',
+    meeting: ev.meeting || null,
+    startIso: ev.start || null,
+    endIso: ev.end || null
   };
+}
+
+// Ícone por tipo de plataforma da reunião — usa lucide.
+function meetingIconName(kind) {
+  if (kind === 'meet') return 'video';
+  if (kind === 'zoom') return 'video';
+  if (kind === 'teams') return 'users';
+  return 'link';
+}
+function meetingLabel(kind) {
+  if (kind === 'meet') return 'Google Meet';
+  if (kind === 'zoom') return 'Zoom';
+  if (kind === 'teams') return 'Microsoft Teams';
+  return 'Reunião';
 }
 
 // N-lane column layout — pra 2+ blocos que se sobrepõem no mesmo dia,
@@ -13394,29 +13608,50 @@ function renderAgenda() {
   // Renderiza nos dois alvos possíveis — standalone (Agenda) e embed (Minhas Demandas)
   renderAgendaInto('agenda-grid-wrap', 'agenda-week-label', agendaUserId);
   renderAgendaInto('mine-agenda-grid-wrap', 'mine-agenda-week-label', me?.id || null);
+  // Label do dia (modo Time — só na página standalone)
+  if (agendaMode === 'team') {
+    const dl = $('agenda-day-label');
+    if (dl) {
+      const d = agendaTeamDate || new Date();
+      dl.textContent = d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }).replace('.', '');
+    }
+  }
 }
 
 function renderAgendaInto(wrapId, weekLabelId, userId) {
   const wrap = document.getElementById(wrapId);
   if (!wrap) return; // página não montada nesse momento
-  const days = agendaDays();
+  // Modo Time só na página standalone (não em Minhas Demandas embed).
+  const isStandalone = (wrapId === 'agenda-grid-wrap');
+  const useTeam = isStandalone && agendaMode === 'team';
+  const days = useTeam ? [new Date(agendaTeamDate || new Date())] : agendaDays();
   const first = days[0], last = days[days.length - 1];
   const wkLabel = document.getElementById(weekLabelId);
-  if (wkLabel && first && last) {
+  if (wkLabel && first && last && !useTeam) {
     const fmt = (d) => d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
     wkLabel.textContent = `${fmt(first)} → ${fmt(last)}`;
+  }
+  if (useTeam) {
+    if (!agendaTeamUsers.length) {
+      wrap.innerHTML = '<div class="agenda-empty">Escolha pessoas pra montar a vista de time.</div>';
+      return;
+    }
+    buildAgendaGrid(wrap, null, days, { team: true });
+    return;
   }
   if (!userId) { wrap.innerHTML = '<div class="agenda-empty">Sem usuário pra exibir.</div>'; return; }
   buildAgendaGrid(wrap, userId, days);
 }
 
-function buildAgendaGrid(wrap, agendaUserIdLocal, days) {
-  if (!agendaUserIdLocal) { wrap.innerHTML = '<div class="agenda-empty">Selecione um usuário pra ver a agenda.</div>'; return; }
+function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
+  const isTeam = !!(opts && opts.team);
+  if (!isTeam && !agendaUserIdLocal) { wrap.innerHTML = '<div class="agenda-empty">Selecione um usuário pra ver a agenda.</div>'; return; }
 
   const slotsPerDay = Math.ceil((AGENDA_DAY_END_MIN - AGENDA_DAY_START_MIN) / AGENDA_SLOT_MIN);
   const rows = slotsPerDay;
   const layout = agendaColumnsLayout();
-  const dayCols = layout.cols.filter(c => c.type === 'day');
+  // "dayCols" = colunas de conteúdo (dia ou user, dependendo do modo).
+  const dayCols = layout.cols.filter(c => c.type === 'day' || c.type === 'user');
 
   const grid = document.createElement('div');
   grid.className = 'agenda-grid';
@@ -13450,18 +13685,34 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days) {
     const head = document.createElement('div');
     head.className = 'agenda-cell is-day-header';
     if (agendaYmd(d) === todayYmd) head.classList.add('is-today');
-    const dayName = d.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '').toUpperCase();
-    const dayDate = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-    const dayMin = schedules
-      .filter(s => s.userId === agendaUserIdLocal && s.date === agendaYmd(d))
-      .reduce((sum, s) => sum + (s.endMin - s.startMin), 0);
-    const dayHours = dayMin / 60;
-    const capacityH = 8;
-    let capClass = '';
-    if (dayHours > capacityH) capClass = 'over';
-    else if (dayHours > capacityH * 0.85) capClass = 'high';
-    const capLabel = `${dayHours.toFixed(1).replace('.', ',')}h / ${capacityH}h`;
-    head.innerHTML = `<span>${esc(dayName)}</span><span class="day-date">${esc(dayDate)}</span><span class="day-cap ${capClass}">${esc(capLabel)}</span>`;
+    if (c.type === 'user') {
+      // Header do modo Time: avatar + nome + capacidade do dia daquele user.
+      const u = c.user;
+      const dayMin = schedules
+        .filter(s => s.userId === u.id && s.date === agendaYmd(d))
+        .reduce((sum, s) => sum + (s.endMin - s.startMin), 0);
+      const dayHours = dayMin / 60;
+      const capacityH = 8;
+      let capClass = '';
+      if (dayHours > capacityH) capClass = 'over';
+      else if (dayHours > capacityH * 0.85) capClass = 'high';
+      const capLabel = `${dayHours.toFixed(1).replace('.', ',')}h / ${capacityH}h`;
+      head.classList.add('is-user-header');
+      head.innerHTML = `${avatarHTML(u, 'avatar avatar-sm')}<span class="agenda-user-head-name">${esc(u.name)}</span><span class="day-cap ${capClass}">${esc(capLabel)}</span>`;
+    } else {
+      const dayName = d.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '').toUpperCase();
+      const dayDate = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+      const dayMin = schedules
+        .filter(s => s.userId === agendaUserIdLocal && s.date === agendaYmd(d))
+        .reduce((sum, s) => sum + (s.endMin - s.startMin), 0);
+      const dayHours = dayMin / 60;
+      const capacityH = 8;
+      let capClass = '';
+      if (dayHours > capacityH) capClass = 'over';
+      else if (dayHours > capacityH * 0.85) capClass = 'high';
+      const capLabel = `${dayHours.toFixed(1).replace('.', ',')}h / ${capacityH}h`;
+      head.innerHTML = `<span>${esc(dayName)}</span><span class="day-date">${esc(dayDate)}</span><span class="day-cap ${capClass}">${esc(capLabel)}</span>`;
+    }
     head.style.gridRow = '1 / 2';
     head.style.gridColumn = `${c.gridCol} / ${c.gridCol + 1}`;
     grid.appendChild(head);
@@ -13488,9 +13739,10 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days) {
       if (min >= AGENDA_LUNCH_MIN && min < AGENDA_LUNCH_MIN + 60) cell.classList.add('is-lunch');
       cell.style.gridRow = `${r + 2} / ${r + 3}`;
       cell.style.gridColumn = `${c.gridCol} / ${c.gridCol + 1}`;
-      if (c.type === 'day') {
+      if (c.type === 'day' || c.type === 'user') {
         cell.dataset.date = agendaYmd(c.day);
         cell.dataset.min = String(min);
+        if (c.type === 'user') cell.dataset.userId = c.user.id;
         cell.addEventListener('mousedown', onAgendaCellMouseDown);
       }
       grid.appendChild(cell);
@@ -13499,21 +13751,29 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days) {
 
   // Blocos por cima. Antes de renderizar, computamos o "lane layout" por dia
   // pra que schedules + google events sobrepostos fiquem lado a lado ao invés
-  // de empilhados. Cada dia é isolado dos outros no layout.
-  const userSchedules = schedules.filter(s => s.userId === agendaUserIdLocal);
-  const userGoogleEvents = (googleEventsForUser[agendaUserIdLocal] || []);
+  // de empilhados. Cada coluna é isolada das outras no layout.
+  // Individual: 1 user, N dias. Time: N users, 1 dia.
+  const userSchedules = isTeam
+    ? schedules.filter(s => agendaTeamUsers.includes(s.userId))
+    : schedules.filter(s => s.userId === agendaUserIdLocal);
+  const userGoogleEvents = isTeam ? [] : (googleEventsForUser[agendaUserIdLocal] || []);
 
-  const dayLayouts = {}; // { ymd: { assign, totalCols } }
+  // Chave do layout por coluna: individual usa "ymd", time usa "userId:ymd".
+  const colKey = (c) => c.type === 'user' ? `${c.user.id}:${agendaYmd(c.day)}` : agendaYmd(c.day);
+  const schedKey = (s) => isTeam ? `${s.userId}:${s.date}` : s.date;
+
+  const dayLayouts = {}; // { colKey: { assign, totalCols } }
   dayCols.forEach(c => {
+    const key = colKey(c);
     const ymd = agendaYmd(c.day);
-    const daySchedules = userSchedules.filter(s => s.date === ymd).map(s => ({
+    const inCol = userSchedules.filter(s => schedKey(s) === key).map(s => ({
       id: 'sched:' + s.id, startMin: s.startMin, endMin: s.endMin, kind: 'sched', ref: s
     }));
     const dayGoogles = userGoogleEvents
       .map(ev => googleEventToBlock(ev, ymd))
       .filter(Boolean)
       .map(b => ({ ...b, id: 'gcal:' + b.id, kind: 'google', ref: b }));
-    dayLayouts[ymd] = computeLaneLayout([...daySchedules, ...dayGoogles]);
+    dayLayouts[key] = computeLaneLayout([...inCol, ...dayGoogles]);
   });
 
   // Helper: converte col/totalCols → width%/left% inline pra bloco absoluto.
@@ -13524,47 +13784,63 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days) {
   };
 
   userSchedules.forEach(s => {
-    const dayCol = dayCols.find(c => agendaYmd(c.day) === s.date);
+    const dayCol = dayCols.find(c => colKey(c) === schedKey(s));
     if (!dayCol) return;
     const startRow = Math.max(0, Math.floor((s.startMin - AGENDA_DAY_START_MIN) / AGENDA_SLOT_MIN));
     const endRow = Math.min(rows, Math.ceil((s.endMin - AGENDA_DAY_START_MIN) / AGENDA_SLOT_MIN));
     if (endRow <= startRow) return;
-    const demand = demands.find(x => x.id === s.demandId);
+    const isFree = !s.demandId;
+    const demand = isFree ? null : demands.find(x => x.id === s.demandId);
     const project = demand ? projects.find(p => p.id === demand.projectId) : null;
     const client = project && project.clientId ? clients.find(c => c.id === project.clientId) : null;
-    // Prioridade: snapshot da cor da etapa NO MOMENTO da criação do bloco →
-    // cor do projeto → fallback. Assim o bloco "guarda" o estado planejado
-    // mesmo se a demanda avançar de etapa depois.
-    const color = s.stageColorSnapshot || project?.color || '#7A00FF';
-    const layout = dayLayouts[s.date];
+    const kindMeta = isFree ? scheduleKindOf(s.kind) : null;
+    // Cor:
+    //  - Livre: s.color explícita (do save) → cor do kind → accent
+    //  - Vinculado atrasado (mesma pessoa): vermelho
+    //  - Vinculado normal: stageColorSnapshot → cor do projeto → fallback
+    let color;
+    if (isFree) {
+      color = s.color || kindMeta.color || '#7A00FF';
+    } else {
+      const isBlockLate = demand && !isDone(demand) && isLate(demand) && demand.ownerId === s.userId;
+      color = isBlockLate ? '#EF4444' : (s.stageColorSnapshot || project?.color || '#7A00FF');
+    }
+    const layout = dayLayouts[schedKey(s)];
     const myCol = layout ? layout.assign['sched:' + s.id] : 0;
     const totalCols = layout ? layout.totalCols : 1;
     const block = document.createElement('div');
     block.className = 'agenda-block';
     if (totalCols > 1) block.classList.add('is-laned');
+    if (isFree) block.classList.add('agenda-block--free');
     block.dataset.scheduleId = s.id;
     block.style.gridRow = `${startRow + 2} / ${endRow + 2}`;
     block.style.gridColumn = `${dayCol.gridCol} / ${dayCol.gridCol + 1}`;
     if (totalCols > 1) block.style.cssText += laneStyle(myCol, totalCols);
     block.style.background = color;
-    const projName = project ? project.name : '';
-    const clientName = client ? client.name : '';
-    const demandName = demand ? demand.name : '(demanda removida)';
     const canEdit = !!(me && (me.isAdmin || s.userId === me.id));
     const actions = canEdit ? `
       <div class="agenda-block-actions">
         <button class="agenda-block-action" title="Editar" data-action="edit"><i data-lucide="pencil" class="ic-xs"></i></button>
         <button class="agenda-block-action danger" title="Excluir" data-action="delete"><i data-lucide="x" class="ic-xs"></i></button>
       </div>` : '';
-    // Linha de cliente · projeto (ou só um deles se faltar)
-    const meta = [clientName, projName].filter(Boolean).join(' · ');
+    let nameHtml, metaHtml;
+    if (isFree) {
+      nameHtml = `<div class="agenda-block-name"><i data-lucide="${kindMeta.icon}" class="agenda-block-free-icon"></i>${esc(s.title || kindMeta.label)}</div>`;
+      metaHtml = `<div class="agenda-block-project">${esc(kindMeta.label)}</div>`;
+    } else {
+      const projName = project ? project.name : '';
+      const clientName = client ? client.name : '';
+      const demandName = demand ? demand.name : '(demanda removida)';
+      nameHtml = `<div class="agenda-block-name">${esc(demandName)}</div>`;
+      const meta = [clientName, projName].filter(Boolean).join(' · ');
+      metaHtml = meta ? `<div class="agenda-block-project">${esc(meta)}</div>` : '';
+    }
     block.innerHTML = `
       ${actions}
-      <div class="agenda-block-name">${esc(demandName)}</div>
-      ${meta ? `<div class="agenda-block-project">${esc(meta)}</div>` : ''}
+      ${nameHtml}
+      ${metaHtml}
       ${canEdit ? '<div class="agenda-block-resize" data-resize="1"></div>' : ''}`;
     block.addEventListener('mousedown', (e) => {
-      // Cliques nos botões de ação não disparam drag — tratados via click
       if (e.target.closest('[data-action]')) return;
       onAgendaBlockMouseDown(e, s, canEdit);
     });
@@ -13578,6 +13854,7 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days) {
       }
       if (!_agendaDrag || !_agendaDrag.moved) {
         if (demand) showDetail(demand.id);
+        else if (isFree) openScheduleModal(s.id); // clique em bloco livre abre edição
       }
     });
     grid.appendChild(block);
@@ -13587,7 +13864,7 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days) {
   // Clique abre modal enxuto com título + link "Abrir no Google Calendar".
   dayCols.forEach(c => {
     const ymd = agendaYmd(c.day);
-    const layout = dayLayouts[ymd];
+    const layout = dayLayouts[colKey(c)];
     if (!layout) return;
     const dayEvents = userGoogleEvents
       .map(ev => googleEventToBlock(ev, ymd))
@@ -13605,13 +13882,18 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days) {
       block.style.gridRow = `${startRow + 2} / ${endRow + 2}`;
       block.style.gridColumn = `${c.gridCol} / ${c.gridCol + 1}`;
       if (totalCols > 1) block.style.cssText += laneStyle(myCol, totalCols);
-      block.style.background = gb.backgroundColor || '#4285F4';
+      block.style.background = gb.backgroundColor || '#0b57d0';
+      // Ícone da plataforma da reunião ao lado do título — só aparece se detectou link.
+      const meetIcon = gb.meeting
+        ? `<i data-lucide="${meetingIconName(gb.meeting.kind)}" class="agenda-block-meet-icon"></i>`
+        : '';
       block.innerHTML = `
         <div class="agenda-block-name">
           <svg class="agenda-block-google-icon" viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.4">
             <rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16"/>
           </svg>
           <span>${esc(gb.summary)}</span>
+          ${meetIcon}
         </div>`;
       block.addEventListener('click', () => openGoogleEventDetail(gb));
       grid.appendChild(block);
@@ -13620,13 +13902,119 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days) {
 
   wrap.innerHTML = '';
   wrap.appendChild(grid);
+  // Linha "agora" logo depois do append pra pegar as posições do grid corretas.
+  placeAgendaNowLine(grid);
   paintIcons();
+  // Garante que o ticker está rodando pra atualizar a linha e disparar lembretes.
+  startAgendaTicker();
 
   // Se ainda sem cache de eventos, dispara fetch async. O backend devolve []
   // se o usuário-alvo não tem Google conectado, então não custa nada tentar.
   // Re-render acontece dentro de refreshGoogleEventsForUser quando termina.
   if (!googleEventsForUser[agendaUserIdLocal]) {
     refreshGoogleEventsForUser(agendaUserIdLocal);
+  }
+}
+
+/* ─── Linha do horário atual + lembretes de reunião ───
+   Ticker global: atualiza a "linha vermelha" da agenda a cada 30s e checa
+   eventos Google prestes a começar (janela -30s a +60s). Deduplica lembretes
+   por event.id na _notifiedEventIds. */
+let _agendaTicker = null;
+const _notifiedEventIds = new Set();
+function startAgendaTicker() {
+  if (_agendaTicker) return;
+  _agendaTicker = setInterval(() => {
+    updateAgendaNowLine();
+    checkEventReminders();
+  }, 30000);
+}
+function updateAgendaNowLine() {
+  document.querySelectorAll('.agenda-now-line').forEach(el => el.remove());
+  document.querySelectorAll('.agenda-grid').forEach(placeAgendaNowLine);
+}
+function placeAgendaNowLine(grid) {
+  if (!grid) return;
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  if (nowMin < AGENDA_DAY_START_MIN || nowMin > AGENDA_DAY_END_MIN) return;
+  const todayYmd = agendaYmd(now);
+  // Acha uma célula do dia de hoje pra pegar a coluna do grid.
+  const todayCell = grid.querySelector(`.agenda-cell[data-date="${todayYmd}"]`);
+  if (!todayCell) return;
+  const gridColumn = todayCell.style.gridColumn;
+  const offsetMin = nowMin - AGENDA_DAY_START_MIN;
+  const slotIdx = Math.floor(offsetMin / AGENDA_SLOT_MIN);
+  const withinSlot = (offsetMin % AGENDA_SLOT_MIN) / AGENDA_SLOT_MIN;
+  const line = document.createElement('div');
+  line.className = 'agenda-now-line';
+  line.style.gridColumn = gridColumn;
+  line.style.gridRow = `${slotIdx + 2} / ${slotIdx + 3}`;
+  line.style.setProperty('--now-y', (withinSlot * 100) + '%');
+  line.title = `Agora — ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+  grid.appendChild(line);
+}
+function checkEventReminders() {
+  if (!me?.id) return;
+  const events = googleEventsForUser[me.id] || [];
+  const now = Date.now();
+  events.forEach(ev => {
+    if (!ev.start || ev.allDay) return;
+    if (_notifiedEventIds.has(ev.id)) return;
+    const startMs = new Date(ev.start).getTime();
+    if (!Number.isFinite(startMs)) return;
+    const diff = startMs - now;
+    // Janela: dispara de -30s até +60s da hora de início.
+    if (diff > -30000 && diff <= 60000) {
+      showEventReminder(ev);
+      _notifiedEventIds.add(ev.id);
+    }
+  });
+}
+function showEventReminder(ev) {
+  const startDate = new Date(ev.start);
+  const endDate = ev.end ? new Date(ev.end) : null;
+  const startLbl = `${String(startDate.getHours()).padStart(2,'0')}:${String(startDate.getMinutes()).padStart(2,'0')}`;
+  const endLbl = endDate ? `${String(endDate.getHours()).padStart(2,'0')}:${String(endDate.getMinutes()).padStart(2,'0')}` : '';
+  const timeLbl = endLbl ? `${startLbl} — ${endLbl}` : startLbl;
+  // Popup in-app — cria overlay flutuante bottom-right.
+  const wrapId = 'event-reminder-wrap';
+  let wrap = document.getElementById(wrapId);
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.id = wrapId;
+    document.body.appendChild(wrap);
+  }
+  const card = document.createElement('div');
+  card.className = 'event-reminder-card';
+  const meetBtn = ev.meeting?.url
+    ? `<a class="btn btn-primary" href="${esc(ev.meeting.url)}" target="_blank" rel="noopener"><i data-lucide="${meetingIconName(ev.meeting.kind)}" class="ic-sm"></i> Entrar no ${esc(meetingLabel(ev.meeting.kind))}</a>`
+    : (ev.htmlLink ? `<a class="btn btn-primary" href="${esc(ev.htmlLink)}" target="_blank" rel="noopener"><i data-lucide="external-link" class="ic-sm"></i> Abrir</a>` : '');
+  card.innerHTML = `
+    <div class="event-reminder-head">
+      <span class="event-reminder-badge"><i data-lucide="bell" class="ic-sm"></i> Reunião começando</span>
+      <button class="event-reminder-close" title="Dispensar" onclick="this.closest('.event-reminder-card').remove()"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="event-reminder-title">${esc(ev.summary || '(Sem título)')}</div>
+    <div class="event-reminder-time">${esc(timeLbl)}</div>
+    <div class="event-reminder-actions">${meetBtn}</div>`;
+  wrap.appendChild(card);
+  paintIcons();
+  // Auto-dispensa após 5 min pra não acumular.
+  setTimeout(() => card.remove(), 5 * 60 * 1000);
+  // Notificação nativa do browser (bônus — funciona com aba em background).
+  if ('Notification' in window && Notification.permission === 'granted') {
+    try {
+      const n = new Notification(ev.summary || 'Reunião começando', {
+        body: timeLbl + (ev.meeting?.url ? ' · ' + meetingLabel(ev.meeting.kind) : ''),
+        tag: ev.id,
+        requireInteraction: false
+      });
+      n.onclick = () => { window.focus(); if (ev.meeting?.url) window.open(ev.meeting.url, '_blank'); };
+    } catch {}
+  } else if ('Notification' in window && Notification.permission === 'default') {
+    // Pede permissão silenciosamente na 1ª vez.
+    Notification.requestPermission().catch(() => {});
   }
 }
 
@@ -13655,6 +14043,7 @@ function openGoogleEventDetail(gb) {
           </div>
           <div class="gcal-modal-title" id="gcal-modal-title"></div>
           <div class="gcal-modal-time" id="gcal-modal-time"></div>
+          <div class="gcal-modal-meeting" id="gcal-modal-meeting" style="display:none"></div>
         </div>
         <div class="modal-footer" style="justify-content:space-between">
           <button class="btn btn-ghost" onclick="closeModal('gcal-event-modal')">Fechar</button>
@@ -13673,6 +14062,17 @@ function openGoogleEventDetail(gb) {
     linkEl.style.display = '';
   } else {
     linkEl.style.display = 'none';
+  }
+  // Botão "Entrar" da reunião — só aparece quando detectou link (Meet/Zoom/Teams).
+  const meetEl = $('gcal-modal-meeting');
+  if (meetEl) {
+    if (gb.meeting && gb.meeting.url) {
+      meetEl.style.display = '';
+      meetEl.innerHTML = `<a class="btn btn-primary gcal-meet-btn" href="${esc(gb.meeting.url)}" target="_blank" rel="noopener"><i data-lucide="${meetingIconName(gb.meeting.kind)}" class="ic-sm"></i> Entrar no ${esc(meetingLabel(gb.meeting.kind))}</a>`;
+    } else {
+      meetEl.style.display = 'none';
+      meetEl.innerHTML = '';
+    }
   }
   openModal('gcal-event-modal');
   paintIcons();
@@ -13708,7 +14108,8 @@ function onAgendaCellMouseDown(e) {
   if (e.button !== 0) return;
   const cell = e.currentTarget;
   const grid = cell.closest('.agenda-grid');
-  const targetUserId = grid?.dataset.userId || agendaUserId;
+  // Célula do modo Time carrega userId próprio; individual pega do grid.
+  const targetUserId = cell.dataset.userId || grid?.dataset.userId || agendaUserId;
   if (me && !me.isAdmin && targetUserId !== me.id) return;
   e.preventDefault();
   const date = cell.dataset.date;
@@ -13720,6 +14121,7 @@ function onAgendaCellMouseDown(e) {
   ghost.className = 'agenda-ghost';
   ghost.style.gridColumn = cell.style.gridColumn;
   ghost.style.gridRow = cell.style.gridRow;
+  ghost.textContent = agendaMinsToHHMM(startMin) + ' → ' + agendaMinsToHHMM(startMin + AGENDA_SLOT_MIN);
   grid.appendChild(ghost);
   _agendaDrag.ghost = ghost;
   _agendaDrag.ghostCol = cell.style.gridColumn;
@@ -13730,12 +14132,16 @@ function onAgendaCreateMove(e) {
   if (!el) return;
   const cell = el.classList && el.classList.contains('agenda-cell') ? el : el.closest('.agenda-cell');
   if (!cell || !cell.dataset.min || cell.dataset.date !== _agendaDrag.date) return;
+  // Modo Time: mantém drag na coluna do MESMO user (não vaza pra outro).
+  if (cell.dataset.userId && cell.dataset.userId !== _agendaDrag.targetUserId) return;
   _agendaDrag.moved = true;
   const cur = Number(cell.dataset.min) + AGENDA_SLOT_MIN;
   _agendaDrag.endRow = Math.max(_agendaDrag.startRow + AGENDA_SLOT_MIN, cur);
   const startRowIdx = Math.floor((_agendaDrag.startRow - AGENDA_DAY_START_MIN) / AGENDA_SLOT_MIN) + 2;
   const endRowIdx = Math.ceil((_agendaDrag.endRow - AGENDA_DAY_START_MIN) / AGENDA_SLOT_MIN) + 2;
   _agendaDrag.ghost.style.gridRow = `${startRowIdx} / ${endRowIdx}`;
+  // Atualiza a label com a faixa horária arrastada — feedback visual imediato.
+  _agendaDrag.ghost.textContent = agendaMinsToHHMM(_agendaDrag.startRow) + ' → ' + agendaMinsToHHMM(_agendaDrag.endRow);
 }
 function onAgendaCreateUp() {
   document.removeEventListener('mousemove', onAgendaCreateMove);
@@ -13849,19 +14255,63 @@ async function onAgendaBlockUp() {
 
 /* ── Modal de agendar/editar bloco ── */
 let _schedulePresetUserId = null; // userId do contexto de criação
+/* Presets de tipo pros blocos livres — ícone + cor default. */
+const SCHEDULE_KINDS = [
+  { k: 'meeting', label: 'Reunião', icon: 'video', color: '#64748B' },
+  { k: 'focus',   label: 'Foco',    icon: 'target', color: '#06B6D4' },
+  { k: 'off',     label: 'Off',     icon: 'coffee', color: '#94A3B8' },
+  { k: 'other',   label: 'Outro',   icon: 'bookmark', color: '#7A00FF' }
+];
+function scheduleKindOf(k) { return SCHEDULE_KINDS.find(x => x.k === k) || SCHEDULE_KINDS[3]; }
+
+let _scheduleMode = 'demand'; // 'demand' | 'free'
+let _scheduleKind = 'meeting';
+function setScheduleMode(mode) {
+  _scheduleMode = mode === 'free' ? 'free' : 'demand';
+  $('sch-mode-demand')?.classList.toggle('is-active', _scheduleMode === 'demand');
+  $('sch-mode-free')?.classList.toggle('is-active', _scheduleMode === 'free');
+  const demandRow = $('sch-demand-row');
+  const titleRow  = $('sch-title-row');
+  const kindRow   = $('sch-kind-row');
+  if (demandRow) demandRow.style.display = _scheduleMode === 'demand' ? '' : 'none';
+  if (titleRow)  titleRow.style.display  = _scheduleMode === 'free'   ? '' : 'none';
+  if (kindRow)   kindRow.style.display   = _scheduleMode === 'free'   ? '' : 'none';
+  if (_scheduleMode === 'free') renderScheduleKindChips();
+}
+function renderScheduleKindChips() {
+  const wrap = $('sch-kind-chips');
+  if (!wrap) return;
+  wrap.innerHTML = SCHEDULE_KINDS.map(k => `
+    <button type="button" class="sch-kind-chip ${k.k === _scheduleKind ? 'is-active' : ''}" data-kind="${k.k}" onclick="pickScheduleKind('${k.k}')" style="--kind-color:${k.color}">
+      <i data-lucide="${k.icon}" class="ic-sm"></i>
+      <span>${esc(k.label)}</span>
+    </button>`).join('');
+  paintIcons();
+}
+function pickScheduleKind(k) {
+  _scheduleKind = SCHEDULE_KINDS.some(x => x.k === k) ? k : 'other';
+  renderScheduleKindChips();
+}
+
 function openScheduleModal(id, preset) {
   editingScheduleId = id || null;
   _schedulePresetUserId = preset?.userId || null;
   const s = id ? schedules.find(x => x.id === id) : null;
   $('schedule-modal-title').textContent = s ? 'Editar bloco' : 'Agendar bloco';
-  // Popula select de demandas — SÓ demandas atribuídas ao usuário selecionado,
-  // ativas no workspace acessível. Em modo edição, mantém a demanda atual
-  // mesmo que não esteja mais atribuída a esse user.
+  // Detecta modo: bloco existente sem demandId → free; caso contrário demand.
+  const startMode = (s && !s.demandId) ? 'free' : 'demand';
+  _scheduleKind = (s && s.kind) ? s.kind : 'meeting';
+  setScheduleMode(startMode);
+  $('sch-title').value = s?.title || '';
+  // Popula select de demandas — TODAS as demandas atribuídas ao usuário
+  // selecionado, através de todos os workspaces acessíveis (não só o ativo).
+  // Em modo edição, mantém a demanda atual mesmo que não esteja mais atribuída
+  // a esse user. A label ganha o nome do workspace pra distinguir quando o
+  // usuário tem demandas em mais de um.
   const sel = $('sch-demand');
-  const wsId = activeWs;
   const ownerUid = s ? s.userId : (preset?.userId || agendaUserId);
   let list = demands
-    .filter(d => d.workspaceId === wsId)
+    .filter(d => !d.deletedAt)
     .filter(d => d.ownerId === ownerUid)
     .sort((a,b) => norm(a.name).localeCompare(norm(b.name)));
   // Se editando e a demanda atual não está mais no usuário, força ela na lista
@@ -13873,10 +14323,15 @@ function openScheduleModal(id, preset) {
   if (!list.length) {
     sel.innerHTML = '<option value="">— Esse usuário não tem demandas atribuídas —</option>';
   } else {
+    // Se o usuário tem demandas em mais de um workspace, prefixa o nome do WS
+    // na label pra evitar confusão. Se só há 1, mantém o rótulo enxuto.
+    const wsIds = new Set(list.map(d => d.workspaceId));
+    const showWs = wsIds.size > 1;
     sel.innerHTML = '<option value="">— Selecione uma demanda —</option>' + list.map(d => {
       const p = projects.find(pp => pp.id === d.projectId);
       const c = p && p.clientId ? clients.find(cc => cc.id === p.clientId) : null;
-      const meta = [c?.name, p?.name].filter(Boolean).join(' · ');
+      const ws = showWs ? wsById(d.workspaceId) : null;
+      const meta = [ws?.name, c?.name, p?.name].filter(Boolean).join(' · ');
       const lbl = meta ? `${d.name} — ${meta}` : d.name;
       return `<option value="${d.id}" ${d.id === currentDemandId ? 'selected' : ''}>${esc(lbl)}</option>`;
     }).join('');
@@ -13894,13 +14349,25 @@ function openScheduleModal(id, preset) {
   openModal('schedule-modal');
 }
 async function saveSchedule() {
-  const demandId = $('sch-demand').value;
-  if (!demandId) { toast('Selecione uma demanda.', 'error'); return; }
   const date = $('sch-date').value;
   const startMin = agendaHHMMtoMins($('sch-start').value);
   const endMin = agendaHHMMtoMins($('sch-end').value);
   if (endMin <= startMin) { toast('Horário final precisa ser depois do início.', 'error'); return; }
-  const payload = { demandId, date, startMin, endMin };
+  const payload = { date, startMin, endMin };
+  if (_scheduleMode === 'free') {
+    const title = ($('sch-title').value || '').trim();
+    if (!title) { toast('Informe um título pro bloco livre.', 'error'); return; }
+    payload.demandId = null;
+    payload.title = title;
+    payload.kind = _scheduleKind;
+    payload.color = scheduleKindOf(_scheduleKind).color;
+    // Blocos livres não têm demanda, então precisam de workspaceId explícito.
+    payload.workspaceId = activeWs;
+  } else {
+    const demandId = $('sch-demand').value;
+    if (!demandId) { toast('Selecione uma demanda.', 'error'); return; }
+    payload.demandId = demandId;
+  }
   // Pra criar (não-edição), respeita o usuário do contexto: o `_schedulePresetUserId`
   // é setado pelo openScheduleModal a partir do preset (drag em qualquer instância).
   if (!editingScheduleId) payload.userId = _schedulePresetUserId || agendaUserId;
