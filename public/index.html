@@ -7,7 +7,7 @@
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="apple-touch-icon" href="/favicon.png">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/css/style.css?v=20260722e">
+<link rel="stylesheet" href="/css/style.css?v=20260722g">
 </head>
 <body>
 
@@ -2293,9 +2293,18 @@
 <!-- MODAL: EDITAR FLUXO DO MODELO -->
 <div class="modal-overlay" id="template-flow-modal">
   <div class="modal modal-lg">
-    <div class="modal-header">
-      <div class="modal-title" id="tfl-title">Editar fluxo do modelo</div>
-      <button class="modal-close" onclick="closeModal('template-flow-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    <div class="modal-header flow-modal-head">
+      <div>
+        <div class="modal-title" id="tfl-title">Editar fluxo do modelo</div>
+      </div>
+      <div class="flow-modal-head-right">
+        <button type="button" class="flow-icon-picker" id="tfl-icon-picker" onclick="openTflIconPicker()" title="Escolher ícone da biblioteca">
+          <div id="tfl-icon-preview" class="flow-icon-preview">
+            <span class="flow-icon-label">ícone</span>
+          </div>
+        </button>
+        <button class="modal-close" onclick="closeModal('template-flow-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+      </div>
     </div>
     <div class="modal-body">
       <div class="form-grid">
@@ -2484,7 +2493,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260722e"></script>
+<script src="/js/app.js?v=20260722g"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

@@ -3118,25 +3118,30 @@ function renderDashRadar() {
     ? wsProjs.filter(p => p.client === clientFilter)
     : wsProjs;
 
+  // Só interessa quem tem demanda atrasada — projetos "verdes" saem do radar.
+  const withOverdue = shown.map(p => {
+    const projDemands = demands.filter(d => d.projectId === p.id && !isDone(d));
+    const overdue = projDemands.filter(isLate).length;
+    return { p, projDemands, overdue };
+  }).filter(x => x.overdue > 0);
+
   if (sub) {
     sub.textContent = clientFilter
-      ? `${shown.length} projeto${shown.length === 1 ? '' : 's'} de ${clientFilter}`
-      : `${shown.length} projeto${shown.length === 1 ? '' : 's'} ativos`;
+      ? `${withOverdue.length} projeto${withOverdue.length === 1 ? '' : 's'} com atraso · ${clientFilter}`
+      : `${withOverdue.length} projeto${withOverdue.length === 1 ? '' : 's'} com atraso`;
   }
 
-  if (!shown.length) {
-    el.innerHTML = `<div class="dash-empty-inline">Nenhum projeto ativo${clientFilter ? ` para ${esc(clientFilter)}` : ''}.</div>`;
+  if (!withOverdue.length) {
+    el.innerHTML = `<div class="dash-empty-inline">Nenhum projeto com atraso${clientFilter ? ` em ${esc(clientFilter)}` : ''}. 🎉</div>`;
     return;
   }
 
-  // Semáforo: verde = 0 atrasadas, amarelo = até 20%, vermelho = >20%.
-  const cards = shown.map(p => {
-    const projDemands = demands.filter(d => d.projectId === p.id && !isDone(d));
-    const overdue = projDemands.filter(isLate).length;
+  // Semáforo: amarelo = até 20%, vermelho = >20% (verde não aparece — já filtrado acima).
+  const cards = withOverdue.map(({ p, projDemands, overdue }) => {
     const total = projDemands.length;
     const ratio = total > 0 ? overdue / total : 0;
-    const status = overdue === 0 ? 'ok' : (ratio > 0.2 ? 'critical' : 'warn');
-    const label = overdue === 0 ? 'Sem atrasos' : `${overdue} atrasada${overdue === 1 ? '' : 's'}`;
+    const status = ratio > 0.2 ? 'critical' : 'warn';
+    const label = `${overdue} atrasada${overdue === 1 ? '' : 's'}`;
     const clientLabel = clientFilter ? '' : `<div class="dash-radar-client">${esc(p.client || '—')}</div>`;
     return `<div class="dash-radar-card dash-radar-${status}"
                  onclick="openProjectDetail('${esc(p.id)}')"
@@ -3784,25 +3789,43 @@ function renderList() {
   // Filtro Workspace: options = workspaces acessíveis, alpha; dot da cor via dotMap.
   fillSelect($('filter-workspace'), accessibleWs.map(w => ({ value: w.id, label: w.name })), undefined, 'Workspace');
 
-  // Usuários acessíveis (todos ativos que o usuário logado enxerga em qualquer workspace).
+  // CROSS-FILTER: se um workspace específico foi escolhido, os filtros de
+  // Usuário/Cliente/Projeto só listam itens daquele workspace. Sem workspace
+  // escolhido, mostra tudo o que o usuário tem acesso.
+  const wsPick = $('filter-workspace')?.value || '';
+  const wsInScope = (wsId) => !wsPick || wsId === wsPick;
+
+  // Usuários acessíveis. Cross-filter: user tem que estar no workspace escolhido
+  // (ou ser admin — admin transita todos os workspaces).
   const prevUser = $('filter-user').value;
   const userOpts = (users || []).filter(u => u.active !== false &&
-    (me.isAdmin || (u.workspaces || []).some(wid => (me.workspaces || []).includes(wid))))
+    (me.isAdmin || (u.workspaces || []).some(wid => (me.workspaces || []).includes(wid))) &&
+    (!wsPick || u.isAdmin || (u.workspaces || []).includes(wsPick)))
     .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  // Se o user escolhido não existe mais na lista filtrada, limpa o value.
+  const userStillValid = !prevUser || userOpts.some(u => u.id === prevUser);
+  const effectiveUser = userStillValid ? prevUser : '';
   $('filter-user').innerHTML = '<option value="">Usuário</option>' +
-    userOpts.map(u => `<option value="${esc(u.id)}" ${u.id === prevUser ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
+    userOpts.map(u => `<option value="${esc(u.id)}" ${u.id === effectiveUser ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
+  if (!userStillValid) $('filter-user').value = '';
 
-  // Projetos acessíveis
+  // Projetos acessíveis (recorte de workspace se filtro estiver ativo).
   const accProjects = (projects || [])
-    .filter(p => me.isAdmin || (me.workspaces || []).includes(p.workspaceId))
+    .filter(p => (me.isAdmin || (me.workspaces || []).includes(p.workspaceId)) && wsInScope(p.workspaceId))
     .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-  fillSelect($('filter-project'), accProjects.map(p => ({ value: p.id, label: p.name })), undefined, 'Projeto');
+  const prevProj = $('filter-project').value;
+  const projStillValid = !prevProj || accProjects.some(p => p.id === prevProj);
+  fillSelect($('filter-project'), accProjects.map(p => ({ value: p.id, label: p.name })), projStillValid ? prevProj : '', 'Projeto');
+  if (!projStillValid) $('filter-project').value = '';
 
-  // Clientes acessíveis (ativos)
+  // Clientes acessíveis (ativos, com recorte de workspace).
   const accClients = (clients || [])
-    .filter(c => c.active !== false && (me.isAdmin || (me.workspaces || []).includes(c.workspaceId)))
+    .filter(c => c.active !== false && (me.isAdmin || (me.workspaces || []).includes(c.workspaceId)) && wsInScope(c.workspaceId))
     .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-  fillSelect($('filter-client'), accClients.map(c => ({ value: c.id, label: c.name })), undefined, 'Cliente');
+  const prevClient = $('filter-client').value;
+  const clientStillValid = !prevClient || accClients.some(c => c.id === prevClient);
+  fillSelect($('filter-client'), accClients.map(c => ({ value: c.id, label: c.name })), clientStillValid ? prevClient : '', 'Cliente');
+  if (!clientStillValid) $('filter-client').value = '';
 
   // Workspace com dots coloridos.
   const wsDotMap = {};
@@ -11340,11 +11363,12 @@ function renderModelCard(t) {
           <div class="model-flow-card" onclick="openTemplateFlowModal('${t.id}', ${pi}, ${fi})" title="Editar fluxo">
             ${projCount > 1 ? `<span class="model-flow-card-proj" title="${esc(p.name)}">${esc(p.name)}</span>` : ''}
             <span class="model-flow-icon" style="background:${modelFlowIconBg(p.color || t.color)}">
-              <i data-lucide="workflow"></i>
+              ${renderModelFlowIconInner(f.icon)}
             </span>
             <span class="model-flow-card-name">${esc(f.name || 'Fluxo sem nome')}</span>
             ${f.demandType ? `<span class="model-flow-card-type">${esc(f.demandType)}</span>` : ''}
             <span class="model-flow-card-actions">
+              <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); duplicateTemplateFlow('${t.id}', ${pi}, ${fi})" title="Duplicar fluxo"><i data-lucide="copy" class="ic-sm"></i></button>
               <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); openTemplateFlowModal('${t.id}', ${pi}, ${fi})" title="Editar fluxo"><i data-lucide="pencil" class="ic-sm"></i></button>
               <button class="btn btn-ghost btn-sm bulk-danger" onclick="event.stopPropagation(); confirmDeleteTemplateFlow('${t.id}', ${pi}, ${fi})" title="Excluir fluxo"><i data-lucide="trash-2" class="ic-sm"></i></button>
             </span>
@@ -11393,6 +11417,29 @@ function renderModelCard(t) {
     </div>
     ${body}
   </div>`;
+}
+
+/* Ícone do card do fluxo do modelo — renderiza lucide, /uploads/... ou fallback. */
+function renderModelFlowIconInner(icon) {
+  if (typeof icon === 'string' && icon.startsWith('lucide:')) {
+    return `<i data-lucide="${esc(icon.slice(7))}"></i>`;
+  }
+  if (typeof icon === 'string' && (icon.startsWith('/uploads/') || icon.startsWith('data:image/'))) {
+    return `<span class="model-flow-icon-img" style="background-image:url('${esc(icon)}');background-size:cover;background-position:center"></span>`;
+  }
+  return `<i data-lucide="workflow"></i>`;
+}
+
+async function duplicateTemplateFlow(tplId, pIdx, fIdx) {
+  const t = clientTemplates.find(x => x.id === tplId);
+  const flow = t?.projects?.[pIdx]?.flows?.[fIdx];
+  if (!flow) return;
+  try {
+    const upd = await api(`/client-templates/${tplId}/projects/${pIdx}/flows/${fIdx}/duplicate`, 'POST');
+    Object.assign(t, upd);
+    renderClientsModels();
+    toast(`Fluxo duplicado: "${flow.name} - Cópia".`);
+  } catch (e) { toast(e.message, 'error'); }
 }
 
 /* Fundo do ícone do card de fluxo — tinta suave da cor do projeto/modelo.
@@ -11561,7 +11608,7 @@ async function confirmDeleteTemplateProject(tplId, pIdx) {
 /* ── EDITOR COMPLETO DE FLUXO DO MODELO ──
    Um único modal (#template-flow-modal) usado pra criar E editar. Diferença
    é só se fIdx === null (criar → POST) ou é número (editar → PUT). */
-let _tflCtx = null; // { tplId, pIdx, fIdx (null se novo), stages: [], checklist: [] }
+let _tflCtx = null; // { tplId, pIdx, fIdx (null se novo), stages: [], checklist: [], icon: string|null }
 function openTemplateFlowModal(tplId, pIdx, fIdx) {
   const t = clientTemplates.find(x => x.id === tplId);
   const proj = t?.projects?.[pIdx];
@@ -11572,12 +11619,14 @@ function openTemplateFlowModal(tplId, pIdx, fIdx) {
   _tflCtx = {
     tplId, pIdx, fIdx: isEdit ? fIdx : null,
     // Cópias locais editáveis — só persiste no Save.
+    // Sem responsibleRole aqui: modelo não decide área (decidido no cliente via matriz Área×Cargo).
     stages: isEdit ? flow.stages.map(s => ({ ...s })) : [
-      { label: 'A fazer',      color: '#64748B', done: false, deadlineDays: null, responsibleRole: null },
-      { label: 'Em andamento', color: '#38BDF8', done: false, deadlineDays: null, responsibleRole: null },
-      { label: 'Concluída',    color: '#22D3A5', done: true,  deadlineDays: null, responsibleRole: null }
+      { label: 'A fazer',      color: '#64748B', done: false, deadlineDays: null },
+      { label: 'Em andamento', color: '#38BDF8', done: false, deadlineDays: null },
+      { label: 'Concluída',    color: '#22D3A5', done: true,  deadlineDays: null }
     ],
-    checklist: isEdit ? [...(flow.defaultChecklist || [])] : []
+    checklist: isEdit ? [...(flow.defaultChecklist || [])] : [],
+    icon: flow?.icon || null
   };
   $('tfl-title').textContent = isEdit ? `Editar fluxo em "${proj.name}"` : `Novo fluxo em "${proj.name}"`;
   $('tfl-name').value = flow?.name || '';
@@ -11587,26 +11636,47 @@ function openTemplateFlowModal(tplId, pIdx, fIdx) {
   const types = [...new Set(flows.filter(f => f.workspaceId === t.workspaceId).map(f => f.demandType).filter(Boolean))].sort();
   $('tfl-type-datalist').innerHTML = types.map(x => `<option value="${esc(x)}">`).join('');
   $('tfl-delete-btn').style.display = isEdit ? '' : 'none';
+  refreshTflIconPreview();
   renderTflStages();
   renderTflChecklist();
   openModal('template-flow-modal');
 }
+function refreshTflIconPreview() {
+  const el = $('tfl-icon-preview');
+  if (!el) return;
+  el.style.backgroundImage = '';
+  el.classList.remove('has-icon');
+  const icon = _tflCtx?.icon;
+  if (!icon) { el.innerHTML = '<span class="flow-icon-label">ícone</span>'; return; }
+  if (typeof icon === 'string' && icon.startsWith('lucide:')) {
+    el.classList.add('has-icon');
+    el.innerHTML = `<i data-lucide="${esc(icon.slice(7))}" class="ic-md"></i>`;
+    paintIcons();
+  } else {
+    el.classList.add('has-icon');
+    el.innerHTML = '';
+    el.style.backgroundImage = `url('${icon}')`;
+    el.style.backgroundSize = 'cover';
+    el.style.backgroundPosition = 'center';
+  }
+}
+function openTflIconPicker() {
+  if (!_tflCtx) return;
+  openLucidePicker(_tflCtx.icon, (val) => {
+    _tflCtx.icon = val;
+    refreshTflIconPreview();
+  });
+}
 function renderTflStages() {
   const wrap = $('tfl-stages-list');
   if (!wrap || !_tflCtx) return;
-  const sortedRoles = (roles || []).slice()
-    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt-BR', { sensitivity: 'base' }));
+  // Sem select de área: modelo só define a forma do fluxo. Área/cargo/responsável
+  // ficam a cargo do cliente (matriz Área × Cargo no painel Pessoas).
   wrap.innerHTML = _tflCtx.stages.map((s, i) => {
-    // Opções do select de role com selected inline (evita bugs de replace).
-    const cur = s.responsibleRole || '';
-    const roleOpts = [`<option value="" ${cur === '' ? 'selected' : ''}>— Sem área —</option>`]
-      .concat(sortedRoles.map(r => `<option value="${esc(r.name)}" ${cur === r.name ? 'selected' : ''}>${esc(r.name)}</option>`))
-      .join('');
     const color = s.color || '#7A00FF';
     return `<div class="tfl-stage-row" data-idx="${i}">
       <button type="button" class="color-swatch-trigger tfl-stage-color" style="background:${esc(color)}" onclick="openColorPicker(this, (c) => { tflSetStage(${i}, 'color', c); this.style.background = c; }, '${esc(color)}')" title="Cor da etapa"></button>
       <input type="text" class="wizard-cust-name" placeholder="Nome da etapa" value="${esc(s.label || '')}" oninput="tflSetStage(${i}, 'label', this.value)">
-      <select class="wizard-cust-resp" onchange="tflSetStage(${i}, 'responsibleRole', this.value || null)">${roleOpts}</select>
       <input type="number" class="wizard-cust-days" min="0" step="1" placeholder="—" value="${s.deadlineDays ?? ''}" oninput="tflSetStage(${i}, 'deadlineDays', this.value === '' ? null : Number(this.value))" title="Prazo em dias (opcional)">
       <label class="wizard-cust-toggle" title="Marcar como etapa final (conclui a demanda)">
         <input type="checkbox" ${s.done ? 'checked' : ''} onchange="tflSetStage(${i}, 'done', this.checked)"> <span class="tfl-stage-done-lbl">Final</span>
@@ -11665,6 +11735,7 @@ async function tflSave() {
   if (validStages.length < 2) { toast('O fluxo precisa de pelo menos 2 etapas com nome.', 'error'); return; }
   const payload = {
     name,
+    icon: _tflCtx.icon || null,
     demandType: $('tfl-type').value.trim(),
     defaultDescription: $('tfl-description').value,
     defaultChecklist: _tflCtx.checklist.filter(it => (it.text || '').trim()),
@@ -11672,8 +11743,7 @@ async function tflSave() {
       label: (s.label || '').trim(),
       color: /^#[0-9a-f]{6}$/i.test(s.color || '') ? s.color : '#7A00FF',
       done: !!s.done,
-      deadlineDays: Number.isInteger(s.deadlineDays) ? s.deadlineDays : null,
-      responsibleRole: s.responsibleRole || null
+      deadlineDays: Number.isInteger(s.deadlineDays) ? s.deadlineDays : null
     }))
   };
   const { tplId, pIdx, fIdx } = _tflCtx;

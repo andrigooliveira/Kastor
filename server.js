@@ -2139,12 +2139,17 @@ app.post('/api/client-templates/:id/projects/:pIdx/flows', requireAuth, (req, re
   if (!name) return res.status(400).json({ error: 'Nome do fluxo é obrigatório.' });
   const stages = Array.isArray(b.stages) ? sanitizeStages(b.stages.map(s => ({ ...s, id: uid() }))) : null;
   if (!stages) return res.status(400).json({ error: 'O fluxo precisa de pelo menos 2 etapas com nome.' });
+  // Fluxo do modelo: área/responsibleRole é decisão de cliente (matriz Área×Cargo)
+  // — modelo só guarda a forma. Icon persiste (lucide/URL/data URI extraído).
   const ftpl = {
     name,
+    icon: sanitizeFlowIcon(b.icon, name),
     demandType: String(b.demandType || ''),
-    // Stages guardadas SEM id — id novo é gerado a cada instância criada.
+    // Stages guardadas SEM id nem responsibleRole — id novo por instância, área por cliente.
     stages: stages.map(s => ({ label: s.label, color: s.color, done: !!s.done,
-      responsibleRole: s.responsibleRole || null, deadlineDays: s.deadlineDays || null })),
+      deadlineDays: s.deadlineDays || null })),
+    defaultDescription: typeof b.defaultDescription === 'string' ? b.defaultDescription : '',
+    defaultChecklist: Array.isArray(b.defaultChecklist) ? sanitizeChecklistTemplate(b.defaultChecklist) : [],
     createdAt: nowISO(),
     updatedAt: nowISO()
   };
@@ -2165,8 +2170,10 @@ app.post('/api/client-templates/:id/projects/:pIdx/flows', requireAuth, (req, re
       // Fluxos pertencem ao CLIENTE, não ao projeto — projectId fica null.
       projectId: null,
       clientId: client.id, client: client.name,
-      icon: null,
+      icon: ftpl.icon || null,
       name: ftpl.name, demandType: ftpl.demandType,
+      defaultDescription: ftpl.defaultDescription || '',
+      defaultChecklist: (ftpl.defaultChecklist || []).map(it => ({ text: it.text })),
       // Regenera stages com IDs novos por instância.
       stages: ftpl.stages.map(s => ({ ...s, id: uid() })),
       createdAt: nowISO()
@@ -2197,17 +2204,44 @@ app.put('/api/client-templates/:id/projects/:pIdx/flows/:fIdx', requireAuth, (re
   if (typeof b.demandType === 'string')        ftpl.demandType        = b.demandType.trim().slice(0, 60);
   if (typeof b.defaultDescription === 'string') ftpl.defaultDescription = b.defaultDescription;
   if (Array.isArray(b.defaultChecklist))       ftpl.defaultChecklist   = sanitizeChecklistTemplate(b.defaultChecklist);
+  if (b.icon !== undefined) ftpl.icon = sanitizeFlowIcon(b.icon, ftpl.name);
   if (Array.isArray(b.stages)) {
     const clean = sanitizeStages(b.stages.map(s => ({ ...s, id: uid() })));
     if (!clean) return res.status(400).json({ error: 'O fluxo precisa de pelo menos 2 etapas com nome.' });
-    // Grava SEM id — IDs são gerados a cada instância criada num cliente.
+    // Grava SEM id nem responsibleRole — IDs são gerados por instância, área é decisão do cliente.
     ftpl.stages = clean.map(s => ({
       label: s.label, color: s.color, done: !!s.done,
-      responsibleRole: s.responsibleRole || null,
       deadlineDays: s.deadlineDays || null
     }));
   }
   ftpl.updatedAt = nowISO(); // usado no sort "Última modificação" da tela de Modelos
+  saveEntity('clientTemplates', t);
+  res.json(t);
+});
+
+/* Duplica um fluxo dentro do MESMO projeto do modelo. Copia name + " - Cópia",
+   icon, demandType, stages, description e checklist. Não replica em clientes
+   vinculados — o usuário duplica pra editar antes de propagar. */
+app.post('/api/client-templates/:id/projects/:pIdx/flows/:fIdx/duplicate', requireAuth, (req, res) => {
+  const t = db.clientTemplates.find(x => x.id === req.params.id);
+  if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Modelo não encontrado.' });
+  const pIdx = parseInt(req.params.pIdx, 10);
+  const fIdx = parseInt(req.params.fIdx, 10);
+  const ptpl = t.projects?.[pIdx];
+  const src = ptpl?.flows?.[fIdx];
+  if (!src) return res.status(400).json({ error: 'Fluxo inválido.' });
+  const copy = {
+    name: (src.name || 'Fluxo').slice(0, 100) + ' - Cópia',
+    icon: src.icon || null,
+    demandType: src.demandType || '',
+    // deep copy pra não compartilhar refs de arrays/objects entre original e cópia
+    stages: (src.stages || []).map(s => ({ ...s })),
+    defaultDescription: src.defaultDescription || '',
+    defaultChecklist: (src.defaultChecklist || []).map(it => ({ text: it.text })),
+    createdAt: nowISO(),
+    updatedAt: nowISO()
+  };
+  ptpl.flows.push(copy);
   saveEntity('clientTemplates', t);
   res.json(t);
 });
@@ -2496,6 +2530,18 @@ app.get('/api/flows/:id', requireAuth, (req, res) => {
   if (!f || !canAccessWs(req.user, f.workspaceId)) return res.status(404).json({ error: 'Fluxo não encontrado' });
   res.json(f);
 });
+
+/* Normaliza icon do fluxo (aceita lucide:X, URL /uploads, ou data URI que
+   extrai pro disco). Retorna string pronta pra persistir ou null. */
+function sanitizeFlowIcon(icon, nameHint) {
+  if (!icon || typeof icon !== 'string') return null;
+  if (icon.startsWith('/uploads/') || icon.startsWith('lucide:')) return icon;
+  if (icon.startsWith('data:image/')) {
+    const saved = saveUploadFromDataUri(icon, (nameHint || 'flow') + '-icon');
+    return saved ? saved.url : null;
+  }
+  return null;
+}
 
 /* Normaliza roleAssignments aceitando os dois formatos:
    - Legado: { [area]: userId }                    (string)
