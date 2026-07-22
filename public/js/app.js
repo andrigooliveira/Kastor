@@ -15609,5 +15609,16 @@ function renderWizardStep4() {
   }
 }
 
+/* ─── PWA: registra o Service Worker ───
+   Necessário pra Chrome/Edge oferecerem "Instalar como app" no Windows.
+   Silencioso — falha de registro (localhost sem HTTPS em prod, extensão
+   bloqueando) não impede o app de funcionar como página normal. */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' })
+      .catch(err => console.warn('[SW] registro falhou:', err.message));
+  });
+}
+
 /* ─── START ─── */
 boot();
