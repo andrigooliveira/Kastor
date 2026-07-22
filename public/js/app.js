@@ -443,6 +443,21 @@ function effectiveStageResponsibleId(d, stage) {
   }
   return stage.responsibleId || null;
 }
+/* Extrai userId de entity.roleAssignments[area] respeitando os 2 formatos:
+   - string (legado): 1 user pra área sem cargo
+   - objeto: { [cargo]: userId }. Se stage tem cargo, tenta esse primeiro; senão,
+   pega o primeiro user não vazio (fallback pra o caso de área sem cargo definido). */
+function _pickAssignment(assignVal, cargo) {
+  if (!assignVal) return null;
+  if (typeof assignVal === 'string') return assignVal;
+  if (typeof assignVal === 'object') {
+    if (cargo && assignVal[cargo]) return assignVal[cargo];
+    for (const k of Object.keys(assignVal)) {
+      if (assignVal[k]) return assignVal[k];
+    }
+  }
+  return null;
+}
 /* Versão completa com resolução via função (role → project → client roleAssignments).
    Espelha resolveStageOwner do backend. Retorna userId ou null. */
 function resolveStageOwnerId(d, stage) {
@@ -450,11 +465,12 @@ function resolveStageOwnerId(d, stage) {
   const direct = effectiveStageResponsibleId(d, stage);
   if (direct) return direct;
   if (stage.responsibleRole) {
+    const cargo = stage.responsiblePosition || null;
     const p = d.projectId ? projectById(d.projectId) : null;
-    const projAssign = p?.roleAssignments?.[stage.responsibleRole];
+    const projAssign = _pickAssignment(p?.roleAssignments?.[stage.responsibleRole], cargo);
     if (projAssign) return projAssign;
     const c = p?.clientId ? clientById(p.clientId) : null;
-    const cliAssign = c?.roleAssignments?.[stage.responsibleRole];
+    const cliAssign = _pickAssignment(c?.roleAssignments?.[stage.responsibleRole], cargo);
     if (cliAssign) return cliAssign;
   }
   return null;
@@ -462,7 +478,7 @@ function resolveStageOwnerId(d, stage) {
 /* Responsável efetivo de uma demanda inteira — resolve via cadeia:
    1) d.ownerId direto
    2) stage.responsibleId da etapa atual (com override d.stageResponsibles)
-   3) stage.responsibleRole → project.roleAssignments[role] → client.roleAssignments[role]
+   3) stage.responsibleRole (+ position) → project → client roleAssignments
    Mesma lógica do backend resolveStageOwner + fallback pra ownerId direto. */
 function effectiveOwnerOf(d) {
   if (!d) return null;
@@ -478,14 +494,15 @@ function effectiveOwnerOf(d) {
       if (u) return u;
     }
     if (stage.responsibleRole) {
+      const cargo = stage.responsiblePosition || null;
       const p = d.projectId ? projectById(d.projectId) : null;
-      const projAssign = p?.roleAssignments?.[stage.responsibleRole];
+      const projAssign = _pickAssignment(p?.roleAssignments?.[stage.responsibleRole], cargo);
       if (projAssign) {
         const u = userById(projAssign);
         if (u) return u;
       }
       const c = p?.clientId ? clientById(p.clientId) : null;
-      const cliAssign = c?.roleAssignments?.[stage.responsibleRole];
+      const cliAssign = _pickAssignment(c?.roleAssignments?.[stage.responsibleRole], cargo);
       if (cliAssign) {
         const u = userById(cliAssign);
         if (u) return u;
@@ -746,6 +763,63 @@ document.addEventListener('click', ev => {
     document.querySelectorAll('.filter-cdrop.open').forEach(c => c.classList.remove('open'));
   }
 });
+
+/* ── AUTO-CDROP ──
+   Todo <select> com classes form-control / filter-select / wizard-cust-resp
+   vira cdrop automaticamente ao entrar no DOM (ou quando suas options
+   mudam). Assim o menu aberto sempre segue o visual da plataforma, sem
+   cair no dropdown nativo do browser.
+   Opt-out por select: data-no-cdrop.
+   Selects multiple/size>1 são ignorados (cdrop não suporta). */
+let _autoCdropSeq = 0;
+const _AUTO_CDROP_SEL = 'select.form-control, select.filter-select, select.wizard-cust-resp';
+const _autoCdropQueue = new Set();
+let _autoCdropRafScheduled = false;
+function _flushAutoCdropQueue() {
+  _autoCdropRafScheduled = false;
+  let processed = 0;
+  _autoCdropQueue.forEach(sel => {
+    if (!sel.isConnected) return;
+    if (!sel.matches || !sel.matches(_AUTO_CDROP_SEL)) return;
+    if (sel.hasAttribute('data-no-cdrop')) return;
+    if (sel.multiple || sel.size > 1) return;
+    if (!sel.id) sel.id = `auto-cdrop-${++_autoCdropSeq}`;
+    applyFilterDropdown(sel.id); // idempotente: cria wrap se não existir, atualiza se existir
+    processed++;
+  });
+  _autoCdropQueue.clear();
+  // Pinta o chevron do trigger criado pelo applyFilterDropdown
+  if (processed && typeof paintIcons === 'function') paintIcons();
+}
+function _queueAutoCdrop(sel) {
+  if (!sel) return;
+  _autoCdropQueue.add(sel);
+  if (!_autoCdropRafScheduled) {
+    _autoCdropRafScheduled = true;
+    requestAnimationFrame(_flushAutoCdropQueue);
+  }
+}
+function _scanAndQueueSelects(node) {
+  if (!node || node.nodeType !== 1) return;
+  if (node.classList && node.classList.contains('filter-cdrop')) return; // pula o próprio wrap
+  if (node.tagName === 'SELECT') _queueAutoCdrop(node);
+  else if (node.querySelectorAll) node.querySelectorAll('select').forEach(_queueAutoCdrop);
+}
+let _autoCdropObserver = null;
+function initAutoCdropObserver() {
+  if (_autoCdropObserver) return;
+  // Catch-up: processa selects que já estavam no DOM antes do observer subir.
+  _scanAndQueueSelects(document.body);
+  _autoCdropObserver = new MutationObserver(muts => {
+    for (const m of muts) {
+      for (const n of m.addedNodes) _scanAndQueueSelects(n);
+      // Options recriadas dentro de um <select> já existente (ex.: fillRoleSelect
+      // que substitui innerHTML das options) — refresh do cdrop pra não ficar stale.
+      if (m.target && m.target.tagName === 'SELECT') _queueAutoCdrop(m.target);
+    }
+  });
+  _autoCdropObserver.observe(document.body, { childList: true, subtree: true });
+}
 function cellUser(u) {
   if (!u) return '—';
   return `<span class="cell-user">${avatarHTML(u)} ${esc(u.name)}</span>`;
@@ -2388,6 +2462,7 @@ async function enterApp() {
   $('app').classList.add('active');
   initTooltips();
   initKeyboardShortcuts();
+  initAutoCdropObserver();
   $('topbar-title').textContent = 'Dashboard';
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-dashboard'));
   if ($('metrics-grid')) $('metrics-grid').innerHTML = skeletonMetrics();
@@ -4626,25 +4701,25 @@ function fmtYMD(y, m, d) {
 }
 
 /* ─── MODAL: NOVA / EDITAR DEMANDA ─── */
-/* Fluxos disponíveis pra um projeto, na nova arquitetura por cliente:
-   1. Fluxos exclusivos desse projetId (caso especial — fluxo amarrado a 1 projeto)
-   2. Fluxos do MESMO CLIENTE do projeto (via field `client`)
-   3. Fluxos "Geral" do workspace (sem cliente) — sempre disponíveis */
+/* Fluxos disponíveis pra um cliente — CROSS-WORKSPACE.
+   Fluxos pertencem ao CLIENTE (não ao projeto/workspace). O filtro é só
+   permissão (workspaces acessíveis pro usuário logado).
+   Match: (a) f.clientId === clientId, (b) legado f.client string, (c) geral. */
+function flowsForClient(clientId) {
+  const c = clientId ? clientById(clientId) : null;
+  const cName = (c?.name || '').trim().toLowerCase();
+  return (flows || []).filter(f => {
+    if (!(me.isAdmin || (me.workspaces || []).includes(f.workspaceId))) return false;
+    if (clientId && f.clientId === clientId) return true;
+    if (cName && !f.clientId && (f.client || '').trim().toLowerCase() === cName) return true;
+    if (!f.clientId && !(f.client || '').trim()) return true; // geral
+    return false;
+  });
+}
+/* Wrapper legado — mantém contratos antigos que passavam projectId. */
 function flowsForProject(projectId) {
   const proj = projectById(projectId);
-  const projClient = (proj?.client || '').trim().toLowerCase();
-  const all = wsFlows();
-  const exclusive = all.filter(f => f.projectId === projectId);
-  const byClient = projClient
-    ? all.filter(f => !f.projectId && (f.client || '').trim().toLowerCase() === projClient)
-    : [];
-  const general = all.filter(f => !f.projectId && !(f.client || '').trim());
-  // Dedup mantendo ordem: exclusive > client-specific > general
-  const seen = new Set();
-  return [...exclusive, ...byClient, ...general].filter(f => {
-    if (seen.has(f.id)) return false;
-    seen.add(f.id); return true;
-  });
+  return flowsForClient(proj?.clientId || null);
 }
 function onDemandProjectChange() {
   const pid = $('f-project').value;
@@ -4724,7 +4799,12 @@ function removeDemandChecklistItem(i) {
   renderDemandChecklist();
 }
 function fillDemandSelectors(d) {
-  const projs = wsProjects().filter(p => p.active !== false || (d && d.projectId === p.id))
+  // Cross-workspace — projetos de todos os workspaces acessíveis pro usuário.
+  // Sem isso, quando o wizard escolhe cliente de outro workspace, o projeto
+  // vira "opção fantasma" e o save falha com "Selecione um projeto válido".
+  const projs = (projects || [])
+    .filter(p => me.isAdmin || (me.workspaces || []).includes(p.workspaceId))
+    .filter(p => p.active !== false || (d && d.projectId === p.id))
     .sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
   $('f-project').innerHTML = '<option value="">— Selecione um projeto —</option>' +
     projs.map(p => `<option value="${p.id}">${esc(p.name)}${p.client ? ' · ' + esc(p.client) : ''}</option>`).join('');
@@ -4784,6 +4864,9 @@ function openNewDemand() {
   wizardState = { step: 1, clientId: null, projectId: null, flowId: null };
   resetWizardCustomization();
   wizardLastFlowApplied = null;
+  // Congela os recentes pra a duração deste modal — evita reordenar cards
+  // enquanto o usuário navega/duplo-clica.
+  wizardSnapshotRecents();
   wizardGoTo(1);
   openModal('demand-modal');
   navPush('/demands/new');
@@ -7654,6 +7737,7 @@ function renderStageRows() {
   $('stage-list').innerHTML = stageRows.map((s, i) => {
     // Reconstrói o estado de UI a partir do que veio do backend
     const roleFilter = s.roleFilter || s.responsibleRole || '';
+    const positionFilter = s.responsiblePosition || '';
     const useDefault = !!s.responsibleRole && !s.responsibleId;
     const userId = s.responsibleId || '';
 
@@ -7661,10 +7745,19 @@ function renderStageRows() {
     const fnOpts = `<option value="">— Sem área —</option>` +
       allRoles.map(r => `<option value="${esc(r.name)}" ${r.name === roleFilter ? 'selected' : ''}>${esc(r.name)}</option>`).join('');
 
-    // Responsável dropdown — filtrado pela função selecionada
+    // Cargo dropdown — só cargos presentes em users daquela área (evita opções mortas).
+    const usersInArea = roleFilter ? allUsers.filter(u => (u.role || '') === roleFilter) : allUsers;
+    const cargosDisponiveis = (positions || []).slice()
+      .filter(p => usersInArea.some(u => (u.position || '') === p.name))
+      .sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+    const cargoOpts = `<option value="">— Qualquer cargo —</option>` +
+      cargosDisponiveis.map(p => `<option value="${esc(p.name)}" ${p.name === positionFilter ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+
+    // Responsável dropdown — filtrado por área + cargo (se informados)
     let respHtml = '<option value="">— Sem responsável —</option>';
     if (roleFilter) {
-      const filteredUsers = allUsers.filter(u => (u.role || '') === roleFilter);
+      let filteredUsers = usersInArea;
+      if (positionFilter) filteredUsers = filteredUsers.filter(u => (u.position || '') === positionFilter);
       if (hasClient) {
         respHtml += `<option value="__client_default__" ${useDefault ? 'selected' : ''}>Padrão do cliente</option>`;
       }
@@ -7672,7 +7765,7 @@ function renderStageRows() {
         `<option value="${u.id}" ${u.id === userId ? 'selected' : ''}>${esc(u.name)}</option>`
       ).join('');
     } else {
-      // Sem função selecionada: mostra todos os usuários (libera assign direto)
+      // Sem área selecionada: mostra todos os usuários (libera assign direto)
       respHtml += allUsers.map(u =>
         `<option value="${u.id}" ${u.id === userId ? 'selected' : ''}>${esc(u.name)}</option>`
       ).join('');
@@ -7685,6 +7778,7 @@ function renderStageRows() {
       <button type="button" class="color-swatch-trigger stage-color" style="background:${s.color}" onclick="openColorPicker(this, (c) => { stageRows[${i}].color = c; this.style.background = c; flowModalDirty = true; }, stageRows[${i}].color)" title="Cor da etapa"></button>
       <input class="form-control" value="${esc(s.label)}" placeholder="Nome da etapa" oninput="stageRows[${i}].label=this.value">
       <select id="stage-role-${i}" class="form-control stage-role" title="Área desta etapa" onchange="setStageRoleFilter(${i}, this.value)">${fnOpts}</select>
+      <select id="stage-cargo-${i}" class="form-control stage-cargo" title="Cargo (opcional) — resolve pela matriz Área×Cargo do cliente" onchange="setStagePositionFilter(${i}, this.value)" ${roleFilter ? '' : 'disabled'}>${cargoOpts}</select>
       <select id="stage-resp-${i}" class="form-control stage-resp" title="Responsável padrão da etapa" onchange="setStageResponsible(${i}, this.value)">${respHtml}</select>
       <div class="stage-days-wrap"><span class="stage-mini-label">Prazo (dias)</span><input class="form-control" type="number" min="1" placeholder="—" value="${s.deadlineDays || ''}" oninput="stageRows[${i}].deadlineDays=this.value?Number(this.value):null"></div>
       <label class="stage-done-toggle"><input type="checkbox" ${s.done ? 'checked' : ''} onchange="stageRows[${i}].done=this.checked"> Conclui</label>
@@ -7694,16 +7788,22 @@ function renderStageRows() {
       </div>
     </div>`;
   }).join('');
-  // Dropdown customizado com avatar nos usuários (responsável). O de função
-  // fica como select nativo — não tem avatar pra exibir.
-  stageRows.forEach((_, i) => applyFilterDropdown(`stage-resp-${i}`, { userIcon: true }));
+  // Cdrop em todos os 3 selects da linha (Área, Cargo, Responsável) — visual
+  // consistente com o resto da plataforma no estado aberto.
+  stageRows.forEach((_, i) => {
+    applyFilterDropdown(`stage-role-${i}`);
+    applyFilterDropdown(`stage-cargo-${i}`);
+    applyFilterDropdown(`stage-resp-${i}`, { userIcon: true });
+  });
   paintIcons();
 }
 
 function setStageRoleFilter(i, value) {
   if (!stageRows[i]) return;
   stageRows[i].roleFilter = value || null;
-  // Troca de função invalida o usuário escolhido (a menos que ele tenha essa função).
+  // Troca de área invalida o cargo escolhido (cargos são filtrados por área).
+  stageRows[i].responsiblePosition = null;
+  // Troca de área invalida o usuário escolhido (a menos que ele tenha essa área).
   if (stageRows[i].responsibleId) {
     const u = userById(stageRows[i].responsibleId);
     if (!u || (u.role || '') !== value) {
@@ -7711,11 +7811,25 @@ function setStageRoleFilter(i, value) {
       stageRows[i].responsibleRole = null;
     }
   }
-  // Se "Padrão do cliente" estava marcado, atualiza pra apontar pra nova função
+  // Se "Padrão do cliente" estava marcado, atualiza pra apontar pra nova área
   if (stageRows[i].responsibleRole) {
     stageRows[i].responsibleRole = value || null;
   }
-  renderStageRows(); // re-render imediato pra atualizar o dropdown de responsável
+  renderStageRows();
+}
+function setStagePositionFilter(i, value) {
+  if (!stageRows[i]) return;
+  stageRows[i].responsiblePosition = value || null;
+  // Se o user selecionado não tem esse cargo, limpa
+  if (stageRows[i].responsibleId && value) {
+    const u = userById(stageRows[i].responsibleId);
+    if (!u || (u.position || '') !== value) {
+      stageRows[i].responsibleId = null;
+      // Se limpou o user mas ainda tem área definida, mantém "padrão do cliente" que
+      // agora resolve por (área × cargo).
+    }
+  }
+  renderStageRows();
 }
 
 function setStageResponsible(i, value) {
@@ -11095,6 +11209,26 @@ function showClientsModelsView() {
    visuais achatados de todos os projetos do modelo). */
 let _modelsSearchQuery = '';
 const _modelsExpanded = new Set(); // ids de modelos abertos no acordeão
+// Filtros dos fluxos POR MODELO — estado local, não persiste.
+// { [templateId]: { search: '', type: '', sort: 'name' } }
+const _modelFlowFilters = {};
+
+function _mfFilterFor(tplId) {
+  if (!_modelFlowFilters[tplId]) _modelFlowFilters[tplId] = { search: '', type: '', sort: 'name' };
+  return _modelFlowFilters[tplId];
+}
+function onModelFlowSearch(tplId, v) {
+  _mfFilterFor(tplId).search = (v || '').trim().toLowerCase();
+  renderClientsModels();
+}
+function onModelFlowType(tplId, v) {
+  _mfFilterFor(tplId).type = v || '';
+  renderClientsModels();
+}
+function onModelFlowSort(tplId, v) {
+  _mfFilterFor(tplId).sort = v || 'name';
+  renderClientsModels();
+}
 
 function onModelsSearch(v) {
   _modelsSearchQuery = (v || '').trim().toLowerCase();
@@ -11159,20 +11293,63 @@ function renderModelCard(t) {
   // pra editar/excluir (endpoints exigem pIdx + fIdx).
   const flatFlows = [];
   projs.forEach((p, pi) => (p.flows || []).forEach((f, fi) => flatFlows.push({ f, p, pi, fi })));
+  // Aplica filtros (search / tipo / ordenação) e monta a barra de filtros.
+  const mff = _mfFilterFor(t.id);
+  const availableTypes = [...new Set(flatFlows.map(x => x.f.demandType).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
+  const filteredFlows = flatFlows.filter(({ f }) => {
+    if (mff.search) {
+      const hay = (f.name || '').toLowerCase() + ' ' + (f.demandType || '').toLowerCase();
+      if (!hay.includes(mff.search)) return false;
+    }
+    if (mff.type && f.demandType !== mff.type) return false;
+    return true;
+  }).sort((a, b) => {
+    if (mff.sort === 'type') {
+      const ta = (a.f.demandType || '').toLowerCase();
+      const tb = (b.f.demandType || '').toLowerCase();
+      if (ta !== tb) return ta.localeCompare(tb, 'pt-BR');
+    } else if (mff.sort === 'updated') {
+      // updated = última modificação (updatedAt do fluxo, ou fallback createdAt).
+      // Desc: mais recente primeiro.
+      const va = a.f.updatedAt || a.f.createdAt || '';
+      const vb = b.f.updatedAt || b.f.createdAt || '';
+      return vb.localeCompare(va);
+    }
+    // Default 'name'
+    return (a.f.name || '').localeCompare(b.f.name || '', 'pt-BR', { sensitivity: 'base' });
+  });
+  const filterBar = flatFlows.length ? `<div class="model-flow-filters" onclick="event.stopPropagation()">
+    <div class="filter-input-wrap" style="flex:1 1 200px;max-width:260px">
+      <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+      <input class="filter-input filter-input--with-icon" placeholder="Buscar fluxo…" value="${esc(mff.search)}" oninput="onModelFlowSearch('${t.id}', this.value)">
+    </div>
+    <select class="filter-select" onchange="onModelFlowType('${t.id}', this.value)">
+      <option value="">Todos os tipos</option>
+      ${availableTypes.map(tp => `<option value="${esc(tp)}" ${tp === mff.type ? 'selected' : ''}>${esc(tp)}</option>`).join('')}
+    </select>
+    <select class="filter-select" onchange="onModelFlowSort('${t.id}', this.value)" title="Ordenar por">
+      <option value="name" ${mff.sort === 'name' ? 'selected' : ''}>Nome (A-Z)</option>
+      <option value="type" ${mff.sort === 'type' ? 'selected' : ''}>Tipo (A-Z)</option>
+      <option value="updated" ${mff.sort === 'updated' ? 'selected' : ''}>Última modificação</option>
+    </select>
+  </div>` : '';
   const flowsGrid = flatFlows.length
-    ? `<div class="model-flows-grid">${flatFlows.map(({ f, p, pi, fi }) => `
-        <div class="model-flow-card" onclick="openTemplateFlowModal('${t.id}', ${pi}, ${fi})" title="Editar fluxo">
-          ${projCount > 1 ? `<span class="model-flow-card-proj" title="${esc(p.name)}">${esc(p.name)}</span>` : ''}
-          <span class="model-flow-icon" style="background:${modelFlowIconBg(p.color || t.color)}">
-            <i data-lucide="workflow"></i>
-          </span>
-          <span class="model-flow-card-name">${esc(f.name || 'Fluxo sem nome')}</span>
-          ${f.demandType ? `<span class="model-flow-card-type">${esc(f.demandType)}</span>` : ''}
-          <span class="model-flow-card-actions">
-            <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); openTemplateFlowModal('${t.id}', ${pi}, ${fi})" title="Editar fluxo"><i data-lucide="pencil" class="ic-sm"></i></button>
-            <button class="btn btn-ghost btn-sm bulk-danger" onclick="event.stopPropagation(); confirmDeleteTemplateFlow('${t.id}', ${pi}, ${fi})" title="Excluir fluxo"><i data-lucide="trash-2" class="ic-sm"></i></button>
-          </span>
-        </div>`).join('')}</div>`
+    ? (filteredFlows.length
+      ? `<div class="model-flows-grid">${filteredFlows.map(({ f, p, pi, fi }) => `
+          <div class="model-flow-card" onclick="openTemplateFlowModal('${t.id}', ${pi}, ${fi})" title="Editar fluxo">
+            ${projCount > 1 ? `<span class="model-flow-card-proj" title="${esc(p.name)}">${esc(p.name)}</span>` : ''}
+            <span class="model-flow-icon" style="background:${modelFlowIconBg(p.color || t.color)}">
+              <i data-lucide="workflow"></i>
+            </span>
+            <span class="model-flow-card-name">${esc(f.name || 'Fluxo sem nome')}</span>
+            ${f.demandType ? `<span class="model-flow-card-type">${esc(f.demandType)}</span>` : ''}
+            <span class="model-flow-card-actions">
+              <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); openTemplateFlowModal('${t.id}', ${pi}, ${fi})" title="Editar fluxo"><i data-lucide="pencil" class="ic-sm"></i></button>
+              <button class="btn btn-ghost btn-sm bulk-danger" onclick="event.stopPropagation(); confirmDeleteTemplateFlow('${t.id}', ${pi}, ${fi})" title="Excluir fluxo"><i data-lucide="trash-2" class="ic-sm"></i></button>
+            </span>
+          </div>`).join('')}</div>`
+      : '<div class="hours-empty" style="text-align:left;padding:6px 0">Nenhum fluxo bate com o filtro.</div>')
     : '<div class="hours-empty" style="text-align:left;padding:6px 0">Nenhum fluxo ainda.</div>';
 
   const projPickerBtn = projCount === 0
@@ -11195,6 +11372,7 @@ function renderModelCard(t) {
           <span class="model-section-label">FLUXOS</span>
           ${projPickerBtn}
         </div>
+        ${filterBar}
         ${flowsGrid}
       </div>
     </div>` : '';
@@ -11785,35 +11963,10 @@ function renderClientDetail(id) {
   if (driveEl)  driveEl.innerHTML  = renderLinkOrEmpty(c.driveFiles,  'Nenhum link do drive.');
   if (assetsEl) assetsEl.innerHTML = renderLinkOrEmpty(c.brandAssets, 'Nenhum link de ativos.');
 
-  // PESSOAS — uma linha por função cadastrada, com select de usuário padrão pro cliente.
-  // Persiste em c.roleAssignments: { [roleName]: userId | null }.
-  const peopleEl = $('client-detail-people');
-  const allRoles = (roles || []).slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-  const assigns = c.roleAssignments || {};
-  // Usuários candidatos pra cada função: filtra por workspace acessível + função
-  const wsUsers = users.filter(u =>
-    (u.workspaces || []).includes(c.workspaceId) || u.isAdmin
-  );
-  if (!allRoles.length) {
-    peopleEl.innerHTML = `<div class="client-people-empty">Nenhuma área cadastrada. Crie áreas em <a href="#" onclick="event.preventDefault(); goPage('users');">Usuários</a> para definir responsáveis padrão por cliente.</div>`;
-  } else {
-    peopleEl.innerHTML = allRoles.map(role => {
-      const candidates = wsUsers.filter(u => (u.role || '') === role.name);
-      const currentUid = assigns[role.name] || '';
-      const opts = [`<option value="">— Sem responsável padrão —</option>`]
-        .concat(candidates.map(u => `<option value="${u.id}" ${u.id === currentUid ? 'selected' : ''}>${esc(u.name)}</option>`))
-        .join('');
-      const currentUser = currentUid ? userById(currentUid) : null;
-      const previewAvatar = currentUser ? avatarHTML(currentUser, 'avatar') : `<div class="avatar" style="background:var(--surface-2);color:var(--text-muted);display:flex;align-items:center;justify-content:center"><i data-lucide="user" class="ic-sm"></i></div>`;
-      return `<div class="client-person-row">
-        <div class="client-person-role">${esc(role.name)}</div>
-        <div class="client-person-name">${previewAvatar}</div>
-        <select class="form-control" onchange="setClientRoleAssignment('${id}', '${esc(role.name).replace(/'/g, "\\'")}', this.value)" ${candidates.length ? '' : 'disabled'}>
-          ${candidates.length ? opts : `<option value="">Sem usuários nesta área</option>`}
-        </select>
-      </div>`;
-    }).join('');
-  }
+  // PESSOAS — matriz Área × Cargo. Para cada área com usuários no workspace,
+  // renderiza um card com uma linha por Cargo presente nos users daquela área.
+  // Persiste em c.roleAssignments: { [area]: { [cargo]: userId } | userId(legado) }.
+  renderRoleCargoMatrix('client-detail-people', c, 'setClientRoleCargoAssignment', id);
 
   // TEMPO DEDICADO
   renderClientTimeBlock(id);
@@ -11839,6 +11992,109 @@ async function setClientRoleAssignment(clientId, roleName, userId) {
     c.roleAssignments = next;
     renderClientDetail(clientId);
     toast('Responsável padrão atualizado.');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+/* ─── Matriz Área × Cargo (Painel Pessoas) ───────────────────────
+   entity = client OU project. Persiste em entity.roleAssignments:
+     { [area]: { [cargo]: userId } | userId (legado, string) }
+   O renderer só mostra combinações (área × cargo) presentes nos usuários do
+   workspace daquele entity — evita poluir com cargos vazios. */
+function _entityAssignmentValue(entity, area, cargo) {
+  const a = entity.roleAssignments && entity.roleAssignments[area];
+  if (!a) return '';
+  if (typeof a === 'string') {
+    // Legado: 1 user pra área sem distinção de cargo. Considera valor pra "qualquer cargo".
+    return a;
+  }
+  return a[cargo] || '';
+}
+function renderRoleCargoMatrix(elId, entity, handlerName, entityId) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  const allRoles = (roles || []).slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  const allPositions = (positions || []).slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  const wsU = (users || []).filter(u => u.active !== false && ((u.workspaces || []).includes(entity.workspaceId) || u.isAdmin));
+
+  if (!allRoles.length) {
+    el.innerHTML = `<div class="client-people-empty">Nenhuma área cadastrada. Crie áreas em <a href="#" onclick="event.preventDefault(); goPage('users');">Usuários</a> para definir responsáveis.</div>`;
+    return;
+  }
+
+  // Pra cada área, quais cargos aparecem nos users daquela área do workspace.
+  const cards = allRoles.map(role => {
+    const candidatesAll = wsU.filter(u => (u.role || '') === role.name);
+    if (!candidatesAll.length) return null; // esconde áreas sem usuário no workspace
+    const cargosPresent = allPositions.filter(p => candidatesAll.some(u => (u.position || '') === p.name));
+    // Se ninguém tem cargo definido, mostra 1 linha "— Sem cargo —" com o pool inteiro.
+    const rows = cargosPresent.length ? cargosPresent.map(p => {
+      const cand = candidatesAll.filter(u => (u.position || '') === p.name);
+      return _matrixRow(role.name, p.name, cand, entity, handlerName, entityId);
+    }).join('') : _matrixRow(role.name, '', candidatesAll, entity, handlerName, entityId);
+    return `<div class="rca-card">
+      <div class="rca-card-head">${esc(role.name).toUpperCase()}</div>
+      <div class="rca-card-body">${rows}</div>
+    </div>`;
+  }).filter(Boolean).join('');
+
+  el.innerHTML = cards || `<div class="client-people-empty">Nenhum usuário no workspace deste cliente tem área definida.</div>`;
+  paintIcons();
+}
+function _matrixRow(area, cargo, candidates, entity, handlerName, entityId) {
+  const cur = _entityAssignmentValue(entity, area, cargo);
+  const opts = [`<option value="">— Sem responsável —</option>`]
+    .concat(candidates.map(u => `<option value="${u.id}" ${u.id === cur ? 'selected' : ''}>${esc(u.name)}</option>`))
+    .join('');
+  const curUser = cur ? userById(cur) : null;
+  const previewAvatar = curUser
+    ? avatarHTML(curUser, 'avatar avatar-sm')
+    : `<div class="avatar avatar-sm" style="background:var(--surface-2);color:var(--text-muted);display:flex;align-items:center;justify-content:center"><i data-lucide="user" class="ic-xs"></i></div>`;
+  const areaEsc = area.replace(/'/g, "\\'");
+  const cargoEsc = cargo.replace(/'/g, "\\'");
+  return `<div class="rca-row">
+    <div class="rca-cargo">${cargo ? esc(cargo).toUpperCase() : '<span style="color:var(--text-muted);font-weight:400">Sem cargo</span>'}</div>
+    <div class="rca-avatar">${previewAvatar}</div>
+    <select class="form-control rca-select" onchange="${handlerName}('${entityId}', '${areaEsc}', '${cargoEsc}', this.value)">${opts}</select>
+  </div>`;
+}
+async function setClientRoleCargoAssignment(clientId, area, cargo, userId) {
+  const c = clientById(clientId);
+  if (!c) return;
+  const nextRA = Object.assign({}, c.roleAssignments || {});
+  // Se o valor atual da área é string (legado), migra pra objeto na primeira mudança.
+  let areaMap = nextRA[area];
+  if (typeof areaMap === 'string') areaMap = { __legacy__: areaMap };
+  if (!areaMap || typeof areaMap !== 'object') areaMap = {};
+  else areaMap = Object.assign({}, areaMap);
+  if (userId) areaMap[cargo || '__any__'] = userId;
+  else delete areaMap[cargo || '__any__'];
+  // Se ficou vazio, remove a área do mapa
+  if (Object.keys(areaMap).length === 0) delete nextRA[area];
+  else nextRA[area] = areaMap;
+  try {
+    await api('/clients/' + clientId, 'PUT', { roleAssignments: nextRA });
+    c.roleAssignments = nextRA;
+    renderClientDetail(clientId);
+    toast('Responsável atualizado.');
+  } catch (e) { toast(e.message, 'error'); }
+}
+async function setProjectRoleCargoAssignment(projectId, area, cargo, userId) {
+  const p = projectById(projectId);
+  if (!p) return;
+  const nextRA = Object.assign({}, p.roleAssignments || {});
+  let areaMap = nextRA[area];
+  if (typeof areaMap === 'string') areaMap = { __legacy__: areaMap };
+  if (!areaMap || typeof areaMap !== 'object') areaMap = {};
+  else areaMap = Object.assign({}, areaMap);
+  if (userId) areaMap[cargo || '__any__'] = userId;
+  else delete areaMap[cargo || '__any__'];
+  if (Object.keys(areaMap).length === 0) delete nextRA[area];
+  else nextRA[area] = areaMap;
+  try {
+    await api('/projects/' + projectId, 'PUT', { roleAssignments: nextRA });
+    p.roleAssignments = nextRA;
+    renderProjectDetail(projectId);
+    toast('Responsável atualizado.');
   } catch (e) { toast(e.message, 'error'); }
 }
 
@@ -11941,12 +12197,23 @@ function renderClientTimeBlock(clientId) {
     const linePath = points.length ? 'M ' + points.map(p => `${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(' L ') : '';
     const areaPath = points.length ? `${linePath} L ${points[points.length-1][0].toFixed(1)} ${padT + innerH} L ${points[0][0].toFixed(1)} ${padT + innerH} Z` : '';
     const peak = Math.ceil(max);
+    // preserveAspectRatio="none" estica X e Y independentemente — <text> nativo
+    // dentro do SVG sai deformado. Labels do eixo Y ficam em HTML absoluto sobre
+    // o wrap, com posições em % (invariantes à escala do SVG).
+    const yTopPct  = (padT / h) * 100;
+    const yMidPct  = ((padT + innerH/2) / h) * 100;
+    const yBotPct  = ((padT + innerH) / h) * 100;
     chartEl.innerHTML = `<div class="client-chart-wrap">
       <div class="client-chart-head">
         <div class="client-chart-title">Horas</div>
         <div class="client-chart-value">${fmtHours(totalHours)} <span class="client-chart-delta">no período</span></div>
       </div>
-      <div class="chart-hover-host" id="cli-chart-host">
+      <div class="chart-hover-host chart-with-axis" id="cli-chart-host">
+        <div class="chart-y-axis">
+          <span class="chart-y-tick" style="top:${yTopPct.toFixed(2)}%">${peak}h</span>
+          <span class="chart-y-tick" style="top:${yMidPct.toFixed(2)}%">${Math.round(peak/2)}h</span>
+          <span class="chart-y-tick" style="top:${yBotPct.toFixed(2)}%">0</span>
+        </div>
         <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="width:100%;height:200px;display:block">
           <defs>
             <linearGradient id="clientHoursGrad" x1="0" x2="0" y1="0" y2="1">
@@ -11958,11 +12225,6 @@ function renderClientTimeBlock(clientId) {
             <line x1="${padL}" y1="${padT}" x2="${w - padR}" y2="${padT}"/>
             <line x1="${padL}" y1="${padT + innerH/2}" x2="${w - padR}" y2="${padT + innerH/2}"/>
             <line x1="${padL}" y1="${padT + innerH}" x2="${w - padR}" y2="${padT + innerH}"/>
-          </g>
-          <g fill="var(--text-muted)" font-size="11" font-family="'JetBrains Mono', monospace">
-            <text x="${padL - 6}" y="${padT + 4}" text-anchor="end">${peak}h</text>
-            <text x="${padL - 6}" y="${padT + innerH/2 + 4}" text-anchor="end">${Math.round(peak/2)}h</text>
-            <text x="${padL - 6}" y="${padT + innerH + 4}" text-anchor="end">0</text>
           </g>
           ${areaPath ? `<path d="${areaPath}" fill="url(#clientHoursGrad)"/>` : ''}
           ${linePath ? `<path d="${linePath}" fill="none" stroke="#3CE3A0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>` : ''}
@@ -12033,33 +12295,8 @@ function renderProjectDetail(id) {
   if (driveEl)  driveEl.innerHTML  = renderLinkOrEmpty(p.driveFiles,  'Nenhum link do drive.');
   if (assetsEl) assetsEl.innerHTML = renderLinkOrEmpty(p.brandAssets, 'Nenhum link de ativos.');
 
-  // PESSOAS — mesma lógica de cliente, mas persistindo em project.roleAssignments.
-  const peopleEl = $('project-detail-people');
-  const allRoles = (roles || []).slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-  const assigns = p.roleAssignments || {};
-  const wsUsers = users.filter(u => (u.workspaces || []).includes(p.workspaceId) || u.isAdmin);
-  if (!allRoles.length) {
-    peopleEl.innerHTML = `<div class="client-people-empty">Nenhuma área cadastrada. Crie áreas em <a href="#" onclick="event.preventDefault(); goPage('users');">Usuários</a> para definir responsáveis padrão por projeto.</div>`;
-  } else {
-    peopleEl.innerHTML = allRoles.map(role => {
-      const candidates = wsUsers.filter(u => (u.role || '') === role.name);
-      const currentUid = assigns[role.name] || '';
-      const opts = [`<option value="">— Sem responsável padrão —</option>`]
-        .concat(candidates.map(u => `<option value="${u.id}" ${u.id === currentUid ? 'selected' : ''}>${esc(u.name)}</option>`))
-        .join('');
-      const currentUser = currentUid ? userById(currentUid) : null;
-      const previewAvatar = currentUser
-        ? avatarHTML(currentUser, 'avatar')
-        : `<div class="avatar" style="background:var(--surface-2);color:var(--text-muted);display:flex;align-items:center;justify-content:center"><i data-lucide="user" class="ic-sm"></i></div>`;
-      return `<div class="client-person-row">
-        <div class="client-person-role">${esc(role.name)}</div>
-        <div class="client-person-name">${previewAvatar}</div>
-        <select class="form-control" onchange="setProjectRoleAssignment('${id}', '${esc(role.name).replace(/'/g, "\\'")}', this.value)" ${candidates.length ? '' : 'disabled'}>
-          ${candidates.length ? opts : `<option value="">Sem usuários nesta área</option>`}
-        </select>
-      </div>`;
-    }).join('');
-  }
+  // PESSOAS — matriz Área × Cargo (mesmo helper do cliente, agora com project.roleAssignments).
+  renderRoleCargoMatrix('project-detail-people', p, 'setProjectRoleCargoAssignment', id);
 
   renderProjectTimeBlock(id);
   // GALERIA DE ANEXOS
@@ -12180,12 +12417,21 @@ function renderProjectTimeBlock(projectId) {
     const linePath = points.length ? 'M ' + points.map(pt => `${pt[0].toFixed(1)} ${pt[1].toFixed(1)}`).join(' L ') : '';
     const areaPath = points.length ? `${linePath} L ${points[points.length-1][0].toFixed(1)} ${padT + innerH} L ${points[0][0].toFixed(1)} ${padT + innerH} Z` : '';
     const peak = Math.ceil(max);
+    // Labels do eixo Y em HTML (fora do SVG stretchado — evita texto deformado).
+    const yTopPct = (padT / h) * 100;
+    const yMidPct = ((padT + innerH/2) / h) * 100;
+    const yBotPct = ((padT + innerH) / h) * 100;
     chartEl.innerHTML = `<div class="client-chart-wrap">
       <div class="client-chart-head">
         <div class="client-chart-title">Horas</div>
         <div class="client-chart-value">${fmtHours(totalHours)} <span class="client-chart-delta">no período</span></div>
       </div>
-      <div class="chart-hover-host" id="proj-chart-host">
+      <div class="chart-hover-host chart-with-axis" id="proj-chart-host">
+        <div class="chart-y-axis">
+          <span class="chart-y-tick" style="top:${yTopPct.toFixed(2)}%">${peak}h</span>
+          <span class="chart-y-tick" style="top:${yMidPct.toFixed(2)}%">${Math.round(peak/2)}h</span>
+          <span class="chart-y-tick" style="top:${yBotPct.toFixed(2)}%">0</span>
+        </div>
         <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="width:100%;height:200px;display:block">
           <defs>
             <linearGradient id="projectHoursGrad" x1="0" x2="0" y1="0" y2="1">
@@ -12197,11 +12443,6 @@ function renderProjectTimeBlock(projectId) {
             <line x1="${padL}" y1="${padT}" x2="${w - padR}" y2="${padT}"/>
             <line x1="${padL}" y1="${padT + innerH/2}" x2="${w - padR}" y2="${padT + innerH/2}"/>
             <line x1="${padL}" y1="${padT + innerH}" x2="${w - padR}" y2="${padT + innerH}"/>
-          </g>
-          <g fill="var(--text-muted)" font-size="11" font-family="'JetBrains Mono', monospace">
-            <text x="${padL - 6}" y="${padT + 4}" text-anchor="end">${peak}h</text>
-            <text x="${padL - 6}" y="${padT + innerH/2 + 4}" text-anchor="end">${Math.round(peak/2)}h</text>
-            <text x="${padL - 6}" y="${padT + innerH + 4}" text-anchor="end">0</text>
           </g>
           ${areaPath ? `<path d="${areaPath}" fill="url(#projectHoursGrad)"/>` : ''}
           ${linePath ? `<path d="${linePath}" fill="none" stroke="#3CE3A0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>` : ''}
@@ -15063,8 +15304,11 @@ function _wizardCardHandlers(el, onSelect) {
 }
 
 /* Recentes — guarda os últimos IDs usados por (usuário × tipo) em localStorage.
-   MRU: recém-usado vai pra frente, cai fora da lista após WIZARD_RECENTS_MAX. */
+   MRU: recém-usado vai pra frente, cai fora da lista após WIZARD_RECENTS_MAX.
+   Snapshot: ao abrir o wizard, congela a lista pra não reordenar em tempo real
+   enquanto o usuário navega (evita "pular" cards durante duplo clique). */
 const WIZARD_RECENTS_MAX = 5;
+let _wizardRecentsSnapshot = { client: null, flow: null };
 function _recentsKey(kind) { return `kastor-recents-${kind}-${me?.id || 'anon'}`; }
 function wizardGetRecents(kind) {
   try {
@@ -15079,12 +15323,18 @@ function wizardPushRecent(kind, id) {
   arr.unshift(id);
   arr = arr.slice(0, WIZARD_RECENTS_MAX);
   try { localStorage.setItem(_recentsKey(kind), JSON.stringify(arr)); } catch {}
+  // NÃO atualiza o snapshot — mudanças só valem no próximo openNewDemand.
+}
+function wizardSnapshotRecents() {
+  _wizardRecentsSnapshot = {
+    client: wizardGetRecents('client'),
+    flow:   wizardGetRecents('flow')
+  };
 }
 /* Ordena a lista completa colocando os recentes primeiro (mesma ordem do MRU),
-   depois o resto na ordem original. Devolve um objeto separando pra que o render
-   possa exibir cabeçalho "Recentes" e "Todos". */
+   depois o resto na ordem original. Usa o snapshot da abertura do wizard. */
 function wizardSplitRecents(kind, fullList) {
-  const recentIds = wizardGetRecents(kind);
+  const recentIds = (_wizardRecentsSnapshot?.[kind]) || wizardGetRecents(kind);
   const byId = new Map(fullList.map(x => [x.id, x]));
   const recents = recentIds.map(id => byId.get(id)).filter(Boolean);
   const recentSet = new Set(recents.map(x => x.id));
@@ -15201,8 +15451,9 @@ function renderWizardFlows() {
   if (!wrap) return;
   const q = norm(($('dw-flow-search')?.value || '').trim());
   const typeFilter = $('dw-flow-type')?.value || '';
-  const pid = wizardState.projectId;
-  const allFlows = flowsForProject(pid);
+  // Fluxos pertencem ao CLIENTE — cross-workspace. Projeto define o "onde"
+  // da demanda, mas não restringe os fluxos disponíveis.
+  const allFlows = flowsForClient(wizardState.clientId);
   // Popula filtro de tipo
   const types = [...new Set(allFlows.map(f => f.demandType).filter(Boolean))].sort();
   const tSel = $('dw-flow-type');

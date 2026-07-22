@@ -1869,15 +1869,9 @@ function buildClientPayload(body, base) {
   if (typeof body.driveFiles === 'string') c.driveFiles = normalizeUrlSrv(body.driveFiles);
   if (typeof body.brandAssets === 'string') c.brandAssets = normalizeUrlSrv(body.brandAssets);
   if (typeof body.guidelines === 'string') c.guidelines = body.guidelines;
-  // roleAssignments: { [roleName]: userId | null } — usuário padrão por função pro cliente
+  // roleAssignments: aceita legado { [area]: userId } ou novo { [area]: { [cargo]: userId } }
   if (body.roleAssignments && typeof body.roleAssignments === 'object') {
-    const out = {};
-    for (const [role, uidVal] of Object.entries(body.roleAssignments)) {
-      const r = String(role || '').trim();
-      if (!r) continue;
-      out[r] = uidVal ? String(uidVal) : null;
-    }
-    c.roleAssignments = out;
+    c.roleAssignments = sanitizeRoleAssignments(body.roleAssignments);
   }
   if (body.avatar !== undefined) {
     if (!body.avatar) c.avatar = null;
@@ -2150,7 +2144,9 @@ app.post('/api/client-templates/:id/projects/:pIdx/flows', requireAuth, (req, re
     demandType: String(b.demandType || ''),
     // Stages guardadas SEM id — id novo é gerado a cada instância criada.
     stages: stages.map(s => ({ label: s.label, color: s.color, done: !!s.done,
-      responsibleRole: s.responsibleRole || null, deadlineDays: s.deadlineDays || null }))
+      responsibleRole: s.responsibleRole || null, deadlineDays: s.deadlineDays || null })),
+    createdAt: nowISO(),
+    updatedAt: nowISO()
   };
   if (!Array.isArray(ptpl.flows)) ptpl.flows = [];
   ptpl.flows.push(ftpl);
@@ -2165,7 +2161,9 @@ app.post('/api/client-templates/:id/projects/:pIdx/flows', requireAuth, (req, re
     const proj = db.projects.find(p => p.clientId === client.id && p.name === ptpl.name && notDeleted(p));
     if (!proj) { skippedClients.push(client.id); continue; }
     const flow = {
-      id: uid(), workspaceId: proj.workspaceId, projectId: proj.id,
+      id: uid(), workspaceId: proj.workspaceId,
+      // Fluxos pertencem ao CLIENTE, não ao projeto — projectId fica null.
+      projectId: null,
       clientId: client.id, client: client.name,
       icon: null,
       name: ftpl.name, demandType: ftpl.demandType,
@@ -2209,6 +2207,7 @@ app.put('/api/client-templates/:id/projects/:pIdx/flows/:fIdx', requireAuth, (re
       deadlineDays: s.deadlineDays || null
     }));
   }
+  ftpl.updatedAt = nowISO(); // usado no sort "Última modificação" da tela de Modelos
   saveEntity('clientTemplates', t);
   res.json(t);
 });
@@ -2355,13 +2354,10 @@ app.post('/api/projects', requireAuth, (req, res) => {
   // Após criado, projeto é independente — edições no cliente NÃO se propagam.
   let initialAssigns = {};
   if (roleAssignments && typeof roleAssignments === 'object') {
-    for (const [role, uidVal] of Object.entries(roleAssignments)) {
-      const r = String(role || '').trim();
-      if (!r) continue;
-      initialAssigns[r] = uidVal ? String(uidVal) : null;
-    }
+    initialAssigns = sanitizeRoleAssignments(roleAssignments);
   } else if (clientEntity.roleAssignments && typeof clientEntity.roleAssignments === 'object') {
-    initialAssigns = { ...clientEntity.roleAssignments };
+    // Deep clone pra não compartilhar referência do nested {cargo: uid} com o cliente
+    initialAssigns = sanitizeRoleAssignments(clientEntity.roleAssignments);
   }
   const p = {
     id: uid(), workspaceId: clientEntity.workspaceId, name: String(name).trim(),
@@ -2392,13 +2388,7 @@ app.put('/api/projects/:id', requireAuth, (req, res) => {
   // roleAssignments: substituição integral (mesmo padrão do cliente).
   // Edição no projeto é INDEPENDENTE do cliente — não propaga.
   if (roleAssignments && typeof roleAssignments === 'object') {
-    const out = {};
-    for (const [role, uidVal] of Object.entries(roleAssignments)) {
-      const r = String(role || '').trim();
-      if (!r) continue;
-      out[r] = uidVal ? String(uidVal) : null;
-    }
-    p.roleAssignments = out;
+    p.roleAssignments = sanitizeRoleAssignments(roleAssignments);
   }
   // Re-vincular a outro cliente (ou nenhum)
   if (clientId !== undefined) {
@@ -2507,6 +2497,36 @@ app.get('/api/flows/:id', requireAuth, (req, res) => {
   res.json(f);
 });
 
+/* Normaliza roleAssignments aceitando os dois formatos:
+   - Legado: { [area]: userId }                    (string)
+   - Novo:   { [area]: { [cargo]: userId, ... } }  (matriz Área × Cargo)
+   Descarta chaves/valores vazios e força userId a string. Se o valor for objeto
+   mas ficar vazio, remove a área do mapa. */
+function sanitizeRoleAssignments(raw) {
+  if (!raw || typeof raw !== 'object') return {};
+  const out = {};
+  for (const [role, val] of Object.entries(raw)) {
+    const r = String(role || '').trim();
+    if (!r) continue;
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      const inner = {};
+      for (const [cargo, uid] of Object.entries(val)) {
+        const c = String(cargo || '').trim();
+        if (!c || !uid) continue;
+        inner[c] = String(uid);
+      }
+      if (Object.keys(inner).length) out[r] = inner;
+    } else if (val) {
+      const s = String(val);
+      // Descarta valores corrompidos por versão antiga que chamava String(obj) sobre { [cargo]: uid }
+      if (s === '[object Object]') continue;
+      out[r] = s;
+    }
+    // val falsy (null/'') → omitido, remove a área do mapa
+  }
+  return out;
+}
+
 /* Lista de itens default de checklist do fluxo. Cada item só tem text. */
 function sanitizeChecklistTemplate(items) {
   if (!Array.isArray(items)) return [];
@@ -2529,6 +2549,9 @@ function sanitizeStages(stages) {
     roleFilter: s.roleFilter ? String(s.roleFilter).trim() : (s.responsibleRole ? String(s.responsibleRole).trim() : null),
     responsibleId: s.responsibleRole ? null : (s.responsibleId || null),
     responsibleRole: s.responsibleRole ? String(s.responsibleRole).trim() : null,
+    // Cargo (opcional) — combinado com responsibleRole vira o par (área × cargo)
+    // usado pra resolver via client.roleAssignments[area][cargo].
+    responsiblePosition: s.responsiblePosition ? String(s.responsiblePosition).trim() : null,
     deadlineDays: Number(s.deadlineDays) > 0 ? Math.round(Number(s.deadlineDays)) : null
   })).filter(s => s.label);
   if (clean.length < 2) return null;
@@ -2537,20 +2560,41 @@ function sanitizeStages(stages) {
 }
 
 // Resolve o responsável de uma etapa pra uma demanda específica.
-// Se a etapa aponta pra um usuário, retorna o id. Se aponta pra uma função
-// (responsibleRole), busca primeiro em project.roleAssignments[role] (projeto
-// pode ter atribuições próprias) e cai pra client.roleAssignments[role].
+// Nova lógica (matriz Área × Cargo):
+//   1. Etapa tem cargo → busca client.roleAssignments[area][cargo]
+//   2. Sem match ou sem cargo → busca client.roleAssignments[area]:
+//        - Se é string (legado) → usa direto
+//        - Se é objeto (novo) → pega qualquer valor não vazio (fallback)
+//   3. Projeto tem prioridade sobre cliente na primeira tentativa.
+//   4. Se etapa só tem responsibleId → usa direto.
+function _pickFromAssignment(assign, cargo) {
+  if (!assign) return null;
+  if (typeof assign === 'string') return assign; // legado (só área)
+  if (typeof assign === 'object') {
+    if (cargo && assign[cargo]) return assign[cargo];
+    // fallback: pega o primeiro user não vazio da área
+    for (const k of Object.keys(assign)) {
+      if (assign[k]) return assign[k];
+    }
+  }
+  return null;
+}
 function resolveStageOwner(stage, project) {
   if (!stage) return null;
   if (stage.responsibleRole) {
     const role = stage.responsibleRole;
+    const cargo = stage.responsiblePosition || null;
     // Projeto tem prioridade — é copiado do cliente na criação mas evolui independente.
-    if (project && project.roleAssignments && project.roleAssignments[role]) {
-      return project.roleAssignments[role];
+    if (project && project.roleAssignments) {
+      const pu = _pickFromAssignment(project.roleAssignments[role], cargo);
+      if (pu) return pu;
     }
     const c = project && project.clientId ? db.clients.find(x => x.id === project.clientId) : null;
-    const uid = c && c.roleAssignments ? c.roleAssignments[role] : null;
-    return uid || null;
+    if (c && c.roleAssignments) {
+      const cu = _pickFromAssignment(c.roleAssignments[role], cargo);
+      if (cu) return cu;
+    }
+    return null;
   }
   return stage.responsibleId || null;
 }
@@ -2807,9 +2851,17 @@ app.post('/api/demands', requireAuth, (req, res) => {
   if (!String(b.name || '').trim()) return res.status(400).json({ error: 'Nome da demanda é obrigatório' });
   const project = db.projects.find(p => p.id === b.projectId);
   if (!project || !canAccessWs(req.user, project.workspaceId)) return res.status(400).json({ error: 'Selecione um projeto válido' });
-  const flow = db.flows.find(f => f.id === b.flowId && f.workspaceId === project.workspaceId)
-            || db.flows.find(f => f.projectId === project.id)
-            || db.flows.find(f => f.workspaceId === project.workspaceId);
+  // Fluxo pode ser de qualquer workspace acessível (fluxos pertencem ao CLIENTE
+  // agora, não ao workspace). Prioriza: id explícito → mesmo cliente → geral.
+  let flow = null;
+  if (b.flowId) {
+    const cand = db.flows.find(f => f.id === b.flowId);
+    if (cand && canAccessWs(req.user, cand.workspaceId)) flow = cand;
+  }
+  if (!flow) {
+    flow = db.flows.find(f => f.clientId === project.clientId && canAccessWs(req.user, f.workspaceId))
+        || db.flows.find(f => f.workspaceId === project.workspaceId);
+  }
   if (!flow) return res.status(400).json({ error: 'Nenhum fluxo disponível para este projeto' });
   const stage = stageById(flow, b.status) || flow.stages[0];
   const stageDue = stage.deadlineDays ? addDays(today(), stage.deadlineDays) : (b.deadline || null);
@@ -3147,17 +3199,19 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
     d.stageHistory.push({ stageId: stage.id, enteredAt: nowISO(), dueDate: d.stageDueDate });
     addHistory(d, req.user.id, 'stage_changed', { fromId: oldStageId, toId: stage.id });
     fired.push('demand.stage_changed');
-    // responsável padrão da etapa assume a demanda (se configurado e sem override no payload).
+    // Responsável padrão da etapa assume a demanda (se configurado e sem override no payload).
     // Override por instância (d.stageResponsibles[stageId]) tem precedência sobre o padrão do fluxo.
+    // Se a nova etapa não define responsável (autoOwner=null), LIMPA d.ownerId — evita herdar
+    // o dono da etapa anterior (importante pra etapas terminais tipo "Concluída").
     if (b.ownerId === undefined) {
       const instOverride = (d.stageResponsibles && typeof d.stageResponsibles === 'object') ? d.stageResponsibles[stage.id] : undefined;
       const projForResolve = db.projects.find(p => p.id === d.projectId);
       const autoOwner = (instOverride !== undefined) ? instOverride : (resolveStageOwner(stage, projForResolve) || null);
-      if (autoOwner) {
-        const prevOwner = d.ownerId;
-        d.ownerId = autoOwner;
-        if (d.ownerId !== prevOwner) {
-          addHistory(d, req.user.id, 'owner_auto_assigned', { fromId: prevOwner, toId: d.ownerId, byStage: stage.id });
+      const prevOwner = d.ownerId;
+      d.ownerId = autoOwner || null;
+      if (d.ownerId !== prevOwner) {
+        addHistory(d, req.user.id, 'owner_auto_assigned', { fromId: prevOwner, toId: d.ownerId, byStage: stage.id });
+        if (d.ownerId && d.ownerId !== req.user.id) {
           notify(d.ownerId, 'stage_assigned', { demandId: d.id, demandName: d.name, stageName: stage.label }, req.user.id, appBaseUrl(req));
           fired.push('demand.stage_assigned');
         }
@@ -3319,10 +3373,11 @@ app.post('/api/demands/bulk', requireAuth, (req, res) => {
         const wasCompleted = !!d.completedAt;
         if (realStage.done && !d.completedAt) d.completedAt = nowISO();
         if (!realStage.done) d.completedAt = null;
-        // Auto-atribui responsável da nova etapa (mesma lógica do PUT individual)
+        // Auto-atribui responsável da nova etapa (mesma lógica do PUT individual).
+        // Se etapa não define ninguém → limpa d.ownerId em vez de herdar da etapa anterior.
         const _bulkProj = db.projects.find(p => p.id === d.projectId);
-        const stageOwner = resolveStageOwner(realStage, _bulkProj);
-        if (stageOwner && stageOwner !== d.ownerId) {
+        const stageOwner = resolveStageOwner(realStage, _bulkProj) || null;
+        if (stageOwner !== d.ownerId) {
           const prevOwner = d.ownerId;
           d.ownerId = stageOwner;
           addHistory(d, req.user.id, 'owner_auto_assigned', { fromId: prevOwner, toId: d.ownerId, byStage: realStage.id });

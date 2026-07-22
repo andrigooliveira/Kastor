@@ -403,6 +403,14 @@ body.user-moderator .full-admin-only { display: none !important; }
 }
 .model-project-pill-actions .btn:hover { background: var(--surface-2); }
 
+/* Barra de filtros dentro da seção FLUXOS de um modelo. */
+.model-flow-filters {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.model-flow-filters .filter-input-wrap { flex: 1 1 200px; min-width: 160px; }
+.model-flow-filters .filter-select { min-width: 140px; }
+
 /* Grid de fluxos — cards visuais com ícone grande + nome + tipo. */
 .model-flows-grid {
   display: grid;
@@ -1265,6 +1273,40 @@ tr:hover td { background: var(--surface-2); }
 .pill-moderator { background: rgba(11, 87, 208, 0.18); color: #0b57d0; }
 .pill-success { background: var(--success-dim); color: var(--success); }
 
+/* ── Matriz Área × Cargo (Painel Pessoas do cliente/projeto) ──
+   Card por Área com header + linhas (Cargo · Avatar · Dropdown user). */
+.rca-card {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 12px;
+  background: var(--surface);
+}
+.rca-card-head {
+  padding: 10px 14px;
+  background: var(--surface-2);
+  font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--hairline);
+}
+.rca-card-body { padding: 6px 14px 10px; }
+.rca-row {
+  display: grid;
+  grid-template-columns: minmax(100px, 130px) 30px 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--hairline);
+}
+.rca-row:last-child { border-bottom: none; }
+.rca-cargo {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+  color: var(--text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rca-avatar { display: flex; align-items: center; justify-content: center; }
+.rca-select { width: 100%; }
+
 /* Grid lado-a-lado de Áreas + Cargos na tela de Usuários. Colapsa em telas pequenas. */
 .roles-positions-grid {
   display: grid;
@@ -1295,7 +1337,13 @@ tr:hover td { background: var(--surface-2); }
 }
 .filters-bar .filter-cdrop-avatar { width: 18px !important; height: 18px !important; font-size: 8px !important; }
 /* Native <select> raw (quando não passa por applyFilterDropdown) — mesma altura. */
-.filters-bar .filter-select { height: 34px; font-size: 12px; padding: 0 10px; }
+.filters-bar .filter-select,
+.filters-bar .filter-select:hover,
+.filters-bar .filter-select:focus {
+  height: 34px; font-size: 12px; padding: 0 28px 0 10px;
+  background-position: right 8px center;
+  background-repeat: no-repeat;
+}
 .filters-bar .filter-period-trigger {
   height: 34px; min-width: 110px; padding: 0 10px 0 12px; font-size: 12px; gap: 6px;
 }
@@ -1494,10 +1542,22 @@ tr:hover td { background: var(--surface-2); }
   outline: none;
   transition: border-color .15s var(--ease-out), background .15s var(--ease-out), color .15s var(--ease-out), box-shadow .15s var(--ease-out);
 }
-/* Chevron do trigger: respiro extra e tamanho/cor consistentes (não fica colado na borda) */
-.filter-cdrop-trigger > i[data-lucide="chevron-down"] {
+/* Chevron do trigger: respiro extra e tamanho/cor consistentes (não fica colado na borda).
+   Vale tanto pro <i data-lucide> quanto pro <svg> que o lucide gera no lugar. */
+.filter-cdrop-trigger > i[data-lucide="chevron-down"],
+.filter-cdrop-trigger > svg.lucide-chevron-down {
   margin-left: 6px; opacity: 0.65; flex-shrink: 0;
 }
+/* SVG/i dentro de triggers de dropdown NÃO capturam o click — deixa o botão
+   (parent) receber. Cobre o bug em que clicar exatamente sobre a seta não abria
+   o menu em alguns navegadores. */
+.filter-cdrop-trigger > i,
+.filter-cdrop-trigger > svg,
+.cdrop-trigger > i,
+.cdrop-trigger > svg,
+.owner-picker > .caret,
+.owner-picker > .caret > i,
+.owner-picker > .caret > svg { pointer-events: none; }
 .filter-cdrop-trigger:hover { background: var(--surface-2); color: var(--text); }
 .filter-cdrop.filtering .filter-cdrop-trigger { border-color: var(--accent); background: var(--accent-dim); color: var(--accent-text); }
 .filter-cdrop-label { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1676,6 +1736,63 @@ tr:hover td { background: var(--surface-2); }
 textarea.form-control { height: auto; min-height: 80px; padding: 11px 14px; }
 .form-control:hover { background: var(--surface-3); }
 .form-control:focus { background: var(--surface-2); border-color: var(--accent); box-shadow: var(--shadow-focus); }
+
+/* ── SELECTS NATIVOS: padronização visual com o cdrop ──
+   Todo <select> (form-control ou filter-select) recebe o mesmo chevron
+   custom (SVG inline) e appearance: none — o clique em qualquer parte do
+   elemento (inclusive sobre o chevron) abre o dropdown nativo.
+
+   CUIDADO: as regras base .form-control / :hover / :focus usam `background:`
+   shorthand (resetam background-image/repeat/size/position pros defaults). Por
+   isso repetimos TODAS as background-* props aqui e nos estados hover/focus,
+   e usamos background-color longhand em vez de shorthand pra não perder o
+   chevron ao trocar de estado (o bug do "chevron tilando"). */
+select.form-control,
+select.filter-select,
+select.wizard-cust-resp,
+select.form-control:hover,
+select.filter-select:hover,
+select.wizard-cust-resp:hover,
+select.form-control:focus,
+select.filter-select:focus,
+select.wizard-cust-resp:focus {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  padding-right: 34px;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23A0A0A0' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 12px 12px;
+}
+select.form-control::-ms-expand,
+select.filter-select::-ms-expand,
+select.wizard-cust-resp::-ms-expand { display: none; }
+select.wizard-cust-resp,
+select.wizard-cust-resp:hover,
+select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 8px center; }
+
+/* Light mode: chevron mais escuro pra contraste com fundo branco.
+   Repetimos base + hover + focus com todas as bg-* longhand pelos mesmos
+   motivos acima (:root[data-theme="light"] .form-control usa background: shorthand). */
+:root[data-theme="light"] select.form-control,
+:root[data-theme="light"] select.filter-select,
+:root[data-theme="light"] select.wizard-cust-resp,
+:root[data-theme="light"] select.form-control:hover,
+:root[data-theme="light"] select.filter-select:hover,
+:root[data-theme="light"] select.wizard-cust-resp:hover,
+:root[data-theme="light"] select.form-control:focus,
+:root[data-theme="light"] select.filter-select:focus,
+:root[data-theme="light"] select.wizard-cust-resp:focus {
+  background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235A5A5A' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 12px 12px;
+}
+:root[data-theme="light"] select.wizard-cust-resp,
+:root[data-theme="light"] select.wizard-cust-resp:hover,
+:root[data-theme="light"] select.wizard-cust-resp:focus { background-position: right 8px center; }
 .form-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); cursor: pointer; }
 .form-check input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
 .modal-footer {
@@ -2541,11 +2658,12 @@ textarea.form-control { height: auto; min-height: 80px; padding: 11px 14px; }
 
 /* Editor de fluxo — etapas arrastáveis */
 .stage-row {
-  /* grip | color | label | função | responsável | prazo | conclui | ações */
-  display: grid; grid-template-columns: 22px 34px minmax(140px, 1.4fr) minmax(140px, 1fr) minmax(160px, 1.1fr) 78px auto auto;
-  gap: 8px; align-items: center;
+  /* grip | color | label | área | cargo | responsável | prazo | conclui | ações */
+  display: grid;
+  grid-template-columns: 18px 28px minmax(110px, 1.3fr) minmax(96px, .9fr) minmax(96px, .9fr) minmax(130px, 1.1fr) 60px auto auto;
+  gap: 6px; align-items: center;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
-  padding: 8px 10px;
+  padding: 6px 8px;
   transition:
     opacity .18s var(--ease-out),
     border-color .15s var(--ease-out),
@@ -2553,6 +2671,20 @@ textarea.form-control { height: auto; min-height: 80px; padding: 11px 14px; }
     transform .18s var(--ease-spring),
     background .15s var(--ease-out);
 }
+/* Campos compactos dentro da stage-row — inputs/selects menores que o form-control padrão */
+.stage-row .form-control {
+  height: 32px; padding: 4px 8px; font-size: 12px; line-height: 1.2;
+}
+.stage-row select.form-control,
+.stage-row select.form-control:hover,
+.stage-row select.form-control:focus {
+  padding-right: 26px;
+  background-position: right 8px center;
+  background-size: 10px 10px;
+  background-repeat: no-repeat;
+}
+.stage-row .stage-color { width: 28px; height: 28px; padding: 2px; }
+.stage-row .icon-btn { width: 24px; height: 24px; }
 /* Inputs/selects dentro da row não participam do drag — evita roubar o
    mousedown de seleção de texto pro dragstart do row draggable=true. */
 .stage-row input,
@@ -2585,11 +2717,16 @@ textarea.form-control { height: auto; min-height: 80px; padding: 11px 14px; }
 .stage-grip:hover { color: var(--text); }
 .stage-grip:active { cursor: grabbing; transform: scale(1.15); }
 .stage-row .stage-mini-label { font-size: 9px; color: var(--text-muted); display: block; margin-bottom: 2px; text-transform: uppercase; letter-spacing: .04em; }
-.stage-days-wrap { display: flex; flex-direction: column; }
-.stage-days-wrap input { width: 90px; }
+.stage-days-wrap { display: flex; flex-direction: column; min-width: 0; }
+.stage-days-wrap input { width: 100%; min-width: 0; }
+.stage-row .stage-mini-label { font-size: 9px; margin-bottom: 1px; }
 /* Editor de fluxo: native select fica oculto e o .filter-cdrop irmão assume.
-   Garante que o cdrop ocupe espaço adequado no grid da stage-row. */
-.stage-row .filter-cdrop { min-width: 200px; }
+   Garante que o cdrop ocupe o espaço da coluna sem forçar largura extra. */
+.stage-row .filter-cdrop { min-width: 0; width: 100%; }
+.stage-row .filter-cdrop-trigger {
+  height: 32px; min-width: 0; padding: 0 10px 0 10px; font-size: 12px; gap: 6px;
+}
+.stage-row .filter-cdrop-avatar { width: 18px !important; height: 18px !important; font-size: 8px !important; }
 
 /* Detalhe — apontamentos e comentários */
 .detail-section { margin-top: 20px; }
@@ -3254,7 +3391,7 @@ i[data-lucide]:not([class*=ic-]) { width: 16px; height: 16px; stroke-width: 2; }
 .qty-cell { display: flex; flex-direction: column; gap: 4px; }
 .qty-cell .form-control { font-variant-numeric: tabular-nums; font-weight: 600; }
 .qty-cell input.form-control[type="number"] { text-align: center; }
-.qty-cell select.form-control { font-weight: 500; padding: 0 14px; }
+.qty-cell select.form-control { font-weight: 500; padding: 0 26px 0 14px; }
 .qty-cell-label {
   font-size: 11px; color: var(--text-muted); text-transform: uppercase;
   letter-spacing: 0.04em; text-align: center; display: inline-flex;
@@ -5625,6 +5762,21 @@ kbd {
 .client-chart-title { font-size: 12px; color: var(--text-muted); font-weight: 600; }
 .client-chart-value { font-size: 22px; font-weight: 800; letter-spacing: -0.02em; }
 .client-chart-delta { font-size: 11px; color: var(--text-muted); font-weight: 500; margin-left: 4px; }
+
+/* Eixo Y em HTML sobreposto ao chart — evita o SVG deformar <text> quando
+   preserveAspectRatio="none" estica X e Y independentemente. Posições em %
+   pra escalar com o container sem depender do tamanho renderizado do SVG. */
+.chart-with-axis { padding-left: 32px; box-sizing: border-box; }
+.chart-y-axis {
+  position: absolute; left: 0; top: 0; width: 30px; height: 100%;
+  pointer-events: none;
+}
+.chart-y-tick {
+  position: absolute; right: 4px; transform: translateY(-50%);
+  font-size: 10.5px; color: var(--text-muted);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  white-space: nowrap; letter-spacing: 0;
+}
 
 /* Modal Cliente — layout 2 colunas (avatar + campos) */
 .client-modal-grid {
