@@ -1281,9 +1281,14 @@ tr:hover td { background: var(--surface-2); }
 .rca-card {
   border: 1px solid var(--hairline);
   border-radius: var(--radius);
-  overflow: hidden;
+  /* Sem overflow: hidden — cortava o menu do cdrop (position:absolute) que
+     abre pra fora da row. O head e o body cuidam do seu próprio raio interno. */
   margin-bottom: 12px;
   background: var(--surface);
+}
+.rca-card-head {
+  border-top-left-radius: var(--radius);
+  border-top-right-radius: var(--radius);
 }
 .rca-card-head {
   padding: 10px 14px;

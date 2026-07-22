@@ -1978,8 +1978,10 @@ app.post('/api/clients/:id/undelete', requireAuth, (req, res) => {
    Não inclui demandas, agendamentos ou roleAssignments (sempre vazios
    no cliente novo). Aplicar um template cria todas as entidades de uma vez. */
 app.get('/api/client-templates', requireAuth, (req, res) => {
-  const ids = wsIdsFor(req.user);
-  res.json((db.clientTemplates || []).filter(t => ids.includes(t.workspaceId)));
+  // Modelos são GLOBAIS: qualquer usuário autenticado vê a biblioteca inteira.
+  // O workspaceId (quando presente em modelos antigos) é ignorado — o cliente
+  // criado a partir do modelo é sempre no ws que o usuário escolher.
+  res.json(db.clientTemplates || []);
 });
 
 app.post('/api/client-templates', requireAuth, (req, res) => {
@@ -1988,15 +1990,12 @@ app.post('/api/client-templates', requireAuth, (req, res) => {
   const tplName = String(b.name || '').trim();
   if (!tplName) return res.status(400).json({ error: 'Dê um nome ao modelo.' });
 
-  // MODO 2: criar modelo VAZIO (só nome + workspace). Usado quando o usuário
-  // constrói o modelo do zero na tela /clients/models, sem partir de cliente
-  // existente. Evita o "gap" de criar cliente, salvar como modelo, editar depois.
+  // MODO 2: criar modelo VAZIO. Modelos são globais — workspaceId nem é setado
+  // (nem faz sentido; o modelo vira "biblioteca compartilhada").
   if (!sourceClientId) {
-    const wsId = b.workspaceId && canAccessWs(req.user, b.workspaceId) ? b.workspaceId : wsIdsFor(req.user)[0];
-    if (!wsId) return res.status(400).json({ error: 'Workspace inválido.' });
     const tpl = {
       id: uid(),
-      workspaceId: wsId,
+      workspaceId: null,
       name: tplName,
       color: (typeof b.color === 'string' && /^#[0-9a-f]{6}$/i.test(b.color)) ? b.color : '#7A00FF',
       segment: '', driveFiles: '', brandAssets: '', guidelines: '',
@@ -2009,7 +2008,8 @@ app.post('/api/client-templates', requireAuth, (req, res) => {
     return res.status(201).json(tpl);
   }
 
-  // MODO 1 (original): snapshot de um cliente existente.
+  // MODO 1 (original): snapshot de um cliente existente. Cliente segue sendo
+  // workspace-scoped (autor precisa acessá-lo), mas o modelo resultante é global.
   const c = db.clients.find(x => x.id === sourceClientId);
   if (!c || !canAccessWs(req.user, c.workspaceId)) return res.status(404).json({ error: 'Cliente não encontrado.' });
 
@@ -2038,7 +2038,7 @@ app.post('/api/client-templates', requireAuth, (req, res) => {
 
   const tpl = {
     id: uid(),
-    workspaceId: c.workspaceId,
+    workspaceId: null, // modelos são globais
     name: tplName,
     color: c.color || '#7A00FF',
     segment: c.segment || '',
@@ -2056,7 +2056,7 @@ app.post('/api/client-templates', requireAuth, (req, res) => {
 
 app.get('/api/client-templates/:id', requireAuth, (req, res) => {
   const t = db.clientTemplates.find(x => x.id === req.params.id);
-  if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Modelo não encontrado.' });
+  if (!t) return res.status(404).json({ error: 'Modelo não encontrado.' });
   res.json(t);
 });
 
@@ -2064,7 +2064,7 @@ app.get('/api/client-templates/:id', requireAuth, (req, res) => {
    Pra edição de PROJETOS e FLUXOS do modelo, ver endpoints dedicados abaixo. */
 app.put('/api/client-templates/:id', requireAuth, (req, res) => {
   const t = db.clientTemplates.find(x => x.id === req.params.id);
-  if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Modelo não encontrado.' });
+  if (!t) return res.status(404).json({ error: 'Modelo não encontrado.' });
   const b = req.body || {};
   if (typeof b.name === 'string' && b.name.trim()) t.name = b.name.trim();
   if (typeof b.color === 'string' && /^#[0-9a-f]{6}$/i.test(b.color)) t.color = b.color;
@@ -2079,7 +2079,7 @@ app.put('/api/client-templates/:id', requireAuth, (req, res) => {
 /* Adiciona/edita/remove um PROJETO dentro do modelo. */
 app.post('/api/client-templates/:id/projects', requireAuth, (req, res) => {
   const t = db.clientTemplates.find(x => x.id === req.params.id);
-  if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Modelo não encontrado.' });
+  if (!t) return res.status(404).json({ error: 'Modelo não encontrado.' });
   const b = req.body || {};
   const name = String(b.name || '').trim();
   if (!name) return res.status(400).json({ error: 'Nome do projeto é obrigatório.' });
@@ -2097,7 +2097,7 @@ app.post('/api/client-templates/:id/projects', requireAuth, (req, res) => {
 });
 app.put('/api/client-templates/:id/projects/:pIdx', requireAuth, (req, res) => {
   const t = db.clientTemplates.find(x => x.id === req.params.id);
-  if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Modelo não encontrado.' });
+  if (!t) return res.status(404).json({ error: 'Modelo não encontrado.' });
   const pIdx = parseInt(req.params.pIdx, 10);
   const ptpl = t.projects?.[pIdx];
   if (!ptpl) return res.status(400).json({ error: 'Projeto inválido.' });
@@ -2112,7 +2112,7 @@ app.put('/api/client-templates/:id/projects/:pIdx', requireAuth, (req, res) => {
 });
 app.delete('/api/client-templates/:id/projects/:pIdx', requireAuth, (req, res) => {
   const t = db.clientTemplates.find(x => x.id === req.params.id);
-  if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Modelo não encontrado.' });
+  if (!t) return res.status(404).json({ error: 'Modelo não encontrado.' });
   const pIdx = parseInt(req.params.pIdx, 10);
   if (!Number.isInteger(pIdx) || pIdx < 0 || !Array.isArray(t.projects) || pIdx >= t.projects.length) {
     return res.status(400).json({ error: 'Projeto inválido.' });
@@ -2128,7 +2128,7 @@ app.delete('/api/client-templates/:id/projects/:pIdx', requireAuth, (req, res) =
    correspondente no cliente é achado por NOME — se ninguém renomeou funciona. */
 app.post('/api/client-templates/:id/projects/:pIdx/flows', requireAuth, (req, res) => {
   const t = db.clientTemplates.find(x => x.id === req.params.id);
-  if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Modelo não encontrado.' });
+  if (!t) return res.status(404).json({ error: 'Modelo não encontrado.' });
   const pIdx = parseInt(req.params.pIdx, 10);
   if (!Number.isInteger(pIdx) || pIdx < 0 || !Array.isArray(t.projects) || pIdx >= t.projects.length) {
     return res.status(400).json({ error: 'Projeto inválido no modelo.' });
@@ -2193,7 +2193,7 @@ app.post('/api/client-templates/:id/projects/:pIdx/flows', requireAuth, (req, re
    customizado fluxos antigos e sobrescrever silenciosamente seria destrutivo. */
 app.put('/api/client-templates/:id/projects/:pIdx/flows/:fIdx', requireAuth, (req, res) => {
   const t = db.clientTemplates.find(x => x.id === req.params.id);
-  if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Modelo não encontrado.' });
+  if (!t) return res.status(404).json({ error: 'Modelo não encontrado.' });
   const pIdx = parseInt(req.params.pIdx, 10);
   const fIdx = parseInt(req.params.fIdx, 10);
   const ptpl = t.projects?.[pIdx];
@@ -2224,7 +2224,7 @@ app.put('/api/client-templates/:id/projects/:pIdx/flows/:fIdx', requireAuth, (re
    vinculados — o usuário duplica pra editar antes de propagar. */
 app.post('/api/client-templates/:id/projects/:pIdx/flows/:fIdx/duplicate', requireAuth, (req, res) => {
   const t = db.clientTemplates.find(x => x.id === req.params.id);
-  if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Modelo não encontrado.' });
+  if (!t) return res.status(404).json({ error: 'Modelo não encontrado.' });
   const pIdx = parseInt(req.params.pIdx, 10);
   const fIdx = parseInt(req.params.fIdx, 10);
   const ptpl = t.projects?.[pIdx];
@@ -2247,7 +2247,7 @@ app.post('/api/client-templates/:id/projects/:pIdx/flows/:fIdx/duplicate', requi
 });
 app.delete('/api/client-templates/:id/projects/:pIdx/flows/:fIdx', requireAuth, (req, res) => {
   const t = db.clientTemplates.find(x => x.id === req.params.id);
-  if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Modelo não encontrado.' });
+  if (!t) return res.status(404).json({ error: 'Modelo não encontrado.' });
   const pIdx = parseInt(req.params.pIdx, 10);
   const fIdx = parseInt(req.params.fIdx, 10);
   const ptpl = t.projects?.[pIdx];
@@ -2261,7 +2261,7 @@ app.delete('/api/client-templates/:id/projects/:pIdx/flows/:fIdx', requireAuth, 
 
 app.delete('/api/client-templates/:id', requireAuth, (req, res) => {
   const t = db.clientTemplates.find(x => x.id === req.params.id);
-  if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Modelo não encontrado.' });
+  if (!t) return res.status(404).json({ error: 'Modelo não encontrado.' });
   db.clientTemplates = db.clientTemplates.filter(x => x.id !== t.id);
   removeEntity('clientTemplates', t.id);
   res.json({ ok: true });
@@ -2276,8 +2276,10 @@ app.post('/api/clients/from-template', requireAuth, (req, res) => {
   const b = req.body || {};
   const tpl = db.clientTemplates.find(t => t.id === b.templateId);
   if (!tpl) return res.status(404).json({ error: 'Modelo não encontrado.' });
-  const wsId = b.workspaceId && canAccessWs(req.user, b.workspaceId) ? b.workspaceId : tpl.workspaceId;
-  if (!canAccessWs(req.user, wsId)) return res.status(403).json({ error: 'Sem acesso ao workspace.' });
+  // Modelo é global — o workspace do cliente vem SEMPRE do body (o switcher do
+  // topbar); fallback pro primeiro workspace acessível se não veio explícito.
+  const wsId = b.workspaceId && canAccessWs(req.user, b.workspaceId) ? b.workspaceId : wsIdsFor(req.user)[0];
+  if (!wsId || !canAccessWs(req.user, wsId)) return res.status(403).json({ error: 'Sem acesso ao workspace.' });
   const newName = String(b.name || '').trim();
   if (!newName) return res.status(400).json({ error: 'Nome do cliente é obrigatório.' });
   // Bloqueia duplicidade

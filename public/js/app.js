@@ -11213,9 +11213,9 @@ function showClientsModelsView() {
   // Se abrir a página sem nada expandido, abre o primeiro modelo — evita
   // impressão de "página vazia" e mostra logo o conteúdo típico.
   if (_modelsExpanded.size === 0) {
+    // Modelos são globais — mostra todos, sem filtro de workspace.
     const first = (clientTemplates || [])
-      .filter(t => me.isAdmin || (me.workspaces || []).includes(t.workspaceId))
-      .sort((a, b) => norm(a.name).localeCompare(norm(b.name)))[0];
+      .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)))[0];
     if (first) _modelsExpanded.add(first.id);
   }
   const inp = $('models-search');
@@ -11267,9 +11267,9 @@ function renderClientsModels() {
   const wrap = $('clients-models-list');
   if (!wrap) return;
   const q = _modelsSearchQuery;
+  // Modelos são globais — todos os autenticados enxergam a biblioteca inteira.
   let list = (clientTemplates || [])
-    .filter(t => me.isAdmin || (me.workspaces || []).includes(t.workspaceId))
-    .sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+    .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
   if (q) {
     list = list.filter(t => {
       if ((t.name || '').toLowerCase().includes(q)) return true;
@@ -11525,8 +11525,9 @@ async function confirmDeleteModel(id) {
 }
 
 /* ── CRIAR MODELO DO ZERO ──
-   Workspace = activeWs (o do topbar switcher). Sem campo no modal — a página é
-   cross-workspace, então o contexto do "onde criar" é o próprio switcher. */
+   Modelos são GLOBAIS — biblioteca compartilhada entre workspaces. Sem campo
+   de workspace no modal; o cliente que aplicar o modelo é que escolhe onde
+   nasce (dropdown de workspace no modal de novo cliente). */
 function openNewModelModal() {
   $('nm-name').value = '';
   $('nm-color').value = '#7A00FF';
@@ -11538,11 +11539,10 @@ function openNewModelModal() {
 async function saveNewModel() {
   const name = $('nm-name').value.trim();
   if (!name) { toast('Informe um nome pro modelo.', 'error'); return; }
-  const workspaceId = activeWs;
-  if (!workspaceId) { toast('Selecione um workspace no topo antes de criar o modelo.', 'error'); return; }
   const color = $('nm-color').value || '#7A00FF';
   try {
-    const tpl = await api('/client-templates', 'POST', { name, workspaceId, color });
+    // Modelo é global — sem workspaceId no payload.
+    const tpl = await api('/client-templates', 'POST', { name, color });
     clientTemplates.push(tpl);
     closeModal('new-model-modal');
     renderClientsModels();
@@ -11632,8 +11632,12 @@ function openTemplateFlowModal(tplId, pIdx, fIdx) {
   $('tfl-name').value = flow?.name || '';
   $('tfl-type').value = flow?.demandType || '';
   $('tfl-description').value = flow?.defaultDescription || '';
-  // datalist com tipos usados em outros fluxos do workspace
-  const types = [...new Set(flows.filter(f => f.workspaceId === t.workspaceId).map(f => f.demandType).filter(Boolean))].sort();
+  // Datalist de tipos: modelo é global, junta tipos de TODOS os fluxos acessíveis
+  // pro usuário — mais completo que restringir por 1 workspace só.
+  const accessibleWs = new Set(me.isAdmin
+    ? (workspaces || []).map(w => w.id)
+    : (me.workspaces || []));
+  const types = [...new Set(flows.filter(f => accessibleWs.has(f.workspaceId)).map(f => f.demandType).filter(Boolean))].sort();
   $('tfl-type-datalist').innerHTML = types.map(x => `<option value="${esc(x)}">`).join('');
   $('tfl-delete-btn').style.display = isEdit ? '' : 'none';
   refreshTflIconPreview();
@@ -13584,12 +13588,14 @@ function openClientModal(id) {
     clientModalStatusActive = c.active !== false;
     refreshClientStatusUI();
   }
-  // Onboarding: dropdown de modelos só no Novo
+  // Onboarding: dropdown de modelos só no Novo. Modelos são globais — mostra
+  // a biblioteca inteira. O cliente novo entra no workspace escolhido no combo
+  // logo abaixo (c-workspace), independente de onde o modelo foi criado.
   const tplBar = $('c-template-bar');
   const tplSel = $('c-template');
   if (isNew && tplSel && tplBar) {
-    const wsId = activeWs;
-    const myTpls = (clientTemplates || []).filter(t => t.workspaceId === wsId);
+    const myTpls = (clientTemplates || [])
+      .slice().sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt-BR', { sensitivity: 'base' }));
     if (myTpls.length) {
       tplBar.style.display = '';
       tplSel.innerHTML = `<option value="">— Em branco —</option>` +

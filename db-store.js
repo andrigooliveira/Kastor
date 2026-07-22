@@ -107,7 +107,10 @@ function createStore(config = {}) {
   // Extrator de workspace_id pra cada tipo. Entidades globais devolvem null.
   function workspaceIdOf(type, entity) {
     if (!entity) return null;
-    if (type === 'workspaces' || type === 'roles' || type === 'users') return null;
+    // Tipos globais: não têm workspaceId no índice — visíveis a todos os usuários.
+    // clientTemplates são compartilhados entre workspaces (por design de UX).
+    if (type === 'workspaces' || type === 'roles' || type === 'users' ||
+        type === 'positions' || type === 'clientTemplates') return null;
     return entity.workspaceId || null;
   }
 
