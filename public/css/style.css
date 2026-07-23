@@ -980,6 +980,9 @@ body::before {
   position: fixed; top: 0; left: 0; bottom: 0; z-index: 100;
   transform: translateZ(0);
   contain: layout paint;
+  /* Anima a mudança de largura entre expanded (--sidebar-w) e collapsed (72px).
+     Timing curto e ease-out pra feedback snappy sem parecer "arrastando". */
+  transition: width .22s var(--ease-out);
 }
 .sidebar-brand {
   padding: 18px 20px; border-bottom: 1px solid var(--hairline);
@@ -1164,7 +1167,13 @@ body.sidebar-collapsed .ws-cdrop .filter-cdrop-menu {
 }
 
 /* ── MAIN ── */
-.main { margin-left: var(--sidebar-w); flex: 1; display: flex; flex-direction: column; min-height: 100vh; }
+.main {
+  margin-left: var(--sidebar-w); flex: 1;
+  display: flex; flex-direction: column; min-height: 100vh;
+  /* Acompanha a transição da largura da sidebar pra não ter descolamento
+     entre o edge direita do sidebar e a coluna do conteúdo principal. */
+  transition: margin-left .22s var(--ease-out);
+}
 .topbar {
   padding: 14px 28px;
   background: var(--glass);
@@ -2864,19 +2873,38 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 .notif-panel-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 18px; border-bottom: 1px solid var(--border);
+  gap: 8px;
 }
+.notif-panel-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.notif-panel-actions .btn { font-size: 11.5px; padding: 4px 8px; }
+.notif-clear-btn { color: var(--danger); }
+.notif-clear-btn:hover { background: rgba(239,80,80,0.12); }
 .notif-panel-title { font-size: 14px; font-weight: 700; }
 .notif-list { overflow-y: auto; flex: 1; padding: 4px 0; }
 .notif-item {
   display: flex; gap: 10px; padding: 12px 18px; cursor: pointer;
   transition: background .15s;
+  align-items: flex-start;
 }
 .notif-item:hover { background: var(--surface-2); }
 .notif-item.unread { background: var(--accent-dim); }
 .notif-item.unread:hover { background: rgba(122,0,255,.22); }
-.notif-dot-wrap { width: 10px; flex-shrink: 0; padding-top: 6px; }
+.notif-dot-wrap { width: 10px; flex-shrink: 0; padding-top: 14px; }
 .notif-dot {
   width: 8px; height: 8px; border-radius: 50%; background: var(--accent); display: block;
+}
+.notif-avatar {
+  width: 32px !important; height: 32px !important;
+  font-size: 12px !important;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+/* Avatar de "sistema" (recorrência, automações) — imagem em vez de iniciais. */
+.notif-avatar-system {
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  color: transparent;
 }
 .notif-body { flex: 1; min-width: 0; }
 .notif-text { font-size: 13px; line-height: 1.5; color: var(--text); }
@@ -6507,4 +6535,217 @@ body.rec-tab-listas-active .rec-layout { grid-template-columns: 1fr; }
   100% { transform: scale(1); }
 }
 .confirm-icon { animation: confirmIconPop .26s var(--ease-spring); }
+
+/* ═══════════════════════════════════════════════════════════════════
+   MODAL DE FLUXO — MODO SOMENTE LEITURA (usuário comum)
+   Aplica quando #flow-modal.readonly. Server ainda bloqueia via modOrAdmin
+   nos endpoints; isso é reforço visual + UX pra evitar frustração.
+   ═══════════════════════════════════════════════════════════════════ */
+#flow-modal.readonly .form-control,
+#flow-modal.readonly textarea,
+#flow-modal.readonly input,
+#flow-modal.readonly select {
+  pointer-events: none;
+  background: var(--surface-2) !important;
+  color: var(--text-dim) !important;
+  cursor: default !important;
+}
+/* Auto-cdrop transforma <select> em .filter-cdrop sibling clicável — bloqueia
+   também esse wrapper pra não permitir abrir o menu customizado. */
+#flow-modal.readonly .filter-cdrop,
+#flow-modal.readonly .filter-cdrop-trigger,
+#flow-modal.readonly .filter-cdrop-menu {
+  pointer-events: none;
+  cursor: default !important;
+}
+#flow-modal.readonly .filter-cdrop-trigger {
+  background: var(--surface-2) !important;
+  color: var(--text-dim) !important;
+  opacity: 0.85;
+}
+/* Botões de ação (salvar, adicionar etapa, ícone, etc.) somem por inteiro */
+#flow-modal.readonly .btn-primary,
+#flow-modal.readonly .flow-icon-picker,
+#flow-modal.readonly .flow-apply-toggle,
+#flow-modal.readonly .flow-checklist-item .icon-btn,
+#flow-modal.readonly #fl-default-checklist + .btn,
+#flow-modal.readonly button[onclick="addFlowChecklistItem()"],
+#flow-modal.readonly button[onclick^="addStageRow"] {
+  display: none !important;
+}
+/* Grip e actions da linha de etapa: visibility em vez de display pra preservar
+   as colunas do grid — sem isso, o nome desliza pra coluna de 18px e trunca. */
+#flow-modal.readonly .stage-grip,
+#flow-modal.readonly .stage-actions {
+  visibility: hidden;
+  pointer-events: none;
+}
+/* Também desabilita checkboxes de "Conclui" e color pickers da linha */
+#flow-modal.readonly .stage-done-toggle,
+#flow-modal.readonly .color-swatch-trigger {
+  pointer-events: none;
+  opacity: 0.7;
+}
+/* Rótulo "Cancelar" vira "Fechar" visualmente — não muda o texto (evita
+   dessincronizar com JS que também usa esse botão em modo edit); só suaviza. */
+#flow-modal.readonly .btn-ghost { opacity: 1; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   MICRO-INTERAÇÕES E MOMENTOS DE SUCESSO
+   Adições visuais leves — todas puramente CSS (exceto confetti).
+   Respeitam prefers-reduced-motion via override no fim do arquivo.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Hover lift em cards ──
+   Sutil: 1px de translate + shadow. Não muda border pra evitar shift de layout. */
+.model-card,
+.model-flow-card,
+.rca-card,
+.dash-radar-card,
+.demand-row {
+  transition:
+    transform .16s var(--ease-out),
+    box-shadow .16s var(--ease-out),
+    border-color .16s var(--ease-out);
+}
+.model-card:hover,
+.model-flow-card:hover,
+.rca-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+}
+:root[data-theme="light"] .model-card:hover,
+:root[data-theme="light"] .model-flow-card:hover,
+:root[data-theme="light"] .rca-card:hover {
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06);
+}
+/* Linhas da tabela de demanda ganham um lift bem mais discreto (linha, não card) */
+tr.demand-row:hover {
+  transform: translateY(-0.5px);
+  background: var(--surface-2);
+}
+
+/* ── Ripple no botão primário ──
+   Um círculo centralizado que expande a partir do clique. Puro CSS via ::after
+   ativado no :active. Não posiciona no ponto exato do clique (isso exigiria JS),
+   mas dá sensação de reação tátil sem custo. */
+.btn-primary { position: relative; overflow: hidden; isolation: isolate; }
+.btn-primary::after {
+  content: '';
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(circle at center, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 60%);
+  opacity: 0;
+  transform: scale(0.2);
+  pointer-events: none;
+  transition: opacity .5s var(--ease-out);
+}
+.btn-primary:active::after {
+  opacity: 1;
+  transform: scale(1);
+  transition: transform .35s var(--ease-out), opacity .01s;
+}
+
+/* ── Presence ring: breathing sutil no online ──
+   Um segundo outline "fantasma" pulsando pra sinalizar "vivo agora". */
+.avatar.presence-online::before {
+  content: '';
+  position: absolute; inset: -3px;
+  border-radius: inherit;
+  border: 2px solid #3CE3A0;
+  opacity: 0;
+  pointer-events: none;
+  animation: presenceBreath 2.6s var(--ease-out) infinite;
+}
+@keyframes presenceBreath {
+  0%   { transform: scale(0.85); opacity: 0.55; }
+  70%  { transform: scale(1.15); opacity: 0; }
+  100% { transform: scale(1.15); opacity: 0; }
+}
+
+/* ── Notif badge: pulse contínuo enquanto tem não lidas ──
+   O badge já tem glow via .has-unread; adicionamos um pulse leve que
+   dá "vida" sem virar strobo. */
+.notif-badge.has-unread {
+  animation: notifBreath 2.2s var(--ease-out) infinite;
+}
+@keyframes notifBreath {
+  0%, 100% { box-shadow: 0 0 0 2px var(--surface), 0 0 0 rgba(239,80,80,0); }
+  50%      { box-shadow: 0 0 0 2px var(--surface), 0 0 14px rgba(239,80,80,0.7); }
+}
+
+/* ── Toast: barra de progresso na base ──
+   Shrink de 100% → 0% na largura durante o timeout. Duration ajustada via
+   var --toast-duration que o JS seta ao criar o toast. */
+.toast { position: relative; overflow: hidden; }
+.toast::after {
+  content: '';
+  position: absolute; left: 0; bottom: 0; height: 2px;
+  width: 100%;
+  background: currentColor;
+  opacity: 0.28;
+  transform-origin: left center;
+  animation: toastProgress var(--toast-duration, 3.5s) linear forwards;
+}
+.toast-success::after { background: var(--success); opacity: 0.55; }
+.toast-warn::after    { background: var(--warn);    opacity: 0.55; }
+.toast-error::after   { background: var(--danger);  opacity: 0.55; }
+@keyframes toastProgress {
+  from { transform: scaleX(1); }
+  to   { transform: scaleX(0); }
+}
+
+/* ── Toast: checkmark que se desenha em success ──
+   SVG inline com stroke-dasharray animado. Ícone pequeno à esquerda. */
+.toast-check {
+  flex-shrink: 0;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: var(--success);
+  display: flex; align-items: center; justify-content: center;
+  color: #0F1114;
+  animation: toastCheckPop .32s var(--ease-spring);
+}
+.toast-check svg {
+  width: 14px; height: 14px;
+  stroke: currentColor; stroke-width: 3;
+  fill: none; stroke-linecap: round; stroke-linejoin: round;
+}
+.toast-check svg path {
+  stroke-dasharray: 20;
+  stroke-dashoffset: 20;
+  animation: toastCheckDraw .38s .12s var(--ease-out) forwards;
+}
+@keyframes toastCheckPop {
+  0%   { transform: scale(0); }
+  60%  { transform: scale(1.15); }
+  100% { transform: scale(1); }
+}
+@keyframes toastCheckDraw {
+  to { stroke-dashoffset: 0; }
+}
+
+/* ── Confetti: partículas quando conclui demanda ──
+   Container fixed em cima do viewport; partículas divs com transform animation.
+   Auto-remove pelo JS via setTimeout depois do total. */
+.confetti-layer {
+  position: fixed; inset: 0; pointer-events: none; z-index: 10000; overflow: hidden;
+}
+.confetti-piece {
+  position: absolute;
+  width: 8px; height: 12px;
+  top: -20px;
+  will-change: transform, opacity;
+  animation: confettiFall var(--confetti-dur, 1.6s) var(--ease-out) forwards;
+  opacity: 0.95;
+  border-radius: 2px;
+}
+@keyframes confettiFall {
+  0%   { transform: translate3d(0,0,0) rotate(0deg); opacity: 1; }
+  85%  { opacity: 1; }
+  100% { transform: translate3d(var(--dx, 0), var(--dy, 240px), 0) rotate(var(--rot, 540deg)); opacity: 0; }
+}
+
+/* Respeito ao prefers-reduced-motion — para as animações contínuas.
+   O bloco global lá em cima já faz `animation: none !important` em tudo. */
 

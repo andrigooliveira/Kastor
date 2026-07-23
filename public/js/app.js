@@ -1073,9 +1073,65 @@ function toastWithUndo(msg, undoFn) {
     }
   });
 }
+/* ── Confetti ──
+   Dispara N partículas coloridas caindo pra celebrar conclusão de demanda.
+   Puro DOM — sem canvas, sem lib. Auto-limpa depois da duração máxima. */
+const _CONFETTI_COLORS = ['#7A00FF', '#3CE3A0', '#F5A718', '#38BDF8', '#EF4444', '#F472B6'];
+function spawnConfetti(originX, originY, count = 14) {
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const layer = document.createElement('div');
+  layer.className = 'confetti-layer';
+  // Se não veio origem, dispara do canto superior direito (perto do detalhe)
+  const ox = originX != null ? originX : window.innerWidth - 40;
+  const oy = originY != null ? originY : 100;
+  const durMax = 1800;
+  for (let i = 0; i < count; i++) {
+    const p = document.createElement('span');
+    p.className = 'confetti-piece';
+    const color = _CONFETTI_COLORS[i % _CONFETTI_COLORS.length];
+    p.style.background = color;
+    p.style.left = (ox - 4) + 'px';
+    p.style.top  = oy + 'px';
+    // Espalhamento horizontal aleatório + queda vertical + rotação
+    const dx  = (Math.random() * 320 - 160).toFixed(0) + 'px';
+    const dy  = (140 + Math.random() * 200).toFixed(0) + 'px';
+    const rot = (Math.random() * 900 - 450).toFixed(0) + 'deg';
+    const dur = 900 + Math.random() * 900;
+    p.style.setProperty('--dx', dx);
+    p.style.setProperty('--dy', dy);
+    p.style.setProperty('--rot', rot);
+    p.style.setProperty('--confetti-dur', dur + 'ms');
+    p.style.animationDelay = (Math.random() * 120) + 'ms';
+    layer.appendChild(p);
+  }
+  document.body.appendChild(layer);
+  setTimeout(() => layer.remove(), durMax + 200);
+}
+/* Wrapper: dispara confetti se a etapa NOVA marca a demanda como concluída.
+   Pega origem no botão que causou a mudança (event.target), fallback pro
+   centro do trigger de etapa no footer. */
+function _celebrateIfCompleted(newStage, ev) {
+  if (!newStage || !newStage.done) return;
+  let x, y;
+  const src = ev && ev.target && ev.target.closest ? ev.target.closest('button, .cdrop-item, [onclick]') : null;
+  if (src) {
+    const r = src.getBoundingClientRect();
+    x = r.left + r.width / 2;
+    y = r.top + r.height / 2;
+  }
+  spawnConfetti(x, y);
+}
+
 function toast(msg, type = 'success', action = null) {
   const t = document.createElement('div');
   t.className = 'toast toast-' + type;
+  // Success ganha o disco com checkmark que se desenha (SVG path com dasharray).
+  if (type === 'success') {
+    const check = document.createElement('span');
+    check.className = 'toast-check';
+    check.innerHTML = '<svg viewBox="0 0 24 24"><path d="M5 12 L10 17 L19 7"/></svg>';
+    t.appendChild(check);
+  }
   const msgEl = document.createElement('span');
   msgEl.className = 'toast-msg';
   msgEl.textContent = msg;
@@ -1094,8 +1150,11 @@ function toast(msg, type = 'success', action = null) {
     });
     t.appendChild(btn);
   }
+  // Sincroniza a barra de progresso da base do toast com o timeout real.
+  const durationMs = hasAction ? 6000 : 3500;
+  t.style.setProperty('--toast-duration', durationMs + 'ms');
   $('toast-container').appendChild(t);
-  setTimeout(() => t.remove(), hasAction ? 6000 : 3500);
+  setTimeout(() => t.remove(), durationMs);
 }
 /* ─── ATALHOS DE TECLADO ─── */
 const KB_SHORTCUTS = [
@@ -1233,11 +1292,12 @@ function cmdkActions() {
     { icon: 'user-circle',  label: 'Ir para Perfil',                kind: 'Navegar',  run: () => goPage('profile') },
     { icon: 'info',         label: 'Ir para Documentação',          kind: 'Navegar',  run: () => goPage('docs') },
   ];
-  // Admin-only.
-  if (me?.isAdmin) {
-    acts.push({ icon: 'users',    label: 'Ir para Usuários',     kind: 'Navegar', run: () => goPage('users') });
-    acts.push({ icon: 'layers',   label: 'Ir para Workspaces',   kind: 'Navegar', run: () => goPage('workspaces') });
-    acts.push({ icon: 'webhook',  label: 'Ir para Integrações',  kind: 'Navegar', run: () => goPage('integrations') });
+  // Usuários: visível pra todos.
+  acts.push({ icon: 'users',    label: 'Ir para Usuários',     kind: 'Navegar', run: () => goPage('users') });
+  // Workspaces e Integrações: admin + moderador (mesmo gate do sidebar).
+  if (me?.isAdmin || me?.isModerator) {
+    acts.push({ icon: 'layers',  label: 'Ir para Workspaces',   kind: 'Navegar', run: () => goPage('workspaces') });
+    acts.push({ icon: 'webhook', label: 'Ir para Integrações',  kind: 'Navegar', run: () => goPage('integrations') });
   }
   acts.push({ icon: 'sun-moon',  label: 'Alternar tema (claro/escuro)', kind: 'Ação', run: () => typeof toggleTheme === 'function' && toggleTheme() });
   acts.push({ icon: 'panel-left',label: 'Alternar sidebar (colapsar)',  kind: 'Ação', run: () => typeof toggleSidebarCollapse === 'function' && toggleSidebarCollapse() });
@@ -1431,11 +1491,12 @@ function hideShortcutsHelp() {
 let _tooltipEl = null;
 let _tooltipHover = null;
 let _tooltipTimer = null;
+let _tooltipInited = false;
 function initTooltips() {
-  if (_tooltipEl) return;
-  _tooltipEl = document.createElement('div');
-  _tooltipEl.className = 'tt';
-  document.body.appendChild(_tooltipEl);
+  if (_tooltipInited) return;
+  _tooltipInited = true;
+  // Não cria o elemento aqui — hideTooltip destrói e _ensureTooltipEl recria
+  // sob demanda. Assim garantimos que nunca sobra ghost visível no DOM.
 
   document.addEventListener('mouseover', e => {
     const t = e.target.closest('[data-tooltip], [title]');
@@ -1479,27 +1540,91 @@ function initTooltips() {
   // Esconde em scroll/clique/blur
   window.addEventListener('scroll', hideTooltip, true);
   document.addEventListener('mousedown', hideTooltip);
+  // Auto-hide quando o elemento alvo sai do DOM (re-render, closeModal com o
+  // cursor ainda em cima, SSE) — sem isso o tooltip fica travado apontando
+  // pro nada. Observer é global; só reage se o hover ativo for afetado.
+  const domWatcher = new MutationObserver(() => {
+    if (_tooltipHover && !_tooltipHover.isConnected) hideTooltip();
+  });
+  domWatcher.observe(document.body, { childList: true, subtree: true });
+}
+function _ensureTooltipEl() {
+  // Recria do zero — usado depois de hideTooltip destroy pra próxima exibição.
+  if (_tooltipEl && _tooltipEl.isConnected) return _tooltipEl;
+  _tooltipEl = document.createElement('div');
+  _tooltipEl.className = 'tt';
+  document.body.appendChild(_tooltipEl);
+  return _tooltipEl;
 }
 function showTooltipFor(target, text) {
-  if (!_tooltipEl) return;
   // Não mostra tooltip pra elemento que já saiu do DOM entre o mouseover e
   // o timer disparar (350ms de espera).
   if (!target.isConnected) { _tooltipHover = null; return; }
-  _tooltipEl.textContent = text;
+  const el = _ensureTooltipEl();
+  el.textContent = text;
   const r = target.getBoundingClientRect();
-  const x = Math.max(8, Math.min(window.innerWidth - 8, r.left + r.width / 2));
-  let y = r.bottom + 8;
-  // Se ficaria fora da viewport por baixo, mostra acima do elemento
-  const flipUp = y + 36 > window.innerHeight;
-  if (flipUp) y = r.top - 8;
-  _tooltipEl.style.left = x + 'px';
-  _tooltipEl.style.top = y + 'px';
-  _tooltipEl.classList.toggle('above', flipUp);
-  _tooltipEl.classList.add('open');
+  const MARGIN = 8;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  // Mede o tooltip ANTES de posicionar. O reflow do append já executou.
+  // Sem .open (opacidade 0) o layout ainda mede corretamente.
+  const tw = el.offsetWidth;
+  const th = el.offsetHeight;
+
+  // Vertical: prefere abaixo do alvo; flip pra cima só se estourar o rodapé
+  // E houver mais espaço acima. Caso extremo (não cabe em nenhum lado) fica
+  // abaixo mesmo e depois clampa.
+  const spaceBelow = vh - r.bottom - MARGIN;
+  const spaceAbove = r.top - MARGIN;
+  const needH = th + 8;
+  const flipUp = spaceBelow < needH && spaceAbove > spaceBelow;
+  let y = flipUp ? r.top - 8 : r.bottom + 8;
+  // Clamp vertical considerando a origem do transform (translate(-100%) quando
+  // above, translate(0) quando abaixo).
+  if (flipUp) {
+    // Topo visível = y - th; deve ser >= MARGIN
+    if (y - th < MARGIN) y = MARGIN + th;
+  } else {
+    // Base visível = y + th; deve ser <= vh - MARGIN
+    if (y + th > vh - MARGIN) y = vh - MARGIN - th;
+  }
+
+  // Horizontal: transform é translate(-50%), então centro X = left.
+  // Clamp left pra que left - tw/2 >= MARGIN e left + tw/2 <= vw - MARGIN.
+  const halfW = tw / 2;
+  const minX = MARGIN + halfW;
+  const maxX = vw - MARGIN - halfW;
+  let x = r.left + r.width / 2;
+  if (maxX < minX) {
+    // Tooltip mais largo que a viewport (tela minúscula) — cola na margem esquerda.
+    x = MARGIN + halfW;
+  } else if (x < minX) x = minX;
+  else if (x > maxX) x = maxX;
+
+  el.style.left = x + 'px';
+  el.style.top = y + 'px';
+  el.classList.toggle('above', flipUp);
+  // Reflow forçado pra o browser processar o append ANTES de aplicar .open
+  // (permite o fade-in do CSS transition).
+  void el.offsetWidth;
+  el.classList.add('open');
 }
 function hideTooltip() {
-  if (_tooltipEl) _tooltipEl.classList.remove('open');
+  // Destroy: remove o elemento do DOM. Recriamos on-demand no próximo show.
+  // Estratégia radical mas 100% robusta — nenhum fade, nenhuma race,
+  // nenhum estado residual sobrevive a um close de modal ou mudança de tela.
+  if (_tooltipEl && _tooltipEl.parentNode) _tooltipEl.remove();
+  _tooltipEl = null;
   clearTimeout(_tooltipTimer);
+  // Restaura o title nativo do último elemento sob mira (se foi suprimido) e
+  // limpa o hover — sem isso, o próximo hover no MESMO elemento é ignorado.
+  if (_tooltipHover) {
+    if (_tooltipHover.dataset && _tooltipHover.dataset._tt !== undefined) {
+      _tooltipHover.setAttribute('title', _tooltipHover.dataset._tt);
+      delete _tooltipHover.dataset._tt;
+    }
+    _tooltipHover = null;
+  }
 }
 
 function openModal(id) {
@@ -1523,6 +1648,7 @@ function openModal(id) {
 }
 const ROUTED_MODAL_IDS = ['detail-modal','demand-modal','project-modal','flow-modal','user-modal','webhook-modal','client-modal'];
 function closeModal(id) {
+  hideTooltip();
   $(id).classList.remove('open');
   // Para o poll de quase-realtime quando o detalhe é fechado
   if (id === 'detail-modal' && typeof stopDetailPoll === 'function') stopDetailPoll();
@@ -2606,6 +2732,7 @@ const PAGE_TITLES = {
   recurring: 'Listas de tarefas', docs: 'Documentação', clientsModels: 'Modelos de Cliente'
 };
 function goPage(page) {
+  hideTooltip();
   currentPage = page;
   // Cada entrada na página força um restoreFilters na próxima render.
   _markFiltersDirty(page);
@@ -5201,7 +5328,8 @@ function renderDetail() {
   const comments = (d.comments || []).map(c => {
     const u = userById(c.userId);
     const canEdit = c.userId === me.id;
-    const canDel = c.userId === me.id || me.isAdmin;
+    // Moderador tem poder de moderação — pode excluir comentário de qualquer um.
+    const canDel = c.userId === me.id || me.isAdmin || me.isModerator;
     let text = esc(c.text).replace(/@([a-zA-Z0-9._-]+)/g, (m, uname) => {
       const found = users.find(x => x.username.toLowerCase() === uname.toLowerCase());
       return found ? `<span class="mention">@${esc(found.username)}</span>` : m;
@@ -5488,7 +5616,7 @@ function buildStagePicker(d, flow) {
       </div>
       <div class="cdrop-menu">
         ${stages.map(s => `
-          <div class="cdrop-item ${s.id === d.status ? 'active' : ''}" onclick="pickStage('${s.id}')">
+          <div class="cdrop-item ${s.id === d.status ? 'active' : ''}" onclick="pickStage('${s.id}', event)">
             <span class="cdrop-dot" style="background:${s.color}"></span>
             <span>${esc(s.label)}</span>
           </div>`).join('')}
@@ -5510,16 +5638,21 @@ document.addEventListener('click', ev => {
 });
 
 /* Stage change via picker */
-async function pickStage(stageId) {
+async function pickStage(stageId, ev) {
   const d = demandById(detailId); if (!d || stageId === d.status) {
     document.querySelectorAll('.cdrop.open').forEach(c => c.classList.remove('open'));
     return;
   }
   document.querySelectorAll('.cdrop.open').forEach(c => c.classList.remove('open'));
+  // Precisa achar a nova stage no fluxo ANTES do await pra celebrar após save.
+  const flow = flowById(d.flowId);
+  const active = flow ? activeStagesOf(d, flow) : [];
+  const newStage = active.find(s => s.id === stageId);
   try {
     const upd = await api('/demands/' + d.id, 'PUT', { status: stageId });
     patchDemand(upd);
     toast('Etapa atualizada!');
+    _celebrateIfCompleted(newStage, ev || (window.event));
     renderDetail();
     renderCurrent();
     fetchNotifications();
@@ -6451,6 +6584,7 @@ async function moveStage(dir) {
     const upd = await api('/demands/' + d.id, 'PUT', { status: next.id });
     patchDemand(upd);
     toast(dir > 0 ? 'Etapa avançada: ' + next.label : 'Etapa retrocedida: ' + next.label);
+    if (dir > 0) _celebrateIfCompleted(next, window.event);
     renderDetail();
     renderCurrent();
     fetchNotifications();
@@ -7141,7 +7275,10 @@ function renderProjects() {
     const pAvatar = p.avatar
       ? `<img src="${p.avatar}" class="avatar" style="width:28px;height:28px;border-radius:6px">`
       : `<span class="avatar" style="width:28px;height:28px;font-size:11px;border-radius:6px;background:${hexDim(p.color)};color:${p.color}">${esc(p.name.charAt(0))}</span>`;
-    const actions = me.isAdmin ? `
+    // Admin e moderador têm ações completas. User comum não vê linha de ações.
+    // Delete é restrito a admin+moderador (server também bloqueia via modOrAdmin).
+    const canManageProject = !!(me.isAdmin || me.isModerator);
+    const actions = canManageProject ? `
       <div class="row-actions">
         <button class="detail-icon-btn" title="Editar" onclick="openProjectModal('${p.id}')"><i data-lucide="pencil" class="ic-sm"></i></button>
         <button class="detail-icon-btn" title="Duplicar" onclick="duplicateProject('${p.id}')"><i data-lucide="copy" class="ic-sm"></i></button>
@@ -7583,7 +7720,9 @@ function renderClientFlows(client) {
         <button class="detail-icon-btn" title="Duplicar" onclick="openDuplicateFlow('${f.id}')"><i data-lucide="copy" class="ic-xs"></i></button>
         <button class="detail-icon-btn danger" title="Excluir" onclick="deleteFlow('${f.id}')"><i data-lucide="trash-2" class="ic-xs"></i></button>
       </div>` : '';
-    const clickAttr = me.isAdmin ? `onclick="openFlowModal('${f.id}')"` : 'style="cursor:default"';
+    // Usuário comum: pode abrir o modal (modo somente leitura), mas não vê
+    // ações de edição. Admin abre no modo edição normal.
+    const clickAttr = `onclick="openFlowModal('${f.id}')"`;
     return `<div class="flow-card flow-card-flow" ${clickAttr}>
       ${iconHtml}
       ${adminActions}
@@ -7610,11 +7749,22 @@ let dragIdx = null;
 let flowModalDirty = false;
 let flowIconData = null;  // data URI/URL do ícone selecionado pra esse modal
 let flowModalClientId = null; // ID do Client em contexto (null = Geral / workspace-wide)
+function canEditFlow() { return !!(me && (me.isAdmin || me.isModerator)); }
 function openFlowModal(id, presetClientId) {
   editingFlowId = id || null;
   flowModalDirty = false;
   const isNew = !id;
   const f = id ? flowById(id) : null;
+  // Read-only pra usuário comum: pode visualizar o fluxo mas não editar.
+  // Server já bloqueia PUT/POST de fluxo por modOrAdmin — isso é só UX.
+  const readOnly = !canEditFlow();
+  const modalEl = $('flow-modal');
+  modalEl.classList.toggle('readonly', readOnly);
+  // Sem autofocus quando read-only — evita o cursor pousar num input desabilitado
+  if (readOnly) modalEl.dataset.noAutofocus = '1';
+  else delete modalEl.dataset.noAutofocus;
+  // Bloquear criação de fluxo novo pra quem não pode editar
+  if (isNew && readOnly) { toast('Você não tem permissão para criar fluxos.', 'warn'); return; }
   // Contexto: edição usa o clientId do fluxo (fallback no nome legado);
   // nova usa o preset (subview do cliente). Sempre id de Client entity.
   if (f) {
@@ -7626,7 +7776,7 @@ function openFlowModal(id, presetClientId) {
   } else {
     flowModalClientId = presetClientId || null;
   }
-  $('flow-modal-title').textContent = isNew ? 'Novo fluxo' : 'Editar fluxo';
+  $('flow-modal-title').textContent = isNew ? 'Novo fluxo' : (readOnly ? 'Ver fluxo' : 'Editar fluxo');
   const clientEntity = flowModalClientId ? clientById(flowModalClientId) : null;
   $('flow-modal-subtitle').textContent = clientEntity ? clientEntity.name : 'Geral · disponível pra todos os clientes';
 
@@ -7983,26 +8133,30 @@ async function confirmDuplicateFlow() {
 
 /* ─── WORKSPACES (admin) ─── */
 function renderWorkspaces() {
+  // Contagem só de clientes ATIVOS + não deletados por workspace — número que
+  // faz sentido pra decisão ("quantos clientes esse ws atende hoje").
+  const nClientsOf = (wsId) => clients.filter(c => c.workspaceId === wsId && c.active !== false && !c.deletedAt).length;
+  const nProjectsOf = (wsId) => projects.filter(p => p.workspaceId === wsId).length;
+  const nMembersOf = (wsId) => users.filter(u => u.active !== false && (u.isAdmin || (u.workspaces || []).includes(wsId))).length;
   const sorted = workspaces.slice().sort((a, b) => {
     let va, vb;
-    const nProjA = projects.filter(p => p.workspaceId === a.id).length;
-    const nProjB = projects.filter(p => p.workspaceId === b.id).length;
-    const nUsersA = users.filter(u => u.active !== false && (u.isAdmin || (u.workspaces || []).includes(a.id))).length;
-    const nUsersB = users.filter(u => u.active !== false && (u.isAdmin || (u.workspaces || []).includes(b.id))).length;
-    if (wsSortKey === 'projects') { va = nProjA; vb = nProjB; }
-    else if (wsSortKey === 'members') { va = nUsersA; vb = nUsersB; }
-    else { va = norm(a.name); vb = norm(b.name); }
+    if (wsSortKey === 'projects')      { va = nProjectsOf(a.id); vb = nProjectsOf(b.id); }
+    else if (wsSortKey === 'members')  { va = nMembersOf(a.id);  vb = nMembersOf(b.id);  }
+    else if (wsSortKey === 'clients')  { va = nClientsOf(a.id);  vb = nClientsOf(b.id);  }
+    else                                { va = norm(a.name);      vb = norm(b.name);      }
     return (va < vb ? -1 : va > vb ? 1 : 0) * wsSortDir;
   });
   $('ws-table-body').innerHTML = sorted.map(w => {
-    const nProj = projects.filter(p => p.workspaceId === w.id).length;
-    const nUsers = users.filter(u => u.active !== false && (u.isAdmin || (u.workspaces || []).includes(w.id))).length;
+    const nClients = nClientsOf(w.id);
+    const nProj = nProjectsOf(w.id);
+    const nUsers = nMembersOf(w.id);
     const actions = me.isAdmin ? `<div class="row-actions">
           <button class="detail-icon-btn" title="Editar" onclick="openWsModal('${w.id}')"><i data-lucide="pencil" class="ic-sm"></i></button>
           <button class="detail-icon-btn danger" title="Excluir" onclick="deleteWs('${w.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
         </div>` : '';
     return `<tr class="row-hover-actions">
       <td><span class="pill" style="color:${w.color || '#7A00FF'};background:${hexDim(w.color)}"><span class="pill-dot" style="background:${w.color || '#7A00FF'}"></span>${esc(w.name)}</span></td>
+      <td>${nClients}</td>
       <td>${nProj}</td>
       <td>${nUsers}</td>
       <td>${actions}</td>
@@ -10793,18 +10947,61 @@ function notifMessage(n) {
   }
 }
 
+/* Tipos que semanticamente vêm do "sistema" — não expressam ação direta de
+   uma pessoa (ex: a demanda avançou e você virou responsável). Mesmo que o
+   backend registre triggerUserId nesses casos, visualmente melhor tratar como
+   sistema pra não confundir "alguém te atribuiu" com "vc virou responsável". */
+const _NOTIF_SYSTEM_TYPES = new Set(['stage_assigned']);
+function notifAvatarHTML(n) {
+  const isSystem = _NOTIF_SYSTEM_TYPES.has(n.type) || !n.fromUser;
+  if (!isSystem) {
+    const from = userById(n.fromUser);
+    if (from) return avatarHTML(from, 'avatar notif-avatar');
+  }
+  return `<span class="avatar notif-avatar notif-avatar-system" style="background-image:url('/profile.jpg')"></span>`;
+}
+
+/* Tempo relativo em pt-BR, no formato pedido pela UI de notificações:
+     <1min → "agora"
+     1-59 min → "X minutos"
+     1-23h → "X horas"
+     1-6 d → "X dias"
+     1-3 sem → "X semanas"
+     1-11 meses → "X meses"
+     ≥1 ano → "X anos"
+   Corners: valor futuro cai em "agora" (relógio dessincronizado). */
+function fmtRelativeTime(iso) {
+  if (!iso) return '';
+  const diffSec = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (diffSec < 60) return 'agora';
+  const min = Math.floor(diffSec / 60);
+  if (min < 60) return `há ${min} ${min === 1 ? 'minuto' : 'minutos'}`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `há ${hr} ${hr === 1 ? 'hora' : 'horas'}`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `há ${day} ${day === 1 ? 'dia' : 'dias'}`;
+  const week = Math.floor(day / 7);
+  if (week < 4) return `há ${week} ${week === 1 ? 'semana' : 'semanas'}`;
+  const month = Math.floor(day / 30);
+  if (month < 12) return `há ${month} ${month === 1 ? 'mês' : 'meses'}`;
+  const year = Math.floor(day / 365);
+  return `há ${year} ${year === 1 ? 'ano' : 'anos'}`;
+}
+
 function renderNotifList() {
   const list = notifications.slice(0, 50);
   if (!list.length) {
     $('notif-list').innerHTML = '<div class="notif-empty">Nenhuma notificação por enquanto.</div>';
     return;
   }
+  // Item lido: sem espaço do dot (a coluna some, não fica "espaço vazio").
   $('notif-list').innerHTML = list.map(n => `
-    <div class="notif-item ${n.read ? 'read' : 'unread'}" onclick="openNotif('${n.id}', '${n.demandId || ''}')">
-      <div class="notif-dot-wrap">${!n.read ? '<span class="notif-dot"></span>' : ''}</div>
+    <div class="notif-item ${n.read ? 'read' : 'unread'}" onclick="openNotif('${n.id}', '${n.demandId || ''}')" title="${esc(fmtDateTime(n.createdAt))}">
+      ${!n.read ? '<div class="notif-dot-wrap"><span class="notif-dot"></span></div>' : ''}
+      ${notifAvatarHTML(n)}
       <div class="notif-body">
         <div class="notif-text">${notifMessage(n)}</div>
-        <div class="notif-time">${fmtDateTime(n.createdAt)}</div>
+        <div class="notif-time">${fmtRelativeTime(n.createdAt)}</div>
       </div>
     </div>`).join('');
 }
@@ -10835,6 +11032,20 @@ async function markAllRead() {
     notifications.forEach(n => { n.read = true; });
     renderNotifBadge();
     renderNotifList();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function clearAllNotifications() {
+  if (!notifications.length) {
+    toast('Nada pra limpar.', 'warn');
+    return;
+  }
+  try {
+    await api('/notifications', 'DELETE');
+    notifications = [];
+    renderNotifBadge();
+    renderNotifList();
+    toast('Notificações limpas.');
   } catch (e) { toast(e.message, 'error'); }
 }
 
@@ -11360,17 +11571,17 @@ function renderModelCard(t) {
   const flowsGrid = flatFlows.length
     ? (filteredFlows.length
       ? `<div class="model-flows-grid">${filteredFlows.map(({ f, p, pi, fi }) => `
-          <div class="model-flow-card" onclick="openTemplateFlowModal('${t.id}', ${pi}, ${fi})" title="Editar fluxo">
-            ${projCount > 1 ? `<span class="model-flow-card-proj" title="${esc(p.name)}">${esc(p.name)}</span>` : ''}
+          <div class="model-flow-card" onclick="openTemplateFlowModal('${t.id}', ${pi}, ${fi})">
+            ${projCount > 1 ? `<span class="model-flow-card-proj">${esc(p.name)}</span>` : ''}
             <span class="model-flow-icon" style="background:${modelFlowIconBg(p.color || t.color)}">
               ${renderModelFlowIconInner(f.icon)}
             </span>
             <span class="model-flow-card-name">${esc(f.name || 'Fluxo sem nome')}</span>
             ${f.demandType ? `<span class="model-flow-card-type">${esc(f.demandType)}</span>` : ''}
             <span class="model-flow-card-actions">
-              <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); duplicateTemplateFlow('${t.id}', ${pi}, ${fi})" title="Duplicar fluxo"><i data-lucide="copy" class="ic-sm"></i></button>
-              <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); openTemplateFlowModal('${t.id}', ${pi}, ${fi})" title="Editar fluxo"><i data-lucide="pencil" class="ic-sm"></i></button>
-              <button class="btn btn-ghost btn-sm bulk-danger" onclick="event.stopPropagation(); confirmDeleteTemplateFlow('${t.id}', ${pi}, ${fi})" title="Excluir fluxo"><i data-lucide="trash-2" class="ic-sm"></i></button>
+              <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); duplicateTemplateFlow('${t.id}', ${pi}, ${fi})"><i data-lucide="copy" class="ic-sm"></i></button>
+              <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); openTemplateFlowModal('${t.id}', ${pi}, ${fi})"><i data-lucide="pencil" class="ic-sm"></i></button>
+              <button class="btn btn-ghost btn-sm bulk-danger" onclick="event.stopPropagation(); confirmDeleteTemplateFlow('${t.id}', ${pi}, ${fi})"><i data-lucide="trash-2" class="ic-sm"></i></button>
             </span>
           </div>`).join('')}</div>`
       : '<div class="hours-empty" style="text-align:left;padding:6px 0">Nenhum fluxo bate com o filtro.</div>')
@@ -13581,7 +13792,9 @@ function openClientModal(id) {
   $('client-segments-datalist').innerHTML = segs.map(s => `<option value="${esc(s)}">`).join('');
   // Footer: edit mostra status toggle + excluir + salvar como modelo
   $('c-foot-left').style.display = '';
-  $('c-delete-btn').style.display = isNew ? 'none' : '';
+  // Excluir cliente restrito a admin/moderador — server também bloqueia via modOrAdmin.
+  const canDeleteClient = !!(me.isAdmin || me.isModerator);
+  $('c-delete-btn').style.display = (isNew || !canDeleteClient) ? 'none' : '';
   $('c-status-group').style.display = isNew ? 'none' : '';
   $('c-save-template-btn').style.display = isNew ? 'none' : '';
   if (c) {

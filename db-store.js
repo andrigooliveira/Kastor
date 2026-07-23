@@ -227,6 +227,9 @@ function createStore(config = {}) {
   async function markAllNotificationsReadFor(userId) {
     await pool.query('UPDATE notifications SET is_read = TRUE WHERE user_id = $1', [userId]);
   }
+  async function deleteAllNotificationsFor(userId) {
+    await pool.query('DELETE FROM notifications WHERE user_id = $1', [userId]);
+  }
   async function trimNotificationsFor(userId, keep) {
     // Mantém as `keep` notificações mais recentes, apaga o resto.
     await pool.query(
@@ -289,7 +292,7 @@ function createStore(config = {}) {
     upsert, upsertMany, remove, get, listByType, listByWorkspace,
     loadAllToCache, applyBatch,
     insertNotification, listNotificationsFor, markNotificationRead, markNotificationReadIfOwner,
-    markAllNotificationsReadFor, trimNotificationsFor,
+    markAllNotificationsReadFor, deleteAllNotificationsFor, trimNotificationsFor,
     insertReset, getReset, markResetUsed, cleanupResets,
     getKv, setKv,
     close,

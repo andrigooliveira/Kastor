@@ -1950,7 +1950,7 @@ app.put('/api/clients/:id', requireAuth, (req, res) => {
   res.json(c);
 });
 
-app.delete('/api/clients/:id', requireAuth, (req, res) => {
+app.delete('/api/clients/:id', requireAuth, modOrAdmin, (req, res) => {
   const c = db.clients.find(x => x.id === req.params.id);
   if (!c || !canAccessWs(req.user, c.workspaceId) || !notDeleted(c)) return res.status(404).json({ error: 'Cliente não encontrado' });
   const linkedProjects = db.projects.filter(p => p.clientId === c.id && notDeleted(p));
@@ -2465,7 +2465,7 @@ app.put('/api/projects/:id', requireAuth, (req, res) => {
   res.json(p);
 });
 
-app.delete('/api/projects/:id', requireAuth, (req, res) => {
+app.delete('/api/projects/:id', requireAuth, modOrAdmin, (req, res) => {
   const p = db.projects.find(x => x.id === req.params.id);
   if (!p || !canAccessWs(req.user, p.workspaceId) || !notDeleted(p)) return res.status(404).json({ error: 'Projeto não encontrado' });
   const force = req.query.force === '1' || req.body?.force === true;
@@ -4512,6 +4512,13 @@ app.put('/api/notifications/:id/read', requireAuth, async (req, res) => {
 
 app.put('/api/notifications/read-all', requireAuth, async (req, res) => {
   await store.markAllNotificationsReadFor(req.user.id);
+  res.json({ ok: true });
+});
+
+/* Apaga TODAS as notificações do usuário. Sem undo — quem clica em "Limpar
+   notificações" tá dizendo que já leu/resolveu tudo e não quer mais o barulho. */
+app.delete('/api/notifications', requireAuth, async (req, res) => {
+  await store.deleteAllNotificationsFor(req.user.id);
   res.json({ ok: true });
 });
 
