@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-title" content="Kastor">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/css/style.css?v=20260723c">
+<link rel="stylesheet" href="/css/style.css?v=20260724a">
 </head>
 <body>
 
@@ -104,6 +104,10 @@
         <svg viewBox="0 0 16 16" fill="none"><path d="M3 4h10M3 8h10M3 12h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="0.5" y="2.5" width="2" height="2" rx="0.5" stroke="currentColor" stroke-width="1.2"/><rect x="0.5" y="6.5" width="2" height="2" rx="0.5" stroke="currentColor" stroke-width="1.2"/><rect x="0.5" y="10.5" width="2" height="2" rx="0.5" stroke="currentColor" stroke-width="1.2"/></svg>
         Listas de tarefas
       </div>
+      <div class="nav-item" data-page="recurringDemands" onclick="goPage('recurringDemands')">
+        <svg viewBox="0 0 16 16" fill="none"><path d="M2.5 6.5A5 5 0 0111.7 4.2l1.8 1.8M13.5 9.5A5 5 0 014.3 11.8L2.5 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.5 2.5v3.5H10M2.5 13.5V10h3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Demandas Recorrentes
+      </div>
       <div class="nav-item" data-page="flows" id="nav-flows" onclick="goPage('flows')">
         <svg viewBox="0 0 16 16" fill="none"><circle cx="3" cy="8" r="1.8" stroke="currentColor" stroke-width="1.5"/><circle cx="13" cy="3.5" r="1.8" stroke="currentColor" stroke-width="1.5"/><circle cx="13" cy="12.5" r="1.8" stroke="currentColor" stroke-width="1.5"/><path d="M4.7 7.2l6.5-3M4.7 8.8l6.5 3" stroke="currentColor" stroke-width="1.5"/></svg>
         Fluxos de Demanda
@@ -129,6 +133,10 @@
       <div class="nav-item" data-page="users" id="nav-users" onclick="goPage('users')">
         <svg viewBox="0 0 16 16" fill="none"><circle cx="5.5" cy="5" r="2.5" stroke="currentColor" stroke-width="1.5"/><path d="M1.5 13c.6-2.2 2.2-3.3 4-3.3s3.4 1.1 4 3.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="11.5" cy="5.5" r="2" stroke="currentColor" stroke-width="1.5"/><path d="M11 9.8c1.8.1 3 1.1 3.5 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         Usuários
+      </div>
+      <div class="nav-item admin-only" data-page="trash" id="nav-trash" onclick="goPage('trash')">
+        <svg viewBox="0 0 16 16" fill="none"><path d="M2.5 4.5h11M6 4.5V3a1 1 0 011-1h2a1 1 0 011 1v1.5M4 4.5l.6 8a1.5 1.5 0 001.5 1.4h3.8a1.5 1.5 0 001.5-1.4l.6-8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M6.5 7.5v4M9.5 7.5v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Lixeira
       </div>
     </nav>
     <div class="sidebar-footer">
@@ -999,7 +1007,10 @@
             </div>
             <select class="filter-select" id="flow-f-client" onchange="renderFlows()"><option value="">Todos os clientes</option></select>
           </div>
-          <div class="section-title" style="margin-bottom:16px">Fluxos de Demanda</div>
+          <div class="section-head" style="margin-bottom:16px">
+            <div class="section-title">Fluxos de Demanda</div>
+            <button class="btn btn-ghost btn-sm admin-only" onclick="openDemandTypesModal()"><i data-lucide="tag" class="ic-sm"></i> Gerenciar tipos</button>
+          </div>
           <div class="flow-grid" id="flow-clients-grid"></div>
         </div>
 
@@ -1122,6 +1133,37 @@
             </div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- ── DEMANDAS RECORRENTES — as que o usuário configurou pra repetir ── -->
+    <div class="page" id="page-recurringDemands">
+      <div class="page-body">
+        <div class="section-head">
+          <div class="section-title">Demandas Recorrentes</div>
+          <div class="rd-filter">
+            <label class="filter-label" for="rd-ws-filter">Workspace</label>
+            <select class="form-control" id="rd-ws-filter" onchange="onRdWsFilterChange()"></select>
+          </div>
+        </div>
+        <div class="rd-hint">
+          Demandas que <strong>você</strong> configurou para se repetir. A cada rotação, o sistema gera automaticamente uma nova demanda idêntica no fluxo. Edite, pause ou encerre a recorrência abaixo.
+        </div>
+        <div id="rd-body"></div>
+      </div>
+    </div>
+
+    <!-- ── LIXEIRA (mod/admin) — recuperação em 30 dias ── -->
+    <div class="page" id="page-trash">
+      <div class="page-body">
+        <div class="section-head">
+          <div class="section-title">Lixeira</div>
+          <button class="btn btn-ghost btn-sm" onclick="renderTrash()" title="Atualizar lista"><i data-lucide="refresh-cw" class="ic-sm"></i> Atualizar</button>
+        </div>
+        <div class="trash-hint">
+          Itens excluídos — clientes, projetos, demandas, fluxos, listas e modelos de cliente — ficam aqui por <strong>30 dias</strong> e depois são removidos definitivamente do servidor. Restaure enquanto estiverem na lista.
+        </div>
+        <div id="trash-body"></div>
       </div>
     </div>
 
@@ -1322,6 +1364,20 @@
           <label class="form-label">Fluxo</label>
           <select class="form-control" id="f-flow" onchange="syncStatusOptions()"></select>
         </div>
+        <!-- 2. PRIORIDADE | RESPONSÁVEL INICIAL — decisões rápidas logo no topo -->
+        <div class="form-group">
+          <label class="form-label">Prioridade</label>
+          <select class="form-control" id="f-priority">
+            <option value="1">Imediato</option>
+            <option value="2">Alta</option>
+            <option value="3" selected>Média</option>
+            <option value="4">Baixa</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Responsável Inicial</label>
+          <div id="f-owner-select"></div>
+        </div>
         <!-- 3. DESCRIÇÃO -->
         <div class="form-group full">
           <label class="form-label">Descrição</label>
@@ -1346,9 +1402,9 @@
         </div>
         <!-- 6. CHECKLIST (vem do flow.defaultChecklist, editável antes de salvar) -->
         <div class="form-group full" id="f-checklist-group" style="display:none">
-          <label class="form-label">Checklist <span class="qty-cell-hint" title="Itens herdados do fluxo. Você pode editar, remover ou adicionar antes de salvar.">?</span></label>
-          <div class="flow-checklist-list" id="f-checklist-list"></div>
-          <button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="addDemandChecklistItem()"><i data-lucide="plus" class="ic-sm"></i> Adicionar item</button>
+          <label class="form-label">Checklist Inicial <span class="qty-cell-hint" title="Itens que a demanda terá ao ser criada. Vem do fluxo, mas você pode editar, adicionar responsável, remover ou incluir novos.">?</span></label>
+          <div class="chk-list" id="f-checklist-list"></div>
+          <button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addDemandChecklistItem()"><i data-lucide="plus" class="ic-sm"></i> Adicionar item</button>
         </div>
         <!-- ENTREGÁVEIS (peças, artes, variações + atribuir a) — 4 campos do mesmo tamanho em 1 linha -->
         <div class="form-group full">
@@ -1374,21 +1430,59 @@
             </div>
           </div>
         </div>
-        <!-- 6. PRIORIDADE | RESPONSÁVEL ATUAL -->
-        <div class="form-group">
-          <label class="form-label">Prioridade</label>
-          <select class="form-control" id="f-priority">
-            <option value="1">Imediato</option>
-            <option value="2">Alta</option>
-            <option value="3" selected>Média</option>
-            <option value="4">Baixa</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Responsável Atual</label>
-          <div id="f-owner-select"></div>
-        </div>
         </div><!-- /form-grid -->
+
+        <!-- RECORRÊNCIA — gera cópias automáticas desta demanda no tempo. -->
+        <div class="form-group full">
+          <div class="rec-card" id="f-rec-card">
+            <label class="rec-head">
+              <span class="rec-head-icon"><i data-lucide="repeat"></i></span>
+              <span class="rec-head-text">
+                <span class="rec-head-title">Demanda recorrente</span>
+                <span class="rec-head-sub">Repete no tempo — o sistema cria uma nova demanda idêntica a cada rotação</span>
+              </span>
+              <input type="checkbox" id="f-rec-enabled" onchange="onRecToggle()">
+              <span class="rec-switch" aria-hidden="true"></span>
+            </label>
+            <div id="f-rec-config" class="rec-config" style="display:none">
+              <div class="rec-field">
+                <span class="rec-field-label">Frequência</span>
+                <div class="rec-row">
+                  <span class="rec-inline-label">Repetir a cada</span>
+                  <input id="f-rec-interval" class="rec-num" type="number" min="1" max="365" value="1" oninput="updateRecPreview()">
+                  <select id="f-rec-pattern" class="form-control rec-unit" onchange="onRecPatternChange()">
+                    <option value="daily">dia(s)</option>
+                    <option value="weekly" selected>semana(s)</option>
+                    <option value="monthly">mês(es)</option>
+                  </select>
+                </div>
+              </div>
+              <div class="rec-field" id="f-rec-weekday-g">
+                <span class="rec-field-label">Nos dias da semana</span>
+                <div class="rec-weekdays" id="f-rec-weekdays"></div>
+              </div>
+              <div class="rec-field" id="f-rec-monthday-g" style="display:none">
+                <span class="rec-field-label">Dia do mês</span>
+                <div class="rec-row">
+                  <span class="rec-inline-label">No dia</span>
+                  <input id="f-rec-monthday" class="rec-num" type="number" min="1" max="28" value="1" oninput="updateRecPreview()">
+                  <span class="rec-inline-label">de cada mês (1–28)</span>
+                </div>
+              </div>
+              <div class="rec-dates">
+                <div class="rec-field">
+                  <span class="rec-field-label">Início</span>
+                  <input id="f-rec-start" class="rec-date" type="date" oninput="updateRecPreview()">
+                </div>
+                <div class="rec-field">
+                  <span class="rec-field-label">Término <span class="rec-opt">(opcional)</span></span>
+                  <input id="f-rec-end" class="rec-date" type="date" oninput="updateRecPreview()">
+                </div>
+              </div>
+              <div class="rec-preview" id="f-rec-preview"></div>
+            </div>
+          </div>
+        </div>
 
         <!-- Campos ocultos do form (mantidos pra compat de JS / dados padrão). -->
         <div style="display:none" aria-hidden="true">
@@ -1396,13 +1490,6 @@
           <input id="f-deadline" type="date">
           <select id="f-status"></select>
           <input id="f-estimated" type="number" value="">
-          <input type="checkbox" id="f-rec-enabled">
-          <div id="f-rec-config">
-            <select id="f-rec-pattern"><option value="weekly" selected>Semanalmente</option></select>
-            <div id="f-rec-weekday-g"><select id="f-rec-weekday"><option value="1" selected>Segunda</option></select></div>
-            <div id="f-rec-monthday-g" style="display:none"><input id="f-rec-monthday" type="number" value="1"></div>
-            <input id="f-rec-end" type="date">
-          </div>
         </div>
       </div><!-- /dw-step-4 -->
     </div><!-- /modal-body -->
@@ -1734,8 +1821,10 @@
         </div>
         <div class="form-group">
           <label class="form-label">Tipo de Demanda</label>
-          <input class="form-control" id="fl-type" placeholder="Ex: Social Media" list="flowtypes-datalist" oninput="flowModalDirty=true">
-          <datalist id="flowtypes-datalist"></datalist>
+          <div class="dtype-combo">
+            <input class="form-control" id="fl-type" placeholder="Ex: Social Media" autocomplete="off" oninput="flowModalDirty=true">
+            <div class="dtype-menu" id="fl-type-menu"></div>
+          </div>
         </div>
         <!-- Projeto vinculado fica como campo opcional avançado, escondido por padrão -->
         <div class="form-group full" id="fl-project-group" style="display:none">
@@ -2299,6 +2388,31 @@
   </div>
 </div>
 
+<!-- MODAL: GERENCIAR TIPOS DE DEMANDA -->
+<div class="modal-overlay" id="dtype-manage-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Tipos de Demanda</div>
+      <button class="modal-close" onclick="closeModal('dtype-manage-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="dtype-mng-hint">
+        Rótulo organizacional dos fluxos. <strong>Renomear</strong> atualiza todos os fluxos que usam o tipo. <strong>Excluir</strong> só o tira desta lista — os fluxos e demandas existentes mantêm o valor.
+      </div>
+      <div class="dtype-mng-add">
+        <input class="form-control" id="dtype-new-name" placeholder="Novo tipo…" maxlength="60" onkeydown="if(event.key==='Enter'){event.preventDefault();addDemandTypeFromModal()}">
+        <button class="btn btn-primary btn-sm" onclick="addDemandTypeFromModal()"><i data-lucide="plus" class="ic-sm"></i> Adicionar</button>
+      </div>
+      <div class="table-wrap table-scroll">
+        <table>
+          <thead><tr><th>Tipo</th><th style="width:80px;text-align:center">Fluxos</th><th style="width:92px"></th></tr></thead>
+          <tbody id="dtype-mng-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL: EDITAR FLUXO DO MODELO -->
 <div class="modal-overlay" id="template-flow-modal">
   <div class="modal modal-lg">
@@ -2323,8 +2437,10 @@
         </div>
         <div class="form-group">
           <label class="form-label">Tipo de demanda</label>
-          <input class="form-control" id="tfl-type" placeholder="Ex.: Social Media" list="tfl-type-datalist">
-          <datalist id="tfl-type-datalist"></datalist>
+          <div class="dtype-combo">
+            <input class="form-control" id="tfl-type" placeholder="Ex.: Social Media" autocomplete="off">
+            <div class="dtype-menu" id="tfl-type-menu"></div>
+          </div>
         </div>
         <div class="form-group full">
           <label class="form-label">Descrição padrão <span class="qty-cell-hint" title="Aparece pré-preenchida na descrição de demandas novas criadas com este fluxo.">?</span></label>
@@ -2502,7 +2618,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260723c"></script>
+<script src="/js/app.js?v=20260724a"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
@@ -2534,6 +2650,21 @@
               <option value="true">Ativo</option>
               <option value="false">Pausado</option>
             </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Cliente (opcional)</label>
+            <select class="form-control" id="wh-client" onchange="whOnClientChange()">
+              <option value="">— Todos os clientes —</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Projeto (opcional)</label>
+            <select class="form-control" id="wh-project">
+              <option value="">— Todos os projetos —</option>
+            </select>
+          </div>
+          <div class="form-group full" style="margin-top:-6px">
+            <div class="webhook-hint">Restrinja o disparo a um cliente e/ou projeto específico. Deixe em <strong>Todos</strong> para receber os eventos de todo o workspace.</div>
           </div>
           <div class="form-group full">
             <label class="form-label">Usuário alvo (opcional)</label>

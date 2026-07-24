@@ -35,13 +35,14 @@ body.user-moderator .full-admin-only { display: none !important; }
   cursor: pointer;
 }
 .wizard-cust-name, .wizard-cust-resp, .wizard-cust-days {
-  background: var(--surface-2); border: 1px solid transparent;
+  background: var(--surface); border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
   padding: 6px 10px; font-size: 13px;
   color: var(--text); font-family: inherit;
 }
+.wizard-cust-name, .wizard-cust-days { height: 36px; }
 .wizard-cust-name:focus, .wizard-cust-resp:focus, .wizard-cust-days:focus {
-  outline: none; border-color: var(--accent); background: var(--surface-3);
+  outline: none; border-color: var(--accent); background: var(--surface);
 }
 .wizard-cust-remove {
   background: transparent; border: none;
@@ -68,7 +69,7 @@ body.user-moderator .full-admin-only { display: none !important; }
 
 .wizard-cust-row-v2 {
   display: grid;
-  grid-template-columns: 22px 30px minmax(140px,1fr) 66px minmax(160px,1fr) 78px 84px 84px 30px;
+  grid-template-columns: 22px 30px minmax(190px,1fr) 66px 160px 48px 40px 40px 28px;
   gap: 8px; align-items: center;
   padding: 8px 10px;
   background: var(--surface); border: 1px solid var(--hairline);
@@ -77,10 +78,7 @@ body.user-moderator .full-admin-only { display: none !important; }
   transition: background .12s, border-color .12s, opacity .12s;
 }
 .wizard-cust-row-v2.is-skipped { opacity: 0.5; }
-.wizard-cust-row-v2.is-added {
-  background: rgba(122,0,255,0.06);
-  border-color: rgba(122,0,255,0.35);
-}
+/* Etapas adicionadas: sem tint roxo — a etiqueta "Nova" já as identifica. */
 .wizard-cust-row-v2.is-dragging { opacity: 0.4; }
 .wizard-cust-row-v2.drop-above { border-top: 2px solid var(--accent); }
 .wizard-cust-row-v2.drop-below { border-bottom: 2px solid var(--accent); }
@@ -515,12 +513,36 @@ body.user-moderator .full-admin-only { display: none !important; }
 /* Editor completo de fluxo do modelo (#template-flow-modal). */
 .tfl-stage-row {
   display: grid;
-  grid-template-columns: 32px 1fr 1fr 78px 82px 32px;
+  /* grip | cor | nome | prazo | final | remover */
+  grid-template-columns: 20px 32px 1fr 48px 40px 40px;
   gap: 10px; align-items: center;
   padding: 8px 12px;
   background: var(--surface); border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
   margin-bottom: 6px;
+  transition: opacity .18s var(--ease-out), border-color .15s var(--ease-out),
+              box-shadow .18s var(--ease-out), transform .18s var(--ease-spring);
+}
+/* Grip de arraste — só ele é draggable, cursor grab. */
+.tfl-stage-grip {
+  cursor: grab; color: var(--text-muted); text-align: center;
+  user-select: none; line-height: 1;
+  transition: color .12s var(--ease-out), transform .12s var(--ease-out);
+}
+.tfl-stage-grip:hover { color: var(--text); }
+.tfl-stage-grip:active { cursor: grabbing; transform: scale(1.15); }
+/* Inputs/botões da row não roubam o mousedown do grip pro dragstart. */
+.tfl-stage-row input,
+.tfl-stage-row button,
+.tfl-stage-row label { -webkit-user-drag: none; }
+.tfl-stage-row.dragging {
+  opacity: .5; border-color: var(--accent-text);
+  transform: scale(.985); box-shadow: 0 8px 22px rgba(0,0,0,.10);
+}
+.tfl-stage-row.drag-over {
+  border-color: var(--accent-text);
+  background: var(--accent-dim);
+  box-shadow: 0 0 0 2px var(--accent-dim), inset 0 2px 0 0 var(--accent-text);
 }
 /* Override .color-swatch-trigger — mesmo compacto do wizard cust. */
 .color-swatch-trigger.tfl-stage-color {
@@ -6580,8 +6602,8 @@ body.rec-tab-listas-active .rec-layout { grid-template-columns: 1fr; }
   visibility: hidden;
   pointer-events: none;
 }
-/* Também desabilita checkboxes de "Conclui" e color pickers da linha */
-#flow-modal.readonly .stage-done-toggle,
+/* Também desabilita o botão "Conclui" (bandeira) e color pickers da linha */
+#flow-modal.readonly .stage-row .cust-icon-toggle,
 #flow-modal.readonly .color-swatch-trigger {
   pointer-events: none;
   opacity: 0.7;
@@ -6745,6 +6767,348 @@ tr.demand-row:hover {
   85%  { opacity: 1; }
   100% { transform: translate3d(var(--dx, 0), var(--dy, 240px), 0) rotate(var(--rot, 540deg)); opacity: 0; }
 }
+
+/* ─── LIXEIRA — recuperação de itens excluídos (30 dias) ─── */
+.trash-hint {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin-bottom: 18px;
+  max-width: 720px;
+}
+.trash-loading { color: var(--text-muted); font-size: 14px; padding: 24px 0; }
+.trash-group { margin-bottom: 22px; }
+.trash-group-head {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 10px;
+}
+.trash-group-toggle {
+  display: flex; align-items: center; gap: 8px;
+  flex: 1; min-width: 0;
+  background: none; border: none; padding: 4px 2px; margin: 0;
+  cursor: pointer; text-align: left;
+  font-size: 13px; font-weight: 600; color: var(--text);
+  border-radius: var(--radius-sm);
+  transition: color .12s var(--ease-out);
+}
+.trash-group-toggle:hover { color: var(--accent-text); }
+.trash-group-toggle > i { color: var(--text-muted); flex-shrink: 0; }
+.trash-group-toggle:hover > i { color: var(--accent-text); }
+.trash-chevron { transition: transform .18s var(--ease-spring); }
+.trash-group.collapsed .trash-chevron { transform: rotate(-90deg); }
+.trash-group.collapsed .trash-list { display: none; }
+.trash-count {
+  font-size: 11px; font-weight: 600;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.trash-clear-btn { color: var(--text-muted); flex-shrink: 0; gap: 5px; }
+.trash-clear-btn:hover { color: var(--danger); background: var(--danger-dim); }
+.trash-list { display: flex; flex-direction: column; gap: 8px; }
+.trash-item {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 14px; align-items: center;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  transition: border-color .15s var(--ease-out), box-shadow .15s var(--ease-out);
+}
+.trash-item:hover { border-color: var(--accent-text); box-shadow: 0 2px 10px rgba(0,0,0,.05); }
+.trash-item-main { min-width: 0; }
+.trash-item-name {
+  font-size: 14px; font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.trash-item-meta {
+  font-size: 12px; color: var(--text-muted); margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.trash-item-purge { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.trash-item-purge.soon { color: var(--danger); font-weight: 600; }
+.trash-item-actions { display: flex; gap: 6px; align-items: center; }
+.trash-purge-btn { color: var(--text-muted); padding: 6px 8px; }
+.trash-purge-btn:hover { color: var(--danger); background: var(--danger-dim); }
+.trash-empty { text-align: center; padding: 56px 20px; color: var(--text-muted); }
+.trash-empty-icon {
+  width: 48px; height: 48px; margin: 0 auto 14px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-muted); opacity: .55;
+}
+.trash-empty-icon i, .trash-empty-icon svg { width: 40px; height: 40px; stroke-width: 1.75; }
+.trash-empty-title { font-size: 15px; font-weight: 600; color: var(--text); }
+.trash-empty-sub { font-size: 13px; margin-top: 4px; }
+@media (max-width: 640px) {
+  .trash-item { grid-template-columns: 1fr auto; }
+  .trash-item-purge { grid-column: 1 / -1; order: 3; }
+  .trash-item-actions { grid-column: 1 / -1; order: 4; justify-content: flex-end; }
+}
+
+/* ── RECORRÊNCIA (modal de demanda) — card destacado ── */
+.rec-card {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+  transition: border-color .2s var(--ease-out), box-shadow .2s var(--ease-out);
+}
+.rec-card.on {
+  border-color: var(--accent-text);
+  box-shadow: 0 0 0 1px var(--accent-text), 0 10px 28px var(--accent-dim);
+}
+.rec-head {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 16px; cursor: pointer; user-select: none;
+}
+.rec-head > input { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
+.rec-head-icon {
+  width: 40px; height: 40px; border-radius: 11px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent-dim); color: var(--accent-text);
+  transition: transform .22s var(--ease-spring);
+}
+.rec-head-icon > i, .rec-head-icon > svg { width: 20px; height: 20px; }
+.rec-card.on .rec-head-icon { transform: scale(1.06) rotate(-8deg); }
+.rec-head-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.rec-head-title { font-size: 14px; font-weight: 600; color: var(--text); }
+.rec-head-sub { font-size: 12px; color: var(--text-muted); line-height: 1.4; }
+.rec-switch {
+  width: 42px; height: 24px; border-radius: 999px; flex-shrink: 0; position: relative;
+  background: var(--surface-2); border: 1px solid var(--hairline);
+  transition: background .18s var(--ease-out), border-color .18s var(--ease-out);
+}
+.rec-switch::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: var(--text-muted);
+  transition: transform .22s var(--ease-spring), background .18s var(--ease-out);
+}
+.rec-head > input:checked ~ .rec-switch { background: var(--accent-text); border-color: var(--accent-text); }
+.rec-head > input:checked ~ .rec-switch::after { transform: translateX(18px); background: #fff; }
+.rec-head > input:focus-visible ~ .rec-switch { box-shadow: 0 0 0 3px var(--accent-dim); }
+
+.rec-config {
+  padding: 18px 16px;
+  border-top: 1px solid var(--hairline);
+  background: var(--surface-2);
+  display: flex; flex-direction: column; gap: 18px;
+}
+.rec-field { display: flex; flex-direction: column; gap: 8px; }
+.rec-field-label {
+  font-size: 11px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase;
+  color: var(--text-muted);
+}
+.rec-opt { font-weight: 500; text-transform: none; letter-spacing: 0; opacity: .8; }
+.rec-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.rec-inline-label { font-size: 13px; color: var(--text); }
+.rec-num {
+  width: 64px; height: 38px; text-align: center;
+  font-size: 15px; font-weight: 600; color: var(--text);
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 9px;
+  transition: border-color .14s var(--ease-out), box-shadow .14s var(--ease-out);
+}
+.rec-num:focus { outline: none; border-color: var(--accent-text); box-shadow: 0 0 0 3px var(--accent-dim); }
+.rec-unit { width: auto; min-width: 140px; flex: 0 0 auto; }
+.rec-date {
+  height: 38px; width: 180px; max-width: 100%; padding: 0 12px;
+  font-size: 14px; color: var(--text);
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 9px;
+  transition: border-color .14s var(--ease-out), box-shadow .14s var(--ease-out);
+}
+.rec-date:focus { outline: none; border-color: var(--accent-text); box-shadow: 0 0 0 3px var(--accent-dim); }
+.rec-dates { display: flex; gap: 16px; flex-wrap: wrap; }
+.rec-weekdays { display: flex; gap: 6px; flex-wrap: wrap; }
+.rec-wd-chip {
+  min-width: 46px; padding: 8px 12px;
+  border: 1px solid var(--hairline); border-radius: 10px;
+  background: var(--surface); color: var(--text-muted);
+  font-size: 12.5px; font-weight: 600; cursor: pointer;
+  transition: background .14s var(--ease-out), border-color .14s var(--ease-out), color .14s var(--ease-out), transform .12s var(--ease-spring);
+}
+.rec-wd-chip:hover { border-color: var(--accent-text); color: var(--text); }
+.rec-wd-chip.active {
+  background: var(--accent-text); border-color: var(--accent-text); color: #fff;
+  box-shadow: 0 2px 8px var(--accent-dim);
+}
+.rec-wd-chip:active { transform: scale(.92); }
+.rec-preview {
+  display: flex; align-items: center; gap: 9px;
+  font-size: 13px; color: var(--accent-text); font-weight: 600;
+  padding: 11px 14px; background: var(--accent-dim); border-radius: 10px;
+}
+.rec-preview::before {
+  content: ''; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent-text); flex-shrink: 0;
+}
+.rec-preview:empty { display: none; }
+
+/* ── DEMANDAS RECORRENTES (tela de gestão) ── */
+.rd-filter { display: flex; align-items: center; gap: 8px; }
+.rd-filter .form-control { width: auto; min-width: 210px; }
+.rd-hint { font-size: 13px; color: var(--text-muted); line-height: 1.6; margin-bottom: 18px; max-width: 760px; }
+.rd-list { display: flex; flex-direction: column; gap: 8px; }
+.rd-item {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: center;
+  padding: 14px 16px; background: var(--surface);
+  border: 1px solid var(--hairline); border-radius: var(--radius-sm);
+  transition: border-color .15s var(--ease-out), box-shadow .15s var(--ease-out), opacity .15s var(--ease-out);
+}
+.rd-item:hover { border-color: var(--accent-text); box-shadow: 0 2px 10px rgba(0,0,0,.05); }
+.rd-item.paused { opacity: .68; }
+.rd-item-icon {
+  width: 34px; height: 34px; border-radius: 9px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent-dim); color: var(--accent-text);
+}
+.rd-item-main { min-width: 0; }
+.rd-item-name {
+  font-size: 14px; font-weight: 600; color: var(--text); cursor: pointer;
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.rd-item-name:hover { color: var(--accent-text); }
+.rd-paused-tag {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
+  color: var(--warn); background: var(--warn-dim, rgba(181,113,0,.14));
+  padding: 1px 7px; border-radius: 999px;
+}
+.rd-item-sched { font-size: 12.5px; color: var(--text-muted); margin-top: 3px; }
+.rd-item-ctx { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+.rd-item-actions { display: flex; gap: 4px; align-items: center; }
+.rd-end-btn:hover { color: var(--danger); background: var(--danger-dim); }
+.rd-empty { text-align: center; padding: 56px 20px; color: var(--text-muted); }
+.rd-empty-icon {
+  width: 48px; height: 48px; margin: 0 auto 14px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-muted); opacity: .55;
+}
+.rd-empty-icon > i, .rd-empty-icon > svg { width: 40px; height: 40px; }
+.rd-empty-title { font-size: 15px; font-weight: 600; color: var(--text); }
+.rd-empty-sub { font-size: 13px; margin: 4px auto 0; max-width: 440px; line-height: 1.5; }
+@media (max-width: 640px) {
+  .rd-item { grid-template-columns: auto 1fr; }
+  .rd-item-actions { grid-column: 1 / -1; justify-content: flex-end; }
+}
+
+/* ── CHECKLIST DO WIZARD — item com responsável por linha ── */
+.chk-item {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 8px;
+}
+.chk-item-text { flex: 1; min-width: 0; }
+.chk-item .filter-cdrop { width: 190px; min-width: 0; flex-shrink: 0; }
+#demand-modal .chk-item .filter-cdrop-trigger { height: 40px; }
+.chk-item-owner { width: 190px; flex-shrink: 0; }
+.chk-item-del { flex-shrink: 0; }
+.chk-empty { color: var(--text-muted); font-size: 13px; padding: 6px 2px; }
+@media (max-width: 620px) {
+  .chk-item { flex-wrap: wrap; }
+  .chk-item-text { flex-basis: 100%; }
+  .chk-item .filter-cdrop { flex: 1; width: auto; }
+}
+/* Responsável do item exibido no checklist do detalhe da demanda */
+.checklist-owner { display: inline-flex; align-items: center; flex-shrink: 0; }
+.checklist-owner-av { width: 22px !important; height: 22px !important; font-size: 10px !important; }
+
+/* ── PASSO CUSTOMIZAR — toggles Conclui/Ativa como ícones ── */
+.cust-icon-toggle {
+  width: 36px; height: 36px; margin: 0 auto;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid var(--hairline);
+  border-radius: 9px; color: var(--text-muted); cursor: pointer;
+  transition: background .14s var(--ease-out), border-color .14s var(--ease-out), color .14s var(--ease-out), transform .12s var(--ease-spring);
+}
+.cust-icon-toggle:hover { color: var(--text); border-color: var(--text-muted); background: var(--surface-2); }
+.cust-icon-toggle:active { transform: scale(.9); }
+.cust-toggle-done.on { background: var(--success); border-color: var(--success); color: #fff; }
+.cust-toggle-active.on { color: var(--accent-text); border-color: var(--accent-text); }
+.cust-toggle-active:not(.on) { color: var(--text-muted); opacity: .7; }
+/* Remover etapa (fluxo do modelo): mesmo botão-ícone, hover vermelho. */
+.tfl-remove-btn:hover { color: var(--danger); border-color: var(--danger); background: var(--danger-dim); }
+
+/* ── LINHA DA ETAPA — responsável mais curto + alturas uniformes (36px) ── */
+.wizard-cust-row-v2 .filter-cdrop { min-width: 0; width: 100%; }
+/* O seletor herda #demand-modal .filter-cdrop-trigger (48px, id vence): re-igualo com id. */
+#demand-modal .wizard-cust-row-v2 .filter-cdrop-trigger { height: 36px; }
+/* Prazo em LINHA (sem rótulo empilhado) pra alinhar com o dropdown de responsável. */
+.wizard-cust-days-inline { display: flex; align-items: center; gap: 5px; }
+.wizard-cust-days-inline .wizard-cust-days { flex: 1; min-width: 0; text-align: center; padding-left: 6px; padding-right: 6px; }
+.wizard-cust-days-unit { font-size: 12px; color: var(--text-muted); flex-shrink: 0; }
+
+/* ── ENTREGÁVEIS — 3 inputs + dropdown do mesmo tamanho ── */
+.qty-cell .filter-cdrop { min-width: 0; width: 100%; }
+.qty-cell .form-control, .qty-cell .filter-cdrop-trigger { width: 100%; }
+#demand-modal .qty-cell .filter-cdrop-trigger { height: 40px; }
+
+/* ── MODAL DE DEMANDA — inputs contornados/clean + mais respiro ── */
+/* Usa background-color LONGHAND (não shorthand) pra não apagar o chevron dos selects. */
+#demand-modal .form-grid { gap: 18px 16px; }
+#demand-modal .form-control { background-color: var(--surface); border-color: var(--hairline); }
+#demand-modal .form-control:hover { background-color: var(--surface); border-color: var(--text-muted); }
+#demand-modal .form-control:focus { background-color: var(--surface); border-color: var(--accent); }
+#dw-step-4 > .form-group.full { margin-top: 14px; }
+
+/* ── EDITOR DE FLUXO — mesma linguagem visual da customização de etapas ── */
+.stage-row {
+  background: var(--surface); border-color: var(--hairline);
+  /* grip | color | nome | Área | Cargo | Responsável | prazo | conclui | ações
+     mins dimensionados pros placeholders ("Sem área" / "Qualquer cargo" / "Sem responsável"). */
+  grid-template-columns: 18px 28px minmax(120px,1.4fr) minmax(100px,.8fr) minmax(130px,1fr) minmax(134px,.85fr) 48px 40px auto;
+}
+.stage-row .form-control {
+  height: 36px; font-size: 13px;
+  background-color: var(--surface); border-color: var(--hairline);
+}
+.stage-row .filter-cdrop-trigger { height: 36px; font-size: 13px; }
+/* Prazo em linha (sem rótulo empilhado), igual à customização de etapas. */
+.stage-days-inline { display: flex; align-items: center; gap: 5px; }
+.stage-days-inline .form-control { flex: 1; min-width: 0; text-align: center; padding-left: 6px; padding-right: 6px; }
+.stage-days-unit { font-size: 12px; color: var(--text-muted); flex-shrink: 0; }
+/* Duplicar/excluir padronizados como botões-ícone contornados (36px). */
+.stage-row .stage-actions { gap: 6px; }
+.stage-row .stage-actions .icon-btn {
+  width: 36px; height: 36px; border-radius: 9px;
+  border: 1px solid var(--hairline); background: transparent; color: var(--text-muted);
+  display: flex; align-items: center; justify-content: center;
+  transition: background .14s var(--ease-out), border-color .14s var(--ease-out), color .14s var(--ease-out);
+}
+.stage-row .stage-actions .icon-btn:hover { color: var(--text); border-color: var(--text-muted); background: var(--surface-2); }
+.stage-row .stage-actions .icon-btn.danger:hover { color: var(--danger); border-color: var(--danger); background: var(--danger-dim); }
+/* Ícone menor dentro do botão de ação — o quadrado (36px) permanece. */
+.stage-row .stage-actions .icon-btn i,
+.stage-row .stage-actions .icon-btn svg { width: 14px !important; height: 14px !important; }
+
+/* ── COMBOBOX DE TIPO DE DEMANDA ── */
+.dtype-combo { position: relative; }
+.dtype-menu {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 100;
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm); box-shadow: 0 10px 28px rgba(0,0,0,.14);
+  max-height: 240px; overflow-y: auto; padding: 4px; display: none;
+}
+.dtype-menu.open { display: block; }
+.dtype-opt, .dtype-add {
+  padding: 8px 10px; border-radius: 7px; font-size: 13px; cursor: pointer; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dtype-opt:hover { background: var(--surface-2); }
+.dtype-add {
+  display: flex; align-items: center; gap: 6px;
+  color: var(--accent-text); font-weight: 600;
+  border-top: 1px solid var(--hairline); margin-top: 4px; padding-top: 10px;
+}
+.dtype-add:hover { background: var(--accent-dim); }
+.dtype-empty { padding: 10px; font-size: 12px; color: var(--text-muted); }
+/* Modal de gestão de tipos */
+.dtype-mng-hint { font-size: 12.5px; color: var(--text-muted); line-height: 1.6; margin-bottom: 14px; }
+.dtype-mng-add { display: flex; gap: 8px; margin-bottom: 16px; }
+.dtype-mng-add .form-control { flex: 1; }
+/* Ações da tabela: só no hover da linha (via .row-actions) e sem contorno. */
+#dtype-manage-modal .row-actions .icon-btn { border: none; background: transparent; color: var(--text-muted); }
+#dtype-manage-modal .row-actions .icon-btn:hover { color: var(--accent-text); background: var(--surface-2); }
+#dtype-manage-modal .row-actions .icon-btn.danger:hover { color: var(--danger); background: var(--danger-dim); }
 
 /* Respeito ao prefers-reduced-motion — para as animações contínuas.
    O bloco global lá em cima já faz `animation: none !important` em tudo. */

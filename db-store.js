@@ -23,7 +23,7 @@ const { Pool } = require('pg');
 const ENTITY_TYPES = [
   'workspaces', 'users', 'clients', 'projects', 'flows',
   'demands', 'roles', 'positions', 'templates', 'webhooks', 'schedules', 'clientTemplates',
-  'recurrings', 'listas', 'googleEvents'
+  'recurrings', 'listas', 'demandTypes', 'googleEvents'
 ];
 
 function createStore(config = {}) {
@@ -110,7 +110,7 @@ function createStore(config = {}) {
     // Tipos globais: não têm workspaceId no índice — visíveis a todos os usuários.
     // clientTemplates são compartilhados entre workspaces (por design de UX).
     if (type === 'workspaces' || type === 'roles' || type === 'users' ||
-        type === 'positions' || type === 'clientTemplates') return null;
+        type === 'positions' || type === 'clientTemplates' || type === 'demandTypes') return null;
     return entity.workspaceId || null;
   }
 

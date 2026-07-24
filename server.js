@@ -59,12 +59,14 @@ function defaultDB() {
 async function isFirstInstall() { return !(await store.getKv('install:completed')); }
 async function markInstallComplete() { await store.setKv('install:completed', new Date().toISOString()); }
 
-/* ─── SOFT DELETE (com undo em ~10s no cliente) ───
+/* ─── SOFT DELETE (com undo em ~10s no cliente + Lixeira de 30 dias) ───
    Marca a entidade com deletedAt em vez de remover. Listagens filtram out.
-   `PurgeJob` remove definitivamente após UNDO_PURGE_MS.
+   O item fica recuperável na Lixeira (GET /api/trash) até `PurgeJob` removê-lo
+   definitivamente após UNDO_PURGE_MS. Retenção de 30 dias: janela confortável
+   pra desfazer sem lotar o banco com lixo antigo.
    Aplicado só em clients/projects/demands por enquanto — ações destrutivas
    que o usuário mais reclama de "sem querer". */
-const UNDO_PURGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias
+const UNDO_PURGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 dias
 function notDeleted(e) { return !e || !e.deletedAt; }
 function softDelete(type, entity, userId) {
   entity.deletedAt = nowISO();
@@ -79,7 +81,7 @@ function undelete(type, entity) {
 function runSoftDeletePurge() {
   const cutoff = Date.now() - UNDO_PURGE_MS;
   let purged = 0;
-  for (const type of ['clients', 'projects', 'demands']) {
+  for (const type of ['clients', 'projects', 'demands', 'flows', 'listas', 'clientTemplates']) {
     const arr = db[type] || [];
     const toRemove = arr.filter(e => e.deletedAt && Date.parse(e.deletedAt) < cutoff);
     for (const e of toRemove) {
@@ -108,7 +110,29 @@ async function loadDB() {
   // Extrai anexos/avatares base64 que ainda estejam dentro das entidades
   // pra arquivos em data/uploads. Idempotente — não toca quem já está em URL.
   extractInlineBase64();
+  await seedDemandTypes(); // popula a biblioteca de tipos a partir dos fluxos (1x)
   await flushDirty(); // garante que entidades criadas no seed/migrate sejam persistidas
+}
+
+/* Semeia a biblioteca de tipos de demanda a partir dos tipos já usados nos fluxos.
+   Roda só na 1ª vez (kv flag) — depois a lista é gerenciada manualmente, então
+   tipos excluídos não voltam a ser re-semeados. */
+async function seedDemandTypes() {
+  if (await store.getKv('demandTypes:seeded')) return;
+  if (!Array.isArray(db.demandTypes)) db.demandTypes = [];
+  const existing = new Set(db.demandTypes.map(t => (t.name || '').toLowerCase()));
+  const distinct = [...new Set((db.flows || []).map(f => String(f.demandType || '').trim()).filter(Boolean))];
+  let added = 0;
+  for (const name of distinct) {
+    if (existing.has(name.toLowerCase())) continue;
+    const t = { id: uid(), name, createdAt: nowISO() };
+    db.demandTypes.push(t);
+    saveEntity('demandTypes', t);
+    existing.add(name.toLowerCase());
+    added++;
+  }
+  await store.setKv('demandTypes:seeded', new Date().toISOString());
+  if (added) console.log(`  [demand-types] ${added} tipo(s) semeado(s) a partir dos fluxos`);
 }
 
 /* Pós-migração: percorre entidades em memória, extrai data: URIs pra disco
@@ -882,6 +906,19 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
   }
 }
 
+// Roteamento por cliente/projeto. Um webhook sem filtro (clientId/projectId nulos)
+// dispara pra todos os eventos do workspace — comportamento original. Quando tem
+// filtro, precisa bater o cliente e/ou o projeto da demanda que gerou o evento.
+function hookMatchesScope(hook, ctx) {
+  if (!hook.clientId && !hook.projectId) return true;
+  const project = ctx.project
+    || (ctx.demand && ctx.demand.projectId ? db.projects.find(p => p.id === ctx.demand.projectId) : null);
+  if (!project) return false; // filtro exige projeto, mas o evento não tem → não dispara
+  if (hook.projectId && project.id !== hook.projectId) return false;
+  if (hook.clientId && project.clientId !== hook.clientId) return false;
+  return true;
+}
+
 async function triggerWebhook(event, ctx) {
   if (!ctx.demand) return;
   const wsId = ctx.demand.workspaceId;
@@ -890,6 +927,7 @@ async function triggerWebhook(event, ctx) {
     h.workspaceId === wsId &&
     Array.isArray(h.events) &&
     h.events.includes(event) &&
+    hookMatchesScope(h, ctx) &&
     eventRelevantToTarget(event, ctx, h.targetUserId || null)
   );
   if (!hooks.length) return;
@@ -1516,7 +1554,16 @@ const _googleAutoInterval = setInterval(runGoogleAutoSync, GOOGLE_AUTO_SYNC_INTE
 app.get('/api/google/events', requireAuth, (req, res) => {
   const targetUserId = req.query.userId || req.user.id;
   if (targetUserId !== req.user.id && !req.user.isAdmin) {
-    return res.status(403).json({ error: 'Sem permissão pra ver eventos de outro usuário' });
+    // Vista de time da agenda: qualquer usuário pode ver eventos de colegas que
+    // compartilham ao menos 1 workspace com ele (mesma regra do seletor de time,
+    // que lista wsUsers()). Admins aparecem em qualquer workspace. Sem overlap → 403.
+    const target = db.users.find(u => u.id === targetUserId);
+    const myWs = wsIdsFor(req.user);
+    const targetWs = target ? (target.isAdmin ? myWs : (target.workspaces || [])) : [];
+    const shares = !!target && targetWs.some(w => myWs.includes(w));
+    if (!shares) {
+      return res.status(403).json({ error: 'Sem permissão pra ver eventos de outro usuário' });
+    }
   }
   const from = req.query.from || null; // 'YYYY-MM-DD'
   const to   = req.query.to   || null;
@@ -1738,6 +1785,87 @@ app.delete('/api/roles/:id', requireAuth, modOrAdmin, (req, res) => {
   if (!r) return res.status(404).json({ error: 'Função não encontrada' });
   db.roles = db.roles.filter(x => x.id !== req.params.id);
   removeEntity('roles', req.params.id);
+  res.json({ ok: true });
+});
+
+/* ── TIPOS DE DEMANDA (rótulo organizacional dos fluxos) ──
+   Biblioteca leve de nomes. O fluxo guarda o tipo como string (flow.demandType);
+   esta lista serve só pro combobox e pra gestão (renomear/excluir). Excluir um
+   tipo apenas o tira da biblioteca — fluxos e demandas existentes mantêm o valor. */
+function demandTypeUsage() {
+  const usage = {};
+  (db.flows || []).forEach(f => {
+    const t = String(f.demandType || '').trim().toLowerCase();
+    if (t) usage[t] = (usage[t] || 0) + 1;
+  });
+  return usage;
+}
+/* Garante que um tipo usado por um fluxo esteja na biblioteca (evita tipos órfãos
+   quando o usuário digita direto e salva sem passar pelo "Adicionar"). */
+function ensureDemandTypeExists(name) {
+  const trimmed = String(name || '').trim();
+  if (!trimmed) return;
+  if (!Array.isArray(db.demandTypes)) db.demandTypes = [];
+  if (db.demandTypes.some(t => t.name.toLowerCase() === trimmed.toLowerCase())) return;
+  const t = { id: uid(), name: trimmed.slice(0, 60), createdAt: nowISO() };
+  db.demandTypes.push(t);
+  saveEntity('demandTypes', t);
+}
+app.get('/api/demand-types', requireAuth, (req, res) => {
+  const usage = demandTypeUsage();
+  res.json((db.demandTypes || []).map(t => ({
+    id: t.id, name: t.name, createdAt: t.createdAt,
+    usageCount: usage[(t.name || '').toLowerCase()] || 0
+  })));
+});
+app.post('/api/demand-types', requireAuth, modOrAdmin, (req, res) => {
+  const trimmed = String((req.body || {}).name || '').trim();
+  if (!trimmed) return res.status(400).json({ error: 'Nome do tipo é obrigatório' });
+  if (trimmed.length > 60) return res.status(400).json({ error: 'Nome muito longo (máx. 60)' });
+  if (!Array.isArray(db.demandTypes)) db.demandTypes = [];
+  if (db.demandTypes.some(t => t.name.toLowerCase() === trimmed.toLowerCase())) {
+    return res.status(409).json({ error: 'Esse tipo já existe' });
+  }
+  const t = { id: uid(), name: trimmed, createdAt: nowISO() };
+  db.demandTypes.push(t);
+  saveEntity('demandTypes', t);
+  broadcastChange('demandType', 'create', { id: t.id, byUserId: req.user.id });
+  res.status(201).json(t);
+});
+app.put('/api/demand-types/:id', requireAuth, modOrAdmin, (req, res) => {
+  const t = (db.demandTypes || []).find(x => x.id === req.params.id);
+  if (!t) return res.status(404).json({ error: 'Tipo não encontrado' });
+  const trimmed = String((req.body || {}).name || '').trim();
+  if (!trimmed) return res.status(400).json({ error: 'Nome do tipo é obrigatório' });
+  if (trimmed.length > 60) return res.status(400).json({ error: 'Nome muito longo (máx. 60)' });
+  if (db.demandTypes.some(x => x.id !== t.id && x.name.toLowerCase() === trimmed.toLowerCase())) {
+    return res.status(409).json({ error: 'Esse tipo já existe' });
+  }
+  const oldName = t.name;
+  t.name = trimmed;
+  saveEntity('demandTypes', t);
+  // Propaga o rename pros fluxos que usavam o nome antigo (conserta em todo lugar).
+  let touched = 0;
+  if (oldName !== trimmed) {
+    db.flows.forEach(f => {
+      if (String(f.demandType || '') === oldName) {
+        f.demandType = trimmed;
+        saveEntity('flows', f);
+        broadcastChange('flow', 'update', { id: f.id, workspaceId: f.workspaceId, byUserId: req.user.id });
+        touched++;
+      }
+    });
+  }
+  broadcastChange('demandType', 'update', { id: t.id, byUserId: req.user.id });
+  res.json({ ...t, flowsUpdated: touched });
+});
+app.delete('/api/demand-types/:id', requireAuth, modOrAdmin, (req, res) => {
+  const t = (db.demandTypes || []).find(x => x.id === req.params.id);
+  if (!t) return res.status(404).json({ error: 'Tipo não encontrado' });
+  db.demandTypes = db.demandTypes.filter(x => x.id !== req.params.id);
+  removeEntity('demandTypes', req.params.id);
+  // Fluxos/demandas mantêm o valor string — não são alterados.
+  broadcastChange('demandType', 'delete', { id: req.params.id, byUserId: req.user.id });
   res.json({ ok: true });
 });
 
@@ -1981,7 +2109,7 @@ app.get('/api/client-templates', requireAuth, (req, res) => {
   // Modelos são GLOBAIS: qualquer usuário autenticado vê a biblioteca inteira.
   // O workspaceId (quando presente em modelos antigos) é ignorado — o cliente
   // criado a partir do modelo é sempre no ws que o usuário escolher.
-  res.json(db.clientTemplates || []);
+  res.json((db.clientTemplates || []).filter(notDeleted));
 });
 
 app.post('/api/client-templates', requireAuth, (req, res) => {
@@ -2156,6 +2284,7 @@ app.post('/api/client-templates/:id/projects/:pIdx/flows', requireAuth, (req, re
   if (!Array.isArray(ptpl.flows)) ptpl.flows = [];
   ptpl.flows.push(ftpl);
   saveEntity('clientTemplates', t);
+  ensureDemandTypeExists(ftpl.demandType); // registra o tipo na biblioteca se for novo
 
   // REPLICAÇÃO: pra cada cliente criado desse modelo, procura projeto com o mesmo
   // nome e cria o fluxo lá. Se o projeto foi renomeado no cliente, skippa (log).
@@ -2201,7 +2330,7 @@ app.put('/api/client-templates/:id/projects/:pIdx/flows/:fIdx', requireAuth, (re
   if (!ftpl) return res.status(400).json({ error: 'Fluxo inválido.' });
   const b = req.body || {};
   if (typeof b.name === 'string' && b.name.trim()) ftpl.name = b.name.trim().slice(0, 120);
-  if (typeof b.demandType === 'string')        ftpl.demandType        = b.demandType.trim().slice(0, 60);
+  if (typeof b.demandType === 'string')      { ftpl.demandType = b.demandType.trim().slice(0, 60); ensureDemandTypeExists(ftpl.demandType); }
   if (typeof b.defaultDescription === 'string') ftpl.defaultDescription = b.defaultDescription;
   if (Array.isArray(b.defaultChecklist))       ftpl.defaultChecklist   = sanitizeChecklistTemplate(b.defaultChecklist);
   if (b.icon !== undefined) ftpl.icon = sanitizeFlowIcon(b.icon, ftpl.name);
@@ -2261,10 +2390,9 @@ app.delete('/api/client-templates/:id/projects/:pIdx/flows/:fIdx', requireAuth, 
 
 app.delete('/api/client-templates/:id', requireAuth, (req, res) => {
   const t = db.clientTemplates.find(x => x.id === req.params.id);
-  if (!t) return res.status(404).json({ error: 'Modelo não encontrado.' });
-  db.clientTemplates = db.clientTemplates.filter(x => x.id !== t.id);
-  removeEntity('clientTemplates', t.id);
-  res.json({ ok: true });
+  if (!t || !notDeleted(t)) return res.status(404).json({ error: 'Modelo não encontrado.' });
+  softDelete('clientTemplates', t, req.user.id);
+  res.json({ ok: true, undoable: true, purgeAt: Date.parse(t.deletedAt) + UNDO_PURGE_MS });
 });
 
 /* Aplica um template criando cliente + projetos + fluxos.
@@ -2522,7 +2650,7 @@ app.post('/api/projects/:id/duplicate', requireAuth, (req, res) => {
 /* ── FLUXOS ── */
 app.get('/api/flows', requireAuth, (req, res) => {
   const ids = wsIdsFor(req.user);
-  res.json(db.flows.filter(f => ids.includes(f.workspaceId)));
+  res.json(db.flows.filter(f => ids.includes(f.workspaceId) && notDeleted(f)));
 });
 
 /* GETs singulares — usados pelo SSE do cliente pra refetch pontual (não a lista inteira).
@@ -2683,6 +2811,7 @@ app.post('/api/flows', requireAuth, modOrAdmin, (req, res) => {
       iconUrl = saved ? saved.url : null;
     }
   }
+  ensureDemandTypeExists(demandType); // registra o tipo na biblioteca se for novo
   // Se applyToAll=true com cliente, cria 1 fluxo pra CADA projeto ATIVO desse cliente.
   if (applyToAll && clientEntity) {
     const targets = db.projects.filter(p =>
@@ -2726,7 +2855,7 @@ app.put('/api/flows/:id', requireAuth, modOrAdmin, (req, res) => {
   if (!f || !canAccessWs(req.user, f.workspaceId)) return res.status(404).json({ error: 'Fluxo não encontrado' });
   const { name, stages, demandType, projectId, client, clientId, icon, defaultDescription, defaultChecklist } = req.body || {};
   if (typeof name === 'string' && name.trim()) f.name = name.trim();
-  if (typeof demandType === 'string') f.demandType = demandType.trim();
+  if (typeof demandType === 'string') { f.demandType = demandType.trim(); ensureDemandTypeExists(f.demandType); }
   // Atualiza clientId (e mantém f.client em sincronia pelo nome da entidade)
   if (clientId !== undefined) {
     if (!clientId) { f.clientId = null; f.client = null; }
@@ -2787,15 +2916,15 @@ app.put('/api/flows/:id', requireAuth, modOrAdmin, (req, res) => {
 
 app.delete('/api/flows/:id', requireAuth, modOrAdmin, (req, res) => {
   const f = db.flows.find(x => x.id === req.params.id);
-  if (!f || !canAccessWs(req.user, f.workspaceId)) return res.status(404).json({ error: 'Fluxo não encontrado' });
+  if (!f || !canAccessWs(req.user, f.workspaceId) || !notDeleted(f)) return res.status(404).json({ error: 'Fluxo não encontrado' });
+  // Bloqueia se QUALQUER demanda (mesmo na lixeira) ainda aponta pra esse fluxo:
+  // só some pra lixeira quando o fluxo está de fato sem uso.
   if (db.demands.some(d => d.flowId === req.params.id)) {
     return res.status(409).json({ error: 'Este fluxo possui demandas vinculadas e não pode ser excluído.' });
   }
-  const wsId = f.workspaceId;
-  db.flows = db.flows.filter(x => x.id !== req.params.id);
-  removeEntity('flows', req.params.id);
-  broadcastChange('flow', 'delete', { id: req.params.id, workspaceId: wsId, byUserId: req.user.id });
-  res.json({ ok: true });
+  softDelete('flows', f, req.user.id);
+  broadcastChange('flow', 'delete', { id: req.params.id, workspaceId: f.workspaceId, byUserId: req.user.id });
+  res.json({ ok: true, undoable: true, purgeAt: Date.parse(f.deletedAt) + UNDO_PURGE_MS });
 });
 
 /* Duplicar fluxo para outro projeto */
@@ -2878,20 +3007,38 @@ function addHistory(d, userId, action, details) {
   }
 }
 
-/* Sanitização de configuração de recorrência */
-function sanitizeRecurrence(r) {
+/* Sanitização de configuração de recorrência.
+   Modelo: repetir a cada `interval` unidades do `pattern` (dia/semana/mês).
+   - weekly usa `weekDays` (múltiplos dias 0=Dom..6=Sáb); `weekDay` fica só p/ compat.
+   - `startDate` é a âncora do intervalo (a partir de quando/de qual semana conta).
+   - `paused` congela a geração sem perder a config. `createdBy` = quem configurou
+     (usado na tela "Demandas Recorrentes", que mostra as do próprio usuário).
+   Passar `existing` preserva createdBy/startDate/lastGeneratedDate em edições. */
+function sanitizeRecurrence(r, existing) {
   if (!r || typeof r !== 'object' || !r.enabled) return null;
   const pattern = ['daily','weekly','monthly'].includes(r.pattern) ? r.pattern : 'weekly';
-  const clean = {
+  const interval = Math.max(1, Math.min(365, Number.isFinite(Number(r.interval)) ? Math.floor(Number(r.interval)) : 1));
+  let weekDays = Array.isArray(r.weekDays)
+    ? [...new Set(r.weekDays.map(Number).filter(n => Number.isInteger(n) && n >= 0 && n <= 6))]
+    : [];
+  if (!weekDays.length) {
+    const wd = Number.isInteger(Number(r.weekDay)) ? Math.max(0, Math.min(6, Number(r.weekDay))) : 1;
+    weekDays = [wd];
+  }
+  weekDays.sort((a, b) => a - b);
+  return {
     enabled: true,
     pattern,
-    startDate: r.startDate || today(),
+    interval,
+    weekDays,
+    weekDay: weekDays[0], // compat com leitura antiga
+    monthDay: Number.isInteger(Number(r.monthDay)) ? Math.max(1, Math.min(28, Number(r.monthDay))) : 1,
+    startDate: r.startDate || (existing && existing.startDate) || today(),
     endDate: r.endDate || null,
-    lastGeneratedDate: r.lastGeneratedDate || null,
-    weekDay: Number.isInteger(Number(r.weekDay)) ? Math.max(0, Math.min(6, Number(r.weekDay))) : 1,
-    monthDay: Number.isInteger(Number(r.monthDay)) ? Math.max(1, Math.min(28, Number(r.monthDay))) : 1
+    lastGeneratedDate: r.lastGeneratedDate || (existing && existing.lastGeneratedDate) || null,
+    paused: !!r.paused,
+    createdBy: r.createdBy || (existing && existing.createdBy) || null
   };
-  return clean;
 }
 
 app.post('/api/demands', requireAuth, (req, res) => {
@@ -2920,12 +3067,20 @@ app.post('/api/demands', requireAuth, (req, res) => {
     && (flow.defaultDescription && flow.defaultDescription.trim());
   const initialDesc = useDefaultDesc ? String(flow.defaultDescription) : String(b.description || '');
   // Checklist inicial: explicit list > flow.defaultChecklist > [].
+  // Valida o responsável de um item de checklist: precisa ser usuário ativo com
+  // acesso ao workspace do projeto; caso contrário vira null.
+  const validChkOwner = v => {
+    if (typeof v !== 'string' || !v) return null;
+    const u = db.users.find(x => x.id === v && x.active !== false);
+    return (u && canAccessWs(u, project.workspaceId)) ? u.id : null;
+  };
   let initialChecklist = [];
   if (Array.isArray(b.checklist) && b.checklist.length) {
     initialChecklist = b.checklist
       .map(it => ({
         id: uid(),
         text: String((it && it.text) || '').trim(),
+        ownerId: validChkOwner(it && it.ownerId),
         done: false, doneBy: null, doneAt: null,
         createdBy: req.user.id, createdAt: nowISO()
       }))
@@ -2934,6 +3089,7 @@ app.post('/api/demands', requireAuth, (req, res) => {
     initialChecklist = flow.defaultChecklist.map(it => ({
       id: uid(),
       text: String(it.text || '').trim(),
+      ownerId: validChkOwner(it && it.ownerId),
       done: false, doneBy: null, doneAt: null,
       createdBy: req.user.id, createdAt: nowISO()
     })).filter(it => it.text);
@@ -3023,6 +3179,10 @@ app.post('/api/demands', requireAuth, (req, res) => {
     if (!initStageOrder.length) initStageOrder = null;
   }
 
+  // Recorrência: quem cria a demanda é o dono da recorrência (tela "Demandas Recorrentes").
+  const initRecurrence = sanitizeRecurrence(b.recurrence);
+  if (initRecurrence && !initRecurrence.createdBy) initRecurrence.createdBy = req.user.id;
+
   const d = {
     id: uid(), workspaceId: project.workspaceId, projectId: project.id,
     flowId: flow.id, name: String(b.name).trim(),
@@ -3045,7 +3205,7 @@ app.post('/api/demands', requireAuth, (req, res) => {
     timeEntries: [], comments: [], history: [],
     checklist: initialChecklist,
     attachments: sanitizeAttachments(b.attachments),
-    recurrence: sanitizeRecurrence(b.recurrence),
+    recurrence: initRecurrence,
     // Customização inicial (só grava campos com conteúdo — economiza espaço em JSONB).
     ...(initSkipped.length ? { skippedStages: initSkipped } : {}),
     ...(Object.keys(initStageResp).length ? { stageResponsibles: initStageResp } : {}),
@@ -3178,7 +3338,8 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
     }
   }
   if (b.recurrence !== undefined) {
-    const newRec = sanitizeRecurrence(b.recurrence);
+    const newRec = sanitizeRecurrence(b.recurrence, d.recurrence);
+    if (newRec && !newRec.createdBy) newRec.createdBy = req.user.id;
     const wasEnabled = !!(d.recurrence && d.recurrence.enabled);
     const isEnabled = !!(newRec && newRec.enabled);
     d.recurrence = newRec;
@@ -3304,6 +3465,135 @@ app.post('/api/demands/:id/undelete', requireAuth, (req, res) => {
   undelete('demands', d);
   broadcastChange('demand', 'update', { id: d.id, workspaceId: d.workspaceId, byUserId: req.user.id });
   res.json(d);
+});
+
+/* ─── LIXEIRA (recuperação em 30 dias) ───
+   Lista tudo que foi soft-deletado e ainda não purgado, dentro dos workspaces
+   que o usuário acessa (modelos de cliente são globais → visíveis a todo mod/admin).
+   Restaurar/limpar usam os endpoints genéricos abaixo.
+   Acesso: moderador ou admin — quem pode excluir pode recuperar. */
+// Modelos de cliente são globais (workspaceId null); pra eles, todo mod/admin acessa.
+const trashAccessible = (user, type, e) => type === 'clientTemplates' ? true : canAccessWs(user, e.workspaceId);
+
+app.get('/api/trash', requireAuth, modOrAdmin, (req, res) => {
+  const userName   = id => (db.users.find(u => u.id === id) || {}).name || null;
+  const wsName     = id => (db.workspaces.find(w => w.id === id) || {}).name || null;
+  const clientName = id => { const c = db.clients.find(x => x.id === id); return c ? c.name : null; };
+  const projName   = id => { const p = id && db.projects.find(x => x.id === id); return p ? p.name : null; };
+  const enrich = (e, extra) => Object.assign({
+    id: e.id,
+    workspaceId: e.workspaceId,
+    workspaceName: wsName(e.workspaceId),
+    deletedAt: e.deletedAt,
+    deletedByName: userName(e.deletedBy),
+    purgeAt: Date.parse(e.deletedAt) + UNDO_PURGE_MS
+  }, extra);
+
+  // Mais recentes (excluídos por último) no topo.
+  const byNewest = (a, b) => Date.parse(b.deletedAt) - Date.parse(a.deletedAt);
+
+  const clients = db.clients
+    .filter(c => c.deletedAt && canAccessWs(req.user, c.workspaceId))
+    .map(c => enrich(c, { name: c.name || '(sem nome)' }))
+    .sort(byNewest);
+
+  const projects = db.projects
+    .filter(p => p.deletedAt && canAccessWs(req.user, p.workspaceId))
+    .map(p => enrich(p, { name: p.name || '(sem nome)', clientId: p.clientId, clientName: clientName(p.clientId) }))
+    .sort(byNewest);
+
+  // Demandas: oculta as que caíram em cascata com um projeto excluído — elas
+  // voltam quando o projeto é restaurado, então listá-las aqui só confunde.
+  const deletedProjectIds = new Set(db.projects.filter(p => p.deletedAt).map(p => p.id));
+  const demands = db.demands
+    .filter(d => d.deletedAt && canAccessWs(req.user, d.workspaceId) && !(d.projectId && deletedProjectIds.has(d.projectId)))
+    .map(d => enrich(d, { name: d.name || '(sem nome)', projectName: projName(d.projectId), clientName: clientName((db.projects.find(x => x.id === d.projectId) || {}).clientId) }))
+    .sort(byNewest);
+
+  const flows = db.flows
+    .filter(f => f.deletedAt && canAccessWs(req.user, f.workspaceId))
+    .map(f => enrich(f, { name: f.name || '(sem nome)', projectName: projName(f.projectId) }))
+    .sort(byNewest);
+
+  const listas = db.listas
+    .filter(l => l.deletedAt && canAccessWs(req.user, l.workspaceId))
+    .map(l => enrich(l, { name: l.name || '(sem nome)', clientName: clientName(l.clientId), projectName: projName(l.projectId) }))
+    .sort(byNewest);
+
+  // Modelos de cliente: globais. Todo mod/admin vê a biblioteca de excluídos.
+  const clientTemplates = (db.clientTemplates || [])
+    .filter(t => t.deletedAt)
+    .map(t => enrich(t, { name: t.name || '(sem nome)' }))
+    .sort(byNewest);
+
+  res.json({ clients, projects, demands, flows, listas, clientTemplates, purgeMs: UNDO_PURGE_MS });
+});
+
+/* Purga permanente de UMA entidade da lixeira. Cascatas:
+   - projeto → leva as demandas que caíram junto (mesma janela de ~5s do restore);
+   - lista   → as recorrentes vinculadas voltam a ficar "sem lista". */
+const TRASH_SINGULAR = {
+  clients: 'client', projects: 'project', demands: 'demand',
+  flows: 'flow', listas: 'lista', clientTemplates: 'clientTemplate'
+};
+function purgeTrashEntity(type, e, byUserId) {
+  if (type === 'projects') {
+    const projDelTs = Date.parse(e.deletedAt);
+    const isCascade = d => d.projectId === e.id && d.deletedAt && Math.abs(Date.parse(d.deletedAt) - projDelTs) < 5000;
+    db.demands.filter(isCascade).forEach(d => removeEntity('demands', d.id));
+    db.demands = db.demands.filter(d => !isCascade(d));
+  }
+  if (type === 'listas') {
+    db.recurrings.forEach(r => { if (r.listaId === e.id) { r.listaId = null; saveEntity('recurrings', r); } });
+  }
+  removeEntity(type, e.id);
+  db[type] = (db[type] || []).filter(x => x.id !== e.id);
+  broadcastChange(TRASH_SINGULAR[type], 'delete', { id: e.id, workspaceId: e.workspaceId, byUserId });
+}
+
+/* Restaurar da lixeira (genérico, todos os tipos). Reverte o soft-delete.
+   Projeto restaura junto as demandas que caíram em cascata com ele. */
+app.post('/api/trash/:type/:id/restore', requireAuth, modOrAdmin, (req, res) => {
+  const type = req.params.type;
+  if (!TRASH_SINGULAR[type]) return res.status(400).json({ error: 'Tipo inválido' });
+  const e = (db[type] || []).find(x => x.id === req.params.id);
+  if (!e || !trashAccessible(req.user, type, e) || !e.deletedAt) return res.status(404).json({ error: 'Item não encontrado na lixeira' });
+  if (type === 'projects') {
+    const projDelTs = Date.parse(e.deletedAt);
+    undelete('projects', e);
+    db.demands.forEach(d => {
+      if (d.projectId === e.id && d.deletedAt && Math.abs(Date.parse(d.deletedAt) - projDelTs) < 5000) undelete('demands', d);
+    });
+  } else {
+    undelete(type, e);
+  }
+  broadcastChange(TRASH_SINGULAR[type], 'update', { id: e.id, workspaceId: e.workspaceId, byUserId: req.user.id });
+  res.json({ ok: true });
+});
+
+/* Purga permanente imediata — esvaziar da lixeira antes dos 30 dias.
+   Irreversível: some do banco. Só age em item que JÁ está soft-deletado. */
+app.delete('/api/trash/:type/:id', requireAuth, modOrAdmin, (req, res) => {
+  const type = req.params.type;
+  if (!TRASH_SINGULAR[type]) return res.status(400).json({ error: 'Tipo inválido' });
+  const e = (db[type] || []).find(x => x.id === req.params.id);
+  if (!e || !trashAccessible(req.user, type, e) || !e.deletedAt) return res.status(404).json({ error: 'Item não encontrado na lixeira' });
+  purgeTrashEntity(type, e, req.user.id);
+  res.json({ ok: true });
+});
+
+/* Limpar TODA uma lista da lixeira de uma vez. Segue os mesmos filtros do GET:
+   só itens acessíveis; demandas em cascata de projetos excluídos ficam de fora. */
+app.delete('/api/trash/:type', requireAuth, modOrAdmin, (req, res) => {
+  const type = req.params.type;
+  if (!TRASH_SINGULAR[type]) return res.status(400).json({ error: 'Tipo inválido' });
+  let items = (db[type] || []).filter(e => e.deletedAt && trashAccessible(req.user, type, e));
+  if (type === 'demands') {
+    const deletedProjectIds = new Set(db.projects.filter(p => p.deletedAt).map(p => p.id));
+    items = items.filter(d => !(d.projectId && deletedProjectIds.has(d.projectId)));
+  }
+  items.forEach(e => purgeTrashEntity(type, e, req.user.id));
+  res.json({ ok: true, purged: items.length });
 });
 
 /* ── WATCHERS (Observar demanda) ──
@@ -4222,6 +4512,7 @@ app.get('/api/listas', requireAuth, (req, res) => {
   const clientId = req.query.clientId || null;
   const projectId = req.query.projectId || null;
   const list = db.listas.filter(l => {
+    if (!notDeleted(l)) return false;
     if (!ids.includes(l.workspaceId)) return false;
     if (clientId && l.clientId !== clientId) return false;
     if (projectId && l.projectId !== projectId) return false;
@@ -4263,17 +4554,14 @@ app.put('/api/listas/:id', requireAuth, (req, res) => {
 });
 app.delete('/api/listas/:id', requireAuth, (req, res) => {
   const l = getLista(req.params.id);
-  if (!l) return res.status(404).json({ error: 'Lista não encontrada' });
+  if (!l || !notDeleted(l)) return res.status(404).json({ error: 'Lista não encontrada' });
   if (!canAccessWs(req.user, l.workspaceId)) return res.status(403).json({ error: 'Sem acesso' });
-  const wsId = l.workspaceId;
-  // Recorrentes vinculadas a essa lista voltam pra listaId=null (não são excluídas)
-  db.recurrings.forEach(r => {
-    if (r.listaId === l.id) { r.listaId = null; saveEntity('recurrings', r); }
-  });
-  db.listas = db.listas.filter(x => x.id !== l.id);
-  removeEntity('listas', l.id);
-  broadcastChange('lista', 'delete', { id: l.id, workspaceId: wsId, byUserId: req.user.id });
-  res.json({ ok: true });
+  // Soft delete: as recorrentes vinculadas mantêm o listaId (não desvincula), então
+  // ao restaurar a lista elas voltam a aparecer agrupadas nela. Enquanto na lixeira,
+  // a lista some das listagens e as recorrentes ficam como "sem lista".
+  softDelete('listas', l, req.user.id);
+  broadcastChange('lista', 'delete', { id: l.id, workspaceId: l.workspaceId, byUserId: req.user.id });
+  res.json({ ok: true, undoable: true, purgeAt: Date.parse(l.deletedAt) + UNDO_PURGE_MS });
 });
 
 /* ── WEBHOOKS ── */
@@ -4288,6 +4576,24 @@ function validateTargetUser(targetUserId, workspaceId) {
   if (!canAccessWs(u, workspaceId)) return { ok: false, error: 'Usuário alvo não tem acesso a este workspace' };
   return { ok: true, value: u.id };
 }
+// Valida o par cliente/projeto do filtro do webhook. Ambos opcionais; se o projeto
+// tem cliente definido, os dois precisam ser consistentes. Retorna os ids normalizados.
+function validateWebhookScope(clientId, projectId, workspaceId) {
+  let cId = null, pId = null;
+  if (clientId) {
+    const c = db.clients.find(x => x.id === clientId && notDeleted(x));
+    if (!c || c.workspaceId !== workspaceId) return { ok: false, error: 'Cliente do filtro não encontrado neste workspace' };
+    cId = c.id;
+  }
+  if (projectId) {
+    const p = db.projects.find(x => x.id === projectId && notDeleted(x));
+    if (!p || p.workspaceId !== workspaceId) return { ok: false, error: 'Projeto do filtro não encontrado neste workspace' };
+    if (cId && p.clientId !== cId) return { ok: false, error: 'O projeto do filtro não pertence ao cliente selecionado' };
+    pId = p.id;
+    if (!cId && p.clientId) cId = p.clientId; // projeto define o cliente implicitamente
+  }
+  return { ok: true, clientId: cId, projectId: pId };
+}
 app.post('/api/webhooks', requireAuth, modOrAdmin, (req, res) => {
   const b = req.body || {};
   const ws = b.workspaceId && canAccessWs(req.user, b.workspaceId) ? b.workspaceId : wsIdsFor(req.user)[0];
@@ -4298,6 +4604,8 @@ app.post('/api/webhooks', requireAuth, modOrAdmin, (req, res) => {
   if (!validEvents.length) return res.status(400).json({ error: 'Selecione ao menos um evento' });
   const target = validateTargetUser(b.targetUserId || null, ws);
   if (!target.ok) return res.status(400).json({ error: target.error });
+  const scope = validateWebhookScope(b.clientId || null, b.projectId || null, ws);
+  if (!scope.ok) return res.status(400).json({ error: scope.error });
   const h = {
     id: uid(), workspaceId: ws,
     name: String(b.name).trim(),
@@ -4305,6 +4613,8 @@ app.post('/api/webhooks', requireAuth, modOrAdmin, (req, res) => {
     format: b.format === 'discord' ? 'discord' : 'raw',
     events: validEvents,
     targetUserId: target.value,
+    clientId: scope.clientId,
+    projectId: scope.projectId,
     active: b.active !== false,
     createdBy: req.user.id, createdAt: nowISO(),
     lastTriggered: null, lastStatus: null, lastError: null
@@ -4326,6 +4636,14 @@ app.put('/api/webhooks/:id', requireAuth, modOrAdmin, (req, res) => {
     const target = validateTargetUser(b.targetUserId || null, h.workspaceId);
     if (!target.ok) return res.status(400).json({ error: target.error });
     h.targetUserId = target.value;
+  }
+  if (b.clientId !== undefined || b.projectId !== undefined) {
+    const nextClient = b.clientId !== undefined ? (b.clientId || null) : (h.clientId || null);
+    const nextProject = b.projectId !== undefined ? (b.projectId || null) : (h.projectId || null);
+    const scope = validateWebhookScope(nextClient, nextProject, h.workspaceId);
+    if (!scope.ok) return res.status(400).json({ error: scope.error });
+    h.clientId = scope.clientId;
+    h.projectId = scope.projectId;
   }
   saveEntity('webhooks', h);
   res.json(h);
@@ -4527,14 +4845,31 @@ app.delete('/api/notifications', requireAuth, async (req, res) => {
    A demanda "modelo" (parent) mantém sua configuração; cada instância gerada é uma demanda comum
    ligada via parentDemandId para rastreabilidade. */
 function isRecurrenceDueToday(rec, ymd) {
-  if (!rec || !rec.enabled) return false;
-  if (rec.startDate && ymd < rec.startDate) return false;
+  if (!rec || !rec.enabled || rec.paused) return false;
+  const anchor = rec.startDate || ymd;
+  if (ymd < anchor) return false;
   if (rec.endDate && ymd > rec.endDate) return false;
   if (rec.lastGeneratedDate === ymd) return false;
-  const d = new Date(ymd + 'T12:00:00');
-  if (rec.pattern === 'daily') return true;
-  if (rec.pattern === 'weekly') return d.getDay() === rec.weekDay;
-  if (rec.pattern === 'monthly') return d.getDate() === rec.monthDay;
+  const interval = Math.max(1, rec.interval || 1);
+  const cur = new Date(ymd + 'T12:00:00');
+  const start = new Date(anchor + 'T12:00:00');
+  if (rec.pattern === 'daily') {
+    const days = Math.round((cur - start) / 86400000);
+    return days >= 0 && days % interval === 0;
+  }
+  if (rec.pattern === 'weekly') {
+    const weekDays = (Array.isArray(rec.weekDays) && rec.weekDays.length) ? rec.weekDays : [rec.weekDay ?? 1];
+    if (!weekDays.includes(cur.getDay())) return false;
+    // Semanas decorridas desde a âncora, normalizando ambas ao domingo da semana.
+    const sow = dt => { const x = new Date(dt); x.setDate(x.getDate() - x.getDay()); x.setHours(12, 0, 0, 0); return x; };
+    const weeks = Math.round((sow(cur) - sow(start)) / (7 * 86400000));
+    return weeks >= 0 && weeks % interval === 0;
+  }
+  if (rec.pattern === 'monthly') {
+    if (cur.getDate() !== rec.monthDay) return false;
+    const months = (cur.getFullYear() - start.getFullYear()) * 12 + (cur.getMonth() - start.getMonth());
+    return months >= 0 && months % interval === 0;
+  }
   return false;
 }
 function runRecurrenceJob() {
@@ -4542,12 +4877,15 @@ function runRecurrenceJob() {
   let count = 0;
   db.demands.slice().forEach(parent => {
     if (!parent.recurrence || !parent.recurrence.enabled) return;
+    if (!notDeleted(parent)) return; // parent na lixeira não gera
     if (!isRecurrenceDueToday(parent.recurrence, ymd)) return;
     const project = db.projects.find(p => p.id === parent.projectId);
-    if (!project || project.active === false) return;
+    if (!project || project.active === false || !notDeleted(project)) return;
     const flow = db.flows.find(f => f.id === parent.flowId);
-    if (!flow) return;
-    const stage = flow.stages[0];
+    if (!flow || !notDeleted(flow) || !flow.stages || !flow.stages.length) return;
+    // Etapa inicial respeita as puladas do modelo (mesma lógica da criação normal).
+    const skipped = new Set(Array.isArray(parent.skippedStages) ? parent.skippedStages : []);
+    const stage = flow.stages.find(s => !skipped.has(s.id)) || flow.stages[0];
     const stageDue = stage.deadlineDays ? addDays(ymd, stage.deadlineDays) : null;
     const copy = {
       id: uid(),
@@ -4561,12 +4899,28 @@ function runRecurrenceJob() {
       deadline: stageDue,
       estimatedHours: parent.estimatedHours,
       priority: parent.priority || 3,
+      // Entregáveis — clona as contagens e o atribuído (cópia fiel do modelo).
+      qtyPieces: parent.qtyPieces || 0,
+      qtyArts: parent.qtyArts || 0,
+      qtyVariations: parent.qtyVariations || 0,
+      deliverableUserId: parent.deliverableUserId || null,
       status: stage.id,
-      ownerId: parent.ownerId || resolveStageOwner(stage, project) || null,
+      ownerId: parent.ownerId || (parent.stageResponsibles && parent.stageResponsibles[stage.id]) || resolveStageOwner(stage, project) || null,
       stageEnteredAt: nowISO(), stageDueDate: stageDue,
       stageHistory: [{ stageId: stage.id, enteredAt: nowISO(), dueDate: stageDue }],
       timeEntries: [], comments: [], history: [],
+      // Checklist herdado do modelo, com estado "feito" zerado.
+      checklist: Array.isArray(parent.checklist)
+        ? parent.checklist.map(it => ({ id: uid(), text: it.text, ownerId: it.ownerId || null, done: false, doneBy: null, doneAt: null, createdBy: parent.recurrence.createdBy || null, createdAt: nowISO() }))
+        : [],
       attachments: (parent.attachments || []).map(a => ({ ...a, id: uid() })),
+      // Customizações de etapa por instância — clonadas pra manter a demanda idêntica.
+      ...(Array.isArray(parent.skippedStages) && parent.skippedStages.length ? { skippedStages: [...parent.skippedStages] } : {}),
+      ...(parent.stageResponsibles ? { stageResponsibles: { ...parent.stageResponsibles } } : {}),
+      ...(parent.stageLabels ? { stageLabels: { ...parent.stageLabels } } : {}),
+      ...(parent.stageOverrides ? { stageOverrides: JSON.parse(JSON.stringify(parent.stageOverrides)) } : {}),
+      ...(Array.isArray(parent.stageAdditions) && parent.stageAdditions.length ? { stageAdditions: parent.stageAdditions.map(a => ({ ...a })) } : {}),
+      ...(Array.isArray(parent.stageOrder) && parent.stageOrder.length ? { stageOrder: [...parent.stageOrder] } : {}),
       recurrence: null,
       createdAt: nowISO(),
       completedAt: stage.done ? nowISO() : null

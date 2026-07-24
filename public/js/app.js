@@ -23,6 +23,7 @@ let schedules  = [];
 let clientTemplates = [];
 let recurrings = [];
 let listas = [];
+let demandTypes = [];
 let notifPollTimer = null;
 
 let activeWs   = localStorage.getItem('fluxo_ws') || null;
@@ -86,6 +87,8 @@ const PAGE_TO_PATH = {
   integrations: '/integrations',
   profile:      '/profile',
   docs:         '/docs',
+  trash:        '/trash',
+  recurringDemands: '/recurring-demands',
   clientsModels: '/clients/models'
 };
 const PATH_TO_PAGE = Object.fromEntries(Object.entries(PAGE_TO_PATH).map(([k, v]) => [v, k]));
@@ -1058,7 +1061,8 @@ function sparkline(values, opts = {}) {
 
 /* Toast com botão "Desfazer" — usado após soft delete de demanda/cliente/projeto.
    `undoFn` só é chamado se o usuário clicar antes do toast desaparecer (~8s).
-   Após ~7 dias o backend faz purge definitivo (config em UNDO_PURGE_MS). */
+   Depois disso o item continua recuperável na Lixeira por 30 dias, quando o
+   backend faz o purge definitivo (config em UNDO_PURGE_MS). */
 function toastWithUndo(msg, undoFn) {
   toast(msg, 'warn', {
     label: 'Desfazer',
@@ -1294,10 +1298,12 @@ function cmdkActions() {
   ];
   // Usuários: visível pra todos.
   acts.push({ icon: 'users',    label: 'Ir para Usuários',     kind: 'Navegar', run: () => goPage('users') });
-  // Workspaces e Integrações: admin + moderador (mesmo gate do sidebar).
+  acts.push({ icon: 'repeat',   label: 'Ir para Demandas Recorrentes', kind: 'Navegar', run: () => goPage('recurringDemands') });
+  // Workspaces, Integrações e Lixeira: admin + moderador (mesmo gate do sidebar).
   if (me?.isAdmin || me?.isModerator) {
     acts.push({ icon: 'layers',  label: 'Ir para Workspaces',   kind: 'Navegar', run: () => goPage('workspaces') });
     acts.push({ icon: 'webhook', label: 'Ir para Integrações',  kind: 'Navegar', run: () => goPage('integrations') });
+    acts.push({ icon: 'trash-2', label: 'Ir para Lixeira',      kind: 'Navegar', run: () => goPage('trash') });
   }
   acts.push({ icon: 'sun-moon',  label: 'Alternar tema (claro/escuro)', kind: 'Ação', run: () => typeof toggleTheme === 'function' && toggleTheme() });
   acts.push({ icon: 'panel-left',label: 'Alternar sidebar (colapsar)',  kind: 'Ação', run: () => typeof toggleSidebarCollapse === 'function' && toggleSidebarCollapse() });
@@ -2627,9 +2633,10 @@ async function loadAll() {
     api('/client-templates').catch(() => []),
     api('/recurrings').catch(() => []),
     api('/listas').catch(() => []),
-    api('/positions').catch(() => [])
+    api('/positions').catch(() => []),
+    api('/demand-types').catch(() => [])
   ]);
-  [workspaces, users, clients, projects, flows, demands, roles, templates, webhooks, schedules, clientTemplates, recurrings, listas, positions] = results;
+  [workspaces, users, clients, projects, flows, demands, roles, templates, webhooks, schedules, clientTemplates, recurrings, listas, positions, demandTypes] = results;
   const allowed = workspaces.map(w => w.id);
   if (!activeWs || !allowed.includes(activeWs)) activeWs = allowed[0] || null;
   localStorage.setItem('fluxo_ws', activeWs || '');
@@ -2729,7 +2736,8 @@ const PAGE_TITLES = {
   clients: 'Clientes', projects: 'Projetos', flows: 'Fluxos de Demanda',
   workspaces: 'Workspaces', users: 'Usuários', profile: 'Meu Perfil',
   capacity: 'Capacidade', templates: 'Templates', integrations: 'Integrações', agenda: 'Agenda',
-  recurring: 'Listas de tarefas', docs: 'Documentação', clientsModels: 'Modelos de Cliente'
+  recurring: 'Listas de tarefas', docs: 'Documentação', clientsModels: 'Modelos de Cliente',
+  trash: 'Lixeira', recurringDemands: 'Demandas Recorrentes'
 };
 function goPage(page) {
   hideTooltip();
@@ -2835,6 +2843,8 @@ function renderCurrent() {
     case 'flows':      renderFlows(); break;
     case 'workspaces': renderWorkspaces(); break;
     case 'users':      renderUsers(); break;
+    case 'trash':      renderTrash(); break;
+    case 'recurringDemands': renderRecurringDemands(); break;
     case 'profile':    renderProfile(); break;
   }
   paintIcons();
@@ -4880,6 +4890,19 @@ function onDemandProjectChange() {
   if ([...$('f-flow').options].some(o => o.value === prev)) $('f-flow').value = prev;
   syncStatusOptions();
 }
+/* Responsável pré-preenchido do responsável inicial no wizard.
+   Resolve a cadeia completa (mesma lógica do backend):
+   1) customização feita no passo "Customizar" (stageResponsibles)
+   2) responsibleId fixo da etapa no fluxo
+   3) responsibleRole → project.roleAssignments → client.roleAssignments (padrão do cliente). */
+function wizardAutoOwnerFor(stage) {
+  if (!stage) return null;
+  const synthetic = {
+    projectId: $('f-project').value || null,
+    stageResponsibles: (wizardState && wizardState.customization && wizardState.customization.stageResponsibles) || {}
+  };
+  return resolveStageOwnerId(synthetic, stage);
+}
 function syncStatusOptions(selectedStageId) {
   const flow = flowById($('f-flow').value);
   $('f-status').innerHTML = flow
@@ -4890,7 +4913,7 @@ function syncStatusOptions(selectedStageId) {
   if (!editingId && flow) {
     const stageId = $('f-status').value;
     const stage = flow.stages.find(s => s.id === stageId);
-    const autoOwner = stage?.responsibleId || null;
+    const autoOwner = wizardAutoOwnerFor(stage);
     buildUserSelect($('f-owner-select'), wsUsers(), autoOwner, null);
     // Defaults herdados do fluxo: só aplica em NOVA demanda e se o usuário ainda
     // não digitou nada nos campos (não sobrescreve mudanças manuais).
@@ -4900,7 +4923,7 @@ function syncStatusOptions(selectedStageId) {
     }
     // Checklist herdado — só popula se ainda tá zerado (evita resetar edições)
     if (!demandChecklistDraft.length && Array.isArray(flow.defaultChecklist)) {
-      demandChecklistDraft = flow.defaultChecklist.map(it => ({ text: String(it.text || '') }));
+      demandChecklistDraft = flow.defaultChecklist.map(it => ({ text: String(it.text || ''), ownerId: it.ownerId || null }));
     }
     renderDemandChecklist();
   }
@@ -4910,7 +4933,7 @@ function onDemandStatusChange() {
     const flow = flowById($('f-flow').value);
     if (flow) {
       const stage = flow.stages.find(s => s.id === $('f-status').value);
-      buildUserSelect($('f-owner-select'), wsUsers(), stage?.responsibleId || null, null);
+      buildUserSelect($('f-owner-select'), wsUsers(), wizardAutoOwnerFor(stage), null);
     }
   }
 }
@@ -4919,29 +4942,40 @@ function onDemandStatusChange() {
    Inicializado pelo defaultChecklist do fluxo em syncStatusOptions().
    Editável aqui — usuário pode adicionar/remover/editar texto antes de salvar. */
 let demandChecklistDraft = [];
+// Opções de usuário do workspace pra o <select> de responsável do item.
+function wsUserOptions(selectedId) {
+  return wsUsers().slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)))
+    .map(u => `<option value="${u.id}" ${u.id === selectedId ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
+}
+// HTML de um item do checklist no wizard (texto + responsável + remover).
+// `removeFn` difere entre o passo de infos e o de customizar (compartilham a draft).
+function chkItemHTML(it, i, removeFn) {
+  return `<div class="chk-item">
+    <input class="form-control chk-item-text" value="${esc(it.text || '')}" placeholder="Item do checklist" oninput="demandChecklistDraft[${i}].text=this.value">
+    <select class="form-control chk-item-owner" onchange="demandChecklistDraft[${i}].ownerId=this.value||null">
+      <option value="">— Responsável —</option>
+      ${wsUserOptions(it.ownerId)}
+    </select>
+    <button type="button" class="detail-icon-btn danger chk-item-del" title="Remover" onclick="${removeFn}(${i})"><i data-lucide="x" class="ic-sm"></i></button>
+  </div>`;
+}
 function renderDemandChecklist() {
   const wrap = $('f-checklist-list');
   const group = $('f-checklist-group');
   if (!wrap || !group) return;
-  // Só exibe na criação (não em edição — checklist edita pela aba detail)
+  // Em edição, o checklist é editado pela aba de detalhe (com estado de conclusão).
   if (editingId) { group.style.display = 'none'; return; }
-  if (!demandChecklistDraft.length) {
-    group.style.display = 'none';
-    wrap.innerHTML = '';
-    return;
-  }
+  // Na criação, fica sempre visível — estado vazio quando não há itens.
   group.style.display = '';
-  wrap.innerHTML = demandChecklistDraft.map((it, i) => `
-    <div class="flow-checklist-item">
-      <input class="form-control" value="${esc(it.text)}" placeholder="Item do checklist" oninput="demandChecklistDraft[${i}].text=this.value">
-      <button type="button" class="icon-btn danger" title="Remover" onclick="removeDemandChecklistItem(${i})"><i data-lucide="x" class="ic-sm"></i></button>
-    </div>`).join('');
+  wrap.innerHTML = demandChecklistDraft.length
+    ? demandChecklistDraft.map((it, i) => chkItemHTML(it, i, 'removeDemandChecklistItem')).join('')
+    : '<div class="chk-empty">Nenhum item.</div>';
   paintIcons();
 }
 function addDemandChecklistItem() {
-  demandChecklistDraft.push({ text: '' });
+  demandChecklistDraft.push({ text: '', ownerId: null });
   renderDemandChecklist();
-  const inputs = $('f-checklist-list').querySelectorAll('input.form-control');
+  const inputs = $('f-checklist-list').querySelectorAll('input.chk-item-text');
   if (inputs.length) inputs[inputs.length - 1].focus();
 }
 function removeDemandChecklistItem(i) {
@@ -5005,7 +5039,12 @@ function openNewDemand() {
   demandChecklistDraft = [];
   renderDemandChecklist();
   $('f-rec-enabled').checked = false; $('f-rec-config').style.display = 'none';
-  $('f-rec-pattern').value = 'weekly'; $('f-rec-weekday').value = '1'; $('f-rec-end').value = '';
+  $('f-rec-card')?.classList.remove('on');
+  $('f-rec-pattern').value = 'weekly'; $('f-rec-interval').value = '1';
+  $('f-rec-monthday').value = '1'; $('f-rec-start').value = ''; $('f-rec-end').value = '';
+  renderRecWeekdayChips([new Date().getDay()]);
+  $('f-rec-weekday-g').style.display = ''; $('f-rec-monthday-g').style.display = 'none';
+  updateRecPreview();
   $('f-project').value = '';
   demandAttachments = [];
   refreshFormAttList('f-attachments-list');
@@ -5052,12 +5091,16 @@ function openEditDemand(id) {
   const rec = d.recurrence;
   $('f-rec-enabled').checked = !!(rec && rec.enabled);
   $('f-rec-config').style.display = rec?.enabled ? '' : 'none';
+  $('f-rec-card')?.classList.toggle('on', !!(rec && rec.enabled));
   $('f-rec-pattern').value = rec?.pattern || 'weekly';
-  $('f-rec-weekday').value = rec?.weekDay ?? 1;
+  $('f-rec-interval').value = rec?.interval || 1;
+  renderRecWeekdayChips((rec?.weekDays && rec.weekDays.length) ? rec.weekDays : (rec?.weekDay != null ? [rec.weekDay] : [new Date().getDay()]));
   if ($('f-rec-monthday')) $('f-rec-monthday').value = rec?.monthDay || 1;
+  $('f-rec-start').value = rec?.startDate || '';
   $('f-rec-end').value = rec?.endDate || '';
   $('f-rec-weekday-g').style.display = (rec?.pattern || 'weekly') === 'weekly' ? '' : 'none';
   $('f-rec-monthday-g').style.display = rec?.pattern === 'monthly' ? '' : 'none';
+  updateRecPreview();
   $('f-project').value = d.projectId || '';
   demandAttachments = (d.attachments || []).slice();
   refreshFormAttList('f-attachments-list');
@@ -5093,15 +5136,17 @@ async function saveDemand() {
     deliverableUserId: $('f-deliverable-user')?.value || null,
     // Checklist inicial — só faz sentido em CRIAÇÃO. Em edição ignora (o user
     // edita pela aba detail). Filtra itens vazios.
-    checklist: editingId ? undefined : demandChecklistDraft.filter(it => (it.text || '').trim()).map(it => ({ text: it.text.trim() })),
+    checklist: editingId ? undefined : demandChecklistDraft.filter(it => (it.text || '').trim()).map(it => ({ text: it.text.trim(), ownerId: it.ownerId || null })),
     status: $('f-status').value,
     ownerId: $('f-owner-select').dataset.value || null,
     attachments: demandAttachments.slice(),
     recurrence: recEnabled ? {
       enabled: true,
       pattern: $('f-rec-pattern').value,
-      weekDay: parseInt($('f-rec-weekday').value, 10),
+      interval: Math.max(1, parseInt($('f-rec-interval').value, 10) || 1),
+      weekDays: getRecWeekdays(),
       monthDay: parseInt(($('f-rec-monthday')?.value) || '1', 10),
+      startDate: $('f-rec-start').value || null,
       endDate: $('f-rec-end').value || null
     } : { enabled: false }
   };
@@ -5482,7 +5527,7 @@ function renderDetail() {
 
         ${d.recurrence?.enabled ? `<div class="detail-section-block" style="padding:12px 18px;display:flex;align-items:center;gap:10px">
           <i data-lucide="repeat" class="ic-sm" style="color:var(--accent-text)"></i>
-          <span style="font-size:12px;color:var(--text-dim)">Demanda recorrente · <strong>${esc({daily:'Diariamente',weekly:'Semanalmente',monthly:'Mensalmente'}[d.recurrence.pattern] || d.recurrence.pattern)}</strong>${d.recurrence.lastGeneratedDate ? ' · Última geração: ' + fmtDate(d.recurrence.lastGeneratedDate) : ''}</span>
+          <span style="font-size:12px;color:var(--text-dim)">Demanda recorrente${d.recurrence.paused ? ' <strong style="color:var(--warn)">(pausada)</strong>' : ''} · <strong>${esc(recurrenceSummary(d.recurrence))}</strong>${d.recurrence.lastGeneratedDate ? ' · Última geração: ' + fmtDate(d.recurrence.lastGeneratedDate) : ''}</span>
         </div>` : ''}
 
         ${renderChecklist(d)}
@@ -5970,6 +6015,210 @@ function onRecurrencePatternChange() {
   const p = $('detail-rec-pattern').value;
   $('detail-rec-weekday-group').style.display = p === 'weekly' ? '' : 'none';
   $('detail-rec-monthday-group').style.display = p === 'monthly' ? '' : 'none';
+}
+
+/* ── RECORRÊNCIA — controles do modal de demanda (a cada N + múltiplos dias) ── */
+const WEEKDAY_ABBR = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+function onRecToggle() {
+  const on = $('f-rec-enabled').checked;
+  $('f-rec-config').style.display = on ? '' : 'none';
+  $('f-rec-card')?.classList.toggle('on', on);
+  if (on && !$('f-rec-weekdays').children.length) renderRecWeekdayChips([new Date().getDay()]);
+  updateRecPreview();
+}
+function onRecPatternChange() {
+  const p = $('f-rec-pattern').value;
+  $('f-rec-weekday-g').style.display = p === 'weekly' ? '' : 'none';
+  $('f-rec-monthday-g').style.display = p === 'monthly' ? '' : 'none';
+  updateRecPreview();
+}
+function renderRecWeekdayChips(selected) {
+  const sel = new Set((selected || []).map(Number));
+  const wrap = $('f-rec-weekdays');
+  if (!wrap) return;
+  wrap.innerHTML = WEEKDAY_ABBR.map((lbl, i) =>
+    `<button type="button" class="rec-wd-chip${sel.has(i) ? ' active' : ''}" data-day="${i}" onclick="toggleRecWeekday(${i})">${lbl}</button>`
+  ).join('');
+}
+function toggleRecWeekday(day) {
+  const btn = document.querySelector(`#f-rec-weekdays .rec-wd-chip[data-day="${day}"]`);
+  if (!btn) return;
+  // Semanal exige ao menos 1 dia — não deixa desmarcar o último.
+  if (btn.classList.contains('active') && getRecWeekdays().length === 1) return;
+  btn.classList.toggle('active');
+  updateRecPreview();
+}
+function getRecWeekdays() {
+  return [...document.querySelectorAll('#f-rec-weekdays .rec-wd-chip.active')]
+    .map(b => Number(b.dataset.day)).sort((a, b) => a - b);
+}
+function updateRecPreview() {
+  const el = $('f-rec-preview');
+  if (!el) return;
+  if (!$('f-rec-enabled').checked) { el.textContent = ''; return; }
+  el.textContent = recurrenceSummary({
+    enabled: true,
+    pattern: $('f-rec-pattern').value,
+    interval: Math.max(1, parseInt($('f-rec-interval').value, 10) || 1),
+    weekDays: getRecWeekdays(),
+    monthDay: parseInt(($('f-rec-monthday')?.value) || '1', 10),
+    startDate: $('f-rec-start').value || null,
+    endDate: $('f-rec-end').value || null
+  });
+}
+
+/* Texto humano do agendamento — reusado no modal, no detalhe e na tela de gestão. */
+function recurrenceSummary(rec) {
+  if (!rec || !rec.enabled) return '';
+  const n = Math.max(1, rec.interval || 1);
+  let base;
+  if (rec.pattern === 'daily') {
+    base = n === 1 ? 'Todo dia' : `A cada ${n} dias`;
+  } else if (rec.pattern === 'monthly') {
+    base = (n === 1 ? 'Todo mês' : `A cada ${n} meses`) + ` no dia ${rec.monthDay || 1}`;
+  } else {
+    const days = ((rec.weekDays && rec.weekDays.length) ? rec.weekDays : [rec.weekDay ?? 1])
+      .slice().sort((a, b) => a - b).map(d => WEEKDAY_ABBR[d]).join(', ');
+    base = (n === 1 ? 'Toda semana' : `A cada ${n} semanas`) + (days ? ` — ${days}` : '');
+  }
+  if (rec.endDate) base += ` · até ${fmtDate(rec.endDate)}`;
+  return base;
+}
+
+/* ── TELA: DEMANDAS RECORRENTES (gestão das que o usuário configurou) ── */
+function recYmd(dt) {
+  const y = dt.getFullYear(), m = String(dt.getMonth() + 1).padStart(2, '0'), d = String(dt.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+// Espelha isRecurrenceDueToday do server, só pra prever a próxima geração no cliente.
+function recMatches(rec, dt) {
+  const ymd = recYmd(dt);
+  const anchor = rec.startDate ? new Date(rec.startDate + 'T12:00:00') : dt;
+  if (rec.startDate && ymd < rec.startDate) return false;
+  const interval = Math.max(1, rec.interval || 1);
+  if (rec.pattern === 'daily') {
+    const days = Math.round((dt - anchor) / 86400000);
+    return days >= 0 && days % interval === 0;
+  }
+  if (rec.pattern === 'monthly') {
+    if (dt.getDate() !== (rec.monthDay || 1)) return false;
+    const months = (dt.getFullYear() - anchor.getFullYear()) * 12 + (dt.getMonth() - anchor.getMonth());
+    return months >= 0 && months % interval === 0;
+  }
+  const weekDays = (rec.weekDays && rec.weekDays.length) ? rec.weekDays : [rec.weekDay ?? 1];
+  if (!weekDays.includes(dt.getDay())) return false;
+  const sow = x => { const y = new Date(x); y.setDate(y.getDate() - y.getDay()); y.setHours(12, 0, 0, 0); return y; };
+  const weeks = Math.round((sow(dt) - sow(anchor)) / (7 * 86400000));
+  return weeks >= 0 && weeks % interval === 0;
+}
+function nextRecurrenceDate(rec) {
+  if (!rec || !rec.enabled || rec.paused) return null;
+  const base = new Date(); base.setHours(12, 0, 0, 0);
+  for (let i = 0; i <= 366; i++) {
+    const dt = new Date(base); dt.setDate(dt.getDate() + i);
+    if (!recMatches(rec, dt)) continue;
+    const ymd = recYmd(dt);
+    if (rec.endDate && ymd > rec.endDate) return null;
+    if (i === 0 && rec.lastGeneratedDate === ymd) continue; // já gerou hoje
+    return ymd;
+  }
+  return null;
+}
+
+let _rdWsFilter = 'all';
+function onRdWsFilterChange() {
+  _rdWsFilter = $('rd-ws-filter').value || 'all';
+  renderRecurringDemands();
+}
+function renderRecurringDemands() {
+  const body = $('rd-body');
+  if (!body) return;
+  // Filtro de workspace: Todas + as do usuário.
+  const wsSel = $('rd-ws-filter');
+  if (wsSel) {
+    const myWs = workspaces.slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+    wsSel.innerHTML = `<option value="all">Todas as workspaces</option>` +
+      myWs.map(w => `<option value="${w.id}">${esc(w.name)}</option>`).join('');
+    if (![...wsSel.options].some(o => o.value === _rdWsFilter)) _rdWsFilter = 'all';
+    wsSel.value = _rdWsFilter;
+    applyFilterDropdown('rd-ws-filter'); // reconstrói o dropdown estilizado com as opções atuais
+  }
+  // Minhas recorrentes: recurrence.enabled + createdBy === eu. (demands já exclui as da lixeira.)
+  let mine = demands.filter(d => d.recurrence?.enabled && d.recurrence.createdBy === me.id);
+  if (_rdWsFilter !== 'all') mine = mine.filter(d => d.workspaceId === _rdWsFilter);
+  // Pausadas ao fim; dentro de cada grupo, por nome.
+  mine.sort((a, b) => (!!a.recurrence.paused - !!b.recurrence.paused) || norm(a.name).localeCompare(norm(b.name)));
+
+  if (!mine.length) {
+    body.innerHTML = `<div class="rd-empty">
+      <div class="rd-empty-icon"><i data-lucide="repeat"></i></div>
+      <div class="rd-empty-title">Nenhuma demanda recorrente${_rdWsFilter !== 'all' ? ' neste workspace' : ''}</div>
+      <div class="rd-empty-sub">Ao criar ou editar uma demanda, ative <strong>"Tornar esta demanda recorrente"</strong> para ela se repetir automaticamente.</div>
+    </div>`;
+    paintIcons();
+    return;
+  }
+  body.innerHTML = `<div class="rd-list">${mine.map(rdRowHTML).join('')}</div>`;
+  paintIcons();
+}
+function rdRowHTML(d) {
+  const rec = d.recurrence;
+  const project = projectById(d.projectId);
+  const client = project ? clientById(project.clientId) : null;
+  const paused = !!rec.paused;
+  const ctxBits = [];
+  if (client) ctxBits.push(esc(client.name));
+  if (project) ctxBits.push(esc(project.name));
+  if (workspaces.length > 1) { const w = wsById(d.workspaceId); if (w) ctxBits.push(esc(w.name)); }
+  const metaBits = [recurrenceSummary(rec)];
+  if (rec.lastGeneratedDate) metaBits.push('última: ' + fmtDate(rec.lastGeneratedDate));
+  const next = nextRecurrenceDate(rec);
+  if (next) metaBits.push('próxima: ' + fmtDate(next));
+  return `<div class="rd-item${paused ? ' paused' : ''}">
+    <div class="rd-item-icon"><i data-lucide="repeat" class="ic-sm"></i></div>
+    <div class="rd-item-main">
+      <div class="rd-item-name" onclick="showDetail('${d.id}')" title="Abrir demanda">${esc(d.name)}${paused ? ' <span class="rd-paused-tag">pausada</span>' : ''}</div>
+      <div class="rd-item-sched">${esc(metaBits.join(' · '))}</div>
+      ${ctxBits.length ? `<div class="rd-item-ctx">${ctxBits.join(' · ')}</div>` : ''}
+    </div>
+    <div class="rd-item-actions">
+      <button class="btn btn-ghost btn-sm" onclick="openEditDemand('${d.id}')" title="Editar demanda / recorrência"><i data-lucide="pencil" class="ic-sm"></i></button>
+      <button class="btn btn-ghost btn-sm" onclick="toggleRecurringPause('${d.id}')" title="${paused ? 'Retomar' : 'Pausar'}"><i data-lucide="${paused ? 'play' : 'pause'}" class="ic-sm"></i></button>
+      <button class="btn btn-ghost btn-sm rd-end-btn" onclick="endRecurring('${d.id}')" title="Encerrar recorrência"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+  </div>`;
+}
+async function toggleRecurringPause(id) {
+  const d = demands.find(x => x.id === id);
+  if (!d || !d.recurrence) return;
+  const recurrence = { ...d.recurrence, enabled: true, paused: !d.recurrence.paused };
+  try {
+    const upd = await api('/demands/' + id, 'PUT', { recurrence });
+    patchDemand(upd);
+    toast(recurrence.paused ? 'Recorrência pausada.' : 'Recorrência retomada.', 'success');
+    renderRecurringDemands();
+  } catch (e) {
+    toast('Falha ao atualizar: ' + (e.message || 'erro'), 'error');
+  }
+}
+async function endRecurring(id) {
+  const d = demands.find(x => x.id === id);
+  if (!d) return;
+  const ok = await showConfirm({
+    title: 'Encerrar recorrência',
+    message: `A demanda <strong>${esc(d.name)}</strong> vai parar de gerar novas cópias. A demanda em si e as já geradas permanecem. Continuar?`,
+    okLabel: 'Encerrar recorrência',
+    danger: true
+  });
+  if (!ok) return;
+  try {
+    const upd = await api('/demands/' + id, 'PUT', { recurrence: { enabled: false } });
+    patchDemand(upd);
+    toast('Recorrência encerrada.', 'success');
+    renderRecurringDemands();
+  } catch (e) {
+    toast('Falha ao encerrar: ' + (e.message || 'erro'), 'error');
+  }
 }
 /* Popula <select> de "atribuir entregáveis a" — usuários ativos do workspace +
    opção vazia (= cai pro responsável atual da demanda). */
@@ -7384,8 +7633,10 @@ async function openProjectModal(id, presetClientId) {
   $('p-brand-assets').value = p?.brandAssets || '';
   $('p-guidelines').value = p?.guidelines || '';
 
-  // Footer: edit mostra Excluir + toggle Estado; new esconde os dois
-  $('p-delete-btn').style.display = p ? '' : 'none';
+  // Footer: edit mostra Excluir + toggle Estado; new esconde os dois.
+  // Excluir restrito a admin/moderador — server também bloqueia via modOrAdmin.
+  const canDeleteProject = !!(me.isAdmin || me.isModerator);
+  $('p-delete-btn').style.display = (p && canDeleteProject) ? '' : 'none';
   $('p-status-group').style.display = p ? '' : 'none';
   projectModalStatusActive = p ? (p.active !== false) : true;
   refreshProjectStatusUI();
@@ -7782,8 +8033,7 @@ function openFlowModal(id, presetClientId) {
 
   $('fl-name').value = f?.name || '';
   $('fl-type').value = f?.demandType || '';
-  $('flowtypes-datalist').innerHTML = [...new Set(flows.map(x => x.demandType).filter(Boolean))]
-    .map(t => `<option value="${esc(t)}">`).join('');
+  initTypeCombo('fl-type', 'fl-type-menu', () => { flowModalDirty = true; });
 
   // Project picker fica escondido por padrão. Útil só pra fluxos exclusivos
   // de um projeto específico — caso raro, atalho via console se necessário.
@@ -7895,6 +8145,147 @@ function handleFlowIconUpload(ev) {
   ev.target.value = '';
 }
 
+/* ── COMBOBOX DE TIPO DE DEMANDA ──
+   Input livre + menu com a biblioteca de tipos (filtrada) + opção "Adicionar 'XXX'"
+   quando o texto não é um tipo existente. Criar chama a API (bloqueia duplicado). */
+function initTypeCombo(inputId, menuId, onChange) {
+  const input = $(inputId);
+  const menu = $(menuId);
+  if (!input || !menu) return;
+  input._comboChange = onChange || null;  // atualiza a cada abertura do modal
+  if (input._comboInit) return;
+  input._comboInit = true;
+  const open = () => { renderTypeCombo(inputId, menuId); menu.classList.add('open'); };
+  input._comboClose = () => menu.classList.remove('open');
+  input.addEventListener('focus', open);
+  input.addEventListener('input', () => { open(); if (input._comboChange) input._comboChange(); });
+  input.addEventListener('keydown', e => { if (e.key === 'Escape') { input._comboClose(); input.blur(); } });
+  input.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== input) input._comboClose(); }, 150));
+}
+function renderTypeCombo(inputId, menuId) {
+  const input = $(inputId);
+  const menu = $(menuId);
+  if (!input || !menu) return;
+  const raw = input.value.trim();
+  const q = norm(raw);
+  const all = (demandTypes || []).slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  const matches = q ? all.filter(t => norm(t.name).includes(q)) : all;
+  const exact = all.some(t => norm(t.name) === q);
+  let html = matches.map(t =>
+    `<div class="dtype-opt" data-name="${esc(t.name)}" onmousedown="event.preventDefault()" onclick="pickTypeCombo('${inputId}','${menuId}', this.dataset.name)">${esc(t.name)}</div>`
+  ).join('');
+  if (!matches.length && !raw) html = `<div class="dtype-empty">Nenhum tipo cadastrado. Digite pra criar um.</div>`;
+  if (raw && !exact) {
+    html += `<div class="dtype-add" onmousedown="event.preventDefault()" onclick="createTypeCombo('${inputId}','${menuId}')"><i data-lucide="plus" class="ic-sm"></i> Adicionar “${esc(raw)}”</div>`;
+  }
+  menu.innerHTML = html;
+  paintIcons();
+}
+function pickTypeCombo(inputId, menuId, name) {
+  const input = $(inputId);
+  if (!input) return;
+  input.value = name;
+  $(menuId).classList.remove('open');
+  if (input._comboChange) input._comboChange();
+}
+async function createTypeCombo(inputId, menuId) {
+  const input = $(inputId);
+  if (!input) return;
+  const name = input.value.trim();
+  if (!name) return;
+  try {
+    const t = await api('/demand-types', 'POST', { name });
+    demandTypes.push(t);
+    input.value = t.name;
+    toast('Tipo “' + t.name + '” criado.', 'success');
+  } catch (e) {
+    if (/já existe/i.test(e.message || '')) { input.value = name; } // adota o existente
+    else { toast('Falha ao criar tipo: ' + (e.message || 'erro'), 'error'); return; }
+  }
+  $(menuId).classList.remove('open');
+  if (input._comboChange) input._comboChange();
+}
+
+/* ── MODAL: GERENCIAR TIPOS DE DEMANDA ── */
+async function openDemandTypesModal() {
+  try { demandTypes = await api('/demand-types'); } catch (e) { /* mantém cache */ }
+  renderDemandTypesTable();
+  openModal('dtype-manage-modal');
+  setTimeout(() => $('dtype-new-name')?.focus(), 60);
+}
+function renderDemandTypesTable() {
+  const body = $('dtype-mng-body');
+  if (!body) return;
+  const list = (demandTypes || []).slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  if (!list.length) {
+    body.innerHTML = `<tr><td colspan="3" style="color:var(--text-muted);padding:18px;text-align:center">Nenhum tipo cadastrado ainda.</td></tr>`;
+    return;
+  }
+  body.innerHTML = list.map(t => `
+    <tr class="row-hover-actions">
+      <td>${esc(t.name)}</td>
+      <td style="text-align:center;color:var(--text-muted)">${t.usageCount || 0}</td>
+      <td>
+        <div class="row-actions">
+          <button class="icon-btn" title="Renomear" onclick="editDemandType('${t.id}')"><i data-lucide="pencil" class="ic-sm"></i></button>
+          <button class="icon-btn danger" title="Excluir" onclick="deleteDemandType('${t.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
+        </div>
+      </td>
+    </tr>`).join('');
+  paintIcons();
+}
+async function addDemandTypeFromModal() {
+  const input = $('dtype-new-name');
+  const name = (input.value || '').trim();
+  if (!name) return;
+  try {
+    const t = await api('/demand-types', 'POST', { name });
+    demandTypes.push({ ...t, usageCount: 0 });
+    input.value = '';
+    toast('Tipo criado.', 'success');
+    renderDemandTypesTable();
+    input.focus();
+  } catch (e) {
+    toast(e.message || 'Falha ao criar', 'error');
+  }
+}
+async function editDemandType(id) {
+  const t = (demandTypes || []).find(x => x.id === id);
+  if (!t) return;
+  const name = await showPrompt({ title: 'Renomear tipo', message: 'Renomear atualiza todos os fluxos que usam este tipo.', defaultValue: t.name, okLabel: 'Salvar' });
+  if (name === null || name === undefined) return;
+  const trimmed = String(name).trim();
+  if (!trimmed || trimmed === t.name) return;
+  try {
+    const upd = await api('/demand-types/' + id, 'PUT', { name: trimmed });
+    if (upd.flowsUpdated && typeof refreshData === 'function') await refreshData();
+    else t.name = upd.name;
+    toast(upd.flowsUpdated ? `Renomeado — ${upd.flowsUpdated} fluxo(s) atualizado(s).` : 'Renomeado.', 'success');
+    renderDemandTypesTable();
+  } catch (e) {
+    toast(e.message || 'Falha ao renomear', 'error');
+  }
+}
+async function deleteDemandType(id) {
+  const t = (demandTypes || []).find(x => x.id === id);
+  if (!t) return;
+  const ok = await showConfirm({
+    title: 'Excluir tipo',
+    message: `O tipo <strong>${esc(t.name)}</strong> será removido da lista.${t.usageCount ? ` Os <strong>${t.usageCount}</strong> fluxo(s) que usam ele mantêm o valor — só some da biblioteca.` : ''} Continuar?`,
+    okLabel: 'Excluir',
+    danger: true
+  });
+  if (!ok) return;
+  try {
+    await api('/demand-types/' + id, 'DELETE');
+    demandTypes = demandTypes.filter(x => x.id !== id);
+    toast('Tipo excluído.', 'success');
+    renderDemandTypesTable();
+  } catch (e) {
+    toast(e.message || 'Falha ao excluir', 'error');
+  }
+}
+
 function renderStageRows() {
   // Mantém referência aos campos pra construir os dropdowns.
   // Convenção de dados: cada stage guarda `roleFilter` (qual função foi
@@ -7915,7 +8306,7 @@ function renderStageRows() {
     const userId = s.responsibleId || '';
 
     // Área dropdown
-    const fnOpts = `<option value="">— Sem área —</option>` +
+    const fnOpts = `<option value="">Sem área</option>` +
       allRoles.map(r => `<option value="${esc(r.name)}" ${r.name === roleFilter ? 'selected' : ''}>${esc(r.name)}</option>`).join('');
 
     // Cargo dropdown — só cargos presentes em users daquela área (evita opções mortas).
@@ -7923,11 +8314,11 @@ function renderStageRows() {
     const cargosDisponiveis = (positions || []).slice()
       .filter(p => usersInArea.some(u => (u.position || '') === p.name))
       .sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-    const cargoOpts = `<option value="">— Qualquer cargo —</option>` +
+    const cargoOpts = `<option value="">Qualquer cargo</option>` +
       cargosDisponiveis.map(p => `<option value="${esc(p.name)}" ${p.name === positionFilter ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
 
     // Responsável dropdown — filtrado por área + cargo (se informados)
-    let respHtml = '<option value="">— Sem responsável —</option>';
+    let respHtml = '<option value="">Sem responsável</option>';
     if (roleFilter) {
       let filteredUsers = usersInArea;
       if (positionFilter) filteredUsers = filteredUsers.filter(u => (u.position || '') === positionFilter);
@@ -7953,11 +8344,14 @@ function renderStageRows() {
       <select id="stage-role-${i}" class="form-control stage-role" title="Área desta etapa" onchange="setStageRoleFilter(${i}, this.value)">${fnOpts}</select>
       <select id="stage-cargo-${i}" class="form-control stage-cargo" title="Cargo (opcional) — resolve pela matriz Área×Cargo do cliente" onchange="setStagePositionFilter(${i}, this.value)" ${roleFilter ? '' : 'disabled'}>${cargoOpts}</select>
       <select id="stage-resp-${i}" class="form-control stage-resp" title="Responsável padrão da etapa" onchange="setStageResponsible(${i}, this.value)">${respHtml}</select>
-      <div class="stage-days-wrap"><span class="stage-mini-label">Prazo (dias)</span><input class="form-control" type="number" min="1" placeholder="—" value="${s.deadlineDays || ''}" oninput="stageRows[${i}].deadlineDays=this.value?Number(this.value):null"></div>
-      <label class="stage-done-toggle"><input type="checkbox" ${s.done ? 'checked' : ''} onchange="stageRows[${i}].done=this.checked"> Conclui</label>
+      <div class="stage-days-inline" title="Prazo da etapa (em dias)">
+        <input class="form-control" type="number" min="1" placeholder="—" value="${s.deadlineDays || ''}" oninput="stageRows[${i}].deadlineDays=this.value?Number(this.value):null">
+        <span class="stage-days-unit">d</span>
+      </div>
+      <button type="button" class="cust-icon-toggle cust-toggle-done ${s.done ? 'on' : ''}" title="${s.done ? 'Etapa final — conclui a demanda' : 'Marcar como etapa final (conclui a demanda)'}" onclick="toggleStageDone(${i})"><i data-lucide="flag" class="ic-sm"></i></button>
       <div class="stage-actions">
-        <button class="icon-btn" title="Duplicar etapa" onclick="duplicateStageRow(${i})"><i data-lucide="copy" class="ic-sm"></i></button>
-        <button class="icon-btn danger" title="Remover etapa" onclick="removeStageRow(${i})"><i data-lucide="x" class="ic-sm"></i></button>
+        <button type="button" class="icon-btn" title="Duplicar etapa" onclick="duplicateStageRow(${i})"><i data-lucide="copy" class="ic-sm"></i></button>
+        <button type="button" class="icon-btn danger" title="Excluir etapa" onclick="removeStageRow(${i})"><i data-lucide="trash-2" class="ic-sm"></i></button>
       </div>
     </div>`;
   }).join('');
@@ -8027,6 +8421,12 @@ function setStageResponsible(i, value) {
   renderStageRows();
 }
 
+function toggleStageDone(i) {
+  if (!stageRows[i]) return;
+  stageRows[i].done = !stageRows[i].done;
+  flowModalDirty = true;
+  renderStageRows();
+}
 function duplicateStageRow(i) {
   if (!stageRows[i]) return;
   const copy = { ...stageRows[i], id: null, label: (stageRows[i].label || '') + ' (cópia)' };
@@ -8410,8 +8810,16 @@ async function renderIntegrations() {
     const targetChip = target
       ? `<div style="margin-top:4px"><span class="pill" style="font-size:9px;color:var(--accent-text);background:var(--accent-dim)">Alvo: ${esc(target.name)}</span>${target.discordId ? '' : '<span class="pill" style="font-size:9px;color:var(--danger);background:var(--danger-dim);margin-left:4px" title="Esse usuário ainda não vinculou o ID do Discord">sem ID</span>'}</div>`
       : '';
+    const scopeClient = h.clientId ? clients.find(c => c.id === h.clientId) : null;
+    const scopeProject = h.projectId ? projects.find(p => p.id === h.projectId) : null;
+    const scopeParts = [];
+    if (scopeClient) scopeParts.push(esc(scopeClient.name));
+    if (scopeProject) scopeParts.push(esc(scopeProject.name));
+    const scopeChip = scopeParts.length
+      ? `<div style="margin-top:4px"><span class="pill" style="font-size:9px;color:var(--accent-text);background:var(--accent-dim)" title="Este webhook só dispara para eventos deste cliente/projeto">Filtro: ${scopeParts.join(' · ')}</span></div>`
+      : '';
     return `<tr class="row-hover-actions">
-      <td><strong>${esc(h.name)}</strong>${targetChip}${h.lastTriggered ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">Último envio: ${esc(fmtDateTime(h.lastTriggered))}</div>` : ''}</td>
+      <td><strong>${esc(h.name)}</strong>${scopeChip}${targetChip}${h.lastTriggered ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">Último envio: ${esc(fmtDateTime(h.lastTriggered))}</div>` : ''}</td>
       <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace;font-size:11px;color:var(--text-dim)" title="${esc(h.url)}">${esc(h.url)}</td>
       <td>${h.format === 'discord' ? '<span class="pill" style="color:#5865f2;background:rgba(88,101,242,0.15);font-size:10px">Discord</span>' : '<span class="pill pill-muted" style="font-size:10px">Raw JSON</span>'}</td>
       <td>${eventChips}${moreCount > 0 ? `<span class="pill pill-muted" style="font-size:9px">+${moreCount}</span>` : ''}</td>
@@ -8440,6 +8848,14 @@ function openWebhookModal(id) {
   targetSel.innerHTML = '<option value="">— Todos os usuários (sem filtro) —</option>' +
     usersForWs.map(u => `<option value="${u.id}">${esc(u.name)}${u.discordId ? '' : ' (sem ID do Discord)'}</option>`).join('');
   targetSel.value = h?.targetUserId || '';
+  // Filtro de escopo: cliente + projeto (opcionais)
+  const clientSel = $('wh-client');
+  const wsClientList = wsClients().filter(c => c.active !== false && !c.deletedAt)
+    .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  clientSel.innerHTML = '<option value="">— Todos os clientes —</option>' +
+    wsClientList.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  clientSel.value = h?.clientId || '';
+  whPopulateProjects(h?.projectId || '');
   const events = h?.events || ['demand.created', 'demand.completed', 'demand.stage_changed'];
   $('wh-events').innerHTML = Object.entries(WEBHOOK_EVENT_LABELS).map(([k, label]) => `
     <label class="wh-event-row">
@@ -8451,6 +8867,22 @@ function openWebhookModal(id) {
   navPush(id ? '/integrations/webhooks/' + id : '/integrations/webhooks/new');
   setTimeout(() => $('wh-name').focus(), 60);
 }
+// Popula o select de projetos, filtrado pelo cliente escolhido (se houver).
+// `selectedId` reaplica a seleção atual quando ainda for válida no novo conjunto.
+function whPopulateProjects(selectedId) {
+  const projSel = $('wh-project');
+  const clientId = $('wh-client').value || '';
+  let list = wsProjects().filter(p => p.active !== false && !p.deletedAt);
+  if (clientId) list = list.filter(p => p.clientId === clientId);
+  list = list.slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  projSel.innerHTML = '<option value="">— Todos os projetos —</option>' +
+    list.map(p => `<option value="${p.id}">${esc(p.name)}${!clientId && p.client ? ` · ${esc(p.client)}` : ''}</option>`).join('');
+  projSel.value = list.some(p => p.id === selectedId) ? selectedId : '';
+}
+// Ao trocar o cliente, repopula os projetos preservando o projeto atual se compatível.
+function whOnClientChange() {
+  whPopulateProjects($('wh-project').value || '');
+}
 async function saveWebhook() {
   const events = [...document.querySelectorAll('#wh-events input:checked')].map(i => i.value);
   const payload = {
@@ -8460,7 +8892,9 @@ async function saveWebhook() {
     format: $('wh-format').value,
     active: $('wh-active').value === 'true',
     events,
-    targetUserId: $('wh-target-user').value || null
+    targetUserId: $('wh-target-user').value || null,
+    clientId: $('wh-client').value || null,
+    projectId: $('wh-project').value || null
   };
   try {
     if (editingWhId) await api('/webhooks/' + editingWhId, 'PUT', payload);
@@ -8543,11 +8977,13 @@ function renderChecklist(d) {
       <div class="checklist-list">
         ${items.map(it => {
           const author = userById(it.doneBy);
+          const owner = it.ownerId ? userById(it.ownerId) : null;
           return `<div class="checklist-item ${it.done ? 'done' : ''}">
             <button type="button" class="checklist-check" onclick="toggleChecklistItem('${it.id}', ${!it.done})" title="${it.done ? 'Desmarcar' : 'Marcar como concluído'}">
               ${it.done ? '<i data-lucide="check" class="ic-sm"></i>' : ''}
             </button>
             <span class="checklist-text">${esc(it.text)}</span>
+            ${owner ? `<span class="checklist-owner" title="Responsável: ${esc(owner.name)}">${avatarHTML(owner, 'avatar checklist-owner-av')}</span>` : ''}
             ${it.done && author ? `<span class="checklist-meta">por ${esc(author.name.split(' ')[0])} · ${esc(fmtDate(it.doneAt))}</span>` : ''}
             <button type="button" class="detail-icon-btn checklist-del" onclick="removeChecklistItem('${it.id}')" title="Remover"><i data-lucide="x" class="ic-xs"></i></button>
           </div>`;
@@ -9080,7 +9516,11 @@ function renderRecurringGroup(spec, clientRecurrings, ym, groupBy, client) {
     });
   }).join('');
 
-  const looseItems = items.filter(r => !r.listaId);
+  // "Sem lista" = itens sem listaId OU cuja lista não está mais visível (ex.: lista
+  // na Lixeira). Assim recorrentes de uma lista excluída não somem — caem em
+  // Personalizada e voltam pro grupo certo se a lista for restaurada.
+  const visibleListaIds = new Set(listas.map(l => l.id));
+  const looseItems = items.filter(r => !r.listaId || !visibleListaIds.has(r.listaId));
   // Personalizada só existe DEPOIS que o usuário criou a primeira demanda personalizada
   const personalizadaHtml = looseItems.length
     ? renderRecurringSublist({
@@ -11848,8 +12288,7 @@ function openTemplateFlowModal(tplId, pIdx, fIdx) {
   const accessibleWs = new Set(me.isAdmin
     ? (workspaces || []).map(w => w.id)
     : (me.workspaces || []));
-  const types = [...new Set(flows.filter(f => accessibleWs.has(f.workspaceId)).map(f => f.demandType).filter(Boolean))].sort();
-  $('tfl-type-datalist').innerHTML = types.map(x => `<option value="${esc(x)}">`).join('');
+  initTypeCombo('tfl-type', 'tfl-type-menu');
   $('tfl-delete-btn').style.display = isEdit ? '' : 'none';
   refreshTflIconPreview();
   renderTflStages();
@@ -11889,23 +12328,60 @@ function renderTflStages() {
   // ficam a cargo do cliente (matriz Área × Cargo no painel Pessoas).
   wrap.innerHTML = _tflCtx.stages.map((s, i) => {
     const color = s.color || '#7A00FF';
-    return `<div class="tfl-stage-row" data-idx="${i}">
+    return `<div class="tfl-stage-row" data-idx="${i}"
+         ondragover="tflStageDragOver(event,${i})" ondragleave="tflStageDragLeave(event)"
+         ondrop="tflStageDrop(event,${i})" ondragend="tflStageDragEnd()">
+      <div class="tfl-stage-grip" draggable="true" ondragstart="tflStageDragStart(event,${i})" title="Arraste para reordenar"><i data-lucide="grip-vertical" class="ic-sm"></i></div>
       <button type="button" class="color-swatch-trigger tfl-stage-color" style="background:${esc(color)}" onclick="openColorPicker(this, (c) => { tflSetStage(${i}, 'color', c); this.style.background = c; }, '${esc(color)}')" title="Cor da etapa"></button>
       <input type="text" class="wizard-cust-name" placeholder="Nome da etapa" value="${esc(s.label || '')}" oninput="tflSetStage(${i}, 'label', this.value)">
-      <input type="number" class="wizard-cust-days" min="0" step="1" placeholder="—" value="${s.deadlineDays ?? ''}" oninput="tflSetStage(${i}, 'deadlineDays', this.value === '' ? null : Number(this.value))" title="Prazo em dias (opcional)">
-      <label class="wizard-cust-toggle" title="Marcar como etapa final (conclui a demanda)">
-        <input type="checkbox" ${s.done ? 'checked' : ''} onchange="tflSetStage(${i}, 'done', this.checked)"> <span class="tfl-stage-done-lbl">Final</span>
-      </label>
-      <button type="button" class="wizard-cust-remove" title="Remover etapa" onclick="tflRemoveStage(${i})"><i data-lucide="x" class="ic-sm"></i></button>
+      <div class="wizard-cust-days-inline" title="Prazo da etapa (em dias)">
+        <input type="number" class="wizard-cust-days" min="0" step="1" placeholder="—" value="${s.deadlineDays ?? ''}" oninput="tflSetStage(${i}, 'deadlineDays', this.value === '' ? null : Number(this.value))">
+        <span class="wizard-cust-days-unit">d</span>
+      </div>
+      <button type="button" class="cust-icon-toggle cust-toggle-done ${s.done ? 'on' : ''}" title="${s.done ? 'Etapa final — conclui a demanda' : 'Marcar como etapa final (conclui a demanda)'}" onclick="tflToggleDone(${i})"><i data-lucide="flag" class="ic-sm"></i></button>
+      <button type="button" class="cust-icon-toggle tfl-remove-btn" title="Excluir etapa" onclick="tflRemoveStage(${i})"><i data-lucide="trash-2" class="ic-sm"></i></button>
     </div>`;
   }).join('');
   paintIcons();
+}
+/* Drag-reorder das etapas no editor de fluxo do modelo. Mesma mecânica do
+   editor de fluxo normal (stageDrag*), mas opera em _tflCtx.stages. */
+let _tflDragIdx = null;
+function tflStageDragStart(e, i) {
+  _tflDragIdx = i;
+  e.dataTransfer.effectAllowed = 'move';
+  const row = e.currentTarget.closest('.tfl-stage-row') || e.currentTarget;
+  row.classList.add('dragging');
+}
+function tflStageDragOver(e, i) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  e.currentTarget.classList.add('drag-over');
+}
+function tflStageDragLeave(e) { e.currentTarget.classList.remove('drag-over'); }
+function tflStageDrop(e, i) {
+  e.preventDefault();
+  if (_tflDragIdx === null || _tflDragIdx === i) { renderTflStages(); return; }
+  const [moved] = _tflCtx.stages.splice(_tflDragIdx, 1);
+  _tflCtx.stages.splice(i, 0, moved);
+  _tflDragIdx = null;
+  renderTflStages();
+}
+function tflStageDragEnd() {
+  _tflDragIdx = null;
+  document.querySelectorAll('.tfl-stage-row').forEach(r => r.classList.remove('dragging', 'drag-over'));
 }
 function tflSetStage(idx, field, value) {
   if (!_tflCtx || !_tflCtx.stages[idx]) return;
   _tflCtx.stages[idx][field] = value;
   // Não re-renderiza — os inputs já refletem o próprio valor. Cor é atualizada
   // inline via oninput no elemento (evita perder o foco enquanto edita).
+}
+// "Final" agora é botão-ícone (bandeira) — re-renderiza pra atualizar o estado visual.
+function tflToggleDone(idx) {
+  if (!_tflCtx || !_tflCtx.stages[idx]) return;
+  _tflCtx.stages[idx].done = !_tflCtx.stages[idx].done;
+  renderTflStages();
 }
 function tflAddStage() {
   if (!_tflCtx) return;
@@ -15349,7 +15825,7 @@ function renderWizardCustomization() {
   // evita resetar edições feitas no step 4 se o usuário voltar pro cust).
   if (!Array.isArray(demandChecklistDraft) || !demandChecklistDraft.length) {
     demandChecklistDraft = Array.isArray(flow.defaultChecklist)
-      ? flow.defaultChecklist.map(it => ({ text: String(it.text || '') }))
+      ? flow.defaultChecklist.map(it => ({ text: String(it.text || ''), ownerId: it.ownerId || null }))
       : [];
   }
   const cust = wizardState.customization;
@@ -15384,7 +15860,7 @@ function renderWizardCustomization() {
     const done = _custEffectiveStageValue(stage, isAddition, 'done');
     const respValue = (stageId in cust.stageResponsibles) ? cust.stageResponsibles[stageId]
       : (isAddition ? (stage.responsibleId || '') : '');
-    const roleOpts = `<option value="">— Padrão do fluxo —</option>` +
+    const roleOpts = `<option value="">Padrão do fluxo</option>` +
       userOptions.map(u => `<option value="${u.id}" ${respValue === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
     const badge = isAddition
       ? '<span class="wizard-cust-badge is-added">Nova</span>'
@@ -15398,16 +15874,12 @@ function renderWizardCustomization() {
       <input type="text" class="wizard-cust-name" value="${esc(label)}" placeholder="Nome da etapa" oninput="wizardCustSetLabel('${stageId}', this.value)">
       ${badge}
       <select class="wizard-cust-resp" onchange="wizardCustSetResp('${stageId}', this.value)">${roleOpts}</select>
-      <div class="wizard-cust-days-wrap">
-        <span class="wizard-cust-mini-label">Prazo (dias)</span>
+      <div class="wizard-cust-days-inline" title="Prazo da etapa (em dias)">
         <input type="number" class="wizard-cust-days" min="0" step="1" value="${days ?? ''}" placeholder="—" oninput="wizardCustSetDays('${stageId}', this.value)">
+        <span class="wizard-cust-days-unit">d</span>
       </div>
-      <label class="wizard-cust-toggle wizard-cust-done" title="Marcar como etapa que encerra a demanda">
-        <input type="checkbox" ${done ? 'checked' : ''} onchange="wizardCustSetDone('${stageId}', this.checked)"> <span>Conclui</span>
-      </label>
-      <label class="wizard-cust-toggle wizard-cust-active" title="${skipped ? 'Habilitar' : 'Pular esta etapa'}">
-        <input type="checkbox" ${!skipped ? 'checked' : ''} onchange="wizardCustToggleSkip('${stageId}', this.checked)"> <span>Ativa</span>
-      </label>
+      <button type="button" class="cust-icon-toggle cust-toggle-done ${done ? 'on' : ''}" title="${done ? 'Etapa final — conclui a demanda' : 'Marcar como etapa final (conclui a demanda)'}" onclick="wizardCustSetDone('${stageId}', ${!done})"><i data-lucide="flag" class="ic-sm"></i></button>
+      <button type="button" class="cust-icon-toggle cust-toggle-active ${!skipped ? 'on' : ''}" title="${skipped ? 'Etapa pulada — clique pra ativar' : 'Etapa ativa — clique pra pular'}" onclick="wizardCustToggleSkip('${stageId}', ${skipped})"><i data-lucide="${skipped ? 'eye-off' : 'eye'}" class="ic-sm"></i></button>
       ${removeBtn}
     </div>`;
   };
@@ -15421,11 +15893,9 @@ function renderWizardCustChecklist() {
   if (!wrap) return;
   // Reusa demandChecklistDraft — o step 4 lê essa mesma variável no submit.
   if (!Array.isArray(demandChecklistDraft)) demandChecklistDraft = [];
-  wrap.innerHTML = demandChecklistDraft.map((it, i) => `
-    <div class="wizard-cust-chk-item">
-      <input type="text" class="form-control" placeholder="Ex.: Aprovar copy com cliente" value="${esc(it.text || '')}" oninput="wizardCustSetChecklistText(${i}, this.value)">
-      <button type="button" class="detail-icon-btn danger" onclick="wizardCustRemoveChecklistItem(${i})" title="Remover"><i data-lucide="x" class="ic-sm"></i></button>
-    </div>`).join('') || '<div class="hours-empty" style="text-align:left;padding:6px 0">Nenhum item ainda.</div>';
+  wrap.innerHTML = demandChecklistDraft.length
+    ? demandChecklistDraft.map((it, i) => chkItemHTML(it, i, 'wizardCustRemoveChecklistItem')).join('')
+    : '<div class="chk-empty">Nenhum item ainda.</div>';
   paintIcons();
 }
 function wizardCustSetChecklistText(idx, value) {
@@ -15434,7 +15904,7 @@ function wizardCustSetChecklistText(idx, value) {
 }
 function wizardCustAddChecklistItem() {
   if (!Array.isArray(demandChecklistDraft)) demandChecklistDraft = [];
-  demandChecklistDraft.push({ text: '' });
+  demandChecklistDraft.push({ text: '', ownerId: null });
   renderWizardCustChecklist();
 }
 function wizardCustRemoveChecklistItem(idx) {
@@ -15447,6 +15917,11 @@ function wizardCustRemoveChecklistItem(idx) {
 let _custDragId = null;
 function _installCustDragDrop(container) {
   container.querySelectorAll('.wizard-cust-row-v2').forEach(row => {
+    // Drag só habilita quando o pointer desce na alça — clicar em input/select/botão
+    // deixa a linha NÃO-arrastável, liberando digitação e seleção de texto.
+    row.addEventListener('pointerdown', (e) => {
+      row.draggable = !!e.target.closest('.wizard-cust-drag');
+    });
     row.addEventListener('dragstart', (e) => {
       _custDragId = row.dataset.stageId;
       row.classList.add('is-dragging');
@@ -15546,11 +16021,12 @@ function wizardCustSetColor(stageId, value) {
 function wizardCustSetDone(stageId, checked) {
   const cust = wizardState.customization;
   const addition = cust.stageAdditions.find(s => s.id === stageId);
-  if (addition) { addition.done = !!checked; return; }
+  if (addition) { addition.done = !!checked; renderWizardCustomization(); return; }
   const flow = flowById(wizardState.flowId);
   const orig = flow?.stages.find(s => s.id === stageId);
   const same = !!orig?.done === !!checked;
   _writeStageOverride(stageId, 'done', same ? undefined : !!checked);
+  renderWizardCustomization();
 }
 /* Grava/limpa override numa etapa original. undefined = remove override
    (volta ao padrão do fluxo). Se o objeto de override fica vazio, remove todo. */
@@ -15819,6 +16295,151 @@ function renderWizardStep4() {
   if (!editingId) {
     // Foca o nome
     setTimeout(() => $('f-name').focus(), 60);
+  }
+}
+
+/* ─── LIXEIRA — recuperação de itens excluídos (30 dias) ───
+   Lista clients/projects/demands soft-deletados via GET /api/trash. Restaurar
+   reaproveita os endpoints /undelete; a purga permanente usa DELETE /api/trash.
+   Acesso mod/admin — usuário comum que chegar por URL vê aviso. */
+// Grupos compactados — persiste na sessão entre re-renders (após restore/purga).
+const _trashCollapsed = new Set();
+function toggleTrashGroup(type) {
+  if (_trashCollapsed.has(type)) _trashCollapsed.delete(type);
+  else _trashCollapsed.add(type);
+  const g = document.querySelector(`.trash-group[data-type="${type}"]`);
+  if (g) g.classList.toggle('collapsed', _trashCollapsed.has(type));
+}
+async function renderTrash() {
+  const body = $('trash-body');
+  if (!body) return;
+  if (!(me && (me.isAdmin || me.isModerator))) {
+    body.innerHTML = '<div class="trash-empty"><div class="trash-empty-title">Sem acesso à Lixeira.</div></div>';
+    return;
+  }
+  body.innerHTML = '<div class="trash-loading">Carregando…</div>';
+  let data;
+  try {
+    data = await api('/trash');
+  } catch (e) {
+    body.innerHTML = `<div class="trash-empty"><div class="trash-empty-title">Não foi possível carregar.</div><div class="trash-empty-sub">${esc(e.message || '')}</div></div>`;
+    return;
+  }
+  const groups = [
+    { type: 'clients',         label: 'Clientes',           icon: 'building-2',      items: data.clients         || [] },
+    { type: 'projects',        label: 'Projetos',           icon: 'folder',          items: data.projects        || [] },
+    { type: 'demands',         label: 'Demandas',           icon: 'clipboard-list',  items: data.demands         || [] },
+    { type: 'flows',           label: 'Fluxos',             icon: 'git-branch',      items: data.flows           || [] },
+    { type: 'listas',          label: 'Listas de tarefas',  icon: 'list-checks',     items: data.listas          || [] },
+    { type: 'clientTemplates', label: 'Modelos de cliente', icon: 'layout-template', items: data.clientTemplates || [] },
+  ];
+  const total = groups.reduce((n, g) => n + g.items.length, 0);
+  if (!total) {
+    body.innerHTML = `<div class="trash-empty">
+      <div class="trash-empty-icon"><i data-lucide="trash-2"></i></div>
+      <div class="trash-empty-title">A lixeira está vazia</div>
+      <div class="trash-empty-sub">Itens excluídos aparecem aqui e podem ser restaurados por até 30 dias.</div>
+    </div>`;
+    paintIcons();
+    return;
+  }
+  body.innerHTML = groups.filter(g => g.items.length).map(g => `
+    <div class="trash-group${_trashCollapsed.has(g.type) ? ' collapsed' : ''}" data-type="${g.type}">
+      <div class="trash-group-head">
+        <button type="button" class="trash-group-toggle" onclick="toggleTrashGroup('${g.type}')" title="Compactar / expandir">
+          <i data-lucide="chevron-down" class="ic-sm trash-chevron"></i>
+          <i data-lucide="${g.icon}" class="ic-sm"></i>
+          <span>${g.label}</span>
+          <span class="trash-count">${g.items.length}</span>
+        </button>
+        <button type="button" class="btn btn-ghost btn-sm trash-clear-btn" onclick="clearTrashGroup('${g.type}','${esc(g.label)}')" title="Limpar toda a lista">
+          <i data-lucide="trash-2" class="ic-sm"></i> Limpar
+        </button>
+      </div>
+      <div class="trash-list">
+        ${g.items.map(it => trashRowHTML(g.type, it)).join('')}
+      </div>
+    </div>`).join('');
+  paintIcons();
+}
+
+function trashRowHTML(type, it) {
+  const name = esc(it.name || '(sem nome)');
+  const who = it.deletedByName ? ` por ${esc(it.deletedByName)}` : '';
+  const ctxBits = [];
+  if (it.clientName) ctxBits.push(esc(it.clientName));
+  if (it.projectName) ctxBits.push(esc(it.projectName));
+  if (it.workspaceName) ctxBits.push(esc(it.workspaceName));
+  const meta = [`Excluído ${fmtRelativeTime(it.deletedAt)}${who}`].concat(ctxBits).join(' · ');
+  const left = trashTimeLeft(it.purgeAt);
+  return `<div class="trash-item">
+    <div class="trash-item-main">
+      <div class="trash-item-name">${name}</div>
+      <div class="trash-item-meta">${meta}</div>
+    </div>
+    <div class="trash-item-purge${left.soon ? ' soon' : ''}" title="Removido definitivamente após 30 dias">${left.label}</div>
+    <div class="trash-item-actions">
+      <button class="btn btn-ghost btn-sm" onclick="restoreTrashItem('${type}','${esc(it.id)}')">Restaurar</button>
+      <button class="btn btn-ghost btn-sm trash-purge-btn" title="Excluir definitivamente" onclick="purgeTrashItem('${type}','${esc(it.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
+    </div>
+  </div>`;
+}
+
+function trashTimeLeft(purgeAt) {
+  const ms = (purgeAt || 0) - Date.now();
+  if (ms <= 0) return { label: 'removendo…', soon: true };
+  const days = Math.ceil(ms / 86400000);
+  if (days <= 1) {
+    const hrs = Math.max(1, Math.ceil(ms / 3600000));
+    return { label: `${hrs}h restantes`, soon: true };
+  }
+  return { label: `${days} dias restantes`, soon: days <= 3 };
+}
+
+async function restoreTrashItem(type, id) {
+  try {
+    await api(`/trash/${type}/${id}/restore`, 'POST');
+    if (typeof refreshData === 'function') await refreshData();
+    toast('Item restaurado.', 'success');
+    renderTrash();
+  } catch (e) {
+    toast('Falha ao restaurar: ' + (e.message || 'erro'), 'error');
+  }
+}
+
+async function purgeTrashItem(type, id) {
+  const ok = await showConfirm({
+    title: 'Excluir definitivamente',
+    message: 'Este item será removido <strong>permanentemente</strong> do servidor e não poderá ser recuperado. Continuar?',
+    okLabel: 'Excluir para sempre',
+    danger: true
+  });
+  if (!ok) return;
+  try {
+    await api(`/trash/${type}/${id}`, 'DELETE');
+    toast('Removido definitivamente.', 'success');
+    renderTrash();
+  } catch (e) {
+    toast('Falha ao remover: ' + (e.message || 'erro'), 'error');
+  }
+}
+
+async function clearTrashGroup(type, label) {
+  const nice = (label || '').toLowerCase();
+  const ok = await showConfirm({
+    title: `Limpar ${nice}`,
+    message: `Todos os itens em <strong>${esc(label || '')}</strong> serão removidos <strong>permanentemente</strong> do servidor e não poderão ser recuperados. Continuar?`,
+    okLabel: 'Limpar tudo',
+    danger: true
+  });
+  if (!ok) return;
+  try {
+    const r = await api(`/trash/${type}`, 'DELETE');
+    const n = r && typeof r.purged === 'number' ? r.purged : 0;
+    toast(n ? `${n} ${n === 1 ? 'item removido' : 'itens removidos'}.` : 'Nada para remover.', 'success');
+    renderTrash();
+  } catch (e) {
+    toast('Falha ao limpar: ' + (e.message || 'erro'), 'error');
   }
 }
 
