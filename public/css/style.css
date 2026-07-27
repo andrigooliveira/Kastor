@@ -2291,6 +2291,12 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 .cap-heat-cell.load-2 { background: #EAB308; color: #3a2e00; }
 .cap-heat-cell.load-3 { background: #F97316; color: #fff; }
 .cap-heat-cell.load-4 { background: #EF4444; color: #fff; }
+/* Avatares do mapa de prazos sem anel de presença (outline + breathing) — só a foto/inicial.
+   Inclui .presence-* pra ganhar especificidade sobre as regras de presença que vêm
+   DEPOIS no arquivo (senão a ordem de fonte faz o anel voltar). */
+.cap-heat-user .avatar.presence-online,
+.cap-heat-user .avatar.presence-away { outline: none; }
+.cap-heat-user .avatar.presence-online::before { display: none; }
 
 /* ── RELATÓRIOS / SLA ──
    Tela de métricas de tempo por etapa (gargalos), lead time, pontualidade,
@@ -2362,6 +2368,24 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 .lista-map-sub { font-size: 11px; color: var(--text-muted); }
 .lista-map-select { flex: 0 0 auto; max-width: 240px; }
 @media (max-width: 560px) { .lista-map-row { flex-direction: column; align-items: stretch; gap: 6px; } .lista-map-select { max-width: none; } }
+
+/* Filtro de workspaces (multi-seleção) na tela de Usuários. Nenhum = todos; admins sempre entram. */
+.uws-filter { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.uws-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
+.uws-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 11px; border-radius: var(--radius-pill);
+  border: 1px solid var(--hairline); background: var(--surface-2);
+  color: var(--text-dim); font-size: 12px; font-weight: 500;
+  cursor: pointer; transition: background .12s var(--ease-out), border-color .12s, color .12s;
+}
+.uws-chip:hover { border-color: var(--accent); color: var(--text); }
+.uws-chip.is-active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.uws-chip-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.uws-chip.is-active .uws-chip-dot { box-shadow: 0 0 0 1.5px rgba(255,255,255,.6); }
+.uws-clear { background: none; border: none; cursor: pointer; font-size: 12px; color: var(--accent-text); font-weight: 600; padding: 4px 6px; }
+.uws-clear:hover { text-decoration: underline; }
+.uws-hint { margin-left: auto; font-size: 11px; color: var(--text-muted); font-style: italic; }
 
 /* KPI card — vertical stack: label · valor grande · sub. Sem border-left accent
    (limpeza visual — o wireframe não tem). Padding moderado. */

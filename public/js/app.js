@@ -40,6 +40,7 @@ let duplicatingFlowId = null;
 let projSortKey = 'name', projSortDir = 1;
 let flowSortKey = 'name', flowSortDir = 1;
 let userSortKey = 'name', userSortDir = 1;
+let usersWsFilter = new Set(); // workspaces selecionados no filtro de Usuários (multi)
 let wsSortKey = 'name', wsSortDir = 1;
 let roleSortKey = 'name', roleSortDir = 1;
 let tplSortKey = 'name', tplSortDir = 1;
@@ -9169,7 +9170,21 @@ function renderUsers() {
   $('user-archive-toggle').textContent = showArchivedUsers ? 'Ocultar desativados' : `Ver desativados (${archivedUsers.length})`;
   $('user-archive-toggle').style.display = archivedUsers.length || showArchivedUsers ? '' : 'none';
 
-  $('users-table-body').innerHTML = displayList.map(u => {
+  renderUsersWsFilter();
+  // Filtro por workspace (multi-seleção). Nenhum selecionado = todos. Admins entram
+  // em QUALQUER filtro — transitam todos os workspaces, sem workspace definido.
+  const filteredList = displayList.filter(u => {
+    if (!usersWsFilter.size) return true;
+    if (u.isAdmin) return true;
+    return (u.workspaces || []).some(id => usersWsFilter.has(id));
+  });
+
+  if (!filteredList.length) {
+    $('users-table-body').innerHTML = `<tr><td colspan="8">${emptyMini('Nenhum usuário nos workspaces selecionados.')}</td></tr>`;
+    renderRoles(); renderPositions();
+    return;
+  }
+  $('users-table-body').innerHTML = filteredList.map(u => {
     const wsNames = u.isAdmin
       ? '<span style="color:var(--text-muted);font-size:12px">Todos (admin)</span>'
       : (u.workspaces || []).map(id => wsById(id)).filter(Boolean).map(w => `<span class="pill pill-muted" style="font-size:10px">${esc(w.name)}</span>`).join(' ') || '—';
@@ -9196,6 +9211,31 @@ function renderUsers() {
   }).join('');
   renderRoles();
   renderPositions();
+}
+function renderUsersWsFilter() {
+  const host = $('users-ws-filter');
+  if (!host) return;
+  const accessible = (workspaces || [])
+    .filter(w => me.isAdmin || (me.workspaces || []).includes(w.id))
+    .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  if (!accessible.length) { host.innerHTML = ''; return; }
+  const chips = accessible.map(w => {
+    const on = usersWsFilter.has(w.id);
+    return `<button class="uws-chip${on ? ' is-active' : ''}" onclick="toggleUsersWsFilter('${esc(w.id)}')">
+      <span class="uws-chip-dot" style="background:${esc(w.color || 'var(--accent)')}"></span>${esc(w.name)}
+    </button>`;
+  }).join('');
+  const clear = usersWsFilter.size ? `<button class="uws-clear" onclick="clearUsersWsFilter()">Limpar</button>` : '';
+  host.innerHTML = `<span class="uws-label">Workspaces</span>${chips}${clear}<span class="uws-hint">Admins sempre aparecem</span>`;
+}
+function toggleUsersWsFilter(id) {
+  if (usersWsFilter.has(id)) usersWsFilter.delete(id);
+  else usersWsFilter.add(id);
+  renderUsers();
+}
+function clearUsersWsFilter() {
+  usersWsFilter.clear();
+  renderUsers();
 }
 function toggleArchivedUsers() {
   showArchivedUsers = !showArchivedUsers;
