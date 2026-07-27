@@ -284,6 +284,7 @@ function createStore(config = {}) {
     );
   }
 
+  async function ping() { await pool.query('SELECT 1'); }
   async function close() { await pool.end(); }
 
   return {
@@ -295,7 +296,7 @@ function createStore(config = {}) {
     markAllNotificationsReadFor, deleteAllNotificationsFor, trimNotificationsFor,
     insertReset, getReset, markResetUsed, cleanupResets,
     getKv, setKv,
-    close,
+    ping, close,
     _pool: pool // exposto pra inspeção em testes
   };
 }

@@ -1289,6 +1289,16 @@ body.sidebar-collapsed .ws-cdrop .filter-cdrop-menu {
 table { width: 100%; border-collapse: collapse; }
 th { padding: 12px 18px; background: transparent; font-size: 10.5px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; text-align: left; border-bottom: 1px solid var(--hairline); }
 td { padding: 13px 18px; border-top: 1px solid var(--hairline); font-size: 13px; transition: background .12s var(--ease-out); }
+/* Densidade compacta (toggle no topbar): reduz o respiro das tabelas pra caber
+   mais linhas na tela. Global via body.density-compact. */
+body.density-compact th { padding: 7px 14px; }
+body.density-compact td { padding: 6px 14px; font-size: 12.5px; }
+body.density-compact .table-wrap table td { font-size: 12px; }
+.topbar-actions .density-toggle {
+  width: 36px; height: 36px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.density-toggle.active { color: var(--accent-text); background: var(--accent-dim); }
 tr:first-child td { border-top: none; }
 tr:hover td { background: var(--surface-2); }
 .table-scroll { overflow-x: auto; }
@@ -1628,6 +1638,24 @@ tr:hover td { background: var(--surface-2); }
 .demand-row { cursor: pointer; }
 .deadline-late { color: var(--danger); font-weight: 600; }
 .demand-name { font-weight: 600; }
+
+/* ── Prioridade: pill com dot vivo. Cor da --prio; label escurecido só o
+   necessário pra legibilidade (o amarelo do "Média" ficava lavado). ── */
+.prio-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px 3px 8px; border-radius: var(--radius-pill);
+  font-size: 11px; font-weight: 600; white-space: nowrap; line-height: 1.4;
+  color: color-mix(in srgb, var(--prio) 68%, var(--text));
+  background: color-mix(in srgb, var(--prio) 14%, transparent);
+}
+.prio-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--prio); flex: 0 0 auto; }
+
+/* ── Urgência de prazo ── */
+.due-chip { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.due-chip .ic-xs { width: 13px; height: 13px; }
+.due-overdue { color: var(--danger); font-weight: 600; }
+.due-today   { color: #FB7415; font-weight: 600; }     /* laranja — vence hoje */
+.due-soon    { color: #CA8A04; font-weight: 600; }     /* âmbar escuro — vence em ≤2 dias (legível no claro e no escuro) */
 
 /* ── CALENDAR ── */
 .calendar-nav { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
@@ -2192,6 +2220,149 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 @media (max-width: 900px) {
   .dash-kpis { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ─── KPI TILES (detalhe de Cliente/Projeto) ─── */
+.kpi-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+@media (max-width: 760px) { .kpi-tiles { grid-template-columns: repeat(2, 1fr); } }
+.kpi-tile {
+  display: flex; align-items: center; gap: 13px;
+  padding: 15px 16px; background: var(--surface);
+  border: 1px solid var(--hairline); border-radius: var(--radius);
+}
+.kpi-tile-icon {
+  flex: 0 0 auto; width: 38px; height: 38px; border-radius: 10px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface-2); color: var(--text-muted);
+}
+.kpi-tile-icon .ic-sm { width: 18px; height: 18px; }
+.kpi-tile-body { min-width: 0; }
+.kpi-tile-value { font-size: 24px; font-weight: 700; line-height: 1.05; letter-spacing: -0.01em; color: var(--text); }
+.kpi-tile-label { font-size: 12px; font-weight: 600; color: var(--text-dim); margin-top: 2px; }
+.kpi-tile-sub { font-size: 10.5px; color: var(--text-muted); margin-top: 1px; }
+.kpi-tile--accent  .kpi-tile-icon { background: var(--accent-dim); color: var(--accent-text); }
+.kpi-tile--danger  .kpi-tile-icon { background: var(--danger-dim); color: var(--danger); }
+.kpi-tile--danger  .kpi-tile-value { color: var(--danger); }
+.kpi-tile--warn    .kpi-tile-icon { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+.kpi-tile--success .kpi-tile-icon { background: var(--success-dim); color: var(--success); }
+
+/* ─── DONUT (dashboard) ─── */
+.donut-widget { display: flex; align-items: center; gap: 18px; padding: 4px 0; }
+.donut-chart { flex: 0 0 auto; }
+.donut-svg .donut-center-value { font-size: 26px; font-weight: 700; fill: var(--text); }
+.donut-svg .donut-center-sub { font-size: 9.5px; font-weight: 600; fill: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.donut-legend { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+.donut-legend-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.donut-legend-dot { width: 9px; height: 9px; border-radius: 3px; flex: 0 0 auto; }
+.donut-legend-label { color: var(--text-dim); flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.donut-legend-value { font-weight: 700; color: var(--text); }
+.donut-legend-pct { color: var(--text-muted); font-size: 11px; min-width: 34px; text-align: right; }
+
+/* ─── CAPACITY HEATMAP (pessoa × dia) ─── */
+.cap-heat { margin: 6px 0 18px; }
+.cap-heat-head-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+.cap-heat-title { font-size: 13px; font-weight: 700; color: var(--text); }
+.cap-heat-sub { font-size: 11px; color: var(--text-muted); }
+.cap-heat-grid { overflow-x: auto; }
+.cap-heat-row { display: flex; align-items: center; gap: 8px; }
+.cap-heat-row + .cap-heat-row { margin-top: 9px; }
+.cap-heat-user { flex: 0 0 112px; width: 112px; display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-dim); overflow: hidden; }
+.cap-heat-user > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cap-heat-cells { display: flex; gap: 4px; flex: 1 1 auto; min-width: 0; }
+.cap-heat-colhead { flex: 1 1 0; min-width: 24px; display: flex; flex-direction: column; align-items: center; line-height: 1.15; }
+.cap-heat-dow { font-size: 8.5px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; }
+.cap-heat-dom { font-size: 11px; font-weight: 600; color: var(--text-dim); }
+.cap-heat-colhead.is-weekend { opacity: 0.5; }
+.cap-heat-colhead.is-today .cap-heat-dom { color: var(--accent-text); }
+.cap-heat-cell {
+  flex: 1 1 0; min-width: 24px; height: 26px; border-radius: 5px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10.5px; font-weight: 700; color: var(--text);
+  background: var(--surface-2); transition: transform .1s var(--ease-out);
+}
+.cap-heat-cell:hover { transform: scale(1.09); }
+/* Fim de semana vazio fica transparente (desênfase visual); dias úteis vazios usam
+   o cinza base. Células com carga mantêm a cor da faixa mesmo no fim de semana. */
+.cap-heat-cell.is-weekend:not(.load-1):not(.load-2):not(.load-3):not(.load-4) { background: transparent; }
+.cap-heat-cell.is-today { box-shadow: inset 0 0 0 1.5px var(--accent-text); }
+/* Cor da célula = nº de demandas com prazo NAQUELE dia, por faixa:
+   0 sem cor · 1–3 verde · 4–6 amarelo · 7–10 laranja · >10 vermelho.
+   Cores sólidas pra contraste garantido em light e dark. */
+.cap-heat-cell.load-1 { background: #22C55E; color: #06310f; }
+.cap-heat-cell.load-2 { background: #EAB308; color: #3a2e00; }
+.cap-heat-cell.load-3 { background: #F97316; color: #fff; }
+.cap-heat-cell.load-4 { background: #EF4444; color: #fff; }
+
+/* ── RELATÓRIOS / SLA ──
+   Tela de métricas de tempo por etapa (gargalos), lead time, pontualidade,
+   retrabalho e demandas mais lentas. Consome /api/reports/sla. */
+#reports-body > * + * { margin-top: 18px; }
+.rep-loading, .rep-error { padding: 40px 8px; text-align: center; font-size: 13px; color: var(--text-muted); }
+.rep-error { color: var(--danger, #EF4444); }
+.rep-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+@media (max-width: 760px) { .rep-kpis { grid-template-columns: repeat(2, 1fr); } }
+.rep-card {
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: var(--radius); padding: 18px 20px;
+}
+.rep-card-title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 14px; font-weight: 700; color: var(--text);
+}
+.rep-card-title .ic-sm { color: var(--accent-text); }
+.rep-card-hint { font-size: 11.5px; color: var(--text-muted); margin: 3px 0 14px; }
+.rep-bars { display: flex; flex-direction: column; gap: 14px; }
+.rep-bar-row { display: flex; flex-direction: column; gap: 5px; }
+.rep-bar-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.rep-bar-name { font-size: 12.5px; font-weight: 600; color: var(--text-dim); display: flex; align-items: center; gap: 7px; min-width: 0; }
+.rep-bar-val { font-size: 12.5px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rep-muted { color: var(--text-muted); font-weight: 500; }
+.rep-tag {
+  font-size: 9.5px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--danger, #EF4444); background: color-mix(in srgb, var(--danger, #EF4444) 14%, transparent);
+  padding: 2px 6px; border-radius: var(--radius-pill); white-space: nowrap;
+}
+.rep-bar-track { height: 8px; background: var(--surface-3, var(--surface)); border-radius: var(--radius-pill); overflow: hidden; }
+.rep-bar-fill { height: 100%; border-radius: var(--radius-pill); transition: width .5s var(--ease-out); }
+.rep-bar-sub { font-size: 10.5px; color: var(--text-muted); }
+.rep-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+@media (max-width: 900px) { .rep-grid { grid-template-columns: 1fr; } }
+.rep-slow-list { display: flex; flex-direction: column; }
+.rep-slow-row {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  padding: 9px 8px; background: none; border: none; border-radius: var(--radius-sm);
+  text-align: left; cursor: pointer; color: inherit; font: inherit;
+  border-bottom: 1px solid var(--hairline); transition: background .12s var(--ease-out);
+}
+.rep-slow-row:last-child { border-bottom: none; }
+.rep-slow-row:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.rep-slow-name { flex: 1 1 auto; min-width: 0; font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rep-slow-proj { flex: 0 1 auto; min-width: 0; font-size: 11.5px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rep-slow-dur { flex: 0 0 auto; font-size: 12.5px; font-weight: 700; color: var(--accent-text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+@media (max-width: 520px) { .rep-slow-proj { display: none; } }
+.rep-effort-stats { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 0 0 14px; font-size: 12px; color: var(--text-muted); }
+.rep-effort-stats strong { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* Abas da página Análises (Capacidade | Relatórios) — mesmo estilo das abas de Listas de tarefas. */
+.an-tabs { display: flex; align-items: stretch; border-bottom: 1px solid var(--hairline); padding: 0 24px; gap: 0; }
+.an-tab {
+  flex: 1; padding: 16px 20px;
+  background: transparent; border: none; border-bottom: 3px solid transparent;
+  color: var(--text-muted); font-size: 12px; font-weight: 700;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  cursor: pointer; transition: color .12s, border-color .12s;
+}
+.an-tab:hover { color: var(--text); }
+.an-tab.is-active { color: var(--text); border-bottom-color: var(--accent); }
+
+/* Mapeamento de fluxos ao aplicar uma lista num cliente (fallback do apply portável). */
+.lista-map-row { display: flex; align-items: center; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--hairline); }
+.lista-map-row:last-child { border-bottom: none; }
+.lista-map-item { flex: 1 1 auto; min-width: 0; }
+.lista-map-name { font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lista-map-sub { font-size: 11px; color: var(--text-muted); }
+.lista-map-select { flex: 0 0 auto; max-width: 240px; }
+@media (max-width: 560px) { .lista-map-row { flex-direction: column; align-items: stretch; gap: 6px; } .lista-map-select { max-width: none; } }
+
 /* KPI card — vertical stack: label · valor grande · sub. Sem border-left accent
    (limpeza visual — o wireframe não tem). Padding moderado. */
 .dash-kpi {
@@ -2432,6 +2603,13 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
   border: 1px dashed var(--hairline); border-radius: var(--radius-sm);
   display: flex; align-items: center; justify-content: center; gap: 8px;
 }
+/* Mini empty state — cantos pequenos (widgets, colunas, tabelas de modal). */
+.empty-mini {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 9px; padding: 22px 16px; text-align: center;
+  color: var(--text-muted); font-size: 12.5px; line-height: 1.4;
+}
+.empty-mini-ico { width: 26px; height: 26px; opacity: 0.5; flex: 0 0 auto; }
 
 /* Lightmode: cards do dashboard sobem pra branco puro pra separar visualmente
    do fundo cinza claro da página. Consistente com .lista-card e .rec-client-card. */
@@ -2579,6 +2757,12 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 .toast-success { border-left: 3px solid var(--success); }
 .toast-warn { border-left: 3px solid var(--warn); }
 .toast-error { border-left: 3px solid var(--danger); }
+/* Ícone estático por tipo (error/warn/info) — o success usa .toast-check animado. */
+.toast-icon { flex-shrink: 0; width: 20px; height: 20px; display: inline-flex; }
+.toast-icon svg { width: 100%; height: 100%; }
+.toast-icon-error { color: var(--danger); }
+.toast-icon-warn  { color: var(--warn); }
+.toast-icon-info  { color: var(--accent-text); }
 @keyframes toastIn { from { opacity: 0; transform: translateY(20px) scale(.95); } to { opacity: 1; transform: translateY(0) scale(1); } }
 
 .badge { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; background: var(--danger); color: #fff; border-radius: var(--radius-pill); font-size: 10px; font-weight: 700; box-shadow: 0 0 0 2px var(--surface); }
@@ -3490,7 +3674,8 @@ i[data-lucide]:not([class*=ic-]) { width: 16px; height: 16px; stroke-width: 2; }
 .agenda-spacer { flex: 1; }
 .agenda-view-toggle { display: inline-flex; gap: 4px; background: var(--surface-2); padding: 3px; border-radius: var(--radius-sm); }
 .agenda-view-btn { font-size: 12px !important; padding: 5px 11px !important; }
-.agenda-view-btn.active { background: var(--accent-dim) !important; color: var(--accent-text) !important; }
+.agenda-view-btn.active { background: var(--accent) !important; color: #fff !important; border-color: transparent !important; box-shadow: 0 1px 2px rgba(122,0,255,0.20); }
+.agenda-view-btn.active:hover { filter: brightness(1.08); }
 .agenda-hint { font-size: 12px; color: var(--text-muted); margin-bottom: 12px; line-height: 1.6; }
 
 .agenda-grid-wrap { width: 100%; overflow-x: auto; }
@@ -3684,44 +3869,69 @@ i[data-lucide]:not([class*=ic-]) { width: 16px; height: 16px; stroke-width: 2; }
 
 /* ── Modal Agendar: toggle Demanda/Livre + chips de tipo ──
    Livre = bloqueio sem vincular demanda (reunião, foco, off, almoço). */
+/* Altura fixa: o modo Livre (Título + Tipo) tem uma linha a mais que Demanda.
+   Fixar o corpo evita o modal "pular" de tamanho ao alternar o toggle. */
+#schedule-modal .modal-body { min-height: 430px; }
 .sch-mode-toggle {
-  display: inline-flex;
+  position: relative;
+  display: flex;
+  width: 100%;
   background: var(--surface-2);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
-  padding: 2px;
-  gap: 2px;
+  padding: 3px;
+  gap: 3px;
 }
-.sch-mode-btn {
-  padding: 6px 14px;
-  background: none; border: 0; color: var(--text-dim);
-  font-family: inherit; font-size: 12.5px; font-weight: 500;
-  border-radius: 5px; cursor: pointer;
-  transition: color .12s, background .12s;
-}
-.sch-mode-btn:hover { color: var(--text); }
-.sch-mode-btn.is-active {
+/* "Thumb" deslizante: cobre o botão ativo e anima a troca entre Demanda ↔ Livre. */
+.sch-mode-toggle::before {
+  content: '';
+  position: absolute;
+  top: 3px; bottom: 3px; left: 3px;
+  width: calc(50% - 4.5px);
   background: var(--surface);
-  color: var(--accent-text);
+  border-radius: calc(var(--radius-sm) - 3px);
   box-shadow: var(--shadow-xs);
+  transition: transform .28s var(--ease-spring);
+  z-index: 0;
 }
-.sch-kind-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.sch-mode-toggle.mode-free::before { transform: translateX(calc(100% + 3px)); }
+.sch-mode-btn {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  padding: 8px 14px;
+  background: none; border: 0; color: var(--text-dim);
+  font-family: inherit; font-size: 13px; font-weight: 600;
+  border-radius: calc(var(--radius-sm) - 3px); cursor: pointer;
+  transition: color .18s var(--ease-out);
+}
+.sch-mode-btn:hover:not(.is-active) { color: var(--text); }
+.sch-mode-btn.is-active { color: var(--accent-text); }
+.sch-kind-chips { display: flex; gap: 8px; flex-wrap: wrap; }
 .sch-kind-chip {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 6px 12px;
-  background: var(--surface-2); border: 1px solid var(--hairline);
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 8px 14px;
+  background: var(--surface); border: 1px solid var(--hairline);
   color: var(--text-dim);
   border-radius: var(--radius-pill);
-  font-family: inherit; font-size: 12.5px; cursor: pointer;
-  transition: border-color .12s, background .12s, color .12s;
+  font-family: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer;
+  transition: border-color .15s var(--ease-out), background .15s var(--ease-out), color .15s var(--ease-out), box-shadow .15s var(--ease-out);
 }
-.sch-kind-chip i { color: var(--kind-color, var(--text-muted)); }
-.sch-kind-chip:hover { color: var(--text); border-color: var(--text-muted); }
+/* Default: ícone numa versão mais clara/suave da cor do tipo. */
+.sch-kind-chip i { color: color-mix(in srgb, var(--kind-color, var(--text-muted)) 60%, var(--text-muted)); }
+.sch-kind-chip:hover:not(.is-active) {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--kind-color) 45%, var(--hairline));
+  background: color-mix(in srgb, var(--kind-color) 7%, var(--surface));
+}
+/* Active: fill 100% na cor do tipo, texto e ícone brancos (mesma convenção dos blocos da agenda). */
 .sch-kind-chip.is-active {
   border-color: var(--kind-color);
-  color: var(--text);
-  background: color-mix(in srgb, var(--kind-color) 14%, transparent);
+  color: #fff;
+  background: var(--kind-color);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--kind-color) 32%, transparent);
 }
+.sch-kind-chip.is-active i { color: #fff; }
 
 /* Bloco livre na agenda — mesma cor do kind, mas com faixa tracejada
    pra distinguir visualmente de blocos vinculados a demanda. */
@@ -3938,7 +4148,9 @@ textarea.form-control { resize: vertical; }
    Calendário customizado que substitui o nativo do navegador.
    Segue o design system: superfície, borda, accent, fonte Inter. */
 .fdp {
-  position: absolute; z-index: 10000;
+  /* Acima de #prompt-modal/#confirm-modal (z-index 10001) — o datepicker é aberto
+     de dentro desses modais (ex.: prazo em bulk), então precisa ficar por cima. */
+  position: absolute; z-index: 10002;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -4606,11 +4818,26 @@ kbd {
    ocupando exatamente as 4 bordas — assim não há como o board crescer com o conteúdo;
    a única saída para mais colunas é o overflow-x: auto dele mesmo. */
 #list-kanban-view {
-  position: relative;
   flex: 1;
   min-height: 0;
   min-width: 0;
   width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+/* Toolbar do kanban (toggle Atenção/Etapas + dica) acima do board. */
+.kanban-toolbar {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 14px;
+  margin-bottom: 12px; flex-wrap: wrap;
+}
+.kanban-toolbar-hint { font-size: 12px; color: var(--text-muted); }
+/* Moldura relativa que dá o "frame" pro board absolute (scroll horizontal fixo). */
+.kanban-board-frame {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
 }
 .kanban-board {
   position: absolute;
@@ -4684,6 +4911,9 @@ kbd {
   overflow: hidden;
   box-shadow: var(--shadow-xs);
 }
+/* Colunas dos boards por banda/atenção: poucas colunas fixas → esticam pra
+   preencher a largura (em vez dos 288px fixos), com limites pra não distorcer. */
+.kanban-col--band, .kanban-col--attention { flex: 1 1 260px; min-width: 240px; max-width: 440px; }
 .kanban-column-head {
   padding: 13px 16px;
   border-top: 2.5px solid var(--accent);
@@ -4775,6 +5005,19 @@ kbd {
   white-space: nowrap;
 }
 .kanban-card-due.late { color: var(--danger); }
+/* Chip "há Xd nesta etapa" (SLA operacional) — detalhe + card do kanban.
+   Neutro por padrão; vermelho quando o prazo efetivo já venceu. */
+.stage-age {
+  display: inline-flex; align-items: center;
+  font-size: 10.5px; font-weight: 600;
+  padding: 1px 7px; border-radius: var(--radius-pill);
+  background: var(--surface-3, var(--surface-2)); color: var(--text-muted);
+  white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.stage-age.is-late {
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  color: var(--danger);
+}
 
 /* ─── Avatars empilhados nos cards do kanban ───
    Owner + colaboradores (autores de comentário, etc) com sobreposição
@@ -5632,7 +5875,14 @@ kbd {
   gap: 2px;
 }
 .client-status-btn { font-size: 12px !important; padding: 5px 12px !important; border-radius: 5px !important; }
-.client-status-btn.active { background: var(--surface); color: var(--accent-text); box-shadow: var(--shadow-xs); }
+/* Active preenchido de roxo (accent) — deixa claro qual filtro está selecionado. */
+.client-status-btn.active {
+  background: var(--accent) !important;
+  color: #fff !important;
+  border-color: transparent !important;
+  box-shadow: 0 1px 2px rgba(122,0,255,0.20);
+}
+.client-status-btn.active:hover { filter: brightness(1.08); }
 
 /* Detalhe do cliente — seções */
 .client-detail-section { margin-bottom: 8px; }
@@ -5658,7 +5908,7 @@ kbd {
 
 /* Card "Sobre" — descrição + link do drive + link de ativos */
 .client-info-card {
-  background: var(--surface-2);
+  background: var(--surface);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
   padding: 18px 20px;
@@ -5706,7 +5956,8 @@ kbd {
 }
 /* Período do TEMPO DEDICADO no detalhe de projeto — mesmo estilo do cliente. */
 .project-time-period { font-size: 12px !important; padding: 6px 12px !important; }
-.project-time-period.active { background: var(--accent-dim); color: var(--accent-text); border-color: transparent; }
+.project-time-period.active { background: var(--accent) !important; color: #fff !important; border-color: transparent !important; box-shadow: 0 1px 2px rgba(122,0,255,0.20); }
+.project-time-period.active:hover { filter: brightness(1.08); }
 
 /* Pessoas */
 .client-person-row {
@@ -5773,7 +6024,8 @@ kbd {
 }
 .client-time-periods { display: inline-flex; gap: 4px; flex-wrap: wrap; }
 .client-time-period { font-size: 12px !important; padding: 6px 12px !important; }
-.client-time-period.active { background: var(--accent-dim); color: var(--accent-text); border-color: transparent; }
+.client-time-period.active { background: var(--accent) !important; color: #fff !important; border-color: transparent !important; box-shadow: 0 1px 2px rgba(122,0,255,0.20); }
+.client-time-period.active:hover { filter: brightness(1.08); }
 
 .client-time-row {
   display: grid;

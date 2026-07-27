@@ -81,7 +81,7 @@ function undelete(type, entity) {
 function runSoftDeletePurge() {
   const cutoff = Date.now() - UNDO_PURGE_MS;
   let purged = 0;
-  for (const type of ['clients', 'projects', 'demands', 'flows', 'listas', 'clientTemplates']) {
+  for (const type of ['clients', 'projects', 'demands', 'flows', 'listas', 'clientTemplates', 'recurrings']) {
     const arr = db[type] || [];
     const toRemove = arr.filter(e => e.deletedAt && Date.parse(e.deletedAt) < cutoff);
     for (const e of toRemove) {
@@ -1017,6 +1017,15 @@ app.use((req, res, next) => {
 // 75mb comporta arquivos até ~50MB depois do overhead do base64 (~33%) + metadados.
 const jsonLg = express.json({ limit: '75mb' });
 const jsonSm = express.json({ limit: '200kb' });
+// Log de request leve: método, rota, status e duração das chamadas /api. Pula o
+// SSE (/api/stream, conexão longa) e os health checks (ruído). Ajuda a debugar prod.
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/') && req.path !== '/api/stream' && !req.path.startsWith('/api/health')) {
+    const start = Date.now();
+    res.on('finish', () => console.log(`${req.method} ${req.path} → ${res.statusCode} ${Date.now() - start}ms`));
+  }
+  next();
+});
 app.use((req, res, next) => {
   const isUpload = /^\/api\/(uploads|demands(\/[^/]+(\/comment)?)?$|me$|users(\/[^/]+)?$|projects(\/[^/]+)?$)/.test(req.path);
   return (isUpload ? jsonLg : jsonSm)(req, res, next);
@@ -1088,8 +1097,16 @@ function saveUploadFromDataUri(dataUri, originalName) {
   };
 }
 
+// Rate limit por USUÁRIO em endpoints caros/de escrita (protege contra abuso interno
+// ou cliente em loop). Chave = user id (requer requireAuth antes); cai pro IP se anônimo.
+// makeRateLimit/clientIp são function declarations (hoisted), então são chamáveis aqui.
+const _rlByUser = req => (req.user && req.user.id) || clientIp(req);
+const rateLimitBulk   = makeRateLimit(new Map(), 30, 'ações em massa',         _rlByUser);
+const rateLimitUpload = makeRateLimit(new Map(), 60, 'uploads',                _rlByUser);
+const rateLimitReport = makeRateLimit(new Map(), 40, 'consultas de relatório', _rlByUser);
+
 // POST /api/uploads — aceita { name, type, data: 'data:image/...;base64,...' }
-app.post('/api/uploads', (req, res, next) => requireAuth(req, res, next), (req, res) => {
+app.post('/api/uploads', (req, res, next) => requireAuth(req, res, next), rateLimitUpload, (req, res) => {
   const { name, data } = req.body || {};
   if (!data) return res.status(400).json({ error: 'data (data URI base64) é obrigatório' });
   const saved = saveUploadFromDataUri(data, name);
@@ -1103,6 +1120,23 @@ app.post('/api/uploads', (req, res, next) => requireAuth(req, res, next), (req, 
 
 // Serve /uploads/* — só pra usuários autenticados (cookie httpOnly). Listing desativado.
 app.use('/uploads', requireAuth, express.static(UPLOADS_DIR, { index: false, dotfiles: 'deny' }));
+
+/* ── HEALTH CHECK ──
+   Liveness (/api/health): responde na hora, sem tocar no banco — é o que o
+   orquestrador/load-balancer deve pollar pra detectar um processo travado.
+   Readiness (/api/health/ready): pinga o Postgres; 503 se o banco estiver fora.
+   Ambos públicos (sem requireAuth) — health check não deve depender de sessão. */
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true, uptime: Math.round(process.uptime()), ts: nowISO() });
+});
+app.get('/api/health/ready', async (req, res) => {
+  try {
+    await store.ping();
+    res.json({ ok: true, db: 'up' });
+  } catch (e) {
+    res.status(503).json({ ok: false, db: 'down' });
+  }
+});
 
 /* ── AUTENTICAÇÃO ── */
 /* Rate limit em memória — 5 tentativas por minuto por IP.
@@ -1119,20 +1153,20 @@ function clientIp(req) {
 }
 /* Middleware genérico de rate limit por IP. `bucket` = Map local.
    Retorna 429 com Retry-After quando estoura; senão incrementa e chama next(). */
-function makeRateLimit(bucket, max, label = 'requisições') {
+function makeRateLimit(bucket, max, label = 'requisições', keyFn = clientIp, windowMs = 60000) {
   return (req, res, next) => {
-    const ip = clientIp(req);
+    const key = keyFn(req);
     const now = Date.now();
-    let rec = bucket.get(ip);
-    if (!rec || now > rec.resetAt) rec = { count: 0, resetAt: now + 60000 };
+    let rec = bucket.get(key);
+    if (!rec || now > rec.resetAt) rec = { count: 0, resetAt: now + windowMs };
     if (rec.count >= max) {
       const retryAfter = Math.ceil((rec.resetAt - now) / 1000);
       res.set('Retry-After', String(retryAfter));
-      bucket.set(ip, rec);
+      bucket.set(key, rec);
       return res.status(429).json({ error: `Muitas ${label}. Aguarde ${retryAfter}s antes de tentar de novo.`, retryAfter });
     }
     rec.count++;
-    bucket.set(ip, rec);
+    bucket.set(key, rec);
     next();
   };
 }
@@ -2038,6 +2072,7 @@ app.post('/api/clients', requireAuth, (req, res) => {
   db.clients.push(c);
   saveEntity('clients', c);
   broadcastChange('client', 'create', { id: c.id, workspaceId: c.workspaceId, byUserId: req.user.id });
+  refreshEntityLinkTitles('clients', c, null, 'client');
   res.status(201).json(c);
 });
 
@@ -2057,6 +2092,8 @@ app.put('/api/clients/:id', requireAuth, (req, res) => {
   if (b.workspaceId && b.workspaceId !== c.workspaceId && canAccessWs(req.user, b.workspaceId)) {
     c.workspaceId = b.workspaceId;
   }
+  // Snapshot dos links ANTES de sobrescrever (pra só refazer o título se a URL mudou).
+  const prevLinks = { driveFiles: c.driveFiles, brandAssets: c.brandAssets, driveFilesTitle: c.driveFilesTitle, brandAssetsTitle: c.brandAssetsTitle };
   buildClientPayload(b, c);
   // Cascade: desativar cliente desativa todos os projetos vinculados
   if (typeof b.active === 'boolean') {
@@ -2075,6 +2112,7 @@ app.put('/api/clients/:id', requireAuth, (req, res) => {
   if (b.name && c.placeholder) delete c.placeholder;
   saveEntity('clients', c);
   broadcastChange('client', 'update', { id: c.id, workspaceId: c.workspaceId, byUserId: req.user.id });
+  refreshEntityLinkTitles('clients', c, prevLinks, 'client');
   res.json(c);
 });
 
@@ -2538,6 +2576,7 @@ app.post('/api/projects', requireAuth, (req, res) => {
   db.projects.push(p);
   saveEntity('projects', p);
   broadcastChange('project', 'create', { id: p.id, workspaceId: p.workspaceId, byUserId: req.user.id });
+  refreshEntityLinkTitles('projects', p, null, 'project');
   res.status(201).json(p);
 });
 
@@ -2545,6 +2584,8 @@ app.put('/api/projects/:id', requireAuth, (req, res) => {
   const p = db.projects.find(x => x.id === req.params.id);
   if (!p || !canAccessWs(req.user, p.workspaceId)) return res.status(404).json({ error: 'Projeto não encontrado' });
   const { name, client, clientId, color, active, workspaceId, avatar, driveFiles, brandAssets, guidelines, roleAssignments } = req.body || {};
+  // Snapshot dos links ANTES de sobrescrever (só refaz o título se a URL mudou).
+  const prevLinks = { driveFiles: p.driveFiles, brandAssets: p.brandAssets, driveFilesTitle: p.driveFilesTitle, brandAssetsTitle: p.brandAssetsTitle };
   if (typeof name === 'string' && name.trim()) p.name = name.trim();
   if (typeof driveFiles === 'string') p.driveFiles = normalizeUrlSrv(driveFiles);
   if (typeof brandAssets === 'string') p.brandAssets = normalizeUrlSrv(brandAssets);
@@ -2590,6 +2631,7 @@ app.put('/api/projects/:id', requireAuth, (req, res) => {
   }
   saveEntity('projects', p);
   broadcastChange('project', 'update', { id: p.id, workspaceId: p.workspaceId, byUserId: req.user.id });
+  refreshEntityLinkTitles('projects', p, prevLinks, 'project');
   res.json(p);
 });
 
@@ -2917,9 +2959,11 @@ app.put('/api/flows/:id', requireAuth, modOrAdmin, (req, res) => {
 app.delete('/api/flows/:id', requireAuth, modOrAdmin, (req, res) => {
   const f = db.flows.find(x => x.id === req.params.id);
   if (!f || !canAccessWs(req.user, f.workspaceId) || !notDeleted(f)) return res.status(404).json({ error: 'Fluxo não encontrado' });
-  // Bloqueia se QUALQUER demanda (mesmo na lixeira) ainda aponta pra esse fluxo:
-  // só some pra lixeira quando o fluxo está de fato sem uso.
-  if (db.demands.some(d => d.flowId === req.params.id)) {
+  // Bloqueia só se houver demanda ATIVA (não deletada) apontando pra esse fluxo.
+  // Demandas na lixeira NÃO bloqueiam — senão o fluxo ficaria preso por 30 dias por
+  // causa de uma demanda que o usuário já excluiu e nem vê nas listagens. Mesmo
+  // critério da exclusão de Projeto (usa notDeleted).
+  if (db.demands.some(d => d.flowId === req.params.id && notDeleted(d))) {
     return res.status(409).json({ error: 'Este fluxo possui demandas vinculadas e não pode ser excluído.' });
   }
   softDelete('flows', f, req.user.id);
@@ -3065,7 +3109,7 @@ app.post('/api/demands', requireAuth, (req, res) => {
   // o padrão do fluxo (não força — se enviou string vazia, não substitui).
   const useDefaultDesc = (b.description === undefined || b.description === null)
     && (flow.defaultDescription && flow.defaultDescription.trim());
-  const initialDesc = useDefaultDesc ? String(flow.defaultDescription) : String(b.description || '');
+  const initialDesc = (useDefaultDesc ? String(flow.defaultDescription) : String(b.description || '')).slice(0, 20000);
   // Checklist inicial: explicit list > flow.defaultChecklist > [].
   // Valida o responsável de um item de checklist: precisa ser usuário ativo com
   // acesso ao workspace do projeto; caso contrário vira null.
@@ -3079,7 +3123,7 @@ app.post('/api/demands', requireAuth, (req, res) => {
     initialChecklist = b.checklist
       .map(it => ({
         id: uid(),
-        text: String((it && it.text) || '').trim(),
+        text: String((it && it.text) || '').trim().slice(0, 500),
         ownerId: validChkOwner(it && it.ownerId),
         done: false, doneBy: null, doneAt: null,
         createdBy: req.user.id, createdAt: nowISO()
@@ -3088,7 +3132,7 @@ app.post('/api/demands', requireAuth, (req, res) => {
   } else if (Array.isArray(flow.defaultChecklist) && flow.defaultChecklist.length) {
     initialChecklist = flow.defaultChecklist.map(it => ({
       id: uid(),
-      text: String(it.text || '').trim(),
+      text: String(it.text || '').trim().slice(0, 500),
       ownerId: validChkOwner(it && it.ownerId),
       done: false, doneBy: null, doneAt: null,
       createdBy: req.user.id, createdAt: nowISO()
@@ -3185,7 +3229,7 @@ app.post('/api/demands', requireAuth, (req, res) => {
 
   const d = {
     id: uid(), workspaceId: project.workspaceId, projectId: project.id,
-    flowId: flow.id, name: String(b.name).trim(),
+    flowId: flow.id, name: String(b.name).trim().slice(0, 300),
     description: initialDesc, briefing: normalizeUrlSrv(b.briefing),
     deadline: b.deadline || null,
     estimatedHours: Number(b.estimatedHours) > 0 ? Math.round(Number(b.estimatedHours) * 100) / 100 : null,
@@ -3261,9 +3305,9 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
   const b = req.body || {};
   const fired = []; // eventos a disparar no final
   const wasCompleted = !!d.completedAt;
-  if (typeof b.name === 'string' && b.name.trim() && b.name.trim() !== d.name) {
+  if (typeof b.name === 'string' && b.name.trim() && b.name.trim().slice(0, 300) !== d.name) {
     const oldName = d.name;
-    d.name = b.name.trim();
+    d.name = b.name.trim().slice(0, 300);
     addHistory(d, req.user.id, 'renamed', { from: oldName, to: d.name });
   }
   if (b.projectId !== undefined) {
@@ -3274,8 +3318,8 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
       addHistory(d, req.user.id, 'project_changed', { fromId: oldId, toId: project.id });
     }
   }
-  if (typeof b.description === 'string' && b.description !== d.description) {
-    d.description = b.description;
+  if (typeof b.description === 'string' && b.description.slice(0, 20000) !== d.description) {
+    d.description = b.description.slice(0, 20000);
     addHistory(d, req.user.id, 'description_changed', null);
   }
   if (typeof b.briefing === 'string') {
@@ -3544,7 +3588,10 @@ function purgeTrashEntity(type, e, byUserId) {
     db.demands = db.demands.filter(d => !isCascade(d));
   }
   if (type === 'listas') {
-    db.recurrings.forEach(r => { if (r.listaId === e.id) { r.listaId = null; saveEntity('recurrings', r); } });
+    // Purga também os recorrentes vinculados (soft-deletados junto com a lista).
+    const linked = db.recurrings.filter(r => r.listaId === e.id);
+    linked.forEach(r => removeEntity('recurrings', r.id));
+    db.recurrings = db.recurrings.filter(r => r.listaId !== e.id);
   }
   removeEntity(type, e.id);
   db[type] = (db[type] || []).filter(x => x.id !== e.id);
@@ -3563,6 +3610,16 @@ app.post('/api/trash/:type/:id/restore', requireAuth, modOrAdmin, (req, res) => 
     undelete('projects', e);
     db.demands.forEach(d => {
       if (d.projectId === e.id && d.deletedAt && Math.abs(Date.parse(d.deletedAt) - projDelTs) < 5000) undelete('demands', d);
+    });
+  } else if (type === 'listas') {
+    // Restaura a lista + os recorrentes que caíram em cascata com ela (mesma janela).
+    const listaDelTs = Date.parse(e.deletedAt);
+    undelete('listas', e);
+    db.recurrings.forEach(r => {
+      if (r.listaId === e.id && r.deletedAt && Math.abs(Date.parse(r.deletedAt) - listaDelTs) < 5000) {
+        undelete('recurrings', r);
+        broadcastChange('recurring', 'update', { id: r.id, workspaceId: r.workspaceId, byUserId: req.user.id });
+      }
     });
   } else {
     undelete(type, e);
@@ -3640,7 +3697,7 @@ function notifyWatchers(demand, type, data, triggerUserId, baseUrl) {
      - setPriority { priority: 1..4 }   → muda prioridade
      - delete                           → remove
    Retorna { updated, skipped, errors }. */
-app.post('/api/demands/bulk', requireAuth, (req, res) => {
+app.post('/api/demands/bulk', requireAuth, rateLimitBulk, (req, res) => {
   const { ids, op, data } = req.body || {};
   if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'Nenhuma demanda selecionada.' });
   if (!op || typeof op !== 'string') return res.status(400).json({ error: 'Operação não informada.' });
@@ -3714,7 +3771,11 @@ app.post('/api/demands/bulk', requireAuth, (req, res) => {
         // Auto-atribui responsável da nova etapa (mesma lógica do PUT individual).
         // Se etapa não define ninguém → limpa d.ownerId em vez de herdar da etapa anterior.
         const _bulkProj = db.projects.find(p => p.id === d.projectId);
-        const stageOwner = resolveStageOwner(realStage, _bulkProj) || null;
+        // Mesma resolução do PUT individual: override por instância (d.stageResponsibles)
+        // tem precedência sobre o padrão do fluxo/projeto — senão o bulk reatribui
+        // errado as demandas com responsável customizado por etapa.
+        const _instOverride = (d.stageResponsibles && typeof d.stageResponsibles === 'object') ? d.stageResponsibles[realStage.id] : undefined;
+        const stageOwner = ((_instOverride !== undefined) ? _instOverride : (resolveStageOwner(realStage, _bulkProj) || null)) || null;
         if (stageOwner !== d.ownerId) {
           const prevOwner = d.ownerId;
           d.ownerId = stageOwner;
@@ -3737,17 +3798,22 @@ app.post('/api/demands/bulk', requireAuth, (req, res) => {
           }));
         }
         updated++;
-      } else if (op === 'setDeadline') {
-        // Novo prazo final (deadline). Aceita null/"" pra limpar OU YYYY-MM-DD.
-        const dl = data?.deadline;
+      } else if (op === 'setStageDue') {
+        // Altera o prazo da ETAPA atual (stageDueDate) — é ele que dita o "prazo
+        // efetivo" (effDue = stageDueDate || deadline) mostrado nas listas, no mapa
+        // de prazos e no calendário. Aceita null/"" pra limpar OU YYYY-MM-DD.
+        const dl = data?.date;
         if (dl !== null && dl !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(String(dl))) {
           skipped++; errors.push({ id: d.id, error: 'Data inválida.' }); continue;
         }
         const normDl = (dl === null || dl === '') ? null : String(dl);
-        if (normDl !== d.deadline) {
-          const from = d.deadline;
-          d.deadline = normDl;
-          addHistory(d, req.user.id, 'deadline_changed', { from, to: normDl });
+        if (normDl !== d.stageDueDate) {
+          const from = d.stageDueDate;
+          d.stageDueDate = normDl;
+          // Espelha na última entrada do stageHistory, como o PUT individual faz.
+          const last = d.stageHistory && d.stageHistory[d.stageHistory.length - 1];
+          if (last) last.dueDate = normDl;
+          addHistory(d, req.user.id, 'stage_due_changed', { from, to: normDl });
           updated++;
         } else skipped++;
       } else if (op === 'setProject') {
@@ -3945,7 +4011,7 @@ app.delete('/api/demands/:id/time/:entryId', requireAuth, (req, res) => {
 /* Comentários com menção */
 app.post('/api/demands/:id/comment', requireAuth, (req, res) => {
   const d = getDemand(req, res); if (!d) return;
-  const text = String((req.body && req.body.text) || '').trim();
+  const text = String((req.body && req.body.text) || '').trim().slice(0, 10000);
   const attachments = sanitizeAttachments(req.body?.attachments).slice(0, 10);
   if (!text && !attachments.length) return res.status(400).json({ error: 'Escreva algo ou anexe um arquivo' });
   // extrai menções @username válidas dentro do workspace
@@ -3994,7 +4060,7 @@ app.put('/api/demands/:id/comment/:cid', requireAuth, (req, res) => {
   if (c.userId !== req.user.id && !req.user.isAdmin) {
     return res.status(403).json({ error: 'Você só pode editar seus próprios comentários' });
   }
-  const text = String((req.body && req.body.text) || '').trim();
+  const text = String((req.body && req.body.text) || '').trim().slice(0, 10000);
   const attachments = req.body?.attachments !== undefined
     ? sanitizeAttachments(req.body.attachments).slice(0, 10)
     : c.attachments;
@@ -4049,7 +4115,7 @@ app.post('/api/demands/:id/comment/:cid/react', requireAuth, (req, res) => {
 /* ── CHECKLIST INTERNO ── */
 app.post('/api/demands/:id/checklist', requireAuth, (req, res) => {
   const d = getDemand(req, res); if (!d) return;
-  const text = String((req.body && req.body.text) || '').trim();
+  const text = String((req.body && req.body.text) || '').trim().slice(0, 500);
   if (!text) return res.status(400).json({ error: 'Texto obrigatório' });
   if (!Array.isArray(d.checklist)) d.checklist = [];
   const item = {
@@ -4069,7 +4135,7 @@ app.put('/api/demands/:id/checklist/:itemId', requireAuth, (req, res) => {
   if (!item) return res.status(404).json({ error: 'Item não encontrado' });
   const b = req.body || {};
   if (typeof b.text === 'string' && b.text.trim()) {
-    item.text = b.text.trim();
+    item.text = b.text.trim().slice(0, 500);
     addHistory(d, req.user.id, 'checklist_edited', { itemId: item.id });
   }
   if (typeof b.done === 'boolean' && b.done !== item.done) {
@@ -4303,6 +4369,9 @@ function sanitizeRecurringBody(b, existing) {
     name,
     workspaceId,
     clientId, projectId: project?.id || null, flowId: flow.id,
+    // demandType: chave PORTÁVEL do item entre clientes. Ao aplicar a lista em outro
+    // cliente, resolvemos o fluxo daquele cliente por este tipo (não pelo flowId fixo).
+    demandType: flow.demandType || null,
     roleId, ownerId, deliverableUserId, listaId,
     description: String(b.description ?? cur.description ?? ''),
     briefing: normalizeUrlSrv(b.briefing ?? cur.briefing ?? ''),
@@ -4324,6 +4393,7 @@ app.get('/api/recurrings', requireAuth, (req, res) => {
   const roleId = req.query.roleId || null;
   const userId = req.query.userId || null;
   const list = db.recurrings.filter(r => {
+    if (!notDeleted(r)) return false;
     if (!ids.includes(r.workspaceId)) return false;
     if (clientId && r.clientId !== clientId) return false;
     if (projectId && r.projectId !== projectId) return false;
@@ -4556,12 +4626,17 @@ app.delete('/api/listas/:id', requireAuth, (req, res) => {
   const l = getLista(req.params.id);
   if (!l || !notDeleted(l)) return res.status(404).json({ error: 'Lista não encontrada' });
   if (!canAccessWs(req.user, l.workspaceId)) return res.status(403).json({ error: 'Sem acesso' });
-  // Soft delete: as recorrentes vinculadas mantêm o listaId (não desvincula), então
-  // ao restaurar a lista elas voltam a aparecer agrupadas nela. Enquanto na lixeira,
-  // a lista some das listagens e as recorrentes ficam como "sem lista".
+  // Excluir a lista CASCATEIA nos recorrentes vinculados — eles NÃO viram mais
+  // personalizadas. Vão pra lixeira junto (mesma janela de ~5s); restaurar a lista
+  // traz todos de volta agrupados, e purgar a lista purga eles também.
   softDelete('listas', l, req.user.id);
+  const linked = db.recurrings.filter(r => r.listaId === l.id && notDeleted(r));
+  linked.forEach(r => {
+    softDelete('recurrings', r, req.user.id);
+    broadcastChange('recurring', 'delete', { id: r.id, workspaceId: r.workspaceId, byUserId: req.user.id });
+  });
   broadcastChange('lista', 'delete', { id: l.id, workspaceId: l.workspaceId, byUserId: req.user.id });
-  res.json({ ok: true, undoable: true, purgeAt: Date.parse(l.deletedAt) + UNDO_PURGE_MS });
+  res.json({ ok: true, undoable: true, deleted: { recurrings: linked.length }, purgeAt: Date.parse(l.deletedAt) + UNDO_PURGE_MS });
 });
 
 /* ── WEBHOOKS ── */
@@ -4691,11 +4766,136 @@ app.post('/api/webhooks/:id/test', requireAuth, modOrAdmin, async (req, res) => 
   }
 });
 
+/* ── TÍTULO DE LINK ──
+   Resolve o <title>/og:title de uma URL pra guardar junto do link (campos
+   Drive/Ativos de cliente e projeto) e exibir o nome da página no lugar da URL
+   crua. Reusa o guard de SSRF e o fetch com timeout dos webhooks; segue redirects
+   revalidando cada hop (pra youtu.be → youtube.com funcionar sem abrir brecha pra
+   rede interna). Cache em memória por 24h evita refetch da mesma URL.
+
+   Modelo: o título é resolvido UMA vez, ao salvar o cliente/projeto (em background,
+   sem travar o save), e persistido em driveFilesTitle/brandAssetsTitle. Quando fica
+   pronto, re-emite o broadcast → a tela recarrega via SSE e mostra o título sozinha.
+   A visualização só lê o valor salvo, sem nenhum fetch. */
+const linkTitleCache = new Map(); // url -> { title, ts }
+const LINK_TITLE_TTL = 24 * 60 * 60 * 1000;
+const LINK_TITLE_MAX_BYTES = 512 * 1024;
+
+function decodeBasicEntities(s) {
+  return String(s)
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&nbsp;/g, ' ')
+    .replace(/&#(\d+);/g, (m, d) => { try { return String.fromCodePoint(parseInt(d, 10)); } catch { return m; } })
+    .replace(/&#x([0-9a-f]+);/gi, (m, h) => { try { return String.fromCodePoint(parseInt(h, 16)); } catch { return m; } });
+}
+function extractPageTitle(html) {
+  const og = html.match(/<meta[^>]+(?:property|name)=["']og:title["'][^>]*>/i);
+  if (og) {
+    const c = og[0].match(/content=["']([^"']*)["']/i);
+    if (c && c[1].trim()) return decodeBasicEntities(c[1].replace(/\s+/g, ' ').trim()).slice(0, 200);
+  }
+  const t = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  if (t && t[1].trim()) return decodeBasicEntities(t[1].replace(/\s+/g, ' ').trim()).slice(0, 200);
+  return null;
+}
+async function readCappedText(resp, maxBytes) {
+  if (!resp.body || typeof resp.body.getReader !== 'function') {
+    return (await resp.text()).slice(0, maxBytes);
+  }
+  const reader = resp.body.getReader();
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) { chunks.push(Buffer.from(value)); total += value.length; }
+    if (total >= maxBytes) { try { await reader.cancel(); } catch {} break; }
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+// Segue redirects manualmente, revalidando o guard de SSRF a cada hop.
+async function fetchHtmlSafe(startUrl, maxRedirects = 4) {
+  let url = startUrl;
+  for (let i = 0; i <= maxRedirects; i++) {
+    if (!isSafeWebhookUrl(url)) return null;
+    const resp = await fetchWithTimeout(url, {
+      method: 'GET', redirect: 'manual',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; KastorBot/1.0; +link-title)',
+        'Accept': 'text/html,application/xhtml+xml'
+      }
+    }, 6000);
+    if (resp.status >= 300 && resp.status < 400) {
+      const loc = resp.headers.get('location');
+      if (!loc) return resp;
+      try { url = new URL(loc, url).toString(); } catch { return null; }
+      continue;
+    }
+    return resp;
+  }
+  return null; // redirects demais
+}
+
+// Resolve o título de UMA url (com cache de 24h). Retorna string ou null.
+async function resolveLinkTitle(rawUrl) {
+  const raw = String(rawUrl || '').trim();
+  if (!/^https?:\/\//i.test(raw) || !isSafeWebhookUrl(raw)) return null;
+  const cached = linkTitleCache.get(raw);
+  if (cached && Date.now() - cached.ts < LINK_TITLE_TTL) return cached.title;
+  let title = null;
+  try {
+    const resp = await fetchHtmlSafe(raw);
+    if (resp && resp.ok) {
+      const ct = (resp.headers.get('content-type') || '').toLowerCase();
+      if (!ct || ct.includes('text/html') || ct.includes('application/xhtml')) {
+        const html = await readCappedText(resp, LINK_TITLE_MAX_BYTES);
+        title = extractPageTitle(html);
+      }
+    }
+  } catch { title = null; }
+  linkTitleCache.set(raw, { title, ts: Date.now() });
+  return title;
+}
+
+/* Atualiza driveFilesTitle/brandAssetsTitle da entidade em background. Só busca
+   quando a URL mudou (URL igual mantém o título; URL vazia zera). Se algo mudou,
+   re-salva e re-emite o broadcast pra tela pegar via SSE. `prev` = snapshot de
+   { driveFiles, brandAssets, driveFilesTitle, brandAssetsTitle } de ANTES do save
+   (null em criação → resolve tudo que tiver link). */
+function refreshEntityLinkTitles(entityType, entity, prev, broadcastKind) {
+  const fields = [['driveFiles', 'driveFilesTitle'], ['brandAssets', 'brandAssetsTitle']];
+  const jobs = [];
+  let syncChanged = false;
+  for (const [uf, tf] of fields) {
+    const url = (entity[uf] || '').trim();
+    if (!url) { if (entity[tf] != null) { entity[tf] = null; syncChanged = true; } continue; }
+    const sameUrl = prev && url === (prev[uf] || '').trim();
+    if (sameUrl && prev[tf] !== undefined) { entity[tf] = prev[tf]; continue; } // URL inalterada
+    jobs.push(resolveLinkTitle(url).then(t => {
+      if (entity[tf] !== t) { entity[tf] = t; return true; }
+      return false;
+    }).catch(() => false));
+  }
+  if (!jobs.length) {
+    if (syncChanged) saveEntity(entityType, entity);
+    return;
+  }
+  Promise.all(jobs).then(results => {
+    if (syncChanged || results.some(Boolean)) {
+      saveEntity(entityType, entity);
+      // Sem byUserId: o broadcast precisa chegar TAMBÉM a quem salvou (o título
+      // ficou pronto depois da resposta do save; broadcastChange pula o originador).
+      broadcastChange(broadcastKind, 'update', { id: entity.id, workspaceId: entity.workspaceId });
+    }
+  }).catch(() => {});
+}
+
 /* ── MÉTRICAS DE SLA ── */
-app.get('/api/metrics/sla', requireAuth, (req, res) => {
+app.get('/api/reports/sla', requireAuth, rateLimitReport, (req, res) => {
   const ids = wsIdsFor(req.user);
   const wsId = String(req.query.workspaceId || '');
   const period = String(req.query.period || '30'); // dias, ou 'all'
+  const clientId = String(req.query.clientId || '');
   const projectId = String(req.query.projectId || '');
   const flowId = String(req.query.flowId || '');
 
@@ -4712,6 +4912,10 @@ app.get('/api/metrics/sla', requireAuth, (req, res) => {
 
   // Demandas concluídas no período
   let demands = db.demands.filter(d => wsFilter.includes(d.workspaceId));
+  if (clientId) {
+    const projIds = new Set(db.projects.filter(p => p.clientId === clientId).map(p => p.id));
+    demands = demands.filter(d => projIds.has(d.projectId));
+  }
   if (projectId) demands = demands.filter(d => d.projectId === projectId);
   if (flowId) demands = demands.filter(d => d.flowId === flowId);
 
@@ -4798,6 +5002,46 @@ app.get('/api/metrics/sla', requireAuth, (req, res) => {
     .sort((a,b) => b.hours - a.hours)
     .slice(0, 10);
 
+  // ── Esforço apontado (timeEntries) — horas que os usuários LANÇARAM, distinto
+  //    do tempo de calendário (entrada → saída da etapa). Respeita o período pela
+  //    data do apontamento (createdAt). ──
+  let effortTotal = 0, demandsWithLog = 0;
+  const effByStage = {}; // stageId -> { hours, demands:Set }
+  const effByUser  = {}; // userId  -> { hours, entries }
+  demands.forEach(d => {
+    const entries = (d.timeEntries || []).filter(e =>
+      Number(e.hours) > 0 && (!startDate || String(e.createdAt || '').slice(0,10) >= startDate));
+    if (!entries.length) return;
+    demandsWithLog++;
+    const flow = db.flows.find(f => f.id === d.flowId);
+    entries.forEach(e => {
+      const h = Number(e.hours) || 0;
+      effortTotal += h;
+      const sid = e.stageId || '__none__';
+      if (!effByStage[sid]) {
+        const stage = flow?.stages.find(x => x.id === sid);
+        effByStage[sid] = {
+          stageId: sid, stageName: stage?.label || '(sem etapa)',
+          stageColor: stage?.color || '#7A00FF', flowName: flow?.name || '—',
+          hours: 0, demands: new Set()
+        };
+      }
+      effByStage[sid].hours += h;
+      effByStage[sid].demands.add(d.id);
+      if (!effByUser[e.userId]) effByUser[e.userId] = { userId: e.userId, hours: 0, entries: 0 };
+      effByUser[e.userId].hours += h;
+      effByUser[e.userId].entries++;
+    });
+  });
+  const effortByStage = Object.values(effByStage).map(s => ({
+    stageId: s.stageId, stageName: s.stageName, stageColor: s.stageColor, flowName: s.flowName,
+    hours: s.hours, avgHours: s.hours / s.demands.size, demands: s.demands.size
+  })).sort((a, b) => b.avgHours - a.avgHours);
+  const effortByUser = Object.values(effByUser).map(u => {
+    const user = db.users.find(x => x.id === u.userId);
+    return { userId: u.userId, name: user?.name || '—', hours: u.hours, entries: u.entries };
+  }).sort((a, b) => b.hours - a.hours);
+
   res.json({
     period,
     totals: {
@@ -4810,34 +5054,49 @@ app.get('/api/metrics/sla', requireAuth, (req, res) => {
     },
     stageStats,
     typeStats,
-    slowest
+    slowest,
+    effort: {
+      totalHours: effortTotal,
+      demandsWithLog,
+      avgPerDemand: demandsWithLog ? effortTotal / demandsWithLog : 0,
+      byStage: effortByStage,
+      byUser: effortByUser
+    }
   });
 });
 
 /* ── NOTIFICAÇÕES (por usuário) ── */
 // Persistência direto no Postgres (tabela dedicada, INDEX(user_id, created_at)).
 app.get('/api/notifications', requireAuth, async (req, res) => {
-  res.json(await store.listNotificationsFor(req.user.id, 100));
+  try {
+    res.json(await store.listNotificationsFor(req.user.id, 100));
+  } catch (e) { res.status(500).json({ error: 'Erro ao carregar notificações' }); }
 });
 
 app.put('/api/notifications/:id/read', requireAuth, async (req, res) => {
   // UPDATE com WHERE id=... AND user_id=... — se não bater, 404. Evita
   // vazar existência de IDs de outros usuários e evita buscar até 500 registros.
-  const n = await store.markNotificationReadIfOwner(req.params.id, req.user.id);
-  if (!n) return res.status(404).json({ error: 'Notificação não encontrada' });
-  res.json(n);
+  try {
+    const n = await store.markNotificationReadIfOwner(req.params.id, req.user.id);
+    if (!n) return res.status(404).json({ error: 'Notificação não encontrada' });
+    res.json(n);
+  } catch (e) { res.status(500).json({ error: 'Erro ao marcar notificação' }); }
 });
 
 app.put('/api/notifications/read-all', requireAuth, async (req, res) => {
-  await store.markAllNotificationsReadFor(req.user.id);
-  res.json({ ok: true });
+  try {
+    await store.markAllNotificationsReadFor(req.user.id);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao marcar notificações' }); }
 });
 
 /* Apaga TODAS as notificações do usuário. Sem undo — quem clica em "Limpar
    notificações" tá dizendo que já leu/resolveu tudo e não quer mais o barulho. */
 app.delete('/api/notifications', requireAuth, async (req, res) => {
-  await store.deleteAllNotificationsFor(req.user.id);
-  res.json({ ok: true });
+  try {
+    await store.deleteAllNotificationsFor(req.user.id);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao limpar notificações' }); }
 });
 
 /* ── AGENDADOR DE RECORRÊNCIA ──
@@ -5267,6 +5526,18 @@ function setupGracefulShutdown(server) {
   }
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
   process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
+  // Rede de segurança: uma Promise rejeitada sem catch NÃO deve derrubar o server
+  // (Node crasha por padrão). Loga e segue — uma promise solta não corrompe o estado.
+  process.on('unhandledRejection', (reason) => {
+    console.error('[unhandledRejection]', reason);
+  });
+  // Erro SÍNCRONO não capturado deixa o processo em estado indefinido: faz flush do
+  // buffer de writes e sai com código 1 (o restart policy sobe um processo limpo).
+  process.on('uncaughtException', async (err) => {
+    console.error('[uncaughtException]', err);
+    try { await flushDirty(); } catch {}
+    process.exit(1);
+  });
 }
 module.exports = app;
 module.exports.ready = _boot;

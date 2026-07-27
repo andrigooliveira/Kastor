@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-title" content="Kastor">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/css/style.css?v=20260724a">
+<link rel="stylesheet" href="/css/style.css?v=20260726o">
 </head>
 <body>
 
@@ -74,6 +74,10 @@
         <svg viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="6" height="6" rx="1.5" fill="currentColor" opacity=".5"/><rect x="9" y="1" width="6" height="6" rx="1.5" fill="currentColor"/><rect x="1" y="9" width="6" height="6" rx="1.5" fill="currentColor"/><rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" opacity=".5"/></svg>
         Dashboard
       </div>
+      <div class="nav-item" data-page="analytics" onclick="goPage('analytics')">
+        <svg viewBox="0 0 16 16" fill="none"><path d="M2 2v11a1 1 0 001 1h11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 11V8M8 11V5M11 11V9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Análises
+      </div>
 
       <div class="nav-section">Execução</div>
       <div class="nav-item" data-page="list" onclick="goPage('list')">
@@ -88,29 +92,23 @@
         <svg viewBox="0 0 16 16" fill="none"><rect x="2" y="3.5" width="12" height="11" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M5 1.5v3M11 1.5v3M2 6.5h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         Agenda
       </div>
-
-      <div class="nav-section">Acompanhamento</div>
-      <div class="nav-item" data-page="capacity" onclick="goPage('capacity')">
-        <svg viewBox="0 0 16 16" fill="none"><path d="M2 13V8m4 5V5m4 8V3m4 10v-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-        Capacidade
-      </div>
-      <div class="nav-item" data-page="clients" onclick="goPage('clients')">
-        <svg viewBox="0 0 16 16" fill="none"><path d="M3 14V3.5a1 1 0 011-1h4a1 1 0 011 1V14M9 6.5h3a1 1 0 011 1V14M2 14h12M5.5 5.5v1M5.5 8.5v1M5.5 11.5v1M10.5 8.5v1M10.5 11.5v1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        Clientes
-      </div>
-
-      <div class="nav-section">Processos</div>
-      <div class="nav-item" data-page="recurring" onclick="goPage('recurring')">
-        <svg viewBox="0 0 16 16" fill="none"><path d="M3 4h10M3 8h10M3 12h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="0.5" y="2.5" width="2" height="2" rx="0.5" stroke="currentColor" stroke-width="1.2"/><rect x="0.5" y="6.5" width="2" height="2" rx="0.5" stroke="currentColor" stroke-width="1.2"/><rect x="0.5" y="10.5" width="2" height="2" rx="0.5" stroke="currentColor" stroke-width="1.2"/></svg>
-        Listas de tarefas
-      </div>
       <div class="nav-item" data-page="recurringDemands" onclick="goPage('recurringDemands')">
         <svg viewBox="0 0 16 16" fill="none"><path d="M2.5 6.5A5 5 0 0111.7 4.2l1.8 1.8M13.5 9.5A5 5 0 014.3 11.8L2.5 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.5 2.5v3.5H10M2.5 13.5V10h3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
         Demandas Recorrentes
       </div>
+
+      <div class="nav-section">Estrutura</div>
+      <div class="nav-item" data-page="clients" onclick="goPage('clients')">
+        <svg viewBox="0 0 16 16" fill="none"><path d="M3 14V3.5a1 1 0 011-1h4a1 1 0 011 1V14M9 6.5h3a1 1 0 011 1V14M2 14h12M5.5 5.5v1M5.5 8.5v1M5.5 11.5v1M10.5 8.5v1M10.5 11.5v1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Clientes
+      </div>
       <div class="nav-item" data-page="flows" id="nav-flows" onclick="goPage('flows')">
         <svg viewBox="0 0 16 16" fill="none"><circle cx="3" cy="8" r="1.8" stroke="currentColor" stroke-width="1.5"/><circle cx="13" cy="3.5" r="1.8" stroke="currentColor" stroke-width="1.5"/><circle cx="13" cy="12.5" r="1.8" stroke="currentColor" stroke-width="1.5"/><path d="M4.7 7.2l6.5-3M4.7 8.8l6.5 3" stroke="currentColor" stroke-width="1.5"/></svg>
         Fluxos de Demanda
+      </div>
+      <div class="nav-item" data-page="recurring" onclick="goPage('recurring')">
+        <svg viewBox="0 0 16 16" fill="none"><path d="M3 4h10M3 8h10M3 12h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="0.5" y="2.5" width="2" height="2" rx="0.5" stroke="currentColor" stroke-width="1.2"/><rect x="0.5" y="6.5" width="2" height="2" rx="0.5" stroke="currentColor" stroke-width="1.2"/><rect x="0.5" y="10.5" width="2" height="2" rx="0.5" stroke="currentColor" stroke-width="1.2"/></svg>
+        Listas de tarefas
       </div>
       <div class="nav-item" data-page="templates" onclick="goPage('templates')">
         <svg viewBox="0 0 16 16" fill="none"><rect x="2.5" y="1.5" width="9" height="13" rx="1" stroke="currentColor" stroke-width="1.5"/><path d="M5 5h4M5 8h4M5 11h2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M13.5 3.5v10a1 1 0 01-1 1H11" stroke="currentColor" stroke-width="1.5"/></svg>
@@ -118,10 +116,6 @@
       </div>
 
       <div class="nav-section">Configurações</div>
-      <div class="nav-item" data-page="docs" onclick="goPage('docs')">
-        <svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.25" stroke="currentColor" stroke-width="1.5"/><path d="M8 11V7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="5.25" r=".75" fill="currentColor"/></svg>
-        Documentação
-      </div>
       <div class="nav-item admin-only" data-page="integrations" id="nav-integrations" onclick="goPage('integrations')">
         <svg viewBox="0 0 16 16" fill="none"><path d="M4 8h2.5a2 2 0 002-2V3.5M12 8H9.5a2 2 0 00-2 2v2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="3" cy="8" r="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="13" cy="8" r="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="7.5" cy="3.5" r="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="7.5" cy="12.5" r="1.5" stroke="currentColor" stroke-width="1.5"/></svg>
         Integrações
@@ -137,6 +131,12 @@
       <div class="nav-item admin-only" data-page="trash" id="nav-trash" onclick="goPage('trash')">
         <svg viewBox="0 0 16 16" fill="none"><path d="M2.5 4.5h11M6 4.5V3a1 1 0 011-1h2a1 1 0 011 1v1.5M4 4.5l.6 8a1.5 1.5 0 001.5 1.4h3.8a1.5 1.5 0 001.5-1.4l.6-8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M6.5 7.5v4M9.5 7.5v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         Lixeira
+      </div>
+
+      <div class="nav-section">Ajuda</div>
+      <div class="nav-item" data-page="docs" onclick="goPage('docs')">
+        <svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.25" stroke="currentColor" stroke-width="1.5"/><path d="M8 11V7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="5.25" r=".75" fill="currentColor"/></svg>
+        Documentação
       </div>
     </nav>
     <div class="sidebar-footer">
@@ -174,6 +174,7 @@
           <button type="button" class="topbar-timer-btn is-primary" onclick="apontarFromTopbar()" title="Apontar horas"><i data-lucide="check" class="ic-sm" width="16" height="16"></i></button>
           <button type="button" class="topbar-timer-btn is-danger" onclick="discardTopbarTimer()" title="Descartar"><i data-lucide="x" class="ic-sm" width="16" height="16"></i></button>
         </div>
+        <button class="btn btn-ghost density-toggle" id="density-toggle-btn" onclick="toggleDensity()" title="Densidade da tabela"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="2.6" width="12" height="2.4" rx="1.2" fill="currentColor"/><rect x="2" y="6.8" width="12" height="2.4" rx="1.2" fill="currentColor"/><rect x="2" y="11" width="12" height="2.4" rx="1.2" fill="currentColor"/></svg></button>
         <div class="notif-wrap">
           <button class="btn btn-ghost notif-bell" onclick="toggleNotifPanel()" title="Notificações">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1.5A4.5 4.5 0 003.5 6v2.5l-1.2 2a.75.75 0 00.65 1.13h10.1a.75.75 0 00.65-1.13l-1.2-2V6A4.5 4.5 0 008 1.5z" stroke="currentColor" stroke-width="1.4"/><path d="M6 11.63a2 2 0 004 0" stroke="currentColor" stroke-width="1.4"/></svg>
@@ -281,6 +282,14 @@
           <div class="dash-col dash-col-right">
             <div class="dash-widget">
               <div class="dash-widget-head">
+                <div class="dash-widget-title">Demandas em aberto · prioridade</div>
+                <div class="dash-widget-sub" id="dash-prio-sub"></div>
+              </div>
+              <div id="dash-prio-donut"></div>
+            </div>
+
+            <div class="dash-widget">
+              <div class="dash-widget-head">
                 <div class="dash-widget-title">Radar de projetos</div>
                 <div class="dash-widget-sub" id="dash-radar-sub"></div>
               </div>
@@ -321,7 +330,7 @@
           <button class="btn btn-ghost btn-sm" onclick="openBulkOwnerPicker()" title="Alterar responsável"><i data-lucide="user" class="ic-sm"></i> Responsável</button>
           <button class="btn btn-ghost btn-sm" onclick="openBulkStagePicker()" title="Mover etapa"><i data-lucide="git-pull-request-arrow" class="ic-sm"></i> Mover etapa</button>
           <button class="btn btn-ghost btn-sm" onclick="openBulkPriorityPicker()" title="Alterar prioridade"><i data-lucide="flag" class="ic-sm"></i> Prioridade</button>
-          <button class="btn btn-ghost btn-sm" onclick="openBulkDeadlinePicker()" title="Alterar prazo final"><i data-lucide="calendar" class="ic-sm"></i> Prazo</button>
+          <button class="btn btn-ghost btn-sm" onclick="openBulkDeadlinePicker()" title="Alterar prazo da etapa"><i data-lucide="calendar" class="ic-sm"></i> Prazo</button>
           <button class="btn btn-ghost btn-sm" onclick="openBulkProjectPicker()" title="Mudar projeto"><i data-lucide="folder-symlink" class="ic-sm"></i> Projeto</button>
           <button class="btn btn-ghost btn-sm bulk-danger" onclick="bulkDelete()" title="Excluir selecionadas"><i data-lucide="trash-2" class="ic-sm"></i> Excluir</button>
           <button class="btn btn-ghost btn-sm" onclick="clearBulkSelection()" title="Limpar seleção" style="margin-left:auto"><i data-lucide="x" class="ic-sm"></i></button>
@@ -422,7 +431,16 @@
           </div>
 
           <div id="list-kanban-view" style="display:none">
-            <div class="kanban-board" id="kanban-board"></div>
+            <div class="kanban-toolbar">
+              <div class="client-status-toggle kanban-mode-toggle">
+                <button type="button" class="btn btn-ghost btn-sm client-status-btn" data-kmode="attention" onclick="setKanbanMode('attention')">Atenção</button>
+                <button type="button" class="btn btn-ghost btn-sm client-status-btn" data-kmode="stage" onclick="setKanbanMode('stage')">Etapas</button>
+              </div>
+              <div class="kanban-toolbar-hint" id="kanban-mode-hint"></div>
+            </div>
+            <div class="kanban-board-frame">
+              <div class="kanban-board" id="kanban-board"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -495,26 +513,65 @@
       </div>
     </div>
 
-    <!-- ── CAPACIDADE ── -->
-    <div class="page" id="page-capacity">
+    <!-- ── ANÁLISES (Capacidade + Relatórios em abas) ── -->
+    <div class="page" id="page-analytics">
+      <div class="an-tabs">
+        <button class="an-tab is-active" data-tab="capacity" onclick="setAnalyticsTab('capacity')">CAPACIDADE</button>
+        <button class="an-tab" data-tab="reports" onclick="setAnalyticsTab('reports')">RELATÓRIOS</button>
+      </div>
       <div class="page-body">
-        <div class="section-head">
-          <div class="section-title" id="capacity-heading">Capacidade da Equipe</div>
-          <select class="filter-select" id="capacity-period" onchange="renderCapacity()" style="max-width:200px">
-            <option value="7">Últimos / Próximos 7 dias</option>
-            <option value="14">Últimos / Próximos 14 dias</option>
-            <option value="30">Últimos / Próximos 30 dias</option>
-            <option value="month">Este mês</option>
-          </select>
+        <!-- Aba CAPACIDADE -->
+        <div id="an-tab-capacity" class="an-tab-panel">
+          <div class="section-head">
+            <div class="section-title" id="capacity-heading">Capacidade da Equipe</div>
+            <select class="filter-select" id="capacity-period" onchange="renderCapacity()" style="max-width:200px">
+              <option value="7">Últimos / Próximos 7 dias</option>
+              <option value="14">Últimos / Próximos 14 dias</option>
+              <option value="30">Últimos / Próximos 30 dias</option>
+              <option value="month">Este mês</option>
+            </select>
+          </div>
+          <div class="capacity-view-toggle">
+            <button class="btn btn-ghost btn-sm active" id="capacity-view-team" onclick="setCapacityView('team')"><i data-lucide="users" class="ic-sm"></i> Equipe</button>
+            <button class="btn btn-ghost btn-sm" id="capacity-view-project" onclick="setCapacityView('project')"><i data-lucide="folder" class="ic-sm"></i> Projeto</button>
+            <button class="btn btn-ghost btn-sm" id="capacity-view-client" onclick="setCapacityView('client')"><i data-lucide="briefcase" class="ic-sm"></i> Cliente</button>
+            <button class="btn btn-ghost btn-sm" onclick="exportCapacityCsv()" title="Exportar visão atual em CSV" style="margin-left:auto"><i data-lucide="download" class="ic-sm"></i> Exportar CSV</button>
+          </div>
+          <div class="capacity-hint" id="capacity-hint">Distribuição de demandas em aberto por responsável. Carga estimada com base nas demandas atribuídas e nas horas já apontadas.</div>
+          <div id="capacity-list"></div>
         </div>
-        <div class="capacity-view-toggle">
-          <button class="btn btn-ghost btn-sm active" id="capacity-view-team" onclick="setCapacityView('team')"><i data-lucide="users" class="ic-sm"></i> Equipe</button>
-          <button class="btn btn-ghost btn-sm" id="capacity-view-project" onclick="setCapacityView('project')"><i data-lucide="folder" class="ic-sm"></i> Projeto</button>
-          <button class="btn btn-ghost btn-sm" id="capacity-view-client" onclick="setCapacityView('client')"><i data-lucide="briefcase" class="ic-sm"></i> Cliente</button>
-          <button class="btn btn-ghost btn-sm" onclick="exportCapacityCsv()" title="Exportar visão atual em CSV" style="margin-left:auto"><i data-lucide="download" class="ic-sm"></i> Exportar CSV</button>
+        <!-- Aba RELATÓRIOS / SLA -->
+        <div id="an-tab-reports" class="an-tab-panel" style="display:none">
+          <div class="filters-bar" style="margin-bottom:16px">
+            <div class="filter-group">
+              <label class="filter-label">Workspace</label>
+              <select class="filter-select" id="reports-ws" onchange="renderReports()"></select>
+            </div>
+            <div class="filter-group">
+              <label class="filter-label">Cliente</label>
+              <select class="filter-select" id="reports-client" onchange="renderReports()"></select>
+            </div>
+            <div class="filter-group">
+              <label class="filter-label">Projeto</label>
+              <select class="filter-select" id="reports-project" onchange="renderReports()"></select>
+            </div>
+            <div class="filter-group">
+              <label class="filter-label">Período</label>
+              <select class="filter-select" id="reports-period" onchange="renderReports()">
+                <option value="30">Últimos 30 dias</option>
+                <option value="90" selected>Últimos 90 dias</option>
+                <option value="365">Último ano</option>
+                <option value="all">Todo o período</option>
+              </select>
+            </div>
+            <div class="filter-group" style="justify-content:flex-end">
+              <label class="filter-label">&nbsp;</label>
+              <button class="btn btn-ghost btn-icon-only" onclick="clearReportFilters()" title="Limpar filtros"><i data-lucide="brush-cleaning" class="ic-sm"></i></button>
+            </div>
+          </div>
+          <div class="capacity-hint">Tempo que as demandas levam em cada etapa e no total. Ajuda a achar gargalos, medir pontualidade e comparar com o esforço apontado.</div>
+          <div id="reports-body"></div>
         </div>
-        <div class="capacity-hint" id="capacity-hint">Distribuição de demandas em aberto por responsável. Carga estimada com base nas demandas atribuídas e nas horas já apontadas.</div>
-        <div id="capacity-list"></div>
       </div>
     </div>
 
@@ -709,6 +766,8 @@
           </div>
           <div class="section-title" id="client-detail-breadcrumb" style="margin-bottom:18px"></div>
 
+          <div class="kpi-tiles" id="client-detail-kpis" style="margin-bottom:28px"></div>
+
           <div class="client-detail-section">
             <div class="client-detail-section-label">PROJETOS</div>
             <div class="flow-grid" id="client-detail-projects"></div>
@@ -775,6 +834,8 @@
             <button class="btn btn-ghost btn-icon-only" title="Editar projeto" onclick="openProjectModalEdit()"><i data-lucide="settings" class="ic-sm"></i></button>
           </div>
           <div class="section-title" id="project-detail-breadcrumb" style="margin-bottom:18px"></div>
+
+          <div class="kpi-tiles" id="project-detail-kpis" style="margin-bottom:28px"></div>
 
           <div class="client-detail-section">
             <div class="client-detail-section-label">SOBRE</div>
@@ -1667,7 +1728,7 @@
       <div class="form-grid">
         <!-- Toggle Demanda / Livre (bloqueio sem demanda: reunião, foco, off, etc) -->
         <div class="form-group full">
-          <div class="sch-mode-toggle" role="tablist">
+          <div class="sch-mode-toggle" id="sch-mode-toggle" role="tablist">
             <button type="button" class="sch-mode-btn is-active" id="sch-mode-demand" onclick="setScheduleMode('demand')">Demanda</button>
             <button type="button" class="sch-mode-btn" id="sch-mode-free" onclick="setScheduleMode('free')">Livre</button>
           </div>
@@ -1685,7 +1746,7 @@
           <div class="sch-kind-chips" id="sch-kind-chips"></div>
         </div>
         <div class="form-group full">
-          <label class="form-label">Quando</label>
+          <label class="form-label">Quem</label>
           <div id="sch-when" style="font-size:13px;color:var(--text-dim)"></div>
         </div>
         <div class="form-group">
@@ -1995,6 +2056,25 @@
   </div>
 </div>
 
+<!-- MODAL: MAPEAR FLUXOS DA LISTA (quando o cliente não tem fluxo único do tipo pedido) -->
+<div class="modal-overlay" id="lista-map-modal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">Mapear fluxos para este cliente</div>
+      <button class="modal-close" onclick="closeModal('lista-map-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="capacity-hint" style="margin-bottom:14px">Alguns itens não têm um fluxo correspondente único neste cliente. Escolha qual fluxo usar em cada um — ou pule.</div>
+      <div id="lista-map-list"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('lista-map-modal')">Cancelar</button>
+      <div style="flex:1"></div>
+      <button class="btn btn-primary" onclick="withLoading(event, confirmListaFlowMapping)">Aplicar lista</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL: DUPLICAR LISTA -->
 <div class="modal-overlay" id="duplicar-lista-modal">
   <div class="modal modal-lg">
@@ -2082,7 +2162,7 @@
     <div class="modal-body">
       <!-- STEP 1: Flow picker -->
       <div class="persona-step" id="persona-step-1">
-        <div class="persona-step-title">Selecione o fluxo</div>
+        <div class="persona-step-title" id="persona-step-1-title">Selecione o fluxo</div>
         <div class="filter-input-wrap wizard-search" style="margin-bottom:20px">
           <i data-lucide="search" class="filter-input-icon ic-sm"></i>
           <input class="filter-input filter-input--with-icon" id="persona-flow-search" placeholder="Buscar" oninput="renderPersonaFlows()">
@@ -2096,7 +2176,7 @@
         </div>
         <div class="persona-flow-section">
           <div class="persona-flow-section-head">
-            <span class="persona-flow-section-title">Todos os fluxos</span>
+            <span class="persona-flow-section-title" id="persona-flows-all-title">Todos os fluxos</span>
             <span class="persona-flow-section-sep"></span>
           </div>
           <div class="wizard-card-grid" id="persona-flows-all"></div>
@@ -2405,7 +2485,7 @@
       </div>
       <div class="table-wrap table-scroll">
         <table>
-          <thead><tr><th>Tipo</th><th style="width:80px;text-align:center">Fluxos</th><th style="width:92px"></th></tr></thead>
+          <thead><tr><th>Tipo</th><th style="width:92px"></th></tr></thead>
           <tbody id="dtype-mng-body"></tbody>
         </table>
       </div>
@@ -2618,7 +2698,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260724a"></script>
+<script src="/js/app.js?v=20260726o"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

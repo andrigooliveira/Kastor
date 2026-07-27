@@ -75,7 +75,7 @@ const PAGE_TO_PATH = {
   dashboard:    '/dashboard',
   list:         '/demands',
   mine:         '/my-demands',
-  capacity:     '/capacity',
+  analytics:    '/analytics',
   agenda:       '/agenda',
   templates:    '/templates',
   recurring:    '/recurring',
@@ -101,6 +101,12 @@ function pageUrlFor(page)  {
     try { tab = localStorage.getItem('kastor-rec-tab') || 'demandas'; } catch {}
     return tab === 'listas' ? '/recurring/lists' : '/recurring/demands';
   }
+  // Análises tem 2 abas (capacidade/relatórios) — resolve pela aba persistida.
+  if (page === 'analytics') {
+    let tab = 'capacity';
+    try { tab = localStorage.getItem('kastor-an-tab') || 'capacity'; } catch {}
+    return tab === 'reports' ? '/analytics/reports' : '/analytics/capacity';
+  }
   return PAGE_TO_PATH[page] || '/dashboard';
 }
 function currentPageUrl()  { return pageUrlFor(currentPage); }
@@ -125,6 +131,15 @@ function parseRoute(path) {
     try { tab = localStorage.getItem('kastor-rec-tab') || 'demandas'; } catch {}
     return { page: 'recurring', tab };
   }
+  // Análises (Capacidade + Relatórios em abas). Bare usa a aba persistida; sub-rotas
+  // explícitas fixam a aba. /capacity e /reports antigos redirecionam pra cá (compat).
+  if (p === '/analytics') {
+    let tab = 'capacity';
+    try { tab = localStorage.getItem('kastor-an-tab') || 'capacity'; } catch {}
+    return { page: 'analytics', tab };
+  }
+  if (p === '/analytics/capacity' || p === '/capacity') return { page: 'analytics', tab: 'capacity' };
+  if (p === '/analytics/reports'  || p === '/reports')  return { page: 'analytics', tab: 'reports' };
   if (PATH_TO_PAGE[p]) return { page: PATH_TO_PAGE[p] };
   let m;
   if ((m = p.match(/^\/demands\/new$/)))                    return { page: 'list',         modal: 'demand',  op: 'new' };
@@ -209,6 +224,10 @@ function applyRoute() {
     if (r.page === 'recurring' && r.tab && typeof setRecurringTab === 'function') {
       setRecurringTab(r.tab);
     }
+    // 4b) Aplica tab da rota da página Análises (Capacidade/Relatórios)
+    if (r.page === 'analytics' && r.tab && typeof setAnalyticsTab === 'function') {
+      setAnalyticsTab(r.tab);
+    }
   } finally {
     _routerSilent = false;
   }
@@ -223,7 +242,8 @@ const FILTER_KEYS = {
   list:      { storage: 'kastor-filters-list',      ids: ['search-input','filter-workspace','filter-user','filter-project','filter-client','filter-period','filter-period-start','filter-period-end','filter-quick'] },
   dashboard: { storage: 'kastor-filters-dashboard', ids: ['dash-f-user','dash-f-client','dash-f-period','dash-f-type'] },
   capacity:  { storage: 'kastor-filters-capacity',  ids: ['capacity-period'] },
-  clients:   { storage: 'kastor-filters-clients',   ids: ['client-search','client-f-ws'] }
+  clients:   { storage: 'kastor-filters-clients',   ids: ['client-search','client-f-ws'] },
+  reports:   { storage: 'kastor-filters-reports',   ids: ['reports-ws','reports-client','reports-project','reports-period'] }
 };
 // Restore só roda na PRIMEIRA pintura após entrar na página. Renders subsequentes
 // (provocados por onchange de filtro) NÃO restauram — senão a tecla que o usuário
@@ -326,7 +346,7 @@ function qtyCell(d) {
 
 function priorityPill(v) {
   const p = PRIORITIES.find(x => x.value === v) || PRIORITIES[2];
-  return `<span class="pill" style="color:${p.color};background:${hexDim(p.color)};font-size:10px">${p.label}</span>`;
+  return `<span class="prio-pill" style="--prio:${p.color}"><span class="prio-dot"></span>${p.label}</span>`;
 }
 /* Ordena opções de um select alfabeticamente (preserva primeira opção como placeholder) */
 function sortSelectAlpha(sel) {
@@ -519,6 +539,46 @@ function todayStr() { return new Date().toISOString().slice(0,10); }
 function effDue(d)  { return d.stageDueDate || d.deadline || null; }
 function isLate(d)  { const due = effDue(d); return !!due && !isDone(d) && due < todayStr(); }
 function wasLate(d) { return isDone(d) && d.deadline && d.completedAt && d.completedAt.slice(0,10) > d.deadline; }
+/* Urgência de prazo: 'overdue' (vencida) | 'today' (vence hoje) | 'soon' (≤2 dias)
+   | 'none'. Demandas concluídas ou sem prazo nunca têm urgência. */
+function dueUrgency(d) {
+  const due = effDue(d);
+  if (!due || isDone(d)) return 'none';
+  const today = todayStr();
+  if (due < today) return 'overdue';
+  if (due === today) return 'today';
+  const days = Math.round((Date.parse(due.slice(0,10) + 'T00:00:00') - Date.parse(today + 'T00:00:00')) / 86400000);
+  return days <= 2 ? 'soon' : 'none';
+}
+/* Chip de prazo colorido por urgência (vencida=vermelho, hoje=laranja, breve=âmbar). */
+function deadlineCell(d) {
+  const due = effDue(d);
+  if (!due) return '<span class="due-chip">—</span>';
+  const u = dueUrgency(d);
+  const cls = u === 'overdue' ? 'due-overdue' : u === 'today' ? 'due-today' : u === 'soon' ? 'due-soon' : '';
+  const icon = u === 'overdue' ? ' <i data-lucide="alert-triangle" class="ic-xs"></i>'
+             : u === 'today'   ? ' <i data-lucide="clock" class="ic-xs"></i>' : '';
+  return `<span class="due-chip ${cls}">${fmtDate(due)}${icon}</span>`;
+}
+/* SLA operacional: idade na etapa atual → "há 3d" / "há 5h" / "há 20min".
+   null pra concluídas ou sem carimbo de entrada. */
+function timeInStage(d) {
+  if (!d.stageEnteredAt || isDone(d)) return null;
+  const ms = Date.now() - new Date(d.stageEnteredAt).getTime();
+  if (!(ms >= 0)) return null;
+  const mins = Math.floor(ms / 60000);
+  if (mins < 60) return `há ${Math.max(1, mins)}min`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `há ${hours}h`;
+  return `há ${Math.floor(hours / 24)}d`;
+}
+/* Chip "há Xd nesta etapa" — vermelho quando o prazo efetivo (stageDueDate||deadline)
+   já venceu. Usado no detalhe da demanda e no card do Kanban. */
+function stageAgeChip(d) {
+  const label = timeInStage(d);
+  if (!label) return '';
+  return `<span class="stage-age${isLate(d) ? ' is-late' : ''}" title="Tempo nesta etapa">${label}</span>`;
+}
 function demandType(d) { const f = flowById(d.flowId); return f ? (f.demandType || '') : ''; }
 
 // Cria uma versão debounced de fn — útil pra inputs de busca que rebuildam
@@ -936,6 +996,86 @@ function emptyState(title, sub, iconName, cta) {
   </div>`;
 }
 
+/* Mini empty state pra cantos pequenos (widgets, colunas, tabelas de modal) onde
+   a ilustração 200×150 do emptyState() seria grande demais. Ícone inline (sem
+   depender de paintIcons) + texto centrado e discreto. */
+function emptyMini(text) {
+  return `<div class="empty-mini">
+    <svg class="empty-mini-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13h3l2 3h6l2-3h3"/><path d="M5.4 6.7 4 13v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4l-1.4-6.3a1 1 0 0 0-1-.8H6.4a1 1 0 0 0-1 .8Z"/></svg>
+    <span>${esc(text)}</span>
+  </div>`;
+}
+
+/* ─── KPI TILES (reutilizável) ───
+   items = [{ label, value, sub?, tone?, icon? }]
+   tone: 'default'|'accent'|'danger'|'success'|'warn' — colore ícone + número. */
+function kpiTiles(items) {
+  return items.map(k => `
+    <div class="kpi-tile ${k.tone ? 'kpi-tile--' + k.tone : ''}">
+      ${k.icon ? `<div class="kpi-tile-icon"><i data-lucide="${k.icon}" class="ic-sm"></i></div>` : ''}
+      <div class="kpi-tile-body">
+        <div class="kpi-tile-value">${esc(String(k.value))}</div>
+        <div class="kpi-tile-label">${esc(k.label)}</div>
+        ${k.sub ? `<div class="kpi-tile-sub">${esc(k.sub)}</div>` : ''}
+      </div>
+    </div>`).join('');
+}
+
+/* ─── DONUT SVG (reutilizável) ───
+   segments = [{ value, color, label }]; opts = { size, thickness, centerValue, centerSub }.
+   Arcos via stroke-dasharray; o grupo é rotacionado -90° pra começar no topo,
+   mantendo o texto central na horizontal. */
+function donutSVG(segments, opts = {}) {
+  const size = opts.size || 128;
+  const thick = opts.thickness || 15;
+  const r = (size - thick) / 2;
+  const cx = size / 2, cy = size / 2;
+  const C = 2 * Math.PI * r;
+  const total = segments.reduce((s, x) => s + (x.value || 0), 0);
+  let acc = 0;
+  const arcs = total > 0 ? segments.filter(s => s.value > 0).map(s => {
+    const frac = s.value / total;
+    const len = frac * C;
+    const off = -acc * C;
+    acc += frac;
+    return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${s.color}" stroke-width="${thick}" stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}" stroke-dashoffset="${off.toFixed(2)}"/>`;
+  }).join('') : '';
+  const track = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--hairline)" stroke-width="${thick}"/>`;
+  const hasSub = !!opts.centerSub;
+  // Com sublabel, sobe o número e desce o label pra abrir espaço entre os dois,
+  // mantendo o par centrado no anel.
+  const valY = hasSub ? cy - 9 : cy;
+  const center = (opts.centerValue !== undefined)
+    ? `<text x="${cx}" y="${valY}" text-anchor="middle" dominant-baseline="central" class="donut-center-value">${esc(String(opts.centerValue))}</text>
+       ${hasSub ? `<text x="${cx}" y="${cy + 17}" text-anchor="middle" class="donut-center-sub">${esc(opts.centerSub)}</text>` : ''}`
+    : '';
+  return `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" class="donut-svg">
+    <g transform="rotate(-90 ${cx} ${cy})">${track}${arcs}</g>
+    ${center}
+  </svg>`;
+}
+
+/* Preenche uma faixa de KPI tiles no detalhe de Cliente/Projeto a partir das
+   demandas dos projectIds informados (em aberto / atrasadas / vencem em breve /
+   entregues no mês). Reutilizado pelos dois detalhes. */
+function renderDetailKpis(elId, projectIds) {
+  const el = $(elId); if (!el) return;
+  const ids = new Set(projectIds);
+  const ds = (demands || []).filter(d => !d.deletedAt && ids.has(d.projectId));
+  const open = ds.filter(d => !isDone(d));
+  const late = open.filter(isLate);
+  const soon = open.filter(d => { const u = dueUrgency(d); return u === 'today' || u === 'soon'; });
+  const ymNow = new Date().toISOString().slice(0, 7);
+  const doneMonth = ds.filter(d => d.completedAt && d.completedAt.slice(0, 7) === ymNow);
+  el.innerHTML = kpiTiles([
+    { label: 'Em aberto', value: open.length, icon: 'layers', tone: 'accent' },
+    { label: 'Atrasadas', value: late.length, icon: 'alert-triangle', tone: late.length ? 'danger' : 'default' },
+    { label: 'Vencem em breve', value: soon.length, icon: 'clock', tone: soon.length ? 'warn' : 'default', sub: 'próx. 2 dias' },
+    { label: 'Entregues no mês', value: doneMonth.length, icon: 'check-circle-2', tone: 'success' },
+  ]);
+  paintIcons();
+}
+
 // ─── SKELETONS ───
 function skeletonMetrics(n = 4) {
   return Array.from({length: n}, () => `
@@ -1126,15 +1266,26 @@ function _celebrateIfCompleted(newStage, ev) {
   spawnConfetti(x, y);
 }
 
+const TOAST_ICONS = {
+  error: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg>',
+  warn:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>',
+  info:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>',
+};
 function toast(msg, type = 'success', action = null) {
   const t = document.createElement('div');
   t.className = 'toast toast-' + type;
   // Success ganha o disco com checkmark que se desenha (SVG path com dasharray).
+  // Os demais tipos ganham um ícone estático colorido conforme a severidade.
   if (type === 'success') {
     const check = document.createElement('span');
     check.className = 'toast-check';
     check.innerHTML = '<svg viewBox="0 0 24 24"><path d="M5 12 L10 17 L19 7"/></svg>';
     t.appendChild(check);
+  } else if (TOAST_ICONS[type]) {
+    const ic = document.createElement('span');
+    ic.className = 'toast-icon toast-icon-' + type;
+    ic.innerHTML = TOAST_ICONS[type];
+    t.appendChild(ic);
   }
   const msgEl = document.createElement('span');
   msgEl.className = 'toast-msg';
@@ -1201,7 +1352,7 @@ function initKeyboardShortcuts() {
     else if (k === 'n') { e.preventDefault(); if (typeof openNewDemand === 'function') openNewDemand(); }
     else if (k === 'g') { _gPressed = true; setTimeout(() => { _gPressed = false; }, 800); }
     else if (_gPressed) {
-      const go = { d: 'dashboard', l: 'list', m: 'mine', c: 'capacity', p: 'projects' }[k];
+      const go = { d: 'dashboard', l: 'list', m: 'mine', c: 'analytics', p: 'projects' }[k];
       if (go) { e.preventDefault(); _gPressed = false; goPage(go); }
     }
   });
@@ -1283,7 +1434,8 @@ function cmdkActions() {
     { icon: 'gauge',        label: 'Ir para Dashboard',             kind: 'Navegar',  run: () => goPage('dashboard') },
     { icon: 'list',         label: 'Ir para Demandas',              kind: 'Navegar',  run: () => goPage('list') },
     { icon: 'user',         label: 'Ir para Minhas Demandas',       kind: 'Navegar',  run: () => goPage('mine') },
-    { icon: 'bar-chart-3',  label: 'Ir para Capacidade',            kind: 'Navegar',  run: () => goPage('capacity') },
+    { icon: 'bar-chart-3',  label: 'Ir para Análises · Capacidade', kind: 'Navegar',  run: () => { goPage('analytics'); setTimeout(() => typeof setAnalyticsTab === 'function' && setAnalyticsTab('capacity'), 30); } },
+    { icon: 'timer',        label: 'Ir para Análises · Relatórios',  kind: 'Navegar',  run: () => { goPage('analytics'); setTimeout(() => typeof setAnalyticsTab === 'function' && setAnalyticsTab('reports'), 30); } },
     { icon: 'calendar',     label: 'Ir para Agenda',                kind: 'Navegar',  run: () => goPage('agenda') },
     { icon: 'calendar',     label: 'Ir para Calendário (Demandas)', kind: 'Navegar',  run: () => { goPage('list'); setTimeout(() => typeof setListView === 'function' && setListView('calendar'), 50); } },
     { icon: 'kanban',       label: 'Ir para Kanban (Demandas)',     kind: 'Navegar',  run: () => { goPage('list'); setTimeout(() => typeof setListView === 'function' && setListView('kanban'), 50); } },
@@ -2525,6 +2677,24 @@ function toggleTheme() {
 // Aplica o tema o mais cedo possível — antes do app render — para evitar flash
 applyTheme(localStorage.getItem('kastor-theme') || 'dark');
 
+/* ─── Densidade de tabela (Compacta ↔ Confortável) ───
+   Classe global no body; CSS reduz o padding de th/td. Persiste em localStorage. */
+function applyDensity(mode) {
+  const compact = mode === 'compact';
+  document.body.classList.toggle('density-compact', compact);
+  const btn = document.getElementById('density-toggle-btn');
+  if (btn) {
+    btn.classList.toggle('active', compact);
+    btn.title = compact ? 'Densidade: compacta (clique p/ confortável)' : 'Densidade: confortável (clique p/ compacta)';
+  }
+}
+function toggleDensity() {
+  const next = document.body.classList.contains('density-compact') ? 'comfortable' : 'compact';
+  localStorage.setItem('kastor-density', next);
+  applyDensity(next);
+}
+applyDensity(localStorage.getItem('kastor-density') || 'comfortable');
+
 async function boot() {
   // Estado do collapse da sidebar aplicado ANTES do render pra evitar flash.
   applySidebarCollapseInit();
@@ -2691,6 +2861,7 @@ function switchWorkspace(id) {
   activeWs = id;
   localStorage.setItem('fluxo_ws', id);
   dashUserInit = false; // re-aplica filtro padrão do usuário no novo workspace
+  _markFiltersDirty('list'); // faz o filtro de Workspace da aba Demandas seguir o atual
   // Fecha o dropdown do switcher
   const cdrop = $('ws-cdrop');
   if (cdrop) cdrop.classList.remove('open');
@@ -2735,7 +2906,7 @@ const PAGE_TITLES = {
   dashboard: 'Dashboard', list: 'Demandas', mine: 'Minhas Demandas',
   clients: 'Clientes', projects: 'Projetos', flows: 'Fluxos de Demanda',
   workspaces: 'Workspaces', users: 'Usuários', profile: 'Meu Perfil',
-  capacity: 'Capacidade', templates: 'Templates', integrations: 'Integrações', agenda: 'Agenda',
+  analytics: 'Análises', templates: 'Templates', integrations: 'Integrações', agenda: 'Agenda',
   recurring: 'Listas de tarefas', docs: 'Documentação', clientsModels: 'Modelos de Cliente',
   trash: 'Lixeira', recurringDemands: 'Demandas Recorrentes'
 };
@@ -2775,7 +2946,7 @@ function renderCurrent() {
     case 'dashboard':  renderDashboard(); break;
     case 'list':       renderList(); renderCalendar('all'); break;
     case 'mine':       renderMine(); renderCalendar('mine'); break;
-    case 'capacity':   renderCapacity(); break;
+    case 'analytics':  renderAnalytics(); break;
     case 'agenda':     renderAgenda(); break;
     case 'templates':  renderTemplates(); break;
     case 'recurring':  renderRecurring(); break;
@@ -3086,6 +3257,7 @@ function renderDashboard() {
   renderDashOverdue(wsAll);
   renderDashRadar();
   renderDashTopOwners(list);
+  renderDashPriorityDonut(list);
   renderDashChart(list);
   renderHoursBoard(list);
   saveFilters('dashboard');
@@ -3336,7 +3508,7 @@ function renderDashTopOwners(list) {
     .slice(0, 6);
 
   if (!rows.length) {
-    el.innerHTML = `<div class="dash-empty-inline">Nenhuma entrega no mês.</div>`;
+    el.innerHTML = emptyMini('Nenhuma entrega no mês.');
     return;
   }
   const max = Math.max(...rows.map(r => r.n));
@@ -3348,6 +3520,31 @@ function renderDashTopOwners(list) {
       <div class="dash-top-value">${r.n}</div>
     </div>`;
   }).join('');
+}
+
+/* Donut de distribuição das demandas EM ABERTO por prioridade (respeita filtros). */
+function renderDashPriorityDonut(list) {
+  const el = $('dash-prio-donut'); if (!el) return;
+  const sub = $('dash-prio-sub');
+  const open = list.filter(d => !isDone(d));
+  const total = open.length;
+  const segments = PRIORITIES.map(p => ({
+    value: open.filter(d => (d.priority || 3) === p.value).length,
+    color: p.color, label: p.label
+  }));
+  if (sub) sub.textContent = `${total} demanda${total === 1 ? '' : 's'} em aberto no filtro`;
+  if (!total) { el.innerHTML = emptyMini('Nenhuma demanda em aberto.'); return; }
+  const legend = segments.filter(s => s.value > 0).map(s => `
+    <div class="donut-legend-row">
+      <span class="donut-legend-dot" style="background:${s.color}"></span>
+      <span class="donut-legend-label">${esc(s.label)}</span>
+      <span class="donut-legend-value">${s.value}</span>
+      <span class="donut-legend-pct">${Math.round(s.value / total * 100)}%</span>
+    </div>`).join('');
+  el.innerHTML = `<div class="donut-widget">
+    <div class="donut-chart">${donutSVG(segments, { centerValue: total, centerSub: 'abertas' })}</div>
+    <div class="donut-legend">${legend}</div>
+  </div>`;
 }
 
 /* Anima cada .metric-value de 0 até o número final usando easing.
@@ -3918,7 +4115,12 @@ function listFilteredDemands() {
 function renderList() {
   // Aplica filtros salvos da sessão anterior ANTES de capturar o valor atual
   // (o rebuild dos options abaixo respeita o value setado aqui via prevUser).
+  const firstEnter = !_filtersRestored['list'];
   restoreFilters('list');
+  // Ao ENTRAR na aba Demandas, o filtro de Workspace já vem travado no workspace
+  // atual (activeWs). Mudanças manuais durante a sessão são respeitadas (re-render
+  // por onchange não é "primeira entrada"); ao voltar pra aba, reflete o atual.
+  if (firstEnter && activeWs) $('filter-workspace').value = activeWs;
   // Populações cross-workspace — todas as opções acessíveis pro usuário.
   const accessibleWs = (workspaces || [])
     .filter(w => me.isAdmin || (me.workspaces || []).includes(w.id))
@@ -3946,23 +4148,27 @@ function renderList() {
     userOpts.map(u => `<option value="${esc(u.id)}" ${u.id === effectiveUser ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
   if (!userStillValid) $('filter-user').value = '';
 
-  // Projetos acessíveis (recorte de workspace se filtro estiver ativo).
-  const accProjects = (projects || [])
-    .filter(p => (me.isAdmin || (me.workspaces || []).includes(p.workspaceId)) && wsInScope(p.workspaceId))
-    .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-  const prevProj = $('filter-project').value;
-  const projStillValid = !prevProj || accProjects.some(p => p.id === prevProj);
-  fillSelect($('filter-project'), accProjects.map(p => ({ value: p.id, label: p.name })), projStillValid ? prevProj : '', 'Projeto');
-  if (!projStillValid) $('filter-project').value = '';
-
-  // Clientes acessíveis (ativos, com recorte de workspace).
+  // Clientes acessíveis (ativos, com recorte de workspace). Populado ANTES dos
+  // projetos porque o cliente escolhido recorta a lista de projetos (cross-filter).
   const accClients = (clients || [])
     .filter(c => c.active !== false && (me.isAdmin || (me.workspaces || []).includes(c.workspaceId)) && wsInScope(c.workspaceId))
     .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
   const prevClient = $('filter-client').value;
   const clientStillValid = !prevClient || accClients.some(c => c.id === prevClient);
-  fillSelect($('filter-client'), accClients.map(c => ({ value: c.id, label: c.name })), clientStillValid ? prevClient : '', 'Cliente');
+  const effectiveClient = clientStillValid ? prevClient : '';
+  fillSelect($('filter-client'), accClients.map(c => ({ value: c.id, label: c.name })), effectiveClient, 'Cliente');
   if (!clientStillValid) $('filter-client').value = '';
+
+  // Projetos acessíveis (recorte de workspace + CROSS-FILTER pelo cliente escolhido:
+  // com um cliente selecionado, só aparecem os projetos DELE).
+  const accProjects = (projects || [])
+    .filter(p => (me.isAdmin || (me.workspaces || []).includes(p.workspaceId)) && wsInScope(p.workspaceId)
+      && (!effectiveClient || p.clientId === effectiveClient))
+    .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  const prevProj = $('filter-project').value;
+  const projStillValid = !prevProj || accProjects.some(p => p.id === prevProj);
+  fillSelect($('filter-project'), accProjects.map(p => ({ value: p.id, label: p.name })), projStillValid ? prevProj : '', 'Projeto');
+  if (!projStillValid) $('filter-project').value = '';
 
   // Workspace com dots coloridos.
   const wsDotMap = {};
@@ -4019,7 +4225,6 @@ function renderList() {
     const wsCell = ws
       ? `<span class="pill" style="color:${ws.color || '#7A00FF'};background:${hexDim(ws.color)}"><span class="pill-dot" style="background:${ws.color || '#7A00FF'}"></span>${esc(ws.name)}</span>`
       : '<span class="pill pill-muted">—</span>';
-    const due = effDue(d);
     const sel = selectedDemandIds.has(d.id);
     return `<tr class="demand-row ${sel ? 'selected' : ''}" data-demand-id="${d.id}" onclick="onDemandRowClick(event, '${d.id}')">
       <td class="col-bulk-check"><input type="checkbox" class="bulk-check-row" ${sel ? 'checked' : ''} onclick="event.stopPropagation();toggleDemandSelection('${d.id}', this.checked)"></td>
@@ -4030,12 +4235,13 @@ function renderList() {
       <td>${esc(demandType(d) || '—')}</td>
       <td>${statusPill(d)}</td>
       <td>${cellUser(userById(d.ownerId))}</td>
-      <td class="${isLate(d) ? 'deadline-late' : ''}">${fmtDate(due)}${isLate(d) ? ' <i data-lucide="alert-triangle" class="ic-sm"></i>' : ''}</td>
+      <td>${deadlineCell(d)}</td>
       <td>${priorityPill(d.priority)}</td>
       <td>${qtyCell(d)}</td>
       <td>${d.completedAt ? fmtDate(d.completedAt) : '—'}</td>
     </tr>`;
   }).join('');
+  paintIcons(); // ícones de urgência de prazo (alert-triangle / clock) nas linhas
   if (listView === 'kanban') renderKanban();
   if (listView === 'cal') renderCalendar('all');
   refreshBulkBar();
@@ -4063,66 +4269,124 @@ function kanbanSort(a, b) {
   if (kb !== null) return 1;
   return (a.priority || 3) - (b.priority || 3);
 }
+/* ── KANBAN: modo ──
+   'attention' (padrão) = colunas por urgência de prazo, independentes de fluxo/etapa
+   — resolve o problema de dezenas de colunas duplicadas quando há muitos fluxos.
+   'stage' = board por etapa (mescla etapas homônimas entre fluxos). */
+let kanbanMode = localStorage.getItem('kastor-kanban-mode') || 'attention';
+const ATTENTION_BUCKETS = [
+  { key: 'overdue', label: 'Atrasadas',       color: '#EF5050', hint: 'prazo vencido' },
+  { key: 'today',   label: 'Vencem hoje',     color: '#FB7415', hint: 'prazo é hoje' },
+  { key: 'week',    label: 'Próximos 7 dias', color: '#F5A718', hint: 'vencem na semana' },
+  { key: 'later',   label: 'Mais pra frente', color: '#64748B', hint: 'prazo distante' },
+  { key: 'nodue',   label: 'Sem prazo',       color: '#94A3B8', hint: 'sem deadline definido' },
+];
+function attentionBucketOf(d) {
+  const due = effDue(d);
+  if (!due) return 'nodue';
+  const today = todayStr();
+  if (due < today) return 'overdue';
+  if (due === today) return 'today';
+  const days = Math.round((Date.parse(due.slice(0, 10) + 'T00:00:00') - Date.parse(today + 'T00:00:00')) / 86400000);
+  return days <= 7 ? 'week' : 'later';
+}
+function setKanbanMode(m) {
+  kanbanMode = (m === 'stage') ? 'stage' : 'attention';
+  localStorage.setItem('kastor-kanban-mode', kanbanMode);
+  renderKanban();
+}
+function syncKanbanModeToggle() {
+  document.querySelectorAll('.kanban-mode-toggle .client-status-btn[data-kmode]')
+    .forEach(b => b.classList.toggle('active', b.dataset.kmode === kanbanMode));
+  const hint = $('kanban-mode-hint');
+  if (hint) hint.textContent = kanbanMode === 'attention'
+    ? 'Cards organizados por urgência de prazo — não por etapa. Clique pra abrir e avançar.'
+    : 'Colunas = etapas (mescladas entre fluxos). Melhor com um cliente/projeto no filtro.';
+}
+/* Board de atenção: colunas = buckets de urgência. Só demandas em aberto (o que
+   precisa de ação). Ordena por prazo asc e prioridade. Sem drag — a posição vem
+   do prazo; pra mudar, abre a demanda. */
+function renderKanbanAttention(board) {
+  const list = listFilteredDemands().filter(d => !isDone(d));
+  const byBucket = new Map(ATTENTION_BUCKETS.map(b => [b.key, []]));
+  for (const d of list) { const k = attentionBucketOf(d); if (byBucket.has(k)) byBucket.get(k).push(d); }
+  const sortFn = (a, b) => {
+    const da = effDue(a) || '9999-99-99', db = effDue(b) || '9999-99-99';
+    if (da !== db) return da < db ? -1 : 1;
+    return (a.priority || 3) - (b.priority || 3);
+  };
+  board.innerHTML = ATTENTION_BUCKETS.map(b => {
+    const items = byBucket.get(b.key).sort(sortFn);
+    return `<div class="kanban-column kanban-col--attention">
+      <div class="kanban-column-head" style="border-top-color:${b.color}">
+        <span class="pill-dot" style="background:${b.color}"></span>
+        <span class="kanban-column-title">${esc(b.label)}</span>
+        <span class="kanban-column-count">${items.length}</span>
+      </div>
+      <div class="kanban-column-body">
+        ${items.length ? items.map(d => kanbanCard(d)).join('') : `<div class="kanban-column-empty">${b.key === 'overdue' ? 'Nada atrasado 🎉' : 'Vazio'}</div>`}
+      </div>
+    </div>`;
+  }).join('');
+  // Sem drag no modo atenção — a coluna é derivada do prazo.
+  board.querySelectorAll('.kanban-card').forEach(c => c.setAttribute('draggable', 'false'));
+  paintIcons();
+}
+
+/* ── Modo "Etapas" = bandas de progresso (name-independent) ──
+   Mapeia CADA etapa por ESTRUTURA, não por nome: a flag `done` define "Concluído"
+   e a POSIÇÃO relativa da etapa no fluxo define as 3 bandas ativas. Assim funciona
+   pra qualquer nome de etapa, em qualquer fluxo, sem configuração nem adivinhação. */
+const STAGE_BANDS = [
+  { key: 'start', label: 'Início',       color: '#64748B' }, // slate
+  { key: 'mid',   label: 'Em andamento', color: '#3B82F6' }, // azul
+  { key: 'final', label: 'Reta final',   color: '#7A00FF' }, // roxo accent
+  { key: 'done',  label: 'Concluído',    color: '#12B886' }, // verde
+];
+function stageBandOf(d) {
+  const flow = flowById(d.flowId);
+  if (!flow || !Array.isArray(flow.stages) || !flow.stages.length) return isDone(d) ? 'done' : 'mid';
+  const cur = flow.stages.find(s => s.id === d.status);
+  if (!cur) return isDone(d) ? 'done' : 'mid';
+  if (cur.done) return 'done';
+  // Entre as etapas ATIVAS (não-done), banda pela posição relativa: início / meio / fim.
+  const active = flow.stages.filter(s => !s.done);
+  const A = active.length;
+  const j = active.findIndex(s => s.id === cur.id);
+  if (A <= 1 || j < 0) return 'mid';
+  const idx = Math.min(2, Math.floor((j / A) * 3)); // 0=start 1=mid 2=final
+  return ['start', 'mid', 'final'][idx];
+}
+/* Board por bandas de progresso — sempre 4 colunas, independente do nº de fluxos.
+   O card mostra a etapa real (subtítulo). Sem drag: a banda vem da posição da etapa;
+   pra avançar de verdade, abre a demanda (mudança de etapa com toda a lógica). */
+function renderKanbanBands(board) {
+  const list = listFilteredDemands().slice().sort(kanbanSort);
+  const byBand = new Map(STAGE_BANDS.map(b => [b.key, []]));
+  for (const d of list) { const k = stageBandOf(d); if (byBand.has(k)) byBand.get(k).push(d); }
+  board.innerHTML = STAGE_BANDS.map(b => {
+    const items = byBand.get(b.key);
+    return `<div class="kanban-column kanban-col--band">
+      <div class="kanban-column-head" style="border-top-color:${b.color}">
+        <span class="pill-dot" style="background:${b.color}"></span>
+        <span class="kanban-column-title">${esc(b.label)}</span>
+        <span class="kanban-column-count">${items.length}</span>
+      </div>
+      <div class="kanban-column-body">
+        ${items.length ? items.map(d => kanbanCard(d)).join('') : '<div class="kanban-column-empty">Vazio</div>'}
+      </div>
+    </div>`;
+  }).join('');
+  board.querySelectorAll('.kanban-card').forEach(c => c.setAttribute('draggable', 'false'));
+  paintIcons();
+}
+
 function renderKanban() {
   const board = $('kanban-board');
   if (!board) return;
-  const flowFilter = $('filter-flow')?.value || '';
-  const list = listFilteredDemands().slice().sort(kanbanSort);
-
-  let columns;
-  if (flowFilter) {
-    // Modo "fluxo único": colunas = etapas do fluxo na ordem em que estão definidas
-    const flow = flowById(flowFilter);
-    if (!flow) {
-      board.innerHTML = `<div class="kanban-empty">${emptyState('Fluxo não encontrado', 'O fluxo selecionado não está mais disponível.', 'flow')}</div>`;
-      paintIcons();
-      return;
-    }
-    columns = flow.stages.map((s, i) => ({
-      label: s.label,
-      color: s.color || '#7A00FF',
-      done: !!s.done,
-      position: i,
-      items: list.filter(d => d.flowId === flow.id && d.status === s.id)
-    }));
-  } else {
-    // Modo "todos os fluxos": agrupa por rótulo, mesclando etapas homônimas entre fluxos
-    const cols = new Map();
-    let order = 0;
-    for (const f of wsFlows()) {
-      for (const s of f.stages) {
-        if (!cols.has(s.label)) {
-          cols.set(s.label, { label: s.label, color: s.color || '#7A00FF', done: !!s.done, position: order++, items: [] });
-        }
-      }
-    }
-    for (const d of list) {
-      const f = flowById(d.flowId); if (!f) continue;
-      const s = f.stages.find(x => x.id === d.status); if (!s) continue;
-      const col = cols.get(s.label);
-      if (col) col.items.push(d);
-    }
-    columns = [...cols.values()].sort((a, b) => a.position - b.position);
-  }
-  if (!columns.length) {
-    board.innerHTML = `<div class="kanban-empty">${emptyState('Nenhum fluxo configurado', 'Crie um fluxo de demanda para visualizar o kanban.', 'kanban')}</div>`;
-    paintIcons();
-    return;
-  }
-  board.innerHTML = columns.map(col => `
-    <div class="kanban-column">
-      <div class="kanban-column-head" style="border-top-color:${col.color}">
-        <span class="pill-dot" style="background:${col.color}"></span>
-        <span class="kanban-column-title">${esc(col.label)}</span>
-        <span class="kanban-column-count">${col.items.length}</span>
-      </div>
-      <div class="kanban-column-body" data-stage-label="${esc(col.label)}">
-        ${col.items.length ? col.items.map(d => kanbanCard(d)).join('') : '<div class="kanban-column-empty">Sem demandas</div>'}
-      </div>
-    </div>
-  `).join('');
-  setupKanbanDragDrop();
-  paintIcons();
+  syncKanbanModeToggle();
+  if (kanbanMode === 'attention') return renderKanbanAttention(board);
+  return renderKanbanBands(board);
 }
 
 /* Conjunto ordenado de usuários envolvidos com uma demanda: owner primeiro,
@@ -4174,7 +4438,7 @@ function kanbanCard(d) {
     : '';
   return `
     <div class="kanban-card" draggable="true" data-demand-id="${d.id}" onclick="showDetail('${d.id}')">
-      <div class="kanban-card-top">${priorityPill(d.priority)}</div>
+      <div class="kanban-card-top">${priorityPill(d.priority)}${statusPill(d)}${stageAgeChip(d)}</div>
       <div class="kanban-card-name">${esc(d.name)}</div>
       <div class="kanban-card-meta">${esc(p?.name || '—')}${p?.client ? ` · ${esc(p.client)}` : ''}</div>
       <div class="kanban-card-foot">
@@ -4485,10 +4749,11 @@ function renderMine() {
       <td>${esc(p?.name || '—')}</td>
       <td>${statusPill(d)}</td>
       <td>${qtyCell(d)}</td>
-      <td class="${isLate(d) ? 'deadline-late' : ''}">${fmtDate(effDue(d))}</td>
+      <td>${deadlineCell(d)}</td>
     </tr>`;
   }).join('')
     : `<tr><td colspan="7">${emptyState('Nenhuma demanda encontrada', 'Você não tem demandas neste filtro.', 'inbox')}</td></tr>`;
+  paintIcons(); // ícones de urgência de prazo
   // Calendário e Agenda embed ficam sempre visíveis abaixo da tabela em
   // "Minhas Demandas". Re-render junto pra refletir mudanças imediato.
   if ($('cal-mine-body')) renderCalendar('mine');
@@ -4512,6 +4777,242 @@ let capacityView = 'team'; // 'team' | 'project' | 'client'
 function setCapacityView(v) {
   capacityView = v;
   renderCapacity();
+}
+
+/* ─── RELATÓRIOS / SLA ───
+   Consome /api/reports/sla (tempo médio por etapa, lead time, pontualidade,
+   retrabalho, mais lentas). O backend já calcula tudo a partir do stageHistory de
+   cada demanda — aqui é só apresentação. Filtra por workspace ativo + período. */
+
+// Humaniza horas em "Xd Yh" / "Yh" / "Zmin". Lead times chegam a centenas de horas,
+// então 168h vira "7d"; abaixo de 1h mostra minutos.
+function fmtDur(hours) {
+  const h = Number(hours) || 0;
+  if (h <= 0) return '—';
+  if (h < 1) return Math.max(1, Math.round(h * 60)) + 'min';
+  if (h < 24) { const v = Math.round(h * 10) / 10; return (Number.isInteger(v) ? v : v.toFixed(1).replace('.', ',')) + 'h'; }
+  const days = Math.floor(h / 24);
+  const rem = Math.round(h - days * 24);
+  return rem ? `${days}d ${rem}h` : `${days}d`;
+}
+
+let _reportsReqSeq = 0; // descarta respostas obsoletas (troca rápida de período)
+
+// Popula os selects Workspace/Cliente/Projeto em cascata (cada um recorta o
+// seguinte), espelhando o cross-filter de Demandas. Na primeira entrada, trava o
+// Workspace no atual (activeWs). Reaproveita o auto-cdrop (não precisa applyFilterDropdown).
+function populateReportFilters(firstEnter) {
+  const wsSel = $('reports-ws'), cSel = $('reports-client'), pSel = $('reports-project');
+  if (!wsSel || !cSel || !pSel) return;
+
+  const accessibleWs = (workspaces || []).filter(w => me.isAdmin || (me.workspaces || []).includes(w.id));
+  let wsPrev = wsSel.value;
+  if (firstEnter && !wsPrev && activeWs) wsPrev = activeWs; // default: workspace atual
+  fillSelect(wsSel, accessibleWs.map(w => ({ value: w.id, label: w.name })), wsPrev, 'Todos os workspaces');
+  const wsPick = wsSel.value;
+  const wsInScope = id => !wsPick || id === wsPick;
+
+  const accClients = (clients || []).filter(c => c.active !== false
+    && (me.isAdmin || (me.workspaces || []).includes(c.workspaceId)) && wsInScope(c.workspaceId));
+  const cPrev = cSel.value;
+  const cValid = !cPrev || accClients.some(c => c.id === cPrev);
+  fillSelect(cSel, accClients.map(c => ({ value: c.id, label: c.name })), cValid ? cPrev : '', 'Todos os clientes');
+  const clientPick = cSel.value;
+
+  const accProjects = (projects || []).filter(p => (me.isAdmin || (me.workspaces || []).includes(p.workspaceId))
+    && wsInScope(p.workspaceId) && (!clientPick || p.clientId === clientPick));
+  const pPrev = pSel.value;
+  const pValid = !pPrev || accProjects.some(p => p.id === pPrev);
+  fillSelect(pSel, accProjects.map(p => ({ value: p.id, label: p.name })), pValid ? pPrev : '', 'Todos os projetos');
+}
+
+function clearReportFilters() {
+  ['reports-ws', 'reports-client', 'reports-project'].forEach(id => { const el = $(id); if (el) el.value = ''; });
+  const per = $('reports-period'); if (per) per.value = '90';
+  renderReports();
+}
+
+async function renderReports() {
+  const host = $('reports-body');
+  if (!host) return;
+  const firstEnter = !_filtersRestored['reports'];
+  restoreFilters('reports');
+  populateReportFilters(firstEnter);
+  const period = ($('reports-period') && $('reports-period').value) || '90';
+  const wsPick     = ($('reports-ws') && $('reports-ws').value) || '';
+  const clientPick = ($('reports-client') && $('reports-client').value) || '';
+  const projPick   = ($('reports-project') && $('reports-project').value) || '';
+  saveFilters('reports');
+
+  const seq = ++_reportsReqSeq;
+  host.innerHTML = '<div class="rep-loading">Carregando métricas…</div>';
+
+  let data;
+  try {
+    const qs = new URLSearchParams({ period });
+    if (wsPick)     qs.set('workspaceId', wsPick);
+    if (clientPick) qs.set('clientId', clientPick);
+    if (projPick)   qs.set('projectId', projPick);
+    data = await api('/reports/sla?' + qs.toString());
+  } catch (err) {
+    if (seq !== _reportsReqSeq || currentPage !== 'analytics' || _anTab !== 'reports') return;
+    host.innerHTML = `<div class="rep-error">${esc(err.message || 'Erro ao carregar métricas.')}</div>`;
+    return;
+  }
+  if (seq !== _reportsReqSeq || currentPage !== 'analytics' || _anTab !== 'reports') return; // resposta obsoleta — usuário já saiu/trocou
+
+  host.innerHTML = buildReportsHTML(data);
+  paintIcons();
+}
+
+function buildReportsHTML(data) {
+  const t = data.totals || {};
+
+  const kpis = kpiTiles([
+    { label: 'Lead time médio', value: t.completedCount ? fmtDur(t.avgTotalHours) : '—',
+      sub: 'criação → conclusão', tone: 'accent', icon: 'clock' },
+    { label: 'Pontualidade', value: t.completedCount ? Math.round(t.punctualityRate) + '%' : '—',
+      sub: 'concluídas no prazo',
+      tone: (t.punctualityRate >= 80 ? 'success' : (t.punctualityRate >= 50 ? 'warn' : 'danger')), icon: 'check-circle' },
+    { label: 'Retrabalho', value: t.demandsTotal ? Math.round(t.reworkRate) + '%' : '—',
+      sub: `${t.reworkedCount || 0} voltaram de etapa`,
+      tone: (t.reworkRate > 25 ? 'danger' : 'default'), icon: 'rotate-ccw' },
+    { label: 'Concluídas', value: String(t.completedCount || 0),
+      sub: `de ${t.demandsTotal || 0} no período`, tone: 'default', icon: 'check-check' },
+  ]);
+
+  // ── Tempo médio por etapa (gargalos) — já vem ordenado desc pelo server ──
+  const stages = (data.stageStats || []).filter(s => s.samples > 0);
+  const maxStage = stages.length ? stages[0].avgHours : 0;
+  const stageBars = stages.length ? stages.map((s, i) => {
+    const pct = maxStage ? Math.max(3, (s.avgHours / maxStage) * 100) : 0;
+    return `<div class="rep-bar-row">
+      <div class="rep-bar-head">
+        <span class="rep-bar-name">${esc(s.stageName)}${i === 0 ? '<span class="rep-tag">gargalo</span>' : ''}</span>
+        <span class="rep-bar-val">${fmtDur(s.avgHours)}</span>
+      </div>
+      <div class="rep-bar-track"><div class="rep-bar-fill" style="width:${pct}%;background:${s.stageColor || 'var(--accent)'}"></div></div>
+      <div class="rep-bar-sub">${esc(s.flowName || '—')} · ${s.samples} ${s.samples === 1 ? 'passagem' : 'passagens'}</div>
+    </div>`;
+  }).join('') : emptyMini('Sem histórico de etapas no período.');
+
+  // ── Demandas mais lentas (criação → conclusão) ──
+  const slowest = data.slowest || [];
+  const slowRows = slowest.length ? slowest.map(d => `
+    <button type="button" class="rep-slow-row" onclick="showDetail('${esc(d.id)}')">
+      <span class="rep-slow-name">${esc(d.name)}</span>
+      <span class="rep-slow-proj">${esc(d.projectName || '—')}</span>
+      <span class="rep-slow-dur">${fmtDur(d.hours)}</span>
+    </button>`).join('') : emptyMini('Nenhuma demanda concluída no período.');
+
+  // ── Tempo médio por tipo de demanda ──
+  const types = data.typeStats || [];
+  const maxType = types.length ? Math.max(...types.map(x => x.avgHours)) : 0;
+  const typeRows = types.length ? types.map(x => {
+    const pct = maxType ? Math.max(3, (x.avgHours / maxType) * 100) : 0;
+    return `<div class="rep-bar-row">
+      <div class="rep-bar-head">
+        <span class="rep-bar-name">${esc(x.type)} <span class="rep-muted">· ${x.count}</span></span>
+        <span class="rep-bar-val">${fmtDur(x.avgHours)}</span>
+      </div>
+      <div class="rep-bar-track"><div class="rep-bar-fill" style="width:${pct}%;background:var(--accent)"></div></div>
+    </div>`;
+  }).join('') : emptyMini('Nenhuma demanda concluída no período.');
+
+  // ── Esforço apontado (horas lançadas pelos usuários) — distinto do calendário ──
+  const effort = data.effort || {};
+  const effStages = effort.byStage || [];
+  const maxEffStage = effStages.length ? Math.max(...effStages.map(s => s.avgHours)) : 0;
+  const effStageBars = effStages.length ? effStages.map(s => {
+    const pct = maxEffStage ? Math.max(3, (s.avgHours / maxEffStage) * 100) : 0;
+    return `<div class="rep-bar-row">
+      <div class="rep-bar-head">
+        <span class="rep-bar-name">${esc(s.stageName)}</span>
+        <span class="rep-bar-val">${fmtHours(s.avgHours)}<span class="rep-muted"> · ${fmtHours(s.hours)} tot.</span></span>
+      </div>
+      <div class="rep-bar-track"><div class="rep-bar-fill" style="width:${pct}%;background:${s.stageColor || 'var(--accent)'}"></div></div>
+      <div class="rep-bar-sub">${esc(s.flowName || '—')} · ${s.demands} ${s.demands === 1 ? 'demanda' : 'demandas'}</div>
+    </div>`;
+  }).join('') : emptyMini('Nenhuma hora apontada no período.');
+
+  const effUsers = effort.byUser || [];
+  const maxEffUser = effUsers.length ? Math.max(...effUsers.map(u => u.hours)) : 0;
+  const effUserRows = effUsers.length ? effUsers.map(u => {
+    const pct = maxEffUser ? Math.max(3, (u.hours / maxEffUser) * 100) : 0;
+    return `<div class="rep-bar-row">
+      <div class="rep-bar-head">
+        <span class="rep-bar-name">${esc(u.name)}</span>
+        <span class="rep-bar-val">${fmtHours(u.hours)}<span class="rep-muted"> · ${u.entries} ${u.entries === 1 ? 'lançamento' : 'lançamentos'}</span></span>
+      </div>
+      <div class="rep-bar-track"><div class="rep-bar-fill" style="width:${pct}%;background:var(--accent)"></div></div>
+    </div>`;
+  }).join('') : emptyMini('Nenhuma hora apontada no período.');
+
+  const effHeader = effort.demandsWithLog ? `<div class="rep-effort-stats">
+      <span><strong>${fmtHours(effort.totalHours)}</strong> apontadas</span>
+      <span><strong>${effort.demandsWithLog}</strong> ${effort.demandsWithLog === 1 ? 'demanda' : 'demandas'}</span>
+      <span>média <strong>${fmtHours(effort.avgPerDemand)}</strong>/demanda</span>
+    </div>` : '';
+
+  return `
+    <div class="rep-kpis">${kpis}</div>
+    <div class="rep-card">
+      <div class="rep-card-title"><i data-lucide="bar-chart-3" class="ic-sm"></i> Tempo médio por etapa</div>
+      <div class="rep-card-hint">Tempo de calendário (entrada → saída da etapa). O maior é o gargalo do processo.</div>
+      <div class="rep-bars">${stageBars}</div>
+    </div>
+    <div class="rep-card">
+      <div class="rep-card-title"><i data-lucide="timer" class="ic-sm"></i> Horas apontadas por etapa</div>
+      <div class="rep-card-hint">Esforço médio lançado pelos usuários em cada etapa — diferente do tempo de calendário acima.</div>
+      ${effHeader}
+      <div class="rep-bars">${effStageBars}</div>
+    </div>
+    <div class="rep-grid">
+      <div class="rep-card">
+        <div class="rep-card-title"><i data-lucide="users" class="ic-sm"></i> Horas apontadas por pessoa</div>
+        <div class="rep-card-hint">Total de horas que cada usuário lançou no período.</div>
+        <div class="rep-bars">${effUserRows}</div>
+      </div>
+      <div class="rep-card">
+        <div class="rep-card-title"><i data-lucide="tag" class="ic-sm"></i> Tempo médio por tipo</div>
+        <div class="rep-card-hint">Lead time médio por tipo de demanda.</div>
+        <div class="rep-bars">${typeRows}</div>
+      </div>
+    </div>
+    <div class="rep-card">
+      <div class="rep-card-title"><i data-lucide="clock" class="ic-sm"></i> Demandas mais lentas</div>
+      <div class="rep-card-hint">Da criação até a conclusão. Clique pra abrir.</div>
+      <div class="rep-slow-list">${slowRows}</div>
+    </div>`;
+}
+
+/* ─── PÁGINA ANÁLISES — abas Capacidade | Relatórios ───
+   Une as duas telas num tab menu (estilo Listas de tarefas). Cada aba mantém sua
+   própria render (renderCapacity / renderReports) e seus próprios filtros. */
+let _anTab = localStorage.getItem('kastor-an-tab') || 'capacity';
+
+function syncAnalyticsTab() {
+  document.querySelectorAll('#page-analytics .an-tab')
+    .forEach(t => t.classList.toggle('is-active', t.dataset.tab === _anTab));
+  const cap = $('an-tab-capacity'), rep = $('an-tab-reports');
+  if (cap) cap.style.display = _anTab === 'capacity' ? '' : 'none';
+  if (rep) rep.style.display = _anTab === 'reports' ? '' : 'none';
+}
+function renderAnalyticsActive() {
+  if (_anTab === 'reports') renderReports();
+  else renderCapacity();
+}
+function setAnalyticsTab(tab) {
+  if (tab !== 'capacity' && tab !== 'reports') tab = 'capacity';
+  _anTab = tab;
+  try { localStorage.setItem('kastor-an-tab', tab); } catch {}
+  syncAnalyticsTab();
+  navPush(tab === 'reports' ? '/analytics/reports' : '/analytics/capacity');
+  renderAnalyticsActive();
+}
+function renderAnalytics() {
+  syncAnalyticsTab();
+  renderAnalyticsActive();
 }
 
 function renderCapacity() {
@@ -4571,6 +5072,55 @@ function renderCapacity() {
   if (capacityView === 'team') return renderCapacityTeam(startYmd, endYmd, businessDays, capacityHours, logStartYmd, logEndYmd);
   if (capacityView === 'project') return renderCapacityAggregate('project', startYmd, endYmd, businessDays, capacityHours);
   return renderCapacityAggregate('client', startYmd, endYmd, businessDays, capacityHours);
+}
+
+/* Heatmap pessoa × dia: nº de demandas em aberto com prazo em cada dia da janela.
+   Mostra onde a pressão de prazo se concentra por pessoa. Usa ymd LOCAL pra bater
+   com o formato de deadline ('YYYY-MM-DD') sem deslocar por fuso. */
+function capacityHeatmapHTML(rows, startYmd, endYmd) {
+  const ymdOf = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  const days = [];
+  let cur = new Date(startYmd + 'T00:00:00');
+  const end = new Date(endYmd + 'T00:00:00');
+  let guard = 0;
+  while (cur <= end && guard < 62) { days.push(new Date(cur)); cur.setDate(cur.getDate() + 1); guard++; }
+  const todayYmd = todayStr();
+  const WD = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S']; // dom..sáb
+  // Cor da célula = nº de demandas com prazo NAQUELE dia (por pessoa). Faixas:
+  // 0 sem cor · 1–3 verde · 4–6 amarelo · 7–10 laranja · >10 vermelho.
+  const loadLevel = n => n === 0 ? 0 : n <= 3 ? 1 : n <= 6 ? 2 : n <= 10 ? 3 : 4;
+  const grid = rows.map(r => ({
+    u: r.u,
+    counts: days.map(day => r.userDemands.filter(dm => effDue(dm) === ymdOf(day)).length)
+  }));
+  const totalDue = grid.reduce((s, g) => s + g.counts.reduce((a, b) => a + b, 0), 0);
+  const colHead = days.map(day => {
+    const dow = day.getDay(), weekend = dow === 0 || dow === 6, isToday = ymdOf(day) === todayYmd;
+    return `<div class="cap-heat-colhead ${weekend ? 'is-weekend' : ''} ${isToday ? 'is-today' : ''}">
+      <span class="cap-heat-dow">${WD[dow]}</span><span class="cap-heat-dom">${day.getDate()}</span></div>`;
+  }).join('');
+  const body = grid.map(g => {
+    const cells = g.counts.map((n, i) => {
+      const day = days[i], dow = day.getDay(), weekend = dow === 0 || dow === 6, isToday = ymdOf(day) === todayYmd;
+      const fill = n > 0 ? `load-${loadLevel(n)}` : '';
+      return `<div class="cap-heat-cell ${fill} ${weekend ? 'is-weekend' : ''} ${isToday ? 'is-today' : ''}">${n || ''}</div>`;
+    }).join('');
+    return `
+    <div class="cap-heat-row">
+      <div class="cap-heat-user">${avatarHTML(g.u, 'avatar avatar-xs')}<span>${esc(g.u.name.split(' ')[0])}</span></div>
+      <div class="cap-heat-cells">${cells}</div>
+    </div>`;
+  }).join('');
+  return `<div class="cap-heat">
+    <div class="cap-heat-head-row">
+      <div class="cap-heat-title">Mapa de prazos por pessoa</div>
+      <div class="cap-heat-sub">${totalDue} demanda${totalDue === 1 ? '' : 's'} com prazo na janela</div>
+    </div>
+    <div class="cap-heat-grid">
+      <div class="cap-heat-row cap-heat-headrow"><div class="cap-heat-user"></div><div class="cap-heat-cells">${colHead}</div></div>
+      ${body}
+    </div>
+  </div>`;
 }
 
 function renderCapacityTeam(startYmd, endYmd, businessDays, capacityHours, logStartYmd, logEndYmd) {
@@ -4651,6 +5201,7 @@ function renderCapacityTeam(startYmd, endYmd, businessDays, capacityHours, logSt
         <div class="capacity-prod-stat"><span class="capacity-prod-value">${wsTotal.variations}</span><span class="capacity-prod-label">variações</span></div>
       </div>
     </div>
+    ${rows.length ? capacityHeatmapHTML(rows, startYmd, endYmd) : ''}
     <div class="capacity-rows">
     ${rows.map(r => `
       <div class="capacity-row ${r.status}">
@@ -5161,12 +5712,10 @@ async function saveDemand() {
     if (c.stageAdditions?.length)                payload.stageAdditions = c.stageAdditions;
     if (Array.isArray(c.stageOrder) && c.stageOrder.length) payload.stageOrder = c.stageOrder;
   }
-  console.log('[saveDemand] entregáveis raw:', _rawQty, '→ payload:', { p: payload.qtyPieces, a: payload.qtyArts, v: payload.qtyVariations });
   try {
     let result;
     if (editingId) result = await api('/demands/' + editingId, 'PUT', payload);
     else result = await api('/demands', 'POST', payload);
-    console.log('[saveDemand] resposta qty:', { p: result?.qtyPieces, a: result?.qtyArts, v: result?.qtyVariations });
     const wasCreate = !editingId;
     const newId = result && result.id;
     closeModal('demand-modal');
@@ -5457,7 +6006,7 @@ function renderDetail() {
           </div>
           <div class="detail-field">
             <div class="detail-field-label">Entrou na etapa em</div>
-            <div class="detail-field-value">${fmtDateTime(d.stageEnteredAt)}</div>
+            <div class="detail-field-value">${fmtDateTime(d.stageEnteredAt)} ${stageAgeChip(d)}</div>
           </div>
           <div class="detail-field">
             <div class="detail-field-label">Criada em</div>
@@ -6239,10 +6788,8 @@ async function saveDeliverablesDetail() {
     qtyVariations: Number($('detail-qty-variations')?.value) || 0,
     deliverableUserId: $('detail-deliverable-user')?.value || null
   };
-  console.log('[saveDeliverables] payload:', payload);
   try {
     const upd = await api('/demands/' + detailId, 'PUT', payload);
-    console.log('[saveDeliverables] resposta:', { p: upd.qtyPieces, a: upd.qtyArts, v: upd.qtyVariations, by: upd.deliverableUserId });
     patchDemand(upd);
     toast('Entregáveis atualizados!');
     renderDetail();
@@ -8218,13 +8765,12 @@ function renderDemandTypesTable() {
   if (!body) return;
   const list = (demandTypes || []).slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
   if (!list.length) {
-    body.innerHTML = `<tr><td colspan="3" style="color:var(--text-muted);padding:18px;text-align:center">Nenhum tipo cadastrado ainda.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="2">${emptyMini('Nenhum tipo cadastrado ainda.')}</td></tr>`;
     return;
   }
   body.innerHTML = list.map(t => `
     <tr class="row-hover-actions">
       <td>${esc(t.name)}</td>
-      <td style="text-align:center;color:var(--text-muted)">${t.usageCount || 0}</td>
       <td>
         <div class="row-actions">
           <button class="icon-btn" title="Renomear" onclick="editDemandType('${t.id}')"><i data-lucide="pencil" class="ic-sm"></i></button>
@@ -8614,7 +9160,7 @@ function renderUsers() {
     else if (userSortKey === 'role')     { va = norm(a.role || ''); vb = norm(b.role || ''); }
     else if (userSortKey === 'position') { va = norm(a.position || ''); vb = norm(b.position || ''); }
     else if (userSortKey === 'ws')       { va = (a.workspaces || []).length; vb = (b.workspaces || []).length; }
-    else if (userSortKey === 'admin')    { va = a.isAdmin ? 0 : 1; vb = b.isAdmin ? 0 : 1; }
+    else if (userSortKey === 'admin')    { const rank = u => u.isAdmin ? 0 : (u.isModerator ? 1 : 2); va = rank(a); vb = rank(b); }
     else if (userSortKey === 'active')   { va = a.active !== false ? 0 : 1; vb = b.active !== false ? 0 : 1; }
     else { va = norm(a.name); vb = norm(b.name); }
     return (va < vb ? -1 : va > vb ? 1 : 0) * userSortDir;
@@ -9272,7 +9818,7 @@ function renderRecurringClientsCol(wsClients) {
     <span>Todos os clientes</span>
   </div>`;
   if (!wsClients.length) {
-    col.innerHTML = totalPill + '<div class="rec-clients-empty">Nenhum cliente neste workspace.</div>';
+    col.innerHTML = totalPill + emptyMini('Nenhum cliente neste workspace.');
     return;
   }
   const cardsHtml = wsClients.map(c => {
@@ -9671,6 +10217,7 @@ let _personaChecklist = [];
 function openPersonalizadaModal(ctx) {
   _personaState.step = 1;
   _personaState.flowId = null;
+  _personaState.demandType = null;
   _personaState.ctx = ctx || {};
   _personaAttachments = [];
   _personaChecklist = [];
@@ -9717,9 +10264,12 @@ function personaGoTo(step) {
   $('persona-next-btn').style.display = step === 1 ? '' : 'none';
   $('persona-create-btn').style.display = step === 2 ? '' : 'none';
 
-  // Pill do fluxo: só visível quando já tem um selecionado
+  // Pill do fluxo/tipo: só visível quando já tem seleção.
   const pill = $('persona-flow-pill');
-  if (_personaState.flowId) {
+  if (_personaState.demandType) {
+    pill.textContent = _personaState.demandType.toUpperCase();
+    pill.style.display = '';
+  } else if (_personaState.flowId) {
     const f = flowById(_personaState.flowId);
     pill.textContent = (f?.name || 'FLUXO').toUpperCase();
     pill.style.display = '';
@@ -9742,13 +10292,20 @@ function personaGoTo(step) {
 }
 
 function updatePersonaNextBtn() {
-  $('persona-next-btn').disabled = !_personaState.flowId;
+  $('persona-next-btn').disabled = !(_personaState.flowId || _personaState.demandType);
 }
 
 /* Renderiza os cards de fluxo (Recentes + Todos) filtrados por busca. */
 function renderPersonaFlows() {
   const q = norm($('persona-flow-search').value || '');
   const ctx = _personaState.ctx || {};
+  // Modo TIPO: item de template geral de lista (sem cliente/projeto) escolhe TIPO de
+  // demanda, não um fluxo de cliente específico. Assim o item vira portável e resolve
+  // o fluxo de CADA cliente ao aplicar a lista.
+  if (_personaTypeMode()) return renderPersonaTypes(q);
+  const t1f = $('persona-step-1-title'); if (t1f) t1f.textContent = 'Selecione o fluxo';
+  const taf = $('persona-flows-all-title'); if (taf) taf.textContent = 'Todos os fluxos';
+  const sInpF = $('persona-flow-search'); if (sInpF) sInpF.placeholder = 'Buscar';
   // Escopo de fluxos: se tem projeto, pega fluxos do projeto; senão do cliente; senão do workspace
   let availableFlows;
   if (ctx.projectId) availableFlows = flowsForProject(ctx.projectId);
@@ -9811,6 +10368,7 @@ function renderPersonaFlowCard(f) {
 
 function personaPickFlow(fid) {
   _personaState.flowId = fid;
+  _personaState.demandType = null;
   // Re-render pra atualizar seleção visual
   document.querySelectorAll('#persona-flows-recent .wizard-card, #persona-flows-all .wizard-card').forEach(el => el.classList.remove('is-selected'));
   document.querySelectorAll(`#persona-step-1 [onclick*="personaPickFlow('${fid}')"]`).forEach(el => el.classList.add('is-selected'));
@@ -9820,6 +10378,44 @@ function personaPickFlow(fid) {
   const f = flowById(fid);
   pill.textContent = (f?.name || 'FLUXO').toUpperCase();
   pill.style.display = '';
+}
+
+/* ── Modo TIPO (Estágio 2): item de template de lista escolhe TIPO de demanda ── */
+function _personaTypeMode() {
+  const ctx = _personaState.ctx || {};
+  if (!ctx.listaId || ctx.clientId || ctx.projectId) return false;
+  const l = listas.find(x => x.id === ctx.listaId);
+  return !!(l && !l.sourceListaId); // template geral → escolhe por tipo
+}
+function renderPersonaTypes(q) {
+  const t1 = $('persona-step-1-title'); if (t1) t1.textContent = 'Selecione o tipo de demanda';
+  const ta = $('persona-flows-all-title'); if (ta) ta.textContent = 'Tipos de demanda';
+  const sInp = $('persona-flow-search'); if (sInp) sInp.placeholder = 'Buscar tipo';
+  const types = [...new Set(wsFlows().map(f => (f.demandType || '').trim()).filter(Boolean))]
+    .filter(t => !q || norm(t).includes(q))
+    .sort((a, b) => norm(a).localeCompare(norm(b)));
+  const recentWrap = $('persona-flows-recent-wrap');
+  if (recentWrap) recentWrap.style.display = 'none';
+  const allGrid = $('persona-flows-all');
+  allGrid.innerHTML = types.length
+    ? types.map(t => renderPersonaTypeCard(t)).join('')
+    : `<div style="color:var(--text-muted);padding:20px;grid-column:1/-1;text-align:center">${q ? 'Nenhum tipo encontrado.' : 'Nenhum tipo de demanda disponível — crie fluxos primeiro.'}</div>`;
+  paintIcons();
+}
+function renderPersonaTypeCard(t) {
+  const isSel = _personaState.demandType === t;
+  return `<div class="wizard-card ${isSel ? 'is-selected' : ''}" data-type="${esc(t)}" onclick="personaPickType(this.dataset.type)" ondblclick="personaPickType(this.dataset.type);personaGoTo(2)">
+    <div class="wizard-card-avatar wizard-card-avatar--icon"><i data-lucide="tag" class="ic-md"></i></div>
+    <div class="wizard-card-name">${esc(t)}</div>
+  </div>`;
+}
+function personaPickType(t) {
+  _personaState.demandType = t;
+  _personaState.flowId = null;
+  document.querySelectorAll('#persona-flows-all .wizard-card').forEach(el => el.classList.toggle('is-selected', el.dataset.type === t));
+  updatePersonaNextBtn();
+  const pill = $('persona-flow-pill');
+  if (pill) { pill.textContent = String(t || 'TIPO').toUpperCase(); pill.style.display = ''; }
 }
 
 /* Checklist inicial editável — array de { text } */
@@ -9847,7 +10443,15 @@ function removePersonaChecklistItem(i) {
 async function savePersonalizada() {
   const name = $('persona-name').value.trim();
   if (!name) return toast('Nome é obrigatório', 'error');
-  if (!_personaState.flowId) return toast('Selecione um fluxo', 'error');
+  // Modo tipo (template): resolve um fluxo REPRESENTATIVO do tipo pra satisfazer o
+  // backend — o demandType derivado dele é a chave portável usada ao aplicar a lista.
+  let flowId = _personaState.flowId;
+  if (!flowId && _personaState.demandType) {
+    const dt = _personaState.demandType;
+    const rep = wsFlows().find(f => f.demandType === dt && !f.clientId) || wsFlows().find(f => f.demandType === dt);
+    flowId = rep?.id || null;
+  }
+  if (!flowId) return toast(_personaState.demandType ? 'Nenhum fluxo desse tipo encontrado.' : 'Selecione um fluxo', 'error');
   const ctx = _personaState.ctx || {};
   // Ctx precisa de cliente OU projeto OU lista — sem nenhum não dá pra derivar workspace.
   if (!ctx.clientId && !ctx.projectId && !ctx.listaId) {
@@ -9858,7 +10462,7 @@ async function savePersonalizada() {
     name,
     clientId: ctx.clientId || null,
     projectId: ctx.projectId || null,  // null = Geral (sem projeto específico)
-    flowId: _personaState.flowId,
+    flowId,
     roleId: null,
     ownerId: $('persona-owner').value || null,
     deliverableUserId: null,
@@ -9874,7 +10478,7 @@ async function savePersonalizada() {
   };
   try {
     await api('/recurrings', 'POST', body);
-    savePersonaRecentFlow(_personaState.flowId);
+    savePersonaRecentFlow(flowId);
     closeModal('personalizada-modal');
     toast(ctx.listaId ? 'Demanda adicionada à lista!' : 'Demanda personalizada criada!', 'success');
     await refreshData();
@@ -10152,7 +10756,7 @@ async function toggleRecurringActive(id) {
 
 /* Cria uma Lista com prompt simples. Contexto vem do grupo (cliente + projeto). */
 async function promptCreateLista(ctx) {
-  const name = window.prompt('Nome da nova lista:', '');
+  const name = await showPrompt({ title: 'Nova lista', message: 'Dê um nome pra nova lista.', placeholder: 'Ex: Social Media', okLabel: 'Criar' });
   if (!name || !name.trim()) return;
   try {
     await api('/listas', 'POST', {
@@ -10784,6 +11388,13 @@ function selectListaInAddModal(id) {
   filterAdicionarListaOptions();
 }
 
+/* Aplicar lista = materializar um template num cliente/projeto. A lista é PORTÁVEL:
+   cada item é resolvido pelo TIPO de demanda pro fluxo DAQUELE cliente (não pelo
+   flowId fixo do template). Se o cliente não tem um fluxo único do tipo (0 ou vários),
+   entra o passo de "mapear na hora". O responsável NÃO é copiado do template — resolve
+   pelos roles do cliente alvo na geração (executor certo por cliente). */
+let _listaMapState = null; // { template, ctx, resolved:[{item,flowId}], unresolved:[...] }
+
 async function saveAdicionarLista() {
   if (!_selectedListaIdInAdd) return toast('Selecione uma lista', 'error');
   const template = listas.find(l => l.id === _selectedListaIdInAdd);
@@ -10792,45 +11403,94 @@ async function saveAdicionarLista() {
   const items = recurrings.filter(r => r.listaId === template.id);
   if (!items.length) return toast('Essa lista não tem demandas ainda.', 'warn');
 
-  try {
-    // 1) Cria a INSTÂNCIA aplicada (nova lista independente, sourceListaId=template)
-    //    Snapshot: mudanças futuras no template NÃO afetam essa instância.
-    const applied = await api('/listas', 'POST', {
-      name: template.name,
-      clientId: ctx.clientId || null,
-      projectId: ctx.projectId || null,
-      description: template.description || '',
-      sourceListaId: template.id,
-      workspaceId: activeWs
-    });
+  // Cliente alvo: do ctx (projeto → seu cliente, ou clientId direto).
+  const targetClientId = ctx.clientId || (ctx.projectId ? projectById(ctx.projectId)?.clientId : null) || null;
+  const clientFlows = flowsForClient(targetClientId);
 
-    // 2) Clona cada recorrente do template pra instância aplicada.
-    //    listaId aponta pra applied.id (não pro template) — isolando os registros.
+  const resolved = [];   // { item, flowId } — resolvidos automaticamente
+  const unresolved = []; // { item, demandType, options } — precisam de mapeamento
+  for (const item of items) {
+    const dt = item.demandType || flowById(item.flowId)?.demandType || null;
+    const matches = dt ? clientFlows.filter(f => f.demandType === dt) : [];
+    if (matches.length === 1) resolved.push({ item, flowId: matches[0].id });
+    else unresolved.push({ item, demandType: dt, options: clientFlows });
+  }
+
+  if (unresolved.length) {
+    _listaMapState = { template, ctx, resolved, unresolved };
+    openListaFlowMapping(unresolved);
+    return;
+  }
+  await applyResolvedLista(template, ctx, resolved);
+}
+
+// Passo de mapeamento: um item por linha, com select dos fluxos do cliente (ou pular).
+function openListaFlowMapping(unresolved) {
+  const wrap = $('lista-map-list');
+  if (!wrap) return;
+  wrap.innerHTML = unresolved.map((u, i) => {
+    const opts = u.options.slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+    const dtLabel = u.demandType ? esc(u.demandType) : 'sem tipo definido';
+    const sameType = u.options.filter(f => f.demandType === u.demandType).length;
+    const reason = sameType > 1 ? 'vários fluxos deste tipo' : 'nenhum fluxo deste tipo';
+    return `<div class="lista-map-row">
+      <div class="lista-map-item">
+        <div class="lista-map-name">${esc(u.item.name)}</div>
+        <div class="lista-map-sub">tipo: <strong>${dtLabel}</strong> · ${reason} neste cliente</div>
+      </div>
+      <select class="form-control lista-map-select" data-i="${i}">
+        <option value="">— Pular este item —</option>
+        ${opts.map(f => `<option value="${esc(f.id)}"${sameType === 1 && f.demandType === u.demandType ? ' selected' : ''}>${esc(f.name)}${f.demandType ? ' · ' + esc(f.demandType) : ''}</option>`).join('')}
+      </select>
+    </div>`;
+  }).join('');
+  closeModal('adicionar-lista-modal');
+  openModal('lista-map-modal');
+  paintIcons();
+}
+
+async function confirmListaFlowMapping() {
+  if (!_listaMapState) return;
+  const { template, ctx, resolved, unresolved } = _listaMapState;
+  const chosen = [];
+  document.querySelectorAll('#lista-map-list .lista-map-select').forEach(sel => {
+    const i = Number(sel.dataset.i);
+    const flowId = sel.value || null; // '' = pular
+    if (flowId && unresolved[i]) chosen.push({ item: unresolved[i].item, flowId });
+  });
+  closeModal('lista-map-modal');
+  _listaMapState = null;
+  await applyResolvedLista(template, ctx, resolved.concat(chosen));
+}
+
+async function applyResolvedLista(template, ctx, list) {
+  const toApply = list.filter(x => x.flowId);
+  if (!toApply.length) return toast('Nenhum item tem fluxo correspondente neste cliente.', 'warn');
+  try {
+    // Instância aplicada (snapshot; sourceListaId aponta pro template).
+    const applied = await api('/listas', 'POST', {
+      name: template.name, clientId: ctx.clientId || null, projectId: ctx.projectId || null,
+      description: template.description || '', sourceListaId: template.id, workspaceId: activeWs
+    });
     let count = 0, errs = 0;
-    for (const r of items) {
+    for (const { item, flowId } of toApply) {
       try {
         await api('/recurrings', 'POST', {
-          name: r.name,
-          clientId: ctx.clientId || null,
-          projectId: ctx.projectId || null,
-          flowId: r.flowId,
-          roleId: r.roleId,
-          ownerId: r.ownerId,
-          deliverableUserId: r.deliverableUserId,
-          description: r.description,
-          briefing: r.briefing,
-          priority: r.priority,
-          qtyPieces: r.qtyPieces, qtyArts: r.qtyArts, qtyVariations: r.qtyVariations,
-          defaultChecklist: r.defaultChecklist,
-          dayOfMonth: r.dayOfMonth,
-          listaId: applied.id,  // aponta pra INSTÂNCIA, não pro template
-          active: true
+          name: item.name, clientId: ctx.clientId || null, projectId: ctx.projectId || null,
+          flowId,                              // fluxo RESOLVIDO do cliente alvo
+          roleId: item.roleId,
+          ownerId: null, deliverableUserId: null, // resolve pelos roles do cliente na geração
+          description: item.description, briefing: item.briefing, priority: item.priority,
+          qtyPieces: item.qtyPieces, qtyArts: item.qtyArts, qtyVariations: item.qtyVariations,
+          defaultChecklist: item.defaultChecklist, dayOfMonth: item.dayOfMonth,
+          listaId: applied.id, active: true
         });
         count++;
       } catch { errs++; }
     }
+    const skipped = list.length - toApply.length;
     closeModal('adicionar-lista-modal');
-    toast(`Lista "${template.name}" aplicada com ${count} demanda${count === 1 ? '' : 's'}${errs ? ` (${errs} falha${errs === 1 ? '' : 's'})` : ''}!`, errs ? 'warn' : 'success');
+    toast(`Lista "${template.name}" aplicada: ${count} demanda${count === 1 ? '' : 's'}${errs ? ` · ${errs} falha${errs === 1 ? '' : 's'}` : ''}${skipped ? ` · ${skipped} pulada${skipped === 1 ? '' : 's'}` : ''}.`, errs ? 'warn' : 'success');
     await refreshData();
   } catch (e) { toast(e.message, 'error'); }
 }
@@ -11239,7 +11899,12 @@ async function refreshGoogleCalendars() {
 }
 
 async function disconnectGoogleCalendar() {
-  if (!confirm('Desconectar Google Calendar? Você precisa autorizar novamente pra voltar a sincronizar.')) return;
+  const ok = await showConfirm({
+    title: 'Desconectar Google Calendar',
+    message: 'Você precisa autorizar novamente pra voltar a sincronizar.',
+    okLabel: 'Desconectar', kind: 'warn'
+  });
+  if (!ok) return;
   try {
     await api('/google/disconnect', 'POST');
     toast('Google Calendar desconectado.', 'warn');
@@ -11619,14 +12284,16 @@ function bulkDelete() {
 async function openBulkDeadlinePicker() {
   if (!selectedDemandIds.size) return;
   // Usa showPrompt em modo date — retorna ISO YYYY-MM-DD ou vazio pra limpar.
+  // Altera o prazo da ETAPA atual (o "prazo efetivo" mostrado nas telas), não o
+  // prazo final — é o que o usuário espera ao mexer na data em lote.
   const val = await showPrompt({
-    title: 'Alterar prazo final',
-    message: 'Novo prazo final. Deixe vazio pra remover o prazo das selecionadas.',
+    title: 'Alterar prazo',
+    message: 'Novo prazo da etapa atual. Deixe vazio pra remover o prazo das selecionadas.',
     type: 'date',
     okLabel: 'Aplicar'
   });
   if (val === null) return; // cancel
-  bulkRun('setDeadline', { deadline: val || null });
+  bulkRun('setStageDue', { date: val || null });
 }
 function openBulkProjectPicker() {
   if (!selectedDemandIds.size) return;
@@ -12163,7 +12830,7 @@ async function confirmDeleteModel(id) {
   const derivados = (clients || []).filter(c => c.fromClientTemplateId === t.id).length;
   const ok = await showConfirm({
     title: 'Excluir modelo?',
-    message: `O modelo "${t.name}" será excluído.${derivados > 0 ? ` Os ${derivados} cliente(s) vinculado(s) continuam existindo, mas perdem o vínculo (fluxos novos deixarão de ser replicados neles).` : ''}`,
+    message: `O modelo "${esc(t.name)}" será excluído.${derivados > 0 ? ` Os ${derivados} cliente(s) vinculado(s) continuam existindo, mas perdem o vínculo (fluxos novos deixarão de ser replicados neles).` : ''}`,
     okLabel: 'Excluir', danger: true
   });
   if (!ok) return;
@@ -12244,7 +12911,7 @@ async function confirmDeleteTemplateProject(tplId, pIdx) {
   const flowCount = (proj.flows || []).length;
   const ok = await showConfirm({
     title: 'Excluir projeto do modelo?',
-    message: `O projeto "${proj.name}"${flowCount ? ` (e ${flowCount} fluxo${flowCount === 1 ? '' : 's'} dentro dele)` : ''} será removido do modelo. Clientes já criados a partir dele NÃO são afetados.`,
+    message: `O projeto "${esc(proj.name)}"${flowCount ? ` (e ${flowCount} fluxo${flowCount === 1 ? '' : 's'} dentro dele)` : ''} será removido do modelo. Clientes já criados a partir dele NÃO são afetados.`,
     okLabel: 'Excluir', danger: true
   });
   if (!ok) return;
@@ -12467,7 +13134,7 @@ async function tflDelete() {
   if (!flow) return;
   const ok = await showConfirm({
     title: 'Excluir fluxo do modelo?',
-    message: `O fluxo "${flow.name}" será removido do modelo. Clientes já criados a partir dele NÃO são afetados.`,
+    message: `O fluxo "${esc(flow.name)}" será removido do modelo. Clientes já criados a partir dele NÃO são afetados.`,
     okLabel: 'Excluir', danger: true
   });
   if (!ok) return;
@@ -12485,7 +13152,7 @@ async function confirmDeleteTemplateFlow(tplId, pIdx, fIdx) {
   if (!flow) return;
   const ok = await showConfirm({
     title: 'Excluir fluxo do modelo?',
-    message: `O fluxo "${flow.name}" será removido do modelo. Clientes já criados a partir dele NÃO são afetados.`,
+    message: `O fluxo "${esc(flow.name)}" será removido do modelo. Clientes já criados a partir dele NÃO são afetados.`,
     okLabel: 'Excluir', danger: true
   });
   if (!ok) return;
@@ -12671,6 +13338,21 @@ function attGalPickKind(ctx, kind) {
   renderAttGallery(ctx);
 }
 
+/* Link de info (Drive/Ativos) — mostra o título salvo da página (resolvido no
+   save, server-side) e cai pra URL crua quando ainda não há título. Sem fetch:
+   a visualização só lê o valor persistido em driveFilesTitle/brandAssetsTitle. */
+function renderInfoLink(raw, title, emptyLabel) {
+  const url = (raw || '').trim();
+  if (!url) return `<div class="client-info-empty">${emptyLabel}</div>`;
+  const label = (title && String(title).trim())
+    ? String(title).trim()
+    : url.replace(/^https?:\/\//i, '').replace(/\/$/, '');
+  return `<a class="client-info-link" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(url)}">
+    <i data-lucide="external-link" class="ic-sm"></i>
+    <span class="client-info-link-label">${esc(label)}</span>
+  </a>`;
+}
+
 function renderClientDetail(id) {
   const c = clientById(id);
   if (!c) return;
@@ -12680,6 +13362,9 @@ function renderClientDetail(id) {
   if (bc) {
     bc.innerHTML = `<span style="color:var(--text-muted);font-weight:500;text-transform:uppercase;letter-spacing:0.05em;font-size:11px">Clientes cadastrados · </span><span>${esc(c.name)}</span>`;
   }
+
+  // KPIs — demandas de todos os projetos deste cliente
+  renderDetailKpis('client-detail-kpis', projects.filter(p => p.clientId === id).map(p => p.id));
 
   // PROJETOS
   const projs = projects.filter(p => p.clientId === id);
@@ -12712,17 +13397,8 @@ function renderClientDetail(id) {
       ? `<div class="client-info-text">${esc(g).replace(/\n/g, '<br>')}</div>`
       : `<div class="client-info-empty">Sem descrição cadastrada.</div>`;
   }
-  const renderLinkOrEmpty = (raw, emptyLabel) => {
-    const url = (raw || '').trim();
-    if (!url) return `<div class="client-info-empty">${emptyLabel}</div>`;
-    const label = url.replace(/^https?:\/\//i, '').replace(/\/$/, '');
-    return `<a class="client-info-link" href="${esc(url)}" target="_blank" rel="noopener">
-      <i data-lucide="external-link" class="ic-sm"></i>
-      <span>${esc(label)}</span>
-    </a>`;
-  };
-  if (driveEl)  driveEl.innerHTML  = renderLinkOrEmpty(c.driveFiles,  'Nenhum link do drive.');
-  if (assetsEl) assetsEl.innerHTML = renderLinkOrEmpty(c.brandAssets, 'Nenhum link de ativos.');
+  if (driveEl)  driveEl.innerHTML  = renderInfoLink(c.driveFiles,  c.driveFilesTitle,  'Nenhum link do drive.');
+  if (assetsEl) assetsEl.innerHTML = renderInfoLink(c.brandAssets, c.brandAssetsTitle, 'Nenhum link de ativos.');
 
   // PESSOAS — matriz Área × Cargo. Para cada área com usuários no workspace,
   // renderiza um card com uma linha por Cargo presente nos users daquela área.
@@ -13034,6 +13710,9 @@ function renderProjectDetail(id) {
     bc.innerHTML = `${clientPart}<span style="color:var(--text-muted);font-weight:500;font-size:11px"> · </span><span>${esc(p.name)}</span>`;
   }
 
+  // KPIs — demandas deste projeto
+  renderDetailKpis('project-detail-kpis', [id]);
+
   // SOBRE
   const descEl = $('project-detail-description');
   const driveEl = $('project-detail-drive');
@@ -13044,17 +13723,8 @@ function renderProjectDetail(id) {
       ? `<div class="client-info-text">${esc(g).replace(/\n/g, '<br>')}</div>`
       : `<div class="client-info-empty">Sem descrição cadastrada.</div>`;
   }
-  const renderLinkOrEmpty = (raw, emptyLabel) => {
-    const url = (raw || '').trim();
-    if (!url) return `<div class="client-info-empty">${emptyLabel}</div>`;
-    const label = url.replace(/^https?:\/\//i, '').replace(/\/$/, '');
-    return `<a class="client-info-link" href="${esc(url)}" target="_blank" rel="noopener">
-      <i data-lucide="external-link" class="ic-sm"></i>
-      <span>${esc(label)}</span>
-    </a>`;
-  };
-  if (driveEl)  driveEl.innerHTML  = renderLinkOrEmpty(p.driveFiles,  'Nenhum link do drive.');
-  if (assetsEl) assetsEl.innerHTML = renderLinkOrEmpty(p.brandAssets, 'Nenhum link de ativos.');
+  if (driveEl)  driveEl.innerHTML  = renderInfoLink(p.driveFiles,  p.driveFilesTitle,  'Nenhum link do drive.');
+  if (assetsEl) assetsEl.innerHTML = renderInfoLink(p.brandAssets, p.brandAssetsTitle, 'Nenhum link de ativos.');
 
   // PESSOAS — matriz Área × Cargo (mesmo helper do cliente, agora com project.roleAssignments).
   renderRoleCargoMatrix('project-detail-people', p, 'setProjectRoleCargoAssignment', id);
@@ -15400,7 +16070,6 @@ async function onAgendaBlockUp() {
   } else {
     payload.endMin = drag.newEnd;
   }
-  console.log('[agenda drag]', drag.mode, 'schedule:', drag.scheduleId, 'payload:', payload);
   try {
     await api('/schedules/' + drag.scheduleId, 'PUT', payload);
     schedules = await api('/schedules'); // refetch sempre — fonte da verdade é o backend
@@ -15416,10 +16085,10 @@ async function onAgendaBlockUp() {
 let _schedulePresetUserId = null; // userId do contexto de criação
 /* Presets de tipo pros blocos livres — ícone + cor default. */
 const SCHEDULE_KINDS = [
-  { k: 'meeting', label: 'Reunião', icon: 'video', color: '#64748B' },
-  { k: 'focus',   label: 'Foco',    icon: 'target', color: '#06B6D4' },
-  { k: 'off',     label: 'Off',     icon: 'coffee', color: '#94A3B8' },
-  { k: 'other',   label: 'Outro',   icon: 'bookmark', color: '#7A00FF' }
+  { k: 'meeting', label: 'Reunião', icon: 'video',    color: '#3B82F6' }, // blue — comunicação
+  { k: 'focus',   label: 'Foco',    icon: 'target',   color: '#7A00FF' }, // roxo accent — foco profundo
+  { k: 'off',     label: 'Off',     icon: 'coffee',   color: '#F59E0B' }, // âmbar — pausa
+  { k: 'other',   label: 'Outro',   icon: 'bookmark', color: '#64748B' }  // slate — neutro
 ];
 function scheduleKindOf(k) { return SCHEDULE_KINDS.find(x => x.k === k) || SCHEDULE_KINDS[3]; }
 
@@ -15429,6 +16098,8 @@ function setScheduleMode(mode) {
   _scheduleMode = mode === 'free' ? 'free' : 'demand';
   $('sch-mode-demand')?.classList.toggle('is-active', _scheduleMode === 'demand');
   $('sch-mode-free')?.classList.toggle('is-active', _scheduleMode === 'free');
+  // Posiciona o thumb deslizante do toggle (anima via CSS).
+  $('sch-mode-toggle')?.classList.toggle('mode-free', _scheduleMode === 'free');
   const demandRow = $('sch-demand-row');
   const titleRow  = $('sch-title-row');
   const kindRow   = $('sch-kind-row');
@@ -15501,7 +16172,7 @@ function openScheduleModal(id, preset) {
   $('sch-date').value = date;
   $('sch-start').value = agendaMinsToHHMM(startMin);
   $('sch-end').value = agendaMinsToHHMM(endMin);
-  // "Quando" texto amigável
+  // "Quem" — texto amigável do responsável pelo bloco
   const userName = userById(s ? s.userId : (preset?.userId || agendaUserId))?.name || '—';
   $('sch-when').textContent = `Para ${userName}`;
   $('sch-delete-btn').style.display = s ? '' : 'none';
@@ -15530,7 +16201,6 @@ async function saveSchedule() {
   // Pra criar (não-edição), respeita o usuário do contexto: o `_schedulePresetUserId`
   // é setado pelo openScheduleModal a partir do preset (drag em qualquer instância).
   if (!editingScheduleId) payload.userId = _schedulePresetUserId || agendaUserId;
-  console.log('[saveSchedule] payload:', payload, 'editingId:', editingScheduleId);
   try {
     if (editingScheduleId) {
       await api('/schedules/' + editingScheduleId, 'PUT', payload);
