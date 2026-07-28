@@ -1834,9 +1834,13 @@ function ic(name, attrs) {
   const extra = attrs ? ' ' + Object.entries(attrs).map(([k,v]) => `${k}="${esc(v)}"`).join(' ') : '';
   return `<i data-lucide="${name}"${extra}></i>`;
 }
-function paintIcons() {
+/* paintIcons(root?) — converte <i data-lucide> em <svg>.
+   Sem root: varre o documento inteiro (compat com as ~90 chamadas existentes).
+   Com root (elemento): varre só aquele subtree — o lucide aceita { root } e
+   assim evitamos re-escanear o DOM todo em cada mutação/re-render. */
+function paintIcons(root) {
   if (typeof window !== 'undefined' && window.lucide && lucide.createIcons) {
-    try { lucide.createIcons(); } catch (e) {}
+    try { lucide.createIcons(root ? { root } : undefined); } catch (e) {}
   }
 }
 /* Auto-paint de ícones Lucide.
@@ -1846,23 +1850,34 @@ function paintIcons() {
    e repinta automaticamente, debounced via rAF pra não repintar em rajada. */
 (function autoPaintIcons() {
   if (typeof MutationObserver === 'undefined' || !document.body) return;
+  // Acumula só os subtrees que ganharam ícones e pinta CADA UM escopado (não o
+  // documento inteiro). rAF coalesce a rajada de mutações num único flush.
+  const pending = new Set();
   let scheduled = false;
+  const flush = () => {
+    scheduled = false;
+    const roots = [...pending]; pending.clear();
+    for (const node of roots) if (node.isConnected) paintIcons(node);
+  };
   const schedule = () => {
     if (scheduled) return;
     scheduled = true;
-    requestAnimationFrame(() => { scheduled = false; paintIcons(); });
+    requestAnimationFrame(flush);
   };
   const obs = new MutationObserver(muts => {
     for (const m of muts) {
       for (const node of m.addedNodes) {
         if (node.nodeType !== 1) continue;
-        if ((node.matches && node.matches('i[data-lucide]')) ||
-            (node.querySelector && node.querySelector('i[data-lucide]'))) {
-          schedule();
-          return;
+        // Se o próprio nó é um <i data-lucide>, escopa no pai (querySelectorAll
+        // do createIcons só enxerga descendentes, não o root em si).
+        if (node.matches && node.matches('i[data-lucide]')) {
+          if (node.parentElement) pending.add(node.parentElement);
+        } else if (node.querySelector && node.querySelector('i[data-lucide]')) {
+          pending.add(node);
         }
       }
     }
+    if (pending.size) schedule();
   });
   obs.observe(document.body, { childList: true, subtree: true });
 })();
@@ -2331,8 +2346,28 @@ function fdpInitGlobal() {
 
   // Converte os inputs nativos para "text" (bloqueando definitivamente o picker do navegador)
   fdpConvertAll();
-  // Reaplica conversão a inputs criados dinamicamente (modais que são re-renderizados)
-  new MutationObserver(() => fdpConvertAll()).observe(document.body, { childList: true, subtree: true });
+  // Reaplica conversão a inputs criados dinamicamente (modais re-renderizados).
+  // Debounced via rAF e só dispara quando um <input date/datetime> realmente
+  // entra no DOM — antes rodava um querySelectorAll no documento INTEIRO a cada
+  // mutação (jank em toda navegação). Espelha o padrão do observer de ícones.
+  let _fdpScanScheduled = false;
+  const _scheduleFdpScan = () => {
+    if (_fdpScanScheduled) return;
+    _fdpScanScheduled = true;
+    requestAnimationFrame(() => { _fdpScanScheduled = false; fdpConvertAll(); });
+  };
+  new MutationObserver(muts => {
+    for (const m of muts) {
+      for (const node of m.addedNodes) {
+        if (node.nodeType !== 1) continue;
+        if ((node.matches && node.matches('input[type="date"],input[type="datetime-local"]')) ||
+            (node.querySelector && node.querySelector('input[type="date"],input[type="datetime-local"]'))) {
+          _scheduleFdpScan();
+          return;
+        }
+      }
+    }
+  }).observe(document.body, { childList: true, subtree: true });
 
   // Abre o popup ao clicar/focar num input convertido
   document.addEventListener('mousedown', e => {
@@ -2913,6 +2948,10 @@ const PAGE_TITLES = {
 };
 function goPage(page) {
   hideTooltip();
+  // Sair da página de Fluxos zera a subview de cliente. Ficar nela (ou entrar
+  // por navegação real) preserva — assim salvar/atualizar um fluxo não joga o
+  // usuário de volta pro grid (o estado é restaurado por renderCurrent).
+  if (page !== 'flows') currentClientView = null;
   currentPage = page;
   // Cada entrada na página força um restoreFilters na próxima render.
   _markFiltersDirty(page);
@@ -3012,14 +3051,27 @@ function renderCurrent() {
       break;
     }
     case 'projects':   renderProjects(); break;
-    case 'flows':      renderFlows(); break;
+    case 'flows': {
+      // Mantém a subview de um cliente aberta quando refreshData()/SSE roda (ou
+      // ao fechar/salvar um fluxo). Sem isso, qualquer re-render voltava pro grid.
+      if (currentClientView && (currentClientView === '__general__' || clientById(currentClientView))) {
+        $('flows-view-clients').style.display = 'none';
+        $('flows-view-detail').style.display = '';
+        renderClientFlows(currentClientView);
+      } else {
+        currentClientView = null;
+        renderFlows();
+      }
+      break;
+    }
     case 'workspaces': renderWorkspaces(); break;
     case 'users':      renderUsers(); break;
     case 'trash':      renderTrash(); break;
     case 'recurringDemands': renderRecurringDemands(); break;
     case 'profile':    renderProfile(); break;
   }
-  paintIcons();
+  // Escopa a pintura de ícones na página ativa em vez do documento inteiro.
+  paintIcons(document.querySelector('.page.active') || undefined);
 }
 
 /* ─── FILTROS COMUNS ─── */
@@ -5603,6 +5655,7 @@ function openNewDemand() {
   applyPriorityDropdown('f-priority');
   // Inicia o wizard no step 1 (cliente). Reset completo do estado (inclui customização).
   wizardState = { step: 1, clientId: null, projectId: null, flowId: null };
+  _dwFlowType = '';
   resetWizardCustomization();
   wizardLastFlowApplied = null;
   // Congela os recentes pra a duração deste modal — evita reordenar cards
@@ -15481,6 +15534,11 @@ function renderAgenda() {
 function renderAgendaInto(wrapId, weekLabelId, userId) {
   const wrap = document.getElementById(wrapId);
   if (!wrap) return; // página não montada nesse momento
+  // Só constrói a grade se a página que a contém está visível. Sem isso,
+  // renderAgenda() montava DUAS grades toda vez (a standalone /agenda E a embed
+  // de Minhas Demandas), mesmo a escondida — cada uma custa centenas de células.
+  const page = wrap.closest('.page');
+  if (page && !page.classList.contains('active')) return;
   // Modo Time só na página standalone (não em Minhas Demandas embed).
   const isStandalone = (wrapId === 'agenda-grid-wrap');
   const useTeam = isStandalone && agendaMode === 'team';
@@ -15522,6 +15580,8 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
   // (que podem ser de qualquer instância: standalone OU embed em Minhas Demandas)
   // saibam pra quem agendar/editar — sem depender da variável global agendaUserId.
   grid.dataset.userId = agendaUserIdLocal;
+  // Um único listener delegado no grid (era 1 por célula → ~900 listeners/render).
+  grid.addEventListener('mousedown', onAgendaCellMouseDown);
 
   // Canto (0,0)
   const corner = document.createElement('div');
@@ -15603,7 +15663,6 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
         cell.dataset.date = agendaYmd(c.day);
         cell.dataset.min = String(min);
         if (c.type === 'user') cell.dataset.userId = c.user.id;
-        cell.addEventListener('mousedown', onAgendaCellMouseDown);
       }
       grid.appendChild(cell);
     });
@@ -15623,14 +15682,37 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
   };
 
   // Chave do layout por coluna: individual usa "ymd", time usa "userId:ymd".
-  const colKey = (c) => c.type === 'user' ? `${c.user.id}:${agendaYmd(c.day)}` : agendaYmd(c.day);
+  // Cacheia o ymd por coluna — agendaYmd() faz toISOString(), caro em loop.
+  dayCols.forEach(c => { if (c._ymd === undefined) c._ymd = agendaYmd(c.day); });
+  const colKey = (c) => c.type === 'user' ? `${c.user.id}:${c._ymd}` : c._ymd;
   const schedKey = (s) => isTeam ? `${s.userId}:${s.date}` : s.date;
+
+  // Processa SÓ os agendamentos das colunas visíveis. Antes, os loops abaixo
+  // varriam TODO o histórico do usuário (cresce sem limite) e ainda chamavam
+  // agendaYmd/toISOString milhares de vezes — o gargalo real da agenda.
+  const colByKey = new Map(dayCols.map(c => [colKey(c), c]));
+  const schedByKey = new Map(); // colKey -> [schedules visíveis]
+  const visibleSchedules = [];
+  for (const s of userSchedules) {
+    const k = schedKey(s);
+    if (!colByKey.has(k)) continue;
+    let arr = schedByKey.get(k);
+    if (!arr) { arr = []; schedByKey.set(k, arr); }
+    arr.push(s);
+    visibleSchedules.push(s);
+  }
+
+  // Índices O(1) pra resolver demanda/projeto/cliente dos blocos — era .find()
+  // linear por bloco (O(blocos × total de demandas), explode com muitos dados).
+  const demandByIdMap = new Map(demands.map(d => [d.id, d]));
+  const projectByIdMap = new Map(projects.map(p => [p.id, p]));
+  const clientByIdMap = new Map(clients.map(c => [c.id, c]));
 
   const dayLayouts = {}; // { colKey: { assign, totalCols } }
   dayCols.forEach(c => {
     const key = colKey(c);
-    const ymd = agendaYmd(c.day);
-    const inCol = userSchedules.filter(s => schedKey(s) === key).map(s => ({
+    const ymd = c._ymd;
+    const inCol = (schedByKey.get(key) || []).map(s => ({
       id: 'sched:' + s.id, startMin: s.startMin, endMin: s.endMin, kind: 'sched', ref: s
     }));
     const dayGoogles = googleEventsForCol(c)
@@ -15647,16 +15729,16 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
     return `left: ${(col * w).toFixed(3)}%; width: calc(${w.toFixed(3)}% - 4px);`;
   };
 
-  userSchedules.forEach(s => {
-    const dayCol = dayCols.find(c => colKey(c) === schedKey(s));
+  visibleSchedules.forEach(s => {
+    const dayCol = colByKey.get(schedKey(s));
     if (!dayCol) return;
     const startRow = Math.max(0, Math.floor((s.startMin - AGENDA_DAY_START_MIN) / AGENDA_SLOT_MIN));
     const endRow = Math.min(rows, Math.ceil((s.endMin - AGENDA_DAY_START_MIN) / AGENDA_SLOT_MIN));
     if (endRow <= startRow) return;
     const isFree = !s.demandId;
-    const demand = isFree ? null : demands.find(x => x.id === s.demandId);
-    const project = demand ? projects.find(p => p.id === demand.projectId) : null;
-    const client = project && project.clientId ? clients.find(c => c.id === project.clientId) : null;
+    const demand = isFree ? null : (demandByIdMap.get(s.demandId) || null);
+    const project = demand ? (projectByIdMap.get(demand.projectId) || null) : null;
+    const client = project && project.clientId ? (clientByIdMap.get(project.clientId) || null) : null;
     const kindMeta = isFree ? scheduleKindOf(s.kind) : null;
     // Cor:
     //  - Livre: s.color explícita (do save) → cor do kind → accent
@@ -15727,7 +15809,7 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
   // Google Calendar events — blocos read-only, azuis, sem drag/resize.
   // Clique abre modal enxuto com título + link "Abrir no Google Calendar".
   dayCols.forEach(c => {
-    const ymd = agendaYmd(c.day);
+    const ymd = c._ymd;
     const layout = dayLayouts[colKey(c)];
     if (!layout) return;
     const dayEvents = googleEventsForCol(c)
@@ -15768,7 +15850,7 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
   wrap.appendChild(grid);
   // Linha "agora" logo depois do append pra pegar as posições do grid corretas.
   placeAgendaNowLine(grid);
-  paintIcons();
+  paintIcons(grid); // escopa no grid — evita varrer o documento inteiro
   // Garante que o ticker está rodando pra atualizar a linha e disparar lembretes.
   startAgendaTicker();
 
@@ -15975,7 +16057,10 @@ async function deleteScheduleFromModal() {
    mousedown numa célula vazia, mousemove pinta ghost, mouseup abre modal. */
 function onAgendaCellMouseDown(e) {
   if (e.button !== 0) return;
-  const cell = e.currentTarget;
+  // Delegado no grid: resolve a célula de conteúdo pelo alvo. Ignora headers,
+  // coluna de horários, gaps e blocos (que têm handler próprio).
+  const cell = e.target.closest('.agenda-cell[data-min]');
+  if (!cell || !cell.dataset.date) return;
   const grid = cell.closest('.agenda-grid');
   // Célula do modo Time carrega userId próprio; individual pega do grid.
   const targetUserId = cell.dataset.userId || grid?.dataset.userId || agendaUserId;
@@ -16921,22 +17006,37 @@ function _wizardFlowCard(f) {
   });
   return card;
 }
+// Filtro de tipo do wizard (chips em linha, estilo aba Análises). Dinâmico:
+// cada demandType existente vira um botão. '' = Todos.
+let _dwFlowType = '';
+let _dwFlowTypes = [];
+function renderWizardTypeFilter() {
+  const el = $('dw-flow-type-filter');
+  if (!el) return;
+  // Botão índice: -1 = Todos; i >= 0 = _dwFlowTypes[i]. Passar índice (não a
+  // string) evita qualquer problema de escape de aspas no onclick inline.
+  let html = `<button type="button" class="dw-type-btn${_dwFlowType === '' ? ' is-active' : ''}" onclick="setWizardFlowType(-1)">Todos</button>`;
+  html += _dwFlowTypes.map((t, i) =>
+    `<button type="button" class="dw-type-btn${_dwFlowType === t ? ' is-active' : ''}" onclick="setWizardFlowType(${i})">${esc(t)}</button>`
+  ).join('');
+  el.innerHTML = html;
+}
+function setWizardFlowType(i) {
+  _dwFlowType = (i < 0) ? '' : (_dwFlowTypes[i] || '');
+  renderWizardFlows();
+}
 function renderWizardFlows() {
   const wrap = $('dw-flows-grid');
   if (!wrap) return;
   const q = norm(($('dw-flow-search')?.value || '').trim());
-  const typeFilter = $('dw-flow-type')?.value || '';
   // Fluxos pertencem ao CLIENTE — cross-workspace. Projeto define o "onde"
   // da demanda, mas não restringe os fluxos disponíveis.
   const allFlows = flowsForClient(wizardState.clientId);
-  // Popula filtro de tipo
-  const types = [...new Set(allFlows.map(f => f.demandType).filter(Boolean))].sort();
-  const tSel = $('dw-flow-type');
-  if (tSel) {
-    const cur = tSel.value;
-    tSel.innerHTML = '<option value="">Todos os tipos</option>' + types.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('');
-    if (types.includes(cur)) tSel.value = cur;
-  }
+  // Popula filtro de tipo (dinâmico — um chip por demandType existente)
+  _dwFlowTypes = [...new Set(allFlows.map(f => f.demandType).filter(Boolean))].sort();
+  if (_dwFlowType && !_dwFlowTypes.includes(_dwFlowType)) _dwFlowType = '';
+  renderWizardTypeFilter();
+  const typeFilter = _dwFlowType;
   const list = allFlows
     .filter(f => !typeFilter || f.demandType === typeFilter)
     .filter(f => !q || norm(f.name).includes(q))

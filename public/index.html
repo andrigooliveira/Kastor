@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-title" content="Kastor">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/css/style.css?v=20260726r">
+<link rel="stylesheet" href="/css/style.css?v=20260727f">
 </head>
 <body>
 
@@ -1376,15 +1376,11 @@
       <!-- STEP 3 — selecionar fluxo (com filtro de tipo) -->
       <div class="wizard-step" id="dw-step-3" style="display:none">
         <div class="wizard-step-title">SELECIONE O TIPO DE DEMANDA</div>
-        <div class="wizard-search-row">
-          <select class="filter-select" id="dw-flow-type" onchange="renderWizardFlows()">
-            <option value="">Todos os tipos</option>
-          </select>
-          <div class="filter-input-wrap wizard-search" style="flex:1">
-            <i data-lucide="search" class="filter-input-icon ic-sm"></i>
-            <input class="filter-input filter-input--with-icon" id="dw-flow-search" placeholder="Pesquisar" oninput="renderWizardFlows()">
-          </div>
+        <div class="filter-input-wrap wizard-search">
+          <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+          <input class="filter-input filter-input--with-icon" id="dw-flow-search" placeholder="Pesquisar" oninput="renderWizardFlows()">
         </div>
+        <div class="dw-type-filter" id="dw-flow-type-filter"></div>
         <div class="wizard-card-grid" id="dw-flows-grid"></div>
       </div>
 
@@ -2699,7 +2695,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260726r"></script>
+<script src="/js/app.js?v=20260727f"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

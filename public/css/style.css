@@ -676,6 +676,9 @@ body.user-moderator .full-admin-only { display: none !important; }
   --glass: rgba(22,22,22,0.72);
   --glass-strong: rgba(22,22,22,0.86);
   --surface-glass: rgba(38,38,38,0.78);     /* cards/painéis frosted: aurora vaza sutilmente */
+  /* Chrome sólido (sidebar/topbar): opaco de propósito pra NÃO precisar de
+     backdrop-filter blur — o blur repintava a cada frame no scroll (jank). */
+  --chrome-bg: #1e1e1e;
   --hairline: rgba(255,255,255,0.06);
 
   /* Motion (curvas estilo Apple: spring suave) */
@@ -695,6 +698,7 @@ body.user-moderator .full-admin-only { display: none !important; }
   --glass: rgba(255,255,255,0.72);
   --glass-strong: rgba(255,255,255,0.86);
   --surface-glass: rgba(255,255,255,0.78);
+  --chrome-bg: #FFFFFF;
   --hairline: rgba(0,0,0,0.07);
   --hairline-strong: rgba(0,0,0,0.14);
 }
@@ -793,9 +797,9 @@ body.user-moderator .full-admin-only { display: none !important; }
 :root[data-theme="light"] table td { border-bottom-color: rgba(0,0,0,0.06); }
 :root[data-theme="light"] tbody tr:hover { background: #F7F7FA; }
 
-/* Sidebar / topbar nos tons certos do light mode (já fazem glass, mas reforçando) */
-:root[data-theme="light"] .sidebar { background: rgba(255,255,255,0.78); border-right-color: rgba(0,0,0,0.08); }
-:root[data-theme="light"] .topbar { background: rgba(255,255,255,0.78); border-bottom-color: rgba(0,0,0,0.08); }
+/* Sidebar / topbar no light mode — fill 100% opaco (sem blur, translucidez fica feia) */
+:root[data-theme="light"] .sidebar { background: var(--chrome-bg); border-right-color: rgba(0,0,0,0.08); }
+:root[data-theme="light"] .topbar { background: var(--chrome-bg); border-bottom-color: rgba(0,0,0,0.08); }
 
 /* Agenda: coluna de horários (HORÁRIO) e cabeçalho de dias ficam quase brancos
    no light mode pra não destoar do bg geral. O cinza padrão (--surface-2)
@@ -994,9 +998,7 @@ body::before {
 /* ── SIDEBAR ── */
 .sidebar {
   width: var(--sidebar-w);
-  background: var(--glass);
-  backdrop-filter: saturate(160%) blur(24px);
-  -webkit-backdrop-filter: saturate(160%) blur(24px);
+  background: var(--chrome-bg);
   border-right: 1px solid var(--hairline);
   display: flex; flex-direction: column;
   position: fixed; top: 0; left: 0; bottom: 0; z-index: 100;
@@ -1198,9 +1200,7 @@ body.sidebar-collapsed .ws-cdrop .filter-cdrop-menu {
 }
 .topbar {
   padding: 14px 28px;
-  background: var(--glass);
-  backdrop-filter: saturate(160%) blur(24px);
-  -webkit-backdrop-filter: saturate(160%) blur(24px);
+  background: var(--chrome-bg);
   border-bottom: 1px solid var(--hairline);
   display: flex; align-items: center; justify-content: space-between;
   position: sticky; top: 0; z-index: 80;
@@ -6270,10 +6270,20 @@ button.is-loading::after {
 .form-group-float > .form-control:not(:focus)::placeholder { color: transparent; }
 
 /* ─── Wizard de Nova Demanda (4 steps) ─────────────────────── */
-/* min-height fixa pra modal não pular de tamanho ao avançar/voltar
-   entre steps com quantidades diferentes de conteúdo. */
-.demand-wizard-modal .modal-body { padding-bottom: 24px; min-height: 70vh; }
-.demand-wizard-modal .wizard-step { min-height: calc(70vh - 48px); }
+/* Altura FIXA (base na etapa final — a mais alta) pra o modal não "pular" de
+   tamanho ao avançar/voltar entre steps. Layout em coluna: header e footer
+   ficam fixos e só o corpo (.modal-body) rola. */
+.demand-wizard-modal {
+  display: flex; flex-direction: column;
+  height: min(92vh, 880px); max-height: 92vh;
+  overflow: hidden;               /* o scroll vive no .modal-body, não no modal inteiro */
+}
+.demand-wizard-modal .modal-header { flex: 0 0 auto; }
+.demand-wizard-modal .modal-body {
+  flex: 1 1 auto; min-height: 0;  /* min-height:0 deixa o flex encolher e o overflow-y funcionar */
+  overflow-y: auto; padding-bottom: 24px;
+}
+.demand-wizard-modal .demand-wizard-footer { flex: 0 0 auto; }
 .wizard-step-title {
   text-align: center; font-size: 13px; font-weight: 700; letter-spacing: 0.08em;
   text-transform: uppercase; color: var(--text-dim);
@@ -6288,6 +6298,27 @@ button.is-loading::after {
 .wizard-search-row { display: flex; gap: 10px; margin-bottom: 18px; }
 .wizard-search-row .filter-select { max-width: 160px; }
 .wizard-search-row .wizard-search { margin-bottom: 0; }
+/* Filtro de tipo do step "fluxo" — chips em uma linha (estilo aba Análises,
+   sem ícone). Dinâmico: um botão por demandType. Rola na horizontal se passar
+   da largura (comporta 8+ tipos sem quebrar linha). */
+#dw-step-3 .wizard-search { margin-bottom: 12px; }
+.dw-type-filter {
+  display: flex; gap: 6px; margin-bottom: 18px;
+  overflow-x: auto; padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+.dw-type-filter::-webkit-scrollbar { height: 6px; }
+.dw-type-filter::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.dw-type-btn {
+  flex: 0 0 auto;
+  padding: 7px 14px; border-radius: 8px;
+  background: var(--surface); color: var(--text-dim);
+  border: 1px solid var(--border);
+  font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.dw-type-btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--border-active); }
+.dw-type-btn.is-active { background: var(--accent); color: #fff; border-color: transparent; }
 .wizard-card-grid {
   display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px;
   max-height: 60vh; overflow-y: auto; padding: 4px;
