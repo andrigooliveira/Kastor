@@ -1,4 +1,4 @@
-/* Kastor Service Worker — PWA "de verdade" com cache-first nos estáticos.
+/* reWork Service Worker — PWA "de verdade" com cache-first nos estáticos.
    Objetivo: abertura quase instantânea nas visitas seguintes + shell offline,
    sem nunca servir dado velho de API.
 
@@ -18,8 +18,8 @@
    hora; o usuário pega os assets novos no próximo reload, sem prompt. O activate
    limpa os caches de versões antigas pra não acumular lixo. */
 
-const SW_VERSION   = 'kastor-2026-07-23a';
-const STATIC_CACHE = `kastor-static-${SW_VERSION}`;
+const SW_VERSION   = '2026-07-31a';
+const STATIC_CACHE = `rework-static-${SW_VERSION}`;
 
 /* App shell mínimo pré-cacheado no install. Só recursos com URL estável (sem
    ?v=). css/js versionados são cacheados em runtime na 1ª visita — hardcodá-los
@@ -29,9 +29,9 @@ const PRECACHE_URLS = [
   '/',
   '/favicon.png',
   '/manifest.json',
-  '/Kastor_branco.svg',
-  '/Kastor_preto.svg',
-  '/Kastor_logo.svg',
+  '/rework_branco.svg',
+  '/rework_preto.svg',
+  '/rework_logo.svg',
 ];
 
 self.addEventListener('install', event => {
@@ -46,10 +46,11 @@ self.addEventListener('install', event => {
 
 self.addEventListener('activate', event => {
   event.waitUntil((async () => {
-    // Remove caches de versões anteriores do Kastor.
+    // Remove caches de versões anteriores do reWork (inclui os antigos da era
+    // Kastor — prefixo kastor-static-* — pra não deixar lixo/logos velhos).
     const keys = await caches.keys();
     await Promise.all(
-      keys.filter(k => k.startsWith('kastor-static-') && k !== STATIC_CACHE)
+      keys.filter(k => (k.startsWith('rework-static-') || k.startsWith('kastor-static-')) && k !== STATIC_CACHE)
           .map(k => caches.delete(k))
     );
     // Assume controle das abas abertas já nesta ativação.

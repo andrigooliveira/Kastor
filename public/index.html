@@ -3,23 +3,23 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Kastor — Gestão de Demandas</title>
+<title>reWork</title>
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="apple-touch-icon" href="/favicon.png">
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#7A00FF">
-<meta name="application-name" content="Kastor">
-<meta name="apple-mobile-web-app-title" content="Kastor">
+<meta name="application-name" content="reWork">
+<meta name="apple-mobile-web-app-title" content="reWork">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/css/style.css?v=20260727f">
+<link rel="stylesheet" href="/css/style.css?v=20260727q">
 </head>
 <body>
 
 <!-- LOGIN -->
 <div id="login-screen">
   <div class="login-box">
-    <div class="login-logo"><img src="/Kastor_branco.svg" alt="Kastor"></div>
+    <div class="login-logo"><img src="/rework_branco.svg" alt="reWork"></div>
     <div class="login-sub">Gestão de Demandas de Marketing</div>
     <input type="text" id="login-username" placeholder="Usuário" autocomplete="username" onkeydown="if(event.key==='Enter'){event.preventDefault();$('login-password').focus();}">
     <input type="password" id="login-password" placeholder="Senha" autocomplete="current-password" onkeydown="if(event.key==='Enter'){event.preventDefault();doLogin();}">
@@ -33,7 +33,7 @@
 <!-- RESET DE SENHA — exibido quando a URL é /reset/<token> -->
 <div id="reset-screen">
   <div class="login-box">
-    <div class="login-logo"><img src="/Kastor_branco.svg" alt="Kastor"></div>
+    <div class="login-logo"><img src="/rework_branco.svg" alt="reWork"></div>
     <div class="login-sub">Definir nova senha</div>
     <input type="password" id="reset-new-pass" placeholder="Nova senha (mín. 6 caracteres)" autocomplete="new-password">
     <input type="password" id="reset-confirm-pass" placeholder="Confirmar nova senha" autocomplete="new-password" onkeydown="if(event.key==='Enter'){event.preventDefault();doResetPassword();}">
@@ -52,12 +52,12 @@
     <div class="sidebar-brand">
       <!-- 3 variantes do logo — visibilidade controlada por CSS (tema + collapse):
            expanded+dark  → branco; expanded+light → preto; collapsed → K icon -->
-      <img src="/Kastor_branco.svg" alt="Kastor" class="sidebar-logo sidebar-logo-full-white">
-      <img src="/Kastor_preto.svg"  alt="Kastor" class="sidebar-logo sidebar-logo-full-black">
-      <img src="/Kastor_logo.svg"   alt="Kastor" class="sidebar-logo sidebar-logo-icon">
+      <img src="/rework_branco.svg" alt="reWork" class="sidebar-logo sidebar-logo-full-white">
+      <img src="/rework_preto.svg"  alt="reWork" class="sidebar-logo sidebar-logo-full-black">
+      <img src="/rework_logo.svg"   alt="reWork" class="sidebar-logo sidebar-logo-icon">
     </div>
     <div class="ws-switch" id="ws-switch">
-      <label class="filter-label">Workspace</label>
+      <label class="filter-label">Squad</label>
       <div class="filter-cdrop ws-cdrop" id="ws-cdrop">
         <button type="button" class="filter-cdrop-trigger" onclick="toggleFilterCdrop(this.parentElement)">
           <span class="ws-trigger-letter" id="ws-trigger-letter">?</span>
@@ -120,9 +120,9 @@
         <svg viewBox="0 0 16 16" fill="none"><path d="M4 8h2.5a2 2 0 002-2V3.5M12 8H9.5a2 2 0 00-2 2v2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="3" cy="8" r="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="13" cy="8" r="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="7.5" cy="3.5" r="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="7.5" cy="12.5" r="1.5" stroke="currentColor" stroke-width="1.5"/></svg>
         Integrações
       </div>
-      <div class="nav-item admin-only" data-page="workspaces" id="nav-workspaces" onclick="goPage('workspaces')">
+      <div class="nav-item admin-only" data-page="workspaces" id="nav-workspaces" onclick="goPage('workspaces')"><!-- id/data-page internos seguem 'workspaces' -->
         <svg viewBox="0 0 16 16" fill="none"><rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M1.5 6h13" stroke="currentColor" stroke-width="1.5"/></svg>
-        Workspaces
+        Squads
       </div>
       <div class="nav-item" data-page="users" id="nav-users" onclick="goPage('users')">
         <svg viewBox="0 0 16 16" fill="none"><circle cx="5.5" cy="5" r="2.5" stroke="currentColor" stroke-width="1.5"/><path d="M1.5 13c.6-2.2 2.2-3.3 4-3.3s3.4 1.1 4 3.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="11.5" cy="5.5" r="2" stroke="currentColor" stroke-width="1.5"/><path d="M11 9.8c1.8.1 3 1.1 3.5 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
@@ -202,7 +202,7 @@
     <div class="welcome-banner" id="welcome-banner" hidden>
       <span class="welcome-banner-emoji" aria-hidden="true">👋</span>
       <div class="welcome-banner-text">
-        <strong>Bem-vindo ao Kastor!</strong>
+        <strong>Bem-vindo ao reWork!</strong>
         <span>Confira o Manual do Usuário para descobrir tudo que a plataforma oferece.</span>
       </div>
       <button class="btn btn-primary btn-sm" onclick="openDocsFromWelcome()">Abrir manual</button>
@@ -256,10 +256,10 @@
 
             <div class="dash-widget">
               <div class="dash-widget-head">
-                <div class="dash-widget-title">Próximos 7 dias</div>
-                <div class="dash-widget-sub" id="dash-next7-sub"></div>
+                <div class="dash-widget-title">Demandas previstas</div>
+                <div class="dash-widget-sub" id="dash-forecast-sub"></div>
               </div>
-              <div class="dash-next7-grid" id="dash-next7"></div>
+              <div class="dash-forecast-grid" id="dash-forecast"></div>
             </div>
 
             <div class="dash-widget">
@@ -340,7 +340,7 @@
             <i data-lucide="search" class="filter-input-icon ic-sm"></i>
             <input class="filter-input filter-input--with-icon" id="search-input" placeholder="Buscar demanda…" oninput="renderListDebounced()">
           </div>
-          <select class="filter-select" id="filter-workspace" onchange="renderList()"><option value="">Workspace</option></select>
+          <select class="filter-select" id="filter-workspace" onchange="renderList()"><option value="">Squad</option></select>
           <select class="filter-select" id="filter-user" onchange="renderList()"></select>
           <select class="filter-select" id="filter-client" onchange="renderList()"><option value="">Cliente</option></select>
           <select class="filter-select" id="filter-project" onchange="renderList()"><option value="">Projeto</option></select>
@@ -400,7 +400,7 @@
                   <tr>
                     <th class="col-bulk-check"><input type="checkbox" class="bulk-check-all" id="bulk-check-all" onclick="toggleBulkSelectAll(this.checked)" title="Selecionar todas"></th>
                     <th style="cursor:pointer" onclick="sortList('name')">Demanda <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                    <th style="cursor:pointer" onclick="sortList('workspace')">Workspace <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                    <th style="cursor:pointer" onclick="sortList('workspace')">Squad <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                     <th style="cursor:pointer" onclick="sortList('project')">Projeto <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                     <th style="cursor:pointer" onclick="sortList('client')">Cliente <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                     <th style="cursor:pointer" onclick="sortList('type')">Tipo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
@@ -470,7 +470,7 @@
               <thead>
                 <tr>
                   <th style="cursor:pointer" onclick="sortMine('name')">Demanda <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                  <th style="cursor:pointer" onclick="sortMine('workspace')">Workspace <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                  <th style="cursor:pointer" onclick="sortMine('workspace')">Squad <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   <th style="cursor:pointer" onclick="sortMine('client')">Cliente <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   <th style="cursor:pointer" onclick="sortMine('project')">Projeto <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   <th style="cursor:pointer" onclick="sortMine('status')">Etapa <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
@@ -524,13 +524,38 @@
         <div id="an-tab-capacity" class="an-tab-panel">
           <div class="section-head">
             <div class="section-title" id="capacity-heading">Capacidade da Equipe</div>
-            <select class="filter-select" id="capacity-period" onchange="renderCapacity()" style="max-width:200px">
-              <option value="7">Últimos / Próximos 7 dias</option>
-              <option value="14">Últimos / Próximos 14 dias</option>
-              <option value="30">Últimos / Próximos 30 dias</option>
-              <option value="month">Este mês</option>
-            </select>
+            <!-- Filtro de período: mesmo visual do filtro de Demandas (pfp), mas
+                 instância isolada (cap-pfp-*). Presets pra frente + range custom. -->
+            <div class="filter-period-picker">
+              <button type="button" class="filter-period-trigger" id="cap-pfp-trigger" onclick="capPfpToggle(event)">
+                <span id="cap-pfp-label">Próximos 7 dias</span>
+                <i data-lucide="chevron-down" class="ic-xs"></i>
+              </button>
+              <div class="pfp-popover" id="cap-pfp-popover" onclick="event.stopPropagation()">
+                <div class="pfp-presets" id="cap-pfp-presets"></div>
+                <div class="pfp-cal">
+                  <div class="pfp-cal-head">
+                    <button type="button" class="pfp-cal-nav" onclick="capPfpNav(-1)" title="Mês anterior"><i data-lucide="chevron-left" class="ic-sm"></i></button>
+                    <span class="pfp-cal-title" id="cap-pfp-cal-title"></span>
+                    <button type="button" class="pfp-cal-nav" onclick="capPfpNav(1)" title="Próximo mês"><i data-lucide="chevron-right" class="ic-sm"></i></button>
+                  </div>
+                  <div class="pfp-cal-dow"><span>D</span><span>S</span><span>T</span><span>Q</span><span>Q</span><span>S</span><span>S</span></div>
+                  <div class="pfp-cal-grid" id="cap-pfp-cal-grid"></div>
+                </div>
+                <div class="pfp-footer">
+                  <button type="button" class="pfp-footer-btn" onclick="capPfpResetDefault()">Padrão</button>
+                  <button type="button" class="pfp-footer-btn" onclick="capPfpToday()">Hoje</button>
+                </div>
+              </div>
+            </div>
+            <input type="hidden" id="capacity-period" value="7">
+            <input type="hidden" id="capacity-period-start" value="">
+            <input type="hidden" id="capacity-period-end" value="">
           </div>
+          <!-- Filtro de squads (multi, estilo Usuários). Vazio = workspace ativo.
+               Hidden input em CSV pra persistir via FILTER_KEYS['capacity']. -->
+          <div class="uws-filter" id="capacity-squad-filter"></div>
+          <input type="hidden" id="capacity-squads" value="">
           <div class="capacity-view-toggle">
             <button class="btn btn-ghost btn-sm active" id="capacity-view-team" onclick="setCapacityView('team')"><i data-lucide="users" class="ic-sm"></i> Equipe</button>
             <button class="btn btn-ghost btn-sm" id="capacity-view-project" onclick="setCapacityView('project')"><i data-lucide="folder" class="ic-sm"></i> Projeto</button>
@@ -544,8 +569,11 @@
         <div id="an-tab-reports" class="an-tab-panel" style="display:none">
           <div class="filters-bar" style="margin-bottom:16px">
             <div class="filter-group">
-              <label class="filter-label">Workspace</label>
-              <select class="filter-select" id="reports-ws" onchange="renderReports()"></select>
+              <label class="filter-label">Squads</label>
+              <!-- Multi-select em chips (estilo Usuários). O hidden input guarda a
+                   seleção em CSV — mantém a persistência via FILTER_KEYS['reports']. -->
+              <div class="rep-squads" id="reports-squad-filter"></div>
+              <input type="hidden" id="reports-ws" value="">
             </div>
             <div class="filter-group">
               <label class="filter-label">Cliente</label>
@@ -701,10 +729,24 @@
           <button class="btn btn-primary admin-only" onclick="openWebhookModal()">+ Nova Integração</button>
         </div>
         <div class="capacity-hint">Webhooks notificam serviços externos (como Discord, Slack, Make, n8n) quando eventos acontecem nas demandas. Use o formato Discord para postar embeds formatados direto em um canal.</div>
+        <!-- Filtros por alvo/escopo dos webhooks. Opções populadas só com valores
+             em uso nos webhooks deste workspace. Lista sempre ordenada por nome. -->
+        <div class="filters-bar" style="margin-bottom:12px">
+          <select class="filter-select" id="wh-f-target" onchange="renderIntegrations()"><option value="">Todos os alvos</option></select>
+          <select class="filter-select" id="wh-f-client" onchange="renderIntegrations()"><option value="">Todos os clientes</option></select>
+          <select class="filter-select" id="wh-f-project" onchange="renderIntegrations()"><option value="">Todos os projetos</option></select>
+        </div>
         <div class="table-wrap table-scroll">
           <table>
             <thead>
-              <tr><th>Integração</th><th>URL</th><th>Formato</th><th>Eventos</th><th>Status</th><th style="width:140px"></th></tr>
+              <tr>
+                <th style="cursor:pointer" onclick="sortWhBy('name')">Integração <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortWhBy('url')">URL <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortWhBy('format')">Formato <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortWhBy('events')">Eventos <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortWhBy('status')">Status <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="width:140px"></th>
+              </tr>
             </thead>
             <tbody id="webhooks-table-body"></tbody>
           </table>
@@ -723,7 +765,7 @@
               <i data-lucide="search" class="filter-input-icon ic-sm"></i>
               <input class="filter-input filter-input--with-icon" id="client-search" placeholder="Buscar cliente…" oninput="renderClients()">
             </div>
-            <select class="filter-select" id="client-f-ws" onchange="renderClients()"><option value="">Todos os workspaces</option></select>
+            <select class="filter-select" id="client-f-ws" onchange="renderClients()"><option value="">Todos os squads</option></select>
             <div class="filter-group-label">
               <span class="filter-group-label-text">Situação</span>
               <div class="client-status-toggle">
@@ -921,7 +963,7 @@
             <!-- Cabeçalho do relatório (visível na impressão também) -->
             <div class="report-header">
               <div class="report-header-brand">
-                <img src="/Kastor_logo.svg" alt="Kastor" class="report-header-logo">
+                <img src="/rework_logo.svg" alt="reWork" class="report-header-logo">
               </div>
               <div class="report-header-titles">
                 <div class="report-header-eyebrow">RELATÓRIO MENSAL</div>
@@ -949,7 +991,7 @@
             </div>
 
             <div class="report-footer">
-              Gerado em <span id="report-generated-at"></span> · Kastor
+              Gerado em <span id="report-generated-at"></span> · reWork
             </div>
           </div>
         </div>
@@ -982,7 +1024,7 @@
           <div id="preport-content">
             <div class="report-header">
               <div class="report-header-brand">
-                <img src="/Kastor_logo.svg" alt="Kastor" class="report-header-logo">
+                <img src="/rework_logo.svg" alt="reWork" class="report-header-logo">
               </div>
               <div class="report-header-titles">
                 <div class="report-header-eyebrow" id="preport-eyebrow">RELATÓRIO MENSAL · PROJETO</div>
@@ -1010,7 +1052,7 @@
             </div>
 
             <div class="report-footer">
-              Gerado em <span id="preport-generated-at"></span> · Kastor
+              Gerado em <span id="preport-generated-at"></span> · reWork
             </div>
           </div>
         </div>
@@ -1103,14 +1145,14 @@
     <div class="page" id="page-workspaces">
       <div class="page-body">
         <div class="section-head">
-          <div class="section-title">Workspaces (Squads)</div>
-          <button class="btn btn-primary btn-sm admin-only full-admin-only" onclick="openWsModal()">+ Novo Workspace</button>
+          <div class="section-title">Squads</div>
+          <button class="btn btn-primary btn-sm admin-only full-admin-only" onclick="openWsModal()">+ Novo Squad</button>
         </div>
         <div class="table-wrap table-scroll">
           <table>
             <thead>
               <tr>
-                <th style="cursor:pointer" onclick="sortWsBy('name')">Workspace <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortWsBy('name')">Squad <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                 <th style="cursor:pointer" onclick="sortWsBy('clients')">Clientes <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                 <th style="cursor:pointer" onclick="sortWsBy('projects')">Projetos <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                 <th style="cursor:pointer" onclick="sortWsBy('members')">Membros <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
@@ -1121,7 +1163,7 @@
           </table>
         </div>
         <div style="font-size:12px;color:var(--text-muted);margin-top:14px;line-height:1.6">
-          Cada squad trabalha em um workspace com projetos e fluxos próprios. Defina quem acessa cada workspace na aba <strong>Usuários</strong>.
+          Cada squad tem projetos e fluxos próprios, isolados dos demais. Defina quem acessa cada squad na aba <strong>Usuários</strong>.
         </div>
       </div>
     </div>
@@ -1145,7 +1187,7 @@
                 <th style="cursor:pointer" onclick="sortUsersBy('username')">Usuário <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                 <th style="cursor:pointer" onclick="sortUsersBy('role')">Área <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                 <th style="cursor:pointer" onclick="sortUsersBy('position')">Cargo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                <th style="cursor:pointer" onclick="sortUsersBy('ws')">Workspaces <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortUsersBy('ws')">Squads <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                 <th style="cursor:pointer" onclick="sortUsersBy('admin')">Permissão <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                 <th style="cursor:pointer" onclick="sortUsersBy('active')">Situação <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                 <th style="width:120px"></th>
@@ -1204,7 +1246,7 @@
         <div class="section-head">
           <div class="section-title">Demandas Recorrentes</div>
           <div class="rd-filter">
-            <label class="filter-label" for="rd-ws-filter">Workspace</label>
+            <label class="filter-label" for="rd-ws-filter">Squad</label>
             <select class="form-control" id="rd-ws-filter" onchange="onRdWsFilterChange()"></select>
           </div>
         </div>
@@ -1565,6 +1607,17 @@
   </div>
 </div>
 
+<!-- MODAL: DEMANDAS PREVISTAS (clique num dia do quadro de previsão) -->
+<div class="modal-overlay" id="forecast-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="forecast-modal-title">Demandas previstas</div>
+      <button class="modal-close" onclick="closeModal('forecast-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body" id="forecast-modal-body"></div>
+  </div>
+</div>
+
 <!-- MODAL: DETALHE DA DEMANDA -->
 <div class="modal-overlay" id="detail-modal">
   <div class="modal modal-xl detail-modal-shell">
@@ -1606,7 +1659,7 @@
             <input class="form-control" id="c-name" placeholder="Ex: BRZ Empreendimentos" autocomplete="off">
           </div>
           <div class="form-group">
-            <label class="form-label">Workspace</label>
+            <label class="form-label">Squad</label>
             <select class="form-control" id="c-workspace"></select>
           </div>
           <div class="form-group">
@@ -2552,13 +2605,13 @@
 <div class="modal-overlay" id="ws-modal">
   <div class="modal modal-md">
     <div class="modal-header">
-      <div class="modal-title" id="ws-modal-title">Novo Workspace</div>
+      <div class="modal-title" id="ws-modal-title">Novo Squad</div>
       <button class="modal-close" onclick="closeModal('ws-modal')"><i data-lucide="x" class="ic-sm"></i></button>
     </div>
     <div class="modal-body">
       <div class="form-grid">
         <div class="form-group">
-          <label class="form-label">Nome do Workspace *</label>
+          <label class="form-label">Nome do Squad *</label>
           <input class="form-control" id="ws-name" placeholder="Ex: Squad Imobiliário">
         </div>
         <div class="form-group">
@@ -2570,7 +2623,7 @@
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('ws-modal')">Cancelar</button>
-      <button class="btn btn-primary" onclick="saveWs()">Salvar Workspace</button>
+      <button class="btn btn-primary" onclick="saveWs()">Salvar Squad</button>
     </div>
   </div>
 </div>
@@ -2615,12 +2668,12 @@
           <div class="webhook-hint" style="margin-top:6px">Necessário para receber menção no Discord quando virar responsável por uma demanda.</div>
         </div>
         <div class="form-group full">
-          <label class="form-label">Acesso aos workspaces</label>
+          <label class="form-label">Acesso aos squads</label>
           <div class="ws-checklist" id="u-workspaces"></div>
         </div>
         <div class="form-group full">
-          <label class="form-check"><input type="checkbox" id="u-admin" onchange="onUserAdminChange()"> Administrador (gerencia workspaces, usuários e fluxos)</label>
-          <label class="form-check" id="u-moderator-wrap"><input type="checkbox" id="u-moderator"> Moderador (gerencia fluxos, funções, webhooks e integrações — mas SÓ nos workspaces liberados acima, e não edita usuários)</label>
+          <label class="form-check"><input type="checkbox" id="u-admin" onchange="onUserAdminChange()"> Administrador (gerencia squads, usuários e fluxos)</label>
+          <label class="form-check" id="u-moderator-wrap"><input type="checkbox" id="u-moderator"> Moderador (gerencia fluxos, funções, webhooks e integrações — mas SÓ nos squads liberados acima, e não edita usuários)</label>
         </div>
       </div>
       <div style="font-size:11px;color:var(--text-muted);margin-top:10px;line-height:1.6">
@@ -2695,7 +2748,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260727f"></script>
+<script src="/js/app.js?v=20260727q"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
@@ -2741,7 +2794,7 @@
             </select>
           </div>
           <div class="form-group full" style="margin-top:-6px">
-            <div class="webhook-hint">Restrinja o disparo a um cliente e/ou projeto específico. Deixe em <strong>Todos</strong> para receber os eventos de todo o workspace.</div>
+            <div class="webhook-hint">Restrinja o disparo a um cliente e/ou projeto específico. Deixe em <strong>Todos</strong> para receber os eventos de todo o squad.</div>
           </div>
           <div class="form-group full">
             <label class="form-label">Usuário alvo (opcional)</label>

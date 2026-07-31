@@ -1,5 +1,5 @@
 /* ───────────────────────────────────────────────────────────────
-   KASTOR — Armazenamento seguro de credenciais
+   reWork — Armazenamento seguro de credenciais
    Mantém senhas (hash+salt) e tokens FORA do db.json, num arquivo
    criptografado (AES-256-GCM). db.json passa a guardar só dados de
    perfil — nada sensível.

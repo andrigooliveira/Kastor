@@ -1,4 +1,4 @@
-KASTOR — Gestão de Demandas de Marketing
+reWork — Gestão de Demandas de Marketing
 ========================================
 
 Guia rápido pra quem vai USAR ou HOSPEDAR o sistema. Pra desenvolver,

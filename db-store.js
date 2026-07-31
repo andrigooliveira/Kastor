@@ -1,5 +1,5 @@
 /* ───────────────────────────────────────────────────────────────
-   KASTOR — Camada de persistência PostgreSQL (via `pg`)
+   reWork — Camada de persistência PostgreSQL (via `pg`)
 
    Modelo híbrido:
      - Tabela genérica `entities` guarda cada entidade como (type, id, workspace_id, JSONB)

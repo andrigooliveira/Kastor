@@ -1,4 +1,4 @@
-# Kastor — Gestão de Demandas de Marketing
+# reWork — Gestão de Demandas de Marketing
 
 Referência técnica pra desenvolvedores. Pra usuários finais, ver [`LEIA-ME.txt`](LEIA-ME.txt). Pra deploy em produção, ver [`../DEPLOY.md`](../DEPLOY.md).
 
@@ -94,7 +94,7 @@ Dependências em `package.json`: 5 produção (express, pg, nodemailer, googleap
 │   ├── index.html              # Uma HTML só, com múltiplos "pages"
 │   ├── css/style.css           # Tudo num arquivo, dark + light themes
 │   ├── js/app.js               # SPA vanilla — router, render, state
-│   ├── Kastor_*.svg            # Logos por tema
+│   ├── rework_*.svg            # Logos por tema
 │   └── vendor/
 │       ├── lucide.min.js       # Ícones
 │       └── jspdf.umd.min.js    # Gerador de PDF pros relatórios

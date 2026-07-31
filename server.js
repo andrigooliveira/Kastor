@@ -1,5 +1,5 @@
 /* ───────────────────────────────────────────────────────────────
-   KASTOR — Gestão de Demandas de Marketing  ·  Backend (v3)
+   reWork — Gestão de Demandas de Marketing  ·  Backend (v3)
    Node.js + Express + banco em arquivo (data/db.json)
    Credenciais ficam num arquivo criptografado separado (auth.enc).
 
@@ -500,7 +500,7 @@ function getMailTransport() {
 }
 function mailEnabled() { return !!getMailTransport(); }
 function fromAddress() {
-  return process.env.SMTP_FROM || `Kastor <${process.env.SMTP_USER || 'noreply@localhost'}>`;
+  return process.env.SMTP_FROM || `reWork <${process.env.SMTP_USER || 'noreply@localhost'}>`;
 }
 async function sendEmail(to, subject, html, text) {
   const t = getMailTransport();
@@ -520,31 +520,31 @@ function buildEmailForNotification(type, ctx) {
   const { demand, project, owner, trigger, stageName, commentText, demandUrl } = ctx;
   const triggerLine = trigger ? `<p style="margin:8px 0;color:#555">Por <strong>${escHtml(trigger.name)}</strong></p>` : '';
   const projectLine = project ? `<p style="margin:0;color:#777;font-size:13px">${escHtml(project.name)}${project.client ? ` · ${escHtml(project.client)}` : ''}</p>` : '';
-  const btn = demandUrl ? `<p style="margin:24px 0 8px"><a href="${demandUrl}" style="display:inline-block;background:#7A00FF;color:#fff;padding:11px 22px;border-radius:6px;text-decoration:none;font-weight:600;font-size:14px">Abrir no Kastor →</a></p><p style="margin:0;color:#999;font-size:11px;word-break:break-all">${escHtml(demandUrl)}</p>` : '';
+  const btn = demandUrl ? `<p style="margin:24px 0 8px"><a href="${demandUrl}" style="display:inline-block;background:#7A00FF;color:#fff;padding:11px 22px;border-radius:6px;text-decoration:none;font-weight:600;font-size:14px">Abrir no reWork →</a></p><p style="margin:0;color:#999;font-size:11px;word-break:break-all">${escHtml(demandUrl)}</p>` : '';
   let subject, headline, body;
   switch (type) {
     case 'assigned':
-      subject = `[Kastor] Você é o responsável: ${demand.name}`;
+      subject = `[reWork] Você é o responsável: ${demand.name}`;
       headline = '🧑‍💼 Atribuído como responsável';
       body = `<p style="margin:0 0 8px">Você foi definido como responsável da demanda <strong>${escHtml(demand.name)}</strong>${stageName ? ` na etapa <strong>${escHtml(stageName)}</strong>` : ''}.</p>`;
       break;
     case 'stage_assigned':
-      subject = `[Kastor] Nova etapa para você: ${demand.name}`;
+      subject = `[reWork] Nova etapa para você: ${demand.name}`;
       headline = '📌 Responsável por nova etapa';
       body = `<p style="margin:0 0 8px">A demanda <strong>${escHtml(demand.name)}</strong> avançou para a etapa <strong>${escHtml(stageName || '—')}</strong> e você é o responsável.</p>`;
       break;
     case 'mention':
-      subject = `[Kastor] Mencionado em: ${demand.name}`;
+      subject = `[reWork] Mencionado em: ${demand.name}`;
       headline = '💬 Você foi mencionado';
       body = `<p style="margin:0 0 8px">${trigger ? `<strong>${escHtml(trigger.name)}</strong> mencionou você em <strong>${escHtml(demand.name)}</strong>:` : `Você foi mencionado em <strong>${escHtml(demand.name)}</strong>:`}</p><blockquote style="border-left:3px solid #7A00FF;padding:10px 14px;margin:12px 0;color:#444;background:#f5f3ff;border-radius:0 4px 4px 0">${escHtml((commentText || '').slice(0, 500))}</blockquote>`;
       break;
     case 'watch_stage':
-      subject = `[Kastor] Etapa avançou (você observa): ${demand.name}`;
+      subject = `[reWork] Etapa avançou (você observa): ${demand.name}`;
       headline = '👀 Movimento em demanda que você observa';
       body = `<p style="margin:0 0 8px">A demanda <strong>${escHtml(demand.name)}</strong> avançou para a etapa <strong>${escHtml(stageName || '—')}</strong>.</p>`;
       break;
     case 'watch_comment':
-      subject = `[Kastor] Novo comentário (você observa): ${demand.name}`;
+      subject = `[reWork] Novo comentário (você observa): ${demand.name}`;
       headline = '👀 Novo comentário em demanda que você observa';
       body = `<p style="margin:0 0 8px">${trigger ? `<strong>${escHtml(trigger.name)}</strong> comentou em ` : 'Novo comentário em '}<strong>${escHtml(demand.name)}</strong>:</p><blockquote style="border-left:3px solid #7A00FF;padding:10px 14px;margin:12px 0;color:#444;background:#f5f3ff;border-radius:0 4px 4px 0">${escHtml((commentText || '').slice(0, 500))}</blockquote>`;
       break;
@@ -553,14 +553,14 @@ function buildEmailForNotification(type, ctx) {
   }
   const html = `<!doctype html><html><body style="margin:0;padding:0;background:#f7f7fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#222">
 <div style="max-width:560px;margin:24px auto;background:#fff;border-radius:12px;padding:28px 32px;box-shadow:0 1px 4px rgba(0,0,0,0.06)">
-  <div style="font-size:13px;font-weight:700;color:#7A00FF;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">Kastor</div>
+  <div style="font-size:13px;font-weight:700;color:#7A00FF;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">reWork</div>
   <h2 style="margin:0 0 14px;font-size:20px;font-weight:700;color:#222">${headline}</h2>
   ${body}
   ${projectLine}
   ${triggerLine}
   ${btn}
   <hr style="border:none;border-top:1px solid #eee;margin:24px 0 16px">
-  <p style="color:#999;font-size:11px;margin:0;line-height:1.6">Você recebe estes e-mails porque cadastrou seu endereço no Kastor. Para ajustar suas preferências, vá em <strong>Meu Perfil → Notificações por e-mail</strong>.</p>
+  <p style="color:#999;font-size:11px;margin:0;line-height:1.6">Você recebe estes e-mails porque cadastrou seu endereço no reWork. Para ajustar suas preferências, vá em <strong>Meu Perfil → Notificações por e-mail</strong>.</p>
 </div>
 </body></html>`;
   const text = `${headline}\n\n${body.replace(/<[^>]+>/g, '').trim()}\n${project ? `\nProjeto: ${project.name}${project.client ? ' · ' + project.client : ''}` : ''}${trigger ? `\nPor: ${trigger.name}` : ''}${demandUrl ? `\n\nAbrir: ${demandUrl}` : ''}`;
@@ -693,7 +693,7 @@ const WEBHOOK_EVENTS = {
   'checklist.completed': 'Item de checklist concluído',
 };
 
-// Cores para embeds do Discord (decimal) — alinhadas com a paleta Kastor
+// Cores para embeds do Discord (decimal) — alinhadas com a paleta reWork
 const DISCORD_COLORS = {
   'demand.created':            7995647,  // #7A00FF accent
   'demand.completed':          3990432,  // #3CE3A0 success
@@ -779,7 +779,7 @@ function buildDiscordPayload(event, ctx) {
   }
   const embedFields = baseFields.concat(extraFields);
   if (demandUrl) {
-    embedFields.push({ name: 'Abrir demanda', value: `[Ver no Kastor](${demandUrl})`, inline: false });
+    embedFields.push({ name: 'Abrir demanda', value: `[Ver no reWork](${demandUrl})`, inline: false });
   }
   const embed = {
     title: title.slice(0, 256),
@@ -787,10 +787,10 @@ function buildDiscordPayload(event, ctx) {
     color: color || DISCORD_COLORS[event] || 6730854,
     fields: embedFields,
     timestamp: nowISO(),
-    footer: { text: `Kastor · ${event}` }
+    footer: { text: `reWork · ${event}` }
   };
   if (demandUrl) embed.url = demandUrl;
-  const payload = { username: 'Kastor', embeds: [embed] };
+  const payload = { username: 'reWork', embeds: [embed] };
   // Ping do responsável conforme o evento:
   //  - demand.stage_assigned: SEMPRE pinga o novo responsável da etapa
   //  - demand.assigned: pinga em mudanças manuais
@@ -1233,10 +1233,10 @@ app.post('/api/forgot-password', rateLimitPwReset, async (req, res) => {
   await store.insertReset({ token, userId: user.id, expiresAt, used: false, createdAt: nowISO() });
   const baseUrl = appBaseUrl(req);
   const link = `${baseUrl}/reset/${token}`;
-  const subject = '[Kastor] Redefinir sua senha';
+  const subject = '[reWork] Redefinir sua senha';
   const html = `<!doctype html><html><body style="margin:0;background:#f7f7fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
     <div style="max-width:540px;margin:24px auto;background:#fff;border-radius:12px;padding:28px 32px">
-      <div style="font-size:13px;font-weight:700;color:#7A00FF;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">Kastor</div>
+      <div style="font-size:13px;font-weight:700;color:#7A00FF;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">reWork</div>
       <h2 style="margin:0 0 10px;font-size:20px;color:#222">Redefinir sua senha</h2>
       <p style="margin:0 0 14px;color:#555;font-size:14px;line-height:1.55">Olá ${escHtml(user.name)}, recebemos um pedido pra redefinir a senha da sua conta. Clique no botão abaixo para criar uma nova:</p>
       <p style="margin:24px 0 8px"><a href="${link}" style="display:inline-block;background:#7A00FF;color:#fff;padding:11px 22px;border-radius:6px;text-decoration:none;font-weight:600;font-size:14px">Redefinir senha →</a></p>
@@ -1351,15 +1351,15 @@ app.post('/api/me/email/test', requireAuth, async (req, res) => {
   if (!req.user.email) return res.status(400).json({ error: 'Cadastre um e-mail no seu perfil antes de testar.' });
   const result = await sendEmail(
     req.user.email,
-    '[Kastor] Teste de notificação por e-mail',
+    '[reWork] Teste de notificação por e-mail',
     `<!doctype html><html><body style="margin:0;background:#f7f7fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
 <div style="max-width:540px;margin:24px auto;background:#fff;border-radius:12px;padding:28px 32px">
-  <div style="font-size:13px;font-weight:700;color:#7A00FF;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">Kastor</div>
+  <div style="font-size:13px;font-weight:700;color:#7A00FF;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">reWork</div>
   <h2 style="margin:0 0 10px;font-size:20px;color:#222">✅ E-mail funcionando</h2>
-  <p style="margin:0 0 8px;color:#444">Olá, ${escHtml(req.user.name)}! Este é um teste do canal de e-mails do Kastor.</p>
+  <p style="margin:0 0 8px;color:#444">Olá, ${escHtml(req.user.name)}! Este é um teste do canal de e-mails do reWork.</p>
   <p style="margin:0;color:#666;font-size:13px">A partir de agora, você pode receber notificações sobre demandas e menções neste endereço.</p>
 </div></body></html>`,
-    `Olá ${req.user.name}! Este é um teste do canal de e-mails do Kastor.`
+    `Olá ${req.user.name}! Este é um teste do canal de e-mails do reWork.`
   );
   if (!result.sent) return res.status(502).json({ error: 'Falha ao enviar: ' + (result.reason || 'erro desconhecido') });
   res.json({ ok: true });
@@ -1642,7 +1642,7 @@ app.get('/api/workspaces', requireAuth, (req, res) => {
 
 app.post('/api/workspaces', requireAuth, adminOnly, (req, res) => {
   const { name, color } = req.body || {};
-  if (!String(name || '').trim()) return res.status(400).json({ error: 'Nome do workspace é obrigatório' });
+  if (!String(name || '').trim()) return res.status(400).json({ error: 'Nome do squad é obrigatório' });
   const w = { id: uid(), name: String(name).trim(), color: color || '#7A00FF', createdAt: nowISO() };
   db.workspaces.push(w);
   saveEntity('workspaces', w);
@@ -1656,7 +1656,7 @@ app.post('/api/workspaces', requireAuth, adminOnly, (req, res) => {
 
 app.put('/api/workspaces/:id', requireAuth, adminOnly, (req, res) => {
   const w = db.workspaces.find(x => x.id === req.params.id);
-  if (!w) return res.status(404).json({ error: 'Workspace não encontrado' });
+  if (!w) return res.status(404).json({ error: 'Squad não encontrado' });
   const { name, color } = req.body || {};
   if (typeof name === 'string' && name.trim()) w.name = name.trim();
   if (color) w.color = color;
@@ -1667,7 +1667,7 @@ app.put('/api/workspaces/:id', requireAuth, adminOnly, (req, res) => {
 app.delete('/api/workspaces/:id', requireAuth, adminOnly, (req, res) => {
   if (db.workspaces.length <= 1) return res.status(400).json({ error: 'É preciso manter pelo menos um workspace' });
   const hasProjects = db.projects.some(p => p.workspaceId === req.params.id);
-  if (hasProjects) return res.status(409).json({ error: 'Este workspace possui projetos. Mova ou exclua-os antes.' });
+  if (hasProjects) return res.status(409).json({ error: 'Este squad possui projetos. Mova ou exclua-os antes.' });
   const orphanFlows = db.flows.filter(f => f.workspaceId === req.params.id);
   db.workspaces = db.workspaces.filter(x => x.id !== req.params.id);
   db.flows = db.flows.filter(f => f.workspaceId !== req.params.id);
@@ -1962,7 +1962,7 @@ app.post('/api/templates', requireAuth, (req, res) => {
   const b = req.body || {};
   if (!String(b.name || '').trim()) return res.status(400).json({ error: 'Nome do template é obrigatório' });
   const ws = b.workspaceId && canAccessWs(req.user, b.workspaceId) ? b.workspaceId : wsIdsFor(req.user)[0];
-  if (!ws) return res.status(400).json({ error: 'Workspace inválido' });
+  if (!ws) return res.status(400).json({ error: 'Squad inválido' });
   const t = {
     id: uid(),
     workspaceId: ws,
@@ -2055,7 +2055,7 @@ app.post('/api/clients', requireAuth, (req, res) => {
   const exists = db.clients.some(c =>
     c.workspaceId === wsId && (c.name || '').trim().toLowerCase() === b.name.trim().toLowerCase()
   );
-  if (exists) return res.status(409).json({ error: 'Já existe um cliente com esse nome neste workspace.' });
+  if (exists) return res.status(409).json({ error: 'Já existe um cliente com esse nome neste squad.' });
   const c = buildClientPayload(b, {
     id: uid(),
     workspaceId: wsId,
@@ -2086,7 +2086,7 @@ app.put('/api/clients/:id', requireAuth, (req, res) => {
       x.id !== c.id && x.workspaceId === c.workspaceId &&
       (x.name || '').trim().toLowerCase() === b.name.trim().toLowerCase()
     );
-    if (dup) return res.status(409).json({ error: 'Já existe outro cliente com esse nome neste workspace.' });
+    if (dup) return res.status(409).json({ error: 'Já existe outro cliente com esse nome neste squad.' });
   }
   // Move pra outro workspace? Permitido pra admins, com revalidação
   if (b.workspaceId && b.workspaceId !== c.workspaceId && canAccessWs(req.user, b.workspaceId)) {
@@ -2445,12 +2445,12 @@ app.post('/api/clients/from-template', requireAuth, (req, res) => {
   // Modelo é global — o workspace do cliente vem SEMPRE do body (o switcher do
   // topbar); fallback pro primeiro workspace acessível se não veio explícito.
   const wsId = b.workspaceId && canAccessWs(req.user, b.workspaceId) ? b.workspaceId : wsIdsFor(req.user)[0];
-  if (!wsId || !canAccessWs(req.user, wsId)) return res.status(403).json({ error: 'Sem acesso ao workspace.' });
+  if (!wsId || !canAccessWs(req.user, wsId)) return res.status(403).json({ error: 'Sem acesso ao squad.' });
   const newName = String(b.name || '').trim();
   if (!newName) return res.status(400).json({ error: 'Nome do cliente é obrigatório.' });
   // Bloqueia duplicidade
   if (db.clients.some(c => c.workspaceId === wsId && (c.name || '').trim().toLowerCase() === newName.toLowerCase())) {
-    return res.status(409).json({ error: 'Já existe um cliente com esse nome neste workspace.' });
+    return res.status(409).json({ error: 'Já existe um cliente com esse nome neste squad.' });
   }
 
   const createdProjects = [];
@@ -2542,7 +2542,7 @@ app.post('/api/projects', requireAuth, (req, res) => {
     return res.status(400).json({ error: 'Selecione um cliente cadastrado pro projeto.' });
   }
   if (!canAccessWs(req.user, clientEntity.workspaceId)) {
-    return res.status(403).json({ error: 'Sem acesso ao workspace deste cliente.' });
+    return res.status(403).json({ error: 'Sem acesso ao squad deste cliente.' });
   }
   let avatarUrl = null;
   if (avatar) {
@@ -3824,7 +3824,7 @@ app.post('/api/demands/bulk', requireAuth, rateLimitBulk, (req, res) => {
         const proj = db.projects.find(p => p.id === newPid && (req.user.isAdmin || wsIds.includes(p.workspaceId)));
         if (!proj) { skipped++; errors.push({ id: d.id, error: 'Projeto inválido.' }); continue; }
         if (proj.workspaceId !== d.workspaceId) {
-          skipped++; errors.push({ id: d.id, error: 'Projeto de outro workspace.' }); continue;
+          skipped++; errors.push({ id: d.id, error: 'Projeto de outro squad.' }); continue;
         }
         if (newPid !== d.projectId) {
           const from = d.projectId;
@@ -4229,7 +4229,7 @@ app.post('/api/schedules', requireAuth, (req, res) => {
     if (!free) return res.status(400).json({ error: 'Título é obrigatório em blocos livres.' });
     const wsId = String(b.workspaceId || '');
     if (!wsId || !canAccessWs(req.user, wsId)) {
-      return res.status(400).json({ error: 'Workspace inválido pro bloco livre.' });
+      return res.status(400).json({ error: 'Squad inválido pro bloco livre.' });
     }
     s = {
       id: uid(),
@@ -4672,7 +4672,7 @@ function validateWebhookScope(clientId, projectId, workspaceId) {
 app.post('/api/webhooks', requireAuth, modOrAdmin, (req, res) => {
   const b = req.body || {};
   const ws = b.workspaceId && canAccessWs(req.user, b.workspaceId) ? b.workspaceId : wsIdsFor(req.user)[0];
-  if (!ws) return res.status(400).json({ error: 'Workspace inválido' });
+  if (!ws) return res.status(400).json({ error: 'Squad inválido' });
   if (!String(b.name || '').trim()) return res.status(400).json({ error: 'Nome obrigatório' });
   if (!String(b.url || '').trim().startsWith('http')) return res.status(400).json({ error: 'URL inválida' });
   const validEvents = Array.isArray(b.events) ? b.events.filter(e => WEBHOOK_EVENTS[e]) : [];
@@ -4740,7 +4740,7 @@ app.post('/api/webhooks/:id/test', requireAuth, modOrAdmin, async (req, res) => 
     return res.status(400).json({ error: 'URL bloqueada: aponta pra rede interna, loopback ou usa protocolo não HTTP(S).' });
   }
   const fakeDemand = {
-    id: 'test', name: '🧪 Teste do webhook do Kastor',
+    id: 'test', name: '🧪 Teste do webhook do reWork',
     workspaceId: h.workspaceId, projectId: null, status: 'test',
     priority: 3, ownerId: req.user.id, description: 'Esta é uma mensagem de teste para validar a integração.'
   };
@@ -4821,7 +4821,7 @@ async function fetchHtmlSafe(startUrl, maxRedirects = 4) {
     const resp = await fetchWithTimeout(url, {
       method: 'GET', redirect: 'manual',
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; KastorBot/1.0; +link-title)',
+        'User-Agent': 'Mozilla/5.0 (compatible; reWorkBot/1.0; +link-title)',
         'Accept': 'text/html,application/xhtml+xml'
       }
     }, 6000);
@@ -4893,14 +4893,15 @@ function refreshEntityLinkTitles(entityType, entity, prev, broadcastKind) {
 /* ── MÉTRICAS DE SLA ── */
 app.get('/api/reports/sla', requireAuth, rateLimitReport, (req, res) => {
   const ids = wsIdsFor(req.user);
-  const wsId = String(req.query.workspaceId || '');
+  // Aceita 1..N workspaces em CSV (filtro de squads multi do front). Vazio = todos.
+  const requested = String(req.query.workspaceId || '').split(',').map(s => s.trim()).filter(Boolean);
   const period = String(req.query.period || '30'); // dias, ou 'all'
   const clientId = String(req.query.clientId || '');
   const projectId = String(req.query.projectId || '');
   const flowId = String(req.query.flowId || '');
 
-  if (wsId && !ids.includes(wsId)) return res.status(403).json({ error: 'Sem acesso' });
-  const wsFilter = wsId ? [wsId] : ids;
+  if (requested.some(w => !ids.includes(w))) return res.status(403).json({ error: 'Sem acesso' });
+  const wsFilter = requested.length ? requested : ids;
 
   // Período retroativo
   let startDate = null;
@@ -5314,7 +5315,7 @@ async function digestSendForUser(user, baseUrl) {
     : '';
   const html = `<!doctype html><html><body style="margin:0;background:#f7f7fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
     <div style="max-width:600px;margin:24px auto;background:#fff;border-radius:12px;padding:28px 32px">
-      <div style="font-size:13px;font-weight:700;color:#7A00FF;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">Kastor · Resumo do dia</div>
+      <div style="font-size:13px;font-weight:700;color:#7A00FF;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">reWork · Resumo do dia</div>
       <h2 style="margin:0 0 18px;font-size:22px;color:#222">Bom dia, ${escHtml(user.name.split(' ')[0])} 👋</h2>
       <p style="margin:0 0 4px;color:#555;font-size:14px">Aqui está o que precisa da sua atenção hoje:</p>
 
@@ -5333,7 +5334,7 @@ async function digestSendForUser(user, baseUrl) {
     </div></body></html>`;
   const text = `Bom dia, ${user.name.split(' ')[0]}!\n\nEm atraso: ${overdue.length}\nVencem hoje: ${dueToday.length}\nPróximos 3 dias: ${dueSoon.length}\nNotificações não lidas: ${unreadNotifs.length}\n\nAbra: ${url}`;
   try {
-    await sendEmail(user.email, `[Kastor] Resumo do dia — ${overdue.length + dueToday.length} pra hoje`, html, text);
+    await sendEmail(user.email, `[reWork] Resumo do dia — ${overdue.length + dueToday.length} pra hoje`, html, text);
     return true;
   } catch (e) {
     console.error(`[digest] falha ao enviar pra ${user.email}: ${e.message}`);

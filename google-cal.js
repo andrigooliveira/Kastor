@@ -1,5 +1,5 @@
 /* ───────────────────────────────────────────────────────────────
-   KASTOR — Google Calendar integration (one-way, read-only)
+   reWork — Google Calendar integration (one-way, read-only)
 
    Isola toda a comunicação com Google (OAuth + Calendar API) num módulo só
    pra não poluir server.js. Fase 1 cobre autenticação e listagem de

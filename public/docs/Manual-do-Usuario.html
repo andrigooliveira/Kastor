@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Kastor — Manual do Usuário</title>
+<title>reWork — Manual do Usuário</title>
 <style>
   :root {
     --bg: #0B0B10;
@@ -403,12 +403,12 @@
 <aside class="toc">
   <header>
     <div class="logo">K</div>
-    <h1>Kastor</h1>
+    <h1>reWork</h1>
   </header>
   <p class="subtitle">Manual do usuário</p>
   <nav>
     <ol>
-      <li><a href="#bem-vindo">Bem-vindo ao Kastor</a></li>
+      <li><a href="#bem-vindo">Bem-vindo ao reWork</a></li>
       <li><a href="#primeiros-passos">Primeiros passos</a>
         <ol>
           <li><a href="#login">Entrar na plataforma</a></li>
@@ -482,18 +482,18 @@
 
 <main>
   <span class="kicker">Manual do Usuário</span>
-  <h1 class="doc-title">Kastor — Gestão de Demandas de Marketing</h1>
+  <h1 class="doc-title">reWork — Gestão de Demandas de Marketing</h1>
   <p class="lead">Guia completo para quem está começando. Você vai aprender o que cada tela faz, os detalhes que fazem diferença no dia a dia, e boas práticas para manter tudo organizado — sem virar refém do sistema.</p>
 
   <!-- ============================================================ -->
   <section id="bem-vindo" class="no-divider">
-    <h2><span class="num">01</span>Bem-vindo ao Kastor</h2>
-    <p>O Kastor é uma plataforma para organizar a operação de um time de marketing: <strong>clientes</strong>, <strong>projetos</strong>, <strong>demandas</strong>, <strong>prazos</strong>, <strong>responsáveis</strong>, <strong>apontamento de horas</strong> e <strong>agenda semanal</strong> — tudo em um lugar só.</p>
+    <h2><span class="num">01</span>Bem-vindo ao reWork</h2>
+    <p>O reWork é uma plataforma para organizar a operação de um time de marketing: <strong>clientes</strong>, <strong>projetos</strong>, <strong>demandas</strong>, <strong>prazos</strong>, <strong>responsáveis</strong>, <strong>apontamento de horas</strong> e <strong>agenda semanal</strong> — tudo em um lugar só.</p>
     <p>Se você já usou ferramentas como Trello, Asana ou Monday, muita coisa vai parecer familiar. Se nunca usou nenhuma, tudo bem — este manual assume que você está começando do zero.</p>
     <div class="grid-2">
       <div class="card"><h4>Para quem executa</h4><p>Ver suas demandas do dia, apontar horas, mover etapas, conversar no detalhe e planejar a semana na Agenda.</p></div>
       <div class="card"><h4>Para quem gerencia</h4><p>Distribuir demandas, montar fluxos, ver capacidade da equipe, priorizar e gerar relatórios mensais em PDF.</p></div>
-      <div class="card"><h4>Para administradores</h4><p>Criar usuários, definir workspaces, funções, permissões e integrações. Poucas pessoas precisam ser admin.</p></div>
+      <div class="card"><h4>Para administradores</h4><p>Criar usuários, definir squads, funções, permissões e integrações. Poucas pessoas precisam ser admin.</p></div>
     </div>
     <div class="callout tip">
       <div class="ic">✓</div>
@@ -516,7 +516,7 @@
     <h3 id="tour">Um tour pela tela</h3>
     <p>A interface é dividida em três regiões:</p>
     <ul>
-      <li><strong>Sidebar à esquerda</strong> — navegação entre as páginas. No <em>topo</em> tem o seletor de <strong>Workspace</strong> (o "espaço" que você está vendo); no <em>rodapé</em>, seu avatar (abre <em>Meu Perfil</em>), alternador de tema (claro/escuro) e o botão para <strong>compactar</strong> a sidebar.</li>
+      <li><strong>Sidebar à esquerda</strong> — navegação entre as páginas. No <em>topo</em> tem o seletor de <strong>Squad</strong> (o "espaço" que você está vendo); no <em>rodapé</em>, seu avatar (abre <em>Meu Perfil</em>), alternador de tema (claro/escuro) e o botão para <strong>compactar</strong> a sidebar.</li>
       <li><strong>Topbar</strong> — mostra o título da página atual, o botão <strong>Modo focar</strong> (esconde sidebar e topbar), o sino de <strong>Notificações</strong> com contador e o botão <strong>+ Nova Demanda</strong>.</li>
       <li><strong>Conteúdo</strong> — a página em si (Dashboard, Demandas, Clientes, etc.).</li>
     </ul>
@@ -528,7 +528,7 @@
         <tr><td><strong>Execução</strong></td><td>Demandas, Minhas Demandas, Agenda</td></tr>
         <tr><td><strong>Acompanhamento</strong></td><td>Capacidade, Clientes</td></tr>
         <tr><td><strong>Processos</strong></td><td>Listas de tarefas, Fluxos de Demanda, Templates</td></tr>
-        <tr><td><strong>Configurações</strong> <span class="badge admin">admin</span></td><td>Integrações, Workspaces, Usuários</td></tr>
+        <tr><td><strong>Configurações</strong> <span class="badge admin">admin</span></td><td>Integrações, Squads, Usuários</td></tr>
       </tbody>
     </table>
 
@@ -543,7 +543,7 @@
     <table>
       <thead><tr><th style="width:170px">Conceito</th><th>O que é</th></tr></thead>
       <tbody>
-        <tr><td><strong>Workspace</strong></td><td>Espaço isolado (um squad, uma unidade, uma marca) que contém seus próprios clientes, projetos e fluxos. Cada usuário pode ter acesso a um ou mais workspaces.</td></tr>
+        <tr><td><strong>Squad</strong></td><td>Espaço isolado (um time, uma unidade, uma marca) que contém seus próprios clientes, projetos e fluxos. Cada usuário pode ter acesso a um ou mais squads.</td></tr>
         <tr><td><strong>Cliente</strong></td><td>A conta que sua equipe atende. Guarda ativos da marca, diretrizes, link do Drive e os projetos daquele cliente.</td></tr>
         <tr><td><strong>Projeto</strong></td><td>Um recorte de trabalho dentro do cliente (ex.: "Instagram", "Blog", "Campanha Q3"). Toda demanda pertence a um projeto.</td></tr>
         <tr><td><strong>Fluxo</strong></td><td>Um "esqueleto" de etapas por onde a demanda passa (ex.: <em>Backlog → Copywrite → Design → Revisão → Concluída</em>). Cada etapa tem cor, prazo em dias e responsável (pessoa ou função).</td></tr>
@@ -555,7 +555,7 @@
     </table>
     <div class="callout tip">
       <div class="ic">✓</div>
-      <div class="body"><strong>Hierarquia mental:</strong> Workspace &rarr; Cliente &rarr; Projeto &rarr; Demanda (que segue um Fluxo). Guarde essa cadeia — ela aparece em toda parte, inclusive no wizard de criação.</div>
+      <div class="body"><strong>Hierarquia mental:</strong> Squad &rarr; Cliente &rarr; Projeto &rarr; Demanda (que segue um Fluxo). Guarde essa cadeia — ela aparece em toda parte, inclusive no wizard de criação.</div>
     </div>
     <h4>A cadeia do responsável</h4>
     <p>Quando o sistema precisa descobrir "quem é o responsável desta etapa desta demanda?", ele percorre esta ordem:</p>
@@ -598,18 +598,18 @@
     <p>Se sua equipe usa Discord, informe seu <strong>ID de usuário do Discord</strong>. Assim as notificações do canal vão te marcar (<code>@você</code>) quando você virar responsável ou for mencionado — o barulho chega em quem interessa, sem incomodar quem não é responsável.</p>
     <div class="callout info">
       <div class="ic">i</div>
-      <div class="body"><strong>Como pegar meu ID no Discord?</strong> No Discord, ative <em>Configurações &rarr; Avançado &rarr; Modo desenvolvedor</em>. Depois clique com o botão direito no seu nome (em qualquer mensagem sua) e escolha <em>Copiar ID do usuário</em>. Cola no campo do Kastor e salva.</div>
+      <div class="body"><strong>Como pegar meu ID no Discord?</strong> No Discord, ative <em>Configurações &rarr; Avançado &rarr; Modo desenvolvedor</em>. Depois clique com o botão direito no seu nome (em qualquer mensagem sua) e escolha <em>Copiar ID do usuário</em>. Cola no campo do reWork e salva.</div>
     </div>
 
     <h3 id="perfil-google">Google Calendar</h3>
-    <p>Conecte sua conta Google para ver seus compromissos pessoais junto com os blocos de trabalho da Agenda. É <strong>somente leitura</strong>: o Kastor nunca escreve no seu Google.</p>
+    <p>Conecte sua conta Google para ver seus compromissos pessoais junto com os blocos de trabalho da Agenda. É <strong>somente leitura</strong>: o reWork nunca escreve no seu Google.</p>
     <ol class="step-list">
       <li>Clique em <strong>Conectar Google Calendar</strong> e autorize no Google.</li>
       <li>Volta para o perfil, a lista de calendários aparece.</li>
       <li>Marque os calendários que quer ver na Agenda e clique em <strong>Sincronizar agora</strong>.</li>
       <li>Os eventos aparecem em <em>azul</em> na Agenda; clicar em um abre o link para o Google Calendar.</li>
     </ol>
-    <p><strong>Atualizar lista</strong> re-pega a lista de calendários (útil se criou um novo no Google). <strong>Sincronizar agora</strong> re-busca os eventos. <strong>Desconectar</strong> remove a integração (o Kastor esquece seus tokens e apaga os eventos sincronizados).</p>
+    <p><strong>Atualizar lista</strong> re-pega a lista de calendários (útil se criou um novo no Google). <strong>Sincronizar agora</strong> re-busca os eventos. <strong>Desconectar</strong> remove a integração (o reWork esquece seus tokens e apaga os eventos sincronizados).</p>
 
     <h3 id="perfil-senha">Alterar senha e sair</h3>
     <p>Em <strong>Alterar Senha</strong>, informe a senha atual e a nova (mínimo 6 caracteres, digite duas vezes). Recomendado trocar de tempos em tempos, especialmente se compartilhou tela em reunião.</p>
@@ -650,7 +650,7 @@
     <p>No grid principal de clientes, use o toggle <strong>Todos / Ativos / Arquivados</strong> para filtrar. A engrenagem em cima abre <strong>Editar cliente</strong>.</p>
 
     <h3 id="cliente-arquivar">Arquivar vs excluir</h3>
-    <p>Kastor te dá duas maneiras de "aposentar" um cliente:</p>
+    <p>reWork te dá duas maneiras de "aposentar" um cliente:</p>
     <ul>
       <li><strong>Desativar/Arquivar</strong> — some das listas do dia a dia mas preserva histórico, relatórios, horas apontadas, tudo. É o caminho seguro. Para reativar, use o toggle <em>Arquivados</em> e restaure.</li>
       <li><strong>Excluir</strong> — apaga o cliente. Só faça isso se realmente não vai mais precisar. Para evitar acidente, o sistema pede que você <strong>digite o nome exato</strong> do cliente antes de confirmar.</li>
@@ -661,7 +661,7 @@
     </div>
 
     <h3 id="cliente-relatorio">Relatório mensal em PDF</h3>
-    <p>Botão <strong>Relatório mensal</strong> no topo do cliente. Escolhe o mês e o Kastor gera um PDF com:</p>
+    <p>Botão <strong>Relatório mensal</strong> no topo do cliente. Escolhe o mês e o reWork gera um PDF com:</p>
     <ul>
       <li>Header com nome do cliente, mês de referência;</li>
       <li>Resumo do mês (demandas concluídas, em andamento, atrasadas);</li>
@@ -715,7 +715,7 @@
     <p>Adicione as fases da produção (ex.: <em>Backlog, Copywrite, Design, Revisão, Aprovação, Concluída</em>). Cada etapa tem:</p>
     <ul>
       <li><strong>Nome</strong> — como aparece no pipeline e no Kanban;</li>
-      <li><strong>Cor</strong> — vira o "amarelo do Kastor" da etapa. Ajuda a bater o olho no board;</li>
+      <li><strong>Cor</strong> — vira o "amarelo do reWork" da etapa. Ajuda a bater o olho no board;</li>
       <li><strong>Prazo</strong> em dias — começa a contar <em>no momento em que a demanda entra na etapa</em>. Se você bota 3 dias em "Design", a demanda que entrou hoje vai vencer daqui a 3 dias nessa etapa;</li>
       <li><strong>Responsável</strong> — pode ser uma <em>pessoa fixa</em> (ex.: "Ana") ou uma <em>função</em> (ex.: "Designer"). <em>Recomendado usar função sempre que der.</em></li>
       <li><strong>Conclui?</strong> — marque na etapa final. É essa marcação que diz ao sistema "quando a demanda entra aqui, tá pronta".</li>
@@ -767,7 +767,7 @@
     <h3 id="criar-demanda">Criar uma demanda (wizard)</h3>
     <p>Clique <strong>+ Nova Demanda</strong> no topbar — ou pressione a tecla <kbd>n</kbd> em qualquer tela. Um wizard em 4 passos aparece:</p>
     <ol class="step-list">
-      <li><strong>Selecione o cliente</strong> — só aparecem os do workspace atual. Use a busca para filtrar rápido.</li>
+      <li><strong>Selecione o cliente</strong> — só aparecem os do squad atual. Use a busca para filtrar rápido.</li>
       <li><strong>Selecione o projeto</strong> — só aparecem os do cliente escolhido.</li>
       <li><strong>Selecione o tipo de demanda</strong> — na prática, o fluxo. Se o cliente tem muitos fluxos, use o filtro por tipo (Social Media / Vídeo / Landing / etc.).</li>
       <li><strong>Preencha os detalhes</strong>:
@@ -832,7 +832,7 @@
       <li><span class="pill p3">Média</span> — o padrão. A maior parte das demandas nasce aqui.</li>
       <li><span class="pill p4">Baixa</span> — pode esperar, "faz quando sobrar tempo".</li>
     </ul>
-    <p>Sobre <strong>prazos</strong>, o Kastor lida com dois:</p>
+    <p>Sobre <strong>prazos</strong>, o reWork lida com dois:</p>
     <ul>
       <li><strong>Prazo da etapa atual</strong> — quando essa etapa específica precisa ser concluída. Vem do fluxo (soma dos dias configurados). Pode ajustar manualmente.</li>
       <li><strong>Prazo final</strong> — deadline da demanda como um todo (a entrega ao cliente). É este que geralmente sai no board para o cliente.</li>
@@ -994,8 +994,8 @@
     </ul>
 
     <h3>Eventos do Google (opcional)</h3>
-    <p>Se você conectou seu Google Calendar em <em>Meu Perfil</em>, seus compromissos pessoais aparecem em <strong>azul</strong> lado a lado com os blocos de trabalho. Eles são <em>somente leitura</em> — o Kastor não pode mover nem apagar. Clique em um evento azul para abrir no Google Calendar em nova aba.</p>
-    <p>Quando um bloco de trabalho e um evento do Google se sobrepõem, o Kastor coloca lado a lado (em "faixas") — nenhum some.</p>
+    <p>Se você conectou seu Google Calendar em <em>Meu Perfil</em>, seus compromissos pessoais aparecem em <strong>azul</strong> lado a lado com os blocos de trabalho. Eles são <em>somente leitura</em> — o reWork não pode mover nem apagar. Clique em um evento azul para abrir no Google Calendar em nova aba.</p>
+    <p>Quando um bloco de trabalho e um evento do Google se sobrepõem, o reWork coloca lado a lado (em "faixas") — nenhum some.</p>
 
     <div class="callout tip">
       <div class="ic">✓</div>
@@ -1006,7 +1006,7 @@
   <!-- ============================================================ -->
   <section id="dashboard">
     <h2><span class="num">11</span>Dashboard</h2>
-    <p class="section-intro">Visão panorâmica do workspace. Ideal para gestores no início do dia, ou para todo mundo em reuniões de status.</p>
+    <p class="section-intro">Visão panorâmica do squad. Ideal para gestores no início do dia, ou para todo mundo em reuniões de status.</p>
 
     <div class="grid-2">
       <div class="card"><h4>Visão Geral</h4><p>Números-chave do momento: total de demandas ativas, atrasadas, concluídas no mês. Bate o olho para saber "como estamos".</p></div>
@@ -1015,7 +1015,7 @@
       <div class="card"><h4>Throughput</h4><p>Quantas demandas o time concluiu por semana nas últimas 12 semanas. Ajuda a ver tendência (subindo, caindo, estável) e prever quanto conseguem entregar no próximo trimestre.</p></div>
       <div class="card"><h4>Radar de projetos</h4><p>Projetos com mais demandas ativas / atrasadas. Sinaliza onde a atenção precisa ir.</p></div>
       <div class="card"><h4>Top responsáveis · mês</h4><p>Quem entregou mais no período. Bom para reconhecer, mas cuidado: quantidade &ne; qualidade. Complementa com apontamento de horas.</p></div>
-      <div class="card"><h4>Apontamento de Horas</h4><p>Quanto tempo foi apontado no total (workspace inteiro) no período.</p></div>
+      <div class="card"><h4>Apontamento de Horas</h4><p>Quanto tempo foi apontado no total (squad inteiro) no período.</p></div>
     </div>
   </section>
 
@@ -1102,14 +1102,14 @@
     </ul>
     <div class="callout tip">
       <div class="ic">✓</div>
-      <div class="body"><strong>Dica:</strong> combine com as notificações por e-mail (para chegar fora do sistema) e Discord pessoal (para o alarme no celular via app do Discord). O sino é para quando você já está dentro do Kastor.</div>
+      <div class="body"><strong>Dica:</strong> combine com as notificações por e-mail (para chegar fora do sistema) e Discord pessoal (para o alarme no celular via app do Discord). O sino é para quando você já está dentro do reWork.</div>
     </div>
   </section>
 
   <!-- ============================================================ -->
   <section id="produtividade">
     <h2><span class="num">16</span>Atalhos e produtividade</h2>
-    <p class="section-intro">O Kastor foi pensado para teclado. Se você usa o dia todo, aprender estes atalhos economiza minutos por dia — e faz uma diferença enorme ao longo da semana.</p>
+    <p class="section-intro">O reWork foi pensado para teclado. Se você usa o dia todo, aprender estes atalhos economiza minutos por dia — e faz uma diferença enorme ao longo da semana.</p>
 
     <h3>Paleta de comandos</h3>
     <p>O atalho mais importante: <kbd>Ctrl</kbd>+<kbd>K</kbd> (ou <kbd>⌘</kbd>+<kbd>K</kbd> no Mac). Abre uma caixa de busca universal:</p>
@@ -1152,20 +1152,20 @@
     <p>Botão de compactar (também no rodapé da sidebar). Reduz a barra lateral para só ícones, ganhando espaço horizontal para o conteúdo. Passe o mouse sobre um ícone para ver o nome. Também persistente entre sessões.</p>
 
     <h3>Real-time silencioso</h3>
-    <p>O Kastor é multi-usuário: mudanças de outra pessoa aparecem para você em quase tempo real, sem precisar dar F5. Você vai perceber quando um colega mover uma demanda que você está olhando — o card atualiza sozinho. Se algo parece estranho, dar F5 nunca faz mal.</p>
+    <p>O reWork é multi-usuário: mudanças de outra pessoa aparecem para você em quase tempo real, sem precisar dar F5. Você vai perceber quando um colega mover uma demanda que você está olhando — o card atualiza sozinho. Se algo parece estranho, dar F5 nunca faz mal.</p>
   </section>
 
   <!-- ============================================================ -->
   <section id="boas-praticas">
     <h2><span class="num">17</span>Boas práticas</h2>
-    <p class="section-intro">Um pouco de disciplina compartilhada faz o Kastor render muito mais. Aqui vão princípios que times operacionais bem-sucedidos costumam adotar.</p>
+    <p class="section-intro">Um pouco de disciplina compartilhada faz o reWork render muito mais. Aqui vão princípios que times operacionais bem-sucedidos costumam adotar.</p>
 
     <h3>Para quem executa</h3>
     <ul>
       <li><strong>Aponte horas no mesmo dia.</strong> Nem que seja no fim do dia. Reconstruir depois é impossível — vai chutar. Chute vira relatório de cliente errado.</li>
       <li><strong>Comente antes de bater na mesa do colega.</strong> Registro no comentário é histórico; conversa no corredor evapora e some do <em>Histórico</em>.</li>
       <li><strong>Marque o checklist conforme faz.</strong> É o sinal mais barato para o próximo saber que pode começar.</li>
-      <li><strong>Suba anexos no Kastor</strong>, não só no WhatsApp. O arquivo passa a viver com a demanda para sempre.</li>
+      <li><strong>Suba anexos no reWork</strong>, não só no WhatsApp. O arquivo passa a viver com a demanda para sempre.</li>
       <li><strong>Use o cronômetro.</strong> É melhor que apontar "estimado" no fim. Mais preciso e menos trabalho.</li>
       <li><strong>Bloqueie sua Agenda no início da semana.</strong> Sem plano, o dia manda em você.</li>
     </ul>
@@ -1220,7 +1220,7 @@
     <p>Duas rotas: abra o cliente e veja <strong>TEMPO DEDICADO</strong> (com filtro por 7/14/30/90 dias); ou vá em <strong>Capacidade &rarr; Cliente</strong> para comparar entre clientes. Para exportar, use <strong>Relatório mensal</strong>.</p>
 
     <h4>O Google Calendar sincroniza para os dois lados?</h4>
-    <p>Não. É <strong>somente leitura</strong>: o Kastor lê seus eventos do Google para mostrar na Agenda, mas nunca escreve nada de volta no seu Google.</p>
+    <p>Não. É <strong>somente leitura</strong>: o reWork lê seus eventos do Google para mostrar na Agenda, mas nunca escreve nada de volta no seu Google.</p>
 
     <h4>Perdi uma demanda — onde procuro?</h4>
     <p>Abra a paleta de comandos (<kbd>Ctrl</kbd>+<kbd>K</kbd>) e digite parte do nome. Busca em clientes, demandas, projetos, listas, recorrentes, fluxos e usuários ao mesmo tempo.</p>
@@ -1245,7 +1245,7 @@
   </section>
 
   <footer class="doc-foot">
-    <span>Kastor — Manual do Usuário</span>
+    <span>reWork — Manual do Usuário</span>
     <span>Se ficou dúvida, procure o administrador da sua equipe.</span>
   </footer>
 </main>

@@ -1,4 +1,4 @@
-# Kastor
+# reWork
 
 > Gestão de demandas de marketing — multiusuário, persistente, com integração Google Calendar.
 

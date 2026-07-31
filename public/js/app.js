@@ -1,5 +1,5 @@
 /* ───────────────────────────────────────────────────────────────
-   KASTOR — Frontend (v3)
+   reWork — Frontend (v3)
    Workspaces · horas · comentários com @ · etapas arrastáveis
    ─────────────────────────────────────────────────────────────── */
 
@@ -242,7 +242,7 @@ window.addEventListener('popstate', applyRoute);
 const FILTER_KEYS = {
   list:      { storage: 'kastor-filters-list',      ids: ['search-input','filter-workspace','filter-user','filter-project','filter-client','filter-period','filter-period-start','filter-period-end','filter-quick'] },
   dashboard: { storage: 'kastor-filters-dashboard', ids: ['dash-f-user','dash-f-client','dash-f-period','dash-f-type'] },
-  capacity:  { storage: 'kastor-filters-capacity',  ids: ['capacity-period'] },
+  capacity:  { storage: 'kastor-filters-capacity',  ids: ['capacity-period','capacity-period-start','capacity-period-end','capacity-squads'] },
   clients:   { storage: 'kastor-filters-clients',   ids: ['client-search','client-f-ws'] },
   reports:   { storage: 'kastor-filters-reports',   ids: ['reports-ws','reports-client','reports-project','reports-period'] }
 };
@@ -1454,7 +1454,7 @@ function cmdkActions() {
   acts.push({ icon: 'repeat',   label: 'Ir para Demandas Recorrentes', kind: 'Navegar', run: () => goPage('recurringDemands') });
   // Workspaces, Integrações e Lixeira: admin + moderador (mesmo gate do sidebar).
   if (me?.isAdmin || me?.isModerator) {
-    acts.push({ icon: 'layers',  label: 'Ir para Workspaces',   kind: 'Navegar', run: () => goPage('workspaces') });
+    acts.push({ icon: 'layers',  label: 'Ir para Squads',   kind: 'Navegar', run: () => goPage('workspaces') });
     acts.push({ icon: 'webhook', label: 'Ir para Integrações',  kind: 'Navegar', run: () => goPage('integrations') });
     acts.push({ icon: 'trash-2', label: 'Ir para Lixeira',      kind: 'Navegar', run: () => goPage('trash') });
   }
@@ -2698,8 +2698,8 @@ function applyTheme(theme) {
   // Troca só o logo da tela de login conforme o tema (preto no claro, branco no escuro).
   // A sidebar tem 3 variantes fixas no HTML (branco/preto/K icon) e o CSS decide qual
   // mostrar via seletores por (data-theme × sidebar-collapsed). Mexer no src daqui
-  // sobrescrevia o Kastor_logo.svg com o wordmark, quebrando o estado colapsado.
-  const loginLogoSrc = t === 'light' ? '/Kastor_preto.svg' : '/Kastor_branco.svg';
+  // sobrescrevia o rework_logo.svg com o wordmark, quebrando o estado colapsado.
+  const loginLogoSrc = t === 'light' ? '/rework_preto.svg' : '/rework_branco.svg';
   document.querySelectorAll('.login-logo img').forEach(img => {
     if (img.getAttribute('src') !== loginLogoSrc) img.setAttribute('src', loginLogoSrc);
   });
@@ -2903,7 +2903,7 @@ function switchWorkspace(id) {
   if (cdrop) cdrop.classList.remove('open');
   renderWsSwitch();
   renderCurrent();
-  toast('Workspace: ' + (wsById(id)?.name || ''), 'success');
+  toast('Squad: ' + (wsById(id)?.name || ''), 'success');
 }
 
 /* ─── NAVEGAÇÃO ─── */
@@ -2941,7 +2941,7 @@ function applySidebarCollapseInit() {
 const PAGE_TITLES = {
   dashboard: 'Dashboard', list: 'Demandas', mine: 'Minhas Demandas',
   clients: 'Clientes', projects: 'Projetos', flows: 'Fluxos de Demanda',
-  workspaces: 'Workspaces', users: 'Usuários', profile: 'Meu Perfil',
+  workspaces: 'Squads', users: 'Usuários', profile: 'Meu Perfil',
   analytics: 'Análises', templates: 'Templates', integrations: 'Integrações', agenda: 'Agenda',
   recurring: 'Listas de tarefas', docs: 'Documentação', clientsModels: 'Modelos de Cliente',
   trash: 'Lixeira', recurringDemands: 'Demandas Recorrentes'
@@ -3305,8 +3305,8 @@ function renderDashboard() {
   `;
   animateCounters($('dash-kpis'));
 
-  // ── Próximos 7 dias / Em atraso / Radar / Top responsáveis / Throughput ──
-  renderDashNext7(wsAll);
+  // ── Demandas previstas / Em atraso / Radar / Top responsáveis / Throughput ──
+  renderDashForecast();
   renderDashOverdue(wsAll);
   renderDashRadar();
   renderDashTopOwners(list);
@@ -3316,56 +3316,153 @@ function renderDashboard() {
   saveFilters('dashboard');
 }
 
-// ── Próximos 7 dias ── 7 pills horizontais, cada uma com contagem por dia
-// baseada em effDue (prazo efetivo). Ignora completadas. Hover mostra lista.
-function renderDashNext7(wsAll) {
-  const el = $('dash-next7');
-  const sub = $('dash-next7-sub');
+// ── Demandas previstas ── quadro heatmap 2×7 (14 dias úteis). Puxa o SLA das
+// etapas pra prever QUANDO cada demanda vai chegar na etapa do usuário-alvo.
+// Escopo: usuário selecionado no filtro do dashboard (default = usuário logado).
+let _forecastByDay = null; // Map<ymd, [{ d, stageLabel, remaining }]> — pro modal do dia
+
+// Réplica do addDays do backend: soma dias corridos e empurra o resultado pra
+// fora do fim de semana (sáb→seg, dom→seg). Mesmo "cálculo padrão dos prazos".
+function forecastAddDays(ymdStr, days) {
+  const base = ymdStr ? new Date(ymdStr + 'T12:00:00') : new Date();
+  base.setDate(base.getDate() + (Number(days) || 0));
+  const dow = base.getDay();
+  if (dow === 6) base.setDate(base.getDate() + 2);
+  if (dow === 0) base.setDate(base.getDate() + 1);
+  return base.toISOString().slice(0, 10);
+}
+// Os próximos 14 dias ÚTEIS (pula fim de semana), a partir de hoje.
+function dashForecastDays() {
+  const days = [];
+  const d = new Date(); d.setHours(0,0,0,0);
+  while (days.length < 14) {
+    const dow = d.getDay();
+    if (dow !== 0 && dow !== 6) days.push(new Date(d));
+    d.setDate(d.getDate() + 1);
+  }
+  return days;
+}
+function forecastLevel(n) {
+  if (n <= 0) return 0;
+  if (n <= 3) return 1;   // verde
+  if (n <= 6) return 2;   // amarelo
+  if (n <= 9) return 3;   // laranja
+  return 4;               // vermelho (≥10)
+}
+function forecastDeliverables(d) {
+  const parts = [];
+  const p = Number(d.qtyPieces) || 0, a = Number(d.qtyArts) || 0, v = Number(d.qtyVariations) || 0;
+  if (p) parts.push(`${p} peça${p > 1 ? 's' : ''}`);
+  if (a) parts.push(`${a} arte${a > 1 ? 's' : ''}`);
+  if (v) parts.push(`${v} var.`);
+  return parts.length ? parts.join(' · ') : '—';
+}
+/* Data (YYYY-MM-DD) em que a demanda deve CHEGAR na primeira etapa futura de
+   responsabilidade de `userId`. Null se o user não está numa etapa futura.
+   - Etapa atual termina no stageDueDate; se atrasada/sem due, conta de hoje
+     (o atraso empurra a previsão pra frente).
+   - Soma o SLA (deadlineDays) só das etapas ENTRE a atual e a do user — entrega
+     antecipada não adianta a previsão (SLAs independentes). */
+// Chegada por usuário numa passada só: userId -> { ymd, stageLabel, remaining }
+// pra a PRIMEIRA etapa futura que cada pessoa é dona. Base do quadro do dashboard
+// (1 user) E do mapa de prazos em modo "previstas" (todos os users de uma vez).
+function forecastArrivalsByUser(d) {
+  const out = new Map();
+  if (!d || d.deletedAt || isDone(d)) return out;
+  const stages = activeStagesOf(d);
+  if (stages.length < 2) return out;
+  const curIdx = stages.findIndex(s => s.id === d.status);
+  if (curIdx < 0) return out;
+  const today = todayStr();
+  const curLabel = stages[curIdx].label || '—';
+  let cursor;
+  if (d.stageDueDate) cursor = (d.stageDueDate < today) ? forecastAddDays(today, 0) : d.stageDueDate;
+  else cursor = forecastAddDays(today, stages[curIdx].deadlineDays || 0);
+  // Ao ENTRAR na etapa i, a demanda chega em `cursor` (fim da etapa i-1). Só a
+  // primeira etapa futura de cada dono conta (a demanda "chega" a ele ali).
+  for (let i = curIdx + 1; i < stages.length; i++) {
+    const owner = resolveStageOwnerId(d, stages[i]);
+    if (owner && !out.has(owner)) {
+      out.set(owner, { ymd: cursor, stageLabel: curLabel, remaining: i - curIdx });
+    }
+    cursor = forecastAddDays(cursor, stages[i].deadlineDays || 0);
+  }
+  return out;
+}
+function forecastArrivalFor(d, userId) {
+  if (!userId) return null;
+  return forecastArrivalsByUser(d).get(userId) || null;
+}
+function renderDashForecast() {
+  const el = $('dash-forecast');
+  const sub = $('dash-forecast-sub');
   if (!el) return;
-  const today0 = new Date(); today0.setHours(0,0,0,0);
-  const days = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(today0); d.setDate(d.getDate() + i);
-    return d;
-  });
-  const ymd = (d) => d.toISOString().slice(0,10);
-  // Nome do dia em maiúsculo completo: HOJE, AMANHÃ, DOMINGO, SEGUNDA, TERÇA…
-  const dayLabel = (d, i) => {
-    if (i === 0) return 'HOJE';
-    if (i === 1) return 'AMANHÃ';
-    const long = d.toLocaleDateString('pt-BR', { weekday: 'long' });
-    // toLocaleDateString devolve "segunda-feira" — cortamos o "-feira" e uppercase.
-    return long.replace(/-feira$/i, '').toUpperCase();
-  };
-
-  const open = wsAll.filter(d => !isDone(d));
+  const targetUserId = ($('dash-f-user') && $('dash-f-user').value) || me?.id || null;
+  const days = dashForecastDays();
+  const ymd = (d) => d.toISOString().slice(0, 10);
   const byDay = new Map(days.map(d => [ymd(d), []]));
-  open.forEach(d => {
-    const due = effDue(d);
-    if (!due) return;
-    if (byDay.has(due)) byDay.get(due).push(d);
-  });
-
-  const maxCount = Math.max(1, ...[...byDay.values()].map(a => a.length));
+  _forecastByDay = byDay;
+  if (targetUserId) {
+    wsDemands().forEach(d => {
+      if (d.deletedAt) return;
+      const fc = forecastArrivalFor(d, targetUserId);
+      if (!fc) return;
+      const bucket = byDay.get(fc.ymd);
+      if (!bucket) return; // fora da janela de 14 dias úteis → não mostra
+      bucket.push({ d, stageLabel: fc.stageLabel, remaining: fc.remaining });
+    });
+  }
   const total = [...byDay.values()].reduce((s, a) => s + a.length, 0);
-  if (sub) sub.textContent = `${total} demanda${total === 1 ? '' : 's'} com prazo nos próximos 7 dias`;
+  const tName = targetUserId ? (userById(targetUserId)?.name || '').split(' ')[0] : '';
+  if (sub) sub.textContent = total
+    ? `${total} demanda${total === 1 ? '' : 's'} prevista${total === 1 ? '' : 's'}${tName ? ' pra ' + esc(tName) : ''} nos próximos 14 dias úteis`
+    : 'Nenhuma demanda prevista pra chegar nos próximos 14 dias úteis';
 
-  el.innerHTML = days.map((d, i) => {
-    const items = byDay.get(ymd(d));
-    const pct = items.length / maxCount;
-    const level = items.length === 0 ? 0 : (pct > 0.66 ? 3 : pct > 0.33 ? 2 : 1);
-    const preview = items.slice(0, 4).map(x => `<div class="dash-next7-item">${esc(x.name)}</div>`).join('')
-      + (items.length > 4 ? `<div class="dash-next7-item dash-next7-item--more">+${items.length - 4} outras</div>` : '');
-    const tooltip = items.length
-      ? `<div class="dash-next7-tooltip">${preview}</div>`
-      : '';
-    return `<div class="dash-next7-pill dash-next7-lvl-${level} ${i === 0 ? 'is-today' : ''}"
-                 onclick="goToDayInList('${ymd(d)}')">
-      <div class="dash-next7-day">${esc(dayLabel(d, i))}</div>
-      <div class="dash-next7-date">${d.getDate().toString().padStart(2, '0')}</div>
-      <div class="dash-next7-count">${items.length}</div>
-      ${tooltip}
+  const todayK = todayStr();
+  el.innerHTML = days.map((dt) => {
+    const k = ymd(dt);
+    const n = byDay.get(k).length;
+    const lvl = forecastLevel(n);
+    const isToday = k === todayK;
+    const wd = dt.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '').toUpperCase();
+    return `<div class="dash-forecast-cell fc-${lvl} ${isToday ? 'is-today' : ''} ${n ? '' : 'is-empty'}"
+                 ${n ? `onclick="openForecastDay('${k}')"` : ''}>
+      <div class="dash-forecast-day">${isToday ? 'HOJE' : esc(wd)}</div>
+      <div class="dash-forecast-date">${String(dt.getDate()).padStart(2, '0')}/${String(dt.getMonth() + 1).padStart(2, '0')}</div>
+      <div class="dash-forecast-count">${n || ''}</div>
     </div>`;
   }).join('');
+}
+// Modal com a lista de demandas previstas pra um dia do quadro.
+function openForecastDay(ymdStr) {
+  const items = (_forecastByDay && _forecastByDay.get(ymdStr)) || [];
+  if (!items.length) return;
+  const dt = new Date(ymdStr + 'T12:00:00');
+  const label = dt.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit' }).replace('-feira', '');
+  const titleEl = $('forecast-modal-title');
+  if (titleEl) titleEl.textContent = 'Demandas previstas — ' + label;
+  const rows = items.slice()
+    .sort((a, b) => (a.remaining - b.remaining) || norm(a.d.name).localeCompare(norm(b.d.name)))
+    .map(it => {
+      const d = it.d;
+      const p = projectById(d.projectId);
+      return `<tr onclick="closeModal('forecast-modal'); showDetail('${esc(d.id)}')">
+        <td class="fc-td-name">${esc(d.name)}${p ? `<div class="fc-td-sub" style="font-size:11px;font-weight:400">${esc(p.name)}</div>` : ''}</td>
+        <td>${esc(it.stageLabel)}</td>
+        <td style="text-align:center">${it.remaining}</td>
+        <td>${esc(forecastDeliverables(d))}</td>
+      </tr>`;
+    }).join('');
+  const body = $('forecast-modal-body');
+  if (body) body.innerHTML = `
+    <table class="forecast-table">
+      <thead><tr>
+        <th>Demanda</th><th>Etapa atual</th>
+        <th style="text-align:center">Etapas restantes</th><th>Entregáveis</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  openModal('forecast-modal');
 }
 
 // Filtro na tela de demandas por dia específico via deep-link ?due=YYYY-MM-DD.
@@ -3866,7 +3963,7 @@ function exportDemandsCsv() {
   const list = listFilteredDemands();
   if (!list.length) { toast('Não há demandas pra exportar com os filtros atuais.', 'warn'); return; }
   const headers = [
-    'ID', 'Nome', 'Workspace', 'Cliente', 'Projeto', 'Fluxo', 'Etapa atual',
+    'ID', 'Nome', 'Squad', 'Cliente', 'Projeto', 'Fluxo', 'Etapa atual',
     'Responsável', 'Prioridade', 'Prazo etapa', 'Prazo final',
     'Horas estimadas', 'Horas apontadas', 'Peças', 'Artes', 'Variações',
     'Criada em', 'Concluída em', 'Status'
@@ -3891,7 +3988,7 @@ function exportDemandsCsv() {
     ];
   });
   const ymd = new Date().toISOString().slice(0, 10);
-  downloadCsv(headers, rows, `kastor-demandas-${ymd}.csv`);
+  downloadCsv(headers, rows, `rework-demandas-${ymd}.csv`);
   toast(`${list.length} demanda${list.length === 1 ? '' : 's'} exportada${list.length === 1 ? '' : 's'}.`);
 }
 
@@ -3920,7 +4017,7 @@ function exportCapacityCsv() {
   });
   const ymd = new Date().toISOString().slice(0, 10);
   const label = { team: 'equipe', project: 'projetos', client: 'clientes' }[capacityView] || 'capacidade';
-  downloadCsv(headers, rows, `kastor-capacidade-${label}-${ymd}.csv`);
+  downloadCsv(headers, rows, `rework-capacidade-${label}-${ymd}.csv`);
   toast(`${rows.length} linha${rows.length === 1 ? '' : 's'} exportada${rows.length === 1 ? '' : 's'}.`);
 }
 
@@ -4113,6 +4210,147 @@ function pfpSyncFromInputs() {
   if (_pfpOpen) { pfpRenderPresets(); pfpRenderCal(); }
 }
 
+/* ─── Picker de período da CAPACIDADE (Análise) ───
+   Mesmo visual do filtro de Demandas (reaproveita o CSS .pfp-*), mas é uma
+   instância ISOLADA (ids cap-pfp-*, inputs capacity-period*) pra não arriscar o
+   filtro da Demandas. Presets voltados pra frente (capacidade é upcoming) +
+   range custom no calendário. Estado nos 3 hidden inputs; consumido por
+   renderCapacity() e persistido em FILTER_KEYS['capacity']. */
+const CAP_PFP_PRESETS = [
+  { val: '7',     label: 'Próximos 7 dias' },
+  { val: '14',    label: 'Próximos 14 dias' },
+  { val: '30',    label: 'Próximos 30 dias' },
+  { val: 'month', label: 'Este mês' }
+];
+// Largura máxima de um range custom (dias corridos). O mapa de prazos tem uma
+// coluna por dia — um range muito largo estoura o heatmap. Trava aqui.
+const CAP_MAX_RANGE_DAYS = 45;
+function capPfpAddDays(iso, n) {
+  const d = new Date(iso + 'T00:00:00');
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+let _capPfpOpen = false;
+let _capPfpView = null;
+function capPfpToggle(evt) { if (evt) evt.stopPropagation(); if (_capPfpOpen) capPfpClose(); else capPfpOpen(); }
+function capPfpOpen() {
+  const pop = $('cap-pfp-popover'); if (!pop) return;
+  const start = $('capacity-period-start')?.value || '';
+  const base = start ? new Date(start + 'T00:00:00') : new Date();
+  _capPfpView = { year: base.getFullYear(), month: base.getMonth() };
+  pop.classList.add('open'); _capPfpOpen = true;
+  capPfpRenderPresets(); capPfpRenderCal(); paintIcons();
+}
+function capPfpClose() { const pop = $('cap-pfp-popover'); if (pop) pop.classList.remove('open'); _capPfpOpen = false; }
+document.addEventListener('click', (e) => {
+  if (!_capPfpOpen) return;
+  const pop = $('cap-pfp-popover'), trg = $('cap-pfp-trigger');
+  if (pop && pop.contains(e.target)) return;
+  if (trg && trg.contains(e.target)) return;
+  capPfpClose();
+});
+document.addEventListener('keydown', (e) => { if (_capPfpOpen && e.key === 'Escape') { e.preventDefault(); capPfpClose(); } });
+function capPfpHasRange() { return !!($('capacity-period-start')?.value || $('capacity-period-end')?.value); }
+function capPfpRenderPresets() {
+  const wrap = $('cap-pfp-presets'); if (!wrap) return;
+  const cur = $('capacity-period').value;
+  wrap.innerHTML = CAP_PFP_PRESETS.map(p =>
+    `<button type="button" class="pfp-preset-btn ${p.val === cur && !capPfpHasRange() ? 'active' : ''}" onclick="capPfpPickPreset('${p.val}')">${esc(p.label)}</button>`
+  ).join('');
+}
+function capPfpRenderCal() {
+  const grid = $('cap-pfp-cal-grid'), title = $('cap-pfp-cal-title');
+  if (!grid || !title || !_capPfpView) return;
+  const { year, month } = _capPfpView;
+  title.textContent = `${PFP_MONTHS[month]} · ${year}`;
+  const firstDow = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const daysInPrev = new Date(year, month, 0).getDate();
+  const startISO = $('capacity-period-start').value || '';
+  const endISO = $('capacity-period-end').value || '';
+  const todayISO = todayStr();
+  // Escolhendo o FIM do range: desabilita dias além do limite de largura.
+  const maxEndISO = (startISO && !endISO) ? capPfpAddDays(startISO, CAP_MAX_RANGE_DAYS - 1) : '';
+  const cells = [];
+  for (let i = firstDow - 1; i >= 0; i--) cells.push({ day: daysInPrev - i, month: month - 1, year: month === 0 ? year - 1 : year, other: true });
+  for (let d = 1; d <= daysInMonth; d++) cells.push({ day: d, month, year, other: false });
+  while (cells.length < 42) {
+    const last = cells[cells.length - 1];
+    const nxt = new Date(last.year, last.month, last.day + 1);
+    cells.push({ day: nxt.getDate(), month: nxt.getMonth(), year: nxt.getFullYear(), other: true });
+  }
+  grid.innerHTML = cells.map(c => {
+    const iso = `${c.year}-${String(c.month + 1).padStart(2, '0')}-${String(c.day).padStart(2, '0')}`;
+    const cls = ['pfp-day'];
+    if (c.other) cls.push('other');
+    if (iso === todayISO) cls.push('today');
+    if (startISO && endISO) {
+      if (iso === startISO && iso === endISO) cls.push('range-single');
+      else if (iso === startISO) cls.push('range-start');
+      else if (iso === endISO) cls.push('range-end');
+      else if (iso > startISO && iso < endISO) cls.push('range-mid');
+    } else if (startISO && iso === startISO) cls.push('range-single');
+    const disabled = maxEndISO && iso > maxEndISO;
+    return `<button type="button" class="${cls.join(' ')}" data-iso="${iso}" ${disabled ? 'disabled' : ''} onclick="capPfpPickDay('${iso}')">${c.day}</button>`;
+  }).join('');
+}
+function capPfpNav(delta) {
+  if (!_capPfpView) return;
+  _capPfpView.month += delta;
+  if (_capPfpView.month < 0) { _capPfpView.month = 11; _capPfpView.year--; }
+  if (_capPfpView.month > 11) { _capPfpView.month = 0; _capPfpView.year++; }
+  capPfpRenderCal(); paintIcons();
+}
+function capPfpPickPreset(val) {
+  $('capacity-period').value = val || '7';
+  $('capacity-period-start').value = '';
+  $('capacity-period-end').value = '';
+  capPfpClose(); capPfpUpdateLabel(); renderCapacity();
+}
+function capPfpPickDay(iso) {
+  const startEl = $('capacity-period-start'), endEl = $('capacity-period-end');
+  const start = startEl.value, end = endEl.value;
+  let newStart, newEnd, done = false;
+  if (!start || (start && end)) { newStart = iso; newEnd = ''; }
+  else if (iso < start) { newStart = iso; newEnd = ''; }
+  else { newStart = start; newEnd = iso; done = true; }
+  if (done) {
+    const maxEnd = capPfpAddDays(newStart, CAP_MAX_RANGE_DAYS - 1);
+    if (newEnd > maxEnd) newEnd = maxEnd; // trava a largura do range
+  }
+  startEl.value = newStart; endEl.value = newEnd;
+  $('capacity-period').value = 'custom';
+  capPfpRenderPresets(); capPfpRenderCal(); capPfpUpdateLabel();
+  // Só re-renderiza quando o range fica completo (evita render com meia seleção).
+  if (done) { capPfpClose(); renderCapacity(); }
+}
+function capPfpResetDefault() {
+  $('capacity-period').value = '7';
+  $('capacity-period-start').value = '';
+  $('capacity-period-end').value = '';
+  capPfpRenderPresets(); capPfpRenderCal(); capPfpUpdateLabel(); renderCapacity();
+}
+function capPfpToday() {
+  const t = new Date();
+  _capPfpView = { year: t.getFullYear(), month: t.getMonth() };
+  capPfpRenderCal(); paintIcons();
+}
+function capPfpUpdateLabel() {
+  const trg = $('cap-pfp-trigger'); if (!trg) return;
+  const lbl = $('cap-pfp-label');
+  const p = $('capacity-period').value, s = $('capacity-period-start').value, e = $('capacity-period-end').value;
+  let text = 'Próximos 7 dias';
+  if (p === 'custom') text = (s && e) ? `${fmtPfpShort(s)} → ${fmtPfpShort(e)}` : (s ? `${fmtPfpShort(s)} → …` : 'Personalizado');
+  else if (p) text = CAP_PFP_PRESETS.find(x => x.val === p)?.label || 'Período';
+  if (lbl) lbl.textContent = text;
+  // "Filtrando" = qualquer coisa fora do padrão (Próximos 7 dias).
+  trg.classList.toggle('filtering', p !== '7');
+}
+function capPfpSync() {
+  capPfpUpdateLabel();
+  if (_capPfpOpen) { capPfpRenderPresets(); capPfpRenderCal(); }
+}
+
 /* Chip toggle "Status" (Abertas / Concluídas / Todas) da página Demandas.
    O <input type="hidden" id="filter-quick"> é a fonte de verdade — mantém
    compat com listFilteredDemands() e a persistência FILTER_KEYS['list']. */
@@ -4179,7 +4417,7 @@ function renderList() {
     .filter(w => me.isAdmin || (me.workspaces || []).includes(w.id))
     .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
   // Filtro Workspace: options = workspaces acessíveis, alpha; dot da cor via dotMap.
-  fillSelect($('filter-workspace'), accessibleWs.map(w => ({ value: w.id, label: w.name })), undefined, 'Workspace');
+  fillSelect($('filter-workspace'), accessibleWs.map(w => ({ value: w.id, label: w.name })), undefined, 'Squad');
 
   // CROSS-FILTER: se um workspace específico foi escolhido, os filtros de
   // Usuário/Cliente/Projeto só listam itens daquele workspace. Sem workspace
@@ -4855,15 +5093,18 @@ let _reportsReqSeq = 0; // descarta respostas obsoletas (troca rápida de perío
 // seguinte), espelhando o cross-filter de Demandas. Na primeira entrada, trava o
 // Workspace no atual (activeWs). Reaproveita o auto-cdrop (não precisa applyFilterDropdown).
 function populateReportFilters(firstEnter) {
-  const wsSel = $('reports-ws'), cSel = $('reports-client'), pSel = $('reports-project');
-  if (!wsSel || !cSel || !pSel) return;
+  const wsInp = $('reports-ws'), cSel = $('reports-client'), pSel = $('reports-project');
+  if (!wsInp || !cSel || !pSel) return;
 
   const accessibleWs = (workspaces || []).filter(w => me.isAdmin || (me.workspaces || []).includes(w.id));
-  let wsPrev = wsSel.value;
-  if (firstEnter && !wsPrev && activeWs) wsPrev = activeWs; // default: workspace atual
-  fillSelect(wsSel, accessibleWs.map(w => ({ value: w.id, label: w.name })), wsPrev, 'Todos os workspaces');
-  const wsPick = wsSel.value;
-  const wsInScope = id => !wsPick || id === wsPick;
+  // Primeira entrada sem seleção salva → default no workspace atual.
+  if (firstEnter && !wsInp.value && activeWs) wsInp.value = activeWs;
+  // Sanitiza o CSV do hidden input (ids que deixaram de existir/perder acesso caem fora).
+  const wsSet = new Set((wsInp.value || '').split(',').filter(Boolean)
+    .filter(id => accessibleWs.some(w => w.id === id)));
+  wsInp.value = [...wsSet].join(',');
+  renderReportSquadChips(accessibleWs, wsSet);
+  const wsInScope = id => !wsSet.size || wsSet.has(id);
 
   const accClients = (clients || []).filter(c => c.active !== false
     && (me.isAdmin || (me.workspaces || []).includes(c.workspaceId)) && wsInScope(c.workspaceId));
@@ -4877,6 +5118,31 @@ function populateReportFilters(firstEnter) {
   const pPrev = pSel.value;
   const pValid = !pPrev || accProjects.some(p => p.id === pPrev);
   fillSelect(pSel, accProjects.map(p => ({ value: p.id, label: p.name })), pValid ? pPrev : '', 'Todos os projetos');
+}
+
+// Chips de squad (workspaces) — multi-select estilo Usuários. Estado vive no
+// hidden #reports-ws como CSV (persistência via FILTER_KEYS continua igual).
+function renderReportSquadChips(accessibleWs, wsSet) {
+  const host = $('reports-squad-filter'); if (!host) return;
+  const chips = accessibleWs.map(w => {
+    const on = wsSet.has(w.id);
+    return `<button type="button" class="uws-chip${on ? ' is-active' : ''}" onclick="toggleReportSquad('${esc(w.id)}')">
+      <span class="uws-chip-dot" style="background:${esc(w.color || 'var(--accent)')}"></span>${esc(w.name)}
+    </button>`;
+  }).join('');
+  const clear = wsSet.size ? `<button type="button" class="uws-clear" onclick="clearReportSquads()">Limpar</button>` : '';
+  host.innerHTML = chips + clear;
+}
+function toggleReportSquad(id) {
+  const inp = $('reports-ws'); if (!inp) return;
+  const set = new Set((inp.value || '').split(',').filter(Boolean));
+  if (set.has(id)) set.delete(id); else set.add(id);
+  inp.value = [...set].join(',');
+  renderReports();
+}
+function clearReportSquads() {
+  const inp = $('reports-ws'); if (inp) inp.value = '';
+  renderReports();
 }
 
 function clearReportFilters() {
@@ -5068,26 +5334,92 @@ function renderAnalytics() {
   renderAnalyticsActive();
 }
 
-function renderCapacity() {
-  restoreFilters('capacity');
+/* Resolve o período da Capacidade (preset ou range custom do cap-pfp) em duas
+   janelas de Date: capacidade (frente, mapa de prazos) e apontamentos (trás).
+   - Numérico (7/14/30): capacidade = próximos N dias, apontadas = últimos N dias.
+   - Este mês: capacidade = mês inteiro, apontadas = início do mês até hoje.
+   - Custom [s,e]: capacidade = [s,e]; apontadas = [s, min(e, hoje)] (não há horas
+     apontadas no futuro, então o fim da janela de horas trava em hoje). */
+function capResolveWindow() {
   const period = $('capacity-period').value || '7';
+  const cs = $('capacity-period-start')?.value || '';
+  const ce = $('capacity-period-end')?.value || '';
   const today = new Date(); today.setHours(0,0,0,0);
-  // Janelas:
-  //   - Numérico (7/14/30): capacidade = próximos N dias, apontadas = últimos N dias.
-  //   - Este mês: capacidade = mês corrente INTEIRO, apontadas = início do mês até hoje (MTD).
   let capStart, capEnd, logStart, logEnd;
-  if (period === 'month') {
+  if (period === 'custom' && cs && ce) {
+    capStart = new Date(cs + 'T00:00:00');
+    capEnd   = new Date(ce + 'T00:00:00');
+    // Trava a largura (defesa pra ranges persistidos/antigos que passem do limite).
+    const maxEnd = new Date(capStart); maxEnd.setDate(maxEnd.getDate() + CAP_MAX_RANGE_DAYS - 1);
+    if (capEnd > maxEnd) capEnd = maxEnd;
+    logStart = new Date(capStart);
+    logEnd   = new Date(Math.min(capEnd.getTime(), today.getTime()));
+  } else if (period === 'month') {
     capStart = new Date(today.getFullYear(), today.getMonth(), 1);
     capEnd   = new Date(today.getFullYear(), today.getMonth() + 1, 0);
     logStart = new Date(capStart);
     logEnd   = new Date(today);
   } else {
-    const days = parseInt(period, 10);
+    const days = parseInt(period, 10) || 7;
     capStart = new Date(today);
     capEnd   = new Date(today); capEnd.setDate(capEnd.getDate() + days - 1);
     logEnd   = new Date(today);
     logStart = new Date(today); logStart.setDate(logStart.getDate() - (days - 1));
   }
+  return { capStart, capEnd, logStart, logEnd };
+}
+/* ─── Filtro de squads da Capacidade (multi, estilo Usuários) ───
+   Estado no hidden #capacity-squads (CSV) → persistido via FILTER_KEYS.
+   Semântica: vazio = workspace ativo (comportamento clássico); com seleção,
+   os dados (pessoas, demandas, horas, mapa) agregam os squads escolhidos. */
+let capSquadFilter = new Set();
+function capScopeWsIds() { return capSquadFilter.size ? [...capSquadFilter] : [activeWs]; }
+function capScopeDemands() {
+  const ids = new Set(capScopeWsIds());
+  return demands.filter(d => ids.has(d.workspaceId));
+}
+function capScopeUsers() {
+  const ids = capScopeWsIds();
+  return users.filter(u => u.active !== false && (u.isAdmin || (u.workspaces || []).some(w => ids.includes(w))));
+}
+function capScopeProjects() {
+  const ids = new Set(capScopeWsIds());
+  return projects.filter(p => ids.has(p.workspaceId));
+}
+function renderCapSquadFilter() {
+  const host = $('capacity-squad-filter'); if (!host) return;
+  const accessibleWs = (workspaces || []).filter(w => me.isAdmin || (me.workspaces || []).includes(w.id));
+  // Com 1 workspace só, o filtro não tem o que filtrar — esconde.
+  if (accessibleWs.length <= 1) { host.innerHTML = ''; return; }
+  const chips = accessibleWs.map(w => {
+    const on = capSquadFilter.has(w.id);
+    return `<button type="button" class="uws-chip${on ? ' is-active' : ''}" onclick="toggleCapSquad('${esc(w.id)}')">
+      <span class="uws-chip-dot" style="background:${esc(w.color || 'var(--accent)')}"></span>${esc(w.name)}
+    </button>`;
+  }).join('');
+  const clear = capSquadFilter.size ? `<button type="button" class="uws-clear" onclick="clearCapSquadFilter()">Limpar</button>` : '';
+  const hint = capSquadFilter.size ? '' : `<span class="uws-hint">Vazio = workspace ativo</span>`;
+  host.innerHTML = `<span class="uws-label">Squads</span>${chips}${clear}${hint}`;
+}
+function toggleCapSquad(id) {
+  if (capSquadFilter.has(id)) capSquadFilter.delete(id); else capSquadFilter.add(id);
+  const inp = $('capacity-squads'); if (inp) inp.value = [...capSquadFilter].join(',');
+  renderCapacity();
+}
+function clearCapSquadFilter() {
+  capSquadFilter.clear();
+  const inp = $('capacity-squads'); if (inp) inp.value = '';
+  renderCapacity();
+}
+function renderCapacity() {
+  restoreFilters('capacity');
+  capPfpSync();
+  // Sincroniza o Set a partir do hidden persistido (sanitizando ids sem acesso).
+  const rawSquads = ($('capacity-squads')?.value || '').split(',').filter(Boolean);
+  capSquadFilter = new Set(rawSquads.filter(id =>
+    (workspaces || []).some(w => w.id === id && (me.isAdmin || (me.workspaces || []).includes(w.id)))));
+  renderCapSquadFilter();
+  const { capStart, capEnd, logStart, logEnd } = capResolveWindow();
   const startYmd = capStart.toISOString().slice(0,10);
   const endYmd   = capEnd.toISOString().slice(0,10);
   const logStartYmd = logStart.toISOString().slice(0,10);
@@ -5130,7 +5462,15 @@ function renderCapacity() {
 /* Heatmap pessoa × dia: nº de demandas em aberto com prazo em cada dia da janela.
    Mostra onde a pressão de prazo se concentra por pessoa. Usa ymd LOCAL pra bater
    com o formato de deadline ('YYYY-MM-DD') sem deslocar por fuso. */
+// Toggle do mapa de prazos: 'prazos' (prazo efetivo por dia) | 'previstas'
+// (quando a demanda deve CHEGAR na etapa da pessoa, via SLA das etapas).
+let _capHeatMode = 'prazos';
+function setCapHeatMode(m) {
+  _capHeatMode = (m === 'previstas') ? 'previstas' : 'prazos';
+  renderCapacity();
+}
 function capacityHeatmapHTML(rows, startYmd, endYmd) {
+  const mode = _capHeatMode === 'previstas' ? 'previstas' : 'prazos';
   const ymdOf = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
   const days = [];
   let cur = new Date(startYmd + 'T00:00:00');
@@ -5139,14 +5479,34 @@ function capacityHeatmapHTML(rows, startYmd, endYmd) {
   while (cur <= end && guard < 62) { days.push(new Date(cur)); cur.setDate(cur.getDate() + 1); guard++; }
   const todayYmd = todayStr();
   const WD = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S']; // dom..sáb
-  // Cor da célula = nº de demandas com prazo NAQUELE dia (por pessoa). Faixas:
+  // Cor da célula = nº de demandas NAQUELE dia (por pessoa). Faixas:
   // 0 sem cor · 1–3 verde · 4–6 amarelo · 7–10 laranja · >10 vermelho.
   const loadLevel = n => n === 0 ? 0 : n <= 3 ? 1 : n <= 6 ? 2 : n <= 10 ? 3 : 4;
+  // Modo "previstas": agrega, numa passada, a chegada prevista por (usuário, dia)
+  // de TODAS as demandas do workspace (não só as que a pessoa já é dona hoje).
+  let arrivalsByUserDay = null;
+  if (mode === 'previstas') {
+    arrivalsByUserDay = new Map();
+    const winStart = ymdOf(days[0]);
+    const winEnd = ymdOf(days[days.length - 1]);
+    capScopeDemands().forEach(d => {
+      forecastArrivalsByUser(d).forEach((info, uid) => {
+        if (info.ymd < winStart || info.ymd > winEnd) return;
+        let m = arrivalsByUserDay.get(uid);
+        if (!m) { m = new Map(); arrivalsByUserDay.set(uid, m); }
+        m.set(info.ymd, (m.get(info.ymd) || 0) + 1);
+      });
+    });
+  }
   const grid = rows.map(r => ({
     u: r.u,
-    counts: days.map(day => r.userDemands.filter(dm => effDue(dm) === ymdOf(day)).length)
+    counts: days.map(day => {
+      const dk = ymdOf(day);
+      if (mode === 'previstas') return (arrivalsByUserDay.get(r.u.id) && arrivalsByUserDay.get(r.u.id).get(dk)) || 0;
+      return r.userDemands.filter(dm => effDue(dm) === dk).length;
+    })
   }));
-  const totalDue = grid.reduce((s, g) => s + g.counts.reduce((a, b) => a + b, 0), 0);
+  const total = grid.reduce((s, g) => s + g.counts.reduce((a, b) => a + b, 0), 0);
   const colHead = days.map(day => {
     const dow = day.getDay(), weekend = dow === 0 || dow === 6, isToday = ymdOf(day) === todayYmd;
     return `<div class="cap-heat-colhead ${weekend ? 'is-weekend' : ''} ${isToday ? 'is-today' : ''}">
@@ -5164,10 +5524,22 @@ function capacityHeatmapHTML(rows, startYmd, endYmd) {
       <div class="cap-heat-cells">${cells}</div>
     </div>`;
   }).join('');
+  const title = mode === 'previstas' ? 'Demandas previstas por pessoa' : 'Mapa de prazos por pessoa';
+  // Em "previstas" a MESMA demanda pode cair em várias pessoas/dias — então
+  // contamos chegadas previstas (ocorrências no mapa), não demandas distintas.
+  const sub = mode === 'previstas'
+    ? `${total} chegada${total === 1 ? '' : 's'} prevista${total === 1 ? '' : 's'} na janela`
+    : `${total} demanda${total === 1 ? '' : 's'} com prazo na janela`;
   return `<div class="cap-heat">
     <div class="cap-heat-head-row">
-      <div class="cap-heat-title">Mapa de prazos por pessoa</div>
-      <div class="cap-heat-sub">${totalDue} demanda${totalDue === 1 ? '' : 's'} com prazo na janela</div>
+      <div class="cap-heat-head-left">
+        <div class="cap-heat-title">${title}</div>
+        <div class="cap-heat-sub">${sub}</div>
+      </div>
+      <div class="cap-heat-toggle">
+        <button type="button" class="cap-heat-toggle-btn ${mode === 'prazos' ? 'is-active' : ''}" onclick="setCapHeatMode('prazos')">Prazos</button>
+        <button type="button" class="cap-heat-toggle-btn ${mode === 'previstas' ? 'is-active' : ''}" onclick="setCapHeatMode('previstas')">Previstas</button>
+      </div>
     </div>
     <div class="cap-heat-grid">
       <div class="cap-heat-row cap-heat-headrow"><div class="cap-heat-user"></div><div class="cap-heat-cells">${colHead}</div></div>
@@ -5177,8 +5549,8 @@ function capacityHeatmapHTML(rows, startYmd, endYmd) {
 }
 
 function renderCapacityTeam(startYmd, endYmd, businessDays, capacityHours, logStartYmd, logEndYmd) {
-  const wsdemands = wsDemands().filter(d => !isDone(d));
-  const wsusers = wsUsers().filter(u => u.active !== false);
+  const wsdemands = capScopeDemands().filter(d => !isDone(d));
+  const wsusers = capScopeUsers();
 
   // Horas apontadas: janela definida no renderCapacity (próximos/últimos N dias
   // pros períodos numéricos, ou início do mês até hoje quando "Este mês").
@@ -5206,14 +5578,14 @@ function renderCapacityTeam(startYmd, endYmd, businessDays, capacityHours, logSt
     });
     const lateCount = userDemands.filter(d => isLate(d)).length;
     // Horas apontadas pelo usuário NOS ÚLTIMOS N dias (independente da demanda estar em aberto ou não)
-    const hoursLogged = wsDemands().reduce((s, d) => {
+    const hoursLogged = capScopeDemands().reduce((s, d) => {
       return s + (d.timeEntries || [])
         .filter(e => e.userId === u.id && inLookback(e))
         .reduce((a, e) => a + (Number(e.hours) || 0), 0);
     }, 0);
     // Entregáveis: soma das 3 contagens em demandas DESTE usuário (concluídas no período OU ativas).
     // Usa deliverableUserId (quem executou as artes) como prioridade; se vazio, cai pro ownerId atual.
-    const deliveredDemands = wsDemands().filter(d => (d.deliverableUserId || d.ownerId) === u.id && deliveredInWindow(d));
+    const deliveredDemands = capScopeDemands().filter(d => (d.deliverableUserId || d.ownerId) === u.id && deliveredInWindow(d));
     const totalPieces     = deliveredDemands.reduce((s, d) => s + (Number(d.qtyPieces) || 0), 0);
     const totalArts       = deliveredDemands.reduce((s, d) => s + (Number(d.qtyArts) || 0), 0);
     const totalVariations = deliveredDemands.reduce((s, d) => s + (Number(d.qtyVariations) || 0), 0);
@@ -5240,12 +5612,12 @@ function renderCapacityTeam(startYmd, endYmd, businessDays, capacityHours, logSt
   $('capacity-list').innerHTML = `
     <div class="capacity-summary">
       <div class="capacity-summary-item"><div class="capacity-summary-label">Capacidade no período</div><div class="capacity-summary-value">${capacityHours}h</div><div class="capacity-summary-sub">${businessDays} dias úteis × 8h</div></div>
-      <div class="capacity-summary-item"><div class="capacity-summary-label">Demandas em aberto</div><div class="capacity-summary-value">${wsdemands.length}</div><div class="capacity-summary-sub">no workspace ${esc(wsById(activeWs)?.name || '')}</div></div>
-      <div class="capacity-summary-item"><div class="capacity-summary-label">Pessoas ativas</div><div class="capacity-summary-value">${wsusers.length}</div><div class="capacity-summary-sub">com acesso ao workspace</div></div>
+      <div class="capacity-summary-item"><div class="capacity-summary-label">Demandas em aberto</div><div class="capacity-summary-value">${wsdemands.length}</div><div class="capacity-summary-sub">${capSquadFilter.size ? `em ${capSquadFilter.size} squad${capSquadFilter.size === 1 ? '' : 's'}` : `no workspace ${esc(wsById(activeWs)?.name || '')}`}</div></div>
+      <div class="capacity-summary-item"><div class="capacity-summary-label">Pessoas ativas</div><div class="capacity-summary-value">${wsusers.length}</div><div class="capacity-summary-sub">com acesso ao squad</div></div>
     </div>
     <!-- Banner de produção total — soma de todas as pessoas no período -->
     <div class="capacity-prod-banner">
-      <div class="capacity-prod-title">Produção do workspace no período</div>
+      <div class="capacity-prod-title">Produção do squad no período</div>
       <div class="capacity-prod-stats">
         <div class="capacity-prod-stat"><span class="capacity-prod-value">${fmtHours(wsTotal.hours)}</span><span class="capacity-prod-label">horas apontadas</span></div>
         <div class="capacity-prod-divider"></div>
@@ -5286,26 +5658,20 @@ function renderCapacityTeam(startYmd, endYmd, businessDays, capacityHours, logSt
     `).join('')}
     </div>
   `;
-  if (!rows.length) $('capacity-list').innerHTML = emptyState('Sem usuários ativos', 'Cadastre usuários e atribua-os a este workspace.', 'users');
+  if (!rows.length) $('capacity-list').innerHTML = emptyState('Sem usuários ativos', 'Cadastre usuários e atribua-os a este squad.', 'users');
 }
 
 function renderCapacityAggregate(kind, startYmd, endYmd, businessDays, capacityHours) {
   // Período retroativo: considera apontamentos do início do período até hoje
   // (o filtro de "próximos N dias" passa a significar "últimos N dias" para os modos de horas apontadas)
-  const period = $('capacity-period').value || '7';
-  const today = new Date(); today.setHours(0,0,0,0);
-  let startBack;
-  if (period === 'month') {
-    startBack = new Date(today.getFullYear(), today.getMonth(), 1);
-  } else {
-    const days = parseInt(period, 10);
-    startBack = new Date(today); startBack.setDate(startBack.getDate() - (days - 1));
-  }
-  const backStartYmd = startBack.toISOString().slice(0,10);
-  const todayYmd = new Date().toISOString().slice(0,10);
+  // Janela retroativa de apontamentos = mesma janela de horas do capResolveWindow
+  // (últimos N / mês corrente / range custom travado em hoje).
+  const { logStart, logEnd } = capResolveWindow();
+  const backStartYmd = logStart.toISOString().slice(0,10);
+  const todayYmd = logEnd.toISOString().slice(0,10);
 
-  // Junta todos os apontamentos de demandas do workspace no período retroativo
-  const wsdemands = wsDemands();
+  // Junta todos os apontamentos de demandas do escopo (squads selecionados ou ws ativo)
+  const wsdemands = capScopeDemands();
   const allEntries = [];
   wsdemands.forEach(d => {
     (d.timeEntries || []).forEach(e => {
@@ -5329,7 +5695,7 @@ function renderCapacityAggregate(kind, startYmd, endYmd, businessDays, capacityH
       key = (proj?.client || '__none__').toLowerCase();
       label = proj?.client || '— Sem cliente —';
       sub = '';
-      projects = wsProjects().filter(p => (p.client || '').toLowerCase() === key);
+      projects = capScopeProjects().filter(p => (p.client || '').toLowerCase() === key);
     }
     const cur = groups.get(key) || {
       key, label, sub, projects, color: proj?.color || '#7A00FF',
@@ -5376,7 +5742,7 @@ function renderCapacityAggregate(kind, startYmd, endYmd, businessDays, capacityH
   const summary = `
     <div class="capacity-summary">
       <div class="capacity-summary-item"><div class="capacity-summary-label">Total apontado</div><div class="capacity-summary-value">${fmtHours(totalHours)}</div><div class="capacity-summary-sub">no período (${businessDays} dias úteis)</div></div>
-      <div class="capacity-summary-item"><div class="capacity-summary-label">${kind === 'project' ? 'Projetos com horas' : 'Clientes com horas'}</div><div class="capacity-summary-value">${rows.length}</div><div class="capacity-summary-sub">no workspace ${esc(wsById(activeWs)?.name || '')}</div></div>
+      <div class="capacity-summary-item"><div class="capacity-summary-label">${kind === 'project' ? 'Projetos com horas' : 'Clientes com horas'}</div><div class="capacity-summary-value">${rows.length}</div><div class="capacity-summary-sub">${capSquadFilter.size ? `em ${capSquadFilter.size} squad${capSquadFilter.size === 1 ? '' : 's'}` : `no workspace ${esc(wsById(activeWs)?.name || '')}`}</div></div>
       <div class="capacity-summary-item"><div class="capacity-summary-label">Apontamentos</div><div class="capacity-summary-value">${allEntries.length}</div><div class="capacity-summary-sub">registros no período</div></div>
     </div>`;
 
@@ -6740,7 +7106,7 @@ function renderRecurringDemands() {
   const wsSel = $('rd-ws-filter');
   if (wsSel) {
     const myWs = workspaces.slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-    wsSel.innerHTML = `<option value="all">Todas as workspaces</option>` +
+    wsSel.innerHTML = `<option value="all">Todos os squads</option>` +
       myWs.map(w => `<option value="${w.id}">${esc(w.name)}</option>`).join('');
     if (![...wsSel.options].some(o => o.value === _rdWsFilter)) _rdWsFilter = 'all';
     wsSel.value = _rdWsFilter;
@@ -6755,7 +7121,7 @@ function renderRecurringDemands() {
   if (!mine.length) {
     body.innerHTML = `<div class="rd-empty">
       <div class="rd-empty-icon"><i data-lucide="repeat"></i></div>
-      <div class="rd-empty-title">Nenhuma demanda recorrente${_rdWsFilter !== 'all' ? ' neste workspace' : ''}</div>
+      <div class="rd-empty-title">Nenhuma demanda recorrente${_rdWsFilter !== 'all' ? ' neste squad' : ''}</div>
       <div class="rd-empty-sub">Ao criar ou editar uma demanda, ative <strong>"Tornar esta demanda recorrente"</strong> para ela se repetir automaticamente.</div>
     </div>`;
     paintIcons();
@@ -9170,7 +9536,7 @@ function sortWsBy(key) {
 }
 function openWsModal(id) {
   editingWsId = id || null;
-  $('ws-modal-title').textContent = id ? 'Editar Workspace' : 'Novo Workspace';
+  $('ws-modal-title').textContent = id ? 'Editar Squad' : 'Novo Squad';
   const w = id ? wsById(id) : null;
   $('ws-name').value = w?.name || '';
   setColorValue('ws-color', w?.color || '#7A00FF');
@@ -9182,15 +9548,15 @@ async function saveWs() {
     if (editingWsId) await api('/workspaces/' + editingWsId, 'PUT', payload);
     else await api('/workspaces', 'POST', payload);
     closeModal('ws-modal');
-    toast(editingWsId ? 'Workspace atualizado!' : 'Workspace criado! Libere o acesso da equipe na aba Usuários.');
+    toast(editingWsId ? 'Squad atualizado!' : 'Squad criado! Libere o acesso da equipe na aba Usuários.');
     await refreshData();
   } catch (e) { toast(e.message, 'error'); }
 }
 async function deleteWs(id) {
   const w = wsById(id);
   const ok = await showConfirm({
-    title: 'Excluir workspace',
-    message: `Excluir o workspace <strong>${esc(w?.name || '')}</strong>?<br><br>Todos os projetos, fluxos e demandas dele serão removidos. <strong>Essa ação não pode ser desfeita.</strong>`,
+    title: 'Excluir squad',
+    message: `Excluir o squad <strong>${esc(w?.name || '')}</strong>?<br><br>Todos os projetos, fluxos e demandas dele serão removidos. <strong>Essa ação não pode ser desfeita.</strong>`,
     okLabel: 'Excluir definitivamente',
     danger: true
   });
@@ -9198,7 +9564,7 @@ async function deleteWs(id) {
   try {
     await api('/workspaces/' + id, 'DELETE');
     if (activeWs === id) { activeWs = null; }
-    toast('Workspace excluído.', 'warn');
+    toast('Squad excluído.', 'warn');
     await refreshData();
   } catch (e) { toast(e.message, 'error'); }
 }
@@ -9279,7 +9645,7 @@ function renderUsersWsFilter() {
     </button>`;
   }).join('');
   const clear = usersWsFilter.size ? `<button class="uws-clear" onclick="clearUsersWsFilter()">Limpar</button>` : '';
-  host.innerHTML = `<span class="uws-label">Workspaces</span>${chips}${clear}<span class="uws-hint">Admins sempre aparecem</span>`;
+  host.innerHTML = `<span class="uws-label">Squads</span>${chips}${clear}<span class="uws-hint">Admins sempre aparecem</span>`;
 }
 function toggleUsersWsFilter(id) {
   if (usersWsFilter.has(id)) usersWsFilter.delete(id);
@@ -9434,11 +9800,55 @@ const WEBHOOK_EVENT_LABELS = {
   'checklist.completed': 'Item de checklist concluído',
 };
 let editingWhId = null;
+// Ordenação da tabela de webhooks — mesmo padrão das outras tabelas (clique no
+// th alterna asc/desc; trocar de coluna reseta pra asc).
+let whSortKey = 'name', whSortDir = 1;
+function sortWhBy(key) {
+  if (whSortKey === key) whSortDir *= -1;
+  else { whSortKey = key; whSortDir = 1; }
+  renderIntegrations();
+}
 async function renderIntegrations() {
   try {
     webhooks = await api('/webhooks');
   } catch (e) { /* ignore */ }
-  const wsHooks = webhooks.filter(h => h.workspaceId === activeWs);
+  const allHooks = webhooks.filter(h => h.workspaceId === activeWs);
+
+  // Filtros por alvo (usuário), cliente e projeto. Opções montadas só com os
+  // valores em uso nos webhooks deste workspace (filtro nunca fica "oco").
+  const fTarget = $('wh-f-target'), fClient = $('wh-f-client'), fProject = $('wh-f-project');
+  if (fTarget) {
+    const targetIds = [...new Set(allHooks.map(h => h.targetUserId).filter(Boolean))];
+    fillSelect(fTarget, targetIds.map(id => ({ value: id, label: userById(id)?.name || '(usuário removido)' })), undefined, 'Todos os alvos');
+  }
+  if (fClient) {
+    const clientIds = [...new Set(allHooks.map(h => h.clientId).filter(Boolean))];
+    fillSelect(fClient, clientIds.map(id => ({ value: id, label: clients.find(c => c.id === id)?.name || '(cliente removido)' })), undefined, 'Todos os clientes');
+  }
+  if (fProject) {
+    const projIds = [...new Set(allHooks.map(h => h.projectId).filter(Boolean))];
+    fillSelect(fProject, projIds.map(id => ({ value: id, label: projectById(id)?.name || '(projeto removido)' })), undefined, 'Todos os projetos');
+  }
+  const pickTarget = fTarget?.value || '', pickClient = fClient?.value || '', pickProject = fProject?.value || '';
+
+  const wsHooks = allHooks
+    .filter(h => !pickTarget || h.targetUserId === pickTarget)
+    .filter(h => !pickClient || h.clientId === pickClient)
+    .filter(h => !pickProject || h.projectId === pickProject)
+    .sort((a, b) => {
+      let va, vb;
+      if (whSortKey === 'url')         { va = norm(a.url || '');    vb = norm(b.url || ''); }
+      else if (whSortKey === 'format') { va = norm(a.format || ''); vb = norm(b.format || ''); }
+      else if (whSortKey === 'events') { va = (a.events || []).length; vb = (b.events || []).length; }
+      else if (whSortKey === 'status') {
+        // Ativo → Erro → Pausado (o mais saudável primeiro no asc)
+        const rank = h => !h.active ? 2 : (h.lastError ? 1 : 0);
+        va = rank(a); vb = rank(b);
+      }
+      else                             { va = norm(a.name || '');   vb = norm(b.name || ''); }
+      return (va < vb ? -1 : va > vb ? 1 : 0) * whSortDir;
+    });
+
   $('webhooks-table-body').innerHTML = wsHooks.length ? wsHooks.map(h => {
     const eventChips = (h.events || []).slice(0, 3).map(e => `<span class="pill pill-muted" style="font-size:9px">${esc(WEBHOOK_EVENT_LABELS[e] || e)}</span>`).join(' ');
     const moreCount = (h.events || []).length - 3;
@@ -9470,7 +9880,9 @@ async function renderIntegrations() {
         </div>` : ''}
       </td>
     </tr>`;
-  }).join('') : `<tr><td colspan="6">${emptyState('Nenhuma integração cadastrada', 'Adicione um webhook para receber eventos das demandas em ferramentas externas como Discord, Slack, Make ou n8n.', 'webhook')}</td></tr>`;
+  }).join('') : `<tr><td colspan="6">${allHooks.length
+    ? emptyState('Nenhum webhook nos filtros', 'Ajuste ou limpe os filtros de alvo/cliente/projeto acima.', 'webhook')
+    : emptyState('Nenhuma integração cadastrada', 'Adicione um webhook para receber eventos das demandas em ferramentas externas como Discord, Slack, Make ou n8n.', 'webhook')}</td></tr>`;
   paintIcons();
 }
 function openWebhookModal(id) {
@@ -12220,7 +12632,7 @@ async function openNotif(notifId, demandId) {
     // demanda pode estar em outro workspace; recarrega dados
     await refreshData();
     if (demands.find(d => d.id === demandId)) showDetail(demandId);
-    else toast('Demanda não encontrada (pode ter sido excluída ou estar em outro workspace).', 'warn');
+    else toast('Demanda não encontrada (pode ter sido excluída ou estar em outro squad).', 'warn');
   }
 }
 
@@ -12395,19 +12807,19 @@ function openBulkProjectPicker() {
   const ids = [...selectedDemandIds];
   const wsSet = new Set(ids.map(id => demandById(id)?.workspaceId).filter(Boolean));
   if (wsSet.size !== 1) {
-    toast('As demandas selecionadas estão em workspaces diferentes — mude uma de cada vez.', 'error');
+    toast('As demandas selecionadas estão em squads diferentes — mude uma de cada vez.', 'error');
     return;
   }
   const wsId = [...wsSet][0];
   const projs = (projects || [])
     .filter(p => p.workspaceId === wsId && p.active !== false)
     .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-  if (!projs.length) { toast('Nenhum projeto disponível no workspace.', 'error'); return; }
+  if (!projs.length) { toast('Nenhum projeto disponível no squad.', 'error'); return; }
   const opts = projs.map(p => ({
     value: p.id,
     label: p.client ? `${p.name} · ${p.client}` : p.name
   }));
-  showCustomPicker('Mudar projeto', 'Selecione o novo projeto (mesmo workspace):', opts, (val) => bulkRun('setProject', { projectId: val }));
+  showCustomPicker('Mudar projeto', 'Selecione o novo projeto (mesmo squad):', opts, (val) => bulkRun('setProject', { projectId: val }));
 }
 
 /* Picker dedicado — lista de botões. Reconstrói o conteúdo a cada chamada. */
@@ -12527,7 +12939,7 @@ function renderClients() {
   if (fwSel) {
     const prev = fwSel.value;
     const accessibleWs = workspaces.filter(w => me.isAdmin || (me.workspaces || []).includes(w.id));
-    fwSel.innerHTML = '<option value="">Todos os workspaces</option>' +
+    fwSel.innerHTML = '<option value="">Todos os squads</option>' +
       accessibleWs.map(w => `<option value="${w.id}">${esc(w.name)}</option>`).join('');
     if ([...fwSel.options].some(o => o.value === prev)) fwSel.value = prev;
     applyFilterDropdown('client-f-ws');
@@ -13567,7 +13979,7 @@ function renderRoleCargoMatrix(elId, entity, handlerName, entityId) {
     </div>`;
   }).filter(Boolean).join('');
 
-  el.innerHTML = cards || `<div class="client-people-empty">Nenhum usuário no workspace deste cliente tem área definida.</div>`;
+  el.innerHTML = cards || `<div class="client-people-empty">Nenhum usuário no squad deste cliente tem área definida.</div>`;
   paintIcons();
 }
 function _matrixRow(area, cargo, candidates, entity, handlerName, entityId) {
@@ -14055,7 +14467,7 @@ async function downloadClientReport() {
   const monthNum = ym.split('-')[1] || '';
   const monthLabel = `${MONTHS[mon - 1]} de ${year}`;
   const sanitize = (s) => String(s || '').replace(/[\\/:*?"<>|]/g, '').trim();
-  const filename = `Relatório Mensal ${monthNum} - ${sanitize(c.name)} - Kastor.pdf`;
+  const filename = `Relatório Mensal ${monthNum} - ${sanitize(c.name)} - reWork.pdf`;
 
   toast('Gerando PDF…');
   try {
@@ -14328,7 +14740,7 @@ async function downloadClientReport() {
 
     // ── Footer em cada página ──
     const totalPages = doc.internal.getNumberOfPages();
-    const genLabel = `Gerado em ${new Date().toLocaleString('pt-BR')} · Kastor`;
+    const genLabel = `Gerado em ${new Date().toLocaleString('pt-BR')} · reWork`;
     for (let i = 1; i <= totalPages; i++) {
       doc.setPage(i);
       doc.setFont('helvetica', 'normal');
@@ -14768,7 +15180,7 @@ async function downloadProjectReport() {
   const monthLabel = `${MONTHS[mon - 1]} de ${year}`;
   const sanitize = (s) => String(s || '').replace(/[\\/:*?"<>|]/g, '').trim();
   const clientPart = c ? ` - ${sanitize(c.name)}` : '';
-  const filename = `Relatório Mensal ${monthNum} - ${sanitize(p.name)}${clientPart} - Kastor.pdf`;
+  const filename = `Relatório Mensal ${monthNum} - ${sanitize(p.name)}${clientPart} - reWork.pdf`;
 
   toast('Gerando PDF…');
   try {
@@ -14989,7 +15401,7 @@ async function downloadProjectReport() {
 
     // Footer.
     const totalPages = doc.internal.getNumberOfPages();
-    const genLabel = `Gerado em ${new Date().toLocaleString('pt-BR')} · Kastor`;
+    const genLabel = `Gerado em ${new Date().toLocaleString('pt-BR')} · reWork`;
     for (let i = 1; i <= totalPages; i++) {
       doc.setPage(i);
       doc.setFont('helvetica', 'normal'); doc.setFontSize(7);
@@ -15230,6 +15642,16 @@ const AGENDA_DAY_END_MIN   = 18 * 60;  // 18:00
 const AGENDA_SLOT_MIN      = 15;       // 15min por linha (granularidade fina)
 const AGENDA_SLOT_PX       = 22;       // px por slot — tabela alta o suficiente sem virar 2 telas
 const AGENDA_LUNCH_MIN     = 12 * 60;  // 12:00–13:00 destacado
+const AGENDA_ROWS = Math.ceil((AGENDA_DAY_END_MIN - AGENDA_DAY_START_MIN) / AGENDA_SLOT_MIN);
+// Minuto (arredondado ao slot) sob o cursor, dada a célula-coluna e o clientY.
+// As colunas agora são UMA célula que cobre o dia inteiro (sem célula por slot),
+// então o slot vem da posição vertical do mouse dentro da coluna.
+function agendaMinFromY(colCell, clientY) {
+  const rect = colCell.getBoundingClientRect();
+  let slot = Math.floor((clientY - rect.top) / AGENDA_SLOT_PX);
+  slot = Math.max(0, Math.min(AGENDA_ROWS - 1, slot));
+  return AGENDA_DAY_START_MIN + slot * AGENDA_SLOT_MIN;
+}
 let agendaUserId = null;          // usuário filtrado (default = me)
 let agendaWeekStart = null;       // segunda da semana atual visualizada
 let agendaWeeks = 2;              // 1 ou 2 semanas lado a lado
@@ -15463,7 +15885,7 @@ function googleEventToBlock(ev, dayYmd) {
     endMin: Math.max(startMin + 15, endMin), // duração mínima visível
     summary: ev.summary || '(Sem título)',
     htmlLink: ev.htmlLink || null,
-    // Cor padrão de eventos Google no Kastor — fixa em #0b57d0 pra que TODOS
+    // Cor padrão de eventos Google no reWork — fixa em #0b57d0 pra que TODOS
     // os eventos externos fiquem visualmente identificáveis, independente da
     // cor do calendário de origem.
     backgroundColor: '#0b57d0',
@@ -15570,6 +15992,8 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
   const layout = agendaColumnsLayout();
   // "dayCols" = colunas de conteúdo (dia ou user, dependendo do modo).
   const dayCols = layout.cols.filter(c => c.type === 'day' || c.type === 'user');
+  // ymd por coluna, calculado UMA vez (agendaYmd faz toISOString — caro em loop).
+  layout.cols.forEach(c => { if (c.day) c._ymd = agendaYmd(c.day); });
 
   const grid = document.createElement('div');
   grid.className = 'agenda-grid';
@@ -15604,12 +16028,12 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
     const d = c.day;
     const head = document.createElement('div');
     head.className = 'agenda-cell is-day-header';
-    if (agendaYmd(d) === todayYmd) head.classList.add('is-today');
+    if (c._ymd === todayYmd) head.classList.add('is-today');
     if (c.type === 'user') {
       // Header do modo Time: avatar + nome + capacidade do dia daquele user.
       const u = c.user;
       const dayMin = schedules
-        .filter(s => s.userId === u.id && s.date === agendaYmd(d))
+        .filter(s => s.userId === u.id && s.date === c._ymd)
         .reduce((sum, s) => sum + (s.endMin - s.startMin), 0);
       const dayHours = dayMin / 60;
       const capacityH = 8;
@@ -15623,7 +16047,7 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
       const dayName = d.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '').toUpperCase();
       const dayDate = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
       const dayMin = schedules
-        .filter(s => s.userId === agendaUserIdLocal && s.date === agendaYmd(d))
+        .filter(s => s.userId === agendaUserIdLocal && s.date === c._ymd)
         .reduce((sum, s) => sum + (s.endMin - s.startMin), 0);
       const dayHours = dayMin / 60;
       const capacityH = 8;
@@ -15638,35 +16062,36 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
     grid.appendChild(head);
   });
 
-  // Linhas de horário + células. Granularidade 15min, mas só o :00 mostra label.
-  // Marcação fina: :30 ganha linha mais clara, demais ficam sutis.
-  for (let r = 0; r < rows; r++) {
-    const min = AGENDA_DAY_START_MIN + r * AGENDA_SLOT_MIN;
-    const onHour = (min % 60) === 0;
-    const onHalf = (min % 60) === 30;
+  // Coluna de horários: UMA célula por HORA (span de 4 slots), não 1 por slot de
+  // 15min — o rótulo só aparecia no :00 mesmo.
+  for (let min = AGENDA_DAY_START_MIN; min < AGENDA_DAY_END_MIN; min += 60) {
+    const rowIdx = Math.floor((min - AGENDA_DAY_START_MIN) / AGENDA_SLOT_MIN) + 2;
+    const span = Math.min(60, AGENDA_DAY_END_MIN - min) / AGENDA_SLOT_MIN;
     const t = document.createElement('div');
     t.className = 'agenda-cell is-time';
-    if (onHour) t.textContent = agendaMinsToHHMM(min);
-    t.style.gridRow = `${r + 2} / ${r + 3}`;
+    t.textContent = agendaMinsToHHMM(min);
+    t.style.gridRow = `${rowIdx} / ${rowIdx + span}`;
     t.style.gridColumn = '1 / 2';
     grid.appendChild(t);
-
-    layout.cols.forEach(c => {
-      const cell = document.createElement('div');
-      cell.className = 'agenda-cell';
-      if (c.type === 'gap') cell.classList.add('is-week-gap');
-      if (onHour) cell.classList.add('is-hour'); else if (onHalf) cell.classList.add('is-half-hour');
-      if (min >= AGENDA_LUNCH_MIN && min < AGENDA_LUNCH_MIN + 60) cell.classList.add('is-lunch');
-      cell.style.gridRow = `${r + 2} / ${r + 3}`;
-      cell.style.gridColumn = `${c.gridCol} / ${c.gridCol + 1}`;
-      if (c.type === 'day' || c.type === 'user') {
-        cell.dataset.date = agendaYmd(c.day);
-        cell.dataset.min = String(min);
-        if (c.type === 'user') cell.dataset.userId = c.user.id;
-      }
-      grid.appendChild(cell);
-    });
   }
+
+  // Colunas de conteúdo: UMA célula por coluna cobrindo todas as linhas. As
+  // linhas de 15/30/60min viram gradiente CSS (.agenda-col) — antes eram ~250
+  // células individuais (cada uma com borda/fundo/relative), o que dominava o
+  // "presentation delay". O minuto do drag é calculado pelo Y do mouse.
+  layout.cols.forEach(c => {
+    const col = document.createElement('div');
+    col.style.gridRow = `2 / ${rows + 2}`;
+    col.style.gridColumn = `${c.gridCol} / ${c.gridCol + 1}`;
+    if (c.type === 'gap') {
+      col.className = 'agenda-cell is-week-gap';
+    } else {
+      col.className = 'agenda-cell agenda-col';
+      col.dataset.date = c._ymd;
+      if (c.type === 'user') col.dataset.userId = c.user.id;
+    }
+    grid.appendChild(col);
+  });
 
   // Blocos por cima. Antes de renderizar, computamos o "lane layout" por dia
   // pra que schedules + google events sobrepostos fiquem lado a lado ao invés
@@ -16057,9 +16482,9 @@ async function deleteScheduleFromModal() {
    mousedown numa célula vazia, mousemove pinta ghost, mouseup abre modal. */
 function onAgendaCellMouseDown(e) {
   if (e.button !== 0) return;
-  // Delegado no grid: resolve a célula de conteúdo pelo alvo. Ignora headers,
+  // Delegado no grid: resolve a célula-coluna do dia pelo alvo. Ignora headers,
   // coluna de horários, gaps e blocos (que têm handler próprio).
-  const cell = e.target.closest('.agenda-cell[data-min]');
+  const cell = e.target.closest('.agenda-col');
   if (!cell || !cell.dataset.date) return;
   const grid = cell.closest('.agenda-grid');
   // Célula do modo Time carrega userId próprio; individual pega do grid.
@@ -16067,14 +16492,15 @@ function onAgendaCellMouseDown(e) {
   if (me && !me.isAdmin && targetUserId !== me.id) return;
   e.preventDefault();
   const date = cell.dataset.date;
-  const startMin = Number(cell.dataset.min);
+  const startMin = agendaMinFromY(cell, e.clientY);
+  const startRowIdx = Math.floor((startMin - AGENDA_DAY_START_MIN) / AGENDA_SLOT_MIN) + 2;
   _agendaDrag = { mode: 'create', date, startRow: startMin, endRow: startMin + AGENDA_SLOT_MIN, ghost: null, moved: false, targetUserId, grid };
   document.addEventListener('mousemove', onAgendaCreateMove);
   document.addEventListener('mouseup', onAgendaCreateUp, { once: true });
   const ghost = document.createElement('div');
   ghost.className = 'agenda-ghost';
   ghost.style.gridColumn = cell.style.gridColumn;
-  ghost.style.gridRow = cell.style.gridRow;
+  ghost.style.gridRow = `${startRowIdx} / ${startRowIdx + 1}`;
   ghost.textContent = agendaMinsToHHMM(startMin) + ' → ' + agendaMinsToHHMM(startMin + AGENDA_SLOT_MIN);
   grid.appendChild(ghost);
   _agendaDrag.ghost = ghost;
@@ -16084,12 +16510,12 @@ function onAgendaCreateMove(e) {
   if (!_agendaDrag || _agendaDrag.mode !== 'create') return;
   const el = document.elementFromPoint(e.clientX, e.clientY);
   if (!el) return;
-  const cell = el.classList && el.classList.contains('agenda-cell') ? el : el.closest('.agenda-cell');
-  if (!cell || !cell.dataset.min || cell.dataset.date !== _agendaDrag.date) return;
+  const cell = el.closest && el.closest('.agenda-col');
+  if (!cell || cell.dataset.date !== _agendaDrag.date) return;
   // Modo Time: mantém drag na coluna do MESMO user (não vaza pra outro).
   if (cell.dataset.userId && cell.dataset.userId !== _agendaDrag.targetUserId) return;
   _agendaDrag.moved = true;
-  const cur = Number(cell.dataset.min) + AGENDA_SLOT_MIN;
+  const cur = agendaMinFromY(cell, e.clientY) + AGENDA_SLOT_MIN;
   _agendaDrag.endRow = Math.max(_agendaDrag.startRow + AGENDA_SLOT_MIN, cur);
   const startRowIdx = Math.floor((_agendaDrag.startRow - AGENDA_DAY_START_MIN) / AGENDA_SLOT_MIN) + 2;
   const endRowIdx = Math.ceil((_agendaDrag.endRow - AGENDA_DAY_START_MIN) / AGENDA_SLOT_MIN) + 2;
@@ -16152,9 +16578,9 @@ function onAgendaBlockMove(e) {
   if (!_agendaDrag) return;
   const el = document.elementFromPoint(e.clientX, e.clientY);
   if (!el) return;
-  const cell = el.classList && el.classList.contains('agenda-cell') ? el : el.closest('.agenda-cell');
-  if (!cell || !cell.dataset.min || !cell.dataset.date) return; // ignora células de gap
-  const min = Number(cell.dataset.min);
+  const cell = el.closest && el.closest('.agenda-col');
+  if (!cell || !cell.dataset.date) return; // fora de uma coluna de dia (gap/header)
+  const min = agendaMinFromY(cell, e.clientY);
   if (_agendaDrag.mode === 'move') {
     const duration = _agendaDrag.origEnd - _agendaDrag.origStart;
     _agendaDrag.newDate = cell.dataset.date;

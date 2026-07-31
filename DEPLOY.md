@@ -1,6 +1,12 @@
-# Kastor — Deploy em Docker Swarm (via Portainer)
+# reWork — Deploy em Docker Swarm (via Portainer)
 
-Guia completo pra subir o Kastor num cluster Docker Swarm gerenciado pelo Portainer, com CI/CD automático pelo GitHub Actions e proxy reverso pra HTTPS.
+Guia completo pra subir o reWork num cluster Docker Swarm gerenciado pelo Portainer, com CI/CD automático pelo GitHub Actions e proxy reverso pra HTTPS.
+
+> **Nota de nomenclatura:** a marca virou **reWork**, mas os identificadores internos da
+> stack (serviço `kastor`, volume `kastor_data`, imagem `ghcr.io/<owner>/kastor`, banco
+> `kastor`, env vars `KASTOR_*`) **continuam com o nome antigo** de propósito — renomeá-los
+> exige migração coordenada de stack + volume + banco, sem ganho funcional. O que é
+> voltado ao usuário (domínio, e-mails, interface) usa reWork.
 
 **Arquitetura resumida:**
 
@@ -32,7 +38,7 @@ Guia completo pra subir o Kastor num cluster Docker Swarm gerenciado pelo Portai
 - VPS com **Docker Swarm ativo** (`docker swarm init` já rodado) e **Portainer** apontando pra ele.
 - **Nginx Proxy Manager** (ou Traefik) já rodando no cluster.
 - **PostgreSQL** acessível — pode ser managed (Neon, Supabase, RDS, Railway, Render) ou um container próprio na mesma VPS. Basta ter a `DATABASE_URL`.
-- Domínio/subdomínio apontando pra IP da VPS (ex.: `kastor.seudominio.com.br`).
+- Domínio/subdomínio apontando pra IP da VPS (ex.: `rework.seudominio.com.br`).
 - Conta GitHub (o repo pode ser privado).
 
 ---
@@ -79,7 +85,7 @@ O redirect URI precisa incluir seu domínio de produção:
 2. Abre o OAuth Client ID
 3. Em **Authorized redirect URIs**, adiciona (não remove os anteriores):
    ```
-   https://kastor.seudominio.com.br/api/google/callback
+   https://rework.seudominio.com.br/api/google/callback
    ```
 4. Salva.
 
@@ -99,7 +105,7 @@ Em modo **Testing**? Adiciona todos os emails da equipe em **Test users** no OAu
 8. **Environment variables** (Advanced mode facilita colar em bloco):
    ```env
    HOST_PORT=8080
-   PUBLIC_URL=https://kastor.seudominio.com.br
+   PUBLIC_URL=https://rework.seudominio.com.br
    GITHUB_REPOSITORY_OWNER=seu-usuario-github
 
    # OBRIGATÓRIO — connection string do Postgres.
@@ -114,7 +120,7 @@ Em modo **Testing**? Adiciona todos os emails da equipe em **Test users** no OAu
    # Google Calendar (opcional)
    GOOGLE_CLIENT_ID=xxx.apps.googleusercontent.com
    GOOGLE_CLIENT_SECRET=xxx
-   GOOGLE_REDIRECT_URI=https://kastor.seudominio.com.br/api/google/callback
+   GOOGLE_REDIRECT_URI=https://rework.seudominio.com.br/api/google/callback
 
    # SMTP (opcional)
    SMTP_HOST=smtp.exemplo.com
@@ -122,7 +128,7 @@ Em modo **Testing**? Adiciona todos os emails da equipe em **Test users** no OAu
    SMTP_USER=noreply@seudominio.com.br
    SMTP_PASS=senha-do-smtp
    SMTP_SECURE=false
-   SMTP_FROM=Kastor <noreply@seudominio.com.br>
+   SMTP_FROM=reWork <noreply@seudominio.com.br>
    ```
 
    > ⚠️ `GITHUB_REPOSITORY_OWNER` deve ser exatamente o dono do repo no GitHub (usuário ou organização). É o que preenche `ghcr.io/${GITHUB_REPOSITORY_OWNER}/kastor:latest` no compose. **Tudo em lowercase** — o GHCR não aceita maiúsculas.
@@ -136,7 +142,7 @@ Em modo **Testing**? Adiciona todos os emails da equipe em **Test users** no OAu
 
 1. Abre o NPM (normalmente porta 81 da VPS)
 2. **Hosts → Proxy Hosts → Add Proxy Host**
-3. **Domain Names**: `kastor.seudominio.com.br`
+3. **Domain Names**: `rework.seudominio.com.br`
 4. **Scheme**: `http`
 5. **Forward Hostname / IP**: `kastor` (nome do serviço no Swarm) OU o IP interno da VPS
 6. **Forward Port**: `3000` (se usar nome) ou `8080` (se usar IP)
@@ -154,7 +160,7 @@ Com o serviço rodando:
 
 1. Empurra o backup pra VPS:
    ```bash
-   scp -r ~/kastor-backup-XXXX usuario@vps:/tmp/
+   scp -r ~/rework-backup-XXXX usuario@vps:/tmp/
    ```
 2. Para o serviço (Swarm exige stop pra escrever no volume):
    ```bash
@@ -167,7 +173,7 @@ Com o serviço rodando:
    ```
 4. Copia os dados:
    ```bash
-   sudo cp -r /tmp/kastor-backup-XXXX/. /var/lib/docker/volumes/kastor_kastor_data/_data/
+   sudo cp -r /tmp/rework-backup-XXXX/. /var/lib/docker/volumes/kastor_kastor_data/_data/
    ```
 5. Sobe de novo:
    ```bash
@@ -178,7 +184,7 @@ Com o serviço rodando:
 
 ## Passo 7 — Verificação
 
-1. Abre `https://kastor.seudominio.com.br` — tela de login.
+1. Abre `https://rework.seudominio.com.br` — tela de login.
 2. Loga como admin.
 3. Confere:
    - Dashboard carrega dados
@@ -212,13 +218,13 @@ Se é self-hosted, cron no nó manager:
 
 ```bash
 # Diário às 3AM — mantém 30 dias
-0 3 * * * pg_dump "$DATABASE_URL" | gzip > /home/backup/kastor-db-$(date +\%F).sql.gz && \
-  find /home/backup -name "kastor-db-*.sql.gz" -mtime +30 -delete
+0 3 * * * pg_dump "$DATABASE_URL" | gzip > /home/backup/rework-db-$(date +\%F).sql.gz && \
+  find /home/backup -name "rework-db-*.sql.gz" -mtime +30 -delete
 ```
 
 Restore:
 ```bash
-gunzip < kastor-db-YYYY-MM-DD.sql.gz | psql "$DATABASE_URL"
+gunzip < rework-db-YYYY-MM-DD.sql.gz | psql "$DATABASE_URL"
 ```
 
 ### Uploads e auth.enc (volume Docker)
@@ -227,12 +233,12 @@ gunzip < kastor-db-YYYY-MM-DD.sql.gz | psql "$DATABASE_URL"
 # Diário às 3:15AM — mantém 30 dias
 15 3 * * * docker run --rm \
   -v kastor_kastor_data:/data \
-  -v /home/backup/kastor:/backup \
-  alpine tar czf /backup/kastor-uploads-$(date +\%F).tar.gz -C /data . && \
-  find /home/backup/kastor -name "kastor-uploads-*.tar.gz" -mtime +30 -delete
+  -v /home/backup/rework:/backup \
+  alpine tar czf /backup/rework-uploads-$(date +\%F).tar.gz -C /data . && \
+  find /home/backup/rework -name "rework-uploads-*.tar.gz" -mtime +30 -delete
 ```
 
-Depois copia `/home/backup/kastor/` pra fora da VPS (Google Drive, S3, rsync pra outro servidor).
+Depois copia `/home/backup/rework/` pra fora da VPS (Google Drive, S3, rsync pra outro servidor).
 
 ---
 

@@ -1,6 +1,6 @@
 {
-  "name": "Kastor — Gestão de Demandas",
-  "short_name": "Kastor",
+  "name": "reWork — Gestão de Demandas",
+  "short_name": "reWork",
   "description": "Gestão de Demandas de Marketing",
   "start_url": "/",
   "scope": "/",
@@ -13,7 +13,7 @@
   "categories": ["productivity", "business"],
   "icons": [
     {
-      "src": "/Kastor_logo.svg",
+      "src": "/rework_logo.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"

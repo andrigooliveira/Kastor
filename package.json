@@ -1,7 +1,7 @@
 {
   "name": "fluxo-gestao-demandas",
   "version": "2.1.0",
-  "description": "Kastor — Gestão de Demandas de Marketing (multiusuário, persistente)",
+  "description": "reWork — Gestão de Demandas de Marketing (multiusuário, persistente)",
   "main": "server.js",
   "engines": {
     "node": ">=18.0.0"

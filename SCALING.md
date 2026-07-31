@@ -1,6 +1,6 @@
-# Escalando o Kastor horizontalmente (HA / múltiplas instâncias)
+# Escalando o reWork horizontalmente (HA / múltiplas instâncias)
 
-> **TL;DR** — Hoje o Kastor roda em **1 instância** (`docker-compose.yml`: `replicas: 1`),
+> **TL;DR** — Hoje o reWork roda em **1 instância** (`docker-compose.yml`: `replicas: 1`),
 > e isso é **adequado** pra escala de time. Só invista neste guia quando tiver um
 > motivo concreto: uptime crítico, muitos usuários simultâneos, ou rolling deploy
 > sem janela de queda.
