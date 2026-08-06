@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-title" content="reWork">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/css/style.css?v=20260727q">
+<link rel="stylesheet" href="/css/style.css?v=20260806f">
 </head>
 <body>
 
@@ -220,6 +220,10 @@
         <!-- Widget "Meu dia" — foco pessoal do usuário logado. Populado em renderMyDay(). -->
         <div class="my-day-grid" id="my-day-grid" style="display:none"></div>
         <div class="filters-bar" style="margin-bottom:22px">
+          <div class="filter-group">
+            <label class="filter-label">Squad</label>
+            <select class="filter-select" id="dash-f-squad" onchange="renderDashboard()"></select>
+          </div>
           <div class="filter-group">
             <label class="filter-label">Usuário</label>
             <select class="filter-select" id="dash-f-user" onchange="renderDashboard()"></select>
@@ -728,7 +732,7 @@
           <div class="section-title">Integrações · Webhooks</div>
           <button class="btn btn-primary admin-only" onclick="openWebhookModal()">+ Nova Integração</button>
         </div>
-        <div class="capacity-hint">Webhooks notificam serviços externos (como Discord, Slack, Make, n8n) quando eventos acontecem nas demandas. Use o formato Discord para postar embeds formatados direto em um canal.</div>
+        <div class="capacity-hint">Webhooks notificam serviços externos (como Discord, Slack, Make, n8n) quando eventos acontecem nas demandas. São <strong>universais</strong>: valem para todos os squads, independente do squad ativo. Use o formato Discord para postar embeds formatados direto em um canal.</div>
         <!-- Filtros por alvo/escopo dos webhooks. Opções populadas só com valores
              em uso nos webhooks deste workspace. Lista sempre ordenada por nome. -->
         <div class="filters-bar" style="margin-bottom:12px">
@@ -1795,6 +1799,11 @@
           <label class="form-label">Tipo</label>
           <div class="sch-kind-chips" id="sch-kind-chips"></div>
         </div>
+        <div class="form-group full" id="sch-recur-row" style="display:none">
+          <label class="form-label">Repetir</label>
+          <select class="form-control" id="sch-recur" onchange="onScheduleRecurPick(this.value)"></select>
+          <div id="sch-recur-info" class="sch-recur-info" style="display:none"></div>
+        </div>
         <div class="form-group full">
           <label class="form-label">Quem</label>
           <div id="sch-when" style="font-size:13px;color:var(--text-dim)"></div>
@@ -2172,19 +2181,20 @@
       <div class="form-grid">
         <div class="form-group full">
           <label class="form-label">Nome da Lista</label>
-          <input class="form-control" id="nl-name" placeholder="Ex: Fluxo de mídias sociais">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Cliente <span class="form-label-hint">(Opcional)</span></label>
-          <select class="form-control" id="nl-client" onchange="onNovaListaClientChange()"></select>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Projeto <span class="form-label-hint">(Opcional)</span></label>
-          <select class="form-control" id="nl-project"></select>
+          <input class="form-control" id="nl-name" placeholder="Ex: Rotina de posts semanais">
         </div>
         <div class="form-group full">
-          <label class="form-label">Detalhes</label>
-          <textarea class="form-control" id="nl-desc" rows="5" placeholder="Adicione uma descrição"></textarea>
+          <label class="form-label">Detalhes <span class="form-label-hint">(opcional)</span></label>
+          <textarea class="form-control" id="nl-desc" rows="3" placeholder="Do que se trata essa lista, quando aplicar…"></textarea>
+        </div>
+        <div class="form-group full">
+          <label class="form-label">Tarefas</label>
+          <div class="nl-items-hint">Só o nome de cada tarefa. Ao aplicar num projeto, você escolhe o fluxo de cada uma na hora de gerar a demanda.</div>
+          <div class="nl-items" id="nl-items"></div>
+          <div class="nl-add-row">
+            <input class="form-control" id="nl-new-item" placeholder="Adicionar tarefa…" onkeydown="if(event.key==='Enter'){event.preventDefault();nlAddItem();}">
+            <button type="button" class="btn btn-ghost btn-sm" onclick="nlAddItem()"><i data-lucide="plus" class="ic-sm"></i> Adicionar</button>
+          </div>
         </div>
       </div>
     </div>
@@ -2748,7 +2758,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260727q"></script>
+<script src="/js/app.js?v=20260806f"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
@@ -2794,7 +2804,7 @@
             </select>
           </div>
           <div class="form-group full" style="margin-top:-6px">
-            <div class="webhook-hint">Restrinja o disparo a um cliente e/ou projeto específico. Deixe em <strong>Todos</strong> para receber os eventos de todo o squad.</div>
+            <div class="webhook-hint">Restrinja o disparo a um cliente e/ou projeto específico. Deixe em <strong>Todos</strong> para receber os eventos de <strong>todos os squads</strong>.</div>
           </div>
           <div class="form-group full">
             <label class="form-label">Usuário alvo (opcional)</label>

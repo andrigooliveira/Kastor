@@ -23,6 +23,7 @@ let schedules  = [];
 let clientTemplates = [];
 let recurrings = [];
 let listas = [];
+let tasks = []; // tarefas de projeto (kind='todo' das listas novas)
 let demandTypes = [];
 let notifPollTimer = null;
 
@@ -1519,7 +1520,7 @@ function renderCommandPalette() {
       .map(l => {
         const c = l.clientId ? clientById(l.clientId) : null;
         const p = l.projectId ? projectById(l.projectId) : null;
-        const sub = c ? `${c.name}${p ? ` · ${p.name}` : ''}` : (p ? p.name : 'Geral');
+        const sub = c ? `${c.name}${p ? ` · ${p.name}` : ''}` : (p ? p.name : 'Cliente');
         return {
           icon: 'list-checks',
           label: l.name,
@@ -2840,9 +2841,10 @@ async function loadAll() {
     api('/recurrings').catch(() => []),
     api('/listas').catch(() => []),
     api('/positions').catch(() => []),
-    api('/demand-types').catch(() => [])
+    api('/demand-types').catch(() => []),
+    api('/tasks').catch(() => [])
   ]);
-  [workspaces, users, clients, projects, flows, demands, roles, templates, webhooks, schedules, clientTemplates, recurrings, listas, positions, demandTypes] = results;
+  [workspaces, users, clients, projects, flows, demands, roles, templates, webhooks, schedules, clientTemplates, recurrings, listas, positions, demandTypes, tasks] = results;
   const allowed = workspaces.map(w => w.id);
   if (!activeWs || !allowed.includes(activeWs)) activeWs = allowed[0] || null;
   localStorage.setItem('fluxo_ws', activeWs || '');
@@ -3135,15 +3137,31 @@ function matchPeriod(dateStr, period, range) {
 }
 
 /* ─── DASHBOARD ─── */
+// Escopo por squad: '' = todos os squads acessíveis; caso contrário, apenas um.
+// Guardado no próprio DOM (dash-f-squad) — sem estado global paralelo.
+function dashScopeWsIds() {
+  const wsId = $('dash-f-squad')?.value || '';
+  if (wsId) return [wsId];
+  return (workspaces || [])
+    .filter(w => me?.isAdmin || (me?.workspaces || []).includes(w.id))
+    .map(w => w.id);
+}
+function dashScopedDemands() { const ids = new Set(dashScopeWsIds()); return demands.filter(d => ids.has(d.workspaceId)); }
+function dashScopedProjects() { const ids = new Set(dashScopeWsIds()); return projects.filter(p => ids.has(p.workspaceId)); }
+function dashScopedFlows() { const ids = new Set(dashScopeWsIds()); return flows.filter(f => ids.has(f.workspaceId)); }
+function dashScopedUsers() {
+  const ids = dashScopeWsIds();
+  return users.filter(u => u.active !== false && (u.isAdmin || (u.workspaces || []).some(w => ids.includes(w))));
+}
 function dashDemandTypes() {
-  return [...new Set(wsFlows().map(f => f.demandType).filter(Boolean))].sort();
+  return [...new Set(dashScopedFlows().map(f => f.demandType).filter(Boolean))].sort();
 }
 function dashFilteredDemands() {
   const fu = $('dash-f-user').value;
   const fp = $('dash-f-period').value;
   const ft = $('dash-f-type').value;
   const fc = $('dash-f-client').value;
-  return wsDemands().filter(d => {
+  return dashScopedDemands().filter(d => {
     if (fu && d.ownerId !== fu) return false;
     if (!matchPeriod(effDue(d), fp)) return false;
     if (ft && demandType(d) !== ft) return false;
@@ -3155,9 +3173,66 @@ function dashFilteredDemands() {
   });
 }
 function clearDashFilters() {
-  ['dash-f-user','dash-f-period','dash-f-type','dash-f-client'].forEach(id => $(id).value = '');
+  ['dash-f-user','dash-f-period','dash-f-type','dash-f-client','dash-f-squad'].forEach(id => { if ($(id)) $(id).value = ''; });
   renderDashboard();
 }
+// Traduz o valor do filtro dash-f-period em janela YYYY-MM-DD [from, to].
+// Retorna { from, to, label } onde label é uma legenda humana pro card.
+function _dashPeriodRange(period) {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const ymd = (d) => d.toISOString().slice(0, 10);
+  if (period === 'today') return { from: ymd(today), to: ymd(today), label: 'hoje' };
+  if (period === '7') {
+    const end = new Date(today); end.setDate(today.getDate() + 6);
+    return { from: ymd(today), to: ymd(end), label: 'próximos 7 dias' };
+  }
+  if (period === 'month') {
+    const start = new Date(today.getFullYear(), today.getMonth(), 1);
+    const end   = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    return { from: ymd(start), to: ymd(end), label: MONTHS[today.getMonth()].toLowerCase() };
+  }
+  if (period === 'lastmonth') {
+    const start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    const end   = new Date(today.getFullYear(), today.getMonth(), 0);
+    return { from: ymd(start), to: ymd(end), label: MONTHS[start.getMonth()].toLowerCase() };
+  }
+  if (period === '90') {
+    const start = new Date(today); start.setDate(today.getDate() - 90);
+    return { from: ymd(start), to: ymd(today), label: 'últimos 90 dias' };
+  }
+  // 'Todo o período' — sem from/to; usa mês corrente por default pro card não
+  // ficar carregando anos de eventos sem sentido.
+  const start = new Date(today.getFullYear(), today.getMonth(), 1);
+  const end   = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+  return { from: ymd(start), to: ymd(end), label: MONTHS[today.getMonth()].toLowerCase() };
+}
+// Popula o card "Horas em reunião" — chama /api/google/meeting-hours com o
+// escopo atual do dashboard (squad + usuário + período).
+async function refreshDashMeetingHours() {
+  const val = $('dash-kpi-meetings-value');
+  const sub = $('dash-kpi-meetings-sub');
+  if (!val) return;
+  const period = $('dash-f-period')?.value || '';
+  const range = _dashPeriodRange(period);
+  const params = new URLSearchParams();
+  if (range.from) params.set('from', range.from);
+  if (range.to)   params.set('to',   range.to);
+  const uid = $('dash-f-user')?.value || '';
+  if (uid) params.set('userId', uid);
+  const wsId = $('dash-f-squad')?.value || '';
+  if (wsId) params.set('workspaceId', wsId);
+  try {
+    const r = await api('/google/meeting-hours?' + params.toString());
+    val.textContent = fmtHours(r.hours || 0);
+    const who = uid ? (userById(uid)?.name?.split(' ')[0] || '') : '';
+    const label = who ? `${who} · ${range.label}` : range.label;
+    if (sub) sub.textContent = `${r.count || 0} evento${(r.count || 0) === 1 ? '' : 's'} · ${label}`;
+  } catch (e) {
+    val.textContent = '—';
+    if (sub) sub.textContent = 'Sem dados';
+  }
+}
+
 /* ─── Widget "Meu dia" ───
    Foco pessoal no topo do dashboard: prazo hoje, atrasadas suas, menções não
    lidas. Sempre relativo ao usuário logado. Não respeita os filtros da tela. */
@@ -3235,11 +3310,26 @@ function _myDayMentionRow(n) {
 function renderDashboard() {
   // Widget pessoal no topo — recalculado a cada re-render.
   renderMyDay();
-  // selects de filtro (preservando seleção)
-  fillSelect($('dash-f-user'), wsUsers().map(u => ({ value: u.id, label: u.name })), undefined, 'Todos os usuários');
+  // Filtro por squad — "Todos" agrega todos os squads acessíveis. Popula antes
+  // dos outros filtros porque eles dependem do escopo dele.
+  const accessibleWs = (workspaces || []).filter(w => me?.isAdmin || (me?.workspaces || []).includes(w.id));
+  const squadSel = $('dash-f-squad');
+  if (squadSel) {
+    // Só faz sentido mostrar o filtro quando há mais de um squad acessível.
+    const parent = squadSel.closest('.filter-group');
+    if (accessibleWs.length <= 1) {
+      if (parent) parent.style.display = 'none';
+      squadSel.value = '';
+    } else {
+      if (parent) parent.style.display = '';
+      fillSelect(squadSel, accessibleWs.map(w => ({ value: w.id, label: w.name })), undefined, 'Todos os squads');
+    }
+  }
+  // selects de filtro (preservando seleção) — agora escopados ao squad
+  fillSelect($('dash-f-user'), dashScopedUsers().map(u => ({ value: u.id, label: u.name })), undefined, 'Todos os usuários');
   fillSelect($('dash-f-type'), dashDemandTypes().map(t => ({ value: t, label: t })), undefined, 'Todos os tipos');
   fillSelect($('dash-f-client'),
-    [...new Set(wsProjects().map(p => p.client).filter(Boolean))].sort().map(c => ({ value: c, label: c })),
+    [...new Set(dashScopedProjects().map(p => p.client).filter(Boolean))].sort().map(c => ({ value: c, label: c })),
     undefined, 'Todos os clientes');
 
   // por padrão o dashboard abre filtrado para o usuário ativo
@@ -3252,11 +3342,12 @@ function renderDashboard() {
   // pintura do dashboard — depois disso o user já interagiu).
   restoreFilters('dashboard');
 
-  ['dash-f-user','dash-f-period','dash-f-type','dash-f-client'].forEach(id => {
-    $(id).classList.toggle('filtering', !!$(id).value);
+  ['dash-f-user','dash-f-period','dash-f-type','dash-f-client','dash-f-squad'].forEach(id => {
+    if ($(id)) $(id).classList.toggle('filtering', !!$(id).value);
   });
 
   // Estilizar os filtros como dropdowns customizados
+  applyFilterDropdown('dash-f-squad');
   applyFilterDropdown('dash-f-user', { userIcon: true });
   applyFilterDropdown('dash-f-client');
   applyFilterDropdown('dash-f-period');
@@ -3265,10 +3356,10 @@ function renderDashboard() {
 
   const list = dashFilteredDemands();
 
-  // Escopo COMPLETO do workspace (ignora filtros) — usado por Próximos 7 dias,
-  // Em atraso, Radar de projetos. Esses widgets sempre olham "a partir de hoje"
-  // independente do filtro de período. Filtro de cliente ainda aplica ao radar.
-  const wsAll = wsDemands();
+  // Escopo COMPLETO do escopo de squad (ignora filtros de período/tipo/cliente)
+  // — usado por Próximos 7 dias, Em atraso, Radar de projetos. Esses widgets
+  // sempre olham "a partir de hoje" independente do filtro de período.
+  const wsAll = dashScopedDemands();
 
   // ── KPIs (respeitam filtros) ──
   const open = list.filter(d => !isDone(d));
@@ -3302,8 +3393,15 @@ function renderDashboard() {
       <div class="dash-kpi-value">${fmtHours(hoursMonth)}</div>
       <div class="dash-kpi-sub">mês corrente</div>
     </div>
+    <div class="dash-kpi" id="dash-kpi-meetings">
+      <div class="dash-kpi-label">Horas em reunião</div>
+      <div class="dash-kpi-value" id="dash-kpi-meetings-value">—</div>
+      <div class="dash-kpi-sub" id="dash-kpi-meetings-sub">Google Calendar</div>
+    </div>
   `;
   animateCounters($('dash-kpis'));
+  // Busca assíncrona: não bloqueia render, mostra "—" até chegar.
+  refreshDashMeetingHours();
 
   // ── Demandas previstas / Em atraso / Radar / Top responsáveis / Throughput ──
   renderDashForecast();
@@ -3403,7 +3501,7 @@ function renderDashForecast() {
   const byDay = new Map(days.map(d => [ymd(d), []]));
   _forecastByDay = byDay;
   if (targetUserId) {
-    wsDemands().forEach(d => {
+    dashScopedDemands().forEach(d => {
       if (d.deletedAt) return;
       const fc = forecastArrivalFor(d, targetUserId);
       if (!fc) return;
@@ -3572,14 +3670,15 @@ function renderDashRadar() {
   const sub = $('dash-radar-sub');
   if (!el) return;
   const clientFilter = $('dash-f-client')?.value || '';
-  const wsProjs = wsProjects().filter(p => p.active !== false);
+  const wsProjs = dashScopedProjects().filter(p => p.active !== false);
   const shown = clientFilter
     ? wsProjs.filter(p => p.client === clientFilter)
     : wsProjs;
+  const scopedDemands = dashScopedDemands();
 
   // Só interessa quem tem demanda atrasada — projetos "verdes" saem do radar.
   const withOverdue = shown.map(p => {
-    const projDemands = demands.filter(d => d.projectId === p.id && !isDone(d));
+    const projDemands = scopedDemands.filter(d => d.projectId === p.id && !isDone(d));
     const overdue = projDemands.filter(isLate).length;
     return { p, projDemands, overdue };
   }).filter(x => x.overdue > 0);
@@ -5996,6 +6095,9 @@ function applyDemandTemplate() {
 
 function openNewDemand() {
   editingId = null;
+  // Zera o contexto de "vindo de tarefa" — só é setado por openNewDemandFromTask
+  // logo depois desta chamada. Sem isso, fechar sem salvar deixa lixo pra próxima.
+  _creatingFromTaskId = null;
   $('modal-title').textContent = 'Nova demanda';
   $('demand-delete-btn').style.display = 'none';
   fillDemandSelectors(null);
@@ -6142,6 +6244,18 @@ async function saveDemand() {
     await refreshData();
     if (detailId && editingId === detailId) renderDetail();
     if (wasCreate && newId) {
+      // Se veio de uma tarefa da lista, vincula a demanda recém-criada.
+      // Sem await no toast/refresh — o link não pode bloquear a UX.
+      if (_creatingFromTaskId) {
+        const tid = _creatingFromTaskId;
+        _creatingFromTaskId = null;
+        api('/tasks/' + tid + '/link-demand', 'POST', { demandId: newId })
+          .then(async () => {
+            try { tasks = await api('/tasks'); } catch {}
+            renderCurrent();
+          })
+          .catch(err => console.warn('[task-link] falha ao vincular tarefa:', err.message));
+      }
       toast('Demanda criada!', 'success', { label: 'Abrir', fn: () => showDetail(newId) });
     } else {
       toast(editingId ? 'Demanda atualizada!' : 'Demanda criada!');
@@ -6150,6 +6264,68 @@ async function saveDemand() {
     console.error('[saveDemand] erro:', e);
     toast(e.message, 'error');
   }
+}
+// Estado do link tarefa→demanda: setado por openNewDemandFromTask, limpo em
+// saveDemand (sucesso) OU quando o modal é fechado sem salvar (openNewDemand).
+let _creatingFromTaskId = null;
+// Abre o wizard de nova demanda a partir de uma tarefa: pula os steps de
+// cliente e projeto (já sabidos do task.projectId/clientId), pré-preenche o
+// nome com o título da tarefa, e após salvar vincula a demanda à tarefa.
+function openNewDemandFromTask(taskId) {
+  const t = (tasks || []).find(x => x.id === taskId);
+  if (!t) return toast('Tarefa não encontrada', 'error');
+  const project = projectById(t.projectId);
+  if (!project) return toast('Projeto da tarefa não encontrado', 'error');
+  // Ativa o wizard limpo (mesmo caminho do openNewDemand), depois pula pra step 3
+  // (fluxo) com cliente/projeto pré-definidos. O nome vai pré-preenchido no step 4.
+  openNewDemand();
+  _creatingFromTaskId = t.id;
+  // Ajusta o wizard state — precisa ir DEPOIS do openNewDemand (que zera tudo).
+  wizardState = { step: 3, clientId: project.clientId || null, projectId: project.id, flowId: null };
+  // Tipo da tarefa vira só pré-filtro informativo no step 3 — user SEMPRE escolhe
+  // o fluxo manualmente (mesmo com só 1 opção). Isso evita erros silenciosos
+  // com fluxos criados errados por tipo.
+  _dwFlowType = t.demandType || '';
+  setTimeout(() => {
+    if ($('f-name')) $('f-name').value = t.name || '';
+    wizardGoTo(3);
+  }, 0);
+}
+// Aplica uma lista (kind='todo') a um PROJETO (só projeto — cliente direto
+// foi removido do modelo). Cada aplicação gera um bloco novo, mesmo se a
+// mesma lista já foi aplicada antes (o backend gera um applicationId único).
+async function openApplyListaToProjectModal(listaId) {
+  const lista = listas.find(l => l.id === listaId);
+  if (!lista) return toast('Lista não encontrada', 'error');
+  if (lista.kind !== 'todo') return toast('Só listas do modelo novo (to-do) podem ser aplicadas por aqui.', 'warn');
+  // Projetos ativos de TODOS os clientes do squad — lista é global mas cria
+  // tasks no squad do projeto de destino.
+  const wsProjs = projects.filter(p => p.workspaceId === activeWs && p.active !== false && !p.deletedAt)
+    .slice().sort((a, b) => {
+      const ca = clientById(a.clientId)?.name || '';
+      const cb = clientById(b.clientId)?.name || '';
+      const cmp = norm(ca).localeCompare(norm(cb));
+      return cmp !== 0 ? cmp : norm(a.name).localeCompare(norm(b.name));
+    });
+  if (!wsProjs.length) return toast('Nenhum projeto ativo neste squad', 'warn');
+  const opts = wsProjs.map(p => {
+    const c = clientById(p.clientId);
+    return { value: p.id, label: c ? `${c.name} · ${p.name}` : p.name };
+  });
+  const nItems = (lista.items || []).length;
+  showCustomPicker(
+    `Aplicar "${lista.name}"`,
+    `Escolha o projeto onde as ${nItems} tarefa(s) vão ficar pendentes:`,
+    opts,
+    async (projectId) => {
+      try {
+        const r = await api('/apply-lista', 'POST', { listaId, projectId });
+        toast(`${r.created} tarefa${r.created === 1 ? '' : 's'} aplicada${r.created === 1 ? '' : 's'}!`, 'success');
+        try { tasks = await api('/tasks'); } catch {}
+        renderCurrent();
+      } catch (e) { toast(e.message, 'error'); }
+    }
+  );
 }
 
 /* ── Salvar como template ── */
@@ -6344,11 +6520,18 @@ function renderDetail() {
     const canEdit = c.userId === me.id;
     // Moderador tem poder de moderação — pode excluir comentário de qualquer um.
     const canDel = c.userId === me.id || me.isAdmin || me.isModerator;
-    let text = esc(c.text).replace(/@([a-zA-Z0-9._-]+)/g, (m, uname) => {
-      const found = users.find(x => x.username.toLowerCase() === uname.toLowerCase());
-      return found ? `<span class="mention">@${esc(found.username)}</span>` : m;
-    });
-    text = mdApply(linkifyEscaped(text));
+    let text;
+    if (c.format === 'html') {
+      // Servidor já sanitizou. Só precisa envolver menções em <span>.
+      text = renderMentionsInHtml(c.text || '');
+    } else {
+      // Legacy: texto puro escapado, markdown-lite + linkify.
+      text = esc(c.text).replace(/@([a-zA-Z0-9._-]+)/g, (m, uname) => {
+        const found = users.find(x => x.username.toLowerCase() === uname.toLowerCase());
+        return found ? `<span class="mention">@${esc(found.username)}</span>` : m;
+      });
+      text = mdApply(linkifyEscaped(text));
+    }
     const atts = (c.attachments || []).map(a => {
       if (a.type && a.type.startsWith('image/')) {
         return `<div class="comment-img-wrap"><img class="comment-img" src="${a.data}" alt="${esc(a.name)}" onclick="window.open(this.src,'_blank')"></div>`;
@@ -6504,14 +6687,30 @@ function renderDetail() {
         <div class="detail-section-heading">Comentários</div>
         <div class="comment-list">${comments || '<div class="hours-empty">Nenhum comentário ainda. Use @ para marcar alguém da equipe.</div>'}</div>
         <div class="comment-compose">
-          <textarea class="form-control" id="comment-input" placeholder="Digite seu comentário — você pode colar (Ctrl+V) ou arrastar imagens aqui" oninput="mentionWatch(this); draftSaveComment(this)" onkeydown="mentionKeys(event)"></textarea>
+          <div class="comment-toolbar" role="toolbar" aria-label="Formatação">
+            <button type="button" class="comment-tool" data-cmd="bold" title="Negrito (Ctrl+B)" onmousedown="event.preventDefault()" onclick="execCommentCmd('bold')"><i data-lucide="bold" class="ic-sm"></i></button>
+            <button type="button" class="comment-tool" data-cmd="italic" title="Itálico (Ctrl+I)" onmousedown="event.preventDefault()" onclick="execCommentCmd('italic')"><i data-lucide="italic" class="ic-sm"></i></button>
+            <button type="button" class="comment-tool" data-cmd="underline" title="Sublinhado (Ctrl+U)" onmousedown="event.preventDefault()" onclick="execCommentCmd('underline')"><i data-lucide="underline" class="ic-sm"></i></button>
+            <span class="comment-toolbar-sep"></span>
+            <button type="button" class="comment-tool" data-cmd="insertOrderedList" title="Lista numerada" onmousedown="event.preventDefault()" onclick="execCommentCmd('insertOrderedList')"><i data-lucide="list-ordered" class="ic-sm"></i></button>
+            <button type="button" class="comment-tool" data-cmd="insertUnorderedList" title="Lista com marcadores" onmousedown="event.preventDefault()" onclick="execCommentCmd('insertUnorderedList')"><i data-lucide="list" class="ic-sm"></i></button>
+          </div>
+          <div class="comment-input comment-input-ce" id="comment-input"
+               contenteditable="true"
+               role="textbox"
+               aria-multiline="true"
+               data-placeholder="Digite seu comentário — use @ para marcar, cole (Ctrl+V) ou arraste imagens"
+               oninput="mentionWatchCE(this); draftSaveCommentCE(this); refreshToolbarState()"
+               onkeydown="mentionKeys(event)"
+               onkeyup="refreshToolbarState()"
+               onmouseup="refreshToolbarState()"></div>
           <div class="mention-pop" id="mention-pop"></div>
           <div class="comment-compose-bar">
             <div class="comment-attach-btns">
               <input type="file" id="comment-file-input" multiple style="display:none" onchange="handleCommentFiles(event)">
               <button class="detail-icon-btn" onclick="$('comment-file-input').click()" title="Anexar arquivo"><i data-lucide="paperclip" class="ic-sm"></i></button>
               <input type="file" id="comment-img-input" accept="image/*" multiple style="display:none" onchange="handleCommentImages(event)">
-              <button class="detail-icon-btn" onclick="$('comment-img-input').click()" title="Anexar imagem"><i data-lucide="image" class="ic-sm"></i></button>
+              <button class="detail-icon-btn" onclick="$('comment-img-input').click()" title="Inserir imagem inline"><i data-lucide="image" class="ic-sm"></i></button>
             </div>
             <button class="btn btn-primary btn-sm" onclick="sendComment()">Enviar comentário</button>
           </div>
@@ -6719,10 +6918,19 @@ function openDetailStages() {
   const set = new Set(customOrder);
   const remaining = poolIds.filter(id => !set.has(id));
   const initialOrder = customOrder.length ? [...customOrder, ...remaining] : poolIds;
+  // Seed do sla: valor EFETIVO por etapa (override salvo OU padrão do fluxo).
+  // Assim o input já mostra o número certo e "voltar ao padrão" fica óbvio.
+  const savedOv = (d.stageOverrides && typeof d.stageOverrides === 'object') ? d.stageOverrides : {};
+  const flowForSeed = flowById(d.flowId);
+  const seedSla = {};
+  (flowForSeed?.stages || []).forEach(s => {
+    seedSla[s.id] = (savedOv[s.id]?.deadlineDays !== undefined) ? savedOv[s.id].deadlineDays : (s.deadlineDays ?? null);
+  });
   stagesEditDraft = {
     skipped: new Set(Array.isArray(d.skippedStages) ? d.skippedStages : []),
     responsibles: { ...(d.stageResponsibles && typeof d.stageResponsibles === 'object' ? d.stageResponsibles : {}) },
     labels: { ...(d.stageLabels && typeof d.stageLabels === 'object' ? d.stageLabels : {}) },
+    sla: seedSla,
     order: initialOrder,
   };
   detailView = 'stages';
@@ -6762,11 +6970,23 @@ function setStageLabelDraft(stageId, value) {
 }
 function refreshStagesEditButtons(d) {
   const dirty = isStagesDraftDirty(d);
+  // "Restaurar padrões" habilita se existe QUALQUER customização (skips, resp,
+  // label, ordem OU SLA diferente do fluxo).
+  const hasSlaOverride = stagesEditDraft?.sla && (() => {
+    const flow = flowById(d.flowId);
+    const flowSlaById = new Map((flow?.stages || []).map(s => [s.id, s.deadlineDays ?? null]));
+    for (const [sid, v] of Object.entries(stagesEditDraft.sla)) {
+      if (!flowSlaById.has(sid)) continue;
+      if ((v ?? null) !== (flowSlaById.get(sid) ?? null)) return true;
+    }
+    return false;
+  })();
   const empty = !stagesEditDraft || (
     stagesEditDraft.skipped.size === 0 &&
     Object.keys(stagesEditDraft.responsibles).length === 0 &&
     Object.keys(stagesEditDraft.labels).length === 0 &&
-    !isStagesOrderCustomized(d)
+    !isStagesOrderCustomized(d) &&
+    !hasSlaOverride
   );
   const saveBtn = document.getElementById('stages-edit-save');
   const resetBtn = document.getElementById('stages-edit-reset');
@@ -6783,23 +7003,59 @@ function isStagesOrderCustomized(d) {
 function resetStagesDraft() {
   if (!stagesEditDraft) return;
   const d = demandById(detailId);
+  // Reset volta pros PADRÕES do fluxo — o seed do sla vira o valor original das
+  // etapas (não vazio), pra o input não ficar em branco depois de restaurar.
+  const flow = d ? flowById(d.flowId) : null;
+  const seedSla = {};
+  (flow?.stages || []).forEach(s => { seedSla[s.id] = s.deadlineDays ?? null; });
   stagesEditDraft = {
     skipped: new Set(),
     responsibles: {},
     labels: {},
+    sla: seedSla,
     order: d ? _demandStageIdPool(d) : [],
   };
   renderDetail();
 }
+// Setter do override de SLA por etapa. Vazio = "voltar pro padrão do fluxo".
+// Atualiza só o botão Salvar pra não perder foco do input (mesmo padrão do label).
+// A badge "SLA customizado" só reaparece no próximo render — trade-off consciente
+// pra evitar remontar a linha a cada tecla.
+function setStageSlaDraft(stageId, value) {
+  if (!stagesEditDraft) return;
+  if (!stagesEditDraft.sla) stagesEditDraft.sla = {};
+  const trimmed = String(value ?? '').trim();
+  if (trimmed === '') {
+    stagesEditDraft.sla[stageId] = null;
+  } else {
+    const n = Number(trimmed);
+    if (!Number.isInteger(n) || n < 0) return; // ignora inválido silenciosamente
+    stagesEditDraft.sla[stageId] = n;
+  }
+  const d = demandById(detailId); if (!d) return;
+  refreshStagesEditButtons(d);
+}
 async function saveStagesDraft() {
   if (!stagesEditDraft) return;
   const d = demandById(detailId); if (!d) return;
+  // Monta stageOverrides só com as chaves onde o SLA difere do padrão do fluxo.
+  // O server valida de novo — isto é só pra não mandar payload inflado.
+  const flow = flowById(d.flowId);
+  const flowSlaById = new Map((flow?.stages || []).map(s => [s.id, s.deadlineDays ?? null]));
+  const overrides = {};
+  for (const [sid, v] of Object.entries(stagesEditDraft.sla || {})) {
+    const orig = flowSlaById.has(sid) ? flowSlaById.get(sid) : undefined;
+    if (orig === undefined) continue; // não é etapa do fluxo → ignora aqui
+    if ((v ?? null) === (orig ?? null)) continue; // igual ao padrão → sem override
+    overrides[sid] = { deadlineDays: v };
+  }
   try {
     const upd = await api('/demands/' + d.id + '/skipped-stages', 'PUT', {
       skippedStages: [...stagesEditDraft.skipped],
       stageResponsibles: stagesEditDraft.responsibles,
       stageOrder: stagesEditDraft.order,
       stageLabels: stagesEditDraft.labels,
+      stageOverrides: overrides,
     });
     patchDemand(upd);
     stagesEditDraft = null;
@@ -6834,6 +7090,21 @@ function isStagesDraftDirty(d) {
     : _demandStageIdPool(d);
   if (origOrder.length !== stagesEditDraft.order.length) return true;
   if (stagesEditDraft.order.some((id, i) => origOrder[i] !== id)) return true;
+  // SLA overrides — compara o valor efetivo (draft) contra o override já salvo
+  // pra cada etapa. Igual ao padrão do fluxo (no draft) equivale a "sem override".
+  const flow = flowById(d.flowId);
+  const flowSlaById = new Map((flow?.stages || []).map(s => [s.id, s.deadlineDays ?? null]));
+  const savedOverrides = (d.stageOverrides && typeof d.stageOverrides === 'object') ? d.stageOverrides : {};
+  const draftSla = stagesEditDraft.sla || {};
+  const slaKeys = new Set([...Object.keys(savedOverrides), ...Object.keys(draftSla)]);
+  for (const sid of slaKeys) {
+    if (!flowSlaById.has(sid)) continue; // ignora ids fora do fluxo
+    const orig = flowSlaById.get(sid);
+    const savedRaw = savedOverrides[sid]?.deadlineDays;
+    const saved = (savedRaw === undefined ? orig : savedRaw); // sem override = valor do fluxo
+    const draftVal = Object.prototype.hasOwnProperty.call(draftSla, sid) ? draftSla[sid] : orig;
+    if ((saved ?? null) !== (draftVal ?? null)) return true;
+  }
   return false;
 }
 
@@ -6889,11 +7160,21 @@ function renderDetailStages(d) {
     } else {
       initOrder = [...(flow ? flow.stages.map(s => s.id) : []), ...additions.map(s => s.id)];
     }
-    stagesEditDraft = { skipped: new Set(d.skippedStages || []), responsibles: { ...(d.stageResponsibles || {}) }, labels: { ...(d.stageLabels || {}) }, order: initOrder };
+    const savedOvFb = (d.stageOverrides && typeof d.stageOverrides === 'object') ? d.stageOverrides : {};
+    const seedSlaFb = {};
+    (flow?.stages || []).forEach(s => {
+      seedSlaFb[s.id] = (savedOvFb[s.id]?.deadlineDays !== undefined) ? savedOvFb[s.id].deadlineDays : (s.deadlineDays ?? null);
+    });
+    stagesEditDraft = { skipped: new Set(d.skippedStages || []), responsibles: { ...(d.stageResponsibles || {}) }, labels: { ...(d.stageLabels || {}) }, sla: seedSlaFb, order: initOrder };
   }
   const draft = stagesEditDraft;
   const dirty = isStagesDraftDirty(d);
-  const empty = draft.skipped.size === 0 && Object.keys(draft.responsibles).length === 0 && Object.keys(draft.labels).length === 0 && !isStagesOrderCustomized(d);
+  // "empty" espelha a lógica do refreshStagesEditButtons — considera SLA custom.
+  const flowSlaById = new Map((flow?.stages || []).map(s => [s.id, s.deadlineDays ?? null]));
+  const hasSlaOv = !!(draft.sla && Object.entries(draft.sla).some(([sid, v]) =>
+    flowSlaById.has(sid) && ((v ?? null) !== (flowSlaById.get(sid) ?? null))
+  ));
+  const empty = draft.skipped.size === 0 && Object.keys(draft.responsibles).length === 0 && Object.keys(draft.labels).length === 0 && !isStagesOrderCustomized(d) && !hasSlaOv;
   const sortedUsers = wsUsers().slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
 
   // Itera na ordem do draft, resolvendo cada ID no pool completo (fluxo + additions)
@@ -6939,6 +7220,11 @@ function renderDetailStages(d) {
           const currentLabel = draft.labels[s.id] || s.label;
           const hasLabelOverride = !!draft.labels[s.id];
           const lockedReason = isCurrent ? 'Etapa atual — mude antes para desativar' : '';
+          // SLA: só editável em etapas do FLUXO original (additions têm seu próprio deadlineDays).
+          const isFlowStage = flowSlaById.has(s.id);
+          const origSla = isFlowStage ? flowSlaById.get(s.id) : (s.deadlineDays ?? null);
+          const draftSlaVal = draft.sla && Object.prototype.hasOwnProperty.call(draft.sla, s.id) ? draft.sla[s.id] : origSla;
+          const hasSlaOverride = isFlowStage && ((draftSlaVal ?? null) !== (origSla ?? null));
           return `<div class="stages-edit-row ${isOn ? 'on' : 'off'} ${isCurrent ? 'locked' : ''}"
                        ondragover="stagesDragOver(event, ${i})"
                        ondragleave="stagesDragLeave(event)"
@@ -6956,6 +7242,15 @@ function renderDetailStages(d) {
               ${!isOn && !isCurrent ? '<span class="pill pill-muted" style="font-size:9px">Desativada</span>' : ''}
               ${hasLabelOverride ? '<span class="pill" style="font-size:9px;background:var(--accent-dim);color:var(--accent-text)">Renomeada</span>' : ''}
               ${hasRespOverride ? '<span class="pill" style="font-size:9px;background:var(--accent-dim);color:var(--accent-text)">Resp. customizado</span>' : ''}
+              ${hasSlaOverride ? `<span class="pill" style="font-size:9px;background:var(--accent-dim);color:var(--accent-text)" title="Padrão do fluxo: ${origSla ?? 'sem SLA'}">SLA customizado</span>` : ''}
+            </div>
+            <div class="stages-edit-sla-wrap" title="SLA da etapa em dias — vazio = sem prazo definido">
+              <input type="number" min="0" step="1" class="form-control stages-edit-sla-input"
+                     placeholder="${origSla ?? '—'}"
+                     value="${draftSlaVal ?? ''}"
+                     ${isFlowStage ? '' : 'disabled title="Etapa adicionada por instância — edite pelo wizard"'}
+                     oninput="setStageSlaDraft('${s.id}', this.value)">
+              <span class="stages-edit-sla-suffix">d</span>
             </div>
             <div class="stages-edit-resp-wrap">
               <select id="${selectId}" class="form-control" onchange="setStageResponsibleDraft('${s.id}', this.value)">
@@ -8138,6 +8433,8 @@ function mentionCandidates(term) {
   return wsUsers().filter(u => norm(u.username).startsWith(t) || norm(u.name).includes(t)).slice(0, 6);
 }
 function mentionContext(ta) {
+  // Legacy: só usa quando `ta` é textarea (edição inline antiga).
+  if (!ta || ta.value === undefined) return null;
   const pos = ta.selectionStart;
   const before = ta.value.slice(0, pos);
   const m = before.match(/@([a-zA-Z0-9._-]*)$/);
@@ -8158,6 +8455,30 @@ function mentionWatch(ta) {
   pop.style.bottom = (ta.offsetHeight + 6) + 'px';
   pop.style.left = '0';
 }
+// Versão pra contenteditable: lê o texto do nó atual até o caret e detecta @.
+function mentionWatchCE(el) {
+  const sel = window.getSelection && window.getSelection();
+  const pop = $('mention-pop');
+  if (!sel || !sel.rangeCount) { pop.classList.remove('open'); return; }
+  const range = sel.getRangeAt(0);
+  if (!el.contains(range.startContainer)) { pop.classList.remove('open'); return; }
+  const node = range.startContainer;
+  // Só faz sentido em text node — dentro de <img> não.
+  if (node.nodeType !== Node.TEXT_NODE) { pop.classList.remove('open'); return; }
+  const before = (node.nodeValue || '').slice(0, range.startOffset);
+  const m = before.match(/@([a-zA-Z0-9._-]*)$/);
+  if (!m) { pop.classList.remove('open'); return; }
+  const list = mentionCandidates(m[1]);
+  if (!list.length) { pop.classList.remove('open'); return; }
+  mentionIdx = 0;
+  pop.innerHTML = list.map((u, i) => `
+    <div class="mention-opt ${i === 0 ? 'active' : ''}" data-uname="${esc(u.username)}" onclick="pickMentionCE('${esc(u.username)}')">
+      ${avatarHTML(u)} <span class="user-mini"><span class="user-mini-name">${esc(u.name)}</span><span class="user-mini-role">@${esc(u.username)}</span></span>
+    </div>`).join('');
+  pop.classList.add('open');
+  pop.style.bottom = (el.offsetHeight + 6) + 'px';
+  pop.style.left = '0';
+}
 function mentionKeys(e) {
   const pop = $('mention-pop');
   if (!pop.classList.contains('open')) return;
@@ -8168,7 +8489,13 @@ function mentionKeys(e) {
     opts.forEach((o, i) => o.classList.toggle('active', i === mentionIdx));
   } else if (e.key === 'Enter' || e.key === 'Tab') {
     e.preventDefault();
-    pickMention(opts[mentionIdx]?.dataset.uname);
+    const uname = opts[mentionIdx]?.dataset.uname;
+    // O handler correto depende do editor ativo (contenteditable vs textarea)
+    if (uname) {
+      const el = e.currentTarget || $('comment-input');
+      if (el && el.isContentEditable) pickMentionCE(uname);
+      else pickMention(uname);
+    }
   } else if (e.key === 'Escape') {
     pop.classList.remove('open');
   }
@@ -8176,17 +8503,53 @@ function mentionKeys(e) {
 function pickMention(uname) {
   if (!uname) return;
   const ta = $('comment-input');
+  // Se o input virou contenteditable, delega — mantém compat com callers antigos.
+  if (ta && ta.isContentEditable) return pickMentionCE(uname);
+  if (!ta || ta.value === undefined) return;
   const ctx = mentionContext(ta);
   if (!ctx) return;
   ta.value = ta.value.slice(0, ctx.start) + '@' + uname + ' ' + ta.value.slice(ctx.pos);
   $('mention-pop').classList.remove('open');
   ta.focus();
 }
+// Substitui o "@abc" antes do caret por "@username " no contenteditable.
+function pickMentionCE(uname) {
+  if (!uname) return;
+  const el = $('comment-input');
+  const sel = window.getSelection && window.getSelection();
+  if (!el || !sel || !sel.rangeCount) return;
+  const range = sel.getRangeAt(0);
+  if (!el.contains(range.startContainer) || range.startContainer.nodeType !== Node.TEXT_NODE) return;
+  const node = range.startContainer;
+  const val = node.nodeValue || '';
+  const before = val.slice(0, range.startOffset);
+  const m = before.match(/@([a-zA-Z0-9._-]*)$/);
+  if (!m) return;
+  const newBefore = before.slice(0, before.length - m[0].length) + '@' + uname + ' ';
+  const after = val.slice(range.startOffset);
+  node.nodeValue = newBefore + after;
+  // Reposiciona o caret no fim do "@uname "
+  const nr = document.createRange();
+  nr.setStart(node, newBefore.length);
+  nr.collapse(true);
+  sel.removeAllRanges(); sel.addRange(nr);
+  $('mention-pop').classList.remove('open');
+  el.focus();
+  draftSaveCommentCE(el);
+}
 async function sendComment() {
-  const text = $('comment-input').value.trim();
-  if (!text && !pendingAttachments.length) return;
+  const el = $('comment-input');
+  if (!el) return;
+  const html = _commentInputHtml(el);
+  const plain = _commentInputPlain(el);
+  const hasImg = /<img\b/i.test(html);
+  if (!plain.trim() && !pendingAttachments.length && !hasImg) return;
   try {
-    const upd = await api('/demands/' + detailId + '/comment', 'POST', { text, attachments: pendingAttachments });
+    const upd = await api('/demands/' + detailId + '/comment', 'POST', {
+      text: html,
+      format: 'html',
+      attachments: pendingAttachments
+    });
     pendingAttachments = [];
     draftClearComment(detailId); // rascunho salvou seu papel — pode sair
     patchDemand(upd);
@@ -8194,34 +8557,114 @@ async function sendComment() {
     toast('Comentário enviado!');
   } catch (e) { toast(e.message, 'error'); }
 }
+// Serializa o conteúdo do editor pra envio. Normaliza <div><br></div> vazios
+// que o Chrome insere e remove trailing whitespace.
+function _commentInputHtml(el) {
+  let html = el.innerHTML || '';
+  // Chrome enche o editor de <br> quando vazio — trata como vazio.
+  const stripped = html.replace(/<br\s*\/?>/gi, '').replace(/&nbsp;/gi, ' ').replace(/<[^>]+>/g, '').trim();
+  if (!stripped && !/<img\b/i.test(html)) return '';
+  return html.trim();
+}
+function _commentInputPlain(el) {
+  return (el.innerText || el.textContent || '').trim();
+}
+// Converte @username no HTML já sanitizado em <span class="mention">. Usa DOM
+// pra andar só nos text nodes (não bagunça atributos ou src de imagens).
+function renderMentionsInHtml(html) {
+  const div = document.createElement('div');
+  div.innerHTML = html;
+  const walker = document.createTreeWalker(div, NodeFilter.SHOW_TEXT, null);
+  const targets = [];
+  while (walker.nextNode()) {
+    const n = walker.currentNode;
+    if (!n.nodeValue || !/@[a-zA-Z0-9._-]+/.test(n.nodeValue)) continue;
+    // Não substitui dentro de <a>, <span class="mention">, <code>
+    let anc = n.parentNode;
+    let skip = false;
+    while (anc && anc !== div) {
+      const t = (anc.tagName || '').toLowerCase();
+      if (t === 'a' || t === 'code' || (t === 'span' && anc.className === 'mention')) { skip = true; break; }
+      anc = anc.parentNode;
+    }
+    if (!skip) targets.push(n);
+  }
+  targets.forEach(n => {
+    const parts = n.nodeValue.split(/(@[a-zA-Z0-9._-]+)/g);
+    const frag = document.createDocumentFragment();
+    parts.forEach(p => {
+      const mm = p.match(/^@([a-zA-Z0-9._-]+)$/);
+      if (mm) {
+        const found = (users || []).find(x => x.username.toLowerCase() === mm[1].toLowerCase());
+        if (found) {
+          const s = document.createElement('span');
+          s.className = 'mention';
+          s.textContent = '@' + found.username;
+          frag.appendChild(s);
+          return;
+        }
+      }
+      frag.appendChild(document.createTextNode(p));
+    });
+    n.parentNode.replaceChild(frag, n);
+  });
+  return div.innerHTML;
+}
+// Executa comando de formatação no editor de comentário. Foca antes pra que
+// o comando aplique na seleção certa mesmo depois de clicar no botão.
+function execCommentCmd(cmd) {
+  const el = $('comment-input');
+  if (!el) return;
+  el.focus();
+  try { document.execCommand(cmd, false, null); } catch {}
+  refreshToolbarState();
+}
+// Atualiza os botões da toolbar pra refletir o estado da seleção atual
+// (ex.: cursor dentro de <b> ativa o botão de negrito).
+function refreshToolbarState() {
+  const bar = document.querySelector('.comment-compose .comment-toolbar');
+  if (!bar) return;
+  bar.querySelectorAll('.comment-tool').forEach(btn => {
+    const cmd = btn.dataset.cmd;
+    let on = false;
+    try { on = document.queryCommandState(cmd); } catch {}
+    btn.classList.toggle('is-active', !!on);
+  });
+}
 
 /* ─── DRAFT DE COMENTÁRIO (autosave em localStorage) ───
-   Salva o rascunho debounced (300ms após parar de digitar) numa key por
-   demanda. Restaura ao abrir o detalhe. Limpa ao enviar ou explicitamente. */
+   Guarda o innerHTML do editor por demanda. Restaura ao abrir o detalhe.
+   Limpa ao enviar. Debounce 300ms. Rascunhos antigos (texto puro) ainda
+   funcionam — draftRestoreComment aceita ambos os formatos. */
 const _DRAFT_KEY = id => 'kastor-draft-comment-' + id;
 let _draftSaveTimer = null;
-function draftSaveComment(el) {
+function draftSaveCommentCE(el) {
   if (!detailId) return;
   clearTimeout(_draftSaveTimer);
   _draftSaveTimer = setTimeout(() => {
     try {
-      if (el.value.trim()) localStorage.setItem(_DRAFT_KEY(detailId), el.value);
+      const html = _commentInputHtml(el);
+      if (html) localStorage.setItem(_DRAFT_KEY(detailId), html);
       else localStorage.removeItem(_DRAFT_KEY(detailId));
     } catch {}
   }, 300);
 }
+// Alias legacy — algum caller antigo pode ainda usar. Aponta pra CE.
+function draftSaveComment(el) { return draftSaveCommentCE(el); }
 function draftClearComment(id) {
   try { localStorage.removeItem(_DRAFT_KEY(id)); } catch {}
 }
 function draftRestoreComment() {
   if (!detailId) return;
-  const ta = document.getElementById('comment-input');
-  if (!ta) return;
+  const el = document.getElementById('comment-input');
+  if (!el) return;
   let saved = '';
   try { saved = localStorage.getItem(_DRAFT_KEY(detailId)) || ''; } catch {}
-  // Só restaura se o textarea estiver vazio (evita sobrescrever se o usuário
-  // já começou a digitar entre o render e o restore).
-  if (saved && !ta.value) ta.value = saved;
+  if (!saved) return;
+  // Se ainda estiver vazio (usuário não começou a digitar entre render e restore).
+  const currentHtml = (el.innerHTML || '').trim();
+  const isEmpty = !currentHtml || /^<br\s*\/?>$/i.test(currentHtml);
+  if (isEmpty) el.innerHTML = saved;
 }
 async function deleteComment(cid) {
   try {
@@ -8276,7 +8719,51 @@ function readFilesAsBase64(files, isImage) {
   });
 }
 function handleCommentFiles(ev) { readFilesAsBase64(ev.target.files, false); ev.target.value = ''; }
-function handleCommentImages(ev) { readFilesAsBase64(ev.target.files, true); ev.target.value = ''; }
+// Imagens agora entram INLINE no HTML do comentário (ao invés de virarem
+// anexo separado). Reaproveita o pipeline de resize/JPEG do readImagesInline.
+function handleCommentImages(ev) { readImagesInline(ev.target.files); ev.target.value = ''; }
+// Redimensiona e comprime cada imagem, então injeta um <img src="data:..."> no
+// caret do editor de comentário. Server converte data URIs em /uploads na hora
+// de salvar. Suporta múltiplos arquivos numa chamada.
+function readImagesInline(files) {
+  const el = $('comment-input');
+  if (!el || !el.isContentEditable) return;
+  el.focus();
+  [...files].forEach(file => {
+    if (!file.type || !file.type.startsWith('image/')) return;
+    if (file.size > 20 * 1024 * 1024) { toast('Imagem "' + file.name + '" excede 20 MB.', 'error'); return; }
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        const max = 1200;
+        let w = img.width, h = img.height;
+        if (w > max || h > max) { const r = Math.min(max / w, max / h); w = Math.round(w * r); h = Math.round(h * r); }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        const data = canvas.toDataURL('image/jpeg', 0.85);
+        insertImageIntoEditor(el, data, file.name);
+        draftSaveCommentCE(el);
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+// Insere um <img> no caret atual do editor, ou no fim se o caret estiver fora.
+function insertImageIntoEditor(el, dataUri, altName) {
+  const imgHtml = `<img src="${dataUri}" alt="${esc(altName || '')}">`;
+  const sel = window.getSelection && window.getSelection();
+  if (sel && sel.rangeCount && el.contains(sel.anchorNode)) {
+    try {
+      document.execCommand('insertHTML', false, imgHtml + '<br>');
+      return;
+    } catch {}
+  }
+  // Fallback: append no fim.
+  el.insertAdjacentHTML('beforeend', imgHtml + '<br>');
+}
 
 /* Paste (Ctrl+V) e drag-and-drop direto no compositor de comentário.
    Reaproveita readFilesAsBase64 → pendingAttachments → renderPendingFiles.
@@ -8295,10 +8782,20 @@ function setupCommentComposer() {
         if (f) imageFiles.push(f);
       }
     }
-    if (!imageFiles.length) return; // sem imagem: deixa o paste de texto normal
-    e.preventDefault();
-    readFilesAsBase64(imageFiles, true);
-    toast(imageFiles.length === 1 ? 'Imagem colada!' : `${imageFiles.length} imagens coladas!`);
+    if (imageFiles.length) {
+      e.preventDefault();
+      readImagesInline(imageFiles);
+      toast(imageFiles.length === 1 ? 'Imagem colada!' : `${imageFiles.length} imagens coladas!`);
+      return;
+    }
+    // Cola texto: força texto puro pra não trazer estilos externos indesejados.
+    if (ta.isContentEditable) {
+      const txt = e.clipboardData?.getData('text/plain');
+      if (txt !== undefined) {
+        e.preventDefault();
+        try { document.execCommand('insertText', false, txt); } catch {}
+      }
+    }
   });
 
   let dragDepth = 0;
@@ -8329,8 +8826,8 @@ function setupCommentComposer() {
     if (!files.length) return;
     const imgs = files.filter(f => f.type.startsWith('image/'));
     const others = files.filter(f => !f.type.startsWith('image/'));
-    if (imgs.length) readFilesAsBase64(imgs, true);
-    if (others.length) readFilesAsBase64(others, false);
+    if (imgs.length) readImagesInline(imgs);           // imagens: inline no editor
+    if (others.length) readFilesAsBase64(others, false); // outros: anexo separado
     const total = files.length;
     toast(`${total} arquivo${total === 1 ? '' : 's'} adicionado${total === 1 ? '' : 's'} ao comentário`);
   });
@@ -9812,7 +10309,8 @@ async function renderIntegrations() {
   try {
     webhooks = await api('/webhooks');
   } catch (e) { /* ignore */ }
-  const allHooks = webhooks.filter(h => h.workspaceId === activeWs);
+  // Integrações são UNIVERSAIS — não recortam por squad (o server já devolve todas).
+  const allHooks = webhooks.slice();
 
   // Filtros por alvo (usuário), cliente e projeto. Opções montadas só com os
   // valores em uso nos webhooks deste workspace (filtro nunca fica "oco").
@@ -9894,14 +10392,17 @@ function openWebhookModal(id) {
   $('wh-format').value = h?.format || 'discord';
   $('wh-active').value = h?.active === false ? 'false' : 'true';
   $('wh-test-btn').style.display = id ? '' : 'none';
+  // Integrações são universais: as opções abaixo varrem TODOS os squads
+  // acessíveis, não só o ativo — senão não dá pra mirar outro squad.
   const targetSel = $('wh-target-user');
-  const usersForWs = wsUsers().slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  const usersForWs = users.filter(u => u.active !== false)
+    .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
   targetSel.innerHTML = '<option value="">— Todos os usuários (sem filtro) —</option>' +
     usersForWs.map(u => `<option value="${u.id}">${esc(u.name)}${u.discordId ? '' : ' (sem ID do Discord)'}</option>`).join('');
   targetSel.value = h?.targetUserId || '';
   // Filtro de escopo: cliente + projeto (opcionais)
   const clientSel = $('wh-client');
-  const wsClientList = wsClients().filter(c => c.active !== false && !c.deletedAt)
+  const wsClientList = clients.filter(c => c.active !== false && !c.deletedAt)
     .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
   clientSel.innerHTML = '<option value="">— Todos os clientes —</option>' +
     wsClientList.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
@@ -9923,7 +10424,8 @@ function openWebhookModal(id) {
 function whPopulateProjects(selectedId) {
   const projSel = $('wh-project');
   const clientId = $('wh-client').value || '';
-  let list = wsProjects().filter(p => p.active !== false && !p.deletedAt);
+  // Cross-squad: integrações são universais (ver openWebhookModal).
+  let list = projects.filter(p => p.active !== false && !p.deletedAt);
   if (clientId) list = list.filter(p => p.clientId === clientId);
   list = list.slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
   projSel.innerHTML = '<option value="">— Todos os projetos —</option>' +
@@ -9937,7 +10439,7 @@ function whOnClientChange() {
 async function saveWebhook() {
   const events = [...document.querySelectorAll('#wh-events input:checked')].map(i => i.value);
   const payload = {
-    workspaceId: activeWs,
+    // Sem workspaceId — integrações valem pra todos os squads.
     name: $('wh-name').value,
     url: $('wh-url').value,
     format: $('wh-format').value,
@@ -10407,6 +10909,9 @@ function renderRecurringAllClients(wsRecurrings, ym, groupBy) {
   };
   for (const r of wsRecurrings) {
     const k = keyFor(r);
+    // Modo "All" agrupado por PROJETO: também remove o balde "Sem projeto"
+    // (coerente com o grupo por-cliente que não mostra mais "Geral").
+    if (groupBy === 'project' && k === '__none__') continue;
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(r);
   }
@@ -10487,13 +10992,12 @@ function renderRecurringClientHeader(client, counts) {
 /* Constrói a lista de grupos a exibir dado o groupBy escolhido. */
 function collectRecurringGroups(groupBy, client, clientRecurrings) {
   if (groupBy === 'project') {
-    // Sempre inclui "Geral" (recorrentes sem projeto) + TODOS projetos ativos do cliente
-    // (independente de terem demandas). Consistente com o count da sidebar.
-    const groups = [{ key: '__geral__', label: 'Geral', projectId: null }];
+    // SÓ projetos ativos do cliente — o card "Geral" (sem projeto) foi removido
+    // a pedido. Recorrentes legadas sem projeto ficam escondidas neste modo;
+    // ficam visíveis nos modos por Área/Responsável ou na tela de Demandas normal.
     const clientProjs = projects.filter(p => p.clientId === client.id && p.active !== false)
       .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-    for (const p of clientProjs) groups.push({ key: p.id, label: p.name, projectId: p.id });
-    return groups;
+    return clientProjs.map(p => ({ key: p.id, label: p.name, projectId: p.id }));
   }
   if (groupBy === 'role') {
     const used = new Set(clientRecurrings.map(r => r.roleId || '__none__'));
@@ -10606,6 +11110,7 @@ function renderRecurringGroup(spec, clientRecurrings, ym, groupBy, client) {
       </div>
     </div>
     <div class="rec-group-body">
+      ${renderTodoTasksSublistsForGroup(spec, client)}
       ${sublistsHtml}
       ${personalizadaHtml}
       <div class="rec-add-row-wrap">
@@ -10643,6 +11148,155 @@ function renderRecurringSublist({ key, title, icon, items, ym, groupBy, emptyLab
     <div class="rec-sublist-body">
       ${itemsHtml}
     </div>
+  </div>`;
+}
+
+/* Sub-listas de TAREFAS do modelo novo (kind='todo') pra este grupo.
+   Só renderiza pra grupos ancorados num projeto (spec.projectId). Tasks só
+   existem em projetos — "Geral" (sem projeto) foi removido do modelo. */
+function renderTodoTasksSublistsForGroup(spec, client) {
+  if (!spec || !spec.projectId) return '';
+  const projectId = spec.projectId;
+  const scopeTasks = (tasks || []).filter(t => t.projectId === projectId);
+  if (!scopeTasks.length) return '';
+  // Agrupa por APLICAÇÃO (cada apply = 1 bloco separado, sem merge). Se a mesma
+  // lista foi aplicada 2x no projeto, aparecem 2 sub-listas independentes.
+  const byApp = new Map();
+  for (const t of scopeTasks) {
+    const key = t.applicationId || `legacy:${t.listaSourceId || 'free'}`;
+    if (!byApp.has(key)) byApp.set(key, []);
+    byApp.get(key).push(t);
+  }
+  const groups = [...byApp.entries()].map(([applicationId, arr]) => {
+    const first = arr[0];
+    const l = first?.listaSourceId ? listas.find(x => x.id === first.listaSourceId) : null;
+    const listaName = l ? l.name : 'Avulsas';
+    // Aplicações da MESMA lista precisam ser distinguíveis — sufixo com data curta.
+    const applyDate = first?.appliedAt ? _fmtShortDate(String(first.appliedAt).slice(0, 10)) : '';
+    return { key: applicationId, listaName, title: listaName, applyDate, items: arr, appliedAt: first?.appliedAt || '' };
+  }).sort((a, b) => (a.appliedAt || '').localeCompare(b.appliedAt || ''));
+  // Se há múltiplas aplicações da mesma lista, adiciona a data no título pra distinguir.
+  const nameCounts = groups.reduce((m, g) => { m[g.listaName] = (m[g.listaName] || 0) + 1; return m; }, {});
+  groups.forEach(g => { if (nameCounts[g.listaName] > 1 && g.applyDate) g.title = `${g.listaName} · ${g.applyDate}`; });
+
+  return groups.map(g => {
+    const sublistKey = `todo-app:${g.key}`;
+    const isCollapsed = _recCollapsed.has(sublistKey);
+    const ordered = g.items.slice().sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)
+      || (a.createdAt || '').localeCompare(b.createdAt || ''));
+    const rowsHtml = ordered.map(_todoTaskRowHTML).join('')
+      || '<div class="rec-sublist-empty">Sem tarefas neste grupo.</div>';
+    // Botão exclui SÓ esta APLICAÇÃO (não o template da lista). Só pra aplicações
+    // com applicationId de verdade (não pro balde legacy).
+    const isLegacy = String(g.key).startsWith('legacy:');
+    const deleteBtn = !isLegacy
+      ? `<button type="button" class="rec-sublist-delete" title="Excluir esta aplicação (tarefas + demandas geradas). Não afeta o template da lista." onclick="event.stopPropagation();confirmDeleteApplication('${esc(g.key)}')"><i data-lucide="trash-2" class="ic-xs"></i></button>`
+      : '';
+    return `<div class="rec-sublist ${isCollapsed ? 'is-collapsed' : ''}" data-collapse-key="${esc(sublistKey)}">
+      <div class="rec-sublist-head" onclick="toggleRecGroup('${esc(sublistKey)}')">
+        <i data-lucide="chevron-down" class="ic-xs rec-chevron-sm"></i>
+        <span style="flex:1">${esc(g.title)}</span>
+        ${deleteBtn}
+      </div>
+      <div class="rec-sublist-body">
+        ${rowsHtml}
+      </div>
+    </div>`;
+  }).join('');
+}
+// Exclui uma APLICAÇÃO específica (tasks + demandas). Preserva o template da lista.
+async function confirmDeleteApplication(applicationId) {
+  const affected = (tasks || []).filter(t => t.applicationId === applicationId);
+  if (!affected.length) return;
+  const first = affected[0];
+  const lista = first?.listaSourceId ? listas.find(l => l.id === first.listaSourceId) : null;
+  const withDemand = affected.filter(t => t.demandId && demandById(t.demandId) && !demandById(t.demandId).deletedAt);
+  let title = `Excluir esta aplicação?`;
+  let message = `As <strong>${affected.length} tarefa${affected.length === 1 ? '' : 's'}</strong> desta aplicação de <strong>${esc(lista?.name || 'lista removida')}</strong> serão removidas.<br><br>O template da lista <strong>não é afetado</strong> — continua disponível para novas aplicações.`;
+  if (withDemand.length) {
+    title = `Excluir aplicação e ${withDemand.length} demanda${withDemand.length === 1 ? '' : 's'}?`;
+    message += `<br><br><strong>Atenção:</strong> ${withDemand.length} demanda${withDemand.length === 1 ? ' já foi gerada' : 's já foram geradas'} e serão <strong>excluídas permanentemente</strong> (anexos, comentários, horas apontadas e histórico serão perdidos).`;
+  }
+  const ok = await showConfirm({ title, message, okLabel: 'Excluir aplicação', danger: true });
+  if (!ok) return;
+  try {
+    await api('/apply-lista/' + encodeURIComponent(applicationId), 'DELETE');
+    toast('Aplicação removida.', 'warn');
+    await refreshData();
+  } catch (e) { toast(e.message, 'error'); }
+}
+// Prazo previsto (data ISO) = criação + soma dos SLAs (deadlineDays) de todas
+// as etapas ATIVAS da demanda, pulando fim de semana (usa forecastAddDays).
+// Retorna null se não há SLA definido em nenhuma etapa.
+function _taskForecastEnd(d) {
+  if (!d) return null;
+  const stages = activeStagesOf(d);
+  const totalDays = stages.reduce((sum, s) => sum + (Number(s.deadlineDays) || 0), 0);
+  if (!totalDays) return null;
+  const start = (d.createdAt || '').slice(0, 10) || todayStr();
+  return forecastAddDays(start, totalDays);
+}
+function _fmtShortDate(ymd) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ymd || '');
+  if (!m) return '';
+  const mo = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'][parseInt(m[2],10)-1];
+  return `${parseInt(m[3], 10)} ${mo}`;
+}
+// Linha de uma tarefa (kind='todo') — TUDO em uma linha: [status] [nome] [meta] [pill] [ações].
+// A meta fica grudada nas ações (à direita do nome, empurradas pelo flex-grow).
+// - Linha inteira clicável: sem demanda → abre modal criação; com demanda → abre detalhe.
+// - Botões usam stopPropagation.
+function _todoTaskRowHTML(t) {
+  const d = _taskLinkedDemand(t);
+  const done = !!(d && isDone(d));
+  const clickAttr = d
+    ? `onclick="showDetail('${esc(d.id)}')"`
+    : `onclick="openNewDemandFromTask('${esc(t.id)}')"`;
+
+  // Meta: sempre mostra o TIPO da task (se existir). Executor/prazo/etapa só
+  // aparecem quando a demanda já foi gerada.
+  const bits = [];
+  // Tipo da task (do editor da lista) — vem antes de tudo, sempre visível.
+  const taskType = t.demandType || (d && flowById(d.flowId)?.demandType) || null;
+  if (taskType) bits.push(`<span class="rec-todo-meta-item"><i data-lucide="tag" class="ic-xs"></i>${esc(taskType)}</span>`);
+  if (d) {
+    const owner = effectiveOwnerOf(d);
+    if (owner) bits.push(`<span class="rec-todo-meta-item"><i data-lucide="user" class="ic-xs"></i>${esc(owner.name.split(' ')[0])}</span>`);
+    const end = _taskForecastEnd(d);
+    if (end) bits.push(`<span class="rec-todo-meta-item"><i data-lucide="calendar" class="ic-xs"></i>${esc(_fmtShortDate(end))}</span>`);
+    const stages = activeStagesOf(d);
+    const curIdx = stages.findIndex(s => s.id === d.status);
+    if (stages.length && curIdx >= 0) {
+      bits.push(`<span class="rec-todo-meta-item"><i data-lucide="git-branch" class="ic-xs"></i>Etapa ${curIdx + 1}/${stages.length}</span>`);
+    }
+  }
+  const metaHtml = bits.length ? `<div class="rec-todo-meta">${bits.join('')}</div>` : '';
+
+  // Pill de status: Concluída (verde) | Andamento (accent) — só com demanda.
+  let statusPill = '';
+  if (d) {
+    statusPill = done
+      ? '<span class="pill pill-success" style="font-size:9px">Concluída</span>'
+      : '<span class="pill" style="font-size:9px;background:var(--accent-dim);color:var(--accent-text)">Andamento</span>';
+  }
+
+  // Ações: sem demanda → CTA "Gerar"; com demanda → ícone "abrir" estilo trash.
+  let actionsHtml;
+  if (!d) {
+    actionsHtml = `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation();openNewDemandFromTask('${esc(t.id)}')" title="Gerar demanda a partir desta tarefa"><i data-lucide="plus" class="ic-xs"></i> Gerar demanda</button>`;
+  } else {
+    actionsHtml = `<button class="detail-icon-btn" onclick="event.stopPropagation();showDetail('${esc(d.id)}')" title="Abrir demanda"><i data-lucide="external-link" class="ic-sm"></i></button>`;
+  }
+  const removeBtn = !d
+    ? `<button class="detail-icon-btn danger" title="Remover tarefa" onclick="event.stopPropagation();confirmDeleteTask('${esc(t.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>`
+    : '';
+
+  return `<div class="rec-todo-row ${done ? 'is-done' : ''} is-clickable" ${clickAttr}>
+    <i data-lucide="${done ? 'check-circle' : 'circle'}" class="ic-sm rec-todo-status-ic" style="color:${done ? 'var(--success)' : 'var(--text-muted)'}"></i>
+    <span class="rec-todo-name">${esc(t.name)}</span>
+    ${metaHtml}
+    ${statusPill}
+    <div class="rec-todo-actions">${actionsHtml}${removeBtn}</div>
   </div>`;
 }
 
@@ -10788,7 +11442,8 @@ function personaGoTo(step) {
     const ctx = _personaState.ctx || {};
     const c = ctx.clientId ? clientById(ctx.clientId) : null;
     const p = ctx.projectId ? projectById(ctx.projectId) : null;
-    const parts = [c?.name || 'Cliente', p?.name || 'Geral'];
+    // Segundo termo "Cliente" (era "Geral") = cliente sem projeto específico.
+    const parts = [c?.name || 'Cliente', p?.name || 'Cliente'];
     bc.innerHTML = parts.filter(Boolean).map(s => esc(s)).join(' <span style="opacity:.45">›</span> ');
     setTimeout(() => $('persona-name').focus(), 60);
   }
@@ -11306,8 +11961,12 @@ function renderListasContent() {
   const body = $('listas-content-body');
   const q = norm($('listas-search')?.value || '');
   // Só templates originais aparecem aqui — instâncias aplicadas (sourceListaId) ficam ocultas.
-  const wsListas = listas.filter(l => l.workspaceId === activeWs && !l.sourceListaId)
-    .filter(l => !q || norm(l.name).includes(q));
+  // Listas kind='todo' são GLOBAIS (visíveis em qualquer squad); legadas só do squad ativo.
+  const wsListas = listas.filter(l => {
+    if (l.sourceListaId) return false;
+    if (l.kind === 'todo') return true;
+    return l.workspaceId === activeWs;
+  }).filter(l => !q || norm(l.name).includes(q));
 
   if (!wsListas.length) {
     body.innerHTML = emptyState(
@@ -11359,8 +12018,14 @@ function renderListasContent() {
 }
 
 function renderListaCard(lista, client, project, items) {
+  // Modelo novo (to-do): lista tem items inline, sem cliente/projeto.
+  // Renderização enxuta — todo o CRUD é no modal de editar.
+  if (lista.kind === 'todo') {
+    return renderListaCardTodo(lista);
+  }
+  // ── Legado (kind falsy): items = recurrings vinculados. Mantém tudo como era. ──
   const isCollapsed = _listasCollapsed.has(lista.id);
-  const contextLabel = project ? project.name : 'Geral';
+  const contextLabel = project ? project.name : 'Cliente';
   const clientLabel = client?.name || '';
   const contextHtml = clientLabel
     ? `<span class="lista-card-context">${esc(clientLabel)}${project ? ` · ${esc(contextLabel)}` : ''}</span>`
@@ -11382,8 +12047,8 @@ function renderListaCard(lista, client, project, items) {
       <i data-lucide="chevron-down" class="ic-sm lista-chevron"></i>
       <div class="lista-card-title">${esc(lista.name)}</div>
       ${contextHtml}
+      <span class="pill pill-muted" style="font-size:9px" title="Lista do modelo antigo (com recurrings). Novas listas usam o modelo to-do.">Legado</span>
       <div class="lista-card-actions">
-        <button class="rec-action-btn" title="Editar lista" onclick="event.stopPropagation();openEditListaModal('${esc(lista.id)}')"><i data-lucide="edit-3" class="ic-sm"></i></button>
         <button class="rec-action-btn" title="Duplicar lista (copia todos os itens)" onclick="event.stopPropagation();duplicateLista('${esc(lista.id)}')"><i data-lucide="copy" class="ic-sm"></i></button>
         <button class="rec-action-btn danger" title="Excluir lista" onclick="event.stopPropagation();confirmDeleteListaFromTab('${esc(lista.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
       </div>
@@ -11394,6 +12059,44 @@ function renderListaCard(lista, client, project, items) {
         <span class="lista-add-demand-icon"><i data-lucide="plus" class="ic-xs"></i></span>
         <span>Adicionar demanda a lista</span>
       </button>
+    </div>
+  </div>`;
+}
+
+// Card da lista do modelo NOVO (to-do): items inline, sem cliente/projeto fixo,
+// tem indicação de quantos projetos aplicaram + botão de aplicar rápido.
+function renderListaCardTodo(lista) {
+  const isCollapsed = _listasCollapsed.has(lista.id);
+  const items = Array.isArray(lista.items) ? lista.items : [];
+  // Quantas aplicações existem hoje (unique projetos com tarefas dessa lista)
+  const appliedProjectIds = new Set((tasks || []).filter(t => t.listaSourceId === lista.id).map(t => t.projectId));
+  const appliedCount = appliedProjectIds.size;
+  const itemsHtml = items.length
+    ? `<ul class="lista-todo-items">${items.map(it => {
+        const typeChip = it.demandType
+          ? `<span class="lista-todo-type"><i data-lucide="tag" class="ic-xs"></i>${esc(it.demandType)}</span>`
+          : '';
+        return `<li><span class="lista-todo-item-name">${esc(it.name)}</span>${typeChip}</li>`;
+      }).join('')}</ul>`
+    : '<div class="lista-empty-msg">Nenhuma tarefa nessa lista. Clique em Editar para adicionar.</div>';
+  const appliedChip = appliedCount
+    ? `<span class="pill" style="font-size:9px;background:var(--accent-dim);color:var(--accent-text)" title="Projetos que já receberam essa lista">${appliedCount} aplicação${appliedCount === 1 ? '' : 'es'}</span>`
+    : '';
+  return `<div class="lista-card ${isCollapsed ? 'is-collapsed' : ''}" data-lista-id="${esc(lista.id)}">
+    <div class="lista-card-head" onclick="toggleListaCard('${esc(lista.id)}')">
+      <i data-lucide="chevron-down" class="ic-sm lista-chevron"></i>
+      <div class="lista-card-title">${esc(lista.name)}</div>
+      <span class="lista-card-context">${items.length} tarefa${items.length === 1 ? '' : 's'}</span>
+      ${appliedChip}
+      <div class="lista-card-actions">
+        <button class="rec-action-btn" title="Editar lista" onclick="event.stopPropagation();openEditListaModal('${esc(lista.id)}')"><i data-lucide="edit-3" class="ic-sm"></i></button>
+        <button class="rec-action-btn" title="Aplicar a um projeto" onclick="event.stopPropagation();openApplyListaToProjectModal('${esc(lista.id)}')"><i data-lucide="send" class="ic-sm"></i></button>
+        <button class="rec-action-btn danger" title="Excluir lista" onclick="event.stopPropagation();confirmDeleteListaFromTab('${esc(lista.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
+      </div>
+    </div>
+    <div class="lista-card-body">
+      ${lista.description ? `<div class="lista-todo-desc">${esc(lista.description)}</div>` : ''}
+      ${itemsHtml}
     </div>
   </div>`;
 }
@@ -11424,25 +12127,94 @@ function renderListaItem(r) {
   </div>`;
 }
 
-/* ─── Modal Nova/Editar Lista ────────────────────────── */
+/* ─── Modal Nova/Editar Lista (kind='todo' — modelo novo) ─────────────────
+   Lista virou um to-do puro: nome + descrição + items simples (só nomes).
+   Sem cliente/projeto — o vínculo é feito ao APLICAR a lista num projeto,
+   noutra tela. Listas antigas (sem kind) continuam funcionando com recurrings
+   pelo card legado; só a criação é sempre nova. */
 let _editingListaId = null;
+let _nlItemsDraft = []; // [{ id, name }] — estado local dos items em edição
 
-function _populateNovaListaSelects(selectedClientId) {
-  const wsClientList = clients.filter(c => c.workspaceId === activeWs && c.active !== false)
-    .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-  $('nl-client').innerHTML = '<option value="">— Selecione o cliente —</option>' +
-    wsClientList.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
-  $('nl-client').value = selectedClientId || '';
-  onNovaListaClientChange();
+function _nlDemandTypeOptions(selected) {
+  // demandTypes é array de objetos { id, name, ... } — não strings.
+  const list = Array.isArray(demandTypes) ? demandTypes : [];
+  return `<option value="">— Sem tipo —</option>` +
+    list.slice().sort((a, b) => norm(a.name || '').localeCompare(norm(b.name || '')))
+      .map(dt => `<option value="${esc(dt.name)}"${dt.name === selected ? ' selected' : ''}>${esc(dt.name)}</option>`).join('');
 }
+function renderNlItems() {
+  const wrap = $('nl-items'); if (!wrap) return;
+  if (!_nlItemsDraft.length) {
+    wrap.innerHTML = '<div class="nl-items-empty">Nenhuma tarefa ainda. Adicione a primeira abaixo.</div>';
+    return;
+  }
+  wrap.innerHTML = _nlItemsDraft.map((it, i) => `
+    <div class="nl-item-row" draggable="true"
+         ondragstart="nlItemDragStart(event, ${i})"
+         ondragover="nlItemDragOver(event, ${i})"
+         ondragleave="nlItemDragLeave(event)"
+         ondrop="nlItemDrop(event, ${i})"
+         ondragend="nlItemDragEnd()">
+      <span class="nl-item-grip" title="Arraste para reordenar"><i data-lucide="grip-vertical" class="ic-sm"></i></span>
+      <input class="form-control nl-item-input" value="${esc(it.name)}" placeholder="Nome da tarefa" oninput="nlUpdateItem(${i}, this.value)">
+      <select class="form-control nl-item-type" onchange="nlUpdateItemType(${i}, this.value)" title="Tipo de demanda (opcional) — pré-seleciona o fluxo do tipo ao gerar a demanda">
+        ${_nlDemandTypeOptions(it.demandType || '')}
+      </select>
+      <button type="button" class="detail-icon-btn danger" title="Remover" onclick="nlRemoveItem(${i})"><i data-lucide="trash-2" class="ic-sm"></i></button>
+    </div>`).join('');
+  paintIcons();
+}
+function nlAddItem() {
+  const inp = $('nl-new-item');
+  const name = (inp?.value || '').trim();
+  if (!name) return;
+  _nlItemsDraft.push({ id: null, name: name.slice(0, 200), demandType: null });
+  if (inp) inp.value = '';
+  renderNlItems();
+  if (inp) inp.focus();
+}
+function nlUpdateItem(i, value) {
+  if (!_nlItemsDraft[i]) return;
+  _nlItemsDraft[i].name = String(value || '').slice(0, 200);
+  // Sem re-render — evita perder foco enquanto digita
+}
+function nlUpdateItemType(i, value) {
+  if (!_nlItemsDraft[i]) return;
+  _nlItemsDraft[i].demandType = String(value || '').trim() || null;
+}
+function nlRemoveItem(i) {
+  _nlItemsDraft.splice(i, 1);
+  renderNlItems();
+}
+let _nlDragIdx = null;
+function nlItemDragStart(e, i) { _nlDragIdx = i; e.dataTransfer.effectAllowed = 'move'; }
+function nlItemDragOver(e, i) { e.preventDefault(); if (_nlDragIdx !== null && _nlDragIdx !== i) e.currentTarget.classList.add('is-drop-target'); }
+function nlItemDragLeave(e) { e.currentTarget.classList.remove('is-drop-target'); }
+function nlItemDrop(e, i) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('is-drop-target');
+  if (_nlDragIdx === null || _nlDragIdx === i) return;
+  // Antes de reordenar, sincroniza o valor visível dos inputs no draft — o
+  // oninput não dispara pro que foi digitado ANTES do drag se não sair do input.
+  document.querySelectorAll('#nl-items .nl-item-input').forEach((el, idx) => {
+    if (_nlItemsDraft[idx]) _nlItemsDraft[idx].name = el.value.slice(0, 200);
+  });
+  const [moved] = _nlItemsDraft.splice(_nlDragIdx, 1);
+  _nlItemsDraft.splice(i, 0, moved);
+  _nlDragIdx = null;
+  renderNlItems();
+}
+function nlItemDragEnd() { _nlDragIdx = null; document.querySelectorAll('#nl-items .is-drop-target').forEach(el => el.classList.remove('is-drop-target')); }
 
 function openNovaListaModal() {
   _editingListaId = null;
-  $('nova-lista-title').textContent = 'Nova lista de demandas';
+  $('nova-lista-title').textContent = 'Nova lista';
   $('nl-save-btn').textContent = 'Criar lista';
   $('nl-name').value = '';
   $('nl-desc').value = '';
-  _populateNovaListaSelects(null);
+  if ($('nl-new-item')) $('nl-new-item').value = '';
+  _nlItemsDraft = [];
+  renderNlItems();
   openModal('nova-lista-modal');
   setTimeout(() => $('nl-name').focus(), 60);
 }
@@ -11450,37 +12222,35 @@ function openNovaListaModal() {
 function openEditListaModal(id) {
   const lista = listas.find(l => l.id === id);
   if (!lista) return toast('Lista não encontrada', 'error');
+  // Listas antigas (sem kind='todo') não têm items — cai no modal legado
+  // se ele ainda for necessário; hoje redireciono pra edição por-linha nos cards.
+  if (lista.kind !== 'todo') {
+    return toast('Essa é uma lista do modelo antigo. Edite os itens direto no card.', 'warn');
+  }
   _editingListaId = id;
-  // Título dinâmico com nome atual da lista entre aspas (como no wireframe)
   $('nova-lista-title').textContent = `Editar "${lista.name || 'Lista'}"`;
   $('nl-save-btn').textContent = 'Salvar alterações';
   $('nl-name').value = lista.name || '';
   $('nl-desc').value = lista.description || '';
-  _populateNovaListaSelects(lista.clientId);
-  $('nl-project').value = lista.projectId || '';
+  if ($('nl-new-item')) $('nl-new-item').value = '';
+  _nlItemsDraft = (Array.isArray(lista.items) ? lista.items : []).map(it => ({ id: it.id, name: it.name, demandType: it.demandType || null }));
+  renderNlItems();
   openModal('nova-lista-modal');
-}
-
-function onNovaListaClientChange() {
-  const cid = $('nl-client').value;
-  // Sem cliente → mostra TODOS os projetos ativos do workspace (lista geral pode
-  // opcionalmente ser fixada a um projeto). Com cliente → só os do cliente.
-  const eligibleProjs = projects.filter(p => p.active !== false && p.workspaceId === activeWs)
-    .filter(p => !cid || p.clientId === cid)
-    .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-  $('nl-project').innerHTML = '<option value="">— Selecione o projeto —</option>' +
-    eligibleProjs.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
 }
 
 async function saveNovaLista() {
   const name = $('nl-name').value.trim();
   if (!name) return toast('Nome é obrigatório', 'error');
-  // Cliente E projeto TOTALMENTE opcionais. Sem eles vira lista "geral"
-  // aplicável a qualquer contexto do workspace.
-  const clientId = $('nl-client').value || null;
-  const projectId = $('nl-project').value || null;
+  // Sincroniza os inputs no draft (última chance antes de salvar)
+  document.querySelectorAll('#nl-items .nl-item-input').forEach((el, idx) => {
+    if (_nlItemsDraft[idx]) _nlItemsDraft[idx].name = el.value.slice(0, 200);
+  });
+  const items = _nlItemsDraft
+    .map(it => ({ id: it.id || undefined, name: (it.name || '').trim(), demandType: it.demandType || null }))
+    .filter(it => it.name);
   const description = $('nl-desc').value || '';
-  const body = { name, clientId, projectId, description, workspaceId: activeWs };
+  // Listas novas: sem cliente/projeto, kind='todo', workspace do usuário.
+  const body = { name, description, workspaceId: activeWs, kind: 'todo', items };
   try {
     if (_editingListaId) await api('/listas/' + _editingListaId, 'PUT', body);
     else await api('/listas', 'POST', body);
@@ -11493,12 +12263,24 @@ async function saveNovaLista() {
 async function confirmDeleteListaFromTab(id) {
   const lista = listas.find(l => l.id === id);
   if (!lista) return;
-  const ok = await showConfirm({
-    title: `Excluir "${lista.name}"?`,
-    message: 'Tem certeza que deseja excluir essa lista?<br>Essa ação não poderá ser desfeita.',
-    okLabel: 'Excluir',
-    danger: true
-  });
+  // Listas kind='todo' precisam de aviso quando geraram demandas — o delete
+  // é HARD e cascateia nas tasks + demandas vinculadas. Mensagem espelha o
+  // padrão do delete de projeto (irreversível, listar contadores).
+  let title = `Excluir "${lista.name}"?`;
+  let message = 'Tem certeza que deseja excluir essa lista?<br>Essa ação não poderá ser desfeita.';
+  let okLabel = 'Excluir';
+  if (lista.kind === 'todo') {
+    const linkedTasks = (tasks || []).filter(t => t.listaSourceId === lista.id);
+    const linkedWithDemand = linkedTasks.filter(t => t.demandId && demandById(t.demandId) && !demandById(t.demandId).deletedAt);
+    if (linkedWithDemand.length) {
+      title = `Excluir "${lista.name}" e ${linkedWithDemand.length} demanda${linkedWithDemand.length === 1 ? '' : 's'}?`;
+      message = `<strong>Atenção:</strong> essa lista tem <strong>${linkedTasks.length} tarefa${linkedTasks.length === 1 ? '' : 's'}</strong> aplicada${linkedTasks.length === 1 ? '' : 's'}, das quais <strong>${linkedWithDemand.length}</strong> já gerou demanda.<br><br>Todas as tarefas e as demandas geradas serão <strong>excluídas permanentemente</strong>. Anexos, comentários, horas apontadas e histórico dessas demandas serão perdidos.<br><br>Essa ação não pode ser desfeita.`;
+      okLabel = 'Excluir tudo';
+    } else if (linkedTasks.length) {
+      message = `Essa lista tem <strong>${linkedTasks.length} tarefa${linkedTasks.length === 1 ? '' : 's'}</strong> aplicada${linkedTasks.length === 1 ? '' : 's'} em projetos/clientes, mas nenhuma virou demanda ainda.<br><br>As tarefas serão removidas junto. Essa ação não pode ser desfeita.`;
+    }
+  }
+  const ok = await showConfirm({ title, message, okLabel, danger: true });
   if (!ok) return;
   try {
     await api('/listas/' + id, 'DELETE');
@@ -11557,7 +12339,8 @@ function onDuplicarListaClientChange() {
   const origProject = originalProjectId ? projectById(originalProjectId) : null;
   // "Manter" só é válido se o cliente não mudou (ou se o projeto original ainda pertence ao novo cliente)
   const stillValid = !clientVal || (origProject && origProject.clientId === clientVal);
-  const keepLabel = stillValid ? (origProject?.name || 'Geral') : 'Geral';
+  // Fallback quando não há projeto = "Cliente" (era "Geral") — semântica "sem projeto".
+  const keepLabel = stillValid ? (origProject?.name || 'Cliente') : 'Cliente';
   $('dl-project').innerHTML = `<option value="">— Manter (${esc(keepLabel)}) —</option>` +
     eligibleProjs.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
   $('dl-project').value = '';
@@ -11858,10 +12641,16 @@ function openAdicionarListaModal(ctx) {
 function filterAdicionarListaOptions() {
   const ctx = _adicionarListaCtx || {};
   const q = norm($('al-search').value);
-  // Só templates originais podem ser aplicados — instâncias já aplicadas não aparecem
-  const wsListas = listas.filter(l => l.workspaceId === activeWs && !l.sourceListaId);
-  // Aplicáveis a este contexto: geral (sem cliente) OU do mesmo cliente
-  const applicable = wsListas.filter(l => !l.clientId || l.clientId === ctx.clientId);
+  // Só templates originais aparecem — instâncias já aplicadas ficam fora.
+  // Listas kind='todo' são GLOBAIS entre squads — não filtra por workspaceId.
+  // Listas legadas mantêm o recorte por squad ativo.
+  const wsListas = listas.filter(l => {
+    if (l.sourceListaId) return false;
+    if (l.kind === 'todo') return true;
+    return l.workspaceId === activeWs;
+  });
+  // Aplicáveis a este contexto: kind='todo' sempre; legadas só do cliente do ctx.
+  const applicable = wsListas.filter(l => l.kind === 'todo' || !l.clientId || l.clientId === ctx.clientId);
   // Filtro por busca de nome
   const filtered = applicable.filter(l => !q || norm(l.name).includes(q))
     .sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
@@ -11871,14 +12660,22 @@ function filterAdicionarListaOptions() {
     return;
   }
   container.innerHTML = filtered.map(l => {
+    const isTodo = l.kind === 'todo';
     const client = l.clientId ? clientById(l.clientId) : null;
     const project = l.projectId ? projectById(l.projectId) : null;
-    const scope = [client?.name || 'Geral', project?.name].filter(Boolean).join(' · ');
-    const itemCount = recurrings.filter(r => r.listaId === l.id).length;
+    // to-do não tem cliente/projeto — mostra "Todos os projetos" no scope.
+    const scope = isTodo
+      ? 'Todos os projetos'
+      : [client?.name || 'Cliente', project?.name].filter(Boolean).join(' · ');
+    // Contagem coerente com o tipo: to-do = items[], antiga = recurrings vinculados.
+    const itemCount = isTodo
+      ? (Array.isArray(l.items) ? l.items.length : 0)
+      : recurrings.filter(r => r.listaId === l.id).length;
+    const noun = isTodo ? 'tarefa' : 'demanda';
     const isSelected = _selectedListaIdInAdd === l.id;
     return `<div class="al-option ${isSelected ? 'is-selected' : ''}" onclick="selectListaInAddModal('${l.id}')">
       <div class="al-option-title">${esc(l.name)}</div>
-      <div class="al-option-sub">${esc(scope)} · ${itemCount} demanda${itemCount === 1 ? '' : 's'}</div>
+      <div class="al-option-sub">${esc(scope)} · ${itemCount} ${noun}${itemCount === 1 ? '' : 's'}</div>
     </div>`;
   }).join('');
   paintIcons();
@@ -11905,6 +12702,27 @@ async function saveAdicionarLista() {
   const template = listas.find(l => l.id === _selectedListaIdInAdd);
   if (!template) return toast('Lista não encontrada', 'error');
   const ctx = _adicionarListaCtx || {};
+
+  // Lista NOVA (kind='todo'): aplica SÓ em projeto — cliente direto foi removido.
+  // Gera tasks numa NOVA instância (mesmo se a lista já foi aplicada antes).
+  if (template.kind === 'todo') {
+    if (!ctx.projectId) {
+      return toast('Escolha um projeto antes de aplicar a lista.', 'error');
+    }
+    if (!Array.isArray(template.items) || !template.items.length) {
+      return toast('Essa lista está vazia. Edite ela na aba Listas pra adicionar tarefas.', 'warn');
+    }
+    try {
+      const r = await api('/apply-lista', 'POST', { listaId: template.id, projectId: ctx.projectId });
+      closeModal('adicionar-lista-modal');
+      toast(`${r.created} tarefa${r.created === 1 ? '' : 's'} aplicada${r.created === 1 ? '' : 's'}!`, 'success');
+      try { tasks = await api('/tasks'); } catch {}
+      renderCurrent();
+    } catch (e) { toast(e.message, 'error'); }
+    return;
+  }
+
+  // Lista ANTIGA: fluxo original (copia recurrings resolvendo fluxo por cliente-alvo).
   const items = recurrings.filter(r => r.listaId === template.id);
   if (!items.length) return toast('Essa lista não tem demandas ainda.', 'warn');
 
@@ -14240,6 +15058,36 @@ function renderProjectDetail(id) {
   paintIcons();
 }
 
+// Helpers de tarefa (usados pela tab Demandas de Listas de Tarefas).
+// Ciclo de vida: sem demandId ou demanda excluída → pode gerar; ativa → abrir;
+// concluída no fluxo → mostra ✓ + abrir.
+function _taskLinkedDemand(t) {
+  if (!t.demandId) return null;
+  const d = demandById(t.demandId);
+  if (!d || d.deletedAt) return null;
+  return d;
+}
+function _taskIsDone(t) {
+  const d = _taskLinkedDemand(t);
+  return !!(d && isDone(d));
+}
+async function confirmDeleteTask(taskId) {
+  const t = (tasks || []).find(x => x.id === taskId);
+  if (!t) return;
+  const ok = await showConfirm({
+    title: 'Remover tarefa?',
+    message: `Remover <strong>${esc(t.name)}</strong> da lista de tarefas?<br><br>A demanda vinculada (se houver) não é afetada.`,
+    okLabel: 'Remover',
+    danger: true
+  });
+  if (!ok) return;
+  try {
+    await api('/tasks/' + t.id, 'DELETE');
+    tasks = tasks.filter(x => x.id !== t.id);
+    renderCurrent();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
 function setProjectTimePeriod(period) {
   currentProjectPeriod = period;
   document.querySelectorAll('.project-time-period').forEach(b => b.classList.toggle('active', b.dataset.period === period));
@@ -15891,8 +16739,43 @@ function googleEventToBlock(ev, dayYmd) {
     backgroundColor: '#0b57d0',
     meeting: ev.meeting || null,
     startIso: ev.start || null,
-    endIso: ev.end || null
+    endIso: ev.end || null,
+    selfResponseStatus: ev.selfResponseStatus || null
   };
+}
+
+// Classe visual do bloco Google conforme resposta do dono do calendário.
+// null/aceito/tentativo → filled azul (default). needsAction → outline azul.
+// declined → outline vermelho. Consumido em buildAgendaGrid.
+function googleResponseClass(status) {
+  if (status === 'declined') return 'is-declined';
+  if (status === 'needsAction') return 'is-needs-response';
+  return ''; // accepted, tentative, null (solo) → estilo padrão
+}
+
+// Minutos de reunião do usuário num dia — conta pro day-cap junto com schedules.
+// Exclui allDay, declinadas e eventos totalmente fora do dia (multi-day corta em 23:59).
+function dayGoogleMinutes(userId, ymd) {
+  const events = googleEventsForUser[userId] || [];
+  let sum = 0;
+  for (const ev of events) {
+    if (!ev || !ev.start || ev.allDay) continue;
+    if (ev.selfResponseStatus === 'declined') continue;
+    const startYmd = String(ev.start).slice(0, 10);
+    if (startYmd !== ymd) continue; // mesma regra do googleEventToBlock
+    const s = new Date(ev.start);
+    const startMin = s.getHours() * 60 + s.getMinutes();
+    const endYmd = ev.end ? String(ev.end).slice(0, 10) : ymd;
+    let endMin;
+    if (endYmd === ymd) {
+      const e = new Date(ev.end || ev.start);
+      endMin = e.getHours() * 60 + e.getMinutes();
+    } else {
+      endMin = 24 * 60;
+    }
+    sum += Math.max(0, endMin - startMin);
+  }
+  return sum;
 }
 
 // Ícone por tipo de plataforma da reunião — usa lucide.
@@ -16032,9 +16915,10 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
     if (c.type === 'user') {
       // Header do modo Time: avatar + nome + capacidade do dia daquele user.
       const u = c.user;
-      const dayMin = schedules
+      const schedMin = schedules
         .filter(s => s.userId === u.id && s.date === c._ymd)
         .reduce((sum, s) => sum + (s.endMin - s.startMin), 0);
+      const dayMin = schedMin + dayGoogleMinutes(u.id, c._ymd);
       const dayHours = dayMin / 60;
       const capacityH = 8;
       let capClass = '';
@@ -16046,9 +16930,10 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
     } else {
       const dayName = d.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '').toUpperCase();
       const dayDate = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-      const dayMin = schedules
+      const schedMin = schedules
         .filter(s => s.userId === agendaUserIdLocal && s.date === c._ymd)
         .reduce((sum, s) => sum + (s.endMin - s.startMin), 0);
+      const dayMin = schedMin + dayGoogleMinutes(agendaUserIdLocal, c._ymd);
       const dayHours = dayMin / 60;
       const capacityH = 8;
       let capClass = '';
@@ -16249,11 +17134,15 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
       const totalCols = layout.totalCols;
       const block = document.createElement('div');
       block.className = 'agenda-block agenda-block--google';
+      const respClass = googleResponseClass(gb.selfResponseStatus);
+      if (respClass) block.classList.add(respClass);
       if (totalCols > 1) block.classList.add('is-laned');
       block.style.gridRow = `${startRow + 2} / ${endRow + 2}`;
       block.style.gridColumn = `${c.gridCol} / ${c.gridCol + 1}`;
       if (totalCols > 1) block.style.cssText += laneStyle(myCol, totalCols);
-      block.style.background = gb.backgroundColor || '#0b57d0';
+      // Filled só quando aceito/tentativo/sem attendees; outros variantes usam
+      // background da variante (deixamos o CSS decidir).
+      if (!respClass) block.style.background = gb.backgroundColor || '#0b57d0';
       // Ícone da plataforma da reunião ao lado do título — só aparece se detectou link.
       const meetIcon = gb.meeting
         ? `<i data-lucide="${meetingIconName(gb.meeting.kind)}" class="agenda-block-meet-icon"></i>`
@@ -16454,24 +17343,76 @@ function openGoogleEventDetail(gb) {
   paintIcons();
 }
 
-async function confirmDeleteSchedule(id) {
-  const ok = await showConfirm({
-    title: 'Excluir bloco',
-    message: 'Remover esse bloco da agenda?',
-    okLabel: 'Excluir',
-    danger: true
+// Resolve o scope de exclusão (one|future|series) para blocos livres com
+// recurrenceGroupId. Modal ad-hoc — showConfirm só tem 2 botões.
+function _pickScheduleDeleteScope(s) {
+  if (!s || !s.recurrenceGroupId) return Promise.resolve('one');
+  const patternLabel = s.recurrencePattern === 'weekdays' ? 'todo dia útil' : 'semanal';
+  return new Promise(resolve => {
+    let overlay = document.getElementById('sch-scope-modal');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'sch-scope-modal';
+      overlay.className = 'modal-overlay';
+      overlay.innerHTML = `<div class="modal modal-sm" data-no-outside-close="1">
+        <div class="modal-header">
+          <div class="modal-title">Excluir bloco de série</div>
+          <button class="modal-close" data-scope="cancel"><i data-lucide="x" class="ic-sm"></i></button>
+        </div>
+        <div class="modal-body">
+          <div id="sch-scope-msg" style="font-size:13px;color:var(--text-dim)"></div>
+        </div>
+        <div class="modal-footer" style="flex-wrap:wrap;gap:8px;justify-content:flex-end">
+          <button class="btn btn-ghost" data-scope="cancel">Cancelar</button>
+          <button class="btn btn-danger" data-scope="one">Apenas este</button>
+          <button class="btn btn-danger" data-scope="future">Deste dia em diante</button>
+          <button class="btn btn-danger" data-scope="series">Toda a série</button>
+        </div>
+      </div>`;
+      document.body.appendChild(overlay);
+    }
+    overlay.querySelector('#sch-scope-msg').textContent =
+      `Este bloco faz parte de uma série (${patternLabel}). O que você quer excluir?`;
+    const onClick = (e) => {
+      const btn = e.target.closest('[data-scope]');
+      if (!btn) return;
+      const scope = btn.dataset.scope;
+      overlay.removeEventListener('click', onClick);
+      closeModal('sch-scope-modal');
+      resolve(scope === 'cancel' ? null : scope);
+    };
+    overlay.addEventListener('click', onClick);
+    openModal('sch-scope-modal');
+    paintIcons(overlay);
   });
-  if (!ok) return;
+}
+async function _resolveDeleteScope(s) {
+  if (s && s.recurrenceGroupId) return _pickScheduleDeleteScope(s);
+  const ok = await showConfirm({
+    title: 'Excluir bloco', message: 'Remover esse bloco da agenda?',
+    okLabel: 'Excluir', danger: true
+  });
+  return ok ? 'one' : null;
+}
+async function confirmDeleteSchedule(id) {
+  const s = schedules.find(x => x.id === id);
+  const scope = await _resolveDeleteScope(s);
+  if (!scope) return;
   try {
-    await api('/schedules/' + id, 'DELETE');
+    const q = scope !== 'one' ? '?scope=' + scope : '';
+    await api('/schedules/' + id + q, 'DELETE');
     schedules = await api('/schedules');
     renderAgenda();
   } catch (e) { toast(e.message, 'error'); }
 }
 async function deleteScheduleFromModal() {
   if (!editingScheduleId) return;
+  const s = schedules.find(x => x.id === editingScheduleId);
+  const scope = await _resolveDeleteScope(s);
+  if (!scope) return;
   try {
-    await api('/schedules/' + editingScheduleId, 'DELETE');
+    const q = scope !== 'one' ? '?scope=' + scope : '';
+    await api('/schedules/' + editingScheduleId + q, 'DELETE');
     schedules = await api('/schedules');
     closeModal('schedule-modal');
     renderAgenda();
@@ -16634,6 +17575,218 @@ async function onAgendaBlockUp() {
 
 /* ── Modal de agendar/editar bloco ── */
 let _schedulePresetUserId = null; // userId do contexto de criação
+// Estado da recorrência escolhida no modal atual. null = "não se repete".
+// Formato: { pattern, interval, byWeekday?, count?, until? } (ver server.js).
+let _scheduleRecurrence = null;
+
+/* Labels dinâmicas do dropdown de recorrência, estilo Google Calendar.
+   Populadas a partir da data selecionada no modal (usa o dow/nth/mês do dia). */
+const WEEKDAY_LONG = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+const WEEKDAY_SHORT = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
+const WEEKDAY_ORDINAL = ['primeiro(a)', 'segundo(a)', 'terceiro(a)', 'quarto(a)', 'último(a)'];
+const MONTHS_LONG = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+
+// Popula o <select id="sch-recur"> baseado na data escolhida (dow/nth/mês).
+// Restaura seleção anterior quando possível — mantém "personalizado" após reabrir.
+function _populateScheduleRecur(dateYmd) {
+  const sel = $('sch-recur');
+  if (!sel) return;
+  const d = dateYmd ? new Date(dateYmd + 'T12:00:00') : new Date();
+  const dow = d.getDay();
+  const dayName = WEEKDAY_LONG[dow];
+  const nth = Math.min(5, Math.ceil(d.getDate() / 7));
+  const nthLabel = WEEKDAY_ORDINAL[Math.min(nth - 1, WEEKDAY_ORDINAL.length - 1)];
+  const monthName = MONTHS_LONG[d.getMonth()];
+  const day = d.getDate();
+  const options = [
+    { v: 'none',      lbl: 'Não se repete' },
+    { v: 'daily',     lbl: 'Todos os dias' },
+    { v: 'weekly',    lbl: `Semanal: cada ${dayName}` },
+    { v: 'monthly',   lbl: `Mensal no(a) ${nthLabel} ${dayName}` },
+    { v: 'yearly',    lbl: `Anual em ${monthName} ${day}` },
+    { v: 'weekdays',  lbl: 'Todos os dias da semana (segunda a sexta-feira)' },
+    { v: 'custom',    lbl: 'Personalizar…' }
+  ];
+  const prev = sel.value;
+  sel.innerHTML = options.map(o => `<option value="${o.v}">${esc(o.lbl)}</option>`).join('');
+  // Restaura seleção anterior se ainda válida; se o usuário tinha custom, mantém.
+  if (prev && options.some(o => o.v === prev)) sel.value = prev;
+  else sel.value = 'none';
+}
+
+// Handler do onchange do dropdown. 'custom' abre o modal; presets salvam objeto.
+function onScheduleRecurPick(value) {
+  const dateYmd = $('sch-date')?.value || null;
+  const d = dateYmd ? new Date(dateYmd + 'T12:00:00') : new Date();
+  const dow = d.getDay();
+  if (value === 'custom') {
+    openScheduleRecurCustomModal();
+    return;
+  }
+  if (value === 'none') {
+    _scheduleRecurrence = null;
+  } else if (value === 'daily') {
+    _scheduleRecurrence = { pattern: 'daily', interval: 1 };
+  } else if (value === 'weekly') {
+    _scheduleRecurrence = { pattern: 'weekly', interval: 1, byWeekday: [dow] };
+  } else if (value === 'monthly') {
+    _scheduleRecurrence = { pattern: 'monthly-nth-weekday', interval: 1 };
+  } else if (value === 'yearly') {
+    _scheduleRecurrence = { pattern: 'yearly', interval: 1 };
+  } else if (value === 'weekdays') {
+    _scheduleRecurrence = { pattern: 'weekdays', interval: 1 };
+  }
+  _updateScheduleRecurInfo();
+}
+
+// Info textual embaixo do dropdown quando há recorrência não-trivial.
+function _updateScheduleRecurInfo() {
+  const info = $('sch-recur-info');
+  if (!info) return;
+  const r = _scheduleRecurrence;
+  if (!r) { info.style.display = 'none'; info.textContent = ''; return; }
+  const parts = [];
+  const unitPlural = { daily: 'dias', weekly: 'semanas', 'monthly-nth-weekday': 'meses', yearly: 'anos', weekdays: 'dia útil' };
+  const unitSingular = { daily: 'dia', weekly: 'semana', 'monthly-nth-weekday': 'mês', yearly: 'ano', weekdays: 'dia útil' };
+  const unit = r.interval === 1 ? unitSingular[r.pattern] : unitPlural[r.pattern];
+  parts.push(`A cada ${r.interval} ${unit}`);
+  if (r.pattern === 'weekly' && r.byWeekday && r.byWeekday.length) {
+    parts.push(`em ${r.byWeekday.map(i => WEEKDAY_LONG[i]).join(', ')}`);
+  }
+  if (r.count) parts.push(`por ${r.count} ocorrências`);
+  else if (r.until) parts.push(`até ${_fmtBrShort(r.until)}`);
+  else parts.push('por até 2 anos');
+  info.textContent = parts.join(' · ');
+  info.style.display = '';
+}
+function _fmtBrShort(ymd) {
+  const [y, m, d] = ymd.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+// Modal "Recorrência personalizada" — criado on-demand (sem poluir index.html).
+function openScheduleRecurCustomModal() {
+  let modal = document.getElementById('sch-recur-custom-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'sch-recur-custom-modal';
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+      <div class="modal modal-sm" data-no-outside-close="1">
+        <div class="modal-header">
+          <div class="modal-title">Recorrência personalizada</div>
+          <button class="modal-close" onclick="closeScheduleRecurCustomModal()"><i data-lucide="x" class="ic-sm"></i></button>
+        </div>
+        <div class="modal-body">
+          <div class="rec-cust-row">
+            <label class="rec-cust-label">Repetir a cada:</label>
+            <input type="number" class="form-control rec-cust-num" id="rec-cust-interval" min="1" max="365" value="1">
+            <select class="form-control rec-cust-unit" id="rec-cust-unit">
+              <option value="daily">dias</option>
+              <option value="weekly">semanas</option>
+              <option value="monthly-nth-weekday">meses</option>
+              <option value="yearly">anos</option>
+            </select>
+          </div>
+          <div class="rec-cust-row rec-cust-days-row" id="rec-cust-days-row">
+            <label class="rec-cust-label">Repetir:</label>
+            <div class="rec-cust-days" id="rec-cust-days"></div>
+          </div>
+          <div class="rec-cust-end">
+            <div class="rec-cust-label">Termina em</div>
+            <label class="rec-cust-end-opt">
+              <input type="radio" name="rec-cust-end" value="never" checked>
+              <span>Nunca</span>
+            </label>
+            <label class="rec-cust-end-opt">
+              <input type="radio" name="rec-cust-end" value="until">
+              <span>Em</span>
+              <input type="date" class="form-control rec-cust-end-input" id="rec-cust-until" disabled>
+            </label>
+            <label class="rec-cust-end-opt">
+              <input type="radio" name="rec-cust-end" value="count">
+              <span>Após</span>
+              <input type="number" class="form-control rec-cust-end-input" id="rec-cust-count" min="1" max="260" placeholder="13" disabled>
+              <span class="rec-cust-end-suffix">ocorrências</span>
+            </label>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" onclick="closeScheduleRecurCustomModal()">Cancelar</button>
+          <button class="btn btn-primary" onclick="saveScheduleRecurCustom()">Concluir</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    // Handlers dos radios end-mode (habilita/desabilita os inputs).
+    modal.addEventListener('change', (e) => {
+      if (e.target?.name === 'rec-cust-end') {
+        const mode = e.target.value;
+        $('rec-cust-until').disabled = mode !== 'until';
+        $('rec-cust-count').disabled = mode !== 'count';
+      }
+      if (e.target?.id === 'rec-cust-unit') {
+        $('rec-cust-days-row').style.display = e.target.value === 'weekly' ? '' : 'none';
+      }
+    });
+  }
+  // Popula os chips de dias da semana (multi-select).
+  const daysWrap = $('rec-cust-days');
+  const baseYmd = $('sch-date')?.value || null;
+  const baseD = baseYmd ? new Date(baseYmd + 'T12:00:00') : new Date();
+  const currentPick = (_scheduleRecurrence?.byWeekday || [baseD.getDay()]);
+  daysWrap.innerHTML = WEEKDAY_SHORT.map((lbl, i) => `
+    <button type="button" class="rec-cust-day ${currentPick.includes(i) ? 'is-active' : ''}" data-dow="${i}"
+      onclick="this.classList.toggle('is-active')">${esc(lbl)}</button>`).join('');
+  // Estado inicial dos campos — usa _scheduleRecurrence se já for um custom, senão fresh.
+  const r = _scheduleRecurrence;
+  const isWeekly = !r || r.pattern === 'weekly';
+  $('rec-cust-interval').value = r?.interval || 1;
+  $('rec-cust-unit').value = (r && r.pattern) || 'weekly';
+  $('rec-cust-days-row').style.display = $('rec-cust-unit').value === 'weekly' ? '' : 'none';
+  // End mode: prioridade count > until > never
+  let endMode = 'never';
+  if (r?.count) endMode = 'count';
+  else if (r?.until) endMode = 'until';
+  modal.querySelectorAll('input[name="rec-cust-end"]').forEach(inp => { inp.checked = inp.value === endMode; });
+  $('rec-cust-until').disabled = endMode !== 'until';
+  $('rec-cust-count').disabled = endMode !== 'count';
+  $('rec-cust-until').value = r?.until || '';
+  $('rec-cust-count').value = r?.count || '';
+  openModal('sch-recur-custom-modal');
+  paintIcons(modal);
+}
+function closeScheduleRecurCustomModal() {
+  closeModal('sch-recur-custom-modal');
+  // Se o usuário cancelou sem já ter recorrência custom, reverte seleção pro que
+  // já tá em _scheduleRecurrence (ou 'none').
+  const sel = $('sch-recur');
+  if (sel && sel.value === 'custom' && !_scheduleRecurrence) sel.value = 'none';
+}
+function saveScheduleRecurCustom() {
+  const interval = Math.max(1, Math.min(365, Number.parseInt($('rec-cust-interval').value, 10) || 1));
+  const unit = $('rec-cust-unit').value;
+  const rec = { pattern: unit, interval };
+  if (unit === 'weekly') {
+    const picked = [...document.querySelectorAll('#rec-cust-days .rec-cust-day.is-active')]
+      .map(b => Number.parseInt(b.dataset.dow, 10));
+    if (!picked.length) { toast('Escolha ao menos um dia da semana.', 'error'); return; }
+    rec.byWeekday = picked;
+  }
+  const endMode = document.querySelector('input[name="rec-cust-end"]:checked')?.value || 'never';
+  if (endMode === 'until') {
+    const until = $('rec-cust-until').value;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(until)) { toast('Informe uma data válida.', 'error'); return; }
+    rec.until = until;
+  } else if (endMode === 'count') {
+    const count = Math.max(1, Math.min(260, Number.parseInt($('rec-cust-count').value, 10) || 0));
+    if (!count) { toast('Informe o número de ocorrências.', 'error'); return; }
+    rec.count = count;
+  }
+  _scheduleRecurrence = rec;
+  closeModal('sch-recur-custom-modal');
+  _updateScheduleRecurInfo();
+}
+
 /* Presets de tipo pros blocos livres — ícone + cor default. */
 const SCHEDULE_KINDS = [
   { k: 'meeting', label: 'Reunião', icon: 'video',    color: '#3B82F6' }, // blue — comunicação
@@ -16654,9 +17807,11 @@ function setScheduleMode(mode) {
   const demandRow = $('sch-demand-row');
   const titleRow  = $('sch-title-row');
   const kindRow   = $('sch-kind-row');
+  const recurRow  = $('sch-recur-row');
   if (demandRow) demandRow.style.display = _scheduleMode === 'demand' ? '' : 'none';
   if (titleRow)  titleRow.style.display  = _scheduleMode === 'free'   ? '' : 'none';
   if (kindRow)   kindRow.style.display   = _scheduleMode === 'free'   ? '' : 'none';
+  if (recurRow)  recurRow.style.display  = _scheduleMode === 'free'   ? '' : 'none';
   if (_scheduleMode === 'free') renderScheduleKindChips();
 }
 function renderScheduleKindChips() {
@@ -16726,8 +17881,49 @@ function openScheduleModal(id, preset) {
   // "Quem" — texto amigável do responsável pelo bloco
   const userName = userById(s ? s.userId : (preset?.userId || agendaUserId))?.name || '—';
   $('sch-when').textContent = `Para ${userName}`;
+  // Recorrência: só faz sentido em criação nova de bloco livre. Em edição,
+  // esconde o select e mostra info se esse bloco faz parte de série.
+  _scheduleRecurrence = null;
+  const recurSel = $('sch-recur');
+  const recurInfo = $('sch-recur-info');
+  if (recurInfo) { recurInfo.style.display = 'none'; recurInfo.textContent = ''; }
+  if (recurSel) {
+    _populateScheduleRecur(date);
+    recurSel.value = 'none';
+  }
+  if (s && s.recurrenceGroupId) {
+    if (recurSel) recurSel.style.display = 'none';
+    if (recurInfo) {
+      const patternLabel = _recurrenceHumanLabel(s.recurrencePattern);
+      recurInfo.style.display = '';
+      recurInfo.textContent = `Faz parte de uma série (${patternLabel}). Ao excluir você escolhe apenas este ou toda a série.`;
+    }
+  } else if (recurSel) {
+    recurSel.style.display = s ? 'none' : ''; // edição de bloco solto: sem opção de virar série
+  }
+  // Re-popula options quando o usuário mudar a data (labels dependem do dow).
+  const dateInp = $('sch-date');
+  if (dateInp && !dateInp._recurBound) {
+    dateInp.addEventListener('change', () => {
+      _populateScheduleRecur(dateInp.value);
+      // Se estava em uma opção baseada em dow, invalida (o dia da semana mudou).
+      const sel = $('sch-recur'); if (sel) sel.value = 'none';
+      _scheduleRecurrence = null;
+      _updateScheduleRecurInfo();
+    });
+    dateInp._recurBound = true;
+  }
   $('sch-delete-btn').style.display = s ? '' : 'none';
   openModal('schedule-modal');
+}
+function _recurrenceHumanLabel(pattern) {
+  return {
+    daily: 'Todos os dias',
+    weekly: 'Semanal',
+    'monthly-nth-weekday': 'Mensal',
+    yearly: 'Anual',
+    weekdays: 'Todo dia útil'
+  }[pattern] || 'Personalizada';
 }
 async function saveSchedule() {
   const date = $('sch-date').value;
@@ -16744,6 +17940,11 @@ async function saveSchedule() {
     payload.color = scheduleKindOf(_scheduleKind).color;
     // Blocos livres não têm demanda, então precisam de workspaceId explícito.
     payload.workspaceId = activeWs;
+    // Recorrência — só em criação, e só em modo Livre. Aceita o objeto
+    // _scheduleRecurrence completo (backend valida e expande).
+    if (!editingScheduleId && _scheduleRecurrence) {
+      payload.recurrence = _scheduleRecurrence;
+    }
   } else {
     const demandId = $('sch-demand').value;
     if (!demandId) { toast('Selecione uma demanda.', 'error'); return; }
@@ -16789,6 +17990,9 @@ const SSE_ENTITY_MAP = {
   flow:      { get: () => flows,       set: v => { flows = v; },       path: id => '/flows/' + id,      listPath: '/flows' },
   recurring: { get: () => recurrings,  set: v => { recurrings = v; },  path: id => '/recurrings/' + id, listPath: '/recurrings' },
   lista:     { get: () => listas,      set: v => { listas = v; },      path: id => '/listas/' + id,     listPath: '/listas' },
+  // tasks: server só emite ('bulk' no apply/'delete'/'update') — sem endpoint
+  // singular, então operações granulares caem no fallback do refetch de lista.
+  task:      { get: () => tasks,       set: v => { tasks = v; },       path: () => null,                listPath: '/tasks' },
 };
 
 function startRealtimeSync() {
@@ -16838,11 +18042,12 @@ async function flushSseRefetch() {
     if (!e.id || e.op === 'bulk') { fullRefetch.add(e.entity); continue; }
     dedup.set(e.entity + ':' + e.id, e);
   }
-  const tasks = [];
+  // Renomeado de `tasks` pra evitar shadow da global `tasks` (tarefas de projeto).
+  const _pending = [];
   // 1) Refetches em lote (fallback pra bulk/sem-id)
   for (const entity of fullRefetch) {
     const spec = SSE_ENTITY_MAP[entity];
-    tasks.push(api(spec.listPath).then(v => spec.set(v)).catch(() => {}));
+    _pending.push(api(spec.listPath).then(v => spec.set(v)).catch(() => {}));
   }
   // 2) Operações granulares
   for (const e of dedup.values()) {
@@ -16850,8 +18055,14 @@ async function flushSseRefetch() {
     if (e.op === 'delete') {
       spec.set(spec.get().filter(x => x.id !== e.id));
     } else {
-      tasks.push(
-        api(spec.path(e.id))
+      // Entities sem endpoint singular (path retorna null) caem em refetch da lista.
+      const singularPath = spec.path(e.id);
+      if (!singularPath) {
+        _pending.push(api(spec.listPath).then(v => spec.set(v)).catch(() => {}));
+        continue;
+      }
+      _pending.push(
+        api(singularPath)
           .then(entity => {
             const arr = spec.get();
             const idx = arr.findIndex(x => x.id === e.id);
@@ -16868,7 +18079,7 @@ async function flushSseRefetch() {
       );
     }
   }
-  await Promise.all(tasks);
+  await Promise.all(_pending);
   renderCurrent();
   if (demandTouched && detailId && document.getElementById('detail-modal')?.classList.contains('open')) {
     refreshDetailDemand();

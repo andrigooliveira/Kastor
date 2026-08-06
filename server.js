@@ -81,7 +81,7 @@ function undelete(type, entity) {
 function runSoftDeletePurge() {
   const cutoff = Date.now() - UNDO_PURGE_MS;
   let purged = 0;
-  for (const type of ['clients', 'projects', 'demands', 'flows', 'listas', 'clientTemplates', 'recurrings']) {
+  for (const type of ['clients', 'projects', 'demands', 'flows', 'listas', 'clientTemplates', 'recurrings', 'tasks']) {
     const arr = db[type] || [];
     const toRemove = arr.filter(e => e.deletedAt && Date.parse(e.deletedAt) < cutoff);
     for (const e of toRemove) {
@@ -257,6 +257,9 @@ function migrate(firstInstall) {
   if (!Array.isArray(db.clientTemplates)) db.clientTemplates = [];
   if (!Array.isArray(db.recurrings)) db.recurrings = [];
   if (!Array.isArray(db.listas)) db.listas = [];
+  // tasks: itens de listas aplicadas a projetos (modelo novo, kind='todo').
+  // Coexiste com recurrings antigos (listas sem kind continuam gerando recurrings).
+  if (!Array.isArray(db.tasks)) db.tasks = [];
   db.projects.forEach(p => { if (!p.workspaceId) p.workspaceId = defWs; });
 
   // Migração: promover `project.client` (string) → entidade Client.
@@ -495,6 +498,14 @@ function getMailTransport() {
     port: Number(SMTP_PORT || 587),
     secure: SMTP_SECURE === 'true' || Number(SMTP_PORT) === 465,
     auth: { user: SMTP_USER, pass: SMTP_PASS },
+    // Timeouts explícitos: sem isso, o nodemailer espera até ~10min por uma
+    // conexão travada — o Cloudflare corta em ~100s e devolve 502 pro usuário
+    // ANTES do server sequer logar a causa. Com esses tetos, a app falha em
+    // no máximo 30s com a mensagem SMTP real (ETIMEDOUT/EAUTH/etc), o CF não
+    // interfere e o toast mostra o motivo.
+    connectionTimeout: 15000, // 15s pra abrir o TCP
+    greetingTimeout:   15000, // 15s pro banner SMTP
+    socketTimeout:     30000, // 30s teto num socket parado
   });
   return _mailTransport;
 }
@@ -921,10 +932,11 @@ function hookMatchesScope(hook, ctx) {
 
 async function triggerWebhook(event, ctx) {
   if (!ctx.demand) return;
-  const wsId = ctx.demand.workspaceId;
+  // Webhooks são UNIVERSAIS — disparam pra eventos de qualquer squad. O campo
+  // workspaceId dos hooks antigos é ignorado de propósito (sem migração de dados).
+  // O recorte fino continua via clientId/projectId (hookMatchesScope) e alvo.
   const hooks = (db.webhooks || []).filter(h =>
     h.active !== false &&
-    h.workspaceId === wsId &&
     Array.isArray(h.events) &&
     h.events.includes(event) &&
     hookMatchesScope(h, ctx) &&
@@ -1517,7 +1529,7 @@ async function syncGoogleForUser(u) {
           }
           continue;
         }
-        const normalized = googleCal.normalizeEvent(raw, calMeta.id, calMeta.backgroundColor);
+        const normalized = googleCal.normalizeEvent(raw, calMeta.id, calMeta.backgroundColor, u.googleAccount?.email);
         if (!normalized.start) continue;
         const entity = { ...normalized, id: compositeId, userId: u.id, lastSyncedAt: nowISO() };
         const existing = db.googleEvents.find(e => e.id === compositeId);
@@ -1609,6 +1621,61 @@ app.get('/api/google/events', requireAuth, (req, res) => {
     return true;
   });
   res.json(filtered);
+});
+
+// Agrega horas em reunião do Google Calendar num período — usado pelo dashboard.
+// Filtros: from/to (YYYY-MM-DD, inclusive), userId (opcional), workspaceId (opcional).
+// Sem userId: soma todos os usuários do(s) workspace(s) acessíveis pelo requester.
+// Sem workspaceId: soma workspaces do requester (admin vê todos).
+// Ignora eventos allDay e declinados (selfResponseStatus === 'declined').
+app.get('/api/google/meeting-hours', requireAuth, (req, res) => {
+  const from = req.query.from || null;
+  const to   = req.query.to   || null;
+  const userId = req.query.userId || null;
+  const wsId = req.query.workspaceId || null;
+
+  // Escopo de usuários: se userId veio, restringe a ele; senão, todos os users
+  // dos workspaces acessíveis (ou do wsId, se veio).
+  const accessibleWs = wsIdsFor(req.user);
+  let scopeWsIds = accessibleWs;
+  if (wsId) {
+    if (!accessibleWs.includes(wsId)) return res.status(403).json({ error: 'Squad fora do escopo' });
+    scopeWsIds = [wsId];
+  }
+  const wsSet = new Set(scopeWsIds);
+  let allowedUserIds;
+  if (userId) {
+    if (userId !== req.user.id && !req.user.isAdmin) {
+      const target = db.users.find(u => u.id === userId);
+      const targetWs = target ? (target.isAdmin ? scopeWsIds : (target.workspaces || [])) : [];
+      const shares = !!target && targetWs.some(w => wsSet.has(w));
+      if (!shares) return res.status(403).json({ error: 'Sem permissão' });
+    }
+    allowedUserIds = new Set([userId]);
+  } else {
+    allowedUserIds = new Set(db.users
+      .filter(u => u.active !== false && (u.isAdmin || (u.workspaces || []).some(w => wsSet.has(w))))
+      .map(u => u.id));
+  }
+
+  let totalMinutes = 0;
+  let count = 0;
+  for (const ev of (db.googleEvents || [])) {
+    if (!allowedUserIds.has(ev.userId)) continue;
+    if (ev.allDay || !ev.start) continue;
+    if (ev.selfResponseStatus === 'declined') continue;
+    const startYmd = String(ev.start).slice(0, 10);
+    const endYmd = ev.end ? String(ev.end).slice(0, 10) : startYmd;
+    if (from && endYmd < from) continue;
+    if (to && startYmd > to) continue;
+    const s = new Date(ev.start);
+    const e = ev.end ? new Date(ev.end) : new Date(s.getTime() + 15 * 60000);
+    const durMin = Math.max(0, Math.round((e.getTime() - s.getTime()) / 60000));
+    if (!durMin) continue;
+    totalMinutes += durMin;
+    count++;
+  }
+  res.json({ totalMinutes, hours: totalMinutes / 60, count });
 });
 
 // Re-fetch da lista de calendários (útil se o usuário criou/removeu no Google).
@@ -2495,8 +2562,15 @@ app.post('/api/clients/from-template', requireAuth, (req, res) => {
       const flow = {
         id: uid(), workspaceId: wsId, projectId: project.id,
         clientId: client.id, client: client.name,
-        icon: null,
+        // Herda o ícone do fluxo no template (mesmo comportamento da rota de
+        // replicação incremental — server.js:2349). O `null` hardcoded aqui
+        // era um esquecimento antigo, os demais campos do template já vinham.
+        icon: ftpl.icon || null,
         name: ftpl.name, demandType: ftpl.demandType || '',
+        // Descrição e checklist padrão do template também estavam sendo perdidos
+        // na criação inicial (só a replicação incremental copiava). Iguala aqui.
+        defaultDescription: ftpl.defaultDescription || '',
+        defaultChecklist: (ftpl.defaultChecklist || []).map(it => ({ text: it.text })),
         stages, createdAt: nowISO()
       };
       db.flows.push(flow);
@@ -3021,6 +3095,93 @@ function normalizeUrlSrv(raw) {
   if (/^https?:\/\//i.test(s)) return s;
   if (/^[a-z][a-z0-9+.-]*:/i.test(s)) return s;
   return 'https://' + s;
+}
+/* Sanitiza HTML de comentário — allowlist estreita cobrindo o que o editor
+   rich text emite (b/strong/i/em/u, listas, br, p, div, spans/mentions, links,
+   imagens). Bloqueia scripts, handlers on*, javascript: URIs. Imagens em data:
+   são materializadas em /uploads (mesmo padrão de sanitizeAttachments). */
+const COMMENT_HTML_ALLOWED_TAGS = new Set([
+  'b', 'strong', 'i', 'em', 'u', 's', 'strike',
+  'p', 'div', 'br',
+  'ol', 'ul', 'li',
+  'a', 'span', 'img', 'code', 'pre', 'blockquote'
+]);
+const COMMENT_HTML_ATTR_ALLOWLIST = {
+  a:    ['href', 'title', 'target', 'rel'],
+  img:  ['src', 'alt', 'title', 'width', 'height'],
+  span: ['class']
+};
+const COMMENT_HTML_MAX_LEN = 200_000;
+function sanitizeCommentHtml(input) {
+  let html = String(input == null ? '' : input);
+  if (html.length > COMMENT_HTML_MAX_LEN) html = html.slice(0, COMMENT_HTML_MAX_LEN);
+  // Remove blocos completos que nunca são seguros — mesmo antes do stripping.
+  html = html.replace(/<!--[\s\S]*?-->/g, '');
+  html = html.replace(/<(script|style|iframe|object|embed|link|meta)[\s\S]*?<\/\1>/gi, '');
+  html = html.replace(/<(script|style|iframe|object|embed|link|meta)\b[^>]*\/?>/gi, '');
+  // Substitui data: em <img src="..."> por URL persistida em /uploads.
+  html = html.replace(/<img\b([^>]*)>/gi, (_full, attrs) => {
+    const srcMatch = /\bsrc\s*=\s*"([^"]*)"|\bsrc\s*=\s*'([^']*)'/i.exec(attrs);
+    const src = srcMatch ? (srcMatch[1] || srcMatch[2] || '') : '';
+    let outSrc = '';
+    if (/^data:image\//i.test(src)) {
+      const saved = saveUploadFromDataUri(src, 'comment-image');
+      if (saved) outSrc = saved.url;
+    } else if (/^https?:\/\//i.test(src) || src.startsWith('/uploads/')) {
+      outSrc = src;
+    }
+    if (!outSrc) return '';
+    const altMatch = /\balt\s*=\s*"([^"]*)"/i.exec(attrs);
+    const alt = altMatch ? altMatch[1] : '';
+    return `<img src="${escAttr(outSrc)}" alt="${escAttr(alt)}">`;
+  });
+  // Walk pelas tags restantes com allowlist.
+  html = html.replace(/<(\/?)\s*([a-zA-Z][a-zA-Z0-9]*)((?:\s+[^>]*)?)\/?>/g, (match, close, tag, rawAttrs) => {
+    const t = tag.toLowerCase();
+    if (!COMMENT_HTML_ALLOWED_TAGS.has(t)) return '';
+    if (close) return `</${t}>`;
+    if (t === 'img') return match; // já tratada acima
+    return `<${t}${_sanitizeCommentAttrs(t, rawAttrs || '')}>`;
+  });
+  // Remove tags órfãs deixadas pelo passo anterior.
+  return html.trim();
+}
+function _sanitizeCommentAttrs(tag, raw) {
+  const allowed = COMMENT_HTML_ATTR_ALLOWLIST[tag];
+  if (!allowed) return '';
+  const out = [];
+  const re = /([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+  let m;
+  while ((m = re.exec(raw)) !== null) {
+    const name = m[1].toLowerCase();
+    if (!allowed.includes(name)) continue;
+    if (name.startsWith('on')) continue; // paranoia — allowlist já bloqueia, mas fica explícito
+    const val = m[2] !== undefined ? m[2] : m[3];
+    if ((name === 'href' || name === 'src') && /^\s*javascript:/i.test(val)) continue;
+    if (tag === 'span' && name === 'class' && val !== 'mention') continue;
+    if (tag === 'a' && name === 'target' && val !== '_blank') continue;
+    if (tag === 'a' && name === 'rel' && !/^(noopener|noreferrer|(noopener\s+noreferrer))$/.test(val)) continue;
+    out.push(` ${name}="${escAttr(val)}"`);
+  }
+  // Força rel="noopener noreferrer" em <a target="_blank">
+  if (tag === 'a' && out.some(a => a.includes('target="_blank"')) && !out.some(a => a.includes('rel='))) {
+    out.push(' rel="noopener noreferrer"');
+  }
+  return out.join('');
+}
+function escAttr(s) {
+  return String(s).replace(/[&<>"']/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]));
+}
+// Extrai texto puro do HTML pra rodar regex de menção e gerar preview.
+function stripHtmlToText(html) {
+  return String(html || '')
+    .replace(/<br\b[^>]*>/gi, '\n')
+    .replace(/<\/(p|div|li|blockquote)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .trim();
 }
 function sanitizeAttachments(arr) {
   if (!Array.isArray(arr)) return [];
@@ -3914,6 +4075,41 @@ app.put('/api/demands/:id/skipped-stages', requireAuth, (req, res) => {
     }
   }
 
+  // ── stageOverrides (mapa { stageId: { deadlineDays: int|null } }) ──
+  // Só SLA por enquanto — cor e "done" são características do fluxo, não fazem
+  // sentido customizar por demanda no editor. Override em etapas do FLUXO só
+  // (additions têm seu deadlineDays direto na própria entrada, editado noutro fluxo).
+  let stageOverrides = null;
+  if (req.body?.stageOverrides && typeof req.body.stageOverrides === 'object') {
+    stageOverrides = {};
+    const flowStageIds = new Set(flow.stages.map(s => s.id));
+    for (const sid of Object.keys(req.body.stageOverrides)) {
+      if (!flowStageIds.has(sid)) continue;
+      const raw = req.body.stageOverrides[sid] || {};
+      const orig = flow.stages.find(s => s.id === sid);
+      const out = {};
+      // Preserva overrides pré-existentes de color/done (se houver) — este editor
+      // só mexe em deadlineDays. Sem isso, salvar aqui apagaria custos antigos.
+      const prev = (d.stageOverrides && d.stageOverrides[sid]) || {};
+      if (prev.color !== undefined) out.color = prev.color;
+      if (prev.done !== undefined)  out.done = prev.done;
+      if ('deadlineDays' in raw) {
+        const v = raw.deadlineDays;
+        if (v === null || v === '') {
+          // null explícito = "voltar pro padrão do fluxo" → só mantém se diferente
+          // do fluxo original (senão o override é redundante — 0 chaves, remove).
+          if (orig?.deadlineDays != null) out.deadlineDays = null;
+        } else if (Number.isInteger(Number(v)) && Number(v) >= 0) {
+          const n = Number(v);
+          if (n !== (orig?.deadlineDays ?? null)) out.deadlineDays = n;
+        }
+      } else if (prev.deadlineDays !== undefined) {
+        out.deadlineDays = prev.deadlineDays; // preserva se não veio no body
+      }
+      if (Object.keys(out).length) stageOverrides[sid] = out;
+    }
+  }
+
   // Diffs para histórico
   const prevSkip = Array.isArray(d.skippedStages) ? d.skippedStages : [];
   const addedSkip = skipped.filter(id => !prevSkip.includes(id));
@@ -3939,15 +4135,28 @@ app.put('/api/demands/:id/skipped-stages', requireAuth, (req, res) => {
     }
   }
 
+  // Diff dos overrides de SLA (só deadlineDays) pra histórico
+  const prevOverrides = (d.stageOverrides && typeof d.stageOverrides === 'object') ? d.stageOverrides : {};
+  const slaChanges = [];
+  if (stageOverrides !== null) {
+    const keys = new Set([...Object.keys(prevOverrides), ...Object.keys(stageOverrides)]);
+    for (const sid of keys) {
+      const from = prevOverrides[sid]?.deadlineDays ?? null;
+      const to = stageOverrides[sid]?.deadlineDays ?? null;
+      if (from !== to) slaChanges.push({ stageId: sid, from, to });
+    }
+  }
+
   d.skippedStages = skipped;
   d.stageResponsibles = stageResp;
   if (stageOrder !== null) d.stageOrder = stageOrder;
   if (stageLabels !== null) d.stageLabels = stageLabels;
+  if (stageOverrides !== null) d.stageOverrides = stageOverrides;
 
-  if (addedSkip.length || removedSkip.length || respChanged.length || orderChanged || labelChanges.length) {
+  if (addedSkip.length || removedSkip.length || respChanged.length || orderChanged || labelChanges.length || slaChanges.length) {
     addHistory(d, req.user.id, 'stages_customized', {
       added: addedSkip, removed: removedSkip, responsibles: respChanged,
-      orderChanged, labelChanges
+      orderChanged, labelChanges, slaChanges
     });
   }
   saveEntity('demands', d);
@@ -4008,31 +4217,39 @@ app.delete('/api/demands/:id/time/:entryId', requireAuth, (req, res) => {
   res.json(d);
 });
 
-/* Comentários com menção */
+/* Comentários com menção. `format`: 'html' (editor rich) ou 'text' (legacy). */
 app.post('/api/demands/:id/comment', requireAuth, (req, res) => {
   const d = getDemand(req, res); if (!d) return;
-  const text = String((req.body && req.body.text) || '').trim().slice(0, 10000);
+  const format = req.body?.format === 'html' ? 'html' : 'text';
+  const rawText = String((req.body && req.body.text) || '');
+  const text = format === 'html'
+    ? sanitizeCommentHtml(rawText)
+    : rawText.trim().slice(0, 10000);
   const attachments = sanitizeAttachments(req.body?.attachments).slice(0, 10);
-  if (!text && !attachments.length) return res.status(400).json({ error: 'Escreva algo ou anexe um arquivo' });
+  // Plain para extração de menções + validação de "vazio".
+  const plain = format === 'html' ? stripHtmlToText(text) : text;
+  if (!plain.trim() && !attachments.length && !/\<img\b/i.test(text)) {
+    return res.status(400).json({ error: 'Escreva algo ou anexe um arquivo' });
+  }
   // extrai menções @username válidas dentro do workspace
-  const tokens = (text.match(/@([a-zA-Z0-9._-]+)/g) || []).map(t => t.slice(1).toLowerCase());
+  const tokens = (plain.match(/@([a-zA-Z0-9._-]+)/g) || []).map(t => t.slice(1).toLowerCase());
   const mentions = db.users
     .filter(u => tokens.includes(u.username.toLowerCase()) && canAccessWs(u, d.workspaceId))
     .map(u => u.id);
-  const c = { id: uid(), userId: req.user.id, text, mentions, attachments, reactions: {}, createdAt: nowISO(), editedAt: null };
+  const c = { id: uid(), userId: req.user.id, text, format, mentions, attachments, reactions: {}, createdAt: nowISO(), editedAt: null };
   d.comments.push(c);
-  addHistory(d, req.user.id, 'comment_added', { commentId: c.id, preview: text.slice(0, 80) });
+  addHistory(d, req.user.id, 'comment_added', { commentId: c.id, preview: plain.slice(0, 80) });
   // Notifica cada usuário mencionado
   const _mentionsBaseUrl = appBaseUrl(req);
   mentions.forEach(mid => {
-    notify(mid, 'mention', { demandId: d.id, demandName: d.name, commentText: text.slice(0, 120) }, req.user.id, _mentionsBaseUrl);
+    notify(mid, 'mention', { demandId: d.id, demandName: d.name, commentText: plain.slice(0, 120) }, req.user.id, _mentionsBaseUrl);
   });
   // Watchers recebem notificação de novo comentário — sem duplicar quem já foi mencionado.
   if (Array.isArray(d.watchers) && d.watchers.length) {
     const alreadyNotified = new Set(mentions);
     for (const uid of d.watchers) {
       if (uid === req.user.id || uid === d.ownerId || alreadyNotified.has(uid)) continue;
-      notify(uid, 'watch_comment', { demandId: d.id, demandName: d.name, commentText: text.slice(0, 120) }, req.user.id, _mentionsBaseUrl);
+      notify(uid, 'watch_comment', { demandId: d.id, demandName: d.name, commentText: plain.slice(0, 120) }, req.user.id, _mentionsBaseUrl);
     }
   }
   saveEntity('demands', d);
@@ -4060,16 +4277,24 @@ app.put('/api/demands/:id/comment/:cid', requireAuth, (req, res) => {
   if (c.userId !== req.user.id && !req.user.isAdmin) {
     return res.status(403).json({ error: 'Você só pode editar seus próprios comentários' });
   }
-  const text = String((req.body && req.body.text) || '').trim().slice(0, 10000);
+  const format = req.body?.format === 'html' ? 'html' : (c.format === 'html' ? 'html' : 'text');
+  const rawText = String((req.body && req.body.text) || '');
+  const text = format === 'html'
+    ? sanitizeCommentHtml(rawText)
+    : rawText.trim().slice(0, 10000);
   const attachments = req.body?.attachments !== undefined
     ? sanitizeAttachments(req.body.attachments).slice(0, 10)
     : c.attachments;
-  if (!text && !(attachments && attachments.length)) return res.status(400).json({ error: 'O comentário não pode ficar vazio' });
+  const plain = format === 'html' ? stripHtmlToText(text) : text;
+  if (!plain.trim() && !(attachments && attachments.length) && !/\<img\b/i.test(text)) {
+    return res.status(400).json({ error: 'O comentário não pode ficar vazio' });
+  }
   c.text = text;
+  c.format = format;
   c.attachments = attachments || [];
   c.editedAt = nowISO();
-  // re-extrai menções
-  const tokens = (text.match(/@([a-zA-Z0-9._-]+)/g) || []).map(t => t.slice(1).toLowerCase());
+  // re-extrai menções (do texto puro)
+  const tokens = (plain.match(/@([a-zA-Z0-9._-]+)/g) || []).map(t => t.slice(1).toLowerCase());
   c.mentions = db.users
     .filter(u => tokens.includes(u.username.toLowerCase()) && canAccessWs(u, d.workspaceId))
     .map(u => u.id);
@@ -4209,6 +4434,142 @@ function sanitizeFreeBlockFields(b) {
   const color = /^#[0-9a-f]{6}$/i.test(b.color || '') ? b.color : null;
   return { title, kind, color };
 }
+// Recorrência de blocos LIVRES — inspirada no seletor do Google Calendar.
+// Formato:
+//   pattern:    'daily' | 'weekly' | 'weekdays' | 'monthly-nth-weekday' | 'yearly'
+//   interval:   inteiro >= 1 (a cada N dias/semanas/meses/anos)
+//   byWeekday:  array de dow [0..6] (só usado quando pattern='weekly')
+//   count:      1..MAX ocorrências (opcional)
+//   until:      'YYYY-MM-DD' inclusive (opcional)
+// Se nem count nem until vierem, usa MAX_HORIZON_DAYS como limite de segurança.
+const RECURRENCE_PATTERNS = ['daily', 'weekly', 'weekdays', 'monthly-nth-weekday', 'yearly'];
+const RECURRENCE_MAX_COUNT = 260;    // ~5 anos semanal, guarda contra runaway
+const RECURRENCE_HORIZON_DAYS = 730; // 2 anos default quando "nunca termina"
+function sanitizeRecurrence(r) {
+  if (!r || typeof r !== 'object') return null;
+  if (!RECURRENCE_PATTERNS.includes(r.pattern)) return null;
+  const interval = Math.max(1, Math.min(365, Number.parseInt(r.interval, 10) || 1));
+  const out = { pattern: r.pattern, interval };
+  if (r.pattern === 'weekly') {
+    const bwd = Array.isArray(r.byWeekday)
+      ? [...new Set(r.byWeekday.map(x => Number.parseInt(x, 10)).filter(n => n >= 0 && n <= 6))].sort()
+      : [];
+    if (bwd.length) out.byWeekday = bwd;
+  }
+  if (r.count !== undefined && r.count !== null && r.count !== '') {
+    const n = Math.max(1, Math.min(RECURRENCE_MAX_COUNT, Number.parseInt(r.count, 10) || 0));
+    if (n) out.count = n;
+  }
+  if (typeof r.until === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.until)) {
+    out.until = r.until;
+  }
+  return out;
+}
+// Expande uma recorrência em N datas 'YYYY-MM-DD' a partir de startYmd (inclusive).
+// Respeita count/until; se nenhum, cap em RECURRENCE_HORIZON_DAYS a partir de start.
+function expandRecurrenceDates(startYmd, rec) {
+  const out = [];
+  const start = new Date(startYmd + 'T12:00:00');
+  const horizonEnd = new Date(start); horizonEnd.setDate(start.getDate() + RECURRENCE_HORIZON_DAYS);
+  const untilDate = rec.until ? new Date(rec.until + 'T12:00:00') : null;
+  const maxCount = rec.count || RECURRENCE_MAX_COUNT;
+  const withinLimits = (d) => {
+    if (out.length >= maxCount) return false;
+    if (untilDate && d > untilDate) return false;
+    if (!untilDate && d > horizonEnd) return false;
+    return true;
+  };
+  const push = (d) => {
+    if (!withinLimits(d)) return false;
+    out.push(d.toISOString().slice(0, 10));
+    return true;
+  };
+  const interval = rec.interval || 1;
+
+  if (rec.pattern === 'daily') {
+    let d = new Date(start);
+    while (withinLimits(d)) {
+      out.push(d.toISOString().slice(0, 10));
+      d = new Date(d); d.setDate(d.getDate() + interval);
+    }
+  } else if (rec.pattern === 'weekdays') {
+    // Atalho: todo dia útil (Seg–Sex), interval sempre 1.
+    let d = new Date(start);
+    while (withinLimits(d)) {
+      const dow = d.getDay();
+      if (dow !== 0 && dow !== 6) out.push(d.toISOString().slice(0, 10));
+      d = new Date(d); d.setDate(d.getDate() + 1);
+    }
+  } else if (rec.pattern === 'weekly') {
+    // Repete nos dias da semana escolhidos; sem seleção usa o dow do start.
+    const byWeekday = (rec.byWeekday && rec.byWeekday.length) ? rec.byWeekday : [start.getDay()];
+    // Ancora na segunda da semana do start pra iterar semana-a-semana consistente.
+    const anchor = new Date(start);
+    const startDow = start.getDay();
+    anchor.setDate(start.getDate() - startDow); // domingo dessa semana
+    let weekIdx = 0;
+    while (true) {
+      const weekStart = new Date(anchor); weekStart.setDate(anchor.getDate() + weekIdx * 7 * interval);
+      let anyValid = false;
+      for (const dow of byWeekday) {
+        const d = new Date(weekStart); d.setDate(weekStart.getDate() + dow);
+        if (d < start) continue;
+        if (!withinLimits(d)) { anyValid = anyValid || (out.length < maxCount); continue; }
+        out.push(d.toISOString().slice(0, 10));
+        anyValid = true;
+      }
+      // Corta se estourou horizonte ou count ou não gerou nada nesta semana + já passou do horizonte
+      const weekEndProbe = new Date(weekStart); weekEndProbe.setDate(weekStart.getDate() + 6);
+      const beyondHorizon = untilDate ? (weekEndProbe > untilDate) : (weekEndProbe > horizonEnd);
+      if (out.length >= maxCount) break;
+      if (beyondHorizon) break;
+      weekIdx++;
+      if (weekIdx > 520) break; // guarda: 10 anos * interval
+    }
+  } else if (rec.pattern === 'monthly-nth-weekday') {
+    // Ex: "primeira terça-feira do mês, a cada N meses". Deriva do start:
+    // nth = ceil(dia / 7), dow = start.getDay().
+    const dow = start.getDay();
+    const nth = Math.ceil(start.getDate() / 7);
+    let monthOffset = 0;
+    while (true) {
+      const y = start.getFullYear();
+      const m = start.getMonth() + monthOffset * interval;
+      const nthDate = _nthWeekdayOfMonth(y, m, dow, nth);
+      if (!nthDate) { monthOffset++; if (monthOffset > 240) break; continue; }
+      if (nthDate < start) { monthOffset++; continue; }
+      if (!withinLimits(nthDate)) break;
+      out.push(nthDate.toISOString().slice(0, 10));
+      monthOffset++;
+      if (monthOffset > 240) break; // 20 anos * interval
+    }
+  } else if (rec.pattern === 'yearly') {
+    const day = start.getDate();
+    const month = start.getMonth();
+    let yearOffset = 0;
+    while (true) {
+      const d = new Date(start.getFullYear() + yearOffset * interval, month, day, 12, 0, 0);
+      // Se o mês não tem esse dia (raro pra yearly, ex.: 29 fev), pula.
+      if (d.getMonth() !== month) { yearOffset++; if (yearOffset > 100) break; continue; }
+      if (d < start) { yearOffset++; continue; }
+      if (!withinLimits(d)) break;
+      out.push(d.toISOString().slice(0, 10));
+      yearOffset++;
+      if (yearOffset > 100) break;
+    }
+  }
+  return out;
+}
+// Retorna o Date do N-ésimo `dow` do mês (ex.: 3ª terça). Se o mês não tiver
+// essa ocorrência (ex.: 5ª sexta em fev), retorna null.
+function _nthWeekdayOfMonth(year, month, dow, nth) {
+  const first = new Date(year, month, 1, 12, 0, 0);
+  const offset = (dow - first.getDay() + 7) % 7;
+  const day = 1 + offset + (nth - 1) * 7;
+  const d = new Date(year, month, day, 12, 0, 0);
+  if (d.getMonth() !== ((month % 12) + 12) % 12) return null;
+  return d;
+}
 app.post('/api/schedules', requireAuth, (req, res) => {
   const b = req.body || {};
   const userId = b.userId || req.user.id;
@@ -4230,6 +4591,38 @@ app.post('/api/schedules', requireAuth, (req, res) => {
     const wsId = String(b.workspaceId || '');
     if (!wsId || !canAccessWs(req.user, wsId)) {
       return res.status(400).json({ error: 'Squad inválido pro bloco livre.' });
+    }
+    // Recorrência opcional: expande em N cópias, todas com o mesmo recurrenceGroupId
+    // pra permitir edição/exclusão em série depois.
+    const rec = sanitizeRecurrence(b.recurrence);
+    if (rec) {
+      const dates = expandRecurrenceDates(fields.date, rec);
+      const recurrenceGroupId = uid();
+      const created = [];
+      for (const dt of dates) {
+        const one = {
+          id: uid(),
+          workspaceId: wsId,
+          userId,
+          demandId: null,
+          title: free.title,
+          kind: free.kind,
+          color: free.color,
+          date: dt,
+          startMin: fields.startMin,
+          endMin: fields.endMin,
+          stageColorSnapshot: null,
+          recurrenceGroupId,
+          recurrencePattern: rec.pattern,
+          createdAt: nowISO(),
+          createdBy: req.user.id
+        };
+        db.schedules.push(one);
+        saveEntity('schedules', one);
+        created.push(one);
+      }
+      broadcastChange('schedule', 'bulk', { workspaceId: wsId, byUserId: req.user.id });
+      return res.status(201).json(created[0]);
     }
     s = {
       id: uid(),
@@ -4316,6 +4709,21 @@ app.delete('/api/schedules/:id', requireAuth, (req, res) => {
   if (!s) return res.status(404).json({ error: 'Agendamento não encontrado' });
   if (!canEditSchedule(req.user, s)) return res.status(403).json({ error: 'Você só remove os próprios agendamentos.' });
   const wsId = s.workspaceId;
+  const scope = String(req.query.scope || 'one');
+  // scope=series: exclui todos os blocos com mesmo recurrenceGroupId; futuros:
+  // apenas os com data >= a data deste bloco.
+  if ((scope === 'series' || scope === 'future') && s.recurrenceGroupId) {
+    const gid = s.recurrenceGroupId;
+    const cutoff = scope === 'future' ? s.date : null;
+    const doomed = db.schedules.filter(x =>
+      x.recurrenceGroupId === gid && canEditSchedule(req.user, x) &&
+      (cutoff ? x.date >= cutoff : true));
+    const ids = new Set(doomed.map(x => x.id));
+    db.schedules = db.schedules.filter(x => !ids.has(x.id));
+    doomed.forEach(x => removeEntity('schedules', x.id));
+    broadcastChange('schedule', 'bulk', { workspaceId: wsId, byUserId: req.user.id });
+    return res.json({ ok: true, deleted: doomed.length });
+  }
   db.schedules = db.schedules.filter(x => x.id !== s.id);
   removeEntity('schedules', s.id);
   broadcastChange('schedule', 'delete', { id: s.id, workspaceId: wsId, byUserId: req.user.id });
@@ -4553,6 +4961,10 @@ function sanitizeListaBody(b, existing) {
   const cur = existing || {};
   const name = String(b.name ?? cur.name ?? '').trim();
   if (!name) return { error: 'Nome é obrigatório' };
+  // kind: 'todo' = lista nova (to-do puro com items inline). null/undefined =
+  // lista clássica (usa recurrings vinculados via listaId). Preserva o kind já
+  // gravado; só define do body na criação.
+  const kind = (b.kind === 'todo' || cur.kind === 'todo') ? 'todo' : null;
   const clientId = (b.clientId !== undefined ? b.clientId : cur.clientId) || null;
   const projectId = (b.projectId !== undefined ? b.projectId : cur.projectId) || null;
   // Workspace: prioriza projeto → cliente → workspaceId explícito do body → existing.
@@ -4575,7 +4987,29 @@ function sanitizeListaBody(b, existing) {
   // Listas com sourceListaId=null são templates originais (aparecem na aba Listas).
   // Listas com sourceListaId=X são instâncias aplicadas (não aparecem na aba Listas).
   const sourceListaId = (b.sourceListaId !== undefined ? b.sourceListaId : cur.sourceListaId) || null;
-  return { name, workspaceId, clientId: clientId || null, projectId: projectId || null, description, sourceListaId };
+  // items: só entra em listas kind='todo'. Cada item = { id, name, demandType? }.
+  // demandType (opcional) referencia a biblioteca universal de tipos de demanda
+  // — usado ao gerar a demanda pra pré-selecionar o fluxo do tipo certo.
+  let items = null;
+  if (kind === 'todo') {
+    const incoming = Array.isArray(b.items) ? b.items : (Array.isArray(cur.items) ? cur.items : []);
+    const seen = new Set();
+    items = [];
+    for (const raw of incoming) {
+      const nm = String(raw?.name ?? '').trim().slice(0, 200);
+      if (!nm) continue;
+      const id = (typeof raw?.id === 'string' && raw.id) ? raw.id : uid();
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const demandType = String(raw?.demandType ?? '').trim().slice(0, 60) || null;
+      items.push({ id, name: nm, demandType });
+    }
+  }
+  return {
+    name, workspaceId, clientId: clientId || null, projectId: projectId || null,
+    description, sourceListaId, kind,
+    ...(items !== null ? { items } : {})
+  };
 }
 app.get('/api/listas', requireAuth, (req, res) => {
   const ids = wsIdsFor(req.user);
@@ -4583,6 +5017,10 @@ app.get('/api/listas', requireAuth, (req, res) => {
   const projectId = req.query.projectId || null;
   const list = db.listas.filter(l => {
     if (!notDeleted(l)) return false;
+    // Listas kind='todo' são GLOBAIS — visíveis pra qualquer usuário autenticado,
+    // não importam clientId/projectId (elas nem têm). Listas legadas mantêm o
+    // recorte por squad + cliente/projeto (comportamento original).
+    if (l.kind === 'todo') return true;
     if (!ids.includes(l.workspaceId)) return false;
     if (clientId && l.clientId !== clientId) return false;
     if (projectId && l.projectId !== projectId) return false;
@@ -4598,7 +5036,10 @@ app.get('/api/listas/:id', requireAuth, (req, res) => {
 app.post('/api/listas', requireAuth, (req, res) => {
   const fields = sanitizeListaBody(req.body || {});
   if (fields.error) return res.status(400).json({ error: fields.error });
-  if (!canAccessWs(req.user, fields.workspaceId)) return res.status(403).json({ error: 'Sem acesso ao workspace' });
+  // Listas kind='todo' são globais — só as legadas checam acesso ao squad.
+  if (fields.kind !== 'todo' && !canAccessWs(req.user, fields.workspaceId)) {
+    return res.status(403).json({ error: 'Sem acesso ao workspace' });
+  }
   const l = {
     id: uid(),
     ...fields,
@@ -4613,10 +5054,15 @@ app.post('/api/listas', requireAuth, (req, res) => {
 });
 app.put('/api/listas/:id', requireAuth, (req, res) => {
   const l = getLista(req.params.id);
-  if (!l || !canAccessWs(req.user, l.workspaceId)) return res.status(404).json({ error: 'Lista não encontrada' });
+  // kind='todo' é global — sempre visível/editável. Legada checa acesso ao squad.
+  if (!l || (l.kind !== 'todo' && !canAccessWs(req.user, l.workspaceId))) {
+    return res.status(404).json({ error: 'Lista não encontrada' });
+  }
   const fields = sanitizeListaBody(req.body || {}, l);
   if (fields.error) return res.status(400).json({ error: fields.error });
-  if (!canAccessWs(req.user, fields.workspaceId)) return res.status(403).json({ error: 'Sem acesso ao workspace destino' });
+  if (fields.kind !== 'todo' && !canAccessWs(req.user, fields.workspaceId)) {
+    return res.status(403).json({ error: 'Sem acesso ao workspace destino' });
+  }
   Object.assign(l, fields, { updatedAt: nowISO() });
   saveEntity('listas', l);
   broadcastChange('lista', 'update', { id: l.id, workspaceId: l.workspaceId, byUserId: req.user.id });
@@ -4625,44 +5071,217 @@ app.put('/api/listas/:id', requireAuth, (req, res) => {
 app.delete('/api/listas/:id', requireAuth, (req, res) => {
   const l = getLista(req.params.id);
   if (!l || !notDeleted(l)) return res.status(404).json({ error: 'Lista não encontrada' });
-  if (!canAccessWs(req.user, l.workspaceId)) return res.status(403).json({ error: 'Sem acesso' });
-  // Excluir a lista CASCATEIA nos recorrentes vinculados — eles NÃO viram mais
-  // personalizadas. Vão pra lixeira junto (mesma janela de ~5s); restaurar a lista
-  // traz todos de volta agrupados, e purgar a lista purga eles também.
+  // Global (kind='todo') = qualquer user autenticado pode excluir. Legada só do squad.
+  if (l.kind !== 'todo' && !canAccessWs(req.user, l.workspaceId)) return res.status(403).json({ error: 'Sem acesso' });
+  const isTodo = l.kind === 'todo';
   softDelete('listas', l, req.user.id);
-  const linked = db.recurrings.filter(r => r.listaId === l.id && notDeleted(r));
-  linked.forEach(r => {
-    softDelete('recurrings', r, req.user.id);
-    broadcastChange('recurring', 'delete', { id: r.id, workspaceId: r.workspaceId, byUserId: req.user.id });
-  });
+  let deletedRecurrings = 0, deletedTasks = 0, deletedDemands = 0;
+
+  if (isTodo) {
+    // Lista NOVA: apaga (hard-delete) as tasks aplicadas dela + as demandas geradas.
+    // Query param ?includeDemands=1 (default true) cascateia nas demandas.
+    const includeDemands = req.query.includeDemands !== '0';
+    const linkedTasks = (db.tasks || []).filter(t => t.listaSourceId === l.id);
+    for (const t of linkedTasks) {
+      if (includeDemands && t.demandId) {
+        const d = db.demands.find(x => x.id === t.demandId && notDeleted(x));
+        if (d) {
+          softDelete('demands', d, req.user.id);
+          broadcastChange('demand', 'delete', { id: d.id, workspaceId: d.workspaceId, byUserId: req.user.id });
+          deletedDemands++;
+        }
+      }
+      db.tasks = db.tasks.filter(x => x.id !== t.id);
+      removeEntity('tasks', t.id);
+      deletedTasks++;
+    }
+    // Broadcast bulk de tasks (frontend refaz refetch da coleção).
+    if (linkedTasks.length) broadcastChange('task', 'bulk', { workspaceId: l.workspaceId, byUserId: req.user.id });
+  } else {
+    // LEGADO: comportamento original — soft-delete dos recorrentes.
+    const linked = db.recurrings.filter(r => r.listaId === l.id && notDeleted(r));
+    linked.forEach(r => {
+      softDelete('recurrings', r, req.user.id);
+      broadcastChange('recurring', 'delete', { id: r.id, workspaceId: r.workspaceId, byUserId: req.user.id });
+    });
+    deletedRecurrings = linked.length;
+  }
+
   broadcastChange('lista', 'delete', { id: l.id, workspaceId: l.workspaceId, byUserId: req.user.id });
-  res.json({ ok: true, undoable: true, deleted: { recurrings: linked.length }, purgeAt: Date.parse(l.deletedAt) + UNDO_PURGE_MS });
+  res.json({
+    ok: true, undoable: !isTodo,
+    deleted: { recurrings: deletedRecurrings, tasks: deletedTasks, demands: deletedDemands },
+    purgeAt: Date.parse(l.deletedAt) + UNDO_PURGE_MS
+  });
+});
+
+/* ── TAREFAS (kind='todo') ──
+   Modelo simples de to-do: tarefa vive num projeto e pode virar demanda depois.
+   Cada tarefa tem no máximo UMA demanda vinculada; se a demanda for excluída,
+   o vínculo "libera" (frontend permite gerar de novo). Status visual (concluída,
+   em andamento) é derivado da demanda vinculada — a tarefa em si não tem estado. */
+app.get('/api/tasks', requireAuth, (req, res) => {
+  const ids = wsIdsFor(req.user);
+  const projectId = req.query.projectId || null;
+  const list = (db.tasks || []).filter(t => {
+    if (!ids.includes(t.workspaceId)) return false;
+    if (projectId && t.projectId !== projectId) return false;
+    return true;
+  });
+  res.json(list);
+});
+// Aplica uma lista (kind='todo') a um cliente E/OU projeto. Cria N tarefas.
+// Aceita 3 formatos no body:
+//   { listaId, projectId }              → tasks vinculadas ao projeto
+//   { listaId, clientId }               → tasks vinculadas ao cliente, sem projeto
+//   { listaId, clientId, projectId }    → equivalente ao 1º (projectId manda)
+function _applyListaHandler(req, res) {
+  const listaId = String(req.body?.listaId || '');
+  const lista = db.listas.find(l => l.id === listaId && notDeleted(l));
+  if (!lista) return res.status(404).json({ error: 'Lista não encontrada' });
+  if (lista.kind !== 'todo') return res.status(400).json({ error: 'Só listas do tipo to-do podem ser aplicadas por aqui' });
+  const projectIdIn = String(req.body?.projectId || '') || null;
+  const clientIdIn = String(req.body?.clientId || '') || null;
+  if (!projectIdIn && !clientIdIn) return res.status(400).json({ error: 'Informe clientId ou projectId de destino' });
+  // Listas kind='todo' são GLOBAIS entre squads — não validamos squad da lista.
+  // O que importa é o acesso do usuário ao squad de DESTINO (projeto/cliente).
+  let project = null, client = null;
+  if (projectIdIn) {
+    project = db.projects.find(p => p.id === projectIdIn && notDeleted(p));
+    if (!project) return res.status(404).json({ error: 'Projeto não encontrado' });
+    if (!canAccessWs(req.user, project.workspaceId)) return res.status(403).json({ error: 'Sem acesso ao squad do projeto' });
+    client = project.clientId ? db.clients.find(c => c.id === project.clientId) : null;
+  } else {
+    client = db.clients.find(c => c.id === clientIdIn && notDeleted(c));
+    if (!client) return res.status(404).json({ error: 'Cliente não encontrado' });
+    if (!canAccessWs(req.user, client.workspaceId)) return res.status(403).json({ error: 'Sem acesso ao squad do cliente' });
+  }
+  const items = Array.isArray(lista.items) ? lista.items : [];
+  if (!items.length) return res.status(400).json({ error: 'A lista está vazia' });
+  const wsId = (project || client).workspaceId;
+  const created = [];
+  // applicationId único por chamada — mesmo se a lista for aplicada 2x no mesmo
+  // projeto, cada aplicação vira um bloco separado no card (sem merge com a
+  // aplicação anterior). É por ele que o agrupamento e delete-aplicação funcionam.
+  const applicationId = uid();
+  const nowIso = nowISO();
+  // sortOrder incremental — inicia após o maior existente no MESMO escopo
+  const sameScope = t => project ? t.projectId === project.id : (t.clientId === client.id && !t.projectId);
+  const existing = (db.tasks || []).filter(sameScope);
+  let cursor = existing.reduce((m, t) => Math.max(m, t.sortOrder || 0), 0);
+  for (const it of items) {
+    cursor += 10;
+    const task = {
+      id: uid(),
+      workspaceId: wsId,
+      projectId: project?.id || null,
+      clientId: (project?.clientId) || client?.id || null,
+      listaSourceId: lista.id,
+      listaItemId: it.id,
+      applicationId,
+      appliedAt: nowIso,
+      name: it.name,
+      demandType: it.demandType || null, // usado ao gerar demanda pra pré-selecionar fluxo
+      demandId: null,
+      sortOrder: cursor,
+      createdAt: nowIso,
+      createdBy: req.user.id
+    };
+    db.tasks.push(task);
+    saveEntity('tasks', task);
+    created.push(task);
+  }
+  broadcastChange('task', 'bulk', { workspaceId: wsId, byUserId: req.user.id });
+  res.status(201).json({ ok: true, created: created.length, applicationId, tasks: created });
+}
+app.post('/api/apply-lista', requireAuth, _applyListaHandler);
+// Exclui SÓ uma aplicação (tasks + demandas geradas naquela chamada de apply).
+// Preserva o template da lista. includeDemands=1 (default) cascateia nas demandas.
+app.delete('/api/apply-lista/:applicationId', requireAuth, (req, res) => {
+  const applicationId = String(req.params.applicationId || '');
+  const affected = (db.tasks || []).filter(t => t.applicationId === applicationId);
+  if (!affected.length) return res.status(404).json({ error: 'Aplicação não encontrada' });
+  const wsId = affected[0].workspaceId;
+  if (!canAccessWs(req.user, wsId)) return res.status(403).json({ error: 'Sem acesso ao squad' });
+  const includeDemands = req.query.includeDemands !== '0';
+  let deletedDemands = 0;
+  for (const t of affected) {
+    if (includeDemands && t.demandId) {
+      const d = db.demands.find(x => x.id === t.demandId && notDeleted(x));
+      if (d) {
+        softDelete('demands', d, req.user.id);
+        broadcastChange('demand', 'delete', { id: d.id, workspaceId: d.workspaceId, byUserId: req.user.id });
+        deletedDemands++;
+      }
+    }
+    db.tasks = db.tasks.filter(x => x.id !== t.id);
+    removeEntity('tasks', t.id);
+  }
+  broadcastChange('task', 'bulk', { workspaceId: wsId, byUserId: req.user.id });
+  res.json({ ok: true, deleted: { tasks: affected.length, demands: deletedDemands } });
+});
+// Retro-compat: rota antiga → injeta projectId no body e reusa o handler.
+app.post('/api/projects/:projectId/apply-lista', requireAuth, (req, res) => {
+  req.body = { ...(req.body || {}), projectId: req.params.projectId };
+  _applyListaHandler(req, res);
+});
+app.put('/api/tasks/:id', requireAuth, (req, res) => {
+  const t = (db.tasks || []).find(x => x.id === req.params.id);
+  if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Tarefa não encontrada' });
+  const b = req.body || {};
+  if (typeof b.name === 'string' && b.name.trim()) t.name = b.name.trim().slice(0, 200);
+  if (Number.isFinite(Number(b.sortOrder))) t.sortOrder = Number(b.sortOrder);
+  saveEntity('tasks', t);
+  broadcastChange('task', 'update', { id: t.id, workspaceId: t.workspaceId, byUserId: req.user.id });
+  res.json(t);
+});
+app.delete('/api/tasks/:id', requireAuth, (req, res) => {
+  const t = (db.tasks || []).find(x => x.id === req.params.id);
+  if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Tarefa não encontrada' });
+  db.tasks = db.tasks.filter(x => x.id !== t.id);
+  removeEntity('tasks', t.id);
+  broadcastChange('task', 'delete', { id: t.id, workspaceId: t.workspaceId, byUserId: req.user.id });
+  res.json({ ok: true });
+});
+// Vincula uma demanda a uma tarefa (chamado após criar a demanda a partir da
+// tarefa). Valida que a demanda pertence ao mesmo projeto — evita link cruzado.
+app.post('/api/tasks/:id/link-demand', requireAuth, (req, res) => {
+  const t = (db.tasks || []).find(x => x.id === req.params.id);
+  if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Tarefa não encontrada' });
+  const demandId = String(req.body?.demandId || '');
+  const d = db.demands.find(x => x.id === demandId);
+  if (!d || !canAccessWs(req.user, d.workspaceId)) return res.status(404).json({ error: 'Demanda não encontrada' });
+  if (d.projectId !== t.projectId) return res.status(400).json({ error: 'Demanda não pertence ao mesmo projeto' });
+  t.demandId = d.id;
+  saveEntity('tasks', t);
+  broadcastChange('task', 'update', { id: t.id, workspaceId: t.workspaceId, byUserId: req.user.id });
+  res.json(t);
 });
 
 /* ── WEBHOOKS ── */
-app.get('/api/webhooks', requireAuth, (req, res) => {
-  const ids = wsIdsFor(req.user);
-  res.json((db.webhooks || []).filter(h => ids.includes(h.workspaceId)));
+// Webhooks são universais (valem pra todos os squads) — lista todos. Gate
+// mod/admin: são só esses perfis que gerenciam a tela, e a lista expõe URLs.
+app.get('/api/webhooks', requireAuth, modOrAdmin, (req, res) => {
+  res.json(db.webhooks || []);
 });
-function validateTargetUser(targetUserId, workspaceId) {
+function validateTargetUser(targetUserId) {
   if (!targetUserId) return { ok: true, value: null };
   const u = db.users.find(x => x.id === targetUserId);
   if (!u) return { ok: false, error: 'Usuário alvo não encontrado' };
-  if (!canAccessWs(u, workspaceId)) return { ok: false, error: 'Usuário alvo não tem acesso a este workspace' };
   return { ok: true, value: u.id };
 }
 // Valida o par cliente/projeto do filtro do webhook. Ambos opcionais; se o projeto
 // tem cliente definido, os dois precisam ser consistentes. Retorna os ids normalizados.
-function validateWebhookScope(clientId, projectId, workspaceId) {
+function validateWebhookScope(clientId, projectId) {
   let cId = null, pId = null;
   if (clientId) {
     const c = db.clients.find(x => x.id === clientId && notDeleted(x));
-    if (!c || c.workspaceId !== workspaceId) return { ok: false, error: 'Cliente do filtro não encontrado neste workspace' };
+    if (!c) return { ok: false, error: 'Cliente do filtro não encontrado' };
     cId = c.id;
   }
   if (projectId) {
     const p = db.projects.find(x => x.id === projectId && notDeleted(x));
-    if (!p || p.workspaceId !== workspaceId) return { ok: false, error: 'Projeto do filtro não encontrado neste workspace' };
+    if (!p) return { ok: false, error: 'Projeto do filtro não encontrado' };
     if (cId && p.clientId !== cId) return { ok: false, error: 'O projeto do filtro não pertence ao cliente selecionado' };
     pId = p.id;
     if (!cId && p.clientId) cId = p.clientId; // projeto define o cliente implicitamente
@@ -4671,18 +5290,16 @@ function validateWebhookScope(clientId, projectId, workspaceId) {
 }
 app.post('/api/webhooks', requireAuth, modOrAdmin, (req, res) => {
   const b = req.body || {};
-  const ws = b.workspaceId && canAccessWs(req.user, b.workspaceId) ? b.workspaceId : wsIdsFor(req.user)[0];
-  if (!ws) return res.status(400).json({ error: 'Squad inválido' });
   if (!String(b.name || '').trim()) return res.status(400).json({ error: 'Nome obrigatório' });
   if (!String(b.url || '').trim().startsWith('http')) return res.status(400).json({ error: 'URL inválida' });
   const validEvents = Array.isArray(b.events) ? b.events.filter(e => WEBHOOK_EVENTS[e]) : [];
   if (!validEvents.length) return res.status(400).json({ error: 'Selecione ao menos um evento' });
-  const target = validateTargetUser(b.targetUserId || null, ws);
+  const target = validateTargetUser(b.targetUserId || null);
   if (!target.ok) return res.status(400).json({ error: target.error });
-  const scope = validateWebhookScope(b.clientId || null, b.projectId || null, ws);
+  const scope = validateWebhookScope(b.clientId || null, b.projectId || null);
   if (!scope.ok) return res.status(400).json({ error: scope.error });
   const h = {
-    id: uid(), workspaceId: ws,
+    id: uid(), workspaceId: null, // universal — vale pra todos os squads
     name: String(b.name).trim(),
     url: String(b.url).trim(),
     format: b.format === 'discord' ? 'discord' : 'raw',
@@ -4700,7 +5317,7 @@ app.post('/api/webhooks', requireAuth, modOrAdmin, (req, res) => {
 });
 app.put('/api/webhooks/:id', requireAuth, modOrAdmin, (req, res) => {
   const h = (db.webhooks || []).find(x => x.id === req.params.id);
-  if (!h || !canAccessWs(req.user, h.workspaceId)) return res.status(404).json({ error: 'Webhook não encontrado' });
+  if (!h) return res.status(404).json({ error: 'Webhook não encontrado' });
   const b = req.body || {};
   if (typeof b.name === 'string' && b.name.trim()) h.name = b.name.trim();
   if (typeof b.url === 'string' && b.url.trim().startsWith('http')) h.url = b.url.trim();
@@ -4708,14 +5325,14 @@ app.put('/api/webhooks/:id', requireAuth, modOrAdmin, (req, res) => {
   if (Array.isArray(b.events)) h.events = b.events.filter(e => WEBHOOK_EVENTS[e]);
   if (typeof b.active === 'boolean') h.active = b.active;
   if (b.targetUserId !== undefined) {
-    const target = validateTargetUser(b.targetUserId || null, h.workspaceId);
+    const target = validateTargetUser(b.targetUserId || null);
     if (!target.ok) return res.status(400).json({ error: target.error });
     h.targetUserId = target.value;
   }
   if (b.clientId !== undefined || b.projectId !== undefined) {
     const nextClient = b.clientId !== undefined ? (b.clientId || null) : (h.clientId || null);
     const nextProject = b.projectId !== undefined ? (b.projectId || null) : (h.projectId || null);
-    const scope = validateWebhookScope(nextClient, nextProject, h.workspaceId);
+    const scope = validateWebhookScope(nextClient, nextProject);
     if (!scope.ok) return res.status(400).json({ error: scope.error });
     h.clientId = scope.clientId;
     h.projectId = scope.projectId;
@@ -4725,14 +5342,14 @@ app.put('/api/webhooks/:id', requireAuth, modOrAdmin, (req, res) => {
 });
 app.delete('/api/webhooks/:id', requireAuth, modOrAdmin, (req, res) => {
   const h = (db.webhooks || []).find(x => x.id === req.params.id);
-  if (!h || !canAccessWs(req.user, h.workspaceId)) return res.status(404).json({ error: 'Webhook não encontrado' });
+  if (!h) return res.status(404).json({ error: 'Webhook não encontrado' });
   db.webhooks = db.webhooks.filter(x => x.id !== req.params.id);
   removeEntity('webhooks', req.params.id);
   res.json({ ok: true });
 });
 app.post('/api/webhooks/:id/test', requireAuth, modOrAdmin, async (req, res) => {
   const h = (db.webhooks || []).find(x => x.id === req.params.id);
-  if (!h || !canAccessWs(req.user, h.workspaceId)) return res.status(404).json({ error: 'Webhook não encontrado' });
+  if (!h) return res.status(404).json({ error: 'Webhook não encontrado' });
   if (!isSafeWebhookUrl(h.url)) {
     h.lastError = 'URL bloqueada (rede interna, loopback ou protocolo inválido)';
     h.lastStatus = 0;
@@ -4741,7 +5358,7 @@ app.post('/api/webhooks/:id/test', requireAuth, modOrAdmin, async (req, res) => 
   }
   const fakeDemand = {
     id: 'test', name: '🧪 Teste do webhook do reWork',
-    workspaceId: h.workspaceId, projectId: null, status: 'test',
+    workspaceId: wsIdsFor(req.user)[0] || null, projectId: null, status: 'test',
     priority: 3, ownerId: req.user.id, description: 'Esta é uma mensagem de teste para validar a integração.'
   };
   const ctx = { demand: fakeDemand, project: null, user: req.user, owner: req.user, appBaseUrl: appBaseUrl(req) };

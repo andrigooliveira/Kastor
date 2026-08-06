@@ -195,7 +195,7 @@ async function syncCalendar(tokens, calendarId, syncToken, onTokenRefresh) {
 
 // Converte o payload cru da Google pro shape local. Tolera eventos parciais
 // (só start, sem end etc) — nada quebra se algum campo faltar.
-function normalizeEvent(raw, calendarId, calendarColor) {
+function normalizeEvent(raw, calendarId, calendarColor, ownerEmail) {
   const isAllDay = !!(raw.start && raw.start.date);
   const start = isAllDay ? raw.start.date : (raw.start && raw.start.dateTime) || null;
   const end   = isAllDay ? (raw.end && raw.end.date) : (raw.end && raw.end.dateTime) || null;
@@ -214,8 +214,21 @@ function normalizeEvent(raw, calendarId, calendarColor) {
     // Prioridade: hangoutLink (Meet nativo) → conferenceData.entryPoints (Meet/Zoom
     // configurado via conference) → location → description (regex de URL).
     meeting: detectMeeting(raw),
+    // Response status do próprio usuário: 'accepted' | 'declined' | 'needsAction' |
+    // 'tentative' | null (organizador único ou evento sem convite).
+    selfResponseStatus: findSelfResponseStatus(raw, ownerEmail),
     updated: raw.updated || null
   };
+}
+
+// Response status do usuário-dono do calendário: procura attendee com self:true;
+// fallback pra match por email. Null quando o evento é solo (sem attendees).
+function findSelfResponseStatus(raw, ownerEmail) {
+  const attendees = Array.isArray(raw.attendees) ? raw.attendees : [];
+  if (!attendees.length) return null;
+  const self = attendees.find(a => a && a.self === true)
+    || (ownerEmail ? attendees.find(a => a && a.email && a.email.toLowerCase() === String(ownerEmail).toLowerCase()) : null);
+  return self ? (self.responseStatus || null) : null;
 }
 
 function detectMeeting(raw) {
