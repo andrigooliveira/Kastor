@@ -393,6 +393,7 @@ function migrate(firstInstall) {
   // Webhooks são universais desde o rebranding — força workspaceId=null nos
   // registros antigos pra remover qualquer ambiguidade e evitar filtros por
   // squad em código legado.
+  const totalHooks = (db.webhooks || []).length;
   let webhookMigrated = 0;
   (db.webhooks || []).forEach(h => {
     if (h.workspaceId != null) {
@@ -401,7 +402,7 @@ function migrate(firstInstall) {
       webhookMigrated++;
     }
   });
-  if (webhookMigrated) console.log(`› Cleanup: ${webhookMigrated} webhook(s) migrado(s) para universal`);
+  console.log(`› Webhooks: ${totalHooks} carregado(s) em cache · ${webhookMigrated} migrado(s) p/ universal · GET /api/webhooks devolve TODOS`);
 }
 
 /* ─── SEED inicial ─── */
@@ -5276,7 +5277,14 @@ app.post('/api/tasks/:id/link-demand', requireAuth, (req, res) => {
 // Payload NUNCA leva workspaceId — evita que cliente antigo tente inferir
 // escopo de squad por esse campo (universalidade explícita no fio).
 app.get('/api/webhooks', requireAuth, modOrAdmin, (req, res) => {
-  const list = (db.webhooks || []).map(({ workspaceId, ...rest }) => rest);
+  // Anti-cache — nenhum proxy/browser deve reter esta resposta. GETs de webhook
+  // são baratos e precisam refletir a verdade do momento.
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  const raw = db.webhooks || [];
+  const list = raw.map(({ workspaceId, ...rest }) => rest);
+  console.log(`[webhooks/get] user=${req.user.username} → ${list.length} webhook(s) (cache tem ${raw.length}; universais, sem filtro por squad)`);
   res.json(list);
 });
 function validateTargetUser(targetUserId) {

@@ -2903,6 +2903,11 @@ function switchWorkspace(id) {
   // Fecha o dropdown do switcher
   const cdrop = $('ws-cdrop');
   if (cdrop) cdrop.classList.remove('open');
+  // Integrações são UNIVERSAIS mas o array `webhooks` é global — invalida
+  // deliberadamente pra que a próxima entrada na tela refaça o fetch e não
+  // sirva um snapshot antigo (nem que fosse do outro squad, pra qualquer
+  // motivo). Fetch é barato (poucos KB) e a tela já refetch em renderIntegrations.
+  webhooks = [];
   renderWsSwitch();
   renderCurrent();
   toast('Squad: ' + (wsById(id)?.name || ''), 'success');
@@ -10521,7 +10526,10 @@ function sortWhBy(key) {
 }
 async function renderIntegrations() {
   try {
-    webhooks = await api('/webhooks');
+    // Cache-buster explícito no URL — se algum proxy/service-worker estiver
+    // devolvendo resposta antiga, o timestamp garante request novo.
+    webhooks = await api('/webhooks?_=' + Date.now());
+    console.debug(`[integrations] carregou ${webhooks.length} webhook(s) universais (squad ativo: ${activeWs || '—'})`);
   } catch (e) { /* ignore */ }
   // Integrações são UNIVERSAIS — não recortam por squad (o server já devolve todas).
   const allHooks = webhooks.slice();
