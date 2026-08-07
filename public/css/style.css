@@ -3043,6 +3043,113 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 .comment-compose textarea { resize: vertical; min-height: 64px; }
 .comment-compose-bar { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
 .comment-attach-btns { display: flex; gap: 4px; }
+
+/* ─── Editor rich text de comentário (contenteditable) ───
+   Cresce com o conteúdo até max-height, então rola dentro. Placeholder aparece
+   quando o :empty do editor está sem texto E sem imagens. */
+.comment-toolbar {
+  display: flex; align-items: center; gap: 2px;
+  padding: 4px 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-bottom: 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+.comment-tool {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px;
+  background: transparent; border: 0; border-radius: 4px;
+  color: var(--text-dim); cursor: pointer;
+  transition: background .12s var(--ease-out), color .12s var(--ease-out);
+}
+.comment-tool:hover { background: var(--surface-3); color: var(--text); }
+.comment-tool.is-active { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent-text); }
+/* Ícones da toolbar em 13px — menores que o ic-xs default (12) só quando
+   dentro da toolbar, sem afetar outros lugares que usam ic-xs. */
+.comment-toolbar .comment-tool i,
+.comment-toolbar .comment-tool svg {
+  width: 13px !important; height: 13px !important;
+}
+.comment-toolbar-sep {
+  width: 1px; height: 14px; background: var(--hairline); margin: 0 3px;
+}
+/* Popover inline pra inserir link. Ancorado ao botão da toolbar via top/left
+   calculados em JS. z-index alto pra ficar sobre modais abertos. */
+.comment-link-pop {
+  position: absolute;
+  z-index: 10001;
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0,0,0,.25));
+  min-width: 300px;
+  animation: linkPopIn .12s var(--ease-out);
+}
+@keyframes linkPopIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+.comment-link-input {
+  flex: 1; min-width: 0;
+  padding: 5px 8px !important;
+  font-size: 12.5px !important;
+  height: 28px !important;
+}
+.comment-link-pop .btn { padding: 4px 10px; height: 28px; }
+.comment-input-ce {
+  min-height: 64px;
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  font-family: inherit; font-size: 13.5px; line-height: 1.5;
+  color: var(--text);
+  outline: none;
+  word-break: break-word;
+}
+.comment-input-ce:focus {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--hairline));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+/* Placeholder — controlado pela classe .is-empty (setada pelo JS sempre que
+   o editor não tem texto NEM imagens). :empty puro não funciona porque o
+   Chrome injeta <br> ao focar o campo. */
+.comment-input-ce.is-empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-muted);
+  pointer-events: none;
+  display: block;
+}
+.comment-input-ce ol,
+.comment-input-ce ul { margin: 4px 0 4px 22px; padding: 0; }
+.comment-input-ce ol { list-style: decimal outside; }
+.comment-input-ce ul { list-style: disc outside; }
+.comment-input-ce li { margin: 2px 0; }
+.comment-input-ce img {
+  max-width: 100%; max-height: 240px;
+  border-radius: 6px;
+  margin: 4px 0;
+  display: inline-block;
+}
+.comment-input-ce p { margin: 0 0 6px; }
+.comment-input-ce a { color: var(--accent-text); text-decoration: underline; }
+
+/* Comentário RENDERIZADO no thread — mesmo tratamento de listas/imagens
+   pra ficar consistente com o compositor. */
+.comment-text ol,
+.comment-text ul { margin: 4px 0 4px 22px; padding: 0; }
+.comment-text ol { list-style: decimal outside; }
+.comment-text ul { list-style: disc outside; }
+.comment-text li { margin: 2px 0; }
+.comment-text img {
+  max-width: 100%; max-height: 320px;
+  border-radius: 6px; margin: 4px 0;
+  display: inline-block; cursor: zoom-in;
+}
 .comment-pending-files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .pending-file {
   display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px;

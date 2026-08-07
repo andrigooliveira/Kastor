@@ -5299,14 +5299,15 @@ function buildReportsHTML(data) {
       sub: `de ${t.demandsTotal || 0} no período`, tone: 'default', icon: 'check-check' },
   ]);
 
-  // ── Tempo médio por etapa (gargalos) — já vem ordenado desc pelo server ──
+  // ── Tempo médio por etapa — já vem ordenado desc pelo server. Etapas com
+  //    mesmo nome (mesmo em fluxos/clientes diferentes) vêm unificadas do server.
   const stages = (data.stageStats || []).filter(s => s.samples > 0);
   const maxStage = stages.length ? stages[0].avgHours : 0;
-  const stageBars = stages.length ? stages.map((s, i) => {
+  const stageBars = stages.length ? stages.map((s) => {
     const pct = maxStage ? Math.max(3, (s.avgHours / maxStage) * 100) : 0;
     return `<div class="rep-bar-row">
       <div class="rep-bar-head">
-        <span class="rep-bar-name">${esc(s.stageName)}${i === 0 ? '<span class="rep-tag">gargalo</span>' : ''}</span>
+        <span class="rep-bar-name">${esc(s.stageName)}</span>
         <span class="rep-bar-val">${fmtDur(s.avgHours)}</span>
       </div>
       <div class="rep-bar-track"><div class="rep-bar-fill" style="width:${pct}%;background:${s.stageColor || 'var(--accent)'}"></div></div>
@@ -5376,7 +5377,7 @@ function buildReportsHTML(data) {
     <div class="rep-kpis">${kpis}</div>
     <div class="rep-card">
       <div class="rep-card-title"><i data-lucide="bar-chart-3" class="ic-sm"></i> Tempo médio por etapa</div>
-      <div class="rep-card-hint">Tempo de calendário (entrada → saída da etapa). O maior é o gargalo do processo.</div>
+      <div class="rep-card-hint">Tempo de calendário (entrada → saída da etapa). Etapas com mesmo nome — em fluxos ou clientes diferentes — vêm agrupadas.</div>
       <div class="rep-bars">${stageBars}</div>
     </div>
     <div class="rep-card">
@@ -6688,19 +6689,21 @@ function renderDetail() {
         <div class="comment-list">${comments || '<div class="hours-empty">Nenhum comentário ainda. Use @ para marcar alguém da equipe.</div>'}</div>
         <div class="comment-compose">
           <div class="comment-toolbar" role="toolbar" aria-label="Formatação">
-            <button type="button" class="comment-tool" data-cmd="bold" title="Negrito (Ctrl+B)" onmousedown="event.preventDefault()" onclick="execCommentCmd('bold')"><i data-lucide="bold" class="ic-sm"></i></button>
-            <button type="button" class="comment-tool" data-cmd="italic" title="Itálico (Ctrl+I)" onmousedown="event.preventDefault()" onclick="execCommentCmd('italic')"><i data-lucide="italic" class="ic-sm"></i></button>
-            <button type="button" class="comment-tool" data-cmd="underline" title="Sublinhado (Ctrl+U)" onmousedown="event.preventDefault()" onclick="execCommentCmd('underline')"><i data-lucide="underline" class="ic-sm"></i></button>
+            <button type="button" class="comment-tool" data-cmd="bold" title="Negrito (Ctrl+B)" onmousedown="event.preventDefault()" onclick="execCommentCmd('bold')"><i data-lucide="bold" class="ic-xs"></i></button>
+            <button type="button" class="comment-tool" data-cmd="italic" title="Itálico (Ctrl+I)" onmousedown="event.preventDefault()" onclick="execCommentCmd('italic')"><i data-lucide="italic" class="ic-xs"></i></button>
+            <button type="button" class="comment-tool" data-cmd="underline" title="Sublinhado (Ctrl+U)" onmousedown="event.preventDefault()" onclick="execCommentCmd('underline')"><i data-lucide="underline" class="ic-xs"></i></button>
             <span class="comment-toolbar-sep"></span>
-            <button type="button" class="comment-tool" data-cmd="insertOrderedList" title="Lista numerada" onmousedown="event.preventDefault()" onclick="execCommentCmd('insertOrderedList')"><i data-lucide="list-ordered" class="ic-sm"></i></button>
-            <button type="button" class="comment-tool" data-cmd="insertUnorderedList" title="Lista com marcadores" onmousedown="event.preventDefault()" onclick="execCommentCmd('insertUnorderedList')"><i data-lucide="list" class="ic-sm"></i></button>
+            <button type="button" class="comment-tool" data-cmd="insertOrderedList" title="Lista numerada" onmousedown="event.preventDefault()" onclick="execCommentCmd('insertOrderedList')"><i data-lucide="list-ordered" class="ic-xs"></i></button>
+            <button type="button" class="comment-tool" data-cmd="insertUnorderedList" title="Lista com marcadores" onmousedown="event.preventDefault()" onclick="execCommentCmd('insertUnorderedList')"><i data-lucide="list" class="ic-xs"></i></button>
+            <span class="comment-toolbar-sep"></span>
+            <button type="button" class="comment-tool" data-cmd="createLink" title="Inserir link" onmousedown="event.preventDefault()" onclick="promptCommentLink()"><i data-lucide="link" class="ic-xs"></i></button>
           </div>
-          <div class="comment-input comment-input-ce" id="comment-input"
+          <div class="comment-input comment-input-ce is-empty" id="comment-input"
                contenteditable="true"
                role="textbox"
                aria-multiline="true"
                data-placeholder="Digite seu comentário — use @ para marcar, cole (Ctrl+V) ou arraste imagens"
-               oninput="mentionWatchCE(this); draftSaveCommentCE(this); refreshToolbarState()"
+               oninput="mentionWatchCE(this); draftSaveCommentCE(this); refreshToolbarState(); syncCommentEmptyState(this)"
                onkeydown="mentionKeys(event)"
                onkeyup="refreshToolbarState()"
                onmouseup="refreshToolbarState()"></div>
@@ -6782,6 +6785,18 @@ function renderDetail() {
   setupDragDrop('#detail-modal .detail-content', 'detail-attachments-list', processDroppedFiles);
   // Paste + drag-and-drop de imagens direto no compositor de comentários
   setupCommentComposer();
+  // Abre imagens inline dos comentários em nova aba ao clicar (mesma UX dos
+  // anexos). Delegação escopada em .comment-list — o innerHTML é substituído
+  // a cada renderDetail, então não há acúmulo de listeners.
+  const list = document.querySelector('#detail-content .comment-list');
+  if (list) {
+    list.addEventListener('click', (ev) => {
+      const img = ev.target.closest('.comment-text img');
+      if (img && img.src) window.open(img.src, '_blank');
+    });
+  }
+  // Estado inicial da toolbar (bordas ativas conforme seleção atual do editor).
+  refreshToolbarState();
 }
 
 /* Owner picker — dropdown customizado com avatar do responsável atual */
@@ -6878,10 +6893,18 @@ function markDetailDirty(key) { detailDirty[key] = true; renderDetailDirtyBadge(
 function hasUnsavedDetailEdits() {
   if (Object.keys(detailDirty).length > 0) return true;
   const ci = document.getElementById('comment-input');
-  if (ci && ci.value.trim()) return true;
+  if (ci) {
+    // Editor rich text (contenteditable) — verifica plain text OU imagens inline.
+    if (ci.isContentEditable) {
+      const plain = (ci.innerText || ci.textContent || '').trim();
+      if (plain || /<img\b/i.test(ci.innerHTML || '')) return true;
+    } else if (ci.value && ci.value.trim()) {
+      return true;
+    }
+  }
   if (typeof pendingAttachments !== 'undefined' && pendingAttachments && pendingAttachments.length) return true;
-  // Verifica se há comentários em edição inline
-  if (document.getElementById('edit-comment-text')) return true;
+  // Edição inline de comentário — id passou a incluir o cid.
+  if (document.querySelector('[id^="edit-comment-text-"]')) return true;
   return false;
 }
 function discardDetailEdits() { detailDirty = {}; }
@@ -8619,6 +8642,118 @@ function execCommentCmd(cmd) {
   try { document.execCommand(cmd, false, null); } catch {}
   refreshToolbarState();
 }
+// Alterna a classe .is-empty no editor pra que o placeholder (via ::before)
+// apareça só quando não há texto NEM imagem. Chrome injeta <br> ao focar, então
+// não podemos confiar só no seletor CSS :empty.
+function syncCommentEmptyState(el) {
+  if (!el) return;
+  const hasImg = /<img\b/i.test(el.innerHTML || '');
+  const hasText = (el.innerText || el.textContent || '').replace(/​/g, '').trim().length > 0;
+  el.classList.toggle('is-empty', !hasImg && !hasText);
+}
+// Popover inline pra inserir link — evita tirar o usuário da tela.
+// Aparece abaixo do botão de link, guarda a seleção atual do editor pra
+// que o URL seja aplicado no ponto certo depois do foco no input.
+function promptCommentLink(anchorBtn) {
+  const el = $('comment-input');
+  if (!el) return;
+  _openLinkPopover(anchorBtn || event?.currentTarget, el);
+}
+function promptEditCommentLink(cid, anchorBtn) {
+  const el = document.getElementById('edit-comment-text-' + cid);
+  if (!el) return;
+  _openLinkPopover(anchorBtn || event?.currentTarget, el);
+}
+let _linkPopSavedRange = null;
+let _linkPopEditor = null;
+function _openLinkPopover(anchorBtn, editorEl) {
+  _closeLinkPopover();
+  // Guarda a Range atual — abrir o popover vai roubar o foco.
+  const sel = window.getSelection && window.getSelection();
+  _linkPopSavedRange = (sel && sel.rangeCount && editorEl.contains(sel.anchorNode))
+    ? sel.getRangeAt(0).cloneRange() : null;
+  _linkPopEditor = editorEl;
+  const selectedText = _linkPopSavedRange ? _linkPopSavedRange.toString() : '';
+  const pop = document.createElement('div');
+  pop.className = 'comment-link-pop';
+  pop.id = 'comment-link-pop';
+  pop.innerHTML = `
+    <input type="url" class="form-control comment-link-input" id="comment-link-input"
+           placeholder="https://exemplo.com" spellcheck="false">
+    <button type="button" class="btn btn-primary btn-sm" onclick="applyLinkPopover()">Inserir</button>
+    <button type="button" class="btn btn-ghost btn-sm" onclick="_closeLinkPopover()" title="Cancelar"><i data-lucide="x" class="ic-xs"></i></button>
+  `;
+  document.body.appendChild(pop);
+  // Posiciona ancorado ao botão da toolbar.
+  const rect = (anchorBtn || editorEl).getBoundingClientRect();
+  pop.style.top  = (window.scrollY + rect.bottom + 6) + 'px';
+  pop.style.left = (window.scrollX + rect.left) + 'px';
+  // Se não couber pela direita, alinha pela direita do botão.
+  requestAnimationFrame(() => {
+    const pr = pop.getBoundingClientRect();
+    if (pr.right > window.innerWidth - 8) {
+      pop.style.left = (window.scrollX + rect.right - pr.width) + 'px';
+    }
+  });
+  paintIcons(pop);
+  const input = $('comment-link-input');
+  // Pré-preenche se selecionado já parece URL, senão fica vazio.
+  if (selectedText && /^https?:\/\//i.test(selectedText)) input.value = selectedText;
+  input.focus();
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); applyLinkPopover(); }
+    else if (e.key === 'Escape') { e.preventDefault(); _closeLinkPopover(); }
+  });
+  // Fecha ao clicar fora.
+  setTimeout(() => document.addEventListener('mousedown', _linkPopOutside), 0);
+}
+function _linkPopOutside(e) {
+  const pop = document.getElementById('comment-link-pop');
+  if (!pop) { document.removeEventListener('mousedown', _linkPopOutside); return; }
+  if (pop.contains(e.target)) return;
+  // Clique em botão de link da toolbar também fecha (será reabrido).
+  if (e.target.closest && e.target.closest('.comment-tool[title="Inserir link"]')) return;
+  _closeLinkPopover();
+}
+function _closeLinkPopover() {
+  document.removeEventListener('mousedown', _linkPopOutside);
+  const pop = document.getElementById('comment-link-pop');
+  if (pop) pop.remove();
+  _linkPopSavedRange = null;
+  _linkPopEditor = null;
+}
+function applyLinkPopover() {
+  const input = $('comment-link-input');
+  const editor = _linkPopEditor;
+  const savedRange = _linkPopSavedRange;
+  const raw = (input?.value || '').trim();
+  if (!raw || !editor) { _closeLinkPopover(); return; }
+  const normalized = /^([a-z][a-z0-9+.-]*):/i.test(raw) ? raw : 'https://' + raw;
+  editor.focus();
+  if (savedRange && window.getSelection) {
+    const s = window.getSelection(); s.removeAllRanges(); s.addRange(savedRange);
+  }
+  const selectedText = savedRange ? savedRange.toString() : '';
+  try {
+    if (selectedText) {
+      document.execCommand('createLink', false, normalized);
+      // execCommand createLink não adiciona target/rel — patch manual.
+      _patchLinksTargetBlank(editor);
+    } else {
+      const anchor = `<a href="${esc(normalized)}" target="_blank" rel="noopener noreferrer">${esc(normalized)}</a>&nbsp;`;
+      document.execCommand('insertHTML', false, anchor);
+    }
+  } catch {}
+  _closeLinkPopover();
+  syncCommentEmptyState(editor);
+}
+// Garante target="_blank" rel="noopener noreferrer" nos <a> do editor.
+function _patchLinksTargetBlank(editor) {
+  editor.querySelectorAll('a').forEach(a => {
+    if (!a.getAttribute('target')) a.setAttribute('target', '_blank');
+    if (!a.getAttribute('rel'))    a.setAttribute('rel', 'noopener noreferrer');
+  });
+}
 // Atualiza os botões da toolbar pra refletir o estado da seleção atual
 // (ex.: cursor dentro de <b> ativa o botão de negrito).
 function refreshToolbarState() {
@@ -8660,11 +8795,12 @@ function draftRestoreComment() {
   if (!el) return;
   let saved = '';
   try { saved = localStorage.getItem(_DRAFT_KEY(detailId)) || ''; } catch {}
-  if (!saved) return;
+  if (!saved) { syncCommentEmptyState(el); return; }
   // Se ainda estiver vazio (usuário não começou a digitar entre render e restore).
   const currentHtml = (el.innerHTML || '').trim();
   const isEmpty = !currentHtml || /^<br\s*\/?>$/i.test(currentHtml);
   if (isEmpty) el.innerHTML = saved;
+  syncCommentEmptyState(el);
 }
 async function deleteComment(cid) {
   try {
@@ -8843,23 +8979,96 @@ function startEditComment(cid) {
     const preview = a.type && a.type.startsWith('image/') ? `<img src="${a.data}" class="pending-thumb">` : '<i data-lucide="file" class="ic-sm"></i>';
     return `<span class="pending-file">${preview} ${esc(a.name)} <button class="icon-btn danger" onclick="removeEditAtt('${cid}', ${i})" title="Remover"><i data-lucide="x" class="ic-sm"></i></button></span>`;
   }).join('');
+  // Edição usa o MESMO editor rich do compositor. Se o comentário original era
+  // texto plano (format ausente/'text'), converte quebras de linha em <br> e
+  // escapa HTML para não perder nada.
+  const startHtml = c.format === 'html'
+    ? (c.text || '')
+    : esc(c.text || '').replace(/\r?\n/g, '<br>');
   el.innerHTML = `
-    <textarea class="form-control" id="edit-comment-text" rows="3">${esc(c.text)}</textarea>
-    <div class="comment-pending-files" id="edit-comment-files">${atts}</div>
-    <div class="comment-compose-bar" style="margin-top:8px">
-      <div class="comment-attach-btns">
-        <input type="file" id="edit-file-input" multiple style="display:none" onchange="handleEditFiles(event,'${cid}')">
-        <button class="btn btn-ghost btn-sm" onclick="$('edit-file-input').click()"><i data-lucide="paperclip" class="ic-sm"></i></button>
-        <input type="file" id="edit-img-input" accept="image/*" multiple style="display:none" onchange="handleEditImages(event,'${cid}')">
-        <button class="btn btn-ghost btn-sm" onclick="$('edit-img-input').click()"><i data-lucide="image" class="ic-sm"></i></button>
+    <div class="comment-compose comment-edit-compose">
+      <div class="comment-toolbar" role="toolbar" aria-label="Formatação">
+        <button type="button" class="comment-tool" data-cmd="bold" title="Negrito" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${cid}','bold')"><i data-lucide="bold" class="ic-xs"></i></button>
+        <button type="button" class="comment-tool" data-cmd="italic" title="Itálico" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${cid}','italic')"><i data-lucide="italic" class="ic-xs"></i></button>
+        <button type="button" class="comment-tool" data-cmd="underline" title="Sublinhado" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${cid}','underline')"><i data-lucide="underline" class="ic-xs"></i></button>
+        <span class="comment-toolbar-sep"></span>
+        <button type="button" class="comment-tool" data-cmd="insertOrderedList" title="Lista numerada" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${cid}','insertOrderedList')"><i data-lucide="list-ordered" class="ic-xs"></i></button>
+        <button type="button" class="comment-tool" data-cmd="insertUnorderedList" title="Lista com marcadores" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${cid}','insertUnorderedList')"><i data-lucide="list" class="ic-xs"></i></button>
+        <span class="comment-toolbar-sep"></span>
+        <button type="button" class="comment-tool" data-cmd="createLink" title="Inserir link" onmousedown="event.preventDefault()" onclick="promptEditCommentLink('${cid}')"><i data-lucide="link" class="ic-xs"></i></button>
       </div>
-      <div style="display:flex;gap:6px">
-        <button class="btn btn-ghost btn-sm" onclick="renderDetail()">Cancelar</button>
-        <button class="btn btn-primary btn-sm" onclick="saveEditComment('${cid}')">Salvar</button>
+      <div class="comment-input comment-input-ce" id="edit-comment-text-${cid}"
+           contenteditable="true" role="textbox" aria-multiline="true"
+           oninput="syncCommentEmptyState(this)"
+           data-placeholder="Editar comentário…">${startHtml}</div>
+      <div class="comment-pending-files" id="edit-comment-files">${atts}</div>
+      <div class="comment-compose-bar" style="margin-top:8px">
+        <div class="comment-attach-btns">
+          <input type="file" id="edit-file-input" multiple style="display:none" onchange="handleEditFiles(event,'${cid}')">
+          <button class="btn btn-ghost btn-sm" onclick="$('edit-file-input').click()" title="Anexar arquivo"><i data-lucide="paperclip" class="ic-sm"></i></button>
+          <input type="file" id="edit-img-input" accept="image/*" multiple style="display:none" onchange="handleEditImagesInline(event,'${cid}')">
+          <button class="btn btn-ghost btn-sm" onclick="$('edit-img-input').click()" title="Inserir imagem inline"><i data-lucide="image" class="ic-sm"></i></button>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-ghost btn-sm" onclick="renderDetail()">Cancelar</button>
+          <button class="btn btn-primary btn-sm" onclick="saveEditComment('${cid}')">Salvar</button>
+        </div>
       </div>
     </div>`;
   el.dataset.editAtts = JSON.stringify(c.attachments || []);
-  $('edit-comment-text').focus();
+  // Paste como texto puro + inline images (mesmo comportamento do compositor).
+  const editEl = document.getElementById('edit-comment-text-' + cid);
+  if (editEl) {
+    editEl.addEventListener('paste', ev => {
+      const items = ev.clipboardData?.items || [];
+      const imgs = [];
+      for (const it of items) if (it.kind === 'file' && it.type.startsWith('image/')) { const f = it.getAsFile(); if (f) imgs.push(f); }
+      if (imgs.length) { ev.preventDefault(); _readImagesInlineInto(editEl, imgs); return; }
+      const txt = ev.clipboardData?.getData('text/plain');
+      if (txt !== undefined) { ev.preventDefault(); try { document.execCommand('insertText', false, txt); } catch {} }
+    });
+    editEl.focus();
+    // Caret no fim.
+    const range = document.createRange();
+    range.selectNodeContents(editEl); range.collapse(false);
+    const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+  }
+}
+function execEditCommentCmd(cid, cmd) {
+  const el = document.getElementById('edit-comment-text-' + cid);
+  if (!el) return;
+  el.focus();
+  try { document.execCommand(cmd, false, null); } catch {}
+}
+// Versão do readImagesInline que aceita um editor alvo — reaproveitada pelo
+// editor de edição inline.
+function _readImagesInlineInto(el, files) {
+  el.focus();
+  [...files].forEach(file => {
+    if (!file.type || !file.type.startsWith('image/')) return;
+    if (file.size > 20 * 1024 * 1024) { toast('Imagem "' + file.name + '" excede 20 MB.', 'error'); return; }
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        const max = 1200;
+        let w = img.width, h = img.height;
+        if (w > max || h > max) { const r = Math.min(max / w, max / h); w = Math.round(w * r); h = Math.round(h * r); }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        const data = canvas.toDataURL('image/jpeg', 0.85);
+        insertImageIntoEditor(el, data, file.name);
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+function handleEditImagesInline(ev, cid) {
+  const el = document.getElementById('edit-comment-text-' + cid);
+  if (el) _readImagesInlineInto(el, ev.target.files);
+  ev.target.value = '';
 }
 function removeEditAtt(cid, idx) {
   const el = document.getElementById('comment-' + cid);
@@ -8925,11 +9134,16 @@ function handleEditImages(ev, cid) {
 }
 async function saveEditComment(cid) {
   const el = document.getElementById('comment-' + cid);
-  const text = $('edit-comment-text').value.trim();
+  const editEl = document.getElementById('edit-comment-text-' + cid);
+  const html = editEl ? _commentInputHtml(editEl) : '';
+  const plain = editEl ? _commentInputPlain(editEl) : '';
   const attachments = JSON.parse(el.dataset.editAtts || '[]');
-  if (!text && !attachments.length) { toast('O comentário não pode ficar vazio.', 'error'); return; }
+  const hasImg = /<img\b/i.test(html);
+  if (!plain.trim() && !attachments.length && !hasImg) { toast('O comentário não pode ficar vazio.', 'error'); return; }
   try {
-    const upd = await api('/demands/' + detailId + '/comment/' + cid, 'PUT', { text, attachments });
+    const upd = await api('/demands/' + detailId + '/comment/' + cid, 'PUT', {
+      text: html, format: 'html', attachments
+    });
     patchDemand(upd);
     renderDetail();
     toast('Comentário atualizado!');

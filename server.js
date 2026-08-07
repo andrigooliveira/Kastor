@@ -390,6 +390,18 @@ function migrate(firstInstall) {
     console.log(`› Cleanup: ${dupes.length} função(ões) duplicada(s) removida(s)`);
   }
 
+  // Webhooks são universais desde o rebranding — força workspaceId=null nos
+  // registros antigos pra remover qualquer ambiguidade e evitar filtros por
+  // squad em código legado.
+  let webhookMigrated = 0;
+  (db.webhooks || []).forEach(h => {
+    if (h.workspaceId != null) {
+      h.workspaceId = null;
+      markDirty('webhooks', h, 'upsert');
+      webhookMigrated++;
+    }
+  });
+  if (webhookMigrated) console.log(`› Cleanup: ${webhookMigrated} webhook(s) migrado(s) para universal`);
 }
 
 /* ─── SEED inicial ─── */
@@ -5261,8 +5273,11 @@ app.post('/api/tasks/:id/link-demand', requireAuth, (req, res) => {
 /* ── WEBHOOKS ── */
 // Webhooks são universais (valem pra todos os squads) — lista todos. Gate
 // mod/admin: são só esses perfis que gerenciam a tela, e a lista expõe URLs.
+// Payload NUNCA leva workspaceId — evita que cliente antigo tente inferir
+// escopo de squad por esse campo (universalidade explícita no fio).
 app.get('/api/webhooks', requireAuth, modOrAdmin, (req, res) => {
-  res.json(db.webhooks || []);
+  const list = (db.webhooks || []).map(({ workspaceId, ...rest }) => rest);
+  res.json(list);
 });
 function validateTargetUser(targetUserId) {
   if (!targetUserId) return { ok: true, value: null };
@@ -5298,8 +5313,9 @@ app.post('/api/webhooks', requireAuth, modOrAdmin, (req, res) => {
   if (!target.ok) return res.status(400).json({ error: target.error });
   const scope = validateWebhookScope(b.clientId || null, b.projectId || null);
   if (!scope.ok) return res.status(400).json({ error: scope.error });
+  // workspaceId do body é ignorado de propósito — webhooks são UNIVERSAIS.
   const h = {
-    id: uid(), workspaceId: null, // universal — vale pra todos os squads
+    id: uid(), workspaceId: null,
     name: String(b.name).trim(),
     url: String(b.url).trim(),
     format: b.format === 'discord' ? 'discord' : 'raw',
@@ -5313,7 +5329,8 @@ app.post('/api/webhooks', requireAuth, modOrAdmin, (req, res) => {
   };
   db.webhooks.push(h);
   saveEntity('webhooks', h);
-  res.status(201).json(h);
+  const { workspaceId, ...rest } = h;
+  res.status(201).json(rest);
 });
 app.put('/api/webhooks/:id', requireAuth, modOrAdmin, (req, res) => {
   const h = (db.webhooks || []).find(x => x.id === req.params.id);
@@ -5337,8 +5354,11 @@ app.put('/api/webhooks/:id', requireAuth, modOrAdmin, (req, res) => {
     h.clientId = scope.clientId;
     h.projectId = scope.projectId;
   }
+  // Blindagem: mantém universal mesmo se algum código antigo tentar setar workspaceId.
+  h.workspaceId = null;
   saveEntity('webhooks', h);
-  res.json(h);
+  const { workspaceId, ...rest } = h;
+  res.json(rest);
 });
 app.delete('/api/webhooks/:id', requireAuth, modOrAdmin, (req, res) => {
   const h = (db.webhooks || []).find(x => x.id === req.params.id);
@@ -5508,6 +5528,15 @@ function refreshEntityLinkTitles(entityType, entity, prev, broadcastKind) {
 }
 
 /* ── MÉTRICAS DE SLA ── */
+// Resume um Set de nomes de fluxo em uma string humana. Um → o próprio nome.
+// Poucos → junta com vírgula. Muitos → "N fluxos".
+function _summarizeFlowNames(set) {
+  const arr = [...(set || [])].filter(Boolean);
+  if (!arr.length) return '—';
+  if (arr.length === 1) return arr[0];
+  if (arr.length <= 3) return arr.join(', ');
+  return `${arr.length} fluxos`;
+}
 app.get('/api/reports/sla', requireAuth, rateLimitReport, (req, res) => {
   const ids = wsIdsFor(req.user);
   // Aceita 1..N workspaces em CSV (filtro de squads multi do front). Vazio = todos.
@@ -5557,8 +5586,11 @@ app.get('/api/reports/sla', requireAuth, rateLimitReport, (req, res) => {
   });
   const reworkRate = demands.length ? (reworked.length / demands.length) * 100 : 0;
 
-  // Tempo médio por etapa (em todas as demandas com histórico)
-  const stageTimings = {}; // { stageId: { stageName, flowName, samples: [hours] } }
+  // Tempo médio por etapa — UNIFICA etapas com mesmo NOME normalizado, mesmo
+  // que sejam ids diferentes em fluxos/clientes distintos. Ex.: "Aprovação" no
+  // fluxo A e no fluxo B viram uma barra só.
+  const _normStageKey = (label) => String(label || '').trim().toLowerCase();
+  const stageTimings = {}; // { normKey: { stageName, flowNames:Set, samples:[hours], stageColor } }
   demands.forEach(d => {
     const flow = db.flows.find(f => f.id === d.flowId);
     const sh = d.stageHistory || [];
@@ -5569,24 +5601,24 @@ app.get('/api/reports/sla', requireAuth, rateLimitReport, (req, res) => {
       const hours = (new Date(endTs) - new Date(s.enteredAt)) / 3600000;
       if (hours < 0) return;
       const stage = flow?.stages.find(x => x.id === s.stageId);
-      const key = s.stageId;
+      const label = stage?.label || '(etapa removida)';
+      const key = _normStageKey(label);
       if (!stageTimings[key]) {
         stageTimings[key] = {
-          stageId: key,
-          stageName: stage?.label || '(etapa removida)',
+          stageName: label,
           stageColor: stage?.color || '#7A00FF',
-          flowName: flow?.name || '—',
+          flowNames: new Set(),
           samples: []
         };
       }
+      if (flow?.name) stageTimings[key].flowNames.add(flow.name);
       stageTimings[key].samples.push(hours);
     });
   });
   const stageStats = Object.values(stageTimings).map(s => ({
-    stageId: s.stageId,
     stageName: s.stageName,
     stageColor: s.stageColor,
-    flowName: s.flowName,
+    flowName: _summarizeFlowNames(s.flowNames),
     avgHours: s.samples.reduce((a,b)=>a+b,0) / s.samples.length,
     samples: s.samples.length
   })).sort((a,b) => b.avgHours - a.avgHours);
@@ -5624,7 +5656,9 @@ app.get('/api/reports/sla', requireAuth, rateLimitReport, (req, res) => {
   //    do tempo de calendário (entrada → saída da etapa). Respeita o período pela
   //    data do apontamento (createdAt). ──
   let effortTotal = 0, demandsWithLog = 0;
-  const effByStage = {}; // stageId -> { hours, demands:Set }
+  // Também unifica por NOME normalizado — mesma etapa em fluxos diferentes vira
+  // uma barra só.
+  const effByStage = {}; // normKey -> { stageName, hours, demands:Set, flowNames:Set }
   const effByUser  = {}; // userId  -> { hours, entries }
   demands.forEach(d => {
     const entries = (d.timeEntries || []).filter(e =>
@@ -5636,23 +5670,28 @@ app.get('/api/reports/sla', requireAuth, rateLimitReport, (req, res) => {
       const h = Number(e.hours) || 0;
       effortTotal += h;
       const sid = e.stageId || '__none__';
-      if (!effByStage[sid]) {
-        const stage = flow?.stages.find(x => x.id === sid);
-        effByStage[sid] = {
-          stageId: sid, stageName: stage?.label || '(sem etapa)',
-          stageColor: stage?.color || '#7A00FF', flowName: flow?.name || '—',
+      const stage = flow?.stages.find(x => x.id === sid);
+      const label = stage?.label || (sid === '__none__' ? '(sem etapa)' : '(etapa removida)');
+      const key = _normStageKey(label);
+      if (!effByStage[key]) {
+        effByStage[key] = {
+          stageName: label,
+          stageColor: stage?.color || '#7A00FF',
+          flowNames: new Set(),
           hours: 0, demands: new Set()
         };
       }
-      effByStage[sid].hours += h;
-      effByStage[sid].demands.add(d.id);
+      if (flow?.name) effByStage[key].flowNames.add(flow.name);
+      effByStage[key].hours += h;
+      effByStage[key].demands.add(d.id);
       if (!effByUser[e.userId]) effByUser[e.userId] = { userId: e.userId, hours: 0, entries: 0 };
       effByUser[e.userId].hours += h;
       effByUser[e.userId].entries++;
     });
   });
   const effortByStage = Object.values(effByStage).map(s => ({
-    stageId: s.stageId, stageName: s.stageName, stageColor: s.stageColor, flowName: s.flowName,
+    stageName: s.stageName, stageColor: s.stageColor,
+    flowName: _summarizeFlowNames(s.flowNames),
     hours: s.hours, avgHours: s.hours / s.demands.size, demands: s.demands.size
   })).sort((a, b) => b.avgHours - a.avgHours);
   const effortByUser = Object.values(effByUser).map(u => {
