@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-title" content="reWork">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/css/style.css?v=20260807f">
+<link rel="stylesheet" href="/css/style.css?v=20260812g">
 </head>
 <body>
 
@@ -137,6 +137,10 @@
       <div class="nav-item" data-page="docs" onclick="goPage('docs')">
         <svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.25" stroke="currentColor" stroke-width="1.5"/><path d="M8 11V7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="5.25" r=".75" fill="currentColor"/></svg>
         Documentação
+      </div>
+      <div class="nav-item admin-only full-admin-only" data-page="devtools" id="nav-devtools" onclick="goPage('devtools')">
+        <svg viewBox="0 0 16 16" fill="none"><path d="M6 4L2.5 8 6 12M10 4l3.5 4L10 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Dev Tools
       </div>
     </nav>
     <div class="sidebar-footer">
@@ -503,7 +507,7 @@
           <div class="section-title">Minha Agenda</div>
           <div class="agenda-week-nav">
             <button class="btn btn-ghost btn-sm" onclick="agendaPrevWeek()" title="Semana anterior"><i data-lucide="chevron-left" class="ic-sm"></i></button>
-            <span class="agenda-week-label" id="mine-agenda-week-label">—</span>
+            <button type="button" class="agenda-week-label agdp-trigger" id="mine-agenda-week-label" onclick="agdpToggle('mine-week', event)" title="Escolher data">—</button>
             <button class="btn btn-ghost btn-sm" onclick="agendaNextWeek()" title="Próxima semana"><i data-lucide="chevron-right" class="ic-sm"></i></button>
             <button class="btn btn-ghost btn-sm" onclick="agendaThisWeek()">Hoje</button>
             <div class="agenda-view-toggle" style="margin-left:8px">
@@ -625,13 +629,13 @@
           </div>
           <div class="agenda-week-nav" id="agenda-nav-week">
             <button class="btn btn-ghost btn-sm" onclick="agendaPrevWeek()" title="Semana anterior"><i data-lucide="chevron-left" class="ic-sm"></i></button>
-            <span class="agenda-week-label" id="agenda-week-label">—</span>
+            <button type="button" class="agenda-week-label agdp-trigger" id="agenda-week-label" onclick="agdpToggle('week', event)" title="Escolher data">—</button>
             <button class="btn btn-ghost btn-sm" onclick="agendaNextWeek()" title="Próxima semana"><i data-lucide="chevron-right" class="ic-sm"></i></button>
             <button class="btn btn-ghost btn-sm" onclick="agendaThisWeek()">Hoje</button>
           </div>
           <div class="agenda-week-nav" id="agenda-nav-day" style="display:none">
             <button class="btn btn-ghost btn-sm" onclick="agendaPrevDay()" title="Dia anterior"><i data-lucide="chevron-left" class="ic-sm"></i></button>
-            <span class="agenda-week-label" id="agenda-day-label">—</span>
+            <button type="button" class="agenda-week-label agdp-trigger" id="agenda-day-label" onclick="agdpToggle('day', event)" title="Escolher data">—</button>
             <button class="btn btn-ghost btn-sm" onclick="agendaNextDay()" title="Próximo dia"><i data-lucide="chevron-right" class="ic-sm"></i></button>
             <button class="btn btn-ghost btn-sm" onclick="agendaTodayDay()">Hoje</button>
           </div>
@@ -1272,6 +1276,19 @@
           Itens excluídos — clientes, projetos, demandas, fluxos, listas e modelos de cliente — ficam aqui por <strong>30 dias</strong> e depois são removidos definitivamente do servidor. Restaure enquanto estiverem na lista.
         </div>
         <div id="trash-body"></div>
+      </div>
+    </div>
+
+    <!-- ── DEV TOOLS (admin) — hub de links pra rotas sem entrada no menu ── -->
+    <div class="page" id="page-devtools">
+      <div class="page-body">
+        <div class="section-head" style="margin-bottom:8px">
+          <div class="section-title">Dev Tools</div>
+        </div>
+        <div class="dt-hint">
+          Atalhos pra rotas que existem no roteador mas não têm entrada no menu lateral — ou têm, mas só chegam via botão dentro de outra tela. Compartilhe pelo link direto se precisar.
+        </div>
+        <div id="devtools-groups"></div>
       </div>
     </div>
 
@@ -2549,6 +2566,24 @@
           <tbody id="dtype-mng-body"></tbody>
         </table>
       </div>
+      <div id="dtype-orphans-wrap" class="dtype-orphans" style="display:none">
+        <a href="#" class="dtype-orphans-toggle" id="dtype-orphans-toggle" onclick="toggleOrphanDemandTypes(event)">
+          <i data-lucide="chevron-right" class="ic-xs dtype-orphans-caret"></i>
+          <span>Órfãos</span>
+          <span class="dtype-orphans-count" id="dtype-orphans-count"></span>
+        </a>
+        <div class="dtype-orphans-panel" id="dtype-orphans-panel" style="display:none">
+          <div class="dtype-mng-hint" style="margin-top:10px">
+            Valores que aparecem no campo <em>Tipo</em> de algum fluxo mas não estão na biblioteca acima. Aparecem no filtro do Dashboard. <strong>Promover</strong> adiciona à biblioteca; <strong>Limpar</strong> apaga o campo em todos os fluxos que usam.
+          </div>
+          <div class="table-wrap table-scroll">
+            <table>
+              <thead><tr><th>Tipo órfão</th><th style="width:90px">Fluxos</th><th style="width:180px"></th></tr></thead>
+              <tbody id="dtype-orphans-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -2758,7 +2793,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260807f"></script>
+<script src="/js/app.js?v=20260812g"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

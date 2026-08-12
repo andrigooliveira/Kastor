@@ -1982,6 +1982,24 @@ app.delete('/api/demand-types/:id', requireAuth, modOrAdmin, (req, res) => {
   broadcastChange('demandType', 'delete', { id: req.params.id, byUserId: req.user.id });
   res.json({ ok: true });
 });
+/* Limpa o campo `demandType` (setando '') em todos os fluxos cujo valor case
+   exatamente com `name`. Usado pelo botão "Limpar" da seção "Tipos órfãos"
+   no modal Gerenciar Tipos — dá cabo dos valores livres que sobraram nos
+   fluxos e ficavam poluindo o filtro do Dashboard. */
+app.post('/api/demand-types/orphans/clear', requireAuth, modOrAdmin, (req, res) => {
+  const name = String((req.body || {}).name || '').trim();
+  if (!name) return res.status(400).json({ error: 'name é obrigatório' });
+  let touched = 0;
+  db.flows.forEach(f => {
+    if (notDeleted(f) && String(f.demandType || '') === name) {
+      f.demandType = '';
+      saveEntity('flows', f);
+      broadcastChange('flow', 'update', { id: f.id, workspaceId: f.workspaceId, byUserId: req.user.id });
+      touched++;
+    }
+  });
+  res.json({ ok: true, cleared: touched });
+});
 
 /* ── CARGOS (posições dentro de uma área) ──
    Ortogonal a `roles` — usuário tem role/área (ex: Criação) + cargo (ex: Diretor

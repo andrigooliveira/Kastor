@@ -3834,8 +3834,16 @@ i[data-lucide]:not([class*=ic-]) { width: 16px; height: 16px; stroke-width: 2; }
 .agenda-toolbar .form-label { margin: 0; }
 .agenda-user-pick { display: flex; align-items: center; gap: 8px; }
 .agenda-user-pick select { min-width: 220px; }
-.agenda-week-nav { display: flex; align-items: center; gap: 6px; }
+.agenda-week-nav { display: flex; align-items: center; gap: 6px; position: relative; }
 .agenda-week-label { font-size: 13px; color: var(--text); font-weight: 600; min-width: 220px; text-align: center; }
+.agenda-week-label.agdp-trigger {
+  background: none; border: 1px solid transparent; padding: 4px 10px;
+  border-radius: 6px; cursor: pointer; font-family: inherit;
+  transition: background .12s, border-color .12s;
+}
+.agenda-week-label.agdp-trigger:hover { background: var(--surface-2); border-color: var(--hairline); }
+.agenda-week-label.agdp-trigger.is-open { background: var(--surface-2); border-color: var(--accent); }
+.agdp-popover { position: fixed; min-width: 280px; }
 .agenda-spacer { flex: 1; }
 .agenda-view-toggle { display: inline-flex; gap: 4px; background: var(--surface-2); padding: 3px; border-radius: var(--radius-sm); }
 .agenda-view-btn { font-size: 12px !important; padding: 5px 11px !important; }
@@ -5924,6 +5932,52 @@ kbd {
   .detail-head-actions { flex-wrap: wrap; }
 }
 
+/* ─── MOBILE (≤640px) — Fase 1: polish geral ───
+   Enxuga chrome redundante, aperta grids que estouram em telas estreitas,
+   garante que barras de ferramentas e filtros se comportem. */
+@media (max-width: 640px) {
+  /* CRÍTICO: `.main` é flex item de `#app` (flex row). Flex items não encolhem
+     abaixo do min-content dos filhos por default — uma tabela com min-width 720px
+     estica `.main` pra 1174px e vaza o layout todo. Force min-width:0 pra permitir
+     encolher (overflow-x fica na tabela, não na página). */
+  #app > .main { min-width: 0; }
+  #app > .main > .page.active { min-width: 0; max-width: 100%; }
+  .page > .page-body { min-width: 0; max-width: 100%; }
+
+  /* Chrome: some com controles que só fazem sentido em desktop */
+  .topbar-actions .density-toggle { display: none; }
+  #sidebar-collapse-btn { display: none; } /* sidebar já é drawer em mobile */
+
+  /* Section-head (título + ação) fica cramped — deixa quebrar */
+  .section-head { flex-wrap: wrap; gap: 10px; }
+  .section-head > .section-title { min-width: 0; word-break: break-word; }
+
+  /* Filtros: cada dropdown ocupa a linha. flex-wrap:nowrap é CRÍTICO — o base
+     `.filters-bar` tem flex-wrap:wrap, e wrap+column cria múltiplas colunas
+     laterais (cada item vira coluna própria), estourando a largura. */
+  .filters-bar { flex-direction: column; flex-wrap: nowrap; align-items: stretch; min-width: 0; }
+  .filters-bar > * { width: 100%; min-width: 0; max-width: 100%; }
+  .filter-group { width: 100%; }
+  .filter-input-wrap { width: 100% !important; max-width: none !important; }
+
+  /* Dashboard forecast heatmap: 7 células apertadas em 300px viewport */
+  .dash-forecast-grid { gap: 4px; }
+  .dash-forecast-cell { padding: 8px 2px; min-height: 60px; min-width: 0; }
+  .dash-forecast-count { font-size: 15px; }
+  .dash-forecast-day  { font-size: 9px; }
+  .dash-forecast-date { font-size: 10px; }
+
+  /* Toggle group (Todas/Abertas/Atrasadas/Concluídas) — permite quebrar */
+  .client-status-toggle, .demand-status-toggle { flex-wrap: wrap; }
+
+  /* Botões dentro de section-head/topbar que carregam texto+ícone
+     ficam com padding menor pra não engolir a linha */
+  .section-head .btn { padding: 6px 10px; font-size: 12.5px; }
+
+  /* Tabelas: garante scroll horizontal isolado (não vaza pro body) */
+  .table-wrap, .table-scroll { overflow-x: auto !important; max-width: 100%; }
+}
+
 /* ─── FLUXOS — Cards de cliente e cards de fluxo ─── */
 .flow-grid {
   display: grid;
@@ -7721,10 +7775,59 @@ tr.demand-row:hover {
 .dtype-mng-hint { font-size: 12.5px; color: var(--text-muted); line-height: 1.6; margin-bottom: 14px; }
 .dtype-mng-add { display: flex; gap: 8px; margin-bottom: 16px; }
 .dtype-mng-add .form-control { flex: 1; }
+.dtype-orphans { margin-top: 16px; border-top: 1px solid var(--hairline); padding-top: 12px; }
+.dtype-orphans-toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--accent); font-size: 13px; font-weight: 600;
+  text-decoration: none; cursor: pointer;
+  padding: 4px 0;
+  transition: color .12s;
+}
+.dtype-orphans-toggle:hover { color: var(--accent-text); text-decoration: underline; }
+.dtype-orphans-caret { transition: transform .15s; }
+.dtype-orphans-toggle.is-open .dtype-orphans-caret { transform: rotate(90deg); }
+.dtype-orphans-count { color: var(--text-muted); font-weight: 500; }
 /* Ações da tabela: só no hover da linha (via .row-actions) e sem contorno. */
 #dtype-manage-modal .row-actions .icon-btn { border: none; background: transparent; color: var(--text-muted); }
 #dtype-manage-modal .row-actions .icon-btn:hover { color: var(--accent-text); background: var(--surface-2); }
 #dtype-manage-modal .row-actions .icon-btn.danger:hover { color: var(--danger); background: var(--danger-dim); }
+
+/* ─── DEV TOOLS ─── hub admin-only de links diretos pras rotas ocultas. */
+.dt-hint { font-size: 13px; color: var(--text-muted); line-height: 1.6; margin-bottom: 22px; max-width: 720px; }
+.dt-group { margin-bottom: 28px; }
+.dt-group-head { margin-bottom: 12px; }
+.dt-group-title { font-size: 13px; font-weight: 700; color: var(--text); text-transform: uppercase; letter-spacing: .06em; }
+.dt-group-hint  { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+.dt-grid {
+  display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+}
+.dt-card {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  color: var(--text); text-decoration: none;
+  transition: border-color .12s, background .12s, transform .12s;
+}
+.dt-card:hover { border-color: var(--accent); background: var(--surface-2); }
+.dt-card:active { transform: translateY(1px); }
+.dt-card-icon {
+  flex-shrink: 0; width: 34px; height: 34px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 8px; background: var(--surface-2); color: var(--accent);
+}
+.dt-card-body { flex: 1; min-width: 0; }
+.dt-card-label { font-size: 14px; font-weight: 600; color: var(--text); }
+.dt-card-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px; color: var(--text-muted); margin-top: 2px;
+  word-break: break-all;
+}
+.dt-card-desc { font-size: 12.5px; color: var(--text-muted); margin-top: 6px; line-height: 1.5; }
+.dt-card-arrow { flex-shrink: 0; color: var(--text-muted); align-self: center; }
+.dt-card:hover .dt-card-arrow { color: var(--accent); }
 
 /* Respeito ao prefers-reduced-motion — para as animações contínuas.
    O bloco global lá em cima já faz `animation: none !important` em tudo. */

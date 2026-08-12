@@ -91,9 +91,49 @@ const PAGE_TO_PATH = {
   docs:         '/docs',
   trash:        '/trash',
   recurringDemands: '/recurring-demands',
-  clientsModels: '/clients/models'
+  clientsModels: '/clients/models',
+  devtools:     '/devtools'
 };
 const PATH_TO_PAGE = Object.fromEntries(Object.entries(PAGE_TO_PATH).map(([k, v]) => [v, k]));
+
+/* ── Slug helpers pra URLs "humanas" ──
+   Entidades (client/project/demand) usam id de 12 hex (crypto.randomBytes(6)).
+   URL canônica: `/clients/{slug}-{id}` — slug é decorativo; lookup usa só o id
+   extraído do final. URLs antigas (só id) continuam válidas — o applyRoute
+   canonicaliza depois via replaceState. */
+const ENTITY_ID_RE = /^[0-9a-f]{12}$/i;
+const ENTITY_ID_SUFFIX = /(?:^|-)([0-9a-f]{12})$/i;
+function slugify(s, maxLen = 60) {
+  const t = String(s || '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '') // remove acentos
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')                       // não-alfanumérico → hífen
+    .replace(/^-+|-+$/g, '');                           // trim de hífens
+  return t.length > maxLen ? t.slice(0, maxLen).replace(/-+$/, '') : t;
+}
+function extractRouteId(segment) {
+  const m = String(segment || '').match(ENTITY_ID_SUFFIX);
+  return m ? m[1] : segment;
+}
+function slugIdSegment(name, id) {
+  const s = slugify(name);
+  return s ? `${s}-${id}` : String(id || '');
+}
+function clientPath(idOrObj) {
+  const c = typeof idOrObj === 'string' ? (typeof clientById === 'function' ? clientById(idOrObj) : null) : idOrObj;
+  const id = c?.id || idOrObj;
+  return '/clients/' + slugIdSegment(c?.name, id);
+}
+function projectPath(idOrObj) {
+  const p = typeof idOrObj === 'string' ? (typeof projectById === 'function' ? projectById(idOrObj) : null) : idOrObj;
+  const id = p?.id || idOrObj;
+  return '/projects/' + slugIdSegment(p?.name, id);
+}
+function demandPath(idOrObj) {
+  const d = typeof idOrObj === 'string' ? (typeof demandById === 'function' ? demandById(idOrObj) : null) : idOrObj;
+  const id = d?.id || idOrObj;
+  return '/demands/' + slugIdSegment(d?.name, id);
+}
 let _routerSilent = false;   // true durante popstate → suprime push/replace
 function pageUrlFor(page)  {
   // Recurring tem 2 sub-rotas (demands/lists) — resolve pela aba persistida em localStorage.
@@ -112,15 +152,17 @@ function pageUrlFor(page)  {
   return PAGE_TO_PATH[page] || '/dashboard';
 }
 function currentPageUrl()  { return pageUrlFor(currentPage); }
-function navPush(path) {
+function navPush(path, opts) {
   if (_routerSilent) return;
-  const target = path + location.search;
+  const keepSearch = !opts || opts.keepSearch !== false;
+  const target = path + (keepSearch ? location.search : '');
   if (location.pathname + location.search === target) return;
   history.pushState(null, '', target);
 }
-function navReplace(path) {
+function navReplace(path, opts) {
   if (_routerSilent) return;
-  const target = path + location.search;
+  const keepSearch = !opts || opts.keepSearch !== false;
+  const target = path + (keepSearch ? location.search : '');
   if (location.pathname + location.search === target) return;
   history.replaceState(null, '', target);
 }
@@ -145,16 +187,19 @@ function parseRoute(path) {
   if (PATH_TO_PAGE[p]) return { page: PATH_TO_PAGE[p] };
   let m;
   if ((m = p.match(/^\/demands\/new$/)))                    return { page: 'list',         modal: 'demand',  op: 'new' };
-  if ((m = p.match(/^\/demands\/([^/]+)\/edit$/)))          return { page: 'list',         modal: 'demand',  op: 'edit', id: m[1] };
-  if ((m = p.match(/^\/demands\/([^/]+)$/)))                return { page: 'list',         modal: 'detail',  id: m[1] };
+  if ((m = p.match(/^\/demands\/([^/]+)\/edit$/)))          return { page: 'list',         modal: 'demand',  op: 'edit', id: extractRouteId(m[1]) };
+  if ((m = p.match(/^\/demands\/([^/]+)$/)))                return { page: 'list',         modal: 'detail',  id: extractRouteId(m[1]) };
   if ((m = p.match(/^\/clients\/new$/)))                    return { page: 'clients',      modal: 'client',  op: 'new' };
-  if ((m = p.match(/^\/clients\/([^/]+)\/edit$/)))          return { page: 'clients',      modal: 'client',  op: 'edit', id: m[1] };
-  if ((m = p.match(/^\/clients\/([^/]+)\/report$/)))        return { page: 'clients',      view: 'report', id: m[1] };
-  if ((m = p.match(/^\/clients\/([^/]+)$/)))                return { page: 'clients',      view: 'detail', id: m[1] };
+  if ((m = p.match(/^\/clients\/([^/]+)\/edit$/)))          return { page: 'clients',      modal: 'client',  op: 'edit', id: extractRouteId(m[1]) };
+  if ((m = p.match(/^\/clients\/([^/]+)\/report$/)))        return { page: 'clients',      view: 'report', id: extractRouteId(m[1]) };
+  if ((m = p.match(/^\/clients\/([^/]+)\/projects\/([^/]+)\/edit$/))) return { page: 'clients', modal: 'project', op: 'edit', id: extractRouteId(m[2]), clientId: extractRouteId(m[1]) };
+  if ((m = p.match(/^\/clients\/([^/]+)\/projects\/([^/]+)\/report$/))) return { page: 'clients', view: 'project-report', id: extractRouteId(m[2]), clientId: extractRouteId(m[1]) };
+  if ((m = p.match(/^\/clients\/([^/]+)\/projects\/([^/]+)$/))) return { page: 'clients', view: 'project-detail', id: extractRouteId(m[2]), clientId: extractRouteId(m[1]) };
+  if ((m = p.match(/^\/clients\/([^/]+)$/)))                return { page: 'clients',      view: 'detail', id: extractRouteId(m[1]) };
   if ((m = p.match(/^\/projects\/new$/)))                   return { page: 'projects',     modal: 'project', op: 'new' };
-  if ((m = p.match(/^\/projects\/([^/]+)\/edit$/)))         return { page: 'clients',      modal: 'project', op: 'edit', id: m[1] };
-  if ((m = p.match(/^\/projects\/([^/]+)\/report$/)))       return { page: 'clients',      view: 'project-report', id: m[1] };
-  if ((m = p.match(/^\/projects\/([^/]+)$/)))               return { page: 'clients',      view: 'project-detail', id: m[1] };
+  if ((m = p.match(/^\/projects\/([^/]+)\/edit$/)))         return { page: 'clients',      modal: 'project', op: 'edit', id: extractRouteId(m[1]) };
+  if ((m = p.match(/^\/projects\/([^/]+)\/report$/)))       return { page: 'clients',      view: 'project-report', id: extractRouteId(m[1]) };
+  if ((m = p.match(/^\/projects\/([^/]+)$/)))               return { page: 'clients',      view: 'project-detail', id: extractRouteId(m[1]) };
   if ((m = p.match(/^\/flows\/new$/)))                      return { page: 'flows',        modal: 'flow',    op: 'new' };
   if ((m = p.match(/^\/flows\/([^/]+)$/)))                  return { page: 'flows',        modal: 'flow',    op: 'edit', id: m[1] };
   if ((m = p.match(/^\/users\/new$/)))                      return { page: 'users',        modal: 'user',    op: 'new' };
@@ -230,8 +275,35 @@ function applyRoute() {
     if (r.page === 'analytics' && r.tab && typeof setAnalyticsTab === 'function') {
       setAnalyticsTab(r.tab);
     }
+    // 5) Canonicaliza a URL. Se veio um link antigo (`/clients/<id>`) ou com slug
+    //    desatualizado, reescreve pra forma `slug-<id>` corrente. Ignora se a
+    //    entidade não está no cache — quando carregar, o próprio open* rewrita.
+    _canonicalizeUrlFromRoute(r);
   } finally {
     _routerSilent = false;
+  }
+}
+function _canonicalizeUrlFromRoute(r) {
+  if (!r || !r.id) return;
+  let canonical = null;
+  if (r.modal === 'detail' || (r.modal === 'demand' && r.op === 'edit')) {
+    canonical = demandPath(r.id) + (r.op === 'edit' ? '/edit' : '');
+  } else if (r.page === 'clients' && r.view === 'detail') {
+    canonical = clientPath(r.id);
+  } else if (r.page === 'clients' && r.view === 'report') {
+    canonical = clientPath(r.id) + '/report';
+  } else if (r.page === 'clients' && r.view === 'project-detail') {
+    canonical = projectPath(r.id);
+  } else if (r.page === 'clients' && r.view === 'project-report') {
+    canonical = projectPath(r.id) + '/report';
+  } else if (r.page === 'clients' && r.modal === 'project' && r.op === 'edit') {
+    canonical = projectPath(r.id) + '/edit';
+  } else if (r.page === 'clients' && r.modal === 'client' && r.op === 'edit') {
+    canonical = clientPath(r.id) + '/edit';
+  }
+  if (canonical && canonical !== location.pathname) {
+    // history.replaceState direto — bypassa _routerSilent, sem re-disparar popstate.
+    history.replaceState(null, '', canonical + location.search + location.hash);
   }
 }
 window.addEventListener('popstate', applyRoute);
@@ -242,11 +314,66 @@ window.addEventListener('popstate', applyRoute);
    Evita que o usuário tenha que re-aplicar filtros toda vez que volta. */
 const FILTER_KEYS = {
   list:      { storage: 'kastor-filters-list',      ids: ['search-input','filter-workspace','filter-user','filter-project','filter-client','filter-period','filter-period-start','filter-period-end','filter-quick'] },
-  dashboard: { storage: 'kastor-filters-dashboard', ids: ['dash-f-user','dash-f-client','dash-f-period','dash-f-type'] },
+  dashboard: { storage: 'kastor-filters-dashboard', ids: ['dash-f-user','dash-f-squad','dash-f-client','dash-f-period','dash-f-type'] },
   capacity:  { storage: 'kastor-filters-capacity',  ids: ['capacity-period','capacity-period-start','capacity-period-end','capacity-squads'] },
   clients:   { storage: 'kastor-filters-clients',   ids: ['client-search','client-f-ws'] },
   reports:   { storage: 'kastor-filters-reports',   ids: ['reports-ws','reports-client','reports-project','reports-period'] }
 };
+/* Mapa: DOM id → nome curto do query param. Filtros presentes aqui são espelhados
+   pra URL (pra permitir compartilhar link já filtrado). Se um DOM id não estiver
+   listado, ele só persiste em localStorage. Chaves curtas pra URL não estourar. */
+const FILTER_URL_KEYS = {
+  list: {
+    'search-input': 'q', 'filter-workspace': 'ws', 'filter-user': 'user',
+    'filter-project': 'project', 'filter-client': 'client', 'filter-period': 'period',
+    'filter-period-start': 'from', 'filter-period-end': 'to', 'filter-quick': 'status'
+  },
+  dashboard: {
+    'dash-f-user': 'user', 'dash-f-squad': 'squad', 'dash-f-client': 'client',
+    'dash-f-period': 'period', 'dash-f-type': 'type'
+  },
+  capacity: {
+    'capacity-period': 'period', 'capacity-period-start': 'from',
+    'capacity-period-end': 'to', 'capacity-squads': 'squads'
+  },
+  clients: { 'client-search': 'q', 'client-f-ws': 'ws' },
+  reports: {
+    'reports-ws': 'ws', 'reports-client': 'client', 'reports-project': 'project',
+    'reports-period': 'period'
+  }
+};
+/* Sobrescreve filtros nos elementos DOM com o que estiver no query da URL.
+   Chamado por restoreFilters ANTES de ler localStorage — URL tem precedência. */
+function _readFiltersFromUrl(page) {
+  const map = FILTER_URL_KEYS[page]; if (!map) return {};
+  const sp = new URLSearchParams(location.search);
+  const applied = {};
+  Object.entries(map).forEach(([domId, urlKey]) => {
+    if (!sp.has(urlKey)) return;
+    const val = sp.get(urlKey);
+    const el = document.getElementById(domId);
+    if (el) el.value = val;
+    applied[domId] = val;
+  });
+  return applied;
+}
+/* Reescreve a URL pra refletir os valores atuais dos filtros dessa página.
+   Silencioso (replaceState), não dispara popstate. Chamado por saveFilters. */
+function _writeFiltersToUrl(page) {
+  const map = FILTER_URL_KEYS[page]; if (!map) return;
+  const sp = new URLSearchParams(location.search);
+  Object.entries(map).forEach(([domId, urlKey]) => {
+    const el = document.getElementById(domId);
+    if (!el) return;
+    const v = String(el.value || '');
+    if (v) sp.set(urlKey, v); else sp.delete(urlKey);
+  });
+  const qs = sp.toString();
+  const target = location.pathname + (qs ? '?' + qs : '') + location.hash;
+  if (target !== location.pathname + location.search + location.hash) {
+    history.replaceState(null, '', target);
+  }
+}
 // Restore só roda na PRIMEIRA pintura após entrar na página. Renders subsequentes
 // (provocados por onchange de filtro) NÃO restauram — senão a tecla que o usuário
 // acabou de mexer seria sobrescrita pelo valor salvo do localStorage.
@@ -257,16 +384,21 @@ function saveFilters(page) {
   const snap = {};
   def.ids.forEach(id => { const el = document.getElementById(id); if (el) snap[id] = el.value; });
   try { localStorage.setItem(def.storage, JSON.stringify(snap)); } catch {}
+  // Espelha na URL — link compartilhável reproduz o mesmo estado.
+  _writeFiltersToUrl(page);
 }
 function restoreFilters(page) {
   const def = FILTER_KEYS[page]; if (!def) return;
   if (_filtersRestored[page]) return;
   _filtersRestored[page] = true;
+  // 1) URL query tem prioridade sobre localStorage (permite abrir link com filtro).
+  const fromUrl = _readFiltersFromUrl(page);
   try {
     const raw = localStorage.getItem(def.storage);
     if (!raw) return;
     const snap = JSON.parse(raw);
     def.ids.forEach(id => {
+      if (fromUrl[id] !== undefined) return; // URL já ditou o valor
       const el = document.getElementById(id);
       // Pra <select>, .value só "cola" se o option existir. Como renderList rebuilda
       // os <option> a partir do .value atual (prevUser etc.), restaurar antes do
@@ -1825,7 +1957,7 @@ function closeModal(id) {
   // a partir do detalhe), volta pra URL desse modal. Senão, URL da página.
   if (ROUTED_MODAL_IDS.includes(id)) {
     const stillOpen = ROUTED_MODAL_IDS.find(mid => mid !== id && document.getElementById(mid)?.classList.contains('open'));
-    if (stillOpen === 'detail-modal' && detailId) navReplace('/demands/' + detailId);
+    if (stillOpen === 'detail-modal' && detailId) navReplace(demandPath(detailId));
     else navReplace(currentPageUrl());
   }
 }
@@ -2951,7 +3083,8 @@ const PAGE_TITLES = {
   workspaces: 'Squads', users: 'Usuários', profile: 'Meu Perfil',
   analytics: 'Análises', templates: 'Templates', integrations: 'Integrações', agenda: 'Agenda',
   recurring: 'Listas de tarefas', docs: 'Documentação', clientsModels: 'Modelos de Cliente',
-  trash: 'Lixeira', recurringDemands: 'Demandas Recorrentes'
+  trash: 'Lixeira', recurringDemands: 'Demandas Recorrentes',
+  devtools: 'Dev Tools'
 };
 function goPage(page) {
   hideTooltip();
@@ -2959,6 +3092,7 @@ function goPage(page) {
   // por navegação real) preserva — assim salvar/atualizar um fluxo não joga o
   // usuário de volta pro grid (o estado é restaurado por renderCurrent).
   if (page !== 'flows') currentClientView = null;
+  const prevPage = currentPage;
   currentPage = page;
   // Cada entrada na página força um restoreFilters na próxima render.
   _markFiltersDirty(page);
@@ -2966,7 +3100,9 @@ function goPage(page) {
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + page));
   $('topbar-title').textContent = PAGE_TITLES[page] || '';
   renderCurrent();
-  navPush(pageUrlFor(page));
+  // Mudou de página → descarta filtros da anterior na URL (semântica é por-página).
+  // Mesma página (renderCurrent voltando) → preserva a query pra não perder o estado.
+  navPush(pageUrlFor(page), { keepSearch: prevPage === page });
   // Em mobile, fecha o menu lateral ao navegar pra uma página.
   closeSidebar();
 }
@@ -2988,6 +3124,84 @@ document.addEventListener('keydown', e => {
     if (!anyModal) { e.preventDefault(); closeSidebar(); }
   }
 });
+/* ─── DEV TOOLS ─── admin-only hub de links pra rotas sem entrada no menu.
+   Fonte da verdade dos grupos/links vive aqui (fácil de editar). Cada card
+   navega via goPage quando dá — pra atualizar sidebar e title — e cai pro
+   applyRoute (link direto) quando a rota carrega um modal ou sub-view. */
+const DEVTOOLS_GROUPS = [
+  {
+    title: 'Páginas ocultas',
+    hint: 'Existem no roteador mas não têm entrada no menu lateral.',
+    links: [
+      { label: 'Projetos Cadastrados', path: '/projects',        icon: 'folder-tree', desc: 'Listagem global de projetos, com filtros por cliente/situação.' },
+      { label: 'Modelos de Fluxo',     path: '/clients/models',  icon: 'layers',      desc: 'Biblioteca de modelos aplicáveis a novos clientes.' },
+    ]
+  },
+  {
+    title: 'Sub-rotas de abas',
+    hint: 'A entrada no menu abre a aba default — links diretos fixam a aba.',
+    links: [
+      { label: 'Análises · Capacidade',    path: '/analytics/capacity', icon: 'gauge',       desc: 'Aba de capacidade da página Análises.' },
+      { label: 'Análises · Relatórios',    path: '/analytics/reports',  icon: 'file-bar-chart', desc: 'Aba de relatórios da página Análises.' },
+      { label: 'Recorrentes · Demandas',   path: '/recurring/demands',  icon: 'refresh-ccw', desc: 'Aba de demandas recorrentes.' },
+      { label: 'Recorrentes · Listas',     path: '/recurring/lists',    icon: 'list-checks', desc: 'Aba de listas recorrentes.' },
+    ]
+  },
+  {
+    title: 'Modais "Novo"',
+    hint: 'Rotas que abrem direto o modal de criação — úteis pra atalhos ou testes.',
+    links: [
+      { label: 'Nova Demanda',      path: '/demands/new',                icon: 'plus-square' },
+      { label: 'Novo Cliente',      path: '/clients/new',                icon: 'building-2' },
+      { label: 'Novo Projeto',      path: '/projects/new',               icon: 'folder-plus' },
+      { label: 'Novo Fluxo',        path: '/flows/new',                  icon: 'workflow' },
+      { label: 'Novo Usuário',      path: '/users/new',                  icon: 'user-plus' },
+      { label: 'Nova Integração',   path: '/integrations/webhooks/new',  icon: 'webhook' },
+      { label: 'Nova Recorrente',   path: '/recurring/new',              icon: 'repeat' },
+    ]
+  }
+];
+function renderDevTools() {
+  const wrap = $('devtools-groups');
+  if (!wrap) return;
+  // Gate final no cliente — a nav-item já é admin-only, mas se cair aqui via URL
+  // direto o non-admin vê uma mensagem em vez do hub.
+  if (!me?.isAdmin) {
+    wrap.innerHTML = `<div class="empty-state">Sem permissão. Só administradores acessam esta tela.</div>`;
+    return;
+  }
+  wrap.innerHTML = DEVTOOLS_GROUPS.map(g => `
+    <div class="dt-group">
+      <div class="dt-group-head">
+        <div class="dt-group-title">${esc(g.title)}</div>
+        ${g.hint ? `<div class="dt-group-hint">${esc(g.hint)}</div>` : ''}
+      </div>
+      <div class="dt-grid">
+        ${g.links.map(l => `
+          <a class="dt-card" href="${esc(l.path)}" onclick="devToolsOpen(event, '${esc(l.path)}')">
+            <div class="dt-card-icon"><i data-lucide="${esc(l.icon || 'link')}" class="ic-sm"></i></div>
+            <div class="dt-card-body">
+              <div class="dt-card-label">${esc(l.label)}</div>
+              <div class="dt-card-path">${esc(l.path)}</div>
+              ${l.desc ? `<div class="dt-card-desc">${esc(l.desc)}</div>` : ''}
+            </div>
+            <div class="dt-card-arrow"><i data-lucide="arrow-up-right" class="ic-xs"></i></div>
+          </a>`).join('')}
+      </div>
+    </div>
+  `).join('');
+  paintIcons();
+}
+/* Cli-side navigation dos cards. Usa history.pushState + applyRoute pra
+   respeitar o SPA (sem full reload). Ctrl/⌘/middle-click deixam o browser
+   abrir em nova aba naturalmente. */
+function devToolsOpen(evt, path) {
+  if (!evt) return;
+  if (evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.button === 1) return; // deixa o browser
+  evt.preventDefault();
+  history.pushState(null, '', path);
+  applyRoute();
+}
 function renderCurrent() {
   switch (currentPage) {
     case 'dashboard':  renderDashboard(); break;
@@ -2998,6 +3212,7 @@ function renderCurrent() {
     case 'templates':  renderTemplates(); break;
     case 'recurring':  renderRecurring(); break;
     case 'integrations': renderIntegrations(); break;
+    case 'devtools':   renderDevTools(); break;
     case 'docs':       break; /* iframe estático — nada pra renderizar */
     case 'clients': {
       // Decide entre grid, detalhe de cliente ou detalhe de projeto sem perder estado
@@ -4454,6 +4669,187 @@ function capPfpSync() {
   capPfpUpdateLabel();
   if (_capPfpOpen) { capPfpRenderPresets(); capPfpRenderCal(); }
 }
+
+/* ─── Picker de data da AGENDA ───
+   Popover clicando no label "10/08 → 21/08" (modo individual/semana) ou "seg 11/08"
+   (modo time/dia) ou no label da agenda embed em Minhas Demandas. Reaproveita o
+   visual dos pickers .pfp-* — sem presets, só o mini-calendário + botão "Hoje".
+   Modo 'week' e 'mine-week' pulam pra semana que contém o dia clicado; modo 'day'
+   define o agendaTeamDate. O popover é criado sob demanda e posicionado (fixed)
+   embaixo do trigger clicado. */
+let _agdpOpen = false;
+let _agdpAnchor = null;    // 'week' | 'day' | 'mine-week'
+let _agdpView = null;      // { year, month }
+
+function agdpToggle(anchor, evt) {
+  if (evt) evt.stopPropagation();
+  if (_agdpOpen && _agdpAnchor === anchor) { agdpClose(); return; }
+  agdpOpen(anchor);
+}
+function agdpOpen(anchor) {
+  agdpClose();
+  _agdpAnchor = anchor;
+  let base;
+  if (anchor === 'day')         base = new Date(agendaTeamDate || new Date());
+  else if (anchor === 'mine-week') base = new Date();
+  else                          base = new Date(agendaWeekStart || new Date());
+  _agdpView = { year: base.getFullYear(), month: base.getMonth() };
+  const pop = _agdpEnsurePopover();
+  _agdpPosition(pop, anchor);
+  pop.classList.add('open');
+  _agdpOpen = true;
+  const btn = document.getElementById(_agdpAnchorId(anchor));
+  if (btn) btn.classList.add('is-open');
+  agdpRender();
+  paintIcons();
+}
+function agdpClose() {
+  const pop = document.getElementById('agdp-popover');
+  if (pop) pop.classList.remove('open');
+  document.querySelectorAll('.agdp-trigger.is-open').forEach(b => b.classList.remove('is-open'));
+  _agdpOpen = false;
+  _agdpAnchor = null;
+}
+function _agdpAnchorId(anchor) {
+  if (anchor === 'day') return 'agenda-day-label';
+  if (anchor === 'mine-week') return 'mine-agenda-week-label';
+  return 'agenda-week-label';
+}
+function _agdpEnsurePopover() {
+  let pop = document.getElementById('agdp-popover');
+  if (pop) return pop;
+  pop = document.createElement('div');
+  pop.id = 'agdp-popover';
+  pop.className = 'agdp-popover pfp-popover';
+  pop.addEventListener('click', (e) => e.stopPropagation());
+  pop.innerHTML = `
+    <div class="pfp-cal" style="border-top:0">
+      <div class="pfp-cal-head">
+        <button type="button" class="pfp-cal-nav" onclick="agdpNav(-1)" title="Mês anterior"><i data-lucide="chevron-left" class="ic-sm"></i></button>
+        <span class="pfp-cal-title" id="agdp-cal-title"></span>
+        <button type="button" class="pfp-cal-nav" onclick="agdpNav(1)" title="Próximo mês"><i data-lucide="chevron-right" class="ic-sm"></i></button>
+      </div>
+      <div class="pfp-cal-dow"><span>D</span><span>S</span><span>T</span><span>Q</span><span>Q</span><span>S</span><span>S</span></div>
+      <div class="pfp-cal-grid" id="agdp-cal-grid"></div>
+    </div>
+    <div class="pfp-footer">
+      <button type="button" class="pfp-footer-btn" onclick="agdpClose()">Fechar</button>
+      <button type="button" class="pfp-footer-btn" onclick="agdpToday()">Hoje</button>
+    </div>
+  `;
+  document.body.appendChild(pop);
+  return pop;
+}
+function _agdpPosition(pop, anchor) {
+  const btn = document.getElementById(_agdpAnchorId(anchor));
+  if (!btn) return;
+  const r = btn.getBoundingClientRect();
+  const popW = pop.offsetWidth || 280;
+  // Centraliza embaixo do trigger, mas trava dentro da viewport.
+  let left = r.left + (r.width / 2) - (popW / 2);
+  left = Math.max(8, Math.min(left, window.innerWidth - popW - 8));
+  pop.style.top = (r.bottom + 6) + 'px';
+  pop.style.left = left + 'px';
+}
+function agdpRender() {
+  const title = document.getElementById('agdp-cal-title');
+  const grid = document.getElementById('agdp-cal-grid');
+  if (!title || !grid || !_agdpView) return;
+  const { year, month } = _agdpView;
+  title.textContent = `${PFP_MONTHS[month]} · ${year}`;
+
+  const firstDow = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const daysInPrev  = new Date(year, month, 0).getDate();
+
+  // Destaque: dia selecionado (modo day) ou faixa da semana visualizada (modo week).
+  let weekStartIso = '', weekEndIso = '', selectedIso = '';
+  if (_agdpAnchor === 'day') {
+    const d = agendaTeamDate || new Date();
+    selectedIso = agendaYmd(d);
+  } else {
+    const ws = _agdpAnchor === 'mine-week' ? agendaWeekStartFor(new Date()) : (agendaWeekStart || agendaWeekStartFor(new Date()));
+    const totalDays = 7 * (agendaWeeks || 2);
+    const wsCopy = new Date(ws);
+    const end = new Date(wsCopy);
+    end.setDate(end.getDate() + totalDays - 1);
+    weekStartIso = agendaYmd(wsCopy);
+    weekEndIso = agendaYmd(end);
+  }
+  const todayISO = todayStr();
+  const cells = [];
+  for (let i = firstDow - 1; i >= 0; i--) {
+    cells.push({ day: daysInPrev - i, month: month - 1, year: month === 0 ? year - 1 : year, other: true });
+  }
+  for (let d = 1; d <= daysInMonth; d++) cells.push({ day: d, month, year, other: false });
+  while (cells.length < 42) {
+    const last = cells[cells.length - 1];
+    const nxt = new Date(last.year, last.month, last.day + 1);
+    cells.push({ day: nxt.getDate(), month: nxt.getMonth(), year: nxt.getFullYear(), other: true });
+  }
+  grid.innerHTML = cells.map(c => {
+    const iso = `${c.year}-${String(c.month + 1).padStart(2, '0')}-${String(c.day).padStart(2, '0')}`;
+    const cls = ['pfp-day'];
+    if (c.other) cls.push('other');
+    if (iso === todayISO) cls.push('today');
+    if (_agdpAnchor === 'day') {
+      if (iso === selectedIso) cls.push('range-single');
+    } else if (weekStartIso && weekEndIso && iso >= weekStartIso && iso <= weekEndIso) {
+      if (iso === weekStartIso && iso === weekEndIso) cls.push('range-single');
+      else if (iso === weekStartIso) cls.push('range-start');
+      else if (iso === weekEndIso) cls.push('range-end');
+      else cls.push('range-mid');
+    }
+    return `<button type="button" class="${cls.join(' ')}" data-iso="${iso}" onclick="agdpPickDay('${iso}')">${c.day}</button>`;
+  }).join('');
+}
+function agdpNav(delta) {
+  if (!_agdpView) return;
+  _agdpView.month += delta;
+  if (_agdpView.month < 0)  { _agdpView.month = 11; _agdpView.year--; }
+  if (_agdpView.month > 11) { _agdpView.month = 0;  _agdpView.year++; }
+  agdpRender();
+  paintIcons();
+}
+function agdpToday() {
+  const t = new Date();
+  _agdpView = { year: t.getFullYear(), month: t.getMonth() };
+  agdpRender();
+  paintIcons();
+}
+function agdpPickDay(iso) {
+  const d = new Date(iso + 'T00:00:00');
+  if (_agdpAnchor === 'day') {
+    agendaTeamDate = d;
+  } else {
+    // Individual / embed: pula pra semana que contém o dia clicado (âncora = segunda).
+    agendaWeekStart = agendaWeekStartFor(d);
+  }
+  agdpClose();
+  renderAgenda();
+}
+document.addEventListener('click', (e) => {
+  if (!_agdpOpen) return;
+  const pop = document.getElementById('agdp-popover');
+  if (pop && pop.contains(e.target)) return;
+  const anchors = ['agenda-week-label', 'agenda-day-label', 'mine-agenda-week-label']
+    .map(id => document.getElementById(id));
+  if (anchors.some(a => a && a.contains(e.target))) return;
+  agdpClose();
+});
+document.addEventListener('keydown', (e) => {
+  if (_agdpOpen && e.key === 'Escape') { e.preventDefault(); agdpClose(); }
+});
+window.addEventListener('resize', () => {
+  if (!_agdpOpen) return;
+  const pop = document.getElementById('agdp-popover');
+  if (pop) _agdpPosition(pop, _agdpAnchor);
+});
+window.addEventListener('scroll', () => {
+  if (!_agdpOpen) return;
+  const pop = document.getElementById('agdp-popover');
+  if (pop) _agdpPosition(pop, _agdpAnchor);
+}, true);
 
 /* Chip toggle "Status" (Abertas / Concluídas / Todas) da página Demandas.
    O <input type="hidden" id="filter-quick"> é a fonte de verdade — mantém
@@ -6189,7 +6585,7 @@ function openEditDemand(id) {
   buildUserSelect($('f-owner-select'), wsUsers(), d.ownerId, null);
   applyPriorityDropdown('f-priority');
   openModal('demand-modal');
-  navPush('/demands/' + id + '/edit');
+  navPush(demandPath(id) + '/edit');
   setTimeout(() => setupDragDrop('#demand-modal .modal-content', 'f-attachments-list', processDroppedFiles), 60);
 }
 async function saveDemand() {
@@ -6400,7 +6796,7 @@ function showDetail(id) {
   renderDetail();             // render imediato com o que tem em cache
   draftRestoreComment();       // restaura rascunho de comentário se houver
   openModal('detail-modal');
-  navPush('/demands/' + id);  // URL compartilhável
+  navPush(demandPath(id));  // URL compartilhável (slug + id)
   // Atualiza com a versão fresca do server (pega anexos/comentários que outros
   // usuários adicionaram desde o último loadAll) + inicia poll periódico.
   refreshDetailDemand();
@@ -9328,7 +9724,7 @@ async function openProjectModal(id, presetClientId) {
   refreshProjectAvatarPreview();
 
   openModal('project-modal');
-  navPush(id ? '/projects/' + id + '/edit' : '/projects/new');
+  navPush(id ? (projectPath(id) + '/edit') : '/projects/new');
 }
 
 function refreshProjectAvatarPreview() {
@@ -9420,9 +9816,9 @@ async function saveProject() {
     // Se estava editando via detalhe de projeto → volta pro detalhe.
     // Se estava criando ou editando pela lista do cliente → volta pro cliente.
     if (wasEditing && currentProjectId === wasEditing) {
-      navPush('/projects/' + wasEditing);
+      navPush(projectPath(wasEditing));
     } else if (ctxClientId) {
-      navPush('/clients/' + ctxClientId);
+      navPush(clientPath(ctxClientId));
     }
     await refreshData();
     // Re-render do detalhe apropriado (refreshData zera cache local).
@@ -9893,6 +10289,7 @@ async function createTypeCombo(inputId, menuId) {
 async function openDemandTypesModal() {
   try { demandTypes = await api('/demand-types'); } catch (e) { /* mantém cache */ }
   renderDemandTypesTable();
+  renderOrphanDemandTypes();
   openModal('dtype-manage-modal');
   setTimeout(() => $('dtype-new-name')?.focus(), 60);
 }
@@ -9915,6 +10312,94 @@ function renderDemandTypesTable() {
       </td>
     </tr>`).join('');
   paintIcons();
+}
+/* Toggle do accordion "Órfãos" no modal Gerenciar Tipos.
+   Fica fechado por padrão — clica no link, expande o painel; clica de novo, fecha. */
+function toggleOrphanDemandTypes(evt) {
+  if (evt) evt.preventDefault();
+  const panel = $('dtype-orphans-panel');
+  const toggle = $('dtype-orphans-toggle');
+  if (!panel || !toggle) return;
+  const open = panel.style.display !== 'none';
+  panel.style.display = open ? 'none' : '';
+  toggle.classList.toggle('is-open', !open);
+}
+/* Valores de `demandType` que aparecem nos fluxos mas não constam na biblioteca
+   `demandTypes`. Case-insensitive na comparação (a lib normaliza pra minúsculas
+   na deduplicação). Retorna [{ name, count, flows: [{id,name,clientId,workspaceId}] }]. */
+function _orphanDemandTypes() {
+  const libSet = new Set((demandTypes || []).map(t => String(t.name || '').trim().toLowerCase()).filter(Boolean));
+  const buckets = {}; // key = original casing do primeiro fluxo achado
+  (flows || []).forEach(f => {
+    const raw = String(f.demandType || '').trim();
+    if (!raw) return;
+    if (libSet.has(raw.toLowerCase())) return;
+    if (!buckets[raw]) buckets[raw] = { name: raw, count: 0, flows: [] };
+    buckets[raw].count++;
+    buckets[raw].flows.push({ id: f.id, name: f.name, clientId: f.clientId, workspaceId: f.workspaceId });
+  });
+  return Object.values(buckets).sort((a, b) => a.name.localeCompare(b.name));
+}
+function renderOrphanDemandTypes() {
+  const wrap = $('dtype-orphans-wrap');
+  const body = $('dtype-orphans-body');
+  const countEl = $('dtype-orphans-count');
+  if (!wrap || !body) return;
+  const orphans = _orphanDemandTypes();
+  if (!orphans.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+  if (countEl) countEl.textContent = `(${orphans.length})`;
+  body.innerHTML = orphans.map(o => {
+    const nameAttr = esc(o.name).replace(/'/g, '&#39;');
+    return `
+    <tr class="row-hover-actions">
+      <td>${esc(o.name)}</td>
+      <td>${o.count}</td>
+      <td>
+        <div class="row-actions">
+          <button class="btn btn-ghost btn-sm" title="Adicionar à biblioteca" onclick="promoteOrphanDemandType('${nameAttr}')"><i data-lucide="library-big" class="ic-sm"></i> Promover</button>
+          <button class="btn btn-ghost btn-sm" title="Limpar campo Tipo em todos os fluxos que usam" onclick="clearOrphanDemandType('${nameAttr}')"><i data-lucide="eraser" class="ic-sm"></i> Limpar</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+  paintIcons();
+}
+async function promoteOrphanDemandType(name) {
+  try {
+    const t = await api('/demand-types', 'POST', { name });
+    demandTypes.push({ ...t, usageCount: 0 });
+    toast('Tipo promovido pra biblioteca.', 'success');
+    renderDemandTypesTable();
+    renderOrphanDemandTypes();
+  } catch (e) {
+    toast(e.message || 'Falha ao promover', 'error');
+  }
+}
+async function clearOrphanDemandType(name) {
+  const orphan = _orphanDemandTypes().find(o => o.name === name);
+  if (!orphan) return;
+  const rows = orphan.flows.slice(0, 8).map(fl => {
+    const cli = clients?.find(c => c.id === fl.clientId);
+    return `• ${esc(fl.name || '(sem nome)')} — ${esc(cli?.name || '?')}`;
+  }).join('<br>');
+  const more = orphan.flows.length > 8 ? `<br>… e mais ${orphan.flows.length - 8}` : '';
+  const ok = await showConfirm({
+    title: 'Limpar tipo órfão',
+    message: `O campo <strong>Tipo</strong> será apagado nos <strong>${orphan.count}</strong> fluxo(s) que usam <strong>"${esc(name)}"</strong>:<br><br>${rows}${more}<br><br>Continuar?`,
+    okLabel: 'Limpar',
+    danger: true
+  });
+  if (!ok) return;
+  try {
+    const r = await api('/demand-types/orphans/clear', 'POST', { name });
+    // Atualiza cache local pra refletir imediatamente sem esperar refresh.
+    (flows || []).forEach(f => { if (String(f.demandType || '') === name) f.demandType = ''; });
+    toast(`Limpo em ${r.cleared || 0} fluxo(s).`, 'success');
+    renderOrphanDemandTypes();
+  } catch (e) {
+    toast(e.message || 'Falha ao limpar', 'error');
+  }
 }
 async function addDemandTypeFromModal() {
   const input = $('dtype-new-name');
@@ -14054,7 +14539,7 @@ function openClient(id) {
   currentProjectId = null;
   showClientDetailView();
   renderClientDetail(id);
-  navPush('/clients/' + id);
+  navPush(clientPath(id));
 }
 function closeClientDetail() {
   currentClientId = null;
@@ -14739,7 +15224,7 @@ function openProjectDetail(id) {
   currentClientId = p.clientId || null; // pra facilitar o "voltar" pro cliente
   showProjectDetailView();
   renderProjectDetail(id);
-  navPush('/projects/' + id);
+  navPush(projectPath(id));
 }
 function closeProjectDetail() {
   const backToClientId = currentClientId;
@@ -14747,7 +15232,7 @@ function closeProjectDetail() {
   if (backToClientId && clientById(backToClientId)) {
     showClientDetailView();
     renderClientDetail(backToClientId);
-    navPush('/clients/' + backToClientId);
+    navPush(clientPath(backToClientId));
   } else {
     $('clients-view-grid').style.display = '';
     $('clients-view-detail').style.display = 'none';
@@ -15488,14 +15973,14 @@ function openClientReport() {
   if (!currentReportMonth) currentReportMonth = new Date().toISOString().slice(0,7);
   showClientReportView();
   renderClientReport(currentClientId);
-  navPush('/clients/' + currentClientId + '/report');
+  navPush(clientPath(currentClientId) + '/report');
 }
 function closeClientReport() {
   const cid = currentClientId;
   if (cid && clientById(cid)) {
     showClientDetailView();
     renderClientDetail(cid);
-    navPush('/clients/' + cid);
+    navPush(clientPath(cid));
   } else {
     closeClientDetail();
   }
@@ -16086,14 +16571,14 @@ function openProjectReport() {
   if (!currentProjectReportMonth) currentProjectReportMonth = new Date().toISOString().slice(0,7);
   showProjectReportView();
   renderProjectReport(currentProjectId);
-  navPush('/projects/' + currentProjectId + '/report');
+  navPush(projectPath(currentProjectId) + '/report');
 }
 function closeProjectReport() {
   const pid = currentProjectId;
   if (pid && projectById(pid)) {
     showProjectDetailView();
     renderProjectDetail(pid);
-    navPush('/projects/' + pid);
+    navPush(projectPath(pid));
   } else {
     closeClientDetail();
   }
@@ -16546,7 +17031,7 @@ function openClientModal(id) {
     tplBar.style.display = 'none';
   }
   openModal('client-modal');
-  navPush(isNew ? '/clients/new' : '/clients/' + id + '/edit');
+  navPush(isNew ? '/clients/new' : (clientPath(id) + '/edit'));
 }
 function openClientModalEdit() {
   if (currentClientId) openClientModal(currentClientId);
@@ -16625,7 +17110,7 @@ async function saveClient() {
     closeModal('client-modal');
     toast(editingClientId ? 'Cliente atualizado!' : 'Cliente criado!');
     // Se estava na tela de detalhe (URL /clients/<id>/edit), volta pro detalhe
-    if (currentClientId) navPush('/clients/' + currentClientId);
+    if (currentClientId) navPush(clientPath(currentClientId));
     await refreshData();
   } catch (e) {
     toast(e.message || 'Erro ao salvar cliente', 'error');
@@ -16724,7 +17209,8 @@ function agendaMinFromY(colCell, clientY) {
 }
 let agendaUserId = null;          // usuário filtrado (default = me)
 let agendaWeekStart = null;       // segunda da semana atual visualizada
-let agendaWeeks = 2;              // 1 ou 2 semanas lado a lado
+// Em mobile começa em 1 semana (2 não cabe nem com column shrink); desktop mantém 2.
+let agendaWeeks = (typeof window !== 'undefined' && window.innerWidth < 640) ? 1 : 2;
 let editingScheduleId = null;     // id do bloco sendo editado no modal
 let _agendaDrag = null;           // estado interno de drag
 // Modo Individual (1 user, N semanas) vs Time (M users, 1 dia).
@@ -16866,8 +17352,15 @@ function agendaDays() {
    Retorna {cols, gridTemplate, days}. Cada col tem
    { type:'day'|'gap'|'user', gridCol, day?, user?, dayIdx? }. */
 function agendaColumnsLayout() {
+  // Em telas estreitas, encolhe a coluna de horário e a min-width das colunas
+  // de dia/usuário — o grid ainda scrolla horizontalmente, mas cabe mais coluna
+  // visível de uma vez sem precisar rolar (5 dias em ~375px fica utilizável).
+  const isNarrow = window.innerWidth < 640;
+  const timeColW = isNarrow ? '44px' : '60px';
+  const dayColMin = isNarrow ? '70px' : '110px';
+  const userColMin = isNarrow ? '90px' : '130px';
   const cols = [];
-  const tmpl = ['60px']; // coluna de tempo (HORÁRIO)
+  const tmpl = [timeColW]; // coluna de tempo (HORÁRIO)
   let gridCol = 2;
   if (agendaMode === 'team') {
     const day = agendaTeamDate || new Date();
@@ -16875,7 +17368,7 @@ function agendaColumnsLayout() {
       const user = userById(uid);
       if (!user) return;
       cols.push({ type: 'user', user, day: new Date(day), dayIdx: i, gridCol });
-      tmpl.push('minmax(130px, 1fr)');
+      tmpl.push(`minmax(${userColMin}, 1fr)`);
       gridCol++;
     });
     return { cols, gridTemplate: tmpl.join(' '), days: [new Date(day)] };
@@ -16889,7 +17382,7 @@ function agendaColumnsLayout() {
       gridCol++;
     }
     cols.push({ type: 'day', day: d, dayIdx: i, gridCol });
-    tmpl.push('minmax(110px, 1fr)');
+    tmpl.push(`minmax(${dayColMin}, 1fr)`);
     gridCol++;
   });
   return { cols, gridTemplate: tmpl.join(' '), days };
