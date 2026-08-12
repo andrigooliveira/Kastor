@@ -16,10 +16,7 @@ jobs:
         with:
           args: |
             🚀 **Novo commit realizado em `${{ github.ref_name }}`!**
-            Repositório: ` ${{ github.repository }}`
-            Autor: ` ${{ github.actor }}`
-            
-            Mensagem do commit:
-            > ${{ github.event.head_commit.message }}
+            Repositório: `${{ github.repository }}`
+            Autor: `${{ github.actor }}`
             
             [Ver alterações](${{ github.event.head_commit.url }})
