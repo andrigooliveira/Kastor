@@ -92,7 +92,8 @@ const PAGE_TO_PATH = {
   trash:        '/trash',
   recurringDemands: '/recurring-demands',
   clientsModels: '/clients/models',
-  devtools:     '/devtools'
+  devtools:     '/devtools',
+  passwords:    '/passwords'
 };
 const PATH_TO_PAGE = Object.fromEntries(Object.entries(PAGE_TO_PATH).map(([k, v]) => [v, k]));
 
@@ -3084,7 +3085,7 @@ const PAGE_TITLES = {
   analytics: 'Análises', templates: 'Templates', integrations: 'Integrações', agenda: 'Agenda',
   recurring: 'Listas de tarefas', docs: 'Documentação', clientsModels: 'Modelos de Cliente',
   trash: 'Lixeira', recurringDemands: 'Demandas Recorrentes',
-  devtools: 'Dev Tools'
+  devtools: 'Dev Tools', passwords: 'Cofre de Senhas'
 };
 function goPage(page) {
   hideTooltip();
@@ -3213,6 +3214,7 @@ function renderCurrent() {
     case 'recurring':  renderRecurring(); break;
     case 'integrations': renderIntegrations(); break;
     case 'devtools':   renderDevTools(); break;
+    case 'passwords':  renderPasswords(); break;
     case 'docs':       break; /* iframe estático — nada pra renderizar */
     case 'clients': {
       // Decide entre grid, detalhe de cliente ou detalhe de projeto sem perder estado
@@ -19614,6 +19616,531 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js', { scope: '/' })
       .catch(err => console.warn('[SW] registro falhou:', err.message));
   });
+}
+
+/* ─── COFRE DE SENHAS ─────────────────────────────────────────
+   Estado só do cliente: `pwState.unlockedUntil` cache local do timestamp
+   devolvido pelo servidor pra pintar o badge de TTL. Servidor é o gate real
+   — 403 vault_locked força a locked view. Lista de entradas é buscada
+   sob demanda (sem cache global); reveal chama endpoint dedicado que
+   registra audit. */
+const pwState = {
+  unlockedUntil: 0,       // ms; 0 = locked
+  ttlMs: 15 * 60 * 1000,  // default; server pode sobrescrever no unlock/status
+  entries: [],
+  revealed: {},           // { id: { pw, timeoutId } } — reveals ativos com auto-hide
+  ttlTimer: null
+};
+/* ── WebAuthn client helpers ──
+   Browser API é `navigator.credentials.create/get`. Todos os campos binários
+   trafegam como base64url (do JSON PublicKeyCredential*OptionsJSON do server)
+   e voltam pra base64url no JSON de resposta. Convertemos manualmente. */
+function _b64uToBuf(b64u) {
+  const b64 = String(b64u || '').replace(/-/g, '+').replace(/_/g, '/');
+  const pad = b64.length % 4 ? 4 - (b64.length % 4) : 0;
+  const bin = atob(b64 + '='.repeat(pad));
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return buf.buffer;
+}
+function _bufToB64u(buf) {
+  const bytes = new Uint8Array(buf);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+async function isWebauthnPlatformAvailable() {
+  if (!window.PublicKeyCredential || !window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) return false;
+  try { return !!(await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()); }
+  catch { return false; }
+}
+/* Wizard de cadastro: pede tipo (Biometria/PIN) + nome antes de iniciar a
+   cerimônia WebAuthn. O `kind` é rótulo do usuário — não muda a cerimônia
+   (o OS mesmo escolhe o gesto), só serve pra ícone e nome bonito na lista. */
+function openPwRegisterWizard() {
+  if (!window.PublicKeyCredential) { toast('Este navegador não suporta biometria/WebAuthn.', 'warn'); return; }
+  // Reset campos + estado do radio
+  const inp = $('pw-wa-name'); if (inp) inp.value = '';
+  document.querySelectorAll('input[name="pw-kind"]').forEach(r => { r.checked = r.value === 'biometric'; });
+  document.querySelectorAll('.pw-kind-opt').forEach(o => {
+    const active = o.querySelector('input')?.checked;
+    o.classList.toggle('is-active', !!active);
+  });
+  // Wire clicks pra atualizar estado visual (o :has() do CSS resolveria, mas
+  // não é universal — deixa explícito)
+  document.querySelectorAll('.pw-kind-opt input').forEach(r => {
+    r.onchange = () => {
+      document.querySelectorAll('.pw-kind-opt').forEach(o =>
+        o.classList.toggle('is-active', o.querySelector('input') === r));
+    };
+  });
+  openModal('pw-webauthn-register-modal');
+  setTimeout(() => $('pw-wa-name')?.focus(), 60);
+  paintIcons();
+}
+async function submitPwRegisterWizard() {
+  const kind = document.querySelector('input[name="pw-kind"]:checked')?.value || 'biometric';
+  const name = ($('pw-wa-name').value || '').trim() || (kind === 'pin' ? 'PIN do dispositivo' : 'Biometria');
+  closeModal('pw-webauthn-register-modal');
+  await _registerWebauthnCredential(kind, name);
+}
+async function _registerWebauthnCredential(kind, label) {
+  try {
+    const opts = await api('/passwords/webauthn/register/begin', 'POST', {});
+    const publicKey = {
+      ...opts,
+      challenge: _b64uToBuf(opts.challenge),
+      user: { ...opts.user, id: _b64uToBuf(opts.user.id) },
+      excludeCredentials: (opts.excludeCredentials || []).map(c => ({ ...c, id: _b64uToBuf(c.id) }))
+    };
+    const cred = await navigator.credentials.create({ publicKey });
+    if (!cred) throw new Error('Registro cancelado');
+    const response = {
+      id: cred.id,
+      rawId: _bufToB64u(cred.rawId),
+      type: cred.type,
+      response: {
+        clientDataJSON: _bufToB64u(cred.response.clientDataJSON),
+        attestationObject: _bufToB64u(cred.response.attestationObject),
+        transports: cred.response.getTransports ? cred.response.getTransports() : undefined
+      },
+      clientExtensionResults: cred.getClientExtensionResults ? cred.getClientExtensionResults() : {},
+      authenticatorAttachment: cred.authenticatorAttachment || undefined
+    };
+    await api('/passwords/webauthn/register/finish', 'POST', { response, label, kind });
+    toast('Acesso cadastrado!', 'success');
+    await refreshWebauthnCredsUI();
+  } catch (e) {
+    if (e.name === 'NotAllowedError') { toast('Cadastro cancelado.', 'warn'); return; }
+    if (e.name === 'InvalidStateError') { toast('Este dispositivo já está cadastrado.', 'warn'); return; }
+    toast(e.message || 'Falha ao cadastrar acesso.', 'error');
+  }
+}
+// Compat: se alguém ainda chamar o helper antigo, cai no fluxo novo (biometria default).
+async function registerWebauthnCredential() { openPwRegisterWizard(); }
+async function unlockWithWebauthn() {
+  if (!window.PublicKeyCredential) { toast('Este navegador não suporta biometria.', 'warn'); return; }
+  try {
+    const opts = await api('/passwords/webauthn/auth/begin', 'POST', {});
+    const publicKey = {
+      ...opts,
+      challenge: _b64uToBuf(opts.challenge),
+      allowCredentials: (opts.allowCredentials || []).map(c => ({ ...c, id: _b64uToBuf(c.id) }))
+    };
+    const assertion = await navigator.credentials.get({ publicKey });
+    if (!assertion) throw new Error('Cancelado');
+    const response = {
+      id: assertion.id,
+      rawId: _bufToB64u(assertion.rawId),
+      type: assertion.type,
+      response: {
+        clientDataJSON: _bufToB64u(assertion.response.clientDataJSON),
+        authenticatorData: _bufToB64u(assertion.response.authenticatorData),
+        signature: _bufToB64u(assertion.response.signature),
+        userHandle: assertion.response.userHandle ? _bufToB64u(assertion.response.userHandle) : undefined
+      },
+      clientExtensionResults: assertion.getClientExtensionResults ? assertion.getClientExtensionResults() : {},
+      authenticatorAttachment: assertion.authenticatorAttachment || undefined
+    };
+    const r = await api('/passwords/webauthn/auth/finish', 'POST', { response });
+    pwState.unlockedUntil = r.until;
+    pwState.ttlMs = r.ttlMs || pwState.ttlMs;
+    await renderPasswords();
+  } catch (e) {
+    if (e.name === 'NotAllowedError') { toast('Cancelado.', 'warn'); return; }
+    toast(e.message || 'Falha ao destravar via biometria.', 'error');
+  }
+}
+async function refreshWebauthnCredsUI() {
+  const list = $('pw-cred-list');
+  if (!list) return;
+  let creds = [];
+  try { creds = await api('/passwords/webauthn/credentials'); } catch {}
+  if (!creds.length) {
+    list.innerHTML = `<div class="pw-cred-empty">Nenhum acesso cadastrado ainda.</div>`;
+    return;
+  }
+  list.innerHTML = creds.map(c => {
+    const kind = c.kind === 'pin' ? 'pin' : 'biometric';
+    const icon = kind === 'pin' ? 'key-round' : 'fingerprint';
+    const typeLabel = kind === 'pin' ? 'PIN' : 'Biometria';
+    return `
+      <div class="pw-cred-row">
+        <div class="pw-cred-info">
+          <i data-lucide="${icon}" class="ic-sm pw-cred-icon pw-cred-icon--${kind}"></i>
+          <div>
+            <div class="pw-cred-name">${esc(c.name || typeLabel)}</div>
+            <div class="pw-cred-meta">${typeLabel} · cadastrado em ${fmtAuditWhen(c.createdAt)}${c.lastUsedAt ? ' · último uso ' + fmtAuditWhen(c.lastUsedAt) : ''}</div>
+          </div>
+        </div>
+        <button class="pw-icon-btn danger" onclick="removeWebauthnCred('${esc(c.credentialID).replace(/'/g,"&#39;")}')" title="Remover"><i data-lucide="trash-2" class="ic-xs"></i></button>
+      </div>`;
+  }).join('');
+  paintIcons();
+}
+async function removeWebauthnCred(credId) {
+  const ok = await showConfirm({
+    title: 'Remover dispositivo',
+    message: 'Este dispositivo não poderá mais destravar o cofre. Você ainda pode usar sua senha ou outros dispositivos cadastrados. Continuar?',
+    okLabel: 'Remover', danger: true
+  });
+  if (!ok) return;
+  try {
+    await api('/passwords/webauthn/credentials/' + encodeURIComponent(credId), 'DELETE');
+    toast('Dispositivo removido.', 'success');
+    await refreshWebauthnCredsUI();
+  } catch (e) { toast(e.message || 'Falha ao remover.', 'error'); }
+}
+async function _pwUpdateWebauthnUnlockBtn() {
+  const btn = $('pw-webauthn-btn');
+  const divider = $('pw-webauthn-divider');
+  if (!btn) return;
+  const supported = await isWebauthnPlatformAvailable();
+  if (!supported) { btn.style.display = 'none'; divider.style.display = 'none'; return; }
+  let creds = [];
+  try { creds = await api('/passwords/webauthn/credentials'); } catch {}
+  const has = creds.length > 0;
+  btn.style.display = has ? '' : 'none';
+  divider.style.display = has ? '' : 'none';
+  paintIcons();
+}
+/* Botão "Biometria" na barra de ações da unlocked view — só aparece se o
+   browser suporta WebAuthn (não filtra por "tem cred", pra dar acesso ao
+   cadastro do primeiro dispositivo). */
+async function _pwUpdateBiometriaBtn() {
+  const btn = $('pw-biometria-btn');
+  if (!btn) return;
+  const supported = await isWebauthnPlatformAvailable();
+  btn.style.display = supported ? '' : 'none';
+  paintIcons();
+}
+async function openPwBiometriaModal() {
+  openModal('pw-biometria-modal');
+  await refreshWebauthnCredsUI();
+}
+
+async function renderPasswords() {
+  const locked = $('pw-locked-view');
+  const unlocked = $('pw-unlocked-view');
+  if (!locked || !unlocked) return;
+  // Consulta status atual — servidor é a fonte da verdade.
+  let s;
+  try { s = await api('/passwords/status'); }
+  catch (e) { s = { unlocked: false }; }
+  if (s.until) pwState.unlockedUntil = s.until;
+  if (s.ttlMs) pwState.ttlMs = s.ttlMs;
+  if (s.unlocked) {
+    locked.style.display = 'none';
+    unlocked.style.display = '';
+    await loadPasswords();
+    _pwStartTtlPaint();
+    _pwUpdateBiometriaBtn();
+  } else {
+    locked.style.display = '';
+    unlocked.style.display = 'none';
+    _pwStopTtlPaint();
+    _pwUpdateWebauthnUnlockBtn();
+    setTimeout(() => $('pw-unlock-input')?.focus(), 60);
+  }
+  paintIcons();
+}
+async function submitPwUnlock() {
+  const inp = $('pw-unlock-input');
+  const err = $('pw-unlock-err');
+  const btn = $('pw-unlock-btn');
+  err.style.display = 'none';
+  const pw = inp.value || '';
+  if (!pw) { err.textContent = 'Digite sua senha.'; err.style.display = ''; return; }
+  btn.disabled = true;
+  try {
+    const r = await api('/passwords/unlock', 'POST', { password: pw });
+    pwState.unlockedUntil = r.until;
+    pwState.ttlMs = r.ttlMs || pwState.ttlMs;
+    inp.value = '';
+    await renderPasswords();
+  } catch (e) {
+    err.textContent = e.message || 'Senha incorreta.';
+    err.style.display = '';
+    inp.focus();
+    inp.select();
+  } finally {
+    btn.disabled = false;
+  }
+}
+async function lockPwVault() {
+  try { await api('/passwords/lock', 'POST', {}); } catch {}
+  pwState.unlockedUntil = 0;
+  // Zera reveals ativos + timers
+  Object.values(pwState.revealed).forEach(r => clearTimeout(r.timeoutId));
+  pwState.revealed = {};
+  pwState.entries = [];
+  toast('Cofre travado.', 'success');
+  await renderPasswords();
+}
+async function loadPasswords() {
+  try {
+    pwState.entries = await api('/passwords');
+    renderPasswordsTable();
+  } catch (e) {
+    if (String(e.message || '').includes('vault_locked') || String(e.message || '').includes('403')) {
+      pwState.unlockedUntil = 0;
+      await renderPasswords();
+      return;
+    }
+    toast('Falha ao carregar cofre.', 'error');
+  }
+}
+function renderPasswordsTable() {
+  const tb = $('pw-tbody');
+  if (!tb) return;
+  const q = norm(($('pw-search')?.value || '').trim());
+  const list = pwState.entries.filter(p =>
+    !q || norm(p.name).includes(q) || norm(p.email || '').includes(q) || norm(p.username || '').includes(q)
+  );
+  if (!list.length) {
+    tb.innerHTML = `<tr><td colspan="6">${emptyMini(q ? 'Nenhuma entrada encontrada.' : 'Nenhuma senha cadastrada ainda. Clique em "Nova entrada".')}</td></tr>`;
+    return;
+  }
+  tb.innerHTML = list.map(p => {
+    const revealed = pwState.revealed[p.id];
+    const pwCell = revealed
+      ? `<span class="pw-value pw-value--shown" title="${esc(revealed.pw)}">${esc(revealed.pw)}</span>
+         <button class="pw-icon-btn" onclick="copyPwValue('${p.id}')" title="Copiar senha"><i data-lucide="copy" class="ic-xs"></i></button>`
+      : `<span class="pw-value">••••••••</span>`;
+    const emailEsc = esc(p.email || '');
+    const usernameEsc = esc(p.username || '');
+    return `
+      <tr>
+        <td class="pw-td-name" title="${esc(p.name)}"><strong>${esc(p.name)}</strong></td>
+        <td class="pw-td-link">${p.link ? `<a href="${esc(p.link)}" target="_blank" rel="noopener" class="pw-link" title="${esc(p.link)}">${esc(_pwShortLink(p.link))}</a>` : '—'}</td>
+        <td class="pw-td-single" title="${emailEsc}">${emailEsc || '—'}</td>
+        <td class="pw-td-single">${p.username ? `<span class="pw-mono" title="${usernameEsc}">${usernameEsc}</span> <button class="pw-icon-btn" onclick="copyToClipboard('${usernameEsc.replace(/'/g,"&#39;")}', 'Usuário')" title="Copiar"><i data-lucide="copy" class="ic-xs"></i></button>` : '—'}</td>
+        <td class="pw-cell pw-td-single">${pwCell}</td>
+        <td>
+          <div class="pw-row-actions">
+            <button class="pw-icon-btn" onclick="togglePwReveal('${p.id}')" title="${revealed ? 'Ocultar' : 'Mostrar'} senha">
+              <i data-lucide="${revealed ? 'eye-off' : 'eye'}" class="ic-xs"></i>
+            </button>
+            <button class="pw-icon-btn" onclick="openPwWizard('${p.id}')" title="Editar"><i data-lucide="pencil" class="ic-xs"></i></button>
+            <button class="pw-icon-btn danger" onclick="deletePwEntry('${p.id}')" title="Excluir"><i data-lucide="trash-2" class="ic-xs"></i></button>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+  paintIcons();
+}
+function _pwShortLink(url) {
+  // Encurta pra caber sem quebrar linha. Só o host (sem www.) — remove path/query.
+  // Ex.: https://docs.google.com/presentation/d/1habv... → docs.google.com
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '');
+    return host.length > 26 ? host.slice(0, 24) + '…' : host;
+  } catch { return url.length > 26 ? url.slice(0, 24) + '…' : url; }
+}
+async function togglePwReveal(id) {
+  if (pwState.revealed[id]) {
+    clearTimeout(pwState.revealed[id].timeoutId);
+    delete pwState.revealed[id];
+    renderPasswordsTable();
+    return;
+  }
+  try {
+    const r = await api('/passwords/' + id + '/reveal');
+    const timeoutId = setTimeout(() => {
+      delete pwState.revealed[id];
+      renderPasswordsTable();
+    }, 20000); // auto-oculta após 20s
+    pwState.revealed[id] = { pw: r.password, timeoutId };
+    renderPasswordsTable();
+  } catch (e) {
+    if (String(e.message || '').includes('vault_locked')) {
+      pwState.unlockedUntil = 0;
+      await renderPasswords();
+      toast('Cofre expirou. Destrave de novo.', 'warn');
+    } else {
+      toast('Falha ao revelar senha.', 'error');
+    }
+  }
+}
+async function copyPwValue(id) {
+  const r = pwState.revealed[id];
+  if (!r) return;
+  await copyToClipboard(r.pw, 'Senha');
+}
+async function copyToClipboard(text, label) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(`${label || 'Texto'} copiado.`, 'success');
+  } catch {
+    toast('Falha ao copiar.', 'error');
+  }
+}
+/* Wizard modal */
+function _pwSetToggleIcon(name) {
+  // lucide substitui <i data-lucide> por <svg> após paintIcons(). Pra alternar
+  // ícone dinamicamente, reescrevo o innerHTML do botão com um <i> fresco e
+  // deixo o paintIcons() do próximo tick renderizar.
+  const btn = $('pw-f-toggle');
+  if (!btn) return;
+  btn.innerHTML = `<i data-lucide="${name}" class="ic-sm"></i>`;
+  paintIcons();
+}
+function openPwWizard(id) {
+  $('pw-edit-id').value = id || '';
+  $('pw-wizard-title').textContent = id ? 'Editar entrada' : 'Nova entrada';
+  const p = id ? pwState.entries.find(x => x.id === id) : null;
+  $('pw-f-name').value     = p?.name     || '';
+  $('pw-f-link').value     = p?.link     || '';
+  $('pw-f-email').value    = p?.email    || '';
+  $('pw-f-username').value = p?.username || '';
+  $('pw-f-password').value = '';
+  $('pw-f-password').type = 'password';
+  _pwSetToggleIcon('eye');
+  $('pw-edit-hint').style.display = id ? '' : 'none';
+  openModal('pw-wizard-modal');
+  setTimeout(() => $('pw-f-name').focus(), 60);
+}
+function pwToggleWizardShow() {
+  const inp = $('pw-f-password');
+  const showing = inp.type === 'text';
+  inp.type = showing ? 'password' : 'text';
+  _pwSetToggleIcon(showing ? 'eye' : 'eye-off');
+}
+function pwGenerateRandom() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*_-+=';
+  const len = 20;
+  const arr = new Uint32Array(len);
+  crypto.getRandomValues(arr);
+  const s = [...arr].map(n => chars[n % chars.length]).join('');
+  $('pw-f-password').value = s;
+  $('pw-f-password').type = 'text';
+  _pwSetToggleIcon('eye-off');
+}
+async function submitPwWizard() {
+  const id = $('pw-edit-id').value || null;
+  const name = ($('pw-f-name').value || '').trim();
+  const pw = $('pw-f-password').value || '';
+  if (!name) { toast('Informe um nome.', 'warn'); return; }
+  if (!id && !pw) { toast('Informe a senha.', 'warn'); return; }
+  const body = {
+    name,
+    link: ($('pw-f-link').value || '').trim(),
+    email: ($('pw-f-email').value || '').trim(),
+    username: ($('pw-f-username').value || '').trim()
+  };
+  if (pw) body.password = pw;
+  try {
+    if (id) await api('/passwords/' + id, 'PUT', body);
+    else    await api('/passwords',        'POST', body);
+    closeModal('pw-wizard-modal');
+    toast(id ? 'Entrada atualizada.' : 'Entrada criada.', 'success');
+    await loadPasswords();
+  } catch (e) {
+    if (String(e.message || '').includes('vault_locked')) {
+      pwState.unlockedUntil = 0;
+      closeModal('pw-wizard-modal');
+      await renderPasswords();
+      toast('Cofre expirou. Destrave de novo.', 'warn');
+    } else {
+      toast(e.message || 'Falha ao salvar.', 'error');
+    }
+  }
+}
+async function deletePwEntry(id) {
+  const p = pwState.entries.find(x => x.id === id);
+  if (!p) return;
+  const ok = await showConfirm({
+    title: 'Excluir entrada',
+    message: `A entrada <strong>${esc(p.name)}</strong> será removida do cofre. Continuar?`,
+    okLabel: 'Excluir', danger: true
+  });
+  if (!ok) return;
+  try {
+    await api('/passwords/' + id, 'DELETE');
+    toast('Entrada removida.', 'success');
+    await loadPasswords();
+  } catch (e) {
+    toast(e.message || 'Falha ao remover.', 'error');
+  }
+}
+/* Painel de TTL — pinta contagem regressiva e re-checa a cada minuto. */
+function _pwStopTtlPaint() {
+  if (pwState.ttlTimer) { clearInterval(pwState.ttlTimer); pwState.ttlTimer = null; }
+}
+function _pwStartTtlPaint() {
+  _pwStopTtlPaint();
+  const paint = () => {
+    const badge = $('pw-ttl-badge'); if (!badge) return;
+    const remain = Math.max(0, pwState.unlockedUntil - Date.now());
+    if (!remain) {
+      badge.textContent = 'expirado';
+      pwState.unlockedUntil = 0;
+      renderPasswords();
+      return;
+    }
+    const min = Math.floor(remain / 60000);
+    const sec = Math.floor((remain % 60000) / 1000);
+    badge.textContent = min > 0 ? `${min}min` : `${sec}s`;
+  };
+  paint();
+  pwState.ttlTimer = setInterval(paint, 5000);
+}
+/* Audit modal (admin/mod) */
+async function openPwAuditModal() {
+  if (!me?.isAdmin && !me?.isModerator) { toast('Sem permissão.', 'warn'); return; }
+  // Popula filtros
+  const uSel = $('pw-audit-f-user');
+  const eSel = $('pw-audit-f-entry');
+  const users = (window.users || []).slice().sort((a,b) => norm(a.name).localeCompare(norm(b.name)));
+  uSel.innerHTML = '<option value="">Todos os usuários</option>' + users.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('');
+  eSel.innerHTML = '<option value="">Todas as entradas</option>' + pwState.entries.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  uSel.onchange = loadPwAudit;
+  eSel.onchange = loadPwAudit;
+  openModal('pw-audit-modal');
+  await loadPwAudit();
+}
+async function loadPwAudit() {
+  const tb = $('pw-audit-tbody');
+  if (!tb) return;
+  const uSel = $('pw-audit-f-user').value;
+  const eSel = $('pw-audit-f-entry').value;
+  const q = new URLSearchParams();
+  if (uSel) q.set('userId', uSel);
+  if (eSel) q.set('passwordId', eSel);
+  q.set('limit', '500');
+  let list = [];
+  try { list = await api('/passwords/audit?' + q.toString()); }
+  catch (e) { tb.innerHTML = `<tr><td colspan="5">${emptyMini('Falha ao carregar histórico.')}</td></tr>`; return; }
+  if (!list.length) { tb.innerHTML = `<tr><td colspan="5">${emptyMini('Nenhum evento no filtro atual.')}</td></tr>`; return; }
+  const ACTION_LABEL = {
+    unlock: '<span class="pw-audit-tag pw-audit-tag--unlock">destravou</span>',
+    lock:   '<span class="pw-audit-tag pw-audit-tag--lock">travou</span>',
+    view:   '<span class="pw-audit-tag pw-audit-tag--view">visualizou</span>',
+    create: '<span class="pw-audit-tag pw-audit-tag--create">criou</span>',
+    update: '<span class="pw-audit-tag pw-audit-tag--update">editou</span>',
+    delete: '<span class="pw-audit-tag pw-audit-tag--delete">apagou</span>'
+  };
+  tb.innerHTML = list.map(a => {
+    const u = userById(a.userId);
+    // esc só quando o nome vem do meta (input do usuário); fallback é hardcoded seguro.
+    const entryCell = a.meta?.name ? esc(a.meta.name) : (a.passwordId ? '—' : '<em>cofre</em>');
+    const detail = (a.action === 'update' && a.meta?.fields) ? esc(a.meta.fields.join(', ')) : '';
+    return `
+      <tr>
+        <td>${fmtAuditWhen(a.createdAt)}</td>
+        <td>${u ? esc(u.name) : '—'}</td>
+        <td>${ACTION_LABEL[a.action] || esc(a.action)}</td>
+        <td>${entryCell}</td>
+        <td>${detail}</td>
+      </tr>`;
+  }).join('');
+  paintIcons();
+}
+function fmtAuditWhen(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
 /* ─── START ─── */

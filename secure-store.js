@@ -51,16 +51,17 @@ function decrypt(b64) {
   return JSON.parse(dec.toString('utf8'));
 }
 
-let store = { credentials: {}, tokens: [] };
+let store = { credentials: {}, tokens: [], webauthn: {} };
 
 function load() {
   try {
     store = decrypt(fs.readFileSync(AUTH_PATH, 'utf8'));
   } catch {
-    store = { credentials: {}, tokens: [] };
+    store = { credentials: {}, tokens: [], webauthn: {} };
   }
   if (!store.credentials) store.credentials = {};
   if (!Array.isArray(store.tokens)) store.tokens = [];
+  if (!store.webauthn) store.webauthn = {}; // { userId: [{ credentialID, publicKey, counter, name, createdAt, transports? }] }
   return store;
 }
 
@@ -143,9 +144,73 @@ function dropTokensFor(userId) {
   save();
 }
 
+/* ── Encriptação de strings arbitrárias ──
+   Usado pelo cofre de senhas (/api/passwords) pra guardar valores no db.json
+   sem plaintext. Usa a mesma chave mestra (via `KEY`), então é reversível
+   enquanto o data/secret.key (ou FLUXO_SECRET) estiver intacto. Se a chave
+   for perdida, os valores viram inúteis — backup do secret.key é essencial. */
+function encryptString(plain) {
+  if (plain == null) return '';
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', KEY, iv);
+  const enc = Buffer.concat([cipher.update(String(plain), 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([iv, tag, enc]).toString('base64');
+}
+function decryptString(b64) {
+  if (!b64) return '';
+  const raw = Buffer.from(String(b64), 'base64');
+  const iv  = raw.subarray(0, 12);
+  const tag = raw.subarray(12, 28);
+  const enc = raw.subarray(28);
+  const decipher = crypto.createDecipheriv('aes-256-gcm', KEY, iv);
+  decipher.setAuthTag(tag);
+  const dec = Buffer.concat([decipher.update(enc), decipher.final()]);
+  return dec.toString('utf8');
+}
+
+/* ── WebAuthn: credenciais por usuário ──
+   Guarda uma lista por userId com { credentialID, publicKey, counter, name,
+   createdAt, transports }. Todos os campos binários chegam como base64url e
+   ficam assim no store (o auth.enc já é encriptado — dupla proteção). O
+   `counter` é atualizado a cada assertion pra prevenir replay. */
+function webauthnList(userId) {
+  return Array.isArray(store.webauthn?.[userId]) ? store.webauthn[userId] : [];
+}
+function webauthnAdd(userId, cred) {
+  if (!store.webauthn) store.webauthn = {};
+  if (!Array.isArray(store.webauthn[userId])) store.webauthn[userId] = [];
+  store.webauthn[userId].push(cred);
+  save();
+}
+function webauthnFind(userId, credentialID) {
+  return webauthnList(userId).find(c => c.credentialID === credentialID) || null;
+}
+function webauthnUpdateCounter(userId, credentialID, counter) {
+  const c = webauthnFind(userId, credentialID);
+  if (!c) return;
+  c.counter = counter;
+  c.lastUsedAt = new Date().toISOString();
+  save();
+}
+function webauthnRemove(userId, credentialID) {
+  const arr = webauthnList(userId);
+  const next = arr.filter(c => c.credentialID !== credentialID);
+  if (!store.webauthn) store.webauthn = {};
+  store.webauthn[userId] = next;
+  save();
+  return arr.length !== next.length;
+}
+function webauthnRemoveAll(userId) {
+  if (store.webauthn) delete store.webauthn[userId];
+  save();
+}
+
 module.exports = {
   load, save,
   setPassword, verifyPassword, hasPassword, removeCredentials,
   addToken, userIdForToken, removeToken, dropTokensFor,
+  encryptString, decryptString,
+  webauthnList, webauthnAdd, webauthnFind, webauthnUpdateCounter, webauthnRemove, webauthnRemoveAll,
   _store: () => store
 };

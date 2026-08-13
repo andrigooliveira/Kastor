@@ -11,6 +11,7 @@
     "test": "node --test tests/smoke.test.js"
   },
   "dependencies": {
+    "@simplewebauthn/server": "^13.3.2",
     "express": "^4.19.2",
     "google-auth-library": "^10.9.0",
     "googleapis": "^173.0.0",

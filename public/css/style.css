@@ -7829,6 +7829,164 @@ tr.demand-row:hover {
 .dt-card-arrow { flex-shrink: 0; color: var(--text-muted); align-self: center; }
 .dt-card:hover .dt-card-arrow { color: var(--accent); }
 
+/* ─── COFRE DE SENHAS ─── */
+.pw-locked { display: flex; align-items: center; justify-content: center; padding: 40px 20px; min-height: 60vh; }
+.pw-locked-card {
+  max-width: 380px; width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: 32px 28px;
+  text-align: center;
+  box-shadow: var(--shadow-lg);
+}
+.pw-locked-icon {
+  width: 64px; height: 64px; margin: 0 auto 14px;
+  border-radius: 50%; background: var(--accent-dim);
+  color: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+}
+.pw-locked-title { font-size: 18px; font-weight: 700; margin-bottom: 6px; }
+.pw-locked-sub { font-size: 13px; color: var(--text-muted); line-height: 1.6; margin-bottom: 20px; }
+.pw-unlock-form { display: flex; gap: 8px; }
+.pw-unlock-form .form-control { flex: 1; }
+.pw-unlock-err { color: var(--danger); font-size: 12.5px; margin-top: 10px; text-align: left; }
+
+.pw-ttl-badge {
+  font-size: 11px; font-weight: 600; padding: 3px 8px;
+  background: var(--accent-dim); color: var(--accent);
+  border-radius: 999px; font-variant-numeric: tabular-nums;
+}
+.pw-cell { min-width: 140px; }
+.pw-value { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; letter-spacing: 0.5px; color: var(--text-muted); }
+.pw-value--shown {
+  color: var(--text); background: var(--surface-2); padding: 2px 8px; border-radius: 4px;
+  letter-spacing: 0; display: inline-block; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle;
+}
+.pw-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;
+  display: inline-block; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle;
+}
+.pw-link {
+  color: var(--accent-text); text-decoration: none;
+  display: inline-block; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle;
+}
+.pw-link:hover { text-decoration: underline; }
+/* NOME: quebra por palavra sem estourar a coluna (nunca corta ao meio) */
+.pw-td-name {
+  max-width: 260px;
+  word-break: normal; overflow-wrap: anywhere;
+}
+/* LINK: cell com largura fixa; anchor faz o ellipsis */
+.pw-td-link { max-width: 200px; }
+/* EMAIL / USUÁRIO / SENHA: forçam única linha na célula toda */
+.pw-td-single {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 220px;
+}
+.pw-icon-btn {
+  background: none; border: 0; padding: 4px 6px;
+  color: var(--text-muted); cursor: pointer;
+  border-radius: 4px;
+  transition: color .12s, background .12s;
+}
+.pw-icon-btn:hover { color: var(--accent); background: var(--surface-2); }
+.pw-icon-btn.danger:hover { color: var(--danger); background: var(--danger-dim); }
+.pw-row-actions { display: inline-flex; gap: 2px; }
+.pw-hint { font-size: 11.5px; color: var(--text-muted); margin-top: 6px; }
+
+.pw-audit-tag {
+  display: inline-block; padding: 2px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 600;
+}
+.pw-audit-tag--unlock { background: rgba(122,0,255,0.12); color: var(--accent-text); }
+.pw-audit-tag--lock   { background: var(--surface-2); color: var(--text-muted); }
+.pw-audit-tag--view   { background: rgba(2,119,182,0.14); color: var(--sky, #0277B6); }
+.pw-audit-tag--create { background: rgba(14,153,104,0.14); color: var(--success); }
+.pw-audit-tag--update { background: rgba(234,179,8,0.16); color: var(--warn); }
+.pw-audit-tag--delete { background: var(--danger-dim); color: var(--danger); }
+
+/* WebAuthn: divisor "ou" entre senha e biometria + botão de biometria */
+.pw-webauthn-divider {
+  text-align: center; font-size: 11px; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .08em;
+  margin: 16px 0 12px; position: relative;
+}
+.pw-webauthn-divider::before,
+.pw-webauthn-divider::after {
+  content: ''; position: absolute; top: 50%; width: 40%; height: 1px;
+  background: var(--hairline);
+}
+.pw-webauthn-divider::before { left: 0; }
+.pw-webauthn-divider::after  { right: 0; }
+.pw-webauthn-btn {
+  width: 100%; justify-content: center;
+  padding: 10px 14px; font-weight: 600;
+  border: 1px solid var(--hairline);
+  transition: border-color .12s, background .12s;
+}
+.pw-webauthn-btn:hover { border-color: var(--accent); background: var(--surface-2); color: var(--accent-text); }
+
+/* Bloco de gerenciamento de credenciais biométricas na unlocked view */
+.pw-security-section {
+  margin-top: 32px; padding-top: 20px;
+  border-top: 1px solid var(--hairline);
+}
+.pw-security-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px; flex-wrap: wrap; gap: 8px;
+}
+.pw-security-title {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 14px; font-weight: 700; color: var(--text);
+}
+.pw-security-hint {
+  font-size: 12.5px; color: var(--text-muted); line-height: 1.6;
+  margin-bottom: 14px; max-width: 720px;
+}
+.pw-cred-list { display: flex; flex-direction: column; gap: 8px; }
+.pw-cred-empty { font-size: 12.5px; color: var(--text-muted); padding: 10px 0; font-style: italic; }
+.pw-cred-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+}
+.pw-cred-info { display: flex; align-items: center; gap: 12px; color: var(--accent); }
+.pw-cred-name { font-size: 13.5px; font-weight: 600; color: var(--text); }
+.pw-cred-meta { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
+/* Ícone por tipo: biometria = accent, PIN = tom mais frio (sky) pra diferenciar
+   à primeira vista dentro da lista. */
+.pw-cred-icon--biometric { color: var(--accent); }
+.pw-cred-icon--pin       { color: var(--sky, #0277B6); }
+
+/* Picker de tipo no wizard de cadastro de acesso — dois cards em row.
+   `margin-bottom` extra pra separar do próximo form-group (nome) — o `is-active`
+   fica muito colado no label seguinte sem folga. */
+#pw-webauthn-register-modal .form-group { margin-bottom: 20px; }
+#pw-webauthn-register-modal .form-group:last-child { margin-bottom: 0; }
+.pw-kind-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.pw-kind-opt {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 16px 12px;
+  background: var(--surface); border: 1.5px solid var(--hairline);
+  border-radius: var(--radius-sm); cursor: pointer;
+  transition: border-color .12s, background .12s;
+  text-align: center;
+}
+.pw-kind-opt input { position: absolute; opacity: 0; pointer-events: none; }
+.pw-kind-opt:hover { border-color: var(--accent); background: var(--surface-2); }
+.pw-kind-opt.is-active { border-color: var(--accent); background: var(--accent-dim); }
+.pw-kind-opt .ic-md { width: 26px; height: 26px; color: var(--accent); }
+.pw-kind-opt:nth-child(2) .ic-md { color: var(--sky, #0277B6); }
+.pw-kind-opt.is-active:nth-child(2) { background: rgba(2,119,182,0.10); border-color: var(--sky, #0277B6); }
+.pw-kind-name { font-size: 14px; font-weight: 700; color: var(--text); }
+.pw-kind-sub { font-size: 11.5px; color: var(--text-muted); }
+
 /* Respeito ao prefers-reduced-motion — para as animações contínuas.
    O bloco global lá em cima já faz `animation: none !important` em tudo. */
 

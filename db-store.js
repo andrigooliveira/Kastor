@@ -23,7 +23,8 @@ const { Pool } = require('pg');
 const ENTITY_TYPES = [
   'workspaces', 'users', 'clients', 'projects', 'flows',
   'demands', 'roles', 'positions', 'templates', 'webhooks', 'schedules', 'clientTemplates',
-  'recurrings', 'listas', 'demandTypes', 'googleEvents', 'tasks'
+  'recurrings', 'listas', 'demandTypes', 'googleEvents', 'tasks',
+  'passwords', 'passwordAudits'
 ];
 
 function createStore(config = {}) {

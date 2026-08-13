@@ -27,6 +27,10 @@ const fs         = require('fs');
 const path       = require('path');
 const nodemailer = require('nodemailer');
 const auth       = require('./secure-store');
+const {
+  generateRegistrationOptions, verifyRegistrationResponse,
+  generateAuthenticationOptions, verifyAuthenticationResponse
+} = require('@simplewebauthn/server');
 const { createStore, ENTITY_TYPES } = require('./db-store');
 const googleCal  = require('./google-cal');
 
@@ -5427,6 +5431,304 @@ app.post('/api/webhooks/:id/test', requireAuth, modOrAdmin, async (req, res) => 
     saveEntity('webhooks', h);
     res.status(502).json({ error: 'Falha ao contatar o endpoint: ' + msg });
   }
+});
+
+/* ─── COFRE DE SENHAS ─────────────────────────────────────────────
+   Cofre por-workspace. Cada entrada guarda { name, link, email, username } em
+   claro e `passwordCipher` (AES-256-GCM via auth.encryptString). Acesso requer
+   "destravar" o cofre digitando a própria senha da conta — o unlock é preso
+   ao token de sessão, TTL 15min idle. Toda ação (view/create/update/delete)
+   gera uma entry em passwordAudits (mod/admin veem tudo). */
+const VAULT_UNLOCK_TTL_MS = 15 * 60 * 1000;
+const _vaultUnlocked = new Map(); // token → expiresAt (ms)
+function _vaultUntil(token) {
+  const until = _vaultUnlocked.get(token) || 0;
+  if (until && until <= Date.now()) { _vaultUnlocked.delete(token); return 0; }
+  return until;
+}
+function _vaultTouch(token) {
+  const until = Date.now() + VAULT_UNLOCK_TTL_MS;
+  _vaultUnlocked.set(token, until);
+  return until;
+}
+function requireVaultUnlock(req, res, next) {
+  if (!_vaultUntil(req.token)) return res.status(403).json({ error: 'vault_locked' });
+  _vaultTouch(req.token); // sliding TTL — cada ação renova
+  next();
+}
+function _passwordListItem(p) {
+  // Metadata pública — nunca inclui a senha em claro nem o cipher.
+  const { passwordCipher, ...rest } = p;
+  return rest;
+}
+function _logPasswordAudit(userId, passwordId, action, meta) {
+  const audit = {
+    id: uid(), userId, passwordId,
+    action, // 'unlock' | 'lock' | 'view' | 'create' | 'update' | 'delete'
+    meta: meta || null,
+    createdAt: nowISO()
+  };
+  db.passwordAudits.push(audit);
+  saveEntity('passwordAudits', audit);
+}
+
+app.post('/api/passwords/unlock', requireAuth, (req, res) => {
+  const pw = String((req.body || {}).password || '');
+  if (!pw) return res.status(400).json({ error: 'Senha obrigatória' });
+  if (!auth.verifyPassword(req.user.id, pw)) {
+    // Não loga tentativas falhas em passwordAudits pra não dar palco pra brute — só rate-limit.
+    return res.status(401).json({ error: 'Senha incorreta' });
+  }
+  const until = _vaultTouch(req.token);
+  _logPasswordAudit(req.user.id, null, 'unlock', null);
+  res.json({ ok: true, until, ttlMs: VAULT_UNLOCK_TTL_MS });
+});
+app.post('/api/passwords/lock', requireAuth, (req, res) => {
+  if (_vaultUnlocked.has(req.token)) {
+    _vaultUnlocked.delete(req.token);
+    _logPasswordAudit(req.user.id, null, 'lock', null);
+  }
+  res.json({ ok: true });
+});
+app.get('/api/passwords/status', requireAuth, (req, res) => {
+  const until = _vaultUntil(req.token);
+  res.json({ unlocked: !!until, until, ttlMs: VAULT_UNLOCK_TTL_MS });
+});
+app.get('/api/passwords', requireAuth, requireVaultUnlock, (req, res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  const wsIds = new Set(wsIdsFor(req.user));
+  const list = (db.passwords || [])
+    .filter(p => notDeleted(p) && wsIds.has(p.workspaceId))
+    .map(_passwordListItem);
+  res.json(list);
+});
+app.post('/api/passwords', requireAuth, requireVaultUnlock, (req, res) => {
+  const b = req.body || {};
+  const name = String(b.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Nome obrigatório' });
+  const pwPlain = String(b.password || '');
+  if (!pwPlain) return res.status(400).json({ error: 'Senha obrigatória' });
+  const wsId = b.workspaceId || wsIdsFor(req.user)[0];
+  if (!wsId || !canAccessWs(req.user, wsId)) return res.status(403).json({ error: 'Sem acesso ao squad' });
+  const p = {
+    id: uid(),
+    workspaceId: wsId,
+    name,
+    link: String(b.link || '').trim(),
+    email: String(b.email || '').trim(),
+    username: String(b.username || '').trim(),
+    passwordCipher: auth.encryptString(pwPlain),
+    createdBy: req.user.id, createdAt: nowISO(),
+    updatedBy: req.user.id, updatedAt: nowISO()
+  };
+  db.passwords.push(p);
+  saveEntity('passwords', p);
+  _logPasswordAudit(req.user.id, p.id, 'create', { name: p.name });
+  res.status(201).json(_passwordListItem(p));
+});
+app.put('/api/passwords/:id', requireAuth, requireVaultUnlock, (req, res) => {
+  const p = (db.passwords || []).find(x => x.id === req.params.id && notDeleted(x));
+  if (!p) return res.status(404).json({ error: 'Entrada não encontrada' });
+  if (!canAccessWs(req.user, p.workspaceId)) return res.status(403).json({ error: 'Sem acesso' });
+  const b = req.body || {};
+  const changed = [];
+  if (typeof b.name === 'string' && b.name.trim() && b.name.trim() !== p.name) { p.name = b.name.trim(); changed.push('name'); }
+  if (typeof b.link === 'string')     { const v = b.link.trim();     if (v !== p.link)     { p.link = v; changed.push('link'); } }
+  if (typeof b.email === 'string')    { const v = b.email.trim();    if (v !== p.email)    { p.email = v; changed.push('email'); } }
+  if (typeof b.username === 'string') { const v = b.username.trim(); if (v !== p.username) { p.username = v; changed.push('username'); } }
+  if (typeof b.password === 'string' && b.password.length > 0) {
+    p.passwordCipher = auth.encryptString(b.password);
+    changed.push('password');
+  }
+  if (b.workspaceId && b.workspaceId !== p.workspaceId) {
+    if (!canAccessWs(req.user, b.workspaceId)) return res.status(403).json({ error: 'Sem acesso ao squad destino' });
+    p.workspaceId = b.workspaceId;
+    changed.push('workspaceId');
+  }
+  p.updatedBy = req.user.id;
+  p.updatedAt = nowISO();
+  saveEntity('passwords', p);
+  _logPasswordAudit(req.user.id, p.id, 'update', { name: p.name, fields: changed });
+  res.json(_passwordListItem(p));
+});
+app.delete('/api/passwords/:id', requireAuth, requireVaultUnlock, (req, res) => {
+  const p = (db.passwords || []).find(x => x.id === req.params.id && notDeleted(x));
+  if (!p) return res.status(404).json({ error: 'Entrada não encontrada' });
+  if (!canAccessWs(req.user, p.workspaceId)) return res.status(403).json({ error: 'Sem acesso' });
+  softDelete('passwords', p, req.user.id);
+  _logPasswordAudit(req.user.id, p.id, 'delete', { name: p.name });
+  res.json({ ok: true });
+});
+app.get('/api/passwords/:id/reveal', requireAuth, requireVaultUnlock, (req, res) => {
+  const p = (db.passwords || []).find(x => x.id === req.params.id && notDeleted(x));
+  if (!p) return res.status(404).json({ error: 'Entrada não encontrada' });
+  if (!canAccessWs(req.user, p.workspaceId)) return res.status(403).json({ error: 'Sem acesso' });
+  let plain = '';
+  try { plain = auth.decryptString(p.passwordCipher); }
+  catch (e) { return res.status(500).json({ error: 'Falha ao decifrar entrada (chave mestra pode ter mudado)' }); }
+  _logPasswordAudit(req.user.id, p.id, 'view', { name: p.name });
+  res.json({ password: plain });
+});
+/* ─── WebAuthn (Windows Hello / Touch ID / biometria / PIN) ───
+   Alternativa rápida ao unlock por senha. O usuário registra 1+ credenciais
+   (cada dispositivo/browser é uma cred). O finish da autenticação seta o
+   mesmo flag de vault-unlocked que o unlock por senha — audit registra a
+   fonte (`method: webauthn`).
+   RP config: rpID vem do Host (sem porta); origin vem do header Origin
+   (respeita http em dev e https em prod). Challenges vivem em memória,
+   TTL 5min, one-time-use. */
+const WEBAUTHN_CHALLENGE_TTL_MS = 5 * 60 * 1000;
+const _webauthnChallenges = new Map(); // userId → { challenge, kind: 'reg'|'auth', expiresAt }
+function _stashChallenge(userId, kind, challenge) {
+  _webauthnChallenges.set(userId, { challenge, kind, expiresAt: Date.now() + WEBAUTHN_CHALLENGE_TTL_MS });
+}
+function _takeChallenge(userId, kind) {
+  const c = _webauthnChallenges.get(userId);
+  _webauthnChallenges.delete(userId); // one-time use
+  if (!c || c.kind !== kind || c.expiresAt <= Date.now()) return null;
+  return c.challenge;
+}
+function _webauthnRpConfig(req) {
+  // Origin: header vindo do browser; se ausente (raro), compõe do request.
+  const origin = req.headers.origin || `${req.protocol}://${req.get('host')}`;
+  const url = new URL(origin);
+  const rpID = url.hostname; // localhost | rework.example.com
+  return { origin, rpID, rpName: 'reWork' };
+}
+function _publicCredMeta(c) {
+  const { publicKey, ...rest } = c;
+  return rest;
+}
+
+app.get('/api/passwords/webauthn/credentials', requireAuth, (req, res) => {
+  const list = auth.webauthnList(req.user.id).map(_publicCredMeta);
+  res.json(list);
+});
+app.delete('/api/passwords/webauthn/credentials/:credId', requireAuth, (req, res) => {
+  const ok = auth.webauthnRemove(req.user.id, req.params.credId);
+  if (!ok) return res.status(404).json({ error: 'Credencial não encontrada' });
+  res.json({ ok: true });
+});
+app.post('/api/passwords/webauthn/register/begin', requireAuth, async (req, res) => {
+  const { rpID, rpName } = _webauthnRpConfig(req);
+  const existing = auth.webauthnList(req.user.id).map(c => ({
+    id: c.credentialID, transports: c.transports || undefined
+  }));
+  try {
+    const options = await generateRegistrationOptions({
+      rpName, rpID,
+      userName: req.user.username || req.user.name || 'user',
+      userDisplayName: req.user.name || req.user.username,
+      userID: Buffer.from(req.user.id, 'utf8'),
+      attestationType: 'none',
+      excludeCredentials: existing,
+      authenticatorSelection: {
+        residentKey: 'preferred',
+        userVerification: 'preferred'
+      }
+    });
+    _stashChallenge(req.user.id, 'reg', options.challenge);
+    res.json(options);
+  } catch (e) {
+    console.error('[webauthn/register/begin]', e);
+    res.status(500).json({ error: 'Falha ao iniciar registro' });
+  }
+});
+app.post('/api/passwords/webauthn/register/finish', requireAuth, async (req, res) => {
+  const { origin, rpID } = _webauthnRpConfig(req);
+  const challenge = _takeChallenge(req.user.id, 'reg');
+  if (!challenge) return res.status(400).json({ error: 'Sessão de registro expirou. Tente de novo.' });
+  const label = String((req.body || {}).label || 'Acesso').slice(0, 60);
+  const kindRaw = String((req.body || {}).kind || 'biometric');
+  const kind = kindRaw === 'pin' ? 'pin' : 'biometric'; // allowlist
+  const response = (req.body || {}).response;
+  if (!response) return res.status(400).json({ error: 'Resposta ausente' });
+  try {
+    const verification = await verifyRegistrationResponse({
+      response, expectedChallenge: challenge,
+      expectedOrigin: origin, expectedRPID: rpID,
+      requireUserVerification: false
+    });
+    if (!verification.verified || !verification.registrationInfo) {
+      return res.status(400).json({ error: 'Registro não verificado' });
+    }
+    const info = verification.registrationInfo;
+    auth.webauthnAdd(req.user.id, {
+      credentialID: info.credential.id,
+      publicKey: Buffer.from(info.credential.publicKey).toString('base64'),
+      counter: info.credential.counter || 0,
+      transports: info.credential.transports || null,
+      name: label,
+      kind,
+      deviceType: info.credentialDeviceType,
+      backedUp: info.credentialBackedUp,
+      createdAt: nowISO(), lastUsedAt: null
+    });
+    res.json({ ok: true, credentialID: info.credential.id });
+  } catch (e) {
+    console.error('[webauthn/register/finish]', e);
+    res.status(400).json({ error: e.message || 'Falha ao verificar registro' });
+  }
+});
+app.post('/api/passwords/webauthn/auth/begin', requireAuth, async (req, res) => {
+  const { rpID } = _webauthnRpConfig(req);
+  const creds = auth.webauthnList(req.user.id);
+  if (!creds.length) return res.status(404).json({ error: 'Nenhuma credencial registrada' });
+  try {
+    const options = await generateAuthenticationOptions({
+      rpID,
+      allowCredentials: creds.map(c => ({ id: c.credentialID, transports: c.transports || undefined })),
+      userVerification: 'preferred'
+    });
+    _stashChallenge(req.user.id, 'auth', options.challenge);
+    res.json(options);
+  } catch (e) {
+    console.error('[webauthn/auth/begin]', e);
+    res.status(500).json({ error: 'Falha ao iniciar autenticação' });
+  }
+});
+app.post('/api/passwords/webauthn/auth/finish', requireAuth, async (req, res) => {
+  const { origin, rpID } = _webauthnRpConfig(req);
+  const challenge = _takeChallenge(req.user.id, 'auth');
+  if (!challenge) return res.status(400).json({ error: 'Sessão expirou. Tente de novo.' });
+  const response = (req.body || {}).response;
+  if (!response) return res.status(400).json({ error: 'Resposta ausente' });
+  const cred = auth.webauthnFind(req.user.id, response.id);
+  if (!cred) return res.status(404).json({ error: 'Credencial desconhecida' });
+  try {
+    const verification = await verifyAuthenticationResponse({
+      response, expectedChallenge: challenge,
+      expectedOrigin: origin, expectedRPID: rpID,
+      requireUserVerification: false,
+      credential: {
+        id: cred.credentialID,
+        publicKey: Buffer.from(cred.publicKey, 'base64'),
+        counter: cred.counter || 0,
+        transports: cred.transports || undefined
+      }
+    });
+    if (!verification.verified) return res.status(400).json({ error: 'Assinatura inválida' });
+    auth.webauthnUpdateCounter(req.user.id, cred.credentialID, verification.authenticationInfo.newCounter);
+    const until = _vaultTouch(req.token);
+    _logPasswordAudit(req.user.id, null, 'unlock', { method: 'webauthn', credentialID: cred.credentialID, name: cred.name });
+    res.json({ ok: true, until, ttlMs: VAULT_UNLOCK_TTL_MS });
+  } catch (e) {
+    console.error('[webauthn/auth/finish]', e);
+    res.status(400).json({ error: e.message || 'Falha ao verificar assinatura' });
+  }
+});
+
+app.get('/api/passwords/audit', requireAuth, modOrAdmin, (req, res) => {
+  // Filtros opcionais: ?passwordId=... ?userId=... ?limit=200
+  const limit = Math.min(Number(req.query.limit) || 200, 1000);
+  const pid = req.query.passwordId || null;
+  const uid_q = req.query.userId || null;
+  const list = (db.passwordAudits || [])
+    .filter(a => (!pid || a.passwordId === pid) && (!uid_q || a.userId === uid_q))
+    .slice()
+    .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+    .slice(0, limit);
+  res.json(list);
 });
 
 /* ── TÍTULO DE LINK ──

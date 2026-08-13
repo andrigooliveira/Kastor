@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-title" content="reWork">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/css/style.css?v=20260812g">
+<link rel="stylesheet" href="/css/style.css?v=20260813h">
 <script type="text/javascript">
     (function(c,l,a,r,i,t,y){
         c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
@@ -134,6 +134,10 @@
       <div class="nav-item" data-page="users" id="nav-users" onclick="goPage('users')">
         <svg viewBox="0 0 16 16" fill="none"><circle cx="5.5" cy="5" r="2.5" stroke="currentColor" stroke-width="1.5"/><path d="M1.5 13c.6-2.2 2.2-3.3 4-3.3s3.4 1.1 4 3.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="11.5" cy="5.5" r="2" stroke="currentColor" stroke-width="1.5"/><path d="M11 9.8c1.8.1 3 1.1 3.5 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         Usuários
+      </div>
+      <div class="nav-item" data-page="passwords" id="nav-passwords" onclick="goPage('passwords')">
+        <svg viewBox="0 0 16 16" fill="none"><rect x="2.5" y="7" width="11" height="6.5" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M5 7V4.5a3 3 0 016 0V7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="10.25" r="1" fill="currentColor"/></svg>
+        Senhas
       </div>
       <div class="nav-item admin-only" data-page="trash" id="nav-trash" onclick="goPage('trash')">
         <svg viewBox="0 0 16 16" fill="none"><path d="M2.5 4.5h11M6 4.5V3a1 1 0 011-1h2a1 1 0 011 1v1.5M4 4.5l.6 8a1.5 1.5 0 001.5 1.4h3.8a1.5 1.5 0 001.5-1.4l.6-8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M6.5 7.5v4M9.5 7.5v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
@@ -1283,6 +1287,192 @@
           Itens excluídos — clientes, projetos, demandas, fluxos, listas e modelos de cliente — ficam aqui por <strong>30 dias</strong> e depois são removidos definitivamente do servidor. Restaure enquanto estiverem na lista.
         </div>
         <div id="trash-body"></div>
+      </div>
+    </div>
+
+    <!-- ── COFRE DE SENHAS — tabela com unlock por senha da conta ── -->
+    <div class="page" id="page-passwords">
+      <div class="page-body">
+        <!-- LOCKED: aparece antes de destravar. Pede a senha da conta. -->
+        <div id="pw-locked-view" class="pw-locked">
+          <div class="pw-locked-card">
+            <div class="pw-locked-icon">
+              <svg width="42" height="42" viewBox="0 0 24 24" fill="none"><rect x="4" y="10" width="16" height="10" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M7 10V7a5 5 0 0110 0v3" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="15" r="1.4" fill="currentColor"/></svg>
+            </div>
+            <div class="pw-locked-title">Cofre trancado</div>
+            <div class="pw-locked-sub">Digite sua senha da conta pra destravar. A sessão do cofre expira após 15 minutos sem uso.</div>
+            <form id="pw-unlock-form" onsubmit="event.preventDefault(); submitPwUnlock();" class="pw-unlock-form">
+              <input type="password" class="form-control" id="pw-unlock-input" placeholder="Sua senha" autocomplete="current-password">
+              <button type="submit" class="btn btn-primary" id="pw-unlock-btn">Destravar</button>
+            </form>
+            <div class="pw-unlock-err" id="pw-unlock-err" style="display:none"></div>
+            <!-- Botão biometria: só aparece se browser suporta E user tem cred registrada. -->
+            <div class="pw-webauthn-divider" id="pw-webauthn-divider" style="display:none">ou</div>
+            <button class="btn btn-ghost pw-webauthn-btn" id="pw-webauthn-btn" style="display:none" onclick="unlockWithWebauthn()">
+              <i data-lucide="fingerprint" class="ic-sm"></i>
+              <span>Destravar com biometria / PIN</span>
+            </button>
+          </div>
+        </div>
+        <!-- UNLOCKED: só aparece após unlock OK. -->
+        <div id="pw-unlocked-view" style="display:none">
+          <div class="section-head" style="margin-bottom:14px">
+            <div class="section-title">Cofre de Senhas</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+              <span class="pw-ttl-badge" id="pw-ttl-badge" title="Tempo restante até re-travar">—</span>
+              <button class="btn btn-ghost btn-sm admin-only" onclick="openPwAuditModal()"><i data-lucide="history" class="ic-sm"></i> Histórico</button>
+              <button class="btn btn-ghost btn-sm" id="pw-biometria-btn" style="display:none" onclick="openPwBiometriaModal()"><i data-lucide="log-in" class="ic-sm"></i> Acesso</button>
+              <button class="btn btn-ghost btn-sm" onclick="lockPwVault()"><i data-lucide="lock" class="ic-sm"></i> Travar</button>
+              <button class="btn btn-primary btn-sm" onclick="openPwWizard(null)"><i data-lucide="plus" class="ic-sm"></i> Nova entrada</button>
+            </div>
+          </div>
+          <div class="filters-bar" style="margin-bottom:14px">
+            <div class="filter-input-wrap">
+              <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+              <input class="filter-input filter-input--with-icon" id="pw-search" placeholder="Buscar por nome, email, usuário…" oninput="renderPasswordsTable()">
+            </div>
+          </div>
+          <div class="table-wrap table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Nome</th>
+                  <th>Link</th>
+                  <th>Email</th>
+                  <th>Usuário</th>
+                  <th>Senha</th>
+                  <th style="width:110px"></th>
+                </tr>
+              </thead>
+              <tbody id="pw-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: ACESSO — gerenciar credenciais WebAuthn do próprio usuário -->
+    <div class="modal-overlay" id="pw-biometria-modal">
+      <div class="modal">
+        <div class="modal-header">
+          <div class="modal-title"><i data-lucide="log-in" class="ic-sm" style="vertical-align:middle;margin-right:6px"></i> Acesso</div>
+          <button class="modal-close" onclick="closeModal('pw-biometria-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+        </div>
+        <div class="modal-body">
+          <div class="pw-security-hint" style="margin-bottom:16px">
+            Configure formas rápidas de destravar o cofre sem digitar a senha da conta — biometria (impressão digital, rosto) ou PIN do dispositivo (Windows Hello, iOS, etc.). Cada dispositivo é uma credencial separada. Só você vê seus próprios acessos.
+          </div>
+          <div id="pw-cred-list" class="pw-cred-list"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" onclick="closeModal('pw-biometria-modal')">Fechar</button>
+          <button class="btn btn-primary" onclick="openPwRegisterWizard()"><i data-lucide="plus" class="ic-sm"></i> Cadastrar acesso</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: WIZARD DE REGISTRO DE ACESSO — tipo + nome antes da cerimônia WebAuthn -->
+    <div class="modal-overlay" id="pw-webauthn-register-modal">
+      <div class="modal">
+        <div class="modal-header">
+          <div class="modal-title">Novo acesso</div>
+          <button class="modal-close" onclick="closeModal('pw-webauthn-register-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Tipo</label>
+            <div class="pw-kind-picker" id="pw-kind-picker">
+              <label class="pw-kind-opt is-active">
+                <input type="radio" name="pw-kind" value="biometric" checked>
+                <i data-lucide="fingerprint" class="ic-md"></i>
+                <span class="pw-kind-name">Biometria</span>
+                <span class="pw-kind-sub">Impressão digital, rosto</span>
+              </label>
+              <label class="pw-kind-opt">
+                <input type="radio" name="pw-kind" value="pin">
+                <i data-lucide="key-round" class="ic-md"></i>
+                <span class="pw-kind-name">PIN</span>
+                <span class="pw-kind-sub">PIN do dispositivo</span>
+              </label>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Nome pra reconhecer depois</label>
+            <input class="form-control" id="pw-wa-name" placeholder="Ex.: Notebook do trabalho" maxlength="60">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" onclick="closeModal('pw-webauthn-register-modal')">Cancelar</button>
+          <button class="btn btn-primary" onclick="submitPwRegisterWizard()">Continuar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: WIZARD DE ENTRADA DO COFRE -->
+    <div class="modal-overlay" id="pw-wizard-modal">
+      <div class="modal">
+        <div class="modal-header">
+          <div class="modal-title" id="pw-wizard-title">Nova entrada</div>
+          <button class="modal-close" onclick="closeModal('pw-wizard-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="pw-edit-id" value="">
+          <div class="form-group">
+            <label class="form-label">Nome <span style="color:var(--danger)">*</span></label>
+            <input class="form-control" id="pw-f-name" placeholder="Ex.: Google Ads WSI" maxlength="120">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Link</label>
+            <input class="form-control" id="pw-f-link" placeholder="https://…" maxlength="500">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Email</label>
+            <input class="form-control" id="pw-f-email" placeholder="conta@dominio.com" maxlength="200">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Usuário</label>
+            <input class="form-control" id="pw-f-username" placeholder="usuário/login" maxlength="200">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Senha <span style="color:var(--danger)">*</span></label>
+            <div style="display:flex;gap:8px">
+              <input class="form-control" id="pw-f-password" type="password" placeholder="Senha" maxlength="500">
+              <button type="button" class="btn btn-ghost" onclick="pwToggleWizardShow()" id="pw-f-toggle" title="Mostrar/ocultar"><i data-lucide="eye" class="ic-sm"></i></button>
+              <button type="button" class="btn btn-ghost" onclick="pwGenerateRandom()" title="Gerar senha aleatória"><i data-lucide="shuffle" class="ic-sm"></i></button>
+            </div>
+            <div class="pw-hint" id="pw-edit-hint" style="display:none">Deixe em branco pra manter a senha atual.</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" onclick="closeModal('pw-wizard-modal')">Cancelar</button>
+          <button class="btn btn-primary" onclick="submitPwWizard()">Salvar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: HISTÓRICO DE ACESSOS (admin/mod) -->
+    <div class="modal-overlay" id="pw-audit-modal">
+      <div class="modal modal-lg">
+        <div class="modal-header">
+          <div class="modal-title">Histórico do cofre</div>
+          <button class="modal-close" onclick="closeModal('pw-audit-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+        </div>
+        <div class="modal-body">
+          <div class="dtype-mng-hint">
+            Registro imutável de todas as ações no cofre — quem destravou, visualizou, criou, editou ou apagou o quê. Retenção limitada aos últimos 1000 eventos por consulta.
+          </div>
+          <div class="filters-bar" style="margin-bottom:12px">
+            <select class="filter-select" id="pw-audit-f-user"><option value="">Todos os usuários</option></select>
+            <select class="filter-select" id="pw-audit-f-entry"><option value="">Todas as entradas</option></select>
+            <button class="btn btn-ghost btn-sm" onclick="loadPwAudit()"><i data-lucide="refresh-ccw" class="ic-sm"></i> Recarregar</button>
+          </div>
+          <div class="table-wrap table-scroll">
+            <table>
+              <thead><tr><th>Quando</th><th>Usuário</th><th>Ação</th><th>Entrada</th><th>Detalhes</th></tr></thead>
+              <tbody id="pw-audit-tbody"></tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -2800,7 +2990,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260812g"></script>
+<script src="/js/app.js?v=20260813h"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
