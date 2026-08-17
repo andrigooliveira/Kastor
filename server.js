@@ -1013,24 +1013,51 @@ app.set('trust proxy', 1);
    cobriria de mais relevante pra esse app. CSP permite inline porque temos
    inline onclick em vários lugares + scripts inline pra setup do tema; quando
    modularizar (ver notes/MODULARIZATION.md), pode endurecer. */
+/* Providers permitidos em <iframe> na Base de Conhecimento. Cada entrada é
+   uma origem completa; entradas com `*.` viram wildcard de subdomínio.
+   MUDAR AQUI reflete no CSP `frame-src` (browser não carrega iframe fora
+   dessa lista). Manter em sincronia com POST_IFRAME_HOST_ALLOWLIST em cima
+   (que valida no sanitizer). */
+const CSP_IFRAME_SRC = [
+  "'self'",
+  'https://www.youtube.com', 'https://youtube.com', 'https://www.youtube-nocookie.com',
+  'https://player.vimeo.com', 'https://vimeo.com',
+  'https://www.loom.com', 'https://loom.com',
+  'https://docs.google.com', 'https://drive.google.com', 'https://sheets.google.com', 'https://lookerstudio.google.com',
+  'https://*.notion.so', 'https://*.notion.site', 'https://notion.so',
+  'https://miro.com', 'https://*.miro.com',
+  'https://www.figma.com', 'https://figma.com',
+  'https://airtable.com', 'https://*.airtable.com',
+  'https://codepen.io',
+  'https://codesandbox.io', 'https://*.codesandbox.io',
+  'https://www.canva.com', 'https://*.canva.com',
+  'https://onedrive.live.com', 'https://*.sharepoint.com'
+].join(' ');
 app.use((req, res, next) => {
   // Anti-clickjacking (não embed em iframe de terceiros)
   res.set('X-Frame-Options', 'SAMEORIGIN');
   // Bloqueia MIME sniffing — força o Content-Type declarado
   res.set('X-Content-Type-Options', 'nosniff');
-  // Não vaza referer pra cross-origin
-  res.set('Referrer-Policy', 'same-origin');
+  // Manda origem (sem path/query) pra requests cross-origin. YouTube, Loom,
+  // Figma e outros exigem Referer pra servir embeds — `same-origin` puro
+  // (que estava aqui antes) bloqueava tudo. `strict-origin-when-cross-origin`
+  // é o default moderno dos browsers e não vaza URL específica.
+  res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   // Bloqueia APIs sensíveis que não usamos
   res.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
-  // CSP relativamente liberal: inline necessário pelo onclick=, fontes Google,
-  // dados em data: pra imagens (avatares/anexos), connect só same-origin.
+  // CSP: inline necessário pelo onclick=, fontes Google, imagens data:.
+  // `frame-src` explícito com os providers da Base de Conhecimento — sem isso
+  // o browser bloqueia YouTube/Loom/Figma/etc. antes mesmo de fazer o request.
   res.set('Content-Security-Policy', [
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com data:",
-    "img-src 'self' data: blob:",
+    "img-src 'self' data: blob: https:",
+    "media-src 'self' https:",
     "connect-src 'self'",
+    `frame-src ${CSP_IFRAME_SRC}`,
+    `child-src ${CSP_IFRAME_SRC}`,
     "frame-ancestors 'self'",
     "base-uri 'self'",
     "form-action 'self'"
@@ -3233,6 +3260,217 @@ function sanitizeAttachments(arr) {
     }
     return { id: a.id || uid(), kind: 'file', name: String(a.name || 'arquivo'), type: String(a.type || ''), data, addedAt: a.addedAt || nowISO() };
   }).filter(a => a.kind === 'link' ? a.url : a.data);
+}
+
+/* ─── SANITIZER DA BASE DE CONHECIMENTO ───
+   Estende o sanitizer de comentários: mesma allowlist + headings + tabelas +
+   iframe com host whitelisted (YouTube, Vimeo, Loom, Google Docs/Slides/
+   Sheets/Drive, Notion, Miro, Figma, Looker Studio, Airtable, CodePen,
+   CodeSandbox). Anti-XSS mesma linha: sem script, sem handlers on-*, sem
+   javascript: em href/src. Cap 1MB. */
+const POST_HTML_MAX_LEN = 1_000_000;
+const POST_HTML_ALLOWED_TAGS = new Set([
+  'b', 'strong', 'i', 'em', 'u', 's',
+  'p', 'div', 'br', 'hr',
+  'ol', 'ul', 'li',
+  'a', 'span', 'img', 'code', 'pre', 'blockquote',
+  'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  'table', 'thead', 'tbody', 'tr', 'th', 'td',
+  'iframe', 'figure', 'figcaption'
+]);
+const POST_HTML_ATTR_ALLOWLIST = {
+  a:      ['href', 'title', 'target', 'rel'],
+  img:    ['src', 'alt', 'title', 'width', 'height'],
+  span:   ['class'],
+  iframe: ['src', 'title', 'width', 'height', 'allowfullscreen', 'allow', 'loading', 'frameborder', 'referrerpolicy'],
+  table:  ['class'],
+  th:     ['colspan', 'rowspan'],
+  td:     ['colspan', 'rowspan'],
+  figure: ['class'], // pra preservar `class="post-embed"` (evita perder o wrapper no re-save)
+  h1: ['id'], h2: ['id'], h3: ['id'], h4: ['id'], h5: ['id'], h6: ['id']
+};
+// Sufixos de host permitidos pra <iframe src>. Match por endsWith('.'+suffix) OU exact.
+const POST_IFRAME_HOST_ALLOWLIST = [
+  'youtube.com', 'youtube-nocookie.com', 'youtu.be',
+  'vimeo.com', 'player.vimeo.com',
+  'loom.com',
+  'docs.google.com', 'drive.google.com', 'sheets.google.com', 'lookerstudio.google.com',
+  'notion.so', 'notion.site',
+  'miro.com',
+  'figma.com',
+  'airtable.com',
+  'codepen.io', 'codesandbox.io',
+  'canva.com',
+  'onedrive.live.com', 'sharepoint.com'
+];
+function _isAllowedIframeSrc(url) {
+  try {
+    const u = new URL(url, 'https://placeholder.local');
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+    const host = u.hostname.toLowerCase();
+    return POST_IFRAME_HOST_ALLOWLIST.some(sfx => host === sfx || host.endsWith('.' + sfx));
+  } catch { return false; }
+}
+function sanitizePostHtml(input) {
+  let html = String(input == null ? '' : input);
+  if (html.length > POST_HTML_MAX_LEN) html = html.slice(0, POST_HTML_MAX_LEN);
+  html = html.replace(/<!--[\s\S]*?-->/g, '');
+  // Blocos sempre inseguros — remove ANTES do walk.
+  html = html.replace(/<(script|style|object|embed|link|meta|form|input|button|textarea|select)[\s\S]*?<\/\1>/gi, '');
+  html = html.replace(/<(script|style|object|embed|link|meta|form|input|button|textarea|select)\b[^>]*\/?>/gi, '');
+  // <img>: mesmo tratamento do comment (data: URI vira /uploads).
+  html = html.replace(/<img\b([^>]*)>/gi, (_full, attrs) => {
+    const srcMatch = /\bsrc\s*=\s*"([^"]*)"|\bsrc\s*=\s*'([^']*)'/i.exec(attrs);
+    const src = srcMatch ? (srcMatch[1] || srcMatch[2] || '') : '';
+    let outSrc = '';
+    if (/^data:image\//i.test(src)) {
+      const saved = saveUploadFromDataUri(src, 'post-image');
+      if (saved) outSrc = saved.url;
+    } else if (/^https?:\/\//i.test(src) || src.startsWith('/uploads/')) {
+      outSrc = src;
+    }
+    if (!outSrc) return '';
+    const altMatch = /\balt\s*=\s*"([^"]*)"/i.exec(attrs);
+    const alt = altMatch ? altMatch[1] : '';
+    return `<img src="${escAttr(outSrc)}" alt="${escAttr(alt)}">`;
+  });
+  // Strip figures `.post-embed` que já vieram de sanitizes anteriores — evita
+  // acumular `<figure><figure>...` a cada re-save de edição. Regex não faz
+  // matching balanceado, então usa contador de <figure>/</figure> ao redor.
+  html = _stripPostEmbedFigures(html);
+  // <iframe>: só com src em host whitelisted. Substitui por wrapper responsivo.
+  // Regex unificado: matcha `<iframe...>content</iframe>` OU `<iframe.../>`
+  // OU `<iframe...>` sem close. Sem 2ª passada — evita re-processar o
+  // <iframe> que acabamos de emitir dentro do wrapper novo.
+  html = html.replace(
+    /<iframe\b([^>]*?)(?:>[\s\S]*?<\/iframe>|\/>)/gi,
+    (_full, attrs) => _sanitizeIframe(attrs)
+  );
+  // Walk das tags restantes.
+  html = html.replace(/<(\/?)\s*([a-zA-Z][a-zA-Z0-9]*)((?:\s+[^>]*)?)\/?>/g, (match, close, tag, rawAttrs) => {
+    const t = tag.toLowerCase();
+    if (!POST_HTML_ALLOWED_TAGS.has(t)) return '';
+    if (close) return `</${t}>`;
+    if (t === 'img' || t === 'iframe') return match; // já tratados acima
+    return `<${t}${_sanitizePostAttrs(t, rawAttrs || '')}>`;
+  });
+  return html.trim();
+}
+/* Remove wrappers `<figure class="post-embed">...<iframe/></figure>` do input
+   (junto com qualquer <figcaption> interno). Extrai o <iframe> nu — o sanitize
+   principal re-envelopa depois. Regex não faz balancing; conto <figure> abre/
+   fecha manualmente pra pegar o par correto mesmo com nesting. */
+function _stripPostEmbedFigures(html) {
+  const re = /<figure\b[^>]*class="[^"]*\bpost-embed\b[^"]*"[^>]*>/gi;
+  const out = [];
+  let last = 0, m;
+  while ((m = re.exec(html)) !== null) {
+    out.push(html.slice(last, m.index));
+    // Encontra o </figure> balanceado a partir do fim da opening tag
+    let i = m.index + m[0].length;
+    let depth = 1;
+    const openRe = /<figure\b/gi, closeRe = /<\/figure>/gi;
+    while (depth > 0 && i < html.length) {
+      openRe.lastIndex = i; closeRe.lastIndex = i;
+      const nextOpen = openRe.exec(html);
+      const nextClose = closeRe.exec(html);
+      if (!nextClose) break; // desbalanceado — deixa como está
+      if (nextOpen && nextOpen.index < nextClose.index) { depth++; i = nextOpen.index + nextOpen[0].length; }
+      else                                              { depth--; i = nextClose.index + nextClose[0].length; }
+    }
+    // Conteúdo entre a opening tag e o </figure> balanceado
+    const inner = html.slice(m.index + m[0].length, i - '</figure>'.length);
+    // Extrai só o iframe (com ou sem fechamento explícito) — descarta figcaption etc.
+    const iframeMatch = inner.match(/<iframe\b[\s\S]*?<\/iframe>|<iframe\b[^>]*\/?>/i);
+    out.push(iframeMatch ? iframeMatch[0] : '');
+    last = i;
+    re.lastIndex = i;
+  }
+  out.push(html.slice(last));
+  return out.join('');
+}
+/* Decodifica entidades HTML — usado antes de re-escapar valores lidos do source
+   via regex (senão dá double-encode: `&amp;` → `&amp;amp;`). */
+function _decodeHtmlEntities(s) {
+  return String(s)
+    .replace(/&amp;/g,  '&')
+    .replace(/&lt;/g,   '<')
+    .replace(/&gt;/g,   '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g,  "'")
+    .replace(/&#x2F;/gi, '/')
+    .replace(/&nbsp;/g, ' ');
+}
+/* Converte URL de embed pra URL "humana" (a de assistir/abrir), pra usar como
+   fallback quando o provider bloqueia o embed (comum em vídeos AO VIVO ou
+   com "permitir incorporação" desativado pelo dono). */
+function _embedToHumanUrl(embedSrc) {
+  try {
+    const u = new URL(embedSrc);
+    const host = u.hostname.replace(/^www\./, '').toLowerCase();
+    // YouTube: /embed/VIDEO_ID → /watch?v=VIDEO_ID
+    if (host === 'youtube.com' || host === 'youtube-nocookie.com' || host === 'youtu.be') {
+      const m = u.pathname.match(/^\/embed\/([\w-]+)/);
+      if (m) return `https://www.youtube.com/watch?v=${m[1]}`;
+    }
+    // Vimeo: player.vimeo.com/video/ID → vimeo.com/ID
+    if (host === 'player.vimeo.com') {
+      const m = u.pathname.match(/^\/video\/(\d+)/);
+      if (m) return `https://vimeo.com/${m[1]}`;
+    }
+    // Loom: loom.com/embed/ID → loom.com/share/ID
+    if (host === 'loom.com') {
+      const m = u.pathname.match(/^\/embed\/([\w-]+)/);
+      if (m) return `https://www.loom.com/share/${m[1]}`;
+    }
+    // Google Docs/Sheets/Slides: /preview → /view (só remove o /preview no fim)
+    if (host === 'docs.google.com') return embedSrc.replace(/\/preview(\?.*)?$/, '/view$1');
+    // Demais providers: retorna a própria src (é a página normal)
+    return embedSrc;
+  } catch { return embedSrc; }
+}
+function _sanitizeIframe(rawAttrs) {
+  const srcMatch = /\bsrc\s*=\s*"([^"]*)"|\bsrc\s*=\s*'([^']*)'/i.exec(rawAttrs || '');
+  const rawSrc = srcMatch ? (srcMatch[1] || srcMatch[2] || '') : '';
+  const src = _decodeHtmlEntities(rawSrc);
+  if (!src || !_isAllowedIframeSrc(src)) return '';
+  const titleMatch = /\btitle\s*=\s*"([^"]*)"|\btitle\s*=\s*'([^']*)'/i.exec(rawAttrs);
+  const rawTitle = titleMatch ? (titleMatch[1] || titleMatch[2] || '') : '';
+  const title = _decodeHtmlEntities(rawTitle) || 'Conteúdo incorporado';
+  const fallbackUrl = _embedToHumanUrl(src);
+  // Wrapper com aspect-ratio 16:9 responsivo + fallback link. `figcaption`
+  // aparece sempre — se o embed carregar OK a pessoa ignora, se travar
+  // (ex.: YouTube AO VIVO com "permitir incorporação" desativado pelo dono)
+  // o link vira o caminho de saída.
+  return `<figure class="post-embed">
+    <iframe src="${escAttr(src)}" title="${escAttr(title)}" loading="lazy" allowfullscreen allow="autoplay; encrypted-media; picture-in-picture; fullscreen"></iframe>
+    <figcaption><a href="${escAttr(fallbackUrl)}" target="_blank" rel="noopener noreferrer">Abrir no serviço original ↗</a></figcaption>
+  </figure>`;
+}
+function _sanitizePostAttrs(tag, raw) {
+  const allowed = POST_HTML_ATTR_ALLOWLIST[tag];
+  if (!allowed) return '';
+  const out = [];
+  const re = /([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+  let m;
+  while ((m = re.exec(raw)) !== null) {
+    const name = m[1].toLowerCase();
+    if (!allowed.includes(name)) continue;
+    if (name.startsWith('on')) continue;
+    // Regex lê o valor JÁ HTML-encoded do source (ex.: `href="a&amp;b"` → val = `a&amp;b`).
+    // Decodifica antes de re-encodar (escAttr) pra não acumular `&amp;amp;` a cada save.
+    // Isso é crítico pra URLs com query strings (`?a=1&b=2`) — que somos praticamente
+    // todos os embeds (Loom, Figma, YouTube com params, etc.).
+    const val = _decodeHtmlEntities(m[2] !== undefined ? m[2] : m[3]);
+    if ((name === 'href' || name === 'src') && /^\s*javascript:/i.test(val)) continue;
+    if (tag === 'a' && name === 'target' && val !== '_blank') continue;
+    if (tag === 'a' && name === 'rel' && !/^(noopener|noreferrer|(noopener\s+noreferrer))$/.test(val)) continue;
+    out.push(` ${name}="${escAttr(val)}"`);
+  }
+  if (tag === 'a' && out.some(a => a.includes('target="_blank"')) && !out.some(a => a.includes('rel='))) {
+    out.push(' rel="noopener noreferrer"');
+  }
+  return out.join('');
 }
 
 /* Registra um evento no histórico da demanda */
@@ -5716,6 +5954,121 @@ app.post('/api/passwords/webauthn/auth/finish', requireAuth, async (req, res) =>
     console.error('[webauthn/auth/finish]', e);
     res.status(400).json({ error: e.message || 'Falha ao verificar assinatura' });
   }
+});
+
+/* ─── BASE DE CONHECIMENTO (posts) ───
+   Posts com HTML sanitizado (permite iframes de domínios whitelist), tags
+   normalizadas, autor + contributors auto-mantidos. Escopo per-squad como
+   demais entidades (aparecem só nos squads que o user pertence). */
+const POST_TAG_MAX_LEN = 40;
+const POST_TAGS_MAX = 12;
+const POST_TITLE_MAX = 180;
+function _sanitizeTags(input) {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const raw of input) {
+    const t = String(raw || '').trim().toLowerCase().slice(0, POST_TAG_MAX_LEN);
+    if (!t) continue;
+    if (seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+    if (out.length >= POST_TAGS_MAX) break;
+  }
+  return out;
+}
+function _publicPost(p) {
+  // Sem alteração — retorna o post cru. deletedAt é filtrado antes de sair.
+  return p;
+}
+app.get('/api/posts', requireAuth, (req, res) => {
+  const ids = new Set(wsIdsFor(req.user));
+  const q = String(req.query.q || '').trim().toLowerCase();
+  const tag = String(req.query.tag || '').trim().toLowerCase();
+  const authorId = req.query.authorId || null;
+  const list = (db.posts || [])
+    .filter(p => notDeleted(p) && ids.has(p.workspaceId))
+    .filter(p => !tag || (p.tags || []).includes(tag))
+    .filter(p => !authorId || p.authorId === authorId)
+    .filter(p => {
+      if (!q) return true;
+      const hay = (p.title || '').toLowerCase() + ' ' + stripHtmlToText(p.content || '').toLowerCase() + ' ' + (p.tags || []).join(' ');
+      return hay.includes(q);
+    })
+    .sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''))
+    .map(_publicPost);
+  res.json(list);
+});
+app.get('/api/posts/:id', requireAuth, (req, res) => {
+  const p = (db.posts || []).find(x => x.id === req.params.id && notDeleted(x));
+  if (!p) return res.status(404).json({ error: 'Post não encontrado' });
+  if (!canAccessWs(req.user, p.workspaceId)) return res.status(403).json({ error: 'Sem acesso' });
+  res.json(_publicPost(p));
+});
+app.post('/api/posts', requireAuth, (req, res) => {
+  const b = req.body || {};
+  const title = String(b.title || '').trim().slice(0, POST_TITLE_MAX);
+  if (!title) return res.status(400).json({ error: 'Título obrigatório' });
+  const wsId = b.workspaceId || wsIdsFor(req.user)[0];
+  if (!wsId || !canAccessWs(req.user, wsId)) return res.status(403).json({ error: 'Sem acesso ao squad' });
+  const now = nowISO();
+  const p = {
+    id: uid(),
+    workspaceId: wsId,
+    title,
+    content: sanitizePostHtml(b.content || ''),
+    tags: _sanitizeTags(b.tags),
+    coverImage: typeof b.coverImage === 'string' && /^\/uploads\// .test(b.coverImage) ? b.coverImage : '',
+    authorId: req.user.id,
+    contributorIds: [],
+    createdAt: now,
+    updatedAt: now
+  };
+  db.posts.push(p);
+  saveEntity('posts', p);
+  broadcastChange('post', 'create', { id: p.id, workspaceId: p.workspaceId, byUserId: req.user.id });
+  res.status(201).json(_publicPost(p));
+});
+app.put('/api/posts/:id', requireAuth, (req, res) => {
+  const p = (db.posts || []).find(x => x.id === req.params.id && notDeleted(x));
+  if (!p) return res.status(404).json({ error: 'Post não encontrado' });
+  if (!canAccessWs(req.user, p.workspaceId)) return res.status(403).json({ error: 'Sem acesso' });
+  // Todos com acesso ao squad podem editar — é knowledge base colaborativa.
+  const b = req.body || {};
+  if (typeof b.title === 'string') {
+    const t = b.title.trim().slice(0, POST_TITLE_MAX);
+    if (!t) return res.status(400).json({ error: 'Título obrigatório' });
+    p.title = t;
+  }
+  if (typeof b.content === 'string') p.content = sanitizePostHtml(b.content);
+  if (Array.isArray(b.tags)) p.tags = _sanitizeTags(b.tags);
+  if (typeof b.coverImage === 'string') {
+    p.coverImage = /^\/uploads\// .test(b.coverImage) ? b.coverImage : '';
+  }
+  if (b.workspaceId && b.workspaceId !== p.workspaceId) {
+    if (!canAccessWs(req.user, b.workspaceId)) return res.status(403).json({ error: 'Sem acesso ao squad destino' });
+    p.workspaceId = b.workspaceId;
+  }
+  // Contributors: adiciona editor se não é o autor e ainda não estava na lista.
+  if (req.user.id !== p.authorId && !(p.contributorIds || []).includes(req.user.id)) {
+    p.contributorIds = [...(p.contributorIds || []), req.user.id];
+  }
+  p.updatedAt = nowISO();
+  saveEntity('posts', p);
+  broadcastChange('post', 'update', { id: p.id, workspaceId: p.workspaceId, byUserId: req.user.id });
+  res.json(_publicPost(p));
+});
+app.delete('/api/posts/:id', requireAuth, (req, res) => {
+  const p = (db.posts || []).find(x => x.id === req.params.id && notDeleted(x));
+  if (!p) return res.status(404).json({ error: 'Post não encontrado' });
+  if (!canAccessWs(req.user, p.workspaceId)) return res.status(403).json({ error: 'Sem acesso' });
+  // Só autor ou admin/mod pode apagar (contributors não).
+  const isAuthor = p.authorId === req.user.id;
+  const isPrivileged = req.user.isAdmin || req.user.isModerator;
+  if (!isAuthor && !isPrivileged) return res.status(403).json({ error: 'Apenas o autor ou moderadores podem excluir' });
+  softDelete('posts', p, req.user.id);
+  broadcastChange('post', 'delete', { id: p.id, workspaceId: p.workspaceId, byUserId: req.user.id });
+  res.json({ ok: true });
 });
 
 app.get('/api/passwords/audit', requireAuth, modOrAdmin, (req, res) => {

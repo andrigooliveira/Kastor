@@ -7792,6 +7792,363 @@ tr.demand-row:hover {
 #dtype-manage-modal .row-actions .icon-btn:hover { color: var(--accent-text); background: var(--surface-2); }
 #dtype-manage-modal .row-actions .icon-btn.danger:hover { color: var(--danger); background: var(--danger-dim); }
 
+/* ─── BASE DE CONHECIMENTO ─── */
+.kb-tag-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+.kb-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 10px; border-radius: 999px;
+  background: var(--surface); border: 1px solid var(--hairline);
+  color: var(--text-dim); font-family: inherit; font-size: 12px; font-weight: 500;
+  cursor: pointer; transition: background .12s, color .12s, border-color .12s;
+}
+.kb-chip:hover { border-color: var(--accent); color: var(--text); }
+.kb-chip.is-active { background: var(--accent-dim); color: var(--accent-text); border-color: var(--accent); }
+.kb-chip-count { font-size: 10.5px; color: var(--text-muted); }
+.kb-chip.is-active .kb-chip-count { color: var(--accent-text); }
+
+.kb-cards {
+  display: grid; gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+}
+.kb-card {
+  display: flex; flex-direction: column;
+  padding: 0; text-align: left;
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  overflow: hidden;
+  cursor: pointer; font-family: inherit;
+  transition: border-color .15s, transform .18s, background .15s, box-shadow .18s;
+}
+.kb-card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: var(--shadow-md); }
+.kb-card-cover {
+  width: 100%; aspect-ratio: 16 / 9;
+  background: var(--surface-2) center/cover no-repeat;
+  border-bottom: 1px solid var(--hairline);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-muted);
+}
+.kb-card-cover--empty { background: linear-gradient(135deg, var(--surface-2), var(--surface)); }
+.kb-card-cover--empty i { opacity: 0.4; }
+.kb-card-body { display: flex; flex-direction: column; gap: 10px; padding: 16px 18px; flex: 1; }
+.kb-card-head { display: flex; flex-direction: column; gap: 6px; }
+.kb-card-title { font-size: 15.5px; font-weight: 700; color: var(--text); line-height: 1.35; }
+.kb-card-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.kb-tag {
+  display: inline-block; padding: 2px 8px; border-radius: 999px;
+  background: var(--accent-dim); color: var(--accent-text);
+  font-size: 10.5px; font-weight: 600;
+}
+.kb-card-excerpt { font-size: 13px; color: var(--text-dim); line-height: 1.55; flex: 1; }
+.kb-card-meta {
+  display: flex; align-items: center; gap: 8px;
+  padding-top: 8px; border-top: 1px solid var(--hairline);
+  font-size: 11.5px; color: var(--text-muted);
+}
+.kb-card-author { color: var(--text-dim); font-weight: 500; }
+.kb-card-contribs { color: var(--accent-text); font-weight: 600; }
+.kb-card-date { margin-left: auto; }
+
+/* Hero da capa no detalhe do post */
+.kb-detail-cover {
+  margin: 0 0 22px;
+  border-radius: 10px; overflow: hidden;
+  border: 1px solid var(--hairline);
+  background: var(--surface-2);
+}
+.kb-detail-cover img {
+  display: block; width: 100%; height: auto; max-height: 420px; object-fit: cover;
+}
+
+/* Detail view */
+.kb-detail-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 8px; flex-wrap: wrap; }
+.kb-detail-actions { display: flex; gap: 6px; }
+.kb-detail-title { font-size: 32px; margin: 0 0 12px; letter-spacing: -0.02em; line-height: 1.15; }
+.kb-detail-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+.kb-detail-meta {
+  display: flex; align-items: center; gap: 20px;
+  padding: 14px 0 20px; margin-bottom: 20px;
+  border-bottom: 1px solid var(--hairline);
+  flex-wrap: wrap;
+}
+.kb-detail-author-info { display: inline-block; margin-left: 8px; vertical-align: middle; }
+.kb-detail-author-name { font-size: 13.5px; font-weight: 600; color: var(--text); }
+.kb-detail-author-role { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
+.kb-detail-contribs { display: flex; align-items: center; gap: 10px; }
+.kb-detail-contribs-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+.kb-detail-contribs-avatars { display: inline-flex; }
+.kb-detail-contribs-avatars .avatar { margin-left: -6px; border: 2px solid var(--surface); }
+.kb-detail-contribs-avatars .avatar:first-child { margin-left: 0; }
+.kb-detail-contribs-more { font-size: 11px; color: var(--text-muted); margin-left: 6px; align-self: center; }
+.kb-detail-body { font-size: 15px; line-height: 1.7; color: var(--text); max-width: 780px; }
+.kb-detail-body h1, .kb-detail-body h2, .kb-detail-body h3 { margin: 24px 0 10px; letter-spacing: -0.01em; }
+.kb-detail-body h2 { font-size: 22px; }
+.kb-detail-body h3 { font-size: 18px; }
+.kb-detail-body p { margin: 10px 0; }
+.kb-detail-body ul, .kb-detail-body ol { padding-left: 22px; margin: 10px 0; }
+.kb-detail-body li { margin: 4px 0; }
+.kb-detail-body blockquote { border-left: 3px solid var(--accent); padding: 4px 12px; margin: 12px 0; color: var(--text-dim); background: var(--surface); border-radius: 0 6px 6px 0; }
+.kb-detail-body pre { background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 6px; padding: 12px; overflow-x: auto; font-family: ui-monospace, monospace; font-size: 12.5px; }
+.kb-detail-body img { max-width: 100%; height: auto; border-radius: 6px; margin: 12px 0; }
+.kb-detail-body a { color: var(--accent-text); }
+
+/* Embed wrapper — 16:9 responsivo, com legend/link como fallback */
+.post-embed {
+  margin: 16px 0;
+  border-radius: 8px; background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  overflow: hidden;
+}
+.post-embed iframe {
+  display: block; width: 100%; aspect-ratio: 16 / 9;
+  border: 0;
+}
+.post-embed figcaption {
+  padding: 8px 12px; font-size: 12px; text-align: right;
+  color: var(--text-muted);
+  border-top: 1px solid var(--hairline);
+  background: var(--surface);
+}
+.post-embed figcaption a {
+  color: var(--accent-text); text-decoration: none; font-weight: 500;
+}
+.post-embed figcaption a:hover { text-decoration: underline; }
+
+/* ── Editor de post: página dedicada estilo blog ── */
+/* Reseta o padding padrão da .page pra dar controle total do layout. */
+#page-post-editor { padding: 0; background: var(--bg); }
+.post-editor-page {
+  display: flex; flex-direction: column;
+  min-height: calc(100vh - 65px);
+  max-width: 100%;
+}
+/* Topbar sticky com Voltar/Preview/Salvar */
+.post-editor-topbar {
+  position: sticky; top: 0; z-index: 40;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 10px 24px;
+  background: var(--surface); border-bottom: 1px solid var(--hairline);
+  backdrop-filter: saturate(180%) blur(6px);
+}
+.post-editor-topbar-left,
+.post-editor-topbar-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.post-editor-topbar-title { font-size: 13px; font-weight: 600; color: var(--text-dim); }
+.post-editor-dirty-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px; border-radius: 999px;
+  background: rgba(255,200,50,.16); color: #b58411; border: 1px solid rgba(255,200,50,.32);
+  font-size: 11px; font-weight: 600;
+}
+:root:not([data-theme="light"]) .post-editor-dirty-badge,
+:root[data-theme="dark"] .post-editor-dirty-badge { color: #e6c774; }
+.post-editor-mode-toggle {
+  display: inline-flex; padding: 3px; gap: 2px;
+  background: var(--surface-2); border: 1px solid var(--hairline);
+  border-radius: 999px;
+}
+.post-editor-mode-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 12px; border-radius: 999px;
+  background: transparent; border: 0;
+  color: var(--text-dim); font-family: inherit; font-size: 12px; font-weight: 500;
+  cursor: pointer; transition: background .12s, color .12s;
+}
+.post-editor-mode-btn:hover { color: var(--text); }
+.post-editor-mode-btn.is-active {
+  background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm);
+}
+
+/* Canvas centralizado — largura confortável pra caber a toolbar em uma linha
+   (22 botões + 5 separadores + label do "Incorporar"). */
+.post-editor-canvas {
+  max-width: 980px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 26px 24px 80px;
+}
+
+/* Dropzone da capa */
+.post-cover-drop {
+  margin-bottom: 22px;
+  border-radius: 10px; overflow: hidden;
+  background: var(--surface-2);
+  border: 1px dashed var(--hairline);
+  transition: border-color .15s;
+}
+.post-cover-drop:hover { border-color: var(--accent); }
+.post-cover-empty {
+  display: flex; align-items: center; justify-content: center;
+  aspect-ratio: 16 / 6;
+  min-height: 140px;
+}
+.post-cover-pick-btn {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px; padding: 24px 32px;
+  background: transparent; border: 0;
+  color: var(--text-muted); font-family: inherit; cursor: pointer;
+  text-align: center; width: 100%; height: 100%;
+}
+.post-cover-pick-btn:hover { color: var(--accent-text); }
+.post-cover-pick-label { font-size: 14px; font-weight: 600; color: var(--text-dim); }
+.post-cover-pick-hint  { font-size: 12px; color: var(--text-muted); }
+.post-cover-preview { position: relative; }
+.post-cover-preview img {
+  display: block; width: 100%; height: auto; max-height: 360px; object-fit: cover;
+}
+.post-cover-actions {
+  position: absolute; top: 10px; right: 10px;
+  display: flex; gap: 6px;
+  padding: 4px; border-radius: 999px;
+  background: rgba(0,0,0,0.55); backdrop-filter: blur(4px);
+}
+.post-cover-actions .btn { color: #fff; }
+.post-cover-actions .btn:hover { background: rgba(255,255,255,0.12); }
+
+/* Título e tags */
+.post-editor-title-input {
+  display: block; width: 100%;
+  padding: 4px 0; margin: 0 0 14px;
+  background: transparent; border: 0;
+  color: var(--text); font-family: inherit;
+  font-size: 32px; font-weight: 800; line-height: 1.15; letter-spacing: -0.02em;
+}
+.post-editor-title-input::placeholder { color: var(--text-muted); font-weight: 700; }
+.post-editor-title-input:focus { outline: none; }
+
+.post-editor-tags-row { margin-bottom: 14px; }
+
+.post-tag-input-wrap {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  padding: 6px 8px;
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: 8px;
+}
+.post-tag-list { display: flex; flex-wrap: wrap; gap: 4px; }
+.post-tag-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 4px 3px 8px; border-radius: 999px;
+  background: var(--accent-dim); color: var(--accent-text);
+  font-size: 11px; font-weight: 600;
+}
+.post-tag-remove {
+  background: none; border: 0; padding: 0 4px;
+  color: inherit; cursor: pointer; font-size: 14px; line-height: 1;
+  opacity: 0.7;
+}
+.post-tag-remove:hover { opacity: 1; }
+.post-tag-input {
+  flex: 1; min-width: 140px;
+  border: 0; background: transparent; padding: 4px 6px;
+  color: var(--text); font-family: inherit; font-size: 13px;
+}
+.post-tag-input:focus { outline: none; }
+
+/* Toolbar sticky — botões maiores (32×32) que o padrão de comentário, com
+   ícones em 16px pra bater com o resto da interface de blog. Uma linha só
+   (nowrap); em telas estreitas rola horizontalmente. */
+.post-editor-toolbar {
+  position: sticky; top: 56px; z-index: 30;
+  display: flex; flex-wrap: nowrap; align-items: center; gap: 4px;
+  padding: 6px 8px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 10px 10px 0 0; border-bottom: 0;
+  box-shadow: 0 4px 12px -8px rgba(0,0,0,.18);
+  overflow-x: auto; scrollbar-width: thin;
+}
+.post-editor-toolbar::-webkit-scrollbar { height: 6px; }
+.post-editor-toolbar::-webkit-scrollbar-thumb { background: var(--hairline); border-radius: 3px; }
+.post-editor-toolgroup, .post-editor-sep { flex-shrink: 0; }
+.post-editor-toolgroup { display: inline-flex; align-items: center; gap: 2px; }
+.post-editor-sep { width: 1px; height: 22px; background: var(--hairline); margin: 0 4px; align-self: center; }
+/* Override do .comment-tool (24×24 padrão) só dentro da toolbar do editor.
+   `width: auto` é obrigatório — o padrão fixa em 24px, o que impede o botão
+   "Incorporar" (com label) de expandir. min-width mantém quadrados em 32. */
+.post-editor-toolbar .comment-tool {
+  width: auto; min-width: 32px; height: 32px; padding: 0 6px;
+  border-radius: 6px;
+}
+.post-editor-toolbar .comment-tool i,
+.post-editor-toolbar .comment-tool svg {
+  width: 16px !important; height: 16px !important;
+}
+/* Botões que mostram texto de rótulo (H1/H2/H3/¶) — sobem o tamanho da fonte
+   pra bater com o novo 16px dos ícones. */
+.post-editor-toolbar .comment-tool > span[style] { font-size: 13px !important; }
+/* Botão de incorporar: ícone + label lado a lado, largura auto. */
+.post-embed-btn { padding: 0 10px; gap: 6px; }
+.post-embed-btn-label { font-size: 12.5px; font-weight: 600; }
+
+/* Corpo */
+.post-editor-body {
+  min-height: 60vh;
+  padding: 18px 20px;
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: 0 0 10px 10px;
+  font-family: inherit; font-size: 16px; line-height: 1.7; color: var(--text);
+}
+.post-editor-body:focus { outline: none; }
+.post-editor-body:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-muted);
+  font-size: 13px;
+  pointer-events: none;
+}
+.post-editor-body h1 { font-size: 26px; margin: 22px 0 10px; letter-spacing: -0.015em; }
+.post-editor-body h2 { font-size: 22px; margin: 18px 0 8px; }
+.post-editor-body h3 { font-size: 18px; margin: 14px 0 6px; }
+.post-editor-body p  { margin: 10px 0; }
+.post-editor-body ul, .post-editor-body ol { padding-left: 22px; margin: 10px 0; }
+.post-editor-body blockquote { border-left: 3px solid var(--accent); padding: 4px 12px; color: var(--text-dim); margin: 12px 0; }
+.post-editor-body pre { background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 6px; padding: 12px; overflow-x: auto; font-family: ui-monospace, monospace; font-size: 13px; }
+.post-editor-body img { max-width: 100%; border-radius: 4px; margin: 8px 0; }
+.post-editor-body hr  { margin: 20px 0; border: 0; border-top: 1px solid var(--hairline); }
+.post-editor-body .post-embed { pointer-events: none; }
+
+/* Mobile */
+@media (max-width: 768px) {
+  .post-editor-topbar { padding: 8px 12px; gap: 6px; }
+  .post-editor-topbar-title { display: none; }
+  .post-editor-canvas { padding: 16px 12px 60px; }
+  .post-editor-title-input { font-size: 26px; }
+  .post-editor-toolbar { top: 52px; }
+  .post-embed-btn-label { display: none; }
+}
+
+/* Modal de incorporar código — sobe z-index pra ficar POR CIMA do editor
+   (que também tem z-index 200 mas vem DEPOIS no DOM). */
+#post-embed-modal { z-index: 300; }
+.post-embed-hint {
+  font-size: 13px; color: var(--text-dim); line-height: 1.6;
+  margin-bottom: 12px;
+}
+.post-embed-hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--surface-2); padding: 1px 6px; border-radius: 3px; font-size: 0.9em;
+}
+.post-embed-input {
+  width: 100%; padding: 10px 12px;
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px; color: var(--text); line-height: 1.5;
+  resize: vertical; min-height: 100px;
+}
+.post-embed-input:focus { outline: none; border-color: var(--accent); }
+.post-embed-preview {
+  margin-top: 14px; padding: 12px;
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 6px;
+}
+.post-embed-preview-label {
+  font-size: 10.5px; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.08em;
+  font-weight: 600; margin-bottom: 8px;
+}
+.post-embed-err {
+  margin-top: 10px; padding: 10px 12px;
+  background: rgba(239,80,80,0.10); color: var(--danger);
+  border: 1px solid rgba(239,80,80,0.28); border-radius: 6px;
+  font-size: 13px; line-height: 1.5;
+}
+
 /* ─── DOCS — container do doc nativo (fetched + injected via shadow DOM) ───
    O container é o SCROLL CONTAINER — sem isso, `position: sticky` dentro do
    Shadow DOM não gruda (o binding cross-boundary com window falha em Chrome).

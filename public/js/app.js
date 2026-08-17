@@ -93,7 +93,8 @@ const PAGE_TO_PATH = {
   recurringDemands: '/recurring-demands',
   clientsModels: '/clients/models',
   devtools:     '/devtools',
-  passwords:    '/passwords'
+  passwords:    '/passwords',
+  kb:           '/knowledge-base'
 };
 const PATH_TO_PAGE = Object.fromEntries(Object.entries(PAGE_TO_PATH).map(([k, v]) => [v, k]));
 
@@ -134,6 +135,11 @@ function demandPath(idOrObj) {
   const d = typeof idOrObj === 'string' ? (typeof demandById === 'function' ? demandById(idOrObj) : null) : idOrObj;
   const id = d?.id || idOrObj;
   return '/demands/' + slugIdSegment(d?.name, id);
+}
+function postPath(idOrObj) {
+  const p = typeof idOrObj === 'string' ? (typeof postById === 'function' ? postById(idOrObj) : null) : idOrObj;
+  const id = p?.id || idOrObj;
+  return '/knowledge-base/' + slugIdSegment(p?.title, id);
 }
 let _routerSilent = false;   // true durante popstate → suprime push/replace
 function pageUrlFor(page)  {
@@ -185,6 +191,15 @@ function parseRoute(path) {
   }
   if (p === '/analytics/capacity' || p === '/capacity') return { page: 'analytics', tab: 'capacity' };
   if (p === '/analytics/reports'  || p === '/reports')  return { page: 'analytics', tab: 'reports' };
+  // Base de conhecimento: /knowledge-base = grid; /knowledge-base/:slug-id = post
+  // /knowledge-base/new = editor (novo); /knowledge-base/:slug-id/edit = editor (editar)
+  if (p === '/knowledge-base')                    return { page: 'kb' };
+  if (p === '/knowledge-base/new')                return { page: 'post-editor', op: 'new' };
+  {
+    let mm;
+    if ((mm = p.match(/^\/knowledge-base\/([a-z0-9-]+)\/edit$/))) return { page: 'post-editor', op: 'edit', postId: extractRouteId(mm[1]) };
+    if ((mm = p.match(/^\/knowledge-base\/([a-z0-9-]+)$/))) return { page: 'kb', postId: extractRouteId(mm[1]) };
+  }
   // Docs (nativos): /docs = manual home; /docs/manual/:sec e /docs/erros/:sec
   if (p === '/docs')                              return { page: 'docs', doc: 'manual' };
   if (p === '/docs/manual')                       return { page: 'docs', doc: 'manual' };
@@ -3094,7 +3109,8 @@ const PAGE_TITLES = {
   analytics: 'Análises', templates: 'Templates', integrations: 'Integrações', agenda: 'Agenda',
   recurring: 'Listas de tarefas', docs: 'Documentação', clientsModels: 'Modelos de Cliente',
   trash: 'Lixeira', recurringDemands: 'Demandas Recorrentes',
-  devtools: 'Dev Tools', passwords: 'Cofre de Senhas'
+  devtools: 'Dev Tools', passwords: 'Cofre de Senhas', kb: 'Base de conhecimento',
+  'post-editor': 'Editor de post'
 };
 function goPage(page) {
   hideTooltip();
@@ -3459,6 +3475,8 @@ function renderCurrent() {
     case 'integrations': renderIntegrations(); break;
     case 'devtools':   renderDevTools(); break;
     case 'passwords':  renderPasswords(); break;
+    case 'kb':         renderKbFromRoute(); break;
+    case 'post-editor': renderPostEditorFromRoute(); break;
     case 'docs':       renderDocsFromRoute(); break;
     case 'clients': {
       // Decide entre grid, detalhe de cliente ou detalhe de projeto sem perder estado
@@ -20455,6 +20473,609 @@ function fmtAuditWhen(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
   return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+/* ─── BASE DE CONHECIMENTO ─────────────────────────────────────
+   Posts colaborativos com rich text, tags, autor + contributors auto-mantidos
+   pelo servidor (quem edita e não é o autor entra na lista). Suporta
+   incorporação de vídeos/dashboards via URL (YouTube, Vimeo, Loom, Google
+   Docs, Notion, Miro, Figma, Looker, Airtable, CodePen, CodeSandbox, Canva).
+   URL da rota: /knowledge-base (grid) ou /knowledge-base/{slug}-{id} (post). */
+const kbState = {
+  posts: [],
+  currentPostId: null,
+  editingTags: []
+};
+function postById(id) { return (kbState.posts || []).find(p => p.id === id) || null; }
+
+async function loadPosts() {
+  try { kbState.posts = await api('/posts'); }
+  catch (e) { kbState.posts = []; }
+}
+async function renderKbFromRoute() {
+  const path = location.pathname;
+  const m = path.match(/^\/knowledge-base\/([a-z0-9-]+)$/);
+  const postId = m ? extractRouteId(m[1]) : null;
+  await loadPosts();
+  if (postId) openPostDetail(postId, /* fromRoute */ true);
+  else showKbGrid();
+}
+function showKbGrid() {
+  kbState.currentPostId = null;
+  const grid = $('kb-grid-view');
+  const det  = $('kb-detail-view');
+  if (grid) grid.style.display = '';
+  if (det)  det.style.display  = 'none';
+  renderKbAuthorFilter();
+  renderKbGrid();
+}
+function renderKbAuthorFilter() {
+  const sel = $('kb-f-author'); if (!sel) return;
+  const authorIds = [...new Set((kbState.posts || []).map(p => p.authorId).filter(Boolean))];
+  const authors = authorIds.map(id => userById(id)).filter(Boolean).sort((a,b) => norm(a.name).localeCompare(norm(b.name)));
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">Todos os autores</option>' + authors.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('');
+  if (authors.some(u => u.id === prev)) sel.value = prev;
+}
+function renderKbGrid() {
+  const wrap = $('kb-cards'); if (!wrap) return;
+  const q = norm(($('kb-search')?.value || '').trim());
+  const author = $('kb-f-author')?.value || '';
+  const activeTag = kbState._activeTag || '';
+  const list = (kbState.posts || []).filter(p => {
+    if (author && p.authorId !== author) return false;
+    if (activeTag && !(p.tags || []).includes(activeTag)) return false;
+    if (!q) return true;
+    const hay = norm(p.title || '') + ' ' + norm(_stripHtml(p.content || '')) + ' ' + (p.tags || []).join(' ');
+    return hay.includes(q);
+  });
+  // Tag chips (top-N tags do resultado atual)
+  renderKbTagChips(activeTag);
+  if (!list.length) {
+    wrap.innerHTML = `<div class="empty-state" style="padding:40px 0">${
+      q || author || activeTag ? 'Nenhum post encontrado com esse filtro.' : 'Nenhum post ainda. Clique em "+ Novo post" pra começar a base de conhecimento.'
+    }</div>`;
+    return;
+  }
+  wrap.innerHTML = list.map(p => {
+    const author = userById(p.authorId);
+    const excerpt = _stripHtml(p.content || '').slice(0, 160);
+    const dt = p.updatedAt ? new Date(p.updatedAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }) : '';
+    const tagsHtml = (p.tags || []).slice(0, 4).map(t => `<span class="kb-tag">${esc(t)}</span>`).join('');
+    const contribs = (p.contributorIds || []).length;
+    const cover = p.coverImage
+      ? `<div class="kb-card-cover" style="background-image:url('${esc(p.coverImage)}')"></div>`
+      : `<div class="kb-card-cover kb-card-cover--empty"><i data-lucide="file-text" class="ic-md"></i></div>`;
+    return `
+      <button type="button" class="kb-card ${p.coverImage ? 'kb-card--has-cover' : ''}" onclick="openPostDetail('${p.id}')">
+        ${cover}
+        <div class="kb-card-body">
+          <div class="kb-card-head">
+            <div class="kb-card-title">${esc(p.title)}</div>
+            ${tagsHtml ? `<div class="kb-card-tags">${tagsHtml}</div>` : ''}
+          </div>
+          ${excerpt ? `<div class="kb-card-excerpt">${esc(excerpt)}${excerpt.length >= 160 ? '…' : ''}</div>` : ''}
+          <div class="kb-card-meta">
+            ${author ? `${avatarHTML(author, 'avatar avatar-xs')}<span class="kb-card-author">${esc(author.name)}</span>` : ''}
+            ${contribs ? `<span class="kb-card-contribs" title="Contribuidores">+${contribs}</span>` : ''}
+            <span class="kb-card-date">${esc(dt)}</span>
+          </div>
+        </div>
+      </button>`;
+  }).join('');
+  paintIcons();
+}
+function renderKbTagChips(activeTag) {
+  const wrap = $('kb-tag-chips'); if (!wrap) return;
+  const counts = new Map();
+  (kbState.posts || []).forEach(p => (p.tags || []).forEach(t => counts.set(t, (counts.get(t) || 0) + 1)));
+  const tags = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20);
+  if (!tags.length) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML =
+    `<button type="button" class="kb-chip ${!activeTag ? 'is-active' : ''}" onclick="setKbTagFilter('')">Todas</button>` +
+    tags.map(([t, n]) => `<button type="button" class="kb-chip ${activeTag === t ? 'is-active' : ''}" onclick="setKbTagFilter('${esc(t).replace(/'/g,"&#39;")}')">${esc(t)} <span class="kb-chip-count">${n}</span></button>`).join('');
+}
+function setKbTagFilter(t) {
+  kbState._activeTag = t || '';
+  renderKbGrid();
+}
+function _stripHtml(html) {
+  const div = document.createElement('div');
+  div.innerHTML = html;
+  // Remove elementos que poluem o excerpt do card (fallback links dos embeds,
+  // figcaptions em geral, código, blockquotes vazios).
+  div.querySelectorAll('figcaption, .post-embed, script, style').forEach(n => n.remove());
+  return (div.textContent || div.innerText || '').replace(/\s+/g, ' ').trim();
+}
+
+/* ── Detalhe de post ── */
+async function openPostDetail(id, fromRoute) {
+  const p = postById(id);
+  if (!p) { toast('Post não encontrado.', 'error'); showKbGrid(); return; }
+  kbState.currentPostId = id;
+  const grid = $('kb-grid-view');
+  const det  = $('kb-detail-view');
+  if (grid) grid.style.display = 'none';
+  if (det)  det.style.display  = '';
+  if (!fromRoute) navPush(postPath(p));
+  const author = userById(p.authorId);
+  const contribs = (p.contributorIds || []).map(userById).filter(Boolean);
+  const dt = p.updatedAt ? new Date(p.updatedAt).toLocaleString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
+  const isAuthorOrPriv = p.authorId === me?.id || me?.isAdmin || me?.isModerator;
+  const canEdit = true; // qualquer um do squad edita (colaborativo)
+  const detBody = $('kb-detail-content');
+  detBody.innerHTML = `
+    <div class="kb-detail-head">
+      <button type="button" class="btn btn-ghost btn-sm" onclick="backToKbGrid()"><i data-lucide="arrow-left" class="ic-sm"></i> Voltar</button>
+      <div class="kb-detail-actions">
+        ${canEdit ? `<button type="button" class="btn btn-ghost btn-sm" onclick="openPostEditor('${p.id}')"><i data-lucide="pencil" class="ic-sm"></i> Editar</button>` : ''}
+        ${isAuthorOrPriv ? `<button type="button" class="btn btn-ghost btn-sm" onclick="deletePost('${p.id}')"><i data-lucide="trash-2" class="ic-sm"></i> Excluir</button>` : ''}
+      </div>
+    </div>
+    ${p.coverImage ? `<div class="kb-detail-cover"><img src="${esc(p.coverImage)}" alt="Capa do post"></div>` : ''}
+    <h1 class="kb-detail-title">${esc(p.title)}</h1>
+    ${(p.tags || []).length ? `<div class="kb-detail-tags">${(p.tags || []).map(t => `<span class="kb-tag">${esc(t)}</span>`).join('')}</div>` : ''}
+    <div class="kb-detail-meta">
+      ${author ? `${avatarHTML(author, 'avatar avatar-sm')}<div class="kb-detail-author-info"><div class="kb-detail-author-name">${esc(author.name)}</div><div class="kb-detail-author-role">Autor · atualizado ${esc(dt)}</div></div>` : ''}
+      ${contribs.length ? `<div class="kb-detail-contribs">
+        <span class="kb-detail-contribs-label">Contribuidores</span>
+        <div class="kb-detail-contribs-avatars">${contribs.slice(0, 8).map(u => avatarHTML(u, 'avatar avatar-xs')).join('')}${contribs.length > 8 ? `<span class="kb-detail-contribs-more">+${contribs.length - 8}</span>` : ''}</div>
+      </div>` : ''}
+    </div>
+    <div class="kb-detail-body">${p.content || '<p class="empty-state">Sem conteúdo.</p>'}</div>
+  `;
+  paintIcons();
+  window.scrollTo({ top: 0, behavior: 'instant' });
+}
+function backToKbGrid() {
+  navPush('/knowledge-base');
+  showKbGrid();
+}
+async function deletePost(id) {
+  const p = postById(id); if (!p) return;
+  const ok = await showConfirm({
+    title: 'Excluir post',
+    message: `O post <strong>${esc(p.title)}</strong> será removido. Continuar?`,
+    okLabel: 'Excluir', danger: true
+  });
+  if (!ok) return;
+  try {
+    await api('/posts/' + id, 'DELETE');
+    toast('Post excluído.', 'success');
+    await loadPosts();
+    backToKbGrid();
+  } catch (e) { toast(e.message || 'Falha ao excluir.', 'error'); }
+}
+
+/* ── Editor de post ── página dedicada estilo blog (rota /knowledge-base/new
+   ou /knowledge-base/{slug}/edit). Substituiu o modal antigo — mais espaço,
+   toolbar sticky, capa dedicada, preview lado-a-lado e proteção contra
+   navegação com edições não salvas. */
+function openPostEditor(id) {
+  // Ponto de entrada externo (botão do grid/detalhe): apenas navega.
+  // renderPostEditorFromRoute cuida do resto quando a rota é aplicada.
+  if (id) {
+    const p = postById(id);
+    navPush(p ? (postPath(p) + '/edit') : '/knowledge-base/new');
+  } else {
+    navPush('/knowledge-base/new');
+  }
+  applyRoute();
+}
+async function renderPostEditorFromRoute() {
+  // Precisa dos posts carregados antes de decidir edit vs new — só ler pela rota.
+  const path = location.pathname;
+  const editMatch = path.match(/^\/knowledge-base\/([a-z0-9-]+)\/edit$/);
+  const isNew = path === '/knowledge-base/new';
+  if (editMatch && !kbState.posts.length) await loadPosts();
+  const id = editMatch ? extractRouteId(editMatch[1]) : null;
+  const p = id ? postById(id) : null;
+  if (id && !p) { toast('Post não encontrado.', 'error'); navPush('/knowledge-base'); applyRoute(); return; }
+  _initPostEditor(p, isNew);
+}
+function _initPostEditor(p, isNew) {
+  $('post-edit-id').value = p?.id || '';
+  $('post-cover-url').value = p?.coverImage || '';
+  $('post-editor-title').textContent = p ? 'Editar post' : 'Novo post';
+  $('post-f-title').value = p?.title || '';
+  kbState.editingTags = p?.tags ? [...p.tags] : [];
+  renderPostTagList();
+  _renderPostCover(p?.coverImage || '');
+  const body = $('post-f-content');
+  body.innerHTML = p?.content || '';
+  setPostEditorMode('edit');
+  _postEditorDirty = false;
+  _updateDirtyBadge();
+  paintIcons();
+  setTimeout(() => $('post-f-title').focus(), 60);
+}
+let _postEditorDirty = false;
+function _markPostDirty() {
+  if (_postEditorDirty) return;
+  _postEditorDirty = true;
+  _updateDirtyBadge();
+}
+function _updateDirtyBadge() {
+  const el = $('post-editor-dirty'); if (!el) return;
+  el.style.display = _postEditorDirty ? '' : 'none';
+}
+function setPostEditorMode(mode) {
+  const editView = $('post-editor-canvas-edit');
+  const prevView = $('post-editor-canvas-preview');
+  document.querySelectorAll('.post-editor-mode-btn').forEach(b => {
+    b.classList.toggle('is-active', b.dataset.mode === mode);
+  });
+  if (mode === 'preview') {
+    _renderPostPreview();
+    editView.style.display = 'none';
+    prevView.style.display = '';
+  } else {
+    editView.style.display = '';
+    prevView.style.display = 'none';
+  }
+}
+function _renderPostPreview() {
+  const body = $('post-editor-preview-body'); if (!body) return;
+  const title = ($('post-f-title').value || '').trim() || 'Sem título';
+  const content = $('post-f-content').innerHTML || '';
+  const cover = $('post-cover-url').value || '';
+  const tagsHtml = (kbState.editingTags || []).map(t => `<span class="kb-tag">${esc(t)}</span>`).join('');
+  body.innerHTML = `
+    ${cover ? `<div class="kb-detail-cover"><img src="${esc(cover)}" alt="Capa"></div>` : ''}
+    <h1 class="kb-detail-title">${esc(title)}</h1>
+    ${tagsHtml ? `<div class="kb-detail-tags">${tagsHtml}</div>` : ''}
+    <div class="kb-detail-body">${content || '<p class="empty-state">Sem conteúdo.</p>'}</div>
+  `;
+  paintIcons();
+}
+function cancelPostEditor() {
+  if (_postEditorDirty) {
+    const ok = confirm('Você tem alterações não salvas. Sair mesmo assim?');
+    if (!ok) return;
+  }
+  _postEditorDirty = false;
+  const id = $('post-edit-id').value;
+  if (id) {
+    const p = postById(id);
+    navPush(p ? postPath(p) : '/knowledge-base');
+  } else {
+    navPush('/knowledge-base');
+  }
+  applyRoute();
+}
+async function onPostCoverPicked(evt) {
+  const file = (evt.target.files || [])[0];
+  evt.target.value = '';
+  if (!file || !/^image\//.test(file.type)) return;
+  if (file.size > 6 * 1024 * 1024) { toast('Capa muito grande (máx 6 MB).', 'warn'); return; }
+  const reader = new FileReader();
+  const dataUri = await new Promise(res => { reader.onload = () => res(reader.result); reader.readAsDataURL(file); });
+  try {
+    const up = await api('/uploads', 'POST', { data: dataUri, name: file.name });
+    $('post-cover-url').value = up.url || '';
+    _renderPostCover(up.url || '');
+    _markPostDirty();
+  } catch (e) { toast('Falha ao subir capa: ' + (e.message || ''), 'error'); }
+}
+function clearPostCover() {
+  $('post-cover-url').value = '';
+  _renderPostCover('');
+  _markPostDirty();
+}
+function _renderPostCover(url) {
+  const empty = $('post-cover-empty');
+  const prev  = $('post-cover-preview');
+  const img   = $('post-cover-img');
+  if (url) {
+    img.src = url;
+    empty.style.display = 'none';
+    prev.style.display  = '';
+  } else {
+    img.src = '';
+    empty.style.display = '';
+    prev.style.display  = 'none';
+  }
+}
+function insertPostHR() {
+  const body = $('post-f-content');
+  body.focus();
+  document.execCommand('insertHTML', false, '<hr><p><br></p>');
+  _markPostDirty();
+}
+function execPostCmd(cmd, arg) {
+  const body = $('post-f-content');
+  body.focus();
+  document.execCommand(cmd, false, arg || null);
+  _markPostDirty();
+}
+function onPostTagKey(evt) {
+  const inp = evt.currentTarget;
+  if (evt.key === 'Enter' || evt.key === ',') {
+    evt.preventDefault();
+    _addPostTag(inp.value);
+    inp.value = '';
+  } else if (evt.key === 'Backspace' && !inp.value && kbState.editingTags.length) {
+    kbState.editingTags.pop();
+    renderPostTagList();
+  }
+}
+function _addPostTag(raw) {
+  const t = String(raw || '').trim().toLowerCase().slice(0, 40).replace(/[^a-z0-9-_À-ſ]+/g, '-').replace(/^-+|-+$/g, '');
+  if (!t) return;
+  if (kbState.editingTags.includes(t)) return;
+  if (kbState.editingTags.length >= 12) { toast('Máximo 12 tags.', 'warn'); return; }
+  kbState.editingTags.push(t);
+  renderPostTagList();
+}
+function _removePostTag(t) {
+  kbState.editingTags = kbState.editingTags.filter(x => x !== t);
+  renderPostTagList();
+}
+function renderPostTagList() {
+  const wrap = $('post-tag-list'); if (!wrap) return;
+  wrap.innerHTML = (kbState.editingTags || []).map(t => `
+    <span class="post-tag-chip">${esc(t)}<button type="button" class="post-tag-remove" onclick="_removePostTag('${esc(t).replace(/'/g,"&#39;")}')" title="Remover">×</button></span>
+  `).join('');
+}
+
+/* ── Incorporação por CÓDIGO ──
+   Usuário cola o código HTML de incorporação (o mesmo que YouTube/Loom/etc.
+   dão no botão "Compartilhar → Incorporar"). O reWork extrai o <iframe>, valida
+   o host, monta um embed limpo e insere. Providers suportados: os mesmos do
+   whitelist do sanitizador (YouTube, Vimeo, Loom, Google Docs/Sheets/Slides/
+   Drive/Looker, Notion, Miro, Figma, Airtable, CodePen, CodeSandbox, Canva,
+   OneDrive, SharePoint). Cursor do editor é preservado entre modal e insert. */
+const POST_EMBED_HOSTS = [
+  'youtube.com', 'youtube-nocookie.com', 'youtu.be',
+  'vimeo.com', 'player.vimeo.com',
+  'loom.com',
+  'docs.google.com', 'drive.google.com', 'sheets.google.com', 'lookerstudio.google.com',
+  'notion.so', 'notion.site',
+  'miro.com',
+  'figma.com',
+  'airtable.com',
+  'codepen.io', 'codesandbox.io',
+  'canva.com',
+  'onedrive.live.com', 'sharepoint.com'
+];
+function _isPostEmbedHostAllowed(url) {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+    const host = u.hostname.toLowerCase();
+    return POST_EMBED_HOSTS.some(sfx => host === sfx || host.endsWith('.' + sfx));
+  } catch { return false; }
+}
+/* Analisa o input colado. Aceita:
+   - URL crua (https://youtube.com/watch?v=...) — detecta provider e monta iframe
+   - Código de incorporação completo (<iframe ...>) — extrai src
+   Retorna { ok, src, title, html?, error }. */
+function parsePostEmbedCode(raw) {
+  const src = String(raw || '').trim();
+  if (!src) return { ok: false, error: 'Cole a URL do vídeo/dashboard ou o código de incorporação (com <iframe>).' };
+  // Caminho 1: URL crua. Detecta provider e converte pro embed correto.
+  if (/^https?:\/\//i.test(src) && !/<iframe/i.test(src)) {
+    const converted = _urlToEmbedSrc(src);
+    if (!converted) {
+      return { ok: false, error: `Não consegui detectar o serviço a partir dessa URL. Tente colar o código de incorporação (<iframe>) que o próprio serviço oferece.` };
+    }
+    if (!_isPostEmbedHostAllowed(converted)) {
+      return { ok: false, error: `Host "${_urlHost(converted)}" não está na lista de provedores permitidos.` };
+    }
+    const title = 'Conteúdo incorporado';
+    const fallback = _embedToHumanUrlClient(converted);
+    const clean = `<figure class="post-embed">
+      <iframe src="${esc(converted)}" title="${esc(title)}" loading="lazy" allowfullscreen allow="autoplay; encrypted-media; picture-in-picture; fullscreen"></iframe>
+      <figcaption><a href="${esc(fallback)}" target="_blank" rel="noopener noreferrer">Abrir no serviço original ↗</a></figcaption>
+    </figure><p><br></p>`;
+    return { ok: true, src: converted, title, html: clean };
+  }
+  // Caminho 2: código de incorporação — parse via DOM.
+  const tmp = document.createElement('template');
+  tmp.innerHTML = src;
+  const iframe = tmp.content.querySelector('iframe');
+  if (!iframe) return { ok: false, error: 'Não achei um <iframe> no código. Cole o código completo que o serviço fornece em "Compartilhar → Incorporar" — ou cole a URL do vídeo diretamente.' };
+  const url = iframe.getAttribute('src') || '';
+  if (!url) return { ok: false, error: 'O <iframe> não tem atributo src. Copie o código de embed novamente.' };
+  if (!_isPostEmbedHostAllowed(url)) {
+    return { ok: false, error: `Host "${_urlHost(url)}" não está na lista de provedores permitidos (YouTube, Vimeo, Loom, Google, Notion, Miro, Figma, Airtable, CodePen, CodeSandbox, Canva, OneDrive, SharePoint).` };
+  }
+  const title = iframe.getAttribute('title') || 'Conteúdo incorporado';
+  // Reescreve iframe seguro com attrs padronizados (sem confiar em width/style
+  // inline — o wrapper .post-embed dá aspect-ratio 16:9).
+  // Sem `referrerpolicy=no-referrer`: YouTube e outros bloqueiam embeds sem Referer.
+  // Figcaption com link "Abrir no serviço original" — fallback quando o dono
+  // do vídeo/dashboard desabilita incorporação (comum em lives, dashboards
+  // privados, etc.). Servidor recalcula o mesmo link na sanitização.
+  const fallback = _embedToHumanUrlClient(url);
+  const clean = `<figure class="post-embed">
+    <iframe src="${esc(url)}" title="${esc(title)}" loading="lazy" allowfullscreen allow="autoplay; encrypted-media; picture-in-picture; fullscreen"></iframe>
+    <figcaption><a href="${esc(fallback)}" target="_blank" rel="noopener noreferrer">Abrir no serviço original ↗</a></figcaption>
+  </figure><p><br></p>`;
+  return { ok: true, src: url, title, html: clean };
+}
+/* Converte URL crua → URL de embed do provider correto.
+   YouTube: watch/short/youtu.be → /embed/{id}
+   Vimeo:   vimeo.com/{id}       → player.vimeo.com/video/{id}
+   Loom:    loom.com/share/{id}  → loom.com/embed/{id}
+   Google Docs/Sheets/Slides/Drive: /edit → /preview
+   Figma:   figma.com/file/...   → figma.com/embed?embed_host=share&url=...
+   Miro/Notion/Airtable/Codepen/CodeSandbox/Canva/OneDrive/SharePoint: passa direto se já for URL de embed; se não, retorna null (usuário usa o iframe). */
+function _urlToEmbedSrc(rawUrl) {
+  let u;
+  try { u = new URL(rawUrl); } catch { return null; }
+  const host = u.hostname.replace(/^www\./, '').toLowerCase();
+  // YouTube
+  if (host === 'youtube.com' || host === 'm.youtube.com') {
+    const v = u.searchParams.get('v');
+    if (v) return `https://www.youtube.com/embed/${v}`;
+    const m = u.pathname.match(/^\/(?:embed|shorts|live)\/([\w-]+)/);
+    if (m) return `https://www.youtube.com/embed/${m[1]}`;
+  }
+  if (host === 'youtu.be') {
+    const m = u.pathname.match(/^\/([\w-]+)/);
+    if (m) return `https://www.youtube.com/embed/${m[1]}`;
+  }
+  if (host === 'youtube-nocookie.com') return rawUrl;
+  // Vimeo
+  if (host === 'vimeo.com') {
+    const m = u.pathname.match(/^\/(\d+)/);
+    if (m) return `https://player.vimeo.com/video/${m[1]}`;
+  }
+  if (host === 'player.vimeo.com') return rawUrl;
+  // Loom
+  if (host === 'loom.com') {
+    const m = u.pathname.match(/^\/(?:share|embed)\/([\w-]+)/);
+    if (m) return `https://www.loom.com/embed/${m[1]}`;
+  }
+  // Google Docs / Sheets / Slides / Drive — troca /edit por /preview (embed padrão).
+  if (host === 'docs.google.com' || host === 'drive.google.com') {
+    if (/\/preview(\?|$)/.test(u.pathname + u.search)) return rawUrl;
+    return rawUrl.replace(/\/edit(\?[^#]*)?(#.*)?$/, '/preview$1$2').replace(/\/view(\?[^#]*)?(#.*)?$/, '/preview$1$2');
+  }
+  // Looker Studio — URL de embed já vem com /embed/reporting
+  if (host === 'lookerstudio.google.com') {
+    if (u.pathname.includes('/embed/')) return rawUrl;
+    return rawUrl.replace('/reporting/', '/embed/reporting/');
+  }
+  // Figma — URL de arquivo/design vira URL de embed via wrapper oficial.
+  if (host === 'figma.com') {
+    if (u.pathname.startsWith('/embed')) return rawUrl;
+    return `https://www.figma.com/embed?embed_host=share&url=${encodeURIComponent(rawUrl)}`;
+  }
+  // Providers que exigem o modo iframe explícito (retornam null → user usa o código).
+  // Notion, Miro, Airtable, CodePen, CodeSandbox, Canva, OneDrive, SharePoint —
+  // se a URL colada já é de embed permitido (host bate no whitelist), passa direto.
+  if (_isPostEmbedHostAllowed(rawUrl)) return rawUrl;
+  return null;
+}
+function _embedToHumanUrlClient(embedSrc) {
+  try {
+    const u = new URL(embedSrc);
+    const host = u.hostname.replace(/^www\./, '').toLowerCase();
+    if (host === 'youtube.com' || host === 'youtube-nocookie.com' || host === 'youtu.be') {
+      const m = u.pathname.match(/^\/embed\/([\w-]+)/);
+      if (m) return 'https://www.youtube.com/watch?v=' + m[1];
+    }
+    if (host === 'player.vimeo.com') {
+      const m = u.pathname.match(/^\/video\/(\d+)/);
+      if (m) return 'https://vimeo.com/' + m[1];
+    }
+    if (host === 'loom.com') {
+      const m = u.pathname.match(/^\/embed\/([\w-]+)/);
+      if (m) return 'https://www.loom.com/share/' + m[1];
+    }
+    if (host === 'docs.google.com') return embedSrc.replace(/\/preview(\?.*)?$/, '/view$1');
+    return embedSrc;
+  } catch { return embedSrc; }
+}
+function _urlHost(url) { try { return new URL(url).hostname; } catch { return url.slice(0, 40); } }
+
+// Preserva a posição do cursor no editor antes de abrir o modal.
+let _postEmbedSavedRange = null;
+function openPostEmbedModal() {
+  const sel = window.getSelection();
+  _postEmbedSavedRange = sel && sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+  const editor = $('post-f-content');
+  // Só guarda range se o cursor estava DENTRO do editor.
+  if (_postEmbedSavedRange && !editor.contains(_postEmbedSavedRange.commonAncestorContainer)) {
+    _postEmbedSavedRange = null;
+  }
+  $('post-embed-input').value = '';
+  $('post-embed-preview').style.display = 'none';
+  $('post-embed-preview-body').innerHTML = '';
+  $('post-embed-err').style.display = 'none';
+  $('post-embed-err').textContent = '';
+  openModal('post-embed-modal');
+  setTimeout(() => $('post-embed-input')?.focus(), 60);
+}
+function validatePostEmbed() {
+  const raw = $('post-embed-input').value;
+  const errEl = $('post-embed-err');
+  const previewEl = $('post-embed-preview');
+  const previewBody = $('post-embed-preview-body');
+  // Input vazio → limpa tudo, sem mostrar erro (o usuário ainda está digitando).
+  if (!String(raw || '').trim()) {
+    errEl.style.display = 'none';
+    previewEl.style.display = 'none';
+    previewBody.innerHTML = '';
+    return false;
+  }
+  const result = parsePostEmbedCode(raw);
+  if (!result.ok) {
+    errEl.textContent = result.error;
+    errEl.style.display = '';
+    previewEl.style.display = 'none';
+    return false;
+  }
+  errEl.style.display = 'none';
+  previewEl.style.display = '';
+  previewBody.innerHTML = result.html;
+  return true;
+}
+function insertPostEmbed() {
+  const result = parsePostEmbedCode($('post-embed-input').value);
+  if (!result.ok) { validatePostEmbed(); return; }
+  const editor = $('post-f-content');
+  editor.focus();
+  // Restaura a posição do cursor onde o usuário estava antes de abrir o modal.
+  if (_postEmbedSavedRange) {
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(_postEmbedSavedRange);
+  }
+  document.execCommand('insertHTML', false, result.html);
+  closeModal('post-embed-modal');
+  _postEmbedSavedRange = null;
+  _markPostDirty();
+}
+async function openPostLinkPopover() {
+  const url = await showPrompt({ title: 'Adicionar link', placeholder: 'https://...', okLabel: 'Adicionar' });
+  if (!url) return;
+  const body = $('post-f-content');
+  body.focus();
+  document.execCommand('createLink', false, url);
+  // Força target=_blank + rel noopener
+  body.querySelectorAll('a[href="' + url + '"]').forEach(a => {
+    a.setAttribute('target', '_blank');
+    a.setAttribute('rel', 'noopener noreferrer');
+  });
+  _markPostDirty();
+}
+async function onPostImagesPicked(evt) {
+  const files = [...(evt.target.files || [])];
+  evt.target.value = '';
+  for (const f of files) {
+    if (!/^image\//.test(f.type)) continue;
+    const reader = new FileReader();
+    const dataUri = await new Promise(res => { reader.onload = () => res(reader.result); reader.readAsDataURL(f); });
+    // Upload primeiro (evita estourar limite de body do PUT).
+    try {
+      const up = await api('/uploads', 'POST', { data: dataUri, name: f.name });
+      const body = $('post-f-content'); body.focus();
+      document.execCommand('insertHTML', false, `<img src="${esc(up.url)}" alt="${esc(f.name)}"><p><br></p>`);
+      _markPostDirty();
+    } catch (e) { toast('Falha ao subir imagem: ' + (e.message || ''), 'error'); }
+  }
+}
+async function submitPostEditor() {
+  const id = $('post-edit-id').value || null;
+  const title = ($('post-f-title').value || '').trim();
+  const content = $('post-f-content').innerHTML || '';
+  const coverImage = $('post-cover-url').value || '';
+  if (!title) { toast('Informe um título.', 'warn'); $('post-f-title').focus(); return; }
+  const body = { title, content, tags: kbState.editingTags, coverImage };
+  try {
+    const saved = id
+      ? await api('/posts/' + id, 'PUT', body)
+      : await api('/posts',        'POST', body);
+    _postEditorDirty = false;
+    toast(id ? 'Post atualizado.' : 'Post criado.', 'success');
+    await loadPosts();
+    // Volta pra tela do post recém-salvo (rota dedicada).
+    navPush(postPath(saved));
+    applyRoute();
+  } catch (e) { toast(e.message || 'Falha ao salvar.', 'error'); }
 }
 
 /* ─── START ─── */

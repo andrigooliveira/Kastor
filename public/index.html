@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-title" content="reWork">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/css/style.css?v=20260814g">
+<link rel="stylesheet" href="/css/style.css?v=20260817i">
 <script type="text/javascript">
     (function(c,l,a,r,i,t,y){
         c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
@@ -120,6 +120,10 @@
       <div class="nav-item" data-page="templates" onclick="goPage('templates')">
         <svg viewBox="0 0 16 16" fill="none"><rect x="2.5" y="1.5" width="9" height="13" rx="1" stroke="currentColor" stroke-width="1.5"/><path d="M5 5h4M5 8h4M5 11h2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M13.5 3.5v10a1 1 0 01-1 1H11" stroke="currentColor" stroke-width="1.5"/></svg>
         Templates
+      </div>
+      <div class="nav-item" data-page="kb" onclick="goPage('kb')">
+        <svg viewBox="0 0 16 16" fill="none"><path d="M2.5 3.5A1 1 0 013.5 2.5H8v11H3.5a1 1 0 01-1-1V3.5zM13.5 3.5A1 1 0 0012.5 2.5H8v11h4.5a1 1 0 001-1V3.5z" stroke="currentColor" stroke-width="1.4"/><path d="M5 5.5h1.5M5 7.5h1.5M9.5 5.5H11M9.5 7.5H11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        Base de conhecimento
       </div>
 
       <div class="nav-section">Configurações</div>
@@ -681,6 +685,172 @@
             </thead>
             <tbody id="templates-table-body"></tbody>
           </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── BASE DE CONHECIMENTO ── posts colaborativos com rich text + embeds -->
+    <div class="page" id="page-kb">
+      <div class="page-body">
+        <div class="section-head" style="margin-bottom:14px">
+          <div class="section-title">Base de conhecimento</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <button class="btn btn-primary btn-sm" onclick="openPostEditor(null)"><i data-lucide="plus" class="ic-sm"></i> Novo post</button>
+          </div>
+        </div>
+        <!-- Grid view: filtros + cards -->
+        <div id="kb-grid-view">
+          <div class="filters-bar" style="margin-bottom:14px">
+            <div class="filter-input-wrap">
+              <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+              <input class="filter-input filter-input--with-icon" id="kb-search" placeholder="Buscar por título, conteúdo ou tag…" oninput="renderKbGrid()">
+            </div>
+            <select class="filter-select" id="kb-f-author" onchange="renderKbGrid()"><option value="">Todos os autores</option></select>
+          </div>
+          <div id="kb-tag-chips" class="kb-tag-chips"></div>
+          <div id="kb-cards" class="kb-cards"></div>
+        </div>
+        <!-- Detail view: post individual -->
+        <div id="kb-detail-view" style="display:none">
+          <div id="kb-detail-content"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: INCORPORAR (colar código de iframe) -->
+    <div class="modal-overlay" id="post-embed-modal">
+      <div class="modal">
+        <div class="modal-header">
+          <div class="modal-title">Incorporar conteúdo</div>
+          <button class="modal-close" onclick="closeModal('post-embed-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+        </div>
+        <div class="modal-body">
+          <div class="post-embed-hint">
+            Cole o <strong>link do vídeo/dashboard</strong> (mais rápido) ou o <strong>código de incorporação</strong> (<code>&lt;iframe&gt;</code>) do serviço. Funciona com YouTube, Vimeo, Loom, Google Docs/Sheets/Slides/Drive/Looker, Notion, Miro, Figma, Airtable, CodePen, CodeSandbox, Canva, OneDrive e SharePoint.
+            <br><small style="color:var(--text-muted)">Vídeos "AO VIVO" e conteúdos com "permitir incorporação" desabilitado pelo dono aparecem bloqueados no player — nesses casos o link "Abrir no serviço original" (embaixo de cada embed) resolve.</small>
+          </div>
+          <textarea id="post-embed-input" class="post-embed-input" rows="5" placeholder='Cole a URL do vídeo — ex.: https://www.youtube.com/watch?v=... — ou o código <iframe> completo' spellcheck="false" oninput="validatePostEmbed()"></textarea>
+          <div id="post-embed-preview" class="post-embed-preview" style="display:none">
+            <div class="post-embed-preview-label">Prévia</div>
+            <div id="post-embed-preview-body"></div>
+          </div>
+          <div id="post-embed-err" class="post-embed-err" style="display:none"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" onclick="closeModal('post-embed-modal')">Cancelar</button>
+          <button class="btn btn-ghost" onclick="validatePostEmbed()">Validar</button>
+          <button class="btn btn-primary" onclick="insertPostEmbed()">Inserir no post</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── EDITOR DE POST ── página dedicada estilo blog. Substitui o modal antigo.
+         Layout: header sticky (voltar/preview/salvar), capa 16:9, título grande,
+         tags, toolbar sticky, área contenteditable centralizada. -->
+    <div class="page" id="page-post-editor">
+      <div class="post-editor-page">
+        <input type="hidden" id="post-edit-id" value="">
+        <input type="hidden" id="post-cover-url" value="">
+        <!-- Header sticky com ações -->
+        <div class="post-editor-topbar">
+          <div class="post-editor-topbar-left">
+            <button type="button" class="btn btn-ghost btn-sm" onclick="cancelPostEditor()"><i data-lucide="arrow-left" class="ic-sm"></i> Voltar</button>
+            <span class="post-editor-topbar-title" id="post-editor-title">Novo post</span>
+            <span class="post-editor-dirty-badge" id="post-editor-dirty" style="display:none">Não salvo</span>
+          </div>
+          <div class="post-editor-topbar-right">
+            <div class="post-editor-mode-toggle" role="tablist" aria-label="Modo do editor">
+              <button type="button" role="tab" class="post-editor-mode-btn is-active" data-mode="edit" onclick="setPostEditorMode('edit')"><i data-lucide="pencil" class="ic-xs"></i> Editar</button>
+              <button type="button" role="tab" class="post-editor-mode-btn" data-mode="preview" onclick="setPostEditorMode('preview')"><i data-lucide="eye" class="ic-xs"></i> Visualizar</button>
+            </div>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="cancelPostEditor()">Cancelar</button>
+            <button type="button" class="btn btn-primary btn-sm" onclick="submitPostEditor()"><i data-lucide="save" class="ic-sm"></i> Salvar</button>
+          </div>
+        </div>
+
+        <!-- Modo EDITAR -->
+        <div class="post-editor-canvas" id="post-editor-canvas-edit">
+          <!-- Capa (dropzone 16:9) -->
+          <div class="post-cover-drop" id="post-cover-drop">
+            <div class="post-cover-empty" id="post-cover-empty">
+              <button type="button" class="post-cover-pick-btn" onclick="document.getElementById('post-cover-input').click()">
+                <i data-lucide="image-up" class="ic-md"></i>
+                <div class="post-cover-pick-label">Adicionar capa</div>
+                <div class="post-cover-pick-hint">Imagem 16:9 recomendada — vira o hero do card no grid</div>
+              </button>
+            </div>
+            <div class="post-cover-preview" id="post-cover-preview" style="display:none">
+              <img id="post-cover-img" alt="Capa do post">
+              <div class="post-cover-actions">
+                <button type="button" class="btn btn-ghost btn-xs" onclick="document.getElementById('post-cover-input').click()"><i data-lucide="refresh-cw" class="ic-xs"></i> Trocar</button>
+                <button type="button" class="btn btn-ghost btn-xs" onclick="clearPostCover()"><i data-lucide="trash-2" class="ic-xs"></i> Remover</button>
+              </div>
+            </div>
+            <input type="file" id="post-cover-input" accept="image/*" style="display:none" onchange="onPostCoverPicked(event)">
+          </div>
+
+          <!-- Título -->
+          <input class="post-editor-title-input" id="post-f-title" placeholder="Título do post…" maxlength="180" oninput="_markPostDirty()">
+
+          <!-- Tags -->
+          <div class="post-editor-tags-row">
+            <div class="post-tag-input-wrap">
+              <div id="post-tag-list" class="post-tag-list"></div>
+              <input class="post-tag-input" id="post-f-tag-input" placeholder="Adicionar tag e Enter (ex.: seo, tutorial, google-ads)" onkeydown="onPostTagKey(event)">
+            </div>
+          </div>
+
+          <!-- Toolbar sticky -->
+          <div class="post-editor-toolbar" id="post-editor-toolbar">
+            <div class="post-editor-toolgroup">
+              <button type="button" class="comment-tool" title="Negrito (Ctrl+B)" onmousedown="event.preventDefault()" onclick="execPostCmd('bold')"><i data-lucide="bold" class="ic-xs"></i></button>
+              <button type="button" class="comment-tool" title="Itálico (Ctrl+I)" onmousedown="event.preventDefault()" onclick="execPostCmd('italic')"><i data-lucide="italic" class="ic-xs"></i></button>
+              <button type="button" class="comment-tool" title="Sublinhado (Ctrl+U)" onmousedown="event.preventDefault()" onclick="execPostCmd('underline')"><i data-lucide="underline" class="ic-xs"></i></button>
+              <button type="button" class="comment-tool" title="Tachado" onmousedown="event.preventDefault()" onclick="execPostCmd('strikeThrough')"><i data-lucide="strikethrough" class="ic-xs"></i></button>
+            </div>
+            <span class="post-editor-sep"></span>
+            <div class="post-editor-toolgroup">
+              <button type="button" class="comment-tool" title="Título grande (H1)" onmousedown="event.preventDefault()" onclick="execPostCmd('formatBlock','H1')"><span style="font-weight:800;font-size:11px">H1</span></button>
+              <button type="button" class="comment-tool" title="Subtítulo (H2)" onmousedown="event.preventDefault()" onclick="execPostCmd('formatBlock','H2')"><span style="font-weight:800;font-size:11px">H2</span></button>
+              <button type="button" class="comment-tool" title="Sub-subtítulo (H3)" onmousedown="event.preventDefault()" onclick="execPostCmd('formatBlock','H3')"><span style="font-weight:800;font-size:11px">H3</span></button>
+              <button type="button" class="comment-tool" title="Parágrafo" onmousedown="event.preventDefault()" onclick="execPostCmd('formatBlock','P')"><span style="font-weight:600;font-size:11px">¶</span></button>
+            </div>
+            <span class="post-editor-sep"></span>
+            <div class="post-editor-toolgroup">
+              <button type="button" class="comment-tool" title="Lista com bullets" onmousedown="event.preventDefault()" onclick="execPostCmd('insertUnorderedList')"><i data-lucide="list" class="ic-xs"></i></button>
+              <button type="button" class="comment-tool" title="Lista numerada" onmousedown="event.preventDefault()" onclick="execPostCmd('insertOrderedList')"><i data-lucide="list-ordered" class="ic-xs"></i></button>
+              <button type="button" class="comment-tool" title="Citação" onmousedown="event.preventDefault()" onclick="execPostCmd('formatBlock','BLOCKQUOTE')"><i data-lucide="quote" class="ic-xs"></i></button>
+              <button type="button" class="comment-tool" title="Bloco de código" onmousedown="event.preventDefault()" onclick="execPostCmd('formatBlock','PRE')"><i data-lucide="code" class="ic-xs"></i></button>
+              <button type="button" class="comment-tool" title="Linha divisória" onmousedown="event.preventDefault()" onclick="insertPostHR()"><i data-lucide="minus" class="ic-xs"></i></button>
+            </div>
+            <span class="post-editor-sep"></span>
+            <div class="post-editor-toolgroup">
+              <button type="button" class="comment-tool" title="Alinhar à esquerda" onmousedown="event.preventDefault()" onclick="execPostCmd('justifyLeft')"><i data-lucide="align-left" class="ic-xs"></i></button>
+              <button type="button" class="comment-tool" title="Centralizar" onmousedown="event.preventDefault()" onclick="execPostCmd('justifyCenter')"><i data-lucide="align-center" class="ic-xs"></i></button>
+              <button type="button" class="comment-tool" title="Alinhar à direita" onmousedown="event.preventDefault()" onclick="execPostCmd('justifyRight')"><i data-lucide="align-right" class="ic-xs"></i></button>
+            </div>
+            <span class="post-editor-sep"></span>
+            <div class="post-editor-toolgroup">
+              <button type="button" class="comment-tool" title="Link" onmousedown="event.preventDefault()" onclick="openPostLinkPopover(this)"><i data-lucide="link" class="ic-xs"></i></button>
+              <button type="button" class="comment-tool" title="Imagem" onmousedown="event.preventDefault()" onclick="document.getElementById('post-image-input').click()"><i data-lucide="image" class="ic-xs"></i></button>
+              <input type="file" id="post-image-input" accept="image/*" style="display:none" multiple onchange="onPostImagesPicked(event)">
+              <button type="button" class="comment-tool post-embed-btn" title="Incorporar vídeo, dashboard, etc." onmousedown="event.preventDefault()" onclick="openPostEmbedModal()"><i data-lucide="film" class="ic-xs"></i> <span class="post-embed-btn-label">Incorporar</span></button>
+            </div>
+            <span class="post-editor-sep"></span>
+            <div class="post-editor-toolgroup">
+              <button type="button" class="comment-tool" title="Desfazer (Ctrl+Z)" onmousedown="event.preventDefault()" onclick="execPostCmd('undo')"><i data-lucide="undo" class="ic-xs"></i></button>
+              <button type="button" class="comment-tool" title="Refazer (Ctrl+Shift+Z)" onmousedown="event.preventDefault()" onclick="execPostCmd('redo')"><i data-lucide="redo" class="ic-xs"></i></button>
+              <button type="button" class="comment-tool" title="Limpar formatação" onmousedown="event.preventDefault()" onclick="execPostCmd('removeFormat')"><i data-lucide="eraser" class="ic-xs"></i></button>
+            </div>
+          </div>
+
+          <!-- Corpo -->
+          <div id="post-f-content" class="post-editor-body" contenteditable="true" data-placeholder="Escreva o conteúdo. Use a toolbar acima pra formatar. O botão &quot;Incorporar&quot; aceita URL do YouTube/Vimeo/Loom/Figma/etc." oninput="_markPostDirty()"></div>
+        </div>
+
+        <!-- Modo VISUALIZAR -->
+        <div class="post-editor-canvas" id="post-editor-canvas-preview" style="display:none">
+          <div id="post-editor-preview-body" class="kb-detail-body"></div>
         </div>
       </div>
     </div>
@@ -2989,7 +3159,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260814g"></script>
+<script src="/js/app.js?v=20260817g"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

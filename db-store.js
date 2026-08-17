@@ -24,7 +24,7 @@ const ENTITY_TYPES = [
   'workspaces', 'users', 'clients', 'projects', 'flows',
   'demands', 'roles', 'positions', 'templates', 'webhooks', 'schedules', 'clientTemplates',
   'recurrings', 'listas', 'demandTypes', 'googleEvents', 'tasks',
-  'passwords', 'passwordAudits'
+  'passwords', 'passwordAudits', 'posts'
 ];
 
 function createStore(config = {}) {
