@@ -7792,6 +7792,28 @@ tr.demand-row:hover {
 #dtype-manage-modal .row-actions .icon-btn:hover { color: var(--accent-text); background: var(--surface-2); }
 #dtype-manage-modal .row-actions .icon-btn.danger:hover { color: var(--danger); background: var(--danger-dim); }
 
+/* ─── DOCS — container do doc nativo (fetched + injected via shadow DOM) ───
+   O container é o SCROLL CONTAINER — sem isso, `position: sticky` dentro do
+   Shadow DOM não gruda (o binding cross-boundary com window falha em Chrome).
+   Dando altura fixa + overflow:auto aqui, a sidebar sticky da doc encontra
+   este elemento como scroll ancestor e funciona corretamente. */
+.docs-container {
+  display: block;
+  width: 100%;
+  height: calc(100vh - 65px);   /* 65px = topbar do app */
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: transparent;
+}
+/* Shadow DOM não conta como light-DOM children — usa data-doc como sinal
+   de "montado". Antes disso o placeholder mostra o loading. */
+.docs-container:not([data-doc])::before {
+  content: 'Carregando…';
+  display: block; text-align: center;
+  color: var(--text-muted); padding: 80px 20px;
+  font-size: 14px;
+}
+
 /* ─── DEV TOOLS ─── hub admin-only de links diretos pras rotas ocultas. */
 .dt-hint { font-size: 13px; color: var(--text-muted); line-height: 1.6; margin-bottom: 22px; max-width: 720px; }
 .dt-group { margin-bottom: 28px; }

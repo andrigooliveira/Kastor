@@ -6,42 +6,20 @@
 <title>reWork — Manual do Usuário</title>
 <style>
   :root {
-    --bg: #0B0B10;
-    --surface: #14141C;
-    --surface-2: #1B1B26;
-    --surface-3: #22222F;
-    --hairline: rgba(255,255,255,0.08);
-    --border: rgba(255,255,255,0.14);
-    --text: #ECECF1;
-    --text-dim: #B4B4C0;
-    --text-muted: #7C7C8A;
-    --accent: #7A00FF;
-    --accent-2: #9B4BFF;
-    --accent-soft: rgba(122,0,255,0.14);
-    --danger: #F26D6D;
-    --success: #22D3A5;
-    --warn: #F59E0B;
-    --info: #38BDF8;
-    --priority-1: #F26D6D;
-    --priority-2: #F59E0B;
-    --priority-3: #F7C948;
-    --priority-4: #38BDF8;
-    --radius: 10px;
-    --radius-lg: 14px;
+    --bg: #0B0B10; --surface: #14141C; --surface-2: #1B1B26; --surface-3: #22222F;
+    --hairline: rgba(255,255,255,0.08); --border: rgba(255,255,255,0.14);
+    --text: #ECECF1; --text-dim: #B4B4C0; --text-muted: #7C7C8A;
+    --accent: #7A00FF; --accent-2: #9B4BFF; --accent-soft: rgba(122,0,255,0.14);
+    --danger: #F26D6D; --success: #22D3A5; --warn: #F59E0B; --info: #38BDF8;
+    --radius: 10px; --radius-lg: 14px;
     --shadow: 0 4px 24px rgba(0,0,0,0.35);
     --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   }
   @media (prefers-color-scheme: light) {
     :root:not([data-theme="dark"]) {
-      --bg: #F7F7FB;
-      --surface: #FFFFFF;
-      --surface-2: #F1F1F6;
-      --surface-3: #E8E8F0;
-      --hairline: rgba(0,0,0,0.06);
-      --border: rgba(0,0,0,0.14);
-      --text: #14141C;
-      --text-dim: #4B4B58;
-      --text-muted: #7C7C8A;
+      --bg: #F7F7FB; --surface: #FFFFFF; --surface-2: #F1F1F6; --surface-3: #E8E8F0;
+      --hairline: rgba(0,0,0,0.06); --border: rgba(0,0,0,0.14);
+      --text: #14141C; --text-dim: #4B4B58; --text-muted: #7C7C8A;
       --accent-soft: rgba(122,0,255,0.10);
       --shadow: 0 4px 20px rgba(0,0,0,0.08);
     }
@@ -49,193 +27,207 @@
   * { box-sizing: border-box; }
   html { scroll-behavior: smooth; }
   body {
-    margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    font-size: 15px;
-    line-height: 1.65;
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+    background: var(--bg); color: var(--text);
+    font-size: 15px; line-height: 1.65;
     -webkit-font-smoothing: antialiased;
   }
-  .layout {
-    display: grid;
-    grid-template-columns: 300px 1fr;
-    min-height: 100vh;
-  }
-  aside.toc {
-    position: sticky;
-    top: 0;
-    height: 100vh;
-    overflow-y: auto;
+  /* ── Header (topbar do doc) ────────────────────────── */
+  .doc-header {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 16px 28px;
     background: var(--surface);
-    border-right: 1px solid var(--hairline);
-    padding: 28px 20px 40px;
+    border-bottom: 1px solid var(--hairline);
+    backdrop-filter: blur(8px);
   }
-  aside.toc header {
-    display: flex; align-items: center; gap: 10px;
-    margin-bottom: 6px;
-  }
-  aside.toc .logo {
-    width: 34px; height: 34px;
-    border-radius: 8px;
+  .doc-brand { display: flex; align-items: center; gap: 12px; }
+  .doc-brand .logo {
+    width: 36px; height: 36px; border-radius: 8px;
     background: linear-gradient(135deg, var(--accent), var(--accent-2));
     display: flex; align-items: center; justify-content: center;
     color: #fff; font-weight: 800; font-size: 15px;
     box-shadow: 0 4px 14px rgba(122,0,255,0.35);
   }
-  aside.toc h1 { font-size: 15px; margin: 0; letter-spacing: -0.01em; }
-  aside.toc .subtitle {
-    color: var(--text-muted); font-size: 12px; margin: 0 0 22px 0;
+  .doc-brand h1 { font-size: 15px; margin: 0; letter-spacing: -0.01em; }
+  .doc-brand .subtitle { color: var(--text-muted); font-size: 12px; margin: 0; }
+  .doc-header .rel {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12.5px; color: var(--accent-2);
+    padding: 8px 12px; border-radius: 6px;
+    background: var(--accent-soft); text-decoration: none;
+    font-weight: 600;
+    transition: background .12s;
   }
-  aside.toc nav ol { list-style: none; padding: 0; margin: 0; counter-reset: sec; }
-  aside.toc nav li { counter-increment: sec; margin: 2px 0; }
-  aside.toc nav > ol > li > a::before {
-    content: counter(sec, decimal-leading-zero);
-    color: var(--text-muted);
-    font-family: var(--mono);
-    font-size: 10.5px;
-    margin-right: 8px;
-    letter-spacing: 0.02em;
-  }
-  aside.toc nav a {
-    display: block;
-    padding: 6px 10px;
-    color: var(--text-dim);
+  .doc-header .rel:hover { background: rgba(122,0,255,0.22); }
+  /* Botão home invisível no header quando estamos na home */
+  body.on-home .doc-header .home-crumb { display: none; }
+  .doc-header .home-crumb {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 12px; border-radius: 6px;
+    background: none; border: 1px solid var(--hairline);
+    color: var(--text-dim); font-size: 12.5px; font-weight: 600;
+    font-family: inherit; cursor: pointer;
     text-decoration: none;
-    font-size: 13px;
-    border-radius: 6px;
-    border-left: 2px solid transparent;
-    cursor: pointer;
     transition: background .12s, color .12s, border-color .12s;
   }
-  aside.toc nav a:hover { background: var(--surface-2); color: var(--text); }
-  aside.toc nav a.active {
-    background: var(--accent-soft);
-    color: var(--text);
-    border-left-color: var(--accent);
-  }
-  aside.toc nav ol ol {
-    list-style: none;
-    padding: 0 0 4px 22px;
-    margin: 0;
-    counter-reset: subsec;
-  }
-  aside.toc nav ol ol li { counter-increment: subsec; }
-  aside.toc nav ol ol li a { font-size: 12.5px; padding: 3px 10px; color: var(--text-muted); }
-  aside.toc nav ol ol li a::before {
-    content: "";
-    display: inline-block;
-    width: 6px; height: 6px;
-    border-radius: 50%;
-    background: var(--surface-3);
-    margin-right: 8px;
-    vertical-align: middle;
-  }
-  aside.toc nav ol ol li a.active::before { background: var(--accent); }
+  .doc-header .home-crumb:hover { background: var(--surface-2); color: var(--text); border-color: var(--border); }
 
-  main { padding: 60px min(80px, 6vw) 120px; max-width: 920px; }
-  main .kicker {
-    display: inline-block;
-    padding: 4px 10px;
-    background: var(--accent-soft);
-    color: var(--accent-2);
-    border-radius: 100px;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    margin-bottom: 16px;
+  /* ── Home view (grid de cards + search) ─────────────── */
+  .home-view { max-width: 1100px; margin: 0 auto; padding: 48px 28px 80px; }
+  body:not(.on-home) .home-view { display: none; }
+  .home-hero { text-align: center; margin-bottom: 32px; }
+  .home-hero h1 { font-size: 36px; letter-spacing: -0.02em; margin: 0 0 10px; }
+  .home-hero p { font-size: 15px; color: var(--text-dim); margin: 0; }
+  .home-search {
+    position: relative;
+    max-width: 640px; margin: 0 auto 36px;
   }
-  main h1.doc-title {
-    font-size: 42px;
-    line-height: 1.1;
-    margin: 0 0 12px;
+  .home-search input {
+    width: 100%; padding: 14px 16px 14px 44px;
+    background: var(--surface); color: var(--text);
+    border: 1.5px solid var(--hairline); border-radius: 10px;
+    font-family: inherit; font-size: 14.5px;
+    transition: border-color .12s, background .12s;
+  }
+  .home-search input::placeholder { color: var(--text-muted); }
+  .home-search input:focus {
+    outline: none; border-color: var(--accent);
+    background: var(--surface);
+  }
+  .home-search::before {
+    content: ''; position: absolute;
+    left: 16px; top: 50%; transform: translateY(-50%);
+    width: 18px; height: 18px;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237C7C8A' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><path d='m21 21-4.3-4.3'/></svg>");
+    background-repeat: no-repeat;
+  }
+  .doc-cards {
+    display: grid; gap: 16px;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  }
+  .doc-card {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 24px 18px 20px; gap: 10px; text-align: center;
+    background: var(--surface); border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    cursor: pointer; font-family: inherit;
+    transition: border-color .15s, transform .18s, background .15s, box-shadow .18s;
+    position: relative;
+  }
+  .doc-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+    background: var(--surface);
+    box-shadow: 0 8px 24px rgba(122,0,255,0.14);
+  }
+  .doc-card-avatar {
+    width: 60px; height: 60px; border-radius: 12px;
+    background: var(--accent-soft); color: var(--accent-2);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 22px; font-weight: 700;
     letter-spacing: -0.02em;
   }
-  main .lead {
-    font-size: 17px;
-    color: var(--text-dim);
-    max-width: 640px;
-    margin: 0 0 40px;
+  .doc-card:hover .doc-card-avatar {
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #fff;
   }
-  section {
-    padding-top: 48px;
-    margin-top: 24px;
+  .doc-card-name {
+    font-size: 15px; font-weight: 700; color: var(--text);
+    letter-spacing: -0.01em; margin-top: 4px;
+  }
+  .doc-card-group {
+    font-size: 11px; font-weight: 600; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .doc-card-desc {
+    font-size: 12.5px; color: var(--text-dim);
+    line-height: 1.5; margin-top: 4px;
+  }
+  .doc-card.hidden { display: none; }
+  .home-empty {
+    text-align: center; color: var(--text-muted);
+    font-size: 14px; padding: 40px 0;
+  }
+
+  /* ── Section view (leitura de tópico) ─────────────── */
+  main.section-view { max-width: 920px; margin: 0 auto; padding: 40px min(60px, 5vw) 80px; }
+  body.on-home main.section-view { display: none; }
+  main section { display: none; }
+  main section.is-active { display: block; }
+  .section-nav {
+    display: flex; justify-content: space-between; gap: 10px;
+    margin-top: 40px; padding-top: 24px;
     border-top: 1px solid var(--hairline);
-    scroll-margin-top: 20px;
   }
-  section.no-divider {
-    border-top: none;
-    padding-top: 32px;
-    margin-top: 12px;
+  .section-nav .nav-btn {
+    flex: 1; min-width: 0;
+    padding: 12px 16px; border-radius: var(--radius);
+    background: var(--surface); border: 1px solid var(--hairline);
+    color: var(--text-dim); font-family: inherit; font-size: 13px;
+    cursor: pointer; text-align: left;
+    transition: border-color .12s, background .12s;
   }
+  .section-nav .nav-btn:hover { border-color: var(--accent); background: var(--surface-2); color: var(--text); }
+  .section-nav .nav-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .section-nav .nav-btn .nav-dir {
+    display: block; font-size: 10.5px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 2px;
+  }
+  .section-nav .nav-btn.next { text-align: right; }
+  .kicker {
+    display: inline-block; padding: 4px 10px;
+    background: var(--accent-soft); color: var(--accent-2);
+    border-radius: 100px; font-size: 11px; font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+  h1.doc-title { font-size: 40px; line-height: 1.08; margin: 0 0 12px; letter-spacing: -0.02em; }
+  .lead { font-size: 16px; color: var(--text-dim); max-width: 640px; margin: 0 0 34px; }
   h2 {
-    font-size: 28px;
-    letter-spacing: -0.015em;
-    margin: 0 0 8px;
+    font-size: 22px; margin: 36px 0 8px; letter-spacing: -0.015em;
+    padding-top: 20px; border-top: 1px solid var(--hairline);
   }
-  h2 .num {
-    display: inline-block;
-    color: var(--accent-2);
-    font-family: var(--mono);
-    font-size: 14px;
-    font-weight: 500;
-    margin-right: 14px;
-    vertical-align: middle;
-    letter-spacing: 0.04em;
-  }
-  section .section-intro { color: var(--text-dim); margin: 0 0 24px; }
-  h3 { font-size: 19px; margin: 34px 0 8px; letter-spacing: -0.01em; scroll-margin-top: 20px; }
+  h2:first-of-type { border-top: 0; padding-top: 0; margin-top: 20px; }
+  h3 { font-size: 16px; margin: 22px 0 6px; letter-spacing: -0.01em; }
   h4 {
-    font-size: 13px;
-    margin: 22px 0 6px;
-    color: var(--text);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
+    font-size: 12px; margin: 18px 0 6px; color: var(--text);
+    text-transform: uppercase; letter-spacing: 0.08em;
   }
-  p { margin: 10px 0 14px; }
-  ul, ol { padding-left: 22px; margin: 10px 0 18px; }
-  li { margin: 4px 0; }
+  p { margin: 8px 0 12px; }
+  ul, ol { padding-left: 22px; margin: 8px 0 16px; }
+  li { margin: 3px 0; }
   li > strong { color: var(--text); }
   code {
-    font-family: var(--mono);
-    font-size: 0.88em;
-    background: var(--surface-2);
-    padding: 1px 6px;
-    border-radius: 4px;
-    color: var(--text);
+    font-family: var(--mono); font-size: 0.88em;
+    background: var(--surface-2); padding: 1px 6px;
+    border-radius: 4px; color: var(--text);
   }
   kbd {
-    font-family: var(--mono);
-    font-size: 0.82em;
-    background: var(--surface-3);
-    border: 1px solid var(--border);
-    border-bottom-width: 2px;
-    padding: 1px 6px;
-    border-radius: 5px;
-    color: var(--text);
-    white-space: nowrap;
+    font-family: var(--mono); font-size: 0.82em;
+    background: var(--surface-3); border: 1px solid var(--border);
+    border-bottom-width: 2px; padding: 1px 6px;
+    border-radius: 5px; color: var(--text); white-space: nowrap;
+  }
+  pre {
+    background: var(--surface-2); border: 1px solid var(--hairline);
+    border-radius: var(--radius); padding: 12px 14px;
+    overflow-x: auto; font-family: var(--mono);
+    font-size: 12.5px; line-height: 1.55; margin: 12px 0 16px;
   }
   .callout {
-    display: flex;
-    gap: 12px;
-    padding: 14px 16px;
-    border-radius: var(--radius);
-    background: var(--surface);
+    display: flex; gap: 12px; padding: 14px 16px;
+    border-radius: var(--radius); background: var(--surface);
     border: 1px solid var(--hairline);
-    margin: 18px 0;
-    font-size: 14px;
+    margin: 14px 0; font-size: 14px;
   }
   .callout .ic {
-    flex-shrink: 0;
-    width: 22px; height: 22px;
-    border-radius: 6px;
+    flex-shrink: 0; width: 22px; height: 22px; border-radius: 6px;
     display: flex; align-items: center; justify-content: center;
-    font-weight: 700; font-size: 13px;
-    margin-top: 1px;
+    font-weight: 700; font-size: 13px; margin-top: 1px;
   }
-  .callout.tip { border-color: rgba(34,211,165,0.28); background: rgba(34,211,165,0.06); }
-  .callout.tip .ic { background: var(--success); color: #06251A; }
+  .callout.tip  { border-color: rgba(34,211,165,0.28); background: rgba(34,211,165,0.06); }
+  .callout.tip  .ic { background: var(--success); color: #06251A; }
   .callout.warn { border-color: rgba(245,158,11,0.32); background: rgba(245,158,11,0.06); }
   .callout.warn .ic { background: var(--warn); color: #3D1D00; }
   .callout.info { border-color: rgba(56,189,248,0.32); background: rgba(56,189,248,0.06); }
@@ -244,1066 +236,1111 @@
   .callout.admin .ic { background: var(--accent); color: #fff; }
   .callout .body { min-width: 0; }
   .callout .body strong { display: block; margin-bottom: 2px; }
-
   .grid-2 {
-    display: grid; gap: 14px;
+    display: grid; gap: 12px;
     grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    margin: 18px 0;
+    margin: 14px 0;
   }
   .card {
-    background: var(--surface);
-    border: 1px solid var(--hairline);
-    border-radius: var(--radius);
-    padding: 16px 18px;
+    background: var(--surface); border: 1px solid var(--hairline);
+    border-radius: var(--radius); padding: 14px 16px;
   }
   .card h4 { margin: 0 0 6px; text-transform: none; letter-spacing: -0.01em; font-size: 14px; }
-  .card p { margin: 0; font-size: 13.5px; color: var(--text-dim); }
-
-  .step-list { counter-reset: step; list-style: none; padding: 0; margin: 18px 0; }
+  .card p  { margin: 0; font-size: 13.5px; color: var(--text-dim); }
+  .step-list { counter-reset: step; list-style: none; padding: 0; margin: 16px 0; }
   .step-list li {
     counter-increment: step;
-    position: relative;
-    padding: 12px 14px 12px 46px;
-    border: 1px solid var(--hairline);
-    border-radius: var(--radius);
-    background: var(--surface);
-    margin: 8px 0;
+    position: relative; padding: 10px 14px 10px 44px;
+    border: 1px solid var(--hairline); border-radius: var(--radius);
+    background: var(--surface); margin: 8px 0;
   }
   .step-list li::before {
-    content: counter(step);
-    position: absolute;
-    left: 12px; top: 12px;
-    width: 24px; height: 24px;
-    border-radius: 50%;
-    background: var(--accent-soft);
-    color: var(--accent-2);
+    content: counter(step); position: absolute;
+    left: 10px; top: 10px; width: 24px; height: 24px;
+    border-radius: 50%; background: var(--accent-soft); color: var(--accent-2);
     display: flex; align-items: center; justify-content: center;
     font-family: var(--mono); font-size: 12px; font-weight: 600;
   }
-
   table {
-    width: 100%;
-    border-collapse: collapse;
-    margin: 16px 0;
-    font-size: 13.5px;
+    width: 100%; border-collapse: collapse;
+    margin: 14px 0; font-size: 13.5px;
   }
   th, td {
-    text-align: left;
-    padding: 10px 12px;
-    border-bottom: 1px solid var(--hairline);
-    vertical-align: top;
+    text-align: left; padding: 10px 12px;
+    border-bottom: 1px solid var(--hairline); vertical-align: top;
   }
-  th {
-    color: var(--text-dim);
-    font-weight: 600;
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    background: var(--surface);
+  th { color: var(--text-dim); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .pill {
+    display: inline-block; padding: 2px 8px; border-radius: 100px;
+    font-size: 11px; font-weight: 600;
   }
+  .pill-admin { background: var(--accent-soft); color: var(--accent-2); }
+  .pill-mod   { background: rgba(56,189,248,0.14); color: var(--info); }
+  .pill-new   { background: rgba(34,211,165,0.16); color: var(--success); }
+  footer { margin: 60px 0 20px; color: var(--text-muted); font-size: 12px; text-align: center; padding-top: 24px; border-top: 1px solid var(--hairline); }
 
-  .badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 100px;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    background: var(--surface-3);
-    color: var(--text-dim);
-    margin-left: 6px;
-    vertical-align: middle;
-  }
-  .badge.admin { background: var(--accent-soft); color: var(--accent-2); }
-  .badge.new { background: rgba(34,211,165,0.14); color: var(--success); }
-
-  .pill { display: inline-block; padding: 1px 8px; border-radius: 100px; font-size: 11.5px; font-weight: 600; margin: 0 2px; }
-  .pill.p1 { background: rgba(242,109,109,0.15); color: var(--priority-1); }
-  .pill.p2 { background: rgba(245,158,11,0.15); color: var(--priority-2); }
-  .pill.p3 { background: rgba(247,201,72,0.15); color: var(--priority-3); }
-  .pill.p4 { background: rgba(56,189,248,0.15); color: var(--priority-4); }
-
-  a.anchor-link {
-    color: var(--accent-2);
-    text-decoration: none;
-    border-bottom: 1px dashed var(--accent-soft);
-  }
-  a.anchor-link:hover { border-bottom-style: solid; }
-
-  .mini-index {
-    background: var(--surface);
-    border: 1px solid var(--hairline);
-    border-radius: var(--radius);
-    padding: 12px 16px;
-    margin: 18px 0 26px;
-    font-size: 13px;
-  }
-  .mini-index strong { color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
-  .mini-index ul { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-wrap: wrap; gap: 6px 14px; }
-  .mini-index a { color: var(--accent-2); text-decoration: none; font-size: 12.5px; }
-  .mini-index a:hover { text-decoration: underline; }
-
-  footer.doc-foot {
-    margin-top: 80px;
-    padding-top: 26px;
-    border-top: 1px solid var(--hairline);
-    color: var(--text-muted);
-    font-size: 12px;
-    display: flex; justify-content: space-between; align-items: center;
-    flex-wrap: wrap; gap: 12px;
-  }
-
-  .toc-toggle {
-    display: none;
-    position: fixed;
-    top: 14px; right: 14px;
-    z-index: 30;
-    background: var(--accent);
-    color: #fff; border: none;
-    padding: 10px 14px;
-    border-radius: var(--radius);
-    font-family: inherit; font-size: 13px; font-weight: 600;
-    cursor: pointer;
-    box-shadow: var(--shadow);
-  }
-
-  @media (max-width: 960px) {
-    .layout { grid-template-columns: 1fr; }
-    aside.toc {
-      position: fixed;
-      inset: 0;
-      height: 100vh;
-      z-index: 25;
-      transform: translateX(-100%);
-      transition: transform .25s ease;
-      width: min(320px, 88vw);
-    }
-    aside.toc.open { transform: translateX(0); }
-    .toc-toggle { display: inline-flex; align-items: center; gap: 6px; }
-    main { padding: 60px 22px 90px; }
-    main h1.doc-title { font-size: 32px; }
-    body::after {
-      content: "";
-      position: fixed; inset: 0;
-      background: rgba(0,0,0,0.5);
-      opacity: 0; pointer-events: none;
-      transition: opacity .2s;
-      z-index: 20;
-    }
-    body.toc-open::after { opacity: 1; pointer-events: all; }
+  @media (max-width: 900px) {
+    .doc-header { padding: 12px 16px; }
+    .home-view { padding: 32px 16px 80px; }
+    .home-hero h1 { font-size: 26px; }
+    main.section-view { padding: 24px 16px 60px; }
+    h1.doc-title { font-size: 26px; }
+    h2 { font-size: 18px; }
+    .doc-cards { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+    .doc-card { padding: 18px 14px 16px; }
+    .doc-card-avatar { width: 48px; height: 48px; font-size: 18px; }
   }
 </style>
 </head>
-<body>
+<body class="on-home">
 
-<button class="toc-toggle" onclick="document.body.classList.toggle('toc-open'); document.querySelector('aside.toc').classList.toggle('open');">☰ Índice</button>
-
-<div class="layout">
-
-<aside class="toc">
-  <header>
-    <div class="logo">K</div>
-    <h1>reWork</h1>
-  </header>
-  <p class="subtitle">Manual do usuário</p>
-  <nav>
-    <ol>
-      <li><a href="#bem-vindo">Bem-vindo ao reWork</a></li>
-      <li><a href="#primeiros-passos">Primeiros passos</a>
-        <ol>
-          <li><a href="#login">Entrar na plataforma</a></li>
-          <li><a href="#tour">Um tour pela tela</a></li>
-          <li><a href="#trocar-senha">Trocar a senha inicial</a></li>
-        </ol>
-      </li>
-      <li><a href="#conceitos">Conceitos fundamentais</a></li>
-      <li><a href="#perfil">Meu Perfil</a>
-        <ol>
-          <li><a href="#perfil-info">Foto, nome e função</a></li>
-          <li><a href="#perfil-email">Notificações por e-mail</a></li>
-          <li><a href="#perfil-discord">Discord pessoal</a></li>
-          <li><a href="#perfil-google">Google Calendar</a></li>
-          <li><a href="#perfil-senha">Alterar senha e sair</a></li>
-        </ol>
-      </li>
-      <li><a href="#clientes">Clientes</a>
-        <ol>
-          <li><a href="#cliente-criar">Criar um cliente</a></li>
-          <li><a href="#cliente-abas">Explorando o cliente</a></li>
-          <li><a href="#cliente-arquivar">Arquivar vs excluir</a></li>
-          <li><a href="#cliente-relatorio">Relatório mensal em PDF</a></li>
-        </ol>
-      </li>
-      <li><a href="#projetos">Projetos</a></li>
-      <li><a href="#fluxos">Fluxos de Demanda</a>
-        <ol>
-          <li><a href="#fluxo-criar">Montar um fluxo</a></li>
-          <li><a href="#fluxo-etapas">Configurar etapas</a></li>
-          <li><a href="#fluxo-defaults">Descrição e checklist padrão</a></li>
-          <li><a href="#fluxo-duplicar">Duplicar para outro projeto</a></li>
-        </ol>
-      </li>
-      <li><a href="#demandas">Demandas — o coração do sistema</a>
-        <ol>
-          <li><a href="#criar-demanda">Criar uma demanda (wizard)</a></li>
-          <li><a href="#detalhe-demanda">Anatomia do detalhe</a></li>
-          <li><a href="#pipeline">O pipeline visual</a></li>
-          <li><a href="#etapas-desta">Etapas desta demanda</a></li>
-          <li><a href="#prioridade">Prioridade e prazos</a></li>
-          <li><a href="#entregaveis">Entregáveis</a></li>
-          <li><a href="#checklist">Checklist</a></li>
-          <li><a href="#anexos">Anexos e arquivos</a></li>
-          <li><a href="#comentarios">Comentários, menções, reações</a></li>
-          <li><a href="#horas">Apontamento de horas</a></li>
-          <li><a href="#historico">Histórico da demanda</a></li>
-          <li><a href="#visualizacoes">Lista, Kanban, Calendário</a></li>
-          <li><a href="#filtros">Filtros e buscas</a></li>
-          <li><a href="#acoes-massa">Ações em massa</a></li>
-        </ol>
-      </li>
-      <li><a href="#minhas-demandas">Minhas Demandas</a></li>
-      <li><a href="#agenda">Agenda semanal</a></li>
-      <li><a href="#dashboard">Dashboard</a></li>
-      <li><a href="#capacidade">Capacidade</a></li>
-      <li><a href="#recorrentes">Recorrentes e Listas</a>
-        <ol>
-          <li><a href="#recorrentes-como">Demandas recorrentes</a></li>
-          <li><a href="#listas-como">Listas-modelo</a></li>
-        </ol>
-      </li>
-      <li><a href="#templates">Templates e Modelos</a></li>
-      <li><a href="#notificacoes">Notificações in-app</a></li>
-      <li><a href="#produtividade">Atalhos e produtividade</a></li>
-      <li><a href="#boas-praticas">Boas práticas</a></li>
-      <li><a href="#faq">Perguntas frequentes</a></li>
-    </ol>
-  </nav>
-</aside>
-
-<main>
-  <span class="kicker">Manual do Usuário</span>
-  <h1 class="doc-title">reWork — Gestão de Demandas de Marketing</h1>
-  <p class="lead">Guia completo para quem está começando. Você vai aprender o que cada tela faz, os detalhes que fazem diferença no dia a dia, e boas práticas para manter tudo organizado — sem virar refém do sistema.</p>
-
-  <!-- ============================================================ -->
-  <section id="bem-vindo" class="no-divider">
-    <h2><span class="num">01</span>Bem-vindo ao reWork</h2>
-    <p>O reWork é uma plataforma para organizar a operação de um time de marketing: <strong>clientes</strong>, <strong>projetos</strong>, <strong>demandas</strong>, <strong>prazos</strong>, <strong>responsáveis</strong>, <strong>apontamento de horas</strong> e <strong>agenda semanal</strong> — tudo em um lugar só.</p>
-    <p>Se você já usou ferramentas como Trello, Asana ou Monday, muita coisa vai parecer familiar. Se nunca usou nenhuma, tudo bem — este manual assume que você está começando do zero.</p>
-    <div class="grid-2">
-      <div class="card"><h4>Para quem executa</h4><p>Ver suas demandas do dia, apontar horas, mover etapas, conversar no detalhe e planejar a semana na Agenda.</p></div>
-      <div class="card"><h4>Para quem gerencia</h4><p>Distribuir demandas, montar fluxos, ver capacidade da equipe, priorizar e gerar relatórios mensais em PDF.</p></div>
-      <div class="card"><h4>Para administradores</h4><p>Criar usuários, definir squads, funções, permissões e integrações. Poucas pessoas precisam ser admin.</p></div>
+<!-- ── Header fixo do doc ─────────────────────────────── -->
+<div class="doc-header">
+  <div class="doc-brand">
+    <div class="logo">R</div>
+    <div>
+      <h1>reWork</h1>
+      <p class="subtitle">Manual do usuário</p>
     </div>
-    <div class="callout tip">
-      <div class="ic">✓</div>
-      <div class="body"><strong>Dica de leitura:</strong> se você está com pressa, leia as seções <a class="anchor-link" href="#conceitos">03 Conceitos fundamentais</a>, <a class="anchor-link" href="#demandas">08 Demandas</a> e <a class="anchor-link" href="#boas-praticas">18 Boas práticas</a>. Cobrem 80% do dia a dia.</div>
-    </div>
-  </section>
-
-  <!-- ============================================================ -->
-  <section id="primeiros-passos">
-    <h2><span class="num">02</span>Primeiros passos</h2>
-
-    <h3 id="login">Entrar na plataforma</h3>
-    <p>Abra o endereço fornecido pela sua equipe (por exemplo, <code>https://kastor.suaempresa.com</code>) e informe <strong>usuário</strong> e <strong>senha</strong>. Se o administrador ainda não criou seu acesso, avise-o: contas são cadastradas internamente pela equipe.</p>
-    <p><strong>Esqueceu a senha?</strong> Clique em <em>Esqueci minha senha</em>, informe o e-mail cadastrado no seu perfil e você vai receber um link para definir uma nova senha (o link expira em 1 hora).</p>
-    <div class="callout info">
-      <div class="ic">i</div>
-      <div class="body"><strong>Sem e-mail no perfil?</strong> A recuperação depende do e-mail estar cadastrado no seu perfil dentro do sistema. Se acabou de entrar e ainda não informou um, peça ao administrador para redefinir sua senha manualmente.</div>
-    </div>
-
-    <h3 id="tour">Um tour pela tela</h3>
-    <p>A interface é dividida em três regiões:</p>
-    <ul>
-      <li><strong>Sidebar à esquerda</strong> — navegação entre as páginas. No <em>topo</em> tem o seletor de <strong>Squad</strong> (o "espaço" que você está vendo); no <em>rodapé</em>, seu avatar (abre <em>Meu Perfil</em>), alternador de tema (claro/escuro) e o botão para <strong>compactar</strong> a sidebar.</li>
-      <li><strong>Topbar</strong> — mostra o título da página atual, o botão <strong>Modo focar</strong> (esconde sidebar e topbar), o sino de <strong>Notificações</strong> com contador e o botão <strong>+ Nova Demanda</strong>.</li>
-      <li><strong>Conteúdo</strong> — a página em si (Dashboard, Demandas, Clientes, etc.).</li>
-    </ul>
-    <p>As seções da sidebar são agrupadas por finalidade:</p>
-    <table>
-      <thead><tr><th>Grupo</th><th>Páginas</th></tr></thead>
-      <tbody>
-        <tr><td><strong>Visão Geral</strong></td><td>Dashboard</td></tr>
-        <tr><td><strong>Execução</strong></td><td>Demandas, Minhas Demandas, Agenda</td></tr>
-        <tr><td><strong>Acompanhamento</strong></td><td>Capacidade, Clientes</td></tr>
-        <tr><td><strong>Processos</strong></td><td>Listas de tarefas, Fluxos de Demanda, Templates</td></tr>
-        <tr><td><strong>Configurações</strong> <span class="badge admin">admin</span></td><td>Integrações, Squads, Usuários</td></tr>
-      </tbody>
-    </table>
-
-    <h3 id="trocar-senha">Trocar a senha inicial</h3>
-    <p>No <em>primeiro acesso</em>, entre em <strong>Meu Perfil</strong> (clique no seu avatar no rodapé da sidebar) e vá até <strong>Alterar Senha</strong>. Informe a senha atual e uma nova (mínimo 6 caracteres). É uma boa hora também para adicionar seu e-mail, sua foto e escolher o tema (claro ou escuro).</p>
-  </section>
-
-  <!-- ============================================================ -->
-  <section id="conceitos">
-    <h2><span class="num">03</span>Conceitos fundamentais</h2>
-    <p class="section-intro">Antes de sair criando coisas, entenda como as peças se encaixam:</p>
-    <table>
-      <thead><tr><th style="width:170px">Conceito</th><th>O que é</th></tr></thead>
-      <tbody>
-        <tr><td><strong>Squad</strong></td><td>Espaço isolado (um time, uma unidade, uma marca) que contém seus próprios clientes, projetos e fluxos. Cada usuário pode ter acesso a um ou mais squads.</td></tr>
-        <tr><td><strong>Cliente</strong></td><td>A conta que sua equipe atende. Guarda ativos da marca, diretrizes, link do Drive e os projetos daquele cliente.</td></tr>
-        <tr><td><strong>Projeto</strong></td><td>Um recorte de trabalho dentro do cliente (ex.: "Instagram", "Blog", "Campanha Q3"). Toda demanda pertence a um projeto.</td></tr>
-        <tr><td><strong>Fluxo</strong></td><td>Um "esqueleto" de etapas por onde a demanda passa (ex.: <em>Backlog → Copywrite → Design → Revisão → Concluída</em>). Cada etapa tem cor, prazo em dias e responsável (pessoa ou função).</td></tr>
-        <tr><td><strong>Demanda</strong></td><td>O trabalho em si — um post, uma peça, uma landing, um vídeo. Nasce em um fluxo, tem responsável, prazo, checklist, entregáveis, comentários e horas apontadas.</td></tr>
-        <tr><td><strong>Função</strong> (Role)</td><td>Cargo/especialidade da pessoa: <em>Designer, Copywriter, Gestor de Tráfego</em>, etc. Serve para atribuir etapas por "função" em vez de por pessoa fixa.</td></tr>
-        <tr><td><strong>Template</strong></td><td>Modelo de demanda pronto para reaproveitar (mesmo checklist, descrição e entregáveis).</td></tr>
-        <tr><td><strong>Modelo de cliente</strong></td><td>Cliente-molde que já vem com projetos e fluxos, para acelerar a criação de novos clientes semelhantes.</td></tr>
-      </tbody>
-    </table>
-    <div class="callout tip">
-      <div class="ic">✓</div>
-      <div class="body"><strong>Hierarquia mental:</strong> Squad &rarr; Cliente &rarr; Projeto &rarr; Demanda (que segue um Fluxo). Guarde essa cadeia — ela aparece em toda parte, inclusive no wizard de criação.</div>
-    </div>
-    <h4>A cadeia do responsável</h4>
-    <p>Quando o sistema precisa descobrir "quem é o responsável desta etapa desta demanda?", ele percorre esta ordem:</p>
-    <ol>
-      <li>Se a demanda tem uma <strong>pessoa atribuída à etapa atual</strong>, é ela.</li>
-      <li>Se não, olha o <strong>responsável configurado no fluxo</strong> para essa etapa (pessoa fixa).</li>
-      <li>Se o fluxo aponta para uma <strong>função</strong> (ex.: "Designer"), o sistema busca a <strong>pessoa padrão dessa função no projeto</strong> (na aba <em>PESSOAS</em>).</li>
-      <li>Se não achou no projeto, cai para o <strong>padrão do cliente</strong>.</li>
-    </ol>
-    <p>Isso explica por que atribuir "por função" no fluxo é tão mais flexível do que amarrar em uma pessoa específica — se alguém mudar de time, você só ajusta a aba <em>PESSOAS</em> e todas as demandas seguem funcionando.</p>
-  </section>
-
-  <!-- ============================================================ -->
-  <section id="perfil">
-    <h2><span class="num">04</span>Meu Perfil</h2>
-    <p class="section-intro">Clique no seu avatar no rodapé da sidebar para abrir <strong>Meu Perfil</strong>. É onde você configura como o sistema se comunica com você e mantém seus dados atualizados.</p>
-
-    <h3 id="perfil-info">Foto, nome e função</h3>
-    <ul>
-      <li><strong>Foto de perfil</strong> — clique em <em>Enviar</em> para subir uma imagem (JPG/PNG), ou <em>Remover</em> para voltar à inicial. Ela aparece em toda menção, comentário, listagem e no canto da sidebar. Vale a pena colocar uma foto real: ajuda o time a te identificar visualmente nas listas cheias.</li>
-      <li><strong>Nome de exibição</strong> — como você aparece para o time. Pode ser só o primeiro nome (ex.: "Ana" em vez de "Ana Silva de Souza"), fica mais compacto nos comentários.</li>
-      <li><strong>Função</strong> — sua especialidade (ex.: <em>Designer</em>). É esta função que os fluxos usam quando dizem "responsável desta etapa: Designer".</li>
-      <li><strong>Nome de usuário</strong> — o login para entrar. Só o administrador pode alterar.</li>
-    </ul>
-
-    <h3 id="perfil-email">Notificações por e-mail</h3>
-    <p>Cadastre um e-mail e escolha em quais situações quer receber aviso:</p>
-    <ul>
-      <li>Quando <em>alguém te atribuir</em> como responsável manualmente;</li>
-      <li>Quando você virar <em>responsável automático</em> da nova etapa (o fluxo te atribuir);</li>
-      <li>Quando alguém <em>te mencionar</em> em um comentário.</li>
-    </ul>
-    <p>Clique <strong>Enviar teste</strong> para conferir se está chegando. Se aparecer aviso de "SMTP não configurado", peça ao administrador para ativar o servidor de e-mail — as opções continuam disponíveis, só não vão sair de fato.</p>
-    <div class="callout tip">
-      <div class="ic">✓</div>
-      <div class="body"><strong>Sugestão de configuração:</strong> ative <em>menção em comentário</em> e <em>responsável automático da nova etapa</em>. A atribuição manual costuma vir junto de uma conversa no Discord/WhatsApp — o e-mail vira ruído.</div>
-    </div>
-
-    <h3 id="perfil-discord">Discord pessoal</h3>
-    <p>Se sua equipe usa Discord, informe seu <strong>ID de usuário do Discord</strong>. Assim as notificações do canal vão te marcar (<code>@você</code>) quando você virar responsável ou for mencionado — o barulho chega em quem interessa, sem incomodar quem não é responsável.</p>
-    <div class="callout info">
-      <div class="ic">i</div>
-      <div class="body"><strong>Como pegar meu ID no Discord?</strong> No Discord, ative <em>Configurações &rarr; Avançado &rarr; Modo desenvolvedor</em>. Depois clique com o botão direito no seu nome (em qualquer mensagem sua) e escolha <em>Copiar ID do usuário</em>. Cola no campo do reWork e salva.</div>
-    </div>
-
-    <h3 id="perfil-google">Google Calendar</h3>
-    <p>Conecte sua conta Google para ver seus compromissos pessoais junto com os blocos de trabalho da Agenda. É <strong>somente leitura</strong>: o reWork nunca escreve no seu Google.</p>
-    <ol class="step-list">
-      <li>Clique em <strong>Conectar Google Calendar</strong> e autorize no Google.</li>
-      <li>Volta para o perfil, a lista de calendários aparece.</li>
-      <li>Marque os calendários que quer ver na Agenda e clique em <strong>Sincronizar agora</strong>.</li>
-      <li>Os eventos aparecem em <em>azul</em> na Agenda; clicar em um abre o link para o Google Calendar.</li>
-    </ol>
-    <p><strong>Atualizar lista</strong> re-pega a lista de calendários (útil se criou um novo no Google). <strong>Sincronizar agora</strong> re-busca os eventos. <strong>Desconectar</strong> remove a integração (o reWork esquece seus tokens e apaga os eventos sincronizados).</p>
-
-    <h3 id="perfil-senha">Alterar senha e sair</h3>
-    <p>Em <strong>Alterar Senha</strong>, informe a senha atual e a nova (mínimo 6 caracteres, digite duas vezes). Recomendado trocar de tempos em tempos, especialmente se compartilhou tela em reunião.</p>
-    <p>No final da página tem <strong>Sair da conta</strong> — encerra sua sessão só neste navegador. Em outros dispositivos você continua logado (sessões duram 30 dias por padrão).</p>
-  </section>
-
-  <!-- ============================================================ -->
-  <section id="clientes">
-    <h2><span class="num">05</span>Clientes</h2>
-    <p class="section-intro">Página <strong>Clientes</strong>. Tudo começa aqui — sem cliente, não há projeto; sem projeto, não há demanda.</p>
-
-    <h3 id="cliente-criar">Criar um cliente</h3>
-    <ol class="step-list">
-      <li>Clique em <strong>Novo Cliente</strong>.</li>
-      <li>Se já existe um <strong>modelo de cliente</strong> parecido (um cliente-molde que alguém salvou antes), use a opção "Começar a partir de um modelo" — ele já traz projetos e fluxos prontos.</li>
-      <li>Preencha:
-        <ul>
-          <li><strong>Nome</strong> e <strong>Cor</strong> — a cor vira o "identificador visual" desse cliente em listas e cards;</li>
-          <li><strong>Foto/Avatar</strong> — geralmente o logo (opcional, mas ajuda a bater o olho);</li>
-          <li><strong>Descrição</strong> — sobre o cliente, tom de voz, contexto, história;</li>
-          <li><strong>Link do Drive</strong> — pasta de referências (Google Drive, Notion, OneDrive);</li>
-          <li><strong>Ativos da marca</strong> — link do Figma ou Drive com logos, tipografia, paleta, fontes;</li>
-          <li><strong>Diretrizes e restrições</strong> — o que pode e o que não pode fazer (ex.: "não usar amarelo", "sempre incluir tag do produto").</li>
-        </ul>
-      </li>
-      <li>Em <strong>PESSOAS</strong>, defina os <strong>responsáveis padrão por função</strong>: "Designer deste cliente = Ana", "Copywriter = João". Todo projeto novo criado dentro desse cliente vai herdar essas atribuições.</li>
-      <li>Salve. O cliente aparece no grid, colorido com a cor escolhida.</li>
-    </ol>
-
-    <h3 id="cliente-abas">Explorando o cliente</h3>
-    <p>Clique no cliente no grid para abrir a página dele. Você vai encontrar quatro abas:</p>
-    <div class="grid-2">
-      <div class="card"><h4>SOBRE</h4><p>Descrição, link do drive, ativos da marca e diretrizes — tudo o que você preencheu na criação. Serve como "briefing perpétuo".</p></div>
-      <div class="card"><h4>PROJETOS</h4><p>Lista dos projetos desse cliente. Botão <em>Novo Projeto</em> aqui dentro.</p></div>
-      <div class="card"><h4>PESSOAS</h4><p>Quem é o padrão de cada função <em>neste cliente</em>. Alterações aqui não retroagem em projetos já criados (ver caixa de aviso abaixo).</p></div>
-      <div class="card"><h4>TEMPO DEDICADO</h4><p>Gráfico com quantas horas o time apontou nas demandas desse cliente. Filtro por 7, 14, 30 e 90 dias.</p></div>
-    </div>
-    <p>No grid principal de clientes, use o toggle <strong>Todos / Ativos / Arquivados</strong> para filtrar. A engrenagem em cima abre <strong>Editar cliente</strong>.</p>
-
-    <h3 id="cliente-arquivar">Arquivar vs excluir</h3>
-    <p>reWork te dá duas maneiras de "aposentar" um cliente:</p>
-    <ul>
-      <li><strong>Desativar/Arquivar</strong> — some das listas do dia a dia mas preserva histórico, relatórios, horas apontadas, tudo. É o caminho seguro. Para reativar, use o toggle <em>Arquivados</em> e restaure.</li>
-      <li><strong>Excluir</strong> — apaga o cliente. Só faça isso se realmente não vai mais precisar. Para evitar acidente, o sistema pede que você <strong>digite o nome exato</strong> do cliente antes de confirmar.</li>
-    </ul>
-    <div class="callout warn">
-      <div class="ic">!</div>
-      <div class="body"><strong>Prefira arquivar.</strong> Uma exclusão apaga junto todas as demandas, comentários e horas — impossível recuperar. Quando em dúvida, arquive.</div>
-    </div>
-
-    <h3 id="cliente-relatorio">Relatório mensal em PDF</h3>
-    <p>Botão <strong>Relatório mensal</strong> no topo do cliente. Escolhe o mês e o reWork gera um PDF com:</p>
-    <ul>
-      <li>Header com nome do cliente, mês de referência;</li>
-      <li>Resumo do mês (demandas concluídas, em andamento, atrasadas);</li>
-      <li>Horas apontadas (total e por pessoa);</li>
-      <li>Lista das demandas do período.</li>
-    </ul>
-    <p>É o snapshot que muitos times enviam ao cliente ou levam para reunião de fechamento. O PDF é gerado no seu navegador (não sai nada do sistema), então funciona mesmo offline se você já carregou a página.</p>
-    <p>Existe versão análoga para <em>Projeto</em> — botão <strong>Relatório mensal</strong> dentro da página do projeto.</p>
-  </section>
-
-  <!-- ============================================================ -->
-  <section id="projetos">
-    <h2><span class="num">06</span>Projetos</h2>
-    <p class="section-intro">Projeto é o recorte dentro do cliente. Um cliente pode ter vários (Instagram, Blog, Ads, Campanha X).</p>
-
-    <h3>Criar um projeto</h3>
-    <p>Dentro da página do cliente, aba <strong>PROJETOS</strong>, clique <strong>Novo Projeto</strong>. Preencha nome, cor, avatar. <strong>Ativos, diretrizes e link do Drive são copiados do cliente automaticamente</strong>, mas você pode sobrescrever com valores específicos do projeto (por exemplo, um Drive só daquele projeto).</p>
-
-    <div class="callout info">
-      <div class="ic">i</div>
-      <div class="body"><strong>Herança &ne; sincronização.</strong> O que vem do cliente é copiado no momento da criação do projeto. Se depois você alterar dados no cliente, os projetos <em>não</em> são atualizados automaticamente — isso dá autonomia para cada projeto ter suas próprias diretrizes se precisar.</div>
-    </div>
-
-    <h3>Editar responsáveis padrão</h3>
-    <p>Na aba <strong>PESSOAS</strong> do projeto, defina quem é o padrão por função <em>naquele projeto</em>. Isso vira o "fallback" quando um fluxo diz "responsável = Designer" — o sistema procura pessoa atribuída na etapa &rarr; padrão do projeto &rarr; padrão do cliente.</p>
-
-    <h3>Arquivar ou excluir</h3>
-    <p>Assim como o cliente, o projeto pode ser <strong>Ativo / Desativado</strong>. Excluir exige digitar o nome exato. Prefira desativar quando o projeto acaba mas você quer manter o histórico e as horas.</p>
-  </section>
-
-  <!-- ============================================================ -->
-  <section id="fluxos">
-    <h2><span class="num">07</span>Fluxos de Demanda <span class="badge admin">admin</span></h2>
-    <p class="section-intro">O fluxo é o esqueleto: as etapas por onde toda demanda passa. Investir tempo aqui poupa muito trabalho depois — um bom fluxo automatiza responsáveis, prazos e defaults.</p>
-
-    <h3 id="fluxo-criar">Montar um fluxo</h3>
-    <ol class="step-list">
-      <li>Vá em <strong>Fluxos de Demanda</strong>. A tela mostra um grid de clientes; clique no cliente que vai receber o fluxo.</li>
-      <li>Clique <strong>+ Novo Fluxo</strong>.</li>
-      <li>Preencha o cabeçalho:
-        <ul>
-          <li><strong>Nome</strong> (ex.: "Post carrossel Instagram");</li>
-          <li><strong>Tipo de Demanda</strong> — categoria livre (Social Media, Vídeo, Landing Page, E-mail Marketing). Serve para filtros e organização;</li>
-          <li><strong>Projeto vinculado</strong> — vazio significa "vale para todos os projetos do cliente". Preencha se o fluxo é específico de um projeto;</li>
-          <li><strong>Ícone</strong> — escolha da biblioteca <em>Lucide</em> (centenas de ícones) ou envie um SVG/PNG próprio.</li>
-        </ul>
-      </li>
-    </ol>
-
-    <h3 id="fluxo-etapas">Configurar etapas</h3>
-    <p>Adicione as fases da produção (ex.: <em>Backlog, Copywrite, Design, Revisão, Aprovação, Concluída</em>). Cada etapa tem:</p>
-    <ul>
-      <li><strong>Nome</strong> — como aparece no pipeline e no Kanban;</li>
-      <li><strong>Cor</strong> — vira o "amarelo do reWork" da etapa. Ajuda a bater o olho no board;</li>
-      <li><strong>Prazo</strong> em dias — começa a contar <em>no momento em que a demanda entra na etapa</em>. Se você bota 3 dias em "Design", a demanda que entrou hoje vai vencer daqui a 3 dias nessa etapa;</li>
-      <li><strong>Responsável</strong> — pode ser uma <em>pessoa fixa</em> (ex.: "Ana") ou uma <em>função</em> (ex.: "Designer"). <em>Recomendado usar função sempre que der.</em></li>
-      <li><strong>Conclui?</strong> — marque na etapa final. É essa marcação que diz ao sistema "quando a demanda entra aqui, tá pronta".</li>
-    </ul>
-    <p>Arraste as etapas para reordenar. Você pode ter quantas quiser, mas mais de 6-7 tende a virar labirinto.</p>
-
-    <div class="callout tip">
-      <div class="ic">✓</div>
-      <div class="body"><strong>Prefira "função" a "pessoa fixa"</strong> em quase todas as etapas. Assim, se o Copywriter mudar, você só troca em <em>PESSOAS</em> do cliente/projeto e todas as demandas seguem funcionando — sem precisar reeditar cada fluxo. Use pessoa fixa só para etapas de aprovação de alguém insubstituível (ex.: o Head).</div>
-    </div>
-
-    <h3 id="fluxo-defaults">Descrição e checklist padrão</h3>
-    <p>Dois campos poderosos e sub-utilizados:</p>
-    <ul>
-      <li><strong>Descrição padrão</strong> — texto que aparece pré-preenchido na descrição de <em>todas</em> as demandas novas desse fluxo. Ótimo para deixar instruções fixas ("Sempre incluir CTA no final", "Formato: 1080x1350");</li>
-      <li><strong>Checklist padrão</strong> — itens que já vêm marcados como pendentes em cada demanda nova. Ótimo para o "não esquece": aprovar copy, salvar em X pasta, agendar postagem, avisar cliente.</li>
-    </ul>
-    <p>Se você marcar <strong>Aplicar a todos os projetos</strong>, o fluxo passa a ser opção em qualquer projeto do cliente (não só naquele em que foi criado).</p>
-
-    <h3 id="fluxo-duplicar">Duplicar para outro projeto</h3>
-    <p>Botão <strong>Duplicar fluxo</strong> (dentro do fluxo). Escolha o cliente e projeto de destino. Todas as etapas, cores, prazos, descrição e checklist padrão são copiados. Serve tanto para replicar entre projetos do mesmo cliente como para clonar em outro cliente similar.</p>
-  </section>
-
-  <!-- ============================================================ -->
-  <section id="demandas">
-    <h2><span class="num">08</span>Demandas — o coração do sistema</h2>
-    <p class="section-intro">Demanda é a unidade de trabalho. Todo o dia a dia gira em torno dela. Esta é a seção mais longa do manual — vale ler com calma.</p>
-
-    <div class="mini-index">
-      <strong>Nesta seção</strong>
-      <ul>
-        <li><a href="#criar-demanda">Criar (wizard)</a></li>
-        <li><a href="#detalhe-demanda">Anatomia do detalhe</a></li>
-        <li><a href="#pipeline">O pipeline visual</a></li>
-        <li><a href="#etapas-desta">Etapas desta demanda</a></li>
-        <li><a href="#prioridade">Prioridade e prazos</a></li>
-        <li><a href="#entregaveis">Entregáveis</a></li>
-        <li><a href="#checklist">Checklist</a></li>
-        <li><a href="#anexos">Anexos</a></li>
-        <li><a href="#comentarios">Comentários</a></li>
-        <li><a href="#horas">Apontamento de horas</a></li>
-        <li><a href="#historico">Histórico</a></li>
-        <li><a href="#visualizacoes">Lista / Kanban / Calendário</a></li>
-        <li><a href="#filtros">Filtros</a></li>
-        <li><a href="#acoes-massa">Ações em massa</a></li>
-      </ul>
-    </div>
-
-    <h3 id="criar-demanda">Criar uma demanda (wizard)</h3>
-    <p>Clique <strong>+ Nova Demanda</strong> no topbar — ou pressione a tecla <kbd>n</kbd> em qualquer tela. Um wizard em 4 passos aparece:</p>
-    <ol class="step-list">
-      <li><strong>Selecione o cliente</strong> — só aparecem os do squad atual. Use a busca para filtrar rápido.</li>
-      <li><strong>Selecione o projeto</strong> — só aparecem os do cliente escolhido.</li>
-      <li><strong>Selecione o tipo de demanda</strong> — na prática, o fluxo. Se o cliente tem muitos fluxos, use o filtro por tipo (Social Media / Vídeo / Landing / etc.).</li>
-      <li><strong>Preencha os detalhes</strong>:
-        <ul>
-          <li><strong>Nome</strong> da demanda — específico, sem "post 1", "post 2": "Reels de dica — Como escolher tênis" é 10x melhor;</li>
-          <li><strong>Descrição</strong> — o briefing (aceita Markdown básico: <code>**negrito**</code>, listas, links);</li>
-          <li><strong>Link do Briefing</strong> — se o briefing completo mora no Drive/Notion, cole o link aqui em vez de duplicar o conteúdo;</li>
-          <li><strong>Anexos</strong> — arquivo, imagem ou link de referência;</li>
-          <li><strong>Checklist</strong> — herdado do fluxo, você pode acrescentar itens específicos desta demanda;</li>
-          <li><strong>Entregáveis</strong> — quantas <em>Peças</em>, <em>Artes</em>, <em>Variações</em> e para quem atribuir (ver <a class="anchor-link" href="#entregaveis">seção específica</a>);</li>
-          <li><strong>Prioridade</strong> — <span class="pill p1">Imediato</span> <span class="pill p2">Alta</span> <span class="pill p3">Média</span> <span class="pill p4">Baixa</span> (ver <a class="anchor-link" href="#prioridade">seção específica</a>);</li>
-          <li><strong>Responsável Atual</strong> — quem começa. Pode deixar em branco para usar o padrão do fluxo.</li>
-        </ul>
-      </li>
-    </ol>
-    <p>Antes de finalizar, se essa demanda tem cara de "vou criar de novo várias vezes" (ex.: "Post carrossel semanal do cliente X"), clique <strong>Salvar como template</strong> antes de <em>Criar</em>. Na próxima vez, você começa da metade do caminho.</p>
-
-    <h3 id="detalhe-demanda">Anatomia do detalhe</h3>
-    <p>Clique em qualquer demanda para abrir o <strong>detalhe</strong> em um modal grande. Ele reúne tudo o que existe sobre aquela demanda:</p>
-    <ul>
-      <li><strong>Título</strong> no topo — clique nele para renomear direto (sem abrir outro modal).</li>
-      <li><strong>Pipeline visual</strong> — as etapas do fluxo aparecem em linha, a atual em destaque. Ver <a class="anchor-link" href="#pipeline">detalhe abaixo</a>.</li>
-      <li><strong>Meta grid</strong> — Fluxo, "Entrou na etapa em", "Criada em", "Concluída em" (se for o caso), Prioridade, Horas estimadas, Horas realizadas (com barra %).</li>
-      <li><strong>Responsável</strong>, <strong>Prazo da etapa atual</strong> e <strong>Prazo final</strong> — editáveis direto no card.</li>
-      <li><strong>Entregáveis</strong> — com botão <em>Salvar entregáveis</em>.</li>
-      <li><strong>Briefing</strong> (link) + <strong>Descrição</strong> (texto).</li>
-      <li><strong>Arquivos da Demanda</strong> — anexos.</li>
-      <li><strong>Checklist</strong> — com barra de progresso.</li>
-      <li><strong>Comentários</strong> — a conversa completa.</li>
-      <li><strong>Apontamentos de Horas</strong> — histórico + cronômetro.</li>
-      <li><strong>Rodapé fixo</strong> — Início / Término / Horas com <strong>cronômetro</strong> e botão <strong>Avançar etapa</strong>.</li>
-      <li><strong>Ícones no cabeçalho</strong>:
-        <ul>
-          <li>🗑 <strong>Excluir demanda</strong>;</li>
-          <li>⚙ <strong>Etapas desta demanda</strong> (ver <a class="anchor-link" href="#etapas-desta">abaixo</a>);</li>
-          <li>🕒 <strong>Histórico</strong> (ver <a class="anchor-link" href="#historico">abaixo</a>).</li>
-        </ul>
-      </li>
-    </ul>
-
-    <h3 id="pipeline">O pipeline visual</h3>
-    <p>No topo do detalhe, você vê todas as etapas do fluxo em sequência, com cores. A etapa <strong>atual</strong> aparece em destaque. Passar o mouse mostra o nome completo e o responsável dela.</p>
-    <p>Clicar em uma etapa <em>mais adiante</em> equivale a mover a demanda para lá (útil quando você pulou uma fase). Clicar em uma etapa <em>anterior</em> volta a demanda (útil quando descobriu que precisa refazer). O botão <strong>Avançar etapa</strong> no rodapé é o caminho mais comum: manda para a próxima na sequência.</p>
-
-    <h3 id="etapas-desta">Etapas desta demanda</h3>
-    <p>Esse recurso é subestimado. O ícone ⚙ (Etapas desta demanda) abre um painel onde você pode <strong>customizar as etapas só desta demanda</strong>, sem mexer no fluxo:</p>
-    <ul>
-      <li><strong>Pular etapa</strong> — marca como "não vai passar aqui" (ex.: uma demanda urgente que dispensa aprovação).</li>
-      <li><strong>Renomear</strong> — muda o nome só neste caso.</li>
-      <li><strong>Trocar o responsável específico da etapa</strong> — sem alterar o padrão do fluxo.</li>
-    </ul>
-    <div class="callout tip">
-      <div class="ic">✓</div>
-      <div class="body"><strong>Quando usar:</strong> exceções pontuais ("esse post o cliente já aprovou por WhatsApp, pula a fase de aprovação"). Se você está usando isso <em>toda vez</em>, é sinal de que o fluxo está errado — melhor ajustar o fluxo em si.</div>
-    </div>
-
-    <h3 id="prioridade">Prioridade e prazos</h3>
-    <p>Quatro níveis:</p>
-    <ul>
-      <li><span class="pill p1">Imediato</span> — precisa ser feita hoje/agora. Use com moderação: se tudo é imediato, nada é.</li>
-      <li><span class="pill p2">Alta</span> — importante, com prazo apertado.</li>
-      <li><span class="pill p3">Média</span> — o padrão. A maior parte das demandas nasce aqui.</li>
-      <li><span class="pill p4">Baixa</span> — pode esperar, "faz quando sobrar tempo".</li>
-    </ul>
-    <p>Sobre <strong>prazos</strong>, o reWork lida com dois:</p>
-    <ul>
-      <li><strong>Prazo da etapa atual</strong> — quando essa etapa específica precisa ser concluída. Vem do fluxo (soma dos dias configurados). Pode ajustar manualmente.</li>
-      <li><strong>Prazo final</strong> — deadline da demanda como um todo (a entrega ao cliente). É este que geralmente sai no board para o cliente.</li>
-    </ul>
-    <p>Quando o prazo passa, a demanda ganha marca de <strong>atrasada</strong> nos filtros e no Dashboard.</p>
-
-    <h3 id="entregaveis">Entregáveis</h3>
-    <p>Três campos numéricos que dizem <em>o que</em> exatamente a demanda produz:</p>
-    <table>
-      <thead><tr><th style="width:120px">Campo</th><th>Significa</th></tr></thead>
-      <tbody>
-        <tr><td><strong>Peças</strong></td><td>Quantos "itens finais" a demanda entrega. Ex.: um carrossel (mesmo com 5 slides) = 1 peça. Um post único = 1 peça. Uma campanha com 3 posts distintos = 3 peças.</td></tr>
-        <tr><td><strong>Artes</strong></td><td>Quantas <em>criações visuais distintas</em> compõem as peças. Um carrossel de 5 slides = 5 artes (uma por slide). Um post único com um layout = 1 arte.</td></tr>
-        <tr><td><strong>Variações</strong></td><td>Adaptações de uma mesma arte para formatos diferentes (feed, story, banner). Uma arte de post postada no feed e no story = 1 arte, 2 variações.</td></tr>
-      </tbody>
-    </table>
-    <p>Também tem um campo <strong>Atribuir a</strong> para dizer quem vai executar. Depois de mexer nos números, clique <strong>Salvar entregáveis</strong>.</p>
-    <p>Esses campos alimentam relatórios de produtividade — "quantas peças o time entregou no mês?" — e não têm efeito operacional na demanda em si.</p>
-
-    <h3 id="checklist">Checklist</h3>
-    <p>Lista de itens marcáveis. Aparece com barra de progresso (X/Y itens) e mostra <strong>quem</strong> marcou cada item quando concluído.</p>
-    <ul>
-      <li>Adicione itens digitando no campo de baixo + Enter;</li>
-      <li>Marque com o clique na caixinha;</li>
-      <li>Reordene arrastando o "handle" de cada item;</li>
-      <li>Delete pelo ícone de lixeira.</li>
-    </ul>
-    <p>Itens herdados do fluxo (<em>Checklist padrão</em>) vêm já na demanda desde o nascimento — você não precisa adicionar toda vez.</p>
-
-    <h3 id="anexos">Anexos e arquivos</h3>
-    <p>A seção <strong>Arquivos da Demanda</strong> aceita três tipos:</p>
-    <ul>
-      <li><strong>Arquivo</strong> — clique em anexar e escolha do computador (imagens, PDF, docs, etc., até 12MB);</li>
-      <li><strong>Imagem colada</strong> — no campo de <em>comentário</em>, faça <kbd>Ctrl</kbd>+<kbd>V</kbd> após copiar uma imagem (útil quando você tira print e cola direto);</li>
-      <li><strong>Link</strong> — cole uma URL (Google Drive, Figma, YouTube, qualquer coisa).</li>
-    </ul>
-    <p>Cada anexo tem miniatura clicável (para imagens) e ícone do tipo (para outros). Delete pelo botão de lixeira ao lado.</p>
-
-    <h3 id="comentarios">Comentários, menções e reações</h3>
-    <p>Toda conversa sobre a demanda mora aqui. Preserva contexto — melhor que Discord/WhatsApp para tudo que é decisão técnica.</p>
-
-    <h4>Menções (@)</h4>
-    <ul>
-      <li>Digite <kbd>@</kbd> — aparece um autocomplete com os usuários;</li>
-      <li>Digite letras para filtrar (<code>@an</code> → mostra Ana, Anderson);</li>
-      <li>Use <kbd>↑</kbd> <kbd>↓</kbd> para navegar, <kbd>Enter</kbd> para escolher, <kbd>Esc</kbd> para cancelar;</li>
-      <li>A pessoa mencionada recebe notificação in-app, e-mail (se ativado) e Discord (se configurado).</li>
-    </ul>
-
-    <h4>Anexar imagem no comentário</h4>
-    <p>Duas formas: <strong>colar</strong> (<kbd>Ctrl</kbd>+<kbd>V</kbd>) uma imagem já copiada; ou <strong>arrastar</strong> um arquivo direto no campo de comentário. A imagem sobe como anexo automaticamente.</p>
-
-    <h4>Reações emoji</h4>
-    <p>Passe o mouse sobre um comentário e clique no ícone de reação. Escolha entre <strong>👍 ❤️ 👀 ✅ 🎉</strong>. Serve como "ok, vi", "gostei", "estou olhando", "aprovado", "manda ver" — sem precisar escrever "ok!" e poluir a thread.</p>
-    <p>Clique de novo na mesma reação para remover a sua. Aparece o número de pessoas que reagiram e quem foi (passando o mouse).</p>
-
-    <h4>Editar / apagar</h4>
-    <p>Passe o mouse no seu próprio comentário: aparecem os ícones de <em>editar</em> e <em>excluir</em>. Só você pode editar seus comentários; admins podem excluir de qualquer um.</p>
-
-    <h3 id="horas">Apontamento de horas</h3>
-    <p>No rodapé do detalhe tem o <strong>cronômetro</strong> — a forma mais precisa de apontar:</p>
-    <ol class="step-list">
-      <li>Clique no botão de <em>iniciar</em> quando começar a trabalhar naquela demanda. O cronômetro começa a rodar.</li>
-      <li>Pode fechar o modal e continuar em outra tela — ele continua contando.</li>
-      <li>Quando pausar (café, reunião), clique em <em>pausar</em>. Retome quando voltar.</li>
-      <li>Quando terminar aquela sessão, clique em <em>parar</em>. Os minutos vão para a lista de <strong>Apontamentos de Horas</strong> automaticamente.</li>
-    </ol>
-    <p>Se esqueceu de ligar o cronômetro, use o <strong>apontamento manual</strong>: preenche <em>Início</em>, <em>Término</em> (ou <em>Horas</em>) e uma observação opcional. Salvar adiciona à lista.</p>
-    <p>Cada apontamento fica visível para o time e vira base do <strong>Capacidade</strong> e do <strong>Relatório mensal</strong>. Trate-o com respeito: um apontamento errado bagunça relatório de cliente.</p>
-
-    <div class="callout tip">
-      <div class="ic">✓</div>
-      <div class="body"><strong>Regra prática:</strong> aponta sempre no mesmo dia. Se deixar para "consolidar no fim da semana", você não lembra. Apontar 30 segundos por vez é indolor. Reconstruir 8h de sexta na segunda é um pesadelo.</div>
-    </div>
-
-    <h3 id="historico">Histórico da demanda</h3>
-    <p>O ícone 🕒 no cabeçalho abre o <strong>Histórico</strong>: linha do tempo de tudo que aconteceu com aquela demanda — quem criou, quem moveu de etapa, quem mudou responsável, quando o prazo foi alterado, quem apontou horas. Serve para investigar "quando isso mudou e por quem?" quando o cliente reclama de alguma coisa.</p>
-
-    <h3 id="visualizacoes">Lista, Kanban e Calendário</h3>
-    <p>No topo da página <strong>Demandas</strong>, escolha a visualização:</p>
-    <div class="grid-2">
-      <div class="card">
-        <h4>Lista</h4>
-        <p>Tabela densa. Ordene clicando nos cabeçalhos (Prazo, Prioridade, Responsável). Marque checkboxes para <a class="anchor-link" href="#acoes-massa">ações em massa</a>. É a melhor view para triagem/reorganização.</p>
-      </div>
-      <div class="card">
-        <h4>Kanban</h4>
-        <p>Cards em colunas por etapa do fluxo. <strong>Arraste um card</strong> entre colunas para mover a demanda de etapa (equivale a <em>Avançar etapa</em>). É a visão mais visual e a preferida de muitos executantes.</p>
-      </div>
-      <div class="card">
-        <h4>Calendário</h4>
-        <p>Demandas encaixadas nos prazos, mês a mês. Ajuda a bater o olho na carga do mês e identificar acúmulos.</p>
-      </div>
-    </div>
-
-    <h3 id="filtros">Filtros e buscas</h3>
-    <p>A barra superior da página <strong>Demandas</strong> tem várias formas de reduzir o barulho:</p>
-    <ul>
-      <li><strong>Busca</strong> por nome da demanda (foco rápido com a tecla <kbd>/</kbd>);</li>
-      <li><strong>Cliente / Projeto / Fluxo</strong> — filtros em cascata (escolher cliente restringe a lista de projetos);</li>
-      <li><strong>Responsável</strong> — todas as demandas de uma pessoa;</li>
-      <li><strong>Período</strong> — por prazo final ou por data de criação;</li>
-      <li><strong>Atalhos</strong>: <em>Todas</em>, <em>Apenas atrasadas</em>, <em>Em andamento</em>, <em>Concluídas</em>.</li>
-    </ul>
-    <p>Os filtros são <strong>persistidos por página</strong> — quando você voltar, encontra do jeito que deixou. Se estranhar "sumiu um monte de demanda", é o filtro anterior ainda ativo.</p>
-
-    <h3 id="acoes-massa">Ações em massa</h3>
-    <p>Na visualização em Lista, marque a checkbox de várias demandas ao mesmo tempo. Uma barra de ações aparece com:</p>
-    <ul>
-      <li><strong>Alterar Responsável</strong> — reatribui todas de uma vez (útil quando alguém sai de férias);</li>
-      <li><strong>Mover etapa</strong> — muda todas para a mesma etapa;</li>
-      <li><strong>Alterar Prioridade</strong> — reorganiza urgência em bloco;</li>
-      <li><strong>Excluir</strong> — apaga todas (com confirmação).</li>
-    </ul>
-    <p>Combina bem com filtros: filtre "todas do cliente X em Design" e reatribua tudo para outro Designer com dois cliques.</p>
-  </section>
-
-  <!-- ============================================================ -->
-  <section id="minhas-demandas">
-    <h2><span class="num">09</span>Minhas Demandas</h2>
-    <p class="section-intro">A página <strong>Minhas Demandas</strong> mostra só o que é seu. É a primeira parada da manhã para muita gente da execução.</p>
-    <p>Três seções empilhadas:</p>
-    <ul>
-      <li><strong>Minha Lista</strong> — tabela com o que está sob sua responsabilidade, ordenada por prazo (mais urgente no topo). Clique no nome para abrir o detalhe da demanda.</li>
-      <li><strong>Minha Agenda</strong> — grid semanal com os blocos de trabalho que você agendou. Igual à página <a class="anchor-link" href="#agenda">Agenda</a>, mas já filtrada para você.</li>
-      <li><strong>Meu Calendário</strong> — visão mensal com pontos indicando quantas demandas vencem em cada dia. Ótimo para planejar semanas cheias com antecedência.</li>
-    </ul>
-    <div class="callout tip">
-      <div class="ic">✓</div>
-      <div class="body"><strong>Ritual de manhã (5 min):</strong> abrir <em>Minhas Demandas</em>, revisar prazos do dia, encaixar na Agenda o que ainda não tem bloco, e só depois começar a trabalhar. Você entra no "modo produção" sabendo o que fazer e por qual ordem.</div>
-    </div>
-  </section>
-
-  <!-- ============================================================ -->
-  <section id="agenda">
-    <h2><span class="num">10</span>Agenda semanal</h2>
-    <p class="section-intro">A <strong>Agenda</strong> é a semana em blocos de tempo. Você "encaixa" cada demanda no horário em que planeja trabalhar nela. É uma ferramenta de <em>planejamento</em>, não de registro — o registro é o cronômetro.</p>
-
-    <h3>Escolher usuário e período</h3>
-    <p>No topo da Agenda:</p>
-    <ul>
-      <li><strong>Seletor de usuário</strong> — vê a semana de qualquer pessoa do time (útil para gestores). Por padrão vem em você.</li>
-      <li><strong>Navegação</strong> — setas ‹ › para mudar de semana; botão <strong>Hoje</strong> para voltar à semana atual;</li>
-      <li><strong>Toggle 1 / 2 semanas</strong> — expande a visão para 14 dias quando você está planejando algo mais longo.</li>
-    </ul>
-
-    <h3>Criar bloco</h3>
-    <ol class="step-list">
-      <li><strong>Arraste em um horário vazio</strong> para desenhar um bloco (do horário de início até o de término).</li>
-      <li>O modal <em>Agendar bloco</em> abre. Escolha a demanda, ajuste data, início e término.</li>
-      <li>Salve. O bloco aparece na grade com a cor do cliente.</li>
-    </ol>
-
-    <h3>Mover, redimensionar, abrir</h3>
-    <ul>
-      <li><strong>Arraste</strong> um bloco existente para mover para outro horário/dia;</li>
-      <li>Arraste a <strong>borda inferior</strong> para aumentar ou diminuir a duração;</li>
-      <li><strong>Clique</strong> em um bloco para abrir a demanda relacionada.</li>
-    </ul>
-
-    <h3>Eventos do Google (opcional)</h3>
-    <p>Se você conectou seu Google Calendar em <em>Meu Perfil</em>, seus compromissos pessoais aparecem em <strong>azul</strong> lado a lado com os blocos de trabalho. Eles são <em>somente leitura</em> — o reWork não pode mover nem apagar. Clique em um evento azul para abrir no Google Calendar em nova aba.</p>
-    <p>Quando um bloco de trabalho e um evento do Google se sobrepõem, o reWork coloca lado a lado (em "faixas") — nenhum some.</p>
-
-    <div class="callout tip">
-      <div class="ic">✓</div>
-      <div class="body"><strong>Ritual de segunda-feira (10 min):</strong> abra a Agenda vazia da semana. Pegue sua <em>Minha Lista</em> e vá bloqueando: "Isso são 2h na segunda de manhã", "aquilo são 4h quarta". Você planeja realista (o dia tem 8h úteis, não 20) e ainda vê onde tem folga para imprevistos.</div>
-    </div>
-  </section>
-
-  <!-- ============================================================ -->
-  <section id="dashboard">
-    <h2><span class="num">11</span>Dashboard</h2>
-    <p class="section-intro">Visão panorâmica do squad. Ideal para gestores no início do dia, ou para todo mundo em reuniões de status.</p>
-
-    <div class="grid-2">
-      <div class="card"><h4>Visão Geral</h4><p>Números-chave do momento: total de demandas ativas, atrasadas, concluídas no mês. Bate o olho para saber "como estamos".</p></div>
-      <div class="card"><h4>Próximos 7 dias</h4><p>O que vence esta semana, agrupado por dia. Ajuda a antecipar semanas puxadas.</p></div>
-      <div class="card"><h4>Em atraso</h4><p>Demandas cuja prazo já passou. Preferido dos gestores. Uma lista longa aqui é sinal de que algo tem que mudar.</p></div>
-      <div class="card"><h4>Throughput</h4><p>Quantas demandas o time concluiu por semana nas últimas 12 semanas. Ajuda a ver tendência (subindo, caindo, estável) e prever quanto conseguem entregar no próximo trimestre.</p></div>
-      <div class="card"><h4>Radar de projetos</h4><p>Projetos com mais demandas ativas / atrasadas. Sinaliza onde a atenção precisa ir.</p></div>
-      <div class="card"><h4>Top responsáveis · mês</h4><p>Quem entregou mais no período. Bom para reconhecer, mas cuidado: quantidade &ne; qualidade. Complementa com apontamento de horas.</p></div>
-      <div class="card"><h4>Apontamento de Horas</h4><p>Quanto tempo foi apontado no total (squad inteiro) no período.</p></div>
-    </div>
-  </section>
-
-  <!-- ============================================================ -->
-  <section id="capacidade">
-    <h2><span class="num">12</span>Capacidade</h2>
-    <p class="section-intro">A página <strong>Capacidade</strong> responde à pergunta: "quem está com quanto?"</p>
-    <p>Três abas:</p>
-    <ul>
-      <li><strong>Equipe</strong> — horas por pessoa. Barras mostram quem está sobrecarregado e quem tem folga. Base para redistribuir carga <em>antes</em> de virar problema.</li>
-      <li><strong>Projeto</strong> — horas por projeto. Se um projeto está consumindo mais do que o previsto (orçamento, escopo), dá para reagir cedo — antes de descobrir só na fatura.</li>
-      <li><strong>Cliente</strong> — horas por cliente. Ideal para cobrança e para saber quais contas dão mais trabalho de operação.</li>
-    </ul>
-    <p>Combine com <em>Relatório mensal</em> na página do cliente para tirar o snapshot para o cliente.</p>
-    <div class="callout info">
-      <div class="ic">i</div>
-      <div class="body"><strong>Interpretação:</strong> os números aqui vêm dos <em>apontamentos de horas</em>. Se o time não aponta, a página fica mentindo. Vale ter conversa recorrente com o time sobre o hábito de apontar — é o combustível de toda análise de capacidade.</div>
-    </div>
-  </section>
-
-  <!-- ============================================================ -->
-  <section id="recorrentes">
-    <h2><span class="num">13</span>Recorrentes e Listas</h2>
-    <p class="section-intro">Página <strong>Listas de tarefas</strong> tem duas abas: <strong>DEMANDAS</strong> (recorrentes) e <strong>LISTAS</strong> (listas-modelo). São duas ferramentas para você não ter que criar demanda repetitiva na mão.</p>
-
-    <h3 id="recorrentes-como">Demandas recorrentes</h3>
-    <p>Se a equipe faz "4 posts por semana, todo mês", ou "1 relatório toda sexta", não faz sentido criar cada demanda na mão. Configure uma <strong>Recorrente</strong>:</p>
-    <ol class="step-list">
-      <li>Clique <strong>Nova Recorrente</strong>. O modal abre.</li>
-      <li>Preencha:
-        <ul>
-          <li>Cliente, Projeto, Fluxo — igual à demanda normal;</li>
-          <li>Nome (ex.: "Post carrossel semanal");</li>
-          <li><strong>Frequência</strong> — Diariamente, Semanalmente ou Mensalmente;</li>
-          <li>Responsável, Prioridade, Prazo em dias;</li>
-          <li><strong>Ativo</strong> — checkbox "aparece na lista de geração mensal". Desative quando o cliente cancelar, sem precisar apagar tudo.</li>
-        </ul>
-      </li>
-      <li>Salve. A recorrente aparece na aba <strong>DEMANDAS</strong>.</li>
-    </ol>
-    <p>A visualização pode ser <strong>agrupada por Projeto, Função ou Responsável</strong> para dar a leitura que você precisa no momento.</p>
-
-    <h3 id="listas-como">Listas-modelo</h3>
-    <p>Uma <strong>lista-modelo</strong> é um checklist de várias demandas que você aplica a um projeto de uma vez. Exemplo clássico: um "kit de lançamento" que tem 12 peças pré-definidas (post feed, story teaser, story principal, e-mail marketing, blog, etc.).</p>
-    <ol class="step-list">
-      <li>Clique <strong>Nova lista</strong> e monte a lista uma vez, definindo cada demanda (nome, fluxo, checklist);</li>
-      <li>Depois, use <strong>Adicionar lista</strong> em qualquer projeto compatível — todas as demandas nascem de uma vez, ligadas àquele projeto;</li>
-      <li>Se quer variar levemente para outro cliente, <strong>Duplicar lista</strong> clona a lista atual (você ajusta o que muda).</li>
-    </ol>
-    <div class="callout tip">
-      <div class="ic">✓</div>
-      <div class="body"><strong>Recorrente x Lista-modelo:</strong> use <em>Recorrente</em> quando a demanda se repete no tempo ("todo mês, faça esse post"). Use <em>Lista-modelo</em> quando um conjunto grande de demandas nasce junto para um evento específico ("todo lançamento tem essas 12 peças").</div>
-    </div>
-  </section>
-
-  <!-- ============================================================ -->
-  <section id="templates">
-    <h2><span class="num">14</span>Templates e Modelos</h2>
-    <p class="section-intro">Dois níveis de reaproveitamento, para você não recriar a roda:</p>
-
-    <div class="grid-2">
-      <div class="card"><h4>Template de demanda</h4><p>Uma demanda-molde: nome, descrição, checklist, entregáveis pré-preenchidos. Aparece na página <strong>Templates</strong>. <em>Como criar:</em> no wizard de nova demanda, clique <em>Salvar como template</em> antes de finalizar. <em>Como usar:</em> na hora de criar uma nova, escolha o template no wizard.</p></div>
-      <div class="card"><h4>Modelo de cliente</h4><p>Um cliente inteiro, com projetos e fluxos, salvo como molde. Ao criar um novo cliente, "Começar a partir de um modelo" já pré-monta tudo. <em>Como criar:</em> dentro do cliente, botão <em>Salvar como modelo</em>.</p></div>
-    </div>
-
-    <div class="callout tip">
-      <div class="ic">✓</div>
-      <div class="body"><strong>Regra do 3&times;:</strong> se você já criou a mesma coisa 3 vezes, é hora de salvar como template ou modelo. Da quarta em diante, é 1 clique — e o time inteiro ganha padronização de graça.</div>
-    </div>
-
-    <h4>Manutenção dos templates</h4>
-    <p>Um template desatualizado é pior do que nenhum — as pessoas criam demandas com valores errados sem perceber. De tempos em tempos (a cada mês, por exemplo), revise os templates: prazos ainda fazem sentido? Checklist reflete a realidade atual? Descrição está em dia?</p>
-  </section>
-
-  <!-- ============================================================ -->
-  <section id="notificacoes">
-    <h2><span class="num">15</span>Notificações in-app</h2>
-    <p class="section-intro">O sino no topbar acumula tudo que aconteceu com você: menções, atribuições, respostas, mudanças de etapa. Clique para abrir o painel.</p>
-    <ul>
-      <li>Cada notificação mostra <strong>o que aconteceu, em qual demanda e quando</strong>. Clique para pular direto para o detalhe.</li>
-      <li>O <strong>contador vermelho</strong> no sino indica quantas ainda não foram vistas.</li>
-      <li><strong>Marcar tudo como lido</strong> zera o contador (não apaga o histórico).</li>
-      <li>Notificações mais antigas ficam na parte de baixo — role para ver o histórico.</li>
-    </ul>
-    <div class="callout tip">
-      <div class="ic">✓</div>
-      <div class="body"><strong>Dica:</strong> combine com as notificações por e-mail (para chegar fora do sistema) e Discord pessoal (para o alarme no celular via app do Discord). O sino é para quando você já está dentro do reWork.</div>
-    </div>
-  </section>
-
-  <!-- ============================================================ -->
-  <section id="produtividade">
-    <h2><span class="num">16</span>Atalhos e produtividade</h2>
-    <p class="section-intro">O reWork foi pensado para teclado. Se você usa o dia todo, aprender estes atalhos economiza minutos por dia — e faz uma diferença enorme ao longo da semana.</p>
-
-    <h3>Paleta de comandos</h3>
-    <p>O atalho mais importante: <kbd>Ctrl</kbd>+<kbd>K</kbd> (ou <kbd>⌘</kbd>+<kbd>K</kbd> no Mac). Abre uma caixa de busca universal:</p>
-    <ul>
-      <li>Digite o nome de qualquer coisa — <strong>cliente, projeto, demanda, lista, recorrente, fluxo, usuário</strong> — e ela aparece;</li>
-      <li>Navegue nos resultados com <kbd>↑</kbd> <kbd>↓</kbd>, escolha com <kbd>Enter</kbd>, cancele com <kbd>Esc</kbd>;</li>
-      <li>Também dispara <strong>ações</strong>: <em>Alternar tema</em>, <em>Mostrar atalhos de teclado</em>, e muitas outras;</li>
-      <li>É a maneira mais rápida de "achar aquela demanda" quando você lembra só de uma palavra do nome.</li>
-    </ul>
-
-    <h3>Atalhos de teclado</h3>
-    <table>
-      <thead><tr><th style="width:180px">Atalho</th><th>Ação</th></tr></thead>
-      <tbody>
-        <tr><td><kbd>Ctrl</kbd>+<kbd>K</kbd> / <kbd>⌘</kbd>+<kbd>K</kbd></td><td>Abrir a paleta de comandos.</td></tr>
-        <tr><td><kbd>?</kbd></td><td>Mostrar a lista de atalhos.</td></tr>
-        <tr><td><kbd>/</kbd></td><td>Focar no campo de busca da página atual.</td></tr>
-        <tr><td><kbd>n</kbd></td><td>Nova demanda (abre o wizard).</td></tr>
-        <tr><td><kbd>g</kbd> depois <kbd>d</kbd></td><td>Ir para Dashboard.</td></tr>
-        <tr><td><kbd>g</kbd> depois <kbd>l</kbd></td><td>Ir para Demandas (lista).</td></tr>
-        <tr><td><kbd>g</kbd> depois <kbd>m</kbd></td><td>Ir para Minhas Demandas.</td></tr>
-        <tr><td><kbd>g</kbd> depois <kbd>c</kbd></td><td>Ir para Capacidade.</td></tr>
-        <tr><td><kbd>g</kbd> depois <kbd>p</kbd></td><td>Ir para Projetos.</td></tr>
-        <tr><td><kbd>Esc</kbd></td><td>Fechar modal / painel / paleta.</td></tr>
-      </tbody>
-    </table>
-
-    <div class="callout info">
-      <div class="ic">i</div>
-      <div class="body">Atalhos não funcionam enquanto você está digitando em um campo — isso é proposital, para não "roubar" as teclas do texto. Se um atalho parece não funcionar, tire o foco do campo (clique fora ou aperte <kbd>Esc</kbd>) e tente de novo.</div>
-    </div>
-
-    <h3>Modo focar</h3>
-    <p>Botão na topbar (ícone de foco). Esconde sidebar e topbar para você concentrar em uma tela cheia — ótimo para quando está executando algo demorado ou fazendo apresentação. Um botão flutuante fica no canto para voltar. Também sai com <kbd>Esc</kbd>. A escolha é lembrada no navegador — se você fechar e voltar, continua no modo focar.</p>
-
-    <h3>Tema claro / escuro</h3>
-    <p>Botão no rodapé da sidebar (ícone de sol/lua). Alterna entre tema escuro (padrão) e claro. A preferência é salva no navegador — na próxima vez que abrir, o tema escolhido volta automaticamente.</p>
-
-    <h3>Sidebar compacta</h3>
-    <p>Botão de compactar (também no rodapé da sidebar). Reduz a barra lateral para só ícones, ganhando espaço horizontal para o conteúdo. Passe o mouse sobre um ícone para ver o nome. Também persistente entre sessões.</p>
-
-    <h3>Real-time silencioso</h3>
-    <p>O reWork é multi-usuário: mudanças de outra pessoa aparecem para você em quase tempo real, sem precisar dar F5. Você vai perceber quando um colega mover uma demanda que você está olhando — o card atualiza sozinho. Se algo parece estranho, dar F5 nunca faz mal.</p>
-  </section>
-
-  <!-- ============================================================ -->
-  <section id="boas-praticas">
-    <h2><span class="num">17</span>Boas práticas</h2>
-    <p class="section-intro">Um pouco de disciplina compartilhada faz o reWork render muito mais. Aqui vão princípios que times operacionais bem-sucedidos costumam adotar.</p>
-
-    <h3>Para quem executa</h3>
-    <ul>
-      <li><strong>Aponte horas no mesmo dia.</strong> Nem que seja no fim do dia. Reconstruir depois é impossível — vai chutar. Chute vira relatório de cliente errado.</li>
-      <li><strong>Comente antes de bater na mesa do colega.</strong> Registro no comentário é histórico; conversa no corredor evapora e some do <em>Histórico</em>.</li>
-      <li><strong>Marque o checklist conforme faz.</strong> É o sinal mais barato para o próximo saber que pode começar.</li>
-      <li><strong>Suba anexos no reWork</strong>, não só no WhatsApp. O arquivo passa a viver com a demanda para sempre.</li>
-      <li><strong>Use o cronômetro.</strong> É melhor que apontar "estimado" no fim. Mais preciso e menos trabalho.</li>
-      <li><strong>Bloqueie sua Agenda no início da semana.</strong> Sem plano, o dia manda em você.</li>
-    </ul>
-
-    <h3>Para quem gerencia</h3>
-    <ul>
-      <li><strong>Priorize antes de distribuir.</strong> Se tudo é <span class="pill p1">Imediato</span>, nada é imediato — o time entra em pânico e você perde a moeda de "isso é urgente de verdade".</li>
-      <li><strong>Prazos por etapa &gt; prazo único.</strong> Configurar no fluxo automatiza pressão saudável em cada handoff — não deixa nada "parado silencioso" numa etapa.</li>
-      <li><strong>Use recorrentes para o feijão-com-arroz.</strong> Nada de criar as 8 demandas mensais no dia 1 na mão.</li>
-      <li><strong>Feche demandas.</strong> Ficar com 400 abertas mata a legibilidade dos KPIs. Termina, arquiva/conclui.</li>
-      <li><strong>Olhe Capacidade toda semana.</strong> Se alguém está sistematicamente sobrecarregado, o problema é de distribuição, não de esforço individual.</li>
-      <li><strong>Aja no "Em atraso" do Dashboard.</strong> Se acumula, é sinal de que os prazos estão irreais — ou o time está pequeno.</li>
-    </ul>
-
-    <h3>Para administradores</h3>
-    <ul>
-      <li><strong>Modele com "função", não com "pessoa".</strong> Turnover não deveria quebrar seu processo.</li>
-      <li><strong>Crie templates das demandas repetitivas.</strong> Cada template poupa erros e minutos por semana.</li>
-      <li><strong>Poucos admins.</strong> Admin muda fluxo, integrações e usuários. Bagunça se qualquer um mexe.</li>
-      <li><strong>Revise fluxos trimestralmente.</strong> Etapas obsoletas, checklists que ninguém marca, prazos que ninguém cumpre — tira ou ajusta.</li>
-      <li><strong>Backup.</strong> Combine com quem hospeda que <code>data/</code> seja copiado regularmente.</li>
-    </ul>
-
-    <h3>Higiene semanal (10 min, toda segunda)</h3>
-    <ol>
-      <li>Abra o <strong>Dashboard</strong> — veja "Em atraso" e "Próximos 7 dias".</li>
-      <li>Vá em <strong>Minhas Demandas</strong> e monte a semana na <strong>Agenda</strong>.</li>
-      <li>Confira sua caixa de <strong>Notificações</strong> (sino no topbar) e marque como lido.</li>
-      <li>Se alguma demanda perdeu o sentido — arquive ou cancele. Menos ruído.</li>
-    </ol>
-
-    <h3>Higiene mensal (30 min, primeira segunda do mês)</h3>
-    <ol>
-      <li>Rode <strong>Relatórios mensais</strong> dos clientes ativos (PDF).</li>
-      <li>Olhe <strong>Capacidade &rarr; Cliente</strong> — algum consumindo muito além do previsto?</li>
-      <li>Olhe <strong>Templates</strong> — algum desatualizado?</li>
-      <li>Olhe <strong>Recorrentes</strong> — alguma que devia ser desativada?</li>
-    </ol>
-  </section>
-
-  <!-- ============================================================ -->
-  <section id="faq">
-    <h2><span class="num">18</span>Perguntas frequentes</h2>
-
-    <h4>Não recebi o e-mail de recuperação de senha.</h4>
-    <p>Confira o spam. Se não chegar em ~5 min, provavelmente o servidor de e-mail não está configurado ou seu e-mail não está cadastrado no perfil. Peça ao administrador para redefinir sua senha manualmente.</p>
-
-    <h4>Uma pessoa saiu da equipe. E as demandas dela?</h4>
-    <p>Peça ao administrador para <strong>desativar</strong> (não excluir) a conta. O histórico fica preservado. Depois, use <strong>Ações em massa</strong> na página Demandas para reatribuir as abertas dela para outro responsável (filtre por responsável → marque tudo → Alterar Responsável).</p>
-
-    <h4>Como faço para acompanhar o esforço em um cliente específico?</h4>
-    <p>Duas rotas: abra o cliente e veja <strong>TEMPO DEDICADO</strong> (com filtro por 7/14/30/90 dias); ou vá em <strong>Capacidade &rarr; Cliente</strong> para comparar entre clientes. Para exportar, use <strong>Relatório mensal</strong>.</p>
-
-    <h4>O Google Calendar sincroniza para os dois lados?</h4>
-    <p>Não. É <strong>somente leitura</strong>: o reWork lê seus eventos do Google para mostrar na Agenda, mas nunca escreve nada de volta no seu Google.</p>
-
-    <h4>Perdi uma demanda — onde procuro?</h4>
-    <p>Abra a paleta de comandos (<kbd>Ctrl</kbd>+<kbd>K</kbd>) e digite parte do nome. Busca em clientes, demandas, projetos, listas, recorrentes, fluxos e usuários ao mesmo tempo.</p>
-
-    <h4>Duas pessoas trabalhando ao mesmo tempo. Alguma trava?</h4>
-    <p>Não. As mudanças aparecem em quase tempo real para todo mundo com acesso — sem precisar dar F5. Se dois editam <em>o mesmo campo</em> ao mesmo tempo, a última salvamento vence (é raro, e o Histórico ajuda a resolver).</p>
-
-    <h4>Posso usar no celular?</h4>
-    <p>A interface é responsiva e funciona no celular para consultas rápidas e comentários, mas foi desenhada para desktop — a Agenda especialmente fica bem mais confortável em tela grande.</p>
-
-    <h4>Como faço para "sair" com segurança?</h4>
-    <p><strong>Meu Perfil &rarr; Sair da conta</strong>. Isso encerra sua sessão só neste navegador. Em outros dispositivos você continua logado (sessões duram 30 dias por padrão).</p>
-
-    <h4>Apontei uma hora errada por engano. Como corrijo?</h4>
-    <p>Na seção <strong>Apontamentos de Horas</strong> da demanda, cada linha tem um botão de editar (você só pode editar os seus). Ajuste início, término ou horas totais e salve. Admins podem editar/excluir apontamento de qualquer pessoa.</p>
-
-    <h4>Alterei uma coisa no cliente, mas os projetos antigos continuam com o valor antigo.</h4>
-    <p>Isso é intencional. Quando você cria um projeto, ele <em>copia</em> o que estava no cliente naquele momento. Mudanças posteriores no cliente não retroagem — cada projeto pode ter sua própria evolução. Se quer alinhar todos, edite projeto por projeto.</p>
-
-    <h4>Como jogo uma demanda para outro fluxo?</h4>
-    <p>Diretamente não dá — os fluxos são a "estrutura" da demanda. O caminho é: crie uma nova demanda no fluxo desejado (pode usar template para copiar rápido) e delete/arquive a antiga se não faz mais sentido.</p>
-  </section>
-
-  <footer class="doc-foot">
-    <span>reWork — Manual do Usuário</span>
-    <span>Se ficou dúvida, procure o administrador da sua equipe.</span>
-  </footer>
-</main>
-
+  </div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <button type="button" class="home-crumb" onclick="showHome()">← Todos os tópicos</button>
+    <a href="Codigos-de-Erro.html" class="rel">Códigos de erro →</a>
+  </div>
 </div>
 
+<!-- ── HOME: search + grid de cards ─────────────────────── -->
+<div class="home-view">
+  <div class="home-hero">
+    <h1>Manual do reWork</h1>
+    <p>Escolha um tópico ou busque por palavra-chave.</p>
+  </div>
+  <div class="home-search">
+    <input id="doc-search" type="search" placeholder="Buscar por palavras-chave (ex.: cofre, biometria, kanban, agenda…)" autocomplete="off">
+  </div>
+  <div class="doc-cards" id="doc-cards">
+    <!-- Fundamentos -->
+    <button class="doc-card" data-section="bem-vindo" data-group="Fundamentos" data-kw="introducao inicio overview visao geral capitulos">
+      <div class="doc-card-avatar">01</div>
+      <div class="doc-card-name">Bem-vindo</div>
+      <div class="doc-card-group">Fundamentos</div>
+      <div class="doc-card-desc">O que a plataforma faz e como este manual está organizado.</div>
+    </button>
+    <button class="doc-card" data-section="primeiros-passos" data-group="Fundamentos" data-kw="login senha tour orientacao primeiro acesso sair logout">
+      <div class="doc-card-avatar">02</div>
+      <div class="doc-card-name">Primeiros passos</div>
+      <div class="doc-card-group">Fundamentos</div>
+      <div class="doc-card-desc">Login, tour pela tela, trocar a senha padrão.</div>
+    </button>
+    <button class="doc-card" data-section="conceitos" data-group="Fundamentos" data-kw="squad workspace cliente projeto fluxo demanda etapa role area cargo">
+      <div class="doc-card-avatar">03</div>
+      <div class="doc-card-name">Conceitos</div>
+      <div class="doc-card-group">Fundamentos</div>
+      <div class="doc-card-desc">Squad, cliente, projeto, fluxo e demanda — vocabulário base.</div>
+    </button>
+
+    <!-- Uso diário -->
+    <button class="doc-card" data-section="perfil" data-group="Uso diário" data-kw="perfil foto email discord google calendar senha avatar preferencias">
+      <div class="doc-card-avatar">04</div>
+      <div class="doc-card-name">Meu Perfil</div>
+      <div class="doc-card-group">Uso diário</div>
+      <div class="doc-card-desc">Foto, email, Discord, Google Calendar e senha.</div>
+    </button>
+    <button class="doc-card" data-section="criar-demanda" data-group="Uso diário" data-kw="criar nova wizard 4 passos novo demanda pedido nome briefing prazo prioridade responsavel entregavel checklist anexo">
+      <div class="doc-card-avatar">05</div>
+      <div class="doc-card-name">Criar demanda</div>
+      <div class="doc-card-group">Uso diário</div>
+      <div class="doc-card-desc">O wizard de 4 passos e todos os campos do formulário.</div>
+    </button>
+    <button class="doc-card" data-section="trabalhando" data-group="Uso diário" data-kw="detalhe pipeline etapa prazo prioridade checklist entregavel anexo comentario reacao mencao imagem link timer horas historico lista kanban calendario filtro url compartilhavel acoes massa">
+      <div class="doc-card-avatar">06</div>
+      <div class="doc-card-name">Trabalhando na demanda</div>
+      <div class="doc-card-group">Uso diário</div>
+      <div class="doc-card-desc">Anatomia do detalhe: pipeline, checklist, timer, comentários, histórico.</div>
+    </button>
+    <button class="doc-card" data-section="rotina" data-group="Uso diário" data-kw="minhas demandas agenda semanal bloco individual time google calendar reuniao recorrencia mobile 1 semana">
+      <div class="doc-card-avatar">07</div>
+      <div class="doc-card-name">Minhas Demandas e Agenda</div>
+      <div class="doc-card-group">Uso diário</div>
+      <div class="doc-card-desc">O que eu preciso fazer hoje e nos próximos dias.</div>
+    </button>
+    <button class="doc-card" data-section="notificacoes" data-group="Uso diário" data-kw="notificacao sino badge email discord mencao aviso alerta">
+      <div class="doc-card-avatar">08</div>
+      <div class="doc-card-name">Notificações</div>
+      <div class="doc-card-group">Uso diário</div>
+      <div class="doc-card-desc">Sino, email e Discord — canais e como configurar.</div>
+    </button>
+
+    <!-- Organização -->
+    <button class="doc-card" data-section="clientes" data-group="Organização" data-kw="cliente projeto criar arquivar excluir lixeira relatorio pdf mensal ativos documentacao modelo">
+      <div class="doc-card-avatar">09</div>
+      <div class="doc-card-name">Clientes e Projetos</div>
+      <div class="doc-card-group">Organização</div>
+      <div class="doc-card-desc">Cadastrar, organizar, arquivar e gerar relatório mensal em PDF.</div>
+    </button>
+    <button class="doc-card" data-section="fluxos" data-group="Organização" data-kw="fluxo etapa sla cargo checklist descricao padrao tipo demanda biblioteca orfaos duplicar">
+      <div class="doc-card-avatar">10</div>
+      <div class="doc-card-name">Fluxos de Demanda</div>
+      <div class="doc-card-group">Organização</div>
+      <div class="doc-card-desc">Etapas, SLAs, cargos e duplicação. Gerenciar tipos e órfãos.</div>
+    </button>
+    <button class="doc-card" data-section="listas" data-group="Organização" data-kw="lista tarefa aplicar projeto duplicar copia recorrente mensal automacao repetitivo">
+      <div class="doc-card-avatar">11</div>
+      <div class="doc-card-name">Listas e Recorrentes</div>
+      <div class="doc-card-group">Organização</div>
+      <div class="doc-card-desc">Listas aplicáveis a projetos e demandas que renascem todo mês.</div>
+    </button>
+    <button class="doc-card" data-section="templates" data-group="Organização" data-kw="template modelo demanda preset cliente onboarding estrutura reuso">
+      <div class="doc-card-avatar">12</div>
+      <div class="doc-card-name">Templates e Modelos</div>
+      <div class="doc-card-group">Organização</div>
+      <div class="doc-card-desc">Presets de demanda e estruturas inteiras de cliente reusáveis.</div>
+    </button>
+
+    <!-- Análise -->
+    <button class="doc-card" data-section="dashboard" data-group="Análise" data-kw="dashboard kpi forecast heatmap radar throughput donut prioridade horas reuniao painel">
+      <div class="doc-card-avatar">13</div>
+      <div class="doc-card-name">Dashboard</div>
+      <div class="doc-card-group">Análise</div>
+      <div class="doc-card-desc">KPIs, forecast heatmap, radar, throughput e painel de horas.</div>
+    </button>
+    <button class="doc-card" data-section="analises" data-group="Análise" data-kw="analise capacidade relatorio equipe projeto cliente producao pecas artes variacoes etapa sla">
+      <div class="doc-card-avatar">14</div>
+      <div class="doc-card-name">Análises</div>
+      <div class="doc-card-group">Análise</div>
+      <div class="doc-card-desc">Capacidade prevista e relatórios retrospectivos.</div>
+    </button>
+
+    <!-- Administração -->
+    <button class="doc-card" data-section="squads-usuarios" data-group="Administração" data-kw="squad workspace usuario role area cargo admin moderador desativar reset senha permissao">
+      <div class="doc-card-avatar">15</div>
+      <div class="doc-card-name">Squads e Usuários</div>
+      <div class="doc-card-group">Administração</div>
+      <div class="doc-card-desc">Estrutura organizacional, papéis e permissões.</div>
+    </button>
+    <button class="doc-card" data-section="integracoes" data-group="Administração" data-kw="integracao webhook discord slack make n8n zapier evento payload mencao">
+      <div class="doc-card-avatar">16</div>
+      <div class="doc-card-name">Integrações</div>
+      <div class="doc-card-group">Administração</div>
+      <div class="doc-card-desc">Webhooks Discord (embed) e Raw JSON pra Make/n8n/etc.</div>
+    </button>
+    <button class="doc-card" data-section="cofre" data-group="Administração" data-kw="cofre senha vault biometria pin webauthn windows hello touch id fido chave criptografia audit historico">
+      <div class="doc-card-avatar">17</div>
+      <div class="doc-card-name">Cofre de Senhas</div>
+      <div class="doc-card-group">Administração</div>
+      <div class="doc-card-desc">Guarda credenciais com AES-256. Destrave por senha ou biometria.</div>
+    </button>
+    <button class="doc-card" data-section="bastidores" data-group="Administração" data-kw="lixeira soft delete restaurar purga dev tools rota oculta slug url compartilhavel">
+      <div class="doc-card-avatar">18</div>
+      <div class="doc-card-name">Lixeira e Dev Tools</div>
+      <div class="doc-card-group">Administração</div>
+      <div class="doc-card-desc">Restaurar excluídos, rotas ocultas e URLs com nome amigável.</div>
+    </button>
+
+    <!-- Referência -->
+    <button class="doc-card" data-section="atalhos" data-group="Referência" data-kw="atalho teclado shortcut command palette ctrl k g d n mobile responsivo produtividade">
+      <div class="doc-card-avatar">19</div>
+      <div class="doc-card-name">Atalhos</div>
+      <div class="doc-card-group">Referência</div>
+      <div class="doc-card-desc">Command palette, atalhos G+letra, filtros como link.</div>
+    </button>
+    <button class="doc-card" data-section="faq" data-group="Referência" data-kw="faq perguntas frequentes duvida esqueci senha transferir squad apagar usuario saiu responsavel offline bug erro">
+      <div class="doc-card-avatar">20</div>
+      <div class="doc-card-name">FAQ</div>
+      <div class="doc-card-group">Referência</div>
+      <div class="doc-card-desc">Perguntas frequentes com respostas rápidas.</div>
+    </button>
+  </div>
+  <div class="home-empty" id="home-empty" style="display:none">Nenhum tópico encontrado. Tente outra palavra.</div>
+</div>
+
+<!-- ── SECTION VIEW: leitura ─────────────────────────── -->
+<main class="section-view">
+    <!-- ============ 01 · BEM-VINDO ============ -->
+    <section id="bem-vindo">
+      <span class="kicker">Fundamentos · 01</span>
+      <h1 class="doc-title">Bem-vindo ao reWork</h1>
+      <p class="lead">reWork é a plataforma de gestão de demandas de marketing usada pelos squads da WSI. Este manual segue uma ordem progressiva — quem está chegando pode ler do começo ao fim; quem já usa pode saltar direto pra seção que precisa.</p>
+
+      <h2>O que dá pra fazer aqui</h2>
+      <ul>
+        <li><strong>Criar e acompanhar demandas</strong> — cada pedido de trabalho de marketing vira uma demanda com fluxo, responsável, prazo e histórico completo.</li>
+        <li><strong>Ver a agenda semanal do time</strong> — bloqueios de tempo, reuniões (via Google Calendar) e demandas atribuídas.</li>
+        <li><strong>Automatizar o repetitivo</strong> — listas de tarefas aplicáveis a novos projetos, demandas recorrentes mensais, integrações com Discord.</li>
+        <li><strong>Medir capacidade e entrega</strong> — dashboard com previsão, atrasos, throughput e relatórios por cliente/projeto.</li>
+        <li><strong>Guardar acessos com segurança</strong> — cofre de senhas criptografado com destravamento por biometria.</li>
+      </ul>
+
+      <h2>Como este manual está organizado</h2>
+      <p>Seis capítulos, do mais básico ao mais avançado:</p>
+      <div class="grid-2">
+        <div class="card"><h4>Fundamentos</h4><p>O que é, como entrar, e os cinco conceitos que aparecem em todo lugar.</p></div>
+        <div class="card"><h4>Uso diário</h4><p>A rotina de quem executa demandas: criar, trabalhar, ver a agenda, receber notificações.</p></div>
+        <div class="card"><h4>Organização</h4><p>Clientes, projetos, fluxos, listas — o esqueleto sob o qual as demandas vivem.</p></div>
+        <div class="card"><h4>Análise</h4><p>Dashboard e relatórios pra enxergar carga, entrega e onde travam as coisas.</p></div>
+        <div class="card"><h4>Administração</h4><p>Squads, usuários, integrações, cofre — o que só admin/moderador toca.</p></div>
+        <div class="card"><h4>Referência</h4><p>Atalhos, perguntas frequentes, códigos de erro (documentados à parte).</p></div>
+      </div>
+
+      <div class="callout tip">
+        <div class="ic">i</div>
+        <div class="body">
+          <strong>Dica de leitura</strong>
+          Cada seção é independente — abra na esquerda a que interessa. Se quiser mandar um trecho pra alguém, o endereço acima muda com a seção (<code>...#conceitos</code>), então basta copiar a URL.
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 02 · PRIMEIROS PASSOS ============ -->
+    <section id="primeiros-passos">
+      <span class="kicker">Fundamentos · 02</span>
+      <h1 class="doc-title">Primeiros passos</h1>
+      <p class="lead">Login, orientação inicial pela tela e como trocar a senha padrão. Se você já usa, salte pra <a href="#conceitos">Conceitos</a>.</p>
+
+      <h2>Entrando pela primeira vez</h2>
+      <ol class="step-list">
+        <li>Receba do admin seu <strong>usuário</strong> (formato <code>nome.sobrenome</code>) e uma <strong>senha temporária</strong>.</li>
+        <li>Abra o endereço do reWork no navegador (ou o app na área de trabalho).</li>
+        <li>Digite usuário + senha na tela de login.</li>
+        <li>Você entra direto na tela de <strong>Dashboard</strong>.</li>
+      </ol>
+      <div class="callout warn">
+        <div class="ic">!</div>
+        <div class="body">
+          <strong>Troque a senha padrão</strong>
+          Assim que entrar pela primeira vez, vá em <em>Perfil → Segurança</em> e defina uma senha só sua. Admin também consegue resetar sua senha se você esquecer.
+        </div>
+      </div>
+
+      <h2>Um tour pela tela</h2>
+      <p>Três áreas fixas em toda página:</p>
+      <ul>
+        <li><strong>Sidebar (esquerda)</strong> — trocador de <em>squad</em> no topo + navegação agrupada (Visão Geral, Execução, Estrutura, Configurações, Ajuda). Em telas &lt; 880px vira drawer que abre pelo hamburger.</li>
+        <li><strong>Topbar</strong> — título da tela + timer ativo (quando houver) + sino de notificações + botão <em>+ Nova Demanda</em>.</li>
+        <li><strong>Área principal</strong> — o conteúdo da tela escolhida. Filtros ficam no topo dessa área, quase sempre com estado espelhado na URL pra compartilhar.</li>
+      </ul>
+
+      <h2>Trocar a senha</h2>
+      <p>Menu lateral → clique no seu nome/foto no rodapé → <strong>Meu Perfil</strong> → seção <em>Alterar senha</em>. Precisa da senha atual pra confirmar.</p>
+
+      <h2>Sair</h2>
+      <p>Perfil → botão <em>Sair</em>. Encerra a sessão neste navegador. Você fica logado nos outros dispositivos.</p>
+    </section>
+
+    <!-- ============ 03 · CONCEITOS ============ -->
+    <section id="conceitos">
+      <span class="kicker">Fundamentos · 03</span>
+      <h1 class="doc-title">Conceitos fundamentais</h1>
+      <p class="lead">Cinco palavras que aparecem em quase tudo. Fixa nelas antes de mergulhar no resto.</p>
+
+      <h2>Squad (workspace)</h2>
+      <p>Um recorte da operação — normalmente um grupo de clientes atendidos por um time. Cada usuário pertence a um ou mais squads (admin vê todos). O <strong>trocador de squad</strong> no topo da sidebar filtra tudo o que você vê: clientes, projetos, demandas, dashboards.</p>
+      <p>Muitas coisas são <em>por squad</em>: clientes, projetos, fluxos, listas. Outras são <em>universais</em>: integrações (webhooks Discord), tipos de demanda, biblioteca de listas de tarefas.</p>
+
+      <h2>Cliente</h2>
+      <p>Uma empresa/marca atendida. Fica dentro de um squad. Cada cliente pode ter vários <strong>projetos</strong>. Um cliente "Geral" implícito recebe demandas sem cliente definido (raro).</p>
+
+      <h2>Projeto</h2>
+      <p>Um esforço específico dentro de um cliente — "Redes Sociais 2026", "Landing Page Institucional", "Campanha Black Friday". Vincula demandas ao <em>fluxo</em> apropriado. Um cliente sem projeto ainda funciona, mas o organograma fica raso.</p>
+
+      <h2>Fluxo</h2>
+      <p>A sequência de etapas que uma demanda percorre até estar pronta. Ex.: <em>Briefing → Criação → Revisão → Aprovação → Publicação</em>. Cada etapa tem um responsável (por cargo), um SLA (prazo em dias) e checklist opcional. Fluxos vivem dentro de um cliente e podem ser reaproveitados em vários projetos.</p>
+
+      <h2>Demanda</h2>
+      <p>A unidade de trabalho — um pedido específico ("banner do evento X"). Segue o fluxo do projeto onde nasceu; carrega prazos, comentários, entregáveis, anexos, checklist e histórico. Uma demanda é o que aparece na Agenda, no Kanban, no filtro de Minhas Demandas.</p>
+
+      <div class="callout tip">
+        <div class="ic">i</div>
+        <div class="body">
+          <strong>Regra prática</strong>
+          Squad &gt; Cliente &gt; Projeto &gt; Demanda. Fluxo é uma <em>receita</em> aplicada ao projeto — várias demandas dele seguem o mesmo passo-a-passo.
+        </div>
+      </div>
+
+      <h3>Termos que aparecem depois</h3>
+      <ul>
+        <li><strong>Etapa</strong> — cada passo dentro do fluxo. A demanda está sempre em <em>uma</em> etapa.</li>
+        <li><strong>Responsável</strong> — quem toca a demanda AGORA. Muda a cada avanço de etapa (é derivado do cargo).</li>
+        <li><strong>Prazo da etapa atual</strong> vs <strong>Prazo final</strong> — o primeiro é da etapa em que a demanda está; o segundo é a data-limite geral, se houver.</li>
+        <li><strong>Role/Área</strong> — a "função" do usuário (Criação, Mídias Sociais, Desenvolvimento, etc.). Determina quais etapas ele "puxa".</li>
+        <li><strong>Cargo</strong> — hierarquia dentro da área (Analista, Diretor, etc.). Ortogonal à role.</li>
+      </ul>
+    </section>
+
+    <!-- ============ 04 · PERFIL ============ -->
+    <section id="perfil">
+      <span class="kicker">Uso diário · 04</span>
+      <h1 class="doc-title">Meu Perfil</h1>
+      <p class="lead">Tudo o que é sobre você — foto, contato, integrações pessoais e senha. Chegue pelo rodapé da sidebar (nome + avatar).</p>
+
+      <h2>Foto, nome e função</h2>
+      <p>Foto de perfil aceita PNG/JPG/GIF/WebP. É otimizada automaticamente pra caber sem estourar armazenamento. Nome e área/cargo são definidos pelo admin no cadastro, mas você pode ajustar seu display name.</p>
+
+      <h2>Email pra notificações</h2>
+      <p>Se você preencher um email válido, o reWork manda avisos importantes por lá (menções, demandas atribuídas, aprovações). Deixe em branco pra não receber nada. Você pode ligar/desligar por tipo de evento.</p>
+
+      <h2>Discord (pessoal)</h2>
+      <p>Cole o <strong>ID do usuário</strong> do seu Discord (não o username). Quando um webhook postar no canal marcando você, o Discord vai fazer notificação real (som/badge).</p>
+      <p><strong>Como pegar o ID:</strong> Configurações do Discord → <em>Avançado</em> → ative <em>Modo Desenvolvedor</em>; clique com o botão direito no seu nome no chat → <em>Copiar ID do Usuário</em>.</p>
+
+      <h2>Google Calendar</h2>
+      <p>Conecta a agenda pro reWork puxar suas reuniões e mostrar na <em>Agenda</em> e no <em>Dashboard</em> (tempo de reunião conta na jornada de 8h).</p>
+      <ol class="step-list">
+        <li>Perfil → seção Google Calendar → botão <em>Conectar Google</em>.</li>
+        <li>Autoriza o acesso <strong>somente-leitura</strong> no popup do Google.</li>
+        <li>Pronto: eventos aparecem em azul na Agenda.</li>
+      </ol>
+      <div class="callout info">
+        <div class="ic">i</div>
+        <div class="body">
+          <strong>Somente leitura</strong>
+          O reWork não cria, edita nem apaga eventos na sua agenda. Só lê.
+        </div>
+      </div>
+
+      <h3>Visual das reuniões na Agenda</h3>
+      <ul>
+        <li><strong>Contorno cheio</strong> — você aceitou o convite.</li>
+        <li><strong>Contorno azul</strong> — sem resposta ainda.</li>
+        <li><strong>Contorno vermelho + risco</strong> — você recusou; não conta como tempo ocupado.</li>
+      </ul>
+
+      <h2>Alterar senha</h2>
+      <p>Precisa da senha atual pra definir uma nova. Mínimo de 8 caracteres. Se esqueceu, admin reseta em <em>Usuários → você → Nova senha</em>.</p>
+    </section>
+
+    <!-- ============ 05 · CRIAR DEMANDA ============ -->
+    <section id="criar-demanda">
+      <span class="kicker">Uso diário · 05</span>
+      <h1 class="doc-title">Criar uma demanda</h1>
+      <p class="lead">O botão <em>+ Nova Demanda</em> vive no topo direito de qualquer tela. Abre um wizard de 4 passos que garante que a demanda nasce no lugar certo.</p>
+
+      <h2>O wizard</h2>
+      <ol class="step-list">
+        <li><strong>Cliente</strong> — busque ou clique no card. Só aparecem clientes ativos do squad atual.</li>
+        <li><strong>Projeto</strong> — igual, filtrado pelo cliente escolhido. Se o cliente só tem 1 projeto, o wizard pula esse passo.</li>
+        <li><strong>Tipo de demanda / Fluxo</strong> — se o projeto tem só um fluxo, vai direto pro form. Se tem vários, escolha o tipo (Criação, Mídias Sociais, etc.) e o fluxo apropriado.</li>
+        <li><strong>Detalhes</strong> — nome, briefing, prazo, prioridade, responsável inicial, checklist, anexos. Só o nome é obrigatório.</li>
+      </ol>
+
+      <h2>Campos do form</h2>
+      <table>
+        <thead><tr><th>Campo</th><th>O que faz</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Nome</strong></td><td>Título curto. Aparece em listas, notificações, kanban.</td></tr>
+          <tr><td><strong>Briefing</strong></td><td>Rich text com anexos inline. É o "contexto do trabalho".</td></tr>
+          <tr><td><strong>Prazo final</strong></td><td>Data-limite geral da demanda (opcional).</td></tr>
+          <tr><td><strong>Prazo da etapa atual</strong></td><td>Data-limite da etapa em curso. Derivada do SLA do fluxo por padrão, editável.</td></tr>
+          <tr><td><strong>Prioridade</strong></td><td>1 (crítica) a 4 (baixa). Afeta ordenação e Radar.</td></tr>
+          <tr><td><strong>Responsável</strong></td><td>Sobrescreve o "puxador natural" da etapa. Útil quando um analista específico precisa tocar.</td></tr>
+          <tr><td><strong>Entregável (usuário)</strong></td><td>Quem faz a entrega final. Aparece no Discord da notificação.</td></tr>
+          <tr><td><strong>Peças / Artes / Variações</strong></td><td>Contadores livres — usados no relatório de produção.</td></tr>
+          <tr><td><strong>Checklist</strong></td><td>Sobrescreve o checklist padrão da etapa.</td></tr>
+          <tr><td><strong>Anexos</strong></td><td>PNG/JPG/GIF/WebP/PDF/DOCX/XLSX/TXT/ZIP. Máx 50MB por arquivo.</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout tip">
+        <div class="ic">✓</div>
+        <div class="body">
+          <strong>Atalho</strong>
+          <kbd>N</kbd> em qualquer tela abre o wizard direto (fora de campos de texto).
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 06 · TRABALHANDO NA DEMANDA ============ -->
+    <section id="trabalhando">
+      <span class="kicker">Uso diário · 06</span>
+      <h1 class="doc-title">Trabalhando na demanda</h1>
+      <p class="lead">Clique numa linha da lista ou num card do kanban pra abrir o detalhe. É onde 90% do trabalho acontece. A URL vira <code>/demands/slug-id</code> — copie pra compartilhar direto o link do detalhe.</p>
+
+      <h2>Anatomia do detalhe</h2>
+      <ul>
+        <li><strong>Header</strong> — nome, cliente/projeto/tipo, e ações no canto (arquivar, checklist, histórico, X).</li>
+        <li><strong>Pipeline visual</strong> — bolinhas numeradas que mostram todas as etapas do fluxo. A atual pisca; concluídas ficam preenchidas.</li>
+        <li><strong>Painel central</strong> — responsável, prazos, fluxo, timer, botões pra avançar/retroceder etapa.</li>
+        <li><strong>Abas laterais</strong> — Descrição, Checklist, Anexos, Comentários, Horas, Histórico.</li>
+      </ul>
+
+      <h2>Pipeline e etapas</h2>
+      <p>A demanda está sempre em <em>uma</em> etapa. Pra avançar: botão <strong>seta direita</strong> no rodapé (ou selecione a etapa alvo direto no pipeline). Pra voltar: seta esquerda. Cada mudança é logada no histórico com timestamp + usuário.</p>
+      <p>Ao entrar numa etapa, o reWork:</p>
+      <ul>
+        <li>Recalcula o responsável (baseado no cargo da etapa)</li>
+        <li>Recalcula o "prazo da etapa" (SLA da etapa a partir de hoje)</li>
+        <li>Notifica o novo responsável (in-app + email + Discord, conforme preferências dele)</li>
+        <li>Dispara webhook <code>demand.stage</code> pra integrações apropriadas</li>
+      </ul>
+
+      <h2>Prazos e prioridade</h2>
+      <p>Dois prazos convivem: o <strong>final</strong> (data-limite geral) e o <strong>da etapa atual</strong>. Nas listas, o campo <em>Prazo efetivo</em> usa o da etapa se houver, senão o final.</p>
+      <p>Cor do prazo:</p>
+      <ul>
+        <li><strong>Verde</strong> — no futuro, folga confortável</li>
+        <li><strong>Amarelo</strong> — vence em ≤2 dias</li>
+        <li><strong>Vermelho</strong> — venceu ontem ou antes (atraso)</li>
+      </ul>
+      <p>Prioridade 1 fica vermelha, 2 laranja, 3 amarela, 4 azul. Usada como tiebreaker em ordenação e no widget "Prioridade" do dashboard.</p>
+
+      <h2>Checklist</h2>
+      <p>Cada etapa pode ter um checklist padrão (definido no fluxo). Ao entrar na etapa, os itens padrão viram tarefas marcáveis. Você pode adicionar itens específicos dessa demanda no botão <em>+</em>.</p>
+
+      <h2>Entregáveis</h2>
+      <p>Peças, Artes e Variações são contadores editáveis. Não afetam o fluxo; são reportados no <em>Análises → Relatórios → Produção</em>.</p>
+
+      <h2>Anexos</h2>
+      <p>Arraste arquivos direto pro modal ou clique em <em>+ Anexo</em>. Formatos aceitos: PNG, JPG, GIF, WebP, PDF, DOCX, XLSX, TXT, ZIP. SVG e HTML são bloqueados por segurança. Máx <strong>50MB</strong> por arquivo (ver <a href="Codigos-de-Erro.html#detalhe-413">erro 413</a> se estourar).</p>
+
+      <h2>Comentários</h2>
+      <p>Rich text com formatação:</p>
+      <ul>
+        <li><strong>Negrito, itálico, sublinhado</strong> — botões da toolbar ou <kbd>Ctrl/⌘</kbd>+<kbd>B/I/U</kbd></li>
+        <li><strong>Listas numeradas e bullets</strong></li>
+        <li><strong>Links</strong> — botão de link abre um popover inline (não tira você da tela); cola URL, aperta Enter</li>
+        <li><strong>Imagens inline</strong> — cole ou arraste; ficam embutidas no HTML do comentário (não viram anexo). Limite 200KB por comentário após limpeza HTML.</li>
+        <li><strong>Menções</strong> — digite <code>@</code> pra abrir picker de usuários. Mencionado recebe notificação in-app + email + Discord.</li>
+        <li><strong>Reações emoji</strong> — clique no ícone de reação pra abrir picker; adiciona 👍 ou similar sem precisar responder.</li>
+      </ul>
+
+      <h2>Timer e apontamento de horas</h2>
+      <p>Botão <strong>▶</strong> na linha de tempo inicia um cronômetro. Fica visível no topbar em todas as telas (mudou de demanda? o timer segue). Botões:</p>
+      <ul>
+        <li><strong>Pausa/Retoma</strong> — pausa acumula tempo separado</li>
+        <li><strong>Check ✓</strong> — apontar as horas medidas (arredonda pra 5min)</li>
+        <li><strong>X</strong> — descartar sem apontar</li>
+      </ul>
+      <p>Também dá pra apontar horas manualmente digitando início/término/horas. As horas apontadas contam pro Dashboard, Capacidade e Relatório de produção.</p>
+
+      <h2>Histórico</h2>
+      <p>Aba <em>Histórico</em> mostra toda mudança de estado: criação, avanço/recuo de etapa, apontamentos, edições de campo, arquivamento. Cada linha tem timestamp + usuário. É um <em>audit trail</em> imutável.</p>
+
+      <h2>Visualizações da lista de demandas</h2>
+      <p>Na página <em>Demandas</em>, três formas de ver os mesmos dados (toggle no filtro):</p>
+      <div class="grid-2">
+        <div class="card"><h4>Tabela</h4><p>Colunas ordenáveis: nome, squad, projeto, cliente, tipo, status, responsável, prazo da etapa, prioridade.</p></div>
+        <div class="card"><h4>Kanban</h4><p>Colunas por etapa OU por atenção (No prazo / Atrasadas / Sem prazo). Arraste cards pra mover.</p></div>
+        <div class="card"><h4>Calendário</h4><p>Vista mensal com bolinhas coloridas nos dias. Clique num dia pra filtrar as demandas com aquele prazo.</p></div>
+      </div>
+
+      <h2>Filtros — a URL é compartilhável</h2>
+      <p>Cada filtro que você aplica (busca, squad, cliente, projeto, usuário, período, status) é <strong>espelhado na URL</strong> como query. Aplicou <em>?client=abc&amp;status=late</em>? Cola o link no chat, quem abrir vê exatamente a mesma vista filtrada.</p>
+      <p>Ao trocar de página, a query é descartada (não faz sentido carregar filtros de Demandas pra Dashboard).</p>
+
+      <h2>Ações em massa</h2>
+      <p>Marque o checkbox em várias linhas da tabela → barra flutuante aparece embaixo com: atribuir responsável, mudar status, apagar, apontar (idem).</p>
+    </section>
+
+    <!-- ============ 07 · MINHAS DEMANDAS E AGENDA ============ -->
+    <section id="rotina">
+      <span class="kicker">Uso diário · 07</span>
+      <h1 class="doc-title">Minhas Demandas e Agenda</h1>
+      <p class="lead">Duas telas pensadas pra "o que eu preciso fazer agora e nos próximos dias".</p>
+
+      <h2>Minhas Demandas</h2>
+      <p>Filtro pré-aplicado: <em>Responsável = você</em>. É o mesmo motor da tela Demandas, mas focado. Você vê a agenda semanal embutida no rodapé — bloqueios, reuniões e demandas com prazo próximo, tudo junto.</p>
+
+      <h2>Agenda</h2>
+      <p>Grade horária por dia útil (seg-sex). Dois modos, alternados no toggle:</p>
+      <ul>
+        <li><strong>Individual</strong> — um usuário, 1 ou 2 semanas visíveis</li>
+        <li><strong>Time</strong> — vários usuários lado a lado, 1 dia só</li>
+      </ul>
+
+      <h3>Navegação</h3>
+      <p>Setas <kbd>&lt;</kbd> <kbd>&gt;</kbd> pulam semana/dia. O <strong>label da data</strong> (10/08 → 21/08) é clicável — abre um mini-calendário pra pular direto pra qualquer dia. Botão <em>Hoje</em> volta pro atual.</p>
+
+      <h3>Criar um bloco</h3>
+      <p>Arraste em um horário vazio → modal <em>Agendar bloco</em>:</p>
+      <ul>
+        <li><strong>Livre</strong> — bloqueio genérico (reunião interna, almoço, foco); <strong>não conta</strong> na jornada de 8h. Aceita recorrência (diária, semanal, mensal, personalizada).</li>
+        <li><strong>Demanda</strong> — vincula à demanda; conta na jornada.</li>
+      </ul>
+
+      <h3>Editar e mover</h3>
+      <p>Arraste o bloco pra mover; arraste a borda inferior pra redimensionar. Clique pra editar/excluir. Blocos recorrentes perguntam o escopo ao apagar: <em>este</em>, <em>este e futuros</em>, ou <em>toda a série</em>.</p>
+
+      <h3>Google Calendar</h3>
+      <p>Se você conectou (ver <a href="#perfil">Perfil</a>), suas reuniões aparecem em azul. Você não edita — é read-only. Tempo de reunião <em>aceita</em> conta na jornada de 8h.</p>
+
+      <div class="callout tip">
+        <div class="ic">i</div>
+        <div class="body">
+          <strong>Mobile</strong>
+          Em telas &lt; 640px, a Agenda abre em <em>1 semana</em> por padrão (2 semanas em portrait não cabe). Você ainda pode trocar pro modo Time (dia único) que fica melhor no celular.
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 08 · NOTIFICAÇÕES ============ -->
+    <section id="notificacoes">
+      <span class="kicker">Uso diário · 08</span>
+      <h1 class="doc-title">Notificações</h1>
+      <p class="lead">Três canais possíveis: in-app (sino), email, Discord. Cada usuário controla individualmente quais quer receber.</p>
+
+      <h2>Sino do topbar</h2>
+      <p>Contador vermelho mostra quantas não lidas. Clique pra abrir o painel. Ações: marcar tudo como lido; limpar tudo; clicar numa notificação abre a demanda associada. Notificações antigas somem depois de N (limite pra não estourar).</p>
+
+      <h2>Eventos que geram notificação</h2>
+      <table>
+        <thead><tr><th>Evento</th><th>Notifica</th></tr></thead>
+        <tbody>
+          <tr><td>Demanda criada com você como responsável</td><td>Responsável</td></tr>
+          <tr><td>Etapa avançou e agora é sua</td><td>Novo responsável</td></tr>
+          <tr><td>Você foi mencionado num comentário</td><td>Mencionado</td></tr>
+          <tr><td>Alguém reagiu no seu comentário</td><td>Autor do comentário (opcional)</td></tr>
+          <tr><td>Demanda que você criou foi aprovada/concluída</td><td>Criador</td></tr>
+          <tr><td>Prazo da etapa vence hoje/amanhã</td><td>Responsável (in-app)</td></tr>
+        </tbody>
+      </table>
+
+      <h2>Email</h2>
+      <p>Se você tem email cadastrado no Perfil, recebe as mesmas notificações por lá. Pra desligar completamente: apaga o email. Pra desligar por tipo: switches no Perfil (menções sim, prazos não, etc.).</p>
+
+      <h2>Discord</h2>
+      <p>Requer <strong>ID do Discord</strong> no seu Perfil E um <strong>webhook</strong> configurado pelo admin apontando pro canal desejado. Menções vão com <code>@você</code> real no Discord (dispara notificação sonora/badge).</p>
+    </section>
+
+    <!-- ============ 09 · CLIENTES E PROJETOS ============ -->
+    <section id="clientes">
+      <span class="kicker">Organização · 09</span>
+      <h1 class="doc-title">Clientes e Projetos</h1>
+      <p class="lead">Como cadastrar, organizar e gerar relatórios dos clientes que seu squad atende. Requer permissão de moderador ou admin pra criar/editar.</p>
+
+      <h2>Criar um cliente</h2>
+      <ol class="step-list">
+        <li>Menu → <em>Clientes</em> → botão <em>+ Novo Cliente</em>.</li>
+        <li>Preencha nome, área (setor), avatar (opcional).</li>
+        <li>Escolha o squad (moderador só vê os squads dele).</li>
+        <li>Salve. O cliente aparece no grid.</li>
+      </ol>
+
+      <h2>Aplicar um modelo</h2>
+      <p>Se já existe um cliente parecido, use <em>Aplicar modelo</em> na criação — copia projetos e fluxos de um <em>modelo de cliente</em> existente (ver <a href="#templates">Templates e Modelos</a>). Ideal quando você atende vários clientes com estrutura idêntica.</p>
+
+      <h2>Explorando o cliente</h2>
+      <p>Clique num card pra abrir o detalhe:</p>
+      <ul>
+        <li><strong>Aba Projetos</strong> — lista os projetos, botão <em>+ Novo Projeto</em>.</li>
+        <li><strong>Aba Fluxos</strong> — atalho pra Fluxos do cliente.</li>
+        <li><strong>Aba Ativos</strong> — links úteis (Drive, Notion, etc.) que a equipe compartilha.</li>
+        <li><strong>Aba Documentação</strong> — briefings, contratos, guidelines em anexo.</li>
+      </ul>
+
+      <h2>Projetos</h2>
+      <p>Um projeto pertence a um cliente. Tem nome, avatar, fluxo padrão, status ativo/arquivado. As demandas do projeto herdam o fluxo dele (podem ser sobrescritas caso o projeto aceite múltiplos fluxos).</p>
+      <p>Página <em>/projects</em> (não linkada no menu, acessível via Dev Tools) mostra a lista global de todos os projetos com filtros por cliente/situação.</p>
+
+      <h2>Arquivar vs. excluir</h2>
+      <ul>
+        <li><strong>Arquivar</strong> — cliente/projeto some das listas ativas mas o histórico fica intacto. Reverter é 1 clique.</li>
+        <li><strong>Excluir</strong> — vai pra <a href="#bastidores">Lixeira</a> (soft-delete). Fica lá por N dias e é purgado automaticamente. Enquanto está na Lixeira, admin/mod pode restaurar.</li>
+      </ul>
+
+      <h2>Relatório mensal em PDF</h2>
+      <p>No detalhe do cliente, botão <em>Relatório</em>. Escolhe o mês → gera PDF com: capa (logo + nome + mês), lista de projetos e demandas concluídas, horas apontadas por analista, entregáveis (peças/artes/variações), gráfico de produção. Ótimo pra fechar mês com cliente ou pra registro interno.</p>
+      <p>Também existe <em>Relatório de projeto</em> (mesma coisa, escopo menor) e o dashboard <a href="#analises">Análises · Relatórios</a> pra visão sem PDF.</p>
+    </section>
+
+    <!-- ============ 10 · FLUXOS ============ -->
+    <section id="fluxos">
+      <span class="kicker">Organização · 10</span>
+      <h1 class="doc-title">Fluxos de Demanda</h1>
+      <p class="lead">Fluxos são a "receita" que as demandas seguem. Definem etapas, quem toca cada uma, quantos dias tem de prazo, e o que precisa ser feito.</p>
+
+      <h2>Onde ficam</h2>
+      <p>Menu → <em>Fluxos de Demanda</em>. Vista de <strong>cards de cliente</strong> (cada card = um cliente + contador de fluxos). Clique num cliente pra ver e editar os fluxos dele. Requer moderador ou admin.</p>
+
+      <h2>Criar um fluxo</h2>
+      <ol class="step-list">
+        <li>Dentro do cliente → <em>+ Novo Fluxo</em>.</li>
+        <li>Nome (ex.: "Post estático Instagram"), ícone (biblioteca lucide), tipo de demanda (dropdown com a biblioteca universal).</li>
+        <li>Adicione etapas na ordem: cada etapa tem <em>nome</em>, <em>cargo responsável</em>, <em>SLA em dias úteis</em>, <em>descrição padrão</em>, <em>checklist padrão</em>.</li>
+        <li>Salve. O fluxo já pode ser usado em demandas novas do projeto que aponta pra ele.</li>
+      </ol>
+
+      <h3>Sobre etapas</h3>
+      <ul>
+        <li><strong>Cargo</strong> — usa a área/cargo do responsável. Quando a demanda entra na etapa, o "puxador natural" é qualquer usuário do squad com esse cargo. Pode ser sobrescrito por demanda.</li>
+        <li><strong>SLA</strong> — em dias úteis. Vira a data-limite da etapa. 0 = mesmo dia; 5 = uma semana.</li>
+        <li><strong>Descrição padrão</strong> — texto que aparece no painel quando a demanda entra na etapa (dica de "como fazer").</li>
+        <li><strong>Checklist padrão</strong> — itens marcáveis. A demanda ganha uma cópia editável (não afeta o fluxo original).</li>
+      </ul>
+
+      <h2>Tipos de demanda</h2>
+      <p>Botão <em>Gerenciar tipos</em> abre a biblioteca universal (compartilhada entre squads). Criar/renomear/excluir aqui.</p>
+      <div class="callout warn">
+        <div class="ic">!</div>
+        <div class="body">
+          <strong>Órfãos</strong>
+          O modal tem um accordion <em>Órfãos (N)</em> no rodapé — lista valores de "tipo" que existem em algum fluxo mas não estão na biblioteca. Duas ações: <em>Promover</em> (adiciona à biblioteca) ou <em>Limpar</em> (apaga o campo Tipo em todos os fluxos que usam). Útil pra limpar strings soltas que poluem o filtro do Dashboard.
+        </div>
+      </div>
+
+      <h2>Duplicar fluxo pra outro projeto</h2>
+      <p>Detalhe do fluxo → botão <em>Duplicar</em>. Escolhe o cliente/projeto destino. Copia estrutura de etapas + defaults; a demanda que vier depois no destino usa o fluxo novo sem afetar o original.</p>
+    </section>
+
+    <!-- ============ 11 · LISTAS E RECORRENTES ============ -->
+    <section id="listas">
+      <span class="kicker">Organização · 11</span>
+      <h1 class="doc-title">Listas de tarefas e Recorrentes</h1>
+      <p class="lead">Duas ferramentas pra <em>automatizar o repetitivo</em>: listas-modelo aplicáveis a projetos, e demandas que renascem todo mês.</p>
+
+      <h2>Listas de tarefas</h2>
+      <p>Página <em>Listas de tarefas</em> (submenu <em>Estrutura</em>). Cada lista é uma coleção de itens ({nome, tipo de demanda opcional}). São <strong>universais</strong> — visíveis pra todos os squads.</p>
+
+      <h3>Aplicar a um projeto</h3>
+      <p>No card da lista → botão <em>Aplicar a um projeto</em>. Escolhe cliente + projeto. O reWork cria as demandas correspondentes usando o fluxo padrão do projeto (ou pergunta se houver ambiguidade) e ancorando o tipo de cada item.</p>
+
+      <h3>Duplicar</h3>
+      <p>Ícone <em>copy</em> no card. Cria "Lista Original - Cópia" (ou " - Cópia 2/3/..." se já existir uma). Preserva itens e configurações; você pode renomear e ajustar antes de aplicar. Modelo legado (com recurrings) também é suportado.</p>
+
+      <h2>Demandas Recorrentes</h2>
+      <p>Menu → <em>Demandas Recorrentes</em>. Cada regra tem: cliente, projeto, fluxo, responsável, dia do mês, e todos os campos de demanda (nome, briefing, prioridade, entregáveis). No dia marcado, a demanda é criada automaticamente.</p>
+
+      <div class="callout info">
+        <div class="ic">i</div>
+        <div class="body">
+          <strong>Quando usar cada uma</strong>
+          Lista de tarefas = "quando eu criar um projeto novo desse tipo, aplique estas N demandas". Recorrentes = "todo dia X do mês, crie esta demanda específica".
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 12 · TEMPLATES E MODELOS ============ -->
+    <section id="templates">
+      <span class="kicker">Organização · 12</span>
+      <h1 class="doc-title">Templates e Modelos</h1>
+      <p class="lead">Duas formas de reuso: <em>templates de demanda</em> (formulário pré-preenchido) e <em>modelos de cliente</em> (estrutura inteira reaproveitada).</p>
+
+      <h2>Templates de demanda</h2>
+      <p>Menu → <em>Templates</em>. Cada template guarda um preset de campos: nome, briefing, prioridade, checklist, entregáveis. Ao criar demanda nova, o wizard oferece o template no passo final.</p>
+      <p>Útil pra "post estático padrão", "aprovação de arte final", "review de campanha" — qualquer coisa que você preenche do mesmo jeito toda vez.</p>
+
+      <h2>Modelos de Cliente</h2>
+      <p>Página <em>/clients/models</em> (acessível pelo botão <em>Modelos</em> dentro de Clientes, ou via Dev Tools). Um modelo agrupa estrutura pronta:</p>
+      <ul>
+        <li>Projetos e seus fluxos</li>
+        <li>Listas de tarefas iniciais</li>
+        <li>Ativos/links padrão</li>
+      </ul>
+      <p>Ao criar um cliente novo, você escolhe um modelo e o reWork instancia tudo. Reduz onboarding de cliente novo de horas pra minutos.</p>
+    </section>
+
+    <!-- ============ 13 · DASHBOARD ============ -->
+    <section id="dashboard">
+      <span class="kicker">Análise · 13</span>
+      <h1 class="doc-title">Dashboard</h1>
+      <p class="lead">A tela inicial. Consolida o estado da operação em widgets. Todos os filtros do topo (squad, usuário, cliente, período, tipo) mudam a URL — link compartilhável.</p>
+
+      <h2>KPIs no topo</h2>
+      <div class="grid-2">
+        <div class="card"><h4>Em andamento</h4><p>Demandas abertas no recorte do filtro.</p></div>
+        <div class="card"><h4>Em atraso</h4><p>Deadline efetivo já vencido.</p></div>
+        <div class="card"><h4>Entregues no mês</h4><p>Concluídas no mês corrente.</p></div>
+        <div class="card"><h4>Horas apontadas</h4><p>Total no mês corrente.</p></div>
+        <div class="card"><h4>Horas em reunião</h4><p>Do Google Calendar, escopo do filtro de período.</p></div>
+      </div>
+
+      <h2>Demandas previstas</h2>
+      <p>Heatmap de <strong>14 dias úteis</strong> (2 semanas × 7 cols). Cada célula = quantas demandas caem naquele dia útil, colorida por intensidade (verde 1-3 → amarelo 4-6 → laranja 7-9 → vermelho 10+). Clique num dia pra abrir a lista das demandas daquele dia.</p>
+
+      <h2>Em atraso</h2>
+      <p>Cards das demandas com prazo vencido — X dias, nome, projeto, responsável. Ordenadas por dias-de-atraso decrescente.</p>
+
+      <h2>Prioridade (donut)</h2>
+      <p>Distribuição das demandas abertas por prioridade (1-4). Segmentos coloridos: vermelho / laranja / amarelo / azul.</p>
+
+      <h2>Radar de projetos</h2>
+      <p>Projetos com pelo menos uma demanda atrasada. Se está tudo em dia, um emoji comemorativo aparece.</p>
+
+      <h2>Top responsáveis · mês</h2>
+      <p>Quem entregou mais demandas no mês corrente. Barra proporcional ao total.</p>
+
+      <h2>Throughput (12 semanas)</h2>
+      <p>Barras stackadas — quantas foram entregues no prazo (verde) vs atrasadas (laranja) por semana. Tendência de qualidade.</p>
+
+      <h2>Painel de horas</h2>
+      <p>Distribuição de apontamentos: por analista, por cliente, por projeto. Escopo do filtro global.</p>
+
+      <div class="callout tip">
+        <div class="ic">i</div>
+        <div class="body">
+          <strong>Filtros na URL</strong>
+          Aplicou <em>?squad=X&amp;period=month</em> e quer compartilhar? Basta copiar a URL da barra. Quem abrir vê exatamente o mesmo recorte.
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 14 · ANÁLISES ============ -->
+    <section id="analises">
+      <span class="kicker">Análise · 14</span>
+      <h1 class="doc-title">Análises</h1>
+      <p class="lead">Duas abas na página <em>Análises</em>: <strong>Capacidade</strong> (o que vem por aí) e <strong>Relatórios</strong> (o que passou).</p>
+
+      <h2>Capacidade</h2>
+      <p>Prevê a carga do time nos próximos N dias — presets 7/14/30 dias ou <em>Este mês</em>. Custom range disponível.</p>
+      <h3>Sub-abas</h3>
+      <ul>
+        <li><strong>Equipe</strong> — carga por responsável (horas previstas ÷ capacidade). Verde = folga, amarelo = apertado, vermelho = estourado.</li>
+        <li><strong>Projeto</strong> — mesma coisa por projeto.</li>
+        <li><strong>Cliente</strong> — mesma coisa por cliente.</li>
+      </ul>
+      <h3>Cards do topo</h3>
+      <p>Capacidade total do período (dias úteis × 8h × N pessoas), demandas em aberto no escopo, pessoas ativas com acesso ao squad.</p>
+      <h3>Produção do squad no período</h3>
+      <p>Horas apontadas, peças únicas entregues, artes, variações — quantitativos livres.</p>
+
+      <h2>Relatórios</h2>
+      <p>Visão retrospectiva. Filtros: workspace, cliente, projeto, período. Mostra:</p>
+      <ul>
+        <li><strong>KPIs</strong> — total entregue, no prazo, atrasado, taxa de aprovação</li>
+        <li><strong>Etapas unificadas por nome</strong> — SLA médio real vs. planejado; identifica onde as demandas gastam tempo demais. Se você tem "Aprovação" em vários fluxos de vários clientes, tudo agrega sob um único bar.</li>
+        <li><strong>Ranking de responsáveis</strong> — quantidade entregue + qualidade (% no prazo).</li>
+      </ul>
+      <div class="callout info">
+        <div class="ic">i</div>
+        <div class="body">
+          <strong>Sem "gargalos"</strong>
+          Removemos o rótulo "gargalos" da tela — os dados são os mesmos, mas apresentados como "tempo médio por etapa" (mais neutro pra usar em reunião).
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 15 · SQUADS E USUÁRIOS ============ -->
+    <section id="squads-usuarios">
+      <span class="kicker">Administração · 15</span>
+      <h1 class="doc-title">Squads e Usuários</h1>
+      <p class="lead">Estrutura organizacional. Squads são visíveis pra admin (criar/editar); todos os usuários são geridos aqui. <span class="pill pill-admin">admin</span></p>
+
+      <h2>Squads (workspaces)</h2>
+      <p>Menu → <em>Squads</em> (só admin). Cada squad tem nome, cor identificadora, membros (usuários com acesso). Membros podem estar em vários squads simultaneamente. Admin vê todos por default.</p>
+
+      <h3>Cor do squad</h3>
+      <p>Aparece na sidebar (barra lateral colorida do squad ativo), no pill do trocador de squad, e em algumas visualizações que multiplexam squads (dashboard "Todos"). Escolha cores contrastantes se atende muitos squads.</p>
+
+      <h2>Usuários</h2>
+      <p>Menu → <em>Usuários</em>. Grid + tabela. Colunas: nome, username, área (role), cargo, squads, admin/moderador, status.</p>
+
+      <h3>Cadastrar novo</h3>
+      <ol class="step-list">
+        <li><em>+ Cadastrar Usuário</em>. Nome, username (formato <code>nome.sobrenome</code>), email opcional.</li>
+        <li>Escolha <strong>Área</strong> (Criação, Mídias Sociais, Desenvolvimento, etc.) e <strong>Cargo</strong>.</li>
+        <li>Marque squads que o usuário pode acessar.</li>
+        <li>Defina se é admin, moderador ou usuário comum.</li>
+        <li>Defina senha temporária. O usuário deve trocar no primeiro login.</li>
+      </ol>
+
+      <h3>Roles/permissões</h3>
+      <table>
+        <thead><tr><th>Nível</th><th>Pode</th></tr></thead>
+        <tbody>
+          <tr><td><span class="pill pill-admin">Admin</span></td><td>Tudo. Cria squads e usuários, edita fluxos globais, acessa Dev Tools, vê histórico do cofre.</td></tr>
+          <tr><td><span class="pill pill-mod">Moderador</span></td><td>Cria e edita clientes/projetos/fluxos <em>dos squads a que pertence</em>. Vê histórico do cofre. Não gerencia usuários.</td></tr>
+          <tr><td>Usuário</td><td>Trabalha demandas dos squads que tem acesso. Usa o cofre. Não edita estrutura.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Áreas e Cargos</h3>
+      <p>Na mesma página, tabela de <em>Áreas da Equipe</em> lista todas as áreas com contagem de usuários. Cargos são ortogonais e definidos globalmente. Admin edita ambos.</p>
+
+      <h3>Desativar vs. excluir</h3>
+      <p><strong>Desativar</strong> mantém o usuário no histórico mas ele não pode logar; ninguém vê nas selects. <strong>Excluir</strong> soft-delete → Lixeira → purga.</p>
+    </section>
+
+    <!-- ============ 16 · INTEGRAÇÕES ============ -->
+    <section id="integracoes">
+      <span class="kicker">Administração · 16</span>
+      <h1 class="doc-title">Integrações — Webhooks</h1>
+      <p class="lead">Notificar serviços externos quando eventos acontecem nas demandas. Discord tem formato próprio (embeds bonitos); outros serviços recebem JSON cru. <span class="pill pill-admin">admin</span></p>
+
+      <h2>Como funciona</h2>
+      <p>Cada webhook tem:</p>
+      <ul>
+        <li><strong>URL</strong> — endpoint HTTPS pra postar</li>
+        <li><strong>Formato</strong> — Discord (embed com título/campos/cor) ou Raw JSON</li>
+        <li><strong>Eventos</strong> — quais gatilhos disparam (criada, mudou etapa, mencionou usuário, concluída, etc.)</li>
+        <li><strong>Alvo (opcional)</strong> — só notifica quando o evento envolve este usuário específico</li>
+        <li><strong>Escopo (opcional)</strong> — só cliente/projeto específico</li>
+      </ul>
+
+      <div class="callout warn">
+        <div class="ic">!</div>
+        <div class="body">
+          <strong>Universais</strong>
+          Webhooks são <strong>globais</strong> — valem pra todos os squads, não são filtrados pelo squad ativo. Isso foi corrigido de uma versão antiga onde ficavam presos ao squad de criação. Se você criar um webhook estando em Squad A, ele dispara pra demanda de qualquer squad.
+        </div>
+      </div>
+
+      <h2>Configurar Discord</h2>
+      <ol class="step-list">
+        <li>No Discord: canal alvo → <em>Configurações do canal</em> → <em>Integrações</em> → <em>Webhooks</em> → <em>Novo webhook</em> → copie a URL.</li>
+        <li>No reWork: <em>Integrações → + Nova Integração</em>. Cole a URL, escolha formato <em>Discord</em>.</li>
+        <li>Marque os eventos que interessam.</li>
+        <li>(Opcional) Restrinja a um usuário-alvo ou cliente/projeto.</li>
+        <li>Salve. Use o botão <em>Testar</em> pra postar uma mensagem de teste.</li>
+      </ol>
+
+      <h3>Menções reais no Discord</h3>
+      <p>Se os usuários envolvidos preencheram o <em>ID do Discord</em> no Perfil, as mensagens usam <code>&lt;@ID&gt;</code> — dispara notificação real (som/badge). Sem ID, aparece só o nome como texto.</p>
+
+      <h2>Raw JSON</h2>
+      <p>Formato genérico pra Make, n8n, Zapier, endpoints internos. Payload contém: evento, demanda inteira (id, nome, status, prazo…), projeto, cliente, usuário que disparou, timestamp. Documentação completa dos campos: consulte um dev interno.</p>
+    </section>
+
+    <!-- ============ 17 · COFRE DE SENHAS ============ -->
+    <section id="cofre">
+      <span class="kicker">Administração · 17</span>
+      <h1 class="doc-title">Cofre de Senhas</h1>
+      <p class="lead">Guarda credenciais de ferramentas (Google Ads, Meta, plataformas do cliente) com criptografia AES-256-GCM em disco. Cada squad tem seu cofre; membros do squad veem as entradas dele.</p>
+
+      <h2>Destravar</h2>
+      <p>Menu → <em>Configurações → Senhas</em>. A tela aparece <strong>trancada</strong>. Duas formas de destravar:</p>
+      <ul>
+        <li><strong>Senha</strong> — digite a senha da sua conta reWork. Vale por 15 minutos de inatividade (renova a cada ação).</li>
+        <li><strong>Biometria / PIN</strong> — botão "Destravar com biometria / PIN" se você tiver cadastrado um dispositivo. Windows Hello, Touch ID, PIN do dispositivo, chave FIDO2.</li>
+      </ul>
+
+      <h2>Cadastrar / editar / excluir entradas</h2>
+      <p>Botão <em>+ Nova entrada</em>. Campos: Nome, Link, Email, Usuário, Senha. Botão <em>gerar senha aleatória</em> cria uma senha forte de 20 chars.</p>
+      <p>Na tabela: senha aparece como <code>••••••••</code>. Botão de olho revela por 20s (auto-oculta) e loga a ação no histórico. Ícones de editar e excluir na direita.</p>
+
+      <h2>Cadastrar biometria/PIN</h2>
+      <p>Botão <em>Acesso</em> no topo (só aparece se o browser suporta WebAuthn) → modal <em>Acesso</em> → <em>+ Cadastrar acesso</em>.</p>
+      <ol class="step-list">
+        <li>Escolha o tipo: <strong>Biometria</strong> (impressão digital, rosto) ou <strong>PIN</strong> (PIN do dispositivo).</li>
+        <li>Dê um nome pra reconhecer depois ("Notebook trabalho", "iPhone pessoal").</li>
+        <li>Continue → o sistema operacional pede pra autenticar (Windows Hello, Touch ID, etc.).</li>
+        <li>Autenticado → cred cadastrada. Aparece na lista.</li>
+      </ol>
+      <div class="callout info">
+        <div class="ic">i</div>
+        <div class="body">
+          <strong>Estritamente pessoal</strong>
+          Cada usuário só vê e cadastra as próprias credenciais WebAuthn. Nem admin acessa as suas. Precisa cadastrar em cada dispositivo/navegador que você usa.
+        </div>
+      </div>
+
+      <h2>Histórico (admin/moderador)</h2>
+      <p>Botão <em>Histórico</em> no topo (visível só pra admin/moderador). Modal com log imutável: quem destravou, visualizou, criou, editou, apagou o quê e quando. Filtros por usuário e por entrada. Tags coloridas por ação.</p>
+      <p>Tentativas de destravar com <strong>senha errada</strong> não geram log (evita enumerar tentativas de brute-force). Detalhes do que foi editado (name, password, email, etc.) aparecem na coluna Detalhes.</p>
+
+      <h2>Segurança em profundidade</h2>
+      <ul>
+        <li>Cada senha é encriptada com AES-256-GCM antes de sair da memória do processo.</li>
+        <li>A chave mestra vive em <code>data/secret.key</code> (ou variável de ambiente <code>FLUXO_SECRET</code>) — perdê-la torna as senhas ilegíveis. <strong>Faça backup.</strong></li>
+        <li>O cofre trancado retorna 403 <code>vault_locked</code> em toda leitura — cliente força a volta pra tela de destravar.</li>
+        <li>Reveal registra o acesso no histórico com nome da entrada.</li>
+      </ul>
+    </section>
+
+    <!-- ============ 18 · BASTIDORES ============ -->
+    <section id="bastidores">
+      <span class="kicker">Administração · 18</span>
+      <h1 class="doc-title">Lixeira e Dev Tools</h1>
+      <p class="lead">Ferramentas que ficam na sombra: onde vai o que você exclui, e um hub pra rotas que não têm entrada no menu.</p>
+
+      <h2>Lixeira</h2>
+      <p>Menu → <em>Lixeira</em>. Lista tudo que foi soft-deletado — clientes, projetos, fluxos, demandas, listas — com quando foi apagado, por quem, e há quantos dias. <span class="pill pill-admin">admin</span> <span class="pill pill-mod">moderador</span></p>
+      <ul>
+        <li><strong>Restaurar</strong> — devolve o item pra listagem normal, com todos os vínculos intactos.</li>
+        <li><strong>Excluir permanentemente</strong> — remoção definitiva. Sem volta.</li>
+      </ul>
+      <p>Purga automática: itens ficam na lixeira por <strong>30 dias</strong> e depois são apagados sem intervenção manual.</p>
+
+      <h2>Dev Tools</h2>
+      <p>Menu → <em>Ajuda → Dev Tools</em>. Só admin vê. É um hub de cards com links diretos pra rotas que:</p>
+      <ul>
+        <li><strong>Existem</strong> no roteador mas não têm entrada no menu (ex.: <em>Projetos Cadastrados</em> em <code>/projects</code>, <em>Modelos de Fluxo</em> em <code>/clients/models</code>, <em>Códigos de Erro</em>)</li>
+        <li><strong>São sub-abas</strong> que a entrada de menu abre com a default (Análises · Capacidade/Relatórios, Recorrentes · Demandas/Listas)</li>
+        <li><strong>São modais de criação</strong> — atalhos pra abrir direto o wizard de nova demanda, novo cliente, novo fluxo, etc.</li>
+      </ul>
+
+      <h2>Rotas com nome amigável</h2>
+      <p>URLs de clientes, projetos e demandas usam <em>slug + id</em> pra ficarem legíveis:</p>
+      <pre>/clients/vermelho-cdb89429c3da
+/projects/gestao-de-marketing-c11e108fba86
+/demands/teste-prazo-3e63859860d9</pre>
+      <p>URLs antigas só com id continuam funcionando — o parser sempre extrai o id final. Se o nome muda, a próxima navegação canonicaliza pra nova URL via replaceState. Ideal pra compartilhar link legível no chat.</p>
+    </section>
+
+    <!-- ============ 19 · ATALHOS ============ -->
+    <section id="atalhos">
+      <span class="kicker">Referência · 19</span>
+      <h1 class="doc-title">Atalhos e produtividade</h1>
+      <p class="lead">Um punhado de atalhos que economizam cliques.</p>
+
+      <h2>Command palette</h2>
+      <p><kbd>Ctrl</kbd>+<kbd>K</kbd> (ou <kbd>⌘</kbd>+<kbd>K</kbd>) abre a paleta de comandos — busca fuzzy por páginas, demandas, clientes, projetos, fluxos, usuários, recorrentes. Enter navega direto.</p>
+
+      <h2>Atalhos de navegação</h2>
+      <p>Prefixo <kbd>G</kbd> + letra pula pra tela:</p>
+      <table>
+        <thead><tr><th>Atalho</th><th>Vai pra</th></tr></thead>
+        <tbody>
+          <tr><td><kbd>G</kbd> <kbd>D</kbd></td><td>Dashboard</td></tr>
+          <tr><td><kbd>G</kbd> <kbd>L</kbd></td><td>Demandas</td></tr>
+          <tr><td><kbd>G</kbd> <kbd>M</kbd></td><td>Minhas Demandas</td></tr>
+          <tr><td><kbd>G</kbd> <kbd>A</kbd></td><td>Agenda</td></tr>
+          <tr><td><kbd>G</kbd> <kbd>C</kbd></td><td>Clientes</td></tr>
+          <tr><td><kbd>G</kbd> <kbd>F</kbd></td><td>Fluxos</td></tr>
+        </tbody>
+      </table>
+
+      <h2>Ações rápidas</h2>
+      <table>
+        <thead><tr><th>Atalho</th><th>Faz</th></tr></thead>
+        <tbody>
+          <tr><td><kbd>N</kbd></td><td>Abre wizard de nova demanda</td></tr>
+          <tr><td><kbd>/</kbd></td><td>Foca no campo de busca da tela atual</td></tr>
+          <tr><td><kbd>?</kbd></td><td>Mostra a lista completa de atalhos</td></tr>
+          <tr><td><kbd>Esc</kbd></td><td>Fecha modal aberto</td></tr>
+          <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>Publica comentário (dentro do editor)</td></tr>
+        </tbody>
+      </table>
+
+      <h2>Filtros como link</h2>
+      <p>Como os filtros ficam na URL, você pode <strong>bookmark</strong> uma vista favorita: "atrasadas do cliente X", "abertas do meu squad no mês", etc. Cola a URL nos favoritos do browser.</p>
+
+      <h2>Mobile</h2>
+      <p>Toda tela é responsiva. Sidebar vira drawer &lt; 880px; filtros empilham; tabelas ganham scroll horizontal isolado; modais viram quase fullscreen. A Agenda muda pra 1 semana automaticamente em telas &lt; 640px. Feature parity 100% — nenhuma tela é bloqueada em mobile.</p>
+    </section>
+
+    <!-- ============ 20 · FAQ ============ -->
+    <section id="faq">
+      <span class="kicker">Referência · 20</span>
+      <h1 class="doc-title">Perguntas frequentes</h1>
+      <p class="lead">Respostas rápidas pras dúvidas mais recorrentes.</p>
+
+      <h3>Esqueci minha senha. Como faço?</h3>
+      <p>Peça ao admin resetar em <em>Usuários → seu perfil → Nova senha</em>. Depois de entrar, troque pra uma senha só sua no Perfil.</p>
+
+      <h3>Como transfiro uma demanda pra outro squad?</h3>
+      <p>Detalhe da demanda → <em>Editar</em> → mude o cliente. O squad é derivado do cliente. Você precisa ter acesso ao squad destino.</p>
+
+      <h3>Posso apagar uma demanda "de vez"?</h3>
+      <p>Exclusão manda pra Lixeira. Lá, admin/mod usa <em>Excluir permanentemente</em>. Purga automática também remove após 30 dias.</p>
+
+      <h3>Um usuário saiu da empresa. O que faço?</h3>
+      <p>Desative-o em <em>Usuários</em> (não exclua — perde histórico). As demandas dele ficam intactas; você pode reatribuir manualmente ou deixar como estão. Se voltar, reative com 1 clique.</p>
+
+      <h3>Como o "responsável" é escolhido em cada etapa?</h3>
+      <p>Se você <em>não sobrescreveu</em> no criar/editar, ele é derivado do <strong>cargo da etapa</strong> — o primeiro usuário do squad com aquele cargo é notificado. Se você definiu manualmente na demanda, permanece esse.</p>
+
+      <h3>O que acontece se eu apagar um cliente com demandas abertas?</h3>
+      <p>O cliente vai pra Lixeira; demandas e projetos junto. Enquanto lá, tudo é restaurável. Depois de 30 dias, purga definitiva (perde tudo).</p>
+
+      <h3>Meu chip do Discord não notifica.</h3>
+      <p>Checa: (1) você preencheu o ID (não username) no Perfil; (2) o webhook Discord está ativo; (3) o evento que dispara envolve você (menção, você é responsável, etc.); (4) o servidor Discord tem <em>Modo Desenvolvedor</em> ligado nas suas configurações.</p>
+
+      <h3>Como conto quantas horas eu apontei no mês?</h3>
+      <p>Dashboard → card <em>Horas apontadas</em> (com você no filtro de usuário). Detalhe: Análises → Capacidade → sub-aba de horas apontadas.</p>
+
+      <h3>O reWork funciona offline?</h3>
+      <p>Não. Toda ação precisa de rede pra sincronizar com o servidor. Um Service Worker cacheia os arquivos do app pra abrir rápido, mas dados vivem no server. Se cair a rede, você vê um toast "Sem conexão".</p>
+
+      <h3>Como reporto um bug?</h3>
+      <p>Anota: URL, o que estava fazendo, o que aparece de erro (toast/console). Se possível, screenshot. Manda pro time responsável pelo reWork internamente. Se for código HTTP específico (401, 413, etc.), a <a href="Codigos-de-Erro.html">Documentação de Erros</a> explica o que significa.</p>
+    </section>
+
+    <!-- Prev/Next entre seções -->
+    <div class="section-nav" id="section-nav">
+      <button type="button" class="nav-btn prev" onclick="showPrev()"><span class="nav-dir">← Anterior</span><span class="nav-title" id="nav-prev-title">—</span></button>
+      <button type="button" class="nav-btn next" onclick="showNext()"><span class="nav-dir">Próximo →</span><span class="nav-title" id="nav-next-title">—</span></button>
+    </div>
+
+    <footer>reWork · Manual do Usuário · <a href="Codigos-de-Erro.html" style="color:var(--accent-2);text-decoration:none">Códigos de erro</a></footer>
+  </main>
+
 <script>
-  (function() {
-    const links = document.querySelectorAll('aside.toc nav a[href^="#"]');
-    const byId = new Map();
-    links.forEach(a => byId.set(a.getAttribute('href').slice(1), a));
+  // ── Router de home ↔ seções, com search e prev/next ────
+  const cards = [...document.querySelectorAll('.doc-card')];
+  const sections = document.querySelectorAll('main section');
+  const order = cards.map(c => c.dataset.section); // ordem canonica dos tópicos
+  const titleById = Object.fromEntries(cards.map(c => [c.dataset.section, c.querySelector('.doc-card-name').textContent]));
 
-    // Clique explícito — força o scroll mesmo em contextos onde
-    // âncoras nativas não funcionam bem (previews, iframes, etc.)
-    links.forEach(a => a.addEventListener('click', (e) => {
-      const href = a.getAttribute('href');
-      if (!href || !href.startsWith('#')) return;
-      const id = href.slice(1);
-      const target = document.getElementById(id);
-      if (!target) return;
-      e.preventDefault();
-      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      if (history.pushState) history.pushState(null, '', '#' + id);
-      // Fecha o menu no mobile depois do clique
-      if (window.innerWidth <= 960) {
-        document.body.classList.remove('toc-open');
-        document.querySelector('aside.toc').classList.remove('open');
+  function normalize(s) {
+    return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  }
+
+  function showHome() {
+    document.body.classList.add('on-home');
+    history.replaceState(null, '', location.pathname + location.search);
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }
+  function showSection(id) {
+    if (!id || !document.getElementById(id)) { showHome(); return; }
+    document.body.classList.remove('on-home');
+    sections.forEach(s => s.classList.toggle('is-active', s.id === id));
+    // Atualiza prev/next
+    const idx = order.indexOf(id);
+    const prev = idx > 0 ? order[idx - 1] : null;
+    const next = idx >= 0 && idx < order.length - 1 ? order[idx + 1] : null;
+    const prevBtn = document.querySelector('.nav-btn.prev');
+    const nextBtn = document.querySelector('.nav-btn.next');
+    prevBtn.disabled = !prev;
+    nextBtn.disabled = !next;
+    document.getElementById('nav-prev-title').textContent = prev ? titleById[prev] : '—';
+    document.getElementById('nav-next-title').textContent = next ? titleById[next] : '—';
+    prevBtn.dataset.target = prev || '';
+    nextBtn.dataset.target = next || '';
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }
+  function showPrev() {
+    const t = document.querySelector('.nav-btn.prev').dataset.target;
+    if (t) navigate(t);
+  }
+  function showNext() {
+    const t = document.querySelector('.nav-btn.next').dataset.target;
+    if (t) navigate(t);
+  }
+  function navigate(id) {
+    history.replaceState(null, '', '#' + id);
+    showSection(id);
+  }
+  // Clique num card
+  cards.forEach(c => c.addEventListener('click', () => navigate(c.dataset.section)));
+
+  // Search — filtra cards por título, grupo e keywords
+  const searchInput = document.getElementById('doc-search');
+  const emptyMsg = document.getElementById('home-empty');
+  function onDocSearch() {
+    const q = normalize(searchInput.value.trim());
+    let visible = 0;
+    cards.forEach(c => {
+      if (!q) {
+        c.classList.remove('hidden'); visible++;
+        return;
       }
-    }));
+      const hay = normalize(
+        (c.querySelector('.doc-card-name')?.textContent || '') + ' ' +
+        (c.dataset.group || '') + ' ' +
+        (c.dataset.kw || '') + ' ' +
+        (c.querySelector('.doc-card-desc')?.textContent || '')
+      );
+      const hit = q.split(/\s+/).every(part => hay.includes(part));
+      c.classList.toggle('hidden', !hit);
+      if (hit) visible++;
+    });
+    emptyMsg.style.display = visible ? 'none' : '';
+  }
+  searchInput.addEventListener('input', onDocSearch);
+  // Esc no search limpa
+  searchInput.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { searchInput.value = ''; onDocSearch(); }
+  });
 
-    // Marca o item ativo conforme a rolagem
-    const sections = document.querySelectorAll('main section[id], main h3[id]');
-    const io = new IntersectionObserver(entries => {
-      entries.forEach(e => {
-        if (!e.isIntersecting) return;
-        const id = e.target.id;
-        links.forEach(a => a.classList.remove('active'));
-        const link = byId.get(id);
-        if (link) {
-          link.classList.add('active');
-          const parentOl = link.closest('ol ol');
-          if (parentOl) {
-            const rootA = parentOl.closest('ol > li').querySelector(':scope > a');
-            if (rootA) rootA.classList.add('active');
-          }
-        }
-      });
-    }, { rootMargin: '-30% 0px -60% 0px', threshold: 0 });
+  // Hash routing
+  window.addEventListener('hashchange', () => {
+    const id = location.hash.slice(1);
+    id ? showSection(id) : showHome();
+  });
 
-    sections.forEach(s => io.observe(s));
-
-    // Se abriu com hash na URL, rola pra ela
-    if (location.hash) {
-      const target = document.getElementById(location.hash.slice(1));
-      if (target) setTimeout(() => target.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
-    }
-  })();
+  // Boot: se URL tem hash → seção; senão → home
+  const bootId = location.hash.slice(1);
+  if (bootId) showSection(bootId);
+  else showHome();
 </script>
-
 </body>
 </html>

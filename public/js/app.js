@@ -185,6 +185,15 @@ function parseRoute(path) {
   }
   if (p === '/analytics/capacity' || p === '/capacity') return { page: 'analytics', tab: 'capacity' };
   if (p === '/analytics/reports'  || p === '/reports')  return { page: 'analytics', tab: 'reports' };
+  // Docs (nativos): /docs = manual home; /docs/manual/:sec e /docs/erros/:sec
+  if (p === '/docs')                              return { page: 'docs', doc: 'manual' };
+  if (p === '/docs/manual')                       return { page: 'docs', doc: 'manual' };
+  if (p === '/docs/erros')                        return { page: 'docs', doc: 'erros' };
+  {
+    let mm;
+    if ((mm = p.match(/^\/docs\/manual\/([a-z0-9-]+)$/))) return { page: 'docs', doc: 'manual', section: mm[1] };
+    if ((mm = p.match(/^\/docs\/erros\/([a-z0-9-]+)$/)))  return { page: 'docs', doc: 'erros',  section: mm[1] };
+  }
   if (PATH_TO_PAGE[p]) return { page: PATH_TO_PAGE[p] };
   let m;
   if ((m = p.match(/^\/demands\/new$/)))                    return { page: 'list',         modal: 'demand',  op: 'new' };
@@ -3136,6 +3145,7 @@ const DEVTOOLS_GROUPS = [
     links: [
       { label: 'Projetos Cadastrados', path: '/projects',        icon: 'folder-tree', desc: 'Listagem global de projetos, com filtros por cliente/situação.' },
       { label: 'Modelos de Fluxo',     path: '/clients/models',  icon: 'layers',      desc: 'Biblioteca de modelos aplicáveis a novos clientes.' },
+      { label: 'Códigos de Erro',      path: '/docs/Codigos-de-Erro.html', icon: 'alert-circle', desc: 'Referência completa dos códigos HTTP retornados pelo backend + erros específicos do cofre e da biometria.' },
     ]
   },
   {
@@ -3203,6 +3213,240 @@ function devToolsOpen(evt, path) {
   history.pushState(null, '', path);
   applyRoute();
 }
+/* ─── DOCS NATIVAS ───
+   Substitui o iframe antigo — o HTML do doc é fetchado, o `<style>` extraído
+   e o body injetado em Shadow DOM (isolamento perfeito de estilos). A
+   navegação interna (cards, prev/next, "Todos os tópicos", cross-doc)
+   passa a usar rotas SPA `/docs/manual/:sec` e `/docs/erros/:sec` — a URL
+   é a fonte da verdade, deep-links funcionam nativamente. */
+const DOCS_MAP = {
+  manual: { url: '/docs/Manual-do-Usuario.html', title: 'Manual do Usuário' },
+  erros:  { url: '/docs/Codigos-de-Erro.html',   title: 'Códigos de Erro' }
+};
+const _docsCache = {}; // { key: { style, body, initialBodyClass } }
+async function _fetchDocContent(key) {
+  if (_docsCache[key]) return _docsCache[key];
+  const spec = DOCS_MAP[key]; if (!spec) throw new Error('doc desconhecido: ' + key);
+  const html = await (await fetch(spec.url + '?ts=' + Date.now())).text();
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+  let style = '';
+  doc.querySelectorAll('style').forEach(s => style += s.textContent + '\n');
+  const bodyEl = doc.querySelector('body');
+  const initialBodyClass = bodyEl?.className || '';
+  const body = bodyEl?.innerHTML || '';
+  // Rescope pra Shadow DOM: `:root` e `body` não existem dentro do shadow.
+  // Ambos precisam virar `:host` pra as custom properties + estilos de body
+  // (font-family, background, cor, etc.) serem aplicados no elemento host.
+  // Sintaxe do :host: filtros vão DENTRO dos parens (`:host(.foo)`, não `:host.foo`).
+  // Ordem importa: primeiro os padrões compostos, depois os standalone.
+  style = style
+    .replace(/:root\[([^\]]+)\]/g, ':host([$1])')
+    .replace(/:root:not\(\s*([^)]+)\s*\)/g, ':host(:not($1))')
+    .replace(/:root\b/g, ':host')  // `\b` só funciona depois do `t` (não antes de `:`)
+    .replace(/\bbody\s*\.([a-zA-Z_-][\w-]*)/g, ':host(.$1)')
+    .replace(/\bbody\s*:not\(\s*([^)]+)\s*\)/g, ':host(:not($1))')
+    .replace(/\bbody\b/g, ':host');
+  _docsCache[key] = { style, body, initialBodyClass };
+  return _docsCache[key];
+}
+async function renderDocsFromRoute() {
+  const container = document.getElementById('docs-container');
+  if (!container) return;
+  const path = location.pathname;
+  let key = 'manual', section = null;
+  let m;
+  if ((m = path.match(/^\/docs\/manual\/([a-z0-9-]+)$/))) { key = 'manual'; section = m[1]; }
+  else if (path === '/docs/manual') { key = 'manual'; }
+  else if ((m = path.match(/^\/docs\/erros\/([a-z0-9-]+)$/))) { key = 'erros'; section = m[1]; }
+  else if (path === '/docs/erros') { key = 'erros'; }
+  else if (path === '/docs' || path === '/docs/') { key = 'manual'; }
+  await _mountDoc(container, key, section);
+}
+async function _mountDoc(container, key, section) {
+  const currentDoc = container.dataset.doc;
+  // Se doc mudou, refaz o mount inteiro; senão só troca a seção.
+  if (currentDoc !== key) {
+    let content;
+    try { content = await _fetchDocContent(key); }
+    catch (e) { container.textContent = 'Falha ao carregar documentação.'; return; }
+    // Shadow root pra isolamento total de estilos
+    const shadow = container.shadowRoot || container.attachShadow({ mode: 'open' });
+    // CSS extra AO FINAL — sobrescreve baseado no `data-theme` espelhado do app,
+    // independente do `prefers-color-scheme` do browser. Sem isso, o doc segue
+    // a preferência do sistema em vez do toggle do app.
+    // Palette alinhada com o app (cinzas neutros, não azulados/roxeados).
+    // Os valores originais do doc tinham tint azul (#0B0B10 → RGB 11,11,16); aqui
+    // usamos as mesmas cores do app (#161616, #262626, #ECECEC) pra o doc não
+    // "destoar" do resto quando embed. Mantém dark/light aos pares.
+    const themeOverride = `
+      :host([data-theme="dark"]) {
+        --bg: #161616; --surface: #262626; --surface-2: #363636; --surface-3: #474747;
+        --hairline: rgba(255,255,255,0.06); --border: rgba(255,255,255,0.08);
+        --text: #ECECEC; --text-dim: #B8B8B8; --text-muted: #A3A3A3;
+        --accent-soft: rgba(122,0,255,0.15);
+        --shadow: 0 12px 32px rgba(0,0,0,0.32);
+      }
+      :host([data-theme="light"]) {
+        --bg: #F5F5F5; --surface: #FFFFFF; --surface-2: #F0F0F0; --surface-3: #E5E5E5;
+        --hairline: rgba(0,0,0,0.07); --border: rgba(0,0,0,0.10);
+        --text: #1A1A1A; --text-dim: #4A4A4A; --text-muted: #6B6B6B;
+        --accent-soft: rgba(122,0,255,0.10);
+        --shadow: 0 4px 20px rgba(0,0,0,0.06);
+      }
+    `;
+    shadow.innerHTML = `<style>:host { display: block; }\n${content.style}\n${themeOverride}</style>${content.body}`;
+    // Aplica a classe inicial do body no host (ex.: on-home)
+    container.className = 'docs-container' + (content.initialBodyClass ? ' ' + content.initialBodyClass : '');
+    container.dataset.doc = key;
+    _wireDocShadowNav(shadow, container, key);
+    _mirrorAppThemeToDocs(container);
+  }
+  _showDocSection(container, key, section);
+}
+/* Espelha o `data-theme` do app pro container do doc, e observa mudanças
+   (toggle de tema) pra sincronizar em tempo real. */
+function _mirrorAppThemeToDocs(container) {
+  const sync = () => {
+    const t = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+    container.setAttribute('data-theme', t);
+  };
+  sync();
+  // MutationObserver único (idempotente por container)
+  if (container._themeMo) return;
+  container._themeMo = new MutationObserver(muts => {
+    if (muts.some(m => m.attributeName === 'data-theme')) sync();
+  });
+  container._themeMo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+}
+function _wireDocShadowNav(shadow, container, docKey) {
+  // Cards (só o manual tem) — click abre section via SPA nav
+  shadow.querySelectorAll('.doc-card[data-section]').forEach(c => {
+    c.addEventListener('click', (e) => {
+      e.preventDefault();
+      _navDoc(`/docs/${docKey}/${c.dataset.section}`);
+    });
+  });
+  // Botão "← Todos os tópicos"
+  shadow.querySelectorAll('.home-crumb').forEach(b => {
+    b.addEventListener('click', (e) => {
+      e.preventDefault();
+      _navDoc(`/docs/${docKey}`);
+    });
+  });
+  // Prev/Next
+  shadow.querySelectorAll('.nav-btn').forEach(b => {
+    b.addEventListener('click', (e) => {
+      const target = b.dataset.target;
+      if (!target) return;
+      e.preventDefault();
+      _navDoc(`/docs/${docKey}/${target}`);
+    });
+  });
+  // Search (só manual) — só filtra local, sem router
+  const searchInput = shadow.getElementById && shadow.getElementById('doc-search');
+  if (searchInput) {
+    const cards = [...shadow.querySelectorAll('.doc-card')];
+    const emptyMsg = shadow.getElementById('home-empty');
+    const doSearch = () => {
+      const q = String(searchInput.value || '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+      let visible = 0;
+      cards.forEach(c => {
+        if (!q) { c.classList.remove('hidden'); visible++; return; }
+        const hay = (
+          (c.querySelector('.doc-card-name')?.textContent || '') + ' ' +
+          (c.dataset.group || '') + ' ' +
+          (c.dataset.kw || '') + ' ' +
+          (c.querySelector('.doc-card-desc')?.textContent || '')
+        ).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+        const hit = q.split(/\s+/).every(part => hay.includes(part));
+        c.classList.toggle('hidden', !hit);
+        if (hit) visible++;
+      });
+      if (emptyMsg) emptyMsg.style.display = visible ? 'none' : '';
+    };
+    searchInput.addEventListener('input', doSearch);
+    searchInput.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { searchInput.value = ''; doSearch(); }
+    });
+  }
+  // Links internos <a href="#xxx"> → SPA nav (na mesma doc)
+  shadow.querySelectorAll('a[href^="#"]').forEach(a => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      const s = a.getAttribute('href').slice(1);
+      if (s) _navDoc(`/docs/${docKey}/${s}`);
+    });
+  });
+  // Cross-doc links: "Codigos-de-Erro.html", "Manual-do-Usuario.html", com ou sem #hash
+  shadow.querySelectorAll('a[href^="Codigos-de-Erro.html"], a[href^="Manual-do-Usuario.html"]').forEach(a => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      const href = a.getAttribute('href');
+      const [file, sec] = href.split('#');
+      const otherKey = file.startsWith('Codigos') ? 'erros' : 'manual';
+      _navDoc(sec ? `/docs/${otherKey}/${sec}` : `/docs/${otherKey}`);
+    });
+  });
+}
+/* Nav interna dos docs: push na URL + re-render. navPush não dispara popstate
+   nem chama applyRoute, então precisamos reaplicar manualmente. */
+function _navDoc(path) {
+  navPush(path);
+  renderDocsFromRoute();
+}
+function _showDocSection(container, docKey, section) {
+  const shadow = container.shadowRoot;
+  if (!shadow) return;
+  if (docKey === 'manual') {
+    // Manual tem card grid + section view. `.on-home` no host controla qual aparece.
+    if (!section) {
+      container.classList.add('on-home');
+    } else {
+      container.classList.remove('on-home');
+      shadow.querySelectorAll('main section').forEach(s => s.classList.toggle('is-active', s.id === section));
+      _updateManualPrevNext(shadow, section);
+    }
+    // Rola pro topo
+    const main = shadow.querySelector('main.section-view');
+    if (main) main.scrollTop = 0;
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  } else if (docKey === 'erros') {
+    // Erros é uma doc scroll-single-page. Section = id do card de erro (com ou sem prefixo `detalhe-`)
+    if (section) {
+      const target = shadow.getElementById(section)
+                  || shadow.getElementById('detalhe-' + section);
+      if (target) target.scrollIntoView({ behavior: 'instant', block: 'start' });
+    } else {
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
+  }
+}
+// Atualiza os botões prev/next baseado na ordem dos cards.
+function _updateManualPrevNext(shadow, section) {
+  const cards = [...shadow.querySelectorAll('.doc-card[data-section]')];
+  const order = cards.map(c => c.dataset.section);
+  const idx = order.indexOf(section);
+  const prev = idx > 0 ? order[idx - 1] : null;
+  const next = idx >= 0 && idx < order.length - 1 ? order[idx + 1] : null;
+  const prevBtn = shadow.querySelector('.nav-btn.prev');
+  const nextBtn = shadow.querySelector('.nav-btn.next');
+  if (prevBtn) {
+    prevBtn.disabled = !prev;
+    prevBtn.dataset.target = prev || '';
+    const t = shadow.getElementById('nav-prev-title');
+    const name = prev ? cards.find(c => c.dataset.section === prev)?.querySelector('.doc-card-name')?.textContent : '—';
+    if (t) t.textContent = name || '—';
+  }
+  if (nextBtn) {
+    nextBtn.disabled = !next;
+    nextBtn.dataset.target = next || '';
+    const t = shadow.getElementById('nav-next-title');
+    const name = next ? cards.find(c => c.dataset.section === next)?.querySelector('.doc-card-name')?.textContent : '—';
+    if (t) t.textContent = name || '—';
+  }
+}
+
 function renderCurrent() {
   switch (currentPage) {
     case 'dashboard':  renderDashboard(); break;
@@ -3215,7 +3459,7 @@ function renderCurrent() {
     case 'integrations': renderIntegrations(); break;
     case 'devtools':   renderDevTools(); break;
     case 'passwords':  renderPasswords(); break;
-    case 'docs':       break; /* iframe estático — nada pra renderizar */
+    case 'docs':       renderDocsFromRoute(); break;
     case 'clients': {
       // Decide entre grid, detalhe de cliente ou detalhe de projeto sem perder estado
       // quando refreshData() roda com um modal aberto (URL temporariamente em /projects/<id>/edit).
@@ -12758,7 +13002,7 @@ function renderListaCard(lista, client, project, items) {
       ${contextHtml}
       <span class="pill pill-muted" style="font-size:9px" title="Lista do modelo antigo (com recurrings). Novas listas usam o modelo to-do.">Legado</span>
       <div class="lista-card-actions">
-        <button class="rec-action-btn" title="Duplicar lista (copia todos os itens)" onclick="event.stopPropagation();duplicateLista('${esc(lista.id)}')"><i data-lucide="copy" class="ic-sm"></i></button>
+        <button class="rec-action-btn" title="Duplicar lista (adiciona &quot; - Cópia&quot;)" onclick="event.stopPropagation();duplicateLista('${esc(lista.id)}')"><i data-lucide="copy" class="ic-sm"></i></button>
         <button class="rec-action-btn danger" title="Excluir lista" onclick="event.stopPropagation();confirmDeleteListaFromTab('${esc(lista.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
       </div>
     </div>
@@ -12800,6 +13044,7 @@ function renderListaCardTodo(lista) {
       <div class="lista-card-actions">
         <button class="rec-action-btn" title="Editar lista" onclick="event.stopPropagation();openEditListaModal('${esc(lista.id)}')"><i data-lucide="edit-3" class="ic-sm"></i></button>
         <button class="rec-action-btn" title="Aplicar a um projeto" onclick="event.stopPropagation();openApplyListaToProjectModal('${esc(lista.id)}')"><i data-lucide="send" class="ic-sm"></i></button>
+        <button class="rec-action-btn" title="Duplicar lista (adiciona &quot; - Cópia&quot;)" onclick="event.stopPropagation();duplicateLista('${esc(lista.id)}')"><i data-lucide="copy" class="ic-sm"></i></button>
         <button class="rec-action-btn danger" title="Excluir lista" onclick="event.stopPropagation();confirmDeleteListaFromTab('${esc(lista.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
       </div>
     </div>
@@ -13003,8 +13248,77 @@ async function confirmDeleteListaFromTab(id) {
    Ao salvar, cria nova lista + clona TODOS os recorrentes apontando pra ela. */
 let _duplicatingListaId = null;
 
-function duplicateLista(id) {
-  openDuplicarListaModal(id);
+/* Duplicação rápida — clona a lista com o nome "Original - Cópia" (ou " - Cópia 2/3/…"
+   se já houver uma cópia existente) e mantém cliente/projeto/descrição/itens iguais.
+   O modal `openDuplicarListaModal` continua disponível pra fluxo avançado
+   (reatribuir cliente/projeto), mas não é a ação default do botão. */
+async function duplicateLista(id) {
+  const orig = listas.find(l => l.id === id);
+  if (!orig) return toast('Lista não encontrada.', 'error');
+  const newName = _uniqueListaCopyName(orig.name);
+  const isTodo = orig.kind === 'todo';
+  try {
+    const body = {
+      name: newName,
+      clientId: orig.clientId || null,
+      projectId: orig.projectId || null,
+      description: orig.description || '',
+      workspaceId: orig.workspaceId || activeWs
+    };
+    if (isTodo) {
+      // Modelo novo: items inline vão junto no próprio POST (server strippa `id`
+      // e regenera pra evitar colisão).
+      body.kind = 'todo';
+      body.items = (Array.isArray(orig.items) ? orig.items : [])
+        .map(it => ({ name: it.name, demandType: it.demandType || null }));
+    }
+    const newLista = await api('/listas', 'POST', body);
+    // Modelo legado: recurrings vivem numa entidade separada — clonar em N POSTs.
+    let clonedItems = 0;
+    if (!isTodo) {
+      const items = recurrings.filter(r => r.listaId === orig.id);
+      for (const r of items) {
+        await api('/recurrings', 'POST', {
+          name: r.name,
+          clientId: r.clientId,
+          projectId: r.projectId,
+          flowId: r.flowId,
+          roleId: r.roleId,
+          ownerId: r.ownerId,
+          deliverableUserId: r.deliverableUserId,
+          description: r.description,
+          briefing: r.briefing,
+          priority: r.priority,
+          qtyPieces: r.qtyPieces, qtyArts: r.qtyArts, qtyVariations: r.qtyVariations,
+          defaultChecklist: r.defaultChecklist,
+          dayOfMonth: r.dayOfMonth,
+          listaId: newLista.id,
+          active: r.active
+        });
+      }
+      clonedItems = items.length;
+    } else {
+      clonedItems = (body.items || []).length;
+    }
+    toast(`Lista duplicada${clonedItems ? ` (${clonedItems} item${clonedItems === 1 ? '' : 's'})` : ''}.`, 'success');
+    await refreshData();
+  } catch (e) { toast(e.message || 'Falha ao duplicar lista.', 'error'); }
+}
+/* Gera "X - Cópia", ou "X - Cópia 2/3/…" se já existir. Match case-insensitive
+   e ignora accents, mas mantém a capitalização original no output. */
+function _uniqueListaCopyName(baseName) {
+  const clean = String(baseName || 'Lista').replace(/\s*-\s*Cópia(\s+\d+)?$/i, '');
+  const suffix = ' - Cópia';
+  const existingNorms = new Set((listas || [])
+    .filter(l => !l.deletedAt)
+    .map(l => norm(l.name || '')));
+  let candidate = clean + suffix;
+  if (!existingNorms.has(norm(candidate))) return candidate;
+  for (let n = 2; n < 999; n++) {
+    candidate = `${clean}${suffix} ${n}`;
+    if (!existingNorms.has(norm(candidate))) return candidate;
+  }
+  return `${clean}${suffix} ${Date.now()}`; // fallback improvável
 }
 
 function openDuplicarListaModal(id) {
