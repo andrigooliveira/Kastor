@@ -3077,7 +3077,7 @@ app.put('/api/flows/:id', requireAuth, modOrAdmin, (req, res) => {
         d.status = clean[0].id;
         d.completedAt = null;
         d.stageEnteredAt = nowISO();
-        d.stageDueDate = clean[0].deadlineDays ? addDays(today(), clean[0].deadlineDays) : null;
+        d.stageDueDate = resolveStageDueDate(clean[0], d, today());
       }
     });
   }
@@ -3148,6 +3148,24 @@ function stageByIdForDemand(flow, d, id) {
     return d.stageAdditions.find(s => s.id === id) || null;
   }
   return null;
+}
+/* Resolve o prazo (stageDueDate) de uma etapa quando ela entra em jogo (é
+   aberta, retomada ou o fluxo é trocado). Ordem de precedência:
+     1) `stageOverrides[id].deadlineDate` — âncora fixa (definida no editor
+        "Etapas desta demanda"). Sobrepõe o SLA em dias.
+     2) `stageOverrides[id].deadlineDays` — override do SLA em dias.
+     3) `stage.deadlineDays` — SLA padrão do fluxo.
+     4) null — sem prazo definido.
+   `baseYmd` é a data-base pra somar dias (normalmente hoje quando avança). */
+function resolveStageDueDate(stage, d, baseYmd) {
+  if (!stage) return null;
+  // Additions carregam a âncora na própria entrada (stage.deadlineDate).
+  if (stage.deadlineDate) return stage.deadlineDate;
+  const ov = (d?.stageOverrides && typeof d.stageOverrides === 'object') ? d.stageOverrides[stage.id] : null;
+  if (ov && ov.deadlineDate) return ov.deadlineDate;
+  const days = (ov && ov.deadlineDays !== undefined) ? ov.deadlineDays : stage.deadlineDays;
+  if (days == null) return null;
+  return addDays(baseYmd, days);
 }
 
 function normalizeUrlSrv(raw) {
@@ -3537,7 +3555,10 @@ app.post('/api/demands', requireAuth, (req, res) => {
   }
   if (!flow) return res.status(400).json({ error: 'Nenhum fluxo disponível para este projeto' });
   const stage = stageById(flow, b.status) || flow.stages[0];
-  const stageDue = stage.deadlineDays ? addDays(today(), stage.deadlineDays) : (b.deadline || null);
+  // stageOverrides pode chegar no body da criação (wizard "Nova demanda") com
+  // uma âncora `deadlineDate` — respeita se vier, senão calcula por SLA em dias.
+  const bodyOv = (b.stageOverrides && typeof b.stageOverrides === 'object') ? b.stageOverrides[stage.id] : null;
+  const stageDue = (bodyOv && bodyOv.deadlineDate) || (stage.deadlineDays ? addDays(today(), stage.deadlineDays) : (b.deadline || null));
   // Defaults do fluxo: descrição se vazia + checklist se não veio nada explícito.
   // Frontend pode ter pré-populado, mas se o user deixou em branco aproveitamos
   // o padrão do fluxo (não força — se enviou string vazia, não substitui).
@@ -3617,11 +3638,16 @@ app.post('/api/demands', requireAuth, (req, res) => {
       }
       const newId = uid();
       if (typeof s.id === 'string' && s.id) clientAdditionIdMap[s.id] = newId;
+      // deadlineDate: âncora opcional (YYYY-MM-DD) — sobrepõe a soma por dias
+      // ao avançar. Usado quando o usuário edita a data no editor de etapas.
+      const dateAnchor = (typeof s.deadlineDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s.deadlineDate))
+        ? s.deadlineDate : null;
       initStageAdditions.push({
         id: newId,
         label,
         color: typeof s.color === 'string' && /^#[0-9a-f]{6}$/i.test(s.color) ? s.color : '#7A00FF',
         deadlineDays: days,
+        deadlineDate: dateAnchor,
         responsibleId: respId,
         done: !!s.done
       });
@@ -3639,6 +3665,11 @@ app.post('/api/demands', requireAuth, (req, res) => {
       if (typeof raw.color === 'string' && /^#[0-9a-f]{6}$/i.test(raw.color)) out.color = raw.color;
       if (raw.deadlineDays === null) out.deadlineDays = null;
       else if (Number.isInteger(Number(raw.deadlineDays)) && Number(raw.deadlineDays) >= 0) out.deadlineDays = Number(raw.deadlineDays);
+      // deadlineDate: âncora de data (YYYY-MM-DD) que sobrepõe o SLA em dias.
+      // Se presente, a etapa termina naquela data; anteriores/próximas cascateiam
+      // a partir dela. null = "sem âncora, usar SLA".
+      if (typeof raw.deadlineDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw.deadlineDate)) out.deadlineDate = raw.deadlineDate;
+      else if (raw.deadlineDate === null) out.deadlineDate = null;
       if (typeof raw.done === 'boolean') out.done = raw.done;
       if (Object.keys(out).length) initStageOverrides[sid] = out;
     }
@@ -3861,7 +3892,7 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
     d.status = first.id;
     d.completedAt = first.done ? nowISO() : null;
     d.stageEnteredAt = nowISO();
-    d.stageDueDate = first.deadlineDays ? addDays(today(), first.deadlineDays) : null;
+    d.stageDueDate = resolveStageDueDate(first, d, today());
     d.stageHistory = [{ stageId: first.id, enteredAt: nowISO(), dueDate: d.stageDueDate }];
     addHistory(d, req.user.id, 'flow_changed', { fromId: oldFlowId, toId: d.flowId });
   }
@@ -3882,7 +3913,7 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
     d.status = stage.id;
     d.stageEnteredAt = nowISO();
     // o prazo da etapa começa a contar agora (independe de atraso anterior)
-    d.stageDueDate = stage.deadlineDays ? addDays(today(), stage.deadlineDays) : null;
+    d.stageDueDate = resolveStageDueDate(stage, d, today());
     d.stageHistory.push({ stageId: stage.id, enteredAt: nowISO(), dueDate: d.stageDueDate });
     addHistory(d, req.user.id, 'stage_changed', { fromId: oldStageId, toId: stage.id });
     fired.push('demand.stage_changed');
@@ -4196,7 +4227,7 @@ app.post('/api/demands/bulk', requireAuth, rateLimitBulk, (req, res) => {
         if (prev && !prev.leftAt) prev.leftAt = nowISO();
         d.status = realStage.id;
         d.stageEnteredAt = nowISO();
-        d.stageDueDate = realStage.deadlineDays ? addDays(today(), realStage.deadlineDays) : null;
+        d.stageDueDate = resolveStageDueDate(realStage, d, today());
         d.stageHistory.push({ stageId: realStage.id, enteredAt: nowISO(), dueDate: d.stageDueDate });
         addHistory(d, req.user.id, 'stage_changed', { fromId: oldStageId, toId: realStage.id });
         const wasCompleted = !!d.completedAt;
@@ -4362,7 +4393,7 @@ app.put('/api/demands/:id/skipped-stages', requireAuth, (req, res) => {
       const orig = flow.stages.find(s => s.id === sid);
       const out = {};
       // Preserva overrides pré-existentes de color/done (se houver) — este editor
-      // só mexe em deadlineDays. Sem isso, salvar aqui apagaria custos antigos.
+      // só mexe em deadlineDays/Date. Sem isso, salvar aqui apagaria custos antigos.
       const prev = (d.stageOverrides && d.stageOverrides[sid]) || {};
       if (prev.color !== undefined) out.color = prev.color;
       if (prev.done !== undefined)  out.done = prev.done;
@@ -4378,6 +4409,19 @@ app.put('/api/demands/:id/skipped-stages', requireAuth, (req, res) => {
         }
       } else if (prev.deadlineDays !== undefined) {
         out.deadlineDays = prev.deadlineDays; // preserva se não veio no body
+      }
+      // deadlineDate: âncora de data que sobrepõe o SLA em dias na cascata.
+      // Formato YYYY-MM-DD. null = remove âncora (volta pro modelo por dias).
+      if ('deadlineDate' in raw) {
+        const v = raw.deadlineDate;
+        if (v === null || v === '') {
+          // Só grava se havia âncora antes (senão é redundante).
+          if (prev.deadlineDate) out.deadlineDate = null;
+        } else if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
+          out.deadlineDate = v;
+        }
+      } else if (prev.deadlineDate !== undefined) {
+        out.deadlineDate = prev.deadlineDate;
       }
       if (Object.keys(out).length) stageOverrides[sid] = out;
     }
@@ -6483,7 +6527,9 @@ function runRecurrenceJob() {
     // Etapa inicial respeita as puladas do modelo (mesma lógica da criação normal).
     const skipped = new Set(Array.isArray(parent.skippedStages) ? parent.skippedStages : []);
     const stage = flow.stages.find(s => !skipped.has(s.id)) || flow.stages[0];
-    const stageDue = stage.deadlineDays ? addDays(ymd, stage.deadlineDays) : null;
+    // Recorrente herda overrides do parent (deadlineDate/deadlineDays), então
+    // resolve o due usando os mesmos overrides que serão copiados pra `copy`.
+    const stageDue = resolveStageDueDate(stage, parent, ymd);
     const copy = {
       id: uid(),
       workspaceId: parent.workspaceId,

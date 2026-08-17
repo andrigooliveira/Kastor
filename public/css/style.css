@@ -69,7 +69,8 @@ body.user-moderator .full-admin-only { display: none !important; }
 
 .wizard-cust-row-v2 {
   display: grid;
-  grid-template-columns: 22px 30px minmax(190px,1fr) 66px 160px 48px 40px 40px 28px;
+  /* drag · ícone etapa · cor · nome · executor · data · dias · done · skip · remove */
+  grid-template-columns: 22px 24px 30px minmax(140px,1fr) minmax(140px,1fr) 68px 52px 32px 32px 28px;
   gap: 8px; align-items: center;
   padding: 8px 10px;
   background: var(--surface); border: 1px solid var(--hairline);
@@ -77,6 +78,27 @@ body.user-moderator .full-admin-only { display: none !important; }
   margin-bottom: 6px;
   transition: background .12s, border-color .12s, opacity .12s;
 }
+/* Ícone da etapa (Original/Nova) — substitui a badge de texto. 16px. */
+.wizard-cust-stage-mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: 6px;
+}
+.wizard-cust-stage-mark.is-original { color: var(--text-muted); }
+.wizard-cust-stage-mark.is-added {
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+/* Campo de data compacto (dd/mm) — bidirecional com dias. */
+.wizard-cust-date {
+  width: 100%; height: 32px; padding: 0 6px;
+  text-align: center; font-variant-numeric: tabular-nums;
+  font-size: 12px; color: var(--text);
+  background: var(--surface-2); border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.wizard-cust-date:hover { border-color: var(--accent); }
+.wizard-cust-date:focus { outline: none; border-color: var(--accent); }
 .wizard-cust-row-v2.is-skipped { opacity: 0.5; }
 /* Etapas adicionadas: sem tint roxo — a etiqueta "Nova" já as identifica. */
 .wizard-cust-row-v2.is-dragging { opacity: 0.4; }
@@ -107,6 +129,9 @@ body.user-moderator .full-admin-only { display: none !important; }
   background: var(--accent);
   color: #fff;
 }
+/* Executor: dropdown com avatar + nome. Dentro do menu, a opção do padrão
+   do fluxo ganha pill "PADRÃO" — indica qual é a escolha original sem
+   precisar de badge externa. */
 .wizard-cust-done, .wizard-cust-active {
   display: flex; align-items: center; gap: 4px;
   font-size: 11.5px; color: var(--text-dim);
@@ -1649,6 +1674,22 @@ tr:hover td { background: var(--surface-2); }
 }
 .filter-cdrop-item:hover { background: var(--surface-2); }
 .filter-cdrop-item.active { background: var(--accent-dim); color: var(--accent-text); }
+/* Highlight da opção padrão (ex.: executor default do fluxo no wizard).
+   Pill "Padrão" na direita + tint sutil de fundo. Fica atrás do .active. */
+.filter-cdrop-item.is-default:not(.active) {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+.filter-cdrop-default-tag {
+  margin-left: auto; flex-shrink: 0;
+  font-size: 9.5px; font-weight: 800;
+  padding: 2px 7px; border-radius: 100px;
+  letter-spacing: 0.05em; text-transform: uppercase;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent-text);
+}
+.filter-cdrop-item.active .filter-cdrop-default-tag {
+  background: rgba(255,255,255,.2); color: currentColor;
+}
 
 .demand-row { cursor: pointer; }
 .deadline-late { color: var(--danger); font-weight: 600; }
@@ -3393,7 +3434,49 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 .stages-edit-label-input:hover { background: var(--surface-3); border-color: var(--hairline); }
 .stages-edit-label-input:focus { background: var(--surface); border-color: var(--accent); box-shadow: var(--shadow-focus); }
 .stages-edit-badges { display: inline-flex; gap: 4px; flex-wrap: wrap; align-items: center; flex-shrink: 0; }
-.stages-edit-resp-wrap { width: 220px; flex-shrink: 0; }
+/* Marker de customização (label, responsável ou SLA diferente do padrão do fluxo).
+   Ícone sparkles 16px, sem texto — economiza espaço e é visualmente óbvio. */
+.stages-edit-custom-mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px;
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+/* Campo de data compacto (dd/mm) — bidirecional com o SLA em dias. */
+.stages-edit-date-input {
+  width: 68px; height: 36px; padding: 0 8px;
+  text-align: center; font-variant-numeric: tabular-nums;
+  font-size: 12.5px; color: var(--text);
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.stages-edit-date-input:hover { border-color: var(--accent); }
+.stages-edit-date-input:focus { outline: none; border-color: var(--accent); box-shadow: var(--shadow-focus); }
+.stages-edit-date-input:disabled { opacity: 0.4; cursor: not-allowed; }
+/* Tooltip transitório ao tentar setar data anterior à etapa anterior. */
+.stage-date-tooltip {
+  position: absolute; z-index: 9999;
+  max-width: 300px;
+  padding: 8px 12px; border-radius: 8px;
+  background: var(--danger, #d64545); color: #fff;
+  font-size: 12px; font-weight: 500; line-height: 1.4;
+  box-shadow: 0 4px 16px rgba(0,0,0,.35);
+  opacity: 0; transform: translateY(-4px);
+  transition: opacity .15s ease, transform .15s ease;
+  pointer-events: none;
+}
+.stage-date-tooltip.show { opacity: 1; transform: translateY(0); }
+.stage-date-tooltip::before {
+  content: ''; position: absolute; top: -5px; left: 16px;
+  width: 8px; height: 8px; background: var(--danger, #d64545);
+  transform: rotate(45deg);
+}
+.stages-edit-row.off .stages-edit-date-input { pointer-events: none; opacity: 0.6; }
+.stages-edit-resp-wrap { width: 170px; flex-shrink: 0; }
 .stages-edit-resp-wrap .filter-cdrop { min-width: 100%; }
 .stages-edit-resp-wrap .filter-cdrop-trigger { height: 36px; }
 .stages-edit-row.off .stages-edit-resp-wrap { pointer-events: none; opacity: 0.6; }
@@ -7682,13 +7765,16 @@ tr.demand-row:hover {
 .checklist-owner { display: inline-flex; align-items: center; flex-shrink: 0; }
 .checklist-owner-av { width: 22px !important; height: 22px !important; font-size: 10px !important; }
 
-/* ── PASSO CUSTOMIZAR — toggles Conclui/Ativa como ícones ── */
+/* ── PASSO CUSTOMIZAR — toggles Conclui/Ativa como ícones (16px) ── */
 .cust-icon-toggle {
-  width: 36px; height: 36px; margin: 0 auto;
+  width: 32px; height: 32px; margin: 0 auto;
   display: flex; align-items: center; justify-content: center;
   background: transparent; border: 1px solid var(--hairline);
-  border-radius: 9px; color: var(--text-muted); cursor: pointer;
+  border-radius: 8px; color: var(--text-muted); cursor: pointer;
   transition: background .14s var(--ease-out), border-color .14s var(--ease-out), color .14s var(--ease-out), transform .12s var(--ease-spring);
+}
+.cust-icon-toggle i, .cust-icon-toggle svg {
+  width: 16px !important; height: 16px !important;
 }
 .cust-icon-toggle:hover { color: var(--text); border-color: var(--text-muted); background: var(--surface-2); }
 .cust-icon-toggle:active { transform: scale(.9); }

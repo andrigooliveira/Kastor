@@ -640,6 +640,24 @@ function _pickAssignment(assignVal, cargo) {
   }
   return null;
 }
+/* Resolve executor padrão de uma etapa quando ainda não existe uma demanda
+   (usado no wizard "Nova demanda"). Segue a mesma cadeia:
+     1) stage.responsibleId direto
+     2) stage.responsibleRole (+position) → project → client roleAssignments */
+function resolveDefaultUserIdForStage(stage, projectId) {
+  if (!stage) return null;
+  if (stage.responsibleId) return stage.responsibleId;
+  if (stage.responsibleRole) {
+    const cargo = stage.responsiblePosition || null;
+    const p = projectId ? projectById(projectId) : null;
+    const projAssign = _pickAssignment(p?.roleAssignments?.[stage.responsibleRole], cargo);
+    if (projAssign) return projAssign;
+    const c = p?.clientId ? clientById(p.clientId) : null;
+    const cliAssign = _pickAssignment(c?.roleAssignments?.[stage.responsibleRole], cargo);
+    if (cliAssign) return cliAssign;
+  }
+  return null;
+}
 /* Versão completa com resolução via função (role → project → client roleAssignments).
    Espelha resolveStageOwner do backend. Retorna userId ou null. */
 function resolveStageOwnerId(d, stage) {
@@ -875,6 +893,9 @@ function applyFilterDropdown(selId, opts = {}) {
   const value = sel.value;
   const options = [...sel.options].map(o => {
     const opt = { value: o.value, label: o.label };
+    // data-default="1" no <option> vira flag isDefault no item do cdrop —
+    // usado pra highlightar a opção "padrão do fluxo" no menu do executor.
+    if (o.dataset && o.dataset.default) opt.isDefault = true;
     if (opts.userIcon && o.value) {
       const u = userById(o.value);
       if (u) opt.avatar = avatarHTML(u, 'avatar filter-cdrop-avatar');
@@ -903,9 +924,10 @@ function applyFilterDropdown(selId, opts = {}) {
     </button>
     <div class="filter-cdrop-menu">
       ${options.map(o => `
-        <div class="filter-cdrop-item ${o.value === value ? 'active' : ''}" onclick="pickFilterCdrop('${esc(selId)}', this.dataset.v)" data-v="${esc(o.value)}">
+        <div class="filter-cdrop-item ${o.value === value ? 'active' : ''} ${o.isDefault ? 'is-default' : ''}" onclick="pickFilterCdrop('${esc(selId)}', this.dataset.v)" data-v="${esc(o.value)}">
           ${o.avatar || ''}
           <span>${esc(o.label)}</span>
+          ${o.isDefault ? '<span class="filter-cdrop-default-tag">Padrão</span>' : ''}
         </div>`).join('')}
     </div>
   `;
@@ -1006,7 +1028,13 @@ function _flushAutoCdropQueue() {
     if (sel.hasAttribute('data-no-cdrop')) return;
     if (sel.multiple || sel.size > 1) return;
     if (!sel.id) sel.id = `auto-cdrop-${++_autoCdropSeq}`;
-    applyFilterDropdown(sel.id); // idempotente: cria wrap se não existir, atualiza se existir
+    // data-cdrop-icon="user|project|client" pinta avatar nas opções + no trigger.
+    const iconKind = sel.getAttribute('data-cdrop-icon');
+    const opts = {};
+    if (iconKind === 'user')    opts.userIcon = true;
+    if (iconKind === 'project') opts.projectIcon = true;
+    if (iconKind === 'client')  opts.clientIcon = true;
+    applyFilterDropdown(sel.id, opts); // idempotente
     processed++;
   });
   _autoCdropQueue.clear();
@@ -2271,10 +2299,13 @@ function fdpFormatDate(year, month, day) {
 function fdpFormatDateTime(year, month, day, hour, minute) {
   return `${fdpFormatDate(year, month, day)}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
-function fdpFormatDisplay(value, mode) {
-  // Para exibição amigável no input "text" (dd/mm/aaaa ou dd/mm/aaaa HH:MM)
+function fdpFormatDisplay(value, mode, displayFmt) {
+  // Formatos: 'short' → dd/mm · padrão → dd/mm/aaaa · datetime → dd/mm/aaaa HH:MM.
   const p = fdpParse(value);
   if (!p) return '';
+  if (displayFmt === 'short') {
+    return `${String(p.day).padStart(2, '0')}/${String(p.month + 1).padStart(2, '0')}`;
+  }
   const d = `${String(p.day).padStart(2, '0')}/${String(p.month + 1).padStart(2, '0')}/${p.year}`;
   if (mode === 'datetime') return `${d} ${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`;
   return d;
@@ -2547,25 +2578,31 @@ function fdpInitGlobal() {
 const FDP_NATIVE_VALUE = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
 
 function fdpConvertAll() {
-  // Converte qualquer <input type=date|datetime-local> ainda não tratado
+  // Converte qualquer <input type=date|datetime-local> ainda não tratado.
+  // `data-fdp-display="short"` renderiza dd/mm (sem ano) — usado em campos
+  // apertados como a coluna de data das etapas.
   document.querySelectorAll('input[type="date"]:not([data-fdp]), input[type="datetime-local"]:not([data-fdp])').forEach(inp => {
     const mode = inp.type === 'datetime-local' ? 'datetime' : 'date';
     const isoVal = FDP_NATIVE_VALUE.get.call(inp); // valor original (ISO)
+    const displayFmt = inp.dataset.fdpDisplay || null;
     inp.type = 'text';
     inp.setAttribute('readonly', 'readonly');
     inp.setAttribute('autocomplete', 'off');
-    inp.setAttribute('placeholder', mode === 'datetime' ? 'dd/mm/aaaa --:--' : 'dd/mm/aaaa');
+    const placeholder = displayFmt === 'short'
+      ? 'dd/mm'
+      : (mode === 'datetime' ? 'dd/mm/aaaa --:--' : 'dd/mm/aaaa');
+    inp.setAttribute('placeholder', placeholder);
     inp.dataset.fdp = mode;
     inp._fdpValue = isoVal || '';
     // Define o texto exibido (formatado) sem disparar nosso setter
-    FDP_NATIVE_VALUE.set.call(inp, fdpFormatDisplay(inp._fdpValue, mode));
+    FDP_NATIVE_VALUE.set.call(inp, fdpFormatDisplay(inp._fdpValue, mode, displayFmt));
     // Sobrescreve .value: getter retorna ISO; setter aceita ISO e atualiza texto
     Object.defineProperty(inp, 'value', {
       configurable: true,
       get() { return this._fdpValue || ''; },
       set(v) {
         this._fdpValue = v || '';
-        FDP_NATIVE_VALUE.set.call(this, fdpFormatDisplay(this._fdpValue, this.dataset.fdp));
+        FDP_NATIVE_VALUE.set.call(this, fdpFormatDisplay(this._fdpValue, this.dataset.fdp, this.dataset.fdpDisplay || null));
       }
     });
   });
@@ -7321,11 +7358,11 @@ function renderDetail() {
             <button class="detail-icon-btn" title="Editar briefing" onclick="editBriefingInline()"><i data-lucide="pencil" class="ic-sm"></i></button>
           </div>
           <div id="detail-briefing-view">
-            ${d.briefing ? `<a class="detail-briefing-link" href="${esc(normalizeUrl(d.briefing))}" target="_blank" rel="noopener noreferrer">${esc(d.briefing)}</a>` : '<span style="color:var(--text-muted)">Sem briefing cadastrado</span>'}
+            ${d.briefing ? `<a class="detail-briefing-link" href="${esc(normalizeUrl(d.briefing))}" target="_blank" rel="noopener noreferrer">${esc(d.briefing)}</a>` : '<div class="hours-empty" style="text-align:left">Sem briefing cadastrado.</div>'}
           </div>
           <div class="field-label" style="margin-top:18px">Descrição</div>
           <div id="detail-description-view">
-            ${d.description ? `<div class="detail-description md-body">${mdRender(d.description)}</div>` : '<span style="color:var(--text-muted)">Sem descrição cadastrada</span>'}
+            ${d.description ? `<div class="detail-description md-body">${mdRender(d.description)}</div>` : '<div class="hours-empty" style="text-align:left">Sem descrição cadastrada.</div>'}
           </div>
         </div>
 
@@ -7611,14 +7648,18 @@ function openDetailStages() {
   const savedOv = (d.stageOverrides && typeof d.stageOverrides === 'object') ? d.stageOverrides : {};
   const flowForSeed = flowById(d.flowId);
   const seedSla = {};
+  const seedDates = {};
   (flowForSeed?.stages || []).forEach(s => {
     seedSla[s.id] = (savedOv[s.id]?.deadlineDays !== undefined) ? savedOv[s.id].deadlineDays : (s.deadlineDays ?? null);
+    // Âncora de data (se salva): sobrepõe o SLA na cascata.
+    if (savedOv[s.id]?.deadlineDate) seedDates[s.id] = savedOv[s.id].deadlineDate;
   });
   stagesEditDraft = {
     skipped: new Set(Array.isArray(d.skippedStages) ? d.skippedStages : []),
     responsibles: { ...(d.stageResponsibles && typeof d.stageResponsibles === 'object' ? d.stageResponsibles : {}) },
     labels: { ...(d.stageLabels && typeof d.stageLabels === 'object' ? d.stageLabels : {}) },
     sla: seedSla,
+    dates: seedDates,
     order: initialOrder,
   };
   detailView = 'stages';
@@ -7632,8 +7673,16 @@ function toggleStageDraft(stageId) {
 }
 function setStageResponsibleDraft(stageId, value) {
   if (!stagesEditDraft) return;
-  // value: '' = sem responsável (null override) · '__default__' = remove override · userId = override
-  if (value === '__default__') {
+  const d = demandById(detailId);
+  const flow = d ? flowById(d.flowId) : null;
+  const stage = flow?.stages.find(s => s.id === stageId) || (d?.stageAdditions || []).find(s => s.id === stageId);
+  // Padrão resolvido (id direto ou via role assignments) — se o usuário escolher
+  // esse mesmo id, remove override (é equivalente a "voltar pro padrão").
+  const defaultRespId = resolveStageOwnerId(d, stage) || '';
+  // value: '' = sem responsável (null override) · '__default__' = remove override
+  // · userId igual ao padrão do fluxo = também remove override (é o mesmo estado)
+  // · outro userId = override.
+  if (value === '__default__' || (value && value === defaultRespId)) {
     delete stagesEditDraft.responsibles[stageId];
   } else if (value === '') {
     stagesEditDraft.responsibles[stageId] = null;
@@ -7669,12 +7718,14 @@ function refreshStagesEditButtons(d) {
     }
     return false;
   })();
+  const hasDateAnchor = !!(stagesEditDraft?.dates && Object.keys(stagesEditDraft.dates).length);
   const empty = !stagesEditDraft || (
     stagesEditDraft.skipped.size === 0 &&
     Object.keys(stagesEditDraft.responsibles).length === 0 &&
     Object.keys(stagesEditDraft.labels).length === 0 &&
     !isStagesOrderCustomized(d) &&
-    !hasSlaOverride
+    !hasSlaOverride &&
+    !hasDateAnchor
   );
   const saveBtn = document.getElementById('stages-edit-save');
   const resetBtn = document.getElementById('stages-edit-reset');
@@ -7701,6 +7752,7 @@ function resetStagesDraft() {
     responsibles: {},
     labels: {},
     sla: seedSla,
+    dates: {},
     order: d ? _demandStageIdPool(d) : [],
   };
   renderDetail();
@@ -7712,30 +7764,79 @@ function resetStagesDraft() {
 function setStageSlaDraft(stageId, value) {
   if (!stagesEditDraft) return;
   if (!stagesEditDraft.sla) stagesEditDraft.sla = {};
+  if (!stagesEditDraft.dates) stagesEditDraft.dates = {};
   const trimmed = String(value ?? '').trim();
+  const d = demandById(detailId); if (!d) return;
+  const flow = flowById(d.flowId);
+  const origSla = flow?.stages.find(s => s.id === stageId)?.deadlineDays ?? null;
   if (trimmed === '') {
-    stagesEditDraft.sla[stageId] = null;
+    // Vazio = voltar pro padrão do fluxo (limpa dias e âncora de data).
+    stagesEditDraft.sla[stageId] = origSla;
+    delete stagesEditDraft.dates[stageId];
   } else {
     const n = Number(trimmed);
     if (!Number.isInteger(n) || n < 0) return; // ignora inválido silenciosamente
     stagesEditDraft.sla[stageId] = n;
+    // Se o valor bate com o padrão do fluxo, é como "voltar pro padrão".
+    if (n === (origSla ?? null)) {
+      delete stagesEditDraft.dates[stageId];
+    } else {
+      // Edição real: transforma em âncora de data (cascade até esta etapa + n).
+      // Assim a data planejada VENCE quando a demanda avança, mesmo pra SLA=0.
+      stagesEditDraft.dates[stageId] = _computeStageAnchorDate(d, stageId, n);
+    }
   }
-  const d = demandById(detailId); if (!d) return;
   refreshStagesEditButtons(d);
+}
+/* Calcula a data-âncora da etapa `stageId` = baseline + soma efetiva dos dias
+   até a etapa anterior + `overrideDays` (dias editados agora). Respeita
+   âncoras de data das etapas anteriores na cascata. */
+function _computeStageAnchorDate(d, stageId, overrideDays) {
+  const flow = flowById(d.flowId);
+  const rowsList = (stagesEditDraft.order || _demandStageIdPool(d))
+    .map(id => flow?.stages.find(s => s.id === id) || (d.stageAdditions || []).find(s => s.id === id))
+    .filter(Boolean);
+  const idx = rowsList.findIndex(s => s.id === stageId);
+  if (idx < 0) return null;
+  const flowSlaById = new Map((flow?.stages || []).map(s => [s.id, s.deadlineDays ?? null]));
+  const baselineYmd = (d.createdAt || '').slice(0, 10) || todayStr();
+  let lastEnd = baselineYmd;
+  for (let k = 0; k < idx; k++) {
+    const st = rowsList[k];
+    const anchor = stagesEditDraft.dates?.[st.id];
+    if (anchor) { lastEnd = anchor; continue; }
+    const days = (stagesEditDraft.sla && Object.prototype.hasOwnProperty.call(stagesEditDraft.sla, st.id))
+      ? Number(stagesEditDraft.sla[st.id] ?? 0)
+      : Number((flowSlaById.has(st.id) ? flowSlaById.get(st.id) : st.deadlineDays) ?? 0);
+    lastEnd = _addDays(lastEnd, days);
+  }
+  return _addDays(lastEnd, Number(overrideDays) || 0);
 }
 async function saveStagesDraft() {
   if (!stagesEditDraft) return;
   const d = demandById(detailId); if (!d) return;
-  // Monta stageOverrides só com as chaves onde o SLA difere do padrão do fluxo.
-  // O server valida de novo — isto é só pra não mandar payload inflado.
+  // Monta stageOverrides com deadlineDays (diferente do padrão) OU deadlineDate
+  // (âncora). Payload inflado é evitado — server valida de novo.
   const flow = flowById(d.flowId);
   const flowSlaById = new Map((flow?.stages || []).map(s => [s.id, s.deadlineDays ?? null]));
   const overrides = {};
-  for (const [sid, v] of Object.entries(stagesEditDraft.sla || {})) {
-    const orig = flowSlaById.has(sid) ? flowSlaById.get(sid) : undefined;
-    if (orig === undefined) continue; // não é etapa do fluxo → ignora aqui
-    if ((v ?? null) === (orig ?? null)) continue; // igual ao padrão → sem override
-    overrides[sid] = { deadlineDays: v };
+  const savedOv = (d.stageOverrides && typeof d.stageOverrides === 'object') ? d.stageOverrides : {};
+  // Coleta ids que aparecem em qualquer draft, para não deixar de mandar limpezas.
+  const allIds = new Set([
+    ...Object.keys(stagesEditDraft.sla || {}),
+    ...Object.keys(stagesEditDraft.dates || {}),
+    ...Object.keys(savedOv),
+  ]);
+  for (const sid of allIds) {
+    if (!flowSlaById.has(sid)) continue;
+    const orig = flowSlaById.get(sid);
+    const draftSla = Object.prototype.hasOwnProperty.call(stagesEditDraft.sla || {}, sid) ? stagesEditDraft.sla[sid] : orig;
+    const draftDate = stagesEditDraft.dates?.[sid] || null;
+    const out = {};
+    if ((draftSla ?? null) !== (orig ?? null)) out.deadlineDays = draftSla;
+    if (draftDate) out.deadlineDate = draftDate;
+    else if (savedOv[sid]?.deadlineDate) out.deadlineDate = null; // limpa âncora salva
+    if (Object.keys(out).length) overrides[sid] = out;
   }
   try {
     const upd = await api('/demands/' + d.id + '/skipped-stages', 'PUT', {
@@ -7784,6 +7885,7 @@ function isStagesDraftDirty(d) {
   const flowSlaById = new Map((flow?.stages || []).map(s => [s.id, s.deadlineDays ?? null]));
   const savedOverrides = (d.stageOverrides && typeof d.stageOverrides === 'object') ? d.stageOverrides : {};
   const draftSla = stagesEditDraft.sla || {};
+  const draftDates = stagesEditDraft.dates || {};
   const slaKeys = new Set([...Object.keys(savedOverrides), ...Object.keys(draftSla)]);
   for (const sid of slaKeys) {
     if (!flowSlaById.has(sid)) continue; // ignora ids fora do fluxo
@@ -7792,6 +7894,13 @@ function isStagesDraftDirty(d) {
     const saved = (savedRaw === undefined ? orig : savedRaw); // sem override = valor do fluxo
     const draftVal = Object.prototype.hasOwnProperty.call(draftSla, sid) ? draftSla[sid] : orig;
     if ((saved ?? null) !== (draftVal ?? null)) return true;
+  }
+  // Âncora de data: qualquer diferença entre draft.dates e stageOverrides[sid].deadlineDate.
+  const dateKeys = new Set([...Object.keys(savedOverrides), ...Object.keys(draftDates)]);
+  for (const sid of dateKeys) {
+    const saved = savedOverrides[sid]?.deadlineDate || null;
+    const draft = draftDates[sid] || null;
+    if (saved !== draft) return true;
   }
   return false;
 }
@@ -7827,6 +7936,108 @@ function stagesDragEnd() {
   stagesDragIdx = null;
   document.querySelectorAll('.stages-edit-row').forEach(r => r.classList.remove('dragging','drag-over'));
 }
+/* Cálculo bidirecional data ↔ dias no editor "Etapas desta demanda".
+   Baseline = createdAt da demanda. Data final da etapa i é:
+      baseline + sum(days[0..i])
+   Mudar a data recalcula os dias da etapa (novos dias = data - final anterior).
+   Sem forecast/skip de fim de semana aqui — simples e previsível. */
+function _addDays(ymd, days) {
+  if (!ymd) return null;
+  const d = new Date(ymd + 'T12:00:00');
+  d.setDate(d.getDate() + (Number(days) || 0));
+  return d.toISOString().slice(0, 10);
+}
+function _daysDiff(startYmd, endYmd) {
+  if (!startYmd || !endYmd) return 0;
+  const s = new Date(startYmd + 'T12:00:00');
+  const e = new Date(endYmd + 'T12:00:00');
+  return Math.round((e - s) / 86400000);
+}
+/* Data final calculada da etapa i, dado o baseline e a lista ordenada de dias. */
+function _stageEndFromDays(baselineYmd, daysArray, idx) {
+  let cum = 0;
+  for (let k = 0; k <= idx; k++) cum += Number(daysArray[k] ?? 0);
+  return _addDays(baselineYmd, cum);
+}
+/* Handler: usuário editou a data final da etapa. A data vira uma ÂNCORA que
+   sobrepõe o SLA em dias — não converte pra dias, grava a data em si. Se a
+   etapa anterior mudar depois, essa data continua fixa.
+   Se a data for anterior ao fim da etapa anterior, mostra tooltip explicando
+   por que a mudança foi rejeitada (o cronograma tem que ser não-decrescente). */
+function setStageDateDraft(stageId, isoDate) {
+  if (!stagesEditDraft) return;
+  if (!stagesEditDraft.dates) stagesEditDraft.dates = {};
+  if (!stagesEditDraft.sla) stagesEditDraft.sla = {};
+  if (!isoDate) {
+    delete stagesEditDraft.dates[stageId];
+    renderDetail();
+    return;
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return;
+  const d = demandById(detailId);
+  if (!d) return;
+  const flow = flowById(d.flowId);
+  const rowsList = stagesEditDraft.order
+    .map(id => flow?.stages.find(s => s.id === id) || (d.stageAdditions || []).find(s => s.id === id))
+    .filter(Boolean);
+  const idx = rowsList.findIndex(s => s.id === stageId);
+  const flowSlaById = new Map((flow?.stages || []).map(s => [s.id, s.deadlineDays ?? null]));
+  const baselineYmd = (d.createdAt || '').slice(0, 10) || todayStr();
+  // Calcula fim da etapa anterior (respeita âncoras já gravadas).
+  let prevEnd = baselineYmd;
+  for (let k = 0; k < idx; k++) {
+    const st = rowsList[k];
+    const anchor = stagesEditDraft.dates?.[st.id];
+    if (anchor) { prevEnd = anchor; continue; }
+    const days = (stagesEditDraft.sla && Object.prototype.hasOwnProperty.call(stagesEditDraft.sla, st.id))
+      ? Number(stagesEditDraft.sla[st.id] ?? 0)
+      : Number((flowSlaById.has(st.id) ? flowSlaById.get(st.id) : st.deadlineDays) ?? 0);
+    prevEnd = _addDays(prevEnd, days);
+  }
+  // Valida contra a etapa anterior — data não pode retroceder.
+  if (idx > 0 && isoDate < prevEnd) {
+    const prev = rowsList[idx - 1];
+    const prevLabel = stagesEditDraft.labels?.[prev.id] || prev.label;
+    _showStageDateTooltip(stageId, `Não é possível colocar data anterior à etapa "${prevLabel}" (termina em ${_fmtDayMonth(prevEnd)}).`);
+    renderDetail();
+    return;
+  }
+  // Grava a âncora E recalcula o SLA em dias como visualização coerente:
+  // dias = data_ancora - fim_da_anterior. Assim o campo "d" reflete quantos
+  // dias o usuário terá pra executar (0 = mesmo dia).
+  stagesEditDraft.dates[stageId] = isoDate;
+  stagesEditDraft.sla[stageId] = _daysDiff(prevEnd, isoDate);
+  renderDetail();
+}
+/* Formata YYYY-MM-DD → dd/mm (usado nas mensagens de erro do editor). */
+function _fmtDayMonth(ymd) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ymd || '');
+  return m ? `${m[3]}/${m[2]}` : ymd;
+}
+/* Tooltip transitório que aparece perto do campo de data de uma etapa. */
+function _showStageDateTooltip(stageId, message) {
+  // Tenta os dois seletores: editor "Etapas desta demanda" e wizard cust.
+  const row = document.querySelector(`.stages-edit-row[data-stage-id="${stageId}"], .wizard-cust-row-v2[data-stage-id="${stageId}"]`)
+    || [...document.querySelectorAll('.stages-edit-row, .wizard-cust-row-v2')].find(r => {
+      const inp = r.querySelector('input[type="date"], input[data-fdp]');
+      return inp && inp.closest(`[data-stage-id="${stageId}"]`);
+    });
+  const input = row?.querySelector('.stages-edit-date-input, .wizard-cust-date');
+  const anchor = input || row;
+  if (!anchor) { toast(message, 'warn'); return; }
+  const rect = anchor.getBoundingClientRect();
+  const tip = document.createElement('div');
+  tip.className = 'stage-date-tooltip';
+  tip.textContent = message;
+  tip.style.left = (rect.left + window.scrollX) + 'px';
+  tip.style.top  = (rect.bottom + window.scrollY + 6) + 'px';
+  document.body.appendChild(tip);
+  requestAnimationFrame(() => tip.classList.add('show'));
+  setTimeout(() => {
+    tip.classList.remove('show');
+    setTimeout(() => tip.remove(), 180);
+  }, 3500);
+}
 function renderDetailStages(d) {
   const flow = flowById(d.flowId);
   // Pool completo de etapas visíveis pra essa demanda: originais do fluxo + as
@@ -7850,10 +8061,12 @@ function renderDetailStages(d) {
     }
     const savedOvFb = (d.stageOverrides && typeof d.stageOverrides === 'object') ? d.stageOverrides : {};
     const seedSlaFb = {};
+    const seedDatesFb = {};
     (flow?.stages || []).forEach(s => {
       seedSlaFb[s.id] = (savedOvFb[s.id]?.deadlineDays !== undefined) ? savedOvFb[s.id].deadlineDays : (s.deadlineDays ?? null);
+      if (savedOvFb[s.id]?.deadlineDate) seedDatesFb[s.id] = savedOvFb[s.id].deadlineDate;
     });
-    stagesEditDraft = { skipped: new Set(d.skippedStages || []), responsibles: { ...(d.stageResponsibles || {}) }, labels: { ...(d.stageLabels || {}) }, sla: seedSlaFb, order: initOrder };
+    stagesEditDraft = { skipped: new Set(d.skippedStages || []), responsibles: { ...(d.stageResponsibles || {}) }, labels: { ...(d.stageLabels || {}) }, sla: seedSlaFb, dates: seedDatesFb, order: initOrder };
   }
   const draft = stagesEditDraft;
   const dirty = isStagesDraftDirty(d);
@@ -7862,7 +8075,8 @@ function renderDetailStages(d) {
   const hasSlaOv = !!(draft.sla && Object.entries(draft.sla).some(([sid, v]) =>
     flowSlaById.has(sid) && ((v ?? null) !== (flowSlaById.get(sid) ?? null))
   ));
-  const empty = draft.skipped.size === 0 && Object.keys(draft.responsibles).length === 0 && Object.keys(draft.labels).length === 0 && !isStagesOrderCustomized(d) && !hasSlaOv;
+  const hasDateAnchorOv = !!(draft.dates && Object.keys(draft.dates).length);
+  const empty = draft.skipped.size === 0 && Object.keys(draft.responsibles).length === 0 && Object.keys(draft.labels).length === 0 && !isStagesOrderCustomized(d) && !hasSlaOv && !hasDateAnchorOv;
   const sortedUsers = wsUsers().slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
 
   // Itera na ordem do draft, resolvendo cada ID no pool completo (fluxo + additions)
@@ -7897,64 +8111,98 @@ function renderDetailStages(d) {
           o responsável no dropdown. As alterações afetam <strong>apenas esta demanda</strong> —
           o fluxo original <strong>${esc(flow?.name || '—')}</strong> continua intacto.
         </div>
-        ${flow ? `<div class="stages-edit-list">${rowsList.map((s, i) => {
-          const isCurrent = s.id === d.status;
-          const isOn = !draft.skipped.has(s.id);
-          const hasRespOverride = Object.prototype.hasOwnProperty.call(draft.responsibles, s.id);
-          const currentResp = hasRespOverride ? draft.responsibles[s.id] : (s.responsibleId || null);
-          const defaultUser = s.responsibleId ? userById(s.responsibleId) : null;
-          const defaultLabel = defaultUser ? `Padrão do fluxo: ${defaultUser.name}` : 'Padrão do fluxo: sem responsável';
-          const selectId = `stages-resp-${s.id}`;
-          const currentLabel = draft.labels[s.id] || s.label;
-          const hasLabelOverride = !!draft.labels[s.id];
-          const lockedReason = isCurrent ? 'Etapa atual — mude antes para desativar' : '';
-          // SLA: só editável em etapas do FLUXO original (additions têm seu próprio deadlineDays).
-          const isFlowStage = flowSlaById.has(s.id);
-          const origSla = isFlowStage ? flowSlaById.get(s.id) : (s.deadlineDays ?? null);
-          const draftSlaVal = draft.sla && Object.prototype.hasOwnProperty.call(draft.sla, s.id) ? draft.sla[s.id] : origSla;
-          const hasSlaOverride = isFlowStage && ((draftSlaVal ?? null) !== (origSla ?? null));
-          return `<div class="stages-edit-row ${isOn ? 'on' : 'off'} ${isCurrent ? 'locked' : ''}"
-                       ondragover="stagesDragOver(event, ${i})"
-                       ondragleave="stagesDragLeave(event)"
-                       ondrop="stagesDrop(event, ${i})"
-                       ondragend="stagesDragEnd()"
-                       ${lockedReason ? `title="${esc(lockedReason)}"` : ''}>
-            <div class="stages-edit-grip" draggable="true" ondragstart="stagesDragStart(event, ${i})" title="Arraste para reordenar"><i data-lucide="grip-vertical" class="ic-sm"></i></div>
-            <input type="checkbox" ${isOn ? 'checked' : ''} ${isCurrent ? 'disabled' : ''} onchange="toggleStageDraft('${s.id}')">
-            <span class="stages-edit-num">${String(i + 1).padStart(2, '0')}</span>
-            <span class="pill-dot" style="background:${s.color}"></span>
-            <input class="form-control stages-edit-label-input" value="${esc(currentLabel)}" placeholder="${esc(s.label)}" oninput="setStageLabelDraft('${s.id}', this.value)" maxlength="80">
-            <div class="stages-edit-badges">
-              ${s.done ? '<span class="pill pill-success" style="font-size:9px">Conclusão</span>' : ''}
-              ${isCurrent ? '<span class="pill" style="font-size:9px;background:var(--accent-dim);color:var(--accent-text)">Atual</span>' : ''}
-              ${!isOn && !isCurrent ? '<span class="pill pill-muted" style="font-size:9px">Desativada</span>' : ''}
-              ${hasLabelOverride ? '<span class="pill" style="font-size:9px;background:var(--accent-dim);color:var(--accent-text)">Renomeada</span>' : ''}
-              ${hasRespOverride ? '<span class="pill" style="font-size:9px;background:var(--accent-dim);color:var(--accent-text)">Resp. customizado</span>' : ''}
-              ${hasSlaOverride ? `<span class="pill" style="font-size:9px;background:var(--accent-dim);color:var(--accent-text)" title="Padrão do fluxo: ${origSla ?? 'sem SLA'}">SLA customizado</span>` : ''}
-            </div>
-            <div class="stages-edit-sla-wrap" title="SLA da etapa em dias — vazio = sem prazo definido">
-              <input type="number" min="0" step="1" class="form-control stages-edit-sla-input"
-                     placeholder="${origSla ?? '—'}"
-                     value="${draftSlaVal ?? ''}"
-                     ${isFlowStage ? '' : 'disabled title="Etapa adicionada por instância — edite pelo wizard"'}
-                     oninput="setStageSlaDraft('${s.id}', this.value)">
-              <span class="stages-edit-sla-suffix">d</span>
-            </div>
-            <div class="stages-edit-resp-wrap">
-              <select id="${selectId}" class="form-control" onchange="setStageResponsibleDraft('${s.id}', this.value)">
-                <option value="__default__" ${!hasRespOverride ? 'selected' : ''}>${esc(defaultLabel)}</option>
-                <option value="" ${hasRespOverride && currentResp === null ? 'selected' : ''}>— Sem responsável —</option>
-                ${sortedUsers.map(u => `<option value="${u.id}" ${currentResp === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}
-              </select>
-            </div>
-          </div>`;
-        }).join('')}</div>` : '<div class="hours-empty">Esta demanda não tem fluxo associado.</div>'}
+        ${flow ? `<div class="stages-edit-list">${(() => {
+          // Data efetiva por etapa. Se houver âncora (draft.dates[sid]) ela ganha
+          // e vira o novo baseline pras próximas etapas cascatearem em cima.
+          const baselineYmd = (d.createdAt || '').slice(0, 10) || todayStr();
+          const effectiveDays = rowsList.map(s => {
+            if (draft.sla && Object.prototype.hasOwnProperty.call(draft.sla, s.id)) return Number(draft.sla[s.id] ?? 0);
+            if (flowSlaById.has(s.id)) return Number(flowSlaById.get(s.id) ?? 0);
+            return Number(s.deadlineDays ?? 0);
+          });
+          const endDates = [];
+          let lastEnd = baselineYmd;
+          rowsList.forEach((s, i) => {
+            const anchor = draft.dates && draft.dates[s.id];
+            const end = anchor || _addDays(lastEnd, effectiveDays[i] ?? 0);
+            endDates.push(end);
+            lastEnd = end;
+          });
+          return rowsList.map((s, i) => {
+            const isCurrent = s.id === d.status;
+            const isOn = !draft.skipped.has(s.id);
+            const hasRespOverride = Object.prototype.hasOwnProperty.call(draft.responsibles, s.id);
+            // Padrão resolvido: stage.responsibleId direto ou role → project/client.
+            const defaultRespId = resolveStageOwnerId(d, s);
+            const currentResp = hasRespOverride ? draft.responsibles[s.id] : defaultRespId;
+            const defaultUser = defaultRespId ? userById(defaultRespId) : null;
+            const defaultLabel = defaultUser ? `Padrão do fluxo: ${defaultUser.name}` : 'Padrão do fluxo: sem responsável';
+            const selectId = `stages-resp-${s.id}`;
+            const currentLabel = draft.labels[s.id] || s.label;
+            const hasLabelOverride = !!draft.labels[s.id];
+            const lockedReason = isCurrent ? 'Etapa atual — mude antes para desativar' : '';
+            const isFlowStage = flowSlaById.has(s.id);
+            const origSla = isFlowStage ? flowSlaById.get(s.id) : (s.deadlineDays ?? null);
+            const draftSlaVal = draft.sla && Object.prototype.hasOwnProperty.call(draft.sla, s.id) ? draft.sla[s.id] : origSla;
+            const hasSlaOverride = isFlowStage && ((draftSlaVal ?? null) !== (origSla ?? null));
+            // Marker único de customização (label, resp, SLA ou data-âncora) —
+            // vira um ícone sparkles 16px no lugar das 3 pills anteriores.
+            const hasDateAnchor = !!(draft.dates && draft.dates[s.id]);
+            const isCustomized = hasLabelOverride || hasRespOverride || hasSlaOverride || hasDateAnchor;
+            const endDate = endDates[i];
+            return `<div class="stages-edit-row ${isOn ? 'on' : 'off'} ${isCurrent ? 'locked' : ''}"
+                         data-stage-id="${s.id}"
+                         ondragover="stagesDragOver(event, ${i})"
+                         ondragleave="stagesDragLeave(event)"
+                         ondrop="stagesDrop(event, ${i})"
+                         ondragend="stagesDragEnd()"
+                         ${lockedReason ? `title="${esc(lockedReason)}"` : ''}>
+              <div class="stages-edit-grip" draggable="true" ondragstart="stagesDragStart(event, ${i})" title="Arraste para reordenar"><i data-lucide="grip-vertical" class="ic-md"></i></div>
+              <input type="checkbox" ${isOn ? 'checked' : ''} ${isCurrent ? 'disabled' : ''} onchange="toggleStageDraft('${s.id}')">
+              <span class="stages-edit-num">${String(i + 1).padStart(2, '0')}</span>
+              <span class="pill-dot" style="background:${s.color}"></span>
+              <input class="form-control stages-edit-label-input" value="${esc(currentLabel)}" placeholder="${esc(s.label)}" oninput="setStageLabelDraft('${s.id}', this.value)" maxlength="80">
+              <div class="stages-edit-badges">
+                ${s.done ? '<span class="pill pill-success" style="font-size:9px">Conclusão</span>' : ''}
+                ${isCurrent ? '<span class="pill" style="font-size:9px;background:var(--accent-dim);color:var(--accent-text)">Atual</span>' : ''}
+                ${!isOn && !isCurrent ? '<span class="pill pill-muted" style="font-size:9px">Desativada</span>' : ''}
+                ${isCustomized ? '<span class="stages-edit-custom-mark"><i data-lucide="sparkles" class="ic-md"></i></span>' : ''}
+              </div>
+              <input type="date" class="stages-edit-date-input" data-fdp-display="short"
+                     value="${endDate || ''}"
+                     ${isFlowStage ? '' : 'disabled'}
+                     onchange="setStageDateDraft('${s.id}', this.value)">
+              <div class="stages-edit-sla-wrap" title="SLA da etapa em dias — vazio = sem prazo definido">
+                <input type="number" min="0" step="1" class="form-control stages-edit-sla-input"
+                       placeholder="${origSla ?? '—'}"
+                       value="${draftSlaVal ?? ''}"
+                       ${isFlowStage ? '' : 'disabled title="Etapa adicionada por instância — edite pelo wizard"'}
+                       oninput="setStageSlaDraft('${s.id}', this.value)"
+                       onchange="renderDetail()">
+                <span class="stages-edit-sla-suffix">d</span>
+              </div>
+              <div class="stages-edit-resp-wrap">
+                <select id="${selectId}" class="form-control" data-cdrop-icon="user" onchange="setStageResponsibleDraft('${s.id}', this.value)">
+                  ${!currentResp && !hasRespOverride ? '<option value="__default__" selected>Selecionar executor…</option>' : ''}
+                  <option value="" ${hasRespOverride && currentResp === null ? 'selected' : ''}>— Sem responsável —</option>
+                  ${sortedUsers.map(u => `<option value="${u.id}" ${currentResp === u.id ? 'selected' : ''} ${u.id === defaultRespId ? 'data-default="1"' : ''}>${esc(u.name)}</option>`).join('')}
+                </select>
+              </div>
+            </div>`;
+          }).join('');
+        })()}</div>` : '<div class="hours-empty">Esta demanda não tem fluxo associado.</div>'}
       </div>
     </div>`;
   paintIcons();
-  // Aplica dropdowns com avatar nos selects de responsável
-  if (flow) {
-    rowsList.forEach(s => applyFilterDropdown(`stages-resp-${s.id}`, { userIcon: true }));
+  // Auto-cdrop (via data-cdrop-icon="user") já pinta os selects com avatar +
+  // pill "Padrão" na option correspondente ao stage.responsibleId — não precisa
+  // aplicar manualmente. Manter aqui só como fallback pro caso de o observer
+  // não pegar (ex.: primeiro render).
+  if (flow && typeof _flushAutoCdropQueue === 'function') {
+    rowsList.forEach(s => {
+      const sel = document.getElementById(`stages-resp-${s.id}`);
+      if (sel) _queueAutoCdrop(sel);
+    });
   }
 }
 
@@ -19330,7 +19578,24 @@ function renderWizardCustomization() {
     orderedIds = [...flow.stages.map(s => s.id), ...cust.stageAdditions.map(s => s.id)];
   }
 
-  const rowHTML = (stageId) => {
+  // Cascata data ↔ dias — respeita âncoras (deadlineDate) das etapas anteriores.
+  const baselineYmd = todayStr();
+  const dateByStageId = {};
+  let lastEnd = baselineYmd;
+  orderedIds.forEach((id, i) => {
+    const meta = allById.get(id);
+    if (!meta) return;
+    const { stage, isAddition } = meta;
+    // Âncora explícita: adição.deadlineDate ou stageOverrides[id].deadlineDate.
+    const anchor = isAddition ? stage.deadlineDate : cust.stageOverrides[id]?.deadlineDate;
+    if (anchor) { dateByStageId[id] = anchor; lastEnd = anchor; return; }
+    const days = _custEffectiveStageValue(stage, isAddition, 'deadlineDays');
+    const end = _addDays(lastEnd, Number(days ?? 0));
+    dateByStageId[id] = end;
+    lastEnd = end;
+  });
+
+  const rowHTML = (stageId, i) => {
     const meta = allById.get(stageId);
     if (!meta) return '';
     const { stage, isAddition } = meta;
@@ -19339,32 +19604,49 @@ function renderWizardCustomization() {
     const color = _custEffectiveStageValue(stage, isAddition, 'color') || '#7A00FF';
     const days = _custEffectiveStageValue(stage, isAddition, 'deadlineDays');
     const done = _custEffectiveStageValue(stage, isAddition, 'done');
-    const respValue = (stageId in cust.stageResponsibles) ? cust.stageResponsibles[stageId]
-      : (isAddition ? (stage.responsibleId || '') : '');
-    const roleOpts = `<option value="">Padrão do fluxo</option>` +
-      userOptions.map(u => `<option value="${u.id}" ${respValue === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
-    const badge = isAddition
-      ? '<span class="wizard-cust-badge is-added">Nova</span>'
-      : '<span class="wizard-cust-badge is-original">Original</span>';
+    // Padrão do fluxo — resolve stage.responsibleId E também stage.responsibleRole
+    // via roleAssignments do projeto/cliente (fluxos frequentemente definem só
+    // o papel, não o usuário direto). Sem isso o dropdown ficava "Selecionar…"
+    // em todos os fluxos que usam responsibleRole.
+    const defaultUserId = isAddition
+      ? ''
+      : (resolveDefaultUserIdForStage(stage, wizardState.projectId) || '');
+    // Para etapas ORIGINAIS: usa override em cust.stageResponsibles, senão o padrão do fluxo.
+    // Para etapas NOVAS: o responsibleId vive na própria addition (não em stageResponsibles).
+    const respValue = isAddition
+      ? (stage.responsibleId || '')
+      : ((stageId in cust.stageResponsibles) ? cust.stageResponsibles[stageId] : defaultUserId);
+    const placeholderOpt = respValue ? '' : `<option value="" selected>Selecionar executor…</option>`;
+    const roleOpts = placeholderOpt + userOptions.map(u => {
+      const isDefault = u.id === defaultUserId;
+      return `<option value="${u.id}" ${respValue === u.id ? 'selected' : ''} ${isDefault ? 'data-default="1"' : ''}>${esc(u.name)}</option>`;
+    }).join('');
+    // Ícone no lugar da badge Original/Nova — 16px, sem tooltip. Etapas novas
+    // ganham sparkles roxo; originais mostram um placeholder discreto (traço).
+    const stageMark = isAddition
+      ? '<span class="wizard-cust-stage-mark is-added"><i data-lucide="sparkles" class="ic-md"></i></span>'
+      : '<span class="wizard-cust-stage-mark is-original"><i data-lucide="corner-down-right" class="ic-md"></i></span>';
     const removeBtn = isAddition
-      ? `<button type="button" class="wizard-cust-remove" title="Remover etapa" onclick="wizardCustRemoveAddition('${stageId}')"><i data-lucide="trash-2" class="ic-sm"></i></button>`
+      ? `<button type="button" class="wizard-cust-remove" title="Remover etapa" onclick="wizardCustRemoveAddition('${stageId}')"><i data-lucide="trash-2" class="ic-md"></i></button>`
       : '<span class="wizard-cust-remove-placeholder"></span>';
+    const endDate = dateByStageId[stageId] || '';
     return `<div class="wizard-cust-row-v2 ${skipped ? 'is-skipped' : ''} ${isAddition ? 'is-added' : ''}" draggable="true" data-stage-id="${stageId}">
-      <span class="wizard-cust-drag" title="Arraste pra reordenar"><i data-lucide="grip-vertical" class="ic-sm"></i></span>
+      <span class="wizard-cust-drag" title="Arraste pra reordenar"><i data-lucide="grip-vertical" class="ic-md"></i></span>
+      ${stageMark}
       <button type="button" class="color-swatch-trigger wizard-cust-color-lg" style="background:${esc(color)}" onclick="openColorPicker(this, (c) => { wizardCustSetColor('${stageId}', c); this.style.background = c; }, '${esc(color)}')" title="Cor da etapa"></button>
       <input type="text" class="wizard-cust-name" value="${esc(label)}" placeholder="Nome da etapa" oninput="wizardCustSetLabel('${stageId}', this.value)">
-      ${badge}
-      <select class="wizard-cust-resp" onchange="wizardCustSetResp('${stageId}', this.value)">${roleOpts}</select>
+      <select class="wizard-cust-resp" data-cdrop-icon="user" data-default-value="${esc(defaultUserId || '')}" onchange="wizardCustSetResp('${stageId}', this.value)">${roleOpts}</select>
+      <input type="date" class="wizard-cust-date" data-fdp-display="short" value="${endDate}" onchange="wizardCustSetDate('${stageId}', this.value)">
       <div class="wizard-cust-days-inline" title="Prazo da etapa (em dias)">
-        <input type="number" class="wizard-cust-days" min="0" step="1" value="${days ?? ''}" placeholder="—" oninput="wizardCustSetDays('${stageId}', this.value)">
+        <input type="number" class="wizard-cust-days" min="0" step="1" value="${days ?? ''}" placeholder="—" oninput="wizardCustSetDays('${stageId}', this.value)" onchange="renderWizardCustomization()">
         <span class="wizard-cust-days-unit">d</span>
       </div>
-      <button type="button" class="cust-icon-toggle cust-toggle-done ${done ? 'on' : ''}" title="${done ? 'Etapa final — conclui a demanda' : 'Marcar como etapa final (conclui a demanda)'}" onclick="wizardCustSetDone('${stageId}', ${!done})"><i data-lucide="flag" class="ic-sm"></i></button>
-      <button type="button" class="cust-icon-toggle cust-toggle-active ${!skipped ? 'on' : ''}" title="${skipped ? 'Etapa pulada — clique pra ativar' : 'Etapa ativa — clique pra pular'}" onclick="wizardCustToggleSkip('${stageId}', ${skipped})"><i data-lucide="${skipped ? 'eye-off' : 'eye'}" class="ic-sm"></i></button>
+      <button type="button" class="cust-icon-toggle cust-toggle-done ${done ? 'on' : ''}" title="${done ? 'Etapa final — conclui a demanda' : 'Marcar como etapa final (conclui a demanda)'}" onclick="wizardCustSetDone('${stageId}', ${!done})"><i data-lucide="flag" class="ic-md"></i></button>
+      <button type="button" class="cust-icon-toggle cust-toggle-active ${!skipped ? 'on' : ''}" title="${skipped ? 'Etapa pulada — clique pra ativar' : 'Etapa ativa — clique pra pular'}" onclick="wizardCustToggleSkip('${stageId}', ${skipped})"><i data-lucide="${skipped ? 'eye-off' : 'eye'}" class="ic-md"></i></button>
       ${removeBtn}
     </div>`;
   };
-  wrap.innerHTML = orderedIds.map(rowHTML).join('');
+  wrap.innerHTML = orderedIds.map((id, i) => rowHTML(id, i)).join('');
   _installCustDragDrop(wrap);
   renderWizardCustChecklist();
   paintIcons();
@@ -19474,20 +19756,111 @@ function wizardCustSetResp(stageId, value) {
   const cust = wizardState.customization;
   const addition = cust.stageAdditions.find(s => s.id === stageId);
   if (addition) { addition.responsibleId = value || null; return; }
-  if (value === '') delete cust.stageResponsibles[stageId];
+  // Etapa original: se o usuário escolheu o mesmo do padrão do fluxo (ou
+  // limpou), remove override — o dropdown já mostra o padrão diretamente.
+  const flow = flowById(wizardState.flowId);
+  const orig = flow?.stages.find(s => s.id === stageId);
+  const defaultUserId = orig?.responsibleId || '';
+  if (value === '' || value === defaultUserId) delete cust.stageResponsibles[stageId];
   else cust.stageResponsibles[stageId] = value;
+}
+function wizardCustSetDate(stageId, isoDate) {
+  if (!wizardState.customization) resetWizardCustomization();
+  const cust = wizardState.customization;
+  const flow = flowById(wizardState.flowId);
+  // Calcula fim da etapa anterior respeitando âncoras já gravadas.
+  const prevEnd = _wizardCustPrevEnd(stageId);
+  if (isoDate && prevEnd && isoDate < prevEnd) {
+    const orderedIds = _wizardCustOrderedIds();
+    const idx = orderedIds.indexOf(stageId);
+    const prevId = orderedIds[idx - 1];
+    const prevStage = flow?.stages.find(s => s.id === prevId) || cust.stageAdditions.find(s => s.id === prevId);
+    const prevLabel = cust.stageLabels[prevId] || prevStage?.label || '';
+    _showStageDateTooltip(stageId, `Não é possível colocar data anterior à etapa "${prevLabel}" (termina em ${_fmtDayMonth(prevEnd)}).`);
+    renderWizardCustomization();
+    return;
+  }
+  // Grava a data como âncora E recalcula o SLA em dias (data - prevEnd).
+  // Assim o campo "d" reflete quantos dias o usuário terá pra executar.
+  const addition = cust.stageAdditions.find(s => s.id === stageId);
+  if (addition) {
+    addition.deadlineDate = isoDate || null;
+    if (isoDate) addition.deadlineDays = _daysDiff(prevEnd, isoDate);
+  } else {
+    if (!cust.stageOverrides[stageId]) cust.stageOverrides[stageId] = {};
+    if (isoDate) {
+      cust.stageOverrides[stageId].deadlineDate = isoDate;
+      cust.stageOverrides[stageId].deadlineDays = _daysDiff(prevEnd, isoDate);
+    } else {
+      delete cust.stageOverrides[stageId].deadlineDate;
+    }
+    if (!Object.keys(cust.stageOverrides[stageId]).length) delete cust.stageOverrides[stageId];
+  }
+  renderWizardCustomization();
+}
+/* Helpers do wizard pra cascata data ↔ dias. */
+function _wizardCustOrderedIds() {
+  const cust = wizardState.customization;
+  const flow = flowById(wizardState.flowId);
+  const allIds = [...(flow?.stages.map(s => s.id) || []), ...cust.stageAdditions.map(s => s.id)];
+  return (Array.isArray(cust.stageOrder) && cust.stageOrder.length)
+    ? cust.stageOrder.filter(id => allIds.includes(id))
+    : allIds;
+}
+function _wizardCustPrevEnd(stageId) {
+  const cust = wizardState.customization;
+  const flow = flowById(wizardState.flowId);
+  const orderedIds = _wizardCustOrderedIds();
+  const idx = orderedIds.indexOf(stageId);
+  if (idx <= 0) return todayStr();
+  let lastEnd = todayStr();
+  for (let k = 0; k < idx; k++) {
+    const id = orderedIds[k];
+    const addition = cust.stageAdditions.find(s => s.id === id);
+    if (addition) {
+      if (addition.deadlineDate) { lastEnd = addition.deadlineDate; continue; }
+      lastEnd = _addDays(lastEnd, Number(addition.deadlineDays ?? 0));
+      continue;
+    }
+    const orig = flow?.stages.find(s => s.id === id);
+    const ov = cust.stageOverrides[id];
+    if (ov?.deadlineDate) { lastEnd = ov.deadlineDate; continue; }
+    const days = (ov && ov.deadlineDays !== undefined) ? ov.deadlineDays : orig?.deadlineDays;
+    lastEnd = _addDays(lastEnd, Number(days ?? 0));
+  }
+  return lastEnd;
 }
 function wizardCustSetDays(stageId, value) {
   const cust = wizardState.customization;
   const n = value === '' ? null : parseInt(value, 10);
   const parsed = (n === null || (Number.isFinite(n) && n >= 0)) ? n : null;
-  const addition = cust.stageAdditions.find(s => s.id === stageId);
-  if (addition) { addition.deadlineDays = parsed; return; }
-  // Etapa original — override. Só grava se diferente do padrão do fluxo.
   const flow = flowById(wizardState.flowId);
+  const addition = cust.stageAdditions.find(s => s.id === stageId);
+  if (addition) {
+    addition.deadlineDays = parsed;
+    // Também âncora a data resultante — se o usuário setou dias=0 na etapa X,
+    // ao avançar pra ela o server deve respeitar a data planejada, não recalcular.
+    if (parsed != null) {
+      const prevEnd = _wizardCustPrevEnd(stageId);
+      addition.deadlineDate = _addDays(prevEnd, parsed);
+    } else {
+      addition.deadlineDate = null;
+    }
+    return;
+  }
   const orig = flow?.stages.find(s => s.id === stageId);
   const same = (orig?.deadlineDays ?? null) === (parsed ?? null);
-  _writeStageOverride(stageId, 'deadlineDays', same ? undefined : parsed);
+  if (same) {
+    // Volta pro padrão do fluxo — remove âncora e override de dias.
+    _writeStageOverride(stageId, 'deadlineDays', undefined);
+    _writeStageOverride(stageId, 'deadlineDate', undefined);
+  } else {
+    _writeStageOverride(stageId, 'deadlineDays', parsed);
+    // Âncora a data derivada — assim SLA=0 gera "mesmo dia da anterior" ao
+    // avançar, e não "hoje".
+    const prevEnd = _wizardCustPrevEnd(stageId);
+    _writeStageOverride(stageId, 'deadlineDate', parsed == null ? undefined : _addDays(prevEnd, parsed));
+  }
 }
 function wizardCustSetColor(stageId, value) {
   if (!/^#[0-9a-f]{6}$/i.test(value || '')) return;
@@ -19526,7 +19899,9 @@ function wizardAddCustStage() {
     label: 'Nova etapa',
     color: '#7A00FF',
     deadlineDays: null,
-    responsibleId: null,
+    // Pré-seleciona o usuário logado como executor da nova etapa — evita o
+    // estado "Escolher executor…" e faz o dropdown já vir preenchido.
+    responsibleId: me?.id || null,
     done: false
   };
   wizardState.customization.stageAdditions.push(newStage);
