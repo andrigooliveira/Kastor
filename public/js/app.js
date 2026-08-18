@@ -156,6 +156,10 @@ function pageUrlFor(page)  {
     try { tab = localStorage.getItem('kastor-an-tab') || 'capacity'; } catch {}
     return tab === 'reports' ? '/analytics/reports' : '/analytics/capacity';
   }
+  // Detalhe da demanda: URL vem do id atual (senão cai pra dashboard).
+  if (page === 'demand-detail') {
+    return detailId ? demandPath(detailId) : '/dashboard';
+  }
   return PAGE_TO_PATH[page] || '/dashboard';
 }
 function currentPageUrl()  { return pageUrlFor(currentPage); }
@@ -213,7 +217,8 @@ function parseRoute(path) {
   let m;
   if ((m = p.match(/^\/demands\/new$/)))                    return { page: 'list',         modal: 'demand',  op: 'new' };
   if ((m = p.match(/^\/demands\/([^/]+)\/edit$/)))          return { page: 'list',         modal: 'demand',  op: 'edit', id: extractRouteId(m[1]) };
-  if ((m = p.match(/^\/demands\/([^/]+)$/)))                return { page: 'list',         modal: 'detail',  id: extractRouteId(m[1]) };
+  // Detalhe da demanda é uma página dedicada agora (deixou de ser modal).
+  if ((m = p.match(/^\/demands\/([^/]+)$/)))                return { page: 'demand-detail', id: extractRouteId(m[1]) };
   if ((m = p.match(/^\/clients\/new$/)))                    return { page: 'clients',      modal: 'client',  op: 'new' };
   if ((m = p.match(/^\/clients\/([^/]+)\/edit$/)))          return { page: 'clients',      modal: 'client',  op: 'edit', id: extractRouteId(m[1]) };
   if ((m = p.match(/^\/clients\/([^/]+)\/report$/)))        return { page: 'clients',      view: 'report', id: extractRouteId(m[1]) };
@@ -251,17 +256,16 @@ function applyRoute() {
     else renderCurrent();
     // 2) Fecha qualquer modal roteado aberto (modais transitórios como
     //    confirm/prompt/picker/cmdk ficam intactos).
-    const ROUTED = ['detail-modal','demand-modal','project-modal','flow-modal','user-modal','webhook-modal','recurring-modal'];
+    const ROUTED = ['demand-modal','project-modal','flow-modal','user-modal','webhook-modal','recurring-modal'];
     document.querySelectorAll('.modal-overlay.open').forEach(m => {
       if (ROUTED.includes(m.id)) m.classList.remove('open');
     });
-    // 3) Abre o modal solicitado pela rota
-    if (r.modal === 'detail' && r.id) {
+    // 3) Página de detalhe da demanda (era modal) — carrega o conteúdo,
+    //    troca workspace se preciso e inicia poll de refresh.
+    if (r.page === 'demand-detail' && r.id) {
       const d = demandById(r.id);
-      if (d) {
-        if (d.workspaceId && d.workspaceId !== activeWs) switchWorkspace(d.workspaceId);
-        showDetail(r.id);
-      }
+      if (d && d.workspaceId && d.workspaceId !== activeWs) switchWorkspace(d.workspaceId);
+      showDetail(r.id);
     } else if (r.modal === 'demand' && r.op === 'new') {
       if (typeof openNewDemand === 'function') openNewDemand();
     } else if (r.modal === 'demand' && r.op === 'edit' && r.id) {
@@ -1991,28 +1995,12 @@ function openModal(id) {
     if (focusable) focusable.focus();
   }, 80);
 }
-const ROUTED_MODAL_IDS = ['detail-modal','demand-modal','project-modal','flow-modal','user-modal','webhook-modal','client-modal'];
+const ROUTED_MODAL_IDS = ['demand-modal','project-modal','flow-modal','user-modal','webhook-modal','client-modal'];
 function closeModal(id) {
   hideTooltip();
   $(id).classList.remove('open');
-  // Para o poll de quase-realtime quando o detalhe é fechado
-  if (id === 'detail-modal' && typeof stopDetailPoll === 'function') stopDetailPoll();
-  // Limpa hashes legados (#demand-xyz)
-  if (id === 'detail-modal' && location.hash.startsWith('#demand-')) {
-    history.replaceState(null, '', location.pathname + location.search);
-  }
-  // Silent refresh do fundo — sem isso, mudanças feitas dentro do modal (responsável,
-  // etapa, prazo, etc) só apareciam na lista/kanban/calendário após reload manual.
-  // renderCurrent() é barato: re-render puro sem fetch nem toast.
-  if (id === 'detail-modal' && typeof renderCurrent === 'function') renderCurrent();
   // Modais com rota própria → ao fechar reescreve URL pro destino apropriado.
-  // Se ainda houver outro modal roteado por trás (ex.: editou uma demanda
-  // a partir do detalhe), volta pra URL desse modal. Senão, URL da página.
-  if (ROUTED_MODAL_IDS.includes(id)) {
-    const stillOpen = ROUTED_MODAL_IDS.find(mid => mid !== id && document.getElementById(mid)?.classList.contains('open'));
-    if (stillOpen === 'detail-modal' && detailId) navReplace(demandPath(detailId));
-    else navReplace(currentPageUrl());
-  }
+  if (ROUTED_MODAL_IDS.includes(id)) navReplace(currentPageUrl());
 }
 
 /* ── Lucide Icons ── */
@@ -2728,25 +2716,31 @@ function promptCancel() {
 
 /* ── Click fora do modal fecha (com proteção) ── */
 function attemptCloseModal(id) {
-  if (id === 'detail-modal' && hasUnsavedDetailEdits()) {
+  closeModal(id);
+}
+/* ── Sair da página de detalhe da demanda ─── volta pra rota anterior
+   (list/dashboard/mine), respeitando drafts não salvos. */
+function closeDemandDetail() {
+  const finish = () => {
+    stopDetailPoll();
+    detailId = null;
+    // Limpa o pipeline visual do topbar (só faz sentido em demand-detail).
+    const topPipe = document.getElementById('topbar-pipeline');
+    if (topPipe) topPipe.innerHTML = '';
+    // Volta pra rota anterior no histórico; se não houver, vai pro dashboard.
+    if (history.length > 1) history.back();
+    else { navPush('/dashboard'); applyRoute(); }
+  };
+  if (hasUnsavedDetailEdits && hasUnsavedDetailEdits()) {
     showConfirm({
       title: 'Descartar alterações?',
       message: 'Você tem alterações pendentes não confirmadas. Se sair agora, elas serão perdidas.',
-      okLabel: 'Descartar e fechar',
+      okLabel: 'Descartar e sair',
       danger: true
-    }).then(ok => { if (ok) { discardDetailEdits(); closeModal('detail-modal'); } });
+    }).then(ok => { if (ok) { if (typeof discardDetailEdits === 'function') discardDetailEdits(); finish(); } });
     return;
   }
-  if (id === 'flow-modal' && flowModalDirty) {
-    showConfirm({
-      title: 'Descartar alterações?',
-      message: 'Você tem alterações no fluxo que não foram salvas. Deseja sair sem salvar?',
-      okLabel: 'Descartar e fechar',
-      danger: true
-    }).then(ok => { if (ok) { flowModalDirty = false; closeModal('flow-modal'); } });
-    return;
-  }
-  closeModal(id);
+  finish();
 }
 document.addEventListener('click', ev => {
   const overlay = ev.target.closest('.modal-overlay');
@@ -3147,7 +3141,7 @@ const PAGE_TITLES = {
   recurring: 'Listas de tarefas', docs: 'Documentação', clientsModels: 'Modelos de Cliente',
   trash: 'Lixeira', recurringDemands: 'Demandas Recorrentes',
   devtools: 'Dev Tools', passwords: 'Cofre de Senhas', kb: 'Base de conhecimento',
-  'post-editor': 'Editor de post'
+  'post-editor': 'Editor de post', 'demand-detail': 'Demanda'
 };
 function goPage(page) {
   hideTooltip();
@@ -3162,6 +3156,14 @@ function goPage(page) {
   document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.page === page));
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + page));
   $('topbar-title').textContent = PAGE_TITLES[page] || '';
+  // Botão Voltar aparece apenas na página de detalhe da demanda.
+  const backBtn = document.getElementById('topbar-back');
+  if (backBtn) backBtn.style.display = page === 'demand-detail' ? '' : 'none';
+  // Pipeline do topbar também é exclusivo de demand-detail.
+  if (page !== 'demand-detail') {
+    const topPipe = document.getElementById('topbar-pipeline');
+    if (topPipe) topPipe.innerHTML = '';
+  }
   renderCurrent();
   // Mudou de página → descarta filtros da anterior na URL (semântica é por-página).
   // Mesma página (renderCurrent voltando) → preserva a query pra não perder o estado.
@@ -3514,6 +3516,7 @@ function renderCurrent() {
     case 'passwords':  renderPasswords(); break;
     case 'kb':         renderKbFromRoute(); break;
     case 'post-editor': renderPostEditorFromRoute(); break;
+    case 'demand-detail': if (detailId) renderDetail(); break;
     case 'docs':       renderDocsFromRoute(); break;
     case 'clients': {
       // Decide entre grid, detalhe de cliente ou detalhe de projeto sem perder estado
@@ -6689,9 +6692,9 @@ function syncStatusOptions(selectedStageId) {
     buildUserSelect($('f-owner-select'), wsUsers(), autoOwner, null);
     // Defaults herdados do fluxo: só aplica em NOVA demanda e se o usuário ainda
     // não digitou nada nos campos (não sobrescreve mudanças manuais).
-    const descEl = $('f-description');
-    if (descEl && !descEl.value.trim() && flow.defaultDescription) {
-      descEl.value = flow.defaultDescription;
+    const curDesc = (getRichValue('f-description') || '').replace(/<[^>]+>/g, '').trim();
+    if (!curDesc && flow.defaultDescription) {
+      setRichValue('f-description', flow.defaultDescription);
     }
     // Checklist herdado — só popula se ainda tá zerado (evita resetar edições)
     if (!demandChecklistDraft.length && Array.isArray(flow.defaultChecklist)) {
@@ -6778,7 +6781,7 @@ function applyDemandTemplate() {
   if (!tid) return;
   const t = templates.find(x => x.id === tid); if (!t) return;
   if ($('f-name').value.trim() === '') $('f-name').value = t.name || '';
-  $('f-description').value = t.description || '';
+  setRichValue('f-description', t.description || '');
   $('f-briefing').value = t.briefing || '';
   $('f-estimated').value = t.estimatedHours || '';
   $('f-priority').value = t.priority || 3;
@@ -6806,7 +6809,9 @@ function openNewDemand() {
   fillDemandSelectors(null);
   fillTemplateSelector();
   $('f-template').value = '';
-  $('f-name').value = ''; $('f-description').value = '';
+  $('f-name').value = '';
+  mountRichEditor('f-description', { placeholder: 'Detalhe o que precisa ser feito, referências, contexto…', minHeight: '120px' });
+  setRichValue('f-description', '');
   $('f-briefing').value = ''; $('f-deadline').value = '';
   $('f-estimated').value = ''; $('f-priority').value = '3';
   $('f-qty-pieces').value = ''; $('f-qty-arts').value = ''; $('f-qty-variations').value = '';
@@ -6851,7 +6856,8 @@ function openEditDemand(id) {
   wizardLastFlowApplied = d.flowId;
   wizardGoTo(4);
   $('f-name').value = d.name;
-  $('f-description').value = d.description || '';
+  mountRichEditor('f-description', { placeholder: 'Detalhe o que precisa ser feito, referências, contexto…', minHeight: '120px' });
+  setRichValue('f-description', d.description || '');
   $('f-briefing').value = d.briefing || '';
   $('f-deadline').value = d.deadline || '';
   $('f-estimated').value = d.estimatedHours || '';
@@ -6899,7 +6905,7 @@ async function saveDemand() {
   };
   const payload = {
     name: $('f-name').value,
-    description: $('f-description').value,
+    description: getRichValue('f-description'),
     projectId: $('f-project').value,
     flowId: $('f-flow').value,
     briefing: normalizeUrl($('f-briefing').value),
@@ -7046,7 +7052,7 @@ async function openSaveAsTemplate() {
     await api('/templates', 'POST', {
       name,
       workspaceId: activeWs,
-      description: $('f-description').value,
+      description: getRichValue('f-description'),
       briefing: normalizeUrl($('f-briefing').value),
       projectId: $('f-project').value || null,
       flowId: $('f-flow').value || null,
@@ -7074,8 +7080,9 @@ async function deleteDemand() {
     const delId = editingId;
     await api('/demands/' + delId, 'DELETE');
     closeModal('demand-modal');
-    closeModal('detail-modal');
-    detailId = null;
+    // Demanda excluída → sai da página de detalhe se estivermos nela.
+    if (currentPage === 'demand-detail') { detailId = null; stopDetailPoll(); navPush('/dashboard'); applyRoute(); }
+    else detailId = null;
     toastWithUndo('Demanda excluída.', () => api('/demands/' + delId + '/undelete', 'POST'));
     await refreshData();
   } catch (e) { toast(e.message, 'error'); }
@@ -7090,16 +7097,22 @@ function editCurrentDemand() {
   openEditDemand(detailId);
 }
 
-/* ─── MODAL: DETALHE DA DEMANDA ─── */
+/* ─── PÁGINA: DETALHE DA DEMANDA ─── (era um modal). Agora é uma rota
+   dedicada — permite Ctrl+click pra nova aba, foco melhor, e Voltar do
+   browser volta pra origem naturalmente. */
 function showDetail(id) {
   detailId = id;
   detailView = 'main';
-  renderDetail();             // render imediato com o que tem em cache
-  draftRestoreComment();       // restaura rascunho de comentário se houver
-  openModal('detail-modal');
-  navPush(demandPath(id));  // URL compartilhável (slug + id)
-  // Atualiza com a versão fresca do server (pega anexos/comentários que outros
-  // usuários adicionaram desde o último loadAll) + inicia poll periódico.
+  // Se ainda não estamos na página, navega — applyRoute fará o goPage.
+  const targetPath = demandPath(id);
+  if (currentPage !== 'demand-detail') {
+    navPush(targetPath);
+    goPage('demand-detail');
+  } else {
+    navPush(targetPath);
+    renderDetail();
+  }
+  draftRestoreComment();
   refreshDetailDemand();
   startDetailPoll();
 }
@@ -7111,6 +7124,26 @@ function demandById(id) { return demands.find(x => x.id === id) || null; }
    sem precisar dar F5. Pausa enquanto o usuário está digitando pra
    não perder texto em meio a um comentário. */
 let _detailPollTimer = null;
+/* Stack de avatares dos observadores — cresce PRA ESQUERDA do botão do olho.
+   Até 2 avatares mostrados; 3+ acumula em "+X". Tooltip lista os nomes. */
+function renderWatcherStack(d) {
+  const ids = Array.isArray(d?.watchers) ? d.watchers : [];
+  if (!ids.length) return '';
+  const users = ids.map(id => userById(id)).filter(Boolean);
+  const MAX_SHOWN = 2;
+  const shown = users.slice(0, MAX_SHOWN);
+  const rest  = users.length - shown.length;
+  const tooltip = users.map(u => u.name).join(', ');
+  // Renderizado em ordem: [+X] [B] [A]. Overlap via margin-left negativo.
+  // z-index cresce da esquerda pra direita → o "colado no olho" fica em cima.
+  const parts = [];
+  if (rest > 0) parts.push(`<span class="watcher-more" style="z-index:1">+${rest}</span>`);
+  shown.forEach((u, i) => {
+    const z = 2 + i;
+    parts.push(`<span class="watcher-avatar-wrap" style="z-index:${z}">${avatarHTML(u, 'avatar avatar-xs')}</span>`);
+  });
+  return `<div class="watcher-stack" title="${esc(tooltip)}">${parts.join('')}</div>`;
+}
 async function toggleWatchCurrent() {
   if (!detailId) return;
   const d = demandById(detailId);
@@ -7133,11 +7166,11 @@ async function toggleWatchCurrent() {
 
 async function refreshDetailDemand() {
   if (!detailId) return;
-  const modal = document.getElementById('detail-modal');
-  if (!modal || !modal.classList.contains('open')) return;
-  // Pula a atualização se o usuário tá digitando dentro do modal
+  const page = document.getElementById('page-demand-detail');
+  if (!page || !page.classList.contains('active')) return;
+  // Pula a atualização se o usuário tá digitando dentro da página
   const active = document.activeElement;
-  if (active && modal.contains(active) &&
+  if (active && page.contains(active) &&
       (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) {
     return;
   }
@@ -7162,11 +7195,38 @@ function stopDetailPoll() {
   if (_detailPollTimer) { clearInterval(_detailPollTimer); _detailPollTimer = null; }
 }
 
+/* Tab ativa na coluna direita (Comentários | Checklist | Atividade | Etapas).
+   Preservada entre renders pra não perder contexto quando refreshDetailDemand
+   dispara. Default = 'comments'. */
+let detailActiveTab = 'comments';
+let detailCommentSort = 'newest'; // 'newest' | 'oldest'
+function _commentSortLabel() { return detailCommentSort === 'newest' ? 'Mais recentes primeiro' : 'Mais antigos primeiro'; }
+function toggleCommentSort() {
+  detailCommentSort = detailCommentSort === 'newest' ? 'oldest' : 'newest';
+  renderDetail();
+}
+function setDemandDetailTab(name) {
+  detailActiveTab = name;
+  // Update classes das abas
+  document.querySelectorAll('.detail-tab').forEach(b => b.classList.remove('is-active'));
+  const btn = document.querySelector(`.detail-tab[onclick*="'${name}'"]`);
+  if (btn) btn.classList.add('is-active');
+  // Show/hide panes
+  ['comments','checklist','activity','stages'].forEach(k => {
+    const el = document.getElementById('tab-pane-' + k);
+    if (el) el.style.display = k === name ? '' : 'none';
+  });
+  // Sort de comentários só aparece na tab Comentários.
+  const sortBtn = document.getElementById('detail-tab-sort');
+  if (sortBtn) sortBtn.style.display = name === 'comments' ? '' : 'none';
+  const d = demandById(detailId);
+  if (name === 'activity') _renderActivityTab(d);
+  if (name === 'stages')   _renderStagesTab(d);
+  paintIcons();
+}
 function renderDetail() {
   const d = demandById(detailId);
-  if (!d) { closeModal('detail-modal'); return; }
-  if (detailView === 'history') return renderDetailHistory(d);
-  if (detailView === 'stages') return renderDetailStages(d);
+  if (!d) { closeDemandDetail(); return; }
   const flow = flowById(d.flowId);
   const stage = stageOf(d);
   const p = projectById(d.projectId);
@@ -7211,14 +7271,24 @@ function renderDetail() {
       </span>
       ${st ? `<span class="pill" style="color:${st.color};background:${hexDim(st.color)};font-size:10px">${esc(st.label)}</span>` : ''}
       <div class="appt-actions">
-        ${canEdit ? `<button class="detail-icon-btn" title="Editar" onclick="startEditTimeEntry('${e.id}')"><i data-lucide="pencil" class="ic-sm"></i></button>` : ''}
-        ${canDel ? `<button class="detail-icon-btn danger" title="Remover" onclick="confirmDeleteTimeEntry('${e.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>` : ''}
+        ${(canEdit || canDel) ? `<div class="chat-comment-menu-wrap appt-menu-wrap">
+          <button class="chat-comment-act" title="Mais" onclick="toggleApptMenu('${e.id}', event)"><i data-lucide="more-horizontal" class="ic-xs"></i></button>
+          <div class="chat-comment-menu appt-menu" id="appt-menu-${e.id}">
+            ${canEdit ? `<button class="chat-comment-menu-item" onclick="closeApptMenus(); startEditTimeEntry('${e.id}')"><i data-lucide="pencil" class="ic-menu"></i> Editar</button>` : ''}
+            ${canDel ? `<button class="chat-comment-menu-item danger" onclick="closeApptMenus(); confirmDeleteTimeEntry('${e.id}')"><i data-lucide="trash-2" class="ic-menu"></i> Excluir</button>` : ''}
+          </div>
+        </div>` : ''}
       </div>
     </div>`;
   }).join('');
 
   // Comentários
-  const comments = (d.comments || []).map(c => {
+  // Aplica ordenação atual (toggle no cabeçalho da tab Comentários).
+  const _sortedComments = (d.comments || []).slice().sort((a, b) => {
+    const A = a.createdAt || '', B = b.createdAt || '';
+    return detailCommentSort === 'newest' ? B.localeCompare(A) : A.localeCompare(B);
+  });
+  const comments = _sortedComments.map(c => {
     const u = userById(c.userId);
     const canEdit = c.userId === me.id;
     // Moderador tem poder de moderação — pode excluir comentário de qualquer um.
@@ -7241,78 +7311,74 @@ function renderDetail() {
       }
       return `<a class="comment-file" href="${a.data}" download="${esc(a.name)}" title="Baixar ${esc(a.name)}"><i data-lucide="paperclip" class="ic-sm"></i> ${esc(a.name)}</a>`;
     }).join('');
-    return `<div class="comment" id="comment-${c.id}">
-      <div class="comment-head">
-        ${avatarHTML(u)}
-        <span class="comment-author">${esc(u?.name || '—')}</span>
-        <span class="comment-time">${fmtDateTime(c.createdAt)}${c.editedAt ? ' · editado' : ''}</span>
-        <div class="comment-actions">
-          ${canEdit ? `<button class="detail-icon-btn comment-act" title="Editar" onclick="startEditComment('${c.id}')"><i data-lucide="pencil" class="ic-sm"></i></button>` : ''}
-          ${canDel ? `<button class="detail-icon-btn danger comment-act" title="Remover" onclick="confirmDeleteComment('${c.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>` : ''}
+    // Header (avatar + nome + ações) numa LINHA horizontal centralizada.
+    // Corpo (texto/anexos) numa linha abaixo com padding-left pra alinhar
+    // com o nome (não com o avatar).
+    return `<div class="chat-comment" id="comment-${c.id}">
+      <div class="chat-comment-head">
+        ${avatarHTML(u, 'avatar avatar-sm')}
+        <span class="chat-comment-author">${esc(u?.name || '—')}</span>
+        <div class="chat-comment-actions">
+          ${renderReactions(c)}
+          <div class="chat-reaction-wrap">
+            <div class="chat-reaction-picker" id="reaction-picker-${c.id}">
+              ${REACTION_EMOJIS.map(e => `<button type="button" class="chat-reaction-opt" onclick="toggleReaction('${c.id}', '${e}'); closeReactionPickers()">${e}</button>`).join('')}
+            </div>
+            <button class="chat-comment-act" title="Reagir" onclick="toggleChatReactionPicker('${c.id}', event)"><i data-lucide="smile" class="ic-xs"></i></button>
+          </div>
+          <span class="chat-comment-time">${fmtDateTime(c.createdAt)}${c.editedAt ? ' · editado' : ''}</span>
+          ${(canEdit || canDel) ? `<div class="chat-comment-menu-wrap">
+            <button class="chat-comment-act" title="Mais" onclick="toggleCommentMenu('${c.id}', event)"><i data-lucide="more-horizontal" class="ic-xs"></i></button>
+            <div class="chat-comment-menu" id="comment-menu-${c.id}">
+              ${canEdit ? `<button class="chat-comment-menu-item" onclick="closeCommentMenus(); startEditComment('${c.id}')"><i data-lucide="pencil" class="ic-menu"></i> Editar</button>` : ''}
+              ${canDel ? `<button class="chat-comment-menu-item danger" onclick="closeCommentMenus(); confirmDeleteComment('${c.id}')"><i data-lucide="trash-2" class="ic-menu"></i> Excluir</button>` : ''}
+            </div>
+          </div>` : ''}
         </div>
       </div>
-      ${text ? `<div class="comment-text">${text}</div>` : ''}
-      ${atts ? `<div class="comment-attachments">${atts}</div>` : ''}
-      ${renderReactions(c)}
+      <div class="chat-comment-body">
+        ${text ? `<div class="chat-comment-text">${text}</div>` : ''}
+        ${atts ? `<div class="chat-comment-attachments">${atts}</div>` : ''}
+      </div>
     </div>`;
   }).join('');
 
   const totalHours = (d.timeEntries || []).reduce((a,e) => a + (Number(e.hours) || 0), 0);
+  const watching = Array.isArray(d.watchers) && d.watchers.includes(me?.id);
+  const watchCnt = (d.watchers || []).length;
+  const clientName = p?.client || '';
+  const projName   = p?.name || '';
+  const flowName   = flow?.name || '';
+  const activeTab = detailActiveTab || 'comments';
 
   $('detail-content').innerHTML = `
-    <div class="detail-content">
-      <div class="detail-head">
-        <div class="detail-head-top">
-          <div>
-            <div class="detail-title" data-tooltip="Clique para renomear" onclick="startEditDemandTitle(this)">${esc(d.name)}</div>
-            <div class="detail-head-meta">
-              ${p ? `<span>${esc(p.name)}</span>` : ''}
-              ${p?.client ? `<span class="meta-sep">|</span><span>${esc(p.client)}</span>` : ''}
-              ${demandType(d) ? `<span class="meta-sep">|</span><span class="pill pill-muted" style="font-size:10px">${esc(demandType(d))}</span>` : ''}
-            </div>
-          </div>
-          <div class="detail-head-actions">
-            ${(() => {
-              const watching = Array.isArray(d.watchers) && d.watchers.includes(me?.id);
-              const cnt = (d.watchers || []).length;
-              const cntBadge = cnt > 0 ? ` <span class="detail-watch-count">${cnt}</span>` : '';
-              return `<button class="detail-icon-btn ${watching ? 'on' : ''}" title="${watching ? 'Você observa esta demanda · clique pra parar' : 'Observar esta demanda (receber notificações de comentários e mudanças de etapa)'}" onclick="toggleWatchCurrent()"><i data-lucide="${watching ? 'eye' : 'eye-off'}" class="ic-sm"></i>${cntBadge}</button>`;
-            })()}
-            <button class="detail-icon-btn danger" title="Excluir demanda" onclick="confirmDeleteCurrentDemand()"><i data-lucide="trash-2" class="ic-sm"></i></button>
-            <button class="detail-icon-btn ${hasCustomization ? 'on' : ''}" title="Etapas desta demanda" onclick="openDetailStages()"><i data-lucide="list-checks" class="ic-sm"></i></button>
-            <button class="detail-icon-btn" title="Histórico" onclick="openDetailHistory()"><i data-lucide="history" class="ic-sm"></i></button>
-            <span class="detail-head-divider"></span>
-            <button class="detail-icon-btn" title="Fechar" onclick="attemptCloseModal('detail-modal')"><i data-lucide="x" class="ic-sm"></i></button>
-          </div>
-        </div>
-      </div>
-
-      <div class="detail-body">
-        ${pipeline ? `<div class="detail-pipeline-wrap">${pipeline}</div>` : ''}
-
-        <div class="detail-fields-row">
-          <div class="detail-field">
-            <div class="detail-field-label">Responsável</div>
-            <div id="detail-owner-picker"></div>
-          </div>
-          <div class="detail-field">
-            <div class="detail-field-label">Prazo da etapa atual</div>
-            <input type="date" class="form-control" id="detail-stage-due" value="${d.stageDueDate || ''}" onchange="markDetailDirty('stageDue')">
-          </div>
-          <div class="detail-field">
-            <div class="detail-field-label">Prazo final</div>
-            <input type="date" class="form-control" id="detail-deadline" value="${d.deadline || ''}" onchange="markDetailDirty('deadline')">
+    <div class="detail-content detail-content-v2">
+      <!-- ── COLUNA ESQUERDA — dados da demanda ── -->
+      <div class="detail-col detail-col-left">
+        <div class="detail-title-block">
+          <div class="detail-title" data-tooltip="Clique para renomear" onclick="startEditDemandTitle(this)">${esc(d.name)}</div>
+          <div class="detail-breadcrumb">
+            ${clientName ? `<span>${esc(clientName)}</span>` : ''}
+            ${clientName && projName ? '<i data-lucide="chevron-right" class="ic-xs"></i>' : ''}
+            ${projName ? `<span>${esc(projName)}</span>` : ''}
+            ${projName && flowName ? '<i data-lucide="chevron-right" class="ic-xs"></i>' : ''}
+            ${flowName ? `<span>${esc(flowName)}</span>` : ''}
           </div>
         </div>
 
-        <div class="detail-meta-grid">
+        <div class="detail-block">
+          <div class="detail-field-label">Responsável</div>
+          <div id="detail-owner-picker"></div>
+        </div>
+
+        <div class="detail-meta-row">
           <div class="detail-field">
-            <div class="detail-field-label">Fluxo</div>
-            <div class="detail-field-value">${esc(flow?.name || '—')}</div>
+            <div class="detail-field-label">Prioridade</div>
+            <div class="detail-field-value">${priorityPill(d.priority)}</div>
           </div>
           <div class="detail-field">
             <div class="detail-field-label">Entrou na etapa em</div>
-            <div class="detail-field-value">${fmtDateTime(d.stageEnteredAt)} ${stageAgeChip(d)}</div>
+            <div class="detail-field-value">${fmtDateTime(d.stageEnteredAt)}</div>
           </div>
           <div class="detail-field">
             <div class="detail-field-label">Criada em</div>
@@ -7322,152 +7388,175 @@ function renderDetail() {
             <div class="detail-field-label">Concluída em</div>
             <div class="detail-field-value">${d.completedAt ? fmtDate(d.completedAt) : '—'}</div>
           </div>
-          <div class="detail-field">
-            <div class="detail-field-label">Prioridade</div>
-            <div class="detail-field-value">${priorityPill(d.priority)}</div>
-          </div>
         </div>
 
-        <!-- Entregáveis no detalhe — botão Salvar explícito (não confia em onchange) -->
-        <div class="detail-section-block">
-          <div class="detail-section-title">Entregáveis</div>
-          <div class="qty-grid">
-            <div class="qty-cell">
-              <input class="form-control" id="detail-qty-pieces" type="number" min="0" step="1" value="${d.qtyPieces || ''}" placeholder="0">
-              <span class="qty-cell-label">Peças <span class="qty-cell-hint" title="Peças únicas. Ex.: 1 criativo + 1 carrossel = 2">?</span></span>
-            </div>
-            <div class="qty-cell">
-              <input class="form-control" id="detail-qty-arts" type="number" min="0" step="1" value="${d.qtyArts || ''}" placeholder="0">
-              <span class="qty-cell-label">Artes <span class="qty-cell-hint" title="Total de artes individuais. Ex.: 1 criativo + carrossel de 3 telas = 4 artes">?</span></span>
-            </div>
-            <div class="qty-cell">
-              <input class="form-control" id="detail-qty-variations" type="number" min="0" step="1" value="${d.qtyVariations || ''}" placeholder="0">
-              <span class="qty-cell-label">Variações <span class="qty-cell-hint" title="Exportações/formatos. Ex.: 1 criativo em 3 formatos = 3 variações">?</span></span>
-            </div>
+        <div class="detail-block">
+          <div class="detail-field-label detail-field-label-row">
+            <span>Descrição</span>
+            <button class="detail-edit-btn" title="Editar descrição e link do briefing" onclick="editDescriptionInline()"><i data-lucide="pencil" class="ic-sm"></i></button>
+            <span class="inline-edit-status-chip" id="edit-desc-status-chip"></span>
           </div>
-          <div class="detail-deliverable-attr">
-            <label class="form-label" style="margin:0">Atribuir a <span class="qty-cell-hint" title="Quem realmente executou estas artes. Se vazio, conta pro responsável atual da demanda (que pode estar em outra etapa do fluxo).">?</span></label>
-            <select class="form-control" id="detail-deliverable-user" style="max-width:280px"></select>
-            <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="saveDeliverablesDetail()"><i data-lucide="save" class="ic-sm"></i> Salvar entregáveis</button>
-          </div>
-        </div>
-
-        <div class="detail-section-block">
-          <div class="field-head">
-            <div class="field-label">Briefing</div>
-            <button class="detail-icon-btn" title="Editar briefing" onclick="editBriefingInline()"><i data-lucide="pencil" class="ic-sm"></i></button>
-          </div>
-          <div id="detail-briefing-view">
-            ${d.briefing ? `<a class="detail-briefing-link" href="${esc(normalizeUrl(d.briefing))}" target="_blank" rel="noopener noreferrer">${esc(d.briefing)}</a>` : '<div class="hours-empty" style="text-align:left">Sem briefing cadastrado.</div>'}
-          </div>
-          <div class="field-label" style="margin-top:18px">Descrição</div>
           <div id="detail-description-view">
-            ${d.description ? `<div class="detail-description md-body">${mdRender(d.description)}</div>` : '<div class="hours-empty" style="text-align:left">Sem descrição cadastrada.</div>'}
+            ${d.description
+              ? `<div class="detail-description md-body ${isHtmlContent(d.description) ? 'is-html' : ''}">${isHtmlContent(d.description) ? d.description : mdRender(d.description)}</div>`
+              : '<div class="hours-empty" style="text-align:left">Sem descrição cadastrada.</div>'}
+          </div>
+          <div id="detail-briefing-view" class="detail-briefing-slot">
+            ${d.briefing ? `<a class="detail-briefing-link" href="${esc(normalizeUrl(d.briefing))}" target="_blank" rel="noopener noreferrer">${esc(d.briefing)}</a>` : '<span class="detail-briefing-placeholder">Sem briefing cadastrado.</span>'}
           </div>
         </div>
 
-        <div class="detail-section-block">
-          <div class="field-head">
-            <div class="field-label">Arquivos da Demanda</div>
-            <div style="display:flex;gap:4px">
-              <input type="file" id="detail-att-file-input" multiple style="display:none" onchange="handleDetailAttachmentFiles(event)">
-              <button class="detail-icon-btn" title="Anexar arquivo" onclick="$('detail-att-file-input').click()"><i data-lucide="paperclip" class="ic-sm"></i></button>
-              <input type="file" id="detail-att-img-input" accept="image/*" multiple style="display:none" onchange="handleDetailAttachmentImages(event)">
-              <button class="detail-icon-btn" title="Anexar imagem" onclick="$('detail-att-img-input').click()"><i data-lucide="image" class="ic-sm"></i></button>
-              <button class="detail-icon-btn" title="Adicionar link" onclick="addDetailAttachmentLink()"><i data-lucide="link" class="ic-sm"></i></button>
-            </div>
-          </div>
+        <div class="detail-block">
+          <div class="detail-field-label">Anexos</div>
           <div class="demand-att-list" id="detail-attachments-list">${renderDemandAttList(d.attachments || [], true)}</div>
+          <div class="detail-attach-chips">
+            <input type="file" id="detail-att-file-input" multiple style="display:none" onchange="handleDetailAttachmentFiles(event)">
+            <button class="attach-chip" onclick="$('detail-att-file-input').click()"><i data-lucide="paperclip" class="ic-sm"></i> Arquivo</button>
+            <input type="file" id="detail-att-img-input" accept="image/*" multiple style="display:none" onchange="handleDetailAttachmentImages(event)">
+            <button class="attach-chip" onclick="$('detail-att-img-input').click()"><i data-lucide="image" class="ic-sm"></i> Imagem</button>
+            <button class="attach-chip" onclick="addDetailAttachmentLink()"><i data-lucide="link" class="ic-sm"></i> Link</button>
+          </div>
         </div>
 
-        ${d.recurrence?.enabled ? `<div class="detail-section-block" style="padding:12px 18px;display:flex;align-items:center;gap:10px">
-          <i data-lucide="repeat" class="ic-sm" style="color:var(--accent-text)"></i>
-          <span style="font-size:12px;color:var(--text-dim)">Demanda recorrente${d.recurrence.paused ? ' <strong style="color:var(--warn)">(pausada)</strong>' : ''} · <strong>${esc(recurrenceSummary(d.recurrence))}</strong>${d.recurrence.lastGeneratedDate ? ' · Última geração: ' + fmtDate(d.recurrence.lastGeneratedDate) : ''}</span>
-        </div>` : ''}
-
-        ${renderChecklist(d)}
-
-        <div class="detail-section-heading">Comentários</div>
-        <div class="comment-list">${comments || '<div class="hours-empty">Nenhum comentário ainda. Use @ para marcar alguém da equipe.</div>'}</div>
-        <div class="comment-compose">
-          <div class="comment-toolbar" role="toolbar" aria-label="Formatação">
-            <button type="button" class="comment-tool" data-cmd="bold" title="Negrito (Ctrl+B)" onmousedown="event.preventDefault()" onclick="execCommentCmd('bold')"><i data-lucide="bold" class="ic-xs"></i></button>
-            <button type="button" class="comment-tool" data-cmd="italic" title="Itálico (Ctrl+I)" onmousedown="event.preventDefault()" onclick="execCommentCmd('italic')"><i data-lucide="italic" class="ic-xs"></i></button>
-            <button type="button" class="comment-tool" data-cmd="underline" title="Sublinhado (Ctrl+U)" onmousedown="event.preventDefault()" onclick="execCommentCmd('underline')"><i data-lucide="underline" class="ic-xs"></i></button>
-            <span class="comment-toolbar-sep"></span>
-            <button type="button" class="comment-tool" data-cmd="insertOrderedList" title="Lista numerada" onmousedown="event.preventDefault()" onclick="execCommentCmd('insertOrderedList')"><i data-lucide="list-ordered" class="ic-xs"></i></button>
-            <button type="button" class="comment-tool" data-cmd="insertUnorderedList" title="Lista com marcadores" onmousedown="event.preventDefault()" onclick="execCommentCmd('insertUnorderedList')"><i data-lucide="list" class="ic-xs"></i></button>
-            <span class="comment-toolbar-sep"></span>
-            <button type="button" class="comment-tool" data-cmd="createLink" title="Inserir link" onmousedown="event.preventDefault()" onclick="promptCommentLink()"><i data-lucide="link" class="ic-xs"></i></button>
-          </div>
-          <div class="comment-input comment-input-ce is-empty" id="comment-input"
-               contenteditable="true"
-               role="textbox"
-               aria-multiline="true"
-               data-placeholder="Digite seu comentário — use @ para marcar, cole (Ctrl+V) ou arraste imagens"
-               oninput="mentionWatchCE(this); draftSaveCommentCE(this); refreshToolbarState(); syncCommentEmptyState(this)"
-               onkeydown="mentionKeys(event)"
-               onkeyup="refreshToolbarState()"
-               onmouseup="refreshToolbarState()"></div>
-          <div class="mention-pop" id="mention-pop"></div>
-          <div class="comment-compose-bar">
-            <div class="comment-attach-btns">
-              <input type="file" id="comment-file-input" multiple style="display:none" onchange="handleCommentFiles(event)">
-              <button class="detail-icon-btn" onclick="$('comment-file-input').click()" title="Anexar arquivo"><i data-lucide="paperclip" class="ic-sm"></i></button>
-              <input type="file" id="comment-img-input" accept="image/*" multiple style="display:none" onchange="handleCommentImages(event)">
-              <button class="detail-icon-btn" onclick="$('comment-img-input').click()" title="Inserir imagem inline"><i data-lucide="image" class="ic-sm"></i></button>
+        <div class="detail-block">
+          <div class="detail-field-label">Entregáveis</div>
+          <div class="detail-deliverables-row">
+            <div class="qty-cell qty-cell-inline">
+              <input class="form-control" id="detail-qty-pieces" type="number" min="0" step="1" value="${d.qtyPieces || ''}" placeholder="0" onchange="saveDeliverablesDetail()">
+              <span class="qty-cell-label">Peças <span class="qty-cell-hint" title="Peças únicas.">?</span></span>
             </div>
-            <button class="btn btn-primary btn-sm" onclick="sendComment()">Enviar comentário</button>
+            <div class="qty-cell qty-cell-inline">
+              <input class="form-control" id="detail-qty-arts" type="number" min="0" step="1" value="${d.qtyArts || ''}" placeholder="0" onchange="saveDeliverablesDetail()">
+              <span class="qty-cell-label">Artes <span class="qty-cell-hint" title="Total de artes individuais.">?</span></span>
+            </div>
+            <div class="qty-cell qty-cell-inline">
+              <input class="form-control" id="detail-qty-variations" type="number" min="0" step="1" value="${d.qtyVariations || ''}" placeholder="0" onchange="saveDeliverablesDetail()">
+              <span class="qty-cell-label">Variações <span class="qty-cell-hint" title="Exportações/formatos.">?</span></span>
+            </div>
+            <div class="detail-deliverables-assign">
+              <select class="form-control" id="detail-deliverable-user" onchange="saveDeliverablesDetail()"></select>
+            </div>
           </div>
-          <div class="comment-pending-files" id="comment-pending-files"></div>
         </div>
 
-        <div class="detail-section-divider"></div>
-
-        <div class="detail-section-heading">
-          <span>Apontamentos de Horas</span>
-          ${totalHours > 0 ? `<span class="detail-section-heading-total">Total · ${fmtHours(totalHours)}</span>` : ''}
+        <div class="detail-block">
+          <div class="detail-field-label">Apontamentos ${totalHours > 0 ? `<span class="detail-block-total">· ${fmtHours(totalHours)}</span>` : ''}</div>
+          <div class="time-list">${timeRows || '<div class="hours-empty" style="text-align:left">Nenhuma hora apontada ainda.</div>'}</div>
         </div>
-        <div class="time-list">${timeRows || '<div class="hours-empty">Nenhuma hora apontada ainda.</div>'}</div>
+
+        ${d.recurrence?.enabled ? `<div class="detail-block detail-recurrence-note">
+          <i data-lucide="repeat" class="ic-sm" style="color:var(--accent-text)"></i>
+          <span>Recorrente${d.recurrence.paused ? ' <strong style="color:var(--warn)">(pausada)</strong>' : ''} · <strong>${esc(recurrenceSummary(d.recurrence))}</strong></span>
+        </div>` : ''}
+      </div>
+
+      <!-- ── COLUNA DIREITA — comentários / checklist / atividade / etapas ── -->
+      <div class="detail-col detail-col-right">
+        <div class="detail-actions-bar">
+          <div class="detail-actions-left">
+            <button class="detail-action-link" onclick="openRegisterTimeModal()"><i data-lucide="clock" class="ic-sm"></i> Registrar tempo</button>
+            <button class="detail-action-link" onclick="toggleTimer()" id="detail-timer-toggle"><i data-lucide="play" class="ic-sm"></i> <span id="detail-timer-label">Iniciar temporizador</span></button>
+            <span class="detail-timer-display" id="timer-display" style="display:none"><span id="timer-clock">00:00:00</span></span>
+          </div>
+          <div class="detail-actions-right">
+            ${renderWatcherStack(d)}
+            <button class="detail-icon-btn ${watching ? 'on' : ''}" title="${watching ? 'Observando · clique pra parar' : 'Observar esta demanda'}" onclick="toggleWatchCurrent()"><i data-lucide="eye" class="ic-sm"></i></button>
+            <button class="detail-icon-btn danger" title="Excluir demanda" onclick="confirmDeleteCurrentDemand()"><i data-lucide="trash-2" class="ic-sm"></i></button>
+          </div>
+        </div>
+
+        <div class="detail-tabs">
+          <button class="detail-tab ${activeTab === 'comments' ? 'is-active' : ''}" onclick="setDemandDetailTab('comments')">Comentários</button>
+          <button class="detail-tab ${activeTab === 'checklist' ? 'is-active' : ''}" onclick="setDemandDetailTab('checklist')">Checklist</button>
+          <button class="detail-tab ${activeTab === 'activity' ? 'is-active' : ''}" onclick="setDemandDetailTab('activity')">Atividade</button>
+          <button class="detail-tab ${activeTab === 'stages' ? 'is-active' : ''} ${hasCustomization ? 'has-mark' : ''}" onclick="setDemandDetailTab('stages')">Etapas</button>
+          <div class="detail-tabs-spacer"></div>
+          <button class="detail-tab-sort" id="detail-tab-sort" title="Ordenar comentários" onclick="toggleCommentSort()" style="${activeTab === 'comments' ? '' : 'display:none'}"><i data-lucide="arrow-down-narrow-wide" class="ic-sm"></i> <span id="detail-sort-label">${_commentSortLabel()}</span></button>
+        </div>
+
+        <div class="detail-tab-content">
+          <!-- Comentários -->
+          <div class="detail-tab-pane" id="tab-pane-comments" style="${activeTab === 'comments' ? '' : 'display:none'}">
+            <div class="chat-compose-wrap">
+              ${avatarHTML(me, 'avatar avatar-sm chat-compose-avatar')}
+              <div class="chat-compose" id="chat-compose">
+                <div class="chat-compose-toolbar">
+                  <button type="button" class="chat-tool" title="Negrito (Ctrl+B)" onmousedown="event.preventDefault()" onclick="execCommentCmd('bold')"><i data-lucide="bold" class="ic-xs"></i></button>
+                  <button type="button" class="chat-tool" title="Itálico" onmousedown="event.preventDefault()" onclick="execCommentCmd('italic')"><i data-lucide="italic" class="ic-xs"></i></button>
+                  <button type="button" class="chat-tool" title="Sublinhado" onmousedown="event.preventDefault()" onclick="execCommentCmd('underline')"><i data-lucide="underline" class="ic-xs"></i></button>
+                  <button type="button" class="chat-tool" title="Tachado" onmousedown="event.preventDefault()" onclick="execCommentCmd('strikeThrough')"><i data-lucide="strikethrough" class="ic-xs"></i></button>
+                  <span class="chat-tool-sep"></span>
+                  <button type="button" class="chat-tool" title="Lista numerada" onmousedown="event.preventDefault()" onclick="execCommentCmd('insertOrderedList')"><i data-lucide="list-ordered" class="ic-xs"></i></button>
+                  <button type="button" class="chat-tool" title="Lista com marcadores" onmousedown="event.preventDefault()" onclick="execCommentCmd('insertUnorderedList')"><i data-lucide="list" class="ic-xs"></i></button>
+                  <button type="button" class="chat-tool" title="Checklist" onmousedown="event.preventDefault()" onclick="execCommentCmd('insertUnorderedList')"><i data-lucide="list-checks" class="ic-xs"></i></button>
+                  <span class="chat-tool-sep"></span>
+                  <button type="button" class="chat-tool" title="Citação" onmousedown="event.preventDefault()" onclick="execCommentCmd('formatBlock','BLOCKQUOTE')"><i data-lucide="quote" class="ic-xs"></i></button>
+                  <span class="chat-tool-sep"></span>
+                  <button type="button" class="chat-tool" title="Link" onmousedown="event.preventDefault()" onclick="promptCommentLink()"><i data-lucide="link" class="ic-xs"></i></button>
+                  <input type="file" id="comment-img-input" accept="image/*" multiple style="display:none" onchange="handleCommentImages(event)">
+                  <button type="button" class="chat-tool" title="Imagem" onmousedown="event.preventDefault()" onclick="$('comment-img-input').click()"><i data-lucide="image" class="ic-xs"></i></button>
+                </div>
+                <div class="chat-compose-input comment-input comment-input-ce is-empty" id="comment-input"
+                     contenteditable="true" role="textbox" aria-multiline="true"
+                     data-placeholder="Adicione um comentário"
+                     onfocus="document.getElementById('chat-compose').classList.add('is-active')"
+                     oninput="mentionWatchCE(this); draftSaveCommentCE(this); refreshToolbarState(); syncCommentEmptyState(this)"
+                     onkeydown="mentionKeys(event)"
+                     onkeyup="refreshToolbarState()"
+                     onmouseup="refreshToolbarState()"></div>
+                <div class="chat-compose-foot">
+                  <div class="chat-compose-foot-left">
+                    <input type="file" id="comment-file-input" multiple style="display:none" onchange="handleCommentFiles(event)">
+                    <button class="chat-compose-icon" onclick="$('comment-file-input').click()" title="Anexar arquivo"><i data-lucide="paperclip" class="ic-xs"></i></button>
+                    <input type="file" id="comment-img-input-2" accept="image/*" multiple style="display:none" onchange="handleCommentImages(event)">
+                    <button class="chat-compose-icon" onclick="$('comment-img-input-2').click()" title="Imagem"><i data-lucide="image" class="ic-xs"></i></button>
+                  </div>
+                  <div class="chat-compose-foot-right">
+                    <button class="btn btn-ghost btn-sm" onclick="cancelCommentCompose()">Cancelar</button>
+                    <button class="btn btn-primary btn-sm" onclick="sendComment()">Salvar</button>
+                  </div>
+                </div>
+                <div class="mention-pop" id="mention-pop"></div>
+                <div class="comment-pending-files" id="comment-pending-files"></div>
+              </div>
+            </div>
+            <div class="chat-list">${comments || '<div class="hours-empty" style="text-align:left;margin-top:16px">Nenhum comentário ainda. Use @ para marcar alguém.</div>'}</div>
+          </div>
+
+          <!-- Checklist -->
+          <div class="detail-tab-pane" id="tab-pane-checklist" style="${activeTab === 'checklist' ? '' : 'display:none'}">
+            ${renderChecklist(d)}
+          </div>
+
+          <!-- Atividade (histórico) -->
+          <div class="detail-tab-pane" id="tab-pane-activity" style="${activeTab === 'activity' ? '' : 'display:none'}">
+            <div id="tab-activity-body"></div>
+          </div>
+
+          <!-- Etapas (customizar) -->
+          <div class="detail-tab-pane" id="tab-pane-stages" style="${activeTab === 'stages' ? '' : 'display:none'}">
+            <div id="tab-stages-body"></div>
+          </div>
+        </div>
+
+        <!-- Footer da coluna direita: nav de etapa + prazo. -->
+        <div class="detail-footer-v2">
+          <button class="detail-footer-nav" ${idx <= 0 ? 'disabled' : ''} onclick="moveStage(-1)" title="Etapa anterior"><i data-lucide="chevron-left" class="ic-sm"></i></button>
+          <div id="detail-stage-picker" class="detail-footer-stage-picker"></div>
+          <input type="date" class="detail-footer-due" id="detail-stage-due" value="${d.stageDueDate || ''}" onchange="markDetailDirty('stageDue'); commitDetailEdits()" title="Prazo da etapa atual">
+          <button class="detail-footer-nav primary" ${!flow || idx < 0 || idx >= active.length - 1 ? 'disabled' : ''} onclick="moveStage(1)" title="Avançar etapa"><i data-lucide="chevron-right" class="ic-sm"></i></button>
+        </div>
       </div>
     </div>`;
 
-  // Footer sticky: apontamento (início, término, horas) | separador | etapa
-  $('detail-footer').innerHTML = `
-    <div class="detail-footer-section">
-      <div class="detail-footer-group">
-        <div class="detail-footer-label">Início</div>
-        <input class="form-control footer-date" id="time-start" type="datetime-local">
-      </div>
-      <div class="detail-footer-group">
-        <div class="detail-footer-label">Término</div>
-        <input class="form-control footer-date" id="time-end" type="datetime-local" onchange="autoHours()">
-      </div>
-      <div class="detail-footer-group" style="flex:0 0 auto">
-        <div class="detail-footer-label">Horas</div>
-        <div class="hours-input-group">
-          <input class="form-control" id="time-hours" type="number" min="0" step="0.25" placeholder="0">
-          <button class="btn hours-timer-btn" id="timer-toggle-btn" onclick="toggleTimer()" title="Cronômetro"><i data-lucide="play" class="ic-sm"></i></button>
-        </div>
-        <div class="timer-display" id="timer-display" style="display:none"><span id="timer-clock">00:00:00</span></div>
-      </div>
-      <div class="detail-footer-group" style="flex:0 0 auto;justify-content:flex-end">
-        <div class="detail-footer-label" style="visibility:hidden">.</div>
-        <button class="btn btn-primary hours-add-btn" onclick="addTimeEntry()" title="Apontar horas"><i data-lucide="check" class="ic-sm"></i></button>
-      </div>
-    </div>
-    <div class="detail-footer-sep"></div>
-    <div class="detail-footer-section detail-footer-stage">
-      <div class="detail-footer-group" style="flex:1;min-width:0">
-        <div class="detail-footer-label">Etapa</div>
-        <div class="detail-footer-stage-controls">
-          <button class="detail-footer-arrow" ${idx <= 0 ? 'disabled' : ''} onclick="moveStage(-1)" title="Etapa anterior"><i data-lucide="chevron-left"></i></button>
-          <div id="detail-stage-picker" style="flex:1"></div>
-          <button class="detail-footer-arrow primary" ${!flow || idx < 0 || idx >= active.length - 1 ? 'disabled' : ''} onclick="moveStage(1)" title="Avançar etapa"><i data-lucide="chevron-right"></i></button>
-        </div>
-      </div>
-    </div>
-  `;
+  // Footer legacy (#detail-footer) fica oculto — agora o rodapé mora dentro
+  // da coluna direita como pediu o wireframe.
+  const legacyFooter = document.getElementById('detail-footer');
+  if (legacyFooter) { legacyFooter.innerHTML = ''; legacyFooter.hidden = true; }
+
+  // Renderiza a subview ativa (Atividade/Etapas) — comentários e checklist já vêm inline.
+  if (activeTab === 'activity') _renderActivityTab(d);
+  if (activeTab === 'stages')   _renderStagesTab(d);
 
   // Owner picker (custom dropdown com avatar)
   buildOwnerPicker(d, owner);
@@ -7480,11 +7569,15 @@ function renderDetail() {
   detailDirty = {};
   // Popula select de "atribuir entregáveis a" — só agora que o DOM tá renderizado
   fillDeliverableUserSelect('detail-deliverable-user', d.deliverableUserId || '');
+  _updateComposeLock();
+  // Injeta pipeline visual no slot da topbar (centralizado ao lado de "Demanda").
+  const topPipe = document.getElementById('topbar-pipeline');
+  if (topPipe) topPipe.innerHTML = pipeline;
   paintIcons();
   // Garante que datetime-local inputs recém-renderizados usem o picker customizado
   if (typeof fdpConvertAll === 'function') fdpConvertAll();
   // Drag-and-drop de arquivos no modal de detalhe
-  setupDragDrop('#detail-modal .detail-content', 'detail-attachments-list', processDroppedFiles);
+  setupDragDrop('#page-demand-detail .detail-content', 'detail-attachments-list', processDroppedFiles);
   // Paste + drag-and-drop de imagens direto no compositor de comentários
   setupCommentComposer();
   // Abre imagens inline dos comentários em nova aba ao clicar (mesma UX dos
@@ -7607,18 +7700,27 @@ function hasUnsavedDetailEdits() {
   if (typeof pendingAttachments !== 'undefined' && pendingAttachments && pendingAttachments.length) return true;
   // Edição inline de comentário — id passou a incluir o cid.
   if (document.querySelector('[id^="edit-comment-text-"]')) return true;
+  // Editor inline de descrição/briefing — compara com o valor salvo (debounce
+  // de 1s pode deixar mudanças pendentes se o usuário sair rápido).
+  const d = detailId ? demandById(detailId) : null;
+  if (d) {
+    const descEl = document.getElementById('edit-description');
+    if (descEl && getRichValue('edit-description') !== (d.description || '')) return true;
+    const briefEl = document.getElementById('edit-briefing');
+    if (briefEl && normalizeUrl(briefEl.value) !== (d.briefing || '')) return true;
+  }
   return false;
 }
 function discardDetailEdits() { detailDirty = {}; }
 /* ── HISTÓRICO DA DEMANDA ── */
 function openDetailHistory() {
-  detailView = 'history';
-  renderDetail();
+  // Compat com atalhos antigos — agora é uma tab.
+  setDemandDetailTab('activity');
 }
 function backToDetailMain() {
+  // Compat: era usado pra sair das subviews. Agora volta pra tab de Comentários.
   detailView = 'main';
-  stagesEditDraft = null;
-  renderDetail();
+  setDemandDetailTab('comments');
 }
 
 /* ── EDITOR DE ETAPAS (por instância da demanda) ──
@@ -7662,8 +7764,7 @@ function openDetailStages() {
     dates: seedDates,
     order: initialOrder,
   };
-  detailView = 'stages';
-  renderDetail();
+  setDemandDetailTab('stages');
 }
 function toggleStageDraft(stageId) {
   if (!stagesEditDraft) return;
@@ -8082,35 +8183,11 @@ function renderDetailStages(d) {
   // Itera na ordem do draft, resolvendo cada ID no pool completo (fluxo + additions)
   const rowsList = draft.order.map(id => poolById.get(id)).filter(Boolean);
 
-  $('detail-content').innerHTML = `
-    <div class="detail-content">
-      <div class="detail-head">
-        <div class="detail-head-top">
-          <div style="display:flex;align-items:center;gap:12px">
-            <button class="btn btn-ghost btn-sm" onclick="backToDetailMain()" style="display:inline-flex;align-items:center;gap:6px">
-              <i data-lucide="arrow-left" class="ic-sm"></i> Voltar
-            </button>
-            <div>
-              <div class="detail-title">Etapas desta demanda</div>
-              <div class="detail-head-meta">
-                <span>${esc(d.name)}</span>
-                ${flow ? `<span class="meta-sep">|</span><span>Fluxo: ${esc(flow.name)}</span>` : ''}
-              </div>
-            </div>
-          </div>
-          <div class="detail-head-actions">
-            <button id="stages-edit-reset" class="btn btn-ghost btn-sm" onclick="resetStagesDraft()" ${empty ? 'disabled' : ''}>Restaurar padrões</button>
-            <button id="stages-edit-save" class="btn btn-primary btn-sm" onclick="saveStagesDraft()" ${!dirty ? 'disabled' : ''}>Salvar</button>
-            <button class="detail-icon-btn" title="Fechar" onclick="attemptCloseModal('detail-modal')"><i data-lucide="x" class="ic-sm"></i></button>
-          </div>
-        </div>
-      </div>
-      <div class="detail-body">
-        <div class="stages-edit-hint">
-          Arraste pela alça à esquerda para reordenar, edite o nome direto no campo e troque
-          o responsável no dropdown. As alterações afetam <strong>apenas esta demanda</strong> —
-          o fluxo original <strong>${esc(flow?.name || '—')}</strong> continua intacto.
-        </div>
+  // Escreve dentro do painel da tab Etapas (era uma sub-view; agora é aba).
+  const body = document.getElementById('tab-stages-body');
+  if (!body) return; // tab não montada ainda — proteção contra render fora de contexto
+  body.innerHTML = `
+    <div class="stages-edit-inline">
         ${flow ? `<div class="stages-edit-list">${(() => {
           // Data efetiva por etapa. Se houver âncora (draft.dates[sid]) ela ganha
           // e vira o novo baseline pras próximas etapas cascatearem em cima.
@@ -8191,6 +8268,9 @@ function renderDetailStages(d) {
             </div>`;
           }).join('');
         })()}</div>` : '<div class="hours-empty">Esta demanda não tem fluxo associado.</div>'}
+      <div class="stages-edit-footer">
+        <button id="stages-edit-reset" class="btn btn-ghost btn-sm" onclick="resetStagesDraft()" ${empty ? 'disabled' : ''}>Restaurar padrões</button>
+        <button id="stages-edit-save" class="btn btn-primary btn-sm" onclick="saveStagesDraft()" ${!dirty ? 'disabled' : ''}>Salvar</button>
       </div>
     </div>`;
   paintIcons();
@@ -8205,6 +8285,9 @@ function renderDetailStages(d) {
     });
   }
 }
+/* Alias interno: chamado pelo setDemandDetailTab('stages') pra renderizar
+   dentro do painel. renderDetailStages já escreve no #tab-stages-body. */
+function _renderStagesTab(d) { renderDetailStages(d); }
 
 /* ── RECORRÊNCIA ── */
 function onRecurrenceToggle() {
@@ -8426,7 +8509,8 @@ function fillDeliverableUserSelect(selId, currentValue) {
   const sel = document.getElementById(selId);
   if (!sel) return;
   const list = wsUsers().slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-  sel.innerHTML = '<option value="">— Responsável atual da demanda —</option>' +
+  // Placeholder neutro — SEM atribuição automática ao responsável atual.
+  sel.innerHTML = '<option value="">Atribuir responsável…</option>' +
     list.map(u => `<option value="${u.id}" ${u.id === currentValue ? 'selected' : ''}>${esc(u.name)}${u.role ? ' · ' + esc(u.role) : ''}</option>`).join('');
 }
 
@@ -8569,44 +8653,25 @@ function describeHistory(h, d) {
     default:                   return esc(h.action);
   }
 }
-function renderDetailHistory(d) {
-  const p = projectById(d.projectId);
+function renderDetailHistory(d) { _renderActivityTab(d); }
+/* Renderiza o histórico DENTRO do painel da tab Atividade (sem trocar toda a
+   página). Mesmo layout que a antiga sub-view "histórico". */
+function _renderActivityTab(d) {
+  const body = document.getElementById('tab-activity-body');
+  if (!body || !d) return;
   const history = (d.history || []).slice().reverse();
-  $('detail-content').innerHTML = `
-    <div class="detail-content">
-      <div class="detail-head">
-        <div class="detail-head-top">
-          <div style="display:flex;align-items:center;gap:12px">
-            <button class="btn btn-ghost btn-sm" onclick="backToDetailMain()" style="display:inline-flex;align-items:center;gap:6px">
-              <i data-lucide="arrow-left" class="ic-sm"></i> Voltar
-            </button>
-            <div>
-              <div class="detail-title">Histórico da demanda</div>
-              <div class="detail-head-meta">
-                <span>${esc(d.name)}</span>
-                ${p ? `<span class="meta-sep">|</span><span>${esc(p.name)}</span>` : ''}
-              </div>
-            </div>
+  body.innerHTML = history.length
+    ? `<div class="history-list">${history.map(h => {
+        const u = userById(h.userId);
+        return `<div class="history-item">
+          ${avatarHTML(u)}
+          <div class="history-body">
+            <div class="history-text"><strong>${esc(u?.name || 'Usuário')}</strong> ${describeHistory(h, d)}</div>
+            <div class="history-time">${esc(fmtDateTime(h.at))}</div>
           </div>
-          <div class="detail-head-actions">
-            <button class="detail-icon-btn" title="Fechar" onclick="attemptCloseModal('detail-modal')"><i data-lucide="x" class="ic-sm"></i></button>
-          </div>
-        </div>
-      </div>
-      <div class="detail-body">
-        ${history.length ? `<div class="history-list">${history.map(h => {
-          const u = userById(h.userId);
-          return `<div class="history-item">
-            ${avatarHTML(u)}
-            <div class="history-body">
-              <div class="history-text"><strong>${esc(u?.name || 'Usuário')}</strong> ${describeHistory(h, d)}</div>
-              <div class="history-time">${esc(fmtDateTime(h.at))}</div>
-            </div>
-          </div>`;
-        }).join('')}</div>` : '<div class="hours-empty">Nenhum registro no histórico ainda.</div>'}
-      </div>
-    </div>`;
-  $('detail-footer').innerHTML = '';
+        </div>`;
+      }).join('')}</div>`
+    : '<div class="hours-empty" style="text-align:left;margin-top:16px">Nenhum registro no histórico ainda.</div>';
   paintIcons();
 }
 
@@ -8649,26 +8714,45 @@ function cancelDetailEdits() {
    Auto-save: dispara em blur ou após ~1s parado de digitar. Salva silenciosamente
    (sem re-render) pra não perder cursor/foco. Indicador minimalista mostra o
    estado: "Salvando…" → "Salvo" → fade. Botão "Concluir" só esconde o editor. */
-function editBriefingInline() {
+function editBriefingInline() { _openInlineDescBriefingEditor('briefing'); }
+function editDescriptionInline() { _openInlineDescBriefingEditor('description'); }
+/* Editor inline unificado — descrição (textarea) + briefing (input url) juntos.
+   CTA "Concluir" fica ABAIXO dos dois, full width. Sem moldura em volta.
+   `preferField` decide qual foca ao abrir ('description' | 'briefing').
+   IMPORTANTE: se já está aberto, apenas foca — NÃO reescreve o DOM (isso
+   destruía o input clicado e devolvia foco pra descrição a cada clique). */
+function _openInlineDescBriefingEditor(preferField) {
   const d = demandById(detailId); if (!d) return;
-  const bView = $('detail-briefing-view');
   const dView = $('detail-description-view');
-  bView.innerHTML = `<input class="form-control" id="edit-briefing" type="url" value="${esc(d.briefing || '')}" placeholder="https://...">`;
-  dView.innerHTML = `<textarea class="form-control" id="edit-description" rows="5" placeholder="Detalhes da demanda...">${esc(d.description || '')}</textarea>
+  const bView = $('detail-briefing-view');
+  if (!dView || !bView) return;
+  const alreadyOpen = !!document.getElementById('edit-description');
+  if (alreadyOpen) return; // clique dentro do editor não deve reabrir
+  dView.innerHTML = renderRichEditor({
+    id: 'edit-description',
+    initial: d.description || '',
+    placeholder: 'Detalhes da demanda...',
+    minHeight: '110px'
+  });
+  bView.innerHTML = `<input class="form-control inline-edit-briefing" id="edit-briefing" type="url" value="${esc(d.briefing || '')}" placeholder="https://... (link do briefing)">
     <div class="inline-edit-foot">
       <span class="inline-edit-status" id="edit-desc-status"></span>
-      <button class="btn btn-ghost btn-sm" onclick="renderDetail()">Concluir</button>
+      <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); renderDetail()">Concluir</button>
     </div>`;
+  bView.classList.add('is-editing');
   const briefingInput = $('edit-briefing');
-  const descTextarea = $('edit-description');
+  const descEditor = $('edit-description');
   if (briefingInput) {
     briefingInput.addEventListener('input', autoSaveBriefingDebounced);
     briefingInput.addEventListener('blur', autoSaveBriefing);
   }
-  if (descTextarea) {
-    descTextarea.addEventListener('input', autoSaveBriefingDebounced);
-    descTextarea.addEventListener('blur', autoSaveBriefing);
+  if (descEditor) {
+    descEditor.addEventListener('input', autoSaveBriefingDebounced);
+    descEditor.addEventListener('blur', autoSaveBriefing);
   }
+  const focusEl = preferField === 'briefing' ? briefingInput : descEditor;
+  if (focusEl) setTimeout(() => focusEl.focus(), 60);
+  paintIcons();
 }
 async function autoSaveBriefing() {
   const d = demandById(detailId); if (!d) return;
@@ -8676,7 +8760,7 @@ async function autoSaveBriefing() {
   const descEl = document.getElementById('edit-description');
   if (!briefingEl && !descEl) return; // editor fechado
   const newBrief = briefingEl ? normalizeUrl(briefingEl.value) : d.briefing;
-  const newDesc  = descEl ? descEl.value.trim() : d.description;
+  const newDesc  = descEl ? getRichValue('edit-description') : d.description;
   if (newBrief === (d.briefing || '') && newDesc === (d.description || '')) return;
   setInlineEditStatus('Salvando…');
   try {
@@ -8690,14 +8774,27 @@ async function autoSaveBriefing() {
 const autoSaveBriefingDebounced = debounce(autoSaveBriefing, 1000);
 function setInlineEditStatus(text, kind) {
   const el = document.getElementById('edit-desc-status');
-  if (!el) return;
-  el.textContent = text || '';
-  el.className = 'inline-edit-status' + (kind ? ' ' + kind : '');
+  const chip = document.getElementById('edit-desc-status-chip');
+  if (el) {
+    el.textContent = text || '';
+    el.className = 'inline-edit-status' + (kind ? ' ' + kind : '');
+  }
+  if (chip) {
+    // Chip com ícone + texto ao lado do pencil — visível sem precisar rolar.
+    const icon = kind === 'ok'  ? 'check-circle-2'
+               : kind === 'err' ? 'alert-circle'
+               : text ? 'loader-2' : '';
+    chip.className = 'inline-edit-status-chip' + (kind ? ' ' + kind : (text ? ' saving' : ''));
+    chip.innerHTML = text ? `<i data-lucide="${icon}" class="ic-xs"></i><span>${esc(text)}</span>` : '';
+    if (text && typeof paintIcons === 'function') paintIcons();
+  }
   if (kind === 'ok') {
     clearTimeout(setInlineEditStatus._t);
     setInlineEditStatus._t = setTimeout(() => {
-      const cur = document.getElementById('edit-desc-status');
-      if (cur && cur.textContent === text) { cur.textContent = ''; cur.className = 'inline-edit-status'; }
+      const curEl = document.getElementById('edit-desc-status');
+      if (curEl && curEl.textContent === text) { curEl.textContent = ''; curEl.className = 'inline-edit-status'; }
+      const curChip = document.getElementById('edit-desc-status-chip');
+      if (curChip) { curChip.innerHTML = ''; curChip.className = 'inline-edit-status-chip'; }
     }, 1800);
   }
 }
@@ -8717,8 +8814,10 @@ async function confirmDeleteCurrentDemand() {
   try {
     const delId = d.id;
     await api('/demands/' + delId, 'DELETE');
-    closeModal('detail-modal');
+    stopDetailPoll();
     detailId = null;
+    // Sai da página de detalhe (era modal → agora navega pra origem).
+    if (currentPage === 'demand-detail') { navPush('/dashboard'); applyRoute(); }
     toastWithUndo('Demanda excluída.', () => api('/demands/' + delId + '/undelete', 'POST'));
     await refreshData();
   } catch (e) { toast(e.message, 'error'); }
@@ -9225,17 +9324,10 @@ function toggleTimer() {
     t.accumulatedMs += Date.now() - t.beginAt;
     t.running = false;
     t.beginAt = null;
-    // Preenche o campo de horas com o acumulado (em horas decimais)
-    const hours = Math.round((t.accumulatedMs / 3600000) * 100) / 100;
-    if (hours > 0) $('time-hours').value = hours;
-    // Preenche término = agora; início = agora - acumulado (se ainda não preenchido)
-    const now = new Date();
-    const toLocal = dt => {
-      const off = dt.getTimezoneOffset();
-      return new Date(dt.getTime() - off * 60000).toISOString().slice(0, 16);
-    };
-    if (!$('time-end').value) $('time-end').value = toLocal(now);
-    if (!$('time-start').value && t.startedAt) $('time-start').value = toLocal(new Date(t.startedAt));
+    // Se o modal de Registrar Tempo estiver aberto, propaga os valores pros
+    // novos campos (data + hora separadas + horas/minutos).
+    const modalOpen = document.getElementById('time-modal')?.classList.contains('open');
+    if (modalOpen && typeof _prefillTimeModal === 'function') _prefillTimeModal();
     toast('Cronômetro pausado · ' + formatTimerClock(t.accumulatedMs));
   } else {
     // Iniciar/retomar. Só 1 timer rodando por vez — pausa outros ativos primeiro.
@@ -9278,30 +9370,126 @@ function toIsoDateTime(v) {
   return null;
 }
 
-/* Apontamento de horas */
-function autoHours() {
-  const s = toIsoDateTime($('time-start').value);
-  const e = toIsoDateTime($('time-end').value);
-  if (s && e && !$('time-hours').value) {
-    const diff = (new Date(e) - new Date(s)) / 3600000;
-    if (diff > 0) $('time-hours').value = Math.round(diff * 100) / 100;
+/* Abre o modal de "Registrar tempo" — layout novo: Início/Término em
+   colunas com data+hora separadas, Horas/Minutos como inputs, chips de
+   duração rápida (2h/1h/45m/30m/15m). Pre-popula com timer atual se houver. */
+function openRegisterTimeModal() {
+  openModal('time-modal');
+  setTimeout(() => { _prefillTimeModal(); }, 60);
+}
+function _prefillTimeModal() {
+  // Se houver timer rodando/pausado pra essa demanda, começa por ele.
+  const t = detailId ? getTimer(detailId) : null;
+  let startDt, endDt, hours = 0, minutes = 0;
+  if (t && t.startedAt) {
+    startDt = new Date(t.startedAt);
+    const elapsedMs = (t.accumulatedMs || 0) + (t.running ? (Date.now() - (t.lastResume || t.startedAt)) : 0);
+    endDt = new Date(startDt.getTime() + elapsedMs);
+    const totalMin = Math.round(elapsedMs / 60000);
+    hours = Math.floor(totalMin / 60);
+    minutes = totalMin % 60;
+  } else {
+    endDt = new Date();
+    startDt = new Date(endDt.getTime());
   }
+  $('time-start-date').value = _fmtDateInput(startDt);
+  $('time-start-time').value = _fmtTimeInput(startDt);
+  $('time-end-date').value   = _fmtDateInput(endDt);
+  $('time-end-time').value   = _fmtTimeInput(endDt);
+  $('time-hours').value   = hours ? String(hours) : '';
+  $('time-minutes').value = minutes ? String(minutes) : '';
+  if (typeof fdpConvertAll === 'function') fdpConvertAll();
+}
+function _fmtDateInput(dt) {
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, '0');
+  const d = String(dt.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+function _fmtTimeInput(dt) {
+  const h = String(dt.getHours()).padStart(2, '0');
+  const m = String(dt.getMinutes()).padStart(2, '0');
+  return `${h}:${m}`;
+}
+function _composeDateTime(dateStr, timeStr) {
+  if (!dateStr) return null;
+  const t = timeStr || '00:00';
+  const dt = new Date(`${dateStr}T${t}:00`);
+  return isNaN(dt.getTime()) ? null : dt;
+}
+/* Recalcula duração a partir de início/término. */
+function _recalcTimeDurationFromRange() {
+  const s = _composeDateTime($('time-start-date').value, $('time-start-time').value);
+  const e = _composeDateTime($('time-end-date').value,   $('time-end-time').value);
+  if (!s || !e) return;
+  const diffMs = e.getTime() - s.getTime();
+  if (diffMs <= 0) { $('time-hours').value = ''; $('time-minutes').value = ''; return; }
+  const totalMin = Math.round(diffMs / 60000);
+  $('time-hours').value   = String(Math.floor(totalMin / 60));
+  $('time-minutes').value = String(totalMin % 60);
+}
+/* Recalcula início a partir de término - duração (término é âncora
+   quando o usuário edita horas/minutos direto). */
+function _recalcTimeStartFromDuration() {
+  const e = _composeDateTime($('time-end-date').value, $('time-end-time').value);
+  if (!e) return;
+  const h = Number($('time-hours').value) || 0;
+  const m = Number($('time-minutes').value) || 0;
+  const s = new Date(e.getTime() - (h * 60 + m) * 60000);
+  $('time-start-date').value = _fmtDateInput(s);
+  $('time-start-time').value = _fmtTimeInput(s);
+}
+/* Normaliza minutos: se > 59, transfere excesso pra horas. */
+function _normalizeHoursMinutes() {
+  let h = Number($('time-hours').value) || 0;
+  let m = Number($('time-minutes').value) || 0;
+  if (m > 59) {
+    h += Math.floor(m / 60);
+    m = m % 60;
+  }
+  if (h < 0) h = 0;
+  if (m < 0) m = 0;
+  $('time-hours').value   = h ? String(h) : '';
+  $('time-minutes').value = m ? String(m) : '';
+}
+function onTimeStartChange() { _recalcTimeDurationFromRange(); }
+function onTimeEndChange()   { _recalcTimeDurationFromRange(); }
+function onTimeDurationChange() {
+  _normalizeHoursMinutes();
+  _recalcTimeStartFromDuration();
+}
+/* Chip de duração — seta horas/minutos e recalcula início (término âncora). */
+function setTimeDuration(h, m) {
+  $('time-hours').value   = h ? String(h) : '';
+  $('time-minutes').value = m ? String(m) : '';
+  _recalcTimeStartFromDuration();
 }
 async function addTimeEntry() {
   const d = demandById(detailId); if (!d) return;
-  let hours = Number($('time-hours').value);
-  const start = toIsoDateTime($('time-start').value);
-  const end = toIsoDateTime($('time-end').value);
-  if (!(hours > 0) && start && end) {
-    const diff = (new Date(end) - new Date(start)) / 3600000;
-    if (diff > 0) hours = Math.round(diff * 100) / 100;
+  const startDt = _composeDateTime($('time-start-date').value, $('time-start-time').value);
+  const endDt   = _composeDateTime($('time-end-date').value,   $('time-end-time').value);
+  // Bloqueia apontamento impossível: término anterior ao início.
+  if (startDt && endDt && endDt.getTime() < startDt.getTime()) {
+    toast('O término não pode ser anterior ao início.', 'error');
+    return;
   }
-  if (!(hours > 0)) { toast('Informe as horas ou um início e término válidos.', 'error'); return; }
+  const h = Number($('time-hours').value) || 0;
+  const m = Number($('time-minutes').value) || 0;
+  let hours = h + m / 60;
+  if (!(hours > 0) && startDt && endDt) {
+    const diff = (endDt.getTime() - startDt.getTime()) / 3600000;
+    if (diff > 0) hours = diff;
+  }
+  hours = Math.round(hours * 100) / 100;
+  if (!(hours > 0)) { toast('Informe uma duração válida ou início e término.', 'error'); return; }
+  const start = startDt ? startDt.toISOString() : null;
+  const end   = endDt   ? endDt.toISOString()   : null;
   try {
     const upd = await api('/demands/' + d.id + '/time', 'POST', { hours, start, end });
     patchDemand(upd);
     resetTimer(d.id);
     toast('Horas apontadas!');
+    closeModal('time-modal');
     renderDetail();
   } catch (e) { toast(e.message, 'error'); }
 }
@@ -9472,6 +9660,57 @@ function pickMentionCE(uname) {
   $('mention-pop').classList.remove('open');
   el.focus();
   draftSaveCommentCE(el);
+}
+/* Menu de "..." de cada comentário — abre popup com Editar/Excluir. */
+function toggleCommentMenu(commentId, ev) {
+  ev?.stopPropagation();
+  const menu = document.getElementById('comment-menu-' + commentId);
+  const wasOpen = menu?.classList.contains('open');
+  closeCommentMenus();
+  closeReactionPickers();
+  if (menu && !wasOpen) menu.classList.add('open');
+}
+function closeCommentMenus() {
+  document.querySelectorAll('.chat-comment-menu.open').forEach(m => m.classList.remove('open'));
+}
+/* Reaction picker inline (chat) — abre à ESQUERDA do smile, em linha. */
+function toggleChatReactionPicker(commentId, ev) {
+  ev?.stopPropagation();
+  const p = document.getElementById('reaction-picker-' + commentId);
+  const wasOpen = p?.classList.contains('open');
+  closeReactionPickers();
+  closeCommentMenus();
+  if (p && !wasOpen) p.classList.add('open');
+}
+function closeReactionPickers() {
+  document.querySelectorAll('.chat-reaction-picker.open').forEach(p => p.classList.remove('open'));
+}
+/* Menu "..." de cada apontamento — mesmo pattern do comment. */
+function toggleApptMenu(apptId, ev) {
+  ev?.stopPropagation();
+  const menu = document.getElementById('appt-menu-' + apptId);
+  const wasOpen = menu?.classList.contains('open');
+  closeApptMenus();
+  closeCommentMenus();
+  closeReactionPickers();
+  if (menu && !wasOpen) menu.classList.add('open');
+}
+function closeApptMenus() {
+  document.querySelectorAll('.appt-menu.open').forEach(m => m.classList.remove('open'));
+}
+document.addEventListener('click', ev => {
+  if (!ev.target.closest('.chat-comment-menu-wrap:not(.appt-menu-wrap)')) closeCommentMenus();
+  if (!ev.target.closest('.appt-menu-wrap')) closeApptMenus();
+  if (!ev.target.closest('.chat-reaction-wrap')) closeReactionPickers();
+}, true);
+
+/* Colapsa o compose e limpa o rascunho — chamado pelo "Cancelar". */
+function cancelCommentCompose() {
+  const inp = document.getElementById('comment-input');
+  if (inp) { inp.innerHTML = ''; syncCommentEmptyState?.(inp); }
+  document.getElementById('chat-compose')?.classList.remove('is-active');
+  document.getElementById('comment-pending-files').innerHTML = '';
+  try { draftSaveCommentCE?.(inp); } catch {}
 }
 async function sendComment() {
   const el = $('comment-input');
@@ -9771,6 +10010,110 @@ function handleCommentFiles(ev) { readFilesAsBase64(ev.target.files, false); ev.
 // Imagens agora entram INLINE no HTML do comentário (ao invés de virarem
 // anexo separado). Reaproveita o pipeline de resize/JPEG do readImagesInline.
 function handleCommentImages(ev) { readImagesInline(ev.target.files); ev.target.value = ''; }
+
+/* ─── RICH EDITOR GENÉRICO ───
+   Editor contenteditable + toolbar reutilizável (usado na descrição da
+   demanda, na descrição padrão dos fluxos e no editor inline da demanda).
+   Mesmo comportamento do editor de comentários. */
+function isHtmlContent(s) {
+  if (!s || typeof s !== 'string') return false;
+  return /<(p|div|br|ul|ol|li|strong|em|b|i|u|s|a|img|blockquote|span|h[1-6])\b[^>]*>/i.test(s);
+}
+/* Renderiza o HTML de um rich editor. `id` é o id do contenteditable.
+   `initial` pode ser markdown-legado ou HTML — detectado automaticamente. */
+function renderRichEditor({ id, initial, placeholder, minHeight }) {
+  const initialHtml = initial ? (isHtmlContent(initial) ? initial : mdRender(initial)) : '';
+  const isEmpty = !initialHtml.trim();
+  return `<div class="rich-editor-wrap">
+    <div class="rich-toolbar">
+      <button type="button" class="rich-tool" title="Negrito (Ctrl+B)" onmousedown="event.preventDefault()" onclick="execRichCmd('${id}','bold')"><i data-lucide="bold" class="ic-xs"></i></button>
+      <button type="button" class="rich-tool" title="Itálico" onmousedown="event.preventDefault()" onclick="execRichCmd('${id}','italic')"><i data-lucide="italic" class="ic-xs"></i></button>
+      <button type="button" class="rich-tool" title="Sublinhado" onmousedown="event.preventDefault()" onclick="execRichCmd('${id}','underline')"><i data-lucide="underline" class="ic-xs"></i></button>
+      <button type="button" class="rich-tool" title="Tachado" onmousedown="event.preventDefault()" onclick="execRichCmd('${id}','strikeThrough')"><i data-lucide="strikethrough" class="ic-xs"></i></button>
+      <span class="chat-tool-sep"></span>
+      <button type="button" class="rich-tool" title="Lista numerada" onmousedown="event.preventDefault()" onclick="execRichCmd('${id}','insertOrderedList')"><i data-lucide="list-ordered" class="ic-xs"></i></button>
+      <button type="button" class="rich-tool" title="Lista com marcadores" onmousedown="event.preventDefault()" onclick="execRichCmd('${id}','insertUnorderedList')"><i data-lucide="list" class="ic-xs"></i></button>
+      <button type="button" class="rich-tool" title="Checklist" onmousedown="event.preventDefault()" onclick="execRichCmd('${id}','insertUnorderedList')"><i data-lucide="list-checks" class="ic-xs"></i></button>
+      <span class="chat-tool-sep"></span>
+      <button type="button" class="rich-tool" title="Citação" onmousedown="event.preventDefault()" onclick="execRichCmd('${id}','formatBlock','BLOCKQUOTE')"><i data-lucide="quote" class="ic-xs"></i></button>
+      <span class="chat-tool-sep"></span>
+      <button type="button" class="rich-tool" title="Link" onmousedown="event.preventDefault()" onclick="promptRichLink('${id}', this)"><i data-lucide="link" class="ic-xs"></i></button>
+      <input type="file" id="rich-img-input-${id}" accept="image/*" multiple style="display:none" onchange="handleRichImages(event, '${id}')">
+      <button type="button" class="rich-tool" title="Imagem" onmousedown="event.preventDefault()" onclick="document.getElementById('rich-img-input-${id}').click()"><i data-lucide="image" class="ic-xs"></i></button>
+    </div>
+    <div class="rich-editor-input ${isEmpty ? 'is-empty' : ''}" id="${id}"
+         contenteditable="true" role="textbox" aria-multiline="true"
+         data-placeholder="${esc(placeholder || 'Escreva aqui…')}"
+         ${minHeight ? `style="min-height:${minHeight}"` : ''}
+         oninput="syncRichEmptyState(this)">${initialHtml}</div>
+  </div>`;
+}
+/* Executa comando no editor específico (foca antes pra que a seleção
+   corrente seja aplicada). */
+function execRichCmd(editorId, cmd, value) {
+  const el = document.getElementById(editorId);
+  if (!el) return;
+  el.focus();
+  try { document.execCommand(cmd, false, value || null); } catch {}
+  syncRichEmptyState(el);
+}
+/* Placeholder helper — mesma lógica do syncCommentEmptyState. */
+function syncRichEmptyState(el) {
+  if (!el) return;
+  const hasImg = /<img\b/i.test(el.innerHTML || '');
+  const hasText = (el.innerText || el.textContent || '').replace(/​/g, '').trim().length > 0;
+  el.classList.toggle('is-empty', !hasImg && !hasText);
+}
+/* Link popover — reusa a mesma implementação do editor de comentário. */
+function promptRichLink(editorId, anchorBtn) {
+  const el = document.getElementById(editorId);
+  if (!el) return;
+  _openLinkPopover(anchorBtn || event?.currentTarget, el);
+}
+/* Handler de upload de imagem via input file (rich editor genérico). */
+function handleRichImages(ev, editorId) {
+  const el = document.getElementById(editorId);
+  if (el && typeof _readImagesInlineInto === 'function') _readImagesInlineInto(el, ev.target.files);
+  ev.target.value = '';
+}
+/* Getter/Setter que funciona tanto pra textarea antigo quanto contenteditable novo. */
+function getRichValue(id) {
+  const el = document.getElementById(id);
+  if (!el) return '';
+  if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') return el.value || '';
+  // Contenteditable — retorna HTML só se tiver conteúdo real.
+  const html = el.innerHTML || '';
+  const text = (el.innerText || '').replace(/​/g, '').trim();
+  const hasImg = /<img\b/i.test(html);
+  if (!text && !hasImg) return '';
+  return html.trim();
+}
+function setRichValue(id, val) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') { el.value = val || ''; return; }
+  const html = val ? (isHtmlContent(val) ? val : mdRender(val)) : '';
+  el.innerHTML = html;
+  syncRichEmptyState(el);
+}
+/* Monta um rich editor no lugar de um textarea existente. Preserva o id
+   (agora aponta pro contenteditable), então getRichValue/setRichValue e
+   qualquer código antigo que use $(id) continua funcionando. */
+function mountRichEditor(id, opts) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  // Já montado? O id agora aponta pro contenteditable dentro do .rich-editor-wrap.
+  // Sem esse check, chamadas subsequentes aninhavam wraps (toolbar duplicada).
+  if (el.closest('.rich-editor-wrap')) return;
+  const placeholder = opts?.placeholder || el.getAttribute('placeholder') || '';
+  const minHeight = opts?.minHeight || '';
+  const initial = el.value || '';
+  const wrap = document.createElement('div');
+  wrap.innerHTML = renderRichEditor({ id, initial, placeholder, minHeight });
+  const built = wrap.firstElementChild;
+  el.parentNode.replaceChild(built, el);
+  if (typeof paintIcons === 'function') paintIcons();
+}
 // Redimensiona e comprime cada imagem, então injeta um <img src="data:..."> no
 // caret do editor de comentário. Server converte data URIs em /uploads na hora
 // de salvar. Suporta múltiplos arquivos numa chamada.
@@ -9888,42 +10231,46 @@ function startEditComment(cid) {
   const c = d.comments.find(x => x.id === cid); if (!c) return;
   const el = document.getElementById('comment-' + cid);
   if (!el) return;
+  // Marca globalmente que estamos editando — o compose principal fica bloqueado
+  // pra evitar dois editores abertos ao mesmo tempo.
+  _editingCommentId = cid;
+  _updateComposeLock();
   const atts = (c.attachments || []).map((a, i) => {
     const preview = a.type && a.type.startsWith('image/') ? `<img src="${a.data}" class="pending-thumb">` : '<i data-lucide="file" class="ic-sm"></i>';
     return `<span class="pending-file">${preview} ${esc(a.name)} <button class="icon-btn danger" onclick="removeEditAtt('${cid}', ${i})" title="Remover"><i data-lucide="x" class="ic-sm"></i></button></span>`;
   }).join('');
-  // Edição usa o MESMO editor rich do compositor. Se o comentário original era
-  // texto plano (format ausente/'text'), converte quebras de linha em <br> e
-  // escapa HTML para não perder nada.
   const startHtml = c.format === 'html'
     ? (c.text || '')
     : esc(c.text || '').replace(/\r?\n/g, '<br>');
+  // Reusa o layout do chat-compose (mesmas classes) — evita "duas caixas
+  // diferentes" e mantém consistência visual entre novo e editar.
   el.innerHTML = `
-    <div class="comment-compose comment-edit-compose">
-      <div class="comment-toolbar" role="toolbar" aria-label="Formatação">
-        <button type="button" class="comment-tool" data-cmd="bold" title="Negrito" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${cid}','bold')"><i data-lucide="bold" class="ic-xs"></i></button>
-        <button type="button" class="comment-tool" data-cmd="italic" title="Itálico" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${cid}','italic')"><i data-lucide="italic" class="ic-xs"></i></button>
-        <button type="button" class="comment-tool" data-cmd="underline" title="Sublinhado" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${cid}','underline')"><i data-lucide="underline" class="ic-xs"></i></button>
-        <span class="comment-toolbar-sep"></span>
-        <button type="button" class="comment-tool" data-cmd="insertOrderedList" title="Lista numerada" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${cid}','insertOrderedList')"><i data-lucide="list-ordered" class="ic-xs"></i></button>
-        <button type="button" class="comment-tool" data-cmd="insertUnorderedList" title="Lista com marcadores" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${cid}','insertUnorderedList')"><i data-lucide="list" class="ic-xs"></i></button>
-        <span class="comment-toolbar-sep"></span>
-        <button type="button" class="comment-tool" data-cmd="createLink" title="Inserir link" onmousedown="event.preventDefault()" onclick="promptEditCommentLink('${cid}')"><i data-lucide="link" class="ic-xs"></i></button>
+    <div class="chat-compose is-active chat-compose-editing" id="chat-compose-edit-${cid}">
+      <div class="chat-compose-toolbar">
+        <button type="button" class="chat-tool" title="Negrito" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${cid}','bold')"><i data-lucide="bold" class="ic-xs"></i></button>
+        <button type="button" class="chat-tool" title="Itálico" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${cid}','italic')"><i data-lucide="italic" class="ic-xs"></i></button>
+        <button type="button" class="chat-tool" title="Sublinhado" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${cid}','underline')"><i data-lucide="underline" class="ic-xs"></i></button>
+        <button type="button" class="chat-tool" title="Tachado" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${cid}','strikeThrough')"><i data-lucide="strikethrough" class="ic-xs"></i></button>
+        <span class="chat-tool-sep"></span>
+        <button type="button" class="chat-tool" title="Lista numerada" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${cid}','insertOrderedList')"><i data-lucide="list-ordered" class="ic-xs"></i></button>
+        <button type="button" class="chat-tool" title="Lista com marcadores" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${cid}','insertUnorderedList')"><i data-lucide="list" class="ic-xs"></i></button>
+        <span class="chat-tool-sep"></span>
+        <button type="button" class="chat-tool" title="Link" onmousedown="event.preventDefault()" onclick="promptEditCommentLink('${cid}')"><i data-lucide="link" class="ic-xs"></i></button>
       </div>
-      <div class="comment-input comment-input-ce" id="edit-comment-text-${cid}"
+      <div class="chat-compose-input comment-input comment-input-ce" id="edit-comment-text-${cid}"
            contenteditable="true" role="textbox" aria-multiline="true"
            oninput="syncCommentEmptyState(this)"
            data-placeholder="Editar comentário…">${startHtml}</div>
       <div class="comment-pending-files" id="edit-comment-files">${atts}</div>
-      <div class="comment-compose-bar" style="margin-top:8px">
-        <div class="comment-attach-btns">
+      <div class="chat-compose-foot">
+        <div class="chat-compose-foot-left">
           <input type="file" id="edit-file-input" multiple style="display:none" onchange="handleEditFiles(event,'${cid}')">
-          <button class="btn btn-ghost btn-sm" onclick="$('edit-file-input').click()" title="Anexar arquivo"><i data-lucide="paperclip" class="ic-sm"></i></button>
+          <button class="chat-compose-icon" onclick="$('edit-file-input').click()" title="Anexar arquivo"><i data-lucide="paperclip" class="ic-xs"></i></button>
           <input type="file" id="edit-img-input" accept="image/*" multiple style="display:none" onchange="handleEditImagesInline(event,'${cid}')">
-          <button class="btn btn-ghost btn-sm" onclick="$('edit-img-input').click()" title="Inserir imagem inline"><i data-lucide="image" class="ic-sm"></i></button>
+          <button class="chat-compose-icon" onclick="$('edit-img-input').click()" title="Imagem"><i data-lucide="image" class="ic-xs"></i></button>
         </div>
-        <div style="display:flex;gap:6px">
-          <button class="btn btn-ghost btn-sm" onclick="renderDetail()">Cancelar</button>
+        <div class="chat-compose-foot-right">
+          <button class="btn btn-ghost btn-sm" onclick="cancelEditComment('${cid}')">Cancelar</button>
           <button class="btn btn-primary btn-sm" onclick="saveEditComment('${cid}')">Salvar</button>
         </div>
       </div>
@@ -10058,9 +10405,24 @@ async function saveEditComment(cid) {
       text: html, format: 'html', attachments
     });
     patchDemand(upd);
+    _editingCommentId = null;
     renderDetail();
     toast('Comentário atualizado!');
   } catch (e) { toast(e.message, 'error'); }
+}
+/* Cancela a edição inline de um comentário — recupera o compose principal. */
+function cancelEditComment(cid) {
+  _editingCommentId = null;
+  renderDetail();
+}
+/* Controle global: quando um comentário está em edição, bloqueia o compose
+   principal (evita duas caixas de escrita ao mesmo tempo). */
+let _editingCommentId = null;
+function _updateComposeLock() {
+  const wrap = document.querySelector('.chat-compose-wrap');
+  if (!wrap) return;
+  if (_editingCommentId) wrap.classList.add('is-locked');
+  else wrap.classList.remove('is-locked');
 }
 
 /* ─── PROJETOS ─── */
@@ -10478,6 +10840,13 @@ function openClientFlows(client) {
   renderClientFlows(client);
 }
 function closeClientFlows() {
+  // Fecha o editor inline antes de sair do subview.
+  editingFlowId = null;
+  flowModalDirty = false;
+  const emptyEl = document.getElementById('flow-inline-empty');
+  const formEl  = document.getElementById('flow-inline-form');
+  if (formEl)  formEl.style.display  = 'none';
+  if (emptyEl) emptyEl.style.display = '';
   currentClientView = null;
   $('flows-view-clients').style.display = '';
   $('flows-view-detail').style.display = 'none';
@@ -10565,7 +10934,8 @@ function renderClientFlows(client) {
     // Usuário comum: pode abrir o modal (modo somente leitura), mas não vê
     // ações de edição. Admin abre no modo edição normal.
     const clickAttr = `onclick="openFlowModal('${f.id}')"`;
-    return `<div class="flow-card flow-card-flow" ${clickAttr}>
+    const isOpen = editingFlowId === f.id;
+    return `<div class="flow-card flow-card-flow ${isOpen ? 'is-open' : ''}" data-flow-id="${f.id}" ${clickAttr}>
       ${iconHtml}
       ${adminActions}
       <div class="flow-card-name">${esc(f.name)}</div>
@@ -10600,13 +10970,19 @@ function openFlowModal(id, presetClientId) {
   // Read-only pra usuário comum: pode visualizar o fluxo mas não editar.
   // Server já bloqueia PUT/POST de fluxo por modOrAdmin — isso é só UX.
   const readOnly = !canEditFlow();
-  const modalEl = $('flow-modal');
-  modalEl.classList.toggle('readonly', readOnly);
-  // Sem autofocus quando read-only — evita o cursor pousar num input desabilitado
-  if (readOnly) modalEl.dataset.noAutofocus = '1';
-  else delete modalEl.dataset.noAutofocus;
+  const formEl = document.getElementById('flow-inline-form');
+  if (formEl) formEl.classList.toggle('readonly', readOnly);
   // Bloquear criação de fluxo novo pra quem não pode editar
   if (isNew && readOnly) { toast('Você não tem permissão para criar fluxos.', 'warn'); return; }
+  // Garante que estamos na página de fluxos e no subview do cliente correto.
+  if (currentPage !== 'flows') goPage('flows');
+  const targetClient = f
+    ? (f.clientId || (function(){
+        const c = wsClients().find(x => (x.name || '').toLowerCase() === (f.client || '').toLowerCase());
+        return c ? c.id : '__general__';
+      })())
+    : (presetClientId || '__general__');
+  if (currentClientView !== targetClient) openClientFlows(targetClient);
   // Contexto: edição usa o clientId do fluxo (fallback no nome legado);
   // nova usa o preset (subview do cliente). Sempre id de Client entity.
   if (f) {
@@ -10652,13 +11028,53 @@ function openFlowModal(id, presetClientId) {
       ];
   renderStageRows();
   // Defaults aplicados a novas demandas deste fluxo
-  $('fl-default-desc').value = f?.defaultDescription || '';
+  mountRichEditor('fl-default-desc', { placeholder: 'Texto que aparecerá pré-preenchido na descrição de toda demanda criada neste fluxo (editável depois).', minHeight: '90px' });
+  setRichValue('fl-default-desc', f?.defaultDescription || '');
   flowDefaultChecklist = Array.isArray(f?.defaultChecklist)
     ? f.defaultChecklist.map(it => ({ text: String(it.text || '') }))
     : [];
   renderFlowChecklist();
-  openModal('flow-modal');
+  // Mostra o painel inline (split view) — não é mais modal.
+  showFlowInlineEditor();
   navPush(id ? '/flows/' + id : '/flows/new');
+}
+/* Mostra o painel inline de edição do fluxo (esconde o empty state). */
+function showFlowInlineEditor() {
+  const empty = document.getElementById('flow-inline-empty');
+  const form  = document.getElementById('flow-inline-form');
+  if (empty) empty.style.display = 'none';
+  if (form)  form.style.display  = '';
+  // Marca o card ativo na lista
+  document.querySelectorAll('#flow-detail-grid .flow-card').forEach(c => c.classList.remove('is-open'));
+  if (editingFlowId) {
+    const card = document.querySelector(`#flow-detail-grid .flow-card[data-flow-id="${editingFlowId}"]`);
+    if (card) card.classList.add('is-open');
+  }
+  if (typeof paintIcons === 'function') paintIcons();
+}
+/* Fecha o editor inline. Se tem alterações não salvas, pede confirmação. */
+function closeFlowInlineEditor() {
+  const finish = () => {
+    flowModalDirty = false;
+    editingFlowId = null;
+    const empty = document.getElementById('flow-inline-empty');
+    const form  = document.getElementById('flow-inline-form');
+    if (form)  form.style.display  = 'none';
+    if (empty) empty.style.display = '';
+    document.querySelectorAll('#flow-detail-grid .flow-card').forEach(c => c.classList.remove('is-open'));
+    // Volta a URL pra lista do cliente atual (sem /flows/id)
+    navPush('/flows');
+  };
+  if (flowModalDirty) {
+    showConfirm({
+      title: 'Descartar alterações?',
+      message: 'Você tem alterações no fluxo que não foram salvas. Deseja sair sem salvar?',
+      okLabel: 'Descartar e fechar',
+      danger: true
+    }).then(ok => { if (ok) finish(); });
+    return;
+  }
+  finish();
 }
 
 /* Checklist padrão do fluxo — array editável de { text } */
@@ -11162,15 +11578,17 @@ async function saveFlow() {
     icon: flowIconData || null,
     stages: stageRows,
     applyToAll: applyAll,
-    defaultDescription: $('fl-default-desc')?.value || '',
+    defaultDescription: getRichValue('fl-default-desc'),
     defaultChecklist: flowDefaultChecklist.filter(it => (it.text || '').trim()).map(it => ({ text: it.text.trim() }))
   };
   try {
     const r = editingFlowId
       ? await api('/flows/' + editingFlowId, 'PUT', payload)
       : await api('/flows', 'POST', payload);
-    closeModal('flow-modal');
     flowModalDirty = false;
+    // Fecha o editor inline (não é modal mais). Se veio de nova criação, refresh
+    // da lista à esquerda mostra o novo fluxo.
+    if (typeof closeFlowInlineEditor === 'function') closeFlowInlineEditor();
     if (applyAll && r && r.count) {
       toast(`Fluxo aplicado a ${r.count} projeto${r.count === 1 ? '' : 's'} do cliente "${clientEntity?.name || ''}"!`);
     } else {
@@ -11531,24 +11949,75 @@ async function renderIntegrations() {
   // Integrações são UNIVERSAIS — não recortam por squad (o server já devolve todas).
   const allHooks = webhooks.slice();
 
-  // Filtros por alvo (usuário), cliente e projeto. Opções montadas só com os
-  // valores em uso nos webhooks deste workspace (filtro nunca fica "oco").
-  const fTarget = $('wh-f-target'), fClient = $('wh-f-client'), fProject = $('wh-f-project');
+  // ── Filtros com cascata: Squad → Usuário/Cliente → Projeto ──
+  const fSquad = $('wh-f-squad'), fTarget = $('wh-f-target'), fClient = $('wh-f-client'), fProject = $('wh-f-project');
+  const pickSquad   = fSquad?.value   || '';
+  const pickTarget  = fTarget?.value  || '';
+  const pickClient  = fClient?.value  || '';
+  const pickProject = fProject?.value || '';
+
+  // Popula opções (cascatadas). Sempre inclui todos os squads como opção.
+  if (fSquad) {
+    const wsList = (typeof workspaces !== 'undefined' ? workspaces : [])
+      .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+    fillSelect(fSquad, wsList.map(w => ({ value: w.id, label: w.name })), pickSquad, 'Todos os squads');
+  }
+  // Usuários — filtra por squad (workspaceIds contém squad) se selecionado.
   if (fTarget) {
-    const targetIds = [...new Set(allHooks.map(h => h.targetUserId).filter(Boolean))];
-    fillSelect(fTarget, targetIds.map(id => ({ value: id, label: userById(id)?.name || '(usuário removido)' })), undefined, 'Todos os alvos');
+    let userList = (typeof users !== 'undefined' ? users : []).filter(u => u.active !== false);
+    if (pickSquad) {
+      userList = userList.filter(u => Array.isArray(u.workspaceIds) && u.workspaceIds.includes(pickSquad));
+    }
+    userList = userList.slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+    fillSelect(fTarget, userList.map(u => ({ value: u.id, label: u.name })), pickTarget, 'Todos os usuários');
   }
+  // Clientes — filtra por squad se selecionado.
   if (fClient) {
-    const clientIds = [...new Set(allHooks.map(h => h.clientId).filter(Boolean))];
-    fillSelect(fClient, clientIds.map(id => ({ value: id, label: clients.find(c => c.id === id)?.name || '(cliente removido)' })), undefined, 'Todos os clientes');
+    let clientList = (typeof clients !== 'undefined' ? clients : []).filter(c => c.active !== false && !c.deletedAt);
+    if (pickSquad) clientList = clientList.filter(c => c.workspaceId === pickSquad);
+    clientList = clientList.slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+    fillSelect(fClient, clientList.map(c => ({ value: c.id, label: c.name })), pickClient, 'Todos os clientes');
   }
+  // Projetos — filtra por squad E cliente (se algum selecionado).
   if (fProject) {
-    const projIds = [...new Set(allHooks.map(h => h.projectId).filter(Boolean))];
-    fillSelect(fProject, projIds.map(id => ({ value: id, label: projectById(id)?.name || '(projeto removido)' })), undefined, 'Todos os projetos');
+    let projList = (typeof projects !== 'undefined' ? projects : []).filter(p => p.active !== false && !p.deletedAt);
+    if (pickSquad)  projList = projList.filter(p => p.workspaceId === pickSquad);
+    if (pickClient) projList = projList.filter(p => p.clientId === pickClient);
+    projList = projList.slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+    fillSelect(fProject, projList.map(p => ({ value: p.id, label: p.name })), pickProject, 'Todos os projetos');
   }
-  const pickTarget = fTarget?.value || '', pickClient = fClient?.value || '', pickProject = fProject?.value || '';
+
+  // Resolve os alvos do filtro de squad: pra bater com o webhook, o squad
+  // filtra por (targetUser está no squad) OU (client do webhook está no squad)
+  // OU (project do webhook pertence a um cliente do squad).
+  const squadUsers   = pickSquad ? new Set((users   || []).filter(u => Array.isArray(u.workspaceIds) && u.workspaceIds.includes(pickSquad)).map(u => u.id)) : null;
+  const squadClients = pickSquad ? new Set((clients || []).filter(c => c.workspaceId === pickSquad).map(c => c.id)) : null;
+  const squadProjs   = pickSquad ? new Set((projects|| []).filter(p => p.workspaceId === pickSquad || (p.clientId && squadClients.has(p.clientId))).map(p => p.id)) : null;
+  const hookMatchesSquad = h => {
+    if (!pickSquad) return true;
+    if (h.targetUserId && squadUsers.has(h.targetUserId)) return true;
+    if (h.clientId    && squadClients.has(h.clientId)) return true;
+    if (h.projectId   && squadProjs.has(h.projectId)) return true;
+    // Sem alvo/cliente/projeto = webhook universal — vale pra qualquer squad.
+    return !h.targetUserId && !h.clientId && !h.projectId;
+  };
+
+  // Busca textual — bate em nome, URL, alvo (usuário), cliente e projeto.
+  const q = norm(($('wh-f-search')?.value || '').trim());
+  const hookMatchesSearch = h => {
+    if (!q) return true;
+    const bits = [
+      h.name, h.url,
+      h.targetUserId ? userById(h.targetUserId)?.name : '',
+      h.clientId ? clients.find(c => c.id === h.clientId)?.name : '',
+      h.projectId ? projectById(h.projectId)?.name : ''
+    ].map(v => norm(v || '')).join(' ');
+    return bits.includes(q);
+  };
 
   const wsHooks = allHooks
+    .filter(hookMatchesSquad)
+    .filter(hookMatchesSearch)
     .filter(h => !pickTarget || h.targetUserId === pickTarget)
     .filter(h => !pickClient || h.clientId === pickClient)
     .filter(h => !pickProject || h.projectId === pickProject)
@@ -11601,6 +12070,65 @@ async function renderIntegrations() {
     ? emptyState('Nenhum webhook nos filtros', 'Ajuste ou limpe os filtros de alvo/cliente/projeto acima.', 'webhook')
     : emptyState('Nenhuma integração cadastrada', 'Adicione um webhook para receber eventos das demandas em ferramentas externas como Discord, Slack, Make ou n8n.', 'webhook')}</td></tr>`;
   paintIcons();
+}
+/* Toggle: alterna entre filtrar por Usuário ou por Cliente. A seleção do
+   escopo inativo é zerada pra não deixar filtro fantasma. */
+let _integrationsScope = 'user';
+function setIntegrationsScope(scope) {
+  _integrationsScope = scope === 'client' ? 'client' : 'user';
+  document.querySelectorAll('#wh-scope-toggle .filter-toggle-btn').forEach(b => {
+    b.classList.toggle('is-active', b.dataset.scope === _integrationsScope);
+  });
+  const tSel = $('wh-f-target'), cSel = $('wh-f-client');
+  if (_integrationsScope === 'user') {
+    if (tSel) tSel.style.display = '';
+    if (cSel) { cSel.style.display = 'none'; cSel.value = ''; }
+  } else {
+    if (cSel) cSel.style.display = '';
+    if (tSel) { tSel.style.display = 'none'; tSel.value = ''; }
+  }
+  renderIntegrations();
+}
+/* Squad muda → reseta seleções que talvez não estejam mais no escopo,
+   depois re-renderiza (cascateia usuários/clientes/projetos). */
+function onIntegrationsSquadChange() {
+  const pickSquad = $('wh-f-squad')?.value || '';
+  if (pickSquad) {
+    const u = $('wh-f-target').value;
+    if (u) {
+      const usr = userById(u);
+      if (!usr || !Array.isArray(usr.workspaceIds) || !usr.workspaceIds.includes(pickSquad)) $('wh-f-target').value = '';
+    }
+    const c = $('wh-f-client').value;
+    if (c) {
+      const cli = clients.find(x => x.id === c);
+      if (!cli || cli.workspaceId !== pickSquad) $('wh-f-client').value = '';
+    }
+    const p = $('wh-f-project').value;
+    if (p) {
+      const proj = projectById(p);
+      if (!proj || (proj.workspaceId !== pickSquad && !(proj.clientId && clients.some(cc => cc.id === proj.clientId && cc.workspaceId === pickSquad)))) $('wh-f-project').value = '';
+    }
+  }
+  renderIntegrations();
+}
+/* Cliente muda → invalida projeto se não bater mais. */
+function onIntegrationsClientChange() {
+  const pickClient = $('wh-f-client')?.value || '';
+  if (pickClient) {
+    const p = $('wh-f-project').value;
+    if (p) {
+      const proj = projectById(p);
+      if (!proj || proj.clientId !== pickClient) $('wh-f-project').value = '';
+    }
+  }
+  renderIntegrations();
+}
+function clearIntegrationsFilters() {
+  ['wh-f-squad', 'wh-f-target', 'wh-f-client', 'wh-f-project', 'wh-f-search'].forEach(id => {
+    const el = $(id); if (el) el.value = '';
+  });
+  setIntegrationsScope('user');
 }
 function openWebhookModal(id) {
   editingWhId = id || null;
@@ -11799,9 +12327,12 @@ function toggleReactionPicker(commentId) {
     }, 50);
   }
 }
+/* Retorna APENAS os chips de reações existentes (sem picker interno).
+   O picker fica em `.chat-reaction-picker` do header — ver chat-comment. */
 function renderReactions(c) {
   const reactions = c.reactions || {};
   const keys = Object.keys(reactions).filter(k => (reactions[k] || []).length > 0);
+  if (!keys.length) return '';
   const myId = me?.id;
   const chips = keys.map(emoji => {
     const userIds = reactions[emoji] || [];
@@ -11812,14 +12343,7 @@ function renderReactions(c) {
       <span class="reaction-count">${userIds.length}</span>
     </button>`;
   }).join('');
-  const pickerOpts = REACTION_EMOJIS.map(e => `<button type="button" class="reaction-opt" onclick="toggleReaction('${c.id}', '${e}')">${e}</button>`).join('');
-  return `<div class="reactions-row">
-    ${chips}
-    <div class="reaction-picker-wrap">
-      <button type="button" class="reaction-add" onclick="toggleReactionPicker('${c.id}')" title="Adicionar reação"><i data-lucide="smile-plus" class="ic-xs"></i></button>
-      <div class="reaction-picker" id="rxp-${c.id}">${pickerOpts}</div>
-    </div>
-  </div>`;
+  return chips;
 }
 
 /* ─── DRAG AND DROP DE ANEXOS ─── */
@@ -14338,13 +14862,91 @@ function renderProfile() {
   if ($('profile-pref-daily_digest'))  $('profile-pref-daily_digest').checked = prefs.daily_digest !== false;
   $('profile-email-smtp-warning').style.display = me._smtpEnabled === false ? '' : 'none';
   fillRoleSelect('profile-f-role', me.role || '');
-  // Mesma lógica do sidebar: regex aguenta classes extras (presence-online, etc).
+  // Avatar grande no hero — mesmo esquema do sidebar, preserva classes extras.
   const profAv = $('profile-avatar');
-  if (profAv) profAv.outerHTML = avatarHTML(me, 'avatar avatar-lg').replace(/class="([^"]+)"/, 'class="$1" id="profile-avatar"');
+  if (profAv) profAv.outerHTML = avatarHTML(me, 'avatar avatar-xl').replace(/class="([^"]+)"/, 'class="$1" id="profile-avatar"');
   $('avatar-remove-btn').style.display = me.avatar ? '' : 'none';
-  // Painel do Google Calendar — carrega estado assíncrono.
+  // Aparência — sincroniza pickers com estado atual.
+  syncProfileAppearanceUI();
+  // Google Calendar — carrega assíncrono.
   renderGoogleCalendarPanel();
   handleGoogleCallbackToast();
+  if (typeof paintIcons === 'function') paintIcons();
+}
+/* Navegação entre seções do perfil (Conta, Aparência, Notificações, etc). */
+function setProfileSection(name) {
+  document.querySelectorAll('#page-profile .profile-nav-item').forEach(b => {
+    b.classList.toggle('is-active', b.dataset.section === name);
+  });
+  document.querySelectorAll('#page-profile .profile-section').forEach(s => {
+    s.hidden = s.dataset.section !== name;
+  });
+}
+/* ─── Aparência: tema, densidade, sidebar collapse, notificações desktop ─── */
+function setProfileTheme(theme) {
+  localStorage.setItem('kastor-theme', theme);
+  applyTheme(theme);
+  syncProfileAppearanceUI();
+}
+function setProfileDensity(mode) {
+  localStorage.setItem('kastor-density', mode);
+  applyDensity(mode);
+  syncProfileAppearanceUI();
+}
+function setProfileSidebarCollapsed(collapsed) {
+  try { localStorage.setItem('kastor-sidebar-collapsed', collapsed ? '1' : '0'); } catch {}
+  document.body.classList.toggle('sidebar-collapsed', !!collapsed);
+}
+/* Toggle de notificações do sistema (Desktop Notification API) — pede permissão
+   se ainda não tiver, mostra estado. */
+function requestDesktopNotifications() {
+  if (!('Notification' in window)) {
+    toast('Este navegador não suporta notificações do sistema.', 'error');
+    return;
+  }
+  if (Notification.permission === 'granted') {
+    try { new Notification('reWork', { body: 'Notificações ativadas ✓', silent: true }); } catch {}
+    return;
+  }
+  if (Notification.permission === 'denied') {
+    toast('Bloqueado pelo navegador. Libere nas configurações do site.', 'warn');
+    return;
+  }
+  Notification.requestPermission().then(() => {
+    syncProfileAppearanceUI();
+    if (Notification.permission === 'granted') {
+      try { new Notification('reWork', { body: 'Notificações ativadas ✓', silent: true }); } catch {}
+    }
+  });
+}
+/* Sincroniza os controles da aba Aparência com o estado global atual. */
+function syncProfileAppearanceUI() {
+  const theme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  document.querySelectorAll('#profile-theme-picker .profile-theme-opt').forEach(b => {
+    b.classList.toggle('is-active', b.dataset.theme === theme);
+  });
+  const dense = document.body.classList.contains('density-compact') ? 'compact' : 'comfortable';
+  document.querySelectorAll('#profile-density-picker .profile-theme-opt').forEach(b => {
+    b.classList.toggle('is-active', b.dataset.density === dense);
+  });
+  const sbCheck = document.getElementById('profile-sidebar-collapsed');
+  if (sbCheck) sbCheck.checked = document.body.classList.contains('sidebar-collapsed');
+  const slot = document.getElementById('profile-desktop-notif-slot');
+  if (slot) {
+    let html;
+    if (!('Notification' in window)) {
+      html = `<span class="profile-status-chip profile-status-chip--muted">Não suportado</span>`;
+    } else if (Notification.permission === 'granted') {
+      html = `<span class="profile-status-chip profile-status-chip--ok"><i data-lucide="check" class="ic-xs"></i> Ativado</span>`;
+    } else if (Notification.permission === 'denied') {
+      html = `<span class="profile-status-chip profile-status-chip--err">Bloqueado</span>
+              <button class="btn btn-ghost btn-sm" onclick="requestDesktopNotifications()" style="margin-left:6px">Tentar novamente</button>`;
+    } else {
+      html = `<button class="btn btn-primary btn-sm" onclick="requestDesktopNotifications()"><i data-lucide="bell" class="ic-sm"></i> Ativar</button>`;
+    }
+    slot.innerHTML = html;
+    if (typeof paintIcons === 'function') paintIcons();
+  }
 }
 
 // Mostra toast quando a URL vem de ?google=connected|error do callback.
@@ -14403,9 +15005,15 @@ async function renderGoogleCalendarPanel() {
   // Conectado — mostra conta + lista de calendários com checkboxes
   const acc = status.account || {};
   const cals = status.calendars || [];
+  // Avatar do Google (lh3.googleusercontent.com) exige referrerpolicy="no-referrer"
+  // — sem isso o navegador manda Referer e o Google devolve 403, virando "imagem
+  // quebrada". Fallback pra letra se a imagem falhar por qualquer motivo.
+  const fallbackLetter = esc((acc.name || acc.email || 'G').charAt(0).toUpperCase());
   const avatarBlock = acc.picture
-    ? `<img src="${esc(acc.picture)}" alt="" class="google-account-avatar">`
-    : `<div class="google-account-avatar google-account-avatar--fallback">${esc((acc.name || acc.email || 'G').charAt(0).toUpperCase())}</div>`;
+    ? `<img src="${esc(acc.picture)}" alt="" class="google-account-avatar"
+            referrerpolicy="no-referrer" crossorigin="anonymous"
+            onerror="this.outerHTML='<div class=\\'google-account-avatar google-account-avatar--fallback\\'>${fallbackLetter}</div>'">`
+    : `<div class="google-account-avatar google-account-avatar--fallback">${fallbackLetter}</div>`;
   const calsHtml = cals.length
     ? cals.map(c => `
       <label class="google-cal-row">
@@ -15561,7 +16169,8 @@ function openTemplateFlowModal(tplId, pIdx, fIdx) {
   $('tfl-title').textContent = isEdit ? `Editar fluxo em "${proj.name}"` : `Novo fluxo em "${proj.name}"`;
   $('tfl-name').value = flow?.name || '';
   $('tfl-type').value = flow?.demandType || '';
-  $('tfl-description').value = flow?.defaultDescription || '';
+  mountRichEditor('tfl-description', { placeholder: 'Ex.: Sempre incluir CTA no final. Formato 1080x1350.', minHeight: '90px' });
+  setRichValue('tfl-description', flow?.defaultDescription || '');
   // Datalist de tipos: modelo é global, junta tipos de TODOS os fluxos acessíveis
   // pro usuário — mais completo que restringir por 1 workspace só.
   const accessibleWs = new Set(me.isAdmin
@@ -15707,7 +16316,7 @@ async function tflSave() {
     name,
     icon: _tflCtx.icon || null,
     demandType: $('tfl-type').value.trim(),
-    defaultDescription: $('tfl-description').value,
+    defaultDescription: getRichValue('tfl-description'),
     defaultChecklist: _tflCtx.checklist.filter(it => (it.text || '').trim()),
     stages: validStages.map(s => ({
       label: (s.label || '').trim(),
@@ -19378,7 +19987,7 @@ async function flushSseRefetch() {
   }
   await Promise.all(_pending);
   renderCurrent();
-  if (demandTouched && detailId && document.getElementById('detail-modal')?.classList.contains('open')) {
+  if (demandTouched && detailId && currentPage === 'demand-detail') {
     refreshDetailDemand();
   }
 }

@@ -633,10 +633,10 @@ body.user-moderator .full-admin-only { display: none !important; }
    Mantém o accent #7A00FF como brand; ajusta contrastes para fundo claro (WCAG AA). */
 :root[data-theme="light"] {
   color-scheme: light;
-  --bg: #F5F5F5;
+  --bg: #FFFFFF;             /* fundo branco (era #F5F5F5) */
   --surface: #FFFFFF;
-  --surface-2: #F0F0F0;
-  --surface-3: #E5E5E5;
+  --surface-2: #F5F5F5;      /* cinza claro só pra separar cards/áreas */
+  --surface-3: #EAEAEA;
   --border: rgba(0,0,0,0.10);
   --border-active: rgba(122,0,255,0.55);
   --accent: #7A00FF;
@@ -1243,6 +1243,18 @@ body.sidebar-collapsed .ws-cdrop .filter-cdrop-menu {
   contain: layout;
 }
 .topbar-title { font-size: 17px; font-weight: 700; letter-spacing: -0.015em; }
+/* Botão Voltar do topbar — só aparece quando na página de detalhe da demanda. */
+.topbar-back {
+  width: 32px; height: 32px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 8px;
+  color: var(--text-dim); cursor: pointer;
+  margin-right: 12px;
+  transition: all .12s;
+}
+.topbar-back:hover { border-color: var(--accent); color: var(--accent-text); }
+/* Ícone dentro do menu dropdown (14px) — usado nos itens de "Editar/Excluir". */
+.ic-menu, i.ic-menu, svg.ic-menu { width: 14px !important; height: 14px !important; flex-shrink: 0; }
 .topbar-actions { display: flex; align-items: center; gap: 10px; }
 .btn {
   padding: 8px 16px; border-radius: var(--radius-sm); font-family: inherit;
@@ -1440,6 +1452,30 @@ tr:hover td { background: var(--surface-2); }
 .filters-bar .list-view-toggle { flex-shrink: 0; }
 .filters-bar .list-view-toggle .btn { height: 32px; width: 32px; padding: 0; }
 .filters-bar > .btn-icon-only { height: 32px; width: 32px; padding: 0; flex-shrink: 0; }
+
+/* Toggle segmentado — 2 botões mutuamente exclusivos (Usuário/Cliente). */
+.filter-toggle {
+  display: inline-flex;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 2px;
+  flex-shrink: 0;
+}
+.filter-toggle-btn {
+  height: 30px; padding: 0 12px;
+  background: transparent; border: 0; border-radius: 6px;
+  color: var(--text-dim); font-family: inherit;
+  font-size: 12px; font-weight: 600;
+  cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.filter-toggle-btn:hover:not(.is-active) { color: var(--text); }
+.filter-toggle-btn.is-active {
+  background: var(--surface);
+  color: var(--accent-text);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+}
 
 /* Fallback: se não caber, quebra em linhas de forma limpa. */
 @media (max-width: 1080px) {
@@ -2026,21 +2062,230 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 .flow-preview { display: flex; gap: 4px; flex-wrap: wrap; }
 .flow-preview .pill { font-size: 10px; padding: 2px 8px; }
 
-/* ── PERFIL ── */
-.profile-layout { display: grid; grid-template-columns: 1fr; gap: 24px; max-width: 980px; }
-@media (min-width: 1100px) { .profile-layout { grid-template-columns: 340px 1fr; align-items: start; } }
-.profile-card {
+/* ── PERFIL — layout novo: hero + nav lateral + seções ── */
+.avatar-xl { width: 96px; height: 96px; font-size: 34px; }
+
+/* Hero (topo com avatar + identidade) */
+.profile-hero {
+  display: flex; align-items: center; gap: 22px;
+  padding: 24px 28px;
   background: var(--surface);
   border: 1px solid var(--hairline);
-  border-radius: var(--radius);
-  padding: 28px; text-align: center;
-  box-shadow: var(--shadow-sm);
+  border-radius: 14px;
+  margin-bottom: 22px;
+  max-width: 1080px;
 }
-.profile-card .avatar-lg { margin: 0 auto 14px; }
-.profile-name { font-size: 17px; font-weight: 700; }
-.profile-role { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
-.profile-username { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
-.upload-btn-wrap { margin-top: 18px; }
+.profile-hero-avatar-wrap { position: relative; flex-shrink: 0; }
+.profile-hero-avatar-wrap .avatar-xl { display: flex; align-items: center; justify-content: center; }
+.profile-hero-avatar-edit {
+  position: absolute; bottom: 0; right: 0;
+  width: 30px; height: 30px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent); color: #fff; border: 3px solid var(--surface);
+  border-radius: 50%; cursor: pointer;
+  transition: background .12s, transform .12s;
+}
+.profile-hero-avatar-edit:hover { background: var(--accent-hover, var(--accent)); transform: scale(1.06); }
+.profile-hero-avatar-edit svg { width: 14px !important; height: 14px !important; }
+.profile-hero-info { flex: 1; min-width: 0; }
+.profile-hero-name { font-size: 20px; font-weight: 700; letter-spacing: -0.015em; color: var(--text); }
+.profile-hero-meta {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-top: 4px;
+  font-size: 13px; color: var(--text-dim);
+}
+.profile-hero-sep { color: var(--text-muted); }
+.profile-hero-username { color: var(--text-muted); font-family: ui-monospace, monospace; font-size: 12.5px; }
+.profile-hero-actions { display: flex; gap: 8px; margin-top: 14px; }
+
+/* Split: nav lateral + conteúdo */
+.profile-split {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 22px;
+  max-width: 1080px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .profile-split { grid-template-columns: 1fr; }
+  .profile-nav { position: static; flex-direction: row; overflow-x: auto; }
+  .profile-nav-item { flex-shrink: 0; }
+}
+.profile-nav {
+  display: flex; flex-direction: column; gap: 2px;
+  position: sticky; top: 20px;
+}
+.profile-nav-item {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  background: transparent; border: 0; border-radius: 8px;
+  color: var(--text-dim); font-family: inherit;
+  font-size: 13px; font-weight: 500;
+  cursor: pointer; text-align: left;
+  transition: background .12s, color .12s;
+}
+.profile-nav-item svg { width: 16px !important; height: 16px !important; }
+.profile-nav-item:hover { background: var(--surface-2); color: var(--text); }
+.profile-nav-item.is-active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+/* Conteúdo — seção ativa */
+.profile-content { min-width: 0; }
+.profile-section-head { margin-bottom: 14px; }
+.profile-section-title { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; color: var(--text); }
+.profile-section-sub { font-size: 13px; color: var(--text-dim); margin-top: 4px; }
+.profile-card-block {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 20px 22px;
+}
+.profile-card-block + .profile-card-block { margin-top: 16px; }
+.profile-block-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 12px; text-transform: uppercase; letter-spacing: .05em; }
+.profile-block-actions {
+  display: flex; gap: 10px; justify-content: flex-end;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--hairline);
+}
+.profile-hint {
+  font-size: 12px; color: var(--text-muted); margin-top: 6px; line-height: 1.5;
+}
+.profile-hint code { background: var(--surface-2); padding: 1px 5px; border-radius: 3px; font-size: 11.5px; }
+.profile-hint--warn {
+  padding: 10px 12px; border-left: 3px solid var(--warn); color: var(--warn);
+  background: color-mix(in srgb, var(--warn, #F59E0B) 8%, transparent);
+  border-radius: 6px;
+}
+
+/* Row layout: título+sub à esquerda, controle à direita (usado em Aparência) */
+.profile-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 20px;
+  padding: 14px 0;
+}
+.profile-row + .profile-row { border-top: 1px solid var(--hairline); }
+.profile-card-block > .profile-row:first-child { padding-top: 0; }
+.profile-card-block > .profile-row:last-child { padding-bottom: 0; }
+.profile-row-info { flex: 1; min-width: 0; }
+.profile-row-title { font-size: 13.5px; font-weight: 600; color: var(--text); }
+.profile-row-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; line-height: 1.5; }
+
+/* Segmented picker (tema, densidade) */
+.profile-theme-picker {
+  display: inline-flex;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 2px;
+  flex-shrink: 0;
+}
+.profile-theme-opt {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
+  background: transparent; border: 0; border-radius: 6px;
+  color: var(--text-dim); font-family: inherit;
+  font-size: 12.5px; font-weight: 600;
+  cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.profile-theme-opt svg { width: 14px !important; height: 14px !important; }
+.profile-theme-opt:hover:not(.is-active) { color: var(--text); }
+.profile-theme-opt.is-active {
+  background: var(--surface);
+  color: var(--accent-text);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+}
+
+/* Switch (sidebar collapse) */
+.profile-switch { position: relative; display: inline-flex; align-items: center; cursor: pointer; }
+.profile-switch input { position: absolute; opacity: 0; }
+.profile-switch-track {
+  width: 40px; height: 22px;
+  background: var(--surface-3, var(--surface-2));
+  border-radius: 999px;
+  transition: background .16s;
+  position: relative;
+}
+.profile-switch-thumb {
+  position: absolute; top: 2px; left: 2px;
+  width: 18px; height: 18px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  transition: transform .16s var(--ease-spring);
+}
+.profile-switch input:checked + .profile-switch-track { background: var(--accent); }
+.profile-switch input:checked + .profile-switch-track .profile-switch-thumb { transform: translateX(18px); }
+
+/* Chip de status (Notif desktop: Ativado/Bloqueado/etc) */
+.profile-status-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11.5px; font-weight: 600;
+  padding: 4px 10px; border-radius: 999px;
+}
+.profile-status-chip svg { width: 12px !important; height: 12px !important; }
+.profile-status-chip--ok { background: color-mix(in srgb, var(--success, #22C55E) 15%, transparent); color: var(--success, #22C55E); }
+.profile-status-chip--err { background: rgba(239,68,68,0.15); color: var(--danger); }
+.profile-status-chip--muted { background: var(--surface-2); color: var(--text-muted); }
+
+/* Preferências de e-mail — cada uma como linha com switch */
+.profile-prefs-list {
+  display: flex; flex-direction: column;
+  border-top: 1px solid var(--hairline);
+}
+.profile-pref-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--hairline);
+  cursor: pointer;
+}
+.profile-pref-info { flex: 1; min-width: 0; }
+.profile-pref-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.profile-pref-sub   { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; line-height: 1.45; }
+.profile-pref-row input[type="checkbox"] {
+  appearance: none;
+  width: 40px; height: 22px;
+  background: var(--surface-3, var(--surface-2));
+  border-radius: 999px;
+  cursor: pointer;
+  position: relative;
+  flex-shrink: 0;
+  transition: background .16s;
+}
+.profile-pref-row input[type="checkbox"]::after {
+  content: '';
+  position: absolute; top: 2px; left: 2px;
+  width: 18px; height: 18px;
+  background: #fff; border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  transition: transform .16s var(--ease-spring);
+}
+.profile-pref-row input[type="checkbox"]:checked { background: var(--accent); }
+.profile-pref-row input[type="checkbox"]:checked::after { transform: translateX(18px); }
+
+/* Cards de integração (Discord, Google) — visual próximo aos webhooks */
+.profile-integration-card {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 20px 22px;
+}
+.profile-integration-card + .profile-integration-card { margin-top: 14px; }
+.profile-integration-head {
+  display: flex; align-items: center; gap: 12px;
+}
+.profile-integration-icon {
+  width: 40px; height: 40px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+.profile-integration-icon svg { width: 20px !important; height: 20px !important; }
+.profile-integration-name { font-size: 14px; font-weight: 700; color: var(--text); }
+.profile-integration-sub  { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 .panel {
   background: var(--surface);
   border: 1px solid var(--hairline);
@@ -3313,9 +3558,639 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 .notif-time { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
 .notif-empty { padding: 32px 18px; text-align: center; color: var(--text-muted); font-size: 13px; }
 
-/* ── DETALHE DA DEMANDA (novo layout) ── */
+/* ── DETALHE DA DEMANDA (página dedicada, era modal — redesenhada) ── */
+/* IMPORTANTE: só sobrescreve layout quando .active. `.main { min-height: 100vh }`
+   sem max-height faz o container ESTICAR quando o conteúdo é grande (tab de
+   Atividade com muitos items). `position: fixed` tira a página do fluxo e a
+   trava dentro da viewport, garantindo que o footer sticky sempre fique visível.
+   Left = --sidebar-w porque a sidebar é fixed também. */
+#page-demand-detail.active {
+  position: fixed;
+  top: 65px;
+  left: var(--sidebar-w);
+  right: 0;
+  bottom: 0;
+  padding: 0;
+  overflow: hidden;
+  z-index: 1;
+}
+body.sidebar-collapsed #page-demand-detail.active { left: 72px; }
+#page-demand-detail.active #detail-content {
+  flex: 1; min-height: 0; overflow: hidden;
+  display: flex; height: 100%;
+}
+/* Footer legacy (#detail-footer) — o rodapé real vive dentro da coluna direita.
+   Esse elemento fica escondido; sem background/border pra não aparecer nada. */
+#page-demand-detail #detail-footer { display: none !important; }
+
+/* Layout novo: duas colunas 50/50 com divider vertical. */
+.detail-content-v2 {
+  display: grid;
+  grid-template-columns: 1fr 1px 1fr;
+  width: 100%; height: 100%;
+  background: var(--bg);
+}
+.detail-content-v2::before {
+  content: ''; grid-column: 2; grid-row: 1;
+  background: var(--hairline);
+}
+.detail-col {
+  min-width: 0;
+  overflow-y: auto;
+  padding: 24px;
+  display: flex; flex-direction: column;
+  gap: 24px;
+}
+.detail-col-left  { grid-column: 1; }
+.detail-col-right { grid-column: 3; padding: 0; gap: 0; }
+
+/* Header interno da esquerda: título + breadcrumb. */
+.detail-title-block { display: flex; flex-direction: column; gap: 8px; }
+.detail-title {
+  font-size: 20px; font-weight: 700; line-height: 1.3; color: var(--text);
+  cursor: pointer;
+}
+.detail-title:hover { color: var(--accent-text); }
+.detail-breadcrumb {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+  color: var(--text-muted); text-transform: uppercase;
+}
+.detail-breadcrumb i, .detail-breadcrumb svg {
+  width: 10px !important; height: 10px !important;
+  color: var(--text-muted);
+}
+
+/* Blocos e campos da coluna esquerda. */
+.detail-block { display: flex; flex-direction: column; gap: 8px; }
+.detail-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.detail-field-label {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+  color: var(--text-muted); text-transform: uppercase;
+}
+.detail-field-value { font-size: 13px; color: var(--text); }
+.detail-block-total { font-weight: 500; color: var(--text-dim); text-transform: none; letter-spacing: 0; font-size: 11px; }
+
+/* Linha de metadados: 4 colunas iguais (prioridade | entrou | criada | concluída). */
+.detail-meta-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px 20px;
+}
+
+/* Descrição + Briefing empilhados. Sem moldura em volta — parece linha
+   discreta. Edição via botão pencil ao lado do label "Descrição". */
+.detail-briefing-slot {
+  padding: 0;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.detail-briefing-placeholder { color: var(--text-muted); font-size: 12px; font-style: italic; }
+.detail-briefing-link { color: var(--accent-text); word-break: break-all; text-decoration: none; }
+.detail-briefing-link:hover { text-decoration: underline; }
+.detail-briefing-slot.is-editing { cursor: default; }
+
+/* Label "Descrição" com botão de edição inline (pencil 16x16) alinhado à direita. */
+.detail-field-label-row { display: flex; align-items: center; gap: 8px; }
+.detail-edit-btn {
+  width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 0; border-radius: 4px;
+  color: var(--text-muted); cursor: pointer;
+  padding: 0;
+  transition: background .12s, color .12s;
+}
+.detail-edit-btn:hover { background: var(--surface-2); color: var(--accent-text); }
+.detail-edit-btn svg,
+.detail-edit-btn i[data-lucide] {
+  width: 16px !important;
+  height: 16px !important;
+}
+
+/* Links dentro da descrição em roxo (mesma cor do link do briefing). */
+.detail-description a,
+#detail-description-view a { color: var(--accent-text); text-decoration: none; word-break: break-word; }
+.detail-description a:hover,
+#detail-description-view a:hover { text-decoration: underline; }
+.inline-edit-desc, .inline-edit-briefing {
+  width: 100%;
+  font-size: 13px;
+}
+.inline-edit-desc { margin-bottom: 8px; resize: vertical; min-height: 90px; }
+.inline-edit-foot {
+  display: flex; align-items: center; justify-content: flex-end;
+  gap: 10px; margin-top: 8px;
+}
+.inline-edit-status { font-size: 11px; color: var(--text-muted); flex: 1; }
+
+/* Chips de anexo (Arquivo, Imagem, Link). */
+.detail-attach-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.attach-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 14px;
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 8px;
+  color: var(--text-dim); font-family: inherit; font-size: 12px; font-weight: 500;
+  cursor: pointer; transition: all .12s;
+}
+.attach-chip:hover { color: var(--accent-text); border-color: var(--accent); background: var(--surface-2); }
+
+/* Entregáveis em linha (3 inputs + assign dropdown). Todos com mesma altura. */
+.detail-deliverables-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr) minmax(220px, 1.6fr);
+  gap: 12px;
+  align-items: end;
+}
+.qty-cell-inline { gap: 4px; display: flex; flex-direction: column; }
+.qty-cell-inline .form-control { text-align: center; height: 40px; }
+.detail-deliverables-assign {
+  display: flex; flex-direction: column; gap: 4px;
+  min-width: 0;
+}
+/* Input do "Atribuir a" na mesma altura das 3 caixas numéricas (40px).
+   Também sincroniza box-sizing/padding pra bordas alinharem verticalmente. */
+.detail-deliverables-assign { justify-content: flex-end; }
+.detail-deliverables-assign .form-control,
+.detail-deliverables-assign .filter-cdrop-trigger {
+  height: 40px; box-sizing: border-box;
+}
+.detail-deliverables-assign .filter-cdrop { width: 100%; }
+/* Wrapper .qty-cell-inline tem um label ABAIXO — pra alinhar as bordas dos
+   inputs (numérico e dropdown) na mesma linha, o dropdown ganha um label
+   equivalente invisível (ou o assign vai no topo sem label). Aqui deixamos
+   o dropdown ancorado ao TOPO pra alinhar com os inputs numéricos. */
+.detail-deliverables-row { align-items: start; }
+
+/* Recorrência (bloco compacto). */
+.detail-recurrence-note {
+  flex-direction: row !important; align-items: center; gap: 8px;
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+  border: 1px solid var(--hairline); border-radius: 8px;
+  font-size: 12px; color: var(--text-dim);
+}
+
+/* Coluna direita: header ações + tabs + panels (scroll) + footer (sticky). */
+.detail-col-right {
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  height: 100%;
+  min-height: 0;
+}
+.detail-actions-bar {
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--hairline);
+}
+/* Força 16x16 nos ícones da actions bar — sem isso lucide renderiza <svg>
+   com width/height="24" inline que ignora .ic-sm em alguns browsers. */
+.detail-actions-bar svg,
+.detail-actions-bar i[data-lucide] {
+  width: 16px !important;
+  height: 16px !important;
+}
+.detail-actions-left { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+.detail-actions-right { display: flex; align-items: center; gap: 4px; }
+
+/* Stack de watchers — avatares sobrepostos crescendo pra ESQUERDA do olho.
+   Gap com o botão do olho é preservado; a lixeira não se mexe. */
+.watcher-stack {
+  display: inline-flex; align-items: center;
+  margin-right: 6px;
+  /* Compensa o overlap dos avatares pra que o gap com o olho continue igual. */
+  padding-right: 0;
+}
+.watcher-stack > * {
+  position: relative;
+  border: 2px solid var(--chrome-bg, var(--surface));
+  border-radius: 50%;
+  box-sizing: content-box;
+}
+.watcher-stack > * + * { margin-left: -8px; }
+.watcher-stack .watcher-avatar-wrap { line-height: 0; display: inline-flex; }
+.watcher-stack .avatar-xs { width: 22px; height: 22px; }
+.watcher-more {
+  min-width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0 5px;
+  background: var(--surface-3, var(--surface-2));
+  color: var(--text-dim);
+  font-size: 10px; font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* Pipeline dentro do topbar — centralizado ao lado do título "Demanda".
+   Slot flex-grow, pipeline com max-width pra não colar em botões laterais. */
+.topbar-pipeline-slot {
+  flex: 1;
+  display: flex; align-items: center; justify-content: center;
+  min-width: 0;
+  padding: 0 24px;
+}
+.topbar-pipeline-slot:empty { padding: 0; }
+.topbar-pipeline-slot .pipeline-bar {
+  margin: 0;
+  height: 24px;
+  width: 100%;
+  max-width: 520px;
+}
+.topbar-pipeline-slot .pipeline-bar-dot {
+  width: 22px; height: 22px; font-size: 10px;
+}
+/* Em telas estreitas o pipeline atrapalha — some. */
+@media (max-width: 1100px) {
+  .topbar-pipeline-slot { display: none; }
+}
+.detail-action-link {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: transparent; border: 0; padding: 4px 0;
+  color: var(--text-dim); font-family: inherit; font-size: 12.5px; font-weight: 500;
+  cursor: pointer;
+}
+.detail-action-link:hover { color: var(--accent-text); }
+.detail-timer-display {
+  font-family: ui-monospace, monospace; font-size: 13px;
+  color: var(--accent-text); font-weight: 600;
+  padding: 3px 8px; border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* Tabs sistema (Comentários | Checklist | Atividade | Etapas). */
+.detail-tabs {
+  display: flex; align-items: center; gap: 0;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--hairline);
+}
+.detail-tab {
+  padding: 14px 16px;
+  background: transparent; border: 0; border-bottom: 2px solid transparent;
+  color: var(--text-muted); font-family: inherit; font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: color .12s, border-color .12s;
+  position: relative;
+}
+.detail-tab:hover { color: var(--text); }
+.detail-tab.is-active { color: var(--accent-text); border-bottom-color: var(--accent); font-weight: 600; }
+.detail-tab.has-mark::after {
+  content: ''; position: absolute; top: 10px; right: 8px;
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent);
+}
+.detail-tabs-spacer { flex: 1; }
+.detail-tab-sort {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 10px;
+  background: transparent; border: 0;
+  color: var(--text-muted); font-family: inherit; font-size: 12px;
+  cursor: pointer;
+}
+.detail-tab-sort:hover { color: var(--text); }
+
+/* Container das tabs (header sticky). */
+.detail-tabs { flex-shrink: 0; }
+
+/* Painel de tab: ocupa o restante e scrolla. */
+.detail-tab-content {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: 20px 24px;
+}
+.detail-tab-pane { display: block; }
+
+/* Footer da coluna direita — nav de etapa + prazo. Sempre fixo no bottom,
+   independente do scroll do painel de tab (que é o único elemento scrollável). */
+.detail-footer-v2 {
+  flex-shrink: 0;
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 24px;
+  border-top: 1px solid var(--hairline);
+  background: var(--surface);
+}
+.detail-footer-nav {
+  width: 40px; height: 40px;
+  box-sizing: border-box;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid var(--hairline); border-radius: 8px;
+  color: var(--text-dim); cursor: pointer; transition: all .12s;
+  flex-shrink: 0;
+}
+.detail-footer-nav:hover:not(:disabled) { background: var(--surface-2); color: var(--text); border-color: var(--text-muted); }
+.detail-footer-nav:disabled { opacity: 0.4; cursor: not-allowed; }
+.detail-footer-nav.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.detail-footer-nav.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 90%, #000); }
+.detail-footer-nav.primary:disabled { opacity: 0.4; }
+.detail-footer-stage-picker {
+  flex: 1; min-width: 0;
+  height: 40px; box-sizing: border-box;
+  display: flex; align-items: stretch;
+}
+/* O stage picker renderiza .cdrop (não .filter-cdrop). Override o default
+   de 48px pra bater com nav/due (40px). */
+.detail-footer-stage-picker .cdrop { width: 100%; min-width: 0; height: 40px; }
+.detail-footer-stage-picker .cdrop-trigger {
+  height: 40px !important; box-sizing: border-box;
+  padding: 0 12px; margin: 0;
+}
+.detail-footer-stage-picker .filter-cdrop { width: 100%; min-width: 0; height: 40px; }
+.detail-footer-stage-picker .filter-cdrop-trigger {
+  height: 40px; box-sizing: border-box;
+  margin: 0; padding-top: 0; padding-bottom: 0;
+}
+.detail-footer-due {
+  width: 130px; height: 40px; padding: 0 12px;
+  box-sizing: border-box;
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 8px;
+  color: var(--text); font-family: inherit; font-size: 13px;
+  cursor: pointer;
+  text-align: center;
+  flex-shrink: 0;
+}
+.detail-footer-due:hover { border-color: var(--accent); }
+.detail-footer-due:focus { outline: none; border-color: var(--accent); }
+
+/* Editor de etapas dentro da tab. */
+.stages-edit-inline { display: flex; flex-direction: column; gap: 14px; }
+.stages-edit-toolbar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+
+/* ─── COMENTÁRIOS ESTILO CHAT (avatar fora + caixa) ───
+   Colapsado: avatar + input horizontal com placeholder.
+   Expandido: toolbar em cima + textarea + footer (attach à esq, Cancelar/Salvar à dir). */
+.chat-compose-wrap {
+  display: flex; gap: 10px;
+  margin-bottom: 20px;
+  align-items: flex-start;
+  transition: opacity .15s;
+}
+/* Bloqueia o compose principal quando há uma edição em andamento. */
+.chat-compose-wrap.is-locked { opacity: 0.35; pointer-events: none; }
+/* Compose em modo edição — vive dentro do próprio comentário. */
+.chat-compose.chat-compose-editing {
+  margin-top: 4px;
+  overflow: visible;
+}
+/* Se um comentário está editando (contém .chat-compose-editing), esconde o
+   header (nome/data/ações) pra não ficar duplicado com a UI de edição. */
+.chat-comment:has(.chat-compose-editing) .chat-comment-head,
+.chat-comment:has(.chat-compose-editing) .chat-comment-text,
+.chat-comment:has(.chat-compose-editing) .chat-comment-attachments,
+.chat-comment:has(.chat-compose-editing) .reactions-row { display: none; }
+.chat-compose-avatar { flex-shrink: 0; margin-top: 6px; }
+.chat-compose {
+  flex: 1; min-width: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--surface);
+  transition: border-color .12s;
+  overflow: hidden;
+}
+.chat-compose:focus-within { border-color: var(--accent); }
+/* Toolbar (aparece só quando expandido). */
+.chat-compose-toolbar {
+  display: flex; align-items: center; gap: 2px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--hairline);
+  max-height: 0; overflow: hidden;
+  transition: max-height .16s ease, padding .12s ease;
+}
+.chat-compose.is-active .chat-compose-toolbar {
+  max-height: 44px; padding: 6px 8px;
+}
+.chat-tool {
+  width: 28px; height: 28px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 0; border-radius: 6px;
+  color: var(--text-dim); cursor: pointer;
+  transition: all .12s;
+}
+.chat-tool:hover { background: var(--surface-2); color: var(--text); }
+.chat-tool i, .chat-tool svg { width: 14px !important; height: 14px !important; }
+.chat-tool-sep { width: 1px; height: 18px; background: var(--hairline); margin: 0 4px; }
+
+/* ─── RICH EDITOR genérico (descrição da demanda, defaults do fluxo) ─── */
+.rich-editor-wrap {
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--surface);
+  transition: border-color .12s;
+  overflow: hidden;
+  width: 100%;
+}
+.rich-editor-wrap:focus-within { border-color: var(--accent); }
+.rich-toolbar {
+  display: flex; align-items: center; gap: 2px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--hairline);
+  flex-wrap: nowrap;
+}
+.rich-tool {
+  width: 28px; height: 28px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 0; border-radius: 6px;
+  color: var(--text-dim); cursor: pointer;
+  transition: all .12s;
+  flex-shrink: 0;
+}
+.rich-tool:hover { background: var(--surface-2); color: var(--text); }
+.rich-tool.is-active { background: var(--accent-dim); color: var(--accent-text); }
+.rich-tool i, .rich-tool svg { width: 14px !important; height: 14px !important; }
+.rich-editor-input {
+  min-height: 90px;
+  padding: 10px 12px;
+  color: var(--text); font-family: inherit; font-size: 13px; line-height: 1.5;
+  border: 0; background: transparent;
+  outline: none;
+  overflow-y: auto;
+  max-height: 400px;
+}
+.rich-editor-input.is-empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+.rich-editor-input p { margin: 0 0 6px; }
+.rich-editor-input p:last-child { margin-bottom: 0; }
+.rich-editor-input ul, .rich-editor-input ol { margin: 4px 0 4px 22px; padding: 0; }
+.rich-editor-input li { margin: 2px 0; }
+.rich-editor-input blockquote {
+  margin: 6px 0; padding: 4px 12px;
+  border-left: 3px solid var(--accent);
+  color: var(--text-dim);
+}
+.rich-editor-input a { color: var(--accent-text); text-decoration: underline; }
+.rich-editor-input img { max-width: 100%; border-radius: 6px; margin: 4px 0; }
+/* Input (contenteditable). Colapsado: linha única (~40px). Expandido: cresce. */
+.chat-compose-input {
+  min-height: 40px;
+  padding: 10px 12px;
+  color: var(--text); font-family: inherit; font-size: 13px; line-height: 1.5;
+  border: 0; background: transparent;
+}
+.chat-compose.is-active .chat-compose-input { min-height: 110px; }
+.chat-compose-input:focus { outline: none; }
+.chat-compose-input:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+/* Footer com attach (esq) + Cancelar/Salvar (dir).
+   Padding horizontal = 12px (mesmo do input), pra alinhar visualmente
+   ícones e botões com o texto do input e a borda da caixa. */
+.chat-compose-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px;
+  padding: 0 12px;
+  max-height: 0; overflow: hidden;
+  transition: max-height .16s ease, padding .12s ease;
+}
+.chat-compose.is-active .chat-compose-foot {
+  max-height: 56px; padding: 6px 12px 8px 12px;
+}
+.chat-compose-foot-left  { display: flex; align-items: center; gap: 6px; }
+.chat-compose-foot-right { display: flex; align-items: center; gap: 6px; }
+.chat-compose-icon {
+  width: 28px; height: 28px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 0; border-radius: 6px;
+  color: var(--text-muted); cursor: pointer; transition: all .12s;
+}
+.chat-compose-icon:hover { background: var(--surface-2); color: var(--text); }
+.chat-compose-icon i, .chat-compose-icon svg {
+  width: 14px !important; height: 14px !important;
+}
+
+/* Lista de comentários — chat com respiro entre eles + separador sutil. */
+.chat-list { display: flex; flex-direction: column; gap: 0; }
+.chat-comment {
+  display: flex; flex-direction: column;
+  padding: 16px 0;
+  border-top: 1px solid var(--hairline);
+  position: relative;
+}
+.chat-comment:first-child { border-top: 0; padding-top: 4px; }
+.chat-comment .avatar-sm { flex-shrink: 0; }
+.chat-comment-body {
+  padding-left: 42px;  /* alinha texto com o nome (avatar 32 + gap 10) */
+  display: flex; flex-direction: column; gap: 4px;
+}
+.chat-comment-head {
+  display: flex; align-items: center; gap: 10px;
+  position: relative;
+  padding-right: 4px;
+}
+.chat-comment-author { font-size: 13px; font-weight: 600; color: var(--text); flex: 1; min-width: 0; }
+.chat-comment-time { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.chat-comment-actions {
+  display: flex; gap: 4px; align-items: center;
+  margin-left: auto;
+}
+.chat-comment-act {
+  width: 26px; height: 26px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 0; border-radius: 6px;
+  color: var(--text-muted); cursor: pointer; transition: all .12s;
+}
+.chat-comment-act i, .chat-comment-act svg {
+  width: 14px !important; height: 14px !important;
+}
+.chat-comment-act:hover { background: var(--surface-2); color: var(--text); }
+.chat-comment-act.danger:hover { color: var(--danger); background: rgba(239,68,68,.08); }
+/* Reaction picker inline (linha à ESQUERDA do smile). */
+.chat-reaction-wrap { position: relative; display: inline-flex; align-items: center; }
+.chat-reaction-picker {
+  position: absolute; right: 100%; top: 50%; transform: translateY(-50%);
+  margin-right: 6px;
+  display: none; align-items: center; gap: 2px;
+  padding: 4px 6px;
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 999px;
+  box-shadow: var(--shadow-md);
+  white-space: nowrap;
+  z-index: 100;
+}
+.chat-reaction-picker.open { display: inline-flex; }
+.chat-reaction-opt {
+  width: 26px; height: 26px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 0; border-radius: 6px;
+  font-size: 16px; cursor: pointer;
+  transition: background .1s, transform .1s;
+}
+.chat-reaction-opt:hover { background: var(--surface-2); transform: scale(1.2); }
+/* Dropdown "..." — ações Editar/Excluir com ícone 14 + label. */
+.chat-comment-menu-wrap { position: relative; }
+.chat-comment-menu {
+  position: absolute; right: 0; top: 26px;
+  min-width: 140px;
+  display: none;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 8px;
+  box-shadow: var(--shadow-md);
+  z-index: 100;
+}
+.chat-comment-menu.open { display: flex; }
+.chat-comment-menu-item {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  background: transparent; border: 0; border-radius: 6px;
+  color: var(--text); font-family: inherit; font-size: 13px; text-align: left;
+  cursor: pointer; transition: background .12s;
+}
+.chat-comment-menu-item:hover { background: var(--surface-2); }
+.chat-comment-menu-item.danger { color: var(--danger); }
+.chat-comment-menu-item.danger:hover { background: rgba(239,68,68,.08); }
+.chat-comment-text { font-size: 13px; line-height: 1.5; color: var(--text); word-wrap: break-word; margin-top: 2px; }
+.chat-comment-text p { margin: 0; }
+.chat-comment-text p + p { margin-top: 6px; }
+.chat-comment-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.chat-comment-attachments .comment-file {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 10px;
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 6px;
+  color: var(--text-dim); font-size: 12px; text-decoration: none;
+}
+.chat-comment-attachments .comment-file:hover { color: var(--accent-text); border-color: var(--accent); }
+.chat-comment-attachments .comment-img { max-width: 220px; border-radius: 6px; cursor: pointer; }
+
+/* ── Etapas tab — footer sticky no bottom com CTAs Restaurar/Salvar ── */
+.stages-edit-footer {
+  display: flex; justify-content: flex-end; gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--hairline);
+  margin-top: 8px;
+}
+
+/* ── Checklist e Atividade dentro dos tabs: sem moldura ── */
+#tab-pane-checklist .checklist,
+#tab-pane-checklist .chk-list,
+#tab-pane-checklist .checklist-wrap {
+  background: transparent; border: 0; padding: 0; margin: 0;
+}
+#tab-pane-activity .history-list {
+  display: flex; flex-direction: column;
+  gap: 0;
+}
+#tab-pane-activity .history-item {
+  padding: 12px 0;
+  border: 0;                                    /* zera bordas laterais/bottom do default */
+  border-top: 1px solid var(--hairline);        /* só separador em cima */
+  background: transparent; border-radius: 0;
+}
+#tab-pane-activity .history-item:first-child { border-top: 0; padding-top: 0; }
+
+/* Compat legacy */
 .detail-modal-shell { display: flex; flex-direction: column; padding: 0; max-height: 92vh; }
 .detail-modal-shell .detail-content { flex: 1; overflow-y: auto; }
+
+/* Responsivo: telas estreitas → colunas empilhadas. */
+@media (max-width: 900px) {
+  .detail-content-v2 { grid-template-columns: 1fr; }
+  .detail-content-v2::before { display: none; }
+  .detail-col-right { border-top: 1px solid var(--hairline); }
+  .detail-meta-row { grid-template-columns: 1fr 1fr; }
+  .detail-deliverables-row { grid-template-columns: 1fr 1fr 1fr; }
+  .detail-deliverables-assign { grid-column: 1 / -1; }
+}
 .detail-head {
   position: sticky; top: 0; background: var(--surface); z-index: 2;
   padding: 22px 28px 16px; border-bottom: 1px solid var(--border);
@@ -3555,8 +4430,19 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 }
 .detail-section-block .field-head { display: flex; justify-content: space-between; align-items: flex-start; }
 .detail-section-block .field-label { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); font-weight: 700; margin-bottom: 8px; }
-.detail-briefing-link { font-size: 14px; color: var(--text); }
+.detail-briefing-link { font-size: 14px; color: var(--accent-text); }
 .detail-description { font-size: 13px; line-height: 1.65; color: var(--text); white-space: pre-wrap; }
+/* HTML rich text não precisa preservar whitespace do source (colapsa espaços entre tags). */
+.detail-description.is-html { white-space: normal; }
+.detail-description.is-html p { margin: 0 0 8px; }
+.detail-description.is-html p:last-child { margin-bottom: 0; }
+.detail-description.is-html ul, .detail-description.is-html ol { margin: 4px 0 4px 22px; padding: 0; }
+.detail-description.is-html blockquote {
+  margin: 6px 0; padding: 4px 12px;
+  border-left: 3px solid var(--accent);
+  color: var(--text-dim);
+}
+.detail-description.is-html img { max-width: 100%; border-radius: 6px; margin: 4px 0; }
 
 .detail-section-divider { margin: 28px 0 18px; height: 1px; background: var(--border); }
 
@@ -3652,6 +4538,32 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
   animation: timerpulse 1.4s ease-in-out infinite;
 }
 @keyframes timerpulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* ─── Modal "Registrar tempo" — layout novo ───
+   Início | Término em duas colunas (data + hora empilhadas), Horas | Minutos
+   em outra linha 2col, e chips de duração rápida. */
+.time-row { display: grid; gap: 12px; margin-bottom: 16px; }
+.time-row-2col { grid-template-columns: 1fr 1fr; }
+.time-row-hm   { grid-template-columns: 1fr 1fr; }
+.time-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.time-col-title {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+  color: var(--text-muted); text-transform: uppercase;
+  margin-bottom: 2px;
+}
+.time-input { width: 100%; }
+.time-chip-row {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin-top: 4px;
+}
+.time-chip {
+  background: transparent; border: 0; padding: 4px 2px;
+  color: var(--accent-text); font-family: inherit; font-size: 13px; font-weight: 600;
+  cursor: pointer; border-radius: 4px;
+  transition: color .12s, background .12s;
+}
+.time-chip:hover { background: var(--accent-dim); }
+.time-chip:active { transform: scale(0.96); }
 .detail-footer-arrow {
   width: 44px; height: 48px; display: flex; align-items: center; justify-content: center;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
@@ -3715,6 +4627,13 @@ i.ic-lg [data-lucide],
 i.ic-lg { width: 24px; height: 24px; stroke-width: 2; }
 i[data-lucide]:not([class*=ic-]) { width: 16px; height: 16px; stroke-width: 2; }
 .modal-close i, .detail-icon-btn i { width: 16px; height: 16px; }
+/* Força 16px nos <svg> gerados pelo lucide dentro dos icon-buttons —
+   sem !important o width/height="24" inline do <svg> vence a regra acima. */
+.detail-icon-btn svg,
+.detail-icon-btn i[data-lucide] {
+  width: 16px !important;
+  height: 16px !important;
+}
 .detail-footer-arrow i { width: 18px; height: 18px; stroke-width: 2.5; }
 
 /* ── DASHBOARD CHART SVG ── */
@@ -4433,9 +5352,12 @@ tr.row-hover-actions:hover .row-actions { opacity: 1; }
   margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border);
 }
 
-/* ── Stage dropdown no footer: abre para cima ── */
-.detail-footer .cdrop-menu {
-  top: auto; bottom: calc(100% + 6px);
+/* ── Stage dropdown no footer da coluna direita: abre SEMPRE pra cima ── */
+.detail-footer .cdrop-menu,
+.detail-footer-v2 .cdrop-menu,
+.detail-footer-stage-picker .cdrop-menu {
+  top: auto !important;
+  bottom: calc(100% + 6px) !important;
 }
 
 /* ── Textarea resize somente vertical ── */
@@ -5832,6 +6754,34 @@ kbd {
 .inline-edit-status.ok  { color: var(--success); }
 .inline-edit-status.err { color: var(--danger); }
 
+/* Chip de status ao lado do pencil — sempre visível, mesmo sem rolar. */
+.inline-edit-status-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0;
+  padding: 2px 8px; border-radius: 999px;
+  text-transform: none;
+  opacity: 0;
+  transition: opacity .18s var(--ease-out);
+  min-height: 20px;
+  pointer-events: none;
+}
+.inline-edit-status-chip:not(:empty) { opacity: 1; }
+.inline-edit-status-chip svg { width: 12px !important; height: 12px !important; }
+.inline-edit-status-chip.saving {
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  color: var(--text-dim);
+}
+.inline-edit-status-chip.saving svg { animation: chipSpin 1s linear infinite; }
+.inline-edit-status-chip.ok {
+  background: color-mix(in srgb, var(--success, #22C55E) 15%, transparent);
+  color: var(--success, #22C55E);
+}
+.inline-edit-status-chip.err {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--danger, #EF4444);
+}
+@keyframes chipSpin { to { transform: rotate(360deg); } }
+
 /* ─── COMBOBOX HÍBRIDO (input livre + dropdown rico) ───
    Usado no campo "Cliente" do modal de Projeto. Permite digitar um valor
    novo OU escolher um existente do dropdown — com avatar dos projetos
@@ -6128,6 +7078,156 @@ kbd {
 .flow-sort-btn.active {
   background: var(--accent-dim);
   color: var(--accent-text);
+}
+
+/* ─── FLOWS SPLIT VIEW — lista de fluxos à esquerda + editor inline à direita ─── */
+.flows-split {
+  display: grid;
+  grid-template-columns: 40fr 60fr;
+  gap: 20px;
+  align-items: start;
+}
+.flows-split-left {
+  min-width: 0;
+}
+/* Lista de fluxos: 3 colunas de cards compactos; reduz conforme a tela encolhe. */
+.flows-split-left .flow-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+@media (max-width: 1500px) {
+  .flows-split-left .flow-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 1200px) {
+  .flows-split-left .flow-grid { grid-template-columns: 1fr; }
+}
+/* Cards menores dentro do split (só afeta a coluna esquerda dos fluxos). */
+.flows-split-left .flow-card {
+  padding: 12px 10px;
+  gap: 6px;
+  min-height: 0;
+  border-radius: 10px;
+}
+.flows-split-left .flow-card .flow-card-icon,
+.flows-split-left .flow-card .flow-card-avatar {
+  width: 36px; height: 36px;
+  font-size: 14px;
+  border-radius: 8px;
+}
+.flows-split-left .flow-card .flow-card-icon .ic-md,
+.flows-split-left .flow-card .flow-card-icon .ic-sm {
+  width: 18px !important; height: 18px !important;
+}
+.flows-split-left .flow-card .flow-card-name {
+  font-size: 12.5px;
+  margin-top: 2px;
+  line-height: 1.25;
+}
+.flows-split-left .flow-card .flow-card-sub {
+  font-size: 10.5px;
+  margin-top: 0;
+}
+.flows-split-left .flow-card:hover { transform: none; box-shadow: none; }
+.flows-split-left .flow-card .flow-card-actions {
+  top: 6px; right: 6px;
+}
+.flows-split-left .flow-card .flow-card-actions .detail-icon-btn {
+  width: 24px; height: 24px;
+}
+.flows-split-left .flow-card {
+  cursor: pointer;
+  transition: border-color .12s, background .12s;
+}
+.flows-split-left .flow-card.is-open {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.flows-split-right {
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  position: sticky; top: 20px;
+  max-height: calc(100vh - 200px);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+/* Empty state (nenhum fluxo aberto) */
+.flow-inline-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 60px 24px;
+  color: var(--text-muted);
+  text-align: center;
+  gap: 8px;
+  min-height: 300px;
+}
+.flow-inline-empty-icon,
+.flow-inline-empty svg {
+  width: 40px !important; height: 40px !important;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  opacity: 0.6;
+}
+.flow-inline-empty-title { font-size: 14px; font-weight: 600; color: var(--text-dim); }
+.flow-inline-empty-sub   { font-size: 12px; color: var(--text-muted); }
+/* Editor inline: header + body scrollável + footer sticky */
+.flow-inline-form {
+  display: flex; flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.flow-inline-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--hairline);
+  flex-shrink: 0;
+}
+.flow-inline-title { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+.flow-inline-subtitle {
+  font-size: 12px; color: var(--text-muted);
+  margin-top: 4px; letter-spacing: -0.005em;
+}
+.flow-inline-head-right {
+  display: flex; align-items: center; gap: 12px;
+}
+.flow-inline-close {
+  width: 30px; height: 30px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 0; border-radius: 6px;
+  color: var(--text-muted); cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.flow-inline-close:hover { background: var(--surface-2); color: var(--text); }
+.flow-inline-close svg { width: 16px !important; height: 16px !important; }
+.flow-inline-body {
+  padding: 20px 22px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.flow-inline-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px;
+  padding: 14px 22px;
+  border-top: 1px solid var(--hairline);
+  background: var(--surface);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.flow-inline-foot-right { display: flex; gap: 10px; align-items: center; margin-left: auto; }
+
+/* Colapsa split em coluna única em telas estreitas — cards da esquerda
+   voltam pra 2 colunas já que agora têm largura total. */
+@media (max-width: 1024px) {
+  .flows-split { grid-template-columns: 1fr; }
+  .flows-split-right { position: static; max-height: none; }
+  .flows-split-left .flow-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 640px) {
+  .flows-split-left .flow-grid { grid-template-columns: 1fr; }
 }
 
 /* ─── FLOW MODAL — Layout novo ─── */

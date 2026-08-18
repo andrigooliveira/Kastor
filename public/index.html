@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-title" content="reWork">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/css/style.css?v=20260817q">
+<link rel="stylesheet" href="/css/style.css?v=20260818h">
 <script type="text/javascript">
     (function(c,l,a,r,i,t,y){
         c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
@@ -182,7 +182,13 @@
       <button class="menu-toggle" id="menu-toggle" onclick="toggleSidebar()" aria-label="Abrir menu">
         <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 6h14M3 10h14M3 14h14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
       </button>
+      <!-- Botão voltar (só aparece na página de detalhe da demanda) -->
+      <button class="topbar-back" id="topbar-back" onclick="closeDemandDetail()" title="Voltar" style="display:none">
+        <i data-lucide="arrow-left" class="ic-sm"></i>
+      </button>
       <div class="topbar-title" id="topbar-title">Dashboard</div>
+      <!-- Slot pra pipeline visual da demanda (populado por renderDetail) -->
+      <div class="topbar-pipeline-slot" id="topbar-pipeline"></div>
       <div class="topbar-actions">
         <!-- Widget de timer ativo — persiste entre demandas. Nome da demanda clicável
              abre o modal correspondente. Só visível quando há um timer rodando ou pausado. -->
@@ -917,12 +923,23 @@
           <button class="btn btn-primary admin-only" onclick="openWebhookModal()">+ Nova Integração</button>
         </div>
         <div class="capacity-hint">Webhooks notificam serviços externos (como Discord, Slack, Make, n8n) quando eventos acontecem nas demandas. São <strong>universais</strong>: valem para todos os squads, independente do squad ativo. Use o formato Discord para postar embeds formatados direto em um canal.</div>
-        <!-- Filtros por alvo/escopo dos webhooks. Opções populadas só com valores
-             em uso nos webhooks deste workspace. Lista sempre ordenada por nome. -->
+        <!-- Filtros: Squad (dropdown) → toggle Usuário/Cliente → dropdown correspondente
+             → Projeto → busca por nome/URL. Toggle é mutuamente exclusivo. -->
         <div class="filters-bar" style="margin-bottom:12px">
-          <select class="filter-select" id="wh-f-target" onchange="renderIntegrations()"><option value="">Todos os alvos</option></select>
-          <select class="filter-select" id="wh-f-client" onchange="renderIntegrations()"><option value="">Todos os clientes</option></select>
+          <div class="filter-input-wrap">
+            <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+            <input class="filter-input filter-input--with-icon" id="wh-f-search" placeholder="Buscar integração…" oninput="renderIntegrations()">
+          </div>
+          <select class="filter-select" id="wh-f-squad" onchange="onIntegrationsSquadChange()"><option value="">Todos os squads</option></select>
+          <!-- Toggle Usuário/Cliente — controla qual dropdown aparece à direita -->
+          <div class="filter-toggle" id="wh-scope-toggle" role="tablist">
+            <button type="button" class="filter-toggle-btn is-active" data-scope="user" onclick="setIntegrationsScope('user')">Usuário</button>
+            <button type="button" class="filter-toggle-btn" data-scope="client" onclick="setIntegrationsScope('client')">Cliente</button>
+          </div>
+          <select class="filter-select" id="wh-f-target" onchange="renderIntegrations()"><option value="">Todos os usuários</option></select>
+          <select class="filter-select" id="wh-f-client" onchange="onIntegrationsClientChange()" style="display:none"><option value="">Todos os clientes</option></select>
           <select class="filter-select" id="wh-f-project" onchange="renderIntegrations()"><option value="">Todos os projetos</option></select>
+          <button class="btn btn-ghost btn-sm" onclick="clearIntegrationsFilters()" title="Limpar filtros"><i data-lucide="x" class="ic-sm"></i> Limpar</button>
         </div>
         <div class="table-wrap table-scroll">
           <table>
@@ -1305,7 +1322,7 @@
           <div class="flow-grid" id="flow-clients-grid"></div>
         </div>
 
-        <!-- VIEW B: fluxos de um cliente específico -->
+        <!-- VIEW B: fluxos de um cliente específico (split: lista à esquerda + editor à direita) -->
         <div id="flows-view-detail" style="display:none">
           <div class="filters-bar" style="margin-bottom:18px;gap:10px">
             <button class="btn btn-ghost btn-sm" onclick="closeClientFlows()"><i data-lucide="chevron-left" class="ic-sm"></i> Voltar</button>
@@ -1323,7 +1340,90 @@
             <button class="btn btn-primary btn-sm admin-only" style="margin-left:auto" onclick="openFlowModalForClient(currentClientView)"><i data-lucide="plus" class="ic-sm"></i> Novo Fluxo</button>
           </div>
           <div class="section-title" id="flow-detail-breadcrumb" style="margin-bottom:16px"></div>
-          <div class="flow-grid" id="flow-detail-grid"></div>
+          <div class="flows-split">
+            <!-- LEFT: lista de fluxos do cliente (grid vira compacto) -->
+            <div class="flows-split-left">
+              <div class="flow-grid" id="flow-detail-grid"></div>
+            </div>
+            <!-- RIGHT: editor inline do fluxo selecionado (mesmos ids do antigo modal) -->
+            <div class="flows-split-right" id="flow-inline-editor">
+              <!-- Estado vazio (default) -->
+              <div class="flow-inline-empty" id="flow-inline-empty">
+                <i data-lucide="workflow" class="flow-inline-empty-icon"></i>
+                <div class="flow-inline-empty-title">Nenhum fluxo aberto</div>
+                <div class="flow-inline-empty-sub">Escolha um fluxo à esquerda ou clique em "+ Novo Fluxo".</div>
+              </div>
+              <!-- Editor (visível quando um fluxo está aberto) -->
+              <div class="flow-inline-form" id="flow-inline-form" style="display:none">
+                <div class="flow-inline-head">
+                  <div class="flow-inline-head-left">
+                    <div class="flow-inline-title" id="flow-modal-title">Novo fluxo</div>
+                    <div class="flow-inline-subtitle" id="flow-modal-subtitle">Cliente</div>
+                  </div>
+                  <div class="flow-inline-head-right">
+                    <button type="button" class="flow-icon-picker" id="fl-icon-picker" onclick="openFlowIconPicker()" title="Escolher ícone da biblioteca">
+                      <input type="file" id="fl-icon-input" accept="image/*" style="display:none" onchange="handleFlowIconUpload(event)">
+                      <div id="fl-icon-preview" class="flow-icon-preview">
+                        <span class="flow-icon-label">ícone</span>
+                      </div>
+                    </button>
+                    <button class="flow-inline-close" onclick="closeFlowInlineEditor()" title="Fechar"><i data-lucide="x" class="ic-sm"></i></button>
+                  </div>
+                </div>
+                <div class="flow-inline-body">
+                  <div class="form-grid" style="margin-bottom:16px">
+                    <div class="form-group">
+                      <label class="form-label">Fluxo</label>
+                      <input class="form-control" id="fl-name" placeholder="Ex: Fluxo de mídias sociais" oninput="flowModalDirty=true">
+                    </div>
+                    <div class="form-group">
+                      <label class="form-label">Tipo de Demanda</label>
+                      <div class="dtype-combo">
+                        <input class="form-control" id="fl-type" placeholder="Ex: Social Media" autocomplete="off" oninput="flowModalDirty=true">
+                        <div class="dtype-menu" id="fl-type-menu"></div>
+                      </div>
+                    </div>
+                    <div class="form-group full" id="fl-project-group" style="display:none">
+                      <label class="form-label">Projeto (deixar vazio para todos os projetos do cliente)</label>
+                      <select class="form-control" id="fl-project" onchange="flowModalDirty=true"></select>
+                    </div>
+                  </div>
+                  <div class="form-group full" style="margin-bottom:18px">
+                    <label class="form-label">Descrição padrão</label>
+                    <textarea class="form-control" id="fl-default-desc" rows="3" placeholder="Texto que aparecerá pré-preenchido na descrição de toda demanda criada neste fluxo (editável depois)." oninput="flowModalDirty=true"></textarea>
+                  </div>
+                  <div class="form-group full" style="margin-bottom:24px">
+                    <label class="form-label">Checklist padrão</label>
+                    <div class="flow-checklist-list" id="fl-default-checklist"></div>
+                    <button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addFlowChecklistItem()"><i data-lucide="plus" class="ic-sm"></i> Adicionar item</button>
+                    <div style="font-size:11px;color:var(--text-muted);margin-top:8px;line-height:1.5">
+                      Itens listados aparecerão no checklist de toda demanda nova deste fluxo. Quem cria pode editar ou remover antes de salvar.
+                    </div>
+                  </div>
+                  <div style="margin-top:8px;padding-top:20px;border-top:1px solid var(--hairline)">
+                    <label class="form-label" style="display:block;margin-bottom:8px">Etapas</label>
+                    <div class="stage-list" id="stage-list" oninput="flowModalDirty=true"></div>
+                    <button class="btn btn-ghost btn-sm flow-add-stage-btn" onclick="addStageRow();flowModalDirty=true"><i data-lucide="plus" class="ic-sm"></i> Adicionar nova etapa</button>
+                    <div style="font-size:11px;color:var(--text-muted);margin-top:12px;line-height:1.6">
+                      <strong>Prazo (dias)</strong> começa a contar quando a demanda entra na etapa. <strong>Responsável</strong> assume a demanda ao chegar nela.
+                      Marque <strong>"Conclui"</strong> nas etapas que encerram a demanda. Se uma etapa em uso for removida, as demandas dela voltam à primeira etapa.
+                    </div>
+                  </div>
+                </div>
+                <div class="flow-inline-foot">
+                  <label class="flow-apply-toggle" id="fl-apply-toggle-wrap">
+                    <input type="checkbox" id="fl-apply-all">
+                    <span class="flow-toggle-track"><span class="flow-toggle-thumb"></span></span>
+                    <span class="flow-toggle-label">Aplicar a todos os projetos</span>
+                  </label>
+                  <div class="flow-inline-foot-right">
+                    <button class="btn btn-ghost" onclick="closeFlowInlineEditor()">Cancelar</button>
+                    <button class="btn btn-primary" onclick="saveFlow()">Salvar Fluxo</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
       </div>
@@ -1658,117 +1758,290 @@
       </div>
     </div>
 
-    <!-- ── PERFIL ── -->
+    <!-- ── PERFIL — layout novo com hero + nav lateral + seções ── -->
     <div class="page" id="page-profile">
       <div class="page-body">
-        <div class="profile-layout">
-          <div class="profile-card">
-            <div class="avatar avatar-lg" id="profile-avatar">A</div>
-            <div class="profile-name" id="profile-name-display">—</div>
-            <div class="profile-role" id="profile-role-display">—</div>
-            <div class="profile-username" id="profile-username-display">—</div>
-            <div class="upload-btn-wrap">
-              <input type="file" id="avatar-file" accept="image/*" style="display:none" onchange="handleAvatarUpload(event)">
-              <button class="btn btn-ghost" onclick="document.getElementById('avatar-file').click()">Enviar foto de perfil</button>
-              <button class="btn btn-ghost btn-sm" id="avatar-remove-btn" style="margin-top:8px;display:none" onclick="removeAvatar()">Remover foto</button>
+        <!-- Hero: avatar + identidade + botão de foto -->
+        <div class="profile-hero">
+          <div class="profile-hero-avatar-wrap">
+            <div class="avatar avatar-xl" id="profile-avatar">A</div>
+            <input type="file" id="avatar-file" accept="image/*" style="display:none" onchange="handleAvatarUpload(event)">
+            <button class="profile-hero-avatar-edit" onclick="document.getElementById('avatar-file').click()" title="Trocar foto">
+              <i data-lucide="camera" class="ic-sm"></i>
+            </button>
+          </div>
+          <div class="profile-hero-info">
+            <div class="profile-hero-name" id="profile-name-display">—</div>
+            <div class="profile-hero-meta">
+              <span class="profile-hero-role" id="profile-role-display">—</span>
+              <span class="profile-hero-sep">·</span>
+              <span class="profile-hero-username" id="profile-username-display">—</span>
+            </div>
+            <div class="profile-hero-actions">
+              <button class="btn btn-ghost btn-sm" onclick="document.getElementById('avatar-file').click()"><i data-lucide="upload" class="ic-sm"></i> Enviar foto</button>
+              <button class="btn btn-ghost btn-sm" id="avatar-remove-btn" style="display:none" onclick="removeAvatar()"><i data-lucide="trash-2" class="ic-sm"></i> Remover</button>
             </div>
           </div>
-          <div>
-            <div class="panel">
-              <div class="panel-title">Informações do Perfil</div>
-              <div class="form-grid">
-                <div class="form-group">
-                  <label class="form-label">Nome de exibição</label>
-                  <input class="form-control" id="profile-f-name">
-                </div>
-                <div class="form-group">
-                  <label class="form-label">Área</label>
-                  <select class="form-control" id="profile-f-role"></select>
-                </div>
-                <div class="form-group">
-                  <label class="form-label">Nome de usuário (login)</label>
-                  <input class="form-control" id="profile-f-username" placeholder="ex: ana.lima">
+        </div>
+
+        <!-- Split: nav lateral + conteúdo da seção -->
+        <div class="profile-split">
+          <nav class="profile-nav" role="tablist" aria-label="Configurações do perfil">
+            <button class="profile-nav-item is-active" data-section="account" onclick="setProfileSection('account')"><i data-lucide="user" class="ic-sm"></i> Conta</button>
+            <button class="profile-nav-item" data-section="appearance" onclick="setProfileSection('appearance')"><i data-lucide="palette" class="ic-sm"></i> Aparência</button>
+            <button class="profile-nav-item" data-section="notifications" onclick="setProfileSection('notifications')"><i data-lucide="bell" class="ic-sm"></i> Notificações</button>
+            <button class="profile-nav-item" data-section="integrations" onclick="setProfileSection('integrations')"><i data-lucide="plug" class="ic-sm"></i> Integrações</button>
+            <button class="profile-nav-item" data-section="security" onclick="setProfileSection('security')"><i data-lucide="shield" class="ic-sm"></i> Segurança</button>
+          </nav>
+
+          <div class="profile-content">
+            <!-- ─── CONTA — dados básicos ─── -->
+            <section class="profile-section" data-section="account">
+              <div class="profile-section-head">
+                <div>
+                  <div class="profile-section-title">Conta</div>
+                  <div class="profile-section-sub">Como você aparece no reWork e como faz login.</div>
                 </div>
               </div>
-              <div style="margin-top:16px;text-align:right">
-                <button class="btn btn-primary" onclick="saveProfile()">Salvar Perfil</button>
+              <div class="profile-card-block">
+                <div class="form-grid">
+                  <div class="form-group">
+                    <label class="form-label">Nome de exibição</label>
+                    <input class="form-control" id="profile-f-name">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Área</label>
+                    <select class="form-control" id="profile-f-role"></select>
+                  </div>
+                  <div class="form-group full">
+                    <label class="form-label">Nome de usuário (login)</label>
+                    <input class="form-control" id="profile-f-username" placeholder="ex: ana.lima">
+                    <div class="profile-hint">Usado ao fazer login. Deve ser único.</div>
+                  </div>
+                </div>
+                <div class="profile-block-actions">
+                  <button class="btn btn-primary" onclick="saveProfile()">Salvar</button>
+                </div>
               </div>
-            </div>
-            <div class="panel">
-              <div class="panel-title">Notificações por E-mail</div>
-              <div id="profile-email-smtp-warning" class="webhook-hint" style="display:none;margin-bottom:12px;border-left:3px solid var(--warn);color:var(--warn)">
-                ⚠️ O servidor não tem SMTP configurado. Mesmo cadastrando um e-mail, nenhuma mensagem será enviada até que o administrador configure as variáveis de ambiente <code>SMTP_HOST</code>, <code>SMTP_USER</code>, <code>SMTP_PASS</code> e <code>SMTP_FROM</code>.
+            </section>
+
+            <!-- ─── APARÊNCIA — tema, densidade, desktop ─── -->
+            <section class="profile-section" data-section="appearance" hidden>
+              <div class="profile-section-head">
+                <div>
+                  <div class="profile-section-title">Aparência</div>
+                  <div class="profile-section-sub">Personalize como o reWork se apresenta pra você.</div>
+                </div>
               </div>
-              <div class="form-grid">
+              <!-- Tema -->
+              <div class="profile-card-block">
+                <div class="profile-row">
+                  <div class="profile-row-info">
+                    <div class="profile-row-title">Tema</div>
+                    <div class="profile-row-sub">Modo claro para ambientes iluminados; escuro reduz cansaço em salas escuras.</div>
+                  </div>
+                  <div class="profile-theme-picker" id="profile-theme-picker">
+                    <button type="button" class="profile-theme-opt" data-theme="light" onclick="setProfileTheme('light')">
+                      <i data-lucide="sun" class="ic-sm"></i> Claro
+                    </button>
+                    <button type="button" class="profile-theme-opt" data-theme="dark" onclick="setProfileTheme('dark')">
+                      <i data-lucide="moon" class="ic-sm"></i> Escuro
+                    </button>
+                  </div>
+                </div>
+                <div class="profile-row">
+                  <div class="profile-row-info">
+                    <div class="profile-row-title">Densidade das tabelas</div>
+                    <div class="profile-row-sub">Compacta cabe mais linhas na tela; confortável dá mais respiro.</div>
+                  </div>
+                  <div class="profile-theme-picker" id="profile-density-picker">
+                    <button type="button" class="profile-theme-opt" data-density="comfortable" onclick="setProfileDensity('comfortable')">
+                      <i data-lucide="align-justify" class="ic-sm"></i> Confortável
+                    </button>
+                    <button type="button" class="profile-theme-opt" data-density="compact" onclick="setProfileDensity('compact')">
+                      <i data-lucide="rows-3" class="ic-sm"></i> Compacta
+                    </button>
+                  </div>
+                </div>
+                <div class="profile-row">
+                  <div class="profile-row-info">
+                    <div class="profile-row-title">Notificações do sistema</div>
+                    <div class="profile-row-sub">Recebe alertas nativos do sistema (fora do navegador) quando algo importante acontece.</div>
+                  </div>
+                  <div id="profile-desktop-notif-slot"></div>
+                </div>
+                <div class="profile-row">
+                  <div class="profile-row-info">
+                    <div class="profile-row-title">Sidebar colapsada por padrão</div>
+                    <div class="profile-row-sub">Mais espaço horizontal pra listas e boards. Você ainda pode expandir a qualquer momento.</div>
+                  </div>
+                  <label class="profile-switch">
+                    <input type="checkbox" id="profile-sidebar-collapsed" onchange="setProfileSidebarCollapsed(this.checked)">
+                    <span class="profile-switch-track"><span class="profile-switch-thumb"></span></span>
+                  </label>
+                </div>
+              </div>
+            </section>
+
+            <!-- ─── NOTIFICAÇÕES ─── -->
+            <section class="profile-section" data-section="notifications" hidden>
+              <div class="profile-section-head">
+                <div>
+                  <div class="profile-section-title">Notificações por e-mail</div>
+                  <div class="profile-section-sub">Configure quais eventos você recebe por e-mail.</div>
+                </div>
+              </div>
+              <div class="profile-card-block">
+                <div id="profile-email-smtp-warning" class="profile-hint profile-hint--warn" style="display:none;margin-bottom:14px">
+                  ⚠️ O servidor não tem SMTP configurado. Mesmo cadastrando um e-mail, nenhuma mensagem será enviada até que o administrador configure as variáveis de ambiente <code>SMTP_HOST</code>, <code>SMTP_USER</code>, <code>SMTP_PASS</code> e <code>SMTP_FROM</code>.
+                </div>
                 <div class="form-group full">
                   <label class="form-label">E-mail</label>
                   <input class="form-control" id="profile-f-email" type="email" placeholder="ex: voce@empresa.com" autocomplete="email">
                 </div>
-                <div class="form-group full">
-                  <label class="form-label">Receber e-mail quando…</label>
-                  <div class="email-prefs">
-                    <label class="form-check"><input type="checkbox" id="profile-pref-assigned"> Eu for atribuído como responsável (manual)</label>
-                    <label class="form-check"><input type="checkbox" id="profile-pref-stage_assigned"> Eu for responsável da nova etapa (atribuição automática)</label>
-                    <label class="form-check"><input type="checkbox" id="profile-pref-mention"> Eu for mencionado em um comentário</label>
-                    <label class="form-check"><input type="checkbox" id="profile-pref-watch_stage"> Etapa mudar em demanda que estou observando</label>
-                    <label class="form-check"><input type="checkbox" id="profile-pref-watch_comment"> Novo comentário em demanda que estou observando</label>
-                    <label class="form-check"><input type="checkbox" id="profile-pref-daily_digest"> Resumo diário do dia (segunda a sexta, 8h)</label>
-                  </div>
+                <div class="profile-prefs-list" style="margin-top:16px">
+                  <label class="profile-pref-row">
+                    <div class="profile-pref-info">
+                      <div class="profile-pref-title">Sou atribuído como responsável</div>
+                      <div class="profile-pref-sub">Alguém te escolheu manualmente pra tocar uma demanda.</div>
+                    </div>
+                    <input type="checkbox" id="profile-pref-assigned">
+                  </label>
+                  <label class="profile-pref-row">
+                    <div class="profile-pref-info">
+                      <div class="profile-pref-title">Sou responsável de nova etapa (automático)</div>
+                      <div class="profile-pref-sub">Uma demanda avançou pra uma etapa cujo responsável configurado é você.</div>
+                    </div>
+                    <input type="checkbox" id="profile-pref-stage_assigned">
+                  </label>
+                  <label class="profile-pref-row">
+                    <div class="profile-pref-info">
+                      <div class="profile-pref-title">Fui mencionado em comentário</div>
+                      <div class="profile-pref-sub">Alguém escreveu @seu.usuario num comentário.</div>
+                    </div>
+                    <input type="checkbox" id="profile-pref-mention">
+                  </label>
+                  <label class="profile-pref-row">
+                    <div class="profile-pref-info">
+                      <div class="profile-pref-title">Etapa mudou (demanda observada)</div>
+                      <div class="profile-pref-sub">Uma demanda que você observa avançou de etapa.</div>
+                    </div>
+                    <input type="checkbox" id="profile-pref-watch_stage">
+                  </label>
+                  <label class="profile-pref-row">
+                    <div class="profile-pref-info">
+                      <div class="profile-pref-title">Novo comentário (demanda observada)</div>
+                      <div class="profile-pref-sub">Alguém comentou numa demanda que você observa.</div>
+                    </div>
+                    <input type="checkbox" id="profile-pref-watch_comment">
+                  </label>
+                  <label class="profile-pref-row">
+                    <div class="profile-pref-info">
+                      <div class="profile-pref-title">Resumo diário</div>
+                      <div class="profile-pref-sub">Segunda a sexta, às 8h — um digest do que espera por você.</div>
+                    </div>
+                    <input type="checkbox" id="profile-pref-daily_digest">
+                  </label>
+                </div>
+                <div class="profile-block-actions">
+                  <button class="btn btn-ghost" onclick="sendEmailTest()"><i data-lucide="send" class="ic-sm"></i> Enviar teste</button>
+                  <button class="btn btn-primary" onclick="saveEmailSettings()">Salvar preferências</button>
                 </div>
               </div>
-              <div style="margin-top:16px;display:flex;justify-content:flex-end;gap:8px">
-                <button class="btn btn-ghost" onclick="sendEmailTest()"><i data-lucide="send" class="ic-sm"></i> Enviar teste</button>
-                <button class="btn btn-primary" onclick="saveEmailSettings()">Salvar preferências</button>
+            </section>
+
+            <!-- ─── INTEGRAÇÕES — Discord + Google ─── -->
+            <section class="profile-section" data-section="integrations" hidden>
+              <div class="profile-section-head">
+                <div>
+                  <div class="profile-section-title">Integrações</div>
+                  <div class="profile-section-sub">Conecte ferramentas externas à sua conta.</div>
+                </div>
               </div>
-            </div>
-            <div class="panel">
-              <div class="panel-title">Integração com Discord</div>
-              <div class="form-grid">
-                <div class="form-group full">
+
+              <!-- Discord -->
+              <div class="profile-integration-card">
+                <div class="profile-integration-head">
+                  <div class="profile-integration-icon" style="background:rgba(88,101,242,0.15);color:#5865f2">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M19.27 5.33a19.19 19.19 0 0 0-4.85-1.53.07.07 0 0 0-.07.03c-.21.38-.44.87-.6 1.26a17.86 17.86 0 0 0-5.5 0 12.6 12.6 0 0 0-.61-1.26.08.08 0 0 0-.07-.03A19.19 19.19 0 0 0 2.73 5.33a.07.07 0 0 0-.03.03C.57 8.63 0 11.83.28 15a19.32 19.32 0 0 0 5.83 2.97.08.08 0 0 0 .09-.03 13.4 13.4 0 0 0 1.19-1.94.08.08 0 0 0-.04-.1 12.8 12.8 0 0 1-1.83-.87.08.08 0 0 1 0-.13c.12-.09.25-.18.36-.28a.08.08 0 0 1 .08 0c3.84 1.76 7.99 1.76 11.79 0a.08.08 0 0 1 .08 0c.12.1.24.19.36.28a.08.08 0 0 1 0 .13c-.58.35-1.2.64-1.83.87a.08.08 0 0 0-.04.1 15 15 0 0 0 1.19 1.94.08.08 0 0 0 .09.03A19.27 19.27 0 0 0 21.72 15c.33-3.67-.55-6.83-2.42-9.64a.07.07 0 0 0-.03-.03zM8.02 12.9c-1.15 0-2.1-1.06-2.1-2.35 0-1.3.93-2.35 2.1-2.35 1.18 0 2.12 1.06 2.1 2.35 0 1.29-.94 2.35-2.1 2.35zm7.79 0c-1.15 0-2.1-1.06-2.1-2.35 0-1.3.93-2.35 2.1-2.35 1.18 0 2.12 1.06 2.1 2.35 0 1.29-.92 2.35-2.1 2.35z"/></svg>
+                  </div>
+                  <div class="profile-integration-info">
+                    <div class="profile-integration-name">Discord</div>
+                    <div class="profile-integration-sub">Receba menção no Discord ao virar responsável.</div>
+                  </div>
+                </div>
+                <div class="form-group full" style="margin-top:14px">
                   <label class="form-label">ID do usuário no Discord</label>
                   <input class="form-control" id="profile-f-discord-id" placeholder="Ex: 123456789012345678" autocomplete="off">
-                  <div class="webhook-hint" style="margin-top:8px">
-                    Cole aqui o seu <strong>ID de usuário do Discord</strong> para receber menção quando virar responsável por uma demanda.<br>
-                    Como obter: Configurações do Discord → <strong>Avançado</strong> → ative <strong>Modo Desenvolvedor</strong> → no chat, clique com o botão direito sobre seu nome → <strong>Copiar ID do Usuário</strong>.
+                  <div class="profile-hint">Configurações do Discord → <strong>Avançado</strong> → ative <strong>Modo Desenvolvedor</strong> → clique com o botão direito sobre seu nome → <strong>Copiar ID do Usuário</strong>.</div>
+                </div>
+                <div class="profile-block-actions">
+                  <button class="btn btn-primary" onclick="saveDiscordId()">Salvar</button>
+                </div>
+              </div>
+
+              <!-- Google Calendar -->
+              <div class="profile-integration-card" id="profile-google-panel">
+                <div class="profile-integration-head">
+                  <div class="profile-integration-icon" style="background:rgba(66,133,244,0.14);color:#4285F4">
+                    <i data-lucide="calendar" class="ic-md"></i>
+                  </div>
+                  <div class="profile-integration-info">
+                    <div class="profile-integration-name">Google Calendar</div>
+                    <div class="profile-integration-sub">Seus eventos aparecem junto com os blocos do reWork.</div>
                   </div>
                 </div>
-              </div>
-              <div style="margin-top:16px;text-align:right">
-                <button class="btn btn-primary" onclick="saveDiscordId()">Salvar ID do Discord</button>
-              </div>
-            </div>
-            <div class="panel" id="profile-google-panel">
-              <div class="panel-title">Google Calendar</div>
-              <div id="profile-google-body">
-                <div class="webhook-hint">Carregando…</div>
-              </div>
-            </div>
-            <div class="panel">
-              <div class="panel-title">Alterar Senha</div>
-              <div class="form-grid">
-                <div class="form-group">
-                  <label class="form-label">Senha atual</label>
-                  <input class="form-control" id="profile-f-pass-current" type="password" autocomplete="current-password">
-                </div>
-                <div class="form-group">
-                  <label class="form-label">Nova senha (mín. 6 caracteres)</label>
-                  <input class="form-control" id="profile-f-pass-new" type="password" autocomplete="new-password">
+                <div id="profile-google-body" style="margin-top:14px">
+                  <div class="profile-hint">Carregando…</div>
                 </div>
               </div>
-              <div style="margin-top:16px;text-align:right">
-                <button class="btn btn-primary" onclick="changePassword()">Alterar Senha</button>
+            </section>
+
+            <!-- ─── SEGURANÇA ─── -->
+            <section class="profile-section" data-section="security" hidden>
+              <div class="profile-section-head">
+                <div>
+                  <div class="profile-section-title">Segurança</div>
+                  <div class="profile-section-sub">Senha e sessão.</div>
+                </div>
               </div>
-            </div>
-            <div class="panel">
-              <div class="panel-title">Sessão</div>
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap">
-                <div style="color:var(--text-muted);font-size:13px">Encerra a sua sessão atual neste dispositivo.</div>
-                <button class="btn btn-danger" onclick="doLogout()"><i data-lucide="log-out" class="ic-sm"></i> Sair da conta</button>
+              <div class="profile-card-block">
+                <div class="profile-block-title">Alterar senha</div>
+                <div class="form-grid">
+                  <div class="form-group">
+                    <label class="form-label">Senha atual</label>
+                    <input class="form-control" id="profile-f-pass-current" type="password" autocomplete="current-password">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Nova senha (mín. 6 caracteres)</label>
+                    <input class="form-control" id="profile-f-pass-new" type="password" autocomplete="new-password">
+                  </div>
+                </div>
+                <div class="profile-block-actions">
+                  <button class="btn btn-primary" onclick="changePassword()">Alterar senha</button>
+                </div>
               </div>
-            </div>
+              <div class="profile-card-block" style="margin-top:16px">
+                <div class="profile-row">
+                  <div class="profile-row-info">
+                    <div class="profile-row-title">Sair da conta</div>
+                    <div class="profile-row-sub">Encerra a sua sessão neste dispositivo.</div>
+                  </div>
+                  <button class="btn btn-danger" onclick="doLogout()"><i data-lucide="log-out" class="ic-sm"></i> Sair</button>
+                </div>
+              </div>
+            </section>
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- ── PÁGINA DE DETALHE DA DEMANDA ── (era um modal overlay).
+         `#detail-content` é preenchido por renderDetail(). O footer agora vive
+         DENTRO da coluna direita (renderDetail move o elemento pra lá). -->
+    <div class="page" id="page-demand-detail">
+      <div id="detail-content"></div>
+      <div class="detail-footer" id="detail-footer" hidden></div>
     </div>
   </main>
 </div>
@@ -1994,6 +2267,55 @@
   </div>
 </div>
 
+<!-- MODAL: REGISTRAR TEMPO — apontamento de horas da demanda aberta.
+     Substitui o antigo rodapé do detail modal (que foi removido no redesign). -->
+<div class="modal-overlay" id="time-modal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div class="modal-title">Registrar tempo</div>
+      <button class="modal-close" onclick="closeModal('time-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <!-- Início | Término -->
+      <div class="time-row time-row-2col">
+        <div class="time-col">
+          <div class="time-col-title">Início</div>
+          <input type="date" class="form-control time-input" id="time-start-date" onchange="onTimeStartChange()">
+          <input type="time" class="form-control time-input" id="time-start-time" onchange="onTimeStartChange()">
+        </div>
+        <div class="time-col">
+          <div class="time-col-title">Término</div>
+          <input type="date" class="form-control time-input" id="time-end-date" onchange="onTimeEndChange()">
+          <input type="time" class="form-control time-input" id="time-end-time" onchange="onTimeEndChange()">
+        </div>
+      </div>
+      <!-- Horas / Minutos -->
+      <div class="time-row time-row-hm">
+        <div class="time-col">
+          <div class="time-col-title">Horas</div>
+          <input type="number" class="form-control time-input" id="time-hours" min="0" step="1" placeholder="0" onchange="onTimeDurationChange()">
+        </div>
+        <div class="time-col">
+          <div class="time-col-title">Minutos</div>
+          <input type="number" class="form-control time-input" id="time-minutes" min="0" max="59" step="1" placeholder="0" onchange="onTimeDurationChange()">
+        </div>
+      </div>
+      <!-- Chips de duração rápida -->
+      <div class="time-chip-row" id="time-chip-row">
+        <button type="button" class="time-chip" onclick="setTimeDuration(2, 0)">2h</button>
+        <button type="button" class="time-chip" onclick="setTimeDuration(1, 0)">1h</button>
+        <button type="button" class="time-chip" onclick="setTimeDuration(0, 45)">45m</button>
+        <button type="button" class="time-chip" onclick="setTimeDuration(0, 30)">30m</button>
+        <button type="button" class="time-chip" onclick="setTimeDuration(0, 15)">15m</button>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('time-modal')">Cancelar</button>
+      <button class="btn btn-primary" onclick="addTimeEntry()"><i data-lucide="check" class="ic-sm"></i> Registrar</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL: DEMANDAS PREVISTAS (clique num dia do quadro de previsão) -->
 <div class="modal-overlay" id="forecast-modal">
   <div class="modal">
@@ -2002,14 +2324,6 @@
       <button class="modal-close" onclick="closeModal('forecast-modal')"><i data-lucide="x" class="ic-sm"></i></button>
     </div>
     <div class="modal-body" id="forecast-modal-body"></div>
-  </div>
-</div>
-
-<!-- MODAL: DETALHE DA DEMANDA -->
-<div class="modal-overlay" id="detail-modal">
-  <div class="modal modal-xl detail-modal-shell">
-    <div id="detail-content"></div>
-    <div class="detail-footer" id="detail-footer"></div>
   </div>
 </div>
 
@@ -2298,81 +2612,7 @@
   </div>
 </div>
 
-<!-- MODAL: FLUXO -->
-<div class="modal-overlay" id="flow-modal">
-  <div class="modal modal-xl">
-    <div class="modal-header flow-modal-head">
-      <div>
-        <div class="modal-title" id="flow-modal-title">Novo fluxo</div>
-        <div class="flow-modal-subtitle" id="flow-modal-subtitle">Cliente</div>
-      </div>
-      <div class="flow-modal-head-right">
-        <button type="button" class="flow-icon-picker" id="fl-icon-picker" onclick="openFlowIconPicker()" title="Escolher ícone da biblioteca">
-          <input type="file" id="fl-icon-input" accept="image/*" style="display:none" onchange="handleFlowIconUpload(event)">
-          <div id="fl-icon-preview" class="flow-icon-preview">
-            <span class="flow-icon-label">ícone</span>
-          </div>
-        </button>
-        <button class="modal-close" onclick="attemptCloseModal('flow-modal')"><i data-lucide="x" class="ic-sm"></i></button>
-      </div>
-    </div>
-    <div class="modal-body">
-      <div class="form-grid" style="margin-bottom:16px">
-        <div class="form-group">
-          <label class="form-label">Fluxo</label>
-          <input class="form-control" id="fl-name" placeholder="Ex: Fluxo de mídias sociais" oninput="flowModalDirty=true">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Tipo de Demanda</label>
-          <div class="dtype-combo">
-            <input class="form-control" id="fl-type" placeholder="Ex: Social Media" autocomplete="off" oninput="flowModalDirty=true">
-            <div class="dtype-menu" id="fl-type-menu"></div>
-          </div>
-        </div>
-        <!-- Projeto vinculado fica como campo opcional avançado, escondido por padrão -->
-        <div class="form-group full" id="fl-project-group" style="display:none">
-          <label class="form-label">Projeto (deixar vazio para todos os projetos do cliente)</label>
-          <select class="form-control" id="fl-project" onchange="flowModalDirty=true"></select>
-        </div>
-      </div>
-      <!-- Defaults aplicados às novas demandas deste fluxo (antes das etapas) -->
-      <div class="form-group full" style="margin-bottom:18px">
-        <label class="form-label">Descrição padrão</label>
-        <textarea class="form-control" id="fl-default-desc" rows="3" placeholder="Texto que aparecerá pré-preenchido na descrição de toda demanda criada neste fluxo (editável depois)." oninput="flowModalDirty=true"></textarea>
-      </div>
-      <div class="form-group full" style="margin-bottom:24px">
-        <label class="form-label">Checklist padrão</label>
-        <div class="flow-checklist-list" id="fl-default-checklist"></div>
-        <button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addFlowChecklistItem()"><i data-lucide="plus" class="ic-sm"></i> Adicionar item</button>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:8px;line-height:1.5">
-          Itens listados aparecerão no checklist de toda demanda nova deste fluxo. Quem cria pode editar ou remover antes de salvar.
-        </div>
-      </div>
-
-      <!-- Etapas (vêm depois dos padrões) -->
-      <div style="margin-top:8px;padding-top:20px;border-top:1px solid var(--hairline)">
-        <label class="form-label" style="display:block;margin-bottom:8px">Etapas</label>
-        <div class="stage-list" id="stage-list" oninput="flowModalDirty=true"></div>
-        <button class="btn btn-ghost btn-sm flow-add-stage-btn" onclick="addStageRow();flowModalDirty=true"><i data-lucide="plus" class="ic-sm"></i> Adicionar nova etapa</button>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:12px;line-height:1.6">
-          <strong>Prazo (dias)</strong> começa a contar quando a demanda entra na etapa. <strong>Responsável</strong> assume a demanda ao chegar nela.
-          Marque <strong>"Conclui"</strong> nas etapas que encerram a demanda. Se uma etapa em uso for removida, as demandas dela voltam à primeira etapa.
-        </div>
-      </div>
-    </div>
-    <div class="modal-footer flow-modal-foot">
-      <label class="flow-apply-toggle" id="fl-apply-toggle-wrap">
-        <input type="checkbox" id="fl-apply-all">
-        <span class="flow-toggle-track"><span class="flow-toggle-thumb"></span></span>
-        <span class="flow-toggle-label">Aplicar a todos os projetos</span>
-      </label>
-      <div class="flow-modal-foot-right">
-        <button class="btn btn-ghost" onclick="attemptCloseModal('flow-modal')">Cancelar</button>
-        <button class="btn btn-primary" onclick="saveFlow()">Salvar Fluxo</button>
-      </div>
-    </div>
-  </div>
-</div>
+<!-- (MODAL FLUXO removido — agora vive inline em flows-view-detail como split pane) -->
 
 <!-- MODAL: NOVA/EDITAR DEMANDA RECORRENTE -->
 <div class="modal-overlay" id="recurring-modal">
@@ -3159,7 +3399,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260817t"></script>
+<script src="/js/app.js?v=20260818h"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

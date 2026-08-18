@@ -2096,7 +2096,7 @@ app.post('/api/templates', requireAuth, (req, res) => {
     id: uid(),
     workspaceId: ws,
     name: String(b.name).trim(),
-    description: String(b.description || ''),
+    description: sanitizeCommentHtml(String(b.description || '')),
     briefing: normalizeUrlSrv(b.briefing),
     projectId: b.projectId || null,
     flowId: b.flowId || null,
@@ -2117,7 +2117,7 @@ app.put('/api/templates/:id', requireAuth, (req, res) => {
   if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Template não encontrado' });
   const b = req.body || {};
   if (typeof b.name === 'string' && b.name.trim()) t.name = b.name.trim();
-  if (typeof b.description === 'string') t.description = b.description;
+  if (typeof b.description === 'string') t.description = sanitizeCommentHtml(b.description);
   if (typeof b.briefing === 'string') t.briefing = normalizeUrlSrv(b.briefing);
   if (b.projectId !== undefined) t.projectId = b.projectId || null;
   if (b.flowId !== undefined) t.flowId = b.flowId || null;
@@ -2443,7 +2443,7 @@ app.post('/api/client-templates/:id/projects/:pIdx/flows', requireAuth, (req, re
     // Stages guardadas SEM id nem responsibleRole — id novo por instância, área por cliente.
     stages: stages.map(s => ({ label: s.label, color: s.color, done: !!s.done,
       deadlineDays: s.deadlineDays || null })),
-    defaultDescription: typeof b.defaultDescription === 'string' ? b.defaultDescription : '',
+    defaultDescription: typeof b.defaultDescription === 'string' ? sanitizeCommentHtml(b.defaultDescription) : '',
     defaultChecklist: Array.isArray(b.defaultChecklist) ? sanitizeChecklistTemplate(b.defaultChecklist) : [],
     createdAt: nowISO(),
     updatedAt: nowISO()
@@ -2498,7 +2498,7 @@ app.put('/api/client-templates/:id/projects/:pIdx/flows/:fIdx', requireAuth, (re
   const b = req.body || {};
   if (typeof b.name === 'string' && b.name.trim()) ftpl.name = b.name.trim().slice(0, 120);
   if (typeof b.demandType === 'string')      { ftpl.demandType = b.demandType.trim().slice(0, 60); ensureDemandTypeExists(ftpl.demandType); }
-  if (typeof b.defaultDescription === 'string') ftpl.defaultDescription = b.defaultDescription;
+  if (typeof b.defaultDescription === 'string') ftpl.defaultDescription = sanitizeCommentHtml(b.defaultDescription);
   if (Array.isArray(b.defaultChecklist))       ftpl.defaultChecklist   = sanitizeChecklistTemplate(b.defaultChecklist);
   if (b.icon !== undefined) ftpl.icon = sanitizeFlowIcon(b.icon, ftpl.name);
   if (Array.isArray(b.stages)) {
@@ -2955,7 +2955,7 @@ function resolveStageOwner(stage, project) {
 
 app.post('/api/flows', requireAuth, modOrAdmin, (req, res) => {
   const { name, stages, demandType, projectId, workspaceId, client, clientId, icon, applyToAll, defaultDescription, defaultChecklist } = req.body || {};
-  const defaultDesc = typeof defaultDescription === 'string' ? defaultDescription : '';
+  const defaultDesc = typeof defaultDescription === 'string' ? sanitizeCommentHtml(defaultDescription) : '';
   const defaultChk = sanitizeChecklistTemplate(defaultChecklist);
   const clean = sanitizeStages(stages);
   if (!String(name || '').trim()) return res.status(400).json({ error: 'Nome do fluxo é obrigatório' });
@@ -3081,7 +3081,7 @@ app.put('/api/flows/:id', requireAuth, modOrAdmin, (req, res) => {
       }
     });
   }
-  if (typeof defaultDescription === 'string') f.defaultDescription = defaultDescription;
+  if (typeof defaultDescription === 'string') f.defaultDescription = sanitizeCommentHtml(defaultDescription);
   if (defaultChecklist !== undefined) f.defaultChecklist = sanitizeChecklistTemplate(defaultChecklist);
   saveEntity('flows', f);
   // Se as stages mudaram, algumas demandas podem ter tido status/stageDueDate reassinalados no loop acima — persiste-as.
@@ -3783,9 +3783,12 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
       addHistory(d, req.user.id, 'project_changed', { fromId: oldId, toId: project.id });
     }
   }
-  if (typeof b.description === 'string' && b.description.slice(0, 20000) !== d.description) {
-    d.description = b.description.slice(0, 20000);
-    addHistory(d, req.user.id, 'description_changed', null);
+  if (typeof b.description === 'string') {
+    const nextDesc = sanitizeCommentHtml(b.description.slice(0, 20000));
+    if (nextDesc !== d.description) {
+      d.description = nextDesc;
+      addHistory(d, req.user.id, 'description_changed', null);
+    }
   }
   if (typeof b.briefing === 'string') {
     const newBrief = normalizeUrlSrv(b.briefing);
@@ -5098,7 +5101,7 @@ function sanitizeRecurringBody(b, existing) {
     // cliente, resolvemos o fluxo daquele cliente por este tipo (não pelo flowId fixo).
     demandType: flow.demandType || null,
     roleId, ownerId, deliverableUserId, listaId,
-    description: String(b.description ?? cur.description ?? ''),
+    description: sanitizeCommentHtml(String(b.description ?? cur.description ?? '')),
     briefing: normalizeUrlSrv(b.briefing ?? cur.briefing ?? ''),
     priority: [1,2,3,4].includes(Number(b.priority ?? cur.priority)) ? Number(b.priority ?? cur.priority) : 3,
     qtyPieces:     Number(b.qtyPieces ?? cur.qtyPieces) > 0     ? Math.floor(Number(b.qtyPieces ?? cur.qtyPieces)) : 0,
@@ -5299,7 +5302,7 @@ function sanitizeListaBody(b, existing) {
   }
   if (!workspaceId && b.workspaceId) workspaceId = b.workspaceId;
   if (!workspaceId) return { error: 'Workspace não pôde ser determinado' };
-  const description = String(b.description ?? cur.description ?? '');
+  const description = sanitizeCommentHtml(String(b.description ?? cur.description ?? ''));
   // sourceListaId: quando definido, marca essa lista como "aplicada" (snapshot de um template).
   // Listas com sourceListaId=null são templates originais (aparecem na aba Listas).
   // Listas com sourceListaId=X são instâncias aplicadas (não aparecem na aba Listas).
