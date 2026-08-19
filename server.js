@@ -115,6 +115,9 @@ async function loadDB() {
   // pra arquivos em data/uploads. Idempotente — não toca quem já está em URL.
   extractInlineBase64();
   await seedDemandTypes(); // popula a biblioteca de tipos a partir dos fluxos (1x)
+  // Migração de folders legados do cofre — cria entidades a partir do campo
+  // string `folder` que existia antes. Idempotente.
+  try { _migrateLegacyPasswordFolders(); } catch (e) { console.warn('migrateLegacyPasswordFolders:', e.message); }
   await flushDirty(); // garante que entidades criadas no seed/migrate sejam persistidas
 }
 
@@ -4455,15 +4458,19 @@ app.put('/api/demands/:id/skipped-stages', requireAuth, (req, res) => {
     }
   }
 
-  // Diff dos overrides de SLA (só deadlineDays) pra histórico
+  // Diff dos overrides — SLA (deadlineDays) E datas (deadlineDate) pra histórico
   const prevOverrides = (d.stageOverrides && typeof d.stageOverrides === 'object') ? d.stageOverrides : {};
   const slaChanges = [];
+  const dateChanges = [];
   if (stageOverrides !== null) {
     const keys = new Set([...Object.keys(prevOverrides), ...Object.keys(stageOverrides)]);
     for (const sid of keys) {
-      const from = prevOverrides[sid]?.deadlineDays ?? null;
-      const to = stageOverrides[sid]?.deadlineDays ?? null;
-      if (from !== to) slaChanges.push({ stageId: sid, from, to });
+      const fromDays = prevOverrides[sid]?.deadlineDays ?? null;
+      const toDays = stageOverrides[sid]?.deadlineDays ?? null;
+      if (fromDays !== toDays) slaChanges.push({ stageId: sid, from: fromDays, to: toDays });
+      const fromDate = prevOverrides[sid]?.deadlineDate ?? null;
+      const toDate = stageOverrides[sid]?.deadlineDate ?? null;
+      if (fromDate !== toDate) dateChanges.push({ stageId: sid, from: fromDate, to: toDate });
     }
   }
 
@@ -4473,10 +4480,10 @@ app.put('/api/demands/:id/skipped-stages', requireAuth, (req, res) => {
   if (stageLabels !== null) d.stageLabels = stageLabels;
   if (stageOverrides !== null) d.stageOverrides = stageOverrides;
 
-  if (addedSkip.length || removedSkip.length || respChanged.length || orderChanged || labelChanges.length || slaChanges.length) {
+  if (addedSkip.length || removedSkip.length || respChanged.length || orderChanged || labelChanges.length || slaChanges.length || dateChanges.length) {
     addHistory(d, req.user.id, 'stages_customized', {
       added: addedSkip, removed: removedSkip, responsibles: respChanged,
-      orderChanged, labelChanges, slaChanges
+      orderChanged, labelChanges, slaChanges, dateChanges
     });
   }
   saveEntity('demands', d);
@@ -5725,7 +5732,7 @@ app.post('/api/webhooks/:id/test', requireAuth, modOrAdmin, async (req, res) => 
    ao token de sessão, TTL 15min idle. Toda ação (view/create/update/delete)
    gera uma entry em passwordAudits (mod/admin veem tudo). */
 const VAULT_UNLOCK_TTL_MS = 15 * 60 * 1000;
-const _vaultUnlocked = new Map(); // token → expiresAt (ms)
+const _vaultUnlocked = new Map(); // token → expiresAt (ms) — legado (compat)
 function _vaultUntil(token) {
   const until = _vaultUnlocked.get(token) || 0;
   if (until && until <= Date.now()) { _vaultUnlocked.delete(token); return 0; }
@@ -5740,6 +5747,35 @@ function requireVaultUnlock(req, res, next) {
   if (!_vaultUntil(req.token)) return res.status(403).json({ error: 'vault_locked' });
   _vaultTouch(req.token); // sliding TTL — cada ação renova
   next();
+}
+/* ── Unlock POR PASTA ── Substitui o unlock global do cofre. Cada pasta
+   requer autenticação separada com a senha da conta. TTL 15min sliding por
+   pasta. Estado: `token → Map<folderId, expiresAt>`. */
+const _folderUnlocked = new Map(); // token → Map(folderId → expiresAt ms)
+function _folderUntil(token, folderId) {
+  const m = _folderUnlocked.get(token);
+  if (!m) return 0;
+  const until = m.get(folderId) || 0;
+  if (until && until <= Date.now()) { m.delete(folderId); return 0; }
+  return until;
+}
+function _folderTouch(token, folderId) {
+  let m = _folderUnlocked.get(token);
+  if (!m) { m = new Map(); _folderUnlocked.set(token, m); }
+  const until = Date.now() + VAULT_UNLOCK_TTL_MS;
+  m.set(folderId, until);
+  return until;
+}
+function _folderLock(token, folderId) {
+  const m = _folderUnlocked.get(token);
+  if (m) m.delete(folderId);
+}
+function requireFolderUnlock(folderId, req, res) {
+  if (!folderId) { res.status(400).json({ error: 'folder_required' }); return false; }
+  const until = _folderUntil(req.token, folderId);
+  if (!until) { res.status(403).json({ error: 'folder_locked' }); return false; }
+  _folderTouch(req.token, folderId); // sliding
+  return true;
 }
 function _passwordListItem(p) {
   // Metadata pública — nunca inclui a senha em claro nem o cipher.
@@ -5779,26 +5815,211 @@ app.get('/api/passwords/status', requireAuth, (req, res) => {
   const until = _vaultUntil(req.token);
   res.json({ unlocked: !!until, until, ttlMs: VAULT_UNLOCK_TTL_MS });
 });
-app.get('/api/passwords', requireAuth, requireVaultUnlock, (req, res) => {
+
+/* ─── PASTAS DO COFRE ───
+   Modelo simplificado: TODAS as pastas são visíveis pra TODOS os usuários
+   (sem whitelist, sem scope de workspace). Pra abrir uma pasta e ver as
+   senhas dentro, o usuário autentica com a própria senha (unlock por pasta,
+   TTL 15min sliding). Cada abertura + reveal fica registrado em audit.
+   Auto-migração: passwords antigos com `folder: string` viram folder entities
+   agrupados por (workspaceId, folder) na primeira leitura. */
+function _folderVisibleTo(_folder, _user) {
+  // Todos veem todas as pastas — o "acesso" real é via unlock por senha.
+  return true;
+}
+function _migrateLegacyPasswordFolders() {
+  if (!Array.isArray(db.passwordFolders)) db.passwordFolders = [];
+  const legacyPws = (db.passwords || []).filter(p => notDeleted(p) && !p.folderId && (p.folder || '').trim());
+  if (!legacyPws.length) return 0;
+  // Agrupa por (workspaceId, folderName)
+  const byKey = new Map();
+  for (const p of legacyPws) {
+    const key = p.workspaceId + ' ' + p.folder.trim();
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(p);
+  }
+  let created = 0;
+  for (const [key, pws] of byKey) {
+    const [wsId, name] = key.split(' ');
+    // Se já existe folder com este nome no workspace, reusa (não duplica).
+    let folder = (db.passwordFolders || []).find(f =>
+      notDeleted(f) && f.workspaceId === wsId && f.name === name
+    );
+    if (!folder) {
+      folder = {
+        id: uid(),
+        workspaceId: wsId,
+        name,
+        ownerId: pws[0].createdBy || null,
+        memberIds: [], // legado: owner apenas. Owner pode adicionar membros depois.
+        createdAt: nowISO(),
+        updatedAt: nowISO()
+      };
+      db.passwordFolders.push(folder);
+      saveEntity('passwordFolders', folder);
+      created++;
+    }
+    // Anexa passwords ao folder e limpa string legada
+    for (const p of pws) {
+      p.folderId = folder.id;
+      p.folder = undefined;
+      saveEntity('passwords', p);
+    }
+  }
+  return created;
+}
+/* Cria uma pasta "Pessoal" pra usuários que não têm nenhuma acessível — evita
+   ficarem sem opção pra criar uma senha nova. Idempotente. */
+function _ensureUserPersonalFolder(user) {
+  if (!Array.isArray(db.passwordFolders)) db.passwordFolders = [];
+  const wsId = wsIdsFor(user)[0];
+  if (!wsId) return null;
+  const has = db.passwordFolders.find(f => notDeleted(f) && f.ownerId === user.id && f.workspaceId === wsId);
+  if (has) return has;
+  const folder = {
+    id: uid(),
+    workspaceId: wsId,
+    name: 'Pessoal',
+    ownerId: user.id,
+    memberIds: [],
+    createdAt: nowISO(),
+    updatedAt: nowISO()
+  };
+  db.passwordFolders.push(folder);
+  saveEntity('passwordFolders', folder);
+  return folder;
+}
+function _passwordFolderItem(f, user) {
+  const isOwner = f.ownerId === user.id;
+  const memberCount = 1 + (Array.isArray(f.memberIds) ? f.memberIds.length : 0);
+  return {
+    id: f.id, workspaceId: f.workspaceId, name: f.name,
+    ownerId: f.ownerId, memberIds: f.memberIds || [],
+    isOwner, canEdit: isOwner || user.isAdmin,
+    memberCount,
+    createdAt: f.createdAt, updatedAt: f.updatedAt
+  };
+}
+// Migração de folders legados — chamada depois que o db carrega (em loadDB).
+
+// GET pastas — NÃO exige unlock nenhum. Todos veem todas as pastas.
+app.get('/api/password-folders', requireAuth, (req, res) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-  const wsIds = new Set(wsIdsFor(req.user));
-  const list = (db.passwords || [])
-    .filter(p => notDeleted(p) && wsIds.has(p.workspaceId))
-    .map(_passwordListItem);
+  if (!Array.isArray(db.passwordFolders)) db.passwordFolders = [];
+  const list = db.passwordFolders
+    .filter(f => notDeleted(f))
+    .map(f => {
+      const item = _passwordFolderItem(f, req.user);
+      // Adiciona flag `unlocked` e `unlockedUntil` pra client saber estado.
+      const until = _folderUntil(req.token, f.id);
+      item.unlocked = !!until;
+      item.unlockedUntil = until || null;
+      item.entryCount = (db.passwords || []).filter(p => notDeleted(p) && p.folderId === f.id).length;
+      return item;
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
   res.json(list);
 });
-app.post('/api/passwords', requireAuth, requireVaultUnlock, (req, res) => {
+// Unlock por pasta — autentica com a senha da conta. TTL sliding 15min.
+app.post('/api/password-folders/:id/unlock', requireAuth, (req, res) => {
+  const folder = (db.passwordFolders || []).find(f => f.id === req.params.id && notDeleted(f));
+  if (!folder) return res.status(404).json({ error: 'Pasta não encontrada' });
+  const pw = String((req.body || {}).password || '');
+  if (!pw) return res.status(400).json({ error: 'Senha obrigatória' });
+  if (!auth.verifyPassword(req.user.id, pw)) {
+    return res.status(401).json({ error: 'Senha incorreta' });
+  }
+  const until = _folderTouch(req.token, folder.id);
+  _logPasswordAudit(req.user.id, folder.id, 'folder_unlock', { name: folder.name });
+  res.json({ ok: true, folderId: folder.id, until, ttlMs: VAULT_UNLOCK_TTL_MS });
+});
+// Lock manual de uma pasta específica.
+app.post('/api/password-folders/:id/lock', requireAuth, (req, res) => {
+  const folder = (db.passwordFolders || []).find(f => f.id === req.params.id && notDeleted(f));
+  if (!folder) return res.status(404).json({ error: 'Pasta não encontrada' });
+  _folderLock(req.token, folder.id);
+  _logPasswordAudit(req.user.id, folder.id, 'folder_lock', { name: folder.name });
+  res.json({ ok: true });
+});
+// Criar/editar/apagar pasta — só requer auth. Qualquer usuário pode criar.
+app.post('/api/password-folders', requireAuth, (req, res) => {
+  const b = req.body || {};
+  const name = String(b.name || '').trim().slice(0, 60);
+  if (!name) return res.status(400).json({ error: 'Nome obrigatório' });
+  const wsId = b.workspaceId || wsIdsFor(req.user)[0] || null;
+  const folder = {
+    id: uid(),
+    workspaceId: wsId,
+    name,
+    ownerId: req.user.id,
+    memberIds: [], // Não é mais usado — mantido só pra compat com data existente.
+    createdAt: nowISO(),
+    updatedAt: nowISO()
+  };
+  if (!Array.isArray(db.passwordFolders)) db.passwordFolders = [];
+  db.passwordFolders.push(folder);
+  saveEntity('passwordFolders', folder);
+  _logPasswordAudit(req.user.id, folder.id, 'folder_create', { name });
+  res.status(201).json(_passwordFolderItem(folder, req.user));
+});
+app.put('/api/password-folders/:id', requireAuth, (req, res) => {
+  const folder = (db.passwordFolders || []).find(x => x.id === req.params.id && notDeleted(x));
+  if (!folder) return res.status(404).json({ error: 'Pasta não encontrada' });
+  const isOwner = folder.ownerId === req.user.id;
+  if (!isOwner && !req.user.isAdmin) return res.status(403).json({ error: 'Só o dono ou admin edita a pasta' });
+  const b = req.body || {};
+  if (typeof b.name === 'string' && b.name.trim()) folder.name = b.name.trim().slice(0, 60);
+  folder.updatedAt = nowISO();
+  saveEntity('passwordFolders', folder);
+  _logPasswordAudit(req.user.id, folder.id, 'folder_update', { name: folder.name });
+  res.json(_passwordFolderItem(folder, req.user));
+});
+app.delete('/api/password-folders/:id', requireAuth, (req, res) => {
+  const folder = (db.passwordFolders || []).find(x => x.id === req.params.id && notDeleted(x));
+  if (!folder) return res.status(404).json({ error: 'Pasta não encontrada' });
+  const isOwner = folder.ownerId === req.user.id;
+  if (!isOwner && !req.user.isAdmin) return res.status(403).json({ error: 'Só o dono ou admin remove a pasta' });
+  const entriesInFolder = (db.passwords || []).filter(p => notDeleted(p) && p.folderId === folder.id);
+  if (entriesInFolder.length > 0) {
+    return res.status(400).json({ error: `Pasta tem ${entriesInFolder.length} entrada(s). Mova ou remova antes.` });
+  }
+  softDelete('passwordFolders', folder, req.user.id);
+  _logPasswordAudit(req.user.id, folder.id, 'folder_delete', { name: folder.name });
+  res.json({ ok: true });
+});
+
+// GET entradas — SEMPRE filtrado por folderId + exige a pasta destravada.
+app.get('/api/passwords', requireAuth, (req, res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  const folderId = String(req.query.folderId || '').trim();
+  if (!folderId) return res.json([]); // Sem pasta selecionada = lista vazia.
+  const folder = (db.passwordFolders || []).find(f => f.id === folderId && notDeleted(f));
+  if (!folder) return res.status(404).json({ error: 'Pasta não encontrada' });
+  if (!requireFolderUnlock(folder.id, req, res)) return;
+  const list = (db.passwords || [])
+    .filter(p => notDeleted(p) && p.folderId === folderId)
+    .map(_passwordListItem);
+  _logPasswordAudit(req.user.id, folder.id, 'folder_view', { name: folder.name, count: list.length });
+  res.json(list);
+});
+// Criar entrada — exige a pasta destravada.
+app.post('/api/passwords', requireAuth, (req, res) => {
   const b = req.body || {};
   const name = String(b.name || '').trim();
   if (!name) return res.status(400).json({ error: 'Nome obrigatório' });
   const pwPlain = String(b.password || '');
   if (!pwPlain) return res.status(400).json({ error: 'Senha obrigatória' });
-  const wsId = b.workspaceId || wsIdsFor(req.user)[0];
-  if (!wsId || !canAccessWs(req.user, wsId)) return res.status(403).json({ error: 'Sem acesso ao squad' });
+  const folderId = String(b.folderId || '').trim();
+  if (!folderId) return res.status(400).json({ error: 'Escolha uma pasta' });
+  const folder = (db.passwordFolders || []).find(f => f.id === folderId && notDeleted(f));
+  if (!folder) return res.status(400).json({ error: 'Pasta inválida' });
+  if (!requireFolderUnlock(folder.id, req, res)) return;
   const p = {
     id: uid(),
-    workspaceId: wsId,
+    workspaceId: folder.workspaceId,
+    folderId,
     name,
+    description: String(b.description || '').trim().slice(0, 500),
     link: String(b.link || '').trim(),
     email: String(b.email || '').trim(),
     username: String(b.username || '').trim(),
@@ -5808,16 +6029,17 @@ app.post('/api/passwords', requireAuth, requireVaultUnlock, (req, res) => {
   };
   db.passwords.push(p);
   saveEntity('passwords', p);
-  _logPasswordAudit(req.user.id, p.id, 'create', { name: p.name });
+  _logPasswordAudit(req.user.id, p.id, 'create', { name: p.name, folderId });
   res.status(201).json(_passwordListItem(p));
 });
-app.put('/api/passwords/:id', requireAuth, requireVaultUnlock, (req, res) => {
+app.put('/api/passwords/:id', requireAuth, (req, res) => {
   const p = (db.passwords || []).find(x => x.id === req.params.id && notDeleted(x));
   if (!p) return res.status(404).json({ error: 'Entrada não encontrada' });
-  if (!canAccessWs(req.user, p.workspaceId)) return res.status(403).json({ error: 'Sem acesso' });
+  if (!requireFolderUnlock(p.folderId, req, res)) return;
   const b = req.body || {};
   const changed = [];
   if (typeof b.name === 'string' && b.name.trim() && b.name.trim() !== p.name) { p.name = b.name.trim(); changed.push('name'); }
+  if (typeof b.description === 'string') { const v = b.description.trim().slice(0, 500); if (v !== (p.description || '')) { p.description = v; changed.push('description'); } }
   if (typeof b.link === 'string')     { const v = b.link.trim();     if (v !== p.link)     { p.link = v; changed.push('link'); } }
   if (typeof b.email === 'string')    { const v = b.email.trim();    if (v !== p.email)    { p.email = v; changed.push('email'); } }
   if (typeof b.username === 'string') { const v = b.username.trim(); if (v !== p.username) { p.username = v; changed.push('username'); } }
@@ -5825,10 +6047,14 @@ app.put('/api/passwords/:id', requireAuth, requireVaultUnlock, (req, res) => {
     p.passwordCipher = auth.encryptString(b.password);
     changed.push('password');
   }
-  if (b.workspaceId && b.workspaceId !== p.workspaceId) {
-    if (!canAccessWs(req.user, b.workspaceId)) return res.status(403).json({ error: 'Sem acesso ao squad destino' });
-    p.workspaceId = b.workspaceId;
-    changed.push('workspaceId');
+  if (b.folderId && b.folderId !== p.folderId) {
+    // Mover pra outra pasta: exige que a pasta destino também esteja destravada.
+    if (!requireFolderUnlock(b.folderId, req, res)) return;
+    const newFolder = (db.passwordFolders || []).find(f => f.id === b.folderId && notDeleted(f));
+    if (!newFolder) return res.status(400).json({ error: 'Pasta destino inválida' });
+    p.folderId = newFolder.id;
+    p.workspaceId = newFolder.workspaceId;
+    changed.push('folderId');
   }
   p.updatedBy = req.user.id;
   p.updatedAt = nowISO();
@@ -5836,18 +6062,18 @@ app.put('/api/passwords/:id', requireAuth, requireVaultUnlock, (req, res) => {
   _logPasswordAudit(req.user.id, p.id, 'update', { name: p.name, fields: changed });
   res.json(_passwordListItem(p));
 });
-app.delete('/api/passwords/:id', requireAuth, requireVaultUnlock, (req, res) => {
+app.delete('/api/passwords/:id', requireAuth, (req, res) => {
   const p = (db.passwords || []).find(x => x.id === req.params.id && notDeleted(x));
   if (!p) return res.status(404).json({ error: 'Entrada não encontrada' });
-  if (!canAccessWs(req.user, p.workspaceId)) return res.status(403).json({ error: 'Sem acesso' });
+  if (!requireFolderUnlock(p.folderId, req, res)) return;
   softDelete('passwords', p, req.user.id);
   _logPasswordAudit(req.user.id, p.id, 'delete', { name: p.name });
   res.json({ ok: true });
 });
-app.get('/api/passwords/:id/reveal', requireAuth, requireVaultUnlock, (req, res) => {
+app.get('/api/passwords/:id/reveal', requireAuth, (req, res) => {
   const p = (db.passwords || []).find(x => x.id === req.params.id && notDeleted(x));
   if (!p) return res.status(404).json({ error: 'Entrada não encontrada' });
-  if (!canAccessWs(req.user, p.workspaceId)) return res.status(403).json({ error: 'Sem acesso' });
+  if (!requireFolderUnlock(p.folderId, req, res)) return;
   let plain = '';
   try { plain = auth.decryptString(p.passwordCipher); }
   catch (e) { return res.status(500).json({ error: 'Falha ao decifrar entrada (chave mestra pode ter mudado)' }); }
@@ -5994,6 +6220,16 @@ app.post('/api/passwords/webauthn/auth/finish', requireAuth, async (req, res) =>
     });
     if (!verification.verified) return res.status(400).json({ error: 'Assinatura inválida' });
     auth.webauthnUpdateCounter(req.user.id, cred.credentialID, verification.authenticationInfo.newCounter);
+    // Novo modelo: se veio folderId no body, destrava só aquela pasta.
+    // Sem folderId (legado): destrava o cofre global (compat com atalhos antigos).
+    const folderId = String((req.body || {}).folderId || '').trim();
+    if (folderId) {
+      const folder = (db.passwordFolders || []).find(f => f.id === folderId && notDeleted(f));
+      if (!folder) return res.status(404).json({ error: 'Pasta não encontrada' });
+      const until = _folderTouch(req.token, folder.id);
+      _logPasswordAudit(req.user.id, folder.id, 'folder_unlock', { method: 'webauthn', name: folder.name, credentialID: cred.credentialID });
+      return res.json({ ok: true, folderId: folder.id, until, ttlMs: VAULT_UNLOCK_TTL_MS });
+    }
     const until = _vaultTouch(req.token);
     _logPasswordAudit(req.user.id, null, 'unlock', { method: 'webauthn', credentialID: cred.credentialID, name: cred.name });
     res.json({ ok: true, until, ttlMs: VAULT_UNLOCK_TTL_MS });

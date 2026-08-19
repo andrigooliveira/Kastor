@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-title" content="reWork">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/css/style.css?v=20260818h">
+<link rel="stylesheet" href="/css/style.css?v=20260818ai">
 <script type="text/javascript">
     (function(c,l,a,r,i,t,y){
         c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
@@ -239,9 +239,6 @@
     <!-- ── DASHBOARD ── -->
     <div class="page active" id="page-dashboard">
       <div class="page-body">
-        <div class="section-head" style="margin-bottom:14px">
-          <div class="section-title">Visão Geral</div>
-        </div>
         <!-- Widget "Meu dia" — foco pessoal do usuário logado. Populado em renderMyDay(). -->
         <div class="my-day-grid" id="my-day-grid" style="display:none"></div>
         <div class="filters-bar" style="margin-bottom:22px">
@@ -428,17 +425,14 @@
                 <thead>
                   <tr>
                     <th class="col-bulk-check"><input type="checkbox" class="bulk-check-all" id="bulk-check-all" onclick="toggleBulkSelectAll(this.checked)" title="Selecionar todas"></th>
-                    <th style="cursor:pointer" onclick="sortList('name')">Demanda <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                    <th style="cursor:pointer" onclick="sortList('workspace')">Squad <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                    <th class="col-demand-name" style="cursor:pointer" onclick="sortList('name')">Demanda <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                     <th style="cursor:pointer" onclick="sortList('project')">Projeto <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                     <th style="cursor:pointer" onclick="sortList('client')">Cliente <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                    <th style="cursor:pointer" onclick="sortList('type')">Tipo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                    <th style="cursor:pointer" onclick="sortList('status')">Status <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                    <th style="cursor:pointer" onclick="sortList('owner')">Responsável <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                    <th style="cursor:pointer" onclick="sortList('deadline')">Prazo da etapa <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                     <th style="cursor:pointer" onclick="sortList('priority')">Prioridade <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                    <th style="cursor:pointer" onclick="sortList('qty')" title="Peças · Artes · Variações">Entregáveis <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                    <th style="cursor:pointer" onclick="sortList('completed')">Concluído em <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                    <th style="cursor:pointer" onclick="sortList('status')">Etapa <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                    <th style="cursor:pointer" onclick="sortList('owner')">Responsável <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                    <th style="cursor:pointer" onclick="sortList('deadline')">Prazo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                    <th style="cursor:pointer" onclick="sortList('completed')">Conclusão <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   </tr>
                 </thead>
                 <tbody id="list-table-body"></tbody>
@@ -478,8 +472,7 @@
     <!-- ── MINHAS DEMANDAS ── -->
     <div class="page" id="page-mine">
       <div class="page-body">
-        <div class="section-head">
-          <div class="section-title" id="mine-view-title">Minha Lista</div>
+        <div class="section-head" style="justify-content:flex-end">
           <div style="display:flex;gap:8px;align-items:center;margin-left:auto">
             <select class="filter-select" id="mine-f-quick" onchange="renderMine()">
               <option value="">Todas</option>
@@ -674,10 +667,6 @@
     <!-- ── TEMPLATES ── -->
     <div class="page" id="page-templates">
       <div class="page-body">
-        <div class="section-head">
-          <div class="section-title">Templates de Demanda</div>
-        </div>
-        <div class="capacity-hint">Templates aceleram a criação de demandas recorrentes. Preencha uma vez e reaproveite quantas vezes precisar.</div>
         <div class="table-wrap table-scroll">
           <table>
             <thead>
@@ -698,12 +687,6 @@
     <!-- ── BASE DE CONHECIMENTO ── posts colaborativos com rich text + embeds -->
     <div class="page" id="page-kb">
       <div class="page-body">
-        <div class="section-head" style="margin-bottom:14px">
-          <div class="section-title">Base de conhecimento</div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-            <button class="btn btn-primary btn-sm" onclick="openPostEditor(null)"><i data-lucide="plus" class="ic-sm"></i> Novo post</button>
-          </div>
-        </div>
         <!-- Grid view: filtros + cards -->
         <div id="kb-grid-view">
           <div class="filters-bar" style="margin-bottom:14px">
@@ -712,6 +695,7 @@
               <input class="filter-input filter-input--with-icon" id="kb-search" placeholder="Buscar por título, conteúdo ou tag…" oninput="renderKbGrid()">
             </div>
             <select class="filter-select" id="kb-f-author" onchange="renderKbGrid()"><option value="">Todos os autores</option></select>
+            <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="openPostEditor(null)"><i data-lucide="plus" class="ic-sm"></i> Novo post</button>
           </div>
           <div id="kb-tag-chips" class="kb-tag-chips"></div>
           <div id="kb-cards" class="kb-cards"></div>
@@ -918,20 +902,15 @@
     <!-- ── INTEGRAÇÕES (WEBHOOKS) ── -->
     <div class="page" id="page-integrations">
       <div class="page-body">
-        <div class="section-head">
-          <div class="section-title">Integrações · Webhooks</div>
-          <button class="btn btn-primary admin-only" onclick="openWebhookModal()">+ Nova Integração</button>
-        </div>
-        <div class="capacity-hint">Webhooks notificam serviços externos (como Discord, Slack, Make, n8n) quando eventos acontecem nas demandas. São <strong>universais</strong>: valem para todos os squads, independente do squad ativo. Use o formato Discord para postar embeds formatados direto em um canal.</div>
         <!-- Filtros: Squad (dropdown) → toggle Usuário/Cliente → dropdown correspondente
-             → Projeto → busca por nome/URL. Toggle é mutuamente exclusivo. -->
+             → Projeto → busca por nome/URL. Toggle é mutuamente exclusivo.
+             Botão de ação alinhado no fim da mesma linha. -->
         <div class="filters-bar" style="margin-bottom:12px">
           <div class="filter-input-wrap">
             <i data-lucide="search" class="filter-input-icon ic-sm"></i>
             <input class="filter-input filter-input--with-icon" id="wh-f-search" placeholder="Buscar integração…" oninput="renderIntegrations()">
           </div>
           <select class="filter-select" id="wh-f-squad" onchange="onIntegrationsSquadChange()"><option value="">Todos os squads</option></select>
-          <!-- Toggle Usuário/Cliente — controla qual dropdown aparece à direita -->
           <div class="filter-toggle" id="wh-scope-toggle" role="tablist">
             <button type="button" class="filter-toggle-btn is-active" data-scope="user" onclick="setIntegrationsScope('user')">Usuário</button>
             <button type="button" class="filter-toggle-btn" data-scope="client" onclick="setIntegrationsScope('client')">Cliente</button>
@@ -940,6 +919,7 @@
           <select class="filter-select" id="wh-f-client" onchange="onIntegrationsClientChange()" style="display:none"><option value="">Todos os clientes</option></select>
           <select class="filter-select" id="wh-f-project" onchange="renderIntegrations()"><option value="">Todos os projetos</option></select>
           <button class="btn btn-ghost btn-sm" onclick="clearIntegrationsFilters()" title="Limpar filtros"><i data-lucide="x" class="ic-sm"></i> Limpar</button>
+          <button class="btn btn-primary btn-sm admin-only" style="margin-left:auto" onclick="openWebhookModal()"><i data-lucide="plus" class="ic-sm"></i> Nova Integração</button>
         </div>
         <div class="table-wrap table-scroll">
           <table>
@@ -982,7 +962,6 @@
             <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="goPage('clientsModels')"><i data-lucide="layers" class="ic-sm"></i> Modelos</button>
             <button class="btn btn-primary btn-sm" onclick="openClientModal()"><i data-lucide="plus" class="ic-sm"></i> Novo Cliente</button>
           </div>
-          <div class="section-title" style="margin-bottom:16px">Clientes Cadastrados</div>
           <div class="flow-grid" id="clients-grid"></div>
         </div>
 
@@ -1313,11 +1292,7 @@
               <i data-lucide="search" class="filter-input-icon ic-sm"></i>
               <input class="filter-input filter-input--with-icon" id="flow-search" placeholder="Buscar cliente…" oninput="renderFlows()">
             </div>
-            <select class="filter-select" id="flow-f-client" onchange="renderFlows()"><option value="">Todos os clientes</option></select>
-          </div>
-          <div class="section-head" style="margin-bottom:16px">
-            <div class="section-title">Fluxos de Demanda</div>
-            <button class="btn btn-ghost btn-sm admin-only" onclick="openDemandTypesModal()"><i data-lucide="tag" class="ic-sm"></i> Gerenciar tipos</button>
+            <button class="btn btn-ghost btn-sm admin-only" style="margin-left:auto" onclick="openDemandTypesModal()"><i data-lucide="tag" class="ic-sm"></i> Gerenciar tipos</button>
           </div>
           <div class="flow-grid" id="flow-clients-grid"></div>
         </div>
@@ -1432,8 +1407,7 @@
     <!-- ── WORKSPACES (admin) ── -->
     <div class="page" id="page-workspaces">
       <div class="page-body">
-        <div class="section-head">
-          <div class="section-title">Squads</div>
+        <div class="section-head" style="justify-content:flex-end">
           <button class="btn btn-primary btn-sm admin-only full-admin-only" onclick="openWsModal()">+ Novo Squad</button>
         </div>
         <div class="table-wrap table-scroll">
@@ -1531,30 +1505,19 @@
     <!-- ── DEMANDAS RECORRENTES — as que o usuário configurou pra repetir ── -->
     <div class="page" id="page-recurringDemands">
       <div class="page-body">
-        <div class="section-head">
-          <div class="section-title">Demandas Recorrentes</div>
+        <div class="section-head" style="justify-content:flex-end">
           <div class="rd-filter">
             <label class="filter-label" for="rd-ws-filter">Squad</label>
             <select class="form-control" id="rd-ws-filter" onchange="onRdWsFilterChange()"></select>
           </div>
         </div>
-        <div class="rd-hint">
-          Demandas que <strong>você</strong> configurou para se repetir. A cada rotação, o sistema gera automaticamente uma nova demanda idêntica no fluxo. Edite, pause ou encerre a recorrência abaixo.
-        </div>
         <div id="rd-body"></div>
       </div>
     </div>
 
-    <!-- ── LIXEIRA (mod/admin) — recuperação em 30 dias ── -->
+    <!-- ── LIXEIRA (mod/admin) — recuperação em 30 dias. renderTrash roda ao abrir a página. -->
     <div class="page" id="page-trash">
       <div class="page-body">
-        <div class="section-head">
-          <div class="section-title">Lixeira</div>
-          <button class="btn btn-ghost btn-sm" onclick="renderTrash()" title="Atualizar lista"><i data-lucide="refresh-cw" class="ic-sm"></i> Atualizar</button>
-        </div>
-        <div class="trash-hint">
-          Itens excluídos — clientes, projetos, demandas, fluxos, listas e modelos de cliente — ficam aqui por <strong>30 dias</strong> e depois são removidos definitivamente do servidor. Restaure enquanto estiverem na lista.
-        </div>
         <div id="trash-body"></div>
       </div>
     </div>
@@ -1562,60 +1525,78 @@
     <!-- ── COFRE DE SENHAS — tabela com unlock por senha da conta ── -->
     <div class="page" id="page-passwords">
       <div class="page-body">
-        <!-- LOCKED: aparece antes de destravar. Pede a senha da conta. -->
-        <div id="pw-locked-view" class="pw-locked">
-          <div class="pw-locked-card">
-            <div class="pw-locked-icon">
-              <svg width="42" height="42" viewBox="0 0 24 24" fill="none"><rect x="4" y="10" width="16" height="10" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M7 10V7a5 5 0 0110 0v3" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="15" r="1.4" fill="currentColor"/></svg>
-            </div>
-            <div class="pw-locked-title">Cofre trancado</div>
-            <div class="pw-locked-sub">Digite sua senha da conta pra destravar. A sessão do cofre expira após 15 minutos sem uso.</div>
-            <form id="pw-unlock-form" onsubmit="event.preventDefault(); submitPwUnlock();" class="pw-unlock-form">
-              <input type="password" class="form-control" id="pw-unlock-input" placeholder="Sua senha" autocomplete="current-password">
-              <button type="submit" class="btn btn-primary" id="pw-unlock-btn">Destravar</button>
-            </form>
-            <div class="pw-unlock-err" id="pw-unlock-err" style="display:none"></div>
-            <!-- Botão biometria: só aparece se browser suporta E user tem cred registrada. -->
-            <div class="pw-webauthn-divider" id="pw-webauthn-divider" style="display:none">ou</div>
-            <button class="btn btn-ghost pw-webauthn-btn" id="pw-webauthn-btn" style="display:none" onclick="unlockWithWebauthn()">
-              <i data-lucide="fingerprint" class="ic-sm"></i>
-              <span>Destravar com biometria / PIN</span>
-            </button>
+        <!-- Cofre entra direto — sem unlock global. Cada pasta é mini-tranca. -->
+        <div class="filters-bar" style="margin-bottom:14px">
+          <div class="filter-input-wrap">
+            <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+            <input class="filter-input filter-input--with-icon" id="pw-search" placeholder="Buscar por nome, email, usuário…" oninput="renderPasswordsTable()">
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;margin-left:auto">
+            <button class="btn btn-ghost btn-sm admin-only" onclick="openPwAuditModal()"><i data-lucide="history" class="ic-sm"></i> Histórico</button>
+            <button class="btn btn-ghost btn-sm" id="pw-biometria-btn" style="display:none" onclick="openPwBiometriaModal()"><i data-lucide="log-in" class="ic-sm"></i> Acesso</button>
+            <button class="btn btn-primary btn-sm" onclick="openPwFolderEditor(null)"><i data-lucide="folder-plus" class="ic-sm"></i> Nova pasta</button>
           </div>
         </div>
-        <!-- UNLOCKED: só aparece após unlock OK. -->
-        <div id="pw-unlocked-view" style="display:none">
-          <div class="section-head" style="margin-bottom:14px">
-            <div class="section-title">Cofre de Senhas</div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-              <span class="pw-ttl-badge" id="pw-ttl-badge" title="Tempo restante até re-travar">—</span>
-              <button class="btn btn-ghost btn-sm admin-only" onclick="openPwAuditModal()"><i data-lucide="history" class="ic-sm"></i> Histórico</button>
-              <button class="btn btn-ghost btn-sm" id="pw-biometria-btn" style="display:none" onclick="openPwBiometriaModal()"><i data-lucide="log-in" class="ic-sm"></i> Acesso</button>
-              <button class="btn btn-ghost btn-sm" onclick="lockPwVault()"><i data-lucide="lock" class="ic-sm"></i> Travar</button>
-              <button class="btn btn-primary btn-sm" onclick="openPwWizard(null)"><i data-lucide="plus" class="ic-sm"></i> Nova entrada</button>
+        <!-- Split: sidebar de pastas (esquerda) + tabela de entradas da pasta ativa (direita) -->
+        <div class="pw-split">
+          <aside class="pw-folders" id="pw-folders">
+            <!-- Injetado por renderPwFolders() -->
+          </aside>
+          <div class="pw-entries">
+            <div id="pw-entries-header" class="pw-entries-header" style="display:none">
+              <div class="pw-entries-title-wrap">
+                <i data-lucide="folder-open" class="ic-sm"></i>
+                <span class="pw-entries-title" id="pw-entries-title">—</span>
+                <span class="pw-ttl-badge" id="pw-ttl-badge" title="Tempo até re-travar">—</span>
+              </div>
+              <div class="pw-entries-actions">
+                <button class="btn btn-ghost btn-sm" onclick="lockCurrentFolder()"><i data-lucide="lock" class="ic-sm"></i> Travar</button>
+                <button class="btn btn-primary btn-sm" onclick="openPwWizard(null)"><i data-lucide="plus" class="ic-sm"></i> Nova entrada</button>
+              </div>
+            </div>
+            <div class="table-wrap table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Nome</th>
+                    <th>Link</th>
+                    <th>Email</th>
+                    <th>Usuário</th>
+                    <th>Senha</th>
+                    <th style="width:110px"></th>
+                  </tr>
+                </thead>
+                <tbody id="pw-tbody"></tbody>
+              </table>
             </div>
           </div>
-          <div class="filters-bar" style="margin-bottom:14px">
-            <div class="filter-input-wrap">
-              <i data-lucide="search" class="filter-input-icon ic-sm"></i>
-              <input class="filter-input filter-input--with-icon" id="pw-search" placeholder="Buscar por nome, email, usuário…" oninput="renderPasswordsTable()">
-            </div>
-          </div>
-          <div class="table-wrap table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Nome</th>
-                  <th>Link</th>
-                  <th>Email</th>
-                  <th>Usuário</th>
-                  <th>Senha</th>
-                  <th style="width:110px"></th>
-                </tr>
-              </thead>
-              <tbody id="pw-tbody"></tbody>
-            </table>
-          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: UNLOCK DE PASTA — pede a senha da conta pra abrir a pasta -->
+    <div class="modal-overlay" id="pw-folder-unlock-modal">
+      <div class="modal modal-sm">
+        <div class="modal-header">
+          <div class="modal-title">Abrir pasta</div>
+          <button class="modal-close" onclick="closeModal('pw-folder-unlock-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+        </div>
+        <div class="modal-body">
+          <div class="pw-vault-hint" id="pw-folder-unlock-hint" style="margin-bottom:14px">Digite sua senha da conta pra abrir <strong id="pw-folder-unlock-name">esta pasta</strong>. Fica destravada por 15 min de uso.</div>
+          <form id="pw-folder-unlock-form" onsubmit="event.preventDefault(); submitFolderUnlock();">
+            <input type="password" class="form-control" id="pw-folder-unlock-input" placeholder="Sua senha" autocomplete="current-password" style="margin-bottom:8px">
+            <div class="pw-unlock-err" id="pw-folder-unlock-err" style="display:none;margin-top:8px"></div>
+          </form>
+          <!-- Biometria/PIN — só aparece se o browser suporta E user tem cred registrada. -->
+          <div class="pw-webauthn-divider" id="pw-folder-webauthn-divider" style="display:none">ou</div>
+          <button class="btn btn-ghost pw-webauthn-btn" id="pw-folder-webauthn-btn" style="display:none;width:100%;justify-content:center" onclick="unlockFolderWithWebauthn()">
+            <i data-lucide="fingerprint" class="ic-sm"></i>
+            <span>Abrir com biometria / PIN</span>
+          </button>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" onclick="closeModal('pw-folder-unlock-modal')">Cancelar</button>
+          <button class="btn btn-primary" onclick="submitFolderUnlock()">Abrir</button>
         </div>
       </div>
     </div>
@@ -1691,6 +1672,15 @@
             <input class="form-control" id="pw-f-name" placeholder="Ex.: Google Ads WSI" maxlength="120">
           </div>
           <div class="form-group">
+            <label class="form-label">Pasta <span style="color:var(--danger)">*</span></label>
+            <select class="form-control" id="pw-f-folder-id"></select>
+            <div class="pw-hint">Escolha onde guardar. Só pessoas com acesso à pasta veem esta senha.</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Descrição</label>
+            <textarea class="form-control" id="pw-f-description" rows="2" placeholder="Notas curtas sobre este acesso (ex.: conta principal, uso restrito, expira 12/2026)" maxlength="500"></textarea>
+          </div>
+          <div class="form-group">
             <label class="form-label">Link</label>
             <input class="form-control" id="pw-f-link" placeholder="https://…" maxlength="500">
           </div>
@@ -1715,6 +1705,30 @@
         <div class="modal-footer">
           <button class="btn btn-ghost" onclick="closeModal('pw-wizard-modal')">Cancelar</button>
           <button class="btn btn-primary" onclick="submitPwWizard()">Salvar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: PASTA (criar/editar) — só nome. Acesso é por senha da conta na abertura. -->
+    <div class="modal-overlay" id="pw-folder-modal">
+      <div class="modal">
+        <div class="modal-header">
+          <div class="modal-title" id="pw-folder-modal-title">Nova pasta</div>
+          <button class="modal-close" onclick="closeModal('pw-folder-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Nome <span style="color:var(--danger)">*</span></label>
+            <input class="form-control" id="pw-folder-f-name" placeholder="Ex.: Marketing, Cliente X, Pessoal" maxlength="60">
+            <div class="pw-hint" id="pw-folder-owner-note">Todos os usuários enxergam a pasta. Pra abrir, cada um autentica com a própria senha.</div>
+          </div>
+        </div>
+        <div class="modal-footer" style="justify-content:space-between">
+          <button class="btn btn-danger" id="pw-folder-delete-btn" style="display:none" onclick="deletePwFolderFromEditor()"><i data-lucide="trash-2" class="ic-sm"></i> Remover pasta</button>
+          <div style="display:flex;gap:8px;margin-left:auto">
+            <button class="btn btn-ghost" onclick="closeModal('pw-folder-modal')">Cancelar</button>
+            <button class="btn btn-primary" onclick="submitPwFolderEditor()">Salvar</button>
+          </div>
         </div>
       </div>
     </div>
@@ -3399,7 +3413,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260818h"></script>
+<script src="/js/app.js?v=20260818aj"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

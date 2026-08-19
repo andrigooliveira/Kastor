@@ -69,14 +69,20 @@ body.user-moderator .full-admin-only { display: none !important; }
 
 .wizard-cust-row-v2 {
   display: grid;
-  /* drag · ícone etapa · cor · nome · executor · data · dias · done · skip · remove */
-  grid-template-columns: 22px 24px 30px minmax(140px,1fr) minmax(140px,1fr) 68px 52px 32px 32px 28px;
+  /* drag · cor · nome · executor · data · dias · done · skip · remove */
+  grid-template-columns: 22px 28px minmax(120px,1.4fr) minmax(120px,1.2fr) 96px 40px 32px 32px 28px;
   gap: 8px; align-items: center;
   padding: 8px 10px;
   background: var(--surface); border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
   margin-bottom: 6px;
   transition: background .12s, border-color .12s, opacity .12s;
+}
+@media (max-width: 900px) {
+  .wizard-cust-row-v2 {
+    grid-template-columns: 22px 28px minmax(100px,1fr) minmax(100px,1fr) 88px 32px 28px 28px 24px;
+    gap: 6px;
+  }
 }
 /* Ícone da etapa (Original/Nova) — substitui a badge de texto. 16px. */
 .wizard-cust-stage-mark {
@@ -1363,6 +1369,15 @@ tr:hover td { background: var(--surface-2); }
 /* Moderador: mesma família visual do admin, mas em azul pra distinguir. */
 .pill-moderator { background: rgba(11, 87, 208, 0.18); color: #0b57d0; }
 .pill-success { background: var(--success-dim); color: var(--success); }
+/* Pill de etapa com truncamento — usado na tabela /demandas pra que nomes
+   longos não estourem a coluna. Título HTML mostra o nome completo no hover. */
+.stage-pill-trunc { max-width: 180px; overflow: hidden; }
+.stage-pill-trunc .stage-pill-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
 
 /* ── Matriz Área × Cargo (Painel Pessoas do cliente/projeto) ──
    Card por Área com header + linhas (Cargo · Avatar · Dropdown user). */
@@ -1730,6 +1745,10 @@ tr:hover td { background: var(--surface-2); }
 .demand-row { cursor: pointer; }
 .deadline-late { color: var(--danger); font-weight: 600; }
 .demand-name { font-weight: 600; }
+/* Coluna Demanda mais larga na /demandas — pra caber nomes longos sem
+   comprimir demais o restante da linha. */
+.col-demand-name { min-width: 280px; width: 28%; }
+.col-demand-name .demand-name { display: block; word-break: break-word; }
 
 /* ── Prioridade: pill com dot vivo. Cor da --prio; label escurecido só o
    necessário pra legibilidade (o amarelo do "Média" ficava lavado). ── */
@@ -3583,17 +3602,41 @@ body.sidebar-collapsed #page-demand-detail.active { left: 72px; }
    Esse elemento fica escondido; sem background/border pra não aparecer nada. */
 #page-demand-detail #detail-footer { display: none !important; }
 
-/* Layout novo: duas colunas 50/50 com divider vertical. */
+/* Layout novo: duas colunas com divider vertical redimensionável.
+   `--detail-split` é a largura da coluna esquerda (padrão 50%). Clamp
+   30/70% via JS pra não deixar coluna ficar impraticável. */
 .detail-content-v2 {
   display: grid;
-  grid-template-columns: 1fr 1px 1fr;
+  grid-template-columns: var(--detail-split, 1fr) 6px 1fr;
   width: 100%; height: 100%;
   background: var(--bg);
+  min-width: 0;
 }
-.detail-content-v2::before {
-  content: ''; grid-column: 2; grid-row: 1;
+/* Divider arrastável: hit area de 6px, linha visual de 1px no meio. */
+.detail-col-divider {
+  grid-column: 2; grid-row: 1;
+  position: relative;
+  cursor: col-resize;
+  background: transparent;
+  user-select: none;
+  touch-action: none;
+  z-index: 3;
+}
+.detail-col-divider::before {
+  content: '';
+  position: absolute; top: 0; bottom: 0; left: 50%;
+  width: 1px; margin-left: -0.5px;
   background: var(--hairline);
+  transition: background .12s, width .12s, margin-left .12s;
 }
+.detail-col-divider:hover::before,
+.detail-col-divider.is-dragging::before {
+  background: var(--accent);
+  width: 3px; margin-left: -1.5px;
+}
+/* Cursor global enquanto arrasta pra não "escapar" do handle. */
+body.is-resizing-detail,
+body.is-resizing-detail * { cursor: col-resize !important; user-select: none !important; }
 .detail-col {
   min-width: 0;
   overflow-y: auto;
@@ -3615,11 +3658,21 @@ body.sidebar-collapsed #page-demand-detail.active { left: 72px; }
   display: flex; align-items: center; gap: 6px;
   font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
   color: var(--text-muted); text-transform: uppercase;
+  flex-wrap: wrap;
 }
 .detail-breadcrumb i, .detail-breadcrumb svg {
   width: 10px !important; height: 10px !important;
   color: var(--text-muted);
 }
+/* Squad pill no início do breadcrumb — alinhado com o texto ao lado. */
+.detail-breadcrumb-squad {
+  font-size: 10px; letter-spacing: 0;
+  padding: 2px 8px;
+  text-transform: none;
+  font-weight: 600;
+  margin-right: 4px;
+}
+.detail-breadcrumb-squad .pill-dot { width: 5px; height: 5px; }
 
 /* Blocos e campos da coluna esquerda. */
 .detail-block { display: flex; flex-direction: column; gap: 8px; }
@@ -3684,7 +3737,7 @@ body.sidebar-collapsed #page-demand-detail.active { left: 72px; }
 .inline-edit-status { font-size: 11px; color: var(--text-muted); flex: 1; }
 
 /* Chips de anexo (Arquivo, Imagem, Link). */
-.detail-attach-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.detail-attach-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
 .attach-chip {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 8px 14px;
@@ -3693,6 +3746,24 @@ body.sidebar-collapsed #page-demand-detail.active { left: 72px; }
   cursor: pointer; transition: all .12s;
 }
 .attach-chip:hover { color: var(--accent-text); border-color: var(--accent); background: var(--surface-2); }
+/* Variante só-ícone (Arquivo/Imagem/Link na demanda) — 16px, sem label, sem contorno. */
+.attach-chip.attach-chip-icon {
+  padding: 6px; gap: 0;
+  background: transparent; border: 0;
+  border-radius: 6px;
+  width: 28px; height: 28px;
+  justify-content: center;
+  color: var(--text-muted);
+}
+.attach-chip.attach-chip-icon:hover {
+  background: var(--surface-2);
+  color: var(--accent-text);
+  border: 0;
+}
+.attach-chip.attach-chip-icon svg,
+.attach-chip.attach-chip-icon i[data-lucide] {
+  width: 16px !important; height: 16px !important;
+}
 
 /* Entregáveis em linha (3 inputs + assign dropdown). Todos com mesma altura. */
 .detail-deliverables-row {
@@ -3837,14 +3908,101 @@ body.sidebar-collapsed #page-demand-detail.active { left: 72px; }
   background: var(--accent);
 }
 .detail-tabs-spacer { flex: 1; }
-.detail-tab-sort {
+/* Botões-ferramenta no header das tabs (sort, compact) — estilo aba discreto. */
+.detail-tab-tool {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 6px 10px;
-  background: transparent; border: 0;
+  background: transparent; border: 0; border-radius: 6px;
   color: var(--text-muted); font-family: inherit; font-size: 12px;
   cursor: pointer;
+  flex-shrink: 0;
+  transition: background .12s, color .12s;
 }
-.detail-tab-sort:hover { color: var(--text); }
+.detail-tab-tool:hover { color: var(--text); background: var(--surface-2); }
+.detail-tab-tool.is-active { color: var(--accent-text); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.detail-tab-tool svg { width: 14px !important; height: 14px !important; }
+.detail-tab-tool-label { white-space: nowrap; }
+/* Quando a coluna direita não tem largura sobrando (tabs + label + sort não
+   cabem), esconde o label do sort e deixa só o ícone. Container-query baseado
+   na largura da própria coluna — assim funciona tanto com o divider arrastado
+   quanto com o viewport apertado. */
+.detail-col-right { container-type: inline-size; container-name: detail-right; }
+@container detail-right (max-width: 560px) {
+  .detail-tab-tool-label { display: none; }
+  .detail-tab-tool { padding: 6px; }
+}
+/* Safety net: qualquer coisa que escapou fica clipada. Sem isso o texto
+   truncado do sort vazava por cima da topbar. */
+.detail-tabs { overflow: hidden; }
+/* Fallback pra browsers sem container queries: usa viewport width. */
+@media (max-width: 900px) {
+  .detail-tab-tool-label { display: none; }
+}
+.detail-tab-sort { /* mantém compat com regras antigas */ }
+
+/* Botão de colapsar (dentro do divider) — visível SEMPRE, muda conforme
+   estado. Aberto: pill discreto que aparece no hover do divider. Fechado:
+   pill roxo bem visível pra sinalizar que tem conteúdo escondido. */
+.detail-right-toggle {
+  position: absolute;
+  top: 60px; left: 50%; transform: translateX(-50%);
+  width: 22px; height: 32px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  color: var(--text-dim); cursor: pointer;
+  opacity: 0;
+  transition: opacity .15s, background .12s, color .12s, border-color .12s, transform .12s;
+  z-index: 4;
+  padding: 0;
+}
+.detail-right-toggle svg { width: 12px !important; height: 12px !important; }
+.detail-col-divider:hover .detail-right-toggle,
+.detail-right-toggle:hover,
+.detail-right-toggle:focus-visible { opacity: 1; }
+.detail-right-toggle:hover {
+  background: var(--surface-2); color: var(--text); border-color: var(--border);
+}
+/* Estado colapsado: pill roxo bem maior pra convidar o usuário a reabrir. */
+.detail-right-toggle.is-collapsed {
+  opacity: 1;
+  width: 26px; height: 44px;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  box-shadow: 0 3px 12px rgba(122, 0, 255, 0.45);
+}
+.detail-right-toggle.is-collapsed svg { width: 14px !important; height: 14px !important; }
+.detail-right-toggle.is-collapsed:hover {
+  background: var(--accent-hover, var(--accent));
+  color: #fff;
+  transform: translateX(-50%) scale(1.08);
+}
+
+/* Estado colapsado do split: coluna direita some, divider vira uma
+   coluna de 24px que segura só o botão de reabrir. */
+.detail-content-v2.is-right-collapsed {
+  grid-template-columns: 1fr 24px 0 !important;
+}
+.detail-content-v2.is-right-collapsed .detail-col-right {
+  overflow: hidden;
+  visibility: hidden;
+  padding: 0 !important;
+  border: 0 !important;
+}
+/* No estado colapsado, divider vira um rail vertical com hover ativo permanente. */
+.detail-content-v2.is-right-collapsed .detail-col-divider {
+  cursor: pointer;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.detail-content-v2.is-right-collapsed .detail-col-divider::before {
+  background: transparent;
+}
+/* Topbar pipeline continua funcionando (fica no topbar, fora do split). */
+
+/* Também precisa esconder o pipeline visual do topbar quando colapsa? Não,
+   ele fica no topbar (fora do split) — segue visível. */
 
 /* Container das tabs (header sticky). */
 .detail-tabs { flex-shrink: 0; }
@@ -4182,10 +4340,11 @@ body.sidebar-collapsed #page-demand-detail.active { left: 72px; }
 .detail-modal-shell { display: flex; flex-direction: column; padding: 0; max-height: 92vh; }
 .detail-modal-shell .detail-content { flex: 1; overflow-y: auto; }
 
-/* Responsivo: telas estreitas → colunas empilhadas. */
+/* Responsivo: telas estreitas → colunas empilhadas + divider some. */
 @media (max-width: 900px) {
   .detail-content-v2 { grid-template-columns: 1fr; }
-  .detail-content-v2::before { display: none; }
+  .detail-content-v2::before,
+  .detail-col-divider { display: none; }
   .detail-col-right { border-top: 1px solid var(--hairline); }
   .detail-meta-row { grid-template-columns: 1fr 1fr; }
   .detail-deliverables-row { grid-template-columns: 1fr 1fr 1fr; }
@@ -4370,6 +4529,25 @@ body.sidebar-collapsed #page-demand-detail.active { left: 72px; }
   font-size: 11px; color: var(--text-muted); pointer-events: none;
 }
 .stages-edit-row.off .stages-edit-sla-wrap { pointer-events: none; opacity: 0.6; }
+/* Dias como texto puro — sem box, cursor help pro tooltip. */
+.stages-edit-sla-days {
+  font-size: 12.5px; font-weight: 600;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  padding: 0 4px;
+  cursor: help;
+  flex-shrink: 0;
+  min-width: 32px;
+  text-align: right;
+}
+/* Data roxa quando o usuário setou âncora explícita — indica customização. */
+.stages-edit-date-input.is-customized,
+.wizard-cust-date.is-customized {
+  border-color: var(--accent) !important;
+  color: var(--accent-text) !important;
+  background: color-mix(in srgb, var(--accent) 8%, transparent) !important;
+  font-weight: 600;
+}
 @media (max-width: 900px) {
   .stages-edit-row { flex-wrap: wrap; }
   .stages-edit-label-input { flex-basis: 100%; order: -1; }
@@ -4449,12 +4627,16 @@ body.sidebar-collapsed #page-demand-detail.active { left: 72px; }
 .detail-section-heading { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); font-weight: 700; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; }
 .detail-section-heading-total { color: var(--text-dim); font-size: 11px; }
 
-/* Apontamentos rows — espaçamento balanceado entre início/fim */
+/* Apontamentos rows — sem card, só divisória entre linhas. */
+.time-list { display: flex; flex-direction: column; }
 .appt-row {
   display: flex; align-items: center; gap: 14px;
-  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-  padding: 10px 14px; margin-bottom: 8px;
+  background: transparent; border: 0;
+  border-top: 1px solid var(--hairline);
+  border-radius: 0;
+  padding: 12px 4px; margin: 0;
 }
+.appt-row:first-child { border-top: 0; padding-top: 6px; }
 .appt-row .appt-name { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; min-width: 130px; }
 .appt-row .appt-hours { color: var(--accent-text); font-weight: 700; font-size: 13px; min-width: 56px; }
 .appt-row .appt-time-range { display: flex; align-items: center; gap: 14px; flex: 1; justify-content: center; }
@@ -4811,8 +4993,29 @@ i[data-lucide]:not([class*=ic-]) { width: 16px; height: 16px; stroke-width: 2; }
   width: 14px; height: 14px; border-radius: 50%;
   background: var(--surface-3); color: var(--text-muted);
   font-size: 9px; font-weight: 700; cursor: help;
+  position: relative;
 }
 .qty-cell-hint:hover { background: var(--accent-dim); color: var(--accent-text); }
+/* Tooltip CSS-only — aparece só no hover do próprio ícone. Sem JS = zero
+   chance de travar. Lê o texto do atributo `title` via `attr()`. */
+.qty-cell-hint::after {
+  content: attr(title);
+  position: absolute;
+  bottom: calc(100% + 6px); left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 10px;
+  background: var(--text); color: var(--surface);
+  font-size: 11px; font-weight: 500; letter-spacing: 0;
+  border-radius: 6px;
+  white-space: nowrap;
+  max-width: 260px; white-space: normal; width: max-content;
+  text-align: center;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.18);
+  opacity: 0; pointer-events: none;
+  transition: opacity .12s ease-out;
+  z-index: 1000;
+}
+.qty-cell-hint:hover::after { opacity: 1; }
 
 /* Célula compacta nas tabelas: 3 números separados por · */
 .qty-cell-compact {
@@ -5473,6 +5676,14 @@ textarea.form-control { resize: vertical; }
 }
 .fdp-day.selected:hover { background: var(--accent); }
 .fdp-day.selected.today { box-shadow: 0 4px 12px rgba(122,0,255,0.35); }
+/* Fim de semana bloqueado — visualmente inativo, sem hover. */
+.fdp-day.disabled {
+  color: var(--text-muted);
+  opacity: 0.35;
+  cursor: not-allowed;
+  text-decoration: line-through;
+}
+.fdp-day.disabled:hover { background: transparent; }
 
 /* Seletor de anos */
 .fdp-years {
@@ -6037,6 +6248,9 @@ kbd {
 .tt.open { opacity: 1; transform: translate(-50%, 0); }
 .tt.above { transform: translate(-50%, calc(-100% + 4px)); }
 .tt.above.open { transform: translate(-50%, -100%); }
+/* Kill switch: tooltip custom desativado — se algum caminho legado ainda
+   criar um `.tt`, esconde e neutraliza (pointer-events pra não interceptar). */
+.tt, .stage-date-tooltip, .k-tooltip { display: none !important; pointer-events: none !important; }
 
 /* Toggle de visualização (Lista / Kanban / Calendário) — fica inline ao lado dos
    filtros, empurrado para a direita via margin-left: auto. */
@@ -8892,6 +9106,17 @@ tr.demand-row:hover {
 .wizard-cust-days-inline { display: flex; align-items: center; gap: 5px; }
 .wizard-cust-days-inline .wizard-cust-days { flex: 1; min-width: 0; text-align: center; padding-left: 6px; padding-right: 6px; }
 .wizard-cust-days-unit { font-size: 12px; color: var(--text-muted); flex-shrink: 0; }
+/* Dias como texto puro no wizard — sem box. */
+.wizard-cust-days-plain {
+  font-size: 12.5px; font-weight: 600;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  padding: 0 4px;
+  cursor: help;
+  flex-shrink: 0;
+  min-width: 32px;
+  text-align: right;
+}
 
 /* ── ENTREGÁVEIS — 3 inputs + dropdown do mesmo tamanho ── */
 .qty-cell .filter-cdrop { min-width: 0; width: 100%; }
@@ -9417,6 +9642,90 @@ tr.demand-row:hover {
 .pw-unlock-form .form-control { flex: 1; }
 .pw-unlock-err { color: var(--danger); font-size: 12.5px; margin-top: 10px; text-align: left; }
 
+/* Split de pastas: sidebar esquerda + tabela direita. */
+.pw-split {
+  display: grid;
+  grid-template-columns: minmax(200px, 240px) 1fr;
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .pw-split { grid-template-columns: 1fr; }
+  .pw-folders { display: flex; flex-wrap: wrap; gap: 6px; }
+  .pw-folder-section-title { display: none; }
+}
+.pw-folders {
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 8px;
+  position: sticky; top: 12px;
+}
+.pw-folder-section-title {
+  font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .06em;
+  color: var(--text-muted);
+  padding: 12px 10px 4px;
+}
+.pw-folder-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  background: transparent; border: 0; border-radius: 6px;
+  color: var(--text-dim);
+  font-family: inherit; font-size: 13px; font-weight: 500;
+  text-align: left; cursor: pointer;
+  transition: background .12s, color .12s;
+  position: relative;
+}
+.pw-folder-item:hover { background: var(--surface-2); color: var(--text); }
+.pw-folder-item.is-active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+.pw-folder-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pw-folder-count {
+  font-size: 11px; font-weight: 600;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  padding: 1px 8px; border-radius: 999px;
+  min-width: 22px; text-align: center;
+}
+.pw-folder-item.is-active .pw-folder-count { background: rgba(122,0,255,0.2); color: var(--accent-text); }
+.pw-folder-menu-btn {
+  width: 22px; height: 22px;
+  display: none;
+  align-items: center; justify-content: center;
+  background: transparent; border: 0; border-radius: 4px;
+  color: var(--text-muted); cursor: pointer;
+  padding: 0;
+}
+.pw-folder-menu-btn:hover { background: var(--surface-3, var(--surface-2)); color: var(--text); }
+.pw-folder-menu-btn svg { width: 12px !important; height: 12px !important; }
+.pw-folder-item:hover .pw-folder-menu-btn { display: inline-flex; }
+.pw-folder-item.is-active .pw-folder-menu-btn { display: inline-flex; }
+/* Menu dropdown (renomear/remover pasta) */
+.pw-folder-menu {
+  position: fixed; z-index: 200;
+  min-width: 180px;
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 8px;
+  padding: 4px;
+  box-shadow: var(--shadow-md);
+  display: flex; flex-direction: column;
+}
+.pw-folder-menu-item {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  background: transparent; border: 0; border-radius: 6px;
+  color: var(--text); font-family: inherit; font-size: 13px; text-align: left;
+  cursor: pointer;
+}
+.pw-folder-menu-item:hover { background: var(--surface-2); }
+.pw-folder-menu-item.danger { color: var(--danger); }
+.pw-folder-menu-item.danger:hover { background: rgba(239,68,68,.08); }
+.pw-folder-menu-item svg { width: 12px !important; height: 12px !important; }
+
 .pw-ttl-badge {
   font-size: 11px; font-weight: 600; padding: 3px 8px;
   background: var(--accent-dim); color: var(--accent);
@@ -9457,11 +9766,124 @@ tr.demand-row:hover {
   color: var(--text-muted); cursor: pointer;
   border-radius: 4px;
   transition: color .12s, background .12s;
+  display: inline-flex; align-items: center; justify-content: center;
 }
 .pw-icon-btn:hover { color: var(--accent); background: var(--surface-2); }
 .pw-icon-btn.danger:hover { color: var(--danger); background: var(--danger-dim); }
+.pw-icon-btn svg, .pw-icon-btn i[data-lucide] { width: 16px !important; height: 16px !important; }
 .pw-row-actions { display: inline-flex; gap: 2px; }
 .pw-hint { font-size: 11.5px; color: var(--text-muted); margin-top: 6px; }
+.pw-td-desc { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; line-height: 1.35; }
+
+/* Descrição em row separada full-width abaixo da entrada. */
+.pw-main-row.has-desc td { border-bottom: 0; padding-bottom: 4px; }
+.pw-desc-row td {
+  padding: 4px 12px 12px;
+  border-top: 0;
+  color: var(--text-muted); font-size: 12px; line-height: 1.5;
+  background: color-mix(in srgb, var(--text-muted) 3%, transparent);
+}
+.pw-desc-row td i[data-lucide], .pw-desc-row td svg {
+  width: 12px !important; height: 12px !important;
+  vertical-align: middle; margin-right: 4px; opacity: 0.7;
+}
+
+/* Header da coluna direita quando pasta destravada */
+.pw-vault-hint {
+  font-size: 12px; color: var(--text-muted);
+  margin-bottom: 14px; line-height: 1.5;
+}
+.pw-entries-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; margin-bottom: 10px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+}
+.pw-entries-title-wrap {
+  display: flex; align-items: center; gap: 8px;
+}
+.pw-entries-title-wrap svg { width: 16px !important; height: 16px !important; color: var(--accent-text); }
+.pw-entries-title { font-size: 14px; font-weight: 700; color: var(--text); }
+.pw-entries-actions { display: flex; gap: 8px; }
+
+/* Estados visuais das pastas na sidebar: destravada vs travada */
+.pw-folder-item.is-unlocked svg[data-lucide="folder-open"] { color: var(--accent-text); }
+.pw-folder-item.is-locked svg[data-lucide="lock"] { color: var(--text-muted); opacity: 0.7; }
+
+/* CTA inline mostrado quando o usuário clica numa pasta travada — sem
+   modal bloqueando, mantém a troca livre entre pastas. */
+.pw-folder-locked-cta {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 40px 20px;
+  text-align: center;
+}
+.pw-folder-locked-cta svg[data-lucide="lock"] {
+  width: 32px !important; height: 32px !important;
+  color: var(--text-muted); opacity: 0.5;
+  margin-bottom: 6px;
+}
+.pw-folder-locked-title { font-size: 15px; font-weight: 700; color: var(--text); }
+.pw-folder-locked-sub { font-size: 12.5px; color: var(--text-muted); margin-bottom: 8px; }
+
+/* Modal de unlock de pasta — mais estreito que o modal-sm padrão, foco só
+   no input e opção de biometria. */
+#pw-folder-unlock-modal .modal { max-width: 400px; }
+#pw-folder-webauthn-divider {
+  text-align: center; color: var(--text-muted); font-size: 11px;
+  margin: 12px 0 10px; position: relative;
+}
+#pw-folder-webauthn-divider::before,
+#pw-folder-webauthn-divider::after {
+  content: ''; position: absolute; top: 50%; width: 40%;
+  height: 1px; background: var(--hairline);
+}
+#pw-folder-webauthn-divider::before { left: 0; }
+#pw-folder-webauthn-divider::after { right: 0; }
+
+/* Botão "+ Nova pasta" no fundo da sidebar */
+.pw-folder-new-btn {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  margin-top: 8px;
+  background: transparent;
+  border: 1px dashed var(--hairline-strong, var(--hairline));
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-family: inherit; font-size: 12.5px; font-weight: 600;
+  text-align: left; cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.pw-folder-new-btn:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--accent-text); border-color: var(--accent); }
+.pw-folder-new-btn svg { width: 14px !important; height: 14px !important; }
+.pw-folder-empty { font-size: 12px; color: var(--text-muted); padding: 8px 10px; font-style: italic; }
+/* Badge de compartilhado */
+.pw-folder-badge {
+  display: inline-flex; align-items: center;
+  color: var(--accent-text);
+}
+.pw-folder-badge svg { width: 12px !important; height: 12px !important; }
+
+/* Members picker no editor de pasta */
+.pw-folder-members {
+  max-height: 260px; overflow-y: auto;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 4px;
+}
+.pw-folder-member-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background .12s;
+}
+.pw-folder-member-row:hover { background: var(--surface-2); }
+.pw-folder-member-row input[type="checkbox"] {
+  width: 16px; height: 16px; accent-color: var(--accent); flex-shrink: 0;
+}
+.pw-folder-member-name { font-size: 13px; font-weight: 500; color: var(--text); flex: 1; min-width: 0; }
+.pw-folder-member-username { font-size: 11px; color: var(--text-muted); font-family: ui-monospace, monospace; }
 
 .pw-audit-tag {
   display: inline-block; padding: 2px 8px; border-radius: 999px;

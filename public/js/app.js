@@ -796,6 +796,20 @@ function statusPill(d) {
   if (!s) return '<span class="pill pill-muted">—</span>';
   return `<span class="pill" style="color:${s.color};background:${hexDim(s.color)}"><span class="pill-dot" style="background:${s.color}"></span>${esc(s.label)}</span>`;
 }
+/* Pill do NOME da etapa atual — truncado com ellipsis pra não roubar espaço
+   quando o nome for grande. Tooltip via title mostra o nome completo. */
+function stagePillTruncated(d) {
+  const s = stageOf(d);
+  if (!s) return '<span class="pill pill-muted">—</span>';
+  return `<span class="pill stage-pill-trunc" style="color:${s.color};background:${hexDim(s.color)}" title="${esc(s.label)}"><span class="pill-dot" style="background:${s.color}"></span><span class="stage-pill-label">${esc(s.label)}</span></span>`;
+}
+/* Estado da demanda: Concluída, Em atraso, Ativa. Coluna separada da etapa. */
+function statePill(d) {
+  if (d.completedAt) return '<span class="pill pill-success" style="font-size:10px">Concluída</span>';
+  const due = effDue ? effDue(d) : (d.stageDueDate || d.deadline);
+  if (due && due < todayStr()) return '<span class="pill" style="font-size:10px;color:var(--danger);background:rgba(239,68,68,0.14)">Em atraso</span>';
+  return '<span class="pill" style="font-size:10px;color:var(--accent-text);background:var(--accent-dim)">Ativa</span>';
+}
 function ownerName(d) { const u = userById(d.ownerId); return u ? u.name : '—'; }
 function avatarHTML(u, cls = 'avatar') {
   const pClass = presenceClassFor(u);
@@ -1516,26 +1530,50 @@ const KB_SHORTCUTS = [
   { keys: ['Esc'],     label: 'Fechar modal/painel' },
 ];
 let _gPressed = false;
+/* Detecta se o foco está num campo de texto (input, textarea, select,
+   contenteditable ou elemento com role="textbox"/"combobox"). Usado pra
+   bloquear TODOS os atalhos rápidos — incluindo Ctrl/Cmd+K — enquanto
+   o usuário digita, evitando roubar teclas dele. */
+function isEditableTarget(t) {
+  if (!t || !t.tagName) return false;
+  const tag = t.tagName;
+  if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (tag === 'INPUT') {
+    // Checkbox/radio/button/hidden não são "de texto" — atalhos podem passar.
+    const type = (t.type || 'text').toLowerCase();
+    return !['checkbox','radio','button','submit','reset','file','hidden','image','color','range'].includes(type);
+  }
+  if (t.isContentEditable) return true;
+  const role = t.getAttribute && t.getAttribute('role');
+  if (role === 'textbox' || role === 'combobox' || role === 'searchbox') return true;
+  return false;
+}
 function initKeyboardShortcuts() {
   document.addEventListener('keydown', e => {
-    // Ctrl/Cmd+K abre paleta de comandos a qualquer momento
+    const t = e.target;
+    const inEditable = isEditableTarget(t);
+    // Esc sempre — fecha popovers/cheatsheet mesmo digitando (é UX esperada).
+    if (e.key === 'Escape') {
+      if (cmdkOpen) { e.preventDefault(); closeCommandPalette(); return; }
+      if (hideShortcutsHelp()) { e.preventDefault(); return; }
+      return;
+    }
+    // Se está num campo de texto, bloqueia TODOS os atalhos (inclusive Ctrl+K).
+    // Exceção: se o cmdk está aberto, Ctrl+K fecha ele mesmo com foco no input.
+    if (inEditable) {
+      if (cmdkOpen && (e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        closeCommandPalette();
+      }
+      return;
+    }
+    // Ctrl/Cmd+K abre paleta de comandos (fora de campos de texto).
     if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'k' || e.key === 'K')) {
       e.preventDefault();
       if (cmdkOpen) closeCommandPalette();
       else openCommandPalette();
       return;
     }
-    // Ignora se está digitando
-    const t = e.target;
-    const inEditable = t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable;
-    // Esc sempre — fecha popovers/cheatsheet
-    if (e.key === 'Escape') {
-      if (cmdkOpen) { e.preventDefault(); closeCommandPalette(); return; }
-      if (hideShortcutsHelp()) { e.preventDefault(); return; }
-      // demais Escs são tratados por outros listeners (modais)
-      return;
-    }
-    if (inEditable) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const k = e.key;
     if (k === '?') { e.preventDefault(); showShortcutsHelp(); }
@@ -1834,9 +1872,13 @@ function hideShortcutsHelp() {
   return true;
 }
 
-/* ─── TOOLTIPS GLOBAIS ───
-   Substitui o tooltip nativo do navegador (cinza/feio) por um estilizado.
-   Lê tanto data-tooltip="..." quanto title="..." (suprimindo o nativo). */
+/* ─── TOOLTIPS GLOBAIS — DESATIVADAS ───
+   O sistema custom tinha bugs recorrentes (travar na tela, abrir fora da
+   viewport, ghost quando o alvo saía do DOM). Removido. Qualquer atributo
+   `title=` continua funcionando via tooltip nativo do navegador.
+   O código antigo abaixo (`_legacyTooltipInit_OFF`) é mantido só como
+   histórico — nada o chama. `initTooltips()` agora só varre o DOM pra
+   remover qualquer bolha ghost `.tt` que possa ter sobrado. */
 let _tooltipEl = null;
 let _tooltipHover = null;
 let _tooltipTimer = null;
@@ -1844,9 +1886,42 @@ let _tooltipInited = false;
 function initTooltips() {
   if (_tooltipInited) return;
   _tooltipInited = true;
-  // Não cria o elemento aqui — hideTooltip destrói e _ensureTooltipEl recria
-  // sob demanda. Assim garantimos que nunca sobra ghost visível no DOM.
-
+  // Limpeza inicial de bolhas ghost que possam ter sobrado.
+  document.querySelectorAll('.tt').forEach(n => n.remove());
+  // Bloqueio permanente: se qualquer código legado criar uma .tt no futuro,
+  // o observer a remove imediatamente. Zero chance de tooltip travar.
+  const killTT = () => {
+    document.querySelectorAll('.tt').forEach(n => n.remove());
+  };
+  new MutationObserver(muts => {
+    for (const m of muts) {
+      for (const n of m.addedNodes) {
+        if (n.nodeType === 1 && (n.classList?.contains('tt') || n.querySelector?.('.tt'))) {
+          killTT();
+          return;
+        }
+      }
+    }
+  }).observe(document.body, { childList: true, subtree: true });
+  // Bloqueio dos tooltips NATIVOS do browser: no primeiro mouseover em
+  // qualquer elemento com `title`, remove o atributo. Sem title, o browser
+  // não desenha nada. Guardamos em data-title pra debug/histórico.
+  // EXCEÇÃO: elementos com classe `qty-cell-hint` (ícones "?") mantém o
+  // tooltip — são pontos de ajuda intencional e não travam.
+  document.addEventListener('mouseover', (e) => {
+    const t = e.target && e.target.closest && e.target.closest('[title]');
+    if (!t) return;
+    if (t.classList && t.classList.contains('qty-cell-hint')) return;
+    const val = t.getAttribute('title');
+    if (val) {
+      t.setAttribute('data-title', val);
+      t.removeAttribute('title');
+    }
+  }, true);
+}
+// Wrapper de compatibilidade com o código antigo — mantém a assinatura mas
+// não instala listeners.
+function _legacyTooltipInit_OFF() {
   document.addEventListener('mouseover', e => {
     const t = e.target.closest('[data-tooltip], [title]');
     if (t === _tooltipHover) return;
@@ -2326,14 +2401,19 @@ function fdpRenderGrid() {
     cells.push({ day: next.getDate(), month: next.getMonth(), year: next.getFullYear(), other: true });
   }
 
+  // Weekend bloqueado quando o input tem data-fdp-no-weekend="1" (ex.: prazos de etapa).
+  const blockWeekend = !!(fdpTarget && fdpTarget.dataset && fdpTarget.dataset.fdpNoWeekend === '1');
   grid.innerHTML = cells.map(c => {
     const isToday = c.day === today.day && c.month === today.month && c.year === today.year;
     const isSelected = selected && c.day === selected.day && c.month === selected.month && c.year === selected.year;
+    const dow = new Date(c.year, c.month, c.day).getDay();
+    const isWeekend = blockWeekend && (dow === 0 || dow === 6);
     const classes = ['fdp-day'];
     if (c.other) classes.push('other');
     if (isToday) classes.push('today');
     if (isSelected) classes.push('selected');
-    return `<button type="button" class="${classes.join(' ')}" data-y="${c.year}" data-m="${c.month}" data-d="${c.day}">${c.day}</button>`;
+    if (isWeekend) classes.push('disabled');
+    return `<button type="button" class="${classes.join(' ')}" data-y="${c.year}" data-m="${c.month}" data-d="${c.day}" ${isWeekend ? 'disabled title="Fins de semana não são permitidos"' : ''}>${c.day}</button>`;
   }).join('');
   paintIcons();
 }
@@ -2448,7 +2528,11 @@ function fdpInitGlobal() {
     const day = e.target.closest('.fdp-day');
     const yr  = e.target.closest('.fdp-year');
     const act = e.target.closest('[data-act]')?.dataset.act;
-    if (day) { fdpSelectDay(+day.dataset.y, +day.dataset.m, +day.dataset.d); return; }
+    if (day) {
+      if (day.disabled || day.classList.contains('disabled')) return; // weekend/blocked
+      fdpSelectDay(+day.dataset.y, +day.dataset.m, +day.dataset.d);
+      return;
+    }
     if (yr)  { fdpViewDate.year = +yr.dataset.year; fdpToggleYears(false); fdpRenderGrid(); return; }
 
     if (act === 'prev') {
@@ -5288,6 +5372,11 @@ function renderList() {
     else if (sortKey === 'client')    { va = norm(projectById(a.projectId)?.client || ''); vb = norm(projectById(b.projectId)?.client || ''); }
     else if (sortKey === 'type')      { va = norm(demandType(a) || ''); vb = norm(demandType(b) || ''); }
     else if (sortKey === 'status')    { const fa = flowById(a.flowId), fb = flowById(b.flowId); const ea = fa ? activeStagesOf(a, fa) : []; const eb = fb ? activeStagesOf(b, fb) : []; va = ea.findIndex(s => s.id === a.status); vb = eb.findIndex(s => s.id === b.status); if (va === -1) va = 999; if (vb === -1) vb = 999; }
+    else if (sortKey === 'state')     {
+      // Ordem: Ativa < Em atraso < Concluída (0/1/2)
+      const stateVal = d => d.completedAt ? 2 : ((effDue(d) && effDue(d) < todayStr()) ? 1 : 0);
+      va = stateVal(a); vb = stateVal(b);
+    }
     else if (sortKey === 'owner')     { va = norm(userById(a.ownerId)?.name || ''); vb = norm(userById(b.ownerId)?.name || ''); }
     else if (sortKey === 'completed') { va = a.completedAt || '9999'; vb = b.completedAt || '9999'; }
     else if (sortKey === 'priority')  { va = a.priority || 3; vb = b.priority || 3; }
@@ -5307,7 +5396,7 @@ function renderList() {
   }
 
   if (!list.length) {
-    $('list-table-body').innerHTML = `<tr><td colspan="12">${emptyState('Nenhuma demanda encontrada', 'Ajuste a busca ou os filtros para encontrar o que procura.', 'search')}</td></tr>`;
+    $('list-table-body').innerHTML = `<tr><td colspan="9">${emptyState('Nenhuma demanda encontrada', 'Ajuste a busca ou os filtros para encontrar o que procura.', 'search')}</td></tr>`;
     if (listView === 'kanban') renderKanban();
     if (listView === 'cal') renderCalendar('all');
     refreshBulkBar();
@@ -5321,18 +5410,16 @@ function renderList() {
       ? `<span class="pill" style="color:${ws.color || '#7A00FF'};background:${hexDim(ws.color)}"><span class="pill-dot" style="background:${ws.color || '#7A00FF'}"></span>${esc(ws.name)}</span>`
       : '<span class="pill pill-muted">—</span>';
     const sel = selectedDemandIds.has(d.id);
+    // Ordem: Demanda · Projeto · Cliente · Prioridade · Etapa · Responsável · Prazo · Conclusão
     return `<tr class="demand-row ${sel ? 'selected' : ''}" data-demand-id="${d.id}" onclick="onDemandRowClick(event, '${d.id}')">
       <td class="col-bulk-check"><input type="checkbox" class="bulk-check-row" ${sel ? 'checked' : ''} onclick="event.stopPropagation();toggleDemandSelection('${d.id}', this.checked)"></td>
-      <td><span class="demand-name">${esc(d.name)}</span></td>
-      <td>${wsCell}</td>
+      <td class="col-demand-name"><span class="demand-name">${esc(d.name)}</span></td>
       <td>${p ? esc(p.name) : '—'}</td>
       <td>${esc(p?.client || '—')}</td>
-      <td>${esc(demandType(d) || '—')}</td>
-      <td>${statusPill(d)}</td>
+      <td>${priorityPill(d.priority)}</td>
+      <td>${stagePillTruncated(d)}</td>
       <td>${cellUser(userById(d.ownerId))}</td>
       <td>${deadlineCell(d)}</td>
-      <td>${priorityPill(d.priority)}</td>
-      <td>${qtyCell(d)}</td>
       <td>${d.completedAt ? fmtDate(d.completedAt) : '—'}</td>
     </tr>`;
   }).join('');
@@ -7124,6 +7211,87 @@ function demandById(id) { return demands.find(x => x.id === id) || null; }
    sem precisar dar F5. Pausa enquanto o usuário está digitando pra
    não perder texto em meio a um comentário. */
 let _detailPollTimer = null;
+/* ── Split resizer da página de detalhe (comentários ↔ dados) ──
+   Clamp em 30/70% da largura útil pra nenhuma coluna sumir. Persiste
+   em localStorage. Desabilita <900px (colunas empilhadas por CSS). */
+const _DETAIL_SPLIT_KEY = 'kastor-detail-split';
+const _DETAIL_SPLIT_MIN = 30; // %
+const _DETAIL_SPLIT_MAX = 70; // %
+function _clampDetailSplit(pct) {
+  if (!Number.isFinite(pct)) return 50;
+  return Math.max(_DETAIL_SPLIT_MIN, Math.min(_DETAIL_SPLIT_MAX, pct));
+}
+function _applyDetailSplit(pct) {
+  const root = document.getElementById('detail-split-root');
+  if (!root) return;
+  const clamped = _clampDetailSplit(pct);
+  // Divider tem 6px; usa calc pra manter proporção exata entre as duas colunas.
+  root.style.setProperty('--detail-split', `calc(${clamped}% - 3px)`);
+}
+// Estado global do drag — listeners de document adicionados UMA vez.
+let _detailSplitDragging = false;
+function _detailSplitOnMove(ev) {
+  if (!_detailSplitDragging) return;
+  const root = document.getElementById('detail-split-root');
+  if (!root) return;
+  const rect = root.getBoundingClientRect();
+  if (rect.width <= 0) return;
+  const x = (ev.touches ? ev.touches[0].clientX : ev.clientX) - rect.left;
+  const pct = (x / rect.width) * 100;
+  _applyDetailSplit(pct);
+  if (ev.cancelable) ev.preventDefault();
+}
+function _detailSplitOnUp() {
+  if (!_detailSplitDragging) return;
+  _detailSplitDragging = false;
+  const handle = document.getElementById('detail-col-divider');
+  if (handle) handle.classList.remove('is-dragging');
+  document.body.classList.remove('is-resizing-detail');
+  const root = document.getElementById('detail-split-root');
+  if (!root) return;
+  const val = root.style.getPropertyValue('--detail-split').trim();
+  const m = val.match(/([\d.]+)%/);
+  if (m) {
+    const pct = _clampDetailSplit(parseFloat(m[1]));
+    try { localStorage.setItem(_DETAIL_SPLIT_KEY, String(pct)); } catch {}
+  }
+}
+document.addEventListener('mousemove', _detailSplitOnMove);
+document.addEventListener('touchmove', _detailSplitOnMove, { passive: false });
+document.addEventListener('mouseup', _detailSplitOnUp);
+document.addEventListener('touchend', _detailSplitOnUp);
+function initDetailSplitResizer() {
+  const root = document.getElementById('detail-split-root');
+  const handle = document.getElementById('detail-col-divider');
+  if (!root || !handle) return;
+  // Aplica valor salvo (ou 50% default).
+  const saved = Number(localStorage.getItem(_DETAIL_SPLIT_KEY));
+  _applyDetailSplit(Number.isFinite(saved) && saved > 0 ? saved : 50);
+  // Handle é recriado a cada renderDetail — listeners locais nele são ok
+  // (o próprio handle some, os listeners junto).
+  const onDown = (ev) => {
+    if (window.innerWidth <= 900) return;
+    _detailSplitDragging = true;
+    handle.classList.add('is-dragging');
+    document.body.classList.add('is-resizing-detail');
+    ev.preventDefault();
+  };
+  handle.addEventListener('mousedown', onDown);
+  handle.addEventListener('touchstart', onDown, { passive: false });
+  handle.addEventListener('dblclick', () => {
+    _applyDetailSplit(50);
+    try { localStorage.setItem(_DETAIL_SPLIT_KEY, '50'); } catch {}
+  });
+  handle.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
+    ev.preventDefault();
+    const cur = Number(localStorage.getItem(_DETAIL_SPLIT_KEY)) || 50;
+    const next = _clampDetailSplit(cur + (ev.key === 'ArrowRight' ? 5 : -5));
+    _applyDetailSplit(next);
+    try { localStorage.setItem(_DETAIL_SPLIT_KEY, String(next)); } catch {}
+  });
+}
+
 /* Stack de avatares dos observadores — cresce PRA ESQUERDA do botão do olho.
    Até 2 avatares mostrados; 3+ acumula em "+X". Tooltip lista os nomes. */
 function renderWatcherStack(d) {
@@ -7200,10 +7368,46 @@ function stopDetailPoll() {
    dispara. Default = 'comments'. */
 let detailActiveTab = 'comments';
 let detailCommentSort = 'newest'; // 'newest' | 'oldest'
+// Estado colapsado da coluna direita (comentários/tabs) — persiste.
+let detailRightCollapsed = (localStorage.getItem('kastor-detail-right-collapsed') === '1');
 function _commentSortLabel() { return detailCommentSort === 'newest' ? 'Mais recentes primeiro' : 'Mais antigos primeiro'; }
+function _commentSortIcon()  { return detailCommentSort === 'newest' ? 'arrow-down-narrow-wide' : 'arrow-up-narrow-wide'; }
 function toggleCommentSort() {
   detailCommentSort = detailCommentSort === 'newest' ? 'oldest' : 'newest';
   renderDetail();
+}
+/* Colapsa/expande a coluna direita inteira (comentários + tabs + actions). */
+function toggleDetailRightCollapsed() {
+  detailRightCollapsed = !detailRightCollapsed;
+  try { localStorage.setItem('kastor-detail-right-collapsed', detailRightCollapsed ? '1' : '0'); } catch {}
+  applyDetailRightCollapsed();
+}
+function applyDetailRightCollapsed() {
+  const root = document.getElementById('detail-split-root');
+  if (!root) return;
+  root.classList.toggle('is-right-collapsed', detailRightCollapsed);
+  // Atualiza ícone + tooltip do botão do divider.
+  const btn = document.getElementById('detail-right-toggle');
+  if (btn) {
+    btn.classList.toggle('is-collapsed', detailRightCollapsed);
+    btn.title = detailRightCollapsed ? 'Expandir comentários' : 'Recolher comentários';
+    const icon = btn.querySelector('svg, i[data-lucide]');
+    const nextName = detailRightCollapsed ? 'panel-right-open' : 'panel-right-close';
+    if (icon) {
+      if (icon.tagName.toLowerCase() === 'svg') {
+        icon.setAttribute('data-lucide', nextName);
+        // Force re-paint no ícone (lucide render observer nem sempre pega).
+        const i = document.createElement('i');
+        i.setAttribute('data-lucide', nextName);
+        i.className = 'ic-sm';
+        icon.replaceWith(i);
+        if (typeof paintIcons === 'function') paintIcons();
+      } else {
+        icon.setAttribute('data-lucide', nextName);
+        if (typeof paintIcons === 'function') paintIcons();
+      }
+    }
+  }
 }
 function setDemandDetailTab(name) {
   detailActiveTab = name;
@@ -7216,7 +7420,7 @@ function setDemandDetailTab(name) {
     const el = document.getElementById('tab-pane-' + k);
     if (el) el.style.display = k === name ? '' : 'none';
   });
-  // Sort de comentários só aparece na tab Comentários.
+  // Sort só aparece na tab Comentários.
   const sortBtn = document.getElementById('detail-tab-sort');
   if (sortBtn) sortBtn.style.display = name === 'comments' ? '' : 'none';
   const d = demandById(detailId);
@@ -7352,12 +7556,22 @@ function renderDetail() {
   const activeTab = detailActiveTab || 'comments';
 
   $('detail-content').innerHTML = `
-    <div class="detail-content detail-content-v2">
+    <div class="detail-content detail-content-v2" id="detail-split-root">
+      <!-- Divider arrastável entre as duas colunas + toggle de colapsar -->
+      <div class="detail-col-divider" id="detail-col-divider" role="separator" aria-orientation="vertical" title="Arraste para redimensionar" tabindex="0">
+        <button type="button" class="detail-right-toggle" id="detail-right-toggle" onclick="event.stopPropagation(); toggleDetailRightCollapsed()" onmousedown="event.stopPropagation()" title="Recolher comentários" aria-label="Recolher comentários">
+          <i data-lucide="panel-right-close" class="ic-sm"></i>
+        </button>
+      </div>
       <!-- ── COLUNA ESQUERDA — dados da demanda ── -->
       <div class="detail-col detail-col-left">
         <div class="detail-title-block">
-          <div class="detail-title" data-tooltip="Clique para renomear" onclick="startEditDemandTitle(this)">${esc(d.name)}</div>
+          <div class="detail-title" title="Clique para renomear" onclick="startEditDemandTitle(this)">${esc(d.name)}</div>
           <div class="detail-breadcrumb">
+            ${(() => {
+              const ws = wsById(d.workspaceId);
+              return ws ? `<span class="pill detail-breadcrumb-squad" style="color:${ws.color || '#7A00FF'};background:${hexDim(ws.color)}"><span class="pill-dot" style="background:${ws.color || '#7A00FF'}"></span>${esc(ws.name)}</span>` : '';
+            })()}
             ${clientName ? `<span>${esc(clientName)}</span>` : ''}
             ${clientName && projName ? '<i data-lucide="chevron-right" class="ic-xs"></i>' : ''}
             ${projName ? `<span>${esc(projName)}</span>` : ''}
@@ -7411,10 +7625,10 @@ function renderDetail() {
           <div class="demand-att-list" id="detail-attachments-list">${renderDemandAttList(d.attachments || [], true)}</div>
           <div class="detail-attach-chips">
             <input type="file" id="detail-att-file-input" multiple style="display:none" onchange="handleDetailAttachmentFiles(event)">
-            <button class="attach-chip" onclick="$('detail-att-file-input').click()"><i data-lucide="paperclip" class="ic-sm"></i> Arquivo</button>
+            <button class="attach-chip attach-chip-icon" title="Anexar arquivo" onclick="$('detail-att-file-input').click()"><i data-lucide="paperclip" class="ic-sm"></i></button>
             <input type="file" id="detail-att-img-input" accept="image/*" multiple style="display:none" onchange="handleDetailAttachmentImages(event)">
-            <button class="attach-chip" onclick="$('detail-att-img-input').click()"><i data-lucide="image" class="ic-sm"></i> Imagem</button>
-            <button class="attach-chip" onclick="addDetailAttachmentLink()"><i data-lucide="link" class="ic-sm"></i> Link</button>
+            <button class="attach-chip attach-chip-icon" title="Anexar imagem" onclick="$('detail-att-img-input').click()"><i data-lucide="image" class="ic-sm"></i></button>
+            <button class="attach-chip attach-chip-icon" title="Anexar link" onclick="addDetailAttachmentLink()"><i data-lucide="link" class="ic-sm"></i></button>
           </div>
         </div>
 
@@ -7471,7 +7685,7 @@ function renderDetail() {
           <button class="detail-tab ${activeTab === 'activity' ? 'is-active' : ''}" onclick="setDemandDetailTab('activity')">Atividade</button>
           <button class="detail-tab ${activeTab === 'stages' ? 'is-active' : ''} ${hasCustomization ? 'has-mark' : ''}" onclick="setDemandDetailTab('stages')">Etapas</button>
           <div class="detail-tabs-spacer"></div>
-          <button class="detail-tab-sort" id="detail-tab-sort" title="Ordenar comentários" onclick="toggleCommentSort()" style="${activeTab === 'comments' ? '' : 'display:none'}"><i data-lucide="arrow-down-narrow-wide" class="ic-sm"></i> <span id="detail-sort-label">${_commentSortLabel()}</span></button>
+          <button class="detail-tab-tool detail-tab-sort" id="detail-tab-sort" title="${_commentSortLabel()} · clique pra inverter" onclick="toggleCommentSort()" style="${activeTab === 'comments' ? '' : 'display:none'}" data-ktip="${_commentSortLabel()}"><i data-lucide="${_commentSortIcon()}" class="ic-sm"></i> <span class="detail-tab-tool-label" id="detail-sort-label">${_commentSortLabel()}</span></button>
         </div>
 
         <div class="detail-tab-content">
@@ -7573,6 +7787,10 @@ function renderDetail() {
   // Injeta pipeline visual no slot da topbar (centralizado ao lado de "Demanda").
   const topPipe = document.getElementById('topbar-pipeline');
   if (topPipe) topPipe.innerHTML = pipeline;
+  // Split resizer: aplica largura salva + attach do drag.
+  initDetailSplitResizer();
+  // Restaura estado colapsado da coluna direita.
+  applyDetailRightCollapsed();
   paintIcons();
   // Garante que datetime-local inputs recém-renderizados usem o picker customizado
   if (typeof fdpConvertAll === 'function') fdpConvertAll();
@@ -8048,6 +8266,29 @@ function _addDays(ymd, days) {
   d.setDate(d.getDate() + (Number(days) || 0));
   return d.toISOString().slice(0, 10);
 }
+/* True se a data cair em sábado (6) ou domingo (0). */
+function _isWeekendYmd(ymd) {
+  if (!ymd) return false;
+  const dow = new Date(ymd + 'T12:00:00').getDay();
+  return dow === 0 || dow === 6;
+}
+/* Adiciona `days` dias úteis a partir de `ymd` (pula sábado/domingo). Usado
+   na cascade de datas das etapas — nenhuma etapa deve cair em fim de semana. */
+function _addBusinessDays(ymd, days) {
+  if (!ymd) return null;
+  const d = new Date(ymd + 'T12:00:00');
+  let remaining = Number(days) || 0;
+  while (remaining > 0) {
+    d.setDate(d.getDate() + 1);
+    const dow = d.getDay();
+    if (dow !== 0 && dow !== 6) remaining--;
+  }
+  // Se days === 0 mas caiu em weekend, empurra pra segunda.
+  if (days === 0 || days == null) {
+    while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
+  }
+  return d.toISOString().slice(0, 10);
+}
 function _daysDiff(startYmd, endYmd) {
   if (!startYmd || !endYmd) return 0;
   const s = new Date(startYmd + 'T12:00:00');
@@ -8075,6 +8316,12 @@ function setStageDateDraft(stageId, isoDate) {
     return;
   }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return;
+  // Bloqueio de fim de semana (safety net — fdp já esconde weekend cells).
+  if (_isWeekendYmd(isoDate)) {
+    toast('Etapas não podem cair em sábado ou domingo.', 'error');
+    renderDetail();
+    return;
+  }
   const d = demandById(detailId);
   if (!d) return;
   const flow = flowById(d.flowId);
@@ -8201,7 +8448,7 @@ function renderDetailStages(d) {
           let lastEnd = baselineYmd;
           rowsList.forEach((s, i) => {
             const anchor = draft.dates && draft.dates[s.id];
-            const end = anchor || _addDays(lastEnd, effectiveDays[i] ?? 0);
+            const end = anchor || _addBusinessDays(lastEnd, effectiveDays[i] ?? 0);
             endDates.push(end);
             lastEnd = end;
           });
@@ -8229,12 +8476,7 @@ function renderDetailStages(d) {
             const endDate = endDates[i];
             return `<div class="stages-edit-row ${isOn ? 'on' : 'off'} ${isCurrent ? 'locked' : ''}"
                          data-stage-id="${s.id}"
-                         ondragover="stagesDragOver(event, ${i})"
-                         ondragleave="stagesDragLeave(event)"
-                         ondrop="stagesDrop(event, ${i})"
-                         ondragend="stagesDragEnd()"
                          ${lockedReason ? `title="${esc(lockedReason)}"` : ''}>
-              <div class="stages-edit-grip" draggable="true" ondragstart="stagesDragStart(event, ${i})" title="Arraste para reordenar"><i data-lucide="grip-vertical" class="ic-md"></i></div>
               <input type="checkbox" ${isOn ? 'checked' : ''} ${isCurrent ? 'disabled' : ''} onchange="toggleStageDraft('${s.id}')">
               <span class="stages-edit-num">${String(i + 1).padStart(2, '0')}</span>
               <span class="pill-dot" style="background:${s.color}"></span>
@@ -8243,21 +8485,16 @@ function renderDetailStages(d) {
                 ${s.done ? '<span class="pill pill-success" style="font-size:9px">Conclusão</span>' : ''}
                 ${isCurrent ? '<span class="pill" style="font-size:9px;background:var(--accent-dim);color:var(--accent-text)">Atual</span>' : ''}
                 ${!isOn && !isCurrent ? '<span class="pill pill-muted" style="font-size:9px">Desativada</span>' : ''}
-                ${isCustomized ? '<span class="stages-edit-custom-mark"><i data-lucide="sparkles" class="ic-md"></i></span>' : ''}
               </div>
-              <input type="date" class="stages-edit-date-input" data-fdp-display="short"
+              <input type="date" class="stages-edit-date-input ${hasDateAnchor ? 'is-customized' : ''}" data-fdp-display="short" data-fdp-no-weekend="1"
                      value="${endDate || ''}"
                      ${isFlowStage ? '' : 'disabled'}
                      onchange="setStageDateDraft('${s.id}', this.value)">
-              <div class="stages-edit-sla-wrap" title="SLA da etapa em dias — vazio = sem prazo definido">
-                <input type="number" min="0" step="1" class="form-control stages-edit-sla-input"
-                       placeholder="${origSla ?? '—'}"
-                       value="${draftSlaVal ?? ''}"
-                       ${isFlowStage ? '' : 'disabled title="Etapa adicionada por instância — edite pelo wizard"'}
-                       oninput="setStageSlaDraft('${s.id}', this.value)"
-                       onchange="renderDetail()">
-                <span class="stages-edit-sla-suffix">d</span>
-              </div>
+              <span class="stages-edit-sla-days" title="Prazo calculado a partir das datas — edite a data pra alterar. O padrão vem do fluxo.">${(() => {
+                const prev = i === 0 ? baselineYmd : (endDates[i - 1] || baselineYmd);
+                const diff = endDate ? _daysDiff(prev, endDate) : (draftSlaVal ?? null);
+                return (diff ?? '—') + 'd';
+              })()}</span>
               <div class="stages-edit-resp-wrap">
                 <select id="${selectId}" class="form-control" data-cdrop-icon="user" onchange="setStageResponsibleDraft('${s.id}', this.value)">
                   ${!currentResp && !hasRespOverride ? '<option value="__default__" selected>Selecionar executor…</option>' : ''}
@@ -8626,12 +8863,15 @@ function describeHistory(h, d) {
     case 'checklist_unchecked':return `desmarcou item do checklist`;
     case 'stages_customized': {
       const flow = flowById(d.flowId);
+      // O server ainda salva em `details` (não `detail`) — aceita os dois pra compat.
+      const det = h.details || h.detail || {};
       const lookup = id => flow?.stages.find(s => s.id === id)?.label || '(removida)';
-      const added = (h.detail?.added || []).map(lookup);
-      const removed = (h.detail?.removed || []).map(lookup);
-      const respChanges = h.detail?.responsibles || [];
-      const labelChanges = h.detail?.labelChanges || [];
-      const orderChanged = !!h.detail?.orderChanged;
+      const added = (det.added || []).map(lookup);
+      const removed = (det.removed || []).map(lookup);
+      const respChanges = det.responsibles || [];
+      const labelChanges = det.labelChanges || [];
+      const dateChanges = det.dateChanges || [];
+      const orderChanged = !!det.orderChanged;
       const parts = [];
       if (added.length) parts.push(`desativou: <em>${esc(added.join(', '))}</em>`);
       if (removed.length) parts.push(`reativou: <em>${esc(removed.join(', '))}</em>`);
@@ -8647,6 +8887,16 @@ function describeHistory(h, d) {
           return `${esc(stageName)} → <em>${esc(userName)}</em>`;
         });
         parts.push(`responsáveis: ${respDesc.join(', ')}`);
+      }
+      // Mudanças de data por etapa — formato: "Etapa XXX — 15/08 → 17/08".
+      if (dateChanges.length) {
+        const dateDesc = dateChanges.map(c => {
+          const stageName = lookup(c.stageId);
+          const fromStr = c.from ? fmtDate(c.from) : 'padrão';
+          const toStr   = c.to   ? fmtDate(c.to)   : 'padrão';
+          return `<strong>${esc(stageName)}</strong> — ${esc(fromStr)} → <strong>${esc(toStr)}</strong>`;
+        });
+        parts.push(`alterou data: ${dateDesc.join(', ')}`);
       }
       return `customizou etapas — ${parts.length ? parts.join(' · ') : 'sem mudanças visíveis'}`;
     }
@@ -12265,14 +12515,7 @@ function renderChecklist(d) {
   const done = items.filter(i => i.done).length;
   const pct = items.length ? Math.round(done / items.length * 100) : 0;
   return `
-    <div class="detail-section-block">
-      <div class="field-head">
-        <div class="field-label">
-          <i data-lucide="check-square" class="ic-sm" style="vertical-align:middle"></i>
-          Checklist
-          ${items.length ? `<span style="margin-left:8px;font-size:11px;color:var(--text-muted);font-weight:500">${done}/${items.length}</span>` : ''}
-        </div>
-      </div>
+    <div class="checklist-inline">
       ${items.length ? `<div class="checklist-bar"><div class="checklist-bar-fill" style="width:${pct}%"></div></div>` : ''}
       <div class="checklist-list">
         ${items.map(it => {
@@ -18821,8 +19064,10 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
     if (c.type === 'user') {
       // Header do modo Time: avatar + nome + capacidade do dia daquele user.
       const u = c.user;
+      // Só demanda + blocos "Reunião" contam no tempo. Livre (focus/off/other) fica de fora.
       const schedMin = schedules
         .filter(s => s.userId === u.id && s.date === c._ymd)
+        .filter(s => s.demandId || s.kind === 'meeting')
         .reduce((sum, s) => sum + (s.endMin - s.startMin), 0);
       const dayMin = schedMin + dayGoogleMinutes(u.id, c._ymd);
       const dayHours = dayMin / 60;
@@ -18838,6 +19083,7 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
       const dayDate = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
       const schedMin = schedules
         .filter(s => s.userId === agendaUserIdLocal && s.date === c._ymd)
+        .filter(s => s.demandId || s.kind === 'meeting')
         .reduce((sum, s) => sum + (s.endMin - s.startMin), 0);
       const dayMin = schedMin + dayGoogleMinutes(agendaUserIdLocal, c._ymd);
       const dayHours = dayMin / 60;
@@ -19992,62 +20238,11 @@ async function flushSseRefetch() {
   }
 }
 
-/* ─── TOOLTIPS CUSTOMIZADOS ──────────────────────────────────
-   Substitui o tooltip nativo do browser (que vem de title="") por uma camada
-   estilizada com fade-in. Funciona pra QUALQUER elemento com title= no DOM,
-   inclusive os adicionados dinamicamente. Suprime o nativo movendo o atributo
-   pra data-ktip e removendo title em hover. */
-(function setupCustomTooltips() {
-  const tipEl = document.createElement('div');
-  tipEl.className = 'k-tooltip';
-  document.body.appendChild(tipEl);
-  let showTimer = null;
-  let activeTarget = null;
-
-  function getTipText(el) {
-    return el.getAttribute('data-ktip') || el.getAttribute('title') || '';
-  }
-
-  function positionTip(el) {
-    const r = el.getBoundingClientRect();
-    tipEl.style.left = (r.left + r.width / 2) + 'px';
-    tipEl.style.top = r.top + 'px';
-  }
-
-  function showFor(el) {
-    const text = getTipText(el);
-    if (!text) return;
-    // Move title pra data-ktip pra suprimir o nativo
-    if (el.hasAttribute('title')) {
-      el.setAttribute('data-ktip', el.getAttribute('title'));
-      el.removeAttribute('title');
-    }
-    tipEl.textContent = text;
-    positionTip(el);
-    tipEl.classList.add('show');
-  }
-  function hide() {
-    tipEl.classList.remove('show');
-    activeTarget = null;
-  }
-
-  document.addEventListener('mouseover', (e) => {
-    const t = e.target.closest('[title], [data-ktip]');
-    if (!t || t === activeTarget) return;
-    // Ignora pickers complexos onde o título é parte da UX (ex.: nada por enquanto)
-    activeTarget = t;
-    clearTimeout(showTimer);
-    showTimer = setTimeout(() => showFor(t), 280); // delay tipo macOS
-  }, true);
-  document.addEventListener('mouseout', (e) => {
-    const t = e.target.closest('[title], [data-ktip]');
-    if (!t) return;
-    clearTimeout(showTimer);
-    if (t === activeTarget) hide();
-  }, true);
-  document.addEventListener('scroll', () => { clearTimeout(showTimer); hide(); }, true);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { clearTimeout(showTimer); hide(); } });
-})();
+/* ─── TOOLTIPS CUSTOMIZADOS — REMOVIDO ──────────────────────
+   O sistema `.k-tooltip` foi tirado (bugs de travar/vazar). Tooltip agora é
+   só CSS-only nos `.qty-cell-hint` (pontos de ajuda "?"). O resto usa title
+   nativo do browser (bloqueado por initTooltips no bootstrap, exceto onde
+   marcado como exceção pela classe `.qty-cell-hint`). */
 
 /* ─── LOADING STATE EM BOTÕES ─────────────────────────────────
    Helper: chame com um event ou um button + asyncFn. Aplica .is-loading
@@ -20187,7 +20382,7 @@ function renderWizardCustomization() {
     orderedIds = [...flow.stages.map(s => s.id), ...cust.stageAdditions.map(s => s.id)];
   }
 
-  // Cascata data ↔ dias — respeita âncoras (deadlineDate) das etapas anteriores.
+  // Cascata data ↔ dias — respeita âncoras (deadlineDate) e SKIPA fins de semana.
   const baselineYmd = todayStr();
   const dateByStageId = {};
   let lastEnd = baselineYmd;
@@ -20199,7 +20394,7 @@ function renderWizardCustomization() {
     const anchor = isAddition ? stage.deadlineDate : cust.stageOverrides[id]?.deadlineDate;
     if (anchor) { dateByStageId[id] = anchor; lastEnd = anchor; return; }
     const days = _custEffectiveStageValue(stage, isAddition, 'deadlineDays');
-    const end = _addDays(lastEnd, Number(days ?? 0));
+    const end = _addBusinessDays(lastEnd, Number(days ?? 0));
     dateByStageId[id] = end;
     lastEnd = end;
   });
@@ -20230,26 +20425,26 @@ function renderWizardCustomization() {
       const isDefault = u.id === defaultUserId;
       return `<option value="${u.id}" ${respValue === u.id ? 'selected' : ''} ${isDefault ? 'data-default="1"' : ''}>${esc(u.name)}</option>`;
     }).join('');
-    // Ícone no lugar da badge Original/Nova — 16px, sem tooltip. Etapas novas
-    // ganham sparkles roxo; originais mostram um placeholder discreto (traço).
-    const stageMark = isAddition
-      ? '<span class="wizard-cust-stage-mark is-added"><i data-lucide="sparkles" class="ic-md"></i></span>'
-      : '<span class="wizard-cust-stage-mark is-original"><i data-lucide="corner-down-right" class="ic-md"></i></span>';
     const removeBtn = isAddition
       ? `<button type="button" class="wizard-cust-remove" title="Remover etapa" onclick="wizardCustRemoveAddition('${stageId}')"><i data-lucide="trash-2" class="ic-md"></i></button>`
       : '<span class="wizard-cust-remove-placeholder"></span>';
     const endDate = dateByStageId[stageId] || '';
+    // Data considerada "customizada" quando o usuário setou âncora explícita.
+    const hasDateAnchor = isAddition
+      ? !!stage.deadlineDate
+      : !!(cust.stageOverrides[stageId]?.deadlineDate);
+    // Dias exibidos = diff entre a data desta etapa e a da anterior (ou baseline
+    // pra primeira). Agora é só indicativo — o usuário edita as DATAS, o número
+    // recalcula automaticamente. Só o fluxo (página Fluxos) tem SLA editável.
+    const prevEnd = i === 0 ? baselineYmd : (dateByStageId[orderedIds[i - 1]] || baselineYmd);
+    const computedDays = endDate ? _daysDiff(prevEnd, endDate) : (days ?? null);
     return `<div class="wizard-cust-row-v2 ${skipped ? 'is-skipped' : ''} ${isAddition ? 'is-added' : ''}" draggable="true" data-stage-id="${stageId}">
       <span class="wizard-cust-drag" title="Arraste pra reordenar"><i data-lucide="grip-vertical" class="ic-md"></i></span>
-      ${stageMark}
       <button type="button" class="color-swatch-trigger wizard-cust-color-lg" style="background:${esc(color)}" onclick="openColorPicker(this, (c) => { wizardCustSetColor('${stageId}', c); this.style.background = c; }, '${esc(color)}')" title="Cor da etapa"></button>
       <input type="text" class="wizard-cust-name" value="${esc(label)}" placeholder="Nome da etapa" oninput="wizardCustSetLabel('${stageId}', this.value)">
       <select class="wizard-cust-resp" data-cdrop-icon="user" data-default-value="${esc(defaultUserId || '')}" onchange="wizardCustSetResp('${stageId}', this.value)">${roleOpts}</select>
-      <input type="date" class="wizard-cust-date" data-fdp-display="short" value="${endDate}" onchange="wizardCustSetDate('${stageId}', this.value)">
-      <div class="wizard-cust-days-inline" title="Prazo da etapa (em dias)">
-        <input type="number" class="wizard-cust-days" min="0" step="1" value="${days ?? ''}" placeholder="—" oninput="wizardCustSetDays('${stageId}', this.value)" onchange="renderWizardCustomization()">
-        <span class="wizard-cust-days-unit">d</span>
-      </div>
+      <input type="date" class="wizard-cust-date ${hasDateAnchor ? 'is-customized' : ''}" data-fdp-display="short" data-fdp-no-weekend="1" value="${endDate}" onchange="wizardCustSetDate('${stageId}', this.value)">
+      <span class="wizard-cust-days-plain" title="Prazo calculado a partir das datas — herdado do fluxo. Edite a data pra alterar.">${(computedDays ?? '—') + 'd'}</span>
       <button type="button" class="cust-icon-toggle cust-toggle-done ${done ? 'on' : ''}" title="${done ? 'Etapa final — conclui a demanda' : 'Marcar como etapa final (conclui a demanda)'}" onclick="wizardCustSetDone('${stageId}', ${!done})"><i data-lucide="flag" class="ic-md"></i></button>
       <button type="button" class="cust-icon-toggle cust-toggle-active ${!skipped ? 'on' : ''}" title="${skipped ? 'Etapa pulada — clique pra ativar' : 'Etapa ativa — clique pra pular'}" onclick="wizardCustToggleSkip('${stageId}', ${skipped})"><i data-lucide="${skipped ? 'eye-off' : 'eye'}" class="ic-md"></i></button>
       ${removeBtn}
@@ -20377,6 +20572,12 @@ function wizardCustSetDate(stageId, isoDate) {
   if (!wizardState.customization) resetWizardCustomization();
   const cust = wizardState.customization;
   const flow = flowById(wizardState.flowId);
+  // Bloqueio de fim de semana (safety net — fdp já esconde weekend cells).
+  if (isoDate && _isWeekendYmd(isoDate)) {
+    toast('Etapas não podem cair em sábado ou domingo.', 'error');
+    renderWizardCustomization();
+    return;
+  }
   // Calcula fim da etapa anterior respeitando âncoras já gravadas.
   const prevEnd = _wizardCustPrevEnd(stageId);
   if (isoDate && prevEnd && isoDate < prevEnd) {
@@ -20944,8 +21145,10 @@ const pwState = {
   unlockedUntil: 0,       // ms; 0 = locked
   ttlMs: 15 * 60 * 1000,  // default; server pode sobrescrever no unlock/status
   entries: [],
+  folders: [],            // [{ id, name, ownerId, memberIds, canEdit, memberCount }]
   revealed: {},           // { id: { pw, timeoutId } } — reveals ativos com auto-hide
-  ttlTimer: null
+  ttlTimer: null,
+  selectedFolderId: '__all__' // '__all__' | folderId
 };
 /* ── WebAuthn client helpers ──
    Browser API é `navigator.credentials.create/get`. Todos os campos binários
@@ -21120,6 +21323,62 @@ async function _pwUpdateWebauthnUnlockBtn() {
   divider.style.display = has ? '' : 'none';
   paintIcons();
 }
+/* Variante do botão de biometria/PIN dentro do modal de unlock de PASTA. */
+async function _pwUpdateFolderWebauthnBtn() {
+  const btn = document.getElementById('pw-folder-webauthn-btn');
+  const divider = document.getElementById('pw-folder-webauthn-divider');
+  if (!btn || !divider) return;
+  const supported = await isWebauthnPlatformAvailable();
+  if (!supported) { btn.style.display = 'none'; divider.style.display = 'none'; return; }
+  let creds = [];
+  try { creds = await api('/passwords/webauthn/credentials'); } catch {}
+  const has = creds.length > 0;
+  btn.style.display = has ? '' : 'none';
+  divider.style.display = has ? 'block' : 'none';
+  paintIcons();
+}
+/* Destrava a pasta atualmente sob unlock modal usando biometria/PIN. */
+async function unlockFolderWithWebauthn() {
+  const folderId = _pwPendingUnlockFolderId;
+  if (!folderId) return;
+  if (!window.PublicKeyCredential) { toast('Este navegador não suporta biometria.', 'warn'); return; }
+  try {
+    const opts = await api('/passwords/webauthn/auth/begin', 'POST', {});
+    const publicKey = {
+      ...opts,
+      challenge: _b64uToBuf(opts.challenge),
+      allowCredentials: (opts.allowCredentials || []).map(c => ({ ...c, id: _b64uToBuf(c.id) }))
+    };
+    const assertion = await navigator.credentials.get({ publicKey });
+    if (!assertion) throw new Error('Cancelado');
+    const response = {
+      id: assertion.id,
+      rawId: _bufToB64u(assertion.rawId),
+      type: assertion.type,
+      response: {
+        clientDataJSON: _bufToB64u(assertion.response.clientDataJSON),
+        authenticatorData: _bufToB64u(assertion.response.authenticatorData),
+        signature: _bufToB64u(assertion.response.signature),
+        userHandle: assertion.response.userHandle ? _bufToB64u(assertion.response.userHandle) : undefined
+      },
+      clientExtensionResults: assertion.getClientExtensionResults ? assertion.getClientExtensionResults() : {}
+    };
+    const r = await api('/passwords/webauthn/auth/finish', 'POST', { response, folderId });
+    closeModal('pw-folder-unlock-modal');
+    // Atualiza estado local
+    const f = _pwFolderById(folderId);
+    if (f) { f.unlocked = true; f.unlockedUntil = r.until; }
+    pwState.selectedFolderId = folderId;
+    await loadPwEntriesForFolder(folderId);
+    renderPwFolders();
+    _updatePwEntriesHeader();
+    _pwStartTtlPaint();
+    toast('Pasta destravada via biometria.', 'success');
+  } catch (e) {
+    if (e.name === 'NotAllowedError') { toast('Cancelado.', 'warn'); return; }
+    toast(e.message || 'Falha ao destravar via biometria.', 'error');
+  }
+}
 /* Botão "Biometria" na barra de ações da unlocked view — só aparece se o
    browser suporta WebAuthn (não filtra por "tem cred", pra dar acesso ao
    cadastro do primeiro dispositivo). */
@@ -21135,115 +21394,299 @@ async function openPwBiometriaModal() {
   await refreshWebauthnCredsUI();
 }
 
+/* Sem unlock global — página abre direto e lista pastas (todas). Entradas
+   só carregam depois que o usuário destrava a pasta clicada. */
 async function renderPasswords() {
-  const locked = $('pw-locked-view');
-  const unlocked = $('pw-unlocked-view');
-  if (!locked || !unlocked) return;
-  // Consulta status atual — servidor é a fonte da verdade.
-  let s;
-  try { s = await api('/passwords/status'); }
-  catch (e) { s = { unlocked: false }; }
-  if (s.until) pwState.unlockedUntil = s.until;
-  if (s.ttlMs) pwState.ttlMs = s.ttlMs;
-  if (s.unlocked) {
-    locked.style.display = 'none';
-    unlocked.style.display = '';
-    await loadPasswords();
-    _pwStartTtlPaint();
-    _pwUpdateBiometriaBtn();
-  } else {
-    locked.style.display = '';
-    unlocked.style.display = 'none';
-    _pwStopTtlPaint();
-    _pwUpdateWebauthnUnlockBtn();
-    setTimeout(() => $('pw-unlock-input')?.focus(), 60);
-  }
-  paintIcons();
-}
-async function submitPwUnlock() {
-  const inp = $('pw-unlock-input');
-  const err = $('pw-unlock-err');
-  const btn = $('pw-unlock-btn');
-  err.style.display = 'none';
-  const pw = inp.value || '';
-  if (!pw) { err.textContent = 'Digite sua senha.'; err.style.display = ''; return; }
-  btn.disabled = true;
   try {
-    const r = await api('/passwords/unlock', 'POST', { password: pw });
-    pwState.unlockedUntil = r.until;
-    pwState.ttlMs = r.ttlMs || pwState.ttlMs;
-    inp.value = '';
-    await renderPasswords();
+    await loadPwFolders();
+    renderPwFolders();
+    // Se tem uma pasta selecionada e destravada, carrega as entradas dela.
+    const cur = pwState.selectedFolderId;
+    if (cur && cur !== '__all__' && pwState.folders.find(f => f.id === cur && f.unlocked)) {
+      await loadPwEntriesForFolder(cur);
+    } else {
+      pwState.entries = [];
+      renderPasswordsTable();
+    }
+    // Mostra botão "Acesso" (gerenciar biometria/PIN) se suportado pelo browser.
+    _pwUpdateBiometriaBtn();
   } catch (e) {
-    err.textContent = e.message || 'Senha incorreta.';
-    err.style.display = '';
-    inp.focus();
-    inp.select();
-  } finally {
-    btn.disabled = false;
+    toast('Falha ao carregar cofre.', 'error');
   }
 }
-async function lockPwVault() {
-  try { await api('/passwords/lock', 'POST', {}); } catch {}
-  pwState.unlockedUntil = 0;
-  // Zera reveals ativos + timers
-  Object.values(pwState.revealed).forEach(r => clearTimeout(r.timeoutId));
-  pwState.revealed = {};
-  pwState.entries = [];
-  toast('Cofre travado.', 'success');
+async function loadPwFolders() {
+  const folders = await api('/password-folders');
+  pwState.folders = folders || [];
+}
+async function loadPwEntriesForFolder(folderId) {
+  const entries = await api('/passwords?folderId=' + encodeURIComponent(folderId));
+  pwState.entries = entries || [];
+  renderPasswordsTable();
+}
+/* Não é mais usado — cofre não tranca globalmente. Mantido por compat com
+   chamadas antigas de outros lugares. */
+async function submitPwUnlock() { /* deprecated */ }
+async function lockPwVault() { /* deprecated */ }
+/* Trava a pasta atualmente aberta. */
+async function lockCurrentFolder() {
+  const cur = pwState.selectedFolderId;
+  if (!cur || cur === '__all__') return;
+  try { await api('/password-folders/' + cur + '/lock', 'POST', {}); } catch {}
+  // Limpa reveals dessa pasta
+  Object.entries(pwState.revealed).forEach(([id, r]) => {
+    const entry = pwState.entries.find(e => e.id === id);
+    if (entry && entry.folderId === cur) {
+      clearTimeout(r.timeoutId);
+      delete pwState.revealed[id];
+    }
+  });
+  toast('Pasta travada.', 'success');
+  pwState.selectedFolderId = null;
   await renderPasswords();
 }
 async function loadPasswords() {
-  try {
-    pwState.entries = await api('/passwords');
-    renderPasswordsTable();
-  } catch (e) {
-    if (String(e.message || '').includes('vault_locked') || String(e.message || '').includes('403')) {
-      pwState.unlockedUntil = 0;
-      await renderPasswords();
-      return;
-    }
-    toast('Falha ao carregar cofre.', 'error');
-  }
+  // Alias legado — delega pro renderPasswords que trata o novo modelo (folders + unlock).
+  await renderPasswords();
 }
 function renderPasswordsTable() {
   const tb = $('pw-tbody');
   if (!tb) return;
+  _updatePwEntriesHeader();
   const q = norm(($('pw-search')?.value || '').trim());
-  const list = pwState.entries.filter(p =>
-    !q || norm(p.name).includes(q) || norm(p.email || '').includes(q) || norm(p.username || '').includes(q)
-  );
+  const sel = pwState.selectedFolderId;
+  // Sem pasta selecionada = tabela vazia com instrução.
+  if (!sel) {
+    tb.innerHTML = `<tr><td colspan="6">${emptyMini(pwState.folders.length === 0
+      ? 'Crie uma pasta primeiro pra guardar suas senhas.'
+      : 'Escolha uma pasta na esquerda pra abrir. Cada uma pede sua senha da conta.')}</td></tr>`;
+    return;
+  }
+  // Se a pasta selecionada está TRAVADA, mostra CTA inline pra destravar
+  // (senha ou biometria) sem forçar modal.
+  const curFolder = _pwFolderById(sel);
+  if (curFolder && !curFolder.unlocked) {
+    tb.innerHTML = `<tr><td colspan="6">
+      <div class="pw-folder-locked-cta">
+        <i data-lucide="lock" class="ic-md"></i>
+        <div class="pw-folder-locked-title">${esc(curFolder.name)} está travada</div>
+        <div class="pw-folder-locked-sub">Autentique com sua senha da conta pra ver as ${curFolder.entryCount || 0} entrada${curFolder.entryCount === 1 ? '' : 's'}.</div>
+        <button class="btn btn-primary" onclick="openFolderUnlockModal('${curFolder.id}')"><i data-lucide="unlock" class="ic-sm"></i> Abrir pasta</button>
+      </div>
+    </td></tr>`;
+    paintIcons();
+    return;
+  }
+  // Filtro textual dentro das entradas da pasta atual (já vieram só dessa pasta do server).
+  const list = pwState.entries.filter(p => {
+    if (!q) return true;
+    return norm(p.name).includes(q)
+        || norm(p.description || '').includes(q)
+        || norm(p.email || '').includes(q)
+        || norm(p.username || '').includes(q);
+  });
   if (!list.length) {
-    tb.innerHTML = `<tr><td colspan="6">${emptyMini(q ? 'Nenhuma entrada encontrada.' : 'Nenhuma senha cadastrada ainda. Clique em "Nova entrada".')}</td></tr>`;
+    const msg = q ? 'Nenhuma entrada encontrada.' : 'Esta pasta está vazia. Clique em "Nova entrada".';
+    tb.innerHTML = `<tr><td colspan="6">${emptyMini(msg)}</td></tr>`;
     return;
   }
   tb.innerHTML = list.map(p => {
     const revealed = pwState.revealed[p.id];
     const pwCell = revealed
       ? `<span class="pw-value pw-value--shown" title="${esc(revealed.pw)}">${esc(revealed.pw)}</span>
-         <button class="pw-icon-btn" onclick="copyPwValue('${p.id}')" title="Copiar senha"><i data-lucide="copy" class="ic-xs"></i></button>`
+         <button class="pw-icon-btn" onclick="copyPwValue('${p.id}')" title="Copiar senha"><i data-lucide="copy" class="ic-sm"></i></button>`
       : `<span class="pw-value">••••••••</span>`;
     const emailEsc = esc(p.email || '');
     const usernameEsc = esc(p.username || '');
+    // Row principal (nome/link/email/user/senha/ações) + row secundário full-width
+    // com a descrição — só aparece se tiver conteúdo.
+    const descRow = p.description
+      ? `<tr class="pw-desc-row"><td colspan="6"><i data-lucide="align-left" class="ic-xs"></i> ${esc(p.description)}</td></tr>`
+      : '';
     return `
-      <tr>
+      <tr class="pw-main-row ${p.description ? 'has-desc' : ''}">
         <td class="pw-td-name" title="${esc(p.name)}"><strong>${esc(p.name)}</strong></td>
         <td class="pw-td-link">${p.link ? `<a href="${esc(p.link)}" target="_blank" rel="noopener" class="pw-link" title="${esc(p.link)}">${esc(_pwShortLink(p.link))}</a>` : '—'}</td>
         <td class="pw-td-single" title="${emailEsc}">${emailEsc || '—'}</td>
-        <td class="pw-td-single">${p.username ? `<span class="pw-mono" title="${usernameEsc}">${usernameEsc}</span> <button class="pw-icon-btn" onclick="copyToClipboard('${usernameEsc.replace(/'/g,"&#39;")}', 'Usuário')" title="Copiar"><i data-lucide="copy" class="ic-xs"></i></button>` : '—'}</td>
+        <td class="pw-td-single">${p.username ? `<span class="pw-mono" title="${usernameEsc}">${usernameEsc}</span> <button class="pw-icon-btn" onclick="copyToClipboard('${usernameEsc.replace(/'/g,"&#39;")}', 'Usuário')" title="Copiar"><i data-lucide="copy" class="ic-sm"></i></button>` : '—'}</td>
         <td class="pw-cell pw-td-single">${pwCell}</td>
         <td>
           <div class="pw-row-actions">
             <button class="pw-icon-btn" onclick="togglePwReveal('${p.id}')" title="${revealed ? 'Ocultar' : 'Mostrar'} senha">
-              <i data-lucide="${revealed ? 'eye-off' : 'eye'}" class="ic-xs"></i>
+              <i data-lucide="${revealed ? 'eye-off' : 'eye'}" class="ic-sm"></i>
             </button>
-            <button class="pw-icon-btn" onclick="openPwWizard('${p.id}')" title="Editar"><i data-lucide="pencil" class="ic-xs"></i></button>
-            <button class="pw-icon-btn danger" onclick="deletePwEntry('${p.id}')" title="Excluir"><i data-lucide="trash-2" class="ic-xs"></i></button>
+            <button class="pw-icon-btn" onclick="openPwWizard('${p.id}')" title="Editar"><i data-lucide="pencil" class="ic-sm"></i></button>
+            <button class="pw-icon-btn danger" onclick="deletePwEntry('${p.id}')" title="Excluir"><i data-lucide="trash-2" class="ic-sm"></i></button>
           </div>
         </td>
-      </tr>`;
+      </tr>
+      ${descRow}`;
   }).join('');
   paintIcons();
+}
+/* ── Pastas do cofre ──
+   Pastas agora são entidades persistidas com controle de acesso por usuário.
+   O usuário só vê pastas que ele criou OU foi adicionado como membro. Cada
+   senha vive DENTRO de uma pasta (folderId obrigatório). */
+function _pwFolderById(id) {
+  return (pwState.folders || []).find(f => f.id === id);
+}
+function _pwCountInFolder(folderId) {
+  return (pwState.entries || []).filter(p => p.folderId === folderId).length;
+}
+function renderPwFolders() {
+  const el = document.getElementById('pw-folders');
+  if (!el) return;
+  const folders = (pwState.folders || []).slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  const sel = pwState.selectedFolderId;
+  const folderItems = folders.map(f => {
+    const isActive = sel === f.id;
+    const isUnlocked = !!f.unlocked;
+    return `<button type="button" class="pw-folder-item ${isActive ? 'is-active' : ''} ${isUnlocked ? 'is-unlocked' : 'is-locked'}" data-folder-id="${f.id}" onclick="selectPwFolder('${f.id}')">
+      <i data-lucide="${isUnlocked ? 'folder-open' : 'lock'}" class="ic-sm"></i>
+      <span class="pw-folder-name" title="${esc(f.name)}">${esc(f.name)}</span>
+      <span class="pw-folder-count">${f.entryCount ?? 0}</span>
+      ${f.canEdit ? `<button type="button" class="pw-folder-menu-btn" title="Editar pasta" onclick="event.stopPropagation(); openPwFolderEditor('${f.id}')"><i data-lucide="more-horizontal" class="ic-xs"></i></button>` : ''}
+    </button>`;
+  }).join('');
+  el.innerHTML = `
+    <div class="pw-folder-section-title">Pastas</div>
+    ${folderItems || '<div class="pw-folder-empty">Nenhuma pasta ainda. Crie a primeira.</div>'}
+    <button type="button" class="pw-folder-new-btn" onclick="openPwFolderEditor(null)">
+      <i data-lucide="plus" class="ic-sm"></i> Nova pasta
+    </button>
+  `;
+  if (typeof paintIcons === 'function') paintIcons();
+}
+/* Clicar em QUALQUER pasta (destravada ou travada) seleciona ela. Se
+   destravada, carrega entradas direto. Se travada, marca como selecionada
+   (visualmente) e mostra o unlock inline no lugar da tabela — sem modal
+   bloqueando. Assim é livre trocar entre pastas a qualquer momento. */
+async function selectPwFolder(folderId) {
+  if (!folderId) return;
+  const f = _pwFolderById(folderId);
+  if (!f) return;
+  pwState.selectedFolderId = folderId;
+  if (f.unlocked) {
+    await loadPwEntriesForFolder(folderId);
+  } else {
+    // Zera entradas anteriores (podem ser de outra pasta destravada) e
+    // renderiza estado bloqueado inline. Usuário destrava clicando no botão
+    // que aparece no lugar da tabela — ou pelo modal se preferir teclado.
+    pwState.entries = [];
+    renderPasswordsTable();
+  }
+  _updatePwEntriesHeader();
+  renderPwFolders(); // atualiza is-active
+}
+/* Header da coluna direita: mostra nome + TTL badge + botão Travar. */
+function _updatePwEntriesHeader() {
+  const header = document.getElementById('pw-entries-header');
+  const title = document.getElementById('pw-entries-title');
+  const badge = document.getElementById('pw-ttl-badge');
+  const cur = pwState.selectedFolderId;
+  const f = cur ? _pwFolderById(cur) : null;
+  if (!header) return;
+  if (f && f.unlocked) {
+    header.style.display = '';
+    if (title) title.textContent = f.name;
+    if (badge && f.unlockedUntil) {
+      const secs = Math.max(0, Math.floor((f.unlockedUntil - Date.now()) / 1000));
+      const mm = Math.floor(secs / 60), ss = secs % 60;
+      badge.textContent = mm + ':' + String(ss).padStart(2, '0');
+    }
+  } else {
+    header.style.display = 'none';
+  }
+}
+/* Modal de unlock por pasta — reusa o mesmo wizard (senha + biometria/PIN). */
+let _pwPendingUnlockFolderId = null;
+function openFolderUnlockModal(folderId) {
+  _pwPendingUnlockFolderId = folderId;
+  const f = _pwFolderById(folderId);
+  const nameEl = document.getElementById('pw-folder-unlock-name');
+  if (nameEl) nameEl.textContent = f ? f.name : 'esta pasta';
+  const inp = document.getElementById('pw-folder-unlock-input');
+  if (inp) inp.value = '';
+  const err = document.getElementById('pw-folder-unlock-err');
+  if (err) err.style.display = 'none';
+  openModal('pw-folder-unlock-modal');
+  _pwUpdateFolderWebauthnBtn(); // mostra botão biometria se houver cred
+  setTimeout(() => document.getElementById('pw-folder-unlock-input')?.focus(), 60);
+}
+async function submitFolderUnlock() {
+  const folderId = _pwPendingUnlockFolderId;
+  if (!folderId) return;
+  const inp = document.getElementById('pw-folder-unlock-input');
+  const err = document.getElementById('pw-folder-unlock-err');
+  const pw = (inp?.value || '');
+  if (!pw) { if (err) { err.textContent = 'Digite sua senha.'; err.style.display = ''; } return; }
+  try {
+    const r = await api('/password-folders/' + folderId + '/unlock', 'POST', { password: pw });
+    if (inp) inp.value = '';
+    closeModal('pw-folder-unlock-modal');
+    // Atualiza estado local
+    const f = _pwFolderById(folderId);
+    if (f) { f.unlocked = true; f.unlockedUntil = r.until; }
+    pwState.selectedFolderId = folderId;
+    await loadPwEntriesForFolder(folderId);
+    renderPwFolders();
+    _updatePwEntriesHeader();
+    _pwStartTtlPaint();
+    toast('Pasta destravada.', 'success');
+  } catch (e) {
+    if (err) { err.textContent = e.message || 'Senha incorreta.'; err.style.display = ''; }
+    inp?.focus(); inp?.select();
+  }
+}
+/* Editor de pasta — só nome. Sem whitelist de membros: todos veem, mas
+   cada um autentica com a própria senha ao abrir. */
+let _pwFolderEditingId = null;
+function openPwFolderEditor(folderId) {
+  _pwFolderEditingId = folderId || null;
+  const f = folderId ? _pwFolderById(folderId) : null;
+  $('pw-folder-modal-title').textContent = f ? 'Editar pasta' : 'Nova pasta';
+  $('pw-folder-f-name').value = f?.name || '';
+  $('pw-folder-delete-btn').style.display = (f && f.canEdit) ? '' : 'none';
+  openModal('pw-folder-modal');
+  setTimeout(() => $('pw-folder-f-name').focus(), 60);
+}
+async function submitPwFolderEditor() {
+  const name = ($('pw-folder-f-name').value || '').trim();
+  if (!name) { toast('Informe o nome da pasta.', 'warn'); return; }
+  try {
+    if (_pwFolderEditingId) {
+      await api('/password-folders/' + _pwFolderEditingId, 'PUT', { name });
+      toast('Pasta atualizada.', 'success');
+    } else {
+      const created = await api('/password-folders', 'POST', { name });
+      toast('Pasta criada.', 'success');
+    }
+    closeModal('pw-folder-modal');
+    await renderPasswords();
+  } catch (e) { toast(e.message || 'Falha ao salvar pasta.', 'error'); }
+}
+async function deletePwFolderFromEditor() {
+  if (!_pwFolderEditingId) return;
+  const f = _pwFolderById(_pwFolderEditingId);
+  if (!f) return;
+  const count = _pwCountInFolder(f.id);
+  if (count > 0) {
+    toast(`Mova as ${count} entrada(s) antes de excluir a pasta.`, 'warn');
+    return;
+  }
+  const ok = await showConfirm({
+    title: 'Remover pasta',
+    message: `A pasta <strong>${esc(f.name)}</strong> será removida. Continuar?`,
+    okLabel: 'Remover', danger: true
+  });
+  if (!ok) return;
+  try {
+    await api('/password-folders/' + f.id, 'DELETE');
+    if (pwState.selectedFolderId === f.id) pwState.selectedFolderId = '__all__';
+    closeModal('pw-folder-modal');
+    toast('Pasta removida.', 'success');
+    await loadPasswords();
+  } catch (e) { toast(e.message || 'Falha ao remover.', 'error'); }
 }
 function _pwShortLink(url) {
   // Encurta pra caber sem quebrar linha. Só o host (sem www.) — remove path/query.
@@ -21303,10 +21746,25 @@ function _pwSetToggleIcon(name) {
   paintIcons();
 }
 function openPwWizard(id) {
+  // Só dá pra criar/editar em pastas DESTRAVADAS (server exige unlock pra CUD).
+  const unlockedFolders = (pwState.folders || []).filter(f => f.unlocked);
+  if (!id && unlockedFolders.length === 0) {
+    toast('Destrave uma pasta antes de criar entradas.', 'warn');
+    return;
+  }
   $('pw-edit-id').value = id || '';
   $('pw-wizard-title').textContent = id ? 'Editar entrada' : 'Nova entrada';
   const p = id ? pwState.entries.find(x => x.id === id) : null;
   $('pw-f-name').value     = p?.name     || '';
+  $('pw-f-description').value = p?.description || '';
+  // Popula dropdown só com pastas destravadas (server só aceita gravar em pasta unlocked).
+  const cur = pwState.selectedFolderId;
+  const prefillFolderId = p ? p.folderId : (cur && unlockedFolders.some(f => f.id === cur) ? cur : (unlockedFolders[0]?.id || ''));
+  const folderSel = $('pw-f-folder-id');
+  folderSel.innerHTML = unlockedFolders
+    .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)))
+    .map(f => `<option value="${f.id}" ${f.id === prefillFolderId ? 'selected' : ''}>${esc(f.name)}</option>`)
+    .join('');
   $('pw-f-link').value     = p?.link     || '';
   $('pw-f-email').value    = p?.email    || '';
   $('pw-f-username').value = p?.username || '';
@@ -21339,8 +21797,12 @@ async function submitPwWizard() {
   const pw = $('pw-f-password').value || '';
   if (!name) { toast('Informe um nome.', 'warn'); return; }
   if (!id && !pw) { toast('Informe a senha.', 'warn'); return; }
+  const folderId = ($('pw-f-folder-id')?.value || '').trim();
+  if (!folderId) { toast('Escolha uma pasta.', 'warn'); return; }
   const body = {
     name,
+    folderId,
+    description: ($('pw-f-description').value || '').trim(),
     link: ($('pw-f-link').value || '').trim(),
     email: ($('pw-f-email').value || '').trim(),
     username: ($('pw-f-username').value || '').trim()
@@ -21351,13 +21813,14 @@ async function submitPwWizard() {
     else    await api('/passwords',        'POST', body);
     closeModal('pw-wizard-modal');
     toast(id ? 'Entrada atualizada.' : 'Entrada criada.', 'success');
-    await loadPasswords();
+    // Seleciona a pasta de destino pra o usuário ver a entrada que acabou de criar/mover.
+    pwState.selectedFolderId = folderId;
+    await renderPasswords();
   } catch (e) {
-    if (String(e.message || '').includes('vault_locked')) {
-      pwState.unlockedUntil = 0;
+    if (String(e.message || '').includes('folder_locked') || String(e.message || '').includes('vault_locked')) {
       closeModal('pw-wizard-modal');
       await renderPasswords();
-      toast('Cofre expirou. Destrave de novo.', 'warn');
+      toast('Pasta expirou. Destrave de novo.', 'warn');
     } else {
       toast(e.message || 'Falha ao salvar.', 'error');
     }
@@ -21505,19 +21968,25 @@ function renderKbGrid() {
   const wrap = $('kb-cards'); if (!wrap) return;
   const q = norm(($('kb-search')?.value || '').trim());
   const author = $('kb-f-author')?.value || '';
-  const activeTag = kbState._activeTag || '';
+  // Multi-select: activeTags é um Set. Post precisa conter TODAS as tags
+  // selecionadas (AND) — filtros cruzados = busca mais precisa.
+  if (!(kbState._activeTags instanceof Set)) kbState._activeTags = new Set();
+  const activeTags = kbState._activeTags;
   const list = (kbState.posts || []).filter(p => {
     if (author && p.authorId !== author) return false;
-    if (activeTag && !(p.tags || []).includes(activeTag)) return false;
+    if (activeTags.size) {
+      const postTags = new Set(p.tags || []);
+      for (const t of activeTags) if (!postTags.has(t)) return false;
+    }
     if (!q) return true;
     const hay = norm(p.title || '') + ' ' + norm(_stripHtml(p.content || '')) + ' ' + (p.tags || []).join(' ');
     return hay.includes(q);
   });
   // Tag chips (top-N tags do resultado atual)
-  renderKbTagChips(activeTag);
+  renderKbTagChips();
   if (!list.length) {
     wrap.innerHTML = `<div class="empty-state" style="padding:40px 0">${
-      q || author || activeTag ? 'Nenhum post encontrado com esse filtro.' : 'Nenhum post ainda. Clique em "+ Novo post" pra começar a base de conhecimento.'
+      q || author || activeTags.size ? 'Nenhum post encontrado com esses filtros.' : 'Nenhum post ainda. Clique em "+ Novo post" pra começar a base de conhecimento.'
     }</div>`;
     return;
   }
@@ -21549,19 +22018,37 @@ function renderKbGrid() {
   }).join('');
   paintIcons();
 }
-function renderKbTagChips(activeTag) {
+function renderKbTagChips() {
   const wrap = $('kb-tag-chips'); if (!wrap) return;
+  if (!(kbState._activeTags instanceof Set)) kbState._activeTags = new Set();
+  const activeTags = kbState._activeTags;
   const counts = new Map();
   (kbState.posts || []).forEach(p => (p.tags || []).forEach(t => counts.set(t, (counts.get(t) || 0) + 1)));
   const tags = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20);
   if (!tags.length) { wrap.innerHTML = ''; return; }
   wrap.innerHTML =
-    `<button type="button" class="kb-chip ${!activeTag ? 'is-active' : ''}" onclick="setKbTagFilter('')">Todas</button>` +
-    tags.map(([t, n]) => `<button type="button" class="kb-chip ${activeTag === t ? 'is-active' : ''}" onclick="setKbTagFilter('${esc(t).replace(/'/g,"&#39;")}')">${esc(t)} <span class="kb-chip-count">${n}</span></button>`).join('');
+    `<button type="button" class="kb-chip ${activeTags.size === 0 ? 'is-active' : ''}" onclick="clearKbTagFilter()">Todas</button>` +
+    tags.map(([t, n]) => {
+      const isOn = activeTags.has(t);
+      return `<button type="button" class="kb-chip ${isOn ? 'is-active' : ''}" onclick="toggleKbTagFilter('${esc(t).replace(/'/g,"&#39;")}')">${esc(t)} <span class="kb-chip-count">${n}</span></button>`;
+    }).join('');
 }
-function setKbTagFilter(t) {
-  kbState._activeTag = t || '';
+/* Toggle multi-select: adiciona/remove a tag do filtro ativo. AND entre elas. */
+function toggleKbTagFilter(t) {
+  if (!t) return;
+  if (!(kbState._activeTags instanceof Set)) kbState._activeTags = new Set();
+  if (kbState._activeTags.has(t)) kbState._activeTags.delete(t);
+  else kbState._activeTags.add(t);
   renderKbGrid();
+}
+function clearKbTagFilter() {
+  kbState._activeTags = new Set();
+  renderKbGrid();
+}
+/* Compat com chamadas antigas (setKbTagFilter). */
+function setKbTagFilter(t) {
+  if (!t) { clearKbTagFilter(); return; }
+  toggleKbTagFilter(t);
 }
 function _stripHtml(html) {
   const div = document.createElement('div');
