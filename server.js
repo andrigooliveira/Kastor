@@ -1053,12 +1053,13 @@ app.use((req, res, next) => {
   // o browser bloqueia YouTube/Loom/Figma/etc. antes mesmo de fazer o request.
   res.set('Content-Security-Policy', [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline'",
+    // Clarity: script vem de www.clarity.ms, beacons/telemetria pra *.clarity.ms.
+    "script-src 'self' 'unsafe-inline' https://www.clarity.ms https://*.clarity.ms",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com data:",
     "img-src 'self' data: blob: https:",
     "media-src 'self' https:",
-    "connect-src 'self'",
+    "connect-src 'self' https://*.clarity.ms https://c.bing.com",
     `frame-src ${CSP_IFRAME_SRC}`,
     `child-src ${CSP_IFRAME_SRC}`,
     "frame-ancestors 'self'",
