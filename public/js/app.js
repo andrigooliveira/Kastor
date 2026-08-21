@@ -2847,6 +2847,11 @@ document.addEventListener('click', ev => {
   if (ev.target !== overlay) return; // clicou no fundo, não no conteúdo
   const inner = overlay.querySelector('.modal');
   if (inner && inner.dataset.noOutsideClose === '1') return;
+  // demand-modal: se está na etapa Customizar ou depois, pede confirmação antes de fechar.
+  if (overlay.id === 'demand-modal' && _wizardShouldConfirmClose()) {
+    _confirmWizardClose();
+    return;
+  }
   attemptCloseModal(overlay.id);
 }, true);
 document.addEventListener('keydown', ev => {
@@ -2855,8 +2860,26 @@ document.addEventListener('keydown', ev => {
   if (!open) return;
   const inner = open.querySelector('.modal');
   if (inner && inner.dataset.noOutsideClose === '1') return;
+  if (open.id === 'demand-modal' && _wizardShouldConfirmClose()) {
+    _confirmWizardClose();
+    return;
+  }
   attemptCloseModal(open.id);
 });
+/* Guarda se o wizard passou pelo passo Customizar/Detalhes — a partir daí a
+   saída acidental (clicar fora / Esc) exige confirmação, pra não perder dados. */
+function _wizardShouldConfirmClose() {
+  if (typeof wizardState !== 'object' || !wizardState) return false;
+  return wizardState.step === 'cust' || wizardState.step === 4;
+}
+function _confirmWizardClose() {
+  showConfirm({
+    title: 'Descartar demanda?',
+    message: 'Você fez alterações que ainda não foram salvas. Deseja descartá-las e sair?',
+    okLabel: 'Descartar e sair',
+    danger: true
+  }).then(ok => { if (ok) attemptCloseModal('demand-modal'); });
+}
 document.addEventListener('click', e => {
   // fecha dropdowns customizados ao clicar fora
   document.querySelectorAll('.user-select.open').forEach(el => {
@@ -8018,15 +8041,19 @@ function openDetailStages() {
 }
 function toggleStageDraft(stageId) {
   if (!stagesEditDraft) return;
+  const d = demandById(detailId); if (!d) return;
   if (stagesEditDraft.skipped.has(stageId)) stagesEditDraft.skipped.delete(stageId);
   else stagesEditDraft.skipped.add(stageId);
-  renderDetail();
+  renderDetailStages(d);
+  refreshStagesEditButtons(d);
 }
 function setStageResponsibleDraft(stageId, value) {
   if (!stagesEditDraft) return;
-  const d = demandById(detailId);
-  const flow = d ? flowById(d.flowId) : null;
-  const stage = flow?.stages.find(s => s.id === stageId) || (d?.stageAdditions || []).find(s => s.id === stageId);
+  const d = demandById(detailId); if (!d) return;
+  const flow = flowById(d.flowId);
+  const stage = flow?.stages.find(s => s.id === stageId)
+    || (d.stageAdditions || []).find(s => s.id === stageId)
+    || (stagesEditDraft.newAdditions || []).find(s => s.id === stageId);
   // Padrão resolvido (id direto ou via role assignments) — se o usuário escolher
   // esse mesmo id, remove override (é equivalente a "voltar pro padrão").
   const defaultRespId = resolveStageOwnerId(d, stage) || '';
@@ -8040,15 +8067,21 @@ function setStageResponsibleDraft(stageId, value) {
   } else {
     stagesEditDraft.responsibles[stageId] = value;
   }
-  renderDetail();
+  // Só re-renderiza o tab (não o modal inteiro) — foca em não perder estado de outros
+  // inputs em edição. renderDetail full disparava re-mount do editor de comentário etc.
+  renderDetailStages(d);
+  refreshStagesEditButtons(d);
 }
 function setStageLabelDraft(stageId, value) {
   if (!stagesEditDraft) return;
   const d = demandById(detailId); if (!d) return;
-  // Pool: fluxo + adicionadas (as duas podem ser renomeadas)
+  // Pool: fluxo + adicionadas salvas + adicionadas novas (as três podem ser renomeadas).
+  // Sem incluir newAdditions, digitar num nome de etapa nova não gravava em draft.labels
+  // e o texto resetava ao próximo re-render (ex.: mudança de executor).
   const flow = flowById(d.flowId);
   let orig = flow?.stages.find(s => s.id === stageId);
   if (!orig) orig = (d.stageAdditions || []).find(s => s.id === stageId);
+  if (!orig) orig = (stagesEditDraft.newAdditions || []).find(s => s.id === stageId);
   if (!orig) return;
   const trimmed = (value || '').trim();
   if (!trimmed || trimmed === orig.label) delete stagesEditDraft.labels[stageId];
@@ -8058,36 +8091,14 @@ function setStageLabelDraft(stageId, value) {
 }
 function refreshStagesEditButtons(d) {
   const dirty = isStagesDraftDirty(d);
-  // "Restaurar padrões" habilita se existe QUALQUER customização (skips, resp,
-  // label, ordem OU SLA diferente do fluxo).
-  const hasSlaOverride = stagesEditDraft?.sla && (() => {
-    const flow = flowById(d.flowId);
-    const flowSlaById = new Map((flow?.stages || []).map(s => [s.id, s.deadlineDays ?? null]));
-    for (const [sid, v] of Object.entries(stagesEditDraft.sla)) {
-      if (!flowSlaById.has(sid)) continue;
-      if ((v ?? null) !== (flowSlaById.get(sid) ?? null)) return true;
-    }
-    return false;
-  })();
-  const hasDateAnchor = !!(stagesEditDraft?.dates && Object.keys(stagesEditDraft.dates).length);
-  const hasNewAdd = !!(stagesEditDraft?.newAdditions && stagesEditDraft.newAdditions.length);
-  const hasRemovedAdd = !!(stagesEditDraft?.removedAdditionIds && stagesEditDraft.removedAdditionIds.size);
-  const hasDoneOv = !!(stagesEditDraft?.done && Object.keys(stagesEditDraft.done).length);
-  const empty = !stagesEditDraft || (
-    stagesEditDraft.skipped.size === 0 &&
-    Object.keys(stagesEditDraft.responsibles).length === 0 &&
-    Object.keys(stagesEditDraft.labels).length === 0 &&
-    !isStagesOrderCustomized(d) &&
-    !hasSlaOverride &&
-    !hasDateAnchor &&
-    !hasNewAdd &&
-    !hasRemovedAdd &&
-    !hasDoneOv
-  );
   const saveBtn = document.getElementById('stages-edit-save');
   const resetBtn = document.getElementById('stages-edit-reset');
+  const hint = document.getElementById('stages-edit-dirty-hint');
   if (saveBtn) saveBtn.disabled = !dirty;
-  if (resetBtn) resetBtn.disabled = empty;
+  // "Descartar alterações" agora restaura o último SALVO (não o padrão do fluxo),
+  // então só faz sentido habilitar quando há diff pra salvar (dirty).
+  if (resetBtn) resetBtn.disabled = !dirty;
+  if (hint) hint.style.display = dirty ? '' : 'none';
 }
 function isStagesOrderCustomized(d) {
   if (!stagesEditDraft) return false;
@@ -8096,26 +8107,41 @@ function isStagesOrderCustomized(d) {
   if (stagesEditDraft.order.length !== baseOrder.length) return true;
   return stagesEditDraft.order.some((id, i) => baseOrder[i] !== id);
 }
+/* "Descartar alterações": restaura o ÚLTIMO ESTADO SALVO da demanda (não o
+   padrão do fluxo). Rebuilda o draft exatamente como openDetailStages faz. */
 function resetStagesDraft() {
-  if (!stagesEditDraft) return;
-  const d = demandById(detailId);
-  // Reset volta pros PADRÕES do fluxo — o seed do sla vira o valor original das
-  // etapas (não vazio), pra o input não ficar em branco depois de restaurar.
-  const flow = d ? flowById(d.flowId) : null;
+  const d = demandById(detailId); if (!d) return;
+  _rebuildStagesDraftFromSaved(d);
+  renderDetailStages(d);
+  refreshStagesEditButtons(d);
+}
+function _rebuildStagesDraftFromSaved(d) {
+  const flow = flowById(d.flowId);
+  const savedOv = (d.stageOverrides && typeof d.stageOverrides === 'object') ? d.stageOverrides : {};
   const seedSla = {};
-  (flow?.stages || []).forEach(s => { seedSla[s.id] = s.deadlineDays ?? null; });
+  const seedDates = {};
+  (flow?.stages || []).forEach(s => {
+    seedSla[s.id] = (savedOv[s.id]?.deadlineDays !== undefined) ? savedOv[s.id].deadlineDays : (s.deadlineDays ?? null);
+    if (savedOv[s.id]?.deadlineDate) seedDates[s.id] = savedOv[s.id].deadlineDate;
+  });
+  const poolIds = _demandStageIdPool(d);
+  const poolSet = new Set(poolIds);
+  const customOrder = Array.isArray(d.stageOrder) ? d.stageOrder.filter(id => poolSet.has(id)) : [];
+  const seen = new Set(customOrder);
+  const remaining = poolIds.filter(id => !seen.has(id));
+  const initialOrder = customOrder.length ? [...customOrder, ...remaining] : poolIds;
   stagesEditDraft = {
-    skipped: new Set(),
-    responsibles: {},
-    labels: {},
+    skipped: new Set(Array.isArray(d.skippedStages) ? d.skippedStages : []),
+    responsibles: { ...(d.stageResponsibles && typeof d.stageResponsibles === 'object' ? d.stageResponsibles : {}) },
+    labels: { ...(d.stageLabels && typeof d.stageLabels === 'object' ? d.stageLabels : {}) },
     sla: seedSla,
-    dates: {},
-    order: d ? _demandStageIdPool(d) : [],
+    dates: seedDates,
+    order: initialOrder,
     newAdditions: [],
     removedAdditionIds: new Set(),
     done: {},
+    donePrevIndex: {},
   };
-  renderDetail();
 }
 /* Adiciona uma nova etapa (só client-side até Salvar). Insere antes da primeira
    etapa de conclusão (done), pra manter a "Conclusão" sempre no fim. */
@@ -8151,7 +8177,8 @@ function addStageToDraft() {
   const firstDoneIdx = stagesEditDraft.order.findIndex(isDoneEff);
   if (firstDoneIdx >= 0) stagesEditDraft.order.splice(firstDoneIdx, 0, newId);
   else stagesEditDraft.order.push(newId);
-  renderDetail();
+  renderDetailStages(d);
+  refreshStagesEditButtons(d);
 }
 /* Remove uma addition da demanda. Se for uma addition NOVA (só client-side),
    apenas retira do draft; se for uma addition já persistida, marca pra remoção. */
@@ -8172,7 +8199,8 @@ function removeStageAdditionDraft(stageId) {
   if (stagesEditDraft.done) delete stagesEditDraft.done[stageId];
   if (stagesEditDraft.dates) delete stagesEditDraft.dates[stageId];
   if (stagesEditDraft.sla) delete stagesEditDraft.sla[stageId];
-  renderDetail();
+  renderDetailStages(d);
+  refreshStagesEditButtons(d);
 }
 /* Alterna a flag "conclusão" (done) de uma etapa. Etapas done vão pro fim da ordem
    E lembram sua posição anterior, pra restaurar quando desmarcadas. Sem isso o
@@ -8213,7 +8241,8 @@ function toggleStageDoneDraft(stageId) {
     }
     delete stagesEditDraft.donePrevIndex[stageId];
   }
-  renderDetail();
+  renderDetailStages(d);
+  refreshStagesEditButtons(d);
 }
 /* Helper: reordena o array de IDs colocando as etapas "done" (com override do
    draft ou default do fluxo) no fim, preservando a ordem relativa dos não-done. */
@@ -8620,16 +8649,7 @@ function renderDetailStages(d) {
   if (!stagesEditDraft.done || typeof stagesEditDraft.done !== 'object') stagesEditDraft.done = {};
   const draft = stagesEditDraft;
   const dirty = isStagesDraftDirty(d);
-  // "empty" espelha a lógica do refreshStagesEditButtons — considera SLA custom.
   const flowSlaById = new Map((flow?.stages || []).map(s => [s.id, s.deadlineDays ?? null]));
-  const hasSlaOv = !!(draft.sla && Object.entries(draft.sla).some(([sid, v]) =>
-    flowSlaById.has(sid) && ((v ?? null) !== (flowSlaById.get(sid) ?? null))
-  ));
-  const hasDateAnchorOv = !!(draft.dates && Object.keys(draft.dates).length);
-  const hasNewAddOv = !!(draft.newAdditions && draft.newAdditions.length);
-  const hasRemovedAddOv = !!(draft.removedAdditionIds && draft.removedAdditionIds.size);
-  const hasDoneOv = !!(draft.done && Object.keys(draft.done).length);
-  const empty = draft.skipped.size === 0 && Object.keys(draft.responsibles).length === 0 && Object.keys(draft.labels).length === 0 && !isStagesOrderCustomized(d) && !hasSlaOv && !hasDateAnchorOv && !hasNewAddOv && !hasRemovedAddOv && !hasDoneOv;
   const sortedUsers = wsUsers().slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
 
   // Inclui adições novas (só client-side) no pool visível — persistem apenas ao Salvar.
@@ -8766,8 +8786,12 @@ function renderDetailStages(d) {
         })()}</div>` : '<div class="hours-empty">Esta demanda não tem fluxo associado.</div>'}
       <div class="stages-edit-footer">
         <button id="stages-edit-add" class="btn btn-ghost btn-sm" onclick="addStageToDraft()" ${flow ? '' : 'disabled'}><i data-lucide="plus" class="ic-sm"></i>&nbsp;Adicionar etapa</button>
+        <div class="stages-edit-dirty-hint" id="stages-edit-dirty-hint" style="${dirty ? '' : 'display:none'}">
+          <i data-lucide="circle-alert" class="ic-xs"></i>
+          <span>Alterações não salvas</span>
+        </div>
         <div style="flex:1"></div>
-        <button id="stages-edit-reset" class="btn btn-ghost btn-sm" onclick="resetStagesDraft()" ${empty ? 'disabled' : ''}>Restaurar padrões</button>
+        <button id="stages-edit-reset" class="btn btn-ghost btn-sm" onclick="resetStagesDraft()" ${dirty ? '' : 'disabled'}>Descartar alterações</button>
         <button id="stages-edit-save" class="btn btn-primary btn-sm" onclick="saveStagesDraft()" ${!dirty ? 'disabled' : ''}>Salvar</button>
       </div>
     </div>`;
@@ -15887,7 +15911,50 @@ function renderNotifBadge() {
       }
     }
   }
+  _updateFaviconDot(unread > 0);
   _lastNotifUnread = unread;
+}
+/* Pinta um pontinho vermelho no canto do favicon quando tem notificação não lida.
+   Baseline (sem dot) e badged (com dot) ficam pre-geradas em cache — a troca é só
+   swap do href de <link rel="icon">, sem redraw a cada chamada. */
+let _faviconCache = { base: null, badged: null, ready: false };
+function _updateFaviconDot(hasUnread) {
+  const link = document.querySelector('link[rel="icon"]');
+  if (!link) return;
+  if (!_faviconCache.ready) { _prepareFaviconCache(link.href); return; }
+  const target = hasUnread ? _faviconCache.badged : _faviconCache.base;
+  if (target && link.href !== target) link.href = target;
+}
+function _prepareFaviconCache(baseHref) {
+  if (_faviconCache.ready) return;
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => {
+    // Trabalha em 64x64 pra ter qualidade em telas HiDPI.
+    const size = 64;
+    const c1 = document.createElement('canvas'); c1.width = size; c1.height = size;
+    c1.getContext('2d').drawImage(img, 0, 0, size, size);
+    _faviconCache.base = c1.toDataURL('image/png');
+    const c2 = document.createElement('canvas'); c2.width = size; c2.height = size;
+    const ctx = c2.getContext('2d');
+    ctx.drawImage(img, 0, 0, size, size);
+    // Dot vermelho no canto superior direito — ~1/2 do favicon,
+    // com halo escuro pra separar visualmente do desenho de fundo.
+    const r = 16;
+    const cx = size - r - 1;
+    const cy = r + 1;
+    ctx.beginPath(); ctx.arc(cx, cy, r + 2, 0, Math.PI * 2);
+    ctx.fillStyle = '#000'; ctx.fill();
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = '#ef4444'; ctx.fill();
+    _faviconCache.badged = c2.toDataURL('image/png');
+    _faviconCache.ready = true;
+    // Reaplica após ficar pronto (chamada inicial pode ter caído antes do onload).
+    const unread = notifications.filter(n => !n.read).length;
+    _updateFaviconDot(unread > 0);
+  };
+  img.onerror = () => { _faviconCache.ready = true; };
+  img.src = baseHref;
 }
 
 function toggleNotifPanel() {

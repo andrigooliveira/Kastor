@@ -4312,11 +4312,21 @@ body.is-resizing-detail * { cursor: col-resize !important; user-select: none !im
 
 /* ── Etapas tab — footer sticky no bottom com CTAs Restaurar/Salvar ── */
 .stages-edit-footer {
-  display: flex; justify-content: flex-end; gap: 10px;
+  display: flex; align-items: center; gap: 10px;
   padding-top: 14px;
   border-top: 1px solid var(--hairline);
   margin-top: 8px;
 }
+/* Indicador "Alterações não salvas" — texto amarelo com ícone, no meio do footer. */
+.stages-edit-dirty-hint {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, #eab308 12%, transparent);
+  color: #eab308;
+  font-size: 12px; font-weight: 600;
+}
+.stages-edit-dirty-hint i, .stages-edit-dirty-hint svg { color: #eab308 !important; }
 
 /* ── Checklist e Atividade dentro dos tabs: sem moldura ── */
 #tab-pane-checklist .checklist,

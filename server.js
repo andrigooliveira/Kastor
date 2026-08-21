@@ -2243,7 +2243,21 @@ app.put('/api/clients/:id', requireAuth, (req, res) => {
   }
   // Snapshot dos links ANTES de sobrescrever (pra só refazer o título se a URL mudou).
   const prevLinks = { driveFiles: c.driveFiles, brandAssets: c.brandAssets, driveFilesTitle: c.driveFilesTitle, brandAssetsTitle: c.brandAssetsTitle };
+  const prevName = c.name;
   buildClientPayload(b, c);
+  // Cascade rename: projeto guarda o NOME do cliente denormalizado em `p.client`
+  // (usado em filtros, listas, ordenação). Sem cascade, renomear o cliente não
+  // atualiza a UI de demandas/dashboard até refetch manual da lista de projetos.
+  let projectsAffected = false;
+  if (typeof b.name === 'string' && b.name.trim() && c.name !== prevName) {
+    db.projects.forEach(p => {
+      if (p.clientId === c.id && p.client !== c.name) {
+        p.client = c.name;
+        saveEntity('projects', p);
+        projectsAffected = true;
+      }
+    });
+  }
   // Cascade: desativar cliente desativa todos os projetos vinculados
   if (typeof b.active === 'boolean') {
     const wasActive = c.active !== false;
@@ -2253,6 +2267,7 @@ app.put('/api/clients/:id', requireAuth, (req, res) => {
         if (p.clientId === c.id && p.active !== false) {
           p.active = false;
           saveEntity('projects', p);
+          projectsAffected = true;
         }
       });
     }
@@ -2261,6 +2276,11 @@ app.put('/api/clients/:id', requireAuth, (req, res) => {
   if (b.name && c.placeholder) delete c.placeholder;
   saveEntity('clients', c);
   broadcastChange('client', 'update', { id: c.id, workspaceId: c.workspaceId, byUserId: req.user.id });
+  // Se projetos foram atualizados (rename cascade ou disable), avisa clientes
+  // pra refetch — isso propaga o novo nome do cliente em listas e dashboard.
+  if (projectsAffected) {
+    broadcastChange('project', 'bulk', { workspaceId: c.workspaceId, byUserId: req.user.id });
+  }
   refreshEntityLinkTitles('clients', c, prevLinks, 'client');
   res.json(c);
 });
