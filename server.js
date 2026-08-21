@@ -3204,7 +3204,9 @@ function resolveStageDueDate(stage, d, baseYmd) {
   const ov = (d?.stageOverrides && typeof d.stageOverrides === 'object') ? d.stageOverrides[stage.id] : null;
   if (ov && ov.deadlineDate) return ov.deadlineDate;
   const days = (ov && ov.deadlineDays !== undefined) ? ov.deadlineDays : stage.deadlineDays;
-  if (days == null) return null;
+  // SLA null/0 em etapa NÃO-done → prazo = baseYmd (hoje ao avançar). Evita
+  // que a etapa fique sem data marcada. Etapas done podem ficar sem prazo.
+  if (days == null) return stage.done ? null : baseYmd;
   return addDays(baseYmd, days);
 }
 
@@ -3601,7 +3603,10 @@ app.post('/api/demands', requireAuth, (req, res) => {
   // stageOverrides pode chegar no body da criação (wizard "Nova demanda") com
   // uma âncora `deadlineDate` — respeita se vier, senão calcula por SLA em dias.
   const bodyOv = (b.stageOverrides && typeof b.stageOverrides === 'object') ? b.stageOverrides[stage.id] : null;
-  const stageDue = (bodyOv && bodyOv.deadlineDate) || (stage.deadlineDays ? addDays(today(), stage.deadlineDays) : (b.deadline || null));
+  // Regra: se etapa não tem SLA (deadlineDays null/0) e não tem deadline geral,
+  // vira HOJE — evita ficar com data em branco. Etapa "done" pode ficar sem data.
+  const stageDue = (bodyOv && bodyOv.deadlineDate)
+    || (stage.deadlineDays ? addDays(today(), stage.deadlineDays) : (b.deadline || (stage.done ? null : today())));
   // Defaults do fluxo: descrição se vazia + checklist se não veio nada explícito.
   // Frontend pode ter pré-populado, mas se o user deixou em branco aproveitamos
   // o padrão do fluxo (não força — se enviou string vazia, não substitui).
@@ -3914,6 +3919,13 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
     d.ownerId = b.ownerId || null;
     if (d.ownerId !== prevOwner) {
       addHistory(d, req.user.id, 'owner_changed', { fromId: prevOwner, toId: d.ownerId });
+      // Sync bidirecional: se muda o responsável da demanda, atualiza também o
+      // executor da etapa ATUAL em stageResponsibles — assim os dois campos
+      // ficam sempre coerentes (a UI mostra o mesmo user nos dois lugares).
+      if (d.status) {
+        if (!d.stageResponsibles || typeof d.stageResponsibles !== 'object') d.stageResponsibles = {};
+        d.stageResponsibles[d.status] = d.ownerId;
+      }
       if (d.ownerId && d.ownerId !== req.user.id) {
         const flow = db.flows.find(f => f.id === d.flowId);
         const st = flow ? flow.stages.find(s => s.id === d.status) : null;
@@ -4584,6 +4596,23 @@ app.put('/api/demands/:id/skipped-stages', requireAuth, (req, res) => {
   if (Array.isArray(req.body?.stageAdditions)) {
     if (nextStageAdditions.length) d.stageAdditions = nextStageAdditions;
     else delete d.stageAdditions;
+  }
+  // Sync bidirecional: se o executor da etapa ATUAL mudou (via stageResponsibles
+  // ou via addition.responsibleId), reflete em d.ownerId — os dois campos são
+  // conceitualmente a mesma coisa quando a demanda está naquela etapa.
+  if (d.status) {
+    let curResp;
+    if (Object.prototype.hasOwnProperty.call(d.stageResponsibles || {}, d.status)) {
+      curResp = d.stageResponsibles[d.status];
+    } else {
+      const curAddition = (Array.isArray(d.stageAdditions) ? d.stageAdditions : []).find(a => a.id === d.status);
+      if (curAddition) curResp = curAddition.responsibleId || null;
+    }
+    if (curResp !== undefined && curResp !== d.ownerId) {
+      const prevOwner = d.ownerId;
+      d.ownerId = curResp;
+      addHistory(d, req.user.id, 'owner_changed', { fromId: prevOwner, toId: d.ownerId });
+    }
   }
   // Safety net: limpa chaves órfãs em mapas por stageId — se uma addition foi
   // removida (e o client não limpou tudo), ainda temos garantia de coerência.

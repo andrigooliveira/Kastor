@@ -58,3 +58,15 @@ jobs:
             ghcr.io/${{ env.REPO_NAME }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Dispara o webhook do Portainer pra puxar a imagem nova e redeployar o
+      # serviço. Configurar no Portainer: Service kastor → Service webhooks →
+      # Create webhook, e cole a URL no secret PORTAINER_WEBHOOK_URL do repo.
+      # Se o secret não existir, o step é pulado (não quebra o build).
+      - name: Trigger Portainer redeploy
+        if: ${{ success() && env.PORTAINER_WEBHOOK_URL != '' }}
+        env:
+          PORTAINER_WEBHOOK_URL: ${{ secrets.PORTAINER_WEBHOOK_URL }}
+        run: |
+          curl -fsSL -X POST --max-time 30 "$PORTAINER_WEBHOOK_URL"
+          echo "Portainer webhook disparado."

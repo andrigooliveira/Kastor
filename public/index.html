@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-title" content="reWork">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/css/style.css?v=20260821n">
+<link rel="stylesheet" href="/css/style.css?v=20260821x">
 <script type="text/javascript">
     (function(c,l,a,r,i,t,y){
         c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
@@ -366,7 +366,15 @@
             <i data-lucide="search" class="filter-input-icon ic-sm"></i>
             <input class="filter-input filter-input--with-icon" id="search-input" placeholder="Buscar demanda…" oninput="renderListDebounced()">
           </div>
-          <select class="filter-select" id="filter-workspace" onchange="renderList()"><option value="">Squad</option></select>
+          <!-- Squad: multi-select via popover com checkboxes; estado em CSV no hidden input. -->
+          <div class="filter-multi-wrap" id="filter-workspace-wrap">
+            <button type="button" class="filter-multi-trigger" id="filter-workspace-trigger" onclick="toggleWsMulti(event)">
+              <span class="filter-multi-label" id="filter-workspace-label">Squads</span>
+              <i data-lucide="chevron-down" class="ic-xs"></i>
+            </button>
+            <div class="filter-multi-menu" id="filter-workspace-menu" onclick="event.stopPropagation()"></div>
+          </div>
+          <input type="hidden" id="filter-workspace" value="">
           <select class="filter-select" id="filter-user" onchange="renderList()"></select>
           <select class="filter-select" id="filter-client" onchange="renderList()"><option value="">Cliente</option></select>
           <select class="filter-select" id="filter-project" onchange="renderList()"><option value="">Projeto</option></select>
@@ -398,21 +406,165 @@
           <input type="hidden" id="filter-period" value="">
           <input type="hidden" id="filter-period-start" value="">
           <input type="hidden" id="filter-period-end" value="">
-          <div class="client-status-toggle demand-status-toggle">
-            <button type="button" class="btn btn-ghost btn-sm client-status-btn" data-status="" onclick="setDemandStatusFilter('')">Todas</button>
-            <button type="button" class="btn btn-ghost btn-sm client-status-btn active" data-status="open" onclick="setDemandStatusFilter('open')">Abertas</button>
-            <button type="button" class="btn btn-ghost btn-sm client-status-btn" data-status="late" onclick="setDemandStatusFilter('late')" title="Apenas atrasadas">Atrasadas</button>
-            <button type="button" class="btn btn-ghost btn-sm client-status-btn" data-status="done" onclick="setDemandStatusFilter('done')">Concluídas</button>
+          <!-- Botão de filtros avançados: popover com filtros menos usados. -->
+          <div class="advanced-filters-wrap">
+            <button type="button" class="btn btn-ghost btn-sm btn-icon-only advanced-filters-btn" id="advanced-filters-btn" title="Filtros avançados" onclick="toggleAdvancedFilters(event)">
+              <i data-lucide="filter" class="ic-sm"></i>
+              <span class="advanced-filters-badge" id="advanced-filters-badge" style="display:none">0</span>
+            </button>
+            <div class="advanced-filters-pop" id="advanced-filters-pop" onclick="event.stopPropagation()">
+              <div class="advanced-filters-head">Filtros avançados</div>
+              <div class="advanced-filters-body">
+
+                <div class="af-section">
+                  <div class="af-section-head">Escopo</div>
+                  <div class="advanced-filters-row">
+                    <span class="advanced-filters-lbl">Participante <small>(precisa participar de todas)</small></span>
+                    <div class="filter-multi-wrap" id="filter-participant-wrap">
+                      <button type="button" class="filter-multi-trigger" id="filter-participant-trigger" onclick="toggleParticipantMulti(event)">
+                        <span class="filter-multi-label" id="filter-participant-label">Qualquer participante</span>
+                        <i data-lucide="chevron-down" class="ic-xs"></i>
+                      </button>
+                      <div class="filter-multi-menu" id="filter-participant-menu" onclick="event.stopPropagation()"></div>
+                    </div>
+                    <input type="hidden" id="filter-participant" value="">
+                  </div>
+                  <label class="advanced-filters-row">
+                    <span class="advanced-filters-lbl">Criado por</span>
+                    <select class="filter-select" id="filter-created-by" onchange="renderList(); _updateAdvancedFiltersBadge()"><option value="">Qualquer criador</option></select>
+                  </label>
+                  <label class="advanced-filters-row">
+                    <span class="advanced-filters-lbl">Etapa atual (agrupa por rótulo)</span>
+                    <select class="filter-select" id="filter-stage-label" onchange="renderList(); _updateAdvancedFiltersBadge()"><option value="">Qualquer etapa</option></select>
+                  </label>
+                  <div class="advanced-filters-row">
+                    <span class="advanced-filters-lbl">Prioridade</span>
+                    <div class="af-priority-chips" id="af-priority-chips"></div>
+                    <input type="hidden" id="filter-priority" value="">
+                  </div>
+                </div>
+
+                <div class="af-section">
+                  <div class="af-section-head">Estado</div>
+                  <label class="advanced-filters-row af-toggle-row">
+                    <input type="checkbox" id="filter-noowner" onchange="renderList(); _updateAdvancedFiltersBadge()">
+                    <span class="advanced-filters-lbl-inline">Somente demandas sem responsável</span>
+                  </label>
+                  <label class="advanced-filters-row af-toggle-row">
+                    <input type="checkbox" id="filter-watched" onchange="renderList(); _updateAdvancedFiltersBadge()">
+                    <span class="advanced-filters-lbl-inline">Somente demandas que observo</span>
+                  </label>
+                  <label class="advanced-filters-row">
+                    <span class="advanced-filters-lbl">Recorrência</span>
+                    <select class="filter-select" id="filter-recurrence" onchange="renderList(); _updateAdvancedFiltersBadge()">
+                      <option value="">Qualquer</option>
+                      <option value="yes">Só recorrentes</option>
+                      <option value="no">Só avulsas</option>
+                    </select>
+                  </label>
+                  <label class="advanced-filters-row">
+                    <span class="advanced-filters-lbl">Etapa parada há mais de (dias)</span>
+                    <input type="number" min="1" step="1" class="filter-select af-stuck-input" id="filter-stuck-days" placeholder="ex.: 3" oninput="renderList(); _updateAdvancedFiltersBadge()">
+                  </label>
+                </div>
+
+                <div class="af-section">
+                  <div class="af-section-head">Conteúdo</div>
+                  <label class="advanced-filters-row">
+                    <span class="advanced-filters-lbl">Anexos</span>
+                    <select class="filter-select" id="filter-attachments" onchange="renderList(); _updateAdvancedFiltersBadge()">
+                      <option value="">Qualquer</option>
+                      <option value="yes">Com anexos</option>
+                      <option value="no">Sem anexos</option>
+                    </select>
+                  </label>
+                  <label class="advanced-filters-row">
+                    <span class="advanced-filters-lbl">Apontamento de tempo</span>
+                    <select class="filter-select" id="filter-time-entries" onchange="renderList(); _updateAdvancedFiltersBadge()">
+                      <option value="">Qualquer</option>
+                      <option value="yes">Com apontamento</option>
+                      <option value="no">Sem apontamento</option>
+                    </select>
+                  </label>
+                  <label class="advanced-filters-row">
+                    <span class="advanced-filters-lbl">Entregáveis definidos (peças/artes/variações)</span>
+                    <select class="filter-select" id="filter-pieces" onchange="renderList(); _updateAdvancedFiltersBadge()">
+                      <option value="">Qualquer</option>
+                      <option value="yes">Com entregáveis</option>
+                      <option value="no">Sem entregáveis</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div class="af-section">
+                  <div class="af-section-head">Datas</div>
+                  <div class="advanced-filters-row">
+                    <span class="advanced-filters-lbl">Criada entre</span>
+                    <div class="af-date-range">
+                      <input type="date" class="filter-select af-date-input" id="filter-created-from" onchange="renderList(); _updateAdvancedFiltersBadge()">
+                      <span class="af-date-sep">até</span>
+                      <input type="date" class="filter-select af-date-input" id="filter-created-to" onchange="renderList(); _updateAdvancedFiltersBadge()">
+                    </div>
+                  </div>
+                  <div class="advanced-filters-row">
+                    <span class="advanced-filters-lbl">Concluída entre</span>
+                    <div class="af-date-range">
+                      <input type="date" class="filter-select af-date-input" id="filter-completed-from" onchange="renderList(); _updateAdvancedFiltersBadge()">
+                      <span class="af-date-sep">até</span>
+                      <input type="date" class="filter-select af-date-input" id="filter-completed-to" onchange="renderList(); _updateAdvancedFiltersBadge()">
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+              <div class="advanced-filters-foot">
+                <button type="button" class="btn btn-ghost btn-sm" onclick="clearAdvancedFilters()">Limpar filtros</button>
+                <button type="button" class="btn btn-primary btn-sm" onclick="closeAdvancedFilters()">Fechar</button>
+              </div>
+            </div>
+          </div>
+          <!-- Status dropdown (Todas/Abertas/Atrasadas/Concluídas) — visual do trigger
+               reflete a opção ativa (ícone + texto). Backing input mantém compat. -->
+          <div class="demand-status-drop-wrap">
+            <button type="button" class="filter-multi-trigger demand-status-drop-btn" id="demand-status-drop-btn" onclick="toggleDemandStatusDrop(event)">
+              <i data-lucide="circle-dashed" class="ic-md demand-status-drop-ico" id="demand-status-drop-ico"></i>
+              <span class="demand-status-drop-lbl" id="demand-status-drop-lbl">Abertas</span>
+            </button>
+            <div class="demand-status-drop-menu" id="demand-status-drop-menu" onclick="event.stopPropagation()">
+              <button type="button" class="demand-status-drop-item" data-status="" onclick="closeDemandStatusDrop(); setDemandStatusFilter('')">
+                <i data-lucide="layers" class="ic-menu"></i><span>Todas</span>
+              </button>
+              <button type="button" class="demand-status-drop-item" data-status="open" onclick="closeDemandStatusDrop(); setDemandStatusFilter('open')">
+                <i data-lucide="circle-dashed" class="ic-menu status-ico-open"></i><span>Abertas</span>
+              </button>
+              <button type="button" class="demand-status-drop-item" data-status="late" onclick="closeDemandStatusDrop(); setDemandStatusFilter('late')">
+                <i data-lucide="alert-triangle" class="ic-menu status-ico-late"></i><span>Atrasadas</span>
+              </button>
+              <button type="button" class="demand-status-drop-item" data-status="done" onclick="closeDemandStatusDrop(); setDemandStatusFilter('done')">
+                <i data-lucide="check-circle-2" class="ic-menu status-ico-done"></i><span>Concluídas</span>
+              </button>
+            </div>
           </div>
           <!-- Backing value pro filtro — mantém compat com listFilteredDemands()
                e persistência via FILTER_KEYS['list']. -->
           <input type="hidden" id="filter-quick" value="open">
-          <div class="list-view-toggle">
-            <button class="btn btn-ghost btn-sm active" id="list-view-table" onclick="setListView('table')" title="Lista"><i data-lucide="list" class="ic-sm"></i></button>
-            <button class="btn btn-ghost btn-sm" id="list-view-kanban" onclick="setListView('kanban')" title="Kanban"><i data-lucide="kanban-square" class="ic-sm"></i></button>
-            <button class="btn btn-ghost btn-sm" id="list-view-cal" onclick="setListView('cal')" title="Calendário"><i data-lucide="calendar" class="ic-sm"></i></button>
+          <!-- Menu kebab: agrupa toggles de visualização + export CSV num só botão.
+               Reusa o pattern .stages-edit-menu (dropdown com backdrop + click-outside). -->
+          <div class="list-view-menu-wrap">
+            <button type="button" class="btn btn-ghost btn-sm btn-icon-only list-view-menu-btn" id="list-view-menu-btn" title="Opções da lista" onclick="toggleListViewMenu(event)"><i data-lucide="more-horizontal" class="ic-sm"></i></button>
+            <div class="list-view-menu" id="list-view-menu" onclick="event.stopPropagation()">
+              <button type="button" class="list-view-menu-item" id="list-view-item-table" onclick="closeListViewMenu(); setListView('table')"><i data-lucide="list" class="ic-menu"></i> <span>Lista</span></button>
+              <button type="button" class="list-view-menu-item" id="list-view-item-kanban" onclick="closeListViewMenu(); setListView('kanban')"><i data-lucide="kanban-square" class="ic-menu"></i> <span>Kanban</span></button>
+              <button type="button" class="list-view-menu-item" id="list-view-item-cal" onclick="closeListViewMenu(); setListView('cal')"><i data-lucide="calendar" class="ic-menu"></i> <span>Calendário</span></button>
+              <div class="list-view-menu-sep"></div>
+              <button type="button" class="list-view-menu-item" onclick="closeListViewMenu(); exportDemandsCsv()"><i data-lucide="download" class="ic-menu"></i> <span>Exportar CSV</span></button>
+            </div>
           </div>
-          <button class="btn btn-ghost btn-sm btn-icon-only" onclick="exportDemandsCsv()" title="Exportar CSV (respeita os filtros aplicados)"><i data-lucide="download" class="ic-sm"></i></button>
+          <!-- Backing IDs preservados: setListView() ainda usa list-view-table/kanban/cal pro .active.
+               Escondidos porque agora o estado ativo aparece no menu item. -->
+          <button style="display:none" id="list-view-table"></button>
+          <button style="display:none" id="list-view-kanban"></button>
+          <button style="display:none" id="list-view-cal"></button>
         </div>
 
         <!-- Chip visível quando ?due=YYYY-MM-DD tá aplicado (deep-link do dashboard) -->
@@ -3413,7 +3565,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260821n"></script>
+<script src="/js/app.js?v=20260821aa"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

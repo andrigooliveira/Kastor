@@ -342,7 +342,7 @@ window.addEventListener('popstate', applyRoute);
    no início do render correspondente — antes de capturar os valores atuais.
    Evita que o usuário tenha que re-aplicar filtros toda vez que volta. */
 const FILTER_KEYS = {
-  list:      { storage: 'kastor-filters-list',      ids: ['search-input','filter-workspace','filter-user','filter-project','filter-client','filter-period','filter-period-start','filter-period-end','filter-quick'] },
+  list:      { storage: 'kastor-filters-list',      ids: ['search-input','filter-workspace','filter-user','filter-participant','filter-project','filter-client','filter-period','filter-period-start','filter-period-end','filter-quick','filter-priority','filter-stuck-days','filter-noowner','filter-created-by','filter-stage-label','filter-recurrence','filter-watched','filter-attachments','filter-time-entries','filter-pieces','filter-created-from','filter-created-to','filter-completed-from','filter-completed-to'] },
   dashboard: { storage: 'kastor-filters-dashboard', ids: ['dash-f-user','dash-f-squad','dash-f-client','dash-f-period','dash-f-type'] },
   capacity:  { storage: 'kastor-filters-capacity',  ids: ['capacity-period','capacity-period-start','capacity-period-end','capacity-squads'] },
   clients:   { storage: 'kastor-filters-clients',   ids: ['client-search','client-f-ws'] },
@@ -354,8 +354,14 @@ const FILTER_KEYS = {
 const FILTER_URL_KEYS = {
   list: {
     'search-input': 'q', 'filter-workspace': 'ws', 'filter-user': 'user',
+    'filter-participant': 'part',
     'filter-project': 'project', 'filter-client': 'client', 'filter-period': 'period',
-    'filter-period-start': 'from', 'filter-period-end': 'to', 'filter-quick': 'status'
+    'filter-period-start': 'from', 'filter-period-end': 'to', 'filter-quick': 'status',
+    'filter-priority': 'prio', 'filter-stuck-days': 'stuck', 'filter-noowner': 'noowner',
+    'filter-created-by': 'creator', 'filter-stage-label': 'stage', 'filter-recurrence': 'rec',
+    'filter-watched': 'wtch', 'filter-attachments': 'att', 'filter-time-entries': 'time',
+    'filter-pieces': 'del', 'filter-created-from': 'cfrom', 'filter-created-to': 'cto',
+    'filter-completed-from': 'dfrom', 'filter-completed-to': 'dto'
   },
   dashboard: {
     'dash-f-user': 'user', 'dash-f-squad': 'squad', 'dash-f-client': 'client',
@@ -381,7 +387,10 @@ function _readFiltersFromUrl(page) {
     if (!sp.has(urlKey)) return;
     const val = sp.get(urlKey);
     const el = document.getElementById(domId);
-    if (el) el.value = val;
+    if (el) {
+      if (el.type === 'checkbox') el.checked = val === '1' || val === 'true';
+      else el.value = val;
+    }
     applied[domId] = val;
   });
   return applied;
@@ -394,7 +403,7 @@ function _writeFiltersToUrl(page) {
   Object.entries(map).forEach(([domId, urlKey]) => {
     const el = document.getElementById(domId);
     if (!el) return;
-    const v = String(el.value || '');
+    const v = el.type === 'checkbox' ? (el.checked ? '1' : '') : String(el.value || '');
     if (v) sp.set(urlKey, v); else sp.delete(urlKey);
   });
   const qs = sp.toString();
@@ -411,7 +420,12 @@ function _markFiltersDirty(page) { _filtersRestored[page] = false; }
 function saveFilters(page) {
   const def = FILTER_KEYS[page]; if (!def) return;
   const snap = {};
-  def.ids.forEach(id => { const el = document.getElementById(id); if (el) snap[id] = el.value; });
+  def.ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    // Checkbox usa .checked; demais usam .value.
+    snap[id] = el.type === 'checkbox' ? (el.checked ? '1' : '') : el.value;
+  });
   try { localStorage.setItem(def.storage, JSON.stringify(snap)); } catch {}
   // Espelha na URL — link compartilhável reproduz o mesmo estado.
   _writeFiltersToUrl(page);
@@ -429,10 +443,12 @@ function restoreFilters(page) {
     def.ids.forEach(id => {
       if (fromUrl[id] !== undefined) return; // URL já ditou o valor
       const el = document.getElementById(id);
+      if (!el || snap[id] == null) return;
       // Pra <select>, .value só "cola" se o option existir. Como renderList rebuilda
       // os <option> a partir do .value atual (prevUser etc.), restaurar antes do
       // rebuild + então deixar o rebuild adicionar selected=true funciona.
-      if (el && snap[id] != null) el.value = snap[id];
+      if (el.type === 'checkbox') el.checked = !!snap[id];
+      else el.value = snap[id];
     });
   } catch {}
 }
@@ -4673,9 +4689,31 @@ function setListView(v) {
   $('list-table-view').style.display = v === 'table' ? '' : 'none';
   $('list-kanban-view').style.display = v === 'kanban' ? '' : 'none';
   $('list-cal-view').style.display = v === 'cal' ? '' : 'none';
+  // Também marca o item do kebab menu como ativo (visual reflete escolha).
+  ['table','kanban','cal'].forEach(k => {
+    document.getElementById('list-view-item-' + k)?.classList.toggle('is-active', v === k);
+  });
   if (v === 'cal') renderCalendar('all');
   if (v === 'kanban') renderKanban();
 }
+/* Kebab menu da barra de filtros — agrupa Lista/Kanban/Calendário + Export CSV. */
+function toggleListViewMenu(ev) {
+  ev?.stopPropagation();
+  const menu = document.getElementById('list-view-menu');
+  if (!menu) return;
+  const willOpen = !menu.classList.contains('open');
+  document.querySelectorAll('.list-view-menu.open').forEach(m => m.classList.remove('open'));
+  if (willOpen) menu.classList.add('open');
+}
+function closeListViewMenu() {
+  document.getElementById('list-view-menu')?.classList.remove('open');
+}
+document.addEventListener('click', ev => {
+  const menu = document.getElementById('list-view-menu');
+  if (!menu || !menu.classList.contains('open')) return;
+  if (ev.target.closest('.list-view-menu-wrap')) return;
+  menu.classList.remove('open');
+}, true);
 
 /* ─── EXPORT CSV ─── */
 /* Escape RFC 4180: qualquer célula com `,`, `"` ou quebra de linha vira "…"
@@ -5287,18 +5325,75 @@ function setDemandStatusFilter(v) {
   syncDemandStatusChip();
   renderList();
 }
+// Config de label + ícone + classe do ícone por status. Fonte de verdade única
+// pra o trigger dropdown E pro item ativo no menu.
+const DEMAND_STATUS_META = {
+  '':     { label: 'Todas',      icon: 'layers',         cls: '' },
+  'open': { label: 'Abertas',    icon: 'circle-dashed',  cls: 'status-ico-open' },
+  'late': { label: 'Atrasadas',  icon: 'alert-triangle', cls: 'status-ico-late' },
+  'done': { label: 'Concluídas', icon: 'check-circle-2', cls: 'status-ico-done' }
+};
 function syncDemandStatusChip() {
   const inp = document.getElementById('filter-quick');
   if (!inp) return;
   const v = inp.value || '';
-  document.querySelectorAll('.demand-status-toggle .client-status-btn[data-status]')
-    .forEach(b => b.classList.toggle('active', b.dataset.status === v));
+  const meta = DEMAND_STATUS_META[v] || DEMAND_STATUS_META[''];
+  // Atualiza trigger do dropdown (label + ícone + cor de fundo).
+  const btn = document.getElementById('demand-status-drop-btn');
+  const lbl = document.getElementById('demand-status-drop-lbl');
+  const ico = document.getElementById('demand-status-drop-ico');
+  if (lbl) lbl.textContent = meta.label;
+  if (btn) {
+    // Remove todas as variantes e aplica a atual — o CSS pinta o botão inteiro.
+    btn.classList.remove('is-status-all', 'is-status-open', 'is-status-late', 'is-status-done');
+    const cls = v === 'open' ? 'is-status-open' :
+                v === 'late' ? 'is-status-late' :
+                v === 'done' ? 'is-status-done' : 'is-status-all';
+    btn.classList.add(cls);
+  }
+  if (ico) {
+    // Força re-render do ícone (lucide observer pode não pegar mudança de data-lucide).
+    const fresh = document.createElement('i');
+    fresh.setAttribute('data-lucide', meta.icon);
+    fresh.className = 'ic-md demand-status-drop-ico';
+    fresh.id = 'demand-status-drop-ico';
+    ico.replaceWith(fresh);
+    if (typeof paintIcons === 'function') paintIcons();
+  }
+  // Marca o item ativo no menu.
+  document.querySelectorAll('.demand-status-drop-item').forEach(b => {
+    b.classList.toggle('is-active', (b.dataset.status || '') === v);
+  });
 }
+function toggleDemandStatusDrop(ev) {
+  ev?.stopPropagation();
+  const menu = document.getElementById('demand-status-drop-menu');
+  if (!menu) return;
+  const willOpen = !menu.classList.contains('open');
+  document.querySelectorAll('.demand-status-drop-menu.open').forEach(m => m.classList.remove('open'));
+  if (willOpen) menu.classList.add('open');
+}
+function closeDemandStatusDrop() {
+  document.getElementById('demand-status-drop-menu')?.classList.remove('open');
+}
+document.addEventListener('click', ev => {
+  const menu = document.getElementById('demand-status-drop-menu');
+  if (!menu || !menu.classList.contains('open')) return;
+  if (ev.target.closest('.demand-status-drop-wrap')) return;
+  menu.classList.remove('open');
+}, true);
 
 function listFilteredDemands() {
   const q  = norm($('search-input').value.trim());
-  const fsq = $('filter-workspace')?.value || '';
+  // Squad: CSV com IDs (multi-select). Vazio = todos os acessíveis. Compat: se
+  // vier valor único legado (sem vírgula), trata como set de 1.
+  const wsCsv = $('filter-workspace')?.value || '';
+  const wsSet = new Set(wsCsv.split(',').filter(Boolean));
   const fu = $('filter-user').value;
+  // Participante agora é multi (CSV). Match: qualquer user selecionado precisa
+  // aparecer no set de participantes da demanda (OR entre eles).
+  const partCsv = $('filter-participant')?.value || '';
+  const partSet = new Set(partCsv.split(',').filter(Boolean));
   const fp = $('filter-project').value;
   const fc = $('filter-client')?.value || '';
   const fd = $('filter-period').value;
@@ -5306,15 +5401,39 @@ function listFilteredDemands() {
     ? { start: $('filter-period-start')?.value || '', end: $('filter-period-end')?.value || '' }
     : null;
   const fq = $('filter-quick').value;
+  // Prioridade multi (CSV: "1,2,4"). Vazio = qualquer.
+  const priCsv = $('filter-priority')?.value || '';
+  const priSet = new Set(priCsv.split(',').filter(Boolean).map(x => Number(x)));
+  const stuckDays = Number($('filter-stuck-days')?.value || 0);
+  const noOwner = !!document.getElementById('filter-noowner')?.checked;
+  const watched = !!document.getElementById('filter-watched')?.checked;
+  const fCreator = $('filter-created-by')?.value || '';
+  const fStageLabel = ($('filter-stage-label')?.value || '').trim();
+  const fRec = $('filter-recurrence')?.value || '';
+  const fAtt = $('filter-attachments')?.value || '';
+  const fTime = $('filter-time-entries')?.value || '';
+  const fDel = $('filter-pieces')?.value || '';
+  const fCFrom = $('filter-created-from')?.value || '';
+  const fCTo = $('filter-created-to')?.value || '';
+  const fDFrom = $('filter-completed-from')?.value || '';
+  const fDTo = $('filter-completed-to')?.value || '';
   const due = currentDueFilter(); // ?due=YYYY-MM-DD via URL (deep-link do dashboard)
   // Cross-workspace: todas as demandas acessíveis pro usuário logado, não deletadas.
-  // O filter-workspace é um recorte adicional pra ficar em 1 workspace específico.
+  // filter-workspace agora é MULTI (CSV) — recorta pra 1+ workspaces específicos.
   return (demands || []).filter(d => {
     if (d.deletedAt) return false;
     if (!(me.isAdmin || (me.workspaces || []).includes(d.workspaceId))) return false;
-    if (fsq && d.workspaceId !== fsq) return false;
+    if (wsSet.size && !wsSet.has(d.workspaceId)) return false;
     if (q && !norm(d.name).includes(q)) return false;
     if (fu && d.ownerId !== fu) return false;
+    if (partSet.size) {
+      const ids = _demandParticipantIds(d);
+      // AND: TODOS os users selecionados precisam participar da demanda pra passar.
+      // (ex.: filtrar demandas em que Ana E João aparecem juntos)
+      let all = true;
+      for (const uid of partSet) if (!ids.has(uid)) { all = false; break; }
+      if (!all) return false;
+    }
     if (fp && d.projectId !== fp) return false;
     if (fc) {
       const proj = projectById(d.projectId);
@@ -5325,8 +5444,283 @@ function listFilteredDemands() {
     if (fq === 'late' && !isLate(d)) return false;
     if (fq === 'open' && isDone(d)) return false;
     if (fq === 'done' && !isDone(d)) return false;
+    if (priSet.size && !priSet.has(Number(d.priority))) return false;
+    if (noOwner && d.ownerId) return false;
+    if (stuckDays > 0) {
+      // Etapa parada = tempo desde stageEnteredAt (fallback pra createdAt se ausente).
+      // Ignora demandas concluídas — não faz sentido "parada" pra fechadas.
+      if (isDone(d)) return false;
+      const anchor = d.stageEnteredAt || d.createdAt;
+      if (!anchor) return false;
+      const daysStuck = Math.floor((Date.now() - Date.parse(anchor)) / 86400000);
+      if (daysStuck < stuckDays) return false;
+    }
+    if (fCreator) { if (_demandCreatorId(d) !== fCreator) return false; }
+    if (fStageLabel) {
+      const st = stageOf(d);
+      const label = (d.stageLabels && d.stageLabels[d.status]) || st?.label || '';
+      if (label !== fStageLabel) return false;
+    }
+    if (fRec === 'yes' && !(d.recurrence && d.recurrence.enabled)) return false;
+    if (fRec === 'no' && (d.recurrence && d.recurrence.enabled)) return false;
+    if (watched && !(Array.isArray(d.watchers) && d.watchers.includes(me?.id))) return false;
+    if (fAtt === 'yes' && !(Array.isArray(d.attachments) && d.attachments.length)) return false;
+    if (fAtt === 'no' && (Array.isArray(d.attachments) && d.attachments.length)) return false;
+    if (fTime === 'yes' && !(Array.isArray(d.timeEntries) && d.timeEntries.length)) return false;
+    if (fTime === 'no' && (Array.isArray(d.timeEntries) && d.timeEntries.length)) return false;
+    if (fDel === 'yes' && !((d.qtyPieces || 0) + (d.qtyArts || 0) + (d.qtyVariations || 0) > 0)) return false;
+    if (fDel === 'no' && ((d.qtyPieces || 0) + (d.qtyArts || 0) + (d.qtyVariations || 0) > 0)) return false;
+    if (fCFrom || fCTo) {
+      const ymd = (d.createdAt || '').slice(0, 10);
+      if (fCFrom && ymd < fCFrom) return false;
+      if (fCTo && ymd > fCTo) return false;
+    }
+    if (fDFrom || fDTo) {
+      const ymd = (d.completedAt || '').slice(0, 10);
+      if (!ymd) return false; // sem completedAt = não passa no filtro de conclusão
+      if (fDFrom && ymd < fDFrom) return false;
+      if (fDTo && ymd > fDTo) return false;
+    }
     return true;
   });
+}
+/* Retorna o userId de quem CRIOU a demanda (via primeira entrada de history do tipo 'created').
+   Retorna null se não encontrar. */
+function _demandCreatorId(d) {
+  const arr = Array.isArray(d.history) ? d.history : [];
+  for (const h of arr) if (h && h.type === 'created') return h.userId || null;
+  return null;
+}
+/* Popover de "Filtros avançados" — abre/fecha, limpa e mantém a badge com o
+   número de filtros ativos. Reusa os selects existentes (mesmo IDs). */
+function toggleAdvancedFilters(ev) {
+  ev?.stopPropagation();
+  const pop = document.getElementById('advanced-filters-pop');
+  const btn = document.getElementById('advanced-filters-btn');
+  if (!pop) return;
+  const willOpen = !pop.classList.contains('open');
+  pop.classList.toggle('open', willOpen);
+  btn?.classList.toggle('is-open', willOpen);
+}
+function closeAdvancedFilters() {
+  document.getElementById('advanced-filters-pop')?.classList.remove('open');
+  document.getElementById('advanced-filters-btn')?.classList.remove('is-open');
+}
+// Filtros DENTRO do popover — mantém contador (badge) e reset centralizados.
+const _AF_VALUE_IDS = [
+  'filter-participant','filter-priority','filter-stuck-days',
+  'filter-created-by','filter-stage-label','filter-recurrence',
+  'filter-attachments','filter-time-entries','filter-pieces',
+  'filter-created-from','filter-created-to','filter-completed-from','filter-completed-to'
+];
+const _AF_CHECKBOX_IDS = ['filter-noowner','filter-watched'];
+function clearAdvancedFilters() {
+  _AF_VALUE_IDS.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  _AF_CHECKBOX_IDS.forEach(id => { const el = document.getElementById(id); if (el) el.checked = false; });
+  _renderPriorityChips();
+  renderList();
+  _updateAdvancedFiltersBadge();
+}
+function _updateAdvancedFiltersBadge() {
+  const badge = document.getElementById('advanced-filters-badge');
+  if (!badge) return;
+  let count = 0;
+  _AF_VALUE_IDS.forEach(id => { if ((document.getElementById(id)?.value || '').trim()) count++; });
+  _AF_CHECKBOX_IDS.forEach(id => { if (document.getElementById(id)?.checked) count++; });
+  badge.textContent = String(count);
+  badge.style.display = count > 0 ? '' : 'none';
+}
+/* Populador dos selects Criado por (userOpts) + Etapa atual (labels únicos entre fluxos). */
+function _populateAdvancedSelectors(userOpts) {
+  const creator = document.getElementById('filter-created-by');
+  if (creator) {
+    const prev = creator.value;
+    const still = !prev || userOpts.some(u => u.id === prev);
+    creator.innerHTML = '<option value="">Qualquer criador</option>' +
+      userOpts.map(u => `<option value="${esc(u.id)}" ${still && u.id === prev ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
+    if (!still) creator.value = '';
+  }
+  const stageSel = document.getElementById('filter-stage-label');
+  if (stageSel) {
+    const prev = stageSel.value;
+    // Union: label de todas as etapas de todos os fluxos acessíveis + additions das demandas visíveis.
+    const set = new Set();
+    (flows || []).forEach(f => {
+      if (!(me.isAdmin || (me.workspaces || []).includes(f.workspaceId))) return;
+      (f.stages || []).forEach(s => { if (s.label) set.add(s.label); });
+    });
+    (demands || []).forEach(d => {
+      if (!(me.isAdmin || (me.workspaces || []).includes(d.workspaceId))) return;
+      (d.stageAdditions || []).forEach(s => { if (s.label) set.add(s.label); });
+    });
+    const labels = [...set].sort((a, b) => norm(a).localeCompare(norm(b)));
+    const still = !prev || labels.includes(prev);
+    stageSel.innerHTML = '<option value="">Qualquer etapa</option>' +
+      labels.map(l => `<option value="${esc(l)}" ${still && l === prev ? 'selected' : ''}>${esc(l)}</option>`).join('');
+    if (!still) stageSel.value = '';
+  }
+}
+/* Multi-select de Participantes — CSV no #filter-participant. Reusa o pattern
+   do multi de Squads: popover com checkboxes + avatar do user. */
+function _renderParticipantMultiMenu(userOpts) {
+  const menu = document.getElementById('filter-participant-menu');
+  const label = document.getElementById('filter-participant-label');
+  const input = document.getElementById('filter-participant');
+  if (!menu || !label || !input) return;
+  const set = new Set((input.value || '').split(',').filter(Boolean));
+  // Purga IDs órfãos (user removido do workspace, etc).
+  const validIds = new Set(userOpts.map(u => u.id));
+  [...set].forEach(id => { if (!validIds.has(id)) set.delete(id); });
+  if ([...set].join(',') !== input.value) input.value = [...set].join(',');
+  menu.innerHTML = userOpts.map(u => {
+    const on = set.has(u.id);
+    return `<label class="filter-multi-item">
+      <input type="checkbox" ${on ? 'checked' : ''} onchange="toggleParticipantMultiItem('${esc(u.id)}', this.checked)">
+      ${avatarHTML(u, 'avatar avatar-xs')}
+      <span class="filter-multi-item-lbl">${esc(u.name)}</span>
+    </label>`;
+  }).join('') + (set.size ? `<button type="button" class="filter-multi-clear" onclick="clearParticipantMulti()">Limpar seleção</button>` : '');
+  if (!set.size) label.textContent = 'Qualquer participante';
+  else if (set.size === 1) {
+    const u = userOpts.find(x => set.has(x.id));
+    label.textContent = u ? u.name : '1 participante';
+  } else label.textContent = set.size + ' participantes';
+}
+function toggleParticipantMulti(ev) {
+  ev?.stopPropagation();
+  const menu = document.getElementById('filter-participant-menu');
+  if (!menu) return;
+  const willOpen = !menu.classList.contains('open');
+  document.querySelectorAll('.filter-multi-menu.open').forEach(m => m.classList.remove('open'));
+  if (willOpen) menu.classList.add('open');
+}
+function toggleParticipantMultiItem(userId, on) {
+  const input = document.getElementById('filter-participant');
+  if (!input) return;
+  const set = new Set((input.value || '').split(',').filter(Boolean));
+  if (on) set.add(userId); else set.delete(userId);
+  input.value = [...set].join(',');
+  renderList();
+  _updateAdvancedFiltersBadge();
+}
+function clearParticipantMulti() {
+  const input = document.getElementById('filter-participant');
+  if (input) input.value = '';
+  renderList();
+  _updateAdvancedFiltersBadge();
+}
+document.addEventListener('click', ev => {
+  const menu = document.getElementById('filter-participant-menu');
+  if (!menu || !menu.classList.contains('open')) return;
+  if (ev.target.closest('#filter-participant-wrap')) return;
+  menu.classList.remove('open');
+}, true);
+/* Chips multi-select de Prioridade. Estado no CSV do hidden #filter-priority. */
+function _renderPriorityChips() {
+  const host = document.getElementById('af-priority-chips'); if (!host) return;
+  const input = document.getElementById('filter-priority'); if (!input) return;
+  const active = new Set((input.value || '').split(',').filter(Boolean).map(x => Number(x)));
+  host.innerHTML = (typeof PRIORITIES !== 'undefined' ? PRIORITIES : []).map(p => {
+    const on = active.has(p.value);
+    return `<button type="button" class="af-priority-chip${on ? ' is-active' : ''}" style="--pc:${p.color}"
+              onclick="_togglePriorityChip(${p.value})">
+      <span class="af-priority-dot" style="background:${p.color}"></span>${esc(p.label)}
+    </button>`;
+  }).join('');
+}
+function _togglePriorityChip(v) {
+  const input = document.getElementById('filter-priority'); if (!input) return;
+  const set = new Set((input.value || '').split(',').filter(Boolean).map(x => Number(x)));
+  if (set.has(v)) set.delete(v); else set.add(v);
+  input.value = [...set].join(',');
+  _renderPriorityChips();
+  renderList();
+  _updateAdvancedFiltersBadge();
+}
+/* Multi-select de Squads — popover com checkboxes; estado no CSV do hidden #filter-workspace.
+   Label do trigger reflete quantidade selecionada. */
+function _renderWorkspaceMultiMenu(accessibleWs) {
+  const menu = document.getElementById('filter-workspace-menu');
+  const label = document.getElementById('filter-workspace-label');
+  const input = document.getElementById('filter-workspace');
+  if (!menu || !label || !input) return;
+  const wsSet = new Set((input.value || '').split(',').filter(Boolean));
+  // Só mantém IDs válidos (evita órfãos após um squad ser removido).
+  const validIds = new Set(accessibleWs.map(w => w.id));
+  [...wsSet].forEach(id => { if (!validIds.has(id)) wsSet.delete(id); });
+  if ([...wsSet].join(',') !== input.value) input.value = [...wsSet].join(',');
+  menu.innerHTML = accessibleWs.map(w => {
+    const on = wsSet.has(w.id);
+    return `<label class="filter-multi-item">
+      <input type="checkbox" ${on ? 'checked' : ''} onchange="toggleWsMultiItem('${esc(w.id)}', this.checked)">
+      <span class="filter-multi-item-dot" style="background:${esc(w.color || 'var(--accent)')}"></span>
+      <span class="filter-multi-item-lbl">${esc(w.name)}</span>
+    </label>`;
+  }).join('') + (wsSet.size ? `<button type="button" class="filter-multi-clear" onclick="clearWsMulti()">Limpar seleção</button>` : '');
+  // Label do trigger
+  if (!wsSet.size) label.textContent = 'Squads';
+  else if (wsSet.size === 1) {
+    const w = accessibleWs.find(x => wsSet.has(x.id));
+    label.textContent = w ? w.name : '1 squad';
+  } else label.textContent = wsSet.size + ' squads';
+}
+function toggleWsMulti(ev) {
+  ev?.stopPropagation();
+  const menu = document.getElementById('filter-workspace-menu');
+  if (!menu) return;
+  const willOpen = !menu.classList.contains('open');
+  document.querySelectorAll('.filter-multi-menu.open').forEach(m => m.classList.remove('open'));
+  if (willOpen) menu.classList.add('open');
+}
+function toggleWsMultiItem(wsId, on) {
+  const input = document.getElementById('filter-workspace');
+  if (!input) return;
+  const set = new Set((input.value || '').split(',').filter(Boolean));
+  if (on) set.add(wsId); else set.delete(wsId);
+  input.value = [...set].join(',');
+  renderList();
+}
+function clearWsMulti() {
+  const input = document.getElementById('filter-workspace');
+  if (!input) return;
+  input.value = '';
+  renderList();
+}
+document.addEventListener('click', ev => {
+  const menu = document.getElementById('filter-workspace-menu');
+  if (!menu || !menu.classList.contains('open')) return;
+  if (ev.target.closest('#filter-workspace-wrap')) return;
+  menu.classList.remove('open');
+}, true);
+// Fecha o popover ao clicar fora.
+document.addEventListener('click', ev => {
+  const pop = document.getElementById('advanced-filters-pop');
+  if (!pop || !pop.classList.contains('open')) return;
+  if (ev.target.closest('.advanced-filters-wrap')) return;
+  closeAdvancedFilters();
+}, true);
+/* Retorna o Set de userIds que "participam" da demanda: dono atual + responsável
+   resolvido de CADA etapa do fluxo (incluindo additions, override por instância e
+   roleAssignments do projeto/cliente). Usado no filtro "Participante" — mostra a
+   demanda mesmo que ela ainda não tenha chegado na etapa daquele usuário. */
+function _demandParticipantIds(d) {
+  const set = new Set();
+  if (d.ownerId) set.add(d.ownerId);
+  const flow = flowById(d.flowId);
+  if (flow && Array.isArray(flow.stages)) {
+    flow.stages.forEach(s => {
+      const uid = resolveStageOwnerId(d, s);
+      if (uid) set.add(uid);
+    });
+  }
+  (Array.isArray(d.stageAdditions) ? d.stageAdditions : []).forEach(s => {
+    const uid = resolveStageOwnerId(d, s);
+    if (uid) set.add(uid);
+  });
+  // Overrides por instância (stageResponsibles): já são cobertos por resolveStageOwnerId,
+  // mas se algum id do map não bate com nenhuma stage (dead entry), inclui igual pra ser tolerante.
+  Object.values(d.stageResponsibles || {}).forEach(uid => { if (uid) set.add(uid); });
+  return set;
 }
 
 function renderList() {
@@ -5334,29 +5728,29 @@ function renderList() {
   // (o rebuild dos options abaixo respeita o value setado aqui via prevUser).
   const firstEnter = !_filtersRestored['list'];
   restoreFilters('list');
-  // Ao ENTRAR na aba Demandas, o filtro de Workspace já vem travado no workspace
-  // atual (activeWs). Mudanças manuais durante a sessão são respeitadas (re-render
-  // por onchange não é "primeira entrada"); ao voltar pra aba, reflete o atual.
-  if (firstEnter && activeWs) $('filter-workspace').value = activeWs;
+  // Ao ENTRAR na aba Demandas, o filtro de Squad vem travado no workspace
+  // atual (activeWs) — apenas 1 squad selecionado por padrão.
+  const wsInput = $('filter-workspace');
+  if (firstEnter && activeWs && wsInput && !wsInput.value) wsInput.value = activeWs;
   // Populações cross-workspace — todas as opções acessíveis pro usuário.
   const accessibleWs = (workspaces || [])
     .filter(w => me.isAdmin || (me.workspaces || []).includes(w.id))
     .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-  // Filtro Workspace: options = workspaces acessíveis, alpha; dot da cor via dotMap.
-  fillSelect($('filter-workspace'), accessibleWs.map(w => ({ value: w.id, label: w.name })), undefined, 'Squad');
+  // Menu multi-select de squads (checkboxes) — estado no CSV do hidden #filter-workspace.
+  _renderWorkspaceMultiMenu(accessibleWs);
 
-  // CROSS-FILTER: se um workspace específico foi escolhido, os filtros de
-  // Usuário/Cliente/Projeto só listam itens daquele workspace. Sem workspace
-  // escolhido, mostra tudo o que o usuário tem acesso.
-  const wsPick = $('filter-workspace')?.value || '';
-  const wsInScope = (wsId) => !wsPick || wsId === wsPick;
+  // CROSS-FILTER: se algum squad foi escolhido, os filtros de Usuário/Cliente/Projeto
+  // só listam itens daqueles squads. Sem seleção, mostra tudo acessível.
+  const wsCsv = wsInput?.value || '';
+  const wsPickSet = new Set(wsCsv.split(',').filter(Boolean));
+  const wsInScope = (wsId) => !wsPickSet.size || wsPickSet.has(wsId);
 
   // Usuários acessíveis. Cross-filter: user tem que estar no workspace escolhido
   // (ou ser admin — admin transita todos os workspaces).
   const prevUser = $('filter-user').value;
   const userOpts = (users || []).filter(u => u.active !== false &&
     (me.isAdmin || (u.workspaces || []).some(wid => (me.workspaces || []).includes(wid))) &&
-    (!wsPick || u.isAdmin || (u.workspaces || []).includes(wsPick)))
+    (!wsPickSet.size || u.isAdmin || (u.workspaces || []).some(w => wsPickSet.has(w))))
     .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
   // Se o user escolhido não existe mais na lista filtrada, limpa o value.
   const userStillValid = !prevUser || userOpts.some(u => u.id === prevUser);
@@ -5364,6 +5758,7 @@ function renderList() {
   $('filter-user').innerHTML = '<option value="">Usuário</option>' +
     userOpts.map(u => `<option value="${esc(u.id)}" ${u.id === effectiveUser ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
   if (!userStillValid) $('filter-user').value = '';
+  // Participante agora é multi via popover (renderizado abaixo por _renderParticipantMultiMenu).
 
   // Clientes acessíveis (ativos, com recorte de workspace). Populado ANTES dos
   // projetos porque o cliente escolhido recorta a lista de projetos (cross-filter).
@@ -5387,13 +5782,15 @@ function renderList() {
   fillSelect($('filter-project'), accProjects.map(p => ({ value: p.id, label: p.name })), projStillValid ? prevProj : '', 'Projeto');
   if (!projStillValid) $('filter-project').value = '';
 
-  // Workspace com dots coloridos.
-  const wsDotMap = {};
-  accessibleWs.forEach(w => { wsDotMap[w.id] = w.color || 'var(--accent)'; });
-  applyFilterDropdown('filter-workspace', { dotMap: wsDotMap });
+  // Squad agora é multi-select custom (não é <select>) — a label do trigger é
+  // atualizada por _renderWorkspaceMultiMenu. Não passa por applyFilterDropdown.
   applyFilterDropdown('filter-user', { userIcon: true });
   applyFilterDropdown('filter-client', { clientIcon: true });
   applyFilterDropdown('filter-project', { projectIcon: true });
+  _renderParticipantMultiMenu(userOpts);
+  _populateAdvancedSelectors(userOpts);
+  _renderPriorityChips();
+  _updateAdvancedFiltersBadge();
   // filter-period agora é hidden input controlado pelo popover pfp — sincroniza
   // label do trigger + estado visual do popover (caso esteja aberto).
   pfpSyncFromInputs();
@@ -8026,6 +8423,12 @@ function openDetailStages() {
     // Âncora de data (se salva): sobrepõe o SLA na cascata.
     if (savedOv[s.id]?.deadlineDate) seedDates[s.id] = savedOv[s.id].deadlineDate;
   });
+  // Additions: campos vivem no próprio objeto — seed pra que a âncora salva
+  // seja respeitada (evita cascade recalculando data já definida pelo usuário).
+  (Array.isArray(d.stageAdditions) ? d.stageAdditions : []).forEach(a => {
+    if (a.deadlineDate) seedDates[a.id] = a.deadlineDate;
+    seedSla[a.id] = a.deadlineDays ?? null;
+  });
   stagesEditDraft = {
     skipped: new Set(Array.isArray(d.skippedStages) ? d.skippedStages : []),
     responsibles: { ...(d.stageResponsibles && typeof d.stageResponsibles === 'object' ? d.stageResponsibles : {}) },
@@ -8124,6 +8527,12 @@ function _rebuildStagesDraftFromSaved(d) {
     seedSla[s.id] = (savedOv[s.id]?.deadlineDays !== undefined) ? savedOv[s.id].deadlineDays : (s.deadlineDays ?? null);
     if (savedOv[s.id]?.deadlineDate) seedDates[s.id] = savedOv[s.id].deadlineDate;
   });
+  // Additions: campos vivem no próprio objeto — seed pra que a âncora salva
+  // seja respeitada e a data exibida seja idêntica à salva (sem recálculo).
+  (Array.isArray(d.stageAdditions) ? d.stageAdditions : []).forEach(a => {
+    if (a.deadlineDate) seedDates[a.id] = a.deadlineDate;
+    seedSla[a.id] = a.deadlineDays ?? null;
+  });
   const poolIds = _demandStageIdPool(d);
   const poolSet = new Set(poolIds);
   const customOrder = Array.isArray(d.stageOrder) ? d.stageOrder.filter(id => poolSet.has(id)) : [];
@@ -8154,7 +8563,8 @@ function addStageToDraft() {
     id: newId,
     label: 'Nova etapa',
     color: '#7A00FF',
-    deadlineDays: 1,
+    // Default 0 dias — etapa sem SLA definido não empurra o cronograma.
+    deadlineDays: 0,
     // Pré-seleciona o usuário logado como executor — evita "Selecionar…" na UI.
     responsibleId: me?.id || null,
     done: false
@@ -8353,22 +8763,33 @@ async function saveStagesDraft() {
   const savedAdditionIds = new Set((Array.isArray(d.stageAdditions) ? d.stageAdditions : []).map(a => a.id));
   // Mescla additions existentes (menos as removidas) + novas (com done aplicado).
   const removedIds = stagesEditDraft.removedAdditionIds instanceof Set ? stagesEditDraft.removedAdditionIds : new Set();
+  const draftSlaMap = stagesEditDraft.sla || {};
+  const draftDates = stagesEditDraft.dates || {};
   const existingKept = (Array.isArray(d.stageAdditions) ? d.stageAdditions : [])
     .filter(a => !removedIds.has(a.id))
     .map(a => {
       const dv = Object.prototype.hasOwnProperty.call(draftDone, a.id) ? !!draftDone[a.id] : !!a.done;
-      // Aplica também rename e resp override, quando presentes no draft.
       const label = stagesEditDraft.labels?.[a.id] || a.label;
       const responsibleId = Object.prototype.hasOwnProperty.call(stagesEditDraft.responsibles, a.id)
         ? stagesEditDraft.responsibles[a.id] : (a.responsibleId || null);
-      return { ...a, label, responsibleId, done: dv };
+      // deadlineDate: âncora vinda do draft (user editou) OU a já salva na addition.
+      // deadlineDays: idem — se draft tem, usa; senão preserva.
+      const deadlineDate = Object.prototype.hasOwnProperty.call(draftDates, a.id)
+        ? (draftDates[a.id] || null) : (a.deadlineDate || null);
+      const deadlineDays = Object.prototype.hasOwnProperty.call(draftSlaMap, a.id)
+        ? draftSlaMap[a.id] : (a.deadlineDays ?? null);
+      return { ...a, label, responsibleId, done: dv, deadlineDate, deadlineDays };
     });
   const newOnes = (stagesEditDraft.newAdditions || []).map(s => {
     const dv = Object.prototype.hasOwnProperty.call(draftDone, s.id) ? !!draftDone[s.id] : !!s.done;
     const label = stagesEditDraft.labels?.[s.id] || s.label;
     const responsibleId = Object.prototype.hasOwnProperty.call(stagesEditDraft.responsibles, s.id)
       ? stagesEditDraft.responsibles[s.id] : (s.responsibleId || null);
-    return { ...s, label, responsibleId, done: dv };
+    const deadlineDate = Object.prototype.hasOwnProperty.call(draftDates, s.id)
+      ? (draftDates[s.id] || null) : (s.deadlineDate || null);
+    const deadlineDays = Object.prototype.hasOwnProperty.call(draftSlaMap, s.id)
+      ? draftSlaMap[s.id] : (s.deadlineDays ?? null);
+    return { ...s, label, responsibleId, done: dv, deadlineDate, deadlineDays };
   });
   const stageAdditions = [...existingKept, ...newOnes];
   // Filtra ordem: remove IDs de additions apagadas.
@@ -8427,18 +8848,30 @@ function isStagesDraftDirty(d) {
   const draftSla = stagesEditDraft.sla || {};
   const draftDates = stagesEditDraft.dates || {};
   const slaKeys = new Set([...Object.keys(savedOverrides), ...Object.keys(draftSla)]);
+  // Additions guardam campos no próprio objeto — compara contra ele em vez de stageOverrides.
+  const addById = new Map((Array.isArray(d.stageAdditions) ? d.stageAdditions : []).map(a => [a.id, a]));
   for (const sid of slaKeys) {
-    if (!flowSlaById.has(sid)) continue; // ignora ids fora do fluxo
+    if (addById.has(sid)) {
+      const a = addById.get(sid);
+      const saved = a.deadlineDays ?? null;
+      const draftVal = Object.prototype.hasOwnProperty.call(draftSla, sid) ? (draftSla[sid] ?? null) : saved;
+      if ((saved ?? null) !== (draftVal ?? null)) return true;
+      continue;
+    }
+    if (!flowSlaById.has(sid)) continue; // ignora ids fora do fluxo/additions
     const orig = flowSlaById.get(sid);
     const savedRaw = savedOverrides[sid]?.deadlineDays;
     const saved = (savedRaw === undefined ? orig : savedRaw); // sem override = valor do fluxo
     const draftVal = Object.prototype.hasOwnProperty.call(draftSla, sid) ? draftSla[sid] : orig;
     if ((saved ?? null) !== (draftVal ?? null)) return true;
   }
-  // Âncora de data: qualquer diferença entre draft.dates e stageOverrides[sid].deadlineDate.
-  const dateKeys = new Set([...Object.keys(savedOverrides), ...Object.keys(draftDates)]);
+  // Âncora de data: compara draft.dates com o valor SALVO — flow stages usam
+  // stageOverrides[sid].deadlineDate; additions guardam a data na própria addition.
+  const dateKeys = new Set([...Object.keys(savedOverrides), ...Object.keys(draftDates), ...addById.keys()]);
   for (const sid of dateKeys) {
-    const saved = savedOverrides[sid]?.deadlineDate || null;
+    let saved;
+    if (addById.has(sid)) saved = addById.get(sid).deadlineDate || null;
+    else saved = savedOverrides[sid]?.deadlineDate || null;
     const draft = draftDates[sid] || null;
     if (saved !== draft) return true;
   }
@@ -8516,6 +8949,25 @@ function _daysDiff(startYmd, endYmd) {
   const e = new Date(endYmd + 'T12:00:00');
   return Math.round((e - s) / 86400000);
 }
+/* Diff em DIAS ÚTEIS entre duas datas (não conta sábado/domingo). Usado no
+   display "Xd" das etapas — ninguém trabalha no fim de semana, então contar
+   calendário passa a impressão errada de "6 dias pra executar". */
+function _daysDiffBusiness(startYmd, endYmd) {
+  if (!startYmd || !endYmd) return 0;
+  const s = new Date(startYmd + 'T12:00:00');
+  const e = new Date(endYmd + 'T12:00:00');
+  const total = Math.round((e - s) / 86400000);
+  if (total === 0) return 0;
+  const step = total > 0 ? 1 : -1;
+  let count = 0;
+  const cur = new Date(s);
+  for (let i = 0; i < Math.abs(total); i++) {
+    cur.setDate(cur.getDate() + step);
+    const dow = cur.getDay();
+    if (dow !== 0 && dow !== 6) count += step;
+  }
+  return count;
+}
 /* Data final calculada da etapa i, dado o baseline e a lista ordenada de dias. */
 function _stageEndFromDays(baselineYmd, daysArray, idx) {
   let cum = 0;
@@ -8575,7 +9027,9 @@ function setStageDateDraft(stageId, isoDate) {
   // dias = data_ancora - fim_da_anterior. Assim o campo "d" reflete quantos
   // dias o usuário terá pra executar (0 = mesmo dia).
   stagesEditDraft.dates[stageId] = isoDate;
-  stagesEditDraft.sla[stageId] = _daysDiff(prevEnd, isoDate);
+  // SLA em dias ÚTEIS (consistente com o display "Xd"). A âncora manda mesmo — este
+  // é só o número exibido no campo "d" e usado como fallback quando não há data.
+  stagesEditDraft.sla[stageId] = _daysDiffBusiness(prevEnd, isoDate);
   renderDetail();
 }
 /* Formata YYYY-MM-DD → dd/mm (usado nas mensagens de erro do editor). */
@@ -8640,6 +9094,12 @@ function renderDetailStages(d) {
     (flow?.stages || []).forEach(s => {
       seedSlaFb[s.id] = (savedOvFb[s.id]?.deadlineDays !== undefined) ? savedOvFb[s.id].deadlineDays : (s.deadlineDays ?? null);
       if (savedOvFb[s.id]?.deadlineDate) seedDatesFb[s.id] = savedOvFb[s.id].deadlineDate;
+    });
+    // Additions também têm deadlineDate/deadlineDays no próprio objeto — seed pra que
+    // (a) o cascade respeite a âncora salva e (b) o input mostre a data certa no primeiro render.
+    (Array.isArray(d.stageAdditions) ? d.stageAdditions : []).forEach(a => {
+      if (a.deadlineDate) seedDatesFb[a.id] = a.deadlineDate;
+      seedSlaFb[a.id] = a.deadlineDays ?? null;
     });
     stagesEditDraft = { skipped: new Set(d.skippedStages || []), responsibles: { ...(d.stageResponsibles || {}) }, labels: { ...(d.stageLabels || {}) }, sla: seedSlaFb, dates: seedDatesFb, order: initOrder, newAdditions: [], removedAdditionIds: new Set(), done: {} };
   }
@@ -8761,9 +9221,10 @@ function renderDetailStages(d) {
                      value="${endDate || ''}"
                      ${isFlowStage || isAddition ? '' : 'disabled'}
                      onchange="setStageDateDraft('${s.id}', this.value)">
-              <span class="stages-edit-sla-days" title="Prazo calculado a partir das datas — edite a data pra alterar. O padrão vem do fluxo.">${(() => {
+              <span class="stages-edit-sla-days" title="Dias úteis pra executar (não conta sábado/domingo). Edite a data pra alterar. O padrão vem do fluxo.">${(() => {
                 const prev = i === 0 ? baselineYmd : (endDates[i - 1] || baselineYmd);
-                const diff = endDate ? _daysDiff(prev, endDate) : (draftSlaVal ?? null);
+                // Diff em dias ÚTEIS — evita mostrar "6d" quando 2 são fim de semana.
+                const diff = endDate ? _daysDiffBusiness(prev, endDate) : (draftSlaVal ?? null);
                 return (diff ?? '—') + 'd';
               })()}</span>
               <div class="stages-edit-resp-wrap">
@@ -12200,7 +12661,9 @@ function duplicateStageRow(i) {
   renderStageRows();
 }
 function addStageRow() {
-  stageRows.push({ id: null, label: '', color: '#7A00FF', done: false, roleFilter: null, responsibleId: null, responsibleRole: null, deadlineDays: null });
+  // deadlineDays=0 por padrão (não null) — etapa nova não adiciona dias ao cronograma
+  // até o usuário definir. Etapas done também nascem com 0 (irrelevante pra elas).
+  stageRows.push({ id: null, label: '', color: '#7A00FF', done: false, roleFilter: null, responsibleId: null, responsibleRole: null, deadlineDays: 0 });
   renderStageRows();
   const inputs = $('stage-list').querySelectorAll('.stage-row input.form-control');
   if (inputs.length) inputs[inputs.length - 1].focus();
@@ -20901,7 +21364,8 @@ function renderWizardCustomization() {
     // pra primeira). Agora é só indicativo — o usuário edita as DATAS, o número
     // recalcula automaticamente. Só o fluxo (página Fluxos) tem SLA editável.
     const prevEnd = i === 0 ? baselineYmd : (dateByStageId[orderedIds[i - 1]] || baselineYmd);
-    const computedDays = endDate ? _daysDiff(prevEnd, endDate) : (days ?? null);
+    // Diff em dias ÚTEIS — ignora fim de semana pra não passar impressão errada.
+    const computedDays = endDate ? _daysDiffBusiness(prevEnd, endDate) : (days ?? null);
     return `<div class="wizard-cust-row-v2 ${skipped ? 'is-skipped' : ''} ${isAddition ? 'is-added' : ''}" draggable="true" data-stage-id="${stageId}">
       <span class="wizard-cust-drag" title="Arraste pra reordenar"><i data-lucide="grip-vertical" class="ic-md"></i></span>
       <button type="button" class="color-swatch-trigger wizard-cust-color-lg" style="background:${esc(color)}" onclick="openColorPicker(this, (c) => { wizardCustSetColor('${stageId}', c); this.style.background = c; }, '${esc(color)}')" title="Cor da etapa"></button>
@@ -21054,17 +21518,17 @@ function wizardCustSetDate(stageId, isoDate) {
     renderWizardCustomization();
     return;
   }
-  // Grava a data como âncora E recalcula o SLA em dias (data - prevEnd).
-  // Assim o campo "d" reflete quantos dias o usuário terá pra executar.
+  // Grava a data como âncora E recalcula o SLA em dias ÚTEIS (data - prevEnd).
+  // Assim o campo "d" reflete quantos dias úteis o usuário terá pra executar.
   const addition = cust.stageAdditions.find(s => s.id === stageId);
   if (addition) {
     addition.deadlineDate = isoDate || null;
-    if (isoDate) addition.deadlineDays = _daysDiff(prevEnd, isoDate);
+    if (isoDate) addition.deadlineDays = _daysDiffBusiness(prevEnd, isoDate);
   } else {
     if (!cust.stageOverrides[stageId]) cust.stageOverrides[stageId] = {};
     if (isoDate) {
       cust.stageOverrides[stageId].deadlineDate = isoDate;
-      cust.stageOverrides[stageId].deadlineDays = _daysDiff(prevEnd, isoDate);
+      cust.stageOverrides[stageId].deadlineDays = _daysDiffBusiness(prevEnd, isoDate);
     } else {
       delete cust.stageOverrides[stageId].deadlineDate;
     }
@@ -21172,7 +21636,9 @@ function wizardAddCustStage() {
     id: 'add-' + Math.random().toString(36).slice(2, 10),
     label: 'Nova etapa',
     color: '#7A00FF',
-    deadlineDays: null,
+    // Default 0 dias (mesma regra do editor de fluxos): etapa sem SLA definido
+    // não empurra o cronograma. Se o usuário quiser, edita depois pra 1+.
+    deadlineDays: 0,
     // Pré-seleciona o usuário logado como executor da nova etapa — evita o
     // estado "Escolher executor…" e faz o dropdown já vir preenchido.
     responsibleId: me?.id || null,
