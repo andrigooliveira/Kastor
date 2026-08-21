@@ -21,7 +21,8 @@ try {
   console.log('[env] .env não encontrado (usando variáveis do sistema)');
 }
 
-const express    = require('express');
+const express     = require('express');
+const compression = require('compression');
 const crypto     = require('crypto');
 const fs         = require('fs');
 const path       = require('path');
@@ -1026,6 +1027,21 @@ const app = express();
 // seguros não seriam emitidos e rate limits por IP contariam tudo como localhost.
 app.set('trust proxy', 1);
 
+/* Compressão gzip/deflate — reduz app.js (1.12MB) e style.css (434KB) em
+   ~75% na transmissão. Pula:
+     - /api/stream (SSE): compressão bufferiza chunks e quebra o realtime.
+     - /uploads/*: arquivos binários (imagens/PDFs) já vêm comprimidos.
+   O middleware avalia Accept-Encoding do cliente e o Content-Type da resposta
+   automaticamente — texto/JSON/JS/CSS ganham gzip; binários passam direto. */
+app.use(compression({
+  filter: (req, res) => {
+    if (req.path === '/api/stream') return false;
+    if (req.path.startsWith('/uploads/')) return false;
+    return compression.filter(req, res);
+  },
+  threshold: 1024
+}));
+
 /* Security headers — middleware caseiro, sem dep externa. Cobre o que helmet
    cobriria de mais relevante pra esse app. CSP permite inline porque temos
    inline onclick em vários lugares + scripts inline pra setup do tema; quando
@@ -1104,12 +1120,28 @@ app.use((req, res, next) => {
   const isUpload = /^\/api\/(uploads|demands(\/[^/]+(\/comment)?)?$|me$|users(\/[^/]+)?$|projects(\/[^/]+)?$)/.test(req.path);
   return (isUpload ? jsonLg : jsonSm)(req, res, next);
 });
-// Static do SPA — sem cache em dev pra que mudanças em app.js/style.css/index.html
-// apareçam imediatamente. Anexos (/uploads/*) continuam servidos pelo bloco abaixo.
+/* Static do SPA — política de cache diferenciada:
+   - HTML: no-cache (revalida sempre → pega novos ?v= dos assets)
+   - JS/CSS: immutable, max-age=1yr (temos cache-buster ?v=... no HTML;
+     mudar o cache-buster = URL nova = cache miss → sempre pega a versão certa)
+   - Fontes/imagens: 30 dias
+   Assim depois do primeiro load só o HTML (~40KB gzip) trafega em cada visita.
+   Em dev, exporte NO_STATIC_CACHE=1 pra desabilitar cache e ver mudanças na hora. */
+const NO_CACHE_STATIC = process.env.NO_STATIC_CACHE === '1';
 app.use(express.static(path.join(__dirname, 'public'), {
+  etag: true,
+  lastModified: true,
   setHeaders: (res, filePath) => {
-    if (/\.(html|js|css)$/.test(filePath)) {
+    if (NO_CACHE_STATIC) {
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      return;
+    }
+    if (/\.html$/.test(filePath)) {
+      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    } else if (/\.(js|css)$/.test(filePath)) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    } else if (/\.(png|jpg|jpeg|gif|webp|svg|ico|woff2?|ttf|eot)$/.test(filePath)) {
+      res.setHeader('Cache-Control', 'public, max-age=2592000');
     }
   }
 }));
@@ -1769,6 +1801,53 @@ app.post('/api/google/refresh-calendars', requireAuth, async (req, res) => {
 app.get('/api/workspaces', requireAuth, (req, res) => {
   const ids = wsIdsFor(req.user);
   res.json(db.workspaces.filter(w => ids.includes(w.id)));
+});
+
+/* Bootstrap consolidado: retorna em UMA resposta o que o cliente pedia em
+   16 GETs paralelos no boot (workspaces, users, clients, projects, flows,
+   demands, roles, templates, schedules, client-templates, recurrings,
+   listas, positions, demand-types, tasks, webhooks). Em conexões lentas,
+   isso economiza 15 RTTs — cada um custa 100-500ms sob 4G. O payload
+   consolidado ainda comprime melhor que 16 respostas pequenas (dicionário
+   de brotli/gzip reaproveita chaves repetidas entre coleções).
+   Mantém os endpoints individuais funcionando pra refetches pontuais
+   (SSE reage a mudança de UM tipo → refetch só daquele tipo). */
+app.get('/api/bootstrap', requireAuth, (req, res) => {
+  const u = req.user;
+  const ids = wsIdsFor(u);
+  const inWs = (obj) => ids.includes(obj.workspaceId);
+
+  // demand-types tem cálculo de usageCount
+  const dtUsage = demandTypeUsage();
+  const demandTypes = (db.demandTypes || []).map(t => ({
+    id: t.id, name: t.name, createdAt: t.createdAt,
+    usageCount: dtUsage[(t.name || '').toLowerCase()] || 0
+  }));
+
+  // webhooks só pra mod/admin (mesma regra do endpoint individual)
+  const canSeeWebhooks = u.isAdmin || u.isModerator;
+  const webhooks = canSeeWebhooks
+    ? (db.webhooks || []).map(({ workspaceId, ...rest }) => rest)
+    : [];
+
+  res.json({
+    workspaces:      db.workspaces.filter(w => ids.includes(w.id)),
+    users:           db.users.map(publicUser),
+    clients:         db.clients.filter(c => inWs(c) && notDeleted(c)),
+    projects:        db.projects.filter(p => inWs(p) && notDeleted(p)),
+    flows:           db.flows.filter(f => inWs(f) && notDeleted(f)),
+    demands:         db.demands.filter(d => inWs(d) && notDeleted(d)),
+    roles:           db.roles,
+    templates:       (db.templates || []).filter(inWs),
+    schedules:       (db.schedules || []).filter(inWs),
+    clientTemplates: (db.clientTemplates || []).filter(notDeleted),
+    recurrings:      (db.recurrings || []).filter(r => notDeleted(r) && inWs(r)),
+    listas:          (db.listas || []).filter(l => notDeleted(l) && (l.kind === 'todo' || inWs(l))),
+    positions:       db.positions || [],
+    demandTypes,
+    tasks:           (db.tasks || []).filter(inWs),
+    webhooks,
+  });
 });
 
 app.post('/api/workspaces', requireAuth, adminOnly, (req, res) => {

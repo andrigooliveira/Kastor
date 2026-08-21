@@ -25,6 +25,12 @@ RUN npm install --omit=dev --no-audit --no-fund
 # (node_modules local, .env, data/, .git, etc — ver .dockerignore).
 COPY . .
 
+# Minifica app.js e style.css IN-PLACE via esbuild (source original
+# permanece no git, só a imagem Docker fica com o minified). Em conjunto
+# com o middleware compression() no server, o app.js sai de 1.1MB → ~180KB
+# gzipped e o style.css de 434KB → ~55KB gzipped no wire.
+RUN node build-prod.js
+
 # Diretório de dados persistidos. Docker Compose monta um volume nomeado
 # aqui pra uploads dos usuários e auth.enc sobreviverem a `docker compose down`.
 # O banco de dados fica em Postgres EXTERNO (ver DATABASE_URL).

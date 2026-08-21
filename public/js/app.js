@@ -3032,13 +3032,13 @@ function applyTheme(theme) {
   });
 }
 function toggleTheme() {
-  const current = localStorage.getItem('kastor-theme') || 'dark';
+  const current = localStorage.getItem('kastor-theme') || 'light';
   const next = current === 'dark' ? 'light' : 'dark';
   localStorage.setItem('kastor-theme', next);
   applyTheme(next);
 }
 // Aplica o tema o mais cedo possível — antes do app render — para evitar flash
-applyTheme(localStorage.getItem('kastor-theme') || 'dark');
+applyTheme(localStorage.getItem('kastor-theme') || 'light');
 
 /* ─── Densidade de tabela (Compacta ↔ Confortável) ───
    Classe global no body; CSS reduz o padding de th/td. Persiste em localStorage. */
@@ -3158,25 +3158,55 @@ async function enterApp() {
 }
 
 async function loadAll() {
-  const results = await Promise.all([
-    api('/workspaces'), api('/users'), api('/clients'), api('/projects'),
-    api('/flows'), api('/demands'), api('/roles'), api('/templates'),
-    api('/webhooks').catch(() => []),
-    api('/schedules').catch(() => []),
-    api('/client-templates').catch(() => []),
-    api('/recurrings').catch(() => []),
-    api('/listas').catch(() => []),
-    api('/positions').catch(() => []),
-    api('/demand-types').catch(() => []),
-    api('/tasks').catch(() => [])
-  ]);
-  [workspaces, users, clients, projects, flows, demands, roles, templates, webhooks, schedules, clientTemplates, recurrings, listas, positions, demandTypes, tasks] = results;
+  // Uma única request substitui os 16 GETs antigos — em conexões lentas
+  // isso economiza ~15 RTTs (300-500ms cada em mobile). Fallback pro
+  // caminho antigo se o /bootstrap não existir (compat com server velho).
+  try {
+    const b = await api('/bootstrap');
+    workspaces      = b.workspaces      || [];
+    users           = b.users           || [];
+    clients         = b.clients         || [];
+    projects        = b.projects        || [];
+    flows           = b.flows           || [];
+    demands         = b.demands         || [];
+    roles           = b.roles           || [];
+    templates       = b.templates       || [];
+    webhooks        = b.webhooks        || [];
+    schedules       = b.schedules       || [];
+    clientTemplates = b.clientTemplates || [];
+    recurrings      = b.recurrings      || [];
+    listas          = b.listas          || [];
+    positions       = b.positions       || [];
+    demandTypes     = b.demandTypes     || [];
+    tasks           = b.tasks           || [];
+  } catch (err) {
+    // Fallback: 404 (server sem bootstrap) → recai no fluxo antigo.
+    console.warn('bootstrap falhou, usando fetches individuais:', err.message);
+    const results = await Promise.all([
+      api('/workspaces'), api('/users'), api('/clients'), api('/projects'),
+      api('/flows'), api('/demands'), api('/roles'), api('/templates'),
+      api('/webhooks').catch(() => []),
+      api('/schedules').catch(() => []),
+      api('/client-templates').catch(() => []),
+      api('/recurrings').catch(() => []),
+      api('/listas').catch(() => []),
+      api('/positions').catch(() => []),
+      api('/demand-types').catch(() => []),
+      api('/tasks').catch(() => [])
+    ]);
+    [workspaces, users, clients, projects, flows, demands, roles, templates, webhooks, schedules, clientTemplates, recurrings, listas, positions, demandTypes, tasks] = results;
+  }
   const allowed = workspaces.map(w => w.id);
   if (!activeWs || !allowed.includes(activeWs)) activeWs = allowed[0] || null;
   localStorage.setItem('fluxo_ws', activeWs || '');
 }
 
 async function fetchNotifications() {
+  // Pula quando a aba está em background — usuário não vê o badge, servidor não
+  // precisa responder. Volta a rodar sozinho no próximo tick de setInterval;
+  // se ficar muito tempo escondido, um handler de visibilitychange força um
+  // fetch imediato ao retomar a aba (ver setupVisibilityWake).
+  if (document.hidden) return;
   try { notifications = await api('/notifications'); } catch { notifications = []; }
   renderNotifBadge();
 }
@@ -3184,6 +3214,14 @@ function startNotifPoll() {
   clearInterval(notifPollTimer);
   notifPollTimer = setInterval(fetchNotifications, 30000); // a cada 30s
 }
+
+/* Ao retomar uma aba de background, força um fetch imediato de notificações
+   e um ping de presença — em vez de esperar até 30s pelo próximo tick. */
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  if (me) { fetchNotifications(); }
+  if (typeof pingPresence === 'function') { pingPresence(); }
+});
 
 async function refreshData() {
   await loadAll();
@@ -7854,6 +7892,7 @@ async function toggleWatchCurrent() {
 
 async function refreshDetailDemand() {
   if (!detailId) return;
+  if (document.hidden) return; // pausa polling em aba de background
   const page = document.getElementById('page-demand-detail');
   if (!page || !page.classList.contains('active')) return;
   // Pula a atualização se o usuário tá digitando dentro da página
@@ -8036,7 +8075,7 @@ function renderDetail() {
     }
     const atts = (c.attachments || []).map(a => {
       if (a.type && a.type.startsWith('image/')) {
-        return `<div class="comment-img-wrap"><img class="comment-img" src="${a.data}" alt="${esc(a.name)}" onclick="window.open(this.src,'_blank')"></div>`;
+        return `<div class="comment-img-wrap"><img class="comment-img" loading="lazy" decoding="async" src="${a.data}" alt="${esc(a.name)}" onclick="window.open(this.src,'_blank')"></div>`;
       }
       return `<a class="comment-file" href="${a.data}" download="${esc(a.name)}" title="Baixar ${esc(a.name)}"><i data-lucide="paperclip" class="ic-sm"></i> ${esc(a.name)}</a>`;
     }).join('');
@@ -9968,7 +10007,7 @@ function renderDemandAttList(list, withDelete) {
       ? `openAttPreview('${src}', '${esc(a.type || '')}', '${esc(a.name || '')}')`
       : null;
     const thumbOrIcon = kind === 'image'
-      ? `<img src="${a.data || a.url}" class="demand-att-thumb" onclick="${openCall}" style="cursor:zoom-in">`
+      ? `<img loading="lazy" decoding="async" src="${a.data || a.url}" class="demand-att-thumb" onclick="${openCall}" style="cursor:zoom-in">`
       : `<i data-lucide="${attIcon(kind)}" class="ic-sm" style="color:var(--accent-text);${previewable ? 'cursor:pointer' : ''}" ${openCall ? `onclick="${openCall}"` : ''}></i>`;
     const nameEl = previewable
       ? `<a href="#" class="demand-att-name" onclick="event.preventDefault();${openCall}">${nameEsc}</a>`
@@ -16883,6 +16922,7 @@ function mdRender(raw) {
 /* ─── PRESENÇA — ping a cada minuto + refresh leve da lista de usuários ─── */
 let _presencePingTimer = null;
 async function pingPresence() {
+  if (document.hidden) return; // sem ping em aba de background — status vai virar "offline" naturalmente
   try {
     const r = await api('/me/ping', 'POST', {});
     if (r && r.lastSeen && me) me.lastSeen = r.lastSeen;

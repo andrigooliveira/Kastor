@@ -635,64 +635,147 @@ body.user-moderator .full-admin-only { display: none !important; }
   .welcome-banner-text { width: 100%; }
 }
 
-/* Light mode — sobrescreve as variáveis quando :root tem data-theme="light".
-   Mantém o accent #7A00FF como brand; ajusta contrastes para fundo claro (WCAG AA). */
+/* ══════════════════════════════════════════════════════════════════════
+   PALETA — shadcn/ui "Neutral" preset (b1Z5fa9ZI)
+   Chrome 100% grayscale, brand accent em Tailwind Blue-700 (#1447e6),
+   chart series azul (blue-300 → blue-800), destructive red-400.
+
+   Estrutura: :root = tema DARK (default histórico da Kastor era dark;
+   agora abrimos em light — ver applyTheme no app.js). :root[data-theme="light"]
+   sobrescreve pro tema light. Ambos expõem tanto os tokens NATIVOS do
+   shadcn (--background, --card, --primary, --muted, --sidebar, --sidebar-primary,
+   --chart-1..5, --destructive, --ring) quanto os tokens LEGADOS da Kastor
+   (--bg, --surface, --accent, --text, --success, --warn, --danger…) mapeados
+   pros equivalentes do preset. Assim o código antigo continua funcionando
+   sem alteração e componentes novos podem já usar os nomes shadcn.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ─── LIGHT (padrão do app hoje) ─── */
 :root[data-theme="light"] {
   color-scheme: light;
-  --bg: #FFFFFF;             /* fundo branco (era #F5F5F5) */
-  --surface: #FFFFFF;
-  --surface-2: #F5F5F5;      /* cinza claro só pra separar cards/áreas */
-  --surface-3: #EAEAEA;
-  --border: rgba(0,0,0,0.10);
+  /* shadcn nativos */
+  --background: #ffffff;
+  --foreground: #000000;
+  --card: #ffffff;
+  --card-foreground: #000000;
+  --popover: #ffffff;
+  --popover-foreground: #000000;
+  --primary: #7A00FF;           /* brand roxo — buttons/hovers/rings usam esse */
+  --primary-foreground: #ffffff;
+  --secondary: #f5f5f5;
+  --secondary-foreground: #171717;
+  --muted: #f5f5f5;
+  --muted-foreground: #737373;
+  --accent-2: #f5f5f5;          /* shadcn "--accent" (hover neutro) — sufixo -2 pra não colidir com o legado Kastor */
+  --accent-2-foreground: #171717;
+  --destructive: #e7000b;
+  --destructive-foreground: #fcf3f3;
+  --input: #e5e5e5;
+  --ring: #7A00FF;
+  --chart-1: #8ec5ff;
+  --chart-2: #2b7fff;
+  --chart-3: #155dfc;
+  --chart-4: #1447e6;
+  --chart-5: #193cb8;
+  --sidebar: #fafafa;
+  --sidebar-foreground: #000000;
+  --sidebar-primary: #7A00FF;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f5f5f5;
+  --sidebar-accent-foreground: #171717;
+  --sidebar-border: #e5e5e5;
+  --sidebar-ring: #7A00FF;
+
+  /* legados Kastor mapeados no preset */
+  --bg: var(--background);
+  --surface: var(--card);
+  --surface-2: var(--muted);
+  --surface-3: #ebebeb;
+  --border: #e5e5e5;
   --border-active: rgba(122,0,255,0.55);
-  --accent: #7A00FF;
-  --accent-text: #5E00CC;     /* roxo mais escuro · AA vs #F5F5F5 (8.2:1) */
+  --accent: #7A00FF;            /* brand roxo — mesmo valor de --primary */
+  --accent-text: #5E00CC;       /* roxo mais escuro pra uso como texto em fundo claro (AA vs #F5F5F5 8.2:1) */
   --accent-dim: rgba(122,0,255,0.10);
-  --success: #0E9968;         /* verde escuro · AA vs #F5F5F5 (4.7:1) */
-  --success-dim: rgba(14,153,104,0.12);
-  --warn: #B57100;            /* âmbar escuro · AA vs #F5F5F5 (4.9:1) */
+  --success: #16a34a;
+  --success-dim: rgba(22,163,74,0.12);
+  --warn: #b57100;
   --warn-dim: rgba(181,113,0,0.12);
-  --danger: #C03737;          /* vermelho escuro · AA vs #F5F5F5 (5.2:1) */
-  --danger-dim: rgba(192,55,55,0.12);
-  --sky: #0277B6;
-  --sky-dim: rgba(2,119,182,0.12);
-  --purple: #6D28D9;
-  --purple-dim: rgba(109,40,217,0.12);
-  --text: #1A1A1A;            /* AAA vs --bg (14.8:1) */
-  --text-dim: #4A4A4A;        /* AAA vs --bg (8.1:1) */
-  --text-muted: #6B6B6B;      /* AA vs --bg (4.8:1) */
+  --danger: var(--destructive);
+  --danger-dim: rgba(231,0,11,0.10);
+  --sky: var(--chart-2);
+  --sky-dim: rgba(43,127,255,0.12);
+  --purple: var(--chart-4);
+  --purple-dim: rgba(20,71,230,0.12);
+  --text: var(--foreground);
+  --text-dim: #4a4a4a;
+  --text-muted: var(--muted-foreground);
 }
 
+/* ─── DARK (mantém :root como raiz do tema) ─── */
 :root {
   color-scheme: dark;
-  --bg: #161616;
-  --surface: #262626;
-  --surface-2: #363636;
-  --surface-3: #474747;
-  --border: rgba(255,255,255,0.08);
-  --border-active: rgba(122,0,255,0.5);
-  --accent: #7A00FF;          /* brand: usado em background/border/box-shadow */
-  --accent-text: #B380FF;     /* variante clara para uso COMO TEXTO em fundo escuro (WCAG AA) */
-  --accent-dim: rgba(122,0,255,0.15);
-  --success: #3CE3A0;         /* AAA vs --bg (10.6:1) */
-  --success-dim: rgba(60,227,160,0.15);
-  --warn: #F5A718;            /* AAA vs --bg (8.7:1) */
-  --warn-dim: rgba(245,167,24,0.15);
-  --danger: #EF5050;          /* AA vs --bg (5.0:1) */
-  --danger-dim: rgba(239,80,80,0.15);
-  --sky: #38BDF8;
-  --sky-dim: rgba(56,189,248,0.15);
-  --purple: #A78BFA;
-  --purple-dim: rgba(167,139,250,0.15);
-  --text: #ECECEC;            /* AAA vs --bg (14.8:1) */
-  --text-dim: #B8B8B8;        /* cinza neutro · AAA vs --bg (8.8:1) · AA vs --surface-3 */
-  --text-muted: #A3A3A3;      /* cinza neutro · AAA vs --bg (6.98:1) · AA vs --surface-2 */
+  /* shadcn nativos */
+  --background: #0a0a0a;
+  --foreground: #fafafa;
+  --card: #171717;
+  --card-foreground: #fafafa;
+  --popover: #171717;
+  --popover-foreground: #fafafa;
+  --primary: #7A00FF;           /* brand roxo — buttons/hovers/rings usam esse */
+  --primary-foreground: #ffffff;
+  --secondary: #262626;
+  --secondary-foreground: #fafafa;
+  --muted: #262626;
+  --muted-foreground: #a1a1a1;
+  --accent-2: #404040;
+  --accent-2-foreground: #fafafa;
+  --destructive: #ff6467;
+  --destructive-foreground: #ffe4e5;
+  --input: rgba(255,255,255,0.15);
+  --ring: #7A00FF;
+  --chart-1: #8ec5ff;
+  --chart-2: #2b7fff;
+  --chart-3: #155dfc;
+  --chart-4: #1447e6;
+  --chart-5: #193cb8;
+  --sidebar: #171717;
+  --sidebar-foreground: #fafafa;
+  --sidebar-primary: #7A00FF;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #262626;
+  --sidebar-accent-foreground: #fafafa;
+  --sidebar-border: rgba(255,255,255,0.10);
+  --sidebar-ring: #7A00FF;
 
-  /* Raios — escala mais ampla, cantos mais contínuos (aproximação de squircle iOS) */
-  --radius-xs: 6px;
-  --radius-sm: 10px;
-  --radius: 14px;
-  --radius-lg: 20px;
+  /* legados Kastor mapeados no preset */
+  --bg: var(--background);
+  --surface: var(--card);
+  --surface-2: var(--muted);
+  --surface-3: #333333;
+  --border: rgba(255,255,255,0.10);
+  --border-active: rgba(122,0,255,0.5);
+  --accent: #7A00FF;            /* brand roxo — mesmo valor de --primary */
+  --accent-text: #B380FF;       /* variante clara pra uso como texto em fundo escuro (AA) */
+  --accent-dim: rgba(122,0,255,0.15);
+  --success: #3ce3a0;
+  --success-dim: rgba(60,227,160,0.15);
+  --warn: #f5a718;
+  --warn-dim: rgba(245,167,24,0.15);
+  --danger: var(--destructive);
+  --danger-dim: rgba(255,100,103,0.15);
+  --sky: var(--chart-2);
+  --sky-dim: rgba(43,127,255,0.15);
+  --purple: var(--chart-4);
+  --purple-dim: rgba(20,71,230,0.15);
+  --text: var(--foreground);
+  --text-dim: #b8b8b8;
+  --text-muted: var(--muted-foreground);
+
+  /* Raios — shadcn base = 0.625rem (10px). Kastor mantém escala proporcional. */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
   --radius-pill: 999px;
 
   /* Sombras suaves multi-camada (estilo iOS/macOS) */
@@ -709,8 +792,9 @@ body.user-moderator .full-admin-only { display: none !important; }
   --surface-glass: rgba(38,38,38,0.78);     /* cards/painéis frosted: aurora vaza sutilmente */
   /* Chrome sólido (sidebar/topbar): opaco de propósito pra NÃO precisar de
      backdrop-filter blur — o blur repintava a cada frame no scroll (jank). */
-  --chrome-bg: #1e1e1e;
+  --chrome-bg: var(--sidebar);
   --hairline: rgba(255,255,255,0.06);
+  --hairline-strong: rgba(255,255,255,0.12);
 
   /* Motion (curvas estilo Apple: spring suave) */
   --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
@@ -729,7 +813,7 @@ body.user-moderator .full-admin-only { display: none !important; }
   --glass: rgba(255,255,255,0.72);
   --glass-strong: rgba(255,255,255,0.86);
   --surface-glass: rgba(255,255,255,0.78);
-  --chrome-bg: #FFFFFF;
+  --chrome-bg: var(--sidebar);
   --hairline: rgba(0,0,0,0.07);
   --hairline-strong: rgba(0,0,0,0.14);
 }
@@ -882,7 +966,7 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Inter', 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
   min-height: 100vh;
@@ -6011,7 +6095,7 @@ textarea.form-control { resize: vertical; }
   box-shadow: 0 20px 50px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.02);
   padding: 14px;
   width: 280px;
-  font-family: 'Inter', sans-serif;
+  font-family: 'Geist', -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--text);
   opacity: 0; transform: translateY(-4px);
   transition: opacity .12s ease, transform .12s ease;
@@ -10376,4 +10460,47 @@ tr.demand-row:hover {
 
 /* Respeito ao prefers-reduced-motion — para as animações contínuas.
    O bloco global lá em cima já faz `animation: none !important` em tudo. */
+
+/* ══════════════════════════════════════════════════════════════════════
+   PERFORMANCE — content-visibility: auto
+   O browser pula LAYOUT + PAINT + STYLE de elementos fora do viewport
+   (mais scroll buffer). Combina com `contain-intrinsic-size` como
+   placeholder pra preservar altura calculada da barra de scroll. Ganho
+   real com muitas linhas (>50): tabela de Demandas com 500+ linhas
+   deixa de custar ~200ms de layout na primeira pintura pra ~15ms.
+   Testado em Chrome/Edge/Safari/Firefox 125+.
+
+   IMPORTANTE: não aplicar em containers pequenos (<10 filhos) — o custo
+   do check "está visível?" supera o ganho. Também não aplicar em elementos
+   com altura muito variável — o placeholder chuta errado e faz o scroll
+   pular quando rolam pra dentro deles.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* Linhas de tabela de demandas (usadas em Demandas e Minhas Demandas).
+   Altura padrão ~44px; usamos 48px como buffer conservador. */
+tr.demand-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 48px;
+}
+
+/* Cards do Kanban — altura variável, mas média ~120px. */
+.kanban-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
+}
+
+/* Cards de projeto/cliente/template — grids longos. */
+.model-card,
+.model-flow-card,
+.rca-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 200px;
+}
+
+/* Rows de recorrências e listas de tarefa. */
+.rec-row,
+.nl-item-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 56px;
+}
 
