@@ -1380,10 +1380,22 @@ app.get('/api/me', requireAuth, (req, res) => {
 });
 
 app.put('/api/me', requireAuth, (req, res) => {
-  const { name, role, avatar, currentPassword, newPassword, username, discordId, email, emailPrefs } = req.body || {};
+  const { name, role, avatar, currentPassword, newPassword, username, discordId, email, emailPrefs, discord, phone } = req.body || {};
   const u = req.user;
   if (typeof name === 'string' && name.trim()) u.name = name.trim();
   if (typeof role === 'string') u.role = role.trim();
+  // Nome de usuário do Discord — puramente pra exibição no mini-card (não é o
+  // snowflake ID, que fica em `discordId` e é usado pela integração de bot).
+  // Aceita @usuario, usuario#0000, ou usuario — normalizamos só truncando.
+  if (discord !== undefined) {
+    const raw = (discord === null ? '' : String(discord)).trim().slice(0, 40);
+    u.discord = raw || null;
+  }
+  // Telefone — só string, sem validação estrita (formatos internacionais variam).
+  if (phone !== undefined) {
+    const raw = (phone === null ? '' : String(phone)).trim().slice(0, 30);
+    u.phone = raw || null;
+  }
   if (discordId !== undefined) {
     if (discordId === null || discordId === '') {
       u.discordId = null;

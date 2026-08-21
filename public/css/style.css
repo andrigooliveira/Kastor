@@ -10458,6 +10458,159 @@ tr.demand-row:hover {
 .pw-kind-name { font-size: 14px; font-weight: 700; color: var(--text); }
 .pw-kind-sub { font-size: 11.5px; color: var(--text-muted); }
 
+/* ══════════════════════════════════════════════════════════════════════
+   USER MINI-CARD — cartão de contato disparado por clique em avatar.
+   Estilo alinhado ao design system: fundo card, borda hairline, radius do
+   sistema, mesma família de sombra dos popovers. Aparece por cima de
+   modais (z-index alto). Escuro/claro seguem os tokens.
+   ══════════════════════════════════════════════════════════════════════ */
+.user-mini-card {
+  position: fixed;
+  z-index: 10000;
+  width: 300px;
+  max-width: calc(100vw - 16px);
+  background: var(--popover, var(--card));
+  color: var(--popover-foreground, var(--text));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: 14px;
+  font-family: inherit;
+  animation: umcIn .14s var(--ease-out);
+}
+@keyframes umcIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.user-mini-card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.user-mini-card-avatar {
+  width: 48px !important;
+  height: 48px !important;
+  font-size: 18px !important;
+  border-radius: 999px !important;
+  flex-shrink: 0;
+}
+.user-mini-card-heading {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.user-mini-card-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-mini-card-role {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.3;
+  margin-top: 2px;
+}
+.user-mini-card-body {
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.user-mini-card-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 4px 6px 8px;
+  border-radius: var(--radius-sm);
+  transition: background .12s var(--ease-out);
+}
+.user-mini-card-row:hover {
+  background: var(--surface-2);
+}
+.user-mini-card-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+.user-mini-card-field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.user-mini-card-label {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  line-height: 1.2;
+}
+.user-mini-card-value {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-mini-card-value--link {
+  color: var(--accent-text, var(--accent));
+  text-decoration: none;
+}
+.user-mini-card-value--link:hover { text-decoration: underline; }
+.user-mini-card-copy {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: var(--radius-xs);
+  opacity: 0;
+  transition: opacity .12s var(--ease-out), color .12s var(--ease-out), background .12s var(--ease-out);
+}
+.user-mini-card-row:hover .user-mini-card-copy { opacity: 1; }
+.user-mini-card-copy:hover {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+.user-mini-card-empty {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  padding: 8px 4px;
+  text-align: center;
+}
+/* Avatar clicável — cursor mais óbvio quando abre mini-card.
+   Skips: avatares de fallback (sem data-user-id) e os que estão em dropdowns
+   (via :not() com o mesmo selector list do JS). */
+.avatar[data-user-id] { cursor: pointer; }
+.avatar[data-user-id]:hover {
+  filter: brightness(1.08);
+  transition: filter .12s var(--ease-out);
+}
+/* Não muda cursor pra pointer dentro dos dropdowns onde o clique já tem outra ação. */
+.filter-cdrop-menu .avatar[data-user-id],
+.cdrop-menu .avatar[data-user-id],
+.combo-menu .avatar[data-user-id],
+.picker-list .avatar[data-user-id],
+.owner-picker-list .avatar[data-user-id],
+.select-menu .avatar[data-user-id],
+.sidebar-user .avatar[data-user-id],
+.owner-picker .avatar[data-user-id],
+.mention-pop .avatar[data-user-id],
+.chat-compose-wrap .avatar[data-user-id],
+[data-avatar-no-menu] .avatar[data-user-id] {
+  filter: none;
+}
+
 /* Respeito ao prefers-reduced-motion — para as animações contínuas.
    O bloco global lá em cima já faz `animation: none !important` em tudo. */
 

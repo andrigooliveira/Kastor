@@ -14,12 +14,12 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/css/style.css?v=20260821perf3">
+<link rel="stylesheet" href="/css/style.css?v=20260821minicard3">
 <!-- Preload dos JS pesados no <head> pra que o download comece IMEDIATAMENTE,
      em paralelo com o parse do HTML, em vez de esperar o parser chegar em
      </body>. Com immutable cache (max-age=1yr), na 2ª visita nem baixa. -->
 <link rel="preload" href="/vendor/lucide.min.js" as="script">
-<link rel="preload" href="/js/app.js?v=20260821perf3" as="script">
+<link rel="preload" href="/js/app.js?v=20260821minicard3" as="script">
 <script type="text/javascript">
     (function(c,l,a,r,i,t,y){
         c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
@@ -2019,6 +2019,16 @@
                     <input class="form-control" id="profile-f-username" placeholder="ex: ana.lima">
                     <div class="profile-hint">Usado ao fazer login. Deve ser único.</div>
                   </div>
+                  <div class="form-group">
+                    <label class="form-label">Nome no Discord</label>
+                    <input class="form-control" id="profile-f-discord" placeholder="ex: ana#0001 ou @ana">
+                    <div class="profile-hint">Só pra exibir no cartão de contato quando alguém clicar na sua foto.</div>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Telefone</label>
+                    <input class="form-control" id="profile-f-phone" type="tel" placeholder="ex: +55 (11) 91234-5678" autocomplete="tel">
+                    <div class="profile-hint">Aparece no cartão de contato. Use formato internacional se possível.</div>
+                  </div>
                 </div>
                 <div class="profile-block-actions">
                   <button class="btn btn-primary" onclick="saveProfile()">Salvar</button>
@@ -3600,7 +3610,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260821perf3"></script>
+<script src="/js/app.js?v=20260821minicard3"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

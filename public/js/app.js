@@ -845,10 +845,15 @@ function ownerName(d) { const u = userById(d.ownerId); return u ? u.name : '—'
 function avatarHTML(u, cls = 'avatar') {
   const pClass = presenceClassFor(u);
   const fullCls = pClass ? `${cls} ${pClass}` : cls;
-  if (u && u.avatar) return `<div class="${fullCls}" style="background-image:url('${u.avatar}');background-size:cover;background-position:center"></div>`;
+  // data-user-id habilita o mini-card de contato (openUserMiniCard) via
+  // event delegation em document. Ausente quando não há usuário identificável
+  // (fallback "?" ou placeholders "—"). Ancestrais com [data-avatar-no-menu]
+  // ou classes de dropdown suprimem a abertura.
+  const idAttr = u && u.id ? ` data-user-id="${esc(u.id)}"` : '';
+  if (u && u.avatar) return `<div class="${fullCls}"${idAttr} style="background-image:url('${u.avatar}');background-size:cover;background-position:center"></div>`;
   const initial = u ? (u.name || u.username || '?').trim().charAt(0).toUpperCase() : '?';
   const seed = u ? (u.id || u.username || u.name || '?') : '?';
-  return `<div class="${fullCls}" style="background:${avatarGradient(seed)};color:#fff;border:0;box-shadow:inset 0 0 0 1px rgba(255,255,255,0.08)">${esc(initial)}</div>`;
+  return `<div class="${fullCls}"${idAttr} style="background:${avatarGradient(seed)};color:#fff;border:0;box-shadow:inset 0 0 0 1px rgba(255,255,255,0.08)">${esc(initial)}</div>`;
 }
 /* Classe de presença que vira um anel ao redor do avatar.
    verde = ativo nos últimos 5min, amarelo = 5-30min, sem anel a partir de 30min. */
@@ -2108,6 +2113,155 @@ function closeModal(id) {
   // Modais com rota própria → ao fechar reescreve URL pro destino apropriado.
   if (ROUTED_MODAL_IDS.includes(id)) navReplace(currentPageUrl());
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   USER MINI-CARD — cartão de contato ao clicar em qualquer avatar
+   Onde: acionado por avatarHTML() que injeta data-user-id na <div class="avatar">.
+   Delegado em document (capture) pra pegar cliques em avatares que aparecem
+   depois (renders dinâmicos, SSE). Suprime abertura quando o avatar está
+   dentro de dropdowns/pickers (linhas de menu não devem virar botão de contato)
+   ou em contêineres marcados com data-avatar-no-menu.
+   ══════════════════════════════════════════════════════════════════════ */
+let _userMiniCard = null;
+
+/* Ancestrais que suprimem o mini-card. Selector list — qualquer match no
+   .closest() da avatar → não abre. Cobre TODO local onde o clique já tem
+   uma ação natural (selecionar item de menu, trocar responsável, inserir
+   @menção, etc). */
+const AVATAR_MENU_SUPPRESSORS = [
+  '.filter-cdrop-menu',      // filtros multi-select (Squad, Usuário, Cliente…)
+  '.cdrop-menu',             // combos customizados (dropdown de owner-picker etc)
+  '.combo-menu',             // combos legacy
+  '.picker-list',            // pickers de bulk actions (owner, stage, priority)
+  '.owner-picker-list',      // picker de responsável (bulk)
+  '.select-menu',            // menus de select genéricos
+  '.sidebar-user',           // avatar do próprio usuário na sidebar já tem menu próprio
+  '.owner-picker',           // TRIGGER do change-owner no detalhe da demanda
+  '.mention-pop',            // autocomplete de @menção em comentários
+  '.chat-compose-wrap',      // avatar do próprio usuário no editor de comentário
+  '[data-avatar-no-menu]'    // opt-out explícito
+].join(',');
+
+function closeUserMiniCard() {
+  if (_userMiniCard && _userMiniCard.parentNode) _userMiniCard.remove();
+  _userMiniCard = null;
+  document.removeEventListener('click', _onDocClickCloseMiniCard, true);
+  document.removeEventListener('keydown', _onEscCloseMiniCard, true);
+  window.removeEventListener('scroll', closeUserMiniCard, true);
+  window.removeEventListener('resize', closeUserMiniCard);
+}
+function _onDocClickCloseMiniCard(e) {
+  if (!_userMiniCard) return;
+  if (_userMiniCard.contains(e.target)) return; // clique dentro do card não fecha
+  // Clique em outro avatar deixa o handler global reabrir com o novo user
+  if (e.target.closest('.avatar[data-user-id]')) return;
+  closeUserMiniCard();
+}
+function _onEscCloseMiniCard(e) {
+  if (e.key === 'Escape' && _userMiniCard) { e.stopPropagation(); closeUserMiniCard(); }
+}
+
+function openUserMiniCard(userId, anchorEl) {
+  closeUserMiniCard();
+  // Prioriza `me` quando é o próprio (traz campos privados como discord/phone
+  // que o publicUser() do server também expõe pra qualquer autenticado).
+  const u = (me && me.id === userId) ? me : (users || []).find(x => x.id === userId);
+  if (!u) return;
+
+  const card = document.createElement('div');
+  card.className = 'user-mini-card';
+  card.setAttribute('role', 'dialog');
+  card.setAttribute('aria-label', `Contato de ${u.name || u.username}`);
+  const bigAvatar = avatarHTML(u, 'avatar user-mini-card-avatar').replace(/data-user-id="[^"]+"/,''); // dentro do card não deve reabrir
+  const rowsHTML = [
+    ['at-sign',    'Usuário', u.username ? '@' + u.username : null, null],
+    ['mail',       'E-mail',  u.email || null, u.email ? `mailto:${u.email}` : null],
+    ['message-circle', 'Discord', u.discord || null, null],
+    ['phone',      'Telefone', u.phone || null, u.phone ? `tel:${(u.phone || '').replace(/[^\d+]/g,'')}` : null],
+  ].map(([icon, label, value, href]) => {
+    if (!value) return '';
+    const inner = href
+      ? `<a class="user-mini-card-value user-mini-card-value--link" href="${esc(href)}">${esc(value)}</a>`
+      : `<span class="user-mini-card-value">${esc(value)}</span>`;
+    return `<div class="user-mini-card-row">
+      <i data-lucide="${icon}" class="ic-sm user-mini-card-icon"></i>
+      <div class="user-mini-card-field">
+        <div class="user-mini-card-label">${esc(label)}</div>
+        ${inner}
+      </div>
+      <button type="button" class="user-mini-card-copy" title="Copiar" data-copy="${esc(value)}"><i data-lucide="copy" class="ic-xs"></i></button>
+    </div>`;
+  }).join('');
+
+  const hasAnyContact = !!(u.email || u.discord || u.phone);
+  card.innerHTML = `
+    <div class="user-mini-card-head">
+      ${bigAvatar}
+      <div class="user-mini-card-heading">
+        <div class="user-mini-card-name">${esc(u.name || '—')}</div>
+        <div class="user-mini-card-role">${esc(u.role || (u.isAdmin ? 'Administrador' : 'Equipe'))}</div>
+      </div>
+    </div>
+    <div class="user-mini-card-body">
+      ${rowsHTML || `<div class="user-mini-card-empty">Sem contatos adicionados.${u.id === me.id ? ' Cadastre no seu perfil.' : ''}</div>`}
+    </div>
+  `;
+  document.body.appendChild(card);
+  if (typeof paintIcons === 'function') paintIcons(card);
+
+  // Botão de copiar
+  card.querySelectorAll('.user-mini-card-copy').forEach(btn => {
+    btn.addEventListener('click', (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      const val = btn.getAttribute('data-copy') || '';
+      if (!val) return;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(val).then(() => toast('Copiado!', 'success')).catch(() => toast('Falha ao copiar', 'error'));
+      }
+    });
+  });
+
+  // Posicionamento — abaixo do avatar, alinhado à esquerda; se estourar o
+  // viewport, gira pra cima ou pra outro lado.
+  const rect = anchorEl.getBoundingClientRect();
+  const gap = 8;
+  card.style.position = 'fixed';
+  card.style.visibility = 'hidden';
+  card.style.left = '0px';
+  card.style.top = '0px';
+  const cardRect = card.getBoundingClientRect();
+  const w = cardRect.width, h = cardRect.height;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  let left = rect.left;
+  let top = rect.bottom + gap;
+  if (left + w + 8 > vw) left = Math.max(8, vw - w - 8);
+  if (top + h + 8 > vh) top = Math.max(8, rect.top - h - gap); // abre pra cima
+  card.style.left = `${Math.max(8, left)}px`;
+  card.style.top = `${Math.max(8, top)}px`;
+  card.style.visibility = '';
+
+  _userMiniCard = card;
+  // Delay pra não fechar imediatamente com o mesmo click que abriu
+  setTimeout(() => {
+    document.addEventListener('click', _onDocClickCloseMiniCard, true);
+    document.addEventListener('keydown', _onEscCloseMiniCard, true);
+    window.addEventListener('scroll', closeUserMiniCard, true);
+    window.addEventListener('resize', closeUserMiniCard);
+  }, 0);
+}
+
+/* Delegation global — captura ANTES de outros handlers pra bloquear
+   propagação (row-click de <tr class="demand-row">, por exemplo, abriria
+   a demanda em vez de mostrar o cartão). */
+document.addEventListener('click', (e) => {
+  const av = e.target.closest('.avatar[data-user-id]');
+  if (!av) return;
+  if (av.closest(AVATAR_MENU_SUPPRESSORS)) return; // dentro de dropdown/picker
+  e.preventDefault();
+  e.stopPropagation();
+  const uid = av.getAttribute('data-user-id');
+  openUserMiniCard(uid, av);
+}, true);
 
 /* ── Lucide Icons ── */
 function ic(name, attrs) {
@@ -16132,6 +16286,8 @@ function renderProfile() {
   $('profile-f-name').value = me.name;
   $('profile-f-username').value = me.username;
   $('profile-f-discord-id').value = me.discordId || '';
+  if ($('profile-f-discord'))  $('profile-f-discord').value = me.discord || '';
+  if ($('profile-f-phone'))    $('profile-f-phone').value = me.phone || '';
   $('profile-f-email').value = me.email || '';
   const prefs = me.emailPrefs || { assigned: true, stage_assigned: true, mention: true, watch_stage: true, watch_comment: true, daily_digest: true };
   $('profile-pref-assigned').checked = prefs.assigned !== false;
@@ -16446,7 +16602,13 @@ async function sendEmailTest() {
 }
 async function saveProfile() {
   try {
-    me = await api('/me', 'PUT', { name: $('profile-f-name').value, role: $('profile-f-role').value, username: $('profile-f-username').value });
+    me = await api('/me', 'PUT', {
+      name: $('profile-f-name').value,
+      role: $('profile-f-role').value,
+      username: $('profile-f-username').value,
+      discord: $('profile-f-discord') ? $('profile-f-discord').value : undefined,
+      phone:   $('profile-f-phone')   ? $('profile-f-phone').value   : undefined
+    });
     toast('Perfil atualizado!');
     renderSidebarUser(); renderProfile();
     await refreshData();
