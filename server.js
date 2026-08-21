@@ -4457,10 +4457,10 @@ app.put('/api/demands/:id/skipped-stages', requireAuth, (req, res) => {
     }
   }
 
-  // ── stageOverrides (mapa { stageId: { deadlineDays: int|null } }) ──
-  // Só SLA por enquanto — cor e "done" são características do fluxo, não fazem
-  // sentido customizar por demanda no editor. Override em etapas do FLUXO só
-  // (additions têm seu deadlineDays direto na própria entrada, editado noutro fluxo).
+  // ── stageOverrides (mapa { stageId: { deadlineDays, deadlineDate, done } }) ──
+  // Este editor aceita SLA (dias/data) E override de conclusão ("done"). Cor
+  // continua sendo do fluxo (não faz sentido mudar por demanda). Só em etapas
+  // do FLUXO — additions têm seus campos diretos no próprio objeto.
   let stageOverrides = null;
   if (req.body?.stageOverrides && typeof req.body.stageOverrides === 'object') {
     stageOverrides = {};
@@ -4470,11 +4470,16 @@ app.put('/api/demands/:id/skipped-stages', requireAuth, (req, res) => {
       const raw = req.body.stageOverrides[sid] || {};
       const orig = flow.stages.find(s => s.id === sid);
       const out = {};
-      // Preserva overrides pré-existentes de color/done (se houver) — este editor
-      // só mexe em deadlineDays/Date. Sem isso, salvar aqui apagaria custos antigos.
+      // Preserva cor pré-existente (esse editor não mexe em cor). Já `done` NÃO é
+      // preservado do prev — o body agora é a fonte de verdade dele.
       const prev = (d.stageOverrides && d.stageOverrides[sid]) || {};
       if (prev.color !== undefined) out.color = prev.color;
-      if (prev.done !== undefined)  out.done = prev.done;
+      // done override — grava só se diferente do padrão do fluxo. undefined = sem override.
+      if ('done' in raw) {
+        if (typeof raw.done === 'boolean' && raw.done !== !!orig?.done) out.done = raw.done;
+      } else if (prev.done !== undefined) {
+        out.done = prev.done; // preserva se o body não veio com done
+      }
       if ('deadlineDays' in raw) {
         const v = raw.deadlineDays;
         if (v === null || v === '') {
@@ -4530,10 +4535,11 @@ app.put('/api/demands/:id/skipped-stages', requireAuth, (req, res) => {
     }
   }
 
-  // Diff dos overrides — SLA (deadlineDays) E datas (deadlineDate) pra histórico
+  // Diff dos overrides — SLA (deadlineDays), datas (deadlineDate) E done pra histórico
   const prevOverrides = (d.stageOverrides && typeof d.stageOverrides === 'object') ? d.stageOverrides : {};
   const slaChanges = [];
   const dateChanges = [];
+  const doneChanges = [];
   if (stageOverrides !== null) {
     const keys = new Set([...Object.keys(prevOverrides), ...Object.keys(stageOverrides)]);
     for (const sid of keys) {
@@ -4543,6 +4549,9 @@ app.put('/api/demands/:id/skipped-stages', requireAuth, (req, res) => {
       const fromDate = prevOverrides[sid]?.deadlineDate ?? null;
       const toDate = stageOverrides[sid]?.deadlineDate ?? null;
       if (fromDate !== toDate) dateChanges.push({ stageId: sid, from: fromDate, to: toDate });
+      const fromDone = prevOverrides[sid]?.done ?? null;
+      const toDone = stageOverrides[sid]?.done ?? null;
+      if (fromDone !== toDone) doneChanges.push({ stageId: sid, from: fromDone, to: toDone });
     }
   }
 
@@ -4556,11 +4565,27 @@ app.put('/api/demands/:id/skipped-stages', requireAuth, (req, res) => {
     if (nextStageAdditions.length) d.stageAdditions = nextStageAdditions;
     else delete d.stageAdditions;
   }
+  // Safety net: limpa chaves órfãs em mapas por stageId — se uma addition foi
+  // removida (e o client não limpou tudo), ainda temos garantia de coerência.
+  const validIdsFinal = new Set([
+    ...flow.stages.map(s => s.id),
+    ...(Array.isArray(d.stageAdditions) ? d.stageAdditions.map(a => a.id) : [])
+  ]);
+  const cleanMap = obj => {
+    if (!obj || typeof obj !== 'object') return obj;
+    for (const k of Object.keys(obj)) if (!validIdsFinal.has(k)) delete obj[k];
+    return obj;
+  };
+  cleanMap(d.stageResponsibles);
+  cleanMap(d.stageLabels);
+  cleanMap(d.stageOverrides);
+  if (Array.isArray(d.skippedStages)) d.skippedStages = d.skippedStages.filter(id => validIdsFinal.has(id));
+  if (Array.isArray(d.stageOrder)) d.stageOrder = d.stageOrder.filter(id => validIdsFinal.has(id));
 
-  if (addedSkip.length || removedSkip.length || respChanged.length || orderChanged || labelChanges.length || slaChanges.length || dateChanges.length) {
+  if (addedSkip.length || removedSkip.length || respChanged.length || orderChanged || labelChanges.length || slaChanges.length || dateChanges.length || doneChanges.length) {
     addHistory(d, req.user.id, 'stages_customized', {
       added: addedSkip, removed: removedSkip, responsibles: respChanged,
-      orderChanged, labelChanges, slaChanges, dateChanges
+      orderChanged, labelChanges, slaChanges, dateChanges, doneChanges
     });
   }
   saveEntity('demands', d);

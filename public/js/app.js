@@ -538,7 +538,8 @@ function normalizeUrl(raw) {
 /* Detecta URLs dentro de texto livre e converte em <a target=_blank>. Recebe string JÁ ESCAPADA. */
 function linkifyEscaped(escaped) {
   // Padrão: protocolo opcional + domínio + path. Adiciona https:// se omitido.
-  const re = /\b((?:https?:\/\/|www\.)[^\s<]+|[a-z0-9-]+(?:\.[a-z0-9-]+)+\.(?:com|com\.br|net|org|io|co|app|dev|info|gov|edu|me|tv|ai|design)(?:\/[^\s<]*)?)\b/gi;
+  // Segmento intermediário usa `*` pra também casar 2-partes (`google.com`).
+  const re = /\b((?:https?:\/\/|www\.)[^\s<]+|[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com\.br|com|net|org|io|co|app|dev|info|gov|edu|me|tv|ai|design)(?:\/[^\s<]*)?)\b/gi;
   return escaped.replace(re, m => {
     // Evita linkificar conteúdo dentro de tags já inseridas (mention spans não contém URL real, então é raro)
     const href = normalizeUrl(m);
@@ -8173,11 +8174,14 @@ function removeStageAdditionDraft(stageId) {
   if (stagesEditDraft.sla) delete stagesEditDraft.sla[stageId];
   renderDetail();
 }
-/* Alterna a flag "conclusão" (done) de uma etapa. Etapas done vão pro fim da ordem. */
+/* Alterna a flag "conclusão" (done) de uma etapa. Etapas done vão pro fim da ordem
+   E lembram sua posição anterior, pra restaurar quando desmarcadas. Sem isso o
+   toggle done→undone deixava a etapa no fim silenciosamente. */
 function toggleStageDoneDraft(stageId) {
   if (!stagesEditDraft) return;
   const d = demandById(detailId); if (!d) return;
   if (!stagesEditDraft.done) stagesEditDraft.done = {};
+  if (!stagesEditDraft.donePrevIndex) stagesEditDraft.donePrevIndex = {};
   // Estado efetivo atual
   const poolById = new Map();
   const flow = flowById(d.flowId);
@@ -8194,10 +8198,20 @@ function toggleStageDoneDraft(stageId) {
   // Se novo estado bate com o padrão salvo, remove override; senão grava.
   if (newDone === savedDone) delete stagesEditDraft.done[stageId];
   else stagesEditDraft.done[stageId] = newDone;
-  // Se marcou como done, move pro fim da ordem (mantém invariante).
   if (newDone) {
+    // Marcou como done — guarda a posição atual pra restaurar depois, e move pro fim.
+    stagesEditDraft.donePrevIndex[stageId] = stagesEditDraft.order.indexOf(stageId);
     stagesEditDraft.order = stagesEditDraft.order.filter(id => id !== stageId);
     stagesEditDraft.order.push(stageId);
+  } else {
+    // Desmarcou — restaura pra posição original (se tinha sido gravada nesta sessão).
+    const prevIdx = stagesEditDraft.donePrevIndex[stageId];
+    if (typeof prevIdx === 'number' && prevIdx >= 0) {
+      stagesEditDraft.order = stagesEditDraft.order.filter(id => id !== stageId);
+      const insertAt = Math.min(prevIdx, stagesEditDraft.order.length);
+      stagesEditDraft.order.splice(insertAt, 0, stageId);
+    }
+    delete stagesEditDraft.donePrevIndex[stageId];
   }
   renderDetail();
 }
@@ -10361,7 +10375,9 @@ function renderMentionsInHtml(html) {
    Auto-hyperlink no RENDER — o HTML armazenado não muda, o editor não vê o link. */
 function linkifyHtmlPreserveAnchors(html) {
   if (!html) return html || '';
-  const URL_RE = /\b((?:https?:\/\/|www\.)[^\s<]+|[a-z0-9-]+(?:\.[a-z0-9-]+)+\.(?:com|com\.br|net|org|io|co|app|dev|info|gov|edu|me|tv|ai|design)(?:\/[^\s<]*)?)\b/gi;
+  // 2ª alternativa usa `*` (não `+`) pros segmentos intermediários — assim `google.com`
+  // (uma parte antes do TLD) casa, além de `sub.dom.com`. Antes exigia 3 partes.
+  const URL_RE = /\b((?:https?:\/\/|www\.)[^\s<]+|[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com\.br|com|net|org|io|co|app|dev|info|gov|edu|me|tv|ai|design)(?:\/[^\s<]*)?)\b/gi;
   const div = document.createElement('div');
   div.innerHTML = html;
   const walker = document.createTreeWalker(div, NodeFilter.SHOW_TEXT, null);
@@ -10505,12 +10521,20 @@ function applyLinkPopover() {
   if (savedRange && window.getSelection) {
     const s = window.getSelection(); s.removeAllRanges(); s.addRange(savedRange);
   }
-  const selectedText = savedRange ? savedRange.toString() : '';
   try {
     // Sempre insere via insertHTML — evita `createLink` que perde parâmetros de
     // URL em alguns browsers (Dropbox: ?dl=0&rlkey=... virava href truncado).
-    const label = selectedText || normalized;
-    const anchor = `<a href="${esc(normalized)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>&nbsp;`;
+    // Se há seleção, preserva a formatação INTERNA (bold/italic/mention) via
+    // cloneContents; sem seleção, insere o URL como texto do link.
+    let innerHtml;
+    if (savedRange && !savedRange.collapsed) {
+      const wrap = document.createElement('div');
+      wrap.appendChild(savedRange.cloneContents());
+      innerHtml = wrap.innerHTML || esc(savedRange.toString());
+    } else {
+      innerHtml = esc(normalized);
+    }
+    const anchor = `<a href="${esc(normalized)}" target="_blank" rel="noopener noreferrer">${innerHtml}</a>&nbsp;`;
     document.execCommand('insertHTML', false, anchor);
   } catch {}
   _closeLinkPopover();
