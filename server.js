@@ -4613,6 +4613,23 @@ app.put('/api/demands/:id/skipped-stages', requireAuth, (req, res) => {
       d.ownerId = curResp;
       addHistory(d, req.user.id, 'owner_changed', { fromId: prevOwner, toId: d.ownerId });
     }
+    // Sync prazo: se o override de data (ou addition.deadlineDate) da etapa ATUAL
+    // mudou, replica em d.stageDueDate — sem isso, editar a data pela tab Etapas
+    // salva mas o input do footer continua com o valor antigo até refetch/navegação.
+    let curDate = null;
+    const ovForCur = d.stageOverrides?.[d.status];
+    if (ovForCur && ovForCur.deadlineDate) curDate = ovForCur.deadlineDate;
+    else {
+      const curAdd = (Array.isArray(d.stageAdditions) ? d.stageAdditions : []).find(a => a.id === d.status);
+      if (curAdd && curAdd.deadlineDate) curDate = curAdd.deadlineDate;
+    }
+    if (curDate && curDate !== d.stageDueDate) {
+      const oldDue = d.stageDueDate;
+      d.stageDueDate = curDate;
+      const last = Array.isArray(d.stageHistory) ? d.stageHistory[d.stageHistory.length - 1] : null;
+      if (last) last.dueDate = curDate;
+      addHistory(d, req.user.id, 'stage_due_changed', { from: oldDue, to: curDate });
+    }
   }
   // Safety net: limpa chaves órfãs em mapas por stageId — se uma addition foi
   // removida (e o client não limpou tudo), ainda temos garantia de coerência.

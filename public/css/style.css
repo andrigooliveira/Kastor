@@ -1535,6 +1535,88 @@ tr:hover td { background: var(--surface-2); }
 .status-ico-open { color: var(--accent) !important; }
 .status-ico-late { color: var(--danger, #ef4444) !important; }
 .status-ico-done { color: var(--success, #16a34a) !important; }
+/* Seções de urgência na tabela de Minhas Demandas — header row dentro do tbody
+   agrupa por prazo (Atrasadas / Hoje / Essa semana / Próximos dias).
+   Cada seção ganha tint na row + borda lateral + texto/ícone coloridos, pra
+   ficar óbvio bater o olho em qual bucket você tá. */
+.mine-section-head td {
+  padding: 8px 12px !important;
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+  border-left: 3px solid transparent;
+  position: sticky; top: 0; z-index: 1;
+  background: var(--surface-2);
+}
+.mine-section-head:first-child td { border-top: 0; }
+.mine-section-lbl {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 12px; font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .04em;
+}
+.mine-section-lbl i,
+.mine-section-lbl svg { width: 16px !important; height: 16px !important; flex-shrink: 0; }
+.mine-section-count {
+  min-width: 22px; height: 18px; padding: 0 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface-3); color: var(--text-dim);
+  border-radius: 9px; font-size: 10px; font-weight: 700;
+  margin-left: 4px;
+}
+/* Atrasadas → vermelho */
+.mine-section-head.is-late td {
+  background: color-mix(in srgb, var(--danger, #ef4444) 12%, var(--surface-2));
+  border-left-color: var(--danger, #ef4444);
+}
+.mine-section-head.is-late .mine-section-lbl { color: var(--danger, #ef4444); }
+.mine-section-head.is-late .mine-section-lbl i,
+.mine-section-head.is-late .mine-section-lbl svg { color: var(--danger, #ef4444) !important; }
+/* Hoje → amarelo */
+.mine-section-head.is-today td {
+  background: color-mix(in srgb, #eab308 12%, var(--surface-2));
+  border-left-color: #eab308;
+}
+.mine-section-head.is-today .mine-section-lbl { color: #eab308; }
+.mine-section-head.is-today .mine-section-lbl i,
+.mine-section-head.is-today .mine-section-lbl svg { color: #eab308 !important; }
+/* Essa semana → roxo (accent) */
+.mine-section-head.is-week td {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface-2));
+  border-left-color: var(--accent);
+}
+.mine-section-head.is-week .mine-section-lbl { color: var(--accent-text); }
+.mine-section-head.is-week .mine-section-lbl i,
+.mine-section-head.is-week .mine-section-lbl svg { color: var(--accent-text) !important; }
+/* Próximos dias → verde (relaxado, sem urgência) */
+.mine-section-head.is-later td {
+  background: color-mix(in srgb, var(--success, #16a34a) 12%, var(--surface-2));
+  border-left-color: var(--success, #16a34a);
+}
+.mine-section-head.is-later .mine-section-lbl { color: var(--success, #16a34a); }
+.mine-section-head.is-later .mine-section-lbl i,
+.mine-section-head.is-later .mine-section-lbl svg { color: var(--success, #16a34a) !important; }
+/* Tabela colapsável de "Concluídas" abaixo da tabela principal (/demandas).
+   Header clicável com contador; body vira só o table quando aberto. */
+.done-table-wrap { margin-top: 18px; }
+.done-table-toggle {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 12px;
+  background: var(--surface-2); border: 1px solid var(--hairline);
+  border-radius: 8px;
+  color: var(--text); font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: background .12s, border-color .12s;
+  width: 100%;
+}
+.done-table-toggle:hover { background: var(--surface-3); border-color: var(--border); }
+.done-table-caret { color: var(--text-muted); flex-shrink: 0; }
+.done-table-title { flex: 1; text-align: left; }
+.done-table-count {
+  min-width: 22px; height: 20px; padding: 0 7px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface-3); color: var(--text-dim);
+  border-radius: 10px; font-size: 11px; font-weight: 700;
+}
+.done-table-body-wrap { margin-top: 8px; }
 /* Kebab menu da barra de filtros da lista de Demandas — agrupa toggles de
    visualização (Lista/Kanban/Calendário) + Exportar CSV. Mesmo pattern do
    .stages-edit-menu (comment kebab): abre à direita, click-outside fecha.
@@ -3321,6 +3403,9 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 
 /* TOAST */
 #toast-container { position: fixed; bottom: 24px; right: 24px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; }
+/* Na página de detalhe da demanda o rodapé (stage picker + prazo + avançar)
+   fica fixo no canto. Sobe o toast pra não cobrir esses controles. */
+body:has(#page-demand-detail.active) #toast-container { bottom: 96px; }
 .toast {
   background: var(--glass-strong);
   backdrop-filter: saturate(180%) blur(24px);

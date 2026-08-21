@@ -5830,22 +5830,19 @@ function renderList() {
     }
   }
 
-  if (!list.length) {
-    $('list-table-body').innerHTML = `<tr><td colspan="9">${emptyState('Nenhuma demanda encontrada', 'Ajuste a busca ou os filtros para encontrar o que procura.', 'search')}</td></tr>`;
-    if (listView === 'kanban') renderKanban();
-    if (listView === 'cal') renderCalendar('all');
-    refreshBulkBar();
-    saveFilters('list');
-    return;
-  }
-  $('list-table-body').innerHTML = list.map(d => {
+  // Split: demandas em ANDAMENTO vão pra tabela principal; CONCLUÍDAS vão pra
+  // uma segunda tabela colapsável, respeitando os mesmos filtros e sort.
+  // Se o filtro de Status = "Concluídas", `list` já vem só de concluídas — vai tudo
+  // pra tabela principal (não faz sentido duplicar). Nos outros filtros, split real.
+  const statusFilter = $('filter-quick')?.value || '';
+  const isDoneOnly = statusFilter === 'done';
+  const openList = isDoneOnly ? [] : list.filter(d => !isDone(d));
+  const doneList = isDoneOnly ? list : list.filter(d => isDone(d));
+  const mainList = isDoneOnly ? doneList : openList;
+
+  const renderRow = (d) => {
     const p = projectById(d.projectId);
-    const ws = wsById(d.workspaceId);
-    const wsCell = ws
-      ? `<span class="pill" style="color:${ws.color || '#7A00FF'};background:${hexDim(ws.color)}"><span class="pill-dot" style="background:${ws.color || '#7A00FF'}"></span>${esc(ws.name)}</span>`
-      : '<span class="pill pill-muted">—</span>';
     const sel = selectedDemandIds.has(d.id);
-    // Ordem: Demanda · Projeto · Cliente · Prioridade · Etapa · Responsável · Prazo · Conclusão
     return `<tr class="demand-row ${sel ? 'selected' : ''}" data-demand-id="${d.id}" onclick="onDemandRowClick(event, '${d.id}')">
       <td class="col-bulk-check"><input type="checkbox" class="bulk-check-row" ${sel ? 'checked' : ''} onclick="event.stopPropagation();toggleDemandSelection('${d.id}', this.checked)"></td>
       <td class="col-demand-name"><span class="demand-name">${esc(d.name)}</span></td>
@@ -5857,12 +5854,55 @@ function renderList() {
       <td>${deadlineCell(d)}</td>
       <td>${d.completedAt ? fmtDate(d.completedAt) : '—'}</td>
     </tr>`;
-  }).join('');
+  };
+
+  // Tabela principal
+  if (!mainList.length) {
+    $('list-table-body').innerHTML = `<tr><td colspan="9">${emptyState(isDoneOnly ? 'Nenhuma demanda concluída no filtro' : 'Nenhuma demanda encontrada', 'Ajuste a busca ou os filtros para encontrar o que procura.', 'search')}</td></tr>`;
+  } else {
+    $('list-table-body').innerHTML = mainList.map(renderRow).join('');
+  }
+
+  // Tabela concluídas (colapsável) — só mostra se houver e não estivermos no filtro "Concluídas".
+  const doneWrap = document.getElementById('done-table-wrap');
+  if (doneWrap) {
+    if (!isDoneOnly && doneList.length) {
+      doneWrap.style.display = '';
+      document.getElementById('done-table-count').textContent = String(doneList.length);
+      document.getElementById('done-table-body').innerHTML = doneList.map(renderRow).join('');
+      // Restaura estado open/close persistido (default = fechado)
+      const body = document.getElementById('done-table-body-wrap');
+      const caret = document.querySelector('.done-table-caret');
+      const isOpen = (() => { try { return localStorage.getItem('kastor-done-table-open') === '1'; } catch { return false; } })();
+      if (body) body.style.display = isOpen ? '' : 'none';
+      if (caret) caret.setAttribute('data-lucide', isOpen ? 'chevron-down' : 'chevron-right');
+    } else {
+      doneWrap.style.display = 'none';
+    }
+  }
+
   paintIcons(); // ícones de urgência de prazo (alert-triangle / clock) nas linhas
   if (listView === 'kanban') renderKanban();
   if (listView === 'cal') renderCalendar('all');
   refreshBulkBar();
   saveFilters('list');
+}
+/* Colapsa/expande a tabela de "Concluídas" na aba Demandas. Persiste em localStorage. */
+function toggleDoneTable() {
+  const body = document.getElementById('done-table-body-wrap');
+  const caret = document.querySelector('.done-table-caret');
+  if (!body) return;
+  const willOpen = body.style.display === 'none';
+  body.style.display = willOpen ? '' : 'none';
+  if (caret) {
+    caret.setAttribute('data-lucide', willOpen ? 'chevron-down' : 'chevron-right');
+    const fresh = document.createElement('i');
+    fresh.setAttribute('data-lucide', willOpen ? 'chevron-down' : 'chevron-right');
+    fresh.className = 'ic-sm done-table-caret';
+    caret.replaceWith(fresh);
+    if (typeof paintIcons === 'function') paintIcons();
+  }
+  try { localStorage.setItem('kastor-done-table-open', willOpen ? '1' : '0'); } catch {}
 }
 function sortList(key) {
   if (sortKey === key) sortAsc = !sortAsc; else { sortKey = key; sortAsc = true; }
@@ -6352,10 +6392,9 @@ function renderMine() {
     return (va < vb ? -1 : va > vb ? 1 : 0) * (mineSortAsc ? 1 : -1);
   });
 
-  $('mine-table-body').innerHTML = list.length ? list.map(d => {
+  const renderMineRow = (d) => {
     const p = projectById(d.projectId);
     const ws = wsById(d.workspaceId);
-    // Pill de workspace com cor — mesmo padrão usado na tela de Workspaces.
     const wsCell = ws
       ? `<span class="pill" style="color:${ws.color || '#7A00FF'};background:${hexDim(ws.color)}"><span class="pill-dot" style="background:${ws.color || '#7A00FF'}"></span>${esc(ws.name)}</span>`
       : '<span class="pill pill-muted">—</span>';
@@ -6368,8 +6407,45 @@ function renderMine() {
       <td>${qtyCell(d)}</td>
       <td>${deadlineCell(d)}</td>
     </tr>`;
-  }).join('')
-    : `<tr><td colspan="7">${emptyState('Nenhuma demanda encontrada', 'Você não tem demandas neste filtro.', 'inbox')}</td></tr>`;
+  };
+
+  const body = $('mine-table-body');
+  if (!list.length) {
+    body.innerHTML = `<tr><td colspan="7">${emptyState('Nenhuma demanda encontrada', 'Você não tem demandas neste filtro.', 'inbox')}</td></tr>`;
+  } else if (fq === 'done') {
+    // Filtro "Concluídas" — flat, sem seções (não faz sentido separar por prazo).
+    body.innerHTML = list.map(renderMineRow).join('');
+  } else {
+    // 4 seções por urgência de prazo. Cada seção mantém a ordenação corrente.
+    const today = todayStr();
+    const now = new Date(today + 'T00:00:00');
+    // Fim da semana atual = próximo domingo (getDay 0=dom, 6=sab). "essa semana" = hoje..domingo.
+    const daysUntilSunday = (7 - now.getDay()) % 7;
+    const endOfWeek = new Date(now); endOfWeek.setDate(endOfWeek.getDate() + daysUntilSunday);
+    const endOfWeekYmd = endOfWeek.toISOString().slice(0, 10);
+    const buckets = { atrasadas: [], hoje: [], semana: [], proximos: [] };
+    for (const d of list) {
+      const due = effDue(d);
+      if (!due) { buckets.proximos.push(d); continue; }
+      if (due < today) buckets.atrasadas.push(d);
+      else if (due === today) buckets.hoje.push(d);
+      else if (due <= endOfWeekYmd) buckets.semana.push(d);
+      else buckets.proximos.push(d);
+    }
+    const sections = [
+      { key: 'atrasadas', label: 'Atrasadas', icon: 'alert-triangle', cls: 'is-late' },
+      { key: 'hoje',      label: 'Hoje',      icon: 'circle-dot',     cls: 'is-today' },
+      { key: 'semana',    label: 'Essa semana', icon: 'calendar',     cls: 'is-week' },
+      { key: 'proximos',  label: 'Próximos dias', icon: 'arrow-right', cls: 'is-later' }
+    ];
+    body.innerHTML = sections.map(sec => {
+      const items = buckets[sec.key];
+      if (!items.length) return '';
+      return `<tr class="mine-section-head ${sec.cls}"><td colspan="7"><span class="mine-section-lbl"><i data-lucide="${sec.icon}" class="ic-sm"></i>${esc(sec.label)}<span class="mine-section-count">${items.length}</span></span></td></tr>` +
+        items.map(renderMineRow).join('');
+    }).join('');
+  }
+
   paintIcons(); // ícones de urgência de prazo
   // Calendário e Agenda embed ficam sempre visíveis abaixo da tabela em
   // "Minhas Demandas". Re-render junto pra refletir mudanças imediato.
@@ -8004,6 +8080,18 @@ function renderDetail() {
   const flowName   = flow?.name || '';
   const activeTab = detailActiveTab || 'comments';
 
+  // ANTES de destruir o DOM: snapshot IMEDIATO do compose de comentário pro localStorage.
+  // Sem isso, um SSE (ou refetch) que caia entre teclas do usuário e o debounce de 300ms
+  // do draftSaveCommentCE apaga o texto que ele tá digitando. Bypass do debounce aqui.
+  try {
+    const composeEl = document.getElementById('comment-input');
+    if (composeEl && detailId) {
+      _composeWasFocused = document.activeElement === composeEl;
+      const html = _commentInputHtml(composeEl);
+      if (html) localStorage.setItem(_DRAFT_KEY(detailId), html);
+    }
+  } catch {}
+
   $('detail-content').innerHTML = `
     <div class="detail-content detail-content-v2" id="detail-split-root">
       <!-- Divider arrastável entre as duas colunas + toggle de colapsar -->
@@ -8247,6 +8335,9 @@ function renderDetail() {
   setupDragDrop('#page-demand-detail .detail-content', 'detail-attachments-list', processDroppedFiles);
   // Paste + drag-and-drop de imagens direto no compositor de comentários
   setupCommentComposer();
+  // Restaura o rascunho do compose (localStorage) — sem isso, cada renderDetail
+  // provocado por SSE/refetch destruiria o texto sendo digitado.
+  draftRestoreComment();
   // Abre imagens inline dos comentários em nova aba ao clicar (mesma UX dos
   // anexos). Delegação escopada em .comment-list — o innerHTML é substituído
   // a cada renderDetail, então não há acúmulo de listeners.
@@ -10796,6 +10887,10 @@ async function sendComment() {
     });
     pendingAttachments = [];
     draftClearComment(detailId); // rascunho salvou seu papel — pode sair
+    // Limpa o compose ANTES de renderDetail — sem isso, o snapshot que roda no topo
+    // do renderDetail captura o texto já enviado e o draftRestoreComment repõe.
+    el.innerHTML = '';
+    syncCommentEmptyState(el);
     patchDemand(upd);
     renderDetail();
     toast('Comentário enviado!');
@@ -11077,9 +11172,23 @@ function draftRestoreComment() {
   // Se ainda estiver vazio (usuário não começou a digitar entre render e restore).
   const currentHtml = (el.innerHTML || '').trim();
   const isEmpty = !currentHtml || /^<br\s*\/?>$/i.test(currentHtml);
-  if (isEmpty) el.innerHTML = saved;
+  if (isEmpty) {
+    el.innerHTML = saved;
+    // Se o compose estava focado antes do render (SSE mid-typing), re-foca e joga
+    // o caret no fim — assim o usuário volta exatamente onde parou de digitar.
+    if (_composeWasFocused) {
+      try {
+        el.focus();
+        const range = document.createRange();
+        range.selectNodeContents(el); range.collapse(false);
+        const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+      } catch {}
+    }
+  }
+  _composeWasFocused = false;
   syncCommentEmptyState(el);
 }
+let _composeWasFocused = false;
 async function deleteComment(cid) {
   try {
     const upd = await api('/demands/' + detailId + '/comment/' + cid, 'DELETE');
@@ -11143,7 +11252,12 @@ function handleCommentImages(ev) { readImagesInline(ev.target.files); ev.target.
    Mesmo comportamento do editor de comentários. */
 function isHtmlContent(s) {
   if (!s || typeof s !== 'string') return false;
-  return /<(p|div|br|ul|ol|li|strong|em|b|i|u|s|a|img|blockquote|span|h[1-6])\b[^>]*>/i.test(s);
+  if (/<(p|div|br|ul|ol|li|strong|em|b|i|u|s|a|img|blockquote|span|h[1-6])\b[^>]*>/i.test(s)) return true;
+  // Também trata entidades HTML como "já é HTML" — sem isso, uma string tipo
+  // "&amp;&amp;" (que veio de um innerHTML) é achada plain-text e passa pelo
+  // esc() de novo, virando "&amp;amp;&amp;amp;" (double-encoding do usuário).
+  if (/&(?:amp|lt|gt|quot|nbsp|#\d+|#x[0-9a-f]+);/i.test(s)) return true;
+  return false;
 }
 /* Renderiza o HTML de um rich editor. `id` é o id do contenteditable.
    `initial` pode ser markdown-legado ou HTML — detectado automaticamente. */

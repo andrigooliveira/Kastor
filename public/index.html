@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-title" content="reWork">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/css/style.css?v=20260821x">
+<link rel="stylesheet" href="/css/style.css?v=20260821ae">
 <script type="text/javascript">
     (function(c,l,a,r,i,t,y){
         c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
@@ -589,6 +589,34 @@
                 </thead>
                 <tbody id="list-table-body"></tbody>
               </table>
+            </div>
+            <!-- Tabela separada pra CONCLUÍDAS — colapsável, respeita os mesmos filtros/sort.
+                 Evita poluir a tabela principal com histórico. -->
+            <div class="done-table-wrap" id="done-table-wrap" style="display:none">
+              <button type="button" class="done-table-toggle" id="done-table-toggle" onclick="toggleDoneTable()">
+                <i data-lucide="chevron-right" class="ic-sm done-table-caret"></i>
+                <i data-lucide="check-circle-2" class="ic-sm status-ico-done"></i>
+                <span class="done-table-title">Concluídas</span>
+                <span class="done-table-count" id="done-table-count">0</span>
+              </button>
+              <div class="table-wrap table-scroll done-table-body-wrap" id="done-table-body-wrap" style="display:none">
+                <table>
+                  <thead>
+                    <tr>
+                      <th class="col-bulk-check"></th>
+                      <th class="col-demand-name" style="cursor:pointer" onclick="sortList('name')">Demanda <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                      <th style="cursor:pointer" onclick="sortList('project')">Projeto <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                      <th style="cursor:pointer" onclick="sortList('client')">Cliente <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                      <th style="cursor:pointer" onclick="sortList('priority')">Prioridade <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                      <th style="cursor:pointer" onclick="sortList('status')">Etapa <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                      <th style="cursor:pointer" onclick="sortList('owner')">Responsável <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                      <th style="cursor:pointer" onclick="sortList('deadline')">Prazo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                      <th style="cursor:pointer" onclick="sortList('completed')">Conclusão <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                    </tr>
+                  </thead>
+                  <tbody id="done-table-body"></tbody>
+                </table>
+              </div>
             </div>
           </div>
 
@@ -3565,7 +3593,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260821aa"></script>
+<script src="/js/app.js?v=20260821ad"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
