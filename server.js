@@ -224,14 +224,28 @@ function saveDB() {
 
 function uid() { return crypto.randomBytes(6).toString('hex'); }
 function nowISO() { return new Date().toISOString(); }
-function today() { return new Date().toISOString().slice(0,10); }
+// USA DATA LOCAL do server (setar TZ env pra alinhar com o time). ISO/UTC dava
+// off-by-one à noite (Brasil UTC-3 às 22h já é dia+1 em UTC).
+function today() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+function _ymdOf(dateObj) {
+  const y = dateObj.getFullYear();
+  const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const day = String(dateObj.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 function addDays(ymd, days) {
   const base = ymd ? new Date(ymd + 'T12:00:00') : new Date();
   base.setDate(base.getDate() + (Number(days) || 0));
   const dow = base.getDay();
   if (dow === 6) base.setDate(base.getDate() + 2); // sáb → seg
   if (dow === 0) base.setDate(base.getDate() + 1); // dom → seg
-  return base.toISOString().slice(0,10);
+  return _ymdOf(base);
 }
 
 /* ─── MIGRAÇÃO de bases antigas ─── */
@@ -1133,7 +1147,9 @@ const ALLOWED_MIME_EXT = {
   'text/csv':   'csv',
   'text/markdown': 'md',
 };
-const UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
+// 25 MB por arquivo — cabe screenshots grandes e PDFs pequenos. O compress
+// client-side reduz a maioria pra <2MB, mas prints/PNGs sem compress podem passar.
+const UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
 
 function saveUploadFromDataUri(dataUri, originalName) {
   if (typeof dataUri !== 'string') return null;
@@ -3195,7 +3211,10 @@ const COMMENT_HTML_ATTR_ALLOWLIST = {
   img:  ['src', 'alt', 'title', 'width', 'height'],
   span: ['class']
 };
-const COMMENT_HTML_MAX_LEN = 200_000;
+// 60 MB — teto do input BRUTO pro sanitizer (comentários + descrições).
+// Cabe várias imagens grandes coladas; o sanitizer converte data URIs em /uploads,
+// então o valor GRAVADO em disco/DB fica sempre em KB.
+const COMMENT_HTML_MAX_LEN = 60 * 1024 * 1024;
 function sanitizeCommentHtml(input) {
   let html = String(input == null ? '' : input);
   if (html.length > COMMENT_HTML_MAX_LEN) html = html.slice(0, COMMENT_HTML_MAX_LEN);
@@ -3568,7 +3587,12 @@ app.post('/api/demands', requireAuth, (req, res) => {
   // o padrão do fluxo (não força — se enviou string vazia, não substitui).
   const useDefaultDesc = (b.description === undefined || b.description === null)
     && (flow.defaultDescription && flow.defaultDescription.trim());
-  const initialDesc = (useDefaultDesc ? String(flow.defaultDescription) : String(b.description || '')).slice(0, 20000);
+  // Sanitiza (transforma data: em /uploads, strip de tags perigosas, allowlist).
+  // Aceita até 60 MB no bruto — cabe vários prints/screenshots grandes embutidos
+  // como data URIs; sanitizer converte pra /uploads e o valor final fica em KB.
+  // Depois de sanitizar, aplica cap de 500 KB no HTML final (texto + URLs curtas).
+  const rawDesc = (useDefaultDesc ? String(flow.defaultDescription) : String(b.description || '')).slice(0, 60 * 1024 * 1024);
+  const initialDesc = sanitizeCommentHtml(rawDesc).slice(0, 500 * 1024);
   // Checklist inicial: explicit list > flow.defaultChecklist > [].
   // Valida o responsável de um item de checklist: precisa ser usuário ativo com
   // acesso ao workspace do projeto; caso contrário vira null.
@@ -3788,7 +3812,9 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
     }
   }
   if (typeof b.description === 'string') {
-    const nextDesc = sanitizeCommentHtml(b.description.slice(0, 20000));
+    // 60 MB pra caber múltiplos prints (data: URIs); sanitizeCommentHtml converte
+    // pra /uploads e o final vira KB (texto + URLs curtas).
+    const nextDesc = sanitizeCommentHtml(b.description.slice(0, 60 * 1024 * 1024)).slice(0, 500 * 1024);
     if (nextDesc !== d.description) {
       d.description = nextDesc;
       addHistory(d, req.user.id, 'description_changed', null);
@@ -4330,10 +4356,52 @@ app.put('/api/demands/:id/skipped-stages', requireAuth, (req, res) => {
   const d = getDemand(req, res); if (!d) return;
   const flow = db.flows.find(f => f.id === d.flowId);
   if (!flow) return res.status(400).json({ error: 'Fluxo da demanda não encontrado' });
-  // Pool completo: etapas do fluxo + etapas adicionadas por instância.
+
+  // ── stageAdditions: sincroniza etapas EXTRAS da demanda (novas + kept + rename).
+  //    Body pode conter: novas (id começa com 'add-' ou id inexistente) e/ou existentes.
+  //    Server gera IDs definitivos pras novas e remove qualquer existente omitida.
+  const clientAdditionIdMap = {}; // id do cliente → id gerado no server (pra remap do stageOrder)
+  let nextStageAdditions = Array.isArray(d.stageAdditions) ? d.stageAdditions.map(a => ({ ...a })) : [];
+  if (Array.isArray(req.body?.stageAdditions)) {
+    const existingById = new Map(nextStageAdditions.map(a => [a.id, a]));
+    const rebuilt = [];
+    for (const s of req.body.stageAdditions) {
+      if (!s || typeof s !== 'object') continue;
+      const label = String(s.label || '').trim().slice(0, 80);
+      if (!label) continue;
+      const days = Number.isInteger(Number(s.deadlineDays)) && Number(s.deadlineDays) >= 0 ? Number(s.deadlineDays) : null;
+      let respId = null;
+      if (typeof s.responsibleId === 'string' && s.responsibleId) {
+        const u = db.users.find(x => x.id === s.responsibleId && x.active !== false);
+        if (u && canAccessWs(u, d.workspaceId)) respId = u.id;
+      }
+      const color = typeof s.color === 'string' && /^#[0-9a-f]{6}$/i.test(s.color) ? s.color : '#7A00FF';
+      const dateAnchor = (typeof s.deadlineDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s.deadlineDate))
+        ? s.deadlineDate : null;
+      const done = !!s.done;
+      const clientId = typeof s.id === 'string' ? s.id : '';
+      // Se o cliente mandou um id que já existe na demanda → é UMA edição da existente.
+      // Se não existe (ou não veio) → é uma NOVA addition; gera id server-side.
+      if (clientId && existingById.has(clientId)) {
+        const prev = existingById.get(clientId);
+        rebuilt.push({ ...prev, label, color, deadlineDays: days, deadlineDate: dateAnchor, responsibleId: respId, done });
+      } else {
+        const newId = uid();
+        if (clientId) clientAdditionIdMap[clientId] = newId;
+        rebuilt.push({ id: newId, label, color, deadlineDays: days, deadlineDate: dateAnchor, responsibleId: respId, done });
+      }
+    }
+    nextStageAdditions = rebuilt;
+  }
+
+  // Pool completo: etapas do fluxo + etapas adicionadas por instância (com as novas já dentro).
   // Sem isso, additions eram rejeitadas nas customizações (skip/rename/order/resp).
-  const additionIds = Array.isArray(d.stageAdditions) ? d.stageAdditions.map(s => s.id) : [];
+  const additionIds = nextStageAdditions.map(s => s.id);
   const validStageIds = new Set([...flow.stages.map(s => s.id), ...additionIds]);
+  // Impede remover a etapa ATUAL da demanda via addition-remove.
+  if (d.status && !validStageIds.has(d.status)) {
+    return res.status(400).json({ error: 'Não é possível remover a etapa atual da demanda.' });
+  }
 
   // ── skippedStages ──
   const raw = Array.isArray(req.body?.skippedStages) ? req.body.skippedStages : [];
@@ -4358,12 +4426,15 @@ app.put('/api/demands/:id/skipped-stages', requireAuth, (req, res) => {
   }
 
   // ── stageOrder (array de stage IDs na ordem desejada) ──
+  // Remap: ids do cliente pra ids gerados no server (quando aplicável, additions novas).
   let stageOrder = null;
   if (Array.isArray(req.body?.stageOrder)) {
     const seen = new Set();
     stageOrder = [];
-    for (const id of req.body.stageOrder) {
-      if (typeof id === 'string' && validStageIds.has(id) && !seen.has(id)) {
+    for (const rawId of req.body.stageOrder) {
+      if (typeof rawId !== 'string') continue;
+      const id = clientAdditionIdMap[rawId] || rawId;
+      if (validStageIds.has(id) && !seen.has(id)) {
         stageOrder.push(id);
         seen.add(id);
       }
@@ -4480,6 +4551,11 @@ app.put('/api/demands/:id/skipped-stages', requireAuth, (req, res) => {
   if (stageOrder !== null) d.stageOrder = stageOrder;
   if (stageLabels !== null) d.stageLabels = stageLabels;
   if (stageOverrides !== null) d.stageOverrides = stageOverrides;
+  // Persiste stageAdditions se o body incluiu (rebuilt acima). Array vazio remove todas.
+  if (Array.isArray(req.body?.stageAdditions)) {
+    if (nextStageAdditions.length) d.stageAdditions = nextStageAdditions;
+    else delete d.stageAdditions;
+  }
 
   if (addedSkip.length || removedSkip.length || respChanged.length || orderChanged || labelChanges.length || slaChanges.length || dateChanges.length) {
     addHistory(d, req.user.id, 'stages_customized', {

@@ -716,7 +716,21 @@ function effectiveOwnerOf(d) {
   return null;
 }
 function isDone(d)  { const s = stageOf(d); return !!(s && s.done); }
-function todayStr() { return new Date().toISOString().slice(0,10); }
+// USA DATA LOCAL — toISOString é UTC e dava off-by-one à noite (Brasil UTC-3
+// às 22h já era dia+1 em UTC, fazendo "hoje+1" virar dia+2 na visão do user).
+function todayStr() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+function _ymdLocal(dateObj) {
+  const y = dateObj.getFullYear();
+  const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const day = String(dateObj.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 function effDue(d)  { return d.stageDueDate || d.deadline || null; }
 function isLate(d)  { const due = effDue(d); return !!due && !isDone(d) && due < todayStr(); }
 function wasLate(d) { return isDone(d) && d.deadline && d.completedAt && d.completedAt.slice(0,10) > d.deadline; }
@@ -6952,7 +6966,7 @@ function openEditDemand(id) {
   $('f-qty-pieces').value = d.qtyPieces || '';
   $('f-qty-arts').value = d.qtyArts || '';
   $('f-qty-variations').value = d.qtyVariations || '';
-  fillDeliverableUserSelect('f-deliverable-user', d.deliverableUserId || '');
+  fillDeliverableUserSelect('f-deliverable-user', d.deliverableUserId || '', d.workspaceId);
   // Em edição, o checklist é gerenciado pelo painel de detalhe (não aqui)
   demandChecklistDraft = [];
   renderDemandChecklist();
@@ -7188,15 +7202,24 @@ function editCurrentDemand() {
    dedicada — permite Ctrl+click pra nova aba, foco melhor, e Voltar do
    browser volta pra origem naturalmente. */
 function showDetail(id) {
+  // Draft do editor de etapas é por-demanda — se muda a demanda, invalida o draft
+  // anterior (senão o Etapas tab renderiza vazio porque a ordem tem IDs de outra).
+  if (detailId !== id) {
+    stagesEditDraft = null;
+    // Toda demanda abre expandida — colapse anterior não sobrevive troca de demanda.
+    detailRightCollapsed = false;
+  }
   detailId = id;
   detailView = 'main';
   // Se ainda não estamos na página, navega — applyRoute fará o goPage.
+  // keepSearch:false — descarta query-string herdada da rota anterior (ex.: /demandas?ws=…);
+  // sem isso os links compartilhados de demanda vinham com ?ws=xxx pendurado.
   const targetPath = demandPath(id);
   if (currentPage !== 'demand-detail') {
-    navPush(targetPath);
+    navPush(targetPath, { keepSearch: false });
     goPage('demand-detail');
   } else {
-    navPush(targetPath);
+    navPush(targetPath, { keepSearch: false });
     renderDetail();
   }
   draftRestoreComment();
@@ -7369,17 +7392,21 @@ function stopDetailPoll() {
 let detailActiveTab = 'comments';
 let detailCommentSort = 'newest'; // 'newest' | 'oldest'
 // Estado colapsado da coluna direita (comentários/tabs) — persiste.
-let detailRightCollapsed = (localStorage.getItem('kastor-detail-right-collapsed') === '1');
+// Colapse do painel direito é temporário — sem persistência. Sempre inicia expandido.
+let detailRightCollapsed = false;
+// Limpa flag antiga do localStorage (migração one-shot — não custa nada).
+try { localStorage.removeItem('kastor-detail-right-collapsed'); } catch {}
 function _commentSortLabel() { return detailCommentSort === 'newest' ? 'Mais recentes primeiro' : 'Mais antigos primeiro'; }
 function _commentSortIcon()  { return detailCommentSort === 'newest' ? 'arrow-down-narrow-wide' : 'arrow-up-narrow-wide'; }
 function toggleCommentSort() {
   detailCommentSort = detailCommentSort === 'newest' ? 'oldest' : 'newest';
   renderDetail();
 }
-/* Colapsa/expande a coluna direita inteira (comentários + tabs + actions). */
+/* Colapsa/expande a coluna direita inteira (comentários + tabs + actions).
+   NÃO persiste mais em localStorage — colapse era pegajoso e causava confusão
+   ("por que abre em 1 coluna?"). Reset ao abrir/mudar demanda. */
 function toggleDetailRightCollapsed() {
   detailRightCollapsed = !detailRightCollapsed;
-  try { localStorage.setItem('kastor-detail-right-collapsed', detailRightCollapsed ? '1' : '0'); } catch {}
   applyDetailRightCollapsed();
 }
 function applyDetailRightCollapsed() {
@@ -7499,8 +7526,9 @@ function renderDetail() {
     const canDel = c.userId === me.id || me.isAdmin || me.isModerator;
     let text;
     if (c.format === 'html') {
-      // Servidor já sanitizou. Só precisa envolver menções em <span>.
-      text = renderMentionsInHtml(c.text || '');
+      // Servidor já sanitizou. Envolve menções + auto-linkify URLs soltas
+      // (URL colada como texto vira <a> — preserva <a> já existentes).
+      text = linkifyHtmlPreserveAnchors(renderMentionsInHtml(c.text || ''));
     } else {
       // Legacy: texto puro escapado, markdown-lite + linkify.
       text = esc(c.text).replace(/@([a-zA-Z0-9._-]+)/g, (m, uname) => {
@@ -7612,7 +7640,7 @@ function renderDetail() {
           </div>
           <div id="detail-description-view">
             ${d.description
-              ? `<div class="detail-description md-body ${isHtmlContent(d.description) ? 'is-html' : ''}">${isHtmlContent(d.description) ? d.description : mdRender(d.description)}</div>`
+              ? `<div class="detail-description md-body ${isHtmlContent(d.description) ? 'is-html' : ''}">${isHtmlContent(d.description) ? linkifyHtmlPreserveAnchors(d.description) : mdRender(d.description)}</div>`
               : '<div class="hours-empty" style="text-align:left">Sem descrição cadastrada.</div>'}
           </div>
           <div id="detail-briefing-view" class="detail-briefing-slot">
@@ -7782,7 +7810,7 @@ function renderDetail() {
 
   detailDirty = {};
   // Popula select de "atribuir entregáveis a" — só agora que o DOM tá renderizado
-  fillDeliverableUserSelect('detail-deliverable-user', d.deliverableUserId || '');
+  fillDeliverableUserSelect('detail-deliverable-user', d.deliverableUserId || '', d.workspaceId);
   _updateComposeLock();
   // Injeta pipeline visual no slot da topbar (centralizado ao lado de "Demanda").
   const topPipe = document.getElementById('topbar-pipeline');
@@ -7981,6 +8009,9 @@ function openDetailStages() {
     sla: seedSla,
     dates: seedDates,
     order: initialOrder,
+    newAdditions: [],
+    removedAdditionIds: new Set(),
+    done: {},
   };
   setDemandDetailTab('stages');
 }
@@ -8038,13 +8069,19 @@ function refreshStagesEditButtons(d) {
     return false;
   })();
   const hasDateAnchor = !!(stagesEditDraft?.dates && Object.keys(stagesEditDraft.dates).length);
+  const hasNewAdd = !!(stagesEditDraft?.newAdditions && stagesEditDraft.newAdditions.length);
+  const hasRemovedAdd = !!(stagesEditDraft?.removedAdditionIds && stagesEditDraft.removedAdditionIds.size);
+  const hasDoneOv = !!(stagesEditDraft?.done && Object.keys(stagesEditDraft.done).length);
   const empty = !stagesEditDraft || (
     stagesEditDraft.skipped.size === 0 &&
     Object.keys(stagesEditDraft.responsibles).length === 0 &&
     Object.keys(stagesEditDraft.labels).length === 0 &&
     !isStagesOrderCustomized(d) &&
     !hasSlaOverride &&
-    !hasDateAnchor
+    !hasDateAnchor &&
+    !hasNewAdd &&
+    !hasRemovedAdd &&
+    !hasDoneOv
   );
   const saveBtn = document.getElementById('stages-edit-save');
   const resetBtn = document.getElementById('stages-edit-reset');
@@ -8073,8 +8110,112 @@ function resetStagesDraft() {
     sla: seedSla,
     dates: {},
     order: d ? _demandStageIdPool(d) : [],
+    newAdditions: [],
+    removedAdditionIds: new Set(),
+    done: {},
   };
   renderDetail();
+}
+/* Adiciona uma nova etapa (só client-side até Salvar). Insere antes da primeira
+   etapa de conclusão (done), pra manter a "Conclusão" sempre no fim. */
+function addStageToDraft() {
+  const d = demandById(detailId); if (!d) return;
+  if (!stagesEditDraft) return;
+  if (!Array.isArray(stagesEditDraft.newAdditions)) stagesEditDraft.newAdditions = [];
+  const newId = 'add-' + Math.random().toString(36).slice(2, 10);
+  const newStage = {
+    id: newId,
+    label: 'Nova etapa',
+    color: '#7A00FF',
+    deadlineDays: 1,
+    // Pré-seleciona o usuário logado como executor — evita "Selecionar…" na UI.
+    responsibleId: me?.id || null,
+    done: false
+  };
+  stagesEditDraft.newAdditions.push(newStage);
+  // Inserção: antes da primeira etapa marcada como conclusão; se não houver, no fim.
+  const flow = flowById(d.flowId);
+  const poolById = new Map();
+  if (flow) flow.stages.forEach(s => poolById.set(s.id, s));
+  (Array.isArray(d.stageAdditions) ? d.stageAdditions : []).forEach(s => poolById.set(s.id, s));
+  stagesEditDraft.newAdditions.forEach(s => poolById.set(s.id, s));
+  const isDoneEff = (id) => {
+    const s = poolById.get(id);
+    if (!s) return false;
+    if (stagesEditDraft.done && Object.prototype.hasOwnProperty.call(stagesEditDraft.done, id)) return !!stagesEditDraft.done[id];
+    const ovDone = d.stageOverrides?.[id]?.done;
+    if (typeof ovDone === 'boolean') return ovDone;
+    return !!s.done;
+  };
+  const firstDoneIdx = stagesEditDraft.order.findIndex(isDoneEff);
+  if (firstDoneIdx >= 0) stagesEditDraft.order.splice(firstDoneIdx, 0, newId);
+  else stagesEditDraft.order.push(newId);
+  renderDetail();
+}
+/* Remove uma addition da demanda. Se for uma addition NOVA (só client-side),
+   apenas retira do draft; se for uma addition já persistida, marca pra remoção. */
+function removeStageAdditionDraft(stageId) {
+  if (!stagesEditDraft) return;
+  const d = demandById(detailId); if (!d) return;
+  if (stageId === d.status) { toast('Não é possível remover a etapa atual.', 'error'); return; }
+  const newIdx = (stagesEditDraft.newAdditions || []).findIndex(s => s.id === stageId);
+  if (newIdx >= 0) {
+    stagesEditDraft.newAdditions.splice(newIdx, 1);
+  } else {
+    if (!(stagesEditDraft.removedAdditionIds instanceof Set)) stagesEditDraft.removedAdditionIds = new Set();
+    stagesEditDraft.removedAdditionIds.add(stageId);
+  }
+  stagesEditDraft.order = stagesEditDraft.order.filter(id => id !== stageId);
+  delete stagesEditDraft.responsibles[stageId];
+  delete stagesEditDraft.labels[stageId];
+  if (stagesEditDraft.done) delete stagesEditDraft.done[stageId];
+  if (stagesEditDraft.dates) delete stagesEditDraft.dates[stageId];
+  if (stagesEditDraft.sla) delete stagesEditDraft.sla[stageId];
+  renderDetail();
+}
+/* Alterna a flag "conclusão" (done) de uma etapa. Etapas done vão pro fim da ordem. */
+function toggleStageDoneDraft(stageId) {
+  if (!stagesEditDraft) return;
+  const d = demandById(detailId); if (!d) return;
+  if (!stagesEditDraft.done) stagesEditDraft.done = {};
+  // Estado efetivo atual
+  const poolById = new Map();
+  const flow = flowById(d.flowId);
+  if (flow) flow.stages.forEach(s => poolById.set(s.id, s));
+  (Array.isArray(d.stageAdditions) ? d.stageAdditions : []).forEach(s => poolById.set(s.id, s));
+  (stagesEditDraft.newAdditions || []).forEach(s => poolById.set(s.id, s));
+  const stage = poolById.get(stageId);
+  if (!stage) return;
+  const savedDone = (d.stageOverrides && d.stageOverrides[stageId] && typeof d.stageOverrides[stageId].done === 'boolean')
+    ? d.stageOverrides[stageId].done : !!stage.done;
+  const currentDraftDone = Object.prototype.hasOwnProperty.call(stagesEditDraft.done, stageId)
+    ? stagesEditDraft.done[stageId] : savedDone;
+  const newDone = !currentDraftDone;
+  // Se novo estado bate com o padrão salvo, remove override; senão grava.
+  if (newDone === savedDone) delete stagesEditDraft.done[stageId];
+  else stagesEditDraft.done[stageId] = newDone;
+  // Se marcou como done, move pro fim da ordem (mantém invariante).
+  if (newDone) {
+    stagesEditDraft.order = stagesEditDraft.order.filter(id => id !== stageId);
+    stagesEditDraft.order.push(stageId);
+  }
+  renderDetail();
+}
+/* Helper: reordena o array de IDs colocando as etapas "done" (com override do
+   draft ou default do fluxo) no fim, preservando a ordem relativa dos não-done. */
+function _reorderWithDoneAtEnd(d, orderIds, poolById) {
+  if (!Array.isArray(orderIds) || !orderIds.length) return orderIds || [];
+  const draft = stagesEditDraft || {};
+  const isDone = (id) => {
+    if (draft.done && Object.prototype.hasOwnProperty.call(draft.done, id)) return !!draft.done[id];
+    const ovDone = d?.stageOverrides?.[id]?.done;
+    if (typeof ovDone === 'boolean') return ovDone;
+    const s = poolById.get(id);
+    return !!s?.done;
+  };
+  const nonDone = orderIds.filter(id => !isDone(id));
+  const doneIds = orderIds.filter(id => isDone(id));
+  return [...nonDone, ...doneIds];
 }
 // Setter do override de SLA por etapa. Vazio = "voltar pro padrão do fluxo".
 // Atualiza só o botão Salvar pra não perder foco do input (mesmo padrão do label).
@@ -8134,19 +8275,22 @@ function _computeStageAnchorDate(d, stageId, overrideDays) {
 async function saveStagesDraft() {
   if (!stagesEditDraft) return;
   const d = demandById(detailId); if (!d) return;
-  // Monta stageOverrides com deadlineDays (diferente do padrão) OU deadlineDate
-  // (âncora). Payload inflado é evitado — server valida de novo.
+  // Monta stageOverrides com deadlineDays (diferente do padrão), deadlineDate
+  // (âncora) OU done (override de conclusão). Payload inflado é evitado — server valida.
   const flow = flowById(d.flowId);
   const flowSlaById = new Map((flow?.stages || []).map(s => [s.id, s.deadlineDays ?? null]));
+  const flowStageById = new Map((flow?.stages || []).map(s => [s.id, s]));
   const overrides = {};
   const savedOv = (d.stageOverrides && typeof d.stageOverrides === 'object') ? d.stageOverrides : {};
-  // Coleta ids que aparecem em qualquer draft, para não deixar de mandar limpezas.
+  const draftDone = stagesEditDraft.done || {};
   const allIds = new Set([
     ...Object.keys(stagesEditDraft.sla || {}),
     ...Object.keys(stagesEditDraft.dates || {}),
+    ...Object.keys(draftDone),
     ...Object.keys(savedOv),
   ]);
   for (const sid of allIds) {
+    // Só grava overrides em etapas do FLUXO — additions têm seus próprios campos.
     if (!flowSlaById.has(sid)) continue;
     const orig = flowSlaById.get(sid);
     const draftSla = Object.prototype.hasOwnProperty.call(stagesEditDraft.sla || {}, sid) ? stagesEditDraft.sla[sid] : orig;
@@ -8155,15 +8299,45 @@ async function saveStagesDraft() {
     if ((draftSla ?? null) !== (orig ?? null)) out.deadlineDays = draftSla;
     if (draftDate) out.deadlineDate = draftDate;
     else if (savedOv[sid]?.deadlineDate) out.deadlineDate = null; // limpa âncora salva
+    // done override — só grava se difere do padrão do fluxo.
+    if (Object.prototype.hasOwnProperty.call(draftDone, sid)) {
+      const flowStage = flowStageById.get(sid);
+      if (!!draftDone[sid] !== !!flowStage?.done) out.done = !!draftDone[sid];
+    }
     if (Object.keys(out).length) overrides[sid] = out;
   }
+  // Adiciona `done` override em additions salvas (não em newAdditions — done vai no próprio objeto).
+  const savedAdditionIds = new Set((Array.isArray(d.stageAdditions) ? d.stageAdditions : []).map(a => a.id));
+  // Mescla additions existentes (menos as removidas) + novas (com done aplicado).
+  const removedIds = stagesEditDraft.removedAdditionIds instanceof Set ? stagesEditDraft.removedAdditionIds : new Set();
+  const existingKept = (Array.isArray(d.stageAdditions) ? d.stageAdditions : [])
+    .filter(a => !removedIds.has(a.id))
+    .map(a => {
+      const dv = Object.prototype.hasOwnProperty.call(draftDone, a.id) ? !!draftDone[a.id] : !!a.done;
+      // Aplica também rename e resp override, quando presentes no draft.
+      const label = stagesEditDraft.labels?.[a.id] || a.label;
+      const responsibleId = Object.prototype.hasOwnProperty.call(stagesEditDraft.responsibles, a.id)
+        ? stagesEditDraft.responsibles[a.id] : (a.responsibleId || null);
+      return { ...a, label, responsibleId, done: dv };
+    });
+  const newOnes = (stagesEditDraft.newAdditions || []).map(s => {
+    const dv = Object.prototype.hasOwnProperty.call(draftDone, s.id) ? !!draftDone[s.id] : !!s.done;
+    const label = stagesEditDraft.labels?.[s.id] || s.label;
+    const responsibleId = Object.prototype.hasOwnProperty.call(stagesEditDraft.responsibles, s.id)
+      ? stagesEditDraft.responsibles[s.id] : (s.responsibleId || null);
+    return { ...s, label, responsibleId, done: dv };
+  });
+  const stageAdditions = [...existingKept, ...newOnes];
+  // Filtra ordem: remove IDs de additions apagadas.
+  const stageOrder = stagesEditDraft.order.filter(id => !removedIds.has(id));
   try {
     const upd = await api('/demands/' + d.id + '/skipped-stages', 'PUT', {
       skippedStages: [...stagesEditDraft.skipped],
       stageResponsibles: stagesEditDraft.responsibles,
-      stageOrder: stagesEditDraft.order,
+      stageOrder,
       stageLabels: stagesEditDraft.labels,
       stageOverrides: overrides,
+      stageAdditions,
     });
     patchDemand(upd);
     stagesEditDraft = null;
@@ -8175,6 +8349,10 @@ async function saveStagesDraft() {
 }
 function isStagesDraftDirty(d) {
   if (!stagesEditDraft) return false;
+  // Novas adições / remoções / done overrides — qualquer um marca dirty.
+  if (Array.isArray(stagesEditDraft.newAdditions) && stagesEditDraft.newAdditions.length) return true;
+  if (stagesEditDraft.removedAdditionIds instanceof Set && stagesEditDraft.removedAdditionIds.size) return true;
+  if (stagesEditDraft.done && Object.keys(stagesEditDraft.done).length) return true;
   // skippedStages
   const origSkip = new Set(d.skippedStages || []);
   if (origSkip.size !== stagesEditDraft.skipped.size) return true;
@@ -8264,7 +8442,7 @@ function _addDays(ymd, days) {
   if (!ymd) return null;
   const d = new Date(ymd + 'T12:00:00');
   d.setDate(d.getDate() + (Number(days) || 0));
-  return d.toISOString().slice(0, 10);
+  return _ymdLocal(d);
 }
 /* True se a data cair em sábado (6) ou domingo (0). */
 function _isWeekendYmd(ymd) {
@@ -8287,7 +8465,7 @@ function _addBusinessDays(ymd, days) {
   if (days === 0 || days == null) {
     while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
   }
-  return d.toISOString().slice(0, 10);
+  return _ymdLocal(d);
 }
 function _daysDiff(startYmd, endYmd) {
   if (!startYmd || !endYmd) return 0;
@@ -8395,6 +8573,12 @@ function renderDetailStages(d) {
   const poolById = new Map();
   if (flow) flow.stages.forEach(s => poolById.set(s.id, s));
   additions.forEach(s => poolById.set(s.id, s));
+  // Safety net: se o draft anterior é de OUTRA demanda (order tem IDs desconhecidos
+  // no pool atual), reseta pra reconstruir. Sem isso, a tab renderiza vazio.
+  if (stagesEditDraft && Array.isArray(stagesEditDraft.order) && stagesEditDraft.order.length) {
+    const anyMatch = stagesEditDraft.order.some(id => poolById.has(id));
+    if (!anyMatch) stagesEditDraft = null;
+  }
   // Garante draft inicializado (caso entre direto pelo deep link, por ex.)
   if (!stagesEditDraft) {
     // Ordem inicial: usa d.stageOrder se existir; senão originais + adicionadas.
@@ -8414,8 +8598,12 @@ function renderDetailStages(d) {
       seedSlaFb[s.id] = (savedOvFb[s.id]?.deadlineDays !== undefined) ? savedOvFb[s.id].deadlineDays : (s.deadlineDays ?? null);
       if (savedOvFb[s.id]?.deadlineDate) seedDatesFb[s.id] = savedOvFb[s.id].deadlineDate;
     });
-    stagesEditDraft = { skipped: new Set(d.skippedStages || []), responsibles: { ...(d.stageResponsibles || {}) }, labels: { ...(d.stageLabels || {}) }, sla: seedSlaFb, dates: seedDatesFb, order: initOrder };
+    stagesEditDraft = { skipped: new Set(d.skippedStages || []), responsibles: { ...(d.stageResponsibles || {}) }, labels: { ...(d.stageLabels || {}) }, sla: seedSlaFb, dates: seedDatesFb, order: initOrder, newAdditions: [], removedAdditionIds: new Set(), done: {} };
   }
+  // Idempotência: garante que drafts antigos (sem os campos novos) tenham as chaves.
+  if (!Array.isArray(stagesEditDraft.newAdditions)) stagesEditDraft.newAdditions = [];
+  if (!(stagesEditDraft.removedAdditionIds instanceof Set)) stagesEditDraft.removedAdditionIds = new Set();
+  if (!stagesEditDraft.done || typeof stagesEditDraft.done !== 'object') stagesEditDraft.done = {};
   const draft = stagesEditDraft;
   const dirty = isStagesDraftDirty(d);
   // "empty" espelha a lógica do refreshStagesEditButtons — considera SLA custom.
@@ -8424,10 +8612,26 @@ function renderDetailStages(d) {
     flowSlaById.has(sid) && ((v ?? null) !== (flowSlaById.get(sid) ?? null))
   ));
   const hasDateAnchorOv = !!(draft.dates && Object.keys(draft.dates).length);
-  const empty = draft.skipped.size === 0 && Object.keys(draft.responsibles).length === 0 && Object.keys(draft.labels).length === 0 && !isStagesOrderCustomized(d) && !hasSlaOv && !hasDateAnchorOv;
+  const hasNewAddOv = !!(draft.newAdditions && draft.newAdditions.length);
+  const hasRemovedAddOv = !!(draft.removedAdditionIds && draft.removedAdditionIds.size);
+  const hasDoneOv = !!(draft.done && Object.keys(draft.done).length);
+  const empty = draft.skipped.size === 0 && Object.keys(draft.responsibles).length === 0 && Object.keys(draft.labels).length === 0 && !isStagesOrderCustomized(d) && !hasSlaOv && !hasDateAnchorOv && !hasNewAddOv && !hasRemovedAddOv && !hasDoneOv;
   const sortedUsers = wsUsers().slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
 
-  // Itera na ordem do draft, resolvendo cada ID no pool completo (fluxo + additions)
+  // Inclui adições novas (só client-side) no pool visível — persistem apenas ao Salvar.
+  if (Array.isArray(draft.newAdditions)) {
+    draft.newAdditions.forEach(s => { if (!poolById.has(s.id)) poolById.set(s.id, s); });
+  }
+  // Ids marcados pra remoção não devem renderizar (adições existentes que serão apagadas).
+  const removedIds = draft.removedAdditionIds instanceof Set ? draft.removedAdditionIds : new Set();
+  // Garante que qualquer newAddition esteja na order (append) e que removidos saiam.
+  if (Array.isArray(draft.newAdditions)) {
+    draft.newAdditions.forEach(s => { if (!draft.order.includes(s.id)) draft.order.push(s.id); });
+  }
+  draft.order = draft.order.filter(id => !removedIds.has(id));
+  // Enforça: etapas marcadas como "conclusão" (done=true, considerando doneDraft) ficam no fim.
+  draft.order = _reorderWithDoneAtEnd(d, draft.order, poolById);
+  // Itera na ordem do draft, resolvendo cada ID no pool completo (fluxo + additions + newAdditions)
   const rowsList = draft.order.map(id => poolById.get(id)).filter(Boolean);
 
   // Escreve dentro do painel da tab Etapas (era uma sub-view; agora é aba).
@@ -8456,6 +8660,8 @@ function renderDetailStages(d) {
             const isCurrent = s.id === d.status;
             const isOn = !draft.skipped.has(s.id);
             const hasRespOverride = Object.prototype.hasOwnProperty.call(draft.responsibles, s.id);
+            const isAddition = !flowSlaById.has(s.id);
+            const isNewAddition = Array.isArray(draft.newAdditions) && draft.newAdditions.some(a => a.id === s.id);
             // Padrão resolvido: stage.responsibleId direto ou role → project/client.
             const defaultRespId = resolveStageOwnerId(d, s);
             const currentResp = hasRespOverride ? draft.responsibles[s.id] : defaultRespId;
@@ -8474,21 +8680,52 @@ function renderDetailStages(d) {
             const hasDateAnchor = !!(draft.dates && draft.dates[s.id]);
             const isCustomized = hasLabelOverride || hasRespOverride || hasSlaOverride || hasDateAnchor;
             const endDate = endDates[i];
-            return `<div class="stages-edit-row ${isOn ? 'on' : 'off'} ${isCurrent ? 'locked' : ''}"
+            // Estado efetivo de "done" — override no draft.done tem prioridade, senão vem da etapa/override salvo.
+            const savedDoneOv = (d.stageOverrides && d.stageOverrides[s.id] && typeof d.stageOverrides[s.id].done === 'boolean') ? d.stageOverrides[s.id].done : null;
+            const draftDone = (draft.done && Object.prototype.hasOwnProperty.call(draft.done, s.id)) ? draft.done[s.id] : null;
+            const effDone = draftDone !== null ? draftDone : (savedDoneOv !== null ? savedDoneOv : !!s.done);
+            const menuId = `stage-menu-${s.id}`;
+            const doneItemLabel = effDone ? 'Desmarcar conclusão' : 'Marcar como conclusão';
+            const activeItemLabel = isOn ? 'Desativar etapa' : 'Ativar etapa';
+            const activeDisabled = isCurrent;
+            // Classes semânticas no próprio card — o contorno colorido substitui as pills
+            // (Atual/Conclusão/Nova/Desativada). O texto vai no title pra acessibilidade.
+            // Distinção addition salva x não salva:
+            //   isNewAddition = adição criada no draft (ainda não persistida)
+            //   isSavedAddition = adição já salva no server (é addition e não é new)
+            const isSavedAddition = isAddition && !isNewAddition;
+            const rowStateClasses = [
+              isOn ? 'on' : 'off',
+              isCurrent ? 'locked is-current' : '',
+              effDone ? 'is-done' : '',
+              isNewAddition ? 'is-new-unsaved' : '',
+              isSavedAddition ? 'is-new-saved' : '',
+              !isOn && !isCurrent ? 'is-inactive' : ''
+            ].filter(Boolean).join(' ');
+            const stateLabel = [
+              isCurrent ? 'Etapa atual' : '',
+              effDone ? 'Etapa de conclusão' : '',
+              isNewAddition ? 'Etapa nova (não salva)' : '',
+              isSavedAddition ? 'Etapa personalizada' : '',
+              !isOn && !isCurrent ? 'Etapa desativada' : ''
+            ].filter(Boolean).join(' · ');
+            const rowTitle = lockedReason || stateLabel;
+            return `<div class="stages-edit-row ${rowStateClasses}"
                          data-stage-id="${s.id}"
-                         ${lockedReason ? `title="${esc(lockedReason)}"` : ''}>
-              <input type="checkbox" ${isOn ? 'checked' : ''} ${isCurrent ? 'disabled' : ''} onchange="toggleStageDraft('${s.id}')">
+                         ondragover="stagesDragOver(event, ${i})"
+                         ondragleave="stagesDragLeave(event)"
+                         ondrop="stagesDrop(event, ${i})"
+                         ${rowTitle ? `title="${esc(rowTitle)}"` : ''}>
+              <span class="stages-edit-grip" draggable="true"
+                    ondragstart="stagesDragStart(event, ${i})"
+                    ondragend="stagesDragEnd()"
+                    title="Arraste pra reordenar"><i data-lucide="grip-vertical" class="ic-md"></i></span>
               <span class="stages-edit-num">${String(i + 1).padStart(2, '0')}</span>
               <span class="pill-dot" style="background:${s.color}"></span>
               <input class="form-control stages-edit-label-input" value="${esc(currentLabel)}" placeholder="${esc(s.label)}" oninput="setStageLabelDraft('${s.id}', this.value)" maxlength="80">
-              <div class="stages-edit-badges">
-                ${s.done ? '<span class="pill pill-success" style="font-size:9px">Conclusão</span>' : ''}
-                ${isCurrent ? '<span class="pill" style="font-size:9px;background:var(--accent-dim);color:var(--accent-text)">Atual</span>' : ''}
-                ${!isOn && !isCurrent ? '<span class="pill pill-muted" style="font-size:9px">Desativada</span>' : ''}
-              </div>
               <input type="date" class="stages-edit-date-input ${hasDateAnchor ? 'is-customized' : ''}" data-fdp-display="short" data-fdp-no-weekend="1"
                      value="${endDate || ''}"
-                     ${isFlowStage ? '' : 'disabled'}
+                     ${isFlowStage || isAddition ? '' : 'disabled'}
                      onchange="setStageDateDraft('${s.id}', this.value)">
               <span class="stages-edit-sla-days" title="Prazo calculado a partir das datas — edite a data pra alterar. O padrão vem do fluxo.">${(() => {
                 const prev = i === 0 ? baselineYmd : (endDates[i - 1] || baselineYmd);
@@ -8502,10 +8739,20 @@ function renderDetailStages(d) {
                   ${sortedUsers.map(u => `<option value="${u.id}" ${currentResp === u.id ? 'selected' : ''} ${u.id === defaultRespId ? 'data-default="1"' : ''}>${esc(u.name)}</option>`).join('')}
                 </select>
               </div>
+              <div class="stages-edit-menu-wrap">
+                <button type="button" class="stages-edit-menu-btn" title="Mais ações" onclick="toggleStageMenu('${s.id}', event)"><i data-lucide="more-horizontal" class="ic-md"></i></button>
+                <div class="stages-edit-menu" id="${menuId}">
+                  <button class="stages-edit-menu-item" onclick="closeStageMenus(); toggleStageDoneDraft('${s.id}')"><i data-lucide="flag" class="ic-menu"></i> ${doneItemLabel}</button>
+                  <button class="stages-edit-menu-item" ${activeDisabled ? 'disabled' : ''} title="${activeDisabled ? 'Etapa atual — mude antes de desativar' : ''}" onclick="closeStageMenus(); toggleStageDraft('${s.id}')"><i data-lucide="${isOn ? 'eye-off' : 'eye'}" class="ic-menu"></i> ${activeItemLabel}</button>
+                  ${isAddition ? `<button class="stages-edit-menu-item danger" ${isCurrent ? 'disabled' : ''} title="${isCurrent ? 'Etapa atual — não pode remover' : ''}" onclick="closeStageMenus(); removeStageAdditionDraft('${s.id}')"><i data-lucide="trash-2" class="ic-menu"></i> Excluir etapa</button>` : ''}
+                </div>
+              </div>
             </div>`;
           }).join('');
         })()}</div>` : '<div class="hours-empty">Esta demanda não tem fluxo associado.</div>'}
       <div class="stages-edit-footer">
+        <button id="stages-edit-add" class="btn btn-ghost btn-sm" onclick="addStageToDraft()" ${flow ? '' : 'disabled'}><i data-lucide="plus" class="ic-sm"></i>&nbsp;Adicionar etapa</button>
+        <div style="flex:1"></div>
         <button id="stages-edit-reset" class="btn btn-ghost btn-sm" onclick="resetStagesDraft()" ${empty ? 'disabled' : ''}>Restaurar padrões</button>
         <button id="stages-edit-save" class="btn btn-primary btn-sm" onclick="saveStagesDraft()" ${!dirty ? 'disabled' : ''}>Salvar</button>
       </div>
@@ -8742,10 +8989,17 @@ async function endRecurring(id) {
 }
 /* Popula <select> de "atribuir entregáveis a" — usuários ativos do workspace +
    opção vazia (= cai pro responsável atual da demanda). */
-function fillDeliverableUserSelect(selId, currentValue) {
+function fillDeliverableUserSelect(selId, currentValue, workspaceId) {
   const sel = document.getElementById(selId);
   if (!sel) return;
-  const list = wsUsers().slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  // Escopa ao WORKSPACE da demanda (não ao ativo do usuário). Em produção o
+  // usuário pode ter mudado o wsActive depois de abrir o detalhe — sem o
+  // scope da demanda, o dropdown lista usuários errados.
+  const wsScope = workspaceId || activeWs;
+  const list = users
+    .filter(u => u.active !== false && (u.isAdmin || (u.workspaces || []).includes(wsScope)))
+    .slice()
+    .sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
   // Placeholder neutro — SEM atribuição automática ao responsável atual.
   sel.innerHTML = '<option value="">Atribuir responsável…</option>' +
     list.map(u => `<option value="${u.id}" ${u.id === currentValue ? 'selected' : ''}>${esc(u.name)}${u.role ? ' · ' + esc(u.role) : ''}</option>`).join('');
@@ -9830,28 +10084,62 @@ function mentionWatch(ta) {
   pop.style.left = '0';
 }
 // Versão pra contenteditable: lê o texto do nó atual até o caret e detecta @.
+// Guarda a Range corrente pra permitir seleção por CLIQUE (o clique tira o foco
+// do editor e destrói getSelection()); pickMentionCE restaura a partir daqui.
+let _mentionSavedRange = null;
+let _mentionSavedTerm = '';
 function mentionWatchCE(el) {
   const sel = window.getSelection && window.getSelection();
   const pop = $('mention-pop');
-  if (!sel || !sel.rangeCount) { pop.classList.remove('open'); return; }
+  if (!sel || !sel.rangeCount) { pop.classList.remove('open'); _mentionSavedRange = null; return; }
   const range = sel.getRangeAt(0);
-  if (!el.contains(range.startContainer)) { pop.classList.remove('open'); return; }
+  if (!el.contains(range.startContainer)) { pop.classList.remove('open'); _mentionSavedRange = null; return; }
   const node = range.startContainer;
-  // Só faz sentido em text node — dentro de <img> não.
-  if (node.nodeType !== Node.TEXT_NODE) { pop.classList.remove('open'); return; }
+  if (node.nodeType !== Node.TEXT_NODE) { pop.classList.remove('open'); _mentionSavedRange = null; return; }
   const before = (node.nodeValue || '').slice(0, range.startOffset);
   const m = before.match(/@([a-zA-Z0-9._-]*)$/);
-  if (!m) { pop.classList.remove('open'); return; }
+  if (!m) { pop.classList.remove('open'); _mentionSavedRange = null; return; }
   const list = mentionCandidates(m[1]);
-  if (!list.length) { pop.classList.remove('open'); return; }
+  if (!list.length) { pop.classList.remove('open'); _mentionSavedRange = null; return; }
+  _mentionSavedRange = range.cloneRange();
+  _mentionSavedTerm = m[0]; // inclui o @
   mentionIdx = 0;
   pop.innerHTML = list.map((u, i) => `
-    <div class="mention-opt ${i === 0 ? 'active' : ''}" data-uname="${esc(u.username)}" onclick="pickMentionCE('${esc(u.username)}')">
+    <div class="mention-opt ${i === 0 ? 'active' : ''}" data-uname="${esc(u.username)}"
+         onmousedown="event.preventDefault()"
+         onclick="pickMentionCE('${esc(u.username)}')">
       ${avatarHTML(u)} <span class="user-mini"><span class="user-mini-name">${esc(u.name)}</span><span class="user-mini-role">@${esc(u.username)}</span></span>
     </div>`).join('');
   pop.classList.add('open');
-  pop.style.bottom = (el.offsetHeight + 6) + 'px';
-  pop.style.left = '0';
+  // Posiciona no caret usando coords do viewport (position: fixed). Assim funciona
+  // independente de offsetParent — antes calculávamos relativo a parentElement
+  // que nem sempre é o offsetParent, e o popup aparecia no canto errado da tela.
+  pop.style.position = 'fixed';
+  const caretRect = range.getBoundingClientRect();
+  if (caretRect && caretRect.width + caretRect.height > 0) {
+    const popH = pop.offsetHeight || 220;
+    const popW = pop.offsetWidth || 260;
+    // Prefere abaixo do caret; se não couber na tela, tenta acima.
+    let top = caretRect.bottom + 6;
+    if (top + popH > window.innerHeight - 8 && caretRect.top - popH - 6 > 8) {
+      top = caretRect.top - popH - 6;
+    }
+    let left = caretRect.left;
+    // Clamp horizontal — mantém o popup dentro da viewport.
+    if (left + popW > window.innerWidth - 8) left = Math.max(8, window.innerWidth - popW - 8);
+    if (left < 8) left = 8;
+    pop.style.top = top + 'px';
+    pop.style.left = left + 'px';
+    pop.style.bottom = 'auto';
+    pop.style.right = 'auto';
+  } else {
+    // Fallback: ancora no rodapé do editor (mesma referência do viewport).
+    const er = el.getBoundingClientRect();
+    pop.style.top = (er.bottom + 6) + 'px';
+    pop.style.left = er.left + 'px';
+    pop.style.bottom = 'auto';
+    pop.style.right = 'auto';
+  }
 }
 function mentionKeys(e) {
   const pop = $('mention-pop');
@@ -9886,12 +10174,20 @@ function pickMention(uname) {
   $('mention-pop').classList.remove('open');
   ta.focus();
 }
-// Substitui o "@abc" antes do caret por "@username " no contenteditable.
+// Substitui o "@abc" antes do caret por <span class="mention">@username</span>
+// no contenteditable. Restaura o range gravado por mentionWatchCE pra que o
+// clique (que tira foco) funcione — antes só teclado funcionava.
 function pickMentionCE(uname) {
   if (!uname) return;
   const el = $('comment-input');
+  if (!el) return;
+  el.focus();
   const sel = window.getSelection && window.getSelection();
-  if (!el || !sel || !sel.rangeCount) return;
+  // Restaura a Range gravada — clique tira foco e sel.getRangeAt(0) fica no popup.
+  if (_mentionSavedRange) {
+    try { sel.removeAllRanges(); sel.addRange(_mentionSavedRange); } catch {}
+  }
+  if (!sel || !sel.rangeCount) return;
   const range = sel.getRangeAt(0);
   if (!el.contains(range.startContainer) || range.startContainer.nodeType !== Node.TEXT_NODE) return;
   const node = range.startContainer;
@@ -9899,16 +10195,23 @@ function pickMentionCE(uname) {
   const before = val.slice(0, range.startOffset);
   const m = before.match(/@([a-zA-Z0-9._-]*)$/);
   if (!m) return;
-  const newBefore = before.slice(0, before.length - m[0].length) + '@' + uname + ' ';
-  const after = val.slice(range.startOffset);
-  node.nodeValue = newBefore + after;
-  // Reposiciona o caret no fim do "@uname "
-  const nr = document.createRange();
-  nr.setStart(node, newBefore.length);
-  nr.collapse(true);
-  sel.removeAllRanges(); sel.addRange(nr);
+  // Deleta o "@abc" antes do caret, depois insere o span de menção via insertHTML —
+  // assim o roxo/negrito aparece imediatamente no editor.
+  const startOffset = before.length - m[0].length;
+  const r = document.createRange();
+  r.setStart(node, startOffset);
+  r.setEnd(node, range.startOffset);
+  sel.removeAllRanges(); sel.addRange(r);
+  document.execCommand('delete', false, null);
+  const html = `<span class="mention" contenteditable="false">@${esc(uname)}</span>&nbsp;`;
+  try { document.execCommand('insertHTML', false, html); } catch {
+    // Fallback: text puro se insertHTML falhar
+    document.execCommand('insertText', false, '@' + uname + ' ');
+  }
+  _mentionSavedRange = null;
+  _mentionSavedTerm = '';
   $('mention-pop').classList.remove('open');
-  el.focus();
+  syncCommentEmptyState(el);
   draftSaveCommentCE(el);
 }
 /* Menu de "..." de cada comentário — abre popup com Editar/Excluir. */
@@ -9935,6 +10238,22 @@ function toggleChatReactionPicker(commentId, ev) {
 function closeReactionPickers() {
   document.querySelectorAll('.chat-reaction-picker.open').forEach(p => p.classList.remove('open'));
 }
+/* Menu "..." de cada linha do editor de etapas — pattern do comment.
+   Sem portal — o CSS de .off agora não usa opacity (que cascatearia pro menu),
+   fada os elementos individualmente. */
+function toggleStageMenu(stageId, ev) {
+  ev?.stopPropagation();
+  const menu = document.getElementById('stage-menu-' + stageId);
+  const wasOpen = menu?.classList.contains('open');
+  closeStageMenus();
+  closeCommentMenus();
+  closeApptMenus();
+  closeReactionPickers();
+  if (menu && !wasOpen) menu.classList.add('open');
+}
+function closeStageMenus() {
+  document.querySelectorAll('.stages-edit-menu.open').forEach(m => m.classList.remove('open'));
+}
 /* Menu "..." de cada apontamento — mesmo pattern do comment. */
 function toggleApptMenu(apptId, ev) {
   ev?.stopPropagation();
@@ -9952,6 +10271,7 @@ document.addEventListener('click', ev => {
   if (!ev.target.closest('.chat-comment-menu-wrap:not(.appt-menu-wrap)')) closeCommentMenus();
   if (!ev.target.closest('.appt-menu-wrap')) closeApptMenus();
   if (!ev.target.closest('.chat-reaction-wrap')) closeReactionPickers();
+  if (!ev.target.closest('.stages-edit-menu-wrap')) closeStageMenus();
 }, true);
 
 /* Colapsa o compose e limpa o rascunho — chamado pelo "Cancelar". */
@@ -10031,6 +10351,56 @@ function renderMentionsInHtml(html) {
       }
       frag.appendChild(document.createTextNode(p));
     });
+    n.parentNode.replaceChild(frag, n);
+  });
+  return div.innerHTML;
+}
+/* Percorre text nodes de um HTML e converte URLs soltas em <a target=_blank>.
+   Preserva <a>, <code>, <span.mention> — não recursifica dentro deles.
+   Regex casa http(s)://…, www.… e domínios .com/.com.br/.io/etc.
+   Auto-hyperlink no RENDER — o HTML armazenado não muda, o editor não vê o link. */
+function linkifyHtmlPreserveAnchors(html) {
+  if (!html) return html || '';
+  const URL_RE = /\b((?:https?:\/\/|www\.)[^\s<]+|[a-z0-9-]+(?:\.[a-z0-9-]+)+\.(?:com|com\.br|net|org|io|co|app|dev|info|gov|edu|me|tv|ai|design)(?:\/[^\s<]*)?)\b/gi;
+  const div = document.createElement('div');
+  div.innerHTML = html;
+  const walker = document.createTreeWalker(div, NodeFilter.SHOW_TEXT, null);
+  const targets = [];
+  while (walker.nextNode()) {
+    const n = walker.currentNode;
+    if (!n.nodeValue) continue;
+    URL_RE.lastIndex = 0;
+    if (!URL_RE.test(n.nodeValue)) continue;
+    // Skip dentro de <a>/<code>/<pre>/<span.mention>
+    let anc = n.parentNode;
+    let skip = false;
+    while (anc && anc !== div) {
+      const t = (anc.tagName || '').toLowerCase();
+      if (t === 'a' || t === 'code' || t === 'pre' || (t === 'span' && anc.className === 'mention')) { skip = true; break; }
+      anc = anc.parentNode;
+    }
+    if (!skip) targets.push(n);
+  }
+  targets.forEach(n => {
+    URL_RE.lastIndex = 0;
+    const raw = n.nodeValue;
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    let m;
+    while ((m = URL_RE.exec(raw)) !== null) {
+      if (m.index > last) frag.appendChild(document.createTextNode(raw.slice(last, m.index)));
+      const text = m[0];
+      const href = normalizeUrl(text);
+      const a = document.createElement('a');
+      a.href = href;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.className = 'auto-link';
+      a.textContent = text;
+      frag.appendChild(a);
+      last = m.index + text.length;
+    }
+    if (last < raw.length) frag.appendChild(document.createTextNode(raw.slice(last)));
     n.parentNode.replaceChild(frag, n);
   });
   return div.innerHTML;
@@ -10137,14 +10507,11 @@ function applyLinkPopover() {
   }
   const selectedText = savedRange ? savedRange.toString() : '';
   try {
-    if (selectedText) {
-      document.execCommand('createLink', false, normalized);
-      // execCommand createLink não adiciona target/rel — patch manual.
-      _patchLinksTargetBlank(editor);
-    } else {
-      const anchor = `<a href="${esc(normalized)}" target="_blank" rel="noopener noreferrer">${esc(normalized)}</a>&nbsp;`;
-      document.execCommand('insertHTML', false, anchor);
-    }
+    // Sempre insere via insertHTML — evita `createLink` que perde parâmetros de
+    // URL em alguns browsers (Dropbox: ?dl=0&rlkey=... virava href truncado).
+    const label = selectedText || normalized;
+    const anchor = `<a href="${esc(normalized)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>&nbsp;`;
+    document.execCommand('insertHTML', false, anchor);
   } catch {}
   _closeLinkPopover();
   syncCommentEmptyState(editor);
@@ -10378,13 +10745,15 @@ function readImagesInline(files) {
     reader.onload = e => {
       const img = new Image();
       img.onload = () => {
-        const max = 1200;
+        // 1920px + qualidade 0.9 — antes era 1200px @ 0.85 (screenshots ficavam
+        // borrados/pequenos). Server aceita bem maior (25 MB/imagem, 60 MB/desc).
+        const max = 1920;
         let w = img.width, h = img.height;
         if (w > max || h > max) { const r = Math.min(max / w, max / h); w = Math.round(w * r); h = Math.round(h * r); }
         const canvas = document.createElement('canvas');
         canvas.width = w; canvas.height = h;
         canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        const data = canvas.toDataURL('image/jpeg', 0.85);
+        const data = canvas.toDataURL('image/jpeg', 0.9);
         insertImageIntoEditor(el, data, file.name);
         draftSaveCommentCE(el);
       };
@@ -10561,13 +10930,15 @@ function _readImagesInlineInto(el, files) {
     reader.onload = e => {
       const img = new Image();
       img.onload = () => {
-        const max = 1200;
+        // 1920px + qualidade 0.9 — antes era 1200px @ 0.85 (screenshots ficavam
+        // borrados/pequenos). Server aceita bem maior (25 MB/imagem, 60 MB/desc).
+        const max = 1920;
         let w = img.width, h = img.height;
         if (w > max || h > max) { const r = Math.min(max / w, max / h); w = Math.round(w * r); h = Math.round(h * r); }
         const canvas = document.createElement('canvas');
         canvas.width = w; canvas.height = h;
         canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        const data = canvas.toDataURL('image/jpeg', 0.85);
+        const data = canvas.toDataURL('image/jpeg', 0.9);
         insertImageIntoEditor(el, data, file.name);
       };
       img.src = e.target.result;
@@ -10620,13 +10991,15 @@ function handleEditImages(ev, cid) {
     reader.onload = e => {
       const img = new Image();
       img.onload = () => {
-        const max = 1200;
+        // 1920px + qualidade 0.9 — antes era 1200px @ 0.85 (screenshots ficavam
+        // borrados/pequenos). Server aceita bem maior (25 MB/imagem, 60 MB/desc).
+        const max = 1920;
         let w = img.width, h = img.height;
         if (w > max || h > max) { const r = Math.min(max / w, max / h); w = Math.round(w * r); h = Math.round(h * r); }
         const canvas = document.createElement('canvas');
         canvas.width = w; canvas.height = h;
         canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        const data = canvas.toDataURL('image/jpeg', 0.85);
+        const data = canvas.toDataURL('image/jpeg', 0.9);
         const atts = JSON.parse(el.dataset.editAtts || '[]');
         atts.push({ name: file.name, type: file.type, data });
         el.dataset.editAtts = JSON.stringify(atts);

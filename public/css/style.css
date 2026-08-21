@@ -4340,8 +4340,10 @@ body.is-resizing-detail * { cursor: col-resize !important; user-select: none !im
 .detail-modal-shell { display: flex; flex-direction: column; padding: 0; max-height: 92vh; }
 .detail-modal-shell .detail-content { flex: 1; overflow-y: auto; }
 
-/* Responsivo: telas estreitas → colunas empilhadas + divider some. */
-@media (max-width: 900px) {
+/* Responsivo: telas estreitas → colunas empilhadas + divider some.
+   Breakpoint em 720px (não 900) — usuários em prod com laptops 13" ou telas
+   split viam a versão empilhada mesmo com espaço sobrando. */
+@media (max-width: 720px) {
   .detail-content-v2 { grid-template-columns: 1fr; }
   .detail-content-v2::before,
   .detail-col-divider { display: none; }
@@ -4429,10 +4431,51 @@ body.is-resizing-detail * { cursor: col-resize !important; user-select: none !im
     transform .18s var(--ease-spring);
 }
 .stages-edit-row:hover { background: var(--surface-3); }
-.stages-edit-row.off { opacity: 0.55; }
+/* Fade só os elementos visuais (não a row inteira) — se usarmos `opacity` no
+   pai, o dropdown .stages-edit-menu (filho da row) herda e fica transparente
+   sobre o footer. Fada individualmente e escapa disso. */
+.stages-edit-row.off .stages-edit-num,
+.stages-edit-row.off .pill-dot,
+.stages-edit-row.off .stages-edit-label-input,
+.stages-edit-row.off .stages-edit-date-input,
+.stages-edit-row.off .stages-edit-sla-days,
+.stages-edit-row.off .stages-edit-resp-wrap,
+.stages-edit-row.off .stages-edit-grip { opacity: 0.55; }
 .stages-edit-row.off .stages-edit-label-input { text-decoration: line-through; color: var(--text-muted); }
 .stages-edit-row.locked { background: var(--surface); }
 .stages-edit-row.locked:hover { background: var(--surface); }
+/* Contornos por estado — substitui as pills Atual/Conclusão/Nova/Desativada.
+   Borda esquerda 3px colorida, sem alterar o layout. Em tela pequena continua legível.
+   Convenção de cores:
+     Atual         → amarelo (sólido)  — chama atenção pro que tá "acontecendo agora"
+     Conclusão     → verde (sólido)    — final feliz
+     Nova salva    → roxo (sólido)     — personalização já persistida
+     Nova não salva→ roxo pontilhado   — precisa de Salvar pra virar sólida
+     Desativada    → cinza pontilhado  — desligada, secundária */
+.stages-edit-row.is-current {
+  border-left: 3px solid var(--warning, #eab308);
+  background: color-mix(in srgb, var(--warning, #eab308) 6%, var(--surface-2));
+}
+.stages-edit-row.is-current:hover {
+  background: color-mix(in srgb, var(--warning, #eab308) 10%, var(--surface-2));
+}
+.stages-edit-row.is-done {
+  border-left: 3px solid var(--success, #16a34a);
+}
+.stages-edit-row.is-new-saved {
+  border-left: 3px solid var(--accent);
+}
+.stages-edit-row.is-new-unsaved {
+  border-left: 3px dotted var(--accent);
+  background: color-mix(in srgb, var(--accent) 4%, var(--surface-2));
+}
+/* Precedência quando concorrem — atual (amarelo) sempre ganha; conclusão sobrepõe nova salva. */
+.stages-edit-row.is-current.is-done,
+.stages-edit-row.is-current.is-new-saved,
+.stages-edit-row.is-current.is-new-unsaved {
+  border-left: 3px solid var(--warning, #eab308);
+}
+.stages-edit-row.is-inactive { border-left: 3px dotted var(--text-muted); }
 .stages-edit-row.dragging {
   opacity: .45;
   border-color: var(--accent);
@@ -4529,6 +4572,38 @@ body.is-resizing-detail * { cursor: col-resize !important; user-select: none !im
   font-size: 11px; color: var(--text-muted); pointer-events: none;
 }
 .stages-edit-row.off .stages-edit-sla-wrap { pointer-events: none; opacity: 0.6; }
+/* Kebab "..." de cada linha do editor de etapas — mesmo pattern do chat-comment-menu. */
+.stages-edit-menu-wrap { position: relative; flex-shrink: 0; }
+.stages-edit-menu-btn {
+  width: 32px; height: 32px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid transparent; border-radius: 8px;
+  color: var(--text-muted); cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.stages-edit-menu-btn:hover { background: var(--surface-3); color: var(--text); border-color: var(--hairline); }
+.stages-edit-menu {
+  position: absolute; right: 0; top: 36px;
+  min-width: 200px;
+  display: none;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 8px;
+  box-shadow: var(--shadow-md);
+  z-index: 100;
+}
+.stages-edit-menu.open { display: flex; }
+.stages-edit-menu-item {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  background: transparent; border: 0; border-radius: 6px;
+  color: var(--text); font-family: inherit; font-size: 13px; text-align: left;
+  cursor: pointer; transition: background .12s;
+}
+.stages-edit-menu-item:hover:not(:disabled) { background: var(--surface-2); }
+.stages-edit-menu-item:disabled { opacity: 0.45; cursor: not-allowed; }
+.stages-edit-menu-item.danger { color: var(--danger); }
+.stages-edit-menu-item.danger:hover:not(:disabled) { background: rgba(239,68,68,.08); }
 /* Dias como texto puro — sem box, cursor help pro tooltip. */
 .stages-edit-sla-days {
   font-size: 12.5px; font-weight: 600;
