@@ -697,7 +697,7 @@ function buildDiscordDMForNotification(type, ctx) {
     description,
     color: COLORS[type] || 0x7A00FF,
     fields: fields.length ? fields : undefined,
-    footer: { text: 'Kastor · reWork' },
+    footer: { text: 'reWork' },
     timestamp: new Date().toISOString(),
   };
   if (demandUrl) embed.url = demandUrl;
@@ -1650,10 +1650,10 @@ app.post('/api/me/discord/test', requireAuth, async (req, res) => {
   if (!req.user.discordId) return res.status(400).json({ error: 'Cadastre seu ID do Discord no perfil antes de testar.' });
   const ok = await discordBot.sendDM(req.user.discordId, {
     embeds: [{
-      title: '✅ Kastor conectado',
-      description: `Olá, **${req.user.name}**! Este é um teste do canal de DM do bot Kastor.\n\nA partir de agora você pode receber notificações privadas aqui.`,
+      title: '✅ reWork conectado',
+      description: `Olá, **${req.user.name}**! Este é um teste do canal de DM do bot reWork.\n\nA partir de agora você pode receber notificações privadas aqui.`,
       color: 0x7A00FF,
-      footer: { text: 'Kastor · reWork' },
+      footer: { text: 'reWork' },
     }],
   });
   if (!ok) return res.status(502).json({ error: 'Falha ao enviar DM. Provavelmente o bot ainda não está no seu servidor Discord (sem guild em comum, o Discord bloqueia DM por spam). Convide o bot pelo OAuth2 URL Generator no Developer Portal (scope: bot). Também verifique que você permite DMs de membros do server (Configurações do Discord → Privacidade e Segurança).' });
