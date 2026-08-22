@@ -138,6 +138,103 @@ function invalidateUser(discordId) {
   _dmChannelCache.delete(discordId);
 }
 
+/* Guilds em que o bot está presente. TTL 5min pra refletir invites novos
+   sem precisar restart. Retorna [{ id, name, icon }]. */
+let _guildsCache = null;
+let _guildsCacheExpires = 0;
+async function listGuilds() {
+  if (!isEnabled()) return [];
+  if (_guildsCache && Date.now() < _guildsCacheExpires) return _guildsCache;
+  const r = await _request('/users/@me/guilds');
+  if (!r.ok || !Array.isArray(r.data)) return [];
+  _guildsCache = r.data.map(g => ({ id: g.id, name: g.name, icon: g.icon || null }));
+  _guildsCacheExpires = Date.now() + 5 * 60 * 1000;
+  return _guildsCache;
+}
+
+/* Canais de texto de um guild — filtra type 0 (GUILD_TEXT) e type 5
+   (GUILD_ANNOUNCEMENT). Threads (10/11/12) e voz (2/13) ignorados —
+   pra bot postar mensagem só faz sentido em canais de texto. TTL 5min. */
+const _channelsCacheByGuild = new Map(); // guildId → { value, expiresAt }
+async function listGuildChannels(guildId) {
+  if (!isEnabled() || !guildId) return [];
+  const cached = _channelsCacheByGuild.get(guildId);
+  if (cached && Date.now() < cached.expiresAt) return cached.value;
+  const r = await _request(`/guilds/${guildId}/channels`);
+  if (!r.ok || !Array.isArray(r.data)) return [];
+  const TEXT_TYPES = new Set([0, 5]);
+  const channels = r.data
+    .filter(c => TEXT_TYPES.has(c.type))
+    .map(c => ({ id: c.id, name: c.name, position: c.position, parent_id: c.parent_id || null }))
+    .sort((a, b) => a.position - b.position);
+  _channelsCacheByGuild.set(guildId, { value: channels, expiresAt: Date.now() + 5 * 60 * 1000 });
+  return channels;
+}
+
+/* Força re-fetch dos canais/guilds no próximo lookup — usado após admin
+   trocar o binding ou mover canais no Discord (webhook manual). */
+function invalidateGuildsCache() {
+  _guildsCache = null;
+  _channelsCacheByGuild.clear();
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Discord CHANNEL WEBHOOKS (não confundir com o webhook system LEGADO
+   da Kastor — aquele é POST HTTP externo). Aqui usamos o webhook nativo
+   do Discord dentro de um canal pra podermos postar com "persona" (nome
+   e foto por mensagem). Bots normais têm 1 identidade global; via
+   webhook, cada mensagem pode ter username/avatar_url próprios.
+   Requer permissão MANAGE_WEBHOOKS no canal.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Cria um webhook em um canal. Retorna { id, token } ou null se falhar.
+   `name` é o nome default do webhook (mostrado no Discord na config do
+   canal). Cada mensagem depois pode sobrescrever username/avatar_url. */
+async function createChannelWebhook(channelId, name) {
+  if (!isEnabled() || !channelId) return null;
+  const cleanName = String(name || 'reWork').trim().slice(0, 80) || 'reWork';
+  const r = await _request(`/channels/${channelId}/webhooks`, {
+    method: 'POST',
+    body: { name: cleanName },
+  });
+  if (!r.ok || !r.data?.id || !r.data?.token) {
+    console.warn('[discord-bot] createChannelWebhook falhou:', r.status, r.data?.message);
+    return null;
+  }
+  return { id: r.data.id, token: r.data.token };
+}
+
+/* Deleta o webhook pelo id+token (não precisa auth do bot — token é a auth).
+   Usado quando binding é removido ou o canal muda. Silencia erros. */
+async function deleteChannelWebhook(webhookId, webhookToken) {
+  if (!webhookId || !webhookToken) return false;
+  try {
+    const r = await fetch(`${API_BASE}/webhooks/${webhookId}/${webhookToken}`, { method: 'DELETE' });
+    return r.ok;
+  } catch (e) {
+    console.warn('[discord-bot] deleteChannelWebhook:', e.message);
+    return false;
+  }
+}
+
+/* Envia payload via webhook token — mensagem aparece com o username +
+   avatar_url passados no payload, não com a identidade do bot. */
+async function sendViaWebhook(webhookId, webhookToken, payload) {
+  if (!webhookId || !webhookToken) return false;
+  try {
+    const r = await fetch(`${API_BASE}/webhooks/${webhookId}/${webhookToken}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'User-Agent': 'Kastor (https://github.com/andrigooliveira/Kastor, 1.0)' },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) console.warn('[discord-bot] sendViaWebhook falhou:', r.status);
+    return r.ok;
+  } catch (e) {
+    console.warn('[discord-bot] sendViaWebhook:', e.message);
+    return false;
+  }
+}
+
 /* ID do próprio bot — cacheado (imutável durante o processo). Usado pra
    filtrar mensagens que sejam do bot no clearBotDMs. */
 let _botUserIdCache = null;
@@ -199,4 +296,10 @@ module.exports = {
   invalidateUser,
   getBotUserId,
   clearBotDMs,
+  listGuilds,
+  listGuildChannels,
+  invalidateGuildsCache,
+  createChannelWebhook,
+  deleteChannelWebhook,
+  sendViaWebhook,
 };

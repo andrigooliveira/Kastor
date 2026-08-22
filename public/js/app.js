@@ -25,6 +25,7 @@ let recurrings = [];
 let listas = [];
 let tasks = []; // tarefas de projeto (kind='todo' das listas novas)
 let demandTypes = [];
+let discordChannels = []; // bindings cliente → canal do bot Discord
 let notifPollTimer = null;
 
 let activeWs   = localStorage.getItem('fluxo_ws') || null;
@@ -3405,6 +3406,7 @@ async function loadAll() {
     positions       = b.positions       || [];
     demandTypes     = b.demandTypes     || [];
     tasks           = b.tasks           || [];
+    discordChannels = b.discordChannels || [];
   } catch (err) {
     // Fallback: 404 (server sem bootstrap) → recai no fluxo antigo.
     console.warn('bootstrap falhou, usando fetches individuais:', err.message);
@@ -3913,7 +3915,7 @@ function renderCurrent() {
     case 'agenda':     renderAgenda(); break;
     case 'templates':  renderTemplates(); break;
     case 'recurring':  renderRecurring(); break;
-    case 'integrations': renderIntegrations(); setIntegrationsTab(_integrationsTab || 'webhooks'); break;
+    case 'integrations': renderIntegrations(); setIntegrationsTab(_integrationsTab || 'discord'); break;
     case 'devtools':   renderDevTools(); break;
     case 'passwords':  renderPasswords(); break;
     case 'kb':         renderKbFromRoute(); break;
@@ -16761,7 +16763,7 @@ async function renderDiscordPrefsUI() {
    Painel administrativo: status do bot + defaults do time por evento.
    Ambos só fazem sentido pra admin; user comum vê aba mas o admin-block
    fica escondido pela classe .admin-only (via body.user-*). */
-let _integrationsTab = 'webhooks';
+let _integrationsTab = 'discord';
 function setIntegrationsTab(name) {
   _integrationsTab = name;
   document.querySelectorAll('#page-integrations .integrations-tab').forEach(b => {
@@ -16793,6 +16795,8 @@ async function renderDiscordIntegrationsPanel() {
         </div>
       </div>`;
     if (adminBlock) adminBlock.style.display = 'none';
+    const chBlock = $('int-discord-channels-block');
+    if (chBlock) chBlock.style.display = 'none';
     return;
   }
   status.innerHTML = `
@@ -16822,6 +16826,13 @@ async function renderDiscordIntegrationsPanel() {
   } else if (adminBlock) {
     adminBlock.style.display = 'none';
   }
+  // Bindings cliente → canal — só admin, só se bot habilitado
+  if (me.isAdmin) {
+    renderDiscordChannelsList().catch(() => {});
+  } else {
+    const chBlock = $('int-discord-channels-block');
+    if (chBlock) chBlock.style.display = 'none';
+  }
   if (typeof paintIcons === 'function') paintIcons($('page-integrations'));
 }
 
@@ -16848,6 +16859,187 @@ async function testDiscordDM() {
   try {
     await api('/me/discord/test', 'POST', {});
     toast('DM de teste enviado! Confira o Discord.', 'success');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Integrações > Discord Bot > Canais por cliente (bindings)
+   Cliente escolhe cliente + canal + eventos → notificações desse cliente
+   viram embed no canal. Bot lista os canais via API (cache 5min no server).
+   ═══════════════════════════════════════════════════════════════════════ */
+const DC_EVENT_LABELS = {
+  'demand.created': 'Demanda criada',
+  'demand.completed': 'Demanda concluída',
+  'demand.stage_changed': 'Etapa avançada',
+  'demand.assigned': 'Responsável alterado manualmente',
+  'demand.stage_assigned': 'Responsável atribuído pela etapa',
+  'demand.deadline_changed': 'Prazo alterado',
+  'demand.priority_changed': 'Prioridade alterada',
+  'comment.added': 'Comentário adicionado',
+  'comment.mention': 'Menção em comentário',
+  'checklist.completed': 'Item de checklist concluído',
+};
+
+let _dcEditingId = null;
+let _dcGuildsCache = null;
+let _dcChannelsCacheByGuild = new Map();
+
+async function renderDiscordChannelsList() {
+  const wrap = $('int-discord-channels-block');
+  if (!wrap) return;
+  if (!me.isAdmin) { wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+  const body = $('int-discord-channels-body');
+  if (!body) return;
+  if (!discordChannels.length) {
+    body.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:24px">Nenhum canal configurado.</td></tr>`;
+    return;
+  }
+  body.innerHTML = discordChannels.map(b => {
+    const client = clients.find(c => c.id === b.clientId);
+    const eventBadges = (b.events || []).slice(0, 3).map(e => `<span class="pill pill-muted" style="font-size:10.5px">${esc(DC_EVENT_LABELS[e] || e)}</span>`).join(' ');
+    const moreEvents = (b.events || []).length > 3 ? ` <span class="pill-muted" style="font-size:11px">+${b.events.length - 3}</span>` : '';
+    const statusBadge = b.active === false
+      ? `<span class="pill pill-muted">Pausado</span>`
+      : (b.lastError
+        ? `<span class="pill" style="color:var(--danger);background:var(--danger-dim)" title="${esc(b.lastError)}">Erro</span>`
+        : `<span class="pill" style="color:var(--success);background:var(--success-dim)">Ativo</span>`);
+    return `<tr>
+      <td>${esc(client?.name || '— cliente removido —')}</td>
+      <td><code style="font-size:12px">#${esc(b.channelName || b.channelId)}</code></td>
+      <td style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">${eventBadges}${moreEvents}</td>
+      <td>${statusBadge}</td>
+      <td>
+        <button class="btn btn-ghost btn-sm" onclick="openDiscordChannelModal('${b.id}')" title="Editar"><i data-lucide="pencil" class="ic-sm"></i></button>
+        <button class="btn btn-ghost btn-sm" onclick="deleteDiscordChannel('${b.id}')" title="Remover"><i data-lucide="trash-2" class="ic-sm"></i></button>
+      </td>
+    </tr>`;
+  }).join('');
+  if (typeof paintIcons === 'function') paintIcons(body);
+}
+
+async function openDiscordChannelModal(bindingId) {
+  _dcEditingId = bindingId || null;
+  $('dc-modal-title').textContent = bindingId ? 'Editar canal Discord' : 'Adicionar canal Discord';
+  const existing = bindingId ? discordChannels.find(x => x.id === bindingId) : null;
+
+  // Cliente dropdown
+  const clientSel = $('dc-client');
+  const scoped = clients.filter(c => c.active !== false).sort((a,b) => norm(a.name).localeCompare(norm(b.name)));
+  clientSel.innerHTML = '<option value="">— escolha um cliente —</option>' +
+    scoped.map(c => `<option value="${esc(c.id)}" ${existing?.clientId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+
+  // Guilds dropdown
+  const guildSel = $('dc-guild');
+  guildSel.innerHTML = '<option value="">Carregando…</option>';
+  if (!_dcGuildsCache) {
+    try { _dcGuildsCache = await api('/discord/guilds'); }
+    catch (e) { _dcGuildsCache = []; toast('Falha ao listar servers: ' + e.message, 'error'); }
+  }
+  guildSel.innerHTML = '<option value="">— escolha um server —</option>' +
+    _dcGuildsCache.map(g => `<option value="${esc(g.id)}" ${existing?.guildId === g.id ? 'selected' : ''}>${esc(g.name)}</option>`).join('');
+
+  // Canais — só carrega se já tem guild selecionado
+  const chSel = $('dc-channel');
+  if (existing?.guildId) {
+    await _loadDcChannels(existing.guildId, existing.channelId);
+  } else {
+    chSel.innerHTML = '<option value="">Escolha um server primeiro</option>';
+  }
+
+  // Eventos
+  const evList = $('dc-events-list');
+  const selectedEvents = new Set(existing?.events || []);
+  evList.innerHTML = Object.entries(DC_EVENT_LABELS).map(([key, label]) => `
+    <label class="profile-pref-row" style="padding:6px 0;border:0">
+      <div class="profile-pref-info">
+        <div class="profile-pref-title" style="font-size:13px">${esc(label)}</div>
+      </div>
+      <input type="checkbox" data-dc-event="${esc(key)}" ${selectedEvents.has(key) ? 'checked' : ''}>
+    </label>
+  `).join('');
+
+  $('dc-active').value = existing?.active === false ? 'false' : 'true';
+  $('dc-test-btn').style.display = existing ? '' : 'none';
+
+  openModal('dc-modal');
+  if (typeof paintIcons === 'function') paintIcons($('dc-modal'));
+}
+
+async function _loadDcChannels(guildId, selectedChannelId) {
+  const chSel = $('dc-channel');
+  chSel.innerHTML = '<option value="">Carregando…</option>';
+  let channels = _dcChannelsCacheByGuild.get(guildId);
+  if (!channels) {
+    try { channels = await api('/discord/guilds/' + guildId + '/channels'); }
+    catch (e) { channels = []; toast('Falha ao listar canais: ' + e.message, 'error'); }
+    _dcChannelsCacheByGuild.set(guildId, channels);
+  }
+  chSel.innerHTML = '<option value="">— escolha um canal —</option>' +
+    channels.map(c => `<option value="${esc(c.id)}" data-name="${esc(c.name)}" ${selectedChannelId === c.id ? 'selected' : ''}>#${esc(c.name)}</option>`).join('');
+}
+
+async function onDcGuildChange() {
+  const guildId = $('dc-guild').value;
+  if (guildId) await _loadDcChannels(guildId);
+  else $('dc-channel').innerHTML = '<option value="">Escolha um server primeiro</option>';
+}
+
+async function saveDiscordChannel() {
+  const clientId = $('dc-client').value;
+  const guildId = $('dc-guild').value;
+  const chSelEl = $('dc-channel');
+  const channelId = chSelEl.value;
+  const channelName = chSelEl.selectedOptions[0]?.getAttribute('data-name') || null;
+  const events = [...document.querySelectorAll('[data-dc-event]:checked')].map(el => el.getAttribute('data-dc-event'));
+  const active = $('dc-active').value === 'true';
+
+  if (!clientId) { toast('Escolha um cliente.', 'error'); return; }
+  if (!guildId)  { toast('Escolha um server.', 'error'); return; }
+  if (!channelId){ toast('Escolha um canal.', 'error'); return; }
+  if (!events.length) { toast('Marque ao menos 1 evento.', 'error'); return; }
+
+  const payload = { clientId, guildId, channelId, channelName, events, active };
+  try {
+    if (_dcEditingId) {
+      const updated = await api('/discord/client-channels/' + _dcEditingId, 'PUT', payload);
+      const idx = discordChannels.findIndex(x => x.id === _dcEditingId);
+      if (idx >= 0) discordChannels[idx] = updated;
+      toast('Canal atualizado.', 'success');
+    } else {
+      const created = await api('/discord/client-channels', 'POST', payload);
+      discordChannels.push(created);
+      toast('Canal adicionado.', 'success');
+    }
+    closeModal('dc-modal');
+    renderDiscordChannelsList();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function deleteDiscordChannel(id) {
+  const bind = discordChannels.find(x => x.id === id);
+  if (!bind) return;
+  const client = clients.find(c => c.id === bind.clientId);
+  const ok = await showConfirm({
+    title: 'Remover canal Discord?',
+    message: `Notificações do cliente ${client?.name || '—'} vão parar de chegar no canal #${bind.channelName || bind.channelId}.`,
+    okLabel: 'Remover',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await api('/discord/client-channels/' + id, 'DELETE');
+    discordChannels = discordChannels.filter(x => x.id !== id);
+    toast('Canal removido.', 'success');
+    renderDiscordChannelsList();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function testDiscordChannel() {
+  if (!_dcEditingId) return;
+  try {
+    await api('/discord/client-channels/' + _dcEditingId + '/test', 'POST', {});
+    toast('Mensagem de teste enviada!', 'success');
   } catch (e) { toast(e.message, 'error'); }
 }
 

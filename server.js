@@ -1121,16 +1121,74 @@ async function triggerWebhook(event, ctx) {
   }
 }
 
-// Atalho assíncrono para disparar sem bloquear a request
+// Atalho assíncrono para disparar sem bloquear a request. Dispara AMBOS:
+// webhooks legados (POST HTTP externo) e bindings de canal do bot Discord
+// (postar embed via bot). Cada saída trata o mesmo `ctx`, então call sites
+// não precisam saber que existem 2 canais de saída.
 function fireWebhook(event, ctxBuilder) {
   setImmediate(async () => {
     try {
       const ctx = typeof ctxBuilder === 'function' ? ctxBuilder() : ctxBuilder;
-      await triggerWebhook(event, ctx);
+      await Promise.all([
+        triggerWebhook(event, ctx),
+        triggerBotChannelBindings(event, ctx),
+      ]);
     } catch (e) {
-      console.error('[webhook] erro no contexto:', e.message);
+      console.error('[fireWebhook] erro:', e.message);
     }
   });
+}
+
+/* Dispara bindings de canal do bot Discord — cliente → canal com eventos
+   opt-in. Match: bind.clientId === project.clientId E event está em
+   bind.events. Silencioso se bot desabilitado ou sem bind pro cliente.
+
+   Envio:
+     - Se binding tem webhookId+webhookToken (criado no POST/PUT), usa o
+       webhook do canal e sobrescreve username+avatar_url pro NOME e FOTO
+       do cliente (persona por-cliente). Foto vem de client.avatar
+       transformada em URL absoluta via ctx.appBaseUrl.
+     - Fallback: send como bot (identidade global do bot) se o webhook não
+       foi criado (permissão MANAGE_WEBHOOKS ausente, canal privado, etc.) */
+async function triggerBotChannelBindings(event, ctx) {
+  if (!discordBot.isEnabled()) return;
+  if (!ctx.demand || !ctx.project) return;
+  const clientId = ctx.project.clientId;
+  if (!clientId) return;
+  const binds = (db.discordChannels || []).filter(b =>
+    b.active !== false &&
+    b.clientId === clientId &&
+    Array.isArray(b.events) &&
+    b.events.includes(event)
+  );
+  if (!binds.length) return;
+  const basePayload = buildDiscordPayload(event, ctx);
+  const client = db.clients.find(c => c.id === clientId);
+  const baseUrl = ctx.appBaseUrl || process.env.PUBLIC_URL || '';
+  const avatarUrl = (client && client.avatar && baseUrl && client.avatar.startsWith('/'))
+    ? baseUrl.replace(/\/+$/, '') + client.avatar
+    : (client && client.avatar && /^https?:\/\//.test(client.avatar) ? client.avatar : null);
+  const username = client?.name || 'reWork';
+  for (const b of binds) {
+    try {
+      let ok = false;
+      if (b.webhookId && b.webhookToken) {
+        // Persona do cliente via webhook
+        const personaPayload = { ...basePayload, username, ...(avatarUrl ? { avatar_url: avatarUrl } : {}) };
+        ok = await discordBot.sendViaWebhook(b.webhookId, b.webhookToken, personaPayload);
+      } else {
+        // Fallback: identidade do bot
+        ok = await discordBot.sendChannelMessage(b.channelId, basePayload);
+      }
+      b.lastTriggered = nowISO();
+      b.lastStatus = ok ? 200 : 0;
+      b.lastError = ok ? null : 'Discord recusou a mensagem';
+    } catch (e) {
+      b.lastError = String(e.message || e).slice(0, 200);
+      b.lastStatus = 0;
+    }
+    saveEntity('discordChannels', b);
+  }
 }
 
 /* ─── APP ─── */
@@ -1675,6 +1733,167 @@ app.post('/api/me/discord/test', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+/* ── DISCORD BOT — client-channel bindings ──
+   Admin escolhe cliente → guild+canal → quais eventos disparam.
+   Bindings persistidos em `discordChannels`. Cache dos guilds/canais é
+   in-memory no bot helper (5min TTL). */
+
+// Lista os guilds em que o bot está — pra popular o dropdown na UI.
+app.get('/api/discord/guilds', requireAuth, adminOnly, async (req, res) => {
+  if (!discordBot.isEnabled()) return res.status(503).json({ error: 'Discord bot não configurado.' });
+  const guilds = await discordBot.listGuilds();
+  res.json(guilds);
+});
+
+// Canais de texto de um guild — dropdown do canal na UI.
+app.get('/api/discord/guilds/:guildId/channels', requireAuth, adminOnly, async (req, res) => {
+  if (!discordBot.isEnabled()) return res.status(503).json({ error: 'Discord bot não configurado.' });
+  const channels = await discordBot.listGuildChannels(req.params.guildId);
+  res.json(channels);
+});
+
+// Lista bindings (todos podem ver — pra render de badge no card do cliente
+// no futuro; admin gerencia). Enriquece com nome do cliente e do canal.
+// Strip `webhookToken` das respostas — é secret, cliente só precisa saber
+// se tem persona ativa (via `hasWebhook`). Reduz superfície se localStorage
+// ou cookie vaza.
+function publicBinding(b) {
+  const { webhookToken, ...rest } = b;
+  return { ...rest, hasWebhook: !!webhookToken };
+}
+
+app.get('/api/discord/client-channels', requireAuth, (req, res) => {
+  const binds = (db.discordChannels || []).map(publicBinding);
+  res.json(binds);
+});
+
+app.post('/api/discord/client-channels', requireAuth, adminOnly, async (req, res) => {
+  if (!discordBot.isEnabled()) return res.status(503).json({ error: 'Discord bot não configurado.' });
+  const { clientId, guildId, channelId, channelName, events, active } = req.body || {};
+  const client = db.clients.find(c => c.id === clientId);
+  if (!client) return res.status(400).json({ error: 'Cliente inválido.' });
+  if (!guildId || !/^\d{15,22}$/.test(String(guildId))) return res.status(400).json({ error: 'Guild ID inválido.' });
+  if (!channelId || !/^\d{15,22}$/.test(String(channelId))) return res.status(400).json({ error: 'Channel ID inválido.' });
+  if (!Array.isArray(events) || !events.length) return res.status(400).json({ error: 'Escolha ao menos 1 evento.' });
+  const validEvents = events.filter(e => WEBHOOK_EVENTS[e]);
+  if (!validEvents.length) return res.status(400).json({ error: 'Eventos inválidos.' });
+  // Cria webhook no canal pra habilitar persona por cliente (username +
+  // avatar_url por mensagem). Falha silenciosa: se bot não tem
+  // MANAGE_WEBHOOKS, binding ainda é criado mas envia como identidade do bot.
+  const hook = await discordBot.createChannelWebhook(channelId, `reWork · ${client.name}`);
+  const b = {
+    id: uid(),
+    clientId,
+    guildId: String(guildId),
+    channelId: String(channelId),
+    channelName: channelName || null,
+    events: validEvents,
+    active: active !== false,
+    webhookId: hook?.id || null,
+    webhookToken: hook?.token || null,
+    createdAt: nowISO(),
+    updatedAt: nowISO(),
+    lastTriggered: null,
+    lastStatus: null,
+    lastError: hook ? null : 'Bot sem permissão MANAGE_WEBHOOKS — persona do cliente indisponível, mensagens vão como bot.',
+  };
+  if (!Array.isArray(db.discordChannels)) db.discordChannels = [];
+  db.discordChannels.push(b);
+  saveEntity('discordChannels', b);
+  res.status(201).json(publicBinding(b));
+});
+
+app.put('/api/discord/client-channels/:id', requireAuth, adminOnly, async (req, res) => {
+  const b = (db.discordChannels || []).find(x => x.id === req.params.id);
+  if (!b) return res.status(404).json({ error: 'Binding não encontrado.' });
+  const { clientId, guildId, channelId, channelName, events, active } = req.body || {};
+  const oldChannelId = b.channelId;
+  if (clientId !== undefined) {
+    if (!db.clients.some(c => c.id === clientId)) return res.status(400).json({ error: 'Cliente inválido.' });
+    b.clientId = clientId;
+  }
+  if (guildId !== undefined) {
+    if (!/^\d{15,22}$/.test(String(guildId))) return res.status(400).json({ error: 'Guild ID inválido.' });
+    b.guildId = String(guildId);
+  }
+  if (channelId !== undefined) {
+    if (!/^\d{15,22}$/.test(String(channelId))) return res.status(400).json({ error: 'Channel ID inválido.' });
+    b.channelId = String(channelId);
+  }
+  if (channelName !== undefined) b.channelName = channelName || null;
+  if (Array.isArray(events)) {
+    const valid = events.filter(e => WEBHOOK_EVENTS[e]);
+    if (!valid.length) return res.status(400).json({ error: 'Escolha ao menos 1 evento.' });
+    b.events = valid;
+  }
+  if (typeof active === 'boolean') b.active = active;
+  // Se o canal mudou, recria o webhook (o antigo fica órfão no canal antigo
+  // — deletamos ele) porque webhook é vinculado ao canal.
+  if (b.channelId !== oldChannelId) {
+    if (b.webhookId && b.webhookToken) {
+      discordBot.deleteChannelWebhook(b.webhookId, b.webhookToken).catch(() => {});
+    }
+    const client = db.clients.find(c => c.id === b.clientId);
+    const hook = await discordBot.createChannelWebhook(b.channelId, `reWork · ${client?.name || 'Kastor'}`);
+    b.webhookId = hook?.id || null;
+    b.webhookToken = hook?.token || null;
+    b.lastError = hook ? null : 'Bot sem permissão MANAGE_WEBHOOKS no novo canal — mensagens vão como bot.';
+  }
+  b.updatedAt = nowISO();
+  saveEntity('discordChannels', b);
+  res.json(publicBinding(b));
+});
+
+app.delete('/api/discord/client-channels/:id', requireAuth, adminOnly, (req, res) => {
+  const idx = (db.discordChannels || []).findIndex(x => x.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Binding não encontrado.' });
+  const [removed] = db.discordChannels.splice(idx, 1);
+  // Cleanup do webhook criado no Discord — fire-and-forget, se falhar tudo bem
+  // (usuário pode remover manualmente na config do canal).
+  if (removed.webhookId && removed.webhookToken) {
+    discordBot.deleteChannelWebhook(removed.webhookId, removed.webhookToken).catch(() => {});
+  }
+  removeEntity('discordChannels', removed.id);
+  res.json({ ok: true });
+});
+
+// Envia uma mensagem de teste pro canal do binding — usado pelo botão
+// "Testar canal" na UI. Rota admin, dispara embed simples.
+app.post('/api/discord/client-channels/:id/test', requireAuth, adminOnly, async (req, res) => {
+  if (!discordBot.isEnabled()) return res.status(503).json({ error: 'Discord bot não configurado.' });
+  const b = (db.discordChannels || []).find(x => x.id === req.params.id);
+  if (!b) return res.status(404).json({ error: 'Binding não encontrado.' });
+  const client = db.clients.find(c => c.id === b.clientId);
+  const baseUrl = appBaseUrl(req);
+  const avatarUrl = (client?.avatar && baseUrl && client.avatar.startsWith('/'))
+    ? baseUrl.replace(/\/+$/, '') + client.avatar
+    : (client?.avatar && /^https?:\/\//.test(client.avatar) ? client.avatar : null);
+  const testEmbed = {
+    embeds: [{
+      title: '✅ Canal conectado ao reWork',
+      description: `Notificações sobre o cliente **${client?.name || '—'}** vão aparecer aqui.`,
+      color: 0x7A00FF,
+      fields: [{ name: 'Eventos', value: b.events.join(', ') || '—', inline: false }],
+      footer: { text: 'reWork' },
+      timestamp: new Date().toISOString(),
+    }],
+  };
+  let ok = false;
+  if (b.webhookId && b.webhookToken) {
+    // Envia com a persona do cliente
+    const persona = { ...testEmbed, username: client?.name || 'reWork', ...(avatarUrl ? { avatar_url: avatarUrl } : {}) };
+    ok = await discordBot.sendViaWebhook(b.webhookId, b.webhookToken, persona);
+  } else {
+    ok = await discordBot.sendChannelMessage(b.channelId, testEmbed);
+  }
+  b.lastTriggered = nowISO();
+  b.lastStatus = ok ? 200 : 0;
+  b.lastError = ok ? null : 'Falha ao enviar (bot sem permissão no canal ou webhook expirou).';
+  saveEntity('discordChannels', b);
+  if (!ok) return res.status(502).json({ error: 'Falha ao enviar. Verifique que o bot tem permissão no canal.' });
+  res.json({ ok: true });
+});
+
 /* ── GOOGLE CALENDAR (integração one-way, read-only) ──
    Fase 1: OAuth + storage de tokens + listagem de calendários.
    Fase 2 (sync engine) e Fase 3 (render na agenda) virão em seguida. */
@@ -2049,6 +2268,7 @@ app.get('/api/bootstrap', requireAuth, (req, res) => {
     demandTypes,
     tasks:           (db.tasks || []).filter(inWs),
     webhooks,
+    discordChannels: canSeeWebhooks ? (db.discordChannels || []).map(publicBinding) : [],
   });
 });
 
