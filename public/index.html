@@ -14,12 +14,12 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/css/style.css?v=20260822persona2">
+<link rel="stylesheet" href="/css/style.css?v=20260822dcrow1">
 <!-- Preload dos JS pesados no <head> pra que o download comece IMEDIATAMENTE,
      em paralelo com o parse do HTML, em vez de esperar o parser chegar em
      </body>. Com immutable cache (max-age=1yr), na 2ª visita nem baixa. -->
 <link rel="preload" href="/vendor/lucide.min.js" as="script">
-<link rel="preload" href="/js/app.js?v=20260822persona2" as="script">
+<link rel="preload" href="/js/app.js?v=20260822dcrow1" as="script">
 <script type="text/javascript">
     (function(c,l,a,r,i,t,y){
         c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
@@ -2241,6 +2241,7 @@
                 <div class="profile-block-actions">
                   <button class="btn btn-primary" onclick="saveDiscordId()">Salvar</button>
                   <button class="btn btn-ghost" id="profile-discord-test-btn" onclick="testDiscordDM()" style="display:none"><i data-lucide="send" class="ic-sm"></i> Enviar DM de teste</button>
+                  <button class="btn btn-ghost" id="profile-discord-digest-btn" onclick="sendDiscordDigestNow()" style="display:none"><i data-lucide="sunrise" class="ic-sm"></i> Enviar resumo agora</button>
                   <button class="btn btn-ghost" id="profile-discord-clear-btn" onclick="clearDiscordDMs()" style="display:none"><i data-lucide="trash-2" class="ic-sm"></i> Limpar histórico de DMs</button>
                 </div>
 
@@ -3674,7 +3675,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260822persona2"></script>
+<script src="/js/app.js?v=20260822dcrow1"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

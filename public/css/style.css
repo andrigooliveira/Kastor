@@ -10649,6 +10649,33 @@ tr.demand-row:hover {
   line-height: 1.5;
 }
 
+/* ── Tabela "Canais por cliente" (Integrações → Discord Bot) ── */
+tr.dc-row td { vertical-align: middle; padding-top: 10px; padding-bottom: 10px; }
+.dc-event-badges { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+.dc-row-actions { display: flex; gap: 4px; justify-content: flex-end; align-items: center; }
+.dc-icon-btn {
+  background: transparent;
+  border: 0;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .12s var(--ease-out), color .12s var(--ease-out);
+}
+.dc-icon-btn:hover { background: var(--surface-2); color: var(--text); }
+.dc-icon-btn svg,
+.dc-icon-btn i[data-lucide] {
+  width: 16px !important;
+  height: 16px !important;
+}
+.dc-icon-btn--danger:hover {
+  color: var(--danger);
+  background: var(--danger-dim);
+}
+
 /* ── Tri-toggle usado nas prefs de DM do Discord (padrão / on / off) ── */
 .profile-tri-toggle {
   display: inline-flex;

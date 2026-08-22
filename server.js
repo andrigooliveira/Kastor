@@ -531,9 +531,13 @@ const DISCORD_EVENT_LABELS = {
   mention:        'Mencionado em comentário',
   watch_stage:    'Movimento de etapa em demanda que observo',
   watch_comment:  'Novo comentário em demanda que observo',
+  daily_digest:   'Resumo diário (seg-sex, 8h) das minhas demandas',
 };
+// Nota: daily_digest é AGENDADO, não é chamado via notify(). Fica no map só
+// pra aparecer na UI de prefs e ser consultado por effectiveDiscordPref no
+// runDailyBotDMDigest. notify() nunca é invocado com type='daily_digest'.
 const DISCORD_HARDCODED_DEFAULTS = {
-  assigned: false, stage_assigned: false, mention: true, watch_stage: false, watch_comment: false,
+  assigned: false, stage_assigned: false, mention: true, watch_stage: false, watch_comment: false, daily_digest: true,
 };
 let _adminDiscordDefaultsCache = null;
 async function loadAdminDiscordDefaults() {
@@ -1715,6 +1719,16 @@ app.post('/api/me/discord/clear-dms', requireAuth, async (req, res) => {
   const result = await discordBot.clearBotDMs(req.user.discordId);
   if (result.error) return res.status(502).json({ error: 'Falha ao limpar DMs: ' + result.error });
   res.json(result);
+});
+
+// Dispara o resumo diário na DM do próprio user AGORA (ignora hora/idempotência).
+// Usa `sendDiscordDMDigestForUser` — mesma função do cron das 8h.
+app.post('/api/me/discord/digest', requireAuth, async (req, res) => {
+  if (!discordBot.isEnabled()) return res.status(503).json({ error: 'Discord bot não configurado.' });
+  if (!req.user.discordId) return res.status(400).json({ error: 'Cadastre seu ID do Discord no perfil antes.' });
+  const ok = await sendDiscordDMDigestForUser(req.user);
+  if (!ok) return res.json({ ok: false, note: 'Nada pra reportar hoje (nenhuma atrasada, nada vencendo hoje/próximos 3 dias, sem notif não lida). Comportamento normal — evita DM diária vazia.' });
+  res.json({ ok: true });
 });
 
 // Envia um DM de teste pro próprio user — pra validar setup (discordId + bot).
@@ -7662,6 +7676,85 @@ if (_digestInterval.unref) _digestInterval.unref();
 // Uma checagem 2 min após boot pra pegar caso o servidor tenha subido às 8h.
 const _digestBoot = setTimeout(runDailyDigest, 2 * 60 * 1000);
 if (_digestBoot.unref) _digestBoot.unref();
+
+/* ── DIGEST DIÁRIO DE DM DISCORD ──
+   Seg-sex, ~8h local. Pra cada usuário com discordId + effectiveDiscordPref
+   `daily_digest` ligado, o bot manda uma DM com o resumo do dia dele:
+   - Demandas atrasadas
+   - Vencendo hoje
+   - Vencendo nos próximos 3 dias
+   - Notificações não lidas
+   Reusa `digestBuildForUser` (mesma lógica do digest de e-mail). Se nada
+   relevante pro user, não envia. Idempotência: `user._lastDiscordDigestSent`. */
+async function sendDiscordDMDigestForUser(user) {
+  if (!discordBot.isEnabled() || !user.discordId) return false;
+  const { overdue, dueToday, dueSoon } = digestBuildForUser(user);
+  let unreadNotifs = [];
+  try {
+    const list = await store.listNotificationsFor(user.id, 50);
+    unreadNotifs = list.filter(n => !n.read);
+  } catch {}
+  if (!overdue.length && !dueToday.length && !dueSoon.length && !unreadNotifs.length) return false;
+  const baseUrl = process.env.PUBLIC_URL || '';
+  const fmt = (d) => {
+    const proj = db.projects.find(p => p.id === d.projectId);
+    const url = baseUrl ? `${baseUrl}/#demand-${d.id}` : null;
+    const line = url ? `[**${d.name}**](${url})` : `**${d.name}**`;
+    const meta = [proj?.client, proj?.name].filter(Boolean).join(' · ');
+    return meta ? `• ${line} — ${meta}` : `• ${line}`;
+  };
+  const clip = (items, n) => items.slice(0, n).map(fmt).join('\n') +
+    (items.length > n ? `\n_…e mais ${items.length - n}_` : '');
+  const fields = [];
+  if (overdue.length)  fields.push({ name: `🔥 Em atraso (${overdue.length})`,     value: clip(overdue, 8),  inline: false });
+  if (dueToday.length) fields.push({ name: `📅 Vencem hoje (${dueToday.length})`,  value: clip(dueToday, 8), inline: false });
+  if (dueSoon.length)  fields.push({ name: `⏭️ Próximos 3 dias (${dueSoon.length})`, value: clip(dueSoon, 8),  inline: false });
+  if (unreadNotifs.length) fields.push({ name: `🔔 Notificações não lidas`, value: String(unreadNotifs.length), inline: true });
+  const firstName = (user.name || '').split(/\s+/)[0] || user.name || '';
+  const payload = {
+    embeds: [{
+      title: `☀️ Bom dia, ${firstName}!`,
+      description: `Aqui está o resumo do dia — ${new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}.`,
+      color: overdue.length ? 0xEF5050 : 0x7A00FF,
+      fields,
+      footer: { text: 'reWork · resumo diário' },
+      timestamp: new Date().toISOString(),
+    }],
+  };
+  const ok = await discordBot.sendDM(user.discordId, payload);
+  return ok;
+}
+async function runDailyBotDMDigest() {
+  if (!discordBot.isEnabled()) return;
+  const now = new Date();
+  const dow = now.getDay(); // 0 dom .. 6 sáb
+  if (dow === 0 || dow === 6) return; // só seg-sex
+  const hour = now.getHours();
+  if (hour < 8 || hour > 9) return;   // janela 8h-9h tolera atraso do interval
+  const ymd = now.toISOString().slice(0, 10);
+  let sent = 0, skipped = 0;
+  for (const u of db.users) {
+    if (u.active === false) continue;
+    if (!u.discordId) continue;
+    if (!effectiveDiscordPref(u, 'daily_digest')) continue;
+    if (u._lastDiscordDigestSent === ymd) { skipped++; continue; }
+    try {
+      const didSend = await sendDiscordDMDigestForUser(u);
+      if (didSend) sent++;
+    } catch (e) {
+      console.warn(`[discord-dm-digest] falha ${u.username}:`, e.message);
+    }
+    // Marca sempre (mesmo se não teve conteúdo) pra não reprocessar na janela
+    u._lastDiscordDigestSent = ymd;
+    saveEntity('users', u);
+  }
+  if (sent > 0) console.log(`  [discord-dm-digest] ${sent} DM(s) enviada(s) · ${skipped} pulada(s)`);
+}
+// Mesmo padrão do digest de e-mail — 15min interval + 2min após boot.
+const _ddDigestInterval = setInterval(runDailyBotDMDigest, 15 * 60 * 1000);
+if (_ddDigestInterval.unref) _ddDigestInterval.unref();
+const _ddDigestBoot = setTimeout(runDailyBotDMDigest, 2 * 60 * 1000);
+if (_ddDigestBoot.unref) _ddDigestBoot.unref();
 
 /* ── REAL-TIME via Server-Sent Events ─────────────────────────────
    Cada cliente conectado mantém uma resposta HTTP aberta com

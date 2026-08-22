@@ -7246,8 +7246,11 @@ function renderCapacityTeam(startYmd, endYmd, businessDays, capacityHours, logSt
       return due && due >= startYmd && due <= endYmd;
     });
     const lateCount = userDemands.filter(d => isLate(d)).length;
-    // Horas apontadas pelo usuário NOS ÚLTIMOS N dias (independente da demanda estar em aberto ou não)
-    const hoursLogged = capScopeDemands().reduce((s, d) => {
+    // Horas apontadas pelo usuário NOS ÚLTIMOS N dias — UNIVERSAIS: soma
+    // apontamentos dele em QUALQUER squad, não só no escopo atual. O trabalho
+    // de uma pessoa é único; o filtro de squad só afeta os OUTROS stats (em
+    // aberto/atrasadas/entregáveis) que refletem produção contextual.
+    const hoursLogged = demands.reduce((s, d) => {
       return s + (d.timeEntries || [])
         .filter(e => e.userId === u.id && inLookback(e))
         .reduce((a, e) => a + (Number(e.hours) || 0), 0);
@@ -7310,7 +7313,7 @@ function renderCapacityTeam(startYmd, endYmd, businessDays, capacityHours, logSt
           <div class="capacity-stat"><span class="capacity-stat-value">${r.userDemands.length}</span><span class="capacity-stat-label">em aberto</span></div>
           <div class="capacity-stat"><span class="capacity-stat-value">${r.inPeriod.length}</span><span class="capacity-stat-label">no período</span></div>
           <div class="capacity-stat ${r.lateCount > 0 ? 'late' : ''}"><span class="capacity-stat-value">${r.lateCount}</span><span class="capacity-stat-label">atrasadas</span></div>
-          <div class="capacity-stat"><span class="capacity-stat-value">${fmtHours(r.hoursLogged)}</span><span class="capacity-stat-label">apontadas</span></div>
+          <div class="capacity-stat" title="Horas apontadas pelo usuário em QUALQUER squad no período — o trabalho da pessoa é único."><span class="capacity-stat-value">${fmtHours(r.hoursLogged)}</span><span class="capacity-stat-label">apontadas</span></div>
           <div class="capacity-stat-divider"></div>
           <div class="capacity-stat" title="Peças únicas entregues no período"><span class="capacity-stat-value">${r.totalPieces}</span><span class="capacity-stat-label">peças</span></div>
           <div class="capacity-stat" title="Artes individuais entregues no período"><span class="capacity-stat-value">${r.totalArts}</span><span class="capacity-stat-label">artes</span></div>
@@ -16724,16 +16727,19 @@ async function renderDiscordPrefsUI() {
   const wrap = $('profile-discord-prefs-wrap');
   const testBtn = $('profile-discord-test-btn');
   const clearBtn = $('profile-discord-clear-btn');
+  const digestBtn = $('profile-discord-digest-btn');
   if (!cfg.enabled) {
     if (wrap) wrap.style.display = 'none';
     if (testBtn) testBtn.style.display = 'none';
     if (clearBtn) clearBtn.style.display = 'none';
+    if (digestBtn) digestBtn.style.display = 'none';
     return;
   }
   if (wrap) wrap.style.display = '';
   const showActions = me.discordId ? '' : 'none';
   if (testBtn) testBtn.style.display = showActions;
   if (clearBtn) clearBtn.style.display = showActions;
+  if (digestBtn) digestBtn.style.display = showActions;
   // User prefs list — só INDIVIDUAL agora. Defaults do time viraram
   // painel próprio na página Integrações (aba Discord Bot).
   const list = $('profile-discord-prefs-list');
@@ -16904,14 +16910,14 @@ async function renderDiscordChannelsList() {
       : (b.lastError
         ? `<span class="pill" style="color:var(--danger);background:var(--danger-dim)" title="${esc(b.lastError)}">Erro</span>`
         : `<span class="pill" style="color:var(--success);background:var(--success-dim)">Ativo</span>`);
-    return `<tr>
+    return `<tr class="dc-row">
       <td>${esc(client?.name || '— cliente removido —')}</td>
       <td><code style="font-size:12px">#${esc(b.channelName || b.channelId)}</code></td>
-      <td style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">${eventBadges}${moreEvents}</td>
+      <td><div class="dc-event-badges">${eventBadges}${moreEvents}</div></td>
       <td>${statusBadge}</td>
-      <td>
-        <button class="btn btn-ghost btn-sm" onclick="openDiscordChannelModal('${b.id}')" title="Editar"><i data-lucide="pencil" class="ic-sm"></i></button>
-        <button class="btn btn-ghost btn-sm" onclick="deleteDiscordChannel('${b.id}')" title="Remover"><i data-lucide="trash-2" class="ic-sm"></i></button>
+      <td class="dc-row-actions">
+        <button class="dc-icon-btn" onclick="openDiscordChannelModal('${b.id}')" title="Editar"><i data-lucide="pencil"></i></button>
+        <button class="dc-icon-btn dc-icon-btn--danger" onclick="deleteDiscordChannel('${b.id}')" title="Remover"><i data-lucide="trash-2"></i></button>
       </td>
     </tr>`;
   }).join('');
@@ -17041,6 +17047,17 @@ async function testDiscordChannel() {
     await api('/discord/client-channels/' + _dcEditingId + '/test', 'POST', {});
     toast('Mensagem de teste enviada!', 'success');
   } catch (e) { toast(e.message, 'error'); }
+}
+
+async function sendDiscordDigestNow() {
+  const btn = $('profile-discord-digest-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
+  try {
+    const r = await api('/me/discord/digest', 'POST', {});
+    if (r.ok) toast('Resumo diário enviado! Confira o Discord.', 'success');
+    else toast(r.note || 'Nada pra reportar hoje.', 'info');
+  } catch (e) { toast(e.message, 'error'); }
+  finally { if (btn) { btn.disabled = false; btn.innerHTML = '<i data-lucide="sunrise" class="ic-sm"></i> Enviar resumo agora'; paintIcons(btn); } }
 }
 
 async function clearDiscordDMs() {
