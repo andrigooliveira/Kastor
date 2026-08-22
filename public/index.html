@@ -14,12 +14,12 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/css/style.css?v=20260821minicard3">
+<link rel="stylesheet" href="/css/style.css?v=20260821discord2">
 <!-- Preload dos JS pesados no <head> pra que o download comece IMEDIATAMENTE,
      em paralelo com o parse do HTML, em vez de esperar o parser chegar em
      </body>. Com immutable cache (max-age=1yr), na 2ª visita nem baixa. -->
 <link rel="preload" href="/vendor/lucide.min.js" as="script">
-<link rel="preload" href="/js/app.js?v=20260821minicard3" as="script">
+<link rel="preload" href="/js/app.js?v=20260821discord2" as="script">
 <script type="text/javascript">
     (function(c,l,a,r,i,t,y){
         c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
@@ -1089,39 +1089,68 @@
     <!-- ── INTEGRAÇÕES (WEBHOOKS) ── -->
     <div class="page" id="page-integrations">
       <div class="page-body">
-        <!-- Filtros: Squad (dropdown) → toggle Usuário/Cliente → dropdown correspondente
-             → Projeto → busca por nome/URL. Toggle é mutuamente exclusivo.
-             Botão de ação alinhado no fim da mesma linha. -->
-        <div class="filters-bar" style="margin-bottom:12px">
-          <div class="filter-input-wrap">
-            <i data-lucide="search" class="filter-input-icon ic-sm"></i>
-            <input class="filter-input filter-input--with-icon" id="wh-f-search" placeholder="Buscar integração…" oninput="renderIntegrations()">
-          </div>
-          <select class="filter-select" id="wh-f-squad" onchange="onIntegrationsSquadChange()"><option value="">Todos os squads</option></select>
-          <div class="filter-toggle" id="wh-scope-toggle" role="tablist">
-            <button type="button" class="filter-toggle-btn is-active" data-scope="user" onclick="setIntegrationsScope('user')">Usuário</button>
-            <button type="button" class="filter-toggle-btn" data-scope="client" onclick="setIntegrationsScope('client')">Cliente</button>
-          </div>
-          <select class="filter-select" id="wh-f-target" onchange="renderIntegrations()"><option value="">Todos os usuários</option></select>
-          <select class="filter-select" id="wh-f-client" onchange="onIntegrationsClientChange()" style="display:none"><option value="">Todos os clientes</option></select>
-          <select class="filter-select" id="wh-f-project" onchange="renderIntegrations()"><option value="">Todos os projetos</option></select>
-          <button class="btn btn-ghost btn-sm" onclick="clearIntegrationsFilters()" title="Limpar filtros"><i data-lucide="x" class="ic-sm"></i> Limpar</button>
-          <button class="btn btn-primary btn-sm admin-only" style="margin-left:auto" onclick="openWebhookModal()"><i data-lucide="plus" class="ic-sm"></i> Nova Integração</button>
+        <!-- Tabs: alterna entre Webhooks (saída simples via URL) e Discord Bot
+             (canal privado com DM + resolver nome). Cada aba tem sua UI própria. -->
+        <div class="integrations-tabs" role="tablist" style="display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:18px">
+          <button type="button" class="integrations-tab is-active" data-int-tab="webhooks" onclick="setIntegrationsTab('webhooks')" role="tab">
+            <i data-lucide="webhook" class="ic-sm"></i> Webhooks
+          </button>
+          <button type="button" class="integrations-tab" data-int-tab="discord" onclick="setIntegrationsTab('discord')" role="tab">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" style="vertical-align:middle;margin-right:6px"><path d="M19.27 5.33a19.19 19.19 0 0 0-4.85-1.53.07.07 0 0 0-.07.03c-.21.38-.44.87-.6 1.26a17.86 17.86 0 0 0-5.5 0 12.6 12.6 0 0 0-.61-1.26.08.08 0 0 0-.07-.03A19.19 19.19 0 0 0 2.73 5.33a.07.07 0 0 0-.03.03C.57 8.63 0 11.83.28 15a19.32 19.32 0 0 0 5.83 2.97.08.08 0 0 0 .09-.03 13.4 13.4 0 0 0 1.19-1.94.08.08 0 0 0-.04-.1 12.8 12.8 0 0 1-1.83-.87.08.08 0 0 1 0-.13c.12-.09.25-.18.36-.28a.08.08 0 0 1 .08 0c3.84 1.76 7.99 1.76 11.79 0a.08.08 0 0 1 .08 0c.12.1.24.19.36.28a.08.08 0 0 1 0 .13c-.58.35-1.2.64-1.83.87a.08.08 0 0 0-.04.1 15 15 0 0 0 1.19 1.94.08.08 0 0 0 .09.03A19.27 19.27 0 0 0 21.72 15c.33-3.67-.55-6.83-2.42-9.64a.07.07 0 0 0-.03-.03zM8.02 12.9c-1.15 0-2.1-1.06-2.1-2.35 0-1.3.93-2.35 2.1-2.35 1.18 0 2.12 1.06 2.1 2.35 0 1.29-.94 2.35-2.1 2.35zm7.79 0c-1.15 0-2.1-1.06-2.1-2.35 0-1.3.93-2.35 2.1-2.35 1.18 0 2.12 1.06 2.1 2.35 0 1.29-.92 2.35-2.1 2.35z"/></svg>Discord Bot
+          </button>
         </div>
-        <div class="table-wrap table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th style="cursor:pointer" onclick="sortWhBy('name')">Integração <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                <th style="cursor:pointer" onclick="sortWhBy('url')">URL <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                <th style="cursor:pointer" onclick="sortWhBy('format')">Formato <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                <th style="cursor:pointer" onclick="sortWhBy('events')">Eventos <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                <th style="cursor:pointer" onclick="sortWhBy('status')">Status <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                <th style="width:140px"></th>
-              </tr>
-            </thead>
-            <tbody id="webhooks-table-body"></tbody>
-          </table>
+
+        <!-- ─── TAB: Webhooks ─── -->
+        <div class="integrations-tab-panel" data-int-panel="webhooks">
+          <div class="filters-bar" style="margin-bottom:12px">
+            <div class="filter-input-wrap">
+              <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+              <input class="filter-input filter-input--with-icon" id="wh-f-search" placeholder="Buscar integração…" oninput="renderIntegrations()">
+            </div>
+            <select class="filter-select" id="wh-f-squad" onchange="onIntegrationsSquadChange()"><option value="">Todos os squads</option></select>
+            <div class="filter-toggle" id="wh-scope-toggle" role="tablist">
+              <button type="button" class="filter-toggle-btn is-active" data-scope="user" onclick="setIntegrationsScope('user')">Usuário</button>
+              <button type="button" class="filter-toggle-btn" data-scope="client" onclick="setIntegrationsScope('client')">Cliente</button>
+            </div>
+            <select class="filter-select" id="wh-f-target" onchange="renderIntegrations()"><option value="">Todos os usuários</option></select>
+            <select class="filter-select" id="wh-f-client" onchange="onIntegrationsClientChange()" style="display:none"><option value="">Todos os clientes</option></select>
+            <select class="filter-select" id="wh-f-project" onchange="renderIntegrations()"><option value="">Todos os projetos</option></select>
+            <button class="btn btn-ghost btn-sm" onclick="clearIntegrationsFilters()" title="Limpar filtros"><i data-lucide="x" class="ic-sm"></i> Limpar</button>
+            <button class="btn btn-primary btn-sm admin-only" style="margin-left:auto" onclick="openWebhookModal()"><i data-lucide="plus" class="ic-sm"></i> Nova Integração</button>
+          </div>
+          <div class="table-wrap table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th style="cursor:pointer" onclick="sortWhBy('name')">Integração <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                  <th style="cursor:pointer" onclick="sortWhBy('url')">URL <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                  <th style="cursor:pointer" onclick="sortWhBy('format')">Formato <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                  <th style="cursor:pointer" onclick="sortWhBy('events')">Eventos <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                  <th style="cursor:pointer" onclick="sortWhBy('status')">Status <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                  <th style="width:140px"></th>
+                </tr>
+              </thead>
+              <tbody id="webhooks-table-body"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ─── TAB: Discord Bot ─── -->
+        <div class="integrations-tab-panel" data-int-panel="discord" hidden>
+          <!-- Status card — pintado por renderDiscordIntegrationsPanel() -->
+          <div class="integrations-discord-status" id="int-discord-status">
+            <div class="profile-hint">Carregando…</div>
+          </div>
+
+          <!-- Padrão do time (só admin) -->
+          <div id="int-discord-admin-block" class="admin-only" style="display:none;margin-top:24px">
+            <div class="section-title" style="margin-bottom:6px">Padrão do time por evento</div>
+            <div class="profile-hint" style="margin-bottom:14px">Quando um usuário não personaliza a preferência dele, vale o padrão configurado aqui. Não afeta quem já escolheu individualmente.</div>
+            <div class="profile-prefs-list" id="int-discord-admin-list"></div>
+            <div class="profile-block-actions" style="margin-top:12px">
+              <button class="btn btn-primary btn-sm" onclick="saveDiscordAdminDefaults()">Salvar padrão do time</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -2188,7 +2217,18 @@
                 </div>
                 <div class="profile-block-actions">
                   <button class="btn btn-primary" onclick="saveDiscordId()">Salvar</button>
+                  <button class="btn btn-ghost" id="profile-discord-test-btn" onclick="testDiscordDM()" style="display:none"><i data-lucide="send" class="ic-sm"></i> Enviar DM de teste</button>
                 </div>
+
+                <!-- Preferências de DM por evento — só mostra se o bot estiver configurado no server -->
+                <div id="profile-discord-prefs-wrap" style="display:none;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+                  <div class="profile-block-title">Notificações por DM no Discord</div>
+                  <div class="profile-hint" style="margin-bottom:12px">Quando marcado, você recebe uma DM privada do bot em vez de (ou além de) e-mail. Marcações "usar padrão" seguem a configuração do time.</div>
+                  <div class="profile-prefs-list" id="profile-discord-prefs-list">
+                    <!-- populado por renderProfile → renderDiscordPrefsList -->
+                  </div>
+                </div>
+
               </div>
 
               <!-- Google Calendar -->
@@ -3610,7 +3650,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260821minicard3"></script>
+<script src="/js/app.js?v=20260821discord2"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

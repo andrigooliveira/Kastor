@@ -2123,6 +2123,35 @@ function closeModal(id) {
    ou em contêineres marcados com data-avatar-no-menu.
    ══════════════════════════════════════════════════════════════════════ */
 let _userMiniCard = null;
+/* Cache in-memory da disponibilidade do bot Discord. Setada na 1ª chamada de
+   openUserMiniCard e reutilizada — evita bater /discord/config em cada abertura.
+   Reset ao mudar de usuário logado (renderSidebarUser já ocorre nesse ponto). */
+let _discordBotEnabled = null;
+async function _isDiscordBotAvailable() {
+  if (_discordBotEnabled !== null) return _discordBotEnabled;
+  try {
+    const cfg = await api('/discord/config');
+    _discordBotEnabled = !!cfg.enabled;
+  } catch { _discordBotEnabled = false; }
+  return _discordBotEnabled;
+}
+/* Resolve discordId → username via API (cache 24h no server). Ignora falhas
+   silenciosamente — se der 404/503 o mini-card apenas não mostra o nome. */
+const _discordUserCache = new Map(); // id → { username, global_name, avatar_url } | null
+async function _resolveDiscordUser(discordId) {
+  if (!discordId) return null;
+  if (_discordUserCache.has(discordId)) return _discordUserCache.get(discordId);
+  const bot = await _isDiscordBotAvailable();
+  if (!bot) { _discordUserCache.set(discordId, null); return null; }
+  try {
+    const u = await api('/discord/user/' + discordId);
+    _discordUserCache.set(discordId, u);
+    return u;
+  } catch {
+    _discordUserCache.set(discordId, null);
+    return null;
+  }
+}
 
 /* Ancestrais que suprimem o mini-card. Selector list — qualquer match no
    .closest() da avatar → não abre. Cobre TODO local onde o clique já tem
@@ -2173,17 +2202,25 @@ function openUserMiniCard(userId, anchorEl) {
   card.setAttribute('role', 'dialog');
   card.setAttribute('aria-label', `Contato de ${u.name || u.username}`);
   const bigAvatar = avatarHTML(u, 'avatar user-mini-card-avatar').replace(/data-user-id="[^"]+"/,''); // dentro do card não deve reabrir
-  const rowsHTML = [
-    ['at-sign',    'Usuário', u.username ? '@' + u.username : null, null],
-    ['mail',       'E-mail',  u.email || null, u.email ? `mailto:${u.email}` : null],
-    ['message-circle', 'Discord', u.discord || null, null],
-    ['phone',      'Telefone', u.phone || null, u.phone ? `tel:${(u.phone || '').replace(/[^\d+]/g,'')}` : null],
-  ].map(([icon, label, value, href]) => {
+  // Valor do Discord: prioriza `u.discord` (manual) — se vazio mas u.discordId
+  // existe, renderiza placeholder "…" que é atualizado async pelo resolver do bot.
+  const discordManual = u.discord || null;
+  const discordShowRow = !!(discordManual || u.discordId);
+  const discordInitialValue = discordManual || (u.discordId ? '…' : null);
+  const rows = [
+    { icon: 'at-sign', label: 'Usuário', value: u.username ? '@' + u.username : null, href: null },
+    { icon: 'mail', label: 'E-mail', value: u.email || null, href: u.email ? `mailto:${u.email}` : null },
+    discordShowRow
+      ? { icon: 'message-circle', label: 'Discord', value: discordInitialValue, href: null, attr: 'data-mc-discord="1"' }
+      : null,
+    { icon: 'phone', label: 'Telefone', value: u.phone || null, href: u.phone ? `tel:${(u.phone || '').replace(/[^\d+]/g,'')}` : null },
+  ].filter(Boolean);
+  const rowsHTML = rows.map(({ icon, label, value, href, attr }) => {
     if (!value) return '';
     const inner = href
       ? `<a class="user-mini-card-value user-mini-card-value--link" href="${esc(href)}">${esc(value)}</a>`
       : `<span class="user-mini-card-value">${esc(value)}</span>`;
-    return `<div class="user-mini-card-row">
+    return `<div class="user-mini-card-row" ${attr || ''}>
       <i data-lucide="${icon}" class="ic-sm user-mini-card-icon"></i>
       <div class="user-mini-card-field">
         <div class="user-mini-card-label">${esc(label)}</div>
@@ -2194,12 +2231,20 @@ function openUserMiniCard(userId, anchorEl) {
   }).join('');
 
   const hasAnyContact = !!(u.email || u.discord || u.phone);
+  // Header: nome, depois "Cargo · Área" (cargo=position, área=role). Só
+  // mostra o separador se ambos existirem — se um faltar, exibe só o outro.
+  const position = (u.position || '').trim();
+  const role = (u.role || (u.isAdmin ? 'Administrador' : 'Equipe') || '').trim();
+  const metaParts = [position, role].filter(Boolean);
+  const metaLine = metaParts.length
+    ? metaParts.map(esc).join(' <span class="user-mini-card-sep">·</span> ')
+    : '—';
   card.innerHTML = `
     <div class="user-mini-card-head">
       ${bigAvatar}
       <div class="user-mini-card-heading">
         <div class="user-mini-card-name">${esc(u.name || '—')}</div>
-        <div class="user-mini-card-role">${esc(u.role || (u.isAdmin ? 'Administrador' : 'Equipe'))}</div>
+        <div class="user-mini-card-role">${metaLine}</div>
       </div>
     </div>
     <div class="user-mini-card-body">
@@ -2208,6 +2253,30 @@ function openUserMiniCard(userId, anchorEl) {
   `;
   document.body.appendChild(card);
   if (typeof paintIcons === 'function') paintIcons(card);
+
+  // Resolução assíncrona do username do Discord via bot — só se u.discordId existe
+  // e o usuário NÃO cadastrou o nome manualmente (respeita o valor manual).
+  if (u.discordId && !discordManual) {
+    _resolveDiscordUser(u.discordId).then(resolved => {
+      if (!_userMiniCard || _userMiniCard !== card) return; // card já foi fechado
+      const row = card.querySelector('[data-mc-discord="1"]');
+      if (!row) return;
+      const displayName = resolved && (resolved.global_name || resolved.username);
+      if (!displayName) {
+        // Falha na resolução — mostra o ID cru como fallback
+        row.querySelector('.user-mini-card-value').textContent = u.discordId;
+        const copyBtn = row.querySelector('.user-mini-card-copy');
+        if (copyBtn) copyBtn.setAttribute('data-copy', u.discordId);
+        return;
+      }
+      const label = resolved.username && resolved.global_name && resolved.username !== resolved.global_name
+        ? `${resolved.global_name} (@${resolved.username})`
+        : displayName;
+      row.querySelector('.user-mini-card-value').textContent = label;
+      const copyBtn = row.querySelector('.user-mini-card-copy');
+      if (copyBtn) copyBtn.setAttribute('data-copy', label);
+    });
+  }
 
   // Botão de copiar
   card.querySelectorAll('.user-mini-card-copy').forEach(btn => {
@@ -2252,15 +2321,18 @@ function openUserMiniCard(userId, anchorEl) {
 
 /* Delegation global — captura ANTES de outros handlers pra bloquear
    propagação (row-click de <tr class="demand-row">, por exemplo, abriria
-   a demanda em vez de mostrar o cartão). */
+   a demanda em vez de mostrar o cartão). Cobre AMBOS os pontos de entrada:
+     - .avatar[data-user-id] — fotos/iniciais renderizadas por avatarHTML
+     - .mention[data-user-id] — @menções renderizadas dentro de comentários
+   Mesmas regras de supressão pros dois. */
 document.addEventListener('click', (e) => {
-  const av = e.target.closest('.avatar[data-user-id]');
-  if (!av) return;
-  if (av.closest(AVATAR_MENU_SUPPRESSORS)) return; // dentro de dropdown/picker
+  const trigger = e.target.closest('.avatar[data-user-id], .mention[data-user-id]');
+  if (!trigger) return;
+  if (trigger.closest(AVATAR_MENU_SUPPRESSORS)) return;
   e.preventDefault();
   e.stopPropagation();
-  const uid = av.getAttribute('data-user-id');
-  openUserMiniCard(uid, av);
+  const uid = trigger.getAttribute('data-user-id');
+  openUserMiniCard(uid, trigger);
 }, true);
 
 /* ── Lucide Icons ── */
@@ -3841,7 +3913,7 @@ function renderCurrent() {
     case 'agenda':     renderAgenda(); break;
     case 'templates':  renderTemplates(); break;
     case 'recurring':  renderRecurring(); break;
-    case 'integrations': renderIntegrations(); break;
+    case 'integrations': renderIntegrations(); setIntegrationsTab(_integrationsTab || 'webhooks'); break;
     case 'devtools':   renderDevTools(); break;
     case 'passwords':  renderPasswords(); break;
     case 'kb':         renderKbFromRoute(); break;
@@ -11106,6 +11178,16 @@ function _commentInputPlain(el) {
 function renderMentionsInHtml(html) {
   const div = document.createElement('div');
   div.innerHTML = html;
+  // Enriquece <span class="mention"> pré-existentes com data-user-id (o mini-card
+  // é acionado por esse attr via delegação global). Rodada no HTML "cru" antes
+  // do TreeWalker — comentários salvos antes desse commit não tinham o attr,
+  // mas ganham no render agora sem migração de dados.
+  div.querySelectorAll('span.mention:not([data-user-id])').forEach(span => {
+    const m = (span.textContent || '').trim().match(/^@([a-zA-Z0-9._-]+)$/);
+    if (!m) return;
+    const found = (users || []).find(x => x.username.toLowerCase() === m[1].toLowerCase());
+    if (found) span.setAttribute('data-user-id', found.id);
+  });
   const walker = document.createTreeWalker(div, NodeFilter.SHOW_TEXT, null);
   const targets = [];
   while (walker.nextNode()) {
@@ -11131,6 +11213,8 @@ function renderMentionsInHtml(html) {
         if (found) {
           const s = document.createElement('span');
           s.className = 'mention';
+          // data-user-id habilita o mini-card (mesma delegação global do avatar).
+          s.setAttribute('data-user-id', found.id);
           s.textContent = '@' + found.username;
           frag.appendChild(s);
           return;
@@ -16307,6 +16391,8 @@ function renderProfile() {
   // Google Calendar — carrega assíncrono.
   renderGoogleCalendarPanel();
   handleGoogleCallbackToast();
+  // Discord DM prefs — carrega assíncrono; UI só aparece se o bot tá configurado
+  renderDiscordPrefsUI().catch(() => {});
   if (typeof paintIcons === 'function') paintIcons();
 }
 /* Navegação entre seções do perfil (Conta, Aparência, Notificações, etc). */
@@ -16621,6 +16707,143 @@ async function saveDiscordId() {
     toast(raw ? 'ID do Discord vinculado!' : 'ID do Discord removido.');
     renderProfile();
     await refreshData();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+/* ── Discord DM prefs ── */
+let _discordConfig = null;
+async function loadDiscordConfig() {
+  try { _discordConfig = await api('/discord/config'); }
+  catch { _discordConfig = { enabled: false, labels: {}, adminDefaults: {}, userPrefs: {} }; }
+  return _discordConfig;
+}
+async function renderDiscordPrefsUI() {
+  const cfg = await loadDiscordConfig();
+  const wrap = $('profile-discord-prefs-wrap');
+  const testBtn = $('profile-discord-test-btn');
+  if (!cfg.enabled) {
+    if (wrap) wrap.style.display = 'none';
+    if (testBtn) testBtn.style.display = 'none';
+    return;
+  }
+  if (wrap) wrap.style.display = '';
+  if (testBtn) testBtn.style.display = me.discordId ? '' : 'none';
+  // User prefs list — só INDIVIDUAL agora. Defaults do time viraram
+  // painel próprio na página Integrações (aba Discord Bot).
+  const list = $('profile-discord-prefs-list');
+  if (list) {
+    const rows = Object.entries(cfg.labels).map(([key, label]) => {
+      const userVal = cfg.userPrefs[key];
+      const adminDefault = cfg.adminDefaults[key] !== false;
+      const state = userVal === true ? 'on' : userVal === false ? 'off' : 'default';
+      const effective = state === 'default' ? adminDefault : (state === 'on');
+      return `<div class="profile-pref-row profile-pref-row--tri" data-key="${key}">
+        <div class="profile-pref-info">
+          <div class="profile-pref-title">${esc(label)}</div>
+          <div class="profile-pref-sub">Padrão do time: <strong>${adminDefault ? 'Ligado' : 'Desligado'}</strong>${state === 'default' ? '' : ` · Efetivo: <strong>${effective ? 'Ligado' : 'Desligado'}</strong>`}</div>
+        </div>
+        <div class="profile-tri-toggle">
+          <button type="button" class="tri-btn ${state === 'default' ? 'is-active' : ''}" onclick="setDiscordPref('${key}', null)" title="Usar padrão do time">Padrão</button>
+          <button type="button" class="tri-btn ${state === 'on' ? 'is-active' : ''}" onclick="setDiscordPref('${key}', true)" title="Sempre receber DM">Ligado</button>
+          <button type="button" class="tri-btn ${state === 'off' ? 'is-active' : ''}" onclick="setDiscordPref('${key}', false)" title="Nunca receber DM">Desligado</button>
+        </div>
+      </div>`;
+    }).join('');
+    list.innerHTML = rows;
+  }
+}
+
+/* ── Integrações → aba Discord Bot ──
+   Painel administrativo: status do bot + defaults do time por evento.
+   Ambos só fazem sentido pra admin; user comum vê aba mas o admin-block
+   fica escondido pela classe .admin-only (via body.user-*). */
+let _integrationsTab = 'webhooks';
+function setIntegrationsTab(name) {
+  _integrationsTab = name;
+  document.querySelectorAll('#page-integrations .integrations-tab').forEach(b => {
+    b.classList.toggle('is-active', b.dataset.intTab === name);
+  });
+  document.querySelectorAll('#page-integrations .integrations-tab-panel').forEach(p => {
+    p.hidden = p.dataset.intPanel !== name;
+  });
+  if (name === 'discord') renderDiscordIntegrationsPanel().catch(() => {});
+  if (typeof paintIcons === 'function') paintIcons(document.getElementById('page-integrations'));
+}
+
+async function renderDiscordIntegrationsPanel() {
+  // Invalida cache pra sempre pegar o estado mais recente do server
+  _discordConfig = null;
+  const cfg = await loadDiscordConfig();
+  const status = $('int-discord-status');
+  const adminBlock = $('int-discord-admin-block');
+  if (!status) return;
+  if (!cfg.enabled) {
+    status.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">🔌</div>
+        <div class="empty-title">Bot Discord não configurado</div>
+        <div class="empty-sub" style="margin-top:8px;max-width:520px">
+          Adicione <code>DISCORD_BOT_TOKEN</code> no <code>.env</code> do servidor e reinicie.
+          Sem ele, as notificações continuam funcionando via webhooks; só o mini-card
+          (com nome do Discord) e as DMs privadas ficam indisponíveis.
+        </div>
+      </div>`;
+    if (adminBlock) adminBlock.style.display = 'none';
+    return;
+  }
+  status.innerHTML = `
+    <div class="integrations-discord-card">
+      <div class="integrations-discord-check" style="color:var(--success)"><i data-lucide="check-circle" class="ic-md"></i></div>
+      <div class="integrations-discord-info">
+        <div class="integrations-discord-title">Bot Discord ativo</div>
+        <div class="integrations-discord-sub">
+          Resolve nome do Discord pelo ID (mini-card) e envia notificações por DM privada
+          conforme o padrão do time e a preferência de cada pessoa.
+        </div>
+      </div>
+    </div>`;
+  if (adminBlock && me.isAdmin) {
+    adminBlock.style.display = '';
+    const list = $('int-discord-admin-list');
+    if (list) {
+      list.innerHTML = Object.entries(cfg.labels).map(([key, label]) => `
+        <label class="profile-pref-row">
+          <div class="profile-pref-info">
+            <div class="profile-pref-title">${esc(label)}</div>
+          </div>
+          <input type="checkbox" data-admin-pref="${key}" ${cfg.adminDefaults[key] !== false ? 'checked' : ''}>
+        </label>
+      `).join('');
+    }
+  } else if (adminBlock) {
+    adminBlock.style.display = 'none';
+  }
+  if (typeof paintIcons === 'function') paintIcons($('page-integrations'));
+}
+
+async function setDiscordPref(event, value) {
+  try {
+    // value: true, false, ou null (limpar override)
+    me = await api('/me', 'PUT', { discordPrefs: { [event]: value } });
+    await renderDiscordPrefsUI();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function saveDiscordAdminDefaults() {
+  const boxes = document.querySelectorAll('[data-admin-pref]');
+  const payload = {};
+  boxes.forEach(b => { payload[b.getAttribute('data-admin-pref')] = b.checked; });
+  try {
+    await api('/discord/admin-defaults', 'PUT', payload);
+    toast('Padrão do time atualizado.', 'success');
+    await renderDiscordPrefsUI();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function testDiscordDM() {
+  try {
+    await api('/me/discord/test', 'POST', {});
+    toast('DM de teste enviado! Confira o Discord.', 'success');
   } catch (e) { toast(e.message, 'error'); }
 }
 async function changePassword() {

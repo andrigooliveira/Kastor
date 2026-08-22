@@ -10588,13 +10588,97 @@ tr.demand-row:hover {
   padding: 8px 4px;
   text-align: center;
 }
+/* ── Tabs da página Integrações ── */
+.integrations-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 10px 18px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  margin-bottom: -1px;
+  transition: color .12s var(--ease-out), border-color .12s var(--ease-out);
+}
+.integrations-tab:hover { color: var(--text); }
+.integrations-tab.is-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.integrations-discord-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 18px 20px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.integrations-discord-check { flex-shrink: 0; padding-top: 2px; }
+.integrations-discord-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.integrations-discord-sub {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+/* ── Tri-toggle usado nas prefs de DM do Discord (padrão / on / off) ── */
+.profile-tri-toggle {
+  display: inline-flex;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--surface-2);
+  flex-shrink: 0;
+}
+.profile-tri-toggle .tri-btn {
+  background: transparent;
+  border: 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-right: 1px solid var(--border);
+  transition: background .12s var(--ease-out), color .12s var(--ease-out);
+}
+.profile-tri-toggle .tri-btn:last-child { border-right: 0; }
+.profile-tri-toggle .tri-btn:hover { background: var(--surface); color: var(--text); }
+.profile-tri-toggle .tri-btn.is-active {
+  background: var(--accent);
+  color: var(--primary-foreground, #fff);
+}
+.profile-pref-row--tri {
+  align-items: center;
+}
+
+/* Separador (·) na linha de cargo · área do mini-card. */
+.user-mini-card-sep {
+  color: var(--text-muted);
+  opacity: .6;
+  margin: 0 2px;
+}
 /* Avatar clicável — cursor mais óbvio quando abre mini-card.
    Skips: avatares de fallback (sem data-user-id) e os que estão em dropdowns
    (via :not() com o mesmo selector list do JS). */
-.avatar[data-user-id] { cursor: pointer; }
+.avatar[data-user-id],
+.mention[data-user-id] { cursor: pointer; }
 .avatar[data-user-id]:hover {
   filter: brightness(1.08);
   transition: filter .12s var(--ease-out);
+}
+.mention[data-user-id]:hover {
+  text-decoration: underline;
 }
 /* Não muda cursor pra pointer dentro dos dropdowns onde o clique já tem outra ação. */
 .filter-cdrop-menu .avatar[data-user-id],

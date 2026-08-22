@@ -34,6 +34,7 @@ const {
 } = require('@simplewebauthn/server');
 const { createStore, ENTITY_TYPES } = require('./db-store');
 const googleCal  = require('./google-cal');
+const discordBot = require('./discord-bot');
 
 const PORT    = process.env.PORT || 3000;
 // KASTOR_DATA_DIR sobrescreve o diretório de uploads e do auth.enc.
@@ -115,6 +116,7 @@ async function loadDB() {
   // Extrai anexos/avatares base64 que ainda estejam dentro das entidades
   // pra arquivos em data/uploads. Idempotente — não toca quem já está em URL.
   extractInlineBase64();
+  await loadAdminDiscordDefaults(); // carrega defaults de DM do Discord (KV)
   await seedDemandTypes(); // popula a biblioteca de tipos a partir dos fluxos (1x)
   // Migração de folders legados do cofre — cria entidades a partir do campo
   // string `folder` que existia antes. Idempotente.
@@ -515,6 +517,49 @@ const EMAIL_EVENT_LABELS = {
 function defaultEmailPrefs() {
   return { assigned: true, stage_assigned: true, mention: true, watch_stage: true, watch_comment: true, daily_digest: true };
 }
+
+/* ── DISCORD DM PREFS ──
+   Mesmo modelo do e-mail: por evento, ligado/desligado. Mas com duas camadas:
+     1) HARDCODED default (fallback final se KV vazio) — @mention on, resto off
+     2) ADMIN default (KV `discordAdminDefaults`) — admin do time altera pra
+        aplicar a todos que ainda não personalizaram
+     3) USER override (u.discordPrefs) — vence tudo, chave por chave (parcial)
+   effectiveDiscordPref(user, event) resolve na ordem 3 → 2 → 1. */
+const DISCORD_EVENT_LABELS = {
+  assigned:       'Atribuído como responsável',
+  stage_assigned: 'Responsável por etapa (auto-atribuição)',
+  mention:        'Mencionado em comentário',
+  watch_stage:    'Movimento de etapa em demanda que observo',
+  watch_comment:  'Novo comentário em demanda que observo',
+};
+const DISCORD_HARDCODED_DEFAULTS = {
+  assigned: false, stage_assigned: false, mention: true, watch_stage: false, watch_comment: false,
+};
+let _adminDiscordDefaultsCache = null;
+async function loadAdminDiscordDefaults() {
+  const raw = await store.getKv('discordAdminDefaults');
+  if (!raw) { _adminDiscordDefaultsCache = { ...DISCORD_HARDCODED_DEFAULTS }; return; }
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    _adminDiscordDefaultsCache = { ...DISCORD_HARDCODED_DEFAULTS, ...parsed };
+  } catch { _adminDiscordDefaultsCache = { ...DISCORD_HARDCODED_DEFAULTS }; }
+}
+function getAdminDiscordDefaults() { return _adminDiscordDefaultsCache || { ...DISCORD_HARDCODED_DEFAULTS }; }
+async function saveAdminDiscordDefaults(next) {
+  const clean = {};
+  for (const k of Object.keys(DISCORD_EVENT_LABELS)) {
+    if (typeof next[k] === 'boolean') clean[k] = next[k];
+  }
+  _adminDiscordDefaultsCache = { ...DISCORD_HARDCODED_DEFAULTS, ...clean };
+  await store.setKv('discordAdminDefaults', JSON.stringify(_adminDiscordDefaultsCache));
+}
+function effectiveDiscordPref(user, event) {
+  if (!DISCORD_EVENT_LABELS[event]) return false;
+  const userPrefs = (user && user.discordPrefs) || {};
+  if (typeof userPrefs[event] === 'boolean') return userPrefs[event];
+  const admin = getAdminDiscordDefaults();
+  return admin[event] !== false; // fallback = admin default (que já herda do hardcoded)
+}
 function isValidEmail(e) {
   if (typeof e !== 'string') return false;
   const t = e.trim();
@@ -612,6 +657,53 @@ function buildEmailForNotification(type, ctx) {
   const text = `${headline}\n\n${body.replace(/<[^>]+>/g, '').trim()}\n${project ? `\nProjeto: ${project.name}${project.client ? ' · ' + project.client : ''}` : ''}${trigger ? `\nPor: ${trigger.name}` : ''}${demandUrl ? `\n\nAbrir: ${demandUrl}` : ''}`;
   return { subject, html, text };
 }
+/* Constrói payload de DM Discord (embed) pra uma notificação. Análogo ao
+   buildEmailForNotification mas menor — DM não tem headline+body+footer,
+   só embed com title/description/fields/url. */
+function buildDiscordDMForNotification(type, ctx) {
+  const { demand, project, trigger, stageName, commentText, demandUrl } = ctx;
+  const projSub = project ? `${project.name}${project.client ? ' · ' + project.client : ''}` : null;
+  const triggerName = trigger ? trigger.name : null;
+  const clip = (s, n) => { s = String(s || '').replace(/<[^>]+>/g,'').trim(); return s.length > n ? s.slice(0, n-1) + '…' : s; };
+  const COLORS = { assigned: 0x7A00FF, stage_assigned: 0x2b7fff, mention: 0xF5A718, watch_stage: 0xa1a1a1, watch_comment: 0xa1a1a1 };
+  let title, description = '';
+  switch (type) {
+    case 'assigned':
+      title = `🧑‍💼 Você é o responsável: ${demand.name}`;
+      description = `Você foi definido como responsável${stageName ? ` na etapa **${stageName}**` : ''}.`;
+      break;
+    case 'stage_assigned':
+      title = `📌 Nova etapa para você: ${demand.name}`;
+      description = `A demanda avançou para a etapa **${stageName || '—'}** e você é o responsável.`;
+      break;
+    case 'mention':
+      title = `💬 Mencionado em: ${demand.name}`;
+      description = `${triggerName ? `**${triggerName}** mencionou você:\n` : ''}> ${clip(commentText, 300)}`;
+      break;
+    case 'watch_stage':
+      title = `👀 Etapa avançou: ${demand.name}`;
+      description = `Nova etapa: **${stageName || '—'}**.`;
+      break;
+    case 'watch_comment':
+      title = `👀 Novo comentário: ${demand.name}`;
+      description = `${triggerName ? `**${triggerName}** comentou:\n` : ''}> ${clip(commentText, 300)}`;
+      break;
+    default: return null;
+  }
+  const fields = [];
+  if (projSub) fields.push({ name: 'Projeto', value: projSub, inline: true });
+  const embed = {
+    title,
+    description,
+    color: COLORS[type] || 0x7A00FF,
+    fields: fields.length ? fields : undefined,
+    footer: { text: 'Kastor · reWork' },
+    timestamp: new Date().toISOString(),
+  };
+  if (demandUrl) embed.url = demandUrl;
+  return { embeds: [embed], allowed_mentions: { parse: [] } };
+}
+
 function wsIdsFor(user) {
   if (user.isAdmin) return db.workspaces.map(w => w.id);
   return Array.isArray(user.workspaces) ? user.workspaces : [];
@@ -704,6 +796,27 @@ function notify(targetUserId, type, data, triggerUserId, baseUrl) {
       setImmediate(() => sendNotificationEmail(user, type, data, triggerUserId, baseUrl));
     }
   }
+  // Discord DM opcional — bot habilitado + user com discordId + pref efetiva ligada
+  if (discordBot.isEnabled() && user.discordId && DISCORD_EVENT_LABELS[type] && effectiveDiscordPref(user, type)) {
+    setImmediate(() => sendNotificationDiscordDM(user, type, data, triggerUserId, baseUrl));
+  }
+}
+
+/* Wrapper que monta ctx igual ao email e chama o bot. Fire-and-forget. */
+function sendNotificationDiscordDM(user, type, data, triggerUserId, baseUrl) {
+  const demand = data.demandId ? db.demands.find(d => d.id === data.demandId) : null;
+  if (!demand) return;
+  const project = demand.projectId ? db.projects.find(p => p.id === demand.projectId) : null;
+  const trigger = triggerUserId ? db.users.find(u => u.id === triggerUserId) : null;
+  const ctx = {
+    demand, project, owner: user, trigger,
+    stageName: data.stageName || null,
+    commentText: data.commentText || null,
+    demandUrl: demandLinkFor(baseUrl || process.env.PUBLIC_URL || '', demand.id),
+  };
+  const payload = buildDiscordDMForNotification(type, ctx);
+  if (!payload) return;
+  discordBot.sendDM(user.discordId, payload).catch(e => console.warn('[discord-dm]', e.message));
 }
 function sendNotificationEmail(user, type, data, triggerUserId, baseUrl) {
   const demand = data.demandId ? db.demands.find(d => d.id === data.demandId) : null;
@@ -1380,7 +1493,7 @@ app.get('/api/me', requireAuth, (req, res) => {
 });
 
 app.put('/api/me', requireAuth, (req, res) => {
-  const { name, role, avatar, currentPassword, newPassword, username, discordId, email, emailPrefs, discord, phone } = req.body || {};
+  const { name, role, avatar, currentPassword, newPassword, username, discordId, email, emailPrefs, discord, phone, discordPrefs } = req.body || {};
   const u = req.user;
   if (typeof name === 'string' && name.trim()) u.name = name.trim();
   if (typeof role === 'string') u.role = role.trim();
@@ -1421,6 +1534,17 @@ app.put('/api/me', requireAuth, (req, res) => {
       if (typeof emailPrefs[k] === 'boolean') next[k] = emailPrefs[k];
     }
     u.emailPrefs = next;
+  }
+  // discordPrefs — parcial: chaves undefined caem no admin default. null explícito
+  // remove o override daquela chave (volta a usar o default do time).
+  if (discordPrefs && typeof discordPrefs === 'object') {
+    const prev = u.discordPrefs || {};
+    const next = { ...prev };
+    for (const k of Object.keys(DISCORD_EVENT_LABELS)) {
+      if (discordPrefs[k] === null) delete next[k];
+      else if (typeof discordPrefs[k] === 'boolean') next[k] = discordPrefs[k];
+    }
+    u.discordPrefs = next;
   }
   if (typeof username === 'string' && username.trim()) {
     const trimmed = username.trim().toLowerCase();
@@ -1482,6 +1606,57 @@ app.post('/api/me/email/test', requireAuth, async (req, res) => {
     `Olá ${req.user.name}! Este é um teste do canal de e-mails do reWork.`
   );
   if (!result.sent) return res.status(502).json({ error: 'Falha ao enviar: ' + (result.reason || 'erro desconhecido') });
+  res.json({ ok: true });
+});
+
+/* ── DISCORD BOT (integração híbrida com webhooks) ──
+   Bot serve pra 3 coisas complementares aos webhooks:
+     1) Resolver discordId → username (mini-card de contato)
+     2) Enviar DM privada de notificações (opt-in por evento)
+     3) [futuro] slash commands
+   Habilitação: env DISCORD_BOT_TOKEN. Sem token, os endpoints ainda
+   existem mas retornam 503 (cliente detecta e esconde a UI). */
+
+// Resolve discordId → { username, global_name, avatar_url }. Cache 24h.
+app.get('/api/discord/user/:id', requireAuth, async (req, res) => {
+  if (!discordBot.isEnabled()) return res.status(503).json({ error: 'Discord bot não configurado.' });
+  const id = String(req.params.id || '').trim();
+  if (!/^\d{15,22}$/.test(id)) return res.status(400).json({ error: 'ID inválido.' });
+  const data = await discordBot.getUser(id);
+  if (!data) return res.status(404).json({ error: 'Usuário não encontrado ou bot sem acesso.' });
+  res.json(data);
+});
+
+// Config: retorna se o bot tá habilitado, defaults do admin e prefs do próprio user.
+app.get('/api/discord/config', requireAuth, (req, res) => {
+  res.json({
+    enabled: discordBot.isEnabled(),
+    labels: DISCORD_EVENT_LABELS,
+    adminDefaults: getAdminDiscordDefaults(),
+    userPrefs: req.user.discordPrefs || {},
+  });
+});
+
+// Admin edita os defaults do time (KV). Não afeta users que já personalizaram.
+app.put('/api/discord/admin-defaults', requireAuth, adminOnly, async (req, res) => {
+  const body = req.body || {};
+  await saveAdminDiscordDefaults(body);
+  res.json({ ok: true, adminDefaults: getAdminDiscordDefaults() });
+});
+
+// Envia um DM de teste pro próprio user — pra validar setup (discordId + bot).
+app.post('/api/me/discord/test', requireAuth, async (req, res) => {
+  if (!discordBot.isEnabled()) return res.status(503).json({ error: 'Discord bot não configurado no servidor.' });
+  if (!req.user.discordId) return res.status(400).json({ error: 'Cadastre seu ID do Discord no perfil antes de testar.' });
+  const ok = await discordBot.sendDM(req.user.discordId, {
+    embeds: [{
+      title: '✅ Kastor conectado',
+      description: `Olá, **${req.user.name}**! Este é um teste do canal de DM do bot Kastor.\n\nA partir de agora você pode receber notificações privadas aqui.`,
+      color: 0x7A00FF,
+      footer: { text: 'Kastor · reWork' },
+    }],
+  });
+  if (!ok) return res.status(502).json({ error: 'Falha ao enviar DM. Provavelmente o bot ainda não está no seu servidor Discord (sem guild em comum, o Discord bloqueia DM por spam). Convide o bot pelo OAuth2 URL Generator no Developer Portal (scope: bot). Também verifique que você permite DMs de membros do server (Configurações do Discord → Privacidade e Segurança).' });
   res.json({ ok: true });
 });
 
