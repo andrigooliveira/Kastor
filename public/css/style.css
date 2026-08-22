@@ -10588,6 +10588,24 @@ tr.demand-row:hover {
   padding: 8px 4px;
   text-align: center;
 }
+/* Ícones dentro das ações do bloco de perfil (Discord, Google, etc.) ficam
+   sempre 16x16 — o Lucide default é 24 e força via width/height inline. */
+.profile-block-actions .btn svg,
+.profile-block-actions .btn i[data-lucide] {
+  width: 16px !important;
+  height: 16px !important;
+}
+/* Botão destrutivo "Limpar histórico de DMs" ganha hover vermelho pra
+   sinalizar a ação. Escopo restrito ao id pra não pintar outros ghost btns. */
+#profile-discord-clear-btn:hover:not(:disabled) {
+  color: var(--danger);
+  background: var(--danger-dim);
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+}
+#profile-discord-clear-btn:hover:not(:disabled) svg {
+  color: var(--danger);
+}
+
 /* ── Tabs da página Integrações ── */
 .integrations-tab {
   display: inline-flex;

@@ -16721,13 +16721,17 @@ async function renderDiscordPrefsUI() {
   const cfg = await loadDiscordConfig();
   const wrap = $('profile-discord-prefs-wrap');
   const testBtn = $('profile-discord-test-btn');
+  const clearBtn = $('profile-discord-clear-btn');
   if (!cfg.enabled) {
     if (wrap) wrap.style.display = 'none';
     if (testBtn) testBtn.style.display = 'none';
+    if (clearBtn) clearBtn.style.display = 'none';
     return;
   }
   if (wrap) wrap.style.display = '';
-  if (testBtn) testBtn.style.display = me.discordId ? '' : 'none';
+  const showActions = me.discordId ? '' : 'none';
+  if (testBtn) testBtn.style.display = showActions;
+  if (clearBtn) clearBtn.style.display = showActions;
   // User prefs list — só INDIVIDUAL agora. Defaults do time viraram
   // painel próprio na página Integrações (aba Discord Bot).
   const list = $('profile-discord-prefs-list');
@@ -16845,6 +16849,23 @@ async function testDiscordDM() {
     await api('/me/discord/test', 'POST', {});
     toast('DM de teste enviado! Confira o Discord.', 'success');
   } catch (e) { toast(e.message, 'error'); }
+}
+
+async function clearDiscordDMs() {
+  const ok = await showConfirm({
+    title: 'Limpar histórico de DMs?',
+    message: 'Vai apagar TODAS as mensagens que o bot te enviou (notificações + testes). Pode levar até 30s se tiver muita mensagem. Suas mensagens no chat NÃO são afetadas — só as do bot.',
+    okLabel: 'Limpar',
+    danger: true,
+  });
+  if (!ok) return;
+  const btn = $('profile-discord-clear-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Limpando…'; }
+  try {
+    const r = await api('/me/discord/clear-dms', 'POST', {});
+    toast(`${r.deleted} mensagem(ns) do bot apagada(s) (de ${r.scanned} escaneadas).`, 'success');
+  } catch (e) { toast(e.message, 'error'); }
+  finally { if (btn) { btn.disabled = false; btn.innerHTML = '<i data-lucide="trash-2" class="ic-sm"></i> Limpar histórico de DMs'; paintIcons(btn); } }
 }
 async function changePassword() {
   const currentPassword = $('profile-f-pass-current').value;

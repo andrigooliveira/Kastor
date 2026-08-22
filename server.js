@@ -1644,6 +1644,17 @@ app.put('/api/discord/admin-defaults', requireAuth, adminOnly, async (req, res) 
   res.json({ ok: true, adminDefaults: getAdminDiscordDefaults() });
 });
 
+// Apaga TODAS as mensagens que o bot enviou nas DMs com o próprio user.
+// Discord não expõe delete no menu de DM (bot != usuário) — este endpoint
+// faz por API. Rate-limited a ~4/s. Retorna { deleted, scanned }.
+app.post('/api/me/discord/clear-dms', requireAuth, async (req, res) => {
+  if (!discordBot.isEnabled()) return res.status(503).json({ error: 'Discord bot não configurado.' });
+  if (!req.user.discordId) return res.status(400).json({ error: 'Cadastre seu ID do Discord no perfil antes.' });
+  const result = await discordBot.clearBotDMs(req.user.discordId);
+  if (result.error) return res.status(502).json({ error: 'Falha ao limpar DMs: ' + result.error });
+  res.json(result);
+});
+
 // Envia um DM de teste pro próprio user — pra validar setup (discordId + bot).
 app.post('/api/me/discord/test', requireAuth, async (req, res) => {
   if (!discordBot.isEnabled()) return res.status(503).json({ error: 'Discord bot não configurado no servidor.' });

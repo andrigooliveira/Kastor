@@ -138,10 +138,65 @@ function invalidateUser(discordId) {
   _dmChannelCache.delete(discordId);
 }
 
+/* ID do próprio bot — cacheado (imutável durante o processo). Usado pra
+   filtrar mensagens que sejam do bot no clearBotDMs. */
+let _botUserIdCache = null;
+async function getBotUserId() {
+  if (_botUserIdCache) return _botUserIdCache;
+  if (!isEnabled()) return null;
+  const r = await _request('/users/@me');
+  if (r.ok && r.data?.id) { _botUserIdCache = r.data.id; return _botUserIdCache; }
+  return null;
+}
+
+/* Apaga as mensagens que o bot enviou nas DMs com um usuário específico.
+   Discord DMs não têm bulk-delete — cada mensagem é uma request. Rate limit
+   por canal é ~5 req/s; usamos 1 req a cada 250ms pra ficar bem abaixo.
+   `maxPages` limita o total de páginas de 100 mensagens (default 5 = até 500).
+   Retorna { deleted, scanned }. */
+async function clearBotDMs(discordUserId, { maxPages = 5, perDeleteMs = 250 } = {}) {
+  if (!isEnabled()) return { deleted: 0, scanned: 0, error: 'bot_disabled' };
+  const botId = await getBotUserId();
+  if (!botId) return { deleted: 0, scanned: 0, error: 'no_bot_id' };
+  let channelId = _readCache(_dmChannelCache, discordUserId);
+  if (!channelId) {
+    const r = await _request('/users/@me/channels', {
+      method: 'POST', body: { recipient_id: String(discordUserId) },
+    });
+    if (!r.ok || !r.data?.id) return { deleted: 0, scanned: 0, error: 'no_dm_channel' };
+    channelId = r.data.id;
+    _writeCache(_dmChannelCache, discordUserId, channelId);
+  }
+
+  let deleted = 0, scanned = 0, before = null;
+  for (let page = 0; page < maxPages; page++) {
+    const qs = new URLSearchParams({ limit: '100' });
+    if (before) qs.set('before', before);
+    const listResp = await _request(`/channels/${channelId}/messages?${qs}`);
+    if (!listResp.ok || !Array.isArray(listResp.data)) break;
+    const msgs = listResp.data;
+    if (msgs.length === 0) break;
+    scanned += msgs.length;
+    // Só apaga mensagens do próprio bot — as do usuário Discord bloqueia mesmo
+    // pra bot com Manage Messages em DM.
+    const mine = msgs.filter(m => m && m.author && m.author.id === botId);
+    for (const m of mine) {
+      const del = await _request(`/channels/${channelId}/messages/${m.id}`, { method: 'DELETE' });
+      if (del.ok) deleted++;
+      await new Promise(r => setTimeout(r, perDeleteMs));
+    }
+    if (msgs.length < 100) break; // última página
+    before = msgs[msgs.length - 1].id;
+  }
+  return { deleted, scanned };
+}
+
 module.exports = {
   isEnabled,
   getUser,
   sendChannelMessage,
   sendDM,
   invalidateUser,
+  getBotUserId,
+  clearBotDMs,
 };
