@@ -1244,6 +1244,10 @@ const NO_CACHE_STATIC = process.env.NO_STATIC_CACHE === '1';
 app.use(express.static(path.join(__dirname, 'public'), {
   etag: true,
   lastModified: true,
+  // `extensions: ['html']` permite acessar /termos → termos.html sem sufixo.
+  // Se o path bater com um arquivo .html, serve; senão passa pro próximo
+  // middleware (SPA fallback via app.get catch-all).
+  extensions: ['html'],
   setHeaders: (res, filePath) => {
     if (NO_CACHE_STATIC) {
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');

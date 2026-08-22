@@ -1,0 +1,152 @@
+/* ═════════════════════════════════════════════════════════════════════
+   legal.css — usado pelas páginas /termos e /privacidade.
+   Deliberadamente MINIMALISTA (não carrega style.css do app, que tem
+   ~434KB só pra chrome que essas páginas nunca precisam). Segue tokens
+   do design system pra combinar visualmente. Suporta light/dark via
+   prefers-color-scheme (sem toggle — legal pages não têm data-theme).
+   ═════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --bg: #ffffff;
+  --surface: #fafafa;
+  --text: #171717;
+  --text-muted: #737373;
+  --border: #e5e5e5;
+  --accent: #7A00FF;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0a0a0a;
+    --surface: #171717;
+    --text: #fafafa;
+    --text-muted: #a1a1a1;
+    --border: rgba(255, 255, 255, 0.10);
+  }
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.65;
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.legal-header {
+  border-bottom: 1px solid var(--border);
+  padding: 18px 24px;
+  background: var(--surface);
+}
+.legal-header-inner {
+  max-width: 760px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.legal-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  color: var(--text);
+}
+.legal-logo img { height: 24px; width: auto; display: block; }
+.legal-logo-name { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+.legal-header-nav a {
+  color: var(--text-muted);
+  font-size: 13px;
+  text-decoration: none;
+  transition: color .15s ease;
+}
+.legal-header-nav a:hover { color: var(--accent); }
+
+.legal-container {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 48px 24px 96px;
+}
+
+.legal-eyebrow {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 12px;
+}
+.legal-container h1 {
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  margin-bottom: 8px;
+  color: var(--text);
+}
+.legal-updated {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 32px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--border);
+}
+.legal-container h2 {
+  font-size: 22px;
+  font-weight: 700;
+  margin-top: 40px;
+  margin-bottom: 14px;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.legal-container h3 {
+  font-size: 17px;
+  font-weight: 600;
+  margin-top: 24px;
+  margin-bottom: 8px;
+  color: var(--text);
+}
+.legal-container p {
+  color: var(--text-muted);
+  margin-bottom: 14px;
+}
+.legal-container ul, .legal-container ol {
+  margin: 0 0 16px 24px;
+  color: var(--text-muted);
+}
+.legal-container ul li, .legal-container ol li {
+  margin-bottom: 6px;
+}
+.legal-container strong { color: var(--text); font-weight: 600; }
+.legal-container a { color: var(--accent); text-decoration: none; }
+.legal-container a:hover { text-decoration: underline; }
+.legal-container code {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: ui-monospace, 'Cascadia Code', 'SF Mono', Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+}
+.legal-note {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin: 16px 0 24px;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+.legal-footer {
+  border-top: 1px solid var(--border);
+  padding: 32px 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
