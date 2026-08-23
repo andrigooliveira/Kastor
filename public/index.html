@@ -11,21 +11,32 @@
 <meta name="application-name" content="reWork">
 <meta name="apple-mobile-web-app-title" content="reWork">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/css/style.css?v=20260822dcrow1">
+<link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/geist-latin-ext.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/css/fonts.css?v=1">
+<link rel="stylesheet" href="/css/style.css?v=20260823perf1">
 <!-- Preload dos JS pesados no <head> pra que o download comece IMEDIATAMENTE,
      em paralelo com o parse do HTML, em vez de esperar o parser chegar em
      </body>. Com immutable cache (max-age=1yr), na 2ª visita nem baixa. -->
 <link rel="preload" href="/vendor/lucide.min.js" as="script">
-<link rel="preload" href="/js/app.js?v=20260822dcrow1" as="script">
+<link rel="preload" href="/js/app.js?v=20260823perf1" as="script">
 <script type="text/javascript">
-    (function(c,l,a,r,i,t,y){
+    // Clarity: analytics de heatmap/session replay. Não é crítico pro app —
+    // deferido pra depois do primeiro paint pra não roubar tempo do LCP.
+    // requestIdleCallback com fallback pra setTimeout garante que só carrega
+    // quando o browser está ocioso ou 3s após o load (o que vier primeiro).
+    (function(){
+      const load = () => (function(c,l,a,r,i,t,y){
         c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
         t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
         y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
-    })(window, document, "clarity", "script", "y1e77t47kg");
+      })(window, document, "clarity", "script", "y1e77t47kg");
+      if (typeof requestIdleCallback === 'function') {
+        requestIdleCallback(load, { timeout: 3000 });
+      } else {
+        setTimeout(load, 2000);
+      }
+    })();
 </script>
 </head>
 <body>
@@ -3675,7 +3686,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260822dcrow1"></script>
+<script src="/js/app.js?v=20260823perf1"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

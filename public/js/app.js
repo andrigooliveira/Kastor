@@ -26,6 +26,8 @@ let listas = [];
 let tasks = []; // tarefas de projeto (kind='todo' das listas novas)
 let demandTypes = [];
 let discordChannels = []; // bindings cliente → canal do bot Discord
+let _scheduleRangeLoaded = null; // { from, to } — range de schedules já em cache local
+let _scheduleFetchInFlight = null; // dedupe: se já tem fetch rolando, reusa a mesma promise
 let notifPollTimer = null;
 
 let activeWs   = localStorage.getItem('fluxo_ws') || null;
@@ -3348,6 +3350,11 @@ async function doResetPassword() {
 }
 
 async function enterApp() {
+  // Dispara loadAll() ANTES dos setups síncronos — enquanto o servidor
+  // devolve o bootstrap (rede), o browser executa initTooltips/keys/etc
+  // em paralelo. Sem isso a sequência era: setup síncrono (~50ms) →
+  // fetch (RTT), agora rodam ao mesmo tempo.
+  const loadPromise = loadAll();
   // Mostra a UI imediatamente com skeleton — usuário não vê tela em branco
   $('login-screen').style.display = 'none';
   $('app').style.display = 'flex';
@@ -3361,7 +3368,7 @@ async function enterApp() {
   if ($('list-table-body')) $('list-table-body').innerHTML = skeletonTableRows(9, 7);
   if ($('sidebar-uname')) $('sidebar-uname').innerHTML = '<span class="skeleton skeleton-line sm" style="display:inline-block;width:80px;height:11px;vertical-align:middle"></span>';
 
-  await loadAll();
+  await loadPromise;
 
   renderSidebarUser();
   renderWsSwitch();
@@ -3407,6 +3414,9 @@ async function loadAll() {
     demandTypes     = b.demandTypes     || [];
     tasks           = b.tasks           || [];
     discordChannels = b.discordChannels || [];
+    // Server só manda schedules dos últimos 14 dias + próximos 14 dias
+    // (~4 semanas). Se agenda navegar pra fora, lazy fetch (ver ensureSchedulesLoaded).
+    if (b._scheduleRange) _scheduleRangeLoaded = { ...b._scheduleRange };
   } catch (err) {
     // Fallback: 404 (server sem bootstrap) → recai no fluxo antigo.
     console.warn('bootstrap falhou, usando fetches individuais:', err.message);
@@ -3440,7 +3450,10 @@ async function fetchNotifications() {
 }
 function startNotifPoll() {
   clearInterval(notifPollTimer);
-  notifPollTimer = setInterval(fetchNotifications, 30000); // a cada 30s
+  // SSE já refetcha imediatamente em nova notificação (onSseMessage entity=notification).
+  // Poll passou de 30s pra 5min — vira só safety net pro caso do SSE cair
+  // (mobile em background, network flaky, proxy que fecha conexão longa).
+  notifPollTimer = setInterval(fetchNotifications, 5 * 60 * 1000);
 }
 
 /* Ao retomar uma aba de background, força um fetch imediato de notificações
@@ -20657,8 +20670,55 @@ function computeLaneLayout(blocks) {
   return { assign, totalCols: columns.length };
 }
 
+/* Se a semana visível está fora do range de schedules já carregados,
+   dispara fetch async pro range que falta. Ao terminar, re-renderiza a
+   agenda pra mostrar os novos blocos. Idempotente: dedupe por schedule.id;
+   dedupe de requests em voo via _scheduleFetchInFlight. */
+async function ensureSchedulesLoaded(fromYmd, toYmd) {
+  if (!fromYmd || !toYmd) return false;
+  const range = _scheduleRangeLoaded;
+  const covered = range && fromYmd >= range.from && toYmd <= range.to;
+  if (covered) return false;
+  // Expande o fetch pra cobrir tudo entre novo range e o antigo (evita gap).
+  const from = range && range.from < fromYmd ? range.from : fromYmd;
+  const to   = range && range.to   > toYmd   ? range.to   : toYmd;
+  // Dedupe: se já tem fetch em voo pro mesmo range, espera ele.
+  if (_scheduleFetchInFlight && _scheduleFetchInFlight.from === from && _scheduleFetchInFlight.to === to) {
+    return _scheduleFetchInFlight.promise;
+  }
+  const promise = (async () => {
+    try {
+      const fresh = await api(`/schedules?from=${from}&to=${to}`);
+      const seen = new Set(schedules.map(s => s.id));
+      let added = 0;
+      for (const s of fresh) { if (!seen.has(s.id)) { schedules.push(s); added++; } }
+      _scheduleRangeLoaded = { from, to };
+      return added > 0;
+    } catch (e) {
+      console.warn('[schedules-lazy] fetch falhou:', e.message);
+      return false;
+    } finally {
+      _scheduleFetchInFlight = null;
+    }
+  })();
+  _scheduleFetchInFlight = { from, to, promise };
+  return promise;
+}
+
 function renderAgenda() {
   agendaInit();
+  // Dispara lazy-load se a semana visualizada está fora do range em cache.
+  // Fire-and-forget: quando terminar, ensureSchedulesLoaded re-renderiza.
+  if (agendaMode !== 'team') {
+    const days = agendaDays();
+    if (days.length) {
+      const fromYmd = agendaYmd(days[0]);
+      const toYmd = agendaYmd(days[days.length - 1]);
+      ensureSchedulesLoaded(fromYmd, toYmd).then(added => {
+        if (added && (currentPage === 'agenda' || currentPage === 'mine')) renderAgenda();
+      });
+    }
+  }
   // Popula select de usuários (só na página standalone /agenda)
   const sel = $('agenda-user');
   if (sel) {
@@ -21866,6 +21926,13 @@ function stopRealtimeSync() {
 function onSseMessage(ev) {
   let data; try { data = JSON.parse(ev.data); } catch { return; }
   if (!data || !data.entity) return;
+  // Notificação: broadcast dedicado por-usuário (broadcastToUser no server).
+  // Substitui o poll de 30s — em vez de bater no server sem parar, refetch
+  // só quando algo realmente chegou pro user.
+  if (data.entity === 'notification') {
+    fetchNotifications().catch(() => {});
+    return;
+  }
   _sseEvents.push(data);
   clearTimeout(_sseRefetchTimer);
   _sseRefetchTimer = setTimeout(flushSseRefetch, 250);

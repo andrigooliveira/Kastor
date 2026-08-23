@@ -793,6 +793,10 @@ function notify(targetUserId, type, data, triggerUserId, baseUrl) {
   // Cap por usuário — remove as mais antigas.
   store.trimNotificationsFor(targetUserId, NOTIFICATIONS_MAX_PER_USER)
     .catch(err => console.error('[notify] trim:', err.message));
+  // Broadcast SSE pro user alvo — refetch imediato do badge no cliente,
+  // sem esperar o poll de 5min. Se cliente não está conectado por SSE
+  // (mobile em background, tab fechada), pega no próximo poll ou no next boot.
+  broadcastToUser(targetUserId, 'notification', 'create');
   // Email opcional — depende de SMTP configurado, do usuário ter email e do tipo estar nas prefs
   if (mailEnabled() && user.email && EMAIL_EVENT_LABELS[type]) {
     const prefs = user.emailPrefs || defaultEmailPrefs();
@@ -1260,8 +1264,8 @@ app.use((req, res, next) => {
     "default-src 'self'",
     // Clarity: script vem de www.clarity.ms, beacons/telemetria pra *.clarity.ms.
     "script-src 'self' 'unsafe-inline' https://www.clarity.ms https://*.clarity.ms",
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "font-src 'self' https://fonts.gstatic.com data:",
+    "style-src 'self' 'unsafe-inline'",
+    "font-src 'self' data:",
     "img-src 'self' data: blob: https:",
     "media-src 'self' https:",
     "connect-src 'self' https://*.clarity.ms https://c.bing.com",
@@ -2238,6 +2242,15 @@ app.get('/api/workspaces', requireAuth, (req, res) => {
   res.json(db.workspaces.filter(w => ids.includes(w.id)));
 });
 
+/* Retorna versão "leve" da demanda pra listas/dashboard/analytics — remove
+   os campos que só são exibidos na página de detalhe (rich text, comments,
+   anexos, briefing, history). Cliente re-hidrata com GET /api/demands/:id
+   quando o user abre a demanda (showDetail → refreshDetailDemand). */
+function stripDemandForList(d) {
+  const { description, comments, attachments, briefing, history, ...rest } = d;
+  return rest;
+}
+
 /* Bootstrap consolidado: retorna em UMA resposta o que o cliente pedia em
    16 GETs paralelos no boot (workspaces, users, clients, projects, flows,
    demands, roles, templates, schedules, client-templates, recurrings,
@@ -2271,10 +2284,20 @@ app.get('/api/bootstrap', requireAuth, (req, res) => {
     clients:         db.clients.filter(c => inWs(c) && notDeleted(c)),
     projects:        db.projects.filter(p => inWs(p) && notDeleted(p)),
     flows:           db.flows.filter(f => inWs(f) && notDeleted(f)),
-    demands:         db.demands.filter(d => inWs(d) && notDeleted(d)),
+    // Stripped: description/comments/attachments/briefing/history só chegam
+    // quando o user abre a demanda (~70% menor no wire, escala melhor).
+    demands:         db.demands.filter(d => inWs(d) && notDeleted(d)).map(stripDemandForList),
     roles:           db.roles,
     templates:       (db.templates || []).filter(inWs),
-    schedules:       (db.schedules || []).filter(inWs),
+    // Schedules: só 4 semanas ao redor de hoje (2 anteriores incluindo semana
+    // corrente + 1 depois + buffer). O cliente lazy-loada semanas fora desse
+    // range via GET /api/schedules?from&to (dedupe por id).
+    schedules:       (db.schedules || []).filter(s => {
+      if (!inWs(s)) return false;
+      const from = addDays(today(), -14);
+      const to   = addDays(today(),  14);
+      return s.date >= from && s.date <= to;
+    }),
     clientTemplates: (db.clientTemplates || []).filter(notDeleted),
     recurrings:      (db.recurrings || []).filter(r => notDeleted(r) && inWs(r)),
     listas:          (db.listas || []).filter(l => notDeleted(l) && (l.kind === 'todo' || inWs(l))),
@@ -2283,6 +2306,9 @@ app.get('/api/bootstrap', requireAuth, (req, res) => {
     tasks:           (db.tasks || []).filter(inWs),
     webhooks,
     discordChannels: canSeeWebhooks ? (db.discordChannels || []).map(publicBinding) : [],
+    // Informa ao cliente o range de schedules já carregados — pra saber
+    // quando lazy-fetchar semanas fora dessa janela.
+    _scheduleRange: { from: addDays(today(), -14), to: addDays(today(), 14) },
   });
 });
 
@@ -7826,6 +7852,19 @@ function broadcastChange(entity, op, ctx = {}) {
     for (const res of conns) {
       try { res.write(line); } catch {}
     }
+  }
+}
+
+/* Envia evento SSE pra UM usuário específico (não broadcast por workspace).
+   Usado por notificações que são pessoais — cada notif é do usuário-alvo,
+   ninguém mais precisa saber. Substitui o polling agressivo de 30s. */
+function broadcastToUser(userId, entity, op, extra = {}) {
+  const conns = sseClients.get(userId);
+  if (!conns || !conns.size) return;
+  const payload = JSON.stringify({ entity, op, ...extra, ts: Date.now() });
+  const line = `data: ${payload}\n\n`;
+  for (const res of conns) {
+    try { res.write(line); } catch {}
   }
 }
 
