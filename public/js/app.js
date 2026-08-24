@@ -1003,14 +1003,27 @@ function toggleFilterCdrop(wrap) {
   paintIcons();
 }
 
-/* Reposiciona o menu do filter-cdrop com position:fixed pra escapar de
-   ancestrais com overflow:hidden (cards, panels). Mede o botão via
-   getBoundingClientRect e posiciona menu abaixo (ou acima se não couber).
-   Reposiciona automaticamente em scroll/resize via listener global. */
+/* Reposiciona o menu do filter-cdrop pra escapar de ancestrais com
+   overflow:hidden (cards, panels). Estratégia: MOVE o menu pra
+   document.body via portal, posiciona com position:fixed absoluto em
+   coordenadas de viewport. Ancestrais com transform/will-change/filter
+   NÃO viram containing block do menu (que agora é filho do body).
+   Guarda referência do parent original em `menu._origParent` pra devolver
+   ao fechar. Reposiciona em scroll/resize via listener global. */
 function _positionFilterCdropMenu(wrap) {
-  const menu = wrap.querySelector('.filter-cdrop-menu');
+  const menu = wrap.querySelector('.filter-cdrop-menu') || wrap._portalMenu;
   const btn = wrap.querySelector('.filter-cdrop-trigger') || wrap.querySelector('button');
   if (!menu || !btn) return;
+  // Portal: mova o menu pra document.body se ainda não moveu
+  if (!menu._origParent) {
+    menu._origParent = menu.parentElement;
+    menu._origNextSibling = menu.nextSibling;
+    wrap._portalMenu = menu;
+    document.body.appendChild(menu);
+    // Marca o menu com data-portal-of pra o click-outside saber que ele pertence a este wrap
+    menu.dataset.cdropPortal = '1';
+    menu._ownerWrap = wrap;
+  }
   const rect = btn.getBoundingClientRect();
   const menuH = menu.scrollHeight || 260;
   const spaceBelow = window.innerHeight - rect.bottom;
@@ -1021,6 +1034,7 @@ function _positionFilterCdropMenu(wrap) {
   menu.style.left = rect.left + 'px';
   menu.style.minWidth = rect.width + 'px';
   menu.style.zIndex = '9999';
+  menu.style.display = 'block';
   if (openUp) {
     menu.style.top = 'auto';
     menu.style.bottom = (window.innerHeight - rect.top + 6) + 'px';
@@ -1033,9 +1047,22 @@ function _positionFilterCdropMenu(wrap) {
   menu.style.overflowY = 'auto';
 }
 function _resetFilterCdropMenu(wrap) {
-  const menu = wrap.querySelector('.filter-cdrop-menu');
+  const menu = wrap._portalMenu || wrap.querySelector('.filter-cdrop-menu');
   if (!menu) return;
+  // Devolve o menu pro parent original (fica restaurável se o wrap ainda existir)
+  if (menu._origParent && menu._origParent.isConnected) {
+    if (menu._origNextSibling && menu._origNextSibling.isConnected) {
+      menu._origParent.insertBefore(menu, menu._origNextSibling);
+    } else {
+      menu._origParent.appendChild(menu);
+    }
+  }
   menu.style.cssText = '';
+  delete menu._origParent;
+  delete menu._origNextSibling;
+  delete menu._ownerWrap;
+  delete menu.dataset.cdropPortal;
+  delete wrap._portalMenu;
   wrap.classList.remove('drop-up');
 }
 // Reposiciona em scroll/resize (menu fixed não segue o scroll do container).
@@ -1097,14 +1124,17 @@ function pickFilterCdrop(selId, value) {
     sel.dispatchEvent(new Event('change', { bubbles: true }));
   }
 }
-// Fecha cdrops ao clicar fora
+// Fecha cdrops ao clicar fora. Considera menus portalados (movidos pro
+// body via _positionFilterCdropMenu) como "dentro" — o click não fecha.
 document.addEventListener('click', ev => {
-  if (!ev.target.closest('.filter-cdrop')) {
-    document.querySelectorAll('.filter-cdrop.open').forEach(c => {
-      c.classList.remove('open');
-      _resetFilterCdropMenu(c);
-    });
-  }
+  // Se clicou no wrap OU no menu portalado, ignora
+  if (ev.target.closest('.filter-cdrop')) return;
+  const portalMenu = ev.target.closest('.filter-cdrop-menu[data-cdrop-portal]');
+  if (portalMenu) return;
+  document.querySelectorAll('.filter-cdrop.open').forEach(c => {
+    c.classList.remove('open');
+    _resetFilterCdropMenu(c);
+  });
 });
 
 /* ── AUTO-CDROP ──
