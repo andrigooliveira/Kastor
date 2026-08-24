@@ -990,32 +990,71 @@ function applyFilterDropdown(selId, opts = {}) {
   `;
 }
 function toggleFilterCdrop(wrap) {
-  document.querySelectorAll('.filter-cdrop.open, .cdrop.open').forEach(el => { if (el !== wrap) el.classList.remove('open'); });
-  wrap.classList.toggle('open');
-  if (wrap.classList.contains('open')) {
-    // Auto-flip pra cima quando não cabe abaixo. Mede contra o container
-    // de scroll mais próximo (modal-body / modal / viewport) — só assim
-    // dropdowns dentro de modais detectam o limite real, não o da janela.
-    const menu = wrap.querySelector('.filter-cdrop-menu');
-    if (menu) {
-      wrap.classList.remove('drop-up');
-      const rect = wrap.getBoundingClientRect();
-      const scrollHost = wrap.closest('.modal-body') || wrap.closest('.modal') || document.documentElement;
-      const hostRect = scrollHost.getBoundingClientRect ? scrollHost.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
-      const bottomLimit = Math.min(hostRect.bottom, window.innerHeight);
-      const topLimit = Math.max(hostRect.top, 0);
-      const spaceBelow = bottomLimit - rect.bottom;
-      const spaceAbove = rect.top - topLimit;
-      const menuH = menu.scrollHeight || menu.offsetHeight || 0;
-      if (spaceBelow < menuH + 12 && spaceAbove > spaceBelow) wrap.classList.add('drop-up');
-    }
+  document.querySelectorAll('.filter-cdrop.open, .cdrop.open').forEach(el => {
+    if (el !== wrap) { el.classList.remove('open'); _resetFilterCdropMenu(el); }
+  });
+  const willOpen = !wrap.classList.contains('open');
+  wrap.classList.toggle('open', willOpen);
+  if (willOpen) {
+    _positionFilterCdropMenu(wrap);
+  } else {
+    _resetFilterCdropMenu(wrap);
   }
   paintIcons();
 }
+
+/* Reposiciona o menu do filter-cdrop com position:fixed pra escapar de
+   ancestrais com overflow:hidden (cards, panels). Mede o botão via
+   getBoundingClientRect e posiciona menu abaixo (ou acima se não couber).
+   Reposiciona automaticamente em scroll/resize via listener global. */
+function _positionFilterCdropMenu(wrap) {
+  const menu = wrap.querySelector('.filter-cdrop-menu');
+  const btn = wrap.querySelector('.filter-cdrop-trigger') || wrap.querySelector('button');
+  if (!menu || !btn) return;
+  const rect = btn.getBoundingClientRect();
+  const menuH = menu.scrollHeight || 260;
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const spaceAbove = rect.top;
+  const openUp = spaceBelow < menuH + 12 && spaceAbove > spaceBelow;
+  wrap.classList.toggle('drop-up', openUp);
+  menu.style.position = 'fixed';
+  menu.style.left = rect.left + 'px';
+  menu.style.minWidth = rect.width + 'px';
+  menu.style.zIndex = '9999';
+  if (openUp) {
+    menu.style.top = 'auto';
+    menu.style.bottom = (window.innerHeight - rect.top + 6) + 'px';
+    menu.style.maxHeight = Math.min(320, spaceAbove - 12) + 'px';
+  } else {
+    menu.style.bottom = 'auto';
+    menu.style.top = (rect.bottom + 6) + 'px';
+    menu.style.maxHeight = Math.min(320, spaceBelow - 12) + 'px';
+  }
+  menu.style.overflowY = 'auto';
+}
+function _resetFilterCdropMenu(wrap) {
+  const menu = wrap.querySelector('.filter-cdrop-menu');
+  if (!menu) return;
+  menu.style.cssText = '';
+  wrap.classList.remove('drop-up');
+}
+// Reposiciona em scroll/resize (menu fixed não segue o scroll do container).
+(function _filterCdropGlobalHandlers(){
+  if (typeof window === 'undefined' || window._fcdSetup) return;
+  window._fcdSetup = true;
+  const reflow = () => {
+    document.querySelectorAll('.filter-cdrop.open').forEach(_positionFilterCdropMenu);
+  };
+  window.addEventListener('scroll', reflow, true);
+  window.addEventListener('resize', reflow);
+})();
 function pickFilterCdrop(selId, value) {
   const sel = document.getElementById(selId);
   if (!sel) return;
-  document.querySelectorAll('.filter-cdrop.open').forEach(el => el.classList.remove('open'));
+  document.querySelectorAll('.filter-cdrop.open').forEach(el => {
+    el.classList.remove('open');
+    _resetFilterCdropMenu(el);
+  });
   if (![...sel.options].some(o => o.value === value)) {
     const opt = document.createElement('option');
     opt.value = value;
@@ -1061,7 +1100,10 @@ function pickFilterCdrop(selId, value) {
 // Fecha cdrops ao clicar fora
 document.addEventListener('click', ev => {
   if (!ev.target.closest('.filter-cdrop')) {
-    document.querySelectorAll('.filter-cdrop.open').forEach(c => c.classList.remove('open'));
+    document.querySelectorAll('.filter-cdrop.open').forEach(c => {
+      c.classList.remove('open');
+      _resetFilterCdropMenu(c);
+    });
   }
 });
 
@@ -3137,6 +3179,54 @@ document.addEventListener('click', e => {
 });
 
 /* ─── SELECT DE USUÁRIO COM FOTO ─── */
+/* ── Position/reset helpers pro user-select menu ──
+   Sem escape de overflow, cards com overflow:hidden cortavam o menu.
+   Solução: position:fixed com getBoundingClientRect. Reposição em
+   scroll/resize (ou fecha, se o botão saiu do viewport). */
+function _positionUserSelectMenu(container) {
+  const menu = container.querySelector('.user-select-menu');
+  const btn = container.querySelector('.user-select-btn');
+  if (!menu || !btn) return;
+  const rect = btn.getBoundingClientRect();
+  const menuH = menu.scrollHeight || 260;
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const spaceAbove = rect.top;
+  const openUp = spaceBelow < menuH + 12 && spaceAbove > spaceBelow;
+  menu.style.position = 'fixed';
+  menu.style.left = rect.left + 'px';
+  menu.style.width = rect.width + 'px';
+  menu.style.zIndex = '9999';
+  if (openUp) {
+    menu.style.top = 'auto';
+    menu.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
+    menu.style.maxHeight = Math.min(260, spaceAbove - 12) + 'px';
+  } else {
+    menu.style.bottom = 'auto';
+    menu.style.top = (rect.bottom + 4) + 'px';
+    menu.style.maxHeight = Math.min(260, spaceBelow - 12) + 'px';
+  }
+}
+function _resetUserSelectMenu(container) {
+  const menu = container.querySelector('.user-select-menu');
+  if (!menu) return;
+  menu.style.cssText = '';
+}
+// Global listeners: reposicionar em scroll/resize, fechar em click fora.
+(function _userSelectGlobalHandlers(){
+  if (typeof window === 'undefined' || window._usSetup) return;
+  window._usSetup = true;
+  const reflow = () => {
+    document.querySelectorAll('.user-select.open').forEach(_positionUserSelectMenu);
+  };
+  window.addEventListener('scroll', reflow, true);
+  window.addEventListener('resize', reflow);
+  document.addEventListener('click', (e) => {
+    document.querySelectorAll('.user-select.open').forEach(el => {
+      if (!el.contains(e.target)) { el.classList.remove('open'); _resetUserSelectMenu(el); }
+    });
+  }, true);
+})();
+
 function buildUserSelect(container, list, selectedId, onPick, placeholder = '— Sem responsável —') {
   container.classList.add('user-select');
   container.dataset.value = selectedId || '';
@@ -3160,29 +3250,23 @@ function buildUserSelect(container, list, selectedId, onPick, placeholder = '—
     <div class="user-select-menu">${opts}</div>`;
   container.querySelector('.user-select-btn').onclick = e => {
     e.stopPropagation();
-    document.querySelectorAll('.user-select.open').forEach(el => { if (el !== container) el.classList.remove('open'); });
-    container.classList.toggle('open');
-    if (container.classList.contains('open')) {
-      // Auto-flip pra cima quando não cabe abaixo dentro do modal/host
-      container.classList.remove('drop-up');
-      const menu = container.querySelector('.user-select-menu');
-      if (menu) {
-        const rect = container.getBoundingClientRect();
-        const scrollHost = container.closest('.modal-body') || container.closest('.modal') || document.documentElement;
-        const hostRect = scrollHost.getBoundingClientRect ? scrollHost.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
-        const bottomLimit = Math.min(hostRect.bottom, window.innerHeight);
-        const topLimit = Math.max(hostRect.top, 0);
-        const spaceBelow = bottomLimit - rect.bottom;
-        const spaceAbove = rect.top - topLimit;
-        const menuH = menu.scrollHeight || menu.offsetHeight || 0;
-        if (spaceBelow < menuH + 12 && spaceAbove > spaceBelow) container.classList.add('drop-up');
-      }
-    }
+    document.querySelectorAll('.user-select.open').forEach(el => {
+      if (el !== container) { el.classList.remove('open'); _resetUserSelectMenu(el); }
+    });
+    const willOpen = !container.classList.contains('open');
+    container.classList.toggle('open', willOpen);
+    const menu = container.querySelector('.user-select-menu');
+    if (!menu) return;
+    if (!willOpen) { _resetUserSelectMenu(container); return; }
+    // Escapa clipping: posiciona menu FIXED alinhado à posição atual do botão.
+    // Assim, qualquer overflow:hidden ancestral (cards, panels) deixa de cortar.
+    _positionUserSelectMenu(container);
   };
   container.querySelectorAll('.user-select-opt').forEach(opt => {
     opt.onclick = () => {
       const uid = opt.dataset.uid || '';
       container.classList.remove('open');
+      _resetUserSelectMenu(container);
       buildUserSelect(container, list, uid || null, onPick, placeholder);
       if (onPick) onPick(uid || null);
     };
