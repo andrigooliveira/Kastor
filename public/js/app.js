@@ -17496,7 +17496,7 @@ function notifAvatarHTML(n) {
     const from = userById(n.fromUser);
     if (from) return avatarHTML(from, 'avatar notif-avatar');
   }
-  return `<span class="avatar notif-avatar notif-avatar-system" style="background-image:url('/profile.jpg')"></span>`;
+  return `<span class="avatar notif-avatar notif-avatar-system" style="background-image:url('/rework.jpg')"></span>`;
 }
 
 /* Tempo relativo em pt-BR, no formato pedido pela UI de notificações:
