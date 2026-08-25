@@ -5832,7 +5832,10 @@ function toggleAdvancedFilters(ev) {
 /* Fecha popovers "irmãos" quando algum abre — evita ter mais de um aberto
    ao mesmo tempo. Passa o nome do popover que ESTÁ abrindo para não fechá-lo. */
 function _closeOtherPopovers(except) {
-  if (except !== 'af') {
+  // Multi-menus (`except === 'multi'`) podem viver DENTRO do popover de filtros
+  // avançados (ex.: Participante). Fechar AF aqui esconderia o menu que acabou
+  // de abrir. Só fecha AF quem realmente não é filho dele.
+  if (except !== 'af' && except !== 'multi') {
     const afPop = document.getElementById('advanced-filters-pop');
     if (afPop?.classList.contains('open')) closeAdvancedFilters();
   }

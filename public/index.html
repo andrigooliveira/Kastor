@@ -14,12 +14,12 @@
 <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/geist-latin-ext.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/css/fonts.css?v=1">
-<link rel="stylesheet" href="/css/style.css?v=20260825myday">
+<link rel="stylesheet" href="/css/style.css?v=20260825filterfix">
 <!-- Preload dos JS pesados no <head> pra que o download comece IMEDIATAMENTE,
      em paralelo com o parse do HTML, em vez de esperar o parser chegar em
      </body>. Com immutable cache (max-age=1yr), na 2ª visita nem baixa. -->
 <link rel="preload" href="/vendor/lucide.min.js" as="script">
-<link rel="preload" href="/js/app.js?v=20260825myday" as="script">
+<link rel="preload" href="/js/app.js?v=20260825filterfix" as="script">
 <script type="text/javascript">
     // Clarity: analytics de heatmap/session replay. Não é crítico pro app —
     // deferido pra depois do primeiro paint pra não roubar tempo do LCP.
@@ -443,7 +443,7 @@
                 <div class="af-section">
                   <div class="af-section-head">Escopo</div>
                   <div class="advanced-filters-row">
-                    <span class="advanced-filters-lbl">Participante <small>(precisa participar de todas)</small></span>
+                    <span class="advanced-filters-lbl">Participante</span>
                     <div class="filter-multi-wrap" id="filter-participant-wrap">
                       <button type="button" class="filter-multi-trigger" id="filter-participant-trigger" onclick="toggleParticipantMulti(event)">
                         <span class="filter-multi-label" id="filter-participant-label">Qualquer participante</span>
@@ -3707,7 +3707,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260825myday"></script>
+<script src="/js/app.js?v=20260825filterfix"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
