@@ -7318,7 +7318,7 @@ function renderCapSquadFilter() {
     </button>`;
   }).join('');
   const clear = capSquadFilter.size ? `<button type="button" class="uws-clear" onclick="clearCapSquadFilter()">Limpar</button>` : '';
-  const hint = capSquadFilter.size ? '' : `<span class="uws-hint">Vazio = workspace ativo</span>`;
+  const hint = capSquadFilter.size ? '' : `<span class="uws-hint">Vazio = workspace atual</span>`;
   host.innerHTML = `<span class="uws-label">Squads</span>${chips}${clear}${hint}`;
 }
 function toggleCapSquad(id) {
@@ -7444,7 +7444,7 @@ function capacityHeatmapHTML(rows, startYmd, endYmd) {
       <div class="cap-heat-cells">${cells}</div>
     </div>`;
   }).join('');
-  const title = mode === 'previstas' ? 'Demandas previstas por pessoa' : 'Mapa de prazos por pessoa';
+  const title = mode === 'previstas' ? 'Demandas previstas por pessoa' : 'Prazos por pessoa';
   // Em "previstas" a MESMA demanda pode cair em várias pessoas/dias — então
   // contamos chegadas previstas (ocorrências no mapa), não demandas distintas.
   const sub = mode === 'previstas'
