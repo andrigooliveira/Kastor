@@ -14,12 +14,12 @@
 <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/geist-latin-ext.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/css/fonts.css?v=1">
-<link rel="stylesheet" href="/css/style.css?v=20260823dropfix3">
+<link rel="stylesheet" href="/css/style.css?v=20260825myday">
 <!-- Preload dos JS pesados no <head> pra que o download comece IMEDIATAMENTE,
      em paralelo com o parse do HTML, em vez de esperar o parser chegar em
      </body>. Com immutable cache (max-age=1yr), na 2ª visita nem baixa. -->
 <link rel="preload" href="/vendor/lucide.min.js" as="script">
-<link rel="preload" href="/js/app.js?v=20260823dropfix3" as="script">
+<link rel="preload" href="/js/app.js?v=20260825myday" as="script">
 <script type="text/javascript">
     // Clarity: analytics de heatmap/session replay. Não é crítico pro app —
     // deferido pra depois do primeiro paint pra não roubar tempo do LCP.
@@ -257,8 +257,6 @@
     <!-- ── DASHBOARD ── -->
     <div class="page active" id="page-dashboard">
       <div class="page-body">
-        <!-- Widget "Meu dia" — foco pessoal do usuário logado. Populado em renderMyDay(). -->
-        <div class="my-day-grid" id="my-day-grid" style="display:none"></div>
         <div class="filters-bar" style="margin-bottom:22px">
           <div class="filter-group">
             <label class="filter-label">Squad</label>
@@ -431,7 +429,15 @@
               <span class="advanced-filters-badge" id="advanced-filters-badge" style="display:none">0</span>
             </button>
             <div class="advanced-filters-pop" id="advanced-filters-pop" onclick="event.stopPropagation()">
-              <div class="advanced-filters-head">Filtros avançados</div>
+              <div class="advanced-filters-saved" id="advanced-filters-saved" style="display:none">
+                <div class="filter-cdrop" id="saved-filters-cdrop">
+                  <button type="button" class="filter-cdrop-trigger" onclick="toggleFilterCdrop(this.parentElement)">
+                    <span class="filter-cdrop-label" id="saved-filters-label">Filtros salvos</span>
+                    <i data-lucide="chevron-down" class="ic-xs"></i>
+                  </button>
+                  <div class="filter-cdrop-menu" id="saved-filters-menu"></div>
+                </div>
+              </div>
               <div class="advanced-filters-body">
 
                 <div class="af-section">
@@ -450,10 +456,6 @@
                   <label class="advanced-filters-row">
                     <span class="advanced-filters-lbl">Criado por</span>
                     <select class="filter-select" id="filter-created-by" onchange="renderList(); _updateAdvancedFiltersBadge()"><option value="">Qualquer criador</option></select>
-                  </label>
-                  <label class="advanced-filters-row">
-                    <span class="advanced-filters-lbl">Etapa atual (agrupa por rótulo)</span>
-                    <select class="filter-select" id="filter-stage-label" onchange="renderList(); _updateAdvancedFiltersBadge()"><option value="">Qualquer etapa</option></select>
                   </label>
                   <div class="advanced-filters-row">
                     <span class="advanced-filters-lbl">Prioridade</span>
@@ -535,9 +537,17 @@
                 </div>
 
               </div>
-              <div class="advanced-filters-foot">
-                <button type="button" class="btn btn-ghost btn-sm" onclick="clearAdvancedFilters()">Limpar filtros</button>
-                <button type="button" class="btn btn-primary btn-sm" onclick="closeAdvancedFilters()">Fechar</button>
+              <div class="advanced-filters-foot" id="advanced-filters-foot">
+                <button type="button" class="btn btn-ghost btn-sm" onclick="clearAdvancedFilters()">Limpar</button>
+                <button type="button" class="af-save-btn" title="Salvar filtro" onclick="openSaveFilterWizard()"><i data-lucide="bookmark-plus"></i></button>
+              </div>
+              <div class="af-save-wizard" id="af-save-wizard">
+                <div class="af-save-wizard-title">Nome do filtro</div>
+                <input type="text" id="af-save-wizard-input" placeholder="Ex.: Minhas demandas urgentes" maxlength="60" onkeydown="if(event.key==='Enter'){event.preventDefault();confirmSaveFilterWizard()}else if(event.key==='Escape'){closeSaveFilterWizard()}">
+                <div class="af-save-wizard-actions">
+                  <button type="button" class="btn btn-ghost btn-sm" onclick="closeSaveFilterWizard()">Cancelar</button>
+                  <button type="button" class="btn btn-primary btn-sm" onclick="confirmSaveFilterWizard()">Salvar</button>
+                </div>
               </div>
             </div>
           </div>
@@ -2614,6 +2624,17 @@
   </div>
 </div>
 
+<!-- MODAL: GERENCIAR FILTROS SALVOS -->
+<div class="modal-overlay" id="saved-filters-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Filtros salvos</div>
+      <button class="modal-close" onclick="closeModal('saved-filters-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body" id="saved-filters-modal-body"></div>
+  </div>
+</div>
+
 <!-- MODAL: PROJETO -->
 <!-- ── MODAL: NOVO / EDITAR CLIENTE ── -->
 <div class="modal-overlay" id="client-modal">
@@ -3686,7 +3707,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260823dropfix3"></script>
+<script src="/js/app.js?v=20260825myday"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

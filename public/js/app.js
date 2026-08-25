@@ -990,6 +990,13 @@ function applyFilterDropdown(selId, opts = {}) {
   `;
 }
 function toggleFilterCdrop(wrap) {
+  // Fecha outros popovers "irmãos" — mas NÃO fecha o AF pop se o cdrop
+  // está DENTRO dele (senão abrir "Filtros salvos" derrubaria o pop e o
+  // menu portalado ficaria solto no canto da tela).
+  if (!wrap.classList.contains('open') && typeof _closeOtherPopovers === 'function') {
+    const insideAF = !!wrap.closest('#advanced-filters-pop');
+    _closeOtherPopovers(insideAF ? 'af' : 'cdrop');
+  }
   document.querySelectorAll('.filter-cdrop.open, .cdrop.open').forEach(el => {
     if (el !== wrap) { el.classList.remove('open'); _resetFilterCdropMenu(el); }
   });
@@ -1124,10 +1131,12 @@ function pickFilterCdrop(selId, value) {
     sel.dispatchEvent(new Event('change', { bubbles: true }));
   }
 }
-// Fecha cdrops ao clicar fora. Considera menus portalados (movidos pro
-// body via _positionFilterCdropMenu) como "dentro" — o click não fecha.
+// Fecha cdrops ao clicar fora. Considera menus portalados (movidos pro body
+// via _positionFilterCdropMenu) como "dentro" — o click não fecha. Usa
+// capture=true pra rodar ANTES de qualquer stopPropagation em contêineres
+// aninhados (ex.: #advanced-filters-pop), garantindo que cdrops embutidos
+// dentro desses contêineres também fechem no click fora.
 document.addEventListener('click', ev => {
-  // Se clicou no wrap OU no menu portalado, ignora
   if (ev.target.closest('.filter-cdrop')) return;
   const portalMenu = ev.target.closest('.filter-cdrop-menu[data-cdrop-portal]');
   if (portalMenu) return;
@@ -1135,7 +1144,7 @@ document.addEventListener('click', ev => {
     c.classList.remove('open');
     _resetFilterCdropMenu(c);
   });
-});
+}, true);
 
 /* ── AUTO-CDROP ──
    Todo <select> com classes form-control / filter-select / wizard-cust-resp
@@ -4288,83 +4297,7 @@ async function refreshDashMeetingHours() {
   }
 }
 
-/* ─── Widget "Meu dia" ───
-   Foco pessoal no topo do dashboard: prazo hoje, atrasadas suas, menções não
-   lidas. Sempre relativo ao usuário logado. Não respeita os filtros da tela. */
-function renderMyDay() {
-  const wrap = $('my-day-grid');
-  if (!wrap || !me) return;
-  const today = todayStr();
-  // Escopo: demandas visíveis pro usuário (workspaces acessíveis), não deletadas,
-  // não concluídas. "Suas" = ownerId === me.id OU watcher.
-  const mine = (demands || []).filter(d => {
-    if (d.deletedAt) return false;
-    if (isDone(d)) return false;
-    if (!(me.isAdmin || (me.workspaces || []).includes(d.workspaceId))) return false;
-    if (d.ownerId === me.id) return true;
-    if (Array.isArray(d.watchers) && d.watchers.includes(me.id)) return true;
-    return false;
-  });
-  const dueToday = mine.filter(d => effDue(d) === today).slice(0, 20);
-  const overdue  = mine.filter(d => isLate(d)).slice(0, 20);
-  const mentionsUnread = (notifications || [])
-    .filter(n => !n.read && n.type === 'mention')
-    .slice(0, 20);
-
-  const anyContent = dueToday.length + overdue.length + mentionsUnread.length > 0;
-  // Se não há nada relevante, esconde totalmente — dashboard vira o de sempre.
-  if (!anyContent) { wrap.style.display = 'none'; return; }
-  wrap.style.display = '';
-  wrap.innerHTML = [
-    _myDayCard('Prazo hoje', 'calendar-check', dueToday, _myDayDemandRow, 'Você não tem entregas pra hoje.'),
-    _myDayCard('Atrasadas', 'alert-triangle', overdue, _myDayOverdueRow, 'Nada atrasado. ', 'danger'),
-    _myDayCard('Menções não lidas', 'at-sign', mentionsUnread, _myDayMentionRow, 'Nenhuma menção nova.')
-  ].join('');
-  paintIcons();
-}
-function _myDayCard(title, icon, items, rowFn, empty, tone) {
-  const rows = items.slice(0, 3).map(rowFn).join('');
-  const more = items.length > 3
-    ? `<div class="my-day-more">+ ${items.length - 3} mais</div>`
-    : '';
-  const body = items.length
-    ? `<div class="my-day-items">${rows}${more}</div>`
-    : `<div class="my-day-empty">${esc(empty)}</div>`;
-  return `<div class="my-day-card ${tone ? 'is-' + tone : ''}">
-    <div class="my-day-head">
-      <span class="my-day-title"><i data-lucide="${icon}" class="ic-sm"></i> ${esc(title)}</span>
-      <span class="my-day-count">${items.length}</span>
-    </div>
-    ${body}
-  </div>`;
-}
-function _myDayDemandRow(d) {
-  const p = projectById(d.projectId);
-  const proj = p ? esc(p.name) : '—';
-  return `<button type="button" class="my-day-row" onclick="showDetail('${esc(d.id)}')">
-    <span class="my-day-row-name">${esc(d.name)}</span>
-    <span class="my-day-row-sub">${proj}</span>
-  </button>`;
-}
-function _myDayOverdueRow(d) {
-  const due = effDue(d);
-  const days = due ? Math.max(1, Math.floor((Date.now() - new Date(due + 'T00:00:00').getTime()) / 86400000)) : 0;
-  return `<button type="button" class="my-day-row" onclick="showDetail('${esc(d.id)}')">
-    <span class="my-day-row-name">${esc(d.name)}</span>
-    <span class="my-day-row-sub">${days} dia${days === 1 ? '' : 's'} de atraso</span>
-  </button>`;
-}
-function _myDayMentionRow(n) {
-  const dName = n.demandName || 'demanda';
-  return `<button type="button" class="my-day-row" onclick="openNotif('${esc(n.id)}', '${esc(n.demandId || '')}')">
-    <span class="my-day-row-name">${esc(dName)}</span>
-    <span class="my-day-row-sub">${esc(fmtDateTime(n.createdAt))}</span>
-  </button>`;
-}
-
 function renderDashboard() {
-  // Widget pessoal no topo — recalculado a cada re-render.
-  renderMyDay();
   // Filtro por squad — "Todos" agrega todos os squads acessíveis. Popula antes
   // dos outros filtros porque eles dependem do escopo dele.
   const accessibleWs = (workspaces || []).filter(w => me?.isAdmin || (me?.workspaces || []).includes(w.id));
@@ -5224,6 +5157,7 @@ function openPfp() {
   const start = $('filter-period-start')?.value || '';
   const base = start ? new Date(start + 'T00:00:00') : new Date();
   _pfpView = { year: base.getFullYear(), month: base.getMonth() };
+  _closeOtherPopovers('pfp');
   pop.classList.add('open');
   _pfpOpen = true;
   pfpRenderPresets();
@@ -5801,7 +5735,6 @@ function listFilteredDemands() {
   const noOwner = !!document.getElementById('filter-noowner')?.checked;
   const watched = !!document.getElementById('filter-watched')?.checked;
   const fCreator = $('filter-created-by')?.value || '';
-  const fStageLabel = ($('filter-stage-label')?.value || '').trim();
   const fRec = $('filter-recurrence')?.value || '';
   const fAtt = $('filter-attachments')?.value || '';
   const fTime = $('filter-time-entries')?.value || '';
@@ -5849,11 +5782,6 @@ function listFilteredDemands() {
       if (daysStuck < stuckDays) return false;
     }
     if (fCreator) { if (_demandCreatorId(d) !== fCreator) return false; }
-    if (fStageLabel) {
-      const st = stageOf(d);
-      const label = (d.stageLabels && d.stageLabels[d.status]) || st?.label || '';
-      if (label !== fStageLabel) return false;
-    }
     if (fRec === 'yes' && !(d.recurrence && d.recurrence.enabled)) return false;
     if (fRec === 'no' && (d.recurrence && d.recurrence.enabled)) return false;
     if (watched && !(Array.isArray(d.watchers) && d.watchers.includes(me?.id))) return false;
@@ -5877,11 +5805,14 @@ function listFilteredDemands() {
     return true;
   });
 }
-/* Retorna o userId de quem CRIOU a demanda (via primeira entrada de history do tipo 'created').
-   Retorna null se não encontrar. */
+/* Retorna o userId de quem CRIOU a demanda. Fonte primária: campo d.createdBy
+   (persistido no server em demandas novas). Fallback: primeira entrada de history
+   com action === 'created' — o campo é `action`, não `type` (bug antigo lia h.type
+   e nunca casava, deixando o filtro Criado por sem efeito). */
 function _demandCreatorId(d) {
-  const arr = Array.isArray(d.history) ? d.history : [];
-  for (const h of arr) if (h && h.type === 'created') return h.userId || null;
+  if (d && typeof d.createdBy === 'string' && d.createdBy) return d.createdBy;
+  const arr = Array.isArray(d?.history) ? d.history : [];
+  for (const h of arr) if (h && h.action === 'created') return h.userId || null;
   return null;
 }
 /* Popover de "Filtros avançados" — abre/fecha, limpa e mantém a badge com o
@@ -5892,17 +5823,59 @@ function toggleAdvancedFilters(ev) {
   const btn = document.getElementById('advanced-filters-btn');
   if (!pop) return;
   const willOpen = !pop.classList.contains('open');
+  if (willOpen) _closeOtherPopovers('af');
   pop.classList.toggle('open', willOpen);
   btn?.classList.toggle('is-open', willOpen);
+  if (willOpen) { _renderSavedFiltersMenu(); _syncSavedFilterLabel(); }
+  else closeSaveFilterWizard(true);
+}
+/* Fecha popovers "irmãos" quando algum abre — evita ter mais de um aberto
+   ao mesmo tempo. Passa o nome do popover que ESTÁ abrindo para não fechá-lo. */
+function _closeOtherPopovers(except) {
+  if (except !== 'af') {
+    const afPop = document.getElementById('advanced-filters-pop');
+    if (afPop?.classList.contains('open')) closeAdvancedFilters();
+  }
+  if (except !== 'pfp' && typeof _pfpOpen !== 'undefined' && _pfpOpen) closePfp();
+  if (except !== 'cdrop') {
+    document.querySelectorAll('.filter-cdrop.open').forEach(c => {
+      c.classList.remove('open');
+      _resetFilterCdropMenu(c);
+    });
+  }
+  if (except !== 'multi') {
+    document.querySelectorAll('.filter-multi-menu.open').forEach(m => m.classList.remove('open'));
+  }
 }
 function closeAdvancedFilters() {
   document.getElementById('advanced-filters-pop')?.classList.remove('open');
   document.getElementById('advanced-filters-btn')?.classList.remove('is-open');
+  closeSaveFilterWizard(true);
 }
+/* Click fora do popover de filtros avançados fecha o popover (com prompt de
+   descarte se o wizard "Salvar filtro" está aberto e com nome digitado).
+   Exemplos exemptos: menus portalados, multi-menus abertos, modais abertos e
+   confirmações do próprio browser. */
+document.addEventListener('click', ev => {
+  const pop = document.getElementById('advanced-filters-pop');
+  if (!pop || !pop.classList.contains('open')) return;
+  if (ev.target.closest('#advanced-filters-pop')) return;
+  if (ev.target.closest('#advanced-filters-btn')) return;
+  if (ev.target.closest('.filter-cdrop-menu[data-cdrop-portal]')) return;
+  if (ev.target.closest('.filter-multi-menu.open')) return;
+  if (ev.target.closest('.modal-overlay.open')) return;
+  const wiz = document.getElementById('af-save-wizard');
+  const wizOpen = wiz?.classList.contains('open');
+  const typedName = (document.getElementById('af-save-wizard-input')?.value || '').trim();
+  if (wizOpen && typedName) {
+    if (!confirm('Descartar o filtro sendo salvo?')) return;
+  }
+  closeAdvancedFilters();
+}, true);
 // Filtros DENTRO do popover — mantém contador (badge) e reset centralizados.
 const _AF_VALUE_IDS = [
   'filter-participant','filter-priority','filter-stuck-days',
-  'filter-created-by','filter-stage-label','filter-recurrence',
+  'filter-created-by','filter-recurrence',
   'filter-attachments','filter-time-entries','filter-pieces',
   'filter-created-from','filter-created-to','filter-completed-from','filter-completed-to'
 ];
@@ -5922,8 +5895,178 @@ function _updateAdvancedFiltersBadge() {
   _AF_CHECKBOX_IDS.forEach(id => { if (document.getElementById(id)?.checked) count++; });
   badge.textContent = String(count);
   badge.style.display = count > 0 ? '' : 'none';
+  _syncSavedFilterLabel();
 }
-/* Populador dos selects Criado por (userOpts) + Etapa atual (labels únicos entre fluxos). */
+
+/* ─── FILTROS SALVOS (per-user, localStorage) ───
+   Snapshot dos AF fields (values + checkboxes). Aplicar restaura o estado
+   exato e re-renderiza a lista. Estado persistido por userId (múltiplos
+   usuários no mesmo device não se misturam). */
+function _savedFiltersKey() { return 'kastor-saved-filters-' + (me?.id || 'anon'); }
+function _getSavedFilters() {
+  try {
+    const raw = localStorage.getItem(_savedFiltersKey());
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+}
+function _setSavedFilters(arr) {
+  try { localStorage.setItem(_savedFiltersKey(), JSON.stringify(arr || [])); } catch {}
+}
+function _captureAdvancedFiltersState() {
+  const state = { values: {}, checks: {} };
+  _AF_VALUE_IDS.forEach(id => { state.values[id] = document.getElementById(id)?.value || ''; });
+  _AF_CHECKBOX_IDS.forEach(id => { state.checks[id] = !!document.getElementById(id)?.checked; });
+  return state;
+}
+function _applyAdvancedFiltersState(state) {
+  if (!state || typeof state !== 'object') return;
+  _AF_VALUE_IDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = (state.values && state.values[id]) || '';
+  });
+  _AF_CHECKBOX_IDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.checked = !!(state.checks && state.checks[id]);
+  });
+  _renderPriorityChips();
+  renderList();
+  _updateAdvancedFiltersBadge();
+}
+function _statesEqual(a, b) {
+  if (!a || !b) return false;
+  for (const id of _AF_VALUE_IDS) if ((a.values?.[id] || '') !== (b.values?.[id] || '')) return false;
+  for (const id of _AF_CHECKBOX_IDS) if (!!a.checks?.[id] !== !!b.checks?.[id]) return false;
+  return true;
+}
+let _appliedSavedFilterId = null;
+function _syncSavedFilterLabel() {
+  const label = document.getElementById('saved-filters-label');
+  if (!label) return;
+  const cur = _captureAdvancedFiltersState();
+  const saved = _getSavedFilters();
+  // Marca aplicado se bate exatamente com algum salvo.
+  const match = saved.find(sf => _statesEqual(sf.state, cur));
+  _appliedSavedFilterId = match ? match.id : null;
+  label.textContent = match ? match.name : 'Filtros salvos';
+}
+function _renderSavedFiltersMenu() {
+  const bar = document.getElementById('advanced-filters-saved');
+  const menu = document.getElementById('saved-filters-menu');
+  if (!menu) return;
+  const saved = _getSavedFilters();
+  // A barra inteira só aparece se há pelo menos 1 filtro salvo.
+  if (bar) bar.style.display = saved.length ? '' : 'none';
+  if (!saved.length) { menu.innerHTML = ''; return; }
+  const rows = saved.map(sf => `
+    <div class="filter-cdrop-item ${sf.id === _appliedSavedFilterId ? 'active' : ''}" onclick="applySavedFilter('${esc(sf.id)}')">
+      <i data-lucide="bookmark" class="ic-xs"></i>
+      <span>${esc(sf.name)}</span>
+    </div>`).join('');
+  menu.innerHTML = rows + '<button type="button" class="saved-filter-view-all" onclick="openManageSavedFiltersModal()">Ver todos</button>';
+  paintIcons(menu);
+}
+function applySavedFilter(id) {
+  const saved = _getSavedFilters();
+  const sf = saved.find(x => x.id === id);
+  if (!sf) return;
+  _applyAdvancedFiltersState(sf.state);
+  _appliedSavedFilterId = id;
+  const cdrop = document.getElementById('saved-filters-cdrop');
+  if (cdrop) { cdrop.classList.remove('open'); _resetFilterCdropMenu(cdrop); }
+  toast('Filtro aplicado: ' + sf.name, 'success');
+}
+
+/* Wizard inline pra dar nome ao filtro. Foco no input ao abrir; Enter salva. */
+function openSaveFilterWizard() {
+  const wiz = document.getElementById('af-save-wizard');
+  const foot = document.getElementById('advanced-filters-foot');
+  const input = document.getElementById('af-save-wizard-input');
+  if (!wiz || !input) return;
+  wiz.classList.add('open');
+  if (foot) foot.style.display = 'none';
+  input.value = '';
+  setTimeout(() => input.focus(), 0);
+}
+function closeSaveFilterWizard(silent) {
+  const wiz = document.getElementById('af-save-wizard');
+  const foot = document.getElementById('advanced-filters-foot');
+  if (!wiz) return;
+  wiz.classList.remove('open');
+  if (foot) foot.style.display = '';
+  const input = document.getElementById('af-save-wizard-input');
+  if (input) input.value = '';
+}
+function confirmSaveFilterWizard() {
+  const input = document.getElementById('af-save-wizard-input');
+  const name = (input?.value || '').trim().slice(0, 60);
+  if (!name) { toast('Dê um nome ao filtro.', 'error'); input?.focus(); return; }
+  const saved = _getSavedFilters();
+  if (saved.some(sf => sf.name.toLowerCase() === name.toLowerCase())) {
+    toast('Já existe um filtro com esse nome.', 'error'); input?.focus(); return;
+  }
+  const sf = {
+    id: 'sf-' + Math.random().toString(36).slice(2, 10),
+    name,
+    createdAt: new Date().toISOString(),
+    state: _captureAdvancedFiltersState()
+  };
+  saved.push(sf);
+  _setSavedFilters(saved);
+  _appliedSavedFilterId = sf.id;
+  closeSaveFilterWizard();
+  _renderSavedFiltersMenu();
+  _syncSavedFilterLabel();
+  toast('Filtro salvo: ' + name, 'success');
+}
+
+/* Modal de gerenciamento — lista todos com rename inline e botão de excluir. */
+function openManageSavedFiltersModal() {
+  const cdrop = document.getElementById('saved-filters-cdrop');
+  if (cdrop) { cdrop.classList.remove('open'); _resetFilterCdropMenu(cdrop); }
+  const body = document.getElementById('saved-filters-modal-body');
+  if (!body) return;
+  const saved = _getSavedFilters();
+  const listHtml = saved.length
+    ? saved.map(sf => `
+      <div class="saved-filters-manage-item" data-sfid="${esc(sf.id)}">
+        <input type="text" value="${esc(sf.name)}" maxlength="60" onchange="renameSavedFilter('${esc(sf.id)}', this.value)">
+        <button type="button" class="sf-icon-btn" title="Aplicar" onclick="event.stopPropagation(); applySavedFilter('${esc(sf.id)}'); closeModal('saved-filters-modal')"><i data-lucide="play"></i></button>
+        <button type="button" class="sf-icon-btn danger" title="Excluir" onclick="event.stopPropagation(); deleteSavedFilter('${esc(sf.id)}')"><i data-lucide="trash-2"></i></button>
+      </div>`).join('')
+    : '<div class="saved-filter-empty">Você ainda não salvou nenhum filtro.</div>';
+  body.innerHTML = `<div class="saved-filters-manage-list">${listHtml}</div>`;
+  openModal('saved-filters-modal');
+  paintIcons(body);
+}
+function renameSavedFilter(id, newName) {
+  const name = String(newName || '').trim().slice(0, 60);
+  if (!name) { toast('Nome não pode ficar vazio.', 'error'); openManageSavedFiltersModal(); return; }
+  const saved = _getSavedFilters();
+  const sf = saved.find(x => x.id === id); if (!sf) return;
+  if (saved.some(x => x.id !== id && x.name.toLowerCase() === name.toLowerCase())) {
+    toast('Já existe outro filtro com esse nome.', 'error');
+    openManageSavedFiltersModal();
+    return;
+  }
+  sf.name = name;
+  _setSavedFilters(saved);
+  _renderSavedFiltersMenu();
+  _syncSavedFilterLabel();
+}
+function deleteSavedFilter(id) {
+  const saved = _getSavedFilters();
+  const sf = saved.find(x => x.id === id); if (!sf) return;
+  _setSavedFilters(saved.filter(x => x.id !== id));
+  if (_appliedSavedFilterId === id) _appliedSavedFilterId = null;
+  _renderSavedFiltersMenu();
+  _syncSavedFilterLabel();
+  openManageSavedFiltersModal();
+  toast('Filtro removido: ' + sf.name, 'success');
+}
+/* Populador do select Criado por. Reconstrói options a partir de userOpts,
+   preservando a seleção anterior se o user ainda existir na lista. */
 function _populateAdvancedSelectors(userOpts) {
   const creator = document.getElementById('filter-created-by');
   if (creator) {
@@ -5932,25 +6075,6 @@ function _populateAdvancedSelectors(userOpts) {
     creator.innerHTML = '<option value="">Qualquer criador</option>' +
       userOpts.map(u => `<option value="${esc(u.id)}" ${still && u.id === prev ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
     if (!still) creator.value = '';
-  }
-  const stageSel = document.getElementById('filter-stage-label');
-  if (stageSel) {
-    const prev = stageSel.value;
-    // Union: label de todas as etapas de todos os fluxos acessíveis + additions das demandas visíveis.
-    const set = new Set();
-    (flows || []).forEach(f => {
-      if (!(me.isAdmin || (me.workspaces || []).includes(f.workspaceId))) return;
-      (f.stages || []).forEach(s => { if (s.label) set.add(s.label); });
-    });
-    (demands || []).forEach(d => {
-      if (!(me.isAdmin || (me.workspaces || []).includes(d.workspaceId))) return;
-      (d.stageAdditions || []).forEach(s => { if (s.label) set.add(s.label); });
-    });
-    const labels = [...set].sort((a, b) => norm(a).localeCompare(norm(b)));
-    const still = !prev || labels.includes(prev);
-    stageSel.innerHTML = '<option value="">Qualquer etapa</option>' +
-      labels.map(l => `<option value="${esc(l)}" ${still && l === prev ? 'selected' : ''}>${esc(l)}</option>`).join('');
-    if (!still) stageSel.value = '';
   }
 }
 /* Multi-select de Participantes — CSV no #filter-participant. Reusa o pattern
@@ -5985,7 +6109,7 @@ function toggleParticipantMulti(ev) {
   if (!menu) return;
   const willOpen = !menu.classList.contains('open');
   document.querySelectorAll('.filter-multi-menu.open').forEach(m => m.classList.remove('open'));
-  if (willOpen) menu.classList.add('open');
+  if (willOpen) { _closeOtherPopovers('multi'); menu.classList.add('open'); }
 }
 function toggleParticipantMultiItem(userId, on) {
   const input = document.getElementById('filter-participant');
@@ -6063,7 +6187,7 @@ function toggleWsMulti(ev) {
   if (!menu) return;
   const willOpen = !menu.classList.contains('open');
   document.querySelectorAll('.filter-multi-menu.open').forEach(m => m.classList.remove('open'));
-  if (willOpen) menu.classList.add('open');
+  if (willOpen) { _closeOtherPopovers('multi'); menu.classList.add('open'); }
 }
 function toggleWsMultiItem(wsId, on) {
   const input = document.getElementById('filter-workspace');
@@ -9240,10 +9364,13 @@ async function saveStagesDraft() {
     if ((draftSla ?? null) !== (orig ?? null)) out.deadlineDays = draftSla;
     if (draftDate) out.deadlineDate = draftDate;
     else if (savedOv[sid]?.deadlineDate) out.deadlineDate = null; // limpa âncora salva
-    // done override — só grava se difere do padrão do fluxo.
+    // done override — sempre envia quando o usuário tocou nesse sid nessa sessão.
+    // Servidor descarta se bater com o flow default. Se comparássemos aqui contra
+    // o flow default, um "toggle pra igual ao default" resultaria em body sem `done`,
+    // e o server preservaria o override ANTIGO via fallback `prev.done` — a etapa
+    // voltaria a ficar marcada como conclusão após salvar.
     if (Object.prototype.hasOwnProperty.call(draftDone, sid)) {
-      const flowStage = flowStageById.get(sid);
-      if (!!draftDone[sid] !== !!flowStage?.done) out.done = !!draftDone[sid];
+      out.done = !!draftDone[sid];
     }
     if (Object.keys(out).length) overrides[sid] = out;
   }
@@ -9598,7 +9725,28 @@ function renderDetailStages(d) {
   const draft = stagesEditDraft;
   const dirty = isStagesDraftDirty(d);
   const flowSlaById = new Map((flow?.stages || []).map(s => [s.id, s.deadlineDays ?? null]));
-  const sortedUsers = wsUsers().slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  // Lista de executores das etapas: usuários do SQUAD DA DEMANDA (d.workspaceId),
+  // não do workspace ativo — se o usuário troca de squad no UI ou o demand é
+  // movido pra outro squad, a lista fica estável. Une também com quem já está
+  // atribuído como executor em qualquer etapa/addition/owner/padrão do fluxo,
+  // pra que ninguém "suma" do dropdown caso saia do squad depois.
+  const _demandWsId = d.workspaceId;
+  const _assignedIds = new Set();
+  if (d.ownerId) _assignedIds.add(d.ownerId);
+  Object.values(d.stageResponsibles || {}).forEach(v => { if (v) _assignedIds.add(v); });
+  Object.values(draft.responsibles || {}).forEach(v => { if (v) _assignedIds.add(v); });
+  (Array.isArray(d.stageAdditions) ? d.stageAdditions : []).forEach(a => { if (a.responsibleId) _assignedIds.add(a.responsibleId); });
+  (draft.newAdditions || []).forEach(a => { if (a.responsibleId) _assignedIds.add(a.responsibleId); });
+  (flow?.stages || []).forEach(s => {
+    const rid = resolveStageOwnerId(d, s);
+    if (rid) _assignedIds.add(rid);
+  });
+  const sortedUsers = users
+    .filter(u => u.active !== false && (
+      u.isAdmin || (u.workspaces || []).includes(_demandWsId) || _assignedIds.has(u.id)
+    ))
+    .slice()
+    .sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
 
   // Inclui adições novas (só client-side) no pool visível — persistem apenas ao Salvar.
   if (Array.isArray(draft.newAdditions)) {
@@ -9725,7 +9873,7 @@ function renderDetailStages(d) {
               <div class="stages-edit-menu-wrap">
                 <button type="button" class="stages-edit-menu-btn" title="Mais ações" onclick="toggleStageMenu('${s.id}', event)"><i data-lucide="more-horizontal" class="ic-md"></i></button>
                 <div class="stages-edit-menu" id="${menuId}">
-                  <button class="stages-edit-menu-item" onclick="closeStageMenus(); toggleStageDoneDraft('${s.id}')"><i data-lucide="flag" class="ic-menu"></i> ${doneItemLabel}</button>
+                  <button class="stages-edit-menu-item ${effDone ? 'is-active-done' : ''}" onclick="closeStageMenus(); toggleStageDoneDraft('${s.id}')"><i data-lucide="flag" class="ic-menu"></i> ${doneItemLabel}</button>
                   <button class="stages-edit-menu-item" ${activeDisabled ? 'disabled' : ''} title="${activeDisabled ? 'Etapa atual — mude antes de desativar' : ''}" onclick="closeStageMenus(); toggleStageDraft('${s.id}')"><i data-lucide="${isOn ? 'eye-off' : 'eye'}" class="ic-menu"></i> ${activeItemLabel}</button>
                   ${isAddition ? `<button class="stages-edit-menu-item danger" ${isCurrent ? 'disabled' : ''} title="${isCurrent ? 'Etapa atual — não pode remover' : ''}" onclick="closeStageMenus(); removeStageAdditionDraft('${s.id}')"><i data-lucide="trash-2" class="ic-menu"></i> Excluir etapa</button>` : ''}
                 </div>
@@ -20764,24 +20912,39 @@ function meetingLabel(kind) {
   return 'Reunião';
 }
 
-// N-lane column layout — pra 2+ blocos que se sobrepõem no mesmo dia,
-// atribui uma "coluna" a cada um sem overlap dentro dela. Retorna
-// { assign: { blockId: colIdx }, totalCols }.
+// N-lane column layout — agrupa blocos em clusters de sobreposição transitiva
+// e atribui uma "coluna" a cada um sem overlap dentro do cluster. Retorna
+// { assign: { blockId: colIdx }, colCounts: { blockId: clusterTotalCols } }.
 function computeLaneLayout(blocks) {
+  // Blocos são agrupados em clusters de sobreposição (transitiva).
+  // Cada bloco recebe totalCols = tamanho do SEU cluster — assim blocos sem
+  // vizinho ocupam 100% da célula mesmo se o dia tem overlap em outro horário.
   const sorted = blocks.slice().sort((a, b) => a.startMin - b.startMin);
-  const columns = []; // columns[i] = array de blocos naquela coluna
   const assign = {};
+  const colCounts = {};
+  let cluster = [];
+  let clusterColEnds = []; // fim do último bloco em cada coluna do cluster
+  let latestEnd = -Infinity;
+  const flushCluster = () => {
+    const total = clusterColEnds.length;
+    for (const b of cluster) colCounts[b.id] = total;
+    cluster = [];
+    clusterColEnds = [];
+    latestEnd = -Infinity;
+  };
   for (const b of sorted) {
+    if (cluster.length && b.startMin >= latestEnd) flushCluster();
     let placedCol = -1;
-    for (let i = 0; i < columns.length; i++) {
-      const col = columns[i];
-      const conflict = col.some(x => !(x.endMin <= b.startMin || x.startMin >= b.endMin));
-      if (!conflict) { col.push(b); placedCol = i; break; }
+    for (let i = 0; i < clusterColEnds.length; i++) {
+      if (clusterColEnds[i] <= b.startMin) { clusterColEnds[i] = b.endMin; placedCol = i; break; }
     }
-    if (placedCol < 0) { columns.push([b]); placedCol = columns.length - 1; }
+    if (placedCol < 0) { clusterColEnds.push(b.endMin); placedCol = clusterColEnds.length - 1; }
     assign[b.id] = placedCol;
+    cluster.push(b);
+    if (b.endMin > latestEnd) latestEnd = b.endMin;
   }
-  return { assign, totalCols: columns.length };
+  if (cluster.length) flushCluster();
+  return { assign, colCounts };
 }
 
 /* Se a semana visível está fora do range de schedules já carregados,
@@ -21040,7 +21203,7 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
   const projectByIdMap = new Map(projects.map(p => [p.id, p]));
   const clientByIdMap = new Map(clients.map(c => [c.id, c]));
 
-  const dayLayouts = {}; // { colKey: { assign, totalCols } }
+  const dayLayouts = {}; // { colKey: { assign, colCounts } }
   dayCols.forEach(c => {
     const key = colKey(c);
     const ymd = c._ymd;
@@ -21085,7 +21248,7 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
     }
     const layout = dayLayouts[schedKey(s)];
     const myCol = layout ? layout.assign['sched:' + s.id] : 0;
-    const totalCols = layout ? layout.totalCols : 1;
+    const totalCols = layout ? (layout.colCounts['sched:' + s.id] || 1) : 1;
     const block = document.createElement('div');
     block.className = 'agenda-block';
     if (totalCols > 1) block.classList.add('is-laned');
@@ -21153,7 +21316,7 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
       if (endRow <= startRow) return;
       const laneId = 'gcal:' + gb.id;
       const myCol = layout.assign[laneId] ?? 0;
-      const totalCols = layout.totalCols;
+      const totalCols = layout.colCounts[laneId] || 1;
       const block = document.createElement('div');
       block.className = 'agenda-block agenda-block--google';
       const respClass = googleResponseClass(gb.selfResponseStatus);

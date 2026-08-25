@@ -4316,6 +4316,7 @@ app.post('/api/demands', requireAuth, (req, res) => {
     ...(Object.keys(initStageOverrides).length ? { stageOverrides: initStageOverrides } : {}),
     ...(initStageAdditions.length ? { stageAdditions: initStageAdditions } : {}),
     ...(initStageOrder ? { stageOrder: initStageOrder } : {}),
+    createdBy: req.user.id,
     createdAt: nowISO(),
     completedAt: stage.done ? nowISO() : null
   };

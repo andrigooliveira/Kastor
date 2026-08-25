@@ -167,66 +167,6 @@ body.user-moderator .full-admin-only { display: none !important; }
 }
 .wizard-section-head + .wizard-card { margin-top: 4px; }
 
-/* ── Widget "Meu dia" (topo do Dashboard) ──
-   3 cards horizontais com foco pessoal: prazo hoje, atrasadas, menções. */
-.my-day-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 12px;
-  margin-bottom: 18px;
-}
-.my-day-card {
-  background: var(--surface);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius);
-  padding: 14px;
-  display: flex; flex-direction: column; gap: 10px;
-}
-.my-day-card.is-danger { border-color: rgba(239, 68, 68, 0.35); }
-.my-day-head {
-  display: flex; align-items: center; justify-content: space-between;
-}
-.my-day-title {
-  display: inline-flex; align-items: center; gap: 8px;
-  font-size: 12.5px; font-weight: 600; color: var(--text);
-  text-transform: uppercase; letter-spacing: 0.05em;
-}
-.my-day-title i { color: var(--accent-text); }
-.my-day-card.is-danger .my-day-title i { color: #EF4444; }
-.my-day-count {
-  font-size: 20px; font-weight: 700; color: var(--text);
-  font-variant-numeric: tabular-nums;
-}
-.my-day-card.is-danger .my-day-count { color: #EF4444; }
-.my-day-items { display: flex; flex-direction: column; gap: 4px; }
-.my-day-row {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
-  padding: 8px 10px;
-  background: none; border: 0; color: var(--text);
-  font-family: inherit; text-align: left;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: background .12s;
-  width: 100%;
-}
-.my-day-row:hover { background: var(--surface-2); }
-.my-day-row-name {
-  font-size: 13px; color: var(--text);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  max-width: 100%;
-}
-.my-day-row-sub {
-  font-size: 11.5px; color: var(--text-muted);
-}
-.my-day-more {
-  font-size: 11.5px; color: var(--text-muted);
-  padding: 4px 10px;
-}
-.my-day-empty {
-  font-size: 12.5px; color: var(--text-muted);
-  padding: 8px 4px;
-}
-
 /* ── Galeria de anexos (dentro de detalhe do cliente / projeto) ──
    Agrega todos os anexos de demandas + comentários no escopo. Toolbar em cima
    (busca + chips por tipo com contagem), grid embaixo. */
@@ -1788,10 +1728,81 @@ tr:hover td { background: var(--surface-2); }
 }
 .advanced-filters-row .filter-select { width: 100%; }
 .advanced-filters-foot {
-  display: flex; justify-content: space-between; gap: 8px;
-  padding-top: 12px; margin-top: 4px;
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  padding: 10px 12px; margin: 4px -12px -12px;
   border-top: 1px solid var(--hairline);
+  background: var(--surface);
+  position: sticky; bottom: -12px; z-index: 2;
 }
+/* Botão de salvar: só o ícone, sem borda/fundo, 16x16px. */
+.af-save-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0;
+  background: transparent; border: none; border-radius: 6px;
+  color: var(--text-dim); cursor: pointer; transition: background .12s, color .12s;
+}
+.af-save-btn:hover { background: var(--surface-2); color: var(--text); }
+.af-save-btn svg { width: 16px !important; height: 16px !important; }
+/* Barra de filtros salvos no topo do popover — sticky pra ficar sempre visível. */
+.advanced-filters-saved {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; margin: -12px -12px 8px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--surface);
+  position: sticky; top: -12px; z-index: 2;
+}
+.advanced-filters-saved-lbl {
+  font-size: 11px; font-weight: 600; color: var(--text-dim);
+  flex-shrink: 0;
+}
+.advanced-filters-saved .filter-cdrop { flex: 1; min-width: 0; }
+.saved-filter-view-all {
+  display: block; width: 100%;
+  padding: 8px 10px; text-align: center;
+  font-size: 12px; color: var(--text-dim); font-weight: 600;
+  background: var(--surface-2); border: none; border-top: 1px solid var(--hairline);
+  cursor: pointer; transition: background .12s;
+}
+.saved-filter-view-all:hover { background: color-mix(in srgb, var(--surface-2) 60%, var(--accent) 12%); color: var(--text); }
+.saved-filter-empty { padding: 10px; text-align: center; font-size: 11.5px; color: var(--text-muted); }
+/* Wizard inline pra dar nome ao filtro salvo. */
+.af-save-wizard {
+  display: none; flex-direction: column; gap: 8px;
+  padding: 12px; margin: 4px -12px -12px;
+  border-top: 1px solid var(--hairline);
+  background: var(--surface-2);
+  position: sticky; bottom: -12px; z-index: 3;
+}
+.af-save-wizard.open { display: flex; }
+.af-save-wizard-title { font-size: 12px; font-weight: 700; color: var(--text); }
+.af-save-wizard input {
+  padding: 8px 10px; border: 1px solid var(--hairline);
+  background: var(--surface); color: var(--text); border-radius: 6px;
+  font-size: 13px;
+}
+.af-save-wizard-actions { display: flex; justify-content: flex-end; gap: 6px; }
+/* Modal simples pra gerenciar (renomear/excluir) filtros salvos. */
+.saved-filters-manage-list { display: flex; flex-direction: column; gap: 6px; max-height: 55vh; overflow-y: auto; }
+.saved-filters-manage-item {
+  display: flex; align-items: center; gap: 4px;
+  padding: 8px 10px; background: var(--surface-2); border-radius: 8px;
+}
+.saved-filters-manage-item input {
+  flex: 1; padding: 6px 8px; border: 1px solid var(--hairline);
+  background: var(--surface); color: var(--text); border-radius: 6px;
+  font-size: 13px;
+  margin-right: 4px;
+}
+.saved-filters-manage-item .sf-icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0; flex-shrink: 0;
+  background: transparent; border: none; border-radius: 6px;
+  color: var(--text-dim); cursor: pointer; transition: background .12s, color .12s;
+}
+.saved-filters-manage-item .sf-icon-btn:hover { background: var(--surface-2); color: var(--text); }
+.saved-filters-manage-item .sf-icon-btn.danger { color: var(--danger); }
+.saved-filters-manage-item .sf-icon-btn.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+.saved-filters-manage-item .sf-icon-btn svg { width: 16px !important; height: 16px !important; }
 /* Chips multi-select de prioridade dentro do popover. Cor por prioridade via --pc. */
 .af-priority-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .af-priority-chip {
@@ -5013,6 +5024,8 @@ body.is-resizing-detail * { cursor: col-resize !important; user-select: none !im
 .stages-edit-menu-item:disabled { opacity: 0.45; cursor: not-allowed; }
 .stages-edit-menu-item.danger { color: var(--danger); }
 .stages-edit-menu-item.danger:hover:not(:disabled) { background: rgba(239,68,68,.08); }
+.stages-edit-menu-item.is-active-done { background: rgba(34,197,94,.15); color: #16a34a; }
+.stages-edit-menu-item.is-active-done:hover:not(:disabled) { background: rgba(34,197,94,.22); }
 /* Dias como texto puro — sem box, cursor help pro tooltip. */
 .stages-edit-sla-days {
   font-size: 12.5px; font-weight: 600;
@@ -5688,12 +5701,13 @@ i[data-lucide]:not([class*=ic-]) { width: 16px; height: 16px; stroke-width: 2; }
 }
 .agenda-block:hover .agenda-block-actions { opacity: 1; }
 .agenda-block-action {
-  width: 20px; height: 20px;
+  width: 18px; height: 18px;
   display: inline-flex; align-items: center; justify-content: center;
-  background: rgba(0,0,0,0.35); color: rgba(255,255,255,0.95);
+  background: transparent; color: rgba(255,255,255,0.95);
   border: none; border-radius: 4px; cursor: pointer; padding: 0;
 }
-.agenda-block-action:hover { background: rgba(0,0,0,0.6); }
+.agenda-block-action svg { width: 14px !important; height: 14px !important; }
+.agenda-block-action:hover { background: rgba(255,255,255,0.18); }
 .agenda-block-action.danger:hover { background: var(--danger); }
 
 /* ── Toggle Modo (Individual / Time) na toolbar da Agenda ── */
