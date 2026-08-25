@@ -2,10 +2,21 @@
 # Kastor — build da imagem Docker e push pro GHCR (GitHub Container Registry)
 #
 # Dispara em todo push na main. A imagem publicada é a que o docker-compose.yml
-# em produção referencia (ghcr.io/<owner>/kastor:latest).
+# em produção referencia (ghcr.io/<owner>/kastor:<sha>).
+#
+# Fluxo do deploy:
+#   1. Build + push da imagem no GHCR com dois tags: :latest e :<sha>
+#   2. Reescreve docker-compose.yml pra apontar pro :<sha> desse commit
+#   3. Commita e faz push (com [skip ci] pra NÃO retriggar o workflow)
+#   4. Dispara webhook do Portainer → Portainer faz git pull, vê tag novo,
+#      Swarm re-puxa a imagem do GHCR e faz update do serviço.
+#
+# Por que reescrever o tag? O webhook de STACK do Portainer roda "stack deploy"
+# usando cache local — se o tag continua :latest, Swarm não puxa a nova imagem.
+# Trocando pra SHA único a cada commit, Swarm é forçado a puxar do registry.
 #
 # Permissões:
-#   - contents: read      → clonar o repo
+#   - contents: write     → clonar o repo E commitar o compose com tag novo
 #   - packages: write     → publicar no ghcr.io (usa GITHUB_TOKEN automático)
 #
 # Cache:
@@ -19,16 +30,24 @@ on:
     branches:
       - main
 
+# Evita que dois deploys rodem em paralelo e briguem pelo git push.
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          # Persist token pra permitir git push depois.
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -59,10 +78,36 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Dispara o webhook do Portainer pra puxar a imagem nova e redeployar o
-      # serviço. Configurar no Portainer: Service kastor → Service webhooks →
-      # Create webhook, e cole a URL no secret PORTAINER_WEBHOOK_URL do repo.
-      # Se o secret não existir, o step é pulado (não quebra o build).
+      # Reescreve a linha `image:` do compose pra apontar pro SHA desse commit.
+      # Regex captura qualquer variação (${GITHUB_REPOSITORY_OWNER}/kastor:latest,
+      # andrigooliveira/kastor:<sha antigo>, etc.) e normaliza pra REPO_NAME:SHA.
+      - name: Pin image tag to commit SHA
+        run: |
+          sed -i -E "s|image: ghcr\.io/[^[:space:]]+/kastor:[^[:space:]]+|image: ghcr.io/${REPO_NAME}:${GITHUB_SHA}|" docker-compose.yml
+          echo "--- Diff no docker-compose.yml ---"
+          git --no-pager diff docker-compose.yml || true
+
+      # Commita o compose atualizado. [skip ci] previne loop (o próprio workflow
+      # não redispara em push do GITHUB_TOKEN, mas o marcador é seguro extra).
+      # Se nada mudou (raro, mas possível se dois commits pegarem o mesmo estado),
+      # apenas segue.
+      - name: Commit pinned compose
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet docker-compose.yml; then
+            echo "docker-compose.yml já estava no SHA atual — nada pra commitar."
+            exit 0
+          fi
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          git add docker-compose.yml
+          git commit -m "deploy: pin image to ${SHORT_SHA} [skip ci]"
+          git push
+
+      # Dispara o webhook do Portainer. Como o commit acima já foi pro main,
+      # o git pull do Portainer vai pegar o compose com o SHA novo.
+      # Configurar no Portainer: Stacks → kastor → Webhook, e cole a URL no
+      # secret PORTAINER_WEBHOOK_URL do repo. Se o secret não existir, pula.
       - name: Trigger Portainer redeploy
         if: ${{ success() && env.PORTAINER_WEBHOOK_URL != '' }}
         env:
