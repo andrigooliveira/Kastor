@@ -2894,6 +2894,23 @@ app.delete('/api/form-responses/:id', requireAuth, (req, res) => {
 const DASHBOARD_CHART_TYPES = ['bar', 'kpi', 'pie', 'line'];
 const DASHBOARD_KPI_AGGS = ['count', 'sum', 'avg'];
 const DASHBOARD_LINE_BUCKETS = ['auto', 'day', 'week', 'month'];
+const DASHBOARD_GRID_COLS = 12;
+/* Grid layout: x/y são 0-indexed, w/h em unidades (w cabe em 1..12, h em 1..8).
+   Se ausente, deixa null — cliente faz auto-placement. */
+function sanitizeWidgetLayout(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const x = Number.isInteger(raw.x) ? raw.x : null;
+  const y = Number.isInteger(raw.y) ? raw.y : null;
+  const w = Number.isInteger(raw.w) ? raw.w : null;
+  const h = Number.isInteger(raw.h) ? raw.h : null;
+  if (x === null || y === null || w === null || h === null) return null;
+  return {
+    x: Math.max(0, Math.min(DASHBOARD_GRID_COLS - 1, x)),
+    y: Math.max(0, y),
+    w: Math.max(1, Math.min(DASHBOARD_GRID_COLS - x, w)),
+    h: Math.max(1, Math.min(8, h))
+  };
+}
 function sanitizeDashboardWidgets(raw) {
   if (!Array.isArray(raw)) return [];
   const out = [];
@@ -2913,6 +2930,8 @@ function sanitizeDashboardWidgets(raw) {
       chartType,
       source: { templateId }
     };
+    const layout = sanitizeWidgetLayout(w.layout);
+    if (layout) widget.layout = layout;
     if (chartType === 'bar' || chartType === 'pie') {
       const fieldId = typeof src.fieldId === 'string' ? src.fieldId : null;
       if (!fieldId) continue; // bar/pie sem field não faz sentido

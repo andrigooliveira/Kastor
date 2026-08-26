@@ -14,12 +14,12 @@
 <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/geist-latin-ext.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/css/fonts.css?v=1">
-<link rel="stylesheet" href="/css/style.css?v=20260825ph5">
+<link rel="stylesheet" href="/css/style.css?v=20260825line">
 <!-- Preload dos JS pesados no <head> pra que o download comece IMEDIATAMENTE,
      em paralelo com o parse do HTML, em vez de esperar o parser chegar em
      </body>. Com immutable cache (max-age=1yr), na 2ª visita nem baixa. -->
 <link rel="preload" href="/vendor/lucide.min.js" as="script">
-<link rel="preload" href="/js/app.js?v=20260825ph5" as="script">
+<link rel="preload" href="/js/app.js?v=20260825line" as="script">
 <script type="text/javascript">
     // Clarity: analytics de heatmap/session replay. Não é crítico pro app —
     // deferido pra depois do primeiro paint pra não roubar tempo do LCP.
@@ -974,13 +974,15 @@
             <button class="btn btn-ghost btn-sm" onclick="closeDashboardView()"><i data-lucide="arrow-left" class="ic-sm"></i> Voltar</button>
             <div class="dashboards-view-title" id="dashboards-view-title"></div>
             <div class="dashboards-view-actions admin-only">
-              <button class="btn btn-ghost btn-sm" onclick="openDashboardEditor(_currentDashboardId)"><i data-lucide="pencil" class="ic-sm"></i> Editar</button>
+              <button class="btn btn-ghost btn-sm" id="dash-edit-toggle" onclick="toggleDashEditMode()"><i data-lucide="layout-grid" class="ic-sm"></i> Editar layout</button>
+              <button class="btn btn-ghost btn-sm" onclick="openDashboardEditor(_currentDashboardId)"><i data-lucide="pencil" class="ic-sm"></i> Editar nome</button>
               <button class="btn btn-ghost btn-sm danger" onclick="confirmDeleteDashboard(_currentDashboardId)"><i data-lucide="trash-2" class="ic-sm"></i> Excluir</button>
             </div>
           </div>
           <div id="dashboards-view-desc" class="dashboards-view-desc"></div>
           <div id="dashboards-view-filters" class="dashboards-view-filters"></div>
-          <div id="dashboards-view-widgets" class="dw-widget-grid"></div>
+          <div id="dashboards-view-widgets" class="dw-widget-grid dw-canvas"></div>
+          <div id="dashboards-view-records" class="dw-records-panel"></div>
         </div>
       </div>
     </div>
@@ -3777,7 +3779,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260825ph5"></script>
+<script src="/js/app.js?v=20260825line"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
@@ -3943,9 +3945,9 @@
     </div>
   </div>
 
-  <!-- ── DASHBOARD — editor com widgets configuráveis (fase 4) ── -->
+  <!-- ── DASHBOARD — editor simples (só nome/descrição; widgets moraram no canvas) ── -->
   <div class="modal-overlay" id="dashboard-editor-modal">
-    <div class="modal modal-lg">
+    <div class="modal modal-md">
       <div class="modal-header">
         <div class="modal-title" id="dashboard-editor-title">Novo dashboard</div>
         <button class="modal-close" onclick="closeModal('dashboard-editor-modal')"><i data-lucide="x" class="ic-sm"></i></button>
@@ -3960,19 +3962,81 @@
             <label class="form-label">Descrição (opcional)</label>
             <textarea class="form-control" id="de-description" rows="2" placeholder="Aparece abaixo do título."></textarea>
           </div>
-          <div class="form-group full">
-            <label class="form-label" style="display:flex;align-items:center;justify-content:space-between">
-              <span>Widgets</span>
-              <button type="button" class="btn btn-ghost btn-sm" onclick="deAddWidget()"><i data-lucide="plus" class="ic-sm"></i> Adicionar widget</button>
-            </label>
-            <div id="de-widgets-list" class="de-widgets-list"></div>
-            <div id="de-widgets-empty" class="fe-fields-empty" style="display:none">Nenhum widget ainda. Cada widget = 1 gráfico ou 1 número, baseado num formulário.</div>
-          </div>
         </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-ghost" onclick="closeModal('dashboard-editor-modal')">Cancelar</button>
         <button class="btn btn-primary" onclick="saveDashboard()">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── WIDGET CONFIG — configura UM widget individual (adicionar ou editar) ── -->
+  <div class="modal-overlay" id="widget-config-modal">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <div class="modal-title" id="wc-title">Configurar widget</div>
+        <button class="modal-close" onclick="closeModal('widget-config-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-group full">
+            <label class="form-label">Título do widget (opcional)</label>
+            <input class="form-control" id="wc-title-input" placeholder="Deixe em branco pra usar um título automático">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Tipo de visualização</label>
+            <select class="form-control" id="wc-chart-type" onchange="_wcOnChartTypeChange()">
+              <option value="bar">Gráfico de barras</option>
+              <option value="pie">Pizza (donut)</option>
+              <option value="line">Linha (timeline)</option>
+              <option value="kpi">KPI (número grande)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Formulário</label>
+            <select class="form-control" id="wc-template" onchange="_wcOnTemplateChange()"></select>
+          </div>
+          <div class="form-group" id="wc-field-group">
+            <label class="form-label" id="wc-field-label">Campo</label>
+            <select class="form-control" id="wc-field"></select>
+          </div>
+          <div class="form-group" id="wc-agg-group" style="display:none">
+            <label class="form-label">Agregação</label>
+            <select class="form-control" id="wc-agg" onchange="_wcOnAggChange()">
+              <option value="count">Contagem</option>
+              <option value="sum">Soma</option>
+              <option value="avg">Média</option>
+            </select>
+          </div>
+          <div class="form-group" id="wc-bucket-group" style="display:none">
+            <label class="form-label">Agrupar tempo em</label>
+            <select class="form-control" id="wc-bucket">
+              <option value="auto">Automático</option>
+              <option value="day">Dia</option>
+              <option value="week">Semana</option>
+              <option value="month">Mês</option>
+            </select>
+          </div>
+          <div class="form-group" id="wc-groupby-group" style="display:none">
+            <label class="form-label">Agrupar por (2ª dimensão)</label>
+            <select class="form-control" id="wc-groupby">
+              <option value="">Sem agrupar</option>
+            </select>
+          </div>
+          <div class="form-group full" id="wc-multi-kpi-group" style="display:none">
+            <label class="form-label" style="display:flex;align-items:center;justify-content:space-between">
+              <span>Múltiplas métricas (KPI)</span>
+              <button type="button" class="btn btn-ghost btn-sm" onclick="_wcAddKpiSeries()"><i data-lucide="plus" class="ic-sm"></i> Adicionar métrica</button>
+            </label>
+            <div id="wc-kpi-series-list" class="de-kpi-series" style="border:0;padding:0;margin:0"></div>
+            <div id="wc-kpi-series-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px">Deixe vazio pra usar um único KPI (configurado acima).</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal('widget-config-modal')">Cancelar</button>
+        <button class="btn btn-primary" onclick="saveWidgetConfig()">Salvar</button>
       </div>
     </div>
   </div>

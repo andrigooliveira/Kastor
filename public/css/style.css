@@ -715,7 +715,9 @@ body.user-moderator .full-admin-only { display: none !important; }
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius: 10px;
+  --radius-md: 12px;
   --radius-lg: 14px;
+  --radius-xl: 18px;
   --radius-pill: 999px;
 
   /* Sombras suaves multi-camada (estilo iOS/macOS) */
@@ -10808,16 +10810,22 @@ tr.demand-row {
 }
 .dashboards-card {
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: 16px;
+  border-radius: var(--radius-xl);
+  padding: 18px;
   background: var(--surface);
   cursor: pointer;
-  transition: border-color .12s, background .12s;
+  transition: border-color .12s, background .12s, box-shadow .12s, transform .12s;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.04);
 }
-.dashboards-card:hover { border-color: var(--accent); background: var(--surface-hover); }
+.dashboards-card:hover {
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 6px 20px -8px rgba(122,0,255,.25);
+  transform: translateY(-2px);
+}
 .dashboards-card-name { font-weight: 600; font-size: 15px; }
 .dashboards-card-desc { font-size: 12px; color: var(--text-muted); flex: 1; }
 .dashboards-card-meta { font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; margin-top: 4px; }
@@ -10844,11 +10852,11 @@ tr.demand-row {
 .dashboards-view-filters {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
-  margin-bottom: 14px;
+  gap: 10px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-lg);
   background: var(--surface);
 }
 .dashboards-view-filters .df-row {
@@ -10909,17 +10917,157 @@ tr.demand-row {
 .df-chip button:hover { color: var(--danger); background: var(--surface); }
 .dw-widget-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(12, 1fr);
+  grid-auto-rows: 200px;
+  gap: 12px;
+  position: relative;
+}
+.dw-widget {
+  min-height: unset;
+  overflow: hidden;
+  position: relative;
+}
+.dw-widget-header-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: none;
+  gap: 4px;
+  z-index: 2;
+}
+.dw-canvas.edit-mode .dw-widget-header-actions {
+  display: flex;
+}
+.dw-canvas.edit-mode .dw-widget {
+  cursor: move;
+}
+.dw-cell-empty {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius-xl);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color .12s, background .12s, color .12s;
+}
+.dw-cell-empty:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+  color: var(--accent-text);
+}
+.dw-cell-empty-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+/* Resize handles: 3 direções — SE (canto), E (borda direita), S (borda inferior).
+   Só aparecem em edit mode. Cursor específico por direção. */
+.dw-resize-handle {
+  position: absolute;
+  color: var(--text-muted);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 3;
+}
+.dw-canvas.edit-mode .dw-resize-handle {
+  display: flex;
+}
+.dw-resize-handle-se {
+  right: 2px;
+  bottom: 2px;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+}
+.dw-resize-handle-se::after {
+  content: '';
+  width: 10px;
+  height: 10px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  border-bottom-right-radius: 3px;
+  opacity: .6;
+}
+.dw-resize-handle-e {
+  right: 0;
+  top: 30%;
+  bottom: 30%;
+  width: 6px;
+  cursor: ew-resize;
+}
+.dw-resize-handle-e::after {
+  content: '';
+  width: 3px;
+  height: 20px;
+  border-radius: 2px;
+  background: currentColor;
+  opacity: .35;
+}
+.dw-resize-handle-e:hover::after { opacity: .8; }
+.dw-resize-handle-s {
+  bottom: 0;
+  left: 30%;
+  right: 30%;
+  height: 6px;
+  cursor: ns-resize;
+}
+.dw-resize-handle-s::after {
+  content: '';
+  height: 3px;
+  width: 20px;
+  border-radius: 2px;
+  background: currentColor;
+  opacity: .35;
+}
+.dw-resize-handle-s:hover::after { opacity: .8; }
+/* Ghost preview durante drag/resize */
+.dw-ghost {
+  border: 2px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border-radius: var(--radius-xl);
+  pointer-events: none;
+  z-index: 4;
+  transition: background .15s;
+}
+.dw-ghost.is-conflict {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+}
+/* Widget em drag: fica mais transparente pra dar destaque ao ghost */
+.dw-widget.is-dragging {
+  opacity: .35;
+  pointer-events: none;
+}
+/* Bloquear seleção de texto em edit mode — texto nos gráficos não pode ser
+   arrastado como seleção enquanto o usuário quer mover/redimensionar. */
+.dw-canvas.edit-mode {
+  user-select: none;
+  -webkit-user-select: none;
+}
+.dw-canvas.edit-mode .dw-widget {
+  cursor: grab;
+}
+.dw-canvas.edit-mode .dw-widget.is-dragging {
+  cursor: grabbing;
+}
+@media (max-width: 768px) {
+  /* Em mobile o grid vira 4 colunas pra widgets pequenos ainda caberem, e widgets
+     largos ocupam a linha inteira. Cliente ajusta w automaticamente pra 4 se maior. */
+  .dw-widget-grid { grid-template-columns: repeat(4, 1fr); grid-auto-rows: 180px; }
 }
 .dw-widget {
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: 14px;
+  border-radius: var(--radius-xl);
+  padding: 16px;
   background: var(--surface);
   min-height: 160px;
   display: flex;
   flex-direction: column;
+  box-shadow: 0 1px 2px rgba(0,0,0,.04);
 }
 .dw-widget-title {
   font-size: 12px;
@@ -10987,6 +11135,310 @@ tr.demand-row {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+/* Vertical bar chart — colunas estilo Excel */
+.dw-widget-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.dw-widget-title-row .dw-widget-title { margin-bottom: 0; }
+.dw-vbar {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  gap: 4px;
+  min-height: 0;
+}
+.dw-vbar-yaxis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  font-size: 10px;
+  color: var(--text-muted);
+  padding-right: 4px;
+  padding-bottom: 20px; /* alinha com xlabel embaixo */
+  font-variant-numeric: tabular-nums;
+}
+.dw-vbar-plot {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding-bottom: 20px; /* espaço pra xlabel */
+}
+.dw-vbar-grid {
+  position: absolute;
+  inset: 0 0 20px 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  pointer-events: none;
+}
+.dw-vbar-grid span {
+  display: block;
+  height: 1px;
+  background: var(--border);
+  opacity: .5;
+}
+.dw-vbar-groups {
+  position: absolute;
+  inset: 0 0 20px 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  z-index: 1;
+}
+.dw-vbar-group {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+  position: relative;
+}
+.dw-vbar-bars {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px;
+  width: 100%;
+  min-height: 0;
+}
+.dw-vbar-column {
+  flex: 1;
+  max-width: 32px;
+  min-width: 6px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+}
+.dw-vbar-value {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.dw-vbar-bar {
+  width: 100%;
+  border-radius: 4px 4px 0 0;
+  min-height: 0;
+  transition: opacity .12s;
+}
+.dw-vbar-bar:hover { opacity: .8; }
+.dw-vbar-xlabel {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  font-size: 10px;
+  color: var(--text-muted);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dw-vbar-legend {
+  margin-top: 0;
+}
+
+/* ── Painel de registros no rodapé do dashboard ──
+   Só aparece fora de edit mode. Colapsável. Lista todas as respostas de todos
+   os formulários usados nos widgets (respeitando os filtros do dashboard). */
+.dw-records-panel {
+  margin-top: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(0,0,0,.04);
+}
+.dw-canvas.edit-mode + .dw-records-panel { display: none; }
+.dw-records-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  cursor: pointer;
+  user-select: none;
+  background: var(--surface);
+  transition: background .12s;
+}
+.dw-records-header:hover { background: var(--surface-hover); }
+.dw-records-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  flex: 1;
+}
+.dw-records-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 2px 8px;
+  background: var(--surface-hover);
+  border-radius: var(--radius-pill);
+  font-weight: 500;
+}
+.dw-records-toggle {
+  color: var(--text-muted);
+  transition: transform .18s;
+}
+.dw-records-panel.is-open .dw-records-toggle { transform: rotate(180deg); }
+.dw-records-body {
+  display: none;
+  border-top: 1px solid var(--border);
+  padding: 0;
+  max-height: 500px;
+  overflow-y: auto;
+}
+.dw-records-panel.is-open .dw-records-body { display: block; }
+.dw-records-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.dw-records-table th,
+.dw-records-table td {
+  padding: 10px 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.dw-records-table th {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  background: var(--surface);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.dw-records-table tr:last-child td { border-bottom: 0; }
+.dw-records-table tbody tr:hover { background: var(--surface-hover); }
+.dw-records-table .rec-form {
+  font-weight: 600;
+  color: var(--text);
+}
+.dw-records-table .rec-user {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.dw-records-table .rec-date {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.dw-records-table .rec-demand a {
+  color: var(--accent-text);
+  text-decoration: none;
+}
+.dw-records-table .rec-demand a:hover { text-decoration: underline; }
+.dw-records-empty {
+  padding: 30px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* Legado — Grouped bars horizontais (mantido pra retrocompat, mas não usado
+   pelo _renderBarWidget novo). */
+.dw-bar-group {
+  margin-bottom: 8px;
+}
+.dw-bar-group-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+/* Legenda compartilhada (bar grouped + line multi) */
+.dw-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 10px;
+  font-size: 11px;
+}
+.dw-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text);
+}
+.dw-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+}
+/* Multi-KPI card */
+.dw-kpi-multi {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(70px, 1fr));
+  gap: 12px;
+  margin-top: auto;
+}
+.dw-kpi-multi-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.dw-kpi-multi-value {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.dw-kpi-multi-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Editor multi-KPI */
+.de-kpi-series {
+  border-top: 1px dashed var(--border);
+  padding-top: 8px;
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.de-kpi-series-head {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+.de-kpi-series-row {
+  display: grid;
+  grid-template-columns: 1fr 140px 1fr auto;
+  gap: 6px;
+  align-items: center;
+}
+.de-kpi-series-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+@media (max-width: 640px) {
+  .de-kpi-series-row { grid-template-columns: 1fr; }
+}
 /* Pie/donut chart */
 .dw-pie-wrap {
   display: grid;
@@ -11034,47 +11486,21 @@ tr.demand-row {
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
-/* Line chart */
+/* Line chart — usa estilo do Throughput (viewBox 1600x360 stretched to fit) */
 .dw-line-wrap {
   flex: 1;
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
-.dw-line-svg {
+.dw-line-wrap .dash-chart-svg {
   width: 100%;
-  height: 160px;
-  overflow: visible;
+  height: 100%;
+  min-height: 0;
+  display: block;
 }
-.dw-line-axis {
-  stroke: var(--border);
-  stroke-width: 1;
-}
-.dw-line-grid {
-  stroke: var(--border);
-  stroke-width: 1;
-  stroke-dasharray: 2 3;
-  opacity: .5;
-}
-.dw-line-path {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-.dw-line-area {
-  fill: var(--accent);
-  opacity: .15;
-}
-.dw-line-dot {
-  fill: var(--accent);
-  stroke: var(--surface);
-  stroke-width: 1.5;
-}
-.dw-line-tick {
-  font-size: 10px;
-  fill: var(--text-muted);
-}
+.dw-line-wrap .chart-hover-host { overflow: visible; }
+.dw-line-legend { margin-top: 0; }
 @media (max-width: 480px) {
   .dw-pie-wrap { grid-template-columns: 1fr; justify-items: center; }
 }
@@ -11147,43 +11573,85 @@ tr.demand-row {
 }
 .fr-card {
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: 12px 14px;
+  border-radius: var(--radius-xl);
+  padding: 16px 18px;
   background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0,0,0,.04);
 }
 .fr-card-head {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
+  align-items: flex-start;
+  gap: 12px;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
 }
 .fr-card-name {
-  font-weight: 600;
+  font-weight: 700;
+  font-size: 15px;
   flex: 1;
   min-width: 0;
+  color: var(--text);
 }
 .fr-card-meta {
+  display: block;
   font-size: 11px;
+  font-weight: 400;
   color: var(--text-muted);
+  margin-top: 2px;
 }
 .fr-card-actions {
   display: flex;
   gap: 4px;
+  flex-shrink: 0;
 }
 .fr-values {
   display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 4px 12px;
+  grid-template-columns: minmax(80px, max-content) 1fr;
+  gap: 0;
   font-size: 13px;
+  margin: 0;
 }
 .fr-values dt {
   color: var(--text-muted);
   font-weight: 500;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  padding: 10px 16px 10px 0;
+  border-bottom: 1px solid var(--border);
+  align-self: center;
 }
 .fr-values dd {
   margin: 0;
   color: var(--text);
+  font-weight: 600;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
   word-break: break-word;
+  align-self: center;
+  min-height: 20px;
+}
+.fr-values dt:last-of-type,
+.fr-values dd:last-of-type {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.fr-values dt:first-of-type,
+.fr-values dd:first-of-type {
+  padding-top: 0;
+}
+.fr-values dd .pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent-text);
+  font-size: 12px !important;
+  font-weight: 600;
+  margin-right: 4px;
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
 }
 .fr-tab-actions {
   display: flex;
