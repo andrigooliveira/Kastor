@@ -18012,8 +18012,10 @@ function _renderLineWidget(w, template, responses) {
       values: sortedKeys.map(bk => _lineBucketAggregate(buckets.get(bk), agg, field))
     }];
   }
-  // Geometria SVG — mesmo layout do gráfico de Throughput no /dashboard.
-  const W = 1600, H = 360, PL = 60, PR = 30, PT = 20, PB = 42;
+  // Geometria SVG — viewBox esticado horizontalmente, mas texto vai em overlay
+  // HTML (posicionado por %) pra evitar distorção. Todos os traços usam
+  // vector-effect="non-scaling-stroke" pra ficarem crisp em qualquer aspecto.
+  const W = 1600, H = 360, PL = 140, PR = 30, PT = 20, PB = 60;
   const innerW = W - PL - PR;
   const innerH = H - PT - PB;
   const rawMax = Math.max(1, ...series.flatMap(s => s.values));
@@ -18023,21 +18025,14 @@ function _renderLineWidget(w, template, responses) {
   for (let i = 0; i <= gridSteps; i++) gridLevels.push(yMax * i / gridSteps);
   const xFor = i => PL + (sortedKeys.length <= 1 ? innerW / 2 : i * innerW / (sortedKeys.length - 1));
   const yFor = v => PT + innerH - (v / yMax) * innerH;
-  // Gridlines Y (dashed) + Y labels
+  // Gridlines Y (dashed) — só as linhas no SVG; labels vêm no overlay HTML
   const yEls = gridLevels.map(v => {
     const y = yFor(v);
-    const label = Number.isInteger(v) ? String(v) : v.toFixed(1);
-    return `<line x1="${PL}" x2="${W - PR}" y1="${y}" y2="${y}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3 4" opacity="0.5"/>
-      <text x="${PL - 12}" y="${y + 5}" fill="var(--text-muted)" font-size="16" text-anchor="end">${label}</text>`;
+    return `<line x1="${PL}" x2="${W - PR}" y1="${y}" y2="${y}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3 4" opacity="0.5" vector-effect="non-scaling-stroke"/>`;
   }).join('');
-  // X labels — mostra 6-8 marcadores
-  const maxLabels = 8;
-  const labelStep = Math.max(1, Math.ceil(sortedKeys.length / maxLabels));
-  const xEls = sortedKeys.map((k, i) => {
-    if (i % labelStep !== 0 && i !== sortedKeys.length - 1) return '';
-    return `<text x="${xFor(i)}" y="${H - 12}" fill="var(--text-muted)" font-size="16" text-anchor="middle">${esc(xLabels[i])}</text>`;
-  }).join('');
-  // Séries (linhas + área quando single)
+  // Séries (linhas + área quando single) — vector-effect pra strokes ficarem crisp.
+  // Dots ficam em HTML overlay (SVG circles distorceriam por serem elípticos
+  // quando o viewBox esticado tem aspecto diferente do widget).
   const showArea = series.length === 1;
   const pathParts = series.map(s => {
     const pts = s.values.map((v, i) => [xFor(i), yFor(v)]);
@@ -18048,15 +18043,37 @@ function _renderLineWidget(w, template, responses) {
       const baseY = PT + innerH;
       area = `<path d="${path} L ${last[0]} ${baseY} L ${first[0]} ${baseY} Z" fill="${s.color}" fill-opacity="0.12"/>`;
     }
-    const dots = pts.map(p => `<circle cx="${p[0]}" cy="${p[1]}" r="4" fill="${s.color}" opacity="0.9"/>`).join('');
-    return `${area}<path d="${path}" fill="none" stroke="${s.color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>${dots}`;
+    return `${area}<path d="${path}" fill="none" stroke="${s.color}" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`;
   }).join('');
-  // Markers + guide (hover) — invisíveis até mousemove
+  // Dots HTML — posicionados por % pra não distorcer
   const uid = 'lw' + Math.random().toString(36).slice(2, 8);
-  const markerEls = series.map((s, i) =>
-    `<circle id="${uid}-mk-${i}" r="6" fill="${s.color}" stroke="#fff" stroke-width="2" vector-effect="non-scaling-stroke" style="opacity:0;pointer-events:none"/>`
+  const dotsHtml = series.map((s, si) => s.values.map((v, i) => {
+    const leftPct = (xFor(i) / W) * 100;
+    const topPct = (yFor(v) / H) * 100;
+    return `<div class="dw-line-dot" style="left:${leftPct}%;top:${topPct}%;background:${s.color}"></div>`;
+  }).join('')).join('');
+  // Hover markers em HTML também
+  const markerHtml = series.map((s, i) =>
+    `<div id="${uid}-mk-${i}" class="dw-line-marker" style="background:${s.color}"></div>`
   ).join('');
+  // Guide line vertical fica no SVG (vertical, não distorce)
   const guideEl = `<line id="${uid}-guide" class="chart-guide" x1="0" y1="${PT}" x2="0" y2="${PT + innerH}" stroke="var(--text-muted)" stroke-width="1" stroke-dasharray="2 3" vector-effect="non-scaling-stroke" style="opacity:0;pointer-events:none"/>`;
+  // Overlay HTML — labels sem distorção. Posições em % relativas ao container.
+  // Y axis: cada label na linha do grid correspondente (top:% baseado em H).
+  const yLabelsHtml = gridLevels.map(v => {
+    const y = yFor(v);
+    const topPct = (y / H) * 100;
+    const label = Number.isInteger(v) ? String(v) : v.toFixed(1);
+    return `<span class="dw-line-ylabel" style="top:${topPct}%">${label}</span>`;
+  }).join('');
+  // X axis: mostra 6-8 labels distribuídos
+  const maxLabels = 8;
+  const labelStep = Math.max(1, Math.ceil(sortedKeys.length / maxLabels));
+  const xLabelsHtml = sortedKeys.map((k, i) => {
+    if (i % labelStep !== 0 && i !== sortedKeys.length - 1) return '';
+    const leftPct = (xFor(i) / W) * 100;
+    return `<span class="dw-line-xlabel" style="left:${leftPct}%">${esc(xLabels[i])}</span>`;
+  }).join('');
   const legend = series.length > 1 ? `<div class="dw-legend dw-line-legend">${series.map(s => `<span class="dw-legend-item"><span class="dw-legend-dot" style="background:${s.color}"></span>${esc(s.name)}</span>`).join('')}</div>` : '';
   const html = `<div class="dw-widget">
     <div class="dw-widget-title-row">
@@ -18064,14 +18081,16 @@ function _renderLineWidget(w, template, responses) {
       ${legend}
     </div>
     <div class="dw-line-wrap">
-      <div class="chart-hover-host" id="${uid}-host" style="position:relative;flex:1;min-height:0">
+      <div class="chart-hover-host dw-line-host" id="${uid}-host">
         <svg viewBox="0 0 ${W} ${H}" class="dash-chart-svg" preserveAspectRatio="none">
           ${yEls}
           ${pathParts}
-          ${xEls}
           ${guideEl}
-          ${markerEls}
         </svg>
+        <div class="dw-line-dots">${dotsHtml}</div>
+        <div class="dw-line-markers">${markerHtml}</div>
+        <div class="dw-line-axis-y">${yLabelsHtml}</div>
+        <div class="dw-line-axis-x">${xLabelsHtml}</div>
         <div class="chart-tooltip" id="${uid}-tip"></div>
       </div>
       <div class="dw-kpi-label" style="margin-top:6px;font-size:11px">${aggLbl} · ${bucketLbl}${groupField ? ' · por ' + esc(groupField.label) : ''}</div>
@@ -18080,32 +18099,95 @@ function _renderLineWidget(w, template, responses) {
   // Empurra pra fila — attach do hover roda após innerHTML no _renderDashboardView.
   _pendingLineHovers.push({
     uid,
-    viewBox: { w: W, h: H, padL: PL, padR: PR, padT: PT, innerH },
+    viewBoxW: W, viewBoxH: H,
     points: sortedKeys.map((k, i) => ({
-      x: xFor(i),
+      xVb: xFor(i),                   // pra guide SVG
+      xPct: (xFor(i) / W) * 100,      // pra tooltip HTML
       label: _formatBucketLabel(k, bucketMode),
-      series: series.map(s => ({ name: s.name, value: s.values[i], y: yFor(s.values[i]), color: s.color }))
+      series: series.map(s => ({
+        name: s.name,
+        value: s.values[i],
+        yPct: (yFor(s.values[i]) / H) * 100,
+        color: s.color
+      }))
     })),
     seriesCount: series.length
   });
   return html;
 }
 let _pendingLineHovers = [];
+/* Hover handler específico do line widget — markers e labels são HTML overlay
+   (pra não distorcer), guide continua no SVG (linha vertical, insensível a
+   stretch horizontal). */
 function _flushLineHovers() {
   const queue = _pendingLineHovers;
   _pendingLineHovers = [];
   for (const q of queue) {
     const host = document.getElementById(q.uid + '-host');
-    if (!host) continue;
-    attachChartHover(host, {
-      viewBox: q.viewBox,
-      points: q.points,
-      lineEls: document.getElementById(q.uid + '-guide'),
-      markerEls: Array.from({ length: q.seriesCount }, (_, i) => document.getElementById(q.uid + '-mk-' + i)),
-      tooltipEl: document.getElementById(q.uid + '-tip'),
-      format: (v) => Number.isInteger(v) ? String(v) : Number(v).toFixed(2)
-    });
+    if (!host || !q.points.length) continue;
+    _attachLineHover(host, q);
   }
+}
+function _attachLineHover(host, q) {
+  const tip = document.getElementById(q.uid + '-tip');
+  const guide = document.getElementById(q.uid + '-guide');
+  const markers = Array.from({ length: q.seriesCount }, (_, i) => document.getElementById(q.uid + '-mk-' + i));
+  let lastIdx = -1;
+  const onMove = (e) => {
+    const rect = host.getBoundingClientRect();
+    if (!rect.width) return;
+    const localX = e.clientX - rect.left;
+    const xPctMouse = (localX / rect.width) * 100;
+    // Acha ponto mais próximo por xPct
+    let best = 0, bestDist = Infinity;
+    for (let i = 0; i < q.points.length; i++) {
+      const d = Math.abs(q.points[i].xPct - xPctMouse);
+      if (d < bestDist) { bestDist = d; best = i; }
+    }
+    if (best === lastIdx) return;
+    lastIdx = best;
+    const p = q.points[best];
+    // Guide (SVG, em unidades de viewBox)
+    if (guide) {
+      guide.setAttribute('x1', p.xVb);
+      guide.setAttribute('x2', p.xVb);
+      guide.style.opacity = '1';
+    }
+    // Markers HTML — posicionados por %
+    p.series.forEach((s, i) => {
+      const m = markers[i];
+      if (!m) return;
+      m.style.left = p.xPct + '%';
+      m.style.top = s.yPct + '%';
+      m.style.background = s.color;
+      m.style.opacity = '1';
+    });
+    // Tooltip
+    if (tip) {
+      const lines = p.series.map(s => {
+        const dot = `<span class="chart-tip-dot" style="background:${s.color}"></span>`;
+        const val = Number.isInteger(s.value) ? String(s.value) : Number(s.value).toFixed(2);
+        return `<div class="chart-tip-row">${dot}<span class="chart-tip-label">${esc(s.name || '')}</span><span class="chart-tip-value">${esc(val)}</span></div>`;
+      }).join('');
+      tip.innerHTML = `<div class="chart-tip-head">${esc(p.label)}</div>${lines}`;
+      const tipX = (p.xPct / 100) * rect.width;
+      const tipW = tip.offsetWidth || 140;
+      let left = tipX + 10;
+      if (left + tipW > rect.width - 8) left = tipX - tipW - 10;
+      if (left < 4) left = 4;
+      tip.style.left = left + 'px';
+      tip.style.top = '8px';
+      tip.style.opacity = '1';
+    }
+  };
+  const onLeave = () => {
+    lastIdx = -1;
+    if (tip) tip.style.opacity = '0';
+    if (guide) guide.style.opacity = '0';
+    markers.forEach(m => m && (m.style.opacity = '0'));
+  };
+  host.addEventListener('mousemove', onMove);
+  host.addEventListener('mouseleave', onLeave);
 }
 function _lineBucketAggregate(rs, agg, field) {
   if (agg === 'count') return rs.length;
