@@ -14,12 +14,12 @@
 <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/geist-latin-ext.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/css/fonts.css?v=1">
-<link rel="stylesheet" href="/css/style.css?v=20260825line">
+<link rel="stylesheet" href="/css/style.css?v=20260825barh">
 <!-- Preload dos JS pesados no <head> pra que o download comece IMEDIATAMENTE,
      em paralelo com o parse do HTML, em vez de esperar o parser chegar em
      </body>. Com immutable cache (max-age=1yr), na 2ª visita nem baixa. -->
 <link rel="preload" href="/vendor/lucide.min.js" as="script">
-<link rel="preload" href="/js/app.js?v=20260825line" as="script">
+<link rel="preload" href="/js/app.js?v=20260825barh" as="script">
 <script type="text/javascript">
     // Clarity: analytics de heatmap/session replay. Não é crítico pro app —
     // deferido pra depois do primeiro paint pra não roubar tempo do LCP.
@@ -3779,7 +3779,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260825line"></script>
+<script src="/js/app.js?v=20260825barh"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
@@ -3987,7 +3987,8 @@
           <div class="form-group">
             <label class="form-label">Tipo de visualização</label>
             <select class="form-control" id="wc-chart-type" onchange="_wcOnChartTypeChange()">
-              <option value="bar">Gráfico de barras</option>
+              <option value="bar">Barras verticais (colunas)</option>
+              <option value="barh">Barras horizontais</option>
               <option value="pie">Pizza (donut)</option>
               <option value="line">Linha (timeline)</option>
               <option value="kpi">KPI (número grande)</option>

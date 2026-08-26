@@ -17584,6 +17584,7 @@ function renderWidget(w) {
   const respList = _applyDashFilters(baseList, t.id);
   if (w.chartType === 'kpi')  return _renderKpiWidget(w, t, respList);
   if (w.chartType === 'bar')  return _renderBarWidget(w, t, respList);
+  if (w.chartType === 'barh') return _renderBarHorizontalWidget(w, t, respList);
   if (w.chartType === 'pie')  return _renderPieWidget(w, t, respList);
   if (w.chartType === 'line') return _renderLineWidget(w, t, respList);
   return `<div class="dw-widget"><div class="dw-widget-title">${esc(w.title || 'Widget')}</div><div class="dw-widget-empty">Tipo de gráfico desconhecido.</div></div>`;
@@ -17770,6 +17771,100 @@ function _renderBarWidget(w, template, responses) {
         <div class="dw-vbar-groups">${groupsHtml}</div>
       </div>
     </div>
+    ${total ? `<div class="dw-kpi-label" style="margin-top:6px;font-size:11px">Total de respostas: ${total}</div>` : ''}
+  </div>`;
+}
+/* Bar chart HORIZONTAL — barras deitadas com label à esquerda + track + valor
+   à direita. Menos denso pra widgets estreitos. Suporta groupBy (barras
+   agrupadas em blocos por primary, uma sub-linha por group value). */
+function _renderBarHorizontalWidget(w, template, responses) {
+  const primary = (template.fields || []).find(f => f.id === w.source.fieldId);
+  if (!primary) {
+    return `<div class="dw-widget"><div class="dw-widget-title">${esc(w.title || 'Barras')}</div><div class="dw-widget-empty">Campo fonte não existe mais.</div></div>`;
+  }
+  const groupField = w.groupByFieldId ? (template.fields || []).find(f => f.id === w.groupByFieldId) : null;
+  const total = responses.length;
+  if (!groupField) {
+    // Single dimension
+    const { entries, isSelect } = _aggregateCategorical(primary, responses);
+    if (!isSelect) entries.sort((a, b) => b[1] - a[1]);
+    const top = isSelect ? entries : entries.slice(0, 10);
+    const max = Math.max(1, ...top.map(([, v]) => v));
+    const bars = top.map(([, count, lbl]) => {
+      const pct = (count / max) * 100;
+      return `<div class="dw-bar-row" title="${esc(lbl)}: ${count}">
+        <div class="dw-bar-label">${esc(lbl)}</div>
+        <div class="dw-bar-track"><div class="dw-bar-fill" style="width:${pct}%"></div></div>
+        <div class="dw-bar-value">${_fmtNum(count)}</div>
+      </div>`;
+    }).join('');
+    return `<div class="dw-widget">
+      <div class="dw-widget-title">${esc(w.title || (primary.label + ' — distribuição'))}</div>
+      ${bars ? `<div class="dw-bar-chart">${bars}</div>` : '<div class="dw-widget-empty">Sem respostas ainda</div>'}
+      ${total ? `<div class="dw-kpi-label" style="margin-top:10px">Total de respostas: ${total}</div>` : ''}
+    </div>`;
+  }
+  // Grouped: matriz 2D
+  const primAgg = _aggregateCategorical(primary, responses);
+  const primaries = primAgg.isSelect ? primAgg.entries : primAgg.entries.slice(0, 10);
+  const groupAgg = _aggregateCategorical(groupField, responses);
+  const groups = groupAgg.entries.filter(([, c]) => c > 0).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  if (!primaries.length || !groups.length) {
+    return `<div class="dw-widget">
+      <div class="dw-widget-title">${esc(w.title || (primary.label + ' × ' + groupField.label))}</div>
+      <div class="dw-widget-empty">Sem dados suficientes pra agrupar</div>
+    </div>`;
+  }
+  const primIsMulti = primary.type === 'multiselect';
+  const grpIsMulti = groupField.type === 'multiselect';
+  const valsOf = (r, f, isMulti) => {
+    const v = r.values?.[f.id];
+    if (isMulti) return Array.isArray(v) ? v : [];
+    if (v === null || v === undefined || v === '') return [];
+    return [String(v)];
+  };
+  const matrix = new Map();
+  for (const r of responses) {
+    const pVals = valsOf(r, primary, primIsMulti);
+    const gVals = valsOf(r, groupField, grpIsMulti);
+    for (const pv of pVals) {
+      if (!matrix.has(pv)) matrix.set(pv, new Map());
+      const inner = matrix.get(pv);
+      for (const gv of gVals) inner.set(gv, (inner.get(gv) || 0) + 1);
+    }
+  }
+  let max = 1;
+  for (const [pv] of primaries) {
+    const inner = matrix.get(pv);
+    if (!inner) continue;
+    for (const c of inner.values()) if (c > max) max = c;
+  }
+  const blocks = primaries.map(([pv, , plbl]) => {
+    const inner = matrix.get(pv) || new Map();
+    const barsHtml = groups.map(([gv, , glbl], gi) => {
+      const c = inner.get(gv) || 0;
+      const pct = (c / max) * 100;
+      const color = _widgetColor(gi);
+      return `<div class="dw-bar-row" title="${esc(plbl)} · ${esc(glbl)}: ${c}">
+        <div class="dw-bar-label" style="padding-left:18px">${esc(glbl)}</div>
+        <div class="dw-bar-track"><div class="dw-bar-fill" style="width:${pct}%;background:${color}"></div></div>
+        <div class="dw-bar-value">${_fmtNum(c)}</div>
+      </div>`;
+    }).join('');
+    return `<div class="dw-bar-group">
+      <div class="dw-bar-group-label">${esc(plbl)}</div>
+      ${barsHtml}
+    </div>`;
+  }).join('');
+  const legend = `<div class="dw-legend">${groups.map(([, , glbl], gi) => `
+    <span class="dw-legend-item"><span class="dw-legend-dot" style="background:${_widgetColor(gi)}"></span>${esc(glbl)}</span>
+  `).join('')}</div>`;
+  return `<div class="dw-widget">
+    <div class="dw-widget-title-row">
+      <div class="dw-widget-title">${esc(w.title || (primary.label + ' × ' + groupField.label))}</div>
+      ${legend}
+    </div>
+    <div class="dw-bar-chart">${blocks}</div>
     ${total ? `<div class="dw-kpi-label" style="margin-top:6px;font-size:11px">Total de respostas: ${total}</div>` : ''}
   </div>`;
 }
@@ -18075,7 +18170,8 @@ function _wcRerenderFieldsAndOptions() {
   const w = _wcState.widgetId ? (dashboardById(_wcState.dashboardId)?.widgets || []).find(x => x.id === _wcState.widgetId) : null;
   const isKpi = chartType === 'kpi';
   const isLine = chartType === 'line';
-  const isCat = chartType === 'bar' || chartType === 'pie';
+  const isBarLike = chartType === 'bar' || chartType === 'barh';
+  const isCat = isBarLike || chartType === 'pie';
   const isMultiKpi = isKpi && Array.isArray(_wcState.kpiSeries) && _wcState.kpiSeries.length > 0;
   const agg = document.getElementById('wc-agg').value;
   const noField = (isKpi && !isMultiKpi && agg === 'count') || (isLine && agg === 'count');
@@ -18103,7 +18199,7 @@ function _wcRerenderFieldsAndOptions() {
   // GroupBy: bar ou line, quando tem campos categóricos
   const groupByGroup = document.getElementById('wc-groupby-group');
   const groupBySelect = document.getElementById('wc-groupby');
-  if ((chartType === 'bar' || isLine) && fields.some(f => f.type === 'select' || f.type === 'multiselect')) {
+  if ((isBarLike || isLine) && fields.some(f => f.type === 'select' || f.type === 'multiselect')) {
     groupByGroup.style.display = '';
     const currentGroupBy = w?.groupByFieldId || '';
     const selectedFieldId = fieldSelect.value;
@@ -18190,10 +18286,10 @@ async function saveWidgetConfig() {
     source: { templateId },
     layout: _wcState.layout || undefined
   };
-  if (chartType === 'bar' || chartType === 'pie') {
+  if (chartType === 'bar' || chartType === 'barh' || chartType === 'pie') {
     if (!fieldId) { toast('Escolha um campo', 'warn'); return; }
     widget.source.fieldId = fieldId;
-    if (chartType === 'bar' && groupBy) widget.groupByFieldId = groupBy;
+    if ((chartType === 'bar' || chartType === 'barh') && groupBy) widget.groupByFieldId = groupBy;
   } else if (chartType === 'kpi') {
     if (isMultiKpi) {
       for (const s of _wcState.kpiSeries) {

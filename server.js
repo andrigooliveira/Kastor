@@ -2891,7 +2891,7 @@ app.delete('/api/form-responses/:id', requireAuth, (req, res) => {
    fieldId (pra bar) ou só templateId (pra KPI de contagem). Admin cria/edita
    (todos visualizam). Renderização (agregação das responses → SVG) mora no
    client — server só valida a estrutura. */
-const DASHBOARD_CHART_TYPES = ['bar', 'kpi', 'pie', 'line'];
+const DASHBOARD_CHART_TYPES = ['bar', 'barh', 'kpi', 'pie', 'line'];
 const DASHBOARD_KPI_AGGS = ['count', 'sum', 'avg'];
 const DASHBOARD_LINE_BUCKETS = ['auto', 'day', 'week', 'month'];
 const DASHBOARD_GRID_COLS = 12;
@@ -2932,12 +2932,12 @@ function sanitizeDashboardWidgets(raw) {
     };
     const layout = sanitizeWidgetLayout(w.layout);
     if (layout) widget.layout = layout;
-    if (chartType === 'bar' || chartType === 'pie') {
+    if (chartType === 'bar' || chartType === 'barh' || chartType === 'pie') {
       const fieldId = typeof src.fieldId === 'string' ? src.fieldId : null;
-      if (!fieldId) continue; // bar/pie sem field não faz sentido
+      if (!fieldId) continue; // bar/barh/pie sem field não faz sentido
       widget.source.fieldId = fieldId;
-      // Bar suporta groupBy pra barras agrupadas (2ª dimensão). Pie ignora.
-      if (chartType === 'bar' && typeof w.groupByFieldId === 'string' && w.groupByFieldId) {
+      // Bar (vertical e horizontal) suporta groupBy pra 2ª dimensão. Pie ignora.
+      if ((chartType === 'bar' || chartType === 'barh') && typeof w.groupByFieldId === 'string' && w.groupByFieldId) {
         widget.groupByFieldId = w.groupByFieldId;
       }
     } else if (chartType === 'kpi') {
