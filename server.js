@@ -87,7 +87,7 @@ function undelete(type, entity) {
 function runSoftDeletePurge() {
   const cutoff = Date.now() - UNDO_PURGE_MS;
   let purged = 0;
-  for (const type of ['clients', 'projects', 'demands', 'flows', 'listas', 'clientTemplates', 'recurrings', 'tasks']) {
+  for (const type of ['clients', 'projects', 'demands', 'flows', 'listas', 'clientTemplates', 'recurrings', 'tasks', 'formTemplates', 'formResponses', 'dashboards']) {
     const arr = db[type] || [];
     const toRemove = arr.filter(e => e.deletedAt && Date.parse(e.deletedAt) < cutoff);
     for (const e of toRemove) {
@@ -2306,6 +2306,11 @@ app.get('/api/bootstrap', requireAuth, (req, res) => {
     tasks:           (db.tasks || []).filter(inWs),
     webhooks,
     discordChannels: canSeeWebhooks ? (db.discordChannels || []).map(publicBinding) : [],
+    // Universais: qualquer autenticado vê todos os templates/dashboards.
+    formTemplates:   (db.formTemplates || []).filter(notDeleted),
+    dashboards:      (db.dashboards    || []).filter(notDeleted),
+    // Responses ficam escopadas: só respostas dos squads em que o user está.
+    formResponses:   (db.formResponses || []).filter(r => notDeleted(r) && inWs(r)),
     // Informa ao cliente o range de schedules já carregados — pra saber
     // quando lazy-fetchar semanas fora dessa janela.
     _scheduleRange: { from: addDays(today(), -14), to: addDays(today(), 14) },
@@ -2695,6 +2700,319 @@ app.delete('/api/templates/:id', requireAuth, (req, res) => {
   if (!t || !canAccessWs(req.user, t.workspaceId)) return res.status(404).json({ error: 'Template não encontrado' });
   db.templates = db.templates.filter(x => x.id !== req.params.id);
   removeEntity('templates', req.params.id);
+  res.json({ ok: true });
+});
+
+/* ── FORMULÁRIOS (fase 2) ──
+   formTemplates são definições reutilizáveis: cada um tem um array `fields`
+   com {id, label, type, required, options?}. As respostas (formResponses) vão
+   em rota separada. Templates só admin cria/edita/deleta (delete é soft pra
+   preservar referência das respostas antigas). */
+const FORM_FIELD_TYPES = ['text', 'number', 'select', 'multiselect'];
+function sanitizeFormFields(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  const seenIds = new Set();
+  for (const f of raw) {
+    if (!f || typeof f !== 'object') continue;
+    const label = String(f.label || '').trim();
+    if (!label) continue;
+    const type = FORM_FIELD_TYPES.includes(f.type) ? f.type : 'text';
+    // ID vem do cliente pra sobreviver a renames; se não veio ou colide, gera.
+    let id = typeof f.id === 'string' && /^[a-z0-9_-]{1,40}$/i.test(f.id) ? f.id : uid();
+    if (seenIds.has(id)) id = uid();
+    seenIds.add(id);
+    const field = { id, label, type, required: !!f.required };
+    if (type === 'select' || type === 'multiselect') {
+      const opts = Array.isArray(f.options) ? f.options : [];
+      field.options = opts.map(o => {
+        if (typeof o === 'string') return { value: o, label: o };
+        const value = String(o?.value ?? '').trim();
+        const optLabel = String(o?.label ?? value).trim();
+        return value ? { value, label: optLabel || value } : null;
+      }).filter(Boolean);
+    }
+    out.push(field);
+  }
+  return out;
+}
+
+app.get('/api/form-templates', requireAuth, (req, res) => {
+  // Formulários são UNIVERSAIS — visíveis a todos autenticados independente do squad.
+  // O workspaceId no template é meramente informativo (onde foi criado).
+  res.json((db.formTemplates || []).filter(notDeleted));
+});
+
+app.post('/api/form-templates', requireAuth, adminOnly, (req, res) => {
+  const b = req.body || {};
+  const name = String(b.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Nome do formulário é obrigatório' });
+  const ws = b.workspaceId && canAccessWs(req.user, b.workspaceId) ? b.workspaceId : wsIdsFor(req.user)[0];
+  if (!ws) return res.status(400).json({ error: 'Squad inválido' });
+  const fields = sanitizeFormFields(b.fields);
+  const t = {
+    id: uid(),
+    workspaceId: ws,
+    name,
+    description: String(b.description || '').trim(),
+    fields,
+    createdBy: req.user.id,
+    createdAt: nowISO(),
+    updatedAt: nowISO()
+  };
+  if (!Array.isArray(db.formTemplates)) db.formTemplates = [];
+  db.formTemplates.push(t);
+  saveEntity('formTemplates', t);
+  broadcastChange('formTemplate', 'create', { id: t.id, workspaceId: t.workspaceId, byUserId: req.user.id });
+  res.status(201).json(t);
+});
+
+app.put('/api/form-templates/:id', requireAuth, adminOnly, (req, res) => {
+  const t = (db.formTemplates || []).find(x => x.id === req.params.id && notDeleted(x));
+  // Universal: admin de qualquer squad pode editar.
+  if (!t) return res.status(404).json({ error: 'Formulário não encontrado' });
+  const b = req.body || {};
+  if (typeof b.name === 'string' && b.name.trim()) t.name = b.name.trim();
+  if (typeof b.description === 'string') t.description = b.description.trim();
+  if (b.fields !== undefined) t.fields = sanitizeFormFields(b.fields);
+  t.updatedAt = nowISO();
+  saveEntity('formTemplates', t);
+  broadcastChange('formTemplate', 'update', { id: t.id, workspaceId: t.workspaceId, byUserId: req.user.id });
+  res.json(t);
+});
+
+app.delete('/api/form-templates/:id', requireAuth, adminOnly, (req, res) => {
+  const t = (db.formTemplates || []).find(x => x.id === req.params.id && notDeleted(x));
+  if (!t) return res.status(404).json({ error: 'Formulário não encontrado' });
+  softDelete('formTemplates', t, req.user.id);
+  broadcastChange('formTemplate', 'delete', { id: t.id, workspaceId: t.workspaceId, byUserId: req.user.id });
+  res.json({ ok: true });
+});
+
+/* ── RESPOSTAS DE FORMULÁRIOS ──
+   Qualquer usuário do squad pode preencher. Deletar só o autor ou admin.
+   Sem PUT no MVP: pra "corrigir" uma resposta, o usuário deleta e resubmete
+   (mantém a auditoria simples). Values são validados contra os fields do
+   template atual — se o template mudou depois, campos ausentes viram null. */
+function sanitizeResponseValues(template, rawValues) {
+  const values = {};
+  const missingRequired = [];
+  const errors = [];
+  for (const f of (template.fields || [])) {
+    const raw = rawValues?.[f.id];
+    const isEmpty = raw === undefined || raw === null || raw === '' || (Array.isArray(raw) && !raw.length);
+    if (isEmpty) {
+      if (f.required) missingRequired.push(f.label);
+      values[f.id] = f.type === 'multiselect' ? [] : null;
+      continue;
+    }
+    if (f.type === 'number') {
+      const n = Number(raw);
+      if (!Number.isFinite(n)) { errors.push(`Campo "${f.label}" precisa ser numérico`); values[f.id] = null; }
+      else values[f.id] = n;
+    } else if (f.type === 'text') {
+      values[f.id] = String(raw).slice(0, 4000);
+    } else if (f.type === 'select') {
+      const allowed = new Set((f.options || []).map(o => o.value));
+      const v = String(raw);
+      values[f.id] = allowed.has(v) ? v : null;
+      if (!allowed.has(v)) errors.push(`Opção inválida em "${f.label}"`);
+    } else if (f.type === 'multiselect') {
+      const allowed = new Set((f.options || []).map(o => o.value));
+      const arr = Array.isArray(raw) ? raw : [raw];
+      values[f.id] = arr.map(String).filter(v => allowed.has(v));
+    } else {
+      values[f.id] = null;
+    }
+  }
+  return { values, missingRequired, errors };
+}
+
+app.get('/api/form-responses', requireAuth, (req, res) => {
+  // Responses seguem escopadas por squad da DEMANDA (não do template) — user só
+  // enxerga respostas de demandas nos squads dele. Standalone (sem demandId)
+  // usa o workspaceId no próprio registro.
+  const ids = wsIdsFor(req.user);
+  let list = (db.formResponses || []).filter(r => notDeleted(r) && ids.includes(r.workspaceId));
+  if (req.query.demandId)   list = list.filter(r => r.demandId === req.query.demandId);
+  if (req.query.templateId) list = list.filter(r => r.templateId === req.query.templateId);
+  res.json(list);
+});
+
+app.post('/api/form-responses', requireAuth, (req, res) => {
+  const b = req.body || {};
+  const template = (db.formTemplates || []).find(t => t.id === b.templateId && notDeleted(t));
+  if (!template) return res.status(404).json({ error: 'Formulário não encontrado' });
+  // Universal: qualquer user autenticado pode usar o template. workspaceId da
+  // resposta vem da DEMANDA (não do template) — templates cross-squad são a norma.
+  let demandId = null;
+  let workspaceId = null;
+  if (b.demandId) {
+    const d = (db.demands || []).find(x => x.id === b.demandId);
+    if (!d) return res.status(400).json({ error: 'Demanda inválida' });
+    if (!canAccessWs(req.user, d.workspaceId)) return res.status(403).json({ error: 'Sem acesso ao squad da demanda' });
+    demandId = d.id;
+    workspaceId = d.workspaceId;
+  } else {
+    // Standalone: mantém no squad do template (compat) e valida acesso.
+    workspaceId = template.workspaceId;
+    if (workspaceId && !canAccessWs(req.user, workspaceId)) return res.status(403).json({ error: 'Sem acesso a este squad' });
+  }
+  const { values, missingRequired, errors } = sanitizeResponseValues(template, b.values);
+  if (missingRequired.length) return res.status(400).json({ error: `Campos obrigatórios: ${missingRequired.join(', ')}` });
+  if (errors.length) return res.status(400).json({ error: errors[0] });
+  const r = {
+    id: uid(),
+    workspaceId,
+    templateId: template.id,
+    demandId,
+    values,
+    submittedBy: req.user.id,
+    submittedAt: nowISO()
+  };
+  if (!Array.isArray(db.formResponses)) db.formResponses = [];
+  db.formResponses.push(r);
+  saveEntity('formResponses', r);
+  broadcastChange('formResponse', 'create', { id: r.id, workspaceId: r.workspaceId, demandId: r.demandId, byUserId: req.user.id });
+  res.status(201).json(r);
+});
+
+app.delete('/api/form-responses/:id', requireAuth, (req, res) => {
+  const r = (db.formResponses || []).find(x => x.id === req.params.id && notDeleted(x));
+  if (!r || !canAccessWs(req.user, r.workspaceId)) return res.status(404).json({ error: 'Resposta não encontrada' });
+  if (r.submittedBy !== req.user.id && !req.user.isAdmin) return res.status(403).json({ error: 'Sem permissão pra excluir esta resposta' });
+  softDelete('formResponses', r, req.user.id);
+  broadcastChange('formResponse', 'delete', { id: r.id, workspaceId: r.workspaceId, demandId: r.demandId, byUserId: req.user.id });
+  res.json({ ok: true });
+});
+
+/* ── DASHBOARDS (fase 4) ──
+   Painéis com widgets configuráveis. Widget aponta pra um formTemplate + um
+   fieldId (pra bar) ou só templateId (pra KPI de contagem). Admin cria/edita
+   (todos visualizam). Renderização (agregação das responses → SVG) mora no
+   client — server só valida a estrutura. */
+const DASHBOARD_CHART_TYPES = ['bar', 'kpi', 'pie', 'line'];
+const DASHBOARD_KPI_AGGS = ['count', 'sum', 'avg'];
+const DASHBOARD_LINE_BUCKETS = ['auto', 'day', 'week', 'month'];
+function sanitizeDashboardWidgets(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const w of raw) {
+    if (!w || typeof w !== 'object') continue;
+    const chartType = DASHBOARD_CHART_TYPES.includes(w.chartType) ? w.chartType : 'bar';
+    const src = w.source || {};
+    const templateId = typeof src.templateId === 'string' ? src.templateId : null;
+    if (!templateId) continue;
+    let id = typeof w.id === 'string' && /^[a-z0-9_-]{1,40}$/i.test(w.id) ? w.id : uid();
+    if (seen.has(id)) id = uid();
+    seen.add(id);
+    const widget = {
+      id,
+      title: String(w.title || '').trim().slice(0, 120),
+      chartType,
+      source: { templateId }
+    };
+    if (chartType === 'bar' || chartType === 'pie') {
+      const fieldId = typeof src.fieldId === 'string' ? src.fieldId : null;
+      if (!fieldId) continue; // bar/pie sem field não faz sentido
+      widget.source.fieldId = fieldId;
+      // Bar suporta groupBy pra barras agrupadas (2ª dimensão). Pie ignora.
+      if (chartType === 'bar' && typeof w.groupByFieldId === 'string' && w.groupByFieldId) {
+        widget.groupByFieldId = w.groupByFieldId;
+      }
+    } else if (chartType === 'kpi') {
+      // Multi-KPI: se kpiSeries vier, ignora kpiAggregate/source.fieldId antigos
+      // e usa a lista. Retrocompatível: se kpiSeries vazio, mantém single KPI.
+      const rawSeries = Array.isArray(w.kpiSeries) ? w.kpiSeries : [];
+      const series = [];
+      for (const s of rawSeries.slice(0, 4)) { // limite defensivo
+        if (!s || typeof s !== 'object') continue;
+        const agg = DASHBOARD_KPI_AGGS.includes(s.aggregate) ? s.aggregate : 'count';
+        const item = { label: String(s.label || '').trim().slice(0, 60), aggregate: agg };
+        if (agg !== 'count') {
+          if (typeof s.fieldId !== 'string' || !s.fieldId) continue;
+          item.fieldId = s.fieldId;
+        }
+        series.push(item);
+      }
+      if (series.length) {
+        widget.kpiSeries = series;
+      } else {
+        const agg = DASHBOARD_KPI_AGGS.includes(w.kpiAggregate) ? w.kpiAggregate : 'count';
+        widget.kpiAggregate = agg;
+        if (agg !== 'count') {
+          const fieldId = typeof src.fieldId === 'string' ? src.fieldId : null;
+          if (!fieldId) continue;
+          widget.source.fieldId = fieldId;
+        }
+      }
+    } else if (chartType === 'line') {
+      const agg = DASHBOARD_KPI_AGGS.includes(w.lineAggregate) ? w.lineAggregate : 'count';
+      const bucket = DASHBOARD_LINE_BUCKETS.includes(w.lineBucket) ? w.lineBucket : 'auto';
+      widget.lineAggregate = agg;
+      widget.lineBucket = bucket;
+      if (agg !== 'count') {
+        const fieldId = typeof src.fieldId === 'string' ? src.fieldId : null;
+        if (!fieldId) continue;
+        widget.source.fieldId = fieldId;
+      }
+      // Line também suporta groupBy pra múltiplas séries (uma linha por valor).
+      if (typeof w.groupByFieldId === 'string' && w.groupByFieldId) {
+        widget.groupByFieldId = w.groupByFieldId;
+      }
+    }
+    out.push(widget);
+  }
+  return out;
+}
+
+app.get('/api/dashboards', requireAuth, (req, res) => {
+  // Dashboards são UNIVERSAIS — visíveis a todos autenticados.
+  res.json((db.dashboards || []).filter(notDeleted));
+});
+
+app.post('/api/dashboards', requireAuth, adminOnly, (req, res) => {
+  const b = req.body || {};
+  const name = String(b.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Nome do dashboard é obrigatório' });
+  const ws = b.workspaceId && canAccessWs(req.user, b.workspaceId) ? b.workspaceId : wsIdsFor(req.user)[0];
+  if (!ws) return res.status(400).json({ error: 'Squad inválido' });
+  const d = {
+    id: uid(),
+    workspaceId: ws,
+    name,
+    description: String(b.description || '').trim(),
+    widgets: sanitizeDashboardWidgets(b.widgets),
+    createdBy: req.user.id,
+    createdAt: nowISO(),
+    updatedAt: nowISO()
+  };
+  if (!Array.isArray(db.dashboards)) db.dashboards = [];
+  db.dashboards.push(d);
+  saveEntity('dashboards', d);
+  broadcastChange('dashboard', 'create', { id: d.id, workspaceId: d.workspaceId, byUserId: req.user.id });
+  res.status(201).json(d);
+});
+
+app.put('/api/dashboards/:id', requireAuth, adminOnly, (req, res) => {
+  const d = (db.dashboards || []).find(x => x.id === req.params.id && notDeleted(x));
+  if (!d) return res.status(404).json({ error: 'Dashboard não encontrado' });
+  const b = req.body || {};
+  if (typeof b.name === 'string' && b.name.trim()) d.name = b.name.trim();
+  if (typeof b.description === 'string') d.description = b.description.trim();
+  if (b.widgets !== undefined) d.widgets = sanitizeDashboardWidgets(b.widgets);
+  d.updatedAt = nowISO();
+  saveEntity('dashboards', d);
+  broadcastChange('dashboard', 'update', { id: d.id, workspaceId: d.workspaceId, byUserId: req.user.id });
+  res.json(d);
+});
+
+app.delete('/api/dashboards/:id', requireAuth, adminOnly, (req, res) => {
+  const d = (db.dashboards || []).find(x => x.id === req.params.id && notDeleted(x));
+  if (!d) return res.status(404).json({ error: 'Dashboard não encontrado' });
+  softDelete('dashboards', d, req.user.id);
+  broadcastChange('dashboard', 'delete', { id: d.id, workspaceId: d.workspaceId, byUserId: req.user.id });
   res.json({ ok: true });
 });
 

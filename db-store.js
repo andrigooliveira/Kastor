@@ -25,7 +25,8 @@ const ENTITY_TYPES = [
   'demands', 'roles', 'positions', 'templates', 'webhooks', 'schedules', 'clientTemplates',
   'recurrings', 'listas', 'demandTypes', 'googleEvents', 'tasks',
   'passwords', 'passwordFolders', 'passwordAudits', 'posts',
-  'discordChannels'
+  'discordChannels',
+  'formTemplates', 'formResponses', 'dashboards'
 ];
 
 function createStore(config = {}) {

@@ -14,12 +14,12 @@
 <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/geist-latin-ext.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/css/fonts.css?v=1">
-<link rel="stylesheet" href="/css/style.css?v=20260825filterfix">
+<link rel="stylesheet" href="/css/style.css?v=20260825ph5">
 <!-- Preload dos JS pesados no <head> pra que o download comece IMEDIATAMENTE,
      em paralelo com o parse do HTML, em vez de esperar o parser chegar em
      </body>. Com immutable cache (max-age=1yr), na 2ª visita nem baixa. -->
 <link rel="preload" href="/vendor/lucide.min.js" as="script">
-<link rel="preload" href="/js/app.js?v=20260825filterfix" as="script">
+<link rel="preload" href="/js/app.js?v=20260825ph5" as="script">
 <script type="text/javascript">
     // Clarity: analytics de heatmap/session replay. Não é crítico pro app —
     // deferido pra depois do primeiro paint pra não roubar tempo do LCP.
@@ -96,12 +96,16 @@
     <nav class="sidebar-nav">
       <div class="nav-section">Visão Geral</div>
       <div class="nav-item active" data-page="dashboard" onclick="goPage('dashboard')">
-        <svg viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="6" height="6" rx="1.5" fill="currentColor" opacity=".5"/><rect x="9" y="1" width="6" height="6" rx="1.5" fill="currentColor"/><rect x="1" y="9" width="6" height="6" rx="1.5" fill="currentColor"/><rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" opacity=".5"/></svg>
-        Dashboard
+        <svg viewBox="0 0 16 16" fill="none"><path d="M2.5 7L8 2.5 13.5 7v6a1 1 0 01-1 1H3.5a1 1 0 01-1-1V7z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M6.5 14V9.5h3V14" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+        Início
       </div>
       <div class="nav-item" data-page="analytics" onclick="goPage('analytics')">
         <svg viewBox="0 0 16 16" fill="none"><path d="M2 2v11a1 1 0 001 1h11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 11V8M8 11V5M11 11V9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         Análises
+      </div>
+      <div class="nav-item" data-page="dashboards" onclick="goPage('dashboards')">
+        <svg viewBox="0 0 16 16" fill="none"><rect x="1.5" y="1.5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.4"/><rect x="8.5" y="1.5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.4"/><rect x="1.5" y="8.5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.4"/><rect x="8.5" y="8.5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.4"/></svg>
+        Dashboards
       </div>
 
       <div class="nav-section">Execução</div>
@@ -138,6 +142,10 @@
       <div class="nav-item" data-page="templates" onclick="goPage('templates')">
         <svg viewBox="0 0 16 16" fill="none"><rect x="2.5" y="1.5" width="9" height="13" rx="1" stroke="currentColor" stroke-width="1.5"/><path d="M5 5h4M5 8h4M5 11h2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M13.5 3.5v10a1 1 0 01-1 1H11" stroke="currentColor" stroke-width="1.5"/></svg>
         Templates
+      </div>
+      <div class="nav-item" data-page="forms" onclick="goPage('forms')">
+        <svg viewBox="0 0 16 16" fill="none"><rect x="3" y="1.5" width="10" height="13" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="5.5" cy="5.5" r=".5" fill="currentColor"/><circle cx="5.5" cy="8" r=".5" fill="currentColor"/><circle cx="5.5" cy="10.5" r=".5" fill="currentColor"/></svg>
+        Formulários
       </div>
       <div class="nav-item" data-page="kb" onclick="goPage('kb')">
         <svg viewBox="0 0 16 16" fill="none"><path d="M2.5 3.5A1 1 0 013.5 2.5H8v11H3.5a1 1 0 01-1-1V3.5zM13.5 3.5A1 1 0 0012.5 2.5H8v11h4.5a1 1 0 001-1V3.5z" stroke="currentColor" stroke-width="1.4"/><path d="M5 5.5h1.5M5 7.5h1.5M9.5 5.5H11M9.5 7.5H11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
@@ -204,7 +212,7 @@
       <button class="topbar-back" id="topbar-back" onclick="closeDemandDetail()" title="Voltar" style="display:none">
         <i data-lucide="arrow-left" class="ic-sm"></i>
       </button>
-      <div class="topbar-title" id="topbar-title">Dashboard</div>
+      <div class="topbar-title" id="topbar-title">Início</div>
       <!-- Slot pra pipeline visual da demanda (populado por renderDetail) -->
       <div class="topbar-pipeline-slot" id="topbar-pipeline"></div>
       <div class="topbar-actions">
@@ -911,6 +919,68 @@
         <!-- Detail view: post individual -->
         <div id="kb-detail-view" style="display:none">
           <div id="kb-detail-content"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── FORMULÁRIOS ── criação e gestão de forms (admin cria; usuários preenchem via demanda) -->
+    <div class="page" id="page-forms">
+      <div class="page-body">
+        <div class="filters-bar" style="margin-bottom:14px">
+          <div class="filter-input-wrap">
+            <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+            <input class="filter-input filter-input--with-icon" id="forms-search" placeholder="Buscar por nome…" oninput="renderForms()">
+          </div>
+          <button class="btn btn-primary btn-sm admin-only" style="margin-left:auto" onclick="openFormEditor(null)">
+            <i data-lucide="plus" class="ic-sm"></i> Novo formulário
+          </button>
+        </div>
+        <div class="table-wrap table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Formulário</th>
+                <th>Campos</th>
+                <th>Respostas</th>
+                <th>Criado por</th>
+                <th style="width:120px"></th>
+              </tr>
+            </thead>
+            <tbody id="forms-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── DASHBOARDS ── painéis com widgets configuráveis sobre respostas de formulários -->
+    <div class="page" id="page-dashboards">
+      <div class="page-body">
+        <!-- Lista de dashboards (grid) -->
+        <div id="dashboards-grid-view">
+          <div class="filters-bar" style="margin-bottom:14px">
+            <div class="filter-input-wrap">
+              <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+              <input class="filter-input filter-input--with-icon" id="dashboards-search" placeholder="Buscar dashboard…" oninput="renderDashboards()">
+            </div>
+            <button class="btn btn-primary btn-sm admin-only" style="margin-left:auto" onclick="openDashboardEditor(null)">
+              <i data-lucide="plus" class="ic-sm"></i> Novo dashboard
+            </button>
+          </div>
+          <div id="dashboards-cards" class="dashboards-cards"></div>
+        </div>
+        <!-- View mode de um dashboard específico -->
+        <div id="dashboards-view" style="display:none">
+          <div class="dashboards-view-head">
+            <button class="btn btn-ghost btn-sm" onclick="closeDashboardView()"><i data-lucide="arrow-left" class="ic-sm"></i> Voltar</button>
+            <div class="dashboards-view-title" id="dashboards-view-title"></div>
+            <div class="dashboards-view-actions admin-only">
+              <button class="btn btn-ghost btn-sm" onclick="openDashboardEditor(_currentDashboardId)"><i data-lucide="pencil" class="ic-sm"></i> Editar</button>
+              <button class="btn btn-ghost btn-sm danger" onclick="confirmDeleteDashboard(_currentDashboardId)"><i data-lucide="trash-2" class="ic-sm"></i> Excluir</button>
+            </div>
+          </div>
+          <div id="dashboards-view-desc" class="dashboards-view-desc"></div>
+          <div id="dashboards-view-filters" class="dashboards-view-filters"></div>
+          <div id="dashboards-view-widgets" class="dw-widget-grid"></div>
         </div>
       </div>
     </div>
@@ -3707,7 +3777,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260825filterfix"></script>
+<script src="/js/app.js?v=20260825ph5"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
@@ -3818,6 +3888,109 @@
         <button class="btn btn-ghost" id="dc-test-btn" onclick="testDiscordChannel()" style="margin-right:auto;display:none"><i data-lucide="send" class="ic-sm"></i> Enviar teste</button>
         <button class="btn btn-ghost" onclick="closeModal('dc-modal')">Cancelar</button>
         <button class="btn btn-primary" onclick="saveDiscordChannel()">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── FORMULÁRIO — editor de template com campos dinâmicos (fase 2) ── -->
+  <div class="modal-overlay" id="form-editor-modal">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <div class="modal-title" id="form-editor-title">Novo formulário</div>
+        <button class="modal-close" onclick="closeModal('form-editor-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-group full">
+            <label class="form-label">Nome do formulário *</label>
+            <input class="form-control" id="fe-name" placeholder="Ex: Registro de entrega de peça">
+          </div>
+          <div class="form-group full">
+            <label class="form-label">Descrição (opcional)</label>
+            <textarea class="form-control" id="fe-description" rows="2" placeholder="Aparece no topo do formulário quando alguém preenche."></textarea>
+          </div>
+          <div class="form-group full">
+            <label class="form-label" style="display:flex;align-items:center;justify-content:space-between">
+              <span>Campos</span>
+              <button type="button" class="btn btn-ghost btn-sm" onclick="feAddField()"><i data-lucide="plus" class="ic-sm"></i> Adicionar campo</button>
+            </label>
+            <div id="fe-fields-list" class="fe-fields-list"></div>
+            <div id="fe-fields-empty" class="fe-fields-empty" style="display:none">Nenhum campo ainda. Adicione ao menos um pra o formulário fazer sentido.</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal('form-editor-modal')">Cancelar</button>
+        <button class="btn btn-primary" onclick="saveFormTemplate()">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── FORMULÁRIO — picker de template (usado ao "Preencher formulário") ── -->
+  <div class="modal-overlay" id="form-picker-modal">
+    <div class="modal modal-md">
+      <div class="modal-header">
+        <div class="modal-title">Escolha um formulário</div>
+        <button class="modal-close" onclick="closeModal('form-picker-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+      </div>
+      <div class="modal-body">
+        <div class="filter-input-wrap" style="margin-bottom:12px">
+          <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+          <input class="filter-input filter-input--with-icon" id="fp-search" placeholder="Buscar formulário…" oninput="renderFormPickerList()">
+        </div>
+        <div id="fp-list" class="fp-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── DASHBOARD — editor com widgets configuráveis (fase 4) ── -->
+  <div class="modal-overlay" id="dashboard-editor-modal">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <div class="modal-title" id="dashboard-editor-title">Novo dashboard</div>
+        <button class="modal-close" onclick="closeModal('dashboard-editor-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-group full">
+            <label class="form-label">Nome *</label>
+            <input class="form-control" id="de-name" placeholder="Ex: Produção da equipe criativa">
+          </div>
+          <div class="form-group full">
+            <label class="form-label">Descrição (opcional)</label>
+            <textarea class="form-control" id="de-description" rows="2" placeholder="Aparece abaixo do título."></textarea>
+          </div>
+          <div class="form-group full">
+            <label class="form-label" style="display:flex;align-items:center;justify-content:space-between">
+              <span>Widgets</span>
+              <button type="button" class="btn btn-ghost btn-sm" onclick="deAddWidget()"><i data-lucide="plus" class="ic-sm"></i> Adicionar widget</button>
+            </label>
+            <div id="de-widgets-list" class="de-widgets-list"></div>
+            <div id="de-widgets-empty" class="fe-fields-empty" style="display:none">Nenhum widget ainda. Cada widget = 1 gráfico ou 1 número, baseado num formulário.</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal('dashboard-editor-modal')">Cancelar</button>
+        <button class="btn btn-primary" onclick="saveDashboard()">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── FORMULÁRIO — preenchimento de resposta (fields renderizados dinamicamente em JS) ── -->
+  <div class="modal-overlay" id="form-fill-modal">
+    <div class="modal modal-md">
+      <div class="modal-header">
+        <div class="modal-title" id="ff-title">Preencher formulário</div>
+        <button class="modal-close" onclick="closeModal('form-fill-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+      </div>
+      <div class="modal-body">
+        <div id="ff-description" style="font-size:12px;color:var(--text-muted);margin-bottom:12px"></div>
+        <div id="ff-fields"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal('form-fill-modal')">Cancelar</button>
+        <button class="btn btn-primary" onclick="submitFormResponse()">Enviar</button>
       </div>
     </div>
   </div>

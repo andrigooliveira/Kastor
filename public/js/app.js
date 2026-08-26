@@ -26,6 +26,9 @@ let listas = [];
 let tasks = []; // tarefas de projeto (kind='todo' das listas novas)
 let demandTypes = [];
 let discordChannels = []; // bindings cliente → canal do bot Discord
+let formTemplates = []; // definições de formulários (fase 2)
+let formResponses = []; // respostas preenchidas nos formulários
+let dashboards = [];    // painéis com widgets sobre respostas de formulários
 let _scheduleRangeLoaded = null; // { from, to } — range de schedules já em cache local
 let _scheduleFetchInFlight = null; // dedupe: se já tem fetch rolando, reusa a mesma promise
 let notifPollTimer = null;
@@ -97,7 +100,9 @@ const PAGE_TO_PATH = {
   clientsModels: '/clients/models',
   devtools:     '/devtools',
   passwords:    '/passwords',
-  kb:           '/knowledge-base'
+  kb:           '/knowledge-base',
+  forms:        '/forms',
+  dashboards:   '/dashboards'
 };
 const PATH_TO_PAGE = Object.fromEntries(Object.entries(PAGE_TO_PATH).map(([k, v]) => [v, k]));
 
@@ -239,6 +244,11 @@ function parseRoute(path) {
   if ((m = p.match(/^\/users\/([^/]+)$/)))                  return { page: 'users',        modal: 'user',    op: 'edit', id: m[1] };
   if ((m = p.match(/^\/integrations\/webhooks\/new$/)))     return { page: 'integrations', modal: 'webhook', op: 'new' };
   if ((m = p.match(/^\/integrations\/webhooks\/([^/]+)$/))) return { page: 'integrations', modal: 'webhook', op: 'edit', id: m[1] };
+  if ((m = p.match(/^\/forms\/new$/)))                      return { page: 'forms',        modal: 'form',    op: 'new' };
+  if ((m = p.match(/^\/forms\/([^/]+)$/)))                  return { page: 'forms',        modal: 'form',    op: 'edit', id: m[1] };
+  if ((m = p.match(/^\/dashboards\/new$/)))                 return { page: 'dashboards',   modal: 'dashboard', op: 'new' };
+  if ((m = p.match(/^\/dashboards\/([^/]+)\/edit$/)))       return { page: 'dashboards',   modal: 'dashboard', op: 'edit', id: m[1] };
+  if ((m = p.match(/^\/dashboards\/([^/]+)$/)))             return { page: 'dashboards',   view: 'detail', id: m[1] };
   // Tabs específicas — precedem o modal edit pra não bater com o regex genérico.
   if ((m = p.match(/^\/recurring\/demands$/)))              return { page: 'recurring',    tab: 'demandas' };
   if ((m = p.match(/^\/recurring\/lists$/)))                return { page: 'recurring',    tab: 'listas' };
@@ -259,7 +269,7 @@ function applyRoute() {
     else renderCurrent();
     // 2) Fecha qualquer modal roteado aberto (modais transitórios como
     //    confirm/prompt/picker/cmdk ficam intactos).
-    const ROUTED = ['demand-modal','project-modal','flow-modal','user-modal','webhook-modal','recurring-modal'];
+    const ROUTED = ['demand-modal','project-modal','flow-modal','user-modal','webhook-modal','recurring-modal','form-editor-modal','dashboard-editor-modal'];
     document.querySelectorAll('.modal-overlay.open').forEach(m => {
       if (ROUTED.includes(m.id)) m.classList.remove('open');
     });
@@ -296,6 +306,14 @@ function applyRoute() {
       if (typeof openUserModal === 'function') openUserModal(r.op === 'edit' ? r.id : null);
     } else if (r.modal === 'webhook' && me?.isAdmin) {
       if (typeof openWebhookModal === 'function') openWebhookModal(r.op === 'edit' ? r.id : null);
+    } else if (r.modal === 'form' && me?.isAdmin) {
+      if (typeof openFormEditor === 'function') openFormEditor(r.op === 'edit' ? r.id : null);
+    } else if (r.page === 'dashboards' && r.view === 'detail' && r.id) {
+      _currentDashboardId = r.id;
+      renderDashboards();
+    } else if (r.modal === 'dashboard' && me?.isAdmin) {
+      if (r.op === 'edit' && r.id) _currentDashboardId = r.id;
+      if (typeof openDashboardEditor === 'function') openDashboardEditor(r.op === 'edit' ? r.id : null);
     } else if (r.modal === 'recurring') {
       if (typeof openRecurringModal === 'function') openRecurringModal(r.op === 'edit' ? r.id : null);
     }
@@ -1642,7 +1660,7 @@ const KB_SHORTCUTS = [
   { keys: ['?'],       label: 'Mostrar atalhos' },
   { keys: ['/'],       label: 'Focar na busca' },
   { keys: ['n'],       label: 'Nova demanda' },
-  { keys: ['g', 'd'],  label: 'Ir para Dashboard' },
+  { keys: ['g', 'd'],  label: 'Ir para Início' },
   { keys: ['g', 'l'],  label: 'Ir para Demandas' },
   { keys: ['g', 'm'],  label: 'Ir para Minhas Demandas' },
   { keys: ['g', 'c'],  label: 'Ir para Capacidade' },
@@ -1780,7 +1798,7 @@ function cmdkActions() {
     { icon: 'plus',         label: 'Novo cliente',                  kind: 'Ação',     run: () => typeof openClientModal === 'function' && openClientModal(null) },
     { icon: 'plus',         label: 'Nova lista recorrente',         kind: 'Ação',     run: () => typeof openNovaListaModal === 'function' && openNovaListaModal() },
     // Navegação — telas principais
-    { icon: 'gauge',        label: 'Ir para Dashboard',             kind: 'Navegar',  run: () => goPage('dashboard') },
+    { icon: 'home',         label: 'Ir para Início',                kind: 'Navegar',  run: () => goPage('dashboard') },
     { icon: 'list',         label: 'Ir para Demandas',              kind: 'Navegar',  run: () => goPage('list') },
     { icon: 'user',         label: 'Ir para Minhas Demandas',       kind: 'Navegar',  run: () => goPage('mine') },
     { icon: 'bar-chart-3',  label: 'Ir para Análises · Capacidade', kind: 'Navegar',  run: () => { goPage('analytics'); setTimeout(() => typeof setAnalyticsTab === 'function' && setAnalyticsTab('capacity'), 30); } },
@@ -2190,7 +2208,7 @@ function openModal(id) {
     if (focusable) focusable.focus();
   }, 80);
 }
-const ROUTED_MODAL_IDS = ['demand-modal','project-modal','flow-modal','user-modal','webhook-modal','client-modal'];
+const ROUTED_MODAL_IDS = ['demand-modal','project-modal','flow-modal','user-modal','webhook-modal','client-modal','form-editor-modal','dashboard-editor-modal'];
 function closeModal(id) {
   hideTooltip();
   $(id).classList.remove('open');
@@ -3485,7 +3503,7 @@ async function enterApp() {
   initTooltips();
   initKeyboardShortcuts();
   initAutoCdropObserver();
-  $('topbar-title').textContent = 'Dashboard';
+  $('topbar-title').textContent = 'Início';
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-dashboard'));
   if ($('metrics-grid')) $('metrics-grid').innerHTML = skeletonMetrics();
   if ($('list-table-body')) $('list-table-body').innerHTML = skeletonTableRows(9, 7);
@@ -3537,6 +3555,9 @@ async function loadAll() {
     demandTypes     = b.demandTypes     || [];
     tasks           = b.tasks           || [];
     discordChannels = b.discordChannels || [];
+    formTemplates   = b.formTemplates   || [];
+    formResponses   = b.formResponses   || [];
+    dashboards      = b.dashboards      || [];
     // Server só manda schedules dos últimos 14 dias + próximos 14 dias
     // (~4 semanas). Se agenda navegar pra fora, lazy fetch (ver ensureSchedulesLoaded).
     if (b._scheduleRange) _scheduleRangeLoaded = { ...b._scheduleRange };
@@ -3674,13 +3695,14 @@ function applySidebarCollapseInit() {
 }
 
 const PAGE_TITLES = {
-  dashboard: 'Dashboard', list: 'Demandas', mine: 'Minhas Demandas',
+  dashboard: 'Início', list: 'Demandas', mine: 'Minhas Demandas',
   clients: 'Clientes', projects: 'Projetos', flows: 'Fluxos de Demanda',
   workspaces: 'Squads', users: 'Usuários', profile: 'Meu Perfil',
   analytics: 'Análises', templates: 'Templates', integrations: 'Integrações', agenda: 'Agenda',
   recurring: 'Listas de tarefas', docs: 'Documentação', clientsModels: 'Modelos de Cliente',
   trash: 'Lixeira', recurringDemands: 'Demandas Recorrentes',
   devtools: 'Dev Tools', passwords: 'Cofre de Senhas', kb: 'Base de conhecimento',
+  forms: 'Formulários', dashboards: 'Dashboards',
   'post-editor': 'Editor de post', 'demand-detail': 'Demanda'
 };
 function goPage(page) {
@@ -4055,6 +4077,8 @@ function renderCurrent() {
     case 'devtools':   renderDevTools(); break;
     case 'passwords':  renderPasswords(); break;
     case 'kb':         renderKbFromRoute(); break;
+    case 'forms':      renderForms(); break;
+    case 'dashboards': renderDashboards(); break;
     case 'post-editor': renderPostEditorFromRoute(); break;
     case 'demand-detail': if (detailId) renderDetail(); break;
     case 'docs':       renderDocsFromRoute(); break;
@@ -8464,7 +8488,7 @@ function setDemandDetailTab(name) {
   const btn = document.querySelector(`.detail-tab[onclick*="'${name}'"]`);
   if (btn) btn.classList.add('is-active');
   // Show/hide panes
-  ['comments','checklist','activity','stages'].forEach(k => {
+  ['comments','checklist','forms','activity','stages'].forEach(k => {
     const el = document.getElementById('tab-pane-' + k);
     if (el) el.style.display = k === name ? '' : 'none';
   });
@@ -8474,6 +8498,7 @@ function setDemandDetailTab(name) {
   const d = demandById(detailId);
   if (name === 'activity') _renderActivityTab(d);
   if (name === 'stages')   _renderStagesTab(d);
+  if (name === 'forms')    _renderFormsTab(d);
   paintIcons();
 }
 function renderDetail() {
@@ -8743,6 +8768,7 @@ function renderDetail() {
         <div class="detail-tabs">
           <button class="detail-tab ${activeTab === 'comments' ? 'is-active' : ''}" onclick="setDemandDetailTab('comments')">Comentários</button>
           <button class="detail-tab ${activeTab === 'checklist' ? 'is-active' : ''}" onclick="setDemandDetailTab('checklist')">Checklist</button>
+          <button class="detail-tab ${activeTab === 'forms' ? 'is-active' : ''}" onclick="setDemandDetailTab('forms')">Formulários${_formsResponseCountForDemand(d.id) ? ` <span class="detail-tab-badge">${_formsResponseCountForDemand(d.id)}</span>` : ''}</button>
           <button class="detail-tab ${activeTab === 'activity' ? 'is-active' : ''}" onclick="setDemandDetailTab('activity')">Atividade</button>
           <button class="detail-tab ${activeTab === 'stages' ? 'is-active' : ''} ${hasCustomization ? 'has-mark' : ''}" onclick="setDemandDetailTab('stages')">Etapas</button>
           <div class="detail-tabs-spacer"></div>
@@ -8808,6 +8834,11 @@ function renderDetail() {
             <div id="tab-activity-body"></div>
           </div>
 
+          <!-- Formulários (respostas anexadas à demanda) -->
+          <div class="detail-tab-pane" id="tab-pane-forms" style="${activeTab === 'forms' ? '' : 'display:none'}">
+            <div id="tab-forms-body"></div>
+          </div>
+
           <!-- Etapas (customizar) -->
           <div class="detail-tab-pane" id="tab-pane-stages" style="${activeTab === 'stages' ? '' : 'display:none'}">
             <div id="tab-stages-body"></div>
@@ -8829,9 +8860,10 @@ function renderDetail() {
   const legacyFooter = document.getElementById('detail-footer');
   if (legacyFooter) { legacyFooter.innerHTML = ''; legacyFooter.hidden = true; }
 
-  // Renderiza a subview ativa (Atividade/Etapas) — comentários e checklist já vêm inline.
+  // Renderiza a subview ativa (Atividade/Etapas/Formulários) — comentários e checklist já vêm inline.
   if (activeTab === 'activity') _renderActivityTab(d);
   if (activeTab === 'stages')   _renderStagesTab(d);
+  if (activeTab === 'forms')    _renderFormsTab(d);
 
   // Owner picker (custom dropdown com avatar)
   buildOwnerPicker(d, owner);
@@ -16510,6 +16542,1434 @@ function renderTemplates() {
     </tr>`;
   }).join('') : `<tr><td colspan="5">${emptyState('Nenhum template cadastrado', 'Crie um template a partir da área de criação de demanda usando o botão "Salvar como template".', 'default')}</td></tr>`;
 }
+
+/* ── FORMULÁRIOS ──
+   Página admin pra CRUD de formTemplates. Lista os templates do squad ativo
+   e abre o editor (modal form-editor-modal) pra criar/editar/duplicar.
+   Deletar é soft-delete (a rota do server preserva o registro pra manter
+   referência de respostas antigas). */
+const FORM_FIELD_TYPE_LABELS = {
+  text: 'Texto curto',
+  number: 'Número',
+  select: 'Seleção única',
+  multiselect: 'Seleção múltipla'
+};
+function formTemplateById(id) { return (formTemplates || []).find(t => t.id === id); }
+function formResponseCountFor(templateId) {
+  return (formResponses || []).filter(r => r.templateId === templateId).length;
+}
+function renderForms() {
+  const body = document.getElementById('forms-table-body');
+  if (!body) return;
+  const q = norm(document.getElementById('forms-search')?.value || '');
+  // Universal: formulários são visíveis pra todos, independente do squad.
+  const list = (formTemplates || [])
+    .filter(t => !q || norm(t.name).includes(q))
+    .sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  if (!list.length) {
+    body.innerHTML = `<tr><td colspan="5">${emptyState(
+      q ? 'Nenhum formulário bate com a busca' : 'Nenhum formulário criado ainda',
+      q ? 'Tente outro termo.' : 'Só admin cria formulários. Clique em "Novo formulário" pra começar.',
+      'default'
+    )}</td></tr>`;
+  } else {
+    body.innerHTML = list.map(t => {
+      const creator = userById(t.createdBy);
+      const respCount = formResponseCountFor(t.id);
+      const canEdit = !!me?.isAdmin;
+      return `<tr class="row-hover-actions">
+        <td><strong>${esc(t.name)}</strong>${t.description ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px">${esc(t.description.slice(0, 80))}${t.description.length > 80 ? '…' : ''}</div>` : ''}</td>
+        <td>${(t.fields || []).length}</td>
+        <td>${respCount}</td>
+        <td>${creator ? esc(creator.name) : '<span style="color:var(--text-muted)">—</span>'}</td>
+        <td>
+          <div class="row-actions">
+            ${canEdit ? `<button class="detail-icon-btn" title="Editar" onclick="openFormEditor('${t.id}')"><i data-lucide="pencil" class="ic-sm"></i></button>` : ''}
+            ${canEdit ? `<button class="detail-icon-btn" title="Duplicar" onclick="duplicateFormTemplate('${t.id}')"><i data-lucide="copy" class="ic-sm"></i></button>` : ''}
+            ${canEdit ? `<button class="detail-icon-btn danger" title="Excluir" onclick="confirmDeleteFormTemplate('${t.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>` : ''}
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+  }
+  if (window.lucide?.createIcons) lucide.createIcons();
+}
+
+/* Estado do editor — vive em memória enquanto o modal está aberto. */
+let _feEditingId = null;
+let _feFields = []; // [{id, label, type, required, options?}]
+
+function openFormEditor(templateId) {
+  if (!me?.isAdmin) { toast('Apenas administradores podem criar formulários', 'warn'); return; }
+  _feEditingId = templateId || null;
+  const t = templateId ? formTemplateById(templateId) : null;
+  document.getElementById('form-editor-title').textContent = t ? 'Editar formulário' : 'Novo formulário';
+  document.getElementById('fe-name').value = t?.name || '';
+  document.getElementById('fe-description').value = t?.description || '';
+  _feFields = t ? deepCopyFields(t.fields) : [];
+  _feRenderFields();
+  openModal('form-editor-modal');
+  // URL reflete o estado — atalho compartilhável e Voltar/Avançar do browser funciona.
+  navPush(templateId ? `/forms/${templateId}` : '/forms/new');
+}
+function deepCopyFields(fields) {
+  return (fields || []).map(f => ({
+    id: f.id,
+    label: f.label,
+    type: f.type,
+    required: !!f.required,
+    options: Array.isArray(f.options) ? f.options.map(o => ({ value: o.value, label: o.label })) : undefined
+  }));
+}
+function _feRenderFields() {
+  const host = document.getElementById('fe-fields-list');
+  const empty = document.getElementById('fe-fields-empty');
+  if (!host) return;
+  empty.style.display = _feFields.length ? 'none' : '';
+  host.innerHTML = _feFields.map((f, idx) => {
+    const isSelect = f.type === 'select' || f.type === 'multiselect';
+    const optionsHtml = isSelect ? `
+      <div class="fe-field-options">
+        <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.4px">Opções</div>
+        ${(f.options || []).map((o, oi) => `
+          <div class="fe-option-row">
+            <input class="form-control" placeholder="Opção" value="${esc(o.label)}" oninput="feUpdateOption('${f.id}', ${oi}, this.value)">
+            <button type="button" class="detail-icon-btn danger" title="Remover opção" onclick="feRemoveOption('${f.id}', ${oi})"><i data-lucide="x" class="ic-sm"></i></button>
+          </div>
+        `).join('')}
+        <button type="button" class="btn btn-ghost btn-sm" style="align-self:flex-start" onclick="feAddOption('${f.id}')"><i data-lucide="plus" class="ic-sm"></i> Adicionar opção</button>
+      </div>
+    ` : '';
+    return `<div class="fe-field-row" data-field-id="${f.id}">
+      <div class="fe-drag" title="Arraste ou use as setas pra reordenar"><i data-lucide="grip-vertical" class="ic-sm"></i></div>
+      <input class="form-control" placeholder="Rótulo do campo" value="${esc(f.label)}" oninput="feUpdateField('${f.id}', 'label', this.value)">
+      <select class="form-control" onchange="feUpdateField('${f.id}', 'type', this.value)">
+        ${Object.entries(FORM_FIELD_TYPE_LABELS).map(([v, lbl]) => `<option value="${v}" ${f.type === v ? 'selected' : ''}>${lbl}</option>`).join('')}
+      </select>
+      <label class="fe-req"><input type="checkbox" ${f.required ? 'checked' : ''} onchange="feUpdateField('${f.id}', 'required', this.checked)"> Obrigatório</label>
+      <div class="fe-actions">
+        <button type="button" class="detail-icon-btn" title="Subir" ${idx === 0 ? 'disabled' : ''} onclick="feMoveField('${f.id}', -1)"><i data-lucide="arrow-up" class="ic-sm"></i></button>
+        <button type="button" class="detail-icon-btn" title="Descer" ${idx === _feFields.length - 1 ? 'disabled' : ''} onclick="feMoveField('${f.id}', 1)"><i data-lucide="arrow-down" class="ic-sm"></i></button>
+        <button type="button" class="detail-icon-btn danger" title="Remover campo" onclick="feRemoveField('${f.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
+      </div>
+      ${optionsHtml}
+    </div>`;
+  }).join('');
+  if (window.lucide?.createIcons) lucide.createIcons();
+}
+function feAddField() {
+  _feFields.push({ id: 'f_' + Math.random().toString(36).slice(2, 10), label: '', type: 'text', required: false });
+  _feRenderFields();
+}
+function feRemoveField(fid) {
+  _feFields = _feFields.filter(f => f.id !== fid);
+  _feRenderFields();
+}
+function feMoveField(fid, delta) {
+  const idx = _feFields.findIndex(f => f.id === fid);
+  const target = idx + delta;
+  if (idx < 0 || target < 0 || target >= _feFields.length) return;
+  const [f] = _feFields.splice(idx, 1);
+  _feFields.splice(target, 0, f);
+  _feRenderFields();
+}
+function feUpdateField(fid, key, val) {
+  const f = _feFields.find(x => x.id === fid);
+  if (!f) return;
+  f[key] = val;
+  // Mudou pra select/multiselect → garante que exista array de opções.
+  if (key === 'type') {
+    if ((val === 'select' || val === 'multiselect') && !Array.isArray(f.options)) f.options = [];
+    if (val !== 'select' && val !== 'multiselect') delete f.options;
+    _feRenderFields(); // troca de tipo re-renderiza pra mostrar/esconder editor de opções
+  }
+}
+function feAddOption(fid) {
+  const f = _feFields.find(x => x.id === fid);
+  if (!f) return;
+  if (!Array.isArray(f.options)) f.options = [];
+  f.options.push({ value: '', label: '' });
+  _feRenderFields();
+}
+function feRemoveOption(fid, oi) {
+  const f = _feFields.find(x => x.id === fid);
+  if (!f?.options) return;
+  f.options.splice(oi, 1);
+  _feRenderFields();
+}
+function feUpdateOption(fid, oi, label) {
+  const f = _feFields.find(x => x.id === fid);
+  if (!f?.options?.[oi]) return;
+  f.options[oi].label = label;
+  // Value acompanha label (slug simples) pra evitar ter que digitar duas vezes.
+  f.options[oi].value = norm(label).replace(/\s+/g, '_').replace(/[^a-z0-9_-]/gi, '');
+  // Não re-renderiza aqui (foco perderia). Value é derivado no submit.
+}
+async function saveFormTemplate() {
+  const name = document.getElementById('fe-name').value.trim();
+  if (!name) { toast('Nome do formulário é obrigatório', 'warn'); return; }
+  // Valida cada campo antes de mandar
+  const cleanFields = [];
+  for (const f of _feFields) {
+    const label = String(f.label || '').trim();
+    if (!label) { toast('Todo campo precisa de um rótulo', 'warn'); return; }
+    if ((f.type === 'select' || f.type === 'multiselect')) {
+      const opts = (f.options || []).filter(o => String(o?.label || '').trim());
+      if (!opts.length) { toast(`Campo "${label}" precisa de ao menos uma opção`, 'warn'); return; }
+      cleanFields.push({ ...f, options: opts });
+    } else {
+      cleanFields.push(f);
+    }
+  }
+  const payload = {
+    name,
+    description: document.getElementById('fe-description').value.trim(),
+    fields: cleanFields,
+    workspaceId: activeWs
+  };
+  try {
+    if (_feEditingId) {
+      const updated = await api('/form-templates/' + _feEditingId, 'PUT', payload);
+      formTemplates = formTemplates.map(t => t.id === updated.id ? updated : t);
+    } else {
+      const created = await api('/form-templates', 'POST', payload);
+      formTemplates.push(created);
+    }
+    closeModal('form-editor-modal');
+    toast(_feEditingId ? 'Formulário atualizado' : 'Formulário criado', 'success');
+    renderForms();
+  } catch (e) {
+    toast(e.message || 'Erro ao salvar formulário', 'error');
+  }
+}
+async function duplicateFormTemplate(id) {
+  const t = formTemplateById(id);
+  if (!t) return;
+  try {
+    const created = await api('/form-templates', 'POST', {
+      name: t.name + ' (cópia)',
+      description: t.description || '',
+      fields: deepCopyFields(t.fields),
+      workspaceId: activeWs
+    });
+    formTemplates.push(created);
+    toast('Formulário duplicado', 'success');
+    renderForms();
+  } catch (e) {
+    toast(e.message || 'Erro ao duplicar', 'error');
+  }
+}
+/* ── FORMULÁRIOS na demanda (fase 3) ──
+   Aba "Formulários" no detalhe da demanda: lista as respostas anexadas
+   (`formResponse.demandId === d.id`) e permite preencher novas via picker. */
+function _formsResponseCountForDemand(demandId) {
+  if (!demandId) return 0;
+  return (formResponses || []).filter(r => r.demandId === demandId).length;
+}
+function _renderFormsTab(d) {
+  if (!d) return;
+  const host = document.getElementById('tab-forms-body');
+  if (!host) return;
+  const list = (formResponses || [])
+    .filter(r => r.demandId === d.id)
+    .sort((a, b) => (b.submittedAt || '').localeCompare(a.submittedAt || ''));
+  // Universal: qualquer template pode ser preenchido (não escopa por squad).
+  const canPreencher = (formTemplates || []).length > 0;
+  const actions = `<div class="fr-tab-actions">
+    <button class="btn btn-primary btn-sm" onclick="openFormPicker('${d.id}')" ${canPreencher ? '' : 'disabled title="Nenhum formulário criado ainda"'}><i data-lucide="plus" class="ic-sm"></i> Preencher formulário</button>
+  </div>`;
+  if (!list.length) {
+    host.innerHTML = actions + `<div class="fr-empty">${canPreencher ? 'Nenhum formulário preenchido ainda. Clique em "Preencher formulário" acima pra começar.' : 'Nenhum formulário criado ainda. Peça pro admin criar um em <strong>Formulários</strong>.'}</div>`;
+  } else {
+    host.innerHTML = actions + '<div class="fr-list">' + list.map(r => {
+      const t = formTemplateById(r.templateId);
+      const u = userById(r.submittedBy);
+      const canDel = r.submittedBy === me.id || me.isAdmin;
+      const valuesHtml = t ? _renderResponseValues(t, r) : '<em style="color:var(--text-muted)">Formulário original foi excluído — dados preservados abaixo.</em><br>' + _renderResponseValuesRaw(r);
+      return `<div class="fr-card">
+        <div class="fr-card-head">
+          ${avatarHTML(u, 'avatar avatar-sm')}
+          <div class="fr-card-name">${esc(t?.name || 'Formulário excluído')}<div class="fr-card-meta">${esc(u?.name || '—')} · ${fmtDateTime(r.submittedAt)}</div></div>
+          <div class="fr-card-actions">
+            ${canDel ? `<button class="detail-icon-btn danger" title="Excluir resposta" onclick="confirmDeleteFormResponse('${r.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>` : ''}
+          </div>
+        </div>
+        <dl class="fr-values">${valuesHtml}</dl>
+      </div>`;
+    }).join('') + '</div>';
+  }
+  if (window.lucide?.createIcons) lucide.createIcons();
+}
+function _renderResponseValues(template, response) {
+  return (template.fields || []).map(f => {
+    const v = response.values?.[f.id];
+    let display;
+    if (v === null || v === undefined || v === '' || (Array.isArray(v) && !v.length)) {
+      display = '<span style="color:var(--text-muted)">—</span>';
+    } else if (f.type === 'select') {
+      const opt = (f.options || []).find(o => o.value === v);
+      display = esc(opt?.label || v);
+    } else if (f.type === 'multiselect') {
+      display = v.map(val => {
+        const opt = (f.options || []).find(o => o.value === val);
+        return `<span class="pill" style="font-size:11px;margin-right:4px">${esc(opt?.label || val)}</span>`;
+      }).join('');
+    } else {
+      display = esc(String(v));
+    }
+    return `<dt>${esc(f.label)}</dt><dd>${display}</dd>`;
+  }).join('');
+}
+function _renderResponseValuesRaw(response) {
+  return Object.entries(response.values || {}).map(([k, v]) => {
+    const val = Array.isArray(v) ? v.join(', ') : (v ?? '—');
+    return `<dt>${esc(k)}</dt><dd>${esc(String(val))}</dd>`;
+  }).join('');
+}
+
+/* ── PICKER de template (modal form-picker-modal) ── */
+let _fpDemandId = null;
+function openFormPicker(demandId) {
+  _fpDemandId = demandId || null;
+  document.getElementById('fp-search').value = '';
+  renderFormPickerList();
+  openModal('form-picker-modal');
+}
+function renderFormPickerList() {
+  const host = document.getElementById('fp-list');
+  if (!host) return;
+  const q = norm(document.getElementById('fp-search')?.value || '');
+  // Universal: qualquer template pode ser preenchido pra qualquer demanda.
+  const list = (formTemplates || [])
+    .filter(t => !q || norm(t.name).includes(q) || norm(t.description || '').includes(q))
+    .sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  if (!list.length) {
+    host.innerHTML = `<div class="fr-empty">${q ? 'Nenhum formulário bate com a busca.' : 'Nenhum formulário criado ainda.'}</div>`;
+    return;
+  }
+  host.innerHTML = list.map(t => `
+    <button type="button" class="fp-item" onclick="pickFormTemplate('${t.id}')">
+      <div class="fp-item-name">${esc(t.name)}</div>
+      ${t.description ? `<div class="fp-item-desc">${esc(t.description)}</div>` : ''}
+      <div class="fp-item-meta">${(t.fields || []).length} campo(s)</div>
+    </button>
+  `).join('');
+}
+function pickFormTemplate(templateId) {
+  closeModal('form-picker-modal');
+  openFormFill(templateId, _fpDemandId);
+}
+
+/* ── FILL: modal de preenchimento (renderiza fields do template) ── */
+let _ffTemplateId = null;
+let _ffDemandId = null;
+let _ffValues = {};
+function openFormFill(templateId, demandId) {
+  const t = formTemplateById(templateId);
+  if (!t) { toast('Formulário não encontrado', 'error'); return; }
+  _ffTemplateId = templateId;
+  _ffDemandId = demandId || null;
+  _ffValues = {};
+  document.getElementById('ff-title').textContent = t.name;
+  const descEl = document.getElementById('ff-description');
+  descEl.textContent = t.description || '';
+  descEl.style.display = t.description ? '' : 'none';
+  _renderFillFields(t);
+  openModal('form-fill-modal');
+}
+function _renderFillFields(t) {
+  const host = document.getElementById('ff-fields');
+  host.innerHTML = (t.fields || []).map(f => {
+    const req = f.required ? '<span class="ff-field-required">*</span>' : '';
+    let input = '';
+    if (f.type === 'text') {
+      input = `<input class="form-control" data-field-id="${f.id}" oninput="_ffSetValue('${f.id}', this.value)">`;
+    } else if (f.type === 'number') {
+      input = `<input type="number" class="form-control" data-field-id="${f.id}" oninput="_ffSetValue('${f.id}', this.value)">`;
+    } else if (f.type === 'select') {
+      input = `<select class="form-control" data-field-id="${f.id}" onchange="_ffSetValue('${f.id}', this.value)">
+        <option value="">— Selecione —</option>
+        ${(f.options || []).map(o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('')}
+      </select>`;
+    } else if (f.type === 'multiselect') {
+      input = `<div class="ff-multi-list">
+        ${(f.options || []).map(o => `<label class="ff-multi-item"><input type="checkbox" value="${esc(o.value)}" onchange="_ffToggleMulti('${f.id}', this.value, this.checked)"> ${esc(o.label)}</label>`).join('')}
+      </div>`;
+    }
+    return `<div class="ff-field">
+      <label class="ff-field-label">${esc(f.label)}${req}</label>
+      ${input}
+    </div>`;
+  }).join('');
+  if (window.lucide?.createIcons) lucide.createIcons();
+}
+function _ffSetValue(fieldId, val) {
+  _ffValues[fieldId] = val;
+}
+function _ffToggleMulti(fieldId, val, on) {
+  const cur = Array.isArray(_ffValues[fieldId]) ? _ffValues[fieldId] : [];
+  const set = new Set(cur);
+  if (on) set.add(val); else set.delete(val);
+  _ffValues[fieldId] = [...set];
+}
+async function submitFormResponse() {
+  const t = formTemplateById(_ffTemplateId);
+  if (!t) return;
+  try {
+    const created = await api('/form-responses', 'POST', {
+      templateId: _ffTemplateId,
+      demandId: _ffDemandId,
+      values: _ffValues
+    });
+    formResponses.push(created);
+    closeModal('form-fill-modal');
+    toast('Formulário enviado', 'success');
+    // Re-renderiza a aba (badge + lista atualizam) se ainda estamos no detalhe.
+    if (currentPage === 'demand-detail' && detailId === _ffDemandId) {
+      renderDetail();
+    }
+  } catch (e) {
+    toast(e.message || 'Erro ao enviar formulário', 'error');
+  }
+}
+async function confirmDeleteFormResponse(id) {
+  const r = (formResponses || []).find(x => x.id === id);
+  if (!r) return;
+  const t = formTemplateById(r.templateId);
+  const ok = await showConfirm({
+    title: 'Excluir resposta',
+    message: `Excluir esta resposta do formulário <strong>${esc(t?.name || 'formulário')}</strong>?`,
+    okLabel: 'Excluir',
+    danger: true
+  });
+  if (!ok) return;
+  try {
+    await api('/form-responses/' + id, 'DELETE');
+    formResponses = formResponses.filter(x => x.id !== id);
+    toast('Resposta excluída', 'success');
+    if (currentPage === 'demand-detail' && detailId === r.demandId) {
+      renderDetail();
+    } else if (currentPage === 'forms') {
+      renderForms();
+    }
+  } catch (e) {
+    toast(e.message || 'Erro ao excluir', 'error');
+  }
+}
+
+async function confirmDeleteFormTemplate(id) {
+  const t = formTemplateById(id);
+  if (!t) return;
+  const respCount = formResponseCountFor(t.id);
+  const respWarn = respCount > 0 ? `<br><br><em>Existem ${respCount} resposta(s) associadas.</em> Elas continuam gravadas mas ficam sem template ativo até você recriar/restaurar.` : '';
+  const ok = await showConfirm({
+    title: 'Excluir formulário',
+    message: `Excluir o formulário <strong>${esc(t.name)}</strong>?${respWarn}`,
+    okLabel: 'Excluir',
+    danger: true
+  });
+  if (!ok) return;
+  try {
+    await api('/form-templates/' + id, 'DELETE');
+    formTemplates = formTemplates.filter(x => x.id !== id);
+    toast('Formulário excluído', 'success');
+    renderForms();
+  } catch (e) {
+    toast(e.message || 'Erro ao excluir', 'error');
+  }
+}
+
+/* ── DASHBOARDS (fase 4) ──
+   Painéis com widgets configuráveis. Widget = { source: {templateId, fieldId?},
+   chartType: 'bar'|'kpi', kpiAggregate?: 'count'|'sum'|'avg' }. Renderização
+   das agregações mora aqui — server só valida a estrutura. */
+let _currentDashboardId = null;
+
+function dashboardById(id) { return (dashboards || []).find(d => d.id === id); }
+
+function renderDashboards() {
+  const gridView = document.getElementById('dashboards-grid-view');
+  const detailView = document.getElementById('dashboards-view');
+  if (!gridView || !detailView) return;
+  if (_currentDashboardId) {
+    const d = dashboardById(_currentDashboardId);
+    if (!d) { _currentDashboardId = null; renderDashboards(); return; }
+    gridView.style.display = 'none';
+    detailView.style.display = '';
+    _renderDashboardView(d);
+  } else {
+    gridView.style.display = '';
+    detailView.style.display = 'none';
+    _renderDashboardsGrid();
+  }
+  if (window.lucide?.createIcons) lucide.createIcons();
+}
+function _renderDashboardsGrid() {
+  const host = document.getElementById('dashboards-cards');
+  if (!host) return;
+  const q = norm(document.getElementById('dashboards-search')?.value || '');
+  // Universal: dashboards são visíveis pra todos, independente do squad.
+  const list = (dashboards || [])
+    .filter(d => !q || norm(d.name).includes(q) || norm(d.description || '').includes(q))
+    .sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  if (!list.length) {
+    host.innerHTML = emptyState(
+      q ? 'Nenhum dashboard bate com a busca' : 'Nenhum dashboard criado ainda',
+      me?.isAdmin ? 'Clique em "Novo dashboard" pra montar um painel de widgets.' : 'Só admin cria dashboards — peça pra criar um.',
+      'default'
+    );
+    return;
+  }
+  host.innerHTML = list.map(d => `
+    <div class="dashboards-card" onclick="openDashboardView('${d.id}')">
+      <div class="dashboards-card-name">${esc(d.name)}</div>
+      <div class="dashboards-card-desc">${esc(d.description || '')}</div>
+      <div class="dashboards-card-meta">
+        <i data-lucide="layout-dashboard" class="ic-xs"></i>
+        ${(d.widgets || []).length} widget(s)
+      </div>
+    </div>
+  `).join('');
+}
+function _renderDashboardView(d) {
+  document.getElementById('dashboards-view-title').textContent = d.name;
+  const descEl = document.getElementById('dashboards-view-desc');
+  descEl.textContent = d.description || '';
+  descEl.style.display = d.description ? '' : 'none';
+  _renderDashFilters(d);
+  const grid = document.getElementById('dashboards-view-widgets');
+  if (!(d.widgets || []).length) {
+    grid.innerHTML = `<div class="dw-widget"><div class="dw-widget-empty">Sem widgets ainda. ${me?.isAdmin ? 'Clique em "Editar" pra adicionar.' : ''}</div></div>`;
+    return;
+  }
+  grid.innerHTML = d.widgets.map(w => renderWidget(w)).join('');
+}
+
+/* ── FILTROS do view mode ──
+   Estado local (não persiste no dashboard salvo — mas presets vão pra localStorage
+   por usuário/dashboard). Reseta ao entrar/sair da view. Aplica:
+   - período (submittedAt)
+   - workspaceId (squad)
+   - clientId + projectId (via demand → project → client)
+   - submittedBy (autor)
+   - fieldFilters: { [templateId]: { [fieldId]: [valuesAllowed] } } */
+function _emptyDashFilters() {
+  return { period: 'all', dateFrom: '', dateTo: '', workspaceId: '', clientId: '', projectId: '', submittedBy: '', fieldFilters: {} };
+}
+let _dashFilters = _emptyDashFilters();
+function _resetDashFilters() { _dashFilters = _emptyDashFilters(); }
+function _dashFilterActiveCount() {
+  let n = 0;
+  if (_dashFilters.period !== 'all') n++;
+  if (_dashFilters.workspaceId) n++;
+  if (_dashFilters.clientId)    n++;
+  if (_dashFilters.projectId)   n++;
+  if (_dashFilters.submittedBy) n++;
+  for (const tid in (_dashFilters.fieldFilters || {})) {
+    for (const fid in (_dashFilters.fieldFilters[tid] || {})) {
+      const arr = _dashFilters.fieldFilters[tid][fid];
+      if (Array.isArray(arr) && arr.length) n++;
+    }
+  }
+  return n;
+}
+function _templatesUsedIn(dashboard) {
+  const ids = new Set((dashboard?.widgets || []).map(w => w.source?.templateId).filter(Boolean));
+  return [...ids].map(id => formTemplateById(id)).filter(Boolean);
+}
+function _renderDashFilters(d) {
+  const host = document.getElementById('dashboards-view-filters');
+  if (!host) return;
+  const wss = (workspaces || []).slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  const clientsAll = (clients || []).filter(c => !c.deletedAt);
+  const clientsForWs = clientsAll
+    .filter(c => !_dashFilters.workspaceId || c.workspaceId === _dashFilters.workspaceId)
+    .sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  const projectsForClient = (projects || [])
+    .filter(p => !p.deletedAt)
+    .filter(p => !_dashFilters.workspaceId || p.workspaceId === _dashFilters.workspaceId)
+    .filter(p => !_dashFilters.clientId || p.clientId === _dashFilters.clientId)
+    .sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  // Usuários que já preencheram algum formulário (evita mostrar 300 opções irrelevantes)
+  const submitterIds = new Set((formResponses || []).map(r => r.submittedBy).filter(Boolean));
+  const submitters = (users || []).filter(u => submitterIds.has(u.id)).sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  const templatesUsed = _templatesUsedIn(d);
+  const activeCount = _dashFilterActiveCount();
+  const presets = _dashPresetsFor(d.id);
+  host.innerHTML = `
+    <div class="df-row">
+      <select class="filter-select df-preset-select" onchange="_applyDashPreset('${d.id}', this.value)" title="Aplicar preset">
+        <option value="">— Preset —</option>
+        ${presets.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}
+      </select>
+      <button class="btn btn-ghost btn-sm" onclick="_promptSavePreset('${d.id}')" ${activeCount ? '' : 'disabled title="Ative pelo menos um filtro pra salvar"'}><i data-lucide="bookmark-plus" class="ic-xs"></i> Salvar preset</button>
+      ${presets.length ? `<button class="btn btn-ghost btn-sm" onclick="_managePresets('${d.id}')"><i data-lucide="list" class="ic-xs"></i> Gerenciar (${presets.length})</button>` : ''}
+      <div style="flex:1"></div>
+      ${activeCount ? `<span class="df-active-count">${activeCount} filtro(s) ativo(s)</span>` : ''}
+      ${activeCount ? `<button class="btn btn-ghost btn-sm" onclick="_clearDashFilters()"><i data-lucide="x" class="ic-xs"></i> Limpar</button>` : ''}
+    </div>
+    <div class="df-row">
+      <span class="df-label">Período</span>
+      <select class="filter-select" onchange="_setDashFilter('period', this.value)">
+        <option value="all"    ${_dashFilters.period === 'all'    ? 'selected' : ''}>Tudo</option>
+        <option value="7d"     ${_dashFilters.period === '7d'     ? 'selected' : ''}>Últimos 7 dias</option>
+        <option value="30d"    ${_dashFilters.period === '30d'    ? 'selected' : ''}>Últimos 30 dias</option>
+        <option value="90d"    ${_dashFilters.period === '90d'    ? 'selected' : ''}>Últimos 90 dias</option>
+        <option value="year"   ${_dashFilters.period === 'year'   ? 'selected' : ''}>Este ano</option>
+        <option value="custom" ${_dashFilters.period === 'custom' ? 'selected' : ''}>Personalizado</option>
+      </select>
+      ${_dashFilters.period === 'custom' ? `
+        <input type="date" class="filter-select" value="${_dashFilters.dateFrom}" onchange="_setDashFilter('dateFrom', this.value)" title="Início">
+        <input type="date" class="filter-select" value="${_dashFilters.dateTo}"   onchange="_setDashFilter('dateTo', this.value)"   title="Fim">
+      ` : ''}
+      <span class="df-label">Squad</span>
+      <select class="filter-select" onchange="_setDashFilter('workspaceId', this.value)">
+        <option value="">Todos</option>
+        ${wss.map(w => `<option value="${esc(w.id)}" ${_dashFilters.workspaceId === w.id ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}
+      </select>
+      <span class="df-label">Cliente</span>
+      <select class="filter-select" onchange="_setDashFilter('clientId', this.value)">
+        <option value="">Todos</option>
+        ${clientsForWs.map(c => `<option value="${esc(c.id)}" ${_dashFilters.clientId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+      </select>
+      <span class="df-label">Projeto</span>
+      <select class="filter-select" onchange="_setDashFilter('projectId', this.value)" ${!projectsForClient.length ? 'disabled' : ''}>
+        <option value="">Todos</option>
+        ${projectsForClient.map(p => `<option value="${esc(p.id)}" ${_dashFilters.projectId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+      </select>
+      <span class="df-label">Preenchido por</span>
+      <select class="filter-select" onchange="_setDashFilter('submittedBy', this.value)" ${!submitters.length ? 'disabled' : ''}>
+        <option value="">Qualquer</option>
+        ${submitters.map(u => `<option value="${esc(u.id)}" ${_dashFilters.submittedBy === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}
+      </select>
+    </div>
+    ${templatesUsed.length ? `
+      <div class="df-row">
+        <span class="df-label">Por campo</span>
+        ${templatesUsed.map(t => _renderTemplateFieldFilters(t)).join('')}
+      </div>
+    ` : ''}
+  `;
+  if (window.lucide?.createIcons) lucide.createIcons();
+}
+/* Renderiza um dropdown por template com todos os campos filtráveis (select/multi). */
+function _renderTemplateFieldFilters(template) {
+  const filterableFields = (template.fields || []).filter(f => f.type === 'select' || f.type === 'multiselect');
+  if (!filterableFields.length) return '';
+  const chips = [];
+  const activeForTemplate = _dashFilters.fieldFilters?.[template.id] || {};
+  for (const fieldId in activeForTemplate) {
+    const vals = activeForTemplate[fieldId];
+    if (!Array.isArray(vals) || !vals.length) continue;
+    const field = filterableFields.find(f => f.id === fieldId);
+    if (!field) continue;
+    for (const val of vals) {
+      const opt = (field.options || []).find(o => o.value === val);
+      chips.push(`<span class="df-chip">${esc(template.name)} · ${esc(field.label)} = ${esc(opt?.label || val)}<button onclick="_toggleFieldFilter('${template.id}', '${field.id}', '${esc(val)}', false)"><i data-lucide="x" class="ic-xs"></i></button></span>`);
+    }
+  }
+  return `
+    <div class="df-field-group">
+      <span class="df-field-tmpl">${esc(template.name)}</span>
+      <select class="filter-select" onchange="_openFieldValuesPicker('${template.id}', this.value); this.value=''">
+        <option value="">+ Filtrar campo…</option>
+        ${filterableFields.map(f => `<option value="${esc(f.id)}">${esc(f.label)} (${f.type === 'multiselect' ? 'multi' : 'select'})</option>`).join('')}
+      </select>
+      ${chips.join('')}
+    </div>
+  `;
+}
+/* Popover simples pra escolher valores do campo. */
+function _openFieldValuesPicker(templateId, fieldId) {
+  if (!fieldId) return;
+  const t = formTemplateById(templateId);
+  const field = t?.fields?.find(f => f.id === fieldId);
+  if (!field?.options?.length) { toast('Este campo não tem opções', 'warn'); return; }
+  const current = new Set(_dashFilters.fieldFilters?.[templateId]?.[fieldId] || []);
+  const html = field.options.map(o => `
+    <label class="ff-multi-item">
+      <input type="checkbox" value="${esc(o.value)}" ${current.has(o.value) ? 'checked' : ''}>
+      ${esc(o.label)}
+    </label>
+  `).join('');
+  showConfirm({
+    title: `Filtrar por ${field.label}`,
+    message: `<div class="ff-multi-list" id="_df-picker-list">${html}</div>`,
+    okLabel: 'Aplicar',
+    danger: false
+  }).then(ok => {
+    if (!ok) return;
+    const picked = Array.from(document.querySelectorAll('#_df-picker-list input:checked')).map(el => el.value);
+    _dashFilters.fieldFilters = _dashFilters.fieldFilters || {};
+    _dashFilters.fieldFilters[templateId] = _dashFilters.fieldFilters[templateId] || {};
+    if (picked.length) _dashFilters.fieldFilters[templateId][fieldId] = picked;
+    else delete _dashFilters.fieldFilters[templateId][fieldId];
+    const d = _currentDashboardId ? dashboardById(_currentDashboardId) : null;
+    if (d) _renderDashboardView(d);
+  });
+}
+function _toggleFieldFilter(templateId, fieldId, val, on) {
+  _dashFilters.fieldFilters = _dashFilters.fieldFilters || {};
+  const tf = _dashFilters.fieldFilters[templateId] = _dashFilters.fieldFilters[templateId] || {};
+  const cur = new Set(tf[fieldId] || []);
+  if (on) cur.add(val); else cur.delete(val);
+  if (cur.size) tf[fieldId] = [...cur]; else delete tf[fieldId];
+  const d = _currentDashboardId ? dashboardById(_currentDashboardId) : null;
+  if (d) _renderDashboardView(d);
+}
+function _setDashFilter(key, val) {
+  _dashFilters[key] = val;
+  // Cascatas: trocar squad reseta cliente e projeto; trocar cliente reseta projeto.
+  if (key === 'workspaceId') { _dashFilters.clientId = ''; _dashFilters.projectId = ''; }
+  if (key === 'clientId')    { _dashFilters.projectId = ''; }
+  const d = _currentDashboardId ? dashboardById(_currentDashboardId) : null;
+  if (d) _renderDashboardView(d);
+}
+function _clearDashFilters() {
+  _resetDashFilters();
+  const d = _currentDashboardId ? dashboardById(_currentDashboardId) : null;
+  if (d) _renderDashboardView(d);
+}
+/* Aplica os filtros globais na lista de respostas. Chamado dentro de renderWidget.
+   fieldFilters são scoped por template — o filter só considera se o templateId
+   da resposta bater com a chave. */
+function _applyDashFilters(responses, templateId) {
+  if (!responses.length) return responses;
+  let cutoffMs = null;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  if (_dashFilters.period === '7d')   cutoffMs = today.getTime() - 6 * 86400000;
+  if (_dashFilters.period === '30d')  cutoffMs = today.getTime() - 29 * 86400000;
+  if (_dashFilters.period === '90d')  cutoffMs = today.getTime() - 89 * 86400000;
+  if (_dashFilters.period === 'year') cutoffMs = new Date(today.getFullYear(), 0, 1).getTime();
+  const customFrom = _dashFilters.period === 'custom' && _dashFilters.dateFrom ? new Date(_dashFilters.dateFrom + 'T00:00:00').getTime() : null;
+  const customTo   = _dashFilters.period === 'custom' && _dashFilters.dateTo   ? new Date(_dashFilters.dateTo   + 'T23:59:59').getTime() : null;
+  const wantWs      = _dashFilters.workspaceId || null;
+  const wantClient  = _dashFilters.clientId    || null;
+  const wantProject = _dashFilters.projectId   || null;
+  const wantUser    = _dashFilters.submittedBy || null;
+  const fieldFilter = templateId ? (_dashFilters.fieldFilters?.[templateId] || null) : null;
+  return responses.filter(r => {
+    const ts = new Date(r.submittedAt).getTime();
+    if (isNaN(ts)) return false;
+    if (cutoffMs !== null && ts < cutoffMs) return false;
+    if (customFrom !== null && ts < customFrom) return false;
+    if (customTo   !== null && ts > customTo)   return false;
+    if (wantWs   && r.workspaceId !== wantWs) return false;
+    if (wantUser && r.submittedBy !== wantUser) return false;
+    if (wantClient || wantProject) {
+      const d = r.demandId ? demandById(r.demandId) : null;
+      if (!d) return false;
+      if (wantProject && d.projectId !== wantProject) return false;
+      if (wantClient) {
+        const proj = d.projectId ? projectById(d.projectId) : null;
+        if (!proj || proj.clientId !== wantClient) return false;
+      }
+    }
+    if (fieldFilter) {
+      for (const fieldId in fieldFilter) {
+        const allowed = fieldFilter[fieldId];
+        if (!Array.isArray(allowed) || !allowed.length) continue;
+        const v = r.values?.[fieldId];
+        if (Array.isArray(v)) {
+          // multiselect: passa se qualquer valor da resposta bate com allowed
+          if (!v.some(x => allowed.includes(x))) return false;
+        } else {
+          if (!allowed.includes(v)) return false;
+        }
+      }
+    }
+    return true;
+  });
+}
+
+/* ── PRESETS de filtro (per-user localStorage) ──
+   Chave: dashPresets:{userId}:{dashboardId} → JSON array [{id,name,filters}]. */
+function _presetKey(dashboardId) {
+  const uid = me?.id || 'anon';
+  return `dashPresets:${uid}:${dashboardId}`;
+}
+function _dashPresetsFor(dashboardId) {
+  try { return JSON.parse(localStorage.getItem(_presetKey(dashboardId)) || '[]'); }
+  catch { return []; }
+}
+function _saveDashPresets(dashboardId, presets) {
+  try { localStorage.setItem(_presetKey(dashboardId), JSON.stringify(presets)); } catch {}
+}
+async function _promptSavePreset(dashboardId) {
+  const name = await showPrompt({
+    title: 'Salvar preset de filtro',
+    message: 'Nome do preset',
+    placeholder: 'Ex.: Q3 · Cliente X · Formato Story',
+    okLabel: 'Salvar'
+  });
+  if (!name || !name.trim()) return;
+  const list = _dashPresetsFor(dashboardId);
+  const preset = {
+    id: 'p_' + Math.random().toString(36).slice(2, 10),
+    name: name.trim(),
+    filters: JSON.parse(JSON.stringify(_dashFilters))
+  };
+  list.push(preset);
+  _saveDashPresets(dashboardId, list);
+  toast('Preset salvo', 'success');
+  const d = dashboardById(dashboardId);
+  if (d) _renderDashboardView(d);
+}
+function _applyDashPreset(dashboardId, presetId) {
+  if (!presetId) return;
+  const p = _dashPresetsFor(dashboardId).find(x => x.id === presetId);
+  if (!p) { toast('Preset não encontrado', 'warn'); return; }
+  _dashFilters = JSON.parse(JSON.stringify(p.filters));
+  const d = dashboardById(dashboardId);
+  if (d) _renderDashboardView(d);
+}
+async function _managePresets(dashboardId) {
+  const list = _dashPresetsFor(dashboardId);
+  if (!list.length) { toast('Nenhum preset ainda', 'warn'); return; }
+  const rowsHtml = list.map(p => `
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+      <span style="flex:1">${esc(p.name)}</span>
+      <button class="btn btn-ghost btn-sm" data-action="rename" data-id="${p.id}">Renomear</button>
+      <button class="btn btn-ghost btn-sm danger" data-action="delete" data-id="${p.id}">Excluir</button>
+    </div>
+  `).join('');
+  await showConfirm({
+    title: 'Gerenciar presets',
+    message: `<div id="_dp-manage">${rowsHtml}</div>`,
+    okLabel: 'Fechar',
+    danger: false
+  }).then(async () => {
+    // Handlers só ativos enquanto o modal está aberto — aqui já fechou, então só
+    // limpou. Ações são disparadas via listener adicionado no showConfirm below.
+  });
+}
+/* Delegated handler pra ações dentro do modal "Gerenciar presets". */
+document.addEventListener('click', async ev => {
+  const target = ev.target.closest('#_dp-manage [data-action]');
+  if (!target) return;
+  const dashboardId = _currentDashboardId;
+  if (!dashboardId) return;
+  const action = target.dataset.action;
+  const presetId = target.dataset.id;
+  const list = _dashPresetsFor(dashboardId);
+  const idx = list.findIndex(p => p.id === presetId);
+  if (idx < 0) return;
+  if (action === 'delete') {
+    const ok = await showConfirm({ title: 'Excluir preset', message: `Excluir "${esc(list[idx].name)}"?`, okLabel: 'Excluir', danger: true });
+    if (!ok) return;
+    list.splice(idx, 1);
+    _saveDashPresets(dashboardId, list);
+    target.closest('div').remove();
+    toast('Preset excluído', 'success');
+    const d = dashboardById(dashboardId);
+    if (d) _renderDashboardView(d);
+  } else if (action === 'rename') {
+    const name = await showPrompt({ title: 'Renomear preset', message: 'Novo nome', defaultValue: list[idx].name, okLabel: 'Salvar' });
+    if (!name || !name.trim()) return;
+    list[idx].name = name.trim();
+    _saveDashPresets(dashboardId, list);
+    target.closest('div').querySelector('span').textContent = list[idx].name;
+    toast('Preset renomeado', 'success');
+    const d = dashboardById(dashboardId);
+    if (d) _renderDashboardView(d);
+  }
+}, true);
+function openDashboardView(id) {
+  _currentDashboardId = id;
+  _resetDashFilters();
+  renderDashboards();
+  navPush('/dashboards/' + id);
+}
+function closeDashboardView() {
+  _currentDashboardId = null;
+  _resetDashFilters();
+  renderDashboards();
+  navReplace('/dashboards');
+}
+
+/* ── RENDERER de widget individual ──
+   Cada widget renderiza HTML/SVG a partir das responses do template em memória.
+   Filtra por workspace ativo pra manter escopo (mesmo squad que o dashboard). */
+function renderWidget(w) {
+  const t = formTemplateById(w.source?.templateId);
+  if (!t) {
+    return `<div class="dw-widget">
+      <div class="dw-widget-title">${esc(w.title || 'Widget')}</div>
+      <div class="dw-widget-empty">Formulário fonte foi excluído.</div>
+    </div>`;
+  }
+  // Dashboards são universais — usa todas as respostas do template que o user
+  // pode ver (já vieram filtradas por squad no bootstrap).
+  const baseList = (formResponses || []).filter(r => r.templateId === t.id);
+  const respList = _applyDashFilters(baseList, t.id);
+  if (w.chartType === 'kpi')  return _renderKpiWidget(w, t, respList);
+  if (w.chartType === 'bar')  return _renderBarWidget(w, t, respList);
+  if (w.chartType === 'pie')  return _renderPieWidget(w, t, respList);
+  if (w.chartType === 'line') return _renderLineWidget(w, t, respList);
+  return `<div class="dw-widget"><div class="dw-widget-title">${esc(w.title || 'Widget')}</div><div class="dw-widget-empty">Tipo de gráfico desconhecido.</div></div>`;
+}
+
+/* Paleta pra pie/line — bate com a variedade de fluxos/tipos do app.
+   Fixa (não usa CSS vars) porque SVG stroke precisa de valores concretos
+   e a paleta funciona bem tanto no tema claro quanto no escuro. */
+const _WIDGET_PALETTE = ['#7A00FF', '#00B4D8', '#F59E0B', '#10B981', '#EF4444', '#8B5CF6', '#F97316', '#0EA5E9'];
+function _widgetColor(i) { return _WIDGET_PALETTE[i % _WIDGET_PALETTE.length]; }
+
+/* Agrega respostas por opção/valor. Serve tanto pra bar quanto pra pie.
+   Retorna [[valueRaw, count, labelResolved], ...]. */
+function _aggregateCategorical(field, responses) {
+  const counts = new Map();
+  const isMulti = field.type === 'multiselect';
+  const isSelect = field.type === 'select' || isMulti;
+  if (isSelect) {
+    for (const o of (field.options || [])) counts.set(o.value, 0);
+    for (const r of responses) {
+      const v = r.values?.[field.id];
+      const arr = isMulti ? (Array.isArray(v) ? v : []) : (v ? [v] : []);
+      for (const val of arr) counts.set(val, (counts.get(val) || 0) + 1);
+    }
+  } else {
+    for (const r of responses) {
+      const v = r.values?.[field.id];
+      if (v === null || v === undefined || v === '') continue;
+      const key = String(v);
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+  }
+  const labelFor = (val) => {
+    if (!isSelect) return val;
+    return (field.options || []).find(o => o.value === val)?.label || val;
+  };
+  return { entries: [...counts.entries()].map(([v, c]) => [v, c, labelFor(v)]), isSelect };
+}
+function _renderKpiWidget(w, template, responses) {
+  const agg = w.kpiAggregate || 'count';
+  let value = 0;
+  let subtitle = '';
+  if (agg === 'count') {
+    value = responses.length;
+    subtitle = 'respostas de "' + template.name + '"';
+  } else {
+    const field = (template.fields || []).find(f => f.id === w.source.fieldId);
+    if (!field) {
+      return `<div class="dw-widget"><div class="dw-widget-title">${esc(w.title || 'KPI')}</div><div class="dw-widget-empty">Campo fonte não existe mais.</div></div>`;
+    }
+    const nums = responses.map(r => Number(r.values?.[field.id])).filter(n => Number.isFinite(n));
+    if (agg === 'sum') { value = nums.reduce((s, n) => s + n, 0); subtitle = 'soma de "' + field.label + '"'; }
+    if (agg === 'avg') { value = nums.length ? (nums.reduce((s, n) => s + n, 0) / nums.length) : 0; subtitle = 'média de "' + field.label + '"'; }
+  }
+  const displayValue = Number.isInteger(value) ? String(value) : value.toFixed(2);
+  return `<div class="dw-widget">
+    <div class="dw-widget-title">${esc(w.title || template.name)}</div>
+    <div class="dw-kpi-value">${displayValue}</div>
+    <div class="dw-kpi-label">${esc(subtitle)}${responses.length === 0 ? ' · sem respostas ainda' : ''}</div>
+  </div>`;
+}
+function _renderBarWidget(w, template, responses) {
+  const field = (template.fields || []).find(f => f.id === w.source.fieldId);
+  if (!field) {
+    return `<div class="dw-widget"><div class="dw-widget-title">${esc(w.title || 'Barra')}</div><div class="dw-widget-empty">Campo fonte não existe mais.</div></div>`;
+  }
+  const groupField = w.groupByFieldId ? (template.fields || []).find(f => f.id === w.groupByFieldId) : null;
+  if (groupField) return _renderBarGroupedWidget(w, template, responses, field, groupField);
+  const { entries, isSelect } = _aggregateCategorical(field, responses);
+  if (!isSelect) entries.sort((a, b) => b[1] - a[1]);
+  const top = isSelect ? entries : entries.slice(0, 10);
+  const max = Math.max(1, ...top.map(([, v]) => v));
+  const bars = top.map(([, count, lbl]) => {
+    const pct = (count / max) * 100;
+    return `<div class="dw-bar-row" title="${esc(lbl)}: ${count}">
+      <div class="dw-bar-label">${esc(lbl)}</div>
+      <div class="dw-bar-track"><div class="dw-bar-fill" style="width:${pct}%"></div></div>
+      <div class="dw-bar-value">${count}</div>
+    </div>`;
+  }).join('');
+  const total = responses.length;
+  return `<div class="dw-widget">
+    <div class="dw-widget-title">${esc(w.title || (field.label + ' — distribuição'))}</div>
+    ${bars ? `<div class="dw-bar-chart">${bars}</div>` : '<div class="dw-widget-empty">Sem respostas ainda</div>'}
+    ${total ? `<div class="dw-kpi-label" style="margin-top:10px">Total de respostas: ${total}</div>` : ''}
+  </div>`;
+}
+/* Barras AGRUPADAS: 2D aggregation. Cada categoria primária vira um bloco com
+   N sub-barras coloridas (uma por valor do groupBy). Legenda embaixo. */
+function _renderBarGroupedWidget(w, template, responses, primary, groupBy) {
+  // Valores primários (categorias)
+  const primAgg = _aggregateCategorical(primary, responses);
+  const primaries = primAgg.isSelect ? primAgg.entries : primAgg.entries.slice(0, 10);
+  // Valores do groupBy (séries)
+  const groupAgg = _aggregateCategorical(groupBy, responses);
+  const groups = groupAgg.entries.filter(([, c]) => c > 0);
+  if (!primaries.length || !groups.length) {
+    return `<div class="dw-widget">
+      <div class="dw-widget-title">${esc(w.title || (primary.label + ' × ' + groupBy.label))}</div>
+      <div class="dw-widget-empty">Sem dados suficientes pra agrupar</div>
+    </div>`;
+  }
+  // 2D counts: matrix[primaryValue][groupValue] = count
+  const matrix = new Map();
+  const primIsMulti = primary.type === 'multiselect';
+  const grpIsMulti = groupBy.type === 'multiselect';
+  const valsOf = (r, f, isMulti) => {
+    const v = r.values?.[f.id];
+    if (isMulti) return Array.isArray(v) ? v : [];
+    if (v === null || v === undefined || v === '') return [];
+    return [String(v)];
+  };
+  for (const r of responses) {
+    const primVals = valsOf(r, primary, primIsMulti);
+    const grpVals  = valsOf(r, groupBy, grpIsMulti);
+    for (const pv of primVals) {
+      if (!matrix.has(pv)) matrix.set(pv, new Map());
+      const inner = matrix.get(pv);
+      for (const gv of grpVals) {
+        inner.set(gv, (inner.get(gv) || 0) + 1);
+      }
+    }
+  }
+  // Máximo pra normalizar largura das barras (todas escalam pelo mesmo max).
+  let max = 1;
+  for (const [pv] of primaries) {
+    const inner = matrix.get(pv);
+    if (!inner) continue;
+    for (const c of inner.values()) if (c > max) max = c;
+  }
+  const blocks = primaries.map(([pv, , plbl]) => {
+    const inner = matrix.get(pv) || new Map();
+    const barsHtml = groups.map(([gv, , glbl], gi) => {
+      const c = inner.get(gv) || 0;
+      const pct = (c / max) * 100;
+      const color = _widgetColor(gi);
+      return `<div class="dw-bar-row" title="${esc(plbl)} · ${esc(glbl)}: ${c}">
+        <div class="dw-bar-label" style="padding-left:18px">${esc(glbl)}</div>
+        <div class="dw-bar-track"><div class="dw-bar-fill" style="width:${pct}%;background:${color}"></div></div>
+        <div class="dw-bar-value">${c}</div>
+      </div>`;
+    }).join('');
+    return `<div class="dw-bar-group">
+      <div class="dw-bar-group-label">${esc(plbl)}</div>
+      ${barsHtml}
+    </div>`;
+  }).join('');
+  const legend = groups.map(([, , glbl], gi) => `
+    <span class="dw-legend-item"><span class="dw-legend-dot" style="background:${_widgetColor(gi)}"></span>${esc(glbl)}</span>
+  `).join('');
+  return `<div class="dw-widget">
+    <div class="dw-widget-title">${esc(w.title || (primary.label + ' × ' + groupBy.label))}</div>
+    <div class="dw-bar-chart">${blocks}</div>
+    <div class="dw-legend">${legend}</div>
+  </div>`;
+}
+function _renderPieWidget(w, template, responses) {
+  const field = (template.fields || []).find(f => f.id === w.source.fieldId);
+  if (!field) {
+    return `<div class="dw-widget"><div class="dw-widget-title">${esc(w.title || 'Pizza')}</div><div class="dw-widget-empty">Campo fonte não existe mais.</div></div>`;
+  }
+  const { entries } = _aggregateCategorical(field, responses);
+  // Filtra opções zeradas (não gera fatia invisível) e ordena decrescente.
+  const nonZero = entries.filter(([, c]) => c > 0).sort((a, b) => b[1] - a[1]);
+  // Top-7 + "Outros" pra não poluir o donut.
+  let slices = nonZero;
+  if (nonZero.length > 8) {
+    const top = nonZero.slice(0, 7);
+    const rest = nonZero.slice(7).reduce((s, [, c]) => s + c, 0);
+    slices = [...top, ['__outros__', rest, 'Outros']];
+  }
+  const totalValue = slices.reduce((s, [, c]) => s + c, 0);
+  if (!totalValue) {
+    return `<div class="dw-widget">
+      <div class="dw-widget-title">${esc(w.title || (field.label + ' — pizza'))}</div>
+      <div class="dw-widget-empty">Sem respostas ainda</div>
+    </div>`;
+  }
+  // Donut: círculo com stroke-dasharray. Circunferência = 2πr, r=40 → C=251.33.
+  const R = 40;
+  const C = 2 * Math.PI * R;
+  let cumOffset = 0;
+  const arcs = slices.map(([, count], i) => {
+    const frac = count / totalValue;
+    const dash = frac * C;
+    const gap = C - dash;
+    const svgOffset = -cumOffset; // stroke-dashoffset gira o start point
+    cumOffset += dash;
+    return `<circle cx="50" cy="50" r="${R}" fill="none" stroke="${_widgetColor(i)}" stroke-width="16" stroke-dasharray="${dash} ${gap}" stroke-dashoffset="${svgOffset}" transform="rotate(-90 50 50)"><title>${esc(slices[i][2])}: ${count}</title></circle>`;
+  }).join('');
+  const legend = slices.map(([, count, lbl], i) => {
+    const pct = Math.round((count / totalValue) * 100);
+    return `<div class="dw-pie-legend-row">
+      <span class="dw-pie-legend-dot" style="background:${_widgetColor(i)}"></span>
+      <span class="dw-pie-legend-label" title="${esc(lbl)}">${esc(lbl)}</span>
+      <span class="dw-pie-legend-val">${count} · ${pct}%</span>
+    </div>`;
+  }).join('');
+  return `<div class="dw-widget">
+    <div class="dw-widget-title">${esc(w.title || (field.label + ' — pizza'))}</div>
+    <div class="dw-pie-wrap">
+      <svg class="dw-pie-svg" viewBox="0 0 100 100">
+        ${arcs}
+        <text x="50" y="50" class="dw-pie-center" fill="currentColor">${totalValue}</text>
+      </svg>
+      <div class="dw-pie-legend">${legend}</div>
+    </div>
+  </div>`;
+}
+/* Bucketiza timestamps ISO por dia/semana/mês. week = YYYY-Www (ISO). month = YYYY-MM. */
+function _bucketKey(iso, bucket) {
+  const d = new Date(iso);
+  if (isNaN(d)) return null;
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  if (bucket === 'day')   return `${yyyy}-${mm}-${dd}`;
+  if (bucket === 'month') return `${yyyy}-${mm}`;
+  if (bucket === 'week') {
+    // Semana ISO: joga pra quinta-feira da mesma semana.
+    const tmp = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    tmp.setUTCDate(tmp.getUTCDate() + 4 - (tmp.getUTCDay() || 7));
+    const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
+    const weekNo = Math.ceil((((tmp - yearStart) / 86400000) + 1) / 7);
+    return `${tmp.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
+  }
+  return null;
+}
+function _chooseAutoBucket(responses) {
+  if (!responses.length) return 'day';
+  const ts = responses.map(r => new Date(r.submittedAt).getTime()).filter(t => !isNaN(t));
+  if (!ts.length) return 'day';
+  const range = (Math.max(...ts) - Math.min(...ts)) / 86400000; // dias
+  if (range <= 45)  return 'day';
+  if (range <= 240) return 'week';
+  return 'month';
+}
+function _formatBucketLabel(key, bucket) {
+  if (bucket === 'day')   return key.slice(5).replace('-', '/'); // "MM/DD"
+  if (bucket === 'week')  return key.slice(5); // "Www"
+  if (bucket === 'month') { const [y, m] = key.split('-'); return `${m}/${y.slice(2)}`; } // "MM/YY"
+  return key;
+}
+function _renderLineWidget(w, template, responses) {
+  const agg = w.lineAggregate || 'count';
+  let field = null;
+  if (agg !== 'count') {
+    field = (template.fields || []).find(f => f.id === w.source.fieldId);
+    if (!field) {
+      return `<div class="dw-widget"><div class="dw-widget-title">${esc(w.title || 'Linha')}</div><div class="dw-widget-empty">Campo fonte não existe mais.</div></div>`;
+    }
+  }
+  const groupField = w.groupByFieldId ? (template.fields || []).find(f => f.id === w.groupByFieldId) : null;
+  const bucketMode = w.lineBucket && w.lineBucket !== 'auto' ? w.lineBucket : _chooseAutoBucket(responses);
+  const bucketLbl = bucketMode === 'day' ? 'diário' : bucketMode === 'week' ? 'semanal' : 'mensal';
+  const aggLbl = agg === 'count' ? 'contagem' : (agg === 'sum' ? 'soma' : 'média') + ` de "${field?.label}"`;
+  // Bucketiza — mesma lógica pra single ou multi série
+  const buckets = new Map();
+  for (const r of responses) {
+    const key = _bucketKey(r.submittedAt, bucketMode);
+    if (!key) continue;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(r);
+  }
+  if (!buckets.size) {
+    return `<div class="dw-widget">
+      <div class="dw-widget-title">${esc(w.title || (template.name + ' — timeline'))}</div>
+      <div class="dw-widget-empty">Sem respostas ainda</div>
+    </div>`;
+  }
+  const sortedKeys = [...buckets.keys()].sort();
+  const xLabels = sortedKeys.map(k => _formatBucketLabel(k, bucketMode));
+  // Define as séries: single ou multi por groupBy
+  let series; // [{name, color, values: number[]}]
+  if (groupField) {
+    // Descobre as séries (valores distintos do groupBy). Top-6 + Outros.
+    const grpAgg = _aggregateCategorical(groupField, responses);
+    const sorted = grpAgg.entries.filter(([, c]) => c > 0).sort((a, b) => b[1] - a[1]);
+    const topGroups = sorted.slice(0, 6);
+    const otherGroups = sorted.slice(6).map(([v]) => v);
+    const isMulti = groupField.type === 'multiselect';
+    const seriesKeys = topGroups.map(([v, , lbl]) => ({ key: v, label: lbl }));
+    if (otherGroups.length) seriesKeys.push({ key: '__outros__', label: 'Outros' });
+    series = seriesKeys.map((sk, si) => {
+      const values = sortedKeys.map(bk => {
+        const rs = buckets.get(bk).filter(r => {
+          const v = r.values?.[groupField.id];
+          const arr = isMulti ? (Array.isArray(v) ? v : []) : (v ? [String(v)] : []);
+          if (sk.key === '__outros__') return arr.some(x => otherGroups.includes(x));
+          return arr.includes(sk.key);
+        });
+        return _lineBucketAggregate(rs, agg, field);
+      });
+      return { name: sk.label, color: _widgetColor(si), values };
+    });
+  } else {
+    series = [{
+      name: aggLbl,
+      color: _widgetColor(0),
+      values: sortedKeys.map(bk => _lineBucketAggregate(buckets.get(bk), agg, field))
+    }];
+  }
+  // Geometria SVG
+  const W = 320, H = 140, PL = 30, PR = 10, PT = 10, PB = 22;
+  const innerW = W - PL - PR;
+  const innerH = H - PT - PB;
+  const maxV = Math.max(1, ...series.flatMap(s => s.values));
+  const stepX = xLabels.length > 1 ? innerW / (xLabels.length - 1) : 0;
+  const yFor = v => PT + innerH - (v / maxV) * innerH;
+  const xFor = i => PL + (xLabels.length > 1 ? i * stepX : innerW / 2);
+  // Grid Y + ticks
+  const yTicks = [0, maxV / 2, maxV].map(v => {
+    const y = yFor(v);
+    const disp = Number.isInteger(v) ? String(v) : v.toFixed(1);
+    return `<line x1="${PL}" x2="${W - PR}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}" class="dw-line-grid"/><text x="${PL - 4}" y="${(y + 3).toFixed(1)}" class="dw-line-tick" text-anchor="end">${disp}</text>`;
+  }).join('');
+  const tickIdx = xLabels.length <= 2 ? xLabels.map((_, i) => i) : [0, Math.floor((xLabels.length - 1) / 2), xLabels.length - 1];
+  const xTicks = tickIdx.map(i => `<text x="${xFor(i).toFixed(1)}" y="${H - 6}" class="dw-line-tick" text-anchor="middle">${esc(xLabels[i])}</text>`).join('');
+  // Séries
+  const seriesSvg = series.map(s => {
+    const coords = s.values.map((v, i) => ({ x: xFor(i), y: yFor(v), v }));
+    const path = coords.map((c, i) => (i === 0 ? 'M' : 'L') + c.x.toFixed(1) + ',' + c.y.toFixed(1)).join(' ');
+    const dots = coords.map((c, i) => `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="3" fill="${s.color}" stroke="var(--surface)" stroke-width="1.5"><title>${esc(s.name)} · ${esc(xLabels[i])}: ${Number.isInteger(c.v) ? c.v : c.v.toFixed(2)}</title></circle>`).join('');
+    return `<path d="${path}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>${dots}`;
+  }).join('');
+  // Area só na série única
+  const areaSvg = series.length === 1 ? (() => {
+    const s = series[0];
+    const coords = s.values.map((v, i) => ({ x: xFor(i), y: yFor(v) }));
+    const path = coords.map((c, i) => (i === 0 ? 'M' : 'L') + c.x.toFixed(1) + ',' + c.y.toFixed(1)).join(' ');
+    return `<path d="${path} L${coords[coords.length - 1].x.toFixed(1)},${PT + innerH} L${coords[0].x.toFixed(1)},${PT + innerH} Z" fill="${s.color}" opacity=".15"/>`;
+  })() : '';
+  const legend = series.length > 1 ? `<div class="dw-legend">${series.map(s => `<span class="dw-legend-item"><span class="dw-legend-dot" style="background:${s.color}"></span>${esc(s.name)}</span>`).join('')}</div>` : '';
+  return `<div class="dw-widget">
+    <div class="dw-widget-title">${esc(w.title || (template.name + ' — timeline'))}</div>
+    <div class="dw-line-wrap">
+      <svg class="dw-line-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+        ${yTicks}
+        ${areaSvg}
+        ${seriesSvg}
+        ${xTicks}
+      </svg>
+      <div class="dw-kpi-label" style="margin-top:8px">${aggLbl} · ${bucketLbl}${groupField ? ' · por ' + esc(groupField.label) : ''}</div>
+      ${legend}
+    </div>
+  </div>`;
+}
+function _lineBucketAggregate(rs, agg, field) {
+  if (agg === 'count') return rs.length;
+  const nums = rs.map(r => Number(r.values?.[field.id])).filter(n => Number.isFinite(n));
+  if (agg === 'sum') return nums.reduce((s, n) => s + n, 0);
+  if (agg === 'avg') return nums.length ? (nums.reduce((s, n) => s + n, 0) / nums.length) : 0;
+  return 0;
+}
+
+/* ── EDITOR de dashboard (modal dashboard-editor-modal) ── */
+let _deEditingId = null;
+let _deName = '';
+let _deDescription = '';
+let _deWidgets = [];
+
+function openDashboardEditor(dashId) {
+  if (!me?.isAdmin) { toast('Apenas administradores podem editar dashboards', 'warn'); return; }
+  _deEditingId = dashId || null;
+  const d = dashId ? dashboardById(dashId) : null;
+  document.getElementById('dashboard-editor-title').textContent = d ? 'Editar dashboard' : 'Novo dashboard';
+  document.getElementById('de-name').value = d?.name || '';
+  document.getElementById('de-description').value = d?.description || '';
+  _deWidgets = d ? JSON.parse(JSON.stringify(d.widgets || [])) : [];
+  _deRenderWidgets();
+  openModal('dashboard-editor-modal');
+  navPush(dashId ? `/dashboards/${dashId}/edit` : '/dashboards/new');
+}
+function _deRenderWidgets() {
+  const host = document.getElementById('de-widgets-list');
+  const empty = document.getElementById('de-widgets-empty');
+  if (!host) return;
+  empty.style.display = _deWidgets.length ? 'none' : '';
+  // Universal: todos os templates disponíveis, independente do squad.
+  const templates = (formTemplates || []).slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  host.innerHTML = _deWidgets.map((w, idx) => {
+    const t = w.source?.templateId ? formTemplateById(w.source.templateId) : null;
+    const fields = t?.fields || [];
+    // Campo dropdown depende do tipo: bar/pie mostram qualquer campo; kpi/line sum/avg só numéricos; count esconde.
+    const isKpi = w.chartType === 'kpi';
+    const isLine = w.chartType === 'line';
+    const isCat = w.chartType === 'bar' || w.chartType === 'pie';
+    const kpiNeedsField  = isKpi  && (w.kpiAggregate  === 'sum' || w.kpiAggregate  === 'avg');
+    const lineNeedsField = isLine && (w.lineAggregate === 'sum' || w.lineAggregate === 'avg');
+    const noField = (isKpi && w.kpiAggregate === 'count') || (isLine && w.lineAggregate === 'count');
+    const fieldOptions = fields
+      .filter(f => {
+        if (isCat) return true;
+        if (noField) return false;
+        return f.type === 'number';
+      })
+      .map(f => `<option value="${esc(f.id)}" ${w.source?.fieldId === f.id ? 'selected' : ''}>${esc(f.label)} <${f.type}></option>`)
+      .join('');
+    // Extra selects específicos por tipo
+    const kpiAggSelect = isKpi ? `<select class="form-control" onchange="deUpdateWidget('${w.id}', 'kpiAggregate', this.value)">
+      <option value="count" ${w.kpiAggregate === 'count' ? 'selected' : ''}>Contagem</option>
+      <option value="sum"   ${w.kpiAggregate === 'sum'   ? 'selected' : ''}>Soma</option>
+      <option value="avg"   ${w.kpiAggregate === 'avg'   ? 'selected' : ''}>Média</option>
+    </select>` : '';
+    const lineAggSelect = isLine ? `<select class="form-control" onchange="deUpdateWidget('${w.id}', 'lineAggregate', this.value)">
+      <option value="count" ${w.lineAggregate === 'count' ? 'selected' : ''}>Contagem</option>
+      <option value="sum"   ${w.lineAggregate === 'sum'   ? 'selected' : ''}>Soma</option>
+      <option value="avg"   ${w.lineAggregate === 'avg'   ? 'selected' : ''}>Média</option>
+    </select>` : '';
+    const lineBucketSelect = isLine ? `<select class="form-control" onchange="deUpdateWidget('${w.id}', 'lineBucket', this.value)">
+      <option value="auto"  ${(w.lineBucket || 'auto') === 'auto'  ? 'selected' : ''}>Bucket auto</option>
+      <option value="day"   ${w.lineBucket === 'day'   ? 'selected' : ''}>Por dia</option>
+      <option value="week"  ${w.lineBucket === 'week'  ? 'selected' : ''}>Por semana</option>
+      <option value="month" ${w.lineBucket === 'month' ? 'selected' : ''}>Por mês</option>
+    </select>` : '';
+    return `<div class="de-widget-row" data-widget-id="${w.id}">
+      <div class="de-widget-row-head">
+        <input class="form-control" placeholder="Título do widget (opcional)" value="${esc(w.title || '')}" oninput="deUpdateWidget('${w.id}', 'title', this.value)">
+        <div class="fe-actions">
+          <button type="button" class="detail-icon-btn" title="Subir" ${idx === 0 ? 'disabled' : ''} onclick="deMoveWidget('${w.id}', -1)"><i data-lucide="arrow-up" class="ic-sm"></i></button>
+          <button type="button" class="detail-icon-btn" title="Descer" ${idx === _deWidgets.length - 1 ? 'disabled' : ''} onclick="deMoveWidget('${w.id}', 1)"><i data-lucide="arrow-down" class="ic-sm"></i></button>
+          <button type="button" class="detail-icon-btn danger" title="Remover" onclick="deRemoveWidget('${w.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
+        </div>
+      </div>
+      <div class="de-widget-row-fields">
+        <select class="form-control" onchange="deUpdateWidget('${w.id}', 'chartType', this.value)">
+          <option value="bar"  ${w.chartType === 'bar'  ? 'selected' : ''}>Gráfico de barras</option>
+          <option value="pie"  ${w.chartType === 'pie'  ? 'selected' : ''}>Pizza (donut)</option>
+          <option value="line" ${w.chartType === 'line' ? 'selected' : ''}>Linha (timeline)</option>
+          <option value="kpi"  ${w.chartType === 'kpi'  ? 'selected' : ''}>KPI (número grande)</option>
+        </select>
+        <select class="form-control" onchange="deUpdateWidget('${w.id}', 'templateId', this.value)">
+          <option value="">— Formulário —</option>
+          ${templates.map(tp => `<option value="${esc(tp.id)}" ${w.source?.templateId === tp.id ? 'selected' : ''}>${esc(tp.name)}</option>`).join('')}
+        </select>
+        ${noField
+          ? '<div class="de-widget-row-note">Conta todas as respostas</div>'
+          : `<select class="form-control" onchange="deUpdateWidget('${w.id}', 'fieldId', this.value)" ${!t ? 'disabled' : ''}>
+              <option value="">${(kpiNeedsField || lineNeedsField) ? '— Campo numérico —' : '— Campo —'}</option>
+              ${fieldOptions}
+            </select>`
+        }
+        ${kpiAggSelect}
+        ${lineAggSelect}
+        ${lineBucketSelect}
+      </div>
+    </div>`;
+  }).join('');
+  if (window.lucide?.createIcons) lucide.createIcons();
+}
+function deAddWidget() {
+  _deWidgets.push({
+    id: 'w_' + Math.random().toString(36).slice(2, 10),
+    title: '',
+    chartType: 'bar',
+    source: { templateId: null, fieldId: null }
+  });
+  _deRenderWidgets();
+}
+function deRemoveWidget(wid) {
+  _deWidgets = _deWidgets.filter(w => w.id !== wid);
+  _deRenderWidgets();
+}
+function deMoveWidget(wid, delta) {
+  const idx = _deWidgets.findIndex(w => w.id === wid);
+  const target = idx + delta;
+  if (idx < 0 || target < 0 || target >= _deWidgets.length) return;
+  const [w] = _deWidgets.splice(idx, 1);
+  _deWidgets.splice(target, 0, w);
+  _deRenderWidgets();
+}
+function deUpdateWidget(wid, key, val) {
+  const w = _deWidgets.find(x => x.id === wid);
+  if (!w) return;
+  if (key === 'title') { w.title = val; return; }
+  if (key === 'chartType') {
+    w.chartType = val;
+    // Defaults por tipo — limpa config específica dos outros tipos.
+    if (val === 'kpi')  { if (!w.kpiAggregate)  w.kpiAggregate  = 'count'; delete w.lineAggregate; delete w.lineBucket; }
+    if (val === 'line') { if (!w.lineAggregate) w.lineAggregate = 'count'; if (!w.lineBucket) w.lineBucket = 'auto'; delete w.kpiAggregate; }
+    if (val === 'bar' || val === 'pie') { delete w.kpiAggregate; delete w.lineAggregate; delete w.lineBucket; }
+    _deRenderWidgets();
+    return;
+  }
+  if (key === 'templateId') {
+    w.source = { templateId: val || null };
+    _deRenderWidgets();
+    return;
+  }
+  if (key === 'fieldId') {
+    w.source.fieldId = val || null;
+    return;
+  }
+  if (key === 'kpiAggregate') {
+    w.kpiAggregate = val;
+    if (val === 'count') w.source.fieldId = null;
+    _deRenderWidgets();
+    return;
+  }
+  if (key === 'lineAggregate') {
+    w.lineAggregate = val;
+    if (val === 'count') w.source.fieldId = null;
+    _deRenderWidgets();
+    return;
+  }
+  if (key === 'lineBucket') { w.lineBucket = val; return; }
+}
+async function saveDashboard() {
+  const name = document.getElementById('de-name').value.trim();
+  if (!name) { toast('Nome do dashboard é obrigatório', 'warn'); return; }
+  // Valida widgets: cada um precisa ter templateId; bar precisa de fieldId;
+  // kpi sum/avg precisa de fieldId; kpi count não precisa.
+  const cleanWidgets = [];
+  for (const w of _deWidgets) {
+    const label = w.title || 'sem título';
+    if (!w.source?.templateId) { toast(`Widget "${label}" precisa de um formulário`, 'warn'); return; }
+    if ((w.chartType === 'bar' || w.chartType === 'pie') && !w.source.fieldId) { toast(`Widget "${label}" precisa de um campo`, 'warn'); return; }
+    if (w.chartType === 'kpi'  && w.kpiAggregate  !== 'count' && !w.source.fieldId) { toast(`Widget "${label}" precisa de um campo numérico`, 'warn'); return; }
+    if (w.chartType === 'line' && w.lineAggregate !== 'count' && !w.source.fieldId) { toast(`Widget "${label}" precisa de um campo numérico`, 'warn'); return; }
+    cleanWidgets.push(w);
+  }
+  const payload = {
+    name,
+    description: document.getElementById('de-description').value.trim(),
+    widgets: cleanWidgets,
+    workspaceId: activeWs
+  };
+  try {
+    let saved;
+    if (_deEditingId) {
+      saved = await api('/dashboards/' + _deEditingId, 'PUT', payload);
+      dashboards = dashboards.map(d => d.id === saved.id ? saved : d);
+    } else {
+      saved = await api('/dashboards', 'POST', payload);
+      dashboards.push(saved);
+      _currentDashboardId = saved.id;
+    }
+    closeModal('dashboard-editor-modal');
+    toast(_deEditingId ? 'Dashboard atualizado' : 'Dashboard criado', 'success');
+    renderDashboards();
+  } catch (e) {
+    toast(e.message || 'Erro ao salvar', 'error');
+  }
+}
+async function confirmDeleteDashboard(id) {
+  const d = dashboardById(id);
+  if (!d) return;
+  const ok = await showConfirm({
+    title: 'Excluir dashboard',
+    message: `Excluir o dashboard <strong>${esc(d.name)}</strong>?<br><br>Os formulários e respostas continuam intactos.`,
+    okLabel: 'Excluir',
+    danger: true
+  });
+  if (!ok) return;
+  try {
+    await api('/dashboards/' + id, 'DELETE');
+    dashboards = dashboards.filter(x => x.id !== id);
+    if (_currentDashboardId === id) _currentDashboardId = null;
+    toast('Dashboard excluído', 'success');
+    renderDashboards();
+    navReplace('/dashboards');
+  } catch (e) {
+    toast(e.message || 'Erro ao excluir', 'error');
+  }
+}
+
 function useTemplate(tid) {
   openNewDemand();
   setTimeout(() => {
@@ -22181,6 +23641,11 @@ const SSE_ENTITY_MAP = {
   // tasks: server só emite ('bulk' no apply/'delete'/'update') — sem endpoint
   // singular, então operações granulares caem no fallback do refetch de lista.
   task:      { get: () => tasks,       set: v => { tasks = v; },       path: () => null,                listPath: '/tasks' },
+  // Formulários e dashboards seguem o padrão de refetch de lista — não têm
+  // endpoint singular, então qualquer op cai no fallback (barato: listas pequenas).
+  formTemplate: { get: () => formTemplates, set: v => { formTemplates = v; if (currentPage === 'forms') renderForms(); }, path: () => null, listPath: '/form-templates' },
+  formResponse: { get: () => formResponses, set: v => { formResponses = v; if (currentPage === 'demand-detail') renderDetail(); else if (currentPage === 'forms') renderForms(); else if (currentPage === 'dashboards') renderDashboards(); }, path: () => null, listPath: '/form-responses' },
+  dashboard:    { get: () => dashboards,    set: v => { dashboards = v;    if (currentPage === 'dashboards') renderDashboards(); }, path: () => null, listPath: '/dashboards' },
 };
 
 function startRealtimeSync() {
