@@ -17326,26 +17326,63 @@ function _renderDashRecords(d) {
   filtered.sort((a, b) => (b.submittedAt || '').localeCompare(a.submittedAt || ''));
   const isOpen = _dashRecordsOpen.has(d.id);
   host.className = 'dw-records-panel' + (isOpen ? ' is-open' : '');
-  const rowsHtml = filtered.length ? filtered.map(r => {
-    const t = formTemplateById(r.templateId);
-    const u = userById(r.submittedBy);
-    const dm = r.demandId ? demandById(r.demandId) : null;
-    const demandLink = dm
-      ? `<a href="${esc(demandPath(dm.id))}" onclick="event.preventDefault();showDetail('${dm.id}')">${esc(dm.name || dm.id.slice(0,6))}</a>`
-      : '<span style="color:var(--text-muted)">—</span>';
-    return `<tr>
-      <td class="rec-date">${_fmtRecordDate(r.submittedAt)}</td>
-      <td class="rec-form">${esc(t?.name || 'Formulário excluído')}</td>
-      <td><span class="rec-user">${avatarHTML(u, 'avatar avatar-xs')} ${esc(u?.name || '—')}</span></td>
-      <td class="rec-demand">${demandLink}</td>
-      <td class="rec-values">${_renderRecordValuesCompact(t, r)}</td>
-    </tr>`;
-  }).join('') : '';
+  // Agrupa por template — cada template tem seu próprio esqueleto de campos,
+  // então cada um vira uma tabela onde cada campo é uma coluna. Se o dashboard
+  // usa só um template, não mostra subtítulo (fica uma tabela única, limpa).
+  const groups = new Map();
+  for (const r of filtered) {
+    const key = r.templateId || '__none__';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
   const bodyInner = filtered.length
-    ? `<table class="dw-records-table">
-        <thead><tr><th style="width:140px">Data</th><th>Formulário</th><th>Preenchido por</th><th>Demanda</th><th>Preenchimento</th></tr></thead>
-        <tbody>${rowsHtml}</tbody>
-      </table>`
+    ? Array.from(groups.entries()).map(([tid, rows]) => {
+        const t = formTemplateById(tid);
+        const fields = (t?.fields || []);
+        const showHeader = groups.size > 1;
+        const fieldHeaders = fields.map(f => `<th class="rec-field-col">${esc(f.label)}</th>`).join('');
+        const trs = rows.map(r => {
+          const u = userById(r.submittedBy);
+          const dm = r.demandId ? demandById(r.demandId) : null;
+          const demandLink = dm
+            ? `<a href="${esc(demandPath(dm.id))}" onclick="event.preventDefault();showDetail('${dm.id}')">${esc(dm.name || dm.id.slice(0,6))}</a>`
+            : '<span style="color:var(--text-muted)">—</span>';
+          const fieldTds = fields.map(f => {
+            const v = r.values?.[f.id];
+            if (v === null || v === undefined || v === '' || (Array.isArray(v) && !v.length)) {
+              return '<td class="rec-field-cell rec-field-empty">—</td>';
+            }
+            let display;
+            if (f.type === 'select') {
+              display = (f.options || []).find(o => o.value === v)?.label || v;
+            } else if (f.type === 'multiselect') {
+              const arr = Array.isArray(v) ? v : [v];
+              display = arr.map(val => (f.options || []).find(o => o.value === val)?.label || val).join(', ');
+            } else {
+              display = String(v);
+            }
+            return `<td class="rec-field-cell">${esc(display)}</td>`;
+          }).join('');
+          return `<tr>
+            <td class="rec-date">${_fmtRecordDate(r.submittedAt)}</td>
+            <td><span class="rec-user">${avatarHTML(u, 'avatar avatar-xs')} ${esc(u?.name || '—')}</span></td>
+            <td class="rec-demand">${demandLink}</td>
+            ${fieldTds}
+          </tr>`;
+        }).join('');
+        const header = showHeader
+          ? `<div class="dw-records-group-title">${esc(t?.name || 'Formulário excluído')} <span class="dw-records-group-count">${rows.length}</span></div>`
+          : '';
+        return `${header}<div class="dw-records-table-wrap"><table class="dw-records-table">
+          <thead><tr>
+            <th style="width:140px">Data</th>
+            <th>Preenchido por</th>
+            <th>Demanda</th>
+            ${fieldHeaders}
+          </tr></thead>
+          <tbody>${trs}</tbody>
+        </table></div>`;
+      }).join('')
     : '<div class="dw-records-empty">Nenhum registro correspondente aos filtros ativos.</div>';
   host.innerHTML = `
     <div class="dw-records-header" onclick="_toggleDashRecords('${d.id}')">
@@ -17375,29 +17412,6 @@ function _toggleDashRecords(dashId) {
   if (d) _renderDashRecords(d);
   if (window.lucide?.createIcons) lucide.createIcons();
 }
-/* Renderiza os valores da resposta em uma célula compacta — cada campo vira
-   "Rótulo: valor" com separador visual. Vazio → traço. Multiselect concatena. */
-function _renderRecordValuesCompact(template, response) {
-  if (!template) return '<span style="color:var(--text-muted)">—</span>';
-  const parts = (template.fields || []).map(f => {
-    const v = response.values?.[f.id];
-    let display;
-    if (v === null || v === undefined || v === '' || (Array.isArray(v) && !v.length)) return null;
-    if (f.type === 'select') {
-      const opt = (f.options || []).find(o => o.value === v);
-      display = opt?.label || v;
-    } else if (f.type === 'multiselect') {
-      const arr = Array.isArray(v) ? v : [v];
-      display = arr.map(val => (f.options || []).find(o => o.value === val)?.label || val).join(', ');
-    } else {
-      display = String(v);
-    }
-    return `<span class="rec-val-pair"><span class="rec-val-label">${esc(f.label)}:</span> <span class="rec-val-value">${esc(display)}</span></span>`;
-  }).filter(Boolean);
-  if (!parts.length) return '<span style="color:var(--text-muted)">—</span>';
-  return parts.join('');
-}
-
 /* ── FILTROS do view mode ──
    Estado local (não persiste no dashboard salvo — mas presets vão pra localStorage
    por usuário/dashboard). Reseta ao entrar/sair da view. Aplica:
