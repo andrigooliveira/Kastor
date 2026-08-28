@@ -2355,9 +2355,8 @@ tr:hover td { background: var(--surface-2); }
 }
 .dw-heat-cell {
   padding: 8px 6px; text-align: center; border-radius: 4px;
-  font-weight: 500; transition: transform .12s;
+  font-weight: 500;
 }
-.dw-heat-cell:hover { transform: scale(1.06); outline: 1px solid var(--accent); }
 
 /* Combo (bar + line, dual axis) */
 .dw-combo { display: grid; grid-template-columns: 34px 1fr 34px; gap: 6px; height: calc(100% - 32px); min-height: 140px; }
@@ -2397,7 +2396,6 @@ tr:hover td { background: var(--surface-2); }
 /* Drill-down: cursor + hover em qualquer elemento clicável de widget cross-data */
 .pv-drillable { cursor: pointer; transition: background .12s, outline .12s; }
 .pv-drillable:hover { outline: 1px dashed var(--accent); background: var(--surface-hover); }
-.dw-heat-cell.pv-drillable:hover { outline: 1px solid var(--accent); transform: scale(1.06); }
 .dw-combo-group.pv-drillable:hover .dw-combo-bar { filter: brightness(1.15); }
 
 /* Chip do drill-down no painel de filtros */
@@ -11485,6 +11483,33 @@ tr.demand-row {
   text-decoration: none;
 }
 .dw-records-table .rec-demand a:hover { text-decoration: underline; }
+.dw-records-table .rec-values {
+  color: var(--text-dim);
+  font-size: 12.5px;
+  max-width: 480px;
+  line-height: 1.6;
+}
+.rec-val-pair {
+  display: inline-block;
+  margin-right: 12px;
+  white-space: nowrap;
+}
+.rec-val-pair + .rec-val-pair::before {
+  content: '·';
+  margin-right: 12px;
+  color: var(--text-muted);
+}
+.rec-val-label {
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-size: 10.5px;
+  letter-spacing: .3px;
+}
+.rec-val-value {
+  font-weight: 600;
+  color: var(--text);
+}
 .dw-records-empty {
   padding: 30px;
   text-align: center;

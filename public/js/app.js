@@ -17231,11 +17231,12 @@ function _renderDashRecords(d) {
       <td class="rec-form">${esc(t?.name || 'Formulário excluído')}</td>
       <td><span class="rec-user">${avatarHTML(u, 'avatar avatar-xs')} ${esc(u?.name || '—')}</span></td>
       <td class="rec-demand">${demandLink}</td>
+      <td class="rec-values">${_renderRecordValuesCompact(t, r)}</td>
     </tr>`;
   }).join('') : '';
   const bodyInner = filtered.length
     ? `<table class="dw-records-table">
-        <thead><tr><th style="width:140px">Data</th><th>Formulário</th><th>Preenchido por</th><th>Demanda</th></tr></thead>
+        <thead><tr><th style="width:140px">Data</th><th>Formulário</th><th>Preenchido por</th><th>Demanda</th><th>Preenchimento</th></tr></thead>
         <tbody>${rowsHtml}</tbody>
       </table>`
     : '<div class="dw-records-empty">Nenhum registro correspondente aos filtros ativos.</div>';
@@ -17266,6 +17267,28 @@ function _toggleDashRecords(dashId) {
   const d = dashboardById(dashId);
   if (d) _renderDashRecords(d);
   if (window.lucide?.createIcons) lucide.createIcons();
+}
+/* Renderiza os valores da resposta em uma célula compacta — cada campo vira
+   "Rótulo: valor" com separador visual. Vazio → traço. Multiselect concatena. */
+function _renderRecordValuesCompact(template, response) {
+  if (!template) return '<span style="color:var(--text-muted)">—</span>';
+  const parts = (template.fields || []).map(f => {
+    const v = response.values?.[f.id];
+    let display;
+    if (v === null || v === undefined || v === '' || (Array.isArray(v) && !v.length)) return null;
+    if (f.type === 'select') {
+      const opt = (f.options || []).find(o => o.value === v);
+      display = opt?.label || v;
+    } else if (f.type === 'multiselect') {
+      const arr = Array.isArray(v) ? v : [v];
+      display = arr.map(val => (f.options || []).find(o => o.value === val)?.label || val).join(', ');
+    } else {
+      display = String(v);
+    }
+    return `<span class="rec-val-pair"><span class="rec-val-label">${esc(f.label)}:</span> <span class="rec-val-value">${esc(display)}</span></span>`;
+  }).filter(Boolean);
+  if (!parts.length) return '<span style="color:var(--text-muted)">—</span>';
+  return parts.join('');
 }
 
 /* ── FILTROS do view mode ──
@@ -18192,15 +18215,15 @@ function _renderHeatmapWidget(w) {
   // Grid flat: row 0 = header vazio + col labels; rows subsequentes = rowhead + N cells
   const cellsFlat = [];
   cellsFlat.push('<div class="dw-heat-corner"></div>');
-  for (const ck of cols) cellsFlat.push(`<div class="dw-heat-colhead pv-drillable" onclick="_dashApplyDrillDown('${esc(colDim)}', ${JSON.stringify(ck).replace(/"/g,'&quot;')})" title="Drill: ${esc(_dashDrillLabel(colDim))} = ${esc(ck)}">${esc(ck)}</div>`);
+  for (const ck of cols) cellsFlat.push(`<div class="dw-heat-colhead" title="${esc(ck)}">${esc(ck)}</div>`);
   for (const rk of rows) {
-    cellsFlat.push(`<div class="dw-heat-rowhead pv-drillable" onclick="_dashApplyDrillDown('${esc(rowDim)}', ${JSON.stringify(rk).replace(/"/g,'&quot;')})" title="Drill: ${esc(_dashDrillLabel(rowDim))} = ${esc(rk)}">${esc(rk)}</div>`);
+    cellsFlat.push(`<div class="dw-heat-rowhead" title="${esc(rk)}">${esc(rk)}</div>`);
     for (const ck of cols) {
       const v = cellVal(rk, ck);
       const t = max > 0 ? v / max : 0;
       const bg = `rgba(122, 0, 255, ${(0.08 + t * 0.65).toFixed(3)})`;
       const color = t > 0.55 ? '#fff' : 'var(--text)';
-      cellsFlat.push(`<div class="dw-heat-cell pv-drillable" style="background:${bg};color:${color}" onclick="_dashPivotCellDrill('${esc(rowDim)}', ${JSON.stringify(rk).replace(/"/g,'&quot;')}, '${esc(colDim)}', ${JSON.stringify(ck).replace(/"/g,'&quot;')})" title="${esc(rk)} × ${esc(ck)}: ${_fmtNum(v)}">${v > 0 ? _fmtNum(v) : ''}</div>`);
+      cellsFlat.push(`<div class="dw-heat-cell" style="background:${bg};color:${color}" title="${esc(rk)} × ${esc(ck)}: ${_fmtNum(v)}">${v > 0 ? _fmtNum(v) : ''}</div>`);
     }
   }
   return `<div class="dw-widget">
@@ -18796,7 +18819,9 @@ function _renderLineWidget(w, template, responses) {
       return `<div class="dw-widget"><div class="dw-widget-title">${esc(w.title || 'Linha')}</div><div class="dw-widget-empty">Campo fonte não existe mais.</div></div>`;
     }
   }
-  const groupField = w.groupByFieldId ? (template.fields || []).find(f => f.id === w.groupByFieldId) : null;
+  const gbId = w.groupByFieldId || null;
+  const isSubmitterGroup = gbId === '__submitter__';
+  const groupField = (gbId && !isSubmitterGroup) ? (template.fields || []).find(f => f.id === gbId) : null;
   const bucketMode = w.lineBucket && w.lineBucket !== 'auto' ? w.lineBucket : _chooseAutoBucket(responses);
   const bucketLbl = bucketMode === 'day' ? 'diário' : bucketMode === 'week' ? 'semanal' : 'mensal';
   const aggLbl = agg === 'count' ? 'contagem' : (agg === 'sum' ? 'soma' : 'média') + ` de "${field?.label}"`;
@@ -18815,9 +18840,25 @@ function _renderLineWidget(w, template, responses) {
   }
   const sortedKeys = [...buckets.keys()].sort();
   const xLabels = sortedKeys.map(k => _formatBucketLabel(k, bucketMode));
-  // Séries: single ou multi por groupBy
+  // Séries: single ou multi por groupBy (campo do form ou "Preenchido por")
   let series; // [{name, color, values: number[]}]
-  if (groupField) {
+  if (isSubmitterGroup) {
+    // Agrupa por submittedBy — cada usuário vira uma série (top 6 por volume, outros agregados).
+    const counts = new Map();
+    for (const r of responses) counts.set(r.submittedBy, (counts.get(r.submittedBy) || 0) + 1);
+    const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+    const topUsers = sorted.slice(0, 6).map(([uid]) => uid);
+    const otherUsers = sorted.slice(6).map(([uid]) => uid);
+    const seriesKeys = topUsers.map(uid => ({ key: uid, label: userById(uid)?.name || '— sem autor —' }));
+    if (otherUsers.length) seriesKeys.push({ key: '__outros__', label: 'Outros' });
+    series = seriesKeys.map((sk, si) => ({
+      name: sk.label, color: _widgetColor(si),
+      values: sortedKeys.map(bk => {
+        const rs = buckets.get(bk).filter(r => sk.key === '__outros__' ? otherUsers.includes(r.submittedBy) : r.submittedBy === sk.key);
+        return _lineBucketAggregate(rs, agg, field);
+      })
+    }));
+  } else if (groupField) {
     const grpAgg = _aggregateCategorical(groupField, responses);
     const sorted = grpAgg.entries.filter(([, c]) => c > 0).sort((a, b) => b[1] - a[1]);
     const topGroups = sorted.slice(0, 6);
@@ -18925,7 +18966,7 @@ function _renderLineWidget(w, template, responses) {
         <div class="dw-line-axis-x">${xLabelsHtml}</div>
         <div class="chart-tooltip" id="${uid}-tip"></div>
       </div>
-      <div class="dw-kpi-label" style="margin-top:6px;font-size:11px">${aggLbl} · ${bucketLbl}${groupField ? ' · por ' + esc(groupField.label) : ''}</div>
+      <div class="dw-kpi-label" style="margin-top:6px;font-size:11px">${aggLbl} · ${bucketLbl}${groupField ? ' · por ' + esc(groupField.label) : ''}${isSubmitterGroup ? ' · por Preenchido por' : ''}</div>
     </div>
   </div>`;
   // Empurra pra fila — attach do hover roda após innerHTML no _renderDashboardView.
@@ -19259,15 +19300,21 @@ function _wcRerenderFieldsAndOptions() {
   // barWrap só faz sentido em bar (vertical).
   const bwGroup = document.getElementById('wc-barwrap-group');
   if (bwGroup) bwGroup.style.display = chartType === 'bar' ? '' : 'none';
-  // GroupBy: bar ou line, quando tem campos categóricos
+  // GroupBy: bar (vertical/horizontal) ou line. Além dos campos categóricos, oferece
+  // "Preenchido por" (sentinela __submitter__) — útil pra comparar séries por autor.
   const groupByGroup = document.getElementById('wc-groupby-group');
   const groupBySelect = document.getElementById('wc-groupby');
-  if ((isBarLike || isLine) && fields.some(f => f.type === 'select' || f.type === 'multiselect')) {
+  const catFields = fields.filter(f => (f.type === 'select' || f.type === 'multiselect'));
+  const showGroupBy = (isBarLike || isLine) && (catFields.length > 0 || isLine);
+  if (showGroupBy) {
     groupByGroup.style.display = '';
     const currentGroupBy = w?.groupByFieldId || '';
     const selectedFieldId = fieldSelect.value;
-    groupBySelect.innerHTML = '<option value="">Sem agrupar</option>' +
-      fields.filter(f => (f.type === 'select' || f.type === 'multiselect') && f.id !== selectedFieldId)
+    const subOption = isLine
+      ? `<option value="__submitter__" ${currentGroupBy === '__submitter__' ? 'selected' : ''}>Preenchido por</option>`
+      : '';
+    groupBySelect.innerHTML = '<option value="">Sem agrupar</option>' + subOption +
+      catFields.filter(f => f.id !== selectedFieldId)
         .map(f => `<option value="${esc(f.id)}" ${currentGroupBy === f.id ? 'selected' : ''}>${esc(f.label)}</option>`).join('');
   } else {
     groupByGroup.style.display = 'none';
@@ -19660,9 +19707,12 @@ function _deRenderWidgets() {
       <option value="week"  ${w.lineBucket === 'week'  ? 'selected' : ''}>Por semana</option>
       <option value="month" ${w.lineBucket === 'month' ? 'selected' : ''}>Por mês</option>
     </select>` : '';
-    // groupBy dropdown pra bar e line (só quando template tem categóricos)
-    const groupBySelect = ((isBar || isLine) && groupFieldOptions) ? `<select class="form-control" onchange="deUpdateWidget('${w.id}', 'groupByFieldId', this.value)">
+    // groupBy dropdown pra bar e line. Pra line também aceita sentinela "__submitter__"
+    // que agrupa por quem preencheu (útil quando o form não tem campo categórico).
+    const submitterOpt = isLine ? `<option value="__submitter__" ${w.groupByFieldId === '__submitter__' ? 'selected' : ''}>Preenchido por</option>` : '';
+    const groupBySelect = ((isBar || isLine) && (groupFieldOptions || isLine)) ? `<select class="form-control" onchange="deUpdateWidget('${w.id}', 'groupByFieldId', this.value)">
       <option value="">Sem agrupar</option>
+      ${submitterOpt}
       ${groupFieldOptions}
     </select>` : '';
     // Multi-KPI: editor de séries + botão adicionar
