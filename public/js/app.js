@@ -958,6 +958,8 @@ function applyPriorityDropdown(selId) {
 function applyFilterDropdown(selId, opts = {}) {
   const sel = document.getElementById(selId);
   if (!sel) return;
+  // Guarda defensivo: elemento pode ter o mesmo id que não é <select> (ex.: div do body).
+  if (sel.tagName !== 'SELECT' || !sel.options) return;
   sel.classList.add('filter-native-hidden');
   let wrap = sel.nextElementSibling;
   if (!wrap || !wrap.classList.contains('filter-cdrop')) {
@@ -993,6 +995,7 @@ function applyFilterDropdown(selId, opts = {}) {
   wrap.dataset.targetSel = selId;
   wrap.innerHTML = `
     <button type="button" class="filter-cdrop-trigger" onclick="toggleFilterCdrop(this.parentElement)">
+      ${opts.leadingIcon ? `<i data-lucide="${opts.leadingIcon}" class="ic-sm filter-cdrop-lead"></i>` : ''}
       ${current.avatar || ''}
       <span class="filter-cdrop-label">${esc(current.label || '')}</span>
       <i data-lucide="chevron-down" class="ic-xs"></i>
@@ -1179,19 +1182,25 @@ function _flushAutoCdropQueue() {
   _autoCdropRafScheduled = false;
   let processed = 0;
   _autoCdropQueue.forEach(sel => {
-    if (!sel.isConnected) return;
-    if (!sel.matches || !sel.matches(_AUTO_CDROP_SEL)) return;
-    if (sel.hasAttribute('data-no-cdrop')) return;
-    if (sel.multiple || sel.size > 1) return;
-    if (!sel.id) sel.id = `auto-cdrop-${++_autoCdropSeq}`;
-    // data-cdrop-icon="user|project|client" pinta avatar nas opções + no trigger.
-    const iconKind = sel.getAttribute('data-cdrop-icon');
-    const opts = {};
-    if (iconKind === 'user')    opts.userIcon = true;
-    if (iconKind === 'project') opts.projectIcon = true;
-    if (iconKind === 'client')  opts.clientIcon = true;
-    applyFilterDropdown(sel.id, opts); // idempotente
-    processed++;
+    try {
+      if (!sel.isConnected) return;
+      if (!sel.matches || !sel.matches(_AUTO_CDROP_SEL)) return;
+      if (sel.hasAttribute('data-no-cdrop')) return;
+      if (sel.multiple || sel.size > 1) return;
+      if (!sel.id) sel.id = `auto-cdrop-${++_autoCdropSeq}`;
+      // data-cdrop-icon="user|project|client" pinta avatar nas opções + no trigger.
+      const iconKind = sel.getAttribute('data-cdrop-icon');
+      const opts = {};
+      if (iconKind === 'user')    opts.userIcon = true;
+      if (iconKind === 'project') opts.projectIcon = true;
+      if (iconKind === 'client')  opts.clientIcon = true;
+      applyFilterDropdown(sel.id, opts); // idempotente
+      processed++;
+    } catch (e) {
+      // Isola falha: se um select da fila crashar (ex.: id colide com div do body),
+      // o resto ainda é processado. Sem esse try/catch, um único erro bloqueia tudo.
+      console.warn('[auto-cdrop] falha ao processar', sel, e);
+    }
   });
   _autoCdropQueue.clear();
   // Pinta o chevron do trigger criado pelo applyFilterDropdown
@@ -16664,10 +16673,14 @@ function _feRenderFields() {
       <div class="fe-field-options">
         <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.4px">Opções</div>
         ${(f.options || []).map((o, oi) => `
-          <div class="fe-option-row">
+          <div class="fe-option-row" draggable="true" data-oi="${oi}"
+               ondragstart="_feOptDragStart(event, '${f.id}', ${oi})"
+               ondragover="_feOptDragOver(event)"
+               ondragleave="_feOptDragLeave(event)"
+               ondrop="_feOptDrop(event, '${f.id}', ${oi})"
+               ondragend="_feOptDragEnd(event)">
+            <span class="fe-option-drag" title="Arraste pra reordenar"><i data-lucide="grip-vertical" class="ic-sm"></i></span>
             <input class="form-control" placeholder="Opção" value="${esc(o.label)}" oninput="feUpdateOption('${f.id}', ${oi}, this.value)">
-            <button type="button" class="detail-icon-btn" title="Subir" ${oi === 0 ? 'disabled' : ''} onclick="feMoveOption('${f.id}', ${oi}, -1)"><i data-lucide="arrow-up" class="ic-sm"></i></button>
-            <button type="button" class="detail-icon-btn" title="Descer" ${oi === (f.options.length - 1) ? 'disabled' : ''} onclick="feMoveOption('${f.id}', ${oi}, 1)"><i data-lucide="arrow-down" class="ic-sm"></i></button>
             <button type="button" class="detail-icon-btn danger" title="Remover opção" onclick="feRemoveOption('${f.id}', ${oi})"><i data-lucide="x" class="ic-sm"></i></button>
           </div>
         `).join('')}
@@ -16739,6 +16752,56 @@ function feMoveOption(fid, oi, delta) {
   const [opt] = f.options.splice(oi, 1);
   f.options.splice(target, 0, opt);
   _feRenderFields();
+}
+
+/* Drag & drop pra reordenar opções de select/multiselect no editor de form.
+   Armazena {fieldId, srcIdx} num estado global; ao soltar, splice+re-render. */
+let _feOptDrag = null;
+function _feOptDragStart(ev, fid, oi) {
+  _feOptDrag = { fid, srcIdx: oi };
+  ev.dataTransfer.effectAllowed = 'move';
+  // Firefox precisa de setData pra ativar o drag; qualquer string serve.
+  try { ev.dataTransfer.setData('text/plain', String(oi)); } catch {}
+  ev.currentTarget.classList.add('is-dragging');
+}
+function _feOptDragOver(ev) {
+  if (!_feOptDrag) return;
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect = 'move';
+  const row = ev.currentTarget;
+  if (row.classList.contains('is-dragging')) return;
+  // Marca "acima" ou "abaixo" pela posição do mouse — feedback visual do ponto de inserção.
+  const r = row.getBoundingClientRect();
+  const before = ev.clientY < r.top + r.height / 2;
+  row.classList.toggle('drop-above', before);
+  row.classList.toggle('drop-below', !before);
+}
+function _feOptDragLeave(ev) {
+  const row = ev.currentTarget;
+  row.classList.remove('drop-above', 'drop-below');
+}
+function _feOptDrop(ev, fid, dstIdx) {
+  ev.preventDefault();
+  if (!_feOptDrag || _feOptDrag.fid !== fid) return;
+  const row = ev.currentTarget;
+  const r = row.getBoundingClientRect();
+  const insertBefore = ev.clientY < r.top + r.height / 2;
+  const f = _feFields.find(x => x.id === fid);
+  if (!f?.options) return;
+  const src = _feOptDrag.srcIdx;
+  let dst = dstIdx + (insertBefore ? 0 : 1);
+  if (dst > src) dst -= 1; // ajusta índice quando remove antes de inserir
+  if (src === dst) { _feOptDragEnd(ev); return; }
+  const [opt] = f.options.splice(src, 1);
+  f.options.splice(Math.max(0, Math.min(dst, f.options.length)), 0, opt);
+  _feOptDrag = null;
+  _feRenderFields();
+}
+function _feOptDragEnd(ev) {
+  _feOptDrag = null;
+  document.querySelectorAll('.fe-option-row').forEach(el =>
+    el.classList.remove('is-dragging', 'drop-above', 'drop-below')
+  );
 }
 function feUpdateOption(fid, oi, label) {
   const f = _feFields.find(x => x.id === fid);
@@ -17386,87 +17449,90 @@ function _renderDashFilters(d) {
   const templatesUsed = _templatesUsedIn(d);
   const activeCount = _dashFilterActiveCount();
   const presets = _dashPresetsFor(d.id);
-  // Chip helper — envolve um <select> com ícone e destaque quando ativo.
-  // O botão "×" limpa aquele filtro específico (só aparece quando ativo).
-  const chip = (icon, active, selectHtml, key, disabled) => `
-    <label class="df-fchip${active ? ' is-active' : ''}${disabled ? ' is-disabled' : ''}" title="${disabled ? 'Sem opções pra escolher' : ''}">
-      <i data-lucide="${icon}" class="ic-xs df-fchip-icon"></i>
-      ${selectHtml}
-      ${active && key ? `<button type="button" class="df-fchip-x" title="Limpar" onclick="event.preventDefault();event.stopPropagation();_setDashFilter('${key}', ${key === 'period' ? '\'all\'' : '\'\''})"><i data-lucide="x" class="ic-xs"></i></button>` : ''}
-    </label>`;
-
   const periodActive = _dashFilters.period !== 'all';
   const wsActive     = !!_dashFilters.workspaceId;
   const clActive     = !!_dashFilters.clientId;
   const prjActive    = !!_dashFilters.projectId;
   const subActive    = !!_dashFilters.submittedBy;
+  const uidBase      = 'dfsel_' + d.id;
 
-  const periodSelect = `
-    <select class="df-fchip-select" onchange="_setDashFilter('period', this.value)">
-      <option value="all"    ${_dashFilters.period === 'all'    ? 'selected' : ''}>Período: tudo</option>
-      <option value="7d"     ${_dashFilters.period === '7d'     ? 'selected' : ''}>Últimos 7 dias</option>
-      <option value="30d"    ${_dashFilters.period === '30d'    ? 'selected' : ''}>Últimos 30 dias</option>
-      <option value="90d"    ${_dashFilters.period === '90d'    ? 'selected' : ''}>Últimos 90 dias</option>
-      <option value="year"   ${_dashFilters.period === 'year'   ? 'selected' : ''}>Este ano</option>
-      <option value="custom" ${_dashFilters.period === 'custom' ? 'selected' : ''}>Personalizado</option>
-    </select>`;
-  const wsSelect = `
-    <select class="df-fchip-select" onchange="_setDashFilter('workspaceId', this.value)">
-      <option value="">Squad</option>
-      ${wss.map(w => `<option value="${esc(w.id)}" ${_dashFilters.workspaceId === w.id ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}
-    </select>`;
-  const clSelect = `
-    <select class="df-fchip-select" onchange="_setDashFilter('clientId', this.value)">
-      <option value="">Cliente</option>
-      ${clientsForWs.map(c => `<option value="${esc(c.id)}" ${_dashFilters.clientId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
-    </select>`;
-  const prjSelect = `
-    <select class="df-fchip-select" onchange="_setDashFilter('projectId', this.value)">
-      <option value="">Projeto</option>
-      ${projectsForClient.map(p => `<option value="${esc(p.id)}" ${_dashFilters.projectId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-    </select>`;
-  const subSelect = `
-    <select class="df-fchip-select" onchange="_setDashFilter('submittedBy', this.value)">
-      <option value="">Preenchido por</option>
-      ${submitters.map(u => `<option value="${esc(u.id)}" ${_dashFilters.submittedBy === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}
-    </select>`;
+  // Cada filtro é um <select> nativo (padrão do app) transformado em .filter-cdrop
+  // via applyFilterDropdown() logo após o innerHTML. O `leadingIcon` insere o
+  // ícone dentro do trigger, alinhado com o resto do app.
+  const chip = (idSuffix, active, key, disabled, selectInner) => {
+    const clearBtn = active && key ? `<button type="button" class="df-fchip-x" title="Limpar" onclick="_setDashFilter('${key}', ${key === 'period' ? '\'all\'' : '\'\''})"><i data-lucide="x" class="ic-sm"></i></button>` : '';
+    // data-no-cdrop evita que o auto-cdrop passe primeiro com opts vazio; nosso wire()
+    // chama applyFilterDropdown manualmente com leadingIcon.
+    return `<span class="df-fchip${active ? ' is-active' : ''}${disabled ? ' is-disabled' : ''}">
+      <select id="${uidBase}_${idSuffix}" class="filter-select" data-no-cdrop ${disabled ? 'disabled' : ''}>${selectInner}</select>
+      ${clearBtn}
+    </span>`;
+  };
+
+  const periodOpts = `
+    <option value="all"    ${_dashFilters.period === 'all'    ? 'selected' : ''}>Período: tudo</option>
+    <option value="7d"     ${_dashFilters.period === '7d'     ? 'selected' : ''}>Últimos 7 dias</option>
+    <option value="30d"    ${_dashFilters.period === '30d'    ? 'selected' : ''}>Últimos 30 dias</option>
+    <option value="90d"    ${_dashFilters.period === '90d'    ? 'selected' : ''}>Últimos 90 dias</option>
+    <option value="year"   ${_dashFilters.period === 'year'   ? 'selected' : ''}>Este ano</option>
+    <option value="custom" ${_dashFilters.period === 'custom' ? 'selected' : ''}>Personalizado</option>`;
+  const wsOpts = `<option value="">Squad</option>` +
+    wss.map(w => `<option value="${esc(w.id)}" ${_dashFilters.workspaceId === w.id ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
+  const clOpts = `<option value="">Cliente</option>` +
+    clientsForWs.map(c => `<option value="${esc(c.id)}" ${_dashFilters.clientId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+  const prjOpts = `<option value="">Projeto</option>` +
+    projectsForClient.map(p => `<option value="${esc(p.id)}" ${_dashFilters.projectId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+  const subOpts = `<option value="">Preenchido por</option>` +
+    submitters.map(u => `<option value="${esc(u.id)}" ${_dashFilters.submittedBy === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
 
   host.innerHTML = `
     <div class="df-toolbar">
       <div class="df-preset-wrap">
-        <select class="df-fchip-select df-preset-select" onchange="_applyDashPreset('${d.id}', this.value)" title="Aplicar preset">
-          <option value="">Preset…</option>
-          ${presets.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}
-        </select>
-        <button class="df-icon-btn" onclick="_promptSavePreset('${d.id}')" ${activeCount ? '' : 'disabled'} title="Salvar preset atual"><i data-lucide="bookmark-plus" class="ic-xs"></i></button>
-        ${presets.length ? `<button class="df-icon-btn" onclick="_managePresets('${d.id}')" title="Gerenciar presets (${presets.length})"><i data-lucide="list" class="ic-xs"></i></button>` : ''}
+        <span class="df-fchip">
+          <select id="${uidBase}_preset" class="filter-select" data-no-cdrop><option value="">Preset…</option>${presets.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}</select>
+        </span>
+        <button class="df-icon-btn" onclick="_promptSavePreset('${d.id}')" ${activeCount ? '' : 'disabled'} title="Salvar preset atual"><i data-lucide="bookmark-plus" class="ic-sm"></i></button>
+        ${presets.length ? `<button class="df-icon-btn" onclick="_managePresets('${d.id}')" title="Gerenciar presets (${presets.length})"><i data-lucide="list" class="ic-sm"></i></button>` : ''}
       </div>
       <div class="df-chips">
-        ${chip('calendar', periodActive, periodSelect, 'period')}
+        ${chip('period', periodActive, 'period', false, periodOpts)}
         ${_dashFilters.period === 'custom' ? `
           <input type="date" class="df-date-inline" value="${_dashFilters.dateFrom}" onchange="_setDashFilter('dateFrom', this.value)" title="Início">
           <input type="date" class="df-date-inline" value="${_dashFilters.dateTo}"   onchange="_setDashFilter('dateTo', this.value)"   title="Fim">
         ` : ''}
-        ${chip('layers', wsActive, wsSelect, 'workspaceId', wss.length === 0)}
-        ${chip('users', clActive, clSelect, 'clientId', clientsForWs.length === 0)}
-        ${clActive ? chip('folder', prjActive, prjSelect, 'projectId', projectsForClient.length === 0) : ''}
-        ${chip('user-check', subActive, subSelect, 'submittedBy', submitters.length === 0)}
+        ${chip('ws',   wsActive, 'workspaceId', wss.length === 0, wsOpts)}
+        ${chip('cl',   clActive, 'clientId',    clientsForWs.length === 0, clOpts)}
+        ${clActive ? chip('prj', prjActive, 'projectId', projectsForClient.length === 0, prjOpts) : ''}
+        ${chip('sub',  subActive, 'submittedBy', submitters.length === 0, subOpts)}
       </div>
       <div class="df-toolbar-right">
-        ${activeCount ? `<button class="df-clear-btn" onclick="_clearDashFilters()" title="Limpar todos os filtros"><i data-lucide="x" class="ic-xs"></i> ${activeCount}</button>` : ''}
+        ${activeCount ? `<button class="df-clear-btn" onclick="_clearDashFilters()" title="Limpar todos os filtros"><i data-lucide="x" class="ic-sm"></i> ${activeCount}</button>` : ''}
       </div>
     </div>
     ${_dashDrillDown.size ? `<div class="df-extra df-drill-row">
       ${[..._dashDrillDown.entries()].map(([dim, val]) => `
-        <span class="df-chip df-chip-drill">${esc(_dashDrillLabel(dim))}: ${esc(val)}<button title="Remover" onclick="_dashClearDrillDown('${esc(dim)}')"><i data-lucide="x" class="ic-xs"></i></button></span>
+        <span class="df-chip df-chip-drill">${esc(_dashDrillLabel(dim))}: ${esc(val)}<button title="Remover" onclick="_dashClearDrillDown('${esc(dim)}')"><i data-lucide="x" class="ic-sm"></i></button></span>
       `).join('')}
     </div>` : ''}
-    ${templatesUsed.length ? `
-      <div class="df-extra">
-        ${templatesUsed.map(t => _renderTemplateFieldFilters(t)).join('')}
-      </div>
-    ` : ''}
   `;
+  // Transforma cada <select> em .filter-cdrop (padrão do app) com ícone à esquerda.
+  const wire = (suffix, icon, onchangeKey) => {
+    const id = uidBase + '_' + suffix;
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    sel.addEventListener('change', () => _setDashFilter(onchangeKey, sel.value));
+    applyFilterDropdown(id, icon ? { leadingIcon: icon } : {});
+  };
+  wire('period', 'calendar',   'period');
+  wire('ws',     'layers',     'workspaceId');
+  wire('cl',     'users',      'clientId');
+  wire('prj',    'folder',     'projectId');
+  wire('sub',    'user-check', 'submittedBy');
+  const presetSel = document.getElementById(uidBase + '_preset');
+  if (presetSel) {
+    presetSel.addEventListener('change', () => _applyDashPreset(d.id, presetSel.value));
+    applyFilterDropdown(uidBase + '_preset', { leadingIcon: 'bookmark' });
+  }
   if (window.lucide?.createIcons) lucide.createIcons();
 }
 /* Renderiza um dropdown por template com todos os campos filtráveis (select/multi). */
@@ -17949,10 +18015,10 @@ function _renderComboWidget(w) {
   return `<div class="dw-widget">
     <div class="dw-widget-title-row">
       <div class="dw-widget-title">${esc(title)}</div>
-      <div class="dw-legend">
+      ${w.hideLegend ? '' : `<div class="dw-legend">
         <span class="dw-legend-item"><span class="dw-legend-dot" style="background:${barColor}"></span>${esc(barMetricLbl)}</span>
         <span class="dw-legend-item"><span class="dw-legend-dot" style="background:${lineColor};border-radius:1px"></span>${esc(lineMetricLbl)}</span>
-      </div>
+      </div>`}
     </div>
     <div class="dw-combo">
       <div class="dw-combo-yaxis dw-combo-yaxis-left">
@@ -18013,7 +18079,7 @@ function _renderScatterWidget(w) {
   const diagMax = Math.min(xMax, yMax);
   const diagX = (diagMax / xMax) * 100;
   const diagY = 100 - (diagMax / yMax) * 100;
-  const legendHtml = groupDim ? `<div class="dw-legend">${groups.map((g, i) => `<span class="dw-legend-item"><span class="dw-legend-dot" style="background:${_widgetColor(i)}"></span>${esc(g)}</span>`).join('')}</div>` : '';
+  const legendHtml = (groupDim && !w.hideLegend) ? `<div class="dw-legend">${groups.map((g, i) => `<span class="dw-legend-item"><span class="dw-legend-dot" style="background:${_widgetColor(i)}"></span>${esc(g)}</span>`).join('')}</div>` : '';
   const xLabel = _metricLabel(xMetric, 'sum');
   const yLabel = _metricLabel(yMetric, 'sum');
   return `<div class="dw-widget">
@@ -18144,7 +18210,7 @@ function _renderTimelineWidget(w) {
     const leftPct = (xFor(i) / W) * 100;
     return `<span class="dw-line-xlabel" style="left:${leftPct}%">${esc(xLabels[i])}</span>`;
   }).join('');
-  const legend = series.length > 1 ? `<div class="dw-legend dw-line-legend">${series.map(s => `<span class="dw-legend-item"><span class="dw-legend-dot" style="background:${s.color}"></span>${esc(s.name)}</span>`).join('')}</div>` : '';
+  const legend = (series.length > 1 && !w.hideLegend) ? `<div class="dw-legend dw-line-legend">${series.map(s => `<span class="dw-legend-item"><span class="dw-legend-dot" style="background:${s.color}"></span>${esc(s.name)}</span>`).join('')}</div>` : '';
   const html = `<div class="dw-widget">
     <div class="dw-widget-title-row">
       <div class="dw-widget-title">${esc(title)}</div>
@@ -18501,24 +18567,22 @@ function _dashPreviousPeriodResponses(templateId) {
   return prev;
 }
 
-/* Calcula variação percentual entre KPI atual e KPI anterior.
-   Retorna { pct, direction: 'up'|'down'|'flat', absCur, absPrev }. */
+/* Calcula variação absoluta (atual - anterior) entre KPI atual e KPI anterior.
+   Retorna { diff, direction: 'up'|'down'|'flat', absCur, absPrev }. */
 function _computeDelta(cur, prev) {
   const a = Number(cur.raw ?? parseFloat(String(cur.display).replace(/\./g, '').replace(',', '.'))) || 0;
   const b = Number(prev.raw ?? parseFloat(String(prev.display).replace(/\./g, '').replace(',', '.'))) || 0;
-  if (b === 0 && a === 0) return { pct: 0, direction: 'flat', absCur: a, absPrev: b };
-  if (b === 0) return { pct: null, direction: 'up', absCur: a, absPrev: b };
-  const pct = ((a - b) / Math.abs(b)) * 100;
-  const dir = Math.abs(pct) < 0.5 ? 'flat' : (pct > 0 ? 'up' : 'down');
-  return { pct, direction: dir, absCur: a, absPrev: b };
+  const diff = a - b;
+  const dir = Math.abs(diff) < 0.005 ? 'flat' : (diff > 0 ? 'up' : 'down');
+  return { diff, direction: dir, absCur: a, absPrev: b };
 }
 function _renderKpiDelta(delta, size) {
   const cls = 'dw-kpi-delta dw-kpi-delta-' + delta.direction + (size === 'small' ? ' dw-kpi-delta-sm' : '');
   const arrow = delta.direction === 'up' ? '▲' : (delta.direction === 'down' ? '▼' : '•');
-  const pctTxt = delta.pct === null
-    ? 'novo'
-    : (Math.abs(delta.pct) >= 1000 ? '>999%' : (Math.round(Math.abs(delta.pct) * 10) / 10).toLocaleString('pt-BR') + '%');
-  return `<div class="${cls}" title="Anterior: ${_fmtNum(delta.absPrev)}"><span class="dw-kpi-delta-arrow">${arrow}</span> ${pctTxt} <span class="dw-kpi-delta-vs">vs período anterior</span></div>`;
+  const sign = delta.diff > 0 ? '+' : (delta.diff < 0 ? '−' : '');
+  const val = _fmtNum(Math.abs(delta.diff));
+  const tip = `Anterior: ${_fmtNum(delta.absPrev)} · Atual: ${_fmtNum(delta.absCur)}`;
+  return `<span class="${cls}" title="${esc(tip)}">${arrow} ${sign}${val}</span>`;
 }
 /* Compute helper compartilhado entre single-KPI e multi-KPI. */
 function _computeKpi(spec, template, responses) {
@@ -18625,7 +18689,10 @@ function _renderBarWidget(w, template, responses) {
       <div class="dw-vbar-xlabel" title="${esc(plbl)}">${esc(plbl)}</div>
     </div>`;
   }).join('');
-  const legendHtml = series.length > 1 ? `<div class="dw-legend dw-vbar-legend">${series.map(s => `<span class="dw-legend-item"><span class="dw-legend-dot" style="background:${s.color}"></span>${esc(s.label)}</span>`).join('')}</div>` : '';
+  // Legenda só aparece se houver + de 1 série e não estiver escondida pelo widget.
+  const legendHtml = (series.length > 1 && !w.hideLegend)
+    ? `<div class="dw-legend dw-vbar-legend dw-vbar-legend-bottom">${series.map(s => `<span class="dw-legend-item"><span class="dw-legend-dot" style="background:${s.color}"></span>${esc(s.label)}</span>`).join('')}</div>`
+    : '';
   // Quando barWrap=true, as colunas quebram em múltiplas linhas pra caber em widgets largos
   // com muitas categorias. Cada barra tem largura mínima, e o y-axis fica escondido — os
   // valores no topo de cada barra assumem esse papel.
@@ -18633,7 +18700,6 @@ function _renderBarWidget(w, template, responses) {
   return `<div class="dw-widget">
     <div class="dw-widget-title-row">
       <div class="dw-widget-title">${esc(w.title || (groupField ? primary.label + ' × ' + groupField.label : primary.label))}</div>
-      ${legendHtml}
     </div>
     <div class="dw-vbar${wrap ? ' is-wrap' : ''}">
       ${wrap ? '' : `<div class="dw-vbar-yaxis">
@@ -18646,6 +18712,7 @@ function _renderBarWidget(w, template, responses) {
         <div class="dw-vbar-groups">${groupsHtml}</div>
       </div>
     </div>
+    ${legendHtml}
     ${total ? `<div class="dw-kpi-label" style="margin-top:6px;font-size:11px">Total de respostas: ${total}</div>` : ''}
   </div>`;
 }
@@ -18731,7 +18798,7 @@ function _renderBarHorizontalWidget(w, template, responses) {
       ${barsHtml}
     </div>`;
   }).join('');
-  const legend = `<div class="dw-legend">${groups.map(([, , glbl], gi) => `
+  const legend = w.hideLegend ? '' : `<div class="dw-legend">${groups.map(([, , glbl], gi) => `
     <span class="dw-legend-item"><span class="dw-legend-dot" style="background:${_widgetColor(gi)}"></span>${esc(glbl)}</span>
   `).join('')}</div>`;
   return `<div class="dw-widget">
@@ -18792,7 +18859,7 @@ function _renderPieWidget(w, template, responses) {
         ${arcs}
         <text x="50" y="50" class="dw-pie-center" fill="currentColor">${totalValue}</text>
       </svg>
-      <div class="dw-pie-legend">${legend}</div>
+      ${w.hideLegend ? '' : `<div class="dw-pie-legend">${legend}</div>`}
     </div>
   </div>`;
 }
@@ -18967,7 +19034,7 @@ function _renderLineWidget(w, template, responses) {
     const leftPct = (xFor(i) / W) * 100;
     return `<span class="dw-line-xlabel" style="left:${leftPct}%">${esc(xLabels[i])}</span>`;
   }).join('');
-  const legend = series.length > 1 ? `<div class="dw-legend dw-line-legend">${series.map(s => `<span class="dw-legend-item"><span class="dw-legend-dot" style="background:${s.color}"></span>${esc(s.name)}</span>`).join('')}</div>` : '';
+  const legend = (series.length > 1 && !w.hideLegend) ? `<div class="dw-legend dw-line-legend">${series.map(s => `<span class="dw-legend-item"><span class="dw-legend-dot" style="background:${s.color}"></span>${esc(s.name)}</span>`).join('')}</div>` : '';
   const html = `<div class="dw-widget">
     <div class="dw-widget-title-row">
       <div class="dw-widget-title">${esc(w.title || (template.name + ' — timeline'))}</div>
@@ -19138,6 +19205,8 @@ function openWidgetConfig(dashboardId, widgetId, x, y, w, h) {
   document.getElementById('wc-bucket').value = widget?.lineBucket || 'auto';
   const bw = document.getElementById('wc-barwrap');
   if (bw) bw.checked = !!widget?.barWrap;
+  const hl = document.getElementById('wc-hidelegend');
+  if (hl) hl.checked = !!widget?.hideLegend;
   _wcRerenderFieldsAndOptions();
   openModal('widget-config-modal');
 }
@@ -19320,6 +19389,10 @@ function _wcRerenderFieldsAndOptions() {
   // barWrap só faz sentido em bar (vertical).
   const bwGroup = document.getElementById('wc-barwrap-group');
   if (bwGroup) bwGroup.style.display = chartType === 'bar' ? '' : 'none';
+  // hideLegend faz sentido em tipos com legenda (bar, barh, pie, line, combo, timeline, scatter).
+  const hlGroup = document.getElementById('wc-hidelegend-group');
+  const legendTypes = ['bar','barh','pie','line','combo','timeline','scatter'];
+  if (hlGroup) hlGroup.style.display = legendTypes.includes(chartType) ? '' : 'none';
   // GroupBy: bar (vertical/horizontal) ou line. Além dos campos categóricos, oferece
   // "Preenchido por" (sentinela __submitter__) — útil pra comparar séries por autor.
   const groupByGroup = document.getElementById('wc-groupby-group');
@@ -19488,6 +19561,7 @@ async function saveWidgetConfig() {
     }
     if (groupBy) widget.groupByFieldId = groupBy;
   }
+  if (document.getElementById('wc-hidelegend')?.checked) widget.hideLegend = true;
   const existing = dash.widgets || [];
   const nextWidgets = _wcState.widgetId
     ? existing.map(x => x.id === _wcState.widgetId ? widget : x)

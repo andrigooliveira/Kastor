@@ -3039,6 +3039,7 @@ function sanitizeDashboardWidgets(raw) {
     };
     const layout = sanitizeWidgetLayout(w.layout);
     if (layout) widget.layout = layout;
+    if (w.hideLegend === true) widget.hideLegend = true;
     if (isPivotLike) {
       const pv = w.pivot || {};
       const rowDim = _isValidPivotDim(pv.rowDim) ? pv.rowDim : null;
