@@ -6354,7 +6354,7 @@ function renderList() {
   // (ou ser admin — admin transita todos os workspaces).
   const prevUser = $('filter-user').value;
   const userOpts = (users || []).filter(u => u.active !== false &&
-    (me.isAdmin || (u.workspaces || []).some(wid => (me.workspaces || []).includes(wid))) &&
+    (me.isAdmin || u.isAdmin || (u.workspaces || []).some(wid => (me.workspaces || []).includes(wid))) &&
     (!wsPickSet.size || u.isAdmin || (u.workspaces || []).some(w => wsPickSet.has(w))))
     .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
   // Se o user escolhido não existe mais na lista filtrada, limpa o value.
