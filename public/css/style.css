@@ -12281,7 +12281,24 @@ tr.demand-row {
   font-size: 12.5px;
   height: 34px;
 }
-.perf-refresh-btn { height: 34px; white-space: nowrap; }
+/* Botões-ícone dos filtros (atualizar, config). Sem label, sem borda, só
+   um hover discreto pra afirmar clicabilidade. 16×16 no ícone. */
+.perf-icon-btn {
+  background: transparent;
+  border: none;
+  padding: 0;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background .15s, color .15s;
+}
+.perf-icon-btn:hover { background: var(--surface-hover); color: var(--text); }
+.perf-icon-btn .ic-md { width: 16px; height: 16px; }
 /* Linha do timestamp: fica abaixo dos controls, dentro do próprio toolbar,
    alinhada à direita pra ficar imediatamente sob o botão Atualizar. */
 .perf-updated-row {
@@ -12585,7 +12602,19 @@ tr.demand-row {
    Explicitamente restaura pra right. */
 .perf-table tfoot .perf-tr-total td:nth-child(1) { text-align: left; }
 .perf-table tfoot .perf-tr-total td:nth-child(2) { text-align: right; }
-.perf-td-plat { white-space: nowrap; }
+.perf-td-plat {
+  white-space: nowrap;
+  width: 1%;   /* colapsa pra o mínimo necessário; nowrap garante que caiba */
+  padding-right: 8px !important;
+}
+.perf-plat-logo {
+  width: 16px;
+  height: 16px;
+  display: inline-block;
+  vertical-align: middle;
+  object-fit: contain;
+}
+.perf-alert .perf-plat-logo { width: 14px; height: 14px; }
 .perf-td-camp {
   max-width: 360px;
   overflow: hidden;
@@ -12609,6 +12638,89 @@ tr.demand-row {
 :root[data-theme="dark"] .perf-plat-google { background: rgba(245,158,11,0.2); color: #fbbf24; }
 .perf-pos { color: var(--perf-green); font-weight: 600; }
 .perf-neg { color: var(--perf-red);   font-weight: 600; }
+
+/* Card de alertas colapsável (acima do resumo detalhado). Usa <details>
+   pra ter open/close nativos; a chevron gira via [open] no summary. */
+.perf-alerts-card { margin-bottom: 16px; padding: 0; }
+.perf-alerts-summary {
+  cursor: pointer;
+  user-select: none;
+  padding: 14px 16px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  list-style: none;
+}
+.perf-alerts-summary::-webkit-details-marker { display: none; }
+.perf-alerts-summary-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.perf-alerts-chevron { transition: transform .18s; }
+.perf-alerts-card[open] .perf-alerts-chevron { transform: rotate(90deg); }
+.perf-alerts-card .perf-card-body {
+  padding: 0 16px 16px;
+}
+.perf-alerts-count {
+  background: var(--perf-red);
+  color: white;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.perf-alerts-count.is-ok { background: var(--perf-green); }
+.perf-alerts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.perf-alert {
+  display: flex;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border-left: 3px solid var(--border);
+  background: var(--surface-hover);
+  align-items: flex-start;
+}
+.perf-alert.is-critical {
+  border-left-color: var(--perf-red);
+  background: rgba(239, 68, 68, 0.08);
+}
+.perf-alert.is-ok {
+  border-left-color: var(--perf-green);
+  background: rgba(16, 185, 129, 0.06);
+}
+.perf-alert-icon {
+  flex-shrink: 0;
+  padding-top: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.perf-alert.is-critical .perf-alert-icon { color: var(--perf-red); }
+.perf-alert.is-ok .perf-alert-icon { color: var(--perf-green); }
+.perf-alert-body { flex: 1; min-width: 0; }
+.perf-alert-camp {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.perf-alert-msg {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  word-break: break-word;
+}
+.perf-alert-msg strong { color: var(--text); font-weight: 700; }
 
 /* Painel de configuração do webhook (admin) */
 .perf-config {

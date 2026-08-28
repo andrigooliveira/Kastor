@@ -14,12 +14,12 @@
 <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/geist-latin-ext.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/css/fonts.css?v=1">
-<link rel="stylesheet" href="/css/style.css?v=20260828perf9">
+<link rel="stylesheet" href="/css/style.css?v=20260828perf14">
 <!-- Preload dos JS pesados no <head> pra que o download comece IMEDIATAMENTE,
      em paralelo com o parse do HTML, em vez de esperar o parser chegar em
      </body>. Com immutable cache (max-age=1yr), na 2ª visita nem baixa. -->
 <link rel="preload" href="/vendor/lucide.min.js" as="script">
-<link rel="preload" href="/js/app.js?v=20260828perf9" as="script">
+<link rel="preload" href="/js/app.js?v=20260828perf14" as="script">
 <script type="text/javascript">
     // Clarity: analytics de heatmap/session replay. Não é crítico pro app —
     // deferido pra depois do primeiro paint pra não roubar tempo do LCP.
@@ -828,6 +828,14 @@
                 <select class="filter-select" id="perf-client" onchange="renderPerformance()" disabled></select>
               </div>
               <div class="perf-control">
+                <label class="filter-label">Plataforma</label>
+                <select class="filter-select" id="perf-platform" onchange="renderPerformance()" disabled></select>
+              </div>
+              <div class="perf-control">
+                <label class="filter-label">Campanha</label>
+                <select class="filter-select" id="perf-campaign" onchange="renderPerformance()" disabled></select>
+              </div>
+              <div class="perf-control">
                 <label class="filter-label">Período</label>
                 <select class="filter-select" id="perf-period" onchange="_perfOnPeriodChange()">
                   <option value="30" selected>Últimos 30 dias</option>
@@ -845,8 +853,8 @@
                   <input type="date" class="filter-select" id="perf-end" onchange="renderPerformance()">
                 </div>
               </div>
-              <button class="btn btn-ghost btn-sm perf-refresh-btn" onclick="renderPerformance()" title="Atualizar dados"><i data-lucide="refresh-cw" class="ic-sm"></i> Atualizar</button>
-              <button class="btn btn-ghost btn-sm" id="perf-config-btn" onclick="togglePerfConfig()" title="Configurar webhook" style="display:none"><i data-lucide="settings" class="ic-sm"></i></button>
+              <button class="perf-icon-btn" onclick="renderPerformance()" title="Atualizar dados" aria-label="Atualizar"><i data-lucide="refresh-cw" class="ic-md"></i></button>
+              <button class="perf-icon-btn" id="perf-config-btn" onclick="togglePerfConfig()" title="Configurar webhook" aria-label="Configurar webhook" style="display:none"><i data-lucide="settings" class="ic-md"></i></button>
             </div>
             <div class="perf-updated-row"><div class="perf-updated-at" id="perf-updated-at"></div></div>
           </div>
@@ -3829,7 +3837,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260828perf9"></script>
+<script src="/js/app.js?v=20260828perf14"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

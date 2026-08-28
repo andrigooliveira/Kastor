@@ -7387,6 +7387,8 @@ function renderAnalytics() {
 const _perfState = {
   workspaceId: localStorage.getItem('kastor-perf-ws') || '',
   clientId: localStorage.getItem('kastor-perf-client') || '',
+  platform: localStorage.getItem('kastor-perf-platform') || '',
+  campaign: localStorage.getItem('kastor-perf-campaign') || '',
   rows: [],
   loading: false,
   error: '',
@@ -7398,6 +7400,8 @@ function _perfSaveClient() {
   try {
     localStorage.setItem('kastor-perf-client', _perfState.clientId || '');
     localStorage.setItem('kastor-perf-ws', _perfState.workspaceId || '');
+    localStorage.setItem('kastor-perf-platform', _perfState.platform || '');
+    localStorage.setItem('kastor-perf-campaign', _perfState.campaign || '');
   } catch {}
 }
 /* Resolve o período do dropdown pra { start, end } (ISO YYYY-MM-DD) inclusivo,
@@ -7453,11 +7457,13 @@ function _perfOnPeriodChange() {
   }
   renderPerformance();
 }
-/* Trocar de squad zera cliente — regra do fluxo progressivo. */
+/* Trocar de squad zera cliente, plataforma E campanha — fluxo progressivo. */
 function _perfOnSquadChange() {
   const wsSel = $('perf-squad');
   _perfState.workspaceId = wsSel?.value || '';
   _perfState.clientId = '';
+  _perfState.platform = '';
+  _perfState.campaign = '';
   _perfSaveClient();
   _perfPopulateClients('');
   renderPerformance();
@@ -7478,6 +7484,58 @@ function _perfPopulateSquads() {
     ? accessible.map(w => `<option value="${esc(w.id)}" ${w.id === selected ? 'selected' : ''}>${esc(w.name)}</option>`).join('')
     : '<option value="">Nenhum squad disponível</option>';
   applyFilterDropdown('perf-squad');
+}
+/* Popula o <select> de campanha com as distintas presentes nos rows.
+   Habilitado só quando há cliente específico selecionado — sem cliente,
+   a lista teria todas as campanhas de todos os clientes do squad e o
+   filtro perderia sentido. */
+function _perfPopulateCampaigns(rows) {
+  const sel = $('perf-campaign');
+  if (!sel) return;
+  if (!_perfState.clientId) {
+    sel.innerHTML = '<option value="">— Selecione um cliente primeiro</option>';
+    sel.disabled = true;
+    _perfState.campaign = '';
+    _perfSaveClient();
+    applyFilterDropdown('perf-campaign');
+    return;
+  }
+  sel.disabled = false;
+  const distinct = Array.from(new Set((rows || []).map(r => r.campaign).filter(Boolean))).sort();
+  const prev = _perfState.campaign;
+  const stillValid = prev && distinct.includes(prev);
+  const selected = stillValid ? prev : '';
+  _perfState.campaign = selected;
+  _perfSaveClient();
+  const allOpt = `<option value="" ${!selected ? 'selected' : ''}>— Todas as campanhas</option>`;
+  sel.innerHTML = allOpt + distinct.map(c => `<option value="${esc(c)}" ${c === selected ? 'selected' : ''}>${esc(c)}</option>`).join('');
+  applyFilterDropdown('perf-campaign');
+}
+/* Popula o <select> de plataforma com as distintas presentes nos rows atuais.
+   Disabled sem squad. "" = todas. Mantém a seleção do user se ainda existir
+   nos dados novos; senão cai pra "". */
+function _perfPopulatePlatforms(rows) {
+  const sel = $('perf-platform');
+  if (!sel) return;
+  const wsId = _perfState.workspaceId;
+  if (!wsId) {
+    sel.innerHTML = '<option value="">— Selecione um squad primeiro</option>';
+    sel.disabled = true;
+    _perfState.platform = '';
+    _perfSaveClient();
+    applyFilterDropdown('perf-platform');
+    return;
+  }
+  sel.disabled = false;
+  const distinct = Array.from(new Set((rows || []).map(r => r.platform).filter(Boolean))).sort();
+  const prev = _perfState.platform;
+  const stillValid = prev && distinct.includes(prev);
+  const selected = stillValid ? prev : '';
+  _perfState.platform = selected;
+  _perfSaveClient();
+  const allOpt = `<option value="" ${!selected ? 'selected' : ''}>— Todas as plataformas</option>`;
+  sel.innerHTML = allOpt + distinct.map(p => `<option value="${esc(p)}" ${p === selected ? 'selected' : ''}>${esc(p)}</option>`).join('');
+  applyFilterDropdown('perf-platform');
 }
 /* Popula o <select> de cliente restrito ao squad escolhido (`_perfState.workspaceId`).
    Fluxo progressivo: cliente só aparece depois que o squad foi definido. Vazio
@@ -7514,6 +7572,17 @@ async function renderPerformance() {
   // que o user acabou de fazer.
   const clientPicked = $('perf-client')?.value;
   _perfPopulateClients(clientPicked !== undefined ? clientPicked : _perfState.clientId);
+  // Idem pra plataforma: valor do select tem prioridade sobre state.
+  // Se plataforma mudou vs state anterior, zera campanha (evita filtro
+  // "morto" — campanha só existia na plataforma antiga).
+  const platformPicked = $('perf-platform')?.value;
+  if (platformPicked !== undefined) {
+    if (platformPicked !== _perfState.platform) _perfState.campaign = '';
+    _perfState.platform = platformPicked;
+  }
+  // Campanha: se cliente mudou, o select já foi rebuildado e o value some.
+  const campaignPicked = $('perf-campaign')?.value;
+  if (campaignPicked !== undefined) _perfState.campaign = campaignPicked;
   _perfSyncPeriodVisibility();
   const workspaceId = _perfState.workspaceId;
   const clientId = _perfState.clientId;
@@ -7533,6 +7602,8 @@ async function renderPerformance() {
   const body = $('perf-body');
   if (!body) return;
   if (!workspaceId) {
+    _perfPopulatePlatforms([]);
+    _perfPopulateCampaigns([]);
     body.innerHTML = '<div class="perf-empty"><i data-lucide="bar-chart-3" class="ic-lg"></i><div>Selecione um squad pra começar.</div></div>';
     _perfUpdateTimestamp(null);
     if (window.lucide?.createIcons) lucide.createIcons();
@@ -7549,19 +7620,34 @@ async function renderPerformance() {
       api(`/marketing/performance?${scopeQs}&start=${start}&end=${end}`),
       api(`/marketing/performance?${scopeQs}&start=${prevStart}&end=${prevEnd}`).catch(() => ({ rows: [] }))
     ]);
-    _perfState.rows = cur.rows || [];
+    const rawCur = cur.rows || [];
+    const rawPrev = prev.rows || [];
+    // Popula filtro de plataforma com as platforms distintas dos dados atuais.
+    // Faz antes do filtro pra listar SEMPRE todas as opções (não só a selecionada).
+    _perfPopulatePlatforms(rawCur);
+    // Aplica filtro de plataforma (client-side — refetch não precisa).
+    const plat = _perfState.platform;
+    let curRows = plat ? rawCur.filter(r => r.platform === plat) : rawCur;
+    let prevRows = plat ? rawPrev.filter(r => r.platform === plat) : rawPrev;
+    // Popula filtro de campanha só se cliente específico + já filtrado por
+    // plataforma (senão a lista pode misturar campanhas com nomes similares
+    // entre platforms).
+    _perfPopulateCampaigns(curRows);
+    const camp = _perfState.campaign;
+    if (camp) {
+      curRows = curRows.filter(r => r.campaign === camp);
+      prevRows = prevRows.filter(r => r.campaign === camp);
+    }
+    _perfState.rows = curRows;
     _perfState.updatedAt = new Date();
     _perfUpdateTimestamp(_perfState.updatedAt);
-    if (!(cur.rows || []).length) {
-      // Empty state:
-      //  - Com cliente específico + admin → painel de config do webhook
-      //  - Sem cliente (squad inteiro) ou não-admin → mensagem simples
+    if (!curRows.length) {
       if (client) body.innerHTML = _perfRenderEmptyOrConfig(client);
-      else body.innerHTML = `<div class="perf-empty"><i data-lucide="inbox" class="ic-lg"></i><div>Sem dados nesse período pra ${esc(ws?.name || 'esse squad')}.</div><div class="perf-empty-hint">Nenhum cliente do squad recebeu snapshots no intervalo.</div></div>`;
+      else body.innerHTML = `<div class="perf-empty"><i data-lucide="inbox" class="ic-lg"></i><div>Sem dados nesse período${plat ? ` pra plataforma ${esc(plat)}` : ` pra ${esc(ws?.name || 'esse squad')}`}.</div><div class="perf-empty-hint">${plat ? 'Ajuste o filtro de plataforma ou o período.' : 'Nenhum cliente do squad recebeu snapshots no intervalo.'}</div></div>`;
       if (window.lucide?.createIcons) lucide.createIcons();
       return;
     }
-    _perfRender(body, cur.rows || [], prev.rows || []);
+    _perfRender(body, curRows, prevRows);
   } catch (e) {
     body.innerHTML = `<div class="perf-empty perf-error"><i data-lucide="alert-triangle" class="ic-lg"></i><div>Erro ao carregar: ${esc(e.message || 'desconhecido')}</div></div>`;
     if (window.lucide?.createIcons) lucide.createIcons();
@@ -7827,6 +7913,7 @@ function _perfRender(host, curRows, prevRows) {
         <div class="perf-card-body">${_perfRenderTimeSeries(series)}</div>
       </div>
     </div>
+    ${_perfRenderAlerts(curRows)}
     <div class="perf-card perf-table-card">
       <div class="perf-card-title">Resumo detalhado por campanha</div>
       <div class="perf-card-body">${_perfRenderTable(camp)}</div>
@@ -7910,7 +7997,8 @@ function _perfRenderCampaignCombo(rows) {
     rows: [
       { label: 'Investimento', value: _perfFmtBRLexact(r.spend), dot: 'var(--perf-purple)' },
       { label: 'Leads',        value: _perfFmtInt(r.leads),      dot: 'var(--perf-green)'  },
-      { label: 'CPL',          value: _perfFmtBRLexact(r.cpl)                              }
+      { label: 'CPL',          value: _perfFmtBRLexact(r.cpl)                              },
+      { label: 'Conversão',    value: _perfFmtPct(r.conv)                                  }
     ]
   }));
   _perfPendingHovers.push({ uid, points, viewBoxW: W });
@@ -8064,7 +8152,7 @@ function _perfRenderTable(agg) {
   });
   const body = rows.map(g => `
     <tr>
-      <td class="perf-td-plat"><span class="perf-plat-badge perf-plat-${g.platform.toLowerCase()}">${esc(g.platform)}</span></td>
+      <td class="perf-td-plat">${_perfPlatLogo(g.platform)}</td>
       <td class="perf-td-camp" title="${esc(g.campaign)}">${esc(g.campaign)}</td>
       <td>${_perfFmtInt(g.leads)}</td>
       <td>${_perfFmtPct(g.leadsPct)}</td>
@@ -8083,7 +8171,7 @@ function _perfRenderTable(agg) {
       <table class="perf-table perf-table-zebra">
         <thead>
           <tr>
-            ${_perfTh('platform',  'Plataforma')}
+            ${_perfTh('platform',  'Plat.')}
             ${_perfTh('campaign',  'Campanha')}
             ${_perfTh('leads',     'Leads')}
             ${_perfTh('leadsPct',  '% Leads')}
@@ -8221,6 +8309,85 @@ function _perfSetSort(key) {
     const agg = _perfAggregateByCampaign(_perfState.rows);
     table.querySelector('.perf-card-body').innerHTML = _perfRenderTable(agg);
   }
+}
+/* Logo 14×14 da plataforma pra usar em qualquer lugar (tabela, alertas).
+   Meta e Google têm SVGs em /public. Fallback pra badge textual pra plataformas
+   futuras que não tenham asset dedicado. */
+function _perfPlatLogo(platform) {
+  const p = String(platform || '').toLowerCase();
+  if (p === 'meta' || p === 'google') {
+    return `<img class="perf-plat-logo" src="/${p}.svg" width="14" height="14" alt="${esc(platform)}" title="${esc(platform)}">`;
+  }
+  return `<span class="perf-plat-badge">${esc(platform)}</span>`;
+}
+/* Card de Alertas — pega o snapshot MAIS RECENTE por (platform, campaign) e
+   lista status_alerta + analise_alerta. Se todas as campanhas estão ok, esconde
+   ("nada a reportar"). Rows já vêm ordenadas por date ASC no server, então o
+   último snapshot da chave é o mais recente. */
+function _perfCollectAlerts(rowsIn) {
+  const latest = new Map();
+  for (const r of rowsIn) {
+    const key = `${r.platform}::${r.campaign}`;
+    latest.set(key, r); // sobrescreve — fica com o último (mais recente) por chave
+  }
+  return Array.from(latest.values())
+    .filter(r => r.alertStatus || r.alertAnalysis)
+    .sort((a, b) => {
+      // Alertas críticos primeiro (heurística: emojis 🔻/⚠️/❗/📉 antes de ✅)
+      const rank = s => /[🔻⚠️❗📉]/.test(s || '') ? 0 : (s === '✅' ? 2 : 1);
+      return rank(a.alertStatus) - rank(b.alertStatus);
+    });
+}
+function _perfRenderAlerts(rowsIn) {
+  const alerts = _perfCollectAlerts(rowsIn);
+  if (!alerts.length) return '';
+  const critCount = alerts.filter(a => /[🔻⚠️❗📉]/.test(a.alertStatus || '')).length;
+  const openAttr = critCount > 0 ? 'open' : '';
+  return `
+    <details class="perf-card perf-alerts-card" ${openAttr}>
+      <summary class="perf-card-title perf-alerts-summary">
+        <span class="perf-alerts-summary-label">
+          <i data-lucide="chevron-right" class="ic-sm perf-alerts-chevron"></i>
+          Alertas por campanha
+        </span>
+        <span class="perf-alerts-count ${critCount === 0 ? 'is-ok' : ''}">${alerts.length}</span>
+      </summary>
+      <div class="perf-card-body">
+        <div class="perf-alerts">
+          ${alerts.map(a => {
+            const critical = /[🔻⚠️❗📉]/.test(a.alertStatus || '');
+            return `
+              <div class="perf-alert ${critical ? 'is-critical' : 'is-ok'}">
+                <div class="perf-alert-icon">
+                  <i data-lucide="${critical ? 'alert-triangle' : 'check-circle-2'}" class="ic-md"></i>
+                </div>
+                <div class="perf-alert-body">
+                  <div class="perf-alert-camp">
+                    ${_perfPlatLogo(a.platform)}
+                    <span title="${esc(a.campaign)}">${esc(a.campaign)}</span>
+                  </div>
+                  <div class="perf-alert-msg">${_perfFormatAlertText(a.alertAnalysis)}</div>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    </details>
+  `;
+}
+/* Formata o texto do alerta: strip TODOS os emojis (o n8n manda 📉/⚠️ no
+   corpo, mas visualmente polui — o ícone lateral já sinaliza severidade),
+   colapsa espaços que sobram, escape e **bold** → <strong>. */
+function _perfFormatAlertText(txt) {
+  if (!txt) return '';
+  // Remove qualquer pictograph unicode + presentation selectors (VS16 U+FE0F).
+  // Regex de Extended_Pictographic cobre todos os emojis modernos.
+  let s = String(txt).replace(/[\p{Extended_Pictographic}️]/gu, '');
+  // Colapsa spaces resultantes (ex: "📉 **X:** foo" → "**X:** foo").
+  s = s.replace(/\s{2,}/g, ' ').replace(/^\s+|\s+$/g, '');
+  const escaped = esc(s);
+  return escaped.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
 }
 /* Encurta nome de campanha pra labels de eixo. Prefere o segmento em [COLCHETES]
    mais distintivo (o último tag). Ex: [WSI][LEADs][HORTOLANDIA][CBO] → HORTOLANDIA. */
