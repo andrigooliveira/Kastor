@@ -757,8 +757,44 @@ function requireAuth(req, res, next) {
   const userId = auth.userIdForToken(token);
   const user = userId && db.users.find(u => u.id === userId && u.active !== false);
   if (!user) return res.status(401).json({ error: 'Não autenticado' });
+  // Freelancer: bloqueia globalmente mutações fora da whitelist. Endpoints
+  // permitidos ainda aplicam checks internos (freelancerHasDemandAccess,
+  // ownership em comentários/checklist/time, e limite de campos no PUT).
+  if (user.isFreelancer && !freelancerCanMutate(req.method, req.path)) {
+    return res.status(403).json({ error: 'Freelancers não têm permissão para essa ação' });
+  }
   req.user = user; req.token = token;
   next();
+}
+
+/* Whitelist de rotas que um freelancer pode acessar via método mutante (POST/PUT/DELETE/PATCH).
+   GET/HEAD/OPTIONS passam livre — a filtragem por demanda é feita nas próprias rotas.
+   Cobre: alterar etapa da demanda (PUT /demands/:id — com guard interno de campos),
+   comentar, apontar horas, checklist, watch/unwatch, perfil próprio e notificações. */
+const FREELANCER_ALLOWED_MUTATIONS = [
+  { m: 'PUT',    re: /^\/api\/demands\/[^/]+$/ },
+  { m: 'POST',   re: /^\/api\/demands\/[^/]+\/comment$/ },
+  { m: 'PUT',    re: /^\/api\/demands\/[^/]+\/comment\/[^/]+$/ },
+  { m: 'DELETE', re: /^\/api\/demands\/[^/]+\/comment\/[^/]+$/ },
+  { m: 'POST',   re: /^\/api\/demands\/[^/]+\/comment\/[^/]+\/react$/ },
+  { m: 'POST',   re: /^\/api\/demands\/[^/]+\/time$/ },
+  { m: 'PUT',    re: /^\/api\/demands\/[^/]+\/time\/[^/]+$/ },
+  { m: 'DELETE', re: /^\/api\/demands\/[^/]+\/time\/[^/]+$/ },
+  { m: 'POST',   re: /^\/api\/demands\/[^/]+\/checklist$/ },
+  { m: 'PUT',    re: /^\/api\/demands\/[^/]+\/checklist\/[^/]+$/ },
+  { m: 'DELETE', re: /^\/api\/demands\/[^/]+\/checklist\/[^/]+$/ },
+  { m: 'POST',   re: /^\/api\/demands\/[^/]+\/watch$/ },
+  { m: 'POST',   re: /^\/api\/demands\/[^/]+\/unwatch$/ },
+  { m: 'PUT',    re: /^\/api\/me$/ },
+  { m: 'POST',   re: /^\/api\/me(\/.*)?$/ },
+  { m: 'POST',   re: /^\/api\/logout$/ },
+  { m: 'POST',   re: /^\/api\/uploads$/ },
+  { m: 'PUT',    re: /^\/api\/notifications(\/.*)?$/ },
+  { m: 'DELETE', re: /^\/api\/notifications(\/.*)?$/ },
+];
+function freelancerCanMutate(method, path) {
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return true;
+  return FREELANCER_ALLOWED_MUTATIONS.some(r => r.m === method && r.re.test(path));
 }
 function adminOnly(req, res, next) {
   if (!req.user.isAdmin) return res.status(403).json({ error: 'Apenas administradores podem fazer isso' });
@@ -770,6 +806,34 @@ function adminOnly(req, res, next) {
 function modOrAdmin(req, res, next) {
   if (!req.user.isAdmin && !req.user.isModerator) return res.status(403).json({ error: 'Apenas moderadores ou administradores podem fazer isso' });
   next();
+}
+/* Bloqueia freelancers — usado em endpoints que criam/editam entidades globais
+   (clientes, projetos, fluxos, workspaces, usuários, etc). Freelancer só interage
+   com as demandas em que está: avança etapas e comenta. */
+function blockFreelancer(req, res, next) {
+  if (req.user.isFreelancer) return res.status(403).json({ error: 'Freelancers não têm permissão para essa ação' });
+  next();
+}
+/* Verifica se um freelancer tem vínculo com a demanda: é o responsável atual,
+   OU foi responsável em alguma etapa (stageResponsibles / stageAdditions), OU criou. */
+function freelancerHasDemandAccess(user, d) {
+  if (!user || !d) return false;
+  if (d.ownerId === user.id) return true;
+  if (d.createdBy === user.id) return true;
+  if (d.deliverableUserId === user.id) return true;
+  if (d.stageResponsibles && typeof d.stageResponsibles === 'object') {
+    for (const v of Object.values(d.stageResponsibles)) {
+      if (v === user.id) return true;
+    }
+  }
+  if (Array.isArray(d.stageAdditions) && d.stageAdditions.some(s => s && s.responsibleId === user.id)) return true;
+  if (Array.isArray(d.watchers) && d.watchers.includes(user.id)) return true;
+  return false;
+}
+function canAccessDemand(user, d) {
+  if (!d || !canAccessWs(user, d.workspaceId)) return false;
+  if (user.isFreelancer) return freelancerHasDemandAccess(user, d);
+  return true;
 }
 
 /* ─── NOTIFICAÇÕES ─── */
@@ -2278,15 +2342,30 @@ app.get('/api/bootstrap', requireAuth, (req, res) => {
     ? (db.webhooks || []).map(({ workspaceId, ...rest }) => rest)
     : [];
 
+  // Freelancer só vê as demandas em que está — e só os clientes/projetos/fluxos
+  // referenciados por essas demandas (o resto do sistema fica invisível).
+  let visibleDemands = db.demands.filter(d => inWs(d) && notDeleted(d));
+  let visibleClientIds = null, visibleProjectIds = null, visibleFlowIds = null;
+  if (u.isFreelancer) {
+    visibleDemands = visibleDemands.filter(d => freelancerHasDemandAccess(u, d));
+    visibleProjectIds = new Set(visibleDemands.map(d => d.projectId).filter(Boolean));
+    visibleFlowIds    = new Set(visibleDemands.map(d => d.flowId).filter(Boolean));
+    const projList = db.projects.filter(p => visibleProjectIds.has(p.id));
+    visibleClientIds = new Set(projList.map(p => p.clientId).filter(Boolean));
+  }
+  const clientOK  = c => visibleClientIds  ? visibleClientIds.has(c.id)  : true;
+  const projectOK = p => visibleProjectIds ? visibleProjectIds.has(p.id) : true;
+  const flowOK    = f => visibleFlowIds    ? visibleFlowIds.has(f.id)    : true;
+
   res.json({
     workspaces:      db.workspaces.filter(w => ids.includes(w.id)),
     users:           db.users.map(publicUser),
-    clients:         db.clients.filter(c => inWs(c) && notDeleted(c)),
-    projects:        db.projects.filter(p => inWs(p) && notDeleted(p)),
-    flows:           db.flows.filter(f => inWs(f) && notDeleted(f)),
+    clients:         db.clients.filter(c => inWs(c) && notDeleted(c) && clientOK(c)),
+    projects:        db.projects.filter(p => inWs(p) && notDeleted(p) && projectOK(p)),
+    flows:           db.flows.filter(f => inWs(f) && notDeleted(f) && flowOK(f)),
     // Stripped: description/comments/attachments/briefing/history só chegam
     // quando o user abre a demanda (~70% menor no wire, escala melhor).
-    demands:         db.demands.filter(d => inWs(d) && notDeleted(d)).map(stripDemandForList),
+    demands:         visibleDemands.map(stripDemandForList),
     roles:           db.roles,
     templates:       (db.templates || []).filter(inWs),
     // Schedules: só 4 semanas ao redor de hoje (2 anteriores incluindo semana
@@ -2363,7 +2442,7 @@ app.delete('/api/workspaces/:id', requireAuth, adminOnly, (req, res) => {
 app.get('/api/users', requireAuth, (req, res) => res.json(db.users.map(publicUser)));
 
 app.post('/api/users', requireAuth, adminOnly, (req, res) => {
-  const { username, password, name, role, position, isAdmin, isModerator, workspaces, discordId, email } = req.body || {};
+  const { username, password, name, role, position, isAdmin, isModerator, isFreelancer, workspaces, discordId, email } = req.body || {};
   const uname = String(username || '').trim().toLowerCase();
   if (!uname || !password) return res.status(400).json({ error: 'Usuário e senha são obrigatórios' });
   if (String(password).length < 6) return res.status(400).json({ error: 'A senha deve ter pelo menos 6 caracteres' });
@@ -2388,6 +2467,8 @@ app.post('/api/users', requireAuth, adminOnly, (req, res) => {
     isAdmin: !!isAdmin,
     // Moderador só faz sentido se não for admin (admin já tem tudo). Silenciosamente ignora.
     isModerator: !isAdmin && !!isModerator,
+    // Freelancer é excludente com admin/moderador — silenciosamente ignora se veio junto.
+    isFreelancer: !isAdmin && !isModerator && !!isFreelancer,
     avatar: null,
     active: true, workspaces: wsList, discordId: did, email: mail,
     emailPrefs: defaultEmailPrefs(), createdAt: nowISO()
@@ -2401,7 +2482,7 @@ app.post('/api/users', requireAuth, adminOnly, (req, res) => {
 app.put('/api/users/:id', requireAuth, adminOnly, (req, res) => {
   const u = db.users.find(x => x.id === req.params.id);
   if (!u) return res.status(404).json({ error: 'Usuário não encontrado' });
-  const { name, role, position, isAdmin, isModerator, active, password, workspaces, discordId, email } = req.body || {};
+  const { name, role, position, isAdmin, isModerator, isFreelancer, active, password, workspaces, discordId, email } = req.body || {};
   if (typeof name === 'string' && name.trim()) u.name = name.trim();
   if (typeof role === 'string') u.role = role.trim();
   if (typeof position === 'string') u.position = position.trim() || null;
@@ -2431,11 +2512,15 @@ app.put('/api/users/:id', requireAuth, adminOnly, (req, res) => {
       return res.status(400).json({ error: 'É preciso manter pelo menos um administrador ativo' });
     }
     u.isAdmin = isAdmin;
-    // Admin absorve moderador — não fazem sentido juntos.
-    if (isAdmin) u.isModerator = false;
+    // Admin absorve moderador/freelancer — não fazem sentido juntos.
+    if (isAdmin) { u.isModerator = false; u.isFreelancer = false; }
   }
   if (typeof isModerator === 'boolean' && !u.isAdmin) {
     u.isModerator = isModerator;
+    if (isModerator) u.isFreelancer = false;
+  }
+  if (typeof isFreelancer === 'boolean' && !u.isAdmin && !u.isModerator) {
+    u.isFreelancer = isFreelancer;
   }
   if (typeof active === 'boolean') {
     if (!active && u.isAdmin && db.users.filter(x => x.isAdmin && x.active !== false).length <= 1) {
@@ -2891,7 +2976,23 @@ app.delete('/api/form-responses/:id', requireAuth, (req, res) => {
    fieldId (pra bar) ou só templateId (pra KPI de contagem). Admin cria/edita
    (todos visualizam). Renderização (agregação das responses → SVG) mora no
    client — server só valida a estrutura. */
-const DASHBOARD_CHART_TYPES = ['bar', 'barh', 'kpi', 'pie', 'line'];
+const DASHBOARD_CHART_TYPES = ['bar', 'barh', 'kpi', 'pie', 'line', 'pivot', 'heatmap', 'combo', 'scatter', 'timeline'];
+const DASHBOARD_TIMELINE_BUCKETS = ['auto', 'day', 'week', 'month'];
+const DASHBOARD_SOURCE_KINDS = ['form', 'demand', 'time'];
+const DASHBOARD_PIVOT_METRICS = ['count', 'hours', 'qtyPieces', 'qtyArts', 'qtyVariations', 'estimatedHours', 'realHours'];
+const DASHBOARD_PIVOT_AGGREGATES = ['sum', 'avg'];
+// Dimensões válidas por fonte — o server só valida a shape (string com prefixo permitido),
+// mas mantém a lista pra prevenir chave arbitrária. field:<uuid> é permitido pra 'form'.
+const DASHBOARD_PIVOT_DIMS_COMMON = new Set([
+  'clientName','projectName','workspaceName','flowName','deadlineMonth','createdMonth',
+  'userName','submitterName','demandName','day','week','month'
+]);
+function _isValidPivotDim(d) {
+  if (typeof d !== 'string' || !d) return false;
+  if (DASHBOARD_PIVOT_DIMS_COMMON.has(d)) return true;
+  if (d.startsWith('field:') && d.length > 6 && d.length < 64) return true;
+  return false;
+}
 const DASHBOARD_KPI_AGGS = ['count', 'sum', 'avg'];
 const DASHBOARD_LINE_BUCKETS = ['auto', 'day', 'week', 'month'];
 const DASHBOARD_GRID_COLS = 12;
@@ -2919,8 +3020,14 @@ function sanitizeDashboardWidgets(raw) {
     if (!w || typeof w !== 'object') continue;
     const chartType = DASHBOARD_CHART_TYPES.includes(w.chartType) ? w.chartType : 'bar';
     const src = w.source || {};
+    const kind = DASHBOARD_SOURCE_KINDS.includes(src.kind) ? src.kind : 'form';
     const templateId = typeof src.templateId === 'string' ? src.templateId : null;
-    if (!templateId) continue;
+    // Só form requer templateId; cross widgets sobre demand/time não têm template.
+    if (kind === 'form' && !templateId) continue;
+    // Widgets clássicos (bar/pie/line/kpi) exigem kind=form (só operam sobre respostas).
+    const isPivotLike = chartType === 'pivot' || chartType === 'heatmap';
+    const isCross = isPivotLike || chartType === 'combo' || chartType === 'scatter' || chartType === 'timeline';
+    if (!isCross && kind !== 'form') continue;
     let id = typeof w.id === 'string' && /^[a-z0-9_-]{1,40}$/i.test(w.id) ? w.id : uid();
     if (seen.has(id)) id = uid();
     seen.add(id);
@@ -2928,11 +3035,54 @@ function sanitizeDashboardWidgets(raw) {
       id,
       title: String(w.title || '').trim().slice(0, 120),
       chartType,
-      source: { templateId }
+      source: kind === 'form' ? { kind: 'form', templateId } : { kind }
     };
     const layout = sanitizeWidgetLayout(w.layout);
     if (layout) widget.layout = layout;
-    if (chartType === 'bar' || chartType === 'barh' || chartType === 'pie') {
+    if (isPivotLike) {
+      const pv = w.pivot || {};
+      const rowDim = _isValidPivotDim(pv.rowDim) ? pv.rowDim : null;
+      const colDim = _isValidPivotDim(pv.colDim) ? pv.colDim : '';
+      const metric = typeof pv.metric === 'string' && (DASHBOARD_PIVOT_METRICS.includes(pv.metric) || pv.metric.startsWith('field:'))
+        ? pv.metric : 'count';
+      const aggregate = DASHBOARD_PIVOT_AGGREGATES.includes(pv.aggregate) ? pv.aggregate : 'sum';
+      if (!rowDim) continue;                      // pivot precisa de linha
+      if (chartType === 'heatmap' && !colDim) continue;
+      widget.pivot = { rowDim, colDim, metric, aggregate };
+    } else if (chartType === 'combo') {
+      const cb = w.combo || {};
+      const primary = _isValidPivotDim(cb.primary) ? cb.primary : null;
+      const barMet  = typeof cb.bar?.metric  === 'string' && (DASHBOARD_PIVOT_METRICS.includes(cb.bar.metric)  || cb.bar.metric.startsWith('field:'))  ? cb.bar.metric  : 'count';
+      const lineMet = typeof cb.line?.metric === 'string' && (DASHBOARD_PIVOT_METRICS.includes(cb.line.metric) || cb.line.metric.startsWith('field:')) ? cb.line.metric : 'count';
+      const barAgg  = DASHBOARD_PIVOT_AGGREGATES.includes(cb.bar?.aggregate)  ? cb.bar.aggregate  : 'sum';
+      const lineAgg = DASHBOARD_PIVOT_AGGREGATES.includes(cb.line?.aggregate) ? cb.line.aggregate : 'sum';
+      if (!primary) continue;
+      widget.combo = { primary, bar: { metric: barMet, aggregate: barAgg }, line: { metric: lineMet, aggregate: lineAgg } };
+    } else if (chartType === 'scatter') {
+      const sc = w.scatter || {};
+      const x = typeof sc.x === 'string' && (DASHBOARD_PIVOT_METRICS.includes(sc.x) || sc.x.startsWith('field:')) ? sc.x : null;
+      const y = typeof sc.y === 'string' && (DASHBOARD_PIVOT_METRICS.includes(sc.y) || sc.y.startsWith('field:')) ? sc.y : null;
+      const groupDim = _isValidPivotDim(sc.groupDim) ? sc.groupDim : '';
+      if (!x || !y) continue;
+      if (x === 'count' || y === 'count') continue;
+      widget.scatter = { x, y, groupDim };
+    } else if (chartType === 'timeline') {
+      const tl = w.timeline || {};
+      const bucket = DASHBOARD_TIMELINE_BUCKETS.includes(tl.bucket) ? tl.bucket : 'auto';
+      const rawMetrics = Array.isArray(tl.metrics) ? tl.metrics.slice(0, 4) : [];
+      const metrics = [];
+      for (const m of rawMetrics) {
+        if (!m || typeof m !== 'object') continue;
+        const metric = typeof m.metric === 'string' && (DASHBOARD_PIVOT_METRICS.includes(m.metric) || m.metric.startsWith('field:'))
+          ? m.metric : null;
+        if (!metric) continue;
+        const aggregate = DASHBOARD_PIVOT_AGGREGATES.includes(m.aggregate) ? m.aggregate : 'sum';
+        metrics.push({ label: String(m.label || '').trim().slice(0, 60), metric, aggregate });
+      }
+      if (!metrics.length) continue;
+      const splitBy = _isValidPivotDim(tl.splitBy) ? tl.splitBy : '';
+      widget.timeline = { bucket, metrics, splitBy };
+    } else if (chartType === 'bar' || chartType === 'barh' || chartType === 'pie') {
       const fieldId = typeof src.fieldId === 'string' ? src.fieldId : null;
       if (!fieldId) continue; // bar/barh/pie sem field não faz sentido
       widget.source.fieldId = fieldId;
@@ -2940,6 +3090,7 @@ function sanitizeDashboardWidgets(raw) {
       if ((chartType === 'bar' || chartType === 'barh') && typeof w.groupByFieldId === 'string' && w.groupByFieldId) {
         widget.groupByFieldId = w.groupByFieldId;
       }
+      if (chartType === 'bar' && w.barWrap === true) widget.barWrap = true;
     } else if (chartType === 'kpi') {
       // Multi-KPI: se kpiSeries vier, ignora kpiAggregate/source.fieldId antigos
       // e usa a lista. Retrocompatível: se kpiSeries vazio, mantém single KPI.
@@ -4050,7 +4201,11 @@ app.post('/api/flows/:id/duplicate', requireAuth, modOrAdmin, (req, res) => {
 /* ── DEMANDAS ── */
 app.get('/api/demands', requireAuth, (req, res) => {
   const ids = wsIdsFor(req.user);
-  res.json(db.demands.filter(d => ids.includes(d.workspaceId) && notDeleted(d)));
+  const list = db.demands.filter(d => ids.includes(d.workspaceId) && notDeleted(d));
+  if (req.user.isFreelancer) {
+    return res.json(list.filter(d => freelancerHasDemandAccess(req.user, d)));
+  }
+  res.json(list);
 });
 
 function stageById(flow, id) { return flow ? flow.stages.find(s => s.id === id) : null; }
@@ -4681,6 +4836,9 @@ function getDemand(req, res) {
   const d = db.demands.find(x => x.id === req.params.id);
   // notDeleted filtra soft-deleted — todas as rotas de mutação passam por aqui.
   if (!d || !canAccessWs(req.user, d.workspaceId) || !notDeleted(d)) { res.status(404).json({ error: 'Demanda não encontrada' }); return null; }
+  if (req.user.isFreelancer && !freelancerHasDemandAccess(req.user, d)) {
+    res.status(404).json({ error: 'Demanda não encontrada' }); return null;
+  }
   return d;
 }
 // Helper pra reduzir boilerplate de SSE nas subrotinas de demanda
@@ -4700,6 +4858,15 @@ app.get('/api/demands/:id', requireAuth, (req, res) => {
 app.put('/api/demands/:id', requireAuth, (req, res) => {
   const d = getDemand(req, res); if (!d) return;
   const b = req.body || {};
+  // Freelancer só pode mudar a etapa (avançar/retroceder) e a ordem no kanban.
+  // Qualquer outro campo no body é bloqueado — evita edição indireta de descrição,
+  // prazo, prioridade, responsável, etc.
+  if (req.user.isFreelancer) {
+    const ALLOWED = new Set(['status', 'kanbanOrder']);
+    for (const k of Object.keys(b)) {
+      if (!ALLOWED.has(k)) return res.status(403).json({ error: 'Freelancers só podem avançar/retroceder etapas desta demanda' });
+    }
+  }
   const fired = []; // eventos a disparar no final
   const wasCompleted = !!d.completedAt;
   if (typeof b.name === 'string' && b.name.trim() && b.name.trim().slice(0, 300) !== d.name) {
@@ -4851,6 +5018,12 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
     const oldStageId = d.status;
     const prevStage = stageByIdForDemand(flow, d, oldStageId);
     stageChangeCtx = { prevStage, stage };
+    // Debounce de notificações: se a etapa anterior ficou < 10s, é provável que
+    // seja um clique errado (o usuário avança e volta). Nesse caso pula toda
+    // notificação/webhook de mudança de etapa pra não floodar responsáveis/watchers.
+    const prevEnteredMs = d.stageEnteredAt ? new Date(d.stageEnteredAt).getTime() : 0;
+    const heldMs = prevEnteredMs ? (Date.now() - prevEnteredMs) : Infinity;
+    const notifyStage = heldMs > 10000;
     // fecha a etapa anterior no histórico
     const prev = d.stageHistory[d.stageHistory.length - 1];
     if (prev && !prev.leftAt) prev.leftAt = nowISO();
@@ -4860,7 +5033,7 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
     d.stageDueDate = resolveStageDueDate(stage, d, today());
     d.stageHistory.push({ stageId: stage.id, enteredAt: nowISO(), dueDate: d.stageDueDate });
     addHistory(d, req.user.id, 'stage_changed', { fromId: oldStageId, toId: stage.id });
-    fired.push('demand.stage_changed');
+    if (notifyStage) fired.push('demand.stage_changed');
     // Responsável padrão da etapa assume a demanda (se configurado e sem override no payload).
     // Override por instância (d.stageResponsibles[stageId]) tem precedência sobre o padrão do fluxo.
     // Se a nova etapa não define responsável (autoOwner=null), LIMPA d.ownerId — evita herdar
@@ -4873,14 +5046,16 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
       d.ownerId = autoOwner || null;
       if (d.ownerId !== prevOwner) {
         addHistory(d, req.user.id, 'owner_auto_assigned', { fromId: prevOwner, toId: d.ownerId, byStage: stage.id });
-        if (d.ownerId && d.ownerId !== req.user.id) {
+        if (notifyStage && d.ownerId && d.ownerId !== req.user.id) {
           notify(d.ownerId, 'stage_assigned', { demandId: d.id, demandName: d.name, stageName: stage.label }, req.user.id, appBaseUrl(req));
           fired.push('demand.stage_assigned');
         }
       }
     }
     // Notifica watchers da demanda sobre a mudança de etapa.
-    notifyWatchers(d, 'watch_stage', { demandId: d.id, demandName: d.name, stageName: stage.label }, req.user.id, appBaseUrl(req));
+    if (notifyStage) {
+      notifyWatchers(d, 'watch_stage', { demandId: d.id, demandName: d.name, stageName: stage.label }, req.user.id, appBaseUrl(req));
+    }
     if (stage.done && !d.completedAt) d.completedAt = nowISO();
     if (!stage.done) d.completedAt = null;
   }
@@ -5167,6 +5342,11 @@ app.post('/api/demands/bulk', requireAuth, rateLimitBulk, (req, res) => {
         if (realStage.id === d.status) { skipped++; continue; }
         const oldStageId = d.status;
         const prevStage = stageByIdForDemand(flow, d, oldStageId);
+        // Debounce igual ao PUT individual: se a etapa anterior ficou < 10s,
+        // suprime notificações/webhooks pra não floodar em clicks errados.
+        const prevEnteredMs = d.stageEnteredAt ? new Date(d.stageEnteredAt).getTime() : 0;
+        const heldMs = prevEnteredMs ? (Date.now() - prevEnteredMs) : Infinity;
+        const notifyStage = heldMs > 10000;
         const prev = d.stageHistory[d.stageHistory.length - 1];
         if (prev && !prev.leftAt) prev.leftAt = nowISO();
         d.status = realStage.id;
@@ -5189,18 +5369,22 @@ app.post('/api/demands/bulk', requireAuth, rateLimitBulk, (req, res) => {
           const prevOwner = d.ownerId;
           d.ownerId = stageOwner;
           addHistory(d, req.user.id, 'owner_auto_assigned', { fromId: prevOwner, toId: d.ownerId, byStage: realStage.id });
-          if (d.ownerId && d.ownerId !== req.user.id) {
+          if (notifyStage && d.ownerId && d.ownerId !== req.user.id) {
             notify(d.ownerId, 'stage_assigned', { demandId: d.id, demandName: d.name, stageName: realStage.label }, req.user.id, appBaseUrl(req));
           }
         }
         // Watchers também recebem notificação de mudança de etapa (bulk).
-        notifyWatchers(d, 'watch_stage', { demandId: d.id, demandName: d.name, stageName: realStage.label }, req.user.id, appBaseUrl(req));
+        if (notifyStage) {
+          notifyWatchers(d, 'watch_stage', { demandId: d.id, demandName: d.name, stageName: realStage.label }, req.user.id, appBaseUrl(req));
+        }
         // Webhooks — mesmo conjunto de eventos do PUT individual.
         const owner = db.users.find(u => u.id === d.ownerId);
         const _bulkReqBase = appBaseUrl(req);
-        fireWebhook('demand.stage_changed', () => ({
-          demand: d, project: _bulkProj, flow, stage: realStage, prevStage, user: req.user, owner, appBaseUrl: _bulkReqBase
-        }));
+        if (notifyStage) {
+          fireWebhook('demand.stage_changed', () => ({
+            demand: d, project: _bulkProj, flow, stage: realStage, prevStage, user: req.user, owner, appBaseUrl: _bulkReqBase
+          }));
+        }
         if (!wasCompleted && d.completedAt) {
           fireWebhook('demand.completed', () => ({
             demand: d, project: _bulkProj, flow, user: req.user, owner, appBaseUrl: _bulkReqBase
@@ -5732,6 +5916,9 @@ app.put('/api/demands/:id/checklist/:itemId', requireAuth, (req, res) => {
   const d = getDemand(req, res); if (!d) return;
   const item = (d.checklist || []).find(x => x.id === req.params.itemId);
   if (!item) return res.status(404).json({ error: 'Item não encontrado' });
+  if (req.user.isFreelancer && item.createdBy !== req.user.id) {
+    return res.status(403).json({ error: 'Freelancers só podem editar itens de checklist que criaram' });
+  }
   const b = req.body || {};
   if (typeof b.text === 'string' && b.text.trim()) {
     item.text = b.text.trim().slice(0, 500);
@@ -5759,6 +5946,9 @@ app.put('/api/demands/:id/checklist/:itemId', requireAuth, (req, res) => {
 app.delete('/api/demands/:id/checklist/:itemId', requireAuth, (req, res) => {
   const d = getDemand(req, res); if (!d) return;
   const item = (d.checklist || []).find(x => x.id === req.params.itemId);
+  if (item && req.user.isFreelancer && item.createdBy !== req.user.id) {
+    return res.status(403).json({ error: 'Freelancers só podem remover itens de checklist que criaram' });
+  }
   if (item) addHistory(d, req.user.id, 'checklist_removed', { itemId: item.id, text: item.text });
   d.checklist = (d.checklist || []).filter(x => x.id !== req.params.itemId);
   saveEntity('demands', d);

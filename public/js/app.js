@@ -3678,6 +3678,7 @@ function renderSidebarUser() {
   //   admin (nenhuma)   → vê tudo
   document.body.classList.toggle('user-readonly', !me.isAdmin && !me.isModerator);
   document.body.classList.toggle('user-moderator', !!me.isModerator && !me.isAdmin);
+  document.body.classList.toggle('user-freelancer', !!me.isFreelancer && !me.isAdmin && !me.isModerator);
 }
 
 /* Sidebar collapse — estado persistido em localStorage. */
@@ -3707,6 +3708,13 @@ const PAGE_TITLES = {
 };
 function goPage(page) {
   hideTooltip();
+  // Freelancer só navega em Minhas Demandas, no próprio perfil e no detalhe
+  // de uma demanda. Qualquer outra URL cai em 'mine' — evita telas quebradas
+  // por dados filtrados (clientes/projetos/fluxos vêm reduzidos do backend).
+  if (me?.isFreelancer) {
+    const FREE_ALLOWED = new Set(['mine', 'profile', 'demand-detail']);
+    if (!FREE_ALLOWED.has(page)) page = 'mine';
+  }
   // Sair da página de Fluxos zera a subview de cliente. Ficar nela (ou entrar
   // por navegação real) preserva — assim salvar/atualizar um fluxo não joga o
   // usuário de volta pro grid (o estado é restaurado por renderCurrent).
@@ -6910,6 +6918,9 @@ function setMineView(v) {
 function myDemands() {
   return (demands || []).filter(d => {
     if (d.deletedAt) return false;
+    // Freelancer: o backend já enviou só as demandas em que ele está.
+    // Não filtra por ownerId (pode estar em etapa passada/futura via stageResponsibles).
+    if (me.isFreelancer) return true;
     if (d.ownerId !== me.id) return false;
     if (!(me.isAdmin || (me.workspaces || []).includes(d.workspaceId))) return false;
     return true;
@@ -6995,6 +7006,25 @@ function renderMine() {
   // "Minhas Demandas". Re-render junto pra refletir mudanças imediato.
   if ($('cal-mine-body')) renderCalendar('mine');
   if (typeof renderAgenda === 'function') renderAgenda();
+  _applyMineAgendaCollapsed();
+}
+/* "Minha Agenda" recolhível — botão-chevron no cabeçalho.
+   Estado persiste em localStorage; aplicado ao entrar na página. */
+function _mineAgendaCollapsed() {
+  try { return localStorage.getItem('kastor-mine-agenda-collapsed') === '1'; } catch { return false; }
+}
+function _applyMineAgendaCollapsed() {
+  const panel = document.getElementById('mine-agenda-panel');
+  if (!panel) return;
+  panel.classList.toggle('is-collapsed', _mineAgendaCollapsed());
+}
+function _toggleMineAgenda() {
+  const panel = document.getElementById('mine-agenda-panel');
+  if (!panel) return;
+  const next = !panel.classList.contains('is-collapsed');
+  panel.classList.toggle('is-collapsed', next);
+  try { localStorage.setItem('kastor-mine-agenda-collapsed', next ? '1' : '0'); } catch {}
+  if (window.lucide?.createIcons) lucide.createIcons();
 }
 function sortMine(key) {
   if (mineSortKey === key) mineSortAsc = !mineSortAsc; else { mineSortKey = key; mineSortAsc = true; }
@@ -13551,7 +13581,7 @@ function renderUsers() {
     else if (userSortKey === 'role')     { va = norm(a.role || ''); vb = norm(b.role || ''); }
     else if (userSortKey === 'position') { va = norm(a.position || ''); vb = norm(b.position || ''); }
     else if (userSortKey === 'ws')       { va = (a.workspaces || []).length; vb = (b.workspaces || []).length; }
-    else if (userSortKey === 'admin')    { const rank = u => u.isAdmin ? 0 : (u.isModerator ? 1 : 2); va = rank(a); vb = rank(b); }
+    else if (userSortKey === 'admin')    { const rank = u => u.isAdmin ? 0 : (u.isModerator ? 1 : (u.isFreelancer ? 3 : 2)); va = rank(a); vb = rank(b); }
     else if (userSortKey === 'active')   { va = a.active !== false ? 0 : 1; vb = b.active !== false ? 0 : 1; }
     else { va = norm(a.name); vb = norm(b.name); }
     return (va < vb ? -1 : va > vb ? 1 : 0) * userSortDir;
@@ -13588,7 +13618,9 @@ function renderUsers() {
         ? '<span class="pill pill-admin">Admin</span>'
         : (u.isModerator
           ? '<span class="pill pill-moderator">Moderador</span>'
-          : '<span class="pill pill-muted">Equipe</span>')}</td>
+          : (u.isFreelancer
+            ? '<span class="pill pill-freelancer">Freelancer</span>'
+            : '<span class="pill pill-muted">Equipe</span>'))}</td>
       <td>${u.active !== false ? '<span class="pill pill-success">Ativo</span>' : '<span class="pill pill-muted">Desativado</span>'}</td>
       <td>${me.isAdmin ? `<div class="row-actions">
           <button class="detail-icon-btn" title="Editar" onclick="openUserModal('${u.id}')"><i data-lucide="pencil" class="ic-sm"></i></button>
@@ -16634,6 +16666,8 @@ function _feRenderFields() {
         ${(f.options || []).map((o, oi) => `
           <div class="fe-option-row">
             <input class="form-control" placeholder="Opção" value="${esc(o.label)}" oninput="feUpdateOption('${f.id}', ${oi}, this.value)">
+            <button type="button" class="detail-icon-btn" title="Subir" ${oi === 0 ? 'disabled' : ''} onclick="feMoveOption('${f.id}', ${oi}, -1)"><i data-lucide="arrow-up" class="ic-sm"></i></button>
+            <button type="button" class="detail-icon-btn" title="Descer" ${oi === (f.options.length - 1) ? 'disabled' : ''} onclick="feMoveOption('${f.id}', ${oi}, 1)"><i data-lucide="arrow-down" class="ic-sm"></i></button>
             <button type="button" class="detail-icon-btn danger" title="Remover opção" onclick="feRemoveOption('${f.id}', ${oi})"><i data-lucide="x" class="ic-sm"></i></button>
           </div>
         `).join('')}
@@ -16695,6 +16729,15 @@ function feRemoveOption(fid, oi) {
   const f = _feFields.find(x => x.id === fid);
   if (!f?.options) return;
   f.options.splice(oi, 1);
+  _feRenderFields();
+}
+function feMoveOption(fid, oi, delta) {
+  const f = _feFields.find(x => x.id === fid);
+  if (!f?.options) return;
+  const target = oi + delta;
+  if (target < 0 || target >= f.options.length) return;
+  const [opt] = f.options.splice(oi, 1);
+  f.options.splice(target, 0, opt);
   _feRenderFields();
 }
 function feUpdateOption(fid, oi, label) {
@@ -17234,10 +17277,53 @@ function _toggleDashRecords(dashId) {
    - submittedBy (autor)
    - fieldFilters: { [templateId]: { [fieldId]: [valuesAllowed] } } */
 function _emptyDashFilters() {
-  return { period: 'all', dateFrom: '', dateTo: '', workspaceId: '', clientId: '', projectId: '', submittedBy: '', fieldFilters: {} };
+  return {
+    period: 'all', dateFrom: '', dateTo: '',
+    workspaceId: '', clientId: '', projectId: '', submittedBy: '',
+    fieldFilters: {}
+  };
 }
 let _dashFilters = _emptyDashFilters();
-function _resetDashFilters() { _dashFilters = _emptyDashFilters(); }
+/* Drill-down: filtros dinâmicos aplicados ao clicar em segmentos dos widgets.
+   Map<dimKey, valueLabel>. Aplicado por cima dos filtros globais e afeta TODOS
+   os widgets do dashboard. Clicar duas vezes no mesmo valor remove o drill. */
+let _dashDrillDown = new Map();
+function _resetDashFilters() { _dashFilters = _emptyDashFilters(); _dashDrillDown.clear(); }
+function _dashDrillLabel(dimKey) {
+  const map = {
+    clientName: 'Cliente', projectName: 'Projeto', workspaceName: 'Squad',
+    flowName: 'Fluxo', userName: 'Executor', demandName: 'Demanda',
+    submitterName: 'Preenchido por',
+    deadlineMonth: 'Prazo (mês)', createdMonth: 'Criada (mês)',
+    day: 'Dia', week: 'Semana', month: 'Mês'
+  };
+  if (map[dimKey]) return map[dimKey];
+  if (dimKey.startsWith('field:')) return 'Campo';
+  return dimKey;
+}
+function _dashApplyDrillDown(dim, value) {
+  if (!dim || value === undefined || value === null) return;
+  if (_dashDrillDown.get(dim) === value) _dashDrillDown.delete(dim);
+  else _dashDrillDown.set(dim, value);
+  const d = _currentDashboardId ? dashboardById(_currentDashboardId) : null;
+  if (d) _renderDashboardView(d);
+}
+function _dashClearDrillDown(dim) {
+  if (!dim) _dashDrillDown.clear();
+  else _dashDrillDown.delete(dim);
+  const d = _currentDashboardId ? dashboardById(_currentDashboardId) : null;
+  if (d) _renderDashboardView(d);
+}
+/* Pivot/heatmap: um clique numa célula aplica os dois filtros (row + col) de uma vez.
+   Se ambos já estão ativos com os mesmos valores, remove os dois (toggle). */
+function _dashPivotCellDrill(rowDim, rowVal, colDim, colVal) {
+  if (!rowDim || !colDim) return;
+  const already = _dashDrillDown.get(rowDim) === rowVal && _dashDrillDown.get(colDim) === colVal;
+  if (already) { _dashDrillDown.delete(rowDim); _dashDrillDown.delete(colDim); }
+  else { _dashDrillDown.set(rowDim, rowVal); _dashDrillDown.set(colDim, colVal); }
+  const d = _currentDashboardId ? dashboardById(_currentDashboardId) : null;
+  if (d) _renderDashboardView(d);
+}
 function _dashFilterActiveCount() {
   let n = 0;
   if (_dashFilters.period !== 'all') n++;
@@ -17251,6 +17337,7 @@ function _dashFilterActiveCount() {
       if (Array.isArray(arr) && arr.length) n++;
     }
   }
+  n += _dashDrillDown.size;
   return n;
 }
 function _templatesUsedIn(dashboard) {
@@ -17288,6 +17375,13 @@ function _renderDashFilters(d) {
       ${activeCount ? `<span class="df-active-count">${activeCount} filtro(s) ativo(s)</span>` : ''}
       ${activeCount ? `<button class="btn btn-ghost btn-sm" onclick="_clearDashFilters()"><i data-lucide="x" class="ic-xs"></i> Limpar</button>` : ''}
     </div>
+    ${_dashDrillDown.size ? `<div class="df-row df-drill-row">
+      <span class="df-label">Drill-down</span>
+      ${[..._dashDrillDown.entries()].map(([dim, val]) => `
+        <span class="df-chip df-chip-drill">${esc(_dashDrillLabel(dim))} = ${esc(val)}<button title="Remover" onclick="_dashClearDrillDown('${esc(dim)}')"><i data-lucide="x" class="ic-xs"></i></button></span>
+      `).join('')}
+      <button class="btn btn-ghost btn-sm" onclick="_dashClearDrillDown()"><i data-lucide="x" class="ic-xs"></i> Limpar drill</button>
+    </div>` : ''}
     <div class="df-row">
       <span class="df-label">Período</span>
       <select class="filter-select" onchange="_setDashFilter('period', this.value)">
@@ -17427,6 +17521,7 @@ function _applyDashFilters(responses, templateId) {
   const wantClient  = _dashFilters.clientId    || null;
   const wantProject = _dashFilters.projectId   || null;
   const wantUser    = _dashFilters.submittedBy || null;
+  const needsDemand = !!(wantClient || wantProject);
   const fieldFilter = templateId ? (_dashFilters.fieldFilters?.[templateId] || null) : null;
   return responses.filter(r => {
     const ts = new Date(r.submittedAt).getTime();
@@ -17436,7 +17531,7 @@ function _applyDashFilters(responses, templateId) {
     if (customTo   !== null && ts > customTo)   return false;
     if (wantWs   && r.workspaceId !== wantWs) return false;
     if (wantUser && r.submittedBy !== wantUser) return false;
-    if (wantClient || wantProject) {
+    if (needsDemand) {
       const d = r.demandId ? demandById(r.demandId) : null;
       if (!d) return false;
       if (wantProject && d.projectId !== wantProject) return false;
@@ -17458,8 +17553,664 @@ function _applyDashFilters(responses, templateId) {
         }
       }
     }
+    if (_dashDrillDown.size) {
+      const enriched = _wgtEnrich(r, 'form');
+      const wFake = { source: { kind: 'form', templateId } };
+      for (const [dim, val] of _dashDrillDown) {
+        if (_dimResolve(enriched, dim, wFake) !== val) return false;
+      }
+    }
     return true;
   });
+}
+
+/* ─── CROSS-DATA ENGINE ───
+   Abstração pra permitir widgets sobre 3 fontes:
+     - 'form'   → respostas de um formulário (compat original)
+     - 'demand' → uma linha por demanda
+     - 'time'   → uma linha por apontamento de horas
+   Cada registro é enriquecido com __demand/__project/__client pra que qualquer
+   dimensão possa ser resolvida uniformemente. */
+const DEMAND_DIMS = [
+  { key: 'clientName',    label: 'Cliente' },
+  { key: 'projectName',   label: 'Projeto' },
+  { key: 'workspaceName', label: 'Squad' },
+  { key: 'flowName',      label: 'Fluxo' },
+  { key: 'deadlineMonth', label: 'Prazo (mês)' },
+  { key: 'createdMonth',  label: 'Criada (mês)' }
+];
+const DEMAND_METRICS = [
+  { key: 'count',          label: 'Contagem de demandas', supports: ['sum'] },
+  { key: 'qtyPieces',      label: 'Peças',                supports: ['sum','avg'] },
+  { key: 'qtyArts',        label: 'Artes',                supports: ['sum','avg'] },
+  { key: 'qtyVariations',  label: 'Variações',            supports: ['sum','avg'] },
+  { key: 'estimatedHours', label: 'Horas estimadas',      supports: ['sum','avg'] },
+  { key: 'realHours',      label: 'Horas realizadas',     supports: ['sum','avg'] }
+];
+const TIME_DIMS = [
+  { key: 'userName',      label: 'Executor' },
+  { key: 'clientName',    label: 'Cliente' },
+  { key: 'projectName',   label: 'Projeto' },
+  { key: 'workspaceName', label: 'Squad' },
+  { key: 'flowName',      label: 'Fluxo' },
+  { key: 'demandName',    label: 'Demanda' },
+  { key: 'day',           label: 'Dia' },
+  { key: 'week',          label: 'Semana' },
+  { key: 'month',         label: 'Mês' }
+];
+const TIME_METRICS = [
+  { key: 'count', label: 'Contagem de apontamentos', supports: ['sum'] },
+  { key: 'hours', label: 'Horas apontadas',          supports: ['sum','avg'] }
+];
+
+function _wgtKind(w) { return (w && w.source && w.source.kind) || 'form'; }
+
+function _wgtBaseRecords(w) {
+  const kind = _wgtKind(w);
+  if (kind === 'form') {
+    const tid = w.source?.templateId;
+    return (formResponses || []).filter(r => tid ? r.templateId === tid : true);
+  }
+  if (kind === 'demand') {
+    return (demands || []).filter(d => !d.deletedAt);
+  }
+  if (kind === 'time') {
+    const out = [];
+    for (const d of (demands || [])) {
+      if (d.deletedAt) continue;
+      for (const t of (d.timeEntries || [])) {
+        out.push(Object.assign({}, t, { demandId: d.id, demandName: d.name, workspaceId: d.workspaceId }));
+      }
+    }
+    return out;
+  }
+  return [];
+}
+
+function _wgtEnrich(r, kind) {
+  const d = kind === 'demand' ? r : (r.demandId ? demandById(r.demandId) : null);
+  const p = d?.projectId ? projectById(d.projectId) : null;
+  const c = p?.clientId ? clientById(p.clientId) : null;
+  return Object.assign({}, r, { __kind: kind, __demand: d, __project: p, __client: c });
+}
+
+function _wgtRecords(w) {
+  const kind = _wgtKind(w);
+  const enriched = _wgtBaseRecords(w).map(r => _wgtEnrich(r, kind));
+  return _wgtApplyFilters(enriched, w);
+}
+
+/* Timestamp de um registro conforme sua natureza — usa submittedAt (form) ou
+   createdAt (demand/time). Fallback pra 0 se ausente. */
+function _wgtRecordTs(r) {
+  const kind = r.__kind || 'form';
+  if (kind === 'form')   return new Date(r.submittedAt || 0).getTime();
+  if (kind === 'demand') return new Date(r.createdAt || 0).getTime();
+  if (kind === 'time')   return new Date(r.createdAt || 0).getTime();
+  return 0;
+}
+
+/* Aplica os filtros globais em records enriched. Reusa a mesma lógica de
+   _applyDashFilters, mas trabalha sobre records genéricos (form/demand/time). */
+function _wgtApplyFilters(records, w) {
+  if (!records.length) return records;
+  const kind = _wgtKind(w);
+  const templateId = kind === 'form' ? (w.source?.templateId || null) : null;
+  let cutoffMs = null;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  if (_dashFilters.period === '7d')   cutoffMs = today.getTime() - 6 * 86400000;
+  if (_dashFilters.period === '30d')  cutoffMs = today.getTime() - 29 * 86400000;
+  if (_dashFilters.period === '90d')  cutoffMs = today.getTime() - 89 * 86400000;
+  if (_dashFilters.period === 'year') cutoffMs = new Date(today.getFullYear(), 0, 1).getTime();
+  const customFrom = _dashFilters.period === 'custom' && _dashFilters.dateFrom ? new Date(_dashFilters.dateFrom + 'T00:00:00').getTime() : null;
+  const customTo   = _dashFilters.period === 'custom' && _dashFilters.dateTo   ? new Date(_dashFilters.dateTo   + 'T23:59:59').getTime() : null;
+  const wantWs      = _dashFilters.workspaceId || null;
+  const wantClient  = _dashFilters.clientId    || null;
+  const wantProject = _dashFilters.projectId   || null;
+  const wantUser    = _dashFilters.submittedBy || null;
+  const fieldFilter = templateId ? (_dashFilters.fieldFilters?.[templateId] || null) : null;
+  return records.filter(r => {
+    const ts = _wgtRecordTs(r);
+    if (cutoffMs !== null && ts < cutoffMs) return false;
+    if (customFrom !== null && ts < customFrom) return false;
+    if (customTo   !== null && ts > customTo)   return false;
+    const d = r.__demand;
+    const wsId = kind === 'form' ? r.workspaceId : d?.workspaceId;
+    if (wantWs && wsId !== wantWs) return false;
+    if (wantUser) {
+      if (kind === 'form'   && r.submittedBy !== wantUser) return false;
+      if (kind === 'time'   && r.userId      !== wantUser) return false;
+      if (kind === 'demand' && d?.ownerId    !== wantUser) return false;
+    }
+    if (wantClient && r.__client?.id !== wantClient) return false;
+    if (wantProject && r.__project?.id !== wantProject) return false;
+    if (fieldFilter && kind === 'form') {
+      for (const fieldId in fieldFilter) {
+        const allowed = fieldFilter[fieldId];
+        if (!Array.isArray(allowed) || !allowed.length) continue;
+        const v = r.values?.[fieldId];
+        if (Array.isArray(v)) {
+          if (!v.some(x => allowed.includes(x))) return false;
+        } else {
+          if (!allowed.includes(v)) return false;
+        }
+      }
+    }
+    if (_dashDrillDown.size) {
+      for (const [dim, val] of _dashDrillDown) {
+        if (_dimResolve(r, dim, w) !== val) return false;
+      }
+    }
+    return true;
+  });
+}
+
+/* Resolve o valor de uma dimensão pra um registro. Retorna string (rótulo).
+   `dim` pode ser um dos DEMAND_DIMS/TIME_DIMS ou "field:<fieldId>" (form). */
+function _dimResolve(r, dim, w) {
+  const kind = r.__kind || _wgtKind(w);
+  const d = r.__demand;
+  if (dim === 'clientName')    return r.__client?.name || '— sem cliente —';
+  if (dim === 'projectName')   return r.__project?.name || '— sem projeto —';
+  if (dim === 'workspaceName') {
+    const wsId = kind === 'form' ? r.workspaceId : d?.workspaceId;
+    return wsById(wsId)?.name || '—';
+  }
+  if (dim === 'flowName')      return flowById(d?.flowId)?.name || '—';
+  if (dim === 'userName')      return userById(r.userId || r.submittedBy)?.name || '—';
+  if (dim === 'submitterName') return userById(r.submittedBy)?.name || '—';
+  if (dim === 'demandName')    return d?.name || r.demandName || '—';
+  if (dim === 'deadlineMonth') return (d?.deadline || '').slice(0, 7) || '— sem prazo —';
+  if (dim === 'createdMonth')  return (d?.createdAt || '').slice(0, 7) || '—';
+  if (dim === 'day')   return (r.createdAt || '').slice(0, 10) || '—';
+  if (dim === 'week') {
+    const s = (r.createdAt || '').slice(0, 10);
+    if (!s) return '—';
+    const dt = new Date(s + 'T00:00:00');
+    const y = dt.getFullYear();
+    const start = new Date(y, 0, 1);
+    const wk = Math.ceil((((dt - start) / 86400000) + start.getDay() + 1) / 7);
+    return `${y}-S${String(wk).padStart(2,'0')}`;
+  }
+  if (dim === 'month') return (r.createdAt || '').slice(0, 7) || '—';
+  if (typeof dim === 'string' && dim.startsWith('field:')) {
+    const fid = dim.slice(6);
+    const template = w.source?.templateId ? formTemplateById(w.source.templateId) : null;
+    const field = template?.fields?.find(f => f.id === fid);
+    const v = r.values?.[fid];
+    const labelOf = val => (field?.options || []).find(o => o.value === val)?.label || String(val);
+    if (Array.isArray(v)) return v.length ? v.map(labelOf).join(', ') : '—';
+    if (v === null || v === undefined || v === '') return '—';
+    return labelOf(v);
+  }
+  return '—';
+}
+
+/* Retorna a métrica numérica de um registro. Usa `metric` como identificador:
+   'count' (sempre 1), 'hours', 'qtyPieces', 'estimatedHours', 'realHours', 'field:<id>'. */
+function _metricValue(r, metric, w) {
+  if (!metric || metric === 'count') return 1;
+  if (metric === 'hours')          return Number(r.hours) || 0;
+  if (metric === 'qtyPieces')      return Number(r.__demand?.qtyPieces || r.qtyPieces) || 0;
+  if (metric === 'qtyArts')        return Number(r.__demand?.qtyArts || r.qtyArts) || 0;
+  if (metric === 'qtyVariations')  return Number(r.__demand?.qtyVariations || r.qtyVariations) || 0;
+  if (metric === 'estimatedHours') return Number(r.__demand?.estimatedHours || r.estimatedHours) || 0;
+  if (metric === 'realHours') {
+    const d = r.__demand || r;
+    if (!Array.isArray(d.timeEntries)) return 0;
+    return d.timeEntries.reduce((s, t) => s + (Number(t.hours) || 0), 0);
+  }
+  if (typeof metric === 'string' && metric.startsWith('field:')) {
+    return Number(r.values?.[metric.slice(6)]) || 0;
+  }
+  return 0;
+}
+
+function _aggReduce(values, aggregate) {
+  if (!values.length) return 0;
+  if (aggregate === 'avg') return values.reduce((s, n) => s + n, 0) / values.length;
+  return values.reduce((s, n) => s + n, 0); // sum default
+}
+
+/* Lista dimensões/métricas disponíveis pra uma fonte. Pra 'form' precisa do templateId. */
+function _wgtDimsFor(kind, templateId) {
+  if (kind === 'demand') return DEMAND_DIMS;
+  if (kind === 'time')   return TIME_DIMS;
+  // form: dimensões vindas dos campos do template (select/multi/number)
+  // + usuário que preencheu + dimensões da demanda vinculada (via r.demandId).
+  const template = templateId ? formTemplateById(templateId) : null;
+  const fields = (template?.fields || []).filter(f => f.type === 'select' || f.type === 'multiselect' || f.type === 'number');
+  const fieldDims = fields.map(f => ({ key: 'field:' + f.id, label: 'Campo: ' + f.label + (f.type === 'number' ? ' (número)' : '') }));
+  return [
+    { key: 'submitterName', label: 'Preenchido por' },
+    ...fieldDims,
+    ...DEMAND_DIMS.map(d => ({ key: d.key, label: 'Demanda: ' + d.label }))
+  ];
+}
+function _wgtMetricsFor(kind, templateId) {
+  if (kind === 'demand') return DEMAND_METRICS;
+  if (kind === 'time')   return TIME_METRICS;
+  const template = templateId ? formTemplateById(templateId) : null;
+  const numFields = (template?.fields || []).filter(f => f.type === 'number');
+  const numMetrics = numFields.map(f => ({ key: 'field:' + f.id, label: 'Campo: ' + f.label, supports: ['sum','avg'] }));
+  return [{ key: 'count', label: 'Contagem de respostas', supports: ['sum'] }, ...numMetrics];
+}
+
+/* ── Widget: PIVOT TABLE ── */
+function _renderPivotWidget(w) {
+  const records = _wgtRecords(w);
+  const rowDim = w.pivot?.rowDim || null;
+  const colDim = w.pivot?.colDim || null;
+  const metric = w.pivot?.metric || 'count';
+  const aggregate = w.pivot?.aggregate || 'sum';
+  const title = w.title || 'Tabela dinâmica';
+  if (!rowDim) {
+    return `<div class="dw-widget"><div class="dw-widget-title">${esc(title)}</div><div class="dw-widget-empty">Configure a dimensão de linha.</div></div>`;
+  }
+  if (!records.length) {
+    return `<div class="dw-widget"><div class="dw-widget-title">${esc(title)}</div><div class="dw-widget-empty">Sem dados no filtro atual.</div></div>`;
+  }
+  const rowLabels = new Set(), colLabels = new Set();
+  const bucket = new Map(); // rowKey → colKey → values[]
+  for (const r of records) {
+    const rk = _dimResolve(r, rowDim, w);
+    const ck = colDim ? _dimResolve(r, colDim, w) : '__total__';
+    const v  = _metricValue(r, metric, w);
+    if (!bucket.has(rk)) bucket.set(rk, new Map());
+    const inner = bucket.get(rk);
+    if (!inner.has(ck)) inner.set(ck, []);
+    inner.get(ck).push(v);
+    rowLabels.add(rk);
+    colLabels.add(ck);
+  }
+  const rows = [...rowLabels].sort((a, b) => norm(a).localeCompare(norm(b)));
+  const cols = colDim ? [...colLabels].sort((a, b) => norm(a).localeCompare(norm(b))) : ['__total__'];
+  const cellVal = (rk, ck) => _aggReduce(bucket.get(rk)?.get(ck) || [], aggregate);
+  const rowTotals = new Map(rows.map(rk => [rk, _aggReduce(cols.flatMap(ck => bucket.get(rk)?.get(ck) || []), aggregate)]));
+  const colTotals = new Map(cols.map(ck => [ck, _aggReduce(rows.flatMap(rk => bucket.get(rk)?.get(ck) || []), aggregate)]));
+  const grandTotal = _aggReduce(rows.flatMap(rk => cols.flatMap(ck => bucket.get(rk)?.get(ck) || [])), aggregate);
+  const head = colDim
+    ? `<thead><tr><th></th>${cols.map(c => `<th class="pv-col-head" onclick="_dashApplyDrillDown('${esc(colDim)}', ${JSON.stringify(c).replace(/"/g,'&quot;')})" title="Drill: ${esc(_dashDrillLabel(colDim))} = ${esc(c)}">${esc(c)}</th>`).join('')}<th class="pv-total-head">Total</th></tr></thead>`
+    : `<thead><tr><th></th><th class="pv-total-head">${esc(_metricLabel(metric, aggregate))}</th></tr></thead>`;
+  const body = rows.map(rk => {
+    const cellsHtml = cols.map(ck => `<td class="pv-cell${colDim ? ' pv-drillable' : ''}" ${colDim ? `onclick="_dashPivotCellDrill('${esc(rowDim)}', ${JSON.stringify(rk).replace(/"/g,'&quot;')}, '${esc(colDim)}', ${JSON.stringify(ck).replace(/"/g,'&quot;')})"` : ''} title="${colDim ? esc(rk) + ' × ' + esc(ck) : esc(rk)}: ${_fmtNum(cellVal(rk, ck))}">${_fmtNum(cellVal(rk, ck))}</td>`).join('');
+    const rowTotal = colDim ? `<td class="pv-total-cell">${_fmtNum(rowTotals.get(rk))}</td>` : '';
+    return `<tr><th class="pv-row-head pv-drillable" onclick="_dashApplyDrillDown('${esc(rowDim)}', ${JSON.stringify(rk).replace(/"/g,'&quot;')})" title="Drill: ${esc(_dashDrillLabel(rowDim))} = ${esc(rk)}">${esc(rk)}</th>${cellsHtml}${rowTotal}</tr>`;
+  }).join('');
+  const footer = colDim ? `<tfoot><tr><th class="pv-total-head">Total</th>${cols.map(ck => `<td class="pv-total-cell">${_fmtNum(colTotals.get(ck))}</td>`).join('')}<td class="pv-total-cell pv-grand">${_fmtNum(grandTotal)}</td></tr></tfoot>` : '';
+  return `<div class="dw-widget">
+    <div class="dw-widget-title">${esc(title)}</div>
+    <div class="dw-pivot-wrap"><table class="dw-pivot-table">${head}<tbody>${body}</tbody>${footer}</table></div>
+  </div>`;
+}
+function _metricLabel(metric, aggregate) {
+  const m = { count: 'Contagem', hours: 'Horas', qtyPieces: 'Peças', qtyArts: 'Artes', qtyVariations: 'Variações', estimatedHours: 'Horas est.', realHours: 'Horas real.' };
+  const base = m[metric] || (metric.startsWith('field:') ? 'Campo' : metric);
+  if (aggregate === 'avg') return 'Média · ' + base;
+  return base;
+}
+
+/* ── Widget: COMBO (bar + line, dual axis) ──
+   Uma dimensão categórica no eixo X + duas métricas em eixos Y independentes:
+   barra à esquerda, linha à direita. Permite comparar volume × qualidade
+   (ex.: nº de demandas × horas realizadas por cliente). */
+function _renderComboWidget(w) {
+  const records = _wgtRecords(w);
+  const primary = w.combo?.primary;
+  const barSpec = w.combo?.bar || {};
+  const lineSpec = w.combo?.line || {};
+  const title = w.title || 'Combo';
+  if (!primary || !barSpec.metric || !lineSpec.metric) {
+    return `<div class="dw-widget"><div class="dw-widget-title">${esc(title)}</div><div class="dw-widget-empty">Configure a dimensão + as duas métricas.</div></div>`;
+  }
+  if (!records.length) {
+    return `<div class="dw-widget"><div class="dw-widget-title">${esc(title)}</div><div class="dw-widget-empty">Sem dados no filtro atual.</div></div>`;
+  }
+  const buckets = new Map(); // primaryVal → { bar: [], line: [] }
+  for (const r of records) {
+    const k = _dimResolve(r, primary, w);
+    if (!buckets.has(k)) buckets.set(k, { bar: [], line: [] });
+    const b = buckets.get(k);
+    b.bar.push(_metricValue(r, barSpec.metric, w));
+    b.line.push(_metricValue(r, lineSpec.metric, w));
+  }
+  const keys = [...buckets.keys()].sort((a, b) => norm(a).localeCompare(norm(b))).slice(0, 20);
+  const barVals = keys.map(k => _aggReduce(buckets.get(k).bar,  barSpec.aggregate  || 'sum'));
+  const lineVals = keys.map(k => _aggReduce(buckets.get(k).line, lineSpec.aggregate || 'sum'));
+  const barMax  = Math.max(1, ...barVals);
+  const lineMax = Math.max(1, ...lineVals);
+  const barColor = _widgetColor(0);
+  const lineColor = _widgetColor(2);
+  // Layout: 100% × 100% flex. Cada bar é uma coluna; a linha é sobreposta em SVG absoluto.
+  const groupsHtml = keys.map((k, i) => {
+    const bp = (barVals[i] / barMax) * 100;
+    return `<div class="dw-combo-group pv-drillable" onclick="_dashApplyDrillDown('${esc(primary)}', ${JSON.stringify(k).replace(/"/g,'&quot;')})" title="Drill: ${esc(_dashDrillLabel(primary))} = ${esc(k)}">
+      <div class="dw-combo-bar-col">
+        <span class="dw-combo-val">${_fmtNum(barVals[i])}</span>
+        <div class="dw-combo-bar" style="height:${bp}%;background:${barColor}"></div>
+      </div>
+      <div class="dw-combo-xlabel" title="${esc(k)}">${esc(k)}</div>
+    </div>`;
+  }).join('');
+  // Line overlay — SVG absoluto sobre o plot. y invertido (0 = topo).
+  const n = keys.length;
+  const pts = lineVals.map((v, i) => {
+    const x = n === 1 ? 50 : (i / (n - 1)) * 100;
+    const y = 100 - (v / lineMax) * 100;
+    return { x, y, v, k: keys[i] };
+  });
+  const path = pts.map((p, i) => (i === 0 ? 'M' : 'L') + p.x + ',' + p.y).join(' ');
+  const dotsHtml = pts.map(p => `<circle cx="${p.x}" cy="${p.y}" r="1.6" fill="${lineColor}"><title>${esc(p.k)}: ${_fmtNum(p.v)}</title></circle>`).join('');
+  const barMetricLbl  = _metricLabel(barSpec.metric,  barSpec.aggregate  || 'sum');
+  const lineMetricLbl = _metricLabel(lineSpec.metric, lineSpec.aggregate || 'sum');
+  return `<div class="dw-widget">
+    <div class="dw-widget-title-row">
+      <div class="dw-widget-title">${esc(title)}</div>
+      <div class="dw-legend">
+        <span class="dw-legend-item"><span class="dw-legend-dot" style="background:${barColor}"></span>${esc(barMetricLbl)}</span>
+        <span class="dw-legend-item"><span class="dw-legend-dot" style="background:${lineColor};border-radius:1px"></span>${esc(lineMetricLbl)}</span>
+      </div>
+    </div>
+    <div class="dw-combo">
+      <div class="dw-combo-yaxis dw-combo-yaxis-left">
+        <span>${_fmtNum(barMax)}</span><span>${_fmtNum(barMax / 2)}</span><span>0</span>
+      </div>
+      <div class="dw-combo-plot">
+        <div class="dw-combo-grid"><span></span><span></span><span></span></div>
+        <div class="dw-combo-groups">${groupsHtml}</div>
+        <svg class="dw-combo-line" viewBox="0 0 100 100" preserveAspectRatio="none">
+          <path d="${path}" fill="none" stroke="${lineColor}" stroke-width="1.4" vector-effect="non-scaling-stroke"/>
+          ${dotsHtml}
+        </svg>
+      </div>
+      <div class="dw-combo-yaxis dw-combo-yaxis-right">
+        <span>${_fmtNum(lineMax)}</span><span>${_fmtNum(lineMax / 2)}</span><span>0</span>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ── Widget: SCATTER (dispersão) ──
+   Cada registro vira um ponto (x, y). Útil pra ver correlação entre duas
+   métricas numéricas (ex.: horas estimadas × horas realizadas). Opcionalmente
+   colore por uma dimensão categórica (`groupDim`). */
+function _renderScatterWidget(w) {
+  const records = _wgtRecords(w);
+  const xMetric = w.scatter?.x;
+  const yMetric = w.scatter?.y;
+  const groupDim = w.scatter?.groupDim || null;
+  const title = w.title || 'Dispersão';
+  if (!xMetric || !yMetric) {
+    return `<div class="dw-widget"><div class="dw-widget-title">${esc(title)}</div><div class="dw-widget-empty">Configure as métricas de X e Y.</div></div>`;
+  }
+  const pts = [];
+  for (const r of records) {
+    const x = _metricValue(r, xMetric, w);
+    const y = _metricValue(r, yMetric, w);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    if (x === 0 && y === 0) continue; // zeros costumam significar "sem dado"
+    pts.push({ x, y, g: groupDim ? _dimResolve(r, groupDim, w) : null });
+  }
+  if (!pts.length) {
+    return `<div class="dw-widget"><div class="dw-widget-title">${esc(title)}</div><div class="dw-widget-empty">Sem pares (x, y) válidos.</div></div>`;
+  }
+  const xMax = Math.max(1, ...pts.map(p => p.x));
+  const yMax = Math.max(1, ...pts.map(p => p.y));
+  // Grupos → cores
+  const groups = groupDim ? [...new Set(pts.map(p => p.g))].slice(0, 8) : [];
+  const groupIdx = new Map(groups.map((g, i) => [g, i]));
+  const dots = pts.map(p => {
+    const cx = (p.x / xMax) * 100;
+    const cy = 100 - (p.y / yMax) * 100;
+    const color = groupDim ? _widgetColor(groupIdx.get(p.g) ?? 0) : _widgetColor(0);
+    const title = `x=${_fmtNum(p.x)}, y=${_fmtNum(p.y)}${p.g ? ' · ' + p.g : ''}`;
+    return `<circle cx="${cx}" cy="${cy}" r="1.4" fill="${color}" opacity="0.75"><title>${esc(title)}</title></circle>`;
+  }).join('');
+  // Linha y=x diagonal — referência visual pra correlação perfeita
+  const diagMax = Math.min(xMax, yMax);
+  const diagX = (diagMax / xMax) * 100;
+  const diagY = 100 - (diagMax / yMax) * 100;
+  const legendHtml = groupDim ? `<div class="dw-legend">${groups.map((g, i) => `<span class="dw-legend-item"><span class="dw-legend-dot" style="background:${_widgetColor(i)}"></span>${esc(g)}</span>`).join('')}</div>` : '';
+  const xLabel = _metricLabel(xMetric, 'sum');
+  const yLabel = _metricLabel(yMetric, 'sum');
+  return `<div class="dw-widget">
+    <div class="dw-widget-title-row">
+      <div class="dw-widget-title">${esc(title)}</div>
+      ${legendHtml}
+    </div>
+    <div class="dw-scatter">
+      <div class="dw-scatter-yaxis"><span>${_fmtNum(yMax)}</span><span>${_fmtNum(yMax/2)}</span><span>0</span></div>
+      <div class="dw-scatter-plot">
+        <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+          <line x1="0" y1="100" x2="${diagX}" y2="${diagY}" stroke="var(--border)" stroke-dasharray="2 2" vector-effect="non-scaling-stroke"/>
+          ${dots}
+        </svg>
+      </div>
+    </div>
+    <div class="dw-scatter-xaxis">
+      <span>0</span>
+      <span class="dw-scatter-xlbl">${esc(xLabel)} →</span>
+      <span>${_fmtNum(xMax)}</span>
+    </div>
+  </div>`;
+}
+
+/* ── Widget: TIMELINE ── (linha temporal com múltiplas métricas ou split por dimensão)
+   X = tempo (day/week/month, ou auto), Y = métrica numérica.
+   Dois modos:
+     - splitBy vazio: cada série de w.timeline.metrics vira uma linha
+     - splitBy setado: usa APENAS a 1ª métrica e gera uma linha por valor da dimensão */
+function _renderTimelineWidget(w) {
+  const records = _wgtRecords(w);
+  const bucketMode = w.timeline?.bucket && w.timeline.bucket !== 'auto'
+    ? w.timeline.bucket
+    : _chooseAutoBucketRecords(records);
+  const bucketLbl = bucketMode === 'day' ? 'diário' : (bucketMode === 'week' ? 'semanal' : 'mensal');
+  const seriesConfig = Array.isArray(w.timeline?.metrics) ? w.timeline.metrics : [];
+  const splitBy = w.timeline?.splitBy || null;
+  const title = w.title || 'Timeline';
+  if (!seriesConfig.length) {
+    return `<div class="dw-widget"><div class="dw-widget-title">${esc(title)}</div><div class="dw-widget-empty">Configure pelo menos uma métrica.</div></div>`;
+  }
+  if (!records.length) {
+    return `<div class="dw-widget"><div class="dw-widget-title">${esc(title)}</div><div class="dw-widget-empty">Sem dados no filtro atual.</div></div>`;
+  }
+  const buckets = new Map();
+  for (const r of records) {
+    const ts = _wgtRecordTs(r);
+    if (!ts) continue;
+    const key = _bucketKey(new Date(ts).toISOString(), bucketMode);
+    if (!key) continue;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(r);
+  }
+  if (!buckets.size) {
+    return `<div class="dw-widget"><div class="dw-widget-title">${esc(title)}</div><div class="dw-widget-empty">Sem dados no período.</div></div>`;
+  }
+  const sortedKeys = [...buckets.keys()].sort();
+  const xLabels = sortedKeys.map(k => _formatBucketLabel(k, bucketMode));
+  let series;
+  if (splitBy) {
+    const primaryMetric = seriesConfig[0];
+    // Escolhe até 8 valores mais frequentes da dimensão pra virar linhas.
+    const dimValues = new Map();
+    for (const r of records) {
+      const v = _dimResolve(r, splitBy, w);
+      dimValues.set(v, (dimValues.get(v) || 0) + 1);
+    }
+    const topVals = [...dimValues.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([v]) => v);
+    series = topVals.map((val, i) => ({
+      name: val,
+      color: _widgetColor(i),
+      values: sortedKeys.map(bk => {
+        const rs = buckets.get(bk).filter(r => _dimResolve(r, splitBy, w) === val);
+        return _timelineAgg(rs, primaryMetric, w);
+      })
+    }));
+  } else {
+    series = seriesConfig.map((sc, i) => ({
+      name: sc.label || _metricLabel(sc.metric, sc.aggregate),
+      color: _widgetColor(i),
+      values: sortedKeys.map(bk => _timelineAgg(buckets.get(bk), sc, w))
+    }));
+  }
+  const W = 1600, H = 360, PL = 140, PR = 30, PT = 20, PB = 60;
+  const innerW = W - PL - PR;
+  const innerH = H - PT - PB;
+  const rawMax = Math.max(1, ...series.flatMap(s => s.values));
+  const yMax = Math.max(4, Math.ceil(rawMax * 1.15));
+  const gridLevels = [];
+  for (let i = 0; i <= 5; i++) gridLevels.push(yMax * i / 5);
+  const xFor = i => PL + (sortedKeys.length <= 1 ? innerW / 2 : i * innerW / (sortedKeys.length - 1));
+  const yFor = v => PT + innerH - (v / yMax) * innerH;
+  const yEls = gridLevels.map(v => {
+    const y = yFor(v);
+    return `<line x1="${PL}" x2="${W - PR}" y1="${y}" y2="${y}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3 4" opacity="0.5" vector-effect="non-scaling-stroke"/>`;
+  }).join('');
+  const showArea = series.length === 1;
+  const pathParts = series.map(s => {
+    const pts = s.values.map((v, i) => [xFor(i), yFor(v)]);
+    const path = 'M ' + pts.map(p => `${p[0]} ${p[1]}`).join(' L ');
+    let area = '';
+    if (showArea) {
+      const last = pts[pts.length - 1], first = pts[0];
+      const baseY = PT + innerH;
+      area = `<path d="${path} L ${last[0]} ${baseY} L ${first[0]} ${baseY} Z" fill="${s.color}" fill-opacity="0.12"/>`;
+    }
+    return `${area}<path d="${path}" fill="none" stroke="${s.color}" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`;
+  }).join('');
+  const uid = 'tl' + Math.random().toString(36).slice(2, 8);
+  const dotsHtml = series.map(s => s.values.map((v, i) => {
+    const leftPct = (xFor(i) / W) * 100;
+    const topPct = (yFor(v) / H) * 100;
+    return `<div class="dw-line-dot" style="left:${leftPct}%;top:${topPct}%;background:${s.color}"></div>`;
+  }).join('')).join('');
+  const markerHtml = series.map((s, i) =>
+    `<div id="${uid}-mk-${i}" class="dw-line-marker" style="background:${s.color}"></div>`
+  ).join('');
+  const guideEl = `<line id="${uid}-guide" class="chart-guide" x1="0" y1="${PT}" x2="0" y2="${PT + innerH}" stroke="var(--text-muted)" stroke-width="1" stroke-dasharray="2 3" vector-effect="non-scaling-stroke" style="opacity:0;pointer-events:none"/>`;
+  const yLabelsHtml = gridLevels.map(v => {
+    const y = yFor(v);
+    const topPct = (y / H) * 100;
+    const label = Number.isInteger(v) ? String(v) : v.toFixed(1);
+    return `<span class="dw-line-ylabel" style="top:${topPct}%">${label}</span>`;
+  }).join('');
+  const labelStep = Math.max(1, Math.ceil(sortedKeys.length / 8));
+  const xLabelsHtml = sortedKeys.map((k, i) => {
+    if (i % labelStep !== 0 && i !== sortedKeys.length - 1) return '';
+    const leftPct = (xFor(i) / W) * 100;
+    return `<span class="dw-line-xlabel" style="left:${leftPct}%">${esc(xLabels[i])}</span>`;
+  }).join('');
+  const legend = series.length > 1 ? `<div class="dw-legend dw-line-legend">${series.map(s => `<span class="dw-legend-item"><span class="dw-legend-dot" style="background:${s.color}"></span>${esc(s.name)}</span>`).join('')}</div>` : '';
+  const html = `<div class="dw-widget">
+    <div class="dw-widget-title-row">
+      <div class="dw-widget-title">${esc(title)}</div>
+      ${legend}
+    </div>
+    <div class="dw-line-wrap">
+      <div class="chart-hover-host dw-line-host" id="${uid}-host">
+        <svg viewBox="0 0 ${W} ${H}" class="dash-chart-svg" preserveAspectRatio="none">
+          ${yEls}${pathParts}${guideEl}
+        </svg>
+        <div class="dw-line-dots">${dotsHtml}</div>
+        <div class="dw-line-markers">${markerHtml}</div>
+        <div class="dw-line-axis-y">${yLabelsHtml}</div>
+        <div class="dw-line-axis-x">${xLabelsHtml}</div>
+        <div class="chart-tooltip" id="${uid}-tip"></div>
+      </div>
+      <div class="dw-kpi-label" style="margin-top:6px;font-size:11px">${bucketLbl}${splitBy ? ' · por ' + esc(_dashDrillLabel(splitBy)) : ''}</div>
+    </div>
+  </div>`;
+  _pendingLineHovers.push({
+    uid,
+    viewBoxW: W, viewBoxH: H,
+    points: sortedKeys.map((k, i) => ({
+      xVb: xFor(i),
+      xPct: (xFor(i) / W) * 100,
+      label: _formatBucketLabel(k, bucketMode),
+      series: series.map(s => ({
+        name: s.name,
+        value: s.values[i],
+        yPct: (yFor(s.values[i]) / H) * 100,
+        color: s.color
+      }))
+    })),
+    seriesCount: series.length
+  });
+  return html;
+}
+function _chooseAutoBucketRecords(records) {
+  if (!records.length) return 'day';
+  const ts = records.map(_wgtRecordTs).filter(t => t > 0);
+  if (!ts.length) return 'day';
+  const range = (Math.max(...ts) - Math.min(...ts)) / 86400000;
+  if (range <= 45)  return 'day';
+  if (range <= 240) return 'week';
+  return 'month';
+}
+function _timelineAgg(records, spec, w) {
+  const agg = spec?.aggregate || 'sum';
+  const metric = spec?.metric || 'count';
+  const vals = records.map(r => _metricValue(r, metric, w));
+  if (!vals.length) return 0;
+  if (agg === 'avg') return vals.reduce((s, n) => s + n, 0) / vals.length;
+  return vals.reduce((s, n) => s + n, 0);
+}
+
+/* ── Widget: HEATMAP ── (mesmo config do pivot, render como grade colorida) */
+function _renderHeatmapWidget(w) {
+  const records = _wgtRecords(w);
+  const rowDim = w.pivot?.rowDim || null;
+  const colDim = w.pivot?.colDim || null;
+  const metric = w.pivot?.metric || 'count';
+  const aggregate = w.pivot?.aggregate || 'sum';
+  const title = w.title || 'Heatmap';
+  if (!rowDim || !colDim) {
+    return `<div class="dw-widget"><div class="dw-widget-title">${esc(title)}</div><div class="dw-widget-empty">Heatmap precisa de dimensão de linha E coluna.</div></div>`;
+  }
+  if (!records.length) {
+    return `<div class="dw-widget"><div class="dw-widget-title">${esc(title)}</div><div class="dw-widget-empty">Sem dados no filtro atual.</div></div>`;
+  }
+  const rowLabels = new Set(), colLabels = new Set();
+  const bucket = new Map();
+  for (const r of records) {
+    const rk = _dimResolve(r, rowDim, w);
+    const ck = _dimResolve(r, colDim, w);
+    const v  = _metricValue(r, metric, w);
+    if (!bucket.has(rk)) bucket.set(rk, new Map());
+    const inner = bucket.get(rk);
+    if (!inner.has(ck)) inner.set(ck, []);
+    inner.get(ck).push(v);
+    rowLabels.add(rk);
+    colLabels.add(ck);
+  }
+  const rows = [...rowLabels].sort((a, b) => norm(a).localeCompare(norm(b)));
+  const cols = [...colLabels].sort((a, b) => norm(a).localeCompare(norm(b)));
+  const cellVal = (rk, ck) => _aggReduce(bucket.get(rk)?.get(ck) || [], aggregate);
+  let max = 0;
+  for (const rk of rows) for (const ck of cols) { const v = cellVal(rk, ck); if (v > max) max = v; }
+  // Grid flat: row 0 = header vazio + col labels; rows subsequentes = rowhead + N cells
+  const cellsFlat = [];
+  cellsFlat.push('<div class="dw-heat-corner"></div>');
+  for (const ck of cols) cellsFlat.push(`<div class="dw-heat-colhead pv-drillable" onclick="_dashApplyDrillDown('${esc(colDim)}', ${JSON.stringify(ck).replace(/"/g,'&quot;')})" title="Drill: ${esc(_dashDrillLabel(colDim))} = ${esc(ck)}">${esc(ck)}</div>`);
+  for (const rk of rows) {
+    cellsFlat.push(`<div class="dw-heat-rowhead pv-drillable" onclick="_dashApplyDrillDown('${esc(rowDim)}', ${JSON.stringify(rk).replace(/"/g,'&quot;')})" title="Drill: ${esc(_dashDrillLabel(rowDim))} = ${esc(rk)}">${esc(rk)}</div>`);
+    for (const ck of cols) {
+      const v = cellVal(rk, ck);
+      const t = max > 0 ? v / max : 0;
+      const bg = `rgba(122, 0, 255, ${(0.08 + t * 0.65).toFixed(3)})`;
+      const color = t > 0.55 ? '#fff' : 'var(--text)';
+      cellsFlat.push(`<div class="dw-heat-cell pv-drillable" style="background:${bg};color:${color}" onclick="_dashPivotCellDrill('${esc(rowDim)}', ${JSON.stringify(rk).replace(/"/g,'&quot;')}, '${esc(colDim)}', ${JSON.stringify(ck).replace(/"/g,'&quot;')})" title="${esc(rk)} × ${esc(ck)}: ${_fmtNum(v)}">${v > 0 ? _fmtNum(v) : ''}</div>`);
+    }
+  }
+  return `<div class="dw-widget">
+    <div class="dw-widget-title">${esc(title)}</div>
+    <div class="dw-heat-wrap">
+      <div class="dw-heat-grid" style="grid-template-columns:auto repeat(${cols.length}, minmax(56px, 1fr))">
+        ${cellsFlat.join('')}
+      </div>
+    </div>
+  </div>`;
 }
 
 /* ── PRESETS de filtro (per-user localStorage) ──
@@ -17571,6 +18322,19 @@ function closeDashboardView() {
    Cada widget renderiza HTML/SVG a partir das responses do template em memória.
    Filtra por workspace ativo pra manter escopo (mesmo squad que o dashboard). */
 function renderWidget(w) {
+  // Widgets fonte-agnósticos — funcionam pra form/demand/time.
+  if (w.chartType === 'pivot')   return _renderPivotWidget(w);
+  if (w.chartType === 'heatmap') return _renderHeatmapWidget(w);
+  if (w.chartType === 'combo')    return _renderComboWidget(w);
+  if (w.chartType === 'scatter')  return _renderScatterWidget(w);
+  if (w.chartType === 'timeline') return _renderTimelineWidget(w);
+  const kind = _wgtKind(w);
+  if (kind !== 'form') {
+    return `<div class="dw-widget">
+      <div class="dw-widget-title">${esc(w.title || 'Widget')}</div>
+      <div class="dw-widget-empty">Este tipo de gráfico só roda sobre formulários — pra ${esc(kind === 'demand' ? 'demandas' : 'apontamentos')} use Pivot, Heatmap, Combo ou Scatter.</div>
+    </div>`;
+  }
   const t = formTemplateById(w.source?.templateId);
   if (!t) {
     return `<div class="dw-widget">
@@ -17624,15 +18388,23 @@ function _aggregateCategorical(field, responses) {
   return { entries: [...counts.entries()].map(([v, c]) => [v, c, labelFor(v)]), isSelect };
 }
 function _renderKpiWidget(w, template, responses) {
+  // Compara com período anterior (quando há um filtro de período ativo).
+  const prevResponses = _dashPreviousPeriodResponses(template.id);
   // Multi-KPI: se kpiSeries vier, renderiza N mini-KPIs lado a lado.
   if (Array.isArray(w.kpiSeries) && w.kpiSeries.length) {
-    const items = w.kpiSeries.map(s => _computeKpi(s, template, responses));
+    const items = w.kpiSeries.map(s => {
+      const cur = _computeKpi(s, template, responses);
+      const prev = prevResponses ? _computeKpi(s, template, prevResponses) : null;
+      cur.delta = prev && !prev.error ? _computeDelta(cur, prev) : null;
+      return cur;
+    });
     return `<div class="dw-widget">
       <div class="dw-widget-title">${esc(w.title || template.name)}</div>
       <div class="dw-kpi-multi">
         ${items.map(it => `
           <div class="dw-kpi-multi-item" ${it.error ? 'title="Campo fonte não existe mais"' : ''}>
             <div class="dw-kpi-multi-value">${it.error ? '—' : it.display}</div>
+            ${it.delta ? _renderKpiDelta(it.delta, 'small') : ''}
             <div class="dw-kpi-multi-label">${esc(it.label)}</div>
           </div>
         `).join('')}
@@ -17643,11 +18415,67 @@ function _renderKpiWidget(w, template, responses) {
   // Single KPI (comportamento original)
   const single = _computeKpi({ label: '', aggregate: w.kpiAggregate || 'count', fieldId: w.source?.fieldId }, template, responses);
   if (single.error) return `<div class="dw-widget"><div class="dw-widget-title">${esc(w.title || 'KPI')}</div><div class="dw-widget-empty">Campo fonte não existe mais.</div></div>`;
+  const prev = prevResponses ? _computeKpi({ label: '', aggregate: w.kpiAggregate || 'count', fieldId: w.source?.fieldId }, template, prevResponses) : null;
+  const delta = prev && !prev.error ? _computeDelta(single, prev) : null;
   return `<div class="dw-widget">
     <div class="dw-widget-title">${esc(w.title || template.name)}</div>
     <div class="dw-kpi-value">${single.display}</div>
+    ${delta ? _renderKpiDelta(delta, 'large') : ''}
     <div class="dw-kpi-label">${esc(single.subtitle)}${responses.length === 0 ? ' · sem respostas ainda' : ''}</div>
   </div>`;
+}
+
+/* Retorna as respostas do período ANTERIOR de mesma duração ao filtro atual.
+   Null se não faz sentido (period=all ou custom sem datas). */
+function _dashPreviousPeriodResponses(templateId) {
+  const p = _dashFilters.period;
+  if (!p || p === 'all') return null;
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  let fromMs, toMs;
+  if (p === '7d')  { const n = 7  * 86400000; toMs = now.getTime() - n; fromMs = toMs - n; }
+  else if (p === '30d') { const n = 30 * 86400000; toMs = now.getTime() - n; fromMs = toMs - n; }
+  else if (p === '90d') { const n = 90 * 86400000; toMs = now.getTime() - n; fromMs = toMs - n; }
+  else if (p === 'year') {
+    const prevStart = new Date(now.getFullYear() - 1, 0, 1);
+    const prevEnd   = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate() + 1);
+    fromMs = prevStart.getTime(); toMs = prevEnd.getTime();
+  } else if (p === 'custom') {
+    if (!_dashFilters.dateFrom || !_dashFilters.dateTo) return null;
+    const cf = new Date(_dashFilters.dateFrom + 'T00:00:00').getTime();
+    const ct = new Date(_dashFilters.dateTo   + 'T23:59:59').getTime();
+    const span = ct - cf;
+    toMs = cf - 1; fromMs = toMs - span;
+  } else return null;
+  const saved = _dashFilters;
+  _dashFilters = Object.assign({}, saved, {
+    period: 'custom',
+    dateFrom: new Date(fromMs).toISOString().slice(0, 10),
+    dateTo:   new Date(toMs).toISOString().slice(0, 10)
+  });
+  const base = (formResponses || []).filter(r => r.templateId === templateId);
+  const prev = _applyDashFilters(base, templateId);
+  _dashFilters = saved;
+  return prev;
+}
+
+/* Calcula variação percentual entre KPI atual e KPI anterior.
+   Retorna { pct, direction: 'up'|'down'|'flat', absCur, absPrev }. */
+function _computeDelta(cur, prev) {
+  const a = Number(cur.raw ?? parseFloat(String(cur.display).replace(/\./g, '').replace(',', '.'))) || 0;
+  const b = Number(prev.raw ?? parseFloat(String(prev.display).replace(/\./g, '').replace(',', '.'))) || 0;
+  if (b === 0 && a === 0) return { pct: 0, direction: 'flat', absCur: a, absPrev: b };
+  if (b === 0) return { pct: null, direction: 'up', absCur: a, absPrev: b };
+  const pct = ((a - b) / Math.abs(b)) * 100;
+  const dir = Math.abs(pct) < 0.5 ? 'flat' : (pct > 0 ? 'up' : 'down');
+  return { pct, direction: dir, absCur: a, absPrev: b };
+}
+function _renderKpiDelta(delta, size) {
+  const cls = 'dw-kpi-delta dw-kpi-delta-' + delta.direction + (size === 'small' ? ' dw-kpi-delta-sm' : '');
+  const arrow = delta.direction === 'up' ? '▲' : (delta.direction === 'down' ? '▼' : '•');
+  const pctTxt = delta.pct === null
+    ? 'novo'
+    : (Math.abs(delta.pct) >= 1000 ? '>999%' : (Math.round(Math.abs(delta.pct) * 10) / 10).toLocaleString('pt-BR') + '%');
+  return `<div class="${cls}" title="Anterior: ${_fmtNum(delta.absPrev)}"><span class="dw-kpi-delta-arrow">${arrow}</span> ${pctTxt} <span class="dw-kpi-delta-vs">vs período anterior</span></div>`;
 }
 /* Compute helper compartilhado entre single-KPI e multi-KPI. */
 function _computeKpi(spec, template, responses) {
@@ -17655,16 +18483,16 @@ function _computeKpi(spec, template, responses) {
   const label = spec.label || (agg === 'count' ? 'Total' : (agg === 'sum' ? 'Soma' : 'Média'));
   if (agg === 'count') {
     const value = responses.length;
-    return { display: String(value), label, subtitle: 'respostas de "' + template.name + '"' };
+    return { display: String(value), raw: value, label, subtitle: 'respostas de "' + template.name + '"' };
   }
   const field = (template.fields || []).find(f => f.id === spec.fieldId);
-  if (!field) return { error: true, label, display: '—' };
+  if (!field) return { error: true, label, display: '—', raw: 0 };
   const nums = responses.map(r => Number(r.values?.[field.id])).filter(n => Number.isFinite(n));
   let value = 0;
   let subtitle = '';
   if (agg === 'sum') { value = nums.reduce((s, n) => s + n, 0); subtitle = 'soma de "' + field.label + '"'; }
   if (agg === 'avg') { value = nums.length ? (nums.reduce((s, n) => s + n, 0) / nums.length) : 0; subtitle = 'média de "' + field.label + '"'; }
-  return { display: Number.isInteger(value) ? String(value) : value.toFixed(2), label, subtitle };
+  return { display: Number.isInteger(value) ? String(value) : value.toFixed(2), raw: value, label, subtitle };
 }
 /* Formata número pt-BR pra rótulos de gráfico. Inteiros sem decimal, floats
    com no máximo 1 decimal. Milhares com ponto. */
@@ -17755,19 +18583,23 @@ function _renderBarWidget(w, template, responses) {
     </div>`;
   }).join('');
   const legendHtml = series.length > 1 ? `<div class="dw-legend dw-vbar-legend">${series.map(s => `<span class="dw-legend-item"><span class="dw-legend-dot" style="background:${s.color}"></span>${esc(s.label)}</span>`).join('')}</div>` : '';
+  // Quando barWrap=true, as colunas quebram em múltiplas linhas pra caber em widgets largos
+  // com muitas categorias. Cada barra tem largura mínima, e o y-axis fica escondido — os
+  // valores no topo de cada barra assumem esse papel.
+  const wrap = !!w.barWrap;
   return `<div class="dw-widget">
     <div class="dw-widget-title-row">
       <div class="dw-widget-title">${esc(w.title || (groupField ? primary.label + ' × ' + groupField.label : primary.label))}</div>
       ${legendHtml}
     </div>
-    <div class="dw-vbar">
-      <div class="dw-vbar-yaxis">
+    <div class="dw-vbar${wrap ? ' is-wrap' : ''}">
+      ${wrap ? '' : `<div class="dw-vbar-yaxis">
         <span>${_fmtNum(yMax)}</span>
         <span>${_fmtNum(yMid)}</span>
         <span>0</span>
-      </div>
+      </div>`}
       <div class="dw-vbar-plot">
-        <div class="dw-vbar-grid"><span></span><span></span><span></span></div>
+        ${wrap ? '' : '<div class="dw-vbar-grid"><span></span><span></span><span></span></div>'}
         <div class="dw-vbar-groups">${groupsHtml}</div>
       </div>
     </div>
@@ -18226,11 +19058,16 @@ function openWidgetConfig(dashboardId, widgetId, x, y, w, h) {
     dashboardId,
     widgetId: widgetId || null,
     layout: widget?.layout || (Number.isInteger(x) ? { x, y, w: Math.min(w || DASH_DEFAULT_W, DASH_COLS), h: h || DASH_DEFAULT_H } : null),
-    kpiSeries: widget?.kpiSeries ? JSON.parse(JSON.stringify(widget.kpiSeries)) : []
+    kpiSeries: widget?.kpiSeries ? JSON.parse(JSON.stringify(widget.kpiSeries)) : [],
+    pivot: widget?.pivot ? JSON.parse(JSON.stringify(widget.pivot)) : { rowDim: '', colDim: '', metric: 'count', aggregate: 'sum' },
+    combo: widget?.combo ? JSON.parse(JSON.stringify(widget.combo)) : { primary: '', bar: { metric: 'count', aggregate: 'sum' }, line: { metric: 'count', aggregate: 'sum' } },
+    scatter: widget?.scatter ? JSON.parse(JSON.stringify(widget.scatter)) : { x: '', y: '', groupDim: '' },
+    timeline: widget?.timeline ? JSON.parse(JSON.stringify(widget.timeline)) : { bucket: 'auto', metrics: [{ label: '', metric: 'count', aggregate: 'sum' }], splitBy: '' }
   };
   document.getElementById('wc-title').textContent = widget ? 'Editar widget' : 'Adicionar widget';
   document.getElementById('wc-title-input').value = widget?.title || '';
   document.getElementById('wc-chart-type').value = widget?.chartType || 'bar';
+  document.getElementById('wc-source-kind').value = widget?.source?.kind || 'form';
   // Popular templates dropdown
   const templates = (formTemplates || []).slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
   document.getElementById('wc-template').innerHTML = '<option value="">— Formulário —</option>' +
@@ -18238,18 +19075,137 @@ function openWidgetConfig(dashboardId, widgetId, x, y, w, h) {
   // Popular agg dropdowns com valores do widget
   document.getElementById('wc-agg').value = widget?.kpiAggregate || widget?.lineAggregate || 'count';
   document.getElementById('wc-bucket').value = widget?.lineBucket || 'auto';
+  const bw = document.getElementById('wc-barwrap');
+  if (bw) bw.checked = !!widget?.barWrap;
   _wcRerenderFieldsAndOptions();
   openModal('widget-config-modal');
+}
+
+function _wcMarkDirty() { /* placeholder — mudanças persistem só no save */ }
+function _wcOnSourceKindChange() { _wcRerenderFieldsAndOptions(); }
+function _wcOnPivotMetricChange() {
+  // Se métrica é count, força agregação = sum (irrelevante); senão libera avg.
+  const metric = document.getElementById('wc-pivot-metric').value;
+  const aggSel = document.getElementById('wc-pivot-agg');
+  if (metric === 'count') { aggSel.value = 'sum'; aggSel.disabled = true; }
+  else aggSel.disabled = false;
+}
+function _wcRefreshComboScatterDropdowns() {
+  const kind = document.getElementById('wc-source-kind').value || 'form';
+  const templateId = document.getElementById('wc-template').value || '';
+  const dims = _wgtDimsFor(kind, templateId);
+  const metrics = _wgtMetricsFor(kind, templateId);
+  const cb = _wcState.combo || {};
+  const sc = _wcState.scatter || {};
+  // Combo
+  const primSel = document.getElementById('wc-combo-primary');
+  const barMetSel = document.getElementById('wc-combo-bar-metric');
+  const barAggSel = document.getElementById('wc-combo-bar-agg');
+  const lineMetSel = document.getElementById('wc-combo-line-metric');
+  const lineAggSel = document.getElementById('wc-combo-line-agg');
+  if (primSel) {
+    primSel.innerHTML = '<option value="">— Selecione —</option>' + dims.map(d => `<option value="${esc(d.key)}" ${cb.primary === d.key ? 'selected' : ''}>${esc(d.label)}</option>`).join('');
+    barMetSel.innerHTML  = metrics.map(m => `<option value="${esc(m.key)}" ${cb.bar?.metric  === m.key ? 'selected' : ''}>${esc(m.label)}</option>`).join('');
+    lineMetSel.innerHTML = metrics.map(m => `<option value="${esc(m.key)}" ${cb.line?.metric === m.key ? 'selected' : ''}>${esc(m.label)}</option>`).join('');
+    barAggSel.value  = cb.bar?.aggregate  || 'sum';
+    lineAggSel.value = cb.line?.aggregate || 'sum';
+  }
+  // Scatter — só métricas numéricas fazem sentido em ambos eixos
+  const scX = document.getElementById('wc-scatter-x');
+  const scY = document.getElementById('wc-scatter-y');
+  const scG = document.getElementById('wc-scatter-group');
+  if (scX) {
+    scX.innerHTML = '<option value="">— Selecione —</option>' + metrics.filter(m => m.key !== 'count').map(m => `<option value="${esc(m.key)}" ${sc.x === m.key ? 'selected' : ''}>${esc(m.label)}</option>`).join('');
+    scY.innerHTML = '<option value="">— Selecione —</option>' + metrics.filter(m => m.key !== 'count').map(m => `<option value="${esc(m.key)}" ${sc.y === m.key ? 'selected' : ''}>${esc(m.label)}</option>`).join('');
+    scG.innerHTML = '<option value="">Sem agrupar</option>' + dims.map(d => `<option value="${esc(d.key)}" ${sc.groupDim === d.key ? 'selected' : ''}>${esc(d.label)}</option>`).join('');
+  }
+}
+function _wcRefreshTimelineDropdowns() {
+  const kind = document.getElementById('wc-source-kind').value || 'form';
+  const templateId = document.getElementById('wc-template').value || '';
+  const dims = _wgtDimsFor(kind, templateId);
+  const tl = _wcState.timeline || {};
+  document.getElementById('wc-timeline-bucket').value = tl.bucket || 'auto';
+  const splitSel = document.getElementById('wc-timeline-split');
+  splitSel.innerHTML = '<option value="">Sem dividir (mostra as métricas)</option>' +
+    dims.map(d => `<option value="${esc(d.key)}" ${tl.splitBy === d.key ? 'selected' : ''}>${esc(d.label)}</option>`).join('');
+  _wcRenderTimelineMetrics();
+}
+function _wcRenderTimelineMetrics() {
+  const host = document.getElementById('wc-timeline-metrics-list');
+  if (!host) return;
+  const kind = document.getElementById('wc-source-kind').value || 'form';
+  const templateId = document.getElementById('wc-template').value || '';
+  const metrics = _wgtMetricsFor(kind, templateId);
+  const list = _wcState.timeline?.metrics || [];
+  host.innerHTML = list.map((m, mi) => {
+    const optsHtml = metrics.map(mm => `<option value="${esc(mm.key)}" ${m.metric === mm.key ? 'selected' : ''}>${esc(mm.label)}</option>`).join('');
+    return `<div class="de-kpi-series-row">
+      <input class="form-control" placeholder="Rótulo (opcional)" value="${esc(m.label || '')}" oninput="_wcUpdateTimelineMetric(${mi}, 'label', this.value)">
+      <select class="form-control" onchange="_wcUpdateTimelineMetric(${mi}, 'metric', this.value)">${optsHtml}</select>
+      <select class="form-control" onchange="_wcUpdateTimelineMetric(${mi}, 'aggregate', this.value)">
+        <option value="sum" ${m.aggregate === 'sum' ? 'selected' : ''}>Soma</option>
+        <option value="avg" ${m.aggregate === 'avg' ? 'selected' : ''}>Média</option>
+      </select>
+      <button type="button" class="detail-icon-btn danger" title="Remover métrica" onclick="_wcRemoveTimelineMetric(${mi})" ${list.length <= 1 ? 'disabled' : ''}><i data-lucide="x" class="ic-sm"></i></button>
+    </div>`;
+  }).join('');
+  if (window.lucide?.createIcons) lucide.createIcons();
+}
+function _wcAddTimelineMetric() {
+  if (!Array.isArray(_wcState.timeline?.metrics)) _wcState.timeline.metrics = [];
+  if (_wcState.timeline.metrics.length >= 4) { toast('Máximo 4 métricas', 'warn'); return; }
+  _wcState.timeline.metrics.push({ label: '', metric: 'count', aggregate: 'sum' });
+  _wcRenderTimelineMetrics();
+}
+function _wcRemoveTimelineMetric(idx) {
+  if (!_wcState.timeline?.metrics) return;
+  if (_wcState.timeline.metrics.length <= 1) return;
+  _wcState.timeline.metrics.splice(idx, 1);
+  _wcRenderTimelineMetrics();
+}
+function _wcUpdateTimelineMetric(idx, key, val) {
+  const m = _wcState.timeline?.metrics?.[idx];
+  if (!m) return;
+  m[key] = val;
+  if (key === 'metric') _wcRenderTimelineMetrics();
+}
+function _wcRefreshPivotDropdowns() {
+  const kind = document.getElementById('wc-source-kind').value || 'form';
+  const templateId = document.getElementById('wc-template').value || '';
+  const dims = _wgtDimsFor(kind, templateId);
+  const metrics = _wgtMetricsFor(kind, templateId);
+  const pv = _wcState.pivot || {};
+  const rowSel = document.getElementById('wc-pivot-row');
+  const colSel = document.getElementById('wc-pivot-col');
+  const metSel = document.getElementById('wc-pivot-metric');
+  const aggSel = document.getElementById('wc-pivot-agg');
+  const chartType = document.getElementById('wc-chart-type').value;
+  const isHeat = chartType === 'heatmap';
+  rowSel.innerHTML = '<option value="">— Selecione —</option>' +
+    dims.map(d => `<option value="${esc(d.key)}" ${pv.rowDim === d.key ? 'selected' : ''}>${esc(d.label)}</option>`).join('');
+  colSel.innerHTML = (isHeat ? '<option value="">— Selecione —</option>' : '<option value="">Sem coluna</option>') +
+    dims.map(d => `<option value="${esc(d.key)}" ${pv.colDim === d.key ? 'selected' : ''}>${esc(d.label)}</option>`).join('');
+  metSel.innerHTML = metrics.map(m => `<option value="${esc(m.key)}" ${pv.metric === m.key ? 'selected' : ''}>${esc(m.label)}</option>`).join('');
+  aggSel.value = pv.aggregate || 'sum';
+  document.getElementById('wc-pivot-col-label').textContent = isHeat ? 'Dimensão de colunas' : 'Dimensão de colunas (opcional)';
+  _wcOnPivotMetricChange();
 }
 
 /* Re-renderiza dropdowns dependentes (fields, groupBy, kpi series) baseado no
    estado atual do formulário — chamado sempre que tipo/template muda. */
 function _wcRerenderFieldsAndOptions() {
   const chartType = document.getElementById('wc-chart-type').value;
+  const kind = document.getElementById('wc-source-kind').value || 'form';
   const templateId = document.getElementById('wc-template').value;
   const template = templateId ? formTemplateById(templateId) : null;
   const fields = template?.fields || [];
   const w = _wcState.widgetId ? (dashboardById(_wcState.dashboardId)?.widgets || []).find(x => x.id === _wcState.widgetId) : null;
+  const isPivot = chartType === 'pivot' || chartType === 'heatmap';
+  const isCombo = chartType === 'combo';
+  const isScatter = chartType === 'scatter';
+  const isTimeline = chartType === 'timeline';
+  const isCross = isPivot || isCombo || isScatter || isTimeline; // usa novas dropdowns/kind livre
   const isKpi = chartType === 'kpi';
   const isLine = chartType === 'line';
   const isBarLike = chartType === 'bar' || chartType === 'barh';
@@ -18257,6 +19213,28 @@ function _wcRerenderFieldsAndOptions() {
   const isMultiKpi = isKpi && Array.isArray(_wcState.kpiSeries) && _wcState.kpiSeries.length > 0;
   const agg = document.getElementById('wc-agg').value;
   const noField = (isKpi && !isMultiKpi && agg === 'count') || (isLine && agg === 'count');
+  // Cross-widgets (pivot/heatmap/combo/scatter): usa dropdowns próprios; esconde os legados.
+  document.getElementById('wc-pivot-group').style.display    = isPivot    ? '' : 'none';
+  document.getElementById('wc-combo-group').style.display    = isCombo    ? '' : 'none';
+  document.getElementById('wc-scatter-group').style.display  = isScatter  ? '' : 'none';
+  document.getElementById('wc-timeline-group').style.display = isTimeline ? '' : 'none';
+  // Fonte de dados: só cross-widgets suportam kind ≠ form. Widgets clássicos forçam form.
+  const kindSel = document.getElementById('wc-source-kind');
+  if (!isCross && kind !== 'form') { kindSel.value = 'form'; }
+  const kindEff = kindSel.value;
+  document.getElementById('wc-template-group').style.display = kindEff === 'form' ? '' : 'none';
+  if (isCross) {
+    if (isPivot) _wcRefreshPivotDropdowns();
+    else if (isTimeline) _wcRefreshTimelineDropdowns();
+    else _wcRefreshComboScatterDropdowns();
+    document.getElementById('wc-field-group').style.display = 'none';
+    document.getElementById('wc-agg-group').style.display = 'none';
+    document.getElementById('wc-bucket-group').style.display = 'none';
+    document.getElementById('wc-groupby-group').style.display = 'none';
+    document.getElementById('wc-multi-kpi-group').style.display = 'none';
+    if (window.lucide?.createIcons) lucide.createIcons();
+    return;
+  }
   // Field group visibility
   const fieldGroup = document.getElementById('wc-field-group');
   const fieldLabel = document.getElementById('wc-field-label');
@@ -18278,6 +19256,9 @@ function _wcRerenderFieldsAndOptions() {
   document.getElementById('wc-agg-group').style.display = (isKpi && !isMultiKpi) || isLine ? '' : 'none';
   // Bucket: só line
   document.getElementById('wc-bucket-group').style.display = isLine ? '' : 'none';
+  // barWrap só faz sentido em bar (vertical).
+  const bwGroup = document.getElementById('wc-barwrap-group');
+  if (bwGroup) bwGroup.style.display = chartType === 'bar' ? '' : 'none';
   // GroupBy: bar ou line, quando tem campos categóricos
   const groupByGroup = document.getElementById('wc-groupby-group');
   const groupBySelect = document.getElementById('wc-groupby');
@@ -18353,25 +19334,69 @@ async function saveWidgetConfig() {
   const dash = dashboardById(dashId);
   if (!dash) return;
   const chartType = document.getElementById('wc-chart-type').value;
+  const kind = document.getElementById('wc-source-kind').value || 'form';
   const templateId = document.getElementById('wc-template').value;
   const fieldId = document.getElementById('wc-field').value;
   const agg = document.getElementById('wc-agg').value;
   const bucket = document.getElementById('wc-bucket').value;
   const groupBy = document.getElementById('wc-groupby').value;
   const title = document.getElementById('wc-title-input').value.trim();
-  if (!templateId) { toast('Escolha um formulário', 'warn'); return; }
+  const isPivot = chartType === 'pivot' || chartType === 'heatmap';
+  const isCombo = chartType === 'combo';
+  const isScatter = chartType === 'scatter';
+  const isTimeline = chartType === 'timeline';
+  const isCross = isPivot || isCombo || isScatter || isTimeline;
+  // Pra cross-widgets qualquer kind vale; pra outros tipos precisa de form + template
+  if (!isCross && !templateId) { toast('Escolha um formulário', 'warn'); return; }
+  if (isCross && kind === 'form' && !templateId) { toast('Escolha um formulário (a fonte é form)', 'warn'); return; }
   const isMultiKpi = chartType === 'kpi' && _wcState.kpiSeries.length > 0;
   const widget = {
     id: _wcState.widgetId || 'w_' + Math.random().toString(36).slice(2, 10),
     title,
     chartType,
-    source: { templateId },
+    source: kind === 'form' ? { kind: 'form', templateId } : { kind },
     layout: _wcState.layout || undefined
   };
+  if (isPivot) {
+    const rowDim = document.getElementById('wc-pivot-row').value;
+    const colDim = document.getElementById('wc-pivot-col').value;
+    const metric = document.getElementById('wc-pivot-metric').value;
+    const aggregate = document.getElementById('wc-pivot-agg').value || 'sum';
+    if (!rowDim) { toast('Escolha a dimensão de linhas', 'warn'); return; }
+    if (chartType === 'heatmap' && !colDim) { toast('Heatmap precisa de dimensão de colunas', 'warn'); return; }
+    widget.pivot = { rowDim, colDim: colDim || '', metric: metric || 'count', aggregate };
+  } else if (isCombo) {
+    const primary = document.getElementById('wc-combo-primary').value;
+    const barMetric = document.getElementById('wc-combo-bar-metric').value;
+    const barAgg    = document.getElementById('wc-combo-bar-agg').value || 'sum';
+    const lineMetric = document.getElementById('wc-combo-line-metric').value;
+    const lineAgg    = document.getElementById('wc-combo-line-agg').value || 'sum';
+    if (!primary) { toast('Escolha a dimensão do eixo X', 'warn'); return; }
+    if (!barMetric || !lineMetric) { toast('Escolha as duas métricas (barra e linha)', 'warn'); return; }
+    widget.combo = { primary, bar: { metric: barMetric, aggregate: barAgg }, line: { metric: lineMetric, aggregate: lineAgg } };
+  } else if (isScatter) {
+    const x = document.getElementById('wc-scatter-x').value;
+    const y = document.getElementById('wc-scatter-y').value;
+    const groupDim = document.getElementById('wc-scatter-group').value;
+    if (!x || !y) { toast('Escolha as métricas de X e Y', 'warn'); return; }
+    if (x === 'count' || y === 'count') { toast('Scatter não aceita "count" — escolha uma métrica numérica.', 'warn'); return; }
+    widget.scatter = { x, y, groupDim: groupDim || '' };
+  } else if (isTimeline) {
+    const bucket = document.getElementById('wc-timeline-bucket').value || 'auto';
+    const splitBy = document.getElementById('wc-timeline-split').value || '';
+    const metrics = (_wcState.timeline?.metrics || []).map(m => ({
+      label: String(m.label || '').trim().slice(0, 60),
+      metric: m.metric || 'count',
+      aggregate: m.aggregate === 'avg' ? 'avg' : 'sum'
+    })).filter(m => m.metric);
+    if (!metrics.length) { toast('Configure pelo menos uma métrica na timeline', 'warn'); return; }
+    widget.timeline = { bucket, metrics, splitBy };
+  }
   if (chartType === 'bar' || chartType === 'barh' || chartType === 'pie') {
     if (!fieldId) { toast('Escolha um campo', 'warn'); return; }
     widget.source.fieldId = fieldId;
     if ((chartType === 'bar' || chartType === 'barh') && groupBy) widget.groupByFieldId = groupBy;
+    if (chartType === 'bar' && document.getElementById('wc-barwrap')?.checked) widget.barWrap = true;
   } else if (chartType === 'kpi') {
     if (isMultiKpi) {
       for (const s of _wcState.kpiSeries) {
@@ -18926,7 +19951,8 @@ function openUserModal(id) {
   $('u-discord-id').value = u?.discordId || '';
   $('u-admin').checked = !!u?.isAdmin;
   $('u-moderator').checked = !!u?.isModerator;
-  onUserAdminChange(); // atualiza estado do checkbox Moderador (esconde se admin)
+  if ($('u-freelancer')) $('u-freelancer').checked = !!u?.isFreelancer;
+  onUserAdminChange(); // atualiza estado do checkbox Moderador/Freelancer (esconde se admin)
   const selected = u ? (u.workspaces || []) : [activeWs];
   $('u-workspaces').innerHTML = [...workspaces]
     .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt-BR', { sensitivity: 'base' }))
@@ -18939,12 +19965,21 @@ function openUserModal(id) {
   openModal('user-modal');
   navPush(id ? '/users/' + id : '/users/new');
 }
-/* Admin absorve moderador: se marca admin, força moderator = false + esconde. */
+/* Admin absorve moderador/freelancer: se marca admin, força os dois pra false + esconde.
+   Moderador e Freelancer também são mutuamente exclusivos entre si. */
 function onUserAdminChange() {
   const isAdmin = $('u-admin').checked;
   const modWrap = $('u-moderator-wrap');
+  const freeWrap = $('u-freelancer-wrap');
   if (modWrap) modWrap.style.display = isAdmin ? 'none' : '';
-  if (isAdmin) $('u-moderator').checked = false;
+  if (freeWrap) freeWrap.style.display = isAdmin ? 'none' : '';
+  if (isAdmin) {
+    $('u-moderator').checked = false;
+    if ($('u-freelancer')) $('u-freelancer').checked = false;
+  }
+}
+function onUserModeratorChange() {
+  if ($('u-moderator').checked && $('u-freelancer')) $('u-freelancer').checked = false;
 }
 async function saveUser() {
   const wsSel = [...$('u-workspaces').querySelectorAll('input:checked')].map(i => i.value);
@@ -18953,6 +19988,7 @@ async function saveUser() {
     position: $('u-position') ? ($('u-position').value || '') : '',
     isAdmin: $('u-admin').checked,
     isModerator: !$('u-admin').checked && $('u-moderator').checked,
+    isFreelancer: !$('u-admin').checked && !$('u-moderator').checked && !!($('u-freelancer') && $('u-freelancer').checked),
     workspaces: wsSel,
     discordId: ($('u-discord-id').value || '').trim() || null,
     email: ($('u-email').value || '').trim() || null
@@ -18993,7 +20029,13 @@ async function toggleUser(id) {
 /* ─── PERFIL ─── */
 function renderProfile() {
   $('profile-name-display').textContent = me.name;
-  $('profile-role-display').textContent = me.isAdmin ? (me.role ? me.role + ' · Administrador' : 'Administrador') : (me.role || 'Equipe');
+  $('profile-role-display').textContent = me.isAdmin
+    ? (me.role ? me.role + ' · Administrador' : 'Administrador')
+    : (me.isModerator
+      ? (me.role ? me.role + ' · Moderador' : 'Moderador')
+      : (me.isFreelancer
+        ? (me.role ? me.role + ' · Freelancer' : 'Freelancer')
+        : (me.role || 'Equipe')));
   $('profile-username-display').textContent = '@' + me.username;
   $('profile-f-name').value = me.name;
   $('profile-f-username').value = me.username;

@@ -8,6 +8,11 @@ body.user-readonly .admin-only { display: none !important; }
    Moderador vê tudo com `.admin-only` mas não vê `.full-admin-only`. */
 body.user-readonly .full-admin-only,
 body.user-moderator .full-admin-only { display: none !important; }
+/* Freelancer: acesso mínimo — só vê as demandas em que está. Esconde tudo
+   marcado como admin-only + toda navegação/ação fora do escopo dele. */
+body.user-freelancer .admin-only,
+body.user-freelancer .full-admin-only,
+body.user-freelancer .freelancer-hide { display: none !important; }
 
 /* Step de customização de etapas no wizard de nova demanda. */
 .wizard-cust-hint {
@@ -1339,6 +1344,21 @@ body.sidebar-collapsed .ws-cdrop .filter-cdrop-menu {
 .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
 .section-head .section-title { margin-bottom: 0; }
 
+/* "Minha Agenda" recolhível — mesma família visual da seção de registros
+   do dashboard: chevron rotativo + persistência local do estado. */
+.mine-agenda-title-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: transparent; border: 0; padding: 0; cursor: pointer; color: inherit;
+  user-select: none;
+}
+.mine-agenda-toggle-chevron {
+  color: var(--text-muted); transition: transform .18s;
+}
+.mine-agenda-panel.is-collapsed .mine-agenda-toggle-chevron { transform: rotate(-90deg); }
+.mine-agenda-panel.is-collapsed .mine-agenda-body,
+.mine-agenda-panel.is-collapsed .agenda-week-nav { display: none; }
+.mine-agenda-panel.is-collapsed .mine-agenda-head { margin-bottom: 0; }
+
 /* PIPELINE CHART */
 .dash-bar-chart {
   display: flex; gap: 6px; align-items: flex-end; justify-content: flex-start;
@@ -1394,6 +1414,8 @@ tr:hover td { background: var(--surface-2); }
 .pill-admin { background: var(--accent-dim); color: var(--accent-text); }
 /* Moderador: mesma família visual do admin, mas em azul pra distinguir. */
 .pill-moderator { background: rgba(11, 87, 208, 0.18); color: #0b57d0; }
+/* Freelancer: verde-água — separa visualmente de admin/moderador/equipe. */
+.pill-freelancer { background: rgba(20, 184, 166, 0.18); color: #0d9488; }
 .pill-success { background: var(--success-dim); color: var(--success); }
 /* Pill de etapa com truncamento — usado na tabela /demandas pra que nomes
    longos não estourem a coluna. Título HTML mostra o nome completo no hover. */
@@ -2301,6 +2323,102 @@ tr:hover td { background: var(--surface-2); }
 .modal-close:active { transform: scale(0.92); }
 .modal-body { padding: 20px 28px 24px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.form-grid-3 { grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+
+/* Pivot table widget — cross-tab compacta com totais */
+.dw-pivot-wrap { overflow: auto; max-height: 100%; }
+.dw-pivot-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.dw-pivot-table th, .dw-pivot-table td {
+  padding: 6px 10px; border-bottom: 1px solid var(--border);
+  text-align: right; white-space: nowrap;
+}
+.dw-pivot-table thead th { text-align: right; font-weight: 600; color: var(--text-dim); background: var(--surface-2); position: sticky; top: 0; }
+.dw-pivot-table th.pv-row-head { text-align: left; font-weight: 500; color: var(--text); position: sticky; left: 0; background: var(--surface); z-index: 1; }
+.dw-pivot-table th.pv-total-head { color: var(--accent); }
+.dw-pivot-table td.pv-total-cell { font-weight: 600; background: var(--surface-2); }
+.dw-pivot-table td.pv-grand { color: var(--accent); }
+.dw-pivot-table tbody tr:hover td, .dw-pivot-table tbody tr:hover th.pv-row-head { background: var(--surface-hover); }
+
+/* Heatmap widget — grade colorida por intensidade */
+.dw-heat-wrap { overflow: auto; max-height: 100%; padding: 4px 0; }
+.dw-heat-grid { display: grid; gap: 3px; font-size: 11.5px; min-width: 100%; }
+.dw-heat-corner { }
+.dw-heat-colhead {
+  padding: 6px 8px; font-weight: 600; color: var(--text-dim);
+  text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  border-bottom: 2px solid var(--border);
+}
+.dw-heat-rowhead {
+  padding: 6px 10px 6px 4px; font-weight: 500; color: var(--text);
+  text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  border-right: 2px solid var(--border);
+}
+.dw-heat-cell {
+  padding: 8px 6px; text-align: center; border-radius: 4px;
+  font-weight: 500; transition: transform .12s;
+}
+.dw-heat-cell:hover { transform: scale(1.06); outline: 1px solid var(--accent); }
+
+/* Combo (bar + line, dual axis) */
+.dw-combo { display: grid; grid-template-columns: 34px 1fr 34px; gap: 6px; height: calc(100% - 32px); min-height: 140px; }
+.dw-combo-yaxis {
+  display: flex; flex-direction: column; justify-content: space-between;
+  align-items: flex-end; font-size: 10px; color: var(--text-muted);
+  padding: 4px 4px 24px 0;
+}
+.dw-combo-yaxis-right { align-items: flex-start; padding-right: 0; padding-left: 4px; }
+.dw-combo-plot { position: relative; padding-bottom: 20px; }
+.dw-combo-grid { position: absolute; inset: 0 0 20px 0; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; }
+.dw-combo-grid span { border-bottom: 1px dashed var(--border); height: 0; }
+.dw-combo-groups { position: absolute; inset: 0 0 20px 0; display: flex; align-items: flex-end; gap: 6px; padding: 0 6px; }
+.dw-combo-group { flex: 1; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; min-width: 0; }
+.dw-combo-bar-col { position: relative; width: 60%; max-width: 40px; height: calc(100% - 18px); display: flex; align-items: flex-end; justify-content: center; }
+.dw-combo-val { position: absolute; top: -14px; font-size: 10px; color: var(--text-muted); white-space: nowrap; }
+.dw-combo-bar { width: 100%; border-radius: 3px 3px 0 0; transition: height .18s; }
+.dw-combo-xlabel {
+  position: absolute; bottom: 0; font-size: 10.5px; color: var(--text-dim);
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center;
+}
+.dw-combo-line { position: absolute; inset: 0 0 20px 0; pointer-events: none; overflow: visible; }
+.dw-combo-line circle { pointer-events: auto; }
+
+/* Scatter */
+.dw-scatter { display: grid; grid-template-columns: 40px 1fr; gap: 6px; height: calc(100% - 44px); min-height: 140px; }
+.dw-scatter-yaxis {
+  display: flex; flex-direction: column; justify-content: space-between;
+  align-items: flex-end; font-size: 10px; color: var(--text-muted);
+  padding: 2px 4px 2px 0;
+}
+.dw-scatter-plot { position: relative; border-left: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.dw-scatter-plot svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.dw-scatter-xaxis { display: flex; justify-content: space-between; font-size: 10px; color: var(--text-muted); margin-top: 4px; padding-left: 46px; }
+.dw-scatter-xlbl { flex: 1; text-align: center; color: var(--text-dim); }
+
+/* Drill-down: cursor + hover em qualquer elemento clicável de widget cross-data */
+.pv-drillable { cursor: pointer; transition: background .12s, outline .12s; }
+.pv-drillable:hover { outline: 1px dashed var(--accent); background: var(--surface-hover); }
+.dw-heat-cell.pv-drillable:hover { outline: 1px solid var(--accent); transform: scale(1.06); }
+.dw-combo-group.pv-drillable:hover .dw-combo-bar { filter: brightness(1.15); }
+
+/* Chip do drill-down no painel de filtros */
+.df-drill-row { padding-top: 4px; }
+.df-chip-drill {
+  background: var(--accent-dim); color: var(--accent-text);
+  border: 1px solid var(--accent);
+}
+
+/* Delta temporal em KPI */
+.dw-kpi-delta {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12px; font-weight: 600;
+  padding: 2px 8px; border-radius: 999px; margin: 2px 0 4px;
+}
+.dw-kpi-delta-sm { font-size: 10.5px; padding: 1px 6px; margin: 0 0 2px; }
+.dw-kpi-delta-arrow { font-size: 10px; }
+.dw-kpi-delta-vs { font-weight: 400; color: inherit; opacity: 0.75; font-size: 10.5px; }
+.dw-kpi-delta-up   { background: rgba(16, 185, 129, 0.15); color: #0f8f66; }
+.dw-kpi-delta-down { background: rgba(239, 68, 68, 0.15);  color: #b91c1c; }
+.dw-kpi-delta-flat { background: var(--surface-2); color: var(--text-muted); }
 .form-group { display: flex; flex-direction: column; gap: 6px; }
 .form-group.full { grid-column: 1 / -1; }
 .form-label { font-size: 11px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: .06em; }
@@ -11248,6 +11366,28 @@ tr.demand-row {
 }
 .dw-vbar-legend {
   margin-top: 0;
+}
+
+/* Bar chart em modo wrap — quebra as colunas em múltiplas linhas pra caber em widgets
+   largos com muitas categorias. Y-axis some (rótulos no topo de cada barra assumem
+   esse papel), plot vira grid flex-wrap com min-width por barra. */
+.dw-vbar.is-wrap { grid-template-columns: 1fr; }
+.dw-vbar.is-wrap .dw-vbar-plot {
+  position: static; height: auto; padding-bottom: 0;
+}
+.dw-vbar.is-wrap .dw-vbar-groups {
+  position: static; inset: auto;
+  flex-wrap: wrap; align-items: stretch; gap: 12px 10px;
+  padding: 8px 4px 4px;
+}
+.dw-vbar.is-wrap .dw-vbar-group {
+  flex: 1 1 72px; min-width: 64px; max-width: 140px;
+  height: 160px;
+}
+.dw-vbar.is-wrap .dw-vbar-bars { min-height: 130px; }
+.dw-vbar.is-wrap .dw-vbar-xlabel {
+  position: static; padding-top: 4px;
+  white-space: normal; overflow: visible; text-overflow: initial; line-height: 1.2;
 }
 
 /* ── Painel de registros no rodapé do dashboard ──
