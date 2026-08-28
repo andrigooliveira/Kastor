@@ -11031,6 +11031,147 @@ tr.demand-row {
   border-radius: 50%;
 }
 .df-chip button:hover { color: var(--danger); background: var(--surface); }
+
+/* ─── Filtros compactos do dashboard (chips com ícone) ─── */
+.df-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.df-preset-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.df-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
+.df-toolbar-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Chip com ícone + <select> invisível por cima */
+.df-fchip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 10px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color .12s, background .12s, color .12s;
+  white-space: nowrap;
+}
+.df-fchip:hover:not(.is-disabled) { border-color: var(--accent); color: var(--text); }
+.df-fchip.is-active {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+.df-fchip.is-disabled { opacity: .55; cursor: not-allowed; }
+.df-fchip-icon { flex-shrink: 0; }
+.df-fchip-select {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0 2px;
+  cursor: pointer;
+  outline: none;
+  max-width: 180px;
+  text-overflow: ellipsis;
+}
+.df-fchip-select:disabled { cursor: not-allowed; }
+.df-fchip-select option { color: var(--text); background: var(--surface); }
+.df-fchip-x {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 2px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 50%;
+  opacity: .7;
+}
+.df-fchip-x:hover { opacity: 1; background: rgba(0,0,0,0.06); }
+.df-preset-select {
+  min-width: 100px;
+  max-width: 160px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px;
+  height: 30px;
+  background: var(--surface);
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.df-preset-select:hover { border-color: var(--accent); }
+.df-icon-btn {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  height: 30px;
+  min-width: 30px;
+  padding: 0 6px;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.df-icon-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent-text); background: var(--accent-dim); }
+.df-icon-btn:disabled { opacity: .45; cursor: not-allowed; }
+.df-clear-btn {
+  border: 1px solid var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent-text);
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.df-clear-btn:hover { background: var(--accent); color: #fff; }
+.df-date-inline {
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+}
+.df-extra {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+.df-drill-row .df-chip { background: var(--accent-dim); color: var(--accent-text); border: 1px solid var(--accent); }
 .dw-widget-grid {
   display: grid;
   grid-template-columns: repeat(12, 1fr);

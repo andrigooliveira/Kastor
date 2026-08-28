@@ -17386,63 +17386,83 @@ function _renderDashFilters(d) {
   const templatesUsed = _templatesUsedIn(d);
   const activeCount = _dashFilterActiveCount();
   const presets = _dashPresetsFor(d.id);
+  // Chip helper — envolve um <select> com ícone e destaque quando ativo.
+  // O botão "×" limpa aquele filtro específico (só aparece quando ativo).
+  const chip = (icon, active, selectHtml, key, disabled) => `
+    <label class="df-fchip${active ? ' is-active' : ''}${disabled ? ' is-disabled' : ''}" title="${disabled ? 'Sem opções pra escolher' : ''}">
+      <i data-lucide="${icon}" class="ic-xs df-fchip-icon"></i>
+      ${selectHtml}
+      ${active && key ? `<button type="button" class="df-fchip-x" title="Limpar" onclick="event.preventDefault();event.stopPropagation();_setDashFilter('${key}', ${key === 'period' ? '\'all\'' : '\'\''})"><i data-lucide="x" class="ic-xs"></i></button>` : ''}
+    </label>`;
+
+  const periodActive = _dashFilters.period !== 'all';
+  const wsActive     = !!_dashFilters.workspaceId;
+  const clActive     = !!_dashFilters.clientId;
+  const prjActive    = !!_dashFilters.projectId;
+  const subActive    = !!_dashFilters.submittedBy;
+
+  const periodSelect = `
+    <select class="df-fchip-select" onchange="_setDashFilter('period', this.value)">
+      <option value="all"    ${_dashFilters.period === 'all'    ? 'selected' : ''}>Período: tudo</option>
+      <option value="7d"     ${_dashFilters.period === '7d'     ? 'selected' : ''}>Últimos 7 dias</option>
+      <option value="30d"    ${_dashFilters.period === '30d'    ? 'selected' : ''}>Últimos 30 dias</option>
+      <option value="90d"    ${_dashFilters.period === '90d'    ? 'selected' : ''}>Últimos 90 dias</option>
+      <option value="year"   ${_dashFilters.period === 'year'   ? 'selected' : ''}>Este ano</option>
+      <option value="custom" ${_dashFilters.period === 'custom' ? 'selected' : ''}>Personalizado</option>
+    </select>`;
+  const wsSelect = `
+    <select class="df-fchip-select" onchange="_setDashFilter('workspaceId', this.value)">
+      <option value="">Squad</option>
+      ${wss.map(w => `<option value="${esc(w.id)}" ${_dashFilters.workspaceId === w.id ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}
+    </select>`;
+  const clSelect = `
+    <select class="df-fchip-select" onchange="_setDashFilter('clientId', this.value)">
+      <option value="">Cliente</option>
+      ${clientsForWs.map(c => `<option value="${esc(c.id)}" ${_dashFilters.clientId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+    </select>`;
+  const prjSelect = `
+    <select class="df-fchip-select" onchange="_setDashFilter('projectId', this.value)">
+      <option value="">Projeto</option>
+      ${projectsForClient.map(p => `<option value="${esc(p.id)}" ${_dashFilters.projectId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+    </select>`;
+  const subSelect = `
+    <select class="df-fchip-select" onchange="_setDashFilter('submittedBy', this.value)">
+      <option value="">Preenchido por</option>
+      ${submitters.map(u => `<option value="${esc(u.id)}" ${_dashFilters.submittedBy === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}
+    </select>`;
+
   host.innerHTML = `
-    <div class="df-row">
-      <select class="filter-select df-preset-select" onchange="_applyDashPreset('${d.id}', this.value)" title="Aplicar preset">
-        <option value="">— Preset —</option>
-        ${presets.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}
-      </select>
-      <button class="btn btn-ghost btn-sm" onclick="_promptSavePreset('${d.id}')" ${activeCount ? '' : 'disabled title="Ative pelo menos um filtro pra salvar"'}><i data-lucide="bookmark-plus" class="ic-xs"></i> Salvar preset</button>
-      ${presets.length ? `<button class="btn btn-ghost btn-sm" onclick="_managePresets('${d.id}')"><i data-lucide="list" class="ic-xs"></i> Gerenciar (${presets.length})</button>` : ''}
-      <div style="flex:1"></div>
-      ${activeCount ? `<span class="df-active-count">${activeCount} filtro(s) ativo(s)</span>` : ''}
-      ${activeCount ? `<button class="btn btn-ghost btn-sm" onclick="_clearDashFilters()"><i data-lucide="x" class="ic-xs"></i> Limpar</button>` : ''}
+    <div class="df-toolbar">
+      <div class="df-preset-wrap">
+        <select class="df-fchip-select df-preset-select" onchange="_applyDashPreset('${d.id}', this.value)" title="Aplicar preset">
+          <option value="">Preset…</option>
+          ${presets.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}
+        </select>
+        <button class="df-icon-btn" onclick="_promptSavePreset('${d.id}')" ${activeCount ? '' : 'disabled'} title="Salvar preset atual"><i data-lucide="bookmark-plus" class="ic-xs"></i></button>
+        ${presets.length ? `<button class="df-icon-btn" onclick="_managePresets('${d.id}')" title="Gerenciar presets (${presets.length})"><i data-lucide="list" class="ic-xs"></i></button>` : ''}
+      </div>
+      <div class="df-chips">
+        ${chip('calendar', periodActive, periodSelect, 'period')}
+        ${_dashFilters.period === 'custom' ? `
+          <input type="date" class="df-date-inline" value="${_dashFilters.dateFrom}" onchange="_setDashFilter('dateFrom', this.value)" title="Início">
+          <input type="date" class="df-date-inline" value="${_dashFilters.dateTo}"   onchange="_setDashFilter('dateTo', this.value)"   title="Fim">
+        ` : ''}
+        ${chip('layers', wsActive, wsSelect, 'workspaceId', wss.length === 0)}
+        ${chip('users', clActive, clSelect, 'clientId', clientsForWs.length === 0)}
+        ${clActive ? chip('folder', prjActive, prjSelect, 'projectId', projectsForClient.length === 0) : ''}
+        ${chip('user-check', subActive, subSelect, 'submittedBy', submitters.length === 0)}
+      </div>
+      <div class="df-toolbar-right">
+        ${activeCount ? `<button class="df-clear-btn" onclick="_clearDashFilters()" title="Limpar todos os filtros"><i data-lucide="x" class="ic-xs"></i> ${activeCount}</button>` : ''}
+      </div>
     </div>
-    ${_dashDrillDown.size ? `<div class="df-row df-drill-row">
-      <span class="df-label">Drill-down</span>
+    ${_dashDrillDown.size ? `<div class="df-extra df-drill-row">
       ${[..._dashDrillDown.entries()].map(([dim, val]) => `
-        <span class="df-chip df-chip-drill">${esc(_dashDrillLabel(dim))} = ${esc(val)}<button title="Remover" onclick="_dashClearDrillDown('${esc(dim)}')"><i data-lucide="x" class="ic-xs"></i></button></span>
+        <span class="df-chip df-chip-drill">${esc(_dashDrillLabel(dim))}: ${esc(val)}<button title="Remover" onclick="_dashClearDrillDown('${esc(dim)}')"><i data-lucide="x" class="ic-xs"></i></button></span>
       `).join('')}
-      <button class="btn btn-ghost btn-sm" onclick="_dashClearDrillDown()"><i data-lucide="x" class="ic-xs"></i> Limpar drill</button>
     </div>` : ''}
-    <div class="df-row">
-      <span class="df-label">Período</span>
-      <select class="filter-select" onchange="_setDashFilter('period', this.value)">
-        <option value="all"    ${_dashFilters.period === 'all'    ? 'selected' : ''}>Tudo</option>
-        <option value="7d"     ${_dashFilters.period === '7d'     ? 'selected' : ''}>Últimos 7 dias</option>
-        <option value="30d"    ${_dashFilters.period === '30d'    ? 'selected' : ''}>Últimos 30 dias</option>
-        <option value="90d"    ${_dashFilters.period === '90d'    ? 'selected' : ''}>Últimos 90 dias</option>
-        <option value="year"   ${_dashFilters.period === 'year'   ? 'selected' : ''}>Este ano</option>
-        <option value="custom" ${_dashFilters.period === 'custom' ? 'selected' : ''}>Personalizado</option>
-      </select>
-      ${_dashFilters.period === 'custom' ? `
-        <input type="date" class="filter-select" value="${_dashFilters.dateFrom}" onchange="_setDashFilter('dateFrom', this.value)" title="Início">
-        <input type="date" class="filter-select" value="${_dashFilters.dateTo}"   onchange="_setDashFilter('dateTo', this.value)"   title="Fim">
-      ` : ''}
-      <span class="df-label">Squad</span>
-      <select class="filter-select" onchange="_setDashFilter('workspaceId', this.value)">
-        <option value="">Todos</option>
-        ${wss.map(w => `<option value="${esc(w.id)}" ${_dashFilters.workspaceId === w.id ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}
-      </select>
-      <span class="df-label">Cliente</span>
-      <select class="filter-select" onchange="_setDashFilter('clientId', this.value)">
-        <option value="">Todos</option>
-        ${clientsForWs.map(c => `<option value="${esc(c.id)}" ${_dashFilters.clientId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
-      </select>
-      <span class="df-label">Projeto</span>
-      <select class="filter-select" onchange="_setDashFilter('projectId', this.value)" ${!projectsForClient.length ? 'disabled' : ''}>
-        <option value="">Todos</option>
-        ${projectsForClient.map(p => `<option value="${esc(p.id)}" ${_dashFilters.projectId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-      </select>
-      <span class="df-label">Preenchido por</span>
-      <select class="filter-select" onchange="_setDashFilter('submittedBy', this.value)" ${!submitters.length ? 'disabled' : ''}>
-        <option value="">Qualquer</option>
-        ${submitters.map(u => `<option value="${esc(u.id)}" ${_dashFilters.submittedBy === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}
-      </select>
-    </div>
     ${templatesUsed.length ? `
-      <div class="df-row">
-        <span class="df-label">Por campo</span>
+      <div class="df-extra">
         ${templatesUsed.map(t => _renderTemplateFieldFilters(t)).join('')}
       </div>
     ` : ''}
