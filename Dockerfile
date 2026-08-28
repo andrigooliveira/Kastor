@@ -9,6 +9,13 @@
 # ────────────────────────────────────────────────────────────────
 FROM node:22-alpine
 
+# BUILD_SHA vem do CI (Actions passa --build-arg BUILD_SHA=${{ github.sha }}).
+# Alimenta o build-prod.js (que reescreve os cache-busters do index.html e o
+# SW_VERSION do sw.js) e vira ENV do runtime (server expõe em /api/health, o
+# cliente checa periodicamente pra oferecer reload em versão nova).
+ARG BUILD_SHA=dev
+ENV BUILD_SHA=$BUILD_SHA
+
 # Alpine não vem com o /home/node populado; roda como root simplifica volumes
 # de dados (uploads/auth.enc mount) sem se preocupar com uid/gid.
 WORKDIR /app

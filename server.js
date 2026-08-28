@@ -1481,8 +1481,12 @@ app.use('/uploads', requireAuth, express.static(UPLOADS_DIR, { index: false, dot
    orquestrador/load-balancer deve pollar pra detectar um processo travado.
    Readiness (/api/health/ready): pinga o Postgres; 503 se o banco estiver fora.
    Ambos públicos (sem requireAuth) — health check não deve depender de sessão. */
+/* BUILD_SHA vem do env (setado no Dockerfile via ARG do GitHub Actions).
+   É o identificador da build atual — se o cliente detectar que mudou desde
+   o load da página, sabe que o server foi atualizado e oferece um reload. */
+const BUILD_SHA = String(process.env.BUILD_SHA || 'dev').slice(0, 40);
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, uptime: Math.round(process.uptime()), ts: nowISO() });
+  res.json({ ok: true, uptime: Math.round(process.uptime()), ts: nowISO(), build: BUILD_SHA });
 });
 app.get('/api/health/ready', async (req, res) => {
   try {

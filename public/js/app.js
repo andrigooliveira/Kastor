@@ -3437,6 +3437,49 @@ function toggleDensity() {
 }
 applyDensity(localStorage.getItem('kastor-density') || 'comfortable');
 
+/* Detecção automática de nova build: no boot pega o BUILD_SHA do /api/health,
+   e depois periodicamente / quando a aba volta a ficar visível refetcha e compara.
+   Se mudou (deploy novo), mostra um banner discreto pedindo pra recarregar.
+   Sem isso, usuários com aba aberta podem ficar horas com JS/CSS/HTML velhos
+   mesmo depois do deploy. */
+let _bootBuildSha = null;
+let _updateBannerShown = false;
+async function initBuildVersionCheck() {
+  try {
+    const h = await fetch('/api/health', { cache: 'no-store' }).then(r => r.json());
+    _bootBuildSha = h?.build || null;
+  } catch { /* offline / erro — tenta de novo no próximo check */ }
+  // Periodicidade generosa: 5 min. Mais frequente polui log e não muda nada
+  // (deploy leva ~2-3min do push até rodar).
+  setInterval(_checkBuildVersion, 5 * 60 * 1000);
+  // Quando a aba volta a ficar visível — usuário provavelmente ficou horas fora.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') _checkBuildVersion();
+  });
+}
+async function _checkBuildVersion() {
+  if (_updateBannerShown) return;                          // já pediu reload, não checa mais
+  if (!_bootBuildSha) return;                              // não sabemos com o que comparar
+  try {
+    const h = await fetch('/api/health', { cache: 'no-store' }).then(r => r.json());
+    const cur = h?.build || null;
+    if (cur && cur !== _bootBuildSha) _showUpdateBanner();
+  } catch { /* rede fora — reblobla no próximo tick */ }
+}
+function _showUpdateBanner() {
+  if (_updateBannerShown) return;
+  _updateBannerShown = true;
+  const el = document.createElement('div');
+  el.className = 'app-update-banner';
+  el.innerHTML = `
+    <span><strong>Nova versão disponível.</strong> Recarregue pra aplicar as atualizações.</span>
+    <button type="button" class="btn btn-primary btn-sm" onclick="location.reload(true)">Recarregar</button>
+    <button type="button" class="app-update-close" title="Dispensar" onclick="this.parentElement.remove()"><i data-lucide="x" class="ic-sm"></i></button>
+  `;
+  document.body.appendChild(el);
+  if (window.lucide?.createIcons) lucide.createIcons();
+}
+
 async function boot() {
   // Estado do collapse da sidebar aplicado ANTES do render pra evitar flash.
   applySidebarCollapseInit();
@@ -3512,6 +3555,7 @@ async function enterApp() {
   initTooltips();
   initKeyboardShortcuts();
   initAutoCdropObserver();
+  initBuildVersionCheck();
   $('topbar-title').textContent = 'Início';
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-dashboard'));
   if ($('metrics-grid')) $('metrics-grid').innerHTML = skeletonMetrics();

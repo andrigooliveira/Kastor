@@ -1,6 +1,42 @@
 /* ───────────────────────────────────────────────
    reWork — Design System (base original preservada)
    ─────────────────────────────────────────────── */
+/* Banner "Nova versão disponível" — canto inferior direito, dispensável.
+   Aparece quando o cliente detecta que o BUILD_SHA do server mudou desde o load. */
+.app-update-banner {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  font-size: 13px;
+  color: var(--text);
+  max-width: 480px;
+  animation: appUpdateIn .3s var(--ease-out);
+}
+@keyframes appUpdateIn {
+  from { transform: translateY(20px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+.app-update-close {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+}
+.app-update-close:hover { background: var(--surface-2); color: var(--text); }
+
 /* Usuários não-admin: oculta qualquer elemento marcado como admin-only.
    A classe é alternada em body via renderSidebarUser(). */
 body.user-readonly .admin-only { display: none !important; }

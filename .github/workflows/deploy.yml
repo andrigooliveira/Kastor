@@ -72,6 +72,10 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
+          # BUILD_SHA: passa o SHA do commit pra dentro da imagem — build-prod.js
+          # usa pra reescrever cache-busters e o server expõe em /api/health.
+          build-args: |
+            BUILD_SHA=${{ github.sha }}
           tags: |
             ghcr.io/${{ env.REPO_NAME }}:latest
             ghcr.io/${{ env.REPO_NAME }}:${{ github.sha }}
