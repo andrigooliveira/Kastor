@@ -107,6 +107,12 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
 
+      # ── Marketing (webhook n8n) ─────────────────────────
+      # Token estático que o n8n envia em X-Marketing-Token pra POST em
+      # /api/marketing/ingest. Gere com:  openssl rand -hex 24
+      # Sem essa var, o endpoint devolve 503.
+      MARKETING_WEBHOOK_TOKEN: ${MARKETING_WEBHOOK_TOKEN:-}
+
     volumes:
       # Volume nomeado — sobrevive a rebuilds/updates. Contém uploads dos
       # usuários e secret.bin (criptografia local do auth). BACKUP DISSO

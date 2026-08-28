@@ -14,12 +14,12 @@
 <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/geist-latin-ext.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/css/fonts.css?v=1">
-<link rel="stylesheet" href="/css/style.css?v=20260828dash14">
+<link rel="stylesheet" href="/css/style.css?v=20260828perf9">
 <!-- Preload dos JS pesados no <head> pra que o download comece IMEDIATAMENTE,
      em paralelo com o parse do HTML, em vez de esperar o parser chegar em
      </body>. Com immutable cache (max-age=1yr), na 2ª visita nem baixa. -->
 <link rel="preload" href="/vendor/lucide.min.js" as="script">
-<link rel="preload" href="/js/app.js?v=20260828dash14" as="script">
+<link rel="preload" href="/js/app.js?v=20260828perf9" as="script">
 <script type="text/javascript">
     // Clarity: analytics de heatmap/session replay. Não é crítico pro app —
     // deferido pra depois do primeiro paint pra não roubar tempo do LCP.
@@ -763,6 +763,7 @@
       <div class="an-tabs">
         <button class="an-tab is-active" data-tab="capacity" onclick="setAnalyticsTab('capacity')">CAPACIDADE</button>
         <button class="an-tab" data-tab="reports" onclick="setAnalyticsTab('reports')">RELATÓRIOS</button>
+        <button class="an-tab" data-tab="performance" onclick="setAnalyticsTab('performance')">PERFORMANCE</button>
       </div>
       <div class="page-body">
         <!-- Aba CAPACIDADE -->
@@ -809,6 +810,47 @@
           </div>
           <div class="capacity-hint" id="capacity-hint">Distribuição de demandas em aberto por responsável. Carga estimada com base nas demandas atribuídas e nas horas já apontadas.</div>
           <div id="capacity-list"></div>
+        </div>
+        <!-- Aba PERFORMANCE — dashboard de marketing por cliente (dados via webhook n8n) -->
+        <div id="an-tab-performance" class="an-tab-panel" style="display:none">
+          <div class="perf-toolbar">
+            <div class="perf-title-block">
+              <div class="perf-title" id="perf-client-name">Selecione um cliente</div>
+              <div class="perf-subtitle">Visão consolidada de mídia e geração de leads</div>
+            </div>
+            <div class="perf-controls">
+              <div class="perf-control">
+                <label class="filter-label">Squad</label>
+                <select class="filter-select" id="perf-squad" onchange="_perfOnSquadChange()"></select>
+              </div>
+              <div class="perf-control">
+                <label class="filter-label">Cliente</label>
+                <select class="filter-select" id="perf-client" onchange="renderPerformance()" disabled></select>
+              </div>
+              <div class="perf-control">
+                <label class="filter-label">Período</label>
+                <select class="filter-select" id="perf-period" onchange="_perfOnPeriodChange()">
+                  <option value="30" selected>Últimos 30 dias</option>
+                  <option value="7">Últimos 7 dias</option>
+                  <option value="mtd">Este mês</option>
+                  <option value="90">Últimos 90 dias</option>
+                  <option value="365">Último ano</option>
+                  <option value="custom">Personalizado…</option>
+                </select>
+              </div>
+              <div class="perf-control perf-custom-dates" id="perf-custom-dates" style="display:none">
+                <label class="filter-label">De · até</label>
+                <div class="perf-daterange">
+                  <input type="date" class="filter-select" id="perf-start" onchange="renderPerformance()">
+                  <input type="date" class="filter-select" id="perf-end" onchange="renderPerformance()">
+                </div>
+              </div>
+              <button class="btn btn-ghost btn-sm perf-refresh-btn" onclick="renderPerformance()" title="Atualizar dados"><i data-lucide="refresh-cw" class="ic-sm"></i> Atualizar</button>
+              <button class="btn btn-ghost btn-sm" id="perf-config-btn" onclick="togglePerfConfig()" title="Configurar webhook" style="display:none"><i data-lucide="settings" class="ic-sm"></i></button>
+            </div>
+            <div class="perf-updated-row"><div class="perf-updated-at" id="perf-updated-at"></div></div>
+          </div>
+          <div id="perf-body"></div>
         </div>
         <!-- Aba RELATÓRIOS / SLA -->
         <div id="an-tab-reports" class="an-tab-panel" style="display:none">
@@ -3787,7 +3829,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260828dash14"></script>
+<script src="/js/app.js?v=20260828perf9"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

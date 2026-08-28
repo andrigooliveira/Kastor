@@ -158,11 +158,12 @@ function pageUrlFor(page)  {
     try { tab = localStorage.getItem('kastor-rec-tab') || 'demandas'; } catch {}
     return tab === 'listas' ? '/recurring/lists' : '/recurring/demands';
   }
-  // Análises tem 2 abas (capacidade/relatórios) — resolve pela aba persistida.
+  // Análises tem 3 abas (capacidade/relatórios/performance) — resolve pela aba persistida.
   if (page === 'analytics') {
     let tab = 'capacity';
     try { tab = localStorage.getItem('kastor-an-tab') || 'capacity'; } catch {}
-    return tab === 'reports' ? '/analytics/reports' : '/analytics/capacity';
+    const map = { reports: '/analytics/reports', performance: '/analytics/performance', capacity: '/analytics/capacity' };
+    return map[tab] || '/analytics/capacity';
   }
   // Detalhe da demanda: URL vem do id atual (senão cai pra dashboard).
   if (page === 'demand-detail') {
@@ -203,6 +204,7 @@ function parseRoute(path) {
   }
   if (p === '/analytics/capacity' || p === '/capacity') return { page: 'analytics', tab: 'capacity' };
   if (p === '/analytics/reports'  || p === '/reports')  return { page: 'analytics', tab: 'reports' };
+  if (p === '/analytics/performance' || p === '/performance') return { page: 'analytics', tab: 'performance' };
   // Base de conhecimento: /knowledge-base = grid; /knowledge-base/:slug-id = post
   // /knowledge-base/new = editor (novo); /knowledge-base/:slug-id/edit = editor (editar)
   if (p === '/knowledge-base')                    return { page: 'kb' };
@@ -1812,6 +1814,7 @@ function cmdkActions() {
     { icon: 'user',         label: 'Ir para Minhas Demandas',       kind: 'Navegar',  run: () => goPage('mine') },
     { icon: 'bar-chart-3',  label: 'Ir para Análises · Capacidade', kind: 'Navegar',  run: () => { goPage('analytics'); setTimeout(() => typeof setAnalyticsTab === 'function' && setAnalyticsTab('capacity'), 30); } },
     { icon: 'timer',        label: 'Ir para Análises · Relatórios',  kind: 'Navegar',  run: () => { goPage('analytics'); setTimeout(() => typeof setAnalyticsTab === 'function' && setAnalyticsTab('reports'), 30); } },
+    { icon: 'line-chart',   label: 'Ir para Análises · Performance', kind: 'Navegar',  run: () => { goPage('analytics'); setTimeout(() => typeof setAnalyticsTab === 'function' && setAnalyticsTab('performance'), 30); } },
     { icon: 'calendar',     label: 'Ir para Agenda',                kind: 'Navegar',  run: () => goPage('agenda') },
     { icon: 'calendar',     label: 'Ir para Calendário (Demandas)', kind: 'Navegar',  run: () => { goPage('list'); setTimeout(() => typeof setListView === 'function' && setListView('calendar'), 50); } },
     { icon: 'kanban',       label: 'Ir para Kanban (Demandas)',     kind: 'Navegar',  run: () => { goPage('list'); setTimeout(() => typeof setListView === 'function' && setListView('kanban'), 50); } },
@@ -3832,6 +3835,7 @@ const DEVTOOLS_GROUPS = [
     links: [
       { label: 'Análises · Capacidade',    path: '/analytics/capacity', icon: 'gauge',       desc: 'Aba de capacidade da página Análises.' },
       { label: 'Análises · Relatórios',    path: '/analytics/reports',  icon: 'file-bar-chart', desc: 'Aba de relatórios da página Análises.' },
+      { label: 'Análises · Performance',   path: '/analytics/performance', icon: 'line-chart', desc: 'Aba de performance de mídia (marketing) da página Análises.' },
       { label: 'Recorrentes · Demandas',   path: '/recurring/demands',  icon: 'refresh-ccw', desc: 'Aba de demandas recorrentes.' },
       { label: 'Recorrentes · Listas',     path: '/recurring/lists',    icon: 'list-checks', desc: 'Aba de listas recorrentes.' },
     ]
@@ -7343,26 +7347,893 @@ let _anTab = localStorage.getItem('kastor-an-tab') || 'capacity';
 function syncAnalyticsTab() {
   document.querySelectorAll('#page-analytics .an-tab')
     .forEach(t => t.classList.toggle('is-active', t.dataset.tab === _anTab));
-  const cap = $('an-tab-capacity'), rep = $('an-tab-reports');
+  const cap = $('an-tab-capacity'), rep = $('an-tab-reports'), perf = $('an-tab-performance');
   if (cap) cap.style.display = _anTab === 'capacity' ? '' : 'none';
   if (rep) rep.style.display = _anTab === 'reports' ? '' : 'none';
+  if (perf) perf.style.display = _anTab === 'performance' ? '' : 'none';
 }
 function renderAnalyticsActive() {
   if (_anTab === 'reports') renderReports();
+  else if (_anTab === 'performance') renderPerformance();
   else renderCapacity();
 }
 function setAnalyticsTab(tab) {
-  if (tab !== 'capacity' && tab !== 'reports') tab = 'capacity';
+  if (!['capacity', 'reports', 'performance'].includes(tab)) tab = 'capacity';
   _anTab = tab;
   try { localStorage.setItem('kastor-an-tab', tab); } catch {}
   syncAnalyticsTab();
-  navPush(tab === 'reports' ? '/analytics/reports' : '/analytics/capacity');
+  const paths = { reports: '/analytics/reports', performance: '/analytics/performance', capacity: '/analytics/capacity' };
+  navPush(paths[tab]);
   renderAnalyticsActive();
 }
 function renderAnalytics() {
   syncAnalyticsTab();
   renderAnalyticsActive();
 }
+
+/* ───────────────────────────────────────────────────────────────
+   PERFORMANCE (dashboard de marketing por cliente)
+   Dados vêm via webhook do n8n (POST /api/marketing/ingest, snapshots
+   diários por (client, platform, campaign)). Aqui só lemos e desenhamos.
+
+   O layout é fixo (não customizável pelo usuário) — decisão de escopo pra
+   manter uma vista bonita e comparável entre clientes. Ordem:
+     1. Header (título + subtítulo + filtros)
+     2. Row de 6 KPIs (com delta vs período anterior)
+     3. 4 gráficos: leads/campanha, investimento×leads/campanha,
+        CPL/campanha, evolução temporal (combo)
+     4. Tabela detalhada por campanha
+   ─────────────────────────────────────────────────────────────── */
+const _perfState = {
+  workspaceId: localStorage.getItem('kastor-perf-ws') || '',
+  clientId: localStorage.getItem('kastor-perf-client') || '',
+  rows: [],
+  loading: false,
+  error: '',
+  updatedAt: null,
+  // Sort da tabela detalhada. Default: leads desc.
+  sort: { key: 'leads', dir: 'desc' }
+};
+function _perfSaveClient() {
+  try {
+    localStorage.setItem('kastor-perf-client', _perfState.clientId || '');
+    localStorage.setItem('kastor-perf-ws', _perfState.workspaceId || '');
+  } catch {}
+}
+/* Resolve o período do dropdown pra { start, end } (ISO YYYY-MM-DD) inclusivo,
+   mais { prevStart, prevEnd } pro delta comparativo. Convenção:
+     - Nd: últimos N dias corridos; anterior = os N dias antes disso
+     - mtd: 1º do mês até hoje; anterior = mês anterior no mesmo # de dias
+     - 365: últimos 365; anterior = 365 antes
+     - custom: usa datas do #perf-start / #perf-end; anterior = mesma janela antes. */
+function _perfResolvePeriod(preset) {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const fmt = d => d.toISOString().slice(0, 10);
+  const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+  if (preset === 'custom') {
+    const s = $('perf-start')?.value;
+    const e = $('perf-end')?.value;
+    if (s && e && s <= e) {
+      const start = new Date(s + 'T00:00:00');
+      const end = new Date(e + 'T00:00:00');
+      const daysIn = Math.floor((end - start) / 86400000) + 1;
+      const prevEnd = addDays(start, -1);
+      const prevStart = addDays(prevEnd, -(daysIn - 1));
+      return { start: fmt(start), end: fmt(end), prevStart: fmt(prevStart), prevEnd: fmt(prevEnd) };
+    }
+    // Datas inválidas/ausentes: cai pro default de 30 dias.
+    preset = '30';
+  }
+  if (preset === 'mtd') {
+    const start = new Date(today.getFullYear(), today.getMonth(), 1);
+    const daysIn = Math.floor((today - start) / 86400000) + 1;
+    const prevEnd = addDays(start, -1);
+    const prevStart = addDays(prevEnd, -(daysIn - 1));
+    return { start: fmt(start), end: fmt(today), prevStart: fmt(prevStart), prevEnd: fmt(prevEnd) };
+  }
+  const n = Number(preset) || 30;
+  const start = addDays(today, -(n - 1));
+  const prevEnd = addDays(start, -1);
+  const prevStart = addDays(prevEnd, -(n - 1));
+  return { start: fmt(start), end: fmt(today), prevStart: fmt(prevStart), prevEnd: fmt(prevEnd) };
+}
+function _perfOnPeriodChange() {
+  const period = $('perf-period')?.value || '30';
+  const dates = $('perf-custom-dates');
+  if (dates) dates.style.display = period === 'custom' ? '' : 'none';
+  if (period === 'custom') {
+    // Pré-preenche com últimos 30 dias na 1ª vez.
+    const s = $('perf-start'), e = $('perf-end');
+    if (s && !s.value) {
+      const today = new Date(); today.setHours(0,0,0,0);
+      const start = new Date(today); start.setDate(start.getDate() - 29);
+      s.value = start.toISOString().slice(0, 10);
+      e.value = today.toISOString().slice(0, 10);
+    }
+  }
+  renderPerformance();
+}
+/* Trocar de squad zera cliente — regra do fluxo progressivo. */
+function _perfOnSquadChange() {
+  const wsSel = $('perf-squad');
+  _perfState.workspaceId = wsSel?.value || '';
+  _perfState.clientId = '';
+  _perfSaveClient();
+  _perfPopulateClients('');
+  renderPerformance();
+}
+/* Popula o <select> de squads com os workspaces acessíveis ao user. */
+function _perfPopulateSquads() {
+  const sel = $('perf-squad');
+  if (!sel) return;
+  const accessible = (workspaces || [])
+    .filter(w => me?.isAdmin || (me?.workspaces || []).includes(w.id))
+    .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  const prev = _perfState.workspaceId;
+  const stillValid = prev && accessible.some(w => w.id === prev);
+  const selected = stillValid ? prev : (accessible[0]?.id || '');
+  _perfState.workspaceId = selected;
+  _perfSaveClient();
+  sel.innerHTML = accessible.length
+    ? accessible.map(w => `<option value="${esc(w.id)}" ${w.id === selected ? 'selected' : ''}>${esc(w.name)}</option>`).join('')
+    : '<option value="">Nenhum squad disponível</option>';
+  applyFilterDropdown('perf-squad');
+}
+/* Popula o <select> de cliente restrito ao squad escolhido (`_perfState.workspaceId`).
+   Fluxo progressivo: cliente só aparece depois que o squad foi definido. Vazio
+   (opção "— Todos os clientes") = agrega squad inteiro. */
+function _perfPopulateClients(overrideId) {
+  const sel = $('perf-client');
+  if (!sel) return;
+  const wsId = _perfState.workspaceId;
+  if (!wsId) {
+    sel.innerHTML = '<option value="">— Selecione um squad primeiro</option>';
+    sel.disabled = true;
+    _perfState.clientId = '';
+    _perfSaveClient();
+    applyFilterDropdown('perf-client', { clientIcon: true });
+    return;
+  }
+  sel.disabled = false;
+  const accessible = (clients || [])
+    .filter(c => c.active !== false && c.workspaceId === wsId &&
+      (me?.isAdmin || (me?.workspaces || []).includes(c.workspaceId)))
+    .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  const prev = overrideId !== undefined ? overrideId : _perfState.clientId;
+  const stillValid = prev && accessible.some(c => c.id === prev);
+  const selected = stillValid ? prev : '';
+  _perfState.clientId = selected;
+  _perfSaveClient();
+  const allOpt = `<option value="" ${!selected ? 'selected' : ''}>— Todos os clientes do squad</option>`;
+  sel.innerHTML = allOpt + accessible.map(c => `<option value="${esc(c.id)}" ${c.id === selected ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+  applyFilterDropdown('perf-client', { clientIcon: true });
+}
+async function renderPerformance() {
+  _perfPopulateSquads();
+  // Ler o value do <select> de cliente ANTES do repopulate — evita perder a escolha
+  // que o user acabou de fazer.
+  const clientPicked = $('perf-client')?.value;
+  _perfPopulateClients(clientPicked !== undefined ? clientPicked : _perfState.clientId);
+  _perfSyncPeriodVisibility();
+  const workspaceId = _perfState.workspaceId;
+  const clientId = _perfState.clientId;
+  const period = ($('perf-period')?.value) || '30';
+  const client = clientId ? (clients || []).find(c => c.id === clientId) : null;
+  const ws = workspaceId ? (workspaces || []).find(w => w.id === workspaceId) : null;
+  const nameEl = $('perf-client-name');
+  if (nameEl) {
+    if (client) nameEl.textContent = client.name;
+    else if (ws) nameEl.textContent = `Squad ${ws.name} — todos os clientes`;
+    else nameEl.textContent = 'Selecione um squad';
+  }
+  // Config: só faz sentido pra admin E com cliente específico selecionado
+  // (o token é único, mas o clientId no exemplo depende do cliente).
+  const cfgBtn = $('perf-config-btn');
+  if (cfgBtn) cfgBtn.style.display = (me?.isAdmin && clientId) ? '' : 'none';
+  const body = $('perf-body');
+  if (!body) return;
+  if (!workspaceId) {
+    body.innerHTML = '<div class="perf-empty"><i data-lucide="bar-chart-3" class="ic-lg"></i><div>Selecione um squad pra começar.</div></div>';
+    _perfUpdateTimestamp(null);
+    if (window.lucide?.createIcons) lucide.createIcons();
+    return;
+  }
+  body.innerHTML = '<div class="perf-loading">Carregando dados...</div>';
+  const { start, end, prevStart, prevEnd } = _perfResolvePeriod(period);
+  // Query param: clientId se específico, senão workspaceId (agrega squad inteiro).
+  const scopeQs = clientId
+    ? `clientId=${encodeURIComponent(clientId)}`
+    : `workspaceId=${encodeURIComponent(workspaceId)}`;
+  try {
+    const [cur, prev] = await Promise.all([
+      api(`/marketing/performance?${scopeQs}&start=${start}&end=${end}`),
+      api(`/marketing/performance?${scopeQs}&start=${prevStart}&end=${prevEnd}`).catch(() => ({ rows: [] }))
+    ]);
+    _perfState.rows = cur.rows || [];
+    _perfState.updatedAt = new Date();
+    _perfUpdateTimestamp(_perfState.updatedAt);
+    if (!(cur.rows || []).length) {
+      // Empty state:
+      //  - Com cliente específico + admin → painel de config do webhook
+      //  - Sem cliente (squad inteiro) ou não-admin → mensagem simples
+      if (client) body.innerHTML = _perfRenderEmptyOrConfig(client);
+      else body.innerHTML = `<div class="perf-empty"><i data-lucide="inbox" class="ic-lg"></i><div>Sem dados nesse período pra ${esc(ws?.name || 'esse squad')}.</div><div class="perf-empty-hint">Nenhum cliente do squad recebeu snapshots no intervalo.</div></div>`;
+      if (window.lucide?.createIcons) lucide.createIcons();
+      return;
+    }
+    _perfRender(body, cur.rows || [], prev.rows || []);
+  } catch (e) {
+    body.innerHTML = `<div class="perf-empty perf-error"><i data-lucide="alert-triangle" class="ic-lg"></i><div>Erro ao carregar: ${esc(e.message || 'desconhecido')}</div></div>`;
+    if (window.lucide?.createIcons) lucide.createIcons();
+  }
+}
+function _perfSyncPeriodVisibility() {
+  const period = $('perf-period')?.value || '30';
+  const dates = $('perf-custom-dates');
+  if (dates) dates.style.display = period === 'custom' ? '' : 'none';
+}
+function _perfUpdateTimestamp(date) {
+  const el = $('perf-updated-at');
+  if (!el) return;
+  if (!date) { el.textContent = ''; return; }
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  const ss = String(date.getSeconds()).padStart(2, '0');
+  el.textContent = `Atualizado às ${hh}:${mm}:${ss}`;
+}
+/* Empty state / config panel. Admin vê instruções + token; não-admin vê só
+   mensagem de "sem dados". */
+function _perfRenderEmptyOrConfig(client) {
+  if (!me?.isAdmin) {
+    return `<div class="perf-empty">
+      <i data-lucide="inbox" class="ic-lg"></i>
+      <div>Sem dados nesse período pra esse cliente.</div>
+      <div class="perf-empty-hint">Pergunte a um admin se o webhook do n8n está configurado.</div>
+    </div>`;
+  }
+  return _perfBuildConfigPanel(client, true);
+}
+/* Painel de configuração do webhook. Usado quando: (a) cliente sem dados;
+   (b) admin clica no botão ⚙ do header. isEmpty muda o copy do topo. */
+function _perfBuildConfigPanel(client, isEmpty) {
+  const url = `${location.origin}/api/marketing/ingest`;
+  const clientId = client?.id || '';
+  const headerCopy = isEmpty
+    ? `<div class="perf-config-lead"><strong>${esc(client?.name || 'Este cliente')}</strong> ainda não recebeu snapshots. Configure o n8n com os dados abaixo.</div>`
+    : `<div class="perf-config-lead">Envie snapshots pra este cliente configurando o n8n com os dados abaixo.</div>`;
+  return `
+    <div class="perf-config">
+      <div class="perf-config-head">
+        <div>
+          <div class="perf-config-title"><i data-lucide="webhook" class="ic-sm"></i> Configuração do webhook (n8n)</div>
+          ${headerCopy}
+        </div>
+      </div>
+      <div class="perf-config-grid">
+        <div class="perf-config-field">
+          <div class="perf-config-label">Endpoint</div>
+          <div class="perf-config-value">
+            <code>POST ${esc(url)}</code>
+            <button class="perf-copy" onclick="_perfCopy(this, '${esc(url)}')" title="Copiar"><i data-lucide="copy" class="ic-sm"></i></button>
+          </div>
+        </div>
+        <div class="perf-config-field">
+          <div class="perf-config-label">Header de autenticação</div>
+          <div class="perf-config-value">
+            <code>X-Marketing-Token: <span id="perf-config-token">••••••••••••</span></code>
+            <button class="perf-copy" onclick="_perfRevealToken(this)" title="Mostrar / copiar"><i data-lucide="eye" class="ic-sm"></i></button>
+          </div>
+          <div class="perf-config-hint">Token único do server. Cadastre no n8n como credencial.</div>
+        </div>
+        <div class="perf-config-field">
+          <div class="perf-config-label">clientId (obrigatório em todo row)</div>
+          <div class="perf-config-value">
+            <code>${esc(clientId)}</code>
+            <button class="perf-copy" onclick="_perfCopy(this, '${esc(clientId)}')" title="Copiar"><i data-lucide="copy" class="ic-sm"></i></button>
+          </div>
+        </div>
+      </div>
+      <details class="perf-config-details">
+        <summary>Formato do payload &nbsp;<i data-lucide="chevron-down" class="ic-sm"></i></summary>
+        <pre class="perf-config-code">${esc(_perfSamplePayload(clientId))}</pre>
+        <div class="perf-config-hint">
+          Campos aceitos: <code>spend</code>, <code>leads</code>, <code>cpl</code>, <code>impressions</code>, <code>reach</code>,
+          <code>clicks</code>, <code>cpm</code>, <code>cpc</code>, <code>profileVisits</code>, <code>newFollowers</code>,
+          <code>monthlyBudget</code>, <code>projSpendCampaign</code>, <code>projLeadsCampaign</code>,
+          <code>projSpendAccount</code>, <code>projLeadsAccount</code>, <code>alertStatus</code>, <code>alertAnalysis</code>.
+          Snapshots com a mesma chave (clientId + platform + campaign + date) são substituídos (upsert).
+        </div>
+      </details>
+    </div>
+  `;
+}
+function _perfSamplePayload(clientId) {
+  const today = new Date().toISOString().slice(0, 10);
+  return JSON.stringify({
+    rows: [{
+      clientId, platform: 'Meta', campaign: '[WSI][LEADs][CAMPINAS]',
+      date: today,
+      spend: 753.06, leads: 8, cpl: 94.13,
+      impressions: 42815, reach: 19728, clicks: 454,
+      cpm: 17.58, cpc: 1.65,
+      monthlyBudget: 888.89,
+      alertStatus: '✅', alertAnalysis: 'Dentro da meta.'
+    }]
+  }, null, 2);
+}
+function _perfCopy(btn, text) {
+  navigator.clipboard?.writeText(text).then(() => {
+    btn.innerHTML = '<i data-lucide="check" class="ic-sm"></i>';
+    if (window.lucide?.createIcons) lucide.createIcons();
+    setTimeout(() => {
+      btn.innerHTML = '<i data-lucide="copy" class="ic-sm"></i>';
+      if (window.lucide?.createIcons) lucide.createIcons();
+    }, 1200);
+  });
+}
+async function _perfRevealToken(btn) {
+  try {
+    const r = await api('/marketing/webhook-config');
+    const span = document.getElementById('perf-config-token');
+    if (span) span.textContent = r.token || 'não configurado no server';
+    if (r.token) {
+      navigator.clipboard?.writeText(r.token);
+      btn.innerHTML = '<i data-lucide="check" class="ic-sm"></i>';
+    } else {
+      btn.innerHTML = '<i data-lucide="alert-circle" class="ic-sm"></i>';
+    }
+    if (window.lucide?.createIcons) lucide.createIcons();
+    setTimeout(() => {
+      btn.innerHTML = '<i data-lucide="eye" class="ic-sm"></i>';
+      if (window.lucide?.createIcons) lucide.createIcons();
+    }, 2500);
+  } catch (e) {
+    toast('Falha ao ler token: ' + (e.message || 'erro'));
+  }
+}
+/* Alterna entre dashboard e painel de config (usado pelo botão ⚙ do header). */
+function togglePerfConfig() {
+  const body = $('perf-body');
+  if (!body) return;
+  const client = (clients || []).find(c => c.id === _perfState.clientId);
+  if (!client) return;
+  if (body.querySelector('.perf-config')) {
+    // Volta pro dashboard
+    renderPerformance();
+  } else {
+    body.innerHTML = _perfBuildConfigPanel(client, false);
+    if (window.lucide?.createIcons) lucide.createIcons();
+  }
+}
+/* Sums & averages sobre o array de snapshots. Média ponderada de CPL: soma
+   de gasto / soma de leads (evita distorção da média simples). CTR e conversão
+   idem sobre totais. */
+function _perfAggregateAll(rows) {
+  const s = { spend: 0, leads: 0, impressions: 0, reach: 0, clicks: 0 };
+  for (const r of rows) {
+    s.spend += r.spend || 0;
+    s.leads += r.leads || 0;
+    s.impressions += r.impressions || 0;
+    s.reach += r.reach || 0;
+    s.clicks += r.clicks || 0;
+  }
+  s.cpl = s.leads > 0 ? s.spend / s.leads : 0;
+  s.ctr = s.impressions > 0 ? (s.clicks / s.impressions) * 100 : 0;
+  s.conv = s.clicks > 0 ? (s.leads / s.clicks) * 100 : 0;
+  return s;
+}
+/* Agrupa por campanha (chave: platform + campaign). Retorna array ordenado
+   por leads desc. Inclui % do total (share) pra tabela. */
+function _perfAggregateByCampaign(rows) {
+  const map = new Map();
+  for (const r of rows) {
+    const key = `${r.platform}::${r.campaign}`;
+    let g = map.get(key);
+    if (!g) {
+      g = {
+        platform: r.platform, campaign: r.campaign, key,
+        spend: 0, leads: 0, impressions: 0, reach: 0, clicks: 0, budget: 0
+      };
+      map.set(key, g);
+    }
+    g.spend += r.spend || 0;
+    g.leads += r.leads || 0;
+    g.impressions += r.impressions || 0;
+    g.reach += r.reach || 0;
+    g.clicks += r.clicks || 0;
+    // Verba pega o valor mais recente (o último snapshot dessa campanha manda).
+    g.budget = r.monthlyBudget || g.budget || 0;
+  }
+  const arr = Array.from(map.values());
+  const totalLeads = arr.reduce((s, g) => s + g.leads, 0);
+  const totalSpend = arr.reduce((s, g) => s + g.spend, 0);
+  for (const g of arr) {
+    g.cpl = g.leads > 0 ? g.spend / g.leads : 0;
+    g.ctr = g.impressions > 0 ? (g.clicks / g.impressions) * 100 : 0;
+    g.conv = g.clicks > 0 ? (g.leads / g.clicks) * 100 : 0;
+    g.leadsPct = totalLeads > 0 ? (g.leads / totalLeads) * 100 : 0;
+    g.spendPct = totalSpend > 0 ? (g.spend / totalSpend) * 100 : 0;
+  }
+  arr.sort((a, b) => b.leads - a.leads);
+  return { rows: arr, totals: { spend: totalSpend, leads: totalLeads } };
+}
+/* Série temporal por dia — soma gasto e leads. Retorna array [{date, spend, leads, cpl}]
+   ordenado por data. Datas ausentes NÃO são preenchidas (deixa o eixo compactar). */
+function _perfSeriesByDate(rows) {
+  const map = new Map();
+  for (const r of rows) {
+    if (!r.date) continue;
+    let g = map.get(r.date);
+    if (!g) { g = { date: r.date, spend: 0, leads: 0 }; map.set(r.date, g); }
+    g.spend += r.spend || 0;
+    g.leads += r.leads || 0;
+  }
+  const arr = Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date));
+  for (const g of arr) g.cpl = g.leads > 0 ? g.spend / g.leads : 0;
+  return arr;
+}
+/* Formatadores compactos BR. Reais grandes viram "R$ 305,8 mil" / "R$ 1,2M". */
+function _perfFmtBRL(v) {
+  const n = Number(v) || 0;
+  const abs = Math.abs(n);
+  if (abs >= 1e6) return `R$ ${(n / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} mi`;
+  if (abs >= 1e3) return `R$ ${(n / 1e3).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} mil`;
+  return `R$ ${n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+function _perfFmtBRLexact(v) {
+  return `R$ ${(Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+function _perfFmtNum(v) {
+  const n = Number(v) || 0;
+  const abs = Math.abs(n);
+  if (abs >= 1e6) return `${(n / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} mi`;
+  if (abs >= 1e3) return `${(n / 1e3).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} mil`;
+  return n.toLocaleString('pt-BR');
+}
+function _perfFmtInt(v) { return (Number(v) || 0).toLocaleString('pt-BR'); }
+function _perfFmtPct(v, dp = 1) {
+  return `${(Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: dp, maximumFractionDigits: dp })}%`;
+}
+function _perfFmtDate(iso) {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}`;
+}
+/* Render principal — dispara render dos blocos em ordem. */
+function _perfRender(host, curRows, prevRows) {
+  const cur = _perfAggregateAll(curRows);
+  const prev = _perfAggregateAll(prevRows);
+  const camp = _perfAggregateByCampaign(curRows);
+  const series = _perfSeriesByDate(curRows);
+  // renderPerformance já trata caso curRows.length === 0 (mostra config ou empty).
+  // Este render é chamado só quando há dados.
+  host.innerHTML = `
+    <div class="perf-kpis">${_perfRenderKpis(cur, prev)}</div>
+    <div class="perf-charts-grid">
+      <div class="perf-card">
+        <div class="perf-card-title">Leads por campanha</div>
+        <div class="perf-card-body">${_perfRenderCampaignBars(camp.rows, 'leads', 'purple', v => _perfFmtInt(v), true)}</div>
+      </div>
+      <div class="perf-card">
+        <div class="perf-card-title">Investimento × Leads por campanha</div>
+        <div class="perf-card-body">${_perfRenderCampaignCombo(camp.rows)}</div>
+      </div>
+      <div class="perf-card">
+        <div class="perf-card-title">CPL por campanha</div>
+        <div class="perf-card-body">${_perfRenderCampaignBars(camp.rows, 'cpl', 'orange', v => _perfFmtBRLexact(v), false)}</div>
+      </div>
+      <div class="perf-card">
+        <div class="perf-card-title">Evolução no período</div>
+        <div class="perf-card-body">${_perfRenderTimeSeries(series)}</div>
+      </div>
+    </div>
+    <div class="perf-card perf-table-card">
+      <div class="perf-card-title">Resumo detalhado por campanha</div>
+      <div class="perf-card-body">${_perfRenderTable(camp)}</div>
+    </div>
+  `;
+  _perfFlushHovers();
+  if (window.lucide?.createIcons) lucide.createIcons();
+}
+function _perfRenderKpis(cur, prev) {
+  const kpis = [
+    { icon: 'users',     label: 'Leads Gerados',       value: _perfFmtInt(cur.leads),        raw: cur.leads,        prev: prev.leads,        fmt: v => _perfFmtInt(v),        pp: false },
+    { icon: 'dollar-sign', label: 'Investimento',      value: _perfFmtBRL(cur.spend),        raw: cur.spend,        prev: prev.spend,        fmt: v => _perfFmtBRL(v),        pp: false },
+    { icon: 'user',      label: 'CPL Médio',           value: _perfFmtBRLexact(cur.cpl),     raw: cur.cpl,          prev: prev.cpl,          fmt: v => _perfFmtBRLexact(v),   pp: false, invert: true },
+    { icon: 'eye',       label: 'Impressões',          value: _perfFmtNum(cur.impressions),  raw: cur.impressions,  prev: prev.impressions,  fmt: v => _perfFmtNum(v),        pp: false },
+    { icon: 'mouse-pointer-2', label: 'Cliques',       value: _perfFmtNum(cur.clicks),       raw: cur.clicks,       prev: prev.clicks,       fmt: v => _perfFmtNum(v),        pp: false },
+    { icon: 'target',    label: 'Taxa de Conversão',   value: _perfFmtPct(cur.conv),         raw: cur.conv,         prev: prev.conv,         fmt: v => _perfFmtPct(v),        pp: true }
+  ];
+  return kpis.map(k => {
+    const hasPrev = prev && (Number(k.prev) || 0) > 0;
+    const diff = (Number(k.raw) || 0) - (Number(k.prev) || 0);
+    // Direção do delta — invertida pra métricas onde "menos é melhor" (CPL).
+    const rawDir = Math.abs(diff) < 1e-9 ? 'flat' : (diff > 0 ? 'up' : 'down');
+    const good = k.invert ? (rawDir === 'down') : (rawDir === 'up');
+    const dir = rawDir === 'flat' ? 'flat' : (good ? 'up' : 'down');
+    const arrow = dir === 'up' ? '↑' : dir === 'down' ? '↓' : '—';
+    const deltaTxt = hasPrev ? `${arrow} ${k.fmt(Math.abs(diff))}` : '—';
+    return `
+      <div class="perf-kpi">
+        <div class="perf-kpi-icon perf-kpi-icon-${k.icon}"><i data-lucide="${k.icon}" class="ic-md"></i></div>
+        <div class="perf-kpi-body">
+          <div class="perf-kpi-label">${esc(k.label)}</div>
+          <div class="perf-kpi-value">${k.value}</div>
+          <div class="perf-kpi-delta perf-kpi-delta-${dir}">
+            <span class="perf-kpi-delta-value">${deltaTxt}</span>
+            <span class="perf-kpi-delta-caption">vs período anterior</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+/* Bar chart horizontal — usado por "Leads por campanha" e "CPL por campanha".
+   showShare: se true, mostra % ao lado do valor. Truncated a top 8 campanhas
+   pra caber sem scroll. */
+function _perfRenderCampaignBars(rows, metric, palette, fmt, showShare) {
+  if (!rows.length) return '<div class="perf-empty-mini">Sem dados</div>';
+  const top = rows.slice(0, 8);
+  const max = Math.max(1, ...top.map(r => r[metric] || 0));
+  return `<div class="perf-hbars${showShare ? ' has-share' : ''}">${top.map(r => {
+    const v = r[metric] || 0;
+    const w = Math.max(1, (v / max) * 100);
+    const label = _perfCampaignShort(r.campaign);
+    return `
+      <div class="perf-hbar" title="${esc(r.campaign)} (${esc(r.platform)})">
+        <div class="perf-hbar-label">${esc(label)}</div>
+        <div class="perf-hbar-track">
+          <div class="perf-hbar-fill perf-hbar-fill-${palette}" style="width:${w}%"></div>
+        </div>
+        <div class="perf-hbar-value">${fmt(v)}</div>
+        ${showShare ? `<div class="perf-hbar-share">${_perfFmtPct(r.leadsPct)}</div>` : ''}
+      </div>`;
+  }).join('')}</div>`;
+}
+/* Combo: barra (investimento) + linha (leads) por campanha. Eixo Y esquerdo
+   pra R$, direito pra leads. SVG inline pra não puxar biblioteca. */
+function _perfRenderCampaignCombo(rows) {
+  if (!rows.length) return '<div class="perf-empty-mini">Sem dados</div>';
+  const top = rows.slice(0, 6);
+  const uid = 'perf_combo_' + Math.random().toString(36).slice(2, 8);
+  const W = 640, H = 260, padL = 60, padR = 50, padT = 20, padB = 60;
+  const iw = W - padL - padR, ih = H - padT - padB;
+  const maxSpend = Math.max(1, ...top.map(r => r.spend));
+  const maxLeads = Math.max(1, ...top.map(r => r.leads));
+  const bw = iw / top.length * 0.6;
+  const step = iw / top.length;
+  // Registra pontos no queue de hover — mousemove no host acha o mais próximo,
+  // move a guide vertical e atualiza o tooltip fixed.
+  const points = top.map((r, i) => ({
+    xVb: padL + i * step + step / 2,
+    title: r.campaign,
+    rows: [
+      { label: 'Investimento', value: _perfFmtBRLexact(r.spend), dot: 'var(--perf-purple)' },
+      { label: 'Leads',        value: _perfFmtInt(r.leads),      dot: 'var(--perf-green)'  },
+      { label: 'CPL',          value: _perfFmtBRLexact(r.cpl)                              }
+    ]
+  }));
+  _perfPendingHovers.push({ uid, points, viewBoxW: W });
+  const bars = top.map((r, i) => {
+    const x = padL + i * step + (step - bw) / 2;
+    const h = (r.spend / maxSpend) * ih;
+    const y = padT + ih - h;
+    return `<rect x="${x}" y="${y}" width="${bw}" height="${h}" rx="3" fill="var(--perf-purple)" />`;
+  }).join('');
+  const pts = top.map((r, i) => {
+    const x = padL + i * step + step / 2;
+    const y = padT + ih - (r.leads / maxLeads) * ih;
+    return `${x},${y}`;
+  }).join(' ');
+  const dots = top.map((r, i) => {
+    const x = padL + i * step + step / 2;
+    const y = padT + ih - (r.leads / maxLeads) * ih;
+    return `<circle cx="${x}" cy="${y}" r="4" fill="var(--perf-green)" />`;
+  }).join('');
+  const xlabels = top.map((r, i) => {
+    const x = padL + i * step + step / 2;
+    return `<text x="${x}" y="${H - padB + 16}" text-anchor="middle" class="perf-svg-tick">${esc(_perfCampaignShort(r.campaign, 10))}</text>`;
+  }).join('');
+  // Ticks Y esquerdo (spend) — 4 níveis
+  const yticksL = [0, 0.25, 0.5, 0.75, 1].map(t => {
+    const y = padT + ih - t * ih;
+    const v = maxSpend * t;
+    return `
+      <line x1="${padL}" x2="${W - padR}" y1="${y}" y2="${y}" class="perf-svg-grid"/>
+      <text x="${padL - 8}" y="${y + 4}" text-anchor="end" class="perf-svg-tick">${_perfFmtBRL(v)}</text>
+    `;
+  }).join('');
+  const yticksR = [0, 0.5, 1].map(t => {
+    const y = padT + ih - t * ih;
+    const v = Math.round(maxLeads * t);
+    return `<text x="${W - padR + 8}" y="${y + 4}" text-anchor="start" class="perf-svg-tick">${_perfFmtInt(v)}</text>`;
+  }).join('');
+  return `
+    <div class="perf-legend">
+      <span class="perf-legend-chip"><span class="perf-legend-dot" style="background:var(--perf-purple)"></span> Investimento</span>
+      <span class="perf-legend-chip"><span class="perf-legend-dot" style="background:var(--perf-green)"></span> Leads</span>
+    </div>
+    <div class="perf-svg-host" id="${uid}-host">
+      <svg viewBox="0 0 ${W} ${H}" class="perf-svg" preserveAspectRatio="xMidYMid meet">
+        ${yticksL}
+        ${bars}
+        <polyline points="${pts}" fill="none" stroke="var(--perf-green)" stroke-width="2"/>
+        ${dots}
+        <line id="${uid}-guide" class="perf-guide" x1="0" x2="0" y1="${padT}" y2="${padT + ih}" style="opacity:0"/>
+        ${yticksR}
+        ${xlabels}
+      </svg>
+    </div>
+  `;
+}
+/* Série temporal — barras de investimento + linha leads. Compacto. */
+function _perfRenderTimeSeries(series) {
+  if (!series.length) return '<div class="perf-empty-mini">Sem dados</div>';
+  const uid = 'perf_ts_' + Math.random().toString(36).slice(2, 8);
+  const W = 640, H = 260, padL = 60, padR = 50, padT = 20, padB = 40;
+  const iw = W - padL - padR, ih = H - padT - padB;
+  const maxSpend = Math.max(1, ...series.map(s => s.spend));
+  const maxLeads = Math.max(1, ...series.map(s => s.leads));
+  const step = iw / Math.max(1, series.length);
+  const bw = Math.max(2, step * 0.55);
+  // Pontos pro hover (mesma lógica do combo): trava no dia mais próximo do cursor.
+  const points = series.map((s, i) => ({
+    xVb: padL + i * step + step / 2,
+    title: _perfFmtDate(s.date),
+    rows: [
+      { label: 'Investimento', value: _perfFmtBRLexact(s.spend), dot: 'var(--perf-purple)' },
+      { label: 'Leads',        value: _perfFmtInt(s.leads),      dot: 'var(--perf-green)'  },
+      { label: 'CPL',          value: _perfFmtBRLexact(s.cpl)                              }
+    ]
+  }));
+  _perfPendingHovers.push({ uid, points, viewBoxW: W });
+  const bars = series.map((s, i) => {
+    const x = padL + i * step + (step - bw) / 2;
+    const h = (s.spend / maxSpend) * ih;
+    const y = padT + ih - h;
+    return `<rect x="${x}" y="${y}" width="${bw}" height="${h}" rx="2" fill="var(--perf-purple)"/>`;
+  }).join('');
+  const dots = series.map((s, i) => {
+    const x = padL + i * step + step / 2;
+    const y = padT + ih - (s.leads / maxLeads) * ih;
+    return `<circle cx="${x}" cy="${y}" r="3" fill="var(--perf-green)"/>`;
+  }).join('');
+  const pts = series.map((s, i) => {
+    const x = padL + i * step + step / 2;
+    const y = padT + ih - (s.leads / maxLeads) * ih;
+    return `${x},${y}`;
+  }).join(' ');
+  // Ticks X — no máximo ~6 rótulos pra caber
+  const stride = Math.max(1, Math.ceil(series.length / 6));
+  const xlabels = series.map((s, i) => {
+    if (i % stride !== 0 && i !== series.length - 1) return '';
+    const x = padL + i * step + step / 2;
+    return `<text x="${x}" y="${H - padB + 16}" text-anchor="middle" class="perf-svg-tick">${_perfFmtDate(s.date)}</text>`;
+  }).join('');
+  const yticksL = [0, 0.5, 1].map(t => {
+    const y = padT + ih - t * ih;
+    const v = maxSpend * t;
+    return `
+      <line x1="${padL}" x2="${W - padR}" y1="${y}" y2="${y}" class="perf-svg-grid"/>
+      <text x="${padL - 8}" y="${y + 4}" text-anchor="end" class="perf-svg-tick">${_perfFmtBRL(v)}</text>
+    `;
+  }).join('');
+  const yticksR = [0, 0.5, 1].map(t => {
+    const y = padT + ih - t * ih;
+    const v = Math.round(maxLeads * t);
+    return `<text x="${W - padR + 8}" y="${y + 4}" text-anchor="start" class="perf-svg-tick">${_perfFmtInt(v)}</text>`;
+  }).join('');
+  return `
+    <div class="perf-legend">
+      <span class="perf-legend-chip"><span class="perf-legend-dot" style="background:var(--perf-purple)"></span> Investimento</span>
+      <span class="perf-legend-chip"><span class="perf-legend-dot" style="background:var(--perf-green)"></span> Leads</span>
+    </div>
+    <div class="perf-svg-host" id="${uid}-host">
+      <svg viewBox="0 0 ${W} ${H}" class="perf-svg" preserveAspectRatio="xMidYMid meet">
+        ${yticksL}
+        ${bars}
+        <polyline points="${pts}" fill="none" stroke="var(--perf-green)" stroke-width="2"/>
+        ${dots}
+        <line id="${uid}-guide" class="perf-guide" x1="0" x2="0" y1="${padT}" y2="${padT + ih}" style="opacity:0"/>
+        ${yticksR}
+        ${xlabels}
+      </svg>
+    </div>
+  `;
+}
+function _perfRenderTable(agg) {
+  const rowsBase = agg.rows;
+  if (!rowsBase.length) return '<div class="perf-empty-mini">Sem dados</div>';
+  const totalBudget = rowsBase.reduce((s, g) => s + (g.budget || 0), 0);
+  const totalImpr = rowsBase.reduce((s, g) => s + g.impressions, 0);
+  const totalReach = rowsBase.reduce((s, g) => s + g.reach, 0);
+  const totalClicks = rowsBase.reduce((s, g) => s + g.clicks, 0);
+  const totCpl = agg.totals.leads > 0 ? agg.totals.spend / agg.totals.leads : 0;
+  const totCtr = totalImpr > 0 ? (totalClicks / totalImpr) * 100 : 0;
+  const totConv = totalClicks > 0 ? (agg.totals.leads / totalClicks) * 100 : 0;
+  // Aplica sort do estado. `platform` e `campaign` são strings (localeCompare);
+  // demais são numéricos. Total NUNCA é ordenado — fica fixo no tfoot.
+  const { key, dir } = _perfState.sort || { key: 'leads', dir: 'desc' };
+  const sign = dir === 'asc' ? 1 : -1;
+  const rows = [...rowsBase].sort((a, b) => {
+    const va = a[key], vb = b[key];
+    if (typeof va === 'string' || typeof vb === 'string') {
+      return sign * String(va || '').localeCompare(String(vb || ''), 'pt-BR');
+    }
+    return sign * ((Number(va) || 0) - (Number(vb) || 0));
+  });
+  const body = rows.map(g => `
+    <tr>
+      <td class="perf-td-plat"><span class="perf-plat-badge perf-plat-${g.platform.toLowerCase()}">${esc(g.platform)}</span></td>
+      <td class="perf-td-camp" title="${esc(g.campaign)}">${esc(g.campaign)}</td>
+      <td>${_perfFmtInt(g.leads)}</td>
+      <td>${_perfFmtPct(g.leadsPct)}</td>
+      <td>${_perfFmtBRLexact(g.spend)}</td>
+      <td>${_perfFmtPct(g.spendPct)}</td>
+      <td class="${g.cpl > 0 && agg.totals.leads > 0 && g.cpl > totCpl ? 'perf-neg' : g.cpl > 0 ? 'perf-pos' : ''}">${_perfFmtBRLexact(g.cpl)}</td>
+      <td>${_perfFmtInt(g.reach)}</td>
+      <td>${_perfFmtInt(g.impressions)}</td>
+      <td>${_perfFmtInt(g.clicks)}</td>
+      <td>${_perfFmtPct(g.ctr, 2)}</td>
+      <td>${_perfFmtPct(g.conv)}</td>
+    </tr>
+  `).join('');
+  return `
+    <div class="perf-table-wrap">
+      <table class="perf-table perf-table-zebra">
+        <thead>
+          <tr>
+            ${_perfTh('platform',  'Plataforma')}
+            ${_perfTh('campaign',  'Campanha')}
+            ${_perfTh('leads',     'Leads')}
+            ${_perfTh('leadsPct',  '% Leads')}
+            ${_perfTh('spend',     'Investimento')}
+            ${_perfTh('spendPct',  '% Verba')}
+            ${_perfTh('cpl',       'CPL')}
+            ${_perfTh('reach',     'Alcance')}
+            ${_perfTh('impressions','Impressões')}
+            ${_perfTh('clicks',    'Cliques')}
+            ${_perfTh('ctr',       'CTR')}
+            ${_perfTh('conv',      'Conversão')}
+          </tr>
+        </thead>
+        <tbody>${body}</tbody>
+        <tfoot>
+          <tr class="perf-tr-total">
+            <td colspan="2">Total</td>
+            <td>${_perfFmtInt(agg.totals.leads)}</td>
+            <td>100,0%</td>
+            <td>${_perfFmtBRLexact(agg.totals.spend)}</td>
+            <td>100,0%</td>
+            <td>${_perfFmtBRLexact(totCpl)}</td>
+            <td>${_perfFmtInt(totalReach)}</td>
+            <td>${_perfFmtInt(totalImpr)}</td>
+            <td>${_perfFmtInt(totalClicks)}</td>
+            <td>${_perfFmtPct(totCtr, 2)}</td>
+            <td>${_perfFmtPct(totConv)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  `;
+}
+/* Queue de handlers de hover pendentes. Cada gráfico registra seus pontos
+   aqui durante o render; _perfFlushHovers attach mousemove no host DEPOIS
+   que o innerHTML foi setado (senão o listener some no reflow). Igual ao
+   padrão do line widget do dashboard. */
+let _perfPendingHovers = [];
+function _perfFlushHovers() {
+  const q = _perfPendingHovers;
+  _perfPendingHovers = [];
+  for (const item of q) _perfAttachHover(item);
+}
+function _perfAttachHover({ uid, points, viewBoxW }) {
+  const host = document.getElementById(uid + '-host');
+  const guide = document.getElementById(uid + '-guide');
+  if (!host || !points.length) return;
+  let lastIdx = -1;
+  host.addEventListener('mousemove', e => {
+    const rect = host.getBoundingClientRect();
+    if (!rect.width) return;
+    const localX = e.clientX - rect.left;
+    const xVb = (localX / rect.width) * viewBoxW;
+    // Ponto de dado mais próximo em coordenada de viewBox.
+    let best = 0, bestDist = Infinity;
+    for (let i = 0; i < points.length; i++) {
+      const d = Math.abs(points[i].xVb - xVb);
+      if (d < bestDist) { bestDist = d; best = i; }
+    }
+    // Sempre atualiza posição do tooltip (segue o cursor).
+    _perfTtMove(e);
+    if (best === lastIdx) return;
+    lastIdx = best;
+    const p = points[best];
+    if (guide) {
+      guide.setAttribute('x1', p.xVb);
+      guide.setAttribute('x2', p.xVb);
+      guide.style.opacity = '1';
+    }
+    _perfTt(e, p.title, p.rows);
+  });
+  host.addEventListener('mouseleave', () => {
+    lastIdx = -1;
+    if (guide) guide.style.opacity = '0';
+    _perfTtHide();
+  });
+}
+/* Tooltip HTML compartilhado pra gráficos SVG. Reusa as classes .chart-tip-*
+   do dashboard pra manter o mesmo visual (título uppercase, linhas com dot
+   colorido, valor à direita). Cada `data` pode ter `dot` (cor CSS opcional). */
+function _perfTt(evt, title, data) {
+  let tt = document.getElementById('perf-tt');
+  if (!tt) {
+    tt = document.createElement('div');
+    tt.id = 'perf-tt';
+    tt.className = 'chart-tooltip perf-tt-fixed';
+    document.body.appendChild(tt);
+  }
+  const rows = (data || []).map(d => {
+    const dot = d.dot ? `<span class="chart-tip-dot" style="background:${d.dot}"></span>` : '';
+    return `<div class="chart-tip-row">${dot}<span class="chart-tip-label">${esc(d.label)}</span><span class="chart-tip-value">${esc(d.value)}</span></div>`;
+  }).join('');
+  tt.innerHTML = `<div class="chart-tip-head">${esc(title)}</div>${rows}`;
+  tt.style.display = 'block';
+  tt.style.opacity = '1';
+  _perfTtMove(evt);
+}
+function _perfTtMove(evt) {
+  const tt = document.getElementById('perf-tt');
+  if (!tt) return;
+  // Se colar na direita da janela, desloca pra esquerda pra não sair.
+  const pad = 14;
+  const w = tt.offsetWidth || 200;
+  const h = tt.offsetHeight || 60;
+  let x = evt.clientX + pad;
+  let y = evt.clientY + pad;
+  if (x + w > window.innerWidth - 8)  x = evt.clientX - w - pad;
+  if (y + h > window.innerHeight - 8) y = evt.clientY - h - pad;
+  tt.style.left = x + 'px';
+  tt.style.top  = y + 'px';
+}
+function _perfTtHide() {
+  const tt = document.getElementById('perf-tt');
+  if (tt) { tt.style.opacity = '0'; tt.style.display = 'none'; }
+}
+/* Header cell sortable — clicar alterna dir; se troca a key, reseta pra desc
+   (leads/spend/etc costumam ser mais úteis do maior pro menor). */
+function _perfTh(key, label) {
+  const active = _perfState.sort?.key === key;
+  const dir = active ? _perfState.sort.dir : '';
+  const icon = active ? (dir === 'asc' ? '▲' : '▼') : '⇅';
+  return `<th class="perf-th-sortable${active ? ' is-active' : ''}" onclick="_perfSetSort('${key}')">${esc(label)} <span class="perf-th-sort-icon">${icon}</span></th>`;
+}
+function _perfSetSort(key) {
+  const cur = _perfState.sort || { key: 'leads', dir: 'desc' };
+  if (cur.key === key) {
+    cur.dir = cur.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    _perfState.sort = { key, dir: 'desc' };
+  }
+  // Re-renderiza só o card da tabela pra não refazer os KPIs/gráficos.
+  const body = $('perf-body');
+  const table = body?.querySelector('.perf-table-card');
+  if (table && _perfState.rows.length) {
+    const agg = _perfAggregateByCampaign(_perfState.rows);
+    table.querySelector('.perf-card-body').innerHTML = _perfRenderTable(agg);
+  }
+}
+/* Encurta nome de campanha pra labels de eixo. Prefere o segmento em [COLCHETES]
+   mais distintivo (o último tag). Ex: [WSI][LEADs][HORTOLANDIA][CBO] → HORTOLANDIA. */
+function _perfCampaignShort(name, cap = 18) {
+  if (!name) return '';
+  const tags = String(name).match(/\[([^\]]+)\]/g);
+  if (tags && tags.length) {
+    const inner = tags[tags.length - 1].slice(1, -1);
+    return inner.length > cap ? inner.slice(0, cap - 1) + '…' : inner;
+  }
+  return name.length > cap ? name.slice(0, cap - 1) + '…' : name;
+}
+
 
 /* Resolve o período da Capacidade (preset ou range custom do cap-pfp) em duas
    janelas de Date: capacidade (frente, mapa de prazos) e apontamentos (trás).

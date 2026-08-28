@@ -12217,3 +12217,510 @@ tr.demand-row {
   .fe-field-row .fe-drag { display: none; }
 }
 
+/* ─────────────────────────────────────────────
+   PERFORMANCE (Análises → Performance)
+   Dashboard fixo de marketing por cliente. Layout inspirado no exemplo
+   Looker Studio: header + 6 KPIs + 4 gráficos + tabela detalhada.
+   Paleta própria (perf-*) pra ficar consistente independente do tema
+   e casar com o design de referência. */
+:root {
+  --perf-purple: #7c3aed;
+  --perf-purple-soft: rgba(124,58,237,0.15);
+  --perf-green: #10b981;
+  --perf-orange: #f59e0b;
+  --perf-blue: #3b82f6;
+  --perf-red: #ef4444;
+  --perf-pink: #ec4899;
+  --perf-cyan: #06b6d4;
+}
+.perf-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 20px 24px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+.perf-title-block { flex: 1 1 320px; }
+.perf-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.2;
+}
+.perf-subtitle {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+/* Todos os filtros + botão em UMA linha só. flex-wrap: wrap só como fallback
+   quando a viewport ficar apertada demais (< ~1100px total do toolbar). */
+.perf-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.perf-control { display: flex; flex-direction: column; gap: 4px; min-width: 140px; }
+.perf-control select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.perf-custom-dates { min-width: 260px; }
+.perf-daterange {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.perf-daterange input[type="date"] {
+  padding: 6px 10px;
+  font-size: 12.5px;
+  height: 34px;
+}
+.perf-refresh-btn { height: 34px; white-space: nowrap; }
+/* Linha do timestamp: fica abaixo dos controls, dentro do próprio toolbar,
+   alinhada à direita pra ficar imediatamente sob o botão Atualizar. */
+.perf-updated-row {
+  width: 100%;
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+.perf-updated-at {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  min-height: 12px;
+}
+.perf-empty {
+  padding: 60px 20px;
+  text-align: center;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.perf-empty .ic-lg { color: var(--text-dim); }
+.perf-empty-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  max-width: 480px;
+  line-height: 1.5;
+}
+.perf-empty-hint code {
+  background: var(--surface-hover);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+.perf-empty-mini {
+  padding: 30px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+.perf-error { border-color: var(--perf-red); color: var(--perf-red); }
+.perf-loading {
+  padding: 40px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* KPIs — 6 cards em grid responsivo. Ícone colorido + label + valor grande + delta. */
+.perf-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.perf-kpi {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.perf-kpi-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: white;
+}
+.perf-kpi-icon-users            { background: var(--perf-blue); }
+.perf-kpi-icon-dollar-sign      { background: var(--perf-green); }
+.perf-kpi-icon-user             { background: var(--perf-orange); }
+.perf-kpi-icon-eye              { background: var(--perf-cyan); }
+.perf-kpi-icon-mouse-pointer-2  { background: var(--perf-pink); }
+.perf-kpi-icon-target           { background: var(--perf-red); }
+.perf-kpi-body { flex: 1; min-width: 0; }
+.perf-kpi-label {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  font-weight: 600;
+}
+.perf-kpi-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.15;
+  margin: 4px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.perf-kpi-delta {
+  font-size: 11.5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.perf-kpi-delta-value { font-weight: 600; }
+.perf-kpi-delta-caption { color: var(--text-muted); font-weight: 400; }
+.perf-kpi-delta-up   .perf-kpi-delta-value { color: var(--perf-green); }
+.perf-kpi-delta-down .perf-kpi-delta-value { color: var(--perf-red); }
+.perf-kpi-delta-flat .perf-kpi-delta-value { color: var(--text-muted); }
+
+/* Grid dos 4 gráficos — 2×2 fixo no desktop, 1 coluna no mobile.
+   minmax(0, 1fr) evita expansão pelo conteúdo interno (SVGs wide fazem
+   isso sem o minmax). */
+.perf-charts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+@media (max-width: 900px) {
+  .perf-charts-grid { grid-template-columns: 1fr; }
+}
+.perf-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.perf-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+.perf-card-body {
+  min-height: 200px;
+}
+.perf-table-card .perf-card-body { min-height: 0; }
+
+/* Bar chart horizontal (Leads / CPL por campanha).
+   Grid: label | track | valor | share. Share só quando showShare=true
+   (marcada com .has-share no wrapper) — sem share, colapsa a coluna. */
+.perf-hbars {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 4px;
+}
+.perf-hbar {
+  display: grid;
+  grid-template-columns: 110px 1fr 68px;
+  gap: 10px;
+  align-items: center;
+  font-size: 12px;
+}
+.perf-hbars.has-share .perf-hbar {
+  grid-template-columns: 110px 1fr 56px 52px;
+}
+.perf-hbar-label {
+  color: var(--text);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.perf-hbar-track {
+  position: relative;
+  background: var(--surface-hover);
+  border-radius: 4px;
+  height: 22px;
+  overflow: hidden;
+}
+.perf-hbar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width .3s;
+}
+.perf-hbar-fill-purple { background: var(--perf-purple); }
+.perf-hbar-fill-orange { background: var(--perf-orange); }
+.perf-hbar-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.perf-hbar-share {
+  color: var(--text-muted);
+  font-weight: 500;
+  text-align: right;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* SVG charts (combo + timeline) */
+.perf-svg-host { position: relative; }
+.perf-svg-host svg { cursor: crosshair; display: block; }
+.perf-svg { width: 100%; height: auto; max-height: 280px; }
+.perf-guide {
+  stroke: var(--text-muted);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  pointer-events: none;
+  transition: opacity .12s;
+}
+.perf-svg-tick {
+  fill: var(--text-muted);
+  font-size: 11px;
+  font-family: inherit;
+}
+/* Tooltip dos gráficos SVG usa .chart-tooltip (mesmo visual do dashboard),
+   com override pra position: fixed — segue o cursor globalmente. */
+.chart-tooltip.perf-tt-fixed {
+  position: fixed;
+  display: none;
+  z-index: 9999;
+  transition: none;
+}
+.perf-svg-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.6;
+}
+.perf-legend {
+  display: flex;
+  gap: 16px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.perf-legend-chip { display: inline-flex; align-items: center; gap: 6px; }
+.perf-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+/* Tabela detalhada */
+.perf-table-wrap { overflow-x: auto; }
+.perf-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.perf-table th,
+.perf-table td {
+  padding: 10px 12px;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.perf-table th:nth-child(1),
+.perf-table td:nth-child(1),
+.perf-table th:nth-child(2),
+.perf-table td:nth-child(2) { text-align: left; }
+.perf-table th.perf-th-sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.perf-table th.perf-th-sortable:hover { color: var(--text); }
+.perf-th-sort-icon {
+  display: inline-block;
+  margin-left: 4px;
+  color: var(--text-dim);
+  font-size: 9px;
+  vertical-align: middle;
+}
+.perf-th-sortable.is-active .perf-th-sort-icon { color: var(--perf-purple); }
+.perf-table th {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  background: var(--surface-hover);
+}
+.perf-table tbody tr:hover { background: var(--surface-hover); }
+/* Zebra: linhas ímpares um pouquinho mais escuras que o surface pra separação */
+.perf-table-zebra tbody tr:nth-child(odd) { background: rgba(0,0,0,0.02); }
+:root:not([data-theme="light"]) .perf-table-zebra tbody tr:nth-child(odd) { background: rgba(255,255,255,0.02); }
+:root[data-theme="dark"] .perf-table-zebra tbody tr:nth-child(odd) { background: rgba(255,255,255,0.02); }
+.perf-table tfoot .perf-tr-total td {
+  font-weight: 700;
+  background: var(--perf-purple-soft);
+  color: var(--text);
+  border-top: 2px solid var(--perf-purple);
+  border-bottom: 0;
+  text-align: right;
+}
+/* O nth-child(2) global joga o 2º TD pra esquerda — mas na linha Total o
+   1º TD tem colspan=2 (Total ocupa Plataforma+Campanha), então o 2º TD
+   visualmente é a coluna Leads (numérica, deveria ficar à direita).
+   Explicitamente restaura pra right. */
+.perf-table tfoot .perf-tr-total td:nth-child(1) { text-align: left; }
+.perf-table tfoot .perf-tr-total td:nth-child(2) { text-align: right; }
+.perf-td-plat { white-space: nowrap; }
+.perf-td-camp {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.perf-plat-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+}
+.perf-plat-meta   { background: #eef2ff; color: #4f46e5; }
+.perf-plat-google { background: #fef3c7; color: #b45309; }
+:root:not([data-theme="light"]) .perf-plat-meta   { background: rgba(99,102,241,0.2);  color: #a5b4fc; }
+:root:not([data-theme="light"]) .perf-plat-google { background: rgba(245,158,11,0.2); color: #fbbf24; }
+:root[data-theme="dark"] .perf-plat-meta   { background: rgba(99,102,241,0.2);  color: #a5b4fc; }
+:root[data-theme="dark"] .perf-plat-google { background: rgba(245,158,11,0.2); color: #fbbf24; }
+.perf-pos { color: var(--perf-green); font-weight: 600; }
+.perf-neg { color: var(--perf-red);   font-weight: 600; }
+
+/* Painel de configuração do webhook (admin) */
+.perf-config {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+}
+.perf-config-head { margin-bottom: 18px; }
+.perf-config-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.perf-config-lead {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.perf-config-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+.perf-config-field { display: flex; flex-direction: column; gap: 4px; }
+.perf-config-label {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  font-weight: 600;
+}
+.perf-config-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+}
+.perf-config-value code {
+  flex: 1;
+  color: var(--text);
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.perf-copy {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all .15s;
+}
+.perf-copy:hover { background: var(--surface); color: var(--text); }
+.perf-config-hint {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+.perf-config-hint code {
+  background: var(--surface-hover);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10.5px;
+  color: var(--text);
+}
+.perf-config-details {
+  margin-top: 4px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.perf-config-details summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  user-select: none;
+  padding: 4px 0;
+}
+.perf-config-details summary::-webkit-details-marker { display: none; }
+.perf-config-details[open] summary i { transform: rotate(180deg); }
+.perf-config-details summary i { transition: transform .18s; }
+.perf-config-code {
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  font-size: 11.5px;
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  color: var(--text);
+  overflow-x: auto;
+  margin: 12px 0;
+  line-height: 1.5;
+}
+
+@media (max-width: 720px) {
+  .perf-kpi-value { font-size: 18px; }
+  .perf-hbar { grid-template-columns: 80px 1fr; }
+}
+

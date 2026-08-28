@@ -85,6 +85,42 @@ function createStore(config = {}) {
         k TEXT PRIMARY KEY,
         v TEXT
       );
+
+      /* Snapshots diários de marketing por (client, platform, campaign, date).
+         Ingestão via webhook do n8n. Cada linha = fotografia do dia.
+         Guarda métricas em colunas dedicadas (queries por período/agregação
+         ficam SQL puro) e o payload cru em raw pra evolução futura de campos
+         sem migração. Índice (client_id, date) cobre o padrão de leitura
+         principal: "todos os snapshots de X entre A e B". */
+      CREATE TABLE IF NOT EXISTS marketing_snapshots (
+        client_id           TEXT   NOT NULL,
+        platform            TEXT   NOT NULL,
+        campaign            TEXT   NOT NULL,
+        date                DATE   NOT NULL,
+        spend               NUMERIC,
+        avg_daily           NUMERIC,
+        leads               NUMERIC,
+        cpl                 NUMERIC,
+        impressions         NUMERIC,
+        reach               NUMERIC,
+        clicks              NUMERIC,
+        cpm                 NUMERIC,
+        cpc                 NUMERIC,
+        profile_visits      NUMERIC,
+        new_followers       NUMERIC,
+        proj_spend_campaign NUMERIC,
+        proj_leads_campaign NUMERIC,
+        monthly_budget      NUMERIC,
+        proj_spend_account  NUMERIC,
+        proj_leads_account  NUMERIC,
+        alert_status        TEXT,
+        alert_analysis      TEXT,
+        raw                 JSONB,
+        ingested_at         BIGINT NOT NULL,
+        PRIMARY KEY (client_id, platform, campaign, date)
+      );
+      CREATE INDEX IF NOT EXISTS idx_mkt_client_date
+        ON marketing_snapshots (client_id, date DESC);
     `);
   }
 
@@ -290,6 +326,105 @@ function createStore(config = {}) {
   async function ping() { await pool.query('SELECT 1'); }
   async function close() { await pool.end(); }
 
+  // ── MARKETING SNAPSHOTS ──
+  // Colunas gravadas por upsertMarketingSnapshots (ordem importa: casa com o
+  // array de valores montado abaixo). Manter sincronizado com o CREATE TABLE.
+  const MKT_COLS = [
+    'client_id','platform','campaign','date','spend','avg_daily','leads','cpl',
+    'impressions','reach','clicks','cpm','cpc','profile_visits','new_followers',
+    'proj_spend_campaign','proj_leads_campaign','monthly_budget',
+    'proj_spend_account','proj_leads_account','alert_status','alert_analysis',
+    'raw','ingested_at'
+  ];
+  async function upsertMarketingSnapshots(rows) {
+    if (!rows || !rows.length) return { inserted: 0, updated: 0 };
+    // Batch UPSERT via multi-row INSERT ... ON CONFLICT. Uma tx só, evitando
+    // N round-trips. Postgres retorna xmax=0 quando inseriu, !=0 quando update.
+    const now = Date.now();
+    const values = [];
+    const params = [];
+    let p = 1;
+    for (const r of rows) {
+      const rowParams = [
+        r.client_id, r.platform, r.campaign, r.date,
+        r.spend, r.avg_daily, r.leads, r.cpl,
+        r.impressions, r.reach, r.clicks, r.cpm, r.cpc,
+        r.profile_visits, r.new_followers,
+        r.proj_spend_campaign, r.proj_leads_campaign, r.monthly_budget,
+        r.proj_spend_account, r.proj_leads_account,
+        r.alert_status, r.alert_analysis,
+        r.raw ? JSON.stringify(r.raw) : null,
+        now
+      ];
+      const placeholders = rowParams.map((_, i) => {
+        // raw é JSONB — precisa de cast explícito.
+        if (i === 22) return `$${p + i}::jsonb`;
+        return `$${p + i}`;
+      });
+      values.push(`(${placeholders.join(',')})`);
+      params.push(...rowParams);
+      p += rowParams.length;
+    }
+    const updateSet = MKT_COLS
+      .filter(c => !['client_id','platform','campaign','date'].includes(c))
+      .map(c => `${c} = EXCLUDED.${c}`).join(',\n             ');
+    const sql = `
+      INSERT INTO marketing_snapshots (${MKT_COLS.join(',')})
+      VALUES ${values.join(',')}
+      ON CONFLICT (client_id, platform, campaign, date) DO UPDATE
+        SET ${updateSet}
+      RETURNING (xmax = 0) AS inserted
+    `;
+    const r = await pool.query(sql, params);
+    let inserted = 0, updated = 0;
+    for (const row of r.rows) row.inserted ? inserted++ : updated++;
+    return { inserted, updated };
+  }
+  async function listMarketingSnapshots(clientIdOrIds, startDate, endDate) {
+    // startDate/endDate: string ISO 'YYYY-MM-DD'. Ambos inclusivos.
+    // clientIdOrIds: string única OU array de ids (query multi-cliente do squad).
+    const ids = Array.isArray(clientIdOrIds) ? clientIdOrIds : [clientIdOrIds];
+    if (!ids.length) return [];
+    const r = await pool.query(
+      `SELECT ${MKT_COLS.join(',')} FROM marketing_snapshots
+       WHERE client_id = ANY($1) AND date >= $2 AND date <= $3
+       ORDER BY date ASC, platform ASC, campaign ASC`,
+      [ids, startDate, endDate]
+    );
+    return r.rows.map(row => {
+      // Postgres devolve DATE como Date object — normaliza pra 'YYYY-MM-DD'
+      // (fuso-safe: usa componentes UTC pra evitar shift no serialize).
+      const d = row.date instanceof Date
+        ? row.date.toISOString().slice(0, 10)
+        : String(row.date);
+      const num = v => v === null || v === undefined ? null : Number(v);
+      return {
+        clientId: row.client_id,
+        platform: row.platform,
+        campaign: row.campaign,
+        date: d,
+        spend: num(row.spend),
+        avgDaily: num(row.avg_daily),
+        leads: num(row.leads),
+        cpl: num(row.cpl),
+        impressions: num(row.impressions),
+        reach: num(row.reach),
+        clicks: num(row.clicks),
+        cpm: num(row.cpm),
+        cpc: num(row.cpc),
+        profileVisits: num(row.profile_visits),
+        newFollowers: num(row.new_followers),
+        projSpendCampaign: num(row.proj_spend_campaign),
+        projLeadsCampaign: num(row.proj_leads_campaign),
+        monthlyBudget: num(row.monthly_budget),
+        projSpendAccount: num(row.proj_spend_account),
+        projLeadsAccount: num(row.proj_leads_account),
+        alertStatus: row.alert_status,
+        alertAnalysis: row.alert_analysis
+      };
+    });
+  }
+
   return {
     init,
     transaction,
@@ -299,6 +434,7 @@ function createStore(config = {}) {
     markAllNotificationsReadFor, deleteAllNotificationsFor, trimNotificationsFor,
     insertReset, getReset, markResetUsed, cleanupResets,
     getKv, setKv,
+    upsertMarketingSnapshots, listMarketingSnapshots,
     ping, close,
     _pool: pool // exposto pra inspeção em testes
   };

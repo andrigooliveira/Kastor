@@ -1497,6 +1497,147 @@ app.get('/api/health/ready', async (req, res) => {
   }
 });
 
+/* ─── MARKETING (n8n webhook + view Performance) ───
+   Ingest é público mas gated por token estático (env MARKETING_WEBHOOK_TOKEN),
+   pois o n8n não tem sessão. Payload esperado:
+     { rows: [{ clientId, platform, campaign, date, spend, leads, cpl, ... }, ...] }
+   Campos são normalizados (numeric coercion + trim). Dia repetido → upsert. */
+const MARKETING_TOKEN = String(process.env.MARKETING_WEBHOOK_TOKEN || '').trim();
+function _mktNum(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+function _mktStr(v) {
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim();
+  return s || null;
+}
+function _mktDate(v) {
+  if (!v) return null;
+  // Aceita 'YYYY-MM-DD', ISO com hora, ou epoch. Sempre serializa como 'YYYY-MM-DD'.
+  if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  const d = new Date(v);
+  if (isNaN(d)) return null;
+  return d.toISOString().slice(0, 10);
+}
+app.post('/api/marketing/ingest', express.json({ limit: '5mb' }), async (req, res) => {
+  if (!MARKETING_TOKEN) {
+    return res.status(503).json({ error: 'MARKETING_WEBHOOK_TOKEN não configurado no server' });
+  }
+  const token = String(req.headers['x-marketing-token'] || '').trim();
+  if (token !== MARKETING_TOKEN) return res.status(401).json({ error: 'Token inválido' });
+  const rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
+  if (!rows) return res.status(400).json({ error: 'Body precisa de { rows: [...] }' });
+  if (rows.length > 5000) return res.status(413).json({ error: 'Lote máximo: 5000 rows' });
+
+  const normalized = [];
+  const errors = [];
+  const validClientIds = new Set(db.clients.map(c => c.id));
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i] || {};
+    const clientId = _mktStr(r.clientId);
+    const platform = _mktStr(r.platform);
+    const campaign = _mktStr(r.campaign);
+    const date = _mktDate(r.date);
+    if (!clientId || !platform || !campaign || !date) {
+      errors.push({ index: i, reason: 'clientId/platform/campaign/date obrigatórios' });
+      continue;
+    }
+    if (!validClientIds.has(clientId)) {
+      errors.push({ index: i, reason: `clientId ${clientId} não existe` });
+      continue;
+    }
+    normalized.push({
+      client_id: clientId,
+      platform,
+      campaign,
+      date,
+      spend: _mktNum(r.spend),
+      avg_daily: _mktNum(r.avgDaily ?? r.avg_daily),
+      leads: _mktNum(r.leads),
+      cpl: _mktNum(r.cpl),
+      impressions: _mktNum(r.impressions),
+      reach: _mktNum(r.reach),
+      clicks: _mktNum(r.clicks),
+      cpm: _mktNum(r.cpm),
+      cpc: _mktNum(r.cpc),
+      profile_visits: _mktNum(r.profileVisits ?? r.profile_visits),
+      new_followers: _mktNum(r.newFollowers ?? r.new_followers),
+      proj_spend_campaign: _mktNum(r.projSpendCampaign ?? r.proj_spend_campaign),
+      proj_leads_campaign: _mktNum(r.projLeadsCampaign ?? r.proj_leads_campaign),
+      monthly_budget: _mktNum(r.monthlyBudget ?? r.monthly_budget),
+      proj_spend_account: _mktNum(r.projSpendAccount ?? r.proj_spend_account),
+      proj_leads_account: _mktNum(r.projLeadsAccount ?? r.proj_leads_account),
+      alert_status: _mktStr(r.alertStatus ?? r.alert_status),
+      alert_analysis: _mktStr(r.alertAnalysis ?? r.alert_analysis),
+      raw: r
+    });
+  }
+  if (!normalized.length) {
+    return res.status(400).json({ error: 'Nenhuma linha válida', errors });
+  }
+  try {
+    const { inserted, updated } = await store.upsertMarketingSnapshots(normalized);
+    res.json({ ok: true, inserted, updated, skipped: errors.length, errors });
+  } catch (e) {
+    console.error('[marketing/ingest] erro:', e.message);
+    res.status(500).json({ error: 'Falha ao gravar snapshots' });
+  }
+});
+
+/* Lê snapshots de um cliente num período. Retorna rows achatadas + o cliente
+   pra facilitar render no frontend. Filtro de permissão: admin OU membro de
+   um workspace que contém esse cliente. */
+/* Config do webhook — só admin. Devolve o token pra o admin colar no n8n.
+   Não trafega o token pra usuários comuns. */
+app.get('/api/marketing/webhook-config', requireAuth, (req, res) => {
+  if (!req.user.isAdmin) return res.status(403).json({ error: 'Apenas admins podem ver o token' });
+  res.json({ token: MARKETING_TOKEN || '', endpoint: '/api/marketing/ingest' });
+});
+
+app.get('/api/marketing/performance', requireAuth, async (req, res) => {
+  const clientId = String(req.query.clientId || '').trim();
+  const workspaceId = String(req.query.workspaceId || '').trim();
+  const start = _mktDate(req.query.start);
+  const end = _mktDate(req.query.end);
+  if (!clientId && !workspaceId) return res.status(400).json({ error: 'clientId ou workspaceId obrigatório' });
+  if (!start || !end) return res.status(400).json({ error: 'start/end obrigatórios (YYYY-MM-DD)' });
+
+  let ids = [];
+  let scope = null;
+  if (clientId) {
+    // Modo cliente único: valida existência + acesso ao workspace do cliente.
+    const client = db.clients.find(c => c.id === clientId);
+    if (!client || !notDeleted(client)) return res.status(404).json({ error: 'Cliente não encontrado' });
+    if (!canAccessWs(req.user, client.workspaceId)) {
+      return res.status(403).json({ error: 'Sem acesso a esse cliente' });
+    }
+    // Squad opcional: se veio junto, precisa bater — protege contra query manual estranha.
+    if (workspaceId && workspaceId !== client.workspaceId) {
+      return res.status(400).json({ error: 'workspaceId não corresponde ao cliente' });
+    }
+    ids = [clientId];
+    scope = { kind: 'client', client: { id: client.id, name: client.name, workspaceId: client.workspaceId } };
+  } else {
+    // Modo squad: agrega todos os clientes ativos daquele workspace que o user pode ver.
+    if (!canAccessWs(req.user, workspaceId)) {
+      return res.status(403).json({ error: 'Sem acesso a esse squad' });
+    }
+    const clientsInWs = db.clients.filter(c => c.workspaceId === workspaceId && notDeleted(c) && c.active !== false);
+    ids = clientsInWs.map(c => c.id);
+    scope = { kind: 'workspace', workspaceId, clientCount: clientsInWs.length };
+  }
+
+  try {
+    const rows = ids.length ? await store.listMarketingSnapshots(ids, start, end) : [];
+    res.json({ scope, rows, fetchedAt: new Date().toISOString() });
+  } catch (e) {
+    console.error('[marketing/performance] erro:', e.message);
+    res.status(500).json({ error: 'Falha ao ler snapshots' });
+  }
+});
+
 /* ── AUTENTICAÇÃO ── */
 /* Rate limit em memória — 5 tentativas por minuto por IP.
    Usado em /api/login (falha zera em sucesso), /api/forgot-password e
