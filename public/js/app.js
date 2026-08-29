@@ -7901,7 +7901,10 @@ function _perfRender(host, curRows, prevRows) {
         <div class="perf-card-body">${_perfRenderCampaignBars(camp.rows, 'leads', 'purple', v => _perfFmtInt(v), true)}</div>
       </div>
       <div class="perf-card">
-        <div class="perf-card-title">Investimento × Leads por campanha</div>
+        <div class="perf-card-title perf-card-title-flex">
+          <span>Investimento × Leads por campanha</span>
+          ${_perfInlineLegend()}
+        </div>
         <div class="perf-card-body">${_perfRenderCampaignCombo(camp.rows)}</div>
       </div>
       <div class="perf-card">
@@ -7909,7 +7912,10 @@ function _perfRender(host, curRows, prevRows) {
         <div class="perf-card-body">${_perfRenderCampaignBars(camp.rows, 'cpl', 'orange', v => _perfFmtBRLexact(v), false)}</div>
       </div>
       <div class="perf-card">
-        <div class="perf-card-title">Evolução no período</div>
+        <div class="perf-card-title perf-card-title-flex">
+          <span>Evolução no período</span>
+          ${_perfInlineLegend()}
+        </div>
         <div class="perf-card-body">${_perfRenderTimeSeries(series)}</div>
       </div>
     </div>
@@ -7942,14 +7948,16 @@ function _perfRenderKpis(cur, prev) {
     const deltaTxt = hasPrev ? `${arrow} ${k.fmt(Math.abs(diff))}` : '—';
     return `
       <div class="perf-kpi">
-        <div class="perf-kpi-icon perf-kpi-icon-${k.icon}"><i data-lucide="${k.icon}" class="ic-md"></i></div>
-        <div class="perf-kpi-body">
-          <div class="perf-kpi-label">${esc(k.label)}</div>
-          <div class="perf-kpi-value">${k.value}</div>
-          <div class="perf-kpi-delta perf-kpi-delta-${dir}">
-            <span class="perf-kpi-delta-value">${deltaTxt}</span>
-            <span class="perf-kpi-delta-caption">vs período anterior</span>
+        <div class="perf-kpi-top">
+          <div class="perf-kpi-icon perf-kpi-icon-${k.icon}"><i data-lucide="${k.icon}" class="ic-md"></i></div>
+          <div class="perf-kpi-body">
+            <div class="perf-kpi-label">${esc(k.label)}</div>
+            <div class="perf-kpi-value">${k.value}</div>
           </div>
+        </div>
+        <div class="perf-kpi-delta perf-kpi-delta-${dir}">
+          <span class="perf-kpi-delta-value">${deltaTxt}</span>
+          <span class="perf-kpi-delta-caption">vs período anterior</span>
         </div>
       </div>
     `;
@@ -7977,72 +7985,68 @@ function _perfRenderCampaignBars(rows, metric, palette, fmt, showShare) {
       </div>`;
   }).join('')}</div>`;
 }
-/* Combo: barra (investimento) + linha (leads) por campanha. Eixo Y esquerdo
-   pra R$, direito pra leads. SVG inline pra não puxar biblioteca. */
+/* Combo: barra (investimento) + linha (leads) por campanha. Altura FIXA em
+   260px; largura acompanha o container. As colunas se distribuem no espaço
+   disponível — em telas largas ficam mais espaçadas, sem stretch/distorção.
+   Implementação: SVG com viewBox recalculado após render (mede clientWidth
+   do host); ResizeObserver reajusta quando o container muda. */
 function _perfRenderCampaignCombo(rows) {
   if (!rows.length) return '<div class="perf-empty-mini">Sem dados</div>';
   const top = rows.slice(0, 6);
   const uid = 'perf_combo_' + Math.random().toString(36).slice(2, 8);
-  const W = 640, H = 260, padL = 60, padR = 50, padT = 20, padB = 60;
-  const iw = W - padL - padR, ih = H - padT - padB;
+  const H = 260, padL = 80, padR = 60, padT = 20, padB = 60;
   const maxSpend = Math.max(1, ...top.map(r => r.spend));
   const maxLeads = Math.max(1, ...top.map(r => r.leads));
-  const bw = iw / top.length * 0.6;
-  const step = iw / top.length;
-  // Registra pontos no queue de hover — mousemove no host acha o mais próximo,
-  // move a guide vertical e atualiza o tooltip fixed.
-  const points = top.map((r, i) => ({
-    xVb: padL + i * step + step / 2,
-    title: r.campaign,
-    rows: [
-      { label: 'Investimento', value: _perfFmtBRLexact(r.spend), dot: 'var(--perf-purple)' },
-      { label: 'Leads',        value: _perfFmtInt(r.leads),      dot: 'var(--perf-green)'  },
-      { label: 'CPL',          value: _perfFmtBRLexact(r.cpl)                              },
-      { label: 'Conversão',    value: _perfFmtPct(r.conv)                                  }
-    ]
-  }));
-  _perfPendingHovers.push({ uid, points, viewBoxW: W });
-  const bars = top.map((r, i) => {
-    const x = padL + i * step + (step - bw) / 2;
-    const h = (r.spend / maxSpend) * ih;
-    const y = padT + ih - h;
-    return `<rect x="${x}" y="${y}" width="${bw}" height="${h}" rx="3" fill="var(--perf-purple)" />`;
-  }).join('');
-  const pts = top.map((r, i) => {
-    const x = padL + i * step + step / 2;
-    const y = padT + ih - (r.leads / maxLeads) * ih;
-    return `${x},${y}`;
-  }).join(' ');
-  const dots = top.map((r, i) => {
-    const x = padL + i * step + step / 2;
-    const y = padT + ih - (r.leads / maxLeads) * ih;
-    return `<circle cx="${x}" cy="${y}" r="4" fill="var(--perf-green)" />`;
-  }).join('');
-  const xlabels = top.map((r, i) => {
-    const x = padL + i * step + step / 2;
-    return `<text x="${x}" y="${H - padB + 16}" text-anchor="middle" class="perf-svg-tick">${esc(_perfCampaignShort(r.campaign, 10))}</text>`;
-  }).join('');
-  // Ticks Y esquerdo (spend) — 4 níveis
-  const yticksL = [0, 0.25, 0.5, 0.75, 1].map(t => {
-    const y = padT + ih - t * ih;
-    const v = maxSpend * t;
-    return `
-      <line x1="${padL}" x2="${W - padR}" y1="${y}" y2="${y}" class="perf-svg-grid"/>
-      <text x="${padL - 8}" y="${y + 4}" text-anchor="end" class="perf-svg-tick">${_perfFmtBRL(v)}</text>
-    `;
-  }).join('');
-  const yticksR = [0, 0.5, 1].map(t => {
-    const y = padT + ih - t * ih;
-    const v = Math.round(maxLeads * t);
-    return `<text x="${W - padR + 8}" y="${y + 4}" text-anchor="start" class="perf-svg-tick">${_perfFmtInt(v)}</text>`;
-  }).join('');
-  return `
-    <div class="perf-legend">
-      <span class="perf-legend-chip"><span class="perf-legend-dot" style="background:var(--perf-purple)"></span> Investimento</span>
-      <span class="perf-legend-chip"><span class="perf-legend-dot" style="background:var(--perf-green)"></span> Leads</span>
-    </div>
-    <div class="perf-svg-host" id="${uid}-host">
-      <svg viewBox="0 0 ${W} ${H}" class="perf-svg" preserveAspectRatio="xMidYMid meet">
+  // Builder chamado após render (com width real) e em resize.
+  const build = (W) => {
+    const iw = Math.max(1, W - padL - padR), ih = H - padT - padB;
+    const step = iw / top.length;
+    const bw = step * 0.6;
+    const points = top.map((r, i) => ({
+      xVb: padL + i * step + step / 2,
+      title: r.campaign,
+      rows: [
+        { label: 'Investimento', value: _perfFmtBRLexact(r.spend), dot: 'var(--perf-purple)' },
+        { label: 'Leads',        value: _perfFmtInt(r.leads),      dot: 'var(--perf-green)'  },
+        { label: 'CPL',          value: _perfFmtBRLexact(r.cpl)                              },
+        { label: 'Conversão',    value: _perfFmtPct(r.conv)                                  }
+      ]
+    }));
+    const bars = top.map((r, i) => {
+      const x = padL + i * step + (step - bw) / 2;
+      const h = (r.spend / maxSpend) * ih;
+      const y = padT + ih - h;
+      return `<rect x="${x}" y="${y}" width="${bw}" height="${h}" rx="3" fill="var(--perf-purple)" />`;
+    }).join('');
+    const pts = top.map((r, i) => {
+      const x = padL + i * step + step / 2;
+      const y = padT + ih - (r.leads / maxLeads) * ih;
+      return `${x},${y}`;
+    }).join(' ');
+    const dots = top.map((r, i) => {
+      const x = padL + i * step + step / 2;
+      const y = padT + ih - (r.leads / maxLeads) * ih;
+      return `<circle cx="${x}" cy="${y}" r="4" fill="var(--perf-green)" />`;
+    }).join('');
+    const xlabels = top.map((r, i) => {
+      const x = padL + i * step + step / 2;
+      return `<text x="${x}" y="${H - padB + 16}" text-anchor="middle" class="perf-svg-tick">${esc(_perfCampaignShort(r.campaign, 10))}</text>`;
+    }).join('');
+    const yticksL = [0, 0.25, 0.5, 0.75, 1].map(t => {
+      const y = padT + ih - t * ih;
+      const v = maxSpend * t;
+      return `
+        <line x1="${padL}" x2="${W - padR}" y1="${y}" y2="${y}" class="perf-svg-grid"/>
+        <text x="${padL - 8}" y="${y + 4}" text-anchor="end" class="perf-svg-tick">${_perfFmtBRL(v)}</text>
+      `;
+    }).join('');
+    const yticksR = [0, 0.5, 1].map(t => {
+      const y = padT + ih - t * ih;
+      const v = Math.round(maxLeads * t);
+      return `<text x="${W - padR + 8}" y="${y + 4}" text-anchor="start" class="perf-svg-tick">${_perfFmtInt(v)}</text>`;
+    }).join('');
+    const svg = `
+      <svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" class="perf-svg">
         ${yticksL}
         ${bars}
         <polyline points="${pts}" fill="none" stroke="var(--perf-green)" stroke-width="2"/>
@@ -8051,73 +8055,71 @@ function _perfRenderCampaignCombo(rows) {
         ${yticksR}
         ${xlabels}
       </svg>
-    </div>
-  `;
+    `;
+    return { svg, points, viewBoxW: W };
+  };
+  _perfPendingHovers.push({ uid, build });
+  return `<div class="perf-svg-host" id="${uid}-host" style="height:${H}px"></div>`;
 }
 /* Série temporal — barras de investimento + linha leads. Compacto. */
 function _perfRenderTimeSeries(series) {
   if (!series.length) return '<div class="perf-empty-mini">Sem dados</div>';
   const uid = 'perf_ts_' + Math.random().toString(36).slice(2, 8);
-  const W = 640, H = 260, padL = 60, padR = 50, padT = 20, padB = 40;
-  const iw = W - padL - padR, ih = H - padT - padB;
+  const H = 260, padL = 80, padR = 60, padT = 20, padB = 40;
   const maxSpend = Math.max(1, ...series.map(s => s.spend));
   const maxLeads = Math.max(1, ...series.map(s => s.leads));
-  const step = iw / Math.max(1, series.length);
-  const bw = Math.max(2, step * 0.55);
-  // Pontos pro hover (mesma lógica do combo): trava no dia mais próximo do cursor.
-  const points = series.map((s, i) => ({
-    xVb: padL + i * step + step / 2,
-    title: _perfFmtDate(s.date),
-    rows: [
-      { label: 'Investimento', value: _perfFmtBRLexact(s.spend), dot: 'var(--perf-purple)' },
-      { label: 'Leads',        value: _perfFmtInt(s.leads),      dot: 'var(--perf-green)'  },
-      { label: 'CPL',          value: _perfFmtBRLexact(s.cpl)                              }
-    ]
-  }));
-  _perfPendingHovers.push({ uid, points, viewBoxW: W });
-  const bars = series.map((s, i) => {
-    const x = padL + i * step + (step - bw) / 2;
-    const h = (s.spend / maxSpend) * ih;
-    const y = padT + ih - h;
-    return `<rect x="${x}" y="${y}" width="${bw}" height="${h}" rx="2" fill="var(--perf-purple)"/>`;
-  }).join('');
-  const dots = series.map((s, i) => {
-    const x = padL + i * step + step / 2;
-    const y = padT + ih - (s.leads / maxLeads) * ih;
-    return `<circle cx="${x}" cy="${y}" r="3" fill="var(--perf-green)"/>`;
-  }).join('');
-  const pts = series.map((s, i) => {
-    const x = padL + i * step + step / 2;
-    const y = padT + ih - (s.leads / maxLeads) * ih;
-    return `${x},${y}`;
-  }).join(' ');
-  // Ticks X — no máximo ~6 rótulos pra caber
-  const stride = Math.max(1, Math.ceil(series.length / 6));
-  const xlabels = series.map((s, i) => {
-    if (i % stride !== 0 && i !== series.length - 1) return '';
-    const x = padL + i * step + step / 2;
-    return `<text x="${x}" y="${H - padB + 16}" text-anchor="middle" class="perf-svg-tick">${_perfFmtDate(s.date)}</text>`;
-  }).join('');
-  const yticksL = [0, 0.5, 1].map(t => {
-    const y = padT + ih - t * ih;
-    const v = maxSpend * t;
-    return `
-      <line x1="${padL}" x2="${W - padR}" y1="${y}" y2="${y}" class="perf-svg-grid"/>
-      <text x="${padL - 8}" y="${y + 4}" text-anchor="end" class="perf-svg-tick">${_perfFmtBRL(v)}</text>
-    `;
-  }).join('');
-  const yticksR = [0, 0.5, 1].map(t => {
-    const y = padT + ih - t * ih;
-    const v = Math.round(maxLeads * t);
-    return `<text x="${W - padR + 8}" y="${y + 4}" text-anchor="start" class="perf-svg-tick">${_perfFmtInt(v)}</text>`;
-  }).join('');
-  return `
-    <div class="perf-legend">
-      <span class="perf-legend-chip"><span class="perf-legend-dot" style="background:var(--perf-purple)"></span> Investimento</span>
-      <span class="perf-legend-chip"><span class="perf-legend-dot" style="background:var(--perf-green)"></span> Leads</span>
-    </div>
-    <div class="perf-svg-host" id="${uid}-host">
-      <svg viewBox="0 0 ${W} ${H}" class="perf-svg" preserveAspectRatio="xMidYMid meet">
+  const build = (W) => {
+    const iw = Math.max(1, W - padL - padR), ih = H - padT - padB;
+    const step = iw / Math.max(1, series.length);
+    const bw = Math.max(2, step * 0.55);
+    const points = series.map((s, i) => ({
+      xVb: padL + i * step + step / 2,
+      title: _perfFmtDate(s.date),
+      rows: [
+        { label: 'Investimento', value: _perfFmtBRLexact(s.spend), dot: 'var(--perf-purple)' },
+        { label: 'Leads',        value: _perfFmtInt(s.leads),      dot: 'var(--perf-green)'  },
+        { label: 'CPL',          value: _perfFmtBRLexact(s.cpl)                              }
+      ]
+    }));
+    const bars = series.map((s, i) => {
+      const x = padL + i * step + (step - bw) / 2;
+      const h = (s.spend / maxSpend) * ih;
+      const y = padT + ih - h;
+      return `<rect x="${x}" y="${y}" width="${bw}" height="${h}" rx="2" fill="var(--perf-purple)"/>`;
+    }).join('');
+    const dots = series.map((s, i) => {
+      const x = padL + i * step + step / 2;
+      const y = padT + ih - (s.leads / maxLeads) * ih;
+      return `<circle cx="${x}" cy="${y}" r="3" fill="var(--perf-green)"/>`;
+    }).join('');
+    const pts = series.map((s, i) => {
+      const x = padL + i * step + step / 2;
+      const y = padT + ih - (s.leads / maxLeads) * ih;
+      return `${x},${y}`;
+    }).join(' ');
+    // Alvo de ~ 60px entre rótulos X — evita amontoamento em telas pequenas.
+    const targetGap = 60;
+    const stride = Math.max(1, Math.ceil(series.length / Math.max(1, Math.floor(iw / targetGap))));
+    const xlabels = series.map((s, i) => {
+      if (i % stride !== 0 && i !== series.length - 1) return '';
+      const x = padL + i * step + step / 2;
+      return `<text x="${x}" y="${H - padB + 16}" text-anchor="middle" class="perf-svg-tick">${_perfFmtDate(s.date)}</text>`;
+    }).join('');
+    const yticksL = [0, 0.5, 1].map(t => {
+      const y = padT + ih - t * ih;
+      const v = maxSpend * t;
+      return `
+        <line x1="${padL}" x2="${W - padR}" y1="${y}" y2="${y}" class="perf-svg-grid"/>
+        <text x="${padL - 8}" y="${y + 4}" text-anchor="end" class="perf-svg-tick">${_perfFmtBRL(v)}</text>
+      `;
+    }).join('');
+    const yticksR = [0, 0.5, 1].map(t => {
+      const y = padT + ih - t * ih;
+      const v = Math.round(maxLeads * t);
+      return `<text x="${W - padR + 8}" y="${y + 4}" text-anchor="start" class="perf-svg-tick">${_perfFmtInt(v)}</text>`;
+    }).join('');
+    const svg = `
+      <svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" class="perf-svg">
         ${yticksL}
         ${bars}
         <polyline points="${pts}" fill="none" stroke="var(--perf-green)" stroke-width="2"/>
@@ -8126,8 +8128,11 @@ function _perfRenderTimeSeries(series) {
         ${yticksR}
         ${xlabels}
       </svg>
-    </div>
-  `;
+    `;
+    return { svg, points, viewBoxW: W };
+  };
+  _perfPendingHovers.push({ uid, build });
+  return `<div class="perf-svg-host" id="${uid}-host" style="height:${H}px"></div>`;
 }
 function _perfRenderTable(agg) {
   const rowsBase = agg.rows;
@@ -8213,34 +8218,87 @@ let _perfPendingHovers = [];
 function _perfFlushHovers() {
   const q = _perfPendingHovers;
   _perfPendingHovers = [];
-  for (const item of q) _perfAttachHover(item);
+  for (const item of q) _perfMountChart(item);
 }
-function _perfAttachHover({ uid, points, viewBoxW }) {
+/* Monta o SVG usando a largura REAL do host (não a fake viewBox 640) e attach
+   listener de hover. Um ResizeObserver re-monta quando o card muda de largura,
+   redistribuindo as colunas — altura fica fixa (definida no host). */
+function _perfMountChart({ uid, build, points, viewBoxW }) {
   const host = document.getElementById(uid + '-host');
+  if (!host) return;
+  // Compat com item legado (sem build): usa como estava.
+  if (!build && points) return _perfAttachHoverLegacy(host, uid, points, viewBoxW);
+  let currentPoints = null;
+  let currentVbW = 0;
+  const remount = () => {
+    const w = Math.max(1, Math.round(host.clientWidth || host.getBoundingClientRect().width || 0));
+    if (!w) return;
+    if (currentVbW === w) return; // sem mudança relevante
+    const out = build(w);
+    host.innerHTML = out.svg;
+    currentPoints = out.points;
+    currentVbW = out.viewBoxW;
+  };
+  remount();
+  // ResizeObserver: recalcula quando o container muda (redimensionar janela,
+  // toggle de sidebar, expandir/colapsar cards). rAF pra debounce entre frames.
+  let raf = null;
+  const ro = new ResizeObserver(() => {
+    if (raf) cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => { raf = null; remount(); });
+  });
+  ro.observe(host);
+  // Hover baseado em `currentPoints` (fecha sobre a variável — sempre atual).
+  const guide = () => host.querySelector('.perf-guide');
+  let lastIdx = -1;
+  host.addEventListener('mousemove', e => {
+    if (!currentPoints?.length) return;
+    const rect = host.getBoundingClientRect();
+    if (!rect.width) return;
+    const localX = e.clientX - rect.left;
+    const xVb = (localX / rect.width) * currentVbW;
+    let best = 0, bestDist = Infinity;
+    for (let i = 0; i < currentPoints.length; i++) {
+      const d = Math.abs(currentPoints[i].xVb - xVb);
+      if (d < bestDist) { bestDist = d; best = i; }
+    }
+    _perfTtMove(e);
+    if (best === lastIdx) return;
+    lastIdx = best;
+    const p = currentPoints[best];
+    const g = guide();
+    if (g) {
+      g.setAttribute('x1', p.xVb);
+      g.setAttribute('x2', p.xVb);
+      g.style.opacity = '1';
+    }
+    _perfTt(e, p.title, p.rows);
+  });
+  host.addEventListener('mouseleave', () => {
+    lastIdx = -1;
+    const g = guide();
+    if (g) g.style.opacity = '0';
+    _perfTtHide();
+  });
+}
+function _perfAttachHoverLegacy(host, uid, points, viewBoxW) {
+  // Fallback pra chamadas antigas (viewBox estático).
   const guide = document.getElementById(uid + '-guide');
-  if (!host || !points.length) return;
   let lastIdx = -1;
   host.addEventListener('mousemove', e => {
     const rect = host.getBoundingClientRect();
     if (!rect.width) return;
-    const localX = e.clientX - rect.left;
-    const xVb = (localX / rect.width) * viewBoxW;
-    // Ponto de dado mais próximo em coordenada de viewBox.
+    const xVb = ((e.clientX - rect.left) / rect.width) * viewBoxW;
     let best = 0, bestDist = Infinity;
     for (let i = 0; i < points.length; i++) {
       const d = Math.abs(points[i].xVb - xVb);
       if (d < bestDist) { bestDist = d; best = i; }
     }
-    // Sempre atualiza posição do tooltip (segue o cursor).
     _perfTtMove(e);
     if (best === lastIdx) return;
     lastIdx = best;
     const p = points[best];
-    if (guide) {
-      guide.setAttribute('x1', p.xVb);
-      guide.setAttribute('x2', p.xVb);
-      guide.style.opacity = '1';
-    }
+    if (guide) { guide.setAttribute('x1', p.xVb); guide.setAttribute('x2', p.xVb); guide.style.opacity = '1'; }
     _perfTt(e, p.title, p.rows);
   });
   host.addEventListener('mouseleave', () => {
@@ -8309,6 +8367,14 @@ function _perfSetSort(key) {
     const agg = _perfAggregateByCampaign(_perfState.rows);
     table.querySelector('.perf-card-body').innerHTML = _perfRenderTable(agg);
   }
+}
+/* Legenda inline usada nos títulos do combo e da timeline (Investimento roxo
+   + Leads verde). Cor por CSS vars pra consistência. */
+function _perfInlineLegend() {
+  return `<div class="perf-legend perf-legend-inline">
+    <span class="perf-legend-chip"><span class="perf-legend-dot" style="background:var(--perf-purple)"></span> Investimento</span>
+    <span class="perf-legend-chip"><span class="perf-legend-dot" style="background:var(--perf-green)"></span> Leads</span>
+  </div>`;
 }
 /* Logo 14×14 da plataforma pra usar em qualquer lugar (tabela, alertas).
    Meta e Google têm SVGs em /public. Fallback pra badge textual pra plataformas

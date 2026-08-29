@@ -12365,6 +12365,13 @@ tr.demand-row {
   border-radius: var(--radius);
   padding: 16px;
   display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* Ícone + label/value na parte superior; delta como linha inteira abaixo,
+   alinhado à borda esquerda do card (junto do ícone visualmente). */
+.perf-kpi-top {
+  display: flex;
   gap: 12px;
   align-items: flex-start;
 }
@@ -12498,10 +12505,13 @@ tr.demand-row {
   font-variant-numeric: tabular-nums;
 }
 
-/* SVG charts (combo + timeline) */
-.perf-svg-host { position: relative; }
-.perf-svg-host svg { cursor: crosshair; display: block; }
-.perf-svg { width: 100%; height: auto; max-height: 280px; }
+/* SVG charts (combo + timeline). Host tem altura FIXA (via inline style de
+   height, ex 260px). O SVG lá dentro é remontado com a largura real do host
+   (via ResizeObserver), então as colunas se distribuem no espaço horizontal
+   sem stretch — em telas largas fica mais folga entre elas. */
+.perf-svg-host { position: relative; width: 100%; overflow: hidden; }
+.perf-svg-host svg { cursor: crosshair; display: block; width: 100%; height: 100%; }
+.perf-svg { }
 .perf-guide {
   stroke: var(--text-muted);
   stroke-width: 1;
@@ -12534,6 +12544,18 @@ tr.demand-row {
   font-size: 11.5px;
   color: var(--text-muted);
   margin-bottom: 8px;
+}
+/* Título do card em flex: nome à esquerda, legenda à direita. Combo/timeline
+   usam isso pra economizar altura vertical (o gráfico ocupa mais espaço). */
+.perf-card-title-flex {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.perf-legend-inline {
+  margin-bottom: 0;
 }
 .perf-legend-chip { display: inline-flex; align-items: center; gap: 6px; }
 .perf-legend-dot {
