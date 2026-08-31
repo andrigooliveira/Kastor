@@ -1589,10 +1589,9 @@ app.post('/api/marketing/ingest', express.json({ limit: '5mb' }), async (req, re
 /* Lê snapshots de um cliente num período. Retorna rows achatadas + o cliente
    pra facilitar render no frontend. Filtro de permissão: admin OU membro de
    um workspace que contém esse cliente. */
-/* Config do webhook — só admin. Devolve o token pra o admin colar no n8n.
+/* Config do webhook — admin ou moderador. Devolve o token pra colar no n8n.
    Não trafega o token pra usuários comuns. */
-app.get('/api/marketing/webhook-config', requireAuth, (req, res) => {
-  if (!req.user.isAdmin) return res.status(403).json({ error: 'Apenas admins podem ver o token' });
+app.get('/api/marketing/webhook-config', requireAuth, modOrAdmin, (req, res) => {
   res.json({ token: MARKETING_TOKEN || '', endpoint: '/api/marketing/ingest' });
 });
 

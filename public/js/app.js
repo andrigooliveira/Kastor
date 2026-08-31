@@ -7598,7 +7598,7 @@ async function renderPerformance() {
   // Config: só faz sentido pra admin E com cliente específico selecionado
   // (o token é único, mas o clientId no exemplo depende do cliente).
   const cfgBtn = $('perf-config-btn');
-  if (cfgBtn) cfgBtn.style.display = (me?.isAdmin && clientId) ? '' : 'none';
+  if (cfgBtn) cfgBtn.style.display = ((me?.isAdmin || me?.isModerator) && clientId) ? '' : 'none';
   const body = $('perf-body');
   if (!body) return;
   if (!workspaceId) {
@@ -7667,14 +7667,14 @@ function _perfUpdateTimestamp(date) {
   const ss = String(date.getSeconds()).padStart(2, '0');
   el.textContent = `Atualizado às ${hh}:${mm}:${ss}`;
 }
-/* Empty state / config panel. Admin vê instruções + token; não-admin vê só
-   mensagem de "sem dados". */
+/* Empty state / config panel. Admin ou moderador vê instruções + token;
+   demais vêem só mensagem de "sem dados". */
 function _perfRenderEmptyOrConfig(client) {
-  if (!me?.isAdmin) {
+  if (!(me?.isAdmin || me?.isModerator)) {
     return `<div class="perf-empty">
       <i data-lucide="inbox" class="ic-lg"></i>
       <div>Sem dados nesse período pra esse cliente.</div>
-      <div class="perf-empty-hint">Pergunte a um admin se o webhook do n8n está configurado.</div>
+      <div class="perf-empty-hint">Peça a um admin ou moderador pra checar o webhook do n8n.</div>
     </div>`;
   }
   return _perfBuildConfigPanel(client, true);
