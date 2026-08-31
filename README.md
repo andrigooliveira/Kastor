@@ -83,4 +83,17 @@ Variáveis essenciais (todas em `.env.example`):
 
 ## Licença
 
-Privado — sem licença pública declarada.
+**Software proprietário. Todos os direitos reservados.**
+Copyright © 2026 Andrigo Oliveira.
+
+- O código-fonte, a documentação, os recursos gráficos e todos os artefatos deste
+  repositório são de **propriedade exclusiva** de Andrigo Oliveira.
+- **Não é permitido** usar, copiar, modificar, distribuir, hospedar, servir ou criar
+  trabalhos derivados a partir deste software **sem autorização prévia, por escrito
+  e assinada** pelo autor.
+- A disponibilização pública do código **não constitui** licença implícita de uso.
+- Uso não autorizado sujeita-se às sanções civis e criminais das
+  Leis 9.610/1998 e 9.609/1998 e tratados internacionais aplicáveis.
+
+Termos completos em **[`LICENSE`](LICENSE)**. Para solicitar autorização, contato
+via [github.com/andrigooliveira](https://github.com/andrigooliveira).

@@ -1,0 +1,88 @@
+reWork — Licença Proprietária (All Rights Reserved)
+Copyright (c) 2026 Andrigo Oliveira. Todos os direitos reservados.
+
+────────────────────────────────────────────────────────────────
+
+1. TITULARIDADE
+
+   Todo o conteúdo deste repositório — incluindo, sem se limitar a, código-fonte,
+   documentação, recursos gráficos, esquemas de dados, arquivos de configuração,
+   scripts de deploy e quaisquer artefatos derivados — é de propriedade
+   exclusiva de Andrigo Oliveira ("o Autor"). Este software é referido neste
+   documento como "reWork" ou "a Plataforma".
+
+2. DIREITOS RESERVADOS
+
+   Nenhum direito de uso, cópia, modificação, mesclagem, publicação,
+   distribuição, sublicenciamento, comercialização, engenharia reversa,
+   descompilação ou criação de trabalhos derivados é concedido por este
+   arquivo. A disponibilização pública do código (por exemplo, em um repositório
+   Git ou registro de contêiner) NÃO constitui, de forma alguma, licença
+   implícita de uso.
+
+3. USO PROIBIDO SEM AUTORIZAÇÃO EXPRESSA
+
+   É EXPRESSAMENTE PROIBIDO, sem autorização prévia, por escrito e assinada
+   por Andrigo Oliveira:
+
+   (a) executar, hospedar, servir ou disponibilizar a Plataforma (ou qualquer
+       parte substancial dela) a terceiros, gratuita ou comercialmente;
+   (b) copiar, redistribuir ou incorporar qualquer parte do código-fonte ou
+       da documentação em outros projetos, produtos ou serviços;
+   (c) modificar, adaptar, traduzir, portar ou criar trabalhos derivados a
+       partir do código;
+   (d) remover, ocultar ou alterar avisos de autoria, copyright ou marcas
+       presentes no código, na interface ou nos artefatos publicados;
+   (e) usar o nome "reWork", quaisquer logotipos, marcas ou identidade visual
+       associada em contextos que sugiram endosso, associação ou parceria não
+       autorizada.
+
+   Cada autorização é específica ao escopo declarado por escrito pelo Autor.
+   Autorizações passadas para determinado propósito NÃO se estendem a novos
+   usos, novas versões, novos ambientes ou novos beneficiários.
+
+4. CONTRIBUIÇÕES
+
+   Contribuições ao código (pull requests, patches, sugestões incorporadas)
+   podem ser aceitas EXCLUSIVAMENTE mediante entendimento prévio e por
+   escrito de que o(a) contribuinte cede ao Autor, de forma perpétua,
+   irrevogável, mundial, gratuita e não-exclusiva, todos os direitos
+   necessários para incorporação da contribuição à Plataforma sob os termos
+   desta Licença. Sem esse acordo, contribuições podem ser recusadas ou
+   removidas a critério do Autor.
+
+5. SEM GARANTIA
+
+   O software é fornecido "COMO ESTÁ", sem garantia de qualquer natureza,
+   expressa ou implícita, incluindo, mas não se limitando a, garantias de
+   comercialização, adequação a um propósito específico ou não-violação. O
+   Autor não se responsabiliza por quaisquer danos decorrentes do uso não
+   autorizado ou de tentativas de uso da Plataforma.
+
+6. VIOLAÇÕES
+
+   Qualquer uso, distribuição, modificação ou execução da Plataforma em
+   desacordo com esta Licença constitui violação de direitos autorais e
+   demais direitos de propriedade intelectual do Autor, sujeita às sanções
+   civis e criminais cabíveis pela legislação brasileira aplicável (Lei
+   9.610/1998 — Lei de Direitos Autorais; Lei 9.609/1998 — Lei do Software)
+   e por tratados internacionais dos quais o Brasil seja signatário.
+
+7. CONTATO PARA AUTORIZAÇÃO
+
+   Solicitações de autorização de uso, licenciamento comercial ou
+   parcerias devem ser encaminhadas ao Autor pelo canal de contato
+   informado no perfil oficial do repositório
+   (https://github.com/andrigooliveira).
+
+────────────────────────────────────────────────────────────────
+
+EN — SHORT NOTICE
+
+reWork is proprietary software. Copyright (c) 2026 Andrigo Oliveira. All
+rights reserved. No license is granted for use, copying, modification,
+distribution, hosting, or the creation of derivative works without the
+Author's prior express written permission. Public availability of the source
+code does NOT constitute an implied license. Unauthorized use is prohibited
+and subject to the applicable civil and criminal penalties under Brazilian
+law (Law 9.610/1998 and Law 9.609/1998) and international treaties.

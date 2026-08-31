@@ -7719,19 +7719,135 @@ function _perfBuildConfigPanel(client, isEmpty) {
           </div>
         </div>
       </div>
+      <details class="perf-config-details" open>
+        <summary>Passo a passo no n8n &nbsp;<i data-lucide="chevron-down" class="ic-sm"></i></summary>
+        <ol class="perf-config-steps">
+          <li>
+            <div class="perf-config-step-title">Schedule Trigger</div>
+            <div class="perf-config-step-body">
+              Adicione um nó <em>Schedule Trigger</em> configurado pra rodar uma vez por dia
+              (ex: 08:00). Dispara o workflow todo dia automaticamente.
+            </div>
+          </li>
+          <li>
+            <div class="perf-config-step-title">Puxar dados das plataformas</div>
+            <div class="perf-config-step-body">
+              Um nó pra cada fonte:
+              <ul>
+                <li><strong>Meta Ads</strong>: <code>GET /v19.0/act_&lt;ACCOUNT&gt;/insights</code> com fields
+                  <code>spend,impressions,reach,clicks,cpm,cpc,actions,campaign_name</code> e
+                  <code>date_preset=yesterday</code>.</li>
+                <li><strong>Google Ads</strong>: query GAQL selecionando
+                  <code>metrics.cost_micros, metrics.conversions, metrics.impressions,
+                  metrics.clicks</code> de <code>campaign</code> onde
+                  <code>segments.date = 'YESTERDAY'</code>.</li>
+              </ul>
+            </div>
+          </li>
+          <li>
+            <div class="perf-config-step-title">Normalizar (nó Code)</div>
+            <div class="perf-config-step-body">
+              Converta cada resposta pro formato do reWork. Exemplo:
+              <pre class="perf-config-code">${esc(_perfSampleCode(clientId))}</pre>
+              O <code>clientId</code> desse cliente é <code>${esc(clientId)}</code> —
+              se seu workflow atende vários clientes, guarde essa lista num nó
+              <em>Set</em> e itere.
+            </div>
+          </li>
+          <li>
+            <div class="perf-config-step-title">HTTP Request pro reWork</div>
+            <div class="perf-config-step-body">
+              Nó <em>HTTP Request</em> com:
+              <ul>
+                <li><strong>Method</strong>: <code>POST</code></li>
+                <li><strong>URL</strong>: o <em>Endpoint</em> mostrado acima</li>
+                <li><strong>Headers</strong>: <code>X-Marketing-Token</code> com o valor do
+                  campo <em>Header de autenticação</em> (clique no olho pra revelar/copiar)</li>
+                <li><strong>Body</strong> (JSON): <code>{ "rows": [...] }</code> — array
+                  agregado do passo anterior</li>
+              </ul>
+            </div>
+          </li>
+          <li>
+            <div class="perf-config-step-title">Testar</div>
+            <div class="perf-config-step-body">
+              Clique em <em>Execute Workflow</em> no n8n. O último nó deve mostrar
+              <code>{"ok": true, "inserted": N, ...}</code>. Se der 401 = token errado;
+              400 = clientId inválido ou campo obrigatório faltando (a resposta lista
+              qual row falhou); 413 = mais de 5000 rows num batch.
+            </div>
+          </li>
+          <li>
+            <div class="perf-config-step-title">Ativar</div>
+            <div class="perf-config-step-body">
+              Toggle <em>Active</em> no canto superior direito do workflow.
+              Rodadas repetidas no mesmo dia sobrescrevem (upsert por
+              <code>clientId + platform + campaign + date</code>) — seguro reexecutar.
+            </div>
+          </li>
+        </ol>
+      </details>
       <details class="perf-config-details">
-        <summary>Formato do payload &nbsp;<i data-lucide="chevron-down" class="ic-sm"></i></summary>
+        <summary>Payload de exemplo &nbsp;<i data-lucide="chevron-down" class="ic-sm"></i></summary>
         <pre class="perf-config-code">${esc(_perfSamplePayload(clientId))}</pre>
-        <div class="perf-config-hint">
-          Campos aceitos: <code>spend</code>, <code>leads</code>, <code>cpl</code>, <code>impressions</code>, <code>reach</code>,
-          <code>clicks</code>, <code>cpm</code>, <code>cpc</code>, <code>profileVisits</code>, <code>newFollowers</code>,
-          <code>monthlyBudget</code>, <code>projSpendCampaign</code>, <code>projLeadsCampaign</code>,
-          <code>projSpendAccount</code>, <code>projLeadsAccount</code>, <code>alertStatus</code>, <code>alertAnalysis</code>.
-          Snapshots com a mesma chave (clientId + platform + campaign + date) são substituídos (upsert).
+      </details>
+      <details class="perf-config-details">
+        <summary>Campos aceitos &nbsp;<i data-lucide="chevron-down" class="ic-sm"></i></summary>
+        <div class="perf-config-fields-grid">
+          <div class="perf-config-field-doc"><code>clientId</code> <em>obrigatório</em> — id do cliente</div>
+          <div class="perf-config-field-doc"><code>platform</code> <em>obrigatório</em> — "Meta" ou "Google"</div>
+          <div class="perf-config-field-doc"><code>campaign</code> <em>obrigatório</em> — nome da campanha</div>
+          <div class="perf-config-field-doc"><code>date</code> <em>obrigatório</em> — "YYYY-MM-DD"</div>
+          <div class="perf-config-field-doc"><code>spend</code> — investimento (R$)</div>
+          <div class="perf-config-field-doc"><code>leads</code> — leads gerados</div>
+          <div class="perf-config-field-doc"><code>cpl</code> — custo por lead (calcula se omitir)</div>
+          <div class="perf-config-field-doc"><code>impressions</code> — impressões</div>
+          <div class="perf-config-field-doc"><code>reach</code> — alcance</div>
+          <div class="perf-config-field-doc"><code>clicks</code> — cliques</div>
+          <div class="perf-config-field-doc"><code>cpm</code>, <code>cpc</code> — custo por 1000 impressões / clique</div>
+          <div class="perf-config-field-doc"><code>profileVisits</code>, <code>newFollowers</code> — só Meta</div>
+          <div class="perf-config-field-doc"><code>monthlyBudget</code> — verba mensal da campanha</div>
+          <div class="perf-config-field-doc"><code>projSpendCampaign</code>, <code>projLeadsCampaign</code> — projeções</div>
+          <div class="perf-config-field-doc"><code>projSpendAccount</code>, <code>projLeadsAccount</code> — projeções da conta</div>
+          <div class="perf-config-field-doc"><code>alertStatus</code> — emoji de status (✅ ok, 🔻/⚠️/📉 crítico)</div>
+          <div class="perf-config-field-doc"><code>alertAnalysis</code> — texto do alerta (<code>**bold**</code> suportado)</div>
         </div>
       </details>
     </div>
   `;
+}
+/* Snippet de código pra o nó Code do n8n. clientId vem hardcoded pra
+   quem tá lendo já ter o valor certo, mas idealmente vem de um Set node. */
+function _perfSampleCode(clientId) {
+  return `const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+const date = yesterday.toISOString().slice(0, 10);
+
+return items.map(item => {
+  const d = item.json;
+  const spend = Number(d.spend || d.cost_micros / 1e6 || 0);
+  const leads = Number(d.leads || d.conversions || 0);
+  const clicks = Number(d.clicks || 0);
+  const cpl = leads > 0 ? spend / leads : 0;
+
+  // Alerta — customize as regras
+  let alertStatus = '✅', alertAnalysis = 'Dentro da meta.';
+  if (spend > 10 && leads === 0) {
+    alertStatus = '🔻';
+    alertAnalysis = \`**ZERO CONVERSÕES:** Gastou R$\${spend.toFixed(2)} sem conversão.\`;
+  }
+
+  return { json: {
+    clientId: '${clientId}',
+    platform: 'Meta',   // ou 'Google'
+    campaign: d.campaign_name,
+    date, spend, leads, cpl, clicks,
+    impressions: Number(d.impressions || 0),
+    reach: Number(d.reach || 0),
+    cpm: Number(d.cpm || 0),
+    cpc: Number(d.cpc || 0),
+    alertStatus, alertAnalysis
+  }};
+});`;
 }
 function _perfSamplePayload(clientId) {
   const today = new Date().toISOString().slice(0, 10);

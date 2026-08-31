@@ -12851,6 +12851,95 @@ tr.demand-row {
   overflow-x: auto;
   margin: 12px 0;
   line-height: 1.5;
+  white-space: pre;
+}
+/* Passo a passo do n8n dentro do painel de config */
+.perf-config-steps {
+  list-style: none;
+  counter-reset: step;
+  padding: 8px 0 0 0;
+  margin: 0;
+}
+.perf-config-steps > li {
+  counter-increment: step;
+  position: relative;
+  padding: 10px 0 10px 44px;
+  border-bottom: 1px dashed var(--border);
+}
+.perf-config-steps > li:last-child { border-bottom: 0; }
+.perf-config-steps > li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: 10px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--perf-purple);
+  color: white;
+  font-weight: 700;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.perf-config-step-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.perf-config-step-body {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+.perf-config-step-body ul {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+.perf-config-step-body ul li {
+  margin: 3px 0;
+}
+.perf-config-step-body code {
+  background: var(--surface-hover);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11.5px;
+  color: var(--text);
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+}
+.perf-config-step-body em {
+  color: var(--text);
+  font-style: normal;
+  font-weight: 600;
+}
+/* Grid de campos aceitos */
+.perf-config-fields-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 6px 12px;
+  margin: 12px 0;
+}
+.perf-config-field-doc {
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 4px 0;
+}
+.perf-config-field-doc code {
+  background: var(--surface-hover);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--text);
+  margin-right: 4px;
+}
+.perf-config-field-doc em {
+  color: var(--perf-red);
+  font-style: normal;
+  font-size: 10.5px;
+  font-weight: 600;
+  margin-right: 4px;
 }
 
 @media (max-width: 720px) {
