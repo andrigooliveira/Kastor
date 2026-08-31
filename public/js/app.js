@@ -10096,7 +10096,6 @@ function renderDetail() {
                   <span class="chat-tool-sep"></span>
                   <button type="button" class="chat-tool" title="Citação" onmousedown="event.preventDefault()" onclick="execCommentCmd('formatBlock','BLOCKQUOTE')"><i data-lucide="quote" class="ic-xs"></i></button>
                   <span class="chat-tool-sep"></span>
-                  <button type="button" class="chat-tool" title="Link" onmousedown="event.preventDefault()" onclick="promptCommentLink()"><i data-lucide="link" class="ic-xs"></i></button>
                   <input type="file" id="comment-img-input" accept="image/*" multiple style="display:none" onchange="handleCommentImages(event)">
                   <button type="button" class="chat-tool" title="Imagem" onmousedown="event.preventDefault()" onclick="$('comment-img-input').click()"><i data-lucide="image" class="ic-xs"></i></button>
                 </div>
@@ -12914,114 +12913,6 @@ function syncCommentEmptyState(el) {
   const hasText = (el.innerText || el.textContent || '').replace(/​/g, '').trim().length > 0;
   el.classList.toggle('is-empty', !hasImg && !hasText);
 }
-// Popover inline pra inserir link — evita tirar o usuário da tela.
-// Aparece abaixo do botão de link, guarda a seleção atual do editor pra
-// que o URL seja aplicado no ponto certo depois do foco no input.
-function promptCommentLink(anchorBtn) {
-  const el = $('comment-input');
-  if (!el) return;
-  _openLinkPopover(anchorBtn || event?.currentTarget, el);
-}
-function promptEditCommentLink(cid, anchorBtn) {
-  const el = document.getElementById('edit-comment-text-' + cid);
-  if (!el) return;
-  _openLinkPopover(anchorBtn || event?.currentTarget, el);
-}
-let _linkPopSavedRange = null;
-let _linkPopEditor = null;
-function _openLinkPopover(anchorBtn, editorEl) {
-  _closeLinkPopover();
-  // Guarda a Range atual — abrir o popover vai roubar o foco.
-  const sel = window.getSelection && window.getSelection();
-  _linkPopSavedRange = (sel && sel.rangeCount && editorEl.contains(sel.anchorNode))
-    ? sel.getRangeAt(0).cloneRange() : null;
-  _linkPopEditor = editorEl;
-  const selectedText = _linkPopSavedRange ? _linkPopSavedRange.toString() : '';
-  const pop = document.createElement('div');
-  pop.className = 'comment-link-pop';
-  pop.id = 'comment-link-pop';
-  pop.innerHTML = `
-    <input type="url" class="form-control comment-link-input" id="comment-link-input"
-           placeholder="https://exemplo.com" spellcheck="false">
-    <button type="button" class="btn btn-primary btn-sm" onclick="applyLinkPopover()">Inserir</button>
-    <button type="button" class="btn btn-ghost btn-sm" onclick="_closeLinkPopover()" title="Cancelar"><i data-lucide="x" class="ic-xs"></i></button>
-  `;
-  document.body.appendChild(pop);
-  // Posiciona ancorado ao botão da toolbar.
-  const rect = (anchorBtn || editorEl).getBoundingClientRect();
-  pop.style.top  = (window.scrollY + rect.bottom + 6) + 'px';
-  pop.style.left = (window.scrollX + rect.left) + 'px';
-  // Se não couber pela direita, alinha pela direita do botão.
-  requestAnimationFrame(() => {
-    const pr = pop.getBoundingClientRect();
-    if (pr.right > window.innerWidth - 8) {
-      pop.style.left = (window.scrollX + rect.right - pr.width) + 'px';
-    }
-  });
-  paintIcons(pop);
-  const input = $('comment-link-input');
-  // Pré-preenche se selecionado já parece URL, senão fica vazio.
-  if (selectedText && /^https?:\/\//i.test(selectedText)) input.value = selectedText;
-  input.focus();
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); applyLinkPopover(); }
-    else if (e.key === 'Escape') { e.preventDefault(); _closeLinkPopover(); }
-  });
-  // Fecha ao clicar fora.
-  setTimeout(() => document.addEventListener('mousedown', _linkPopOutside), 0);
-}
-function _linkPopOutside(e) {
-  const pop = document.getElementById('comment-link-pop');
-  if (!pop) { document.removeEventListener('mousedown', _linkPopOutside); return; }
-  if (pop.contains(e.target)) return;
-  // Clique em botão de link da toolbar também fecha (será reabrido).
-  if (e.target.closest && e.target.closest('.comment-tool[title="Inserir link"]')) return;
-  _closeLinkPopover();
-}
-function _closeLinkPopover() {
-  document.removeEventListener('mousedown', _linkPopOutside);
-  const pop = document.getElementById('comment-link-pop');
-  if (pop) pop.remove();
-  _linkPopSavedRange = null;
-  _linkPopEditor = null;
-}
-function applyLinkPopover() {
-  const input = $('comment-link-input');
-  const editor = _linkPopEditor;
-  const savedRange = _linkPopSavedRange;
-  const raw = (input?.value || '').trim();
-  if (!raw || !editor) { _closeLinkPopover(); return; }
-  const normalized = /^([a-z][a-z0-9+.-]*):/i.test(raw) ? raw : 'https://' + raw;
-  editor.focus();
-  if (savedRange && window.getSelection) {
-    const s = window.getSelection(); s.removeAllRanges(); s.addRange(savedRange);
-  }
-  try {
-    // Sempre insere via insertHTML — evita `createLink` que perde parâmetros de
-    // URL em alguns browsers (Dropbox: ?dl=0&rlkey=... virava href truncado).
-    // Se há seleção, preserva a formatação INTERNA (bold/italic/mention) via
-    // cloneContents; sem seleção, insere o URL como texto do link.
-    let innerHtml;
-    if (savedRange && !savedRange.collapsed) {
-      const wrap = document.createElement('div');
-      wrap.appendChild(savedRange.cloneContents());
-      innerHtml = wrap.innerHTML || esc(savedRange.toString());
-    } else {
-      innerHtml = esc(normalized);
-    }
-    const anchor = `<a href="${esc(normalized)}" target="_blank" rel="noopener noreferrer">${innerHtml}</a>&nbsp;`;
-    document.execCommand('insertHTML', false, anchor);
-  } catch {}
-  _closeLinkPopover();
-  syncCommentEmptyState(editor);
-}
-// Garante target="_blank" rel="noopener noreferrer" nos <a> do editor.
-function _patchLinksTargetBlank(editor) {
-  editor.querySelectorAll('a').forEach(a => {
-    if (!a.getAttribute('target')) a.setAttribute('target', '_blank');
-    if (!a.getAttribute('rel'))    a.setAttribute('rel', 'noopener noreferrer');
-  });
-}
 // Atualiza os botões da toolbar pra refletir o estado da seleção atual
 // (ex.: cursor dentro de <b> ativa o botão de negrito).
 function refreshToolbarState() {
@@ -13172,7 +13063,6 @@ function renderRichEditor({ id, initial, placeholder, minHeight }) {
       <span class="chat-tool-sep"></span>
       <button type="button" class="rich-tool" title="Citação" onmousedown="event.preventDefault()" onclick="execRichCmd('${id}','formatBlock','BLOCKQUOTE')"><i data-lucide="quote" class="ic-xs"></i></button>
       <span class="chat-tool-sep"></span>
-      <button type="button" class="rich-tool" title="Link" onmousedown="event.preventDefault()" onclick="promptRichLink('${id}', this)"><i data-lucide="link" class="ic-xs"></i></button>
       <input type="file" id="rich-img-input-${id}" accept="image/*" multiple style="display:none" onchange="handleRichImages(event, '${id}')">
       <button type="button" class="rich-tool" title="Imagem" onmousedown="event.preventDefault()" onclick="document.getElementById('rich-img-input-${id}').click()"><i data-lucide="image" class="ic-xs"></i></button>
     </div>
@@ -13198,12 +13088,6 @@ function syncRichEmptyState(el) {
   const hasImg = /<img\b/i.test(el.innerHTML || '');
   const hasText = (el.innerText || el.textContent || '').replace(/​/g, '').trim().length > 0;
   el.classList.toggle('is-empty', !hasImg && !hasText);
-}
-/* Link popover — reusa a mesma implementação do editor de comentário. */
-function promptRichLink(editorId, anchorBtn) {
-  const el = document.getElementById(editorId);
-  if (!el) return;
-  _openLinkPopover(anchorBtn || event?.currentTarget, el);
 }
 /* Handler de upload de imagem via input file (rich editor genérico). */
 function handleRichImages(ev, editorId) {
@@ -13391,8 +13275,6 @@ function startEditComment(cid) {
         <span class="chat-tool-sep"></span>
         <button type="button" class="chat-tool" title="Lista numerada" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${cid}','insertOrderedList')"><i data-lucide="list-ordered" class="ic-xs"></i></button>
         <button type="button" class="chat-tool" title="Lista com marcadores" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${cid}','insertUnorderedList')"><i data-lucide="list" class="ic-xs"></i></button>
-        <span class="chat-tool-sep"></span>
-        <button type="button" class="chat-tool" title="Link" onmousedown="event.preventDefault()" onclick="promptEditCommentLink('${cid}')"><i data-lucide="link" class="ic-xs"></i></button>
       </div>
       <div class="chat-compose-input comment-input comment-input-ce" id="edit-comment-text-${cid}"
            contenteditable="true" role="textbox" aria-multiline="true"
@@ -29358,19 +29240,6 @@ function insertPostEmbed() {
   document.execCommand('insertHTML', false, result.html);
   closeModal('post-embed-modal');
   _postEmbedSavedRange = null;
-  _markPostDirty();
-}
-async function openPostLinkPopover() {
-  const url = await showPrompt({ title: 'Adicionar link', placeholder: 'https://...', okLabel: 'Adicionar' });
-  if (!url) return;
-  const body = $('post-f-content');
-  body.focus();
-  document.execCommand('createLink', false, url);
-  // Força target=_blank + rel noopener
-  body.querySelectorAll('a[href="' + url + '"]').forEach(a => {
-    a.setAttribute('target', '_blank');
-    a.setAttribute('rel', 'noopener noreferrer');
-  });
   _markPostDirty();
 }
 async function onPostImagesPicked(evt) {

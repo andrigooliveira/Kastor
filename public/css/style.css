@@ -3943,31 +3943,6 @@ body:has(#page-demand-detail.active) #toast-container { bottom: 96px; }
 .comment-toolbar-sep {
   width: 1px; height: 14px; background: var(--hairline); margin: 0 3px;
 }
-/* Popover inline pra inserir link. Ancorado ao botão da toolbar via top/left
-   calculados em JS. z-index alto pra ficar sobre modais abertos. */
-.comment-link-pop {
-  position: absolute;
-  z-index: 10001;
-  display: flex; align-items: center; gap: 6px;
-  padding: 6px;
-  background: var(--surface);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0,0,0,.25));
-  min-width: 300px;
-  animation: linkPopIn .12s var(--ease-out);
-}
-@keyframes linkPopIn {
-  from { opacity: 0; transform: translateY(-4px); }
-  to   { opacity: 1; transform: none; }
-}
-.comment-link-input {
-  flex: 1; min-width: 0;
-  padding: 5px 8px !important;
-  font-size: 12.5px !important;
-  height: 28px !important;
-}
-.comment-link-pop .btn { padding: 4px 10px; height: 28px; }
 .comment-input-ce {
   min-height: 64px;
   max-height: 340px;
