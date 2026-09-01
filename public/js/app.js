@@ -10394,8 +10394,20 @@ function openDetailStages() {
 function toggleStageDraft(stageId) {
   if (!stagesEditDraft) return;
   const d = demandById(detailId); if (!d) return;
-  if (stagesEditDraft.skipped.has(stageId)) stagesEditDraft.skipped.delete(stageId);
-  else stagesEditDraft.skipped.add(stageId);
+  if (stagesEditDraft.skipped.has(stageId)) {
+    // Reativando: limpa âncora e SLA custom pra que o cascade recomponha a
+    // data a partir do estado atual das etapas anteriores ativas.
+    stagesEditDraft.skipped.delete(stageId);
+    if (stagesEditDraft.dates) delete stagesEditDraft.dates[stageId];
+    // SLA volta pro padrão do fluxo (undefined = padrão).
+    if (stagesEditDraft.sla) {
+      const flow = flowById(d.flowId);
+      const flowStage = flow?.stages.find(s => s.id === stageId);
+      if (flowStage) stagesEditDraft.sla[stageId] = flowStage.deadlineDays ?? null;
+    }
+  } else {
+    stagesEditDraft.skipped.add(stageId);
+  }
   renderDetailStages(d);
   refreshStagesEditButtons(d);
 }
@@ -10458,6 +10470,44 @@ function isStagesOrderCustomized(d) {
   const baseOrder = _demandStageIdPool(d);
   if (stagesEditDraft.order.length !== baseOrder.length) return true;
   return stagesEditDraft.order.some((id, i) => baseOrder[i] !== id);
+}
+/* "Resetar ao padrão do fluxo": limpa APENAS fluxo (skipped/order), etapas
+   novas (additions salvas e não salvas) e datas (dates/sla). Mantém executores,
+   nomes e overrides de conclusão — o que o usuário editou nessas áreas fica. */
+function resetStagesToFlowDefault() {
+  const d = demandById(detailId); if (!d) return;
+  const flow = flowById(d.flowId); if (!flow) return;
+  if (!stagesEditDraft) _rebuildStagesDraftFromSaved(d);
+  const preservedResp = { ...(stagesEditDraft.responsibles || {}) };
+  const preservedLabels = { ...(stagesEditDraft.labels || {}) };
+  const preservedDone = { ...(stagesEditDraft.done || {}) };
+  const preservedDonePrev = { ...(stagesEditDraft.donePrevIndex || {}) };
+  // Marca additions salvas pra remoção — reset devolve à composição do fluxo.
+  const savedAdditionIds = new Set((Array.isArray(d.stageAdditions) ? d.stageAdditions : []).map(a => a.id));
+  // Seed do SLA com o padrão do fluxo (sem overrides).
+  const seedSla = {};
+  (flow.stages || []).forEach(s => { seedSla[s.id] = s.deadlineDays ?? null; });
+  // Limpa overrides de responsáveis/labels/done que apontam pra additions removidas.
+  savedAdditionIds.forEach(id => {
+    delete preservedResp[id];
+    delete preservedLabels[id];
+    delete preservedDone[id];
+    delete preservedDonePrev[id];
+  });
+  stagesEditDraft = {
+    skipped: new Set(),
+    responsibles: preservedResp,
+    labels: preservedLabels,
+    sla: seedSla,
+    dates: {},
+    order: flow.stages.map(s => s.id),
+    newAdditions: [],
+    removedAdditionIds: savedAdditionIds,
+    done: preservedDone,
+    donePrevIndex: preservedDonePrev,
+  };
+  renderDetailStages(d);
+  refreshStagesEditButtons(d);
 }
 /* "Descartar alterações": restaura o ÚLTIMO ESTADO SALVO da demanda (não o
    padrão do fluxo). Rebuilda o draft exatamente como openDetailStages faz. */
@@ -10665,6 +10715,8 @@ function _computeStageAnchorDate(d, stageId, overrideDays) {
   let lastEnd = baselineYmd;
   for (let k = 0; k < idx; k++) {
     const st = rowsList[k];
+    // Etapas desativadas não entram no cronograma — pula sem avançar o cursor.
+    if (stagesEditDraft.skipped?.has(st.id)) continue;
     const anchor = stagesEditDraft.dates?.[st.id];
     if (anchor) { lastEnd = anchor; continue; }
     const days = (stagesEditDraft.sla && Object.prototype.hasOwnProperty.call(stagesEditDraft.sla, st.id))
@@ -10957,9 +11009,13 @@ function setStageDateDraft(stageId, isoDate) {
   const flowSlaById = new Map((flow?.stages || []).map(s => [s.id, s.deadlineDays ?? null]));
   const baselineYmd = (d.createdAt || '').slice(0, 10) || todayStr();
   // Calcula fim da etapa anterior (respeita âncoras já gravadas).
+  // Ignora etapas desativadas — elas não entram no cronograma.
   let prevEnd = baselineYmd;
+  let lastActivePrevIdx = -1;
   for (let k = 0; k < idx; k++) {
     const st = rowsList[k];
+    if (stagesEditDraft.skipped?.has(st.id)) continue;
+    lastActivePrevIdx = k;
     const anchor = stagesEditDraft.dates?.[st.id];
     if (anchor) { prevEnd = anchor; continue; }
     const days = (stagesEditDraft.sla && Object.prototype.hasOwnProperty.call(stagesEditDraft.sla, st.id))
@@ -10967,9 +11023,10 @@ function setStageDateDraft(stageId, isoDate) {
       : Number((flowSlaById.has(st.id) ? flowSlaById.get(st.id) : st.deadlineDays) ?? 0);
     prevEnd = _addDays(prevEnd, days);
   }
-  // Valida contra a etapa anterior — data não pode retroceder.
-  if (idx > 0 && isoDate < prevEnd) {
-    const prev = rowsList[idx - 1];
+  // Valida contra a última etapa ATIVA anterior — data não pode retroceder.
+  const isEditingSkipped = stagesEditDraft.skipped?.has(stageId);
+  if (!isEditingSkipped && lastActivePrevIdx >= 0 && isoDate < prevEnd) {
+    const prev = rowsList[lastActivePrevIdx];
     const prevLabel = stagesEditDraft.labels?.[prev.id] || prev.label;
     _showStageDateTooltip(stageId, `Não é possível colocar data anterior à etapa "${prevLabel}" (termina em ${_fmtDayMonth(prevEnd)}).`);
     renderDetail();
@@ -11116,8 +11173,17 @@ function renderDetailStages(d) {
             return Number(s.deadlineDays ?? 0);
           });
           const endDates = [];
+          const prevActiveEnds = []; // fim da última etapa ATIVA antes desta linha
           let lastEnd = baselineYmd;
           rowsList.forEach((s, i) => {
+            prevActiveEnds.push(lastEnd);
+            // Desativadas ficam fora do cronograma: mostram a âncora só como
+            // visualização (ou vazio) e não avançam o cursor pra próxima.
+            if (draft.skipped.has(s.id)) {
+              const anchor = draft.dates && draft.dates[s.id];
+              endDates.push(anchor || '');
+              return;
+            }
             const anchor = draft.dates && draft.dates[s.id];
             const end = anchor || _addBusinessDays(lastEnd, effectiveDays[i] ?? 0);
             endDates.push(end);
@@ -11195,7 +11261,7 @@ function renderDetailStages(d) {
                      ${isFlowStage || isAddition ? '' : 'disabled'}
                      onchange="setStageDateDraft('${s.id}', this.value)">
               <span class="stages-edit-sla-days" title="Dias úteis pra executar (não conta sábado/domingo). Edite a data pra alterar. O padrão vem do fluxo.">${(() => {
-                const prev = i === 0 ? baselineYmd : (endDates[i - 1] || baselineYmd);
+                const prev = prevActiveEnds[i] || baselineYmd;
                 // Diff em dias ÚTEIS — evita mostrar "6d" quando 2 são fim de semana.
                 const diff = endDate ? _daysDiffBusiness(prev, endDate) : (draftSlaVal ?? null);
                 return (diff ?? '—') + 'd';
@@ -11225,6 +11291,7 @@ function renderDetailStages(d) {
           <span>Alterações não salvas</span>
         </div>
         <div style="flex:1"></div>
+        <button id="stages-edit-reset-flow" class="btn btn-ghost btn-sm" onclick="resetStagesToFlowDefault()" title="Volta fluxo, etapas novas e datas ao padrão do fluxo (mantém executores e nomes editados)">Resetar ao padrão do fluxo</button>
         <button id="stages-edit-reset" class="btn btn-ghost btn-sm" onclick="resetStagesDraft()" ${dirty ? '' : 'disabled'}>Descartar alterações</button>
         <button id="stages-edit-save" class="btn btn-primary btn-sm" onclick="saveStagesDraft()" ${!dirty ? 'disabled' : ''}>Salvar</button>
       </div>
@@ -27079,6 +27146,32 @@ function resetWizardCustomization() {
     stageOverrides: {}, stageAdditions: [], stageOrder: null
   };
 }
+/* Reset "leve" acionado pelo link no rodapé do step Customizar. Volta APENAS
+   fluxo (skipped/order), etapas novas (additions) e datas (overrides de
+   deadlineDate/deadlineDays) ao padrão do fluxo — mantém executores, nomes,
+   cores e a flag de conclusão que o usuário já editou. */
+function resetWizardCust() {
+  if (!wizardState.customization) { resetWizardCustomization(); renderWizardCustomization(); return; }
+  const cust = wizardState.customization;
+  const preservedOverrides = {};
+  Object.keys(cust.stageOverrides || {}).forEach(sid => {
+    const ov = cust.stageOverrides[sid] || {};
+    const cleaned = {};
+    // Mantém color/done — resetamos só o que é "data".
+    if (ov.color !== undefined) cleaned.color = ov.color;
+    if (ov.done !== undefined) cleaned.done = ov.done;
+    if (Object.keys(cleaned).length) preservedOverrides[sid] = cleaned;
+  });
+  wizardState.customization = {
+    skippedStages: [],
+    stageResponsibles: { ...(cust.stageResponsibles || {}) },
+    stageLabels: { ...(cust.stageLabels || {}) },
+    stageOverrides: preservedOverrides,
+    stageAdditions: [],
+    stageOrder: null,
+  };
+  renderWizardCustomization();
+}
 /* Aplica valor efetivo de uma etapa considerando origem + overrides. Usado
    pra renderizar o valor "atual" mesmo pras originais que sofreram override. */
 function _custEffectiveStageValue(stage, isAddition, field) {
@@ -27122,13 +27215,21 @@ function renderWizardCustomization() {
   }
 
   // Cascata data ↔ dias — respeita âncoras (deadlineDate) e SKIPA fins de semana.
+  // Etapas desativadas ficam fora do cronograma (não avançam o cursor).
   const baselineYmd = todayStr();
   const dateByStageId = {};
+  const prevActiveEndByStageId = {};
   let lastEnd = baselineYmd;
   orderedIds.forEach((id, i) => {
     const meta = allById.get(id);
     if (!meta) return;
     const { stage, isAddition } = meta;
+    prevActiveEndByStageId[id] = lastEnd;
+    if (cust.skippedStages.includes(id)) {
+      const anchor = isAddition ? stage.deadlineDate : cust.stageOverrides[id]?.deadlineDate;
+      dateByStageId[id] = anchor || '';
+      return;
+    }
     // Âncora explícita: adição.deadlineDate ou stageOverrides[id].deadlineDate.
     const anchor = isAddition ? stage.deadlineDate : cust.stageOverrides[id]?.deadlineDate;
     if (anchor) { dateByStageId[id] = anchor; lastEnd = anchor; return; }
@@ -27175,7 +27276,7 @@ function renderWizardCustomization() {
     // Dias exibidos = diff entre a data desta etapa e a da anterior (ou baseline
     // pra primeira). Agora é só indicativo — o usuário edita as DATAS, o número
     // recalcula automaticamente. Só o fluxo (página Fluxos) tem SLA editável.
-    const prevEnd = i === 0 ? baselineYmd : (dateByStageId[orderedIds[i - 1]] || baselineYmd);
+    const prevEnd = prevActiveEndByStageId[stageId] || baselineYmd;
     // Diff em dias ÚTEIS — ignora fim de semana pra não passar impressão errada.
     const computedDays = endDate ? _daysDiffBusiness(prevEnd, endDate) : (days ?? null);
     return `<div class="wizard-cust-row-v2 ${skipped ? 'is-skipped' : ''} ${isAddition ? 'is-added' : ''}" draggable="true" data-stage-id="${stageId}">
@@ -27193,7 +27294,28 @@ function renderWizardCustomization() {
   wrap.innerHTML = orderedIds.map((id, i) => rowHTML(id, i)).join('');
   _installCustDragDrop(wrap);
   renderWizardCustChecklist();
+  const resetLink = document.getElementById('dw-cust-reset-link');
+  if (resetLink) resetLink.style.display = _isWizardCustDirty() ? '' : 'none';
   paintIcons();
+}
+/* Dirty do wizard cust: qualquer customização manual (skip, additions, order,
+   overrides de data/dias/cor/done, executor ou label editados). */
+function _isWizardCustDirty() {
+  const cust = wizardState?.customization;
+  if (!cust) return false;
+  if (Array.isArray(cust.skippedStages) && cust.skippedStages.length) return true;
+  if (Array.isArray(cust.stageAdditions) && cust.stageAdditions.length) return true;
+  if (cust.stageLabels && Object.keys(cust.stageLabels).length) return true;
+  if (cust.stageResponsibles && Object.keys(cust.stageResponsibles).length) return true;
+  if (cust.stageOverrides && Object.keys(cust.stageOverrides).length) return true;
+  // stageOrder diferente do default (fluxo original) também conta.
+  if (Array.isArray(cust.stageOrder) && cust.stageOrder.length) {
+    const flow = flowById(wizardState.flowId);
+    const defaultOrder = flow ? flow.stages.map(s => s.id) : [];
+    if (cust.stageOrder.length !== defaultOrder.length) return true;
+    if (cust.stageOrder.some((id, i) => defaultOrder[i] !== id)) return true;
+  }
+  return false;
 }
 function renderWizardCustChecklist() {
   const wrap = $('dw-cust-checklist');
@@ -27281,8 +27403,23 @@ function _reorderCust(draggedId, targetId, above) {
 
 function wizardCustToggleSkip(stageId, enabled) {
   const cust = wizardState.customization;
-  if (enabled) cust.skippedStages = cust.skippedStages.filter(id => id !== stageId);
-  else if (!cust.skippedStages.includes(stageId)) cust.skippedStages.push(stageId);
+  if (enabled) {
+    // Reativando: limpa âncora de data e SLA custom pra que o cascade recalcule
+    // a data a partir das etapas ativas anteriores.
+    cust.skippedStages = cust.skippedStages.filter(id => id !== stageId);
+    const addition = cust.stageAdditions.find(s => s.id === stageId);
+    if (addition) {
+      addition.deadlineDate = null;
+      // deadlineDays da addition volta pro default salvo (não temos "flow default"
+      // pra additions — mantém o que tem, mas remove âncora resolve o problema).
+    } else if (cust.stageOverrides[stageId]) {
+      delete cust.stageOverrides[stageId].deadlineDate;
+      delete cust.stageOverrides[stageId].deadlineDays;
+      if (!Object.keys(cust.stageOverrides[stageId]).length) delete cust.stageOverrides[stageId];
+    }
+  } else if (!cust.skippedStages.includes(stageId)) {
+    cust.skippedStages.push(stageId);
+  }
   // Re-render pra visual do skipped (opacity)
   renderWizardCustomization();
 }
@@ -27318,14 +27455,12 @@ function wizardCustSetDate(stageId, isoDate) {
     renderWizardCustomization();
     return;
   }
-  // Calcula fim da etapa anterior respeitando âncoras já gravadas.
+  // Calcula fim da etapa ATIVA anterior respeitando âncoras já gravadas.
   const prevEnd = _wizardCustPrevEnd(stageId);
-  if (isoDate && prevEnd && isoDate < prevEnd) {
-    const orderedIds = _wizardCustOrderedIds();
-    const idx = orderedIds.indexOf(stageId);
-    const prevId = orderedIds[idx - 1];
-    const prevStage = flow?.stages.find(s => s.id === prevId) || cust.stageAdditions.find(s => s.id === prevId);
-    const prevLabel = cust.stageLabels[prevId] || prevStage?.label || '';
+  const isEditingSkipped = cust.skippedStages.includes(stageId);
+  const prevActive = _wizardCustPrevActiveStage(stageId);
+  if (!isEditingSkipped && isoDate && prevActive && isoDate < prevEnd) {
+    const prevLabel = cust.stageLabels[prevActive.id] || prevActive.label || '';
     _showStageDateTooltip(stageId, `Não é possível colocar data anterior à etapa "${prevLabel}" (termina em ${_fmtDayMonth(prevEnd)}).`);
     renderWizardCustomization();
     return;
@@ -27366,6 +27501,8 @@ function _wizardCustPrevEnd(stageId) {
   let lastEnd = todayStr();
   for (let k = 0; k < idx; k++) {
     const id = orderedIds[k];
+    // Etapas desativadas ficam fora do cronograma — não avançam o cursor.
+    if (cust.skippedStages.includes(id)) continue;
     const addition = cust.stageAdditions.find(s => s.id === id);
     if (addition) {
       if (addition.deadlineDate) { lastEnd = addition.deadlineDate; continue; }
@@ -27379,6 +27516,20 @@ function _wizardCustPrevEnd(stageId) {
     lastEnd = _addDays(lastEnd, Number(days ?? 0));
   }
   return lastEnd;
+}
+/* Última etapa ATIVA anterior a `stageId` (pra rótulo de tooltip de validação). */
+function _wizardCustPrevActiveStage(stageId) {
+  const cust = wizardState.customization;
+  const flow = flowById(wizardState.flowId);
+  const orderedIds = _wizardCustOrderedIds();
+  const idx = orderedIds.indexOf(stageId);
+  if (idx <= 0) return null;
+  for (let k = idx - 1; k >= 0; k--) {
+    const id = orderedIds[k];
+    if (cust.skippedStages.includes(id)) continue;
+    return flow?.stages.find(s => s.id === id) || cust.stageAdditions.find(s => s.id === id) || null;
+  }
+  return null;
 }
 function wizardCustSetDays(stageId, value) {
   const cust = wizardState.customization;

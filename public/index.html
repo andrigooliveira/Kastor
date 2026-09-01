@@ -2521,9 +2521,12 @@
         </div>
         <div class="wizard-cust-section-title">Etapas</div>
         <div class="wizard-cust-list" id="dw-cust-list"></div>
-        <button type="button" class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="wizardAddCustStage()">
-          <i data-lucide="plus" class="ic-sm"></i> Adicionar etapa
-        </button>
+        <div class="wizard-cust-footer-row">
+          <button type="button" class="btn btn-ghost btn-sm" onclick="wizardAddCustStage()">
+            <i data-lucide="plus" class="ic-sm"></i> Adicionar etapa
+          </button>
+          <a href="#" id="dw-cust-reset-link" class="wizard-cust-reset-link" style="display:none" title="Descarta alterações manuais desta instância e volta ao padrão do fluxo" onclick="event.preventDefault(); resetWizardCust()">Descartar alterações</a>
+        </div>
         <div class="wizard-cust-section-title" style="margin-top:26px">Checklist inicial</div>
         <div class="wizard-cust-chk-hint">Itens do checklist que a demanda vai ter ao ser criada. Vem pré-preenchido do fluxo — você pode editar, adicionar ou remover.</div>
         <div id="dw-cust-checklist"></div>
