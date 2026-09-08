@@ -102,7 +102,8 @@ const PAGE_TO_PATH = {
   passwords:    '/passwords',
   kb:           '/knowledge-base',
   forms:        '/forms',
-  dashboards:   '/dashboards'
+  dashboards:   '/dashboards',
+  performance:  '/performance'
 };
 const PATH_TO_PAGE = Object.fromEntries(Object.entries(PAGE_TO_PATH).map(([k, v]) => [v, k]));
 
@@ -158,11 +159,11 @@ function pageUrlFor(page)  {
     try { tab = localStorage.getItem('kastor-rec-tab') || 'demandas'; } catch {}
     return tab === 'listas' ? '/recurring/lists' : '/recurring/demands';
   }
-  // Análises tem 3 abas (capacidade/relatórios/performance) — resolve pela aba persistida.
+  // Análises tem 2 abas (capacidade/relatórios) — resolve pela aba persistida.
   if (page === 'analytics') {
     let tab = 'capacity';
     try { tab = localStorage.getItem('kastor-an-tab') || 'capacity'; } catch {}
-    const map = { reports: '/analytics/reports', performance: '/analytics/performance', capacity: '/analytics/capacity' };
+    const map = { reports: '/analytics/reports', capacity: '/analytics/capacity' };
     return map[tab] || '/analytics/capacity';
   }
   // Detalhe da demanda: URL vem do id atual (senão cai pra dashboard).
@@ -204,7 +205,9 @@ function parseRoute(path) {
   }
   if (p === '/analytics/capacity' || p === '/capacity') return { page: 'analytics', tab: 'capacity' };
   if (p === '/analytics/reports'  || p === '/reports')  return { page: 'analytics', tab: 'reports' };
-  if (p === '/analytics/performance' || p === '/performance') return { page: 'analytics', tab: 'performance' };
+  // Performance agora é uma página isolada. URL legacy /analytics/performance
+  // continua caindo aqui pra não quebrar links antigos/bookmarks.
+  if (p === '/analytics/performance' || p === '/performance') return { page: 'performance' };
   // Base de conhecimento: /knowledge-base = grid; /knowledge-base/:slug-id = post
   // /knowledge-base/new = editor (novo); /knowledge-base/:slug-id/edit = editor (editar)
   if (p === '/knowledge-base')                    return { page: 'kb' };
@@ -1814,7 +1817,7 @@ function cmdkActions() {
     { icon: 'user',         label: 'Ir para Minhas Demandas',       kind: 'Navegar',  run: () => goPage('mine') },
     { icon: 'bar-chart-3',  label: 'Ir para Análises · Capacidade', kind: 'Navegar',  run: () => { goPage('analytics'); setTimeout(() => typeof setAnalyticsTab === 'function' && setAnalyticsTab('capacity'), 30); } },
     { icon: 'timer',        label: 'Ir para Análises · Relatórios',  kind: 'Navegar',  run: () => { goPage('analytics'); setTimeout(() => typeof setAnalyticsTab === 'function' && setAnalyticsTab('reports'), 30); } },
-    { icon: 'line-chart',   label: 'Ir para Análises · Performance', kind: 'Navegar',  run: () => { goPage('analytics'); setTimeout(() => typeof setAnalyticsTab === 'function' && setAnalyticsTab('performance'), 30); } },
+    { icon: 'line-chart',   label: 'Ir para Performance', kind: 'Navegar',  run: () => goPage('performance') },
     { icon: 'calendar',     label: 'Ir para Agenda',                kind: 'Navegar',  run: () => goPage('agenda') },
     { icon: 'calendar',     label: 'Ir para Calendário (Demandas)', kind: 'Navegar',  run: () => { goPage('list'); setTimeout(() => typeof setListView === 'function' && setListView('calendar'), 50); } },
     { icon: 'kanban',       label: 'Ir para Kanban (Demandas)',     kind: 'Navegar',  run: () => { goPage('list'); setTimeout(() => typeof setListView === 'function' && setListView('kanban'), 50); } },
@@ -3778,7 +3781,7 @@ const PAGE_TITLES = {
   recurring: 'Listas de tarefas', docs: 'Documentação', clientsModels: 'Modelos de Cliente',
   trash: 'Lixeira', recurringDemands: 'Demandas Recorrentes',
   devtools: 'Dev Tools', passwords: 'Cofre de Senhas', kb: 'Base de conhecimento',
-  forms: 'Formulários', dashboards: 'Dashboards',
+  forms: 'Formulários', dashboards: 'Dashboards', performance: 'Performance',
   'post-editor': 'Editor de post', 'demand-detail': 'Demanda'
 };
 function goPage(page) {
@@ -3915,7 +3918,6 @@ const DEVTOOLS_GROUPS = [
     links: [
       { label: 'Análises · Capacidade',    path: '/analytics/capacity', icon: 'gauge',       desc: 'Aba de capacidade da página Análises.' },
       { label: 'Análises · Relatórios',    path: '/analytics/reports',  icon: 'file-bar-chart', desc: 'Aba de relatórios da página Análises.' },
-      { label: 'Análises · Performance',   path: '/analytics/performance', icon: 'line-chart', desc: 'Aba de performance de mídia (marketing) da página Análises.' },
       { label: 'Recorrentes · Demandas',   path: '/recurring/demands',  icon: 'refresh-ccw', desc: 'Aba de demandas recorrentes.' },
       { label: 'Recorrentes · Listas',     path: '/recurring/lists',    icon: 'list-checks', desc: 'Aba de listas recorrentes.' },
     ]
@@ -4215,6 +4217,7 @@ function renderCurrent() {
     case 'list':       renderList(); renderCalendar('all'); break;
     case 'mine':       renderMine(); renderCalendar('mine'); break;
     case 'analytics':  renderAnalytics(); break;
+    case 'performance': renderPerformance(); break;
     case 'agenda':     renderAgenda(); break;
     case 'templates':  renderTemplates(); break;
     case 'recurring':  renderRecurring(); break;
@@ -7718,22 +7721,20 @@ let _anTab = localStorage.getItem('kastor-an-tab') || 'capacity';
 function syncAnalyticsTab() {
   document.querySelectorAll('#page-analytics .an-tab')
     .forEach(t => t.classList.toggle('is-active', t.dataset.tab === _anTab));
-  const cap = $('an-tab-capacity'), rep = $('an-tab-reports'), perf = $('an-tab-performance');
+  const cap = $('an-tab-capacity'), rep = $('an-tab-reports');
   if (cap) cap.style.display = _anTab === 'capacity' ? '' : 'none';
   if (rep) rep.style.display = _anTab === 'reports' ? '' : 'none';
-  if (perf) perf.style.display = _anTab === 'performance' ? '' : 'none';
 }
 function renderAnalyticsActive() {
   if (_anTab === 'reports') renderReports();
-  else if (_anTab === 'performance') renderPerformance();
   else renderCapacity();
 }
 function setAnalyticsTab(tab) {
-  if (!['capacity', 'reports', 'performance'].includes(tab)) tab = 'capacity';
+  if (!['capacity', 'reports'].includes(tab)) tab = 'capacity';
   _anTab = tab;
   try { localStorage.setItem('kastor-an-tab', tab); } catch {}
   syncAnalyticsTab();
-  const paths = { reports: '/analytics/reports', performance: '/analytics/performance', capacity: '/analytics/capacity' };
+  const paths = { reports: '/analytics/reports', capacity: '/analytics/capacity' };
   navPush(paths[tab]);
   renderAnalyticsActive();
 }
@@ -7839,7 +7840,8 @@ function _perfOnSquadChange() {
   _perfPopulateClients('');
   renderPerformance();
 }
-/* Popula o <select> de squads com os workspaces acessíveis ao user. */
+/* Popula o <select> de squads com os workspaces acessíveis ao user.
+   Default: squad ativo na sidebar (activeWs). Fallback: primeiro acessível. */
 function _perfPopulateSquads() {
   const sel = $('perf-squad');
   if (!sel) return;
@@ -7848,7 +7850,8 @@ function _perfPopulateSquads() {
     .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
   const prev = _perfState.workspaceId;
   const stillValid = prev && accessible.some(w => w.id === prev);
-  const selected = stillValid ? prev : (accessible[0]?.id || '');
+  const activeValid = activeWs && accessible.some(w => w.id === activeWs);
+  const selected = stillValid ? prev : (activeValid ? activeWs : (accessible[0]?.id || ''));
   _perfState.workspaceId = selected;
   _perfSaveClient();
   sel.innerHTML = accessible.length
