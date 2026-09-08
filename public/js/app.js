@@ -3741,6 +3741,25 @@ function renderSidebarUser() {
 function toggleSidebarCollapse() {
   const isCollapsed = document.body.classList.toggle('sidebar-collapsed');
   try { localStorage.setItem('kastor-sidebar-collapsed', isCollapsed ? '1' : '0'); } catch {}
+  // Se o popover "Mais" tá aberto, reposiciona pra acompanhar a nova borda
+  // da sidebar (aguarda a transição de width acabar).
+  const pop = document.getElementById('nav-more-popover');
+  if (pop && !pop.hidden) setTimeout(_repositionNavMore, 240);
+}
+function _repositionNavMore() {
+  const pop = document.getElementById('nav-more-popover');
+  const btn = document.getElementById('nav-more-toggle');
+  if (!pop || pop.hidden || !btn) return;
+  const btnRect = btn.getBoundingClientRect();
+  const sidebarRect = document.querySelector('.sidebar')?.getBoundingClientRect();
+  const leftAnchor = (sidebarRect ? sidebarRect.right : btnRect.right) + 8;
+  pop.style.left = leftAnchor + 'px';
+  const pr = pop.getBoundingClientRect();
+  let top = btnRect.top;
+  if (top + pr.height > window.innerHeight - 8) {
+    top = Math.max(8, window.innerHeight - pr.height - 8);
+  }
+  pop.style.top = top + 'px';
 }
 // Aplica estado inicial (chamado no boot).
 function applySidebarCollapseInit() {
@@ -3781,6 +3800,7 @@ function goPage(page) {
   _markFiltersDirty(page);
   document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.page === page));
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + page));
+  _syncNavMoreActiveHint(page);
   $('topbar-title').textContent = PAGE_TITLES[page] || '';
   // Botão Voltar aparece apenas na página de detalhe da demanda.
   const backBtn = document.getElementById('topbar-back');
@@ -3808,6 +3828,66 @@ function toggleSidebar() {
 function closeSidebar() {
   document.body.classList.remove('menu-open');
 }
+/* Popover "Mais" na sidebar — abre um card ancorado à direita do botão com
+   as opções secundárias (recorrentes, config, ajuda). */
+function toggleNavMore(ev) {
+  ev?.stopPropagation();
+  const pop = document.getElementById('nav-more-popover');
+  const btn = document.getElementById('nav-more-toggle');
+  if (!pop || !btn) return;
+  if (!pop.hidden) { closeNavMore(); return; }
+  // Move o popover pro body — sidebar tem `contain: layout paint`, que
+  // clipa filhos position:fixed dentro do seu box.
+  if (pop.parentElement !== document.body) document.body.appendChild(pop);
+  const btnRect = btn.getBoundingClientRect();
+  const sidebarRect = document.querySelector('.sidebar')?.getBoundingClientRect();
+  // Ancora pela borda direita da sidebar (funciona em modo compacto e normal).
+  const leftAnchor = (sidebarRect ? sidebarRect.right : btnRect.right) + 8;
+  pop.style.left = leftAnchor + 'px';
+  pop.hidden = false;
+  // Depois de ficar visível, mede altura pra manter dentro da viewport.
+  requestAnimationFrame(() => {
+    const pr = pop.getBoundingClientRect();
+    let top = btnRect.top;
+    if (top + pr.height > window.innerHeight - 8) {
+      top = Math.max(8, window.innerHeight - pr.height - 8);
+    }
+    pop.style.top = top + 'px';
+  });
+  if (window.lucide?.createIcons) lucide.createIcons({ nameAttr: 'data-lucide' });
+  setTimeout(() => document.addEventListener('mousedown', _navMoreOutside, true), 0);
+}
+function closeNavMore() {
+  const pop = document.getElementById('nav-more-popover');
+  if (pop) pop.hidden = true;
+  document.removeEventListener('mousedown', _navMoreOutside, true);
+}
+function _navMoreOutside(e) {
+  const pop = document.getElementById('nav-more-popover');
+  const btn = document.getElementById('nav-more-toggle');
+  if (!pop || pop.hidden) { document.removeEventListener('mousedown', _navMoreOutside, true); return; }
+  if (pop.contains(e.target) || btn?.contains(e.target)) return;
+  closeNavMore();
+}
+/* Se a página ativa vive dentro do "Mais", destaca o botão de toggle. */
+function _syncNavMoreActiveHint(page) {
+  const btn = document.getElementById('nav-more-toggle');
+  const pop = document.getElementById('nav-more-popover');
+  if (!btn || !pop) return;
+  const inMore = !!pop.querySelector(`.nav-item[data-page="${page}"]`);
+  btn.classList.toggle('has-active-child', inMore);
+}
+// Esc / resize fecham o popover.
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    const pop = document.getElementById('nav-more-popover');
+    if (pop && !pop.hidden) { e.preventDefault(); closeNavMore(); }
+  }
+});
+window.addEventListener('resize', () => {
+  const pop = document.getElementById('nav-more-popover');
+  if (pop && !pop.hidden) closeNavMore();
+});
 // Esc fecha o menu mobile quando aberto.
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && document.body.classList.contains('menu-open')) {
@@ -7000,6 +7080,7 @@ function renderMine() {
     else if (mineSortKey === 'client')     { va = norm(projectById(a.projectId)?.client || ''); vb = norm(projectById(b.projectId)?.client || ''); }
     else if (mineSortKey === 'project')    { va = norm(projectById(a.projectId)?.name || ''); vb = norm(projectById(b.projectId)?.name || ''); }
     else if (mineSortKey === 'status')     { const fa = flowById(a.flowId), fb = flowById(b.flowId); const ea = fa ? activeStagesOf(a, fa) : []; const eb = fb ? activeStagesOf(b, fb) : []; va = ea.findIndex(s => s.id === a.status); vb = eb.findIndex(s => s.id === b.status); if (va === -1) va = 999; if (vb === -1) vb = 999; }
+    else if (mineSortKey === 'priority')   { va = a.priority || 3; vb = b.priority || 3; }
     else                                   { va = effDue(a) || '9999'; vb = effDue(b) || '9999'; }
     return (va < vb ? -1 : va > vb ? 1 : 0) * (mineSortAsc ? 1 : -1);
   });
@@ -7016,6 +7097,7 @@ function renderMine() {
       <td>${esc(p?.client || '—')}</td>
       <td>${esc(p?.name || '—')}</td>
       <td>${statusPill(d)}</td>
+      <td>${priorityPill(d.priority)}</td>
       <td>${qtyCell(d)}</td>
       <td>${deadlineCell(d)}</td>
     </tr>`;
@@ -7023,7 +7105,7 @@ function renderMine() {
 
   const body = $('mine-table-body');
   if (!list.length) {
-    body.innerHTML = `<tr><td colspan="7">${emptyState('Nenhuma demanda encontrada', 'Você não tem demandas neste filtro.', 'inbox')}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="8">${emptyState('Nenhuma demanda encontrada', 'Você não tem demandas neste filtro.', 'inbox')}</td></tr>`;
   } else if (fq === 'done') {
     // Filtro "Concluídas" — flat, sem seções (não faz sentido separar por prazo).
     body.innerHTML = list.map(renderMineRow).join('');
@@ -7053,7 +7135,7 @@ function renderMine() {
     body.innerHTML = sections.map(sec => {
       const items = buckets[sec.key];
       if (!items.length) return '';
-      return `<tr class="mine-section-head ${sec.cls}"><td colspan="7"><span class="mine-section-lbl"><i data-lucide="${sec.icon}" class="ic-sm"></i>${esc(sec.label)}<span class="mine-section-count">${items.length}</span></span></td></tr>` +
+      return `<tr class="mine-section-head ${sec.cls}"><td colspan="8"><span class="mine-section-lbl"><i data-lucide="${sec.icon}" class="ic-sm"></i>${esc(sec.label)}<span class="mine-section-count">${items.length}</span></span></td></tr>` +
         items.map(renderMineRow).join('');
     }).join('');
   }

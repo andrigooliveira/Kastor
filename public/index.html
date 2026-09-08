@@ -14,12 +14,12 @@
 <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/geist-latin-ext.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/css/fonts.css?v=1">
-<link rel="stylesheet" href="/css/style.css?v=20260829perf5">
+<link rel="stylesheet" href="/css/style.css?v=20260908nav4">
 <!-- Preload dos JS pesados no <head> pra que o download comece IMEDIATAMENTE,
      em paralelo com o parse do HTML, em vez de esperar o parser chegar em
      </body>. Com immutable cache (max-age=1yr), na 2ª visita nem baixa. -->
 <link rel="preload" href="/vendor/lucide.min.js" as="script">
-<link rel="preload" href="/js/app.js?v=20260829perf5" as="script">
+<link rel="preload" href="/js/app.js?v=20260908nav4" as="script">
 <script type="text/javascript">
     // Clarity: analytics de heatmap/session replay. Não é crítico pro app —
     // deferido pra depois do primeiro paint pra não roubar tempo do LCP.
@@ -121,11 +121,6 @@
         <svg viewBox="0 0 16 16" fill="none"><rect x="2" y="3.5" width="12" height="11" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M5 1.5v3M11 1.5v3M2 6.5h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         Agenda
       </div>
-      <div class="nav-item freelancer-hide" data-page="recurringDemands" onclick="goPage('recurringDemands')">
-        <svg viewBox="0 0 16 16" fill="none"><path d="M2.5 6.5A5 5 0 0111.7 4.2l1.8 1.8M13.5 9.5A5 5 0 014.3 11.8L2.5 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.5 2.5v3.5H10M2.5 13.5V10h3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        Demandas Recorrentes
-      </div>
-
       <div class="nav-section freelancer-hide">Estrutura</div>
       <div class="nav-item freelancer-hide" data-page="clients" onclick="goPage('clients')">
         <svg viewBox="0 0 16 16" fill="none"><path d="M3 14V3.5a1 1 0 011-1h4a1 1 0 011 1V14M9 6.5h3a1 1 0 011 1V14M2 14h12M5.5 5.5v1M5.5 8.5v1M5.5 11.5v1M10.5 8.5v1M10.5 11.5v1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -139,51 +134,62 @@
         <svg viewBox="0 0 16 16" fill="none"><path d="M3 4h10M3 8h10M3 12h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="0.5" y="2.5" width="2" height="2" rx="0.5" stroke="currentColor" stroke-width="1.2"/><rect x="0.5" y="6.5" width="2" height="2" rx="0.5" stroke="currentColor" stroke-width="1.2"/><rect x="0.5" y="10.5" width="2" height="2" rx="0.5" stroke="currentColor" stroke-width="1.2"/></svg>
         Listas de tarefas
       </div>
-      <div class="nav-item freelancer-hide" data-page="templates" onclick="goPage('templates')">
+
+      <div class="nav-item nav-more-toggle freelancer-hide" id="nav-more-toggle" onclick="toggleNavMore(event)" title="Mais opções">
+        <svg viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Mais
+      </div>
+    </nav>
+    <div class="nav-more-popover" id="nav-more-popover" hidden>
+      <div class="nav-more-section">Execução</div>
+      <div class="nav-item freelancer-hide" data-page="recurringDemands" onclick="goPage('recurringDemands'); closeNavMore()">
+        <svg viewBox="0 0 16 16" fill="none"><path d="M2.5 6.5A5 5 0 0111.7 4.2l1.8 1.8M13.5 9.5A5 5 0 014.3 11.8L2.5 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.5 2.5v3.5H10M2.5 13.5V10h3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Demandas Recorrentes
+      </div>
+      <div class="nav-more-section">Estrutura</div>
+      <div class="nav-item freelancer-hide" data-page="templates" onclick="goPage('templates'); closeNavMore()">
         <svg viewBox="0 0 16 16" fill="none"><rect x="2.5" y="1.5" width="9" height="13" rx="1" stroke="currentColor" stroke-width="1.5"/><path d="M5 5h4M5 8h4M5 11h2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M13.5 3.5v10a1 1 0 01-1 1H11" stroke="currentColor" stroke-width="1.5"/></svg>
         Templates
       </div>
-      <div class="nav-item freelancer-hide" data-page="forms" onclick="goPage('forms')">
+      <div class="nav-item freelancer-hide" data-page="forms" onclick="goPage('forms'); closeNavMore()">
         <svg viewBox="0 0 16 16" fill="none"><rect x="3" y="1.5" width="10" height="13" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="5.5" cy="5.5" r=".5" fill="currentColor"/><circle cx="5.5" cy="8" r=".5" fill="currentColor"/><circle cx="5.5" cy="10.5" r=".5" fill="currentColor"/></svg>
         Formulários
       </div>
-      <div class="nav-item freelancer-hide" data-page="kb" onclick="goPage('kb')">
+      <div class="nav-item freelancer-hide" data-page="kb" onclick="goPage('kb'); closeNavMore()">
         <svg viewBox="0 0 16 16" fill="none"><path d="M2.5 3.5A1 1 0 013.5 2.5H8v11H3.5a1 1 0 01-1-1V3.5zM13.5 3.5A1 1 0 0012.5 2.5H8v11h4.5a1 1 0 001-1V3.5z" stroke="currentColor" stroke-width="1.4"/><path d="M5 5.5h1.5M5 7.5h1.5M9.5 5.5H11M9.5 7.5H11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
         Base de conhecimento
       </div>
-
-      <div class="nav-section freelancer-hide">Configurações</div>
-      <div class="nav-item admin-only" data-page="integrations" id="nav-integrations" onclick="goPage('integrations')">
+      <div class="nav-more-section">Configurações</div>
+      <div class="nav-item admin-only" data-page="integrations" id="nav-integrations" onclick="goPage('integrations'); closeNavMore()">
         <svg viewBox="0 0 16 16" fill="none"><path d="M4 8h2.5a2 2 0 002-2V3.5M12 8H9.5a2 2 0 00-2 2v2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="3" cy="8" r="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="13" cy="8" r="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="7.5" cy="3.5" r="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="7.5" cy="12.5" r="1.5" stroke="currentColor" stroke-width="1.5"/></svg>
         Integrações
       </div>
-      <div class="nav-item admin-only" data-page="workspaces" id="nav-workspaces" onclick="goPage('workspaces')"><!-- id/data-page internos seguem 'workspaces' -->
+      <div class="nav-item admin-only" data-page="workspaces" id="nav-workspaces" onclick="goPage('workspaces'); closeNavMore()">
         <svg viewBox="0 0 16 16" fill="none"><rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M1.5 6h13" stroke="currentColor" stroke-width="1.5"/></svg>
         Squads
       </div>
-      <div class="nav-item freelancer-hide" data-page="users" id="nav-users" onclick="goPage('users')">
+      <div class="nav-item freelancer-hide" data-page="users" id="nav-users" onclick="goPage('users'); closeNavMore()">
         <svg viewBox="0 0 16 16" fill="none"><circle cx="5.5" cy="5" r="2.5" stroke="currentColor" stroke-width="1.5"/><path d="M1.5 13c.6-2.2 2.2-3.3 4-3.3s3.4 1.1 4 3.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="11.5" cy="5.5" r="2" stroke="currentColor" stroke-width="1.5"/><path d="M11 9.8c1.8.1 3 1.1 3.5 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         Usuários
       </div>
-      <div class="nav-item freelancer-hide" data-page="passwords" id="nav-passwords" onclick="goPage('passwords')">
+      <div class="nav-item freelancer-hide" data-page="passwords" id="nav-passwords" onclick="goPage('passwords'); closeNavMore()">
         <svg viewBox="0 0 16 16" fill="none"><rect x="2.5" y="7" width="11" height="6.5" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M5 7V4.5a3 3 0 016 0V7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="10.25" r="1" fill="currentColor"/></svg>
         Senhas
       </div>
-      <div class="nav-item admin-only" data-page="trash" id="nav-trash" onclick="goPage('trash')">
+      <div class="nav-item admin-only" data-page="trash" id="nav-trash" onclick="goPage('trash'); closeNavMore()">
         <svg viewBox="0 0 16 16" fill="none"><path d="M2.5 4.5h11M6 4.5V3a1 1 0 011-1h2a1 1 0 011 1v1.5M4 4.5l.6 8a1.5 1.5 0 001.5 1.4h3.8a1.5 1.5 0 001.5-1.4l.6-8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M6.5 7.5v4M9.5 7.5v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         Lixeira
       </div>
-
-      <div class="nav-section freelancer-hide">Ajuda</div>
-      <div class="nav-item freelancer-hide" data-page="docs" onclick="goPage('docs')">
+      <div class="nav-more-section">Ajuda</div>
+      <div class="nav-item freelancer-hide" data-page="docs" onclick="goPage('docs'); closeNavMore()">
         <svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.25" stroke="currentColor" stroke-width="1.5"/><path d="M8 11V7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="5.25" r=".75" fill="currentColor"/></svg>
         Documentação
       </div>
-      <div class="nav-item admin-only full-admin-only" data-page="devtools" id="nav-devtools" onclick="goPage('devtools')">
+      <div class="nav-item admin-only full-admin-only" data-page="devtools" id="nav-devtools" onclick="goPage('devtools'); closeNavMore()">
         <svg viewBox="0 0 16 16" fill="none"><path d="M6 4L2.5 8 6 12M10 4l3.5 4L10 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
         Dev Tools
       </div>
-    </nav>
+    </div>
     <div class="sidebar-footer">
       <div class="sidebar-user" onclick="goPage('profile')" title="Abrir perfil">
         <div class="avatar" id="sidebar-avatar">A</div>
@@ -712,6 +718,7 @@
                   <th style="cursor:pointer" onclick="sortMine('client')">Cliente <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   <th style="cursor:pointer" onclick="sortMine('project')">Projeto <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   <th style="cursor:pointer" onclick="sortMine('status')">Etapa <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                  <th style="cursor:pointer" onclick="sortMine('priority')">Prioridade <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   <th title="Peças · Artes · Variações">Entregáveis</th>
                   <th style="cursor:pointer" onclick="sortMine('deadline')">Prazo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                 </tr>
@@ -3839,7 +3846,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260829perf5"></script>
+<script src="/js/app.js?v=20260908nav4"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

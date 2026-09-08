@@ -1169,21 +1169,59 @@ body::before {
 .nav-item:active { transform: scale(0.98); }
 .nav-item.active { background: var(--accent-dim); color: var(--accent-text); font-weight: 600; }
 .nav-item svg { width: 16px; height: 16px; flex-shrink: 0; }
+/* Seções ficam como divisórias visuais — sem título. Título ainda existe no
+   HTML pra leitores de tela (aria-friendly) mas o texto é escondido. */
 .nav-section {
-  font-size: 10px; font-weight: 700; color: var(--text-muted);
-  text-transform: uppercase; letter-spacing: .1em;
-  padding: 16px 12px 8px;
-}
-/* Linha sutil de separação acima de cada seção (exceto a primeira) */
-.nav-section + .nav-section,
-.sidebar-nav > .nav-section:not(:first-child) {
+  padding: 0; margin: 10px 12px;
+  height: 0; overflow: hidden;
+  font-size: 0; line-height: 0; color: transparent;
   border-top: 1px solid var(--hairline);
-  margin-top: 4px;
+}
+.sidebar-nav > .nav-section:first-child {
+  border-top: none; margin-top: 0;
 }
 .sidebar-footer {
   padding: 10px 14px; border-top: 1px solid var(--hairline);
   display: flex; align-items: center; gap: 6px;
 }
+/* Botão "Mais" no rodapé da nav — abre popover com opções secundárias. */
+.nav-more-toggle { margin-top: 4px; }
+.nav-more-toggle.has-active-child { color: var(--accent-text); }
+.nav-more-toggle.has-active-child::after {
+  content: ''; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent); margin-left: auto;
+}
+.nav-more-popover {
+  position: fixed;
+  z-index: 950;
+  min-width: 240px; max-width: 280px;
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md, 10px);
+  box-shadow: var(--shadow-lg, 0 12px 28px rgba(0,0,0,.22));
+  flex-direction: column; gap: 2px;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  animation: navMoreIn .14s var(--ease-out);
+}
+.nav-more-popover[hidden] { display: none !important; }
+.nav-more-popover:not([hidden]) { display: flex; }
+@keyframes navMoreIn {
+  from { opacity: 0; transform: translateX(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+.nav-more-popover .nav-item {
+  padding: 9px 11px; font-size: 13px;
+}
+.nav-more-section {
+  font-size: 10px; font-weight: 700; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .1em;
+  padding: 10px 8px 4px;
+}
+.nav-more-section:first-child { padding-top: 4px; }
+body.sidebar-collapsed .nav-more-toggle { justify-content: center; }
+body.sidebar-collapsed .nav-more-toggle.has-active-child::after { display: none; }
 .sidebar-footer-actions { display: flex; gap: 4px; flex-shrink: 0; }
 
 /* Icon button pra ações da sidebar (theme toggle, collapse) */
@@ -1236,24 +1274,26 @@ body.sidebar-collapsed .sidebar-logo-icon {
   display: block !important;
 }
 
-/* Nav items: perfeitamente centralizados, sem qualquer resquício de texto. */
+/* Nav items: perfeitamente centralizados, sem qualquer resquício de texto.
+   Escopo restrito à sidebar — nav-items do popover "Mais" moram no body
+   e mantêm seus rótulos visíveis mesmo com a sidebar colapsada. */
 body.sidebar-collapsed .sidebar-nav { padding: 8px 0; }
-body.sidebar-collapsed .nav-item {
+body.sidebar-collapsed .sidebar .nav-item {
   justify-content: center; align-items: center;
   padding: 10px 0; margin: 0 auto; width: 40px;
   gap: 0; font-size: 0; line-height: 0;
   border-radius: var(--radius-sm);
 }
-body.sidebar-collapsed .nav-item svg { width: 18px; height: 18px; }
+body.sidebar-collapsed .sidebar .nav-item svg { width: 18px; height: 18px; }
 
 /* Section headers viram só linha divisória (mantém a separação visual). */
-body.sidebar-collapsed .nav-section {
+body.sidebar-collapsed .sidebar .nav-section {
   padding: 0; margin: 8px 16px;
   height: 0; font-size: 0; line-height: 0;
   border-top: 1px solid var(--hairline);
   color: transparent;
 }
-body.sidebar-collapsed .sidebar-nav > .nav-section:first-child {
+body.sidebar-collapsed .sidebar .sidebar-nav > .nav-section:first-child {
   border-top: none; margin-top: 0;
 }
 
