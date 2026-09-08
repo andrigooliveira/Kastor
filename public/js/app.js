@@ -4480,15 +4480,15 @@ function renderDashboard() {
   const activeSquadScope = activeWs
     ? teamScope.filter(d => d.workspaceId === activeWs)
     : teamScope;
+  const activeSquadActive = activeSquadScope.filter(d => !isDone(d));
   renderDashFocus(mineActive);
   renderDashNextDelivery(mineActive);
   renderDashHoursToday();
   renderDashForecast();
   renderDashOverdue(mineActive);
   renderDashActivityFeed(mineActive);
-  renderDashMentions(teamScope);
   renderDashBlocked(mineActive);
-  renderDashRadar(mineActive);
+  renderDashRadar(activeSquadActive);
   renderDashTopOwners(activeSquadScope);
   renderDashPriorityDonut(mineActive);
   paintIcons();
@@ -4640,60 +4640,6 @@ function renderDashHoursToday() {
     <div class="dash-hours-value">${fmtHours(hoursToday)}<span>/${goal}h</span></div>
     <div class="dash-hours-track"><div class="dash-hours-fill" style="width:${pct}%"></div></div>
   </div>`;
-}
-
-/* Menções pra você — comentários dos últimos 30 dias que citaram @me. */
-function renderDashMentions(teamScope) {
-  const el = $('dash-mentions');
-  const sub = $('dash-mentions-sub');
-  if (!el) return;
-  if (!me?.username) { if (sub) sub.textContent = ''; el.innerHTML = ''; return; }
-  const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 30);
-  const cutoffIso = cutoff.toISOString();
-  const uname = me.username.toLowerCase();
-  const rxHtml = new RegExp(`class="mention"[^>]*>@${uname}\\b`, 'i');
-  const rxText = new RegExp(`(^|[^\\w])@${uname}\\b`, 'i');
-  const hits = [];
-  (teamScope || []).forEach(d => {
-    (d.comments || []).forEach(c => {
-      if (c.userId === me.id) return;
-      const when = c.createdAt || '';
-      if (!when || when < cutoffIso) return;
-      const text = c.text || '';
-      const hit = c.format === 'html' ? rxHtml.test(text) : rxText.test(text);
-      if (!hit) return;
-      hits.push({ d, c });
-    });
-  });
-  hits.sort((a, b) => (b.c.createdAt || '').localeCompare(a.c.createdAt || ''));
-  if (sub) sub.textContent = hits.length ? `${hits.length} nos últimos 30 dias` : '';
-  if (!hits.length) {
-    el.innerHTML = `<div class="dash-empty-inline"><i data-lucide="at-sign" class="ic-sm"></i> Nenhuma menção recente.</div>`;
-    return;
-  }
-  _dashLists.mentions = hits;
-  const MAX = 3;
-  const html = hits.slice(0, MAX).map(_dashMentionRowHtml).join('');
-  const more = hits.length > MAX
-    ? `<a href="#" class="dash-more-link" onclick="event.preventDefault(); openDashMentionsAll()">Ver mais (${hits.length})</a>`
-    : '';
-  el.innerHTML = html + more;
-}
-function _dashMentionRowHtml({ d, c }) {
-  const author = userById(c.userId);
-  const preview = _plainPreview(c.text || '', 80);
-  return `<div class="dash-mention-row" onclick="closeModal('dash-more-modal'); showDetail('${esc(d.id)}')">
-    ${avatarHTML(author, 'avatar avatar-xs')}
-    <div class="dash-mention-body">
-      <div class="dash-mention-head"><strong>${esc(author?.name || 'Alguém')}</strong> em <em>${esc(d.name)}</em></div>
-      <div class="dash-mention-preview">${esc(preview)}</div>
-    </div>
-    <span class="dash-mention-when">${_fmtRelTime(c.createdAt)}</span>
-  </div>`;
-}
-function openDashMentionsAll() {
-  const items = _dashLists.mentions || [];
-  openDashMore('Menções pra você', items.map(_dashMentionRowHtml).join('') || '<div class="dash-empty-inline">Nenhuma menção recente.</div>');
 }
 
 /* Bloqueios — MINHAS demandas onde a etapa ATUAL é de outra pessoa há > 3 dias
@@ -5094,15 +5040,14 @@ function openDashOverdueAll() {
 }
 
 // ── Radar de projetos ── grid de cards com semáforo.
-// Sem filtro de cliente: todos os projetos ativos do workspace, mostra qual cliente.
-// Com filtro de cliente: só os projetos daquele cliente, sem repetir a identificação.
-function renderDashRadar(mineActive) {
+// Escopo: SQUAD ATIVO (activeWs) — projetos com demanda em aberto atrasada.
+// Individualizar só nas MINHAS demandas deixava o radar sempre vazio.
+function renderDashRadar(squadActive) {
   const el = $('dash-radar');
   const sub = $('dash-radar-sub');
   if (!el) return;
-  // Só projetos onde eu tenho demanda em aberto E pelo menos uma atrasada.
   const byProject = new Map();
-  (mineActive || []).forEach(d => {
+  (squadActive || []).forEach(d => {
     if (!d.projectId) return;
     const arr = byProject.get(d.projectId) || [];
     arr.push(d);
@@ -5117,14 +5062,13 @@ function renderDashRadar(mineActive) {
   });
 
   if (sub) {
-    sub.textContent = `${withOverdue.length} projeto${withOverdue.length === 1 ? '' : 's'} seu${withOverdue.length === 1 ? '' : 's'} com atraso`;
+    sub.textContent = `${withOverdue.length} projeto${withOverdue.length === 1 ? '' : 's'} com atraso no squad`;
   }
 
   if (!withOverdue.length) {
-    el.innerHTML = `<div class="dash-empty-inline">Nenhum projeto seu com atraso. 🎉</div>`;
+    el.innerHTML = `<div class="dash-empty-inline">Nenhum projeto do squad com atraso. 🎉</div>`;
     return;
   }
-  const clientFilter = '';
 
   _dashLists.radar = withOverdue;
   const MAX = 3;
