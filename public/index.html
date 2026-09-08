@@ -14,12 +14,12 @@
 <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/geist-latin-ext.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/css/fonts.css?v=1">
-<link rel="stylesheet" href="/css/style.css?v=20260908nav4">
+<link rel="stylesheet" href="/css/style.css?v=20260908dash1">
 <!-- Preload dos JS pesados no <head> pra que o download comece IMEDIATAMENTE,
      em paralelo com o parse do HTML, em vez de esperar o parser chegar em
      </body>. Com immutable cache (max-age=1yr), na 2ª visita nem baixa. -->
 <link rel="preload" href="/vendor/lucide.min.js" as="script">
-<link rel="preload" href="/js/app.js?v=20260908nav4" as="script">
+<link rel="preload" href="/js/app.js?v=20260908dash1" as="script">
 <script type="text/javascript">
     // Clarity: analytics de heatmap/session replay. Não é crítico pro app —
     // deferido pra depois do primeiro paint pra não roubar tempo do LCP.
@@ -271,50 +271,20 @@
     <!-- ── DASHBOARD ── -->
     <div class="page active" id="page-dashboard">
       <div class="page-body">
-        <div class="filters-bar" style="margin-bottom:22px">
-          <div class="filter-group">
-            <label class="filter-label">Squad</label>
-            <select class="filter-select" id="dash-f-squad" onchange="renderDashboard()"></select>
-          </div>
-          <div class="filter-group">
-            <label class="filter-label">Usuário</label>
-            <select class="filter-select" id="dash-f-user" onchange="renderDashboard()"></select>
-          </div>
-          <div class="filter-group">
-            <label class="filter-label">Cliente</label>
-            <select class="filter-select" id="dash-f-client" onchange="renderDashboard()"></select>
-          </div>
-          <div class="filter-group">
-            <label class="filter-label">Período (prazo)</label>
-            <select class="filter-select" id="dash-f-period" onchange="renderDashboard()">
-              <option value="">Todo o período</option>
-              <option value="today">Hoje</option>
-              <option value="7">Próximos 7 dias</option>
-              <option value="month">Este mês</option>
-              <option value="lastmonth">Mês passado</option>
-              <option value="90">Últimos 90 dias</option>
-            </select>
-          </div>
-          <div class="filter-group">
-            <label class="filter-label">Tipo de demanda</label>
-            <select class="filter-select" id="dash-f-type" onchange="renderDashboard()"></select>
-          </div>
-          <div class="filter-group" style="justify-content:flex-end">
-            <label class="filter-label">&nbsp;</label>
-            <button class="btn btn-ghost btn-icon-only" onclick="clearDashFilters()" title="Limpar filtros"><i data-lucide="brush-cleaning" class="ic-sm"></i></button>
-          </div>
-        </div>
-
-        <!-- Row 2+3 · Grid 2/3 esquerda (KPIs + operacional + throughput) | 1/3 direita (analítico) -->
+        <!-- Dashboard individualizado: cada usuário vê só o seu.
+             5 seções: Previstas (com toggle Previstas/Prazos), Em atraso,
+             Prioridade, Radar e Top responsáveis. -->
         <div class="dash-grid">
           <div class="dash-col dash-col-left">
-            <div class="dash-kpis" id="dash-kpis"></div>
-
             <div class="dash-widget">
               <div class="dash-widget-head">
                 <div class="dash-widget-title">Demandas previstas</div>
-                <div class="dash-widget-sub" id="dash-forecast-sub"></div>
+                <div class="dash-widget-toggle" id="dash-forecast-toggle">
+                  <button type="button" class="dash-toggle-btn is-active" onclick="setDashForecastMode('previstas')" data-mode="previstas">Previstas</button>
+                  <button type="button" class="dash-toggle-btn" onclick="setDashForecastMode('prazos')" data-mode="prazos">Prazos</button>
+                </div>
               </div>
+              <div class="dash-widget-sub" id="dash-forecast-sub"></div>
               <div class="dash-forecast-grid" id="dash-forecast"></div>
             </div>
 
@@ -324,14 +294,6 @@
                 <div class="dash-widget-sub" id="dash-overdue-sub"></div>
               </div>
               <div id="dash-overdue"></div>
-            </div>
-
-            <div class="dash-widget">
-              <div class="dash-widget-head">
-                <div class="dash-widget-title">Throughput</div>
-                <div class="dash-widget-sub">Últimas 12 semanas — entregas no prazo vs. atrasadas</div>
-              </div>
-              <div id="dash-chart"></div>
             </div>
           </div>
 
@@ -361,20 +323,6 @@
             </div>
           </div>
         </div>
-
-        <!-- Apontamento de horas (mantido) -->
-        <div class="section-head" style="margin-top:28px">
-          <div class="section-title">Apontamento de Horas</div>
-          <select class="filter-select" id="hours-f-period" onchange="renderDashboard()" style="max-width:180px">
-            <option value="">Todo o período</option>
-            <option value="today">Hoje</option>
-            <option value="7">Últimos 7 dias</option>
-            <option value="month">Este mês</option>
-            <option value="lastmonth">Mês passado</option>
-            <option value="90">Últimos 90 dias</option>
-          </select>
-        </div>
-        <div class="hours-board" id="hours-board"></div>
       </div>
     </div>
 
@@ -3846,7 +3794,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260908nav4"></script>
+<script src="/js/app.js?v=20260908dash1"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

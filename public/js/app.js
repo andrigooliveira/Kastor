@@ -4467,108 +4467,38 @@ async function refreshDashMeetingHours() {
 }
 
 function renderDashboard() {
-  // Filtro por squad — "Todos" agrega todos os squads acessíveis. Popula antes
-  // dos outros filtros porque eles dependem do escopo dele.
-  const accessibleWs = (workspaces || []).filter(w => me?.isAdmin || (me?.workspaces || []).includes(w.id));
-  const squadSel = $('dash-f-squad');
-  if (squadSel) {
-    // Só faz sentido mostrar o filtro quando há mais de um squad acessível.
-    const parent = squadSel.closest('.filter-group');
-    if (accessibleWs.length <= 1) {
-      if (parent) parent.style.display = 'none';
-      squadSel.value = '';
-    } else {
-      if (parent) parent.style.display = '';
-      fillSelect(squadSel, accessibleWs.map(w => ({ value: w.id, label: w.name })), undefined, 'Todos os squads');
-    }
-  }
-  // selects de filtro (preservando seleção) — agora escopados ao squad
-  fillSelect($('dash-f-user'), dashScopedUsers().map(u => ({ value: u.id, label: u.name })), undefined, 'Todos os usuários');
-  fillSelect($('dash-f-type'), dashDemandTypes().map(t => ({ value: t, label: t })), undefined, 'Todos os tipos');
-  fillSelect($('dash-f-client'),
-    [...new Set(dashScopedProjects().map(p => p.client).filter(Boolean))].sort().map(c => ({ value: c, label: c })),
-    undefined, 'Todos os clientes');
-
-  // por padrão o dashboard abre filtrado para o usuário ativo
-  if (!dashUserInit) {
-    dashUserInit = true;
-    if ([...$('dash-f-user').options].some(o => o.value === me.id)) $('dash-f-user').value = me.id;
-  }
-
-  // Filtros salvos da sessão anterior vencem o default acima (mas só na primeira
-  // pintura do dashboard — depois disso o user já interagiu).
-  restoreFilters('dashboard');
-
-  ['dash-f-user','dash-f-period','dash-f-type','dash-f-client','dash-f-squad'].forEach(id => {
-    if ($(id)) $(id).classList.toggle('filtering', !!$(id).value);
-  });
-
-  // Estilizar os filtros como dropdowns customizados
-  applyFilterDropdown('dash-f-squad');
-  applyFilterDropdown('dash-f-user', { userIcon: true });
-  applyFilterDropdown('dash-f-client');
-  applyFilterDropdown('dash-f-period');
-  applyFilterDropdown('dash-f-type');
-  applyFilterDropdown('hours-f-period');
-
-  const list = dashFilteredDemands();
-
-  // Escopo COMPLETO do escopo de squad (ignora filtros de período/tipo/cliente)
-  // — usado por Próximos 7 dias, Em atraso, Radar de projetos. Esses widgets
-  // sempre olham "a partir de hoje" independente do filtro de período.
-  const wsAll = dashScopedDemands();
-
-  // ── KPIs (respeitam filtros) ──
-  const open = list.filter(d => !isDone(d));
-  const late = list.filter(isLate);
-  const ymNow = new Date().toISOString().slice(0,7);
-  const doneMonth = list.filter(d => d.completedAt && d.completedAt.slice(0,7) === ymNow);
-  let hoursMonth = 0;
-  list.forEach(d => (d.timeEntries || []).forEach(e => {
-    const when = ((e.start || e.createdAt || '') + '').slice(0,7);
-    if (when === ymNow) hoursMonth += Number(e.hours) || 0;
-  }));
-
-  $('dash-kpis').innerHTML = `
-    <div class="dash-kpi">
-      <div class="dash-kpi-label">Em andamento</div>
-      <div class="dash-kpi-value">${open.length}</div>
-      <div class="dash-kpi-sub">demandas abertas no filtro</div>
-    </div>
-    <div class="dash-kpi ${late.length ? 'is-danger' : ''}">
-      <div class="dash-kpi-label">Em atraso</div>
-      <div class="dash-kpi-value">${late.length}</div>
-      <div class="dash-kpi-sub">deadline vencido</div>
-    </div>
-    <div class="dash-kpi">
-      <div class="dash-kpi-label">Entregues no mês</div>
-      <div class="dash-kpi-value">${doneMonth.length}</div>
-      <div class="dash-kpi-sub">${MONTHS[new Date().getMonth()]}</div>
-    </div>
-    <div class="dash-kpi">
-      <div class="dash-kpi-label">Horas apontadas</div>
-      <div class="dash-kpi-value">${fmtHours(hoursMonth)}</div>
-      <div class="dash-kpi-sub">mês corrente</div>
-    </div>
-    <div class="dash-kpi" id="dash-kpi-meetings">
-      <div class="dash-kpi-label">Horas em reunião</div>
-      <div class="dash-kpi-value" id="dash-kpi-meetings-value">—</div>
-      <div class="dash-kpi-sub" id="dash-kpi-meetings-sub">Google Calendar</div>
-    </div>
-  `;
-  animateCounters($('dash-kpis'));
-  // Busca assíncrona: não bloqueia render, mostra "—" até chegar.
-  refreshDashMeetingHours();
-
-  // ── Demandas previstas / Em atraso / Radar / Top responsáveis / Throughput ──
+  // Dashboard individualizado: sempre no escopo do usuário logado.
+  if (!me?.id) return;
+  const mine = _dashMyDemands();
+  const mineActive = mine.filter(d => !isDone(d));
+  const teamScope = dashScopedDemands(); // team-wide (workspaces acessíveis)
   renderDashForecast();
-  renderDashOverdue(wsAll);
-  renderDashRadar();
-  renderDashTopOwners(list);
-  renderDashPriorityDonut(list);
-  renderDashChart(list);
-  renderHoursBoard(list);
-  saveFilters('dashboard');
+  renderDashOverdue(mineActive);
+  renderDashRadar(mineActive);
+  renderDashTopOwners(teamScope);
+  renderDashPriorityDonut(mineActive);
+}
+/* Demandas em aberto/concluídas do usuário logado (owner) nos squads acessíveis.
+   Freelancer: o backend já filtra o que ele pode ver. */
+function _dashMyDemands() {
+  return (demands || []).filter(d => {
+    if (d.deletedAt) return false;
+    if (me.isFreelancer) return true;
+    if (d.ownerId !== me.id) return false;
+    if (!(me.isAdmin || (me.workspaces || []).includes(d.workspaceId))) return false;
+    return true;
+  });
+}
+/* Toggle Previstas/Prazos do bloco "Demandas previstas". */
+let _dashForecastMode = 'previstas'; // 'previstas' | 'prazos'
+function setDashForecastMode(m) {
+  const next = (m === 'prazos') ? 'prazos' : 'previstas';
+  if (next === _dashForecastMode) return;
+  _dashForecastMode = next;
+  document.querySelectorAll('#dash-forecast-toggle .dash-toggle-btn').forEach(btn => {
+    btn.classList.toggle('is-active', btn.dataset.mode === next);
+  });
+  renderDashForecast();
 }
 
 // ── Demandas previstas ── quadro heatmap 2×7 (14 dias úteis). Puxa o SLA das
@@ -4652,15 +4582,30 @@ function renderDashForecast() {
   const el = $('dash-forecast');
   const sub = $('dash-forecast-sub');
   if (!el) return;
-  const targetUserId = ($('dash-f-user') && $('dash-f-user').value) || me?.id || null;
+  const meId = me?.id;
+  if (!meId) return;
+  const mode = _dashForecastMode;
   const days = dashForecastDays();
   const ymd = (d) => d.toISOString().slice(0, 10);
   const byDay = new Map(days.map(d => [ymd(d), []]));
   _forecastByDay = byDay;
-  if (targetUserId) {
+  if (mode === 'prazos') {
+    // Prazos: minhas demandas em aberto agrupadas pelo prazo efetivo (etapa atual).
+    _dashMyDemands().forEach(d => {
+      if (isDone(d)) return;
+      const due = effDue(d);
+      if (!due) return;
+      const bucket = byDay.get(due);
+      if (!bucket) return;
+      const stages = activeStagesOf(d);
+      const cur = stages.find(s => s.id === d.status);
+      bucket.push({ d, stageLabel: cur?.label || '—', remaining: 1 });
+    });
+  } else {
+    // Previstas: quando a demanda vai CHEGAR na etapa do usuário (via SLA).
     dashScopedDemands().forEach(d => {
       if (d.deletedAt) return;
-      const fc = forecastArrivalFor(d, targetUserId);
+      const fc = forecastArrivalFor(d, meId);
       if (!fc) return;
       const bucket = byDay.get(fc.ymd);
       if (!bucket) return; // fora da janela de 14 dias úteis → não mostra
@@ -4668,10 +4613,17 @@ function renderDashForecast() {
     });
   }
   const total = [...byDay.values()].reduce((s, a) => s + a.length, 0);
-  const tName = targetUserId ? (userById(targetUserId)?.name || '').split(' ')[0] : '';
-  if (sub) sub.textContent = total
-    ? `${total} demanda${total === 1 ? '' : 's'} prevista${total === 1 ? '' : 's'}${tName ? ' pra ' + esc(tName) : ''} nos próximos 14 dias úteis`
-    : 'Nenhuma demanda prevista pra chegar nos próximos 14 dias úteis';
+  if (sub) {
+    if (mode === 'prazos') {
+      sub.textContent = total
+        ? `${total} demanda${total === 1 ? '' : 's'} sua${total === 1 ? '' : 's'} com prazo nos próximos 14 dias úteis`
+        : 'Nenhuma demanda sua com prazo nos próximos 14 dias úteis';
+    } else {
+      sub.textContent = total
+        ? `${total} demanda${total === 1 ? '' : 's'} prevista${total === 1 ? '' : 's'} chegando pra você nos próximos 14 dias úteis`
+        : 'Nenhuma demanda prevista pra chegar pra você nos próximos 14 dias úteis';
+    }
+  }
 
   const todayK = todayStr();
   el.innerHTML = days.map((dt) => {
@@ -4768,11 +4720,11 @@ function renderDueFilterChip() {
 }
 
 // ── Em atraso — top 5 mais atrasadas (sempre a partir de hoje, ignora filtros) ──
-function renderDashOverdue(wsAll) {
+function renderDashOverdue(mineActive) {
   const el = $('dash-overdue');
   const sub = $('dash-overdue-sub');
   if (!el) return;
-  const overdue = wsAll.filter(isLate);
+  const overdue = (mineActive || []).filter(isLate);
   const today0 = new Date(); today0.setHours(0,0,0,0);
   const withDelay = overdue.map(d => {
     const due = effDue(d);
@@ -4781,7 +4733,7 @@ function renderDashOverdue(wsAll) {
     return { d, daysLate };
   }).sort((a, b) => b.daysLate - a.daysLate);
 
-  if (sub) sub.textContent = `${overdue.length} demanda${overdue.length === 1 ? '' : 's'} com prazo vencido`;
+  if (sub) sub.textContent = `${overdue.length} demanda${overdue.length === 1 ? '' : 's'} sua${overdue.length === 1 ? '' : 's'} com prazo vencido`;
 
   if (!overdue.length) {
     el.innerHTML = `<div class="dash-empty-inline">
@@ -4822,34 +4774,35 @@ function renderDashOverdue(wsAll) {
 // ── Radar de projetos ── grid de cards com semáforo.
 // Sem filtro de cliente: todos os projetos ativos do workspace, mostra qual cliente.
 // Com filtro de cliente: só os projetos daquele cliente, sem repetir a identificação.
-function renderDashRadar() {
+function renderDashRadar(mineActive) {
   const el = $('dash-radar');
   const sub = $('dash-radar-sub');
   if (!el) return;
-  const clientFilter = $('dash-f-client')?.value || '';
-  const wsProjs = dashScopedProjects().filter(p => p.active !== false);
-  const shown = clientFilter
-    ? wsProjs.filter(p => p.client === clientFilter)
-    : wsProjs;
-  const scopedDemands = dashScopedDemands();
-
-  // Só interessa quem tem demanda atrasada — projetos "verdes" saem do radar.
-  const withOverdue = shown.map(p => {
-    const projDemands = scopedDemands.filter(d => d.projectId === p.id && !isDone(d));
+  // Só projetos onde eu tenho demanda em aberto E pelo menos uma atrasada.
+  const byProject = new Map();
+  (mineActive || []).forEach(d => {
+    if (!d.projectId) return;
+    const arr = byProject.get(d.projectId) || [];
+    arr.push(d);
+    byProject.set(d.projectId, arr);
+  });
+  const withOverdue = [];
+  byProject.forEach((projDemands, pid) => {
+    const p = projectById(pid);
+    if (!p) return;
     const overdue = projDemands.filter(isLate).length;
-    return { p, projDemands, overdue };
-  }).filter(x => x.overdue > 0);
+    if (overdue > 0) withOverdue.push({ p, projDemands, overdue });
+  });
 
   if (sub) {
-    sub.textContent = clientFilter
-      ? `${withOverdue.length} projeto${withOverdue.length === 1 ? '' : 's'} com atraso · ${clientFilter}`
-      : `${withOverdue.length} projeto${withOverdue.length === 1 ? '' : 's'} com atraso`;
+    sub.textContent = `${withOverdue.length} projeto${withOverdue.length === 1 ? '' : 's'} seu${withOverdue.length === 1 ? '' : 's'} com atraso`;
   }
 
   if (!withOverdue.length) {
-    el.innerHTML = `<div class="dash-empty-inline">Nenhum projeto com atraso${clientFilter ? ` em ${esc(clientFilter)}` : ''}. 🎉</div>`;
+    el.innerHTML = `<div class="dash-empty-inline">Nenhum projeto seu com atraso. 🎉</div>`;
     return;
   }
+  const clientFilter = '';
 
   // Semáforo: amarelo = até 20%, vermelho = >20% (verde não aparece — já filtrado acima).
   const cards = withOverdue.map(({ p, projDemands, overdue }) => {
@@ -4938,8 +4891,8 @@ function renderDashPriorityDonut(list) {
     value: open.filter(d => (d.priority || 3) === p.value).length,
     color: p.color, label: p.label
   }));
-  if (sub) sub.textContent = `${total} demanda${total === 1 ? '' : 's'} em aberto no filtro`;
-  if (!total) { el.innerHTML = emptyMini('Nenhuma demanda em aberto.'); return; }
+  if (sub) sub.textContent = `${total} demanda${total === 1 ? '' : 's'} sua${total === 1 ? '' : 's'} em aberto`;
+  if (!total) { el.innerHTML = emptyMini('Nenhuma demanda sua em aberto.'); return; }
   const legend = segments.filter(s => s.value > 0).map(s => `
     <div class="donut-legend-row">
       <span class="donut-legend-dot" style="background:${s.color}"></span>
