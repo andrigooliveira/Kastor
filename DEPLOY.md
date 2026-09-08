@@ -112,6 +112,13 @@ Em modo **Testing**? Adiciona todos os emails da equipe em **Test users** no OAu
    # Managed (Neon/Supabase/RDS/Railway/Render): geralmente exige ?sslmode=require
    DATABASE_URL=postgres://kastor:s3nh4@db.exemplo.com:5432/kastor?sslmode=require
 
+   # OBRIGATÓRIO — credenciais decompostas pro sidecar de backup diário
+   # (repetem o que está na DATABASE_URL; a imagem não parseia URL inteira).
+   DB_HOST=db.exemplo.com
+   DB_NAME=kastor
+   DB_USER=kastor
+   DB_PASSWORD=s3nh4
+
    # Gera com: openssl rand -hex 32
    FLUXO_SECRET=cole-aqui-64-chars-hex
 
@@ -212,20 +219,36 @@ Duas coisas pra fazer backup: o **banco** (crítico) e o **volume de uploads**.
 
 ### Banco de dados (Postgres) — prioridade #1
 
-Se seu Postgres é managed (Neon, Supabase, RDS, Railway, Render), quase todos já fazem backup automático. **Confirme** no painel do provedor e teste um restore antes de confiar.
+Automatizado pelo sidecar `postgres-backup` no `docker-compose.yml` (imagem `prodrigestivill/postgres-backup-local:16`). Roda **todo dia à 00:00** (America/Sao_Paulo) e mantém política clássica: **7 diários + 4 semanais + 6 mensais**. Dumps ficam no volume nomeado `kastor_backups` no nó manager.
 
-Se é self-hosted, cron no nó manager:
+**Configuração** — o sidecar precisa das credenciais **decompostas** (não aceita `DATABASE_URL` inteira). Adicione na aba **Environment variables** do Portainer, além das que a app usa:
 
+| Var | Valor |
+|---|---|
+| `DB_HOST` | host do Postgres (ex.: `postgres.internal` ou `db.xxx.neon.tech`) |
+| `DB_NAME` | nome do database (ex.: `kastor`) |
+| `DB_USER` | usuário |
+| `DB_PASSWORD` | senha |
+| `DB_EXTRA_OPTS` | opcional — default é `-Z9 --schema=public --blobs`. Se o provedor exige SSL, geralmente não precisa mexer (o sidecar herda de `PGSSLMODE` se setado). |
+
+Se o Postgres é **managed** (Neon, Supabase, RDS, Railway, Render), o provedor já faz backup próprio — mantenha esse sidecar mesmo assim como **redundância local** (barato, sem dependência externa, restore imediato).
+
+**Verificar que rodou**:
 ```bash
-# Diário às 3AM — mantém 30 dias
-0 3 * * * pg_dump "$DATABASE_URL" | gzip > /home/backup/rework-db-$(date +\%F).sql.gz && \
-  find /home/backup -name "rework-db-*.sql.gz" -mtime +30 -delete
+docker run --rm -v kastor_kastor_backups:/backups alpine ls -lh /backups/daily
 ```
 
-Restore:
+**Restore** (do backup mais recente):
 ```bash
-gunzip < rework-db-YYYY-MM-DD.sql.gz | psql "$DATABASE_URL"
+# Listar dumps
+docker run --rm -v kastor_kastor_backups:/backups alpine ls /backups/daily
+
+# Restaurar (o arquivo é .sql.gz)
+docker run --rm -v kastor_kastor_backups:/backups alpine \
+  sh -c "gunzip -c /backups/daily/<arquivo>.sql.gz" | psql "$DATABASE_URL"
 ```
+
+⚠️ **Backup local não é backup de verdade contra desastre** (fogo, roubo, deleção acidental do volume). Depois, plugar um `rclone` no cron do host empurrando `kastor_backups` pra Google Drive/S3 fecha o buraco.
 
 ### Uploads e auth.enc (volume Docker)
 

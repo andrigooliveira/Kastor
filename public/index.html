@@ -14,12 +14,12 @@
 <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/geist-latin-ext.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/css/fonts.css?v=1">
-<link rel="stylesheet" href="/css/style.css?v=20260908rep1">
+<link rel="stylesheet" href="/css/style.css?v=20260908disc5">
 <!-- Preload dos JS pesados no <head> pra que o download comece IMEDIATAMENTE,
      em paralelo com o parse do HTML, em vez de esperar o parser chegar em
      </body>. Com immutable cache (max-age=1yr), na 2ª visita nem baixa. -->
 <link rel="preload" href="/vendor/lucide.min.js" as="script">
-<link rel="preload" href="/js/app.js?v=20260908rep1" as="script">
+<link rel="preload" href="/js/app.js?v=20260908disc5" as="script">
 <script type="text/javascript">
     // Clarity: analytics de heatmap/session replay. Não é crítico pro app —
     // deferido pra depois do primeiro paint pra não roubar tempo do LCP.
@@ -50,6 +50,15 @@
     <input type="password" id="login-password" placeholder="Senha" autocomplete="current-password" onkeydown="if(event.key==='Enter'){event.preventDefault();doLogin();}">
     <div class="login-error" id="login-error"></div>
     <button onclick="doLogin()">Entrar</button>
+    <!-- Botão "Entrar com Discord" — só aparece se o server tem OAuth configurado.
+         Visibilidade controlada por checkDiscordOAuthAvailable() no boot. -->
+    <div class="login-divider" id="login-discord-wrap">
+      <div class="login-divider-line"><span>ou</span></div>
+      <button type="button" class="btn-discord-soon" disabled aria-disabled="true" title="Em breve — login com Discord ainda não está disponível">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M19.27 5.33a19.19 19.19 0 0 0-4.85-1.53.07.07 0 0 0-.07.03c-.21.38-.44.87-.6 1.26a17.86 17.86 0 0 0-5.5 0 12.6 12.6 0 0 0-.61-1.26.08.08 0 0 0-.07-.03A19.19 19.19 0 0 0 2.73 5.33a.07.07 0 0 0-.03.03C.57 8.63 0 11.83.28 15a19.32 19.32 0 0 0 5.83 2.97.08.08 0 0 0 .09-.03 13.4 13.4 0 0 0 1.19-1.94.08.08 0 0 0-.04-.1 12.8 12.8 0 0 1-1.83-.87.08.08 0 0 1 0-.13c.12-.09.25-.18.36-.28a.08.08 0 0 1 .08 0c3.84 1.76 7.99 1.76 11.79 0a.08.08 0 0 1 .08 0c.12.1.24.19.36.28a.08.08 0 0 1 0 .13c-.58.35-1.2.64-1.83.87a.08.08 0 0 0-.04.1 15 15 0 0 0 1.19 1.94.08.08 0 0 0 .09.03A19.27 19.27 0 0 0 21.72 15c.33-3.67-.55-6.83-2.42-9.64a.07.07 0 0 0-.03-.03zM8.02 12.9c-1.15 0-2.1-1.06-2.1-2.35 0-1.3.93-2.35 2.1-2.35 1.18 0 2.12 1.06 2.1 2.35 0 1.29-.94 2.35-2.1 2.35zm7.79 0c-1.15 0-2.1-1.06-2.1-2.35 0-1.3.93-2.35 2.1-2.35 1.18 0 2.12 1.06 2.1 2.35 0 1.29-.92 2.35-2.1 2.35z"/></svg>
+        Entrar com Discord — em breve
+      </button>
+    </div>
     <a href="#" class="login-forgot" onclick="event.preventDefault();showForgotPassword()">Esqueci minha senha</a>
     <div class="login-hint">Acessos são criados internamente pela equipe.</div>
   </div>
@@ -2300,11 +2309,26 @@
             <section class="profile-section" data-section="notifications" hidden>
               <div class="profile-section-head">
                 <div>
-                  <div class="profile-section-title">Notificações por e-mail</div>
-                  <div class="profile-section-sub">Configure quais eventos você recebe por e-mail.</div>
+                  <div class="profile-section-title">Notificações</div>
+                  <div class="profile-section-sub">Configure quais eventos você recebe por DM no Discord e por e-mail.</div>
                 </div>
               </div>
+
+              <!-- Preferências de DM no Discord — só aparece se o bot estiver configurado.
+                   Fica ACIMA das de e-mail porque DM é o canal preferido do time. -->
+              <div class="profile-card-block" id="profile-notif-discord-block" style="display:none;margin-bottom:16px">
+                <div class="profile-block-title">Notificações por DM no Discord</div>
+                <div class="profile-hint" style="margin-bottom:12px">Quando marcado, você recebe uma DM privada do bot em vez de (ou além de) e-mail. Marcações "usar padrão" seguem a configuração do time.</div>
+                <div id="profile-notif-discord-empty" class="profile-hint profile-hint--warn" style="display:none;margin-bottom:12px">
+                  ⚠️ Vincule sua conta do Discord na aba <strong>Integrações</strong> para começar a receber DMs.
+                </div>
+                <div class="profile-prefs-list" id="profile-discord-prefs-list">
+                  <!-- populado por renderProfile → renderDiscordPrefsList -->
+                </div>
+              </div>
+
               <div class="profile-card-block">
+                <div class="profile-block-title" style="margin-bottom:6px">Notificações por e-mail</div>
                 <div id="profile-email-smtp-warning" class="profile-hint profile-hint--warn" style="display:none;margin-bottom:14px">
                   ⚠️ O servidor não tem SMTP configurado. Mesmo cadastrando um e-mail, nenhuma mensagem será enviada até que o administrador configure as variáveis de ambiente <code>SMTP_HOST</code>, <code>SMTP_USER</code>, <code>SMTP_PASS</code> e <code>SMTP_FROM</code>.
                 </div>
@@ -2383,26 +2407,34 @@
                     <div class="profile-integration-sub">Receba menção no Discord ao virar responsável.</div>
                   </div>
                 </div>
-                <div class="form-group full" style="margin-top:14px">
+                <!-- Bloco OAuth — visível se DISCORD_OAUTH_* configurado no server.
+                     renderProfileDiscordOAuth() alterna entre vincular/desvincular. -->
+                <div id="profile-discord-oauth-wrap" style="display:none;margin-top:14px">
+                  <div id="profile-discord-oauth-status" class="profile-hint" style="margin-bottom:10px"></div>
+                  <div class="profile-block-actions">
+                    <button class="btn-discord-oauth" style="width:auto;padding:10px 16px;font-size:13px" id="profile-discord-oauth-btn" onclick="linkDiscord()">
+                      <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M19.27 5.33a19.19 19.19 0 0 0-4.85-1.53.07.07 0 0 0-.07.03c-.21.38-.44.87-.6 1.26a17.86 17.86 0 0 0-5.5 0 12.6 12.6 0 0 0-.61-1.26.08.08 0 0 0-.07-.03A19.19 19.19 0 0 0 2.73 5.33a.07.07 0 0 0-.03.03C.57 8.63 0 11.83.28 15a19.32 19.32 0 0 0 5.83 2.97.08.08 0 0 0 .09-.03 13.4 13.4 0 0 0 1.19-1.94.08.08 0 0 0-.04-.1 12.8 12.8 0 0 1-1.83-.87.08.08 0 0 1 0-.13c.12-.09.25-.18.36-.28a.08.08 0 0 1 .08 0c3.84 1.76 7.99 1.76 11.79 0a.08.08 0 0 1 .08 0c.12.1.24.19.36.28a.08.08 0 0 1 0 .13c-.58.35-1.2.64-1.83.87a.08.08 0 0 0-.04.1 15 15 0 0 0 1.19 1.94.08.08 0 0 0 .09.03A19.27 19.27 0 0 0 21.72 15c.33-3.67-.55-6.83-2.42-9.64a.07.07 0 0 0-.03-.03zM8.02 12.9c-1.15 0-2.1-1.06-2.1-2.35 0-1.3.93-2.35 2.1-2.35 1.18 0 2.12 1.06 2.1 2.35 0 1.29-.94 2.35-2.1 2.35zm7.79 0c-1.15 0-2.1-1.06-2.1-2.35 0-1.3.93-2.35 2.1-2.35 1.18 0 2.12 1.06 2.1 2.35 0 1.29-.92 2.35-2.1 2.35z"/></svg>
+                      <span id="profile-discord-oauth-btn-label">Vincular com Discord</span>
+                    </button>
+                    <button class="btn btn-ghost" id="profile-discord-unlink-btn" style="display:none" onclick="unlinkDiscord()"><i data-lucide="unlink" class="ic-sm"></i> Desvincular</button>
+                  </div>
+                </div>
+
+                <!-- Fallback manual — só aparece se OAuth do Discord NÃO está configurado no server.
+                     renderProfileDiscordOAuth() esconde este bloco quando o OAuth está disponível. -->
+                <div id="profile-discord-manual-wrap" class="form-group full" style="margin-top:14px">
                   <label class="form-label">ID do usuário no Discord</label>
                   <input class="form-control" id="profile-f-discord-id" placeholder="Ex: 123456789012345678" autocomplete="off">
                   <div class="profile-hint">Configurações do Discord → <strong>Avançado</strong> → ative <strong>Modo Desenvolvedor</strong> → clique com o botão direito sobre seu nome → <strong>Copiar ID do Usuário</strong>.</div>
                 </div>
                 <div class="profile-block-actions">
-                  <button class="btn btn-primary" onclick="saveDiscordId()">Salvar</button>
+                  <button class="btn btn-primary" id="profile-discord-save-btn" onclick="saveDiscordId()">Salvar</button>
                   <button class="btn btn-ghost" id="profile-discord-test-btn" onclick="testDiscordDM()" style="display:none"><i data-lucide="send" class="ic-sm"></i> Enviar DM de teste</button>
                   <button class="btn btn-ghost" id="profile-discord-digest-btn" onclick="sendDiscordDigestNow()" style="display:none"><i data-lucide="sunrise" class="ic-sm"></i> Enviar resumo agora</button>
                   <button class="btn btn-ghost" id="profile-discord-clear-btn" onclick="clearDiscordDMs()" style="display:none"><i data-lucide="trash-2" class="ic-sm"></i> Limpar histórico de DMs</button>
                 </div>
 
-                <!-- Preferências de DM por evento — só mostra se o bot estiver configurado no server -->
-                <div id="profile-discord-prefs-wrap" style="display:none;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
-                  <div class="profile-block-title">Notificações por DM no Discord</div>
-                  <div class="profile-hint" style="margin-bottom:12px">Quando marcado, você recebe uma DM privada do bot em vez de (ou além de) e-mail. Marcações "usar padrão" seguem a configuração do time.</div>
-                  <div class="profile-prefs-list" id="profile-discord-prefs-list">
-                    <!-- populado por renderProfile → renderDiscordPrefsList -->
-                  </div>
-                </div>
+                <div class="profile-hint" style="margin-top:14px">As preferências de quais eventos disparam DM ficam na aba <strong>Notificações</strong>.</div>
 
               </div>
 
@@ -3851,7 +3883,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260908rep1"></script>
+<script src="/js/app.js?v=20260908disc5"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

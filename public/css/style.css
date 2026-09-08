@@ -1094,6 +1094,45 @@ body::before {
   transition: color .12s var(--ease-out);
 }
 .login-forgot:hover { color: var(--accent-text); text-decoration: underline; }
+/* Bloco do botão "Entrar com Discord" — só visível se OAuth do Discord estiver
+   configurado no server (checkDiscordOAuthAvailable no boot). */
+.login-divider { margin-top: 16px; }
+.login-divider-line {
+  display: flex; align-items: center; gap: 10px;
+  color: var(--text-muted); font-size: 11px; letter-spacing: 0.08em;
+  text-transform: uppercase; margin-bottom: 12px;
+}
+.login-divider-line::before, .login-divider-line::after {
+  content: ''; flex: 1; height: 1px; background: var(--border);
+}
+.btn-discord-oauth {
+  width: 100%; padding: 12px; background: #5865F2; color: #fff;
+  border: none; border-radius: var(--radius-sm);
+  font-family: inherit; font-size: 14px; font-weight: 600;
+  display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+  cursor: pointer; letter-spacing: -0.01em;
+  box-shadow: 0 1px 2px rgba(88,101,242,0.22), inset 0 1px 0 rgba(255,255,255,0.14);
+  transition: transform .12s var(--ease-spring), filter .15s, box-shadow .15s;
+}
+.btn-discord-oauth:hover { filter: brightness(1.08); box-shadow: 0 4px 12px rgba(88,101,242,0.36), inset 0 1px 0 rgba(255,255,255,0.18); }
+.btn-discord-oauth:active { transform: scale(0.985); }
+.btn-discord-oauth svg { flex: 0 0 auto; }
+/* Variante "em breve" — secundária: contorno cinza, fundo do próprio surface,
+   texto discreto, desabilitada. Usada na tela de login enquanto a integração
+   ainda não foi habilitada em produção. */
+/* Especificidade extra pra vencer .login-box button (background accent + shadow). */
+.login-box .btn-discord-soon, .btn-discord-soon {
+  width: 100%; padding: 12px;
+  background: transparent; color: var(--text-muted);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-family: inherit; font-size: 13px; font-weight: 500;
+  display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+  letter-spacing: -0.01em;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.login-box .btn-discord-soon:hover { filter: none; box-shadow: none; }
+.btn-discord-soon svg { flex: 0 0 auto; opacity: 0.55; }
 /* A tela de reset reaproveita o layout do login — mesma .login-box. */
 #reset-screen {
   display: none;

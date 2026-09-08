@@ -126,19 +126,74 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # ────────────────────────────────────────────────────────────────
+  # Backup automático do Postgres — sidecar prodrigestivill/postgres-backup-local
+  #
+  # Roda pg_dump todo dia à 0h (America/Sao_Paulo) e mantém política
+  # clássica: 7 diários, 4 semanais, 6 mensais. Dumps ficam em volume
+  # nomeado (kastor_backups) fixado no nó manager, separado do volume
+  # de uploads pra não poluir. Ver DEPLOY.md → "Backup automático".
+  #
+  # PRÉ-REQUISITO — decompor DATABASE_URL nas quatro vars abaixo no
+  # painel do Portainer (a imagem não aceita URL única):
+  #   DB_HOST, DB_NAME, DB_USER, DB_PASSWORD
+  # Se o Postgres exige SSL, ajuste POSTGRES_EXTRA_OPTS.
+  # ────────────────────────────────────────────────────────────────
+  postgres-backup:
+    image: prodrigestivill/postgres-backup-local:16
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 30s
+      placement:
+        constraints:
+          - node.role == manager  # Fixa junto do volume de backups.
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 32M
+    environment:
+      POSTGRES_HOST: ${DB_HOST:-}
+      POSTGRES_DB: ${DB_NAME:-}
+      POSTGRES_USER: ${DB_USER:-}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-}
+      POSTGRES_EXTRA_OPTS: ${DB_EXTRA_OPTS:--Z9 --schema=public --blobs}
+      SCHEDULE: "0 0 0 * * *"          # todo dia à 00:00:00 (formato go-cron: seg min hora dia mês dow)
+      BACKUP_KEEP_DAYS: "7"
+      BACKUP_KEEP_WEEKS: "4"
+      BACKUP_KEEP_MONTHS: "6"
+      HEALTHCHECK_PORT: "8080"
+      TZ: America/Sao_Paulo
+    volumes:
+      - kastor_backups:/backups
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   kastor_data:
     # Driver local — vive no filesystem do nó manager fixado.
     # Pra backup de uploads, ver seção "Backup" no DEPLOY.md.
     # O banco em si (Postgres) tem backup próprio via provedor ou dump.
+  kastor_backups:
+    # Dumps diários do Postgres (sidecar postgres-backup).
+    # Vive no nó manager fixado. Ver DEPLOY.md → "Backup automático".
 
 # ────────────────────────────────────────────────────────────────
 # BACKUP / RESTORE
 #
-# Banco (Postgres) — SEMPRE prioridade #1:
-#   pg_dump "$DATABASE_URL" > kastor-$(date +%F).sql
-#   psql "$DATABASE_URL" < kastor-YYYY-MM-DD.sql   # restore
-# (managed providers como Neon/Supabase têm backup automatizado — confira.)
+# Banco (Postgres) — automatizado pelo sidecar `postgres-backup` acima.
+# Dumps diários à 0h em kastor_backups (7d + 4w + 6m). Restore:
+#   # localizar o dump mais recente no volume
+#   docker run --rm -v kastor_kastor_backups:/backups alpine ls /backups/daily
+#   # restaurar (o arquivo é .sql.gz)
+#   docker run --rm -v kastor_kastor_backups:/backups alpine \
+#     sh -c "gunzip -c /backups/daily/<arquivo>.sql.gz" | psql "$DATABASE_URL"
+# (managed providers como Neon/Supabase têm backup nativo próprio também.)
 #
 # Uploads (volume kastor_data) — rodar no nó manager onde o volume mora:
 #   docker run --rm -v kastor_kastor_data:/data -v $(pwd):/backup \

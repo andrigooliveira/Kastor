@@ -3493,12 +3493,83 @@ async function boot() {
   // (pública — sem auth nem app carregado).
   const resetMatch = location.pathname.match(/^\/reset\/([A-Za-z0-9_-]+)$/);
   if (resetMatch) { showResetScreen(resetMatch[1]); return; }
+  // Roda em paralelo com o /me: descobrir se o server tem Discord OAuth
+  // configurado (pra decidir se mostra o botão "Entrar com Discord").
+  checkDiscordOAuthAvailable();
+  // Processa o retorno do callback OAuth do Discord — ?discord=... na URL.
+  // Feito ANTES do /me pra que o toast de erro apareça mesmo na tela de login.
+  handleDiscordCallbackQuery();
   // Sem token em localStorage agora — tenta /me direto. Se cookie httpOnly
   // estiver válido, server devolve o user; senão 401 → forceLogout.
   try {
     me = await api('/me');
     await enterApp();
   } catch { forceLogout(); }
+}
+
+/* Discord OAuth availability check — cachea o resultado numa flag global.
+   Não bloqueia o boot: fire-and-forget. Se der erro, o botão fica escondido. */
+let _discordOAuthConfigured = false;
+async function checkDiscordOAuthAvailable() {
+  try {
+    const r = await fetch('/api/auth/discord/status', { credentials: 'same-origin' });
+    if (!r.ok) return;
+    const data = await r.json();
+    _discordOAuthConfigured = !!data.configured;
+    // Botão da tela de login fica sempre visível como "em breve" até o
+    // OAuth ser habilitado em produção — sem toggle por status aqui.
+  } catch {}
+}
+
+function loginWithDiscord() {
+  // Redirect direto — o server monta a URL do Discord com state CSRF.
+  window.location.href = '/api/auth/discord/start';
+}
+
+/* Traduz ?discord=<slug>&reason=... vindo do callback pro usuário.
+   Sempre limpa a query da URL depois pra evitar re-processar num F5. */
+function handleDiscordCallbackQuery() {
+  const q = new URLSearchParams(location.search);
+  const status = q.get('discord');
+  if (!status) return;
+  const reason = q.get('reason') || '';
+  // Limpa a URL — evita disparar de novo em F5 ou navegação com back/forward.
+  const cleanUrl = location.pathname + location.hash;
+  history.replaceState(null, '', cleanUrl);
+
+  if (status === 'logged-in') {
+    // Sessão já foi emitida via Set-Cookie pelo server — o /me vai passar.
+    // Não precisa toast: o app entrando é feedback suficiente.
+    return;
+  }
+  if (status === 'linked') {
+    // Aguarda um tick pro toast() estar disponível (pode ser antes de enterApp).
+    setTimeout(() => { try { toast('Discord vinculado com sucesso!', 'success'); } catch {} }, 400);
+    return;
+  }
+  if (status === 'error') {
+    const msg = _discordErrorMessage(reason);
+    setTimeout(() => {
+      try { toast(msg, 'error'); }
+      catch {
+        const el = document.getElementById('login-error');
+        if (el) el.textContent = msg;
+      }
+    }, 200);
+  }
+}
+
+function _discordErrorMessage(reason) {
+  switch (reason) {
+    case 'not-configured':  return 'O login com Discord não está habilitado neste servidor.';
+    case 'missing-params':  return 'O Discord não devolveu os parâmetros esperados. Tente de novo.';
+    case 'invalid-state':   return 'Sessão de OAuth expirou (mais de 10 min). Tente de novo.';
+    case 'exchange-failed': return 'Falha ao validar o retorno do Discord. Tente de novo em alguns segundos.';
+    case 'no-account':      return 'Nenhuma conta reWork está vinculada a esse Discord. Peça pra alguém da coordenação vincular seu ID, ou entre com usuário/senha e vincule no perfil.';
+    case 'already-linked':  return 'Esse Discord já está vinculado a outra conta reWork. Desvincule lá antes de vincular aqui.';
+    case 'user-not-found':  return 'Usuário não encontrado. Faça login de novo e tente vincular.';
+    default:                return 'Não foi possível concluir o login com Discord (' + (reason || 'erro desconhecido') + '). Tente de novo.';
+  }
 }
 
 /* ─── FLUXO "ESQUECI MINHA SENHA" ───
@@ -21843,6 +21914,8 @@ function renderProfile() {
   handleGoogleCallbackToast();
   // Discord DM prefs — carrega assíncrono; UI só aparece se o bot tá configurado
   renderDiscordPrefsUI().catch(() => {});
+  // Discord OAuth (login com Discord + vínculo) — alterna manual/OAuth
+  renderProfileDiscordOAuth();
   if (typeof paintIcons === 'function') paintIcons();
 }
 /* Navegação entre seções do perfil (Conta, Aparência, Notificações, etc). */
@@ -22160,6 +22233,65 @@ async function saveDiscordId() {
   } catch (e) { toast(e.message, 'error'); }
 }
 
+/* Renderiza o bloco OAuth do Discord no perfil.
+   Se o server tem OAuth configurado (_discordOAuthConfigured=true), mostra
+   o bloco "Vincular com Discord" e ESCONDE o input manual do snowflake.
+   Se OAuth não está disponível, mantém apenas o input manual (comportamento
+   antigo pra quem só tem o bot, sem client_id/secret cadastrados). */
+function renderProfileDiscordOAuth() {
+  const oauthWrap = document.getElementById('profile-discord-oauth-wrap');
+  const manualWrap = document.getElementById('profile-discord-manual-wrap');
+  const manualSaveBtn = document.getElementById('profile-discord-save-btn');
+  const statusEl = document.getElementById('profile-discord-oauth-status');
+  const btnLabel = document.getElementById('profile-discord-oauth-btn-label');
+  const oauthBtn = document.getElementById('profile-discord-oauth-btn');
+  const unlinkBtn = document.getElementById('profile-discord-unlink-btn');
+  if (!oauthWrap) return;
+
+  if (!_discordOAuthConfigured) {
+    oauthWrap.style.display = 'none';
+    if (manualWrap) manualWrap.style.display = '';
+    if (manualSaveBtn) manualSaveBtn.style.display = '';
+    return;
+  }
+  oauthWrap.style.display = '';
+  if (manualWrap) manualWrap.style.display = 'none';
+  if (manualSaveBtn) manualSaveBtn.style.display = 'none';
+
+  if (me.discordId) {
+    if (statusEl) statusEl.innerHTML = `Discord vinculado — <strong>ID:</strong> <code>${esc(me.discordId)}</code>. Você pode entrar direto pelo botão "Entrar com Discord" na tela de login.`;
+    if (btnLabel) btnLabel.textContent = 'Trocar conta do Discord';
+    if (unlinkBtn) unlinkBtn.style.display = '';
+  } else {
+    if (statusEl) statusEl.textContent = 'Vincule sua conta do Discord pra entrar com um clique e receber DMs do bot.';
+    if (btnLabel) btnLabel.textContent = 'Vincular com Discord';
+    if (unlinkBtn) unlinkBtn.style.display = 'none';
+  }
+  if (window.lucide?.createIcons) lucide.createIcons();
+}
+
+function linkDiscord() {
+  // Redirect direto — o server monta a URL do Discord com state CSRF.
+  window.location.href = '/api/auth/discord/link/start';
+}
+
+async function unlinkDiscord() {
+  const ok = await showConfirm({
+    title: 'Desvincular Discord',
+    message: 'Você não conseguirá mais entrar pelo botão "Entrar com Discord" até vincular de novo. Também para de receber DMs do bot. Continuar?',
+    okLabel: 'Desvincular',
+    danger: true
+  });
+  if (!ok) return;
+  try {
+    const r = await api('/me/discord/unlink', 'POST');
+    if (r.user) me = r.user;
+    toast('Discord desvinculado.', 'warn');
+    renderProfile();
+    await refreshData();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
 /* ── Discord DM prefs ── */
 let _discordConfig = null;
 async function loadDiscordConfig() {
@@ -22169,7 +22301,10 @@ async function loadDiscordConfig() {
 }
 async function renderDiscordPrefsUI() {
   const cfg = await loadDiscordConfig();
-  const wrap = $('profile-discord-prefs-wrap');
+  // Novo wrap fica na aba Notificações (movido de Integrações).
+  const wrap = $('profile-notif-discord-block');
+  const emptyMsg = $('profile-notif-discord-empty');
+  const list = $('profile-discord-prefs-list');
   const testBtn = $('profile-discord-test-btn');
   const clearBtn = $('profile-discord-clear-btn');
   const digestBtn = $('profile-discord-digest-btn');
@@ -22181,13 +22316,16 @@ async function renderDiscordPrefsUI() {
     return;
   }
   if (wrap) wrap.style.display = '';
-  const showActions = me.discordId ? '' : 'none';
+  // Sem discordId: mostra aviso pra vincular e esconde a lista de prefs.
+  const linked = !!me.discordId;
+  if (emptyMsg) emptyMsg.style.display = linked ? 'none' : '';
+  if (list) list.style.display = linked ? '' : 'none';
+  const showActions = linked ? '' : 'none';
   if (testBtn) testBtn.style.display = showActions;
   if (clearBtn) clearBtn.style.display = showActions;
   if (digestBtn) digestBtn.style.display = showActions;
   // User prefs list — só INDIVIDUAL agora. Defaults do time viraram
   // painel próprio na página Integrações (aba Discord Bot).
-  const list = $('profile-discord-prefs-list');
   if (list) {
     const rows = Object.entries(cfg.labels).map(([key, label]) => {
       const userVal = cfg.userPrefs[key];

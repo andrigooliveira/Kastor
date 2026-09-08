@@ -35,6 +35,7 @@ const {
 const { createStore, ENTITY_TYPES } = require('./db-store');
 const googleCal  = require('./google-cal');
 const discordBot = require('./discord-bot');
+const discordOAuth = require('./discord-oauth');
 
 const PORT    = process.env.PORT || 3000;
 // KASTOR_DATA_DIR sobrescreve o diretório de uploads e do auth.enc.
@@ -1706,6 +1707,108 @@ app.post('/api/logout', requireAuth, (req, res) => {
   auth.removeToken(req.token);
   res.set('Set-Cookie', clearSessionCookie());
   res.json({ ok: true });
+});
+
+/* ─── LOGIN COM DISCORD (OAuth2) ───
+   Dois modos:
+     login → start público. Callback resolve user por discordId; se existe,
+             emite sessão. Se não existe, redireciona pro login com erro
+             (nunca cria conta fantasma — cadastro é interno pela equipe).
+     link  → start autenticado. Callback grava u.discordId no user logado.
+             Rejeita se aquele discordId já pertence a outro user.
+
+   Rate-limit próprio (5 starts/min por IP) — mesmo padrão do /login.
+   State CSRF gerenciado no discord-oauth.js (TTL 10min, single-use).
+   Redirects sempre pra origem confiável (mesma app), nunca pra URL do query.
+
+   Falhas caem em / ou /profile com ?discord=error&reason=<slug>, e o
+   frontend decodifica isso pra mensagem amigável. */
+const _discordOAuthAttempts = new Map(); // ip → { count, resetAt }
+const rateLimitDiscordOAuth = makeRateLimit(_discordOAuthAttempts, 5, 'tentativas');
+
+app.get('/api/auth/discord/status', (req, res) => {
+  res.json({ configured: discordOAuth.isConfigured() });
+});
+
+app.get('/api/auth/discord/start', rateLimitDiscordOAuth, (req, res) => {
+  if (!discordOAuth.isConfigured()) {
+    return res.redirect('/?discord=error&reason=not-configured');
+  }
+  try {
+    const state = discordOAuth.makeState('login', null);
+    return res.redirect(discordOAuth.getAuthUrl(state));
+  } catch (e) {
+    console.error('[discord-oauth/start]', e.message);
+    return res.redirect('/?discord=error&reason=' + encodeURIComponent(e.message));
+  }
+});
+
+app.get('/api/auth/discord/link/start', requireAuth, rateLimitDiscordOAuth, (req, res) => {
+  if (!discordOAuth.isConfigured()) {
+    return res.redirect('/profile?discord=error&reason=not-configured');
+  }
+  try {
+    const state = discordOAuth.makeState('link', req.user.id);
+    return res.redirect(discordOAuth.getAuthUrl(state));
+  } catch (e) {
+    console.error('[discord-oauth/link]', e.message);
+    return res.redirect('/profile?discord=error&reason=' + encodeURIComponent(e.message));
+  }
+});
+
+app.get('/api/auth/discord/callback', async (req, res) => {
+  const { code, state, error } = req.query;
+  if (error)  return res.redirect('/?discord=error&reason=' + encodeURIComponent(String(error)));
+  if (!code || !state) return res.redirect('/?discord=error&reason=missing-params');
+  const entry = discordOAuth.popState(String(state));
+  if (!entry) return res.redirect('/?discord=error&reason=invalid-state');
+
+  let profile;
+  try {
+    profile = await discordOAuth.exchangeCodeForProfile(String(code));
+  } catch (e) {
+    console.error('[discord-oauth/callback]', e.message);
+    const back = entry.mode === 'link' ? '/profile' : '/';
+    return res.redirect(back + '?discord=error&reason=' + encodeURIComponent('exchange-failed'));
+  }
+
+  if (entry.mode === 'link') {
+    const user = db.users.find(u => u.id === entry.userId && u.active !== false);
+    if (!user) return res.redirect('/?discord=error&reason=user-not-found');
+    const clash = db.users.find(u => u.id !== user.id && u.discordId === profile.id);
+    if (clash) {
+      return res.redirect('/profile?discord=error&reason=' + encodeURIComponent('already-linked'));
+    }
+    user.discordId = profile.id;
+    saveEntity('users', user);
+    return res.redirect('/profile?discord=linked');
+  }
+
+  // mode = 'login' — resolve user por discordId
+  const user = db.users.find(u => u.discordId === profile.id && u.active !== false);
+  if (!user) {
+    return res.redirect('/?discord=error&reason=' + encodeURIComponent('no-account'));
+  }
+  const token = auth.addToken(user.id);
+  res.set('Set-Cookie', buildSessionCookie(token, { secure: isHttpsRequest(req) }));
+  return res.redirect('/?discord=logged-in');
+});
+
+/* Desvincula o discordId do próprio usuário. Bloqueia se o user NÃO tem
+   senha configurada — desvincular deixaria a conta sem nenhum método de
+   login (chave só via Discord). Freelancer sem senha SÓ é criado com
+   discord vinculado, então esse guard evita locked-out acidental. */
+app.post('/api/me/discord/unlink', requireAuth, (req, res) => {
+  const u = req.user;
+  if (!u.discordId) return res.json({ ok: true });
+  if (!auth.hasPassword(u.id)) {
+    return res.status(400).json({
+      error: 'Você não tem senha cadastrada — desvincular o Discord te deixaria sem nenhum método de login. Defina uma senha primeiro em "Alterar senha" logo acima, e depois volte aqui.'
+    });
+  }
+  u.discordId = null;
+  saveEntity('users', u);
+  res.json({ ok: true, user: publicUser(u) });
 });
 
 /* ─── ESQUECI A SENHA / RESET POR E-MAIL ───
