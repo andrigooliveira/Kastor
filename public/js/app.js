@@ -7579,14 +7579,15 @@ function buildReportsHTML(data) {
   // ── Tempo médio por tipo de demanda ──
   const types = data.typeStats || [];
   const maxType = types.length ? Math.max(...types.map(x => x.avgHours)) : 0;
-  const typeRows = types.length ? types.map(x => {
+  const typeRows = types.length ? types.map((x, i) => {
     const pct = maxType ? Math.max(3, (x.avgHours / maxType) * 100) : 0;
+    const color = CAP_SPARK_PALETTE[i % CAP_SPARK_PALETTE.length];
     return `<div class="rep-bar-row">
       <div class="rep-bar-head">
         <span class="rep-bar-name">${esc(x.type)} <span class="rep-muted">· ${x.count}</span></span>
         <span class="rep-bar-val">${fmtDur(x.avgHours)}</span>
       </div>
-      <div class="rep-bar-track"><div class="rep-bar-fill" style="width:${pct}%;background:var(--accent)"></div></div>
+      <div class="rep-bar-track"><div class="rep-bar-fill" style="width:${pct}%;background:${color}"></div></div>
     </div>`;
   }).join('') : emptyMini('Nenhuma demanda concluída no período.');
 
@@ -7608,14 +7609,15 @@ function buildReportsHTML(data) {
 
   const effUsers = effort.byUser || [];
   const maxEffUser = effUsers.length ? Math.max(...effUsers.map(u => u.hours)) : 0;
-  const effUserRows = effUsers.length ? effUsers.map(u => {
+  const effUserRows = effUsers.length ? effUsers.map((u, i) => {
     const pct = maxEffUser ? Math.max(3, (u.hours / maxEffUser) * 100) : 0;
+    const color = CAP_SPARK_PALETTE[i % CAP_SPARK_PALETTE.length];
     return `<div class="rep-bar-row">
       <div class="rep-bar-head">
         <span class="rep-bar-name">${esc(u.name)}</span>
         <span class="rep-bar-val">${fmtHours(u.hours)}<span class="rep-muted"> · ${u.entries} ${u.entries === 1 ? 'lançamento' : 'lançamentos'}</span></span>
       </div>
-      <div class="rep-bar-track"><div class="rep-bar-fill" style="width:${pct}%;background:var(--accent)"></div></div>
+      <div class="rep-bar-track"><div class="rep-bar-fill" style="width:${pct}%;background:${color}"></div></div>
     </div>`;
   }).join('') : emptyMini('Nenhuma hora apontada no período.');
 
@@ -7627,30 +7629,30 @@ function buildReportsHTML(data) {
 
   return `
     <div class="rep-kpis">${kpis}</div>
-    <div class="rep-card">
-      <div class="rep-card-title"><i data-lucide="bar-chart-3" class="ic-sm"></i> Tempo médio por etapa</div>
-      <div class="rep-card-hint">Tempo de calendário (entrada → saída da etapa). Etapas com mesmo nome — em fluxos ou clientes diferentes — vêm agrupadas.</div>
-      <div class="rep-bars">${stageBars}</div>
-    </div>
-    <div class="rep-card">
-      <div class="rep-card-title"><i data-lucide="timer" class="ic-sm"></i> Horas apontadas por etapa</div>
-      <div class="rep-card-hint">Esforço médio lançado pelos usuários em cada etapa — diferente do tempo de calendário acima.</div>
-      ${effHeader}
-      <div class="rep-bars">${effStageBars}</div>
-    </div>
     <div class="rep-grid">
-      <div class="rep-card">
+      <div class="rep-card rep-tone-time">
+        <div class="rep-card-title"><i data-lucide="bar-chart-3" class="ic-sm"></i> Tempo médio por etapa</div>
+        <div class="rep-card-hint">Tempo de calendário (entrada → saída). Etapas com mesmo nome vêm agrupadas.</div>
+        <div class="rep-bars">${stageBars}</div>
+      </div>
+      <div class="rep-card rep-tone-effort">
+        <div class="rep-card-title"><i data-lucide="timer" class="ic-sm"></i> Horas apontadas por etapa</div>
+        <div class="rep-card-hint">Esforço médio lançado pelos usuários em cada etapa.</div>
+        ${effHeader}
+        <div class="rep-bars">${effStageBars}</div>
+      </div>
+      <div class="rep-card rep-tone-people">
         <div class="rep-card-title"><i data-lucide="users" class="ic-sm"></i> Horas apontadas por pessoa</div>
-        <div class="rep-card-hint">Total de horas que cada usuário lançou no período.</div>
+        <div class="rep-card-hint">Total de horas lançadas no período.</div>
         <div class="rep-bars">${effUserRows}</div>
       </div>
-      <div class="rep-card">
+      <div class="rep-card rep-tone-type">
         <div class="rep-card-title"><i data-lucide="tag" class="ic-sm"></i> Tempo médio por tipo</div>
         <div class="rep-card-hint">Lead time médio por tipo de demanda.</div>
         <div class="rep-bars">${typeRows}</div>
       </div>
     </div>
-    <div class="rep-card">
+    <div class="rep-card rep-tone-slow">
       <div class="rep-card-title"><i data-lucide="clock" class="ic-sm"></i> Demandas mais lentas</div>
       <div class="rep-card-hint">Da criação até a conclusão. Clique pra abrir.</div>
       <div class="rep-slow-list">${slowRows}</div>
@@ -9116,9 +9118,12 @@ function capacityHeatmapHTML(rows, startYmd, endYmd) {
   </div>`;
 }
 
-/* Sparkline de horas apontadas por dia no período. Tooltip mostra o total do
-   dia + os usuários que apontaram (top 6 por horas). Segue o mesmo padrão
-   dos gráficos de linha usados em Dashboards. */
+/* Sparkline multi-linha de horas apontadas por dia (uma linha por usuário).
+   - preserveAspectRatio=none só afeta os paths (com non-scaling-stroke).
+   - Markers da bolinha são HTML absolutos, sem distorção.
+   - Y-axis com múltiplos labels (0 → yMax) posicionados por % em HTML.
+   - Tooltip mostra dot colorido + nome + horas, ordenado por horas do dia. */
+const CAP_SPARK_PALETTE = ['#7A00FF','#3b82f6','#10b981','#f59e0b','#ef4444','#ec4899','#06b6d4','#8b5cf6','#f97316','#14b8a6'];
 function _capSparklineHtml(logStartYmd, logEndYmd) {
   const days = [];
   const cur = new Date(logStartYmd + 'T00:00:00');
@@ -9127,43 +9132,68 @@ function _capSparklineHtml(logStartYmd, logEndYmd) {
   while (cur <= end && guardIter < 400) { days.push(new Date(cur)); cur.setDate(cur.getDate() + 1); guardIter++; }
   if (!days.length) return '';
   const ymdOf = dt => `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
-  const byDayUser = new Map(days.map(dt => [ymdOf(dt), new Map()]));
+  const validDays = new Set(days.map(ymdOf));
+  // Agrega horas por (usuário, dia).
+  const byUserDay = new Map();
   capScopeDemands().forEach(dem => {
     (dem.timeEntries || []).forEach(e => {
       const when = ((e.start || e.createdAt || '') + '').slice(0, 10);
-      const m = byDayUser.get(when);
-      if (!m || !e.userId) return;
-      m.set(e.userId, (m.get(e.userId) || 0) + (Number(e.hours) || 0));
+      if (!validDays.has(when) || !e.userId) return;
+      let m = byUserDay.get(e.userId);
+      if (!m) { m = new Map(); byUserDay.set(e.userId, m); }
+      m.set(when, (m.get(when) || 0) + (Number(e.hours) || 0));
     });
   });
-  const totals = days.map(dt => [...byDayUser.get(ymdOf(dt)).values()].reduce((s, v) => s + v, 0));
-  const totalAll = totals.reduce((s, v) => s + v, 0);
-  if (!totalAll) {
+  if (!byUserDay.size) {
     return `<div class="cap-spark">
-      <div class="cap-spark-title">Horas apontadas por dia</div>
+      <div class="cap-spark-head">
+        <div class="cap-spark-title">Horas apontadas por dia</div>
+      </div>
       <div class="cap-spark-empty">Sem apontamentos no período.</div>
     </div>`;
   }
-  // ViewBox interno usado só pelo SVG (paths esticam com preserveAspectRatio=none).
-  // Rótulos (Y max, datas do eixo X) ficam como HTML fora do SVG — assim NÃO
-  // sofrem distorção quando o card muda de tamanho. O host é 100%×100% e a
-  // altura vem do próprio parent (grid stretch), casando com os cards ao lado.
+  // Top-N usuários por horas totais no período; usa a paleta pra dar cor.
+  const MAX_SERIES = 10;
+  const userTotals = [...byUserDay.entries()].map(([uid, m]) => ({
+    uid, total: [...m.values()].reduce((s, v) => s + v, 0)
+  })).filter(u => u.total > 0).sort((a, b) => b.total - a.total);
+  const series = userTotals.slice(0, MAX_SERIES).map((u, i) => {
+    const user = userById(u.uid);
+    const m = byUserDay.get(u.uid);
+    return {
+      user, color: CAP_SPARK_PALETTE[i % CAP_SPARK_PALETTE.length],
+      values: days.map(dt => m.get(ymdOf(dt)) || 0),
+      total: u.total,
+    };
+  }).filter(s => s.user);
+  const totalAll = userTotals.reduce((s, u) => s + u.total, 0);
+
   const W = 1000, H = 300;
-  const rawMax = Math.max(1, ...totals);
+  const rawMax = Math.max(1, ...series.flatMap(s => s.values));
   const yMax = Math.max(1, Math.ceil(rawMax * 1.15));
   const xAt = i => days.length <= 1 ? W / 2 : i * W / (days.length - 1);
   const yAt = v => H - (v / yMax) * H;
-  const color = '#7A00FF';
-  const pts = days.map((_, i) => [xAt(i), yAt(totals[i])]);
-  const path = 'M ' + pts.map(p => `${p[0]} ${p[1]}`).join(' L ');
-  const areaPath = `${path} L ${pts[pts.length - 1][0]} ${H} L ${pts[0][0]} ${H} Z`;
-  const gridEls = [0, 0.5, 1].map(f => {
-    const y = yAt(yMax * f);
-    return `<line x1="0" x2="${W}" y1="${y}" y2="${y}" stroke="var(--border)" stroke-width="1" stroke-dasharray="2 3" opacity="0.45" vector-effect="non-scaling-stroke"/>`;
+  // Uma path por série (linha por usuário). Sem áreas — polui com N linhas.
+  const pathParts = series.map(s => {
+    const pts = s.values.map((v, i) => [xAt(i), yAt(v)]);
+    const path = 'M ' + pts.map(p => `${p[0]} ${p[1]}`).join(' L ');
+    return `<path d="${path}" fill="none" stroke="${s.color}" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" opacity="0.9"/>`;
   }).join('');
-  const marker = `<circle id="cap-spark-mk" r="4" fill="${color}" stroke="var(--surface)" stroke-width="1.5" vector-effect="non-scaling-stroke" style="opacity:0;pointer-events:none"/>`;
-  const guide = `<line id="cap-spark-guide" x1="0" y1="0" x2="0" y2="${H}" stroke="rgba(122,0,255,0.55)" stroke-width="1" stroke-dasharray="2 3" vector-effect="non-scaling-stroke" style="opacity:0;pointer-events:none"/>`;
-  // Labels do eixo X — HTML posicionado por %, sem distorção.
+  // Gridlines em 5 níveis (0, 25%, 50%, 75%, 100%).
+  const gridLevels = [0, 0.25, 0.5, 0.75, 1];
+  const gridEls = gridLevels.map(f => {
+    const y = yAt(yMax * f);
+    return `<line x1="0" x2="${W}" y1="${y}" y2="${y}" stroke="var(--border)" stroke-width="1" stroke-dasharray="2 3" opacity="0.4" vector-effect="non-scaling-stroke"/>`;
+  }).join('');
+  const guide = `<line id="cap-spark-guide" x1="0" y1="0" x2="0" y2="${H}" stroke="rgba(122,0,255,0.5)" stroke-width="1" stroke-dasharray="2 3" vector-effect="non-scaling-stroke" style="opacity:0;pointer-events:none"/>`;
+  // Y-axis labels (HTML) — do topo (yMax) até 0.
+  const yLabelsHtml = gridLevels.slice().reverse().map(f => {
+    const v = yMax * f;
+    const label = Number.isInteger(v) ? String(v) : v.toFixed(1);
+    const topPct = (1 - f) * 100;
+    return `<span class="cap-spark-ylabel" style="top:${topPct}%">${label}h</span>`;
+  }).join('');
+  // X-axis labels (HTML).
   const idxsToLabel = days.length <= 4 ? days.map((_, i) => i) : [0, Math.floor(days.length / 3), Math.floor(days.length * 2 / 3), days.length - 1];
   const xLabelsHtml = idxsToLabel.map(i => {
     const dt = days[i];
@@ -9174,21 +9204,26 @@ function _capSparklineHtml(logStartYmd, logEndYmd) {
     else if (i === days.length - 1) align = 'right';
     return `<span class="cap-spark-xlabel is-${align}" style="left:${pct}%">${lbl}</span>`;
   }).join('');
-  _pendingCapSparkline = { days, byDayUser, totals, xAt, yAt, W, H };
+  // Markers HTML (um por série) — posicionados por % no hover, sem distorção.
+  const markersHtml = series.map((s, i) =>
+    `<div class="cap-spark-mk" data-idx="${i}" style="background:${s.color}"></div>`
+  ).join('');
+  _pendingCapSparkline = { days, series, xAt, yAt, W, H, yMax };
   return `<div class="cap-spark">
     <div class="cap-spark-head">
       <div class="cap-spark-title">Horas apontadas por dia</div>
-      <div class="cap-spark-sub">${fmtHours(totalAll)} no período</div>
+      <div class="cap-spark-sub">${fmtHours(totalAll)} no período · ${series.length} pessoa${series.length === 1 ? '' : 's'}</div>
     </div>
     <div class="chart-hover-host cap-spark-host" id="cap-spark-host">
-      <span class="cap-spark-ymax">${yMax}h</span>
-      <svg viewBox="0 0 ${W} ${H}" class="cap-spark-svg" preserveAspectRatio="none">
-        ${gridEls}
-        <path d="${areaPath}" fill="${color}" fill-opacity="0.14"/>
-        <path d="${path}" fill="none" stroke="${color}" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
-        ${guide}
-        ${marker}
-      </svg>
+      <div class="cap-spark-yaxis">${yLabelsHtml}</div>
+      <div class="cap-spark-plot" id="cap-spark-plot">
+        <svg viewBox="0 0 ${W} ${H}" class="cap-spark-svg" preserveAspectRatio="none">
+          ${gridEls}
+          ${pathParts}
+          ${guide}
+        </svg>
+        <div class="cap-spark-markers" id="cap-spark-markers">${markersHtml}</div>
+      </div>
       <div class="cap-spark-xaxis">${xLabelsHtml}</div>
       <div class="chart-tooltip" id="cap-spark-tip"></div>
     </div>
@@ -9200,21 +9235,19 @@ function _wireCapSparkline() {
   _pendingCapSparkline = null;
   if (!cfg) return;
   const host = document.getElementById('cap-spark-host');
-  const svg = host?.querySelector('.cap-spark-svg');
+  const plot = document.getElementById('cap-spark-plot');
+  const svg = plot?.querySelector('.cap-spark-svg');
   const tip = document.getElementById('cap-spark-tip');
-  const mk = document.getElementById('cap-spark-mk');
   const gd = document.getElementById('cap-spark-guide');
-  if (!host || !svg) return;
-  const { days, byDayUser, totals, xAt, yAt, W } = cfg;
-  const ymdOf = dt => `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+  const markers = [...(document.getElementById('cap-spark-markers')?.children || [])];
+  if (!host || !plot || !svg) return;
+  const { days, series, xAt, yAt, W, H } = cfg;
   let lastIdx = -1;
-  host.addEventListener('mousemove', e => {
-    // Mapeia cursor pelo SVG (não pelo host) — o host tem padding pro Y-label
-    // e datas, então usar o rect do host jogaria as coordenadas fora.
-    const svgRect = svg.getBoundingClientRect();
+  plot.addEventListener('mousemove', e => {
+    const rect = plot.getBoundingClientRect();
     const hostRect = host.getBoundingClientRect();
-    if (!svgRect.width) return;
-    const svgX = ((e.clientX - svgRect.left) * W / svgRect.width);
+    if (!rect.width) return;
+    const svgX = ((e.clientX - rect.left) * W / rect.width);
     let best = 0, bd = Infinity;
     for (let i = 0; i < days.length; i++) {
       const dx = Math.abs(xAt(i) - svgX);
@@ -9223,25 +9256,34 @@ function _wireCapSparkline() {
     if (best === lastIdx) return;
     lastIdx = best;
     const dt = days[best];
-    const total = totals[best];
-    const y = yAt(total);
-    if (mk) { mk.setAttribute('cx', xAt(best)); mk.setAttribute('cy', y); mk.style.opacity = '1'; }
+    const xPct = (xAt(best) / W) * 100;
     if (gd) { gd.setAttribute('x1', xAt(best)); gd.setAttribute('x2', xAt(best)); gd.style.opacity = '1'; }
-    const contribs = [...byDayUser.get(ymdOf(dt)).entries()]
-      .map(([uid, hrs]) => ({ u: userById(uid), hrs }))
-      .filter(x => x.u && x.hrs > 0)
+    // Markers HTML por série — % dentro do .cap-spark-plot.
+    series.forEach((s, i) => {
+      const mk = markers[i];
+      if (!mk) return;
+      const v = s.values[best];
+      if (v <= 0) { mk.style.opacity = '0'; return; }
+      mk.style.left = xPct + '%';
+      mk.style.top = ((yAt(v) / H) * 100) + '%';
+      mk.style.opacity = '1';
+    });
+    // Tooltip: dot colorido + nome + horas, ordenado por horas do dia.
+    const contribs = series
+      .map(s => ({ user: s.user, color: s.color, hrs: s.values[best] }))
+      .filter(c => c.hrs > 0)
       .sort((a, b) => b.hrs - a.hrs);
+    const total = contribs.reduce((s, c) => s + c.hrs, 0);
     const dateLabel = dt.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }).replace(/\.$/, '');
     const lines = contribs.length
-      ? contribs.slice(0, 6).map(c =>
-          `<div class="chart-tip-row"><span class="chart-tip-label">${esc(c.u.name.split(' ')[0])}</span><span class="chart-tip-value">${fmtHours(c.hrs)}</span></div>`
-        ).join('') + (contribs.length > 6 ? `<div class="chart-tip-row" style="opacity:.7"><span class="chart-tip-label">+${contribs.length - 6} outros</span></div>` : '')
+      ? contribs.slice(0, 8).map(c =>
+          `<div class="chart-tip-row"><span class="chart-tip-dot" style="background:${c.color}"></span><span class="chart-tip-label">${esc(c.user.name.split(' ')[0])}</span><span class="chart-tip-value">${fmtHours(c.hrs)}</span></div>`
+        ).join('') + (contribs.length > 8 ? `<div class="chart-tip-row" style="opacity:.7"><span class="chart-tip-label">+${contribs.length - 8} outros</span></div>` : '')
       : '<div class="chart-tip-row" style="opacity:.7"><span class="chart-tip-label">Sem apontamentos</span></div>';
     if (tip) {
       tip.innerHTML = `<div class="chart-tip-head">${esc(dateLabel)} · ${fmtHours(total)}</div>${lines}`;
-      // Posiciona o tooltip em coords do HOST (o container do tooltip).
-      const cursorLocalX = (svgRect.left - hostRect.left) + xAt(best) * svgRect.width / W;
-      const tipW = tip.offsetWidth || 160;
+      const cursorLocalX = (rect.left - hostRect.left) + xPct * rect.width / 100;
+      const tipW = tip.offsetWidth || 180;
       let left = cursorLocalX + 8;
       if (left + tipW > hostRect.width - 4) left = cursorLocalX - tipW - 8;
       if (left < 4) left = 4;
@@ -9250,11 +9292,11 @@ function _wireCapSparkline() {
       tip.style.opacity = '1';
     }
   });
-  host.addEventListener('mouseleave', () => {
+  plot.addEventListener('mouseleave', () => {
     lastIdx = -1;
     if (tip) tip.style.opacity = '0';
-    if (mk) mk.style.opacity = '0';
     if (gd) gd.style.opacity = '0';
+    markers.forEach(m => m && (m.style.opacity = '0'));
   });
 }
 

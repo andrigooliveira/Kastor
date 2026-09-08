@@ -3161,23 +3161,23 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 }
 
 /* ─── KPI TILES (detalhe de Cliente/Projeto) ─── */
-.kpi-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.kpi-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
 @media (max-width: 760px) { .kpi-tiles { grid-template-columns: repeat(2, 1fr); } }
 .kpi-tile {
-  display: flex; align-items: center; gap: 13px;
-  padding: 15px 16px; background: var(--surface);
-  border: 1px solid var(--hairline); border-radius: var(--radius);
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; background: var(--surface);
+  border: 1px solid var(--hairline); border-radius: 10px;
 }
 .kpi-tile-icon {
-  flex: 0 0 auto; width: 38px; height: 38px; border-radius: 10px;
+  flex: 0 0 auto; width: 30px; height: 30px; border-radius: 8px;
   display: inline-flex; align-items: center; justify-content: center;
   background: var(--surface-2); color: var(--text-muted);
 }
-.kpi-tile-icon .ic-sm { width: 18px; height: 18px; }
+.kpi-tile-icon .ic-sm { width: 15px; height: 15px; }
 .kpi-tile-body { min-width: 0; }
-.kpi-tile-value { font-size: 24px; font-weight: 700; line-height: 1.05; letter-spacing: -0.01em; color: var(--text); }
-.kpi-tile-label { font-size: 12px; font-weight: 600; color: var(--text-dim); margin-top: 2px; }
-.kpi-tile-sub { font-size: 10.5px; color: var(--text-muted); margin-top: 1px; }
+.kpi-tile-value { font-size: 20px; font-weight: 800; line-height: 1.05; letter-spacing: -0.01em; color: var(--text); }
+.kpi-tile-label { font-size: 11px; font-weight: 600; color: var(--text-dim); margin-top: 1px; }
+.kpi-tile-sub { font-size: 10px; color: var(--text-muted); margin-top: 1px; }
 .kpi-tile--accent  .kpi-tile-icon { background: var(--accent-dim); color: var(--accent-text); }
 .kpi-tile--danger  .kpi-tile-icon { background: var(--danger-dim); color: var(--danger); }
 .kpi-tile--danger  .kpi-tile-value { color: var(--danger); }
@@ -3254,51 +3254,66 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 /* ── RELATÓRIOS / SLA ──
    Tela de métricas de tempo por etapa (gargalos), lead time, pontualidade,
    retrabalho e demandas mais lentas. Consome /api/reports/sla. */
-#reports-body > * + * { margin-top: 18px; }
+#reports-body > * + * { margin-top: 12px; }
 .rep-loading, .rep-error { padding: 40px 8px; text-align: center; font-size: 13px; color: var(--text-muted); }
 .rep-error { color: var(--danger, #EF4444); }
-.rep-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.rep-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
 @media (max-width: 760px) { .rep-kpis { grid-template-columns: repeat(2, 1fr); } }
 .rep-card {
+  position: relative; overflow: hidden;
   background: var(--surface); border: 1px solid var(--hairline);
-  border-radius: var(--radius); padding: 18px 20px;
+  border-radius: 10px; padding: 12px 14px;
 }
+.rep-card::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: var(--accent);
+}
+.rep-tone-time::before   { background: #3b82f6; }
+.rep-tone-time   .rep-card-title .ic-sm { color: #3b82f6; }
+.rep-tone-effort::before { background: #06b6d4; }
+.rep-tone-effort .rep-card-title .ic-sm { color: #06b6d4; }
+.rep-tone-people::before { background: #10b981; }
+.rep-tone-people .rep-card-title .ic-sm { color: #10b981; }
+.rep-tone-type::before   { background: #f59e0b; }
+.rep-tone-type   .rep-card-title .ic-sm { color: #f59e0b; }
+.rep-tone-slow::before   { background: #ef4444; }
+.rep-tone-slow   .rep-card-title .ic-sm { color: #ef4444; }
 .rep-card-title {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 14px; font-weight: 700; color: var(--text);
+  display: flex; align-items: center; gap: 7px;
+  font-size: 13px; font-weight: 700; color: var(--text);
 }
 .rep-card-title .ic-sm { color: var(--accent-text); }
-.rep-card-hint { font-size: 11.5px; color: var(--text-muted); margin: 3px 0 14px; }
-.rep-bars { display: flex; flex-direction: column; gap: 14px; }
-.rep-bar-row { display: flex; flex-direction: column; gap: 5px; }
-.rep-bar-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.rep-bar-name { font-size: 12.5px; font-weight: 600; color: var(--text-dim); display: flex; align-items: center; gap: 7px; min-width: 0; }
-.rep-bar-val { font-size: 12.5px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rep-card-hint { font-size: 11px; color: var(--text-muted); margin: 2px 0 10px; line-height: 1.35; }
+.rep-bars { display: flex; flex-direction: column; gap: 8px; }
+.rep-bar-row { display: flex; flex-direction: column; gap: 3px; }
+.rep-bar-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.rep-bar-name { font-size: 12px; font-weight: 600; color: var(--text-dim); display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rep-bar-val { font-size: 11.5px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .rep-muted { color: var(--text-muted); font-weight: 500; }
 .rep-tag {
   font-size: 9.5px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--danger, #EF4444); background: color-mix(in srgb, var(--danger, #EF4444) 14%, transparent);
   padding: 2px 6px; border-radius: var(--radius-pill); white-space: nowrap;
 }
-.rep-bar-track { height: 8px; background: var(--surface-3, var(--surface)); border-radius: var(--radius-pill); overflow: hidden; }
+.rep-bar-track { height: 6px; background: var(--surface-3, var(--surface)); border-radius: var(--radius-pill); overflow: hidden; }
 .rep-bar-fill { height: 100%; border-radius: var(--radius-pill); transition: width .5s var(--ease-out); }
-.rep-bar-sub { font-size: 10.5px; color: var(--text-muted); }
-.rep-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+.rep-bar-sub { font-size: 10px; color: var(--text-muted); }
+.rep-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
 @media (max-width: 900px) { .rep-grid { grid-template-columns: 1fr; } }
 .rep-slow-list { display: flex; flex-direction: column; }
 .rep-slow-row {
-  display: flex; align-items: center; gap: 12px; width: 100%;
-  padding: 9px 8px; background: none; border: none; border-radius: var(--radius-sm);
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 6px 8px; background: none; border: none; border-radius: 4px;
   text-align: left; cursor: pointer; color: inherit; font: inherit;
   border-bottom: 1px solid var(--hairline); transition: background .12s var(--ease-out);
 }
 .rep-slow-row:last-child { border-bottom: none; }
 .rep-slow-row:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
-.rep-slow-name { flex: 1 1 auto; min-width: 0; font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rep-slow-proj { flex: 0 1 auto; min-width: 0; font-size: 11.5px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rep-slow-dur { flex: 0 0 auto; font-size: 12.5px; font-weight: 700; color: var(--accent-text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rep-slow-name { flex: 1 1 auto; min-width: 0; font-size: 12.5px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rep-slow-proj { flex: 0 1 auto; min-width: 0; font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rep-slow-dur { flex: 0 0 auto; font-size: 12px; font-weight: 700; color: #ef4444; font-variant-numeric: tabular-nums; white-space: nowrap; }
 @media (max-width: 520px) { .rep-slow-proj { display: none; } }
-.rep-effort-stats { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 0 0 14px; font-size: 12px; color: var(--text-muted); }
+.rep-effort-stats { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0 0 10px; font-size: 11px; color: var(--text-muted); }
 .rep-effort-stats strong { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
 
 /* Abas da página Análises (Capacidade | Relatórios) — mesmo estilo das abas de Listas de tarefas. */
@@ -6356,23 +6371,48 @@ tr.row-hover-actions:hover .row-actions { opacity: 1; }
 .cap-spark-head { margin-bottom: 10px; }
 .cap-spark-title { font-size: 12px; font-weight: 700; color: var(--text); }
 .cap-spark-sub { font-size: 10.5px; color: var(--text-muted); margin-top: 2px; }
-/* Host do gráfico ocupa TODO o espaço restante do card — casa altura com os
-   rows da esquerda via grid stretch. Padding cria espaço pro Y-label e datas. */
+/* Layout do gráfico:
+   .cap-spark-host  → container relativo (100% do card restante)
+     .cap-spark-yaxis → coluna à esquerda com labels de horas por %
+     .cap-spark-plot  → área do gráfico (SVG stretched + markers HTML)
+     .cap-spark-xaxis → linha inferior com labels de data por %
+   Markers e labels são HTML — não distorcem quando o SVG é esticado. */
 .cap-spark-host {
-  position: relative; flex: 1; min-height: 140px;
-  padding: 4px 4px 22px 30px;
+  position: relative; flex: 1; min-height: 160px;
+}
+.cap-spark-yaxis {
+  position: absolute; left: 0; top: 6px; bottom: 22px; width: 32px;
+  pointer-events: none;
+}
+.cap-spark-ylabel {
+  position: absolute; right: 6px;
+  font-size: 10px; color: var(--text-muted); font-weight: 500; line-height: 1;
+  transform: translateY(-50%);
+}
+.cap-spark-ylabel[style*="top:100%"], .cap-spark-ylabel[style*="top: 100%"] { transform: translateY(-100%); }
+.cap-spark-ylabel[style*="top:0%"], .cap-spark-ylabel[style*="top: 0%"] { transform: none; }
+.cap-spark-plot {
+  position: absolute; left: 32px; top: 6px; right: 6px; bottom: 22px;
 }
 .cap-spark-svg {
-  position: absolute; top: 4px; left: 30px; right: 4px; bottom: 22px;
-  width: calc(100% - 34px); height: calc(100% - 26px);
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
   display: block; overflow: visible;
 }
-.cap-spark-ymax {
-  position: absolute; left: 0; top: 0;
-  font-size: 10px; color: var(--text-muted); font-weight: 500;
+.cap-spark-markers {
+  position: absolute; inset: 0;
+  pointer-events: none;
+}
+.cap-spark-mk {
+  position: absolute;
+  width: 8px; height: 8px; border-radius: 50%;
+  border: 1.5px solid var(--surface);
+  transform: translate(-50%, -50%);
+  opacity: 0; transition: opacity .12s;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.06);
 }
 .cap-spark-xaxis {
-  position: absolute; left: 30px; right: 4px; bottom: 0; height: 18px;
+  position: absolute; left: 32px; right: 6px; bottom: 0; height: 18px;
 }
 .cap-spark-xlabel {
   position: absolute; bottom: 0;
