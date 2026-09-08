@@ -4472,11 +4472,18 @@ function renderDashboard() {
   const mine = _dashMyDemands();
   const mineActive = mine.filter(d => !isDone(d));
   const teamScope = dashScopedDemands(); // team-wide (workspaces acessíveis)
+  renderDashFocus(mineActive);
+  renderDashNextDelivery(mineActive);
+  renderDashHoursToday();
   renderDashForecast();
   renderDashOverdue(mineActive);
+  renderDashActivityFeed(mineActive);
+  renderDashMentions(teamScope);
+  renderDashBlocked(mineActive);
   renderDashRadar(mineActive);
   renderDashTopOwners(teamScope);
   renderDashPriorityDonut(mineActive);
+  paintIcons();
 }
 /* Demandas em aberto/concluídas do usuário logado (owner) nos squads acessíveis.
    Freelancer: o backend já filtra o que ele pode ver. */
@@ -4499,6 +4506,255 @@ function setDashForecastMode(m) {
     btn.classList.toggle('is-active', btn.dataset.mode === next);
   });
   renderDashForecast();
+}
+
+/* Meu foco de hoje — demandas em aberto onde EU sou o dono da etapa atual
+   (é a minha vez de agir). Ordena por prazo efetivo. */
+function renderDashFocus(mineActive) {
+  const el = $('dash-focus');
+  const sub = $('dash-focus-sub');
+  if (!el) return;
+  const myTurn = (mineActive || []).filter(d => {
+    const flow = flowById(d.flowId);
+    if (!flow) return false;
+    const stage = activeStagesOf(d, flow).find(s => s.id === d.status);
+    if (!stage) return false;
+    return resolveStageOwnerId(d, stage) === me.id;
+  }).sort((a, b) => {
+    const da = effDue(a) || '9999';
+    const db = effDue(b) || '9999';
+    return da.localeCompare(db);
+  });
+  if (sub) sub.textContent = myTurn.length
+    ? `${myTurn.length} demanda${myTurn.length === 1 ? '' : 's'} esperando você`
+    : 'Nada esperando por você agora';
+  if (!myTurn.length) {
+    el.innerHTML = `<div class="dash-empty-inline"><i data-lucide="coffee" class="ic-sm"></i> Você tá em dia. 🎉</div>`;
+    return;
+  }
+  const today = todayStr();
+  el.innerHTML = myTurn.slice(0, 8).map(d => {
+    const p = projectById(d.projectId);
+    const due = effDue(d);
+    const stages = activeStagesOf(d);
+    const cur = stages.find(s => s.id === d.status);
+    let dueBadge = '';
+    if (due) {
+      const isLateD = due < today;
+      const isTodayD = due === today;
+      const cls = isLateD ? 'is-late' : isTodayD ? 'is-today' : '';
+      dueBadge = `<span class="dash-focus-due ${cls}">${_fmtShortDate(due)}</span>`;
+    } else {
+      dueBadge = `<span class="dash-focus-due">sem prazo</span>`;
+    }
+    return `<div class="dash-focus-row" onclick="showDetail('${esc(d.id)}')">
+      <div class="dash-focus-body">
+        <div class="dash-focus-name">${esc(d.name)}</div>
+        <div class="dash-focus-meta">${cur ? `<span class="pill-dot" style="background:${cur.color}"></span>${esc(cur.label)}` : ''} ${p ? '· ' + esc(p.name) : ''}</div>
+      </div>
+      ${dueBadge}
+    </div>`;
+  }).join('');
+}
+
+/* Próxima entrega — MINHA demanda em aberto com prazo mais próximo (hoje ou futuro). */
+function renderDashNextDelivery(mineActive) {
+  const el = $('dash-next');
+  const sub = $('dash-next-sub');
+  if (!el) return;
+  const today = todayStr();
+  const upcoming = (mineActive || [])
+    .map(d => ({ d, due: effDue(d) }))
+    .filter(x => x.due && x.due >= today)
+    .sort((a, b) => a.due.localeCompare(b.due));
+  if (!upcoming.length) {
+    if (sub) sub.textContent = '';
+    el.innerHTML = `<div class="dash-empty-inline"><i data-lucide="calendar-check" class="ic-sm"></i> Sem prazos futuros.</div>`;
+    return;
+  }
+  const { d, due } = upcoming[0];
+  const p = projectById(d.projectId);
+  const dueDate = new Date(due + 'T00:00:00');
+  const todayD = new Date(today + 'T00:00:00');
+  const daysLeft = Math.round((dueDate - todayD) / 86400000);
+  const daysLabel = daysLeft === 0 ? 'hoje' : daysLeft === 1 ? 'amanhã' : `em ${daysLeft} dias`;
+  const cls = daysLeft === 0 ? 'is-today' : daysLeft <= 2 ? 'is-soon' : '';
+  if (sub) sub.textContent = _fmtShortDate(due);
+  el.innerHTML = `<div class="dash-next-card ${cls}" onclick="showDetail('${esc(d.id)}')">
+    <div class="dash-next-days">
+      <strong>${Math.max(0, daysLeft)}</strong>
+      <span>dia${daysLeft === 1 ? '' : 's'}</span>
+    </div>
+    <div class="dash-next-body">
+      <div class="dash-next-name">${esc(d.name)}</div>
+      ${p ? `<div class="dash-next-meta">${esc(p.name)}</div>` : ''}
+      <div class="dash-next-when">${esc(daysLabel)}</div>
+    </div>
+  </div>`;
+}
+
+/* Horas apontadas hoje — bar de progresso contra a meta padrão de 6h. */
+function renderDashHoursToday() {
+  const el = $('dash-hours-today');
+  const sub = $('dash-hours-sub');
+  if (!el) return;
+  const today = todayStr();
+  let hoursToday = 0;
+  (demands || []).forEach(d => (d.timeEntries || []).forEach(e => {
+    if (e.userId !== me.id) return;
+    const when = ((e.start || e.createdAt || '') + '').slice(0, 10);
+    if (when === today) hoursToday += Number(e.hours) || 0;
+  }));
+  const goal = 8;
+  const pct = Math.min(100, Math.round((hoursToday / goal) * 100));
+  const status = pct >= 100 ? 'is-full' : pct >= 60 ? 'is-mid' : 'is-low';
+  if (sub) sub.textContent = `Meta ${goal}h`;
+  el.innerHTML = `<div class="dash-hours-wrap ${status}">
+    <div class="dash-hours-value">${fmtHours(hoursToday)}<span>/${goal}h</span></div>
+    <div class="dash-hours-track"><div class="dash-hours-fill" style="width:${pct}%"></div></div>
+  </div>`;
+}
+
+/* Menções pra você — comentários dos últimos 30 dias que citaram @me. */
+function renderDashMentions(teamScope) {
+  const el = $('dash-mentions');
+  const sub = $('dash-mentions-sub');
+  if (!el) return;
+  if (!me?.username) { if (sub) sub.textContent = ''; el.innerHTML = ''; return; }
+  const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 30);
+  const cutoffIso = cutoff.toISOString();
+  const uname = me.username.toLowerCase();
+  const rxHtml = new RegExp(`class="mention"[^>]*>@${uname}\\b`, 'i');
+  const rxText = new RegExp(`(^|[^\\w])@${uname}\\b`, 'i');
+  const hits = [];
+  (teamScope || []).forEach(d => {
+    (d.comments || []).forEach(c => {
+      if (c.userId === me.id) return;
+      const when = c.createdAt || '';
+      if (!when || when < cutoffIso) return;
+      const text = c.text || '';
+      const hit = c.format === 'html' ? rxHtml.test(text) : rxText.test(text);
+      if (!hit) return;
+      hits.push({ d, c });
+    });
+  });
+  hits.sort((a, b) => (b.c.createdAt || '').localeCompare(a.c.createdAt || ''));
+  if (sub) sub.textContent = hits.length ? `${hits.length} nos últimos 30 dias` : '';
+  if (!hits.length) {
+    el.innerHTML = `<div class="dash-empty-inline"><i data-lucide="at-sign" class="ic-sm"></i> Nenhuma menção recente.</div>`;
+    return;
+  }
+  el.innerHTML = hits.slice(0, 5).map(({ d, c }) => {
+    const author = userById(c.userId);
+    const preview = _plainPreview(c.text || '', 80);
+    return `<div class="dash-mention-row" onclick="showDetail('${esc(d.id)}')">
+      ${avatarHTML(author, 'avatar avatar-xs')}
+      <div class="dash-mention-body">
+        <div class="dash-mention-head"><strong>${esc(author?.name || 'Alguém')}</strong> em <em>${esc(d.name)}</em></div>
+        <div class="dash-mention-preview">${esc(preview)}</div>
+      </div>
+      <span class="dash-mention-when">${_fmtRelTime(c.createdAt)}</span>
+    </div>`;
+  }).join('');
+}
+
+/* Bloqueios — MINHAS demandas onde a etapa ATUAL é de outra pessoa há > 3 dias
+   (alguém tá segurando o que eu preciso). */
+function renderDashBlocked(mineActive) {
+  const el = $('dash-blocked');
+  const sub = $('dash-blocked-sub');
+  if (!el) return;
+  const now = new Date();
+  const items = [];
+  (mineActive || []).forEach(d => {
+    const flow = flowById(d.flowId);
+    if (!flow) return;
+    const stage = activeStagesOf(d, flow).find(s => s.id === d.status);
+    if (!stage) return;
+    const owner = resolveStageOwnerId(d, stage);
+    if (!owner || owner === me.id) return; // se sou eu ou ninguém, não é bloqueio
+    if (!d.stageEnteredAt) return;
+    const days = Math.floor((now - new Date(d.stageEnteredAt)) / 86400000);
+    if (days < 3) return;
+    items.push({ d, stage, ownerId: owner, days });
+  });
+  items.sort((a, b) => b.days - a.days);
+  if (sub) sub.textContent = items.length ? `${items.length} parada${items.length === 1 ? '' : 's'} há 3+ dias` : '';
+  if (!items.length) {
+    el.innerHTML = `<div class="dash-empty-inline"><i data-lucide="check" class="ic-sm"></i> Nada travado.</div>`;
+    return;
+  }
+  el.innerHTML = items.slice(0, 5).map(({ d, stage, ownerId, days }) => {
+    const owner = userById(ownerId);
+    return `<div class="dash-blocked-row" onclick="showDetail('${esc(d.id)}')">
+      <div class="dash-blocked-days"><strong>${days}</strong><span>d</span></div>
+      <div class="dash-blocked-body">
+        <div class="dash-blocked-name">${esc(d.name)}</div>
+        <div class="dash-blocked-meta"><span class="pill-dot" style="background:${stage.color}"></span>${esc(stage.label)}</div>
+      </div>
+      <div class="dash-blocked-owner" title="Com ${esc(owner?.name || '—')}">${avatarHTML(owner, 'avatar avatar-xs')}</div>
+    </div>`;
+  }).join('');
+}
+
+/* Atividade recente — últimas 24h de mudanças nas minhas demandas. */
+function renderDashActivityFeed(mineActive) {
+  const el = $('dash-activity');
+  const sub = $('dash-activity-sub');
+  if (!el) return;
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const items = [];
+  (mineActive || []).forEach(d => {
+    (d.history || []).forEach(h => {
+      if (!h.at || h.at < cutoff) return;
+      if (h.userId === me.id) return; // não me interessa o que EU fiz
+      items.push({ d, h });
+    });
+  });
+  items.sort((a, b) => (b.h.at || '').localeCompare(a.h.at || ''));
+  if (sub) sub.textContent = items.length ? `${items.length} nas últimas 24h` : '';
+  if (!items.length) {
+    el.innerHTML = `<div class="dash-empty-inline"><i data-lucide="activity" class="ic-sm"></i> Sem atividade nova.</div>`;
+    return;
+  }
+  el.innerHTML = items.slice(0, 8).map(({ d, h }) => {
+    const u = userById(h.userId);
+    const desc = _historyText(d, h);
+    return `<div class="dash-activity-row" onclick="showDetail('${esc(d.id)}')">
+      ${avatarHTML(u, 'avatar avatar-xs')}
+      <div class="dash-activity-body">
+        <div class="dash-activity-desc"><strong>${esc(u?.name || 'Alguém')}</strong> ${desc}</div>
+        <div class="dash-activity-meta"><em>${esc(d.name)}</em> · ${_fmtRelTime(h.at)}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/* Helpers usados só pelos widgets novos. */
+function _plainPreview(html, max) {
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html || '';
+  const txt = (tmp.textContent || '').replace(/\s+/g, ' ').trim();
+  return txt.length > max ? txt.slice(0, max) + '…' : txt;
+}
+function _fmtShortDate(ymd) {
+  if (!ymd) return '';
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ymd);
+  return m ? `${m[3]}/${m[2]}` : ymd;
+}
+function _fmtRelTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const diff = (Date.now() - d.getTime()) / 1000;
+  if (diff < 60) return 'agora';
+  if (diff < 3600) return `${Math.floor(diff / 60)} min`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
+  const days = Math.floor(diff / 86400);
+  return `${days}d`;
+}
+// Delega pro texto de atividade já usado no histórico da demanda (mesmo formato).
+function _historyText(d, h) {
+  try { return describeHistory(h, d); } catch { return esc(h.action || ''); }
 }
 
 // ── Demandas previstas ── quadro heatmap 2×7 (14 dias úteis). Puxa o SLA das

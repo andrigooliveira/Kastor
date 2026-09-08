@@ -14,12 +14,12 @@
 <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/geist-latin-ext.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/css/fonts.css?v=1">
-<link rel="stylesheet" href="/css/style.css?v=20260908dash1">
+<link rel="stylesheet" href="/css/style.css?v=20260908dash2">
 <!-- Preload dos JS pesados no <head> pra que o download comece IMEDIATAMENTE,
      em paralelo com o parse do HTML, em vez de esperar o parser chegar em
      </body>. Com immutable cache (max-age=1yr), na 2ª visita nem baixa. -->
 <link rel="preload" href="/vendor/lucide.min.js" as="script">
-<link rel="preload" href="/js/app.js?v=20260908dash1" as="script">
+<link rel="preload" href="/js/app.js?v=20260908dash2" as="script">
 <script type="text/javascript">
     // Clarity: analytics de heatmap/session replay. Não é crítico pro app —
     // deferido pra depois do primeiro paint pra não roubar tempo do LCP.
@@ -278,6 +278,14 @@
           <div class="dash-col dash-col-left">
             <div class="dash-widget">
               <div class="dash-widget-head">
+                <div class="dash-widget-title">Meu foco de hoje</div>
+                <div class="dash-widget-sub" id="dash-focus-sub"></div>
+              </div>
+              <div id="dash-focus"></div>
+            </div>
+
+            <div class="dash-widget">
+              <div class="dash-widget-head">
                 <div class="dash-widget-title">Demandas previstas</div>
                 <div class="dash-widget-toggle" id="dash-forecast-toggle">
                   <button type="button" class="dash-toggle-btn is-active" onclick="setDashForecastMode('previstas')" data-mode="previstas">Previstas</button>
@@ -295,15 +303,55 @@
               </div>
               <div id="dash-overdue"></div>
             </div>
+
+            <div class="dash-widget">
+              <div class="dash-widget-head">
+                <div class="dash-widget-title">Atividade recente</div>
+                <div class="dash-widget-sub" id="dash-activity-sub"></div>
+              </div>
+              <div id="dash-activity"></div>
+            </div>
           </div>
 
           <div class="dash-col dash-col-right">
+            <div class="dash-widget" id="dash-widget-next">
+              <div class="dash-widget-head">
+                <div class="dash-widget-title">Próxima entrega</div>
+                <div class="dash-widget-sub" id="dash-next-sub"></div>
+              </div>
+              <div id="dash-next"></div>
+            </div>
+
+            <div class="dash-widget">
+              <div class="dash-widget-head">
+                <div class="dash-widget-title">Horas de hoje</div>
+                <div class="dash-widget-sub" id="dash-hours-sub"></div>
+              </div>
+              <div id="dash-hours-today"></div>
+            </div>
+
             <div class="dash-widget">
               <div class="dash-widget-head">
                 <div class="dash-widget-title">Demandas em aberto · prioridade</div>
                 <div class="dash-widget-sub" id="dash-prio-sub"></div>
               </div>
               <div id="dash-prio-donut"></div>
+            </div>
+
+            <div class="dash-widget">
+              <div class="dash-widget-head">
+                <div class="dash-widget-title">Menções pra você</div>
+                <div class="dash-widget-sub" id="dash-mentions-sub"></div>
+              </div>
+              <div id="dash-mentions"></div>
+            </div>
+
+            <div class="dash-widget">
+              <div class="dash-widget-head">
+                <div class="dash-widget-title">Bloqueios</div>
+                <div class="dash-widget-sub" id="dash-blocked-sub"></div>
+              </div>
+              <div id="dash-blocked"></div>
             </div>
 
             <div class="dash-widget">
@@ -3794,7 +3842,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260908dash1"></script>
+<script src="/js/app.js?v=20260908dash2"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

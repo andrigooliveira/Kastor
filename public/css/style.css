@@ -3413,6 +3413,111 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
   box-shadow: 0 1px 3px rgba(0,0,0,.08);
 }
 
+/* ── Meu foco de hoje ── linhas compactas clicáveis. */
+.dash-focus-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: var(--radius-sm);
+  cursor: pointer; transition: background .12s;
+}
+.dash-focus-row:hover { background: var(--surface-2); }
+.dash-focus-row + .dash-focus-row { border-top: 1px solid var(--hairline); }
+.dash-focus-body { flex: 1; min-width: 0; }
+.dash-focus-name {
+  font-size: 13px; font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dash-focus-meta {
+  font-size: 11.5px; color: var(--text-muted);
+  display: flex; align-items: center; gap: 6px; margin-top: 2px;
+}
+.dash-focus-due {
+  font-size: 11px; font-weight: 700; padding: 4px 8px;
+  border-radius: 6px; background: var(--surface-2);
+  color: var(--text-muted); white-space: nowrap;
+}
+.dash-focus-due.is-today { background: rgba(122,0,255,0.14); color: var(--accent-text); }
+.dash-focus-due.is-late { background: rgba(239,68,68,0.14); color: var(--danger); }
+
+/* ── Próxima entrega ── card grande. */
+.dash-next-card {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px; border-radius: var(--radius-sm);
+  background: var(--surface-2); cursor: pointer;
+  transition: transform .12s var(--ease-spring), box-shadow .12s;
+}
+.dash-next-card:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,0,0,0.14); }
+.dash-next-card.is-today { background: rgba(122,0,255,0.10); }
+.dash-next-card.is-soon { background: rgba(245,158,11,0.10); }
+.dash-next-days {
+  display: flex; flex-direction: column; align-items: center;
+  min-width: 52px;
+}
+.dash-next-days strong { font-size: 26px; font-weight: 800; color: var(--text); line-height: 1; }
+.dash-next-days span { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; margin-top: 2px; }
+.dash-next-body { flex: 1; min-width: 0; }
+.dash-next-name { font-size: 13.5px; font-weight: 700; color: var(--text); }
+.dash-next-meta { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.dash-next-when { font-size: 11px; color: var(--text-muted); margin-top: 4px; text-transform: uppercase; letter-spacing: .06em; }
+
+/* ── Horas de hoje ── barra de progresso. */
+.dash-hours-wrap { display: flex; flex-direction: column; gap: 8px; }
+.dash-hours-value {
+  font-size: 22px; font-weight: 800; color: var(--text);
+}
+.dash-hours-value span { font-size: 13px; color: var(--text-muted); font-weight: 500; margin-left: 4px; }
+.dash-hours-track {
+  height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden;
+}
+.dash-hours-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width .3s var(--ease-out); }
+.dash-hours-wrap.is-low .dash-hours-fill { background: var(--danger); }
+.dash-hours-wrap.is-mid .dash-hours-fill { background: #f59e0b; }
+.dash-hours-wrap.is-full .dash-hours-fill { background: #10b981; }
+
+/* ── Menções ── linhas com avatar. */
+.dash-mention-row, .dash-blocked-row, .dash-activity-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: var(--radius-sm);
+  cursor: pointer; transition: background .12s;
+}
+.dash-mention-row:hover, .dash-blocked-row:hover, .dash-activity-row:hover { background: var(--surface-2); }
+.dash-mention-row + .dash-mention-row,
+.dash-blocked-row + .dash-blocked-row,
+.dash-activity-row + .dash-activity-row { border-top: 1px solid var(--hairline); }
+.dash-mention-body, .dash-activity-body, .dash-blocked-body { flex: 1; min-width: 0; }
+.dash-mention-head { font-size: 12px; color: var(--text); }
+.dash-mention-head strong { color: var(--text); }
+.dash-mention-head em { color: var(--text-muted); font-style: normal; }
+.dash-mention-preview {
+  font-size: 11.5px; color: var(--text-muted); margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dash-mention-when { font-size: 10.5px; color: var(--text-muted); white-space: nowrap; }
+
+/* ── Bloqueios ── */
+.dash-blocked-days {
+  display: flex; flex-direction: column; align-items: center;
+  min-width: 34px;
+}
+.dash-blocked-days strong { font-size: 16px; font-weight: 800; color: var(--danger); line-height: 1; }
+.dash-blocked-days span { font-size: 9px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
+.dash-blocked-name {
+  font-size: 12.5px; font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dash-blocked-meta {
+  font-size: 11px; color: var(--text-muted); margin-top: 2px;
+  display: flex; align-items: center; gap: 6px;
+}
+
+/* ── Atividade recente ── */
+.dash-activity-desc {
+  font-size: 12px; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dash-activity-desc strong { font-weight: 600; }
+.dash-activity-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.dash-activity-meta em { font-style: normal; }
+
 /* Demandas previstas — quadro heatmap 2×7 (14 dias úteis). Cor pela quantidade
    de demandas que devem CHEGAR na etapa da pessoa naquele dia. */
 .dash-forecast-grid {
