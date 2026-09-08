@@ -9172,26 +9172,155 @@ function capacityHeatmapHTML(rows, startYmd, endYmd) {
   </div>`;
 }
 
+/* Sparkline de horas apontadas por dia no período. Tooltip mostra o total do
+   dia + os usuários que apontaram (top 6 por horas). Segue o mesmo padrão
+   dos gráficos de linha usados em Dashboards. */
+function _capSparklineHtml(logStartYmd, logEndYmd) {
+  const days = [];
+  const cur = new Date(logStartYmd + 'T00:00:00');
+  const end = new Date(logEndYmd + 'T00:00:00');
+  let guardIter = 0;
+  while (cur <= end && guardIter < 400) { days.push(new Date(cur)); cur.setDate(cur.getDate() + 1); guardIter++; }
+  if (!days.length) return '';
+  const ymdOf = dt => `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+  const byDayUser = new Map(days.map(dt => [ymdOf(dt), new Map()]));
+  capScopeDemands().forEach(dem => {
+    (dem.timeEntries || []).forEach(e => {
+      const when = ((e.start || e.createdAt || '') + '').slice(0, 10);
+      const m = byDayUser.get(when);
+      if (!m || !e.userId) return;
+      m.set(e.userId, (m.get(e.userId) || 0) + (Number(e.hours) || 0));
+    });
+  });
+  const totals = days.map(dt => [...byDayUser.get(ymdOf(dt)).values()].reduce((s, v) => s + v, 0));
+  const totalAll = totals.reduce((s, v) => s + v, 0);
+  if (!totalAll) {
+    return `<div class="cap-spark">
+      <div class="cap-spark-title">Horas apontadas por dia</div>
+      <div class="cap-spark-empty">Sem apontamentos no período.</div>
+    </div>`;
+  }
+  // ViewBox interno usado só pelo SVG (paths esticam com preserveAspectRatio=none).
+  // Rótulos (Y max, datas do eixo X) ficam como HTML fora do SVG — assim NÃO
+  // sofrem distorção quando o card muda de tamanho. O host é 100%×100% e a
+  // altura vem do próprio parent (grid stretch), casando com os cards ao lado.
+  const W = 1000, H = 300;
+  const rawMax = Math.max(1, ...totals);
+  const yMax = Math.max(1, Math.ceil(rawMax * 1.15));
+  const xAt = i => days.length <= 1 ? W / 2 : i * W / (days.length - 1);
+  const yAt = v => H - (v / yMax) * H;
+  const color = '#7A00FF';
+  const pts = days.map((_, i) => [xAt(i), yAt(totals[i])]);
+  const path = 'M ' + pts.map(p => `${p[0]} ${p[1]}`).join(' L ');
+  const areaPath = `${path} L ${pts[pts.length - 1][0]} ${H} L ${pts[0][0]} ${H} Z`;
+  const gridEls = [0, 0.5, 1].map(f => {
+    const y = yAt(yMax * f);
+    return `<line x1="0" x2="${W}" y1="${y}" y2="${y}" stroke="var(--border)" stroke-width="1" stroke-dasharray="2 3" opacity="0.45" vector-effect="non-scaling-stroke"/>`;
+  }).join('');
+  const marker = `<circle id="cap-spark-mk" r="4" fill="${color}" stroke="var(--surface)" stroke-width="1.5" vector-effect="non-scaling-stroke" style="opacity:0;pointer-events:none"/>`;
+  const guide = `<line id="cap-spark-guide" x1="0" y1="0" x2="0" y2="${H}" stroke="rgba(122,0,255,0.55)" stroke-width="1" stroke-dasharray="2 3" vector-effect="non-scaling-stroke" style="opacity:0;pointer-events:none"/>`;
+  // Labels do eixo X — HTML posicionado por %, sem distorção.
+  const idxsToLabel = days.length <= 4 ? days.map((_, i) => i) : [0, Math.floor(days.length / 3), Math.floor(days.length * 2 / 3), days.length - 1];
+  const xLabelsHtml = idxsToLabel.map(i => {
+    const dt = days[i];
+    const pct = days.length <= 1 ? 50 : (i * 100 / (days.length - 1));
+    const lbl = `${String(dt.getDate()).padStart(2, '0')}/${String(dt.getMonth() + 1).padStart(2, '0')}`;
+    let align = 'center';
+    if (i === 0) align = 'left';
+    else if (i === days.length - 1) align = 'right';
+    return `<span class="cap-spark-xlabel is-${align}" style="left:${pct}%">${lbl}</span>`;
+  }).join('');
+  _pendingCapSparkline = { days, byDayUser, totals, xAt, yAt, W, H };
+  return `<div class="cap-spark">
+    <div class="cap-spark-head">
+      <div class="cap-spark-title">Horas apontadas por dia</div>
+      <div class="cap-spark-sub">${fmtHours(totalAll)} no período</div>
+    </div>
+    <div class="chart-hover-host cap-spark-host" id="cap-spark-host">
+      <span class="cap-spark-ymax">${yMax}h</span>
+      <svg viewBox="0 0 ${W} ${H}" class="cap-spark-svg" preserveAspectRatio="none">
+        ${gridEls}
+        <path d="${areaPath}" fill="${color}" fill-opacity="0.14"/>
+        <path d="${path}" fill="none" stroke="${color}" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+        ${guide}
+        ${marker}
+      </svg>
+      <div class="cap-spark-xaxis">${xLabelsHtml}</div>
+      <div class="chart-tooltip" id="cap-spark-tip"></div>
+    </div>
+  </div>`;
+}
+let _pendingCapSparkline = null;
+function _wireCapSparkline() {
+  const cfg = _pendingCapSparkline;
+  _pendingCapSparkline = null;
+  if (!cfg) return;
+  const host = document.getElementById('cap-spark-host');
+  const svg = host?.querySelector('.cap-spark-svg');
+  const tip = document.getElementById('cap-spark-tip');
+  const mk = document.getElementById('cap-spark-mk');
+  const gd = document.getElementById('cap-spark-guide');
+  if (!host || !svg) return;
+  const { days, byDayUser, totals, xAt, yAt, W } = cfg;
+  const ymdOf = dt => `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+  let lastIdx = -1;
+  host.addEventListener('mousemove', e => {
+    // Mapeia cursor pelo SVG (não pelo host) — o host tem padding pro Y-label
+    // e datas, então usar o rect do host jogaria as coordenadas fora.
+    const svgRect = svg.getBoundingClientRect();
+    const hostRect = host.getBoundingClientRect();
+    if (!svgRect.width) return;
+    const svgX = ((e.clientX - svgRect.left) * W / svgRect.width);
+    let best = 0, bd = Infinity;
+    for (let i = 0; i < days.length; i++) {
+      const dx = Math.abs(xAt(i) - svgX);
+      if (dx < bd) { bd = dx; best = i; }
+    }
+    if (best === lastIdx) return;
+    lastIdx = best;
+    const dt = days[best];
+    const total = totals[best];
+    const y = yAt(total);
+    if (mk) { mk.setAttribute('cx', xAt(best)); mk.setAttribute('cy', y); mk.style.opacity = '1'; }
+    if (gd) { gd.setAttribute('x1', xAt(best)); gd.setAttribute('x2', xAt(best)); gd.style.opacity = '1'; }
+    const contribs = [...byDayUser.get(ymdOf(dt)).entries()]
+      .map(([uid, hrs]) => ({ u: userById(uid), hrs }))
+      .filter(x => x.u && x.hrs > 0)
+      .sort((a, b) => b.hrs - a.hrs);
+    const dateLabel = dt.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }).replace(/\.$/, '');
+    const lines = contribs.length
+      ? contribs.slice(0, 6).map(c =>
+          `<div class="chart-tip-row"><span class="chart-tip-label">${esc(c.u.name.split(' ')[0])}</span><span class="chart-tip-value">${fmtHours(c.hrs)}</span></div>`
+        ).join('') + (contribs.length > 6 ? `<div class="chart-tip-row" style="opacity:.7"><span class="chart-tip-label">+${contribs.length - 6} outros</span></div>` : '')
+      : '<div class="chart-tip-row" style="opacity:.7"><span class="chart-tip-label">Sem apontamentos</span></div>';
+    if (tip) {
+      tip.innerHTML = `<div class="chart-tip-head">${esc(dateLabel)} · ${fmtHours(total)}</div>${lines}`;
+      // Posiciona o tooltip em coords do HOST (o container do tooltip).
+      const cursorLocalX = (svgRect.left - hostRect.left) + xAt(best) * svgRect.width / W;
+      const tipW = tip.offsetWidth || 160;
+      let left = cursorLocalX + 8;
+      if (left + tipW > hostRect.width - 4) left = cursorLocalX - tipW - 8;
+      if (left < 4) left = 4;
+      tip.style.left = left + 'px';
+      tip.style.top = '4px';
+      tip.style.opacity = '1';
+    }
+  });
+  host.addEventListener('mouseleave', () => {
+    lastIdx = -1;
+    if (tip) tip.style.opacity = '0';
+    if (mk) mk.style.opacity = '0';
+    if (gd) gd.style.opacity = '0';
+  });
+}
+
 function renderCapacityTeam(startYmd, endYmd, businessDays, capacityHours, logStartYmd, logEndYmd) {
   const wsdemands = capScopeDemands().filter(d => !isDone(d));
   const wsusers = capScopeUsers();
 
-  // Horas apontadas: janela definida no renderCapacity (próximos/últimos N dias
-  // pros períodos numéricos, ou início do mês até hoje quando "Este mês").
   const inLookback = (e) => {
     const when = ((e.start || e.createdAt || '') + '').slice(0,10);
     return when >= logStartYmd && when <= logEndYmd;
-  };
-  // Janela de "entregas": considera a demanda no período se:
-  //   - foi CONCLUÍDA dentro da janela (completedAt no período)
-  //   - OU está EM ABERTO e atribuída ao usuário (em produção agora)
-  // Isso evita que o "0 0 0" apareça enquanto a demanda ainda está em execução.
-  const deliveredInWindow = (d) => {
-    if (d.completedAt) {
-      const day = String(d.completedAt).slice(0, 10);
-      return day >= logStartYmd && day <= logEndYmd;
-    }
-    return !isDone(d); // em aberto = conta como volume previsto
   };
 
   const rows = wsusers.map(u => {
@@ -9201,91 +9330,47 @@ function renderCapacityTeam(startYmd, endYmd, businessDays, capacityHours, logSt
       return due && due >= startYmd && due <= endYmd;
     });
     const lateCount = userDemands.filter(d => isLate(d)).length;
-    // Horas apontadas pelo usuário NOS ÚLTIMOS N dias — UNIVERSAIS: soma
-    // apontamentos dele em QUALQUER squad, não só no escopo atual. O trabalho
-    // de uma pessoa é único; o filtro de squad só afeta os OUTROS stats (em
-    // aberto/atrasadas/entregáveis) que refletem produção contextual.
     const hoursLogged = demands.reduce((s, d) => {
       return s + (d.timeEntries || [])
         .filter(e => e.userId === u.id && inLookback(e))
         .reduce((a, e) => a + (Number(e.hours) || 0), 0);
     }, 0);
-    // Entregáveis: soma das 3 contagens em demandas DESTE usuário (concluídas no período OU ativas).
-    // Usa deliverableUserId (quem executou as artes) como prioridade; se vazio, cai pro ownerId atual.
-    const deliveredDemands = capScopeDemands().filter(d => (d.deliverableUserId || d.ownerId) === u.id && deliveredInWindow(d));
-    const totalPieces     = deliveredDemands.reduce((s, d) => s + (Number(d.qtyPieces) || 0), 0);
-    const totalArts       = deliveredDemands.reduce((s, d) => s + (Number(d.qtyArts) || 0), 0);
-    const totalVariations = deliveredDemands.reduce((s, d) => s + (Number(d.qtyVariations) || 0), 0);
-    const estimatedLoad = userDemands.reduce((s, d) => s + (Number(d.estimatedHours) > 0 ? Number(d.estimatedHours) : 4), 0);
-    // Preenchimento da barra: horas apontadas no período / capacidade do período
     const pct = capacityHours > 0 ? Math.min(150, Math.round(hoursLogged / capacityHours * 100)) : 0;
     const status = pct >= 100 ? 'overload' : pct >= 75 ? 'high' : pct >= 40 ? 'medium' : 'low';
-    return { u, userDemands, inPeriod, lateCount, hoursLogged, totalPieces, totalArts, totalVariations, estimatedLoad, pct, status };
+    return { u, userDemands, inPeriod, lateCount, hoursLogged, pct, status };
   }).sort((a, b) => {
-    // 1º critério: horas apontadas (decrescente) — quem mais trabalhou no topo
     if (b.hoursLogged !== a.hoursLogged) return b.hoursLogged - a.hoursLogged;
-    // 2º critério: nome do usuário em ordem alfabética (A-Z)
     return norm(a.u.name).localeCompare(norm(b.u.name));
   });
 
-  // Totais do workspace (somatório de todas as rows) — visão global de produção
-  const wsTotal = rows.reduce((acc, r) => ({
-    pieces: acc.pieces + r.totalPieces,
-    arts: acc.arts + r.totalArts,
-    variations: acc.variations + r.totalVariations,
-    hours: acc.hours + r.hoursLogged
-  }), { pieces: 0, arts: 0, variations: 0, hours: 0 });
-
   $('capacity-list').innerHTML = `
     <div class="capacity-summary">
-      <div class="capacity-summary-item"><div class="capacity-summary-label">Capacidade no período</div><div class="capacity-summary-value">${capacityHours}h</div><div class="capacity-summary-sub">${businessDays} dias úteis × 8h</div></div>
-      <div class="capacity-summary-item"><div class="capacity-summary-label">Demandas em aberto</div><div class="capacity-summary-value">${wsdemands.length}</div><div class="capacity-summary-sub">${capSquadFilter.size ? `em ${capSquadFilter.size} squad${capSquadFilter.size === 1 ? '' : 's'}` : `no workspace ${esc(wsById(activeWs)?.name || '')}`}</div></div>
-      <div class="capacity-summary-item"><div class="capacity-summary-label">Pessoas ativas</div><div class="capacity-summary-value">${wsusers.length}</div><div class="capacity-summary-sub">com acesso ao squad</div></div>
-    </div>
-    <!-- Banner de produção total — soma de todas as pessoas no período -->
-    <div class="capacity-prod-banner">
-      <div class="capacity-prod-title">Produção do squad no período</div>
-      <div class="capacity-prod-stats">
-        <div class="capacity-prod-stat"><span class="capacity-prod-value">${fmtHours(wsTotal.hours)}</span><span class="capacity-prod-label">horas apontadas</span></div>
-        <div class="capacity-prod-divider"></div>
-        <div class="capacity-prod-stat"><span class="capacity-prod-value">${wsTotal.pieces}</span><span class="capacity-prod-label">peças únicas</span></div>
-        <div class="capacity-prod-stat"><span class="capacity-prod-value">${wsTotal.arts}</span><span class="capacity-prod-label">artes individuais</span></div>
-        <div class="capacity-prod-stat"><span class="capacity-prod-value">${wsTotal.variations}</span><span class="capacity-prod-label">variações</span></div>
-      </div>
+      <div class="capacity-summary-item is-primary"><div class="capacity-summary-label">Capacidade no período</div><div class="capacity-summary-value">${capacityHours}h</div><div class="capacity-summary-sub">${businessDays} dias úteis × 8h</div></div>
+      <div class="capacity-summary-item is-info"><div class="capacity-summary-label">Demandas em aberto</div><div class="capacity-summary-value">${wsdemands.length}</div><div class="capacity-summary-sub">${capSquadFilter.size ? `em ${capSquadFilter.size} squad${capSquadFilter.size === 1 ? '' : 's'}` : `no workspace ${esc(wsById(activeWs)?.name || '')}`}</div></div>
+      <div class="capacity-summary-item is-team"><div class="capacity-summary-label">Pessoas ativas</div><div class="capacity-summary-value">${wsusers.length}</div><div class="capacity-summary-sub">com acesso ao squad</div></div>
     </div>
     ${rows.length ? capacityHeatmapHTML(rows, startYmd, endYmd) : ''}
-    <div class="capacity-rows">
-    ${rows.map(r => `
-      <div class="capacity-row ${r.status}">
-        <div class="capacity-user">
-          ${avatarHTML(r.u)}
-          <div>
-            <div class="capacity-user-name">${esc(r.u.name)}</div>
-            <div class="capacity-user-role">${esc(r.u.role || '—')}</div>
+    <div class="capacity-body">
+      <div class="capacity-rows">
+      ${rows.map(r => `
+        <div class="capacity-row ${r.status}" title="${esc(r.u.name)} · ${fmtHours(r.hoursLogged)} apontadas · ${r.userDemands.length} em aberto · ${r.lateCount} atrasadas · ${r.pct}% da capacidade">
+          <div class="capacity-user">
+            ${avatarHTML(r.u)}
+            <div class="capacity-user-info">
+              <div class="capacity-user-name">${esc(r.u.name)}</div>
+              <div class="capacity-user-role">${fmtHours(r.hoursLogged)} · ${r.pct}%</div>
+            </div>
           </div>
+          <div class="capacity-mini-stat" title="Demandas em aberto"><i data-lucide="inbox" class="ic-xs"></i>${r.userDemands.length}</div>
+          <div class="capacity-mini-stat ${r.lateCount > 0 ? 'is-late' : ''}" title="Atrasadas"><i data-lucide="alert-triangle" class="ic-xs"></i>${r.lateCount}</div>
         </div>
-        <div class="capacity-stats">
-          <div class="capacity-stat"><span class="capacity-stat-value">${r.userDemands.length}</span><span class="capacity-stat-label">em aberto</span></div>
-          <div class="capacity-stat"><span class="capacity-stat-value">${r.inPeriod.length}</span><span class="capacity-stat-label">no período</span></div>
-          <div class="capacity-stat ${r.lateCount > 0 ? 'late' : ''}"><span class="capacity-stat-value">${r.lateCount}</span><span class="capacity-stat-label">atrasadas</span></div>
-          <div class="capacity-stat" title="Horas apontadas pelo usuário em QUALQUER squad no período — o trabalho da pessoa é único."><span class="capacity-stat-value">${fmtHours(r.hoursLogged)}</span><span class="capacity-stat-label">apontadas</span></div>
-          <div class="capacity-stat-divider"></div>
-          <div class="capacity-stat" title="Peças únicas entregues no período"><span class="capacity-stat-value">${r.totalPieces}</span><span class="capacity-stat-label">peças</span></div>
-          <div class="capacity-stat" title="Artes individuais entregues no período"><span class="capacity-stat-value">${r.totalArts}</span><span class="capacity-stat-label">artes</span></div>
-          <div class="capacity-stat" title="Variações/exportações entregues no período"><span class="capacity-stat-value">${r.totalVariations}</span><span class="capacity-stat-label">variações</span></div>
-        </div>
-        <div class="capacity-bar-wrap">
-          <div class="capacity-bar-track">
-            <div class="capacity-bar-fill ${r.status}" style="width:${Math.min(100, r.pct)}%"></div>
-            ${r.pct > 100 ? `<div class="capacity-bar-over" style="width:${Math.min(100, r.pct - 100)}%"></div>` : ''}
-          </div>
-          <div class="capacity-bar-label">${r.pct}%<span class="capacity-bar-sub"> · ${fmtHours(r.hoursLogged)} / ${capacityHours}h</span></div>
-        </div>
+      `).join('')}
       </div>
-    `).join('')}
+      <div class="capacity-side">${_capSparklineHtml(logStartYmd, logEndYmd)}</div>
     </div>
   `;
   if (!rows.length) $('capacity-list').innerHTML = emptyState('Sem usuários ativos', 'Cadastre usuários e atribua-os a este squad.', 'users');
+  _wireCapSparkline();
 }
 
 function renderCapacityAggregate(kind, startYmd, endYmd, businessDays, capacityHours) {
@@ -9326,8 +9411,7 @@ function renderCapacityAggregate(kind, startYmd, endYmd, businessDays, capacityH
     }
     const cur = groups.get(key) || {
       key, label, sub, projects, color: proj?.color || '#7A00FF',
-      hours: 0, demands: new Set(), users: new Set(), entries: 0,
-      pieces: 0, arts: 0, variations: 0
+      hours: 0, demands: new Set(), users: new Set(), entries: 0
     };
     cur.hours += Number(e.hours) || 0;
     cur.demands.add(d.id);
@@ -9337,30 +9421,6 @@ function renderCapacityAggregate(kind, startYmd, endYmd, businessDays, capacityH
     groups.set(key, cur);
   });
 
-  // Segundo loop: soma entregáveis (peças/artes/variações) por grupo.
-  // Critério = demanda concluída no período OU em aberto (mesma regra da Equipe).
-  // Itera UMA vez por demanda (evita dupla-contagem que viria de iterar por entries).
-  const isInWindow = (d) => {
-    if (d.completedAt) {
-      const day = String(d.completedAt).slice(0, 10);
-      return day >= backStartYmd && day <= todayYmd;
-    }
-    return !isDone(d);
-  };
-  wsdemands.forEach(d => {
-    if (!isInWindow(d)) return;
-    if (!(d.qtyPieces || d.qtyArts || d.qtyVariations)) return;
-    const proj = projectById(d.projectId);
-    let key;
-    if (kind === 'project') key = proj?.id || '__none__';
-    else key = (proj?.client || '__none__').toLowerCase();
-    const g = groups.get(key);
-    if (!g) return; // grupo só existe se houver apontamentos — sem horas, sem linha
-    g.pieces += Number(d.qtyPieces) || 0;
-    g.arts += Number(d.qtyArts) || 0;
-    g.variations += Number(d.qtyVariations) || 0;
-  });
-
   const rows = [...groups.values()].sort((a, b) => b.hours - a.hours);
   const totalHours = rows.reduce((s, r) => s + r.hours, 0);
   const maxHours = Math.max(1, ...rows.map(r => r.hours));
@@ -9368,9 +9428,9 @@ function renderCapacityAggregate(kind, startYmd, endYmd, businessDays, capacityH
   // Resumo
   const summary = `
     <div class="capacity-summary">
-      <div class="capacity-summary-item"><div class="capacity-summary-label">Total apontado</div><div class="capacity-summary-value">${fmtHours(totalHours)}</div><div class="capacity-summary-sub">no período (${businessDays} dias úteis)</div></div>
-      <div class="capacity-summary-item"><div class="capacity-summary-label">${kind === 'project' ? 'Projetos com horas' : 'Clientes com horas'}</div><div class="capacity-summary-value">${rows.length}</div><div class="capacity-summary-sub">${capSquadFilter.size ? `em ${capSquadFilter.size} squad${capSquadFilter.size === 1 ? '' : 's'}` : `no workspace ${esc(wsById(activeWs)?.name || '')}`}</div></div>
-      <div class="capacity-summary-item"><div class="capacity-summary-label">Apontamentos</div><div class="capacity-summary-value">${allEntries.length}</div><div class="capacity-summary-sub">registros no período</div></div>
+      <div class="capacity-summary-item is-primary"><div class="capacity-summary-label">Total apontado</div><div class="capacity-summary-value">${fmtHours(totalHours)}</div><div class="capacity-summary-sub">no período (${businessDays} dias úteis)</div></div>
+      <div class="capacity-summary-item is-info"><div class="capacity-summary-label">${kind === 'project' ? 'Projetos com horas' : 'Clientes com horas'}</div><div class="capacity-summary-value">${rows.length}</div><div class="capacity-summary-sub">${capSquadFilter.size ? `em ${capSquadFilter.size} squad${capSquadFilter.size === 1 ? '' : 's'}` : `no workspace ${esc(wsById(activeWs)?.name || '')}`}</div></div>
+      <div class="capacity-summary-item is-team"><div class="capacity-summary-label">Apontamentos</div><div class="capacity-summary-value">${allEntries.length}</div><div class="capacity-summary-sub">registros no período</div></div>
     </div>`;
 
   if (!rows.length) {
@@ -9382,38 +9442,27 @@ function renderCapacityAggregate(kind, startYmd, endYmd, businessDays, capacityH
   }
 
   $('capacity-list').innerHTML = summary + `
-    <div class="capacity-rows">
-    ${rows.map(r => {
-      const pct = Math.round(r.hours / maxHours * 100);
-      const share = totalHours > 0 ? Math.round(r.hours / totalHours * 100) : 0;
-      return `<div class="capacity-row">
-        <div class="capacity-user">
-          <span class="capacity-color-dot" style="background:${r.color}"></span>
-          <div>
-            <div class="capacity-user-name">${esc(r.label)}</div>
-            <div class="capacity-user-role">${kind === 'project' ? (r.sub ? esc(r.sub) : 'Sem cliente') : (r.projects.length + ' projeto' + (r.projects.length === 1 ? '' : 's'))}</div>
+    <div class="capacity-body">
+      <div class="capacity-rows">
+      ${rows.map(r => {
+        const share = totalHours > 0 ? Math.round(r.hours / totalHours * 100) : 0;
+        return `<div class="capacity-row" style="--row-accent:${r.color}" title="${esc(r.label)} · ${fmtHours(r.hours)} apontadas · ${r.demands.size} demandas · ${share}% do total">
+          <div class="capacity-user">
+            <span class="capacity-color-dot" style="background:${r.color}"></span>
+            <div class="capacity-user-info">
+              <div class="capacity-user-name">${esc(r.label)}</div>
+              <div class="capacity-user-role">${fmtHours(r.hours)} · ${share}%</div>
+            </div>
           </div>
-        </div>
-        <div class="capacity-stats">
-          <div class="capacity-stat"><span class="capacity-stat-value">${fmtHours(r.hours)}</span><span class="capacity-stat-label">apontadas</span></div>
-          <div class="capacity-stat"><span class="capacity-stat-value">${r.demands.size}</span><span class="capacity-stat-label">demanda${r.demands.size === 1 ? '' : 's'}</span></div>
-          <div class="capacity-stat"><span class="capacity-stat-value">${r.users.size}</span><span class="capacity-stat-label">pessoa${r.users.size === 1 ? '' : 's'}</span></div>
-          <div class="capacity-stat"><span class="capacity-stat-value">${r.entries}</span><span class="capacity-stat-label">apontamento${r.entries === 1 ? '' : 's'}</span></div>
-          <div class="capacity-stat-divider"></div>
-          <div class="capacity-stat" title="Peças únicas entregues no período"><span class="capacity-stat-value">${r.pieces}</span><span class="capacity-stat-label">peças</span></div>
-          <div class="capacity-stat" title="Artes individuais entregues no período"><span class="capacity-stat-value">${r.arts}</span><span class="capacity-stat-label">artes</span></div>
-          <div class="capacity-stat" title="Variações/exportações entregues no período"><span class="capacity-stat-value">${r.variations}</span><span class="capacity-stat-label">variações</span></div>
-        </div>
-        <div class="capacity-bar-wrap">
-          <div class="capacity-bar-track">
-            <div class="capacity-bar-fill medium" style="width:${pct}%;background:${r.color}"></div>
-          </div>
-          <div class="capacity-bar-label">${share}%<span class="capacity-bar-sub"> · do total apontado</span></div>
-        </div>
-      </div>`;
-    }).join('')}
+          <div class="capacity-mini-stat" title="Demandas com apontamento"><i data-lucide="inbox" class="ic-xs"></i>${r.demands.size}</div>
+          <div class="capacity-mini-stat" title="Pessoas apontando"><i data-lucide="users" class="ic-xs"></i>${r.users.size}</div>
+        </div>`;
+      }).join('')}
+      </div>
+      <div class="capacity-side">${_capSparklineHtml(backStartYmd, todayYmd)}</div>
     </div>
   `;
+  _wireCapSparkline();
 }
 
 function renderCalendar(which) {
