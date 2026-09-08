@@ -1039,15 +1039,110 @@ body::before {
 ::-webkit-scrollbar-thumb { background: rgba(160,160,160,0.25); border-radius: var(--radius-pill); border: 2px solid transparent; background-clip: padding-box; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(160,160,160,0.4); background-clip: padding-box; border: 2px solid transparent; }
 
-/* ── LOGIN ── */
+/* ── LOGIN — split layout (painel roxo + form) ── */
 #login-screen {
   position: fixed; inset: 0; background: var(--bg);
-  display: flex; align-items: center; justify-content: center; z-index: 9999;
+  display: flex; align-items: stretch; z-index: 9999;
 }
-#login-screen::before {
+/* Card esquerdo: flutuante com gap de 10px do topo, esquerda e baixo da tela.
+   Cantos arredondados. Imagem hero como background (cover, não distorce).
+   Overlay sutil pra garantir legibilidade do texto branco em cima da foto. */
+.login-split-left {
+  flex: 1 1 55%;
+  margin: 10px 0 10px 10px;
+  border-radius: 20px;
+  background-color: var(--accent);
+  background-image: url('/login-hero.jpg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  color: #fff;
+  padding: 40px 44px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: stretch;
+  position: relative;
+  overflow: hidden;
+}
+.login-split-left::before {
+  /* Overlay escuro sutil no topo (headline) e na base (crédito) — a foto
+     de fundo tem áreas claras que comeriam o texto branco sem isso. */
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  border-radius: inherit;
+  background:
+    linear-gradient(180deg, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0) 30%, rgba(0,0,0,0) 70%, rgba(0,0,0,0.28) 100%);
+}
+.login-split-headline {
+  position: relative;
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  max-width: 520px;
+  color: #fff;
+  text-shadow: 0 1px 8px rgba(0,0,0,0.25);
+}
+.login-split-credit {
+  position: relative;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: rgba(255,255,255,0.88);
+  text-shadow: 0 1px 6px rgba(0,0,0,0.35);
+}
+/* Painel direito: mantém o container flex pra centralizar a .login-box. */
+.login-split-right {
+  flex: 1 1 45%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  position: relative;
+}
+/* Fade roxo atrás do form removido — o painel esquerdo já concentra a
+   presença de cor; a direita fica limpa pra o form respirar. */
+/* Variante "bare" da .login-box: some o card (sem background, sem borda,
+   sem shadow, sem blur). Usada no split-right — o form respira sozinho
+   no painel. Seletores duplicados (.login-box.login-box--bare) pra vencer
+   as regras base .login-box na ordem do arquivo. */
+.login-box.login-box--bare {
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  width: 360px;
+  max-width: 100%;
+  text-align: left;
+}
+.login-box.login-box--bare .login-logo { margin-bottom: 56px; justify-content: center; }
+.login-box.login-box--bare input { margin-bottom: 12px; }
+.login-box.login-box--bare button { margin-top: 22px; }
+/* "Esqueci minha senha" agora fica alinhado à direita, logo abaixo do
+   campo de senha (não mais depois do botão). Discreto, sem margin-top
+   grande porque cola no input. Seletor duplo pra vencer a base. */
+.login-box.login-box--bare .login-forgot--inline {
+  display: block;
+  width: 100%;
+  text-align: right;
+  margin: 2px 0 4px;
+  font-size: 12px;
+}
+/* Hint final (Acessos são criados...) segue centralizado, mas com margin
+   maior pra dar respiro depois do bloco Discord. */
+.login-box.login-box--bare .login-hint { text-align: center; margin-top: 26px; }
+/* Reset-screen mantém o layout centralizado original (regra abaixo, .open). */
+#reset-screen::before {
   content: ''; position: absolute; inset: 0; pointer-events: none;
   background: radial-gradient(ellipse 60% 50% at 20% 20%, rgba(122,0,255,0.10), transparent 70%),
               radial-gradient(ellipse 50% 40% at 80% 80%, rgba(122,0,255,0.06), transparent 70%);
+}
+/* Mobile: painel esquerdo some (imagem+headline não cabem confortável).
+   Form fica sozinho, centralizado, com o gradiente do body por trás. */
+@media (max-width: 900px) {
+  .login-split-left { display: none; }
+  .login-split-right { flex: 1 1 100%; }
 }
 .login-box {
   position: relative;
