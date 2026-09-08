@@ -14,12 +14,12 @@
 <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/geist-latin-ext.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/css/fonts.css?v=1">
-<link rel="stylesheet" href="/css/style.css?v=20260908dash2">
+<link rel="stylesheet" href="/css/style.css?v=20260908dash7">
 <!-- Preload dos JS pesados no <head> pra que o download comece IMEDIATAMENTE,
      em paralelo com o parse do HTML, em vez de esperar o parser chegar em
      </body>. Com immutable cache (max-age=1yr), na 2ª visita nem baixa. -->
 <link rel="preload" href="/vendor/lucide.min.js" as="script">
-<link rel="preload" href="/js/app.js?v=20260908dash2" as="script">
+<link rel="preload" href="/js/app.js?v=20260908dash7" as="script">
 <script type="text/javascript">
     // Clarity: analytics de heatmap/session replay. Não é crítico pro app —
     // deferido pra depois do primeiro paint pra não roubar tempo do LCP.
@@ -276,17 +276,17 @@
              Prioridade, Radar e Top responsáveis. -->
         <div class="dash-grid">
           <div class="dash-col dash-col-left">
-            <div class="dash-widget">
+            <div class="dash-widget dash-tone-focus">
               <div class="dash-widget-head">
-                <div class="dash-widget-title">Meu foco de hoje</div>
+                <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="target" class="ic-sm"></i></span>Meu foco de hoje</div>
                 <div class="dash-widget-sub" id="dash-focus-sub"></div>
               </div>
               <div id="dash-focus"></div>
             </div>
 
-            <div class="dash-widget">
+            <div class="dash-widget dash-tone-forecast">
               <div class="dash-widget-head">
-                <div class="dash-widget-title">Demandas previstas</div>
+                <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="calendar-days" class="ic-sm"></i></span>Demandas previstas</div>
                 <div class="dash-widget-toggle" id="dash-forecast-toggle">
                   <button type="button" class="dash-toggle-btn is-active" onclick="setDashForecastMode('previstas')" data-mode="previstas">Previstas</button>
                   <button type="button" class="dash-toggle-btn" onclick="setDashForecastMode('prazos')" data-mode="prazos">Prazos</button>
@@ -296,17 +296,17 @@
               <div class="dash-forecast-grid" id="dash-forecast"></div>
             </div>
 
-            <div class="dash-widget">
+            <div class="dash-widget dash-tone-late">
               <div class="dash-widget-head">
-                <div class="dash-widget-title">Em atraso</div>
+                <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="alert-triangle" class="ic-sm"></i></span>Em atraso</div>
                 <div class="dash-widget-sub" id="dash-overdue-sub"></div>
               </div>
               <div id="dash-overdue"></div>
             </div>
 
-            <div class="dash-widget">
+            <div class="dash-widget dash-tone-activity">
               <div class="dash-widget-head">
-                <div class="dash-widget-title">Atividade recente</div>
+                <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="activity" class="ic-sm"></i></span>Atividade recente</div>
                 <div class="dash-widget-sub" id="dash-activity-sub"></div>
               </div>
               <div id="dash-activity"></div>
@@ -314,57 +314,57 @@
           </div>
 
           <div class="dash-col dash-col-right">
-            <div class="dash-widget" id="dash-widget-next">
+            <div class="dash-widget dash-tone-next" id="dash-widget-next">
               <div class="dash-widget-head">
-                <div class="dash-widget-title">Próxima entrega</div>
+                <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="package" class="ic-sm"></i></span>Próxima entrega</div>
                 <div class="dash-widget-sub" id="dash-next-sub"></div>
               </div>
               <div id="dash-next"></div>
             </div>
 
-            <div class="dash-widget">
+            <div class="dash-widget dash-tone-hours">
               <div class="dash-widget-head">
-                <div class="dash-widget-title">Horas de hoje</div>
+                <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="clock" class="ic-sm"></i></span>Horas de hoje</div>
                 <div class="dash-widget-sub" id="dash-hours-sub"></div>
               </div>
               <div id="dash-hours-today"></div>
             </div>
 
-            <div class="dash-widget">
+            <div class="dash-widget dash-tone-prio">
               <div class="dash-widget-head">
-                <div class="dash-widget-title">Demandas em aberto · prioridade</div>
+                <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="flag" class="ic-sm"></i></span>Demandas em aberto · prioridade</div>
                 <div class="dash-widget-sub" id="dash-prio-sub"></div>
               </div>
               <div id="dash-prio-donut"></div>
             </div>
 
-            <div class="dash-widget">
+            <div class="dash-widget dash-tone-mentions">
               <div class="dash-widget-head">
-                <div class="dash-widget-title">Menções pra você</div>
+                <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="at-sign" class="ic-sm"></i></span>Menções pra você</div>
                 <div class="dash-widget-sub" id="dash-mentions-sub"></div>
               </div>
               <div id="dash-mentions"></div>
             </div>
 
-            <div class="dash-widget">
+            <div class="dash-widget dash-tone-blocked">
               <div class="dash-widget-head">
-                <div class="dash-widget-title">Bloqueios</div>
+                <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="ban" class="ic-sm"></i></span>Bloqueios</div>
                 <div class="dash-widget-sub" id="dash-blocked-sub"></div>
               </div>
               <div id="dash-blocked"></div>
             </div>
 
-            <div class="dash-widget">
+            <div class="dash-widget dash-tone-radar">
               <div class="dash-widget-head">
-                <div class="dash-widget-title">Radar de projetos</div>
+                <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="radar" class="ic-sm"></i></span>Radar de projetos</div>
                 <div class="dash-widget-sub" id="dash-radar-sub"></div>
               </div>
               <div class="dash-radar-grid" id="dash-radar"></div>
             </div>
 
-            <div class="dash-widget">
+            <div class="dash-widget dash-tone-top">
               <div class="dash-widget-head">
-                <div class="dash-widget-title">Top responsáveis · mês</div>
+                <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="trophy" class="ic-sm"></i></span>Top responsáveis · mês</div>
                 <div class="dash-widget-sub">Entregas no mês corrente</div>
               </div>
               <div id="dash-top-owners"></div>
@@ -2758,6 +2758,17 @@
   </div>
 </div>
 
+<!-- MODAL genérico "Ver mais" dos widgets do dashboard -->
+<div class="modal-overlay" id="dash-more-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="dash-more-title">Detalhes</div>
+      <button class="modal-close" onclick="closeModal('dash-more-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body" id="dash-more-body"></div>
+  </div>
+</div>
+
 <!-- MODAL: GERENCIAR FILTROS SALVOS -->
 <div class="modal-overlay" id="saved-filters-modal">
   <div class="modal">
@@ -3842,7 +3853,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260908dash2"></script>
+<script src="/js/app.js?v=20260908dash7"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

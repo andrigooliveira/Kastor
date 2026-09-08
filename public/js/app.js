@@ -4472,6 +4472,11 @@ function renderDashboard() {
   const mine = _dashMyDemands();
   const mineActive = mine.filter(d => !isDone(d));
   const teamScope = dashScopedDemands(); // team-wide (workspaces acessíveis)
+  // Top responsáveis usa APENAS o squad ativo (o selecionado no seletor da
+  // sidebar), pra bater com o contexto do usuário.
+  const activeSquadScope = activeWs
+    ? teamScope.filter(d => d.workspaceId === activeWs)
+    : teamScope;
   renderDashFocus(mineActive);
   renderDashNextDelivery(mineActive);
   renderDashHoursToday();
@@ -4481,7 +4486,7 @@ function renderDashboard() {
   renderDashMentions(teamScope);
   renderDashBlocked(mineActive);
   renderDashRadar(mineActive);
-  renderDashTopOwners(teamScope);
+  renderDashTopOwners(activeSquadScope);
   renderDashPriorityDonut(mineActive);
   paintIcons();
 }
@@ -4508,6 +4513,16 @@ function setDashForecastMode(m) {
   renderDashForecast();
 }
 
+/* Abre o modal "Ver mais" com título + HTML já pronto (lista de rows). */
+function openDashMore(title, html) {
+  document.getElementById('dash-more-title').textContent = title;
+  document.getElementById('dash-more-body').innerHTML = html;
+  openModal('dash-more-modal');
+  paintIcons(document.getElementById('dash-more-body'));
+}
+/* Cache dos itens de cada widget pra reuso pelo modal (evita recomputar). */
+let _dashLists = {};
+
 /* Meu foco de hoje — demandas em aberto onde EU sou o dono da etapa atual
    (é a minha vez de agir). Ordena por prazo efetivo. */
 function renderDashFocus(mineActive) {
@@ -4532,29 +4547,38 @@ function renderDashFocus(mineActive) {
     el.innerHTML = `<div class="dash-empty-inline"><i data-lucide="coffee" class="ic-sm"></i> Você tá em dia. 🎉</div>`;
     return;
   }
+  _dashLists.focus = myTurn;
+  const MAX = 4;
+  const rowsHtml = myTurn.slice(0, MAX).map(_dashFocusRowHtml).join('');
+  const more = myTurn.length > MAX
+    ? `<a href="#" class="dash-more-link" onclick="event.preventDefault(); openDashFocusAll()">Ver mais (${myTurn.length})</a>`
+    : '';
+  el.innerHTML = rowsHtml + more;
+}
+function _dashFocusRowHtml(d) {
   const today = todayStr();
-  el.innerHTML = myTurn.slice(0, 8).map(d => {
-    const p = projectById(d.projectId);
-    const due = effDue(d);
-    const stages = activeStagesOf(d);
-    const cur = stages.find(s => s.id === d.status);
-    let dueBadge = '';
-    if (due) {
-      const isLateD = due < today;
-      const isTodayD = due === today;
-      const cls = isLateD ? 'is-late' : isTodayD ? 'is-today' : '';
-      dueBadge = `<span class="dash-focus-due ${cls}">${_fmtShortDate(due)}</span>`;
-    } else {
-      dueBadge = `<span class="dash-focus-due">sem prazo</span>`;
-    }
-    return `<div class="dash-focus-row" onclick="showDetail('${esc(d.id)}')">
-      <div class="dash-focus-body">
-        <div class="dash-focus-name">${esc(d.name)}</div>
-        <div class="dash-focus-meta">${cur ? `<span class="pill-dot" style="background:${cur.color}"></span>${esc(cur.label)}` : ''} ${p ? '· ' + esc(p.name) : ''}</div>
-      </div>
-      ${dueBadge}
-    </div>`;
-  }).join('');
+  const p = projectById(d.projectId);
+  const due = effDue(d);
+  const stages = activeStagesOf(d);
+  const cur = stages.find(s => s.id === d.status);
+  let dueBadge;
+  if (due) {
+    const cls = due < today ? 'is-late' : due === today ? 'is-today' : '';
+    dueBadge = `<span class="dash-focus-due ${cls}">${_fmtShortDate(due)}</span>`;
+  } else {
+    dueBadge = `<span class="dash-focus-due">sem prazo</span>`;
+  }
+  return `<div class="dash-focus-row" onclick="closeModal('dash-more-modal'); showDetail('${esc(d.id)}')">
+    <div class="dash-focus-body">
+      <div class="dash-focus-name">${esc(d.name)}</div>
+      <div class="dash-focus-meta">${cur ? `<span class="pill-dot" style="background:${cur.color}"></span>${esc(cur.label)}` : ''} ${p ? '· ' + esc(p.name) : ''}</div>
+    </div>
+    ${dueBadge}
+  </div>`;
+}
+function openDashFocusAll() {
+  const items = _dashLists.focus || [];
+  openDashMore('Meu foco de hoje', items.map(_dashFocusRowHtml).join('') || '<div class="dash-empty-inline">Nada esperando por você.</div>');
 }
 
 /* Próxima entrega — MINHA demanda em aberto com prazo mais próximo (hoje ou futuro). */
@@ -4644,18 +4668,29 @@ function renderDashMentions(teamScope) {
     el.innerHTML = `<div class="dash-empty-inline"><i data-lucide="at-sign" class="ic-sm"></i> Nenhuma menção recente.</div>`;
     return;
   }
-  el.innerHTML = hits.slice(0, 5).map(({ d, c }) => {
-    const author = userById(c.userId);
-    const preview = _plainPreview(c.text || '', 80);
-    return `<div class="dash-mention-row" onclick="showDetail('${esc(d.id)}')">
-      ${avatarHTML(author, 'avatar avatar-xs')}
-      <div class="dash-mention-body">
-        <div class="dash-mention-head"><strong>${esc(author?.name || 'Alguém')}</strong> em <em>${esc(d.name)}</em></div>
-        <div class="dash-mention-preview">${esc(preview)}</div>
-      </div>
-      <span class="dash-mention-when">${_fmtRelTime(c.createdAt)}</span>
-    </div>`;
-  }).join('');
+  _dashLists.mentions = hits;
+  const MAX = 3;
+  const html = hits.slice(0, MAX).map(_dashMentionRowHtml).join('');
+  const more = hits.length > MAX
+    ? `<a href="#" class="dash-more-link" onclick="event.preventDefault(); openDashMentionsAll()">Ver mais (${hits.length})</a>`
+    : '';
+  el.innerHTML = html + more;
+}
+function _dashMentionRowHtml({ d, c }) {
+  const author = userById(c.userId);
+  const preview = _plainPreview(c.text || '', 80);
+  return `<div class="dash-mention-row" onclick="closeModal('dash-more-modal'); showDetail('${esc(d.id)}')">
+    ${avatarHTML(author, 'avatar avatar-xs')}
+    <div class="dash-mention-body">
+      <div class="dash-mention-head"><strong>${esc(author?.name || 'Alguém')}</strong> em <em>${esc(d.name)}</em></div>
+      <div class="dash-mention-preview">${esc(preview)}</div>
+    </div>
+    <span class="dash-mention-when">${_fmtRelTime(c.createdAt)}</span>
+  </div>`;
+}
+function openDashMentionsAll() {
+  const items = _dashLists.mentions || [];
+  openDashMore('Menções pra você', items.map(_dashMentionRowHtml).join('') || '<div class="dash-empty-inline">Nenhuma menção recente.</div>');
 }
 
 /* Bloqueios — MINHAS demandas onde a etapa ATUAL é de outra pessoa há > 3 dias
@@ -4684,17 +4719,28 @@ function renderDashBlocked(mineActive) {
     el.innerHTML = `<div class="dash-empty-inline"><i data-lucide="check" class="ic-sm"></i> Nada travado.</div>`;
     return;
   }
-  el.innerHTML = items.slice(0, 5).map(({ d, stage, ownerId, days }) => {
-    const owner = userById(ownerId);
-    return `<div class="dash-blocked-row" onclick="showDetail('${esc(d.id)}')">
-      <div class="dash-blocked-days"><strong>${days}</strong><span>d</span></div>
-      <div class="dash-blocked-body">
-        <div class="dash-blocked-name">${esc(d.name)}</div>
-        <div class="dash-blocked-meta"><span class="pill-dot" style="background:${stage.color}"></span>${esc(stage.label)}</div>
-      </div>
-      <div class="dash-blocked-owner" title="Com ${esc(owner?.name || '—')}">${avatarHTML(owner, 'avatar avatar-xs')}</div>
-    </div>`;
-  }).join('');
+  _dashLists.blocked = items;
+  const MAX = 3;
+  const html = items.slice(0, MAX).map(_dashBlockedRowHtml).join('');
+  const more = items.length > MAX
+    ? `<a href="#" class="dash-more-link" onclick="event.preventDefault(); openDashBlockedAll()">Ver mais (${items.length})</a>`
+    : '';
+  el.innerHTML = html + more;
+}
+function _dashBlockedRowHtml({ d, stage, ownerId, days }) {
+  const owner = userById(ownerId);
+  return `<div class="dash-blocked-row" onclick="closeModal('dash-more-modal'); showDetail('${esc(d.id)}')">
+    <div class="dash-blocked-days"><strong>${days}</strong><span>d</span></div>
+    <div class="dash-blocked-body">
+      <div class="dash-blocked-name">${esc(d.name)}</div>
+      <div class="dash-blocked-meta"><span class="pill-dot" style="background:${stage.color}"></span>${esc(stage.label)}</div>
+    </div>
+    <div class="dash-blocked-owner" title="Com ${esc(owner?.name || '—')}">${avatarHTML(owner, 'avatar avatar-xs')}</div>
+  </div>`;
+}
+function openDashBlockedAll() {
+  const items = _dashLists.blocked || [];
+  openDashMore('Bloqueios', items.map(_dashBlockedRowHtml).join('') || '<div class="dash-empty-inline">Nada travado.</div>');
 }
 
 /* Atividade recente — últimas 24h de mudanças nas minhas demandas. */
@@ -4717,17 +4763,28 @@ function renderDashActivityFeed(mineActive) {
     el.innerHTML = `<div class="dash-empty-inline"><i data-lucide="activity" class="ic-sm"></i> Sem atividade nova.</div>`;
     return;
   }
-  el.innerHTML = items.slice(0, 8).map(({ d, h }) => {
-    const u = userById(h.userId);
-    const desc = _historyText(d, h);
-    return `<div class="dash-activity-row" onclick="showDetail('${esc(d.id)}')">
-      ${avatarHTML(u, 'avatar avatar-xs')}
-      <div class="dash-activity-body">
-        <div class="dash-activity-desc"><strong>${esc(u?.name || 'Alguém')}</strong> ${desc}</div>
-        <div class="dash-activity-meta"><em>${esc(d.name)}</em> · ${_fmtRelTime(h.at)}</div>
-      </div>
-    </div>`;
-  }).join('');
+  _dashLists.activity = items;
+  const MAX = 4;
+  const html = items.slice(0, MAX).map(_dashActivityRowHtml).join('');
+  const more = items.length > MAX
+    ? `<a href="#" class="dash-more-link" onclick="event.preventDefault(); openDashActivityAll()">Ver mais (${items.length})</a>`
+    : '';
+  el.innerHTML = html + more;
+}
+function _dashActivityRowHtml({ d, h }) {
+  const u = userById(h.userId);
+  const desc = _historyText(d, h);
+  return `<div class="dash-activity-row" onclick="closeModal('dash-more-modal'); showDetail('${esc(d.id)}')">
+    ${avatarHTML(u, 'avatar avatar-xs')}
+    <div class="dash-activity-body">
+      <div class="dash-activity-desc"><strong>${esc(u?.name || 'Alguém')}</strong> ${desc}</div>
+      <div class="dash-activity-meta"><em>${esc(d.name)}</em> · ${_fmtRelTime(h.at)}</div>
+    </div>
+  </div>`;
+}
+function openDashActivityAll() {
+  const items = _dashLists.activity || [];
+  openDashMore('Atividade recente', items.map(_dashActivityRowHtml).join('') || '<div class="dash-empty-inline">Sem atividade nova.</div>');
 }
 
 /* Helpers usados só pelos widgets novos. */
@@ -5000,31 +5057,37 @@ function renderDashOverdue(mineActive) {
     return;
   }
 
-  el.innerHTML = withDelay.slice(0, 5).map(({ d, daysLate }) => {
-    const proj = projectById(d.projectId);
-    const client = proj?.client || (proj?.clientId ? clientById(proj.clientId)?.name : '') || '';
-    const owner = effectiveOwnerOf(d);
-    const ownerHtml = owner
-      ? `<div class="dash-overdue-owner">${avatarHTML(owner, 'avatar avatar-xs')} <span class="dash-overdue-owner-name">${esc(owner.name)}</span></div>`
-      : `<div class="dash-overdue-owner dash-overdue-owner--empty"><i data-lucide="user-x" class="ic-xs"></i> <span>Sem responsável</span></div>`;
-    // Meta: "Cliente · Projeto". Se um lado faltar, mostra só o outro.
-    const metaParts = [];
-    if (client) metaParts.push(esc(client));
-    if (proj?.name) metaParts.push(esc(proj.name));
-    const metaText = metaParts.join(' · ');
-    return `<div class="dash-overdue-row" onclick="showDetail('${esc(d.id)}')">
-      <div class="dash-overdue-days">
-        <strong>${daysLate}</strong>
-        <span>dia${daysLate === 1 ? '' : 's'}</span>
-      </div>
-      <div class="dash-overdue-body">
-        <div class="dash-overdue-name">${esc(d.name)}</div>
-        ${metaText ? `<div class="dash-overdue-meta">${metaText}</div>` : ''}
-      </div>
-      ${ownerHtml}
-    </div>`;
-  }).join('');
-  paintIcons();
+  _dashLists.overdue = withDelay;
+  const MAX = 4;
+  const rowsHtml = withDelay.slice(0, MAX).map(_dashOverdueRowHtml).join('');
+  const more = withDelay.length > MAX
+    ? `<a href="#" class="dash-more-link" onclick="event.preventDefault(); openDashOverdueAll()">Ver mais (${withDelay.length})</a>`
+    : '';
+  el.innerHTML = rowsHtml + more;
+}
+function _dashOverdueRowHtml({ d, daysLate }) {
+  const proj = projectById(d.projectId);
+  const client = proj?.client || (proj?.clientId ? clientById(proj.clientId)?.name : '') || '';
+  const owner = effectiveOwnerOf(d);
+  const ownerHtml = owner
+    ? `<div class="dash-overdue-owner">${avatarHTML(owner, 'avatar avatar-xs')} <span class="dash-overdue-owner-name">${esc(owner.name)}</span></div>`
+    : `<div class="dash-overdue-owner dash-overdue-owner--empty"><i data-lucide="user-x" class="ic-xs"></i> <span>Sem responsável</span></div>`;
+  const metaParts = [];
+  if (client) metaParts.push(esc(client));
+  if (proj?.name) metaParts.push(esc(proj.name));
+  const metaText = metaParts.join(' · ');
+  return `<div class="dash-overdue-row" onclick="closeModal('dash-more-modal'); showDetail('${esc(d.id)}')">
+    <div class="dash-overdue-days"><strong>${daysLate}</strong><span>dia${daysLate === 1 ? '' : 's'}</span></div>
+    <div class="dash-overdue-body">
+      <div class="dash-overdue-name">${esc(d.name)}</div>
+      ${metaText ? `<div class="dash-overdue-meta">${metaText}</div>` : ''}
+    </div>
+    ${ownerHtml}
+  </div>`;
+}
+function openDashOverdueAll() {
+  const items = _dashLists.overdue || [];
+  openDashMore('Demandas em atraso', items.map(_dashOverdueRowHtml).join('') || '<div class="dash-empty-inline">Nada atrasado.</div>');
 }
 
 // ── Radar de projetos ── grid de cards com semáforo.
@@ -5060,25 +5123,32 @@ function renderDashRadar(mineActive) {
   }
   const clientFilter = '';
 
-  // Semáforo: amarelo = até 20%, vermelho = >20% (verde não aparece — já filtrado acima).
-  const cards = withOverdue.map(({ p, projDemands, overdue }) => {
-    const total = projDemands.length;
-    const ratio = total > 0 ? overdue / total : 0;
-    const status = ratio > 0.2 ? 'critical' : 'warn';
-    const label = `${overdue} atrasada${overdue === 1 ? '' : 's'}`;
-    const clientLabel = clientFilter ? '' : `<div class="dash-radar-client">${esc(p.client || '—')}</div>`;
-    return `<div class="dash-radar-card dash-radar-${status}"
-                 onclick="openProjectDetail('${esc(p.id)}')"
-                 title="${esc(p.name)} · ${label} · ${total} demanda${total === 1 ? '' : 's'} abertas">
-      <div class="dash-radar-body">
-        <div class="dash-radar-name">${esc(p.name)}</div>
-        ${clientLabel}
-        <div class="dash-radar-meta">${total} aberta${total === 1 ? '' : 's'} · ${label}</div>
-      </div>
-    </div>`;
-  });
-
-  el.innerHTML = cards.join('');
+  _dashLists.radar = withOverdue;
+  const MAX = 3;
+  const cards = withOverdue.slice(0, MAX).map(_dashRadarCardHtml).join('');
+  const more = withOverdue.length > MAX
+    ? `<a href="#" class="dash-more-link" onclick="event.preventDefault(); openDashRadarAll()">Ver mais (${withOverdue.length})</a>`
+    : '';
+  el.innerHTML = cards + more;
+}
+function _dashRadarCardHtml({ p, projDemands, overdue }) {
+  const total = projDemands.length;
+  const ratio = total > 0 ? overdue / total : 0;
+  const status = ratio > 0.2 ? 'critical' : 'warn';
+  const label = `${overdue} atrasada${overdue === 1 ? '' : 's'}`;
+  return `<div class="dash-radar-card dash-radar-${status}"
+               onclick="closeModal('dash-more-modal'); openProjectDetail('${esc(p.id)}')"
+               title="${esc(p.name)} · ${label} · ${total} demanda${total === 1 ? '' : 's'} abertas">
+    <div class="dash-radar-body">
+      <div class="dash-radar-name">${esc(p.name)}</div>
+      <div class="dash-radar-client">${esc(p.client || '—')}</div>
+      <div class="dash-radar-meta">${total} aberta${total === 1 ? '' : 's'} · ${label}</div>
+    </div>
+  </div>`;
+}
+function openDashRadarAll() {
+  const items = _dashLists.radar || [];
+  openDashMore('Radar de projetos', `<div class="dash-radar-grid">${items.map(_dashRadarCardHtml).join('')}</div>` || '<div class="dash-empty-inline">Nenhum projeto com atraso.</div>');
 }
 
 // ── Top responsáveis ── entregas do mês por conclusão de etapa.
@@ -5119,22 +5189,32 @@ function renderDashTopOwners(list) {
   const rows = [...byUser.entries()]
     .map(([uid, n]) => ({ u: userById(uid), n }))
     .filter(x => x.u)
-    .sort((a, b) => b.n - a.n)
-    .slice(0, 6);
+    .sort((a, b) => b.n - a.n);
 
   if (!rows.length) {
     el.innerHTML = emptyMini('Nenhuma entrega no mês.');
     return;
   }
   const max = Math.max(...rows.map(r => r.n));
-  el.innerHTML = rows.map(r => {
-    const pct = Math.round((r.n / max) * 100);
-    return `<div class="dash-top-row">
-      <div class="dash-top-user">${avatarHTML(r.u, 'avatar avatar-xs')} <span>${esc(r.u.name)}</span></div>
-      <div class="dash-top-track"><div class="dash-top-fill" style="width:${pct}%"></div></div>
-      <div class="dash-top-value">${r.n}</div>
-    </div>`;
-  }).join('');
+  _dashLists.topOwners = { rows, max };
+  const MAX = 4;
+  const html = rows.slice(0, MAX).map(r => _dashTopOwnerRowHtml(r, max)).join('');
+  const more = rows.length > MAX
+    ? `<a href="#" class="dash-more-link" onclick="event.preventDefault(); openDashTopOwnersAll()">Ver mais (${rows.length})</a>`
+    : '';
+  el.innerHTML = html + more;
+}
+function _dashTopOwnerRowHtml(r, max) {
+  const pct = Math.round((r.n / max) * 100);
+  return `<div class="dash-top-row">
+    <div class="dash-top-user">${avatarHTML(r.u, 'avatar avatar-xs')} <span>${esc(r.u.name)}</span></div>
+    <div class="dash-top-track"><div class="dash-top-fill" style="width:${pct}%"></div></div>
+    <div class="dash-top-value">${r.n}</div>
+  </div>`;
+}
+function openDashTopOwnersAll() {
+  const { rows = [], max = 1 } = _dashLists.topOwners || {};
+  openDashMore('Top responsáveis · mês', rows.map(r => _dashTopOwnerRowHtml(r, max)).join('') || '<div class="dash-empty-inline">Nenhuma entrega no mês.</div>');
 }
 
 /* Donut de distribuição das demandas EM ABERTO por prioridade (respeita filtros). */

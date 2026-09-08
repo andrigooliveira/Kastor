@@ -3367,7 +3367,7 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* Grid principal */
+/* Grid principal — 2 colunas (2fr / 1fr). Widgets abraçam o conteúdo. */
 .dash-grid {
   display: grid;
   grid-template-columns: 2fr 1fr;
@@ -3391,8 +3391,47 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 .dash-widget-title {
   font-size: 14px; font-weight: 700; color: var(--text);
   letter-spacing: -0.01em;
+  display: inline-flex; align-items: center; gap: 8px;
 }
 .dash-widget-sub { font-size: 12px; color: var(--text-muted); margin-bottom: 12px; }
+
+/* Ícone colorido no título de cada widget — chip 26px com fundo tintado. */
+.dash-widget-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 7px;
+  background: rgba(122,0,255,0.14); color: var(--accent);
+  flex-shrink: 0;
+}
+.dash-widget-icon svg { width: 14px !important; height: 14px !important; }
+
+/* Faixa colorida no topo do card + tinta do ícone por tema semântico. */
+.dash-widget { position: relative; overflow: hidden; }
+.dash-widget::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: var(--accent);
+}
+.dash-tone-focus::before    { background: #7A00FF; }
+.dash-tone-focus    .dash-widget-icon { background: rgba(122,0,255,0.14);  color: #7A00FF; }
+.dash-tone-forecast::before { background: #3b82f6; }
+.dash-tone-forecast .dash-widget-icon { background: rgba(59,130,246,0.14); color: #3b82f6; }
+.dash-tone-late::before     { background: #ef4444; }
+.dash-tone-late     .dash-widget-icon { background: rgba(239,68,68,0.14);  color: #ef4444; }
+.dash-tone-activity::before { background: #10b981; }
+.dash-tone-activity .dash-widget-icon { background: rgba(16,185,129,0.14); color: #10b981; }
+.dash-tone-next::before     { background: #f97316; }
+.dash-tone-next     .dash-widget-icon { background: rgba(249,115,22,0.14); color: #f97316; }
+.dash-tone-hours::before    { background: #06b6d4; }
+.dash-tone-hours    .dash-widget-icon { background: rgba(6,182,212,0.14);  color: #06b6d4; }
+.dash-tone-prio::before     { background: #eab308; }
+.dash-tone-prio     .dash-widget-icon { background: rgba(234,179,8,0.14);  color: #eab308; }
+.dash-tone-mentions::before { background: #ec4899; }
+.dash-tone-mentions .dash-widget-icon { background: rgba(236,72,153,0.14); color: #ec4899; }
+.dash-tone-blocked::before  { background: #dc2626; }
+.dash-tone-blocked  .dash-widget-icon { background: rgba(220,38,38,0.14);  color: #dc2626; }
+.dash-tone-radar::before    { background: #8b5cf6; }
+.dash-tone-radar    .dash-widget-icon { background: rgba(139,92,246,0.14); color: #8b5cf6; }
+.dash-tone-top::before      { background: #f59e0b; }
+.dash-tone-top      .dash-widget-icon { background: rgba(245,158,11,0.14); color: #f59e0b; }
 
 /* Toggle segmentado no header dos widgets (Previstas/Prazos). */
 .dash-widget-toggle {
@@ -3437,6 +3476,14 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 }
 .dash-focus-due.is-today { background: rgba(122,0,255,0.14); color: var(--accent-text); }
 .dash-focus-due.is-late { background: rgba(239,68,68,0.14); color: var(--danger); }
+.dash-focus-more, .dash-more-link {
+  display: block; padding: 8px 12px; margin-top: 8px;
+  font-size: 12px; color: var(--text-muted);
+  text-decoration: underline; text-underline-offset: 2px;
+  cursor: pointer; border-top: 1px solid var(--hairline);
+  text-align: center;
+}
+.dash-focus-more:hover, .dash-more-link:hover { color: var(--accent-text); }
 
 /* ── Próxima entrega ── card grande. */
 .dash-next-card {
