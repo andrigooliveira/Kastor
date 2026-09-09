@@ -1883,6 +1883,16 @@ tr:hover td { background: var(--surface-2); }
    ritmo visual sem competir com o conteúdo. */
 #list-table-body .demand-row.is-alt > td { background: rgba(0,0,0,0.022); }
 :root[data-theme="dark"] #list-table-body .demand-row.is-alt > td { background: rgba(255,255,255,0.028); }
+/* Colunas Projeto/Cliente: trunca texto longo com ellipsis. `max-width` em td
+   só funciona com table-layout: fixed — aqui usamos display:block + overflow
+   direto no <td>, que funciona em tables auto-layout também. Hover mostra o
+   nome completo via title. */
+#list-table-body .col-truncate {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 #list-table-body .demand-row:hover > td { background: var(--surface-3); }
 #list-table-body .demand-row.selected > td { background: var(--accent-dim); }
 /* Tabela colapsável de "Concluídas" abaixo da tabela principal (/demandas).

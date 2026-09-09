@@ -777,14 +777,14 @@ function dueUrgency(d) {
   return days <= 2 ? 'soon' : 'none';
 }
 /* Chip de prazo colorido por urgência (vencida=vermelho, hoje=laranja, breve=âmbar). */
-function deadlineCell(d) {
+function deadlineCell(d, short) {
   const due = effDue(d);
   if (!due) return '<span class="due-chip">—</span>';
   const u = dueUrgency(d);
   const cls = u === 'overdue' ? 'due-overdue' : u === 'today' ? 'due-today' : u === 'soon' ? 'due-soon' : '';
   const icon = u === 'overdue' ? ' <i data-lucide="alert-triangle" class="ic-xs"></i>'
              : u === 'today'   ? ' <i data-lucide="clock" class="ic-xs"></i>' : '';
-  return `<span class="due-chip ${cls}">${fmtDate(due)}${icon}</span>`;
+  return `<span class="due-chip ${cls}">${short ? fmtDateShort(due) : fmtDate(due)}${icon}</span>`;
 }
 /* SLA operacional: idade na etapa atual → "há 3d" / "há 5h" / "há 20min".
    null pra concluídas ou sem carimbo de entrada. */
@@ -821,6 +821,14 @@ function fmtDate(s) {
   if (!s) return '—';
   const [y,m,d] = String(s).slice(0,10).split('-');
   return `${d}/${m}/${y}`;
+}
+/* Formato curto "dd/mm" — sem ano. Usado nas colunas Prazo/Conclusão da lista
+   de /demands pra dar respiro entre colunas. Contexto (mês/dia) já dá pra
+   entender urgência; ano só ocupa espaço em listas do ano corrente. */
+function fmtDateShort(s) {
+  if (!s) return '—';
+  const [, m, d] = String(s).slice(0,10).split('-');
+  return `${d}/${m}`;
 }
 function fmtDateTime(iso) {
   if (!iso) return '—';
@@ -6764,13 +6772,13 @@ function renderList() {
     return `<tr class="demand-row${alt} ${sel ? 'selected' : ''}" data-demand-id="${d.id}"${sectionAttr} onclick="onDemandRowClick(event, '${d.id}')">
       <td class="col-bulk-check"><input type="checkbox" class="bulk-check-row" ${sel ? 'checked' : ''} onclick="event.stopPropagation();toggleDemandSelection('${d.id}', this.checked)"></td>
       <td class="col-demand-name"><span class="demand-name">${esc(d.name)}</span></td>
-      <td>${p ? esc(p.name) : '—'}</td>
-      <td>${esc(p?.client || '—')}</td>
+      <td class="col-truncate" title="${esc(p?.name || '')}">${p ? esc(p.name) : '—'}</td>
+      <td class="col-truncate" title="${esc(p?.client || '')}">${esc(p?.client || '—')}</td>
       <td>${priorityPill(d.priority)}</td>
       <td>${stagePillTruncated(d)}</td>
       <td>${cellUser(userById(d.ownerId))}</td>
-      <td>${deadlineCell(d)}</td>
-      <td>${d.completedAt ? fmtDate(d.completedAt) : '—'}</td>
+      <td>${deadlineCell(d, true)}</td>
+      <td>${d.completedAt ? fmtDateShort(d.completedAt) : '—'}</td>
     </tr>`;
   };
 
