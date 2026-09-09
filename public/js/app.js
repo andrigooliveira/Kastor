@@ -163,7 +163,7 @@ function pageUrlFor(page)  {
   if (page === 'analytics') {
     let tab = 'capacity';
     try { tab = localStorage.getItem('kastor-an-tab') || 'capacity'; } catch {}
-    const map = { reports: '/analytics/reports', capacity: '/analytics/capacity' };
+    const map = { reports: '/analytics/reports', capacity: '/analytics/capacity', rhythm: '/analytics/rhythm' };
     return map[tab] || '/analytics/capacity';
   }
   // Detalhe da demanda: URL vem do id atual (senão cai pra dashboard).
@@ -205,6 +205,7 @@ function parseRoute(path) {
   }
   if (p === '/analytics/capacity' || p === '/capacity') return { page: 'analytics', tab: 'capacity' };
   if (p === '/analytics/reports'  || p === '/reports')  return { page: 'analytics', tab: 'reports' };
+  if (p === '/analytics/rhythm')                        return { page: 'analytics', tab: 'rhythm' };
   // Performance agora é uma página isolada. URL legacy /analytics/performance
   // continua caindo aqui pra não quebrar links antigos/bookmarks.
   if (p === '/analytics/performance' || p === '/performance') return { page: 'performance' };
@@ -1812,6 +1813,7 @@ function cmdkActions() {
     { icon: 'list',         label: 'Ir para Demandas',              kind: 'Navegar',  run: () => goPage('list') },
     { icon: 'user',         label: 'Ir para Minhas Demandas',       kind: 'Navegar',  run: () => goPage('mine') },
     { icon: 'bar-chart-3',  label: 'Ir para Análises · Capacidade', kind: 'Navegar',  run: () => { goPage('analytics'); setTimeout(() => typeof setAnalyticsTab === 'function' && setAnalyticsTab('capacity'), 30); } },
+    { icon: 'activity',     label: 'Ir para Análises · Ritmo',       kind: 'Navegar',  run: () => { goPage('analytics'); setTimeout(() => typeof setAnalyticsTab === 'function' && setAnalyticsTab('rhythm'), 30); } },
     { icon: 'timer',        label: 'Ir para Análises · Relatórios',  kind: 'Navegar',  run: () => { goPage('analytics'); setTimeout(() => typeof setAnalyticsTab === 'function' && setAnalyticsTab('reports'), 30); } },
     { icon: 'line-chart',   label: 'Ir para Performance', kind: 'Navegar',  run: () => goPage('performance') },
     { icon: 'calendar',     label: 'Ir para Agenda',                kind: 'Navegar',  run: () => goPage('agenda') },
@@ -4010,6 +4012,7 @@ const DEVTOOLS_GROUPS = [
     hint: 'A entrada no menu abre a aba default — links diretos fixam a aba.',
     links: [
       { label: 'Análises · Capacidade',    path: '/analytics/capacity', icon: 'gauge',       desc: 'Aba de capacidade da página Análises.' },
+      { label: 'Análises · Ritmo',         path: '/analytics/rhythm',   icon: 'activity',    desc: 'Burndown por squad e resumo semanal.' },
       { label: 'Análises · Relatórios',    path: '/analytics/reports',  icon: 'file-bar-chart', desc: 'Aba de relatórios da página Análises.' },
       { label: 'Recorrentes · Demandas',   path: '/recurring/demands',  icon: 'refresh-ccw', desc: 'Aba de demandas recorrentes.' },
       { label: 'Recorrentes · Listas',     path: '/recurring/lists',    icon: 'list-checks', desc: 'Aba de listas recorrentes.' },
@@ -7741,26 +7744,559 @@ let _anTab = localStorage.getItem('kastor-an-tab') || 'capacity';
 function syncAnalyticsTab() {
   document.querySelectorAll('#page-analytics .an-tab')
     .forEach(t => t.classList.toggle('is-active', t.dataset.tab === _anTab));
-  const cap = $('an-tab-capacity'), rep = $('an-tab-reports');
+  const cap = $('an-tab-capacity'), rep = $('an-tab-reports'), rhy = $('an-tab-rhythm');
   if (cap) cap.style.display = _anTab === 'capacity' ? '' : 'none';
   if (rep) rep.style.display = _anTab === 'reports' ? '' : 'none';
+  if (rhy) rhy.style.display = _anTab === 'rhythm' ? '' : 'none';
 }
 function renderAnalyticsActive() {
   if (_anTab === 'reports') renderReports();
+  else if (_anTab === 'rhythm') renderRhythm();
   else renderCapacity();
 }
 function setAnalyticsTab(tab) {
-  if (!['capacity', 'reports'].includes(tab)) tab = 'capacity';
+  if (!['capacity', 'reports', 'rhythm'].includes(tab)) tab = 'capacity';
   _anTab = tab;
   try { localStorage.setItem('kastor-an-tab', tab); } catch {}
   syncAnalyticsTab();
-  const paths = { reports: '/analytics/reports', capacity: '/analytics/capacity' };
+  const paths = { reports: '/analytics/reports', capacity: '/analytics/capacity', rhythm: '/analytics/rhythm' };
   navPush(paths[tab]);
   renderAnalyticsActive();
 }
 function renderAnalytics() {
   syncAnalyticsTab();
   renderAnalyticsActive();
+}
+
+/* ─── RITMO ─── burndown semanal por squad + resumo textual.
+   Tudo deriva do cache local de demandas — nenhuma request extra. Fonte de verdade:
+     - abertura: d.createdAt
+     - entrega : d.completedAt
+     - squad   : d.workspaceId
+     - prazo   : d.deadline (pra contar atrasadas)
+   Semana útil é seg→sex (5 dias), referência = seleção do dropdown (0=atual, -1=passada).
+   O range de agregação vai até domingo pra contabilizar entregas de fim de semana,
+   mas o gráfico plota apenas os 5 dias úteis. */
+function _rhythmWeekBounds(offset) {
+  const now = new Date();
+  const dow = (now.getDay() + 6) % 7; // seg=0..dom=6
+  const monday = new Date(now);
+  monday.setHours(0, 0, 0, 0);
+  monday.setDate(monday.getDate() - dow + offset * 7);
+  const friday = new Date(monday);
+  friday.setDate(monday.getDate() + 4);
+  friday.setHours(23, 59, 59, 999);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  sunday.setHours(23, 59, 59, 999);
+  return { monday, friday, sunday };
+}
+
+function _rhythmDemandsForSquad(wsId) {
+  return demands.filter(d => d.workspaceId === wsId && !d.deletedAt);
+}
+
+/* Snapshot de "abertas ao fim do dia D": criadas até D E (não concluídas OU concluídas depois de D). */
+function _rhythmOpenAt(list, endOfDay) {
+  let n = 0;
+  for (const d of list) {
+    const created = d.createdAt ? new Date(d.createdAt) : null;
+    if (!created || created > endOfDay) continue;
+    if (d.completedAt && new Date(d.completedAt) <= endOfDay) continue;
+    n++;
+  }
+  return n;
+}
+
+/* Ideal driven by deadlines: cada demanda "no escopo da semana" (aberta na segunda
+   ou criada durante a semana) deveria estar concluída até seu deadline. Ao fim do
+   dia D, o ideal conta quantas demandas *deveriam* seguir abertas — as com
+   deadline > D. Deadline ausente = tratado como sexta 23:59 (default útil).
+   Deadline anterior à segunda = deveria estar fechada já na segunda (herdada). */
+function _rhythmInScope(list, monday, sunday) {
+  return list.filter(d => {
+    const created = d.createdAt ? new Date(d.createdAt) : null;
+    if (!created || created > sunday) return false;
+    const completed = d.completedAt ? new Date(d.completedAt) : null;
+    const openAtMondayStart = created < monday && (!completed || completed >= monday);
+    const createdDuringWeek = created >= monday && created <= sunday;
+    return openAtMondayStart || createdDuringWeek;
+  });
+}
+function _rhythmIdealAt(inScope, endOfDay, fridayEOD) {
+  let n = 0;
+  for (const d of inScope) {
+    const created = new Date(d.createdAt);
+    if (created > endOfDay) continue; // ainda não existe naquele dia
+    const dl = d.deadline ? new Date(d.deadline) : fridayEOD;
+    if (dl > endOfDay) n++;
+  }
+  return n;
+}
+
+function _rhythmBuildSeries(list, monday, sunday) {
+  // Seg (0) → Sex (4), 5 pontos.
+  const days = [];
+  for (let i = 0; i < 5; i++) {
+    const eod = new Date(monday);
+    eod.setDate(monday.getDate() + i);
+    eod.setHours(23, 59, 59, 999);
+    days.push(eod);
+  }
+  const fridayEOD = days[4];
+  const start = _rhythmOpenAt(list, new Date(monday.getTime() - 1)); // domingo 23:59 (véspera)
+  const real = days.map(eod => _rhythmOpenAt(list, eod));
+  const inScope = _rhythmInScope(list, monday, sunday);
+  const ideal = days.map(eod => _rhythmIdealAt(inScope, eod, fridayEOD));
+  return { start, real, ideal, days };
+}
+
+function _rhythmSummary(list, monday, sunday) {
+  let delivered = 0, created = 0, overdue = 0, open = 0;
+  const now = new Date();
+  for (const d of list) {
+    const compl = d.completedAt ? new Date(d.completedAt) : null;
+    const cr = d.createdAt ? new Date(d.createdAt) : null;
+    if (compl && compl >= monday && compl <= sunday) delivered++;
+    if (cr && cr >= monday && cr <= sunday) created++;
+    if (!compl) {
+      open++;
+      if (d.deadline) {
+        const dl = new Date(d.deadline);
+        if (dl < now) overdue++;
+      }
+    }
+  }
+  return { delivered, created, overdue, open };
+}
+
+/* SVG mini burndown. `series.start` = abertas no fim de domingo (véspera).
+   Se o squad começou a semana com 0 aberto e não abriu nada, mostra placeholder. */
+/* Render do gráfico:
+   - SVG (100% × 200px, preserveAspectRatio=none) desenha SÓ as linhas/dots
+     que usam vector-effect=non-scaling-stroke pra não deformar visualmente.
+   - Y-tick labels, DOW labels e zonas de hover são elementos HTML absolutos
+     por cima do SVG. Assim textos NÃO esticam com o gráfico. */
+function _rhythmSvg(series) {
+  const w = 800, h = 200, padL = 18, padR = 18, padT = 20, padB = 32;
+  const iw = w - padL - padR, ih = h - padT - padB;
+  const N = 5, LAST = N - 1;
+  const peak = Math.max(series.start, ...series.real, ...series.ideal);
+  const maxY = Math.max(1, peak);
+  if (peak <= 0) {
+    return `<div class="rhythm-chart-inner rhythm-chart-inner--empty">
+      <div class="rhythm-chart-empty">Sem demandas nesta semana</div>
+    </div>`;
+  }
+  const xOf = i => padL + (i / LAST) * iw;
+  const yOf = v => padT + (1 - v / maxY) * ih;
+  const xPct = i => (xOf(i) / w) * 100;
+  const yPct = v => (yOf(v) / h) * 100;
+
+  const idealPts = series.ideal.map((v, i) => `${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`);
+  const realPts = series.real.map((v, i) => `${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`);
+
+  const yValues = [0, Math.round(maxY / 2), maxY].filter((v, i, arr) => arr.indexOf(v) === i);
+  const yGrid = yValues.map(v =>
+    `<line x1="0" x2="${w}" y1="${yOf(v).toFixed(1)}" y2="${yOf(v).toFixed(1)}" class="rhythm-svg-grid" vector-effect="non-scaling-stroke"/>`
+  ).join('');
+  const realDots = series.real.map((v, i) =>
+    `<path d="M ${xOf(i).toFixed(1)} ${yOf(v).toFixed(1)} L ${xOf(i).toFixed(1)} ${yOf(v).toFixed(1)}" class="rhythm-svg-dot" vector-effect="non-scaling-stroke"/>`
+  ).join('');
+
+  const dow = ['Seg','Ter','Qua','Qui','Sex'];
+  const yLabelsHtml = yValues.map(v =>
+    `<span class="rhythm-y-label" style="top:${yPct(v).toFixed(2)}%">${v}</span>`
+  ).join('');
+  const xLabelsHtml = dow.map((d, i) =>
+    `<span class="rhythm-x-label" style="left:${xPct(i).toFixed(2)}%">${d}</span>`
+  ).join('');
+
+  // Zonas de hover: uma faixa vertical por dia, com dataset carregando o
+  // texto que o tooltip vai exibir. Um handler único em .rhythm-chart-inner
+  // pega mouseover/mouseleave e move a tooltip via data-attrs.
+  const bandW = 100 / N;
+  const hoversHtml = dow.map((d, i) => {
+    const real = series.real[i];
+    const idealVal = series.ideal[i];
+    const dateStr = series.days[i]
+      ? series.days[i].toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+      : '';
+    const label = `${d} ${dateStr}`;
+    return `<div class="rhythm-x-hover"
+      style="left:${(i * bandW).toFixed(2)}%;width:${bandW.toFixed(2)}%"
+      data-day="${label}"
+      data-real="${real}"
+      data-ideal="${idealVal}"
+      data-xpct="${xPct(i).toFixed(2)}"
+      data-ypct="${yPct(real).toFixed(2)}"></div>`;
+  }).join('');
+
+  return `<div class="rhythm-chart-inner" onmousemove="_rhythmTip(event)" onmouseleave="_rhythmTipHide(event)">
+    <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" class="rhythm-svg" role="img">
+      ${yGrid}
+      <polyline points="${idealPts.join(' ')}" class="rhythm-svg-ideal" vector-effect="non-scaling-stroke"/>
+      <polyline points="${realPts.join(' ')}" class="rhythm-svg-real" vector-effect="non-scaling-stroke"/>
+      ${realDots}
+    </svg>
+    <div class="rhythm-y-labels">${yLabelsHtml}</div>
+    <div class="rhythm-x-labels">${xLabelsHtml}</div>
+    <div class="rhythm-x-hovers">${hoversHtml}</div>
+    <div class="rhythm-tooltip" hidden></div>
+  </div>`;
+}
+
+/* Move e preenche a tooltip. `hover` = zona vertical do dia sob o cursor.
+   Posicionamento: acima do dot real, centralizado, com clamp nas bordas. */
+function _rhythmTip(ev) {
+  const inner = ev.currentTarget;
+  const hover = ev.target.closest('.rhythm-x-hover');
+  const tip = inner.querySelector('.rhythm-tooltip');
+  if (!hover || !tip) { if (tip) tip.hidden = true; return; }
+  const day = hover.dataset.day || '';
+  const real = hover.dataset.real || '0';
+  const ideal = hover.dataset.ideal || '0';
+  const diff = Number(real) - Number(ideal);
+  let diffTxt;
+  if (diff > 0) diffTxt = `<span class="rhythm-tip-diff rhythm-tip-diff--bad">+${diff} vs. ideal</span>`;
+  else if (diff < 0) diffTxt = `<span class="rhythm-tip-diff rhythm-tip-diff--good">${diff} vs. ideal</span>`;
+  else diffTxt = `<span class="rhythm-tip-diff">no ritmo</span>`;
+  tip.innerHTML = `<div class="rhythm-tip-day">${day}</div>
+    <div class="rhythm-tip-row"><b>${real}</b> em aberto</div>
+    <div class="rhythm-tip-row rhythm-tip-row--muted">ideal: ${ideal}</div>
+    <div class="rhythm-tip-row">${diffTxt}</div>`;
+  tip.hidden = false;
+  // Posição: usa xpct do dot real e ypct do dot real, com deslocamento.
+  const xpct = parseFloat(hover.dataset.xpct) || 0;
+  const ypct = parseFloat(hover.dataset.ypct) || 0;
+  tip.style.left = xpct + '%';
+  tip.style.top = ypct + '%';
+}
+function _rhythmTipHide(ev) {
+  const tip = ev.currentTarget.querySelector('.rhythm-tooltip');
+  if (tip) tip.hidden = true;
+}
+
+/* Avalia o ritmo do squad e devolve um objeto pronto pra UI:
+   { kind: 'atrasado'|'no-ritmo'|'adiantado'|'sem-mov',
+     label: 'Atrasado' | 'No ritmo' | 'Adiantado' | 'Sem movimentação',
+     detail: string curta explicando ('5 demandas além do previsto'),
+     text: linha copiável pra Slack/reunião } */
+function _rhythmAnalyze(wsName, summary, series) {
+  // Semana útil = 5 dias (índices 0..4). Se hoje for sáb/dom, usa sexta como referência.
+  const dayIdx = Math.min(4, Math.max(0, Math.floor((Date.now() - series.days[0].getTime()) / 86400000)));
+  const idealNow = series.ideal[dayIdx];
+  const realNow = series.real[dayIdx];
+  const diff = realNow - idealNow;
+
+  let kind, label, detail;
+  if (series.start === 0 && summary.created === 0) {
+    kind = 'sem-mov';
+    label = 'Sem movimentação';
+    detail = 'nenhuma demanda ativa nesta semana';
+  } else if (diff > 0.5) {
+    const n = Math.round(diff);
+    kind = 'atrasado';
+    label = 'Atrasado';
+    detail = `${n} demanda${n === 1 ? '' : 's'} passaram do prazo e seguem em aberto`;
+  } else if (diff < -0.5) {
+    const n = Math.round(-diff);
+    kind = 'adiantado';
+    label = 'Adiantado';
+    detail = `${n} demanda${n === 1 ? '' : 's'} entregue${n === 1 ? '' : 's'} antes do prazo — dá pra puxar da semana que vem`;
+  } else {
+    kind = 'no-ritmo';
+    label = 'No ritmo';
+    detail = 'entregas acompanhando os prazos combinados';
+  }
+
+  const text =
+    `Squad ${wsName} — ${label.toLowerCase()}${kind !== 'sem-mov' ? ` (${detail})` : ''}. ` +
+    `Entregou ${summary.delivered}, ${summary.overdue} atrasada${summary.overdue === 1 ? '' : 's'}, ${summary.open} em aberto` +
+    `${summary.created ? `, ${summary.created} nova${summary.created === 1 ? '' : 's'} na semana` : ''}.`;
+
+  return { kind, label, detail, text };
+}
+
+function _rhythmCopySummary(btn, text) {
+  try {
+    navigator.clipboard.writeText(text);
+    const original = btn.innerHTML;
+    btn.innerHTML = '<i data-lucide="check"></i>';
+    btn.classList.add('is-copied');
+    if (window.lucide) lucide.createIcons();
+    setTimeout(() => { btn.innerHTML = original; btn.classList.remove('is-copied'); if (window.lucide) lucide.createIcons(); }, 1500);
+  } catch {}
+}
+
+function _renderRhythmCard(ws, monday, sunday) {
+  const ds = _rhythmDemandsForSquad(ws.id);
+  const series = _rhythmBuildSeries(ds, monday, sunday);
+  const summary = _rhythmSummary(ds, monday, sunday);
+  const svg = _rhythmSvg(series);
+  const info = _rhythmAnalyze(ws.name, summary, series);
+  const textEsc = info.text.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  return `<div class="rhythm-card" data-status="${info.kind}">
+    <div class="rhythm-card-head">
+      <div class="rhythm-card-title" style="--sq-color:${esc(ws.color || '#7c3aed')}">
+        <span class="rhythm-card-dot"></span>${esc(ws.name)}
+      </div>
+      <span class="rhythm-status-pill rhythm-status-pill--${info.kind}">${esc(info.label)}</span>
+    </div>
+    <div class="rhythm-card-chart">${svg}</div>
+    <div class="rhythm-card-foot">
+      <div class="rhythm-card-info">
+        <div class="rhythm-card-detail">${esc(info.detail)}</div>
+        <div class="rhythm-card-stats">
+          <span class="rhythm-stat"><b>${summary.delivered}</b> entregues</span>
+          <span class="rhythm-stat"><b>${summary.overdue}</b> atrasadas</span>
+          <span class="rhythm-stat"><b>${summary.open}</b> em aberto</span>
+        </div>
+      </div>
+      <button class="rhythm-copy-btn" onclick="_rhythmCopySummary(this, '${textEsc}')" title="Copiar resumo pra Slack / reunião" aria-label="Copiar resumo">
+        <i data-lucide="copy"></i>
+      </button>
+    </div>
+  </div>`;
+}
+
+/* Modo combinado: 1 card com N linhas coloridas (uma por squad).
+   Cada squad usa sua cor própria. Tooltip separa por squad no hover do dia. */
+function _renderRhythmCombined(monday, sunday) {
+  const list = _rhythmAccessibleWs().filter(w => _rhythmSquadFilter.has(w.id));
+  const perSquad = list.map(ws => {
+    const ds = _rhythmDemandsForSquad(ws.id);
+    return {
+      ws,
+      color: ws.color || '#7c3aed',
+      series: _rhythmBuildSeries(ds, monday, sunday),
+      summary: _rhythmSummary(ds, monday, sunday)
+    };
+  });
+
+  const totalDelivered = perSquad.reduce((s, x) => s + x.summary.delivered, 0);
+  const totalOverdue = perSquad.reduce((s, x) => s + x.summary.overdue, 0);
+  const totalOpen = perSquad.reduce((s, x) => s + x.summary.open, 0);
+
+  const svg = _rhythmCombinedSvg(perSquad);
+  const legend = perSquad.map(p =>
+    `<span class="rhythm-legend-item"><span class="rhythm-legend-line" style="background:${esc(p.color)}"></span>${esc(p.ws.name)}</span>`
+  ).join('');
+
+  return `<div class="rhythm-card rhythm-card--combined">
+    <div class="rhythm-card-head">
+      <div class="rhythm-card-title">Comparativo · ${list.length} squads</div>
+      <div class="rhythm-legend rhythm-legend--inline">${legend}</div>
+    </div>
+    <div class="rhythm-card-chart">${svg}</div>
+    <div class="rhythm-card-foot">
+      <div class="rhythm-card-info">
+        <div class="rhythm-card-stats">
+          <span class="rhythm-stat"><b>${totalDelivered}</b> entregues</span>
+          <span class="rhythm-stat"><b>${totalOverdue}</b> atrasadas</span>
+          <span class="rhythm-stat"><b>${totalOpen}</b> em aberto</span>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* SVG combinado — N linhas reais coloridas + 1 linha ideal cinza (soma).
+   Reaproveita a mesma projeção do _rhythmSvg pra manter comportamento consistente. */
+function _rhythmCombinedSvg(perSquad) {
+  const w = 800, h = 200, padL = 18, padR = 18, padT = 20, padB = 32;
+  const iw = w - padL - padR, ih = h - padT - padB;
+  const N = 5, LAST = N - 1;
+  const perDayReal = Array.from({length: N}, (_, i) =>
+    perSquad.reduce((s, p) => s + (p.series.real[i] || 0), 0)
+  );
+  const perDayIdeal = Array.from({length: N}, (_, i) =>
+    perSquad.reduce((s, p) => s + (p.series.ideal[i] || 0), 0)
+  );
+  const maxAcross = Math.max(
+    ...perSquad.map(p => Math.max(p.series.start, ...p.series.real, ...p.series.ideal)),
+    ...perDayReal, ...perDayIdeal
+  );
+  const maxY = Math.max(1, maxAcross);
+  if (maxAcross <= 0) {
+    return `<div class="rhythm-chart-inner rhythm-chart-inner--empty">
+      <div class="rhythm-chart-empty">Sem demandas nesta semana</div>
+    </div>`;
+  }
+  const xOf = i => padL + (i / LAST) * iw;
+  const yOf = v => padT + (1 - v / maxY) * ih;
+  const xPct = i => (xOf(i) / w) * 100;
+  const yPct = v => (yOf(v) / h) * 100;
+
+  const yValues = [0, Math.round(maxY / 2), maxY].filter((v, i, arr) => arr.indexOf(v) === i);
+  const yGrid = yValues.map(v =>
+    `<line x1="0" x2="${w}" y1="${yOf(v).toFixed(1)}" y2="${yOf(v).toFixed(1)}" class="rhythm-svg-grid" vector-effect="non-scaling-stroke"/>`
+  ).join('');
+
+  // Linha ideal AGREGADA (soma dos ideais de cada squad por dia).
+  const idealPts = perDayIdeal.map((v, i) => `${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`);
+
+  // Uma polyline+dots por squad, com sua cor.
+  const squadLines = perSquad.map(p => {
+    const pts = p.series.real.map((v, i) => `${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`).join(' ');
+    const dots = p.series.real.map((v, i) =>
+      `<path d="M ${xOf(i).toFixed(1)} ${yOf(v).toFixed(1)} L ${xOf(i).toFixed(1)} ${yOf(v).toFixed(1)}" stroke="${esc(p.color)}" stroke-width="8" stroke-linecap="round" fill="none" vector-effect="non-scaling-stroke"/>`
+    ).join('');
+    return `<polyline points="${pts}" fill="none" stroke="${esc(p.color)}" stroke-width="2.5" vector-effect="non-scaling-stroke"/>${dots}`;
+  }).join('');
+
+  const dow = ['Seg','Ter','Qua','Qui','Sex'];
+  const yLabelsHtml = yValues.map(v =>
+    `<span class="rhythm-y-label" style="top:${yPct(v).toFixed(2)}%">${v}</span>`
+  ).join('');
+  const xLabelsHtml = dow.map((d, i) =>
+    `<span class="rhythm-x-label" style="left:${xPct(i).toFixed(2)}%">${d}</span>`
+  ).join('');
+
+  // Hovers combinados: cada faixa de dia carrega array JSON com breakdown por squad.
+  const bandW = 100 / N;
+  const hoversHtml = dow.map((d, i) => {
+    const dateStr = perSquad[0]?.series.days[i]
+      ? perSquad[0].series.days[i].toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+      : '';
+    const breakdown = perSquad.map(p => ({
+      name: p.ws.name,
+      color: p.color,
+      real: p.series.real[i],
+      ideal: p.series.ideal[i]
+    }));
+    // Encode como JSON no data-attr — parser dentro do _rhythmTipCombined.
+    const dataStr = esc(JSON.stringify(breakdown));
+    const idealTotal = perDayIdeal[i];
+    const realTotal = perDayReal[i];
+    return `<div class="rhythm-x-hover"
+      style="left:${(i * bandW).toFixed(2)}%;width:${bandW.toFixed(2)}%"
+      data-day="${esc(d + ' ' + dateStr)}"
+      data-breakdown="${dataStr}"
+      data-real-total="${realTotal}"
+      data-ideal-total="${idealTotal}"
+      data-xpct="${xPct(i).toFixed(2)}"
+      data-ypct="${yPct(realTotal).toFixed(2)}"></div>`;
+  }).join('');
+
+  return `<div class="rhythm-chart-inner" onmousemove="_rhythmTipCombined(event)" onmouseleave="_rhythmTipHide(event)">
+    <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" class="rhythm-svg" role="img">
+      ${yGrid}
+      <polyline points="${idealPts.join(' ')}" class="rhythm-svg-ideal" vector-effect="non-scaling-stroke"/>
+      ${squadLines}
+    </svg>
+    <div class="rhythm-y-labels">${yLabelsHtml}</div>
+    <div class="rhythm-x-labels">${xLabelsHtml}</div>
+    <div class="rhythm-x-hovers">${hoversHtml}</div>
+    <div class="rhythm-tooltip" hidden></div>
+  </div>`;
+}
+
+/* Tooltip do modo combinado: mostra breakdown por squad + totais. */
+function _rhythmTipCombined(ev) {
+  const inner = ev.currentTarget;
+  const hover = ev.target.closest('.rhythm-x-hover');
+  const tip = inner.querySelector('.rhythm-tooltip');
+  if (!hover || !tip) { if (tip) tip.hidden = true; return; }
+  const day = hover.dataset.day || '';
+  const realTotal = hover.dataset.realTotal || '0';
+  const idealTotal = hover.dataset.idealTotal || '0';
+  let breakdown = [];
+  try { breakdown = JSON.parse(hover.dataset.breakdown || '[]'); } catch {}
+  // Cada squad ganha o mesmo bloco do modo individual (em aberto / ideal / vs.),
+  // separados por divisória. Header do dia aparece uma vez no topo.
+  const blocks = breakdown.map(b => {
+    const diff = b.real - b.ideal;
+    let diffTxt;
+    if (diff > 0) diffTxt = `<span class="rhythm-tip-diff rhythm-tip-diff--bad">+${diff} vs. ideal</span>`;
+    else if (diff < 0) diffTxt = `<span class="rhythm-tip-diff rhythm-tip-diff--good">${diff} vs. ideal</span>`;
+    else diffTxt = `<span class="rhythm-tip-diff">no ritmo</span>`;
+    return `<div class="rhythm-tip-squad-block">
+      <div class="rhythm-tip-squad-name">
+        <span class="rhythm-tip-squad-dot" style="background:${esc(b.color)}"></span>${esc(b.name)}
+      </div>
+      <div class="rhythm-tip-row"><b>${b.real}</b> em aberto</div>
+      <div class="rhythm-tip-row rhythm-tip-row--muted">ideal: ${b.ideal}</div>
+      <div class="rhythm-tip-row">${diffTxt}</div>
+    </div>`;
+  }).join('<div class="rhythm-tip-sep"></div>');
+  tip.innerHTML = `<div class="rhythm-tip-day">${day}</div>
+    ${blocks}
+    <div class="rhythm-tip-sep"></div>
+    <div class="rhythm-tip-total">Total: <b>${realTotal}</b> · ideal ${idealTotal}</div>`;
+  tip.hidden = false;
+  const xpct = parseFloat(hover.dataset.xpct) || 0;
+  const ypct = parseFloat(hover.dataset.ypct) || 0;
+  tip.style.left = xpct + '%';
+  tip.style.top = ypct + '%';
+}
+
+/* Filtro de squads (idêntico à Capacidade). Estado em memória; sem hidden input
+   porque não persistimos entre navegações — a URL de aba já resolve retomada. */
+let _rhythmSquadFilter = new Set();
+function _rhythmAccessibleWs() {
+  const allowedIds = new Set(me?.isAdmin ? workspaces.map(w => w.id) : (me?.workspaces || []));
+  return workspaces
+    .filter(w => allowedIds.has(w.id))
+    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt-BR', { sensitivity: 'base' }));
+}
+function _renderRhythmSquadFilter() {
+  const host = $('rhythm-squad-filter'); if (!host) return;
+  const list = _rhythmAccessibleWs();
+  if (list.length <= 1) { host.innerHTML = ''; return; }
+  const chips = list.map(w => {
+    const on = _rhythmSquadFilter.has(w.id);
+    return `<button type="button" class="uws-chip${on ? ' is-active' : ''}" onclick="toggleRhythmSquad('${esc(w.id)}')">
+      <span class="uws-chip-dot" style="background:${esc(w.color || 'var(--accent)')}"></span>${esc(w.name)}
+    </button>`;
+  }).join('');
+  const clear = _rhythmSquadFilter.size ? `<button type="button" class="uws-clear" onclick="clearRhythmSquadFilter()">Limpar</button>` : '';
+  const hint = _rhythmSquadFilter.size >= 2
+    ? '<span class="uws-hint">Combinado num gráfico</span>'
+    : '<span class="uws-hint">Vazio = todos separados</span>';
+  host.innerHTML = `<span class="uws-label">Squads</span>${chips}${clear}${hint}`;
+}
+function toggleRhythmSquad(id) {
+  if (_rhythmSquadFilter.has(id)) _rhythmSquadFilter.delete(id);
+  else _rhythmSquadFilter.add(id);
+  renderRhythm();
+}
+function clearRhythmSquadFilter() {
+  _rhythmSquadFilter.clear();
+  renderRhythm();
+}
+
+function renderRhythm() {
+  const body = $('rhythm-body');
+  if (!body) return;
+  const sel = $('rhythm-week');
+  const offset = sel ? parseInt(sel.value, 10) || 0 : 0;
+  const { monday, friday, sunday } = _rhythmWeekBounds(offset);
+
+  _renderRhythmSquadFilter();
+
+  const all = _rhythmAccessibleWs();
+  if (!all.length) { body.innerHTML = '<div class="empty-state">Sem squads acessíveis.</div>'; return; }
+
+  const fmtDate = d => d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  const header = `<div class="rhythm-weekrange">${fmtDate(monday)} — ${fmtDate(friday)}</div>`;
+
+  // 2+ squads selecionados → gráfico combinado. Senão, cards individuais.
+  const combined = _rhythmSquadFilter.size >= 2;
+  if (combined) {
+    body.innerHTML = header + _renderRhythmCombined(monday, sunday);
+  } else {
+    const list = _rhythmSquadFilter.size === 1
+      ? all.filter(w => _rhythmSquadFilter.has(w.id))
+      : all;
+    const cards = list.map(ws => _renderRhythmCard(ws, monday, sunday)).join('');
+    body.innerHTML = `${header}<div class="rhythm-stack">${cards}</div>
+      <div class="rhythm-legend">
+        <span class="rhythm-legend-item"><span class="rhythm-legend-line rhythm-legend-line--ideal"></span> Ideal</span>
+        <span class="rhythm-legend-item"><span class="rhythm-legend-line rhythm-legend-line--real"></span> Real</span>
+      </div>`;
+  }
+  if (window.lucide) lucide.createIcons();
 }
 
 /* ───────────────────────────────────────────────────────────────
@@ -25773,6 +26309,115 @@ async function saveClient() {
 }
 
 /* Salvar cliente atual como modelo — abre confirm que pede o nome */
+/* ─── LINKS PÚBLICOS DE CLIENTE ─── gerência dos tokens read-only.
+   Lista, cria, revoga (delete) e pausa/reativa (put). URL final é do formato
+   /public/client/<token> — o token já é retornado pelo POST e refetchado no GET. */
+let _cplState = { clientId: null, links: [] };
+
+function openClientPublicLinksModalFromDetail() {
+  if (!currentClientId) { toast('Nenhum cliente selecionado', 'warn'); return; }
+  return openClientPublicLinksModal(currentClientId);
+}
+
+async function openClientPublicLinksModal(clientId) {
+  const id = clientId || editingClientId;
+  if (!id) return;
+  const c = clientById(id);
+  if (!c) return;
+  _cplState.clientId = c.id;
+  _cplState.links = [];
+  $('cpl-client-name').textContent = '— ' + c.name;
+  $('cpl-new-label').value = '';
+  $('cpl-list').innerHTML = '<div style="padding:20px 0;text-align:center;color:var(--text-muted);font-size:12px">Carregando…</div>';
+  openModal('client-public-links-modal');
+  try {
+    _cplState.links = await api(`/clients/${c.id}/public-links`);
+    renderClientPublicLinksList();
+  } catch (e) {
+    $('cpl-list').innerHTML = `<div style="padding:20px 0;text-align:center;color:var(--danger);font-size:12px">${esc(e.message || 'Erro ao carregar links')}</div>`;
+  }
+}
+
+function renderClientPublicLinksList() {
+  const list = $('cpl-list');
+  const arr = _cplState.links || [];
+  if (!arr.length) {
+    list.innerHTML = '<div style="padding:24px 0;text-align:center;color:var(--text-muted);font-size:13px">Nenhum link gerado ainda.</div>';
+    return;
+  }
+  // Ordena por criação desc
+  const sorted = [...arr].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  list.innerHTML = sorted.map(l => {
+    const url = `${location.origin}/public/client/${l.token}`;
+    const created = l.createdAt ? new Date(l.createdAt).toLocaleDateString('pt-BR') : '';
+    const activeCls = l.active ? '' : 'cpl-link--inactive';
+    return `<div class="cpl-link ${activeCls}">
+      <div class="cpl-link-head">
+        <div class="cpl-link-label">${esc(l.label || 'Link sem rótulo')}${l.active ? '' : ' <span class="cpl-link-badge">Pausado</span>'}</div>
+        <div class="cpl-link-date">Criado em ${esc(created)}</div>
+      </div>
+      <div class="cpl-link-url"><input type="text" readonly value="${esc(url)}" onclick="this.select()"></div>
+      <div class="cpl-link-actions">
+        <button class="btn btn-ghost btn-sm" onclick="copyClientPublicLink('${esc(url)}', this)"><i data-lucide="copy" class="ic-sm"></i> Copiar</button>
+        <button class="btn btn-ghost btn-sm" onclick="toggleClientPublicLink('${esc(l.id)}', ${!l.active})">
+          <i data-lucide="${l.active ? 'pause' : 'play'}" class="ic-sm"></i> ${l.active ? 'Pausar' : 'Reativar'}
+        </button>
+        <button class="btn btn-ghost btn-sm cpl-link-revoke" onclick="revokeClientPublicLink('${esc(l.id)}')"><i data-lucide="trash-2" class="ic-sm"></i> Revogar</button>
+      </div>
+    </div>`;
+  }).join('');
+  if (window.lucide) lucide.createIcons();
+}
+
+async function createClientPublicLink() {
+  if (!_cplState.clientId) return;
+  const label = ($('cpl-new-label').value || '').trim();
+  try {
+    const link = await api(`/clients/${_cplState.clientId}/public-links`, 'POST', { label });
+    _cplState.links.push(link);
+    $('cpl-new-label').value = '';
+    renderClientPublicLinksList();
+    toast('Link criado. Copie e compartilhe.', 'success');
+  } catch (e) {
+    toast(e.message || 'Erro ao criar link', 'error');
+  }
+}
+
+async function toggleClientPublicLink(linkId, active) {
+  if (!_cplState.clientId) return;
+  try {
+    const updated = await api(`/clients/${_cplState.clientId}/public-links/${linkId}`, 'PUT', { active });
+    const i = _cplState.links.findIndex(l => l.id === linkId);
+    if (i !== -1) _cplState.links[i] = updated;
+    renderClientPublicLinksList();
+  } catch (e) {
+    toast(e.message || 'Erro ao atualizar', 'error');
+  }
+}
+
+async function revokeClientPublicLink(linkId) {
+  if (!_cplState.clientId) return;
+  if (!confirm('Revogar este link definitivamente? Quem tiver a URL não vai mais conseguir acessar.')) return;
+  try {
+    await api(`/clients/${_cplState.clientId}/public-links/${linkId}`, 'DELETE');
+    _cplState.links = _cplState.links.filter(l => l.id !== linkId);
+    renderClientPublicLinksList();
+    toast('Link revogado.', 'success');
+  } catch (e) {
+    toast(e.message || 'Erro ao revogar', 'error');
+  }
+}
+
+function copyClientPublicLink(url, btn) {
+  try {
+    navigator.clipboard.writeText(url);
+    const original = btn.innerHTML;
+    btn.innerHTML = '<i data-lucide="check" class="ic-sm"></i> Copiado';
+    if (window.lucide) lucide.createIcons();
+    setTimeout(() => { btn.innerHTML = original; if (window.lucide) lucide.createIcons(); }, 1500);
+  } catch {}
+}
+
 function openSaveClientTemplate() {
   if (!editingClientId) return;
   const c = clientById(editingClientId);

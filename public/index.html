@@ -801,6 +801,7 @@ body{background:var(--bg);color:var(--text);font-family:'Geist','Segoe UI',syste
     <div class="page" id="page-analytics">
       <div class="an-tabs">
         <button class="an-tab is-active" data-tab="capacity" onclick="setAnalyticsTab('capacity')">CAPACIDADE</button>
+        <button class="an-tab" data-tab="rhythm" onclick="setAnalyticsTab('rhythm')">RITMO</button>
         <button class="an-tab" data-tab="reports" onclick="setAnalyticsTab('reports')">RELATÓRIOS</button>
       </div>
       <div class="page-body">
@@ -864,6 +865,29 @@ body{background:var(--bg);color:var(--text);font-family:'Geist','Segoe UI',syste
             </div>
           </div>
           <div id="capacity-list"></div>
+        </div>
+        <!-- Aba RITMO / burndown semanal por squad + resumo -->
+        <div id="an-tab-rhythm" class="an-tab-panel" style="display:none">
+          <div class="rhythm-header">
+            <div class="rhythm-header-main">
+              <h2 class="rhythm-title">Ritmo da Semana</h2>
+              <div class="rhythm-subtitle">Burndown por squad — quantas demandas seguem abertas ao fim de cada dia útil. A linha ideal se baseia nos prazos combinados: cada demanda deveria estar entregue até seu deadline.</div>
+            </div>
+            <div class="rhythm-header-actions">
+              <select class="filter-select" id="rhythm-week" onchange="renderRhythm()">
+                <option value="0">Semana atual</option>
+                <option value="-1">Semana passada</option>
+                <option value="-2">Há 2 semanas</option>
+                <option value="-3">Há 3 semanas</option>
+              </select>
+            </div>
+          </div>
+          <!-- Filtro de squads: vazio = cards individuais empilhados; com 2+ selecionados,
+               combina num gráfico único (cada squad com sua cor). Mesma UI da Capacidade. -->
+          <div class="rhythm-filter-bar">
+            <div class="uws-filter rhythm-squad-filter-inline" id="rhythm-squad-filter"></div>
+          </div>
+          <div id="rhythm-body"></div>
         </div>
         <!-- Aba RELATÓRIOS / SLA -->
         <div id="an-tab-reports" class="an-tab-panel" style="display:none">
@@ -1432,6 +1456,7 @@ body{background:var(--bg);color:var(--text);font-family:'Geist','Segoe UI',syste
             <button class="btn btn-ghost btn-sm" onclick="closeClientDetail()"><i data-lucide="chevron-left" class="ic-sm"></i> Voltar</button>
             <div style="flex:1"></div>
             <button class="btn btn-ghost btn-sm" onclick="openClientReport()"><i data-lucide="file-text" class="ic-sm"></i> Relatório mensal</button>
+            <button class="btn btn-ghost btn-sm" onclick="openClientPublicLinksModalFromDetail()"><i data-lucide="link" class="ic-sm"></i> Compartilhamento</button>
             <button class="btn btn-primary btn-sm" id="client-detail-new-project" onclick="openProjectModalForCurrentClient()"><i data-lucide="plus" class="ic-sm"></i> Novo Projeto</button>
             <button class="btn btn-ghost btn-icon-only" title="Editar cliente" onclick="openClientModalEdit()"><i data-lucide="settings" class="ic-sm"></i></button>
           </div>
@@ -2936,6 +2961,30 @@ body{background:var(--bg);color:var(--text);font-family:'Geist','Segoe UI',syste
   </div>
 </div>
 
+<!-- ── MODAL: LINKS PÚBLICOS DO CLIENTE (read-only) ── -->
+<div class="modal-overlay" id="client-public-links-modal">
+  <div class="modal modal-md">
+    <div class="modal-header">
+      <div class="modal-title">Compartilhamento <span id="cpl-client-name" style="color:var(--text-muted);font-weight:500"></span></div>
+      <button class="modal-close" onclick="closeModal('client-public-links-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <p style="margin:0 0 14px;font-size:13px;color:var(--text-dim);line-height:1.55">
+        Um link público dá acesso somente-leitura ao pipeline de demandas deste cliente — sem login, sem dados sensíveis do time.
+        Compartilhe com stakeholders externos. Cada link pode ser revogado a qualquer momento.
+      </p>
+      <div style="display:flex;gap:8px;margin-bottom:16px">
+        <input class="form-control" id="cpl-new-label" placeholder="Rótulo (opcional) — ex: 'Diretoria do cliente'" maxlength="60" style="flex:1">
+        <button class="btn btn-primary btn-sm" onclick="createClientPublicLink()"><i data-lucide="plus" class="ic-sm"></i> Gerar link</button>
+      </div>
+      <div id="cpl-list"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('client-public-links-modal')">Fechar</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── MODAL: CONFIRMAR EXCLUSÃO DE CLIENTE (digite o nome) ── -->
 <div class="modal-overlay" id="client-delete-modal">
   <div class="modal modal-sm">
@@ -3884,7 +3933,7 @@ body{background:var(--bg);color:var(--text);font-family:'Geist','Segoe UI',syste
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260909pref" defer></script>
+<script src="/js/boot.js?v=20260909rhythm11" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

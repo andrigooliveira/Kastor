@@ -3577,6 +3577,105 @@ app.post('/api/clients/:id/undelete', requireAuth, (req, res) => {
   res.json(c);
 });
 
+/* ── LINKS PÚBLICOS DE CLIENTE (read-only) ──
+   Cada cliente pode ter N tokens que dão acesso público (sem login) a uma
+   página read-only com o pipeline de demandas dele. Token = 32 bytes hex,
+   URL-safe, não-adivinhável. Cada link tem `active`; revogar = active=false.
+   Nunca deletamos histórico — auditoria.
+   Formato: c.publicLinks = [{ id, token, label, active, createdAt, createdBy }] */
+function _cliPublicLinks(c) { return Array.isArray(c.publicLinks) ? c.publicLinks : (c.publicLinks = []); }
+
+app.get('/api/clients/:id/public-links', requireAuth, (req, res) => {
+  const c = db.clients.find(x => x.id === req.params.id);
+  if (!c || !canAccessWs(req.user, c.workspaceId) || !notDeleted(c)) return res.status(404).json({ error: 'Cliente não encontrado' });
+  res.json(_cliPublicLinks(c));
+});
+
+app.post('/api/clients/:id/public-links', requireAuth, blockFreelancer, (req, res) => {
+  const c = db.clients.find(x => x.id === req.params.id);
+  if (!c || !canAccessWs(req.user, c.workspaceId) || !notDeleted(c)) return res.status(404).json({ error: 'Cliente não encontrado' });
+  const label = String((req.body && req.body.label) || '').trim().slice(0, 60);
+  const link = {
+    id: uid(),
+    token: crypto.randomBytes(24).toString('hex'), // 48 hex chars → ~192 bits
+    label,
+    active: true,
+    createdAt: nowISO(),
+    createdBy: req.user.id
+  };
+  _cliPublicLinks(c).push(link);
+  saveEntity('clients', c);
+  broadcastChange('client', 'update', { id: c.id, workspaceId: c.workspaceId, byUserId: req.user.id });
+  res.status(201).json(link);
+});
+
+app.put('/api/clients/:id/public-links/:linkId', requireAuth, blockFreelancer, (req, res) => {
+  const c = db.clients.find(x => x.id === req.params.id);
+  if (!c || !canAccessWs(req.user, c.workspaceId) || !notDeleted(c)) return res.status(404).json({ error: 'Cliente não encontrado' });
+  const link = _cliPublicLinks(c).find(l => l.id === req.params.linkId);
+  if (!link) return res.status(404).json({ error: 'Link não encontrado' });
+  const b = req.body || {};
+  if (typeof b.active === 'boolean') link.active = b.active;
+  if (typeof b.label === 'string') link.label = b.label.trim().slice(0, 60);
+  saveEntity('clients', c);
+  broadcastChange('client', 'update', { id: c.id, workspaceId: c.workspaceId, byUserId: req.user.id });
+  res.json(link);
+});
+
+app.delete('/api/clients/:id/public-links/:linkId', requireAuth, blockFreelancer, (req, res) => {
+  const c = db.clients.find(x => x.id === req.params.id);
+  if (!c || !canAccessWs(req.user, c.workspaceId) || !notDeleted(c)) return res.status(404).json({ error: 'Cliente não encontrado' });
+  const arr = _cliPublicLinks(c);
+  const idx = arr.findIndex(l => l.id === req.params.linkId);
+  if (idx === -1) return res.status(404).json({ error: 'Link não encontrado' });
+  arr.splice(idx, 1);
+  saveEntity('clients', c);
+  broadcastChange('client', 'update', { id: c.id, workspaceId: c.workspaceId, byUserId: req.user.id });
+  res.json({ ok: true });
+});
+
+/* ── ROTA PÚBLICA (sem auth) ── retorna snapshot read-only pra página pública.
+   Filtramos campos sensíveis: nada de comentários internos, apontamentos, histórico
+   ou responsáveis. Só o essencial pra o cliente enxergar o pipeline dele. */
+app.get('/api/public/client/:token', (req, res) => {
+  const token = String(req.params.token || '');
+  if (!/^[a-f0-9]{48}$/i.test(token)) return res.status(404).json({ error: 'Link inválido' });
+  let hitClient = null, hitLink = null;
+  for (const c of db.clients) {
+    if (!notDeleted(c)) continue;
+    const link = (c.publicLinks || []).find(l => l.token === token && l.active);
+    if (link) { hitClient = c; hitLink = link; break; }
+  }
+  if (!hitClient) return res.status(404).json({ error: 'Link inválido ou revogado' });
+  const projectIds = db.projects.filter(p => p.clientId === hitClient.id && notDeleted(p)).map(p => p.id);
+  const projectsPublic = db.projects
+    .filter(p => projectIds.includes(p.id))
+    .map(p => ({ id: p.id, name: p.name }));
+  const demandsPublic = db.demands
+    .filter(d => projectIds.includes(d.projectId) && notDeleted(d))
+    .map(d => {
+      const flow = db.flows.find(f => f.id === d.flowId);
+      const stage = flow && flow.stages && flow.stages.find(s => s.id === d.status);
+      return {
+        id: d.id,
+        name: d.name,
+        projectId: d.projectId,
+        stageName: stage ? stage.label : '',
+        stageDone: !!(stage && stage.done),
+        deadline: d.deadline || null,
+        completedAt: d.completedAt || null,
+        createdAt: d.createdAt || null,
+        priority: d.priority || 3
+      };
+    });
+  res.json({
+    client: { id: hitClient.id, name: hitClient.name, color: hitClient.color || '#7A00FF', avatar: hitClient.avatar || null },
+    projects: projectsPublic,
+    demands: demandsPublic,
+    generatedAt: nowISO()
+  });
+});
+
 /* ── MODELOS DE CLIENTE (onboarding em 1 clique) ──
    Um clientTemplate é um snapshot reutilizável de um cliente:
    metadados (segmento, diretrizes) + projetos + fluxos exclusivos.
@@ -8600,6 +8699,11 @@ function broadcastToUser(userId, entity, op, extra = {}) {
 // HTML com status 200 e quebraria clientes que esperam JSON).
 app.all(/^\/api\/.*/, (req, res) => {
   res.status(404).json({ error: `Endpoint não encontrado: ${req.method} ${req.originalUrl}` });
+});
+// Rota pública read-only: /public/client/<token> — serve a página standalone.
+// O token é validado pelo JS da própria página via /api/public/client/:token.
+app.get(/^\/public\/client\/[a-f0-9]{48}$/i, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'public-client.html'));
 });
 // Demais rotas: serve o SPA pra deixar o roteamento client-side resolver
 // (/dashboard, /demands/<id>, etc).

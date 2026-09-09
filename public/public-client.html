@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Painel de demandas</title>
+<link rel="icon" href="/favicon.ico">
+<style>
+  :root {
+    --bg: #f8f7fb; --card: #fff; --text: #1a1a1a; --muted: #6b6b73;
+    --hair: #e6e4ee; --accent: #7a00ff; --danger: #e11d48; --ok: #059669;
+    --amber: #d97706;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 32px 20px 64px; }
+  .head { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
+  .avatar { width: 44px; height: 44px; border-radius: 12px; background: var(--accent); background-size: cover; background-position: center; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 18px; }
+  .title { font-size: 22px; font-weight: 700; margin: 0; }
+  .subtitle { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 24px 0 28px; }
+  .kpi { background: var(--card); border: 1px solid var(--hair); border-radius: 12px; padding: 14px 16px; }
+  .kpi-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .kpi-val { font-size: 22px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .kpi-val.danger { color: var(--danger); }
+  .kpi-val.ok { color: var(--ok); }
+  .section { background: var(--card); border: 1px solid var(--hair); border-radius: 14px; overflow: hidden; margin-bottom: 16px; }
+  .section-head { padding: 12px 16px; font-weight: 600; font-size: 13px; color: var(--muted); background: #fafaff; border-bottom: 1px solid var(--hair); text-transform: uppercase; letter-spacing: .06em; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 10px 16px; font-size: 13px; border-bottom: 1px solid var(--hair); }
+  th { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; background: #fafaff; font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .pill-status { background: #eee; color: #333; }
+  .pill-done { background: #dcfce7; color: #15803d; }
+  .pill-late { background: #fee2e2; color: #b91c1c; }
+  .pill-today { background: #fef3c7; color: #92400e; }
+  .empty { padding: 40px 16px; text-align: center; color: var(--muted); }
+  .foot { text-align: center; color: var(--muted); font-size: 11px; margin-top: 32px; }
+  .foot a { color: var(--accent); text-decoration: none; }
+  .err { background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; padding: 20px; border-radius: 12px; text-align: center; }
+  .filter-row { display: flex; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--hair); background: #fafaff; align-items: center; }
+  .filter-row select { padding: 6px 10px; border: 1px solid var(--hair); border-radius: 8px; background: #fff; font-size: 12px; }
+  .filter-row label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+  <div class="empty">Carregando…</div>
+</div>
+<script>
+(function(){
+  const token = location.pathname.split('/').pop();
+  const $ = id => document.getElementById(id);
+  const app = $('app');
+
+  function fmtDate(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' });
+  }
+  function statusPill(d) {
+    if (d.stageDone) return '<span class="pill pill-done">' + escapeHtml(d.stageName || 'Concluída') + '</span>';
+    if (d.deadline) {
+      const dl = new Date(d.deadline);
+      const now = new Date();
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const endOfToday = new Date(startOfToday.getTime() + 86400000 - 1);
+      if (dl < startOfToday) return '<span class="pill pill-late">Atrasada · ' + escapeHtml(d.stageName || '') + '</span>';
+      if (dl <= endOfToday) return '<span class="pill pill-today">Hoje · ' + escapeHtml(d.stageName || '') + '</span>';
+    }
+    return '<span class="pill pill-status">' + escapeHtml(d.stageName || '—') + '</span>';
+  }
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  function initials(name) {
+    return String(name || '?').trim().split(/\s+/).slice(0, 2).map(p => p[0]).join('').toUpperCase() || '?';
+  }
+
+  fetch('/api/public/client/' + encodeURIComponent(token))
+    .then(r => {
+      if (!r.ok) throw new Error(r.status === 404 ? 'Link inválido ou revogado.' : 'Erro ao carregar dados.');
+      return r.json();
+    })
+    .then(render)
+    .catch(err => {
+      app.innerHTML = '<div class="err"><b>Não foi possível abrir este painel.</b><br>' + escapeHtml(err.message) + '</div>';
+    });
+
+  function render(data) {
+    const client = data.client || {};
+    const demands = data.demands || [];
+    const projects = data.projects || [];
+    const projMap = new Map(projects.map(p => [p.id, p.name]));
+
+    let delivered = 0, open = 0, late = 0, today = 0;
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const endOfToday = new Date(startOfToday.getTime() + 86400000 - 1);
+    for (const d of demands) {
+      if (d.completedAt || d.stageDone) delivered++;
+      else {
+        open++;
+        if (d.deadline) {
+          const dl = new Date(d.deadline);
+          if (dl < startOfToday) late++;
+          else if (dl <= endOfToday) today++;
+        }
+      }
+    }
+
+    const avatarHtml = client.avatar
+      ? '<div class="avatar" style="background-image:url(\'' + escapeHtml(client.avatar) + '\')"></div>'
+      : '<div class="avatar" style="background:' + escapeHtml(client.color || '#7a00ff') + '">' + escapeHtml(initials(client.name)) + '</div>';
+
+    const projectOptions = ['<option value="">Todos os projetos</option>']
+      .concat(projects.map(p => '<option value="' + escapeHtml(p.id) + '">' + escapeHtml(p.name) + '</option>'))
+      .join('');
+
+    app.innerHTML =
+      '<div class="head">' +
+        avatarHtml +
+        '<div>' +
+          '<h1 class="title">' + escapeHtml(client.name || 'Cliente') + '</h1>' +
+          '<div class="subtitle">Painel público · atualizado em ' + fmtDate(data.generatedAt) + '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="kpis">' +
+        kpi('Em aberto', open) +
+        kpi('Entregues', delivered, 'ok') +
+        kpi('Para hoje', today, today > 0 ? 'ok' : '') +
+        kpi('Atrasadas', late, late > 0 ? 'danger' : '') +
+      '</div>' +
+      '<div class="section">' +
+        '<div class="section-head">Demandas em aberto</div>' +
+        '<div class="filter-row">' +
+          '<label for="f-proj">Projeto</label>' +
+          '<select id="f-proj">' + projectOptions + '</select>' +
+          '<label for="f-status" style="margin-left:12px">Situação</label>' +
+          '<select id="f-status">' +
+            '<option value="all">Todas</option>' +
+            '<option value="open" selected>Em aberto</option>' +
+            '<option value="done">Entregues</option>' +
+          '</select>' +
+        '</div>' +
+        '<div id="tbl-wrap"></div>' +
+      '</div>' +
+      '<div class="foot">Este painel é apenas leitura. Compartilhado por reWork.</div>';
+
+    const filterProj = $('f-proj');
+    const filterStat = $('f-status');
+    filterProj.addEventListener('change', renderTable);
+    filterStat.addEventListener('change', renderTable);
+    renderTable();
+
+    function renderTable() {
+      const pfilter = filterProj.value;
+      const sfilter = filterStat.value;
+      const rows = demands.filter(d => {
+        if (pfilter && d.projectId !== pfilter) return false;
+        const isDone = d.completedAt || d.stageDone;
+        if (sfilter === 'open' && isDone) return false;
+        if (sfilter === 'done' && !isDone) return false;
+        return true;
+      }).sort((a, b) => {
+        // Não entregues por prazo (nulls por último), entregues por data desc
+        const aDone = a.completedAt || a.stageDone;
+        const bDone = b.completedAt || b.stageDone;
+        if (aDone !== bDone) return aDone ? 1 : -1;
+        if (!aDone) {
+          const ad = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+          const bd = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+          return ad - bd;
+        }
+        const ac = a.completedAt ? new Date(a.completedAt).getTime() : 0;
+        const bc = b.completedAt ? new Date(b.completedAt).getTime() : 0;
+        return bc - ac;
+      });
+
+      const wrap = $('tbl-wrap');
+      if (!rows.length) { wrap.innerHTML = '<div class="empty">Nada por aqui.</div>'; return; }
+      wrap.innerHTML =
+        '<table>' +
+          '<thead><tr>' +
+            '<th>Demanda</th>' +
+            '<th>Projeto</th>' +
+            '<th>Prazo</th>' +
+            '<th>Situação</th>' +
+          '</tr></thead>' +
+          '<tbody>' +
+            rows.map(d =>
+              '<tr>' +
+                '<td>' + escapeHtml(d.name) + '</td>' +
+                '<td>' + escapeHtml(projMap.get(d.projectId) || '—') + '</td>' +
+                '<td>' + fmtDate(d.deadline) + '</td>' +
+                '<td>' + statusPill(d) + '</td>' +
+              '</tr>'
+            ).join('') +
+          '</tbody>' +
+        '</table>';
+    }
+  }
+
+  function kpi(label, val, cls) {
+    return '<div class="kpi"><div class="kpi-label">' + label + '</div><div class="kpi-val ' + (cls || '') + '">' + val + '</div></div>';
+  }
+})();
+</script>
+</body>
+</html>

@@ -3491,6 +3491,185 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 .an-tab:hover { color: var(--text); }
 .an-tab.is-active { color: var(--text); border-bottom-color: var(--accent); }
 
+/* ── Links públicos de cliente ── modal de compartilhamento read-only. */
+.cpl-link { border: 1px solid var(--hairline); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; background: var(--surface); }
+.cpl-link--inactive { opacity: 0.6; }
+.cpl-link-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; gap: 8px; }
+.cpl-link-label { font-size: 13px; font-weight: 600; color: var(--text); }
+.cpl-link-badge { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; background: var(--surface-2); color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; margin-left: 6px; }
+.cpl-link-date { font-size: 11px; color: var(--text-muted); }
+.cpl-link-url { margin-bottom: 8px; }
+.cpl-link-url input { width: 100%; padding: 6px 10px; border: 1px solid var(--hairline); border-radius: 6px; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--surface-2); color: var(--text); }
+.cpl-link-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+.cpl-link-actions .btn { padding: 4px 8px; font-size: 12px; }
+.cpl-link-revoke:hover { color: var(--danger); }
+
+/* ── Ritmo (aba de Análises) ── burndown por squad empilhado + resumo semanal.
+   Cards ocupam a largura toda; o gráfico é a peça principal, informação
+   (status pill, detalhe, stats) fica logo abaixo. Botão copiar discreto no canto. */
+.rhythm-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin: 20px 24px 8px; }
+.rhythm-header-main { flex: 1 1 auto; min-width: 0; }
+.rhythm-title { font-size: 20px; font-weight: 700; color: var(--text); margin: 0 0 4px; }
+.rhythm-subtitle { font-size: 13px; color: var(--text-muted); }
+.rhythm-header-actions { flex: 0 0 auto; }
+.rhythm-header-actions .filter-select { min-width: 180px; }
+.rhythm-weekrange { font-size: 12px; color: var(--text-muted); margin: 0 24px 12px; font-variant-numeric: tabular-nums; }
+
+/* Corrige tamanho de ícones lucide na filters-bar do detalhe de cliente.
+   O seletor global é `i.ic-sm`, mas após lucide.createIcons() o <i> vira <svg>
+   e o seletor não bate — SVG sobra em 24×24. Aqui forçamos 16×16. */
+#clients-view-detail .filters-bar svg.ic-sm { width: 16px; height: 16px; }
+
+.rhythm-stack { display: flex; flex-direction: column; gap: 18px; padding: 0 24px; }
+.rhythm-card {
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 12px;
+  padding: 20px 24px 18px; display: flex; flex-direction: column; gap: 18px;
+}
+.rhythm-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+.rhythm-card-title { font-size: 14px; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 8px; }
+.rhythm-card-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--sq-color, var(--accent)); flex: 0 0 auto; }
+
+/* Status pill — coloração comunica saúde de imediato, sem precisar ler o número. */
+.rhythm-status-pill {
+  display: inline-block; padding: 3px 10px; border-radius: 999px;
+  font-size: 11px; font-weight: 700; letter-spacing: .02em;
+  text-transform: uppercase;
+}
+.rhythm-status-pill--atrasado  { background: rgba(239, 68, 68, 0.12); color: #b91c1c; }
+.rhythm-status-pill--adiantado { background: rgba(16, 185, 129, 0.12); color: #047857; }
+.rhythm-status-pill--no-ritmo  { background: rgba(59, 130, 246, 0.12); color: #1d4ed8; }
+.rhythm-status-pill--sem-mov   { background: var(--surface-2); color: var(--text-muted); }
+[data-theme="dark"] .rhythm-status-pill--atrasado  { background: rgba(239, 68, 68, 0.20); color: #fca5a5; }
+[data-theme="dark"] .rhythm-status-pill--adiantado { background: rgba(16, 185, 129, 0.20); color: #6ee7b7; }
+[data-theme="dark"] .rhythm-status-pill--no-ritmo  { background: rgba(59, 130, 246, 0.20); color: #93c5fd; }
+
+.rhythm-card-chart { width: 100%; }
+/* O wrapper .rhythm-chart-inner é o palco: SVG absoluto no fundo, labels e
+   zonas de hover em HTML absoluto por cima. Height total = área do gráfico + faixa
+   pros labels dos dias embaixo. */
+.rhythm-chart-inner {
+  position: relative; width: 100%;
+  height: 200px; padding-bottom: 22px;
+  box-sizing: content-box;
+}
+.rhythm-chart-inner--empty { height: 120px; padding-bottom: 0; }
+.rhythm-chart-empty {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: var(--text-muted); font-size: 13px;
+}
+/* SVG estica ponta a ponta; strokes usam vector-effect=non-scaling-stroke. */
+.rhythm-svg {
+  position: absolute; left: 0; right: 0; top: 0; width: 100%; height: 200px; display: block;
+}
+.rhythm-svg-grid { stroke: var(--hairline); stroke-width: 1; opacity: 0.6; }
+.rhythm-svg-ideal { fill: none; stroke: var(--text-muted); stroke-width: 1.5; stroke-dasharray: 4 3; opacity: 0.7; }
+.rhythm-svg-real  { fill: none; stroke: var(--accent); stroke-width: 2.5; }
+.rhythm-svg-dot   { fill: none; stroke: var(--accent); stroke-width: 8; stroke-linecap: round; }
+
+/* Labels via HTML — não distorcem porque não estão dentro do SVG esticado. */
+.rhythm-y-labels {
+  position: absolute; left: 0; right: 0; top: 0; height: 200px;
+  pointer-events: none;
+}
+.rhythm-y-label {
+  position: absolute; right: 4px; transform: translateY(-100%);
+  font-size: 10px; color: var(--text-muted); font-variant-numeric: tabular-nums;
+  padding: 0 2px; background: var(--surface);
+}
+.rhythm-x-labels {
+  position: absolute; left: 0; right: 0; top: 200px; height: 22px;
+  pointer-events: none;
+}
+.rhythm-x-label {
+  position: absolute; transform: translateX(-50%);
+  font-size: 11px; color: var(--text-muted); top: 4px;
+}
+/* Zonas de hover — cobrem só o eixo Y do gráfico (200px). */
+.rhythm-x-hovers {
+  position: absolute; left: 0; right: 0; top: 0; height: 200px;
+}
+.rhythm-x-hover {
+  position: absolute; top: 0; bottom: 0;
+  cursor: default;
+}
+.rhythm-x-hover:hover { background: rgba(122, 0, 255, 0.06); }
+
+/* Tooltip — flutua acima do ponto real. */
+.rhythm-tooltip {
+  position: absolute; z-index: 2; transform: translate(-50%, calc(-100% - 10px));
+  background: var(--text); color: var(--surface);
+  padding: 8px 10px; border-radius: 6px; font-size: 12px; line-height: 1.4;
+  min-width: 120px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  pointer-events: none; white-space: nowrap;
+}
+[data-theme="dark"] .rhythm-tooltip { background: #fff; color: #111; }
+.rhythm-tip-day { font-weight: 700; margin-bottom: 4px; }
+.rhythm-tip-row { font-size: 12px; }
+.rhythm-tip-row b { font-weight: 700; font-variant-numeric: tabular-nums; }
+.rhythm-tip-row--muted { color: rgba(255,255,255,0.65); }
+[data-theme="dark"] .rhythm-tip-row--muted { color: rgba(0,0,0,0.55); }
+.rhythm-tip-diff { font-size: 11px; }
+.rhythm-tip-diff--bad  { color: #fca5a5; }
+.rhythm-tip-diff--good { color: #6ee7b7; }
+[data-theme="dark"] .rhythm-tip-diff--bad  { color: #b91c1c; }
+[data-theme="dark"] .rhythm-tip-diff--good { color: #047857; }
+
+.rhythm-card-foot { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-top: 4px; }
+.rhythm-card-info { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.rhythm-card-detail { font-size: 13px; color: var(--text); line-height: 1.5; }
+.rhythm-card-stats { display: flex; gap: 18px; font-size: 12px; color: var(--text-muted); }
+.rhythm-stat b { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* Botão copiar: só o ícone 16×16 cinza. Sem contorno, sem background. */
+.rhythm-copy-btn {
+  flex: 0 0 auto; background: transparent; border: none;
+  padding: 4px; margin: -4px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--text-muted); cursor: pointer;
+  transition: color .12s;
+}
+.rhythm-copy-btn svg { width: 16px; height: 16px; }
+.rhythm-copy-btn:hover { color: var(--text); }
+.rhythm-copy-btn.is-copied { color: #059669; }
+[data-theme="dark"] .rhythm-copy-btn.is-copied { color: #6ee7b7; }
+
+.rhythm-legend { display: flex; gap: 20px; align-items: center; padding: 12px 24px 24px; font-size: 11px; color: var(--text-muted); flex-wrap: wrap; }
+.rhythm-legend--inline { padding: 0; gap: 14px; }
+.rhythm-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.rhythm-legend-line { display: inline-block; width: 22px; height: 2px; border-radius: 2px; }
+.rhythm-legend-line--ideal { background: repeating-linear-gradient(90deg, var(--text-muted) 0 4px, transparent 4px 7px); }
+.rhythm-legend-line--real { background: var(--accent); }
+
+/* Barra de filtro de squads (chips) — mesmo padrão da Capacidade. */
+.rhythm-filter-bar { padding: 0 24px 8px; }
+.rhythm-squad-filter-inline { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+/* Modo combinado — legenda inline com o título, sem status pill. */
+.rhythm-card--combined .rhythm-card-title { color: var(--text); }
+
+/* Tooltip combinado — um bloco por squad (mesmo layout do modo individual),
+   separados por linha fina horizontal. */
+.rhythm-tip-squad-block { display: flex; flex-direction: column; gap: 2px; padding: 4px 0; }
+.rhythm-tip-squad-name {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 700; margin-bottom: 2px;
+}
+.rhythm-tip-squad-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.rhythm-tip-sep {
+  height: 1px; background: rgba(255,255,255,0.15); margin: 2px 0;
+}
+[data-theme="dark"] .rhythm-tip-sep { background: rgba(0,0,0,0.12); }
+.rhythm-tip-total {
+  font-size: 12px; color: rgba(255,255,255,0.75);
+}
+[data-theme="dark"] .rhythm-tip-total { color: rgba(0,0,0,0.7); }
+.rhythm-tip-total b { color: inherit; font-variant-numeric: tabular-nums; }
+@media (max-width: 720px) {
+  .rhythm-header { flex-direction: column; }
+  .rhythm-card-foot { flex-direction: column; align-items: flex-start; }
+  .rhythm-card-stats { flex-wrap: wrap; }
+}
+
 /* Mapeamento de fluxos ao aplicar uma lista num cliente (fallback do apply portável). */
 .lista-map-row { display: flex; align-items: center; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--hairline); }
 .lista-map-row:last-child { border-bottom: none; }
