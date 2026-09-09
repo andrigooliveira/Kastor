@@ -25,6 +25,36 @@
   const APP_URL = '/js/app.js' + (ASSET_VERSION ? '?v=' + ASSET_VERSION : '');
   const LUCIDE_URL = '/vendor/lucide.min.js';
 
+  // ── KILL SWITCH ────────────────────────────────────────────────────────
+  // Se `?legacy=1` na URL OU localStorage.kastor-legacy-boot === '1',
+  // carrega style.css + app.js DIRETO (comportamento pré-split), pulando
+  // todo o resto do boot.js. Uso em incidente: abra a app com ?legacy=1
+  // uma vez — a flag persiste em localStorage e todas as próximas visitas
+  // usam o caminho antigo até você fazer ?legacy=0 (ou limpar storage).
+  try {
+    const q = new URLSearchParams(location.search);
+    const qLegacy = q.get('legacy');
+    if (qLegacy === '1') localStorage.setItem('kastor-legacy-boot', '1');
+    else if (qLegacy === '0') localStorage.removeItem('kastor-legacy-boot');
+    if (localStorage.getItem('kastor-legacy-boot') === '1') {
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = CSS_URL;
+      document.head.appendChild(link);
+      const lucide = document.createElement('script');
+      lucide.src = LUCIDE_URL;
+      lucide.onload = () => {
+        const app = document.createElement('script');
+        app.src = APP_URL;
+        document.body.appendChild(app);
+      };
+      document.body.appendChild(lucide);
+      // Log visível pro dev saber que o modo legacy está ativo.
+      console.warn('[boot] modo legacy ativo — app.js carregado direto. Use ?legacy=0 pra voltar ao boot rápido.');
+      return; // NÃO executa o restante do boot.js
+    }
+  } catch {}
+
   // ── Tema — aplica ANTES de renderizar. Evita flash. ───────────────────
   try {
     const theme = localStorage.getItem('kastor-theme') || 'dark';
