@@ -31,21 +31,46 @@ body{background:var(--bg);color:var(--text);font-family:'Geist','Segoe UI',syste
 #app-loading-screen.is-hidden{opacity:0;pointer-events:none}
 .app-loading-mark{width:88px;height:88px}
 .app-loading-mark svg{width:100%;height:100%;display:block;overflow:visible}
-/* Cada peça pulsa uma vez de cada, na ordem de cima pra baixo:
-   diamante topo → diamante meio → diamante base → L shape. Cada ciclo
-   completo dura 2.4s (cabe em 2s de min-load com boa margem). */
-.rework-mark-part{opacity:0;transform-box:fill-box;transform-origin:center;animation:rework-mark-pulse 2.4s ease-out infinite}
-.rework-mark-part--2{animation-delay:0ms}     /* diamante topo (y=27) */
-.rework-mark-part--4{animation-delay:250ms}   /* diamante meio-alto (y=139) */
-.rework-mark-part--3{animation-delay:500ms}   /* diamante mais baixo (y=447) */
-.rework-mark-part--1{animation-delay:750ms}   /* L shape (y=523) */
-@keyframes rework-mark-pulse{
-  0%{opacity:0;transform:scale(.7)}
-  15%{opacity:1;transform:scale(1.12)}
-  25%{opacity:1;transform:scale(1)}
-  75%{opacity:1;transform:scale(1)}
-  92%{opacity:0;transform:scale(.85)}
-  100%{opacity:0;transform:scale(.7)}
+/* Cada peça entra em uma janela diferente (sequência topo → meio → base → L),
+   TODAS SAINDO JUNTAS no fim do ciclo. Mesmo animation-duration + mesmo
+   ponto de exit = loop limpo (nenhuma peça restartando enquanto outra fecha). */
+.rework-mark-part{opacity:0;transform-box:fill-box;transform-origin:center;animation-duration:2400ms;animation-iteration-count:infinite;animation-timing-function:ease-out}
+.rework-mark-part--2{animation-name:rework-mark-slot-1} /* diamante topo (y=27) */
+.rework-mark-part--4{animation-name:rework-mark-slot-2} /* diamante meio-alto (y=139) */
+.rework-mark-part--3{animation-name:rework-mark-slot-3} /* diamante mais baixo (y=447) */
+.rework-mark-part--1{animation-name:rework-mark-slot-4} /* L shape (y=523) */
+/* Cada slot: espera → entra com scale bump → segura → sai junto (78→88%) → repousa. */
+@keyframes rework-mark-slot-1{
+  0%{opacity:0;transform:scale(.75)}
+  4%{opacity:1;transform:scale(1.12)}
+  8%{opacity:1;transform:scale(1)}
+  78%{opacity:1;transform:scale(1)}
+  88%{opacity:0;transform:scale(.9)}
+  100%{opacity:0;transform:scale(.75)}
+}
+@keyframes rework-mark-slot-2{
+  0%,9%{opacity:0;transform:scale(.75)}
+  13%{opacity:1;transform:scale(1.12)}
+  17%{opacity:1;transform:scale(1)}
+  78%{opacity:1;transform:scale(1)}
+  88%{opacity:0;transform:scale(.9)}
+  100%{opacity:0;transform:scale(.75)}
+}
+@keyframes rework-mark-slot-3{
+  0%,18%{opacity:0;transform:scale(.75)}
+  22%{opacity:1;transform:scale(1.12)}
+  26%{opacity:1;transform:scale(1)}
+  78%{opacity:1;transform:scale(1)}
+  88%{opacity:0;transform:scale(.9)}
+  100%{opacity:0;transform:scale(.75)}
+}
+@keyframes rework-mark-slot-4{
+  0%,27%{opacity:0;transform:scale(.75)}
+  31%{opacity:1;transform:scale(1.12)}
+  35%{opacity:1;transform:scale(1)}
+  78%{opacity:1;transform:scale(1)}
+  88%{opacity:0;transform:scale(.9)}
+  100%{opacity:0;transform:scale(.75)}
 }
 /* Tela de login SEMPRE em fundo claro (independente do tema do app). Painel
    direito branco pro form respirar; o painel esquerdo é o card roxo com hero.
@@ -3977,7 +4002,7 @@ body{background:var(--bg);color:var(--text);font-family:'Geist','Segoe UI',syste
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260909loading4" defer></script>
+<script src="/js/boot.js?v=20260909loading5" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
