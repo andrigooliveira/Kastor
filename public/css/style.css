@@ -3574,12 +3574,8 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 .dash-tone-focus    .dash-widget-icon { background: rgba(122,0,255,0.14);  color: #7A00FF; }
 .dash-tone-forecast::before { background: #3b82f6; }
 .dash-tone-forecast .dash-widget-icon { background: rgba(59,130,246,0.14); color: #3b82f6; }
-.dash-tone-late::before     { background: #ef4444; }
-.dash-tone-late     .dash-widget-icon { background: rgba(239,68,68,0.14);  color: #ef4444; }
 .dash-tone-activity::before { background: #10b981; }
 .dash-tone-activity .dash-widget-icon { background: rgba(16,185,129,0.14); color: #10b981; }
-.dash-tone-next::before     { background: #f97316; }
-.dash-tone-next     .dash-widget-icon { background: rgba(249,115,22,0.14); color: #f97316; }
 .dash-tone-hours::before    { background: #06b6d4; }
 .dash-tone-hours    .dash-widget-icon { background: rgba(6,182,212,0.14);  color: #06b6d4; }
 .dash-tone-prio::before     { background: #eab308; }
@@ -3644,27 +3640,6 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
   text-align: center;
 }
 .dash-focus-more:hover, .dash-more-link:hover { color: var(--accent-text); }
-
-/* ── Próxima entrega ── card grande. */
-.dash-next-card {
-  display: flex; align-items: center; gap: 14px;
-  padding: 14px; border-radius: var(--radius-sm);
-  background: var(--surface-2); cursor: pointer;
-  transition: transform .12s var(--ease-spring), box-shadow .12s;
-}
-.dash-next-card:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,0,0,0.14); }
-.dash-next-card.is-today { background: rgba(122,0,255,0.10); }
-.dash-next-card.is-soon { background: rgba(245,158,11,0.10); }
-.dash-next-days {
-  display: flex; flex-direction: column; align-items: center;
-  min-width: 52px;
-}
-.dash-next-days strong { font-size: 26px; font-weight: 800; color: var(--text); line-height: 1; }
-.dash-next-days span { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; margin-top: 2px; }
-.dash-next-body { flex: 1; min-width: 0; }
-.dash-next-name { font-size: 13.5px; font-weight: 700; color: var(--text); }
-.dash-next-meta { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
-.dash-next-when { font-size: 11px; color: var(--text-muted); margin-top: 4px; text-transform: uppercase; letter-spacing: .06em; }
 
 /* ── Horas de hoje ── barra de progresso. */
 .dash-hours-wrap { display: flex; flex-direction: column; gap: 8px; }
@@ -3774,66 +3749,6 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 .forecast-table .fc-td-name { font-weight: 600; color: var(--text); }
 .forecast-table .fc-td-sub { color: var(--text-dim); }
 
-/* Em atraso — linha horizontal: [dias][nome + projeto][responsável]
-   Blocos separados por gap generoso, cada um com propósito visual claro. */
-.dash-overdue-row {
-  display: flex; align-items: center; gap: 14px;
-  padding: 12px 14px; border-radius: var(--radius-sm);
-  border: 1px solid var(--hairline); background: var(--surface);
-  cursor: pointer; margin-bottom: 8px;
-  transition: border-color .12s var(--ease-out), background .12s var(--ease-out), transform .15s var(--ease-spring);
-}
-.dash-overdue-row:hover {
-  border-color: var(--danger, #EF4444);
-  background: rgba(239, 68, 68, 0.06);
-  transform: translateX(2px);
-}
-/* Bloco esquerdo — número grande em vermelho + label "dias" abaixo */
-.dash-overdue-days {
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  min-width: 48px; flex-shrink: 0;
-  padding: 4px 6px; border-radius: var(--radius-sm);
-  background: rgba(239, 68, 68, 0.08);
-  border: 1px solid rgba(239, 68, 68, 0.2);
-  line-height: 1;
-}
-.dash-overdue-days strong {
-  font-size: 22px; font-weight: 800;
-  color: var(--danger, #EF4444);
-  font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
-}
-.dash-overdue-days span {
-  font-size: 9.5px; font-weight: 700; letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--danger, #EF4444); opacity: .8;
-  margin-top: 3px;
-}
-/* Bloco central — nome (bold) + chip do projeto abaixo */
-.dash-overdue-body {
-  flex: 1; min-width: 0;
-  display: flex; flex-direction: column; gap: 4px;
-}
-.dash-overdue-name {
-  font-size: 13.5px; font-weight: 600; color: var(--text);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
-  letter-spacing: -0.005em;
-}
-.dash-overdue-meta {
-  font-size: 11.5px; color: var(--text-muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-/* Bloco direito — avatar + nome do responsável */
-.dash-overdue-owner {
-  display: inline-flex; align-items: center; gap: 8px;
-  flex-shrink: 0; max-width: 160px;
-}
-.dash-overdue-owner-name {
-  font-size: 12.5px; font-weight: 600; color: var(--text);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.dash-overdue-owner--empty { color: var(--text-muted); font-style: italic; font-size: 12px; }
-.dash-overdue-owner--empty svg { width: 12px; height: 12px; }
-
 /* Radar de projetos — borda colorida indica status. Sem dot.
    Verde: 0 atrasadas. Amarelo: ≤ 20%. Vermelho: > 20%. */
 .dash-radar-grid {
@@ -3916,7 +3831,6 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
   background: #FFFFFF;
 }
 :root[data-theme="light"] .dash-next7-pill,
-:root[data-theme="light"] .dash-overdue-row,
 :root[data-theme="light"] .dash-radar-card {
   background: #FAFAFA;
 }

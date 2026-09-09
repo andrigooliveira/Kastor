@@ -14,12 +14,12 @@
 <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/geist-latin-ext.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/css/fonts.css?v=1">
-<link rel="stylesheet" href="/css/style.css?v=20260909greet2">
+<link rel="stylesheet" href="/css/style.css?v=20260909paradas">
 <!-- Preload dos JS pesados no <head> pra que o download comece IMEDIATAMENTE,
      em paralelo com o parse do HTML, em vez de esperar o parser chegar em
      </body>. Com immutable cache (max-age=1yr), na 2ª visita nem baixa. -->
 <link rel="preload" href="/vendor/lucide.min.js" as="script">
-<link rel="preload" href="/js/app.js?v=20260909greet2" as="script">
+<link rel="preload" href="/js/app.js?v=20260909paradas" as="script">
 <script type="text/javascript">
     // Clarity: analytics de heatmap/session replay. Não é crítico pro app —
     // deferido pra depois do primeiro paint pra não roubar tempo do LCP.
@@ -305,6 +305,14 @@
               <div id="dash-focus"></div>
             </div>
 
+            <div class="dash-widget dash-tone-blocked">
+              <div class="dash-widget-head">
+                <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="pause-circle" class="ic-sm"></i></span>Paradas</div>
+                <div class="dash-widget-sub" id="dash-blocked-sub"></div>
+              </div>
+              <div id="dash-blocked"></div>
+            </div>
+
             <div class="dash-widget dash-tone-forecast">
               <div class="dash-widget-head">
                 <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="calendar-days" class="ic-sm"></i></span>Demandas previstas</div>
@@ -317,14 +325,6 @@
               <div class="dash-forecast-grid" id="dash-forecast"></div>
             </div>
 
-            <div class="dash-widget dash-tone-late">
-              <div class="dash-widget-head">
-                <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="alert-triangle" class="ic-sm"></i></span>Em atraso</div>
-                <div class="dash-widget-sub" id="dash-overdue-sub"></div>
-              </div>
-              <div id="dash-overdue"></div>
-            </div>
-
             <div class="dash-widget dash-tone-activity">
               <div class="dash-widget-head">
                 <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="activity" class="ic-sm"></i></span>Atividade recente</div>
@@ -335,14 +335,6 @@
           </div>
 
           <div class="dash-col dash-col-right">
-            <div class="dash-widget dash-tone-next" id="dash-widget-next">
-              <div class="dash-widget-head">
-                <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="package" class="ic-sm"></i></span>Próxima entrega</div>
-                <div class="dash-widget-sub" id="dash-next-sub"></div>
-              </div>
-              <div id="dash-next"></div>
-            </div>
-
             <div class="dash-widget dash-tone-hours">
               <div class="dash-widget-head">
                 <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="clock" class="ic-sm"></i></span>Horas de hoje</div>
@@ -357,14 +349,6 @@
                 <div class="dash-widget-sub" id="dash-prio-sub"></div>
               </div>
               <div id="dash-prio-donut"></div>
-            </div>
-
-            <div class="dash-widget dash-tone-blocked">
-              <div class="dash-widget-head">
-                <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="ban" class="ic-sm"></i></span>Bloqueios</div>
-                <div class="dash-widget-sub" id="dash-blocked-sub"></div>
-              </div>
-              <div id="dash-blocked"></div>
             </div>
 
             <div class="dash-widget dash-tone-radar">
@@ -3891,7 +3875,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260909greet2"></script>
+<script src="/js/app.js?v=20260909paradas"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

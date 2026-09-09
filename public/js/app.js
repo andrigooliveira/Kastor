@@ -4573,10 +4573,8 @@ function renderDashboard() {
     : teamScope;
   const activeSquadActive = activeSquadScope.filter(d => !isDone(d));
   renderDashFocus(mineActive);
-  renderDashNextDelivery(mineActive);
   renderDashHoursToday();
   renderDashForecast();
-  renderDashOverdue(mineActive);
   renderDashActivityFeed(mineActive);
   renderDashBlocked(mineActive);
   renderDashRadar(activeSquadActive);
@@ -4675,42 +4673,6 @@ function openDashFocusAll() {
   openDashMore('Meu foco de hoje', items.map(_dashFocusRowHtml).join('') || '<div class="dash-empty-inline">Nada esperando por você.</div>');
 }
 
-/* Próxima entrega — MINHA demanda em aberto com prazo mais próximo (hoje ou futuro). */
-function renderDashNextDelivery(mineActive) {
-  const el = $('dash-next');
-  const sub = $('dash-next-sub');
-  if (!el) return;
-  const today = todayStr();
-  const upcoming = (mineActive || [])
-    .map(d => ({ d, due: effDue(d) }))
-    .filter(x => x.due && x.due >= today)
-    .sort((a, b) => a.due.localeCompare(b.due));
-  if (!upcoming.length) {
-    if (sub) sub.textContent = '';
-    el.innerHTML = `<div class="dash-empty-inline"><i data-lucide="calendar-check" class="ic-sm"></i> Sem prazos futuros.</div>`;
-    return;
-  }
-  const { d, due } = upcoming[0];
-  const p = projectById(d.projectId);
-  const dueDate = new Date(due + 'T00:00:00');
-  const todayD = new Date(today + 'T00:00:00');
-  const daysLeft = Math.round((dueDate - todayD) / 86400000);
-  const daysLabel = daysLeft === 0 ? 'hoje' : daysLeft === 1 ? 'amanhã' : `em ${daysLeft} dias`;
-  const cls = daysLeft === 0 ? 'is-today' : daysLeft <= 2 ? 'is-soon' : '';
-  if (sub) sub.textContent = _fmtShortDate(due);
-  el.innerHTML = `<div class="dash-next-card ${cls}" onclick="showDetail('${esc(d.id)}')">
-    <div class="dash-next-days">
-      <strong>${Math.max(0, daysLeft)}</strong>
-      <span>dia${daysLeft === 1 ? '' : 's'}</span>
-    </div>
-    <div class="dash-next-body">
-      <div class="dash-next-name">${esc(d.name)}</div>
-      ${p ? `<div class="dash-next-meta">${esc(p.name)}</div>` : ''}
-      <div class="dash-next-when">${esc(daysLabel)}</div>
-    </div>
-  </div>`;
-}
-
 /* Horas apontadas hoje — bar de progresso contra a meta padrão de 6h. */
 function renderDashHoursToday() {
   const el = $('dash-hours-today');
@@ -4780,7 +4742,7 @@ function _dashBlockedRowHtml({ d, stage, ownerId, days }) {
 }
 function openDashBlockedAll() {
   const items = _dashLists.blocked || [];
-  openDashMore('Bloqueios', items.map(_dashBlockedRowHtml).join('') || '<div class="dash-empty-inline">Nada travado.</div>');
+  openDashMore('Paradas', items.map(_dashBlockedRowHtml).join('') || '<div class="dash-empty-inline">Nada travado.</div>');
 }
 
 /* Atividade recente — últimas 24h de mudanças nas minhas demandas. */
@@ -5070,64 +5032,6 @@ function renderDueFilterChip() {
     </button>
   </div>`;
   paintIcons();
-}
-
-// ── Em atraso — top 5 mais atrasadas (sempre a partir de hoje, ignora filtros) ──
-function renderDashOverdue(mineActive) {
-  const el = $('dash-overdue');
-  const sub = $('dash-overdue-sub');
-  if (!el) return;
-  const overdue = (mineActive || []).filter(isLate);
-  const today0 = new Date(); today0.setHours(0,0,0,0);
-  const withDelay = overdue.map(d => {
-    const due = effDue(d);
-    const dueD = due ? new Date(due) : null;
-    const daysLate = dueD ? Math.floor((today0 - dueD) / 86400000) : 0;
-    return { d, daysLate };
-  }).sort((a, b) => b.daysLate - a.daysLate);
-
-  if (sub) sub.textContent = `${overdue.length} demanda${overdue.length === 1 ? '' : 's'} sua${overdue.length === 1 ? '' : 's'} com prazo vencido`;
-
-  if (!overdue.length) {
-    el.innerHTML = `<div class="dash-empty-inline">
-      <i data-lucide="check-circle-2" class="ic-sm"></i>
-      Nada atrasado.
-    </div>`;
-    paintIcons();
-    return;
-  }
-
-  _dashLists.overdue = withDelay;
-  const MAX = 4;
-  const rowsHtml = withDelay.slice(0, MAX).map(_dashOverdueRowHtml).join('');
-  const more = withDelay.length > MAX
-    ? `<a href="#" class="dash-more-link" onclick="event.preventDefault(); openDashOverdueAll()">Ver mais (${withDelay.length})</a>`
-    : '';
-  el.innerHTML = rowsHtml + more;
-}
-function _dashOverdueRowHtml({ d, daysLate }) {
-  const proj = projectById(d.projectId);
-  const client = proj?.client || (proj?.clientId ? clientById(proj.clientId)?.name : '') || '';
-  const owner = effectiveOwnerOf(d);
-  const ownerHtml = owner
-    ? `<div class="dash-overdue-owner">${avatarHTML(owner, 'avatar avatar-xs')} <span class="dash-overdue-owner-name">${esc(owner.name)}</span></div>`
-    : `<div class="dash-overdue-owner dash-overdue-owner--empty"><i data-lucide="user-x" class="ic-xs"></i> <span>Sem responsável</span></div>`;
-  const metaParts = [];
-  if (client) metaParts.push(esc(client));
-  if (proj?.name) metaParts.push(esc(proj.name));
-  const metaText = metaParts.join(' · ');
-  return `<div class="dash-overdue-row" onclick="closeModal('dash-more-modal'); showDetail('${esc(d.id)}')">
-    <div class="dash-overdue-days"><strong>${daysLate}</strong><span>dia${daysLate === 1 ? '' : 's'}</span></div>
-    <div class="dash-overdue-body">
-      <div class="dash-overdue-name">${esc(d.name)}</div>
-      ${metaText ? `<div class="dash-overdue-meta">${metaText}</div>` : ''}
-    </div>
-    ${ownerHtml}
-  </div>`;
-}
-function openDashOverdueAll() {
-  const items = _dashLists.overdue || [];
-  openDashMore('Demandas em atraso', items.map(_dashOverdueRowHtml).join('') || '<div class="dash-empty-inline">Nada atrasado.</div>');
 }
 
 // ── Radar de projetos ── grid de cards com semáforo.
