@@ -122,6 +122,29 @@ function createStore(config = {}) {
       CREATE INDEX IF NOT EXISTS idx_mkt_client_date
         ON marketing_snapshots (client_id, date DESC);
     `);
+
+    // Tuning de autovacuum nas tabelas HOT.
+    //
+    //   entities: cada edição de demanda/projeto/etc. é UPSERT — dead tuples
+    //             acumulam rápido. Default do Postgres é vacuum a 20% da
+    //             tabela morta; pra tabela quente isso é tarde e index scans
+    //             degradam entre passadas.
+    //   notifications: INSERT constante + UPDATE (mark as read) + DELETE (trim).
+    //                  Mesmo padrão.
+    //
+    // Reduz vacuum de 20% → 5%, analyze de 10% → 2%. ALTER TABLE SET com
+    // storage parameter é metadata-only (sem rewrite/lock long) — idempotente,
+    // seguro rodar todo boot.
+    await pool.query(`
+      ALTER TABLE entities SET (
+        autovacuum_vacuum_scale_factor = 0.05,
+        autovacuum_analyze_scale_factor = 0.02
+      );
+      ALTER TABLE notifications SET (
+        autovacuum_vacuum_scale_factor = 0.05,
+        autovacuum_analyze_scale_factor = 0.02
+      );
+    `);
   }
 
   /* ── TRANSAÇÃO ──
@@ -204,11 +227,15 @@ function createStore(config = {}) {
 
   // Carrega todas as entidades pra um objeto compatível com o `db` em memória
   // que o restante do código já espera (chaves: workspaces, users, demands, etc).
+  //
+  // Queries paralelas via Promise.all — pool de 10 conexões absorve tranquilo
+  // as ~24 (uma por tipo). Antes era serial: cada round-trip (~20-50ms) somava
+  // pra 500ms-1.2s de boot. Paralelo cai pra a query mais lenta + overhead.
   async function loadAllToCache() {
     const out = { notifications: [] }; // notifications viajam por endpoint dedicado
-    // Uma query por tipo — poderia virar UMA query com todos os tipos, mas
-    // o custo em boot é irrelevante frente à clareza.
-    for (const t of ENTITY_TYPES) out[t] = await listByType(t);
+    await Promise.all(ENTITY_TYPES.map(async t => {
+      out[t] = await listByType(t);
+    }));
     return out;
   }
 

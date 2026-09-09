@@ -231,6 +231,23 @@
       // Deslogado — deixa a tela de login visível. O app.js NÃO carrega até
       // o user submeter o form.
       const u = $('login-username'); if (u) setTimeout(() => u.focus(), 100);
+      // Prefetch dos assets pesados em background enquanto o user digita.
+      // rel=prefetch tem prioridade baixa (não compete com o LCP do login),
+      // mas garante que quando o Entrar for clicado, os bytes já estão em
+      // cache — login → app fica quase instantâneo.
+      try {
+        setTimeout(() => {
+          [
+            { rel: 'prefetch', href: APP_URL, as: 'script' },
+            { rel: 'prefetch', href: CSS_URL, as: 'style' },
+            { rel: 'prefetch', href: LUCIDE_URL, as: 'script' },
+          ].forEach(({ rel, href, as }) => {
+            const el = document.createElement('link');
+            el.rel = rel; el.href = href; el.as = as;
+            document.head.appendChild(el);
+          });
+        }, 800); // esperar o LCP do login estabilizar antes de disparar prefetch
+      } catch {}
     }
   })();
 })();
