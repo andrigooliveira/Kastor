@@ -3713,6 +3713,13 @@ async function loadAll() {
   localStorage.setItem('fluxo_ws', activeWs || '');
 }
 
+/* Set de IDs "não clicadas" — o purple bg + dot vermelho no item é controlado
+   por essa Set, NÃO por n.read. `n.read` agora é marcado assim que o painel
+   abre (contador zera imediatamente), mas o item continua visualmente destacado
+   até o usuário clicar. Se recarregar a página, o server retorna read=true e o
+   item nem entra na Set — comportamento "novo dia, nova lista", como email. */
+let _notifWasUnread = new Set();
+
 async function fetchNotifications() {
   // Pula quando a aba está em background — usuário não vê o badge, servidor não
   // precisa responder. Volta a rodar sozinho no próximo tick de setInterval;
@@ -3720,6 +3727,18 @@ async function fetchNotifications() {
   // fetch imediato ao retomar a aba (ver setupVisibilityWake).
   if (document.hidden) return;
   try { notifications = await api('/notifications'); } catch { notifications = []; }
+  // Mantém _notifWasUnread sincronizada com a lista atual:
+  // - remove IDs de notifs que sumiram (deletadas/expiradas);
+  // - adiciona IDs novas que vieram como read=false (aparecerão como purple).
+  // Não mexe em IDs já presentes (preserva o estado "aberto no painel mas não
+  // clicado" — ver toggleNotifPanel).
+  const idsInList = new Set(notifications.map(n => n.id));
+  for (const id of _notifWasUnread) {
+    if (!idsInList.has(id)) _notifWasUnread.delete(id);
+  }
+  notifications.forEach(n => {
+    if (!n.read && !_notifWasUnread.has(n.id)) _notifWasUnread.add(n.id);
+  });
   renderNotifBadge();
 }
 function startNotifPoll() {
@@ -22698,7 +22717,19 @@ function _prepareFaviconCache(baseHref) {
 function toggleNotifPanel() {
   const panel = $('notif-panel');
   const isOpen = panel.classList.toggle('open');
-  if (isOpen) renderNotifList();
+  if (isOpen) {
+    // Assim que o painel abre, tudo vira "lido" pro contador (bell/badge/favicon)
+    // — server + client. O visual "não clicada" (purple bg + dot vermelho no item)
+    // segue vivo via _notifWasUnread, que só é esvaziada por click, markAllRead
+    // ou clearAll. Isso mata o incômodo do "abri, vi, e o badge ainda tá lá".
+    const hasUnread = notifications.some(n => !n.read);
+    if (hasUnread) {
+      notifications.forEach(n => { n.read = true; });
+      api('/notifications/read-all', 'PUT').catch(() => {});
+      renderNotifBadge();
+    }
+    renderNotifList();
+  }
 }
 
 function notifMessage(n) {
@@ -22764,21 +22795,28 @@ function renderNotifList() {
     $('notif-list').innerHTML = '<div class="notif-empty">Nenhuma notificação por enquanto.</div>';
     return;
   }
-  // Item lido: sem espaço do dot (a coluna some, não fica "espaço vazio").
-  $('notif-list').innerHTML = list.map(n => `
-    <div class="notif-item ${n.read ? 'read' : 'unread'}" onclick="openNotif('${n.id}', '${n.demandId || ''}')" title="${esc(fmtDateTime(n.createdAt))}">
-      ${!n.read ? '<div class="notif-dot-wrap"><span class="notif-dot"></span></div>' : ''}
+  // "Não clicada" — purple bg + dot vermelho. Não usa mais n.read (que agora
+  // vira true na abertura do painel) e sim _notifWasUnread (removida no click).
+  $('notif-list').innerHTML = list.map(n => {
+    const unclicked = _notifWasUnread.has(n.id);
+    return `
+    <div class="notif-item ${unclicked ? 'unread' : 'read'}" onclick="openNotif('${n.id}', '${n.demandId || ''}')" title="${esc(fmtDateTime(n.createdAt))}">
+      ${unclicked ? '<div class="notif-dot-wrap"><span class="notif-dot"></span></div>' : ''}
       ${notifAvatarHTML(n)}
       <div class="notif-body">
         <div class="notif-text">${notifMessage(n)}</div>
         <div class="notif-time">${fmtRelativeTime(n.createdAt)}</div>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 async function openNotif(notifId, demandId) {
-  // marca como lido
   const n = notifications.find(x => x.id === notifId);
+  // Click consome o visual (tira purple bg + dot do item).
+  _notifWasUnread.delete(notifId);
+  // Fallback pro caso raro do click acontecer sem o painel ter aberto antes
+  // (deep-link, atalho, etc): marca como lida no server também.
   if (n && !n.read) {
     n.read = true;
     api('/notifications/' + notifId + '/read', 'PUT').catch(() => {});
@@ -22800,6 +22838,8 @@ async function markAllRead() {
   try {
     await api('/notifications/read-all', 'PUT');
     notifications.forEach(n => { n.read = true; });
+    // Botão "marcar tudo": consome também (tira purple bg de todos).
+    _notifWasUnread.clear();
     renderNotifBadge();
     renderNotifList();
   } catch (e) { toast(e.message, 'error'); }
@@ -22813,6 +22853,7 @@ async function clearAllNotifications() {
   try {
     await api('/notifications', 'DELETE');
     notifications = [];
+    _notifWasUnread.clear();
     renderNotifBadge();
     renderNotifList();
     toast('Notificações limpas.');
