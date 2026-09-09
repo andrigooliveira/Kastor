@@ -3495,8 +3495,15 @@ async function boot() {
   // Processa o retorno do callback OAuth do Discord — ?discord=... na URL.
   // Feito ANTES do /me pra que o toast de erro apareça mesmo na tela de login.
   handleDiscordCallbackQuery();
-  // Sem token em localStorage agora — tenta /me direto. Se cookie httpOnly
-  // estiver válido, server devolve o user; senão 401 → forceLogout.
+  // Se boot.js já pré-carregou o `me` (fluxo cold-load ou pós-login), usa
+  // direto. Evita segundo /api/me em cada carregamento. Fallback pro fetch
+  // preserva testes / carregamentos alternativos onde boot.js não rodou.
+  if (window.__preloadedMe) {
+    me = window.__preloadedMe;
+    delete window.__preloadedMe;
+    await enterApp();
+    return;
+  }
   try {
     me = await api('/me');
     await enterApp();

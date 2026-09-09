@@ -14,12 +14,59 @@
 <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/geist-latin-ext.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/css/fonts.css?v=1">
-<link rel="stylesheet" href="/css/style.css?v=20260909min">
-<!-- Preload dos JS pesados no <head> pra que o download comece IMEDIATAMENTE,
-     em paralelo com o parse do HTML, em vez de esperar o parser chegar em
-     </body>. Com immutable cache (max-age=1yr), na 2ª visita nem baixa. -->
-<link rel="preload" href="/vendor/lucide.min.js" as="script">
-<link rel="preload" href="/js/app.js?v=20260909min" as="script">
+<!-- CSS crítico INLINE — apenas o mínimo pra render inicial do login/reset.
+     O style.css completo é carregado sob demanda pelo boot.js depois que o
+     user autentica. Isso derruba o LCP no cold load (deslogado / /reset). -->
+<style id="critical-css">
+:root{color-scheme:dark;--bg:#0a0a0a;--surface:#171717;--surface-2:#262626;--surface-3:#333;--border:rgba(255,255,255,.10);--hairline:rgba(255,255,255,.06);--accent:#7A00FF;--accent-text:#B380FF;--accent-dim:rgba(122,0,255,.15);--danger:#ff6467;--text:#fafafa;--text-dim:#b8b8b8;--text-muted:#a1a1a1;--radius-sm:6px;--radius-lg:14px;--shadow-xl:0 24px 64px rgba(0,0,0,.38),0 8px 16px rgba(0,0,0,.22);--shadow-focus:0 0 0 4px var(--accent-dim);--glass-strong:rgba(22,22,22,.86);--ease-out:cubic-bezier(.16,1,.3,1);--ease-spring:cubic-bezier(.32,.72,0,1)}
+:root[data-theme="light"]{color-scheme:light;--bg:#fff;--surface:#fff;--surface-2:#f5f5f5;--surface-3:#ebebeb;--border:#e5e5e5;--hairline:#e5e5e5;--danger:#e7000b;--text:#000;--text-dim:#4a4a4a;--text-muted:#737373;--accent-text:#5E00CC;--accent-dim:rgba(122,0,255,.10);--glass-strong:rgba(255,255,255,.86);--shadow-xl:0 24px 64px rgba(0,0,0,.14),0 8px 16px rgba(0,0,0,.08)}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:'Geist','Segoe UI',system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+#app{display:none}
+/* Tela de login SEMPRE em fundo claro (independente do tema do app). Painel
+   direito branco pro form respirar; o painel esquerdo é o card roxo com hero.
+   Dark mode só passa a valer depois do login (dentro do app). */
+#login-screen{position:fixed;inset:0;background:#fff;color:#111;display:flex;align-items:stretch;z-index:9999}
+.login-split-left{flex:1 1 55%;margin:10px 0 10px 10px;border-radius:20px;background-color:var(--accent);background-image:url('/login-hero.jpg');background-size:cover;background-position:center;background-repeat:no-repeat;color:#fff;padding:40px 44px;display:flex;flex-direction:column;justify-content:space-between;align-items:stretch;position:relative;overflow:hidden}
+.login-split-left::before{content:'';position:absolute;inset:0;pointer-events:none;border-radius:inherit;background:linear-gradient(180deg,rgba(0,0,0,.25) 0%,rgba(0,0,0,0) 30%,rgba(0,0,0,0) 70%,rgba(0,0,0,.28) 100%)}
+.login-split-headline{position:relative;font-size:48px;font-weight:600;line-height:1.1;letter-spacing:-.025em;max-width:620px;color:#fff;text-shadow:0 1px 12px rgba(0,0,0,.28)}
+.login-split-credit{position:relative;font-size:12px;letter-spacing:.04em;color:rgba(255,255,255,.88);text-shadow:0 1px 6px rgba(0,0,0,.35)}
+.login-split-right{flex:1 1 45%;display:flex;align-items:center;justify-content:center;padding:32px;position:relative}
+.login-box{position:relative;background:var(--glass-strong);backdrop-filter:saturate(180%) blur(30px);-webkit-backdrop-filter:saturate(180%) blur(30px);border:1px solid var(--hairline);border-radius:var(--radius-lg);padding:44px 40px;width:380px;text-align:center;box-shadow:var(--shadow-xl)}
+.login-box.login-box--bare{background:none;backdrop-filter:none;-webkit-backdrop-filter:none;border:none;box-shadow:none;padding:0;width:360px;max-width:100%;text-align:left}
+.login-box.login-box--bare .login-logo{margin-bottom:56px;justify-content:center}
+.login-box.login-box--bare input{margin-bottom:12px}
+.login-box.login-box--bare button{margin-top:22px}
+.login-box.login-box--bare .login-forgot--inline{display:block;width:100%;text-align:right;margin:2px 0 4px;font-size:12px}
+.login-box.login-box--bare .login-hint{text-align:center;margin-top:26px}
+.login-logo{margin-bottom:14px;display:flex;justify-content:center}
+.login-logo img{height:40px;width:auto;display:block}
+.login-sub{color:var(--text-dim);font-size:13px;margin-bottom:32px}
+.login-box input{width:100%;background:#f5f5f5;border:1px solid transparent;color:#111;padding:13px 16px;border-radius:var(--radius-sm);font-family:inherit;font-size:14px;outline:none;margin-bottom:12px;transition:border-color .15s var(--ease-out),box-shadow .15s var(--ease-out),background .15s}
+.login-box input:hover{background:#ebebeb}
+.login-box input:focus{background:#f5f5f5;border-color:var(--accent);box-shadow:var(--shadow-focus)}
+.login-box button{width:100%;padding:13px;background:var(--accent);color:#fff;border:none;border-radius:var(--radius-sm);font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 1px 2px rgba(122,0,255,.18),inset 0 1px 0 rgba(255,255,255,.12);transition:transform .12s var(--ease-spring),filter .15s,box-shadow .15s;letter-spacing:-.01em}
+.login-box button:hover{filter:brightness(1.08);box-shadow:0 4px 12px rgba(122,0,255,.32),inset 0 1px 0 rgba(255,255,255,.16)}
+.login-box button:active{transform:scale(.985)}
+.login-error{color:var(--danger);font-size:12px;min-height:16px;margin-bottom:10px}
+.login-hint{color:#737373;font-size:11px;margin-top:22px;line-height:1.6}
+.login-forgot{display:inline-block;margin-top:14px;color:#737373;font-size:12px;text-decoration:none;letter-spacing:-.005em;transition:color .12s var(--ease-out)}
+.login-forgot:hover{color:#5E00CC;text-decoration:underline}
+.login-divider{margin-top:16px}
+.login-divider-line{display:flex;align-items:center;gap:10px;color:#737373;font-size:11px;letter-spacing:.08em;text-transform:uppercase;margin-bottom:12px}
+.login-divider-line::before,.login-divider-line::after{content:'';flex:1;height:1px;background:#e5e5e5}
+.btn-discord-oauth{width:100%;padding:12px;background:#5865F2;color:#fff;border:none;border-radius:var(--radius-sm);font-family:inherit;font-size:14px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:10px;cursor:pointer;letter-spacing:-.01em;box-shadow:0 1px 2px rgba(88,101,242,.22),inset 0 1px 0 rgba(255,255,255,.14);transition:transform .12s var(--ease-spring),filter .15s,box-shadow .15s}
+.btn-discord-oauth:hover{filter:brightness(1.08);box-shadow:0 4px 12px rgba(88,101,242,.36),inset 0 1px 0 rgba(255,255,255,.18)}
+.btn-discord-oauth:active{transform:scale(.985)}
+.btn-discord-oauth svg{flex:0 0 auto}
+#reset-screen{display:none;align-items:center;justify-content:center;min-height:100vh;position:fixed;inset:0;background:#fff;color:#111;z-index:10000}
+#reset-screen .login-box{background:#fff;border:1px solid #e5e5e5;color:#111}
+#reset-screen .login-sub{color:#4a4a4a}
+#reset-screen input{background:#f5f5f5;color:#111}
+#reset-screen::before{content:'';position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse 60% 50% at 20% 20%,rgba(122,0,255,.10),transparent 70%),radial-gradient(ellipse 50% 40% at 80% 80%,rgba(122,0,255,.06),transparent 70%)}
+#reset-screen.open{display:flex}
+@media (max-width:900px){.login-split-left{display:none}.login-split-right{flex:1 1 100%}}
+</style>
 <script type="text/javascript">
     // Clarity: analytics de heatmap/session replay. Não é crítico pro app —
     // deferido pra depois do primeiro paint pra não roubar tempo do LCP.
@@ -3835,8 +3882,9 @@
 <!-- TOAST -->
 <div id="toast-container"></div>
 
-<script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260909min"></script>
+<!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
+     Deslogados nunca pagam o custo de parse do app.js. -->
+<script src="/js/boot.js?v=20260909split2" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
