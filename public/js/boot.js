@@ -51,6 +51,13 @@
       document.body.appendChild(lucide);
       // Log visível pro dev saber que o modo legacy está ativo.
       console.warn('[boot] modo legacy ativo — app.js carregado direto. Use ?legacy=0 pra voltar ao boot rápido.');
+      // No modo legacy o overlay some assim que app.js termina — app.js chama
+      // hideBootLoading? via window. Se não estiver disponível, fallback pós 2s.
+      window.hideBootLoading = window.hideBootLoading || function () {
+        const el = document.getElementById('app-loading-screen');
+        if (el) { el.classList.add('is-hidden'); setTimeout(() => el.style.display = 'none', 400); }
+      };
+      setTimeout(() => { try { window.hideBootLoading(); } catch {} }, 2500);
       return; // NÃO executa o restante do boot.js
     }
   } catch {}
@@ -116,6 +123,58 @@
     return _appLoading;
   }
 
+  // ── Overlay de loading ───────────────────────────────────────────────
+  // Início: overlay VISÍVEL (default HTML). Some quando o app.js chama
+  // hideBootLoading() no fim de enterApp(), ou aqui quando decidimos que
+  // vamos mostrar a tela de login em vez do app.
+  //
+  // Tempo mínimo visível é parametrizável — showBootLoading(ms) reinicia
+  // o timer e força o overlay a ficar pelo menos `ms` desde ali. Default 1s
+  // pro cold load; pós-login usa 2s (feedback deliberado da autenticação).
+  const DEFAULT_MIN_LOADING_MS = 1000;
+  let _minLoadingMs = DEFAULT_MIN_LOADING_MS;
+  let _loadingHideT = null;
+  let _loadingShownAt = Date.now(); // considera o próprio pageload
+  function showBootLoading(minMs) {
+    const el = $('app-loading-screen');
+    if (!el) return;
+    if (_loadingHideT) { clearTimeout(_loadingHideT); _loadingHideT = null; }
+    _minLoadingMs = typeof minMs === 'number' && minMs >= 0 ? minMs : DEFAULT_MIN_LOADING_MS;
+    _loadingShownAt = Date.now();
+    el.style.display = '';
+    // rAF garante que remover a classe cause transição de opacidade.
+    requestAnimationFrame(() => el.classList.remove('is-hidden'));
+  }
+  function _actuallyHideBootLoading() {
+    const el = $('app-loading-screen');
+    if (!el) return;
+    el.classList.add('is-hidden');
+    if (_loadingHideT) clearTimeout(_loadingHideT);
+    // Duração do fade bate com a transição CSS (--boot-fade-ms). Se subir aqui
+    // sem subir lá, o `display:none` cortaria antes do fade acabar.
+    _loadingHideT = setTimeout(() => { el.style.display = 'none'; }, 220);
+  }
+  function hideBootLoading() {
+    const elapsed = Date.now() - _loadingShownAt;
+    const remaining = _minLoadingMs - elapsed;
+    if (remaining > 0) {
+      if (_loadingHideT) clearTimeout(_loadingHideT);
+      _loadingHideT = setTimeout(_actuallyHideBootLoading, remaining);
+    } else {
+      _actuallyHideBootLoading();
+    }
+  }
+  window.showBootLoading = showBootLoading;
+  window.hideBootLoading = hideBootLoading;
+
+  // Mostra a tela de login (que começa oculta). Some com o overlay depois
+  // que ela já está no DOM — evita flash branco.
+  function showLoginScreen() {
+    const ls = $('login-screen');
+    if (ls) ls.classList.add('is-visible');
+    hideBootLoading();
+  }
+
   // ── Tela de login: doLogin, doLogout, esqueci senha ───────────────────
   async function doLogin() {
     const username = $('login-username').value.trim();
@@ -125,6 +184,8 @@
     if (!username || !password) { err.textContent = 'Informe usuário e senha.'; return; }
     try {
       const data = await api('/login', 'POST', { username, password });
+      // Overlay obrigatório de 2s pós-login (feedback deliberado da autenticação).
+      showBootLoading(2000);
       // Sessão emitida via cookie. Carrega app.js com o `me` já resolvido.
       await loadFullApp(data.user);
     } catch (e) {
@@ -136,10 +197,11 @@
   let _resetToken = null;
   function showResetScreen(token) {
     _resetToken = token;
-    $('login-screen').style.display = 'none';
+    const ls = $('login-screen'); if (ls) ls.classList.remove('is-visible');
     const rs = $('reset-screen');
     rs.classList.add('open');
     setTimeout(() => { const i = $('reset-new-pass'); if (i) i.focus(); }, 60);
+    hideBootLoading();
   }
 
   async function doResetPassword() {
@@ -222,14 +284,15 @@
     handleDiscordCallbackQuery();
 
     // Tenta /api/me — se ok, já carrega o app com o user pré-carregado.
+    // O overlay de loading fica visível o tempo todo (default do HTML) e o
+    // app.js chama hideBootLoading() quando termina enterApp — evita flash
+    // de login → app.
     try {
       const me = await api('/me');
-      // Some com o login antes de carregar app.js pra evitar flash.
-      const ls = $('login-screen'); if (ls) ls.style.display = 'none';
       await loadFullApp(me);
     } catch {
-      // Deslogado — deixa a tela de login visível. O app.js NÃO carrega até
-      // o user submeter o form.
+      // Deslogado — revela a tela de login e some com o overlay.
+      showLoginScreen();
       const u = $('login-username'); if (u) setTimeout(() => u.focus(), 100);
       // Prefetch dos assets pesados em background enquanto o user digita.
       // rel=prefetch tem prioridade baixa (não compete com o LCP do login),

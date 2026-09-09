@@ -3665,6 +3665,11 @@ async function enterApp() {
   startNotifPoll();
   startRealtimeSync(); // SSE — substitui polling agressivo de dados
   paintIcons();
+  // Aguarda dois frames pra garantir que o primeiro paint completo aconteceu
+  // antes de tirar o overlay de loading — evita ver skeleton "acender" um instante.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (typeof window.hideBootLoading === 'function') window.hideBootLoading();
+  }));
 }
 
 async function loadAll() {

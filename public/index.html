@@ -23,10 +23,35 @@
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:var(--bg);color:var(--text);font-family:'Geist','Segoe UI',system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
 #app{display:none}
+/* Overlay de loading — visível ANTES de qualquer outra tela.
+   Some quando o app.js sinaliza que a UI está pronta pra render (evita flash
+   de login → app ou frames de skeleton). Fundo branco pra combinar com login
+   e não mudar de cor bruscamente quando o app entra em dark. */
+#app-loading-screen{position:fixed;inset:0;background:#fff;display:flex;align-items:center;justify-content:center;z-index:100000;transition:opacity .2s ease-out}
+#app-loading-screen.is-hidden{opacity:0;pointer-events:none}
+.app-loading-mark{width:88px;height:88px}
+.app-loading-mark svg{width:100%;height:100%;display:block;overflow:visible}
+/* Cada peça pulsa uma vez de cada, na ordem de cima pra baixo:
+   diamante topo → diamante meio → diamante base → L shape. Cada ciclo
+   completo dura 2.4s (cabe em 2s de min-load com boa margem). */
+.rework-mark-part{opacity:0;transform-box:fill-box;transform-origin:center;animation:rework-mark-pulse 2.4s ease-out infinite}
+.rework-mark-part--2{animation-delay:0ms}     /* diamante topo (y=27) */
+.rework-mark-part--4{animation-delay:250ms}   /* diamante meio-alto (y=139) */
+.rework-mark-part--3{animation-delay:500ms}   /* diamante mais baixo (y=447) */
+.rework-mark-part--1{animation-delay:750ms}   /* L shape (y=523) */
+@keyframes rework-mark-pulse{
+  0%{opacity:0;transform:scale(.7)}
+  15%{opacity:1;transform:scale(1.12)}
+  25%{opacity:1;transform:scale(1)}
+  75%{opacity:1;transform:scale(1)}
+  92%{opacity:0;transform:scale(.85)}
+  100%{opacity:0;transform:scale(.7)}
+}
 /* Tela de login SEMPRE em fundo claro (independente do tema do app). Painel
    direito branco pro form respirar; o painel esquerdo é o card roxo com hero.
-   Dark mode só passa a valer depois do login (dentro do app). */
-#login-screen{position:fixed;inset:0;background:#fff;color:#111;display:flex;align-items:stretch;z-index:9999}
+   Começa OCULTA — o boot.js decide se mostra (deslogado) ou pula direto pro app. */
+#login-screen{position:fixed;inset:0;background:#fff;color:#111;display:none;align-items:stretch;z-index:9999}
+#login-screen.is-visible{display:flex}
 .login-split-left{flex:1 1 55%;margin:10px 0 10px 10px;border-radius:20px;background-color:var(--accent);background-image:url('/login-hero.jpg');background-size:cover;background-position:center;background-repeat:no-repeat;color:#fff;padding:40px 44px;display:flex;flex-direction:column;justify-content:space-between;align-items:stretch;position:relative;overflow:hidden}
 .login-split-left::before{content:'';position:absolute;inset:0;pointer-events:none;border-radius:inherit;background:linear-gradient(180deg,rgba(0,0,0,.25) 0%,rgba(0,0,0,0) 30%,rgba(0,0,0,0) 70%,rgba(0,0,0,.28) 100%)}
 .login-split-headline{position:relative;font-size:48px;font-weight:600;line-height:1.1;letter-spacing:-.025em;max-width:620px;color:#fff;text-shadow:0 1px 12px rgba(0,0,0,.28)}
@@ -87,6 +112,25 @@ body{background:var(--bg);color:var(--text);font-family:'Geist','Segoe UI',syste
 </script>
 </head>
 <body>
+
+<!-- OVERLAY DE LOADING — visível ANTES de tudo (login, app, reset).
+     boot.js/app.js escondem quando a UI está pronta. Reduz flash inicial. -->
+<div id="app-loading-screen" aria-hidden="true" role="presentation">
+  <div class="app-loading-mark">
+    <svg viewBox="0 0 1221.96 1211.57" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="rework-mark-grad" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#7a00ff"/>
+          <stop offset="1" stop-color="#9300ff"/>
+        </linearGradient>
+      </defs>
+      <path class="rework-mark-part rework-mark-part--1" fill="url(#rework-mark-grad)" d="M530.34,523.76H92.86c-51.29,0-92.86,41.58-92.86,92.86v158.18c0,51.29,41.58,92.86,92.86,92.86h250.99v251.05c0,51.29,41.58,92.86,92.86,92.86h158.18c51.29,0,92.86-41.58,92.86-92.86v-437.53c0-86.94-70.48-157.42-157.42-157.42Z"/>
+      <path class="rework-mark-part rework-mark-part--2" fill="url(#rework-mark-grad)" d="M465.23,27.2l-111.85,111.85c-36.26,36.26-36.26,95.06,0,131.33l111.85,111.85c36.26,36.26,95.06,36.26,131.33,0l177.52-177.52L596.56,27.2c-36.26-36.26-95.06-36.26-131.33,0Z"/>
+      <path class="rework-mark-part rework-mark-part--3" fill="url(#rework-mark-grad)" d="M1017.25,447.89l-177.52,177.52c-36.26,36.26-36.26,95.06,0,131.33l111.85,111.85c36.26,36.26,95.06,36.26,131.33,0l111.85-111.85c36.26-36.26,36.26-95.06,0-131.33l-177.52-177.52Z"/>
+      <path class="rework-mark-part rework-mark-part--4" fill="url(#rework-mark-grad)" d="M1194.77,139.05l-111.85-111.85c-36.26-36.26-95.06-36.26-131.33,0l-177.52,177.52,243.18,243.18,177.52-177.52c36.26-36.26,36.26-95.06,0-131.33Z"/>
+    </svg>
+  </div>
+</div>
 
 <!-- LOGIN — layout split: card roxo flutuante à esquerda (hero) + form à direita -->
 <div id="login-screen">
@@ -3933,7 +3977,7 @@ body{background:var(--bg);color:var(--text);font-family:'Geist','Segoe UI',syste
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260909rhythm11" defer></script>
+<script src="/js/boot.js?v=20260909loading4" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
