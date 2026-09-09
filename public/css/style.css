@@ -1881,13 +1881,16 @@ tr:hover td { background: var(--surface-2); }
    pelo renderRow (via classe .is-alt) porque as rows de section-head no
    meio quebram o nth-child. Tint muito discreta (~2% de contraste) — dá
    ritmo visual sem competir com o conteúdo. */
-#list-table-body .demand-row.is-alt > td { background: rgba(0,0,0,0.022); }
-:root[data-theme="dark"] #list-table-body .demand-row.is-alt > td { background: rgba(255,255,255,0.028); }
+#list-table-body .demand-row.is-alt > td,
+#mine-table-body .demand-row.is-alt > td { background: rgba(0,0,0,0.022); }
+:root[data-theme="dark"] #list-table-body .demand-row.is-alt > td,
+:root[data-theme="dark"] #mine-table-body .demand-row.is-alt > td { background: rgba(255,255,255,0.028); }
 /* Colunas Projeto/Cliente: trunca texto longo com ellipsis. `max-width` em td
    só funciona com table-layout: fixed — aqui usamos display:block + overflow
    direto no <td>, que funciona em tables auto-layout também. Hover mostra o
    nome completo via title. */
-#list-table-body .col-truncate {
+#list-table-body .col-truncate,
+#mine-table-body .col-truncate {
   max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;

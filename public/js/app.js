@@ -7386,20 +7386,23 @@ function renderMine() {
     return (va < vb ? -1 : va > vb ? 1 : 0) * (mineSortAsc ? 1 : -1);
   });
 
+  // Contador global de linhas pra zebra alternada — reseta a cada renderMine.
+  let _mineRowAlt = 0;
   const renderMineRow = (d) => {
     const p = projectById(d.projectId);
     const ws = wsById(d.workspaceId);
     const wsCell = ws
       ? `<span class="pill" style="color:${ws.color || '#7A00FF'};background:${hexDim(ws.color)}"><span class="pill-dot" style="background:${ws.color || '#7A00FF'}"></span>${esc(ws.name)}</span>`
       : '<span class="pill pill-muted">—</span>';
-    return `<tr class="demand-row" onclick="showDetail('${d.id}')">
+    const alt = (_mineRowAlt++ % 2 === 1) ? ' is-alt' : '';
+    return `<tr class="demand-row${alt}" onclick="showDetail('${d.id}')">
       <td><span class="demand-name">${esc(d.name)}</span></td>
       <td>${wsCell}</td>
-      <td>${esc(p?.client || '—')}</td>
-      <td>${esc(p?.name || '—')}</td>
+      <td class="col-truncate" title="${esc(p?.client || '')}">${esc(p?.client || '—')}</td>
+      <td class="col-truncate" title="${esc(p?.name || '')}">${esc(p?.name || '—')}</td>
       <td>${statusPill(d)}</td>
       <td>${priorityPill(d.priority)}</td>
-      <td>${deadlineCell(d)}</td>
+      <td>${deadlineCell(d, true)}</td>
     </tr>`;
   };
 
