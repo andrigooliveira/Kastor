@@ -1869,6 +1869,22 @@ tr:hover td { background: var(--surface-2); }
 .mine-section-head.is-later .mine-section-lbl { color: var(--success, #16a34a); }
 .mine-section-head.is-later .mine-section-lbl i,
 .mine-section-head.is-later .mine-section-lbl svg { color: var(--success, #16a34a) !important; }
+/* Section head clicável: cursor pointer + caret que gira quando colapsada.
+   Usado em /demands (Atrasadas/Hoje/Essa semana/Próximos dias/Sem prazo). */
+.mine-section-head { cursor: pointer; user-select: none; }
+.mine-section-head:hover .mine-section-caret { opacity: 1; }
+.mine-section-caret {
+  transition: transform .16s var(--ease-spring);
+  opacity: 0.7;
+}
+/* Zebra alternada nas linhas da lista de Demandas — a paridade é atribuída
+   pelo renderRow (via classe .is-alt) porque as rows de section-head no
+   meio quebram o nth-child. Tint muito discreta (~2% de contraste) — dá
+   ritmo visual sem competir com o conteúdo. */
+#list-table-body .demand-row.is-alt > td { background: rgba(0,0,0,0.022); }
+:root[data-theme="dark"] #list-table-body .demand-row.is-alt > td { background: rgba(255,255,255,0.028); }
+#list-table-body .demand-row:hover > td { background: var(--surface-3); }
+#list-table-body .demand-row.selected > td { background: var(--accent-dim); }
 /* Tabela colapsável de "Concluídas" abaixo da tabela principal (/demandas).
    Header clicável com contador; body vira só o table quando aberto. */
 .done-table-wrap { margin-top: 18px; }
@@ -4606,33 +4622,6 @@ body.is-resizing-detail * { cursor: col-resize !important; user-select: none !im
   width: 16px !important; height: 16px !important;
 }
 
-/* Entregáveis em linha (3 inputs + assign dropdown). Todos com mesma altura. */
-.detail-deliverables-row {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr) minmax(220px, 1.6fr);
-  gap: 12px;
-  align-items: end;
-}
-.qty-cell-inline { gap: 4px; display: flex; flex-direction: column; }
-.qty-cell-inline .form-control { text-align: center; height: 40px; }
-.detail-deliverables-assign {
-  display: flex; flex-direction: column; gap: 4px;
-  min-width: 0;
-}
-/* Input do "Atribuir a" na mesma altura das 3 caixas numéricas (40px).
-   Também sincroniza box-sizing/padding pra bordas alinharem verticalmente. */
-.detail-deliverables-assign { justify-content: flex-end; }
-.detail-deliverables-assign .form-control,
-.detail-deliverables-assign .filter-cdrop-trigger {
-  height: 40px; box-sizing: border-box;
-}
-.detail-deliverables-assign .filter-cdrop { width: 100%; }
-/* Wrapper .qty-cell-inline tem um label ABAIXO — pra alinhar as bordas dos
-   inputs (numérico e dropdown) na mesma linha, o dropdown ganha um label
-   equivalente invisível (ou o assign vai no topo sem label). Aqui deixamos
-   o dropdown ancorado ao TOPO pra alinhar com os inputs numéricos. */
-.detail-deliverables-row { align-items: start; }
-
 /* Recorrência (bloco compacto). */
 .detail-recurrence-note {
   flex-direction: row !important; align-items: center; gap: 8px;
@@ -5200,8 +5189,6 @@ body.is-resizing-detail * { cursor: col-resize !important; user-select: none !im
   .detail-col-divider { display: none; }
   .detail-col-right { border-top: 1px solid var(--hairline); }
   .detail-meta-row { grid-template-columns: 1fr 1fr; }
-  .detail-deliverables-row { grid-template-columns: 1fr 1fr 1fr; }
-  .detail-deliverables-assign { grid-column: 1 / -1; }
 }
 .detail-head {
   position: sticky; top: 0; background: var(--surface); z-index: 2;
@@ -5902,20 +5889,8 @@ i[data-lucide]:not([class*=ic-]) { width: 16px; height: 16px; stroke-width: 2; }
 :root[data-theme="light"] .lucide-picker-item { background: #FAFAFA; }
 :root[data-theme="light"] .lucide-picker-item:hover { background: #F0F0F0; }
 
-/* ─── Entregáveis (3 contagens) ───
-   Modal: grid de 3 inputs com label embaixo + tooltip "?". Tabelas: pill compacta. */
-.qty-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
-/* 3 contadores estreitos + 1 select largo (cabe nome do user inteiro) */
-.qty-grid-4 { grid-template-columns: 0.6fr 0.6fr 0.6fr 2fr; }
-.qty-cell { display: flex; flex-direction: column; gap: 4px; }
-.qty-cell .form-control { font-variant-numeric: tabular-nums; font-weight: 600; }
-.qty-cell input.form-control[type="number"] { text-align: center; }
-.qty-cell select.form-control { font-weight: 500; padding: 0 26px 0 14px; }
-.qty-cell-label {
-  font-size: 11px; color: var(--text-muted); text-transform: uppercase;
-  letter-spacing: 0.04em; text-align: center; display: inline-flex;
-  align-items: center; justify-content: center; gap: 5px;
-}
+/* Bolinha "?" de ajuda inline em labels — com tooltip CSS-only via
+   `title`. Preservada aqui (reusada em Checklist Inicial e outros pontos). */
 .qty-cell-hint {
   display: inline-flex; align-items: center; justify-content: center;
   width: 14px; height: 14px; border-radius: 50%;
@@ -5924,8 +5899,6 @@ i[data-lucide]:not([class*=ic-]) { width: 16px; height: 16px; stroke-width: 2; }
   position: relative;
 }
 .qty-cell-hint:hover { background: var(--accent-dim); color: var(--accent-text); }
-/* Tooltip CSS-only — aparece só no hover do próprio ícone. Sem JS = zero
-   chance de travar. Lê o texto do atributo `title` via `attr()`. */
 .qty-cell-hint::after {
   content: attr(title);
   position: absolute;
@@ -5935,7 +5908,6 @@ i[data-lucide]:not([class*=ic-]) { width: 16px; height: 16px; stroke-width: 2; }
   background: var(--text); color: var(--surface);
   font-size: 11px; font-weight: 500; letter-spacing: 0;
   border-radius: 6px;
-  white-space: nowrap;
   max-width: 260px; white-space: normal; width: max-content;
   text-align: center;
   box-shadow: 0 4px 12px rgba(0,0,0,0.18);
@@ -5944,20 +5916,6 @@ i[data-lucide]:not([class*=ic-]) { width: 16px; height: 16px; stroke-width: 2; }
   z-index: 1000;
 }
 .qty-cell-hint:hover::after { opacity: 1; }
-
-/* Célula compacta nas tabelas: 3 números separados por · */
-.qty-cell-compact {
-  display: inline-flex; align-items: center; gap: 4px;
-  font-variant-numeric: tabular-nums; font-size: 12px; color: var(--text-dim);
-  white-space: nowrap;
-}
-.qty-cell-compact .qty-num { color: var(--text); font-weight: 600; min-width: 16px; text-align: center; }
-.qty-cell-compact .qty-sep { color: var(--text-muted); opacity: 0.6; }
-.qty-cell-empty { color: var(--text-muted); }
-
-/* Tabelas com a coluna extra ficam apertadas — reduz 1px na fonte das células */
-.table-wrap table td { font-size: 12.5px; }
-.table-wrap table th { font-size: 11px; }
 
 /* ─── AGENDA ───────────────────────────────────────────
    Grade tipo planilha: HORÁRIO (1 col fixa) × N dias úteis.
@@ -6392,7 +6350,6 @@ tr.row-hover-actions:hover .row-actions { opacity: 1; }
 
 
 /* ── CAPACIDADE ── layout compacto e colorido. */
-.capacity-hint { color: var(--text-muted); font-size: 12px; margin-bottom: 12px; line-height: 1.45; }
 .capacity-summary {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px;
 }
@@ -6577,22 +6534,82 @@ textarea.form-control { resize: vertical; }
 }
 
 
-/* ── Capacity view toggle ── */
+/* ── Header da Capacidade — layout de duas colunas ──
+   Título+subtitle à esquerda, filtros (squad + período) à direita.
+   Wrap em mobile. */
+.capacity-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 20px; flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+.capacity-header-main { min-width: 0; flex: 1 1 auto; }
+.capacity-title {
+  font-size: 18px; font-weight: 600;
+  letter-spacing: -0.01em; color: var(--text);
+  margin: 0 0 4px;
+}
+.capacity-subtitle {
+  color: var(--text-muted); font-size: 12.5px;
+  line-height: 1.5;
+  max-width: 620px;
+}
+.capacity-header-filters {
+  display: flex; align-items: center; gap: 10px;
+  flex-shrink: 0; flex-wrap: wrap;
+}
+/* Squad filter inline no header — remove o margin-bottom global de .uws-filter. */
+.capacity-squad-filter-inline { margin-bottom: 0; }
+
+/* Barra da visão: squads à esquerda (respiram até 7 squads), segmented +
+   export agrupados à direita. Wrap em mobile: squads vão pra cima, controles
+   pra baixo. */
+.capacity-view-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+.capacity-view-bar-left {
+  display: flex; align-items: center; gap: 10px;
+  min-width: 0; flex: 1 1 auto;
+}
+.capacity-view-bar-right {
+  display: flex; align-items: center; gap: 10px;
+  flex-shrink: 0;
+}
 .capacity-view-toggle {
-  display: flex; gap: 6px; margin-bottom: 14px;
-  background: var(--surface); border: 1px solid var(--border);
-  padding: 4px; border-radius: 10px; width: fit-content;
+  display: inline-flex;
+  background: var(--surface-2); border: 1px solid var(--border);
+  padding: 4px; border-radius: 10px;
 }
-.capacity-view-toggle .btn {
+.capacity-view-btn {
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 8px 14px;
+  padding: 7px 14px;
+  background: transparent; border: none;
+  border-radius: 7px;
+  font-family: inherit; font-size: 13px; font-weight: 500;
+  color: var(--text-muted); cursor: pointer;
+  transition: background .12s var(--ease-out), color .12s var(--ease-out);
 }
-.capacity-view-toggle .btn.active {
+.capacity-view-btn:hover:not(.is-active) { color: var(--text); background: var(--surface-3); }
+.capacity-view-btn.is-active {
   background: var(--accent); color: #fff;
+  box-shadow: 0 1px 2px rgba(122,0,255,0.22);
 }
-.capacity-view-toggle .btn.active:hover {
-  background: var(--accent);
+.capacity-view-btn.is-active:hover { background: var(--accent); }
+.capacity-view-btn i, .capacity-view-btn svg { width: 14px !important; height: 14px !important; }
+/* Botão Exportar — ghost com contorno leve, distinto dos toggles. */
+.capacity-export-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 12px;
+  background: transparent; border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: inherit; font-size: 12.5px; font-weight: 500;
+  color: var(--text-dim); cursor: pointer;
+  transition: background .12s var(--ease-out), color .12s, border-color .12s;
 }
+.capacity-export-btn:hover { color: var(--text); border-color: var(--text-muted); background: var(--surface-2); }
+.capacity-export-btn i, .capacity-export-btn svg { width: 14px !important; height: 14px !important; opacity: .8; }
+
 .capacity-color-dot {
   width: 36px; height: 36px; border-radius: 8px; flex-shrink: 0;
   display: inline-block;
@@ -7749,6 +7766,10 @@ kbd {
   cursor: pointer;
   margin: 0;
 }
+/* Modo de seleção OFF (padrão): esconde a coluna de checkbox por completo,
+   colapsando a largura pra não deixar buraco no lado esquerdo. Ativa via
+   .bulk-mode-on em #page-list (setado por toggleBulkMode). */
+#page-list:not(.bulk-mode-on) .col-bulk-check { display: none; }
 .demand-row.selected {
   background: linear-gradient(90deg, rgba(122,0,255,0.10), transparent 60%);
   box-shadow: inset 3px 0 0 var(--accent-text);
@@ -10117,11 +10138,6 @@ tr.demand-row:hover {
   min-width: 32px;
   text-align: right;
 }
-
-/* ── ENTREGÁVEIS — 3 inputs + dropdown do mesmo tamanho ── */
-.qty-cell .filter-cdrop { min-width: 0; width: 100%; }
-.qty-cell .form-control, .qty-cell .filter-cdrop-trigger { width: 100%; }
-#demand-modal .qty-cell .filter-cdrop-trigger { height: 40px; }
 
 /* ── MODAL DE DEMANDA — inputs contornados/clean + mais respiro ── */
 /* Usa background-color LONGHAND (não shorthand) pra não apagar o chevron dos selects. */

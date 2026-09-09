@@ -377,12 +377,6 @@ function migrate(firstInstall) {
     }
     if (!Array.isArray(d.stageHistory)) d.stageHistory = [];
     if (d.estimatedHours === undefined) d.estimatedHours = null;
-    if (d.qtyPieces === undefined) d.qtyPieces = 0;
-    if (d.qtyArts === undefined) d.qtyArts = 0;
-    if (d.qtyVariations === undefined) d.qtyVariations = 0;
-    // Quem executou os entregáveis (distinto do ownerId atual, que muda
-    // conforme a demanda avança no fluxo). Se null, cai pra ownerId.
-    if (d.deliverableUserId === undefined) d.deliverableUserId = null;
     if (d.recurrence === undefined) d.recurrence = null;
     if (d.priority === undefined || !Number.isInteger(d.priority)) d.priority = 3;
     if (d.stageEnteredAt === undefined) d.stageEnteredAt = d.createdAt || nowISO();
@@ -821,7 +815,6 @@ function freelancerHasDemandAccess(user, d) {
   if (!user || !d) return false;
   if (d.ownerId === user.id) return true;
   if (d.createdBy === user.id) return true;
-  if (d.deliverableUserId === user.id) return true;
   if (d.stageResponsibles && typeof d.stageResponsibles === 'object') {
     for (const v of Object.values(d.stageResponsibles)) {
       if (v === user.id) return true;
@@ -3226,7 +3219,7 @@ app.delete('/api/form-responses/:id', requireAuth, (req, res) => {
 const DASHBOARD_CHART_TYPES = ['bar', 'barh', 'kpi', 'pie', 'line', 'pivot', 'heatmap', 'combo', 'scatter', 'timeline'];
 const DASHBOARD_TIMELINE_BUCKETS = ['auto', 'day', 'week', 'month'];
 const DASHBOARD_SOURCE_KINDS = ['form', 'demand', 'time'];
-const DASHBOARD_PIVOT_METRICS = ['count', 'hours', 'qtyPieces', 'qtyArts', 'qtyVariations', 'estimatedHours', 'realHours'];
+const DASHBOARD_PIVOT_METRICS = ['count', 'hours', 'estimatedHours', 'realHours'];
 const DASHBOARD_PIVOT_AGGREGATES = ['sum', 'avg'];
 // Dimensões válidas por fonte — o server só valida a shape (string com prefixo permitido),
 // mas mantém a lista pra prevenir chave arbitrária. field:<uuid> é permitido pra 'form'.
@@ -5033,14 +5026,6 @@ app.post('/api/demands', requireAuth, (req, res) => {
     deadline: b.deadline || null,
     estimatedHours: Number(b.estimatedHours) > 0 ? Math.round(Number(b.estimatedHours) * 100) / 100 : null,
     priority: [1,2,3,4].includes(Number(b.priority)) ? Number(b.priority) : 3,
-    // Entregáveis (3 contagens distintas — performance/produtividade):
-    //   qtyPieces  = peças únicas (ex.: 1 criativo + 1 carrossel = 2)
-    //   qtyArts    = artes individuais (1 criativo + carrossel de 3 telas = 4)
-    //   qtyVariations = exportações/variações (1 criativo em 3 formatos = 3)
-    qtyPieces:     Number(b.qtyPieces) > 0 ? Math.floor(Number(b.qtyPieces)) : 0,
-    qtyArts:       Number(b.qtyArts) > 0 ? Math.floor(Number(b.qtyArts)) : 0,
-    qtyVariations: Number(b.qtyVariations) > 0 ? Math.floor(Number(b.qtyVariations)) : 0,
-    deliverableUserId: b.deliverableUserId || null,
     status: stage.id,
     ownerId: b.ownerId || (initStageResp[stage.id] !== undefined ? initStageResp[stage.id] : null) || resolveStageOwner(stage, project) || null,
     stageEnteredAt: nowISO(), stageDueDate: stageDue,
@@ -5166,27 +5151,6 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
       const oldEst = d.estimatedHours;
       d.estimatedHours = newEst;
       addHistory(d, req.user.id, 'estimated_hours_changed', { from: oldEst, to: newEst });
-    }
-  }
-  // Entregáveis — editáveis a qualquer momento (inclusive depois de "concluída")
-  for (const field of ['qtyPieces', 'qtyArts', 'qtyVariations']) {
-    if (b[field] !== undefined) {
-      const v = Number(b[field]) > 0 ? Math.floor(Number(b[field])) : 0;
-      if (v !== d[field]) {
-        const oldV = d[field];
-        d[field] = v;
-        addHistory(d, req.user.id, 'deliverables_changed', { field, from: oldV, to: v });
-      }
-    }
-  }
-  // Quem fez os entregáveis (separado do ownerId atual, que pode mudar no fluxo).
-  // null = cai pro owner. Aceita string vazia como "limpar".
-  if (b.deliverableUserId !== undefined) {
-    const newVal = b.deliverableUserId || null;
-    if (newVal !== d.deliverableUserId) {
-      const oldVal = d.deliverableUserId;
-      d.deliverableUserId = newVal;
-      addHistory(d, req.user.id, 'deliverable_user_changed', { from: oldVal, to: newVal });
     }
   }
   if (b.priority !== undefined) {
@@ -6580,7 +6544,6 @@ function sanitizeRecurringBody(b, existing) {
   if (!workspaceId) return { error: 'Não foi possível determinar o workspace' };
   const roleId = (b.roleId !== undefined ? b.roleId : cur.roleId) || null;
   const ownerId = (b.ownerId !== undefined ? b.ownerId : cur.ownerId) || null;
-  const deliverableUserId = (b.deliverableUserId !== undefined ? b.deliverableUserId : cur.deliverableUserId) || null;
   const dayOfMonth = Number.isInteger(Number(b.dayOfMonth)) && Number(b.dayOfMonth) >= 1 && Number(b.dayOfMonth) <= 31
     ? Number(b.dayOfMonth) : (cur.dayOfMonth || null);
   // Se a lista pertence a outro workspace, invalida (segurança)
@@ -6592,13 +6555,10 @@ function sanitizeRecurringBody(b, existing) {
     // demandType: chave PORTÁVEL do item entre clientes. Ao aplicar a lista em outro
     // cliente, resolvemos o fluxo daquele cliente por este tipo (não pelo flowId fixo).
     demandType: flow.demandType || null,
-    roleId, ownerId, deliverableUserId, listaId,
+    roleId, ownerId, listaId,
     description: sanitizeCommentHtml(String(b.description ?? cur.description ?? '')),
     briefing: normalizeUrlSrv(b.briefing ?? cur.briefing ?? ''),
     priority: [1,2,3,4].includes(Number(b.priority ?? cur.priority)) ? Number(b.priority ?? cur.priority) : 3,
-    qtyPieces:     Number(b.qtyPieces ?? cur.qtyPieces) > 0     ? Math.floor(Number(b.qtyPieces ?? cur.qtyPieces)) : 0,
-    qtyArts:       Number(b.qtyArts ?? cur.qtyArts) > 0         ? Math.floor(Number(b.qtyArts ?? cur.qtyArts)) : 0,
-    qtyVariations: Number(b.qtyVariations ?? cur.qtyVariations) > 0 ? Math.floor(Number(b.qtyVariations ?? cur.qtyVariations)) : 0,
     defaultChecklist: sanitizeChecklistTemplate(b.defaultChecklist !== undefined ? b.defaultChecklist : cur.defaultChecklist),
     attachments: sanitizeAttachments(b.attachments !== undefined ? b.attachments : cur.attachments),
     dayOfMonth,
@@ -6725,10 +6685,6 @@ app.post('/api/recurrings/:id/generate', requireAuth, (req, res) => {
     deadline,
     estimatedHours: null,
     priority: r.priority || 3,
-    qtyPieces: r.qtyPieces || 0,
-    qtyArts: r.qtyArts || 0,
-    qtyVariations: r.qtyVariations || 0,
-    deliverableUserId: r.deliverableUserId || null,
     status: stage.id,
     ownerId: r.ownerId || resolveStageOwner(stage, project) || null,
     stageEnteredAt: nowISO(), stageDueDate: stageDue,
@@ -8266,11 +8222,6 @@ function runRecurrenceJob() {
       deadline: stageDue,
       estimatedHours: parent.estimatedHours,
       priority: parent.priority || 3,
-      // Entregáveis — clona as contagens e o atribuído (cópia fiel do modelo).
-      qtyPieces: parent.qtyPieces || 0,
-      qtyArts: parent.qtyArts || 0,
-      qtyVariations: parent.qtyVariations || 0,
-      deliverableUserId: parent.deliverableUserId || null,
       status: stage.id,
       ownerId: parent.ownerId || (parent.stageResponsibles && parent.stageResponsibles[stage.id]) || resolveStageOwner(stage, project) || null,
       stageEnteredAt: nowISO(), stageDueDate: stageDue,

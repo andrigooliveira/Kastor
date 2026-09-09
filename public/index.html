@@ -14,12 +14,12 @@
 <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/geist-latin-ext.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/css/fonts.css?v=1">
-<link rel="stylesheet" href="/css/style.css?v=20260909notif">
+<link rel="stylesheet" href="/css/style.css?v=20260909zb2">
 <!-- Preload dos JS pesados no <head> pra que o download comece IMEDIATAMENTE,
      em paralelo com o parse do HTML, em vez de esperar o parser chegar em
      </body>. Com immutable cache (max-age=1yr), na 2ª visita nem baixa. -->
 <link rel="preload" href="/vendor/lucide.min.js" as="script">
-<link rel="preload" href="/js/app.js?v=20260909notif" as="script">
+<link rel="preload" href="/js/app.js?v=20260909zb2" as="script">
 <script type="text/javascript">
     // Clarity: analytics de heatmap/session replay. Não é crítico pro app —
     // deferido pra depois do primeiro paint pra não roubar tempo do LCP.
@@ -513,14 +513,6 @@
                       <option value="no">Sem apontamento</option>
                     </select>
                   </label>
-                  <label class="advanced-filters-row">
-                    <span class="advanced-filters-lbl">Entregáveis definidos (peças/artes/variações)</span>
-                    <select class="filter-select" id="filter-pieces" onchange="renderList(); _updateAdvancedFiltersBadge()">
-                      <option value="">Qualquer</option>
-                      <option value="yes">Com entregáveis</option>
-                      <option value="no">Sem entregáveis</option>
-                    </select>
-                  </label>
                 </div>
 
                 <div class="af-section">
@@ -592,6 +584,7 @@
               <button type="button" class="list-view-menu-item" id="list-view-item-kanban" onclick="closeListViewMenu(); setListView('kanban')"><i data-lucide="kanban-square" class="ic-menu"></i> <span>Kanban</span></button>
               <button type="button" class="list-view-menu-item" id="list-view-item-cal" onclick="closeListViewMenu(); setListView('cal')"><i data-lucide="calendar" class="ic-menu"></i> <span>Calendário</span></button>
               <div class="list-view-menu-sep"></div>
+              <button type="button" class="list-view-menu-item" id="list-bulk-toggle-item" onclick="closeListViewMenu(); toggleBulkMode()"><i data-lucide="check-square" class="ic-menu"></i> <span id="list-bulk-toggle-label">Selecionar demandas</span></button>
               <button type="button" class="list-view-menu-item" onclick="closeListViewMenu(); exportDemandsCsv()"><i data-lucide="download" class="ic-menu"></i> <span>Exportar CSV</span></button>
             </div>
           </div>
@@ -712,7 +705,6 @@
                   <th style="cursor:pointer" onclick="sortMine('project')">Projeto <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   <th style="cursor:pointer" onclick="sortMine('status')">Etapa <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   <th style="cursor:pointer" onclick="sortMine('priority')">Prioridade <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                  <th title="Peças · Artes · Variações">Entregáveis</th>
                   <th style="cursor:pointer" onclick="sortMine('deadline')">Prazo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                 </tr>
               </thead>
@@ -767,47 +759,63 @@
       <div class="page-body">
         <!-- Aba CAPACIDADE -->
         <div id="an-tab-capacity" class="an-tab-panel">
-          <div class="section-head">
-            <div class="section-title" id="capacity-heading">Capacidade da Equipe</div>
-            <!-- Filtro de período: mesmo visual do filtro de Demandas (pfp), mas
-                 instância isolada (cap-pfp-*). Presets pra frente + range custom. -->
-            <div class="filter-period-picker">
-              <button type="button" class="filter-period-trigger" id="cap-pfp-trigger" onclick="capPfpToggle(event)">
-                <span id="cap-pfp-label">Próximos 7 dias</span>
-                <i data-lucide="chevron-down" class="ic-xs"></i>
-              </button>
-              <div class="pfp-popover" id="cap-pfp-popover" onclick="event.stopPropagation()">
-                <div class="pfp-presets" id="cap-pfp-presets"></div>
-                <div class="pfp-cal">
-                  <div class="pfp-cal-head">
-                    <button type="button" class="pfp-cal-nav" onclick="capPfpNav(-1)" title="Mês anterior"><i data-lucide="chevron-left" class="ic-sm"></i></button>
-                    <span class="pfp-cal-title" id="cap-pfp-cal-title"></span>
-                    <button type="button" class="pfp-cal-nav" onclick="capPfpNav(1)" title="Próximo mês"><i data-lucide="chevron-right" class="ic-sm"></i></button>
+          <!-- Header reorganizado: título + subtitle à esquerda, filtros (squad + período)
+               agrupados à direita. Segmented control da visão numa segunda linha, com
+               o botão Exportar isolado à direita — evita competição visual com as abas. -->
+          <div class="capacity-header">
+            <div class="capacity-header-main">
+              <h2 class="capacity-title" id="capacity-heading">Capacidade da Equipe</h2>
+              <div class="capacity-subtitle" id="capacity-hint">Distribuição de demandas em aberto por responsável — carga baseada em atribuições e horas apontadas.</div>
+            </div>
+            <div class="capacity-header-filters">
+              <!-- Período: mesma pfp de Demandas, instância isolada (cap-pfp-*). -->
+              <div class="filter-period-picker">
+                <button type="button" class="filter-period-trigger" id="cap-pfp-trigger" onclick="capPfpToggle(event)">
+                  <span id="cap-pfp-label">Próximos 7 dias</span>
+                  <i data-lucide="chevron-down" class="ic-xs"></i>
+                </button>
+                <div class="pfp-popover" id="cap-pfp-popover" onclick="event.stopPropagation()">
+                  <div class="pfp-presets" id="cap-pfp-presets"></div>
+                  <div class="pfp-cal">
+                    <div class="pfp-cal-head">
+                      <button type="button" class="pfp-cal-nav" onclick="capPfpNav(-1)" title="Mês anterior"><i data-lucide="chevron-left" class="ic-sm"></i></button>
+                      <span class="pfp-cal-title" id="cap-pfp-cal-title"></span>
+                      <button type="button" class="pfp-cal-nav" onclick="capPfpNav(1)" title="Próximo mês"><i data-lucide="chevron-right" class="ic-sm"></i></button>
+                    </div>
+                    <div class="pfp-cal-dow"><span>D</span><span>S</span><span>T</span><span>Q</span><span>Q</span><span>S</span><span>S</span></div>
+                    <div class="pfp-cal-grid" id="cap-pfp-cal-grid"></div>
                   </div>
-                  <div class="pfp-cal-dow"><span>D</span><span>S</span><span>T</span><span>Q</span><span>Q</span><span>S</span><span>S</span></div>
-                  <div class="pfp-cal-grid" id="cap-pfp-cal-grid"></div>
-                </div>
-                <div class="pfp-footer">
-                  <button type="button" class="pfp-footer-btn" onclick="capPfpResetDefault()">Padrão</button>
-                  <button type="button" class="pfp-footer-btn" onclick="capPfpToday()">Hoje</button>
+                  <div class="pfp-footer">
+                    <button type="button" class="pfp-footer-btn" onclick="capPfpResetDefault()">Padrão</button>
+                    <button type="button" class="pfp-footer-btn" onclick="capPfpToday()">Hoje</button>
+                  </div>
                 </div>
               </div>
+              <input type="hidden" id="capacity-period" value="7">
+              <input type="hidden" id="capacity-period-start" value="">
+              <input type="hidden" id="capacity-period-end" value="">
             </div>
-            <input type="hidden" id="capacity-period" value="7">
-            <input type="hidden" id="capacity-period-start" value="">
-            <input type="hidden" id="capacity-period-end" value="">
           </div>
-          <!-- Filtro de squads (multi, estilo Usuários). Vazio = workspace ativo.
-               Hidden input em CSV pra persistir via FILTER_KEYS['capacity']. -->
-          <div class="uws-filter" id="capacity-squad-filter"></div>
-          <input type="hidden" id="capacity-squads" value="">
-          <div class="capacity-view-toggle">
-            <button class="btn btn-ghost btn-sm active" id="capacity-view-team" onclick="setCapacityView('team')"><i data-lucide="users" class="ic-sm"></i> Equipe</button>
-            <button class="btn btn-ghost btn-sm" id="capacity-view-project" onclick="setCapacityView('project')"><i data-lucide="folder" class="ic-sm"></i> Projeto</button>
-            <button class="btn btn-ghost btn-sm" id="capacity-view-client" onclick="setCapacityView('client')"><i data-lucide="briefcase" class="ic-sm"></i> Cliente</button>
-            <button class="btn btn-ghost btn-sm" onclick="exportCapacityCsv()" title="Exportar visão atual em CSV" style="margin-left:auto"><i data-lucide="download" class="ic-sm"></i> Exportar CSV</button>
+          <div class="capacity-view-bar">
+            <!-- Squads à esquerda (respiram bem — até 7 squads cabem numa linha
+                 antes de precisar wrap). Toggle da visão + export ficam agrupados
+                 à direita, isolados do filtro. -->
+            <div class="capacity-view-bar-left">
+              <div class="uws-filter capacity-squad-filter-inline" id="capacity-squad-filter"></div>
+              <input type="hidden" id="capacity-squads" value="">
+            </div>
+            <div class="capacity-view-bar-right">
+              <div class="capacity-view-toggle" role="tablist">
+                <button class="capacity-view-btn is-active" id="capacity-view-team" onclick="setCapacityView('team')"><i data-lucide="users" class="ic-sm"></i> Equipe</button>
+                <button class="capacity-view-btn" id="capacity-view-project" onclick="setCapacityView('project')"><i data-lucide="folder" class="ic-sm"></i> Projeto</button>
+                <button class="capacity-view-btn" id="capacity-view-client" onclick="setCapacityView('client')"><i data-lucide="briefcase" class="ic-sm"></i> Cliente</button>
+              </div>
+              <button class="capacity-export-btn" onclick="exportCapacityCsv()" title="Exportar visão atual em CSV">
+                <i data-lucide="download" class="ic-sm"></i>
+                <span>Exportar</span>
+              </button>
+            </div>
           </div>
-          <div class="capacity-hint" id="capacity-hint">Distribuição de demandas em aberto por responsável. Carga estimada com base nas demandas atribuídas e nas horas já apontadas.</div>
           <div id="capacity-list"></div>
         </div>
         <!-- Aba RELATÓRIOS / SLA -->
@@ -2619,30 +2627,6 @@
           <div class="chk-list" id="f-checklist-list"></div>
           <button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addDemandChecklistItem()"><i data-lucide="plus" class="ic-sm"></i> Adicionar item</button>
         </div>
-        <!-- ENTREGÁVEIS (peças, artes, variações + atribuir a) — 4 campos do mesmo tamanho em 1 linha -->
-        <div class="form-group full">
-          <label class="form-label">Entregáveis</label>
-          <div class="qty-grid qty-grid-4">
-            <div class="qty-cell">
-              <input class="form-control" id="f-qty-pieces" type="number" min="0" step="1" placeholder="0">
-              <span class="qty-cell-label">Peças <span class="qty-cell-hint" title="Peças únicas. Ex.: 1 criativo + 1 carrossel = 2">?</span></span>
-            </div>
-            <div class="qty-cell">
-              <input class="form-control" id="f-qty-arts" type="number" min="0" step="1" placeholder="0">
-              <span class="qty-cell-label">Artes <span class="qty-cell-hint" title="Total de artes individuais. Ex.: 1 criativo + carrossel de 3 telas = 4 artes">?</span></span>
-            </div>
-            <div class="qty-cell">
-              <input class="form-control" id="f-qty-variations" type="number" min="0" step="1" placeholder="0">
-              <span class="qty-cell-label">Variações <span class="qty-cell-hint" title="Exportações/formatos. Ex.: 1 criativo em 3 formatos = 3 variações">?</span></span>
-            </div>
-            <div class="qty-cell">
-              <select class="form-control" id="f-deliverable-user">
-                <option value="">— Responsável atual —</option>
-              </select>
-              <span class="qty-cell-label">Atribuir a <span class="qty-cell-hint" title="Quem efetivamente executou as artes. Se vazio, conta pro responsável atual da demanda.">?</span></span>
-            </div>
-          </div>
-        </div>
         </div><!-- /form-grid -->
 
         <!-- RECORRÊNCIA — gera cópias automáticas desta demanda no tempo. -->
@@ -3133,29 +3117,6 @@
         <div class="form-group full">
           <label class="form-label">Link do Briefing</label>
           <input class="form-control" id="rec-briefing" type="url" placeholder="https://...">
-        </div>
-        <div class="form-group full">
-          <label class="form-label">Entregáveis</label>
-          <div class="qty-grid qty-grid-4">
-            <div class="qty-cell">
-              <input class="form-control" id="rec-qty-pieces" type="number" min="0" step="1" placeholder="0">
-              <span class="qty-cell-label">Peças</span>
-            </div>
-            <div class="qty-cell">
-              <input class="form-control" id="rec-qty-arts" type="number" min="0" step="1" placeholder="0">
-              <span class="qty-cell-label">Artes</span>
-            </div>
-            <div class="qty-cell">
-              <input class="form-control" id="rec-qty-variations" type="number" min="0" step="1" placeholder="0">
-              <span class="qty-cell-label">Variações</span>
-            </div>
-            <div class="qty-cell">
-              <select class="form-control" id="rec-deliverable-user">
-                <option value="">— Responsável atual —</option>
-              </select>
-              <span class="qty-cell-label">Atribuir a</span>
-            </div>
-          </div>
         </div>
         <div class="form-group">
           <label class="form-label">Prioridade</label>
@@ -3875,7 +3836,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260909notif"></script>
+<script src="/js/app.js?v=20260909zb2"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

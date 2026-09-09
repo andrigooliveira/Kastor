@@ -368,7 +368,7 @@ window.addEventListener('popstate', applyRoute);
    no início do render correspondente — antes de capturar os valores atuais.
    Evita que o usuário tenha que re-aplicar filtros toda vez que volta. */
 const FILTER_KEYS = {
-  list:      { storage: 'kastor-filters-list',      ids: ['search-input','filter-workspace','filter-user','filter-participant','filter-project','filter-client','filter-period','filter-period-start','filter-period-end','filter-quick','filter-priority','filter-stuck-days','filter-noowner','filter-created-by','filter-stage-label','filter-recurrence','filter-watched','filter-attachments','filter-time-entries','filter-pieces','filter-created-from','filter-created-to','filter-completed-from','filter-completed-to'] },
+  list:      { storage: 'kastor-filters-list',      ids: ['search-input','filter-workspace','filter-user','filter-participant','filter-project','filter-client','filter-period','filter-period-start','filter-period-end','filter-quick','filter-priority','filter-stuck-days','filter-noowner','filter-created-by','filter-stage-label','filter-recurrence','filter-watched','filter-attachments','filter-time-entries','filter-created-from','filter-created-to','filter-completed-from','filter-completed-to'] },
   dashboard: { storage: 'kastor-filters-dashboard', ids: ['dash-f-user','dash-f-squad','dash-f-client','dash-f-period','dash-f-type'] },
   capacity:  { storage: 'kastor-filters-capacity',  ids: ['capacity-period','capacity-period-start','capacity-period-end','capacity-squads'] },
   clients:   { storage: 'kastor-filters-clients',   ids: ['client-search','client-f-ws'] },
@@ -386,7 +386,7 @@ const FILTER_URL_KEYS = {
     'filter-priority': 'prio', 'filter-stuck-days': 'stuck', 'filter-noowner': 'noowner',
     'filter-created-by': 'creator', 'filter-stage-label': 'stage', 'filter-recurrence': 'rec',
     'filter-watched': 'wtch', 'filter-attachments': 'att', 'filter-time-entries': 'time',
-    'filter-pieces': 'del', 'filter-created-from': 'cfrom', 'filter-created-to': 'cto',
+    'filter-created-from': 'cfrom', 'filter-created-to': 'cto',
     'filter-completed-from': 'dfrom', 'filter-completed-to': 'dto'
   },
   dashboard: {
@@ -537,18 +537,6 @@ const PRIORITIES = [
 ];
 function priorityLabel(v) { return (PRIORITIES.find(p => p.value === v) || PRIORITIES[2]).label; }
 function priorityColor(v) { return (PRIORITIES.find(p => p.value === v) || PRIORITIES[2]).color; }
-/* Célula compacta dos entregáveis pra tabelas: "P · A · V" com tooltip.
-   Se TODOS forem zero, mostra "—". */
-function qtyCell(d) {
-  const p = Number(d.qtyPieces) || 0;
-  const a = Number(d.qtyArts) || 0;
-  const v = Number(d.qtyVariations) || 0;
-  if (!p && !a && !v) return '<span class="qty-cell-empty">—</span>';
-  return `<span class="qty-cell-compact" title="${p} peça${p === 1 ? '' : 's'} · ${a} arte${a === 1 ? '' : 's'} · ${v} variaç${v === 1 ? 'ão' : 'ões'}">
-    <span class="qty-num">${p}</span><span class="qty-sep">·</span><span class="qty-num">${a}</span><span class="qty-sep">·</span><span class="qty-num">${v}</span>
-  </span>`;
-}
-
 function priorityPill(v) {
   const p = PRIORITIES.find(x => x.value === v) || PRIORITIES[2];
   return `<span class="prio-pill" style="--prio:${p.color}"><span class="prio-dot"></span>${p.label}</span>`;
@@ -4868,14 +4856,6 @@ function forecastLevel(n) {
   if (n <= 9) return 3;   // laranja
   return 4;               // vermelho (≥10)
 }
-function forecastDeliverables(d) {
-  const parts = [];
-  const p = Number(d.qtyPieces) || 0, a = Number(d.qtyArts) || 0, v = Number(d.qtyVariations) || 0;
-  if (p) parts.push(`${p} peça${p > 1 ? 's' : ''}`);
-  if (a) parts.push(`${a} arte${a > 1 ? 's' : ''}`);
-  if (v) parts.push(`${v} var.`);
-  return parts.length ? parts.join(' · ') : '—';
-}
 /* Data (YYYY-MM-DD) em que a demanda deve CHEGAR na primeira etapa futura de
    responsabilidade de `userId`. Null se o user não está numa etapa futura.
    - Etapa atual termina no stageDueDate; se atrasada/sem due, conta de hoje
@@ -4991,7 +4971,6 @@ function openForecastDay(ymdStr) {
         <td class="fc-td-name">${esc(d.name)}${p ? `<div class="fc-td-sub" style="font-size:11px;font-weight:400">${esc(p.name)}</div>` : ''}</td>
         <td>${esc(it.stageLabel)}</td>
         <td style="text-align:center">${it.remaining}</td>
-        <td>${esc(forecastDeliverables(d))}</td>
       </tr>`;
     }).join('');
   const body = $('forecast-modal-body');
@@ -4999,7 +4978,7 @@ function openForecastDay(ymdStr) {
     <table class="forecast-table">
       <thead><tr>
         <th>Demanda</th><th>Etapa atual</th>
-        <th style="text-align:center">Etapas restantes</th><th>Entregáveis</th>
+        <th style="text-align:center">Etapas restantes</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
@@ -5493,7 +5472,7 @@ function exportDemandsCsv() {
   const headers = [
     'ID', 'Nome', 'Squad', 'Cliente', 'Projeto', 'Fluxo', 'Etapa atual',
     'Responsável', 'Prioridade', 'Prazo etapa', 'Prazo final',
-    'Horas estimadas', 'Horas apontadas', 'Peças', 'Artes', 'Variações',
+    'Horas estimadas', 'Horas apontadas',
     'Criada em', 'Concluída em', 'Status'
   ];
   const rows = list.map(d => {
@@ -5509,7 +5488,6 @@ function exportDemandsCsv() {
       owner?.name || '', priorityLabel(d.priority) || '',
       d.stageDueDate || '', d.deadline || '',
       d.estimatedHours ?? '', totalHours.toFixed(2),
-      d.qtyPieces ?? 0, d.qtyArts ?? 0, d.qtyVariations ?? 0,
       (d.createdAt || '').slice(0, 10),
       (d.completedAt || '').slice(0, 10),
       d.completedAt ? 'Concluída' : (st?.done ? 'Concluída' : 'Em andamento')
@@ -6157,7 +6135,6 @@ function listFilteredDemands() {
   const fRec = $('filter-recurrence')?.value || '';
   const fAtt = $('filter-attachments')?.value || '';
   const fTime = $('filter-time-entries')?.value || '';
-  const fDel = $('filter-pieces')?.value || '';
   const fCFrom = $('filter-created-from')?.value || '';
   const fCTo = $('filter-created-to')?.value || '';
   const fDFrom = $('filter-completed-from')?.value || '';
@@ -6208,8 +6185,6 @@ function listFilteredDemands() {
     if (fAtt === 'no' && (Array.isArray(d.attachments) && d.attachments.length)) return false;
     if (fTime === 'yes' && !(Array.isArray(d.timeEntries) && d.timeEntries.length)) return false;
     if (fTime === 'no' && (Array.isArray(d.timeEntries) && d.timeEntries.length)) return false;
-    if (fDel === 'yes' && !((d.qtyPieces || 0) + (d.qtyArts || 0) + (d.qtyVariations || 0) > 0)) return false;
-    if (fDel === 'no' && ((d.qtyPieces || 0) + (d.qtyArts || 0) + (d.qtyVariations || 0) > 0)) return false;
     if (fCFrom || fCTo) {
       const ymd = (d.createdAt || '').slice(0, 10);
       if (fCFrom && ymd < fCFrom) return false;
@@ -6298,7 +6273,7 @@ document.addEventListener('click', ev => {
 const _AF_VALUE_IDS = [
   'filter-participant','filter-priority','filter-stuck-days',
   'filter-created-by','filter-recurrence',
-  'filter-attachments','filter-time-entries','filter-pieces',
+  'filter-attachments','filter-time-entries',
   'filter-created-from','filter-created-to','filter-completed-from','filter-completed-to'
 ];
 const _AF_CHECKBOX_IDS = ['filter-noowner','filter-watched'];
@@ -6754,7 +6729,6 @@ function renderList() {
     else if (sortKey === 'owner')     { va = norm(userById(a.ownerId)?.name || ''); vb = norm(userById(b.ownerId)?.name || ''); }
     else if (sortKey === 'completed') { va = a.completedAt || '9999'; vb = b.completedAt || '9999'; }
     else if (sortKey === 'priority')  { va = a.priority || 3; vb = b.priority || 3; }
-    else if (sortKey === 'qty')       { va = (a.qtyArts || 0); vb = (b.qtyArts || 0); }
     else                              { va = effDue(a) || '9999'; vb = effDue(b) || '9999'; }
     return (va < vb ? -1 : va > vb ? 1 : 0) * (sortAsc ? 1 : -1);
   });
@@ -6779,10 +6753,15 @@ function renderList() {
   const doneList = isDoneOnly ? list : list.filter(d => isDone(d));
   const mainList = isDoneOnly ? doneList : openList;
 
-  const renderRow = (d) => {
+  // Contador global de linhas pra zebra alternada — reseta a cada renderList.
+  // (não usa nth-child do CSS porque as tr's de section-head atrapalham a paridade)
+  let _rowAlt = 0;
+  const renderRow = (d, sectionKey) => {
     const p = projectById(d.projectId);
     const sel = selectedDemandIds.has(d.id);
-    return `<tr class="demand-row ${sel ? 'selected' : ''}" data-demand-id="${d.id}" onclick="onDemandRowClick(event, '${d.id}')">
+    const alt = (_rowAlt++ % 2 === 1) ? ' is-alt' : '';
+    const sectionAttr = sectionKey ? ` data-section="${sectionKey}"` : '';
+    return `<tr class="demand-row${alt} ${sel ? 'selected' : ''}" data-demand-id="${d.id}"${sectionAttr} onclick="onDemandRowClick(event, '${d.id}')">
       <td class="col-bulk-check"><input type="checkbox" class="bulk-check-row" ${sel ? 'checked' : ''} onclick="event.stopPropagation();toggleDemandSelection('${d.id}', this.checked)"></td>
       <td class="col-demand-name"><span class="demand-name">${esc(d.name)}</span></td>
       <td>${p ? esc(p.name) : '—'}</td>
@@ -6795,11 +6774,58 @@ function renderList() {
     </tr>`;
   };
 
-  // Tabela principal
+  // Tabela principal — abertas ficam agrupadas por urgência de prazo
+  // (Atrasadas / Hoje / Essa semana / Próximos dias / Sem prazo), mesmo
+  // padrão de Minhas Demandas. Concluídas (isDoneOnly) mantém flat.
+  const bodyEl = $('list-table-body');
   if (!mainList.length) {
-    $('list-table-body').innerHTML = `<tr><td colspan="9">${emptyState(isDoneOnly ? 'Nenhuma demanda concluída no filtro' : 'Nenhuma demanda encontrada', 'Ajuste a busca ou os filtros para encontrar o que procura.', 'search')}</td></tr>`;
+    bodyEl.innerHTML = `<tr><td colspan="9">${emptyState(isDoneOnly ? 'Nenhuma demanda concluída no filtro' : 'Nenhuma demanda encontrada', 'Ajuste a busca ou os filtros para encontrar o que procura.', 'search')}</td></tr>`;
+  } else if (isDoneOnly) {
+    bodyEl.innerHTML = mainList.map(renderRow).join('');
   } else {
-    $('list-table-body').innerHTML = mainList.map(renderRow).join('');
+    const today = todayStr();
+    const now = new Date(today + 'T00:00:00');
+    const daysUntilSunday = (7 - now.getDay()) % 7;
+    const endOfWeek = new Date(now); endOfWeek.setDate(endOfWeek.getDate() + daysUntilSunday);
+    const endOfWeekYmd = endOfWeek.toISOString().slice(0, 10);
+    const buckets = { atrasadas: [], hoje: [], semana: [], proximos: [], sem: [] };
+    for (const d of mainList) {
+      const due = effDue(d);
+      if (!due) { buckets.sem.push(d); continue; }
+      if (due < today) buckets.atrasadas.push(d);
+      else if (due === today) buckets.hoje.push(d);
+      else if (due <= endOfWeekYmd) buckets.semana.push(d);
+      else buckets.proximos.push(d);
+    }
+    const sections = [
+      { key: 'atrasadas', label: 'Atrasadas',     icon: 'alert-triangle', cls: 'is-late'  },
+      { key: 'hoje',      label: 'Hoje',          icon: 'circle-dot',     cls: 'is-today' },
+      { key: 'semana',    label: 'Essa semana',   icon: 'calendar',       cls: 'is-week'  },
+      { key: 'proximos',  label: 'Próximos dias', icon: 'arrow-right',    cls: 'is-later' },
+      { key: 'sem',       label: 'Sem prazo',     icon: 'circle-dashed',  cls: 'is-later' },
+    ];
+    bodyEl.innerHTML = sections.map(sec => {
+      const items = buckets[sec.key];
+      if (!items.length) return '';
+      const collapsed = _listCollapsedSections.has(sec.key);
+      const caret = collapsed ? 'chevron-right' : 'chevron-down';
+      const headRow = `<tr class="mine-section-head ${sec.cls} ${collapsed ? 'is-collapsed' : ''}" data-section="${sec.key}" onclick="toggleListSection('${sec.key}')">
+        <td colspan="9">
+          <span class="mine-section-lbl">
+            <i data-lucide="${caret}" class="ic-sm mine-section-caret"></i>
+            <i data-lucide="${sec.icon}" class="ic-sm"></i>
+            ${esc(sec.label)}
+            <span class="mine-section-count">${items.length}</span>
+          </span>
+        </td>
+      </tr>`;
+      // Se colapsada, reseta o contador da zebra pra a próxima seção não herdar
+      // um deslocamento invisível (senão a paridade "escorrega" ao expandir).
+      if (collapsed) {
+        return headRow;
+      }
+      return headRow + items.map(d => renderRow(d, sec.key)).join('');
+    }).join('');
   }
 
   // Tabela concluídas (colapsável) — só mostra se houver e não estivermos no filtro "Concluídas".
@@ -6823,6 +6849,7 @@ function renderList() {
   paintIcons(); // ícones de urgência de prazo (alert-triangle / clock) nas linhas
   if (listView === 'kanban') renderKanban();
   if (listView === 'cal') renderCalendar('all');
+  _applyBulkMode();
   refreshBulkBar();
   saveFilters('list');
 }
@@ -6845,6 +6872,22 @@ function toggleDoneTable() {
 }
 function sortList(key) {
   if (sortKey === key) sortAsc = !sortAsc; else { sortKey = key; sortAsc = true; }
+  renderList();
+}
+
+/* Estado das seções colapsadas em /demands. Persiste em localStorage — cada key
+   corresponde a um bucket (atrasadas/hoje/semana/proximos/sem). Ao clicar no
+   header, alterna e re-renderiza (mais simples que manipular o DOM à mão e
+   mantém a zebra alternada consistente com o novo conjunto visível). */
+let _listCollapsedSections = new Set();
+try {
+  const raw = localStorage.getItem('kastor-list-collapsed');
+  if (raw) _listCollapsedSections = new Set(JSON.parse(raw));
+} catch {}
+function toggleListSection(key) {
+  if (_listCollapsedSections.has(key)) _listCollapsedSections.delete(key);
+  else _listCollapsedSections.add(key);
+  try { localStorage.setItem('kastor-list-collapsed', JSON.stringify([..._listCollapsedSections])); } catch {}
   renderList();
 }
 // Versão debounced só pro campo de busca — evita rebuild da tabela em cada
@@ -7348,14 +7391,13 @@ function renderMine() {
       <td>${esc(p?.name || '—')}</td>
       <td>${statusPill(d)}</td>
       <td>${priorityPill(d.priority)}</td>
-      <td>${qtyCell(d)}</td>
       <td>${deadlineCell(d)}</td>
     </tr>`;
   };
 
   const body = $('mine-table-body');
   if (!list.length) {
-    body.innerHTML = `<tr><td colspan="8">${emptyState('Nenhuma demanda encontrada', 'Você não tem demandas neste filtro.', 'inbox')}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="7">${emptyState('Nenhuma demanda encontrada', 'Você não tem demandas neste filtro.', 'inbox')}</td></tr>`;
   } else if (fq === 'done') {
     // Filtro "Concluídas" — flat, sem seções (não faz sentido separar por prazo).
     body.innerHTML = list.map(renderMineRow).join('');
@@ -7385,7 +7427,7 @@ function renderMine() {
     body.innerHTML = sections.map(sec => {
       const items = buckets[sec.key];
       if (!items.length) return '';
-      return `<tr class="mine-section-head ${sec.cls}"><td colspan="8"><span class="mine-section-lbl"><i data-lucide="${sec.icon}" class="ic-sm"></i>${esc(sec.label)}<span class="mine-section-count">${items.length}</span></span></td></tr>` +
+      return `<tr class="mine-section-head ${sec.cls}"><td colspan="7"><span class="mine-section-lbl"><i data-lucide="${sec.icon}" class="ic-sm"></i>${esc(sec.label)}<span class="mine-section-count">${items.length}</span></span></td></tr>` +
         items.map(renderMineRow).join('');
     }).join('');
   }
@@ -9020,10 +9062,10 @@ function renderCapacity() {
   }
   const capacityHours = businessDays * 8;
 
-  // Atualiza estado visual dos botões de view
+  // Atualiza estado visual dos botões do segmented control
   ['team', 'project', 'client'].forEach(v => {
     const btn = $('capacity-view-' + v);
-    if (btn) btn.classList.toggle('active', capacityView === v);
+    if (btn) btn.classList.toggle('is-active', capacityView === v);
   });
 
   // Esconde o cabeçalho ("Capacidade da Equipe") com base no modo
@@ -9032,10 +9074,10 @@ function renderCapacity() {
 
   const hint = $('capacity-hint');
   if (hint) hint.textContent = capacityView === 'team'
-    ? 'Distribuição de demandas em aberto por responsável. Carga estimada com base nas demandas atribuídas e nas horas já apontadas.'
+    ? 'Distribuição de demandas em aberto por responsável — carga baseada em atribuições e horas apontadas.'
     : (capacityView === 'project'
-        ? 'Total de horas apontadas em cada projeto, somando os apontamentos de todos os usuários no período.'
-        : 'Total de horas apontadas para cada cliente, somando todos os projetos do cliente no período.');
+        ? 'Total de horas apontadas em cada projeto no período.'
+        : 'Total de horas apontadas em cada cliente no período.');
 
   saveFilters('capacity');
   if (capacityView === 'team') return renderCapacityTeam(startYmd, endYmd, businessDays, capacityHours, logStartYmd, logEndYmd);
@@ -9685,8 +9727,6 @@ function openNewDemand() {
   setRichValue('f-description', '');
   $('f-briefing').value = ''; $('f-deadline').value = '';
   $('f-estimated').value = ''; $('f-priority').value = '3';
-  $('f-qty-pieces').value = ''; $('f-qty-arts').value = ''; $('f-qty-variations').value = '';
-  fillDeliverableUserSelect('f-deliverable-user', null);
   demandChecklistDraft = [];
   renderDemandChecklist();
   $('f-rec-enabled').checked = false; $('f-rec-config').style.display = 'none';
@@ -9733,10 +9773,6 @@ function openEditDemand(id) {
   $('f-deadline').value = d.deadline || '';
   $('f-estimated').value = d.estimatedHours || '';
   $('f-priority').value = d.priority || 3;
-  $('f-qty-pieces').value = d.qtyPieces || '';
-  $('f-qty-arts').value = d.qtyArts || '';
-  $('f-qty-variations').value = d.qtyVariations || '';
-  fillDeliverableUserSelect('f-deliverable-user', d.deliverableUserId || '', d.workspaceId);
   // Em edição, o checklist é gerenciado pelo painel de detalhe (não aqui)
   demandChecklistDraft = [];
   renderDemandChecklist();
@@ -9768,12 +9804,6 @@ function openEditDemand(id) {
 }
 async function saveDemand() {
   const recEnabled = $('f-rec-enabled').checked;
-  // Lê valores brutos pra log diagnóstico — se algum vier "" ou NaN sabemos por aí
-  const _rawQty = {
-    p: $('f-qty-pieces')?.value,
-    a: $('f-qty-arts')?.value,
-    v: $('f-qty-variations')?.value
-  };
   const payload = {
     name: $('f-name').value,
     description: getRichValue('f-description'),
@@ -9783,10 +9813,6 @@ async function saveDemand() {
     deadline: $('f-deadline').value || null,
     estimatedHours: $('f-estimated').value ? Number($('f-estimated').value) : null,
     priority: Number($('f-priority').value) || 3,
-    qtyPieces: Number($('f-qty-pieces').value) || 0,
-    qtyArts: Number($('f-qty-arts').value) || 0,
-    qtyVariations: Number($('f-qty-variations').value) || 0,
-    deliverableUserId: $('f-deliverable-user')?.value || null,
     // Checklist inicial — só faz sentido em CRIAÇÃO. Em edição ignora (o user
     // edita pela aba detail). Filtra itens vazios.
     checklist: editingId ? undefined : demandChecklistDraft.filter(it => (it.text || '').trim()).map(it => ({ text: it.text.trim(), ownerId: it.ownerId || null })),
@@ -10445,27 +10471,6 @@ function renderDetail() {
         </div>
 
         <div class="detail-block">
-          <div class="detail-field-label">Entregáveis</div>
-          <div class="detail-deliverables-row">
-            <div class="qty-cell qty-cell-inline">
-              <input class="form-control" id="detail-qty-pieces" type="number" min="0" step="1" value="${d.qtyPieces || ''}" placeholder="0" onchange="saveDeliverablesDetail()">
-              <span class="qty-cell-label">Peças <span class="qty-cell-hint" title="Peças únicas.">?</span></span>
-            </div>
-            <div class="qty-cell qty-cell-inline">
-              <input class="form-control" id="detail-qty-arts" type="number" min="0" step="1" value="${d.qtyArts || ''}" placeholder="0" onchange="saveDeliverablesDetail()">
-              <span class="qty-cell-label">Artes <span class="qty-cell-hint" title="Total de artes individuais.">?</span></span>
-            </div>
-            <div class="qty-cell qty-cell-inline">
-              <input class="form-control" id="detail-qty-variations" type="number" min="0" step="1" value="${d.qtyVariations || ''}" placeholder="0" onchange="saveDeliverablesDetail()">
-              <span class="qty-cell-label">Variações <span class="qty-cell-hint" title="Exportações/formatos.">?</span></span>
-            </div>
-            <div class="detail-deliverables-assign">
-              <select class="form-control" id="detail-deliverable-user" onchange="saveDeliverablesDetail()"></select>
-            </div>
-          </div>
-        </div>
-
-        <div class="detail-block">
           <div class="detail-field-label">Apontamentos ${totalHours > 0 ? `<span class="detail-block-total">· ${fmtHours(totalHours)}</span>` : ''}</div>
           <div class="time-list">${timeRows || '<div class="hours-empty" style="text-align:left">Nenhuma hora apontada ainda.</div>'}</div>
         </div>
@@ -10599,8 +10604,6 @@ function renderDetail() {
   if (getTimer(detailId).running) ensureTimerInterval();
 
   detailDirty = {};
-  // Popula select de "atribuir entregáveis a" — só agora que o DOM tá renderizado
-  fillDeliverableUserSelect('detail-deliverable-user', d.deliverableUserId || '', d.workspaceId);
   _updateComposeLock();
   // Injeta pipeline visual no slot da topbar (centralizado ao lado de "Demanda").
   const topPipe = document.getElementById('topbar-pipeline');
@@ -11947,43 +11950,6 @@ async function endRecurring(id) {
     renderRecurringDemands();
   } catch (e) {
     toast('Falha ao encerrar: ' + (e.message || 'erro'), 'error');
-  }
-}
-/* Popula <select> de "atribuir entregáveis a" — usuários ativos do workspace +
-   opção vazia (= cai pro responsável atual da demanda). */
-function fillDeliverableUserSelect(selId, currentValue, workspaceId) {
-  const sel = document.getElementById(selId);
-  if (!sel) return;
-  // Escopa ao WORKSPACE da demanda (não ao ativo do usuário). Em produção o
-  // usuário pode ter mudado o wsActive depois de abrir o detalhe — sem o
-  // scope da demanda, o dropdown lista usuários errados.
-  const wsScope = workspaceId || activeWs;
-  const list = users
-    .filter(u => u.active !== false && (u.isAdmin || (u.workspaces || []).includes(wsScope)))
-    .slice()
-    .sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-  // Placeholder neutro — SEM atribuição automática ao responsável atual.
-  sel.innerHTML = '<option value="">Atribuir responsável…</option>' +
-    list.map(u => `<option value="${u.id}" ${u.id === currentValue ? 'selected' : ''}>${esc(u.name)}${u.role ? ' · ' + esc(u.role) : ''}</option>`).join('');
-}
-
-/* Salva os 3 campos de entregáveis + usuário atribuído (do detail) via botão explícito. */
-async function saveDeliverablesDetail() {
-  if (!detailId) return;
-  const payload = {
-    qtyPieces: Number($('detail-qty-pieces')?.value) || 0,
-    qtyArts: Number($('detail-qty-arts')?.value) || 0,
-    qtyVariations: Number($('detail-qty-variations')?.value) || 0,
-    deliverableUserId: $('detail-deliverable-user')?.value || null
-  };
-  try {
-    const upd = await api('/demands/' + detailId, 'PUT', payload);
-    patchDemand(upd);
-    toast('Entregáveis atualizados!');
-    renderDetail();
-  } catch (e) {
-    console.error('[saveDeliverables] erro:', e);
-    toast(e.message || 'Erro ao salvar entregáveis', 'error');
   }
 }
 
@@ -16878,11 +16844,9 @@ async function savePersonalizada() {
     flowId,
     roleId: null,
     ownerId: $('persona-owner').value || null,
-    deliverableUserId: null,
     description: $('persona-desc').value || '',
     briefing: $('persona-briefing').value || '',
     priority: Number($('persona-priority').value) || 3,
-    qtyPieces: 0, qtyArts: 0, qtyVariations: 0,
     attachments: _personaAttachments,
     defaultChecklist: _personaChecklist.filter(it => (it.text || '').trim()).map(it => ({ text: it.text.trim() })),
     dayOfMonth: null,
@@ -17056,11 +17020,9 @@ async function saveNovaDemandaLista() {
     flowId: _ndlState.flowId,
     roleId: null,
     ownerId: $('ndl-owner').value || null,
-    deliverableUserId: null,
     description: $('ndl-desc').value || '',
     briefing: $('ndl-briefing').value || '',
     priority: Number($('ndl-priority').value) || 3,
-    qtyPieces: 0, qtyArts: 0, qtyVariations: 0,
     attachments: _ndlAttachments,
     defaultChecklist: _ndlChecklist.filter(it => (it.text || '').trim()).map(it => ({ text: it.text.trim() })),
     dayOfMonth: null,
@@ -17585,11 +17547,9 @@ async function duplicateLista(id) {
           flowId: r.flowId,
           roleId: r.roleId,
           ownerId: r.ownerId,
-          deliverableUserId: r.deliverableUserId,
           description: r.description,
           briefing: r.briefing,
           priority: r.priority,
-          qtyPieces: r.qtyPieces, qtyArts: r.qtyArts, qtyVariations: r.qtyVariations,
           defaultChecklist: r.defaultChecklist,
           dayOfMonth: r.dayOfMonth,
           listaId: newLista.id,
@@ -17713,11 +17673,9 @@ async function saveDuplicarLista() {
         flowId: r.flowId,
         roleId: r.roleId,
         ownerId: r.ownerId,
-        deliverableUserId: r.deliverableUserId,
         description: r.description,
         briefing: r.briefing,
         priority: r.priority,
-        qtyPieces: r.qtyPieces, qtyArts: r.qtyArts, qtyVariations: r.qtyVariations,
         defaultChecklist: r.defaultChecklist,
         dayOfMonth: r.dayOfMonth,
         listaId: newLista.id,
@@ -17782,8 +17740,6 @@ function openRecurringModal(id) {
   const wsUsersList = wsUsers().slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
   $('rec-owner').innerHTML = '<option value="">— Sem responsável fixo —</option>' +
     wsUsersList.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('');
-  $('rec-deliverable-user').innerHTML = '<option value="">— Responsável atual —</option>' +
-    wsUsersList.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('');
 
   if (id) {
     const r = recurrings.find(x => x.id === id);
@@ -17799,10 +17755,6 @@ function openRecurringModal(id) {
     $('rec-dom').value = r.dayOfMonth || '';
     $('rec-desc').value = r.description || '';
     $('rec-briefing').value = r.briefing || '';
-    $('rec-qty-pieces').value = r.qtyPieces || '';
-    $('rec-qty-arts').value = r.qtyArts || '';
-    $('rec-qty-variations').value = r.qtyVariations || '';
-    $('rec-deliverable-user').value = r.deliverableUserId || '';
     $('rec-priority').value = r.priority || 3;
     $('rec-active').checked = r.active !== false;
     _recModalListaId = r.listaId || null;
@@ -17818,10 +17770,6 @@ function openRecurringModal(id) {
     $('rec-dom').value = '';
     $('rec-desc').value = '';
     $('rec-briefing').value = '';
-    $('rec-qty-pieces').value = '';
-    $('rec-qty-arts').value = '';
-    $('rec-qty-variations').value = '';
-    $('rec-deliverable-user').value = '';
     $('rec-priority').value = '3';
     $('rec-active').checked = true;
     _recModalListaId = null;
@@ -17886,13 +17834,9 @@ async function saveRecurring() {
     flowId,
     roleId: $('rec-role').value || null,
     ownerId: $('rec-owner').value || null,
-    deliverableUserId: $('rec-deliverable-user').value || null,
     description: $('rec-desc').value || '',
     briefing: $('rec-briefing').value || '',
     priority: Number($('rec-priority').value) || 3,
-    qtyPieces: Number($('rec-qty-pieces').value) || 0,
-    qtyArts: Number($('rec-qty-arts').value) || 0,
-    qtyVariations: Number($('rec-qty-variations').value) || 0,
     dayOfMonth: $('rec-dom').value ? Number($('rec-dom').value) : null,
     active: $('rec-active').checked,
     listaId: _recModalListaId,
@@ -18125,9 +18069,8 @@ async function applyResolvedLista(template, ctx, list) {
           name: item.name, clientId: ctx.clientId || null, projectId: ctx.projectId || null,
           flowId,                              // fluxo RESOLVIDO do cliente alvo
           roleId: item.roleId,
-          ownerId: null, deliverableUserId: null, // resolve pelos roles do cliente na geração
+          ownerId: null, // resolve pelos roles do cliente na geração
           description: item.description, briefing: item.briefing, priority: item.priority,
-          qtyPieces: item.qtyPieces, qtyArts: item.qtyArts, qtyVariations: item.qtyVariations,
           defaultChecklist: item.defaultChecklist, dayOfMonth: item.dayOfMonth,
           listaId: applied.id, active: true
         });
@@ -19340,9 +19283,6 @@ const DEMAND_DIMS = [
 ];
 const DEMAND_METRICS = [
   { key: 'count',          label: 'Contagem de demandas', supports: ['sum'] },
-  { key: 'qtyPieces',      label: 'Peças',                supports: ['sum','avg'] },
-  { key: 'qtyArts',        label: 'Artes',                supports: ['sum','avg'] },
-  { key: 'qtyVariations',  label: 'Variações',            supports: ['sum','avg'] },
   { key: 'estimatedHours', label: 'Horas estimadas',      supports: ['sum','avg'] },
   { key: 'realHours',      label: 'Horas realizadas',     supports: ['sum','avg'] }
 ];
@@ -19506,13 +19446,10 @@ function _dimResolve(r, dim, w) {
 }
 
 /* Retorna a métrica numérica de um registro. Usa `metric` como identificador:
-   'count' (sempre 1), 'hours', 'qtyPieces', 'estimatedHours', 'realHours', 'field:<id>'. */
+   'count' (sempre 1), 'hours', 'estimatedHours', 'realHours', 'field:<id>'. */
 function _metricValue(r, metric, w) {
   if (!metric || metric === 'count') return 1;
   if (metric === 'hours')          return Number(r.hours) || 0;
-  if (metric === 'qtyPieces')      return Number(r.__demand?.qtyPieces || r.qtyPieces) || 0;
-  if (metric === 'qtyArts')        return Number(r.__demand?.qtyArts || r.qtyArts) || 0;
-  if (metric === 'qtyVariations')  return Number(r.__demand?.qtyVariations || r.qtyVariations) || 0;
   if (metric === 'estimatedHours') return Number(r.__demand?.estimatedHours || r.estimatedHours) || 0;
   if (metric === 'realHours') {
     const d = r.__demand || r;
@@ -19603,7 +19540,7 @@ function _renderPivotWidget(w) {
   </div>`;
 }
 function _metricLabel(metric, aggregate) {
-  const m = { count: 'Contagem', hours: 'Horas', qtyPieces: 'Peças', qtyArts: 'Artes', qtyVariations: 'Variações', estimatedHours: 'Horas est.', realHours: 'Horas real.' };
+  const m = { count: 'Contagem', hours: 'Horas', estimatedHours: 'Horas est.', realHours: 'Horas real.' };
   const base = m[metric] || (metric.startsWith('field:') ? 'Campo' : metric);
   if (aggregate === 'avg') return 'Média · ' + base;
   return base;
@@ -22870,6 +22807,25 @@ document.addEventListener('click', e => {
 
 /* ─── BULK ACTIONS — seleção múltipla de demandas na lista ─── */
 let selectedDemandIds = new Set();
+/* Modo de seleção: por padrão desligado (as checkboxes ficam escondidas via
+   CSS `.page-list-bulk-off`). Persiste em localStorage entre sessões. */
+let _bulkMode = false;
+try { _bulkMode = localStorage.getItem('kastor-bulk-mode') === '1'; } catch {}
+function _applyBulkMode() {
+  const page = document.getElementById('page-list');
+  if (page) page.classList.toggle('bulk-mode-on', _bulkMode);
+  const label = document.getElementById('list-bulk-toggle-label');
+  if (label) label.textContent = _bulkMode ? 'Sair da seleção' : 'Selecionar demandas';
+  const item = document.getElementById('list-bulk-toggle-item');
+  if (item) item.classList.toggle('is-active', _bulkMode);
+}
+function toggleBulkMode() {
+  _bulkMode = !_bulkMode;
+  try { localStorage.setItem('kastor-bulk-mode', _bulkMode ? '1' : '0'); } catch {}
+  if (!_bulkMode) clearBulkSelection();
+  _applyBulkMode();
+  refreshBulkBar();
+}
 function onDemandRowClick(ev, id) {
   // Click no checkbox NÃO abre o detalhe (handled por event.stopPropagation no input).
   // Click em qualquer outra parte da row abre normalmente.
@@ -22909,7 +22865,10 @@ function refreshBulkBar() {
   const checkAll = $('bulk-check-all');
   if (!bar) return;
   const n = selectedDemandIds.size;
-  bar.classList.toggle('open', n > 0);
+  // Só mostra a barra em modo seleção — se o modo está off, mesmo com seleção
+  // residual (não deveria acontecer, clearBulkSelection roda no toggle) a barra
+  // continua escondida.
+  bar.classList.toggle('open', _bulkMode && n > 0);
   if (count) count.textContent = `${n} ${n === 1 ? 'selecionada' : 'selecionadas'}`;
   // Sincroniza o "select all" com a seleção atual
   if (checkAll) {
