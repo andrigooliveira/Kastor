@@ -1075,13 +1075,13 @@ body::before {
 }
 .login-split-headline {
   position: relative;
-  font-size: 30px;
+  font-size: 48px;
   font-weight: 600;
-  line-height: 1.15;
-  letter-spacing: -0.02em;
-  max-width: 520px;
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+  max-width: 620px;
   color: #fff;
-  text-shadow: 0 1px 8px rgba(0,0,0,0.25);
+  text-shadow: 0 1px 12px rgba(0,0,0,0.28);
 }
 .login-split-credit {
   position: relative;
@@ -3514,6 +3514,17 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 .dash-kpi-sub {
   font-size: 11.5px; color: var(--text-muted); line-height: 1.3;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Saudação personalizada no topo do dashboard — muda com a hora do dia.
+   Populada por renderDashGreeting() em app.js. */
+.dash-greeting {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  margin: 0 0 20px;
+  line-height: 1.2;
 }
 
 /* Grid principal — 2 colunas (2fr / 1fr). Widgets abraçam o conteúdo. */

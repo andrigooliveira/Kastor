@@ -4540,9 +4540,29 @@ async function refreshDashMeetingHours() {
   }
 }
 
+/* Saudação do topo do dashboard — muda com a hora local do browser.
+     06–12 Bom dia · 12–18 Boa tarde · 18–23 Boa noite · 23–06 Trabalhando tarde?
+   Usa o primeiro nome do usuário logado (me.name split ' '[0]). Se me
+   ainda não estiver carregado, esconde o elemento. */
+function renderDashGreeting() {
+  const el = document.getElementById('dash-greeting');
+  if (!el) return;
+  if (!me || !me.name) { el.hidden = true; return; }
+  const first = String(me.name).trim().split(/\s+/)[0] || '';
+  const h = new Date().getHours();
+  let msg;
+  if (h >= 23 || h < 6)      msg = `Trabalhando tarde, ${first}?`;
+  else if (h < 12)           msg = `Bom dia, ${first}!`;
+  else if (h < 18)           msg = `Boa tarde, ${first}!`;
+  else                       msg = `Boa noite, ${first}!`;
+  el.textContent = msg;
+  el.hidden = false;
+}
+
 function renderDashboard() {
   // Dashboard individualizado: sempre no escopo do usuário logado.
   if (!me?.id) return;
+  renderDashGreeting();
   const mine = _dashMyDemands();
   const mineActive = mine.filter(d => !isDone(d));
   const teamScope = dashScopedDemands(); // team-wide (workspaces acessíveis)

@@ -14,12 +14,12 @@
 <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/geist-latin-ext.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/css/fonts.css?v=1">
-<link rel="stylesheet" href="/css/style.css?v=20260908split4">
+<link rel="stylesheet" href="/css/style.css?v=20260909greet2">
 <!-- Preload dos JS pesados no <head> pra que o download comece IMEDIATAMENTE,
      em paralelo com o parse do HTML, em vez de esperar o parser chegar em
      </body>. Com immutable cache (max-age=1yr), na 2ª visita nem baixa. -->
 <link rel="preload" href="/vendor/lucide.min.js" as="script">
-<link rel="preload" href="/js/app.js?v=20260908split4" as="script">
+<link rel="preload" href="/js/app.js?v=20260909greet2" as="script">
 <script type="text/javascript">
     // Clarity: analytics de heatmap/session replay. Não é crítico pro app —
     // deferido pra depois do primeiro paint pra não roubar tempo do LCP.
@@ -59,9 +59,9 @@
          Visibilidade controlada por checkDiscordOAuthAvailable() no boot. -->
     <div class="login-divider" id="login-discord-wrap">
       <div class="login-divider-line"><span>ou</span></div>
-      <button type="button" class="btn-discord-soon" disabled aria-disabled="true" title="Em breve — login com Discord ainda não está disponível">
+      <button type="button" class="btn-discord-oauth" onclick="loginWithDiscord()">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M19.27 5.33a19.19 19.19 0 0 0-4.85-1.53.07.07 0 0 0-.07.03c-.21.38-.44.87-.6 1.26a17.86 17.86 0 0 0-5.5 0 12.6 12.6 0 0 0-.61-1.26.08.08 0 0 0-.07-.03A19.19 19.19 0 0 0 2.73 5.33a.07.07 0 0 0-.03.03C.57 8.63 0 11.83.28 15a19.32 19.32 0 0 0 5.83 2.97.08.08 0 0 0 .09-.03 13.4 13.4 0 0 0 1.19-1.94.08.08 0 0 0-.04-.1 12.8 12.8 0 0 1-1.83-.87.08.08 0 0 1 0-.13c.12-.09.25-.18.36-.28a.08.08 0 0 1 .08 0c3.84 1.76 7.99 1.76 11.79 0a.08.08 0 0 1 .08 0c.12.1.24.19.36.28a.08.08 0 0 1 0 .13c-.58.35-1.2.64-1.83.87a.08.08 0 0 0-.04.1 15 15 0 0 0 1.19 1.94.08.08 0 0 0 .09.03A19.27 19.27 0 0 0 21.72 15c.33-3.67-.55-6.83-2.42-9.64a.07.07 0 0 0-.03-.03zM8.02 12.9c-1.15 0-2.1-1.06-2.1-2.35 0-1.3.93-2.35 2.1-2.35 1.18 0 2.12 1.06 2.1 2.35 0 1.29-.94 2.35-2.1 2.35zm7.79 0c-1.15 0-2.1-1.06-2.1-2.35 0-1.3.93-2.35 2.1-2.35 1.18 0 2.12 1.06 2.1 2.35 0 1.29-.92 2.35-2.1 2.35z"/></svg>
-        Entrar com Discord — em breve
+        Entrar com Discord
       </button>
     </div>
       <div class="login-hint">Acessos são criados internamente pela equipe.</div>
@@ -289,6 +289,9 @@
     <!-- ── DASHBOARD ── -->
     <div class="page active" id="page-dashboard">
       <div class="page-body">
+        <!-- Saudação — muda de acordo com a hora do dia. Populada por
+             renderDashGreeting() no boot do dashboard. -->
+        <div class="dash-greeting" id="dash-greeting" hidden></div>
         <!-- Dashboard individualizado: cada usuário vê só o seu.
              5 seções: Previstas (com toggle Previstas/Prazos), Em atraso,
              Prioridade, Radar e Top responsáveis. -->
@@ -3888,7 +3891,7 @@
 <div id="toast-container"></div>
 
 <script src="/vendor/lucide.min.js"></script>
-<script src="/js/app.js?v=20260908split4"></script>
+<script src="/js/app.js?v=20260909greet2"></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
