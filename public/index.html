@@ -18,7 +18,7 @@
      O style.css completo é carregado sob demanda pelo boot.js depois que o
      user autentica. Isso derruba o LCP no cold load (deslogado / /reset). -->
 <style id="critical-css">
-:root{color-scheme:dark;--bg:#0a0a0a;--surface:#171717;--surface-2:#262626;--surface-3:#333;--border:rgba(255,255,255,.10);--hairline:rgba(255,255,255,.06);--accent:#7A00FF;--accent-text:#B380FF;--accent-dim:rgba(122,0,255,.15);--danger:#ff6467;--text:#fafafa;--text-dim:#b8b8b8;--text-muted:#a1a1a1;--radius-sm:6px;--radius-lg:14px;--shadow-xl:0 24px 64px rgba(0,0,0,.38),0 8px 16px rgba(0,0,0,.22);--shadow-focus:0 0 0 4px var(--accent-dim);--glass-strong:rgba(22,22,22,.86);--ease-out:cubic-bezier(.16,1,.3,1);--ease-spring:cubic-bezier(.32,.72,0,1)}
+:root{color-scheme:dark;--bg:#0c0c10;--surface:#17171c;--surface-2:#22222a;--surface-3:#2d2d36;--border:rgba(255,255,255,.10);--hairline:rgba(255,255,255,.06);--accent:#7A00FF;--accent-text:#B380FF;--accent-dim:rgba(122,0,255,.15);--danger:#ff6467;--text:#f5f5f7;--text-dim:#b8b8b8;--text-muted:#a1a1a1;--radius-sm:6px;--radius-lg:14px;--shadow-xl:0 24px 64px rgba(0,0,0,.44),0 8px 16px rgba(0,0,0,.24);--shadow-focus:0 0 0 4px var(--accent-dim);--glass-strong:rgba(23,23,28,.88);--ease-out:cubic-bezier(.16,1,.3,1);--ease-spring:cubic-bezier(.32,.72,0,1)}
 :root[data-theme="light"]{color-scheme:light;--bg:#fff;--surface:#fff;--surface-2:#f5f5f5;--surface-3:#ebebeb;--border:#e5e5e5;--hairline:#e5e5e5;--danger:#e7000b;--text:#000;--text-dim:#4a4a4a;--text-muted:#737373;--accent-text:#5E00CC;--accent-dim:rgba(122,0,255,.10);--glass-strong:rgba(255,255,255,.86);--shadow-xl:0 24px 64px rgba(0,0,0,.14),0 8px 16px rgba(0,0,0,.08)}
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:var(--bg);color:var(--text);font-family:'Geist','Segoe UI',system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
@@ -4091,7 +4091,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260910notes3" defer></script>
+<script src="/js/boot.js?v=20260910timerfix2" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

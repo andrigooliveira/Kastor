@@ -1387,12 +1387,14 @@ function donutSVG(segments, opts = {}) {
   const C = 2 * Math.PI * r;
   const total = segments.reduce((s, x) => s + (x.value || 0), 0);
   let acc = 0;
-  const arcs = total > 0 ? segments.filter(s => s.value > 0).map(s => {
+  const arcs = total > 0 ? segments.filter(s => s.value > 0).map((s, i) => {
     const frac = s.value / total;
     const len = frac * C;
     const off = -acc * C;
     acc += frac;
-    return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${s.color}" stroke-width="${thick}" stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}" stroke-dashoffset="${off.toFixed(2)}"/>`;
+    // Anima a stroke-dasharray via CSS var + keyframes — cada slice entra em
+    // sequência (stagger 120ms). Fica "preenchendo" em vez de aparecer pronto.
+    return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${s.color}" stroke-width="${thick}" stroke-linecap="butt" class="donut-slice" style="--slice-len:${len.toFixed(2)};--slice-gap:${(C - len).toFixed(2)};--slice-off:${off.toFixed(2)};--slice-delay:${i * 120}ms"/>`;
   }).join('') : '';
   const track = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--hairline)" stroke-width="${thick}"/>`;
   const hasSub = !!opts.centerSub;
@@ -5016,7 +5018,35 @@ function renderDashGreeting() {
   else if (h < 12)           msg = `Bom dia, ${first}!`;
   else if (h < 18)           msg = `Boa tarde, ${first}!`;
   else                       msg = `Boa noite, ${first}!`;
-  el.textContent = msg;
+
+  // Subtítulo com 3 números-chave do dia — foco, parada, previstas até sexta.
+  // Puxa do cache local sem request extra.
+  let subline = '';
+  try {
+    const mine = _dashMyDemands ? _dashMyDemands().filter(d => !isDone(d)) : [];
+    const nowD = new Date(); nowD.setHours(23,59,59,999);
+    const foco = mine.filter(d => {
+      const dl = d.deadline ? new Date(d.deadline) : null;
+      return dl && dl <= nowD;
+    }).length;
+    const paradas = mine.filter(d => d.status === 'blocked' || d.blocked).length;
+    // Previstas até sexta (fim de semana atual dias úteis).
+    const eow = new Date(); eow.setHours(23,59,59,999);
+    const dow = eow.getDay();
+    const daysToFriday = (5 - dow + 7) % 7 || 0;
+    eow.setDate(eow.getDate() + daysToFriday);
+    const previstas = mine.filter(d => {
+      const dl = d.deadline ? new Date(d.deadline) : null;
+      return dl && dl > nowD && dl <= eow;
+    }).length;
+    const parts = [];
+    parts.push(`<b>${foco}</b> ${foco === 1 ? 'foco' : 'focos'} pra hoje`);
+    if (paradas) parts.push(`<b>${paradas}</b> ${paradas === 1 ? 'parada' : 'paradas'}`);
+    parts.push(`<b>${previstas}</b> ${previstas === 1 ? 'prevista' : 'previstas'} até sexta`);
+    subline = parts.join(' <span class="dash-greeting-sep">·</span> ');
+  } catch {}
+
+  el.innerHTML = `<span class="dash-greeting-msg">${esc(msg)}</span>${subline ? `<div class="dash-greeting-sub">${subline}</div>` : ''}`;
   el.hidden = false;
 }
 
@@ -11254,18 +11284,32 @@ function renderDetail() {
   const owner = userById(d.ownerId);
   const hasCustomization = Array.isArray(d.skippedStages) && d.skippedStages.length > 0;
 
-  // Pipeline: círculos numerados ligados por um traço (sem labels — nome aparece no tooltip)
+  // Pipeline: círculos numerados com cor da etapa (done/current pintados com a cor
+   // da própria etapa; futuras ficam neutras). Nome aparece via tooltip.
+   // A "trilha" preenchida vira uma sequência de segmentos coloridos — cada segmento
+   // usa a cor da etapa de DESTINO (o segmento entre 3 e 4 tem a cor da etapa 4).
   const stepCount = active.length;
   const fillPct = stepCount > 1 ? (idx / (stepCount - 1)) * 100 : (idx >= 0 ? 100 : 0);
+  const segments = [];
+  if (flow && stepCount > 1) {
+    // Renderiza segmento i→(i+1) até o atual (idx). Se etapa atual é a 0, sem segmentos.
+    for (let i = 0; i < idx; i++) {
+      const from = (i / (stepCount - 1)) * 100;
+      const to = ((i + 1) / (stepCount - 1)) * 100;
+      const destColor = active[i + 1]?.color || 'var(--accent)';
+      segments.push(`<div class="pipeline-bar-seg" style="left:${from.toFixed(2)}%;width:${(to - from).toFixed(2)}%;background:${esc(destColor)}"></div>`);
+    }
+  }
   const pipeline = flow ? `
     <div class="pipeline-bar" style="--fill:${Math.max(0, Math.min(100, fillPct))}%">
       <div class="pipeline-bar-track"></div>
-      <div class="pipeline-bar-fill"></div>
+      <div class="pipeline-bar-fill-multi">${segments.join('')}</div>
       <div class="pipeline-bar-steps">
         ${active.map((s, i) => {
           const stepPct = stepCount > 1 ? (i / (stepCount - 1)) * 100 : 50;
           const state = i < idx ? 'done' : (i === idx ? 'current' : '');
-          return `<div class="pipeline-bar-step ${state}" style="left:${stepPct}%" data-tooltip="${esc(s.label)}">
+          const color = s.color || 'var(--accent)';
+          return `<div class="pipeline-bar-step ${state}" style="left:${stepPct}%;--step-color:${esc(color)}" data-tooltip="${esc(s.label)}">
             <div class="pipeline-bar-dot">${i + 1}</div>
           </div>`;
         }).join('')}
@@ -11413,6 +11457,15 @@ function renderDetail() {
           <div id="detail-owner-picker"></div>
         </div>
 
+        ${stage ? `<div class="detail-stage-card" style="--stage-color:${esc(stage.color || '#7A00FF')}">
+          <div class="detail-stage-card-icon"><i data-lucide="${stage.done ? 'check-circle' : 'compass'}" class="ic-sm"></i></div>
+          <div class="detail-stage-card-info">
+            <div class="detail-stage-card-label">${stage.done ? 'Concluída na etapa' : 'Etapa atual'}</div>
+            <div class="detail-stage-card-name">${esc(stage.label)}</div>
+          </div>
+          ${d.stageDueDate ? `<div class="detail-stage-card-due"><i data-lucide="clock" class="ic-xs"></i> Prazo desta etapa: <b>${fmtDate(d.stageDueDate)}</b></div>` : ''}
+        </div>` : ''}
+
         <div class="detail-meta-row">
           <div class="detail-field">
             <div class="detail-field-label">Prioridade</div>
@@ -11420,15 +11473,15 @@ function renderDetail() {
           </div>
           <div class="detail-field">
             <div class="detail-field-label">Entrou na etapa em</div>
-            <div class="detail-field-value">${fmtDateTime(d.stageEnteredAt)}</div>
+            <div class="detail-field-value"><i data-lucide="log-in" class="ic-xs meta-ico meta-ico-info"></i> ${fmtDateTime(d.stageEnteredAt)}</div>
           </div>
           <div class="detail-field">
             <div class="detail-field-label">Criada em</div>
-            <div class="detail-field-value">${fmtDateTime(d.createdAt)}</div>
+            <div class="detail-field-value"><i data-lucide="calendar-plus" class="ic-xs meta-ico meta-ico-brand"></i> ${fmtDateTime(d.createdAt)}</div>
           </div>
           <div class="detail-field">
             <div class="detail-field-label">Concluída em</div>
-            <div class="detail-field-value">${d.completedAt ? fmtDate(d.completedAt) : '—'}</div>
+            <div class="detail-field-value"><i data-lucide="check-circle-2" class="ic-xs meta-ico ${d.completedAt ? 'meta-ico-done' : 'meta-ico-pending'}"></i> ${d.completedAt ? fmtDate(d.completedAt) : '—'}</div>
           </div>
         </div>
 
@@ -13652,10 +13705,21 @@ async function apontarFromTopbar() {
   if (!d) { toast('Demanda não encontrada.', 'error'); return; }
   const t = timerState[activeTimerId];
   const ms = timerElapsedMs(t);
+  // Threshold explícito: 1 minuto (60_000 ms). Antes o Math.round da hora podia
+  // deixar apontamentos com poucos segundos passarem como 0.01h, e o toast
+  // "sem tempo" era enganoso — agora a mensagem é direta.
+  if (ms < 60000) { toast('Não é possível apontar menos de 1 minuto.', 'warn'); return; }
   const hours = Math.round((ms / 3600000) * 100) / 100;
-  if (!(hours > 0)) { toast('Sem tempo pra apontar.', 'warn'); return; }
-  const startIso = t.startedAt ? new Date(t.startedAt).toISOString().slice(0, 16) : null;
-  const endIso = new Date().toISOString().slice(0, 16);
+  if (!(hours > 0)) { toast('Não é possível apontar menos de 1 minuto.', 'warn'); return; }
+  // Formata como `YYYY-MM-DDTHH:mm` no fuso LOCAL — toISOString() converte pra
+  // UTC e distorce o horário exibido depois (usuário em BRT via 13h em vez de 10h).
+  const toLocalMinute = date => {
+    const dt = date instanceof Date ? date : new Date(date);
+    const off = dt.getTimezoneOffset();
+    return new Date(dt.getTime() - off * 60000).toISOString().slice(0, 16);
+  };
+  const startIso = t.startedAt ? toLocalMinute(t.startedAt) : null;
+  const endIso = toLocalMinute(new Date());
   try {
     const upd = await api('/demands/' + d.id + '/time', 'POST', { hours, start: startIso, end: endIso });
     patchDemand(upd);
