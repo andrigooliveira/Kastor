@@ -3491,6 +3491,19 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 .an-tab:hover { color: var(--text); }
 .an-tab.is-active { color: var(--text); border-bottom-color: var(--accent); }
 
+/* ── Release Notes (modal 1x/dia) ── mostra novidades desde a última visita. */
+.release-notes-intro { font-size: 13px; color: var(--text-muted); margin: 0 0 16px; }
+.release-note-card {
+  background: var(--surface-2); border: 1px solid var(--hairline);
+  border-radius: 10px; padding: 14px 16px; margin-bottom: 12px;
+}
+.release-note-card:last-child { margin-bottom: 0; }
+.release-note-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.release-note-title { font-size: 14px; font-weight: 700; color: var(--text); }
+.release-note-date { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.release-note-list { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: var(--text); line-height: 1.55; }
+.release-note-list li { margin-bottom: 4px; }
+
 /* ── Tour de boas-vindas ── overlay com spotlight (SVG mask) + tooltip.
    Ativa só no primeiro login (server controla via user.hasSeenTour).
    O spotlight é um rect no SVG que "fura" a máscara escura, revelando o

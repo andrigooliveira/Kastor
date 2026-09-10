@@ -3677,6 +3677,9 @@ async function enterApp() {
         history.replaceState(null, '', location.pathname);
       }
       setTimeout(() => { try { startWelcomeTour(); } catch {} }, 600);
+    } else {
+      // Se não tem tour, checa notas de atualização (também respeita rate limit).
+      setTimeout(() => { try { maybeShowReleaseNotes(); } catch {} }, 800);
     }
   }));
 }
@@ -4027,6 +4030,50 @@ async function tourFinish() {
     await api('/me/tour-complete', 'POST');
     if (me) me.hasSeenTour = true;
   } catch {}
+  // Depois de fechar o tour, checa notas de atualização (respeita rate limit
+  // de 1x/dia no server — se já viu hoje, nada abre).
+  setTimeout(() => { try { maybeShowReleaseNotes(); } catch {} }, 400);
+}
+
+/* ─── RELEASE NOTES ─── modal 1x/dia com o que mudou na plataforma. */
+let _releaseNotesPending = [];
+async function maybeShowReleaseNotes() {
+  try {
+    const r = await api('/me/release-notes');
+    const notes = (r && r.notes) || [];
+    if (!notes.length) return;
+    _releaseNotesPending = notes;
+    renderReleaseNotes(notes);
+    openModal('release-notes-modal');
+  } catch {}
+}
+function renderReleaseNotes(notes) {
+  const wrap = $('release-notes-list');
+  if (!wrap) return;
+  const fmt = d => {
+    if (!d) return '';
+    const [y, m, dd] = d.split('-');
+    return `${dd}/${m}/${y.slice(2)}`;
+  };
+  wrap.innerHTML = notes.map(n => `
+    <div class="release-note-card">
+      <div class="release-note-head">
+        <div class="release-note-title">${esc(n.title || '')}</div>
+        <div class="release-note-date">${esc(fmt(n.date))}</div>
+      </div>
+      <ul class="release-note-list">
+        ${(n.highlights || []).map(h => `<li>${esc(h)}</li>`).join('')}
+      </ul>
+    </div>
+  `).join('');
+  if (window.lucide) lucide.createIcons();
+}
+async function dismissReleaseNotes() {
+  closeModal('release-notes-modal');
+  const ids = _releaseNotesPending.map(n => n.id);
+  _releaseNotesPending = [];
+  if (!ids.length) return;
+  try { await api('/me/release-notes-seen', 'POST', { ids }); } catch {}
 }
 
 async function loadAll() {

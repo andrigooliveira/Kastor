@@ -166,6 +166,24 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
   </div>
 </div>
 
+<!-- RELEASE NOTES / NOTAS DE ATUALIZAÇÃO — modal simples, 1x/dia.
+     Puxa /api/me/release-notes e mostra as pendentes. Dismiss = mark as seen. -->
+<div class="modal-overlay" id="release-notes-modal">
+  <div class="modal modal-md">
+    <div class="modal-header">
+      <div class="modal-title"><i data-lucide="sparkles" class="ic-sm"></i> Novidades do reWork</div>
+      <button class="modal-close" onclick="dismissReleaseNotes()"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <p class="release-notes-intro">Confira o que mudou desde a sua última visita.</p>
+      <div id="release-notes-list"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="dismissReleaseNotes()">Ok, entendi</button>
+    </div>
+  </div>
+</div>
+
 <!-- TOUR DE BOAS-VINDAS — overlay com spotlight + tooltip. Ativado apenas no
      primeiro acesso do usuário (server marca hasSeenTour após completar/pular). -->
 <div id="tour-overlay" aria-hidden="true">
@@ -4064,7 +4082,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260910icons" defer></script>
+<script src="/js/boot.js?v=20260910notes" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

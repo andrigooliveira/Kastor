@@ -471,9 +471,9 @@ function seed(firstInstall) {
 function publicUser(u) {
   if (!u) return null;
   // Nunca expõe tokens do Google — refresh_token é credencial de longa duração.
-  // Também remove knownIps (histórico de IPs é interno, uso de auditoria).
-  // Devolve booleano + info da conta pra frontend saber que tá conectado.
-  const { googleTokens, googleSyncTokens, knownIps, ...rest } = u;
+  // Também remove knownIps e releaseNotesSeenIds (metadados internos, sem uso
+  // no frontend). Devolve booleano + info da conta pra frontend saber que tá conectado.
+  const { googleTokens, googleSyncTokens, knownIps, releaseNotesSeenIds, ...rest } = u;
   rest.googleConnected = !!googleTokens;
   return rest;
 }
@@ -1761,6 +1761,73 @@ app.post('/api/me/tour-complete', requireAuth, (req, res) => {
     saveEntity('users', user);
   }
   res.json({ ok: true, hasSeenTour: true });
+});
+
+/* ─── RELEASE NOTES / NOTAS DE ATUALIZAÇÃO ─────────────────────────────
+   Fonte: release-notes.json na raiz do projeto (versionado no git).
+   Devs adicionam entradas antes do deploy. Estrutura de cada entrada:
+     { id: 'slug-unico', date: 'YYYY-MM-DD', title, highlights: [] }
+   Cache em memória com refresh no filestamp — evita re-ler o arquivo a
+   cada request mas pega mudanças pós-deploy sem restart.
+
+   Regras de exibição pro usuário:
+   - Rate limit: 1x por dia (user.releaseNotesShownAt = YYYY-MM-DD).
+   - Só entradas com id NÃO em user.releaseNotesSeenIds.
+   - Ordenadas por data desc, cap em 5.
+   - Se hoje já mostrou (mesma data em shownAt), retorna vazio. */
+const RELEASE_NOTES_PATH = path.join(__dirname, 'release-notes.json');
+let _releaseNotesCache = { data: [], mtime: 0 };
+function _loadReleaseNotes() {
+  try {
+    const st = fs.statSync(RELEASE_NOTES_PATH);
+    if (st.mtimeMs === _releaseNotesCache.mtime) return _releaseNotesCache.data;
+    const raw = fs.readFileSync(RELEASE_NOTES_PATH, 'utf8');
+    const arr = JSON.parse(raw);
+    _releaseNotesCache = { data: Array.isArray(arr) ? arr : [], mtime: st.mtimeMs };
+  } catch { _releaseNotesCache = { data: [], mtime: 0 }; }
+  return _releaseNotesCache.data;
+}
+function _todayYmd() { return new Date().toISOString().slice(0, 10); }
+
+app.get('/api/me/release-notes', requireAuth, (req, res) => {
+  const user = req.user;
+  const today = _todayYmd();
+  // Rate limit: já viu hoje → nada pendente.
+  if (user.releaseNotesShownAt === today) return res.json({ notes: [] });
+  const all = _loadReleaseNotes();
+  const seen = new Set(user.releaseNotesSeenIds || []);
+  const pending = all
+    .filter(n => n && n.id && !seen.has(n.id))
+    .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+    .slice(0, 5)
+    .map(n => ({ id: n.id, date: n.date, title: n.title, highlights: Array.isArray(n.highlights) ? n.highlights : [] }));
+  res.json({ notes: pending });
+});
+
+/* Marca notas como vistas + registra data pra rate limit diário. Idempotente. */
+app.post('/api/me/release-notes-seen', requireAuth, (req, res) => {
+  const user = req.user;
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(x => typeof x === 'string').slice(0, 50) : [];
+  if (!Array.isArray(user.releaseNotesSeenIds)) user.releaseNotesSeenIds = [];
+  let changed = false;
+  for (const id of ids) {
+    if (!user.releaseNotesSeenIds.includes(id)) {
+      user.releaseNotesSeenIds.push(id);
+      changed = true;
+    }
+  }
+  // Cap defensivo: guarda últimos 200 ids.
+  if (user.releaseNotesSeenIds.length > 200) {
+    user.releaseNotesSeenIds = user.releaseNotesSeenIds.slice(-200);
+    changed = true;
+  }
+  const today = _todayYmd();
+  if (user.releaseNotesShownAt !== today) {
+    user.releaseNotesShownAt = today;
+    changed = true;
+  }
+  if (changed) saveEntity('users', user);
+  res.json({ ok: true });
 });
 
 app.post('/api/logout', requireAuth, (req, res) => {

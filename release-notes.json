@@ -1,0 +1,22 @@
+[
+  {
+    "id": "2026-09-10-tour-lgpd-icons",
+    "date": "2026-09-10",
+    "title": "Tour de boas-vindas, revisão LGPD e melhorias visuais",
+    "highlights": [
+      "Novo tour interativo no primeiro login — passa pelas principais telas. Você pode refazer pelo Perfil › Segurança.",
+      "Termos e Política de Privacidade revisados com foco em LGPD, agora acessíveis pelo rodapé do login e pelo Perfil.",
+      "Ícones do sistema padronizados em 16px em várias telas (Perfil, Clientes, Minhas Demandas).",
+      "Bot do Discord agora puxa a foto do cliente corretamente nas notificações do canal."
+    ]
+  },
+  {
+    "id": "2026-09-09-ritmo-publico",
+    "date": "2026-09-09",
+    "title": "Aba Ritmo em Análises e link público por cliente",
+    "highlights": [
+      "Nova aba 'Ritmo' em Análises: burndown semanal por squad com linha ideal baseada nos prazos combinados.",
+      "Compartilhamento por cliente: gere links públicos read-only (com pause/revoke) pra stakeholders acompanharem o pipeline sem login."
+    ]
+  }
+]
