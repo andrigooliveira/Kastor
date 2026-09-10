@@ -3491,6 +3491,79 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 .an-tab:hover { color: var(--text); }
 .an-tab.is-active { color: var(--text); border-bottom-color: var(--accent); }
 
+/* ── Tour de boas-vindas ── overlay com spotlight (SVG mask) + tooltip.
+   Ativa só no primeiro login (server controla via user.hasSeenTour).
+   O spotlight é um rect no SVG que "fura" a máscara escura, revelando o
+   elemento em destaque. */
+#tour-overlay {
+  position: fixed; inset: 0; z-index: 90000;
+  display: none; pointer-events: none;
+}
+#tour-overlay.is-active { display: block; }
+.tour-mask {
+  position: absolute; inset: 0;
+  pointer-events: auto;
+}
+/* Spotlight se move suave entre steps — evita "salto" quando o layout muda
+   pós-navegação. Casa com a transição do tooltip. */
+#tour-spot {
+  transition: x .32s cubic-bezier(.16,1,.3,1),
+              y .32s cubic-bezier(.16,1,.3,1),
+              width .32s cubic-bezier(.16,1,.3,1),
+              height .32s cubic-bezier(.16,1,.3,1);
+}
+.tour-tooltip {
+  position: absolute;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 20px 22px;
+  width: 360px; max-width: calc(100vw - 32px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.32);
+  pointer-events: auto;
+  transition: top .28s cubic-bezier(.16,1,.3,1), left .28s cubic-bezier(.16,1,.3,1), transform .28s cubic-bezier(.16,1,.3,1);
+}
+/* Centro da tela — usado no step de welcome e ao apontar pro body todo. */
+.tour-tooltip.is-centered {
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+}
+.tour-step-counter {
+  font-size: 11px; font-weight: 700; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--accent-text);
+  margin-bottom: 6px;
+}
+.tour-title {
+  font-size: 18px; font-weight: 700; margin: 0 0 8px; color: var(--text);
+  line-height: 1.3;
+}
+.tour-body {
+  font-size: 14px; color: var(--text-dim); margin: 0 0 18px; line-height: 1.55;
+}
+.tour-actions {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+}
+.tour-btn {
+  padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600;
+  cursor: pointer; border: none; font-family: inherit;
+  transition: filter .12s var(--ease-out), background .12s;
+}
+.tour-btn-skip {
+  background: transparent; color: var(--text-muted);
+}
+.tour-btn-skip:hover { color: var(--text); background: var(--surface-2); }
+.tour-actions-right { display: flex; gap: 8px; align-items: center; }
+.tour-btn-back {
+  background: var(--surface-2); color: var(--text);
+}
+.tour-btn-back:hover { background: var(--surface-3); }
+.tour-btn-next {
+  background: var(--accent); color: #fff;
+  box-shadow: 0 1px 2px rgba(122, 0, 255, .18);
+}
+.tour-btn-next:hover { filter: brightness(1.08); }
+
 /* ── Links públicos de cliente ── modal de compartilhamento read-only. */
 .cpl-link { border: 1px solid var(--hairline); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; background: var(--surface); }
 .cpl-link--inactive { opacity: 0.6; }
@@ -3514,11 +3587,6 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 .rhythm-header-actions { flex: 0 0 auto; }
 .rhythm-header-actions .filter-select { min-width: 180px; }
 .rhythm-weekrange { font-size: 12px; color: var(--text-muted); margin: 0 24px 12px; font-variant-numeric: tabular-nums; }
-
-/* Corrige tamanho de ícones lucide na filters-bar do detalhe de cliente.
-   O seletor global é `i.ic-sm`, mas após lucide.createIcons() o <i> vira <svg>
-   e o seletor não bate — SVG sobra em 24×24. Aqui forçamos 16×16. */
-#clients-view-detail .filters-bar svg.ic-sm { width: 16px; height: 16px; }
 
 .rhythm-stack { display: flex; flex-direction: column; gap: 18px; padding: 0 24px; }
 .rhythm-card {
@@ -5898,6 +5966,12 @@ body.is-resizing-detail * { cursor: col-resize !important; user-select: none !im
 [data-lucide] { display: inline-block; vertical-align: middle; }
 i.ic-xs [data-lucide],
 i.ic-xs { width: 12px; height: 12px; stroke-width: 2.5; }
+/* Após lucide.createIcons() os <i> viram <svg> e o seletor i.ic-* não bate
+   mais — os SVGs sobram no tamanho intrínseco 24×24 (atributo width/height).
+   Estas regras garantem o tamanho correto no SVG resultante. */
+svg.ic-xs { width: 12px; height: 12px; stroke-width: 2.5; }
+svg.ic-sm { width: 16px; height: 16px; stroke-width: 2; }
+svg.ic-md { width: 20px; height: 20px; stroke-width: 2; }
 /* Cabeçalhos sortáveis: ícone padrão 16px + opacity baixa pra não competir
    com o título. O <i> é substituído por <svg.lucide-chevrons-up-down> depois
    do lucide.createIcons(), por isso miramos AMBOS pra cobrir os 2 estados. */

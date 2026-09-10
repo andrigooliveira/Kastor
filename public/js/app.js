@@ -3669,7 +3669,364 @@ async function enterApp() {
   // antes de tirar o overlay de loading — evita ver skeleton "acender" um instante.
   requestAnimationFrame(() => requestAnimationFrame(() => {
     if (typeof window.hideBootLoading === 'function') window.hideBootLoading();
+    // Tour de boas-vindas — normalmente só no primeiro login (hasSeenTour !== true).
+    // `?tour=1` na URL força reabrir (pra QA e pra o botão "Refazer tour").
+    const forceTour = new URLSearchParams(location.search).get('tour') === '1';
+    if (me && (me.hasSeenTour !== true || forceTour)) {
+      if (forceTour) {
+        history.replaceState(null, '', location.pathname);
+      }
+      setTimeout(() => { try { startWelcomeTour(); } catch {} }, 600);
+    }
   }));
+}
+
+/* ─── TOUR DE BOAS-VINDAS ─────────────────────────────────────────────
+   Overlay que destaca elementos-chave da interface pra novos usuários.
+   Ativado uma vez pelo enterApp() e marcado no server via POST /me/tour-complete
+   (idempotente). Estrutura de step:
+     { target, title, body, position, action, waitMs }
+     - target: seletor CSS ou null (centraliza)
+     - position: 'auto'|'bottom'|'right'|'top'|'left'
+     - action: função chamada ANTES de posicionar (ex: navegar pra página)
+     - waitMs: delay antes de calcular posição (deixa layout assentar) */
+const TOUR_STEPS = [
+  // 1. Boas-vindas
+  {
+    target: null,
+    title: 'Bem-vindo ao reWork',
+    body: (name) => `Oi ${name}! Preparei um tour rápido pra você conhecer as principais áreas do sistema. Menos de 2 minutos, e você já sai pronto pra tocar seu dia.`
+  },
+  // 2. Sidebar
+  {
+    target: '.sidebar',
+    position: 'right',
+    title: 'Menu principal',
+    body: 'Todas as áreas do sistema estão listadas aqui. Você pode compactar a sidebar clicando no ícone abaixo, e navegar rapidamente entre Início, Demandas, Análises e outros módulos.'
+  },
+  // 3. Início / saudação
+  {
+    action: () => goPage('dashboard'),
+    waitMs: 550,
+    target: '#dash-greeting',
+    position: 'bottom',
+    title: 'Início — sua sala de comando',
+    body: 'A tela inicial reúne tudo que você precisa saber num relance: o que tem pra hoje, o que atrasou, onde a equipe está e quais projetos estão sob risco.'
+  },
+  // 4. Meu foco
+  {
+    target: '.dash-tone-focus',
+    position: 'right',
+    title: 'Meu foco de hoje',
+    body: 'As demandas que precisam da sua atenção hoje. Prioridade pra fechar o dia sabendo o que realmente importa.'
+  },
+  // 5. Paradas
+  {
+    target: '.dash-tone-blocked',
+    position: 'right',
+    title: 'Paradas',
+    body: 'Demandas travadas por dependências ou pendências externas. Aqui você vê o que precisa desbloquear antes de destrancar entregas.'
+  },
+  // 6. Demandas previstas
+  {
+    target: '.dash-tone-forecast',
+    position: 'right',
+    title: 'Demandas previstas',
+    body: 'Timeline dos próximos dias úteis. Alterna entre "Previstas" (planejadas) e "Prazos" (deadlines) — visão semanal do que vem por aí.'
+  },
+  // 7. Radar de projetos
+  {
+    target: '.dash-tone-radar',
+    position: 'left',
+    title: 'Radar de projetos',
+    body: 'Panorama macro dos projetos ativos com atrasos, entregas e status. Ótimo pra reuniões rápidas de status.'
+  },
+  // 8. Demandas — lista completa
+  {
+    action: () => goPage('list'),
+    waitMs: 600,
+    target: '#page-list',
+    position: 'auto',
+    title: 'Demandas — visão completa',
+    body: 'Todas as demandas ativas agrupadas por urgência (atrasadas, hoje, na semana, próximos, sem prazo). Filtre, ordene e edite direto na lista.'
+  },
+  // 9. Minhas Demandas
+  {
+    action: () => goPage('mine'),
+    waitMs: 600,
+    target: '#page-mine',
+    position: 'auto',
+    title: 'Minhas Demandas',
+    body: 'Recorte só do que é seu — o que você responde por, com prazo, cliente e projeto num só lugar. É a tela que você mais vai usar no dia a dia.'
+  },
+  // 10. Agenda
+  {
+    action: () => goPage('agenda'),
+    waitMs: 700,
+    target: '#page-agenda',
+    position: 'auto',
+    title: 'Agenda',
+    body: 'Visualização de calendário das demandas agendadas + eventos. Arraste pra reagendar, clique pra abrir. Pode alternar entre visões pessoal e por time.'
+  },
+  // 11. Análises → Capacidade
+  {
+    action: () => { goPage('analytics'); setTimeout(() => setAnalyticsTab('capacity'), 100); },
+    waitMs: 700,
+    target: '.an-tabs',
+    position: 'bottom',
+    title: 'Análises — Capacidade',
+    body: 'Aba de Capacidade mostra distribuição de carga por pessoa, projeto ou cliente. Serve pra balancear a operação sem precisar chutar.'
+  },
+  // 12. Análises → Ritmo
+  {
+    action: () => setAnalyticsTab('rhythm'),
+    waitMs: 300,
+    target: '#an-tab-rhythm',
+    position: 'auto',
+    title: 'Análises — Ritmo',
+    body: 'Burndown semanal por squad. A linha ideal segue os prazos combinados — se a linha real fica acima dela, o squad está atrasado. Leitura assertiva do ritmo da semana.'
+  },
+  // 13. Clientes
+  {
+    action: () => goPage('clients'),
+    waitMs: 600,
+    target: '#page-clients',
+    position: 'auto',
+    title: 'Clientes',
+    body: 'Todos os clientes com seus projetos, KPIs e integrações. Aqui você abre o detalhe pra criar demandas rápido, gerar relatório mensal ou compartilhar um painel público read-only.'
+  },
+  // 14. Voltar pro Início pra mostrar o topbar
+  {
+    action: () => goPage('dashboard'),
+    waitMs: 600,
+    target: '#btn-new-demand',
+    position: 'bottom',
+    title: 'Criar demanda',
+    body: 'O acesso pra abrir uma nova demanda fica sempre visível no topo. Preencha em segundos: cliente, projeto, fluxo, prazo e responsável.'
+  },
+  // 15. Notificações
+  {
+    target: '.notif-bell',
+    position: 'bottom',
+    title: 'Notificações em tempo real',
+    body: 'Menções, mudanças de etapa, atribuições e prazos chegam aqui ao vivo. O badge some quando você abre — as não clicadas seguem com fundo destacado até você entrar em cada uma.'
+  },
+  // 16. Perfil (sidebar)
+  {
+    target: '.sidebar-user',
+    position: 'right',
+    title: 'Seu perfil',
+    body: 'Este bloco no rodapé da sidebar é o atalho pro seu perfil. Vamos entrar rapidamente pra você conhecer o que fica lá dentro.'
+  },
+  // 17. Perfil - navegação (abas)
+  {
+    action: () => { goPage('profile'); setTimeout(() => setProfileSection('account'), 100); },
+    waitMs: 700,
+    target: '.profile-nav',
+    position: 'bottom',
+    title: 'Configurações do perfil',
+    body: 'Cinco seções: Conta (nome e usuário), Aparência (tema), Notificações (o que te avisa), Integrações (Discord e Google) e Segurança (senha e refazer este tour).'
+  },
+  // 18. Aparência
+  {
+    action: () => setProfileSection('appearance'),
+    waitMs: 300,
+    target: '.profile-section[data-section="appearance"]',
+    position: 'auto',
+    title: 'Aparência',
+    body: 'Escolha entre tema claro ou escuro. A preferência fica salva no seu navegador, mesmo se você trocar de dispositivo depois.'
+  },
+  // 19. Notificações
+  {
+    action: () => setProfileSection('notifications'),
+    waitMs: 300,
+    target: '.profile-section[data-section="notifications"]',
+    position: 'auto',
+    title: 'Preferências de notificação',
+    body: 'Controla o que você quer ser notificado (no sistema, por e-mail e pelo Discord). Você desativa qualquer canal individualmente — sem tudo-ou-nada.'
+  },
+  // 20. Integrações
+  {
+    action: () => setProfileSection('integrations'),
+    waitMs: 300,
+    target: '.profile-section[data-section="integrations"]',
+    position: 'auto',
+    title: 'Integrações',
+    body: 'Conecte seu Discord pra receber DM/notificação em canal e o Google Calendar pra ver seus eventos junto com as demandas.'
+  },
+  // 21. Segurança
+  {
+    action: () => setProfileSection('security'),
+    waitMs: 300,
+    target: '.profile-section[data-section="security"]',
+    position: 'auto',
+    title: 'Segurança e ferramentas',
+    body: 'Aqui você troca sua senha, refaz este tour de boas-vindas, acessa os documentos legais (Termos e Privacidade) e sai da conta quando quiser.'
+  },
+  // 22. Command palette
+  {
+    target: null,
+    title: 'Atalho de superpoder',
+    body: (name) => `Aperte Ctrl + K a qualquer momento e você abre a paleta de comandos: navegar, criar, buscar demanda por nome, atalhos pra tudo. Vai poupar muito clique, ${name}.`
+  },
+  // 18. Encerramento
+  {
+    target: null,
+    title: 'Pronto pra começar',
+    body: 'Foi isso! Você pode reabrir esse tour a qualquer momento pelo seu perfil. Boas demandas — e boa sorte com o time. 🚀'
+  }
+];
+
+let _tourIdx = 0;
+let _tourActive = false;
+
+function startWelcomeTour() {
+  if (_tourActive) return;
+  _tourActive = true;
+  _tourIdx = 0;
+  const overlay = $('tour-overlay');
+  if (!overlay) return;
+  overlay.classList.add('is-active');
+  renderTourStep();
+  // Re-render em resize/scroll pra spotlight acompanhar o layout.
+  window.addEventListener('resize', _tourReflow);
+  window.addEventListener('scroll', _tourReflow, true);
+}
+
+function _tourReflow() { if (_tourActive) renderTourStep(); }
+
+async function renderTourStep() {
+  const step = TOUR_STEPS[_tourIdx];
+  if (!step) { tourFinish(); return; }
+  const tt = $('tour-tooltip');
+  const spot = document.getElementById('tour-spot');
+  const counter = $('tour-step-counter');
+  const title = $('tour-title');
+  const body = $('tour-body');
+  const nextBtn = $('tour-next-btn');
+  const backBtn = $('tour-back-btn');
+  if (!tt || !spot || !title || !body) return;
+
+  // Executa action (ex: goPage) ANTES de posicionar. Espera waitMs pro
+  // layout novo assentar antes de calcular o bounding rect do target.
+  if (typeof step.action === 'function') {
+    try { step.action(); } catch {}
+    if (step.waitMs) await new Promise(r => setTimeout(r, step.waitMs));
+  }
+
+  counter.textContent = `Passo ${_tourIdx + 1} de ${TOUR_STEPS.length}`;
+  title.textContent = step.title;
+  const bodyText = typeof step.body === 'function' ? step.body(_tourFirstName()) : step.body;
+  body.textContent = bodyText;
+  nextBtn.textContent = _tourIdx === TOUR_STEPS.length - 1 ? 'Finalizar' : 'Próximo';
+  // Botão Voltar só aparece a partir do step 2.
+  if (backBtn) backBtn.style.display = _tourIdx === 0 ? 'none' : '';
+
+  if (!step.target) {
+    // Centralizado, sem spotlight visível.
+    tt.classList.add('is-centered');
+    tt.style.top = ''; tt.style.left = ''; tt.style.transform = '';
+    spot.setAttribute('x', '-100'); spot.setAttribute('y', '-100');
+    spot.setAttribute('width', '0'); spot.setAttribute('height', '0');
+    return;
+  }
+
+  const el = document.querySelector(step.target);
+  if (!el) {
+    // Elemento não encontrado — pula pra próximo step.
+    _tourIdx++;
+    return renderTourStep();
+  }
+  // Scroll suave pro elemento antes de posicionar.
+  try { el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' }); } catch {}
+  // Espera o scroll acabar antes de medir (smooth scroll varia; 400ms é seguro).
+  await new Promise(r => setTimeout(r, 400));
+  const r = el.getBoundingClientRect();
+  const pad = 8;
+  spot.setAttribute('x', Math.max(0, r.left - pad));
+  spot.setAttribute('y', Math.max(0, r.top - pad));
+  spot.setAttribute('width', r.width + pad * 2);
+  spot.setAttribute('height', r.height + pad * 2);
+
+  tt.classList.remove('is-centered');
+  _positionTourTooltip(tt, r, step.position || 'auto');
+}
+
+/* Posiciona o tooltip perto do target, com clamp nas bordas da viewport. */
+function _positionTourTooltip(tt, r, position) {
+  const gap = 16;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const tw = 360, th = tt.offsetHeight || 200;
+  let top, left, transform = '';
+  // Auto: escolhe o lado com mais espaço.
+  if (position === 'auto') {
+    const space = { bottom: vh - r.bottom, top: r.top, right: vw - r.right, left: r.left };
+    position = Object.keys(space).sort((a, b) => space[b] - space[a])[0];
+  }
+  switch (position) {
+    case 'bottom':
+      top = r.bottom + gap;
+      left = r.left + r.width / 2 - tw / 2;
+      break;
+    case 'top':
+      top = r.top - th - gap;
+      left = r.left + r.width / 2 - tw / 2;
+      break;
+    case 'right':
+      top = r.top + r.height / 2 - th / 2;
+      left = r.right + gap;
+      break;
+    case 'left':
+      top = r.top + r.height / 2 - th / 2;
+      left = r.left - tw - gap;
+      break;
+    default:
+      top = r.bottom + gap;
+      left = r.left;
+  }
+  // Clamp pra viewport.
+  left = Math.max(12, Math.min(left, vw - tw - 12));
+  top = Math.max(12, Math.min(top, vh - th - 12));
+  tt.style.top = top + 'px';
+  tt.style.left = left + 'px';
+  tt.style.transform = transform;
+}
+
+function _tourFirstName() {
+  const n = (me && me.name) || 'você';
+  return n.split(/\s+/)[0];
+}
+
+function tourNext() {
+  if (!_tourActive) return;
+  _tourIdx++;
+  if (_tourIdx >= TOUR_STEPS.length) { tourFinish(); return; }
+  renderTourStep();
+}
+
+function tourBack() {
+  if (!_tourActive || _tourIdx === 0) return;
+  _tourIdx--;
+  renderTourStep();
+}
+
+function tourSkip() {
+  if (!_tourActive) return;
+  tourFinish();
+}
+
+async function tourFinish() {
+  _tourActive = false;
+  const overlay = $('tour-overlay');
+  if (overlay) overlay.classList.remove('is-active');
+  window.removeEventListener('resize', _tourReflow);
+  window.removeEventListener('scroll', _tourReflow, true);
+  // Marca como visto no server (idempotente). Atualiza estado local pra
+  // não disparar de novo se o user recarregar sem sair.
+  try {
+    await api('/me/tour-complete', 'POST');
+    if (me) me.hasSeenTour = true;
+  } catch {}
 }
 
 async function loadAll() {

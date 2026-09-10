@@ -166,6 +166,32 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
   </div>
 </div>
 
+<!-- TOUR DE BOAS-VINDAS — overlay com spotlight + tooltip. Ativado apenas no
+     primeiro acesso do usuário (server marca hasSeenTour após completar/pular). -->
+<div id="tour-overlay" aria-hidden="true">
+  <svg class="tour-mask" width="100%" height="100%" preserveAspectRatio="none">
+    <defs>
+      <mask id="tour-mask-def">
+        <rect width="100%" height="100%" fill="white"/>
+        <rect id="tour-spot" x="0" y="0" width="0" height="0" rx="10" ry="10" fill="black"/>
+      </mask>
+    </defs>
+    <rect width="100%" height="100%" fill="rgba(0,0,0,0.6)" mask="url(#tour-mask-def)"/>
+  </svg>
+  <div class="tour-tooltip" id="tour-tooltip">
+    <div class="tour-step-counter" id="tour-step-counter"></div>
+    <h3 class="tour-title" id="tour-title"></h3>
+    <p class="tour-body" id="tour-body"></p>
+    <div class="tour-actions">
+      <button type="button" class="tour-btn tour-btn-skip" onclick="tourSkip()">Pular tour</button>
+      <div class="tour-actions-right">
+        <button type="button" class="tour-btn tour-btn-back" id="tour-back-btn" onclick="tourBack()" style="display:none">Voltar</button>
+        <button type="button" class="tour-btn tour-btn-next" id="tour-next-btn" onclick="tourNext()">Próximo</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- LOGIN — layout split: card roxo flutuante à esquerda (hero) + form à direita -->
 <div id="login-screen">
   <aside class="login-split-left">
@@ -397,7 +423,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <div class="notif-list" id="notif-list"></div>
           </div>
         </div>
-        <button class="btn btn-primary freelancer-hide" onclick="openNewDemand()">
+        <button class="btn btn-primary freelancer-hide" id="btn-new-demand" onclick="openNewDemand()">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
           <span>Nova Demanda</span>
         </button>
@@ -2638,6 +2664,27 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               <div class="profile-card-block" style="margin-top:16px">
                 <div class="profile-row">
                   <div class="profile-row-info">
+                    <div class="profile-row-title">Refazer tour de boas-vindas</div>
+                    <div class="profile-row-sub">Reabre o passo a passo pelas principais telas do sistema.</div>
+                  </div>
+                  <button class="btn btn-ghost" onclick="startWelcomeTour()"><i data-lucide="compass" class="ic-sm"></i> Refazer tour</button>
+                </div>
+              </div>
+              <div class="profile-card-block" style="margin-top:16px">
+                <div class="profile-row">
+                  <div class="profile-row-info">
+                    <div class="profile-row-title">Documentos legais</div>
+                    <div class="profile-row-sub">Termos de serviço e política de privacidade.</div>
+                  </div>
+                  <div style="display:flex;gap:8px">
+                    <a class="btn btn-ghost" href="/termos" target="_blank" rel="noopener"><i data-lucide="file-text" class="ic-sm"></i> Termos</a>
+                    <a class="btn btn-ghost" href="/privacidade" target="_blank" rel="noopener"><i data-lucide="shield" class="ic-sm"></i> Privacidade</a>
+                  </div>
+                </div>
+              </div>
+              <div class="profile-card-block" style="margin-top:16px">
+                <div class="profile-row">
+                  <div class="profile-row-info">
                     <div class="profile-row-title">Sair da conta</div>
                     <div class="profile-row-sub">Encerra a sua sessão neste dispositivo.</div>
                   </div>
@@ -4017,7 +4064,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260910legal" defer></script>
+<script src="/js/boot.js?v=20260910icons" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

@@ -471,8 +471,9 @@ function seed(firstInstall) {
 function publicUser(u) {
   if (!u) return null;
   // Nunca expõe tokens do Google — refresh_token é credencial de longa duração.
+  // Também remove knownIps (histórico de IPs é interno, uso de auditoria).
   // Devolve booleano + info da conta pra frontend saber que tá conectado.
-  const { googleTokens, googleSyncTokens, ...rest } = u;
+  const { googleTokens, googleSyncTokens, knownIps, ...rest } = u;
   rest.googleConnected = !!googleTokens;
   return rest;
 }
@@ -495,6 +496,19 @@ function appBaseUrl(req) {
 function demandLinkFor(baseUrl, demandId) {
   if (!baseUrl || !demandId) return null;
   return `${baseUrl}/#demand-${demandId}`;
+}
+
+/* Deriva uma versão curta e estável a partir do path do avatar. Usado como
+   `?v=` na URL pública — muda quando o cliente troca o avatar (o arquivo é
+   novo), invalidando o cache do Discord/browser. Dígitos no filename já são
+   únicos por upload; se não houver, cai pra hash simples do path. */
+function _avatarVersion(avatarPath) {
+  if (!avatarPath) return '0';
+  const digits = String(avatarPath).replace(/\D/g, '');
+  if (digits) return digits.slice(-10);
+  let h = 0;
+  for (const c of avatarPath) h = ((h << 5) - h + c.charCodeAt(0)) | 0;
+  return String(Math.abs(h));
 }
 
 /* ─── E-MAIL (notificações por SMTP) ───
@@ -1231,9 +1245,14 @@ async function triggerBotChannelBindings(event, ctx) {
   const basePayload = buildDiscordPayload(event, ctx);
   const client = db.clients.find(c => c.id === clientId);
   const baseUrl = ctx.appBaseUrl || process.env.PUBLIC_URL || '';
-  const avatarUrl = (client && client.avatar && baseUrl && client.avatar.startsWith('/'))
-    ? baseUrl.replace(/\/+$/, '') + client.avatar
-    : (client && client.avatar && /^https?:\/\//.test(client.avatar) ? client.avatar : null);
+  // Discord baixa a URL sem sessão — precisa apontar pra rota pública
+  // (/api/public/client-avatar/:id), não pra /uploads (que exige auth).
+  // `?v=` invalida cache do Discord quando o avatar do cliente muda.
+  const avatarUrl = (client && client.avatar && baseUrl)
+    ? (/^https?:\/\//i.test(client.avatar)
+        ? client.avatar
+        : `${baseUrl.replace(/\/+$/, '')}/api/public/client-avatar/${client.id}?v=${_avatarVersion(client.avatar)}`)
+    : null;
   const username = client?.name || 'reWork';
   for (const b of binds) {
     try {
@@ -1470,6 +1489,31 @@ app.post('/api/uploads', (req, res, next) => requireAuth(req, res, next), rateLi
 // Serve /uploads/* — só pra usuários autenticados (cookie httpOnly). Listing desativado.
 app.use('/uploads', requireAuth, express.static(UPLOADS_DIR, { index: false, dotfiles: 'deny' }));
 
+/* Avatar público de cliente — rota SEM auth, usada por:
+   - Bot do Discord (baixa a imagem pra usar como avatar da persona por-cliente
+     no webhook do canal). Sem auth aqui = 401 = ícone genérico do Discord.
+   - Dashboard público read-only (a página de link compartilhado carrega direto
+     no browser do stakeholder, que não tem sessão do reWork).
+   Retorna apenas a foto — nenhum outro dado do cliente. */
+app.get('/api/public/client-avatar/:clientId', (req, res) => {
+  const id = String(req.params.clientId || '');
+  if (!/^[a-f0-9]{6,64}$/i.test(id)) return res.status(404).end();
+  const c = db.clients.find(x => x.id === id && notDeleted(x));
+  if (!c || !c.avatar) return res.status(404).end();
+  // Se o avatar já é uma URL absoluta (raro, mas suportado), redireciona.
+  if (/^https?:\/\//i.test(c.avatar)) return res.redirect(302, c.avatar);
+  // Path interno /uploads/xxx — resolve dentro de UPLOADS_DIR (guard de path traversal).
+  const rel = String(c.avatar).replace(/^\/+/, '').replace(/^uploads\/+/, '');
+  const safe = path.basename(rel);
+  const full = path.join(UPLOADS_DIR, safe);
+  if (!full.startsWith(UPLOADS_DIR) || !fs.existsSync(full)) return res.status(404).end();
+  const ext = path.extname(safe).slice(1).toLowerCase();
+  const mime = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', svg: 'image/svg+xml' }[ext] || 'application/octet-stream';
+  res.setHeader('Content-Type', mime);
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  fs.createReadStream(full).pipe(res);
+});
+
 /* ── HEALTH CHECK ──
    Liveness (/api/health): responde na hora, sem tocar no banco — é o que o
    orquestrador/load-balancer deve pollar pra detectar um processo travado.
@@ -1689,11 +1733,34 @@ app.post('/api/login', (req, res) => {
   }
   // Sucesso: zera o contador desse IP
   _loginAttempts.delete(ip);
+  // Registra o IP no histórico do usuário (audit + heurística de "primeiro
+  // acesso"). Se knownIps ainda não existia, este é o primeiro login e o
+  // frontend deve exibir o tour de boas-vindas — desde que hasSeenTour ainda
+  // não esteja marcado (usuário pode ter dispensado antes de completar).
+  if (!Array.isArray(user.knownIps)) user.knownIps = [];
+  if (!user.knownIps.includes(ip)) {
+    user.knownIps.push(ip);
+    // Cap simples pra não crescer indefinidamente (guarda últimos 20).
+    if (user.knownIps.length > 20) user.knownIps = user.knownIps.slice(-20);
+    saveEntity('users', user);
+  }
   const token = auth.addToken(user.id);
   // Cookie httpOnly: JS no browser não consegue ler — protege contra XSS.
   // O `token` no body é mantido por compat (clientes antigos podiam usar Bearer).
   res.set('Set-Cookie', buildSessionCookie(token, { secure: isHttpsRequest(req) }));
   res.json({ token, user: publicUser(user) });
+});
+
+/* Marca o tour de boas-vindas como visto — chamado pelo frontend depois
+   do usuário completar ou pular o tour. Idempotente. */
+app.post('/api/me/tour-complete', requireAuth, (req, res) => {
+  const user = req.user;
+  if (!user.hasSeenTour) {
+    user.hasSeenTour = true;
+    user.tourSeenAt = nowISO();
+    saveEntity('users', user);
+  }
+  res.json({ ok: true, hasSeenTour: true });
 });
 
 app.post('/api/logout', requireAuth, (req, res) => {
@@ -2187,9 +2254,12 @@ app.post('/api/discord/client-channels/:id/test', requireAuth, adminOnly, async 
   if (!b) return res.status(404).json({ error: 'Binding não encontrado.' });
   const client = db.clients.find(c => c.id === b.clientId);
   const baseUrl = appBaseUrl(req);
-  const avatarUrl = (client?.avatar && baseUrl && client.avatar.startsWith('/'))
-    ? baseUrl.replace(/\/+$/, '') + client.avatar
-    : (client?.avatar && /^https?:\/\//.test(client.avatar) ? client.avatar : null);
+  // Mesma lógica do triggerBotChannelBindings — rota pública sem auth.
+  const avatarUrl = (client?.avatar && baseUrl)
+    ? (/^https?:\/\//i.test(client.avatar)
+        ? client.avatar
+        : `${baseUrl.replace(/\/+$/, '')}/api/public/client-avatar/${client.id}?v=${_avatarVersion(client.avatar)}`)
+    : null;
   const testEmbed = {
     embeds: [{
       title: '✅ Canal conectado ao reWork',
@@ -3669,7 +3739,18 @@ app.get('/api/public/client/:token', (req, res) => {
       };
     });
   res.json({
-    client: { id: hitClient.id, name: hitClient.name, color: hitClient.color || '#7A00FF', avatar: hitClient.avatar || null },
+    client: {
+      id: hitClient.id,
+      name: hitClient.name,
+      color: hitClient.color || '#7A00FF',
+      // Aponta pra rota pública — o browser do stakeholder não tem sessão do reWork
+      // pra baixar /uploads/... (401). URL absoluta com ?v= pra invalidar cache.
+      avatar: hitClient.avatar
+        ? (/^https?:\/\//i.test(hitClient.avatar)
+            ? hitClient.avatar
+            : `/api/public/client-avatar/${hitClient.id}?v=${_avatarVersion(hitClient.avatar)}`)
+        : null
+    },
     projects: projectsPublic,
     demands: demandsPublic,
     generatedAt: nowISO()
