@@ -14,6 +14,18 @@
 <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/geist-latin-ext.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/css/fonts.css?v=1">
+<!-- Aplica o tema salvo ANTES de renderizar o body — evita flash claro pra
+     quem usa dark. Roda síncrono no head (não fica com defer). Login sempre
+     em light (marcador `data-boot-theme="light"` — só o overlay usa). -->
+<script>
+(function () {
+  try {
+    var t = localStorage.getItem('kastor-theme') || 'dark';
+    if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+    else document.documentElement.setAttribute('data-boot-theme', 'dark');
+  } catch (e) {}
+})();
+</script>
 <!-- CSS crítico INLINE — apenas o mínimo pra render inicial do login/reset.
      O style.css completo é carregado sob demanda pelo boot.js depois que o
      user autentica. Isso derruba o LCP no cold load (deslogado / /reset). -->
@@ -25,9 +37,10 @@ body{background:var(--bg);color:var(--text);font-family:'Geist','Segoe UI',syste
 #app{display:none}
 /* Overlay de loading — visível ANTES de qualquer outra tela.
    Some quando o app.js sinaliza que a UI está pronta pra render (evita flash
-   de login → app ou frames de skeleton). Fundo branco pra combinar com login
-   e não mudar de cor bruscamente quando o app entra em dark. */
+   de login → app ou frames de skeleton). Cor adapta ao tema (data-boot-theme
+   é setado pelo script inline no head antes do body renderizar). */
 #app-loading-screen{position:fixed;inset:0;background:#fff;display:flex;align-items:center;justify-content:center;z-index:100000;transition:opacity .2s ease-out}
+:root[data-boot-theme="dark"] #app-loading-screen{background:#0c0c10}
 #app-loading-screen.is-hidden{opacity:0;pointer-events:none}
 /* Enquanto o overlay está visível, trava o scroll do document — evita
    scrollbars aparecendo por conteúdo que ainda vai renderizar por trás.
@@ -4091,7 +4104,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260910timerfix2" defer></script>
+<script src="/js/boot.js?v=20260910loaddark" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
