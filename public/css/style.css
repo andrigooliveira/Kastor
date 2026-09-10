@@ -3503,6 +3503,7 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 .release-note-date { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .release-note-list { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: var(--text); line-height: 1.55; }
 .release-note-list li { margin-bottom: 4px; }
+.release-notes-empty { padding: 24px 0; text-align: center; color: var(--text-muted); font-size: 13px; }
 
 /* ── Tour de boas-vindas ── overlay com spotlight (SVG mask) + tooltip.
    Ativa só no primeiro login (server controla via user.hasSeenTour).

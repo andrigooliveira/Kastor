@@ -1804,6 +1804,17 @@ app.get('/api/me/release-notes', requireAuth, (req, res) => {
   res.json({ notes: pending });
 });
 
+/* Lista completa de notas — sem rate limit, sem filtro de seen. Usado pelo
+   botão "Ver novidades" no perfil pra o usuário revisitar o histórico. */
+app.get('/api/release-notes/all', requireAuth, (req, res) => {
+  const all = _loadReleaseNotes();
+  const sorted = all
+    .filter(n => n && n.id)
+    .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+    .map(n => ({ id: n.id, date: n.date, title: n.title, highlights: Array.isArray(n.highlights) ? n.highlights : [] }));
+  res.json({ notes: sorted });
+});
+
 /* Marca notas como vistas + registra data pra rate limit diário. Idempotente. */
 app.post('/api/me/release-notes-seen', requireAuth, (req, res) => {
   const user = req.user;

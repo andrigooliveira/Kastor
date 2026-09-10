@@ -4043,6 +4043,11 @@ async function maybeShowReleaseNotes() {
     const notes = (r && r.notes) || [];
     if (!notes.length) return;
     _releaseNotesPending = notes;
+    // Reseta a intro caso o modal tenha sido aberto antes no modo histórico.
+    const intro = $('release-notes-intro');
+    const closeBtn = $('release-notes-close-btn');
+    if (intro) intro.textContent = 'Confira o que mudou desde a sua última visita.';
+    if (closeBtn) closeBtn.textContent = 'Ok, entendi';
     renderReleaseNotes(notes);
     openModal('release-notes-modal');
   } catch {}
@@ -4074,6 +4079,28 @@ async function dismissReleaseNotes() {
   _releaseNotesPending = [];
   if (!ids.length) return;
   try { await api('/me/release-notes-seen', 'POST', { ids }); } catch {}
+}
+
+/* Abre o modal em modo HISTÓRICO — mostra todas as notas, sem marcar como
+   vistas (não interfere no rate limit diário nem em pendências futuras). */
+async function showAllReleaseNotes() {
+  try {
+    const r = await api('/release-notes/all');
+    const notes = (r && r.notes) || [];
+    _releaseNotesPending = []; // histórico não marca nada
+    const intro = $('release-notes-intro');
+    const closeBtn = $('release-notes-close-btn');
+    if (intro) intro.textContent = 'Histórico completo de novidades da plataforma, do mais recente pro mais antigo.';
+    if (closeBtn) closeBtn.textContent = 'Fechar';
+    if (!notes.length) {
+      $('release-notes-list').innerHTML = '<div class="release-notes-empty">Nenhuma novidade registrada ainda.</div>';
+    } else {
+      renderReleaseNotes(notes);
+    }
+    openModal('release-notes-modal');
+  } catch (e) {
+    toast(e.message || 'Erro ao carregar novidades', 'error');
+  }
 }
 
 async function loadAll() {

@@ -175,11 +175,11 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       <button class="modal-close" onclick="dismissReleaseNotes()"><i data-lucide="x" class="ic-sm"></i></button>
     </div>
     <div class="modal-body">
-      <p class="release-notes-intro">Confira o que mudou desde a sua última visita.</p>
+      <p class="release-notes-intro" id="release-notes-intro">Confira o que mudou desde a sua última visita.</p>
       <div id="release-notes-list"></div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-primary" onclick="dismissReleaseNotes()">Ok, entendi</button>
+      <button class="btn btn-primary" id="release-notes-close-btn" onclick="dismissReleaseNotes()">Ok, entendi</button>
     </div>
   </div>
 </div>
@@ -2691,6 +2691,15 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               <div class="profile-card-block" style="margin-top:16px">
                 <div class="profile-row">
                   <div class="profile-row-info">
+                    <div class="profile-row-title">Novidades do reWork</div>
+                    <div class="profile-row-sub">Histórico completo do que mudou desde os primeiros releases.</div>
+                  </div>
+                  <button class="btn btn-ghost" onclick="showAllReleaseNotes()"><i data-lucide="sparkles" class="ic-sm"></i> Ver novidades</button>
+                </div>
+              </div>
+              <div class="profile-card-block" style="margin-top:16px">
+                <div class="profile-row">
+                  <div class="profile-row-info">
                     <div class="profile-row-title">Documentos legais</div>
                     <div class="profile-row-sub">Termos de serviço e política de privacidade.</div>
                   </div>
@@ -4082,7 +4091,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260910notes" defer></script>
+<script src="/js/boot.js?v=20260910notes2" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
