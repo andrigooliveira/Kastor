@@ -105,6 +105,10 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 .login-box button:active{transform:scale(.985)}
 .login-error{color:var(--danger);font-size:12px;min-height:16px;margin-bottom:10px}
 .login-hint{color:#737373;font-size:11px;margin-top:22px;line-height:1.6}
+.login-legal-footer{position:absolute;bottom:20px;left:0;right:0;text-align:center;font-size:11px;color:#a1a1a1;letter-spacing:.02em}
+.login-legal-footer a{color:#737373;text-decoration:none;transition:color .12s var(--ease-out)}
+.login-legal-footer a:hover{color:#5E00CC;text-decoration:underline}
+.login-legal-sep{margin:0 10px;color:#d4d4d4}
 .login-forgot{display:inline-block;margin-top:14px;color:#737373;font-size:12px;text-decoration:none;letter-spacing:-.005em;transition:color .12s var(--ease-out)}
 .login-forgot:hover{color:#5E00CC;text-decoration:underline}
 .login-divider{margin-top:16px}
@@ -186,6 +190,12 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       </button>
     </div>
       <div class="login-hint">Acessos são criados internamente pela equipe.</div>
+    </div>
+    <!-- Rodapé com links legais — sempre acessíveis mesmo antes do login. -->
+    <div class="login-legal-footer">
+      <a href="/termos" target="_blank" rel="noopener">Termos de Serviço</a>
+      <span class="login-legal-sep">·</span>
+      <a href="/privacidade" target="_blank" rel="noopener">Política de Privacidade</a>
     </div>
   </main>
 </div>
@@ -4007,7 +4017,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260910loading7" defer></script>
+<script src="/js/boot.js?v=20260910legal" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

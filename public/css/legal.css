@@ -143,6 +143,17 @@ body {
   font-size: 14px;
   color: var(--text-muted);
 }
+/* Callout inline no meio do texto (ex.: aviso sobre dispensa de DPO) —
+   menos destaque que .legal-note pra não parecer "rascunho". */
+.legal-callout {
+  background: var(--surface);
+  border-left: 2px solid var(--border);
+  padding: 10px 14px;
+  margin: 12px 0;
+  font-size: 14px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
 .legal-footer {
   border-top: 1px solid var(--border);
   padding: 32px 24px;

@@ -8,7 +8,7 @@
 <meta name="robots" content="index,follow">
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="stylesheet" href="/css/fonts.css?v=1">
-<link rel="stylesheet" href="/css/legal.css?v=1">
+<link rel="stylesheet" href="/css/legal.css?v=2">
 </head>
 <body>
 
@@ -29,151 +29,193 @@
 <main class="legal-container">
   <div class="legal-eyebrow">Documento legal</div>
   <h1>Política de Privacidade</h1>
-  <p class="legal-updated">Última atualização: 22 de agosto de 2026</p>
-
-  <div class="legal-note">
-    <strong>Rascunho.</strong> Este documento é um esqueleto compatível com a LGPD.
-    Substitua as seções com o conteúdo revisado antes de disponibilizar publicamente,
-    especialmente identificação do controlador e canal do encarregado (DPO).
-  </div>
+  <p class="legal-updated">Última atualização: 10 de setembro de 2026 · Vigência a partir de 10 de setembro de 2026</p>
 
   <h2>1. Introdução</h2>
   <p>
-    Esta Política de Privacidade descreve como o reWork (a "Plataforma") coleta, usa,
-    compartilha e protege dados pessoais. Estamos comprometidos com a proteção da sua
-    privacidade em conformidade com a Lei Geral de Proteção de Dados Pessoais
-    (Lei nº 13.709/2018 — LGPD).
+    Esta Política de Privacidade descreve como o reWork (a "Plataforma") trata dados
+    pessoais em conformidade com a Lei Geral de Proteção de Dados Pessoais
+    (Lei nº 13.709/2018 — "LGPD"). Ao usar a Plataforma, você reconhece que leu e
+    entendeu como seus dados são coletados, utilizados, compartilhados e protegidos.
   </p>
 
   <h2>2. Controlador dos Dados</h2>
   <p>
     O controlador dos dados pessoais tratados nesta Plataforma é
-    <strong>[Razão Social da empresa]</strong>, CNPJ <strong>[CNPJ]</strong>,
-    sediada em <strong>[Endereço]</strong>.
+    <strong>Andrigo Luís Oliveira dos Santos</strong>, pessoa física, operando o
+    serviço em caráter individual.
+  </p>
+  <p>
+    Canal único para dúvidas de privacidade, exercício de direitos do titular e
+    demais assuntos relativos a dados pessoais:
+    <a href="mailto:andrigo.contato@gmail.com">andrigo.contato@gmail.com</a>.
+  </p>
+  <p class="legal-callout">
+    <strong>Encarregado (DPO).</strong> Como agente de tratamento de pequeno porte
+    (conforme critérios da Resolução CD/ANPD nº 2/2022), a operação está dispensada
+    da indicação formal de Encarregado. O canal de comunicação acima cumpre a
+    função prevista no art. 41, § 4º da LGPD.
   </p>
 
   <h2>3. Dados que Coletamos</h2>
-  <h3>3.1. Dados fornecidos por você</h3>
+
+  <h3>3.1. Dados fornecidos por você ou pela sua organização</h3>
   <ul>
-    <li><strong>Cadastrais:</strong> nome, nome de usuário, e-mail, cargo/área;</li>
+    <li><strong>Cadastro:</strong> nome, nome de usuário, e-mail, cargo ou área;</li>
     <li><strong>Contato opcional:</strong> telefone, nome no Discord, ID do Discord;</li>
     <li><strong>Foto de perfil:</strong> quando enviada por você;</li>
-    <li><strong>Conteúdo:</strong> demandas, comentários, arquivos anexos, apontamentos de horas.</li>
+    <li><strong>Conteúdo produzido:</strong> demandas, comentários, arquivos anexados, apontamentos de horas, checklists, formulários e demais registros criados no uso da Plataforma.</li>
   </ul>
 
   <h3>3.2. Dados coletados automaticamente</h3>
   <ul>
-    <li><strong>Sessão:</strong> cookie HTTP-only de autenticação;</li>
-    <li><strong>Atividade:</strong> último acesso, timestamps de ações realizadas;</li>
-    <li><strong>Análise agregada:</strong> tempo de uso, páginas visitadas (via Microsoft Clarity).</li>
+    <li><strong>Sessão:</strong> cookie HTTP-only de autenticação (<code>kastor_session</code>) — não acessível por scripts;</li>
+    <li><strong>Metadados de acesso:</strong> endereço IP, agente do navegador (User-Agent), horários de login e último acesso, timestamps das ações realizadas;</li>
+    <li><strong>Logs técnicos:</strong> registros de requisições (rota, status, latência) mantidos para segurança e depuração;</li>
+    <li><strong>Preferências locais:</strong> tema (claro/escuro), filtros aplicados, workspace ativo — armazenados apenas no <em>localStorage</em> do seu navegador.</li>
   </ul>
 
-  <h3>3.3. Dados de integrações</h3>
+  <h3>3.3. Análise de uso</h3>
   <p>
-    Se você conectar integrações opcionais (Google Calendar, Discord), tratamos os tokens
-    de acesso necessários para o funcionamento delas. Não temos acesso à sua senha do Google
-    ou Discord.
+    Utilizamos o <strong>Microsoft Clarity</strong> para gerar heatmaps e gravações de
+    sessão agregadas, com o objetivo de melhorar a experiência de uso. O Clarity coleta
+    interações (cliques, movimentos do cursor, rolagem), tamanho de tela e navegador.
+    Campos com senhas e conteúdo sensível são mascarados por padrão.
+  </p>
+
+  <h3>3.4. Dados de integrações opcionais</h3>
+  <p>
+    Se você habilitar integrações (Google Calendar, Discord), tratamos os tokens de
+    acesso necessários para o funcionamento delas e o mínimo de dados do seu perfil
+    devolvido pelo provedor (por exemplo, ID do Discord e nome de usuário no OAuth
+    de identificação). Nunca temos acesso à sua senha nesses serviços.
   </p>
 
   <h2>4. Como Usamos seus Dados</h2>
   <ul>
-    <li>Fornecer, manter e melhorar as funcionalidades da Plataforma;</li>
-    <li>Autenticar você e proteger sua conta;</li>
-    <li>Enviar notificações sobre demandas, menções e eventos relevantes;</li>
-    <li>Cumprir obrigações legais e regulatórias;</li>
-    <li>Investigar e prevenir uso indevido, fraudes ou violações destes termos.</li>
+    <li>Prover, manter e melhorar as funcionalidades da Plataforma;</li>
+    <li>Autenticar você e proteger a sua conta;</li>
+    <li>Enviar notificações operacionais sobre demandas, menções e eventos relevantes;</li>
+    <li>Detectar, investigar e prevenir uso indevido, abusos ou incidentes de segurança;</li>
+    <li>Cumprir obrigações legais e responder a requisições de autoridades competentes.</li>
   </ul>
+  <p>
+    Não utilizamos seus dados para <strong>publicidade comportamental</strong> nem tomamos
+    <strong>decisões automatizadas</strong> com efeitos jurídicos ou impactos significativos
+    sobre você (art. 20 da LGPD).
+  </p>
 
   <h2>5. Bases Legais (art. 7º LGPD)</h2>
   <ul>
-    <li><strong>Execução de contrato:</strong> operação da Plataforma que você contratou;</li>
-    <li><strong>Consentimento:</strong> para integrações opcionais e comunicações de marketing;</li>
-    <li><strong>Legítimo interesse:</strong> segurança, prevenção de fraude, melhoria do serviço;</li>
-    <li><strong>Cumprimento de obrigação legal:</strong> quando exigido por autoridade competente.</li>
+    <li><strong>Execução de contrato (art. 7º, V):</strong> operação da Plataforma e prestação do serviço contratado pela sua organização;</li>
+    <li><strong>Consentimento (art. 7º, I):</strong> para integrações opcionais que você habilita e para eventuais comunicações não essenciais;</li>
+    <li><strong>Legítimo interesse (art. 7º, IX):</strong> segurança, prevenção de fraude, análise de uso e melhoria contínua do serviço, sempre respeitando suas expectativas legítimas;</li>
+    <li><strong>Cumprimento de obrigação legal (art. 7º, II):</strong> quando exigido por lei ou por autoridade competente.</li>
   </ul>
 
-  <h2>6. Compartilhamento de Dados</h2>
-  <p>Compartilhamos dados pessoais apenas nas seguintes situações:</p>
+  <h2>6. Compartilhamento e Subprocessadores</h2>
+  <p>Compartilhamos dados pessoais apenas nas seguintes hipóteses:</p>
   <ul>
-    <li><strong>Com sua organização:</strong> outros membros da mesma equipe têm acesso ao conteúdo colaborativo;</li>
-    <li><strong>Provedores de serviço:</strong> hospedagem (servidores), envio de e-mail, integrações que você habilitou;</li>
-    <li><strong>Obrigação legal:</strong> quando exigido por lei, ordem judicial ou autoridade competente;</li>
-    <li><strong>Nunca vendemos</strong> dados pessoais a terceiros.</li>
+    <li><strong>Com a sua organização:</strong> membros da mesma equipe têm acesso ao conteúdo colaborativo criado por você dentro do escopo autorizado pelo administrador;</li>
+    <li><strong>Com subprocessadores</strong> que apoiam a operação do serviço (listados abaixo);</li>
+    <li><strong>Por obrigação legal:</strong> quando exigido por lei, ordem judicial ou autoridade competente;</li>
+    <li><strong>Nunca vendemos seus dados a terceiros.</strong></li>
+  </ul>
+
+  <p>Lista de subprocessadores em vigor:</p>
+  <ul>
+    <li><strong>Hostinger (Portainer/VPS):</strong> hospedagem da aplicação e do banco de dados;</li>
+    <li><strong>Microsoft (Clarity):</strong> análise de uso e heatmaps agregados;</li>
+    <li><strong>Google (Calendar API / OAuth):</strong> integração opcional de calendário;</li>
+    <li><strong>Discord Inc. (OAuth e Bot API):</strong> login opcional com Discord e notificações via bot;</li>
+    <li><strong>Provedor de e-mail transacional:</strong> envio de mensagens de sistema (redefinição de senha e afins).</li>
   </ul>
 
   <h2>7. Cookies e Tecnologias Similares</h2>
-  <p>Usamos:</p>
   <ul>
-    <li><strong>Cookie de sessão (essencial):</strong> mantém você logado; HTTP-only, SameSite=Lax;</li>
-    <li><strong>LocalStorage:</strong> guarda preferências (tema, filtros, workspace ativo) apenas no seu navegador;</li>
-    <li><strong>Análise (Microsoft Clarity):</strong> heatmaps e gravações anônimas de sessão para melhorias de UX.</li>
+    <li><strong>Cookie de sessão (essencial):</strong> <code>kastor_session</code>, HTTP-only, SameSite=Lax — mantém você autenticado; sem ele a Plataforma não funciona;</li>
+    <li><strong>LocalStorage (essencial):</strong> guarda preferências de tema, filtros e workspace ativo somente no seu navegador. Não trafega em requisições;</li>
+    <li><strong>Análise (Microsoft Clarity):</strong> heatmaps e gravações de sessão anonimizadas para melhorias de UX. Você pode se opor ao tratamento entrando em contato pelo canal do item 2.</li>
   </ul>
 
   <h2>8. Seus Direitos (art. 18 LGPD)</h2>
-  <p>Como titular, você tem direito a:</p>
+  <p>Como titular, você pode a qualquer momento:</p>
   <ul>
-    <li>Confirmar a existência de tratamento;</li>
+    <li>Confirmar a existência de tratamento de seus dados;</li>
     <li>Acessar seus dados;</li>
     <li>Corrigir dados incompletos, inexatos ou desatualizados;</li>
-    <li>Solicitar anonimização, bloqueio ou eliminação de dados desnecessários;</li>
-    <li>Portabilidade dos dados;</li>
-    <li>Eliminação dos dados tratados com base em consentimento;</li>
-    <li>Informação sobre com quem compartilhamos seus dados;</li>
+    <li>Solicitar a anonimização, o bloqueio ou a eliminação de dados desnecessários, excessivos ou tratados em desconformidade com a LGPD;</li>
+    <li>Solicitar a portabilidade dos seus dados a outro fornecedor;</li>
+    <li>Solicitar a eliminação dos dados tratados com base em consentimento;</li>
+    <li>Ser informado sobre com quem compartilhamos seus dados;</li>
+    <li>Ser informado sobre a possibilidade de não fornecer consentimento e sobre as consequências da recusa;</li>
     <li>Revogar o consentimento a qualquer momento.</li>
   </ul>
   <p>
-    Para exercer qualquer direito, entre em contato com o Encarregado de Proteção de Dados
-    (DPO) pelo e-mail <a href="mailto:[email do DPO]">[email do DPO]</a>.
+    Para exercer qualquer um desses direitos, envie um pedido para
+    <a href="mailto:andrigo.contato@gmail.com">andrigo.contato@gmail.com</a>. Responderemos
+    em até 15 dias corridos, podendo esse prazo ser justificadamente prorrogado.
+  </p>
+  <p>
+    Você também tem o direito de peticionar diretamente à
+    <strong>Autoridade Nacional de Proteção de Dados (ANPD)</strong> quando entender
+    que seus direitos não foram respeitados: <a href="https://www.gov.br/anpd/" target="_blank" rel="noopener">gov.br/anpd</a>.
   </p>
 
   <h2>9. Retenção de Dados</h2>
-  <p>
-    Mantemos seus dados enquanto sua conta estiver ativa e pelo período necessário para
-    cumprir as finalidades desta política. Após a solicitação de exclusão da conta,
-    dados são removidos em até <strong>30 dias</strong>, exceto quando a retenção for
-    exigida por obrigação legal.
-  </p>
+  <ul>
+    <li><strong>Enquanto sua conta estiver ativa</strong> — mantemos os dados necessários pra operar a Plataforma;</li>
+    <li><strong>Solicitação de exclusão</strong> — dados são anonimizados ou eliminados em até <strong>30 dias corridos</strong> a partir da solicitação;</li>
+    <li><strong>Backups</strong> — cópias de segurança podem manter dados por até <strong>7 dias</strong> (diário) e são sobrescritas no ciclo regular;</li>
+    <li><strong>Logs técnicos e de segurança</strong> — retidos por até <strong>6 meses</strong> para investigação de incidentes;</li>
+    <li><strong>Registros exigidos por lei</strong> — mantidos pelos prazos aplicáveis (por exemplo, art. 15 do Marco Civil da Internet — 6 meses de logs de acesso).</li>
+  </ul>
 
-  <h2>10. Segurança</h2>
-  <p>
-    Aplicamos medidas técnicas e administrativas razoáveis para proteger seus dados:
-  </p>
+  <h2>10. Segurança e Notificação de Incidentes</h2>
+  <p>Adotamos medidas técnicas e administrativas para proteger seus dados:</p>
   <ul>
     <li>Comunicação criptografada em trânsito (HTTPS/TLS);</li>
     <li>Senhas armazenadas com hash criptográfico irreversível;</li>
-    <li>Cookie de sessão HTTP-only (protegido contra scripts do navegador);</li>
-    <li>Controle de acesso baseado em papéis (admin/moderador/equipe);</li>
-    <li>Backups regulares do banco de dados.</li>
+    <li>Cookie de sessão HTTP-only, protegido contra <em>scripts</em> do navegador;</li>
+    <li>Controle de acesso baseado em papéis (administrador, moderador, equipe, freelancer);</li>
+    <li>Backups regulares e criptografados do banco de dados;</li>
+    <li>Registros de auditoria de alterações relevantes.</li>
   </ul>
   <p>
-    Nenhum sistema é 100% seguro. Em caso de incidente de segurança que comprometa
-    dados pessoais, notificaremos os titulares afetados e a ANPD nos termos da LGPD.
+    Nenhum sistema é 100% seguro. Em caso de incidente de segurança que possa
+    acarretar risco ou dano relevante aos titulares, comunicaremos os afetados
+    e a ANPD nos termos do art. 48 da LGPD.
   </p>
 
   <h2>11. Transferência Internacional</h2>
   <p>
-    Alguns serviços de terceiros (Google, Microsoft) podem armazenar dados fora do Brasil.
-    Nesses casos, garantimos que a transferência ocorre em conformidade com o art. 33 da LGPD.
+    Alguns dos subprocessadores listados no item 6 (Microsoft, Google, Discord)
+    podem armazenar ou processar dados fora do Brasil. A transferência ocorre em
+    conformidade com o art. 33 da LGPD, apoiada em compromissos contratuais desses
+    provedores (cláusulas-padrão ou instrumentos equivalentes) que asseguram nível
+    adequado de proteção.
   </p>
 
-  <h2>12. Menores de Idade</h2>
+  <h2>12. Crianças e Adolescentes</h2>
   <p>
-    A Plataforma não se destina a menores de 18 anos. Não coletamos deliberadamente dados
-    de menores. Se identificarmos coleta indevida, os dados serão excluídos imediatamente.
+    A Plataforma não é destinada a crianças (menores de 12 anos). Contas de
+    adolescentes (12 a 18 anos) só são admitidas mediante consentimento específico
+    e destacado de ao menos um dos pais ou responsável legal, conforme art. 14
+    da LGPD.
   </p>
 
   <h2>13. Alterações nesta Política</h2>
   <p>
-    Podemos atualizar esta política periodicamente. Alterações materiais serão comunicadas
-    dentro da Plataforma com pelo menos 15 dias de antecedência. A data de "Última
-    atualização" no topo indica a versão vigente.
+    Podemos atualizar esta política periodicamente. Alterações materiais serão
+    comunicadas dentro da Plataforma com pelo menos <strong>15 dias</strong> de
+    antecedência. A data de "Última atualização" no topo indica sempre a versão
+    vigente.
   </p>
 
-  <h2>14. Contato do Encarregado (DPO)</h2>
+  <h2>14. Contato</h2>
   <p>
-    <strong>Encarregado de Proteção de Dados:</strong> [Nome do DPO]<br>
-    <strong>E-mail:</strong> <a href="mailto:[email do DPO]">[email do DPO]</a><br>
-    <strong>Endereço postal:</strong> [Endereço da empresa]
+    <strong>Controlador:</strong> Andrigo Luís Oliveira dos Santos<br>
+    <strong>E-mail:</strong> <a href="mailto:andrigo.contato@gmail.com">andrigo.contato@gmail.com</a>
   </p>
 </main>
 
