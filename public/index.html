@@ -946,17 +946,30 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
         <button class="an-tab" data-tab="reports" onclick="setAnalyticsTab('reports')">RELATÓRIOS</button>
       </div>
       <div class="page-body">
-        <!-- Aba CAPACIDADE -->
+        <!-- Aba CAPACIDADE — layout unificado v2:
+             Linha 1 ("capa"):  título + subtitle + toggle da visão à direita.
+             Linha 2 ("filtros"): squads + período + export numa fileira só.
+             Isso reduz a fricção de "onde fica cada filtro?". -->
         <div id="an-tab-capacity" class="an-tab-panel">
-          <!-- Header reorganizado: título + subtitle à esquerda, filtros (squad + período)
-               agrupados à direita. Segmented control da visão numa segunda linha, com
-               o botão Exportar isolado à direita — evita competição visual com as abas. -->
-          <div class="capacity-header">
-            <div class="capacity-header-main">
+          <div class="capacity-hero">
+            <div class="capacity-hero-main">
               <h2 class="capacity-title" id="capacity-heading">Capacidade da Equipe</h2>
               <div class="capacity-subtitle" id="capacity-hint">Distribuição de demandas em aberto por responsável — carga baseada em atribuições e horas apontadas.</div>
             </div>
-            <div class="capacity-header-filters">
+            <div class="capacity-view-toggle" role="tablist" aria-label="Trocar visão">
+              <button class="capacity-view-btn is-active" id="capacity-view-team" onclick="setCapacityView('team')"><i data-lucide="users" class="ic-sm"></i> Equipe</button>
+              <button class="capacity-view-btn" id="capacity-view-project" onclick="setCapacityView('project')"><i data-lucide="folder" class="ic-sm"></i> Projeto</button>
+              <button class="capacity-view-btn" id="capacity-view-client" onclick="setCapacityView('client')"><i data-lucide="briefcase" class="ic-sm"></i> Cliente</button>
+            </div>
+          </div>
+          <div class="capacity-filterbar">
+            <div class="capacity-filterbar-group">
+              <span class="capacity-filterbar-label"><i data-lucide="users" class="ic-xs"></i> Squads</span>
+              <div class="uws-filter capacity-squad-filter-inline" id="capacity-squad-filter"></div>
+              <input type="hidden" id="capacity-squads" value="">
+            </div>
+            <div class="capacity-filterbar-group">
+              <span class="capacity-filterbar-label"><i data-lucide="calendar-range" class="ic-xs"></i> Período</span>
               <!-- Período: mesma pfp de Demandas, instância isolada (cap-pfp-*). -->
               <div class="filter-period-picker">
                 <button type="button" class="filter-period-trigger" id="cap-pfp-trigger" onclick="capPfpToggle(event)">
@@ -984,26 +997,11 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               <input type="hidden" id="capacity-period-start" value="">
               <input type="hidden" id="capacity-period-end" value="">
             </div>
-          </div>
-          <div class="capacity-view-bar">
-            <!-- Squads à esquerda (respiram bem — até 7 squads cabem numa linha
-                 antes de precisar wrap). Toggle da visão + export ficam agrupados
-                 à direita, isolados do filtro. -->
-            <div class="capacity-view-bar-left">
-              <div class="uws-filter capacity-squad-filter-inline" id="capacity-squad-filter"></div>
-              <input type="hidden" id="capacity-squads" value="">
-            </div>
-            <div class="capacity-view-bar-right">
-              <div class="capacity-view-toggle" role="tablist">
-                <button class="capacity-view-btn is-active" id="capacity-view-team" onclick="setCapacityView('team')"><i data-lucide="users" class="ic-sm"></i> Equipe</button>
-                <button class="capacity-view-btn" id="capacity-view-project" onclick="setCapacityView('project')"><i data-lucide="folder" class="ic-sm"></i> Projeto</button>
-                <button class="capacity-view-btn" id="capacity-view-client" onclick="setCapacityView('client')"><i data-lucide="briefcase" class="ic-sm"></i> Cliente</button>
-              </div>
-              <button class="capacity-export-btn" onclick="exportCapacityCsv()" title="Exportar visão atual em CSV">
-                <i data-lucide="download" class="ic-sm"></i>
-                <span>Exportar</span>
-              </button>
-            </div>
+            <div class="capacity-filterbar-spacer"></div>
+            <button class="capacity-export-btn" onclick="exportCapacityCsv()" title="Exportar visão atual em CSV">
+              <i data-lucide="download" class="ic-sm"></i>
+              <span>Exportar</span>
+            </button>
           </div>
           <div id="capacity-list"></div>
         </div>
@@ -1030,39 +1028,45 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           </div>
           <div id="rhythm-body"></div>
         </div>
-        <!-- Aba RELATÓRIOS / SLA -->
+        <!-- Aba RELATÓRIOS / SLA — v2:
+             Hero + filterbar unificado (padrão da capacidade), cards com hover
+             refinado e tooltip nos hints. -->
         <div id="an-tab-reports" class="an-tab-panel" style="display:none">
-          <div class="filters-bar" style="margin-bottom:16px">
-            <div class="filter-group">
-              <label class="filter-label">Squads</label>
-              <!-- Multi-select em chips (estilo Usuários). O hidden input guarda a
-                   seleção em CSV — mantém a persistência via FILTER_KEYS['reports']. -->
+          <div class="capacity-hero">
+            <div class="capacity-hero-main">
+              <h2 class="capacity-title">Relatórios de SLA</h2>
+              <div class="capacity-subtitle">Tempo em cada etapa, pontualidade, esforço apontado e demandas mais lentas — pra achar gargalos e comparar performance.</div>
+            </div>
+          </div>
+          <div class="capacity-filterbar rep-filterbar">
+            <div class="capacity-filterbar-group">
+              <span class="capacity-filterbar-label"><i data-lucide="users" class="ic-xs"></i> Squads</span>
               <div class="rep-squads" id="reports-squad-filter"></div>
               <input type="hidden" id="reports-ws" value="">
             </div>
-            <div class="filter-group">
-              <label class="filter-label">Cliente</label>
-              <select class="filter-select" id="reports-client" onchange="renderReports()"></select>
+            <div class="capacity-filterbar-group">
+              <span class="capacity-filterbar-label"><i data-lucide="briefcase" class="ic-xs"></i> Cliente</span>
+              <select id="reports-client" onchange="renderReports()"></select>
             </div>
-            <div class="filter-group">
-              <label class="filter-label">Projeto</label>
-              <select class="filter-select" id="reports-project" onchange="renderReports()"></select>
+            <div class="capacity-filterbar-group">
+              <span class="capacity-filterbar-label"><i data-lucide="folder" class="ic-xs"></i> Projeto</span>
+              <select id="reports-project" onchange="renderReports()"></select>
             </div>
-            <div class="filter-group">
-              <label class="filter-label">Período</label>
-              <select class="filter-select" id="reports-period" onchange="renderReports()">
+            <div class="capacity-filterbar-group">
+              <span class="capacity-filterbar-label"><i data-lucide="calendar-range" class="ic-xs"></i> Período</span>
+              <select id="reports-period" onchange="renderReports()">
                 <option value="30">Últimos 30 dias</option>
                 <option value="90" selected>Últimos 90 dias</option>
                 <option value="365">Último ano</option>
                 <option value="all">Todo o período</option>
               </select>
             </div>
-            <div class="filter-group" style="justify-content:flex-end">
-              <label class="filter-label">&nbsp;</label>
-              <button class="btn btn-ghost btn-icon-only" onclick="clearReportFilters()" title="Limpar filtros"><i data-lucide="brush-cleaning" class="ic-sm"></i></button>
-            </div>
+            <div class="capacity-filterbar-spacer"></div>
+            <button class="capacity-export-btn" onclick="clearReportFilters()" title="Limpar filtros">
+              <i data-lucide="brush-cleaning" class="ic-sm"></i>
+              <span>Limpar</span>
+            </button>
           </div>
-          <div class="capacity-hint">Tempo que as demandas levam em cada etapa e no total. Ajuda a achar gargalos, medir pontualidade e comparar com o esforço apontado.</div>
           <div id="reports-body"></div>
         </div>
       </div>
@@ -1236,14 +1240,20 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       <div class="page-body">
         <!-- Lista de dashboards (grid) -->
         <div id="dashboards-grid-view">
-          <div class="filters-bar" style="margin-bottom:14px">
+          <div class="capacity-hero">
+            <div class="capacity-hero-main">
+              <h2 class="capacity-title">Dashboards</h2>
+              <div class="capacity-subtitle">Painéis com widgets pra cruzar dados de formulários, demandas e horas apontadas — filtre por período, squad, cliente e projeto.</div>
+            </div>
+            <button class="btn btn-primary btn-sm admin-only" onclick="openDashboardEditor(null)">
+              <i data-lucide="plus" class="ic-sm"></i> Novo dashboard
+            </button>
+          </div>
+          <div class="dashboards-searchbar">
             <div class="filter-input-wrap">
               <i data-lucide="search" class="filter-input-icon ic-sm"></i>
               <input class="filter-input filter-input--with-icon" id="dashboards-search" placeholder="Buscar dashboard…" oninput="renderDashboards()">
             </div>
-            <button class="btn btn-primary btn-sm admin-only" style="margin-left:auto" onclick="openDashboardEditor(null)">
-              <i data-lucide="plus" class="ic-sm"></i> Novo dashboard
-            </button>
           </div>
           <div id="dashboards-cards" class="dashboards-cards"></div>
         </div>
@@ -4104,7 +4114,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260910loaddark" defer></script>
+<script src="/js/boot.js?v=20260911demV4" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

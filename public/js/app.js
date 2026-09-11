@@ -1639,7 +1639,7 @@ function toast(msg, type = 'success', action = null) {
     t.appendChild(check);
   } else if (TOAST_ICONS[type]) {
     const ic = document.createElement('span');
-    ic.className = 'toast-icon toast-icon-' + type;
+    ic.className = 'toast-icon toast-icon-badge toast-icon-' + type;
     ic.innerHTML = TOAST_ICONS[type];
     t.appendChild(ic);
   }
@@ -7331,6 +7331,7 @@ function renderList() {
   }
 
   paintIcons(); // ícones de urgência de prazo (alert-triangle / clock) nas linhas
+  _syncListSortHeaders();
   if (listView === 'kanban') renderKanban();
   if (listView === 'cal') renderCalendar('all');
   _applyBulkMode();
@@ -7357,6 +7358,23 @@ function toggleDoneTable() {
 function sortList(key) {
   if (sortKey === key) sortAsc = !sortAsc; else { sortKey = key; sortAsc = true; }
   renderList();
+}
+/* Marca a coluna atualmente ordenada (nas duas tabelas — principal e concluídas).
+   O CSS troca o ícone `chevrons-up-down` neutro por uma seta direcionada e colorida. */
+function _syncListSortHeaders() {
+  const scopes = ['#list-table-view table thead', '#done-table-body-wrap table thead'];
+  const dirCls = sortAsc ? 'is-sort-asc' : 'is-sort-desc';
+  scopes.forEach(sel => {
+    document.querySelectorAll(sel + ' th[onclick^="sortList"]').forEach(th => {
+      const raw = th.getAttribute('onclick') || '';
+      const m = raw.match(/sortList\('([^']+)'\)/);
+      const k = m ? m[1] : '';
+      th.classList.remove('is-sort-asc', 'is-sort-desc', 'is-sorted');
+      if (k === sortKey) {
+        th.classList.add('is-sorted', dirCls);
+      }
+    });
+  });
 }
 
 /* Estado das seções colapsadas em /demands. Persiste em localStorage — cada key
@@ -7539,6 +7557,9 @@ function kanbanCard(d) {
   const owner = userById(d.ownerId);
   const due = effDue(d);
   const late = isLate(d);
+  const flow = flowById(d.flowId);
+  const curStage = flow ? activeStagesOf(d, flow).find(s => s.id === d.status) : null;
+  const stageColor = curStage?.color || 'var(--accent)';
   let ownerBlock;
   if (!owner) {
     ownerBlock = '<span class="kanban-card-owner-empty">Sem responsável</span>';
@@ -7560,7 +7581,7 @@ function kanbanCard(d) {
     ? `<span class="kanban-card-due ${late ? 'late' : ''}"><i data-lucide="${late ? 'alert-triangle' : 'calendar'}" class="ic-xs"></i> ${esc(fmtDate(due))}</span>`
     : '';
   return `
-    <div class="kanban-card" draggable="true" data-demand-id="${d.id}" onclick="showDetail('${d.id}')">
+    <div class="kanban-card" draggable="true" data-demand-id="${d.id}" style="--card-stage:${esc(stageColor)}" onclick="showDetail('${d.id}')">
       <div class="kanban-card-top">${priorityPill(d.priority)}${statusPill(d)}${stageAgeChip(d)}</div>
       <div class="kanban-card-name">${esc(d.name)}</div>
       <div class="kanban-card-meta">${esc(p?.name || '—')}${p?.client ? ` · ${esc(p.client)}` : ''}</div>
@@ -8051,6 +8072,13 @@ async function renderReports() {
   const firstEnter = !_filtersRestored['reports'];
   restoreFilters('reports');
   populateReportFilters(firstEnter);
+  // Substitui os <select> nativos por dropdowns customizados (mesma UI do
+  // resto do app). Os <select> continuam existindo escondidos e persistem
+  // o valor via saveFilters/restoreFilters normalmente.
+  applyFilterDropdown('reports-client',  { clientIcon: true });
+  applyFilterDropdown('reports-project', { projectIcon: true });
+  applyFilterDropdown('reports-period',  {});
+  paintIcons();
   const period = ($('reports-period') && $('reports-period').value) || '90';
   const wsPick     = ($('reports-ws') && $('reports-ws').value) || '';
   const clientPick = ($('reports-client') && $('reports-client').value) || '';
@@ -8170,34 +8198,35 @@ function buildReportsHTML(data) {
       <span>média <strong>${fmtHours(effort.avgPerDemand)}</strong>/demanda</span>
     </div>` : '';
 
+  const cardHead = (icon, title, hint) => `
+    <div class="rep-card-head">
+      <div class="rep-card-title"><i data-lucide="${icon}" class="ic-sm"></i>${esc(title)}</div>
+      <div class="rep-card-hint" title="${esc(hint)}">${esc(hint)}</div>
+    </div>`;
+
   return `
     <div class="rep-kpis">${kpis}</div>
     <div class="rep-grid">
       <div class="rep-card rep-tone-time">
-        <div class="rep-card-title"><i data-lucide="bar-chart-3" class="ic-sm"></i> Tempo médio por etapa</div>
-        <div class="rep-card-hint">Tempo de calendário (entrada → saída). Etapas com mesmo nome vêm agrupadas.</div>
+        ${cardHead('bar-chart-3', 'Tempo médio por etapa', 'Tempo de calendário (entrada → saída). Etapas com mesmo nome vêm agrupadas.')}
         <div class="rep-bars">${stageBars}</div>
       </div>
       <div class="rep-card rep-tone-effort">
-        <div class="rep-card-title"><i data-lucide="timer" class="ic-sm"></i> Horas apontadas por etapa</div>
-        <div class="rep-card-hint">Esforço médio lançado pelos usuários em cada etapa.</div>
+        ${cardHead('timer', 'Horas apontadas por etapa', 'Esforço médio lançado pelos usuários em cada etapa.')}
         ${effHeader}
         <div class="rep-bars">${effStageBars}</div>
       </div>
       <div class="rep-card rep-tone-people">
-        <div class="rep-card-title"><i data-lucide="users" class="ic-sm"></i> Horas apontadas por pessoa</div>
-        <div class="rep-card-hint">Total de horas lançadas no período.</div>
+        ${cardHead('users', 'Horas apontadas por pessoa', 'Total de horas lançadas no período.')}
         <div class="rep-bars">${effUserRows}</div>
       </div>
       <div class="rep-card rep-tone-type">
-        <div class="rep-card-title"><i data-lucide="tag" class="ic-sm"></i> Tempo médio por tipo</div>
-        <div class="rep-card-hint">Lead time médio por tipo de demanda.</div>
+        ${cardHead('tag', 'Tempo médio por tipo', 'Lead time médio por tipo de demanda.')}
         <div class="rep-bars">${typeRows}</div>
       </div>
     </div>
     <div class="rep-card rep-tone-slow">
-      <div class="rep-card-title"><i data-lucide="clock" class="ic-sm"></i> Demandas mais lentas</div>
-      <div class="rep-card-hint">Da criação até a conclusão. Clique pra abrir.</div>
+      ${cardHead('clock', 'Demandas mais lentas', 'Da criação até a conclusão. Clique pra abrir.')}
       <div class="rep-slow-list">${slowRows}</div>
     </div>`;
 }
@@ -10376,6 +10405,22 @@ function _wireCapSparkline() {
   });
 }
 
+/* State pra linhas expandidas (ID do usuário → true).
+   Sobrevive a re-renders; limpo quando muda escopo se ficar órfão. */
+const _capExpanded = new Set();
+function capToggleRow(uid) {
+  if (_capExpanded.has(uid)) _capExpanded.delete(uid);
+  else _capExpanded.add(uid);
+  renderCapacity();
+}
+/* Rótulos de status humanos, alinhados ao CSS. */
+const CAP_STATUS_LABELS = {
+  low:      { label: 'Folga',       hint: '< 40% da capacidade' },
+  medium:   { label: 'Saudável',    hint: '40 – 74% da capacidade' },
+  high:     { label: 'Alta carga',  hint: '75 – 99% da capacidade' },
+  overload: { label: 'Sobrecarga',  hint: '≥ 100% da capacidade' }
+};
+
 function renderCapacityTeam(startYmd, endYmd, businessDays, capacityHours, logStartYmd, logEndYmd) {
   const wsdemands = capScopeDemands().filter(d => !isDone(d));
   const wsusers = capScopeUsers();
@@ -10405,28 +10450,116 @@ function renderCapacityTeam(startYmd, endYmd, businessDays, capacityHours, logSt
     return norm(a.u.name).localeCompare(norm(b.u.name));
   });
 
-  $('capacity-list').innerHTML = `
+  // KPI extras: quanto do time está em sobrecarga, quantas atrasadas totais.
+  const totalHoursLogged = rows.reduce((s, r) => s + r.hoursLogged, 0);
+  const totalCapacityHours = capacityHours * rows.length;
+  const teamPct = totalCapacityHours > 0 ? Math.min(150, Math.round(totalHoursLogged / totalCapacityHours * 100)) : 0;
+  const overloadCount = rows.filter(r => r.status === 'overload').length;
+  const totalLate = rows.reduce((s, r) => s + r.lateCount, 0);
+
+  const summaryHtml = `
     <div class="capacity-summary">
-      <div class="capacity-summary-item is-primary"><div class="capacity-summary-label">Capacidade no período</div><div class="capacity-summary-value">${capacityHours}h</div><div class="capacity-summary-sub">${businessDays} dias úteis × 8h</div></div>
-      <div class="capacity-summary-item is-info"><div class="capacity-summary-label">Demandas em aberto</div><div class="capacity-summary-value">${wsdemands.length}</div><div class="capacity-summary-sub">${capSquadFilter.size ? `em ${capSquadFilter.size} squad${capSquadFilter.size === 1 ? '' : 's'}` : `no workspace ${esc(wsById(activeWs)?.name || '')}`}</div></div>
-      <div class="capacity-summary-item is-team"><div class="capacity-summary-label">Pessoas ativas</div><div class="capacity-summary-value">${wsusers.length}</div><div class="capacity-summary-sub">com acesso ao squad</div></div>
-    </div>
+      <div class="cap-kpi is-primary" data-tooltip="Meta = dias úteis × 8h por pessoa. Base pra calcular %.">
+        <div class="cap-kpi-icon"><i data-lucide="target" class="ic-sm"></i></div>
+        <div class="cap-kpi-main">
+          <div class="cap-kpi-label">Meta do time no período</div>
+          <div class="cap-kpi-value">${totalCapacityHours}h</div>
+          <div class="cap-kpi-sub">${rows.length} pessoa${rows.length === 1 ? '' : 's'} × ${businessDays} dia${businessDays === 1 ? '' : 's'} útil × 8h</div>
+        </div>
+      </div>
+      <div class="cap-kpi is-info" data-tooltip="Horas apontadas no período. % é sobre a meta ao lado.">
+        <div class="cap-kpi-icon"><i data-lucide="timer" class="ic-sm"></i></div>
+        <div class="cap-kpi-main">
+          <div class="cap-kpi-label">Realizado</div>
+          <div class="cap-kpi-value">${fmtHours(totalHoursLogged)} <span class="cap-kpi-pct is-${teamPct >= 100 ? 'overload' : teamPct >= 75 ? 'high' : teamPct >= 40 ? 'medium' : 'low'}">· ${teamPct}%</span></div>
+          <div class="cap-kpi-progress"><span class="cap-kpi-progress-fill is-${teamPct >= 100 ? 'overload' : teamPct >= 75 ? 'high' : teamPct >= 40 ? 'medium' : 'low'}" style="width:${Math.min(100, teamPct)}%"></span></div>
+        </div>
+      </div>
+      <div class="cap-kpi ${overloadCount > 0 || totalLate > 0 ? 'is-danger' : 'is-team'}" data-tooltip="Pessoas ≥100% de carga + demandas com prazo já vencido.">
+        <div class="cap-kpi-icon"><i data-lucide="${overloadCount > 0 || totalLate > 0 ? 'alert-triangle' : 'check-circle-2'}" class="ic-sm"></i></div>
+        <div class="cap-kpi-main">
+          <div class="cap-kpi-label">Alertas</div>
+          <div class="cap-kpi-value">${overloadCount + totalLate}</div>
+          <div class="cap-kpi-sub">${overloadCount} em sobrecarga · ${totalLate} atrasada${totalLate === 1 ? '' : 's'}</div>
+        </div>
+      </div>
+    </div>`;
+
+  const rowsHtml = rows.map(r => {
+    const info = CAP_STATUS_LABELS[r.status] || CAP_STATUS_LABELS.medium;
+    const expanded = _capExpanded.has(r.u.id);
+    const barFillPct = Math.min(100, r.pct);
+    const overflowPct = r.pct > 100 ? Math.min(100, r.pct - 100) : 0;
+    // Lista de demandas em aberto pra breakdown expandido — ordenada por prazo asc (late first).
+    const dList = r.userDemands.slice().sort((a, b) => {
+      const la = isLate(a), lb = isLate(b);
+      if (la !== lb) return la ? -1 : 1;
+      const da = effDue(a) || '9999';
+      const db = effDue(b) || '9999';
+      return da.localeCompare(db);
+    });
+    return `<div class="cap-row ${r.status} ${expanded ? 'is-expanded' : ''}" data-uid="${esc(r.u.id)}">
+      <button type="button" class="cap-row-head" onclick="capToggleRow('${esc(r.u.id)}')" aria-expanded="${expanded}">
+        <div class="cap-row-user">
+          ${avatarHTML(r.u, 'avatar cap-row-avatar')}
+          <div class="cap-row-user-info">
+            <div class="cap-row-name">${esc(r.u.name)}</div>
+            <div class="cap-row-role">${esc(r.u.role || r.u.email || '—')}</div>
+          </div>
+        </div>
+        <div class="cap-row-load">
+          <div class="cap-row-load-head">
+            <span class="cap-load-value">${fmtHours(r.hoursLogged)}</span>
+            <span class="cap-load-pct">${r.pct}%</span>
+            <span class="cap-load-status is-${r.status}">${info.label}</span>
+          </div>
+          <div class="cap-row-bar-track" title="${r.pct}% de ${capacityHours}h">
+            <span class="cap-row-bar-fill is-${r.status}" style="width:${barFillPct}%"></span>
+            ${overflowPct > 0 ? `<span class="cap-row-bar-over" style="width:${overflowPct}%"></span>` : ''}
+          </div>
+        </div>
+        <div class="cap-row-stats">
+          <span class="cap-stat-chip" title="Demandas em aberto atribuídas">
+            <i data-lucide="inbox" class="ic-xs"></i>
+            <span class="cap-stat-num">${r.userDemands.length}</span>
+            <span class="cap-stat-lbl">em aberto</span>
+          </span>
+          <span class="cap-stat-chip ${r.lateCount > 0 ? 'is-late' : ''}" title="Demandas com prazo vencido">
+            <i data-lucide="alert-triangle" class="ic-xs"></i>
+            <span class="cap-stat-num">${r.lateCount}</span>
+            <span class="cap-stat-lbl">atrasadas</span>
+          </span>
+        </div>
+        <div class="cap-row-chev"><i data-lucide="chevron-down" class="ic-sm"></i></div>
+      </button>
+      ${expanded ? `<div class="cap-row-body">
+        ${dList.length ? `
+          <div class="cap-row-body-title">${dList.length} demanda${dList.length === 1 ? '' : 's'} em aberto</div>
+          <div class="cap-row-demands">
+            ${dList.map(d => {
+              const p = projectById(d.projectId);
+              const s = stageOf(d);
+              const due = effDue(d);
+              const late = isLate(d);
+              return `<a class="cap-demand" onclick="showDetail('${esc(d.id)}'); event.stopPropagation()">
+                <span class="cap-demand-stage" style="background:${esc(s?.color || 'var(--accent)')}"></span>
+                <span class="cap-demand-name">${esc(d.name)}</span>
+                <span class="cap-demand-project">${esc(p?.name || '—')}${p?.client ? ' · ' + esc(p.client) : ''}</span>
+                <span class="cap-demand-due ${late ? 'is-late' : ''}">${due ? fmtDate(due) : '—'}</span>
+              </a>`;
+            }).join('')}
+          </div>
+        ` : `<div class="cap-row-body-empty">Sem demandas em aberto no escopo atual.</div>`}
+      </div>` : ''}
+    </div>`;
+  }).join('');
+
+  $('capacity-list').innerHTML = `
+    ${summaryHtml}
     ${rows.length ? capacityHeatmapHTML(rows, startYmd, endYmd) : ''}
     <div class="capacity-body">
-      <div class="capacity-rows">
-      ${rows.map(r => `
-        <div class="capacity-row ${r.status}" title="${esc(r.u.name)} · ${fmtHours(r.hoursLogged)} apontadas · ${r.userDemands.length} em aberto · ${r.lateCount} atrasadas · ${r.pct}% da capacidade">
-          <div class="capacity-user">
-            ${avatarHTML(r.u)}
-            <div class="capacity-user-info">
-              <div class="capacity-user-name">${esc(r.u.name)}</div>
-              <div class="capacity-user-role">${fmtHours(r.hoursLogged)} · ${r.pct}%</div>
-            </div>
-          </div>
-          <div class="capacity-mini-stat" title="Demandas em aberto"><i data-lucide="inbox" class="ic-xs"></i>${r.userDemands.length}</div>
-          <div class="capacity-mini-stat ${r.lateCount > 0 ? 'is-late' : ''}" title="Atrasadas"><i data-lucide="alert-triangle" class="ic-xs"></i>${r.lateCount}</div>
-        </div>
-      `).join('')}
+      <div class="capacity-rows cap-rows">
+      ${rowsHtml}
       </div>
       <div class="capacity-side">${_capSparklineHtml(logStartYmd, logEndYmd)}</div>
     </div>
@@ -10487,12 +10620,37 @@ function renderCapacityAggregate(kind, startYmd, endYmd, businessDays, capacityH
   const totalHours = rows.reduce((s, r) => s + r.hours, 0);
   const maxHours = Math.max(1, ...rows.map(r => r.hours));
 
-  // Resumo
+  // KPI destaque: quanto tempo em média por demanda? Top-1 concentração?
+  const uniqueUsers = new Set();
+  allEntries.forEach(({ e }) => e.userId && uniqueUsers.add(e.userId));
+  const topShare = totalHours > 0 && rows[0] ? Math.round(rows[0].hours / totalHours * 100) : 0;
+
   const summary = `
     <div class="capacity-summary">
-      <div class="capacity-summary-item is-primary"><div class="capacity-summary-label">Total apontado</div><div class="capacity-summary-value">${fmtHours(totalHours)}</div><div class="capacity-summary-sub">no período (${businessDays} dias úteis)</div></div>
-      <div class="capacity-summary-item is-info"><div class="capacity-summary-label">${kind === 'project' ? 'Projetos com horas' : 'Clientes com horas'}</div><div class="capacity-summary-value">${rows.length}</div><div class="capacity-summary-sub">${capSquadFilter.size ? `em ${capSquadFilter.size} squad${capSquadFilter.size === 1 ? '' : 's'}` : `no workspace ${esc(wsById(activeWs)?.name || '')}`}</div></div>
-      <div class="capacity-summary-item is-team"><div class="capacity-summary-label">Apontamentos</div><div class="capacity-summary-value">${allEntries.length}</div><div class="capacity-summary-sub">registros no período</div></div>
+      <div class="cap-kpi is-primary" data-tooltip="Soma de horas apontadas em todas as demandas do escopo, no período selecionado.">
+        <div class="cap-kpi-icon"><i data-lucide="timer" class="ic-sm"></i></div>
+        <div class="cap-kpi-main">
+          <div class="cap-kpi-label">Total apontado</div>
+          <div class="cap-kpi-value">${fmtHours(totalHours)}</div>
+          <div class="cap-kpi-sub">${allEntries.length} apontamento${allEntries.length === 1 ? '' : 's'} · ${uniqueUsers.size} pessoa${uniqueUsers.size === 1 ? '' : 's'}</div>
+        </div>
+      </div>
+      <div class="cap-kpi is-info" data-tooltip="${kind === 'project' ? 'Quantos projetos receberam horas no período.' : 'Quantos clientes receberam horas no período.'}">
+        <div class="cap-kpi-icon"><i data-lucide="${kind === 'project' ? 'folder' : 'briefcase'}" class="ic-sm"></i></div>
+        <div class="cap-kpi-main">
+          <div class="cap-kpi-label">${kind === 'project' ? 'Projetos ativos' : 'Clientes ativos'}</div>
+          <div class="cap-kpi-value">${rows.length}</div>
+          <div class="cap-kpi-sub">${capSquadFilter.size ? `em ${capSquadFilter.size} squad${capSquadFilter.size === 1 ? '' : 's'}` : `no squad ${esc(wsById(activeWs)?.name || '')}`}</div>
+        </div>
+      </div>
+      <div class="cap-kpi is-team" data-tooltip="${kind === 'project' ? 'Projeto' : 'Cliente'} que mais concentrou horas — indica onde o esforço se acumulou.">
+        <div class="cap-kpi-icon"><i data-lucide="award" class="ic-sm"></i></div>
+        <div class="cap-kpi-main">
+          <div class="cap-kpi-label">Maior consumidor</div>
+          <div class="cap-kpi-value">${rows[0] ? esc(rows[0].label) : '—'}</div>
+          <div class="cap-kpi-sub">${rows[0] ? `${fmtHours(rows[0].hours)} · ${topShare}% do total` : 'sem dados'}</div>
+        </div>
+      </div>
     </div>`;
 
   if (!rows.length) {
@@ -10505,19 +10663,41 @@ function renderCapacityAggregate(kind, startYmd, endYmd, businessDays, capacityH
 
   $('capacity-list').innerHTML = summary + `
     <div class="capacity-body">
-      <div class="capacity-rows">
+      <div class="capacity-rows cap-rows">
       ${rows.map(r => {
         const share = totalHours > 0 ? Math.round(r.hours / totalHours * 100) : 0;
-        return `<div class="capacity-row" style="--row-accent:${r.color}" title="${esc(r.label)} · ${fmtHours(r.hours)} apontadas · ${r.demands.size} demandas · ${share}% do total">
-          <div class="capacity-user">
-            <span class="capacity-color-dot" style="background:${r.color}"></span>
-            <div class="capacity-user-info">
-              <div class="capacity-user-name">${esc(r.label)}</div>
-              <div class="capacity-user-role">${fmtHours(r.hours)} · ${share}%</div>
+        return `<div class="cap-row cap-row-agg" style="--row-accent:${esc(r.color)}" title="${esc(r.label)} · ${fmtHours(r.hours)} apontadas · ${r.demands.size} demandas · ${share}% do total">
+          <div class="cap-row-head" style="cursor:default">
+            <div class="cap-row-user">
+              <span class="cap-agg-dot" style="background:${esc(r.color)}"></span>
+              <div class="cap-row-user-info">
+                <div class="cap-row-name">${esc(r.label)}</div>
+                ${r.sub ? `<div class="cap-row-role">${esc(r.sub)}</div>` : ''}
+              </div>
+            </div>
+            <div class="cap-row-load">
+              <div class="cap-row-load-head">
+                <span class="cap-load-value">${fmtHours(r.hours)}</span>
+                <span class="cap-load-pct">${share}%</span>
+                <span class="cap-load-status is-share">do total</span>
+              </div>
+              <div class="cap-row-bar-track">
+                <span class="cap-row-bar-fill" style="width:${share}%; background:${esc(r.color)}"></span>
+              </div>
+            </div>
+            <div class="cap-row-stats">
+              <span class="cap-stat-chip" title="Demandas que receberam apontamento">
+                <i data-lucide="inbox" class="ic-xs"></i>
+                <span class="cap-stat-num">${r.demands.size}</span>
+                <span class="cap-stat-lbl">demandas</span>
+              </span>
+              <span class="cap-stat-chip" title="Pessoas apontando neste ${kind === 'project' ? 'projeto' : 'cliente'}">
+                <i data-lucide="users" class="ic-xs"></i>
+                <span class="cap-stat-num">${r.users.size}</span>
+                <span class="cap-stat-lbl">pessoas</span>
+              </span>
             </div>
           </div>
-          <div class="capacity-mini-stat" title="Demandas com apontamento"><i data-lucide="inbox" class="ic-xs"></i>${r.demands.size}</div>
-          <div class="capacity-mini-stat" title="Pessoas apontando"><i data-lucide="users" class="ic-xs"></i>${r.users.size}</div>
         </div>`;
       }).join('')}
       </div>
@@ -19761,16 +19941,34 @@ function _renderDashboardsGrid() {
     );
     return;
   }
-  host.innerHTML = list.map(d => `
-    <div class="dashboards-card" onclick="openDashboardView('${d.id}')">
-      <div class="dashboards-card-name">${esc(d.name)}</div>
-      <div class="dashboards-card-desc">${esc(d.description || '')}</div>
-      <div class="dashboards-card-meta">
-        <i data-lucide="layout-dashboard" class="ic-xs"></i>
-        ${(d.widgets || []).length} widget(s)
+  // Cor derivada do nome — mesma cor sempre pra mesmo dashboard, sem estado extra.
+  const _dashPalette = ['#7A00FF','#3b82f6','#10b981','#f59e0b','#ec4899','#06b6d4','#f43f5e','#8b5cf6','#22c55e','#f97316'];
+  const _dashColor = (name) => {
+    let h = 0;
+    for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffff;
+    return _dashPalette[h % _dashPalette.length];
+  };
+  host.innerHTML = list.map(d => {
+    const color = _dashColor(d.name || '');
+    const wcount = (d.widgets || []).length;
+    const desc = (d.description || '').trim();
+    return `<div class="dashboards-card" style="--dash-color:${esc(color)}" onclick="openDashboardView('${d.id}')">
+      <div class="dashboards-card-head">
+        <div class="dashboards-card-icon" style="background:color-mix(in oklab, ${esc(color)} 15%, transparent); color:${esc(color)}">
+          <i data-lucide="layout-dashboard" class="ic-sm"></i>
+        </div>
+        <div class="dashboards-card-name">${esc(d.name)}</div>
       </div>
-    </div>
-  `).join('');
+      <div class="dashboards-card-desc">${desc ? esc(desc) : '<span class="dashboards-card-desc-empty">Sem descrição</span>'}</div>
+      <div class="dashboards-card-foot">
+        <span class="dashboards-card-chip">
+          <i data-lucide="component" class="ic-xs"></i>
+          ${wcount} ${wcount === 1 ? 'widget' : 'widgets'}
+        </span>
+        <span class="dashboards-card-open"><i data-lucide="arrow-up-right" class="ic-sm"></i></span>
+      </div>
+    </div>`;
+  }).join('');
 }
 let _dashEditMode = false;
 const DASH_COLS = 12;
@@ -21733,6 +21931,14 @@ function _attachLineHover(host, q) {
   const tip = document.getElementById(q.uid + '-tip');
   const guide = document.getElementById(q.uid + '-guide');
   const markers = Array.from({ length: q.seriesCount }, (_, i) => document.getElementById(q.uid + '-mk-' + i));
+  // Portala o tooltip pra <body> pra escapar do overflow:hidden do widget.
+  // Uso position:fixed + coords do viewport pra não depender do stacking do widget.
+  if (tip && tip.parentElement !== document.body) {
+    document.body.appendChild(tip);
+    tip.style.position = 'fixed';
+    tip.style.zIndex = '9999';
+    tip.style.pointerEvents = 'none';
+  }
   let lastIdx = -1;
   const onMove = (e) => {
     const rect = host.getBoundingClientRect();
@@ -21763,7 +21969,7 @@ function _attachLineHover(host, q) {
       m.style.background = s.color;
       m.style.opacity = '1';
     });
-    // Tooltip
+    // Tooltip (portalado — coords em viewport)
     if (tip) {
       const lines = p.series.map(s => {
         const dot = `<span class="chart-tip-dot" style="background:${s.color}"></span>`;
@@ -21771,13 +21977,20 @@ function _attachLineHover(host, q) {
         return `<div class="chart-tip-row">${dot}<span class="chart-tip-label">${esc(s.name || '')}</span><span class="chart-tip-value">${esc(val)}</span></div>`;
       }).join('');
       tip.innerHTML = `<div class="chart-tip-head">${esc(p.label)}</div>${lines}`;
-      const tipX = (p.xPct / 100) * rect.width;
-      const tipW = tip.offsetWidth || 140;
-      let left = tipX + 10;
-      if (left + tipW > rect.width - 8) left = tipX - tipW - 10;
-      if (left < 4) left = 4;
+      // Anchor no ponto do gráfico dentro do viewport.
+      const anchorX = rect.left + (p.xPct / 100) * rect.width;
+      const tipW = tip.offsetWidth || 160;
+      const tipH = tip.offsetHeight || 80;
+      let left = anchorX + 12;
+      // Se estoura à direita, joga pra esquerda do ponto
+      if (left + tipW > window.innerWidth - 8) left = anchorX - tipW - 12;
+      // Se ainda estoura à esquerda, cola no canto
+      if (left < 8) left = 8;
+      // Vertical: 8px acima do topo do host — se não couber, cola no topo do viewport
+      let top = rect.top - tipH - 8;
+      if (top < 8) top = rect.top + 8; // dentro do host se não couber acima
       tip.style.left = left + 'px';
-      tip.style.top = '8px';
+      tip.style.top  = top + 'px';
       tip.style.opacity = '1';
     }
   };

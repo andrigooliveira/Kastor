@@ -647,48 +647,54 @@ body.user-freelancer .freelancer-hide { display: none !important; }
    sem alteração e componentes novos podem já usar os nomes shadcn.
    ══════════════════════════════════════════════════════════════════════ */
 
-/* ─── LIGHT (padrão do app hoje) ─── */
+/* ─── LIGHT (padrão do app hoje) ───
+   Palette repensada pra criar HIERARQUIA visual entre fundo, sidebar e cards:
+   - background = off-white levemente frio (#f5f5f8) — descansa o olho
+   - card/surface = branco puro (#ffffff) — se destaca contra o bg
+   - sidebar = off-white ainda mais leve (#fafafb) — separa do main sem competir
+   - surface-2/3 = tons de cinza-frio suaves pra hover/hierarquia
+   - hairlines mais suaves (não linhas sólidas)                                    */
 :root[data-theme="light"] {
   color-scheme: light;
   /* shadcn nativos */
-  --background: #ffffff;
-  --foreground: #000000;
+  --background: #f5f5f8;
+  --foreground: #111114;
   --card: #ffffff;
-  --card-foreground: #000000;
+  --card-foreground: #111114;
   --popover: #ffffff;
-  --popover-foreground: #000000;
+  --popover-foreground: #111114;
   --primary: #7A00FF;           /* brand roxo — buttons/hovers/rings usam esse */
   --primary-foreground: #ffffff;
-  --secondary: #f5f5f5;
+  --secondary: #eeeef2;
   --secondary-foreground: #171717;
-  --muted: #f5f5f5;
-  --muted-foreground: #737373;
-  --accent-2: #f5f5f5;          /* shadcn "--accent" (hover neutro) — sufixo -2 pra não colidir com o legado Kastor */
+  --muted: #eeeef2;
+  --muted-foreground: #6b6b74;
+  --accent-2: #eeeef2;          /* shadcn "--accent" (hover neutro) — sufixo -2 pra não colidir com o legado Kastor */
   --accent-2-foreground: #171717;
   --destructive: #e7000b;
   --destructive-foreground: #fcf3f3;
-  --input: #e5e5e5;
+  --input: #e2e2e8;
   --ring: #7A00FF;
   --chart-1: #8ec5ff;
   --chart-2: #2b7fff;
   --chart-3: #155dfc;
   --chart-4: #1447e6;
   --chart-5: #193cb8;
-  --sidebar: #fafafa;
-  --sidebar-foreground: #000000;
+  --sidebar: #fafafb;
+  --sidebar-foreground: #111114;
   --sidebar-primary: #7A00FF;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #f5f5f5;
+  --sidebar-accent: #eeeef2;
   --sidebar-accent-foreground: #171717;
-  --sidebar-border: #e5e5e5;
+  --sidebar-border: #e5e5ea;
   --sidebar-ring: #7A00FF;
 
   /* legados Kastor mapeados no preset */
   --bg: var(--background);
   --surface: var(--card);
   --surface-2: var(--muted);
-  --surface-3: #ebebeb;
-  --border: #e5e5e5;
+  --surface-3: #e4e4ea;
+  --border: #e5e5ea;
   --border-active: rgba(122,0,255,0.55);
   --accent: #7A00FF;            /* brand roxo — mesmo valor de --primary */
   --accent-text: #5E00CC;       /* roxo mais escuro pra uso como texto em fundo claro (AA vs #F5F5F5 8.2:1) */
@@ -704,7 +710,7 @@ body.user-freelancer .freelancer-hide { display: none !important; }
   --purple: var(--chart-4);
   --purple-dim: rgba(20,71,230,0.12);
   --text: var(--foreground);
-  --text-dim: #4a4a4a;
+  --text-dim: #4a4a55;
   --text-muted: var(--muted-foreground);
 }
 
@@ -803,19 +809,19 @@ body.user-freelancer .freelancer-hide { display: none !important; }
   --sidebar-w: 230px;
 }
 
-/* Light mode — sombras mais sutis, glass branco */
+/* Light mode — sombras suaves com leve tint frio pra dar profundidade */
 :root[data-theme="light"] {
-  --shadow-xs: 0 1px 2px rgba(0,0,0,0.04);
-  --shadow-sm: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
-  --shadow-md: 0 4px 12px rgba(0,0,0,0.06), 0 2px 4px rgba(0,0,0,0.04);
-  --shadow-lg: 0 12px 32px rgba(0,0,0,0.10), 0 4px 8px rgba(0,0,0,0.06);
-  --shadow-xl: 0 24px 64px rgba(0,0,0,0.14), 0 8px 16px rgba(0,0,0,0.08);
+  --shadow-xs: 0 1px 2px rgba(30, 30, 60, 0.05);
+  --shadow-sm: 0 1px 3px rgba(30, 30, 60, 0.06), 0 1px 2px rgba(30, 30, 60, 0.04);
+  --shadow-md: 0 4px 14px rgba(30, 30, 60, 0.08), 0 2px 4px rgba(30, 30, 60, 0.04);
+  --shadow-lg: 0 14px 36px rgba(30, 30, 60, 0.11), 0 4px 10px rgba(30, 30, 60, 0.06);
+  --shadow-xl: 0 28px 72px rgba(30, 30, 60, 0.16), 0 10px 24px rgba(30, 30, 60, 0.08);
   --glass: rgba(255,255,255,0.72);
   --glass-strong: rgba(255,255,255,0.86);
   --surface-glass: rgba(255,255,255,0.78);
   --chrome-bg: var(--sidebar);
-  --hairline: rgba(0,0,0,0.07);
-  --hairline-strong: rgba(0,0,0,0.14);
+  --hairline: rgba(30, 30, 60, 0.06);
+  --hairline-strong: rgba(30, 30, 60, 0.12);
 }
 
 /* ─── LIGHT MODE: revisão de campos e elementos que estavam destoando ─── */
@@ -2583,10 +2589,7 @@ tr:hover td { background: var(--surface-2); }
 .modal-header {
   padding: 22px 28px 18px; display: flex; align-items: flex-start; justify-content: space-between;
   position: sticky; top: 0; z-index: 1;
-  /* Gradient sutil de accent — puxa o brand sem dominar */
-  background:
-    linear-gradient(to bottom, var(--accent-dim) 0%, transparent 80%),
-    var(--surface);
+  background: var(--surface);
   border-bottom: 1px solid var(--hairline);
 }
 .modal-title { font-size: 17px; font-weight: 700; letter-spacing: -0.015em; }
@@ -13755,4 +13758,1249 @@ tr.demand-row {
   .perf-kpi-value { font-size: 18px; }
   .perf-hbar { grid-template-columns: 80px 1fr; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   POLISH PASS #2 — refinamentos visuais sistêmicos
+   ─ Kanban cards com faixa de cor da etapa + hover accent glow
+   ─ Sidebar: hover com pill de fundo, ícone com leve tinta
+   ─ Chips de filtro: hover mais vivo, active com fill em color-mix
+   ─ Toasts: ícone circular colorido, stack mais elegante
+   ─ Modais: fio de accent no topo, botão primário com halo
+   ─ Empty state: ilustração com blob accent atrás
+   ─ Skeleton com shimmer accent-tint
+   ─ Micro-anim: fade+slide de tabs, checkbox check anim, contadores
+   ─ Tema light: sombras coloridas
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Kanban card: faixa lateral colorida da etapa + hover glow ── */
+.kanban-card {
+  position: relative;
+  padding-left: 15px; /* dá espaço pra faixa da esquerda */
+  transition: transform .18s var(--ease-spring),
+              border-color .18s var(--ease-out),
+              box-shadow .22s var(--ease-out),
+              background .18s var(--ease-out);
+}
+.kanban-card::before {
+  content: '';
+  position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px;
+  background: var(--card-stage, var(--accent));
+  border-radius: 0 2px 2px 0;
+  opacity: 0.9;
+  transition: width .18s var(--ease-out), opacity .18s var(--ease-out);
+}
+.kanban-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in oklab, var(--card-stage, var(--accent)) 45%, var(--hairline));
+  box-shadow:
+    var(--shadow-md),
+    0 0 0 3px color-mix(in oklab, var(--card-stage, var(--accent)) 12%, transparent);
+}
+.kanban-card:hover::before { width: 4px; opacity: 1; }
+.kanban-card.dragging::before { opacity: 0.4; }
+
+/* Ícone do "due" no card usa a cor da etapa quando não está atrasado */
+.kanban-card-due i,
+.kanban-card-due svg { color: color-mix(in oklab, var(--card-stage, var(--accent)) 70%, var(--text-dim)); }
+.kanban-card-due.late i,
+.kanban-card-due.late svg { color: var(--danger); }
+
+/* ── Sidebar: pill de fundo no hover + micro tint no ícone ── */
+.nav-item {
+  transition: background .22s var(--ease-out),
+              color .18s var(--ease-out),
+              transform .12s var(--ease-spring),
+              padding-left .22s var(--ease-out);
+}
+.nav-item svg { transition: color .18s var(--ease-out), transform .18s var(--ease-spring); }
+.nav-item:hover svg { color: var(--accent-text); transform: scale(1.08); }
+.nav-item.active svg { color: var(--accent); }
+/* Barrinha vertical do ativo — pequena animação de "entrar" */
+.nav-item.active::before {
+  animation: navActiveBar .32s var(--ease-spring);
+}
+@keyframes navActiveBar {
+  from { transform: scaleY(0.3); opacity: 0; }
+  to   { transform: scaleY(1); opacity: 1; }
+}
+
+/* Divisórias entre grupos ficam com um leve gradient em vez de linha seca */
+.nav-section {
+  border-top: none !important;
+  height: 1px !important;
+  background: linear-gradient(to right,
+    transparent 0%,
+    var(--hairline-strong) 30%,
+    var(--hairline-strong) 70%,
+    transparent 100%);
+  opacity: 0.75;
+}
+
+/* ── Chips de filtro: refinamento ── */
+.due-filter-chip {
+  transition: background .18s var(--ease-out), border-color .18s var(--ease-out), transform .12s var(--ease-spring), box-shadow .18s var(--ease-out);
+}
+.due-filter-chip:hover {
+  background: color-mix(in oklab, var(--accent) 12%, var(--surface-2));
+  border-color: color-mix(in oklab, var(--accent) 40%, var(--hairline));
+  transform: translateY(-1px);
+  box-shadow: 0 3px 10px color-mix(in oklab, var(--accent) 18%, transparent);
+}
+
+/* ── Toasts: ícone circular colorido ── */
+.toast {
+  transition: transform .22s var(--ease-spring), opacity .22s var(--ease-out), box-shadow .22s var(--ease-out);
+}
+.toast:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    var(--shadow-xl),
+    0 0 0 1px var(--hairline-strong);
+}
+.toast-icon-badge {
+  width: 24px !important; height: 24px !important;
+  border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  animation: toastCheckPop .32s var(--ease-spring);
+}
+.toast-icon-badge svg { width: 14px !important; height: 14px !important; }
+.toast-icon-badge.toast-icon-error {
+  background: color-mix(in oklab, var(--danger) 22%, transparent);
+  color: var(--danger);
+}
+.toast-icon-badge.toast-icon-warn {
+  background: color-mix(in oklab, var(--warn) 22%, transparent);
+  color: var(--warn);
+}
+.toast-icon-badge.toast-icon-info {
+  background: color-mix(in oklab, var(--accent) 22%, transparent);
+  color: var(--accent-text);
+}
+/* Stack: quando há vários toasts, os de trás recuam um pouco (efeito iOS) */
+#toast-container { display: flex; flex-direction: column-reverse; gap: 8px; }
+
+/* ── Modais: fio de accent no topo + close com hover refinado ── */
+.modal {
+  position: relative;
+}
+.modal::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    var(--accent) 25%,
+    var(--accent) 75%,
+    transparent 100%);
+  opacity: 0.7;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  z-index: 2;
+  pointer-events: none;
+}
+.modal-close {
+  transition: background .18s var(--ease-out),
+              color .18s var(--ease-out),
+              transform .18s var(--ease-spring),
+              border-color .18s var(--ease-out);
+}
+.modal-close:hover {
+  background: color-mix(in oklab, var(--danger) 12%, var(--surface-3));
+  color: var(--danger);
+  transform: rotate(90deg);
+}
+
+/* ── Empty state: blob accent atrás da ilustração ── */
+.empty-state-icon {
+  position: relative;
+}
+.empty-state-icon::before {
+  content: '';
+  position: absolute;
+  inset: -8% -12%;
+  background: radial-gradient(ellipse at center,
+    color-mix(in oklab, var(--accent) 12%, transparent) 0%,
+    transparent 65%);
+  z-index: -1;
+  border-radius: 50%;
+  filter: blur(8px);
+}
+
+/* ── Skeleton com leve tint accent no shimmer ── */
+.skeleton::after {
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(255,255,255,0.08) 40%,
+    color-mix(in oklab, var(--accent) 8%, rgba(255,255,255,0.14)) 50%,
+    rgba(255,255,255,0.08) 60%,
+    transparent 100%);
+}
+:root[data-theme="light"] .skeleton::after {
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(0,0,0,0.04) 40%,
+    color-mix(in oklab, var(--accent) 8%, rgba(0,0,0,0.10)) 50%,
+    rgba(0,0,0,0.04) 60%,
+    transparent 100%);
+}
+
+/* ── Micro-anim: fade+slide de tabs do detalhe ── */
+.detail-tab {
+  transition: background .18s var(--ease-out),
+              color .18s var(--ease-out),
+              border-color .18s var(--ease-out),
+              transform .12s var(--ease-spring);
+}
+.detail-tab.active {
+  animation: detailTabPop .28s var(--ease-spring);
+}
+@keyframes detailTabPop {
+  from { transform: scale(0.94); }
+  to   { transform: scale(1); }
+}
+
+/* Checkbox com animação de check ao marcar */
+input[type="checkbox"] {
+  transition: transform .12s var(--ease-spring);
+}
+input[type="checkbox"]:checked {
+  animation: checkPop .32s var(--ease-spring);
+}
+@keyframes checkPop {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.22); }
+  100% { transform: scale(1); }
+}
+
+/* ── Botão primário: halo suave (usa .btn-primary se existir; caso contrário
+   aplica no CTA e no send-primary) ── */
+.btn-primary, .empty-state-cta:not(.is-ghost) {
+  position: relative;
+}
+.btn-primary::before,
+.empty-state-cta:not(.is-ghost)::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  background: radial-gradient(ellipse at center,
+    color-mix(in oklab, var(--accent) 25%, transparent) 0%,
+    transparent 65%);
+  border-radius: inherit;
+  opacity: 0;
+  z-index: -1;
+  transition: opacity .22s var(--ease-out);
+  pointer-events: none;
+}
+.btn-primary:hover::before,
+.empty-state-cta:not(.is-ghost):hover::before { opacity: 1; }
+
+/* (Bloco de sombras/hairlines light-mode movido pro root light acima —
+   consolidado num único lugar pra facilitar tuning.) */
+
+/* ── Contadores animados: pequena escala quando muda (via .count-bump) ── */
+.count-bump {
+  animation: countBump .38s var(--ease-spring);
+}
+@keyframes countBump {
+  0%   { transform: scale(1); color: var(--accent); }
+  50%  { transform: scale(1.18); color: var(--accent); }
+  100% { transform: scale(1); }
+}
+
+/* ── Topbar: elevação sutil ao scrollar (adiciona .is-scrolled via JS se
+     quiser; enquanto isso, apenas garantimos que a linha inferior tenha
+     um leve gradient em vez de border seca) ── */
+.topbar {
+  position: relative;
+}
+.topbar::after {
+  content: '';
+  position: absolute; left: 0; right: 0; bottom: -1px; height: 1px;
+  background: linear-gradient(to right,
+    transparent 0%,
+    var(--hairline-strong) 20%,
+    var(--hairline-strong) 80%,
+    transparent 100%);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kanban-card, .kanban-card::before,
+  .toast, .toast-icon-badge,
+  .modal-close, .empty-state-icon::before,
+  .detail-tab, .btn-primary::before,
+  .count-bump {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   LIGHT MODE POLISH — refinos exclusivos pra aliviar o "chapado"
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Cards com borda extra suave + sombra vertical bem leve pra separar do fundo */
+:root[data-theme="light"] .kanban-card,
+:root[data-theme="light"] .modal,
+:root[data-theme="light"] .panel,
+:root[data-theme="light"] .card,
+:root[data-theme="light"] .dw-widget,
+:root[data-theme="light"] .cmdk-card {
+  box-shadow:
+    0 1px 2px rgba(30, 30, 60, 0.04),
+    0 1px 0 rgba(255, 255, 255, 0.9) inset;
+}
+
+:root[data-theme="light"] .kanban-card:hover {
+  box-shadow:
+    0 6px 20px rgba(30, 30, 60, 0.10),
+    0 0 0 3px color-mix(in oklab, var(--card-stage, var(--accent)) 12%, transparent),
+    0 1px 0 rgba(255, 255, 255, 0.9) inset;
+}
+
+/* Sidebar em light: leve borda direita pra separar do main com off-white */
+:root[data-theme="light"] .sidebar {
+  border-right: 1px solid rgba(30, 30, 60, 0.05);
+}
+
+/* Topbar em light: mesmo tratamento — apoia no fundo branco do card behind */
+:root[data-theme="light"] .topbar {
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: saturate(180%) blur(12px);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
+}
+
+/* Sem aurora no light — usuário achou que criava um fade estranho no topo */
+:root[data-theme="light"] body::before { display: none; }
+
+/* Inputs em light — fundo levemente cinza pra parecer "campo" e não sumir no card */
+:root[data-theme="light"] input[type="text"],
+:root[data-theme="light"] input[type="email"],
+:root[data-theme="light"] input[type="password"],
+:root[data-theme="light"] input[type="search"],
+:root[data-theme="light"] input[type="number"],
+:root[data-theme="light"] input[type="date"],
+:root[data-theme="light"] input[type="datetime-local"],
+:root[data-theme="light"] input[type="url"],
+:root[data-theme="light"] textarea,
+:root[data-theme="light"] select {
+  background: #f5f5f8;
+  border-color: transparent;
+}
+:root[data-theme="light"] input:focus,
+:root[data-theme="light"] textarea:focus,
+:root[data-theme="light"] select:focus {
+  background: #ffffff;
+  border-color: var(--accent);
+}
+
+/* Botões neutros (ghost/secondary) em light — leve fundo cinza pra dar volume */
+:root[data-theme="light"] .btn:not(.btn-primary):not(.btn-danger):not(.btn-ghost),
+:root[data-theme="light"] .btn-secondary {
+  background: #ffffff;
+  border: 1px solid rgba(30, 30, 60, 0.08);
+  box-shadow: 0 1px 2px rgba(30, 30, 60, 0.04);
+}
+:root[data-theme="light"] .btn:not(.btn-primary):not(.btn-danger):not(.btn-ghost):hover,
+:root[data-theme="light"] .btn-secondary:hover {
+  background: #fafafb;
+  border-color: rgba(30, 30, 60, 0.12);
+}
+
+/* Nav item ativo em light — accent-dim mais colorido pra destacar */
+:root[data-theme="light"] .nav-item.active {
+  background: rgba(122, 0, 255, 0.08);
+  color: var(--accent-text);
+}
+:root[data-theme="light"] .nav-item:hover:not(.active) {
+  background: rgba(30, 30, 60, 0.04);
+}
+
+/* Hairlines internas de tabela/lista — bem leves em light pra não "cortar" o card */
+:root[data-theme="light"] tr,
+:root[data-theme="light"] .list-row,
+:root[data-theme="light"] .field-row {
+  border-color: rgba(30, 30, 60, 0.05);
+}
+
+/* Modal overlay em light — glassy sem escurecer demais */
+:root[data-theme="light"] .modal-overlay {
+  background: rgba(30, 30, 60, 0.35);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+/* Chips/pills neutras em light — fundo branco puro pra destacar do bg cinza */
+:root[data-theme="light"] .pill,
+:root[data-theme="light"] .status-pill,
+:root[data-theme="light"] .priority-pill {
+  background: #ffffff;
+  border: 1px solid rgba(30, 30, 60, 0.08);
+  box-shadow: 0 1px 1px rgba(30, 30, 60, 0.03);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   CAPACIDADE v2 — layout unificado, KPI cards com ícone, rows com barra
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Hero: título/subtitle esquerda + toggle da visão à direita */
+.capacity-hero {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 20px; flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.capacity-hero-main { min-width: 0; flex: 1 1 auto; }
+.capacity-hero .capacity-title { margin-bottom: 2px; }
+.capacity-hero .capacity-subtitle { max-width: 640px; }
+
+/* Filterbar: uma fileira só com labels em cima dos controles */
+.capacity-filterbar {
+  display: flex; align-items: center; gap: 10px;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  margin-bottom: 14px;
+  box-shadow: 0 1px 2px rgba(30, 30, 60, 0.04);
+}
+.capacity-filterbar-group {
+  display: flex; align-items: center; gap: 6px;
+  min-width: 0;
+}
+.capacity-filterbar-group + .capacity-filterbar-group {
+  padding-left: 10px;
+  border-left: 1px solid var(--hairline);
+}
+.capacity-filterbar-label {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10.5px; font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .05em;
+  white-space: nowrap;
+}
+.capacity-filterbar-label svg { width: 11px !important; height: 11px !important; opacity: .7; }
+.capacity-filterbar-spacer { flex: 1 1 auto; }
+.capacity-filterbar .capacity-squad-filter-inline { margin-bottom: 0; }
+
+/* Botão de período dentro da filterbar da capacidade: compacto (28px vs 40px) */
+.capacity-filterbar .filter-period-trigger {
+  height: 28px;
+  min-width: 0;
+  padding: 0 10px;
+  gap: 6px;
+  font-size: 12px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  border-color: transparent;
+}
+.capacity-filterbar .filter-period-trigger:hover {
+  background: var(--surface-3);
+  border-color: transparent;
+}
+.capacity-filterbar .filter-period-trigger.filtering {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 8%, var(--surface-2));
+}
+
+/* Export button na filterbar — também compacto pra harmonizar */
+.capacity-filterbar .capacity-export-btn {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+.capacity-filterbar .capacity-export-btn i,
+.capacity-filterbar .capacity-export-btn svg {
+  width: 12px !important; height: 12px !important;
+}
+
+/* Squad chips dentro da filterbar — menor tamanho pra bater com o período */
+.capacity-filterbar .uws-chip {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11.5px;
+}
+/* Esconde o label "Squads" interno do filtro — já temos label externo na filterbar */
+.capacity-filterbar .uws-label { display: none; }
+.capacity-filterbar .uws-hint  { font-size: 11px; margin-left: 4px; }
+.capacity-filterbar .uws-clear { font-size: 11px; padding: 0 6px; height: 24px; }
+
+/* KPI cards — ícone + label + valor grande + subtitle/progresso */
+.capacity-summary {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+  margin-bottom: 16px;
+}
+@media (max-width: 900px) { .capacity-summary { grid-template-columns: 1fr; } }
+.cap-kpi {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(30, 30, 60, 0.04);
+  transition: transform .2s var(--ease-spring), box-shadow .22s var(--ease-out);
+}
+.cap-kpi:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(30, 30, 60, 0.08);
+}
+.cap-kpi::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: var(--cap-kpi-color, var(--accent));
+}
+.cap-kpi.is-primary { --cap-kpi-color: #7A00FF; }
+.cap-kpi.is-info    { --cap-kpi-color: #3b82f6; }
+.cap-kpi.is-team    { --cap-kpi-color: #10b981; }
+.cap-kpi.is-danger  { --cap-kpi-color: #ef4444; }
+
+.cap-kpi-icon {
+  width: 34px; height: 34px; border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: color-mix(in oklab, var(--cap-kpi-color, var(--accent)) 15%, transparent);
+  color: var(--cap-kpi-color, var(--accent));
+  flex-shrink: 0;
+}
+.cap-kpi-icon svg { width: 16px !important; height: 16px !important; }
+.cap-kpi-main { min-width: 0; flex: 1 1 auto; }
+.cap-kpi-label {
+  font-size: 10.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .06em;
+  color: var(--text-muted); margin-bottom: 4px;
+}
+.cap-kpi-value {
+  font-size: 22px; font-weight: 800;
+  color: var(--text); line-height: 1.05;
+  letter-spacing: -0.01em;
+  display: flex; align-items: baseline; gap: 8px;
+}
+.cap-kpi-pct { font-size: 13px; font-weight: 700; }
+.cap-kpi-pct.is-low      { color: #10b981; }
+.cap-kpi-pct.is-medium   { color: #7A00FF; }
+.cap-kpi-pct.is-high     { color: #f59e0b; }
+.cap-kpi-pct.is-overload { color: #ef4444; }
+.cap-kpi-sub {
+  font-size: 11px; color: var(--text-muted);
+  margin-top: 4px; line-height: 1.4;
+}
+.cap-kpi-progress {
+  margin-top: 8px;
+  height: 4px; border-radius: 3px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.cap-kpi-progress-fill {
+  display: block; height: 100%;
+  border-radius: 3px;
+  transition: width .35s var(--ease-out);
+}
+.cap-kpi-progress-fill.is-low      { background: #10b981; }
+.cap-kpi-progress-fill.is-medium   { background: #7A00FF; }
+.cap-kpi-progress-fill.is-high     { background: #f59e0b; }
+.cap-kpi-progress-fill.is-overload { background: #ef4444; }
+
+/* Rows v2 — expansível, com barra de carga visível */
+.cap-rows { display: flex; flex-direction: column; gap: 6px; }
+.cap-row {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  transition: box-shadow .22s var(--ease-out), border-color .18s var(--ease-out);
+  box-shadow: 0 1px 2px rgba(30, 30, 60, 0.03);
+}
+.cap-row:hover { box-shadow: 0 4px 12px rgba(30, 30, 60, 0.06); }
+.cap-row.is-expanded {
+  border-color: color-mix(in oklab, var(--accent) 30%, var(--hairline));
+  box-shadow: 0 6px 20px rgba(30, 30, 60, 0.08);
+}
+
+.cap-row-head {
+  width: 100%; text-align: left;
+  display: grid;
+  grid-template-columns: minmax(200px, 260px) minmax(180px, 1fr) auto auto;
+  align-items: center; gap: 20px;
+  padding: 12px 14px;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background .18s var(--ease-out);
+}
+.cap-row-head:hover { background: color-mix(in oklab, var(--accent) 4%, transparent); }
+.cap-row-agg .cap-row-head { grid-template-columns: minmax(200px, 260px) minmax(180px, 1fr) auto; }
+@media (max-width: 900px) {
+  .cap-row-head {
+    grid-template-columns: 1fr auto;
+    grid-template-areas: "user chev" "load load" "stats stats";
+    gap: 10px;
+  }
+  .cap-row-user  { grid-area: user; }
+  .cap-row-load  { grid-area: load; }
+  .cap-row-stats { grid-area: stats; }
+  .cap-row-chev  { grid-area: chev; }
+}
+
+.cap-row-user { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.cap-row-avatar { width: 38px !important; height: 38px !important; font-size: 14px !important; flex-shrink: 0; }
+.cap-row-user-info { min-width: 0; }
+.cap-row-name {
+  font-size: 13px; font-weight: 600;
+  color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  letter-spacing: -0.005em;
+}
+.cap-row-role {
+  font-size: 11.5px; color: var(--text-muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  margin-top: 1px;
+}
+.cap-agg-dot {
+  display: inline-block; width: 32px; height: 32px;
+  border-radius: 8px; flex-shrink: 0;
+}
+
+.cap-row-load { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.cap-row-load-head {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; font-weight: 600;
+  color: var(--text-dim);
+}
+.cap-load-value { color: var(--text); font-weight: 700; }
+.cap-load-pct { color: var(--text-muted); }
+.cap-load-status {
+  margin-left: auto;
+  font-size: 10.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .05em;
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+.cap-load-status.is-low      { background: color-mix(in oklab, #10b981 15%, transparent); color: #10b981; }
+.cap-load-status.is-medium   { background: color-mix(in oklab, #7A00FF 15%, transparent); color: var(--accent-text); }
+.cap-load-status.is-high     { background: color-mix(in oklab, #f59e0b 18%, transparent); color: #b45309; }
+.cap-load-status.is-overload { background: color-mix(in oklab, #ef4444 18%, transparent); color: #ef4444; }
+.cap-load-status.is-share    { background: var(--surface-2); color: var(--text-muted); }
+:root[data-theme="dark"] .cap-load-status.is-high { color: #f59e0b; }
+
+.cap-row-bar-track {
+  position: relative; height: 6px;
+  background: var(--surface-3);
+  border-radius: 4px;
+  overflow: hidden;
+  display: flex;
+}
+.cap-row-bar-fill {
+  height: 100%; background: var(--accent);
+  border-radius: 4px;
+  transition: width .4s var(--ease-out);
+}
+.cap-row-bar-fill.is-low      { background: #10b981; }
+.cap-row-bar-fill.is-medium   { background: #7A00FF; }
+.cap-row-bar-fill.is-high     { background: #f59e0b; }
+.cap-row-bar-fill.is-overload { background: #ef4444; }
+.cap-row-bar-over {
+  height: 100%;
+  background: repeating-linear-gradient(45deg, #ef4444 0 4px, #b91c1c 4px 8px);
+  border-radius: 0 4px 4px 0;
+}
+
+.cap-row-stats { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
+.cap-stat-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 10px;
+  background: var(--surface-2);
+  border-radius: var(--radius-pill);
+  font-size: 11.5px; font-weight: 600;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.cap-stat-chip svg { width: 12px; height: 12px; opacity: .6; }
+.cap-stat-chip .cap-stat-num { color: var(--text); font-weight: 700; }
+.cap-stat-chip .cap-stat-lbl { color: var(--text-muted); font-weight: 500; }
+.cap-stat-chip.is-late {
+  background: color-mix(in oklab, var(--danger) 15%, transparent);
+  color: var(--danger);
+}
+.cap-stat-chip.is-late svg,
+.cap-stat-chip.is-late .cap-stat-num { color: var(--danger); opacity: 1; }
+
+.cap-row-chev {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px;
+  color: var(--text-muted);
+  transition: transform .22s var(--ease-spring), color .18s var(--ease-out);
+  flex-shrink: 0;
+}
+.cap-row.is-expanded .cap-row-chev { transform: rotate(180deg); color: var(--accent); }
+
+/* Body expandido: lista de demandas em aberto */
+.cap-row-body {
+  padding: 4px 14px 14px;
+  border-top: 1px dashed var(--hairline);
+  background: color-mix(in oklab, var(--accent) 2%, var(--surface));
+  animation: capRowBodyIn .28s var(--ease-spring);
+}
+@keyframes capRowBodyIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.cap-row-body-title {
+  font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .06em;
+  color: var(--text-muted);
+  margin: 10px 4px 8px;
+}
+.cap-row-body-empty {
+  padding: 14px 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
+.cap-row-demands { display: flex; flex-direction: column; gap: 2px; }
+.cap-demand {
+  display: grid;
+  grid-template-columns: 4px minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: center; gap: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background .15s var(--ease-out);
+  color: var(--text);
+  text-decoration: none;
+}
+.cap-demand:hover { background: color-mix(in oklab, var(--accent) 8%, transparent); }
+.cap-demand-stage {
+  width: 4px; height: 20px; border-radius: 3px;
+}
+.cap-demand-name {
+  font-size: 12.5px; font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cap-demand-project {
+  font-size: 11.5px; color: var(--text-muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cap-demand-due {
+  font-size: 11.5px; font-weight: 600;
+  color: var(--text-dim);
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  white-space: nowrap;
+}
+.cap-demand-due.is-late {
+  background: color-mix(in oklab, var(--danger) 15%, transparent);
+  color: var(--danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cap-row, .cap-row-body, .cap-row-chev, .cap-kpi,
+  .cap-row-bar-fill, .cap-kpi-progress-fill {
+    animation: none !important; transition: none !important;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   RELATÓRIOS v2 — hero + filterbar + cards polidos
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Filter-cdrop compacto dentro da filterbar da capacidade/reports (28px, com
+   os selects nativos já escondidos pelo applyFilterDropdown via
+   .filter-native-hidden). Bate com o botão de período. */
+.capacity-filterbar .filter-cdrop { display: inline-flex; }
+.capacity-filterbar .filter-cdrop-trigger {
+  height: 28px;
+  padding: 0 8px 0 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  border-color: transparent;
+  min-width: 140px;
+  color: var(--text);
+}
+.capacity-filterbar .filter-cdrop-trigger:hover {
+  background: var(--surface-3);
+  border-color: transparent;
+}
+.capacity-filterbar .filter-cdrop.filtering .filter-cdrop-trigger {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 8%, var(--surface-2));
+}
+.capacity-filterbar .filter-cdrop-lead {
+  width: 12px !important; height: 12px !important;
+  color: var(--text-muted); margin-right: 2px;
+}
+.capacity-filterbar .filter-cdrop-label {
+  font-size: 12px;
+}
+.capacity-filterbar .filter-cdrop-trigger .ic-xs {
+  color: var(--text-muted); margin-left: auto;
+}
+
+/* KPI tiles: hover suave e transição */
+.kpi-tile {
+  transition: transform .2s var(--ease-spring), box-shadow .22s var(--ease-out), border-color .18s var(--ease-out);
+}
+.kpi-tile:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(30, 30, 60, 0.08);
+  border-color: color-mix(in oklab, var(--accent) 20%, var(--hairline));
+}
+
+/* Rep cards v2: head separado do body, hover levanta */
+.rep-card {
+  transition: transform .2s var(--ease-spring), box-shadow .22s var(--ease-out), border-color .18s var(--ease-out);
+}
+.rep-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 22px rgba(30, 30, 60, 0.08);
+}
+.rep-card-head {
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed var(--hairline);
+}
+.rep-card-head .rep-card-title { margin-bottom: 3px; }
+.rep-card-head .rep-card-hint {
+  margin: 0;
+  cursor: help;
+}
+
+/* Barras animam a largura ao entrar */
+.rep-bar-fill {
+  animation: repBarFill .6s var(--ease-out);
+  transform-origin: left center;
+}
+@keyframes repBarFill {
+  from { transform: scaleX(0.4); opacity: 0.7; }
+  to   { transform: scaleX(1); opacity: 1; }
+}
+
+/* Rep bar row com hover leve */
+.rep-bar-row {
+  padding: 4px 6px;
+  border-radius: 6px;
+  transition: background .18s var(--ease-out);
+}
+.rep-bar-row:hover {
+  background: color-mix(in oklab, var(--accent) 5%, transparent);
+}
+
+/* Rep slow row: chevron discreto à direita */
+.rep-slow-row {
+  position: relative;
+  padding-right: 24px;
+}
+.rep-slow-row::after {
+  content: '›';
+  position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+  font-size: 16px; color: var(--text-muted);
+  opacity: 0; transition: opacity .18s var(--ease-out), transform .18s var(--ease-out);
+}
+.rep-slow-row:hover::after { opacity: 1; transform: translate(3px, -50%); }
+
+/* Rep filterbar: chips das squads inline */
+.rep-filterbar .rep-squads {
+  display: inline-flex; align-items: center; gap: 4px;
+  flex-wrap: wrap;
+}
+.rep-filterbar .rep-squads .uws-chip {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11.5px;
+}
+.rep-filterbar .rep-squads .uws-label { display: none; }
+.rep-filterbar .rep-squads .uws-hint  { font-size: 11px; margin-left: 4px; }
+.rep-filterbar .rep-squads .uws-clear { font-size: 11px; padding: 0 6px; height: 24px; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   DASHBOARDS v2 — grid com cards ricos + detail view mais elegante
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Search bar isolada (fora do hero pra ficar full-width) */
+.dashboards-searchbar {
+  margin-bottom: 16px;
+  max-width: 420px;
+}
+
+/* Cards do grid: colorido, hover expressivo */
+.dashboards-cards {
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+.dashboards-card {
+  --dash-color: var(--accent);
+  position: relative;
+  padding: 16px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  gap: 10px;
+  transition: transform .22s var(--ease-spring),
+              box-shadow .22s var(--ease-out),
+              border-color .18s var(--ease-out);
+}
+.dashboards-card::before {
+  content: '';
+  position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: var(--dash-color);
+  opacity: 0.85;
+  transition: width .18s var(--ease-out), opacity .18s var(--ease-out);
+}
+.dashboards-card:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in oklab, var(--dash-color) 40%, var(--hairline));
+  box-shadow:
+    0 10px 28px rgba(30, 30, 60, 0.10),
+    0 0 0 3px color-mix(in oklab, var(--dash-color) 10%, transparent);
+}
+.dashboards-card:hover::before { width: 4px; opacity: 1; }
+
+.dashboards-card-head {
+  display: flex; align-items: center; gap: 10px;
+}
+.dashboards-card-icon {
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.dashboards-card-icon svg { width: 16px !important; height: 16px !important; }
+.dashboards-card-name {
+  font-size: 14px; font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.005em;
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dashboards-card-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.45;
+  flex: 1;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.dashboards-card-desc-empty { color: var(--text-muted); font-style: italic; }
+.dashboards-card-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--hairline);
+}
+.dashboards-card-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 8px;
+  background: var(--surface-2);
+  border-radius: var(--radius-pill);
+  font-size: 11px; font-weight: 600;
+  color: var(--text-dim);
+}
+.dashboards-card-chip svg { width: 11px !important; height: 11px !important; opacity: .7; }
+.dashboards-card-open {
+  color: var(--text-muted);
+  transition: color .18s var(--ease-out), transform .22s var(--ease-spring);
+}
+.dashboards-card:hover .dashboards-card-open {
+  color: var(--dash-color);
+  transform: translate(3px, -3px);
+}
+
+/* Header da view do dashboard (voltar + título + ações) */
+.dashboards-view-head {
+  align-items: center;
+  padding: 4px 0;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--hairline);
+  padding-bottom: 12px;
+}
+.dashboards-view-head .btn {
+  border-radius: 8px;
+}
+.dashboards-view-title {
+  font-size: 18px !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.01em;
+}
+.dashboards-view-desc {
+  margin-top: -6px;
+  margin-bottom: 14px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  max-width: 780px;
+  line-height: 1.5;
+}
+
+/* Filters bar da view: mesma linguagem da capacity/reports */
+.dashboards-view-filters {
+  padding: 8px 12px !important;
+  border-radius: var(--radius-md) !important;
+  box-shadow: 0 1px 2px rgba(30, 30, 60, 0.04);
+  border-color: var(--hairline) !important;
+}
+.dashboards-view-filters .df-row {
+  gap: 10px !important;
+}
+.dashboards-view-filters .df-label {
+  font-size: 10.5px !important;
+  font-weight: 600 !important;
+  color: var(--text-muted);
+}
+
+/* Widget cards mais respirando + hover suave (fora do edit mode) */
+.dw-widget {
+  border-radius: var(--radius-md);
+  transition: transform .2s var(--ease-spring),
+              box-shadow .22s var(--ease-out),
+              border-color .18s var(--ease-out);
+}
+.dw-canvas:not(.edit-mode) .dw-widget:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in oklab, var(--accent) 25%, var(--hairline));
+  box-shadow: 0 6px 20px rgba(30, 30, 60, 0.06);
+}
+.dw-widget-title {
+  font-weight: 700 !important;
+  color: var(--text-dim) !important;
+  letter-spacing: .06em !important;
+  font-size: 10.5px !important;
+}
+
+/* Empty state dentro do widget */
+.dw-widget-empty {
+  color: var(--text-muted);
+  font-size: 12.5px;
+  font-style: italic;
+}
+
+/* Empty cell in edit mode: gradient border com accent */
+.dw-cell-empty {
+  border-radius: var(--radius-md) !important;
+  border-width: 1.5px !important;
+  background: color-mix(in oklab, var(--accent) 3%, transparent);
+  transition: border-color .18s var(--ease-out),
+              background .18s var(--ease-out),
+              color .18s var(--ease-out),
+              transform .18s var(--ease-spring);
+}
+.dw-cell-empty:hover {
+  background: color-mix(in oklab, var(--accent) 10%, transparent);
+  transform: scale(1.01);
+}
+
+/* Botão Editar layout ativo: destacado quando estamos no modo edição */
+#dash-edit-toggle.is-active {
+  background: color-mix(in oklab, var(--accent) 15%, transparent);
+  color: var(--accent-text);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   DEMANDAS v2 — hero, filterbar em container, rows polidas
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Filters-bar da /demandas (e /mine, /agenda) vira um "chip container"
+   com fundo próprio, borda hairline e cantos arredondados — bate com o
+   padrão visual da capacity/reports/dashboards. */
+#page-list .filters-bar,
+#page-mine .filters-bar {
+  padding: 6px 10px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  margin-bottom: 14px;
+  box-shadow: 0 1px 2px rgba(30, 30, 60, 0.04);
+}
+
+/* Search input dentro do card — fundo branco (surface) + border hairline */
+#page-list .filters-bar .filter-input-wrap,
+#page-mine .filters-bar .filter-input-wrap {
+  flex: 1 1 200px;
+  max-width: 280px;
+}
+#page-list .filters-bar .filter-input,
+#page-mine .filters-bar .filter-input {
+  background: var(--surface);
+  border: 1px solid var(--hairline-strong);
+  height: 32px;
+}
+#page-list .filters-bar .filter-input:hover,
+#page-mine .filters-bar .filter-input:hover {
+  border-color: var(--text-muted);
+}
+#page-list .filters-bar .filter-input:focus,
+#page-mine .filters-bar .filter-input:focus {
+  background: var(--surface);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 15%, transparent);
+}
+
+/* Filter-cdrop trigger + multi-trigger + period trigger dentro da filters-bar
+   uniformizados em 32px — fundo branco (surface) com border hairline detalhada */
+#page-list .filters-bar .filter-cdrop-trigger,
+#page-list .filters-bar .filter-multi-trigger,
+#page-list .filters-bar .filter-period-trigger,
+#page-mine .filters-bar .filter-cdrop-trigger,
+#page-mine .filters-bar .filter-multi-trigger,
+#page-mine .filters-bar .filter-period-trigger {
+  height: 32px;
+  background: var(--surface);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 7px;
+  padding: 0 10px;
+  min-width: 0;
+}
+#page-list .filters-bar .filter-cdrop-trigger:hover,
+#page-list .filters-bar .filter-multi-trigger:hover,
+#page-list .filters-bar .filter-period-trigger:hover,
+#page-mine .filters-bar .filter-cdrop-trigger:hover,
+#page-mine .filters-bar .filter-multi-trigger:hover,
+#page-mine .filters-bar .filter-period-trigger:hover {
+  background: var(--surface);
+  border-color: var(--text-muted);
+}
+#page-list .filters-bar .filter-cdrop.filtering .filter-cdrop-trigger,
+#page-list .filters-bar .filter-period-trigger.filtering,
+#page-list .filters-bar .filter-multi-trigger.filtering,
+#page-mine .filters-bar .filter-cdrop.filtering .filter-cdrop-trigger,
+#page-mine .filters-bar .filter-period-trigger.filtering,
+#page-mine .filters-bar .filter-multi-trigger.filtering {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 6%, var(--surface));
+  color: var(--accent-text);
+}
+
+/* Botões icon-only (filtro avançado, kebab) padronizados em 32px */
+#page-list .filters-bar > .advanced-filters-wrap .advanced-filters-btn,
+#page-list .filters-bar > .list-view-menu-wrap .list-view-menu-btn,
+#page-mine .filters-bar > .advanced-filters-wrap .advanced-filters-btn,
+#page-mine .filters-bar > .list-view-menu-wrap .list-view-menu-btn {
+  height: 32px;
+  width: 32px;
+  padding: 0;
+  border-radius: 7px;
+  background: var(--surface);
+  border: 1px solid var(--hairline-strong);
+}
+#page-list .filters-bar > .advanced-filters-wrap .advanced-filters-btn:hover,
+#page-list .filters-bar > .list-view-menu-wrap .list-view-menu-btn:hover,
+#page-mine .filters-bar > .advanced-filters-wrap .advanced-filters-btn:hover,
+#page-mine .filters-bar > .list-view-menu-wrap .list-view-menu-btn:hover {
+  border-color: var(--text-muted);
+}
+
+/* Status dropdown (Abertas/Atrasadas/Concluídas) também 32px */
+#page-list .filters-bar .demand-status-drop-btn,
+#page-mine .filters-bar .demand-status-drop-btn {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 7px;
+  background: var(--surface);
+  border: 1px solid var(--hairline-strong);
+  gap: 6px;
+}
+#page-list .filters-bar .demand-status-drop-btn:hover,
+#page-mine .filters-bar .demand-status-drop-btn:hover {
+  border-color: var(--text-muted);
+}
+
+/* ── Indicador visual de sort na tabela de demandas ──
+   `.is-sorted` = coluna ativa (arrow colorida); direção via `.is-sort-asc`/`.is-sort-desc`.
+   O ícone base `chevrons-up-down` fica cinza claro em colunas não ordenadas,
+   e vira uma seta única (up ou down) e roxa na coluna ativa. */
+#page-list th[onclick^="sortList"] {
+  position: relative;
+  transition: color .18s var(--ease-out);
+}
+#page-list th[onclick^="sortList"] .ic-xs {
+  display: inline-block;
+  color: var(--text-muted);
+  opacity: .55;
+  margin-left: 4px;
+  vertical-align: -2px;
+  transition: color .18s var(--ease-out), opacity .18s var(--ease-out), transform .22s var(--ease-spring);
+}
+#page-list th[onclick^="sortList"]:hover .ic-xs { opacity: 1; }
+#page-list th[onclick^="sortList"].is-sorted {
+  color: var(--accent-text);
+  font-weight: 700;
+}
+#page-list th[onclick^="sortList"].is-sorted .ic-xs {
+  color: var(--accent);
+  opacity: 1;
+}
+/* Troca o ícone chevrons-up-down por uma seta única colorida ao ordenar:
+   escondendo o path original e desenhando via pseudo. */
+#page-list th[onclick^="sortList"].is-sorted svg { display: none; }
+#page-list th[onclick^="sortList"].is-sorted::after {
+  content: '';
+  display: inline-block;
+  width: 0; height: 0;
+  margin-left: 6px;
+  vertical-align: 3px;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-bottom: 5px solid var(--accent);
+  transition: transform .22s var(--ease-spring);
+}
+#page-list th[onclick^="sortList"].is-sort-desc::after {
+  transform: rotate(180deg);
+}
+
+/* Section headers das bandas (Atrasadas/Hoje/Essa semana) com bg tingido
+   pela cor da urgência — dá um "highlight" no separador sem virar barra sólida. */
+.mine-section-head.is-late td {
+  background: color-mix(in oklab, var(--danger) 8%, transparent);
+}
+.mine-section-head.is-today td {
+  background: color-mix(in oklab, #eab308 10%, transparent);
+}
+.mine-section-head.is-week td {
+  background: color-mix(in oklab, var(--accent) 8%, transparent);
+}
+.mine-section-head.is-later td {
+  background: color-mix(in oklab, var(--success) 8%, transparent);
+}
+.mine-section-head:hover td {
+  filter: brightness(1.08);
+}
+.mine-section-head { transition: filter .18s var(--ease-out); }
+
+/* Row hover mais expressivo: fundo accent-tint em vez de plano cinza */
+#page-list tbody tr:not(.mine-section-head):hover td,
+#page-mine tbody tr:not(.mine-section-head):hover td {
+  background: color-mix(in oklab, var(--accent) 5%, transparent);
+}
+
+/* Coluna "Prazo" com atraso ganha destaque colorido no cell inteiro */
+#page-list tbody tr td .prazo-late,
+#page-mine tbody tr td .prazo-late {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+/* Kanban toolbar Attention/Etapas fica compacto e visualmente parte do card */
+.kanban-toolbar {
+  padding: 6px 10px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  margin-bottom: 10px;
+  box-shadow: 0 1px 2px rgba(30, 30, 60, 0.04);
+  gap: 12px;
+}
+.kanban-mode-toggle .client-status-btn {
+  height: 26px;
+  padding: 0 12px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+
+
+
+
+
+
 
