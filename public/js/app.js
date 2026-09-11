@@ -4773,14 +4773,27 @@ function renderCurrent() {
       const projectDetailMatch = path.match(/^\/projects\/([^/]+)$/);
       const reportMatch = path.match(/^\/clients\/([^/]+)\/report$/);
       const projectReportMatch = path.match(/^\/projects\/([^/]+)\/report$/);
+      const clientGalleryMatch = path.match(/^\/clients\/([^/]+)\/gallery$/);
+      const projectGalleryMatch = path.match(/^\/projects\/([^/]+)\/gallery$/);
       const clientDetailId = clientDetailMatch ? clientDetailMatch[1] : null;
       const projectDetailId = projectDetailMatch ? projectDetailMatch[1] : null;
       const reportId = reportMatch ? reportMatch[1] : null;
       const projectReportId = projectReportMatch ? projectReportMatch[1] : null;
+      const clientGalleryId = clientGalleryMatch ? clientGalleryMatch[1] : null;
+      const projectGalleryId = projectGalleryMatch ? projectGalleryMatch[1] : null;
       if (isOnGridUrl) {
         currentClientId = null;
         currentProjectId = null;
         renderClients();
+      } else if (clientGalleryId && clientById(clientGalleryId)) {
+        currentClientId = clientGalleryId;
+        currentProjectId = null;
+        showGalleryPageView('client', clientGalleryId);
+      } else if (projectGalleryId && projectById(projectGalleryId)) {
+        currentProjectId = projectGalleryId;
+        const p = projectById(projectGalleryId);
+        currentClientId = p?.clientId || null;
+        showGalleryPageView('project', projectGalleryId);
       } else if (projectReportId && projectById(projectReportId)) {
         currentProjectId = projectReportId;
         const p = projectById(projectReportId);
@@ -13524,10 +13537,36 @@ function attPreviewKind(type) {
   if (t === 'application/pdf') return 'pdf';
   if (t.startsWith('video/')) return 'video';
   if (t.startsWith('audio/')) return 'audio';
+  // Documentos office (docx/pptx/xlsx) — preview via Office Online Embed
+  // (só funciona quando o arquivo é acessível por URL http/https; caso o item
+  // seja um data: URI local, o modal cai pra download).
+  if (t === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+      t === 'application/msword') return 'doc';
+  if (t === 'application/vnd.openxmlformats-officedocument.presentationml.presentation' ||
+      t === 'application/vnd.ms-powerpoint') return 'ppt';
+  if (t === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+      t === 'application/vnd.ms-excel') return 'xls';
+  return 'other';
+}
+/* Fallback: infere o "kind" a partir da extensão do nome quando o mime type
+   veio vazio (ex.: attachments antigos gravados sem `type`). */
+function attKindFromName(name) {
+  const ext = (name || '').toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] || '';
+  if (['png','jpg','jpeg','gif','webp','svg','bmp','avif'].includes(ext)) return 'image';
+  if (ext === 'pdf') return 'pdf';
+  if (['mp4','mov','webm','mkv','avi','m4v'].includes(ext)) return 'video';
+  if (['mp3','wav','m4a','ogg','flac','aac'].includes(ext)) return 'audio';
+  if (['doc','docx'].includes(ext)) return 'doc';
+  if (['ppt','pptx'].includes(ext)) return 'ppt';
+  if (['xls','xlsx','csv'].includes(ext)) return 'xls';
   return 'other';
 }
 function attIcon(kind) {
-  return { image: 'image', pdf: 'file-text', video: 'video', audio: 'music', other: 'file' }[kind] || 'file';
+  return {
+    image: 'image', pdf: 'file-text', video: 'video', audio: 'music',
+    doc: 'file-text', ppt: 'presentation', xls: 'sheet',
+    link: 'link', other: 'file'
+  }[kind] || 'file';
 }
 function renderDemandAttList(list, withDelete) {
   if (!list || !list.length) return '<div class="hours-empty" style="text-align:left">Nenhum arquivo anexado.</div>';
@@ -13577,7 +13616,10 @@ function openAttPreview(src, type, name) {
       if (ev.key === 'Escape' && el.classList.contains('open')) closeAttPreview();
     });
   }
-  const kind = attPreviewKind(type);
+  // Se não temos type, tenta inferir por extensão do nome (attachments antigos).
+  let kind = attPreviewKind(type);
+  if (kind === 'other') kind = attKindFromName(name);
+  const isRemote = /^https?:\/\//i.test(src);
   let body = '';
   if (kind === 'image') {
     body = `<img src="${src}" alt="${esc(name)}" class="att-preview-image">`;
@@ -13587,6 +13629,21 @@ function openAttPreview(src, type, name) {
     body = `<video src="${src}" controls class="att-preview-video"></video>`;
   } else if (kind === 'audio') {
     body = `<audio src="${src}" controls class="att-preview-audio"></audio>`;
+  } else if ((kind === 'doc' || kind === 'ppt' || kind === 'xls')) {
+    // Office Online Embed viewer — só funciona com URL http/https públicas.
+    // Se o arquivo veio como data: URI (upload local), cai pra fallback com
+    // botão de download bem visível.
+    if (isRemote) {
+      const embedUrl = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(src);
+      body = `<iframe src="${embedUrl}" class="att-preview-frame" title="${esc(name)}" allowfullscreen></iframe>`;
+    } else {
+      body = `<div class="att-preview-unsupported">
+        <i data-lucide="${attIcon(kind)}" class="ic-lg"></i>
+        <div class="att-preview-unsupported-title">${esc(name || 'Arquivo')}</div>
+        <div class="att-preview-unsupported-sub">Documento Office não pode ser exibido inline quando salvo localmente. Baixe pra abrir na sua máquina.</div>
+        <a class="btn btn-primary" href="${src}" download="${esc(name || '')}"><i data-lucide="download" class="ic-sm"></i> Baixar arquivo</a>
+      </div>`;
+    }
   } else {
     // fallback — abre em nova aba
     window.open(src, '_blank'); return;
@@ -24473,7 +24530,7 @@ function closeClientDetail() {
 }
 // Helpers de switch de view — só uma view visível por vez.
 function hideAllDetailViews() {
-  const ids = ['clients-view-detail', 'clients-view-models', 'projects-view-detail', 'client-report-view', 'project-report-view'];
+  const ids = ['clients-view-detail', 'clients-view-models', 'projects-view-detail', 'client-report-view', 'project-report-view', 'gallery-view'];
   ids.forEach(id => { const el = $(id); if (el) el.style.display = 'none'; });
 }
 function showClientsModelsView() {
@@ -25173,8 +25230,10 @@ function openProjectModalEdit() {
    Agrega anexos de demandas e comentários no escopo dado, com busca + chips
    de filtro por tipo. Reusa openAttPreview pra visualização. */
 const _attGalState = {
-  client:  { search: '', kind: '' },
-  project: { search: '', kind: '' }
+  client:  { search: '', kind: '', sort: 'date', dir: 'desc', view: 'grid' },
+  project: { search: '', kind: '', sort: 'date', dir: 'desc', view: 'grid' },
+  // Estado do modal fullscreen (mesmo padrão, escopo isolado)
+  full:    { search: '', kind: '', sort: 'date', dir: 'desc', view: 'grid', ctx: null }
 };
 const _attGalKindLabels = [
   { k: '',      label: 'Todos' },
@@ -25182,12 +25241,38 @@ const _attGalKindLabels = [
   { k: 'pdf',   label: 'PDFs' },
   { k: 'video', label: 'Vídeos' },
   { k: 'audio', label: 'Áudios' },
+  { k: 'doc',   label: 'Docs' },
+  { k: 'ppt',   label: 'Slides' },
+  { k: 'xls',   label: 'Planilhas' },
   { k: 'link',  label: 'Links' },
   { k: 'other', label: 'Outros' }
 ];
 function attGalKindOf(a) {
   if (a.kind === 'link') return 'link';
-  return attPreviewKind(a.type);
+  const k = attPreviewKind(a.type);
+  return k === 'other' ? attKindFromName(a.name) : k;
+}
+/* Peso estimado de um anexo em bytes.
+   - kind === 'link'  → 0
+   - a.size explícito → usa esse
+   - data: URI base64 → estima como 3/4 do tamanho da string
+   - URL remota       → 0 (não conhecemos sem HEAD) */
+function attSizeBytes(a) {
+  if (a.kind === 'link') return 0;
+  if (typeof a.size === 'number' && a.size > 0) return a.size;
+  const d = a.data || '';
+  if (typeof d === 'string' && d.startsWith('data:')) {
+    const b64 = d.slice(d.indexOf(',') + 1);
+    return Math.floor(b64.length * 0.75);
+  }
+  return 0;
+}
+function fmtBytes(n) {
+  if (!n) return '—';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let i = 0, v = n;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return v.toFixed(v >= 10 ? 0 : 1) + ' ' + units[i];
 }
 function collectClientAttachments(clientId) {
   const projIds = new Set((projects || []).filter(p => p.clientId === clientId).map(p => p.id));
@@ -25213,15 +25298,10 @@ function collectAttachmentsFromDemands(dds) {
   // Ordem: mais recentes primeiro (fallback zero se sem timestamp).
   return items.sort((a, b) => (b.addedAt || '').localeCompare(a.addedAt || ''));
 }
-function renderAttGallery(ctx) {
-  const wrap = $('att-gallery-' + ctx);
-  if (!wrap) return;
-  const items = ctx === 'client'
-    ? collectClientAttachments(currentClientId)
-    : collectProjectAttachments(currentProjectId);
-  const st = _attGalState[ctx];
+/* Aplica busca/filtro/sort ao array de items segundo o estado st. */
+function _attGalApply(items, st) {
   const q = (st.search || '').toLowerCase();
-  const filtered = items.filter(a => {
+  let out = items.filter(a => {
     if (st.kind && attGalKindOf(a) !== st.kind) return false;
     if (q) {
       const n = (a.name || '').toLowerCase();
@@ -25230,33 +25310,256 @@ function renderAttGallery(ctx) {
     }
     return true;
   });
-  // Contagem por tipo pra mostrar no chip.
-  const counts = { '': items.length };
-  items.forEach(a => {
-    const k = attGalKindOf(a);
-    counts[k] = (counts[k] || 0) + 1;
-  });
-  const chipsHtml = _attGalKindLabels.map(({ k, label }) => {
-    const n = counts[k] || 0;
-    if (k && n === 0) return ''; // esconde chip vazio (exceto "Todos")
-    return `<button type="button" class="att-gal-chip ${k === st.kind ? 'is-active' : ''}" onclick="attGalPickKind('${ctx}', '${k}')">${esc(label)}<span class="att-gal-chip-count">${n}</span></button>`;
-  }).join('');
-  const gridHtml = filtered.length
-    ? filtered.map(a => attGalTileHtml(a)).join('')
-    : `<div class="att-gal-empty">${items.length ? 'Nenhum anexo bate com o filtro.' : 'Nenhum anexo neste ' + (ctx === 'client' ? 'cliente' : 'projeto') + ' ainda.'}</div>`;
+  const dir = st.dir === 'asc' ? 1 : -1;
+  if (st.sort === 'name') {
+    out.sort((a, b) => dir * norm(a.name || '').localeCompare(norm(b.name || '')));
+  } else if (st.sort === 'size') {
+    out.sort((a, b) => dir * (attSizeBytes(a) - attSizeBytes(b)));
+  } else if (st.sort === 'type') {
+    out.sort((a, b) => dir * norm(attGalKindOf(a)).localeCompare(norm(attGalKindOf(b))));
+  } else {
+    out.sort((a, b) => dir * (a.addedAt || '').localeCompare(b.addedAt || ''));
+  }
+  return out;
+}
+
+/* Modo "preview" (dentro do detail do cliente/projeto): mostra até PREVIEW_MAX
+   itens numa grade compacta, com botão "Ver galeria completa" que navega pra
+   página cheia da galeria. */
+const ATT_GAL_PREVIEW_MAX = 8;
+function renderAttGallery(ctx) {
+  const wrap = $('att-gallery-' + ctx);
+  if (!wrap) return;
+  const items = ctx === 'client'
+    ? collectClientAttachments(currentClientId)
+    : collectProjectAttachments(currentProjectId);
+  if (!items.length) {
+    wrap.innerHTML = `<div class="att-gal-empty">Nenhum item nesta galeria ainda. Anexos das demandas aparecem aqui.</div>`;
+    return;
+  }
+  // Preview: mesma ordenação default (mais recentes primeiro).
+  const previewSt = { search: '', kind: '', sort: 'date', dir: 'desc' };
+  const preview = _attGalApply(items, previewSt).slice(0, ATT_GAL_PREVIEW_MAX);
+  const remaining = items.length - preview.length;
+  const goCall = ctx === 'client'
+    ? `goClientGallery('${esc(currentClientId)}')`
+    : `goProjectGallery('${esc(currentProjectId)}')`;
   wrap.innerHTML = `
-    <div class="att-gal-toolbar">
-      <div class="filter-input-wrap att-gal-search">
-        <i data-lucide="search" class="filter-input-icon ic-sm"></i>
-        <input class="filter-input filter-input--with-icon" placeholder="Buscar anexo ou demanda…" value="${esc(st.search)}" oninput="attGalSearch('${ctx}', this.value)">
-      </div>
-      <div class="att-gal-chips">${chipsHtml}</div>
+    <div class="att-gal-preview-head">
+      <div class="att-gal-preview-count">${items.length} ite${items.length === 1 ? 'm' : 'ns'} · mais recentes primeiro</div>
+      <button type="button" class="att-gal-see-all" onclick="${goCall}">
+        <span>Ver galeria completa</span>
+        <i data-lucide="arrow-up-right" class="ic-sm"></i>
+      </button>
     </div>
-    <div class="att-gal-grid">${gridHtml}</div>
+    <div class="att-gal-grid att-gal-grid--preview">
+      ${preview.map(a => attGalTileHtml(a, 'grid')).join('')}
+      ${remaining > 0 ? `<button type="button" class="att-gal-more-tile" onclick="${goCall}">
+        <span class="att-gal-more-num">+${remaining}</span>
+        <span class="att-gal-more-lbl">Ver mais</span>
+      </button>` : ''}
+    </div>
   `;
   paintIcons();
 }
-function attGalTileHtml(a) {
+
+/* Página da galeria — entrada pela URL ou pelos botões "Ver galeria completa". */
+function goClientGallery(id) {
+  const c = clientById(id);
+  if (!c) return;
+  if (currentPage !== 'clients') goPage('clients');
+  currentClientId = id;
+  currentProjectId = null;
+  navPush('/clients/' + id + '/gallery');
+  showGalleryPageView('client', id);
+}
+function goProjectGallery(id) {
+  const p = projectById(id);
+  if (!p) return;
+  if (currentPage !== 'clients') goPage('clients');
+  currentProjectId = id;
+  currentClientId = p.clientId || null;
+  navPush('/projects/' + id + '/gallery');
+  showGalleryPageView('project', id);
+}
+function closeGalleryPage() {
+  // Volta pro detalhe do cliente ou projeto que veio.
+  if (_attGalState.full.ctx === 'project' && currentProjectId && projectById(currentProjectId)) {
+    showProjectDetailView();
+    renderProjectDetail(currentProjectId);
+    navPush(projectPath(currentProjectId));
+  } else if (currentClientId && clientById(currentClientId)) {
+    showClientDetailView();
+    renderClientDetail(currentClientId);
+    navPush(clientPath(currentClientId));
+  } else {
+    $('clients-view-grid').style.display = '';
+    hideAllDetailViews();
+    navPush('/clients');
+    renderClients();
+  }
+  _attGalState.full.ctx = null;
+}
+function showGalleryPageView(ctx, entityId) {
+  const st = _attGalState.full;
+  st.ctx = ctx;
+  st.search = st.search || '';
+  st.kind = st.kind || '';
+  st.sort = st.sort || 'date';
+  st.dir = st.dir || 'desc';
+  st.view = st.view || 'grid';
+  $('clients-view-grid').style.display = 'none';
+  hideAllDetailViews();
+  const el = $('gallery-view');
+  if (el) el.style.display = '';
+  // Title/sub baseados no contexto
+  const name = ctx === 'client'
+    ? (clientById(entityId)?.name || 'Cliente')
+    : (projectById(entityId)?.name || 'Projeto');
+  $('gallery-page-title').textContent = 'Galeria — ' + name;
+  $('gallery-page-sub').textContent = ctx === 'client'
+    ? 'Anexos de todas as demandas deste cliente'
+    : 'Anexos de todas as demandas deste projeto';
+  const searchInp = $('gallery-page-search-input');
+  if (searchInp) searchInp.value = st.search || '';
+  _renderGalleryPageInner();
+}
+function _galleryPageItems() {
+  const ctx = _attGalState.full.ctx;
+  if (!ctx) return [];
+  return ctx === 'client'
+    ? collectClientAttachments(currentClientId)
+    : collectProjectAttachments(currentProjectId);
+}
+function _renderGalleryPageInner() {
+  const el = $('gallery-view');
+  if (!el || el.style.display === 'none') return;
+  const st = _attGalState.full;
+  const items = _galleryPageItems();
+  const filtered = _attGalApply(items, st);
+  // Sort buttons (label pill group)
+  const sortOptions = [
+    { k: 'date',  label: 'Data' },
+    { k: 'name',  label: 'Nome' },
+    { k: 'size',  label: 'Peso' },
+    { k: 'type',  label: 'Tipo' },
+  ];
+  $('gallery-page-sort-btns').innerHTML = sortOptions.map(o =>
+    `<button type="button" class="att-gal-sort-btn ${st.sort === o.k ? 'is-active' : ''}" onclick="galleryPageSetSort('${o.k}')">${o.label}</button>`
+  ).join('');
+  // Direction icon
+  const dirBtn = $('gallery-page-dir-btn');
+  if (dirBtn) {
+    dirBtn.title = st.dir === 'asc' ? 'Crescente' : 'Decrescente';
+    dirBtn.innerHTML = `<i data-lucide="${st.dir === 'asc' ? 'arrow-up' : 'arrow-down'}" class="ic-sm"></i>`;
+  }
+  // View toggle
+  $('gallery-page-view-toggle').innerHTML = `
+    <button type="button" class="att-gal-view-btn ${st.view === 'grid' ? 'is-active' : ''}" onclick="galleryPageSetView('grid')" title="Grade com capa">
+      <i data-lucide="layout-grid" class="ic-sm"></i>
+    </button>
+    <button type="button" class="att-gal-view-btn ${st.view === 'list' ? 'is-active' : ''}" onclick="galleryPageSetView('list')" title="Lista (tabela)">
+      <i data-lucide="table-2" class="ic-sm"></i>
+    </button>`;
+  // Chips por tipo com contagem
+  const counts = { '': items.length };
+  items.forEach(a => { const k = attGalKindOf(a); counts[k] = (counts[k] || 0) + 1; });
+  $('gallery-page-chips').innerHTML = _attGalKindLabels.map(({ k, label }) => {
+    const n = counts[k] || 0;
+    if (k && n === 0) return '';
+    return `<button type="button" class="att-gal-chip ${k === st.kind ? 'is-active' : ''}" onclick="galleryPagePickKind('${k}')">${esc(label)}<span class="att-gal-chip-count">${n}</span></button>`;
+  }).join('');
+  // Corpo — tabela estilo Windows Explorer OU grade com capa
+  const body = $('gallery-page-body');
+  if (!filtered.length) {
+    body.innerHTML = `<div class="att-gal-empty">${items.length ? 'Nenhum item bate com o filtro.' : 'Nenhum item nesta galeria ainda.'}</div>`;
+  } else if (st.view === 'list') {
+    body.innerHTML = _galleryPageTableHtml(filtered, st);
+  } else {
+    body.innerHTML = `<div class="att-gal-grid att-gal-grid--full">${filtered.map(a => attGalTileHtml(a, 'grid')).join('')}</div>`;
+  }
+  paintIcons();
+}
+/* Tabela estilo Windows Explorer: Nome · Data mod. · Tipo · Tamanho.
+   Headers clicáveis pra ordenar (com indicador de direção). */
+function _galleryPageTableHtml(items, st) {
+  const cols = [
+    { k: 'name', label: 'Nome',           className: 'gal-col-name' },
+    { k: 'date', label: 'Data mod.',      className: 'gal-col-date' },
+    { k: 'type', label: 'Tipo',           className: 'gal-col-type' },
+    { k: 'size', label: 'Tamanho',        className: 'gal-col-size' },
+  ];
+  const headHtml = cols.map(c => {
+    const isSorted = st.sort === c.k;
+    const dirIco = isSorted
+      ? `<i data-lucide="${st.dir === 'asc' ? 'arrow-up' : 'arrow-down'}" class="ic-xs"></i>`
+      : '';
+    return `<th class="${c.className} ${isSorted ? 'is-sorted' : ''}" onclick="galleryPageSetSort('${c.k}')">${esc(c.label)} ${dirIco}</th>`;
+  }).join('');
+  const rowsHtml = items.map(a => _galleryPageRowHtml(a)).join('');
+  return `<div class="gal-explorer-wrap">
+    <table class="gal-explorer">
+      <thead><tr>${headHtml}</tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+  </div>`;
+}
+function _galleryPageRowHtml(a) {
+  const kind = attGalKindOf(a);
+  const nameEsc = esc(a.name || (kind === 'link' ? (a.url || 'Link') : 'Arquivo'));
+  const demandEsc = esc(a.demandName || '');
+  const src = a.data || a.url || '';
+  const srcEsc = esc(src);
+  const previewable = kind !== 'other' && kind !== 'link';
+  const openCall = kind === 'link'
+    ? `window.open('${esc(normalizeUrl(a.url || a.name))}', '_blank')`
+    : previewable
+      ? `openAttPreview('${srcEsc}', '${esc(a.type || '')}', '${esc(a.name || '')}')`
+      : `window.open('${srcEsc}', '_blank')`;
+  const openDemandCall = `event.stopPropagation();showDetail('${esc(a.demandId)}')`;
+  const size = attSizeBytes(a);
+  const dateLbl = a.addedAt ? fmtDate(a.addedAt) : '—';
+  const kindLbl = (_attGalKindLabels.find(x => x.k === kind)?.label) || kind || '—';
+  const iconOnly = `<i data-lucide="${attIcon(kind)}" class="ic-sm gal-row-ico"></i>`;
+  const thumb = kind === 'image' && src
+    ? `<span class="gal-row-thumb" style="background-image:url('${srcEsc}')"></span>`
+    : `<span class="gal-row-thumb gal-row-thumb--icon">${iconOnly}</span>`;
+  return `<tr class="gal-explorer-row" onclick="${openCall}">
+    <td class="gal-col-name">
+      <span class="gal-row-name-wrap">
+        ${thumb}
+        <span class="gal-row-name">${nameEsc}</span>
+      </span>
+      ${demandEsc ? `<button type="button" class="gal-row-demand" title="Abrir demanda" onclick="${openDemandCall}">${demandEsc}</button>` : ''}
+    </td>
+    <td class="gal-col-date">${esc(dateLbl)}</td>
+    <td class="gal-col-type">${esc(kindLbl)}</td>
+    <td class="gal-col-size">${esc(fmtBytes(size))}</td>
+  </tr>`;
+}
+function galleryPageSearch(val) {
+  _attGalState.full.search = val || '';
+  clearTimeout(_attGalState.full._t);
+  _attGalState.full._t = setTimeout(_renderGalleryPageInner, 120);
+}
+function galleryPagePickKind(k) {
+  _attGalState.full.kind = k || '';
+  _renderGalleryPageInner();
+}
+function galleryPageSetSort(k) {
+  if (_attGalState.full.sort === k) galleryPageToggleDir();
+  else { _attGalState.full.sort = k; _renderGalleryPageInner(); }
+}
+function galleryPageToggleDir() {
+  _attGalState.full.dir = _attGalState.full.dir === 'asc' ? 'desc' : 'asc';
+  _renderGalleryPageInner();
+}
+function galleryPageSetView(v) {
+  _attGalState.full.view = v;
+  _renderGalleryPageInner();
+}
+
+function attGalTileHtml(a, view = 'grid') {
   const kind = attGalKindOf(a);
   const nameEsc = esc(a.name || (kind === 'link' ? (a.url || 'Link') : 'Arquivo'));
   const demandEsc = esc(a.demandName || 'Demanda');
@@ -25268,7 +25571,29 @@ function attGalTileHtml(a) {
     : previewable
       ? `openAttPreview('${srcEsc}', '${esc(a.type || '')}', '${esc(a.name || '')}')`
       : `window.open('${srcEsc}', '_blank')`;
-  const openDemandCall = `event.stopPropagation();showDetail('${esc(a.demandId)}')`;
+  const openDemandCall = `event.stopPropagation();closeAttGalleryFull();showDetail('${esc(a.demandId)}')`;
+  const size = attSizeBytes(a);
+  const dateLbl = a.addedAt ? fmtDate(a.addedAt) : '';
+  const kindLbl = (_attGalKindLabels.find(x => x.k === kind)?.label) || kind;
+  if (view === 'list') {
+    const thumb = kind === 'image' && src
+      ? `<div class="att-gal-list-thumb att-gal-thumb-image" style="background-image:url('${srcEsc}')"></div>`
+      : `<div class="att-gal-list-thumb att-gal-thumb-icon"><i data-lucide="${attIcon(kind)}"></i></div>`;
+    return `<button type="button" class="att-gal-list-row" onclick="${openCall}">
+      ${thumb}
+      <div class="att-gal-list-main">
+        <div class="att-gal-list-name">${nameEsc}</div>
+        <div class="att-gal-list-meta">
+          <span class="att-gal-list-demand" onclick="${openDemandCall}">${demandEsc}</span>
+          <span>${esc(kindLbl)}</span>
+          ${size ? `<span>${esc(fmtBytes(size))}</span>` : ''}
+          ${dateLbl ? `<span>${esc(dateLbl)}</span>` : ''}
+        </div>
+      </div>
+      <i data-lucide="chevron-right" class="ic-sm att-gal-list-chev"></i>
+    </button>`;
+  }
+  // grid (padrão)
   const thumb = kind === 'image' && src
     ? `<div class="att-gal-thumb att-gal-thumb-image" style="background-image:url('${srcEsc}')"></div>`
     : `<div class="att-gal-thumb att-gal-thumb-icon"><i data-lucide="${attIcon(kind)}"></i></div>`;
@@ -25279,16 +25604,6 @@ function attGalTileHtml(a) {
       <button type="button" class="att-gal-tile-demand" title="Abrir demanda" onclick="${openDemandCall}">${demandEsc}</button>
     </div>
   </div>`;
-}
-function attGalSearch(ctx, val) {
-  _attGalState[ctx].search = val || '';
-  // Re-render debounced pra não rebuildar em cada tecla.
-  clearTimeout(_attGalState[ctx]._t);
-  _attGalState[ctx]._t = setTimeout(() => renderAttGallery(ctx), 120);
-}
-function attGalPickKind(ctx, kind) {
-  _attGalState[ctx].kind = kind || '';
-  renderAttGallery(ctx);
 }
 
 /* Link de info (Drive/Ativos) — mostra o título salvo da página (resolvido no

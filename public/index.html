@@ -1672,7 +1672,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           </div>
 
           <div class="client-detail-section att-gallery-section" style="margin-top:32px">
-            <div class="client-detail-section-label">ANEXOS</div>
+            <div class="client-detail-section-label">GALERIA</div>
             <div class="att-gallery" id="att-gallery-client"></div>
           </div>
         </div>
@@ -1739,9 +1739,36 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           </div>
 
           <div class="client-detail-section att-gallery-section" style="margin-top:32px">
-            <div class="client-detail-section-label">ANEXOS</div>
+            <div class="client-detail-section-label">GALERIA</div>
             <div class="att-gallery" id="att-gallery-project"></div>
           </div>
+        </div>
+
+        <!-- VIEW GALLERY: página cheia da galeria de anexos (cliente/projeto) -->
+        <div id="gallery-view" style="display:none">
+          <div class="gallery-page-head">
+            <button class="btn btn-ghost btn-sm" onclick="closeGalleryPage()"><i data-lucide="chevron-left" class="ic-sm"></i> Voltar</button>
+            <div class="gallery-page-title-wrap">
+              <div class="gallery-page-title" id="gallery-page-title">Galeria</div>
+              <div class="gallery-page-sub" id="gallery-page-sub"></div>
+            </div>
+          </div>
+          <div class="gallery-page-toolbar">
+            <div class="filter-input-wrap gallery-page-search">
+              <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+              <input class="filter-input filter-input--with-icon" id="gallery-page-search-input" placeholder="Buscar anexo ou demanda…" oninput="galleryPageSearch(this.value)">
+            </div>
+            <div class="att-gal-sort-group">
+              <span class="att-gal-sort-label">Ordenar por</span>
+              <div class="att-gal-sort-btns" id="gallery-page-sort-btns"></div>
+              <button type="button" class="att-gal-dir-btn" id="gallery-page-dir-btn" onclick="galleryPageToggleDir()" title="Direção">
+                <i data-lucide="arrow-down" class="ic-sm"></i>
+              </button>
+            </div>
+            <div class="att-gal-view-toggle" id="gallery-page-view-toggle"></div>
+          </div>
+          <div class="gallery-page-chips" id="gallery-page-chips"></div>
+          <div class="gallery-page-body" id="gallery-page-body"></div>
         </div>
 
         <!-- VIEW D: Relatório mensal do cliente (print-friendly) -->
@@ -4119,7 +4146,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260911demV5" defer></script>
+<script src="/js/boot.js?v=20260911galB" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
