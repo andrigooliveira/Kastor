@@ -7264,7 +7264,8 @@ function renderList() {
   const bodyEl = $('list-table-body');
   if (!mainList.length) {
     bodyEl.innerHTML = `<tr><td colspan="9">${emptyState(isDoneOnly ? 'Nenhuma demanda concluída no filtro' : 'Nenhuma demanda encontrada', 'Ajuste a busca ou os filtros para encontrar o que procura.', 'search')}</td></tr>`;
-  } else if (isDoneOnly) {
+  } else if (isDoneOnly || !_listGrouping) {
+    // Flat: sem headers de agrupamento (toggle off) OU filtro Concluídas.
     bodyEl.innerHTML = mainList.map(renderRow).join('');
   } else {
     const today = todayStr();
@@ -7332,6 +7333,7 @@ function renderList() {
 
   paintIcons(); // ícones de urgência de prazo (alert-triangle / clock) nas linhas
   _syncListSortHeaders();
+  _syncListGroupingBtn();
   if (listView === 'kanban') renderKanban();
   if (listView === 'cal') renderCalendar('all');
   _applyBulkMode();
@@ -7375,6 +7377,23 @@ function _syncListSortHeaders() {
       }
     });
   });
+}
+
+/* Agrupamento por urgência de prazo em /demands. Quando OFF, a tabela vira flat
+   (todos os itens em ordem, sem headers). Persiste em localStorage. */
+let _listGrouping = (() => {
+  try { return localStorage.getItem('kastor-list-grouping') !== '0'; } catch { return true; }
+})();
+function toggleListGrouping() {
+  _listGrouping = !_listGrouping;
+  try { localStorage.setItem('kastor-list-grouping', _listGrouping ? '1' : '0'); } catch {}
+  renderList();
+}
+function _syncListGroupingBtn() {
+  const btn = document.getElementById('list-group-toggle');
+  if (!btn) return;
+  btn.classList.toggle('is-active', _listGrouping);
+  btn.title = _listGrouping ? 'Agrupamento ativo — clique pra ver lista corrida' : 'Lista corrida — clique pra agrupar por urgência';
 }
 
 /* Estado das seções colapsadas em /demands. Persiste em localStorage — cada key

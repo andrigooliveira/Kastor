@@ -14906,6 +14906,26 @@ input[type="checkbox"]:checked {
   border-color: var(--text-muted);
 }
 
+/* Toggle de agrupamento: mesmo tamanho dos outros ícones do filter bar */
+#page-list .filters-bar .list-group-toggle {
+  height: 32px;
+  width: 32px;
+  padding: 0;
+  border-radius: 7px;
+  background: var(--surface);
+  border: 1px solid var(--hairline-strong);
+  color: var(--text-dim);
+  transition: background .15s var(--ease-out), border-color .15s var(--ease-out), color .15s var(--ease-out);
+}
+#page-list .filters-bar .list-group-toggle:hover {
+  border-color: var(--text-muted);
+}
+#page-list .filters-bar .list-group-toggle.is-active {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 8%, var(--surface));
+  color: var(--accent-text);
+}
+
 /* ── Indicador visual de sort na tabela de demandas ──
    `.is-sorted` = coluna ativa (arrow colorida); direção via `.is-sort-asc`/`.is-sort-desc`.
    O ícone base `chevrons-up-down` fica cinza claro em colunas não ordenadas,

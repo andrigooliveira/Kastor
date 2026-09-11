@@ -763,6 +763,11 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           <!-- Backing value pro filtro — mantém compat com listFilteredDemands()
                e persistência via FILTER_KEYS['list']. -->
           <input type="hidden" id="filter-quick" value="open">
+          <!-- Toggle de agrupar por urgência (Atrasadas / Hoje / Essa semana / …).
+               Estado persistido em localStorage; default = agrupado. -->
+          <button type="button" class="btn btn-ghost btn-sm btn-icon-only list-group-toggle" id="list-group-toggle" title="Agrupar por urgência de prazo" onclick="toggleListGrouping()">
+            <i data-lucide="list-tree" class="ic-sm"></i>
+          </button>
           <!-- Menu kebab: agrupa toggles de visualização + export CSV num só botão.
                Reusa o pattern .stages-edit-menu (dropdown com backdrop + click-outside). -->
           <div class="list-view-menu-wrap">
@@ -4114,7 +4119,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260911demV4" defer></script>
+<script src="/js/boot.js?v=20260911demV5" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
