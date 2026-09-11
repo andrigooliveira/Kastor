@@ -1,5 +1,18 @@
 [
   {
+    "id": "2026-09-11-galeria-viewer",
+    "date": "2026-09-11",
+    "title": "Galeria unificada + visualização de PDF, DOCX e PPTX na plataforma",
+    "highlights": [
+      "Nova página 'Galeria' no menu lateral: mini-drive com todos os arquivos anexados nas demandas de todos os clientes — sem depender do squad ativo.",
+      "Filtros por squad, cliente e tipo (imagens, PDFs, docs, slides, planilhas, vídeos, áudios, links); busca por nome, cliente, projeto ou demanda; ordenação por data, nome, peso, tipo ou cliente.",
+      "Cada arquivo tem sua URL própria (/gallery/nome-id) — dá pra compartilhar link direto pro item, e voltar/avançar do browser funciona certinho.",
+      "Visualização inline dos formatos Office (PPTX, DOCX, XLSX) fiel ao original — a plataforma converte no servidor com LibreOffice e mostra as páginas em alta resolução via pdf.js, com zoom que mantém nitidez.",
+      "PDFs e imagens ganham botões de zoom (+/−) e o modal ocupa a tela inteira em fundo escuro pra melhor leitura.",
+      "Também tem uma prévia da galeria nos detalhes de cliente e projeto (8 itens mais recentes + botão 'Ver galeria completa')."
+    ]
+  },
+  {
     "id": "2026-09-10-tour-lgpd-icons",
     "date": "2026-09-10",
     "title": "Tour de boas-vindas, revisão LGPD e melhorias visuais",

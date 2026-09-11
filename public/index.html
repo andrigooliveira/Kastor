@@ -340,6 +340,10 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
         <svg viewBox="0 0 16 16" fill="none"><path d="M3 4h10M3 8h10M3 12h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="0.5" y="2.5" width="2" height="2" rx="0.5" stroke="currentColor" stroke-width="1.2"/><rect x="0.5" y="6.5" width="2" height="2" rx="0.5" stroke="currentColor" stroke-width="1.2"/><rect x="0.5" y="10.5" width="2" height="2" rx="0.5" stroke="currentColor" stroke-width="1.2"/></svg>
         Listas de tarefas
       </div>
+      <div class="nav-item freelancer-hide" data-page="gallery" onclick="goPage('gallery')">
+        <svg viewBox="0 0 16 16" fill="none"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="5.5" cy="6.5" r="1.2" stroke="currentColor" stroke-width="1.3"/><path d="M2 11l3-3 2.5 2.5L11 6.5l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Galeria
+      </div>
 
       <div class="nav-item nav-more-toggle freelancer-hide" id="nav-more-toggle" onclick="toggleNavMore(event)" title="Mais opções">
         <svg viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
@@ -1561,6 +1565,53 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             </div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- ── GALERIA GLOBAL ── mini-drive com anexos de TODOS os clientes,
+         independente do squad ativo do usuário. -->
+    <div class="page" id="page-gallery">
+      <div class="page-body">
+        <div class="gallery-page-head" style="margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--hairline)">
+          <div class="gallery-page-title-wrap">
+            <div class="gallery-page-title">Galeria</div>
+            <div class="gallery-page-sub">Mini-drive com todos os arquivos de mídia da plataforma — independente de squad.</div>
+          </div>
+        </div>
+        <div class="gallery-page-toolbar">
+          <div class="filter-input-wrap gallery-page-search">
+            <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+            <input class="filter-input filter-input--with-icon" id="global-gallery-search-input" placeholder="Buscar por nome, cliente, projeto ou demanda…" oninput="globalGallerySearch(this.value)">
+          </div>
+          <!-- Multi-select de squads: popover com checkboxes; label reflete qtd selecionada. -->
+          <div class="filter-multi-wrap gallery-multi-wrap" id="gg-ws-wrap">
+            <button type="button" class="filter-multi-trigger gallery-multi-trigger" onclick="ggToggleMulti(event, 'ws')">
+              <i data-lucide="users" class="ic-xs"></i>
+              <span class="filter-multi-label" id="gg-ws-label">Squad</span>
+              <i data-lucide="chevron-down" class="ic-xs"></i>
+            </button>
+            <div class="filter-multi-menu" id="gg-ws-menu" onclick="event.stopPropagation()"></div>
+          </div>
+          <!-- Multi-select de clientes: idem. -->
+          <div class="filter-multi-wrap gallery-multi-wrap" id="gg-client-wrap">
+            <button type="button" class="filter-multi-trigger gallery-multi-trigger" onclick="ggToggleMulti(event, 'client')">
+              <i data-lucide="briefcase" class="ic-xs"></i>
+              <span class="filter-multi-label" id="gg-client-label">Cliente</span>
+              <i data-lucide="chevron-down" class="ic-xs"></i>
+            </button>
+            <div class="filter-multi-menu" id="gg-client-menu" onclick="event.stopPropagation()"></div>
+          </div>
+          <div class="att-gal-sort-group">
+            <span class="att-gal-sort-label">Ordenar por</span>
+            <div class="att-gal-sort-btns" id="global-gallery-sort-btns"></div>
+            <button type="button" class="att-gal-dir-btn" id="global-gallery-dir-btn" onclick="globalGalleryToggleDir()" title="Direção">
+              <i data-lucide="arrow-down" class="ic-sm"></i>
+            </button>
+          </div>
+          <div class="att-gal-view-toggle" id="global-gallery-view-toggle"></div>
+        </div>
+        <div class="gallery-page-chips" id="global-gallery-chips"></div>
+        <div class="gallery-page-body" id="global-gallery-body"></div>
       </div>
     </div>
 
@@ -4146,7 +4197,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260911galB" defer></script>
+<script src="/js/boot.js?v=20260911galSlug" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

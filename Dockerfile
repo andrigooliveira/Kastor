@@ -20,6 +20,17 @@ ENV BUILD_SHA=$BUILD_SHA
 # de dados (uploads/auth.enc mount) sem se preocupar com uid/gid.
 WORKDIR /app
 
+# LibreOffice pra conversão PPTX/DOCX/XLSX → PDF (headless).
+# É pesado (~250MB extra na imagem), mas é a ÚNICA forma de ter fidelidade
+# 100% no viewer sem depender do usuário instalar nada. Fica embutido no
+# container — do ponto de vista do produto, é interno.
+# ttf-dejavu evita substituição estranha de fontes que faltam no arquivo.
+RUN apk add --no-cache \
+      libreoffice \
+      ttf-dejavu ttf-liberation ttf-freefont \
+      font-noto-cjk
+ENV SOFFICE_PATH=/usr/bin/soffice
+
 # Copia manifests primeiro pra Docker cachear a camada de dependências —
 # só reinstala quando package*.json muda de verdade.
 COPY package*.json ./

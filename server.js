@@ -25,7 +25,9 @@ const express     = require('express');
 const compression = require('compression');
 const crypto     = require('crypto');
 const fs         = require('fs');
+const os         = require('os');
 const path       = require('path');
+const { spawn }  = require('child_process');
 const nodemailer = require('nodemailer');
 const auth       = require('./secure-store');
 const {
@@ -1344,8 +1346,10 @@ app.use((req, res, next) => {
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
     "img-src 'self' data: blob: https:",
-    "media-src 'self' https:",
+    "media-src 'self' https: blob:",
     "connect-src 'self' https://*.clarity.ms https://c.bing.com",
+    // pdf.js sobe um Web Worker (usa blob: quando o worker é servido cross-origin).
+    "worker-src 'self' blob:",
     `frame-src ${CSP_IFRAME_SRC}`,
     `child-src ${CSP_IFRAME_SRC}`,
     "frame-ancestors 'self'",
@@ -2702,6 +2706,161 @@ function stripDemandForList(d) {
   const { description, comments, attachments, briefing, history, ...rest } = d;
   return rest;
 }
+
+/* ── Conversão PPTX/DOCX/XLSX → PDF via LibreOffice ──
+   Rodamos `soffice --headless --convert-to pdf` num tmpdir. Cache por
+   sha1(caminho + mtime + size) — arquivo idempotente. Resultado streamado
+   como application/pdf, que o cliente exibe via pdf.js (mesmo viewer do PDF).
+   Requer LibreOffice instalado. Se falhar, o cliente cai no renderer client-side. */
+const PPTX_PDF_CACHE_DIR = path.join(os.tmpdir(), 'kastor-office-pdf');
+try { fs.mkdirSync(PPTX_PDF_CACHE_DIR, { recursive: true }); } catch {}
+function findSoffice() {
+  if (process.env.SOFFICE_PATH && fs.existsSync(process.env.SOFFICE_PATH)) return process.env.SOFFICE_PATH;
+  if (process.platform === 'win32') {
+    const candidates = [
+      'C:\\Program Files\\LibreOffice\\program\\soffice.exe',
+      'C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe'
+    ];
+    for (const c of candidates) if (fs.existsSync(c)) return c;
+  }
+  // Linux/Mac: assume no PATH
+  return 'soffice';
+}
+const _conversionInFlight = new Map(); // cacheKey → Promise<pdfPath>
+app.get('/api/office-as-pdf', requireAuth, async (req, res) => {
+  const src = String(req.query.path || '');
+  // Security: só /uploads/…, sem `..`, extensões office suportadas.
+  if (!src.startsWith('/uploads/') || src.includes('..')) return res.status(400).json({ error: 'bad path' });
+  const ext = (src.split('.').pop() || '').toLowerCase();
+  if (!['pptx','ppt','docx','doc','xlsx','xls'].includes(ext)) return res.status(400).json({ error: 'unsupported' });
+  const localPath = path.join(__dirname, 'public', src);
+  if (!fs.existsSync(localPath)) return res.status(404).json({ error: 'not found' });
+  const stat = fs.statSync(localPath);
+  const cacheKey = crypto.createHash('sha1').update(localPath + ':' + stat.mtimeMs + ':' + stat.size).digest('hex');
+  const cachedPdf = path.join(PPTX_PDF_CACHE_DIR, cacheKey + '.pdf');
+  if (fs.existsSync(cachedPdf)) {
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    return fs.createReadStream(cachedPdf).pipe(res);
+  }
+  // Deduplica conversões simultâneas do mesmo arquivo.
+  let pending = _conversionInFlight.get(cacheKey);
+  if (!pending) {
+    pending = new Promise((resolve, reject) => {
+      let workDir;
+      try {
+        workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kastor-office-'));
+      } catch (e) { return reject(e); }
+      const soffice = findSoffice();
+      const proc = spawn(soffice, ['--headless', '--norestore', '--convert-to', 'pdf', '--outdir', workDir, localPath], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        // Isola o profile do LibreOffice num tmpdir — evita lock de instância única.
+        env: { ...process.env, HOME: workDir, TMPDIR: workDir }
+      });
+      let stderrBuf = '';
+      proc.stderr.on('data', d => { stderrBuf += d.toString(); });
+      proc.on('error', (err) => {
+        try { fs.rmSync(workDir, { recursive: true, force: true }); } catch {}
+        reject(new Error('LibreOffice não encontrado. Instale LibreOffice ou defina SOFFICE_PATH. (' + err.message + ')'));
+      });
+      proc.on('exit', (code) => {
+        if (code !== 0) {
+          try { fs.rmSync(workDir, { recursive: true, force: true }); } catch {}
+          return reject(new Error('LibreOffice exit ' + code + ' — ' + stderrBuf.slice(0, 400)));
+        }
+        try {
+          const files = fs.readdirSync(workDir).filter(f => f.toLowerCase().endsWith('.pdf'));
+          if (!files.length) throw new Error('Sem PDF gerado');
+          fs.copyFileSync(path.join(workDir, files[0]), cachedPdf);
+        } catch (e) {
+          try { fs.rmSync(workDir, { recursive: true, force: true }); } catch {}
+          return reject(e);
+        }
+        try { fs.rmSync(workDir, { recursive: true, force: true }); } catch {}
+        resolve(cachedPdf);
+      });
+    }).finally(() => { _conversionInFlight.delete(cacheKey); });
+    _conversionInFlight.set(cacheKey, pending);
+  }
+  try {
+    await pending;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    fs.createReadStream(cachedPdf).pipe(res);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* ── Galeria de anexos — endpoint que agrega attachments de TODAS as demandas
+   acessíveis pro usuário (respeitando workspaces/freelancer). Retorna binário
+   (data) junto — assim a galeria fica confiável entre reloads sem precisar
+   abrir cada demanda pra carregar seus attachments.
+
+   Query params opcionais:
+     ?meta=1  → devolve só metadados (sem `data`) pra painéis "explorer"
+                que fazem preview sob demanda. Recomendo pra listas grandes.
+                Sem esse flag, devolve TUDO — cuidado com payload grande. */
+app.get('/api/gallery', requireAuth, (req, res) => {
+  const u = req.user;
+  const ids = wsIdsFor(u);
+  const inWs = (obj) => ids.includes(obj.workspaceId);
+  const metaOnly = req.query.meta === '1';
+
+  let visibleDemands = db.demands.filter(d => inWs(d) && notDeleted(d));
+  if (u.isFreelancer) {
+    visibleDemands = visibleDemands.filter(d => freelancerHasDemandAccess(u, d));
+  }
+  const projectsById = new Map((db.projects || []).map(p => [p.id, p]));
+  const clientsById = new Map((db.clients || []).map(c => [c.id, c]));
+  const out = [];
+  for (const d of visibleDemands) {
+    const proj = d.projectId ? projectsById.get(d.projectId) : null;
+    const client = proj?.clientId ? clientsById.get(proj.clientId) : null;
+    const base = {
+      demandId: d.id,
+      demandName: d.name,
+      workspaceId: d.workspaceId || null,
+      projectId: d.projectId || null,
+      projectName: proj?.name || '',
+      clientId: proj?.clientId || null,
+      clientName: client?.name || proj?.client || '',
+      addedAt: d.updatedAt || d.createdAt || ''
+    };
+    (d.attachments || []).forEach(a => {
+      const item = {
+        ...base,
+        id: a.id,
+        kind: a.kind || 'file',
+        name: a.name || '',
+        type: a.type || '',
+        size: a.size || 0,
+        url: a.url || null
+      };
+      // Só inclui `data` (base64) quando não é metaOnly — é o pesado.
+      if (!metaOnly && a.data) item.data = a.data;
+      out.push(item);
+    });
+    // Comentários também podem ter anexos.
+    (d.comments || []).forEach(c => {
+      (c.attachments || []).forEach(a => {
+        const item = {
+          ...base,
+          addedAt: c.at || c.createdAt || base.addedAt,
+          id: a.id,
+          kind: a.kind || 'file',
+          name: a.name || '',
+          type: a.type || '',
+          size: a.size || 0,
+          url: a.url || null
+        };
+        if (!metaOnly && a.data) item.data = a.data;
+        out.push(item);
+      });
+    });
+  }
+  res.json(out);
+});
 
 /* Bootstrap consolidado: retorna em UMA resposta o que o cliente pedia em
    16 GETs paralelos no boot (workspaces, users, clients, projects, flows,

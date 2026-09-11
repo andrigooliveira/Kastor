@@ -15157,6 +15157,8 @@ input[type="checkbox"]:checked {
 .gal-explorer .gal-col-date { width: 140px; }
 .gal-explorer .gal-col-type { width: 110px; }
 .gal-explorer .gal-col-size { width: 100px; text-align: right; }
+.gal-explorer .gal-col-client { width: 180px; }
+.gal-explorer .gal-col-client { color: var(--text-dim); font-size: 12px; }
 
 .gal-explorer tbody tr {
   cursor: pointer;
@@ -15213,6 +15215,104 @@ input[type="checkbox"]:checked {
   transition: color .15s var(--ease-out);
 }
 .gal-row-demand:hover { color: var(--accent-text); text-decoration: underline; }
+
+/* Multi-select triggers (cliente + squad) na toolbar da galeria global */
+.gallery-multi-wrap { position: relative; }
+.gallery-multi-trigger {
+  height: 32px !important;
+  padding: 0 12px !important;
+  gap: 6px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--hairline-strong);
+  font-family: inherit;
+  font-size: 12.5px;
+  color: var(--text);
+  display: inline-flex; align-items: center;
+  cursor: pointer;
+  transition: background .15s var(--ease-out), border-color .15s var(--ease-out);
+}
+.gallery-multi-trigger:hover {
+  background: var(--surface-2);
+  border-color: var(--text-muted);
+}
+.gallery-multi-trigger .ic-xs {
+  width: 12px !important; height: 12px !important;
+  color: var(--text-muted);
+}
+.gallery-multi-trigger .filter-multi-label {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+}
+.gallery-multi-wrap.filtering .gallery-multi-trigger {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 6%, var(--surface));
+  color: var(--accent-text);
+}
+.gallery-multi-wrap.filtering .gallery-multi-trigger .filter-multi-label {
+  color: var(--accent-text); font-weight: 600;
+}
+.gallery-multi-wrap .filter-multi-menu {
+  position: absolute; top: calc(100% + 6px); left: 0;
+  min-width: 240px; max-width: 320px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  padding: 6px;
+  z-index: 100;
+  display: none;
+  max-height: 380px;
+  overflow-y: auto;
+}
+.gallery-multi-wrap .filter-multi-menu.open { display: block; }
+.gallery-multi-wrap .filter-multi-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--text);
+  transition: background .12s var(--ease-out);
+}
+.gallery-multi-wrap .filter-multi-item:hover { background: var(--surface-2); }
+.gallery-multi-wrap .filter-multi-item input[type="checkbox"] {
+  width: 14px; height: 14px; flex-shrink: 0;
+  accent-color: var(--accent);
+}
+.gallery-multi-wrap .filter-multi-item-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  flex-shrink: 0;
+}
+.gallery-multi-wrap .filter-multi-item-lbl {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gallery-multi-wrap .filter-multi-item-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  padding: 1px 6px;
+  background: var(--surface-2);
+  border-radius: var(--radius-pill);
+}
+.gallery-multi-wrap .filter-multi-clear {
+  display: block; width: 100%;
+  padding: 6px 8px;
+  margin-top: 4px;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--hairline);
+  border-radius: 0 0 6px 6px;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: color .12s var(--ease-out);
+}
+.gallery-multi-wrap .filter-multi-clear:hover { color: var(--danger); }
 
 /* Modal fullscreen da galeria completa */
 .att-gal-modal-overlay {
@@ -15420,6 +15520,239 @@ input[type="checkbox"]:checked {
 .att-gal-list-demand:hover { text-decoration: underline; }
 .att-gal-list-chev { color: var(--text-muted); opacity: .5; flex-shrink: 0; }
 .att-gal-list-row:hover .att-gal-list-chev { opacity: 1; color: var(--accent); }
+
+/* Viewer inline — PDF, DOCX, PPTX renderizados client-side */
+.att-preview-loading {
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  min-height: 320px;
+  gap: 14px;
+  color: var(--text-muted);
+}
+.att-preview-spinner svg {
+  width: 32px !important; height: 32px !important;
+  animation: rotateSpin 1s linear infinite;
+  color: var(--accent);
+}
+.att-preview-loading-label {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+@keyframes rotateSpin { to { transform: rotate(360deg); } }
+
+/* PDF (pdf.js) — cada página é um <canvas> empilhado, com scroll interno.
+   O zoom re-renderiza os canvases via pdf.js (scale nativo) — mantém nítido
+   em qualquer zoom, sem depender de CSS transform. */
+.att-preview-pdf {
+  display: flex; flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 20px;
+  overflow-y: auto;
+  height: 100%; max-height: 100%;
+  background: var(--surface-2);
+}
+.att-preview-pdf-page {
+  /* NÃO use max-width aqui — o CSS width é definido inline pelo pdf.js render,
+     baseado no zoom atual. max-width mataria o efeito de "aumentar" a página. */
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  background: #fff;
+  display: block;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+}
+
+/* DOCX (mammoth) — HTML de saída num "documento" com margem branca */
+.att-preview-docx {
+  padding: 40px 60px;
+  margin: 20px auto;
+  max-width: 820px;
+  background: #ffffff;
+  color: #111114;
+  font-family: 'Georgia', 'Cambria', serif;
+  font-size: 14px;
+  line-height: 1.7;
+  border-radius: 6px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  overflow-y: auto;
+  max-height: calc(100vh - 120px);
+}
+.att-preview-docx h1, .att-preview-docx h2, .att-preview-docx h3,
+.att-preview-docx h4, .att-preview-docx h5, .att-preview-docx h6 {
+  font-family: 'Helvetica', 'Arial', sans-serif;
+  color: #111114;
+  margin-top: 1.4em; margin-bottom: 0.5em;
+}
+.att-preview-docx p { margin: 0 0 1em; }
+.att-preview-docx table { border-collapse: collapse; margin: 1em 0; }
+.att-preview-docx table td, .att-preview-docx table th {
+  border: 1px solid #ccc; padding: 6px 10px;
+}
+.att-preview-docx img { max-width: 100%; height: auto; }
+.att-preview-docx a { color: #5E00CC; }
+.att-preview-docx ul, .att-preview-docx ol { padding-left: 28px; }
+
+/* DOCX (docx-preview) — preserva estilos originais do documento.
+   Deixamos o lib injetar suas próprias fontes e cores. */
+.att-preview-docx-host {
+  padding: 20px;
+  display: flex; justify-content: center;
+  overflow-y: auto; overflow-x: auto;
+  max-height: calc(100vh - 120px);
+  background: var(--surface-2);
+  transition: transform .18s var(--ease-out);
+}
+.att-preview-docx-host .docx-wrapper {
+  padding: 0 !important;
+  background: transparent !important;
+}
+.att-preview-docx-host .docx-wrapper > section.docx {
+  background: #ffffff !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  margin-bottom: 14px;
+}
+
+/* PPTX viewer (renderer próprio, Dropbox-style) — fundo escuro, slides
+   grandes com aspect-ratio preservado, separação clara por espaçamento. */
+.att-preview-pptx {
+  padding: 30px 20px 60px;
+  overflow-y: auto; overflow-x: hidden;
+  height: 100%;   /* preenche o att-preview-body inteiro */
+  width: 100%;
+  max-height: 100%;
+  background: #1a1a1e;
+  border-radius: 10px;
+  transition: transform .18s var(--ease-out);
+  transform-origin: top center;
+  box-sizing: border-box;
+}
+/* Quando o body contém o pptx viewer, remove os defaults centralizadores.
+   O viewer alinha os slides pra cima e ao centro do container. */
+.att-preview-body:has(.att-preview-pptx) {
+  align-items: stretch;
+  padding: 0;
+}
+.kastor-pptx-stage {
+  display: flex; flex-direction: column;
+  align-items: center;
+  gap: 40px;
+}
+.kastor-pptx-slide-wrap {
+  border-radius: 6px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45), 0 4px 12px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+  background: #fff;
+}
+.kastor-pptx-slide {
+  will-change: transform;
+  /* Defaults do PowerPoint quando o pptx não especifica: texto preto, fonte
+     Calibri. Isso evita que o CSS escuro do app "vaze" pra dentro do slide
+     e deixe texto invisível em fundo claro. */
+  color: #000;
+  font-family: 'Calibri', 'Segoe UI', -apple-system, Arial, sans-serif;
+}
+.kastor-pptx-slide p { color: inherit; }
+.kastor-pptx-slide span { color: inherit; }
+
+/* Zoom toolbar no header do preview modal */
+.att-preview-zoom {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-left: auto; margin-right: 10px;
+}
+.att-preview-zoom-lbl {
+  min-width: 52px;
+  padding: 4px 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  cursor: pointer;
+  transition: background .15s var(--ease-out), color .15s var(--ease-out);
+}
+.att-preview-zoom-lbl:hover { background: var(--surface-3); color: var(--text); }
+.att-preview-zoom .detail-icon-btn svg { color: var(--text-dim); }
+
+/* Image preview: também zoomável */
+.att-preview-image[data-zoom-target] {
+  transition: transform .18s var(--ease-out);
+  transform-origin: center top;
+}
+
+/* Badge de formato no thumb */
+.att-gal-ext-badge {
+  position: absolute;
+  top: 6px; right: 6px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.68);
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  font-family: -apple-system, 'SF Mono', Menlo, monospace;
+  z-index: 2;
+  backdrop-filter: blur(4px);
+}
+.att-gal-thumb { position: relative; }
+/* Cores por tipo — segue paleta consistente */
+.att-gal-ext-badge.ext-pdf { background: #dc2626; }
+.att-gal-ext-badge.ext-doc { background: #2563eb; }
+.att-gal-ext-badge.ext-ppt { background: #ea580c; }
+.att-gal-ext-badge.ext-xls { background: #16a34a; }
+.att-gal-ext-badge.ext-image { background: #7c3aed; }
+.att-gal-ext-badge.ext-video { background: #db2777; }
+.att-gal-ext-badge.ext-audio { background: #0891b2; }
+.att-gal-ext-badge.ext-link { background: #6b7280; }
+
+/* Cover thumb gerado — pdf vira imagem, docx vira "papel" reduzido.
+   `contain` mostra a página inteira com barras se a proporção não bate;
+   o fundo branco simula "papel" atrás. */
+.att-gal-thumb.att-gal-thumb-cover {
+  background-color: #ffffff;
+  background-size: cover;
+  background-position: center top;
+  background-repeat: no-repeat;
+}
+.att-gal-thumb.att-gal-thumb-docx {
+  background: #ffffff;
+  color: #111114;
+  overflow: hidden;
+  padding: 10px 12px;
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+.att-gal-thumb.att-gal-thumb-docx .att-gal-thumb-docx-page {
+  font-family: 'Georgia', 'Cambria', serif;
+  font-size: 6.5px;
+  line-height: 1.35;
+  color: #333;
+  transform-origin: top left;
+  transform: scale(1);
+  overflow: hidden;
+  height: 100%; width: 100%;
+  pointer-events: none;
+}
+.att-gal-thumb.att-gal-thumb-docx .att-gal-thumb-docx-page * {
+  max-width: 100%;
+  margin-top: 0 !important;
+}
+.att-gal-thumb.att-gal-thumb-docx .att-gal-thumb-docx-page img { display: none; }
+.att-gal-thumb.att-gal-thumb-docx .att-gal-thumb-docx-page h1,
+.att-gal-thumb.att-gal-thumb-docx .att-gal-thumb-docx-page h2,
+.att-gal-thumb.att-gal-thumb-docx .att-gal-thumb-docx-page h3 {
+  font-family: 'Helvetica', 'Arial', sans-serif;
+  color: #111114;
+  font-size: 8px;
+  margin-bottom: 3px;
+}
+.att-gal-thumb.att-gal-thumb-docx .att-gal-thumb-docx-page p { margin-bottom: 4px; }
 
 /* Preview modal: mensagem quando Office file é local (data:) e não pode ser embed */
 .att-preview-unsupported {

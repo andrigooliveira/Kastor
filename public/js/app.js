@@ -103,7 +103,8 @@ const PAGE_TO_PATH = {
   kb:           '/knowledge-base',
   forms:        '/forms',
   dashboards:   '/dashboards',
-  performance:  '/performance'
+  performance:  '/performance',
+  gallery:      '/gallery'
 };
 const PATH_TO_PAGE = Object.fromEntries(Object.entries(PAGE_TO_PATH).map(([k, v]) => [v, k]));
 
@@ -195,6 +196,12 @@ function parseRoute(path) {
     let tab = 'demandas';
     try { tab = localStorage.getItem('kastor-rec-tab') || 'demandas'; } catch {}
     return { page: 'recurring', tab };
+  }
+  // Galeria de anexos — bare abre a lista; /gallery/<slug-id> abre um item.
+  if (p === '/gallery') return { page: 'gallery' };
+  {
+    const gm = p.match(/^\/gallery\/([a-zA-Z0-9-]+)$/);
+    if (gm) return { page: 'gallery', itemSlug: gm[1] };
   }
   // Análises (Capacidade + Relatórios em abas). Bare usa a aba persistida; sub-rotas
   // explícitas fixam a aba. /capacity e /reports antigos redirecionam pra cá (compat).
@@ -4311,7 +4318,7 @@ const PAGE_TITLES = {
   clients: 'Clientes', projects: 'Projetos', flows: 'Fluxos de Demanda',
   workspaces: 'Squads', users: 'Usuários', profile: 'Meu Perfil',
   analytics: 'Análises', templates: 'Templates', integrations: 'Integrações', agenda: 'Agenda',
-  recurring: 'Listas de tarefas', docs: 'Documentação', clientsModels: 'Modelos de Cliente',
+  recurring: 'Listas de tarefas', gallery: 'Galeria', docs: 'Documentação', clientsModels: 'Modelos de Cliente',
   trash: 'Lixeira', recurringDemands: 'Demandas Recorrentes',
   devtools: 'Dev Tools', passwords: 'Cofre de Senhas', kb: 'Base de conhecimento',
   forms: 'Formulários', dashboards: 'Dashboards', performance: 'Performance',
@@ -4835,6 +4842,7 @@ function renderCurrent() {
       renderClientsModels();
       break;
     }
+    case 'gallery':    renderGlobalGallery(); break;
     case 'projects':   renderProjects(); break;
     case 'flows': {
       // Mantém a subview de um cliente aberta quando refreshData()/SSE roda (ou
@@ -13601,10 +13609,968 @@ function renderDemandAttList(list, withDelete) {
   }).join('');
 }
 
-/* Modal fullscreen de preview — image/pdf/video/audio. Reusa uma <div> única,
-   criada on-demand. Fechar: clique fora, Esc ou botão X. */
-function openAttPreview(src, type, name) {
+/* ═══ Viewer engine — lazy-load de libs de renderização (pdf.js / mammoth /
+   pptxjs) via CDN, com cache global no window pra reutilização. ═══ */
+/* Libs de renderização hospedadas em /vendor pra não depender de CDN externo
+   (CSP restrita, cache offline, funcionamento consistente em prod). */
+const _VIEWER_CDN = {
+  pdfjs: {
+    lib:    '/vendor/pdf.min.js',
+    worker: '/vendor/pdf.worker.min.js',
+    global: 'pdfjsLib'
+  },
+  mammoth: { lib: '/vendor/mammoth.browser.min.js', global: 'mammoth' },
+  jszip:   { lib: '/vendor/jszip.min.js', global: 'JSZip' },
+  docxPreview: { lib: '/vendor/docx-preview.js', global: 'docx' }
+};
+const _viewerLoaded = {};
+function _loadScript(url) {
+  if (_viewerLoaded[url]) return _viewerLoaded[url];
+  _viewerLoaded[url] = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = url;
+    s.async = false; // preserva ordem quando encadeamos
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('Falha ao carregar ' + url));
+    document.head.appendChild(s);
+  });
+  return _viewerLoaded[url];
+}
+function _loadCss(url) {
+  if (_viewerLoaded['css:' + url]) return;
+  _viewerLoaded['css:' + url] = true;
+  const l = document.createElement('link');
+  l.rel = 'stylesheet';
+  l.href = url;
+  document.head.appendChild(l);
+}
+async function _ensurePdfJs() {
+  if (window.pdfjsLib) return window.pdfjsLib;
+  await _loadScript(_VIEWER_CDN.pdfjs.lib);
+  if (window.pdfjsLib && window.pdfjsLib.GlobalWorkerOptions) {
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = _VIEWER_CDN.pdfjs.worker;
+  }
+  return window.pdfjsLib;
+}
+async function _ensureMammoth() {
+  if (window.mammoth) return window.mammoth;
+  await _loadScript(_VIEWER_CDN.mammoth.lib);
+  return window.mammoth;
+}
+async function _ensureJSZip() {
+  if (window.JSZip) return window.JSZip;
+  await _loadScript(_VIEWER_CDN.jszip.lib);
+  return window.JSZip;
+}
+async function _ensureDocxPreview() {
+  if (window.docx && window.docx.renderAsync) return window.docx;
+  await _ensureJSZip();
+  await _loadScript(_VIEWER_CDN.docxPreview.lib);
+  return window.docx;
+}
+/* Renderer PPTX próprio — cansei de bibliotecas com bugs.
+   PPTX = zip com XMLs. Parseamos o `ppt/presentation.xml` pra descobrir a lista
+   ordenada de slides e as dimensões. Cada slide é um XML com shapes (sp/pic).
+   Cada shape tem xfrm (position/size em EMUs) + txBody (parágrafos com runs de
+   texto formatado) + fills (cor de fundo/texto).
+
+   Escopo do renderer:
+   - Texto com fonte, tamanho, cor, bold, italic, alinhamento
+   - Cor de fundo de shapes (solidFill)
+   - Imagens (blipFill → media/image*.png)
+   - Posicionamento absoluto em pixels
+   Não cobre: charts, animações, tabelas complexas, SmartArt, temas herdados. */
+
+const EMU_PER_PX = 9525; // OOXML: 914400 EMU = 1 inch, ~96 dpi ≈ 9525 EMU/px
+const emuToPx = (emu) => Math.round(parseInt(emu || 0, 10) / EMU_PER_PX);
+
+/* Extrai atributo tolerante a namespaces — chama getAttribute('r:id'),
+   getAttributeNS(null,'id') se o primeiro falhar. */
+function _xmlAttr(el, name) {
+  if (!el) return null;
+  const v = el.getAttribute(name);
+  if (v != null) return v;
+  const local = name.split(':').pop();
+  return el.getAttributeNS(null, local);
+}
+/* getElementsByTagName lida com namespaces — pptx-a:t vem como 'a:t'. */
+function _xmlFirst(parent, tagWithNs) {
+  const list = parent.getElementsByTagName(tagWithNs);
+  return list.length ? list[0] : null;
+}
+function _xmlAll(parent, tagWithNs) {
+  return Array.from(parent.getElementsByTagName(tagWithNs));
+}
+
+/* Faz o unzip do pptx e retorna um objeto com `zip`, `parser`, e helpers de
+   fetch de arquivos internos. */
+async function _openPptx(arrayBuffer) {
+  const JSZip = window.JSZip;
+  if (!JSZip) throw new Error('JSZip indisponível');
+  const zip = await JSZip.loadAsync(arrayBuffer);
+  const parser = new DOMParser();
+  const readXml = async (path) => {
+    const f = zip.file(path);
+    if (!f) return null;
+    return parser.parseFromString(await f.async('text'), 'application/xml');
+  };
+  const readBinary = async (path) => {
+    const f = zip.file(path);
+    return f ? await f.async('uint8array') : null;
+  };
+  return { zip, parser, readXml, readBinary };
+}
+
+/* Constrói lista ordenada de arquivos de slide + dimensões da apresentação. */
+async function _pptxGetSlides(pptx) {
+  const presDoc = await pptx.readXml('ppt/presentation.xml');
+  if (!presDoc) throw new Error('presentation.xml ausente');
+  const relsDoc = await pptx.readXml('ppt/_rels/presentation.xml.rels');
+  const sldSize = _xmlFirst(presDoc, 'p:sldSz') || _xmlFirst(presDoc, 'sldSz');
+  const cx = _xmlAttr(sldSize, 'cx') || 9144000;
+  const cy = _xmlAttr(sldSize, 'cy') || 6858000;
+  const width = emuToPx(cx);
+  const height = emuToPx(cy);
+  const sldIds = _xmlAll(presDoc, 'p:sldId').length ? _xmlAll(presDoc, 'p:sldId') : _xmlAll(presDoc, 'sldId');
+  const relsMap = new Map();
+  _xmlAll(relsDoc || presDoc, 'Relationship').forEach(r => {
+    relsMap.set(_xmlAttr(r, 'Id'), { type: _xmlAttr(r, 'Type'), target: _xmlAttr(r, 'Target') });
+  });
+  const paths = sldIds.map(s => {
+    const rid = _xmlAttr(s, 'r:id') || _xmlAttr(s, 'id');
+    const rel = relsMap.get(rid);
+    if (!rel) return null;
+    const target = (rel.target || '').replace(/^\.?\.?\//, '');
+    return 'ppt/' + target;
+  }).filter(Boolean);
+  return { width, height, paths };
+}
+
+/* Constrói o cache de rels de um XML qualquer do pptx (slide/layout/master).
+   Retorna { dir, map } — o dir é o diretório do arquivo alvo, usado pra
+   resolver targets relativos como "../media/foo.png". */
+async function _pptxRelsFor(pptx, xmlPath) {
+  const dir = xmlPath.substring(0, xmlPath.lastIndexOf('/'));
+  const relsPath = dir + '/_rels/' + xmlPath.split('/').pop() + '.rels';
+  const doc = await pptx.readXml(relsPath);
+  const map = new Map();
+  if (doc) _xmlAll(doc, 'Relationship').forEach(r => {
+    map.set(_xmlAttr(r, 'Id'), { type: _xmlAttr(r, 'Type'), target: _xmlAttr(r, 'Target') });
+  });
+  return { dir, map };
+}
+/* Compat com nome antigo — mesma coisa. */
+const _pptxSlideRels = _pptxRelsFor;
+
+/* Segue relação por Type (endsWith('/slideLayout') etc). Retorna path absoluto
+   no zip do arquivo referenciado. */
+function _pptxResolveTargetPath(dir, target) {
+  if (!target) return null;
+  // Normaliza "../foo" → resolve subindo dirs
+  const parts = (dir + '/' + target).split('/');
+  const out = [];
+  for (const p of parts) {
+    if (p === '..') out.pop();
+    else if (p !== '.' && p !== '') out.push(p);
+  }
+  return out.join('/');
+}
+function _pptxFindRelByType(rels, typeSuffix) {
+  for (const rel of rels.map.values()) {
+    if ((rel.type || '').endsWith(typeSuffix)) {
+      return _pptxResolveTargetPath(rels.dir, rel.target);
+    }
+  }
+  return null;
+}
+
+/* Resolve cadeia slide → layout → master → theme. Retorna documentos + rels
+   cacheados pra reuso em todos os slides. */
+const _pptxThemeCache = new WeakMap();
+async function _pptxChainFor(pptx, slidePath) {
+  const slideRels = await _pptxRelsFor(pptx, slidePath);
+  const layoutPath = _pptxFindRelByType(slideRels, '/slideLayout');
+  const layoutDoc = layoutPath ? await pptx.readXml(layoutPath) : null;
+  const layoutRels = layoutPath ? await _pptxRelsFor(pptx, layoutPath) : null;
+  const masterPath = layoutRels ? _pptxFindRelByType(layoutRels, '/slideMaster') : null;
+  const masterDoc = masterPath ? await pptx.readXml(masterPath) : null;
+  const masterRels = masterPath ? await _pptxRelsFor(pptx, masterPath) : null;
+  const themePath = masterRels ? _pptxFindRelByType(masterRels, '/theme') : null;
+  const themeDoc = themePath ? await pptx.readXml(themePath) : null;
+  return { slideRels, layoutDoc, layoutRels, masterDoc, masterRels, themeDoc, themePath, masterPath, layoutPath };
+}
+
+/* Extrai a paleta scheme colors do theme (bg1, tx1, accent1...) em hex.
+   Cache no zip pra não re-parsear a cada slide. */
+function _pptxThemeColors(themeDoc) {
+  if (!themeDoc) return {};
+  const colors = {};
+  const scheme = _xmlFirst(themeDoc, 'a:clrScheme');
+  if (!scheme) return colors;
+  const clrTag = ['a:dk1', 'a:lt1', 'a:dk2', 'a:lt2', 'a:accent1', 'a:accent2', 'a:accent3', 'a:accent4', 'a:accent5', 'a:accent6', 'a:hlink', 'a:folHlink'];
+  clrTag.forEach(tag => {
+    const el = _xmlFirst(scheme, tag);
+    if (!el) return;
+    const srgb = _xmlFirst(el, 'a:srgbClr');
+    const sys = _xmlFirst(el, 'a:sysClr');
+    let val = _xmlAttr(srgb, 'val') || _xmlAttr(sys, 'lastClr') || null;
+    if (val) colors[tag.replace('a:', '')] = val.toUpperCase();
+  });
+  // OOXML maps schemeClr names: dk1→tx1, lt1→bg1, dk2→tx2, lt2→bg2
+  colors.tx1 = colors.tx1 || colors.dk1;
+  colors.tx2 = colors.tx2 || colors.dk2;
+  colors.bg1 = colors.bg1 || colors.lt1;
+  colors.bg2 = colors.bg2 || colors.lt2;
+  return colors;
+}
+
+/* Resolve uma <a:solidFill> → cor hex. Aceita srgbClr direto ou schemeClr. */
+function _pptxResolveColor(solidFillEl, themeColors) {
+  if (!solidFillEl) return null;
+  const srgb = _xmlFirst(solidFillEl, 'a:srgbClr');
+  if (srgb) return '#' + _xmlAttr(srgb, 'val');
+  const scheme = _xmlFirst(solidFillEl, 'a:schemeClr');
+  if (scheme) {
+    const name = _xmlAttr(scheme, 'val');
+    const hex = themeColors[name];
+    return hex ? '#' + hex : null;
+  }
+  const sys = _xmlFirst(solidFillEl, 'a:sysClr');
+  if (sys) return '#' + (_xmlAttr(sys, 'lastClr') || '000000');
+  return null;
+}
+
+/* Resolve o typeface a partir do `a:latin`. Se for `+mj-lt`/`+mn-lt` (major/minor
+   latin), busca no fontScheme do theme. */
+function _pptxResolveTypeface(latinEl, themeDoc) {
+  if (!latinEl) return null;
+  let tf = _xmlAttr(latinEl, 'typeface');
+  if (!tf) return null;
+  if (tf.startsWith('+')) {
+    if (!themeDoc) return null;
+    const scheme = _xmlFirst(themeDoc, 'a:fontScheme');
+    const target = tf === '+mj-lt' ? 'a:majorFont' : 'a:minorFont';
+    const fontGroup = scheme ? _xmlFirst(scheme, target) : null;
+    const themeLatin = fontGroup ? _xmlFirst(fontGroup, 'a:latin') : null;
+    tf = _xmlAttr(themeLatin, 'typeface') || null;
+  }
+  return tf;
+}
+
+/* Coleta estilos default de um placeholder (do lvl1pPr do lstStyle da layout/master).
+   Merge com defaults do próprio shape. */
+function _pptxCollectPlaceholderDefaults(placeholderType, ctx) {
+  // ctx = { layoutDoc, masterDoc, themeDoc }
+  const findByType = (root, type) => {
+    if (!root) return null;
+    const sps = _xmlAll(root, 'p:sp');
+    for (const sp of sps) {
+      const ph = _xmlFirst(sp, 'p:ph');
+      if (!ph) continue;
+      const ptype = _xmlAttr(ph, 'type');
+      if (ptype === type || (!ptype && type === 'body')) return sp;
+    }
+    return null;
+  };
+  // Encontra sp correspondente na layout, depois na master
+  const layoutSp = findByType(ctx.layoutDoc, placeholderType);
+  const masterSp = findByType(ctx.masterDoc, placeholderType);
+  return { layoutSp, masterSp };
+}
+
+/* Lê style defaults (color, size, font, bold/italic + spcBef/spcAft + bullet)
+   de um lstStyle > lvlNpPr > defRPr. Também retorna props no nível do parágrafo
+   (spcBef/spcAft/buChar/buAutoNum) que a herança precisa saber. */
+function _pptxReadDefRPr(sp, themeDoc, themeColors, level = 0) {
+  if (!sp) return {};
+  const txBody = _xmlFirst(sp, 'p:txBody') || _xmlFirst(sp, 'txBody');
+  if (!txBody) return {};
+  const lstStyle = _xmlFirst(txBody, 'a:lstStyle');
+  // Level pode ser 0..8 → a:lvl1pPr..a:lvl9pPr. Como nossa herança default
+  // é lvl1, aceitamos qualquer para uso futuro.
+  const lvlTag = `a:lvl${(level || 0) + 1}pPr`;
+  const lvl = lstStyle ? _xmlFirst(lstStyle, lvlTag) : null;
+  const out = {};
+  if (!lvl) return out;
+  // Espaçamento antes/depois
+  const readSpc = (spc) => {
+    if (!spc) return null;
+    const pts = _xmlFirst(spc, 'a:spcPts');
+    if (pts) return (parseInt(_xmlAttr(pts, 'val'), 10) / 100) + 'pt';
+    const pct = _xmlFirst(spc, 'a:spcPct');
+    if (pct) return (parseInt(_xmlAttr(pct, 'val'), 10) / 1000) + '%';
+    return null;
+  };
+  const spcBef = _xmlFirst(lvl, 'a:spcBef');
+  const spcAft = _xmlFirst(lvl, 'a:spcAft');
+  const bef = readSpc(spcBef);
+  const aft = readSpc(spcAft);
+  if (bef) out.spcBef = bef;
+  if (aft) out.spcAft = aft;
+  // Line-height (lnSpc) — pode ser pct 100000=100% (1.0) ou pts.
+  const lnSpc = _xmlFirst(lvl, 'a:lnSpc');
+  if (lnSpc) {
+    const pts = _xmlFirst(lnSpc, 'a:spcPts');
+    if (pts) out.lineHeight = (parseInt(_xmlAttr(pts, 'val'), 10) / 100) + 'pt';
+    const pct = _xmlFirst(lnSpc, 'a:spcPct');
+    if (pct) out.lineHeight = (parseInt(_xmlAttr(pct, 'val'), 10) / 100000);
+  }
+  // Bullet default do nível
+  const buChar = _xmlFirst(lvl, 'a:buChar');
+  const buAutoNum = _xmlFirst(lvl, 'a:buAutoNum');
+  const buNone = _xmlFirst(lvl, 'a:buNone');
+  if (buNone) out.bullet = { none: true };
+  else if (buChar) out.bullet = { char: _xmlAttr(buChar, 'char') || '•' };
+  else if (buAutoNum) out.bullet = { autoNum: _xmlAttr(buAutoNum, 'type') || 'arabicPeriod' };
+  // Indent
+  const marL = _xmlAttr(lvl, 'marL');
+  const indent = _xmlAttr(lvl, 'indent');
+  if (marL) out.marL = emuToPx(marL);
+  if (indent) out.indent = emuToPx(indent);
+  // Text defaults do run (defRPr do lvl)
+  const defRPr = _xmlFirst(lvl, 'a:defRPr');
+  if (defRPr) {
+    const sz = _xmlAttr(defRPr, 'sz');
+    if (sz) out.size = parseInt(sz, 10) / 100;
+    if (_xmlAttr(defRPr, 'b') === '1') out.bold = true;
+    if (_xmlAttr(defRPr, 'i') === '1') out.italic = true;
+    const latin = _xmlFirst(defRPr, 'a:latin');
+    const tf = _pptxResolveTypeface(latin, themeDoc);
+    if (tf) out.font = tf;
+    const solid = _xmlFirst(defRPr, 'a:solidFill');
+    const color = _pptxResolveColor(solid, themeColors);
+    if (color) out.color = color;
+  }
+  return out;
+}
+
+/* Retorna o char de bullet do parágrafo (ou null quando não tem). Aceita
+   <a:buChar char="•"/>, <a:buAutoNum type="arabicPeriod"/> e <a:buNone/>. */
+function _pptxParagraphBullet(pPr, idx) {
+  if (!pPr) return null;
+  if (_xmlFirst(pPr, 'a:buNone')) return null;
+  const buChar = _xmlFirst(pPr, 'a:buChar');
+  if (buChar) return _xmlAttr(buChar, 'char') || '•';
+  const buAutoNum = _xmlFirst(pPr, 'a:buAutoNum');
+  if (buAutoNum) {
+    const type = _xmlAttr(buAutoNum, 'type') || 'arabicPeriod';
+    const n = (idx || 0) + 1;
+    if (type.startsWith('arabic'))  return n + (type.endsWith('Period') ? '.' : type.endsWith('Paren') ? ')' : '');
+    if (type.startsWith('roman'))   return _pptxToRoman(n) + '.';
+    if (type.startsWith('alpha'))   return String.fromCharCode(64 + n) + '.';
+    return n + '.';
+  }
+  return null;
+}
+function _pptxToRoman(num) {
+  const map = [['M',1000],['CM',900],['D',500],['CD',400],['C',100],['XC',90],['L',50],['XL',40],['X',10],['IX',9],['V',5],['IV',4],['I',1]];
+  let out = '';
+  for (const [r, v] of map) { while (num >= v) { out += r; num -= v; } }
+  return out;
+}
+
+/* Renderiza runs de texto (r) em `p` → HTML com <span> estilizados.
+   `ctx` traz defaults do placeholder herdados de layout/master + themeColors.
+   Suporta bullets, quebras de linha (<a:br>) e hyperlinks (<a:hlinkClick>). */
+function _pptxRenderText(pEl, targetEl, ctx) {
+  const pPr = _xmlFirst(pEl, 'a:pPr');
+  const align = _xmlAttr(pPr, 'algn');
+  const alignMap = { l: 'left', ctr: 'center', r: 'right', just: 'justify' };
+  const pOut = document.createElement('p');
+  pOut.style.margin = '0';
+  pOut.style.padding = '0';
+  // Line-height do parágrafo — vem de <a:lnSpc>. Aceita <a:spcPct val="150000"/>
+  // (=150%, ou 1.5) ou <a:spcPts val="1200"/> (=12pt).
+  const defs = ctx.placeholderDefaults || {};
+  const readSpcAsMargin = (spc) => {
+    if (!spc) return null;
+    const pts = _xmlFirst(spc, 'a:spcPts');
+    if (pts) return (parseInt(_xmlAttr(pts, 'val'), 10) / 100) + 'pt';
+    const pct = _xmlFirst(spc, 'a:spcPct');
+    if (pct) return (parseInt(_xmlAttr(pct, 'val'), 10) / 1000) + '%';
+    return null;
+  };
+  const readLineHeight = (lnSpc) => {
+    if (!lnSpc) return null;
+    const pts = _xmlFirst(lnSpc, 'a:spcPts');
+    if (pts) return (parseInt(_xmlAttr(pts, 'val'), 10) / 100) + 'pt';
+    const pct = _xmlFirst(lnSpc, 'a:spcPct');
+    if (pct) return (parseInt(_xmlAttr(pct, 'val'), 10) / 100000);
+    return null;
+  };
+  const lnSpc = pPr ? _xmlFirst(pPr, 'a:lnSpc') : null;
+  const lineHeight = readLineHeight(lnSpc) || defs.lineHeight;
+  if (lineHeight) pOut.style.lineHeight = lineHeight;
+  else pOut.style.lineHeight = '1.3';
+  if (align && alignMap[align]) pOut.style.textAlign = alignMap[align];
+  // Spacing antes/depois do parágrafo — merge com defaults do placeholder.
+  const spcBef = pPr ? _xmlFirst(pPr, 'a:spcBef') : null;
+  const spcAft = pPr ? _xmlFirst(pPr, 'a:spcAft') : null;
+  const before = readSpcAsMargin(spcBef) || defs.spcBef;
+  const after  = readSpcAsMargin(spcAft) || defs.spcAft;
+  if (before) pOut.style.marginTop = before;
+  if (after) pOut.style.marginBottom = after;
+  // Bullet — busca em pPr; se ausente, usa o do defaults do placeholder.
+  const lvl = parseInt(_xmlAttr(pPr, 'lvl') || 0, 10);
+  let bulletChar = _pptxParagraphBullet(pPr, ctx.__bulletIdx || 0);
+  if (!bulletChar && pPr && !_xmlFirst(pPr, 'a:buNone') && defs.bullet && !defs.bullet.none) {
+    if (defs.bullet.char) bulletChar = defs.bullet.char;
+    else if (defs.bullet.autoNum) {
+      const type = defs.bullet.autoNum;
+      const n = (ctx.__bulletIdx || 0) + 1;
+      if (type.startsWith('arabic'))  bulletChar = n + (type.endsWith('Period') ? '.' : type.endsWith('Paren') ? ')' : '');
+      else if (type.startsWith('roman'))  bulletChar = _pptxToRoman(n) + '.';
+      else if (type.startsWith('alpha'))  bulletChar = String.fromCharCode(64 + n) + '.';
+      else bulletChar = n + '.';
+    }
+  }
+  if (bulletChar) {
+    ctx.__bulletIdx = (ctx.__bulletIdx || 0) + 1;
+    pOut.style.display = 'flex';
+    pOut.style.gap = '0.6em';
+    // Indent — usa marL do pPr específico ou default do placeholder
+    const marL = parseInt(_xmlAttr(pPr, 'marL') || 0, 10);
+    const marLpx = marL ? emuToPx(marL) : (defs.marL || (lvl * 24));
+    pOut.style.paddingLeft = marLpx + 'px';
+    const bul = document.createElement('span');
+    bul.textContent = bulletChar;
+    bul.style.flexShrink = '0';
+    pOut.appendChild(bul);
+    const bodySpan = document.createElement('span');
+    bodySpan.style.flex = '1';
+    pOut.appendChild(bodySpan);
+    _pptxAppendRunsInto(pEl, bodySpan, ctx);
+  } else {
+    ctx.__bulletIdx = 0;
+    _pptxAppendRunsInto(pEl, pOut, ctx);
+  }
+  targetEl.appendChild(pOut);
+}
+
+/* Anexa os runs (r) e quebras (br) do parágrafo em `target`, respeitando
+   defaults do placeholder e hyperlinks. */
+function _pptxAppendRunsInto(pEl, target, ctx) {
+  const defs = ctx.placeholderDefaults || {};
+  // Itera os filhos DIRETOS do parágrafo, respeitando ordem (a:r, a:br, a:fld).
+  const children = Array.from(pEl.children);
+  let hasContent = false;
+  for (const child of children) {
+    if (child.tagName === 'a:br') {
+      target.appendChild(document.createElement('br'));
+      continue;
+    }
+    if (child.tagName !== 'a:r' && child.tagName !== 'a:fld') continue;
+    const t = _xmlFirst(child, 'a:t');
+    if (!t) continue;
+    hasContent = true;
+    const rPr = _xmlFirst(child, 'a:rPr');
+    // Hyperlink
+    const hlink = rPr ? _xmlFirst(rPr, 'a:hlinkClick') : null;
+    const hlinkId = _xmlAttr(hlink, 'r:id');
+    let hlinkUrl = null;
+    if (hlinkId && ctx.slideRels?.map?.has(hlinkId)) {
+      hlinkUrl = ctx.slideRels.map.get(hlinkId).target;
+    }
+    const node = hlinkUrl
+      ? document.createElement('a')
+      : document.createElement('span');
+    if (hlinkUrl) {
+      node.href = hlinkUrl;
+      node.target = '_blank';
+      node.rel = 'noopener noreferrer';
+      node.style.color = '#0563C1';
+      node.style.textDecoration = 'underline';
+    }
+    node.textContent = t.textContent || '';
+    // Defaults do placeholder — aplicados sempre; runs override.
+    if (defs.color && !hlinkUrl)  node.style.color = defs.color;
+    if (defs.font)   node.style.fontFamily = `"${defs.font}", sans-serif`;
+    if (defs.size)   node.style.fontSize = defs.size + 'pt';
+    if (defs.bold)   node.style.fontWeight = 'bold';
+    if (defs.italic) node.style.fontStyle = 'italic';
+    if (rPr) {
+      const sz = _xmlAttr(rPr, 'sz');
+      if (sz) node.style.fontSize = (parseInt(sz, 10) / 100) + 'pt';
+      if (_xmlAttr(rPr, 'b') === '1') node.style.fontWeight = 'bold';
+      if (_xmlAttr(rPr, 'i') === '1') node.style.fontStyle = 'italic';
+      const u = _xmlAttr(rPr, 'u');
+      if (u && u !== 'none') node.style.textDecoration = 'underline';
+      const latin = _xmlFirst(rPr, 'a:latin');
+      const tf = _pptxResolveTypeface(latin, ctx.themeDoc);
+      if (tf) node.style.fontFamily = `"${tf}", sans-serif`;
+      const solid = _xmlFirst(rPr, 'a:solidFill');
+      const color = _pptxResolveColor(solid, ctx.themeColors);
+      if (color && !hlinkUrl) node.style.color = color;
+    }
+    target.appendChild(node);
+  }
+  if (!hasContent) {
+    // Parágrafo só com <a:pPr>/vazio — pinta um <br> pra manter espaço.
+    target.appendChild(document.createElement('br'));
+  }
+}
+
+/* Renderiza um shape (sp/pic) num container escalado. Retorna a div do shape.
+   `ctx` traz layout/master/theme docs pra herança de placeholder. */
+async function _pptxRenderShape(shape, slideDiv, pptx, rels, ctx) {
+  // Position/size: primeiro tenta do próprio shape, senão herda do placeholder
+  // na layout (comum em títulos que só têm posição definida na layout).
+  const spPr = _xmlFirst(shape, 'p:spPr') || _xmlFirst(shape, 'spPr');
+  let xfrm = spPr ? _xmlFirst(spPr, 'a:xfrm') : null;
+  let off = xfrm ? _xmlFirst(xfrm, 'a:off') : null;
+  let ext = xfrm ? _xmlFirst(xfrm, 'a:ext') : null;
+  // Placeholder type — pra herança
+  const nvSpPr = _xmlFirst(shape, 'p:nvSpPr');
+  const ph = nvSpPr ? _xmlFirst(nvSpPr, 'p:ph') : null;
+  const phType = _xmlAttr(ph, 'type') || (ph ? 'body' : null);
+  const phIdx = _xmlAttr(ph, 'idx');
+  // Fallback pra posição herdada da layout, se falta no slide
+  let placeholderLayoutSp = null;
+  let placeholderMasterSp = null;
+  if (ph && (!off || !ext)) {
+    const found = _pptxCollectPlaceholderDefaults(phType, ctx);
+    placeholderLayoutSp = found.layoutSp;
+    placeholderMasterSp = found.masterSp;
+    const layoutXfrm = placeholderLayoutSp ? _xmlFirst(_xmlFirst(placeholderLayoutSp, 'p:spPr'), 'a:xfrm') : null;
+    if (!off && layoutXfrm) off = _xmlFirst(layoutXfrm, 'a:off');
+    if (!ext && layoutXfrm) ext = _xmlFirst(layoutXfrm, 'a:ext');
+    const masterXfrm = placeholderMasterSp ? _xmlFirst(_xmlFirst(placeholderMasterSp, 'p:spPr'), 'a:xfrm') : null;
+    if (!off && masterXfrm) off = _xmlFirst(masterXfrm, 'a:off');
+    if (!ext && masterXfrm) ext = _xmlFirst(masterXfrm, 'a:ext');
+  } else if (ph) {
+    // Coleta mesmo com posição válida — precisamos pra defaults de texto
+    const found = _pptxCollectPlaceholderDefaults(phType, ctx);
+    placeholderLayoutSp = found.layoutSp;
+    placeholderMasterSp = found.masterSp;
+  }
+  if (!off || !ext) return;
+  const x = emuToPx(_xmlAttr(off, 'x'));
+  const y = emuToPx(_xmlAttr(off, 'y'));
+  const w = emuToPx(_xmlAttr(ext, 'cx'));
+  const h = emuToPx(_xmlAttr(ext, 'cy'));
+  const el = document.createElement('div');
+  el.style.cssText = `position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;overflow:hidden;box-sizing:border-box;`;
+  // Background solidFill (com resolução de scheme colors)
+  const bgFillEl = spPr ? _xmlFirst(spPr, 'a:solidFill') : null;
+  const bgColor = _pptxResolveColor(bgFillEl, ctx.themeColors);
+  if (bgColor) el.style.background = bgColor;
+  // Padding interno da text-box
+  const txBody = _xmlFirst(shape, 'p:txBody') || _xmlFirst(shape, 'txBody');
+  if (txBody) {
+    const bodyPr = _xmlFirst(txBody, 'a:bodyPr');
+    const l = emuToPx(_xmlAttr(bodyPr, 'lIns') || 91440);
+    const t = emuToPx(_xmlAttr(bodyPr, 'tIns') || 45720);
+    const r = emuToPx(_xmlAttr(bodyPr, 'rIns') || 91440);
+    const b = emuToPx(_xmlAttr(bodyPr, 'bIns') || 45720);
+    const anchor = _xmlAttr(bodyPr, 'anchor');
+    const inner = document.createElement('div');
+    inner.style.cssText = `position:absolute;left:${l}px;top:${t}px;right:${r}px;bottom:${b}px;display:flex;flex-direction:column;`;
+    if (anchor === 'ctr') inner.style.justifyContent = 'center';
+    else if (anchor === 'b') inner.style.justifyContent = 'flex-end';
+    else inner.style.justifyContent = 'flex-start';
+    // Defaults do placeholder: merge master → layout → shape (mais específico ganha).
+    let placeholderDefaults = {};
+    if (placeholderMasterSp) placeholderDefaults = { ...placeholderDefaults, ..._pptxReadDefRPr(placeholderMasterSp, ctx.themeDoc, ctx.themeColors) };
+    if (placeholderLayoutSp) placeholderDefaults = { ...placeholderDefaults, ..._pptxReadDefRPr(placeholderLayoutSp, ctx.themeDoc, ctx.themeColors) };
+    placeholderDefaults = { ...placeholderDefaults, ..._pptxReadDefRPr(shape, ctx.themeDoc, ctx.themeColors) };
+    const runCtx = { ...ctx, placeholderDefaults };
+    const paragraphs = _xmlAll(txBody, 'a:p');
+    paragraphs.forEach(p => _pptxRenderText(p, inner, runCtx));
+    el.appendChild(inner);
+  }
+  // Imagem (blipFill)
+  const blipFill = _xmlFirst(shape, 'p:blipFill') || _xmlFirst(shape, 'a:blipFill');
+  const blip = blipFill ? _xmlFirst(blipFill, 'a:blip') : null;
+  const embed = _xmlAttr(blip, 'r:embed');
+  if (embed && rels.map.has(embed)) {
+    const rel = rels.map.get(embed);
+    const mediaPath = _pptxResolveTargetPath(rels.dir, rel.target);
+    const bytes = await pptx.readBinary(mediaPath);
+    if (bytes) {
+      const extName = (mediaPath || '').split('.').pop().toLowerCase();
+      const mime = ({ png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', svg: 'image/svg+xml', webp: 'image/webp' }[extName] || 'image/png');
+      const blob = new Blob([bytes], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const img = document.createElement('img');
+      img.src = url;
+      img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;';
+      el.appendChild(img);
+    }
+  }
+  slideDiv.appendChild(el);
+}
+
+/* Renderer principal — recebe arraybuffer do pptx, container-alvo, retorna
+   quando terminou. */
+/* Recalcula o fit-scale e aplica em todos os slides já renderizados.
+   Usado em window.resize + na entrada. Não re-renderiza os shapes — só ajusta
+   a escala do wrapper (o slide interno mantém coordenadas nativas em px). */
+function _pptxRescale(container) {
+  const width = parseInt(container.dataset.pptxWidth || 0, 10);
+  const height = parseInt(container.dataset.pptxHeight || 0, 10);
+  if (!width || !height) return;
+  const rect = container.getBoundingClientRect();
+  const availableW = Math.max(500, rect.width - 60);
+  const availableH = Math.max(360, rect.height - 80);
+  const fitScale = Math.min(availableW / width, availableH / height);
+  container.dataset.pptxFit = fitScale;
+  // Re-aplica combinando fit + zoom manual do usuário.
+  _pptxApplyZoom(container);
+}
+let _pptxResizeBound = false;
+function _bindPptxResize() {
+  if (_pptxResizeBound) return;
+  _pptxResizeBound = true;
+  window.addEventListener('resize', () => {
+    document.querySelectorAll('.att-preview-pptx').forEach(_pptxRescale);
+  });
+}
+
+async function _renderPptxCustom(arrayBuffer, container) {
+  await _ensureJSZip();
+  _useJSZipV3(); // JSZip 3.x — API loadAsync
+  const pptx = await _openPptx(arrayBuffer);
+  const { width, height, paths } = await _pptxGetSlides(pptx);
+  container.dataset.pptxWidth = width;
+  container.dataset.pptxHeight = height;
+  container.style.setProperty('--pptx-slide-w', width + 'px');
+  container.style.setProperty('--pptx-slide-h', height + 'px');
+  _bindPptxResize();
+  // Fit: garante que 1 slide inteiro cabe na tela — fita pelo menor entre
+  // largura E altura disponíveis (aspect ratio preservado). Sem cap superior
+  // pra usar toda a área quando o slide é pequeno.
+  const containerRect = container.getBoundingClientRect();
+  const availableW = Math.max(500, containerRect.width - 60);
+  const availableH = Math.max(360, containerRect.height - 80);
+  const fitScale = Math.min(availableW / width, availableH / height);
+  container.dataset.pptxFit = fitScale;
+  container.dataset.slideCount = paths.length;
+  const wrapAll = document.createElement('div');
+  wrapAll.className = 'kastor-pptx-stage';
+  container.appendChild(wrapAll);
+  paths.forEach((slidePath, idx) => {
+    // Wrap com dimensões escaladas — reserva espaço no layout normal.
+    const wrap = document.createElement('div');
+    wrap.className = 'kastor-pptx-slide-wrap';
+    wrap.style.cssText = `width:${Math.ceil(width * fitScale)}px;height:${Math.ceil(height * fitScale)}px;position:relative;`;
+    const slideDiv = document.createElement('div');
+    slideDiv.className = 'kastor-pptx-slide';
+    slideDiv.style.cssText = `position:absolute;top:0;left:0;width:${width}px;height:${height}px;background:#fff;overflow:hidden;transform:scale(${fitScale});transform-origin:top left;`;
+    slideDiv.dataset.slidePath = slidePath;
+    wrap.appendChild(slideDiv);
+    wrapAll.appendChild(wrap);
+  });
+  // Render de fato dos shapes — em paralelo pra ganhar velocidade.
+  await Promise.all(paths.map(async (slidePath, idx) => {
+    const slideDoc = await pptx.readXml(slidePath);
+    if (!slideDoc) return;
+    const wrap = wrapAll.children[idx];
+    const slideDiv = wrap?.querySelector('.kastor-pptx-slide');
+    if (!slideDiv) return;
+    // Cadeia layout → master → theme (pra herança de background + text style)
+    const chain = await _pptxChainFor(pptx, slidePath);
+    const themeColors = _pptxThemeColors(chain.themeDoc);
+    const rels = chain.slideRels;
+    const ctx = { ...chain, themeColors };
+    // Background do slide — tenta na ordem: slide → layout → master
+    const findBgFill = (doc) => {
+      if (!doc) return null;
+      const bg = _xmlFirst(doc, 'p:bg');
+      if (!bg) return null;
+      const bgPr = _xmlFirst(bg, 'p:bgPr');
+      if (bgPr) return _xmlFirst(bgPr, 'a:solidFill');
+      return _xmlFirst(bg, 'a:solidFill');
+    };
+    const findBgBlip = async (doc, docRels) => {
+      if (!doc || !docRels) return null;
+      const bg = _xmlFirst(doc, 'p:bg');
+      if (!bg) return null;
+      const bgPr = _xmlFirst(bg, 'p:bgPr');
+      const blipFill = bgPr ? _xmlFirst(bgPr, 'a:blipFill') : null;
+      const blip = blipFill ? _xmlFirst(blipFill, 'a:blip') : null;
+      const embed = _xmlAttr(blip, 'r:embed');
+      if (!embed || !docRels.map.has(embed)) return null;
+      const rel = docRels.map.get(embed);
+      const mediaPath = _pptxResolveTargetPath(docRels.dir, rel.target);
+      const bytes = await pptx.readBinary(mediaPath);
+      if (!bytes) return null;
+      const ext = (mediaPath || '').split('.').pop().toLowerCase();
+      const mime = ({ png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', svg: 'image/svg+xml', webp: 'image/webp' }[ext] || 'image/png');
+      const blob = new Blob([bytes], { type: mime });
+      return URL.createObjectURL(blob);
+    };
+    let bgColor = _pptxResolveColor(findBgFill(slideDoc), themeColors)
+              || _pptxResolveColor(findBgFill(chain.layoutDoc), themeColors)
+              || _pptxResolveColor(findBgFill(chain.masterDoc), themeColors);
+    if (bgColor) slideDiv.style.background = bgColor;
+    // Imagem de background (blipFill), tenta na mesma ordem
+    const bgImgUrl = await findBgBlip(slideDoc, rels)
+                 || await findBgBlip(chain.layoutDoc, chain.layoutRels)
+                 || await findBgBlip(chain.masterDoc, chain.masterRels);
+    if (bgImgUrl) {
+      slideDiv.style.backgroundImage = `url('${bgImgUrl}')`;
+      slideDiv.style.backgroundSize = 'cover';
+      slideDiv.style.backgroundPosition = 'center';
+    }
+    // Z-order preservado: itera `spTree` na ordem do XML (não separa sp de pic).
+    // Groups (`p:grpSp`) recursivamente pra shapes aninhadas.
+    const spTree = _xmlFirst(slideDoc, 'p:spTree');
+    const walk = async (root) => {
+      if (!root) return;
+      for (const child of Array.from(root.children)) {
+        const tag = child.tagName;
+        if (tag === 'p:sp' || tag === 'p:pic') {
+          await _pptxRenderShape(child, slideDiv, pptx, rels, ctx);
+        } else if (tag === 'p:grpSp') {
+          await walk(child); // trata grupo como flat — subshapes ficam sob o mesmo z
+        }
+      }
+    };
+    await walk(spTree);
+  }));
+}
+
+let _JSZipV3 = null;
+async function _ensureJSZipV3() {
+  if (_JSZipV3) return _JSZipV3;
+  await _ensureJSZip();
+  _JSZipV3 = window.JSZip;
+  return _JSZipV3;
+}
+function _useJSZipV3() {
+  if (_JSZipV3) window.JSZip = _JSZipV3;
+}
+
+/* Converte data: URI (base64) em ArrayBuffer pra libs que só aceitam binário. */
+function _dataUriToArrayBuffer(dataUri) {
+  const idx = dataUri.indexOf(',');
+  if (idx < 0) return null;
+  const b64 = dataUri.slice(idx + 1);
+  const bin = atob(b64);
+  const buf = new ArrayBuffer(bin.length);
+  const u8 = new Uint8Array(buf);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return buf;
+}
+async function _srcToArrayBuffer(src) {
+  if (src.startsWith('data:')) return _dataUriToArrayBuffer(src);
+  const res = await fetch(src);
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return await res.arrayBuffer();
+}
+
+/* Renderiza PDF com pdf.js — cria um canvas por página, empilhado num scroller.
+   Cancela o render se o modal fechar no meio. */
+/* PDFs precisam de re-render em cada mudança de zoom pra manter nitidez —
+   CSS transform:scale num canvas fica pixelado. Guardo o `pdf` object e o
+   scale-base atual pra que attPreviewZoomIn/Out chamem `_rerenderPdfPages`. */
+let _currentPdf = null;
+let _currentPdfBaseScale = 1.5;
+async function _renderPdfInto(container, src, ticket) {
+  const lib = await _ensurePdfJs();
+  if (!lib) throw new Error('pdf.js indisponível');
+  const data = await _srcToArrayBuffer(src);
+  if (ticket && ticket.aborted) return;
+  const pdf = await lib.getDocument({ data }).promise;
+  if (ticket && ticket.aborted) return;
+  _currentPdf = pdf;
+  container.innerHTML = `<div class="att-preview-pdf" data-pages="${pdf.numPages}"></div>`;
+  const wrap = container.querySelector('.att-preview-pdf');
+  await _rerenderPdfPagesInto(wrap, pdf, _currentPdfBaseScale * _attPreviewZoom, ticket);
+}
+async function _rerenderPdfPagesInto(wrap, pdf, cssScale, ticket) {
+  // Raster nítido em qualquer zoom: canvas físico = cssScale * dpr, CSS = cssScale.
+  // Assim mesmo em zoom alto a página é nítida porque re-renderizamos.
+  const dpr = window.devicePixelRatio || 1;
+  const physicalScale = cssScale * dpr;
+  wrap.innerHTML = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    if (ticket && ticket.aborted) return;
+    const page = await pdf.getPage(i);
+    const physVp = page.getViewport({ scale: physicalScale });
+    const cssVp  = page.getViewport({ scale: cssScale });
+    const canvas = document.createElement('canvas');
+    canvas.className = 'att-preview-pdf-page';
+    canvas.width = Math.ceil(physVp.width);
+    canvas.height = Math.ceil(physVp.height);
+    canvas.style.width  = Math.ceil(cssVp.width) + 'px';
+    canvas.style.height = Math.ceil(cssVp.height) + 'px';
+    wrap.appendChild(canvas);
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport: physVp }).promise;
+  }
+}
+/* Chamado por attPreviewZoomIn/Out — se estamos num PDF, re-renderiza páginas
+   com scale novo (nítido em qualquer zoom). Debounce leve pra evitar burst. */
+let _pdfRerenderTimer = null;
+function _schedulePdfRerender() {
+  if (!_currentPdf) return;
+  const wrap = document.querySelector('#att-preview-body .att-preview-pdf');
+  if (!wrap) return;
+  clearTimeout(_pdfRerenderTimer);
+  _pdfRerenderTimer = setTimeout(() => {
+    _rerenderPdfPagesInto(wrap, _currentPdf, _currentPdfBaseScale * _attPreviewZoom, _attPreviewTicket);
+  }, 150);
+}
+/* Renderiza DOCX com docx-preview — preserva fontes, tabelas, imagens e
+   estilos originais (renderAsync monta um wrapper .docx-wrapper com estilos
+   embutidos do próprio documento). */
+async function _renderDocxInto(container, src, ticket) {
+  // Tenta LibreOffice → PDF primeiro (fidelidade máxima).
+  const isServerFile = src.startsWith('/uploads/') || src.startsWith('/');
+  if (isServerFile) {
+    try {
+      const pdfUrl = '/api/office-as-pdf?path=' + encodeURIComponent(src);
+      const probe = await fetch(pdfUrl, { method: 'HEAD' });
+      if (probe.ok && probe.headers.get('content-type') === 'application/pdf') {
+        if (ticket && ticket.aborted) return;
+        return _renderPdfInto(container, pdfUrl, ticket);
+      }
+    } catch (e) { /* fallback pra docx-preview */ }
+  }
+  const docx = await _ensureDocxPreview();
+  if (!docx || !docx.renderAsync) throw new Error('docx-preview indisponível');
+  _useJSZipV3();   // docx-preview precisa da API JSZip 3.x
+  const data = await _srcToArrayBuffer(src);
+  if (ticket && ticket.aborted) return;
+  container.innerHTML = `<div class="att-preview-docx-host" data-zoom-target="1"></div>`;
+  const host = container.querySelector('.att-preview-docx-host');
+  const blob = new Blob([data], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+  await docx.renderAsync(blob, host, null, {
+    className: 'docx',
+    inWrapper: true,
+    ignoreFonts: false,
+    ignoreLastRenderedPageBreak: false,
+    experimental: true,
+    renderHeaders: true,
+    renderFooters: true,
+    renderFootnotes: true,
+    renderEndnotes: true,
+    debug: false
+  });
+  if (ticket && ticket.aborted) return;
+  _applyZoomToContainer(container);
+}
+/* Renderiza PPTX com PPTXjs — biblioteca completa que constrói HTML fiel ao
+   layout (shapes, text-boxes, imagens, backgrounds). Precisa de jQuery + d3
+   + JSZip + o próprio pptxjs (todos self-hosted em /vendor).
+
+   PPTXjs faz XHR pra fetchar o .pptx da URL passada. Como a CSP não libera
+   blob: em connect-src, evitamos objectURL e passamos a URL same-origin
+   direto (a maioria dos anexos vem de `/uploads/*.pptx`). Pra data: URIs
+   precisaríamos de blob → fallback com CTA de download. */
+/* Tenta primeiro converter no server via LibreOffice → PDF (fidelidade máxima,
+   exatamente como LibreOffice renderiza). Se falhar (LO ausente, timeout, etc)
+   cai no renderer client-side JSZip+XML. */
+async function _renderPptxInto(container, src, ticket) {
+  // LO só converte de path server-side — precisa ser mesma-origem (/uploads/…).
+  const isServerFile = src.startsWith('/uploads/') || src.startsWith('/');
+  if (isServerFile) {
+    try {
+      const pdfUrl = '/api/office-as-pdf?path=' + encodeURIComponent(src);
+      const probe = await fetch(pdfUrl, { method: 'HEAD' });
+      if (probe.ok && probe.headers.get('content-type') === 'application/pdf') {
+        if (ticket && ticket.aborted) return;
+        // Mesmo container que PDF nativo, com o mesmo renderer nítido e zoom.
+        return _renderPdfInto(container, pdfUrl, ticket);
+      }
+    } catch (e) {
+      // silencioso — cai no renderer custom.
+    }
+  }
+  // Fallback: renderer próprio (JSZip + XML). Fidelidade parcial, sem LO.
+  await _ensureJSZipV3();
+  if (ticket && ticket.aborted) return;
+  const data = await _srcToArrayBuffer(src);
+  if (ticket && ticket.aborted) return;
+  container.innerHTML = `<div class="att-preview-pptx" data-zoom-target="1"></div>`;
+  const host = container.querySelector('.att-preview-pptx');
+  await _renderPptxCustom(data, host);
+  if (ticket && ticket.aborted) return;
+  _applyZoomToContainer(container);
+}
+
+/* Zoom global do preview atual — persiste durante o ciclo de vida do modal.
+   Aplica via CSS transform:scale nos containers com data-zoom-target. */
+let _attPreviewZoom = 1.0;
+const ZOOM_MIN = 0.4, ZOOM_MAX = 3.0, ZOOM_STEP = 0.2;
+function _applyZoomToContainer(container) {
+  if (!container) return;
+  container.querySelectorAll('[data-zoom-target]').forEach(el => {
+    // PDFs: re-renderizamos as páginas (mantém nítido).
+    if (el.classList.contains('att-preview-pdf')) {
+      el.style.transform = '';
+      return;
+    }
+    // PPTX: aplica zoom nos wrappers dos slides — background do modal
+    // permanece parado.
+    if (el.classList.contains('att-preview-pptx')) {
+      el.style.transform = '';
+      _pptxApplyZoom(el);
+      return;
+    }
+    el.style.transform = `scale(${_attPreviewZoom})`;
+    el.style.transformOrigin = 'top center';
+  });
+  const lbl = document.getElementById('att-preview-zoom-lbl');
+  if (lbl) lbl.textContent = Math.round(_attPreviewZoom * 100) + '%';
+}
+/* Aplica o zoom manual nos slides do PPTX (multiplica o fit-scale existente).
+   Assim o fundo escuro do modal fica parado — só os slides crescem/encolhem. */
+function _pptxApplyZoom(container) {
+  const fitScale = parseFloat(container.dataset.pptxFit || 1);
+  const width = parseInt(container.dataset.pptxWidth || 0, 10);
+  const height = parseInt(container.dataset.pptxHeight || 0, 10);
+  if (!width || !height) return;
+  const effective = fitScale * _attPreviewZoom;
+  container.querySelectorAll('.kastor-pptx-slide-wrap').forEach(wrap => {
+    wrap.style.width  = Math.ceil(width * effective) + 'px';
+    wrap.style.height = Math.ceil(height * effective) + 'px';
+    const slide = wrap.querySelector('.kastor-pptx-slide');
+    if (slide) slide.style.transform = `scale(${effective})`;
+  });
+}
+function attPreviewZoomIn()  {
+  _attPreviewZoom = Math.min(ZOOM_MAX, +(_attPreviewZoom + ZOOM_STEP).toFixed(2));
+  _applyZoomToContainer(document.getElementById('att-preview-body'));
+  _schedulePdfRerender();
+}
+function attPreviewZoomOut() {
+  _attPreviewZoom = Math.max(ZOOM_MIN, +(_attPreviewZoom - ZOOM_STEP).toFixed(2));
+  _applyZoomToContainer(document.getElementById('att-preview-body'));
+  _schedulePdfRerender();
+}
+function attPreviewZoomReset() {
+  _attPreviewZoom = 1.0;
+  _applyZoomToContainer(document.getElementById('att-preview-body'));
+  _schedulePdfRerender();
+}
+
+/* Modal fullscreen de preview — image/pdf/video/audio/doc/ppt/xls.
+   PDFs, DOCXs e PPTXs renderizam INLINE via libs client-side (self-hosted em
+   /vendor). Reusa uma <div> única. Fechar: clique fora, Esc ou botão X. */
+let _attPreviewTicket = null;
+/* Se estamos na galeria e o preview foi aberto por clique num tile, empurra
+   a URL /gallery/<slug-id> pra virar link compartilhável. Sem re-render. */
+let _attPreviewReturnUrl = null;
+function _pushGalleryItemUrl(a) {
+  if (currentPage !== 'gallery') return;
+  const slug = _attSlug(a);
+  const target = '/gallery/' + slug + (location.search || '');
+  if (location.pathname + location.search !== target) {
+    _attPreviewReturnUrl = _globalGalStateToUrl();
+    history.pushState(null, '', target);
+  }
+}
+function openAttPreview(src, type, name, opts) {
   if (!src) return;
+  opts = opts || {};
+  // Se estamos na galeria global e não é uma abertura por URL direta,
+  // tenta achar o attachment correspondente pra empurrar /gallery/<slug-id>.
+  if (currentPage === 'gallery' && !opts._skipUrlPush) {
+    const items = collectAllAttachments();
+    const found = items.find(a => (a.data || a.url) === src);
+    if (found) _pushGalleryItemUrl(found);
+  }
   let el = document.getElementById('att-preview-modal');
   if (!el) {
     el = document.createElement('div');
@@ -13619,50 +14585,96 @@ function openAttPreview(src, type, name) {
   // Se não temos type, tenta inferir por extensão do nome (attachments antigos).
   let kind = attPreviewKind(type);
   if (kind === 'other') kind = attKindFromName(name);
-  const isRemote = /^https?:\/\//i.test(src);
-  let body = '';
-  if (kind === 'image') {
-    body = `<img src="${src}" alt="${esc(name)}" class="att-preview-image">`;
-  } else if (kind === 'pdf') {
-    body = `<iframe src="${src}" class="att-preview-frame" title="${esc(name)}"></iframe>`;
-  } else if (kind === 'video') {
-    body = `<video src="${src}" controls class="att-preview-video"></video>`;
-  } else if (kind === 'audio') {
-    body = `<audio src="${src}" controls class="att-preview-audio"></audio>`;
-  } else if ((kind === 'doc' || kind === 'ppt' || kind === 'xls')) {
-    // Office Online Embed viewer — só funciona com URL http/https públicas.
-    // Se o arquivo veio como data: URI (upload local), cai pra fallback com
-    // botão de download bem visível.
-    if (isRemote) {
-      const embedUrl = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(src);
-      body = `<iframe src="${embedUrl}" class="att-preview-frame" title="${esc(name)}" allowfullscreen></iframe>`;
-    } else {
-      body = `<div class="att-preview-unsupported">
-        <i data-lucide="${attIcon(kind)}" class="ic-lg"></i>
-        <div class="att-preview-unsupported-title">${esc(name || 'Arquivo')}</div>
-        <div class="att-preview-unsupported-sub">Documento Office não pode ser exibido inline quando salvo localmente. Baixe pra abrir na sua máquina.</div>
-        <a class="btn btn-primary" href="${src}" download="${esc(name || '')}"><i data-lucide="download" class="ic-sm"></i> Baixar arquivo</a>
-      </div>`;
-    }
-  } else {
-    // fallback — abre em nova aba
-    window.open(src, '_blank'); return;
-  }
-  el.innerHTML = `
+  const ticket = { aborted: false };
+  if (_attPreviewTicket) _attPreviewTicket.aborted = true;
+  _attPreviewTicket = ticket;
+  _attPreviewZoom = 1.0; // reset zoom entre previews diferentes
+  // Zoom controls só aparecem em kinds que suportam (image, pdf, doc, ppt)
+  const supportsZoom = kind === 'image' || kind === 'pdf' || kind === 'doc' || kind === 'ppt';
+  const zoomToolbar = supportsZoom
+    ? `<div class="att-preview-zoom">
+        <button class="detail-icon-btn" onclick="attPreviewZoomOut()" title="Diminuir zoom"><i data-lucide="zoom-out" class="ic-sm"></i></button>
+        <button class="att-preview-zoom-lbl" id="att-preview-zoom-lbl" onclick="attPreviewZoomReset()" title="Resetar (100%)">100%</button>
+        <button class="detail-icon-btn" onclick="attPreviewZoomIn()" title="Aumentar zoom"><i data-lucide="zoom-in" class="ic-sm"></i></button>
+      </div>`
+    : '';
+  const header = `
     <div class="att-preview-head">
       <span class="att-preview-name">${esc(name || 'Anexo')}</span>
+      ${zoomToolbar}
       <a href="${src}" download="${esc(name || '')}" class="detail-icon-btn" title="Baixar"><i data-lucide="download" class="ic-sm"></i></a>
       <button class="detail-icon-btn" onclick="closeAttPreview()" title="Fechar"><i data-lucide="x" class="ic-sm"></i></button>
-    </div>
-    <div class="att-preview-body">${body}</div>`;
+    </div>`;
+  const loadingBody = `<div class="att-preview-body att-preview-loading" id="att-preview-body">
+    <div class="att-preview-spinner"><i data-lucide="loader" class="ic-md"></i></div>
+    <div class="att-preview-loading-label">Preparando visualização…</div>
+  </div>`;
+  if (kind === 'image') {
+    el.innerHTML = header + `<div class="att-preview-body" id="att-preview-body"><img src="${src}" alt="${esc(name)}" class="att-preview-image" data-zoom-target="1"></div>`;
+  } else if (kind === 'video') {
+    el.innerHTML = header + `<div class="att-preview-body"><video src="${src}" controls class="att-preview-video"></video></div>`;
+  } else if (kind === 'audio') {
+    el.innerHTML = header + `<div class="att-preview-body"><audio src="${src}" controls class="att-preview-audio"></audio></div>`;
+  } else if (kind === 'pdf' || kind === 'doc' || kind === 'ppt') {
+    // Renderização inline com libs client-side (lazy-load na 1ª vez).
+    el.innerHTML = header + loadingBody;
+    el.classList.add('open');
+    paintIcons();
+    const container = document.getElementById('att-preview-body');
+    const renderer =
+      kind === 'pdf' ? _renderPdfInto :
+      kind === 'doc' ? _renderDocxInto :
+      _renderPptxInto;
+    renderer(container, src, ticket).catch(err => {
+      if (ticket.aborted) return;
+      console.error('viewer error', err);
+      container.classList.remove('att-preview-loading');
+      container.innerHTML = `<div class="att-preview-unsupported">
+        <i data-lucide="${attIcon(kind)}" class="ic-lg"></i>
+        <div class="att-preview-unsupported-title">${esc(name || 'Arquivo')}</div>
+        <div class="att-preview-unsupported-sub">Não deu pra pré-visualizar este ${kind === 'pdf' ? 'PDF' : kind === 'doc' ? 'documento' : 'slide'} aqui — provavelmente o formato tem algo que o viewer não suporta. Baixe pra abrir na sua máquina.</div>
+        <a class="btn btn-primary" href="${src}" download="${esc(name || '')}"><i data-lucide="download" class="ic-sm"></i> Baixar arquivo</a>
+      </div>`;
+      paintIcons();
+    }).then(() => {
+      if (ticket.aborted) return;
+      container.classList.remove('att-preview-loading');
+      paintIcons();
+    });
+    return;
+  } else if (kind === 'xls') {
+    // XLSX/CSV: fallback Office Online (só URL http/https) ou download.
+    const isRemote = /^https?:\/\//i.test(src);
+    if (isRemote) {
+      const embedUrl = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(src);
+      el.innerHTML = header + `<div class="att-preview-body"><iframe src="${embedUrl}" class="att-preview-frame" title="${esc(name)}" allowfullscreen></iframe></div>`;
+    } else {
+      el.innerHTML = header + `<div class="att-preview-body"><div class="att-preview-unsupported">
+        <i data-lucide="${attIcon(kind)}" class="ic-lg"></i>
+        <div class="att-preview-unsupported-title">${esc(name || 'Arquivo')}</div>
+        <div class="att-preview-unsupported-sub">Planilhas não têm viewer inline aqui ainda. Baixe pra abrir na sua máquina.</div>
+        <a class="btn btn-primary" href="${src}" download="${esc(name || '')}"><i data-lucide="download" class="ic-sm"></i> Baixar arquivo</a>
+      </div></div>`;
+    }
+  } else {
+    window.open(src, '_blank'); return;
+  }
   el.classList.add('open');
   paintIcons();
 }
 function closeAttPreview() {
   const el = document.getElementById('att-preview-modal');
   if (!el) return;
+  if (_attPreviewTicket) { _attPreviewTicket.aborted = true; _attPreviewTicket = null; }
   el.classList.remove('open');
   el.innerHTML = ''; // para vídeo/áudio pararem de tocar
+  _currentPdf = null;
+  clearTimeout(_pdfRerenderTimer);
+  // Restaura a URL da galeria (com filtros preservados) se abrimos por lá.
+  if (_attPreviewReturnUrl) {
+    history.pushState(null, '', _attPreviewReturnUrl);
+    _attPreviewReturnUrl = null;
+  }
 }
 
 function genAttId() { return 'a' + Math.random().toString(36).slice(2,10); }
@@ -13714,9 +14726,17 @@ function removeFormAttachment(id, listId) {
 
 /* Detail attachments — operam direto na demanda via API */
 async function handleDetailAttachmentFiles(ev) {
-  const d = demandById(detailId); if (!d) return;
-  for (const file of ev.target.files) {
+  const files = [...ev.target.files];
+  ev.target.value = '';
+  if (!files.length) return;
+  let addedCount = 0;
+  for (const file of files) {
     if (file.size > 50 * 1024 * 1024) { toast('Arquivo "' + file.name + '" excede 50 MB.', 'error'); continue; }
+    // Re-lookup a cada iteração — patchDemand troca a referência em `demands`,
+    // então o `d` capturado do início ficaria com o attachments desatualizado
+    // e cada upload sobrescreveria os anteriores.
+    const d = demandById(detailId);
+    if (!d) return;
     await new Promise(resolve => {
       const reader = new FileReader();
       reader.onload = async e => {
@@ -13724,20 +14744,25 @@ async function handleDetailAttachmentFiles(ev) {
         try {
           const upd = await api('/demands/' + d.id, 'PUT', { attachments: newAtts });
           patchDemand(upd);
+          addedCount++;
         } catch (err) { toast(err.message, 'error'); }
         resolve();
       };
       reader.readAsDataURL(file);
     });
   }
-  ev.target.value = '';
   renderDetail();
-  toast('Anexo adicionado!');
+  if (addedCount) toast(addedCount === 1 ? 'Anexo adicionado!' : `${addedCount} anexos adicionados!`);
 }
 async function handleDetailAttachmentImages(ev) {
-  const d = demandById(detailId); if (!d) return;
-  for (const file of ev.target.files) {
+  const files = [...ev.target.files];
+  ev.target.value = '';
+  if (!files.length) return;
+  let addedCount = 0;
+  for (const file of files) {
     if (file.size > 50 * 1024 * 1024) { toast('Arquivo "' + file.name + '" excede 50 MB.', 'error'); continue; }
+    const d = demandById(detailId);
+    if (!d) return;
     await new Promise(resolve => {
       const reader = new FileReader();
       reader.onload = e => {
@@ -13754,6 +14779,7 @@ async function handleDetailAttachmentImages(ev) {
           try {
             const upd = await api('/demands/' + d.id, 'PUT', { attachments: newAtts });
             patchDemand(upd);
+            addedCount++;
           } catch (err) { toast(err.message, 'error'); }
           resolve();
         };
@@ -13762,9 +14788,8 @@ async function handleDetailAttachmentImages(ev) {
       reader.readAsDataURL(file);
     });
   }
-  ev.target.value = '';
   renderDetail();
-  toast('Imagem adicionada!');
+  if (addedCount) toast(addedCount === 1 ? 'Imagem adicionada!' : `${addedCount} imagens adicionadas!`);
 }
 async function addDetailAttachmentLink() {
   const d = demandById(detailId); if (!d) return;
@@ -13802,6 +14827,11 @@ async function changeOwner(uid) {
 function patchDemand(d) {
   const i = demands.findIndex(x => x.id === d.id);
   if (i >= 0) demands[i] = d; else demands.push(d);
+  // Se essa demanda tem attachments, invalida o cache da galeria — próxima
+  // render vai refetchar. Barato: só se o cache existe.
+  if (typeof invalidateGalleryCache === 'function' && Array.isArray(_galleryAttCache)) {
+    invalidateGalleryCache();
+  }
 }
 
 /* ─── Edição inline do título da demanda ───
@@ -25275,13 +26305,23 @@ function fmtBytes(n) {
   return v.toFixed(v >= 10 ? 0 : 1) + ' ' + units[i];
 }
 function collectClientAttachments(clientId) {
-  const projIds = new Set((projects || []).filter(p => p.clientId === clientId).map(p => p.id));
-  const dds = (demands || []).filter(d => projIds.has(d.projectId) && !d.deletedAt);
-  return collectAttachmentsFromDemands(dds);
+  // Usa o cache global (populado por /api/gallery) + demandas abertas na sessão.
+  // Se o cache ainda não carregou, dispara em background.
+  if (!Array.isArray(_galleryAttCache)) {
+    loadGalleryAttachments().then(() => {
+      // Re-render da galeria do cliente quando os dados chegarem.
+      if (currentClientId === clientId) renderAttGallery('client');
+    });
+  }
+  return collectAllAttachments().filter(a => a.clientId === clientId);
 }
 function collectProjectAttachments(projectId) {
-  const dds = (demands || []).filter(d => d.projectId === projectId && !d.deletedAt);
-  return collectAttachmentsFromDemands(dds);
+  if (!Array.isArray(_galleryAttCache)) {
+    loadGalleryAttachments().then(() => {
+      if (currentProjectId === projectId) renderAttGallery('project');
+    });
+  }
+  return collectAllAttachments().filter(a => a.projectId === projectId);
 }
 function collectAttachmentsFromDemands(dds) {
   const items = [];
@@ -25361,6 +26401,7 @@ function renderAttGallery(ctx) {
     </div>
   `;
   paintIcons();
+  _wireAttCovers(wrap);
 }
 
 /* Página da galeria — entrada pela URL ou pelos botões "Ver galeria completa". */
@@ -25479,6 +26520,7 @@ function _renderGalleryPageInner() {
     body.innerHTML = `<div class="att-gal-grid att-gal-grid--full">${filtered.map(a => attGalTileHtml(a, 'grid')).join('')}</div>`;
   }
   paintIcons();
+  _wireAttCovers(body);
 }
 /* Tabela estilo Windows Explorer: Nome · Data mod. · Tipo · Tamanho.
    Headers clicáveis pra ordenar (com indicador de direção). */
@@ -25559,6 +26601,606 @@ function galleryPageSetView(v) {
   _renderGalleryPageInner();
 }
 
+/* ─── Galeria GLOBAL ─── mini-drive: TODOS os anexos, TODOS os clientes.
+   Ignora squad — usa `demands` e `projects` da store como estão (backend já
+   respeita permissões do usuário; a página apenas não filtra por workspace). */
+const _globalGalState = {
+  search: '', kind: '',
+  clientIds: new Set(),
+  workspaceIds: new Set(),
+  sort: 'date', dir: 'desc', view: 'grid'
+};
+/* Cache global de anexos — sobrevive entre renders. Populado por /api/gallery
+   (endpoint dedicado; bootstrap não traz `attachments` das demandas pra
+   economizar payload). Merge com anexos que já foram fetched via
+   /api/demands/:id (quando o usuário abre uma demanda). */
+let _galleryAttCache = null; // Array<attachment> | null quando ainda não carregou
+let _galleryAttCachePromise = null;
+async function loadGalleryAttachments(force = false) {
+  if (!force && _galleryAttCache) return _galleryAttCache;
+  if (_galleryAttCachePromise) return _galleryAttCachePromise;
+  _galleryAttCachePromise = (async () => {
+    try {
+      const list = await api('/gallery');
+      _galleryAttCache = Array.isArray(list) ? list : [];
+      return _galleryAttCache;
+    } catch (e) {
+      console.error('loadGalleryAttachments', e);
+      _galleryAttCache = [];
+      return _galleryAttCache;
+    } finally {
+      _galleryAttCachePromise = null;
+    }
+  })();
+  return _galleryAttCachePromise;
+}
+/* Invalida o cache — chamada quando um upload/remove muda anexos.
+   Próximo `loadGalleryAttachments` refaz o fetch. */
+function invalidateGalleryCache() {
+  _galleryAttCache = null;
+  _galleryAttCachePromise = null;
+}
+function collectAllAttachments() {
+  // Prioridade 1: cache do endpoint /api/gallery (fonte confiável, sobrevive reload).
+  // Prioridade 2: fallback — junta com o que já tem em `demands` (demandas abertas
+  // in-session recebem attachments completos via /api/demands/:id).
+  const byId = new Map();
+  const push = (a) => {
+    if (!a || !a.id) return;
+    const key = a.demandId + ':' + a.id;
+    if (byId.has(key)) return; // evita duplicar
+    byId.set(key, a);
+  };
+  if (Array.isArray(_galleryAttCache)) {
+    _galleryAttCache.forEach(push);
+  }
+  const dds = (demands || []).filter(d => !d.deletedAt);
+  dds.forEach(d => {
+    const proj = projectById(d.projectId);
+    const clientId = proj?.clientId || null;
+    const clientName = proj?.client || (clientById(clientId)?.name || '');
+    const workspaceId = d.workspaceId || null;
+    (d.attachments || []).forEach(a => {
+      push({ ...a, demandId: d.id, demandName: d.name, projectId: d.projectId, projectName: proj?.name || '', clientId, clientName, workspaceId, addedAt: d.updatedAt || d.createdAt || '' });
+    });
+    (d.comments || []).forEach(c => {
+      (c.attachments || []).forEach(a => {
+        push({ ...a, demandId: d.id, demandName: d.name, projectId: d.projectId, projectName: proj?.name || '', clientId, clientName, workspaceId, addedAt: c.at || c.createdAt || '' });
+      });
+    });
+  });
+  return [...byId.values()].sort((a, b) => (b.addedAt || '').localeCompare(a.addedAt || ''));
+}
+/* Aplica busca (nome/demanda/projeto/cliente) + chip de tipo + filtro por cliente
+   + sort (data/nome/peso/tipo/cliente) ao array global. */
+function _globalGalApply(items) {
+  const st = _globalGalState;
+  const q = (st.search || '').toLowerCase();
+  const cids = st.clientIds instanceof Set ? st.clientIds : new Set();
+  const wsids = st.workspaceIds instanceof Set ? st.workspaceIds : new Set();
+  let out = items.filter(a => {
+    if (cids.size) {
+      const cid = a.clientId || '__none__';
+      if (!cids.has(cid)) return false;
+    }
+    if (wsids.size) {
+      const wsid = a.workspaceId || '__none__';
+      if (!wsids.has(wsid)) return false;
+    }
+    if (st.kind && attGalKindOf(a) !== st.kind) return false;
+    if (q) {
+      const hay = [
+        (a.name || ''), (a.demandName || ''), (a.projectName || ''), (a.clientName || '')
+      ].map(s => s.toLowerCase()).join(' ');
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+  const dir = st.dir === 'asc' ? 1 : -1;
+  if (st.sort === 'name') {
+    out.sort((a, b) => dir * norm(a.name || '').localeCompare(norm(b.name || '')));
+  } else if (st.sort === 'size') {
+    out.sort((a, b) => dir * (attSizeBytes(a) - attSizeBytes(b)));
+  } else if (st.sort === 'type') {
+    out.sort((a, b) => dir * norm(attGalKindOf(a)).localeCompare(norm(attGalKindOf(b))));
+  } else if (st.sort === 'client') {
+    out.sort((a, b) => dir * norm(a.clientName || '').localeCompare(norm(b.clientName || '')));
+  } else {
+    out.sort((a, b) => dir * (a.addedAt || '').localeCompare(b.addedAt || ''));
+  }
+  return out;
+}
+/* Gera slug estável a partir do nome do arquivo — usado no path da URL do item. */
+function _attSlug(a) {
+  const base = (a.name || 'arquivo').split('.').slice(0, -1).join('.') || a.name || 'arquivo';
+  const slug = base
+    .toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')  // remove acentos
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-+|-+$)/g, '')
+    .slice(0, 60) || 'arquivo';
+  return slug + '-' + (a.id || '');
+}
+/* Extrai apenas o id do slug (última parte após o último "-"). Usado no
+   parseRoute pra achar o attachment. */
+function _idFromAttSlug(slug) {
+  if (!slug) return null;
+  const idx = slug.lastIndexOf('-');
+  if (idx < 0) return slug;
+  return slug.slice(idx + 1);
+}
+/* Se a URL atual é /gallery/<slug-id>, tenta abrir o preview do item. */
+let _galleryItemUrlPending = false;
+function _tryOpenGalleryItemFromUrl() {
+  const m = location.pathname.match(/^\/gallery\/([^/]+)$/);
+  if (!m) return;
+  const wanted = _idFromAttSlug(m[1]);
+  const items = collectAllAttachments();
+  const found = items.find(a => a.id === wanted);
+  if (!found) {
+    // Ainda não carregou o cache — tenta de novo quando /api/gallery voltar.
+    if (!_galleryItemUrlPending) {
+      _galleryItemUrlPending = true;
+      loadGalleryAttachments().then(() => {
+        _galleryItemUrlPending = false;
+        _tryOpenGalleryItemFromUrl();
+      });
+    }
+    return;
+  }
+  // Abre preview do item (sem re-empurrar URL — já estamos nela).
+  const src = found.data || found.url || '';
+  if (found.kind === 'link') { window.open(normalizeUrl(found.url || found.name), '_blank'); return; }
+  openAttPreview(src, found.type || '', found.name || '', { _skipUrlPush: true });
+}
+
+/* Serializa/parseia o estado da galeria global em query params — permite
+   compartilhar URLs com filtros aplicados e sobreviver a reloads. */
+function _globalGalStateToUrl() {
+  const st = _globalGalState;
+  const p = new URLSearchParams();
+  if (st.search) p.set('q', st.search);
+  if (st.kind)   p.set('type', st.kind);
+  if (st.sort && st.sort !== 'date') p.set('sort', st.sort);
+  if (st.dir && st.dir !== 'desc')   p.set('dir', st.dir);
+  if (st.view && st.view !== 'list') p.set('view', st.view);
+  if (st.clientIds instanceof Set && st.clientIds.size)     p.set('clients', [...st.clientIds].join(','));
+  if (st.workspaceIds instanceof Set && st.workspaceIds.size) p.set('squads',  [...st.workspaceIds].join(','));
+  const qs = p.toString();
+  return '/gallery' + (qs ? '?' + qs : '');
+}
+function _globalGalStateFromUrl() {
+  const st = _globalGalState;
+  const p = new URLSearchParams(location.search || '');
+  st.search = p.get('q') || '';
+  st.kind   = p.get('type') || '';
+  st.sort   = p.get('sort') || 'date';
+  st.dir    = p.get('dir')  || 'desc';
+  st.view   = p.get('view') || 'list';
+  st.clientIds = new Set((p.get('clients') || '').split(',').filter(Boolean));
+  st.workspaceIds = new Set((p.get('squads') || '').split(',').filter(Boolean));
+}
+function _syncGlobalGalleryUrl() {
+  const path = _globalGalStateToUrl();
+  if (location.pathname + location.search !== path) {
+    history.replaceState(null, '', path);
+  }
+}
+function renderGlobalGallery() {
+  // Restaura o estado da URL sempre que a rota é aplicada.
+  _globalGalStateFromUrl();
+  const searchInp = $('global-gallery-search-input');
+  if (searchInp && searchInp.value !== _globalGalState.search) searchInp.value = _globalGalState.search;
+  _renderGlobalGalleryInner();
+  _syncGlobalGalleryUrl();
+  // Se a URL contém um slug de item (/gallery/nome-id), tenta abrir o preview
+  // quando os dados estiverem carregados.
+  _tryOpenGalleryItemFromUrl();
+  // Dispara o fetch dos anexos (assíncrono). Ao chegar, re-renderiza.
+  if (!Array.isArray(_galleryAttCache)) {
+    loadGalleryAttachments().then(() => {
+      if (currentPage === 'gallery') _renderGlobalGalleryInner();
+    });
+  }
+}
+function _renderGlobalGalleryInner() {
+  const st = _globalGalState;
+  const items = collectAllAttachments();
+  const filtered = _globalGalApply(items);
+  // Sort options (inclui Cliente, além de Data/Nome/Peso/Tipo)
+  const sortOptions = [
+    { k: 'date',   label: 'Data' },
+    { k: 'name',   label: 'Nome' },
+    { k: 'size',   label: 'Peso' },
+    { k: 'type',   label: 'Tipo' },
+    { k: 'client', label: 'Cliente' },
+  ];
+  $('global-gallery-sort-btns').innerHTML = sortOptions.map(o =>
+    `<button type="button" class="att-gal-sort-btn ${st.sort === o.k ? 'is-active' : ''}" onclick="globalGallerySetSort('${o.k}')">${o.label}</button>`
+  ).join('');
+  const dirBtn = $('global-gallery-dir-btn');
+  if (dirBtn) {
+    dirBtn.title = st.dir === 'asc' ? 'Crescente' : 'Decrescente';
+    dirBtn.innerHTML = `<i data-lucide="${st.dir === 'asc' ? 'arrow-up' : 'arrow-down'}" class="ic-sm"></i>`;
+  }
+  $('global-gallery-view-toggle').innerHTML = `
+    <button type="button" class="att-gal-view-btn ${st.view === 'grid' ? 'is-active' : ''}" onclick="globalGallerySetView('grid')" title="Grade com capa">
+      <i data-lucide="layout-grid" class="ic-sm"></i>
+    </button>
+    <button type="button" class="att-gal-view-btn ${st.view === 'list' ? 'is-active' : ''}" onclick="globalGallerySetView('list')" title="Lista (tabela)">
+      <i data-lucide="table-2" class="ic-sm"></i>
+    </button>`;
+  // Multi-select popovers (cliente + squad) — labels refletem qtd selecionada.
+  _renderGGMulti('client', items);
+  _renderGGMulti('ws', items);
+  // Chips por tipo com contagem
+  const counts = { '': items.length };
+  items.forEach(a => { const k = attGalKindOf(a); counts[k] = (counts[k] || 0) + 1; });
+  $('global-gallery-chips').innerHTML = _attGalKindLabels.map(({ k, label }) => {
+    const n = counts[k] || 0;
+    if (k && n === 0) return '';
+    return `<button type="button" class="att-gal-chip ${k === st.kind ? 'is-active' : ''}" onclick="globalGalleryPickKind('${k}')">${esc(label)}<span class="att-gal-chip-count">${n}</span></button>`;
+  }).join('');
+  // Body
+  const body = $('global-gallery-body');
+  if (!filtered.length) {
+    body.innerHTML = `<div class="att-gal-empty">${items.length ? 'Nenhum item bate com o filtro.' : 'Sem arquivos ainda. Anexos das demandas aparecem aqui.'}</div>`;
+  } else if (st.view === 'list') {
+    body.innerHTML = _globalGalleryTableHtml(filtered);
+  } else {
+    body.innerHTML = `<div class="att-gal-grid att-gal-grid--full">${filtered.map(a => _globalGalleryTileHtml(a)).join('')}</div>`;
+  }
+  paintIcons();
+  _wireAttCovers(body);
+}
+function _globalGalleryTableHtml(items) {
+  const st = _globalGalState;
+  const cols = [
+    { k: 'name',   label: 'Nome',      className: 'gal-col-name' },
+    { k: 'client', label: 'Cliente',   className: 'gal-col-client' },
+    { k: 'date',   label: 'Data mod.', className: 'gal-col-date' },
+    { k: 'type',   label: 'Tipo',      className: 'gal-col-type' },
+    { k: 'size',   label: 'Tamanho',   className: 'gal-col-size' },
+  ];
+  const headHtml = cols.map(c => {
+    const isSorted = st.sort === c.k;
+    const dirIco = isSorted
+      ? `<i data-lucide="${st.dir === 'asc' ? 'arrow-up' : 'arrow-down'}" class="ic-xs"></i>`
+      : '';
+    return `<th class="${c.className} ${isSorted ? 'is-sorted' : ''}" onclick="globalGallerySetSort('${c.k}')">${esc(c.label)} ${dirIco}</th>`;
+  }).join('');
+  const rowsHtml = items.map(a => _globalGalleryRowHtml(a)).join('');
+  return `<div class="gal-explorer-wrap">
+    <table class="gal-explorer gal-explorer--global">
+      <thead><tr>${headHtml}</tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+  </div>`;
+}
+function _globalGalleryRowHtml(a) {
+  const kind = attGalKindOf(a);
+  const nameEsc = esc(a.name || (kind === 'link' ? (a.url || 'Link') : 'Arquivo'));
+  const demandEsc = esc(a.demandName || '');
+  const clientName = a.clientName || (clientById(a.clientId)?.name || '—');
+  const src = a.data || a.url || '';
+  const srcEsc = esc(src);
+  const previewable = kind !== 'other' && kind !== 'link';
+  const openCall = kind === 'link'
+    ? `window.open('${esc(normalizeUrl(a.url || a.name))}', '_blank')`
+    : previewable
+      ? `openAttPreview('${srcEsc}', '${esc(a.type || '')}', '${esc(a.name || '')}')`
+      : `window.open('${srcEsc}', '_blank')`;
+  const openDemandCall = `event.stopPropagation();showDetail('${esc(a.demandId)}')`;
+  const size = attSizeBytes(a);
+  const dateLbl = a.addedAt ? fmtDate(a.addedAt) : '—';
+  const kindLbl = (_attGalKindLabels.find(x => x.k === kind)?.label) || kind || '—';
+  const iconOnly = `<i data-lucide="${attIcon(kind)}" class="ic-sm gal-row-ico"></i>`;
+  const thumb = kind === 'image' && src
+    ? `<span class="gal-row-thumb" style="background-image:url('${srcEsc}')"></span>`
+    : `<span class="gal-row-thumb gal-row-thumb--icon">${iconOnly}</span>`;
+  return `<tr class="gal-explorer-row" onclick="${openCall}">
+    <td class="gal-col-name">
+      <span class="gal-row-name-wrap">
+        ${thumb}
+        <span class="gal-row-name">${nameEsc}</span>
+      </span>
+      ${demandEsc ? `<button type="button" class="gal-row-demand" title="Abrir demanda" onclick="${openDemandCall}">${demandEsc}</button>` : ''}
+    </td>
+    <td class="gal-col-client">${esc(clientName)}</td>
+    <td class="gal-col-date">${esc(dateLbl)}</td>
+    <td class="gal-col-type">${esc(kindLbl)}</td>
+    <td class="gal-col-size">${esc(fmtBytes(size))}</td>
+  </tr>`;
+}
+function _globalGalleryTileHtml(a) {
+  const kind = attGalKindOf(a);
+  const nameEsc = esc(a.name || (kind === 'link' ? (a.url || 'Link') : 'Arquivo'));
+  const clientName = a.clientName || (clientById(a.clientId)?.name || '');
+  const src = a.data || a.url || '';
+  const srcEsc = esc(src);
+  const previewable = kind !== 'other' && kind !== 'link';
+  const openCall = kind === 'link'
+    ? `window.open('${esc(normalizeUrl(a.url || a.name))}', '_blank')`
+    : previewable
+      ? `openAttPreview('${srcEsc}', '${esc(a.type || '')}', '${esc(a.name || '')}')`
+      : `window.open('${srcEsc}', '_blank')`;
+  const openDemandCall = `event.stopPropagation();showDetail('${esc(a.demandId)}')`;
+  const coverKind = _attCoverKind(a);
+  const ext = attExtOf(a);
+  const extBadge = ext ? `<span class="att-gal-ext-badge ext-${esc(kind)}">${esc(ext)}</span>` : '';
+  const thumb = kind === 'image' && src
+    ? `<div class="att-gal-thumb att-gal-thumb-image" style="background-image:url('${srcEsc}')">${extBadge}</div>`
+    : `<div class="att-gal-thumb att-gal-thumb-icon"><i data-lucide="${attIcon(kind)}"></i>${extBadge}</div>`;
+  const coverAttrs = coverKind
+    ? `data-cover-key="${esc(_attCoverKey(a))}" data-att-id="${esc(a.id || '')}" data-att-size="${esc(String(a.size || 0))}" data-att-src="${srcEsc}" data-att-type="${esc(a.type || '')}" data-att-name="${esc(a.name || '')}"`
+    : '';
+  return `<div class="att-gal-tile" title="${nameEsc}" ${coverAttrs} onclick="${openCall}">
+    ${thumb}
+    <div class="att-gal-tile-body">
+      <div class="att-gal-tile-name">${nameEsc}</div>
+      <button type="button" class="att-gal-tile-demand" title="Abrir demanda" onclick="${openDemandCall}">${esc(clientName || a.demandName || '—')}</button>
+    </div>
+  </div>`;
+}
+function globalGallerySearch(val) {
+  _globalGalState.search = val || '';
+  clearTimeout(_globalGalState._t);
+  _globalGalState._t = setTimeout(() => { _renderGlobalGalleryInner(); _syncGlobalGalleryUrl(); }, 120);
+}
+function globalGalleryPickKind(k) {
+  _globalGalState.kind = k || '';
+  _renderGlobalGalleryInner();
+  _syncGlobalGalleryUrl();
+}
+/* Multi-select popover — cliente + squad. Cada opção é um item com contagem;
+   estado ao vivo em _globalGalState.clientIds / .workspaceIds (Set). */
+function _renderGGMulti(kind, items) {
+  const st = _globalGalState;
+  const label = document.getElementById(`gg-${kind}-label`);
+  const menu = document.getElementById(`gg-${kind}-menu`);
+  const wrap = document.getElementById(`gg-${kind}-wrap`);
+  if (!label || !menu || !wrap) return;
+  const set = kind === 'client' ? st.clientIds : st.workspaceIds;
+  // Contagem por opção — considera todos os OUTROS filtros ativos (menos o próprio)
+  const others = items.filter(a => {
+    if (st.kind && attGalKindOf(a) !== st.kind) return false;
+    if (kind !== 'client' && st.clientIds.size) {
+      const cid = a.clientId || '__none__';
+      if (!st.clientIds.has(cid)) return false;
+    }
+    if (kind !== 'ws' && st.workspaceIds.size) {
+      const wsid = a.workspaceId || '__none__';
+      if (!st.workspaceIds.has(wsid)) return false;
+    }
+    return true;
+  });
+  const counts = new Map();
+  others.forEach(a => {
+    const k = kind === 'client' ? (a.clientId || '__none__') : (a.workspaceId || '__none__');
+    counts.set(k, (counts.get(k) || 0) + 1);
+  });
+  // Opções: todos os clientes/squads no store; ordena por count desc.
+  const options = kind === 'client'
+    ? [...(clients || [])].map(c => ({ id: c.id, name: c.name, color: c.color || '#7A00FF' }))
+    : [...(workspaces || [])].map(w => ({ id: w.id, name: w.name, color: w.color || '#7A00FF' }));
+  // "Sem <cliente/squad>" quando existir
+  if (counts.get('__none__')) options.push({ id: '__none__', name: kind === 'client' ? 'Sem cliente' : 'Sem squad', color: 'var(--text-muted)' });
+  const sorted = options
+    .map(o => ({ ...o, n: counts.get(o.id) || 0 }))
+    .sort((a, b) => b.n - a.n);
+  // Sanitiza IDs órfãos do set
+  const validIds = new Set(options.map(o => o.id));
+  [...set].forEach(id => { if (!validIds.has(id)) set.delete(id); });
+  // Label
+  if (!set.size) label.textContent = kind === 'client' ? 'Cliente' : 'Squad';
+  else if (set.size === 1) {
+    const o = options.find(x => set.has(x.id));
+    label.textContent = o ? o.name : (kind === 'client' ? '1 cliente' : '1 squad');
+  } else {
+    label.textContent = `${set.size} ${kind === 'client' ? 'clientes' : 'squads'}`;
+  }
+  // Filtering visual state
+  wrap.classList.toggle('filtering', set.size > 0);
+  // Body
+  menu.innerHTML = sorted.map(o => {
+    const on = set.has(o.id);
+    return `<label class="filter-multi-item">
+      <input type="checkbox" ${on ? 'checked' : ''} onchange="ggToggleMultiItem('${esc(kind)}', '${esc(o.id)}', this.checked)">
+      <span class="filter-multi-item-dot" style="background:${esc(o.color)}"></span>
+      <span class="filter-multi-item-lbl">${esc(o.name)}</span>
+      <span class="filter-multi-item-count">${o.n}</span>
+    </label>`;
+  }).join('') + (set.size ? `<button type="button" class="filter-multi-clear" onclick="ggClearMulti('${esc(kind)}')">Limpar seleção</button>` : '');
+}
+function ggToggleMulti(ev, kind) {
+  ev?.stopPropagation();
+  const menu = document.getElementById(`gg-${kind}-menu`);
+  if (!menu) return;
+  const willOpen = !menu.classList.contains('open');
+  document.querySelectorAll('.filter-multi-menu.open').forEach(m => m.classList.remove('open'));
+  if (willOpen) menu.classList.add('open');
+}
+function ggToggleMultiItem(kind, id, on) {
+  const set = kind === 'client' ? _globalGalState.clientIds : _globalGalState.workspaceIds;
+  if (on) set.add(id); else set.delete(id);
+  _renderGlobalGalleryInner();
+  _syncGlobalGalleryUrl();
+}
+function ggClearMulti(kind) {
+  const set = kind === 'client' ? _globalGalState.clientIds : _globalGalState.workspaceIds;
+  set.clear();
+  _renderGlobalGalleryInner();
+  _syncGlobalGalleryUrl();
+}
+// Click-outside pra fechar os popovers
+document.addEventListener('click', ev => {
+  const openMenu = document.querySelector('.gallery-multi-wrap .filter-multi-menu.open');
+  if (!openMenu) return;
+  if (ev.target.closest('.gallery-multi-wrap')) return;
+  openMenu.classList.remove('open');
+});
+function globalGallerySetSort(k) {
+  if (_globalGalState.sort === k) globalGalleryToggleDir();
+  else { _globalGalState.sort = k; _renderGlobalGalleryInner(); _syncGlobalGalleryUrl(); }
+}
+function globalGalleryToggleDir() {
+  _globalGalState.dir = _globalGalState.dir === 'asc' ? 'desc' : 'asc';
+  _renderGlobalGalleryInner();
+  _syncGlobalGalleryUrl();
+}
+function globalGallerySetView(v) {
+  _globalGalState.view = v;
+  _renderGlobalGalleryInner();
+  _syncGlobalGalleryUrl();
+}
+
+/* ═══ Cover thumbnails pra pdf/doc/ppt ═══
+   Cada tile do grid registra data-cover-* pra o observer varrer. Quando entra na
+   viewport, o gerador roda: pdf.js renderiza a página 1 num canvas → dataURL;
+   mammoth converte docx → HTML enxuto pra "papel" reduzido. Cache global em
+   memória (Map por chave) evita re-renderizar tiles já processados. */
+const _attCoverCache = new Map();
+const _attCoverInProgress = new Map();
+function _attCoverKey(a) {
+  // Chave estável — id do anexo + tamanho pra evitar colisão entre versões.
+  return (a.id || '') + ':' + (a.size || 0);
+}
+function _attCoverKind(a) {
+  const kind = attGalKindOf(a);
+  return (kind === 'pdf' || kind === 'doc') ? kind : null;
+}
+async function _genPdfCover(src) {
+  const lib = await _ensurePdfJs();
+  if (!lib) throw new Error('pdf.js indisponível');
+  const data = await _srcToArrayBuffer(src);
+  const pdf = await lib.getDocument({ data }).promise;
+  const page = await pdf.getPage(1);
+  const vp1 = page.getViewport({ scale: 1 });
+  const targetW = 320;
+  const scale = targetW / vp1.width;
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.ceil(viewport.width);
+  canvas.height = Math.ceil(viewport.height);
+  await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+  return { kind: 'image', dataUrl: canvas.toDataURL('image/jpeg', 0.75) };
+}
+async function _genDocxCover(src) {
+  const m = await _ensureMammoth();
+  if (!m) throw new Error('mammoth indisponível');
+  const data = await _srcToArrayBuffer(src);
+  const { value } = await m.convertToHtml({ arrayBuffer: data });
+  // Extrai só os primeiros ~600 chars renderizados como HTML enxuto — o suficiente
+  // pra dar contexto sem carregar o documento inteiro em cada tile.
+  const tmp = document.createElement('div');
+  tmp.innerHTML = value;
+  let out = ''; let chars = 0;
+  for (const child of tmp.children) {
+    if (chars > 600) break;
+    out += child.outerHTML;
+    chars += (child.textContent || '').length;
+  }
+  return { kind: 'html', html: out || value.slice(0, 1200) };
+}
+async function _generateAttCover(a) {
+  const key = _attCoverKey(a);
+  if (_attCoverCache.has(key)) return _attCoverCache.get(key);
+  if (_attCoverInProgress.has(key)) return _attCoverInProgress.get(key);
+  const kind = _attCoverKind(a);
+  const src = a.data || a.url || '';
+  if (!kind || !src) return null;
+  const promise = (async () => {
+    try {
+      const cover = kind === 'pdf' ? await _genPdfCover(src) : await _genDocxCover(src);
+      _attCoverCache.set(key, cover);
+      return cover;
+    } catch (e) {
+      // Marca como falha pra não retentar em loop
+      _attCoverCache.set(key, null);
+      return null;
+    } finally {
+      _attCoverInProgress.delete(key);
+    }
+  })();
+  _attCoverInProgress.set(key, promise);
+  return promise;
+}
+/* Fila global — no máximo 2 renders simultâneos pra não travar o browser. */
+const _attCoverQueue = [];
+let _attCoverWorkers = 0;
+const ATT_COVER_MAX_WORKERS = 2;
+function _attCoverEnqueue(a, tileEl) {
+  _attCoverQueue.push({ a, tileEl });
+  _attCoverPump();
+}
+function _attCoverPump() {
+  while (_attCoverWorkers < ATT_COVER_MAX_WORKERS && _attCoverQueue.length) {
+    const job = _attCoverQueue.shift();
+    _attCoverWorkers++;
+    _generateAttCover(job.a).then(cover => {
+      if (cover) _applyAttCoverToTile(job.tileEl, cover, job.a);
+    }).finally(() => {
+      _attCoverWorkers--;
+      _attCoverPump();
+    });
+  }
+}
+function _applyAttCoverToTile(tileEl, cover, a) {
+  if (!tileEl || !tileEl.isConnected) return;
+  const thumb = tileEl.querySelector('.att-gal-thumb');
+  if (!thumb) return;
+  if (cover.kind === 'image') {
+    thumb.classList.remove('att-gal-thumb-icon');
+    thumb.classList.add('att-gal-thumb-image', 'att-gal-thumb-cover');
+    thumb.style.backgroundImage = `url('${cover.dataUrl}')`;
+    thumb.innerHTML = '';
+  } else if (cover.kind === 'html') {
+    thumb.classList.remove('att-gal-thumb-icon');
+    thumb.classList.add('att-gal-thumb-docx');
+    thumb.innerHTML = `<div class="att-gal-thumb-docx-page">${cover.html}</div>`;
+  }
+}
+/* Observer único, reutilizado. Varre .att-gal-tile[data-cover-key] visíveis
+   e enfileira o gerador. Uma vez processado, remove o atributo. */
+let _attCoverObserver = null;
+function _ensureAttCoverObserver() {
+  if (_attCoverObserver) return _attCoverObserver;
+  _attCoverObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (!entry.isIntersecting) return;
+      const tileEl = entry.target;
+      const key = tileEl.dataset.coverKey;
+      _attCoverObserver.unobserve(tileEl);
+      if (!key) return;
+      // Reconstrói o "a" mínimo a partir dos data-* atributos
+      const a = {
+        id: tileEl.dataset.attId || key.split(':')[0],
+        size: Number(tileEl.dataset.attSize || 0),
+        data: tileEl.dataset.attSrc || '',
+        type: tileEl.dataset.attType || '',
+        name: tileEl.dataset.attName || '',
+        kind: tileEl.dataset.attSrc && tileEl.dataset.attSrc.startsWith('data:') ? 'file' : (tileEl.dataset.attKind || 'file')
+      };
+      // Aplica cache imediatamente se já existe
+      const cached = _attCoverCache.get(key);
+      if (cached) return _applyAttCoverToTile(tileEl, cached, a);
+      if (cached === null) return; // já falhou; não retenta
+      _attCoverEnqueue(a, tileEl);
+    });
+  }, { rootMargin: '200px 0px' });
+  return _attCoverObserver;
+}
+function _wireAttCovers(rootEl) {
+  const obs = _ensureAttCoverObserver();
+  (rootEl || document).querySelectorAll('.att-gal-tile[data-cover-key]').forEach(el => obs.observe(el));
+}
+
+/* Extrai extensão do nome do arquivo (sem o ponto). Cai vazio pra links. */
+function attExtOf(a) {
+  if (a.kind === 'link') return 'LINK';
+  const m = (a.name || '').match(/\.([a-z0-9]{1,6})$/i);
+  return m ? m[1].toUpperCase() : '';
+}
 function attGalTileHtml(a, view = 'grid') {
   const kind = attGalKindOf(a);
   const nameEsc = esc(a.name || (kind === 'link' ? (a.url || 'Link') : 'Arquivo'));
@@ -25575,6 +27217,8 @@ function attGalTileHtml(a, view = 'grid') {
   const size = attSizeBytes(a);
   const dateLbl = a.addedAt ? fmtDate(a.addedAt) : '';
   const kindLbl = (_attGalKindLabels.find(x => x.k === kind)?.label) || kind;
+  const ext = attExtOf(a);
+  const extBadge = ext ? `<span class="att-gal-ext-badge ext-${esc(kind)}">${esc(ext)}</span>` : '';
   if (view === 'list') {
     const thumb = kind === 'image' && src
       ? `<div class="att-gal-list-thumb att-gal-thumb-image" style="background-image:url('${srcEsc}')"></div>`
@@ -25594,10 +27238,14 @@ function attGalTileHtml(a, view = 'grid') {
     </button>`;
   }
   // grid (padrão)
+  const coverKind = _attCoverKind(a); // 'pdf' | 'doc' | null
   const thumb = kind === 'image' && src
-    ? `<div class="att-gal-thumb att-gal-thumb-image" style="background-image:url('${srcEsc}')"></div>`
-    : `<div class="att-gal-thumb att-gal-thumb-icon"><i data-lucide="${attIcon(kind)}"></i></div>`;
-  return `<div class="att-gal-tile" title="${nameEsc}" onclick="${openCall}">
+    ? `<div class="att-gal-thumb att-gal-thumb-image" style="background-image:url('${srcEsc}')">${extBadge}</div>`
+    : `<div class="att-gal-thumb att-gal-thumb-icon"><i data-lucide="${attIcon(kind)}"></i>${extBadge}</div>`;
+  const coverAttrs = coverKind
+    ? `data-cover-key="${esc(_attCoverKey(a))}" data-att-id="${esc(a.id || '')}" data-att-size="${esc(String(a.size || 0))}" data-att-src="${srcEsc}" data-att-type="${esc(a.type || '')}" data-att-name="${esc(a.name || '')}"`
+    : '';
+  return `<div class="att-gal-tile" title="${nameEsc}" ${coverAttrs} onclick="${openCall}">
     ${thumb}
     <div class="att-gal-tile-body">
       <div class="att-gal-tile-name">${nameEsc}</div>
