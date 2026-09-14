@@ -11598,7 +11598,7 @@ function renderDetail() {
       if (a.type && a.type.startsWith('image/')) {
         return `<div class="comment-img-wrap"><img class="comment-img" loading="lazy" decoding="async" src="${a.data}" alt="${esc(a.name)}" onclick="window.open(this.src,'_blank')"></div>`;
       }
-      return `<a class="comment-file" href="${esc(attDownloadUrl(a.data, a.name))}" download="${esc(a.name)}" title="Baixar ${esc(a.name)}"><i data-lucide="paperclip" class="ic-sm"></i> ${esc(a.name)}</a>`;
+      return `<a class="comment-file" href="${esc(attDownloadUrl(a.data, a.name))}" ${attDownloadAttrs(a.data, a.name)} download="${esc(a.name)}" title="Baixar ${esc(a.name)}"><i data-lucide="paperclip" class="ic-sm"></i> ${esc(a.name)}</a>`;
     }).join('');
     // Header (avatar + nome + ações) numa LINHA horizontal centralizada.
     // Corpo (texto/anexos) numa linha abaixo com padding-left pra alinhar
@@ -13594,6 +13594,53 @@ function attDownloadUrl(src, name) {
   const q = 'dl=1' + (name ? '&name=' + encodeURIComponent(name) : '');
   return s + (s.includes('?') ? '&' : '?') + q;
 }
+/* Baixa o arquivo via fetch → Blob → click sintético em <a href="blob:...">.
+   Bypassa QUALQUER interpretação do browser sobre a resposta (relevante pra
+   PDF/PPTX que browsers tendem a abrir inline mesmo com Content-Disposition:
+   attachment, ou pra ambientes com proxy que mexem no stream). Os bytes
+   descarregados são EXATAMENTE os que o server enviou.
+   Fallback: se o fetch falhar (rede, CORS estranho), abre a URL num novo tab
+   pra o usuário ao menos ter o arquivo acessível. */
+async function attClickDownload(ev, src, name) {
+  try { ev.preventDefault(); } catch {}
+  const url = attDownloadUrl(src, name);
+  try {
+    const resp = await fetch(url, { credentials: 'same-origin' });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const blob = await resp.blob();
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objUrl;
+    a.download = name || 'arquivo';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { try { document.body.removeChild(a); } catch {} URL.revokeObjectURL(objUrl); }, 1500);
+  } catch (err) {
+    console.error('[download]', err);
+    // Último recurso: navega pro link direto, o browser resolve como puder.
+    window.location.href = url;
+  }
+  return false;
+}
+// Exposto no escopo global pra ser chamado via `onclick=` nos templates HTML.
+window.attClickDownload = attClickDownload;
+// Helper que lê src+name de `data-*` do próprio <a>. Evita ter que interpolar
+// strings JS dentro do onclick= (aspas/acentos ficariam fragilizados).
+function attClickDownloadFromEl(ev, el) {
+  return attClickDownload(ev, el?.dataset?.dlSrc || '', el?.dataset?.dlName || '');
+}
+window.attClickDownloadFromEl = attClickDownloadFromEl;
+/* Gera os atributos HTML pra transformar um <a> em download via fetch→blob.
+   - `/uploads/xxx` → adiciona data-dl-* + onclick (fetch→blob→click sintético,
+     imune a interpretação inline pelo browser ou header wrangling do proxy)
+   - `data:` URIs → volta string vazia. O <a href="data:..." download="name">
+     funciona sozinho e evitamos duplicar o data URI enorme em data-attr. */
+function attDownloadAttrs(rawSrc, name) {
+  const s = String(rawSrc || '');
+  if (!s.startsWith('/uploads/')) return '';
+  return `data-dl-src="${esc(s)}" data-dl-name="${esc(name || '')}" onclick="return attClickDownloadFromEl(event, this)"`;
+}
 function renderDemandAttList(list, withDelete) {
   if (!list || !list.length) return '<div class="hours-empty" style="text-align:left">Nenhum arquivo anexado.</div>';
   return list.map((a, i) => {
@@ -13615,14 +13662,16 @@ function renderDemandAttList(list, withDelete) {
     const thumbOrIcon = kind === 'image'
       ? `<img loading="lazy" decoding="async" src="${a.data || a.url}" class="demand-att-thumb" onclick="${openCall}" style="cursor:zoom-in">`
       : `<i data-lucide="${attIcon(kind)}" class="ic-sm" style="color:var(--accent-text);${previewable ? 'cursor:pointer' : ''}" ${openCall ? `onclick="${openCall}"` : ''}></i>`;
-    const dlSrc = esc(attDownloadUrl(a.data || a.url || '', a.name));
+    const rawSrc = a.data || a.url || '';
+    const dlSrc = esc(attDownloadUrl(rawSrc, a.name));
+    const dlAttrs = attDownloadAttrs(rawSrc, a.name);
     const nameEl = previewable
       ? `<a href="#" class="demand-att-name" onclick="event.preventDefault();${openCall}">${nameEsc}</a>`
-      : `<a href="${dlSrc}" download="${nameEsc}" class="demand-att-name">${nameEsc}</a>`;
+      : `<a href="${dlSrc}" ${dlAttrs} download="${nameEsc}" class="demand-att-name">${nameEsc}</a>`;
     return `<div class="demand-att-item" data-id="${esc(a.id)}">
       ${thumbOrIcon}
       ${nameEl}
-      ${previewable ? `<a href="${dlSrc}" download="${nameEsc}" class="detail-icon-btn" title="Baixar"><i data-lucide="download" class="ic-sm"></i></a>` : ''}
+      ${previewable ? `<a href="${dlSrc}" ${dlAttrs} download="${nameEsc}" class="detail-icon-btn" title="Baixar"><i data-lucide="download" class="ic-sm"></i></a>` : ''}
       ${withDelete ? `<button class="detail-icon-btn danger" title="Remover" onclick="removeDetailAttachment('${esc(a.id)}')"><i data-lucide="x" class="ic-sm"></i></button>` : `<button class="detail-icon-btn danger" title="Remover" onclick="removeFormAttachment('${esc(a.id)}', 'f-attachments-list')"><i data-lucide="x" class="ic-sm"></i></button>`}
     </div>`;
   }).join('');
@@ -14607,6 +14656,7 @@ function openAttPreview(src, type, name, opts) {
   // URL de download força attachment header + nome original (via ?dl=1).
   // `src` continua sendo usado no preview inline (não força download).
   const dlSrc = esc(attDownloadUrl(src, name));
+  const dlAttrs = attDownloadAttrs(src, name);
   const ticket = { aborted: false };
   if (_attPreviewTicket) _attPreviewTicket.aborted = true;
   _attPreviewTicket = ticket;
@@ -14624,7 +14674,7 @@ function openAttPreview(src, type, name, opts) {
     <div class="att-preview-head">
       <span class="att-preview-name">${esc(name || 'Anexo')}</span>
       ${zoomToolbar}
-      <a href="${dlSrc}" download="${esc(name || '')}" class="detail-icon-btn" title="Baixar"><i data-lucide="download" class="ic-sm"></i></a>
+      <a href="${dlSrc}" ${dlAttrs} download="${esc(name || '')}" class="detail-icon-btn" title="Baixar"><i data-lucide="download" class="ic-sm"></i></a>
       <button class="detail-icon-btn" onclick="closeAttPreview()" title="Fechar"><i data-lucide="x" class="ic-sm"></i></button>
     </div>`;
   const loadingBody = `<div class="att-preview-body att-preview-loading" id="att-preview-body">
@@ -14655,7 +14705,7 @@ function openAttPreview(src, type, name, opts) {
         <i data-lucide="${attIcon(kind)}" class="ic-lg"></i>
         <div class="att-preview-unsupported-title">${esc(name || 'Arquivo')}</div>
         <div class="att-preview-unsupported-sub">Não deu pra pré-visualizar este ${kind === 'pdf' ? 'PDF' : kind === 'doc' ? 'documento' : 'slide'} aqui — provavelmente o formato tem algo que o viewer não suporta. Baixe pra abrir na sua máquina.</div>
-        <a class="btn btn-primary" href="${dlSrc}" download="${esc(name || '')}"><i data-lucide="download" class="ic-sm"></i> Baixar arquivo</a>
+        <a class="btn btn-primary" href="${dlSrc}" ${dlAttrs}><i data-lucide="download" class="ic-sm"></i> Baixar arquivo</a>
       </div>`;
       paintIcons();
     }).then(() => {
@@ -14675,7 +14725,7 @@ function openAttPreview(src, type, name, opts) {
         <i data-lucide="${attIcon(kind)}" class="ic-lg"></i>
         <div class="att-preview-unsupported-title">${esc(name || 'Arquivo')}</div>
         <div class="att-preview-unsupported-sub">Planilhas não têm viewer inline aqui ainda. Baixe pra abrir na sua máquina.</div>
-        <a class="btn btn-primary" href="${dlSrc}" download="${esc(name || '')}"><i data-lucide="download" class="ic-sm"></i> Baixar arquivo</a>
+        <a class="btn btn-primary" href="${dlSrc}" ${dlAttrs}><i data-lucide="download" class="ic-sm"></i> Baixar arquivo</a>
       </div></div>`;
     }
   } else {
