@@ -1,0 +1,2388 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#7A00FF">
+  <title>reWork Docs</title>
+  <link rel="icon" href="/favicon.svg?v=1" type="image/svg+xml">
+
+  <!-- Aplica tema salvo antes de qualquer render (evita flash light↔dark). -->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('kastor-theme');
+        if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+        else if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+      } catch (_) {}
+    })();
+  </script>
+
+  <!-- Reusa o mesmo style.css do app pra manter tokens (--surface, --accent, etc)
+       e componentes visuais (botões, inputs, o próprio .writer-*). É pesado (~55KB
+       gzipped) mas o cache-buster do app.js já reaproveita a mesma versão em cache
+       do usuário na maior parte dos acessos. Pra Fase futura vale extrair só tokens
+       + classes writer-* num CSS menor. -->
+  <link rel="stylesheet" href="/css/style.css?v=20260912rulerV2">
+
+  <style>
+    /* Reset do body pra editor standalone — sem margin, cor da plataforma. */
+    html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--text); font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
+
+    /* Regras genéricas do UI Kit setam display: flex/grid em alguns wrappers,
+       o que sobrepõe o comportamento default do atributo `hidden`. Reforça. */
+    [hidden] { display: none !important; }
+
+    /* Shell mínimo: só o topbar do editor + área do documento. Nada mais. */
+    .kd-app { display: flex; flex-direction: column; height: 100vh; }
+    .kd-app.is-list .writer-editor-view { display: none; }
+    .kd-app.is-editor .kd-list-shell { display: none; }
+
+    /* Topbar da lista (usada quando estamos em /writer) */
+    .kd-list-shell { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+    .kd-list-topbar {
+      display: flex; align-items: center; gap: 14px;
+      padding: 14px 28px;
+      border-bottom: 1px solid var(--hairline);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .kd-topbar-back {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 32px; height: 32px;
+      border: 0;
+      background: transparent;
+      color: var(--text-2);
+      cursor: pointer;
+      text-decoration: none;
+      transition: color .15s, transform .12s;
+    }
+    .kd-topbar-back:hover { color: var(--text); transform: translateX(-2px); }
+    .kd-brand { display: inline-flex; align-items: center; }
+    .kd-brand img { display: block; height: 34px; width: auto; }
+    .kd-topbar-spacer { flex: 1; }
+    .kd-icon-btn {
+      width: 34px; height: 34px;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--text-2);
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .kd-icon-btn:hover { background: color-mix(in oklab, var(--text) 6%, transparent); color: var(--text); border-color: var(--hairline); }
+    .kd-user-chip {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 13px; color: var(--text);
+      padding: 4px 10px 4px 4px;
+      border-radius: 999px;
+      background: color-mix(in oklab, var(--text) 5%, transparent);
+    }
+    .kd-user-avatar {
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 700;
+      overflow: hidden;
+    }
+    .kd-user-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+    .kd-list-body {
+      flex: 1; overflow-y: auto;
+      padding: clamp(20px, 3vw, 32px) clamp(16px, 4vw, 40px);
+      max-width: 1280px; width: 100%;
+      margin: 0 auto;
+    }
+    @media (max-width: 600px) {
+      .kd-list-topbar { padding: 12px 16px; gap: 10px; }
+      .kd-brand img { height: 28px; }
+      .kd-user-chip { padding: 4px 10px 4px 4px; }
+      .kd-user-name { font-size: 12px; }
+      .kd-recent-toolbar { flex-wrap: wrap; gap: 8px; }
+      .kd-recent-title { font-size: 14px; }
+      .kd-recent-select { padding: 6px 8px 6px 10px; font-size: 12.5px; }
+      .kd-recent-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+      .kd-new-grid { grid-template-columns: 160px; }
+    }
+    .kd-list-head {
+      display: flex; justify-content: space-between; align-items: flex-end; gap: 16px;
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--hairline);
+      flex-wrap: wrap;
+    }
+    .kd-list-head h1 {
+      font-size: 26px; font-weight: 700; letter-spacing: -.02em;
+      color: var(--text);
+      margin: 0;
+    }
+    .kd-list-head-sub {
+      font-size: 13.5px; color: var(--text-2);
+      margin-top: 6px;
+    }
+    .kd-toolbar {
+      display: flex; gap: 10px; align-items: center;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    /* ── Bloco: Novo documento ─────────────────────────────────────── */
+    .kd-block-title {
+      font-size: 15px; font-weight: 700; color: var(--text);
+      letter-spacing: -.005em;
+      margin-bottom: 14px;
+    }
+    .kd-new-block {
+      max-width: 1080px; width: 100%;
+      margin: 0 auto 32px;
+      padding: 0 4px;
+    }
+    .kd-new-grid {
+      display: grid;
+      grid-template-columns: 200px;   /* mesma largura de um card de recentes */
+      gap: 16px;
+    }
+    /* Card "Em branco" — box com bg neutro do surface + só o "+" roxo
+       centralizado. Sem texto, sem fundo branco, aspect ratio de folha. */
+    .kd-new-card {
+      display: flex; align-items: center; justify-content: center;
+      aspect-ratio: 4 / 4.4;
+      background: var(--surface);
+      border: 1px solid var(--hairline);
+      border-radius: 12px;
+      cursor: pointer;
+      color: #7a00ff;
+      transition: transform .12s, border-color .15s, box-shadow .15s, color .15s;
+    }
+    .kd-new-card:hover {
+      transform: translateY(-2px);
+      border-color: color-mix(in oklab, #7a00ff 45%, var(--hairline));
+      box-shadow: 0 8px 22px -14px color-mix(in oklab, #7a00ff 40%, transparent);
+      color: #9333ea;
+    }
+    .kd-new-card svg { display: block; }
+
+    /* ── Bloco: Arquivos recentes (mesma linguagem visual do Hub) ── */
+    .kd-recent-block {
+      max-width: 1080px; width: 100%;
+      margin: 0 auto;
+      padding: 0 4px 40px;
+    }
+    .kd-recent-toolbar {
+      display: flex; justify-content: space-between; align-items: center;
+      padding-bottom: 12px;
+      gap: 12px;
+      border-bottom: 1px solid var(--hairline);
+      margin-bottom: 16px;
+    }
+    .kd-recent-title {
+      font-size: 15px; font-weight: 700; color: var(--text);
+      letter-spacing: -.005em;
+    }
+    .kd-recent-toolbar-actions {
+      display: flex; align-items: center; gap: 4px;
+      position: relative;
+    }
+    .kd-recent-select {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 8px 7px 12px;
+      background: transparent;
+      border: 0;
+      color: var(--text);
+      font-size: 13px; font-weight: 500;
+      cursor: pointer;
+      border-radius: 8px;
+      transition: background .12s;
+    }
+    .kd-recent-select:hover { background: color-mix(in oklab, var(--text) 6%, transparent); }
+    .kd-recent-divider {
+      width: 1px; height: 20px;
+      background: var(--hairline);
+      margin: 0 6px;
+    }
+    .kd-recent-icon-btn {
+      width: 34px; height: 34px;
+      border-radius: 8px;
+      border: 0;
+      background: transparent;
+      color: var(--text-2);
+      cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      transition: background .12s, color .12s;
+    }
+    .kd-recent-icon-btn:hover { background: color-mix(in oklab, var(--text) 6%, transparent); color: var(--text); }
+    .kd-recent-menu {
+      position: absolute; top: calc(100% + 4px); right: 0;
+      min-width: 200px;
+      background: var(--surface);
+      border: 1px solid var(--hairline);
+      border-radius: 10px;
+      padding: 4px;
+      display: flex; flex-direction: column;
+      box-shadow: 0 16px 40px -12px rgba(0,0,0,.35);
+      z-index: 20;
+    }
+    .kd-recent-menu button {
+      text-align: left;
+      padding: 8px 12px;
+      background: transparent; border: 0;
+      color: var(--text);
+      font-size: 13px;
+      cursor: pointer;
+      border-radius: 6px;
+    }
+    .kd-recent-menu button:hover { background: color-mix(in oklab, var(--text) 6%, transparent); }
+    .kd-recent-menu button.is-selected { background: color-mix(in oklab, var(--accent) 14%, transparent); color: var(--accent); font-weight: 600; }
+
+    /* Grid + card idêntico ao Hub — inclui folha + footer com ícone/data */
+    .kd-recent-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 16px;
+    }
+    .kd-recent-grid.is-list {
+      display: flex; flex-direction: column;
+      gap: 0;
+    }
+    .kd-recent-grid.is-list .kd-recent-card {
+      flex-direction: row;
+      padding: 10px 14px;
+      align-items: center;
+      gap: 14px;
+      border-radius: 8px;
+    }
+    .kd-recent-grid.is-list .kd-recent-card:hover {
+      transform: none;
+      background: color-mix(in oklab, var(--accent) 5%, transparent);
+    }
+    .kd-recent-grid.is-list .kd-recent-card-thumb { display: none; }
+    .kd-recent-grid.is-list .kd-recent-card-footer { padding: 0; gap: 4px; flex: 1; min-width: 0; }
+    .kd-recent-grid.is-list .kd-recent-card-title {
+      -webkit-line-clamp: 1;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      display: block; font-size: 13.5px;
+    }
+    .kd-recent-grid.is-list .kd-recent-card-footer-meta {
+      min-width: 140px;
+      justify-content: flex-end;
+    }
+    .kd-recent-card {
+      display: flex; flex-direction: column;
+      background: var(--surface);
+      border: 1px solid var(--hairline);
+      border-radius: 12px;
+      text-decoration: none; color: inherit;
+      cursor: pointer;
+      overflow: hidden;
+      transition: transform .12s, border-color .15s, box-shadow .15s;
+      position: relative;
+    }
+    .kd-recent-card:hover {
+      transform: translateY(-2px);
+      border-color: color-mix(in oklab, var(--accent) 45%, var(--hairline));
+      box-shadow: 0 8px 22px -14px color-mix(in oklab, var(--accent) 40%, transparent);
+    }
+    .kd-recent-card-thumb {
+      position: relative;
+      aspect-ratio: 4 / 4.4;
+      background: #ffffff;
+      border-bottom: 1px solid var(--hairline);
+      overflow: hidden;
+    }
+    .kd-recent-card-thumb-page {
+      position: absolute; top: 0; left: 0;
+      width: 620px;
+      transform-origin: top left;
+      transform: scale(.32);
+      padding: 24px 32px;
+      color: #1a1a1a;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 12px;
+      line-height: 1.45;
+      pointer-events: none;
+    }
+    .kd-recent-card-thumb-page * { max-width: 100%; }
+    .kd-recent-card-thumb-page p { margin: 0 0 6px; }
+    .kd-recent-card-thumb-page h1 { font-size: 22px; font-weight: 700; margin: 8px 0 6px; line-height: 1.2; }
+    .kd-recent-card-thumb-page h2 { font-size: 17px; font-weight: 700; margin: 8px 0 4px; line-height: 1.25; }
+    .kd-recent-card-thumb-page h3 { font-size: 14px; font-weight: 600; margin: 6px 0 4px; line-height: 1.3; }
+    .kd-recent-card-thumb-page ul,
+    .kd-recent-card-thumb-page ol { margin: 0 0 6px; padding-left: 20px; }
+    .kd-recent-card-thumb-page li { margin: 0 0 2px; }
+    .kd-recent-card-thumb-page blockquote { border-left: 3px solid #ccc; padding: 0 8px; margin: 6px 0; color: #666; }
+    .kd-recent-card-thumb-page code { background: #f0f0f0; padding: 1px 3px; border-radius: 2px; }
+    .kd-recent-card-thumb-page pre { background: #f5f5f5; padding: 6px 8px; border-radius: 3px; overflow: hidden; }
+    .kd-recent-card-thumb-page a { color: #7A00FF; text-decoration: none; }
+    .kd-recent-card-thumb-page hr { border: 0; border-top: 1px solid #e0e0e0; margin: 6px 0; }
+    .kd-recent-card-thumb-page table { border-collapse: collapse; width: 100%; margin: 6px 0; font-size: 11px; }
+    .kd-recent-card-thumb-page th,
+    .kd-recent-card-thumb-page td { border: 1px solid #ddd; padding: 3px 5px; }
+    .kd-recent-card-thumb.is-empty::before {
+      content: '';
+      position: absolute;
+      inset: 18% 14% auto 14%;
+      height: 4px;
+      background: #f0f0f0;
+      border-radius: 2px;
+      box-shadow: 0 12px 0 #f4f4f4, 0 24px 0 #f4f4f4, 0 36px 0 #f4f4f4;
+    }
+    .kd-recent-card-thumb::after {
+      content: '';
+      position: absolute; left: 0; right: 0; bottom: 0; height: 35%;
+      background: linear-gradient(to bottom, transparent, rgba(255,255,255,.95));
+      pointer-events: none;
+    }
+    .kd-recent-card-footer {
+      display: flex; flex-direction: column;
+      gap: 4px;
+      padding: 10px 12px 10px;
+    }
+    .kd-recent-card-title {
+      font-size: 13px; font-weight: 600;
+      color: var(--text); line-height: 1.3;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      display: block;
+    }
+    .kd-recent-card-footer-meta {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 11.5px; color: var(--text-2);
+      min-width: 0;
+    }
+    .kd-recent-card-app-inline { width: 14px; height: 14px; flex-shrink: 0; display: block; }
+    .kd-recent-card-app-inline img { width: 100%; height: 100%; display: block; }
+    .kd-recent-card-meta-date { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .kd-recent-empty {
+      grid-column: 1 / -1;
+      padding: 40px 20px;
+      text-align: center;
+      color: var(--text-2);
+      font-size: 13px;
+      background: color-mix(in oklab, var(--text) 3%, transparent);
+      border-radius: 12px;
+    }
+
+    /* Editor scroll: em standalone o header do editor JÁ é o do doc.
+       Zeramos padding herdado do .page-body pra ocupar 100% da janela. */
+    .writer-editor-view {
+      height: 100vh !important;
+      min-height: 0 !important;
+      padding: 0 !important;
+    }
+    #kd-app.is-editor { padding: 0; }
+
+    /* Estado de "carregando" no boot */
+    .kd-boot-loading {
+      height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 14px;
+      color: var(--text-2);
+    }
+    .kd-spinner {
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      border: 2.5px solid color-mix(in oklab, var(--accent) 30%, transparent);
+      border-top-color: var(--accent);
+      animation: kd-spin 800ms linear infinite;
+    }
+    @keyframes kd-spin { to { transform: rotate(360deg); } }
+
+    /* Toast simples */
+    .kd-toast {
+      position: fixed; bottom: 24px; left: 50%;
+      transform: translateX(-50%) translateY(8px);
+      opacity: 0; pointer-events: none;
+      background: var(--text); color: var(--bg);
+      padding: 10px 16px; border-radius: 10px;
+      font-size: 13px; font-weight: 500;
+      box-shadow: 0 8px 24px -12px rgba(0,0,0,.45);
+      transition: opacity .18s, transform .18s;
+      z-index: 100;
+    }
+    .kd-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
+    .kd-toast.error { background: #b71c1c; color: #fff; }
+
+    /* ── Modal do Picker de Galeria ── */
+    .kd-modal {
+      position: fixed; inset: 0; z-index: 200;
+      display: flex; align-items: center; justify-content: center;
+      padding: 24px;
+    }
+    .kd-modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.55); backdrop-filter: blur(4px); }
+    .kd-modal-card {
+      position: relative;
+      width: 100%; max-width: 960px;
+      max-height: 88vh;
+      background: var(--surface);
+      border: 1px solid var(--hairline);
+      border-radius: 14px;
+      display: flex; flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 24px 64px -20px rgba(0,0,0,.5);
+    }
+    .kd-modal-head {
+      display: flex; justify-content: space-between; align-items: flex-start;
+      padding: 18px 22px 14px;
+      border-bottom: 1px solid var(--hairline);
+    }
+    .kd-modal-title { font-size: 16px; font-weight: 700; color: var(--text); letter-spacing: -.005em; }
+    .kd-modal-sub { font-size: 12.5px; color: var(--text-2); margin-top: 3px; }
+    .kd-modal-toolbar {
+      display: flex; gap: 10px; align-items: center;
+      padding: 12px 22px;
+      border-bottom: 1px solid var(--hairline);
+      background: color-mix(in oklab, var(--text) 3%, transparent);
+      flex-wrap: wrap;
+    }
+    .kd-modal-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 18px 22px;
+    }
+    .kd-gal-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 12px;
+    }
+    .kd-gal-card {
+      cursor: pointer;
+      border: 1px solid var(--hairline);
+      border-radius: 10px;
+      overflow: hidden;
+      background: var(--surface);
+      transition: border-color .15s, transform .15s, box-shadow .15s;
+      display: flex; flex-direction: column;
+    }
+    .kd-gal-card:hover {
+      border-color: color-mix(in oklab, var(--accent) 55%, var(--hairline));
+      transform: translateY(-2px);
+      box-shadow: 0 8px 22px -14px color-mix(in oklab, var(--accent) 45%, transparent);
+    }
+    .kd-gal-thumb {
+      aspect-ratio: 16 / 10;
+      background: color-mix(in oklab, var(--text) 4%, transparent);
+      display: flex; align-items: center; justify-content: center;
+      color: var(--text-2); font-size: 12px; font-weight: 700; letter-spacing: .04em;
+      position: relative; overflow: hidden;
+    }
+    .kd-gal-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .kd-gal-thumb-ext {
+      padding: 4px 8px;
+      background: color-mix(in oklab, var(--accent) 12%, transparent);
+      color: var(--accent);
+      border-radius: 6px;
+      font-size: 11px;
+    }
+    .kd-gal-info {
+      padding: 10px 12px;
+      display: flex; flex-direction: column; gap: 3px;
+    }
+    .kd-gal-name {
+      font-size: 12.5px; font-weight: 600; color: var(--text);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .kd-gal-sub {
+      font-size: 11px; color: var(--text-2);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .kd-gal-empty { padding: 60px 20px; text-align: center; color: var(--text-2); font-size: 13px; }
+
+    /* ── Node de anexo dentro do editor ── */
+    .kastor-att-node {
+      margin: 10px 0;
+      user-select: none;
+    }
+    .kastor-att-node .kastor-att-img-link { display: block; }
+    .kastor-att-node .kastor-att-img {
+      max-width: 100%; height: auto;
+      display: block;
+      border-radius: 8px;
+      border: 1px solid var(--hairline);
+    }
+    /* Card discreto — sem borda, sem estilo de link (o CSS geral do editor
+       pinta <a> como link, aqui neutralizamos com !important). */
+    .kastor-att-node .kastor-att-card {
+      display: flex; align-items: center; gap: 10px;
+      padding: 4px 8px;
+      background: transparent;
+      border: 0;
+      border-radius: 6px;
+      text-decoration: none !important;
+      color: inherit !important;
+      transition: background .12s;
+    }
+    .kastor-att-node .kastor-att-card:hover {
+      background: color-mix(in oklab, var(--text) 5%, transparent);
+    }
+    .kastor-att-node .kastor-att-name {
+      flex: 1; min-width: 0;
+      font-size: 12.5px; font-weight: 500;
+      color: var(--text);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      text-decoration: none !important;
+    }
+    .kastor-att-node .kastor-att-ext {
+      font-size: 10px; font-weight: 600; letter-spacing: .04em;
+      color: var(--text-2);
+      flex-shrink: 0;
+      text-decoration: none !important;
+    }
+    /* Estado selecionado (Tiptap adiciona .ProseMirror-selectednode) */
+    .ProseMirror-selectednode.kastor-att-node .kastor-att-card,
+    .ProseMirror-selectednode.kastor-att-node .kastor-att-img {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    /* Presence stack — avatares dos usuários online com ring de atividade.
+       Estados:
+         --active     → ring verde (ativo agora, <1min)
+         --idle       → ring amarelo (ativo entre 1..10min)
+         --idle-long  → grayscale, ring cinza (>10min sem update) */
+    .kd-presence-stack { display: flex; align-items: center; }
+    .kd-presence-avatar {
+      position: relative;
+      width: 26px; height: 26px;
+      border-radius: 50%;
+      display: inline-flex; align-items: center; justify-content: center;
+      color: #fff; font-size: 11px; font-weight: 700;
+      overflow: hidden;
+      margin-left: -6px;
+      border: 2px solid var(--surface);
+      box-shadow: 0 0 0 2px var(--ring, transparent);
+      transition: transform .12s, box-shadow .2s, filter .2s;
+    }
+    .kd-presence-avatar:first-child { margin-left: 0; }
+    .kd-presence-avatar:hover { transform: translateY(-1px); z-index: 1; }
+    .kd-presence-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+    /* Ring de atividade (custom prop --ring) */
+    .kd-presence-avatar--active    { --ring: #22c55e; }   /* verde */
+    .kd-presence-avatar--idle      { --ring: #f5c518; }   /* amarelo */
+    .kd-presence-avatar--idle-long {
+      --ring: color-mix(in oklab, var(--text) 20%, transparent);
+      filter: grayscale(1);
+      opacity: .75;
+    }
+    .kd-presence-more {
+      font-size: 11px; font-weight: 600;
+      color: var(--text-2);
+      padding: 0 8px; height: 26px;
+      display: inline-flex; align-items: center;
+      border-radius: 999px;
+      background: color-mix(in oklab, var(--text) 5%, transparent);
+      margin-left: 4px;
+    }
+
+    /* Cursor colaborativo (Tiptap CollaborationCaret) — bandeira com nome */
+    .collaboration-carets__caret {
+      border-left: 2px solid;
+      border-right: 2px solid;
+      margin-left: -1px; margin-right: -1px;
+      position: relative;
+      word-break: normal; pointer-events: none;
+    }
+    .collaboration-carets__label {
+      position: absolute;
+      top: -1.35em; left: -2px;
+      font-size: 11px; font-weight: 600;
+      color: #fff;
+      padding: 1px 6px;
+      border-radius: 4px 4px 4px 0;
+      white-space: nowrap;
+      user-select: none;
+      pointer-events: none;
+      box-shadow: 0 2px 4px -1px rgba(0,0,0,.2);
+    }
+    /* Seleção do peer (highlight quando ele selecionou texto) */
+    .collaboration-carets__selection { opacity: .3; }
+
+    /* Empty state na landing */
+    .kd-landing-empty {
+      grid-column: 1 / -1;
+      padding: 60px 40px;
+      text-align: center;
+      display: flex; flex-direction: column; align-items: center; gap: 12px;
+      color: var(--text-2);
+    }
+    .kd-landing-empty-icon {
+      width: 72px; height: 72px;
+      border-radius: 50%;
+      background: color-mix(in oklab, var(--accent) 10%, transparent);
+      color: var(--accent);
+      display: flex; align-items: center; justify-content: center;
+      margin-bottom: 4px;
+    }
+    .kd-landing-empty-title {
+      font-size: 16px; font-weight: 700; color: var(--text);
+      letter-spacing: -.005em;
+    }
+    .kd-landing-empty-sub { font-size: 13px; max-width: 340px; }
+
+    /* Skeleton (loading state da landing) */
+    .kd-skeleton-card {
+      background: color-mix(in oklab, var(--text) 4%, transparent);
+      border: 1px solid var(--hairline);
+      border-radius: var(--radius);
+      min-height: 160px;
+      padding: 16px 18px;
+      display: flex; flex-direction: column; gap: 8px;
+      animation: kd-skel-pulse 1.4s ease-in-out infinite;
+    }
+    .kd-skeleton-line {
+      background: color-mix(in oklab, var(--text) 8%, transparent);
+      height: 12px;
+      border-radius: 4px;
+    }
+    .kd-skeleton-line.short { width: 60%; }
+    .kd-skeleton-line.tiny  { width: 30%; height: 10px; margin-top: auto; }
+    @keyframes kd-skel-pulse {
+      0%, 100% { opacity: .7; }
+      50%      { opacity: 1; }
+    }
+
+    /* Footer com word count + reading time + hint de atalhos */
+    .kd-editor-footer {
+      flex-shrink: 0;
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 20px;
+      border-top: 1px solid var(--hairline);
+      background: var(--surface);
+      font-size: 11.5px;
+      color: var(--text-2);
+    }
+    .kd-editor-footer-sep { opacity: .5; }
+    .kd-editor-footer-hint {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      background: color-mix(in oklab, var(--text) 4%, transparent);
+      cursor: help;
+    }
+    .kd-editor-footer-hint svg { flex-shrink: 0; }
+
+    /* Banner de role quando o user não é editor */
+    .kd-role-banner {
+      padding: 8px 20px;
+      background: color-mix(in oklab, #f5c518 20%, transparent);
+      border-bottom: 1px solid color-mix(in oklab, #f5c518 40%, transparent);
+      color: color-mix(in oklab, #8a6d00 100%, transparent);
+      font-size: 12.5px; font-weight: 500;
+      text-align: center;
+    }
+    :root:not([data-theme="light"]) .kd-role-banner {
+      color: #ffdc73;
+    }
+
+    /* Botão "Compartilhar" na topbar (com label ao lado do ícone) */
+    .kd-topbar-share-btn { width: auto !important; padding: 0 12px 0 10px; gap: 6px; }
+    .kd-topbar-share-btn span { font-size: 12.5px; font-weight: 500; }
+
+    /* ── Compartilhar / Permissões ── */
+    .kd-share-card { max-width: 640px; max-height: 82vh; }
+    .kd-share-add {
+      display: flex; gap: 10px; align-items: stretch;
+      padding: 16px 22px 12px;
+      border-bottom: 1px solid var(--hairline);
+    }
+    .kd-share-add-input-wrap { flex: 1; position: relative; }
+    .kd-share-add-input-wrap input {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      background: var(--bg); color: var(--text);
+      font-size: 13.5px;
+      outline: 0;
+    }
+    .kd-share-add-input-wrap input:focus { border-color: var(--accent); }
+    .kd-share-suggest {
+      position: absolute; top: 100%; left: 0; right: 0;
+      margin-top: 4px;
+      background: var(--surface);
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      max-height: 280px; overflow-y: auto;
+      z-index: 5;
+      box-shadow: 0 16px 40px -12px rgba(0,0,0,.35);
+    }
+    .kd-share-suggest-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    .kd-share-suggest-item:hover { background: color-mix(in oklab, var(--text) 5%, transparent); }
+    .kd-share-suggest-avatar {
+      width: 28px; height: 28px; border-radius: 50%;
+      background: var(--accent); color: #fff;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 700;
+      overflow: hidden; flex-shrink: 0;
+    }
+    .kd-share-suggest-avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .kd-share-suggest-body { flex: 1; min-width: 0; }
+    .kd-share-suggest-name { font-size: 13px; font-weight: 500; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .kd-share-suggest-sub  { font-size: 11px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .kd-share-suggest-ws-badge {
+      font-size: 9px; font-weight: 700;
+      padding: 1px 6px; border-radius: 3px;
+      background: color-mix(in oklab, var(--accent) 15%, transparent);
+      color: var(--accent);
+      letter-spacing: .04em;
+    }
+    .kd-share-suggest-empty { padding: 20px; text-align: center; color: var(--text-2); font-size: 12.5px; }
+
+    .kd-share-role-select {
+      padding: 0 10px;
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--text);
+      font-size: 12.5px;
+      cursor: pointer;
+    }
+
+    .kd-share-body {
+      flex: 1; min-height: 200px;
+      overflow-y: auto;
+      padding: 8px 12px;
+    }
+    .kd-share-list { display: flex; flex-direction: column; }
+    .kd-share-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      transition: background .12s;
+    }
+    .kd-share-item:hover { background: color-mix(in oklab, var(--text) 4%, transparent); }
+    .kd-share-item-avatar {
+      width: 32px; height: 32px; border-radius: 50%;
+      background: var(--accent); color: #fff;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 700;
+      overflow: hidden; flex-shrink: 0;
+    }
+    .kd-share-item-avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .kd-share-item-body { flex: 1; min-width: 0; }
+    .kd-share-item-name { font-size: 13.5px; font-weight: 500; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .kd-share-item-sub { font-size: 11.5px; color: var(--text-2); }
+    .kd-share-item-role {
+      display: flex; align-items: center; gap: 6px;
+    }
+    .kd-share-item-role select {
+      padding: 4px 8px;
+      border: 1px solid var(--hairline);
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-2);
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .kd-share-item-role .kd-share-remove {
+      width: 26px; height: 26px;
+      border: 0; background: transparent;
+      color: var(--text-2);
+      border-radius: 6px;
+      cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .kd-share-item-role .kd-share-remove:hover { background: color-mix(in oklab, #e53935 12%, transparent); color: #e53935; }
+    .kd-share-item.is-owner .kd-share-item-role select { pointer-events: none; opacity: .55; }
+    .kd-share-item.is-owner .kd-share-remove { display: none; }
+    .kd-share-item-owner-tag {
+      font-size: 10px; font-weight: 700; letter-spacing: .04em;
+      padding: 2px 8px; border-radius: 999px;
+      background: color-mix(in oklab, var(--accent) 15%, transparent);
+      color: var(--accent);
+    }
+
+    .kd-share-footer {
+      padding: 14px 22px 18px;
+      border-top: 1px solid var(--hairline);
+    }
+    /* Bloco de link público — pill switch + input + copy */
+    .kd-share-public {
+      padding: 14px 22px;
+      border-bottom: 1px solid var(--hairline);
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .kd-share-public-head {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+    }
+    .kd-share-public-link {
+      display: flex; align-items: stretch; gap: 6px;
+    }
+    .kd-share-public-link input {
+      flex: 1; min-width: 0;
+      padding: 8px 10px;
+      background: color-mix(in oklab, var(--text) 4%, transparent);
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      font-size: 12.5px;
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+    }
+    .kd-share-public-link input:focus { outline: 2px solid color-mix(in oklab, var(--accent) 50%, transparent); outline-offset: -1px; border-color: transparent; }
+    .kd-share-public-copy {
+      padding: 8px 12px;
+      background: var(--surface);
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      color: var(--text-2);
+      cursor: pointer;
+      display: inline-flex; align-items: center; gap: 4px;
+      transition: background .12s, color .12s, border-color .12s;
+    }
+    .kd-share-public-copy:hover { background: color-mix(in oklab, var(--accent) 8%, var(--surface)); border-color: color-mix(in oklab, var(--accent) 30%, var(--hairline)); color: var(--accent); }
+    /* Switch iOS-style */
+    .kd-switch { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
+    .kd-switch input { opacity: 0; width: 0; height: 0; }
+    .kd-switch-slider {
+      position: absolute; inset: 0; cursor: pointer;
+      background: color-mix(in oklab, var(--text) 22%, transparent);
+      transition: background .18s;
+      border-radius: 22px;
+    }
+    .kd-switch-slider::before {
+      content: '';
+      position: absolute; top: 3px; left: 3px;
+      width: 16px; height: 16px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform .18s;
+    }
+    .kd-switch input:checked + .kd-switch-slider { background: var(--accent); }
+    .kd-switch input:checked + .kd-switch-slider::before { transform: translateX(18px); }
+
+    .kd-share-restricted {
+      display: flex; gap: 10px; align-items: flex-start;
+      cursor: pointer;
+    }
+    .kd-share-restricted input { margin-top: 3px; }
+    .kd-share-restricted-title { font-size: 13px; font-weight: 600; color: var(--text); }
+    .kd-share-restricted-sub { font-size: 11.5px; color: var(--text-2); margin-top: 2px; }
+
+    /* ── Time-machine (histórico) ── */
+    .kd-history-card { max-width: 1080px; height: 78vh; }
+    .kd-history-body {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 300px 1fr;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .kd-history-list {
+      border-right: 1px solid var(--hairline);
+      overflow-y: auto;
+      background: color-mix(in oklab, var(--text) 2%, transparent);
+    }
+    .kd-history-item {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--hairline);
+      cursor: pointer;
+      transition: background .12s;
+      display: flex; flex-direction: column; gap: 4px;
+      position: relative;
+    }
+    .kd-history-item:hover { background: color-mix(in oklab, var(--text) 5%, transparent); }
+    .kd-history-item.is-active {
+      background: color-mix(in oklab, var(--accent) 12%, transparent);
+      border-left: 3px solid var(--accent);
+      padding-left: 13px;
+    }
+    .kd-history-item.is-current {
+      background: color-mix(in oklab, #4caf50 8%, transparent);
+    }
+    .kd-history-item-title {
+      font-size: 13px; font-weight: 600; color: var(--text);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .kd-history-item.is-auto .kd-history-item-title { font-weight: 400; color: var(--text-2); }
+    .kd-history-item-meta {
+      font-size: 11px; color: var(--text-2);
+      display: flex; align-items: center; gap: 6px;
+    }
+    .kd-history-item-badge {
+      font-size: 9.5px; font-weight: 700;
+      padding: 1px 6px; border-radius: 4px;
+      background: color-mix(in oklab, var(--accent) 18%, transparent);
+      color: var(--accent);
+      letter-spacing: .05em;
+    }
+    .kd-history-item.is-auto .kd-history-item-badge { display: none; }
+    .kd-history-item-current-tag {
+      font-size: 9.5px; font-weight: 700;
+      padding: 1px 6px; border-radius: 4px;
+      background: color-mix(in oklab, #4caf50 22%, transparent);
+      color: #2e7d32;
+      letter-spacing: .05em;
+    }
+
+    .kd-history-preview {
+      overflow-y: auto;
+      padding: 20px 24px;
+      background: var(--bg);
+    }
+    .kd-history-preview-empty {
+      height: 100%;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--text-2); font-size: 13px;
+    }
+    .kd-history-preview-head {
+      display: flex; justify-content: space-between; align-items: flex-start;
+      gap: 12px;
+      padding-bottom: 14px;
+      margin-bottom: 16px;
+      border-bottom: 1px solid var(--hairline);
+    }
+    .kd-history-preview-title { font-size: 15px; font-weight: 700; color: var(--text); }
+    .kd-history-preview-sub { font-size: 12px; color: var(--text-2); margin-top: 2px; }
+    .kd-history-preview-actions { display: flex; gap: 8px; }
+    .kd-history-restore-btn {
+      background: var(--accent); color: #fff;
+      border: 0;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 13px; font-weight: 600;
+      cursor: pointer;
+    }
+    .kd-history-restore-btn:hover { filter: brightness(1.08); }
+    .kd-history-delete-btn {
+      background: transparent; color: var(--text-2);
+      border: 1px solid var(--hairline);
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .kd-history-delete-btn:hover { color: #e53935; border-color: color-mix(in oklab, #e53935 40%, var(--hairline)); }
+    .kd-history-preview-content {
+      /* Reuso do CSS do paper mas read-only */
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 14px; line-height: 1.65; color: var(--text);
+      background: var(--surface);
+      padding: 24px 28px;
+      border: 1px solid var(--hairline);
+      border-radius: 10px;
+      min-height: 200px;
+    }
+    .kd-history-preview-content h1 { font-size: 22px; margin: 18px 0 8px; }
+    .kd-history-preview-content h2 { font-size: 18px; margin: 16px 0 6px; }
+    .kd-history-preview-content h3 { font-size: 15px; margin: 14px 0 4px; }
+    .kd-history-preview-content p { margin: 6px 0; }
+    .kd-history-preview-content ul, .kd-history-preview-content ol { padding-left: 22px; }
+    .kd-history-preview-content blockquote {
+      border-left: 3px solid color-mix(in oklab, var(--accent) 60%, transparent);
+      padding: 4px 12px;
+      color: var(--text-2);
+      background: color-mix(in oklab, var(--accent) 5%, transparent);
+      margin: 8px 0;
+    }
+    .kd-history-preview-content code {
+      background: color-mix(in oklab, var(--text) 8%, transparent);
+      padding: 1px 4px; border-radius: 3px;
+      font-family: ui-monospace, Consolas, monospace;
+      font-size: .9em;
+    }
+    .kd-history-preview-content img { max-width: 100%; border-radius: 6px; }
+    .kd-history-preview-content .kastor-att-node { margin: 8px 0; }
+
+    /* Toggle Content / Diff + comparar-com */
+    .kd-history-view-toggle {
+      display: flex; align-items: center; gap: 16px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+    .kd-history-view-tabs, .kd-history-compare-tabs {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px;
+      background: color-mix(in oklab, var(--text) 5%, transparent);
+      border-radius: 8px;
+    }
+    .kd-history-view-tab, .kd-history-compare-tab {
+      padding: 5px 10px;
+      border: 0; background: transparent;
+      color: var(--text-2);
+      font-size: 12px; font-weight: 500;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .kd-history-view-tab.is-active, .kd-history-compare-tab.is-active {
+      background: var(--surface);
+      color: var(--text);
+      box-shadow: 0 1px 3px rgba(0,0,0,.08);
+    }
+    .kd-history-compare-tabs span {
+      font-size: 12px; color: var(--text-2);
+      padding: 0 6px;
+    }
+
+    /* Corpo do diff */
+    .kd-diff-summary {
+      display: flex; gap: 10px;
+      margin-bottom: 12px;
+    }
+    .kd-diff-stat {
+      font-size: 11px; font-weight: 700;
+      padding: 3px 10px;
+      border-radius: 999px;
+      letter-spacing: .03em;
+    }
+    .kd-diff-stat-add {
+      background: color-mix(in oklab, #2e7d32 15%, transparent);
+      color: #1b5e20;
+    }
+    .kd-diff-stat-del {
+      background: color-mix(in oklab, #c62828 15%, transparent);
+      color: #b71c1c;
+    }
+    .kd-diff-body {
+      background: var(--surface);
+      border: 1px solid var(--hairline);
+      border-radius: 10px;
+      padding: 18px 22px;
+      font: inherit;
+      font-size: 13.5px;
+      line-height: 1.7;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      overflow-x: auto;
+    }
+    .kd-diff-body ins {
+      background: color-mix(in oklab, #4caf50 25%, transparent);
+      color: #1b5e20;
+      text-decoration: none;
+      padding: 1px 2px;
+      border-radius: 3px;
+    }
+    .kd-diff-body del {
+      background: color-mix(in oklab, #e53935 22%, transparent);
+      color: #b71c1c;
+      text-decoration: line-through;
+      padding: 1px 2px;
+      border-radius: 3px;
+    }
+    .kd-diff-empty {
+      padding: 40px 20px;
+      text-align: center;
+      color: var(--text-2);
+      font-size: 13px;
+    }
+    .kd-diff-loading {
+      padding: 40px 20px;
+      text-align: center;
+      color: var(--text-2);
+      font-size: 13px;
+    }
+
+    /* Dark mode: ajuste de contraste — usa as próprias cores em versões mais brilhantes */
+    :root:not([data-theme="light"]) .kd-diff-body ins { color: #a5d6a7; }
+    :root:not([data-theme="light"]) .kd-diff-body del { color: #ef9a9a; }
+    :root:not([data-theme="light"]) .kd-diff-stat-add { color: #a5d6a7; }
+    :root:not([data-theme="light"]) .kd-diff-stat-del { color: #ef9a9a; }
+
+    @media (max-width: 780px) {
+      .kd-history-card { height: 92vh; }
+      .kd-history-body { grid-template-columns: 1fr; grid-template-rows: 200px 1fr; }
+      .kd-history-list { border-right: 0; border-bottom: 1px solid var(--hairline); }
+    }
+
+    /* ── Menubar estilo Google Docs (Arquivo / Editar / Ver / Inserir / Formatar) ── */
+    /* Sem background/border — o wrapper .kd-editor-header pinta o fade roxo. */
+    .kd-menubar {
+      display: flex; align-items: center;
+      padding: 2px 20px 4px;
+      background: transparent;
+      gap: 2px;
+      flex-shrink: 0;
+      position: relative;
+      z-index: 20;
+    }
+    .kd-menubar-item {
+      padding: 6px 10px;
+      background: transparent;
+      border: 0;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border-radius: 6px;
+      transition: background .12s;
+    }
+    .kd-menubar-item:hover,
+    .kd-menubar-item.is-open { background: color-mix(in oklab, var(--text) 6%, transparent); }
+    /* Dropdown flutuante ancorado ao item do menu — posicionado via JS.
+       Sem overflow: se cortasse, o submenu (left:100%) ficaria escondido. */
+    .kd-menubar-dropdown {
+      position: fixed;
+      min-width: 240px;
+      background: var(--surface);
+      border: 1px solid var(--hairline);
+      border-radius: 10px;
+      padding: 6px;
+      display: flex; flex-direction: column;
+      box-shadow: 0 16px 40px -12px rgba(0,0,0,.35), 0 2px 6px rgba(0,0,0,.08);
+      z-index: 150;
+    }
+    .kd-menubar-dd-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 7px 10px;
+      background: transparent; border: 0;
+      color: var(--text);
+      font-size: 13px; font-weight: 400;
+      text-align: left;
+      cursor: pointer;
+      border-radius: 6px;
+      transition: background .12s;
+    }
+    .kd-menubar-dd-item svg { color: var(--text-2); flex-shrink: 0; }
+    .kd-menubar-dd-item:not([disabled]):hover { background: color-mix(in oklab, var(--text) 6%, transparent); }
+    .kd-menubar-dd-item:not([disabled]):hover svg { color: var(--text); }
+    .kd-menubar-dd-item[disabled] {
+      opacity: .4;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+    .kd-menubar-dd-item span:first-of-type,
+    .kd-menubar-dd-item > span:not(.kd-menubar-dd-shortcut) { flex: 1; }
+    .kd-menubar-dd-shortcut {
+      font-size: 11px; color: var(--text-2);
+      font-family: 'Inter', sans-serif;
+      letter-spacing: .02em;
+    }
+    .kd-menubar-dd-item--danger:hover { background: color-mix(in oklab, #e53935 10%, transparent); color: #e53935; }
+    .kd-menubar-dd-item--danger:hover svg { color: #e53935; }
+    .kd-menubar-dd-item--submenu::after {
+      content: '▸'; margin-left: auto; color: var(--text-2); font-size: 11px;
+    }
+    /* Wrapper de item com submenu — clique no botão abre/fecha o painel lateral.
+       O botão herda a largura total do container (mesmo tamanho dos outros
+       itens do dropdown). Painel abre à direita, com posição absoluta. */
+    .kd-menubar-dd-sub { position: relative; display: block; }
+    .kd-menubar-dd-sub > .kd-menubar-dd-item--submenu { width: 100%; }
+    .kd-menubar-dd-sub-panel {
+      position: absolute;
+      top: -6px; left: 100%;
+      min-width: 200px;
+      background: var(--surface);
+      border: 1px solid var(--hairline);
+      border-radius: 10px;
+      padding: 6px;
+      display: none;
+      box-shadow: 0 16px 40px -12px rgba(0,0,0,.35), 0 2px 6px rgba(0,0,0,.08);
+      margin-left: 4px;
+      z-index: 160;
+    }
+    .kd-menubar-dd-sub.is-open > .kd-menubar-dd-sub-panel {
+      display: flex; flex-direction: column;
+    }
+    .kd-menubar-dd-sub.is-open > .kd-menubar-dd-item--submenu {
+      background: color-mix(in oklab, var(--text) 6%, transparent);
+    }
+    .kd-menubar-dd-divider {
+      height: 1px;
+      background: var(--hairline);
+      margin: 4px 6px;
+    }
+
+    /* ── Comentários ancorados ── */
+    /* Wrap flex: editor à esquerda ocupa o espaço, painel à direita fixo em 340px */
+    .writer-editor-wrap {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .writer-editor-scroll { flex: 1; min-width: 0; }
+
+    /* ── Régua horizontal + marcadores de indent ────────────────────
+       A régua fica sticky no topo da área de scroll, alinhada com a largura
+       do paper A4. Mostra marcas em cm, zonas de margem (padding do paper)
+       em tom mais escuro, e dois marcadores draggable (esquerda / direita)
+       que ajustam indentLeft/indentRight do parágrafo/bloco atual (ou de
+       todos os blocos na seleção). */
+    /* Bar container centralizado horizontalmente pra alinhar com o paper */
+    .kd-ruler-bar {
+      display: flex; justify-content: center;
+      flex-shrink: 0;
+      padding: 4px 0 0;
+      background: var(--bg);
+    }
+    .kd-ruler {
+      width: 210mm;
+      min-height: 20px;
+      height: 20px;
+      flex-shrink: 0;
+      z-index: 4;
+      background: var(--surface);
+      border: 1px solid var(--hairline);
+      border-radius: 3px 3px 0 0;
+      user-select: none;
+      -webkit-user-select: none;
+      box-sizing: border-box;
+      overflow: visible;    /* markers estouram embaixo/em cima do ruler */
+      position: relative;
+      color: var(--text-2);
+      /* Zona externa (margens) mais escura + zona interna (content) mais clara */
+      background:
+        linear-gradient(to right,
+          color-mix(in oklab, var(--text) 8%, transparent) 0,
+          color-mix(in oklab, var(--text) 8%, transparent) 25.4mm,
+          var(--surface) 25.4mm,
+          var(--surface) calc(210mm - 25.4mm),
+          color-mix(in oklab, var(--text) 8%, transparent) calc(210mm - 25.4mm),
+          color-mix(in oklab, var(--text) 8%, transparent) 210mm
+        );
+    }
+    :root[data-theme="light"] .kd-ruler {
+      background:
+        linear-gradient(to right,
+          #e0e0e0 0, #e0e0e0 25.4mm,
+          #ffffff 25.4mm, #ffffff calc(210mm - 25.4mm),
+          #e0e0e0 calc(210mm - 25.4mm), #e0e0e0 210mm
+        );
+    }
+    /* Ticks a cada 5mm — simples, sem números. Marcas maiores a cada 10mm. */
+    .kd-ruler-ticks {
+      position: absolute; left: 0; right: 0; top: 0; bottom: 0;
+      pointer-events: none;
+    }
+    .kd-ruler-tick {
+      position: absolute;
+      top: 0;
+      width: 1px;
+      background: currentColor;
+      opacity: .35;
+      height: 5px;
+    }
+    .kd-ruler-tick.major { height: 8px; opacity: .55; }
+
+    /* Marcadores draggable — snap 5mm.
+       .is-left  = triângulo apontando pra CIMA (margem esquerda)
+       .is-right = triângulo apontando pra CIMA (margem direita)
+       .is-first = triângulo apontando pra BAIXO (recuo da 1ª linha) */
+    .kd-ruler-marker {
+      position: absolute;
+      width: 14px;
+      cursor: ew-resize;
+      pointer-events: auto;
+      transform: translateX(-50%);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .kd-ruler-marker.is-left,
+    .kd-ruler-marker.is-right {
+      bottom: -4px; height: 12px;
+    }
+    .kd-ruler-marker.is-left::before,
+    .kd-ruler-marker.is-right::before {
+      content: '';
+      width: 0; height: 0;
+      border-left: 7px solid transparent;
+      border-right: 7px solid transparent;
+      border-bottom: 9px solid var(--accent);
+      filter: drop-shadow(0 1px 1px rgba(0,0,0,.15));
+    }
+    .kd-ruler-marker.is-first {
+      top: -4px; height: 12px;
+    }
+    .kd-ruler-marker.is-first::before {
+      content: '';
+      width: 0; height: 0;
+      border-left: 7px solid transparent;
+      border-right: 7px solid transparent;
+      border-top: 9px solid color-mix(in oklab, var(--accent) 70%, #ff5aff);
+      filter: drop-shadow(0 1px 1px rgba(0,0,0,.15));
+    }
+    .kd-ruler-marker:hover.is-left::before,
+    .kd-ruler-marker:hover.is-right::before { border-bottom-color: color-mix(in oklab, var(--accent) 60%, #ff5aff); }
+    .kd-ruler-marker:hover.is-first::before { border-top-color: color-mix(in oklab, var(--accent) 60%, #7a00ff); }
+    .kd-ruler-marker.is-dragging.is-left::before,
+    .kd-ruler-marker.is-dragging.is-right::before { border-bottom-color: color-mix(in oklab, var(--accent) 60%, #ff5aff); }
+    .kd-ruler-marker.is-dragging.is-first::before { border-top-color: color-mix(in oklab, var(--accent) 60%, #7a00ff); }
+
+    /* Tooltip com cm atual durante drag */
+    .kd-ruler-tooltip {
+      position: absolute;
+      top: 24px;
+      transform: translateX(-50%);
+      background: var(--text);
+      color: var(--bg);
+      font-size: 11px; font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 4px;
+      white-space: nowrap;
+      pointer-events: none;
+      opacity: 0; transition: opacity .12s;
+    }
+    .kd-ruler.is-dragging .kd-ruler-tooltip { opacity: 1; }
+
+    /* Em telas menores que o paper, esconde a régua */
+    @media (max-width: 900px) {
+      .kd-ruler-bar { display: none; }
+    }
+
+    /* ── Balões flutuantes de comentário ────────────────────────────
+       Aparecem à direita do paper alinhados verticalmente com o mark de cada
+       thread. Se muito próximos, empilham (JS calcula deslocamento). Cada balão
+       expande em accordion pra mostrar mensagens + responder/resolver/excluir. */
+    .writer-editor-scroll { position: relative; }
+    .kd-comment-bubbles {
+      position: absolute;
+      top: 32px;
+      left: calc(50% + 105mm + 16px);
+      width: 240px;
+      pointer-events: none;
+      z-index: 5;
+    }
+    .kd-comment-bubble {
+      position: absolute;
+      right: 0;
+      width: 240px;
+      background: var(--surface);
+      border: 1px solid var(--hairline);
+      border-radius: 10px;
+      padding: 10px 12px;
+      pointer-events: auto;
+      cursor: pointer;
+      transition: transform .18s cubic-bezier(.16,1,.3,1), box-shadow .18s, border-color .15s, top .25s cubic-bezier(.16,1,.3,1);
+      box-shadow: 0 2px 6px -2px rgba(0,0,0,.10);
+      box-sizing: border-box;
+      overflow: hidden;
+    }
+    .kd-comment-bubble:hover { border-color: color-mix(in oklab, var(--accent) 40%, var(--hairline)); }
+    .kd-comment-bubble.is-active {
+      border-color: color-mix(in oklab, var(--accent) 60%, var(--hairline));
+      box-shadow: 0 12px 28px -12px color-mix(in oklab, var(--accent) 45%, transparent);
+      z-index: 6;
+    }
+    .kd-comment-bubble.is-resolved { opacity: .55; }
+    .kd-comment-bubble-head {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 6px;
+    }
+    .kd-comment-bubble-avatar {
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #fff;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 10px; font-weight: 700;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .kd-comment-bubble-avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .kd-comment-bubble-author {
+      font-size: 12px; font-weight: 600; color: var(--text);
+      flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .kd-comment-bubble-when {
+      font-size: 10.5px; color: var(--text-2);
+      flex-shrink: 0;
+    }
+    .kd-comment-bubble-text {
+      font-size: 12.5px; color: var(--text-2); line-height: 1.35;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .kd-comment-bubble-count {
+      margin-top: 6px;
+      font-size: 11px; color: var(--text-2);
+      display: inline-flex; align-items: center; gap: 4px;
+    }
+    /* Expandido — mostra todas mensagens + reply + botões */
+    .kd-comment-bubble--expanded {
+      padding: 14px 14px 12px;
+      cursor: default;
+    }
+    .kd-comment-bubble--expanded .kd-comment-bubble-text { -webkit-line-clamp: unset; overflow: visible; }
+    .kd-comment-bubble-msg + .kd-comment-bubble-msg { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--hairline); }
+    .kd-comment-bubble-reply { margin-top: 10px; }
+    .kd-comment-bubble-reply textarea {
+      width: 100%; min-height: 52px;
+      padding: 6px 8px;
+      background: color-mix(in oklab, var(--text) 3%, transparent);
+      border: 1px solid var(--hairline);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 12.5px; font-family: inherit;
+      resize: vertical;
+      box-sizing: border-box;
+    }
+    .kd-comment-bubble-actions {
+      display: flex; gap: 6px; align-items: center;
+      margin-top: 8px;
+    }
+    /* Ícones check + trash iguais aos da sidebar (14x14) */
+    .kd-comment-bubble-actions .kd-comment-icon-btn { flex-shrink: 0; }
+    /* Em resoluções apertadas, esconde os balões (não há espaço na margem direita) */
+    @media (max-width: 1200px) {
+      .kd-comment-bubbles { display: none; }
+    }
+
+    /* ── Índice (outline) — painel lateral direito, sem fundo/borda ── */
+    .kd-outline-panel {
+      width: 240px;
+      flex-shrink: 0;
+      padding: 28px 20px 20px;
+      overflow-y: auto;
+      background: transparent;
+      border: 0;
+      transition: width .18s ease;
+    }
+    .kd-outline-head {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 12px;
+    }
+    .kd-outline-toggle {
+      width: 26px; height: 26px;
+      border-radius: 6px;
+      border: 0;
+      background: transparent;
+      color: var(--text-2);
+      cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      transition: background .12s, color .12s;
+      flex-shrink: 0;
+    }
+    .kd-outline-toggle:hover { background: color-mix(in oklab, var(--text) 6%, transparent); color: var(--text); }
+    .kd-outline-title {
+      font-size: 12px; font-weight: 700;
+      color: var(--text-2);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+    .kd-outline-list {
+      display: flex; flex-direction: column;
+      gap: 1px;
+    }
+    .kd-outline-empty {
+      font-size: 12px; color: var(--text-2);
+      padding: 8px 4px;
+      line-height: 1.4;
+    }
+    .kd-outline-item {
+      text-align: left;
+      background: transparent;
+      border: 0;
+      color: var(--text-2);
+      cursor: pointer;
+      padding: 5px 8px;
+      font-size: 13px;
+      line-height: 1.35;
+      border-radius: 6px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      transition: background .12s, color .12s;
+    }
+    .kd-outline-item:hover { background: color-mix(in oklab, var(--text) 6%, transparent); color: var(--text); }
+    .kd-outline-item.is-current { color: var(--accent); font-weight: 600; }
+    .kd-outline-l1 { padding-left: 8px; font-weight: 600; color: var(--text); }
+    .kd-outline-l2 { padding-left: 20px; }
+    .kd-outline-l3 { padding-left: 32px; font-size: 12.5px; }
+
+    /* Colapsado — só o botão fica visível, alinhado à direita */
+    .kd-outline-panel.is-collapsed { width: 44px; padding: 28px 8px; }
+    .kd-outline-panel.is-collapsed .kd-outline-title,
+    .kd-outline-panel.is-collapsed .kd-outline-list { display: none; }
+
+    @media (max-width: 1100px) {
+      .kd-outline-panel { display: none; }
+    }
+
+    /* Mark inline com highlight amarelo — subtle, não briga com o texto */
+    .kastor-comment-mark {
+      background: color-mix(in oklab, #f5c518 55%, transparent);
+      border-bottom: 2px solid color-mix(in oklab, #d4a017 90%, transparent);
+      padding: 1px 0 0;
+      cursor: pointer;
+      transition: background .12s;
+    }
+    .kastor-comment-mark:hover {
+      background: color-mix(in oklab, #f5c518 80%, transparent);
+    }
+    .kastor-comment-mark.is-active-thread {
+      background: color-mix(in oklab, #f5c518 100%, transparent);
+      box-shadow: 0 0 0 1px #d4a017;
+    }
+    /* Marks resolvidos ficam bem discretos (só uma linha embaixo) */
+    .kastor-comment-mark.is-resolved {
+      background: transparent;
+      border-bottom-color: color-mix(in oklab, var(--text) 20%, transparent);
+    }
+
+    /* Painel lateral */
+    .kd-comments-panel {
+      width: 340px;
+      flex-shrink: 0;
+      background: var(--surface);
+      border-left: 1px solid var(--hairline);
+      display: flex; flex-direction: column;
+      overflow: hidden;
+    }
+    .kd-comments-head {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--hairline);
+      flex-shrink: 0;
+    }
+    .kd-comments-title { font-size: 14px; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 8px; }
+    .kd-comments-count {
+      font-size: 11px; font-weight: 600;
+      color: var(--text-2);
+      background: color-mix(in oklab, var(--text) 8%, transparent);
+      padding: 2px 8px; border-radius: 999px;
+    }
+    .kd-comments-actions { display: flex; gap: 4px; align-items: center; }
+    .kd-comments-toggle-resolved {
+      width: 26px; height: 26px;
+      border-radius: 6px;
+      border: 1px solid var(--hairline);
+      background: transparent;
+      color: var(--text-2);
+      cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .kd-comments-toggle-resolved.is-active { background: color-mix(in oklab, var(--accent) 15%, transparent); color: var(--accent); border-color: var(--accent); }
+    .kd-comments-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .kd-comment-thread {
+      background: var(--bg);
+      border: 1px solid var(--hairline);
+      border-radius: 10px;
+      padding: 12px 12px 10px;
+      display: flex; flex-direction: column; gap: 8px;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .kd-comment-thread.is-active {
+      border-color: color-mix(in oklab, var(--accent) 55%, var(--hairline));
+      box-shadow: 0 4px 16px -8px color-mix(in oklab, var(--accent) 45%, transparent);
+    }
+    .kd-comment-thread.is-resolved { opacity: .55; }
+    .kd-comment-thread.is-orphan {
+      border-style: dashed;
+      border-color: color-mix(in oklab, var(--text-2) 30%, transparent);
+    }
+    .kd-comment-quote {
+      font-size: 11.5px; color: var(--text-2); font-style: italic;
+      padding: 6px 10px;
+      border-left: 3px solid color-mix(in oklab, #d4a017 90%, transparent);
+      background: color-mix(in oklab, #f5c518 12%, transparent);
+      border-radius: 0 6px 6px 0;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .kd-comment-msg { display: flex; gap: 8px; }
+    .kd-comment-avatar {
+      width: 26px; height: 26px; border-radius: 50%;
+      background: var(--accent); color: #fff;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 700;
+      overflow: hidden; flex-shrink: 0;
+    }
+    .kd-comment-avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .kd-comment-msg-body { flex: 1; min-width: 0; }
+    .kd-comment-msg-head {
+      display: flex; justify-content: space-between; gap: 8px;
+      font-size: 12px; margin-bottom: 2px;
+    }
+    .kd-comment-msg-author { font-weight: 600; color: var(--text); }
+    .kd-comment-msg-when { color: var(--text-2); font-size: 11px; }
+    .kd-comment-msg-text { font-size: 13px; color: var(--text); line-height: 1.45; word-wrap: break-word; }
+    .kd-comment-reply {
+      display: flex; gap: 6px; align-items: flex-end;
+      margin-top: 4px;
+    }
+    .kd-comment-reply textarea {
+      flex: 1;
+      min-height: 34px; max-height: 120px;
+      padding: 7px 10px;
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      background: var(--bg); color: var(--text);
+      font: inherit; font-size: 13px;
+      outline: 0; resize: vertical;
+    }
+    .kd-comment-reply textarea:focus { border-color: var(--accent); }
+    .kd-comment-reply .kd-comment-send {
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 0; background: var(--accent); color: #fff;
+      font-size: 12.5px; font-weight: 600;
+      cursor: pointer;
+    }
+    .kd-comment-reply .kd-comment-send:disabled { opacity: .5; cursor: not-allowed; }
+    .kd-comment-thread-actions {
+      display: flex; gap: 6px; margin-top: 4px;
+      align-items: center;
+    }
+    .kd-comment-action-btn {
+      font-size: 11.5px; font-weight: 500;
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--hairline);
+      background: transparent;
+      color: var(--text-2);
+      cursor: pointer;
+    }
+    .kd-comment-action-btn:hover { background: color-mix(in oklab, var(--text) 6%, transparent); color: var(--text); }
+    .kd-comment-action-btn.is-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .kd-comment-action-btn.is-danger { color: #e53935; border-color: color-mix(in oklab, #e53935 40%, var(--hairline)); }
+    /* Ícones "resolver" (check) e "excluir" (lixeira) — 14x14, container 26x26 */
+    .kd-comment-icon-btn {
+      width: 26px; height: 26px;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: transparent;
+      border: 1px solid var(--hairline);
+      border-radius: 6px;
+      color: var(--text-2);
+      cursor: pointer;
+      padding: 0;
+      transition: background .12s, color .12s, border-color .12s;
+    }
+    .kd-comment-icon-btn svg { width: 14px; height: 14px; display: block; }
+    .kd-comment-icon-btn:hover { background: color-mix(in oklab, var(--text) 6%, transparent); color: var(--text); }
+    .kd-comment-icon-btn--success:hover {
+      color: #10b981;
+      background: color-mix(in oklab, #10b981 10%, transparent);
+      border-color: color-mix(in oklab, #10b981 40%, var(--hairline));
+    }
+    .kd-comment-icon-btn--danger:hover {
+      color: #e53935;
+      background: color-mix(in oklab, #e53935 10%, transparent);
+      border-color: color-mix(in oklab, #e53935 40%, var(--hairline));
+    }
+    .kd-comment-empty {
+      padding: 40px 20px;
+      text-align: center;
+      color: var(--text-2);
+      font-size: 13px;
+    }
+
+    /* Badge no botão da topbar (contador de threads abertas) */
+    .kd-topbar-comments-btn { position: relative; }
+    .kd-topbar-comments-badge {
+      position: absolute; top: 2px; right: 2px;
+      min-width: 15px; height: 15px;
+      padding: 0 4px;
+      background: var(--accent); color: #fff;
+      border-radius: 999px;
+      font-size: 9px; font-weight: 700;
+      display: inline-flex; align-items: center; justify-content: center;
+      line-height: 1;
+    }
+
+    /* Mini-modal (substitui prompt/confirm nativos, bloqueados no sandbox) */
+    .kd-prompt-backdrop {
+      position: fixed; inset: 0; z-index: 300;
+      background: rgba(0,0,0,.55); backdrop-filter: blur(3px);
+      display: flex; align-items: center; justify-content: center;
+      padding: 24px;
+    }
+    .kd-prompt-card {
+      width: 100%; max-width: 420px;
+      background: var(--surface);
+      border: 1px solid var(--hairline);
+      border-radius: 12px;
+      padding: 20px 22px;
+      display: flex; flex-direction: column; gap: 12px;
+      box-shadow: 0 24px 64px -20px rgba(0,0,0,.5);
+    }
+    .kd-prompt-title { font-size: 15px; font-weight: 700; color: var(--text); }
+    .kd-prompt-body  { font-size: 13px; color: var(--text-2); line-height: 1.5; }
+    .kd-prompt-input {
+      width: 100%;
+      padding: 9px 12px;
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 13px;
+      outline: 0;
+    }
+    .kd-prompt-input:focus { border-color: var(--accent); }
+    .kd-prompt-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+    .kd-prompt-btn {
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--hairline);
+      background: transparent;
+      color: var(--text);
+      font-size: 13px; font-weight: 500;
+      cursor: pointer;
+    }
+    .kd-prompt-btn:hover { background: color-mix(in oklab, var(--text) 6%, transparent); }
+    .kd-prompt-btn.kd-prompt-ok { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .kd-prompt-btn.kd-prompt-ok:hover { filter: brightness(1.08); }
+    .kd-prompt-btn.kd-prompt-danger { background: #e53935; border-color: #e53935; }
+
+    /* Menu popover de export */
+    .kd-export-menu {
+      position: fixed; z-index: 250;
+      background: var(--surface);
+      border: 1px solid var(--hairline);
+      border-radius: 10px;
+      padding: 6px;
+      display: flex; flex-direction: column; gap: 2px;
+      min-width: 240px;
+      box-shadow: 0 16px 40px -12px rgba(0,0,0,.35);
+    }
+    .kd-export-menu button {
+      text-align: left;
+      padding: 8px 12px;
+      background: transparent; border: 0;
+      color: var(--text);
+      font-size: 13px;
+      cursor: pointer;
+      border-radius: 6px;
+      display: flex; flex-direction: column; gap: 2px;
+    }
+    .kd-export-menu button:hover { background: color-mix(in oklab, var(--text) 6%, transparent); }
+    .kd-export-menu .kd-export-fmt {
+      font-weight: 700; letter-spacing: .04em;
+      font-size: 11.5px;
+      color: var(--accent);
+    }
+    .kd-export-menu .kd-export-desc {
+      font-size: 12px; color: var(--text-2);
+    }
+
+    /* Font select — precisa ser mais larga que o parágrafo pra caber "Times New Roman" */
+    .writer-tb-select--font { min-width: 130px; }
+
+    /* Widget de tamanho da fonte estilo Docs: [-] [input▾] [+] */
+    .writer-tb-fontsize {
+      display: inline-flex; align-items: stretch;
+      height: 28px;
+      border: 1px solid var(--hairline);
+      border-radius: 6px;
+      overflow: hidden;
+      background: var(--surface);
+    }
+    .writer-tb-fs-btn {
+      width: 22px;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: transparent; border: 0;
+      color: var(--text-2);
+      cursor: pointer;
+      font-size: 14px; font-weight: 600;
+      padding: 0;
+    }
+    .writer-tb-fs-btn:hover { background: color-mix(in oklab, var(--text) 6%, transparent); color: var(--text); }
+    .writer-tb-fs-input {
+      width: 34px;
+      background: transparent; border: 0;
+      border-left: 1px solid var(--hairline);
+      color: var(--text);
+      font-size: 12px;
+      text-align: center;
+      padding: 0 2px;
+      outline: none;
+    }
+    .writer-tb-fs-input:focus { background: color-mix(in oklab, var(--accent) 8%, transparent); }
+    .writer-tb-fs-arrow {
+      width: 16px;
+      font-size: 10px;
+      border-right: 1px solid var(--hairline);
+    }
+
+    /* Dropdown de presets do tamanho */
+    .kd-fontsize-menu {
+      position: fixed;
+      min-width: 60px;
+      background: var(--surface);
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      padding: 4px;
+      box-shadow: 0 16px 40px -12px rgba(0,0,0,.35), 0 2px 6px rgba(0,0,0,.08);
+      z-index: 200;
+      display: flex; flex-direction: column;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    .kd-fontsize-item {
+      background: transparent; border: 0;
+      color: var(--text);
+      font-size: 13px;
+      padding: 6px 12px;
+      text-align: center;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    .kd-fontsize-item:hover { background: color-mix(in oklab, var(--text) 6%, transparent); }
+    .kd-fontsize-item.is-current { background: color-mix(in oklab, var(--accent) 14%, transparent); color: var(--accent); font-weight: 600; }
+
+    /* Botão de cor da toolbar — SVG + barrinha embaixo com a cor ativa */
+    .writer-tb-color-btn {
+      flex-direction: column;
+      gap: 1px;
+      padding-top: 5px !important;
+      padding-bottom: 3px !important;
+    }
+    .writer-tb-color-bar {
+      width: 16px; height: 3px;
+      background: var(--kd-mark-color, currentColor);
+      border-radius: 2px;
+      display: block;
+    }
+
+    /* Popover do color picker (texto/destaque) */
+    .kd-color-popover {
+      position: fixed;
+      background: var(--surface);
+      border: 1px solid var(--hairline);
+      border-radius: 10px;
+      padding: 10px;
+      box-shadow: 0 16px 40px -12px rgba(0,0,0,.35), 0 2px 6px rgba(0,0,0,.08);
+      z-index: 200;
+      min-width: 220px;
+    }
+    .kd-color-title {
+      font-size: 12px; font-weight: 700;
+      color: var(--text-2);
+      text-transform: uppercase; letter-spacing: .06em;
+      margin-bottom: 8px;
+    }
+    .kd-color-grid { display: flex; flex-direction: column; gap: 3px; }
+    .kd-color-row { display: flex; gap: 3px; }
+    .kd-color-swatch {
+      width: 22px; height: 22px;
+      border-radius: 4px;
+      border: 1px solid rgba(0,0,0,.15);
+      cursor: pointer;
+      padding: 0;
+      transition: transform .08s;
+    }
+    .kd-color-swatch:hover { transform: scale(1.12); border-color: var(--text); }
+    .kd-color-recent {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--hairline);
+    }
+    .kd-color-recent-label {
+      font-size: 11px; font-weight: 700;
+      color: var(--text-2);
+      text-transform: uppercase; letter-spacing: .06em;
+      margin-bottom: 6px;
+    }
+    .kd-color-recent-row {
+      display: flex; gap: 3px; flex-wrap: wrap;
+    }
+    .kd-color-actions {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--hairline);
+    }
+    .kd-color-custom {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 12px; color: var(--text-2);
+      cursor: pointer;
+    }
+    .kd-color-input {
+      width: 26px; height: 26px;
+      border: 1px solid var(--hairline);
+      border-radius: 6px;
+      cursor: pointer;
+      background: transparent;
+      padding: 0;
+    }
+    .kd-color-remove {
+      font-size: 12px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      background: transparent;
+      border: 1px solid var(--hairline);
+      color: var(--text-2);
+      cursor: pointer;
+    }
+    .kd-color-remove:hover { background: color-mix(in oklab, #e53935 10%, transparent); color: #e53935; border-color: color-mix(in oklab, #e53935 40%, var(--hairline)); }
+
+    /* ── Menu de contexto do editor (substitui o do browser) ───────── */
+    .kd-context-menu {
+      position: fixed;
+      min-width: 240px;
+      background: var(--surface);
+      border: 1px solid var(--hairline);
+      border-radius: 10px;
+      padding: 6px;
+      box-shadow: 0 16px 40px -12px rgba(0,0,0,.45), 0 2px 6px rgba(0,0,0,.08);
+      z-index: 300;
+      display: flex; flex-direction: column;
+    }
+    .kd-context-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 7px 10px;
+      background: transparent; border: 0;
+      color: var(--text);
+      font-size: 13px;
+      text-align: left;
+      cursor: pointer;
+      border-radius: 6px;
+      transition: background .12s;
+    }
+    .kd-context-item svg { color: var(--text-2); flex-shrink: 0; }
+    .kd-context-item:not([disabled]):hover { background: color-mix(in oklab, var(--text) 6%, transparent); }
+    .kd-context-item:not([disabled]):hover svg { color: var(--text); }
+    .kd-context-item[disabled] {
+      opacity: .4;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+    .kd-context-label { flex: 1; }
+    .kd-context-shortcut { font-size: 11px; color: var(--text-2); letter-spacing: .02em; }
+    .kd-context-item--danger:hover { background: color-mix(in oklab, #e53935 10%, transparent); color: #e53935; }
+    .kd-context-item--danger:hover svg { color: #e53935; }
+    .kd-context-divider {
+      height: 1px;
+      background: var(--hairline);
+      margin: 4px 6px;
+    }
+
+    /* Sem login: prompt pra abrir a plataforma */
+    .kd-auth-wall {
+      height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 18px;
+      text-align: center;
+      padding: 24px;
+    }
+    .kd-auth-wall h2 { font-size: 22px; margin: 0; color: var(--text); }
+    .kd-auth-wall p { color: var(--text-2); font-size: 14px; max-width: 360px; margin: 0; }
+    .kd-auth-wall a {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 10px 18px;
+      background: var(--accent); color: #fff;
+      border-radius: 10px;
+      font-weight: 600; font-size: 14px;
+      text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="kd-boot" class="kd-boot-loading">
+    <div class="kd-spinner"></div>
+    <div>Carregando reWork Docs…</div>
+  </div>
+
+  <div id="kd-app" class="kd-app" hidden>
+    <!-- Shell da LISTA (mostra em /writer sem doc slug) -->
+    <div class="kd-list-shell">
+      <div class="kd-list-topbar">
+        <a class="kd-topbar-back" href="/hub" title="Voltar pro Hub" aria-label="Voltar">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+        </a>
+        <div class="kd-brand">
+          <img id="kd-brand-logo" src="/reworkdocs_preto.svg" alt="reWork Docs">
+        </div>
+        <div class="kd-topbar-spacer"></div>
+        <button type="button" class="kd-icon-btn" onclick="kdToggleTheme()" title="Alternar tema">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+        </button>
+        <div class="kd-user-chip" id="kd-user-chip" title="—">
+          <div class="kd-user-avatar" id="kd-user-avatar">?</div>
+          <span id="kd-user-name">—</span>
+        </div>
+      </div>
+
+      <div class="kd-list-body">
+        <!-- Filtro de squad em estado escondido — o botão de criar precisa
+             saber qual squad usar. Mantemos o <select> pra reaproveitar a
+             lógica existente sem quebrar. -->
+        <select id="kd-f-ws" hidden onchange="kdRenderList()"></select>
+
+        <!-- BLOCO 1 — Novo documento -->
+        <div class="kd-new-block">
+          <div class="kd-block-title">Começar um novo documento</div>
+          <div class="kd-new-grid">
+            <button type="button" class="kd-new-card" onclick="kdCreateDoc()" title="Criar documento em branco" aria-label="Novo documento em branco">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- BLOCO 2 — Arquivos recentes (mesma linguagem do Hub) -->
+        <div class="kd-recent-block">
+          <div class="kd-recent-toolbar">
+            <div class="kd-recent-title" id="kd-recent-title">Documentos recentes</div>
+            <div class="kd-recent-toolbar-actions">
+              <button type="button" class="kd-recent-select" id="kd-recent-owner-btn" onclick="kdRecentToggleMenu('owner', event)">
+                <span id="kd-recent-owner-label">Pertencem a mim</span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+              <div class="kd-recent-menu" id="kd-recent-owner-menu" hidden>
+                <button type="button" data-owner="mine">Pertencem a mim</button>
+                <button type="button" data-owner="any">Qualquer pessoa</button>
+                <button type="button" data-owner="shared">Compartilhados comigo</button>
+              </div>
+
+              <div class="kd-recent-divider"></div>
+
+              <button type="button" class="kd-recent-icon-btn" id="kd-recent-view-btn" onclick="kdRecentToggleView()" title="Alternar visualização">
+                <svg id="kd-recent-view-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+              </button>
+
+              <button type="button" class="kd-recent-icon-btn" id="kd-recent-sort-btn" onclick="kdRecentToggleMenu('sort', event)" title="Ordenar">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5h4M11 9h7M11 13h10M3 17l3 3 3-3M6 20V4"/></svg>
+              </button>
+              <div class="kd-recent-menu" id="kd-recent-sort-menu" hidden>
+                <button type="button" data-sort="updated">Última modificação</button>
+                <button type="button" data-sort="created">Data de criação</button>
+                <button type="button" data-sort="title">Nome (A-Z)</button>
+              </div>
+            </div>
+          </div>
+          <div class="kd-recent-grid" id="kd-grid"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Shell do EDITOR (mostra em /writer/<slug>) — reusa .writer-editor-view do style.css -->
+    <div class="page-body writer-editor-view" id="writer-editor-view">
+      <!-- Header agrupado (topbar + menubar) com fade roxo compartilhado -->
+      <div class="kd-editor-header">
+      <div class="writer-editor-topbar">
+        <a class="writer-topbar-back" href="/hub/docs" title="Todos os documentos">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        </a>
+        <input class="writer-title-input" id="writer-title-input" placeholder="Sem título" onchange="kdRenameCurrent(this.value)">
+        <div class="writer-topbar-status" id="writer-topbar-status">
+          <span class="writer-status-dot"></span>
+          <span class="writer-status-text">—</span>
+        </div>
+        <div class="writer-topbar-actions">
+          <button class="btn-icon kd-topbar-share-btn" onclick="kdShareOpen()" title="Compartilhar">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+            <span>Compartilhar</span>
+          </button>
+          <button class="btn-icon" onclick="kdHistoryOpen()" title="Histórico de versões">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>
+          </button>
+          <button class="btn-icon kd-topbar-comments-btn" id="kd-topbar-comments-btn" onclick="kdCommentsPanelToggle()" title="Comentários">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <span class="kd-topbar-comments-badge" id="kd-topbar-comments-badge" hidden>0</span>
+          </button>
+          <button class="btn-icon" onclick="kdToggleTheme()" title="Alternar tema">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+          </button>
+          <!-- Exportar (kdExportMenu) e Excluir (kdConfirmDelete) foram movidos
+               pro menu Arquivo (kd-menubar). As funções continuam expostas em
+               window.* pra atalhos de teclado e chamadas internas. -->
+        </div>
+      </div>
+
+      <!-- Menubar estilo Google Docs — Arquivo / Editar / Ver / Inserir / Formatar -->
+      <div class="kd-menubar" id="kd-menubar">
+        <button type="button" class="kd-menubar-item" data-menu="arquivo" onclick="kdMenubarOpen('arquivo', event)">Arquivo</button>
+        <button type="button" class="kd-menubar-item" data-menu="editar" onclick="kdMenubarOpen('editar', event)">Editar</button>
+        <button type="button" class="kd-menubar-item" data-menu="ver" onclick="kdMenubarOpen('ver', event)">Ver</button>
+        <button type="button" class="kd-menubar-item" data-menu="inserir" onclick="kdMenubarOpen('inserir', event)">Inserir</button>
+        <button type="button" class="kd-menubar-item" data-menu="formatar" onclick="kdMenubarOpen('formatar', event)">Formatar</button>
+      </div>
+      </div><!-- /.kd-editor-header -->
+
+      <!-- Dropdowns dos menus — apenas Arquivo populado por enquanto -->
+      <div class="kd-menubar-dropdown" id="kd-menubar-dd-arquivo" hidden>
+        <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('novo')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <span>Novo documento</span>
+        </button>
+        <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('duplicar')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          <span>Fazer uma cópia</span>
+        </button>
+        <div class="kd-menubar-dd-divider"></div>
+        <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('compartilhar')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+          <span>Compartilhar</span>
+        </button>
+        <div class="kd-menubar-dd-sub" data-sub="baixar">
+          <button type="button" class="kd-menubar-dd-item kd-menubar-dd-item--submenu" onclick="kdMenubarToggleSub('baixar', event)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <span>Baixar</span>
+          </button>
+          <div class="kd-menubar-dd-sub-panel">
+            <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('baixar-pdf')"><span>PDF</span></button>
+            <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('baixar-docx')"><span>DOCX (Word)</span></button>
+            <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('baixar-html')"><span>HTML</span></button>
+            <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('baixar-txt')"><span>Texto (TXT)</span></button>
+          </div>
+        </div>
+        <div class="kd-menubar-dd-divider"></div>
+        <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('renomear')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          <span>Renomear</span>
+        </button>
+        <button type="button" class="kd-menubar-dd-item kd-menubar-dd-item--danger" onclick="kdMenubarAction('lixeira')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          <span>Mover para a lixeira</span>
+        </button>
+        <div class="kd-menubar-dd-divider"></div>
+        <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('historico')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>
+          <span>Histórico de versões</span>
+        </button>
+        <div class="kd-menubar-dd-divider"></div>
+        <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('imprimir')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+          <span>Imprimir</span>
+          <span class="kd-menubar-dd-shortcut">Ctrl+P</span>
+        </button>
+      </div>
+
+      <!-- Dropdown do menu Editar -->
+      <div class="kd-menubar-dropdown" id="kd-menubar-dd-editar" hidden>
+        <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('undo')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/></svg>
+          <span>Desfazer</span>
+          <span class="kd-menubar-dd-shortcut">Ctrl+Z</span>
+        </button>
+        <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('redo')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5v0A5.5 5.5 0 0 0 9.5 20H13"/></svg>
+          <span>Refazer</span>
+          <span class="kd-menubar-dd-shortcut">Ctrl+Y</span>
+        </button>
+        <div class="kd-menubar-dd-divider"></div>
+        <button type="button" class="kd-menubar-dd-item" data-needs-selection onclick="kdMenubarAction('cut')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
+          <span>Recortar</span>
+          <span class="kd-menubar-dd-shortcut">Ctrl+X</span>
+        </button>
+        <button type="button" class="kd-menubar-dd-item" data-needs-selection onclick="kdMenubarAction('copy')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          <span>Copiar</span>
+          <span class="kd-menubar-dd-shortcut">Ctrl+C</span>
+        </button>
+        <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('paste')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+          <span>Colar</span>
+          <span class="kd-menubar-dd-shortcut">Ctrl+V</span>
+        </button>
+        <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('paste-plain')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M9 12h6M9 16h4"/></svg>
+          <span>Colar sem formatação</span>
+          <span class="kd-menubar-dd-shortcut">Ctrl+Shift+V</span>
+        </button>
+        <div class="kd-menubar-dd-divider"></div>
+        <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('select-all')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/><rect x="7" y="7" width="10" height="10" rx="1"/></svg>
+          <span>Selecionar tudo</span>
+          <span class="kd-menubar-dd-shortcut">Ctrl+A</span>
+        </button>
+        <button type="button" class="kd-menubar-dd-item kd-menubar-dd-item--danger" data-needs-selection onclick="kdMenubarAction('delete-selection')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+          <span>Excluir</span>
+        </button>
+      </div>
+
+      <div class="writer-editor-toolbar" id="writer-editor-toolbar"></div>
+      <!-- Régua horizontal — alinhada com o paper (mesma largura A4).
+           Não é sticky nem flutuante: fica logo abaixo da toolbar de rich text
+           pra ser sempre visível sem "sumir" quando o user rola o doc. -->
+      <div class="kd-ruler-bar">
+        <div class="kd-ruler" id="kd-ruler" aria-hidden="true"></div>
+      </div>
+      <div class="writer-editor-wrap">
+        <!-- Painel de índice (outline) — coluna à esquerda, sem fundo -->
+        <aside class="kd-outline-panel" id="kd-outline-panel">
+          <div class="kd-outline-head">
+            <button type="button" class="kd-outline-toggle" onclick="kdOutlineToggle()" title="Recolher/expandir índice" aria-label="Recolher índice">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="21" y1="10" x2="7" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="21" y1="18" x2="7" y2="18"/></svg>
+            </button>
+            <div class="kd-outline-title">Índice</div>
+          </div>
+          <div class="kd-outline-list" id="kd-outline-list">
+            <div class="kd-outline-empty">Adicione títulos (H1/H2/H3) pra ver o índice.</div>
+          </div>
+        </aside>
+
+        <div class="writer-editor-scroll">
+          <div class="writer-editor-paper">
+            <div id="writer-editor-mount"></div>
+          </div>
+          <!-- Balões de comentário flutuantes — alinhados à direita do paper,
+               posicionados por JS na altura Y de cada mark. -->
+          <div class="kd-comment-bubbles" id="kd-comment-bubbles" aria-hidden="true"></div>
+        </div>
+
+        <!-- Painel lateral de comentários — colapsável -->
+        <aside class="kd-comments-panel" id="kd-comments-panel" hidden>
+          <div class="kd-comments-head">
+            <div class="kd-comments-title">
+              Comentários
+              <span class="kd-comments-count" id="kd-comments-count">0</span>
+            </div>
+            <div class="kd-comments-actions">
+              <button type="button" class="kd-comments-toggle-resolved" id="kd-comments-showresolved" onclick="kdCommentsToggleResolved()" title="Alternar resolvidos">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+              </button>
+              <button type="button" class="kd-icon-btn" onclick="kdCommentsPanelClose()" title="Fechar">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="kd-comments-list" id="kd-comments-list"></div>
+        </aside>
+      </div>
+
+      <!-- Footer sticky com contagem de palavras + tempo de leitura -->
+      <div class="kd-editor-footer">
+        <span id="kd-word-count">—</span>
+        <span class="kd-editor-footer-sep">·</span>
+        <span id="kd-read-time">—</span>
+        <div style="flex:1"></div>
+        <span class="kd-editor-footer-hint" title="Ctrl+S salvar versão · Ctrl+K link · Ctrl+/ comentar">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h12"/></svg>
+          Atalhos
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── COMPARTILHAR ── modal de permissões -->
+  <div id="kd-share-modal" class="kd-modal" hidden>
+    <div class="kd-modal-backdrop" onclick="kdShareClose()"></div>
+    <div class="kd-modal-card kd-share-card">
+      <div class="kd-modal-head">
+        <div>
+          <div class="kd-modal-title">Compartilhar documento</div>
+          <div class="kd-modal-sub">Adicione pessoas e escolha o nível de acesso de cada uma.</div>
+        </div>
+        <button class="kd-icon-btn" onclick="kdShareClose()" title="Fechar">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="kd-share-add">
+        <div class="kd-share-add-input-wrap">
+          <input type="text" id="kd-share-search" placeholder="Buscar por nome, usuário ou e-mail…" autocomplete="off">
+          <div class="kd-share-suggest" id="kd-share-suggest" hidden></div>
+        </div>
+        <select id="kd-share-add-role" class="kd-share-role-select">
+          <option value="editor">Editor</option>
+          <option value="commenter">Comentarista</option>
+          <option value="viewer">Leitor</option>
+        </select>
+      </div>
+      <div class="kd-share-body">
+        <div class="kd-share-list" id="kd-share-list"></div>
+      </div>
+      <div class="kd-share-footer">
+        <!-- Link público — leitura apenas -->
+        <div class="kd-share-public" id="kd-share-public">
+          <div class="kd-share-public-head">
+            <div>
+              <div class="kd-share-restricted-title">Link público (leitura)</div>
+              <div class="kd-share-restricted-sub">Qualquer pessoa com o link consegue visualizar o documento.</div>
+            </div>
+            <label class="kd-switch">
+              <input type="checkbox" id="kd-share-public-toggle" onchange="kdSharePublicToggle(this.checked)">
+              <span class="kd-switch-slider"></span>
+            </label>
+          </div>
+          <div class="kd-share-public-link" id="kd-share-public-link" hidden>
+            <input type="text" id="kd-share-public-url" readonly onclick="this.select()">
+            <button type="button" class="kd-share-public-copy" onclick="kdSharePublicCopy()" title="Copiar link">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <label class="kd-share-restricted">
+          <input type="checkbox" id="kd-share-restricted" onchange="kdShareToggleRestricted(this.checked)">
+          <div>
+            <div class="kd-share-restricted-title">Restringir acesso</div>
+            <div class="kd-share-restricted-sub">Só pessoas listadas acima podem abrir. Sem isso, qualquer membro do squad edita.</div>
+          </div>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── TIME-MACHINE ── modal com histórico de versões -->
+  <div id="kd-history-modal" class="kd-modal" hidden>
+    <div class="kd-modal-backdrop" onclick="kdHistoryClose()"></div>
+    <div class="kd-modal-card kd-history-card">
+      <div class="kd-modal-head">
+        <div>
+          <div class="kd-modal-title">Histórico de versões</div>
+          <div class="kd-modal-sub">Todas as versões salvas — clique numa pra visualizar, ou salve o momento atual com um nome.</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn-icon" onclick="kdHistorySavePrompt()" title="Salvar versão do momento atual">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+          </button>
+          <button class="kd-icon-btn" onclick="kdHistoryClose()" title="Fechar">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="kd-history-body">
+        <!-- Lista à esquerda -->
+        <div class="kd-history-list" id="kd-history-list"></div>
+        <!-- Preview à direita -->
+        <div class="kd-history-preview" id="kd-history-preview">
+          <div class="kd-history-preview-empty">Selecione uma versão pra visualizar.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── PICKER DA GALERIA ── modal pra selecionar anexos existentes -->
+  <div id="kd-gallery-modal" class="kd-modal" hidden>
+    <div class="kd-modal-backdrop" onclick="kdGalleryClose()"></div>
+    <div class="kd-modal-card">
+      <div class="kd-modal-head">
+        <div>
+          <div class="kd-modal-title">Anexar da Galeria</div>
+          <div class="kd-modal-sub">Escolha um arquivo pra inserir no documento.</div>
+        </div>
+        <button class="kd-icon-btn" onclick="kdGalleryClose()" title="Fechar">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="kd-modal-toolbar">
+        <div class="filter-input-wrap" style="flex:1;min-width:180px">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--text-2);pointer-events:none"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input class="filter-input filter-input--with-icon" id="kd-gal-search" placeholder="Buscar por nome, cliente, projeto…" oninput="kdGalleryRender()" style="padding-left:36px">
+        </div>
+        <select class="filter-select" id="kd-gal-f-ws" onchange="kdGalleryRender()">
+          <option value="">Todos os squads</option>
+        </select>
+        <select class="filter-select" id="kd-gal-f-client" onchange="kdGalleryRender()">
+          <option value="">Todos os clientes</option>
+        </select>
+        <select class="filter-select" id="kd-gal-f-kind" onchange="kdGalleryRender()">
+          <option value="">Todos os tipos</option>
+          <option value="image">Imagens</option>
+          <option value="pdf">PDFs</option>
+          <option value="doc">Documentos</option>
+          <option value="slide">Apresentações</option>
+          <option value="sheet">Planilhas</option>
+          <option value="video">Vídeos</option>
+          <option value="audio">Áudios</option>
+          <option value="file">Outros</option>
+        </select>
+      </div>
+      <div class="kd-modal-body">
+        <div class="kd-gal-grid" id="kd-gal-grid"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Muro de autenticação — só mostra se /api/me falhar -->
+  <div id="kd-auth-wall" class="kd-auth-wall" hidden>
+    <img src="/reworkdocs_icone.svg" width="48" height="48" alt="">
+    <h2>Faça login pra continuar</h2>
+    <p>Você precisa estar autenticado na plataforma reWork pra abrir os documentos.</p>
+    <a href="/">Ir pra tela de login</a>
+  </div>
+
+  <div id="kd-toast" class="kd-toast"></div>
+
+  <script src="/js/writer/standalone.js?v=20260912rulerV2"></script>
+</body>
+</html>

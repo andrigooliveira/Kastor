@@ -1651,6 +1651,38 @@ body.density-compact .table-wrap table td { font-size: 12px; }
   width: 36px; height: 36px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
 }
+/* App-launcher do reWork Hub no topbar — só o símbolo, mesma altura dos
+   demais botões (36px) e com respiro extra à direita pra separar visualmente
+   do grupo de utilitários (menu, notificações, Nova Demanda). */
+.topbar-app-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px;
+  padding: 0;
+  margin-right: 14px;                /* respiro extra separando do resto */
+  border-radius: 0;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  transition: transform .12s, opacity .15s;
+  cursor: pointer;
+  text-decoration: none !important;
+  opacity: .9;
+}
+.topbar-app-btn:hover {
+  opacity: 1;
+  transform: scale(1.08);
+  background: transparent !important;
+}
+.topbar-app-btn img { display: block; }
+/* Estado desativado: cinza, sem hover, cursor "not-allowed". Usado enquanto
+   o Hub tá em manutenção — o ícone continua visível pra sinalizar que existe. */
+.topbar-app-btn.is-disabled {
+  cursor: not-allowed;
+  opacity: .45;
+  pointer-events: none;
+  filter: grayscale(1);
+}
+.topbar-app-btn.is-disabled img { opacity: .8; }
 .density-toggle.active { color: var(--accent-text); background: var(--accent-dim); }
 tr:first-child td { border-top: none; }
 tr:hover td { background: var(--surface-2); }
@@ -15778,6 +15810,456 @@ input[type="checkbox"]:checked {
   max-width: 440px;
 }
 .att-preview-unsupported .btn { margin-top: 8px; }
+
+/* ═══════════════════════════════════════════════════════════════
+   Kastor Docs — Editor colaborativo interno
+   ─────────────────────────────────────────
+   Estratégia visual: fidelidade total ao UI Kit do produto.
+   Zero CSS de biblioteca vaza — toolbar, menus, paper, tudo
+   composto com nossos tokens (var(--surface), var(--accent),
+   var(--hairline), var(--radius)). O ProseMirror gerencia o
+   contenteditable; nós envolvemos com a estética do resto.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Landing (lista) */
+.writer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+}
+.writer-card {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: 16px 18px 14px;
+  cursor: pointer;
+  transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease;
+  display: flex; flex-direction: column; gap: 8px;
+  min-height: 160px;
+  position: relative;
+}
+.writer-card:hover {
+  border-color: color-mix(in oklab, var(--accent) 55%, var(--hairline));
+  transform: translateY(-2px);
+  box-shadow: 0 8px 22px -14px color-mix(in oklab, var(--accent) 40%, transparent);
+}
+.writer-card-icon {
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+  color: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px;
+  margin-bottom: 4px;
+}
+.writer-card-title {
+  font-size: 14.5px; font-weight: 600;
+  color: var(--text);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+  letter-spacing: -.005em;
+}
+.writer-card-meta {
+  font-size: 11.5px; color: var(--text-2);
+  margin-top: auto;
+  display: flex; align-items: center; gap: 8px;
+}
+.writer-card-preview {
+  font-size: 11.5px; color: var(--text-2);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 52px;
+  opacity: .85;
+}
+.writer-card-menu-btn {
+  position: absolute; top: 10px; right: 10px;
+  width: 26px; height: 26px;
+  border-radius: 6px;
+  border: 0; background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  opacity: 0; transition: opacity .15s, background .15s;
+  display: flex; align-items: center; justify-content: center;
+}
+.writer-card:hover .writer-card-menu-btn { opacity: 1; }
+.writer-card-menu-btn:hover { background: color-mix(in oklab, var(--text) 8%, transparent); color: var(--text); }
+.writer-card-new {
+  border: 1.5px dashed color-mix(in oklab, var(--accent) 45%, var(--hairline));
+  background: transparent;
+  color: var(--accent);
+  align-items: center; justify-content: center;
+  text-align: center;
+  gap: 6px;
+}
+.writer-card-new:hover { border-style: solid; background: color-mix(in oklab, var(--accent) 8%, transparent); }
+.writer-card-new .writer-card-title { color: var(--accent); }
+
+/* Editor: layout full-page */
+.writer-editor-view {
+  display: flex; flex-direction: column;
+  height: calc(100vh - var(--topbar-h, 0px));
+  min-height: 500px;
+  background: var(--bg);
+}
+/* Wrapper que agrupa topbar + menubar. Fade roxo compartilhado — evita a
+   descontinuidade que surge quando cada bar renderiza seu próprio background. */
+.kd-editor-header {
+  flex-shrink: 0;
+  background:
+    radial-gradient(ellipse 1400px 320px at 50% -60%, color-mix(in oklab, #7a00ff 20%, transparent), transparent 72%),
+    radial-gradient(ellipse 700px 240px at 15% 110%, color-mix(in oklab, #00e5ff 10%, transparent), transparent 65%),
+    radial-gradient(ellipse 700px 240px at 85% 110%, color-mix(in oklab, #ff5aff 10%, transparent), transparent 65%),
+    var(--surface);
+  border-bottom: 1px solid var(--hairline);
+}
+:root[data-theme="light"] .kd-editor-header {
+  background:
+    radial-gradient(ellipse 1400px 320px at 50% -60%, color-mix(in oklab, #7a00ff 10%, transparent), transparent 72%),
+    radial-gradient(ellipse 700px 240px at 15% 110%, color-mix(in oklab, #00b4d8 8%, transparent), transparent 65%),
+    radial-gradient(ellipse 700px 240px at 85% 110%, color-mix(in oklab, #d946ef 8%, transparent), transparent 65%),
+    var(--surface);
+}
+
+.writer-editor-topbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 20px 4px;         /* menor gap embaixo — encosta na menubar */
+  background: transparent;         /* deixa o fade do .kd-editor-header aparecer */
+  flex-shrink: 0;
+}
+.writer-topbar-back {
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--hairline);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.writer-topbar-back:hover { background: color-mix(in oklab, var(--text) 6%, transparent); color: var(--text); border-color: color-mix(in oklab, var(--text) 20%, transparent); }
+.writer-title-input {
+  /* Não estica pra toda largura — ocupa só o que o conteúdo pede + minimum.
+     Assim o status "Salvo" fica colado ao título e as ações vão pra direita. */
+  flex: 0 1 auto;
+  border: 0; background: transparent;
+  color: var(--text);
+  font-size: 16px; font-weight: 600;
+  letter-spacing: -.01em;
+  padding: 6px 8px;
+  border-radius: 6px;
+  outline: 0;
+  min-width: 60px;
+  width: auto;
+  max-width: 380px;
+  /* Corta com "…" quando desfocado. Ao focar (editando) mostra o texto
+     inteiro rolando pra dentro do input (comportamento default). */
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.writer-title-input:focus {
+  text-overflow: clip;
+}
+/* Empurra tudo depois do status pro lado direito da topbar */
+.writer-topbar-status { margin-right: auto; }
+.writer-title-input:hover { background: color-mix(in oklab, var(--text) 4%, transparent); }
+.writer-title-input:focus { background: color-mix(in oklab, var(--text) 6%, transparent); }
+.writer-topbar-status {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--text-2);
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--text) 5%, transparent);
+}
+.writer-topbar-status.is-saving .writer-status-dot { background: #f5a623; }
+.writer-topbar-status.is-saved  .writer-status-dot { background: #4caf50; }
+.writer-topbar-status.is-error  .writer-status-dot { background: #e53935; }
+.writer-topbar-status.is-error  { color: #e53935; }
+.writer-status-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--text-2);
+  transition: background .15s;
+}
+.writer-topbar-actions {
+  display: flex; align-items: center; gap: 4px;
+}
+.writer-topbar-actions .btn-icon {
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .15s, color .15s;
+}
+.writer-topbar-actions .btn-icon:hover { background: color-mix(in oklab, var(--text) 6%, transparent); color: var(--text); }
+
+/* Editor toolbar (formatação) */
+.writer-editor-toolbar {
+  display: flex; align-items: center; gap: 2px;
+  padding: 6px 20px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--surface);
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  position: sticky; top: 0; z-index: 5;
+}
+.writer-tb-group { display: flex; align-items: center; gap: 1px; }
+.writer-tb-sep {
+  width: 1px; height: 20px;
+  background: var(--hairline);
+  margin: 0 6px;
+}
+.writer-tb-btn {
+  min-width: 30px; height: 30px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 0; background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 5px;
+  font-size: 12.5px; font-weight: 500;
+  transition: background .12s, color .12s;
+}
+.writer-tb-btn:hover:not(:disabled) { background: color-mix(in oklab, var(--text) 8%, transparent); }
+.writer-tb-btn.is-active { background: color-mix(in oklab, var(--accent) 18%, transparent); color: var(--accent); }
+.writer-tb-btn:disabled { opacity: .35; cursor: not-allowed; }
+.writer-tb-btn i[data-lucide], .writer-tb-btn svg { width: 16px; height: 16px; }
+.writer-tb-select {
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12.5px;
+  cursor: pointer;
+  min-width: 96px;
+}
+.writer-tb-select:hover { border-color: color-mix(in oklab, var(--text) 22%, transparent); }
+
+/* Editor scroll area + paper A4 (estilo Google Docs)
+   Página com dimensões reais de A4 (210×297mm) e margem interna de 25.4mm
+   (1 polegada, padrão Word/Google Docs). Background do scroll fica cinza
+   escuro pra a folha "flutuar", com sombra. */
+.writer-editor-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 32px 24px 120px;
+  display: flex; justify-content: center;
+  background: var(--bg-elevated, color-mix(in oklab, var(--text) 8%, transparent));
+}
+:root[data-theme="light"] .writer-editor-scroll { background: #e6e8ec; }
+:root:not([data-theme="light"]) .writer-editor-scroll { background: color-mix(in oklab, #0a0a0a 60%, var(--bg)); }
+
+.writer-editor-paper {
+  --page-h: 297mm;
+  --gap-h: 34px;                 /* espaço "entre folhas" */
+  width: 210mm;
+  min-height: var(--page-h);
+  /* Página SEMPRE branca — comportamento WYSIWYG. O usuário está editando
+     uma folha A4 que vai virar PDF/DOCX; deixar dark quebra o preview
+     visual e o export sai diferente do que aparece na tela. UI ao redor
+     respeita o tema (topbar, sidebar), a folha em si não. */
+  color: #202124;
+  border: 0;
+  border-radius: 2px;
+  padding: 25.4mm 25.4mm;
+  margin: 0 auto;
+  box-sizing: border-box;
+  position: relative;
+}
+/* Força o texto do ProseMirror sempre em cor de página, ignora dark mode */
+.writer-editor-paper #writer-editor-mount .ProseMirror {
+  color: #202124 !important;
+}
+.writer-editor-paper #writer-editor-mount .ProseMirror h1,
+.writer-editor-paper #writer-editor-mount .ProseMirror h2,
+.writer-editor-paper #writer-editor-mount .ProseMirror h3 {
+  color: #202124 !important;
+}
+
+/* ── Páginas A4 empilhadas ──
+   O `.writer-editor-paper` fica com background em repeating-linear-gradient:
+   folha branca de 297mm + gap de 34px transparente entre folhas + sombra no
+   fim da folha atual e no topo da próxima pra dar profundidade tipo Google
+   Docs. Content ainda flui continuamente sobre os gaps (limitação — pagination
+   REAL exigiria plugin PM), mas visualmente cada folha vira uma unidade
+   distinta com espaço entre elas.
+   `--kd-pages-h` é setado por JS quando o content ultrapassa 297mm — garante
+   que o paper seja alto o suficiente pra caber todas as folhas + gaps. */
+.writer-editor-paper {
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      /* Folha (297mm de branco) */
+      #ffffff 0 var(--page-h),
+      /* Sombra "duplex" no fim da folha */
+      rgba(0,0,0,.10) var(--page-h) calc(var(--page-h) + 1px),
+      rgba(0,0,0,.03) calc(var(--page-h) + 1px) calc(var(--page-h) + 4px),
+      /* Gap entre folhas — mostra o bg do scroll (dark/light) */
+      transparent calc(var(--page-h) + 4px) calc(var(--page-h) + var(--gap-h) - 4px),
+      /* Leve fade no topo da próxima folha */
+      rgba(0,0,0,.03) calc(var(--page-h) + var(--gap-h) - 4px) calc(var(--page-h) + var(--gap-h))
+    );
+  /* Drop-shadow em cada "folha" via filter (pega cada bloco branco no gradient) */
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,.06)) drop-shadow(0 4px 12px rgba(0,0,0,.10));
+}
+/* Label "Página N" injetado por JS no meio do gap entre folhas.
+   Fica FORA do paper (na margem direita, no scroll area) pra não sobrepor
+   nenhum texto do documento. Transparente pra cliques. */
+.kd-page-label {
+  position: absolute;
+  right: -80px;
+  transform: translateY(-50%);
+  font-size: 10px; font-weight: 600;
+  color: color-mix(in oklab, var(--text) 55%, transparent);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  pointer-events: none;
+  z-index: 2;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: transparent;
+  white-space: nowrap;
+}
+:root[data-theme="light"] .kd-page-label { color: #6b6b6b; }
+/* Em telas apertadas (< 1100px) esconde o label — não tem espaço na margem */
+@media (max-width: 1100px) {
+  .kd-page-label { display: none; }
+}
+
+/* Se a viewport for menor que a largura da folha (~794px), força escala
+   proporcional pra não ter scroll horizontal desagradável. */
+@media (max-width: 900px) {
+  .writer-editor-scroll { padding: 16px 8px 80px; }
+  .writer-editor-paper {
+    width: 100%;
+    max-width: 210mm;
+    padding: 16mm 14mm;
+    min-height: 60vh;
+  }
+}
+
+/* ProseMirror / Tiptap conteúdo — tipografia estilo A4/Word/Google Docs.
+   Arial 11pt (~14.6px) com line-height 1.5, altura mínima cobre a página. */
+#writer-editor-mount .ProseMirror {
+  outline: 0;
+  color: var(--text);
+  font-size: 11pt;
+  line-height: 1.5;
+  font-family: Arial, 'Liberation Sans', 'DejaVu Sans', sans-serif;
+  /* Deixa o cursor ir até o final do paper mesmo com pouco texto */
+  min-height: calc(297mm - 2 * 25.4mm);
+}
+#writer-editor-mount .ProseMirror > *:first-child { margin-top: 0; }
+/* Tamanhos alinhados com Google Docs defaults (H1=20pt, H2=16pt, H3=14pt). */
+#writer-editor-mount .ProseMirror h1 {
+  font-size: 20pt; font-weight: 400;
+  line-height: 1.3;
+  margin: 20pt 0 6pt;
+  color: color-mix(in oklab, var(--text) 90%, transparent);
+}
+#writer-editor-mount .ProseMirror h2 {
+  font-size: 16pt; font-weight: 400;
+  line-height: 1.3;
+  margin: 18pt 0 4pt;
+  color: color-mix(in oklab, var(--text) 90%, transparent);
+}
+#writer-editor-mount .ProseMirror h3 {
+  font-size: 14pt; font-weight: 400;
+  line-height: 1.3;
+  margin: 16pt 0 4pt;
+  color: color-mix(in oklab, var(--text) 90%, transparent);
+}
+#writer-editor-mount .ProseMirror p { margin: 0 0 8pt; }
+#writer-editor-mount .ProseMirror ul,
+#writer-editor-mount .ProseMirror ol { margin: 8px 0; padding-left: 26px; }
+#writer-editor-mount .ProseMirror li { margin: 3px 0; }
+#writer-editor-mount .ProseMirror li > p { margin: 0; }
+#writer-editor-mount .ProseMirror blockquote {
+  border-left: 3px solid color-mix(in oklab, var(--accent) 60%, transparent);
+  margin: 14px 0;
+  padding: 6px 16px;
+  color: var(--text-2);
+  background: color-mix(in oklab, var(--accent) 6%, transparent);
+  border-radius: 0 6px 6px 0;
+}
+#writer-editor-mount .ProseMirror code {
+  background: color-mix(in oklab, var(--text) 8%, transparent);
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+  font-size: .9em;
+}
+#writer-editor-mount .ProseMirror pre {
+  background: color-mix(in oklab, var(--text) 6%, transparent);
+  border: 1px solid var(--hairline);
+  padding: 14px 16px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 12px 0;
+}
+#writer-editor-mount .ProseMirror pre code {
+  background: transparent; padding: 0; border-radius: 0;
+  font-size: 13px;
+}
+#writer-editor-mount .ProseMirror a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--accent) 45%, transparent);
+  text-underline-offset: 2px;
+}
+#writer-editor-mount .ProseMirror hr {
+  border: 0;
+  height: 1px;
+  background: var(--hairline);
+  margin: 24px 0;
+}
+#writer-editor-mount .ProseMirror img {
+  max-width: 100%; height: auto;
+  border-radius: 6px;
+  display: block;
+  margin: 8px 0;
+}
+#writer-editor-mount .ProseMirror table {
+  border-collapse: collapse;
+  margin: 12px 0;
+  overflow: hidden;
+  table-layout: fixed;
+  width: 100%;
+}
+#writer-editor-mount .ProseMirror table td,
+#writer-editor-mount .ProseMirror table th {
+  border: 1px solid var(--hairline);
+  padding: 8px 10px;
+  vertical-align: top;
+  min-width: 60px;
+  position: relative;
+}
+#writer-editor-mount .ProseMirror table th {
+  background: color-mix(in oklab, var(--text) 5%, transparent);
+  font-weight: 600;
+}
+#writer-editor-mount .ProseMirror .selectedCell {
+  background: color-mix(in oklab, var(--accent) 15%, transparent);
+}
+#writer-editor-mount .ProseMirror-focused { outline: 0; }
+#writer-editor-mount .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--text-2);
+  opacity: .6;
+  float: left;
+  pointer-events: none;
+  height: 0;
+}
 
 
 

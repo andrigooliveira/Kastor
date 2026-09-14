@@ -94,7 +94,7 @@ const PAGE_TO_PATH = {
   users:        '/users',
   integrations: '/integrations',
   profile:      '/profile',
-  docs:         '/docs',
+  help:         '/help',
   trash:        '/trash',
   recurringDemands: '/recurring-demands',
   clientsModels: '/clients/models',
@@ -105,6 +105,8 @@ const PAGE_TO_PATH = {
   dashboards:   '/dashboards',
   performance:  '/performance',
   gallery:      '/gallery'
+  // Kastor Docs (writer) NÃO tá aqui — é uma página standalone servida em /writer
+  // por um HTML próprio (public/writer.html). Não passa pelo SPA principal.
 };
 const PATH_TO_PAGE = Object.fromEntries(Object.entries(PAGE_TO_PATH).map(([k, v]) => [v, k]));
 
@@ -225,14 +227,16 @@ function parseRoute(path) {
     if ((mm = p.match(/^\/knowledge-base\/([a-z0-9-]+)\/edit$/))) return { page: 'post-editor', op: 'edit', postId: extractRouteId(mm[1]) };
     if ((mm = p.match(/^\/knowledge-base\/([a-z0-9-]+)$/))) return { page: 'kb', postId: extractRouteId(mm[1]) };
   }
-  // Docs (nativos): /docs = manual home; /docs/manual/:sec e /docs/erros/:sec
-  if (p === '/docs')                              return { page: 'docs', doc: 'manual' };
-  if (p === '/docs/manual')                       return { page: 'docs', doc: 'manual' };
-  if (p === '/docs/erros')                        return { page: 'docs', doc: 'erros' };
+  // Documentação da plataforma (help): /help = manual home; /help/manual/:sec e /help/erros/:sec.
+  // NOTA: /docs foi realocada pro Kastor Docs (editor colaborativo standalone), servida
+  // pelo próprio server em public/writer.html. Não passa por este roteador SPA.
+  if (p === '/help')                              return { page: 'help', doc: 'manual' };
+  if (p === '/help/manual')                       return { page: 'help', doc: 'manual' };
+  if (p === '/help/erros')                        return { page: 'help', doc: 'erros' };
   {
     let mm;
-    if ((mm = p.match(/^\/docs\/manual\/([a-z0-9-]+)$/))) return { page: 'docs', doc: 'manual', section: mm[1] };
-    if ((mm = p.match(/^\/docs\/erros\/([a-z0-9-]+)$/)))  return { page: 'docs', doc: 'erros',  section: mm[1] };
+    if ((mm = p.match(/^\/help\/manual\/([a-z0-9-]+)$/))) return { page: 'help', doc: 'manual', section: mm[1] };
+    if ((mm = p.match(/^\/help\/erros\/([a-z0-9-]+)$/)))  return { page: 'help', doc: 'erros',  section: mm[1] };
   }
   if (PATH_TO_PAGE[p]) return { page: PATH_TO_PAGE[p] };
   let m;
@@ -1835,7 +1839,7 @@ function cmdkActions() {
     { icon: 'list-checks',  label: 'Ir para Recorrentes · Listas',  kind: 'Navegar',  run: () => { goPage('recurring'); setTimeout(() => typeof setRecurringTab === 'function' && setRecurringTab('listas'), 30); } },
     { icon: 'file-text',    label: 'Ir para Templates',             kind: 'Navegar',  run: () => goPage('templates') },
     { icon: 'user-circle',  label: 'Ir para Perfil',                kind: 'Navegar',  run: () => goPage('profile') },
-    { icon: 'info',         label: 'Ir para Documentação',          kind: 'Navegar',  run: () => goPage('docs') },
+    { icon: 'info',         label: 'Ir para Documentação',          kind: 'Navegar',  run: () => goPage('help') },
   ];
   // Usuários: visível pra todos.
   acts.push({ icon: 'users',    label: 'Ir para Usuários',     kind: 'Navegar', run: () => goPage('users') });
@@ -3402,7 +3406,7 @@ function dismissWelcomeBanner() {
 }
 function openDocsFromWelcome() {
   dismissWelcomeBanner();
-  goPage('docs');
+  goPage('help');
 }
 
 /* ─── TEMA (light/dark) ─── */
@@ -4318,7 +4322,7 @@ const PAGE_TITLES = {
   clients: 'Clientes', projects: 'Projetos', flows: 'Fluxos de Demanda',
   workspaces: 'Squads', users: 'Usuários', profile: 'Meu Perfil',
   analytics: 'Análises', templates: 'Templates', integrations: 'Integrações', agenda: 'Agenda',
-  recurring: 'Listas de tarefas', gallery: 'Galeria', docs: 'Documentação', clientsModels: 'Modelos de Cliente',
+  recurring: 'Listas de tarefas', gallery: 'Galeria', help: 'Documentação', clientsModels: 'Modelos de Cliente',
   trash: 'Lixeira', recurringDemands: 'Demandas Recorrentes',
   devtools: 'Dev Tools', passwords: 'Cofre de Senhas', kb: 'Base de conhecimento',
   forms: 'Formulários', dashboards: 'Dashboards', performance: 'Performance',
@@ -4449,7 +4453,7 @@ const DEVTOOLS_GROUPS = [
     links: [
       { label: 'Projetos Cadastrados', path: '/projects',        icon: 'folder-tree', desc: 'Listagem global de projetos, com filtros por cliente/situação.' },
       { label: 'Modelos de Fluxo',     path: '/clients/models',  icon: 'layers',      desc: 'Biblioteca de modelos aplicáveis a novos clientes.' },
-      { label: 'Códigos de Erro',      path: '/docs/Codigos-de-Erro.html', icon: 'alert-circle', desc: 'Referência completa dos códigos HTTP retornados pelo backend + erros específicos do cofre e da biometria.' },
+      { label: 'Códigos de Erro',      path: '/help/Codigos-de-Erro.html', icon: 'alert-circle', desc: 'Referência completa dos códigos HTTP retornados pelo backend + erros específicos do cofre e da biometria.' },
     ]
   },
   {
@@ -4518,15 +4522,16 @@ function devToolsOpen(evt, path) {
   history.pushState(null, '', path);
   applyRoute();
 }
-/* ─── DOCS NATIVAS ───
+/* ─── HELP NATIVA ───
    Substitui o iframe antigo — o HTML do doc é fetchado, o `<style>` extraído
    e o body injetado em Shadow DOM (isolamento perfeito de estilos). A
    navegação interna (cards, prev/next, "Todos os tópicos", cross-doc)
-   passa a usar rotas SPA `/docs/manual/:sec` e `/docs/erros/:sec` — a URL
-   é a fonte da verdade, deep-links funcionam nativamente. */
+   passa a usar rotas SPA `/help/manual/:sec` e `/help/erros/:sec` — a URL
+   é a fonte da verdade, deep-links funcionam nativamente.
+   NOTA: renomeado de /docs pra /help — /docs agora é o Kastor Docs (editor). */
 const DOCS_MAP = {
-  manual: { url: '/docs/Manual-do-Usuario.html', title: 'Manual do Usuário' },
-  erros:  { url: '/docs/Codigos-de-Erro.html',   title: 'Códigos de Erro' }
+  manual: { url: '/help/Manual-do-Usuario.html', title: 'Manual do Usuário' },
+  erros:  { url: '/help/Codigos-de-Erro.html',   title: 'Códigos de Erro' }
 };
 const _docsCache = {}; // { key: { style, body, initialBodyClass } }
 async function _fetchDocContent(key) {
@@ -4561,11 +4566,11 @@ async function renderDocsFromRoute() {
   const path = location.pathname;
   let key = 'manual', section = null;
   let m;
-  if ((m = path.match(/^\/docs\/manual\/([a-z0-9-]+)$/))) { key = 'manual'; section = m[1]; }
-  else if (path === '/docs/manual') { key = 'manual'; }
-  else if ((m = path.match(/^\/docs\/erros\/([a-z0-9-]+)$/))) { key = 'erros'; section = m[1]; }
-  else if (path === '/docs/erros') { key = 'erros'; }
-  else if (path === '/docs' || path === '/docs/') { key = 'manual'; }
+  if ((m = path.match(/^\/help\/manual\/([a-z0-9-]+)$/))) { key = 'manual'; section = m[1]; }
+  else if (path === '/help/manual') { key = 'manual'; }
+  else if ((m = path.match(/^\/help\/erros\/([a-z0-9-]+)$/))) { key = 'erros'; section = m[1]; }
+  else if (path === '/help/erros') { key = 'erros'; }
+  else if (path === '/help' || path === '/help/') { key = 'manual'; }
   await _mountDoc(container, key, section);
 }
 async function _mountDoc(container, key, section) {
@@ -4629,14 +4634,14 @@ function _wireDocShadowNav(shadow, container, docKey) {
   shadow.querySelectorAll('.doc-card[data-section]').forEach(c => {
     c.addEventListener('click', (e) => {
       e.preventDefault();
-      _navDoc(`/docs/${docKey}/${c.dataset.section}`);
+      _navDoc(`/help/${docKey}/${c.dataset.section}`);
     });
   });
   // Botão "← Todos os tópicos"
   shadow.querySelectorAll('.home-crumb').forEach(b => {
     b.addEventListener('click', (e) => {
       e.preventDefault();
-      _navDoc(`/docs/${docKey}`);
+      _navDoc(`/help/${docKey}`);
     });
   });
   // Prev/Next
@@ -4645,7 +4650,7 @@ function _wireDocShadowNav(shadow, container, docKey) {
       const target = b.dataset.target;
       if (!target) return;
       e.preventDefault();
-      _navDoc(`/docs/${docKey}/${target}`);
+      _navDoc(`/help/${docKey}/${target}`);
     });
   });
   // Search (só manual) — só filtra local, sem router
@@ -4680,7 +4685,7 @@ function _wireDocShadowNav(shadow, container, docKey) {
     a.addEventListener('click', (e) => {
       e.preventDefault();
       const s = a.getAttribute('href').slice(1);
-      if (s) _navDoc(`/docs/${docKey}/${s}`);
+      if (s) _navDoc(`/help/${docKey}/${s}`);
     });
   });
   // Cross-doc links: "Codigos-de-Erro.html", "Manual-do-Usuario.html", com ou sem #hash
@@ -4690,7 +4695,7 @@ function _wireDocShadowNav(shadow, container, docKey) {
       const href = a.getAttribute('href');
       const [file, sec] = href.split('#');
       const otherKey = file.startsWith('Codigos') ? 'erros' : 'manual';
-      _navDoc(sec ? `/docs/${otherKey}/${sec}` : `/docs/${otherKey}`);
+      _navDoc(sec ? `/help/${otherKey}/${sec}` : `/help/${otherKey}`);
     });
   });
 }
@@ -4770,7 +4775,7 @@ function renderCurrent() {
     case 'dashboards': renderDashboards(); break;
     case 'post-editor': renderPostEditorFromRoute(); break;
     case 'demand-detail': if (detailId) renderDetail(); break;
-    case 'docs':       renderDocsFromRoute(); break;
+    case 'help':       renderDocsFromRoute(); break;
     case 'clients': {
       // Decide entre grid, detalhe de cliente ou detalhe de projeto sem perder estado
       // quando refreshData() roda com um modal aberto (URL temporariamente em /projects/<id>/edit).
@@ -11593,7 +11598,7 @@ function renderDetail() {
       if (a.type && a.type.startsWith('image/')) {
         return `<div class="comment-img-wrap"><img class="comment-img" loading="lazy" decoding="async" src="${a.data}" alt="${esc(a.name)}" onclick="window.open(this.src,'_blank')"></div>`;
       }
-      return `<a class="comment-file" href="${a.data}" download="${esc(a.name)}" title="Baixar ${esc(a.name)}"><i data-lucide="paperclip" class="ic-sm"></i> ${esc(a.name)}</a>`;
+      return `<a class="comment-file" href="${esc(attDownloadUrl(a.data, a.name))}" download="${esc(a.name)}" title="Baixar ${esc(a.name)}"><i data-lucide="paperclip" class="ic-sm"></i> ${esc(a.name)}</a>`;
     }).join('');
     // Header (avatar + nome + ações) numa LINHA horizontal centralizada.
     // Corpo (texto/anexos) numa linha abaixo com padding-left pra alinhar
@@ -13576,6 +13581,19 @@ function attIcon(kind) {
     link: 'link', other: 'file'
   }[kind] || 'file';
 }
+/* URL de download que FORÇA o browser a baixar o arquivo (Content-Disposition:
+   attachment) com o NOME ORIGINAL preservado (espaços, acentos).
+   - `/uploads/xxx` → adiciona `?dl=1&name=<originalName>`. Server intercepta e
+     seta os headers corretos, evitando que browsers/plugins interpretem PPTX/PDF
+     como inline e corrompam o binário (bug reportado antes desta função existir).
+   - `data:` URIs → passa direto (browser lida sozinho).
+   - URLs externas → passa direto (não temos controle dos headers). */
+function attDownloadUrl(src, name) {
+  const s = String(src || '');
+  if (!s.startsWith('/uploads/')) return s;
+  const q = 'dl=1' + (name ? '&name=' + encodeURIComponent(name) : '');
+  return s + (s.includes('?') ? '&' : '?') + q;
+}
 function renderDemandAttList(list, withDelete) {
   if (!list || !list.length) return '<div class="hours-empty" style="text-align:left">Nenhum arquivo anexado.</div>';
   return list.map((a, i) => {
@@ -13597,13 +13615,14 @@ function renderDemandAttList(list, withDelete) {
     const thumbOrIcon = kind === 'image'
       ? `<img loading="lazy" decoding="async" src="${a.data || a.url}" class="demand-att-thumb" onclick="${openCall}" style="cursor:zoom-in">`
       : `<i data-lucide="${attIcon(kind)}" class="ic-sm" style="color:var(--accent-text);${previewable ? 'cursor:pointer' : ''}" ${openCall ? `onclick="${openCall}"` : ''}></i>`;
+    const dlSrc = esc(attDownloadUrl(a.data || a.url || '', a.name));
     const nameEl = previewable
       ? `<a href="#" class="demand-att-name" onclick="event.preventDefault();${openCall}">${nameEsc}</a>`
-      : `<a href="${src}" download="${nameEsc}" class="demand-att-name">${nameEsc}</a>`;
+      : `<a href="${dlSrc}" download="${nameEsc}" class="demand-att-name">${nameEsc}</a>`;
     return `<div class="demand-att-item" data-id="${esc(a.id)}">
       ${thumbOrIcon}
       ${nameEl}
-      ${previewable ? `<a href="${src}" download="${nameEsc}" class="detail-icon-btn" title="Baixar"><i data-lucide="download" class="ic-sm"></i></a>` : ''}
+      ${previewable ? `<a href="${dlSrc}" download="${nameEsc}" class="detail-icon-btn" title="Baixar"><i data-lucide="download" class="ic-sm"></i></a>` : ''}
       ${withDelete ? `<button class="detail-icon-btn danger" title="Remover" onclick="removeDetailAttachment('${esc(a.id)}')"><i data-lucide="x" class="ic-sm"></i></button>` : `<button class="detail-icon-btn danger" title="Remover" onclick="removeFormAttachment('${esc(a.id)}', 'f-attachments-list')"><i data-lucide="x" class="ic-sm"></i></button>`}
     </div>`;
   }).join('');
@@ -14585,6 +14604,9 @@ function openAttPreview(src, type, name, opts) {
   // Se não temos type, tenta inferir por extensão do nome (attachments antigos).
   let kind = attPreviewKind(type);
   if (kind === 'other') kind = attKindFromName(name);
+  // URL de download força attachment header + nome original (via ?dl=1).
+  // `src` continua sendo usado no preview inline (não força download).
+  const dlSrc = esc(attDownloadUrl(src, name));
   const ticket = { aborted: false };
   if (_attPreviewTicket) _attPreviewTicket.aborted = true;
   _attPreviewTicket = ticket;
@@ -14602,7 +14624,7 @@ function openAttPreview(src, type, name, opts) {
     <div class="att-preview-head">
       <span class="att-preview-name">${esc(name || 'Anexo')}</span>
       ${zoomToolbar}
-      <a href="${src}" download="${esc(name || '')}" class="detail-icon-btn" title="Baixar"><i data-lucide="download" class="ic-sm"></i></a>
+      <a href="${dlSrc}" download="${esc(name || '')}" class="detail-icon-btn" title="Baixar"><i data-lucide="download" class="ic-sm"></i></a>
       <button class="detail-icon-btn" onclick="closeAttPreview()" title="Fechar"><i data-lucide="x" class="ic-sm"></i></button>
     </div>`;
   const loadingBody = `<div class="att-preview-body att-preview-loading" id="att-preview-body">
@@ -14633,7 +14655,7 @@ function openAttPreview(src, type, name, opts) {
         <i data-lucide="${attIcon(kind)}" class="ic-lg"></i>
         <div class="att-preview-unsupported-title">${esc(name || 'Arquivo')}</div>
         <div class="att-preview-unsupported-sub">Não deu pra pré-visualizar este ${kind === 'pdf' ? 'PDF' : kind === 'doc' ? 'documento' : 'slide'} aqui — provavelmente o formato tem algo que o viewer não suporta. Baixe pra abrir na sua máquina.</div>
-        <a class="btn btn-primary" href="${src}" download="${esc(name || '')}"><i data-lucide="download" class="ic-sm"></i> Baixar arquivo</a>
+        <a class="btn btn-primary" href="${dlSrc}" download="${esc(name || '')}"><i data-lucide="download" class="ic-sm"></i> Baixar arquivo</a>
       </div>`;
       paintIcons();
     }).then(() => {
@@ -14653,7 +14675,7 @@ function openAttPreview(src, type, name, opts) {
         <i data-lucide="${attIcon(kind)}" class="ic-lg"></i>
         <div class="att-preview-unsupported-title">${esc(name || 'Arquivo')}</div>
         <div class="att-preview-unsupported-sub">Planilhas não têm viewer inline aqui ainda. Baixe pra abrir na sua máquina.</div>
-        <a class="btn btn-primary" href="${src}" download="${esc(name || '')}"><i data-lucide="download" class="ic-sm"></i> Baixar arquivo</a>
+        <a class="btn btn-primary" href="${dlSrc}" download="${esc(name || '')}"><i data-lucide="download" class="ic-sm"></i> Baixar arquivo</a>
       </div></div>`;
     }
   } else {
@@ -14686,7 +14708,7 @@ function refreshFormAttList(listId) {
 }
 function readDemandFiles(files, isImage, listId) {
   [...files].forEach(file => {
-    if (file.size > 50 * 1024 * 1024) { toast('Arquivo "' + file.name + '" excede 50 MB.', 'error'); return; }
+    if (file.size > 150 * 1024 * 1024) { toast('Arquivo "' + file.name + '" excede 150 MB.', 'error'); return; }
     const reader = new FileReader();
     reader.onload = e => {
       const finish = (data, type) => {
@@ -14731,7 +14753,7 @@ async function handleDetailAttachmentFiles(ev) {
   if (!files.length) return;
   let addedCount = 0;
   for (const file of files) {
-    if (file.size > 50 * 1024 * 1024) { toast('Arquivo "' + file.name + '" excede 50 MB.', 'error'); continue; }
+    if (file.size > 150 * 1024 * 1024) { toast('Arquivo "' + file.name + '" excede 150 MB.', 'error'); continue; }
     // Re-lookup a cada iteração — patchDemand troca a referência em `demands`,
     // então o `d` capturado do início ficaria com o attachments desatualizado
     // e cada upload sobrescreveria os anteriores.
@@ -14760,7 +14782,7 @@ async function handleDetailAttachmentImages(ev) {
   if (!files.length) return;
   let addedCount = 0;
   for (const file of files) {
-    if (file.size > 50 * 1024 * 1024) { toast('Arquivo "' + file.name + '" excede 50 MB.', 'error'); continue; }
+    if (file.size > 150 * 1024 * 1024) { toast('Arquivo "' + file.name + '" excede 150 MB.', 'error'); continue; }
     const d = demandById(detailId);
     if (!d) return;
     await new Promise(resolve => {
@@ -15794,7 +15816,7 @@ function renderPendingFiles() {
 function removePending(i) { pendingAttachments.splice(i, 1); renderPendingFiles(); }
 function readFilesAsBase64(files, isImage) {
   [...files].forEach(file => {
-    if (file.size > 50 * 1024 * 1024) { toast('Arquivo "' + file.name + '" excede 50 MB.', 'error'); return; }
+    if (file.size > 150 * 1024 * 1024) { toast('Arquivo "' + file.name + '" excede 150 MB.', 'error'); return; }
     const reader = new FileReader();
     reader.onload = e => {
       if (isImage) {
@@ -16161,7 +16183,7 @@ function removeEditAtt(cid, idx) {
 function handleEditFiles(ev, cid) {
   const el = document.getElementById('comment-' + cid);
   [...ev.target.files].forEach(file => {
-    if (file.size > 50 * 1024 * 1024) { toast('"' + file.name + '" excede 50 MB.', 'error'); return; }
+    if (file.size > 150 * 1024 * 1024) { toast('"' + file.name + '" excede 150 MB.', 'error'); return; }
     const reader = new FileReader();
     reader.onload = e => {
       const atts = JSON.parse(el.dataset.editAtts || '[]');
@@ -16182,7 +16204,7 @@ function handleEditFiles(ev, cid) {
 function handleEditImages(ev, cid) {
   const el = document.getElementById('comment-' + cid);
   [...ev.target.files].forEach(file => {
-    if (file.size > 50 * 1024 * 1024) { toast('"' + file.name + '" excede 50 MB.', 'error'); return; }
+    if (file.size > 150 * 1024 * 1024) { toast('"' + file.name + '" excede 150 MB.', 'error'); return; }
     const reader = new FileReader();
     reader.onload = e => {
       const img = new Image();

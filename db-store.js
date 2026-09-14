@@ -26,7 +26,12 @@ const ENTITY_TYPES = [
   'recurrings', 'listas', 'demandTypes', 'googleEvents', 'tasks',
   'passwords', 'passwordFolders', 'passwordAudits', 'posts',
   'discordChannels',
-  'formTemplates', 'formResponses', 'dashboards'
+  'formTemplates', 'formResponses', 'dashboards',
+  // Kastor Docs — editor de texto colaborativo interno. Cada writerDocument
+  // guarda { id, workspaceId, title, icon, ownerId, permissions[], content (PM JSON),
+  // updatedAt, createdAt, archived, deletedAt }. Conteúdo colaborativo (Yjs
+  // binary) virá em tabela dedicada quando entrar Fase 2 — por ora JSON serve.
+  'writerDocuments'
 ];
 
 function createStore(config = {}) {

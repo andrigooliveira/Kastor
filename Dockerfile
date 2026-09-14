@@ -43,6 +43,11 @@ RUN npm install --omit=dev --no-audit --no-fund
 # (node_modules local, .env, data/, .git, etc — ver .dockerignore).
 COPY . .
 
+# Build do bundle do editor (Kastor Docs / Tiptap) — precisa vir ANTES do
+# minify porque gera public/vendor/writer.bundle.js. É o único bundle que
+# temos: o resto (app.js) é single-file legado que só passa por minify.
+RUN node scripts/build-writer.js
+
 # Minifica app.js e style.css IN-PLACE via esbuild (source original
 # permanece no git, só a imagem Docker fica com o minified). Em conjunto
 # com o middleware compression() no server, o app.js sai de 1.1MB → ~180KB

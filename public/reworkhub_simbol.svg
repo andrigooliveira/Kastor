@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Camada_2" data-name="Camada 2" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 602.72 602.72">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: url(#Gradiente_sem_nome_103-2);
+      }
+
+      .cls-2 {
+        fill: url(#Gradiente_sem_nome_103-3);
+      }
+
+      .cls-3 {
+        fill: url(#Gradiente_sem_nome_103);
+      }
+
+      .cls-4 {
+        fill: url(#Gradiente_sem_nome_103-4);
+      }
+    </style>
+    <linearGradient id="Gradiente_sem_nome_103" data-name="Gradiente sem nome 103" x1="22.73" y1="804.2" x2="729.27" y2="255.4" gradientTransform="translate(465.21 -192.7) rotate(45)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7a00ff"/>
+      <stop offset=".99" stop-color="#9300ff"/>
+    </linearGradient>
+    <linearGradient id="Gradiente_sem_nome_103-2" data-name="Gradiente sem nome 103" x1="-100.58" y1="645.45" x2="605.96" y2="96.65" gradientTransform="translate(-288.68 233.49) rotate(-45)" xlink:href="#Gradiente_sem_nome_103"/>
+    <linearGradient id="Gradiente_sem_nome_103-3" data-name="Gradiente sem nome 103" x1="-254.78" y1="446.93" x2="451.76" y2="-101.88" gradientTransform="translate(137.51 331.98) rotate(-135)" xlink:href="#Gradiente_sem_nome_103"/>
+    <linearGradient id="Gradiente_sem_nome_103-4" data-name="Gradiente sem nome 103" x1="-131.47" y1="605.68" x2="575.07" y2="56.88" gradientTransform="translate(891.4 -94.21) rotate(135)" xlink:href="#Gradiente_sem_nome_103"/>
+  </defs>
+  <g id="hub">
+    <g>
+      <path class="cls-3" d="M349.35,349.35h231.72v168.13c0,35.1-28.49,63.59-63.59,63.59h-104.54c-35.1,0-63.59-28.49-63.59-63.59v-168.13h0Z" transform="translate(-192.7 465.21) rotate(-45)"/>
+      <path class="cls-1" d="M21.65,349.35h231.72v168.13c0,35.1-28.49,63.59-63.59,63.59h-104.54c-35.1,0-63.59-28.49-63.59-63.59v-168.13h0Z" transform="translate(369.23 39.02) rotate(45)"/>
+      <path class="cls-2" d="M21.65,21.65h231.72v168.13c0,35.1-28.49,63.59-63.59,63.59h-104.54c-35.1,0-63.59-28.49-63.59-63.59V21.65h0Z" transform="translate(331.98 137.51) rotate(135)"/>
+      <path class="cls-4" d="M349.35,21.65h231.72v168.13c0,35.1-28.49,63.59-63.59,63.59h-104.54c-35.1,0-63.59-28.49-63.59-63.59V21.65h0Z" transform="translate(696.93 563.7) rotate(-135)"/>
+    </g>
+  </g>
+</svg>

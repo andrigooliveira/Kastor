@@ -1347,7 +1347,10 @@ app.use((req, res, next) => {
     "font-src 'self' data:",
     "img-src 'self' data: blob: https:",
     "media-src 'self' https: blob:",
-    "connect-src 'self' https://*.clarity.ms https://c.bing.com",
+    // Kastor Docs realtime abre ws:/wss: no MESMO host — 'self' já cobre em
+    // navegadores modernos, mas explicitamos ws://* wss://* pra garantir
+    // compatibilidade e evitar surpresas em CSP report-only.
+    "connect-src 'self' ws: wss: https://*.clarity.ms https://c.bing.com",
     // pdf.js sobe um Web Worker (usa blob: quando o worker é servido cross-origin).
     "worker-src 'self' blob:",
     `frame-src ${CSP_IFRAME_SRC}`,
@@ -1364,8 +1367,8 @@ app.use((req, res, next) => {
 });
 
 // Limite generoso só onde realmente há upload (anexos/avatares); resto é 200kb.
-// 75mb comporta arquivos até ~50MB depois do overhead do base64 (~33%) + metadados.
-const jsonLg = express.json({ limit: '75mb' });
+// 210mb comporta arquivos até ~150MB depois do overhead do base64 (~33%) + metadados.
+const jsonLg = express.json({ limit: '210mb' });
 const jsonSm = express.json({ limit: '200kb' });
 // Log de request leve: método, rota, status e duração das chamadas /api. Pula o
 // SSE (/api/stream, conexão longa) e os health checks (ruído). Ajuda a debugar prod.
@@ -1443,20 +1446,48 @@ const ALLOWED_MIME_EXT = {
   'text/csv':   'csv',
   'text/markdown': 'md',
 };
-// 25 MB por arquivo — cabe screenshots grandes e PDFs pequenos. O compress
-// client-side reduz a maioria pra <2MB, mas prints/PNGs sem compress podem passar.
-const UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
+// 150 MB por arquivo — cabe apresentações grandes com mídia, PDFs longos e
+// vídeos curtos. O compress client-side reduz a maioria pra <2MB, mas prints/
+// PNGs sem compress podem passar. Cliente checa 150MB também.
+// IMPORTANTE: `jsonLg` (limite do express.json em /api/uploads e /api/demands)
+// precisa ser >= UPLOAD_MAX_BYTES * 1.4 pra caber o overhead de base64 (~33%)
+// mais metadados; ver `express.json({ limit: '210mb' })` abaixo.
+const UPLOAD_MAX_BYTES = 150 * 1024 * 1024;
+
+// Mapa reverso: extensão → MIME canônico. Usado no fallback quando o browser
+// não manda um MIME reconhecível (comum em pptx/xlsx/docx no Windows, que
+// vêm como application/x-zip-compressed ou vazio porque são ZIPs por baixo).
+const EXT_TO_MIME = Object.entries(ALLOWED_MIME_EXT).reduce((acc, [m, e]) => {
+  if (!acc[e]) acc[e] = m; // primeiro MIME que bate — os modernos vêm primeiro no allowlist
+  return acc;
+}, {});
 
 function saveUploadFromDataUri(dataUri, originalName) {
   if (typeof dataUri !== 'string') return null;
-  const m = dataUri.match(/^data:([^;]+);base64,(.+)$/);
+  // `[^;]*` (não `+`) pra aceitar data URIs sem MIME (`data:;base64,...`) —
+  // alguns browsers mandam assim quando não identificam o tipo do arquivo.
+  const m = dataUri.match(/^data:([^;]*);base64,(.+)$/);
   if (!m) return null;
-  const mime = m[1].toLowerCase();
-  const ext = ALLOWED_MIME_EXT[mime];
-  if (!ext) return null; // MIME não permitido
+  let mime = (m[1] || '').toLowerCase();
+  let ext = ALLOWED_MIME_EXT[mime];
+  // Fallback pela extensão do nome original: se o browser mandou MIME estranho
+  // (ex.: pptx como application/x-zip-compressed) ou vazio, olha o ".ext" do
+  // nome pra descobrir o tipo. Preserva o comportamento anti-XSS: extensão só
+  // é aceita se estiver no allowlist reverso (EXT_TO_MIME), então .html/.svg
+  // continuam bloqueados.
+  if (!ext && originalName) {
+    const nameMatch = String(originalName).toLowerCase().match(/\.([a-z0-9]{1,10})$/);
+    const nameExt = nameMatch ? nameMatch[1] : null;
+    if (nameExt && EXT_TO_MIME[nameExt]) {
+      ext = nameExt;
+      if (!mime) mime = EXT_TO_MIME[nameExt];
+    }
+  }
+  if (!ext) return null;
   const buf = Buffer.from(m[2], 'base64');
   if (!buf.length || buf.length > UPLOAD_MAX_BYTES) return null;
-  // Nome sanitizado + extensão FORÇADA pelo MIME (ignora extensão original).
+  // Nome sanitizado + extensão FORÇADA (garante que browser reconheça o file
+  // no /uploads/ estático via mime lookup por extensão).
   const rawBase = String(originalName || 'file').replace(/\.[a-z0-9]{1,10}$/i, '');
   const safeBase = rawBase.replace(/[^\w.\-]/g, '_').slice(0, 80) || 'file';
   const filename = uid() + '-' + safeBase + '.' + ext;
@@ -1464,7 +1495,7 @@ function saveUploadFromDataUri(dataUri, originalName) {
   return {
     url: '/uploads/' + filename,
     name: originalName || (safeBase + '.' + ext),
-    type: mime,
+    type: mime || EXT_TO_MIME[ext] || 'application/octet-stream',
     size: buf.length
   };
 }
@@ -1491,7 +1522,34 @@ app.post('/api/uploads', (req, res, next) => requireAuth(req, res, next), rateLi
 });
 
 // Serve /uploads/* — só pra usuários autenticados (cookie httpOnly). Listing desativado.
-app.use('/uploads', requireAuth, express.static(UPLOADS_DIR, { index: false, dotfiles: 'deny' }));
+// Query `?dl=1&name=<original>` força o browser a baixar (Content-Disposition:
+// attachment) com o nome ORIGINAL do arquivo (preservando espaços/acentos via
+// RFC 5987). Sem essa flag, serve inline (comportamento default do express.static).
+// Isso resolve corrupção percebida em PPTX/PDF: sem attachment header + com
+// mime type incomum (ex.: pptx = application/vnd.openxmlformats-...), alguns
+// browsers/plugins tentam abrir inline e re-interpretam o binário. Forçando
+// attachment + Content-Type explícito, o download vem 1:1 com o disco.
+app.use('/uploads', requireAuth, (req, res, next) => {
+  if (req.query.dl === '1') {
+    const rawName = String(req.query.name || '').slice(0, 255) || path.basename(req.path);
+    // Tira caracteres proibidos em nomes de arquivo (Windows + geral).
+    const cleanName = rawName.replace(/[<>:"/\\|?*\x00-\x1f]+/g, '_').replace(/[. ]+$/g, '');
+    const asciiFallback = cleanName.replace(/[^\x20-\x7e]/g, '_') || 'download';
+    // RFC 5987: filename* aceita UTF-8 (acentos/emojis); filename (ASCII) é fallback.
+    const encoded = encodeURIComponent(cleanName);
+    res.setHeader('Content-Disposition',
+      `attachment; filename="${asciiFallback.replace(/"/g, '')}"; filename*=UTF-8''${encoded}`);
+    // Content-Type explícito pela extensão do arquivo REAL no disco — evita que
+    // o mime lookup do send/express tropeçe em extensões incomuns.
+    const ext = path.extname(req.path).slice(1).toLowerCase();
+    const mime = EXT_TO_MIME[ext] || 'application/octet-stream';
+    res.setHeader('Content-Type', mime);
+    // Sem cache pra downloads (o arquivo em si já é imutável pelo hash no nome,
+    // mas com Content-Disposition dinâmico pelo nome, cachear é confuso).
+    res.setHeader('Cache-Control', 'private, no-cache');
+  }
+  next();
+}, express.static(UPLOADS_DIR, { index: false, dotfiles: 'deny' }));
 
 /* Avatar público de cliente — rota SEM auth, usada por:
    - Bot do Discord (baixa a imagem pra usar como avatar da persona por-cliente
@@ -2792,6 +2850,204 @@ app.get('/api/office-as-pdf', requireAuth, async (req, res) => {
   }
 });
 
+/* ── Conversão genérica de HTML → PDF/DOCX/ODT via LibreOffice ──
+   Escreve o HTML num arquivo temp e roda `soffice --convert-to <fmt>`. Mesmo
+   isolamento de profile + dedupe do office-as-pdf, mas com cache dinâmico
+   por (sha1(html) + fmt) — igual gera o mesmo output determinístico.
+   Usado pelo /api/writer/:id/export pra PDF/DOCX. */
+const DOC_EXPORT_CACHE_DIR = path.join(os.tmpdir(), 'kastor-doc-export');
+try { fs.mkdirSync(DOC_EXPORT_CACHE_DIR, { recursive: true }); } catch {}
+const _exportInFlight = new Map();
+async function convertHtmlWithSoffice(html, fmt) {
+  const validFmts = { pdf: 'pdf', docx: 'docx:MS Word 2007 XML', odt: 'odt' };
+  if (!validFmts[fmt]) throw new Error('Formato não suportado: ' + fmt);
+  const cacheKey = crypto.createHash('sha1').update(html + ':' + fmt).digest('hex');
+  const outPath = path.join(DOC_EXPORT_CACHE_DIR, cacheKey + '.' + fmt);
+  if (fs.existsSync(outPath)) return outPath;
+  let pending = _exportInFlight.get(cacheKey);
+  if (!pending) {
+    pending = new Promise((resolve, reject) => {
+      let workDir;
+      try { workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kastor-doc-')); }
+      catch (e) { return reject(e); }
+      const htmlPath = path.join(workDir, 'source.html');
+      try { fs.writeFileSync(htmlPath, html, 'utf8'); }
+      catch (e) { return reject(e); }
+      const soffice = findSoffice();
+      // Alguns filters aceitam "docx:MS Word 2007 XML" — o soffice permite via --convert-to.
+      const proc = spawn(soffice, ['--headless', '--norestore', '--convert-to', validFmts[fmt], '--outdir', workDir, htmlPath], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, HOME: workDir, TMPDIR: workDir }
+      });
+      let stderrBuf = '';
+      proc.stderr.on('data', d => { stderrBuf += d.toString(); });
+      proc.on('error', (err) => {
+        try { fs.rmSync(workDir, { recursive: true, force: true }); } catch {}
+        reject(new Error('LibreOffice não encontrado. (' + err.message + ')'));
+      });
+      proc.on('exit', (code) => {
+        if (code !== 0) {
+          try { fs.rmSync(workDir, { recursive: true, force: true }); } catch {}
+          return reject(new Error('LibreOffice exit ' + code + ' — ' + stderrBuf.slice(0, 400)));
+        }
+        try {
+          const files = fs.readdirSync(workDir).filter(f => f.toLowerCase().endsWith('.' + fmt));
+          if (!files.length) throw new Error('LibreOffice não gerou o arquivo esperado');
+          fs.copyFileSync(path.join(workDir, files[0]), outPath);
+        } catch (e) {
+          try { fs.rmSync(workDir, { recursive: true, force: true }); } catch {}
+          return reject(e);
+        }
+        try { fs.rmSync(workDir, { recursive: true, force: true }); } catch {}
+        resolve(outPath);
+      });
+    }).finally(() => _exportInFlight.delete(cacheKey));
+    _exportInFlight.set(cacheKey, pending);
+  }
+  return pending;
+}
+
+/* ── PM JSON → HTML "portable" (server-side) ──
+   Não é o mesmo _pmToHtmlBasic do client (que só produz fragment). Aqui geramos
+   um HTML COMPLETO com CSS embutido pra ficar bonito no PDF/DOCX gerado.
+   Usa fontes já instaladas no container (DejaVu, Liberation) — sem web fonts. */
+function _serverEscHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+function pmJsonToText(n) {
+  if (!n) return '';
+  if (Array.isArray(n)) return n.map(pmJsonToText).join('');
+  if (n.type === 'text') return n.text || '';
+  if (n.type === 'hardBreak') return '\n';
+  if (n.type === 'horizontalRule') return '\n———\n';
+  if (n.type === 'kastorAttachment') return `\n[anexo: ${n.attrs?.name || 'arquivo'}]\n`;
+  if (n.type === 'image') return '\n[imagem]\n';
+  const kids = (n.content || []).map(pmJsonToText).join('');
+  const isBlock = ['paragraph','heading','listItem','blockquote','codeBlock','tableRow'].includes(n.type);
+  return isBlock ? kids + '\n' : kids;
+}
+function pmJsonToFragment(n) {
+  if (!n) return '';
+  if (Array.isArray(n)) return n.map(pmJsonToFragment).join('');
+  if (n.type === 'text') {
+    let t = _serverEscHtml(n.text || '');
+    for (const m of (n.marks || [])) {
+      if (m.type === 'bold' || m.type === 'strong') t = `<strong>${t}</strong>`;
+      else if (m.type === 'italic' || m.type === 'em') t = `<em>${t}</em>`;
+      else if (m.type === 'underline') t = `<u>${t}</u>`;
+      else if (m.type === 'strike') t = `<s>${t}</s>`;
+      else if (m.type === 'code') t = `<code>${t}</code>`;
+      else if (m.type === 'link') t = `<a href="${_serverEscHtml(m.attrs?.href || '#')}">${t}</a>`;
+    }
+    return t;
+  }
+  const kids = pmJsonToFragment(n.content || []);
+  const alignAttr = n.attrs?.textAlign ? ` style="text-align:${_serverEscHtml(n.attrs.textAlign)}"` : '';
+  switch (n.type) {
+    case 'doc':          return kids;
+    case 'paragraph':    return `<p${alignAttr}>${kids || '&nbsp;'}</p>`;
+    case 'heading':      { const lvl = Math.min(6, Math.max(1, Number(n.attrs?.level || 1))); return `<h${lvl}${alignAttr}>${kids}</h${lvl}>`; }
+    case 'bulletList':   return `<ul>${kids}</ul>`;
+    case 'orderedList':  return `<ol>${kids}</ol>`;
+    case 'listItem':     return `<li>${kids}</li>`;
+    case 'blockquote':   return `<blockquote>${kids}</blockquote>`;
+    case 'codeBlock':    return `<pre><code>${kids}</code></pre>`;
+    case 'horizontalRule': return '<hr>';
+    case 'hardBreak':    return '<br>';
+    case 'table':        return `<table>${kids}</table>`;
+    case 'tableRow':     return `<tr>${kids}</tr>`;
+    case 'tableHeader':  return `<th>${kids}</th>`;
+    case 'tableCell':    return `<td>${kids}</td>`;
+    case 'image':        return `<img src="${_serverEscHtml(n.attrs?.src || '')}" alt="${_serverEscHtml(n.attrs?.alt || '')}">`;
+    case 'kastorAttachment': {
+      const a = n.attrs || {};
+      // Pra PDF/DOCX incluir a imagem real: se `url` for /uploads/…, precisamos
+      // servir com URL absoluta OU file:// path pra o LibreOffice fetchar.
+      // Como não temos host no server, resolvemos pra file:// se possível.
+      let src = a.url || '';
+      if (src.startsWith('/uploads/')) {
+        const local = path.join(__dirname, 'public', src);
+        if (fs.existsSync(local)) src = 'file://' + local.replace(/\\/g, '/');
+      }
+      if (a.isImage && src) {
+        return `<p><img src="${_serverEscHtml(src)}" alt="${_serverEscHtml(a.name || '')}" style="max-width:100%"></p>`;
+      }
+      // Card compacto pra PDF: só o nome + extensão
+      const ext = (a.name || '').split('.').pop().toUpperCase().slice(0, 5);
+      return `<p style="border:1px solid #ccc;padding:6px 10px;border-radius:6px;background:#f7f7f7"><strong>${_serverEscHtml(a.name || 'arquivo')}</strong> <span style="color:#888;font-size:11px">${_serverEscHtml(ext)}</span></p>`;
+    }
+    default: return kids;
+  }
+}
+function pmJsonToPortableHtml(doc, meta = {}) {
+  const title = meta.title || 'Documento';
+  const body = pmJsonToFragment(doc);
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>${_serverEscHtml(title)}</title>
+<style>
+  @page { size: A4; margin: 20mm 22mm; }
+  body { font-family: "Liberation Sans", "DejaVu Sans", Arial, sans-serif; font-size: 11pt; line-height: 1.5; color: #1a1a1a; }
+  h1 { font-size: 22pt; font-weight: 700; margin: 18pt 0 8pt; }
+  h2 { font-size: 16pt; font-weight: 700; margin: 14pt 0 6pt; }
+  h3 { font-size: 13pt; font-weight: 700; margin: 12pt 0 4pt; }
+  p  { margin: 5pt 0; }
+  ul, ol { margin: 6pt 0; padding-left: 22pt; }
+  li { margin: 2pt 0; }
+  blockquote { border-left: 3pt solid #7A00FF; padding: 4pt 12pt; margin: 8pt 0; color: #555; background: #f7f0ff; }
+  code { background: #f0f0f0; padding: 1pt 3pt; border-radius: 2pt; font-family: "DejaVu Sans Mono", Consolas, monospace; font-size: 10pt; }
+  pre { background: #f0f0f0; padding: 8pt 12pt; border-radius: 4pt; overflow-x: auto; }
+  pre code { background: transparent; padding: 0; }
+  a  { color: #7A00FF; text-decoration: underline; }
+  hr { border: 0; border-top: 1pt solid #ddd; margin: 12pt 0; }
+  table { border-collapse: collapse; width: 100%; margin: 8pt 0; }
+  th, td { border: 1pt solid #ccc; padding: 6pt 8pt; vertical-align: top; }
+  th { background: #f0f0f0; font-weight: 700; }
+  img { max-width: 100%; height: auto; }
+</style>
+</head><body>
+${body}
+</body></html>`;
+}
+
+// GET /api/writer/:id/export?format=pdf|docx|html|txt
+app.get('/api/writer/:id/export', requireAuth, async (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  if (!writerCanRead(req.user, doc)) return res.status(404).json({ error: 'Documento não encontrado' });
+  const format = String(req.query.format || 'pdf').toLowerCase();
+  const validFmts = new Set(['pdf', 'docx', 'html', 'txt']);
+  if (!validFmts.has(format)) return res.status(400).json({ error: 'Formato inválido: ' + format });
+  const baseName = (doc.title || 'documento').replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 80) || 'documento';
+  const filename = baseName + '.' + format;
+
+  try {
+    if (format === 'txt') {
+      const txt = pmJsonToText(doc.content || {});
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send(txt);
+    }
+    if (format === 'html') {
+      const html = pmJsonToPortableHtml(doc.content || {}, { title: doc.title });
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send(html);
+    }
+    // pdf / docx via LibreOffice
+    const html = pmJsonToPortableHtml(doc.content || {}, { title: doc.title });
+    const outPath = await convertHtmlWithSoffice(html, format);
+    const mime = format === 'pdf' ? 'application/pdf'
+                : format === 'docx' ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                : 'application/octet-stream';
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    fs.createReadStream(outPath).pipe(res);
+  } catch (e) {
+    console.error('[writer/export]', e.message);
+    res.status(500).json({ error: e.message || 'Falha ao exportar' });
+  }
+});
+
 /* ── Galeria de anexos — endpoint que agrega attachments de TODAS as demandas
    acessíveis pro usuário (respeitando workspaces/freelancer). Retorna binário
    (data) junto — assim a galeria fica confiável entre reloads sem precisar
@@ -2835,7 +3091,11 @@ app.get('/api/gallery', requireAuth, (req, res) => {
         name: a.name || '',
         type: a.type || '',
         size: a.size || 0,
-        url: a.url || null
+        // Anexos antigos guardam o path do arquivo no campo `data` (era base64 e
+        // foi migrado pra /uploads/<id> in-place, mas o field name ficou). Usa
+        // como fallback do url pra que a Galeria (e o Kastor Docs) consigam
+        // sempre resolver o arquivo.
+        url: a.url || (typeof a.data === 'string' && a.data.startsWith('/uploads/') ? a.data : null)
       };
       // Só inclui `data` (base64) quando não é metaOnly — é o pesado.
       if (!metaOnly && a.data) item.data = a.data;
@@ -2860,6 +3120,594 @@ app.get('/api/gallery', requireAuth, (req, res) => {
     });
   }
   res.json(out);
+});
+
+/* ───────────────────────────────────────────────────────────────
+   Kastor Docs — editor colaborativo interno (Fase 0/1: single-user)
+
+   Modelo: writerDocument = { id, workspaceId, title, icon, ownerId,
+   permissions:[{userId, role}], content (ProseMirror JSON), archived,
+   createdAt, updatedAt, deletedAt? }
+
+   Escopo por workspace (mesmo padrão de gallery/clients). Freelancer
+   não vê a página (freelancer-hide na nav) — mas ainda blindamos aqui.
+   Colaboração em tempo real (Yjs + WS) entra em Fase 2 — não altera
+   este contrato, só adiciona endpoint /api/writer/:id/token e serviço RT.
+   ─────────────────────────────────────────────────────────────── */
+/* Permissões finas: role hierarchy
+     owner    → tudo (compartilhar, apagar, editar meta)
+     editor   → edita conteúdo, comenta, exporta
+     commenter→ só comenta, exporta, lê
+     viewer   → só lê e exporta
+   Doc.restricted (default false): quando true, SÓ users em permissions[]
+   têm acesso — o filtro por workspace deixa de valer pra outsiders. */
+const WRITER_ROLE_RANK = { viewer: 1, commenter: 2, editor: 3, owner: 4 };
+function _writerRoleOf(user, doc) {
+  if (!user || !doc) return null;
+  if (user.isAdmin) return 'owner';
+  if (doc.ownerId === user.id) return 'owner';
+  const entry = (doc.permissions || []).find(p => p.userId === user.id);
+  if (entry) return entry.role || 'viewer';
+  // Sem entry: acesso "padrão" = editor pra membros do workspace
+  // (a menos que o doc esteja restrito, aí sem role vira nada)
+  if (doc.restricted) return null;
+  if (canAccessWs(user, doc.workspaceId)) return 'editor';
+  return null;
+}
+function writerCanRead(user, doc)   { if (!doc || doc.deletedAt) return false; return !!_writerRoleOf(user, doc); }
+function writerCanComment(user, doc){ const r = _writerRoleOf(user, doc); return r && WRITER_ROLE_RANK[r] >= WRITER_ROLE_RANK.commenter; }
+function writerCanWrite(user, doc)  {
+  if (!doc || doc.deletedAt) return false;
+  if (user.isFreelancer) return false;
+  const r = _writerRoleOf(user, doc);
+  return r && WRITER_ROLE_RANK[r] >= WRITER_ROLE_RANK.editor;
+}
+function writerCanShare(user, doc)  { return _writerRoleOf(user, doc) === 'owner'; }
+
+/* Preview curto (~180 chars) extraído do PM JSON — usado em thumbnails/lists. */
+function _writerContentPreview(content) {
+  if (!content) return '';
+  const text = pmJsonToText(content).replace(/\s+/g, ' ').trim();
+  return text.length > 180 ? text.slice(0, 178).trimEnd() + '…' : text;
+}
+/* "Snapshot" visual: HTML dos primeiros nodes do doc, renderizado no cliente
+   como capa mini estilo Google Docs. Pega blocos suficientes pra encher
+   uma folha em miniatura (~20), o overflow é cortado no CSS. Trocamos imagens
+   pesadas por placeholder pra o thumb não puxar bytes do bucket. */
+function _writerContentThumb(content) {
+  if (!content || !Array.isArray(content.content)) return '';
+  const nodes = content.content.slice(0, 20);
+  // Sanitiza:
+  // - image/kastorAttachment → placeholder (não puxa bytes pesados)
+  // - remove marks 'link' (o thumb já mora dentro de <a>, HTML não aceita
+  //   <a> aninhado — o browser fecharia o wrapper externo e o card ficaria
+  //   vazio, mostrando só o bg do surface)
+  const sanitize = (n) => {
+    if (!n || typeof n !== 'object') return n;
+    if (n.type === 'image' || n.type === 'kastorAttachment') {
+      return { type: 'paragraph', content: [{ type: 'text', text: '▭' }] };
+    }
+    let out = n;
+    if (Array.isArray(n.marks) && n.marks.length) {
+      const marks = n.marks.filter(m => m && m.type !== 'link');
+      out = marks.length !== n.marks.length ? { ...n, marks } : n;
+    }
+    if (Array.isArray(out.content)) {
+      out = { ...out, content: out.content.map(sanitize) };
+    }
+    return out;
+  };
+  const subset = { type: 'doc', content: nodes.map(sanitize) };
+  return pmJsonToFragment(subset);
+}
+function stripWriterDoc(doc, { includeContent = false, user = null } = {}) {
+  if (!doc) return null;
+  const out = {
+    id: doc.id,
+    workspaceId: doc.workspaceId,
+    title: doc.title || 'Sem título',
+    icon: doc.icon || null,
+    ownerId: doc.ownerId || null,
+    restricted: !!doc.restricted,
+    archived: !!doc.archived,
+    createdAt: doc.createdAt || null,
+    updatedAt: doc.updatedAt || null,
+    // Ajuda o cliente a decidir se abre em read-only, esconde botões, etc.
+    myRole: user ? _writerRoleOf(user, doc) : null,
+    // Preview do texto (linha) — fallback quando o thumbHTML tá vazio
+    preview: _writerContentPreview(doc.content),
+    // Snapshot visual (HTML dos primeiros ~6 blocos) — vira "capa" no card
+    thumbHTML: _writerContentThumb(doc.content)
+  };
+  if (includeContent) {
+    out.content = doc.content || null;
+    out.version = doc.version || 0;
+  }
+  return out;
+}
+
+// GET /api/writer — lista docs do workspace (metadata; sem content)
+app.get('/api/writer', requireAuth, (req, res) => {
+  const u = req.user;
+  if (u.isFreelancer) return res.status(403).json({ error: 'Freelancer não tem acesso' });
+  // Lista qualquer doc onde o user tem role (workspace-editor implícito OU
+  // permission explícita — cobre também docs restritos compartilhados de
+  // outros squads).
+  const list = (db.writerDocuments || [])
+    .filter(d => !d.deletedAt && writerCanRead(u, d))
+    .map(d => stripWriterDoc(d, { user: u }));
+  res.json(list);
+});
+
+// GET /api/writer/:id — metadata + content
+app.get('/api/writer/:id', requireAuth, (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  if (!writerCanRead(req.user, doc)) return res.status(404).json({ error: 'Documento não encontrado' });
+  res.json(stripWriterDoc(doc, { includeContent: true, user: req.user }));
+});
+
+// POST /api/writer — cria novo doc
+app.post('/api/writer', requireAuth, express.json({ limit: '2mb' }), (req, res) => {
+  const u = req.user;
+  if (u.isFreelancer) return res.status(403).json({ error: 'Freelancer não pode criar documentos' });
+  const wsId = String(req.body?.workspaceId || '').trim();
+  if (!wsId || !canAccessWs(u, wsId)) return res.status(400).json({ error: 'workspaceId inválido' });
+  const now = nowISO();
+  const doc = {
+    id: uid(),
+    workspaceId: wsId,
+    title: String(req.body?.title || 'Sem título').slice(0, 200),
+    icon: req.body?.icon ? String(req.body.icon).slice(0, 8) : null,
+    ownerId: u.id,
+    permissions: [{ userId: u.id, role: 'owner' }],
+    content: req.body?.content || null,
+    version: 0,
+    archived: false,
+    createdAt: now,
+    updatedAt: now
+  };
+  if (!Array.isArray(db.writerDocuments)) db.writerDocuments = [];
+  db.writerDocuments.push(doc);
+  saveEntity('writerDocuments', doc);
+  res.json(stripWriterDoc(doc, { includeContent: true, user: u }));
+});
+
+// PATCH /api/writer/:id — atualiza metadata (title, icon, archived)
+app.patch('/api/writer/:id', requireAuth, express.json({ limit: '512kb' }), (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  if (!writerCanWrite(req.user, doc)) return res.status(404).json({ error: 'Documento não encontrado' });
+  if (typeof req.body?.title === 'string') doc.title = req.body.title.slice(0, 200);
+  if (typeof req.body?.icon === 'string' || req.body?.icon === null) {
+    doc.icon = req.body.icon ? String(req.body.icon).slice(0, 8) : null;
+  }
+  if (typeof req.body?.archived === 'boolean') doc.archived = req.body.archived;
+  doc.updatedAt = nowISO();
+  saveEntity('writerDocuments', doc);
+  res.json(stripWriterDoc(doc, { user: req.user }));
+});
+
+// PUT /api/writer/:id/content — autosave do conteúdo (PM JSON).
+// Retorna { version, updatedAt } pra o cliente saber que ficou salvo.
+app.put('/api/writer/:id/content', requireAuth, express.json({ limit: '10mb' }), (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  if (!writerCanWrite(req.user, doc)) return res.status(404).json({ error: 'Documento não encontrado' });
+  const content = req.body?.content;
+  if (content == null || typeof content !== 'object') {
+    return res.status(400).json({ error: 'content ausente ou inválido' });
+  }
+  doc.content = content;
+  doc.version = (doc.version || 0) + 1;
+  doc.updatedAt = nowISO();
+  doc.lastEditedBy = req.user.id;
+  saveEntity('writerDocuments', doc);
+  res.json({ version: doc.version, updatedAt: doc.updatedAt });
+});
+
+/* ── Permissões finas (compartilhamento) ───────────────────────
+   Retorna users com role explícita (permissions[]) + user info enriquecido.
+   Só quem tem role 'owner' pode alterar permissões. */
+function _writerEnrichPermUser(userId, users) {
+  const u = users.find(x => x.id === userId);
+  return u
+    ? { id: u.id, name: u.name || u.username || 'Usuário', username: u.username, email: u.email || null, avatar: u.avatar || null, isFreelancer: !!u.isFreelancer }
+    : { id: userId, name: 'Usuário removido', username: null, email: null, avatar: null };
+}
+
+// GET /api/writer/:id/permissions — retorna {restricted, owner, permissions[]}
+app.get('/api/writer/:id/permissions', requireAuth, (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  if (!writerCanRead(req.user, doc)) return res.status(404).json({ error: 'Documento não encontrado' });
+  const perms = (doc.permissions || []).map(p => ({
+    ..._writerEnrichPermUser(p.userId, db.users),
+    role: p.role || 'viewer',
+    isOwner: p.userId === doc.ownerId
+  }));
+  res.json({
+    ownerId: doc.ownerId,
+    restricted: !!doc.restricted,
+    workspaceId: doc.workspaceId,
+    myRole: _writerRoleOf(req.user, doc),
+    permissions: perms,
+    publicShareEnabled: !!doc.publicShareEnabled,
+    publicShareUrl: doc.publicShareEnabled ? _writerPublicUrl(doc) : null
+  });
+});
+
+// PATCH /api/writer/:id/permissions — só owner. Body: { restricted?, add?, updates?, remove? }
+//   add:    [{ userId, role }]  — adiciona users (não pode duplicar)
+//   updates:[{ userId, role }]  — muda role
+//   remove: [userId, ...]       — tira users
+app.patch('/api/writer/:id/permissions', requireAuth, express.json({ limit: '128kb' }), (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  if (!writerCanShare(req.user, doc)) return res.status(403).json({ error: 'Só o dono pode alterar permissões' });
+
+  if (!Array.isArray(doc.permissions)) doc.permissions = [];
+  if (typeof req.body?.restricted === 'boolean') doc.restricted = req.body.restricted;
+
+  // Owner é FIXO em quem criou o doc — nunca pode ser promovido/transferido
+  // via este endpoint. Só editor/commenter/viewer podem ser adicionados/mudados.
+  const ASSIGNABLE_ROLES = new Set(['viewer', 'commenter', 'editor']);
+
+  // Add — user precisa existir + pertencer ao workspace (freelancer bloqueado)
+  for (const it of (req.body?.add || [])) {
+    if (!it?.userId || !ASSIGNABLE_ROLES.has(it.role)) continue;
+    const u = db.users.find(x => x.id === it.userId && x.active !== false);
+    if (!u) continue;
+    if (u.isFreelancer) continue;
+    if (it.userId === doc.ownerId) continue; // owner já é dono, não vira "editor"
+    if (doc.permissions.find(p => p.userId === it.userId)) continue; // já tem
+    doc.permissions.push({ userId: it.userId, role: it.role });
+  }
+  // Updates — nunca mexe no papel do owner (nem pra tirar, nem pra reafirmar)
+  for (const it of (req.body?.updates || [])) {
+    if (!it?.userId || !ASSIGNABLE_ROLES.has(it.role)) continue;
+    if (it.userId === doc.ownerId) continue;
+    const p = doc.permissions.find(x => x.userId === it.userId);
+    if (p) p.role = it.role;
+  }
+  // Remove
+  for (const uid of (req.body?.remove || [])) {
+    if (uid === doc.ownerId) continue; // não remove o dono
+    doc.permissions = doc.permissions.filter(p => p.userId !== uid);
+  }
+  doc.updatedAt = nowISO();
+  saveEntity('writerDocuments', doc);
+  res.json({
+    ownerId: doc.ownerId,
+    restricted: !!doc.restricted,
+    permissions: (doc.permissions || []).map(p => ({ ..._writerEnrichPermUser(p.userId, db.users), role: p.role, isOwner: p.userId === doc.ownerId }))
+  });
+});
+
+/* ── Link público (leitura) ──────────────────────────────
+   Só o dono pode gerar/revogar. Quem tem o link consegue abrir o doc
+   em modo somente-leitura, mesmo sem estar autenticado. */
+function _writerPublicUrl(doc) {
+  return doc.publicShareToken ? '/hub/docs/public/' + doc.publicShareToken : null;
+}
+
+app.post('/api/writer/:id/public-link', requireAuth, (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  if (!writerCanShare(req.user, doc)) return res.status(403).json({ error: 'Só o dono pode gerar link público' });
+  if (!doc.publicShareToken) doc.publicShareToken = (uid() + uid()).replace(/-/g, '').slice(0, 32);
+  doc.publicShareEnabled = true;
+  doc.updatedAt = nowISO();
+  saveEntity('writerDocuments', doc);
+  res.json({ enabled: true, token: doc.publicShareToken, url: _writerPublicUrl(doc) });
+});
+
+app.delete('/api/writer/:id/public-link', requireAuth, (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  if (!writerCanShare(req.user, doc)) return res.status(403).json({ error: 'Só o dono pode revogar link público' });
+  doc.publicShareEnabled = false;
+  // Mantém o token no banco pra reativação preservar o mesmo link, se o dono quiser.
+  doc.updatedAt = nowISO();
+  saveEntity('writerDocuments', doc);
+  res.json({ enabled: false });
+});
+
+// GET /api/writer/public/:token — pega o doc via token (viewer-only, sem auth)
+app.get('/api/writer/public/:token', (req, res) => {
+  const t = String(req.params.token || '');
+  if (!t || t.length < 8) return res.status(404).json({ error: 'Link inválido' });
+  const doc = (db.writerDocuments || []).find(d =>
+    d.publicShareToken === t && d.publicShareEnabled && !d.deletedAt
+  );
+  if (!doc) return res.status(404).json({ error: 'Documento não encontrado ou link revogado' });
+  res.json({
+    id: doc.id,
+    title: doc.title || 'Sem título',
+    icon: doc.icon || null,
+    workspaceId: doc.workspaceId,
+    ownerId: doc.ownerId,
+    createdAt: doc.createdAt,
+    updatedAt: doc.updatedAt,
+    myRole: 'viewer',
+    isPublic: true,
+    content: doc.content || null,
+    version: doc.version || 0
+  });
+});
+
+// GET /api/writer/:id/users-suggest?q= — autocomplete pra o modal de share.
+// Devolve top-N users (não-freelancer) que casam com o query, com preferência
+// pra membros do workspace do doc. Máx 12 resultados.
+app.get('/api/writer/:id/users-suggest', requireAuth, (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  if (!writerCanRead(req.user, doc)) return res.status(404).json({ error: 'Documento não encontrado' });
+  const q = String(req.query.q || '').trim().toLowerCase();
+  const already = new Set((doc.permissions || []).map(p => p.userId));
+  const list = (db.users || [])
+    .filter(u => u.active !== false && !u.isFreelancer && !already.has(u.id))
+    .map(u => ({
+      id: u.id, name: u.name || u.username || 'Usuário', username: u.username,
+      email: u.email || null, avatar: u.avatar || null,
+      inWorkspace: Array.isArray(u.workspaces) && u.workspaces.includes(doc.workspaceId)
+    }));
+  const filtered = q
+    ? list.filter(u => (u.name || '').toLowerCase().includes(q) || (u.username || '').toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q))
+    : list;
+  // Ordena: membros do workspace primeiro, depois alfabético
+  filtered.sort((a, b) => (b.inWorkspace - a.inWorkspace) || a.name.localeCompare(b.name));
+  res.json(filtered.slice(0, 12));
+});
+
+/* ── Versionamento (time-machine) ──────────────────────────────
+   Snapshots vivem em writerDocument.snapshots[]:
+     { id, at, byId, label?, size, content (PM JSON) }
+   Auto: cliente aciona /versions?auto=1 a cada ~20 saves ou 5min. Server
+   dedupe: se o última snapshot foi < 60s atrás E não tem label, ignora.
+   Poda: limite de 50 snapshots automáticas por doc — as com label ficam.
+   ─────────────────────────────────────────────────────────────── */
+const WRITER_SNAPSHOT_AUTO_CAP = 50;
+const WRITER_SNAPSHOT_AUTO_DEDUP_MS = 60 * 1000;
+function stripWriterSnapshotMeta(s, users) {
+  if (!s) return null;
+  const u = users.find(x => x.id === s.byId);
+  return {
+    id: s.id,
+    at: s.at,
+    label: s.label || null,
+    isAuto: !s.label,
+    size: s.size || 0,
+    by: u ? { id: u.id, name: u.name || u.username || 'Usuário', avatar: u.avatar || null } : { id: s.byId, name: 'Usuário', avatar: null }
+  };
+}
+
+// GET /api/writer/:id/versions — lista de snapshots (metadata)
+app.get('/api/writer/:id/versions', requireAuth, (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  if (!writerCanRead(req.user, doc)) return res.status(404).json({ error: 'Documento não encontrado' });
+  const list = (doc.snapshots || [])
+    .slice()
+    .sort((a, b) => (b.at || '').localeCompare(a.at || ''))
+    .map(s => stripWriterSnapshotMeta(s, db.users));
+  res.json(list);
+});
+
+// GET /api/writer/:id/versions/:sid — snapshot com content (pra preview/restore)
+app.get('/api/writer/:id/versions/:sid', requireAuth, (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  if (!writerCanRead(req.user, doc)) return res.status(404).json({ error: 'Documento não encontrado' });
+  const s = (doc.snapshots || []).find(x => x.id === req.params.sid);
+  if (!s) return res.status(404).json({ error: 'Versão não encontrada' });
+  const meta = stripWriterSnapshotMeta(s, db.users);
+  res.json({ ...meta, content: s.content || null });
+});
+
+// POST /api/writer/:id/versions — cria snapshot. Body: { label?, content? }
+// Se content vem no body, usa; senão usa doc.content atual (típico do "salvar versão" manual).
+// Query `?auto=1` sinaliza snapshot automática (aplica dedupe + poda).
+app.post('/api/writer/:id/versions', requireAuth, express.json({ limit: '10mb' }), (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  if (!writerCanWrite(req.user, doc)) return res.status(404).json({ error: 'Documento não encontrado' });
+  const isAuto = req.query.auto === '1';
+  const content = req.body?.content || doc.content;
+  if (!content) return res.status(400).json({ error: 'Documento sem conteúdo pra versionar' });
+  if (!Array.isArray(doc.snapshots)) doc.snapshots = [];
+
+  // Dedupe: snapshot auto seguidas em <60s ignora
+  if (isAuto) {
+    const last = doc.snapshots[doc.snapshots.length - 1];
+    if (last && !last.label && (Date.now() - Date.parse(last.at || 0) < WRITER_SNAPSHOT_AUTO_DEDUP_MS)) {
+      return res.json({ skipped: true, reason: 'dedup', keeping: stripWriterSnapshotMeta(last, db.users) });
+    }
+  }
+
+  const size = JSON.stringify(content).length;
+  const s = {
+    id: uid(),
+    at: nowISO(),
+    byId: req.user.id,
+    label: req.body?.label ? String(req.body.label).slice(0, 120) : null,
+    size,
+    content
+  };
+  doc.snapshots.push(s);
+
+  // Poda: mantém até WRITER_SNAPSHOT_AUTO_CAP automáticas (as com label são preservadas)
+  const auto = doc.snapshots.filter(x => !x.label);
+  if (auto.length > WRITER_SNAPSHOT_AUTO_CAP) {
+    const toRemove = new Set(auto.slice(0, auto.length - WRITER_SNAPSHOT_AUTO_CAP).map(x => x.id));
+    doc.snapshots = doc.snapshots.filter(x => !toRemove.has(x.id));
+  }
+
+  doc.updatedAt = s.at;
+  saveEntity('writerDocuments', doc);
+  res.json(stripWriterSnapshotMeta(s, db.users));
+});
+
+// POST /api/writer/:id/versions/:sid/restore — restaura o conteúdo pra essa versão.
+// ATENÇÃO: cria uma snapshot automática do estado ATUAL antes de restaurar,
+// pra o restore ser reversível.
+app.post('/api/writer/:id/versions/:sid/restore', requireAuth, (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  if (!writerCanWrite(req.user, doc)) return res.status(404).json({ error: 'Documento não encontrado' });
+  const target = (doc.snapshots || []).find(x => x.id === req.params.sid);
+  if (!target) return res.status(404).json({ error: 'Versão não encontrada' });
+  if (!Array.isArray(doc.snapshots)) doc.snapshots = [];
+
+  // Snapshot do estado atual antes do restore (rótulo indica reversibilidade)
+  if (doc.content) {
+    doc.snapshots.push({
+      id: uid(),
+      at: nowISO(),
+      byId: req.user.id,
+      label: 'Antes de restaurar versão de ' + new Date(target.at).toLocaleString('pt-BR'),
+      size: JSON.stringify(doc.content).length,
+      content: doc.content
+    });
+  }
+  // Aplica o conteúdo da snapshot alvo como conteúdo atual
+  doc.content = target.content;
+  doc.version = (doc.version || 0) + 1;
+  doc.updatedAt = nowISO();
+  // Invalida o yState — clientes conectados vão reconectar e receber o novo
+  // conteúdo. Em Fase 2 (colab) isso força re-sync limpo.
+  doc.yState = null;
+  saveEntity('writerDocuments', doc);
+  res.json({ ok: true, version: doc.version, updatedAt: doc.updatedAt, restoredFrom: stripWriterSnapshotMeta(target, db.users) });
+});
+
+// DELETE /api/writer/:id/versions/:sid — remove uma snapshot (só admin ou dono do doc)
+app.delete('/api/writer/:id/versions/:sid', requireAuth, (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  if (!writerCanWrite(req.user, doc)) return res.status(404).json({ error: 'Documento não encontrado' });
+  if (doc.ownerId !== req.user.id && !req.user.isAdmin) return res.status(403).json({ error: 'Só o dono ou admin pode remover versões' });
+  const before = (doc.snapshots || []).length;
+  doc.snapshots = (doc.snapshots || []).filter(x => x.id !== req.params.sid);
+  if (doc.snapshots.length === before) return res.status(404).json({ error: 'Versão não encontrada' });
+  doc.updatedAt = nowISO();
+  saveEntity('writerDocuments', doc);
+  res.json({ ok: true });
+});
+
+/* ── Comentários ───────────────────────────────────────────────
+   Threads vivem dentro do writerDocument.threads[]:
+     { id, createdBy, createdAt, resolvedAt?, resolvedBy?, quotedText,
+       messages: [{ id, authorId, at, body }] }
+   O mark `kastorComment` no PM guarda apenas `threadId` — a resolução
+   é feita aqui (removendo o mark ao resolver).
+   ─────────────────────────────────────────────────────────────── */
+function stripWriterThread(t, users) {
+  if (!t) return null;
+  const enrichAuthor = (id) => {
+    const u = users.find(x => x.id === id);
+    return u ? { id: u.id, name: u.name || u.username || 'Usuário', avatar: u.avatar || null } : { id, name: 'Usuário', avatar: null };
+  };
+  return {
+    id: t.id,
+    createdBy: enrichAuthor(t.createdBy),
+    createdAt: t.createdAt,
+    resolvedAt: t.resolvedAt || null,
+    resolvedBy: t.resolvedBy ? enrichAuthor(t.resolvedBy) : null,
+    quotedText: t.quotedText || '',
+    messages: (t.messages || []).map(m => ({
+      id: m.id, at: m.at, body: m.body || '',
+      author: enrichAuthor(m.authorId)
+    }))
+  };
+}
+
+// GET /api/writer/:id/comments — lista threads (padrão: só não-resolvidas; ?all=1 pra tudo)
+app.get('/api/writer/:id/comments', requireAuth, (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  if (!writerCanRead(req.user, doc)) return res.status(404).json({ error: 'Documento não encontrado' });
+  const showAll = req.query.all === '1';
+  const threads = (doc.threads || [])
+    .filter(t => showAll || !t.resolvedAt)
+    .map(t => stripWriterThread(t, db.users));
+  res.json(threads);
+});
+
+// POST /api/writer/:id/comments — cria thread nova (body: threadId, quotedText, message)
+app.post('/api/writer/:id/comments', requireAuth, express.json({ limit: '128kb' }), (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  // commenter também pode criar comentários (sem editar o texto)
+  if (!writerCanComment(req.user, doc)) return res.status(403).json({ error: 'Sem permissão pra comentar' });
+  const threadId = String(req.body?.threadId || '').trim();
+  const message  = String(req.body?.message || '').trim();
+  if (!threadId || !message) return res.status(400).json({ error: 'threadId e message obrigatórios' });
+  if (!Array.isArray(doc.threads)) doc.threads = [];
+  if (doc.threads.find(t => t.id === threadId)) return res.status(409).json({ error: 'threadId já existe' });
+  const now = nowISO();
+  const t = {
+    id: threadId,
+    createdBy: req.user.id,
+    createdAt: now,
+    quotedText: String(req.body?.quotedText || '').slice(0, 500),
+    messages: [{ id: uid(), authorId: req.user.id, at: now, body: message.slice(0, 8000) }]
+  };
+  doc.threads.push(t);
+  doc.updatedAt = now;
+  saveEntity('writerDocuments', doc);
+  res.json(stripWriterThread(t, db.users));
+});
+
+// POST /api/writer/:id/comments/:tid/reply — adiciona mensagem
+app.post('/api/writer/:id/comments/:tid/reply', requireAuth, express.json({ limit: '128kb' }), (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  if (!writerCanComment(req.user, doc)) return res.status(403).json({ error: 'Sem permissão pra comentar' });
+  const t = (doc.threads || []).find(x => x.id === req.params.tid);
+  if (!t) return res.status(404).json({ error: 'Thread não encontrada' });
+  const body = String(req.body?.message || '').trim();
+  if (!body) return res.status(400).json({ error: 'message obrigatória' });
+  const now = nowISO();
+  const msg = { id: uid(), authorId: req.user.id, at: now, body: body.slice(0, 8000) };
+  t.messages = t.messages || [];
+  t.messages.push(msg);
+  doc.updatedAt = now;
+  saveEntity('writerDocuments', doc);
+  res.json(stripWriterThread(t, db.users));
+});
+
+// POST /api/writer/:id/comments/:tid/resolve — marca resolvida (idempotente)
+app.post('/api/writer/:id/comments/:tid/resolve', requireAuth, (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  if (!writerCanComment(req.user, doc)) return res.status(403).json({ error: 'Sem permissão pra comentar' });
+  const t = (doc.threads || []).find(x => x.id === req.params.tid);
+  if (!t) return res.status(404).json({ error: 'Thread não encontrada' });
+  t.resolvedAt = nowISO();
+  t.resolvedBy = req.user.id;
+  doc.updatedAt = t.resolvedAt;
+  saveEntity('writerDocuments', doc);
+  res.json(stripWriterThread(t, db.users));
+});
+
+// POST /api/writer/:id/comments/:tid/reopen — desfaz o resolve
+app.post('/api/writer/:id/comments/:tid/reopen', requireAuth, (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  if (!writerCanComment(req.user, doc)) return res.status(403).json({ error: 'Sem permissão pra comentar' });
+  const t = (doc.threads || []).find(x => x.id === req.params.tid);
+  if (!t) return res.status(404).json({ error: 'Thread não encontrada' });
+  delete t.resolvedAt; delete t.resolvedBy;
+  doc.updatedAt = nowISO();
+  saveEntity('writerDocuments', doc);
+  res.json(stripWriterThread(t, db.users));
+});
+
+// DELETE /api/writer/:id/comments/:tid — remove thread (só o criador ou admin)
+app.delete('/api/writer/:id/comments/:tid', requireAuth, (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  if (!writerCanComment(req.user, doc)) return res.status(403).json({ error: 'Sem permissão pra comentar' });
+  const idx = (doc.threads || []).findIndex(x => x.id === req.params.tid);
+  if (idx < 0) return res.status(404).json({ error: 'Thread não encontrada' });
+  const t = doc.threads[idx];
+  if (t.createdBy !== req.user.id && !req.user.isAdmin) return res.status(403).json({ error: 'Só o autor ou um admin pode excluir' });
+  doc.threads.splice(idx, 1);
+  doc.updatedAt = nowISO();
+  saveEntity('writerDocuments', doc);
+  res.json({ ok: true });
+});
+
+// DELETE /api/writer/:id — soft delete
+app.delete('/api/writer/:id', requireAuth, (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  if (!writerCanWrite(req.user, doc)) return res.status(404).json({ error: 'Documento não encontrado' });
+  doc.deletedAt = nowISO();
+  doc.deletedBy = req.user.id;
+  saveEntity('writerDocuments', doc);
+  res.json({ ok: true });
 });
 
 /* Bootstrap consolidado: retorna em UMA resposta o que o cliente pedia em
@@ -9023,6 +9871,29 @@ app.all(/^\/api\/.*/, (req, res) => {
 app.get(/^\/public\/client\/[a-f0-9]{48}$/i, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'public-client.html'));
 });
+// reWork Hub — home standalone dos subprodutos (Docs, Presentations, etc).
+// Portal separado da plataforma principal, acessado pelo ícone do topbar.
+app.get(/^\/hub\/?$/, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'hub.html'));
+});
+
+// reWork Docs — página standalone, INDEPENDENTE da plataforma (abre em outra
+// guia, tem shell próprio, sem sidebar/topbar do app). A auth ainda é checada
+// pelo JS via /api/writer/... (o cookie de sessão é enviado pelo browser).
+//   URL pública: /hub/docs, /hub/docs/<slug-id>  (o Docs é um subproduto do Hub)
+//   API interna: /api/writer/* (mantém "writer" nas rotas do servidor pra não
+//     misturar com a documentação; a URL pública "docs" é o produto).
+//   Documentação/manual foi realocada pra /help/*.
+// /hub/docs               → landing
+// /hub/docs/<slug>        → editor privado
+// /hub/docs/public/<tok>  → viewer público (leitura, sem auth)
+app.get(/^\/hub\/docs(?:\/(?:public\/[a-zA-Z0-9]+|[a-zA-Z0-9-]+))?\/?$/, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'writer.html'));
+});
+// Redirect legado — links antigos pra /docs continuam funcionando.
+app.get(/^\/docs(\/(?:public\/[a-zA-Z0-9]+|[a-zA-Z0-9-]+))?\/?$/, (req, res) => {
+  res.redirect(301, '/hub/docs' + (req.params[0] || ''));
+});
 // Demais rotas: serve o SPA pra deixar o roteamento client-side resolver
 // (/dashboard, /demands/<id>, etc).
 app.get(/.*/, (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
@@ -9035,9 +9906,51 @@ const _boot = loadDB().catch(err => {
 });
 
 if (require.main === module) {
-  _boot.then(() => {
+  _boot.then(async () => {
     const server = app.listen(PORT, () => console.log(`\n  fluxo. rodando em  →  http://localhost:${PORT}\n`));
     setupGracefulShutdown(server);
+    // Kastor Docs — WebSocket runtime pra colab realtime. Pluga no MESMO
+    // http.Server que o Express usa (compartilha a porta, sem processo extra).
+    try {
+      const docsRt = require('./docs-rt.js');
+      await docsRt.setup(server, {
+        // Autentica via cookie de sessão (mesmo do Express)
+        authenticate(req) {
+          const cookies = parseCookies(req);
+          const token = cookies[SESSION_COOKIE] || null;
+          const uid = token && auth.userIdForToken(token);
+          if (!uid) return null;
+          const user = db.users.find(u => u.id === uid && u.active !== false);
+          if (!user || user.isFreelancer) return null;
+          return uid;
+        },
+        // Autoriza acesso ao doc — mesmo escopo do REST
+        async canAccess(docId, userId) {
+          const user = db.users.find(u => u.id === userId);
+          const doc = (db.writerDocuments || []).find(d => d.id === docId);
+          return writerCanRead(user, doc);
+        },
+        // Carrega snapshot Yjs prévio (base64 em db)
+        async loadInitialState(docId) {
+          const doc = (db.writerDocuments || []).find(d => d.id === docId);
+          if (!doc || !doc.yState) return null;
+          try { return Buffer.from(doc.yState, 'base64'); } catch { return null; }
+        },
+        // Persiste update — só ambos os estados avançam juntos (yState + content).
+        // O client ainda faz PUT /content pra manter PM JSON pra viewer/export
+        // (é fonte de verdade da lista + preview + export não-colab).
+        onPersist(docId, updateBytes) {
+          const doc = (db.writerDocuments || []).find(d => d.id === docId);
+          if (!doc) return;
+          doc.yState = Buffer.from(updateBytes).toString('base64');
+          doc.updatedAt = nowISO();
+          saveEntity('writerDocuments', doc);
+        }
+      });
+      console.log('  Kastor Docs realtime  →  ws://localhost:' + PORT + '/rt/docs/<id>');
+    } catch (e) {
+      console.error('[docs-rt] falha ao inicializar:', e.message);
+    }
   });
 }
 
