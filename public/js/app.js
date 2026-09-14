@@ -18288,8 +18288,8 @@ function setupDragDrop(containerSelector, targetListId, callback) {
 async function processDroppedFiles(files, listElementId) {
   // Converte cada arquivo em base64 e adiciona à lista global
   for (const file of files) {
-    const limit = 10 * 1024 * 1024;
-    if (file.size > limit) { toast(`${file.name}: arquivo muito grande (máx 10MB)`, 'error'); continue; }
+    const limit = 150 * 1024 * 1024;
+    if (file.size > limit) { toast(`${file.name}: arquivo muito grande (máx 150MB)`, 'error'); continue; }
     const dataUrl = await new Promise((res, rej) => {
       const r = new FileReader();
       r.onload = () => res(r.result);
