@@ -60,7 +60,11 @@ services:
           - node.role == manager  # Fixa no nó onde o volume de uploads vive.
       resources:
         limits:
-          memory: 512M
+          # 1GB de teto — anexos de até 150MB viram ~200MB de base64 na RAM
+          # durante o parse do express.json, mais o overhead do Node (~150MB) +
+          # LibreOffice pra export PDF/DOCX. Sem essa folga, uploads grandes
+          # trigam OOMKilled + restart no meio.
+          memory: 1G
         reservations:
           memory: 128M
 
