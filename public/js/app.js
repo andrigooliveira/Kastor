@@ -13627,19 +13627,33 @@ async function attClickDownload(ev, src, name) {
 window.attClickDownload = attClickDownload;
 // Helper que lê src+name de `data-*` do próprio <a>. Evita ter que interpolar
 // strings JS dentro do onclick= (aspas/acentos ficariam fragilizados).
+// Se `data-dl-from-href` estiver setado, pega o src do próprio href (usado
+// pra data URIs — não duplicamos o base64 no DOM).
 function attClickDownloadFromEl(ev, el) {
-  return attClickDownload(ev, el?.dataset?.dlSrc || '', el?.dataset?.dlName || '');
+  if (!el) return true;
+  const useHref = el.dataset?.dlFromHref === '1';
+  const src = useHref ? (el.getAttribute('href') || '') : (el.dataset?.dlSrc || '');
+  return attClickDownload(ev, src, el.dataset?.dlName || '');
 }
 window.attClickDownloadFromEl = attClickDownloadFromEl;
 /* Gera os atributos HTML pra transformar um <a> em download via fetch→blob.
    - `/uploads/xxx` → adiciona data-dl-* + onclick (fetch→blob→click sintético,
      imune a interpretação inline pelo browser ou header wrangling do proxy)
-   - `data:` URIs → volta string vazia. O <a href="data:..." download="name">
-     funciona sozinho e evitamos duplicar o data URI enorme em data-attr. */
+   - `data:` URIs → só onclick (o data URI enorme já tá no href do próprio <a>,
+     então o handler lê dali via `this.href`). Isso corrige anexos antigos que
+     ficaram presos como base64 na DB (browser trunca data URI grande no download
+     nativo — decodificar client-side e virar Blob resolve). */
 function attDownloadAttrs(rawSrc, name) {
   const s = String(rawSrc || '');
-  if (!s.startsWith('/uploads/')) return '';
-  return `data-dl-src="${esc(s)}" data-dl-name="${esc(name || '')}" onclick="return attClickDownloadFromEl(event, this)"`;
+  const nameAttr = `data-dl-name="${esc(name || '')}"`;
+  if (s.startsWith('/uploads/')) {
+    return `data-dl-src="${esc(s)}" ${nameAttr} onclick="return attClickDownloadFromEl(event, this)"`;
+  }
+  if (s.startsWith('data:')) {
+    // Sem data-dl-src (evita duplicar o base64 gigante). O handler pega do href.
+    return `${nameAttr} data-dl-from-href="1" onclick="return attClickDownloadFromEl(event, this)"`;
+  }
+  return '';
 }
 function renderDemandAttList(list, withDelete) {
   if (!list || !list.length) return '<div class="hours-empty" style="text-align:left">Nenhum arquivo anexado.</div>';
