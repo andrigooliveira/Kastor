@@ -14765,6 +14765,118 @@ function closeAttPreview() {
 
 function genAttId() { return 'a' + Math.random().toString(36).slice(2,10); }
 
+/* ── UPLOAD COM PROGRESSO ──
+   Faz POST /api/uploads via XHR pra ter onprogress (fetch não suporta upload
+   progress). Resolve com { url, name, type, size }. Retorna também um handle
+   `.xhr` (via callback) pra permitir cancelamento pelo usuário. */
+function _uploadFileXHR(file, onProgress, registerXhr) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/uploads', true);
+      xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.withCredentials = true;
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try { resolve(JSON.parse(xhr.responseText)); }
+          catch { reject(new Error('Resposta inválida do servidor')); }
+        } else {
+          const msg = xhr.status === 413
+            ? 'Arquivo grande demais (proxy retornou 413) — aumente client_max_body_size no Nginx Proxy Manager.'
+            : `HTTP ${xhr.status}`;
+          reject(new Error(msg));
+        }
+      };
+      xhr.onerror = () => reject(new Error('Erro de rede durante upload'));
+      xhr.onabort = () => reject(new Error('cancelado'));
+      if (registerXhr) registerXhr(xhr);
+      xhr.send(JSON.stringify({ name: file.name, data: reader.result }));
+    };
+    reader.onerror = () => reject(reader.error || new Error('Falha na leitura do arquivo'));
+    reader.readAsDataURL(file);
+  });
+}
+
+// Estado de placeholders de upload em curso — chave = list DOM id.
+// Cada item: { id, name, type, pct, xhr }.
+const _uploadingItems = new Map();
+
+function _renderUploadPlaceholder(item) {
+  const pct = Math.round((item.pct || 0) * 100);
+  return `<div class="demand-att-item is-uploading" data-upload-id="${esc(item.id)}">
+    <div class="upload-donut" style="--p:${pct}" data-p="${pct}">
+      <span class="upload-donut-pct">${pct}%</span>
+    </div>
+    <span class="demand-att-name" title="${esc(item.name)}">${esc(item.name)}</span>
+    <button class="detail-icon-btn danger" title="Cancelar" onclick="_cancelUpload('${esc(item.id)}')"><i data-lucide="x" class="ic-sm"></i></button>
+  </div>`;
+}
+
+function _renderUploadListFor(listId) {
+  return (_uploadingItems.get(listId) || []).map(_renderUploadPlaceholder).join('');
+}
+
+// Atualiza donut in-place (sem re-render — mais suave). CSS conic-gradient
+// consome --p; rótulo (span) recebe texto do %.
+function _updateUploadDonut(uploadId, pct) {
+  const wrap = document.querySelector(`[data-upload-id="${uploadId}"]`);
+  if (!wrap) return;
+  const donut = wrap.querySelector('.upload-donut');
+  const lbl = wrap.querySelector('.upload-donut-pct');
+  const rounded = Math.max(0, Math.min(100, Math.round(pct * 100)));
+  if (donut) { donut.style.setProperty('--p', String(rounded)); donut.dataset.p = String(rounded); }
+  if (lbl) lbl.textContent = rounded + '%';
+}
+
+function _cancelUpload(id) {
+  for (const [listId, items] of _uploadingItems.entries()) {
+    const idx = items.findIndex(it => it.id === id);
+    if (idx >= 0) {
+      const item = items[idx];
+      try { item.xhr?.abort(); } catch {}
+      items.splice(idx, 1);
+      document.querySelector(`[data-upload-id="${id}"]`)?.remove();
+      return;
+    }
+  }
+}
+window._cancelUpload = _cancelUpload;
+
+/* Sobe um único arquivo com placeholder+donut na lista `listId`. Ao terminar,
+   remove o placeholder e chama `onDone(saved)` com o resultado do server.
+   Se falhar, remove placeholder e mostra toast. */
+async function _uploadFileWithPlaceholder(file, listId, onDone) {
+  const listEl = $(listId);
+  if (!listEl) return;
+  const uploadId = 'up_' + Math.random().toString(36).slice(2,10);
+  const placeholder = { id: uploadId, name: file.name, type: file.type || '', pct: 0, xhr: null };
+  const bucket = _uploadingItems.get(listId) || [];
+  bucket.push(placeholder);
+  _uploadingItems.set(listId, bucket);
+  // Prepend do placeholder na lista sem re-renderizar tudo.
+  listEl.insertAdjacentHTML('afterbegin', _renderUploadPlaceholder(placeholder));
+  paintIcons();
+  try {
+    const saved = await _uploadFileXHR(
+      file,
+      (frac) => { placeholder.pct = frac; _updateUploadDonut(uploadId, frac); },
+      (xhr) => { placeholder.xhr = xhr; }
+    );
+    if (onDone) await onDone(saved);
+  } catch (err) {
+    if (err.message !== 'cancelado') toast(`${file.name}: ${err.message}`, 'error');
+  } finally {
+    const items = _uploadingItems.get(listId) || [];
+    const idx = items.findIndex(u => u.id === uploadId);
+    if (idx >= 0) items.splice(idx, 1);
+    document.querySelector(`[data-upload-id="${uploadId}"]`)?.remove();
+  }
+}
+
 /* Form attachments (modal de nova demanda) — usa demandAttachments */
 function refreshFormAttList(listId) {
   $(listId).innerHTML = renderDemandAttList(demandAttachments, false);
@@ -14810,7 +14922,15 @@ function removeFormAttachment(id, listId) {
   refreshFormAttList(listId);
 }
 
-/* Detail attachments — operam direto na demanda via API */
+/* Detail attachments — operam direto na demanda via API.
+   Fluxo NOVO (com donut de progresso):
+     1. Placeholder no topo da lista (donut girando).
+     2. XHR pra /api/uploads com onprogress → atualiza donut sem re-render.
+     3. Ao terminar, PUT /demands/:id com o novo attachment (só a URL, não
+        mais o data URI gigante — payload do PUT fica minúsculo).
+     4. Placeholder some, renderDetail() puxa a versão atualizada.
+   Uploads rodam SEQUENCIALMENTE — mudar pra paralelo seria trivial (Promise.all)
+   mas concorreria por RAM no browser em anexos grandes. */
 async function handleDetailAttachmentFiles(ev) {
   const files = [...ev.target.files];
   ev.target.value = '';
@@ -14818,23 +14938,15 @@ async function handleDetailAttachmentFiles(ev) {
   let addedCount = 0;
   for (const file of files) {
     if (file.size > 150 * 1024 * 1024) { toast('Arquivo "' + file.name + '" excede 150 MB.', 'error'); continue; }
-    // Re-lookup a cada iteração — patchDemand troca a referência em `demands`,
-    // então o `d` capturado do início ficaria com o attachments desatualizado
-    // e cada upload sobrescreveria os anteriores.
-    const d = demandById(detailId);
-    if (!d) return;
-    await new Promise(resolve => {
-      const reader = new FileReader();
-      reader.onload = async e => {
-        const newAtts = (d.attachments || []).concat({ id: genAttId(), kind: 'file', name: file.name, type: file.type, data: e.target.result });
-        try {
-          const upd = await api('/demands/' + d.id, 'PUT', { attachments: newAtts });
-          patchDemand(upd);
-          addedCount++;
-        } catch (err) { toast(err.message, 'error'); }
-        resolve();
-      };
-      reader.readAsDataURL(file);
+    await _uploadFileWithPlaceholder(file, 'detail-attachments-list', async (saved) => {
+      // Re-lookup a cada iteração — patchDemand trocou a referência.
+      const d = demandById(detailId);
+      if (!d) return;
+      const newAtt = { id: genAttId(), kind: 'file', name: saved.name, type: saved.type, data: saved.url };
+      const newAtts = (d.attachments || []).concat(newAtt);
+      const upd = await api('/demands/' + d.id, 'PUT', { attachments: newAtts });
+      patchDemand(upd);
+      addedCount++;
     });
   }
   renderDetail();
@@ -14847,35 +14959,50 @@ async function handleDetailAttachmentImages(ev) {
   let addedCount = 0;
   for (const file of files) {
     if (file.size > 150 * 1024 * 1024) { toast('Arquivo "' + file.name + '" excede 150 MB.', 'error'); continue; }
-    const d = demandById(detailId);
-    if (!d) return;
-    await new Promise(resolve => {
-      const reader = new FileReader();
-      reader.onload = e => {
-        const img = new Image();
-        img.onload = async () => {
-          const max = 1200;
-          let w = img.width, h = img.height;
-          if (w > max || h > max) { const r = Math.min(max / w, max / h); w = Math.round(w * r); h = Math.round(h * r); }
-          const canvas = document.createElement('canvas');
-          canvas.width = w; canvas.height = h;
-          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-          const data = canvas.toDataURL('image/jpeg', 0.85);
-          const newAtts = (d.attachments || []).concat({ id: genAttId(), kind: 'file', name: file.name, type: 'image/jpeg', data });
-          try {
-            const upd = await api('/demands/' + d.id, 'PUT', { attachments: newAtts });
-            patchDemand(upd);
-            addedCount++;
-          } catch (err) { toast(err.message, 'error'); }
-          resolve();
-        };
-        img.src = e.target.result;
-      };
-      reader.readAsDataURL(file);
+    // Resize antes do upload (mantém o comportamento do fluxo antigo: 1200px @ 0.85)
+    const resized = await _resizeImageFile(file, 1200, 0.85).catch(() => file);
+    await _uploadFileWithPlaceholder(resized, 'detail-attachments-list', async (saved) => {
+      const d = demandById(detailId);
+      if (!d) return;
+      const newAtt = { id: genAttId(), kind: 'file', name: saved.name, type: saved.type, data: saved.url };
+      const newAtts = (d.attachments || []).concat(newAtt);
+      const upd = await api('/demands/' + d.id, 'PUT', { attachments: newAtts });
+      patchDemand(upd);
+      addedCount++;
     });
   }
   renderDetail();
   if (addedCount) toast(addedCount === 1 ? 'Imagem adicionada!' : `${addedCount} imagens adicionadas!`);
+}
+/* Redimensiona uma imagem (File → File JPEG). Retorna o próprio arquivo se
+   já couber no `max` — evita re-encode desnecessário. */
+function _resizeImageFile(file, max, quality) {
+  return new Promise((resolve, reject) => {
+    if (!file.type || !file.type.startsWith('image/')) return resolve(file);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        if (img.width <= max && img.height <= max && /^image\/(jpeg|jpg)$/i.test(file.type)) {
+          return resolve(file);
+        }
+        const r = Math.min(max / img.width, max / img.height, 1);
+        const w = Math.round(img.width * r), h = Math.round(img.height * r);
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        canvas.toBlob((blob) => {
+          if (!blob) return reject(new Error('Falha ao gerar imagem'));
+          const outName = file.name.replace(/\.[a-z0-9]{1,10}$/i, '') + '.jpg';
+          resolve(new File([blob], outName, { type: 'image/jpeg' }));
+        }, 'image/jpeg', quality);
+      };
+      img.onerror = () => reject(new Error('Imagem inválida'));
+      img.src = e.target.result;
+    };
+    reader.onerror = () => reject(reader.error || new Error('Falha na leitura'));
+    reader.readAsDataURL(file);
+  });
 }
 async function addDetailAttachmentLink() {
   const d = demandById(detailId); if (!d) return;
@@ -18286,38 +18413,50 @@ function setupDragDrop(containerSelector, targetListId, callback) {
 }
 
 async function processDroppedFiles(files, listElementId) {
-  // Converte cada arquivo em base64 e adiciona à lista global
+  // Filtra por tamanho antes de qualquer upload
+  const accepted = [];
   for (const file of files) {
-    const limit = 150 * 1024 * 1024;
-    if (file.size > limit) { toast(`${file.name}: arquivo muito grande (máx 150MB)`, 'error'); continue; }
-    const dataUrl = await new Promise((res, rej) => {
-      const r = new FileReader();
-      r.onload = () => res(r.result);
-      r.onerror = rej;
-      r.readAsDataURL(file);
-    });
-    demandAttachments.push({
-      id: 'a' + Math.random().toString(36).slice(2,10),
-      kind: 'file',
-      name: file.name,
-      type: file.type || 'application/octet-stream',
-      data: String(dataUrl)
-    });
+    if (file.size > 150 * 1024 * 1024) { toast(`${file.name}: arquivo muito grande (máx 150MB)`, 'error'); continue; }
+    accepted.push(file);
   }
+  if (!accepted.length) return;
+
   if (listElementId === 'detail-attachments-list') {
-    // Modal de detalhe: salva direto via PUT
-    const d = demandById(detailId); if (!d) return;
-    const newAtts = [...(d.attachments || []), ...demandAttachments.filter(a => !(d.attachments || []).find(x => x.id === a.id))];
-    try {
-      const upd = await api('/demands/' + d.id, 'PUT', { attachments: newAtts });
-      patchDemand(upd);
-      demandAttachments = [];
-      renderDetail();
-      toast('Arquivo anexado!');
-    } catch (e) { toast(e.message, 'error'); }
+    // Modal de detalhe: upload direto com donut de progresso + PUT por arquivo.
+    let addedCount = 0;
+    for (const file of accepted) {
+      await _uploadFileWithPlaceholder(file, listElementId, async (saved) => {
+        const d = demandById(detailId);
+        if (!d) return;
+        const newAtt = { id: genAttId(), kind: 'file', name: saved.name, type: saved.type, data: saved.url };
+        const newAtts = (d.attachments || []).concat(newAtt);
+        const upd = await api('/demands/' + d.id, 'PUT', { attachments: newAtts });
+        patchDemand(upd);
+        addedCount++;
+      });
+    }
+    renderDetail();
+    if (addedCount) toast(addedCount === 1 ? 'Arquivo anexado!' : `${addedCount} arquivos anexados!`);
   } else {
+    // Modal de nova demanda / persona / etc: upload não acontece agora — o
+    // arquivo fica em memória como data URI, sobe junto quando o form for salvo.
+    for (const file of accepted) {
+      const dataUrl = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result);
+        r.onerror = rej;
+        r.readAsDataURL(file);
+      });
+      demandAttachments.push({
+        id: 'a' + Math.random().toString(36).slice(2,10),
+        kind: 'file',
+        name: file.name,
+        type: file.type || 'application/octet-stream',
+        data: String(dataUrl)
+      });
+    }
     refreshFormAttList(listElementId);
-    toast(`${files.length} arquivo${files.length === 1 ? '' : 's'} adicionado${files.length === 1 ? '' : 's'}`);
+    toast(`${accepted.length} arquivo${accepted.length === 1 ? '' : 's'} adicionado${accepted.length === 1 ? '' : 's'}`);
   }
 }
 

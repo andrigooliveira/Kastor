@@ -6230,6 +6230,39 @@ i[data-lucide]:not([class*=ic-]) { width: 16px; height: 16px; stroke-width: 2; }
 .demand-att-btn i,
 .demand-att-btn svg { color: var(--text-muted); width: 16px !important; height: 16px !important; flex-shrink: 0; }
 
+/* ── Placeholder de upload em curso — mesmo layout do .demand-att-item, mas
+   com donut de progresso no lugar do ícone/thumb. Fica no TOPO da lista
+   enquanto sobe; some quando o server confirma. --p é o percentual 0-100
+   atualizado in-place pelo JS (evita re-render). */
+.demand-att-item.is-uploading { border-color: var(--accent-dim); background: var(--surface-2); }
+.demand-att-item.is-uploading .demand-att-name { color: var(--text-muted); }
+.upload-donut {
+  --p: 0; --size: 26px; --thickness: 4px;
+  width: var(--size); height: var(--size);
+  border-radius: 50%;
+  flex-shrink: 0;
+  position: relative;
+  background: conic-gradient(var(--accent-text) calc(var(--p) * 1%), var(--border) 0);
+  transition: background .15s;
+}
+.upload-donut::before {
+  content: '';
+  position: absolute;
+  inset: var(--thickness);
+  border-radius: 50%;
+  background: var(--surface);
+}
+.upload-donut-pct {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 8px;
+  font-weight: 700;
+  color: var(--text);
+  z-index: 1;
+}
+
 /* ─── Color picker custom (substitui input[type=color] nativo) ───
    Trigger é um botão quadrado com a cor de fundo; popover abre um grid 4x4
    de swatches da paleta do design system. Hidden input mantém compat com JS
