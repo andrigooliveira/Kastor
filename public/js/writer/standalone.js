@@ -1140,10 +1140,34 @@
   const KD_PAPER_MM = 210;
   const KD_MARGIN_MM = 25.4;
   const KD_RULER_SNAP_MM = 5;   // snap fixo em 5mm
+
+  /* Mede a largura da scrollbar vertical do browser e expõe em --kd-sbw.
+     Sem isso, a scrollbar do .writer-editor-scroll desloca o "centro visual"
+     do paper pra esquerda em relação ao centro da .kd-ruler-bar (que não tem
+     scrollbar), quebrando o alinhamento em ~5-7px. Usar essa var como
+     padding-right na ruler-bar reposiciona o centro dela pra bater com o
+     centro do scroll. Re-medido no init do editor e em toggle do índice. */
+  function _kdMeasureScrollbar() {
+    const scroll = document.querySelector('.writer-editor-scroll');
+    if (scroll && scroll.offsetWidth > 0) {
+      const w = scroll.offsetWidth - scroll.clientWidth;
+      document.documentElement.style.setProperty('--kd-sbw', Math.max(0, w) + 'px');
+      return;
+    }
+    // Fallback quando ainda não montou: cria uma div oculta pra medir.
+    const div = document.createElement('div');
+    div.style.cssText = 'position:absolute;top:-9999px;left:-9999px;width:100px;height:100px;overflow:scroll;';
+    document.body.appendChild(div);
+    const w = div.offsetWidth - div.clientWidth;
+    document.body.removeChild(div);
+    document.documentElement.style.setProperty('--kd-sbw', Math.max(0, w) + 'px');
+  }
+
   function _kdRulerInit() {
     const ruler = $('kd-ruler');
     if (!ruler || ruler._kdInit) return;
     ruler._kdInit = true;
+    _kdMeasureScrollbar();
     // Ticks a cada 5mm, marcas maiores a cada 10mm. Sem números.
     const ticks = document.createElement('div');
     ticks.className = 'kd-ruler-ticks';

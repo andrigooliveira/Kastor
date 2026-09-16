@@ -23,7 +23,7 @@
        gzipped) mas o cache-buster do app.js já reaproveita a mesma versão em cache
        do usuário na maior parte dos acessos. Pra Fase futura vale extrair só tokens
        + classes writer-* num CSS menor. -->
-  <link rel="stylesheet" href="/css/style.css?v=20260912rulerV2">
+  <link rel="stylesheet" href="/css/style.css?v=20260916rulerAlign">
 
   <style>
     /* Reset do body pra editor standalone — sem margin, cor da plataforma. */
@@ -1195,6 +1195,18 @@
       min-height: 0;
       overflow: hidden;
     }
+    /* Coluna central que agrupa régua + scroll — flex column pra empilhar
+       vertical. `flex: 1; min-width: 0` faz ela ceder espaço pros painéis
+       laterais (índice / comentários), então quando eles abrem/fecham,
+       essa coluna encolhe/expande — e a régua (centralizada por dentro)
+       segue a mesma posição do paper (também centralizado por dentro). */
+    .writer-editor-center {
+      flex: 1;
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
     .writer-editor-scroll { flex: 1; min-width: 0; }
 
     /* ── Régua horizontal + marcadores de indent ────────────────────
@@ -1203,11 +1215,15 @@
        em tom mais escuro, e dois marcadores draggable (esquerda / direita)
        que ajustam indentLeft/indentRight do parágrafo/bloco atual (ou de
        todos os blocos na seleção). */
-    /* Bar container centralizado horizontalmente pra alinhar com o paper */
+    /* Bar container centralizado horizontalmente pra alinhar com o paper.
+       O padding-right compensa a scrollbar vertical do .writer-editor-scroll —
+       sem isso, o centro visual do scroll fica ~5px à esquerda do centro da
+       ruler-bar (pq scrollbar rouba largura do lado direito). Var `--kd-sbw`
+       é setada em JS via _kdMeasureScrollbar(). */
     .kd-ruler-bar {
       display: flex; justify-content: center;
       flex-shrink: 0;
-      padding: 4px 0 0;
+      padding: 4px var(--kd-sbw, 0px) 0 0;
       background: var(--bg);
     }
     .kd-ruler {
@@ -2180,12 +2196,6 @@
       </div>
 
       <div class="writer-editor-toolbar" id="writer-editor-toolbar"></div>
-      <!-- Régua horizontal — alinhada com o paper (mesma largura A4).
-           Não é sticky nem flutuante: fica logo abaixo da toolbar de rich text
-           pra ser sempre visível sem "sumir" quando o user rola o doc. -->
-      <div class="kd-ruler-bar">
-        <div class="kd-ruler" id="kd-ruler" aria-hidden="true"></div>
-      </div>
       <div class="writer-editor-wrap">
         <!-- Painel de índice (outline) — coluna à esquerda, sem fundo -->
         <aside class="kd-outline-panel" id="kd-outline-panel">
@@ -2200,13 +2210,23 @@
           </div>
         </aside>
 
-        <div class="writer-editor-scroll">
-          <div class="writer-editor-paper">
-            <div id="writer-editor-mount"></div>
+        <!-- Coluna central: régua + área de scroll do paper. AMBAS centralizadas
+             na mesma largura, então a régua fica sempre alinhada com o paper
+             independente do índice/comentários estarem abertos ou fechados. -->
+        <div class="writer-editor-center">
+          <!-- Régua horizontal — alinhada com o paper (mesma largura A4).
+               Fica logo abaixo da toolbar, não é sticky. -->
+          <div class="kd-ruler-bar">
+            <div class="kd-ruler" id="kd-ruler" aria-hidden="true"></div>
           </div>
-          <!-- Balões de comentário flutuantes — alinhados à direita do paper,
-               posicionados por JS na altura Y de cada mark. -->
-          <div class="kd-comment-bubbles" id="kd-comment-bubbles" aria-hidden="true"></div>
+          <div class="writer-editor-scroll">
+            <div class="writer-editor-paper">
+              <div id="writer-editor-mount"></div>
+            </div>
+            <!-- Balões de comentário flutuantes — alinhados à direita do paper,
+                 posicionados por JS na altura Y de cada mark. -->
+            <div class="kd-comment-bubbles" id="kd-comment-bubbles" aria-hidden="true"></div>
+          </div>
         </div>
 
         <!-- Painel lateral de comentários — colapsável -->
@@ -2383,6 +2403,6 @@
 
   <div id="kd-toast" class="kd-toast"></div>
 
-  <script src="/js/writer/standalone.js?v=20260912rulerV2"></script>
+  <script src="/js/writer/standalone.js?v=20260916rulerAlign2"></script>
 </body>
 </html>
