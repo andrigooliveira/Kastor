@@ -1380,7 +1380,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use((req, res, next) => {
-  const isUpload = /^\/api\/(uploads|demands(\/[^/]+(\/comment)?)?$|me$|users(\/[^/]+)?$|projects(\/[^/]+)?$)/.test(req.path);
+  const isUpload = /^\/api\/(uploads|demands(\/[^/]+(\/comment)?)?$|me$|users(\/[^/]+)?$|projects(\/[^/]+)?$|writer\/import$)/.test(req.path);
   return (isUpload ? jsonLg : jsonSm)(req, res, next);
 });
 /* Static do SPA — política de cache diferenciada:
@@ -3045,6 +3045,127 @@ app.get('/api/writer/:id/export', requireAuth, async (req, res) => {
   } catch (e) {
     console.error('[writer/export]', e.message);
     res.status(500).json({ error: e.message || 'Falha ao exportar' });
+  }
+});
+
+/* Import inverso: recebe DOCX/DOC/ODT via multipart ou base64 e devolve HTML.
+   TXT/HTML/MD são retornados direto (sem passar por LibreOffice — economiza
+   segundos por arquivo). O client então usa editor.commands.setContent(html)
+   pra converter em ProseMirror doc.
+   Whitelist estrita de MIMEs — extensão .html direta seria vetor de XSS
+   armazenado (se algum handler renderizasse como HTML rich sem sanitizar).
+   Retorna { html: '...' } ou { error }. */
+const IMPORT_MAX_BYTES = 50 * 1024 * 1024;
+const IMPORT_MIME_EXT = {
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/msword': 'doc',
+  'application/vnd.oasis.opendocument.text': 'odt',
+  'application/rtf': 'rtf',
+  'text/rtf': 'rtf',
+  'text/plain': 'txt',
+  'text/markdown': 'md',
+  'text/html': 'html'
+};
+const IMPORT_EXT_TO_MIME = Object.entries(IMPORT_MIME_EXT).reduce((acc, [m, e]) => (acc[e] || (acc[e] = m), acc), {});
+
+async function convertOfficeDocToHtml(inputPath) {
+  return new Promise((resolve, reject) => {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kastor-import-out-'));
+    const soffice = findSoffice();
+    // xhtml gera XHTML válido (mais fácil de parsear que o "html" simples do
+    // LibreOffice, que às vezes cospe entidades quebradas).
+    const proc = spawn(soffice, ['--headless', '--norestore', '--convert-to', 'html:XHTML Writer File', '--outdir', outDir, inputPath], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, HOME: outDir, TMPDIR: outDir }
+    });
+    let stderrBuf = '';
+    proc.stderr.on('data', d => { stderrBuf += d.toString(); });
+    proc.on('error', (err) => {
+      try { fs.rmSync(outDir, { recursive: true, force: true }); } catch {}
+      reject(new Error('LibreOffice não encontrado: ' + err.message));
+    });
+    proc.on('exit', (code) => {
+      if (code !== 0) {
+        try { fs.rmSync(outDir, { recursive: true, force: true }); } catch {}
+        return reject(new Error('LibreOffice exit ' + code + ': ' + stderrBuf.slice(0, 400)));
+      }
+      try {
+        const files = fs.readdirSync(outDir).filter(f => /\.html?$/i.test(f));
+        if (!files.length) throw new Error('LibreOffice não gerou HTML');
+        let html = fs.readFileSync(path.join(outDir, files[0]), 'utf8');
+        try { fs.rmSync(outDir, { recursive: true, force: true }); } catch {}
+        resolve(html);
+      } catch (e) {
+        try { fs.rmSync(outDir, { recursive: true, force: true }); } catch {}
+        reject(e);
+      }
+    });
+  });
+}
+
+/* Extrai só o BODY do HTML gerado pelo LibreOffice + remove estilos inline
+   redundantes que atrapalham (font-family soffice-default etc). O client
+   ainda passa por setContent que roda o schema-parser do Tiptap. */
+function _cleanImportedHtml(html) {
+  if (!html) return '';
+  // Só a parte dentro de <body>...</body>
+  const m = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+  let body = m ? m[1] : html;
+  // Remove classes/styles verbose gerados pelo soffice
+  body = body.replace(/\sclass="[^"]*"/gi, '');
+  body = body.replace(/\sstyle="[^"]*"/gi, '');
+  body = body.replace(/<font[^>]*>/gi, '').replace(/<\/font>/gi, '');
+  // Colapsa múltiplos <br> em quebras razoáveis
+  body = body.replace(/(<br\s*\/?>\s*){3,}/gi, '<br><br>');
+  return body.trim();
+}
+
+app.post('/api/writer/import', requireAuth, jsonLg, async (req, res) => {
+  const { name, data } = req.body || {};
+  if (!data || typeof data !== 'string') return res.status(400).json({ error: 'data (data URI base64) é obrigatório' });
+  const m = data.match(/^data:([^;]*);base64,(.+)$/);
+  if (!m) return res.status(400).json({ error: 'data URI inválido' });
+  let mime = (m[1] || '').toLowerCase();
+  let ext = IMPORT_MIME_EXT[mime];
+  // Fallback pela extensão do nome — mesmo padrão do sanitizeAttachments.
+  if (!ext && name) {
+    const nm = String(name).toLowerCase().match(/\.([a-z0-9]{1,10})$/);
+    const nameExt = nm ? nm[1] : null;
+    if (nameExt && IMPORT_EXT_TO_MIME[nameExt]) { ext = nameExt; mime = IMPORT_EXT_TO_MIME[nameExt]; }
+  }
+  if (!ext) return res.status(400).json({ error: 'Formato não suportado. Aceita: DOCX, DOC, ODT, RTF, TXT, MD, HTML' });
+  const buf = Buffer.from(m[2], 'base64');
+  if (!buf.length || buf.length > IMPORT_MAX_BYTES) return res.status(400).json({ error: 'Arquivo vazio ou maior que 50 MB' });
+
+  try {
+    // Formatos de texto puro: retorna direto (envolvido em <p>).
+    if (ext === 'txt') {
+      const txt = buf.toString('utf8');
+      const html = txt.split(/\r?\n\r?\n+/).map(p => '<p>' + _serverEscHtml(p).replace(/\r?\n/g, '<br>') + '</p>').join('');
+      return res.json({ html, source: ext });
+    }
+    if (ext === 'md') {
+      // Sem parser Markdown server-side aqui — vira <pre> pro user editar.
+      const txt = buf.toString('utf8');
+      return res.json({ html: '<pre>' + _serverEscHtml(txt) + '</pre>', source: ext });
+    }
+    if (ext === 'html') {
+      const raw = buf.toString('utf8');
+      return res.json({ html: _cleanImportedHtml(raw), source: ext });
+    }
+    // DOCX/DOC/ODT/RTF: passa por LibreOffice
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kastor-import-'));
+    const inputPath = path.join(workDir, 'input.' + ext);
+    fs.writeFileSync(inputPath, buf);
+    try {
+      const html = await convertOfficeDocToHtml(inputPath);
+      res.json({ html: _cleanImportedHtml(html), source: ext });
+    } finally {
+      try { fs.rmSync(workDir, { recursive: true, force: true }); } catch {}
+    }
+  } catch (e) {
+    console.error('[writer/import]', e.message);
+    res.status(500).json({ error: e.message || 'Falha ao importar' });
   }
 });
 

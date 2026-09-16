@@ -21,12 +21,23 @@ import TextAlign from '@tiptap/extension-text-align';
 import Underline from '@tiptap/extension-underline';
 import { TextStyle, FontFamily, Color, FontSize } from '@tiptap/extension-text-style';
 import Highlight from '@tiptap/extension-highlight';
+// ── Novas features (task list, code highlight, mention) ──
+import TaskList from '@tiptap/extension-task-list';
+import TaskItem from '@tiptap/extension-task-item';
+import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
+import { createLowlight, common } from 'lowlight';
+import Mention from '@tiptap/extension-mention';
+import Suggestion from '@tiptap/suggestion';
 // ── Colaboração realtime ──
 import Collaboration from '@tiptap/extension-collaboration';
 import CollaborationCaret from '@tiptap/extension-collaboration-caret';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 import { prosemirrorJSONToYDoc } from 'y-prosemirror';
+
+// Lowlight singleton com os langs "common" (js, ts, py, bash, css, html,
+// json, md, sql, xml, yaml, etc). Suficiente pra 95% dos casos e ~40KB.
+const lowlight = createLowlight(common);
 
 /* Cria um editor Tiptap no elemento `mount`, com os defaults do Kastor.
    `opts.content`   = ProseMirror JSON inicial (ou null)
@@ -48,7 +59,9 @@ function createKastorEditor(mount, opts = {}) {
         // pra evitar "duplicate extension names".
         link: false,
         underline: false,
-        codeBlock: { HTMLAttributes: { class: 'writer-code-block' } }
+        // codeBlock desabilitado — usamos CodeBlockLowlight (com syntax
+        // highlighting via lowlight) registrado abaixo.
+        codeBlock: false
       }),
       Underline,
       Link.configure({
@@ -72,7 +85,16 @@ function createKastorEditor(mount, opts = {}) {
       Color,
       Highlight.configure({ multicolor: true }),
       KdBlockIndent,
-      KdPagination
+      KdPagination,
+      // ── Novos ──
+      TaskList.configure({ HTMLAttributes: { class: 'kd-task-list' } }),
+      TaskItem.configure({ nested: true, HTMLAttributes: { class: 'kd-task-item' } }),
+      CodeBlockLowlight.configure({ lowlight, HTMLAttributes: { class: 'kd-code-block' } }),
+      KdCallout,
+      KdColumn,
+      KdColumnBlock,
+      KdMention,
+      KdSlashCommand
     ],
     onUpdate: ({ editor }) => {
       if (typeof opts.onUpdate === 'function') {
@@ -174,7 +196,8 @@ function createCollabEditor(mount, opts) {
     extensions: [
       StarterKit.configure({
         heading: { levels: [1, 2, 3] },
-        codeBlock: { HTMLAttributes: { class: 'writer-code-block' } },
+        // codeBlock desabilitado — usamos CodeBlockLowlight abaixo.
+        codeBlock: false,
         // StarterKit v3 embute link e underline — desabilita pra usar as
         // nossas versões configuradas (Link com target _blank, etc).
         link: false,
@@ -207,6 +230,15 @@ function createCollabEditor(mount, opts) {
       Highlight.configure({ multicolor: true }),
       KdBlockIndent,
       KdPagination,
+      // ── Novos ──
+      TaskList.configure({ HTMLAttributes: { class: 'kd-task-list' } }),
+      TaskItem.configure({ nested: true, HTMLAttributes: { class: 'kd-task-item' } }),
+      CodeBlockLowlight.configure({ lowlight, HTMLAttributes: { class: 'kd-code-block' } }),
+      KdCallout,
+      KdColumn,
+      KdColumnBlock,
+      KdMention,
+      KdSlashCommand,
       // Colab: substitui o history pelo Yjs undo/redo
       Collaboration.configure({ document: ydoc }),
       CollaborationCaret.configure({
@@ -450,11 +482,18 @@ function _schemaFromExtensions() {
   const tmpEditor = new Editor({
     element: tmpMount,
     extensions: [
-      StarterKit.configure({ heading: { levels: [1, 2, 3] }, link: false, underline: false }),
+      // Precisa refletir TODAS as extensions dos editores reais senão o
+      // prosemirrorJSONToYDoc dropa nodes desconhecidos durante seed inicial.
+      StarterKit.configure({ heading: { levels: [1, 2, 3] }, codeBlock: false, link: false, underline: false }),
       Underline, Link, Placeholder,
       Table, TableRow, TableHeader, TableCell,
-      Image, TextAlign.configure({ types: ['heading', 'paragraph'] }),
-      KastorAttachment, KastorComment, PasteAsLink
+      KdImage, TextAlign.configure({ types: ['heading', 'paragraph'] }),
+      KastorAttachment, KastorComment, PasteAsLink,
+      TextStyle, FontFamily, FontSize, Color, Highlight.configure({ multicolor: true }),
+      KdBlockIndent,
+      TaskList, TaskItem.configure({ nested: true }),
+      CodeBlockLowlight.configure({ lowlight }),
+      KdCallout, KdColumn, KdColumnBlock, KdMention
     ]
   });
   _cachedSchema = tmpEditor.schema;
@@ -495,6 +534,301 @@ const KdImage = Image.extend({
     };
   }
 });
+
+/* ── Callout: bloco de destaque (Nota/Aviso/Dica/Importante) ────────
+   Container com background colorido + ícone + conteúdo editável.
+   Cor/ícone vêm do attr `variant` (info/warn/tip/danger). Renderiza
+   como <div class="kd-callout kd-callout--warn">. Aceita qualquer bloco
+   dentro (parágrafos, listas, etc). Fica GROUP block pra permitir mistura. */
+const KdCallout = Node.create({
+  name: 'kdCallout',
+  group: 'block',
+  content: 'block+',
+  defining: true,
+  addAttributes() {
+    return {
+      variant: {
+        default: 'info',
+        parseHTML: (el) => el.getAttribute('data-variant') || 'info',
+        renderHTML: (attrs) => ({ 'data-variant': attrs.variant || 'info' })
+      }
+    };
+  },
+  parseHTML() {
+    return [{ tag: 'div[data-callout]' }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['div', mergeAttributes(HTMLAttributes, { 'data-callout': 'true', class: 'kd-callout' }), 0];
+  },
+  addCommands() {
+    return {
+      setCallout: (attrs = {}) => ({ commands }) => {
+        return commands.wrapIn(this.name, { variant: attrs.variant || 'info' });
+      },
+      unsetCallout: () => ({ commands }) => commands.lift(this.name),
+      toggleCallout: (attrs = {}) => ({ state, commands }) => {
+        const isInCallout = state.selection.$from.node(-1)?.type.name === this.name
+                         || state.selection.$from.parent.type.name === this.name;
+        return isInCallout ? commands.lift(this.name) : commands.wrapIn(this.name, { variant: attrs.variant || 'info' });
+      }
+    };
+  }
+});
+
+/* ── Colunas: bloco container multi-coluna (2 ou 3 colunas) ─────────
+   kdColumnBlock = wrapper com N .kd-column dentro.
+   kdColumn      = célula editável (aceita blocos).
+   Renderiza como CSS grid. Attr `cols` controla número de colunas.
+   Ao inserir, cria automaticamente N kdColumn com um parágrafo vazio cada. */
+const KdColumn = Node.create({
+  name: 'kdColumn',
+  group: 'kdColumn',
+  content: 'block+',
+  defining: true,
+  isolating: true,
+  parseHTML() { return [{ tag: 'div[data-column]' }]; },
+  renderHTML({ HTMLAttributes }) {
+    return ['div', mergeAttributes(HTMLAttributes, { 'data-column': 'true', class: 'kd-column' }), 0];
+  }
+});
+const KdColumnBlock = Node.create({
+  name: 'kdColumnBlock',
+  group: 'block',
+  content: 'kdColumn{2,3}',       // exige 2 ou 3 kdColumns
+  addAttributes() {
+    return {
+      cols: {
+        default: 2,
+        parseHTML: (el) => parseInt(el.getAttribute('data-cols') || '2', 10),
+        renderHTML: (attrs) => ({ 'data-cols': String(attrs.cols || 2), style: 'grid-template-columns: repeat(' + (attrs.cols || 2) + ', 1fr)' })
+      }
+    };
+  },
+  parseHTML() { return [{ tag: 'div[data-column-block]' }]; },
+  renderHTML({ HTMLAttributes }) {
+    return ['div', mergeAttributes(HTMLAttributes, { 'data-column-block': 'true', class: 'kd-column-block' }), 0];
+  },
+  addCommands() {
+    return {
+      setColumns: (n = 2) => ({ chain, state }) => {
+        const cols = Math.max(2, Math.min(3, Number(n) || 2));
+        const emptyPara = { type: 'paragraph' };
+        const kdCol = { type: 'kdColumn', content: [emptyPara] };
+        return chain().insertContent({
+          type: 'kdColumnBlock',
+          attrs: { cols },
+          content: new Array(cols).fill(null).map(() => kdCol)
+        }).run();
+      }
+    };
+  }
+});
+
+/* ── Mention: renderiza @nome como chip clicável ──────────────────── */
+const KdMentionSuggestion = {
+  char: '@',
+  allowSpaces: false,
+  startOfLine: false,
+  items: ({ query }) => {
+    // Delegado pra window.kdMentionItems se existir (populado pelo standalone.js
+    // com a lista de usuários do docs), senão array vazio.
+    if (typeof window !== 'undefined' && typeof window.kdMentionItems === 'function') {
+      try { return window.kdMentionItems(query) || []; } catch { return []; }
+    }
+    return [];
+  },
+  render: () => {
+    let popup, selectedIndex = 0, currentItems = [];
+    const render = (props) => {
+      if (!popup) {
+        popup = document.createElement('div');
+        popup.className = 'kd-mention-popup';
+        document.body.appendChild(popup);
+      }
+      currentItems = props.items || [];
+      selectedIndex = 0;
+      draw(props);
+      position(props);
+    };
+    const draw = (props) => {
+      if (!currentItems.length) {
+        popup.innerHTML = '<div class="kd-mention-empty">Nenhum usuário</div>';
+        return;
+      }
+      popup.innerHTML = currentItems.map((it, i) => {
+        const avatar = it.avatar
+          ? `<img src="${it.avatar}" alt="" class="kd-mention-avatar">`
+          : `<div class="kd-mention-avatar kd-mention-avatar--initial" style="background:${it.color || '#7A00FF'}">${(it.name || '?').charAt(0).toUpperCase()}</div>`;
+        return `<button type="button" data-i="${i}" class="kd-mention-item${i === selectedIndex ? ' is-selected' : ''}">
+          ${avatar}<span class="kd-mention-name">${escapeHtml(it.name || '')}</span>
+          ${it.role ? `<span class="kd-mention-role">${escapeHtml(it.role)}</span>` : ''}
+        </button>`;
+      }).join('');
+      popup.querySelectorAll('.kd-mention-item').forEach(el => {
+        el.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          const i = parseInt(el.dataset.i, 10);
+          props.command({ id: currentItems[i].id, label: currentItems[i].name });
+        });
+      });
+    };
+    const position = (props) => {
+      const rect = props.clientRect?.();
+      if (!rect) return;
+      const pw = popup.offsetWidth;
+      const ph = popup.offsetHeight;
+      let x = rect.left, y = rect.bottom + 4;
+      if (x + pw > window.innerWidth - 8) x = window.innerWidth - pw - 8;
+      if (y + ph > window.innerHeight - 8) y = rect.top - ph - 4;
+      popup.style.left = x + 'px';
+      popup.style.top = y + 'px';
+    };
+    return {
+      onStart: render,
+      onUpdate: render,
+      onKeyDown: (props) => {
+        const k = props.event.key;
+        if (k === 'ArrowDown') { selectedIndex = (selectedIndex + 1) % Math.max(1, currentItems.length); draw(props); return true; }
+        if (k === 'ArrowUp')   { selectedIndex = (selectedIndex - 1 + currentItems.length) % Math.max(1, currentItems.length); draw(props); return true; }
+        if (k === 'Enter' || k === 'Tab') {
+          if (currentItems[selectedIndex]) {
+            props.command({ id: currentItems[selectedIndex].id, label: currentItems[selectedIndex].name });
+            return true;
+          }
+          return false;
+        }
+        if (k === 'Escape') { popup?.remove(); popup = null; return true; }
+        return false;
+      },
+      onExit: () => { popup?.remove(); popup = null; }
+    };
+  }
+};
+const KdMention = Mention.configure({
+  HTMLAttributes: { class: 'kd-mention' },
+  renderText: ({ node }) => `@${node.attrs.label || node.attrs.id}`,
+  suggestion: KdMentionSuggestion
+});
+
+/* ── Slash command: menu contextual em `/` pra inserir bloco ────────
+   Reusa @tiptap/suggestion (mesma libs do Mention). Ao digitar `/`,
+   abre popup com lista de comandos (heading, list, callout, table…).
+   Executor de cada comando fica no `command` do item. */
+function _matchSlash(query, cmd) {
+  const q = query.toLowerCase();
+  return cmd.title.toLowerCase().includes(q)
+      || (cmd.keywords || []).some(k => k.toLowerCase().includes(q));
+}
+const KdSlashCommands = [
+  { key: 'h1', title: 'Título 1',            keywords: ['h1','título','heading'],       icon: 'H1', run: (ed, r) => ed.chain().deleteRange(r).setNode('heading', { level: 1 }).run() },
+  { key: 'h2', title: 'Título 2',            keywords: ['h2','subtítulo'],              icon: 'H2', run: (ed, r) => ed.chain().deleteRange(r).setNode('heading', { level: 2 }).run() },
+  { key: 'h3', title: 'Título 3',            keywords: ['h3'],                          icon: 'H3', run: (ed, r) => ed.chain().deleteRange(r).setNode('heading', { level: 3 }).run() },
+  { key: 'p',  title: 'Parágrafo',           keywords: ['p','paragrafo','texto'],       icon: '¶',  run: (ed, r) => ed.chain().deleteRange(r).setNode('paragraph').run() },
+  { key: 'ul', title: 'Lista com marcadores', keywords: ['lista','bullet','ul'],        icon: '•',  run: (ed, r) => ed.chain().deleteRange(r).toggleBulletList().run() },
+  { key: 'ol', title: 'Lista numerada',      keywords: ['numerada','ordenada','ol'],    icon: '1.', run: (ed, r) => ed.chain().deleteRange(r).toggleOrderedList().run() },
+  { key: 'task', title: 'Lista de tarefas',  keywords: ['todo','task','checkbox'],      icon: '☑',  run: (ed, r) => ed.chain().deleteRange(r).toggleTaskList().run() },
+  { key: 'quote', title: 'Citação',          keywords: ['quote','citação','blockquote'], icon: '"',  run: (ed, r) => ed.chain().deleteRange(r).toggleBlockquote().run() },
+  { key: 'code', title: 'Bloco de código',   keywords: ['code','codigo'],               icon: '</>', run: (ed, r) => ed.chain().deleteRange(r).toggleCodeBlock().run() },
+  { key: 'hr', title: 'Linha divisória',     keywords: ['hr','divisor','divisória'],    icon: '—',  run: (ed, r) => ed.chain().deleteRange(r).setHorizontalRule().run() },
+  { key: 'table', title: 'Tabela',           keywords: ['table','tabela'],              icon: '▦',  run: (ed, r) => ed.chain().deleteRange(r).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
+  { key: 'callout-info',   title: 'Nota',       keywords: ['nota','info','callout'],   icon: 'ℹ',  run: (ed, r) => ed.chain().deleteRange(r).setCallout({ variant: 'info' }).run() },
+  { key: 'callout-tip',    title: 'Dica',       keywords: ['dica','tip'],              icon: '💡', run: (ed, r) => ed.chain().deleteRange(r).setCallout({ variant: 'tip' }).run() },
+  { key: 'callout-warn',   title: 'Aviso',      keywords: ['aviso','warn','atenção'],  icon: '⚠',  run: (ed, r) => ed.chain().deleteRange(r).setCallout({ variant: 'warn' }).run() },
+  { key: 'callout-danger', title: 'Importante', keywords: ['danger','importante','!!'], icon: '🚨', run: (ed, r) => ed.chain().deleteRange(r).setCallout({ variant: 'danger' }).run() },
+  { key: 'cols2', title: '2 colunas',        keywords: ['colunas','cols','2'],          icon: '⫲',  run: (ed, r) => ed.chain().deleteRange(r).setColumns(2).run() },
+  { key: 'cols3', title: '3 colunas',        keywords: ['colunas','cols','3'],          icon: '⫸',  run: (ed, r) => ed.chain().deleteRange(r).setColumns(3).run() }
+];
+const KdSlashCommand = Extension.create({
+  name: 'kdSlashCommand',
+  addProseMirrorPlugins() {
+    return [
+      Suggestion({
+        editor: this.editor,
+        char: '/',
+        allowSpaces: false,
+        startOfLine: false,
+        // Ativa só quando `/` está no COMEÇO de um bloco vazio ou de linha
+        // (evita popup atrapalhando quando user digita `and/or`).
+        allow: ({ state, range }) => {
+          const $from = state.doc.resolve(range.from);
+          const isRootDepth = $from.depth === 1;
+          const isAfterContent = $from.parent.textContent.slice(0, range.from - $from.start() - 1).trim().length > 0;
+          return isRootDepth && !isAfterContent;
+        },
+        items: ({ query }) => KdSlashCommands.filter(c => _matchSlash(query, c)),
+        command: ({ editor, range, props }) => {
+          try { props.run(editor, range); } catch (e) { console.error('[slash]', e); }
+        },
+        render: () => {
+          let popup, selectedIndex = 0, currentItems = [];
+          const draw = (props) => {
+            if (!currentItems.length) {
+              popup.innerHTML = '<div class="kd-slash-empty">Nada bate com isso</div>';
+              return;
+            }
+            popup.innerHTML = currentItems.map((it, i) => `
+              <button type="button" data-i="${i}" class="kd-slash-item${i === selectedIndex ? ' is-selected' : ''}">
+                <span class="kd-slash-icon">${it.icon}</span>
+                <span class="kd-slash-title">${escapeHtml(it.title)}</span>
+              </button>
+            `).join('');
+            popup.querySelectorAll('.kd-slash-item').forEach(el => {
+              el.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                const i = parseInt(el.dataset.i, 10);
+                props.command(currentItems[i]);
+              });
+            });
+          };
+          const position = (props) => {
+            const rect = props.clientRect?.();
+            if (!rect) return;
+            const pw = popup.offsetWidth || 280;
+            const ph = popup.offsetHeight || 200;
+            let x = rect.left, y = rect.bottom + 4;
+            if (x + pw > window.innerWidth - 8) x = window.innerWidth - pw - 8;
+            if (y + ph > window.innerHeight - 8) y = rect.top - ph - 4;
+            popup.style.left = x + 'px';
+            popup.style.top = y + 'px';
+          };
+          return {
+            onStart: (props) => {
+              popup = document.createElement('div');
+              popup.className = 'kd-slash-popup';
+              document.body.appendChild(popup);
+              currentItems = props.items || [];
+              selectedIndex = 0;
+              draw(props);
+              position(props);
+            },
+            onUpdate: (props) => {
+              currentItems = props.items || [];
+              selectedIndex = Math.min(selectedIndex, Math.max(0, currentItems.length - 1));
+              draw(props);
+              position(props);
+            },
+            onKeyDown: (props) => {
+              const k = props.event.key;
+              if (k === 'ArrowDown') { selectedIndex = (selectedIndex + 1) % Math.max(1, currentItems.length); draw(props); return true; }
+              if (k === 'ArrowUp')   { selectedIndex = (selectedIndex - 1 + currentItems.length) % Math.max(1, currentItems.length); draw(props); return true; }
+              if (k === 'Enter') {
+                if (currentItems[selectedIndex]) { props.command(currentItems[selectedIndex]); return true; }
+                return false;
+              }
+              if (k === 'Escape') { popup?.remove(); popup = null; return true; }
+              return false;
+            },
+            onExit: () => { popup?.remove(); popup = null; }
+          };
+        }
+      })
+    ];
+  }
+});
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
 
 /* ── Indent (margens de parágrafo) ───────────────────────────────────
    Adiciona atributos `indentLeft` e `indentRight` (em mm) nos blocos

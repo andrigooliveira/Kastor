@@ -95,7 +95,7 @@
     if (bundlePromise) return bundlePromise;
     bundlePromise = new Promise((resolve, reject) => {
       const s = document.createElement('script');
-      s.src = '/vendor/writer.bundle.js?v=20260916imgResize';
+      s.src = '/vendor/writer.bundle.js?v=20260916docsPack';
       s.async = true;
       s.onload = () => window.KastorWriter ? resolve(window.KastorWriter) : reject(new Error('bundle sem KastorWriter'));
       s.onerror = () => reject(new Error('Falha ao carregar o editor.'));
@@ -414,6 +414,206 @@
   }
   window.kdCreateDoc = createDoc;
 
+  /* Cria um doc já com HTML pré-preenchido (usado por templates/import).
+     Salva o HTML no doc VIA `content: {type: 'doc', content: [{type:...}]}`
+     não funciona bem — melhor deixar vazio e injetar via setContent depois
+     que o editor montar (goEditor faz isso via KD.pendingHtml). */
+  async function _kdCreateDocWith(html, title) {
+    const wsId = ($('kd-f-ws').value) || (KD.me?.workspaces && KD.me.workspaces[0]) || (KD.workspaces[0]?.id);
+    if (!wsId) { toast('Sem squad disponível pra criar documento.', 'error'); return; }
+    try {
+      const doc = await api('/writer', 'POST', { workspaceId: wsId, title: title || 'Sem título', content: null });
+      KD.docsList.unshift(doc);
+      // Marca que o editor deve inserir esse HTML no mount (é preferível
+      // fazer no onCreate do editor pra passar pelo schema-parser correto).
+      doc._justCreated = true;
+      doc._pendingHtml = html || '';
+      goEditor(doc);
+    } catch (e) { toast(e.message || 'Falha ao criar documento.', 'error'); }
+  }
+
+  /* Templates de documento — HTML pré-preenchido. Escolhido no modal de "novo".
+     Podem ser customizados/editados aqui sem toucar em nenhuma outra coisa. */
+  const KD_TEMPLATES = [
+    {
+      key: 'blank', title: 'Em branco', desc: 'Documento vazio', icon: '📄',
+      html: ''
+    },
+    {
+      key: 'briefing', title: 'Briefing de projeto', desc: 'Escopo, público, entregas, prazos', icon: '📋',
+      html: [
+        '<h1>Briefing — [Nome do projeto]</h1>',
+        '<p><strong>Cliente:</strong> [Nome do cliente]<br>',
+        '<strong>Data:</strong> [DD/MM/AAAA]<br>',
+        '<strong>Responsável:</strong> @[usuário]</p>',
+        '<h2>1. Contexto</h2><p>Breve descrição do que motiva esse projeto — situação atual, dor a resolver, objetivo de negócio.</p>',
+        '<h2>2. Objetivos</h2><ul><li>Objetivo primário</li><li>Objetivo secundário</li></ul>',
+        '<h2>3. Público-alvo</h2><p>Descrição do público que vai consumir o resultado.</p>',
+        '<h2>4. Escopo</h2><h3>O que ENTRA</h3><ul><li>Entregável 1</li><li>Entregável 2</li></ul>',
+        '<h3>O que NÃO entra</h3><ul><li>Fora do escopo</li></ul>',
+        '<h2>5. Prazos & Marcos</h2>',
+        '<table><thead><tr><th>Marco</th><th>Data</th></tr></thead><tbody><tr><td>Kick-off</td><td></td></tr><tr><td>Entrega intermediária</td><td></td></tr><tr><td>Entrega final</td><td></td></tr></tbody></table>',
+        '<h2>6. Referências</h2><p>Links, imagens, materiais de inspiração.</p>',
+        '<div data-callout="true" data-variant="warn"><p><strong>Aprovação:</strong> este briefing precisa ser validado pelo cliente antes de iniciar.</p></div>'
+      ].join('')
+    },
+    {
+      key: 'sow', title: 'Escopo de trabalho (SOW)', desc: 'Contrato de projeto com prazos e valores', icon: '📝',
+      html: [
+        '<h1>Escopo de Trabalho</h1>',
+        '<p><strong>Contratante:</strong> [Cliente]<br><strong>Contratado:</strong> [Empresa]<br><strong>Data:</strong> [DD/MM/AAAA]</p>',
+        '<h2>1. Objeto</h2><p>Descrição do serviço a ser prestado.</p>',
+        '<h2>2. Entregas</h2><ol><li>Entrega 1 — descrição</li><li>Entrega 2 — descrição</li></ol>',
+        '<h2>3. Cronograma</h2><table><thead><tr><th>Etapa</th><th>Início</th><th>Fim</th></tr></thead><tbody><tr><td></td><td></td><td></td></tr></tbody></table>',
+        '<h2>4. Investimento</h2><p>R$ 0.000,00 — pagamento em X parcelas.</p>',
+        '<h2>5. Condições gerais</h2><ul><li>Prazo de execução: XX dias corridos.</li><li>Alterações fora do escopo serão orçadas à parte.</li></ul>',
+        '<div data-callout="true" data-variant="info"><p><strong>Aceite:</strong> a assinatura eletrônica ou aprovação por email valida este documento.</p></div>'
+      ].join('')
+    },
+    {
+      key: 'report', title: 'Relatório executivo', desc: 'Resumo, resultados, próximos passos', icon: '📊',
+      html: [
+        '<h1>Relatório Executivo — [Período]</h1>',
+        '<p><em>Preparado por: @[usuário] · Data: DD/MM/AAAA</em></p>',
+        '<h2>Resumo executivo</h2><p>1-2 parágrafos com os highlights do período.</p>',
+        '<h2>Principais resultados</h2>',
+        '<div data-column-block="true" data-cols="3" style="grid-template-columns: repeat(3, 1fr);"><div data-column="true"><h3>Métrica A</h3><p>Valor + variação</p></div><div data-column="true"><h3>Métrica B</h3><p>Valor + variação</p></div><div data-column="true"><h3>Métrica C</h3><p>Valor + variação</p></div></div>',
+        '<h2>Análise detalhada</h2><p>Contexto, o que funcionou, o que não funcionou.</p>',
+        '<h2>Próximos passos</h2><ul data-type="taskList" class="kd-task-list"><li data-checked="false" class="kd-task-item"><label><input type="checkbox"></label><div><p>Ação 1</p></div></li><li data-checked="false" class="kd-task-item"><label><input type="checkbox"></label><div><p>Ação 2</p></div></li></ul>',
+        '<h2>Riscos / Bloqueios</h2><div data-callout="true" data-variant="danger"><p>Descreva bloqueios críticos aqui.</p></div>'
+      ].join('')
+    },
+    {
+      key: 'meeting', title: 'Ata de reunião', desc: 'Presentes, decisões, próximos passos', icon: '🗓',
+      html: [
+        '<h1>Ata — [Assunto]</h1>',
+        '<p><strong>Data:</strong> DD/MM/AAAA · <strong>Horário:</strong> HH:MM<br><strong>Presentes:</strong> @user1, @user2</p>',
+        '<h2>Pauta</h2><ol><li>Item 1</li><li>Item 2</li></ol>',
+        '<h2>Discussões & Decisões</h2><h3>1. [Título do item]</h3><p>Resumo da discussão. <strong>Decisão:</strong> ...</p>',
+        '<h2>Ações</h2><ul data-type="taskList" class="kd-task-list"><li data-checked="false" class="kd-task-item"><label><input type="checkbox"></label><div><p>@resp — Ação — prazo</p></div></li></ul>',
+        '<h2>Próxima reunião</h2><p>Data / participantes / pauta.</p>'
+      ].join('')
+    },
+    {
+      key: 'onepager', title: 'One-pager', desc: 'Resumo visual em uma página', icon: '🎯',
+      html: [
+        '<h1 style="text-align:center">[Título]</h1>',
+        '<p style="text-align:center"><em>Subtítulo / tagline</em></p>',
+        '<div data-callout="true" data-variant="info"><p><strong>Proposta de valor:</strong> uma frase que resume o "por quê" desse projeto.</p></div>',
+        '<div data-column-block="true" data-cols="2" style="grid-template-columns: repeat(2, 1fr);"><div data-column="true"><h3>Problema</h3><p>Descrição do problema.</p></div><div data-column="true"><h3>Solução</h3><p>Como resolvemos.</p></div></div>',
+        '<h2>Números-chave</h2><div data-column-block="true" data-cols="3" style="grid-template-columns: repeat(3, 1fr);"><div data-column="true"><h2 style="text-align:center">10x</h2><p style="text-align:center">Métrica 1</p></div><div data-column="true"><h2 style="text-align:center">30%</h2><p style="text-align:center">Métrica 2</p></div><div data-column="true"><h2 style="text-align:center">R$ 0</h2><p style="text-align:center">Métrica 3</p></div></div>'
+      ].join('')
+    }
+  ];
+
+  /* Abre modal com grid de templates. Click → cria doc com o HTML do template. */
+  function _kdOpenTemplatesModal() {
+    let overlay = document.getElementById('kd-templates-modal');
+    if (overlay) overlay.remove();
+    overlay = document.createElement('div');
+    overlay.id = 'kd-templates-modal';
+    overlay.className = 'kd-modal-overlay';
+    overlay.innerHTML = `
+      <div class="kd-modal kd-modal--wide">
+        <div class="kd-modal-head">
+          <div class="kd-modal-title">Novo documento</div>
+          <button type="button" class="kd-icon-btn" onclick="_kdCloseTemplatesModal()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        </div>
+        <div class="kd-modal-body">
+          <div class="kd-templates-grid">
+            ${KD_TEMPLATES.map(t => `
+              <button type="button" class="kd-template-card" data-key="${esc(t.key)}">
+                <div class="kd-template-icon">${t.icon}</div>
+                <div class="kd-template-title">${esc(t.title)}</div>
+                <div class="kd-template-desc">${esc(t.desc)}</div>
+              </button>
+            `).join('')}
+            <button type="button" class="kd-template-card kd-template-import" data-import="1">
+              <div class="kd-template-icon">📥</div>
+              <div class="kd-template-title">Importar arquivo…</div>
+              <div class="kd-template-desc">DOCX, DOC, ODT, RTF, TXT, MD, HTML</div>
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) _kdCloseTemplatesModal(); });
+    overlay.querySelectorAll('[data-key]').forEach(el => {
+      el.addEventListener('click', () => {
+        const t = KD_TEMPLATES.find(x => x.key === el.dataset.key);
+        _kdCloseTemplatesModal();
+        if (!t) return;
+        if (t.key === 'blank') return createDoc();
+        _kdCreateDocWith(t.html, null);
+      });
+    });
+    overlay.querySelector('[data-import]').addEventListener('click', () => {
+      _kdCloseTemplatesModal();
+      _kdImportPickFile();
+    });
+  }
+  window._kdOpenTemplatesModal = _kdOpenTemplatesModal;
+  window._kdCloseTemplatesModal = () => document.getElementById('kd-templates-modal')?.remove();
+
+  /* Abre file picker pra importar DOCX/TXT/etc → POST /api/writer/import →
+     cria novo doc com o HTML retornado. */
+  function _kdImportPickFile() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.docx,.doc,.odt,.rtf,.txt,.md,.html,.htm,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,application/vnd.oasis.opendocument.text,application/rtf,text/plain,text/markdown,text/html';
+    input.style.display = 'none';
+    document.body.appendChild(input);
+    input.addEventListener('change', async () => {
+      const file = (input.files || [])[0];
+      document.body.removeChild(input);
+      if (!file) return;
+      if (file.size > 50 * 1024 * 1024) { toast('Arquivo excede 50 MB.', 'error'); return; }
+      toast('Convertendo "' + file.name + '"…', 'info');
+      try {
+        const dataUri = await new Promise((res, rej) => {
+          const r = new FileReader();
+          r.onload = () => res(r.result);
+          r.onerror = () => rej(r.error);
+          r.readAsDataURL(file);
+        });
+        const resp = await fetch('/api/writer/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ name: file.name, data: dataUri })
+        });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error(err.error || ('HTTP ' + resp.status));
+        }
+        const { html } = await resp.json();
+        const title = file.name.replace(/\.[a-z0-9]{1,10}$/i, '');
+        await _kdCreateDocWith(html, title);
+      } catch (e) {
+        toast('Falha ao importar: ' + (e.message || 'erro'), 'error');
+      }
+    });
+    input.click();
+  }
+  window._kdImportPickFile = _kdImportPickFile;
+
+  /* Provider de items pro Mention (extension). Filtra usuários por query. */
+  window.kdMentionItems = (query) => {
+    if (!KD.usersById) return [];
+    const q = String(query || '').toLowerCase();
+    const out = [];
+    for (const u of KD.usersById.values()) {
+      const name = (u.name || '').toLowerCase();
+      const email = (u.email || '').toLowerCase();
+      if (!q || name.includes(q) || email.includes(q)) {
+        out.push({ id: u.id, name: u.name || 'Usuário', role: u.email || '', color: u.color || null, avatar: u.avatar || null });
+        if (out.length >= 8) break;
+      }
+    }
+    return out;
+  };
+
   /* Retorna true se o doc atual é "vazio de nascença": foi criado agora,
      título permanece "Sem título" e o PM JSON só tem parágrafos vazios. */
   function _kdCurrentDocIsUntouched() {
@@ -533,6 +733,17 @@
       });
       KD.collab = collab;
       KD.editor = collab.editor;
+      // Se o doc foi criado com HTML pré-preenchido (template ou import),
+      // injeta agora que o editor tá montado. Aguarda um tick pro Yjs
+      // conectar antes de setContent (senão a operação some no re-sync).
+      if (doc._pendingHtml) {
+        const html = doc._pendingHtml;
+        doc._pendingHtml = null;
+        setTimeout(() => {
+          try { KD.editor?.commands.setContent(html, false, { preserveWhitespace: 'full' }); }
+          catch (e) { console.warn('[setContent template]', e); }
+        }, 600);
+      }
       _kdApplyRoleUI();
       // Índice do doc: 1º render após o editor montar
       _kdOutlineRefresh();
