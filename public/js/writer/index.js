@@ -61,7 +61,7 @@ function createKastorEditor(mount, opts = {}) {
       }),
       Table.configure({ resizable: true, HTMLAttributes: { class: 'writer-table' } }),
       TableRow, TableHeader, TableCell,
-      Image.configure({ HTMLAttributes: { class: 'writer-image' } }),
+      KdImage.configure({ HTMLAttributes: { class: 'writer-image' } }),
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       KastorAttachment,
       KastorComment,
@@ -195,7 +195,7 @@ function createCollabEditor(mount, opts) {
       }),
       Table.configure({ resizable: true, HTMLAttributes: { class: 'writer-table' } }),
       TableRow, TableHeader, TableCell,
-      Image.configure({ HTMLAttributes: { class: 'writer-image' } }),
+      KdImage.configure({ HTMLAttributes: { class: 'writer-image' } }),
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       KastorAttachment,
       KastorComment,
@@ -463,6 +463,39 @@ function _schemaFromExtensions() {
 }
 
 // Namespace global exposto pro app.js legado
+
+/* ── KdImage: extende Image com width + align ─────────────────────────
+   TipTap's Image não tem esses attrs por padrão. Adicionamos aqui pra
+   permitir resize via handles/right-click e alinhamento (left/center/right).
+   width pode ser número (px) ou string ("50%"), renderizado no style. */
+const KdImage = Image.extend({
+  addAttributes() {
+    return {
+      ...(this.parent?.() || {}),
+      width: {
+        default: null,
+        renderHTML: (attrs) => {
+          if (attrs.width == null || attrs.width === '') return {};
+          const v = typeof attrs.width === 'number' ? attrs.width + 'px' : String(attrs.width);
+          return { style: 'width:' + v };
+        },
+        parseHTML: (el) => {
+          const w = el.getAttribute('width') || (el.style && el.style.width) || '';
+          if (!w) return null;
+          if (w.endsWith('%')) return w;
+          const n = parseInt(w, 10);
+          return Number.isFinite(n) ? n : null;
+        }
+      },
+      align: {
+        default: null,
+        renderHTML: (attrs) => attrs.align ? { 'data-align': attrs.align } : {},
+        parseHTML: (el) => el.getAttribute('data-align') || null
+      }
+    };
+  }
+});
+
 /* ── Indent (margens de parágrafo) ───────────────────────────────────
    Adiciona atributos `indentLeft` e `indentRight` (em mm) nos blocos
    (paragraph, heading, listas, blockquote). Renderizados como inline

@@ -23,7 +23,7 @@
        gzipped) mas o cache-buster do app.js já reaproveita a mesma versão em cache
        do usuário na maior parte dos acessos. Pra Fase futura vale extrair só tokens
        + classes writer-* num CSS menor. -->
-  <link rel="stylesheet" href="/css/style.css?v=20260916rulerAlign">
+  <link rel="stylesheet" href="/css/style.css?v=20260916imgResize">
 
   <style>
     /* Reset do body pra editor standalone — sem margin, cor da plataforma. */
@@ -1917,6 +1917,74 @@
     }
     .kd-color-remove:hover { background: color-mix(in oklab, #e53935 10%, transparent); color: #e53935; border-color: color-mix(in oklab, #e53935 40%, var(--hairline)); }
 
+    /* ── Imagem inline: seleção, resize handles, toolbar flutuante ── */
+    img.writer-image {
+      display: inline-block;
+      max-width: 100%;
+      height: auto;
+      cursor: pointer;
+      transition: outline .12s;
+    }
+    img.writer-image[data-align="left"]   { margin-right: auto; float: none; display: block; }
+    img.writer-image[data-align="center"] { margin-left: auto; margin-right: auto; display: block; }
+    img.writer-image[data-align="right"]  { margin-left: auto; float: none; display: block; }
+    img.writer-image.kd-img-selected {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    img.writer-image.is-resizing { opacity: .85; }
+
+    .kd-img-handle {
+      position: fixed;
+      width: 10px; height: 10px;
+      background: var(--accent);
+      border: 2px solid var(--surface);
+      border-radius: 50%;
+      z-index: 350;
+      box-shadow: 0 1px 4px rgba(0,0,0,.35);
+    }
+    .kd-img-handle--nw { cursor: nw-resize; }
+    .kd-img-handle--ne { cursor: ne-resize; }
+    .kd-img-handle--sw { cursor: sw-resize; }
+    .kd-img-handle--se { cursor: se-resize; }
+
+    .kd-img-toolbar {
+      position: fixed;
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      background: var(--surface);
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      padding: 4px;
+      z-index: 340;
+      box-shadow: 0 8px 24px -6px rgba(0,0,0,.4), 0 2px 6px rgba(0,0,0,.1);
+      font-size: 12px;
+    }
+    .kd-img-toolbar button {
+      background: transparent;
+      border: 0;
+      color: var(--text);
+      padding: 4px 8px;
+      border-radius: 5px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      min-height: 26px;
+      transition: background .12s;
+    }
+    .kd-img-toolbar button:hover { background: color-mix(in oklab, var(--text) 8%, transparent); }
+    .kd-img-toolbar .kd-img-toolbar-sep {
+      width: 1px; height: 18px;
+      background: var(--hairline);
+      margin: 0 2px;
+    }
+    .kd-img-toolbar .kd-img-danger { color: #e53935; }
+    .kd-img-toolbar .kd-img-danger:hover { background: color-mix(in oklab, #e53935 12%, transparent); }
+
     /* ── Menu de contexto do editor (substitui o do browser) ───────── */
     .kd-context-menu {
       position: fixed;
@@ -2403,6 +2471,6 @@
 
   <div id="kd-toast" class="kd-toast"></div>
 
-  <script src="/js/writer/standalone.js?v=20260916rulerAlign2"></script>
+  <script src="/js/writer/standalone.js?v=20260916imgResize"></script>
 </body>
 </html>

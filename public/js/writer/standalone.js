@@ -95,7 +95,7 @@
     if (bundlePromise) return bundlePromise;
     bundlePromise = new Promise((resolve, reject) => {
       const s = document.createElement('script');
-      s.src = '/vendor/writer.bundle.js?v=20260912rulerV2';
+      s.src = '/vendor/writer.bundle.js?v=20260916imgResize';
       s.async = true;
       s.onload = () => window.KastorWriter ? resolve(window.KastorWriter) : reject(new Error('bundle sem KastorWriter'));
       s.onerror = () => reject(new Error('Falha ao carregar o editor.'));
@@ -543,6 +543,8 @@
 
       // Menu de contexto custom no editor (substitui o do browser)
       _kdBindContextMenu(mount);
+      // Interações com imagens (click pra selecionar/resize, right-click menu)
+      _kdBindImageInteractions(mount);
 
       // Scroll no topo — várias vezes ao longo de ~1.5s pra vencer:
       //  - autofocus do TipTap tentando scrollar cursor pra visão
@@ -970,6 +972,7 @@
       image:     '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>',
       hr:        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>',
       paperclip: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 12-9.5 9.5a5.5 5.5 0 0 1-7.78-7.78L13.5 4.5a3.5 3.5 0 0 1 5 5L10 18a1.5 1.5 0 0 1-2.12-2.12L15.5 8"/></svg>',
+      upload:    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>',
       comment:   '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
       undo:      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/></svg>',
       redo:      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5v0A5.5 5.5 0 0 0 9.5 20H13"/></svg>',
@@ -1048,9 +1051,10 @@
       <div class="writer-tb-sep"></div>
       <div class="writer-tb-group">
         <button type="button" class="writer-tb-btn ${isActive('link')?'is-active':''}" data-a="toggleLink" title="Link">${I.link}</button>
+        <button type="button" class="writer-tb-btn" data-a="uploadFile" title="Enviar arquivo do computador (imagem, PDF, etc)">${I.upload}</button>
         <button type="button" class="writer-tb-btn" data-a="galleryPick" title="Anexar da Galeria">${I.paperclip}</button>
         <button type="button" class="writer-tb-btn" data-a="insertTable" title="Tabela">${I.table}</button>
-        <button type="button" class="writer-tb-btn" data-a="insertImage" title="Imagem por URL">${I.image}</button>
+        <button type="button" class="writer-tb-btn" data-a="insertImage" title="Imagem da Galeria">${I.image}</button>
         <button type="button" class="writer-tb-btn" data-a="setHorizontalRule" title="Linha divisória">${I.hr}</button>
         <button type="button" class="writer-tb-btn ${isActive('kastorComment')?'is-active':''}" data-a="commentSelection" title="Comentar seleção">${I.comment}</button>
       </div>
@@ -1133,7 +1137,91 @@
       }, 50);
       return;
     }
+    if (name === 'uploadFile') { _kdOpenFilePicker(); return; }
     ed.chain().focus()[name]().run();
+  }
+
+  /* Upload de arquivo direto do computador — abre <input type=file>, sobe via
+     /api/uploads e insere no editor. Imagens viram <img>, outros viram
+     kastorAttachment (card com ícone). */
+  function _kdOpenFilePicker() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.style.display = 'none';
+    document.body.appendChild(input);
+    input.addEventListener('change', () => {
+      const files = [...(input.files || [])];
+      document.body.removeChild(input);
+      files.forEach(_kdUploadAndInsert);
+    });
+    input.click();
+  }
+
+  /* Sobe UM arquivo via /api/uploads (XHR com progresso opcional) e insere
+     no editor no cursor. Mostra toast de progresso e trata erros comuns. */
+  async function _kdUploadAndInsert(file) {
+    if (!file) return;
+    if (file.size > 150 * 1024 * 1024) {
+      toast('"' + file.name + '" excede 150 MB.', 'error');
+      return;
+    }
+    const toastId = _kdShowUploadToast(file.name);
+    try {
+      const dataUri = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result);
+        r.onerror = () => rej(r.error || new Error('Falha na leitura'));
+        r.readAsDataURL(file);
+      });
+      const resp = await fetch('/api/uploads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ name: file.name, data: dataUri })
+      });
+      if (!resp.ok) {
+        if (resp.status === 413) throw new Error('Arquivo grande demais pro proxy (413)');
+        throw new Error('HTTP ' + resp.status);
+      }
+      const saved = await resp.json();
+      const ed = KD.editor; if (!ed) return;
+      const isImage = /^image\//i.test(saved.type || file.type || '');
+      if (isImage) {
+        ed.chain().focus().setImage({ src: saved.url, alt: saved.name || '' }).run();
+      } else {
+        // kastorAttachment node — card com ícone. Attrs seguem o esquema
+        // definido em index.js.
+        ed.chain().focus().insertContent({
+          type: 'kastorAttachment',
+          attrs: {
+            attachmentId: 'up-' + Math.random().toString(36).slice(2, 10),
+            name: saved.name,
+            url:  saved.url,
+            mime: saved.type || file.type || '',
+            size: saved.size || file.size || 0,
+            kind: 'file',
+            isImage: false
+          }
+        }).run();
+      }
+    } catch (err) {
+      toast('Falha no upload: ' + (err.message || 'erro'), 'error');
+    } finally {
+      _kdDismissToast(toastId);
+    }
+  }
+
+  /* Toast de progresso "subindo…" — retorna id pra dismiss depois.
+     Fallback: se app.js não tiver a função global toast(), só loga. */
+  function _kdShowUploadToast(name) {
+    if (typeof window.toast === 'function') {
+      window.toast('Enviando "' + name + '"…', 'info');
+    }
+    return 't_' + Date.now();
+  }
+  function _kdDismissToast(id) {
+    // O `toast()` do app.js auto-dismissa, então nada a fazer aqui por enquanto.
   }
 
   // ── Régua horizontal ─────────────────────────────────────────────
@@ -1282,8 +1370,93 @@
     mount.addEventListener('contextmenu', (ev) => {
       if (!KD.editor) return;
       ev.preventDefault();
+      // Se clicou com direito em cima de uma <img>, mostra menu específico
+      // com opções de imagem (redimensionar, baixar, remover, alinhar).
+      const img = ev.target.closest('img.writer-image, img');
+      if (img) {
+        _kdImgSelect(img);
+        _kdOpenImageContextMenu(ev.clientX, ev.clientY, img);
+        return;
+      }
       _kdOpenContextMenu(ev.clientX, ev.clientY);
     });
+  }
+
+  /* Menu de context específico pra imagens — reusa o CSS `.kd-context-*`
+     do menu genérico mas com items diferentes. */
+  function _kdOpenImageContextMenu(x, y, img) {
+    _kdCloseContextMenu();
+    const I = _kdImgIcons;
+    const items = [
+      { a: 'img-download', i: I.download, l: 'Baixar imagem' },
+      { divider: true },
+      { a: 'img-25',  l: 'Redimensionar: 25%' },
+      { a: 'img-50',  l: 'Redimensionar: 50%' },
+      { a: 'img-75',  l: 'Redimensionar: 75%' },
+      { a: 'img-100', l: 'Redimensionar: 100%' },
+      { divider: true },
+      { a: 'img-align-left',   i: I.alignL, l: 'Alinhar à esquerda' },
+      { a: 'img-align-center', i: I.alignC, l: 'Centralizar' },
+      { a: 'img-align-right',  i: I.alignR, l: 'Alinhar à direita' },
+      { divider: true },
+      { a: 'img-alt', l: 'Editar texto alternativo…' },
+      { a: 'img-remove', i: I.trash, l: 'Remover imagem', danger: true }
+    ];
+    const menu = document.createElement('div');
+    menu.className = 'kd-context-menu';
+    menu.innerHTML = items.map(it => {
+      if (it.divider) return '<div class="kd-context-divider"></div>';
+      const dangerClass = it.danger ? ' kd-context-item--danger' : '';
+      const iconHtml = it.i || '<span style="width:14px;display:inline-block"></span>';
+      return `<button type="button" class="kd-context-item${dangerClass}" data-a="${esc(it.a)}">
+        ${iconHtml}<span class="kd-context-label">${esc(it.l)}</span>
+      </button>`;
+    }).join('');
+    document.body.appendChild(menu);
+    const w = menu.offsetWidth, h = menu.offsetHeight;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    menu.style.left = (x + w > vw ? vw - w - 4 : x) + 'px';
+    menu.style.top  = (y + h > vh ? vh - h - 4 : y) + 'px';
+    menu.addEventListener('click', (e) => {
+      const b = e.target.closest('.kd-context-item[data-a]');
+      if (!b) return;
+      const a = b.dataset.a;
+      _kdCloseContextMenu();
+      if (a === 'img-download') return _kdImgDownload(img);
+      if (a === 'img-remove')   return _kdImgRemove(img);
+      if (a.startsWith('img-align-')) return _kdImgSetAlign(img, a.replace('img-align-', ''));
+      if (a.startsWith('img-') && /^img-\d+$/.test(a)) {
+        const pct = parseInt(a.replace('img-', ''), 10);
+        const paper = document.querySelector('.writer-editor-paper');
+        const paperW = paper ? paper.clientWidth - 96 : 794;
+        _kdImgSetWidth(img, Math.round(paperW * pct / 100));
+        return;
+      }
+      if (a === 'img-alt') {
+        const cur = img.getAttribute('alt') || '';
+        const nv = window.prompt('Texto alternativo (alt) — descreve a imagem pra acessibilidade:', cur);
+        if (nv == null) return;
+        try {
+          const ed = KD.editor;
+          const pos = ed.view.posAtDOM(img, 0);
+          const node = ed.state.doc.nodeAt(pos);
+          if (node && node.type.name === 'image') {
+            ed.chain().command(({ tr }) => { tr.setNodeMarkup(pos, undefined, { ...node.attrs, alt: nv }); return true; }).run();
+          }
+        } catch {}
+      }
+    });
+    const closeOnAny = (e) => { if (!menu.contains(e.target)) _kdCloseContextMenu(); };
+    setTimeout(() => {
+      document.addEventListener('click', closeOnAny);
+      document.addEventListener('contextmenu', closeOnAny);
+      document.addEventListener('scroll', _kdCloseContextMenu, true);
+    }, 0);
+    menu._cleanup = () => {
+      document.removeEventListener('click', closeOnAny);
+      document.removeEventListener('contextmenu', closeOnAny);
+      document.removeEventListener('scroll', _kdCloseContextMenu, true);
+    };
   }
   function _kdOpenContextMenu(x, y) {
     _kdCloseContextMenu();
@@ -1349,6 +1522,263 @@
   }
   function _kdCloseContextMenu() {
     document.querySelectorAll('.kd-context-menu').forEach(m => { m._cleanup && m._cleanup(); m.remove(); });
+  }
+
+  /* ══ Imagem inline: seleção, resize por drag, right-click menu ══════
+     Clicar na imagem → adiciona classe .is-selected + mostra handles nas
+     bordas pra resize por drag + toolbar flutuante com tamanhos preset.
+     Right-click → menu com ações específicas (baixar, alt, %, remover).
+     Persistência via extension KdImage (attrs.width no node). */
+
+  let _kdSelectedImg = null;   // <img> DOM element atualmente selecionado
+  let _kdHandles = [];         // handles ativos (removidos junto com o wrap)
+
+  function _kdImgSelect(img) {
+    _kdImgDeselect();
+    if (!img) return;
+    _kdSelectedImg = img;
+    img.classList.add('kd-img-selected');
+    _kdImgBuildHandles(img);
+    _kdImgBuildToolbar(img);
+    // Reposiciona em scroll/resize enquanto selecionada
+    window.addEventListener('scroll', _kdImgReposition, true);
+    window.addEventListener('resize', _kdImgReposition);
+  }
+
+  function _kdImgDeselect() {
+    if (_kdSelectedImg) {
+      _kdSelectedImg.classList.remove('kd-img-selected');
+      _kdSelectedImg = null;
+    }
+    _kdHandles.forEach(h => h.remove());
+    _kdHandles = [];
+    document.querySelector('.kd-img-toolbar')?.remove();
+    window.removeEventListener('scroll', _kdImgReposition, true);
+    window.removeEventListener('resize', _kdImgReposition);
+  }
+
+  function _kdImgReposition() {
+    if (!_kdSelectedImg) return;
+    _kdImgPositionHandles(_kdSelectedImg);
+    _kdImgPositionToolbar(_kdSelectedImg);
+  }
+
+  function _kdImgBuildHandles(img) {
+    // 4 handles nos cantos. Uso `position: fixed` — reposiciona em scroll/resize.
+    const corners = ['nw', 'ne', 'sw', 'se'];
+    corners.forEach(corner => {
+      const h = document.createElement('div');
+      h.className = 'kd-img-handle kd-img-handle--' + corner;
+      h.dataset.corner = corner;
+      document.body.appendChild(h);
+      _kdImgBindDrag(h, img, corner);
+      _kdHandles.push(h);
+    });
+    _kdImgPositionHandles(img);
+  }
+
+  function _kdImgPositionHandles(img) {
+    const r = img.getBoundingClientRect();
+    _kdHandles.forEach(h => {
+      const c = h.dataset.corner;
+      const x = c.includes('e') ? r.right : r.left;
+      const y = c.includes('s') ? r.bottom : r.top;
+      h.style.left = (x - 5) + 'px';
+      h.style.top  = (y - 5) + 'px';
+    });
+  }
+
+  function _kdImgBindDrag(handle, img, corner) {
+    handle.addEventListener('mousedown', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const startX = ev.clientX;
+      const startRect = img.getBoundingClientRect();
+      const startW = startRect.width;
+      const aspect = startRect.height / startW;
+      const east = corner.includes('e');
+      document.body.style.cursor = corner + '-resize';
+      img.classList.add('is-resizing');
+
+      const onMove = (e) => {
+        const dx = e.clientX - startX;
+        // W handles: drag pra ESQUERDA aumenta; E handles: drag pra DIREITA aumenta
+        const delta = east ? dx : -dx;
+        const newW = Math.max(40, Math.round(startW + delta));
+        img.style.width = newW + 'px';
+        img.style.height = 'auto';
+        _kdImgPositionHandles(img);
+        _kdImgPositionToolbar(img);
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.body.style.cursor = '';
+        img.classList.remove('is-resizing');
+        _kdImgPersistSize(img);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  }
+
+  /* Grava o width no node do ProseMirror pra sobreviver a re-render/reload.
+     Descobre a posição do node no doc via posAtDOM. */
+  function _kdImgPersistSize(img) {
+    const ed = KD.editor; if (!ed) return;
+    const width = Math.round(img.getBoundingClientRect().width);
+    try {
+      const pos = ed.view.posAtDOM(img, 0);
+      if (pos == null || pos < 0) return;
+      ed.chain().command(({ tr }) => {
+        const node = tr.doc.nodeAt(pos);
+        if (!node || node.type.name !== 'image') return false;
+        tr.setNodeMarkup(pos, undefined, { ...node.attrs, width });
+        return true;
+      }).run();
+    } catch (e) { console.warn('[kd-img persist]', e); }
+  }
+
+  function _kdImgSetWidth(img, width) {
+    img.style.width = (typeof width === 'number' ? width + 'px' : width);
+    img.style.height = 'auto';
+    _kdImgPersistSize(img);
+    _kdImgPositionHandles(img);
+    _kdImgPositionToolbar(img);
+  }
+  function _kdImgSetAlign(img, align) {
+    const ed = KD.editor; if (!ed) return;
+    try {
+      const pos = ed.view.posAtDOM(img, 0);
+      if (pos == null || pos < 0) return;
+      ed.chain().command(({ tr }) => {
+        const node = tr.doc.nodeAt(pos);
+        if (!node || node.type.name !== 'image') return false;
+        tr.setNodeMarkup(pos, undefined, { ...node.attrs, align });
+        return true;
+      }).run();
+    } catch (e) { console.warn('[kd-img align]', e); }
+  }
+
+  /* Baixa a imagem em bytes via fetch → blob → download sintético.
+     Usa attClickDownload do app.js quando disponível (mesma lógica dos anexos),
+     senão faz fallback local. */
+  async function _kdImgDownload(img) {
+    const src = img.getAttribute('src') || '';
+    const name = img.getAttribute('alt') || 'imagem';
+    if (window.attClickDownload) {
+      return window.attClickDownload({ preventDefault: () => {} }, src, name);
+    }
+    // Fallback simples
+    try {
+      const r = await fetch(src);
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = name; a.style.display = 'none';
+      document.body.appendChild(a); a.click();
+      setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 1500);
+    } catch (e) { console.warn('[kd-img download]', e); }
+  }
+
+  function _kdImgBuildToolbar(img) {
+    const tb = document.createElement('div');
+    tb.className = 'kd-img-toolbar';
+    tb.innerHTML = `
+      <button type="button" data-w="25" title="25%">25%</button>
+      <button type="button" data-w="50" title="50%">50%</button>
+      <button type="button" data-w="75" title="75%">75%</button>
+      <button type="button" data-w="100" title="100%">100%</button>
+      <div class="kd-img-toolbar-sep"></div>
+      <button type="button" data-align="left" title="Alinhar à esquerda">${_kdImgIcons.alignL}</button>
+      <button type="button" data-align="center" title="Centralizar">${_kdImgIcons.alignC}</button>
+      <button type="button" data-align="right" title="Alinhar à direita">${_kdImgIcons.alignR}</button>
+      <div class="kd-img-toolbar-sep"></div>
+      <button type="button" data-a="download" title="Baixar imagem">${_kdImgIcons.download}</button>
+      <button type="button" data-a="remove" class="kd-img-danger" title="Remover imagem">${_kdImgIcons.trash}</button>
+    `;
+    document.body.appendChild(tb);
+    tb.addEventListener('mousedown', (e) => e.preventDefault());
+    tb.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b || !_kdSelectedImg) return;
+      const w = b.dataset.w;
+      const al = b.dataset.align;
+      const act = b.dataset.a;
+      if (w) {
+        // % da largura do conteúdo — usa clientWidth do paper como referência
+        const paper = document.querySelector('.writer-editor-paper');
+        const paperW = paper ? paper.clientWidth - 96 /* padding */ : 794;
+        _kdImgSetWidth(_kdSelectedImg, Math.round(paperW * parseInt(w) / 100));
+      } else if (al) {
+        _kdImgSetAlign(_kdSelectedImg, al);
+      } else if (act === 'download') {
+        _kdImgDownload(_kdSelectedImg);
+      } else if (act === 'remove') {
+        _kdImgRemove(_kdSelectedImg);
+      }
+    });
+    _kdImgPositionToolbar(img);
+  }
+
+  function _kdImgPositionToolbar(img) {
+    const tb = document.querySelector('.kd-img-toolbar');
+    if (!tb) return;
+    const r = img.getBoundingClientRect();
+    const tw = tb.offsetWidth;
+    let x = r.left + r.width / 2 - tw / 2;
+    let y = r.top - tb.offsetHeight - 8;
+    x = Math.max(8, Math.min(x, window.innerWidth - tw - 8));
+    if (y < 8) y = r.bottom + 8; // se não couber acima, coloca abaixo
+    tb.style.left = x + 'px';
+    tb.style.top  = y + 'px';
+  }
+
+  function _kdImgRemove(img) {
+    const ed = KD.editor; if (!ed) return;
+    try {
+      const pos = ed.view.posAtDOM(img, 0);
+      if (pos == null || pos < 0) return;
+      const node = ed.state.doc.nodeAt(pos);
+      if (!node || node.type.name !== 'image') return;
+      ed.chain().focus().deleteRange({ from: pos, to: pos + node.nodeSize }).run();
+      _kdImgDeselect();
+    } catch (e) { console.warn('[kd-img remove]', e); }
+  }
+
+  // Ícones da toolbar de imagem
+  const _kdImgIcons = {
+    alignL:   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="17" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="17" y1="18" x2="3" y2="18"/></svg>',
+    alignC:   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="10" x2="6" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="18" y1="18" x2="6" y2="18"/></svg>',
+    alignR:   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="21" y1="10" x2="7" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="21" y1="18" x2="7" y2="18"/></svg>',
+    download: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
+    trash:    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>'
+  };
+
+  /* Bind: click numa img seleciona; click fora deseleciona.
+     Called from editor mount setup (junto do context menu). */
+  function _kdBindImageInteractions(mount) {
+    if (!mount || mount._kdImgBound) return;
+    mount._kdImgBound = true;
+    mount.addEventListener('click', (ev) => {
+      const img = ev.target.closest('img.writer-image, img');
+      if (img && mount.contains(img)) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        _kdImgSelect(img);
+      }
+    });
+    // Deseleciona ao clicar fora
+    document.addEventListener('click', (ev) => {
+      if (!_kdSelectedImg) return;
+      if (ev.target.closest('.kd-img-handle, .kd-img-toolbar, .kd-context-menu')) return;
+      if (ev.target === _kdSelectedImg) return;
+      _kdImgDeselect();
+    });
+    // ESC deseleciona
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape' && _kdSelectedImg) _kdImgDeselect();
+    });
   }
 
   /* ── Font size widget ────────────────────────────────────────────────
