@@ -23,7 +23,7 @@
        gzipped) mas o cache-buster do app.js já reaproveita a mesma versão em cache
        do usuário na maior parte dos acessos. Pra Fase futura vale extrair só tokens
        + classes writer-* num CSS menor. -->
-  <link rel="stylesheet" href="/css/style.css?v=20260917colsFix">
+  <link rel="stylesheet" href="/css/style.css?v=20260917importNewTab">
 
   <style>
     /* Reset do body pra editor standalone — sem margin, cor da plataforma. */
@@ -2178,15 +2178,25 @@
     .kd-mention-empty { padding: 12px; text-align: center; color: var(--text-2); font-size: 12px; }
 
     /* Colunas — grid container. Cada coluna tem borda sutil SEMPRE visível
-       (assim o user identifica as células) + bg branco explícito pra não
-       sumir se o paper background estiver numa zona de "gap" da paginação. */
+       (assim o user identifica as células). `min-width: 0` no grid item é
+       ESSENCIAL: sem isso o grid deixa cada coluna crescer até o tamanho
+       intrínseco do conteúdo (URL longa sem espaços = coluna quebra o layout
+       do paper). Com min-width:0 + overflow-wrap:break-word nos filhos, o
+       texto quebra automaticamente respeitando a largura da célula. */
     .kd-column-block {
       display: grid;
       gap: 12px;
       margin: 8px 0;
       padding: 0;
+      /* max-width garante que o bloco nunca exceda a largura do paper. */
+      max-width: 100%;
     }
     .kd-column {
+      min-width: 0;                  /* deixa o grid encolher abaixo do min-content */
+      max-width: 100%;
+      overflow-wrap: break-word;
+      word-wrap: break-word;
+      hyphens: auto;
       min-height: 40px;
       padding: 10px 12px;
       border-radius: 6px;
@@ -2203,6 +2213,15 @@
       border-style: solid;
       background: color-mix(in oklab, #7A00FF 5%, transparent);
     }
+    /* Herda o wrap pros elementos internos (p, li, headings, links, etc). */
+    .kd-column > * {
+      max-width: 100%;
+      overflow-wrap: break-word;
+      word-wrap: break-word;
+    }
+    /* Imagens/tabelas dentro da coluna não podem estourar a largura. */
+    .kd-column img, .kd-column table { max-width: 100%; height: auto; }
+    .kd-column pre, .kd-column code { white-space: pre-wrap; word-break: break-word; }
     .kd-column > *:first-child { margin-top: 0; }
     .kd-column > *:last-child { margin-bottom: 0; }
 
@@ -2818,6 +2837,6 @@
 
   <div id="kd-toast" class="kd-toast"></div>
 
-  <script src="/js/writer/standalone.js?v=20260917docsUX5"></script>
+  <script src="/js/writer/standalone.js?v=20260917importNewTab"></script>
 </body>
 </html>

@@ -704,7 +704,20 @@
         }
         const { html } = await resp.json();
         const title = file.name.replace(/\.[a-z0-9]{1,10}$/i, '');
-        await _kdCreateDocWith(html, title);
+        // Cria doc vazio + guarda HTML em localStorage keyed pelo id +
+        // abre em NOVA ABA. A nova aba mounta o editor e, no _pendingImport,
+        // consome o localStorage e chama setContent com o HTML.
+        const wsId = ($('kd-f-ws')?.value) || (KD.me?.workspaces && KD.me.workspaces[0]) || (KD.workspaces[0]?.id);
+        if (!wsId) { toast('Sem squad disponível pra criar documento.', 'error'); return; }
+        const doc = await api('/writer', 'POST', { workspaceId: wsId, title, content: null });
+        try { localStorage.setItem('kd:pendingImport:' + doc.id, html); } catch {}
+        // Atualiza a lista de recentes em background pro user ver o novo item
+        // se voltar pra home.
+        KD.docsList.unshift(doc);
+        if (typeof renderList === 'function') { try { renderList(); } catch {} }
+        // Abre em nova aba
+        window.open('/hub/docs/' + docSlug(doc), '_blank');
+        toast('Importado! Abrindo em nova aba…', 'success');
       } catch (e) {
         toast('Falha ao importar: ' + (e.message || 'erro'), 'error');
       }
@@ -851,12 +864,23 @@
       // Se o doc foi criado com HTML pré-preenchido (template ou import),
       // injeta agora que o editor tá montado. Aguarda um tick pro Yjs
       // conectar antes de setContent (senão a operação some no re-sync).
-      if (doc._pendingHtml) {
-        const html = doc._pendingHtml;
+      // Fontes possíveis:
+      // 1. doc._pendingHtml → template escolhido no modal (mesma aba).
+      // 2. localStorage["kd:pendingImport:<id>"] → import de DOCX/TXT feito
+      //    numa aba anterior (a home) que abriu esta aba nova.
+      let pendingHtml = doc._pendingHtml || null;
+      if (!pendingHtml) {
+        try {
+          const key = 'kd:pendingImport:' + doc.id;
+          pendingHtml = localStorage.getItem(key);
+          if (pendingHtml) localStorage.removeItem(key);
+        } catch {}
+      }
+      if (pendingHtml) {
         doc._pendingHtml = null;
         setTimeout(() => {
-          try { KD.editor?.commands.setContent(html, false, { preserveWhitespace: 'full' }); }
-          catch (e) { console.warn('[setContent template]', e); }
+          try { KD.editor?.commands.setContent(pendingHtml, false, { preserveWhitespace: 'full' }); }
+          catch (e) { console.warn('[setContent pending]', e); }
         }, 600);
       }
       _kdApplyRoleUI();

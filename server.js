@@ -3072,13 +3072,16 @@ async function convertOfficeDocToHtml(inputPath) {
   return new Promise((resolve, reject) => {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kastor-import-out-'));
     const soffice = findSoffice();
-    // xhtml gera XHTML válido (mais fácil de parsear que o "html" simples do
-    // LibreOffice, que às vezes cospe entidades quebradas).
-    const proc = spawn(soffice, ['--headless', '--norestore', '--convert-to', 'html:XHTML Writer File', '--outdir', outDir, inputPath], {
+    // Filtro `html` puro — usa o writer_html_Export default do LibreOffice
+    // que existe em qualquer distribuição. O filtro `html:XHTML Writer File`
+    // não existe em todas as versões (falhava em Alpine com "unknown filter").
+    // O HTML gerado é passado pelo _cleanImportedHtml pra ficar consumível.
+    const proc = spawn(soffice, ['--headless', '--norestore', '--convert-to', 'html', '--outdir', outDir, inputPath], {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, HOME: outDir, TMPDIR: outDir }
     });
-    let stderrBuf = '';
+    let stderrBuf = '', stdoutBuf = '';
+    proc.stdout.on('data', d => { stdoutBuf += d.toString(); });
     proc.stderr.on('data', d => { stderrBuf += d.toString(); });
     proc.on('error', (err) => {
       try { fs.rmSync(outDir, { recursive: true, force: true }); } catch {}
@@ -3087,7 +3090,8 @@ async function convertOfficeDocToHtml(inputPath) {
     proc.on('exit', (code) => {
       if (code !== 0) {
         try { fs.rmSync(outDir, { recursive: true, force: true }); } catch {}
-        return reject(new Error('LibreOffice exit ' + code + ': ' + stderrBuf.slice(0, 400)));
+        const msg = (stderrBuf || stdoutBuf).trim().slice(0, 400) || 'sem stderr';
+        return reject(new Error('LibreOffice exit ' + code + ': ' + msg));
       }
       try {
         const files = fs.readdirSync(outDir).filter(f => /\.html?$/i.test(f));
