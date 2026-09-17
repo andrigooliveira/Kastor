@@ -95,7 +95,7 @@
     if (bundlePromise) return bundlePromise;
     bundlePromise = new Promise((resolve, reject) => {
       const s = document.createElement('script');
-      s.src = '/vendor/writer.bundle.js?v=20260916docsPack';
+      s.src = '/vendor/writer.bundle.js?v=20260917docsUX5';
       s.async = true;
       s.onload = () => window.KastorWriter ? resolve(window.KastorWriter) : reject(new Error('bundle sem KastorWriter'));
       s.onerror = () => reject(new Error('Falha ao carregar o editor.'));
@@ -323,6 +323,12 @@
     let list = KD.docsList.slice();
     if (KD.owner === 'mine')   list = list.filter(d => d.ownerId === myId);
     if (KD.owner === 'shared') list = list.filter(d => d.ownerId !== myId);
+    // Filtro por busca (título) — case-insensitive, sem acento.
+    if (KD.searchQuery) {
+      const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+      const q = norm(KD.searchQuery);
+      if (q) list = list.filter(d => norm(d.title).includes(q));
+    }
     list.sort((a, b) => {
       if (KD.sort === 'title')   return (a.title || '').localeCompare(b.title || '');
       if (KD.sort === 'created') return (b.createdAt || '').localeCompare(a.createdAt || '');
@@ -330,11 +336,13 @@
     });
 
     if (!list.length) {
-      const msg = KD.owner === 'mine'
-        ? 'Você ainda não criou nenhum documento. Clique em "Em branco" pra começar.'
-        : KD.owner === 'shared'
-          ? 'Ninguém compartilhou documentos com você ainda.'
-          : 'Nenhum documento disponível.';
+      const msg = KD.searchQuery
+        ? 'Nenhum documento com "' + KD.searchQuery + '" no título.'
+        : (KD.owner === 'mine'
+          ? 'Você ainda não criou nenhum documento. Clique em "Em branco" pra começar.'
+          : KD.owner === 'shared'
+            ? 'Ninguém compartilhou documentos com você ainda.'
+            : 'Nenhum documento disponível.');
       grid.innerHTML = `<div class="kd-recent-empty">${msg}</div>`;
       return;
     }
@@ -398,6 +406,30 @@
   }
   window.kdRenderList = renderList;
 
+  /* Search — expande input inline na toolbar quando clica na lupa.
+     ESC ou lupa novamente fecha e limpa filtro. */
+  window.kdRecentToggleSearch = function () {
+    const wrap = document.getElementById('kd-recent-search');
+    const input = document.getElementById('kd-recent-search-input');
+    if (!wrap || !input) return;
+    const open = !wrap.classList.contains('is-open');
+    if (open) {
+      wrap.classList.add('is-open');
+      input.hidden = false;
+      input.value = KD.searchQuery || '';
+      setTimeout(() => input.focus(), 30);
+    } else {
+      wrap.classList.remove('is-open');
+      input.hidden = true;
+      input.value = '';
+      if (KD.searchQuery) { KD.searchQuery = ''; renderList(); }
+    }
+  };
+  window.kdRecentSearchInput = function (v) {
+    KD.searchQuery = String(v || '');
+    renderList();
+  };
+
   // ── CRUD ──────────────────────────────────────────────────────────────
   async function createDoc() {
     const wsId = ($('kd-f-ws').value) || (KD.me?.workspaces && KD.me.workspaces[0]) || (KD.workspaces[0]?.id);
@@ -434,79 +466,164 @@
 
   /* Templates de documento — HTML pré-preenchido. Escolhido no modal de "novo".
      Podem ser customizados/editados aqui sem toucar em nenhuma outra coisa. */
+  /* Retorna a data de hoje no formato DD/MM/AAAA. */
+  function _kdToday() {
+    const d = new Date();
+    return String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0') + '/' + d.getFullYear();
+  }
   const KD_TEMPLATES = [
     {
-      key: 'blank', title: 'Em branco', desc: 'Documento vazio', icon: '📄',
+      key: 'blank', title: 'Em branco', desc: 'Comece do zero', icon: '📄',
+      preview: '<div class="kd-template-preview kd-template-preview--blank">+</div>',
       html: ''
     },
     {
-      key: 'briefing', title: 'Briefing de projeto', desc: 'Escopo, público, entregas, prazos', icon: '📋',
-      html: [
-        '<h1>Briefing — [Nome do projeto]</h1>',
-        '<p><strong>Cliente:</strong> [Nome do cliente]<br>',
-        '<strong>Data:</strong> [DD/MM/AAAA]<br>',
-        '<strong>Responsável:</strong> @[usuário]</p>',
-        '<h2>1. Contexto</h2><p>Breve descrição do que motiva esse projeto — situação atual, dor a resolver, objetivo de negócio.</p>',
-        '<h2>2. Objetivos</h2><ul><li>Objetivo primário</li><li>Objetivo secundário</li></ul>',
-        '<h2>3. Público-alvo</h2><p>Descrição do público que vai consumir o resultado.</p>',
-        '<h2>4. Escopo</h2><h3>O que ENTRA</h3><ul><li>Entregável 1</li><li>Entregável 2</li></ul>',
-        '<h3>O que NÃO entra</h3><ul><li>Fora do escopo</li></ul>',
-        '<h2>5. Prazos & Marcos</h2>',
-        '<table><thead><tr><th>Marco</th><th>Data</th></tr></thead><tbody><tr><td>Kick-off</td><td></td></tr><tr><td>Entrega intermediária</td><td></td></tr><tr><td>Entrega final</td><td></td></tr></tbody></table>',
-        '<h2>6. Referências</h2><p>Links, imagens, materiais de inspiração.</p>',
-        '<div data-callout="true" data-variant="warn"><p><strong>Aprovação:</strong> este briefing precisa ser validado pelo cliente antes de iniciar.</p></div>'
+      key: 'briefing', title: 'Briefing de projeto', desc: 'Contexto, escopo, prazos', icon: '📋',
+      preview: `<div class="kd-template-preview">
+        <strong>Briefing — Redesign do site</strong>
+        <span class="kd-tp-line short"></span>
+        <div class="kd-tp-h2">1. Contexto</div>
+        <span class="kd-tp-line full"></span><span class="kd-tp-line full"></span><span class="kd-tp-line mid"></span>
+        <div class="kd-tp-h2">2. Escopo</div>
+        <span class="kd-tp-line full"></span><span class="kd-tp-line mid"></span>
+        <div class="kd-tp-h2">3. Prazos</div>
+        <table class="kd-tp-table"><thead><tr><th>Marco</th><th>Data</th></tr></thead><tbody><tr><td>&nbsp;</td><td>&nbsp;</td></tr><tr><td>&nbsp;</td><td>&nbsp;</td></tr></tbody></table>
+        <div class="kd-tp-callout">Precisa aprovação</div>
+      </div>`,
+      html: () => [
+        '<h1>Briefing — Redesign do site institucional</h1>',
+        '<p><strong>Cliente:</strong> Acme Ltda &nbsp;·&nbsp; <strong>Data:</strong> ' + _kdToday() + ' &nbsp;·&nbsp; <strong>Responsável:</strong> [seu nome]</p>',
+        '<h2>1. Contexto</h2>',
+        '<p>O site atual está no ar há 4 anos e não reflete mais o posicionamento da marca. A taxa de conversão do formulário caiu 35% no último semestre e a versão mobile tem problemas de layout.</p>',
+        '<h2>2. Objetivos</h2>',
+        '<ul><li><strong>Aumentar conversão do formulário</strong> em pelo menos 20% em 3 meses após o go-live.</li><li>Modernizar identidade visual mantendo o roxo institucional.</li><li>Otimizar carregamento pra abaixo de 2s no mobile.</li></ul>',
+        '<h2>3. Público-alvo</h2>',
+        '<p>Gestores de marketing em empresas B2B de médio porte (50–500 funcionários). Perfil técnico moderado, decisão de compra colaborativa.</p>',
+        '<h2>4. Escopo</h2>',
+        '<h3>O que entra</h3>',
+        '<ul><li>Wireframe + protótipo alta fidelidade das 8 páginas principais.</li><li>Design system básico (tokens de cor, tipografia, componentes).</li><li>Implementação front-end responsiva.</li></ul>',
+        '<h3>O que NÃO entra</h3>',
+        '<ul><li>Migração de conteúdo do blog (fica pro time interno).</li><li>Integração com CRM (fase 2).</li></ul>',
+        '<h2>5. Prazos e marcos</h2>',
+        '<table><thead><tr><th>Marco</th><th>Entrega</th><th>Responsável</th></tr></thead><tbody><tr><td>Kick-off + descoberta</td><td>Sem 1</td><td>Todos</td></tr><tr><td>Wireframes aprovados</td><td>Sem 3</td><td>Design</td></tr><tr><td>Protótipo alta fidelidade</td><td>Sem 5</td><td>Design</td></tr><tr><td>Front-end pronto</td><td>Sem 9</td><td>Dev</td></tr><tr><td>Go-live</td><td>Sem 10</td><td>Todos</td></tr></tbody></table>',
+        '<h2>6. Referências</h2>',
+        '<p>Sites que servem de inspiração: <a href="https://linear.app">linear.app</a>, <a href="https://vercel.com">vercel.com</a>.</p>',
+        '<div data-callout="true" data-variant="warn"><p><strong>Aprovação necessária:</strong> este briefing precisa ser validado pelo cliente antes de iniciar. Ajustes de escopo depois do kick-off entram como change request.</p></div>'
       ].join('')
     },
     {
-      key: 'sow', title: 'Escopo de trabalho (SOW)', desc: 'Contrato de projeto com prazos e valores', icon: '📝',
-      html: [
-        '<h1>Escopo de Trabalho</h1>',
-        '<p><strong>Contratante:</strong> [Cliente]<br><strong>Contratado:</strong> [Empresa]<br><strong>Data:</strong> [DD/MM/AAAA]</p>',
-        '<h2>1. Objeto</h2><p>Descrição do serviço a ser prestado.</p>',
-        '<h2>2. Entregas</h2><ol><li>Entrega 1 — descrição</li><li>Entrega 2 — descrição</li></ol>',
-        '<h2>3. Cronograma</h2><table><thead><tr><th>Etapa</th><th>Início</th><th>Fim</th></tr></thead><tbody><tr><td></td><td></td><td></td></tr></tbody></table>',
-        '<h2>4. Investimento</h2><p>R$ 0.000,00 — pagamento em X parcelas.</p>',
-        '<h2>5. Condições gerais</h2><ul><li>Prazo de execução: XX dias corridos.</li><li>Alterações fora do escopo serão orçadas à parte.</li></ul>',
-        '<div data-callout="true" data-variant="info"><p><strong>Aceite:</strong> a assinatura eletrônica ou aprovação por email valida este documento.</p></div>'
+      key: 'sow', title: 'Escopo de trabalho', desc: 'Contrato: entregas + valor', icon: '📝',
+      preview: `<div class="kd-template-preview">
+        <strong>Escopo de Trabalho</strong>
+        <span class="kd-tp-line mid"></span>
+        <div class="kd-tp-h2">1. Objeto</div>
+        <span class="kd-tp-line full"></span><span class="kd-tp-line mid"></span>
+        <div class="kd-tp-h2">2. Entregas</div>
+        <span class="kd-tp-line full"></span><span class="kd-tp-line full"></span>
+        <div class="kd-tp-h2">3. Investimento</div>
+        <span class="kd-tp-line short"></span>
+        <div class="kd-tp-callout kd-tp-callout-info">Aceite ↔ assinatura</div>
+      </div>`,
+      html: () => [
+        '<h1>Escopo de Trabalho — Projeto Redesign</h1>',
+        '<p><strong>Contratante:</strong> Acme Ltda &nbsp;·&nbsp; <strong>Contratado:</strong> [Sua empresa] &nbsp;·&nbsp; <strong>Data:</strong> ' + _kdToday() + '</p>',
+        '<h2>1. Objeto</h2>',
+        '<p>Prestação de serviços de design e desenvolvimento front-end para o site institucional da Contratante, conforme especificações detalhadas no briefing anexo.</p>',
+        '<h2>2. Entregas</h2>',
+        '<ol><li><strong>Descoberta + wireframes</strong> (8 páginas) — 3 semanas.</li><li><strong>Design system + protótipo alta fidelidade</strong> — 2 semanas.</li><li><strong>Implementação front-end</strong> (HTML/CSS/JS responsivo) — 4 semanas.</li><li><strong>Deploy + treinamento do time</strong> — 1 semana.</li></ol>',
+        '<h2>3. Cronograma</h2>',
+        '<table><thead><tr><th>Etapa</th><th>Início</th><th>Fim</th></tr></thead><tbody><tr><td>Descoberta</td><td>01/10/2026</td><td>21/10/2026</td></tr><tr><td>Design</td><td>22/10/2026</td><td>04/11/2026</td></tr><tr><td>Dev front</td><td>05/11/2026</td><td>02/12/2026</td></tr><tr><td>Go-live</td><td>03/12/2026</td><td>10/12/2026</td></tr></tbody></table>',
+        '<h2>4. Investimento</h2>',
+        '<p><strong>R$ 45.000,00</strong> (quarenta e cinco mil reais), pagos em 3 parcelas iguais de R$ 15.000,00: na assinatura, na entrega do protótipo e no go-live.</p>',
+        '<h2>5. Condições gerais</h2>',
+        '<ul><li>Prazo de execução: 10 semanas corridas a partir do kick-off.</li><li>Até 3 ciclos de revisão por entrega inclusos.</li><li>Alterações fora do escopo original serão orçadas à parte em change request.</li><li>Propriedade intelectual dos arquivos finais é da Contratante após pagamento integral.</li></ul>',
+        '<div data-callout="true" data-variant="info"><p><strong>Aceite:</strong> a assinatura eletrônica deste documento por representantes legais das duas partes valida o contrato e inicia a contagem dos prazos.</p></div>'
       ].join('')
     },
     {
-      key: 'report', title: 'Relatório executivo', desc: 'Resumo, resultados, próximos passos', icon: '📊',
-      html: [
-        '<h1>Relatório Executivo — [Período]</h1>',
-        '<p><em>Preparado por: @[usuário] · Data: DD/MM/AAAA</em></p>',
-        '<h2>Resumo executivo</h2><p>1-2 parágrafos com os highlights do período.</p>',
+      key: 'report', title: 'Relatório executivo', desc: 'KPIs + análise + próximos passos', icon: '📊',
+      preview: `<div class="kd-template-preview">
+        <strong>Relatório — Q3</strong>
+        <div class="kd-tp-h2">Resumo executivo</div>
+        <span class="kd-tp-line full"></span><span class="kd-tp-line mid"></span>
+        <div class="kd-tp-cols"><div class="kd-tp-col"><strong>+18%</strong><br>MRR</div><div class="kd-tp-col"><strong>2.4k</strong><br>Leads</div><div class="kd-tp-col"><strong>92</strong><br>NPS</div></div>
+        <div class="kd-tp-h2">Próximos passos</div>
+        <span class="kd-tp-check">Ação 1</span><span class="kd-tp-check">Ação 2</span>
+      </div>`,
+      html: () => [
+        '<h1>Relatório Executivo — Q3 2026</h1>',
+        '<p><em>Preparado por: [seu nome] &nbsp;·&nbsp; Publicado em: ' + _kdToday() + '</em></p>',
+        '<h2>Resumo executivo</h2>',
+        '<p>O Q3 fechou 18% acima do trimestre anterior em MRR, puxado por 3 grandes contas fechadas no segmento enterprise. NPS subiu 8 pontos após a entrega do novo onboarding. Principal desafio: churn na base SMB cresceu para 4.2%.</p>',
         '<h2>Principais resultados</h2>',
-        '<div data-column-block="true" data-cols="3" style="grid-template-columns: repeat(3, 1fr);"><div data-column="true"><h3>Métrica A</h3><p>Valor + variação</p></div><div data-column="true"><h3>Métrica B</h3><p>Valor + variação</p></div><div data-column="true"><h3>Métrica C</h3><p>Valor + variação</p></div></div>',
-        '<h2>Análise detalhada</h2><p>Contexto, o que funcionou, o que não funcionou.</p>',
-        '<h2>Próximos passos</h2><ul data-type="taskList" class="kd-task-list"><li data-checked="false" class="kd-task-item"><label><input type="checkbox"></label><div><p>Ação 1</p></div></li><li data-checked="false" class="kd-task-item"><label><input type="checkbox"></label><div><p>Ação 2</p></div></li></ul>',
-        '<h2>Riscos / Bloqueios</h2><div data-callout="true" data-variant="danger"><p>Descreva bloqueios críticos aqui.</p></div>'
+        '<div data-column-block="true" data-cols="3" style="grid-template-columns: repeat(3, 1fr);"><div data-column="true"><h3 style="text-align:center">+18%</h3><p style="text-align:center;color:#26a65b"><strong>MRR</strong><br>vs. Q2</p></div><div data-column="true"><h3 style="text-align:center">2.4k</h3><p style="text-align:center"><strong>Novos leads</strong><br>+12% vs. meta</p></div><div data-column="true"><h3 style="text-align:center">92</h3><p style="text-align:center"><strong>NPS</strong><br>+8 pts</p></div></div>',
+        '<h2>Análise detalhada</h2>',
+        '<h3>O que funcionou</h3>',
+        '<ul><li>Novo onboarding reduziu tempo até "primeira valor" de 12 pra 5 dias.</li><li>Campanha no LinkedIn trouxe 40% dos leads qualificados.</li></ul>',
+        '<h3>O que precisa atenção</h3>',
+        '<ul><li>Churn SMB em 4.2% — investigar drivers (feature gap? preço? suporte?).</li><li>CAC subiu 8% — canais orgânicos perdendo tração.</li></ul>',
+        '<h2>Próximos passos</h2>',
+        '<ul data-type="taskList" class="kd-task-list"><li data-checked="false" class="kd-task-item"><label><input type="checkbox"></label><div><p>Pesquisar 20 contas SMB que deram churn nas últimas 4 semanas.</p></div></li><li data-checked="false" class="kd-task-item"><label><input type="checkbox"></label><div><p>Rodar experimento de preço com plano intermediário.</p></div></li><li data-checked="false" class="kd-task-item"><label><input type="checkbox"></label><div><p>Redistribuir 15% do orçamento de Google Ads pra content marketing.</p></div></li></ul>',
+        '<h2>Riscos e bloqueios</h2>',
+        '<div data-callout="true" data-variant="danger"><p><strong>Atenção:</strong> se o churn SMB seguir crescendo, o crescimento líquido do Q4 pode ficar flat mesmo com boa aquisição.</p></div>'
       ].join('')
     },
     {
-      key: 'meeting', title: 'Ata de reunião', desc: 'Presentes, decisões, próximos passos', icon: '🗓',
-      html: [
-        '<h1>Ata — [Assunto]</h1>',
-        '<p><strong>Data:</strong> DD/MM/AAAA · <strong>Horário:</strong> HH:MM<br><strong>Presentes:</strong> @user1, @user2</p>',
-        '<h2>Pauta</h2><ol><li>Item 1</li><li>Item 2</li></ol>',
-        '<h2>Discussões & Decisões</h2><h3>1. [Título do item]</h3><p>Resumo da discussão. <strong>Decisão:</strong> ...</p>',
-        '<h2>Ações</h2><ul data-type="taskList" class="kd-task-list"><li data-checked="false" class="kd-task-item"><label><input type="checkbox"></label><div><p>@resp — Ação — prazo</p></div></li></ul>',
-        '<h2>Próxima reunião</h2><p>Data / participantes / pauta.</p>'
+      key: 'meeting', title: 'Ata de reunião', desc: 'Presentes, decisões, ações', icon: '🗓',
+      preview: `<div class="kd-template-preview">
+        <strong>Ata — Sprint planning</strong>
+        <span class="kd-tp-line short"></span>
+        <div class="kd-tp-h2">Pauta</div>
+        <span class="kd-tp-line full"></span><span class="kd-tp-line mid"></span>
+        <div class="kd-tp-h2">Decisões</div>
+        <span class="kd-tp-line full"></span>
+        <div class="kd-tp-h2">Ações</div>
+        <span class="kd-tp-check">@a — task</span><span class="kd-tp-check">@b — task</span>
+      </div>`,
+      html: () => [
+        '<h1>Ata — Sprint planning #14</h1>',
+        '<p><strong>Data:</strong> ' + _kdToday() + ' &nbsp;·&nbsp; <strong>Horário:</strong> 10:00–11:30 &nbsp;·&nbsp; <strong>Local:</strong> Meet</p>',
+        '<p><strong>Presentes:</strong> [seu nome], Product Owner, Tech Lead, 2 devs, 1 designer</p>',
+        '<h2>Pauta</h2>',
+        '<ol><li>Revisão do sprint anterior (velocity + entregas)</li><li>Priorização do backlog</li><li>Definição do escopo do próximo sprint</li></ol>',
+        '<h2>Discussões e decisões</h2>',
+        '<h3>1. Retrospectiva rápida do sprint 13</h3>',
+        '<p>Fechamos 32 story points de 38 planejados (84%). O que atrasou: bug crítico na API de pagamento consumiu 2 dias do backend.</p>',
+        '<p><strong>Decisão:</strong> reservar 20% do sprint pra bugs/tech debt daqui pra frente, em vez de bloquear 100% em features.</p>',
+        '<h3>2. Prioridade do próximo sprint</h3>',
+        '<p>Debate entre fechar a integração com Stripe (revenue impact) vs. redesign do checkout (conversão).</p>',
+        '<p><strong>Decisão:</strong> Stripe primeiro (2 semanas), checkout entra no sprint seguinte.</p>',
+        '<h2>Ações</h2>',
+        '<ul data-type="taskList" class="kd-task-list"><li data-checked="false" class="kd-task-item"><label><input type="checkbox"></label><div><p>Devs — quebrar tickets da integração Stripe em subtarefas &lt;1d cada — <em>até quarta</em></p></div></li><li data-checked="false" class="kd-task-item"><label><input type="checkbox"></label><div><p>PO — atualizar roadmap público com data revisada do checkout — <em>até sexta</em></p></div></li><li data-checked="false" class="kd-task-item"><label><input type="checkbox"></label><div><p>Tech lead — revisar plano de rollback do Stripe com o time de infra — <em>antes do deploy</em></p></div></li></ul>',
+        '<h2>Próxima reunião</h2>',
+        '<p>Sprint review em 2 semanas, mesma hora. Convite no Google Calendar.</p>'
       ].join('')
     },
     {
-      key: 'onepager', title: 'One-pager', desc: 'Resumo visual em uma página', icon: '🎯',
-      html: [
-        '<h1 style="text-align:center">[Título]</h1>',
-        '<p style="text-align:center"><em>Subtítulo / tagline</em></p>',
-        '<div data-callout="true" data-variant="info"><p><strong>Proposta de valor:</strong> uma frase que resume o "por quê" desse projeto.</p></div>',
-        '<div data-column-block="true" data-cols="2" style="grid-template-columns: repeat(2, 1fr);"><div data-column="true"><h3>Problema</h3><p>Descrição do problema.</p></div><div data-column="true"><h3>Solução</h3><p>Como resolvemos.</p></div></div>',
-        '<h2>Números-chave</h2><div data-column-block="true" data-cols="3" style="grid-template-columns: repeat(3, 1fr);"><div data-column="true"><h2 style="text-align:center">10x</h2><p style="text-align:center">Métrica 1</p></div><div data-column="true"><h2 style="text-align:center">30%</h2><p style="text-align:center">Métrica 2</p></div><div data-column="true"><h2 style="text-align:center">R$ 0</h2><p style="text-align:center">Métrica 3</p></div></div>'
+      key: 'onepager', title: 'One-pager', desc: 'Resumo visual em 1 página', icon: '🎯',
+      preview: `<div class="kd-template-preview">
+        <strong style="text-align:center">Projeto X</strong>
+        <div class="kd-tp-callout kd-tp-callout-info" style="text-align:center">Proposta de valor</div>
+        <div class="kd-tp-cols" style="grid-template-columns: 1fr 1fr"><div class="kd-tp-col"><strong>Problema</strong><br><span class="kd-tp-line full"></span></div><div class="kd-tp-col"><strong>Solução</strong><br><span class="kd-tp-line full"></span></div></div>
+        <div class="kd-tp-cols"><div class="kd-tp-col"><strong>10x</strong></div><div class="kd-tp-col"><strong>30%</strong></div><div class="kd-tp-col"><strong>R$0</strong></div></div>
+      </div>`,
+      html: () => [
+        '<h1 style="text-align:center">Projeto Copiloto — one-pager</h1>',
+        '<p style="text-align:center"><em>Assistente de IA que responde dúvidas de clientes usando a base de conhecimento da empresa</em></p>',
+        '<div data-callout="true" data-variant="info"><p style="text-align:center"><strong>Reduz em 60% o tempo médio de resposta do suporte, mantendo a qualidade das respostas com fontes citadas.</strong></p></div>',
+        '<div data-column-block="true" data-cols="2" style="grid-template-columns: repeat(2, 1fr);"><div data-column="true"><h3>Problema</h3><p>Time de suporte responde 800+ tickets/mês. 40% são dúvidas já respondidas na base — mas o cliente não encontra sozinho.</p></div><div data-column="true"><h3>Solução</h3><p>Chat com IA na página do produto que puxa contexto da base + histórico do cliente. Se não sabe, escala pro humano com o contexto pronto.</p></div></div>',
+        '<h2>Números-chave (projeção 6 meses)</h2>',
+        '<div data-column-block="true" data-cols="3" style="grid-template-columns: repeat(3, 1fr);"><div data-column="true"><h2 style="text-align:center;color:#26a65b">-60%</h2><p style="text-align:center"><strong>Tempo resposta</strong><br>de 8h → 3h</p></div><div data-column="true"><h2 style="text-align:center;color:#4a90e2">+15pts</h2><p style="text-align:center"><strong>CSAT</strong><br>projeção</p></div><div data-column="true"><h2 style="text-align:center;color:#7A00FF">R$120k</h2><p style="text-align:center"><strong>Economia/ano</strong><br>em headcount</p></div></div>',
+        '<h2>Como funciona</h2>',
+        '<ol><li>Cliente pergunta no chat da página do produto.</li><li>IA busca na base + docs + tickets antigos.</li><li>Responde com fontes citadas ou escala pro humano com contexto.</li></ol>',
+        '<div data-callout="true" data-variant="tip"><p><strong>Próximo passo:</strong> POC de 4 semanas com 100 tickets/dia pra validar a projeção.</p></div>'
       ].join('')
     }
   ];
 
-  /* Abre modal com grid de templates. Click → cria doc com o HTML do template. */
+  /* Abre modal com grid de templates. Click → cria doc com o HTML do template.
+     Cada card tem preview visual (mini-página estilizada) + meta (ícone, título,
+     descrição). Grid é 3 colunas em desktop, 2 em tablet, 1 em mobile. */
   function _kdOpenTemplatesModal() {
     let overlay = document.getElementById('kd-templates-modal');
     if (overlay) overlay.remove();
@@ -522,17 +639,17 @@
         <div class="kd-modal-body">
           <div class="kd-templates-grid">
             ${KD_TEMPLATES.map(t => `
-              <button type="button" class="kd-template-card" data-key="${esc(t.key)}">
-                <div class="kd-template-icon">${t.icon}</div>
-                <div class="kd-template-title">${esc(t.title)}</div>
-                <div class="kd-template-desc">${esc(t.desc)}</div>
+              <button type="button" class="kd-template-card" data-key="${esc(t.key)}" title="${esc(t.title)}">
+                ${t.preview || '<div class="kd-template-preview kd-template-preview--blank">+</div>'}
+                <div class="kd-template-meta">
+                  <div class="kd-template-icon">${t.icon}</div>
+                  <div class="kd-template-text">
+                    <div class="kd-template-title">${esc(t.title)}</div>
+                    <div class="kd-template-desc">${esc(t.desc)}</div>
+                  </div>
+                </div>
               </button>
             `).join('')}
-            <button type="button" class="kd-template-card kd-template-import" data-import="1">
-              <div class="kd-template-icon">📥</div>
-              <div class="kd-template-title">Importar arquivo…</div>
-              <div class="kd-template-desc">DOCX, DOC, ODT, RTF, TXT, MD, HTML</div>
-            </button>
           </div>
         </div>
       </div>
@@ -545,12 +662,10 @@
         _kdCloseTemplatesModal();
         if (!t) return;
         if (t.key === 'blank') return createDoc();
-        _kdCreateDocWith(t.html, null);
+        // html pode ser string OU function (que gera na hora, com data atual).
+        const html = typeof t.html === 'function' ? t.html() : t.html;
+        _kdCreateDocWith(html, t.title);
       });
-    });
-    overlay.querySelector('[data-import]').addEventListener('click', () => {
-      _kdCloseTemplatesModal();
-      _kdImportPickFile();
     });
   }
   window._kdOpenTemplatesModal = _kdOpenTemplatesModal;

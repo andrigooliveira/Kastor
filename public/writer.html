@@ -23,7 +23,7 @@
        gzipped) mas o cache-buster do app.js já reaproveita a mesma versão em cache
        do usuário na maior parte dos acessos. Pra Fase futura vale extrair só tokens
        + classes writer-* num CSS menor. -->
-  <link rel="stylesheet" href="/css/style.css?v=20260916docsPack">
+  <link rel="stylesheet" href="/css/style.css?v=20260917docsUX">
 
   <style>
     /* Reset do body pra editor standalone — sem margin, cor da plataforma. */
@@ -141,9 +141,10 @@
     }
     .kd-new-grid {
       display: grid;
-      grid-template-columns: 200px;   /* mesma largura de um card de recentes */
+      grid-template-columns: repeat(2, 200px);   /* novo + upload lado a lado */
       gap: 16px;
     }
+    @media (max-width: 500px) { .kd-new-grid { grid-template-columns: 1fr; } }
     /* Card "Em branco" — box com bg neutro do surface + só o "+" roxo
        centralizado. Sem texto, sem fundo branco, aspect ratio de folha. */
     .kd-new-card {
@@ -163,6 +164,9 @@
       color: #9333ea;
     }
     .kd-new-card svg { display: block; }
+    .kd-new-card-inner { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+    .kd-new-card-label { font-size: 12px; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .04em; }
+    .kd-new-card:hover .kd-new-card-label { color: var(--accent); }
 
     /* ── Bloco: Arquivos recentes (mesma linguagem visual do Hub) ── */
     .kd-recent-block {
@@ -197,6 +201,22 @@
       transition: background .12s;
     }
     .kd-recent-select:hover { background: color-mix(in oklab, var(--text) 6%, transparent); }
+    .kd-recent-search { display: inline-flex; align-items: center; }
+    .kd-recent-search-input {
+      background: var(--surface);
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      padding: 7px 12px;
+      font-size: 13px;
+      color: var(--text);
+      width: 220px;
+      margin-left: 4px;
+      outline: none;
+      transition: border-color .12s, width .18s;
+    }
+    .kd-recent-search-input:focus { border-color: var(--accent); }
+    .kd-recent-search.is-open .kd-recent-search-input { display: inline-block; }
+    .kd-recent-search.is-open .kd-recent-icon-btn { color: var(--accent); }
     .kd-recent-divider {
       width: 1px; height: 20px;
       background: var(--hairline);
@@ -2259,30 +2279,71 @@
     }
     .kd-templates-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      grid-template-columns: repeat(3, 1fr);
       gap: 14px;
     }
+    @media (max-width: 640px) { .kd-templates-grid { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 400px) { .kd-templates-grid { grid-template-columns: 1fr; } }
     .kd-template-card {
       display: flex; flex-direction: column;
-      align-items: flex-start; text-align: left;
-      gap: 6px;
-      padding: 18px 16px;
+      align-items: stretch; text-align: left;
+      gap: 0;
+      padding: 0;
       background: var(--surface);
       border: 1px solid var(--hairline);
       border-radius: 10px;
       cursor: pointer;
       color: var(--text);
-      transition: border-color .12s, transform .12s, background .12s;
+      overflow: hidden;
+      transition: border-color .12s, transform .12s, box-shadow .12s;
     }
     .kd-template-card:hover {
       border-color: var(--accent);
-      background: color-mix(in oklab, var(--accent) 6%, var(--surface));
       transform: translateY(-1px);
+      box-shadow: 0 8px 20px -8px rgba(0,0,0,.35);
     }
-    .kd-template-icon { font-size: 28px; line-height: 1; }
-    .kd-template-title { font-size: 14px; font-weight: 600; }
-    .kd-template-desc { font-size: 12px; color: var(--text-2); line-height: 1.4; }
-    .kd-template-import { border-style: dashed; }
+    /* Preview visual: mini "página" com linhas simulando texto */
+    .kd-template-preview {
+      aspect-ratio: 3 / 4;
+      background: #fff;
+      color: #111;
+      padding: 12px 10px;
+      overflow: hidden;
+      position: relative;
+      font-size: 4px;
+      line-height: 1.25;
+      border-bottom: 1px solid var(--hairline);
+    }
+    .kd-template-preview strong { display: block; font-size: 7px; font-weight: 800; margin: 0 0 3px; }
+    .kd-template-preview .kd-tp-h2 { font-size: 5px; font-weight: 700; margin: 3px 0 1px; color: #333; }
+    .kd-template-preview .kd-tp-line { display: block; height: 3px; background: #ddd; margin: 1px 0; border-radius: 1px; }
+    .kd-template-preview .kd-tp-line.short { width: 40%; }
+    .kd-template-preview .kd-tp-line.mid   { width: 70%; }
+    .kd-template-preview .kd-tp-line.full  { width: 95%; }
+    .kd-template-preview .kd-tp-callout   { background: #fff3cd; border-left: 2px solid #f39c12; padding: 3px 4px; margin: 3px 0; border-radius: 2px; }
+    .kd-template-preview .kd-tp-callout-info { background: #e3f2fd; border-left-color: #4a90e2; }
+    .kd-template-preview .kd-tp-cols { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; margin: 3px 0; }
+    .kd-template-preview .kd-tp-col  { background: #f5f5f5; padding: 3px 2px; border-radius: 1px; }
+    .kd-template-preview .kd-tp-table { border-collapse: collapse; width: 100%; margin: 3px 0; font-size: 4px; }
+    .kd-template-preview .kd-tp-table td, .kd-template-preview .kd-tp-table th { border: 1px solid #ddd; padding: 1px 2px; }
+    .kd-template-preview .kd-tp-table th { background: #f5f5f5; }
+    .kd-template-preview .kd-tp-check { display: block; padding-left: 6px; position: relative; }
+    .kd-template-preview .kd-tp-check::before { content: '☐'; position: absolute; left: 0; }
+    .kd-template-meta {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 12px;
+    }
+    .kd-template-icon { font-size: 18px; line-height: 1; }
+    .kd-template-text { display: flex; flex-direction: column; gap: 1px; overflow: hidden; }
+    .kd-template-title { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .kd-template-desc { font-size: 11px; color: var(--text-2); line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* Card "em branco" tem preview vazio */
+    .kd-template-preview--blank {
+      display: grid; place-items: center;
+      background: #fafafa;
+      color: #ccc;
+      font-size: 24px;
+    }
 
     /* Sem login: prompt pra abrir a plataforma */
     .kd-auth-wall {
@@ -2342,7 +2403,16 @@
           <div class="kd-block-title">Começar um novo documento</div>
           <div class="kd-new-grid">
             <button type="button" class="kd-new-card" onclick="_kdOpenTemplatesModal()" title="Novo documento (com template ou em branco)" aria-label="Novo documento">
-              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+              <div class="kd-new-card-inner">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                <span class="kd-new-card-label">Novo</span>
+              </div>
+            </button>
+            <button type="button" class="kd-new-card" onclick="_kdImportPickFile()" title="Importar DOCX, PDF, TXT, MD, HTML" aria-label="Importar arquivo">
+              <div class="kd-new-card-inner">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <span class="kd-new-card-label">Upload</span>
+              </div>
             </button>
           </div>
         </div>
@@ -2352,6 +2422,16 @@
           <div class="kd-recent-toolbar">
             <div class="kd-recent-title" id="kd-recent-title">Documentos recentes</div>
             <div class="kd-recent-toolbar-actions">
+              <!-- Busca em tempo real. Input fica escondido até clicar na lupa. -->
+              <div class="kd-recent-search" id="kd-recent-search">
+                <button type="button" class="kd-recent-icon-btn" id="kd-recent-search-btn" onclick="kdRecentToggleSearch()" title="Pesquisar por título">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                </button>
+                <input type="text" class="kd-recent-search-input" id="kd-recent-search-input" placeholder="Pesquisar documentos…" hidden oninput="kdRecentSearchInput(this.value)" onkeydown="if(event.key==='Escape') kdRecentToggleSearch()">
+              </div>
+
+              <div class="kd-recent-divider"></div>
+
               <button type="button" class="kd-recent-select" id="kd-recent-owner-btn" onclick="kdRecentToggleMenu('owner', event)">
                 <span id="kd-recent-owner-label">Pertencem a mim</span>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
@@ -2729,6 +2809,6 @@
 
   <div id="kd-toast" class="kd-toast"></div>
 
-  <script src="/js/writer/standalone.js?v=20260916docsPack"></script>
+  <script src="/js/writer/standalone.js?v=20260917docsUX5"></script>
 </body>
 </html>

@@ -443,11 +443,10 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           <button type="button" class="topbar-timer-btn is-danger" onclick="discardTopbarTimer()" title="Descartar"><i data-lucide="x" class="ic-sm" width="16" height="16"></i></button>
         </div>
         <!-- Acesso rápido pro reWork Hub (portal com Docs e outros subprodutos).
-             Desativado temporariamente enquanto rolam ajustes no Hub — mantido
-             cinza no topbar pra sinalizar que existe, mas não abre. -->
-        <span class="topbar-app-btn freelancer-hide is-disabled" title="reWork Hub — em breve" aria-disabled="true">
+             Abre em nova guia — os subprodutos vivem em rotas standalone. -->
+        <a class="topbar-app-btn freelancer-hide" href="/hub" target="_blank" rel="noopener" title="Abrir reWork Hub">
           <img src="/reworkhub_simbol.svg" alt="reWork Hub" width="28" height="28">
-        </span>
+        </a>
         <button class="btn btn-ghost density-toggle" id="density-toggle-btn" onclick="toggleDensity()" title="Densidade da tabela"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="2.6" width="12" height="2.4" rx="1.2" fill="currentColor"/><rect x="2" y="6.8" width="12" height="2.4" rx="1.2" fill="currentColor"/><rect x="2" y="11" width="12" height="2.4" rx="1.2" fill="currentColor"/></svg></button>
         <div class="notif-wrap">
           <button class="btn btn-ghost notif-bell" onclick="toggleNotifPanel()" title="Notificações">

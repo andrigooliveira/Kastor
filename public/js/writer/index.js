@@ -610,15 +610,16 @@ const KdColumnBlock = Node.create({
   },
   addCommands() {
     return {
-      setColumns: (n = 2) => ({ chain, state }) => {
+      setColumns: (n = 2) => ({ commands }) => {
         const cols = Math.max(2, Math.min(3, Number(n) || 2));
-        const emptyPara = { type: 'paragraph' };
-        const kdCol = { type: 'kdColumn', content: [emptyPara] };
-        return chain().insertContent({
+        const kdCol = { type: 'kdColumn', content: [{ type: 'paragraph' }] };
+        // commands.insertContent evita quebrar a chain externa (que às vezes
+        // vem via slash command: chain().deleteRange().setColumns().run()).
+        return commands.insertContent({
           type: 'kdColumnBlock',
           attrs: { cols },
           content: new Array(cols).fill(null).map(() => kdCol)
-        }).run();
+        });
       }
     };
   }
@@ -638,69 +639,114 @@ const KdMentionSuggestion = {
     return [];
   },
   render: () => {
-    let popup, selectedIndex = 0, currentItems = [];
-    const render = (props) => {
-      if (!popup) {
-        popup = document.createElement('div');
-        popup.className = 'kd-mention-popup';
-        document.body.appendChild(popup);
-      }
-      currentItems = props.items || [];
-      selectedIndex = 0;
-      draw(props);
-      position(props);
-    };
-    const draw = (props) => {
+    let popup = null;
+    let selectedIndex = 0;
+    let currentItems = [];
+    let currentCommand = null;   // guarda command entre onStart/onKeyDown
+
+    const draw = () => {
+      if (!popup) return;
       if (!currentItems.length) {
         popup.innerHTML = '<div class="kd-mention-empty">Nenhum usuário</div>';
         return;
       }
-      popup.innerHTML = currentItems.map((it, i) => {
-        const avatar = it.avatar
-          ? `<img src="${it.avatar}" alt="" class="kd-mention-avatar">`
-          : `<div class="kd-mention-avatar kd-mention-avatar--initial" style="background:${it.color || '#7A00FF'}">${(it.name || '?').charAt(0).toUpperCase()}</div>`;
-        return `<button type="button" data-i="${i}" class="kd-mention-item${i === selectedIndex ? ' is-selected' : ''}">
-          ${avatar}<span class="kd-mention-name">${escapeHtml(it.name || '')}</span>
-          ${it.role ? `<span class="kd-mention-role">${escapeHtml(it.role)}</span>` : ''}
-        </button>`;
-      }).join('');
-      popup.querySelectorAll('.kd-mention-item').forEach(el => {
-        el.addEventListener('mousedown', (e) => {
-          e.preventDefault();
-          const i = parseInt(el.dataset.i, 10);
-          props.command({ id: currentItems[i].id, label: currentItems[i].name });
-        });
-      });
+      const existing = popup.querySelectorAll('.kd-mention-item');
+      if (existing.length !== currentItems.length) {
+        popup.innerHTML = currentItems.map((it, i) => {
+          const avatar = it.avatar
+            ? `<img src="${it.avatar}" alt="" class="kd-mention-avatar">`
+            : `<div class="kd-mention-avatar kd-mention-avatar--initial" style="background:${it.color || '#7A00FF'}">${(it.name || '?').charAt(0).toUpperCase()}</div>`;
+          return `<button type="button" data-i="${i}" class="kd-mention-item${i === selectedIndex ? ' is-selected' : ''}">
+            ${avatar}<span class="kd-mention-name">${escapeHtml(it.name || '')}</span>
+            ${it.role ? `<span class="kd-mention-role">${escapeHtml(it.role)}</span>` : ''}
+          </button>`;
+        }).join('');
+      } else {
+        existing.forEach((el, i) => el.classList.toggle('is-selected', i === selectedIndex));
+      }
+      const sel = popup.querySelector('.kd-mention-item.is-selected');
+      if (sel) sel.scrollIntoView({ block: 'nearest' });
     };
     const position = (props) => {
-      const rect = props.clientRect?.();
+      if (!popup) return;
+      const rect = props?.clientRect?.();
       if (!rect) return;
-      const pw = popup.offsetWidth;
-      const ph = popup.offsetHeight;
+      const pw = popup.offsetWidth || 260;
+      const ph = popup.offsetHeight || 200;
       let x = rect.left, y = rect.bottom + 4;
       if (x + pw > window.innerWidth - 8) x = window.innerWidth - pw - 8;
       if (y + ph > window.innerHeight - 8) y = rect.top - ph - 4;
       popup.style.left = x + 'px';
       popup.style.top = y + 'px';
     };
+    const runSelected = (idx) => {
+      const item = currentItems[idx];
+      if (!item || typeof currentCommand !== 'function') return false;
+      try { currentCommand({ id: item.id, label: item.name }); return true; }
+      catch (e) { console.error('[kd-mention]', e); return false; }
+    };
+    const bindPopupInteractions = () => {
+      popup.addEventListener('pointerdown', (e) => {
+        const el = e.target.closest('.kd-mention-item');
+        if (!el) return;
+        e.preventDefault();
+        e.stopPropagation();
+        runSelected(parseInt(el.dataset.i, 10));
+      });
+      popup.addEventListener('mouseover', (e) => {
+        const el = e.target.closest('.kd-mention-item');
+        if (!el) return;
+        const i = parseInt(el.dataset.i, 10);
+        if (i !== selectedIndex) { selectedIndex = i; draw(); }
+      });
+    };
     return {
-      onStart: render,
-      onUpdate: render,
+      onStart: (props) => {
+        popup = document.createElement('div');
+        popup.className = 'kd-mention-popup';
+        document.body.appendChild(popup);
+        currentItems = props.items || [];
+        selectedIndex = 0;
+        currentCommand = props.command;
+        draw();
+        bindPopupInteractions();
+        position(props);
+      },
+      onUpdate: (props) => {
+        currentItems = props.items || [];
+        currentCommand = props.command;
+        selectedIndex = Math.min(selectedIndex, Math.max(0, currentItems.length - 1));
+        draw();
+        position(props);
+      },
       onKeyDown: (props) => {
+        if (!popup) return false;
         const k = props.event.key;
-        if (k === 'ArrowDown') { selectedIndex = (selectedIndex + 1) % Math.max(1, currentItems.length); draw(props); return true; }
-        if (k === 'ArrowUp')   { selectedIndex = (selectedIndex - 1 + currentItems.length) % Math.max(1, currentItems.length); draw(props); return true; }
+        if (k === 'ArrowDown') {
+          if (!currentItems.length) return true;
+          selectedIndex = (selectedIndex + 1) % currentItems.length;
+          draw();
+          return true;
+        }
+        if (k === 'ArrowUp') {
+          if (!currentItems.length) return true;
+          selectedIndex = (selectedIndex - 1 + currentItems.length) % currentItems.length;
+          draw();
+          return true;
+        }
         if (k === 'Enter' || k === 'Tab') {
-          if (currentItems[selectedIndex]) {
-            props.command({ id: currentItems[selectedIndex].id, label: currentItems[selectedIndex].name });
-            return true;
-          }
+          if (runSelected(selectedIndex)) return true;
           return false;
         }
-        if (k === 'Escape') { popup?.remove(); popup = null; return true; }
+        if (k === 'Escape') { popup.remove(); popup = null; return true; }
         return false;
       },
-      onExit: () => { popup?.remove(); popup = null; }
+      onExit: () => {
+        if (popup) { popup.remove(); popup = null; }
+        currentItems = [];
+        selectedIndex = 0;
+        currentCommand = null;
+      }
     };
   }
 };
@@ -714,29 +760,34 @@ const KdMention = Mention.configure({
    Reusa @tiptap/suggestion (mesma libs do Mention). Ao digitar `/`,
    abre popup com lista de comandos (heading, list, callout, table…).
    Executor de cada comando fica no `command` do item. */
+/* Match query contra um comando. Query pode ter múltiplos tokens (separados
+   por espaço) e cada token precisa aparecer em algum lugar (title, keyword
+   individual, ou title+keywords concatenados). Substring match, sem regex. */
 function _matchSlash(query, cmd) {
-  const q = query.toLowerCase();
-  return cmd.title.toLowerCase().includes(q)
-      || (cmd.keywords || []).some(k => k.toLowerCase().includes(q));
+  const q = String(query || '').toLowerCase().trim();
+  if (!q) return true;
+  const haystack = (cmd.title + ' ' + (cmd.keywords || []).join(' ')).toLowerCase();
+  const tokens = q.split(/\s+/).filter(Boolean);
+  return tokens.every(t => haystack.includes(t));
 }
 const KdSlashCommands = [
   { key: 'h1', title: 'Título 1',            keywords: ['h1','título','heading'],       icon: 'H1', run: (ed, r) => ed.chain().deleteRange(r).setNode('heading', { level: 1 }).run() },
   { key: 'h2', title: 'Título 2',            keywords: ['h2','subtítulo'],              icon: 'H2', run: (ed, r) => ed.chain().deleteRange(r).setNode('heading', { level: 2 }).run() },
   { key: 'h3', title: 'Título 3',            keywords: ['h3'],                          icon: 'H3', run: (ed, r) => ed.chain().deleteRange(r).setNode('heading', { level: 3 }).run() },
   { key: 'p',  title: 'Parágrafo',           keywords: ['p','paragrafo','texto'],       icon: '¶',  run: (ed, r) => ed.chain().deleteRange(r).setNode('paragraph').run() },
-  { key: 'ul', title: 'Lista com marcadores', keywords: ['lista','bullet','ul'],        icon: '•',  run: (ed, r) => ed.chain().deleteRange(r).toggleBulletList().run() },
-  { key: 'ol', title: 'Lista numerada',      keywords: ['numerada','ordenada','ol'],    icon: '1.', run: (ed, r) => ed.chain().deleteRange(r).toggleOrderedList().run() },
-  { key: 'task', title: 'Lista de tarefas',  keywords: ['todo','task','checkbox'],      icon: '☑',  run: (ed, r) => ed.chain().deleteRange(r).toggleTaskList().run() },
+  { key: 'ul', title: 'Lista com marcadores', keywords: ['lista','bullet','ul','marcadores'], icon: '•',  run: (ed, r) => ed.chain().deleteRange(r).toggleBulletList().run() },
+  { key: 'ol', title: 'Lista numerada',      keywords: ['numerada','ordenada','ol','1'], icon: '1.', run: (ed, r) => ed.chain().deleteRange(r).toggleOrderedList().run() },
+  { key: 'task', title: 'Lista de tarefas',  keywords: ['todo','task','checkbox','tarefa'], icon: '☑',  run: (ed, r) => ed.chain().deleteRange(r).toggleTaskList().run() },
   { key: 'quote', title: 'Citação',          keywords: ['quote','citação','blockquote'], icon: '"',  run: (ed, r) => ed.chain().deleteRange(r).toggleBlockquote().run() },
   { key: 'code', title: 'Bloco de código',   keywords: ['code','codigo'],               icon: '</>', run: (ed, r) => ed.chain().deleteRange(r).toggleCodeBlock().run() },
-  { key: 'hr', title: 'Linha divisória',     keywords: ['hr','divisor','divisória'],    icon: '—',  run: (ed, r) => ed.chain().deleteRange(r).setHorizontalRule().run() },
+  { key: 'hr', title: 'Linha divisória',     keywords: ['hr','divisor','divisória','separador'], icon: '—',  run: (ed, r) => ed.chain().deleteRange(r).setHorizontalRule().run() },
   { key: 'table', title: 'Tabela',           keywords: ['table','tabela'],              icon: '▦',  run: (ed, r) => ed.chain().deleteRange(r).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
   { key: 'callout-info',   title: 'Nota',       keywords: ['nota','info','callout'],   icon: 'ℹ',  run: (ed, r) => ed.chain().deleteRange(r).setCallout({ variant: 'info' }).run() },
   { key: 'callout-tip',    title: 'Dica',       keywords: ['dica','tip'],              icon: '💡', run: (ed, r) => ed.chain().deleteRange(r).setCallout({ variant: 'tip' }).run() },
   { key: 'callout-warn',   title: 'Aviso',      keywords: ['aviso','warn','atenção'],  icon: '⚠',  run: (ed, r) => ed.chain().deleteRange(r).setCallout({ variant: 'warn' }).run() },
   { key: 'callout-danger', title: 'Importante', keywords: ['danger','importante','!!'], icon: '🚨', run: (ed, r) => ed.chain().deleteRange(r).setCallout({ variant: 'danger' }).run() },
-  { key: 'cols2', title: '2 colunas',        keywords: ['colunas','cols','2'],          icon: '⫲',  run: (ed, r) => ed.chain().deleteRange(r).setColumns(2).run() },
-  { key: 'cols3', title: '3 colunas',        keywords: ['colunas','cols','3'],          icon: '⫸',  run: (ed, r) => ed.chain().deleteRange(r).setColumns(3).run() }
+  { key: 'cols2', title: '2 colunas',        keywords: ['colunas','cols','2col','cols2'], icon: '⫲',  run: (ed, r) => ed.chain().deleteRange(r).setColumns(2).run() },
+  { key: 'cols3', title: '3 colunas',        keywords: ['colunas','cols','3col','cols3'], icon: '⫸',  run: (ed, r) => ed.chain().deleteRange(r).setColumns(3).run() }
 ];
 const KdSlashCommand = Extension.create({
   name: 'kdSlashCommand',
@@ -747,49 +798,86 @@ const KdSlashCommand = Extension.create({
         char: '/',
         allowSpaces: false,
         startOfLine: false,
-        // Ativa só quando `/` está no COMEÇO de um bloco vazio ou de linha
-        // (evita popup atrapalhando quando user digita `and/or`).
+        // Ativa quando `/` está no COMEÇO do parágrafo/heading atual — mas não
+        // no meio de uma palavra (evita interromper `and/or`, `TCP/IP`).
+        // Aceita em qualquer nível de profundidade (paragraph raiz, dentro
+        // de callout, dentro de coluna, etc.), desde que o bloco imediato
+        // aceite conteúdo de texto.
         allow: ({ state, range }) => {
           const $from = state.doc.resolve(range.from);
-          const isRootDepth = $from.depth === 1;
-          const isAfterContent = $from.parent.textContent.slice(0, range.from - $from.start() - 1).trim().length > 0;
-          return isRootDepth && !isAfterContent;
+          // range.from é a posição pm do `/` (início do trigger).
+          // parent.start() é a posição pm do primeiro char do bloco.
+          // A diferença é o offset (em chars) do `/` dentro do bloco.
+          const offset = range.from - $from.start();
+          const beforeSlash = $from.parent.textContent.slice(0, offset);
+          return beforeSlash.trim().length === 0;
         },
         items: ({ query }) => KdSlashCommands.filter(c => _matchSlash(query, c)),
         command: ({ editor, range, props }) => {
           try { props.run(editor, range); } catch (e) { console.error('[slash]', e); }
         },
         render: () => {
-          let popup, selectedIndex = 0, currentItems = [];
-          const draw = (props) => {
+          let popup = null;
+          let selectedIndex = 0;
+          let currentItems = [];
+          // Guarda o `command` do último onStart pra usar em event handlers
+          // do popup (que rodam fora do fluxo do Suggestion). O props do
+          // onKeyDown NÃO carrega .command em versões atuais do @tiptap/
+          // suggestion — precisa manter separado.
+          let currentCommand = null;
+
+          const draw = () => {
+            if (!popup) return;
             if (!currentItems.length) {
               popup.innerHTML = '<div class="kd-slash-empty">Nada bate com isso</div>';
               return;
             }
-            popup.innerHTML = currentItems.map((it, i) => `
-              <button type="button" data-i="${i}" class="kd-slash-item${i === selectedIndex ? ' is-selected' : ''}">
-                <span class="kd-slash-icon">${it.icon}</span>
-                <span class="kd-slash-title">${escapeHtml(it.title)}</span>
-              </button>
-            `).join('');
-            popup.querySelectorAll('.kd-slash-item').forEach(el => {
-              el.addEventListener('mousedown', (e) => {
-                e.preventDefault();
-                const i = parseInt(el.dataset.i, 10);
-                props.command(currentItems[i]);
-              });
-            });
+            const existingItems = popup.querySelectorAll('.kd-slash-item');
+            if (existingItems.length !== currentItems.length) {
+              popup.innerHTML = currentItems.map((it, i) => `
+                <button type="button" data-i="${i}" class="kd-slash-item${i === selectedIndex ? ' is-selected' : ''}">
+                  <span class="kd-slash-icon">${it.icon}</span>
+                  <span class="kd-slash-title">${escapeHtml(it.title)}</span>
+                </button>
+              `).join('');
+            } else {
+              existingItems.forEach((el, i) => el.classList.toggle('is-selected', i === selectedIndex));
+            }
+            const sel = popup.querySelector('.kd-slash-item.is-selected');
+            if (sel) sel.scrollIntoView({ block: 'nearest' });
           };
           const position = (props) => {
-            const rect = props.clientRect?.();
+            if (!popup) return;
+            const rect = props?.clientRect?.();
             if (!rect) return;
             const pw = popup.offsetWidth || 280;
-            const ph = popup.offsetHeight || 200;
+            const ph = popup.offsetHeight || 320;
             let x = rect.left, y = rect.bottom + 4;
             if (x + pw > window.innerWidth - 8) x = window.innerWidth - pw - 8;
             if (y + ph > window.innerHeight - 8) y = rect.top - ph - 4;
             popup.style.left = x + 'px';
             popup.style.top = y + 'px';
+          };
+          const runSelected = (idx) => {
+            const item = currentItems[idx];
+            if (!item || typeof currentCommand !== 'function') return false;
+            try { currentCommand(item); return true; }
+            catch (e) { console.error('[kd-slash]', item?.key || '?', e); return false; }
+          };
+          const bindPopupInteractions = () => {
+            popup.addEventListener('pointerdown', (e) => {
+              const el = e.target.closest('.kd-slash-item');
+              if (!el) return;
+              e.preventDefault();
+              e.stopPropagation();
+              runSelected(parseInt(el.dataset.i, 10));
+            });
+            popup.addEventListener('mouseover', (e) => {
+              const el = e.target.closest('.kd-slash-item');
+              if (!el) return;
+              const i = parseInt(el.dataset.i, 10);
+              if (i !== selectedIndex) { selectedIndex = i; draw(); }
+            });
           };
           return {
             onStart: (props) => {
@@ -798,27 +886,47 @@ const KdSlashCommand = Extension.create({
               document.body.appendChild(popup);
               currentItems = props.items || [];
               selectedIndex = 0;
-              draw(props);
+              currentCommand = props.command;   // ← guarda pra usar depois
+              draw();
+              bindPopupInteractions();
               position(props);
             },
             onUpdate: (props) => {
               currentItems = props.items || [];
+              currentCommand = props.command;
               selectedIndex = Math.min(selectedIndex, Math.max(0, currentItems.length - 1));
-              draw(props);
+              draw();
               position(props);
             },
             onKeyDown: (props) => {
+              // Se popup foi fechado ou nunca abriu, deixa editor lidar.
+              if (!popup) return false;
               const k = props.event.key;
-              if (k === 'ArrowDown') { selectedIndex = (selectedIndex + 1) % Math.max(1, currentItems.length); draw(props); return true; }
-              if (k === 'ArrowUp')   { selectedIndex = (selectedIndex - 1 + currentItems.length) % Math.max(1, currentItems.length); draw(props); return true; }
+              if (k === 'ArrowDown') {
+                if (!currentItems.length) return true;
+                selectedIndex = (selectedIndex + 1) % currentItems.length;
+                draw();
+                return true;
+              }
+              if (k === 'ArrowUp') {
+                if (!currentItems.length) return true;
+                selectedIndex = (selectedIndex - 1 + currentItems.length) % currentItems.length;
+                draw();
+                return true;
+              }
               if (k === 'Enter') {
-                if (currentItems[selectedIndex]) { props.command(currentItems[selectedIndex]); return true; }
+                if (runSelected(selectedIndex)) return true;
                 return false;
               }
-              if (k === 'Escape') { popup?.remove(); popup = null; return true; }
+              if (k === 'Escape') { popup.remove(); popup = null; return true; }
               return false;
             },
-            onExit: () => { popup?.remove(); popup = null; }
+            onExit: () => {
+              if (popup) { popup.remove(); popup = null; }
+              currentItems = [];
+              selectedIndex = 0;
+              currentCommand = null;
+            }
           };
         }
       })
