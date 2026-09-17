@@ -23,7 +23,7 @@
        gzipped) mas o cache-buster do app.js já reaproveita a mesma versão em cache
        do usuário na maior parte dos acessos. Pra Fase futura vale extrair só tokens
        + classes writer-* num CSS menor. -->
-  <link rel="stylesheet" href="/css/style.css?v=20260917docsUX">
+  <link rel="stylesheet" href="/css/style.css?v=20260917colsFix">
 
   <style>
     /* Reset do body pra editor standalone — sem margin, cor da plataforma. */
@@ -2177,22 +2177,31 @@
     .kd-mention-role { font-size: 11px; color: var(--text-2); }
     .kd-mention-empty { padding: 12px; text-align: center; color: var(--text-2); font-size: 12px; }
 
-    /* Colunas — grid container */
+    /* Colunas — grid container. Cada coluna tem borda sutil SEMPRE visível
+       (assim o user identifica as células) + bg branco explícito pra não
+       sumir se o paper background estiver numa zona de "gap" da paginação. */
     .kd-column-block {
       display: grid;
-      gap: 16px;
+      gap: 12px;
       margin: 8px 0;
-      padding: 4px 0;
+      padding: 0;
     }
     .kd-column {
       min-height: 40px;
-      padding: 8px 10px;
+      padding: 10px 12px;
       border-radius: 6px;
-      border: 1px dashed transparent;
-      transition: border-color .12s;
+      background: transparent;
+      border: 1px dashed color-mix(in oklab, #000 15%, transparent);
+      transition: border-color .12s, background .12s;
     }
-    .kd-column:hover, .kd-column:focus-within {
-      border-color: color-mix(in oklab, var(--accent) 25%, transparent);
+    .kd-column:hover {
+      border-color: color-mix(in oklab, #7A00FF 45%, transparent);
+      background: color-mix(in oklab, #7A00FF 4%, transparent);
+    }
+    .kd-column:focus-within {
+      border-color: #7A00FF;
+      border-style: solid;
+      background: color-mix(in oklab, #7A00FF 5%, transparent);
     }
     .kd-column > *:first-child { margin-top: 0; }
     .kd-column > *:last-child { margin-bottom: 0; }
