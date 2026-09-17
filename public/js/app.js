@@ -5044,35 +5044,9 @@ function renderDashGreeting() {
   else if (h < 12)           msg = `Bom dia, ${first}!`;
   else if (h < 18)           msg = `Boa tarde, ${first}!`;
   else                       msg = `Boa noite, ${first}!`;
-
-  // Subtítulo com 3 números-chave do dia — foco, parada, previstas até sexta.
-  // Puxa do cache local sem request extra.
-  let subline = '';
-  try {
-    const mine = _dashMyDemands ? _dashMyDemands().filter(d => !isDone(d)) : [];
-    const nowD = new Date(); nowD.setHours(23,59,59,999);
-    const foco = mine.filter(d => {
-      const dl = d.deadline ? new Date(d.deadline) : null;
-      return dl && dl <= nowD;
-    }).length;
-    const paradas = mine.filter(d => d.status === 'blocked' || d.blocked).length;
-    // Previstas até sexta (fim de semana atual dias úteis).
-    const eow = new Date(); eow.setHours(23,59,59,999);
-    const dow = eow.getDay();
-    const daysToFriday = (5 - dow + 7) % 7 || 0;
-    eow.setDate(eow.getDate() + daysToFriday);
-    const previstas = mine.filter(d => {
-      const dl = d.deadline ? new Date(d.deadline) : null;
-      return dl && dl > nowD && dl <= eow;
-    }).length;
-    const parts = [];
-    parts.push(`<b>${foco}</b> ${foco === 1 ? 'foco' : 'focos'} pra hoje`);
-    if (paradas) parts.push(`<b>${paradas}</b> ${paradas === 1 ? 'parada' : 'paradas'}`);
-    parts.push(`<b>${previstas}</b> ${previstas === 1 ? 'prevista' : 'previstas'} até sexta`);
-    subline = parts.join(' <span class="dash-greeting-sep">·</span> ');
-  } catch {}
-
-  el.innerHTML = `<span class="dash-greeting-msg">${esc(msg)}</span>${subline ? `<div class="dash-greeting-sub">${subline}</div>` : ''}`;
+  // Subline (0 focos, N previstas) removida — poluía visualmente e os
+  // números já aparecem nos widgets abaixo.
+  el.innerHTML = `<span class="dash-greeting-msg">${esc(msg)}</span>`;
   el.hidden = false;
 }
 
@@ -5095,7 +5069,7 @@ function renderDashboard() {
   renderDashActivityFeed(mineActive);
   renderDashBlocked(mineActive);
   renderDashRadar(activeSquadActive);
-  renderDashTopOwners(activeSquadScope);
+  renderDashRecentMine(activeSquadScope);
   renderDashPriorityDonut(mineActive);
   paintIcons();
 }
@@ -5608,6 +5582,95 @@ function openDashRadarAll() {
 // no mês corrente. Contabiliza APENAS a PRIMEIRA etapa (em ordem do fluxo) em
 // que o usuário é responsável naquela demanda — se ele estiver em várias
 // etapas da mesma demanda, só a primeira conta.
+/* Demandas recentes: as 4 mais recentes que JÁ PASSARAM por mim (fui dono
+   de alguma etapa em algum momento, seja via etapa concluída no history OU
+   como responsável atual/anterior) E que continuam ATIVAS (não concluídas
+   nem excluídas). Ordenadas pela última movimentação (updatedAt fallback
+   pra createdAt). Substitui o antigo widget "Top responsáveis". */
+function renderDashRecentMine(list) {
+  const el = $('dash-recent-mine');
+  if (!el) return;
+  const myId = me?.id;
+  if (!myId) { el.innerHTML = emptyMini('Sem dados do usuário.'); return; }
+  const passedThroughMe = (list || []).filter(d => {
+    if (isDone(d)) return false;
+    // 1) Sou dono atual da demanda?
+    if (d.ownerId === myId) return true;
+    // 2) Sou responsável atual de alguma etapa?
+    const flow = flowById(d.flowId);
+    if (flow) {
+      const stages = activeStagesOf(d, flow);
+      for (const st of stages) {
+        if (resolveStageOwnerId(d, st) === myId) return true;
+      }
+    }
+    // 3) Já apareci como responsável em alguma stage_changed do history?
+    const hist = d.history || [];
+    for (const h of hist) {
+      if (h.userId === myId && (h.action === 'stage_changed' || h.action === 'assigned' || h.action === 'owner_changed')) return true;
+      if (h.details && (h.details.fromOwnerId === myId || h.details.toOwnerId === myId)) return true;
+    }
+    return false;
+  });
+  const sorted = passedThroughMe.slice().sort((a, b) => {
+    const ta = a.updatedAt || a.createdAt || '';
+    const tb = b.updatedAt || b.createdAt || '';
+    return tb.localeCompare(ta);
+  });
+  if (!sorted.length) {
+    el.innerHTML = emptyMini('Nenhuma demanda recente sua ativa.');
+    return;
+  }
+  _dashLists.recentMine = sorted;
+  const MAX = 4;
+  const html = sorted.slice(0, MAX).map(_dashRecentMineRowHtml).join('');
+  const more = sorted.length > MAX
+    ? `<a href="#" class="dash-more-link" onclick="event.preventDefault(); openDashRecentMineAll()">Ver mais (${sorted.length})</a>`
+    : '';
+  el.innerHTML = html + more;
+}
+function _dashRecentMineRowHtml(d) {
+  const flow = flowById(d.flowId);
+  const stages = flow ? activeStagesOf(d, flow) : [];
+  const currentStage = stages.find(s => !s.done) || stages[stages.length - 1];
+  const stageColor = currentStage?.color || '#7A00FF';
+  const stageLabel = currentStage?.label || '';
+  const proj = projectById(d.projectId);
+  const projName = proj?.name || '';
+  const when = d.updatedAt || d.createdAt || '';
+  const rel = when ? _kdRelTime(when) : '';
+  return `<div class="dash-recent-row" onclick="showDetail('${esc(d.id)}')" role="button">
+    <div class="dash-recent-dot" style="background:${esc(stageColor)}"></div>
+    <div class="dash-recent-body">
+      <div class="dash-recent-title" title="${esc(d.name)}">${esc(d.name)}</div>
+      <div class="dash-recent-meta">
+        ${stageLabel ? `<span class="dash-recent-stage">${esc(stageLabel)}</span>` : ''}
+        ${projName ? `<span class="dash-recent-sep">·</span><span class="dash-recent-proj">${esc(projName)}</span>` : ''}
+      </div>
+    </div>
+    ${rel ? `<div class="dash-recent-when">${esc(rel)}</div>` : ''}
+  </div>`;
+}
+/* Tempo relativo curto: "há 3d", "há 5h", "há 20min", "agora". */
+function _kdRelTime(iso) {
+  const t = new Date(iso).getTime();
+  if (!isFinite(t)) return '';
+  const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  if (s < 60) return 'agora';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `há ${m}min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `há ${h}h`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `há ${d}d`;
+  const mo = Math.floor(d / 30);
+  return `há ${mo}mês${mo === 1 ? '' : 'es'}`;
+}
+function openDashRecentMineAll() {
+  const rows = _dashLists.recentMine || [];
+  openDashMore('Demandas recentes', rows.map(_dashRecentMineRowHtml).join('') || '<div class="dash-empty-inline">Nenhuma.</div>');
+}
+
 function renderDashTopOwners(list) {
   const el = $('dash-top-owners');
   if (!el) return;

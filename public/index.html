@@ -559,10 +559,10 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
             <div class="dash-widget dash-tone-top">
               <div class="dash-widget-head">
-                <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="trophy" class="ic-sm"></i></span>Top responsáveis · mês</div>
-                <div class="dash-widget-sub">Entregas no mês corrente</div>
+                <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="history" class="ic-sm"></i></span>Demandas recentes</div>
+                <div class="dash-widget-sub">Já passaram por você e seguem ativas</div>
               </div>
-              <div id="dash-top-owners"></div>
+              <div id="dash-recent-mine"></div>
             </div>
           </div>
         </div>
@@ -4205,7 +4205,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260914dlfix4" defer></script>
+<script src="/js/boot.js?v=20260917homeRecent2" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

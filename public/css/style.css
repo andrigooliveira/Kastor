@@ -4227,6 +4227,50 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
   color: var(--text); font-variant-numeric: tabular-nums;
 }
 
+/* Demandas recentes — linha clicável com bolinha de cor da etapa, título,
+   etapa+projeto abaixo, e tempo relativo à direita. Design mais denso e
+   informativo que o antigo "Top responsáveis" (que era só ranking numérico). */
+.dash-recent-row {
+  display: grid;
+  grid-template-columns: 8px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--hairline);
+  cursor: pointer;
+  border-radius: 8px;
+  transition: background .12s;
+}
+.dash-recent-row:last-child { border-bottom: 0; }
+.dash-recent-row:hover { background: color-mix(in oklab, var(--accent) 6%, transparent); }
+.dash-recent-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  align-self: center;
+  box-shadow: 0 0 0 2px color-mix(in oklab, currentColor 12%, transparent);
+}
+.dash-recent-body { min-width: 0; }
+.dash-recent-title {
+  font-size: 13px; font-weight: 600; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  letter-spacing: -.005em;
+}
+.dash-recent-meta {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11.5px; color: var(--text-muted);
+  margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0;
+}
+.dash-recent-stage { font-weight: 500; color: var(--text-dim); }
+.dash-recent-sep { opacity: .5; }
+.dash-recent-proj { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.dash-recent-when {
+  font-size: 11px; color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  padding-left: 4px;
+}
+
 /* Empty state inline (widgets pequenos) */
 .dash-empty-inline {
   padding: 16px; text-align: center;
@@ -4956,8 +5000,12 @@ body.is-resizing-detail * { cursor: col-resize !important; user-select: none !im
 /* Card de destaque da etapa atual — aparece no topo da coluna esquerda com
    a cor da etapa. Puxa identidade visual pro detalhe. */
 .detail-stage-card {
-  display: flex; align-items: center; gap: 14px;
-  padding: 14px 16px;
+  display: flex; align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  /* Padding-left extra pra respirar do risco colorido (3px + margin visual),
+     padding-right generoso pra o prazo não colar na borda. */
+  padding: 14px 20px 14px 22px;
   border-radius: 12px;
   background: color-mix(in oklab, var(--stage-color, var(--accent)) 12%, var(--surface));
   border: 1px solid color-mix(in oklab, var(--stage-color, var(--accent)) 35%, var(--hairline));
@@ -4967,6 +5015,20 @@ body.is-resizing-detail * { cursor: col-resize !important; user-select: none !im
   content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
   background: var(--stage-color, var(--accent));
 }
+/* Info reserva no mínimo 60% da linha — se o prazo não couber, ele quebra
+   pra próxima linha em vez de comprimir o nome da etapa (que é o mais
+   importante do card). */
+.detail-stage-card-info {
+  flex: 1 1 60%;
+  min-width: 180px;
+}
+.detail-stage-card-due {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+/* Se a linha inteira for pra prazo (após wrap), alinha com o info em vez
+   de colar embaixo do ícone. */
+.detail-stage-card > .detail-stage-card-due:only-of-type[data-wrapped] { padding-left: 50px; }
 .detail-stage-card-icon {
   width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0;
   background: color-mix(in oklab, var(--stage-color, var(--accent)) 22%, transparent);
