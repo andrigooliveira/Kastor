@@ -484,87 +484,102 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       </button>
     </div>
 
-    <!-- ── DASHBOARD ── -->
+    <!-- ── DASHBOARD (Split Vertical: Hoje / Próximos Dias) ──
+         Layout redesenhado seguindo o direction contract em
+         .impeccable/surfaces/inicio.md: 2 colunas verticais paralelas
+         (55%/45%) separadas por hairline, cada coluna é um FLUXO
+         contínuo com heading próprio e subseções empilhadas — sem
+         cards individuais. Coluna esquerda = "AGORA" (foco/paradas/
+         comentários), direita = "PRÓXIMOS DIAS" (previstas/radar/
+         atividade/horas via tabs). -->
     <div class="page active" id="page-dashboard">
       <div class="page-body">
-        <!-- Saudação — muda de acordo com a hora do dia. Populada por
-             renderDashGreeting() no boot do dashboard. -->
+        <!-- Saudação — populada por renderDashGreeting(). -->
         <div class="dash-greeting" id="dash-greeting" hidden></div>
-        <!-- Dashboard individualizado: cada usuário vê só o seu.
-             5 seções: Previstas (com toggle Previstas/Prazos), Em atraso,
-             Prioridade, Radar e Top responsáveis. -->
-        <div class="dash-grid">
-          <div class="dash-col dash-col-left">
-            <div class="dash-widget dash-tone-focus">
-              <div class="dash-widget-head">
-                <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="target" class="ic-sm"></i></span>Meu foco de hoje</div>
-                <div class="dash-widget-sub" id="dash-focus-sub"></div>
-              </div>
-              <div id="dash-focus"></div>
-            </div>
 
-            <div class="dash-widget dash-tone-blocked">
-              <div class="dash-widget-head">
-                <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="pause-circle" class="ic-sm"></i></span>Paradas</div>
-                <div class="dash-widget-sub" id="dash-blocked-sub"></div>
-              </div>
-              <div id="dash-blocked"></div>
-            </div>
+        <div class="dash-split">
+          <!-- Coluna esquerda: AGORA -->
+          <section class="dash-col dash-col--now" aria-labelledby="dash-now-heading">
+            <header class="dash-col-head">
+              <h2 class="dash-col-heading" id="dash-now-heading">Agora</h2>
+            </header>
 
-            <div class="dash-widget dash-tone-forecast">
-              <div class="dash-widget-head">
-                <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="calendar-days" class="ic-sm"></i></span>Demandas previstas</div>
-                <div class="dash-widget-toggle" id="dash-forecast-toggle">
+            <div class="dash-flow">
+              <div class="dash-section" id="dash-section-focus">
+                <div class="dash-section-head">
+                  <h3 class="dash-section-title">Foco de hoje</h3>
+                  <span class="dash-section-count" id="dash-focus-count" hidden></span>
+                </div>
+                <div id="dash-focus"></div>
+              </div>
+
+              <div class="dash-section" id="dash-section-blocked">
+                <div class="dash-section-head">
+                  <h3 class="dash-section-title">Paradas</h3>
+                  <span class="dash-section-count" id="dash-blocked-count" hidden></span>
+                </div>
+                <div id="dash-blocked"></div>
+              </div>
+
+              <div class="dash-section" id="dash-section-hours">
+                <div class="dash-section-head">
+                  <h3 class="dash-section-title">Horas hoje</h3>
+                </div>
+                <div id="dash-hours-today"></div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Coluna direita: PRÓXIMOS DIAS -->
+          <section class="dash-col dash-col--next" aria-labelledby="dash-next-heading">
+            <header class="dash-col-head dash-col-head--tabs">
+              <h2 class="dash-col-heading" id="dash-next-heading">Próximos dias</h2>
+              <nav class="dash-tabs" role="tablist" aria-label="Visões dos próximos dias">
+                <button type="button" class="dash-tab is-active" role="tab" aria-selected="true" data-tab="forecast" onclick="setDashNextTab('forecast')">Previstas</button>
+                <button type="button" class="dash-tab" role="tab" aria-selected="false" data-tab="radar" onclick="setDashNextTab('radar')">Radar</button>
+                <button type="button" class="dash-tab" role="tab" aria-selected="false" data-tab="activity" onclick="setDashNextTab('activity')">Atividade</button>
+              </nav>
+            </header>
+
+            <div class="dash-flow">
+              <div class="dash-tab-panel is-active" data-panel="forecast" role="tabpanel">
+                <div class="dash-forecast-toggle-row" id="dash-forecast-toggle">
                   <button type="button" class="dash-toggle-btn is-active" onclick="setDashForecastMode('previstas')" data-mode="previstas">Previstas</button>
                   <button type="button" class="dash-toggle-btn" onclick="setDashForecastMode('prazos')" data-mode="prazos">Prazos</button>
                 </div>
+                <div class="dash-forecast-grid" id="dash-forecast"></div>
+                <div class="dash-subblock">
+                  <div class="dash-subblock-title">Prioridade</div>
+                  <div id="dash-prio-donut"></div>
+                </div>
               </div>
-              <div class="dash-widget-sub" id="dash-forecast-sub"></div>
-              <div class="dash-forecast-grid" id="dash-forecast"></div>
-            </div>
 
-            <div class="dash-widget dash-tone-activity">
-              <div class="dash-widget-head">
-                <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="activity" class="ic-sm"></i></span>Atividade recente</div>
-                <div class="dash-widget-sub" id="dash-activity-sub"></div>
+              <div class="dash-tab-panel" data-panel="radar" role="tabpanel" hidden>
+                <div class="dash-radar-grid" id="dash-radar"></div>
               </div>
-              <div id="dash-activity"></div>
-            </div>
-          </div>
 
-          <div class="dash-col dash-col-right">
-            <div class="dash-widget dash-tone-hours">
-              <div class="dash-widget-head">
-                <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="clock" class="ic-sm"></i></span>Horas de hoje</div>
-                <div class="dash-widget-sub" id="dash-hours-sub"></div>
+              <div class="dash-tab-panel" data-panel="activity" role="tabpanel" hidden>
+                <div id="dash-activity"></div>
+                <div class="dash-subblock">
+                  <div class="dash-subblock-title">Recentes</div>
+                  <div id="dash-recent-mine"></div>
+                </div>
               </div>
-              <div id="dash-hours-today"></div>
             </div>
+          </section>
+        </div>
 
-            <div class="dash-widget dash-tone-prio">
-              <div class="dash-widget-head">
-                <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="flag" class="ic-sm"></i></span>Demandas em aberto · prioridade</div>
-                <div class="dash-widget-sub" id="dash-prio-sub"></div>
-              </div>
-              <div id="dash-prio-donut"></div>
-            </div>
-
-            <div class="dash-widget dash-tone-radar">
-              <div class="dash-widget-head">
-                <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="radar" class="ic-sm"></i></span>Radar de projetos</div>
-                <div class="dash-widget-sub" id="dash-radar-sub"></div>
-              </div>
-              <div class="dash-radar-grid" id="dash-radar"></div>
-            </div>
-
-            <div class="dash-widget dash-tone-top">
-              <div class="dash-widget-head">
-                <div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="history" class="ic-sm"></i></span>Demandas recentes</div>
-                <div class="dash-widget-sub">Já passaram por você e seguem ativas</div>
-              </div>
-              <div id="dash-recent-mine"></div>
-            </div>
-          </div>
+        <!-- Elementos ocultos preservados pra compat com JS legado (sub-texts,
+             etc.) que ainda são referenciados por render functions. Ficam
+             hidden pra não gerar layout, mas o setText não quebra. -->
+        <div hidden>
+          <div id="dash-focus-sub"></div>
+          <div id="dash-blocked-sub"></div>
+          <div id="dash-hours-sub"></div>
+          <div id="dash-forecast-sub"></div>
+          <div id="dash-radar-sub"></div>
+          <div id="dash-activity-sub"></div>
+          <div id="dash-prio-sub"></div>
         </div>
       </div>
     </div>
@@ -803,8 +818,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
         <div class="list-views-container">
           <div id="list-table-view">
-            <div class="table-wrap table-scroll">
-              <table>
+            <div class="table-wrap table-scroll mine-table-wrap">
+              <table class="mine-table-v2 is-demands">
                 <thead>
                   <tr>
                     <th class="col-bulk-check"><input type="checkbox" class="bulk-check-all" id="bulk-check-all" onclick="toggleBulkSelectAll(this.checked)" title="Selecionar todas"></th>
@@ -815,7 +830,6 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                     <th style="cursor:pointer" onclick="sortList('status')">Etapa <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                     <th style="cursor:pointer" onclick="sortList('owner')">Responsável <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                     <th style="cursor:pointer" onclick="sortList('deadline')">Prazo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                    <th style="cursor:pointer" onclick="sortList('completed')">Conclusão <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   </tr>
                 </thead>
                 <tbody id="list-table-body"></tbody>
@@ -826,12 +840,11 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <div class="done-table-wrap" id="done-table-wrap" style="display:none">
               <button type="button" class="done-table-toggle" id="done-table-toggle" onclick="toggleDoneTable()">
                 <i data-lucide="chevron-right" class="ic-sm done-table-caret"></i>
-                <i data-lucide="check-circle-2" class="ic-sm status-ico-done"></i>
                 <span class="done-table-title">Concluídas</span>
                 <span class="done-table-count" id="done-table-count">0</span>
               </button>
-              <div class="table-wrap table-scroll done-table-body-wrap" id="done-table-body-wrap" style="display:none">
-                <table>
+              <div class="table-wrap table-scroll mine-table-wrap done-table-body-wrap" id="done-table-body-wrap" style="display:none">
+                <table class="mine-table-v2 is-demands is-done">
                   <thead>
                     <tr>
                       <th class="col-bulk-check"></th>
@@ -840,7 +853,6 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                       <th style="cursor:pointer" onclick="sortList('client')">Cliente <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                       <th style="cursor:pointer" onclick="sortList('priority')">Prioridade <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                       <th style="cursor:pointer" onclick="sortList('status')">Etapa <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                      <th style="cursor:pointer" onclick="sortList('owner')">Responsável <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                       <th style="cursor:pointer" onclick="sortList('deadline')">Prazo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                       <th style="cursor:pointer" onclick="sortList('completed')">Conclusão <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                     </tr>
@@ -883,8 +895,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
     <!-- ── MINHAS DEMANDAS ── -->
     <div class="page" id="page-mine">
       <div class="page-body">
-        <div class="section-head" style="justify-content:flex-end">
-          <div style="display:flex;gap:8px;align-items:center;margin-left:auto">
+        <div class="mine-head">
+          <div class="mine-head-filters">
             <select class="filter-select" id="mine-f-quick" onchange="renderMine()">
               <option value="">Todas</option>
               <option value="late">Atrasadas</option>
@@ -898,8 +910,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           </div>
         </div>
         <div id="mine-view-list">
-          <div class="table-wrap table-scroll">
-            <table>
+          <div class="table-wrap table-scroll mine-table-wrap">
+            <table class="mine-table-v2">
               <thead>
                 <tr>
                   <th style="cursor:pointer" onclick="sortMine('name')">Demanda <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
@@ -928,25 +940,26 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           <div class="cal-grid" id="cal-mine-body" style="margin-top:4px"></div>
         </div>
 
-        <div class="mine-agenda-panel" id="mine-agenda-panel">
-          <div class="section-head mine-agenda-head" style="margin-top:28px">
+        <div class="mine-agenda-panel mine-agenda-v2" id="mine-agenda-panel">
+          <div class="mine-agenda-head-v2">
             <button type="button" class="mine-agenda-title-btn" onclick="_toggleMineAgenda()" title="Recolher/expandir">
+              <span class="mgroup-bar mine-agenda-bar"></span>
               <i data-lucide="chevron-down" class="ic-sm mine-agenda-toggle-chevron"></i>
-              <span class="section-title" style="margin-bottom:0">Minha Agenda</span>
+              <span class="mine-agenda-title">Minha Agenda</span>
             </button>
             <div class="agenda-week-nav">
               <button class="btn btn-ghost btn-sm" onclick="agendaPrevWeek()" title="Semana anterior"><i data-lucide="chevron-left" class="ic-sm"></i></button>
               <button type="button" class="agenda-week-label agdp-trigger" id="mine-agenda-week-label" onclick="agdpToggle('mine-week', event)" title="Escolher data">—</button>
               <button class="btn btn-ghost btn-sm" onclick="agendaNextWeek()" title="Próxima semana"><i data-lucide="chevron-right" class="ic-sm"></i></button>
               <button class="btn btn-ghost btn-sm" onclick="agendaThisWeek()">Hoje</button>
-              <div class="agenda-view-toggle" style="margin-left:8px">
+              <div class="agenda-view-toggle agenda-view-toggle-v2" style="margin-left:8px">
                 <button class="btn btn-ghost btn-sm agenda-view-btn active" data-view="2" onclick="setAgendaView(2)">2 semanas</button>
                 <button class="btn btn-ghost btn-sm agenda-view-btn" data-view="1" onclick="setAgendaView(1)">1 semana</button>
               </div>
             </div>
           </div>
           <div class="mine-agenda-body">
-            <div class="agenda-hint">Arraste em um horário vazio pra criar um bloco. Arraste um bloco existente pra mover. Arraste a borda inferior pra redimensionar.</div>
+            <div class="agenda-hint">Arraste num horário vazio pra criar · num bloco pra mover · na borda inferior pra redimensionar.</div>
             <div class="agenda-grid-wrap" id="mine-agenda-grid-wrap"></div>
           </div>
         </div>
@@ -1141,15 +1154,14 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
     <!-- ── AGENDA ── -->
     <div class="page" id="page-agenda">
-      <div class="page-body">
+      <div class="page-body mine-agenda-v2 is-standalone">
         <div class="agenda-toolbar">
           <!-- Modo Individual (1 user, N semanas) ↔ Time (N users, 1 dia) -->
-          <div class="agenda-mode-toggle">
-            <button class="btn btn-ghost btn-sm agenda-mode-btn is-active" data-mode="individual" onclick="setAgendaMode('individual')" title="Um usuário, semana toda"><i data-lucide="user" class="ic-sm"></i> Individual</button>
-            <button class="btn btn-ghost btn-sm agenda-mode-btn" data-mode="team" onclick="setAgendaMode('team')" title="Vários usuários, um dia"><i data-lucide="users" class="ic-sm"></i> Time</button>
+          <div class="agenda-mode-toggle agenda-view-toggle-v2">
+            <button class="btn btn-ghost btn-sm agenda-mode-btn agenda-view-btn active" data-mode="individual" onclick="setAgendaMode('individual')" title="Um usuário, semana toda"><i data-lucide="user" class="ic-sm"></i> Individual</button>
+            <button class="btn btn-ghost btn-sm agenda-mode-btn agenda-view-btn" data-mode="team" onclick="setAgendaMode('team')" title="Vários usuários, um dia"><i data-lucide="users" class="ic-sm"></i> Time</button>
           </div>
           <div class="agenda-user-pick" id="agenda-user-pick-single">
-            <label class="form-label" style="margin-right:8px">Usuário</label>
             <select class="form-control" id="agenda-user" onchange="onAgendaUserChange()"></select>
           </div>
           <div class="agenda-user-pick" id="agenda-user-pick-team" style="display:none">
@@ -1168,12 +1180,12 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <button class="btn btn-ghost btn-sm" onclick="agendaTodayDay()">Hoje</button>
           </div>
           <div class="agenda-spacer"></div>
-          <div class="agenda-view-toggle" id="agenda-view-toggle-weeks">
+          <div class="agenda-view-toggle agenda-view-toggle-v2" id="agenda-view-toggle-weeks">
             <button class="btn btn-ghost btn-sm agenda-view-btn active" data-view="2" onclick="setAgendaView(2)">2 semanas</button>
             <button class="btn btn-ghost btn-sm agenda-view-btn" data-view="1" onclick="setAgendaView(1)">1 semana</button>
           </div>
         </div>
-        <div class="agenda-hint">Arraste em um horário vazio pra criar um bloco. Arraste um bloco existente pra mover. Arraste a borda inferior pra redimensionar. Clique pra abrir a demanda.</div>
+        <div class="agenda-hint">Arraste num horário vazio pra criar · num bloco pra mover · na borda inferior pra redimensionar · clique pra abrir a demanda.</div>
         <div class="agenda-grid-wrap" id="agenda-grid-wrap"></div>
       </div>
     </div>
@@ -2044,7 +2056,12 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               <div class="flow-inline-form" id="flow-inline-form" style="display:none">
                 <div class="flow-inline-head">
                   <div class="flow-inline-head-left">
-                    <div class="flow-inline-title" id="flow-modal-title">Novo fluxo</div>
+                    <div class="flow-inline-title-row">
+                      <div class="flow-inline-title" id="flow-modal-title">Novo fluxo</div>
+                      <span class="flow-dirty-badge" id="flow-dirty-badge" hidden>
+                        <span class="flow-dirty-dot"></span>Alterações não salvas
+                      </span>
+                    </div>
                     <div class="flow-inline-subtitle" id="flow-modal-subtitle">Cliente</div>
                   </div>
                   <div class="flow-inline-head-right">
@@ -3235,24 +3252,28 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- ── MODAL: LINKS PÚBLICOS DO CLIENTE (read-only) ── -->
 <div class="modal-overlay" id="client-public-links-modal">
-  <div class="modal modal-md">
-    <div class="modal-header">
-      <div class="modal-title">Compartilhamento <span id="cpl-client-name" style="color:var(--text-muted);font-weight:500"></span></div>
+  <div class="modal modal-md share-modal">
+    <div class="modal-header share-modal-header">
+      <div>
+        <div class="modal-title" style="margin:0">Compartilhar</div>
+        <div class="share-modal-sub" id="cpl-client-chip"></div>
+      </div>
       <button class="modal-close" onclick="closeModal('client-public-links-modal')"><i data-lucide="x" class="ic-sm"></i></button>
     </div>
-    <div class="modal-body">
-      <p style="margin:0 0 14px;font-size:13px;color:var(--text-dim);line-height:1.55">
-        Um link público dá acesso somente-leitura ao pipeline de demandas deste cliente — sem login, sem dados sensíveis do time.
-        Compartilhe com stakeholders externos. Cada link pode ser revogado a qualquer momento.
-      </p>
-      <div style="display:flex;gap:8px;margin-bottom:16px">
-        <input class="form-control" id="cpl-new-label" placeholder="Rótulo (opcional) — ex: 'Diretoria do cliente'" maxlength="60" style="flex:1">
-        <button class="btn btn-primary btn-sm" onclick="createClientPublicLink()"><i data-lucide="plus" class="ic-sm"></i> Gerar link</button>
+    <div class="modal-body share-modal-body">
+      <div class="share-hint">
+        Cada link dá <strong>somente-leitura</strong> ao pipeline deste cliente. Sem login, revogável a qualquer momento.
       </div>
-      <div id="cpl-list"></div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal('client-public-links-modal')">Fechar</button>
+      <div class="share-create">
+        <input class="form-control share-create-input" id="cpl-new-label" placeholder="Rótulo (opcional) — ex: Diretoria" maxlength="60">
+        <button class="btn btn-primary btn-sm share-create-btn" onclick="createClientPublicLink()"><i data-lucide="plus" class="ic-sm"></i> Gerar link</button>
+      </div>
+      <div class="share-list-head" id="cpl-list-head" style="display:none">
+        <span class="share-list-title">LINKS</span>
+        <span class="share-list-count" id="cpl-list-count">0</span>
+      </div>
+      <div id="cpl-list" class="share-list"></div>
+      <span id="cpl-client-name" style="display:none"></span>
     </div>
   </div>
 </div>
@@ -4205,7 +4226,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260917homeRecent2" defer></script>
+<script src="/js/boot.js?v=20260918flowsDirty" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

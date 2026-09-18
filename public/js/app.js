@@ -143,6 +143,16 @@ function projectPath(idOrObj) {
   const id = p?.id || idOrObj;
   return '/projects/' + slugIdSegment(p?.name, id);
 }
+function flowClientPath(clientIdOrObj) {
+  const c = typeof clientIdOrObj === 'string' ? (typeof clientById === 'function' ? clientById(clientIdOrObj) : null) : clientIdOrObj;
+  const id = c?.id || clientIdOrObj;
+  return '/flows/' + slugIdSegment(c?.name, id);
+}
+function flowPath(clientIdOrObj, flowIdOrObj) {
+  const f = typeof flowIdOrObj === 'string' ? (typeof flowById === 'function' ? flowById(flowIdOrObj) : null) : flowIdOrObj;
+  const flowId = f?.id || flowIdOrObj;
+  return flowClientPath(clientIdOrObj) + '/' + slugIdSegment(f?.name, flowId);
+}
 function demandPath(idOrObj) {
   const d = typeof idOrObj === 'string' ? (typeof demandById === 'function' ? demandById(idOrObj) : null) : idOrObj;
   const id = d?.id || idOrObj;
@@ -256,7 +266,11 @@ function parseRoute(path) {
   if ((m = p.match(/^\/projects\/([^/]+)\/report$/)))       return { page: 'clients',      view: 'project-report', id: extractRouteId(m[1]) };
   if ((m = p.match(/^\/projects\/([^/]+)$/)))               return { page: 'clients',      view: 'project-detail', id: extractRouteId(m[1]) };
   if ((m = p.match(/^\/flows\/new$/)))                      return { page: 'flows',        modal: 'flow',    op: 'new' };
-  if ((m = p.match(/^\/flows\/([^/]+)$/)))                  return { page: 'flows',        modal: 'flow',    op: 'edit', id: m[1] };
+  // /flows/{clientSlug-id}/{flowSlug-id} → subview do cliente + fluxo aberto
+  if ((m = p.match(/^\/flows\/([^/]+)\/([^/]+)$/)))         return { page: 'flows',        view: 'client-flows', clientId: extractRouteId(m[1]), flowId: extractRouteId(m[2]) };
+  // /flows/{clientSlug-id} → subview do cliente. Cai aqui o legacy /flows/{flowId}
+  // também; o applyRoute detecta e redireciona pra forma canônica.
+  if ((m = p.match(/^\/flows\/([^/]+)$/)))                  return { page: 'flows',        view: 'client-flows', clientId: extractRouteId(m[1]) };
   if ((m = p.match(/^\/users\/new$/)))                      return { page: 'users',        modal: 'user',    op: 'new' };
   if ((m = p.match(/^\/users\/([^/]+)$/)))                  return { page: 'users',        modal: 'user',    op: 'edit', id: m[1] };
   if ((m = p.match(/^\/integrations\/webhooks\/new$/)))     return { page: 'integrations', modal: 'webhook', op: 'new' };
@@ -317,6 +331,17 @@ function applyRoute() {
       if (typeof openProjectReport === 'function') openProjectReport();
     } else if (r.modal === 'project') {
       if (typeof openProjectModal === 'function') openProjectModal(r.op === 'edit' ? r.id : null);
+    } else if (r.page === 'flows' && r.view === 'client-flows' && r.clientId) {
+      // clientId pode ser o ID de um cliente OU (legacy) de um fluxo direto.
+      const asClient = typeof clientById === 'function' ? clientById(r.clientId) : null;
+      if (asClient) {
+        if (typeof openClientFlows === 'function') openClientFlows(asClient.id);
+        if (r.flowId && typeof openFlowModal === 'function') openFlowModal(r.flowId);
+      } else {
+        // Não é cliente — talvez seja um flow id avulso (legacy /flows/{flowId}).
+        const asFlow = typeof flowById === 'function' ? flowById(r.clientId) : null;
+        if (asFlow && me?.isAdmin) openFlowModal(asFlow.id);
+      }
     } else if (r.modal === 'flow' && me?.isAdmin) {
       if (typeof openFlowModal === 'function') openFlowModal(r.op === 'edit' ? r.id : null);
     } else if (r.modal === 'user' && me?.isAdmin) {
@@ -367,6 +392,15 @@ function _canonicalizeUrlFromRoute(r) {
     canonical = projectPath(r.id) + '/edit';
   } else if (r.page === 'clients' && r.modal === 'client' && r.op === 'edit') {
     canonical = clientPath(r.id) + '/edit';
+  } else if (r.page === 'flows' && r.view === 'client-flows' && r.clientId) {
+    const c = typeof clientById === 'function' ? clientById(r.clientId) : null;
+    if (c) {
+      canonical = r.flowId ? flowPath(r.clientId, r.flowId) : flowClientPath(r.clientId);
+    } else if (typeof flowById === 'function') {
+      // Legacy /flows/{flowId}: descobre o cliente e reescreve pra forma nova.
+      const f = flowById(r.clientId);
+      if (f && f.clientId) canonical = flowPath(f.clientId, f.id);
+    }
   }
   if (canonical && canonical !== location.pathname) {
     // history.replaceState direto — bypassa _routerSilent, sem re-disparar popstate.
@@ -1435,10 +1469,10 @@ function renderDetailKpis(elId, projectIds) {
   const ymNow = new Date().toISOString().slice(0, 7);
   const doneMonth = ds.filter(d => d.completedAt && d.completedAt.slice(0, 7) === ymNow);
   el.innerHTML = kpiTiles([
-    { label: 'Em aberto', value: open.length, icon: 'layers', tone: 'accent' },
-    { label: 'Atrasadas', value: late.length, icon: 'alert-triangle', tone: late.length ? 'danger' : 'default' },
-    { label: 'Vencem em breve', value: soon.length, icon: 'clock', tone: soon.length ? 'warn' : 'default', sub: 'próx. 2 dias' },
-    { label: 'Entregues no mês', value: doneMonth.length, icon: 'check-circle-2', tone: 'success' },
+    { label: 'em aberto', value: open.length, icon: 'layers', tone: 'accent' },
+    { label: 'atrasadas', value: late.length, icon: 'alert-triangle', tone: late.length ? 'danger' : 'default' },
+    { label: 'vencem em 2d', value: soon.length, icon: 'clock', tone: soon.length ? 'warn' : 'default' },
+    { label: 'entregues no mês', value: doneMonth.length, icon: 'check-circle-2', tone: 'success' },
   ]);
   paintIcons();
 }
@@ -5056,9 +5090,7 @@ function renderDashboard() {
   renderDashGreeting();
   const mine = _dashMyDemands();
   const mineActive = mine.filter(d => !isDone(d));
-  const teamScope = dashScopedDemands(); // team-wide (workspaces acessíveis)
-  // Top responsáveis usa APENAS o squad ativo (o selecionado no seletor da
-  // sidebar), pra bater com o contexto do usuário.
+  const teamScope = dashScopedDemands();
   const activeSquadScope = activeWs
     ? teamScope.filter(d => d.workspaceId === activeWs)
     : teamScope;
@@ -5071,7 +5103,66 @@ function renderDashboard() {
   renderDashRadar(activeSquadActive);
   renderDashRecentMine(activeSquadScope);
   renderDashPriorityDonut(mineActive);
+  // Counts inline nas subsection headers (foco, paradas) — refletem a
+  // lista renderizada. Cor roxo Studio quando > 0, cinza quando 0.
+  _dashUpdateSectionCounts(mineActive);
   paintIcons();
+}
+
+/* Preenche os `dash-section-count` inline das subseções da coluna AGORA
+   com os valores atuais. Roxo Studio quando > 0, cinza quando 0.
+   Contagem: pega o número de items realmente renderizados nos containers
+   (evita re-derivar filtros que podem divergir do render function). */
+function _dashUpdateSectionCounts(mineActive) {
+  const setCount = (elId, containerId, itemSelector) => {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    const container = document.getElementById(containerId);
+    const n = container ? container.querySelectorAll(itemSelector).length : 0;
+    if (n <= 0) { el.hidden = true; return; }
+    el.hidden = false;
+    el.textContent = String(n);
+    delete el.dataset.zero;
+  };
+  // Foco = items renderizados por renderDashFocus (.dash-focus-row).
+  // Paradas = items renderizados por renderDashBlocked (.dash-blocked-row).
+  setCount('dash-focus-count',   'dash-focus',   '.dash-focus-row');
+  setCount('dash-blocked-count', 'dash-blocked', '.dash-blocked-row');
+}
+
+/* Tab switching da coluna PRÓXIMOS DIAS. Só troca visibilidade — todo o
+   conteúdo é pré-renderizado pelo renderDashboard, então switch é instant. */
+let _dashNextTab = 'forecast';
+function setDashNextTab(tab) {
+  const valid = ['forecast', 'radar', 'activity', 'prio', 'recent'];
+  if (!valid.includes(tab)) return;
+  if (tab === _dashNextTab) return;
+  _dashNextTab = tab;
+  document.querySelectorAll('.dash-tab').forEach(btn => {
+    const active = btn.dataset.tab === tab;
+    btn.classList.toggle('is-active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  document.querySelectorAll('.dash-tab-panel').forEach(panel => {
+    const show = panel.dataset.panel === tab;
+    panel.hidden = !show;
+    panel.classList.toggle('is-active', show);
+  });
+}
+window.setDashNextTab = setDashNextTab;
+
+/* Badge de alerta em uma tab do "Próximos dias". Some quando n=0. */
+function _setDashTabBadge(tabKey, n) {
+  const btn = document.querySelector(`.dash-tab[data-tab="${tabKey}"]`);
+  if (!btn) return;
+  let badge = btn.querySelector('.dash-tab-badge');
+  if (!n) { if (badge) badge.remove(); return; }
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.className = 'dash-tab-badge';
+    btn.appendChild(badge);
+  }
+  badge.textContent = String(n);
 }
 /* Demandas em aberto/concluídas do usuário logado (owner) nos squads acessíveis.
    Freelancer: o backend já filtra o que ele pode ver. */
@@ -5541,6 +5632,9 @@ function renderDashRadar(squadActive) {
   if (sub) {
     sub.textContent = `${withOverdue.length} projeto${withOverdue.length === 1 ? '' : 's'} com atraso no squad`;
   }
+  // Badge de alerta na tab Radar — dot vermelho com contador quando houver
+  // projetos precisando atenção. Some quando 0.
+  _setDashTabBadge('radar', withOverdue.length);
 
   if (!withOverdue.length) {
     el.innerHTML = `<div class="dash-empty-inline">Nenhum projeto do squad com atraso. 🎉</div>`;
@@ -5730,7 +5824,9 @@ function openDashTopOwnersAll() {
   openDashMore('Top responsáveis · mês', rows.map(r => _dashTopOwnerRowHtml(r, max)).join('') || '<div class="dash-empty-inline">Nenhuma entrega no mês.</div>');
 }
 
-/* Donut de distribuição das demandas EM ABERTO por prioridade (respeita filtros). */
+/* Distribuição das demandas EM ABERTO por prioridade — barra segmentada
+   horizontal + legenda inline (dot · label · N · %). Substitui o donut
+   pra reduzir peso visual sem perder densidade informacional. */
 function renderDashPriorityDonut(list) {
   const el = $('dash-prio-donut'); if (!el) return;
   const sub = $('dash-prio-sub');
@@ -5739,19 +5835,27 @@ function renderDashPriorityDonut(list) {
   const segments = PRIORITIES.map(p => ({
     value: open.filter(d => (d.priority || 3) === p.value).length,
     color: p.color, label: p.label
-  }));
+  })).filter(s => s.value > 0);
   if (sub) sub.textContent = `${total} demanda${total === 1 ? '' : 's'} sua${total === 1 ? '' : 's'} em aberto`;
   if (!total) { el.innerHTML = emptyMini('Nenhuma demanda sua em aberto.'); return; }
-  const legend = segments.filter(s => s.value > 0).map(s => `
-    <div class="donut-legend-row">
-      <span class="donut-legend-dot" style="background:${s.color}"></span>
-      <span class="donut-legend-label">${esc(s.label)}</span>
-      <span class="donut-legend-value">${s.value}</span>
-      <span class="donut-legend-pct">${Math.round(s.value / total * 100)}%</span>
-    </div>`).join('');
-  el.innerHTML = `<div class="donut-widget">
-    <div class="donut-chart">${donutSVG(segments, { centerValue: total, centerSub: 'abertas' })}</div>
-    <div class="donut-legend">${legend}</div>
+  const bar = segments.map(s => {
+    const pct = (s.value / total) * 100;
+    return `<span class="prio-bar-fill" style="width:${pct}%;background:${s.color}" title="${esc(s.label)} · ${s.value} · ${Math.round(pct)}%"></span>`;
+  }).join('');
+  const legend = segments.map(s => {
+    const pct = Math.round(s.value / total * 100);
+    return `<span class="prio-bar-item">
+      <span class="prio-bar-dot" style="background:${s.color}"></span>
+      <span class="prio-bar-label">${esc(s.label)}</span>
+      <span class="prio-bar-sep">·</span>
+      <span class="prio-bar-value">${s.value}</span>
+      <span class="prio-bar-sep">·</span>
+      <span class="prio-bar-pct">${pct}%</span>
+    </span>`;
+  }).join('');
+  el.innerHTML = `<div class="prio-bar-widget">
+    <div class="prio-bar">${bar}</div>
+    <div class="prio-bar-legend">${legend}</div>
   </div>`;
 }
 
@@ -7326,24 +7430,58 @@ function renderList() {
   const doneList = isDoneOnly ? list : list.filter(d => isDone(d));
   const mainList = isDoneOnly ? doneList : openList;
 
-  // Contador global de linhas pra zebra alternada — reseta a cada renderList.
-  // (não usa nth-child do CSS porque as tr's de section-head atrapalham a paridade)
-  let _rowAlt = 0;
-  const renderRow = (d, sectionKey) => {
+  const renderRow = (d, sectionKey, isDoneTable) => {
     const p = projectById(d.projectId);
+    const owner = userById(d.ownerId);
+    const stage = stageOf(d);
+    const prio = PRIORITIES.find(x => x.value === d.priority) || PRIORITIES[2];
+    const due = effDue(d);
+    const u = dueUrgency(d);
+    const stageColor = stage?.color || '#7A00FF';
     const sel = selectedDemandIds.has(d.id);
-    const alt = (_rowAlt++ % 2 === 1) ? ' is-alt' : '';
     const sectionAttr = sectionKey ? ` data-section="${sectionKey}"` : '';
-    return `<tr class="demand-row${alt} ${sel ? 'selected' : ''}" data-demand-id="${d.id}"${sectionAttr} onclick="onDemandRowClick(event, '${d.id}')">
-      <td class="col-bulk-check"><input type="checkbox" class="bulk-check-row" ${sel ? 'checked' : ''} onclick="event.stopPropagation();toggleDemandSelection('${d.id}', this.checked)"></td>
-      <td class="col-demand-name"><span class="demand-name">${esc(d.name)}</span></td>
-      <td class="col-truncate" title="${esc(p?.name || '')}">${p ? esc(p.name) : '—'}</td>
-      <td class="col-truncate" title="${esc(p?.client || '')}">${esc(p?.client || '—')}</td>
-      <td>${priorityPill(d.priority)}</td>
-      <td>${stagePillTruncated(d)}</td>
-      <td>${cellUser(userById(d.ownerId))}</td>
-      <td>${deadlineCell(d, true)}</td>
-      <td>${d.completedAt ? fmtDateShort(d.completedAt) : '—'}</td>
+    // rel do prazo
+    let rel = '';
+    if (due) {
+      if (u === 'overdue') {
+        const days = Math.round((Date.parse(todayStr() + 'T00:00:00') - Date.parse(due.slice(0,10) + 'T00:00:00')) / 86400000);
+        rel = `há ${days}d`;
+      } else if (u === 'today') rel = 'hoje';
+      else if (u === 'soon') {
+        const days = Math.round((Date.parse(due.slice(0,10) + 'T00:00:00') - Date.parse(todayStr() + 'T00:00:00')) / 86400000);
+        rel = `em ${days}d`;
+      }
+    }
+    const barFill = u === 'overdue' ? 100 : u === 'today' ? 85 : u === 'soon' ? 65 : due ? 30 : 0;
+    const stageCell = stage
+      ? `<span class="mstage" style="--stage-color:${stageColor}">${esc(stage.label)}</span>`
+      : '<span class="mmuted">—</span>';
+    const dueCell = due
+      ? `<div class="mdue">
+           <div class="mdue-line"><span class="mdue-date">${esc(fmtDateShort(due))}</span>${rel ? `<span class="mdue-rel">${esc(rel)}</span>` : ''}</div>
+           <div class="mdue-bar"><span class="mdue-bar-fill" style="width:${barFill}%"></span></div>
+         </div>`
+      : '<span class="mmuted">—</span>';
+    // Variant: 'done' = tabela de concluídas (sem coluna Responsável, com Conclusão).
+    // 'open' (default) = tabela principal (com Responsável, sem Conclusão).
+    const isDone = isDoneTable === true;
+    const ownerTd = isDone ? '' :
+      `<td class="mcol-owner">${owner ? `<span class="mowner">${avatarHTML(owner)}<span class="mowner-name">${esc(owner.name)}</span></span>` : '<span class="mmuted">—</span>'}</td>`;
+    const doneTd = isDone
+      ? `<td class="mcol-done">${d.completedAt ? `<span class="mdue-date">${esc(fmtDateShort(d.completedAt))}</span>` : '<span class="mmuted">—</span>'}</td>`
+      : '';
+    return `<tr class="mrow demand-row ${sel ? 'selected' : ''}" data-prio="${prio.value}" data-due="${u}" data-demand-id="${d.id}"${sectionAttr} onclick="onDemandRowClick(event, '${d.id}')">
+      <td class="col-bulk-check mcol-bulk"><input type="checkbox" class="bulk-check-row" ${sel ? 'checked' : ''} onclick="event.stopPropagation();toggleDemandSelection('${d.id}', this.checked)"></td>
+      <td class="mcol-name col-demand-name">
+        <div class="mname">${esc(d.name)}</div>
+      </td>
+      <td class="mcol-project col-truncate" title="${esc(p?.name || '')}">${p ? esc(p.name) : '—'}</td>
+      <td class="mcol-client col-truncate" title="${esc(p?.client || '')}">${esc(p?.client || '—')}</td>
+      <td class="mcol-prio"><span class="mprio"><span class="mprio-dot" style="background:${prio.color}"></span>${esc(prio.label)}</span></td>
+      <td class="mcol-stage">${stageCell}</td>
+      ${ownerTd}
+      <td class="mcol-due">${dueCell}</td>
+      ${doneTd}
     </tr>`;
   };
 
@@ -7352,10 +7490,10 @@ function renderList() {
   // padrão de Minhas Demandas. Concluídas (isDoneOnly) mantém flat.
   const bodyEl = $('list-table-body');
   if (!mainList.length) {
-    bodyEl.innerHTML = `<tr><td colspan="9">${emptyState(isDoneOnly ? 'Nenhuma demanda concluída no filtro' : 'Nenhuma demanda encontrada', 'Ajuste a busca ou os filtros para encontrar o que procura.', 'search')}</td></tr>`;
+    bodyEl.innerHTML = `<tr><td colspan="8">${emptyState(isDoneOnly ? 'Nenhuma demanda concluída no filtro' : 'Nenhuma demanda encontrada', 'Ajuste a busca ou os filtros para encontrar o que procura.', 'search')}</td></tr>`;
   } else if (isDoneOnly || !_listGrouping) {
     // Flat: sem headers de agrupamento (toggle off) OU filtro Concluídas.
-    bodyEl.innerHTML = mainList.map(renderRow).join('');
+    bodyEl.innerHTML = mainList.map(d => renderRow(d, null, isDoneOnly)).join('');
   } else {
     const today = todayStr();
     const now = new Date(today + 'T00:00:00');
@@ -7372,32 +7510,28 @@ function renderList() {
       else buckets.proximos.push(d);
     }
     const sections = [
-      { key: 'atrasadas', label: 'Atrasadas',     icon: 'alert-triangle', cls: 'is-late'  },
-      { key: 'hoje',      label: 'Hoje',          icon: 'circle-dot',     cls: 'is-today' },
-      { key: 'semana',    label: 'Essa semana',   icon: 'calendar',       cls: 'is-week'  },
-      { key: 'proximos',  label: 'Próximos dias', icon: 'arrow-right',    cls: 'is-later' },
-      { key: 'sem',       label: 'Sem prazo',     icon: 'circle-dashed',  cls: 'is-later' },
+      { key: 'atrasadas', label: 'Atrasadas',     cls: 'mgroup--late'  },
+      { key: 'hoje',      label: 'Hoje',          cls: 'mgroup--today' },
+      { key: 'semana',    label: 'Essa semana',   cls: 'mgroup--week'  },
+      { key: 'proximos',  label: 'Próximos dias', cls: 'mgroup--later' },
+      { key: 'sem',       label: 'Sem prazo',     cls: 'mgroup--none'  },
     ];
     bodyEl.innerHTML = sections.map(sec => {
       const items = buckets[sec.key];
       if (!items.length) return '';
       const collapsed = _listCollapsedSections.has(sec.key);
       const caret = collapsed ? 'chevron-right' : 'chevron-down';
-      const headRow = `<tr class="mine-section-head ${sec.cls} ${collapsed ? 'is-collapsed' : ''}" data-section="${sec.key}" onclick="toggleListSection('${sec.key}')">
-        <td colspan="9">
-          <span class="mine-section-lbl">
-            <i data-lucide="${caret}" class="ic-sm mine-section-caret"></i>
-            <i data-lucide="${sec.icon}" class="ic-sm"></i>
-            ${esc(sec.label)}
-            <span class="mine-section-count">${items.length}</span>
-          </span>
+      const headRow = `<tr class="mgroup ${sec.cls} ${collapsed ? 'is-collapsed' : ''}" data-section="${sec.key}" onclick="toggleListSection('${sec.key}')">
+        <td colspan="8">
+          <div class="mgroup-inner">
+            <i data-lucide="${caret}" class="ic-sm mgroup-caret"></i>
+            <span class="mgroup-bar"></span>
+            <span class="mgroup-lbl">${esc(sec.label)}</span>
+            <span class="mgroup-count">${items.length}</span>
+          </div>
         </td>
       </tr>`;
-      // Se colapsada, reseta o contador da zebra pra a próxima seção não herdar
-      // um deslocamento invisível (senão a paridade "escorrega" ao expandir).
-      if (collapsed) {
-        return headRow;
-      }
+      if (collapsed) return headRow;
       return headRow + items.map(d => renderRow(d, sec.key)).join('');
     }).join('');
   }
@@ -7408,7 +7542,7 @@ function renderList() {
     if (!isDoneOnly && doneList.length) {
       doneWrap.style.display = '';
       document.getElementById('done-table-count').textContent = String(doneList.length);
-      document.getElementById('done-table-body').innerHTML = doneList.map(renderRow).join('');
+      document.getElementById('done-table-body').innerHTML = doneList.map(d => renderRow(d, null, true)).join('');
       // Restaura estado open/close persistido (default = fechado)
       const body = document.getElementById('done-table-body-wrap');
       const caret = document.querySelector('.done-table-caret');
@@ -7991,23 +8125,52 @@ function renderMine() {
     return (va < vb ? -1 : va > vb ? 1 : 0) * (mineSortAsc ? 1 : -1);
   });
 
-  // Contador global de linhas pra zebra alternada — reseta a cada renderMine.
-  let _mineRowAlt = 0;
   const renderMineRow = (d) => {
     const p = projectById(d.projectId);
     const ws = wsById(d.workspaceId);
+    const stage = stageOf(d);
+    const prio = PRIORITIES.find(x => x.value === d.priority) || PRIORITIES[2];
+    const due = effDue(d);
+    const u = dueUrgency(d);
+    const wsColor = ws?.color || '#7A00FF';
+    const stageColor = stage?.color || '#7A00FF';
     const wsCell = ws
-      ? `<span class="pill" style="color:${ws.color || '#7A00FF'};background:${hexDim(ws.color)}"><span class="pill-dot" style="background:${ws.color || '#7A00FF'}"></span>${esc(ws.name)}</span>`
-      : '<span class="pill pill-muted">—</span>';
-    const alt = (_mineRowAlt++ % 2 === 1) ? ' is-alt' : '';
-    return `<tr class="demand-row${alt}" onclick="showDetail('${d.id}')">
-      <td><span class="demand-name">${esc(d.name)}</span></td>
-      <td>${wsCell}</td>
-      <td class="col-truncate" title="${esc(p?.client || '')}">${esc(p?.client || '—')}</td>
-      <td class="col-truncate" title="${esc(p?.name || '')}">${esc(p?.name || '—')}</td>
-      <td>${statusPill(d)}</td>
-      <td>${priorityPill(d.priority)}</td>
-      <td>${deadlineCell(d, true)}</td>
+      ? `<span class="msquad"><span class="msquad-dot" style="background:${wsColor}"></span>${esc(ws.name)}</span>`
+      : '<span class="mmuted">—</span>';
+    const stageCell = stage
+      ? `<span class="mstage" style="--stage-color:${stageColor}">${esc(stage.label)}</span>`
+      : '<span class="mmuted">—</span>';
+    // Barra sparkline de prazo: 0..1 de saturação. Overdue=100% vermelho, today=~85% laranja, soon=~65% amber, none=~30% verde.
+    const barFill = u === 'overdue' ? 100 : u === 'today' ? 85 : u === 'soon' ? 65 : due ? 30 : 0;
+    // Rótulo relativo curto: "27d atrasado" / "hoje" / "em 2d" / "" quando >2d.
+    let rel = '';
+    if (due) {
+      if (u === 'overdue') {
+        const days = Math.round((Date.parse(todayStr() + 'T00:00:00') - Date.parse(due.slice(0,10) + 'T00:00:00')) / 86400000);
+        rel = `há ${days}d`;
+      } else if (u === 'today') rel = 'hoje';
+      else if (u === 'soon') {
+        const days = Math.round((Date.parse(due.slice(0,10) + 'T00:00:00') - Date.parse(todayStr() + 'T00:00:00')) / 86400000);
+        rel = `em ${days}d`;
+      }
+    }
+    const dueCell = due
+      ? `<div class="mdue">
+           <div class="mdue-line"><span class="mdue-date">${esc(fmtDateShort(due))}</span>${rel ? `<span class="mdue-rel">${esc(rel)}</span>` : ''}</div>
+           <div class="mdue-bar"><span class="mdue-bar-fill" style="width:${barFill}%"></span></div>
+         </div>`
+      : '<span class="mmuted">—</span>';
+    return `<tr class="mrow" data-prio="${prio.value}" data-due="${u}" onclick="showDetail('${d.id}')">
+      <td class="mcol-name">
+        <div class="mname">${esc(d.name)}</div>
+        <div class="mname-sub" title="${esc((p?.client || '') + ' · ' + (p?.name || ''))}">${esc(p?.client || '—')} · ${esc(p?.name || '—')}</div>
+      </td>
+      <td class="mcol-squad">${wsCell}</td>
+      <td class="mcol-client col-truncate" title="${esc(p?.client || '')}">${esc(p?.client || '—')}</td>
+      <td class="mcol-project col-truncate" title="${esc(p?.name || '')}">${esc(p?.name || '—')}</td>
+      <td class="mcol-stage">${stageCell}</td>
+      <td class="mcol-prio"><span class="mprio"><span class="mprio-dot" style="background:${prio.color}"></span>${esc(prio.label)}</span></td>
+      <td class="mcol-due">${dueCell}</td>
     </tr>`;
   };
 
@@ -8035,15 +8198,21 @@ function renderMine() {
       else buckets.proximos.push(d);
     }
     const sections = [
-      { key: 'atrasadas', label: 'Atrasadas', icon: 'alert-triangle', cls: 'is-late' },
-      { key: 'hoje',      label: 'Hoje',      icon: 'circle-dot',     cls: 'is-today' },
-      { key: 'semana',    label: 'Essa semana', icon: 'calendar',     cls: 'is-week' },
-      { key: 'proximos',  label: 'Próximos dias', icon: 'arrow-right', cls: 'is-later' }
+      { key: 'atrasadas', label: 'Atrasadas',    cls: 'mgroup--late' },
+      { key: 'hoje',      label: 'Hoje',         cls: 'mgroup--today' },
+      { key: 'semana',    label: 'Essa semana',  cls: 'mgroup--week' },
+      { key: 'proximos',  label: 'Próximos dias', cls: 'mgroup--later' }
     ];
     body.innerHTML = sections.map(sec => {
       const items = buckets[sec.key];
       if (!items.length) return '';
-      return `<tr class="mine-section-head ${sec.cls}"><td colspan="7"><span class="mine-section-lbl"><i data-lucide="${sec.icon}" class="ic-sm"></i>${esc(sec.label)}<span class="mine-section-count">${items.length}</span></span></td></tr>` +
+      return `<tr class="mgroup ${sec.cls}"><td colspan="7">
+          <div class="mgroup-inner">
+            <span class="mgroup-bar"></span>
+            <span class="mgroup-lbl">${esc(sec.label)}</span>
+            <span class="mgroup-count">${items.length}</span>
+          </div>
+        </td></tr>` +
         items.map(renderMineRow).join('');
     }).join('');
   }
@@ -16705,11 +16874,14 @@ function refreshProjectAvatarPreview() {
     el.style.backgroundPosition = 'center';
     el.innerHTML = '';
     el.style.background = `url('${projAvatarData}') center/cover no-repeat`;
+    el.classList.remove('is-empty');
     $('p-avatar-remove').style.display = '';
   } else {
     el.style.backgroundImage = '';
     el.style.background = '';
-    el.innerHTML = '<span style="color:var(--text-muted);font-size:12px">Sem foto</span>';
+    el.classList.add('is-empty');
+    el.innerHTML = '<i data-lucide="image" class="avatar-preview-icon"></i><span class="avatar-preview-hint">Sem foto</span>';
+    if (window.lucide?.createIcons) lucide.createIcons();
     $('p-avatar-remove').style.display = 'none';
   }
 }
@@ -16859,10 +17031,8 @@ function renderFlows() {
   const allF = wsFlows();
   const allC = wsClients().filter(c => c.active !== false);
   const groups = [];
-  // Card "Geral" — fluxos sem clientId
-  const generalFlows = allF.filter(f => !f.clientId);
-  groups.push({ key: '__general__', label: 'Geral', color: null, avatar: null, flows: generalFlows });
-  // Um card por cliente cadastrado
+  // "Geral" (fluxos workspace-wide) foi descontinuado — todos os fluxos são
+  // sempre vinculados a um cliente. Não emitimos mais o card.
   for (const c of allC) {
     const cFlows = allF.filter(f => f.clientId === c.id);
     groups.push({ key: c.id, label: c.name, color: c.color, avatar: c.avatar, flows: cFlows });
@@ -16906,13 +17076,17 @@ function renderFlows() {
   grid.innerHTML = list.map(g => {
     let avatarHtml;
     if (g.key === '__general__') {
-      avatarHtml = `<div class="flow-card-avatar" style="background:var(--surface-3);color:var(--text-dim)"><i data-lucide="layers" class="ic-sm"></i></div>`;
+      avatarHtml = `<div class="flow-card-avatar" style="background:var(--surface-3);color:var(--text-dim)"><i data-lucide="layers" class="ic-md"></i></div>`;
     } else if (g.avatar) {
       avatarHtml = `<div class="flow-card-avatar" style="background-image:url('${g.avatar}');background-size:cover;background-position:center"></div>`;
     } else {
       const color = g.color || '#7A00FF';
       const letter = g.label.charAt(0).toUpperCase();
-      avatarHtml = `<div class="flow-card-avatar" style="background:${hexDim(color)};color:${color}">${esc(letter)}</div>`;
+      avatarHtml = `<div class="flow-card-avatar client-card-avatar--letter" style="background:${hexDim(color)};color:${color}">
+        <svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <text x="24" y="24" text-anchor="middle" dominant-baseline="central" font-family="inherit" font-weight="700" font-size="22" fill="currentColor">${esc(letter)}</text>
+        </svg>
+      </div>`;
     }
     const subLabel = g.flows.length === 0 ? 'Sem fluxos · clique pra criar' : `${g.flows.length} fluxo${g.flows.length === 1 ? '' : 's'}`;
     return `<div class="flow-card" onclick="openClientFlows('${esc(g.key).replace(/'/g, "\\'")}')">
@@ -16933,6 +17107,10 @@ function openClientFlows(client) {
   const ds = $('flow-detail-search'); if (ds) ds.value = '';
   const dt = $('flow-detail-type'); if (dt) dt.value = '';
   renderClientFlows(client);
+  // URL da subview: /flows/{clientSlug-id}
+  if (client && client !== '__general__' && typeof clientById === 'function' && clientById(client)) {
+    navPush(flowClientPath(client));
+  }
 }
 function closeClientFlows() {
   // Fecha o editor inline antes de sair do subview.
@@ -16946,6 +17124,7 @@ function closeClientFlows() {
   $('flows-view-clients').style.display = '';
   $('flows-view-detail').style.display = 'none';
   renderFlows();
+  navPush('/flows');
 }
 function setClientFlowSort(key) {
   if (clientFlowSortKey === key) clientFlowSortDir *= -1;
@@ -16969,10 +17148,11 @@ function renderClientFlows(client) {
     label = c.name;
   }
 
-  // Breadcrumb
+  // Título — nome do cliente em destaque
   const bc = $('flow-detail-breadcrumb');
   if (bc) {
-    bc.innerHTML = `<span style="color:var(--text-muted);font-weight:500;text-transform:uppercase;letter-spacing:0.05em;font-size:11px">Fluxos de demanda · </span><span>${esc(label)}</span>`;
+    bc.classList.add('detail-title');
+    bc.innerHTML = `<span class="detail-title-name">${esc(label)}</span>`;
   }
 
   // Popula select de tipo
@@ -17034,7 +17214,7 @@ function renderClientFlows(client) {
       ${iconHtml}
       ${adminActions}
       <div class="flow-card-name">${esc(f.name)}</div>
-      <div class="flow-card-sub">${esc(f.demandType || 'Sem tipo')} · ${count} demanda${count === 1 ? '' : 's'}</div>
+      <div class="flow-card-sub">${esc(f.demandType || 'Sem tipo')}</div>
     </div>`;
   }).join('');
   paintIcons();
@@ -17053,7 +17233,21 @@ function sortFlowsBy() { /* legacy — substituído por setClientFlowSort */ }
 let stageRows = [];
 let dragIdx = null;
 
-let flowModalDirty = false;
+/* Estado "não salvo" do editor de fluxo — via defineProperty em window pra
+   capturar TODAS as atribuições `flowModalDirty = true` do código e dos
+   handlers inline (oninput) e refletir no DOM (badge + botão salvar). */
+var _flowModalDirty = false;
+Object.defineProperty(window, 'flowModalDirty', {
+  get() { return _flowModalDirty; },
+  set(v) { _flowModalDirty = !!v; _syncFlowDirty(); },
+  configurable: true, enumerable: true
+});
+function _syncFlowDirty() {
+  const badge = document.getElementById('flow-dirty-badge');
+  if (badge) badge.hidden = !_flowModalDirty;
+  const form = document.getElementById('flow-inline-form');
+  if (form) form.classList.toggle('is-dirty', _flowModalDirty);
+}
 let flowIconData = null;  // data URI/URL do ícone selecionado pra esse modal
 let flowModalClientId = null; // ID do Client em contexto (null = Geral / workspace-wide)
 function canEditFlow() { return !!(me && (me.isAdmin || me.isModerator)); }
@@ -17131,7 +17325,14 @@ function openFlowModal(id, presetClientId) {
   renderFlowChecklist();
   // Mostra o painel inline (split view) — não é mais modal.
   showFlowInlineEditor();
-  navPush(id ? '/flows/' + id : '/flows/new');
+  // URL: /flows/{clientSlug-id}/{flowSlug-id}
+  if (isNew) {
+    navPush('/flows/new');
+  } else if (flowModalClientId && typeof clientById === 'function' && clientById(flowModalClientId)) {
+    navPush(flowPath(flowModalClientId, id));
+  } else {
+    navPush('/flows/' + id);
+  }
 }
 /* Mostra o painel inline de edição do fluxo (esconde o empty state). */
 function showFlowInlineEditor() {
@@ -17157,8 +17358,12 @@ function closeFlowInlineEditor() {
     if (form)  form.style.display  = 'none';
     if (empty) empty.style.display = '';
     document.querySelectorAll('#flow-detail-grid .flow-card').forEach(c => c.classList.remove('is-open'));
-    // Volta a URL pra lista do cliente atual (sem /flows/id)
-    navPush('/flows');
+    // Volta pra URL da subview do cliente atual (sem flowId).
+    if (currentClientView && currentClientView !== '__general__' && typeof clientById === 'function' && clientById(currentClientView)) {
+      navPush(flowClientPath(currentClientView));
+    } else {
+      navPush('/flows');
+    }
   };
   if (flowModalDirty) {
     showConfirm({
@@ -25806,23 +26011,32 @@ function renderClients() {
   }
 
   grid.innerHTML = list.map(c => {
+    const color = c.color || '#7A00FF';
     let avatarHtml;
     if (c.avatar) {
       avatarHtml = `<div class="client-card-avatar" style="background-image:url('${c.avatar}');background-size:cover;background-position:center"></div>`;
     } else {
+      // Letra como SVG — text-anchor+dominant-baseline garantem centralização
+      // pixel-perfect independente de fonte/altura de linha do container.
       const letter = (c.name || 'C').charAt(0).toUpperCase();
-      avatarHtml = `<div class="client-card-avatar" style="background:${hexDim(c.color || '#7A00FF')};color:${c.color || '#7A00FF'}">${esc(letter)}</div>`;
+      avatarHtml = `<div class="client-card-avatar client-card-avatar--letter" style="background:${hexDim(color)};color:${color}">
+        <svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <text x="24" y="24" text-anchor="middle" dominant-baseline="central" font-family="inherit" font-weight="700" font-size="22" fill="currentColor">${esc(letter)}</text>
+        </svg>
+      </div>`;
     }
     const ws = wsById(c.workspaceId);
-    const projCount = projects.filter(p => p.clientId === c.id).length;
+    const wsColor = ws?.color || '#7A00FF';
+    const wsPill = ws
+      ? `<span class="client-card-squad" style="--squad-color:${wsColor}">${esc(ws.name)}</span>`
+      : '<span class="client-card-squad client-card-squad--muted">—</span>';
     const statusBadge = c.active === false
       ? '<span class="client-card-status client-card-status--archived">Arquivado</span>'
       : '<span class="client-card-status client-card-status--active">Ativo</span>';
     return `<div class="flow-card client-card ${c.active === false ? 'is-archived' : ''}" onclick="openClient('${c.id}')">
       ${avatarHtml}
       <div class="flow-card-name">${esc(c.name)}</div>
-      <div class="flow-card-sub">${esc(ws?.name || '—')}</div>
-      <div class="flow-card-sub" style="font-size:11px;color:var(--text-muted)">${projCount} projeto${projCount === 1 ? '' : 's'}</div>
+      ${wsPill}
       ${statusBadge}
     </div>`;
   }).join('');
@@ -27561,10 +27775,11 @@ function renderClientDetail(id) {
   const c = clientById(id);
   if (!c) return;
 
-  // Breadcrumb
+  // Título de identificação — nome do cliente em destaque.
   const bc = $('client-detail-breadcrumb');
   if (bc) {
-    bc.innerHTML = `<span style="color:var(--text-muted);font-weight:500;text-transform:uppercase;letter-spacing:0.05em;font-size:11px">Clientes cadastrados · </span><span>${esc(c.name)}</span>`;
+    bc.classList.add('detail-title');
+    bc.innerHTML = `<span class="detail-title-name">${esc(c.name)}</span>`;
   }
 
   // KPIs — demandas de todos os projetos deste cliente
@@ -27579,9 +27794,15 @@ function renderClientDetail(id) {
     projGrid.innerHTML = projs.map(p => {
       const statusLabel = p.active === false ? 'Arquivado' : 'Ativo';
       const statusClass = p.active === false ? 'client-card-status--archived' : 'client-card-status--active';
+      const pColor = p.color || '#7A00FF';
+      const pLetter = (p.name || 'P').charAt(0).toUpperCase();
       const avatar = p.avatar
         ? `<div class="client-card-avatar" style="background-image:url('${p.avatar}');background-size:cover;background-position:center"></div>`
-        : `<div class="client-card-avatar" style="background:${hexDim(p.color || '#7A00FF')};color:${p.color || '#7A00FF'}">${esc((p.name || 'P').charAt(0).toUpperCase())}</div>`;
+        : `<div class="client-card-avatar client-card-avatar--letter" style="background:${hexDim(pColor)};color:${pColor}">
+             <svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+               <text x="24" y="24" text-anchor="middle" dominant-baseline="central" font-family="inherit" font-weight="700" font-size="22" fill="currentColor">${esc(pLetter)}</text>
+             </svg>
+           </div>`;
       return `<div class="flow-card" onclick="openProjectDetail('${p.id}')">
         ${avatar}
         <div class="flow-card-name">${esc(p.name)}</div>
@@ -27905,13 +28126,29 @@ function renderProjectDetail(id) {
   if (!p) return;
   const c = p.clientId ? clientById(p.clientId) : null;
 
-  // Breadcrumb: "Cliente · Projeto"
+  // Título — nome do projeto em destaque + chip cliente clicável acima.
   const bc = $('project-detail-breadcrumb');
   if (bc) {
-    const clientPart = c
-      ? `<a href="#" onclick="event.preventDefault(); openClient('${c.id}')" style="color:var(--text-muted);font-weight:500;text-transform:uppercase;letter-spacing:0.05em;font-size:11px;text-decoration:none">${esc(c.name)}</a>`
-      : `<span style="color:var(--text-muted);font-weight:500;text-transform:uppercase;letter-spacing:0.05em;font-size:11px">Sem cliente</span>`;
-    bc.innerHTML = `${clientPart}<span style="color:var(--text-muted);font-weight:500;font-size:11px"> · </span><span>${esc(p.name)}</span>`;
+    bc.classList.add('detail-title');
+    let clientPart;
+    if (c) {
+      const cColor = c.color || '#7A00FF';
+      const cLetter = (c.name || 'C').charAt(0).toUpperCase();
+      const cAvatar = c.avatar
+        ? `<span class="detail-title-parent-avatar" style="background-image:url('${c.avatar}');background-size:cover;background-position:center"></span>`
+        : `<span class="detail-title-parent-avatar" style="background:${hexDim(cColor)};color:${cColor}">
+             <svg viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+               <text x="10" y="10" text-anchor="middle" dominant-baseline="central" font-family="inherit" font-weight="700" font-size="10" fill="currentColor">${esc(cLetter)}</text>
+             </svg>
+           </span>`;
+      clientPart = `<a class="detail-title-parent" href="#" onclick="event.preventDefault(); openClient('${c.id}')" title="Voltar para ${esc(c.name)}">
+        ${cAvatar}
+        <span class="detail-title-parent-name">${esc(c.name)}</span>
+      </a>`;
+    } else {
+      clientPart = `<span class="detail-title-parent detail-title-parent--muted">Sem cliente</span>`;
+    }
+    bc.innerHTML = `${clientPart}<span class="detail-title-name">${esc(p.name)}</span>`;
   }
 
   // KPIs — demandas deste projeto
@@ -29218,10 +29455,13 @@ function refreshClientAvatarPreview() {
     el.style.backgroundSize = 'cover';
     el.style.backgroundPosition = 'center';
     el.innerHTML = '';
+    el.classList.remove('is-empty');
     $('c-avatar-remove').style.display = '';
   } else {
     el.style.backgroundImage = '';
-    el.innerHTML = '<span style="color:var(--text-muted);font-size:12px">Sem foto</span>';
+    el.classList.add('is-empty');
+    el.innerHTML = '<i data-lucide="image" class="avatar-preview-icon"></i><span class="avatar-preview-hint">Sem foto</span>';
+    if (window.lucide?.createIcons) lucide.createIcons();
     $('c-avatar-remove').style.display = 'none';
   }
 }
@@ -29309,9 +29549,24 @@ async function openClientPublicLinksModal(clientId) {
   if (!c) return;
   _cplState.clientId = c.id;
   _cplState.links = [];
-  $('cpl-client-name').textContent = '— ' + c.name;
+  const cn = $('cpl-client-name');
+  if (cn) cn.textContent = '— ' + c.name;
+  // Chip do cliente (avatar + nome) no header do modal
+  const chip = $('cpl-client-chip');
+  if (chip) {
+    const cColor = c.color || '#7A00FF';
+    const cLetter = (c.name || 'C').charAt(0).toUpperCase();
+    const cAvatar = c.avatar
+      ? `<span class="share-client-avatar" style="background-image:url('${c.avatar}');background-size:cover;background-position:center"></span>`
+      : `<span class="share-client-avatar" style="background:${hexDim(cColor)};color:${cColor}">
+           <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+             <text x="9" y="9" text-anchor="middle" dominant-baseline="central" font-family="inherit" font-weight="700" font-size="9" fill="currentColor">${esc(cLetter)}</text>
+           </svg>
+         </span>`;
+    chip.innerHTML = `${cAvatar}<span class="share-client-name">${esc(c.name)}</span>`;
+  }
   $('cpl-new-label').value = '';
-  $('cpl-list').innerHTML = '<div style="padding:20px 0;text-align:center;color:var(--text-muted);font-size:12px">Carregando…</div>';
+  $('cpl-list').innerHTML = '<div class="share-loading">Carregando…</div>';
   openModal('client-public-links-modal');
   try {
     _cplState.links = await api(`/clients/${c.id}/public-links`);
@@ -29323,29 +29578,40 @@ async function openClientPublicLinksModal(clientId) {
 
 function renderClientPublicLinksList() {
   const list = $('cpl-list');
+  const head = document.getElementById('cpl-list-head');
+  const count = document.getElementById('cpl-list-count');
   const arr = _cplState.links || [];
   if (!arr.length) {
-    list.innerHTML = '<div style="padding:24px 0;text-align:center;color:var(--text-muted);font-size:13px">Nenhum link gerado ainda.</div>';
+    if (head) head.style.display = 'none';
+    list.innerHTML = `<div class="share-empty">
+      <i data-lucide="link-2" class="share-empty-icon"></i>
+      <div class="share-empty-text">Nenhum link ainda. Crie um acima pra começar a compartilhar.</div>
+    </div>`;
+    if (window.lucide) lucide.createIcons();
     return;
   }
-  // Ordena por criação desc
+  if (head) head.style.display = '';
+  if (count) count.textContent = String(arr.length);
   const sorted = [...arr].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   list.innerHTML = sorted.map(l => {
     const url = `${location.origin}/public/client/${l.token}`;
     const created = l.createdAt ? new Date(l.createdAt).toLocaleDateString('pt-BR') : '';
-    const activeCls = l.active ? '' : 'cpl-link--inactive';
-    return `<div class="cpl-link ${activeCls}">
-      <div class="cpl-link-head">
-        <div class="cpl-link-label">${esc(l.label || 'Link sem rótulo')}${l.active ? '' : ' <span class="cpl-link-badge">Pausado</span>'}</div>
-        <div class="cpl-link-date">Criado em ${esc(created)}</div>
+    const inactive = !l.active;
+    return `<div class="share-link ${inactive ? 'is-inactive' : ''}">
+      <div class="share-link-header">
+        <div class="share-link-label">${esc(l.label || 'Link sem rótulo')}</div>
+        ${inactive ? '<span class="share-link-badge">Pausado</span>' : '<span class="share-link-badge share-link-badge--active">Ativo</span>'}
       </div>
-      <div class="cpl-link-url"><input type="text" readonly value="${esc(url)}" onclick="this.select()"></div>
-      <div class="cpl-link-actions">
-        <button class="btn btn-ghost btn-sm" onclick="copyClientPublicLink('${esc(url)}', this)"><i data-lucide="copy" class="ic-sm"></i> Copiar</button>
-        <button class="btn btn-ghost btn-sm" onclick="toggleClientPublicLink('${esc(l.id)}', ${!l.active})">
-          <i data-lucide="${l.active ? 'pause' : 'play'}" class="ic-sm"></i> ${l.active ? 'Pausar' : 'Reativar'}
-        </button>
-        <button class="btn btn-ghost btn-sm cpl-link-revoke" onclick="revokeClientPublicLink('${esc(l.id)}')"><i data-lucide="trash-2" class="ic-sm"></i> Revogar</button>
+      <div class="share-link-url" onclick="this.querySelector('input').select()">
+        <input type="text" readonly value="${esc(url)}">
+        <button class="share-link-copy" title="Copiar" onclick="event.stopPropagation();copyClientPublicLink('${esc(url)}', this)"><i data-lucide="copy" class="ic-sm"></i></button>
+      </div>
+      <div class="share-link-footer">
+        <span class="share-link-meta">Criado em ${esc(created)}</span>
+        <div class="share-link-actions">
+          <button class="share-link-icon-btn" title="${l.active ? 'Pausar' : 'Reativar'}" onclick="toggleClientPublicLink('${esc(l.id)}', ${!l.active})"><i data-lucide="${l.active ? 'pause' : 'play'}" class="ic-sm"></i></button>
+          <button class="share-link-icon-btn share-link-icon-btn--danger" title="Revogar" onclick="revokeClientPublicLink('${esc(l.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
+        </div>
       </div>
     </div>`;
   }).join('');
@@ -30135,7 +30401,9 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
     block.style.gridRow = `${startRow + 2} / ${endRow + 2}`;
     block.style.gridColumn = `${dayCol.gridCol} / ${dayCol.gridCol + 1}`;
     if (totalCols > 1) block.style.cssText += laneStyle(myCol, totalCols);
-    block.style.background = color;
+    block.style.setProperty('--block-color', color);
+    block.style.background = `color-mix(in srgb, ${color} 22%, transparent)`;
+    block.style.borderLeftColor = color;
     const canEdit = !!(me && (me.isAdmin || s.userId === me.id));
     const actions = canEdit ? `
       <div class="agenda-block-actions">
