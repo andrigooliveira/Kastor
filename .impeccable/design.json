@@ -1,0 +1,207 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-17T00:00:00.000Z",
+  "title": "Design System: reWork",
+  "extensions": {
+    "colorMeta": {
+      "roxo-studio": {
+        "role": "primary",
+        "displayName": "Roxo Studio",
+        "canonical": "#7A00FF",
+        "tonalRamp": ["#1a0034", "#2e005c", "#450085", "#5e00cc", "#7a00ff", "#9b3dff", "#bc7cff", "#dcbbff"]
+      },
+      "roxo-studio-deep": {
+        "role": "primary",
+        "displayName": "Roxo Studio Deep",
+        "canonical": "#5E00CC",
+        "tonalRamp": ["#12002a", "#22004d", "#33006e", "#4b0099", "#5e00cc", "#8033e0", "#a366ec", "#c799f5"]
+      },
+      "bg-noturno": {
+        "role": "neutral",
+        "displayName": "Fundo Noturno",
+        "canonical": "#0c0c10",
+        "tonalRamp": ["#0c0c10", "#17171c", "#22222a", "#2e2e38", "#4a4a55", "#b8b8b8", "#e4e4ea", "#f5f5f7"]
+      },
+      "surface-carbono": {
+        "role": "neutral",
+        "displayName": "Surface Carbono",
+        "canonical": "#17171c",
+        "tonalRamp": ["#0c0c10", "#17171c", "#22222a", "#2e2e38", "#404052", "#6b6b74", "#a1a1a1", "#f5f5f7"]
+      },
+      "bg-diurno": {
+        "role": "neutral",
+        "displayName": "Fundo Diurno",
+        "canonical": "#f5f5f8",
+        "tonalRamp": ["#111114", "#4a4a55", "#6b6b74", "#a1a1a1", "#e4e4ea", "#eeeef2", "#f5f5f8", "#ffffff"]
+      },
+      "sinal-sucesso": {
+        "role": "tertiary",
+        "displayName": "Sinal Sucesso",
+        "canonical": "#16a34a",
+        "tonalRamp": ["#052013", "#0a3d20", "#105a2e", "#178040", "#16a34a", "#4dbf6d", "#8fd7a2", "#c8ecd0"]
+      },
+      "sinal-aviso": {
+        "role": "tertiary",
+        "displayName": "Sinal Aviso",
+        "canonical": "#b57100",
+        "tonalRamp": ["#241600", "#452d00", "#664300", "#8a5900", "#b57100", "#d4922e", "#e5b975", "#f2dcb2"]
+      },
+      "sinal-perigo": {
+        "role": "tertiary",
+        "displayName": "Sinal Perigo",
+        "canonical": "#e7000b",
+        "tonalRamp": ["#2e0002", "#570004", "#800008", "#b3000a", "#e7000b", "#f24048", "#f88690", "#fcc5cb"]
+      },
+      "analitico-sky": {
+        "role": "secondary",
+        "displayName": "Analítico Sky",
+        "canonical": "#2b7fff",
+        "tonalRamp": ["#001028", "#00224f", "#003477", "#0055c2", "#2b7fff", "#66a3ff", "#a3c7ff", "#d6e5ff"]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Saudação do dashboard, hero de landing dos subprodutos. 1-3 usos por vista."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Título de widget do dashboard, título de modal, nome de demanda no Detail."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Título de card interno, nome de cliente/projeto, breadcrumb."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Copy principal, descrição de demanda, comentário. Core operacional da UI."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Section headers (ETAPA ATUAL, RESPONSÁVEL), header de coluna, seção de sidebar. Sempre uppercase + tracking."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "IDs, timestamps, valores tabulares numéricos. Sempre com tabular-nums."
+      }
+    },
+    "shadows": [
+      { "name": "xs", "value": "0 1px 2px rgba(0,0,0,0.18)", "purpose": "Input focused, chip elevado. Quase imperceptível." },
+      { "name": "sm", "value": "0 1px 3px rgba(0,0,0,0.20), 0 1px 2px rgba(0,0,0,0.12)", "purpose": "Dropdown, tooltip." },
+      { "name": "md", "value": "0 4px 12px rgba(0,0,0,0.24), 0 2px 4px rgba(0,0,0,0.14)", "purpose": "Card em hover, item draggable levantado." },
+      { "name": "lg", "value": "0 12px 32px rgba(0,0,0,0.32), 0 4px 8px rgba(0,0,0,0.18)", "purpose": "Modal padrão, popover de menubar." },
+      { "name": "xl", "value": "0 24px 64px rgba(0,0,0,0.38), 0 8px 16px rgba(0,0,0,0.22)", "purpose": "Modal fullscreen, gallery viewer." },
+      { "name": "focus", "value": "0 0 0 4px rgba(122,0,255,0.10)", "purpose": "Ring de foco de input/botão. Roxo dim — assinatura visual do foco." }
+    ],
+    "motion": [
+      { "name": "ease-spring", "value": "cubic-bezier(0.32, 0.72, 0, 1)", "purpose": "Curva estilo iOS: transforms de elementos que respondem a input físico (button press, drag)." },
+      { "name": "ease-out", "value": "cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Curva de decay: cor, opacidade, background, box-shadow. Default para tudo que não é transform." },
+      { "name": "duration-fast", "value": "120ms", "purpose": "Hover, focus, color changes. Feedback instantâneo." },
+      { "name": "duration-base", "value": "150ms", "purpose": "Card lift, borda active." },
+      { "name": "duration-slow", "value": "180ms", "purpose": "Modal enter, drawer, sidebar collapse." }
+    ],
+    "breakpoints": [
+      { "name": "mobile-max", "value": "640px" },
+      { "name": "tablet-max", "value": "1024px" },
+      { "name": "desktop-min", "value": "1025px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "CTA principal. ≤2 por tela. Fundo roxo Studio com brilho interno sutil.",
+      "html": "<button class=\"ds-btn-primary\">Nova demanda</button>",
+      "css": ".ds-btn-primary { position: relative; overflow: hidden; isolation: isolate; padding: 8px 16px; background: #7A00FF; color: #ffffff; border: none; border-radius: 6px; font-family: 'Geist', -apple-system, sans-serif; font-size: 13px; font-weight: 600; letter-spacing: -0.005em; cursor: pointer; box-shadow: 0 1px 2px rgba(122,0,255,0.20), inset 0 1px 0 rgba(255,255,255,0.14); transition: transform 120ms cubic-bezier(0.32, 0.72, 0, 1), filter 150ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 150ms cubic-bezier(0.16, 1, 0.3, 1); } .ds-btn-primary::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: radial-gradient(circle at center, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 60%); opacity: 0; transition: opacity 150ms cubic-bezier(0.16, 1, 0.3, 1); pointer-events: none; } .ds-btn-primary:hover { filter: brightness(1.08); box-shadow: 0 2px 8px rgba(122,0,255,0.28), inset 0 1px 0 rgba(255,255,255,0.18); } .ds-btn-primary:hover::after { opacity: 0.4; } .ds-btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 4px rgba(122,0,255,0.10), 0 1px 2px rgba(122,0,255,0.20), inset 0 1px 0 rgba(255,255,255,0.14); } .ds-btn-primary:active { transform: scale(0.97); }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Botão secundário default. Border 1px + texto dim, hover troca fundo pra surface-2.",
+      "html": "<button class=\"ds-btn-ghost\">Cancelar</button>",
+      "css": ".ds-btn-ghost { padding: 8px 16px; background: transparent; color: #b8b8b8; border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; font-family: 'Geist', -apple-system, sans-serif; font-size: 13px; font-weight: 600; letter-spacing: -0.005em; cursor: pointer; transition: background 150ms cubic-bezier(0.16, 1, 0.3, 1), color 150ms cubic-bezier(0.16, 1, 0.3, 1), border-color 150ms cubic-bezier(0.16, 1, 0.3, 1); } .ds-btn-ghost:hover { background: #22222a; color: #f5f5f7; border-color: rgba(122,0,255,0.55); } .ds-btn-ghost:focus-visible { outline: none; box-shadow: 0 0 0 4px rgba(122,0,255,0.10); }"
+    },
+    {
+      "name": "Status Chip",
+      "kind": "chip",
+      "refersTo": "chip-status",
+      "description": "Badge de status/prioridade. Bolinha de cor + label uppercase small caps.",
+      "html": "<span class=\"ds-chip-status\"><span class=\"ds-chip-dot\"></span>ATIVA</span>",
+      "css": ".ds-chip-status { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; background: rgba(122,0,255,0.10); color: #7A00FF; border-radius: 999px; font-family: 'Geist', -apple-system, sans-serif; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; line-height: 1; } .ds-chip-dot { width: 6px; height: 6px; border-radius: 50%; background: #7A00FF; flex-shrink: 0; }"
+    },
+    {
+      "name": "Widget Card",
+      "kind": "card",
+      "refersTo": "card-widget",
+      "description": "Card padrão de widget do dashboard. Head com ícone + título + subtítulo, corpo variável.",
+      "html": "<div class=\"ds-widget\"><div class=\"ds-widget-head\"><div class=\"ds-widget-title\"><span class=\"ds-widget-icon\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><path d=\"M12 2v20M2 12h20\"/></svg></span>Meu foco de hoje</div><div class=\"ds-widget-sub\">3 demandas esperando você</div></div><div class=\"ds-widget-body\">Conteúdo…</div></div>",
+      "css": ".ds-widget { background: #17171c; border-radius: 12px; padding: 20px; } .ds-widget-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; gap: 12px; } .ds-widget-title { display: inline-flex; align-items: center; gap: 8px; font-family: 'Geist', -apple-system, sans-serif; font-size: 18px; font-weight: 700; letter-spacing: -0.01em; color: #f5f5f7; } .ds-widget-icon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 8px; background: rgba(122,0,255,0.15); color: #7A00FF; flex-shrink: 0; } .ds-widget-sub { font-family: 'Geist', -apple-system, sans-serif; font-size: 12.5px; color: #a1a1a1; } .ds-widget-body { color: #b8b8b8; font-size: 13px; line-height: 1.55; }"
+    },
+    {
+      "name": "Input Field",
+      "kind": "input",
+      "refersTo": "input-default",
+      "description": "Input texto default. Fundo surface-2, borda sutil, focus ring roxo dim.",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"Nome da demanda\">",
+      "css": ".ds-input { width: 100%; padding: 8px 10px; background: #22222a; color: #f5f5f7; border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; font-family: 'Geist', -apple-system, sans-serif; font-size: 13px; line-height: 1.4; outline: none; transition: border-color 120ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 120ms cubic-bezier(0.16, 1, 0.3, 1); } .ds-input::placeholder { color: #6b6b74; } .ds-input:hover { border-color: rgba(255,255,255,0.22); } .ds-input:focus-visible { border-color: rgba(122,0,255,0.55); box-shadow: 0 0 0 4px rgba(122,0,255,0.10); }"
+    },
+    {
+      "name": "Sidebar Nav Item",
+      "kind": "nav",
+      "refersTo": "nav-item",
+      "description": "Item de navegação da sidebar. Ícone lucide 16px + label. Estado active com fundo roxo dim + barra vertical roxa.",
+      "html": "<a href=\"#\" class=\"ds-nav-item is-active\"><span class=\"ds-nav-icon\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><path d=\"M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\"/></svg></span><span class=\"ds-nav-label\">Início</span></a>",
+      "css": ".ds-nav-item { position: relative; display: flex; align-items: center; gap: 10px; padding: 8px 12px; color: #b8b8b8; font-family: 'Geist', -apple-system, sans-serif; font-size: 13px; font-weight: 500; text-decoration: none; border-radius: 6px; cursor: pointer; transition: background 120ms cubic-bezier(0.16, 1, 0.3, 1), color 120ms cubic-bezier(0.16, 1, 0.3, 1); } .ds-nav-item:hover { background: #22222a; color: #f5f5f7; } .ds-nav-item.is-active { background: rgba(122,0,255,0.10); color: #7A00FF; } .ds-nav-item.is-active::before { content: ''; position: absolute; left: -6px; top: 6px; bottom: 6px; width: 3px; border-radius: 999px; background: #7A00FF; } .ds-nav-icon { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; color: currentColor; } .ds-nav-label { flex: 1; }"
+    },
+    {
+      "name": "Stage Card (signature)",
+      "kind": "custom",
+      "refersTo": "detail-stage-card",
+      "description": "Card característico do produto: cor dinâmica via --stage-color, faixa vertical à esquerda, ícone + info + prazo. Representa a etapa atual da demanda no Detail.",
+      "html": "<div class=\"ds-stage-card\" style=\"--stage-color: #7A00FF\"><div class=\"ds-stage-icon\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"m16.24 7.76-1.804 5.411a2 2 0 0 1-1.265 1.265L7.76 16.24l1.804-5.411a2 2 0 0 1 1.265-1.265Z\"/></svg></div><div class=\"ds-stage-info\"><div class=\"ds-stage-label\">Etapa atual</div><div class=\"ds-stage-name\">[Criação] Aprovação Externa</div></div><div class=\"ds-stage-due\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M12 6v6l4 2\"/></svg>Prazo desta etapa: <b>17/09/2026</b></div></div>",
+      "css": ".ds-stage-card { position: relative; display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; padding: 14px 20px 14px 22px; background: color-mix(in oklab, var(--stage-color, #7A00FF) 12%, #17171c); border: 1px solid color-mix(in oklab, var(--stage-color, #7A00FF) 35%, rgba(255,255,255,0.06)); border-radius: 12px; overflow: hidden; } .ds-stage-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--stage-color, #7A00FF); } .ds-stage-icon { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 10px; background: color-mix(in oklab, var(--stage-color, #7A00FF) 22%, transparent); color: var(--stage-color, #7A00FF); flex-shrink: 0; } .ds-stage-info { flex: 1 1 60%; min-width: 180px; } .ds-stage-label { font-family: 'Geist', -apple-system, sans-serif; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #a1a1a1; } .ds-stage-name { font-family: 'Geist', -apple-system, sans-serif; font-size: 15px; font-weight: 700; color: #f5f5f7; letter-spacing: -0.01em; margin-top: 2px; } .ds-stage-due { display: inline-flex; align-items: center; gap: 5px; font-family: 'Geist', -apple-system, sans-serif; font-size: 11.5px; color: #b8b8b8; margin-left: auto; flex: 0 0 auto; } .ds-stage-due svg { color: var(--stage-color, #7A00FF); } .ds-stage-due b { color: #f5f5f7; font-weight: 600; font-variant-numeric: tabular-nums; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "A Central de Ateliê",
+    "overview": "reWork é um dashboard tratado como estúdio. Metade Central de Operações: precisão de números, hierarquia clara, respeito ao ritmo de trabalho do gestor que abre 40 vezes por dia. Metade Ateliê de Marketing: calor no roxo, densidade que respira, personalidade no acabamento — os artefatos que o time produz (briefings, entregas, comentários) ocupam espaço com dignidade em vez de serem cards genéricos. A base é dark-first — grande maioria dos usuários usa dark theme durante toda a jornada, e o produto foi construído nessa suposição. O produto não é um SaaS azul genérico com hero centralizado e três features iguais. Também não é um Google Docs / Notion neutro-branco onde a marca desaparece. É um ambiente de trabalho onde cada elemento tem função e onde o brand aparece com confiança nos momentos certos — não como decoração, como sinal.",
+    "keyCharacteristics": [
+      "Dark-first (com light theme igualmente polido)",
+      "Densidade média-alta com respiro proporcional ao papel do widget",
+      "Roxo Studio (#7A00FF) como sinal, não como fundo",
+      "Hierarquia por tom + peso tipográfico, não por linhas",
+      "Tátil no hover (elevação sutil), confiante no default (flat com camada tonal)"
+    ],
+    "rules": [
+      { "name": "The Roxo Signal Rule", "body": "O Roxo Studio aparece em no máximo 10% da área visível de qualquer tela. Se ele domina, a atenção do usuário se dispersa. Fluxos com muito estado ativo (uma linha por demanda em progresso) usam a bolinha colorida da etapa, não o roxo do brand.", "section": "colors" },
+      { "name": "The Blue-Is-Data Rule", "body": "Azul (#2b7fff, #1447e6) só existe em charts e visualizações de dados. Não colorimos botões, links ou hovers em azul — a marca não é BlueSaaS, e reservar o azul pros charts torna a leitura de dados mais rápida.", "section": "colors" },
+      { "name": "The Tonal Layer Rule", "body": "Elevação é comunicada por 3 camadas de cinza carbono (--surface, --surface-2, --surface-3), não por borda. Uma borda em card quebra a leitura vertical — se precisa destacar, muda o tom, não adiciona linha.", "section": "colors" },
+      { "name": "The Numeric Tabular Rule", "body": "Qualquer número que aparece em ranking ou em comparação vertical (KPI, tempo, contagem) usa font-variant-numeric: tabular-nums. Números que pulam horizontalmente durante scroll ou sort são anti-leitura.", "section": "typography" },
+      { "name": "The Label Small-Caps Rule", "body": "Labels de seção são sempre em 10px + weight 700 + letter-spacing 0.08em + UPPERCASE. Nunca aumente pra 12px pra ficar mais legível — o tamanho pequeno é o que separa metadata de conteúdo real.", "section": "typography" },
+      { "name": "The Flat-By-Default Rule", "body": "Superfícies default são flat — camada tonal comunica hierarquia. Sombras só aparecem em resposta a estado: hover, focus, ou elevação semântica (modal, popover). Um card com sombra em estado default é ruído.", "section": "elevation" },
+      { "name": "The Glass Only For Chrome Rule", "body": "O backdrop-filter: blur() só entra em chrome (sidebar, topbar, modal overlay). Nunca em card de conteúdo — repintar o blur a cada frame de scroll criava jank e não trazia valor visual.", "section": "elevation" },
+      { "name": "The Gesture-First Radius Rule", "body": "O raio segue o gesto: se você toca com a ponta do dedo (botão pequeno, chip), 6px basta. Se envolve uma área grande (card, modal), 12-14px pra parecer colocado sobre a superfície em vez de recortado da superfície.", "section": "shapes" }
+    ],
+    "dos": [
+      "Do usar tom (--surface-N) pra hierarquia visual em vez de borda. Camada tonal é o mecanismo principal de profundidade — bordas quebram leitura vertical.",
+      "Do usar o Roxo Studio (#7A00FF) como sinal raro (≤10% da tela). Em botão primary, chip ativo, hover ring, mark de comentário. Nunca como fundo de card.",
+      "Do manter azul (#2b7fff, #1447e6) exclusivo pra charts. Não colorir botões/links em azul.",
+      "Do usar font-variant-numeric: tabular-nums em qualquer coluna de números (KPI, ranking, tempo).",
+      "Do aplicar --shadow-focus (roxo dim) em input focado — é a assinatura visual do foco.",
+      "Do escrever labels de seção em 10px 700 uppercase 0.08em. Diferencia hierarquia sem competir com conteúdo.",
+      "Do usar bolinha colorida de --stage-color antes de labels de status/etapa. Comunica a etapa em ~2px sem consumir espaço."
+    ],
+    "donts": [
+      "Don't colocar sombra em card default. Sombra só em hover, focus, ou estado semanticamente elevado (modal, popover). Card com sombra em rest é ruído.",
+      "Don't parecer BlueSaaS: hero centralizado, três feature cards iguais, botão primário azul. Se algum PR começa a caminhar pra isso, é sinal de rota errada.",
+      "Don't parecer Notion/Google Docs neutro-branco. O produto tem marca — o roxo aparece com confiança onde faz sentido, e não se esconde por conta de neutralidade.",
+      "Don't usar borda como divisor entre linhas de lista/tabela. Use hairline (rgba(255,255,255,0.06)) que pertence ao card.",
+      "Don't aumentar labels de section pra 12px pra ficar mais legível. O 10px é o que define eles como metadata, não como copy.",
+      "Don't usar backdrop-filter: blur em card de conteúdo. Só em chrome (sidebar, topbar, modal overlay). Repinta a cada frame de scroll e gera jank.",
+      "Don't traduzir vocabulário PT-BR. Assignee, workflow, workspace quebram a identidade. Use Responsável, Fluxo, Squad.",
+      "Don't introduzir uma família de fonte nova. Geist + JetBrains Mono cobrem tudo. Ver Georgia/Helvetica/Calibri no código é resquício de recibos/PDFs — não expandir pra UI."
+    ]
+  }
+}
