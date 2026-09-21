@@ -9455,12 +9455,17 @@ app.get('/api/reports/sla', requireAuth, rateLimitReport, (req, res) => {
   // uma barra só.
   const effByStage = {}; // normKey -> { stageName, hours, demands:Set, flowNames:Set }
   const effByUser  = {}; // userId  -> { hours, entries }
+  const effByClient = {}; // clientId -> { name, hours, demands:Set }
   demands.forEach(d => {
     const entries = (d.timeEntries || []).filter(e =>
       Number(e.hours) > 0 && (!startDate || String(e.createdAt || '').slice(0,10) >= startDate));
     if (!entries.length) return;
     demandsWithLog++;
     const flow = db.flows.find(f => f.id === d.flowId);
+    const proj = db.projects.find(p => p.id === d.projectId);
+    const client = proj ? db.clients.find(c => c.id === proj.clientId) : null;
+    const clientKey = client?.id || '__none__';
+    const clientName = client?.name || 'Sem cliente';
     entries.forEach(e => {
       const h = Number(e.hours) || 0;
       effortTotal += h;
@@ -9482,6 +9487,9 @@ app.get('/api/reports/sla', requireAuth, rateLimitReport, (req, res) => {
       if (!effByUser[e.userId]) effByUser[e.userId] = { userId: e.userId, hours: 0, entries: 0 };
       effByUser[e.userId].hours += h;
       effByUser[e.userId].entries++;
+      if (!effByClient[clientKey]) effByClient[clientKey] = { clientId: clientKey, name: clientName, hours: 0, demands: new Set() };
+      effByClient[clientKey].hours += h;
+      effByClient[clientKey].demands.add(d.id);
     });
   });
   const effortByStage = Object.values(effByStage).map(s => ({
@@ -9493,6 +9501,9 @@ app.get('/api/reports/sla', requireAuth, rateLimitReport, (req, res) => {
     const user = db.users.find(x => x.id === u.userId);
     return { userId: u.userId, name: user?.name || '—', hours: u.hours, entries: u.entries };
   }).sort((a, b) => b.hours - a.hours);
+  const effortByClient = Object.values(effByClient).map(c => ({
+    clientId: c.clientId, name: c.name, hours: c.hours, demands: c.demands.size
+  })).sort((a, b) => b.hours - a.hours);
 
   res.json({
     period,
@@ -9512,7 +9523,8 @@ app.get('/api/reports/sla', requireAuth, rateLimitReport, (req, res) => {
       demandsWithLog,
       avgPerDemand: demandsWithLog ? effortTotal / demandsWithLog : 0,
       byStage: effortByStage,
-      byUser: effortByUser
+      byUser: effortByUser,
+      byClient: effortByClient
     }
   });
 });

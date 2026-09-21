@@ -823,10 +823,12 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                 <thead>
                   <tr>
                     <th class="col-bulk-check"><input type="checkbox" class="bulk-check-all" id="bulk-check-all" onclick="toggleBulkSelectAll(this.checked)" title="Selecionar todas"></th>
-                    <th class="col-demand-name" style="cursor:pointer" onclick="sortList('name')">Demanda <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                    <th class="col-demand-name mth-sortable">
+                      <button type="button" class="mth-prio-sort" onclick="sortList('priority')" title="Ordenar por prioridade"><i data-lucide="flag" class="ic-xs"></i></button>
+                      <span class="mth-sort" onclick="sortList('name')">Demanda <i data-lucide="chevrons-up-down" class="ic-xs"></i></span>
+                    </th>
                     <th style="cursor:pointer" onclick="sortList('project')">Projeto <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                     <th style="cursor:pointer" onclick="sortList('client')">Cliente <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                    <th style="cursor:pointer" onclick="sortList('priority')">Prioridade <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                     <th style="cursor:pointer" onclick="sortList('status')">Etapa <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                     <th style="cursor:pointer" onclick="sortList('owner')">Responsável <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                     <th style="cursor:pointer" onclick="sortList('deadline')">Prazo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
@@ -848,10 +850,12 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                   <thead>
                     <tr>
                       <th class="col-bulk-check"></th>
-                      <th class="col-demand-name" style="cursor:pointer" onclick="sortList('name')">Demanda <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                      <th class="col-demand-name mth-sortable">
+                        <button type="button" class="mth-prio-sort" onclick="sortList('priority')" title="Ordenar por prioridade"><i data-lucide="flag" class="ic-xs"></i></button>
+                        <span class="mth-sort" onclick="sortList('name')">Demanda <i data-lucide="chevrons-up-down" class="ic-xs"></i></span>
+                      </th>
                       <th style="cursor:pointer" onclick="sortList('project')">Projeto <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                       <th style="cursor:pointer" onclick="sortList('client')">Cliente <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                      <th style="cursor:pointer" onclick="sortList('priority')">Prioridade <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                       <th style="cursor:pointer" onclick="sortList('status')">Etapa <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                       <th style="cursor:pointer" onclick="sortList('deadline')">Prazo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                       <th style="cursor:pointer" onclick="sortList('completed')">Conclusão <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
@@ -914,12 +918,14 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <table class="mine-table-v2">
               <thead>
                 <tr>
-                  <th style="cursor:pointer" onclick="sortMine('name')">Demanda <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                  <th class="mth-sortable">
+                    <button type="button" class="mth-prio-sort" onclick="sortMine('priority')" title="Ordenar por prioridade"><i data-lucide="flag" class="ic-xs"></i></button>
+                    <span class="mth-sort" onclick="sortMine('name')">Demanda <i data-lucide="chevrons-up-down" class="ic-xs"></i></span>
+                  </th>
                   <th style="cursor:pointer" onclick="sortMine('workspace')">Squad <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   <th style="cursor:pointer" onclick="sortMine('client')">Cliente <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   <th style="cursor:pointer" onclick="sortMine('project')">Projeto <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   <th style="cursor:pointer" onclick="sortMine('status')">Etapa <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                  <th style="cursor:pointer" onclick="sortMine('priority')">Prioridade <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   <th style="cursor:pointer" onclick="sortMine('deadline')">Prazo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                 </tr>
               </thead>
@@ -1033,12 +1039,12 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           </div>
           <div id="capacity-list"></div>
         </div>
-        <!-- Aba RITMO / burndown semanal por squad + resumo -->
+        <!-- Aba RITMO — auditoria por squad (tabela + sparkline burndown mini). -->
         <div id="an-tab-rhythm" class="an-tab-panel" style="display:none">
-          <div class="rhythm-header">
+          <div class="rhythm-header rhythm-header-v2">
             <div class="rhythm-header-main">
-              <h2 class="rhythm-title">Ritmo da Semana</h2>
-              <div class="rhythm-subtitle">Burndown por squad — quantas demandas seguem abertas ao fim de cada dia útil. A linha ideal se baseia nos prazos combinados: cada demanda deveria estar entregue até seu deadline.</div>
+              <h2 class="rhythm-title">Ritmo por squad</h2>
+              <div class="rhythm-subtitle">Diagnóstico semanal de gargalos — quem tá no ritmo, quem tá devendo.</div>
             </div>
             <div class="rhythm-header-actions">
               <select class="filter-select" id="rhythm-week" onchange="renderRhythm()">
@@ -1049,10 +1055,9 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               </select>
             </div>
           </div>
-          <!-- Filtro de squads: vazio = cards individuais empilhados; com 2+ selecionados,
-               combina num gráfico único (cada squad com sua cor). Mesma UI da Capacidade. -->
           <div class="rhythm-filter-bar">
             <div class="uws-filter rhythm-squad-filter-inline" id="rhythm-squad-filter"></div>
+            <span class="rhythm-week-range" id="rhythm-week-range"></span>
           </div>
           <div id="rhythm-body"></div>
         </div>
@@ -1062,8 +1067,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
         <div id="an-tab-reports" class="an-tab-panel" style="display:none">
           <div class="capacity-hero">
             <div class="capacity-hero-main">
-              <h2 class="capacity-title">Relatórios de SLA</h2>
-              <div class="capacity-subtitle">Tempo em cada etapa, pontualidade, esforço apontado e demandas mais lentas — pra achar gargalos e comparar performance.</div>
+              <h2 class="capacity-title">Diagnóstico por etapa</h2>
+              <div class="capacity-subtitle">Ranking de gargalos e demandas lentas no período.</div>
             </div>
           </div>
           <div class="capacity-filterbar rep-filterbar">
@@ -4226,7 +4231,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260918flowsDirty" defer></script>
+<script src="/js/boot.js?v=20260921reports2" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

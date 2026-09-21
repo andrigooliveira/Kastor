@@ -7470,14 +7470,13 @@ function renderList() {
     const doneTd = isDone
       ? `<td class="mcol-done">${d.completedAt ? `<span class="mdue-date">${esc(fmtDateShort(d.completedAt))}</span>` : '<span class="mmuted">—</span>'}</td>`
       : '';
-    return `<tr class="mrow demand-row ${sel ? 'selected' : ''}" data-prio="${prio.value}" data-due="${u}" data-demand-id="${d.id}"${sectionAttr} onclick="onDemandRowClick(event, '${d.id}')">
+    return `<tr class="mrow demand-row ${sel ? 'selected' : ''}" data-prio="${prio.value}" data-due="${u}" data-demand-id="${d.id}"${sectionAttr} onclick="onDemandRowClick(event, '${d.id}')" title="Prioridade: ${esc(prio.label)}">
       <td class="col-bulk-check mcol-bulk"><input type="checkbox" class="bulk-check-row" ${sel ? 'checked' : ''} onclick="event.stopPropagation();toggleDemandSelection('${d.id}', this.checked)"></td>
       <td class="mcol-name col-demand-name">
         <div class="mname">${esc(d.name)}</div>
       </td>
       <td class="mcol-project col-truncate" title="${esc(p?.name || '')}">${p ? esc(p.name) : '—'}</td>
       <td class="mcol-client col-truncate" title="${esc(p?.client || '')}">${esc(p?.client || '—')}</td>
-      <td class="mcol-prio"><span class="mprio"><span class="mprio-dot" style="background:${prio.color}"></span>${esc(prio.label)}</span></td>
       <td class="mcol-stage">${stageCell}</td>
       ${ownerTd}
       <td class="mcol-due">${dueCell}</td>
@@ -7490,7 +7489,7 @@ function renderList() {
   // padrão de Minhas Demandas. Concluídas (isDoneOnly) mantém flat.
   const bodyEl = $('list-table-body');
   if (!mainList.length) {
-    bodyEl.innerHTML = `<tr><td colspan="8">${emptyState(isDoneOnly ? 'Nenhuma demanda concluída no filtro' : 'Nenhuma demanda encontrada', 'Ajuste a busca ou os filtros para encontrar o que procura.', 'search')}</td></tr>`;
+    bodyEl.innerHTML = `<tr><td colspan="7">${emptyState(isDoneOnly ? 'Nenhuma demanda concluída no filtro' : 'Nenhuma demanda encontrada', 'Ajuste a busca ou os filtros para encontrar o que procura.', 'search')}</td></tr>`;
   } else if (isDoneOnly || !_listGrouping) {
     // Flat: sem headers de agrupamento (toggle off) OU filtro Concluídas.
     bodyEl.innerHTML = mainList.map(d => renderRow(d, null, isDoneOnly)).join('');
@@ -7522,7 +7521,7 @@ function renderList() {
       const collapsed = _listCollapsedSections.has(sec.key);
       const caret = collapsed ? 'chevron-right' : 'chevron-down';
       const headRow = `<tr class="mgroup ${sec.cls} ${collapsed ? 'is-collapsed' : ''}" data-section="${sec.key}" onclick="toggleListSection('${sec.key}')">
-        <td colspan="8">
+        <td colspan="7">
           <div class="mgroup-inner">
             <i data-lucide="${caret}" class="ic-sm mgroup-caret"></i>
             <span class="mgroup-bar"></span>
@@ -7590,7 +7589,7 @@ function _syncListSortHeaders() {
   const scopes = ['#list-table-view table thead', '#done-table-body-wrap table thead'];
   const dirCls = sortAsc ? 'is-sort-asc' : 'is-sort-desc';
   scopes.forEach(sel => {
-    document.querySelectorAll(sel + ' th[onclick^="sortList"]').forEach(th => {
+    document.querySelectorAll(sel + ' th[onclick^="sortList"], ' + sel + ' .mth-sort[onclick^="sortList"]').forEach(th => {
       const raw = th.getAttribute('onclick') || '';
       const m = raw.match(/sortList\('([^']+)'\)/);
       const k = m ? m[1] : '';
@@ -7598,6 +7597,10 @@ function _syncListSortHeaders() {
       if (k === sortKey) {
         th.classList.add('is-sorted', dirCls);
       }
+    });
+    // Botão flag (ordena por prioridade) — highlight quando ativo.
+    document.querySelectorAll(sel + ' .mth-prio-sort').forEach(btn => {
+      btn.classList.toggle('is-active', sortKey === 'priority');
     });
   });
 }
@@ -8160,7 +8163,7 @@ function renderMine() {
            <div class="mdue-bar"><span class="mdue-bar-fill" style="width:${barFill}%"></span></div>
          </div>`
       : '<span class="mmuted">—</span>';
-    return `<tr class="mrow" data-prio="${prio.value}" data-due="${u}" onclick="showDetail('${d.id}')">
+    return `<tr class="mrow" data-prio="${prio.value}" data-due="${u}" onclick="showDetail('${d.id}')" title="Prioridade: ${esc(prio.label)}">
       <td class="mcol-name">
         <div class="mname">${esc(d.name)}</div>
         <div class="mname-sub" title="${esc((p?.client || '') + ' · ' + (p?.name || ''))}">${esc(p?.client || '—')} · ${esc(p?.name || '—')}</div>
@@ -8169,14 +8172,13 @@ function renderMine() {
       <td class="mcol-client col-truncate" title="${esc(p?.client || '')}">${esc(p?.client || '—')}</td>
       <td class="mcol-project col-truncate" title="${esc(p?.name || '')}">${esc(p?.name || '—')}</td>
       <td class="mcol-stage">${stageCell}</td>
-      <td class="mcol-prio"><span class="mprio"><span class="mprio-dot" style="background:${prio.color}"></span>${esc(prio.label)}</span></td>
       <td class="mcol-due">${dueCell}</td>
     </tr>`;
   };
 
   const body = $('mine-table-body');
   if (!list.length) {
-    body.innerHTML = `<tr><td colspan="7">${emptyState('Nenhuma demanda encontrada', 'Você não tem demandas neste filtro.', 'inbox')}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="6">${emptyState('Nenhuma demanda encontrada', 'Você não tem demandas neste filtro.', 'inbox')}</td></tr>`;
   } else if (fq === 'done') {
     // Filtro "Concluídas" — flat, sem seções (não faz sentido separar por prazo).
     body.innerHTML = list.map(renderMineRow).join('');
@@ -8206,7 +8208,7 @@ function renderMine() {
     body.innerHTML = sections.map(sec => {
       const items = buckets[sec.key];
       if (!items.length) return '';
-      return `<tr class="mgroup ${sec.cls}"><td colspan="7">
+      return `<tr class="mgroup ${sec.cls}"><td colspan="6">
           <div class="mgroup-inner">
             <span class="mgroup-bar"></span>
             <span class="mgroup-lbl">${esc(sec.label)}</span>
@@ -8223,6 +8225,35 @@ function renderMine() {
   if ($('cal-mine-body')) renderCalendar('mine');
   if (typeof renderAgenda === 'function') renderAgenda();
   _applyMineAgendaCollapsed();
+  _syncMineSortHeaders();
+}
+/* Highlight de header/coluna ativa na tabela mine — mesmo padrão de
+   _syncListSortHeaders. Marca .is-sorted + .is-sort-asc/.is-sort-desc no
+   th (ou no span.mth-sort quando o th contém subelementos), e destaca o
+   botão flag quando sortKey === 'priority'. */
+function _syncMineSortHeaders() {
+  const scope = '#page-mine table.mine-table-v2 thead';
+  const dirCls = mineSortAsc ? 'is-sort-asc' : 'is-sort-desc';
+  // Cabeçalhos simples (th com onclick="sortMine('...')")
+  document.querySelectorAll(scope + ' th[onclick^="sortMine"]').forEach(th => {
+    const raw = th.getAttribute('onclick') || '';
+    const m = raw.match(/sortMine\('([^']+)'\)/);
+    const k = m ? m[1] : '';
+    th.classList.remove('is-sort-asc', 'is-sort-desc', 'is-sorted');
+    if (k === mineSortKey) th.classList.add('is-sorted', dirCls);
+  });
+  // Subelementos .mth-sort (span dentro do th composto "Demanda + flag")
+  document.querySelectorAll(scope + ' .mth-sort[onclick^="sortMine"]').forEach(span => {
+    const raw = span.getAttribute('onclick') || '';
+    const m = raw.match(/sortMine\('([^']+)'\)/);
+    const k = m ? m[1] : '';
+    span.classList.remove('is-sort-asc', 'is-sort-desc', 'is-sorted');
+    if (k === mineSortKey) span.classList.add('is-sorted', dirCls);
+  });
+  // Botão flag — highlight quando sort é prioridade
+  document.querySelectorAll('#page-mine .mth-prio-sort').forEach(btn => {
+    btn.classList.toggle('is-active', mineSortKey === 'priority');
+  });
 }
 /* "Minha Agenda" recolhível — botão-chevron no cabeçalho.
    Estado persiste em localStorage; aplicado ao entrar na página. */
@@ -8386,34 +8417,71 @@ async function renderReports() {
 function buildReportsHTML(data) {
   const t = data.totals || {};
 
-  const kpis = kpiTiles([
-    { label: 'Lead time médio', value: t.completedCount ? fmtDur(t.avgTotalHours) : '—',
-      sub: 'criação → conclusão', tone: 'accent', icon: 'clock' },
-    { label: 'Pontualidade', value: t.completedCount ? Math.round(t.punctualityRate) + '%' : '—',
-      sub: 'concluídas no prazo',
-      tone: (t.punctualityRate >= 80 ? 'success' : (t.punctualityRate >= 50 ? 'warn' : 'danger')), icon: 'check-circle' },
-    { label: 'Retrabalho', value: t.demandsTotal ? Math.round(t.reworkRate) + '%' : '—',
-      sub: `${t.reworkedCount || 0} voltaram de etapa`,
-      tone: (t.reworkRate > 25 ? 'danger' : 'default'), icon: 'rotate-ccw' },
-    { label: 'Concluídas', value: String(t.completedCount || 0),
-      sub: `de ${t.demandsTotal || 0} no período`, tone: 'default', icon: 'check-check' },
-  ]);
+  // ── Linha KPI tipográfica (padrão da /capacity — sem cards) ──
+  const punctualPct = t.completedCount ? Math.round(t.punctualityRate) : null;
+  const reworkPct = t.demandsTotal ? Math.round(t.reworkRate) : null;
+  const punctualColor = punctualPct == null ? 'default'
+    : punctualPct >= 80 ? 'good'
+    : punctualPct >= 50 ? 'warn' : 'bad';
+  const reworkColor = reworkPct == null ? 'default'
+    : reworkPct > 25 ? 'bad' : 'default';
+  const kpisLine = `<div class="rep-kpi-line">
+    <div class="rep-kpi">
+      <div class="rep-kpi-label">Lead time médio</div>
+      <div class="rep-kpi-val">${t.completedCount ? esc(fmtDur(t.avgTotalHours)) : '—'}</div>
+      <div class="rep-kpi-sub">criação → conclusão</div>
+    </div>
+    <div class="rep-kpi">
+      <div class="rep-kpi-label">Pontualidade</div>
+      <div class="rep-kpi-val rep-kpi-val--${punctualColor}">${punctualPct == null ? '—' : punctualPct + '%'}</div>
+      <div class="rep-kpi-sub">concluídas no prazo</div>
+    </div>
+    <div class="rep-kpi">
+      <div class="rep-kpi-label">Retrabalho</div>
+      <div class="rep-kpi-val rep-kpi-val--${reworkColor}">${reworkPct == null ? '—' : reworkPct + '%'}</div>
+      <div class="rep-kpi-sub">${t.reworkedCount || 0} voltaram de etapa</div>
+    </div>
+    <div class="rep-kpi">
+      <div class="rep-kpi-label">Concluídas</div>
+      <div class="rep-kpi-val">${t.completedCount || 0}</div>
+      <div class="rep-kpi-sub">de ${t.demandsTotal || 0} no período</div>
+    </div>
+  </div>`;
 
-  // ── Tempo médio por etapa — já vem ordenado desc pelo server. Etapas com
-  //    mesmo nome (mesmo em fluxos/clientes diferentes) vêm unificadas do server.
+  // ── Tabela de etapas (mine-table-v2 aesthetic) com Score de gargalo ──
   const stages = (data.stageStats || []).filter(s => s.samples > 0);
-  const maxStage = stages.length ? stages[0].avgHours : 0;
-  const stageBars = stages.length ? stages.map((s) => {
+  const maxStage = stages.length ? Math.max(...stages.map(s => s.avgHours)) : 0;
+  // Score de gargalo = (avgHours normalizado 0-1) × (samples normalizado 0-1),
+  // depois × 100. Etapas que somam LENTIDÃO com FREQUÊNCIA sobem mais. Ordena
+  // desc (pior primeiro) — a leitura fica "onde tá o gargalo agora?".
+  const maxSamples = stages.length ? Math.max(...stages.map(s => s.samples || 0)) : 0;
+  const stagesRanked = stages.map(s => {
+    const norm = maxStage ? (s.avgHours / maxStage) : 0;
+    const freq = maxSamples ? (s.samples / maxSamples) : 0;
+    const score = Math.round((0.7 * norm + 0.3 * freq) * 100);
+    return { ...s, _score: score };
+  }).sort((a, b) => b._score - a._score);
+  const stageRows = stagesRanked.length ? stagesRanked.map(s => {
     const pct = maxStage ? Math.max(3, (s.avgHours / maxStage) * 100) : 0;
-    return `<div class="rep-bar-row">
-      <div class="rep-bar-head">
-        <span class="rep-bar-name">${esc(s.stageName)}</span>
-        <span class="rep-bar-val">${fmtDur(s.avgHours)}</span>
-      </div>
-      <div class="rep-bar-track"><div class="rep-bar-fill" style="width:${pct}%;background:${s.stageColor || 'var(--accent)'}"></div></div>
-      <div class="rep-bar-sub">${esc(s.flowName || '—')} · ${s.samples} ${s.samples === 1 ? 'passagem' : 'passagens'}</div>
-    </div>`;
-  }).join('') : emptyMini('Sem histórico de etapas no período.');
+    const barColor = s.stageColor || 'var(--accent)';
+    const scoreClass = s._score >= 70 ? 'critical'
+      : s._score >= 40 ? 'warn' : 'ok';
+    return `<tr class="mrow rep-stage-row">
+      <td class="mcol-name rep-stage-name">
+        <div class="mname"><span class="rep-stage-dot" style="background:${esc(s.stageColor || '#7A00FF')}"></span>${esc(s.stageName)}</div>
+        <div class="mname-sub">${esc(s.flowName || '—')}</div>
+      </td>
+      <td class="rep-col-time">
+        <div class="rep-time-val">${esc(fmtDur(s.avgHours))}</div>
+        <div class="rep-time-bar"><span class="rep-time-bar-fill" style="width:${pct}%;background:${barColor}"></span></div>
+      </td>
+      <td class="rep-col-num"><span class="rep-num">${s.samples}</span></td>
+      <td class="rep-col-num"><span class="rep-num${(s.reworkCount || 0) > 0 ? ' rep-num--warn' : ''}">${s.reworkCount || 0}</span></td>
+      <td class="rep-col-score">
+        <span class="rep-score rep-score--${scoreClass}">${s._score}</span>
+      </td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="5" class="rep-empty">Sem histórico de etapas no período.</td></tr>`;
 
   // ── Demandas mais lentas (criação → conclusão) ──
   const slowest = data.slowest || [];
@@ -8469,43 +8537,74 @@ function buildReportsHTML(data) {
     </div>`;
   }).join('') : emptyMini('Nenhuma hora apontada no período.');
 
+  // ── Horas apontadas por cliente ──
+  const effClients = effort.byClient || [];
+  const maxEffClient = effClients.length ? Math.max(...effClients.map(c => c.hours)) : 0;
+  const effClientRows = effClients.length ? effClients.map((c, i) => {
+    const pct = maxEffClient ? Math.max(3, (c.hours / maxEffClient) * 100) : 0;
+    const color = CAP_SPARK_PALETTE[i % CAP_SPARK_PALETTE.length];
+    return `<div class="rep-bar-row">
+      <div class="rep-bar-head">
+        <span class="rep-bar-name">${esc(c.name)}</span>
+        <span class="rep-bar-val">${fmtHours(c.hours)}<span class="rep-muted"> · ${c.demands} ${c.demands === 1 ? 'demanda' : 'demandas'}</span></span>
+      </div>
+      <div class="rep-bar-track"><div class="rep-bar-fill" style="width:${pct}%;background:${color}"></div></div>
+    </div>`;
+  }).join('') : emptyMini('Nenhuma hora apontada no período.');
+
   const effHeader = effort.demandsWithLog ? `<div class="rep-effort-stats">
       <span><strong>${fmtHours(effort.totalHours)}</strong> apontadas</span>
       <span><strong>${effort.demandsWithLog}</strong> ${effort.demandsWithLog === 1 ? 'demanda' : 'demandas'}</span>
       <span>média <strong>${fmtHours(effort.avgPerDemand)}</strong>/demanda</span>
     </div>` : '';
 
-  const cardHead = (icon, title, hint) => `
-    <div class="rep-card-head">
-      <div class="rep-card-title"><i data-lucide="${icon}" class="ic-sm"></i>${esc(title)}</div>
-      <div class="rep-card-hint" title="${esc(hint)}">${esc(hint)}</div>
-    </div>`;
+  // Bloco secundário: Demandas mais lentas (mantido pra drill-down do gargalo).
+  const slowestBlock = `<div class="rep-section">
+    <div class="rep-section-head">
+      <span class="rep-section-title">Demandas mais lentas</span>
+      <span class="rep-section-hint">Da criação até a conclusão — clique pra abrir.</span>
+    </div>
+    <div class="rep-slow-list">${slowRows}</div>
+  </div>`;
+
+  // ── Grid inferior: Tempo médio por tipo + Horas apontadas por cliente ──
+  const secondaryGrid = `<div class="rep-grid">
+    <div class="rep-card rep-tone-type">
+      <div class="rep-card-title"><i class="ic ic-sm" data-lucide="pie-chart"></i>Tempo médio por tipo</div>
+      <div class="rep-card-hint">Da criação até a conclusão, agrupado pelo tipo de demanda do fluxo.</div>
+      <div class="rep-bars">${typeRows}</div>
+    </div>
+    <div class="rep-card rep-tone-effort">
+      <div class="rep-card-title"><i class="ic ic-sm" data-lucide="briefcase"></i>Horas apontadas por cliente</div>
+      <div class="rep-card-hint">Total de horas lançadas em demandas de cada cliente no período.</div>
+      <div class="rep-bars">${effClientRows}</div>
+    </div>
+  </div>`;
 
   return `
-    <div class="rep-kpis">${kpis}</div>
-    <div class="rep-grid">
-      <div class="rep-card rep-tone-time">
-        ${cardHead('bar-chart-3', 'Tempo médio por etapa', 'Tempo de calendário (entrada → saída). Etapas com mesmo nome vêm agrupadas.')}
-        <div class="rep-bars">${stageBars}</div>
+    ${kpisLine}
+    <div class="rep-section">
+      <div class="rep-section-head">
+        <span class="rep-section-title">Gargalos por etapa</span>
+        <span class="rep-section-hint">Ordenado por score (tempo médio × frequência). Etapas com mesmo nome vêm agrupadas.</span>
       </div>
-      <div class="rep-card rep-tone-effort">
-        ${cardHead('timer', 'Horas apontadas por etapa', 'Esforço médio lançado pelos usuários em cada etapa.')}
-        ${effHeader}
-        <div class="rep-bars">${effStageBars}</div>
-      </div>
-      <div class="rep-card rep-tone-people">
-        ${cardHead('users', 'Horas apontadas por pessoa', 'Total de horas lançadas no período.')}
-        <div class="rep-bars">${effUserRows}</div>
-      </div>
-      <div class="rep-card rep-tone-type">
-        ${cardHead('tag', 'Tempo médio por tipo', 'Lead time médio por tipo de demanda.')}
-        <div class="rep-bars">${typeRows}</div>
+      <div class="table-wrap mine-table-wrap rep-stage-table-wrap">
+        <table class="mine-table-v2 rep-stage-table">
+          <thead>
+            <tr>
+              <th class="rep-th-name">Etapa</th>
+              <th class="rep-th-time">Tempo médio</th>
+              <th class="rep-th-num" title="Quantas demandas passaram por essa etapa no período">Passagens</th>
+              <th class="rep-th-num" title="Quantas vezes uma demanda voltou pra essa etapa">Retrabalho</th>
+              <th class="rep-th-score" title="Score de gargalo — quanto maior, mais crítica a etapa">Score gargalo</th>
+            </tr>
+          </thead>
+          <tbody>${stageRows}</tbody>
+        </table>
       </div>
     </div>
-    <div class="rep-card rep-tone-slow">
-      ${cardHead('clock', 'Demandas mais lentas', 'Da criação até a conclusão. Clique pra abrir.')}
-      <div class="rep-slow-list">${slowRows}</div>
-    </div>`;
+    ${secondaryGrid}
+    ${slowestBlock}`;
 }
 
 /* ─── PÁGINA ANÁLISES — abas Capacidade | Relatórios ───
@@ -9051,24 +9150,210 @@ function renderRhythm() {
   if (!all.length) { body.innerHTML = '<div class="empty-state">Sem squads acessíveis.</div>'; return; }
 
   const fmtDate = d => d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-  const header = `<div class="rhythm-weekrange">${fmtDate(monday)} — ${fmtDate(friday)}</div>`;
+  const rangeLabel = document.getElementById('rhythm-week-range');
+  if (rangeLabel) rangeLabel.textContent = `${fmtDate(monday)} → ${fmtDate(friday)}`;
 
-  // 2+ squads selecionados → gráfico combinado. Senão, cards individuais.
-  const combined = _rhythmSquadFilter.size >= 2;
-  if (combined) {
-    body.innerHTML = header + _renderRhythmCombined(monday, sunday);
-  } else {
-    const list = _rhythmSquadFilter.size === 1
-      ? all.filter(w => _rhythmSquadFilter.has(w.id))
-      : all;
-    const cards = list.map(ws => _renderRhythmCard(ws, monday, sunday)).join('');
-    body.innerHTML = `${header}<div class="rhythm-stack">${cards}</div>
-      <div class="rhythm-legend">
-        <span class="rhythm-legend-item"><span class="rhythm-legend-line rhythm-legend-line--ideal"></span> Ideal</span>
-        <span class="rhythm-legend-item"><span class="rhythm-legend-line rhythm-legend-line--real"></span> Real</span>
-      </div>`;
+  // Filtra squads: se há seleção, respeita; sem seleção, todos acessíveis.
+  const list = _rhythmSquadFilter.size
+    ? all.filter(w => _rhythmSquadFilter.has(w.id))
+    : all;
+  if (!list.length) {
+    body.innerHTML = '<div class="empty-state">Nenhum squad na seleção.</div>';
+    return;
   }
+
+  // Por squad: 2 cards lado a lado — meta+KPIs à esquerda, burndown à direita.
+  const rowsHtml = list.map(ws => {
+    const ds = _rhythmDemandsForSquad(ws.id);
+    const series = _rhythmBuildSeries(ds, monday, sunday);
+    const summary = _rhythmSummary(ds, monday, sunday);
+    const info = _rhythmAnalyze(ws.name, summary, series);
+    // Delta = quanto o real do último dia útil difere do ideal desse dia.
+    const N = 5;
+    const realLast = series.real[N - 1] || 0;
+    const idealLast = series.ideal[N - 1] || 0;
+    const delta = realLast - idealLast;
+    const deltaLabel = delta === 0 ? '0'
+      : delta > 0 ? `+${delta}`
+      : `${delta}`;
+    const chart = _rhythmMidSvg(series, info.kind);
+    return `<div class="rhythm-squad-row" data-status="${esc(info.kind)}">
+      <div class="rhy-meta-card">
+        <div class="rhy-meta-head">
+          <span class="rhy-squad">
+            <span class="rhy-squad-dot" style="background:${esc(ws.color || '#7A00FF')}"></span>
+            ${esc(ws.name)}
+          </span>
+        </div>
+        <div class="rhy-meta-detail">${esc(info.detail)}</div>
+        <div class="rhy-kpi-line">
+          <span class="rhy-kpi">
+            <span class="rhy-kpi-label">Entregues</span>
+            <span class="rhy-kpi-value">${summary.delivered}</span>
+          </span>
+          <span class="rhy-kpi">
+            <span class="rhy-kpi-label">Atrasadas</span>
+            <span class="rhy-kpi-value${summary.overdue > 0 ? ' rhy-kpi-value--danger' : ''}">${summary.overdue}</span>
+          </span>
+          <span class="rhy-kpi">
+            <span class="rhy-kpi-label">Em aberto</span>
+            <span class="rhy-kpi-value">${summary.open}</span>
+          </span>
+          <span class="rhy-kpi rhy-kpi--delta">
+            <span class="rhy-kpi-label" title="Real − ideal no fim da semana">Δ ideal</span>
+            <span class="rhy-delta rhy-delta--${delta > 0 ? 'up' : delta < 0 ? 'down' : 'even'}">${esc(deltaLabel)}</span>
+          </span>
+        </div>
+      </div>
+      <div class="rhy-chart-card">
+        <div class="rhy-chart-head">
+          <span class="rhy-chart-title">Burndown · ${esc(info.label)}</span>
+          <span class="rhy-chart-legend">
+            <span class="rhy-legend-item"><span class="rhy-legend-line rhy-legend-line--real" style="background:${esc(_rhythmStatusColor(info.kind))}"></span>Real</span>
+            <span class="rhy-legend-item"><span class="rhy-legend-line rhy-legend-line--ideal"></span>Ideal</span>
+          </span>
+        </div>
+        <div class="rhy-chart-body">${chart}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  body.innerHTML = `<div class="rhythm-stack-v2">${rowsHtml}</div>`;
   if (window.lucide) lucide.createIcons();
+}
+
+/* Cor semantica pro real do burndown, coerente com a status pill. */
+function _rhythmStatusColor(kind) {
+  if (kind === 'atrasado')  return '#EF4444';
+  if (kind === 'adiantado') return '#22c55e';
+  if (kind === 'no-ritmo')  return '#a78bfa';
+  return 'rgba(255,255,255,0.4)';
+}
+
+/* Chart burndown médio (por squad, dentro do card à direita). O SVG é
+   estirado pra ocupar TODA a extensão do container (preserveAspectRatio=none)
+   com strokes non-scaling; labels e dots ficam em HTML absolute sobreposto,
+   assim texto não distorce quando o card muda de largura. */
+function _rhythmMidSvg(series, statusKind) {
+  // Área SVG em coordenadas 0..100 no eixo X e 0..100 no Y. Percentages
+  // uniformes deixam o SVG cobrir width/height do container inteiro.
+  const N = 5, LAST = N - 1;
+  const dayLabels = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex'];
+  const maxV = Math.max(1, ...series.real, ...series.ideal);
+  const niceTop = Math.max(1, Math.ceil(maxV));
+  // Paddings percentuais pra respirar (inset pra evitar clip nos limites).
+  const xPct = i => 3 + (i / LAST) * 94;   // 3%..97% de X
+  const yPct = v => 92 - (v / niceTop) * 84; // 92% (base) → 8% (topo)
+  const idealPts = series.ideal.map((v, i) => `${xPct(i).toFixed(2)},${yPct(v).toFixed(2)}`).join(' ');
+  const realPts  = series.real.map((v, i) => `${xPct(i).toFixed(2)},${yPct(v).toFixed(2)}`).join(' ');
+  const realColor = _rhythmStatusColor(statusKind);
+  const yTicks = [0, Math.round(niceTop / 2), niceTop];
+  const yGridLines = yTicks.map(v => `
+    <line x1="0" x2="100" y1="${yPct(v).toFixed(2)}" y2="${yPct(v).toFixed(2)}"
+          stroke="rgba(255,255,255,0.05)" stroke-width="1" vector-effect="non-scaling-stroke"/>
+  `).join('');
+  const yLabelsHtml = yTicks.map(v => `
+    <span class="rhy-mid-ylab" style="top:${yPct(v).toFixed(2)}%">${v}</span>
+  `).join('');
+  const xLabelsHtml = dayLabels.map((d, i) => `
+    <span class="rhy-mid-xlab" style="left:${xPct(i).toFixed(2)}%">${d}</span>
+  `).join('');
+  const realDots = series.real.map((v, i) => `
+    <span class="rhy-mid-dot" style="left:${xPct(i).toFixed(2)}%;top:${yPct(v).toFixed(2)}%;background:${realColor}"></span>
+  `).join('');
+  // Zonas invisíveis por dia — cobrem uma faixa vertical inteira e ativam
+  // o tooltip com Real/Ideal do dia. Também mostram uma linha-guia vertical.
+  const hoverZones = series.real.map((_, i) => {
+    const half = 100 / (LAST * 2);
+    const start = Math.max(0, xPct(i) - half);
+    const width = (i === 0 || i === LAST) ? half + 1 : half * 2;
+    return `<span class="rhy-mid-zone"
+        style="left:${start.toFixed(2)}%;width:${width.toFixed(2)}%"
+        data-day="${esc(dayLabels[i])}"
+        data-real="${series.real[i]}"
+        data-ideal="${series.ideal[i]}"
+        data-xpct="${xPct(i).toFixed(2)}"
+        onmousemove="_rhyMidTipShow(event, this)"
+        onmouseleave="_rhyMidTipHide(event, this)"></span>`;
+  }).join('');
+  return `<div class="rhy-mid-wrap">
+    <svg viewBox="0 0 100 100" preserveAspectRatio="none" class="rhy-mid-svg" role="img">
+      ${yGridLines}
+      <polyline points="${idealPts}" fill="none" stroke="rgba(255,255,255,0.35)"
+                stroke-width="1.2" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>
+      <polyline points="${realPts}" fill="none" stroke="${realColor}"
+                stroke-width="2" stroke-linejoin="round" stroke-linecap="round"
+                vector-effect="non-scaling-stroke"/>
+    </svg>
+    <div class="rhy-mid-ylabs">${yLabelsHtml}</div>
+    <div class="rhy-mid-xlabs">${xLabelsHtml}</div>
+    <div class="rhy-mid-dots">${realDots}</div>
+    <div class="rhy-mid-guide" hidden></div>
+    <div class="rhy-mid-tip" hidden></div>
+    <div class="rhy-mid-hover">${hoverZones}</div>
+  </div>`;
+}
+
+/* Tooltip do burndown — atualiza posição/conteúdo pelo dia sob o mouse.
+   Cálculos consideram o padding-left do .rhy-mid-wrap (22px reservados
+   pros labels do eixo Y). */
+function _rhyMidTipShow(ev, zone) {
+  const wrap = zone.closest('.rhy-mid-wrap'); if (!wrap) return;
+  const tip = wrap.querySelector('.rhy-mid-tip');
+  const guide = wrap.querySelector('.rhy-mid-guide');
+  const day = zone.dataset.day || '';
+  const real = zone.dataset.real || '0';
+  const ideal = zone.dataset.ideal || '0';
+  const xPct = parseFloat(zone.dataset.xpct) || 50;
+  const PAD_L = 22; // = padding-left do .rhy-mid-wrap em px
+  const rectWrap = wrap.getBoundingClientRect();
+  const innerW = Math.max(1, rectWrap.width - PAD_L);
+  const guideX = PAD_L + (xPct / 100) * innerW;
+  if (guide) {
+    guide.hidden = false;
+    guide.style.left = guideX + 'px';
+  }
+  if (tip) {
+    tip.innerHTML = `<div class="rhy-mid-tip-day">${day}</div>
+      <div class="rhy-mid-tip-row"><span class="rhy-mid-tip-dot rhy-mid-tip-dot--real"></span>Real <b>${real}</b></div>
+      <div class="rhy-mid-tip-row"><span class="rhy-mid-tip-dot rhy-mid-tip-dot--ideal"></span>Ideal <b>${ideal}</b></div>`;
+    tip.hidden = false;
+    // Alinha centro do tooltip pelo dia, mas segura nas bordas do wrap.
+    const tipWidth = tip.offsetWidth || 100;
+    let leftPx = guideX - tipWidth / 2;
+    if (leftPx < 4) leftPx = 4;
+    if (leftPx + tipWidth > rectWrap.width - 4) leftPx = rectWrap.width - tipWidth - 4;
+    tip.style.left = leftPx + 'px';
+    tip.style.top = '6px';
+  }
+}
+function _rhyMidTipHide(ev, zone) {
+  const wrap = zone.closest('.rhy-mid-wrap'); if (!wrap) return;
+  const tip = wrap.querySelector('.rhy-mid-tip');
+  const guide = wrap.querySelector('.rhy-mid-guide');
+  if (tip) tip.hidden = true;
+  if (guide) guide.hidden = true;
+}
+window._rhyMidTipShow = _rhyMidTipShow;
+window._rhyMidTipHide = _rhyMidTipHide;
+
+/* Sparkline mini pro burndown na linha da tabela. 60×16, sem eixos, sem
+   grid — só duas linhas: real (colorido por status) e ideal (tracejado). */
+function _rhythmSparkSvg(series, statusKind) {
+  const w = 60, h = 16, N = 5, LAST = N - 1;
+  const maxV = Math.max(1, ...series.real, ...series.ideal);
+  const xOf = i => (i / LAST) * w;
+  const yOf = v => h - (v / maxV) * h;
+  const idealPts = series.ideal.map((v, i) => `${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`).join(' ');
+  const realPts  = series.real.map((v, i) => `${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`).join(' ');
+  const realColor = statusKind === 'atrasado' ? '#EF4444'
+                  : statusKind === 'adiantado' ? '#22c55e'
+                  : statusKind === 'no-ritmo' ? '#a78bfa'
+                  : 'rgba(255,255,255,0.4)';
+  return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" class="rhy-spark">
+    <polyline points="${idealPts}" fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="1" stroke-dasharray="2 2"/>
+    <polyline points="${realPts}" fill="none" stroke="${realColor}" stroke-width="1.5" stroke-linecap="round"/>
+  </svg>`;
 }
 
 /* ───────────────────────────────────────────────────────────────
