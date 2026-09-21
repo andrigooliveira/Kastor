@@ -8568,15 +8568,21 @@ function buildReportsHTML(data) {
   </div>`;
 
   // ── Grid inferior: Tempo médio por tipo + Horas apontadas por cliente ──
-  const secondaryGrid = `<div class="rep-grid">
-    <div class="rep-card rep-tone-type">
-      <div class="rep-card-title"><i class="ic ic-sm" data-lucide="pie-chart"></i>Tempo médio por tipo</div>
-      <div class="rep-card-hint">Da criação até a conclusão, agrupado pelo tipo de demanda do fluxo.</div>
+  //    Mesma linguagem visual das outras seções (title com barra roxa + hint),
+  //    sem card box: dois blocos lado a lado num grid.
+  const secondaryGrid = `<div class="rep-split">
+    <div class="rep-section rep-section--half">
+      <div class="rep-section-head">
+        <span class="rep-section-title">Tempo médio por tipo</span>
+        <span class="rep-section-hint">Da criação à conclusão, por tipo de demanda.</span>
+      </div>
       <div class="rep-bars">${typeRows}</div>
     </div>
-    <div class="rep-card rep-tone-effort">
-      <div class="rep-card-title"><i class="ic ic-sm" data-lucide="briefcase"></i>Horas apontadas por cliente</div>
-      <div class="rep-card-hint">Total de horas lançadas em demandas de cada cliente no período.</div>
+    <div class="rep-section rep-section--half">
+      <div class="rep-section-head">
+        <span class="rep-section-title">Horas apontadas por cliente</span>
+        <span class="rep-section-hint">Total lançado em demandas de cada cliente no período.</span>
+      </div>
       <div class="rep-bars">${effClientRows}</div>
     </div>
   </div>`;

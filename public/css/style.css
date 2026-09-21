@@ -4101,6 +4101,13 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
   font-size: 11px; color: var(--text-dim);
   flex: 1 1 auto;
 }
+.rep-split {
+  margin-top: 20px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 32px;
+  align-items: start;
+}
+.rep-split .rep-section--half { margin-top: 0; }
+@media (max-width: 900px) { .rep-split { grid-template-columns: 1fr; gap: 20px; } }
 
 /* Tabela por etapa (herda mine-table-v2). */
 .rep-stage-table-wrap { padding: 0; }
@@ -4118,8 +4125,11 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 
 .rep-stage-table .mrow > td {
   padding: 12px 12px;
-  border-bottom: 1px solid var(--hairline);
+  border-bottom: none;
   vertical-align: middle;
+}
+.rep-stage-table tbody tr.mrow:nth-child(odd) > td {
+  background: color-mix(in srgb, var(--surface-2) 45%, transparent);
 }
 .rep-stage-table .mrow:hover > td { background: var(--surface-2); }
 .rep-stage-table .rep-stage-name .mname {
