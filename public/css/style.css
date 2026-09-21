@@ -6835,6 +6835,13 @@ body.is-fullpage #page-notfound.active {
   background: var(--accent);
   color: #ffffff;
 }
+.nf-titlebar-brand {
+  display: inline-flex; align-items: center;
+  color: #ffffff;
+}
+.nf-titlebar-brand svg {
+  height: 24px; width: auto; display: block;
+}
 .nf-titlebar-spacer { flex: 1 1 auto; }
 .nf-titlebar-btns { display: inline-flex; gap: 10px; align-items: center; }
 .nf-tb-btn {
