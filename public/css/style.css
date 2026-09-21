@@ -17066,7 +17066,11 @@ input[type="checkbox"]:checked {
   border-color: var(--text-muted);
 }
 
-/* Status dropdown (Abertas/Atrasadas/Concluídas) também 32px */
+/* Status dropdown (Abertas/Atrasadas/Concluídas) também 32px.
+   Default (all) fica no branco; variantes semânticas (open/late/done) pintam
+   trigger inteiro com a cor do status pra dar sinal visual imediato de filtro
+   ativo — precisa vencer o override neutro acima (spec 1-2-0) por isso as
+   regras variant vêm scoped nos mesmos ids. */
 #page-list .filters-bar .demand-status-drop-btn,
 #page-mine .filters-bar .demand-status-drop-btn {
   height: 32px;
@@ -17079,6 +17083,42 @@ input[type="checkbox"]:checked {
 #page-list .filters-bar .demand-status-drop-btn:hover,
 #page-mine .filters-bar .demand-status-drop-btn:hover {
   border-color: var(--text-muted);
+}
+#page-list .filters-bar .demand-status-drop-btn.is-status-open,
+#page-mine .filters-bar .demand-status-drop-btn.is-status-open {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+#page-list .filters-bar .demand-status-drop-btn.is-status-open:hover,
+#page-mine .filters-bar .demand-status-drop-btn.is-status-open:hover {
+  background: var(--accent-hover, var(--accent));
+  border-color: var(--accent-hover, var(--accent));
+  color: #fff;
+}
+#page-list .filters-bar .demand-status-drop-btn.is-status-late,
+#page-mine .filters-bar .demand-status-drop-btn.is-status-late {
+  background: var(--danger, #ef4444);
+  border-color: var(--danger, #ef4444);
+  color: #fff;
+}
+#page-list .filters-bar .demand-status-drop-btn.is-status-late:hover,
+#page-mine .filters-bar .demand-status-drop-btn.is-status-late:hover {
+  background: color-mix(in srgb, var(--danger, #ef4444) 88%, #000);
+  border-color: color-mix(in srgb, var(--danger, #ef4444) 88%, #000);
+  color: #fff;
+}
+#page-list .filters-bar .demand-status-drop-btn.is-status-done,
+#page-mine .filters-bar .demand-status-drop-btn.is-status-done {
+  background: var(--success, #16a34a);
+  border-color: var(--success, #16a34a);
+  color: #fff;
+}
+#page-list .filters-bar .demand-status-drop-btn.is-status-done:hover,
+#page-mine .filters-bar .demand-status-drop-btn.is-status-done:hover {
+  background: color-mix(in srgb, var(--success, #16a34a) 88%, #000);
+  border-color: color-mix(in srgb, var(--success, #16a34a) 88%, #000);
+  color: #fff;
 }
 
 /* Toggle de agrupamento: mesmo tamanho dos outros ícones do filter bar */
