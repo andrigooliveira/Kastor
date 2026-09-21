@@ -6344,6 +6344,145 @@ body.is-resizing-detail * { cursor: col-resize !important; user-select: none !im
   height: 16px !important;
 }
 
+/* ── Redesign impeccable: Dossiê de demanda (/demands/:id) ──
+   THESIS: detalhe = DOSSIÊ. Header (título + breadcrumb) → responsável
+   (interativo) → ribbon tipográfica de metadados (prioridade + prazos +
+   datas) → sections com barra roxa 3px (Briefing/Anexos/Apontamentos).
+   Refuse: card 'Etapa atual' (redundante com pipeline do topbar) + grid
+   solto de 4 datas com ícones coloridos. */
+.dd-dossier { gap: 20px; }
+.dd-header { display: flex; flex-direction: column; gap: 6px; }
+
+/* Breadcrumb items com mini avatar (14px) antes do nome — cliente (foto ou
+   inicial+cor), projeto (inicial+cor), fluxo (ícone lucide ou foto). */
+.dd-crumb-item {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-width: 0;
+}
+.dd-crumb-avatar {
+  width: 16px; height: 16px; border-radius: 4px;
+  flex-shrink: 0;
+  background-size: cover; background-position: center;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 700; letter-spacing: 0;
+  text-transform: uppercase;
+  line-height: 1;
+}
+.dd-crumb-avatar--icon {
+  background: var(--surface-3);
+  color: var(--text-dim);
+}
+.dd-crumb-avatar svg,
+.dd-crumb-avatar i[data-lucide] {
+  width: 10px !important; height: 10px !important;
+}
+
+/* Responsável — bloco próprio, label pequeno + owner-picker inline compacto. */
+.dd-owner-row { display: flex; flex-direction: column; gap: 6px; }
+.dd-owner-label {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
+  color: var(--text-muted); text-transform: uppercase;
+}
+.dd-owner-picker .owner-picker {
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+}
+
+/* Ribbon tipográfica de metadados — mesma linguagem do KPI line da /capacity.
+   Cada item é inline-flex com label pequeno em cima e value logo abaixo;
+   hairline vertical entre itens; wrap suave em larguras estreitas. */
+.dd-ribbon {
+  display: flex; align-items: stretch;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+  padding: 12px 0;
+  margin: 0;
+}
+.dd-ribbon-item {
+  display: inline-flex; flex-direction: column; gap: 4px;
+  padding: 0 20px;
+  min-width: 0;
+}
+.dd-ribbon-item:first-child { padding-left: 0; }
+.dd-ribbon-item + .dd-ribbon-item { border-left: 1px solid var(--hairline); }
+.dd-ribbon-label {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.dd-ribbon-value {
+  font-size: 13px; font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.dd-ribbon-muted { color: var(--text-muted); font-weight: 400; }
+
+/* Sections: mesma linguagem da /reports e /capacity (barra roxa 3px + small caps). */
+.dd-section { display: flex; flex-direction: column; gap: 10px; }
+.dd-section-head {
+  display: flex; align-items: center; gap: 10px;
+}
+.dd-section-title {
+  font-size: 12px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .05em;
+  color: var(--text-dim);
+  position: relative;
+  padding-left: 12px;
+  flex: 0 0 auto;
+}
+.dd-section-title::before {
+  content: ''; position: absolute; left: 0; top: 3px; bottom: 3px;
+  width: 3px; border-radius: 2px;
+  background: var(--accent, #7A00FF);
+}
+.dd-section-count {
+  font-weight: 500; color: var(--text-muted);
+  text-transform: none; letter-spacing: 0;
+  font-size: 11px;
+}
+.dd-section-actions {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.dd-icon-btn {
+  width: 26px; height: 26px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid var(--hairline);
+  border-radius: 6px;
+  color: var(--text-muted); cursor: pointer;
+  padding: 0;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.dd-icon-btn:hover {
+  background: var(--surface-2);
+  color: var(--accent-text);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--hairline));
+}
+
+/* Empty state compacto — texto dim + itálico sutil, sem box vazio. */
+.dd-empty {
+  font-size: 12px; color: var(--text-muted);
+  padding: 4px 0;
+}
+
+.dd-briefing-slot { padding: 0; }
+
+.dd-recurrence-note {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--hairline); border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+  font-size: 12.5px; color: var(--text-dim);
+}
+.dd-recurrence-note i, .dd-recurrence-note svg { color: var(--accent-text); }
+.dd-recurrence-note strong { color: var(--text); font-weight: 600; }
+
 /* Links dentro da descrição em roxo (mesma cor do link do briefing). */
 .detail-description a,
 #detail-description-view a { color: var(--accent-text); text-decoration: none; word-break: break-word; }

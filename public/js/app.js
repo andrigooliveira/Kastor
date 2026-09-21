@@ -12183,91 +12183,119 @@ function renderDetail() {
           <i data-lucide="panel-right-close" class="ic-sm"></i>
         </button>
       </div>
-      <!-- ── COLUNA ESQUERDA — dados da demanda ── -->
-      <div class="detail-col detail-col-left">
-        <div class="detail-title-block">
+      <!-- ── COLUNA ESQUERDA — dossiê da demanda ── -->
+      <div class="detail-col detail-col-left dd-dossier">
+        <!-- Header: título + breadcrumb (squad/cliente/projeto/fluxo) -->
+        <div class="dd-header">
           <div class="detail-title" title="Clique para renomear" onclick="startEditDemandTitle(this)">${esc(d.name)}</div>
           <div class="detail-breadcrumb">
             ${(() => {
               const ws = wsById(d.workspaceId);
               return ws ? `<span class="pill detail-breadcrumb-squad" style="color:${ws.color || '#7A00FF'};background:${hexDim(ws.color)}"><span class="pill-dot" style="background:${ws.color || '#7A00FF'}"></span>${esc(ws.name)}</span>` : '';
             })()}
-            ${clientName ? `<span>${esc(clientName)}</span>` : ''}
+            ${(() => {
+              const client = p ? clients.find(c => c.id === p.clientId) : null;
+              if (!client && !clientName) return '';
+              const cname = client?.name || clientName;
+              const av = client?.avatar
+                ? `<span class="dd-crumb-avatar" style="background-image:url('${esc(client.avatar)}')"></span>`
+                : `<span class="dd-crumb-avatar" style="background:${hexDim(client?.color || '#7A00FF')};color:${client?.color || '#7A00FF'}">${esc((cname || '?').charAt(0).toUpperCase())}</span>`;
+              return `<span class="dd-crumb-item">${av}<span>${esc(cname)}</span></span>`;
+            })()}
             ${clientName && projName ? '<i data-lucide="chevron-right" class="ic-xs"></i>' : ''}
-            ${projName ? `<span>${esc(projName)}</span>` : ''}
+            ${projName ? (() => {
+              const av = `<span class="dd-crumb-avatar" style="background:${hexDim(p?.color || '#7A00FF')};color:${p?.color || '#7A00FF'}">${esc((projName || '?').charAt(0).toUpperCase())}</span>`;
+              return `<span class="dd-crumb-item">${av}<span>${esc(projName)}</span></span>`;
+            })() : ''}
             ${projName && flowName ? '<i data-lucide="chevron-right" class="ic-xs"></i>' : ''}
-            ${flowName ? `<span>${esc(flowName)}</span>` : ''}
+            ${flowName ? (() => {
+              let ic;
+              if (!flow?.icon) {
+                ic = `<span class="dd-crumb-avatar dd-crumb-avatar--icon"><i data-lucide="workflow" class="ic-xs"></i></span>`;
+              } else if (typeof flow.icon === 'string' && flow.icon.startsWith('lucide:')) {
+                ic = `<span class="dd-crumb-avatar dd-crumb-avatar--icon"><i data-lucide="${esc(flow.icon.slice(7))}" class="ic-xs"></i></span>`;
+              } else {
+                ic = `<span class="dd-crumb-avatar" style="background-image:url('${esc(flow.icon)}')"></span>`;
+              }
+              return `<span class="dd-crumb-item">${ic}<span>${esc(flowName)}</span></span>`;
+            })() : ''}
           </div>
         </div>
 
-        <div class="detail-block">
-          <div class="detail-field-label">Responsável</div>
-          <div id="detail-owner-picker"></div>
+        <!-- Responsável (bloco próprio, interativo) -->
+        <div class="dd-owner-row">
+          <div class="dd-owner-label">Responsável</div>
+          <div id="detail-owner-picker" class="dd-owner-picker"></div>
         </div>
 
-        ${stage ? `<div class="detail-stage-card" style="--stage-color:${esc(stage.color || '#7A00FF')}">
-          <div class="detail-stage-card-icon"><i data-lucide="${stage.done ? 'check-circle' : 'compass'}" class="ic-sm"></i></div>
-          <div class="detail-stage-card-info">
-            <div class="detail-stage-card-label">${stage.done ? 'Concluída na etapa' : 'Etapa atual'}</div>
-            <div class="detail-stage-card-name">${esc(stage.label)}</div>
+        <!-- Ribbon tipográfica: prioridade + prazos + datas em uma linha compacta -->
+        <div class="dd-ribbon">
+          <div class="dd-ribbon-item">
+            <div class="dd-ribbon-label">Prioridade</div>
+            <div class="dd-ribbon-value">${priorityPill(d.priority)}</div>
           </div>
-          ${d.stageDueDate ? `<div class="detail-stage-card-due"><i data-lucide="clock" class="ic-xs"></i> Prazo desta etapa: <b>${fmtDate(d.stageDueDate)}</b></div>` : ''}
-        </div>` : ''}
-
-        <div class="detail-meta-row">
-          <div class="detail-field">
-            <div class="detail-field-label">Prioridade</div>
-            <div class="detail-field-value">${priorityPill(d.priority)}</div>
+          ${stage ? `<div class="dd-ribbon-item">
+            <div class="dd-ribbon-label">Prazo da etapa</div>
+            <div class="dd-ribbon-value">${d.stageDueDate ? fmtDate(d.stageDueDate) : '<span class="dd-ribbon-muted">—</span>'}</div>
+          </div>` : ''}
+          <div class="dd-ribbon-item">
+            <div class="dd-ribbon-label">Entrou na etapa</div>
+            <div class="dd-ribbon-value">${fmtDateTime(d.stageEnteredAt)}</div>
           </div>
-          <div class="detail-field">
-            <div class="detail-field-label">Entrou na etapa em</div>
-            <div class="detail-field-value"><i data-lucide="log-in" class="ic-xs meta-ico meta-ico-info"></i> ${fmtDateTime(d.stageEnteredAt)}</div>
+          <div class="dd-ribbon-item">
+            <div class="dd-ribbon-label">Criada em</div>
+            <div class="dd-ribbon-value">${fmtDateTime(d.createdAt)}</div>
           </div>
-          <div class="detail-field">
-            <div class="detail-field-label">Criada em</div>
-            <div class="detail-field-value"><i data-lucide="calendar-plus" class="ic-xs meta-ico meta-ico-brand"></i> ${fmtDateTime(d.createdAt)}</div>
-          </div>
-          <div class="detail-field">
-            <div class="detail-field-label">Concluída em</div>
-            <div class="detail-field-value"><i data-lucide="check-circle-2" class="ic-xs meta-ico ${d.completedAt ? 'meta-ico-done' : 'meta-ico-pending'}"></i> ${d.completedAt ? fmtDate(d.completedAt) : '—'}</div>
+          <div class="dd-ribbon-item">
+            <div class="dd-ribbon-label">Concluída em</div>
+            <div class="dd-ribbon-value">${d.completedAt ? fmtDate(d.completedAt) : '<span class="dd-ribbon-muted">—</span>'}</div>
           </div>
         </div>
 
-        <div class="detail-block">
-          <div class="detail-field-label detail-field-label-row">
-            <span>Descrição</span>
+        <!-- Section: Briefing / Descrição -->
+        <div class="dd-section">
+          <div class="dd-section-head">
+            <span class="dd-section-title">Briefing e descrição</span>
             <button class="detail-edit-btn" title="Editar descrição e link do briefing" onclick="editDescriptionInline()"><i data-lucide="pencil" class="ic-sm"></i></button>
             <span class="inline-edit-status-chip" id="edit-desc-status-chip"></span>
           </div>
           <div id="detail-description-view">
             ${d.description
               ? `<div class="detail-description md-body ${isHtmlContent(d.description) ? 'is-html' : ''}">${isHtmlContent(d.description) ? linkifyHtmlPreserveAnchors(d.description) : mdRender(d.description)}</div>`
-              : '<div class="hours-empty" style="text-align:left">Sem descrição cadastrada.</div>'}
+              : '<div class="dd-empty">Sem descrição cadastrada.</div>'}
           </div>
-          <div id="detail-briefing-view" class="detail-briefing-slot">
-            ${d.briefing ? `<a class="detail-briefing-link" href="${esc(normalizeUrl(d.briefing))}" target="_blank" rel="noopener noreferrer">${esc(d.briefing)}</a>` : '<span class="detail-briefing-placeholder">Sem briefing cadastrado.</span>'}
-          </div>
-        </div>
-
-        <div class="detail-block">
-          <div class="detail-field-label">Anexos</div>
-          <div class="demand-att-list" id="detail-attachments-list">${renderDemandAttList(d.attachments || [], true)}</div>
-          <div class="detail-attach-chips">
-            <input type="file" id="detail-att-file-input" multiple style="display:none" onchange="handleDetailAttachmentFiles(event)">
-            <button class="attach-chip attach-chip-icon" title="Anexar arquivo" onclick="$('detail-att-file-input').click()"><i data-lucide="paperclip" class="ic-sm"></i></button>
-            <input type="file" id="detail-att-img-input" accept="image/*" multiple style="display:none" onchange="handleDetailAttachmentImages(event)">
-            <button class="attach-chip attach-chip-icon" title="Anexar imagem" onclick="$('detail-att-img-input').click()"><i data-lucide="image" class="ic-sm"></i></button>
-            <button class="attach-chip attach-chip-icon" title="Anexar link" onclick="addDetailAttachmentLink()"><i data-lucide="link" class="ic-sm"></i></button>
+          <div id="detail-briefing-view" class="detail-briefing-slot dd-briefing-slot">
+            ${d.briefing ? `<a class="detail-briefing-link" href="${esc(normalizeUrl(d.briefing))}" target="_blank" rel="noopener noreferrer">${esc(d.briefing)}</a>` : '<span class="dd-empty">Sem briefing cadastrado.</span>'}
           </div>
         </div>
 
-        <div class="detail-block">
-          <div class="detail-field-label">Apontamentos ${totalHours > 0 ? `<span class="detail-block-total">· ${fmtHours(totalHours)}</span>` : ''}</div>
-          <div class="time-list">${timeRows || '<div class="hours-empty" style="text-align:left">Nenhuma hora apontada ainda.</div>'}</div>
+        <!-- Section: Anexos -->
+        <div class="dd-section">
+          <div class="dd-section-head">
+            <span class="dd-section-title">Anexos${(d.attachments || []).length ? ` <span class="dd-section-count">· ${(d.attachments || []).length}</span>` : ''}</span>
+            <div class="dd-section-actions">
+              <input type="file" id="detail-att-file-input" multiple style="display:none" onchange="handleDetailAttachmentFiles(event)">
+              <button class="dd-icon-btn" title="Anexar arquivo" onclick="$('detail-att-file-input').click()"><i data-lucide="paperclip" class="ic-sm"></i></button>
+              <input type="file" id="detail-att-img-input" accept="image/*" multiple style="display:none" onchange="handleDetailAttachmentImages(event)">
+              <button class="dd-icon-btn" title="Anexar imagem" onclick="$('detail-att-img-input').click()"><i data-lucide="image" class="ic-sm"></i></button>
+              <button class="dd-icon-btn" title="Anexar link" onclick="addDetailAttachmentLink()"><i data-lucide="link" class="ic-sm"></i></button>
+            </div>
+          </div>
+          ${(d.attachments || []).length
+            ? `<div class="demand-att-list" id="detail-attachments-list">${renderDemandAttList(d.attachments || [], true)}</div>`
+            : `<div class="demand-att-list" id="detail-attachments-list"><div class="dd-empty">Nenhum arquivo anexado.</div></div>`}
         </div>
 
-        ${d.recurrence?.enabled ? `<div class="detail-block detail-recurrence-note">
-          <i data-lucide="repeat" class="ic-sm" style="color:var(--accent-text)"></i>
+        <!-- Section: Apontamentos -->
+        <div class="dd-section">
+          <div class="dd-section-head">
+            <span class="dd-section-title">Apontamentos${totalHours > 0 ? ` <span class="dd-section-count">· ${fmtHours(totalHours)}</span>` : ''}</span>
+          </div>
+          <div class="time-list">${timeRows || '<div class="dd-empty">Nenhuma hora apontada ainda.</div>'}</div>
+        </div>
+
+        ${d.recurrence?.enabled ? `<div class="dd-recurrence-note">
+          <i data-lucide="repeat" class="ic-sm"></i>
           <span>Recorrente${d.recurrence.paused ? ' <strong style="color:var(--warn)">(pausada)</strong>' : ''} · <strong>${esc(recurrenceSummary(d.recurrence))}</strong></span>
         </div>` : ''}
       </div>
