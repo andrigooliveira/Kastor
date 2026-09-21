@@ -4125,11 +4125,8 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 
 .rep-stage-table .mrow > td {
   padding: 12px 12px;
-  border-bottom: none;
+  border-bottom: 1px solid var(--hairline);
   vertical-align: middle;
-}
-.rep-stage-table tbody tr.mrow:nth-child(odd) > td {
-  background: color-mix(in srgb, var(--surface-2) 45%, transparent);
 }
 .rep-stage-table .mrow:hover > td { background: var(--surface-2); }
 .rep-stage-table .rep-stage-name .mname {
@@ -4141,9 +4138,6 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 }
 .rep-stage-table .mrow > td.mcol-name { border-left: 0; padding-left: 12px; }
 
-.rep-col-time {
-  display: block;
-}
 .rep-time-val {
   font-size: 14px; font-weight: 600;
   color: var(--text);
