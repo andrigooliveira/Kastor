@@ -8179,7 +8179,6 @@ function renderMine() {
     return `<tr class="mrow" data-prio="${prio.value}" data-due="${u}" onclick="showDetail('${d.id}')" title="Prioridade: ${esc(prio.label)}">
       <td class="mcol-name">
         <div class="mname">${esc(d.name)}</div>
-        <div class="mname-sub" title="${esc((p?.client || '') + ' · ' + (p?.name || ''))}">${esc(p?.client || '—')} · ${esc(p?.name || '—')}</div>
       </td>
       <td class="mcol-squad">${wsCell}</td>
       <td class="mcol-client col-truncate" title="${esc(p?.client || '')}">${esc(p?.client || '—')}</td>
