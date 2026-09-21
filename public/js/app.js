@@ -183,6 +183,8 @@ function pageUrlFor(page)  {
   if (page === 'demand-detail') {
     return detailId ? demandPath(detailId) : '/dashboard';
   }
+  // 404: preserva a URL digitada (não canoniza pra /dashboard).
+  if (page === 'notfound') return location.pathname;
   return PAGE_TO_PATH[page] || '/dashboard';
 }
 function currentPageUrl()  { return pageUrlFor(currentPage); }
@@ -285,7 +287,8 @@ function parseRoute(path) {
   if ((m = p.match(/^\/recurring\/lists$/)))                return { page: 'recurring',    tab: 'listas' };
   if ((m = p.match(/^\/recurring\/new$/)))                  return { page: 'recurring',    modal: 'recurring', op: 'new' };
   if ((m = p.match(/^\/recurring\/([^/]+)$/)))              return { page: 'recurring',    modal: 'recurring', op: 'edit', id: m[1] };
-  return { page: 'dashboard' };
+  // Rota inválida: manda pra tela 404 dedicada, preservando o path digitado.
+  return { page: 'notfound', path: path || p };
 }
 function applyRoute() {
   const r = parseRoute(location.pathname);
@@ -3121,7 +3124,7 @@ function showConfirm(opts) {
   $('confirm-message').innerHTML = o.message;
   const okBtn = $('confirm-ok-btn');
   okBtn.textContent = o.okLabel;
-  okBtn.className = 'btn ' + (o.danger ? 'btn-danger' : 'btn-primary');
+  okBtn.className = 'btn ' + (o.danger ? 'btn-danger' : 'btn-confirm');
   // Ícone tematizado: injeta antes da mensagem se ainda não existe
   const kind = o.kind || (o.danger ? 'danger' : 'info');
   const ICONS = {
@@ -3165,7 +3168,7 @@ function showPrompt(opts) {
       </div>
       <div class="modal-footer">
         <button class="btn btn-ghost" onclick="promptCancel()">Cancelar</button>
-        <button class="btn btn-primary" id="prompt-ok-btn" onclick="promptAccept()">OK</button>
+        <button class="btn btn-confirm" id="prompt-ok-btn" onclick="promptAccept()">OK</button>
       </div>
     </div>`;
     document.body.appendChild(p);
@@ -4360,8 +4363,15 @@ const PAGE_TITLES = {
   trash: 'Lixeira', recurringDemands: 'Demandas Recorrentes',
   devtools: 'Dev Tools', passwords: 'Cofre de Senhas', kb: 'Base de conhecimento',
   forms: 'Formulários', dashboards: 'Dashboards', performance: 'Performance',
-  'post-editor': 'Editor de post', 'demand-detail': 'Demanda'
+  'post-editor': 'Editor de post', 'demand-detail': 'Demanda',
+  notfound: 'Página não encontrada'
 };
+/* Render da 404 — popula o path digitado e pinta ícones do botão. */
+function renderNotFound() {
+  const el = document.getElementById('nf-path');
+  if (el) el.textContent = location.pathname + (location.search || '');
+  if (window.lucide?.createIcons) lucide.createIcons();
+}
 function goPage(page) {
   hideTooltip();
   // Freelancer só navega em Minhas Demandas, no próprio perfil e no detalhe
@@ -4381,6 +4391,8 @@ function goPage(page) {
   _markFiltersDirty(page);
   document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.page === page));
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + page));
+  // 404 renderiza fullpage — esconde sidebar + topbar via body class.
+  document.body.classList.toggle('is-fullpage', page === 'notfound');
   _syncNavMoreActiveHint(page);
   $('topbar-title').textContent = PAGE_TITLES[page] || '';
   // Botão Voltar aparece apenas na página de detalhe da demanda.
@@ -4810,6 +4822,7 @@ function renderCurrent() {
     case 'post-editor': renderPostEditorFromRoute(); break;
     case 'demand-detail': if (detailId) renderDetail(); break;
     case 'help':       renderDocsFromRoute(); break;
+    case 'notfound':   renderNotFound(); break;
     case 'clients': {
       // Decide entre grid, detalhe de cliente ou detalhe de projeto sem perder estado
       // quando refreshData() roda com um modal aberto (URL temporariamente em /projects/<id>/edit).
@@ -10003,35 +10016,43 @@ function _perfRender(host, curRows, prevRows) {
   // renderPerformance já trata caso curRows.length === 0 (mostra config ou empty).
   // Este render é chamado só quando há dados.
   host.innerHTML = `
-    <div class="perf-kpis">${_perfRenderKpis(cur, prev)}</div>
-    <div class="perf-charts-grid">
-      <div class="perf-card">
-        <div class="perf-card-title">Leads por campanha</div>
-        <div class="perf-card-body">${_perfRenderCampaignBars(camp.rows, 'leads', 'purple', v => _perfFmtInt(v), true)}</div>
+    <div class="perf-kpi-line">${_perfRenderKpis(cur, prev)}</div>
+    <div class="perf-sections-grid">
+      <div class="perf-section">
+        <div class="perf-section-head">
+          <span class="perf-section-title">Leads por campanha</span>
+          <span class="perf-section-hint">Top 8 por volume · % do total à direita.</span>
+        </div>
+        <div class="perf-section-body">${_perfRenderCampaignBars(camp.rows, 'leads', 'purple', v => _perfFmtInt(v), true)}</div>
       </div>
-      <div class="perf-card">
-        <div class="perf-card-title perf-card-title-flex">
-          <span>Investimento × Leads por campanha</span>
+      <div class="perf-section">
+        <div class="perf-section-head">
+          <span class="perf-section-title">Investimento × Leads por campanha</span>
           ${_perfInlineLegend()}
         </div>
-        <div class="perf-card-body">${_perfRenderCampaignCombo(camp.rows)}</div>
+        <div class="perf-section-body">${_perfRenderCampaignCombo(camp.rows)}</div>
       </div>
-      <div class="perf-card">
-        <div class="perf-card-title">CPL por campanha</div>
-        <div class="perf-card-body">${_perfRenderCampaignBars(camp.rows, 'cpl', 'orange', v => _perfFmtBRLexact(v), false)}</div>
+      <div class="perf-section">
+        <div class="perf-section-head">
+          <span class="perf-section-title">CPL por campanha</span>
+          <span class="perf-section-hint">Custo por lead — quanto menor, melhor.</span>
+        </div>
+        <div class="perf-section-body">${_perfRenderCampaignBars(camp.rows, 'cpl', 'orange', v => _perfFmtBRLexact(v), false)}</div>
       </div>
-      <div class="perf-card">
-        <div class="perf-card-title perf-card-title-flex">
-          <span>Evolução no período</span>
+      <div class="perf-section">
+        <div class="perf-section-head">
+          <span class="perf-section-title">Evolução no período</span>
           ${_perfInlineLegend()}
         </div>
-        <div class="perf-card-body">${_perfRenderTimeSeries(series)}</div>
+        <div class="perf-section-body">${_perfRenderTimeSeries(series)}</div>
       </div>
     </div>
     ${_perfRenderAlerts(curRows)}
-    <div class="perf-card perf-table-card">
-      <div class="perf-card-title">Resumo detalhado por campanha</div>
-      <div class="perf-card-body">${_perfRenderTable(camp)}</div>
+    <div class="perf-section perf-section--table">
+      <div class="perf-section-head">
+        <span class="perf-section-title">Resumo detalhado por campanha</span>
+      </div>
+      <div class="perf-section-body">${_perfRenderTable(camp)}</div>
     </div>
   `;
   _perfFlushHovers();
@@ -10053,20 +10074,15 @@ function _perfRenderKpis(cur, prev) {
     const rawDir = Math.abs(diff) < 1e-9 ? 'flat' : (diff > 0 ? 'up' : 'down');
     const good = k.invert ? (rawDir === 'down') : (rawDir === 'up');
     const dir = rawDir === 'flat' ? 'flat' : (good ? 'up' : 'down');
-    const arrow = dir === 'up' ? '↑' : dir === 'down' ? '↓' : '—';
+    const arrow = dir === 'up' ? '↑' : dir === 'down' ? '↓' : '·';
     const deltaTxt = hasPrev ? `${arrow} ${k.fmt(Math.abs(diff))}` : '—';
     return `
-      <div class="perf-kpi">
-        <div class="perf-kpi-top">
-          <div class="perf-kpi-icon perf-kpi-icon-${k.icon}"><i data-lucide="${k.icon}" class="ic-md"></i></div>
-          <div class="perf-kpi-body">
-            <div class="perf-kpi-label">${esc(k.label)}</div>
-            <div class="perf-kpi-value">${k.value}</div>
-          </div>
-        </div>
+      <div class="perf-kpi-item">
+        <div class="perf-kpi-label">${esc(k.label)}</div>
+        <div class="perf-kpi-value">${k.value}</div>
         <div class="perf-kpi-delta perf-kpi-delta-${dir}">
           <span class="perf-kpi-delta-value">${deltaTxt}</span>
-          <span class="perf-kpi-delta-caption">vs período anterior</span>
+          <span class="perf-kpi-delta-caption">vs anterior</span>
         </div>
       </div>
     `;
@@ -10519,15 +10535,15 @@ function _perfRenderAlerts(rowsIn) {
   const critCount = alerts.filter(a => /[🔻⚠️❗📉]/.test(a.alertStatus || '')).length;
   const openAttr = critCount > 0 ? 'open' : '';
   return `
-    <details class="perf-card perf-alerts-card" ${openAttr}>
-      <summary class="perf-card-title perf-alerts-summary">
-        <span class="perf-alerts-summary-label">
+    <details class="perf-section perf-section--alerts" ${openAttr}>
+      <summary class="perf-section-head perf-alerts-summary">
+        <span class="perf-section-title perf-alerts-summary-label">
           <i data-lucide="chevron-right" class="ic-sm perf-alerts-chevron"></i>
           Alertas por campanha
         </span>
         <span class="perf-alerts-count ${critCount === 0 ? 'is-ok' : ''}">${alerts.length}</span>
       </summary>
-      <div class="perf-card-body">
+      <div class="perf-section-body">
         <div class="perf-alerts">
           ${alerts.map(a => {
             const critical = /[🔻⚠️❗📉]/.test(a.alertStatus || '');
@@ -12363,7 +12379,7 @@ function renderDetail() {
                   </div>
                   <div class="chat-compose-foot-right">
                     <button class="btn btn-ghost btn-sm" onclick="cancelCommentCompose()">Cancelar</button>
-                    <button class="btn btn-primary btn-sm" onclick="sendComment()">Salvar</button>
+                    <button class="btn btn-confirm btn-sm" onclick="sendComment()">Salvar</button>
                   </div>
                 </div>
                 <div class="mention-pop" id="mention-pop"></div>
@@ -13538,7 +13554,7 @@ function renderDetailStages(d) {
         <div style="flex:1"></div>
         <button id="stages-edit-reset-flow" class="btn btn-ghost btn-sm" onclick="resetStagesToFlowDefault()" title="Volta fluxo, etapas novas e datas ao padrão do fluxo (mantém executores e nomes editados)">Resetar ao padrão do fluxo</button>
         <button id="stages-edit-reset" class="btn btn-ghost btn-sm" onclick="resetStagesDraft()" ${dirty ? '' : 'disabled'}>Descartar alterações</button>
-        <button id="stages-edit-save" class="btn btn-primary btn-sm" onclick="saveStagesDraft()" ${!dirty ? 'disabled' : ''}>Salvar</button>
+        <button id="stages-edit-save" class="btn btn-confirm btn-sm" onclick="saveStagesDraft()" ${!dirty ? 'disabled' : ''}>Salvar</button>
       </div>
     </div>`;
   paintIcons();
@@ -13937,7 +13953,7 @@ function renderDetailDirtyBadge() {
   bar.className = 'detail-pending-bar';
   bar.innerHTML = `
     <span class="detail-pending-msg"><i data-lucide="alert-triangle" class="ic-sm"></i> Alterações pendentes</span>
-    <button class="btn btn-primary btn-sm" onclick="commitDetailEdits()">Salvar</button>
+    <button class="btn btn-confirm btn-sm" onclick="commitDetailEdits()">Salvar</button>
     <button class="btn btn-ghost btn-sm" onclick="cancelDetailEdits()">Descartar</button>`;
   const footer = document.getElementById('detail-footer');
   if (footer) footer.insertBefore(bar, footer.firstChild);
@@ -16062,7 +16078,7 @@ function startEditTimeEntry(eid) {
     </div>
     <div style="display:flex;gap:6px;align-items:end;padding-bottom:4px">
       <button class="btn btn-ghost btn-sm" onclick="renderDetail()">Cancelar</button>
-      <button class="btn btn-primary btn-sm" onclick="saveEditTimeEntry('${eid}')">Salvar</button>
+      <button class="btn btn-confirm btn-sm" onclick="saveEditTimeEntry('${eid}')">Salvar</button>
     </div>
   </div>`;
   paintIcons();
@@ -16850,7 +16866,7 @@ function startEditComment(cid) {
         </div>
         <div class="chat-compose-foot-right">
           <button class="btn btn-ghost btn-sm" onclick="cancelEditComment('${cid}')">Cancelar</button>
-          <button class="btn btn-primary btn-sm" onclick="saveEditComment('${cid}')">Salvar</button>
+          <button class="btn btn-confirm btn-sm" onclick="saveEditComment('${cid}')">Salvar</button>
         </div>
       </div>
     </div>`;
@@ -18341,6 +18357,16 @@ function renderUsers() {
   $('user-archive-toggle').textContent = showArchivedUsers ? 'Ocultar desativados' : `Ver desativados (${archivedUsers.length})`;
   $('user-archive-toggle').style.display = archivedUsers.length || showArchivedUsers ? '' : 'none';
 
+  // Contadores no header do dossiê (N ativos · N desativados)
+  const headerCounter = $('users-header-counter');
+  if (headerCounter) {
+    const parts = [`${activeUsers.length} ativos`];
+    if (archivedUsers.length) parts.push(`${archivedUsers.length} desativados`);
+    parts.push(`${roles.length} áreas`);
+    parts.push(`${(positions || []).length} cargos`);
+    headerCounter.textContent = parts.join(' · ');
+  }
+
   renderUsersWsFilter();
   // Filtro por workspace (multi-seleção). Nenhum selecionado = todos. Admins entram
   // em QUALQUER filtro — transitam todos os workspaces, sem workspace definido.
@@ -18359,8 +18385,14 @@ function renderUsers() {
     const wsNames = u.isAdmin
       ? '<span style="color:var(--text-muted);font-size:12px">Todos (admin)</span>'
       : (u.workspaces || []).map(id => wsById(id)).filter(Boolean).map(w => `<span class="pill pill-muted" style="font-size:10px">${esc(w.name)}</span>`).join(' ') || '—';
-    return `<tr class="row-hover-actions" style="${u.active === false ? 'opacity:.55' : ''}">
-      <td>${cellUser(u)}</td>
+    const kebab = me.isAdmin ? _usKebabMenu('user-' + u.id, [
+      { icon: 'pencil', label: 'Editar', onclick: `openUserModal('${u.id}')` },
+      (u.id !== me.id ? (u.active !== false
+        ? { icon: 'user-x', label: 'Desativar', danger: true, onclick: `toggleUser('${u.id}')` }
+        : { icon: 'user-check', label: 'Reativar', onclick: `toggleUser('${u.id}')` }) : null)
+    ].filter(Boolean)) : '';
+    return `<tr class="mrow" style="${u.active === false ? 'opacity:.55' : ''}">
+      <td class="mcol-name">${cellUser(u)}</td>
       <td style="color:var(--text-dim)">${esc(u.username)}</td>
       <td>${esc(u.role || '—')}</td>
       <td>${esc(u.position || '—')}</td>
@@ -18373,13 +18405,7 @@ function renderUsers() {
             ? '<span class="pill pill-freelancer">Freelancer</span>'
             : '<span class="pill pill-muted">Equipe</span>'))}</td>
       <td>${u.active !== false ? '<span class="pill pill-success">Ativo</span>' : '<span class="pill pill-muted">Desativado</span>'}</td>
-      <td>${me.isAdmin ? `<div class="row-actions">
-          <button class="detail-icon-btn" title="Editar" onclick="openUserModal('${u.id}')"><i data-lucide="pencil" class="ic-sm"></i></button>
-          ${u.id !== me.id ? (u.active !== false
-            ? `<button class="detail-icon-btn danger" title="Desativar" onclick="toggleUser('${u.id}')"><i data-lucide="user-x" class="ic-sm"></i></button>`
-            : `<button class="detail-icon-btn" title="Reativar" onclick="toggleUser('${u.id}')"><i data-lucide="user-check" class="ic-sm"></i></button>`
-          ) : ''}
-        </div>` : ''}</td>
+      <td class="us-col-kebab">${kebab}</td>
     </tr>`;
   }).join('');
   renderRoles();
@@ -18430,17 +18456,58 @@ function renderRoles() {
   });
   $('roles-table-body').innerHTML = sorted.length ? sorted.map(r => {
     const count = users.filter(u => u.role === r.name && u.active !== false).length;
-    const actions = me.isAdmin ? `<div class="row-actions">
-          <button class="detail-icon-btn" title="Editar" onclick="openRoleModal('${r.id}')"><i data-lucide="pencil" class="ic-sm"></i></button>
-          <button class="detail-icon-btn danger" title="Excluir" onclick="deleteRole('${r.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
-        </div>` : '';
-    return `<tr class="row-hover-actions">
-      <td><strong>${esc(r.name)}</strong></td>
+    const kebab = me.isAdmin ? _usKebabMenu('role-' + r.id, [
+      { icon: 'pencil', label: 'Editar', onclick: `openRoleModal('${r.id}')` },
+      { icon: 'trash-2', label: 'Excluir', danger: true, onclick: `deleteRole('${r.id}')` }
+    ]) : '';
+    return `<tr class="mrow">
+      <td class="mcol-name"><strong>${esc(r.name)}</strong></td>
       <td>${count} ${count === 1 ? 'usuário' : 'usuários'}</td>
-      <td>${actions}</td>
+      <td class="us-col-kebab">${kebab}</td>
     </tr>`;
   }).join('') : `<tr><td colspan="3">${emptyState('Nenhuma área cadastrada', 'Adicione áreas para organizar a equipe.', 'users')}</td></tr>`;
 }
+
+/* Helper: kebab menu (⋮) com dropdown de ações. Usa <details><summary> +
+   position: fixed calculado no open pra escapar do overflow da table-wrap
+   (senão fica preso dentro da tabela). Fecha ao clicar fora via listener
+   global. */
+function _usKebabMenu(id, items) {
+  const menu = items.map(it => `
+    <button type="button" class="us-kebab-item${it.danger ? ' is-danger' : ''}" onclick="closeUsKebabs(); ${it.onclick}">
+      <i data-lucide="${it.icon}" class="ic-sm"></i> ${esc(it.label)}
+    </button>`).join('');
+  return `<details class="us-kebab" id="us-kebab-${id}" ontoggle="_usKebabToggle(this)">
+    <summary class="us-kebab-btn" title="Ações" onclick="event.stopPropagation()"><i data-lucide="more-horizontal" class="ic-sm"></i></summary>
+    <div class="us-kebab-menu">${menu}</div>
+  </details>`;
+}
+function _usKebabToggle(el) {
+  if (!el.open) return;
+  // Fecha outros abertos
+  document.querySelectorAll('details.us-kebab[open]').forEach(d => { if (d !== el) d.removeAttribute('open'); });
+  // Reposiciona o menu como fixed usando as coordenadas do botão
+  const btn = el.querySelector('.us-kebab-btn');
+  const menu = el.querySelector('.us-kebab-menu');
+  if (!btn || !menu) return;
+  const r = btn.getBoundingClientRect();
+  const menuW = 168, menuH = menu.offsetHeight || 80;
+  // Prefere abrir alinhado à direita do botão; abre pra cima se não couber embaixo.
+  const openUp = (r.bottom + menuH + 8) > window.innerHeight;
+  menu.style.position = 'fixed';
+  menu.style.top = openUp ? `${r.top - menuH - 6}px` : `${r.bottom + 6}px`;
+  menu.style.left = `${Math.max(8, r.right - menuW)}px`;
+  menu.style.right = 'auto';
+}
+function closeUsKebabs() {
+  document.querySelectorAll('details.us-kebab[open]').forEach(d => d.removeAttribute('open'));
+}
+document.addEventListener('click', (ev) => {
+  const inside = ev.target.closest && ev.target.closest('details.us-kebab');
+  if (!inside) closeUsKebabs();
+}, true);
+window.addEventListener('scroll', closeUsKebabs, true);
+window.addEventListener('resize', closeUsKebabs);
 function sortRolesBy(key) {
   if (roleSortKey === key) roleSortDir *= -1;
   else { roleSortKey = key; roleSortDir = 1; }
@@ -18472,14 +18539,14 @@ function renderPositions() {
   });
   wrap.innerHTML = sorted.length ? sorted.map(p => {
     const count = users.filter(u => u.position === p.name && u.active !== false).length;
-    const actions = me.isAdmin ? `<div class="row-actions">
-          <button class="detail-icon-btn" title="Editar" onclick="openPositionModal('${p.id}')"><i data-lucide="pencil" class="ic-sm"></i></button>
-          <button class="detail-icon-btn danger" title="Excluir" onclick="deletePosition('${p.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
-        </div>` : '';
-    return `<tr class="row-hover-actions">
-      <td><strong>${esc(p.name)}</strong></td>
+    const kebab = me.isAdmin ? _usKebabMenu('pos-' + p.id, [
+      { icon: 'pencil', label: 'Editar', onclick: `openPositionModal('${p.id}')` },
+      { icon: 'trash-2', label: 'Excluir', danger: true, onclick: `deletePosition('${p.id}')` }
+    ]) : '';
+    return `<tr class="mrow">
+      <td class="mcol-name"><strong>${esc(p.name)}</strong></td>
       <td>${count} ${count === 1 ? 'usuário' : 'usuários'}</td>
-      <td>${actions}</td>
+      <td class="us-col-kebab">${kebab}</td>
     </tr>`;
   }).join('') : `<tr><td colspan="3">${emptyState('Nenhum cargo cadastrado', 'Adicione cargos (Diretor de Arte, Copywriter Sênior, etc).', 'briefcase')}</td></tr>`;
 }
@@ -24865,46 +24932,40 @@ function openUserModal(id) {
   $('u-password-label').textContent = id ? 'Nova senha (deixe em branco para manter)' : 'Senha inicial *';
   $('u-email').value = u?.email || '';
   $('u-discord-id').value = u?.discordId || '';
-  $('u-admin').checked = !!u?.isAdmin;
-  $('u-moderator').checked = !!u?.isModerator;
-  if ($('u-freelancer')) $('u-freelancer').checked = !!u?.isFreelancer;
-  onUserAdminChange(); // atualiza estado do checkbox Moderador/Freelancer (esconde se admin)
+  // Radio group: admin/mod/equipe/free — Equipe é o default (nenhum bit especial).
+  const kind = u?.isAdmin ? 'admin'
+    : u?.isModerator ? 'mod'
+    : u?.isFreelancer ? 'free'
+    : 'equipe';
+  const kindEl = document.querySelector(`input[name="u-role-kind"][value="${kind}"]`);
+  if (kindEl) kindEl.checked = true;
   const selected = u ? (u.workspaces || []) : [activeWs];
   $('u-workspaces').innerHTML = [...workspaces]
     .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt-BR', { sensitivity: 'base' }))
-    .map(w => `
-    <label class="ws-chip-check ${selected.includes(w.id) ? 'on' : ''}">
+    .map(w => {
+      const color = w.color || '#7A00FF';
+      return `
+    <label class="ws-chip-check ${selected.includes(w.id) ? 'on' : ''}" style="--ws-color:${color}">
       <input type="checkbox" value="${w.id}" ${selected.includes(w.id) ? 'checked' : ''}
              onchange="this.parentElement.classList.toggle('on', this.checked)">
-      <span class="pill-dot" style="background:${w.color || '#7A00FF'}"></span>${esc(w.name)}
-    </label>`).join('');
+      <span class="pill-dot" style="background:${color}"></span>${esc(w.name)}
+    </label>`;
+    }).join('');
   openModal('user-modal');
   navPush(id ? '/users/' + id : '/users/new');
 }
-/* Admin absorve moderador/freelancer: se marca admin, força os dois pra false + esconde.
-   Moderador e Freelancer também são mutuamente exclusivos entre si. */
-function onUserAdminChange() {
-  const isAdmin = $('u-admin').checked;
-  const modWrap = $('u-moderator-wrap');
-  const freeWrap = $('u-freelancer-wrap');
-  if (modWrap) modWrap.style.display = isAdmin ? 'none' : '';
-  if (freeWrap) freeWrap.style.display = isAdmin ? 'none' : '';
-  if (isAdmin) {
-    $('u-moderator').checked = false;
-    if ($('u-freelancer')) $('u-freelancer').checked = false;
-  }
-}
-function onUserModeratorChange() {
-  if ($('u-moderator').checked && $('u-freelancer')) $('u-freelancer').checked = false;
-}
+/* Radio group cuida da exclusividade — handlers legados mantidos como no-op
+   pra caso algum lugar chame externamente. */
+function onUserAdminChange() { /* radio-driven agora */ }
+function onUserModeratorChange() { /* radio-driven agora */ }
 async function saveUser() {
   const wsSel = [...$('u-workspaces').querySelectorAll('input:checked')].map(i => i.value);
   const payload = {
     name: $('u-name').value, role: $('u-role').value,
     position: $('u-position') ? ($('u-position').value || '') : '',
     isAdmin: $('u-admin').checked,
-    isModerator: !$('u-admin').checked && $('u-moderator').checked,
-    isFreelancer: !$('u-admin').checked && !$('u-moderator').checked && !!($('u-freelancer') && $('u-freelancer').checked),
+    isModerator: $('u-moderator').checked,
+    isFreelancer: !!($('u-freelancer') && $('u-freelancer').checked),
     workspaces: wsSel,
     discordId: ($('u-discord-id').value || '').trim() || null,
     email: ($('u-email').value || '').trim() || null
@@ -27584,7 +27645,7 @@ function _globalGalStateToUrl() {
   if (st.kind)   p.set('type', st.kind);
   if (st.sort && st.sort !== 'date') p.set('sort', st.sort);
   if (st.dir && st.dir !== 'desc')   p.set('dir', st.dir);
-  if (st.view && st.view !== 'list') p.set('view', st.view);
+  if (st.view && st.view !== 'grid') p.set('view', st.view);
   if (st.clientIds instanceof Set && st.clientIds.size)     p.set('clients', [...st.clientIds].join(','));
   if (st.workspaceIds instanceof Set && st.workspaceIds.size) p.set('squads',  [...st.workspaceIds].join(','));
   const qs = p.toString();
@@ -27597,7 +27658,7 @@ function _globalGalStateFromUrl() {
   st.kind   = p.get('type') || '';
   st.sort   = p.get('sort') || 'date';
   st.dir    = p.get('dir')  || 'desc';
-  st.view   = p.get('view') || 'list';
+  st.view   = p.get('view') || 'grid';
   st.clientIds = new Set((p.get('clients') || '').split(',').filter(Boolean));
   st.workspaceIds = new Set((p.get('squads') || '').split(',').filter(Boolean));
 }
@@ -31363,7 +31424,7 @@ function openScheduleRecurCustomModal() {
         </div>
         <div class="modal-footer">
           <button class="btn btn-ghost" onclick="closeScheduleRecurCustomModal()">Cancelar</button>
-          <button class="btn btn-primary" onclick="saveScheduleRecurCustom()">Concluir</button>
+          <button class="btn btn-confirm" onclick="saveScheduleRecurCustom()">Concluir</button>
         </div>
       </div>`;
     document.body.appendChild(modal);

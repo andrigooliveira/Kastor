@@ -1561,6 +1561,20 @@ body.sidebar-collapsed .ws-cdrop .filter-cdrop-menu {
   transform: translateY(-1px);
 }
 .btn-primary:active { transform: scale(0.96) translateY(0); }
+/* Variante verde pra CONFIRMAR ação (OK, Salvar, Concluir). btn-primary
+   segue sendo o roxo/accent pras CTAs de criação/ação (Nova demanda, Baixar,
+   Abrir…). Compartilha ripple/halo com btn-primary via seletores agrupados
+   mais abaixo neste arquivo. */
+.btn-confirm {
+  background: #22c55e; color: #fff;
+  box-shadow: 0 1px 2px rgba(34,197,94,0.22), inset 0 1px 0 rgba(255,255,255,0.16);
+}
+.btn-confirm:hover {
+  filter: brightness(1.06);
+  box-shadow: 0 6px 20px rgba(34,197,94,0.38), inset 0 1px 0 rgba(255,255,255,0.20);
+  transform: translateY(-1px);
+}
+.btn-confirm:active { transform: scale(0.96) translateY(0); }
 .btn-ghost { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
 .btn-ghost:hover { background: var(--surface-2); color: var(--text); border-color: var(--border-active); }
 .btn-ghost.active { background: var(--accent-dim); color: var(--accent-text); border-color: transparent; }
@@ -6483,6 +6497,425 @@ body.is-resizing-detail * { cursor: col-resize !important; user-select: none !im
 .dd-recurrence-note i, .dd-recurrence-note svg { color: var(--accent-text); }
 .dd-recurrence-note strong { color: var(--text); font-weight: 600; }
 
+/* ── Redesign impeccable: Quadro da equipe (/users) ──
+   THESIS: /users é DOSSIÊ DO QUADRO. Header + toolbar compacta, tabela
+   mine-v2 com section-title barra-roxa, grid 2-col hairline-separated pra
+   taxonomia (Áreas + Cargos). Refuse cards escuros com moldura em cada
+   bloco; refuse botões de ação inline por row misturados com pills — vira
+   kebab menu. */
+.us-dossier { display: flex; flex-direction: column; gap: 24px; }
+.us-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap;
+}
+.us-header-block { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.us-header-actions {
+  display: inline-flex; align-items: center; gap: 8px;
+  flex-shrink: 0;
+}
+/* Section: mesma linguagem de /reports /performance /demand-detail */
+.us-section { display: flex; flex-direction: column; gap: 12px; }
+.us-section-head {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+.us-section-title {
+  font-size: 12px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .05em;
+  color: var(--text-dim);
+  position: relative;
+  padding-left: 12px;
+  flex: 0 0 auto;
+}
+.us-section-title::before {
+  content: ''; position: absolute; left: 0; top: 3px; bottom: 3px;
+  width: 3px; border-radius: 2px;
+  background: var(--accent, #7A00FF);
+}
+.us-section-hint {
+  font-size: 11px; color: var(--text-dim);
+  flex: 1 1 auto;
+}
+.us-section-cta { margin-left: auto; flex-shrink: 0; }
+
+/* Grid 2-col da taxonomia (Áreas + Cargos) com hairline vertical entre
+   colunas — mesma técnica do perf-sections-grid. */
+.us-taxonomy-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+}
+.us-taxonomy-grid > .us-section {
+  padding: 20px 28px 0;
+}
+.us-taxonomy-grid > .us-section:nth-child(odd) {
+  padding-left: 0;
+  border-right: 1px solid var(--hairline);
+}
+.us-taxonomy-grid > .us-section:nth-child(even) {
+  padding-right: 0;
+}
+@media (max-width: 900px) {
+  .us-taxonomy-grid { grid-template-columns: 1fr; gap: 24px; }
+  .us-taxonomy-grid > .us-section,
+  .us-taxonomy-grid > .us-section:nth-child(odd),
+  .us-taxonomy-grid > .us-section:nth-child(even) {
+    padding: 0;
+    border-right: none;
+  }
+}
+
+/* Coluna do kebab tem largura fixa e alinhamento à direita. */
+.us-col-kebab { width: 40px; text-align: right; padding-right: 6px !important; }
+
+/* Kebab dropdown — <details> nativo, some ao clicar fora via listener global. */
+.us-kebab { position: relative; display: inline-block; }
+.us-kebab > .us-kebab-btn {
+  list-style: none;
+  width: 28px; height: 28px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-muted); cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.us-kebab > .us-kebab-btn::-webkit-details-marker { display: none; }
+.us-kebab > .us-kebab-btn:hover,
+.us-kebab[open] > .us-kebab-btn {
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: var(--hairline);
+}
+.us-kebab-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 168px;
+  z-index: 20;
+  display: flex; flex-direction: column;
+  padding: 4px;
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+}
+.us-kebab-item {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  background: transparent; border: 0;
+  border-radius: 6px;
+  font-size: 12.5px; color: var(--text); text-align: left;
+  cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.us-kebab-item:hover { background: var(--surface-2); }
+.us-kebab-item.is-danger { color: #ef4444; }
+.us-kebab-item.is-danger:hover { background: color-mix(in srgb, #ef4444 12%, transparent); }
+
+/* ── Modal Cadastrar Usuário (/users) — polish impeccable ──
+   3 sections com barra roxa (Identidade / Acesso / Permissões), hints inline
+   compactos no lugar dos boxes tinted, permissões como cards clicáveis com
+   nome + descrição em vez de checkboxes com labels enormes. */
+.um-body { display: flex; flex-direction: column; gap: 24px; padding-top: 20px; padding-bottom: 20px; }
+.um-section { display: flex; flex-direction: column; gap: 12px; }
+.um-section-head {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+}
+.um-section-title {
+  font-size: 15px; font-weight: 700;
+  text-transform: none; letter-spacing: -0.005em;
+  color: var(--text);
+  position: relative;
+  padding-left: 14px;
+  line-height: 1.2;
+}
+.um-section-title::before {
+  content: ''; position: absolute; left: 0; top: 2px; bottom: 2px;
+  width: 4px; border-radius: 2px;
+  background: var(--accent, #7A00FF);
+}
+.um-section-hint {
+  font-size: 12px; color: var(--text-dim);
+  flex: 1 1 auto;
+}
+.um-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 16px;
+}
+.um-col-2 { grid-column: 1 / -1; }
+@media (max-width: 640px) {
+  .um-grid { grid-template-columns: 1fr; }
+}
+.um-field-hint {
+  font-size: 11px; color: var(--text-muted);
+  margin-top: 4px; line-height: 1.4;
+}
+
+/* Cards de permissão — 4 lado a lado como toggle radio (só 1 marcado).
+   Default: neutro (hairline + ícone/texto muted). Hover: glow sutil na cor
+   do role. Selecionado: ícone e nome ganham cor, card fica tinted com border
+   accent + halo externo. Colunas iguais no desktop, wrap em telas estreitas. */
+.um-role-options {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+@media (max-width: 720px) {
+  .um-role-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.um-role-opt {
+  --um-role-color: var(--accent);
+  display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
+  padding: 16px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: var(--surface);
+  cursor: pointer;
+  position: relative;
+  transition: background .18s var(--ease-out), border-color .18s var(--ease-out), box-shadow .18s var(--ease-out), transform .12s var(--ease-out);
+}
+.um-role-opt:hover {
+  border-color: color-mix(in srgb, var(--um-role-color) 40%, var(--hairline));
+  transform: translateY(-1px);
+}
+/* Radio nativo escondido — mantém a11y (keyboard/screen reader) sem poluir. */
+.um-role-opt > input[type="radio"] {
+  position: absolute; opacity: 0; pointer-events: none;
+  width: 0; height: 0;
+}
+.um-role-opt:has(input[type="radio"]:checked) {
+  background: color-mix(in srgb, var(--um-role-color) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--um-role-color) 65%, var(--hairline));
+}
+.um-role-opt:has(input[type="radio"]:focus-visible) {
+  outline: 2px solid color-mix(in srgb, var(--um-role-color) 60%, transparent);
+  outline-offset: 2px;
+}
+/* Cores semânticas por role */
+.um-role-opt--admin { --um-role-color: #7A00FF; }
+.um-role-opt--mod   { --um-role-color: #F59E0B; }
+.um-role-opt--team  { --um-role-color: #3B82F6; }
+.um-role-opt--free  { --um-role-color: #22c55e; }
+/* Ícone quadrado no topo — default muted; ativo ganha cor. */
+.um-role-icon {
+  width: 36px; height: 36px;
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text-muted) 10%, transparent);
+  color: var(--text-muted);
+  transition: background .18s var(--ease-out), color .18s var(--ease-out);
+}
+.um-role-opt:hover .um-role-icon {
+  color: var(--um-role-color);
+}
+.um-role-opt:has(input[type="radio"]:checked) .um-role-icon {
+  background: color-mix(in srgb, var(--um-role-color) 22%, transparent);
+  color: var(--um-role-color);
+}
+.um-role-name {
+  font-size: 13.5px; font-weight: 700;
+  color: var(--text-dim);
+  letter-spacing: -0.005em;
+  transition: color .18s var(--ease-out);
+}
+.um-role-opt:hover .um-role-name,
+.um-role-opt:has(input[type="radio"]:checked) .um-role-name {
+  color: var(--text);
+}
+/* Descrições removidas do markup — o hint da section + tooltip do title do
+   próprio card carregam o contexto. */
+
+/* Squad chips no modal — mesma linguagem dos cards de cargo: card generoso
+   (14×18 padding, radius 12), dot grande (12px), font 14px semibold. Ativo
+   usa a COR DO SQUAD (não só accent) via --ws-color injetado inline no JS. */
+.um-body .ws-checklist { gap: 10px; margin-top: 6px; }
+.um-body .ws-chip-check {
+  --ws-color: var(--accent);
+  padding: 14px 18px;
+  border-radius: 12px;
+  font-size: 14px; font-weight: 600;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  color: var(--text-dim);
+  gap: 12px;
+  cursor: pointer;
+  transition: background .15s var(--ease-out), border-color .15s var(--ease-out), color .15s var(--ease-out), transform .12s var(--ease-out);
+  position: relative;
+}
+.um-body .ws-chip-check:hover {
+  border-color: color-mix(in srgb, var(--ws-color) 40%, var(--hairline));
+  color: var(--text);
+  transform: translateY(-1px);
+}
+.um-body .ws-chip-check input[type="checkbox"] {
+  position: absolute; opacity: 0; pointer-events: none; width: 0; height: 0;
+}
+.um-body .ws-chip-check .pill-dot {
+  width: 12px; height: 12px; border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ws-color) 18%, transparent);
+  transition: box-shadow .15s var(--ease-out);
+}
+.um-body .ws-chip-check.on {
+  background: color-mix(in srgb, var(--ws-color) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--ws-color) 65%, var(--hairline));
+  color: var(--text);
+}
+.um-body .ws-chip-check.on .pill-dot {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ws-color) 28%, transparent);
+}
+
+/* ── 404 — rota não encontrada (fullpage, estilo Windows 95) ──
+   "OPS" gigante em duas palavras offset no fundo, janela com titlebar
+   roxa e 3 botões clássicos, corpo com título grande + subtítulo + 2
+   botões (Tentar outra coisa outline / Voltar ao início roxo filled).
+   Usa tokens da plataforma (--bg, --surface, --text, --accent, etc)
+   que já respondem ao data-theme sozinhos. */
+body.is-fullpage .sidebar,
+body.is-fullpage .topbar { display: none !important; }
+body.is-fullpage .main-content,
+body.is-fullpage .app-layout,
+body.is-fullpage .page-container {
+  margin: 0 !important; width: 100vw !important; max-width: 100vw !important;
+}
+body.is-fullpage #page-notfound.active {
+  position: fixed; inset: 0;
+  z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  overflow: auto;
+  background: var(--bg);
+}
+
+.nf-page {
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; min-height: 100vh;
+  padding: 40px 24px;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* "OPS" gigante offset — 2 palavras nos cantos opostos, cor mix com bg. */
+.nf-backdrop {
+  position: absolute; inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  user-select: none;
+  overflow: hidden;
+}
+.nf-ops {
+  position: absolute;
+  font-weight: 900;
+  font-size: clamp(360px, 42vw, 720px);
+  letter-spacing: -0.06em;
+  line-height: 0.82;
+  color: color-mix(in srgb, var(--accent) 22%, var(--bg));
+  white-space: nowrap;
+}
+.nf-ops-a { top: -14vh; left: -3vw; }
+.nf-ops-b { bottom: -14vh; right: -3vw; }
+
+/* Janela Windows 95 ao centro — border sharp, sombra offset dura. */
+.nf-window {
+  position: relative;
+  z-index: 1;
+  width: min(998px, 92vw);
+  background: var(--surface);
+  border: 1px solid var(--text);
+  box-shadow: 4px 4px 0 color-mix(in srgb, var(--text) 12%, transparent);
+  overflow: hidden;
+  display: flex; flex-direction: column;
+}
+
+/* Titlebar roxa com 3 botões (min/max/close) à direita. */
+.nf-titlebar {
+  display: flex; align-items: center; justify-content: space-between;
+  height: 56px;
+  padding: 0 16px 0 20px;
+  background: var(--accent);
+  color: #ffffff;
+}
+.nf-titlebar-spacer { flex: 1 1 auto; }
+.nf-titlebar-btns { display: inline-flex; gap: 10px; align-items: center; }
+.nf-tb-btn {
+  width: 24px; height: 24px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--text);
+  border-radius: 0;
+  cursor: pointer;
+  padding: 0;
+  transition: background .12s;
+}
+.nf-tb-btn:hover { background: var(--surface-2); }
+.nf-tb-btn[aria-label="Fechar"]:hover {
+  background: color-mix(in srgb, var(--danger, #ef4444) 20%, var(--surface));
+}
+
+/* Corpo — título grande + subtítulo + 2 botões. */
+.nf-body {
+  padding: 64px 64px 48px;
+  display: flex; flex-direction: column;
+  gap: 40px;
+}
+@media (max-width: 640px) {
+  .nf-body { padding: 32px 24px 28px; gap: 24px; }
+}
+.nf-content { display: flex; flex-direction: column; gap: 20px; }
+.nf-title {
+  margin: 0;
+  font-size: clamp(28px, 4.2vw, 56px);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: var(--text);
+}
+.nf-msg {
+  margin: 0;
+  font-size: clamp(14px, 1.2vw, 16px);
+  color: var(--text-dim);
+  line-height: 1.55;
+}
+
+/* 2 botões lado a lado — largura igual, sharp edges Win95. */
+.nf-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 8px;
+}
+.nf-btn {
+  height: 44px;
+  padding: 0 20px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font: inherit;
+  font-size: 14px; font-weight: 600;
+  cursor: pointer;
+  border-radius: 0;
+  transition: background .12s, color .12s, border-color .12s, transform .1s;
+  border: 2px solid;
+}
+.nf-btn:active { transform: translate(1px, 1px); }
+.nf-btn--ghost {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--text);
+}
+.nf-btn--ghost:hover {
+  background: var(--text);
+  color: var(--bg);
+}
+.nf-btn--primary {
+  background: var(--accent);
+  color: #ffffff;
+  border-color: var(--accent);
+}
+.nf-btn--primary:hover {
+  background: color-mix(in srgb, var(--accent) 85%, #000);
+  border-color: color-mix(in srgb, var(--accent) 85%, #000);
+}
+
 /* Links dentro da descrição em roxo (mesma cor do link do briefing). */
 .detail-description a,
 #detail-description-view a { color: var(--accent-text); text-decoration: none; word-break: break-word; }
@@ -10522,6 +10955,9 @@ kbd {
   border: 1px solid color-mix(in srgb, #F59E0B 30%, transparent);
   line-height: 1;
 }
+/* Regra de classe com display: inline-flex vencia [hidden] do UA — força
+   display: none quando o form está limpo. */
+.flow-dirty-badge[hidden] { display: none !important; }
 :root[data-theme="light"] .flow-dirty-badge {
   color: color-mix(in srgb, #F59E0B 60%, #000);
   background: color-mix(in srgb, #F59E0B 20%, #fff);
@@ -12350,8 +12786,9 @@ tr.demand-row:hover {
    Um círculo centralizado que expande a partir do clique. Puro CSS via ::after
    ativado no :active. Não posiciona no ponto exato do clique (isso exigiria JS),
    mas dá sensação de reação tátil sem custo. */
-.btn-primary { position: relative; overflow: hidden; isolation: isolate; }
-.btn-primary::after {
+.btn-primary, .btn-confirm { position: relative; overflow: hidden; isolation: isolate; }
+.btn-primary::after,
+.btn-confirm::after {
   content: '';
   position: absolute; inset: 0;
   border-radius: inherit;
@@ -12361,7 +12798,8 @@ tr.demand-row:hover {
   pointer-events: none;
   transition: opacity .5s var(--ease-out);
 }
-.btn-primary:active::after {
+.btn-primary:active::after,
+.btn-confirm:active::after {
   opacity: 1;
   transform: scale(1);
   transition: transform .35s var(--ease-out), opacity .01s;
@@ -15327,102 +15765,115 @@ tr.demand-row {
 }
 
 /* KPIs — 6 cards em grid responsivo. Ícone colorido + label + valor grande + delta. */
-.perf-kpis {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
-  margin-bottom: 16px;
+/* ── Redesign impeccable: Cockpit de mídia (/performance) ──
+   THESIS: painel-cockpit denso. KPI line tipográfica (mesma linguagem da
+   /capacity e /reports) no lugar do grid de 6 cards com ícones em bolinha,
+   e charts em sections com barra roxa 3px no lugar dos cards escuros com
+   moldura. Refuse: bg + border + radius em cada bloco (era o que fazia a
+   tela virar 10 caixas escuras). */
+.perf-kpi-line {
+  display: flex; align-items: stretch; flex-wrap: wrap;
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+  padding: 14px 0;
+  margin-bottom: 20px;
+  gap: 0;
 }
-.perf-kpi {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+.perf-kpi-item {
+  display: inline-flex; flex-direction: column; gap: 4px;
+  padding: 0 22px;
+  min-width: 0;
+  flex: 1 1 0;
 }
-/* Ícone + label/value na parte superior; delta como linha inteira abaixo,
-   alinhado à borda esquerda do card (junto do ícone visualmente). */
-.perf-kpi-top {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-}
-.perf-kpi-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  color: white;
-}
-.perf-kpi-icon-users            { background: var(--perf-blue); }
-.perf-kpi-icon-dollar-sign      { background: var(--perf-green); }
-.perf-kpi-icon-user             { background: var(--perf-orange); }
-.perf-kpi-icon-eye              { background: var(--perf-cyan); }
-.perf-kpi-icon-mouse-pointer-2  { background: var(--perf-pink); }
-.perf-kpi-icon-target           { background: var(--perf-red); }
-.perf-kpi-body { flex: 1; min-width: 0; }
+.perf-kpi-item:first-child { padding-left: 0; }
+.perf-kpi-item:last-child { padding-right: 0; }
+.perf-kpi-item + .perf-kpi-item { border-left: 1px solid var(--hairline); }
 .perf-kpi-label {
-  font-size: 10.5px;
-  color: var(--text-muted);
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em;
   text-transform: uppercase;
-  letter-spacing: .4px;
-  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 .perf-kpi-value {
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--text);
-  line-height: 1.15;
-  margin: 4px 0;
+  font-size: 22px; font-weight: 700;
+  color: var(--text); line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .perf-kpi-delta {
-  font-size: 11.5px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  font-size: 11px;
+  display: inline-flex; align-items: baseline; gap: 6px;
+  font-variant-numeric: tabular-nums;
 }
 .perf-kpi-delta-value { font-weight: 600; }
 .perf-kpi-delta-caption { color: var(--text-muted); font-weight: 400; }
-.perf-kpi-delta-up   .perf-kpi-delta-value { color: var(--perf-green); }
-.perf-kpi-delta-down .perf-kpi-delta-value { color: var(--perf-red); }
+.perf-kpi-delta-up   .perf-kpi-delta-value { color: #22c55e; }
+.perf-kpi-delta-down .perf-kpi-delta-value { color: #ef4444; }
 .perf-kpi-delta-flat .perf-kpi-delta-value { color: var(--text-muted); }
 
-/* Grid dos 4 gráficos — 2×2 fixo no desktop, 1 coluna no mobile.
-   minmax(0, 1fr) evita expansão pelo conteúdo interno (SVGs wide fazem
-   isso sem o minmax). */
-.perf-charts-grid {
+/* Grid 2×2 dos 4 gráficos — sem card, mas com hairlines vertical + horizontal
+   entre células pra separar visualmente cada gráfico do vizinho. Usa borders
+   nas próprias cells em vez de gap pra manter as linhas divisórias contínuas. */
+.perf-sections-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: 0;
+  margin-bottom: 24px;
+}
+.perf-sections-grid > .perf-section {
+  padding: 20px 28px;
+}
+.perf-sections-grid > .perf-section:nth-child(odd) {
+  padding-left: 0;
+  border-right: 1px solid var(--hairline);
+}
+.perf-sections-grid > .perf-section:nth-child(even) {
+  padding-right: 0;
+}
+.perf-sections-grid > .perf-section:nth-last-child(n+3) {
+  border-bottom: 1px solid var(--hairline);
 }
 @media (max-width: 900px) {
-  .perf-charts-grid { grid-template-columns: 1fr; }
+  .perf-sections-grid { grid-template-columns: 1fr; }
+  .perf-sections-grid > .perf-section,
+  .perf-sections-grid > .perf-section:nth-child(odd),
+  .perf-sections-grid > .perf-section:nth-child(even) {
+    padding: 20px 0;
+    border-right: none;
+  }
+  .perf-sections-grid > .perf-section:nth-last-child(n+2) {
+    border-bottom: 1px solid var(--hairline);
+  }
 }
-.perf-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 16px;
+
+/* Section: mesma linguagem da /reports e /capacity — barra roxa 3px + small caps. */
+.perf-section { display: flex; flex-direction: column; gap: 12px; }
+.perf-section-head {
+  display: flex; align-items: baseline;
+  gap: 12px; flex-wrap: wrap;
 }
-.perf-card-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-  margin-bottom: 12px;
+.perf-section-title {
+  font-size: 12px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .05em;
+  color: var(--text-dim);
+  position: relative;
+  padding-left: 12px;
 }
-.perf-card-body {
-  min-height: 200px;
+.perf-section-title::before {
+  content: ''; position: absolute; left: 0; top: 3px; bottom: 3px;
+  width: 3px; border-radius: 2px;
+  background: var(--accent, #7A00FF);
 }
-.perf-table-card .perf-card-body { min-height: 0; }
+.perf-section-hint {
+  font-size: 11px; color: var(--text-dim);
+  flex: 1 1 auto;
+}
+.perf-section-body { min-height: 200px; }
+.perf-section--table { margin-top: 12px; }
+.perf-section--table .perf-section-body { min-height: 0; }
 
 /* Bar chart horizontal (Leads / CPL por campanha).
    Grid: label | track | valor | share. Share só quando showShare=true
@@ -15635,18 +16086,16 @@ tr.demand-row {
 .perf-pos { color: var(--perf-green); font-weight: 600; }
 .perf-neg { color: var(--perf-red);   font-weight: 600; }
 
-/* Card de alertas colapsável (acima do resumo detalhado). Usa <details>
-   pra ter open/close nativos; a chevron gira via [open] no summary. */
-.perf-alerts-card { margin-bottom: 16px; padding: 0; }
+/* Section de alertas colapsável (acima do resumo detalhado). Usa <details>
+   pra ter open/close nativos; a chevron gira via [open] no summary. Herda
+   perf-section-title (barra roxa 3px + small caps) — o chevron aparece
+   inline antes do texto pra indicar interatividade. */
+.perf-section--alerts { margin-top: 12px; margin-bottom: 12px; }
 .perf-alerts-summary {
   cursor: pointer;
   user-select: none;
-  padding: 14px 16px;
   margin: 0;
-  display: flex;
-  align-items: center;
   justify-content: space-between;
-  gap: 8px;
   list-style: none;
 }
 .perf-alerts-summary::-webkit-details-marker { display: none; }
@@ -15656,9 +16105,9 @@ tr.demand-row {
   gap: 6px;
 }
 .perf-alerts-chevron { transition: transform .18s; }
-.perf-alerts-card[open] .perf-alerts-chevron { transform: rotate(90deg); }
-.perf-alerts-card .perf-card-body {
-  padding: 0 16px 16px;
+.perf-section--alerts[open] .perf-alerts-chevron { transform: rotate(90deg); }
+.perf-section--alerts .perf-section-body {
+  padding-top: 12px;
 }
 .perf-alerts-count {
   background: var(--perf-red);
@@ -16133,10 +16582,11 @@ input[type="checkbox"]:checked {
 
 /* ── Botão primário: halo suave (usa .btn-primary se existir; caso contrário
    aplica no CTA e no send-primary) ── */
-.btn-primary, .empty-state-cta:not(.is-ghost) {
+.btn-primary, .btn-confirm, .empty-state-cta:not(.is-ghost) {
   position: relative;
 }
 .btn-primary::before,
+.btn-confirm::before,
 .empty-state-cta:not(.is-ghost)::before {
   content: '';
   position: absolute;
@@ -16151,7 +16601,14 @@ input[type="checkbox"]:checked {
   pointer-events: none;
 }
 .btn-primary:hover::before,
+.btn-confirm:hover::before,
 .empty-state-cta:not(.is-ghost):hover::before { opacity: 1; }
+/* Halo do confirm em verde, não roxo */
+.btn-confirm::before {
+  background: radial-gradient(ellipse at center,
+    color-mix(in oklab, #22c55e 25%, transparent) 0%,
+    transparent 65%);
+}
 
 /* (Bloco de sombras/hairlines light-mode movido pro root light acima —
    consolidado num único lugar pra facilitar tuning.) */
@@ -16254,13 +16711,13 @@ input[type="checkbox"]:checked {
 }
 
 /* Botões neutros (ghost/secondary) em light — leve fundo cinza pra dar volume */
-:root[data-theme="light"] .btn:not(.btn-primary):not(.btn-danger):not(.btn-ghost),
+:root[data-theme="light"] .btn:not(.btn-primary):not(.btn-confirm):not(.btn-danger):not(.btn-ghost),
 :root[data-theme="light"] .btn-secondary {
   background: #ffffff;
   border: 1px solid rgba(30, 30, 60, 0.08);
   box-shadow: 0 1px 2px rgba(30, 30, 60, 0.04);
 }
-:root[data-theme="light"] .btn:not(.btn-primary):not(.btn-danger):not(.btn-ghost):hover,
+:root[data-theme="light"] .btn:not(.btn-primary):not(.btn-confirm):not(.btn-danger):not(.btn-ghost):hover,
 :root[data-theme="light"] .btn-secondary:hover {
   background: #fafafb;
   border-color: rgba(30, 30, 60, 0.12);
