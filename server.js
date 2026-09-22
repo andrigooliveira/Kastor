@@ -185,12 +185,17 @@ function extractInlineBase64() {
   if (extracted > 0) console.log(`› Anexos extraídos pra disco: ${extracted}`);
 }
 
+// Termos de sugestão de fluxo aprendidos do histórico — ver learnFlowTerms().
+const FLOW_LEARN_SOURCE_TYPES = new Set(['demands', 'flows', 'clients', 'projects']);
+let _flowLearnCache = null;
+
 /* Marca uma entidade como "suja" pra ser persistida no próximo flush.
    Hot paths podem chamar saveEntity diretamente pra ganhar latência. */
 function markDirty(type, entityOrId, op = 'upsert') {
   const id = (op === 'remove') ? entityOrId : (entityOrId && entityOrId.id);
   if (!id) return;
   _dirtyEntities.set(`${type}|${id}`, { type, op, entity: op === 'upsert' ? entityOrId : null, id });
+  if (FLOW_LEARN_SOURCE_TYPES.has(type)) _flowLearnCache = null;
 }
 function saveEntity(type, entity)   { markDirty(type, entity, 'upsert'); scheduleFlush(); }
 function removeEntity(type, id)     { markDirty(type, id, 'remove'); scheduleFlush(); }
@@ -2792,7 +2797,21 @@ app.get('/api/workspaces', requireAuth, (req, res) => {
    quando o user abre a demanda (showDetail → refreshDetailDemand). */
 function stripDemandForList(d) {
   const { description, comments, attachments, briefing, history, ...rest } = d;
-  return rest;
+  return { ...rest, lastOwnerId: lastOwnerIdOf(d) };
+}
+
+/* Etapa final (Concluída/Cancelada) limpa o ownerId, mas listas e exportação
+   ainda precisam saber quem foi o último responsável — vem do histórico. */
+function lastOwnerIdOf(d) {
+  if (d.ownerId) return d.ownerId;
+  const h = Array.isArray(d.history) ? d.history : [];
+  for (let i = h.length - 1; i >= 0; i--) {
+    const { action, details } = h[i];
+    if (!details || !/^owner_/.test(action)) continue;
+    const id = details.toId || details.fromId || details.ownerId;
+    if (id) return id;
+  }
+  return null;
 }
 
 /* ── Conversão PPTX/DOCX/XLSX → PDF via LibreOffice ──
@@ -5555,6 +5574,87 @@ app.post('/api/projects/:id/duplicate', requireAuth, (req, res) => {
   res.status(201).json(copy);
 });
 
+/* ── SUGESTÃO DE FLUXO — termos aprendidos do histórico ──
+   Palavras (e pares de palavras seguidas) de títulos que aparecem muito num tipo
+   de fluxo e pouco nos outros viram termos daquele fluxo. Roda sobre TODAS as
+   demandas (todos os squads) pra que equipe nova já herde o que as outras
+   ensinaram; a resposta só leva os termos, nunca títulos.
+   - Agrupa pelo NOME do fluxo: cópias em clientes diferentes somam.
+   - Ignora fluxos curinga (Personalizado), que misturam de tudo.
+   - Nome de cliente/projeto não entra ("BRZ", "Gênova" aparecem em qualquer fluxo).
+   - Termo precisa aparecer em 2+ projetos — senão nome de campanha ("Saldão")
+     viraria palavra-chave.
+   Listas de palavras espelham _FS_STOP/_FS_GENERIC e o conceito "personalizado"
+   em public/js/app.js — mantenha em sincronia. */
+const FLOW_LEARN_MIN_COUNT = 2;
+const FLOW_LEARN_MIN_PRECISION = 0.75;
+const FLOW_LEARN_MIN_PROJECTS = 2;
+const FLOW_LEARN_STOP = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'em', 'no', 'na', 'nos', 'nas', 'para', 'pra', 'com', 'a', 'o', 'os', 'as', 'um', 'uma', 'por']);
+const FLOW_LEARN_GENERIC = new Set(['novo', 'novos', 'nova', 'novas', 'fluxo', 'fluxos', 'demanda', 'demandas', 'geral', 'padrao', 'digital',
+  'digitais', 'offline', 'online', 'material', 'materiais', 'campanha', 'campanhas', 'marketing', 'criacao', 'conteudo', 'conteudos',
+  'pagina', 'paginas', 'visual', 'visuais', 'servico', 'servicos', 'projeto', 'projetos', 'ajuste', 'ajustes', 'midia', 'midias',
+  'sociais', 'social', 'peca', 'pecas', 'arte', 'artes', 'disparo', 'disparos', 'cliente', 'clientes', 'interno', 'interna',
+  'externo', 'externa', 'outros', 'diversos', 'tipo', 'lancamento', 'lancamentos']);
+const FLOW_LEARN_WILDCARD_FLOWS = new Set(['personalizado', 'personalizada', 'personalizados', 'personalizdo', 'avulso', 'avulsa',
+  'outros', 'geral', 'custom', 'diversos']);
+
+const _flKey = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+  .replace(/[^a-z0-9]+/g, ' ').trim();
+const _flSingular = w => (w.length > 3 ? w.replace(/s$/, '') : w);
+
+function learnFlowTerms({ demands, flows, clients, projects }) {
+  const flowKeyById = new Map(flows.filter(notDeleted).map(f => [f.id, _flKey(f.name)]));
+  const ignore = new Set();
+  [...clients, ...projects].forEach(e => _flKey(e.name).split(' ').forEach(t => {
+    ignore.add(t);
+    ignore.add(_flSingular(t));
+  }));
+  const titleTerms = title => {
+    const kept = _flKey(title).split(' ').map(t => {
+      if (t.length < 2 || /^\d+$/.test(t) || FLOW_LEARN_STOP.has(t) || FLOW_LEARN_GENERIC.has(t)) return null;
+      const s = _flSingular(t);
+      return ignore.has(t) || ignore.has(s) ? null : s;
+    });
+    const out = new Set();
+    kept.forEach((t, i) => {
+      if (!t) return;
+      out.add(t);
+      if (kept[i + 1]) out.add(t + ' ' + kept[i + 1]);
+    });
+    return out;
+  };
+  // termo → { total, byKey: Map(flowKey → { count, projects }) }
+  const stats = new Map();
+  for (const d of demands) {
+    if (!notDeleted(d)) continue;
+    const key = flowKeyById.get(d.flowId);
+    if (!key || FLOW_LEARN_WILDCARD_FLOWS.has(key)) continue;
+    for (const term of titleTerms(d.name)) {
+      if (!stats.has(term)) stats.set(term, { total: 0, byKey: new Map() });
+      const st = stats.get(term);
+      st.total++;
+      if (!st.byKey.has(key)) st.byKey.set(key, { count: 0, projects: new Set() });
+      const g = st.byKey.get(key);
+      g.count++;
+      g.projects.add(d.projectId);
+    }
+  }
+  const terms = {};
+  stats.forEach((st, term) => st.byKey.forEach((g, key) => {
+    const precision = g.count / st.total;
+    if (g.count < FLOW_LEARN_MIN_COUNT || precision < FLOW_LEARN_MIN_PRECISION || g.projects.size < FLOW_LEARN_MIN_PROJECTS) return;
+    (terms[key] ||= []).push([term, precision >= 0.9 && g.count >= 3 ? 3 : 2]);
+  }));
+  return terms;
+}
+
+app.get('/api/flow-suggest/learned', requireAuth, (req, res) => {
+  if (!_flowLearnCache) {
+    _flowLearnCache = { terms: learnFlowTerms(db), computedAt: nowISO() };
+  }
+  res.json(_flowLearnCache);
+});
+
 /* ── FLUXOS ── */
 app.get('/api/flows', requireAuth, (req, res) => {
   const ids = wsIdsFor(req.user);
@@ -5902,6 +6002,26 @@ function resolveStageDueDate(stage, d, baseYmd) {
   // que a etapa fique sem data marcada. Etapas done podem ficar sem prazo.
   if (days == null) return stage.done ? null : baseYmd;
   return addDays(baseYmd, days);
+}
+
+/* Responsável da demanda e executor da etapa atual são o mesmo dado visto de
+   dois lugares; idem prazo da etapa (footer) e data-âncora da etapa atual na
+   tab Etapas. Estes helpers espelham o lado "demanda" no lado "etapa". */
+function syncCurrentStageResponsible(d) {
+  if (!d.status) return;
+  if (!d.stageResponsibles || typeof d.stageResponsibles !== 'object') d.stageResponsibles = {};
+  d.stageResponsibles[d.status] = d.ownerId || null;
+}
+function syncCurrentStageDueAnchor(d) {
+  if (!d.status) return;
+  const addition = (Array.isArray(d.stageAdditions) ? d.stageAdditions : []).find(a => a.id === d.status);
+  if (addition) { addition.deadlineDate = d.stageDueDate || null; return; }
+  if (!d.stageOverrides || typeof d.stageOverrides !== 'object') d.stageOverrides = {};
+  const ov = { ...(d.stageOverrides[d.status] || {}) };
+  if (d.stageDueDate) ov.deadlineDate = d.stageDueDate;
+  else delete ov.deadlineDate;
+  if (Object.keys(ov).length) d.stageOverrides[d.status] = ov;
+  else delete d.stageOverrides[d.status];
 }
 
 function normalizeUrlSrv(raw) {
@@ -6597,13 +6717,7 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
     d.ownerId = b.ownerId || null;
     if (d.ownerId !== prevOwner) {
       addHistory(d, req.user.id, 'owner_changed', { fromId: prevOwner, toId: d.ownerId });
-      // Sync bidirecional: se muda o responsável da demanda, atualiza também o
-      // executor da etapa ATUAL em stageResponsibles — assim os dois campos
-      // ficam sempre coerentes (a UI mostra o mesmo user nos dois lugares).
-      if (d.status) {
-        if (!d.stageResponsibles || typeof d.stageResponsibles !== 'object') d.stageResponsibles = {};
-        d.stageResponsibles[d.status] = d.ownerId;
-      }
+      syncCurrentStageResponsible(d);
       if (d.ownerId && d.ownerId !== req.user.id) {
         const flow = db.flows.find(f => f.id === d.flowId);
         const st = flow ? flow.stages.find(s => s.id === d.status) : null;
@@ -6622,6 +6736,7 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
     d.stageDueDate = b.stageDueDate || null;
     const last = d.stageHistory[d.stageHistory.length - 1];
     if (last) last.dueDate = d.stageDueDate;
+    syncCurrentStageDueAnchor(d);
     addHistory(d, req.user.id, 'stage_due_changed', { from: oldDue, to: d.stageDueDate });
   }
 
@@ -6938,6 +7053,7 @@ app.post('/api/demands/bulk', requireAuth, rateLimitBulk, (req, res) => {
         if (newOwner !== d.ownerId) {
           const prevOwner = d.ownerId;
           d.ownerId = newOwner;
+          syncCurrentStageResponsible(d);
           addHistory(d, req.user.id, 'owner_changed', { fromId: prevOwner, toId: d.ownerId });
           if (d.ownerId && d.ownerId !== req.user.id) {
             const flow = db.flows.find(f => f.id === d.flowId);
@@ -7038,6 +7154,7 @@ app.post('/api/demands/bulk', requireAuth, rateLimitBulk, (req, res) => {
           // Espelha na última entrada do stageHistory, como o PUT individual faz.
           const last = d.stageHistory && d.stageHistory[d.stageHistory.length - 1];
           if (last) last.dueDate = normDl;
+          syncCurrentStageDueAnchor(d);
           addHistory(d, req.user.id, 'stage_due_changed', { from, to: normDl });
           updated++;
         } else skipped++;

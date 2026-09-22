@@ -3203,9 +3203,10 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
         <div class="form-grid">
         <!-- 1. NOME DA DEMANDA — floating label -->
         <div class="form-group form-group-float full">
-          <input class="form-control" id="f-name" placeholder=" ">
+          <input class="form-control" id="f-name" placeholder=" " oninput="renderFlowSuggestionDebounced()">
           <label for="f-name">Nome da Demanda</label>
         </div>
+        <div class="form-group full" id="f-flow-suggest" hidden></div>
         <!-- Selects de PROJETO/FLUXO ocultos — selecionados via wizard -->
         <div class="form-group" style="display:none">
           <label class="form-label">Projeto</label>
@@ -4564,7 +4565,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260921kpiplus" defer></script>
+<script src="/js/boot.js?v=20260922csvexport2" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

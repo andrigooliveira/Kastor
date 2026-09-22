@@ -12256,6 +12256,32 @@ button.is-loading::after {
   padding-bottom: 14px; margin-bottom: 18px;
   border-bottom: 1px solid var(--hairline);
 }
+/* Sugestão de fluxo pelo título — faixa roxa à esquerda (padrão stage-card),
+   superfície tonal em vez de borda. */
+.flow-suggest {
+  position: relative;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px;
+  padding: 12px 14px 12px 18px;
+  background: color-mix(in oklab, var(--accent) 8%, var(--surface-2));
+  border-radius: 10px;
+  overflow: hidden;
+  animation: flowSuggestIn 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.flow-suggest::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: var(--accent);
+}
+.flow-suggest.is-done { background: color-mix(in oklab, var(--success, #16a34a) 8%, var(--surface-2)); }
+.flow-suggest.is-done::before { background: var(--success, #16a34a); }
+.flow-suggest-icon { color: var(--accent-text); flex-shrink: 0; }
+.flow-suggest.is-done .flow-suggest-icon { color: var(--success, #16a34a); }
+.flow-suggest-body { flex: 1 1 280px; min-width: 0; }
+.flow-suggest-title { font-size: 13px; color: var(--text); line-height: 1.4; }
+.flow-suggest-title strong { font-weight: 700; }
+.flow-suggest-text { font-size: 12px; color: var(--text-muted); margin-top: 2px; line-height: 1.45; }
+.flow-suggest-actions { display: flex; gap: 8px; margin-left: auto; }
+@keyframes flowSuggestIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .flow-suggest { animation: none; } }
 
 /* Footer fica colado embaixo, layout esquerda/direita já existe */
 .demand-wizard-footer { padding-top: 14px; }

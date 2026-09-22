@@ -6475,13 +6475,15 @@ document.addEventListener('click', ev => {
 function csvCell(v) {
   if (v === null || v === undefined) return '';
   const s = String(v);
-  return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  return /[";\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 function downloadCsv(headers, rows, filename) {
   // BOM UTF-8 pra Excel abrir com acentos certos. \r\n é padrão CSV.
+  // Separador `;`: o Excel em pt-BR usa vírgula como decimal e só divide
+  // colunas por ponto e vírgula — com `,` tudo caía na coluna A.
   const bom = '﻿';
-  const lines = [headers.map(csvCell).join(',')];
-  for (const r of rows) lines.push(r.map(csvCell).join(','));
+  const lines = [headers.map(csvCell).join(';')];
+  for (const r of rows) lines.push(r.map(csvCell).join(';'));
   const csv = bom + lines.join('\r\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -6494,6 +6496,19 @@ function downloadCsv(headers, rows, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 500);
 }
 
+/* Demanda vinda do detalhe/SSE chega completa (com histórico) mas sem o
+   `lastOwnerId` que o bootstrap calcula — mesma regra do lastOwnerIdOf do server. */
+function _lastOwnerIdFromHistory(d) {
+  const h = Array.isArray(d.history) ? d.history : [];
+  for (let i = h.length - 1; i >= 0; i--) {
+    const { action, details } = h[i];
+    if (!details || !/^owner_/.test(action)) continue;
+    const id = details.toId || details.fromId || details.ownerId;
+    if (id) return id;
+  }
+  return null;
+}
+
 /* Exporta as demandas atualmente filtradas na página /demands. Respeita
    busca, filtros e workspace ativo — o mesmo conjunto que aparece na tela. */
 function exportDemandsCsv() {
@@ -6501,25 +6516,31 @@ function exportDemandsCsv() {
   if (!list.length) { toast('Não há demandas pra exportar com os filtros atuais.', 'warn'); return; }
   const headers = [
     'ID', 'Nome', 'Squad', 'Cliente', 'Projeto', 'Fluxo', 'Etapa atual',
-    'Responsável', 'Prioridade', 'Prazo etapa', 'Prazo final',
-    'Horas estimadas', 'Horas apontadas',
+    'Responsável', 'Prioridade', 'Prazo etapa', 'Horas apontadas',
     'Criada em', 'Concluída em', 'Status'
   ];
+  // dd/mm/aaaa no fuso local. Data pura (YYYY-MM-DD) não passa por Date pra
+  // não voltar um dia em UTC-3.
+  const brDate = v => {
+    if (!v) return '';
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+    if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+    const dt = new Date(v);
+    return isNaN(dt) ? '' : dt.toLocaleDateString('pt-BR');
+  };
   const rows = list.map(d => {
     const p = projectById(d.projectId);
     const cl = p ? (clients.find(c => c.id === p.clientId)?.name || p.client || '') : '';
     const ws = wsById(d.workspaceId);
     const f = flowById(d.flowId);
     const st = stageOf(d);
-    const owner = userById(d.ownerId);
+    const owner = userById(d.ownerId || d.lastOwnerId || _lastOwnerIdFromHistory(d));
     const totalHours = (d.timeEntries || []).reduce((s, e) => s + (Number(e.hours) || 0), 0);
     return [
       d.id, d.name, ws?.name || '', cl, p?.name || '', f?.name || '', st?.label || '',
       owner?.name || '', priorityLabel(d.priority) || '',
-      d.stageDueDate || '', d.deadline || '',
-      d.estimatedHours ?? '', totalHours.toFixed(2),
-      (d.createdAt || '').slice(0, 10),
-      (d.completedAt || '').slice(0, 10),
+      brDate(d.stageDueDate), totalHours.toFixed(2).replace('.', ','),
+      brDate(d.createdAt), brDate(d.completedAt),
       d.completedAt ? 'Concluída' : (st?.done ? 'Concluída' : 'Em andamento')
     ];
   });
@@ -13727,7 +13748,7 @@ function setStageDateDraft(stageId, isoDate) {
     const st = rowsList[k];
     if (stagesEditDraft.skipped?.has(st.id)) continue;
     lastActivePrevIdx = k;
-    const anchor = stagesEditDraft.dates?.[st.id];
+    const anchor = stagesEditDraft.dates?.[st.id] || (st.id === d.status ? d.stageDueDate : null);
     if (anchor) { prevEnd = anchor; continue; }
     const days = (stagesEditDraft.sla && Object.prototype.hasOwnProperty.call(stagesEditDraft.sla, st.id))
       ? Number(stagesEditDraft.sla[st.id] ?? 0)
@@ -13895,7 +13916,8 @@ function renderDetailStages(d) {
               endDates.push(anchor || '');
               return;
             }
-            const anchor = draft.dates && draft.dates[s.id];
+            // Etapa atual sem âncora própria: o prazo da demanda (footer) é a data dela.
+            const anchor = (draft.dates && draft.dates[s.id]) || (s.id === d.status ? d.stageDueDate : null);
             const end = anchor || _addBusinessDays(lastEnd, effectiveDays[i] ?? 0);
             endDates.push(end);
             lastEnd = end;
@@ -13908,7 +13930,8 @@ function renderDetailStages(d) {
             const isNewAddition = Array.isArray(draft.newAdditions) && draft.newAdditions.some(a => a.id === s.id);
             // Padrão resolvido: stage.responsibleId direto ou role → project/client.
             const defaultRespId = resolveStageOwnerId(d, s);
-            const currentResp = hasRespOverride ? draft.responsibles[s.id] : defaultRespId;
+            // Etapa atual sem executor próprio: o Responsável da demanda é o executor.
+            const currentResp = hasRespOverride ? draft.responsibles[s.id] : ((isCurrent && d.ownerId) || defaultRespId);
             const defaultUser = defaultRespId ? userById(defaultRespId) : null;
             const defaultLabel = defaultUser ? `Padrão do fluxo: ${defaultUser.name}` : 'Padrão do fluxo: sem responsável';
             const selectId = `stages-resp-${s.id}`;
@@ -14417,6 +14440,7 @@ async function commitDetailEdits() {
   try {
     const upd = await api('/demands/' + d.id, 'PUT', payload);
     patchDemand(upd);
+    _rebaseStagesDraftCurrentStage(upd);
     detailDirty = {};
     toast('Alterações salvas!');
     renderDetail();
@@ -16045,11 +16069,34 @@ async function removeDetailAttachment(id) {
   } catch (e) { toast(e.message, 'error'); }
 }
 
+/* Responsável/prazo da etapa mudaram por fora da tab Etapas: realinha só a
+   etapa ATUAL no rascunho com o valor salvo, sem perder edições pendentes
+   nas outras etapas. */
+function _rebaseStagesDraftCurrentStage(d) {
+  if (!stagesEditDraft || !d?.status) return;
+  const sid = d.status;
+  const resp = (d.stageResponsibles && typeof d.stageResponsibles === 'object') ? d.stageResponsibles : {};
+  if (Object.prototype.hasOwnProperty.call(resp, sid)) stagesEditDraft.responsibles[sid] = resp[sid];
+  else delete stagesEditDraft.responsibles[sid];
+  const addition = (Array.isArray(d.stageAdditions) ? d.stageAdditions : []).find(a => a.id === sid);
+  const ov = d.stageOverrides?.[sid];
+  const savedDate = addition ? (addition.deadlineDate || null) : (ov?.deadlineDate || null);
+  if (!stagesEditDraft.dates) stagesEditDraft.dates = {};
+  if (savedDate) stagesEditDraft.dates[sid] = savedDate;
+  else delete stagesEditDraft.dates[sid];
+  if (!stagesEditDraft.sla) stagesEditDraft.sla = {};
+  const flowStage = flowById(d.flowId)?.stages.find(s => s.id === sid);
+  stagesEditDraft.sla[sid] = addition
+    ? (addition.deadlineDays ?? null)
+    : (ov?.deadlineDays !== undefined ? ov.deadlineDays : (flowStage?.deadlineDays ?? null));
+}
+
 async function changeOwner(uid) {
   document.querySelectorAll('.cdrop.open').forEach(c => c.classList.remove('open'));
   try {
     const d = await api('/demands/' + detailId, 'PUT', { ownerId: uid });
     patchDemand(d);
+    _rebaseStagesDraftCurrentStage(d);
     toast('Responsável atualizado!');
     renderDetail();
   } catch (e) { toast(e.message, 'error'); }
@@ -18490,9 +18537,10 @@ function renderStageRows() {
       allRoles.map(r => `<option value="${esc(r.name)}" ${r.name === roleFilter ? 'selected' : ''}>${esc(r.name)}</option>`).join('');
 
     // Cargo dropdown — só cargos presentes em users daquela área (evita opções mortas).
+    // O cargo já salvo entra sempre: sem isso ele some da lista e o próximo save o apaga.
     const usersInArea = roleFilter ? allUsers.filter(u => (u.role || '') === roleFilter) : allUsers;
     const cargosDisponiveis = (positions || []).slice()
-      .filter(p => usersInArea.some(u => (u.position || '') === p.name))
+      .filter(p => p.name === positionFilter || usersInArea.some(u => (u.position || '') === p.name))
       .sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
     const cargoOpts = `<option value="">Qualquer cargo</option>` +
       cargosDisponiveis.map(p => `<option value="${esc(p.name)}" ${p.name === positionFilter ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
@@ -33137,7 +33185,394 @@ function renderWizardStep4() {
   if (!editingId) {
     // Foca o nome
     setTimeout(() => $('f-name').focus(), 60);
+    _fsLoadLearnedTerms().then(renderFlowSuggestion);
   }
+  renderFlowSuggestion();
+}
+
+/* ─── SUGESTÃO DE FLUXO PELO TÍTULO ──────────────────────────────
+   Classificador por pontuação. Cada fluxo do cliente ganha termos de 2 fontes:
+     1) FLOW_SUGGEST_CONCEPTS — dicionário por tipo de fluxo (abreviações,
+        variações, erros comuns), ligado ao fluxo pelo nome (`names`).
+     2) O próprio nome do fluxo: nome inteiro, palavras e sigla. É o que faz
+        fluxos novos, fora do dicionário, também serem reconhecidos.
+   Sintaxe dos termos: `=x` só casa exato (palavras curtas que viram outras com
+   1 erro: pauta→pausa, marca→marco); `x*` casa radical (criativ* → criativos).
+   Sem `=`, tolera erro de digitação: 1 letra em palavras de 5+, 2 em 8+.
+   Pesos: s=3, m=2, w=1 por palavra do título coberta; sugere a partir de 3.
+   `veto` zera o fluxo — tarefas operacionais que usam o mesmo vocabulário
+   ("Pausar criativos" não é Novos Criativos). A ordem do array desempata. */
+const FLOW_SUGGEST_CONCEPTS = [
+  {
+    id: 'landing-page',
+    names: ['landing page', 'landing pages', 'landing', 'lp', 'lps', 'pagina de captura'],
+    s: ['=lp', '=lps', '=l p', '=lp s', 'landing*', 'landingpage*', 'lading*', 'ladning*', 'landig*', 'lendin*', 'landpage', 'landin page',
+      'pagina de captura', 'paginas de captura', 'pag de captura', 'pg de captura', 'pagina de conversao', 'pagina de vendas',
+      'pagina de obrigado', 'thank you page', 'thankyou page', '=typ', 'hotsite', 'hot site', 'squeeze page', 'one page', 'onepage',
+      'pagina do empreendimento', 'pagina do produto', 'pagina de cadastro', 'pagina de indicados', 'pagina de indicacao',
+      'pagina da campanha', 'pagina de campanha'],
+    m: ['=pagina', '=paginas', '=pag', 'formulario de captura', 'form de captura', 'dobra', 'dobras', 'headline'],
+    w: ['formulario', '=form', 'layout', 'wireframe', '=cta'],
+    veto: ['=gtm', '=utm', '=utms', 'analytics', 'tag manager', 'google tag', '=pixel', 'search console', 'relatorio*', 'dashboard*', '=verba', '=verbas', '=acesso'],
+  },
+  {
+    id: 'lp-pre-lancamento',
+    names: ['lp pre lancamento', 'landing pre lancamento', 'landing page pre lancamento', 'lp de pre lancamento', 'pre lancamento'],
+    s: ['=lp', '=lps', 'landing*', 'landingpage*', 'lading*', 'hotsite'],
+    m: ['pre lancamento', 'prelancamento*', 'pre lanc', 'pre lancto', 'lista vip', 'cadastro vip', '=vip', 'teaser', 'breve lancamento',
+      'em breve', 'pre venda', 'prevenda'],
+    veto: ['=gtm', '=utm', '=utms', 'analytics', 'tag manager', '=pixel', 'relatorio*', 'dashboard*', '=verba', '=verbas'],
+  },
+  {
+    id: 'newsletter',
+    names: ['newsletter', 'newsletters', 'news', 'email marketing', 'e mail marketing', 'emkt', 'e mails', 'emails'],
+    s: ['newsletter*', 'newslatter*', 'newsleter*', 'newletter*', 'nesletter*', 'newslleter*', 'newsleeter*', '=news', '=newss', '=nws', '=nl',
+      'email', 'emails', '=e mail', '=e mails', '=mail', 'email marketing', 'emailmarketing', '=emkt', '=e mkt', 'mkt email',
+      'mailing', 'mailings', 'mailchimp', 'disparo de email', 'disparo de e mail', 'envio de email', 'envio de e mail',
+      'reenvio de news', 'reenviar news', 'template de email', 'template de e mail', 'regua de email', 'regua de e mail',
+      'regua de relacionamento', 'fluxo de nutricao', 'nutricao de leads', 'automacao de email', 'automacao de e mail',
+      'html de email', 'convite por email'],
+    m: ['reenvio', 'reenviar', 'reenvios', 'nutricao', 'rd station', 'rdstation', 'regua', 'cadencia'],
+    w: ['=rd', 'disparo', 'disparos', 'envio', 'envios'],
+    veto: ['=base', '=bases', 'cadastro', 'cadastrar', 'importar', 'importacao', 'higienizar', 'higienizacao', '=smtp', '=dominio',
+      '=dns', '=dkim', '=spf', 'assinatura', 'lista de contatos', 'integracao'],
+  },
+  {
+    id: 'whatsapp',
+    names: ['disparo de whatsapp', 'whatsapp', 'disparo de wpp', 'wpp', 'zap', 'whats'],
+    s: ['whatsapp*', 'whatsap*', 'whatssap*', 'whatapp*', 'watsapp*', 'watsap*', 'wattsapp*', 'whastapp*', 'whtasapp*', 'wahtsapp*',
+      '=whats', '=wats', '=wts', '=wpp', '=wpps', '=wapp', '=zap', '=zapzap', '=zapp', 'lista de transmissao', 'listas de transmissao',
+      '=hsm', 'wa business', 'banner de wpp', 'banners de wpp'],
+    m: ['transmissao', 'broadcast', 'mensagem em massa', 'mensagens em massa', 'disparo em massa'],
+    w: ['disparo', 'disparos', 'mensagem', 'mensagens', '=wa'],
+  },
+  {
+    id: 'novos-criativos',
+    names: ['novos criativos', 'novo criativo', 'criativos', 'criativo', 'anuncios', 'ads', 'pecas de midia'],
+    s: ['criativo*', 'criativ*', 'critativ*', 'criaitv*', 'criatvo*', 'criatv*', 'anuncio*', 'anucio*', 'anunco*', '=ads', '=ad',
+      'meta ads', 'facebook ads', 'fb ads', 'instagram ads', 'google ads', 'tiktok ads', 'linkedin ads', 'peca de midia',
+      'pecas de midia', 'pecas para midia', 'video de alcance', 'videos de alcance', 'kit de criativos', 'topo de funil',
+      'meio de funil', 'fundo de funil'],
+    m: ['banner', 'banners', '=bnr', 'display', 'programatica', 'carrossel', 'carrosel', 'carousel', 'motion', 'animado', 'animados',
+      'animacao', 'adaptacao', 'adaptacoes', 'variacao', 'variacoes', 'remarketing', 'retargeting', '=rmkt', '=ugc'],
+    w: ['campanha', 'campanhas', 'funil', '=feed', 'performance', 'alcance', '=peca', '=pecas', '=arte', '=artes', '=reels', '=story', '=stories'],
+    veto: ['pausar', 'pausa', 'pausado', '=subir', 'subida', 'substituir', 'substituicao', 'trocar perfil', 'troca de perfil', 'perfil',
+      'relatorio*', 'veicular', '=verba', '=verbas', 'remanejamento', 'remanejar', 'negativar', 'publicos', 'calibrar', 'otimizar',
+      'otimizacao', 'desativar', '=cpl', 'automacao'],
+  },
+  {
+    id: 'material-impresso',
+    names: ['material impresso', 'materiais impressos', 'impressos', 'impresso', 'grafica', 'material grafico', 'offline'],
+    s: ['impress*', 'impresos', '=grafica', '=graficas', 'material grafico', 'folder*', 'folheto*', 'foleto*', 'fohleto*', 'panfleto*',
+      'flyer*', 'flayer*', 'adesivo*', 'adesivagem', 'cartao de visita', 'cartoes de visita', 'cartao visita', 'cartoes visita',
+      'totem', 'totens', 'outdoor*', 'busdoor*', 'backdrop*', 'backlight', 'front light', '=lona', '=lonas', 'banner impresso',
+      'plotagem', 'plotter', 'envelopamento', 'sinalizacao', '=placa', '=placas', 'wobbler*', 'display de mesa', 'etiqueta*',
+      'papelaria', 'papel timbrado', 'cracha*', 'brinde*', 'ecobag*', 'caneca*', 'camiseta*', 'cheque*', '=a3', '=a4', '=a5', '=cinta',
+      '=cintas', 'tabela de vendas', 'espelho de vendas', 'memorial descritivo', 'livreto*', 'cartaz*', '=mupi', 'empena', 'tapume*',
+      'convite impresso', 'convites impressos'],
+    m: ['cartao', 'cartoes', 'catalogo', 'catalogos', '=faixa', '=faixas', 'embalagem', 'embalagens', 'guerrilha', 'blimp', 'mobiliario',
+      'fachada', '=book', 'livro'],
+    w: ['material', 'materiais', '=convite', '=convites', 'evento', '=pdv', '=stand'],
+  },
+  {
+    id: 'website',
+    names: ['website', 'site', 'sites', 'web site', 'portal institucional', 'blog', 'seo'],
+    s: ['=site', '=sites', 'website*', 'websit*', 'web site', 'webiste*', 'wesbite*', '=blog', '=blogs', 'blogpost', 'post de blog',
+      'posts de blog', 'post no blog', 'wordpress', '=wp', 'elementor', '=seo', 'on page', 'sitemap', 'hospedagem', '=dominio', '=ssl',
+      'pagina institucional', 'site institucional', 'home do site', '=cms', 'core web vitals', 'pagespeed', 'page speed',
+      'search console', 'indexacao', '=serp'],
+    m: ['institucional', 'artigo', 'artigos', 'palavra chave', 'palavras chave', 'keyword', 'keywords', 'backlink*', '=menu',
+      'rodape', '=footer', '=header', 'migracao de site', '=url', '=urls'],
+    w: ['=pagina', '=paginas', '=home', 'servidor', '=web'],
+  },
+  {
+    id: 'cronograma',
+    names: ['cronograma', 'cronogramas', 'midias sociais', 'midia social', 'redes sociais', 'social media', 'calendario editorial'],
+    s: ['cronograma*', 'conograma*', 'cronogama*', 'cronorama*', 'calendario editorial', 'calendario de posts', 'calendario de conteudo',
+      '=pauta', '=pautas', 'midias sociais', 'midia social', 'midas sociais', 'redes sociais', 'rede social', 'social media',
+      'socialmedia', '=ms', '=smm', 'grade de conteudo', 'planejamento de conteudo', 'planejamento editorial', 'linha editorial',
+      'conteudo do mes', 'posts do mes', 'instagram', '=insta', '=ig', 'tiktok', 'tik tok', 'linkedin', 'pinterest', '=threads'],
+    m: ['=post', '=posts', 'postagem', 'postagens', '=feed', '=reels', '=reel', 'legenda', 'legendas', 'carrossel', 'carrosel',
+      'facebook', '=fb', 'organico', 'organicos', 'engajamento', '=story', '=stories'],
+    w: ['=copy', '=copys', '=arte', '=artes'],
+    veto: ['patrocinar', 'patrocinado', 'patrocinio', 'impulsionar', 'impulsionamento', 'impulsionado', 'anuncio*', '=ads',
+      'trocar perfil', 'troca de perfil', '=verba', '=verbas'],
+  },
+  {
+    id: 'key-visual',
+    names: ['key visual', 'key visuals', 'kv', 'conceito de campanha'],
+    s: ['key visual', 'keyvisual', 'key visuals', '=kv', '=kvs', '=k v', 'conceito criativo', 'conceito de campanha',
+      'conceito da campanha', 'identidade de campanha', 'identidade da campanha', 'linha criativa', 'big idea', 'conceito visual', 'key art',
+      '=ebook', '=ebooks', '=e book', '=e books'],
+    m: ['conceito', 'conceitos', 'moodboard', 'mood board', 'direcao de arte', 'apresentacao',
+      'naming', '=slogan', 'tagline', 'manifesto'],
+    w: ['campanha', 'campanhas', 'lancamento', '=book', '=tema'],
+  },
+  {
+    id: 'identidade-visual',
+    names: ['identidade visual', 'identidades visuais', 'iv', 'branding', 'marca', 'manual de marca'],
+    s: ['identidade visual', 'identidades visuais', '=iv', 'branding', 'rebranding', '=logo', '=logos', 'logotipo*', 'logomarca*',
+      '=marca', '=marcas', 'manual de marca', 'manual da marca', 'brandbook', 'brand book', 'guia de marca', 'brand guide', '=brand'],
+    m: ['identidade', 'paleta', 'paleta de cores', 'tipografia', '=fonte', '=fontes', 'simbolo', 'assinatura visual'],
+    w: ['visual', '=convite', '=convites', '=selo'],
+  },
+  {
+    id: 'endomarketing-digital',
+    names: ['endomarketing digital', 'endo digital'],
+    s: ['endomarketing', 'endo marketing', '=endo', 'comunicacao interna', 'forca de vendas', 'campanha interna', 'campanha de incentivo',
+      'incentivo de vendas', 'convencao de vendas', '=partiu*'],
+    m: ['corretor', 'corretores', 'corretora', 'premiacao', 'trofeu', 'ranking de vendas', 'incentivo', 'colaboradores',
+      'equipe de vendas', 'time de vendas', 'digital', 'peca digital', '=gif', '=card', '=cards'],
+  },
+  {
+    id: 'endomarketing-offline',
+    names: ['endomarketing offline', 'endo offline', 'endomarketing impresso'],
+    s: ['endomarketing', 'endo marketing', '=endo', 'comunicacao interna', 'forca de vendas', 'campanha interna', 'campanha de incentivo',
+      'incentivo de vendas', 'convencao de vendas', '=partiu*'],
+    m: ['corretor', 'corretores', 'corretora', 'premiacao', 'trofeu', 'ranking de vendas', 'incentivo', 'colaboradores',
+      'equipe de vendas', 'time de vendas', 'offline', 'impress*', '=cinta', 'brinde*', 'adesivo*', '=kit'],
+  },
+  {
+    id: 'melhorias',
+    names: ['melhorias', 'melhoria', 'desenvolvimento', 'dev', 'sistema'],
+    s: ['rework', '=bug', '=bugs', 'melhoria', 'melhorias', 'feature', 'features', 'deploy', 'autodeploy', 'refator*', 'hotfix', '=fix',
+      'correcao', 'correcoes', 'nginx', '=smtp', '=env', '=api', 'endpoint', 'backend', 'frontend'],
+    m: ['config', 'configuracao', 'configurar', 'integracao', 'backup', '=bot', 'servidor', 'acompanhamento'],
+  },
+  // Fluxo "curinga" nunca é sugerido — é justamente dele que queremos tirar demandas.
+  { id: 'personalizado', exclude: true,
+    names: ['personalizado', 'personalizada', 'personalizados', 'personalizdo', 'avulso', 'avulsa', 'outros', 'geral', 'custom', 'diversos'] },
+];
+// Palavras genéricas não viram termo derivado do nome do fluxo ("Novos Criativos" → só "criativos").
+const _FS_GENERIC = new Set(['novo', 'novos', 'nova', 'novas', 'fluxo', 'fluxos', 'demanda', 'demandas', 'geral', 'padrao', 'digital',
+  'digitais', 'offline', 'online', 'material', 'materiais', 'campanha', 'campanhas', 'marketing', 'criacao', 'conteudo', 'conteudos',
+  'pagina', 'paginas', 'visual', 'visuais', 'servico', 'servicos', 'projeto', 'projetos', 'ajuste', 'ajustes', 'midia', 'midias',
+  'sociais', 'social', 'peca', 'pecas', 'arte', 'artes', 'disparo', 'disparos', 'cliente', 'clientes', 'interno', 'interna',
+  'externo', 'externa', 'outros', 'diversos', 'tipo', 'lancamento', 'lancamentos']);
+const _FS_STOP = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'em', 'no', 'na', 'nos', 'nas', 'para', 'pra', 'com', 'a', 'o', 'os', 'as', 'um', 'uma', 'por']);
+const FLOW_SUGGEST_MIN_SCORE = 3;
+
+const _flowSuggestKey = s => norm(s).replace(/[^a-z0-9]+/g, ' ').trim();
+
+// Damerau-Levenshtein (OSA) com corte: devolve max+1 assim que passa do limite.
+function _fsDist(a, b, max) {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev2 = null;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    let rowMin = i;
+    for (let j = 1; j <= b.length; j++) {
+      let v = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) v = Math.min(v, prev2[j - 2] + 1);
+      cur[j] = v;
+      if (v < rowMin) rowMin = v;
+    }
+    if (rowMin > max) return max + 1;
+    prev2 = prev;
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+const _fsSingular = w => (w.length > 3 ? w.replace(/s$/, '') : w);
+function _fsTokenMatch(term, word, exact, prefix) {
+  if (prefix) {
+    if (word.startsWith(term)) return true;
+    if (exact || term.length < 6) return false;
+    for (let len = term.length - 1; len <= term.length + 1; len++) {
+      if (word.length >= len && _fsDist(word.slice(0, len), term, 1) <= 1) return true;
+    }
+    return false;
+  }
+  if (word === term || _fsSingular(word) === _fsSingular(term)) return true;
+  if (exact || term.length < 5) return false;
+  const max = term.length >= 8 ? 2 : 1;
+  return _fsDist(word, term, max) <= max;
+}
+
+function _fsParseTerm(raw, weight) {
+  let s = raw.trim();
+  const exact = s.startsWith('=');
+  if (exact) s = s.slice(1);
+  const prefix = s.endsWith('*');
+  if (prefix) s = s.slice(0, -1);
+  return { toks: _flowSuggestKey(s).split(' ').filter(Boolean), exact, prefix, w: weight };
+}
+
+// Posições do título cobertas pelo termo (1ª ocorrência), ou null.
+function _fsFind(term, tokens) {
+  const k = term.toks.length;
+  if (!k) return null;
+  for (let i = 0; i + k <= tokens.length; i++) {
+    let ok = true;
+    for (let j = 0; j < k && ok; j++) {
+      ok = _fsTokenMatch(term.toks[j], tokens[i + j], term.exact, term.prefix && j === k - 1);
+    }
+    if (ok) return Array.from({ length: k }, (_, j) => i + j);
+  }
+  return null;
+}
+
+function _fsConceptFor(flowKey) {
+  return FLOW_SUGGEST_CONCEPTS.find(c => c.names.some(n => {
+    const nk = _flowSuggestKey(n);
+    return flowKey === nk || (nk.includes(' ') && (' ' + flowKey + ' ').includes(' ' + nk + ' '));
+  })) || null;
+}
+
+/* Termos aprendidos do histórico — calculados no servidor sobre as demandas de
+   TODOS os squads (GET /api/flow-suggest/learned), pra equipe nova já herdar o
+   que as outras ensinaram. Recarrega ao abrir o wizard se tiver mais de 5 min. */
+const FLOW_LEARN_TTL_MS = 5 * 60 * 1000;
+let _fsLearned = { at: 0, byFlowKey: new Map(), loading: null };
+function _fsLoadLearnedTerms() {
+  if (_fsLearned.loading) return _fsLearned.loading;
+  if (Date.now() - _fsLearned.at < FLOW_LEARN_TTL_MS) return Promise.resolve();
+  _fsLearned.loading = api('/flow-suggest/learned')
+    .then(r => {
+      const byFlowKey = new Map(Object.entries(r.terms || {})
+        .map(([key, list]) => [key, list.map(([term, w]) => _fsParseTerm(term, w))]));
+      _fsLearned = { at: Date.now(), byFlowKey, loading: null };
+      _fsProfileCache.clear();
+    })
+    .catch(() => { _fsLearned.loading = null; });
+  return _fsLearned.loading;
+}
+
+const _fsProfileCache = new Map();
+function _fsProfile(flow) {
+  const cacheKey = flow.id + '|' + flow.name;
+  if (_fsProfileCache.has(cacheKey)) return _fsProfileCache.get(cacheKey);
+  const key = _flowSuggestKey(flow.name);
+  const concept = _fsConceptFor(key);
+  let profile = null;
+  if (!concept?.exclude && key) {
+    const terms = [];
+    const add = (list, w) => (list || []).forEach(t => terms.push(_fsParseTerm(t, w)));
+    if (concept) { add(concept.s, 3); add(concept.m, 2); add(concept.w, 1); }
+    terms.push(...(_fsLearned.byFlowKey.get(key) || []));
+    // Fluxo sem dicionário depende só do nome: cada palavra dele já basta pra sugerir.
+    const words = key.split(' ');
+    if (words.length > 1) terms.push(_fsParseTerm(key, 3));
+    words.filter(w => w.length >= 4 && !_FS_GENERIC.has(w))
+      .forEach(w => terms.push(_fsParseTerm(w, words.length === 1 || !concept ? 3 : 2)));
+    const initials = words.filter(w => !_FS_STOP.has(w)).map(w => w[0]);
+    if (initials.length >= 2 && initials.length <= 4) terms.push(_fsParseTerm('=' + initials.join(''), 3));
+    profile = {
+      rank: concept ? FLOW_SUGGEST_CONCEPTS.indexOf(concept) : FLOW_SUGGEST_CONCEPTS.length,
+      terms,
+      veto: (concept?.veto || []).map(t => _fsParseTerm(t, 0)),
+    };
+  }
+  _fsProfileCache.set(cacheKey, profile);
+  return profile;
+}
+
+// Soma, por palavra do título, o maior peso entre os termos que a cobrem.
+// Frase forte (s) vale cheio em cada palavra — é específica ("display de mesa"
+// tem que ganhar de "display" solto). Frase m/w divide o peso entre as palavras,
+// senão "pré lançamento" (m=2) valeria 4 e passaria do mínimo sozinha.
+function _fsScore(profile, tokens) {
+  if (profile.veto.some(v => _fsFind(v, tokens))) return 0;
+  const byPos = new Map();
+  for (const term of profile.terms) {
+    const pos = _fsFind(term, tokens);
+    if (!pos) continue;
+    const w = term.w >= 3 ? term.w : term.w / pos.length;
+    pos.forEach(p => byPos.set(p, Math.max(byPos.get(p) || 0, w)));
+  }
+  let score = 0;
+  byPos.forEach(w => { score += w; });
+  return score;
+}
+
+/* Fluxo sugerido pro título, ou null. Não sugere se o fluxo escolhido pontua
+   igual ou mais que o melhor candidato. */
+function suggestFlowForTitle(title, currentFlowId, clientId) {
+  const tokens = _flowSuggestKey(title).split(' ').filter(Boolean);
+  if (!tokens.length) return null;
+  let best = null;
+  let bestScore = 0;
+  let currentScore = 0;
+  for (const f of flowsForClient(clientId)) {
+    const profile = _fsProfile(f);
+    if (!profile) continue;
+    const score = _fsScore(profile, tokens);
+    if (f.id === currentFlowId) currentScore = score;
+    if (score > bestScore || (score === bestScore && score > 0 && profile.rank < best.rank)) {
+      best = { flow: f, rank: profile.rank };
+      bestScore = score;
+    }
+  }
+  if (!best || bestScore < FLOW_SUGGEST_MIN_SCORE || currentScore >= bestScore || best.flow.id === currentFlowId) return null;
+  return best.flow;
+}
+
+function renderFlowSuggestion() {
+  const box = $('f-flow-suggest');
+  if (!box) return;
+  // Só repinta quando o estado muda — senão a animação de entrada reinicia a cada tecla.
+  const paint = (key, html) => {
+    if (box.dataset.key === key) return;
+    box.dataset.key = key;
+    box.hidden = !html;
+    box.innerHTML = html;
+    if (html) paintIcons();
+  };
+  if (editingId || wizardState.step !== 4) return paint('', '');
+  const title = $('f-name')?.value || '';
+  // Acabou de trocar: confirma e aponta pra desativação de etapas.
+  if (wizardState.flowSuggestSwitchedTo === wizardState.flowId && wizardState.flowSuggestSwitchedTitle === title) {
+    const f = flowById(wizardState.flowId);
+    return paint('done:' + wizardState.flowId, `<div class="flow-suggest is-done">
+      <i data-lucide="check" class="ic-sm flow-suggest-icon"></i>
+      <div class="flow-suggest-body">
+        <div class="flow-suggest-title">Fluxo trocado para <strong>${esc(f?.name || '')}</strong></div>
+        <div class="flow-suggest-text">Alguma etapa não é necessária pra essa demanda? Desative em Customizar etapas.</div>
+      </div>
+      <div class="flow-suggest-actions">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="wizardGoTo('cust')">Customizar etapas</button>
+      </div>
+    </div>`);
+  }
+  const sug = suggestFlowForTitle(title, wizardState.flowId, wizardState.clientId);
+  if (!sug || wizardState.flowSuggestDismissed === sug.id) return paint('', '');
+  const cur = flowById(wizardState.flowId);
+  paint(`sug:${wizardState.flowId}:${sug.id}`, `<div class="flow-suggest">
+    <i data-lucide="sparkles" class="ic-sm flow-suggest-icon"></i>
+    <div class="flow-suggest-body">
+      <div class="flow-suggest-title">Esse título parece <strong>${esc(sug.name)}</strong>${cur ? ` — você escolheu <strong>${esc(cur.name)}</strong>` : ''}</div>
+      <div class="flow-suggest-text">Se alguma etapa de ${esc(sug.name)} não for necessária, dá pra desativá-la no passo Customizar etapas.</div>
+    </div>
+    <div class="flow-suggest-actions">
+      <button type="button" class="btn btn-ghost btn-sm" onclick="dismissFlowSuggestion('${sug.id}')">Manter</button>
+      <button type="button" class="btn btn-primary btn-sm" onclick="applyFlowSuggestion('${sug.id}')">Trocar fluxo</button>
+    </div>
+  </div>`);
+}
+const renderFlowSuggestionDebounced = debounce(renderFlowSuggestion, 250);
+
+function dismissFlowSuggestion(flowId) {
+  wizardState.flowSuggestDismissed = flowId;
+  renderFlowSuggestion();
+}
+
+function applyFlowSuggestion(flowId) {
+  const oldFlow = flowById(wizardState.flowId);
+  if (!flowById(flowId)) return;
+  // renderWizardStep4 zera a descrição ao trocar de fluxo (pra herdar o default
+  // do novo). Preserva o que o usuário escreveu — só descarta o default antigo.
+  const desc = getRichValue('f-description') || '';
+  const userWroteDesc = desc.replace(/<[^>]+>/g, '').trim() && desc !== (oldFlow?.defaultDescription || '');
+  wizardState.flowId = flowId;
+  wizardState.flowSuggestSwitchedTo = flowId;
+  wizardState.flowSuggestSwitchedTitle = $('f-name')?.value || '';
+  wizardPushRecent('flow', flowId);
+  // Customização era das etapas do fluxo anterior.
+  resetWizardCustomization();
+  renderWizardStep4();
+  if (userWroteDesc) setRichValue('f-description', desc);
 }
 
 /* ─── LIXEIRA — recuperação de itens excluídos (30 dias) ───
