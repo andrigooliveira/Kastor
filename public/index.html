@@ -3344,6 +3344,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       <button class="modal-close" onclick="closeModal('time-modal')"><i data-lucide="x" class="ic-sm"></i></button>
     </div>
     <div class="modal-body">
+      <div class="time-advance-hint" id="time-advance-hint" hidden></div>
       <!-- Início | Término -->
       <div class="time-row time-row-2col">
         <div class="time-col">
@@ -3379,7 +3380,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('time-modal')">Cancelar</button>
-      <button class="btn btn-primary" onclick="addTimeEntry()"><i data-lucide="check" class="ic-sm"></i> Registrar</button>
+      <button class="btn btn-primary" onclick="addTimeEntry()"><i data-lucide="check" class="ic-sm"></i> <span id="time-submit-label">Registrar</span></button>
     </div>
   </div>
 </div>
@@ -4565,7 +4566,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260922csvexport2" defer></script>
+<script src="/js/boot.js?v=20260922attgrid2" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

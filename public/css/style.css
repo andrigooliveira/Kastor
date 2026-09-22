@@ -6059,11 +6059,13 @@ body:has(#page-demand-detail.active) #toast-container { bottom: 96px; }
 .comment-input-ce ul { list-style: disc outside; }
 .comment-input-ce li { margin: 2px 0; }
 .comment-input-ce img {
-  max-width: 100%; max-height: 240px;
+  max-width: 100%; height: auto;
   border-radius: 6px;
   margin: 4px 0;
   display: inline-block;
 }
+/* Sem largura escolhida, segura a altura pra não empurrar o compositor. */
+.comment-input-ce img:not([width]) { max-height: 240px; width: auto; }
 .comment-input-ce p { margin: 0 0 6px; }
 .comment-input-ce a { color: var(--accent-text); text-decoration: underline; }
 
@@ -6075,10 +6077,11 @@ body:has(#page-demand-detail.active) #toast-container { bottom: 96px; }
 .comment-text ul { list-style: disc outside; }
 .comment-text li { margin: 2px 0; }
 .comment-text img {
-  max-width: 100%; max-height: 320px;
+  max-width: 100%; height: auto;
   border-radius: 6px; margin: 4px 0;
   display: inline-block; cursor: zoom-in;
 }
+.comment-text img:not([width]) { max-height: 320px; width: auto; }
 .comment-pending-files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .pending-file {
   display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px;
@@ -7462,7 +7465,35 @@ body.is-fullpage #page-notfound.active {
   color: var(--text-dim);
 }
 .rich-editor-input a { color: var(--accent-text); text-decoration: underline; }
-.rich-editor-input img { max-width: 100%; border-radius: 6px; margin: 4px 0; }
+.rich-editor-input img { max-width: 100%; height: auto; border-radius: 6px; margin: 4px 0; }
+/* Alça de altura do editor — contêiner de altura zero logo após o campo; a
+   alça sobe pro canto inferior direito dele (longe da barra de rolagem). */
+.editor-resize-row { position: relative; height: 0; }
+.editor-resize-grip {
+  position: absolute; right: 14px; bottom: 4px; z-index: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 14px; padding: 0;
+  border: 0; border-radius: 4px; background: transparent;
+  color: var(--text-muted); opacity: 0.6;
+  cursor: ns-resize; touch-action: none;
+  transition: opacity 120ms cubic-bezier(0.16, 1, 0.3, 1), background 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.editor-resize-grip:hover, .editor-resize-grip:focus-visible { opacity: 1; background: var(--surface-2); outline: none; }
+.editor-resize-grip svg { width: 14px; height: 14px; }
+/* Compositor de comentário recolhido não precisa da alça. */
+.chat-compose:not(.is-active) .editor-resize-row { display: none; }
+/* Imagem em editor: clique mostra a moldura de redimensionar. */
+[contenteditable="true"] img { cursor: pointer; }
+.img-resize-frame {
+  position: fixed; z-index: 5000; pointer-events: none;
+  outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 6px;
+}
+.img-resize-handle {
+  position: absolute; right: -7px; bottom: -7px;
+  width: 12px; height: 12px; border-radius: 3px;
+  background: var(--accent); border: 2px solid var(--surface);
+  cursor: nwse-resize; pointer-events: auto; touch-action: none;
+}
 /* Input (contenteditable). Colapsado: linha única (~40px). Expandido: cresce. */
 .chat-compose-input {
   min-height: 40px;
@@ -7584,6 +7615,14 @@ body.is-fullpage #page-notfound.active {
 .chat-comment-menu-item.danger { color: var(--danger); }
 .chat-comment-menu-item.danger:hover { background: rgba(239,68,68,.08); }
 .chat-comment-text { font-size: 13px; line-height: 1.5; color: var(--text); word-wrap: break-word; margin-top: 2px; }
+/* Imagem nunca passa da largura do comentário; `width` (redimensionada no
+   editor) vale até esse limite. */
+.chat-comment-text img {
+  max-width: 100%; height: auto;
+  border-radius: 6px; margin: 4px 0;
+  display: inline-block; vertical-align: top;
+  cursor: zoom-in;
+}
 .chat-comment-text p { margin: 0; }
 .chat-comment-text p + p { margin-top: 6px; }
 .chat-comment-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
@@ -7991,7 +8030,7 @@ body.is-fullpage #page-notfound.active {
   border-left: 3px solid var(--accent);
   color: var(--text-dim);
 }
-.detail-description.is-html img { max-width: 100%; border-radius: 6px; margin: 4px 0; }
+.detail-description.is-html img { max-width: 100%; height: auto; border-radius: 6px; margin: 4px 0; cursor: zoom-in; }
 
 .detail-section-divider { margin: 28px 0 18px; height: 1px; background: var(--border); }
 
@@ -8212,8 +8251,38 @@ i[data-lucide]:not([class*=ic-]) { width: 16px; height: 16px; stroke-width: 2; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .demand-att-name:hover { color: var(--accent-text); text-decoration: underline; }
-.demand-att-thumb { width: 32px; height: 32px; object-fit: cover; border-radius: 4px; cursor: pointer; }
 .demand-att-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+/* Grade de cards: no máximo 4 por linha (menos quando estreito), quebrando
+   pra próxima linha. */
+.att-card-grid {
+  --att-cols: 4; --att-gap: 10px;
+  display: grid; gap: var(--att-gap);
+  grid-template-columns: repeat(auto-fill, minmax(max(140px, calc((100% - (var(--att-cols) - 1) * var(--att-gap)) / var(--att-cols))), 1fr));
+}
+.att-card .att-gal-thumb { aspect-ratio: 4 / 3; }
+.att-card .att-gal-thumb-icon i, .att-card .att-gal-thumb-icon svg { width: 32px; height: 32px; }
+.att-card-meta {
+  font-size: 11px; color: var(--text-muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.att-card-actions {
+  position: absolute; top: 6px; right: 6px;
+  display: flex; gap: 4px;
+  opacity: 0; transition: opacity 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.att-card:hover .att-card-actions, .att-card:focus-within .att-card-actions { opacity: 1; }
+@media (hover: none) { .att-card-actions { opacity: 1; } }
+.att-card-act {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0;
+  border: 0; border-radius: 6px; cursor: pointer;
+  background: rgba(0,0,0,0.62); color: #fff;
+  transition: background 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.att-card-act:hover { background: rgba(0,0,0,0.82); }
+.att-card-act.danger:hover { background: #dc2626; }
+.att-card-act svg { width: 15px !important; height: 15px !important; }
 /* Botões de anexo do modal de demanda — caixas paralelas (Arquivo / Imagem / Link) */
 .demand-att-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
 .demand-att-btn {
@@ -12280,6 +12349,40 @@ button.is-loading::after {
 .flow-suggest-title strong { font-weight: 700; }
 .flow-suggest-text { font-size: 12px; color: var(--text-muted); margin-top: 2px; line-height: 1.45; }
 .flow-suggest-actions { display: flex; gap: 8px; margin-left: auto; }
+#f-flow-suggest:not([hidden]) { display: flex; flex-direction: column; gap: 8px; }
+#f-flow-suggest [data-slot]:empty { display: none; }
+.flow-suggest.is-info { background: color-mix(in oklab, var(--text-muted) 8%, var(--surface-2)); }
+.flow-suggest.is-info::before { background: var(--text-muted); }
+.flow-suggest.is-info .flow-suggest-icon { color: var(--text-muted); }
+.flow-suggest-link {
+  background: none; border: none; padding: 0; font: inherit; font-weight: 600;
+  color: var(--accent-text); cursor: pointer; text-decoration: underline;
+  text-decoration-color: transparent; text-underline-offset: 2px;
+  transition: text-decoration-color 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.flow-suggest-link:hover { text-decoration-color: currentColor; }
+.flow-suggest-link:focus-visible { outline: none; border-radius: 4px; box-shadow: 0 0 0 4px rgba(122,0,255,0.10); }
+/* Modal "Registrar tempo" aberto pelo lembrete de avançar etapa */
+.time-advance-hint {
+  font-size: 12.5px; color: var(--text-dim); line-height: 1.45;
+  padding: 10px 12px; margin-bottom: 14px; border-radius: 8px;
+  background: color-mix(in oklab, var(--accent) 8%, var(--surface-2));
+}
+.time-advance-hint strong { color: var(--text); font-weight: 700; }
+/* Mini menu do lembrete de apontamento, ancorado no botão "Avançar etapa". */
+.advance-menu {
+  position: fixed; z-index: 1000;
+  display: flex; flex-direction: column;
+  min-width: 220px; padding: 4px;
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 8px;
+  box-shadow: var(--shadow-md);
+  animation: flowSuggestIn 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.advance-menu-note {
+  padding: 6px 10px 4px;
+  font-size: 11px; color: var(--text-muted); line-height: 1.4;
+}
+@media (prefers-reduced-motion: reduce) { .advance-menu { animation: none; } }
 @keyframes flowSuggestIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .flow-suggest { animation: none; } }
 

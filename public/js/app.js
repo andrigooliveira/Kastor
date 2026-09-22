@@ -12594,7 +12594,7 @@ function renderDetail() {
     }
     const atts = (c.attachments || []).map(a => {
       if (a.type && a.type.startsWith('image/')) {
-        return `<div class="comment-img-wrap"><img class="comment-img" loading="lazy" decoding="async" src="${a.data}" alt="${esc(a.name)}" onclick="window.open(this.src,'_blank')"></div>`;
+        return `<div class="comment-img-wrap"><img class="comment-img" loading="lazy" decoding="async" src="${a.data}" alt="${esc(a.name)}"></div>`;
       }
       return `<a class="comment-file" href="${esc(attDownloadUrl(a.data, a.name))}" ${attDownloadAttrs(a.data, a.name)} download="${esc(a.name)}" title="Baixar ${esc(a.name)}"><i data-lucide="paperclip" class="ic-sm"></i> ${esc(a.name)}</a>`;
     }).join('');
@@ -12837,6 +12837,7 @@ function renderDetail() {
                      onkeydown="mentionKeys(event)"
                      onkeyup="refreshToolbarState()"
                      onmouseup="refreshToolbarState()"></div>
+                ${editorResizeGrip('comment-input')}
                 <div class="chat-compose-foot">
                   <div class="chat-compose-foot-left">
                     <input type="file" id="comment-file-input" multiple style="display:none" onchange="handleCommentFiles(event)">
@@ -14696,40 +14697,66 @@ function attDownloadAttrs(rawSrc, name) {
   }
   return '';
 }
+/* Anexos em grade de cards (mesmo card da Galeria): prévia em cima, nome sem
+   extensão e a linha "EXT · peso · data". PDF/DOCX ganham capa gerada pelo
+   observer da Galeria (_wireAttCovers) quando o card entra na tela. */
 function renderDemandAttList(list, withDelete) {
   if (!list || !list.length) return '<div class="hours-empty" style="text-align:left">Nenhum arquivo anexado.</div>';
-  return list.map((a, i) => {
+  const cards = list.map(a => {
+    const removeCall = withDelete ? `removeDetailAttachment('${esc(a.id)}')` : `removeFormAttachment('${esc(a.id)}', 'f-attachments-list')`;
+    const removeBtn = `<button type="button" class="att-card-act danger" title="Remover" onclick="${removeCall}"><i data-lucide="x" class="ic-sm"></i></button>`;
+    // Clique nos botões (baixar/remover) não abre o card.
+    const onCard = call => `if (!event.target.closest('.att-card-actions')) { ${call} }`;
+    const date = a.addedAt ? new Date(a.addedAt).toLocaleDateString('pt-BR') : '';
     if (a.kind === 'link') {
-      const href = esc(normalizeUrl(a.url || a.name));
-      return `<div class="demand-att-item" data-id="${esc(a.id)}">
-        <i data-lucide="link" class="ic-sm" style="color:var(--accent-text)"></i>
-        <a href="${href}" target="_blank" rel="noopener noreferrer" class="demand-att-name">${esc(a.name || a.url)}</a>
-        ${withDelete ? `<button class="detail-icon-btn danger" title="Remover" onclick="removeDetailAttachment('${esc(a.id)}')"><i data-lucide="x" class="ic-sm"></i></button>` : `<button class="detail-icon-btn danger" title="Remover" onclick="removeFormAttachment('${esc(a.id)}', 'f-attachments-list')"><i data-lucide="x" class="ic-sm"></i></button>`}
+      const url = normalizeUrl(a.url || a.name);
+      let host = '';
+      try { host = new URL(url).hostname.replace(/^www\./, ''); } catch {}
+      return `<div class="att-gal-tile att-card" data-id="${esc(a.id)}" title="${esc(a.name || a.url)}" onclick="${onCard(`window.open('${esc(url)}', '_blank', 'noopener')`)}">
+        <div class="att-gal-thumb att-gal-thumb-icon"><i data-lucide="link"></i>
+          <div class="att-card-actions">${removeBtn}</div>
+        </div>
+        <div class="att-gal-tile-body">
+          <div class="att-gal-tile-name">${esc(a.name || a.url)}</div>
+          <div class="att-card-meta">${['Link', host, date].filter(Boolean).map(esc).join(' · ')}</div>
+        </div>
       </div>`;
     }
-    const kind = attPreviewKind(a.type);
+    const kind = attGalKindOf(a);
     const previewable = kind !== 'other';
-    const src = esc(a.data || a.url || '');
-    const nameEsc = esc(a.name);
-    const openCall = previewable
-      ? `openAttPreview('${src}', '${esc(a.type || '')}', '${esc(a.name || '')}')`
-      : null;
-    const thumbOrIcon = kind === 'image'
-      ? `<img loading="lazy" decoding="async" src="${a.data || a.url}" class="demand-att-thumb" onclick="${openCall}" style="cursor:zoom-in">`
-      : `<i data-lucide="${attIcon(kind)}" class="ic-sm" style="color:var(--accent-text);${previewable ? 'cursor:pointer' : ''}" ${openCall ? `onclick="${openCall}"` : ''}></i>`;
     const rawSrc = a.data || a.url || '';
+    const src = esc(rawSrc);
     const dlSrc = esc(attDownloadUrl(rawSrc, a.name));
     const dlAttrs = attDownloadAttrs(rawSrc, a.name);
-    const nameEl = previewable
-      ? `<a href="#" class="demand-att-name" onclick="event.preventDefault();${openCall}">${nameEsc}</a>`
-      : `<a href="${dlSrc}" ${dlAttrs} download="${nameEsc}" class="demand-att-name">${nameEsc}</a>`;
-    return `<div class="demand-att-item" data-id="${esc(a.id)}">
-      ${thumbOrIcon}
-      ${nameEl}
-      ${previewable ? `<a href="${dlSrc}" ${dlAttrs} download="${nameEsc}" class="detail-icon-btn" title="Baixar"><i data-lucide="download" class="ic-sm"></i></a>` : ''}
-      ${withDelete ? `<button class="detail-icon-btn danger" title="Remover" onclick="removeDetailAttachment('${esc(a.id)}')"><i data-lucide="x" class="ic-sm"></i></button>` : `<button class="detail-icon-btn danger" title="Remover" onclick="removeFormAttachment('${esc(a.id)}', 'f-attachments-list')"><i data-lucide="x" class="ic-sm"></i></button>`}
+    const openCall = previewable
+      ? `openAttPreview('${src}', '${esc(a.type || '')}', '${esc(a.name || '')}')`
+      : `this.querySelector('.att-card-dl').click()`;
+    const ext = attExtOf(a);
+    const baseName = (a.name || 'arquivo').replace(/\.[a-z0-9]{1,6}$/i, '');
+    const size = attSizeBytes(a);
+    const meta = [ext ? ext.toUpperCase() : '', size ? fmtBytes(size) : '', date].filter(Boolean).map(esc).join(' · ');
+    const thumb = kind === 'image' && rawSrc
+      ? `<div class="att-gal-thumb att-gal-thumb-image" style="background-image:url('${src}')">`
+      : `<div class="att-gal-thumb att-gal-thumb-icon"><i data-lucide="${attIcon(kind)}"></i>`;
+    const coverAttrs = _attCoverKind(a)
+      ? `data-cover-key="${esc(_attCoverKey(a))}" data-att-id="${esc(a.id || '')}" data-att-size="${esc(String(a.size || 0))}" data-att-src="${src}" data-att-type="${esc(a.type || '')}" data-att-name="${esc(a.name || '')}"`
+      : '';
+    return `<div class="att-gal-tile att-card" data-id="${esc(a.id)}" title="${esc(a.name)}" ${coverAttrs} onclick="${onCard(openCall)}">
+      ${thumb}
+        <div class="att-card-actions">
+          <a href="${dlSrc}" ${dlAttrs} download="${esc(a.name)}" class="att-card-act att-card-dl" title="Baixar"><i data-lucide="download" class="ic-sm"></i></a>
+          ${removeBtn}
+        </div>
+      </div>
+      <div class="att-gal-tile-body">
+        <div class="att-gal-tile-name">${esc(baseName)}</div>
+        <div class="att-card-meta">${meta}</div>
+      </div>
     </div>`;
   }).join('');
+  // A string vira DOM no chamador; depois disso liga as capas de PDF/DOCX.
+  setTimeout(() => _wireAttCovers(), 0);
+  return `<div class="att-card-grid">${cards}</div>`;
 }
 
 /* ═══ Viewer engine — lazy-load de libs de renderização (pdf.js / mammoth /
@@ -16157,8 +16184,87 @@ function startEditDemandTitle(el) {
   input.addEventListener('blur', () => finish(true));
 }
 
+/* Avançar etapa sem ter apontado tempo na demanda nos últimos 15 min abre um
+   lembrete (apontar e avançar / avançar sem apontar). Fechar o lembrete não
+   avança. `_pendingAdvance` sobrevive ao modal de tempo pra avançar ao salvar. */
+const ADVANCE_TIME_WINDOW_MS = 15 * 60 * 1000;
+let _pendingAdvance = null; // { demandId, dir }
+
+function _hasRecentTimeEntry(d) {
+  const since = Date.now() - ADVANCE_TIME_WINDOW_MS;
+  return (d.timeEntries || []).some(e => e.userId === me.id && Date.parse(e.createdAt) >= since);
+}
+
 async function moveStage(dir) {
   const d = demandById(detailId); if (!d) return;
+  const flow = flowById(d.flowId); if (!flow) return;
+  const active = activeStagesOf(d, flow);
+  const idx = active.findIndex(s => s.id === d.status);
+  const next = active[idx + dir];
+  if (!next) return;
+  if (dir > 0 && !_hasRecentTimeEntry(d)) {
+    _pendingAdvance = { demandId: d.id, dir };
+    _openAdvanceMenu(document.querySelector('.detail-footer-nav.primary'), d);
+    return;
+  }
+  await _moveStageNow(d.id, dir);
+}
+
+/* Mini menu ancorado no botão de avançar (abre pra cima — o rodapé fica no fim
+   da tela). Clique fora / Esc fecha sem avançar. */
+function _openAdvanceMenu(anchor, d) {
+  _closeAdvanceMenu();
+  if (!anchor) return;
+  const t = timerState[d.id];
+  const timerMs = t ? timerElapsedMs(t) : 0;
+  const menu = document.createElement('div');
+  menu.className = 'advance-menu';
+  menu.id = 'advance-menu';
+  menu.setAttribute('role', 'menu');
+  menu.innerHTML = `
+    <div class="advance-menu-note">Sem apontamento nos últimos 15 min${timerMs > 0 ? ` · cronômetro em ${formatTimerClock(timerMs)}` : ''}</div>
+    <button type="button" class="stages-edit-menu-item" role="menuitem" onclick="advanceWithTime()"><i data-lucide="clock" class="ic-menu"></i> Apontar tempo e avançar</button>
+    <button type="button" class="stages-edit-menu-item" role="menuitem" onclick="advanceWithoutTime()"><i data-lucide="chevrons-right" class="ic-menu"></i> Avançar sem apontar</button>`;
+  document.body.appendChild(menu);
+  paintIcons();
+  const r = anchor.getBoundingClientRect();
+  menu.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
+  menu.style.bottom = (window.innerHeight - r.top + 6) + 'px';
+  menu.querySelector('button')?.focus();
+  // Registra depois do clique atual — senão o próprio clique que abriu já fecharia.
+  setTimeout(() => {
+    document.addEventListener('mousedown', _advanceMenuOutside, true);
+    document.addEventListener('keydown', _advanceMenuKey, true);
+    window.addEventListener('resize', _closeAdvanceMenu);
+  });
+}
+function _advanceMenuOutside(e) {
+  if (!e.target.closest('#advance-menu')) { _pendingAdvance = null; _closeAdvanceMenu(); }
+}
+function _advanceMenuKey(e) {
+  if (e.key === 'Escape') { e.stopPropagation(); _pendingAdvance = null; _closeAdvanceMenu(); }
+}
+function _closeAdvanceMenu() {
+  document.getElementById('advance-menu')?.remove();
+  document.removeEventListener('mousedown', _advanceMenuOutside, true);
+  document.removeEventListener('keydown', _advanceMenuKey, true);
+  window.removeEventListener('resize', _closeAdvanceMenu);
+}
+
+function advanceWithoutTime() {
+  _closeAdvanceMenu();
+  const p = _pendingAdvance;
+  _pendingAdvance = null;
+  if (p) _moveStageNow(p.demandId, p.dir);
+}
+
+function advanceWithTime() {
+  _closeAdvanceMenu();
+  openRegisterTimeModal({ advanceAfter: true });
+}
+
+async function _moveStageNow(demandId, dir) {
+  const d = demandById(demandId); if (!d) return;
   const flow = flowById(d.flowId); if (!flow) return;
   const active = activeStagesOf(d, flow);
   const idx = active.findIndex(s => s.id === d.status);
@@ -16422,7 +16528,20 @@ function toIsoDateTime(v) {
 /* Abre o modal de "Registrar tempo" — layout novo: Início/Término em
    colunas com data+hora separadas, Horas/Minutos como inputs, chips de
    duração rápida (2h/1h/45m/30m/15m). Pre-popula com timer atual se houver. */
-function openRegisterTimeModal() {
+function openRegisterTimeModal(opts) {
+  // Aberto pelo botão "Registrar tempo" normal: descarta avanço pendente.
+  if (!opts?.advanceAfter) _pendingAdvance = null;
+  const hint = $('time-advance-hint');
+  const pending = _pendingAdvance && _pendingAdvance.demandId === detailId;
+  if (hint) {
+    const d = pending ? demandById(detailId) : null;
+    const flow = d ? flowById(d.flowId) : null;
+    const active = flow ? activeStagesOf(d, flow) : [];
+    const next = active[active.findIndex(s => s.id === d?.status) + 1];
+    hint.hidden = !next;
+    hint.innerHTML = next ? `Ao registrar, a demanda avança para <strong>${esc(next.label)}</strong>.` : '';
+  }
+  $('time-submit-label').textContent = pending ? 'Registrar e avançar' : 'Registrar';
   openModal('time-modal');
   setTimeout(() => { _prefillTimeModal(); }, 60);
 }
@@ -16539,7 +16658,10 @@ async function addTimeEntry() {
     resetTimer(d.id);
     toast('Horas apontadas!');
     closeModal('time-modal');
-    renderDetail();
+    const p = _pendingAdvance;
+    _pendingAdvance = null;
+    if (p && p.demandId === d.id) await _moveStageNow(p.demandId, p.dir);
+    else renderDetail();
   } catch (e) { toast(e.message, 'error'); }
 }
 async function deleteTimeEntry(entryId) {
@@ -17144,8 +17266,41 @@ function renderRichEditor({ id, initial, placeholder, minHeight }) {
          data-placeholder="${esc(placeholder || 'Escreva aqui…')}"
          ${minHeight ? `style="min-height:${minHeight}"` : ''}
          oninput="syncRichEmptyState(this)">${initialHtml}</div>
+    ${editorResizeGrip(id)}
   </div>`;
 }
+
+/* Alça no canto inferior direito pra ajustar a altura do editor (só vertical) —
+   pra ler um texto longo inteiro sem rolar dentro da caixa. Arrastar tira o
+   limite de altura do CSS; duplo clique volta ao padrão. Vai logo depois do
+   campo, num contêiner de altura zero, e se posiciona sobre o canto dele. */
+function editorResizeGrip(targetId) {
+  return `<div class="editor-resize-row"><button type="button" class="editor-resize-grip" data-resize-target="${targetId}"
+    onmousedown="event.preventDefault()" title="Arraste para ajustar a altura · duplo clique volta ao padrão"
+    aria-label="Ajustar altura do campo"><i data-lucide="grip-horizontal"></i></button></div>`;
+}
+document.addEventListener('pointerdown', e => {
+  const grip = e.target.closest?.('.editor-resize-grip');
+  const ed = grip && document.getElementById(grip.dataset.resizeTarget);
+  if (!ed) return;
+  e.preventDefault(); // não tira o foco do editor
+  const startY = e.clientY;
+  const startH = ed.getBoundingClientRect().height;
+  const minH = parseFloat(getComputedStyle(ed).minHeight) || 40;
+  ed.style.maxHeight = 'none';
+  const move = ev => { ed.style.height = Math.max(minH, Math.round(startH + ev.clientY - startY)) + 'px'; };
+  const up = () => {
+    document.removeEventListener('pointermove', move);
+    document.removeEventListener('pointerup', up);
+  };
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', up);
+});
+document.addEventListener('dblclick', e => {
+  const grip = e.target.closest?.('.editor-resize-grip');
+  const ed = grip && document.getElementById(grip.dataset.resizeTarget);
+  if (ed) { ed.style.height = ''; ed.style.maxHeight = ''; }
+});
 /* Executa comando no editor específico (foca antes pra que a seleção
    corrente seja aplicada). */
 function execRichCmd(editorId, cmd, value) {
@@ -17206,6 +17361,96 @@ function mountRichEditor(id, opts) {
   el.parentNode.replaceChild(built, el);
   if (typeof paintIcons === 'function') paintIcons();
 }
+/* ─── IMAGENS EM RICH TEXT ───
+   Visualização: clique numa imagem de comentário/descrição renderizados abre o
+   preview de anexos (zoom + baixar). Edição: clique numa imagem dentro de um
+   editor mostra uma moldura com alça no canto — arrastar define a largura
+   (atributo width em px, único formato que o sanitizer do server preserva). */
+const RICH_IMG_VIEW_SELECTOR = '.chat-comment-text img, .comment-text img, .detail-description img, img.comment-img';
+const RICH_IMG_MIN_WIDTH = 48;
+
+function _richImageFile(img) {
+  const src = img.currentSrc || img.src;
+  const file = decodeURIComponent(String(src).split('?')[0].split('/').pop() || '');
+  let ext = ((/\.([a-z0-9]{2,5})$/i.exec(file) || [])[1] || 'png').toLowerCase();
+  if (ext === 'jpg') ext = 'jpeg';
+  return { src, type: 'image/' + ext, name: img.getAttribute('alt') || `imagem.${ext === 'jpeg' ? 'jpg' : ext}` };
+}
+document.addEventListener('click', e => {
+  const img = e.target.closest?.(RICH_IMG_VIEW_SELECTOR);
+  if (!img || img.closest('[contenteditable="true"]')) return;
+  e.preventDefault();
+  const f = _richImageFile(img);
+  openAttPreview(f.src, f.type, f.name);
+});
+
+let _imgResize = null; // { img, editor, frame }
+function _placeImgResizer() {
+  if (!_imgResize) return;
+  const { img, frame } = _imgResize;
+  if (!img.isConnected) { _hideImgResizer(); return; }
+  const r = img.getBoundingClientRect();
+  Object.assign(frame.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
+}
+function _showImgResizer(img) {
+  if (_imgResize?.img === img) return;
+  _hideImgResizer();
+  const frame = document.createElement('div');
+  frame.className = 'img-resize-frame';
+  frame.innerHTML = '<span class="img-resize-handle" title="Arraste para redimensionar · duplo clique volta ao tamanho original"></span>';
+  document.body.appendChild(frame);
+  _imgResize = { img, editor: img.closest('[contenteditable="true"]'), frame };
+  _placeImgResizer();
+  const handle = frame.querySelector('.img-resize-handle');
+  handle.addEventListener('pointerdown', _startImgResize);
+  handle.addEventListener('dblclick', () => { img.removeAttribute('width'); _commitImgResize(); });
+  window.addEventListener('scroll', _placeImgResizer, true);
+  window.addEventListener('resize', _placeImgResizer);
+}
+function _hideImgResizer() {
+  if (!_imgResize) return;
+  _imgResize.frame.remove();
+  _imgResize = null;
+  window.removeEventListener('scroll', _placeImgResizer, true);
+  window.removeEventListener('resize', _placeImgResizer);
+}
+function _startImgResize(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const { img, editor, frame } = _imgResize;
+  const startX = e.clientX;
+  const startW = img.getBoundingClientRect().width;
+  const cs = getComputedStyle(editor);
+  const maxW = editor.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  frame.classList.add('is-dragging');
+  const move = ev => {
+    img.setAttribute('width', Math.round(Math.min(maxW, Math.max(RICH_IMG_MIN_WIDTH, startW + ev.clientX - startX))));
+    _placeImgResizer();
+  };
+  const up = () => {
+    frame.classList.remove('is-dragging');
+    document.removeEventListener('pointermove', move);
+    document.removeEventListener('pointerup', up);
+    _commitImgResize();
+  };
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', up);
+}
+// Dispara `input` no editor: autosave da descrição e estado do compositor reagem igual a digitar.
+function _commitImgResize() {
+  const editor = _imgResize?.editor;
+  _placeImgResizer();
+  editor?.dispatchEvent(new Event('input', { bubbles: true }));
+}
+document.addEventListener('mousedown', e => {
+  const img = e.target.closest?.('[contenteditable="true"] img');
+  if (img) { _showImgResizer(img); return; }
+  if (!e.target.closest?.('.img-resize-frame')) _hideImgResizer();
+}, true);
+// Digitar desloca a imagem (ou a apaga) — reposiciona/some a moldura junto.
+document.addEventListener('input', () => { if (_imgResize) _placeImgResizer(); }, true);
+document.addEventListener('keydown', e => { if (_imgResize && e.key === 'Escape') _hideImgResizer(); }, true);
+
 // Redimensiona e comprime cada imagem, então injeta um <img src="data:..."> no
 // caret do editor de comentário. Server converte data URIs em /uploads na hora
 // de salvar. Suporta múltiplos arquivos numa chamada.
@@ -17353,6 +17598,7 @@ function startEditComment(cid) {
            contenteditable="true" role="textbox" aria-multiline="true"
            oninput="syncCommentEmptyState(this)"
            data-placeholder="Editar comentário…">${startHtml}</div>
+      ${editorResizeGrip('edit-comment-text-' + cid)}
       <div class="comment-pending-files" id="edit-comment-files">${atts}</div>
       <div class="chat-compose-foot">
         <div class="chat-compose-foot-left">
@@ -27725,7 +27971,7 @@ function fmtBytes(n) {
   const units = ['B', 'KB', 'MB', 'GB'];
   let i = 0, v = n;
   while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
-  return v.toFixed(v >= 10 ? 0 : 1) + ' ' + units[i];
+  return v.toFixed(v >= 10 ? 0 : 1).replace('.', ',') + ' ' + units[i];
 }
 function collectClientAttachments(clientId) {
   // Usa o cache global (populado por /api/gallery) + demandas abertas na sessão.
@@ -33509,47 +33755,189 @@ function suggestFlowForTitle(title, currentFlowId, clientId) {
   return best.flow;
 }
 
-function renderFlowSuggestion() {
-  const box = $('f-flow-suggest');
-  if (!box) return;
-  // Só repinta quando o estado muda — senão a animação de entrada reinicia a cada tecla.
-  const paint = (key, html) => {
-    if (box.dataset.key === key) return;
-    box.dataset.key = key;
-    box.hidden = !html;
-    box.innerHTML = html;
-    if (html) paintIcons();
+/* ─── Demanda parecida já existente no mesmo cliente ───
+   Pega retrabalho/duplicata ("Ajuste LP Hortolândia" criada de novo dias
+   depois). Palavras de ação não contam — "Ajuste LP X" e "LP X" falam da mesma
+   LP. Exige 2+ palavras no título (senão "Newsletter" casaria com todas) e 75%
+   de sobreposição. Concluídas só dos últimos 90 dias. */
+const SIMILAR_DEMAND_MIN_OVERLAP = 0.75;
+const SIMILAR_DEMAND_RECENT_DAYS = 90;
+const _SIMILAR_IGNORE = new Set(['ajuste', 'ajustes', 'ajustar', 'alteracao', 'alteracoes', 'alterar', 'novo', 'nova', 'novos',
+  'novas', 'reenvio', 'reenviar', 'criar', 'criacao', 'subir', 'atualizar', 'atualizacao']);
+const _similarTokenCache = new Map();
+function _similarTokens(title) {
+  if (_similarTokenCache.has(title)) return _similarTokenCache.get(title);
+  const toks = [...new Set(_flowSuggestKey(title).split(' ')
+    .filter(t => t.length >= 2 && !/^\d+$/.test(t) && !_FS_STOP.has(t) && !_SIMILAR_IGNORE.has(t))
+    .map(_fsSingular))];
+  _similarTokenCache.set(title, toks);
+  return toks;
+}
+function _titleOverlap(a, b) {
+  const used = new Set();
+  let hit = 0;
+  for (const t of a) {
+    const j = b.findIndex((u, i) => !used.has(i) && _fsTokenMatch(t, u, false, false));
+    if (j >= 0) { used.add(j); hit++; }
+  }
+  return hit / Math.max(a.length, b.length);
+}
+function findSimilarDemands(title, clientId) {
+  const tokens = _similarTokens(title);
+  if (tokens.length < 2) return [];
+  const cutoff = Date.now() - SIMILAR_DEMAND_RECENT_DAYS * 86400000;
+  return demands
+    .filter(d => !d.deletedAt && projectById(d.projectId)?.clientId === clientId)
+    .filter(d => !d.completedAt || Date.parse(d.completedAt) >= cutoff)
+    .map(d => ({ d, score: _titleOverlap(tokens, _similarTokens(d.name)) }))
+    .filter(x => x.score >= SIMILAR_DEMAND_MIN_OVERLAP)
+    // Em andamento primeiro (é o caso de duplicata de fato), depois mais parecida/recente.
+    .sort((a, b) => (!!a.d.completedAt - !!b.d.completedAt) || (b.score - a.score) || (Date.parse(b.d.createdAt) - Date.parse(a.d.createdAt)))
+    .slice(0, 2)
+    .map(x => x.d);
+}
+function openSimilarDemand(id) {
+  closeModal('demand-modal');
+  showDetail(id);
+}
+function dismissSimilarDemands(key) {
+  wizardState.similarDismissed = key;
+  renderFlowSuggestion();
+}
+
+/* ─── Etapas que demandas parecidas costumam desativar ───
+   Calculado no servidor (todos os squads). Só etapas do meio: a primeira é
+   sempre a inicial e as de conclusão não se desativam. */
+let _skipSug = { key: '', data: null };
+function _requestStageSkips(title) {
+  const key = wizardState.flowId + '|' + _flowSuggestKey(title);
+  if (_skipSug.key === key) return;
+  _skipSug = { key, data: null };
+  if (_flowSuggestKey(title).split(' ').filter(Boolean).length < 2) return;
+  api(`/flow-suggest/stage-skips?flowId=${encodeURIComponent(wizardState.flowId)}&title=${encodeURIComponent(title)}`)
+    .then(r => { if (_skipSug.key === key) { _skipSug.data = r; renderFlowSuggestion(); } })
+    .catch(() => {});
+}
+function _stageSkipCandidates() {
+  const labels = _skipSug.data?.labels || [];
+  const flow = flowById(wizardState.flowId);
+  if (!labels.length || !flow) return [];
+  const wanted = new Set(labels.map(l => _flowSuggestKey(l.label)));
+  const skipped = wizardState.customization?.skippedStages || [];
+  return flow.stages.filter((s, i) => i > 0 && !s.done && wanted.has(_flowSuggestKey(s.label)) && !skipped.includes(s.id));
+}
+function applyStageSkipSuggestion() {
+  if (!wizardState.customization) resetWizardCustomization();
+  const stages = _stageSkipCandidates();
+  stages.forEach(s => wizardState.customization.skippedStages.push(s.id));
+  wizardState.skipSugApplied = { key: _skipSug.key, labels: stages.map(s => s.label) };
+  renderFlowSuggestion();
+}
+function dismissStageSkipSuggestion() {
+  wizardState.skipSugDismissed = _skipSug.key;
+  renderFlowSuggestion();
+}
+
+function _suggestBox(kind, icon, title, text, actions) {
+  return `<div class="flow-suggest ${kind}">
+    <i data-lucide="${icon}" class="ic-sm flow-suggest-icon"></i>
+    <div class="flow-suggest-body">
+      <div class="flow-suggest-title">${title}</div>
+      ${text ? `<div class="flow-suggest-text">${text}</div>` : ''}
+    </div>
+    <div class="flow-suggest-actions">${actions}</div>
+  </div>`;
+}
+
+function _similarSuggestion(title) {
+  const found = findSimilarDemands(title, wizardState.clientId);
+  const key = found.map(d => d.id).join(',');
+  if (!found.length || wizardState.similarDismissed === key) return null;
+  const lines = found.map(d => {
+    const status = d.completedAt ? `concluída ${fmtRelativeTime(d.completedAt)}` : `em andamento · ${esc(stageOf(d)?.label || '')}`;
+    return `<button type="button" class="flow-suggest-link" onclick="openSimilarDemand('${d.id}')">${esc(d.name)}</button> · ${esc(projectById(d.projectId)?.name || '')} · ${status}`;
+  }).join('<br>');
+  return {
+    key: 'sim:' + key,
+    html: _suggestBox('is-info', 'copy', found.length > 1 ? 'Já existem demandas parecidas neste cliente' : 'Já existe uma demanda parecida neste cliente', lines,
+      `<button type="button" class="btn btn-ghost btn-sm" onclick="dismissSimilarDemands('${key}')">Ignorar</button>`),
   };
-  if (editingId || wizardState.step !== 4) return paint('', '');
-  const title = $('f-name')?.value || '';
+}
+
+function _flowSuggestion(title) {
   // Acabou de trocar: confirma e aponta pra desativação de etapas.
   if (wizardState.flowSuggestSwitchedTo === wizardState.flowId && wizardState.flowSuggestSwitchedTitle === title) {
     const f = flowById(wizardState.flowId);
-    return paint('done:' + wizardState.flowId, `<div class="flow-suggest is-done">
-      <i data-lucide="check" class="ic-sm flow-suggest-icon"></i>
-      <div class="flow-suggest-body">
-        <div class="flow-suggest-title">Fluxo trocado para <strong>${esc(f?.name || '')}</strong></div>
-        <div class="flow-suggest-text">Alguma etapa não é necessária pra essa demanda? Desative em Customizar etapas.</div>
-      </div>
-      <div class="flow-suggest-actions">
-        <button type="button" class="btn btn-ghost btn-sm" onclick="wizardGoTo('cust')">Customizar etapas</button>
-      </div>
-    </div>`);
+    return {
+      key: 'done:' + wizardState.flowId, pending: false,
+      html: _suggestBox('is-done', 'check', `Fluxo trocado para <strong>${esc(f?.name || '')}</strong>`,
+        'Alguma etapa não é necessária pra essa demanda? Desative em Customizar etapas.',
+        `<button type="button" class="btn btn-ghost btn-sm" onclick="wizardGoTo('cust')">Customizar etapas</button>`),
+    };
   }
   const sug = suggestFlowForTitle(title, wizardState.flowId, wizardState.clientId);
-  if (!sug || wizardState.flowSuggestDismissed === sug.id) return paint('', '');
+  if (!sug || wizardState.flowSuggestDismissed === sug.id) return null;
   const cur = flowById(wizardState.flowId);
-  paint(`sug:${wizardState.flowId}:${sug.id}`, `<div class="flow-suggest">
-    <i data-lucide="sparkles" class="ic-sm flow-suggest-icon"></i>
-    <div class="flow-suggest-body">
-      <div class="flow-suggest-title">Esse título parece <strong>${esc(sug.name)}</strong>${cur ? ` — você escolheu <strong>${esc(cur.name)}</strong>` : ''}</div>
-      <div class="flow-suggest-text">Se alguma etapa de ${esc(sug.name)} não for necessária, dá pra desativá-la no passo Customizar etapas.</div>
-    </div>
-    <div class="flow-suggest-actions">
-      <button type="button" class="btn btn-ghost btn-sm" onclick="dismissFlowSuggestion('${sug.id}')">Manter</button>
-      <button type="button" class="btn btn-primary btn-sm" onclick="applyFlowSuggestion('${sug.id}')">Trocar fluxo</button>
-    </div>
-  </div>`);
+  return {
+    key: `sug:${wizardState.flowId}:${sug.id}`, pending: true,
+    html: _suggestBox('', 'sparkles',
+      `Esse título parece <strong>${esc(sug.name)}</strong>${cur ? ` — você escolheu <strong>${esc(cur.name)}</strong>` : ''}`,
+      `Se alguma etapa de ${esc(sug.name)} não for necessária, dá pra desativá-la no passo Customizar etapas.`,
+      `<button type="button" class="btn btn-ghost btn-sm" onclick="dismissFlowSuggestion('${sug.id}')">Manter</button>
+       <button type="button" class="btn btn-primary btn-sm" onclick="applyFlowSuggestion('${sug.id}')">Trocar fluxo</button>`),
+  };
+}
+
+function _skipSuggestion(title) {
+  _requestStageSkips(title);
+  const applied = wizardState.skipSugApplied;
+  if (applied && applied.key === _skipSug.key) {
+    return {
+      key: 'skipdone:' + applied.key,
+      html: _suggestBox('is-done', 'check', `Etapas desativadas: <strong>${applied.labels.map(esc).join(', ')}</strong>`, '',
+        `<button type="button" class="btn btn-ghost btn-sm" onclick="wizardGoTo('cust')">Customizar etapas</button>`),
+    };
+  }
+  const stages = _stageSkipCandidates();
+  if (!stages.length || wizardState.skipSugDismissed === _skipSug.key) return null;
+  const n = _skipSug.data.similar;
+  return {
+    key: 'skip:' + _skipSug.key + ':' + stages.map(s => s.id).join(','),
+    html: _suggestBox('', 'eye-off',
+      `Demandas parecidas costumam desativar <strong>${stages.map(s => esc(s.label)).join(', ')}</strong>`,
+      `Baseado em ${n} demandas com título parecido neste tipo de fluxo.`,
+      `<button type="button" class="btn btn-ghost btn-sm" onclick="dismissStageSkipSuggestion()">Ignorar</button>
+       <button type="button" class="btn btn-primary btn-sm" onclick="applyStageSkipSuggestion()">Desativar etapas</button>`),
+  };
+}
+
+/* Avisos abaixo do título no wizard: demanda parecida, fluxo sugerido e etapas
+   a desativar. Cada um tem sua área e só repinta quando o próprio estado muda —
+   senão a animação de entrada reiniciaria a cada tecla. */
+function renderFlowSuggestion() {
+  const box = $('f-flow-suggest');
+  if (!box) return;
+  if (!box.dataset.ready) {
+    box.innerHTML = '<div data-slot="similar"></div><div data-slot="flow"></div><div data-slot="skip"></div>';
+    box.dataset.ready = '1';
+  }
+  const paint = (slot, s) => {
+    const el = box.querySelector(`[data-slot="${slot}"]`);
+    const key = s?.key || '';
+    if (el.dataset.key === key) return;
+    el.dataset.key = key;
+    el.innerHTML = s?.html || '';
+    if (s) paintIcons();
+  };
+  const active = !editingId && wizardState.step === 4;
+  const title = $('f-name')?.value || '';
+  const flow = active ? _flowSuggestion(title) : null;
+  paint('similar', active ? _similarSuggestion(title) : null);
+  paint('flow', flow);
+  // Etapas a desativar só fazem sentido no fluxo que vai ficar — não enquanto
+  // há troca de fluxo sugerida e pendente.
+  paint('skip', active && !flow?.pending ? _skipSuggestion(title) : null);
+  box.hidden = ![...box.children].some(el => el.innerHTML);
 }
 const renderFlowSuggestionDebounced = debounce(renderFlowSuggestion, 250);
 

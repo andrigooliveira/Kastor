@@ -119,6 +119,7 @@ async function loadDB() {
   // Extrai anexos/avatares base64 que ainda estejam dentro das entidades
   // pra arquivos em data/uploads. Idempotente — não toca quem já está em URL.
   extractInlineBase64();
+  backfillAttachmentSizes();
   await loadAdminDiscordDefaults(); // carrega defaults de DM do Discord (KV)
   await seedDemandTypes(); // popula a biblioteca de tipos a partir dos fluxos (1x)
   // Migração de folders legados do cofre — cria entidades a partir do campo
@@ -1466,6 +1467,28 @@ const EXT_TO_MIME = Object.entries(ALLOWED_MIME_EXT).reduce((acc, [m, e]) => {
   if (!acc[e]) acc[e] = m; // primeiro MIME que bate — os modernos vêm primeiro no allowlist
   return acc;
 }, {});
+
+// Peso em bytes de um arquivo servido de /uploads (0 se não achar). basename
+// impede sair da pasta de uploads.
+function uploadSizeOf(url) {
+  if (typeof url !== 'string' || !url.startsWith('/uploads/')) return 0;
+  try { return fs.statSync(path.join(UPLOADS_DIR, path.basename(url.split('?')[0]))).size; } catch { return 0; }
+}
+
+// Anexos gravados antes de o peso ser salvo — preenche 1x a partir do disco.
+function backfillAttachmentSizes() {
+  let filled = 0;
+  for (const d of db.demands) {
+    let touched = false;
+    for (const a of d.attachments || []) {
+      if (a.kind === 'link' || a.size > 0) continue;
+      const size = uploadSizeOf(a.data);
+      if (size > 0) { a.size = size; touched = true; filled++; }
+    }
+    if (touched) markDirty('demands', d);
+  }
+  if (filled) console.log(`› Peso preenchido em ${filled} anexo(s)`);
+}
 
 function saveUploadFromDataUri(dataUri, originalName) {
   if (typeof dataUri !== 'string') return null;
@@ -5655,6 +5678,53 @@ app.get('/api/flow-suggest/learned', requireAuth, (req, res) => {
   res.json(_flowLearnCache);
 });
 
+/* Etapas que demandas parecidas costumam desativar — mesmo tipo de fluxo (nome),
+   título com 2+ palavras em comum e 50%+ de sobreposição, de TODOS os squads.
+   Palavras de ação ("ajuste", "reenvio") contam aqui: são elas que dizem que a
+   demanda é pequena e pula etapas. Sugere a etapa se 60%+ das parecidas (mín. 2)
+   desativaram. Etapas são casadas pelo rótulo — cada cliente tem sua cópia do fluxo. */
+const SKIP_SUGGEST_MIN_SIMILAR = 2;
+const SKIP_SUGGEST_MIN_SHARE = 0.6;
+const SKIP_SUGGEST_MIN_OVERLAP = 0.5;
+const _flTitleTokens = title => new Set(_flKey(title).split(' ')
+  .filter(t => t.length >= 2 && !/^\d+$/.test(t) && !FLOW_LEARN_STOP.has(t))
+  .map(_flSingular));
+
+function suggestStageSkips(flow, title) {
+  const tokens = _flTitleTokens(title);
+  const empty = { similar: 0, labels: [] };
+  if (tokens.size < 2) return empty;
+  const key = _flKey(flow.name);
+  const flowsById = new Map(db.flows.map(f => [f.id, f]));
+  let similar = 0;
+  const counts = new Map(); // rótulo normalizado → { label, count }
+  for (const d of db.demands) {
+    if (!notDeleted(d)) continue;
+    const f = flowsById.get(d.flowId);
+    if (!f || _flKey(f.name) !== key) continue;
+    const other = _flTitleTokens(d.name);
+    let shared = 0;
+    tokens.forEach(t => { if (other.has(t)) shared++; });
+    if (shared < 2 || shared / Math.max(tokens.size, other.size) < SKIP_SUGGEST_MIN_OVERLAP) continue;
+    similar++;
+    for (const sid of d.skippedStages || []) {
+      const st = f.stages.find(s => s.id === sid) || (d.stageAdditions || []).find(s => s.id === sid);
+      if (!st?.label) continue;
+      const lk = _flKey(st.label);
+      if (!counts.has(lk)) counts.set(lk, { label: st.label, count: 0 });
+      counts.get(lk).count++;
+    }
+  }
+  if (similar < SKIP_SUGGEST_MIN_SIMILAR) return { similar, labels: [] };
+  return { similar, labels: [...counts.values()].filter(c => c.count / similar >= SKIP_SUGGEST_MIN_SHARE) };
+}
+
+app.get('/api/flow-suggest/stage-skips', requireAuth, (req, res) => {
+  const flow = db.flows.find(f => f.id === req.query.flowId && notDeleted(f));
+  if (!flow || !canAccessWs(req.user, flow.workspaceId)) return res.json({ similar: 0, labels: [] });
+  res.json(suggestStageSkips(flow, String(req.query.title || '').slice(0, 300)));
+});
+
 /* ── FLUXOS ── */
 app.get('/api/flows', requireAuth, (req, res) => {
   const ids = wsIdsFor(req.user);
@@ -6072,7 +6142,10 @@ function sanitizeCommentHtml(input) {
     if (!outSrc) return '';
     const altMatch = /\balt\s*=\s*"([^"]*)"/i.exec(attrs);
     const alt = altMatch ? altMatch[1] : '';
-    return `<img src="${escAttr(outSrc)}" alt="${escAttr(alt)}">`;
+    // Largura definida ao redimensionar no editor — só número em px, limitado.
+    const wMatch = /(?:^|\s)width\s*=\s*["']?(\d{1,4})["']?/i.exec(attrs);
+    const width = wMatch ? Math.min(4000, Math.max(16, Number(wMatch[1]))) : null;
+    return `<img src="${escAttr(outSrc)}" alt="${escAttr(alt)}"${width ? ` width="${width}"` : ''}>`;
   });
   // Walk pelas tags restantes com allowlist.
   html = html.replace(/<(\/?)\s*([a-zA-Z][a-zA-Z0-9]*)((?:\s+[^>]*)?)\/?>/g, (match, close, tag, rawAttrs) => {
@@ -6135,7 +6208,8 @@ function sanitizeAttachments(arr) {
       const saved = saveUploadFromDataUri(data, a.name);
       if (saved) data = saved.url;
     }
-    return { id: a.id || uid(), kind: 'file', name: String(a.name || 'arquivo'), type: String(a.type || ''), data, addedAt: a.addedAt || nowISO() };
+    const size = uploadSizeOf(data) || (Number(a.size) > 0 ? Math.round(Number(a.size)) : 0);
+    return { id: a.id || uid(), kind: 'file', name: String(a.name || 'arquivo'), type: String(a.type || ''), data, ...(size ? { size } : {}), addedAt: a.addedAt || nowISO() };
   }).filter(a => a.kind === 'link' ? a.url : a.data);
 }
 
@@ -6209,7 +6283,10 @@ function sanitizePostHtml(input) {
     if (!outSrc) return '';
     const altMatch = /\balt\s*=\s*"([^"]*)"/i.exec(attrs);
     const alt = altMatch ? altMatch[1] : '';
-    return `<img src="${escAttr(outSrc)}" alt="${escAttr(alt)}">`;
+    // Largura definida ao redimensionar no editor — só número em px, limitado.
+    const wMatch = /(?:^|\s)width\s*=\s*["']?(\d{1,4})["']?/i.exec(attrs);
+    const width = wMatch ? Math.min(4000, Math.max(16, Number(wMatch[1]))) : null;
+    return `<img src="${escAttr(outSrc)}" alt="${escAttr(alt)}"${width ? ` width="${width}"` : ''}>`;
   });
   // Strip figures `.post-embed` que já vieram de sanitizes anteriores — evita
   // acumular `<figure><figure>...` a cada re-save de edição. Regex não faz
