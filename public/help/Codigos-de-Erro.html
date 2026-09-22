@@ -67,11 +67,10 @@
   }
   aside.toc header { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
   aside.toc .logo {
-    width: 34px; height: 34px; border-radius: 8px;
-    background: linear-gradient(135deg, var(--accent), var(--accent-2));
-    display: flex; align-items: center; justify-content: center;
-    color: #fff; font-weight: 800; font-size: 15px;
-    box-shadow: 0 4px 14px rgba(122,0,255,0.35);
+    width: 34px; height: 34px;
+    display: block;
+    object-fit: contain;
+    flex-shrink: 0;
   }
   aside.toc h1 { font-size: 15px; margin: 0; letter-spacing: -0.01em; }
   aside.toc .subtitle { color: var(--text-muted); font-size: 12px; margin: 0 0 14px 0; }
@@ -250,7 +249,7 @@
       <span>Sumário</span>
     </button>
     <header>
-      <div class="logo">R</div>
+      <img class="logo" src="/rework_logo.svg" alt="reWork">
       <h1>Códigos de Erro</h1>
     </header>
     <div class="subtitle">reWork · referência</div>
