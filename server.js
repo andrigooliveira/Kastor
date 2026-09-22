@@ -9997,6 +9997,300 @@ function broadcastToUser(userId, entity, op, extra = {}) {
   }
 }
 
+/* ─── PRESENÇA AO VIVO ────────────────────────────────────────────
+   Rastreia quem está com a demanda aberta AGORA. Piggyback no SSE já
+   existente: cliente manda heartbeat (POST) a cada 15s enquanto olha
+   a demanda; servidor broadcast SSE 'presence' pros outros usuários do
+   mesmo workspace quando a lista muda; sweeper de 15s remove ausentes
+   (30s sem heartbeat = removido).
+   Sem WebSocket novo, sem servidor adicional — só um Map em memória. */
+const presenceMap = new Map(); // key: `${kind}:${id}` → Map<userId, {ts, wsId}>
+const PRESENCE_STALE_MS = 30000;
+const PRESENCE_SWEEP_MS = 15000;
+
+function _presenceKey(kind, id) { return `${kind}:${id}`; }
+
+function _presenceUsersFor(kind, id) {
+  const set = presenceMap.get(_presenceKey(kind, id));
+  if (!set) return [];
+  const arr = [];
+  for (const [userId, meta] of set) {
+    const u = db.users.find(x => x.id === userId);
+    if (!u || u.active === false) continue;
+    arr.push({
+      id: u.id,
+      name: u.name || u.username || 'Usuário',
+      avatar: u.avatar || null,
+      color: u.color || null,
+      ts: meta.ts
+    });
+  }
+  return arr;
+}
+
+function _broadcastPresence(kind, id, workspaceId) {
+  if (sseClients.size === 0) return;
+  const users = _presenceUsersFor(kind, id);
+  const payload = JSON.stringify({ entity: 'presence', kind, id, users, ts: Date.now() });
+  const line = `data: ${payload}\n\n`;
+  for (const [userId, conns] of sseClients) {
+    const user = db.users.find(u => u.id === userId);
+    if (!user) continue;
+    if (workspaceId && !canAccessWs(user, workspaceId)) continue;
+    for (const res of conns) { try { res.write(line); } catch {} }
+  }
+}
+
+// Sweeper: remove entradas velhas e emite update quando algo mudou.
+setInterval(() => {
+  const now = Date.now();
+  const dirty = []; // { kind, id, wsId }
+  for (const [key, set] of presenceMap) {
+    let changed = false;
+    for (const [userId, meta] of set) {
+      if (now - meta.ts > PRESENCE_STALE_MS) { set.delete(userId); changed = true; }
+    }
+    if (changed) {
+      const [kind, id] = key.split(':');
+      let wsId = null;
+      if (kind === 'demand') { const d = db.demands.find(x => x.id === id); wsId = d?.workspaceId || null; }
+      dirty.push({ kind, id, wsId });
+    }
+    if (set.size === 0) presenceMap.delete(key);
+  }
+  for (const { kind, id, wsId } of dirty) _broadcastPresence(kind, id, wsId);
+}, PRESENCE_SWEEP_MS);
+
+app.post('/api/presence/:kind/:id/heartbeat', requireAuth, (req, res) => {
+  const { kind, id } = req.params;
+  if (kind !== 'demand') return res.status(400).json({ error: 'kind inválido' });
+  const demand = db.demands.find(x => x.id === id);
+  if (!demand) return res.status(404).json({ error: 'Demanda não encontrada.' });
+  if (!canAccessWs(req.user, demand.workspaceId)) return res.status(403).json({ error: 'Sem acesso a esta demanda.' });
+  const key = _presenceKey(kind, id);
+  if (!presenceMap.has(key)) presenceMap.set(key, new Map());
+  const set = presenceMap.get(key);
+  const isNew = !set.has(req.user.id);
+  set.set(req.user.id, { ts: Date.now(), wsId: demand.workspaceId });
+  const users = _presenceUsersFor(kind, id);
+  // Só faz broadcast quando entra alguém novo (evita spam de renders).
+  if (isNew) _broadcastPresence(kind, id, demand.workspaceId);
+  res.json({ users });
+});
+
+app.delete('/api/presence/:kind/:id', requireAuth, (req, res) => {
+  const { kind, id } = req.params;
+  const key = _presenceKey(kind, id);
+  const set = presenceMap.get(key);
+  if (set && set.delete(req.user.id)) {
+    if (set.size === 0) presenceMap.delete(key);
+    const demand = db.demands.find(x => x.id === id);
+    _broadcastPresence(kind, id, demand?.workspaceId || null);
+  }
+  res.json({ ok: true });
+});
+
+/* ─── GODMODE ─────────────────────────────────────────────────────
+   Painel admin-only pra visibilidade completa: quem tá online, o que
+   está olhando, atividade recente, stats por usuário. Cru sobre o
+   que já existe (SSE, presence, history/comments/timeEntries em
+   cada demanda). Nenhum dado sensível — googleTokens/knownIps já
+   filtrados por publicUser(); passwords nem existem no user record. */
+function _godmodeReversePresence() {
+  // Retorna Map<userId, {demandId, since}>. Se um user tá em várias
+  // demandas (múltiplas abas), vence a de heartbeat mais recente.
+  const out = new Map();
+  for (const [key, set] of presenceMap) {
+    if (!key.startsWith('demand:')) continue;
+    const demandId = key.slice(7);
+    for (const [uid, meta] of set) {
+      const cur = out.get(uid);
+      if (!cur || meta.ts > cur.since) out.set(uid, { demandId, since: meta.ts });
+    }
+  }
+  return out;
+}
+
+function _godmodeStatsFor(userId) {
+  // Contagens rápidas. Iteração linear em db.demands — ok pra escala
+  // atual (centenas de demandas). Se crescer, indexar por ownerId etc.
+  const now = Date.now();
+  const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
+  const monthAgo = now - 30 * 24 * 60 * 60 * 1000;
+  let activeDemands = 0, createdThisMonth = 0, watchedCount = 0, doneThisWeek = 0;
+  let hoursThisWeek = 0, commentsThisMonth = 0, activityThisWeek = 0;
+  for (const d of db.demands) {
+    if (d.deletedAt) continue;
+    if (d.ownerId === userId) {
+      if (!d.completedAt) activeDemands++;
+      if (d.completedAt && Date.parse(d.completedAt) > weekAgo) doneThisWeek++;
+    }
+    if (d.createdBy === userId && d.createdAt && Date.parse(d.createdAt) > monthAgo) createdThisMonth++;
+    if (Array.isArray(d.watchers) && d.watchers.includes(userId)) watchedCount++;
+    if (Array.isArray(d.timeEntries)) {
+      for (const t of d.timeEntries) {
+        if (t.userId !== userId) continue;
+        const ts = t.date ? Date.parse(t.date) : (t.createdAt ? Date.parse(t.createdAt) : 0);
+        if (ts > weekAgo) hoursThisWeek += Number(t.hours) || 0;
+      }
+    }
+    if (Array.isArray(d.comments)) {
+      for (const c of d.comments) {
+        if (c.userId !== userId) continue;
+        const ts = Date.parse(c.createdAt || c.at || 0);
+        if (ts > monthAgo) commentsThisMonth++;
+      }
+    }
+    if (Array.isArray(d.history)) {
+      for (const h of d.history) {
+        if (h.userId !== userId) continue;
+        const ts = Date.parse(h.at || 0);
+        if (ts > weekAgo) activityThisWeek++;
+      }
+    }
+  }
+  return {
+    activeDemands, createdThisMonth, watchedCount, doneThisWeek,
+    hoursThisWeek: Math.round(hoursThisWeek * 100) / 100,
+    commentsThisMonth, activityThisWeek
+  };
+}
+
+function _godmodeRecentActivity(userId, limit = 40) {
+  // Junta history + comments + timeEntries do user em ordem cronológica desc.
+  const events = [];
+  for (const d of db.demands) {
+    if (d.deletedAt) continue;
+    const dLabel = d.name || '(sem título)';
+    for (const h of (d.history || [])) {
+      if (h.userId !== userId) continue;
+      events.push({ at: h.at, kind: 'history', action: h.action, details: h.details, demandId: d.id, demandName: dLabel });
+    }
+    for (const c of (d.comments || [])) {
+      if (c.userId !== userId) continue;
+      const at = c.createdAt || c.at;
+      if (!at) continue;
+      const raw = String(c.text || c.body || '');
+      const preview = raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140);
+      events.push({ at, kind: 'comment', preview, demandId: d.id, demandName: dLabel });
+    }
+    for (const t of (d.timeEntries || [])) {
+      if (t.userId !== userId) continue;
+      const at = t.createdAt || (t.date ? t.date + 'T00:00:00Z' : null);
+      if (!at) continue;
+      events.push({ at, kind: 'time', hours: t.hours, note: t.description || t.note || null, demandId: d.id, demandName: dLabel });
+    }
+  }
+  events.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  return events.slice(0, limit);
+}
+
+app.get('/api/admin/godmode/overview', requireAuth, adminOnly, (req, res) => {
+  const now = Date.now();
+  const presenceByUser = _godmodeReversePresence();
+  const users = db.users.map(u => {
+    const pub = publicUser(u);
+    const online = sseClients.has(u.id) && sseClients.get(u.id).size > 0;
+    const tabCount = online ? sseClients.get(u.id).size : 0;
+    const viewing = presenceByUser.get(u.id) || null;
+    let viewingDetail = null;
+    if (viewing) {
+      const d = db.demands.find(x => x.id === viewing.demandId);
+      viewingDetail = {
+        demandId: viewing.demandId,
+        demandName: d ? d.name : '(demanda removida)',
+        workspaceId: d ? d.workspaceId : null,
+        since: new Date(viewing.since).toISOString()
+      };
+    }
+    return {
+      id: pub.id,
+      name: pub.name,
+      username: pub.username,
+      email: pub.email,
+      avatar: pub.avatar,
+      color: pub.color || null,
+      role: pub.role || null,
+      isAdmin: !!pub.isAdmin,
+      isModerator: !!pub.isModerator,
+      isFreelancer: !!pub.isFreelancer,
+      active: pub.active !== false,
+      workspaces: pub.workspaces || [],
+      lastSeen: pub.lastSeen || null,
+      createdAt: pub.createdAt || null,
+      online, tabCount, viewing: viewingDetail,
+      stats: _godmodeStatsFor(u.id)
+    };
+  });
+  users.sort((a, b) => {
+    // Online primeiro, dentro do mesmo grupo, por lastSeen desc.
+    if (a.online !== b.online) return a.online ? -1 : 1;
+    const la = a.lastSeen ? Date.parse(a.lastSeen) : 0;
+    const lb = b.lastSeen ? Date.parse(b.lastSeen) : 0;
+    return lb - la;
+  });
+  res.json({
+    generatedAt: new Date(now).toISOString(),
+    totals: {
+      users: users.length,
+      online: users.filter(u => u.online).length,
+      inDemand: users.filter(u => u.viewing).length
+    },
+    users
+  });
+});
+
+app.get('/api/admin/godmode/user/:id', requireAuth, adminOnly, (req, res) => {
+  const u = db.users.find(x => x.id === req.params.id);
+  if (!u) return res.status(404).json({ error: 'Usuário não encontrado' });
+  const pub = publicUser(u);
+  const online = sseClients.has(u.id) && sseClients.get(u.id).size > 0;
+  const tabCount = online ? sseClients.get(u.id).size : 0;
+  const presenceByUser = _godmodeReversePresence();
+  const viewing = presenceByUser.get(u.id) || null;
+  let viewingDetail = null;
+  if (viewing) {
+    const d = db.demands.find(x => x.id === viewing.demandId);
+    viewingDetail = {
+      demandId: viewing.demandId,
+      demandName: d ? d.name : '(removida)',
+      workspaceId: d ? d.workspaceId : null,
+      since: new Date(viewing.since).toISOString()
+    };
+  }
+  const assigned = db.demands
+    .filter(d => !d.deletedAt && d.ownerId === u.id && !d.completedAt)
+    .map(d => ({ id: d.id, name: d.name, workspaceId: d.workspaceId, deadline: d.deadline || null, stageDueDate: d.stageDueDate || null, status: d.status || null }));
+  const watched = db.demands
+    .filter(d => !d.deletedAt && Array.isArray(d.watchers) && d.watchers.includes(u.id))
+    .map(d => ({ id: d.id, name: d.name, workspaceId: d.workspaceId }));
+  const createdRecent = db.demands
+    .filter(d => !d.deletedAt && d.createdBy === u.id)
+    .sort((a, b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0))
+    .slice(0, 20)
+    .map(d => ({ id: d.id, name: d.name, workspaceId: d.workspaceId, createdAt: d.createdAt || null }));
+  res.json({
+    user: {
+      id: pub.id, name: pub.name, username: pub.username, email: pub.email, avatar: pub.avatar,
+      role: pub.role || null, phone: pub.phone || null, discord: pub.discord || null, discordId: pub.discordId || null,
+      isAdmin: !!pub.isAdmin, isModerator: !!pub.isModerator, isFreelancer: !!pub.isFreelancer,
+      active: pub.active !== false,
+      color: pub.color || null,
+      workspaces: pub.workspaces || [],
+      lastSeen: pub.lastSeen || null,
+      createdAt: pub.createdAt || null,
+      googleConnected: !!pub.googleConnected,
+      knownIpCount: Array.isArray(u.knownIps) ? u.knownIps.length : 0
+    },
+    presence: { online, tabCount, viewing: viewingDetail },
+    stats: _godmodeStatsFor(u.id),
+    recentActivity: _godmodeRecentActivity(u.id, 40),
+    assignedDemands: assigned,
+    watchedDemands: watched,
+    createdRecent
+  });
+});
+
 /* ── FALLBACK ── */
 // /api/* desconhecidos: devolve 404 JSON em vez de cair no SPA (que retornaria
 // HTML com status 200 e quebraria clientes que esperam JSON).

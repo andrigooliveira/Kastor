@@ -18,10 +18,30 @@
      quem usa dark. Roda síncrono no head (não fica com defer). Login sempre
      em light (marcador `data-boot-theme="light"` — só o overlay usa). -->
 <script>
+/* Pré-aplica o tema antes do CSS carregar pra evitar flash light↔dark.
+   Suporta 3 modos: manual (usa kastor-theme salvo), system (segue OS via
+   prefers-color-scheme) e scheduled (usa a janela darkStart→darkEnd em
+   hora LOCAL do browser). Se algo der errado, cai no default dark. */
 (function () {
   try {
-    var t = localStorage.getItem('kastor-theme') || 'dark';
-    if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+    var mode = localStorage.getItem('kastor-theme-mode') || 'manual';
+    var resolved;
+    if (mode === 'system' && window.matchMedia) {
+      resolved = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    } else if (mode === 'scheduled') {
+      var sched = {}; try { sched = JSON.parse(localStorage.getItem('kastor-theme-schedule') || '{}') || {}; } catch (e) {}
+      var ds = sched.darkStart || '20:00', de = sched.darkEnd || '07:00';
+      var now = new Date();
+      var mins = now.getHours() * 60 + now.getMinutes();
+      var toMin = function (s) { var p = String(s).split(':'); return (parseInt(p[0],10)||0)*60 + (parseInt(p[1],10)||0); };
+      var a = toMin(ds), b = toMin(de);
+      // Janela pode cruzar meia-noite (ex.: 20:00→07:00). Se a>b, dark abrange [a,24h)∪[0,b).
+      var isDark = a === b ? false : (a < b ? (mins >= a && mins < b) : (mins >= a || mins < b));
+      resolved = isDark ? 'dark' : 'light';
+    } else {
+      resolved = localStorage.getItem('kastor-theme') || 'dark';
+    }
+    if (resolved === 'light') document.documentElement.setAttribute('data-theme', 'light');
     else document.documentElement.setAttribute('data-boot-theme', 'dark');
   } catch (e) {}
 })();
@@ -2805,6 +2825,23 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               <div class="profile-card-block">
                 <div class="profile-row">
                   <div class="profile-row-info">
+                    <div class="profile-row-title">Modo do tema</div>
+                    <div class="profile-row-sub">Manual você escolhe; Sistema segue o tema do seu computador; Agendado troca sozinho na janela de horário que você definir.</div>
+                  </div>
+                  <div class="profile-theme-picker" id="profile-theme-mode-picker">
+                    <button type="button" class="profile-theme-opt" data-mode="manual" onclick="setProfileThemeMode('manual')">
+                      <i data-lucide="hand" class="ic-sm"></i> Manual
+                    </button>
+                    <button type="button" class="profile-theme-opt" data-mode="system" onclick="setProfileThemeMode('system')">
+                      <i data-lucide="monitor" class="ic-sm"></i> Sistema
+                    </button>
+                    <button type="button" class="profile-theme-opt" data-mode="scheduled" onclick="setProfileThemeMode('scheduled')">
+                      <i data-lucide="clock" class="ic-sm"></i> Agendado
+                    </button>
+                  </div>
+                </div>
+                <div class="profile-row" id="profile-theme-manual-row">
+                  <div class="profile-row-info">
                     <div class="profile-row-title">Tema</div>
                     <div class="profile-row-sub">Modo claro para ambientes iluminados; escuro reduz cansaço em salas escuras.</div>
                   </div>
@@ -2815,6 +2852,23 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                     <button type="button" class="profile-theme-opt" data-theme="dark" onclick="setProfileTheme('dark')">
                       <i data-lucide="moon" class="ic-sm"></i> Escuro
                     </button>
+                  </div>
+                </div>
+                <div class="profile-row" id="profile-theme-schedule-row" hidden>
+                  <div class="profile-row-info">
+                    <div class="profile-row-title">Janela do modo escuro</div>
+                    <div class="profile-row-sub">Fica escuro entre estes horários (hora do seu computador). Pode cruzar meia-noite, ex.: 20:00 → 07:00.</div>
+                    <div class="profile-row-sub" id="profile-theme-schedule-now" style="margin-top:6px; opacity:.7;"></div>
+                  </div>
+                  <div class="profile-theme-schedule">
+                    <label class="profile-theme-schedule-field">
+                      <span>Escuro a partir de</span>
+                      <input type="time" id="profile-theme-schedule-start" value="20:00" onchange="onProfileThemeScheduleChange()" oninput="onProfileThemeScheduleChange()">
+                    </label>
+                    <label class="profile-theme-schedule-field">
+                      <span>Volta ao claro</span>
+                      <input type="time" id="profile-theme-schedule-end" value="07:00" onchange="onProfileThemeScheduleChange()" oninput="onProfileThemeScheduleChange()">
+                    </label>
                   </div>
                 </div>
                 <div class="profile-row">
@@ -4480,9 +4534,40 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 <!-- TOAST -->
 <div id="toast-container"></div>
 
+<!-- ── GODMODE ── Painel admin oculto (só isAdmin, disparado por sequência
+     "1984" fora de campos de texto). Nenhum link no menu, sem entrada no
+     onboarding, sem badge no header. -->
+<div class="gm-overlay" id="godmode-overlay" hidden aria-hidden="true">
+  <div class="gm-panel" role="dialog" aria-label="Godmode" aria-modal="true">
+    <div class="gm-header">
+      <div class="gm-header-title">
+        <i data-lucide="eye" class="ic-sm"></i>
+        <span>Godmode</span>
+        <span class="gm-header-tag">admin</span>
+      </div>
+      <div class="gm-header-meta" id="gm-header-meta"></div>
+      <div class="gm-header-actions">
+        <button type="button" class="gm-header-btn" onclick="godmodeRefresh()" title="Atualizar agora"><i data-lucide="refresh-cw" class="ic-sm"></i></button>
+        <button type="button" class="gm-header-btn" onclick="closeGodmode()" title="Fechar (Esc)"><i data-lucide="x" class="ic-sm"></i></button>
+      </div>
+    </div>
+    <div class="gm-body">
+      <aside class="gm-side">
+        <div class="gm-filter">
+          <input type="search" id="gm-search" class="gm-search-input" placeholder="Filtrar usuários...">
+        </div>
+        <div class="gm-userlist" id="gm-userlist"></div>
+      </aside>
+      <main class="gm-main" id="gm-main">
+        <div class="gm-empty">Selecione um usuário à esquerda pra ver detalhes.</div>
+      </main>
+    </div>
+  </div>
+</div>
+
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260921minerow" defer></script>
+<script src="/js/boot.js?v=20260921godmode" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

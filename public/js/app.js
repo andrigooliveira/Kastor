@@ -1775,6 +1775,10 @@ function initKeyboardShortcuts() {
     }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const k = e.key;
+    // Detector da sequência "1984" — abre godmode SILENCIOSAMENTE (só se
+    // isAdmin; ignora pra qualquer outro). Sem hint visual em nenhum lugar.
+    // Buffer com timeout curto: qualquer tecla que quebra a sequência reseta.
+    _godmodeCheckKey(k);
     if (k === '?') { e.preventDefault(); showShortcutsHelp(); }
     else if (k === '/') { e.preventDefault(); const s = $('search-input'); if (s) s.focus(); }
     else if (k === 'n') { e.preventDefault(); if (typeof openNewDemand === 'function') openNewDemand(); }
@@ -1784,6 +1788,239 @@ function initKeyboardShortcuts() {
       if (go) { e.preventDefault(); _gPressed = false; goPage(go); }
     }
   });
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   GODMODE — painel admin oculto.
+   Trigger: tipo "1984" com nada focado (sequência 1→9→8→4 em ≤2s cada
+   passo). Nenhum menu, nenhum atalho documentado, nenhum badge. Se o
+   user não for admin, sequência não faz nada (falha silenciosa).
+   Esc fecha. Refresh manual + polling de 10s + reação a SSE de presença.
+   ══════════════════════════════════════════════════════════════════════ */
+const GODMODE_SEQ = ['1', '9', '8', '4'];
+let _godmodeSeqIdx = 0;
+let _godmodeSeqTimer = null;
+function _godmodeCheckKey(k) {
+  if (k === GODMODE_SEQ[_godmodeSeqIdx]) {
+    _godmodeSeqIdx++;
+    clearTimeout(_godmodeSeqTimer);
+    _godmodeSeqTimer = setTimeout(() => { _godmodeSeqIdx = 0; }, 2000);
+    if (_godmodeSeqIdx >= GODMODE_SEQ.length) {
+      _godmodeSeqIdx = 0;
+      clearTimeout(_godmodeSeqTimer);
+      // Silencioso pra não-admin — sem toast, sem log, sem nada.
+      if (typeof me !== 'undefined' && me && me.isAdmin) openGodmode();
+    }
+  } else {
+    _godmodeSeqIdx = 0;
+    clearTimeout(_godmodeSeqTimer);
+  }
+}
+
+let _godmodeOpen = false;
+let _godmodeRefreshTimer = null;
+let _godmodeSelectedId = null;
+let _godmodeOverview = null;
+let _godmodeSearch = '';
+
+async function openGodmode() {
+  if (_godmodeOpen) return;
+  const overlay = document.getElementById('godmode-overlay');
+  if (!overlay) return;
+  _godmodeOpen = true;
+  overlay.hidden = false;
+  overlay.setAttribute('aria-hidden', 'false');
+  overlay.classList.add('is-open');
+  // Bloqueia scroll do body enquanto godmode está aberto.
+  document.body.classList.add('gm-locked');
+  // Handler global de Esc + click no backdrop.
+  overlay.addEventListener('click', _godmodeBackdropClick);
+  document.addEventListener('keydown', _godmodeOnKey, true);
+  const searchEl = document.getElementById('gm-search');
+  if (searchEl) {
+    searchEl.value = _godmodeSearch = '';
+    searchEl.oninput = () => { _godmodeSearch = (searchEl.value || '').toLowerCase().trim(); _godmodeRenderList(); };
+  }
+  await godmodeRefresh();
+  // Auto-refresh de overview a cada 10s enquanto aberto.
+  _godmodeRefreshTimer = setInterval(godmodeRefresh, 10000);
+}
+
+function closeGodmode() {
+  if (!_godmodeOpen) return;
+  _godmodeOpen = false;
+  const overlay = document.getElementById('godmode-overlay');
+  if (overlay) {
+    overlay.classList.remove('is-open');
+    overlay.hidden = true;
+    overlay.setAttribute('aria-hidden', 'true');
+    overlay.removeEventListener('click', _godmodeBackdropClick);
+  }
+  document.body.classList.remove('gm-locked');
+  document.removeEventListener('keydown', _godmodeOnKey, true);
+  if (_godmodeRefreshTimer) { clearInterval(_godmodeRefreshTimer); _godmodeRefreshTimer = null; }
+  _godmodeSelectedId = null;
+}
+
+function _godmodeBackdropClick(ev) {
+  if (ev.target && ev.target.id === 'godmode-overlay') closeGodmode();
+}
+function _godmodeOnKey(ev) {
+  if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); closeGodmode(); }
+}
+
+async function godmodeRefresh() {
+  try {
+    const r = await api('/admin/godmode/overview');
+    _godmodeOverview = r;
+    _godmodeRenderHeader();
+    _godmodeRenderList();
+    // Se um user está selecionado, refetch detail também (silencioso).
+    if (_godmodeSelectedId) godmodeSelectUser(_godmodeSelectedId, true);
+  } catch (e) {
+    // Fail silencioso — 403 pra não-admin, network drop, etc. Fecha painel.
+    if (e && e._apiKind === 'server' && String(e.message || '').match(/administra/i)) closeGodmode();
+  }
+}
+
+function _godmodeRenderHeader() {
+  const el = document.getElementById('gm-header-meta');
+  if (!el || !_godmodeOverview) return;
+  const t = _godmodeOverview.totals;
+  el.innerHTML = `<span>${t.online} online</span><span class="gm-header-dot">·</span><span>${t.inDemand} em demanda</span><span class="gm-header-dot">·</span><span>${t.users} total</span>`;
+}
+
+function _godmodeRenderList() {
+  const el = document.getElementById('gm-userlist');
+  if (!el || !_godmodeOverview) return;
+  const q = _godmodeSearch;
+  const filtered = _godmodeOverview.users.filter(u => {
+    if (!q) return true;
+    return (u.name || '').toLowerCase().includes(q)
+        || (u.username || '').toLowerCase().includes(q)
+        || (u.email || '').toLowerCase().includes(q)
+        || (u.role || '').toLowerCase().includes(q);
+  });
+  el.innerHTML = filtered.map(u => {
+    const activeCls = u.id === _godmodeSelectedId ? ' is-active' : '';
+    const dotCls = u.online ? 'gm-dot gm-dot--online' : 'gm-dot gm-dot--offline';
+    const rolePart = u.isAdmin ? 'Admin' : (u.isModerator ? 'Moderador' : (u.isFreelancer ? 'Freelancer' : (u.role || 'Equipe')));
+    const viewing = u.viewing
+      ? `<div class="gm-user-view">olhando <strong>${esc(u.viewing.demandName)}</strong></div>`
+      : (u.online ? '<div class="gm-user-view gm-user-view--muted">online, sem demanda aberta</div>' : `<div class="gm-user-view gm-user-view--muted">visto ${u.lastSeen ? _gmTimeAgo(u.lastSeen) : 'nunca'}</div>`);
+    return `<button type="button" class="gm-user${activeCls}" onclick="godmodeSelectUser('${esc(u.id)}')">
+      <span class="${dotCls}"></span>
+      <span class="gm-user-avatar">${avatarHTML(u, 'avatar avatar-sm').replace(/data-user-id="[^"]+"/, '')}</span>
+      <span class="gm-user-body">
+        <span class="gm-user-name">${esc(u.name)}${u.tabCount > 1 ? ` <span class="gm-user-tabs" title="${u.tabCount} abas">·${u.tabCount}</span>` : ''}</span>
+        <span class="gm-user-role">${esc(rolePart)}${u.active === false ? ' · <span class="gm-user-inactive">inativo</span>' : ''}</span>
+        ${viewing}
+      </span>
+    </button>`;
+  }).join('') || '<div class="gm-empty">Ninguém bate esse filtro.</div>';
+  paintIcons();
+}
+
+function _gmTimeAgo(iso) {
+  if (!iso) return '—';
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '—';
+  const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  if (s < 60) return `há ${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `há ${m}min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `há ${h}h`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `há ${d}d`;
+  return fmtDateTime(iso);
+}
+
+async function godmodeSelectUser(userId, silent) {
+  _godmodeSelectedId = userId;
+  if (!silent) _godmodeRenderList(); // repinta active
+  try {
+    const d = await api('/admin/godmode/user/' + userId);
+    _godmodeRenderDetail(d);
+  } catch (e) {
+    if (!silent) toast(e.message || 'Falha ao carregar detalhes', 'error');
+  }
+}
+
+function _godmodeRenderDetail(d) {
+  const el = document.getElementById('gm-main');
+  if (!el || !d) return;
+  const u = d.user;
+  const p = d.presence;
+  const s = d.stats;
+  const rolePart = u.isAdmin ? 'Admin' : (u.isModerator ? 'Moderador' : (u.isFreelancer ? 'Freelancer' : (u.role || 'Equipe')));
+  const contactRow = (label, value, href) => value
+    ? `<div class="gm-contact-row"><span class="gm-contact-label">${esc(label)}</span>${href ? `<a class="gm-contact-value" href="${esc(href)}">${esc(value)}</a>` : `<span class="gm-contact-value">${esc(value)}</span>`}</div>`
+    : '';
+  const wsNames = (u.workspaces || []).map(id => {
+    const w = (typeof workspaces !== 'undefined' && Array.isArray(workspaces)) ? workspaces.find(x => x.id === id) : null;
+    return w ? w.name : id;
+  });
+  const activityHtml = (d.recentActivity || []).map(ev => {
+    const time = _gmTimeAgo(ev.at);
+    let label = '';
+    if (ev.kind === 'comment') label = `comentou em <strong>${esc(ev.demandName)}</strong>${ev.preview ? `<span class="gm-act-preview">"${esc(ev.preview)}"</span>` : ''}`;
+    else if (ev.kind === 'time') label = `apontou <strong>${Number(ev.hours) || 0}h</strong> em <strong>${esc(ev.demandName)}</strong>${ev.note ? `<span class="gm-act-preview">"${esc(ev.note)}"</span>` : ''}`;
+    else label = `${esc(ev.action || 'ação')} em <strong>${esc(ev.demandName)}</strong>`;
+    return `<div class="gm-act-item">
+      <span class="gm-act-time">${esc(time)}</span>
+      <span class="gm-act-body">${label}</span>
+    </div>`;
+  }).join('') || '<div class="gm-empty">Sem atividade registrada.</div>';
+  const assignedHtml = (d.assignedDemands || []).length
+    ? `<ul class="gm-list">${d.assignedDemands.map(x => `<li class="gm-list-item"><button class="gm-jump" onclick="closeGodmode(); showDetail('${esc(x.id)}')">${esc(x.name)}</button>${x.deadline ? `<span class="gm-list-meta">prazo ${esc(fmtDate(x.deadline))}</span>` : ''}</li>`).join('')}</ul>`
+    : '<div class="gm-empty">Nenhuma demanda ativa atribuída.</div>';
+  el.innerHTML = `
+    <div class="gm-detail">
+      <div class="gm-detail-head">
+        ${avatarHTML(u, 'avatar avatar-lg').replace(/data-user-id="[^"]+"/, '')}
+        <div class="gm-detail-heading">
+          <div class="gm-detail-name">${esc(u.name)} <span class="gm-detail-user">@${esc(u.username)}</span></div>
+          <div class="gm-detail-sub">${esc(rolePart)} · ${wsNames.length ? esc(wsNames.join(', ')) : 'sem squad'}${u.active === false ? ' · <span class="gm-user-inactive">inativo</span>' : ''}</div>
+          <div class="gm-detail-state">
+            <span class="gm-dot ${p.online ? 'gm-dot--online' : 'gm-dot--offline'}"></span>
+            ${p.online ? `${p.tabCount} ${p.tabCount > 1 ? 'abas abertas' : 'aba aberta'}` : `offline · visto ${_gmTimeAgo(u.lastSeen)}`}
+            ${p.viewing ? ` · olhando <button class="gm-jump" onclick="closeGodmode(); showDetail('${esc(p.viewing.demandId)}')">${esc(p.viewing.demandName)}</button> desde ${_gmTimeAgo(p.viewing.since)}` : ''}
+          </div>
+        </div>
+      </div>
+
+      <div class="gm-stats">
+        <div class="gm-stat"><span class="gm-stat-num">${s.activeDemands}</span><span class="gm-stat-lbl">Demandas ativas</span></div>
+        <div class="gm-stat"><span class="gm-stat-num">${s.hoursThisWeek}h</span><span class="gm-stat-lbl">Horas / semana</span></div>
+        <div class="gm-stat"><span class="gm-stat-num">${s.commentsThisMonth}</span><span class="gm-stat-lbl">Comentários / mês</span></div>
+        <div class="gm-stat"><span class="gm-stat-num">${s.activityThisWeek}</span><span class="gm-stat-lbl">Ações / semana</span></div>
+        <div class="gm-stat"><span class="gm-stat-num">${s.doneThisWeek}</span><span class="gm-stat-lbl">Concluídas / semana</span></div>
+        <div class="gm-stat"><span class="gm-stat-num">${s.createdThisMonth}</span><span class="gm-stat-lbl">Criadas / mês</span></div>
+      </div>
+
+      <div class="gm-cols">
+        <section class="gm-col">
+          <div class="gm-col-title">Contato</div>
+          ${contactRow('E-mail', u.email, u.email ? 'mailto:' + u.email : null)}
+          ${contactRow('Telefone', u.phone, u.phone ? 'tel:' + String(u.phone).replace(/[^\d+]/g,'') : null)}
+          ${contactRow('Discord', u.discord || u.discordId, null)}
+          ${contactRow('Google Calendar', u.googleConnected ? 'Conectado' : null, null)}
+          ${contactRow('IPs de acesso conhecidos', u.knownIpCount ? String(u.knownIpCount) : null, null)}
+          ${contactRow('Cadastrado em', u.createdAt ? fmtDateTime(u.createdAt) : null, null)}
+        </section>
+        <section class="gm-col">
+          <div class="gm-col-title">Demandas atribuídas (${(d.assignedDemands || []).length})</div>
+          ${assignedHtml}
+        </section>
+      </div>
+
+      <section class="gm-activity">
+        <div class="gm-col-title">Atividade recente</div>
+        ${activityHtml}
+      </section>
+    </div>`;
+  paintIcons();
 }
 
 /* ─── PALETA DE COMANDOS (⌘K) ───
@@ -3465,13 +3702,117 @@ function applyTheme(theme) {
   });
 }
 function toggleTheme() {
-  const current = localStorage.getItem('kastor-theme') || 'light';
+  // Toggle manual override — passa modo pra 'manual' e alterna o tema salvo.
+  // Se o user está em 'system'/'scheduled' e clicou toggle, ele quer controlar
+  // agora — trocamos pra manual, coerente com a intenção.
+  const current = localStorage.getItem('kastor-theme') || 'dark';
   const next = current === 'dark' ? 'light' : 'dark';
   localStorage.setItem('kastor-theme', next);
+  localStorage.setItem('kastor-theme-mode', 'manual');
   applyTheme(next);
+  stopThemeAutoWatchers();
+  if (typeof syncProfileAppearanceUI === 'function') syncProfileAppearanceUI();
 }
+
+/* ─── TEMA AUTOMÁTICO (3 modos) ───
+   manual    → usa 'kastor-theme' cru (comportamento clássico do toggle)
+   system    → segue prefers-color-scheme do OS (listener no matchMedia)
+   scheduled → janela darkStart→darkEnd em HORA LOCAL do browser. Wrap em
+               meia-noite ok (ex.: 20:00→07:00). Revalida a cada 60s. */
+const DEFAULT_THEME_SCHEDULE = { darkStart: '20:00', darkEnd: '07:00' };
+function getThemeMode() {
+  const m = localStorage.getItem('kastor-theme-mode') || 'manual';
+  return m === 'system' || m === 'scheduled' ? m : 'manual';
+}
+function setThemeMode(mode) {
+  const m = mode === 'system' || mode === 'scheduled' ? mode : 'manual';
+  localStorage.setItem('kastor-theme-mode', m);
+  applyThemeFromMode();
+  if (typeof syncProfileAppearanceUI === 'function') syncProfileAppearanceUI();
+}
+function getThemeSchedule() {
+  try {
+    const raw = JSON.parse(localStorage.getItem('kastor-theme-schedule') || '{}');
+    return {
+      darkStart: raw.darkStart || DEFAULT_THEME_SCHEDULE.darkStart,
+      darkEnd:   raw.darkEnd   || DEFAULT_THEME_SCHEDULE.darkEnd
+    };
+  } catch { return { ...DEFAULT_THEME_SCHEDULE }; }
+}
+function setThemeSchedule(darkStart, darkEnd) {
+  const s = { darkStart: darkStart || DEFAULT_THEME_SCHEDULE.darkStart, darkEnd: darkEnd || DEFAULT_THEME_SCHEDULE.darkEnd };
+  localStorage.setItem('kastor-theme-schedule', JSON.stringify(s));
+  if (getThemeMode() === 'scheduled') applyThemeFromMode();
+}
+function _hhmmToMinutes(s) {
+  const [h, m] = String(s || '').split(':').map(x => parseInt(x, 10) || 0);
+  return h * 60 + m;
+}
+function _isDarkNowByLocalSchedule(sched) {
+  const now = new Date();
+  const mins = now.getHours() * 60 + now.getMinutes();
+  const a = _hhmmToMinutes(sched.darkStart);
+  const b = _hhmmToMinutes(sched.darkEnd);
+  if (a === b) return false;
+  // Janela cruzando meia-noite: a > b significa dark abrange [a,24h) ∪ [0,b).
+  return a < b ? (mins >= a && mins < b) : (mins >= a || mins < b);
+}
+function resolveThemeFromMode() {
+  const mode = getThemeMode();
+  if (mode === 'system') {
+    if (window.matchMedia) return matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    return localStorage.getItem('kastor-theme') || 'dark';
+  }
+  if (mode === 'scheduled') {
+    return _isDarkNowByLocalSchedule(getThemeSchedule()) ? 'dark' : 'light';
+  }
+  return localStorage.getItem('kastor-theme') || 'dark';
+}
+function applyThemeFromMode() {
+  const resolved = resolveThemeFromMode();
+  applyTheme(resolved);
+  // No modo manual, `kastor-theme` já reflete a escolha; nos automáticos, salvamos
+  // o resolvido pro pré-boot script poder aplicar antes do JS carregar (evita flash).
+  try { localStorage.setItem('kastor-theme', resolved); } catch {}
+  startThemeAutoWatchers();
+}
+// Watchers reativos + polling curto pra modo agendado (matchMedia não avisa
+// sobre virada de hora local). Só liga o que faz sentido pro modo atual.
+let _themeScheduleTimer = null;
+let _themeSystemMql = null;
+let _themeSystemHandler = null;
+function stopThemeAutoWatchers() {
+  if (_themeScheduleTimer) { clearInterval(_themeScheduleTimer); _themeScheduleTimer = null; }
+  if (_themeSystemMql && _themeSystemHandler) {
+    try { _themeSystemMql.removeEventListener('change', _themeSystemHandler); } catch {}
+    _themeSystemMql = null; _themeSystemHandler = null;
+  }
+}
+function startThemeAutoWatchers() {
+  stopThemeAutoWatchers();
+  const mode = getThemeMode();
+  if (mode === 'system' && window.matchMedia) {
+    _themeSystemMql = matchMedia('(prefers-color-scheme: light)');
+    _themeSystemHandler = () => applyThemeFromMode();
+    try { _themeSystemMql.addEventListener('change', _themeSystemHandler); }
+    catch { try { _themeSystemMql.addListener(_themeSystemHandler); } catch {} }
+  }
+  if (mode === 'scheduled') {
+    // 60s cobre virada de minuto com folga; visibilitychange complementa.
+    _themeScheduleTimer = setInterval(() => {
+      const resolved = resolveThemeFromMode();
+      const current  = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+      if (resolved !== current) applyThemeFromMode();
+    }, 60000);
+  }
+}
+// Reavalia ao voltar pra aba — usuário pode ter deixado aberta atravessando
+// a virada de hora agendada, ou trocado o tema do OS enquanto olhava outra janela.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && getThemeMode() !== 'manual') applyThemeFromMode();
+});
 // Aplica o tema o mais cedo possível — antes do app render — para evitar flash
-applyTheme(localStorage.getItem('kastor-theme') || 'light');
+applyThemeFromMode();
 
 /* ─── Densidade de tabela (Compacta ↔ Confortável) ───
    Classe global no body; CSS reduz o padding de th/td. Persiste em localStorage. */
@@ -7840,7 +8181,11 @@ function kanbanCard(d) {
     : '';
   return `
     <div class="kanban-card" draggable="true" data-demand-id="${d.id}" style="--card-stage:${esc(stageColor)}" onclick="showDetail('${d.id}')">
-      <div class="kanban-card-top">${priorityPill(d.priority)}${statusPill(d)}${stageAgeChip(d)}</div>
+      <div class="kanban-card-top">${priorityPill(d.priority)}${statusPill(d)}${stageAgeChip(d)}
+        <button type="button" class="kanban-card-copy" title="Copiar link" aria-label="Copiar link" onclick="copyDemandLink('${d.id}', event)">
+          <i data-lucide="link-2" class="ic-xs"></i>
+        </button>
+      </div>
       <div class="kanban-card-name">${esc(d.name)}</div>
       <div class="kanban-card-meta">${esc(p?.name || '—')}${p?.client ? ` · ${esc(p.client)}` : ''}</div>
       <div class="kanban-card-foot">
@@ -8178,7 +8523,12 @@ function renderMine() {
       : '<span class="mmuted">—</span>';
     return `<tr class="mrow" data-prio="${prio.value}" data-due="${u}" onclick="showDetail('${d.id}')" title="Prioridade: ${esc(prio.label)}">
       <td class="mcol-name">
-        <div class="mname">${esc(d.name)}</div>
+        <div class="mname-row">
+          <div class="mname">${esc(d.name)}</div>
+          <button type="button" class="mrow-copy" title="Copiar link" aria-label="Copiar link" onclick="copyDemandLink('${d.id}', event)">
+            <i data-lucide="link-2" class="ic-xs"></i>
+          </button>
+        </div>
       </td>
       <td class="mcol-squad">${wsCell}</td>
       <td class="mcol-client col-truncate" title="${esc(p?.client || '')}">${esc(p?.client || '—')}</td>
@@ -11961,9 +12311,99 @@ function startDetailPoll() {
   // SSE já refresca o modal em tempo real (handleSseMessage chama refreshDetailDemand).
   // Mantemos polling de fallback em janela maior caso o SSE caia silenciosamente.
   _detailPollTimer = setInterval(refreshDetailDemand, 60000);
+  startDemandPresence(detailId);
 }
 function stopDetailPoll() {
   if (_detailPollTimer) { clearInterval(_detailPollTimer); _detailPollTimer = null; }
+  stopDemandPresence();
+}
+
+/* ── PRESENÇA AO VIVO NA DEMANDA ──
+   NÃO CONFUNDIR com startPresence()/pingPresence() (linha ~26545) que é o
+   ping global do usuário-online (dot verde no avatar). Aquele roda no boot
+   uma vez, este roda enquanto uma demanda específica está aberta.
+   Nomes prefixados com "Demand" pra evitar override — declaração de função
+   com mesmo nome, a última vence. Já perdi 1h com isso.
+   Fluxo: POST heartbeat a cada 15s; servidor mantém set de quem está dentro
+   e broadcast SSE 'presence' pros outros com acesso ao workspace. Ao trocar/
+   fechar demanda, envia DELETE (com keepalive no unload pra pegar close). */
+let _demandPresenceTimer = null;
+let _demandPresenceCurrentId = null;
+const DEMAND_PRESENCE_HEARTBEAT_MS = 15000;
+
+// Cache da última lista de presença conhecida por demanda. Evita "buraco" quando
+// renderDetail() recria o DOM entre um heartbeat e o próximo (perde presença
+// mostrada por 15s). Chave = demandId, valor = users[].
+const _demandPresenceCache = new Map();
+
+async function _demandPresenceHeartbeat(id) {
+  if (!id) return;
+  if (document.hidden) return; // aba background não conta como presente
+  try {
+    const r = await api('/presence/demand/' + id + '/heartbeat', 'POST', {});
+    if (Array.isArray(r?.users)) {
+      _demandPresenceCache.set(id, r.users);
+      if (id === detailId) renderDetailPresence(r.users);
+    }
+  } catch {}
+}
+
+function startDemandPresence(id) {
+  if (!id) return;
+  if (_demandPresenceCurrentId === id) return; // já tá presente nessa demanda
+  stopDemandPresence();
+  _demandPresenceCurrentId = id;
+  _demandPresenceHeartbeat(id);
+  _demandPresenceTimer = setInterval(() => _demandPresenceHeartbeat(_demandPresenceCurrentId), DEMAND_PRESENCE_HEARTBEAT_MS);
+}
+
+function stopDemandPresence() {
+  if (_demandPresenceTimer) { clearInterval(_demandPresenceTimer); _demandPresenceTimer = null; }
+  const leaving = _demandPresenceCurrentId;
+  _demandPresenceCurrentId = null;
+  if (!leaving) return;
+  // DELETE assíncrono normal — servidor emite SSE pros outros verem sair.
+  try { api('/presence/demand/' + leaving, 'DELETE').catch(() => {}); } catch {}
+}
+
+// Presença fantasma caso a aba feche sem passar por stopDetailPoll.
+window.addEventListener('beforeunload', () => {
+  if (!_demandPresenceCurrentId) return;
+  try {
+    const url = '/api/presence/demand/' + _demandPresenceCurrentId;
+    // fetch com keepalive funciona em navegadores modernos e sobrevive ao unload.
+    // sendBeacon não suporta método DELETE, então esta é a alternativa correta.
+    fetch(url, { method: 'DELETE', credentials: 'same-origin', keepalive: true }).catch(() => {});
+  } catch {}
+});
+
+/* Renderiza a stack de avatares no header do dossiê. Mostra até 5, resto vira
+   "+N" com tooltip da lista. Omite o próprio usuário — todo mundo sabe que
+   está lá; interessa quem MAIS está olhando.
+   Usa avatarHTML() padrão pra herdar: (1) mini-card no hover (via data-user-id
+   + delegação global de openUserMiniCard), (2) presence ring verde (via classe
+   presence-online — todos aqui estão presentes por definição, o servidor já
+   filtrou por heartbeat recente). */
+function renderDetailPresence(users) {
+  const el = document.getElementById('dd-presence');
+  if (!el) return;
+  const meId = (typeof me !== 'undefined' && me) ? me.id : null;
+  const others = (users || []).filter(u => u.id !== meId);
+  if (!others.length) { el.innerHTML = ''; return; }
+  const max = 5;
+  const visible = others.slice(0, max);
+  const more = others.length - visible.length;
+  const items = visible.map(u => {
+    // Injeta lastSeen "agora" pra garantir o anel verde vindo do presenceClassFor.
+    // Alternativa era hard-codar a classe; passar por avatarHTML mantém 1 fonte da verdade.
+    const uWithSeen = { ...u, lastSeen: new Date().toISOString() };
+    const avatar = avatarHTML(uWithSeen, 'avatar avatar-sm dd-presence-item');
+    return `<span class="dd-presence-slot" title="${esc(u.name)}">${avatar}</span>`;
+  }).join('');
+  const moreHtml = more > 0
+    ? `<span class="dd-presence-more" title="${esc(others.slice(max).map(u => u.name).join(', '))}">+${more}</span>`
+    : '';
+  el.innerHTML = `<span class="dd-presence-stack">${items}${moreHtml}</span>`;
 }
 
 /* Tab ativa na coluna direita (Comentários | Checklist | Atividade | Etapas).
@@ -12202,7 +12642,15 @@ function renderDetail() {
       <div class="detail-col detail-col-left dd-dossier">
         <!-- Header: título + breadcrumb (squad/cliente/projeto/fluxo) -->
         <div class="dd-header">
-          <div class="detail-title" title="Clique para renomear" onclick="startEditDemandTitle(this)">${esc(d.name)}</div>
+          <div class="dd-title-row">
+            <div class="detail-title" title="Clique para renomear" onclick="startEditDemandTitle(this)">${esc(d.name)}</div>
+            <div class="dd-title-actions">
+              <div id="dd-presence" class="dd-presence" aria-live="polite"></div>
+              <button type="button" class="dd-title-copy" title="Copiar link" aria-label="Copiar link" onclick="copyDemandLink('${d.id}', event)">
+                <i data-lucide="link-2" class="ic-sm"></i>
+              </button>
+            </div>
+          </div>
           <div class="detail-breadcrumb">
             ${(() => {
               const ws = wsById(d.workspaceId);
@@ -12468,6 +12916,10 @@ function renderDetail() {
   }
   // Estado inicial da toolbar (bordas ativas conforme seleção atual do editor).
   refreshToolbarState();
+  // Reaplica presença ao vivo do cache — evita "buraco" quando renderDetail
+  // recria o #dd-presence entre um heartbeat e o próximo (janela de 15s).
+  const cachedPresence = _demandPresenceCache.get(detailId);
+  if (cachedPresence) renderDetailPresence(cachedPresence);
 }
 
 /* Owner picker — dropdown customizado com avatar do responsável atual */
@@ -25054,9 +25506,29 @@ function setProfileSection(name) {
 }
 /* ─── Aparência: tema, densidade, sidebar collapse, notificações desktop ─── */
 function setProfileTheme(theme) {
+  // Clique manual num dos botões light/dark passa modo pra 'manual' — se o
+  // user estava em system/scheduled e escolheu um lado explicitamente, é um
+  // override consciente e o watcher não deve mais mexer.
   localStorage.setItem('kastor-theme', theme);
+  localStorage.setItem('kastor-theme-mode', 'manual');
   applyTheme(theme);
+  stopThemeAutoWatchers();
   syncProfileAppearanceUI();
+}
+function setProfileThemeMode(mode) {
+  setThemeMode(mode);
+}
+/* Chamado on-change dos inputs time da janela agendada. Debounce curto pra
+   não gravar em cada tecla enquanto o user digita a hora. */
+let _themeScheduleSaveTimer = null;
+function onProfileThemeScheduleChange() {
+  if (_themeScheduleSaveTimer) clearTimeout(_themeScheduleSaveTimer);
+  _themeScheduleSaveTimer = setTimeout(() => {
+    const start = document.getElementById('profile-theme-schedule-start')?.value || DEFAULT_THEME_SCHEDULE.darkStart;
+    const end   = document.getElementById('profile-theme-schedule-end')?.value   || DEFAULT_THEME_SCHEDULE.darkEnd;
+    setThemeSchedule(start, end);
+    syncProfileAppearanceUI();
+  }, 250);
 }
 function setProfileDensity(mode) {
   localStorage.setItem('kastor-density', mode);
@@ -25095,6 +25567,29 @@ function syncProfileAppearanceUI() {
   document.querySelectorAll('#profile-theme-picker .profile-theme-opt').forEach(b => {
     b.classList.toggle('is-active', b.dataset.theme === theme);
   });
+  // Modo do tema (manual/system/scheduled) — só mostra o par manual quando
+  // manual, esconde ele nos automáticos pra deixar claro que o toggle é
+  // resolvido pela regra, não pela sua escolha.
+  const mode = getThemeMode();
+  document.querySelectorAll('#profile-theme-mode-picker .profile-theme-opt').forEach(b => {
+    b.classList.toggle('is-active', b.dataset.mode === mode);
+  });
+  const manualRow = document.getElementById('profile-theme-manual-row');
+  if (manualRow) manualRow.hidden = mode !== 'manual';
+  const schedRow = document.getElementById('profile-theme-schedule-row');
+  if (schedRow) schedRow.hidden = mode !== 'scheduled';
+  if (mode === 'scheduled') {
+    const sch = getThemeSchedule();
+    const inpS = document.getElementById('profile-theme-schedule-start');
+    const inpE = document.getElementById('profile-theme-schedule-end');
+    if (inpS && document.activeElement !== inpS) inpS.value = sch.darkStart;
+    if (inpE && document.activeElement !== inpE) inpE.value = sch.darkEnd;
+    const nowLabel = document.getElementById('profile-theme-schedule-now');
+    if (nowLabel) {
+      const isDark = _isDarkNowByLocalSchedule(sch);
+      nowLabel.textContent = `Agora: ${isDark ? 'escuro' : 'claro'} (hora local ${String(new Date().getHours()).padStart(2, '0')}:${String(new Date().getMinutes()).padStart(2, '0')})`;
+    }
+  }
   const dense = document.body.classList.contains('density-compact') ? 'compact' : 'comfortable';
   document.querySelectorAll('#profile-density-picker .profile-theme-opt').forEach(b => {
     b.classList.toggle('is-active', b.dataset.density === dense);
@@ -31740,6 +32235,16 @@ function onSseMessage(ev) {
     fetchNotifications().catch(() => {});
     return;
   }
+  // Presença ao vivo: só nos interessa se o evento é da demanda que o usuário
+  // está OLHANDO agora. Ignoramos silenciosamente os demais pra não trabalhar
+  // à toa quando 20 pessoas estão em demandas diferentes ao mesmo tempo.
+  if (data.entity === 'presence') {
+    if (data.kind === 'demand' && Array.isArray(data.users)) {
+      _demandPresenceCache.set(data.id, data.users);
+      if (data.id === detailId) renderDetailPresence(data.users);
+    }
+    return;
+  }
   _sseEvents.push(data);
   clearTimeout(_sseRefetchTimer);
   _sseRefetchTimer = setTimeout(flushSseRefetch, 250);
@@ -33391,6 +33896,20 @@ async function copyToClipboard(text, label) {
   } catch {
     toast('Falha ao copiar.', 'error');
   }
+}
+/* Copia o link absoluto de uma demanda pra clipboard e mostra toast.
+   Chamado no header do dossiê e nas rows das tabelas (/mine, /demands).
+   `ev` opcional pra parar propagação do clique da linha inteira. */
+function copyDemandLink(id, ev) {
+  if (ev) { try { ev.stopPropagation(); ev.preventDefault(); } catch {} }
+  const url = location.origin + demandPath(id);
+  if (!navigator.clipboard || !navigator.clipboard.writeText) {
+    toast('Falha ao copiar.', 'error');
+    return;
+  }
+  navigator.clipboard.writeText(url)
+    .then(() => toast('Link da demanda copiado.', 'success'))
+    .catch(() => toast('Falha ao copiar.', 'error'));
 }
 /* Wizard modal */
 function _pwSetToggleIcon(name) {
