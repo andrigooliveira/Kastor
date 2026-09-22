@@ -2165,8 +2165,38 @@ app.put('/api/me', requireAuth, (req, res) => {
 
 /* Ping de presença — cliente bate de minuto em minuto. Não loga histórico,
    apenas atualiza lastSeen pra que outros usuários vejam o dot verde. */
+// Buckets de 5min por userId — cada ping marca o bucket atual. Só em memória,
+// serve pra derivar "tempo ativo na semana" (nº de buckets * 5min).
+const _activityBuckets = new Map(); // userId → Set<bucketNumber>
+const ACTIVITY_BUCKET_MS = 5 * 60 * 1000;
+function _touchActivityBucket(userId) {
+  const bucket = Math.floor(Date.now() / ACTIVITY_BUCKET_MS);
+  let set = _activityBuckets.get(userId);
+  if (!set) { set = new Set(); _activityBuckets.set(userId, set); }
+  set.add(bucket);
+}
+function _activeMinutesInWindow(userId, ms) {
+  const set = _activityBuckets.get(userId);
+  if (!set || !set.size) return 0;
+  const minBucket = Math.floor((Date.now() - ms) / ACTIVITY_BUCKET_MS);
+  let count = 0;
+  for (const b of set) {
+    if (b >= minBucket) count++;
+  }
+  return count * 5;
+}
+// Poda buckets velhos a cada 30min pra não vazar memória.
+setInterval(() => {
+  const cutoff = Math.floor((Date.now() - 8 * 24 * 60 * 60 * 1000) / ACTIVITY_BUCKET_MS);
+  for (const [uid, set] of _activityBuckets) {
+    for (const b of set) if (b < cutoff) set.delete(b);
+    if (!set.size) _activityBuckets.delete(uid);
+  }
+}, 30 * 60 * 1000);
+
 app.post('/api/me/ping', requireAuth, (req, res) => {
   req.user.lastSeen = nowISO();
+  _touchActivityBucket(req.user.id);
   saveEntity('users', req.user);
   res.json({ ok: true, lastSeen: req.user.lastSeen });
 });
@@ -10116,11 +10146,31 @@ function _godmodeStatsFor(userId) {
   const monthAgo = now - 30 * 24 * 60 * 60 * 1000;
   let activeDemands = 0, createdThisMonth = 0, watchedCount = 0, doneThisWeek = 0;
   let hoursThisWeek = 0, commentsThisMonth = 0, activityThisWeek = 0;
+  // Cycle time — soma e conta demandas concluídas com createdAt válido.
+  let cycleMsSum = 0, cycleCount = 0;
+  // Atraso — denominador só demandas com prazo definido.
+  let demandsWithDeadline = 0, demandsLate = 0;
   for (const d of db.demands) {
     if (d.deletedAt) continue;
     if (d.ownerId === userId) {
       if (!d.completedAt) activeDemands++;
       if (d.completedAt && Date.parse(d.completedAt) > weekAgo) doneThisWeek++;
+      // Cycle time só faz sentido em concluídas.
+      if (d.completedAt && d.createdAt) {
+        const diff = Date.parse(d.completedAt) - Date.parse(d.createdAt);
+        if (Number.isFinite(diff) && diff >= 0) { cycleMsSum += diff; cycleCount++; }
+      }
+      // Atrasos: demanda tem prazo? já venceu (aberta) OU foi concluída depois?
+      const deadline = d.stageDueDate || d.deadline || null;
+      if (deadline) {
+        demandsWithDeadline++;
+        const deadlineTs = Date.parse(deadline.slice(0, 10) + 'T23:59:59');
+        if (d.completedAt) {
+          if (Date.parse(d.completedAt) > deadlineTs) demandsLate++;
+        } else if (now > deadlineTs) {
+          demandsLate++;
+        }
+      }
     }
     if (d.createdBy === userId && d.createdAt && Date.parse(d.createdAt) > monthAgo) createdThisMonth++;
     if (Array.isArray(d.watchers) && d.watchers.includes(userId)) watchedCount++;
@@ -10146,10 +10196,20 @@ function _godmodeStatsFor(userId) {
       }
     }
   }
+  const activeMinutes = _activeMinutesInWindow(userId, 7 * 24 * 60 * 60 * 1000);
   return {
     activeDemands, createdThisMonth, watchedCount, doneThisWeek,
     hoursThisWeek: Math.round(hoursThisWeek * 100) / 100,
-    commentsThisMonth, activityThisWeek
+    commentsThisMonth, activityThisWeek,
+    // Cycle time médio em ms; frontend formata em h/d.
+    avgCycleMs: cycleCount > 0 ? Math.round(cycleMsSum / cycleCount) : null,
+    cycleSampleCount: cycleCount,
+    // % atraso — 0..100. Null quando não tem base pra calcular (sem prazos).
+    latePercent: demandsWithDeadline > 0 ? Math.round((demandsLate / demandsWithDeadline) * 100) : null,
+    lateCount: demandsLate,
+    deadlineCount: demandsWithDeadline,
+    // Horas ativas na semana (buckets de 5min de /me/ping).
+    activeHoursThisWeek: Math.round((activeMinutes / 60) * 10) / 10
   };
 }
 

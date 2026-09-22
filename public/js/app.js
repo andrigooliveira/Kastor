@@ -1924,6 +1924,13 @@ function _gmTimeAgo(iso) {
   if (d < 30) return `há ${d}d`;
   return fmtDateTime(iso);
 }
+function _gmFmtCycle(ms) {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return '—';
+  const hours = ms / (1000 * 60 * 60);
+  if (hours < 48) return (Math.round(hours * 10) / 10) + 'h';
+  const days = hours / 24;
+  return (Math.round(days * 10) / 10) + 'd';
+}
 
 async function godmodeSelectUser(userId, silent) {
   _godmodeSelectedId = userId;
@@ -1981,11 +1988,14 @@ function _godmodeRenderDetail(d) {
 
       <div class="gm-stats">
         <div class="gm-stat"><span class="gm-stat-num">${s.activeDemands}</span><span class="gm-stat-lbl">Demandas ativas</span></div>
-        <div class="gm-stat"><span class="gm-stat-num">${s.hoursThisWeek}h</span><span class="gm-stat-lbl">Horas / semana</span></div>
+        <div class="gm-stat"><span class="gm-stat-num">${s.hoursThisWeek}h</span><span class="gm-stat-lbl">Horas apontadas / semana</span></div>
+        <div class="gm-stat"><span class="gm-stat-num">${s.activeHoursThisWeek}h</span><span class="gm-stat-lbl">Horas ativo / semana</span></div>
         <div class="gm-stat"><span class="gm-stat-num">${s.commentsThisMonth}</span><span class="gm-stat-lbl">Comentários / mês</span></div>
         <div class="gm-stat"><span class="gm-stat-num">${s.activityThisWeek}</span><span class="gm-stat-lbl">Ações / semana</span></div>
         <div class="gm-stat"><span class="gm-stat-num">${s.doneThisWeek}</span><span class="gm-stat-lbl">Concluídas / semana</span></div>
         <div class="gm-stat"><span class="gm-stat-num">${s.createdThisMonth}</span><span class="gm-stat-lbl">Criadas / mês</span></div>
+        <div class="gm-stat"><span class="gm-stat-num">${_gmFmtCycle(s.avgCycleMs)}</span><span class="gm-stat-lbl">Tempo médio / demanda${s.cycleSampleCount ? ` (n=${s.cycleSampleCount})` : ''}</span></div>
+        <div class="gm-stat"><span class="gm-stat-num">${s.latePercent == null ? '—' : s.latePercent + '%'}</span><span class="gm-stat-lbl">Atraso${s.deadlineCount ? ` (${s.lateCount}/${s.deadlineCount})` : ''}</span></div>
       </div>
 
       <div class="gm-cols">
