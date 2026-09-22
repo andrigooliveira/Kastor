@@ -4839,7 +4839,7 @@ const DEVTOOLS_GROUPS = [
     links: [
       { label: 'Projetos Cadastrados', path: '/projects',        icon: 'folder-tree', desc: 'Listagem global de projetos, com filtros por cliente/situação.' },
       { label: 'Modelos de Fluxo',     path: '/clients/models',  icon: 'layers',      desc: 'Biblioteca de modelos aplicáveis a novos clientes.' },
-      { label: 'Códigos de Erro',      path: '/help/Codigos-de-Erro.html', icon: 'alert-circle', desc: 'Referência completa dos códigos HTTP retornados pelo backend + erros específicos do cofre e da biometria.' },
+      { label: 'Códigos de Erro',      path: '/help/erros', icon: 'alert-circle', desc: 'Referência completa dos códigos HTTP retornados pelo backend + erros específicos do cofre e da biometria.' },
     ]
   },
   {

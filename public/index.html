@@ -262,7 +262,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
     <div class="login-divider" id="login-discord-wrap">
       <div class="login-divider-line"><span>ou</span></div>
       <button type="button" class="btn-discord-oauth" onclick="loginWithDiscord()">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M19.27 5.33a19.19 19.19 0 0 0-4.85-1.53.07.07 0 0 0-.07.03c-.21.38-.44.87-.6 1.26a17.86 17.86 0 0 0-5.5 0 12.6 12.6 0 0 0-.61-1.26.08.08 0 0 0-.07-.03A19.19 19.19 0 0 0 2.73 5.33a.07.07 0 0 0-.03.03C.57 8.63 0 11.83.28 15a19.32 19.32 0 0 0 5.83 2.97.08.08 0 0 0 .09-.03 13.4 13.4 0 0 0 1.19-1.94.08.08 0 0 0-.04-.1 12.8 12.8 0 0 1-1.83-.87.08.08 0 0 1 0-.13c.12-.09.25-.18.36-.28a.08.08 0 0 1 .08 0c3.84 1.76 7.99 1.76 11.79 0a.08.08 0 0 1 .08 0c.12.1.24.19.36.28a.08.08 0 0 1 0 .13c-.58.35-1.2.64-1.83.87a.08.08 0 0 0-.04.1 15 15 0 0 0 1.19 1.94.08.08 0 0 0 .09.03A19.27 19.27 0 0 0 21.72 15c.33-3.67-.55-6.83-2.42-9.64a.07.07 0 0 0-.03-.03zM8.02 12.9c-1.15 0-2.1-1.06-2.1-2.35 0-1.3.93-2.35 2.1-2.35 1.18 0 2.12 1.06 2.1 2.35 0 1.29-.94 2.35-2.1 2.35zm7.79 0c-1.15 0-2.1-1.06-2.1-2.35 0-1.3.93-2.35 2.1-2.35 1.18 0 2.12 1.06 2.1 2.35 0 1.29-.92 2.35-2.1 2.35z"/></svg>
+        <img src="/discord.svg" width="20" height="20" alt="" aria-hidden="true" style="filter:brightness(0) invert(1)">
         Entrar com Discord
       </button>
     </div>
@@ -1722,7 +1722,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
              (canal privado com DM + resolver nome). Cada aba tem sua UI própria. -->
         <div class="integrations-tabs" role="tablist" style="display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:18px">
           <button type="button" class="integrations-tab is-active" data-int-tab="discord" onclick="setIntegrationsTab('discord')" role="tab">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" style="vertical-align:middle;margin-right:6px"><path d="M19.27 5.33a19.19 19.19 0 0 0-4.85-1.53.07.07 0 0 0-.07.03c-.21.38-.44.87-.6 1.26a17.86 17.86 0 0 0-5.5 0 12.6 12.6 0 0 0-.61-1.26.08.08 0 0 0-.07-.03A19.19 19.19 0 0 0 2.73 5.33a.07.07 0 0 0-.03.03C.57 8.63 0 11.83.28 15a19.32 19.32 0 0 0 5.83 2.97.08.08 0 0 0 .09-.03 13.4 13.4 0 0 0 1.19-1.94.08.08 0 0 0-.04-.1 12.8 12.8 0 0 1-1.83-.87.08.08 0 0 1 0-.13c.12-.09.25-.18.36-.28a.08.08 0 0 1 .08 0c3.84 1.76 7.99 1.76 11.79 0a.08.08 0 0 1 .08 0c.12.1.24.19.36.28a.08.08 0 0 1 0 .13c-.58.35-1.2.64-1.83.87a.08.08 0 0 0-.04.1 15 15 0 0 0 1.19 1.94.08.08 0 0 0 .09.03A19.27 19.27 0 0 0 21.72 15c.33-3.67-.55-6.83-2.42-9.64a.07.07 0 0 0-.03-.03zM8.02 12.9c-1.15 0-2.1-1.06-2.1-2.35 0-1.3.93-2.35 2.1-2.35 1.18 0 2.12 1.06 2.1 2.35 0 1.29-.94 2.35-2.1 2.35zm7.79 0c-1.15 0-2.1-1.06-2.1-2.35 0-1.3.93-2.35 2.1-2.35 1.18 0 2.12 1.06 2.1 2.35 0 1.29-.92 2.35-2.1 2.35z"/></svg>Discord Bot
+            <img src="/discord.svg" width="16" height="16" alt="" aria-hidden="true" style="vertical-align:middle;margin-right:6px">Discord Bot
           </button>
           <button type="button" class="integrations-tab" data-int-tab="webhooks" onclick="setIntegrationsTab('webhooks')" role="tab">
             <i data-lucide="webhook" class="ic-sm"></i> Webhooks
@@ -2999,8 +2999,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               <!-- Discord -->
               <div class="profile-integration-card">
                 <div class="profile-integration-head">
-                  <div class="profile-integration-icon" style="background:rgba(88,101,242,0.15);color:#5865f2">
-                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M19.27 5.33a19.19 19.19 0 0 0-4.85-1.53.07.07 0 0 0-.07.03c-.21.38-.44.87-.6 1.26a17.86 17.86 0 0 0-5.5 0 12.6 12.6 0 0 0-.61-1.26.08.08 0 0 0-.07-.03A19.19 19.19 0 0 0 2.73 5.33a.07.07 0 0 0-.03.03C.57 8.63 0 11.83.28 15a19.32 19.32 0 0 0 5.83 2.97.08.08 0 0 0 .09-.03 13.4 13.4 0 0 0 1.19-1.94.08.08 0 0 0-.04-.1 12.8 12.8 0 0 1-1.83-.87.08.08 0 0 1 0-.13c.12-.09.25-.18.36-.28a.08.08 0 0 1 .08 0c3.84 1.76 7.99 1.76 11.79 0a.08.08 0 0 1 .08 0c.12.1.24.19.36.28a.08.08 0 0 1 0 .13c-.58.35-1.2.64-1.83.87a.08.08 0 0 0-.04.1 15 15 0 0 0 1.19 1.94.08.08 0 0 0 .09.03A19.27 19.27 0 0 0 21.72 15c.33-3.67-.55-6.83-2.42-9.64a.07.07 0 0 0-.03-.03zM8.02 12.9c-1.15 0-2.1-1.06-2.1-2.35 0-1.3.93-2.35 2.1-2.35 1.18 0 2.12 1.06 2.1 2.35 0 1.29-.94 2.35-2.1 2.35zm7.79 0c-1.15 0-2.1-1.06-2.1-2.35 0-1.3.93-2.35 2.1-2.35 1.18 0 2.12 1.06 2.1 2.35 0 1.29-.92 2.35-2.1 2.35z"/></svg>
+                  <div class="profile-integration-icon" style="background:rgba(88,101,242,0.15)">
+                    <img src="/discord.svg" width="24" height="24" alt="Discord">
                   </div>
                   <div class="profile-integration-info">
                     <div class="profile-integration-name">Discord</div>
@@ -3013,7 +3013,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                   <div id="profile-discord-oauth-status" class="profile-hint" style="margin-bottom:10px"></div>
                   <div class="profile-block-actions">
                     <button class="btn-discord-oauth" style="width:auto;padding:10px 16px;font-size:13px" id="profile-discord-oauth-btn" onclick="linkDiscord()">
-                      <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M19.27 5.33a19.19 19.19 0 0 0-4.85-1.53.07.07 0 0 0-.07.03c-.21.38-.44.87-.6 1.26a17.86 17.86 0 0 0-5.5 0 12.6 12.6 0 0 0-.61-1.26.08.08 0 0 0-.07-.03A19.19 19.19 0 0 0 2.73 5.33a.07.07 0 0 0-.03.03C.57 8.63 0 11.83.28 15a19.32 19.32 0 0 0 5.83 2.97.08.08 0 0 0 .09-.03 13.4 13.4 0 0 0 1.19-1.94.08.08 0 0 0-.04-.1 12.8 12.8 0 0 1-1.83-.87.08.08 0 0 1 0-.13c.12-.09.25-.18.36-.28a.08.08 0 0 1 .08 0c3.84 1.76 7.99 1.76 11.79 0a.08.08 0 0 1 .08 0c.12.1.24.19.36.28a.08.08 0 0 1 0 .13c-.58.35-1.2.64-1.83.87a.08.08 0 0 0-.04.1 15 15 0 0 0 1.19 1.94.08.08 0 0 0 .09.03A19.27 19.27 0 0 0 21.72 15c.33-3.67-.55-6.83-2.42-9.64a.07.07 0 0 0-.03-.03zM8.02 12.9c-1.15 0-2.1-1.06-2.1-2.35 0-1.3.93-2.35 2.1-2.35 1.18 0 2.12 1.06 2.1 2.35 0 1.29-.94 2.35-2.1 2.35zm7.79 0c-1.15 0-2.1-1.06-2.1-2.35 0-1.3.93-2.35 2.1-2.35 1.18 0 2.12 1.06 2.1 2.35 0 1.29-.92 2.35-2.1 2.35z"/></svg>
+                      <img src="/discord.svg" width="18" height="18" alt="" aria-hidden="true" style="filter:brightness(0) invert(1)">
                       <span id="profile-discord-oauth-btn-label">Vincular com Discord</span>
                     </button>
                     <button class="btn btn-ghost" id="profile-discord-unlink-btn" style="display:none" onclick="unlinkDiscord()"><i data-lucide="unlink" class="ic-sm"></i> Desvincular</button>
@@ -3041,8 +3041,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               <!-- Google Calendar -->
               <div class="profile-integration-card" id="profile-google-panel">
                 <div class="profile-integration-head">
-                  <div class="profile-integration-icon" style="background:rgba(66,133,244,0.14);color:#4285F4">
-                    <i data-lucide="calendar" class="ic-md"></i>
+                  <div class="profile-integration-icon" style="background:rgba(66,133,244,0.14)">
+                    <img src="/calendar.svg" width="24" height="24" alt="Google Calendar">
                   </div>
                   <div class="profile-integration-info">
                     <div class="profile-integration-name">Google Calendar</div>
