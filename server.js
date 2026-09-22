@@ -10090,15 +10090,12 @@ app.delete('/api/presence/:kind/:id', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-/* ─── GODMODE ─────────────────────────────────────────────────────
-   Painel admin-only pra visibilidade completa: quem tá online, o que
-   está olhando, atividade recente, stats por usuário. Cru sobre o
-   que já existe (SSE, presence, history/comments/timeEntries em
-   cada demanda). Nenhum dado sensível — googleTokens/knownIps já
-   filtrados por publicUser(); passwords nem existem no user record. */
+/* Endpoints admin-only pra agregação de dados de usuários. Cru sobre o
+   que já existe (SSE, presence, history/comments/timeEntries em cada
+   demanda). publicUser() já filtra googleTokens/knownIps. */
 function _godmodeReversePresence() {
-  // Retorna Map<userId, {demandId, since}>. Se um user tá em várias
-  // demandas (múltiplas abas), vence a de heartbeat mais recente.
+  // Se um user aparece em várias entradas do presenceMap (múltiplas abas),
+  // vence a de heartbeat mais recente.
   const out = new Map();
   for (const [key, set] of presenceMap) {
     if (!key.startsWith('demand:')) continue;

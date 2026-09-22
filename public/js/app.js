@@ -1775,9 +1775,6 @@ function initKeyboardShortcuts() {
     }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const k = e.key;
-    // Detector da sequência "1984" — abre godmode SILENCIOSAMENTE (só se
-    // isAdmin; ignora pra qualquer outro). Sem hint visual em nenhum lugar.
-    // Buffer com timeout curto: qualquer tecla que quebra a sequência reseta.
     _godmodeCheckKey(k);
     if (k === '?') { e.preventDefault(); showShortcutsHelp(); }
     else if (k === '/') { e.preventDefault(); const s = $('search-input'); if (s) s.focus(); }
@@ -1790,13 +1787,6 @@ function initKeyboardShortcuts() {
   });
 }
 
-/* ══════════════════════════════════════════════════════════════════════
-   GODMODE — painel admin oculto.
-   Trigger: tipo "1984" com nada focado (sequência 1→9→8→4 em ≤2s cada
-   passo). Nenhum menu, nenhum atalho documentado, nenhum badge. Se o
-   user não for admin, sequência não faz nada (falha silenciosa).
-   Esc fecha. Refresh manual + polling de 10s + reação a SSE de presença.
-   ══════════════════════════════════════════════════════════════════════ */
 const GODMODE_SEQ = ['1', '9', '8', '4'];
 let _godmodeSeqIdx = 0;
 let _godmodeSeqTimer = null;
@@ -1831,7 +1821,6 @@ async function openGodmode() {
   overlay.hidden = false;
   overlay.setAttribute('aria-hidden', 'false');
   overlay.classList.add('is-open');
-  // Bloqueia scroll do body enquanto godmode está aberto.
   document.body.classList.add('gm-locked');
   // Handler global de Esc + click no backdrop.
   overlay.addEventListener('click', _godmodeBackdropClick);

@@ -19022,7 +19022,6 @@ input[type="checkbox"]:checked {
   pointer-events: none;
   height: 0;
 }
-/* ─── GODMODE ─── painel admin oculto (aberto pela sequência "1984") */
 .gm-overlay {
   position: fixed; inset: 0;
   background: rgba(0, 0, 0, 0.72);
