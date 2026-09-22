@@ -14698,6 +14698,42 @@ function attDownloadAttrs(rawSrc, name) {
   }
   return '';
 }
+/* Favicon do site do link, em 64px. Serviço do Google primeiro porque
+   /favicon.ico costuma ter só 16px (borrado no card) e ele acha o melhor ícone
+   do site — só o domínio sai daqui, nunca a URL. Link do próprio reWork usa o local. */
+// Fontes em ordem: serviço do Google e, se ele não conhecer o site (devolve um
+// globo genérico de 16px), os caminhos padrão no próprio site.
+function linkFaviconSources(url) {
+  let u;
+  try { u = new URL(url); } catch { return []; }
+  if (!/^https?:$/.test(u.protocol)) return [];
+  if (u.host === location.host) return ['/favicon.png'];
+  const origin = u.origin;
+  return [
+    `https://www.google.com/s2/favicons?domain=${encodeURIComponent(u.hostname)}&sz=64`,
+    `${origin}/apple-touch-icon.png`,
+    `${origin}/favicon.png`,
+    `${origin}/favicon.ico`,
+  ];
+}
+// Próxima fonte; sem mais nenhuma, some a imagem e volta o ícone de link.
+function _faviconNext(img) {
+  const rest = (img.dataset.next || '').split(' ').filter(Boolean);
+  if (!rest.length) { img.remove(); return; }
+  img.dataset.next = rest.slice(1).join(' ');
+  img.src = rest[0];
+}
+function _faviconLoaded(img) {
+  if (img.naturalWidth <= 16 && img.src.includes('google.com/s2/favicons')) _faviconNext(img);
+}
+// Miolo do thumb de link: favicon por cima do ícone genérico, que volta se nada carregar.
+function linkThumbInner(url) {
+  const [first, ...rest] = linkFaviconSources(url);
+  return (first ? `<img class="att-link-favicon" src="${esc(first)}" data-next="${esc(rest.join(' '))}" alt="" loading="lazy"
+      referrerpolicy="no-referrer" onload="_faviconLoaded(this)" onerror="_faviconNext(this)">` : '')
+    + '<i data-lucide="link"></i>';
+}
+
 /* Anexos em grade de cards (mesmo card da Galeria): prévia em cima, nome sem
    extensão e a linha "EXT · peso · data". PDF/DOCX ganham capa gerada pelo
    observer da Galeria (_wireAttCovers) quando o card entra na tela. */
@@ -14706,16 +14742,19 @@ function renderDemandAttList(list, withDelete) {
   const cards = list.map(a => {
     const removeCall = withDelete ? `removeDetailAttachment('${esc(a.id)}')` : `removeFormAttachment('${esc(a.id)}', 'f-attachments-list')`;
     const removeBtn = `<button type="button" class="att-card-act danger" title="Remover" onclick="${removeCall}"><i data-lucide="x" class="ic-sm"></i></button>`;
-    // Clique nos botões (baixar/remover) não abre o card.
-    const onCard = call => `if (!event.target.closest('.att-card-actions')) { ${call} }`;
+    // Clique nos botões (baixar/remover) não abre o card: a propagação é cortada
+    // no contêiner das ações. Checar event.target no card não serve — o botão
+    // abre a confirmação, que repinta os ícones (lucide troca o <svg> clicado) e
+    // o alvo já está fora do DOM quando o clique chega ao card.
+    const actionsAttrs = 'class="att-card-actions" onclick="event.stopPropagation()"';
     const date = a.addedAt ? new Date(a.addedAt).toLocaleDateString('pt-BR') : '';
     if (a.kind === 'link') {
       const url = normalizeUrl(a.url || a.name);
       let host = '';
       try { host = new URL(url).hostname.replace(/^www\./, ''); } catch {}
-      return `<div class="att-gal-tile att-card" data-id="${esc(a.id)}" title="${esc(a.name || a.url)}" onclick="${onCard(`window.open('${esc(url)}', '_blank', 'noopener')`)}">
-        <div class="att-gal-thumb att-gal-thumb-icon"><i data-lucide="link"></i>
-          <div class="att-card-actions">${removeBtn}</div>
+      return `<div class="att-gal-tile att-card" data-id="${esc(a.id)}" title="${esc(a.name || a.url)}" onclick="window.open('${esc(url)}', '_blank', 'noopener')">
+        <div class="att-gal-thumb att-gal-thumb-icon att-link-thumb">${linkThumbInner(url)}
+          <div ${actionsAttrs}>${removeBtn}</div>
         </div>
         <div class="att-gal-tile-body">
           <div class="att-gal-tile-name">${esc(a.name || a.url)}</div>
@@ -14742,9 +14781,9 @@ function renderDemandAttList(list, withDelete) {
     const coverAttrs = _attCoverKind(a)
       ? `data-cover-key="${esc(_attCoverKey(a))}" data-att-id="${esc(a.id || '')}" data-att-size="${esc(String(a.size || 0))}" data-att-src="${src}" data-att-type="${esc(a.type || '')}" data-att-name="${esc(a.name || '')}"`
       : '';
-    return `<div class="att-gal-tile att-card" data-id="${esc(a.id)}" title="${esc(a.name)}" ${coverAttrs} onclick="${onCard(openCall)}">
+    return `<div class="att-gal-tile att-card" data-id="${esc(a.id)}" title="${esc(a.name)}" ${coverAttrs} onclick="${openCall}">
       ${thumb}
-        <div class="att-card-actions">
+        <div ${actionsAttrs}>
           <a href="${dlSrc}" ${dlAttrs} download="${esc(a.name)}" class="att-card-act att-card-dl" title="Baixar"><i data-lucide="download" class="ic-sm"></i></a>
           ${removeBtn}
         </div>
@@ -28600,7 +28639,9 @@ function _globalGalleryTileHtml(a) {
   const extBadge = ext ? `<span class="att-gal-ext-badge ext-${esc(kind)}">${esc(ext)}</span>` : '';
   const thumb = kind === 'image' && src
     ? `<div class="att-gal-thumb att-gal-thumb-image" style="background-image:url('${srcEsc}')">${extBadge}</div>`
-    : `<div class="att-gal-thumb att-gal-thumb-icon"><i data-lucide="${attIcon(kind)}"></i>${extBadge}</div>`;
+    : kind === 'link'
+      ? `<div class="att-gal-thumb att-gal-thumb-icon att-link-thumb">${linkThumbInner(normalizeUrl(a.url || a.name))}${extBadge}</div>`
+      : `<div class="att-gal-thumb att-gal-thumb-icon"><i data-lucide="${attIcon(kind)}"></i>${extBadge}</div>`;
   const coverAttrs = coverKind
     ? `data-cover-key="${esc(_attCoverKey(a))}" data-att-id="${esc(a.id || '')}" data-att-size="${esc(String(a.size || 0))}" data-att-src="${srcEsc}" data-att-type="${esc(a.type || '')}" data-att-name="${esc(a.name || '')}"`
     : '';
@@ -28892,7 +28933,9 @@ function attGalTileHtml(a, view = 'grid') {
   if (view === 'list') {
     const thumb = kind === 'image' && src
       ? `<div class="att-gal-list-thumb att-gal-thumb-image" style="background-image:url('${srcEsc}')"></div>`
-      : `<div class="att-gal-list-thumb att-gal-thumb-icon"><i data-lucide="${attIcon(kind)}"></i></div>`;
+      : kind === 'link'
+        ? `<div class="att-gal-list-thumb att-gal-thumb-icon att-link-thumb att-link-thumb-sm">${linkThumbInner(normalizeUrl(a.url || a.name))}</div>`
+        : `<div class="att-gal-list-thumb att-gal-thumb-icon"><i data-lucide="${attIcon(kind)}"></i></div>`;
     return `<button type="button" class="att-gal-list-row" onclick="${openCall}">
       ${thumb}
       <div class="att-gal-list-main">
@@ -28911,7 +28954,9 @@ function attGalTileHtml(a, view = 'grid') {
   const coverKind = _attCoverKind(a); // 'pdf' | 'doc' | null
   const thumb = kind === 'image' && src
     ? `<div class="att-gal-thumb att-gal-thumb-image" style="background-image:url('${srcEsc}')">${extBadge}</div>`
-    : `<div class="att-gal-thumb att-gal-thumb-icon"><i data-lucide="${attIcon(kind)}"></i>${extBadge}</div>`;
+    : kind === 'link'
+      ? `<div class="att-gal-thumb att-gal-thumb-icon att-link-thumb">${linkThumbInner(normalizeUrl(a.url || a.name))}${extBadge}</div>`
+      : `<div class="att-gal-thumb att-gal-thumb-icon"><i data-lucide="${attIcon(kind)}"></i>${extBadge}</div>`;
   const coverAttrs = coverKind
     ? `data-cover-key="${esc(_attCoverKey(a))}" data-att-id="${esc(a.id || '')}" data-att-size="${esc(String(a.size || 0))}" data-att-src="${srcEsc}" data-att-type="${esc(a.type || '')}" data-att-name="${esc(a.name || '')}"`
     : '';

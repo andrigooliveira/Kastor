@@ -1430,12 +1430,13 @@ app.use(express.static(path.join(__dirname, 'public'), {
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
-/* Whitelist estrita de MIMEs. NÃO inclui:
-   - text/html, application/xhtml+xml → XSS same-origin
-   - image/svg+xml → pode carregar <script>
-   - application/xml, text/xml → XXE em alguns viewers
-   Extensão do arquivo é DERIVADA do MIME (não confiar em user input),
-   evitando "envio evil.png com Content-Type text/html". */
+/* Tipos "inline-safe": servidos com o MIME real e abertos no browser (prévia).
+   Qualquer outro tipo também é ACEITO no upload, mas /uploads o serve sempre
+   como download (attachment + octet-stream + CSP sandbox + nosniff) — HTML,
+   SVG, XML etc. nunca são renderizados na origem do app (XSS). SVG mantém o
+   MIME de imagem pra funcionar em <img> (contexto que nunca executa script).
+   Pros tipos daqui, a extensão é DERIVADA do MIME, evitando "evil.png com
+   Content-Type text/html". */
 const ALLOWED_MIME_EXT = {
   'image/png':  'png',
   'image/jpeg': 'jpg',
@@ -1451,7 +1452,15 @@ const ALLOWED_MIME_EXT = {
   'text/plain': 'txt',
   'text/csv':   'csv',
   'text/markdown': 'md',
+  'video/mp4':  'mp4',
+  'video/webm': 'webm',
+  'video/quicktime': 'mov',
+  'audio/mpeg': 'mp3',
+  'audio/wav':  'wav',
+  'audio/ogg':  'ogg',
+  'audio/mp4':  'm4a',
 };
+const INLINE_SAFE_EXT = new Set([...Object.values(ALLOWED_MIME_EXT), 'jpeg']);
 // 150 MB por arquivo — cabe apresentações grandes com mídia, PDFs longos e
 // vídeos curtos. O compress client-side reduz a maioria pra <2MB, mas prints/
 // PNGs sem compress podem passar. Cliente checa 150MB também.
@@ -1498,20 +1507,16 @@ function saveUploadFromDataUri(dataUri, originalName) {
   if (!m) return null;
   let mime = (m[1] || '').toLowerCase();
   let ext = ALLOWED_MIME_EXT[mime];
-  // Fallback pela extensão do nome original: se o browser mandou MIME estranho
-  // (ex.: pptx como application/x-zip-compressed) ou vazio, olha o ".ext" do
-  // nome pra descobrir o tipo. Preserva o comportamento anti-XSS: extensão só
-  // é aceita se estiver no allowlist reverso (EXT_TO_MIME), então .html/.svg
-  // continuam bloqueados.
-  if (!ext && originalName) {
-    const nameMatch = String(originalName).toLowerCase().match(/\.([a-z0-9]{1,10})$/);
+  // Fora dos tipos conhecidos (ou MIME estranho, ex.: pptx como
+  // application/x-zip-compressed), a extensão vem do nome original — só
+  // [a-z0-9], então não há como injetar caminho. Sem extensão: .bin. O serve
+  // de /uploads trata qualquer extensão fora de INLINE_SAFE_EXT como download.
+  if (!ext) {
+    const nameMatch = String(originalName || '').toLowerCase().match(/\.([a-z0-9]{1,10})$/);
     const nameExt = nameMatch ? nameMatch[1] : null;
-    if (nameExt && EXT_TO_MIME[nameExt]) {
-      ext = nameExt;
-      if (!mime) mime = EXT_TO_MIME[nameExt];
-    }
+    ext = nameExt || 'bin';
+    if (!mime && EXT_TO_MIME[ext]) mime = EXT_TO_MIME[ext];
   }
-  if (!ext) return null;
   const buf = Buffer.from(m[2], 'base64');
   if (!buf.length || buf.length > UPLOAD_MAX_BYTES) return null;
   // Nome sanitizado + extensão FORÇADA (garante que browser reconheça o file
@@ -1543,7 +1548,7 @@ app.post('/api/uploads', (req, res, next) => requireAuth(req, res, next), rateLi
   const saved = saveUploadFromDataUri(data, name);
   if (!saved) {
     return res.status(400).json({
-      error: 'Arquivo inválido: tipo não permitido, tamanho maior que 10MB ou data URI mal formado.'
+      error: 'Arquivo inválido: vazio, maior que 150 MB ou data URI mal formado.'
     });
   }
   res.json(saved);
@@ -1558,6 +1563,16 @@ app.post('/api/uploads', (req, res, next) => requireAuth(req, res, next), rateLi
 // browsers/plugins tentam abrir inline e re-interpretam o binário. Forçando
 // attachment + Content-Type explícito, o download vem 1:1 com o disco.
 app.use('/uploads', requireAuth, (req, res, next) => {
+  const fileExt = path.extname(req.path).slice(1).toLowerCase();
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  if (!INLINE_SAFE_EXT.has(fileExt)) {
+    // Tipo que o browser poderia executar/renderizar (html, svg, xml, js…) ou
+    // desconhecido: nunca abre na origem do app — sempre baixa, em sandbox.
+    // SVG mantém o MIME de imagem pra funcionar em <img> (lá nunca roda script).
+    res.setHeader('Content-Security-Policy', 'sandbox');
+    res.setHeader('Content-Type', fileExt === 'svg' ? 'image/svg+xml' : 'application/octet-stream');
+    if (req.query.dl !== '1') res.setHeader('Content-Disposition', 'attachment');
+  }
   if (req.query.dl === '1') {
     const rawName = String(req.query.name || '').slice(0, 255) || path.basename(req.path);
     // Tira caracteres proibidos em nomes de arquivo (Windows + geral).
@@ -1569,8 +1584,7 @@ app.use('/uploads', requireAuth, (req, res, next) => {
       `attachment; filename="${asciiFallback.replace(/"/g, '')}"; filename*=UTF-8''${encoded}`);
     // Content-Type explícito pela extensão do arquivo REAL no disco — evita que
     // o mime lookup do send/express tropeçe em extensões incomuns.
-    const ext = path.extname(req.path).slice(1).toLowerCase();
-    const mime = EXT_TO_MIME[ext] || 'application/octet-stream';
+    const mime = INLINE_SAFE_EXT.has(fileExt) ? (EXT_TO_MIME[fileExt] || 'application/octet-stream') : 'application/octet-stream';
     res.setHeader('Content-Type', mime);
     // Sem cache pra downloads (o arquivo em si já é imutável pelo hash no nome,
     // mas com Content-Disposition dinâmico pelo nome, cachear é confuso).
@@ -1601,6 +1615,9 @@ app.get('/api/public/client-avatar/:clientId', (req, res) => {
   const mime = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', svg: 'image/svg+xml' }[ext] || 'application/octet-stream';
   res.setHeader('Content-Type', mime);
   res.setHeader('Cache-Control', 'public, max-age=3600');
+  // Rota sem auth: SVG aberto direto no browser não pode executar script.
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', 'sandbox');
   fs.createReadStream(full).pipe(res);
 });
 
