@@ -979,6 +979,31 @@ function projectAvatarHTML(p, cls = 'avatar') {
   const letter = (p.name || 'P').charAt(0).toUpperCase();
   return `<div class="${cls}" style="background:${hexDim(p.color)};color:${p.color}">${esc(letter)}</div>`;
 }
+/* "Cliente › Projeto › Fluxo" com foto/letra/ícone de cada um — cabeçalho do
+   detalhe da demanda e do wizard. `fallback` cobre nomes sem entidade carregada. */
+function demandCrumbItemsHTML(client, project, flow, fallback = {}) {
+  const imgAv = url => `<span class="dd-crumb-avatar" style="background-image:url('${esc(url)}')"></span>`;
+  const letterAv = (name, color) => {
+    const c = color || '#7A00FF';
+    return `<span class="dd-crumb-avatar" style="background:${hexDim(c)};color:${c}">${esc((name || '?').charAt(0).toUpperCase())}</span>`;
+  };
+  const iconAv = name => `<span class="dd-crumb-avatar dd-crumb-avatar--icon"><i data-lucide="${esc(name)}" class="ic-xs"></i></span>`;
+  const item = (av, name) => `<span class="dd-crumb-item">${av}<span>${esc(name)}</span></span>`;
+  const cname = client?.name || fallback.clientName || '';
+  const pname = project?.name || fallback.projectName || '';
+  const fname = flow?.name || fallback.flowName || '';
+  const parts = [];
+  if (cname) parts.push(item(client?.avatar ? imgAv(client.avatar) : letterAv(cname, client?.color), cname));
+  if (pname) parts.push(item(project?.avatar ? imgAv(project.avatar) : letterAv(pname, project?.color), pname));
+  if (fname) {
+    const icon = flow?.icon;
+    const av = !icon ? iconAv('workflow')
+      : String(icon).startsWith('lucide:') ? iconAv(icon.slice(7))
+      : imgAv(icon);
+    parts.push(item(av, fname));
+  }
+  return parts.join('<i data-lucide="chevron-right" class="ic-xs"></i>');
+}
 function clientAvatarHTML(c, cls = 'avatar') {
   if (!c) return `<div class="${cls}">?</div>`;
   if (c.avatar) return `<div class="${cls}" style="background-image:url('${c.avatar}');background-size:cover;background-position:center"></div>`;
@@ -12676,32 +12701,8 @@ function renderDetail() {
               const ws = wsById(d.workspaceId);
               return ws ? `<span class="pill detail-breadcrumb-squad" style="color:${ws.color || '#7A00FF'};background:${hexDim(ws.color)}"><span class="pill-dot" style="background:${ws.color || '#7A00FF'}"></span>${esc(ws.name)}</span>` : '';
             })()}
-            ${(() => {
-              const client = p ? clients.find(c => c.id === p.clientId) : null;
-              if (!client && !clientName) return '';
-              const cname = client?.name || clientName;
-              const av = client?.avatar
-                ? `<span class="dd-crumb-avatar" style="background-image:url('${esc(client.avatar)}')"></span>`
-                : `<span class="dd-crumb-avatar" style="background:${hexDim(client?.color || '#7A00FF')};color:${client?.color || '#7A00FF'}">${esc((cname || '?').charAt(0).toUpperCase())}</span>`;
-              return `<span class="dd-crumb-item">${av}<span>${esc(cname)}</span></span>`;
-            })()}
-            ${clientName && projName ? '<i data-lucide="chevron-right" class="ic-xs"></i>' : ''}
-            ${projName ? (() => {
-              const av = `<span class="dd-crumb-avatar" style="background:${hexDim(p?.color || '#7A00FF')};color:${p?.color || '#7A00FF'}">${esc((projName || '?').charAt(0).toUpperCase())}</span>`;
-              return `<span class="dd-crumb-item">${av}<span>${esc(projName)}</span></span>`;
-            })() : ''}
-            ${projName && flowName ? '<i data-lucide="chevron-right" class="ic-xs"></i>' : ''}
-            ${flowName ? (() => {
-              let ic;
-              if (!flow?.icon) {
-                ic = `<span class="dd-crumb-avatar dd-crumb-avatar--icon"><i data-lucide="workflow" class="ic-xs"></i></span>`;
-              } else if (typeof flow.icon === 'string' && flow.icon.startsWith('lucide:')) {
-                ic = `<span class="dd-crumb-avatar dd-crumb-avatar--icon"><i data-lucide="${esc(flow.icon.slice(7))}" class="ic-xs"></i></span>`;
-              } else {
-                ic = `<span class="dd-crumb-avatar" style="background-image:url('${esc(flow.icon)}')"></span>`;
-              }
-              return `<span class="dd-crumb-item">${ic}<span>${esc(flowName)}</span></span>`;
-            })() : ''}
+            ${demandCrumbItemsHTML(p ? clients.find(c => c.id === p.clientId) : null, p, flow,
+              { clientName, projectName: projName, flowName })}
           </div>
         </div>
 
@@ -33405,7 +33406,8 @@ function renderWizardStep4() {
   const f = fid ? flowById(fid) : null;
   const bc = $('dw-breadcrumb');
   if (bc) {
-    bc.innerHTML = [c?.name, p?.name, f?.name].filter(Boolean).map(s => esc(s)).join(' <span style="opacity:.45">›</span> ');
+    bc.innerHTML = demandCrumbItemsHTML(c, p, f);
+    paintIcons(); // troca de fluxo pelo classificador chama isto fora do wizardGoTo
   }
   // Sincroniza os selects ocultos (compat com o resto do código)
   if (pid) $('f-project').value = pid;
