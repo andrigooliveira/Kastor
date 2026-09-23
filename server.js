@@ -38,6 +38,7 @@ const { createStore, ENTITY_TYPES } = require('./db-store');
 const googleCal  = require('./google-cal');
 const discordBot = require('./discord-bot');
 const discordOAuth = require('./discord-oauth');
+const emailTpl   = require('./email-templates');
 
 const PORT    = process.env.PORT || 3000;
 // KASTOR_DATA_DIR sobrescreve o diretório de uploads e do auth.enc.
@@ -631,65 +632,9 @@ async function sendEmail(to, subject, html, text) {
     return { sent: false, reason: e.message };
   }
 }
-function escHtml(s) {
-  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
-function buildEmailForNotification(type, ctx) {
-  const { demand, project, owner, trigger, stageName, commentText, demandUrl } = ctx;
-  const triggerLine = trigger ? `<p style="margin:8px 0;color:#555">Por <strong>${escHtml(trigger.name)}</strong></p>` : '';
-  const projectLine = project ? `<p style="margin:0;color:#777;font-size:13px">${escHtml(project.name)}${project.client ? ` · ${escHtml(project.client)}` : ''}</p>` : '';
-  const btn = demandUrl ? `<p style="margin:24px 0 8px"><a href="${demandUrl}" style="display:inline-block;background:#7A00FF;color:#fff;padding:11px 22px;border-radius:6px;text-decoration:none;font-weight:600;font-size:14px">Abrir no reWork →</a></p><p style="margin:0;color:#999;font-size:11px;word-break:break-all">${escHtml(demandUrl)}</p>` : '';
-  let subject, headline, body;
-  switch (type) {
-    case 'assigned':
-      subject = `[reWork] Você é o responsável: ${demand.name}`;
-      headline = '🧑‍💼 Atribuído como responsável';
-      body = `<p style="margin:0 0 8px">Você foi definido como responsável da demanda <strong>${escHtml(demand.name)}</strong>${stageName ? ` na etapa <strong>${escHtml(stageName)}</strong>` : ''}.</p>`;
-      break;
-    case 'stage_assigned':
-      subject = `[reWork] Nova etapa para você: ${demand.name}`;
-      headline = '📌 Responsável por nova etapa';
-      body = `<p style="margin:0 0 8px">A demanda <strong>${escHtml(demand.name)}</strong> avançou para a etapa <strong>${escHtml(stageName || '—')}</strong> e você é o responsável.</p>`;
-      break;
-    case 'mention':
-      subject = `[reWork] Mencionado em: ${demand.name}`;
-      headline = '💬 Você foi mencionado';
-      body = `<p style="margin:0 0 8px">${trigger ? `<strong>${escHtml(trigger.name)}</strong> mencionou você em <strong>${escHtml(demand.name)}</strong>:` : `Você foi mencionado em <strong>${escHtml(demand.name)}</strong>:`}</p><blockquote style="border-left:3px solid #7A00FF;padding:10px 14px;margin:12px 0;color:#444;background:#f5f3ff;border-radius:0 4px 4px 0">${escHtml((commentText || '').slice(0, 500))}</blockquote>`;
-      break;
-    case 'watch_stage':
-      subject = `[reWork] Etapa avançou (você observa): ${demand.name}`;
-      headline = '👀 Movimento em demanda que você observa';
-      body = `<p style="margin:0 0 8px">A demanda <strong>${escHtml(demand.name)}</strong> avançou para a etapa <strong>${escHtml(stageName || '—')}</strong>.</p>`;
-      break;
-    case 'reminder':
-      subject = `[reWork] Lembrete: ${demand.name}`;
-      headline = '⏰ Lembrete';
-      body = `<p style="margin:0 0 8px">Você pediu pra ser lembrado da demanda <strong>${escHtml(demand.name)}</strong>.</p>${commentText ? `
-<blockquote style="border-left:3px solid #7A00FF;padding:10px 14px;margin:12px 0;color:#444;background:#f5f3ff;border-radius:0 4px 4px 0">${escHtml(commentText.slice(0, 500))}</blockquote>` : ''}`;
-      break;
-    case 'watch_comment':
-      subject = `[reWork] Novo comentário (você observa): ${demand.name}`;
-      headline = '👀 Novo comentário em demanda que você observa';
-      body = `<p style="margin:0 0 8px">${trigger ? `<strong>${escHtml(trigger.name)}</strong> comentou em ` : 'Novo comentário em '}<strong>${escHtml(demand.name)}</strong>:</p><blockquote style="border-left:3px solid #7A00FF;padding:10px 14px;margin:12px 0;color:#444;background:#f5f3ff;border-radius:0 4px 4px 0">${escHtml((commentText || '').slice(0, 500))}</blockquote>`;
-      break;
-    default:
-      return null;
-  }
-  const html = `<!doctype html><html><body style="margin:0;padding:0;background:#f7f7fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#222">
-<div style="max-width:560px;margin:24px auto;background:#fff;border-radius:12px;padding:28px 32px;box-shadow:0 1px 4px rgba(0,0,0,0.06)">
-  <div style="font-size:13px;font-weight:700;color:#7A00FF;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">reWork</div>
-  <h2 style="margin:0 0 14px;font-size:20px;font-weight:700;color:#222">${headline}</h2>
-  ${body}
-  ${projectLine}
-  ${triggerLine}
-  ${btn}
-  <hr style="border:none;border-top:1px solid #eee;margin:24px 0 16px">
-  <p style="color:#999;font-size:11px;margin:0;line-height:1.6">Você recebe estes e-mails porque cadastrou seu endereço no reWork. Para ajustar suas preferências, vá em <strong>Meu Perfil → Notificações por e-mail</strong>.</p>
-</div>
-</body></html>`;
-  const text = `${headline}\n\n${body.replace(/<[^>]+>/g, '').trim()}\n${project ? `\nProjeto: ${project.name}${project.client ? ' · ' + project.client : ''}` : ''}${trigger ? `\nPor: ${trigger.name}` : ''}${demandUrl ? `\n\nAbrir: ${demandUrl}` : ''}`;
-  return { subject, html, text };
-}
+const escHtml = emailTpl.escHtml;
+// Visual dos e-mails: email-templates.js (pré-visualização em /api/admin/email-preview).
+function buildEmailForNotification(type, ctx) { return emailTpl.notification(type, ctx); }
 /* Constrói payload de DM Discord (embed) pra uma notificação. Análogo ao
    buildEmailForNotification mas menor — DM não tem headline+body+footer,
    só embed com title/description/fields/url. */
@@ -923,16 +868,27 @@ function sendNotificationDiscordDM(user, type, data, triggerUserId, baseUrl) {
   if (!payload) return;
   discordBot.sendDM(user.discordId, payload).catch(e => console.warn('[discord-dm]', e.message));
 }
+// Etapa pro cartão do e-mail: a citada no aviso (pelo nome) ou a atual da demanda.
+function emailStageOf(d, label) {
+  const flow = db.flows.find(f => f.id === d.flowId);
+  const all = [...((flow && flow.stages) || []), ...(Array.isArray(d.stageAdditions) ? d.stageAdditions : [])];
+  const st = label ? all.find(x => x.label === label) : stageByIdForDemand(flow, d, d.status);
+  return st ? { label: st.label, color: st.color } : (label ? { label } : null);
+}
 function sendNotificationEmail(user, type, data, triggerUserId, baseUrl) {
   const demand = data.demandId ? db.demands.find(d => d.id === data.demandId) : null;
   if (!demand) return;
   const project = demand.projectId ? db.projects.find(p => p.id === demand.projectId) : null;
   const trigger = triggerUserId ? db.users.find(u => u.id === triggerUserId) : null;
+  const base = baseUrl || process.env.PUBLIC_URL || '';
   const ctx = {
     demand, project, owner: user, trigger,
     stageName: data.stageName || null,
+    stage: emailStageOf(demand, data.stageName),
+    due: demand.stageDueDate || demand.deadline || null,
     commentText: data.commentText || null,
-    demandUrl: demandLinkFor(baseUrl || process.env.PUBLIC_URL || '', demand.id),
+    demandUrl: demandLinkFor(base, demand.id),
+    baseUrl: base,
   };
   const built = buildEmailForNotification(type, ctx);
   if (!built) return;
@@ -2108,17 +2064,7 @@ app.post('/api/forgot-password', rateLimitPwReset, async (req, res) => {
   await store.insertReset({ token, userId: user.id, expiresAt, used: false, createdAt: nowISO() });
   const baseUrl = appBaseUrl(req);
   const link = `${baseUrl}/reset/${token}`;
-  const subject = '[reWork] Redefinir sua senha';
-  const html = `<!doctype html><html><body style="margin:0;background:#f7f7fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
-    <div style="max-width:540px;margin:24px auto;background:#fff;border-radius:12px;padding:28px 32px">
-      <div style="font-size:13px;font-weight:700;color:#7A00FF;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">reWork</div>
-      <h2 style="margin:0 0 10px;font-size:20px;color:#222">Redefinir sua senha</h2>
-      <p style="margin:0 0 14px;color:#555;font-size:14px;line-height:1.55">Olá ${escHtml(user.name)}, recebemos um pedido pra redefinir a senha da sua conta. Clique no botão abaixo para criar uma nova:</p>
-      <p style="margin:24px 0 8px"><a href="${link}" style="display:inline-block;background:#7A00FF;color:#fff;padding:11px 22px;border-radius:6px;text-decoration:none;font-weight:600;font-size:14px">Redefinir senha →</a></p>
-      <p style="margin:0;color:#999;font-size:11px;word-break:break-all">${escHtml(link)}</p>
-      <p style="margin:24px 0 0;color:#777;font-size:12px;line-height:1.55">Este link vale por <strong>1 hora</strong> e só pode ser usado uma vez. Se você não pediu esta redefinição, pode ignorar este e-mail — sua senha continua a mesma.</p>
-    </div></body></html>`;
-  const text = `Olá ${user.name}, abra este link em 1h pra redefinir sua senha:\n\n${link}\n\nSe não foi você, ignore.`;
+  const { subject, html, text } = emailTpl.resetPassword({ name: user.name, link, baseUrl });
   setImmediate(() => sendEmail(user.email, subject, html, text));
   res.json({ ok: true });
 });
@@ -2290,20 +2236,113 @@ app.post('/api/me/ping', requireAuth, (req, res) => {
 app.post('/api/me/email/test', requireAuth, async (req, res) => {
   if (!mailEnabled()) return res.status(503).json({ error: 'SMTP não configurado no servidor. Defina as variáveis SMTP_HOST, SMTP_USER, SMTP_PASS antes de testar.' });
   if (!req.user.email) return res.status(400).json({ error: 'Cadastre um e-mail no seu perfil antes de testar.' });
-  const result = await sendEmail(
-    req.user.email,
-    '[reWork] Teste de notificação por e-mail',
-    `<!doctype html><html><body style="margin:0;background:#f7f7fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
-<div style="max-width:540px;margin:24px auto;background:#fff;border-radius:12px;padding:28px 32px">
-  <div style="font-size:13px;font-weight:700;color:#7A00FF;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">reWork</div>
-  <h2 style="margin:0 0 10px;font-size:20px;color:#222">✅ E-mail funcionando</h2>
-  <p style="margin:0 0 8px;color:#444">Olá, ${escHtml(req.user.name)}! Este é um teste do canal de e-mails do reWork.</p>
-  <p style="margin:0;color:#666;font-size:13px">A partir de agora, você pode receber notificações sobre demandas e menções neste endereço.</p>
-</div></body></html>`,
-    `Olá ${req.user.name}! Este é um teste do canal de e-mails do reWork.`
-  );
+  const t = emailTpl.testEmail({ name: req.user.name, baseUrl: appBaseUrl(req) });
+  const result = await sendEmail(req.user.email, t.subject, t.html, t.text);
   if (!result.sent) return res.status(502).json({ error: 'Falha ao enviar: ' + (result.reason || 'erro desconhecido') });
   res.json({ ok: true });
+});
+
+/* ── PRÉ-VISUALIZAÇÃO DOS E-MAILS (admin) ──
+   Galeria com todos os modelos preenchidos com dados de exemplo. Relê o
+   email-templates.js a cada acesso: editou o visual, dá F5 — sem reiniciar. */
+function _freshEmailTpl() {
+  const file = require.resolve('./email-templates');
+  delete require.cache[file];
+  return require('./email-templates');
+}
+function _emailPreviewSamples(req) {
+  return _freshEmailTpl().previewSamples(appBaseUrl(req), req.user);
+}
+app.get('/api/admin/email-preview', requireAuth, (req, res) => {
+  if (!req.user.isAdmin) return res.status(403).send('Apenas administradores.');
+  let samples;
+  try { samples = _emailPreviewSamples(req).map(x => ({ key: x.key, label: x.label, subject: x.build().subject })); }
+  catch (e) { return res.status(500).type('text/plain').send('Erro no email-templates.js:\n\n' + (e.stack || e.message)); }
+  const cards = samples.map(x => `
+    <section class="card" id="${escHtml(x.key)}">
+      <header>
+        <div><strong>${escHtml(x.label)}</strong><span>${escHtml(x.subject)}</span></div>
+        <nav>
+          <a href="/api/admin/email-preview/${encodeURIComponent(x.key)}" target="_blank">Abrir sozinho</a>
+          <button onclick="sendMe('${escHtml(x.key)}', this)">Enviar pra mim</button>
+        </nav>
+      </header>
+      <iframe src="/api/admin/email-preview/${encodeURIComponent(x.key)}?scheme=light" loading="lazy" onload="fit(this)"></iframe>
+    </section>`).join('');
+  res.type('html').send(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>E-mails · reWork</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  body{margin:0;background:#18181b;color:#e4e4e7;font:14px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+  .top{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:12px 20px;background:#18181bee;border-bottom:1px solid #27272a}
+  .top h1{font-size:15px;margin:0 auto 0 0}
+  .top small{color:#a1a1aa}
+  .seg{display:flex;border:1px solid #3f3f46;border-radius:8px;overflow:hidden}
+  .seg button{background:none;border:0;color:#a1a1aa;padding:6px 12px;cursor:pointer;font:inherit}
+  .seg button.on{background:#7A00FF;color:#fff}
+  main{display:flex;flex-direction:column;align-items:center;gap:28px;padding:24px 16px 60px}
+  .card{width:100%;max-width:var(--w,720px);transition:max-width .2s}
+  .card header{display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:flex-end;margin-bottom:8px}
+  .card header span{display:block;color:#a1a1aa;font-size:12px;margin-top:2px}
+  .card nav{display:flex;gap:8px}
+  .card nav a,.card nav button{font:inherit;font-size:12px;color:#d4d4d8;background:#27272a;border:1px solid #3f3f46;border-radius:6px;padding:5px 10px;text-decoration:none;cursor:pointer}
+  .card nav button:disabled{opacity:.6;cursor:default}
+  iframe{display:block;width:100%;height:400px;border:1px solid #27272a;border-radius:10px;background:transparent}
+</style></head><body>
+<div class="top">
+  <h1>Pré-visualização dos e-mails <small>· edite email-templates.js e dê F5</small></h1>
+  <div class="seg" id="w">
+    <button data-w="720" class="on">Desktop</button><button data-w="390">Celular</button>
+  </div>
+  <div class="seg" id="scheme">
+    <button data-s="light" class="on">Claro</button><button data-s="dark">Escuro</button>
+  </div>
+</div>
+<main>${cards}</main>
+<script>
+  function fit(f){try{f.style.height='0px';f.style.height=f.contentDocument.documentElement.scrollHeight+'px'}catch(e){}}
+  document.getElementById('w').addEventListener('click',e=>{
+    const b=e.target.closest('button');if(!b)return;
+    document.querySelectorAll('#w button').forEach(x=>x.classList.toggle('on',x===b));
+    document.documentElement.style.setProperty('--w',b.dataset.w+'px');
+    setTimeout(()=>document.querySelectorAll('iframe').forEach(fit),250);
+  });
+  document.getElementById('scheme').addEventListener('click',e=>{
+    const b=e.target.closest('button');if(!b)return;
+    document.querySelectorAll('#scheme button').forEach(x=>x.classList.toggle('on',x===b));
+    document.querySelectorAll('iframe').forEach(f=>{f.src=f.src.split('?')[0]+'?scheme='+b.dataset.s});
+  });
+  async function sendMe(key,btn){
+    btn.disabled=true;const old=btn.textContent;btn.textContent='Enviando…';
+    try{
+      const r=await fetch('/api/admin/email-preview/'+encodeURIComponent(key)+'/send',{method:'POST',credentials:'same-origin'});
+      const j=await r.json().catch(()=>({}));
+      btn.textContent=r.ok?'Enviado pra '+j.to:(j.error||'Falhou');
+    }catch(e){btn.textContent='Falhou'}
+    setTimeout(()=>{btn.textContent=old;btn.disabled=false},4000);
+  }
+</script></body></html>`);
+});
+app.get('/api/admin/email-preview/:key', requireAuth, (req, res) => {
+  if (!req.user.isAdmin) return res.status(403).send('Apenas administradores.');
+  let sample;
+  try { sample = _emailPreviewSamples(req).find(x => x.key === req.params.key); }
+  catch (e) { return res.status(500).type('text/plain').send(e.stack || e.message); }
+  if (!sample) return res.status(404).send('Modelo não encontrado');
+  // Força o tema na prévia (sem isso seguiria o tema do sistema operacional).
+  const scheme = req.query.scheme === 'dark' ? 'dark' : req.query.scheme === 'light' ? 'light' : null;
+  const html = sample.build().html;
+  res.type('html').send(scheme ? html.replace('<html', `<html data-rw-scheme="${scheme}"`) : html);
+});
+app.post('/api/admin/email-preview/:key/send', requireAuth, async (req, res) => {
+  if (!req.user.isAdmin) return res.status(403).json({ error: 'Apenas administradores' });
+  if (!mailEnabled()) return res.status(503).json({ error: 'SMTP não configurado' });
+  if (!req.user.email) return res.status(400).json({ error: 'Cadastre seu e-mail no perfil' });
+  const sample = _emailPreviewSamples(req).find(x => x.key === req.params.key);
+  if (!sample) return res.status(404).json({ error: 'Modelo não encontrado' });
+  const b = sample.build();
+  const r = await sendEmail(req.user.email, '[Prévia] ' + b.subject, b.html, b.text || b.subject);
+  if (!r.sent) return res.status(502).json({ error: 'Falha: ' + (r.reason || 'erro') });
+  res.json({ ok: true, to: req.user.email });
 });
 
 /* ── DISCORD BOT (integração híbrida com webhooks) ──
@@ -10411,39 +10450,27 @@ async function digestSendForUser(user, baseUrl) {
   // Se não há NADA relevante, não envia — evita spam diário vazio.
   if (!overdue.length && !dueToday.length && !dueSoon.length && !unreadNotifs.length) return false;
   const url = baseUrl || process.env.PUBLIC_URL || '';
-  const renderList = (items, empty) => items.length
-    ? `<ul style="margin:8px 0 0;padding-left:18px;color:#333;font-size:14px;line-height:1.7">${items.slice(0, 12).map(d => {
-        const client = (db.projects.find(p => p.id === d.projectId) || {}).client || '';
-        const link = url ? `<a href="${url}/demands/${d.id}" style="color:#7A00FF;text-decoration:none">${escHtml(d.name)}</a>` : escHtml(d.name);
-        const meta = [client, d.stageDueDate || d.deadline].filter(Boolean).map(escHtml).join(' · ');
-        return `<li>${link}${meta ? ` <span style="color:#888;font-size:12px">(${meta})</span>` : ''}</li>`;
-      }).join('')}${items.length > 12 ? `<li style="color:#888;font-size:12px">…e mais ${items.length - 12}</li>` : ''}</ul>`
-    : `<div style="color:#888;font-size:13px;margin-top:6px">${empty}</div>`;
-  const notifBlock = unreadNotifs.length
-    ? `<h3 style="margin:24px 0 6px;font-size:15px;color:#222">🔔 Notificações não lidas (${unreadNotifs.length})</h3>${renderList(unreadNotifs.map(n => ({ id: n.demandId || '', name: n.demandName || n.type })), '')}`
-    : '';
-  const html = `<!doctype html><html><body style="margin:0;background:#f7f7fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
-    <div style="max-width:600px;margin:24px auto;background:#fff;border-radius:12px;padding:28px 32px">
-      <div style="font-size:13px;font-weight:700;color:#7A00FF;letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px">reWork · Resumo do dia</div>
-      <h2 style="margin:0 0 18px;font-size:22px;color:#222">Bom dia, ${escHtml(user.name.split(' ')[0])} 👋</h2>
-      <p style="margin:0 0 4px;color:#555;font-size:14px">Aqui está o que precisa da sua atenção hoje:</p>
-
-      <h3 style="margin:24px 0 6px;font-size:15px;color:#EF4444">🔥 Em atraso (${overdue.length})</h3>
-      ${renderList(overdue, 'Nada em atraso. Boa!')}
-
-      <h3 style="margin:24px 0 6px;font-size:15px;color:#F59E0B">📅 Vencem hoje (${dueToday.length})</h3>
-      ${renderList(dueToday, 'Nenhuma demanda com prazo pra hoje.')}
-
-      <h3 style="margin:24px 0 6px;font-size:15px;color:#38BDF8">⏭️ Próximos 3 dias (${dueSoon.length})</h3>
-      ${renderList(dueSoon, 'Sem demandas nos próximos 3 dias.')}
-
-      ${notifBlock}
-
-      <p style="margin:26px 0 0;color:#999;font-size:11px">Você recebe este resumo em dias úteis às 8h. Pra desativar, vá em <em>Meu Perfil → Notificações por e-mail</em>.</p>
-    </div></body></html>`;
+  const toItem = d => {
+    const st = emailStageOf(d);
+    return {
+      name: d.name,
+      href: url ? `${url}/demands/${d.id}` : null,
+      client: (db.projects.find(p => p.id === d.projectId) || {}).client || '',
+      stageLabel: st && st.label, stageColor: st && st.color,
+      due: (d.stageDueDate || d.deadline || '').slice(0, 10),
+    };
+  };
+  const NOTIF_SHORT = { assigned: 'Responsável', stage_assigned: 'Nova etapa', mention: 'Menção', watch_stage: 'Etapa avançou',
+    watch_comment: 'Novo comentário', reminder: 'Lembrete', reaction: 'Reação', time_gap: 'Sem apontamento' };
+  const { subject, html } = emailTpl.digest({
+    firstName: user.name.split(' ')[0], baseUrl: url, todayYmd: today(),
+    overdue: overdue.map(toItem), dueToday: dueToday.map(toItem), dueSoon: dueSoon.map(toItem),
+    unread: unreadNotifs.map(n => ({ name: n.demandName || NOTIF_SHORT[n.type] || n.type, meta: n.demandName ? NOTIF_SHORT[n.type] || '' : '',
+      href: url && n.demandId ? `${url}/demands/${n.demandId}` : null })),
+  });
   const text = `Bom dia, ${user.name.split(' ')[0]}!\n\nEm atraso: ${overdue.length}\nVencem hoje: ${dueToday.length}\nPróximos 3 dias: ${dueSoon.length}\nNotificações não lidas: ${unreadNotifs.length}\n\nAbra: ${url}`;
   try {
-    await sendEmail(user.email, `[reWork] Resumo do dia — ${overdue.length + dueToday.length} pra hoje`, html, text);
+    await sendEmail(user.email, subject, html, text);
     return true;
   } catch (e) {
     console.error(`[digest] falha ao enviar pra ${user.email}: ${e.message}`);
