@@ -2674,6 +2674,7 @@ function openUserMiniCard(userId, anchorEl) {
       <div class="user-mini-card-heading">
         <div class="user-mini-card-name">${esc(u.name || '—')}</div>
         <div class="user-mini-card-role">${metaLine}</div>
+        ${awayState(u) ? `<div class="user-mini-card-away"><i data-lucide="plane" class="ic-xs"></i> ${esc(awayLabel(u))}${awayState(u).sub ? ` · quem cobre: ${esc(awayState(u).sub.name.split(' ')[0])}` : ''}</div>` : ''}
       </div>
     </div>
     <div class="user-mini-card-body">
@@ -4298,7 +4299,7 @@ const TOUR_STEPS = [
     target: '.profile-nav',
     position: 'bottom',
     title: 'Configurações do perfil',
-    body: 'Cinco seções: Conta (nome e usuário), Aparência (tema), Notificações (o que te avisa), Integrações (Discord e Google) e Segurança (senha e refazer este tour).'
+    body: 'Conta (seus dados e e-mail), Ausência (férias e folgas), Notificações (o que chega por e-mail e Discord), Aparência (tema e cores), Integrações (Discord e Google), Segurança (senha) e Ajuda (este tour e as novidades).'
   },
   // 18. Aparência
   {
@@ -4307,7 +4308,7 @@ const TOUR_STEPS = [
     target: '.profile-section[data-section="appearance"]',
     position: 'auto',
     title: 'Aparência',
-    body: 'Escolha entre tema claro ou escuro. A preferência fica salva no seu navegador, mesmo se você trocar de dispositivo depois.'
+    body: 'Tema claro, escuro ou automático, e a cor de destaque. A cor acompanha você em qualquer computador.'
   },
   // 19. Notificações
   {
@@ -4316,7 +4317,7 @@ const TOUR_STEPS = [
     target: '.profile-section[data-section="notifications"]',
     position: 'auto',
     title: 'Preferências de notificação',
-    body: 'Controla o que você quer ser notificado (no sistema, por e-mail e pelo Discord). Você desativa qualquer canal individualmente — sem tudo-ou-nada.'
+    body: 'O sino recebe tudo. Aqui você escolhe, aviso por aviso, o que também chega por e-mail e pelo Discord. Salva na hora.'
   },
   // 20. Integrações
   {
@@ -4329,12 +4330,12 @@ const TOUR_STEPS = [
   },
   // 21. Segurança
   {
-    action: () => setProfileSection('security'),
+    action: () => setProfileSection('help'),
     waitMs: 300,
-    target: '.profile-section[data-section="security"]',
+    target: '.profile-section[data-section="help"]',
     position: 'auto',
-    title: 'Segurança e ferramentas',
-    body: 'Aqui você troca sua senha, refaz este tour de boas-vindas, acessa os documentos legais (Termos e Privacidade) e sai da conta quando quiser.'
+    title: 'Ajuda',
+    body: 'Refaça este tour quando quiser, veja as notas de atualização e os documentos legais. A senha e o botão de sair ficam em Segurança.'
   },
   // 22. Command palette
   {
@@ -5534,6 +5535,7 @@ function renderDashboard() {
   renderDashForecast();
   renderDashActivityFeed(mineActive);
   renderDashBlocked(mineActive);
+  renderDashMentions();
   renderDashTimeGaps();
   renderDashRadar(activeSquadActive);
   renderDashRecentMine(activeSquadScope);
@@ -12387,6 +12389,7 @@ function showDetail(id) {
   refreshDetailDemand();
   startDetailPoll();
   _markDemandSeen(id);
+  _loadMentionSeen(id);
 }
 function demandById(id) { return demands.find(x => x.id === id) || null; }
 
@@ -13134,6 +13137,7 @@ function renderDetail() {
   const cachedPresence = _demandPresenceCache.get(detailId);
   if (cachedPresence) renderDetailPresence(cachedPresence);
   _applyNewSinceMarks();
+  _applyMentionSeen();
 }
 
 /* Owner picker — dropdown customizado com avatar do responsável atual */
@@ -16608,6 +16612,52 @@ async function _markDemandSeen(id) {
     _applyNewSinceMarks();
   } catch {}
 }
+/* ── "VISTO" NAS MENÇÕES ──
+   Comentário com menção mostra quem já abriu a demanda (ou respondeu) depois
+   dele. Recarrega ao abrir a demanda e quando a janela volta ao foco. */
+let _mentionSeen = null; // { id, map: { userId: iso } }
+async function _loadMentionSeen(id) {
+  // Os comentários só chegam com o detalhe; a consulta é barata, então sempre busca.
+  try {
+    const map = await api('/demands/' + id + '/mention-seen');
+    if (detailId !== id) return;
+    _mentionSeen = { id, map: map || {} };
+    _applyMentionSeen();
+  } catch {}
+}
+window.addEventListener('focus', () => {
+  if (currentPage === 'demand-detail' && detailId) _loadMentionSeen(detailId);
+});
+function _applyMentionSeen() {
+  const st = _mentionSeen;
+  const d = demandById(detailId);
+  if (!st || !d || st.id !== d.id) return;
+  const comments = d.comments || [];
+  const first = u => (u?.name || '—').split(' ')[0];
+  const list = arr => arr.length <= 1 ? arr.join('') : arr.slice(0, -1).join(', ') + ' e ' + arr[arr.length - 1];
+  comments.forEach(c => {
+    const el = document.getElementById('comment-' + c.id);
+    if (!el) return;
+    el.querySelector('.cm-seen')?.remove();
+    const ids = (c.mentions || []).filter(id => id !== c.userId && id !== me.id);
+    if (!ids.length) return;
+    const at = Date.parse(c.createdAt) || 0;
+    const replied = id => comments.some(x => x.userId === id && (Date.parse(x.createdAt) || 0) > at);
+    const seen = ids.filter(id => (Date.parse(st.map[id]) || 0) > at || replied(id));
+    const missing = ids.filter(id => !seen.includes(id));
+    const names = arr => list(arr.map(id => first(userById(id))));
+    const txt = seen.length
+      ? `Visto por ${names(seen)}${missing.length ? ` · falta ${names(missing)}` : ''}`
+      : (ids.length === 1 ? 'Ainda não visto' : 'Ninguém viu ainda');
+    const div = document.createElement('div');
+    div.className = 'cm-seen' + (seen.length ? ' is-seen' : '');
+    div.innerHTML = `<i data-lucide="${seen.length ? 'check-check' : 'check'}" class="ic-xs"></i><span></span>`;
+    div.querySelector('span').textContent = txt;
+    el.querySelector('.chat-comment-body')?.appendChild(div);
+    paintIcons(div);
+  });
+}
+
 function _newSinceData(d, prevIso) {
   const prev = Date.parse(prevIso);
   const after = iso => (Date.parse(iso) || 0) > prev;
@@ -16656,6 +16706,76 @@ function _clearNewSince() {
   if (_detailPrevSeen) _detailPrevSeen.prev = null;
   document.getElementById('dd-news')?.remove();
   document.querySelectorAll('#page-demand-detail .is-new').forEach(el => el.classList.remove('is-new'));
+}
+
+/* ── ESPERANDO SUA RESPOSTA (Início) ──
+   Menções (diretas ou pela área) dos últimos 30 dias que a pessoa ainda não
+   respondeu — sem comentário dela depois nem reação no comentário
+   (server: /api/me/pending-mentions). "×" dispensa. */
+let _pendingMentionsCache = null; // { at, list }
+async function renderDashMentions() {
+  const sec = document.getElementById('dash-section-mentions');
+  const el = document.getElementById('dash-mentions');
+  if (!sec || !el) return;
+  if (!_pendingMentionsCache || Date.now() - _pendingMentionsCache.at > 60000) {
+    try { _pendingMentionsCache = { at: Date.now(), list: await api('/me/pending-mentions') }; }
+    catch { return; }
+  }
+  const list = _pendingMentionsCache.list || [];
+  sec.hidden = !list.length;
+  const count = document.getElementById('dash-mentions-count');
+  if (count) { count.hidden = !list.length; count.textContent = String(list.length); }
+  if (!list.length) { el.innerHTML = ''; return; }
+  _dashLists.mentions = list;
+  const MAX = 4;
+  el.innerHTML = list.slice(0, MAX).map(_dashMentionRowHtml).join('') + (list.length > MAX
+    ? `<a href="#" class="dash-more-link" onclick="event.preventDefault(); openDashMentionsAll()">Ver todas (${list.length})</a>` : '');
+  paintIcons(el);
+}
+function _dashMentionRowHtml(m) {
+  const u = userById(m.fromUserId);
+  const via = m.viaRole ? ` <span class="dash-mention-via">@${esc(roleSlug(m.viaRole))}</span>` : '';
+  return `<div class="dash-blocked-row dash-gap-row dash-mention-row" onclick="openPendingMention('${esc(m.key)}')">
+    <div class="dash-mention-av">${avatarHTML(u, 'avatar avatar-sm').replace(/data-user-id="[^"]+"/, '')}</div>
+    <div class="dash-blocked-body">
+      <div class="dash-blocked-name">${esc(u?.name || '—')}${via}<span class="dash-mention-text"> — ${esc(m.preview || 'anexo')}</span></div>
+      <div class="dash-blocked-meta">${esc(m.demandName)}${m.client ? ' · ' + esc(m.client) : ''} · ${esc(fmtRelativeTime(m.createdAt))}</div>
+    </div>
+    <button type="button" class="btn btn-ghost btn-sm dash-gap-btn" onclick="event.stopPropagation(); openPendingMention('${esc(m.key)}')">Responder</button>
+    <button type="button" class="qr-del dash-gap-dismiss" title="Não precisa responder" onclick="event.stopPropagation(); dismissPendingMention('${esc(m.key)}')"><i data-lucide="x" class="ic-xs"></i></button>
+  </div>`;
+}
+function openDashMentionsAll() {
+  openDashMore('Esperando sua resposta', (_dashLists.mentions || []).map(_dashMentionRowHtml).join(''));
+}
+function openPendingMention(key) {
+  const m = (_pendingMentionsCache?.list || []).find(x => x.key === key);
+  if (!m) return;
+  closeModal('dash-more-modal');
+  detailActiveTab = 'comments';
+  showDetail(m.demandId);
+  // Os comentários chegam com o detalhe: espera o comentário aparecer (até ~4s).
+  let tries = 0;
+  const go = () => {
+    if (detailId !== m.demandId) return;
+    const el = document.getElementById('comment-' + m.commentId);
+    if (!el && ++tries < 20) return setTimeout(go, 200);
+    if (el) {
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      el.classList.add('is-flash');
+      setTimeout(() => el.classList.remove('is-flash'), 2200);
+    }
+    document.getElementById('comment-input')?.focus();
+  };
+  setTimeout(go, 300);
+}
+async function dismissPendingMention(key) {
+  try {
+    await api('/me/pending-mentions/dismiss', 'POST', { key });
+    if (_pendingMentionsCache) _pendingMentionsCache.list = _pendingMentionsCache.list.filter(m => m.key !== key);
+    closeModal('dash-more-modal');
+    renderDashMentions();
+  } catch (e) { toast(e.message, 'error'); }
 }
 
 /* ── SEM APONTAMENTO (Início) ──
@@ -17261,6 +17381,52 @@ async function saveEditTimeEntry(eid) {
   } catch (e) { toast(e.message, 'error'); }
 }
 
+/* ── AUSÊNCIA (férias, folga) ──
+   u.away = { from, to, substituteId } (YYYY-MM-DD). Enquanto fora, e-mail e
+   Discord da pessoa ficam pausados e as etapas dela vão pro substituto. */
+function awayState(u) {
+  const a = u && u.away;
+  if (!a || !a.from || !a.to || a.to < todayStr()) return null;
+  return { active: a.from <= todayStr(), from: a.from, to: a.to, sub: a.substituteId ? userById(a.substituteId) : null };
+}
+function awayLabel(u) {
+  const st = awayState(u);
+  if (!st) return '';
+  return st.active ? `Fora até ${fmtDateShort(st.to)}` : `Fora de ${fmtDateShort(st.from)} a ${fmtDateShort(st.to)}`;
+}
+
+/* ── MENÇÃO A CARGO ──
+   @area (nome da área sem acento, com hífen) avisa quem ocupa a área no
+   projeto da demanda — ou, sem a área no projeto, no cliente. */
+const roleSlug = s => norm(s).trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+function roleMembersForDemand(d, areaName) {
+  const key = String(areaName || '').toLowerCase();
+  const pick = ra => {
+    if (!ra || typeof ra !== 'object') return [];
+    const k = Object.keys(ra).find(x => x.toLowerCase() === key);
+    const v = k ? ra[k] : null;
+    if (!v) return [];
+    return typeof v === 'string' ? [v] : Object.values(v).filter(Boolean);
+  };
+  const p = d ? projectById(d.projectId) : null;
+  let ids = pick(p?.roleAssignments);
+  if (!ids.length && p?.clientId) ids = pick(clientById(p.clientId)?.roleAssignments);
+  return [...new Set(ids)].map(userById).filter(u => u && u.active !== false);
+}
+function mentionRoleCandidates(term) {
+  const d = demandById(detailId);
+  if (!d) return [];
+  const t = norm(term);
+  return (roles || [])
+    .map(r => ({ name: r.name, slug: roleSlug(r.name), members: roleMembersForDemand(d, r.name) }))
+    .filter(r => r.slug && r.members.length && (r.slug.startsWith(t) || norm(r.name).includes(t)))
+    .slice(0, 3);
+}
+function _roleBySlug(slug) {
+  const sl = String(slug || '').toLowerCase();
+  return (roles || []).find(r => roleSlug(r.name) === sl) || null;
+}
+
 /* Comentários com @menção */
 let mentionIdx = -1;
 function mentionCandidates(term) {
@@ -17307,16 +17473,30 @@ function mentionWatchCE(el) {
   const m = before.match(/@([a-zA-Z0-9._-]*)$/);
   if (!m) { pop.classList.remove('open'); _mentionSavedRange = null; return; }
   const list = mentionCandidates(m[1]);
-  if (!list.length) { pop.classList.remove('open'); _mentionSavedRange = null; return; }
+  const roleList = mentionRoleCandidates(m[1]);
+  if (!list.length && !roleList.length) { pop.classList.remove('open'); _mentionSavedRange = null; return; }
   _mentionSavedRange = range.cloneRange();
   _mentionSavedTerm = m[0]; // inclui o @
   mentionIdx = 0;
-  pop.innerHTML = list.map((u, i) => `
-    <div class="mention-opt ${i === 0 ? 'active' : ''}" data-uname="${esc(u.username)}"
+  const userOpts = list.map(u => {
+    const away = awayState(u)?.active ? awayLabel(u) : '';
+    return `
+    <div class="mention-opt" data-uname="${esc(u.username)}"
          onmousedown="event.preventDefault()"
          onclick="pickMentionCE('${esc(u.username)}')">
-      ${avatarHTML(u)} <span class="user-mini"><span class="user-mini-name">${esc(u.name)}</span><span class="user-mini-role">@${esc(u.username)}</span></span>
-    </div>`).join('');
+      ${avatarHTML(u)} <span class="user-mini"><span class="user-mini-name">${esc(u.name)}</span><span class="user-mini-role">@${esc(u.username)}${away ? ` <span class="mention-away">${esc(away)}</span>` : ''}</span></span>
+    </div>`;
+  });
+  const roleOpts = roleList.map(r => `
+    <div class="mention-opt mention-opt--role" data-uname="${esc(r.slug)}"
+         onmousedown="event.preventDefault()"
+         onclick="pickMentionCE('${esc(r.slug)}')">
+      <span class="mention-role-ic"><i data-lucide="users" class="ic-xs"></i></span>
+      <span class="user-mini"><span class="user-mini-name">${esc(r.name)}</span><span class="user-mini-role">@${esc(r.slug)} · ${esc(r.members.map(u => (u.name || '').split(' ')[0]).join(', '))}</span></span>
+    </div>`);
+  pop.innerHTML = [...userOpts, ...roleOpts].join('');
+  pop.querySelector('.mention-opt')?.classList.add('active');
+  paintIcons(pop);
   pop.classList.add('open');
   // Posiciona no caret usando coords do viewport (position: fixed). Assim funciona
   // independente de offsetParent — antes calculávamos relativo a parentElement
@@ -17513,6 +17693,17 @@ async function sendComment() {
     syncCommentEmptyState(el);
     patchDemand(upd);
     renderDetail();
+    _pendingMentionsCache = null;
+    // Mencionou alguém que está fora: avisa (ela só vê quando voltar).
+    const sentC = (upd.comments || [])[upd.comments.length - 1];
+    const awayMentioned = (sentC?.mentions || []).map(userById).filter(u => u && u.id !== me.id && awayState(u)?.active);
+    if (awayMentioned.length) {
+      const u0 = awayMentioned[0], st0 = awayState(u0);
+      const msg = awayMentioned.length === 1
+        ? `${u0.name.split(' ')[0]} está fora até ${fmtDateShort(st0.to)}${st0.sub ? ` — quem cobre é ${st0.sub.name.split(' ')[0]}` : ''}.`
+        : `${awayMentioned.map(u => u.name.split(' ')[0]).join(', ')} estão fora. Vão ver quando voltarem.`;
+      setTimeout(() => toast(msg, 'warn'), 400);
+    }
     // Link no comentário (entrega por Dropbox/Drive etc.) que ainda não está
     // nos anexos: oferece anexar com um clique.
     const demandId = detailId;
@@ -17578,6 +17769,7 @@ function renderMentionsInHtml(html) {
     if (!m) return;
     const found = (users || []).find(x => x.username.toLowerCase() === m[1].toLowerCase());
     if (found) span.setAttribute('data-user-id', found.id);
+    else if (_roleBySlug(m[1])) span.classList.add('mention-role');
   });
   const walker = document.createTreeWalker(div, NodeFilter.SHOW_TEXT, null);
   const targets = [];
@@ -17589,7 +17781,7 @@ function renderMentionsInHtml(html) {
     let skip = false;
     while (anc && anc !== div) {
       const t = (anc.tagName || '').toLowerCase();
-      if (t === 'a' || t === 'code' || (t === 'span' && anc.className === 'mention')) { skip = true; break; }
+      if (t === 'a' || t === 'code' || (t === 'span' && anc.classList.contains('mention'))) { skip = true; break; }
       anc = anc.parentNode;
     }
     if (!skip) targets.push(n);
@@ -17607,6 +17799,13 @@ function renderMentionsInHtml(html) {
           // data-user-id habilita o mini-card (mesma delegação global do avatar).
           s.setAttribute('data-user-id', found.id);
           s.textContent = '@' + found.username;
+          frag.appendChild(s);
+          return;
+        }
+        if (_roleBySlug(mm[1])) {
+          const s = document.createElement('span');
+          s.className = 'mention mention-role';
+          s.textContent = '@' + mm[1].toLowerCase();
           frag.appendChild(s);
           return;
         }
@@ -17640,7 +17839,7 @@ function linkifyHtmlPreserveAnchors(html) {
     let skip = false;
     while (anc && anc !== div) {
       const t = (anc.tagName || '').toLowerCase();
-      if (t === 'a' || t === 'code' || t === 'pre' || (t === 'span' && anc.className === 'mention')) { skip = true; break; }
+      if (t === 'a' || t === 'code' || t === 'pre' || (t === 'span' && anc.classList.contains('mention'))) { skip = true; break; }
       anc = anc.parentNode;
     }
     if (!skip) targets.push(n);
@@ -20664,6 +20863,7 @@ async function toggleReaction(commentId, emoji) {
   const adding = !(c?.reactions?.[emoji] || []).includes(me?.id);
   if (adding) _rememberReaction(emoji);
   _clearNewSince();
+  _pendingMentionsCache = null;
   try {
     const upd = await api('/demands/' + detailId + '/comment/' + commentId + '/react', 'POST', { emoji });
     patchDemand(upd);
@@ -26740,53 +26940,133 @@ async function toggleUser(id) {
 /* ─── PERFIL ─── */
 function renderProfile() {
   $('profile-name-display').textContent = me.name;
-  $('profile-role-display').textContent = me.isAdmin
-    ? (me.role ? me.role + ' · Administrador' : 'Administrador')
-    : (me.isModerator
-      ? (me.role ? me.role + ' · Moderador' : 'Moderador')
-      : (me.isFreelancer
-        ? (me.role ? me.role + ' · Freelancer' : 'Freelancer')
-        : (me.role || 'Equipe')));
-  $('profile-username-display').textContent = '@' + me.username;
-  $('profile-f-name').value = me.name;
-  $('profile-f-username').value = me.username;
-  $('profile-f-discord-id').value = me.discordId || '';
-  if ($('profile-f-discord'))  $('profile-f-discord').value = me.discord || '';
-  if ($('profile-f-phone'))    $('profile-f-phone').value = me.phone || '';
-  $('profile-f-email').value = me.email || '';
-  const prefs = me.emailPrefs || { assigned: true, stage_assigned: true, mention: true, watch_stage: true, watch_comment: true, daily_digest: true };
-  $('profile-pref-assigned').checked = prefs.assigned !== false;
-  $('profile-pref-stage_assigned').checked = prefs.stage_assigned !== false;
-  $('profile-pref-mention').checked = prefs.mention !== false;
-  if ($('profile-pref-watch_stage'))   $('profile-pref-watch_stage').checked = prefs.watch_stage !== false;
-  if ($('profile-pref-watch_comment')) $('profile-pref-watch_comment').checked = prefs.watch_comment !== false;
-  if ($('profile-pref-daily_digest'))  $('profile-pref-daily_digest').checked = prefs.daily_digest !== false;
-  if ($('profile-pref-reminder'))      $('profile-pref-reminder').checked = prefs.reminder !== false;
-  $('profile-email-smtp-warning').style.display = me._smtpEnabled === false ? '' : 'none';
-  fillRoleSelect('profile-f-role', me.role || '');
-  // Avatar grande no hero — mesmo esquema do sidebar, preserva classes extras.
+  $('profile-username-display').textContent = '@' + me.username + (me.role ? ' · ' + me.role : '');
+  const noCard = html => html.replace(/data-user-id="[^"]+"/, ''); // o próprio avatar não abre o cartão
+  const navAv = $('profile-nav-avatar');
+  if (navAv) navAv.innerHTML = noCard(avatarHTML(me, 'avatar'));
   const profAv = $('profile-avatar');
-  if (profAv) profAv.outerHTML = avatarHTML(me, 'avatar avatar-xl').replace(/class="([^"]+)"/, 'class="$1" id="profile-avatar"');
-  $('avatar-remove-btn').style.display = me.avatar ? '' : 'none';
-  // Aparência — sincroniza pickers com estado atual.
+  if (profAv) profAv.innerHTML = noCard(avatarHTML(me, 'avatar'));
+  $('avatar-remove-btn').hidden = !me.avatar;
+  // Conta
+  $('profile-f-name').value = me.name || '';
+  $('profile-f-username').value = me.username || '';
+  $('profile-f-email').value = me.email || '';
+  $('profile-f-phone').value = me.phone || '';
+  $('profile-f-discord').value = me.discord || '';
+  $('profile-f-discord-id').value = me.discordId || '';
+  fillRoleSelect('profile-f-role', me.role || '');
+  _setFieldError('profile-f-email', '');
+  _profileAccountBase = _profileAccountSnapshot();
+  profileAccountDirty();
   syncProfileAppearanceUI();
-  // Google Calendar — carrega assíncrono.
   renderGoogleCalendarPanel();
   handleGoogleCallbackToast();
-  // Discord DM prefs — carrega assíncrono; UI só aparece se o bot tá configurado
-  renderDiscordPrefsUI().catch(() => {});
-  // Discord OAuth (login com Discord + vínculo) — alterna manual/OAuth
   renderProfileDiscordOAuth();
+  renderProfileNotifications().catch(() => {});
+  renderProfileAway();
+  const want = new URLSearchParams(location.search).get('aba');
+  setProfileSection(PROFILE_SECTIONS.includes(want) ? want : _profileSection, { keepUrl: true });
   if (typeof paintIcons === 'function') paintIcons();
 }
-/* Navegação entre seções do perfil (Conta, Aparência, Notificações, etc). */
-function setProfileSection(name) {
+/* Navegação entre seções do perfil. A aba vai pra URL (?aba=) pra dar F5
+   e compartilhar o caminho ("Perfil › Notificações") sem se perder. */
+const PROFILE_SECTIONS = ['account', 'away', 'notifications', 'appearance', 'integrations', 'security', 'help'];
+let _profileSection = 'account';
+function setProfileSection(name, opts = {}) {
+  if (!PROFILE_SECTIONS.includes(name)) name = 'account';
+  const changed = name !== _profileSection;
+  _profileSection = name;
   document.querySelectorAll('#page-profile .profile-nav-item').forEach(b => {
-    b.classList.toggle('is-active', b.dataset.section === name);
+    const on = b.dataset.section === name;
+    b.classList.toggle('is-active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
   });
-  document.querySelectorAll('#page-profile .profile-section').forEach(s => {
-    s.hidden = s.dataset.section !== name;
+  document.querySelectorAll('#page-profile .profile-section').forEach(sec => {
+    sec.hidden = sec.dataset.section !== name;
   });
+  if (currentPage === 'profile' && !opts.keepUrl) {
+    try {
+      const u = new URL(location.href);
+      u.searchParams.set('aba', name);
+      history.replaceState(history.state, '', u.pathname + u.search + u.hash);
+    } catch {}
+  }
+  if (changed && !opts.keepUrl) document.getElementById('page-profile')?.scrollIntoView({ block: 'start' });
+}
+// Leva até um campo da Conta (ex.: "Adicionar e-mail" na aba Notificações).
+function goProfileField(id) {
+  setProfileSection('account');
+  const el = $(id);
+  if (!el) return;
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  setTimeout(() => { el.focus(); el.select?.(); }, 250);
+}
+
+/* Conta: um formulário só (identificação + contato), com aviso de alteração
+   pendente e Salvar habilitado só quando algo mudou. */
+let _profileAccountBase = '';
+function _profileAccountSnapshot() {
+  return JSON.stringify(['name', 'role', 'username', 'email', 'phone', 'discord'].map(k => ($('profile-f-' + k)?.value || '').trim()));
+}
+function profileAccountDirty() {
+  const dirty = _profileAccountSnapshot() !== _profileAccountBase;
+  const save = $('profile-account-save');
+  if (save) save.disabled = !dirty;
+  const note = $('profile-account-dirty');
+  if (note) note.hidden = !dirty;
+  const cancel = $('profile-account-cancel');
+  if (cancel) cancel.hidden = !dirty;
+}
+function _setFieldError(inputId, msg) {
+  const inp = $(inputId), err = $(inputId + '-error');
+  if (inp) { if (msg) inp.setAttribute('aria-invalid', 'true'); else inp.removeAttribute('aria-invalid'); }
+  if (err) { err.textContent = msg || ''; err.hidden = !msg; }
+}
+
+/* Ausência (férias/folga) no perfil. */
+function renderProfileAway() {
+  const from = $('profile-away-from'), to = $('profile-away-to'), sub = $('profile-away-sub');
+  if (!from || !to || !sub) return;
+  const a = me.away && me.away.to >= todayStr() ? me.away : null;
+  from.value = a?.from || '';
+  to.value = a?.to || '';
+  from.min = todayStr();
+  to.min = todayStr();
+  const opts = (users || []).filter(u => u.id !== me.id && u.active !== false && !u.isFreelancer)
+    .sort((x, y) => (x.name || '').localeCompare(y.name || '', 'pt-BR'));
+  sub.innerHTML = '<option value="">Ninguém — as etapas continuam comigo</option>' +
+    opts.map(u => `<option value="${esc(u.id)}">${esc(u.name)}</option>`).join('');
+  sub.value = a?.substituteId || '';
+  const st = awayState(me);
+  const status = $('profile-away-status');
+  if (status) {
+    status.hidden = !st;
+    status.textContent = st ? (st.active ? `Você está marcado como fora até ${fmtDate(st.to)}.` : `Ausência agendada de ${fmtDate(st.from)} a ${fmtDate(st.to)}.`) : '';
+  }
+  const clearBtn = $('profile-away-clear');
+  if (clearBtn) clearBtn.hidden = !st;
+}
+async function saveProfileAway() {
+  const from = $('profile-away-from').value, to = $('profile-away-to').value;
+  if (!from || !to) return toast('Informe as datas de saída e de volta', 'error');
+  try {
+    me = await api('/me', 'PUT', { away: { from, to, substituteId: $('profile-away-sub').value || null } });
+    _syncMeIntoUsers();
+    renderProfileAway();
+    toast('Ausência salva');
+  } catch (e) { toast(e.message, 'error'); }
+}
+async function clearProfileAway() {
+  try {
+    me = await api('/me', 'PUT', { away: null });
+    _syncMeIntoUsers();
+    renderProfileAway();
+    toast('Pronto, você está disponível de novo');
+  } catch (e) { toast(e.message, 'error'); }
+}
+function _syncMeIntoUsers() {
+  const i = (users || []).findIndex(u => u.id === me.id);
+  if (i >= 0) users[i] = { ...users[i], away: me.away || null };
 }
 /* ─── Aparência: tema, densidade, sidebar collapse, notificações desktop ─── */
 function setProfileTheme(theme) {
@@ -26881,6 +27161,9 @@ function syncProfileAppearanceUI() {
   });
   const sbCheck = document.getElementById('profile-sidebar-collapsed');
   if (sbCheck) sbCheck.checked = document.body.classList.contains('sidebar-collapsed');
+  renderDesktopNotifSlot();
+}
+function renderDesktopNotifSlot() {
   const slot = document.getElementById('profile-desktop-notif-slot');
   if (slot) {
     let html;
@@ -26889,10 +27172,9 @@ function syncProfileAppearanceUI() {
     } else if (Notification.permission === 'granted') {
       html = `<span class="profile-status-chip profile-status-chip--ok"><i data-lucide="check" class="ic-xs"></i> Ativado</span>`;
     } else if (Notification.permission === 'denied') {
-      html = `<span class="profile-status-chip profile-status-chip--err">Bloqueado</span>
-              <button class="btn btn-ghost btn-sm" onclick="requestDesktopNotifications()" style="margin-left:6px">Tentar novamente</button>`;
+      html = `<span class="profile-status-chip profile-status-chip--err">Bloqueado no navegador</span>`;
     } else {
-      html = `<button class="btn btn-primary btn-sm" onclick="requestDesktopNotifications()"><i data-lucide="bell" class="ic-sm"></i> Ativar</button>`;
+      html = `<button class="btn btn-ghost btn-sm" onclick="requestDesktopNotifications()">Ativar</button>`;
     }
     slot.innerHTML = html;
     if (typeof paintIcons === 'function') paintIcons();
@@ -26926,28 +27208,19 @@ async function renderGoogleCalendarPanel() {
   try {
     status = await api('/google/status');
   } catch (e) {
-    body.innerHTML = `<div class="webhook-hint" style="color:var(--danger)">Erro ao consultar status: ${esc(e.message)}</div>`;
+    body.innerHTML = `<div class="profile-hint" style="color:var(--danger)">Não deu para consultar a conexão agora: ${esc(e.message)}</div>`;
     return;
   }
   if (!status.configured) {
     body.innerHTML = `
-      <div class="webhook-hint" style="border-left:3px solid var(--warn);color:var(--warn)">
-        ⚠️ Integração não configurada no servidor. O administrador precisa definir
-        <code>GOOGLE_CLIENT_ID</code>, <code>GOOGLE_CLIENT_SECRET</code> e <code>GOOGLE_REDIRECT_URI</code>
-        no arquivo <code>.env</code> antes de conectar.
-      </div>`;
+      <div class="profile-hint">A conexão com o Google Agenda ainda não foi ativada no servidor. Fale com um administrador.</div>`;
     return;
   }
   if (!status.connected) {
     body.innerHTML = `
-      <div class="webhook-hint" style="margin-bottom:14px">
-        Conecte a sua conta do Google para que os eventos da sua agenda apareçam junto com os blocos da plataforma.
-        Nenhuma informação é enviada de volta pro Google — a integração é somente leitura.
-      </div>
-      <div style="text-align:right">
-        <a class="btn btn-primary" href="/api/google/auth">
-          <i data-lucide="calendar-plus" class="ic-sm"></i> Conectar Google Calendar
-        </a>
+      <div class="profile-hint">O reWork só lê sua agenda. Nada é criado ou alterado no Google.</div>
+      <div class="profile-block-actions">
+        <a class="btn btn-confirm" href="/api/google/auth"><i data-lucide="calendar-plus" class="ic-sm"></i> Conectar</a>
       </div>`;
     paintIcons();
     return;
@@ -27086,48 +27359,42 @@ async function disconnectGoogleCalendar() {
     if (currentPage === 'agenda' || currentPage === 'mine') renderAgenda();
   } catch (e) { toast(e.message, 'error'); }
 }
-async function saveEmailSettings() {
-  const email = ($('profile-f-email').value || '').trim();
-  const emailPrefs = {
-    assigned: $('profile-pref-assigned').checked,
-    stage_assigned: $('profile-pref-stage_assigned').checked,
-    mention: $('profile-pref-mention').checked,
-    watch_stage: $('profile-pref-watch_stage')?.checked ?? true,
-    watch_comment: $('profile-pref-watch_comment')?.checked ?? true,
-    daily_digest: $('profile-pref-daily_digest')?.checked ?? true,
-    reminder: $('profile-pref-reminder')?.checked ?? true,
-  };
-  try {
-    me = await api('/me', 'PUT', { email: email || null, emailPrefs });
-    toast('Preferências de e-mail salvas!');
-    renderProfile();
-  } catch (e) { toast(e.message, 'error'); }
-}
-async function sendEmailTest() {
-  const currentEmail = ($('profile-f-email').value || '').trim();
-  if (currentEmail && currentEmail !== me.email) {
-    // Salva o e-mail antes de testar pra evitar testar contra o e-mail antigo
-    try { me = await api('/me', 'PUT', { email: currentEmail }); } catch (e) { toast(e.message, 'error'); return; }
-  }
-  if (!me.email) { toast('Cadastre um e-mail antes de testar.', 'error'); return; }
+async function sendEmailTest(btn) {
+  if (!me.email) { goProfileField('profile-f-email'); return; }
+  if (btn) btn.disabled = true;
   try {
     await api('/me/email/test', 'POST');
     toast('E-mail de teste enviado para ' + me.email);
   } catch (e) { toast(e.message, 'error'); }
+  finally { if (btn) btn.disabled = false; }
 }
 async function saveProfile() {
+  const email = ($('profile-f-email').value || '').trim();
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    _setFieldError('profile-f-email', 'Confira o e-mail. Ele precisa ter o formato nome@empresa.com.');
+    $('profile-f-email').focus();
+    return;
+  }
+  _setFieldError('profile-f-email', '');
+  const btn = $('profile-account-save');
+  if (btn) btn.disabled = true;
   try {
     me = await api('/me', 'PUT', {
       name: $('profile-f-name').value,
       role: $('profile-f-role').value,
       username: $('profile-f-username').value,
-      discord: $('profile-f-discord') ? $('profile-f-discord').value : undefined,
-      phone:   $('profile-f-phone')   ? $('profile-f-phone').value   : undefined
+      email: email || null,
+      phone: $('profile-f-phone').value,
+      discord: $('profile-f-discord').value,
     });
-    toast('Perfil atualizado!');
+    toast('Conta atualizada');
     renderSidebarUser(); renderProfile();
     await refreshData();
-  } catch (e) { toast(e.message, 'error'); }
+  } catch (e) {
+    if (/e-?mail/i.test(e.message)) _setFieldError('profile-f-email', e.message);
+    else toast(e.message, 'error');
+    profileAccountDirty();
+  }
 }
 async function saveDiscordId() {
   const raw = ($('profile-f-discord-id').value || '').trim();
@@ -27145,35 +27412,29 @@ async function saveDiscordId() {
    Se OAuth não está disponível, mantém apenas o input manual (comportamento
    antigo pra quem só tem o bot, sem client_id/secret cadastrados). */
 function renderProfileDiscordOAuth() {
-  const oauthWrap = document.getElementById('profile-discord-oauth-wrap');
-  const manualWrap = document.getElementById('profile-discord-manual-wrap');
-  const manualSaveBtn = document.getElementById('profile-discord-save-btn');
-  const statusEl = document.getElementById('profile-discord-oauth-status');
-  const btnLabel = document.getElementById('profile-discord-oauth-btn-label');
-  const oauthBtn = document.getElementById('profile-discord-oauth-btn');
-  const unlinkBtn = document.getElementById('profile-discord-unlink-btn');
+  const linked = !!me.discordId;
+  const chip = $('profile-discord-chip');
+  if (chip) {
+    chip.hidden = false;
+    chip.className = 'profile-status-chip ' + (linked ? 'profile-status-chip--ok' : 'profile-status-chip--muted');
+    chip.innerHTML = linked ? '<i data-lucide="check" class="ic-xs"></i> Vinculado' : 'Não vinculado';
+  }
+  const oauthWrap = $('profile-discord-oauth-wrap');
+  const manualWrap = $('profile-discord-manual-wrap');
   if (!oauthWrap) return;
-
-  if (!_discordOAuthConfigured) {
-    oauthWrap.style.display = 'none';
-    if (manualWrap) manualWrap.style.display = '';
-    if (manualSaveBtn) manualSaveBtn.style.display = '';
-    return;
+  oauthWrap.hidden = !_discordOAuthConfigured;
+  if (manualWrap) manualWrap.hidden = !!_discordOAuthConfigured;
+  if (_discordOAuthConfigured) {
+    const statusEl = $('profile-discord-oauth-status');
+    if (statusEl) statusEl.textContent = linked
+      ? 'Na tela de entrada, use Entrar com Discord para acessar sem senha.'
+      : 'Vincule para entrar com um clique e receber avisos por mensagem direta.';
+    const lbl = $('profile-discord-oauth-btn-label');
+    if (lbl) lbl.textContent = linked ? 'Trocar conta' : 'Vincular com Discord';
+    const unlink = $('profile-discord-unlink-btn');
+    if (unlink) unlink.hidden = !linked;
   }
-  oauthWrap.style.display = '';
-  if (manualWrap) manualWrap.style.display = 'none';
-  if (manualSaveBtn) manualSaveBtn.style.display = 'none';
-
-  if (me.discordId) {
-    if (statusEl) statusEl.innerHTML = `Discord vinculado — <strong>ID:</strong> <code>${esc(me.discordId)}</code>. Você pode entrar direto pelo botão "Entrar com Discord" na tela de login.`;
-    if (btnLabel) btnLabel.textContent = 'Trocar conta do Discord';
-    if (unlinkBtn) unlinkBtn.style.display = '';
-  } else {
-    if (statusEl) statusEl.textContent = 'Vincule sua conta do Discord pra entrar com um clique e receber DMs do bot.';
-    if (btnLabel) btnLabel.textContent = 'Vincular com Discord';
-    if (unlinkBtn) unlinkBtn.style.display = 'none';
-  }
-  if (window.lucide?.createIcons) lucide.createIcons();
+  paintIcons($('page-profile'));
 }
 
 function linkDiscord() {
@@ -27206,52 +27467,140 @@ async function loadDiscordConfig() {
   return _discordConfig;
 }
 async function renderDiscordPrefsUI() {
-  const cfg = await loadDiscordConfig();
-  // Novo wrap fica na aba Notificações (movido de Integrações).
-  const wrap = $('profile-notif-discord-block');
-  const emptyMsg = $('profile-notif-discord-empty');
-  const list = $('profile-discord-prefs-list');
-  const testBtn = $('profile-discord-test-btn');
-  const clearBtn = $('profile-discord-clear-btn');
-  const digestBtn = $('profile-discord-digest-btn');
-  if (!cfg.enabled) {
-    if (wrap) wrap.style.display = 'none';
-    if (testBtn) testBtn.style.display = 'none';
-    if (clearBtn) clearBtn.style.display = 'none';
-    if (digestBtn) digestBtn.style.display = 'none';
-    return;
-  }
-  if (wrap) wrap.style.display = '';
-  // Sem discordId: mostra aviso pra vincular e esconde a lista de prefs.
-  const linked = !!me.discordId;
-  if (emptyMsg) emptyMsg.style.display = linked ? 'none' : '';
-  if (list) list.style.display = linked ? '' : 'none';
-  const showActions = linked ? '' : 'none';
-  if (testBtn) testBtn.style.display = showActions;
-  if (clearBtn) clearBtn.style.display = showActions;
-  if (digestBtn) digestBtn.style.display = showActions;
-  // User prefs list — só INDIVIDUAL agora. Defaults do time viraram
-  // painel próprio na página Integrações (aba Discord Bot).
-  if (list) {
-    const rows = Object.entries(cfg.labels).map(([key, label]) => {
-      const userVal = cfg.userPrefs[key];
-      const adminDefault = cfg.adminDefaults[key] !== false;
-      const state = userVal === true ? 'on' : userVal === false ? 'off' : 'default';
-      const effective = state === 'default' ? adminDefault : (state === 'on');
-      return `<div class="profile-pref-row profile-pref-row--tri" data-key="${key}">
-        <div class="profile-pref-info">
-          <div class="profile-pref-title">${esc(label)}</div>
-          <div class="profile-pref-sub">Padrão do time: <strong>${adminDefault ? 'Ligado' : 'Desligado'}</strong>${state === 'default' ? '' : ` · Efetivo: <strong>${effective ? 'Ligado' : 'Desligado'}</strong>`}</div>
+  _discordConfig = null;
+  await renderProfileNotifications();
+}
+const PROFILE_NOTIF_EVENTS = [
+  { group: 'Com você', items: [
+    { key: 'mention', title: 'Menções', sub: 'Alguém te marcou com @, direto ou pela sua área.' },
+    { key: 'assigned', title: 'Você virou responsável', sub: 'Alguém te escolheu para tocar uma demanda.' },
+    { key: 'stage_assigned', title: 'Uma etapa chegou para você', sub: 'A demanda avançou para uma etapa que é sua.' },
+    { key: 'reminder', title: 'Lembretes', sub: 'Os que você agendou com Lembrar depois.' },
+  ] },
+  { group: 'Demandas que você observa', items: [
+    { key: 'watch_stage', title: 'Mudança de etapa', sub: 'A demanda avançou ou voltou de etapa.' },
+    { key: 'watch_comment', title: 'Novo comentário', sub: 'Alguém comentou na demanda.' },
+  ] },
+  { group: 'Resumo', items: [
+    { key: 'daily_digest', title: 'Resumo do dia', sub: 'Dias úteis, às 8h: atrasos, prazos do dia e avisos não lidos.' },
+  ] },
+];
+async function renderProfileNotifications() {
+  const chWrap = $('profile-notif-channels');
+  const mxWrap = $('profile-notif-matrix');
+  if (!chWrap || !mxWrap) return;
+  const cfg = _discordConfig || await loadDiscordConfig();
+  const smtp = me._smtpEnabled !== false;
+  const hasEmail = !!me.email;
+  const dc = !!cfg.enabled;
+  const dcLinked = !!me.discordId;
+  const emailOk = smtp && hasEmail;
+
+  // Ferramentas do Discord (em Integrações) só com bot ativo e conta vinculada.
+  const tools = $('profile-discord-tools');
+  if (tools) tools.hidden = !(dc && dcLinked);
+
+  const chip = (tone, txt) => `<span class="profile-status-chip profile-status-chip--${tone}">${txt}</span>`;
+  const emailRow = `<div class="profile-channel">
+    <span class="profile-channel-ic"><i data-lucide="mail"></i></span>
+    <div class="profile-channel-info">
+      <div class="profile-row-title">E-mail</div>
+      <div class="profile-row-sub">${!smtp ? 'O envio de e-mails não está ativo no servidor. Fale com um administrador.'
+        : hasEmail ? esc(me.email) : 'Nenhum e-mail cadastrado.'}</div>
+    </div>
+    <div class="profile-channel-actions">
+      ${!smtp ? chip('muted', 'Indisponível')
+        : hasEmail ? `<button class="btn btn-ghost btn-sm" onclick="sendEmailTest(this)">Enviar teste</button>
+                      <button class="btn btn-ghost btn-sm" onclick="goProfileField('profile-f-email')">Alterar</button>`
+        : `<button class="btn btn-confirm btn-sm" onclick="goProfileField('profile-f-email')">Adicionar e-mail</button>`}
+    </div>
+  </div>`;
+  const dcRow = !dc ? '' : `<div class="profile-channel">
+    <span class="profile-channel-ic"><img src="/discord.svg" alt=""></span>
+    <div class="profile-channel-info">
+      <div class="profile-row-title">Discord</div>
+      <div class="profile-row-sub">${dcLinked ? 'Mensagens diretas do bot do reWork.' : 'Vincule sua conta para receber mensagens diretas.'}</div>
+    </div>
+    <div class="profile-channel-actions">
+      ${dcLinked ? `<button class="btn btn-ghost btn-sm" onclick="testDiscordDM()">Enviar teste</button>`
+        : `<button class="btn btn-confirm btn-sm" onclick="${_discordOAuthConfigured ? 'linkDiscord()' : "setProfileSection('integrations')"}">Vincular</button>`}
+    </div>
+  </div>`;
+  const browserRow = `<div class="profile-channel">
+    <span class="profile-channel-ic"><i data-lucide="monitor"></i></span>
+    <div class="profile-channel-info">
+      <div class="profile-row-title">Alertas do navegador</div>
+      <div class="profile-row-sub">Aparecem no canto da tela mesmo com o reWork em outra aba.</div>
+    </div>
+    <div class="profile-channel-actions" id="profile-desktop-notif-slot"></div>
+  </div>`;
+  chWrap.innerHTML = emailRow + dcRow + browserRow;
+  renderDesktopNotifSlot();
+
+  const cols = 1 + (dc ? 1 : 0);
+  const sw = (on, disabled, handler, label) => `<label class="profile-switch" aria-label="${esc(label)}">
+      <input type="checkbox" ${on ? 'checked' : ''} ${disabled ? 'disabled' : ''} onchange="${handler}">
+      <span class="profile-switch-track"><span class="profile-switch-thumb"></span></span>
+    </label>`;
+  const eprefs = me.emailPrefs || {};
+  const rows = PROFILE_NOTIF_EVENTS.map(g => `
+    <div class="notif-matrix-row notif-matrix-row--group"><div class="notif-group-label">${esc(g.group)}</div></div>
+    ${g.items.map(it => {
+      const eOn = eprefs[it.key] !== false;
+      const hasDc = dc && cfg.labels && cfg.labels[it.key];
+      const dDef = cfg.adminDefaults ? cfg.adminDefaults[it.key] !== false : false;
+      const dVal = cfg.userPrefs && typeof cfg.userPrefs[it.key] === 'boolean' ? cfg.userPrefs[it.key] : dDef;
+      return `<div class="notif-matrix-row" role="row">
+        <div class="profile-pref-info" role="rowheader">
+          <div class="profile-pref-title">${esc(it.title)}</div>
+          <div class="profile-pref-sub">${esc(it.sub)}</div>
         </div>
-        <div class="profile-tri-toggle">
-          <button type="button" class="tri-btn ${state === 'default' ? 'is-active' : ''}" onclick="setDiscordPref('${key}', null)" title="Usar padrão do time">Padrão</button>
-          <button type="button" class="tri-btn ${state === 'on' ? 'is-active' : ''}" onclick="setDiscordPref('${key}', true)" title="Sempre receber DM">Ligado</button>
-          <button type="button" class="tri-btn ${state === 'off' ? 'is-active' : ''}" onclick="setDiscordPref('${key}', false)" title="Nunca receber DM">Desligado</button>
-        </div>
+        <div class="notif-cell" role="cell">${sw(eOn, !emailOk, `setProfileEmailPref('${it.key}', this)`, it.title + ' por e-mail')}</div>
+        ${dc ? `<div class="notif-cell" role="cell">${hasDc ? sw(dVal, !dcLinked, `setProfileDiscordPref('${it.key}', this)`, it.title + ' no Discord') : '<span class="notif-cell-na">-</span>'}</div>` : ''}
       </div>`;
-    }).join('');
-    list.innerHTML = rows;
-  }
+    }).join('')}`).join('');
+  const colHead = (name, note) => `<div class="notif-col-head" role="columnheader">${name}${note ? `<small>${note}</small>` : ''}</div>`;
+  mxWrap.innerHTML = `<div class="notif-matrix" role="table" style="--notif-cols:${cols}">
+    <div class="notif-matrix-row notif-matrix-row--head" role="row">
+      <div></div>
+      ${colHead('E-mail', !smtp ? 'indisponível' : !hasEmail ? 'sem e-mail' : '')}
+      ${dc ? colHead('Discord', dcLinked ? '' : 'não vinculado') : ''}
+    </div>
+    ${rows}
+  </div>
+  ${dc ? '<div class="notif-matrix-foot">No Discord, o que você não mudar segue o padrão definido pelo time.</div>' : ''}`;
+  paintIcons(chWrap);
+}
+let _profileSavedTimer = null;
+function _flashProfileSaved() {
+  const el = $('profile-notif-saved');
+  if (!el) return;
+  el.innerHTML = '<i data-lucide="check" class="ic-xs"></i> Salvo';
+  paintIcons(el);
+  el.classList.add('is-on');
+  clearTimeout(_profileSavedTimer);
+  _profileSavedTimer = setTimeout(() => el.classList.remove('is-on'), 1600);
+}
+async function setProfileEmailPref(key, input) {
+  const val = input.checked;
+  try {
+    me = await api('/me', 'PUT', { emailPrefs: { [key]: val } });
+    _flashProfileSaved();
+  } catch (e) { input.checked = !val; toast(e.message, 'error'); }
+}
+// Discord: igual ao padrão do time → limpa a preferência (volta a seguir o time).
+async function setProfileDiscordPref(key, input) {
+  const val = input.checked;
+  const def = _discordConfig?.adminDefaults ? _discordConfig.adminDefaults[key] !== false : false;
+  const payload = val === def ? null : val;
+  try {
+    me = await api('/me', 'PUT', { discordPrefs: { [key]: payload } });
+    if (_discordConfig) {
+      _discordConfig.userPrefs = { ...(_discordConfig.userPrefs || {}) };
+      if (payload === null) delete _discordConfig.userPrefs[key]; else _discordConfig.userPrefs[key] = payload;
+    }
+    _flashProfileSaved();
+  } catch (e) { input.checked = !val; toast(e.message, 'error'); }
 }
 
 /* ── Integrações → aba Discord Bot ──
@@ -27568,12 +27917,17 @@ async function clearDiscordDMs() {
 async function changePassword() {
   const currentPassword = $('profile-f-pass-current').value;
   const newPassword = $('profile-f-pass-new').value;
-  if (!currentPassword || !newPassword) { toast('Preencha a senha atual e a nova senha.', 'error'); return; }
+  const confirmPw = $('profile-f-pass-confirm')?.value ?? newPassword;
+  const fail = msg => { _setFieldError('profile-f-pass', msg); return false; };
+  _setFieldError('profile-f-pass', '');
+  if (!currentPassword || !newPassword) return fail('Preencha a senha atual e a nova senha.');
+  if (newPassword.length < 6) return fail('A nova senha precisa de pelo menos 6 caracteres.');
+  if (newPassword !== confirmPw) return fail('As duas senhas novas não são iguais.');
   try {
     me = await api('/me', 'PUT', { currentPassword, newPassword });
-    $('profile-f-pass-current').value = ''; $('profile-f-pass-new').value = '';
-    toast('Senha alterada com sucesso!');
-  } catch (e) { toast(e.message, 'error'); }
+    ['profile-f-pass-current', 'profile-f-pass-new', 'profile-f-pass-confirm'].forEach(id => { if ($(id)) $(id).value = ''; });
+    toast('Senha trocada');
+  } catch (e) { fail(e.message); }
 }
 function handleAvatarUpload(ev) {
   const file = ev.target.files[0];
@@ -27610,6 +27964,9 @@ async function removeAvatar() {
 let _lastNotifUnread = 0;
 function renderNotifBadge() {
   const unread = notifications.filter(n => !n.read).length;
+  // Título da aba: "(3) reWork" — quem deixa a aba aberta vê sem entrar nela.
+  const baseTitle = document.title.replace(/^\(\d+\+?\)\s*/, '');
+  document.title = unread > 0 ? `(${unread > 99 ? '99+' : unread}) ${baseTitle}` : baseTitle;
   const badge = $('notif-badge');
   const bell = document.querySelector('.notif-bell');
   if (badge) {

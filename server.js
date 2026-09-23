@@ -484,7 +484,7 @@ function publicUser(u, opts) {
   // no frontend). Devolve booleano + info da conta pra frontend saber que tá conectado.
   // quickReplies (respostas prontas) são pessoais: só voltam pro próprio usuário.
   // reminders/demandSeen/timeGapDismissed: estado pessoal com rota própria.
-  const { googleTokens, googleSyncTokens, knownIps, releaseNotesSeenIds, quickReplies, reminders, demandSeen, timeGapDismissed, ...rest } = u;
+  const { googleTokens, googleSyncTokens, knownIps, releaseNotesSeenIds, quickReplies, reminders, demandSeen, timeGapDismissed, mentionDismissed, ...rest } = u;
   rest.googleConnected = !!googleTokens;
   if (opts && opts.self) rest.quickReplies = Array.isArray(quickReplies) ? quickReplies : null;
   return rest;
@@ -815,6 +815,29 @@ function canAccessDemand(user, d) {
 
 /* ─── NOTIFICAÇÕES ─── */
 const NOTIFICATIONS_MAX_PER_USER = 500;
+/* ── AUSÊNCIA (férias, folga) ──
+   u.away = { from, to, substituteId } — datas YYYY-MM-DD, inclusivas.
+   Enquanto fora: e-mail/Discord ficam pausados (o sino continua recebendo),
+   etapas que cairiam com a pessoa vão pro substituto e quem a menciona é avisado. */
+function isAway(u, ymd = today()) {
+  const a = u && u.away;
+  return !!(a && a.from && a.to && a.from <= ymd && ymd <= a.to);
+}
+// Responsável automático de etapa: se estiver fora, passa pro substituto
+// (segue a cadeia, no máx. 3 saltos; sem substituto fica com a própria pessoa).
+function awaySubstitute(userId) {
+  let id = userId;
+  for (let i = 0; i < 3 && id; i++) {
+    const u = db.users.find(x => x.id === id);
+    if (!u || !isAway(u)) return id;
+    const sub = u.away.substituteId;
+    const su = sub && sub !== userId && db.users.find(x => x.id === sub && x.active !== false);
+    if (!su) return id;
+    id = sub;
+  }
+  return id;
+}
+
 function notify(targetUserId, type, data, triggerUserId, baseUrl) {
   if (!targetUserId || targetUserId === triggerUserId) return; // não notifica a si mesmo
   const user = db.users.find(u => u.id === targetUserId && u.active !== false);
@@ -839,6 +862,8 @@ function notify(targetUserId, type, data, triggerUserId, baseUrl) {
   // sem esperar o poll de 5min. Se cliente não está conectado por SSE
   // (mobile em background, tab fechada), pega no próximo poll ou no next boot.
   broadcastToUser(targetUserId, 'notification', 'create');
+  // Fora (férias/folga): só o sino. E-mail e Discord voltam quando ela voltar.
+  if (isAway(user)) return;
   // Email opcional — depende de SMTP configurado, do usuário ter email e do tipo estar nas prefs
   if (mailEnabled() && user.email && EMAIL_EVENT_LABELS[type]) {
     const prefs = user.emailPrefs || defaultEmailPrefs();
@@ -2093,7 +2118,7 @@ app.get('/api/me', requireAuth, (req, res) => {
 });
 
 app.put('/api/me', requireAuth, (req, res) => {
-  const { name, role, avatar, currentPassword, newPassword, username, discordId, email, emailPrefs, discord, phone, discordPrefs, quickReplies, accentTheme } = req.body || {};
+  const { name, role, avatar, currentPassword, newPassword, username, discordId, email, emailPrefs, discord, phone, discordPrefs, quickReplies, accentTheme, away } = req.body || {};
   const u = req.user;
   if (typeof name === 'string' && name.trim()) u.name = name.trim();
   if (typeof role === 'string') u.role = role.trim();
@@ -2183,6 +2208,23 @@ app.put('/api/me', requireAuth, (req, res) => {
     const a = String(accentTheme || '');
     if (a && !['azul', 'ciano', 'rosa', 'laranja', 'grafite'].includes(a)) return res.status(400).json({ error: 'Tema de cor inválido' });
     u.accentTheme = a || null;
+  }
+  // Ausência (férias/folga). null = volta a estar disponível.
+  if (away !== undefined) {
+    if (!away) u.away = null;
+    else {
+      const ymd = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null;
+      const from = ymd(away.from), to = ymd(away.to);
+      if (!from || !to) return res.status(400).json({ error: 'Informe as datas de saída e de volta' });
+      if (to < from) return res.status(400).json({ error: 'A data final não pode ser antes da inicial' });
+      if (to < today()) return res.status(400).json({ error: 'O período já terminou' });
+      if (to > addDays(today(), 366)) return res.status(400).json({ error: 'Período máximo de um ano' });
+      const subId = away.substituteId ? String(away.substituteId) : null;
+      if (subId && (subId === u.id || !db.users.some(x => x.id === subId && x.active !== false))) {
+        return res.status(400).json({ error: 'Substituto inválido' });
+      }
+      u.away = { from, to, substituteId: subId };
+    }
   }
   // Respostas prontas dos comentários: lista de textos curtos (null = volta
   // pras sugestões padrão do cliente).
@@ -6753,7 +6795,7 @@ app.post('/api/demands', requireAuth, (req, res) => {
     estimatedHours: Number(b.estimatedHours) > 0 ? Math.round(Number(b.estimatedHours) * 100) / 100 : null,
     priority: [1,2,3,4].includes(Number(b.priority)) ? Number(b.priority) : 3,
     status: stage.id,
-    ownerId: b.ownerId || (initStageResp[stage.id] !== undefined ? initStageResp[stage.id] : null) || resolveStageOwner(stage, project) || null,
+    ownerId: b.ownerId || awaySubstitute((initStageResp[stage.id] !== undefined ? initStageResp[stage.id] : null) || resolveStageOwner(stage, project) || null),
     stageEnteredAt: nowISO(), stageDueDate: stageDue,
     stageHistory: [{ stageId: stage.id, enteredAt: nowISO(), dueDate: stageDue }],
     timeEntries: [], comments: [], history: [],
@@ -6979,7 +7021,7 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
     if (b.ownerId === undefined) {
       const instOverride = (d.stageResponsibles && typeof d.stageResponsibles === 'object') ? d.stageResponsibles[stage.id] : undefined;
       const projForResolve = db.projects.find(p => p.id === d.projectId);
-      const autoOwner = (instOverride !== undefined) ? instOverride : (resolveStageOwner(stage, projForResolve) || null);
+      const autoOwner = awaySubstitute((instOverride !== undefined) ? instOverride : (resolveStageOwner(stage, projForResolve) || null));
       const prevOwner = d.ownerId;
       d.ownerId = autoOwner || null;
       if (d.ownerId !== prevOwner) {
@@ -7376,7 +7418,7 @@ app.post('/api/demands/bulk', requireAuth, rateLimitBulk, (req, res) => {
         // tem precedência sobre o padrão do fluxo/projeto — senão o bulk reatribui
         // errado as demandas com responsável customizado por etapa.
         const _instOverride = (d.stageResponsibles && typeof d.stageResponsibles === 'object') ? d.stageResponsibles[realStage.id] : undefined;
-        const stageOwner = ((_instOverride !== undefined) ? _instOverride : (resolveStageOwner(realStage, _bulkProj) || null)) || null;
+        const stageOwner = awaySubstitute(((_instOverride !== undefined) ? _instOverride : (resolveStageOwner(realStage, _bulkProj) || null)) || null);
         if (stageOwner !== d.ownerId) {
           const prevOwner = d.ownerId;
           d.ownerId = stageOwner;
@@ -7906,6 +7948,63 @@ app.post('/api/demands/:id/seen', requireAuth, (req, res) => {
   res.json({ prev });
 });
 
+/* ── MENÇÕES ESPERANDO RESPOSTA ──
+   Comentários dos últimos 30 dias que mencionam a pessoa (direto ou pela área)
+   e que ela ainda não respondeu: sem comentário dela depois naquela demanda,
+   sem reação dela no comentário e sem ter dispensado. Demandas concluídas saem. */
+const PENDING_MENTION_DAYS = 30;
+function pendingMentionsFor(user) {
+  const since = Date.now() - PENDING_MENTION_DAYS * 864e5;
+  const dismissed = new Set(Array.isArray(user.mentionDismissed) ? user.mentionDismissed : []);
+  const out = [];
+  for (const d of db.demands) {
+    if (!notDeleted(d) || d.completedAt || !canAccessWs(user, d.workspaceId)) continue;
+    const comments = Array.isArray(d.comments) ? d.comments : [];
+    let myLast = 0;
+    for (const c of comments) if (c.userId === user.id) myLast = Math.max(myLast, Date.parse(c.createdAt) || 0);
+    for (const c of comments) {
+      if (c.userId === user.id || !Array.isArray(c.mentions) || !c.mentions.includes(user.id)) continue;
+      const at = Date.parse(c.createdAt) || 0;
+      if (at < since || myLast > at) continue;
+      if (Object.values(c.reactions || {}).some(arr => Array.isArray(arr) && arr.includes(user.id))) continue;
+      const key = d.id + ':' + c.id;
+      if (dismissed.has(key)) continue;
+      const plain = (c.format === 'html' ? stripHtmlToText(c.text || '') : String(c.text || '')).replace(/\s+/g, ' ').trim();
+      const project = db.projects.find(p => p.id === d.projectId);
+      out.push({
+        key, demandId: d.id, demandName: d.name, commentId: c.id, fromUserId: c.userId,
+        preview: plain.slice(0, 160), createdAt: c.createdAt, client: project?.client || '',
+        viaRole: (c.roleMentions || [])[0] || null,
+      });
+    }
+  }
+  return out.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+app.get('/api/me/pending-mentions', requireAuth, (req, res) => {
+  res.json(pendingMentionsFor(req.user));
+});
+app.post('/api/me/pending-mentions/dismiss', requireAuth, (req, res) => {
+  const key = String(req.body?.key || '');
+  if (!/^[\w-]+:[\w-]+$/.test(key)) return res.status(400).json({ error: 'Chave inválida' });
+  const list = Array.isArray(req.user.mentionDismissed) ? req.user.mentionDismissed : [];
+  if (!list.includes(key)) list.push(key);
+  req.user.mentionDismissed = list.slice(-300);
+  saveEntity('users', req.user);
+  res.json({ ok: true });
+});
+// "Visto": quando cada pessoa mencionada nesta demanda abriu ela pela última vez.
+app.get('/api/demands/:id/mention-seen', requireAuth, (req, res) => {
+  const d = getDemand(req, res); if (!d) return;
+  const ids = new Set();
+  (d.comments || []).forEach(c => (c.mentions || []).forEach(id => ids.add(id)));
+  const out = {};
+  ids.forEach(id => {
+    const u = db.users.find(x => x.id === id);
+    out[id] = (u && u.demandSeen && u.demandSeen[d.id]) || null;
+  });
+  res.json(out);
+});
+
 /* ── ETAPAS ENTREGUES SEM APONTAMENTO ──
    "Entregou" = moveu a demanda PRA FRENTE saindo da etapa X (histórico
    stage_changed com ele como autor) nos últimos TIME_GAP_WINDOW_DAYS, SENDO o
@@ -7984,7 +8083,7 @@ function runTimeGapNotifyJob() {
   if (dow === 0 || dow === 6 || now.getHours() < 17) return;
   const ymd = today();
   for (const u of db.users || []) {
-    if (u.active === false || u._lastTimeGapNotify === ymd) continue;
+    if (u.active === false || u._lastTimeGapNotify === ymd || isAway(u)) continue;
     const gaps = timeGapsFor(u);
     u._lastTimeGapNotify = ymd;
     saveEntity('users', u);
@@ -8009,6 +8108,44 @@ app.get('/api/me/comment-phrases', requireAuth, (req, res) => {
   res.json(learnCommentPhrases(req.user.id));
 });
 
+/* ── MENÇÕES ──
+   @usuario ou @area (nome da área sem acento, com hífen: "Mídias Digitais"
+   → @midias-digitais). A área avisa quem a ocupa no projeto da demanda
+   (roleAssignments do projeto; sem a área lá, os do cliente). */
+const roleSlug = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
+  .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+function roleMembersFor(d, areaName) {
+  const key = String(areaName || '').toLowerCase();
+  const pick = ra => {
+    if (!ra || typeof ra !== 'object') return [];
+    const k = Object.keys(ra).find(x => x.toLowerCase() === key);
+    const v = k ? ra[k] : null;
+    if (!v) return [];
+    return typeof v === 'string' ? [v] : Object.values(v).filter(Boolean);
+  };
+  const project = db.projects.find(p => p.id === d.projectId);
+  let ids = pick(project && project.roleAssignments);
+  if (!ids.length && project && project.clientId) ids = pick((db.clients.find(c => c.id === project.clientId) || {}).roleAssignments);
+  return [...new Set(ids)];
+}
+function extractMentions(plain, d) {
+  const tokens = (String(plain || '').match(/@([a-zA-Z0-9._-]+)/g) || []).map(t => t.slice(1).toLowerCase());
+  const ids = new Set(db.users
+    .filter(u => tokens.includes(u.username.toLowerCase()) && canAccessWs(u, d.workspaceId))
+    .map(u => u.id));
+  const roleMentions = [];
+  for (const r of db.roles || []) {
+    const slug = roleSlug(r.name);
+    if (!slug || !tokens.includes(slug)) continue;
+    roleMentions.push(r.name);
+    roleMembersFor(d, r.name).forEach(id => {
+      const u = db.users.find(x => x.id === id && x.active !== false);
+      if (u && canAccessWs(u, d.workspaceId)) ids.add(id);
+    });
+  }
+  return { mentions: [...ids], roleMentions };
+}
+
 app.post('/api/demands/:id/comment', requireAuth, (req, res) => {
   const d = getDemand(req, res); if (!d) return;
   const format = req.body?.format === 'html' ? 'html' : 'text';
@@ -8024,12 +8161,10 @@ app.post('/api/demands/:id/comment', requireAuth, (req, res) => {
   if (!plain.trim() && !attachments.length && !/\<img\b/i.test(text)) {
     return res.status(400).json({ error: 'Escreva algo ou anexe um arquivo' });
   }
-  // extrai menções @username válidas dentro do workspace
-  const tokens = (plain.match(/@([a-zA-Z0-9._-]+)/g) || []).map(t => t.slice(1).toLowerCase());
-  const mentions = db.users
-    .filter(u => tokens.includes(u.username.toLowerCase()) && canAccessWs(u, d.workspaceId))
-    .map(u => u.id);
+  // extrai menções (@usuario e @area) válidas dentro do workspace
+  const { mentions, roleMentions } = extractMentions(plain, d);
   const c = { id: uid(), userId: req.user.id, text, format, mentions, attachments, reactions: {}, createdAt: nowISO(), editedAt: null };
+  if (roleMentions.length) c.roleMentions = roleMentions;
   d.comments.push(c);
   addHistory(d, req.user.id, 'comment_added', { commentId: c.id, preview: plain.slice(0, 80) });
   // Notifica cada usuário mencionado
@@ -8053,7 +8188,8 @@ app.post('/api/demands/:id/comment', requireAuth, (req, res) => {
   const reqBase = appBaseUrl(req);
   const mentionedUsers = mentions.map(id => {
     const mu = db.users.find(x => x.id === id);
-    return mu ? { id: mu.id, name: mu.name, discordId: mu.discordId || null } : null;
+    // Quem está fora não é pingado no canal (volta a ser quando retornar).
+    return mu ? { id: mu.id, name: mu.name, discordId: (!isAway(mu) && mu.discordId) || null } : null;
   }).filter(Boolean);
   fireWebhook('comment.added', { demand: d, project, flow, user: req.user, owner, comment: c, mentionedUsers, appBaseUrl: reqBase });
   if (mentions.length) {
@@ -8088,10 +8224,9 @@ app.put('/api/demands/:id/comment/:cid', requireAuth, (req, res) => {
   c.attachments = attachments || [];
   c.editedAt = nowISO();
   // re-extrai menções (do texto puro)
-  const tokens = (plain.match(/@([a-zA-Z0-9._-]+)/g) || []).map(t => t.slice(1).toLowerCase());
-  c.mentions = db.users
-    .filter(u => tokens.includes(u.username.toLowerCase()) && canAccessWs(u, d.workspaceId))
-    .map(u => u.id);
+  const _m = extractMentions(plain, d);
+  c.mentions = _m.mentions;
+  if (_m.roleMentions.length) c.roleMentions = _m.roleMentions; else delete c.roleMentions;
   addHistory(d, req.user.id, 'comment_edited', { commentId: c.id });
   saveEntity('demands', d);
   emitDemand(req, d);
@@ -8726,7 +8861,7 @@ app.post('/api/recurrings/:id/generate', requireAuth, (req, res) => {
     estimatedHours: null,
     priority: r.priority || 3,
     status: stage.id,
-    ownerId: r.ownerId || resolveStageOwner(stage, project) || null,
+    ownerId: r.ownerId || awaySubstitute(resolveStageOwner(stage, project) || null),
     stageEnteredAt: nowISO(), stageDueDate: stageDue,
     stageHistory: [{ stageId: stage.id, enteredAt: nowISO(), dueDate: stageDue }],
     timeEntries: [], comments: [], history: [],
@@ -10489,6 +10624,7 @@ async function runDailyDigest() {
   for (const u of db.users) {
     if (!u.active || u.active === false) continue;
     if (!u.email) continue;
+    if (isAway(u)) continue;
     const prefs = u.emailPrefs || defaultEmailPrefs();
     if (prefs.daily_digest === false) continue;
     if (u._lastDigestSent === ymd) { skipped++; continue; }
@@ -10569,6 +10705,7 @@ async function runDailyBotDMDigest() {
   for (const u of db.users) {
     if (u.active === false) continue;
     if (!u.discordId) continue;
+    if (isAway(u)) continue;
     if (!effectiveDiscordPref(u, 'daily_digest')) continue;
     if (u._lastDiscordDigestSent === ymd) { skipped++; continue; }
     let result = false;

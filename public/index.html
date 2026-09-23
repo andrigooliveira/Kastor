@@ -732,6 +732,14 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                 <div id="dash-focus"></div>
               </div>
 
+              <div class="dash-section" id="dash-section-mentions" hidden>
+                <div class="dash-section-head">
+                  <h3 class="dash-section-title">Esperando sua resposta</h3>
+                  <span class="dash-section-count" id="dash-mentions-count" hidden></span>
+                </div>
+                <div id="dash-mentions"></div>
+              </div>
+
               <div class="dash-section" id="dash-section-blocked">
                 <div class="dash-section-head">
                   <h3 class="dash-section-title">Paradas</h3>
@@ -2747,175 +2755,231 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       </div>
     </div>
 
-    <!-- ── PERFIL — layout novo com hero + nav lateral + seções ── -->
+    <!-- ── PERFIL ──
+         Nav lateral agrupada (Pessoal, Preferências, Conexões) + uma seção por vez.
+         Dados de contato (e-mail inclusive) moram em Conta; Notificações só
+         escolhe o que chega em cada canal e salva na hora. -->
     <div class="page" id="page-profile">
       <div class="page-body">
-        <!-- Hero: avatar + identidade + botão de foto -->
-        <div class="profile-hero">
-          <div class="profile-hero-avatar-wrap">
-            <div class="avatar avatar-xl" id="profile-avatar">A</div>
-            <input type="file" id="avatar-file" accept="image/*" style="display:none" onchange="handleAvatarUpload(event)">
-            <button class="profile-hero-avatar-edit" onclick="document.getElementById('avatar-file').click()" title="Trocar foto">
-              <i data-lucide="camera" class="ic-sm"></i>
-            </button>
-          </div>
-          <div class="profile-hero-info">
-            <div class="profile-hero-name" id="profile-name-display">—</div>
-            <div class="profile-hero-meta">
-              <span class="profile-hero-role" id="profile-role-display">—</span>
-              <span class="profile-hero-sep">·</span>
-              <span class="profile-hero-username" id="profile-username-display">—</span>
-            </div>
-            <div class="profile-hero-actions">
-              <button class="btn btn-ghost btn-sm" onclick="document.getElementById('avatar-file').click()"><i data-lucide="upload" class="ic-sm"></i> Enviar foto</button>
-              <button class="btn btn-ghost btn-sm" id="avatar-remove-btn" style="display:none" onclick="removeAvatar()"><i data-lucide="trash-2" class="ic-sm"></i> Remover</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Split: nav lateral + conteúdo da seção -->
         <div class="profile-split">
           <nav class="profile-nav" role="tablist" aria-label="Configurações do perfil">
+            <div class="profile-nav-id">
+              <span id="profile-nav-avatar"></span>
+              <div class="profile-nav-id-text">
+                <div class="profile-nav-id-name" id="profile-name-display">-</div>
+                <div class="profile-nav-id-meta"><span id="profile-username-display">-</span></div>
+              </div>
+            </div>
+            <div class="profile-nav-group">Pessoal</div>
             <button class="profile-nav-item is-active" data-section="account" onclick="setProfileSection('account')"><i data-lucide="user" class="ic-sm"></i> Conta</button>
-            <button class="profile-nav-item" data-section="appearance" onclick="setProfileSection('appearance')"><i data-lucide="palette" class="ic-sm"></i> Aparência</button>
+            <button class="profile-nav-item" data-section="away" onclick="setProfileSection('away')"><i data-lucide="plane" class="ic-sm"></i> Ausência</button>
+            <div class="profile-nav-group">Preferências</div>
             <button class="profile-nav-item" data-section="notifications" onclick="setProfileSection('notifications')"><i data-lucide="bell" class="ic-sm"></i> Notificações</button>
+            <button class="profile-nav-item" data-section="appearance" onclick="setProfileSection('appearance')"><i data-lucide="palette" class="ic-sm"></i> Aparência</button>
+            <div class="profile-nav-group">Conexões e acesso</div>
             <button class="profile-nav-item" data-section="integrations" onclick="setProfileSection('integrations')"><i data-lucide="plug" class="ic-sm"></i> Integrações</button>
             <button class="profile-nav-item" data-section="security" onclick="setProfileSection('security')"><i data-lucide="shield" class="ic-sm"></i> Segurança</button>
+            <button class="profile-nav-item" data-section="help" onclick="setProfileSection('help')"><i data-lucide="life-buoy" class="ic-sm"></i> Ajuda</button>
           </nav>
 
           <div class="profile-content">
-            <!-- ─── CONTA — dados básicos ─── -->
+            <!-- ─── CONTA ─── -->
             <section class="profile-section" data-section="account">
-              <div class="profile-section-head">
-                <div>
-                  <div class="profile-section-title">Conta</div>
-                  <div class="profile-section-sub">Como você aparece no reWork e como faz login.</div>
+              <header class="profile-section-head">
+                <h2 class="profile-section-title">Conta</h2>
+                <p class="profile-section-sub">Como você aparece para o time e como falam com você.</p>
+              </header>
+
+              <div class="profile-card-block">
+                <div class="profile-photo-row">
+                  <div class="profile-photo-av">
+                    <span id="profile-avatar"></span>
+                    <input type="file" id="avatar-file" accept="image/*" hidden onchange="handleAvatarUpload(event)">
+                  </div>
+                  <div class="profile-photo-info">
+                    <div class="profile-row-title">Foto</div>
+                    <div class="profile-row-sub">Aparece nos comentários, nas demandas e no cartão de contato.</div>
+                    <div class="profile-photo-actions">
+                      <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('avatar-file').click()"><i data-lucide="upload" class="ic-sm"></i> Enviar foto</button>
+                      <button type="button" class="btn btn-ghost btn-sm" id="avatar-remove-btn" hidden onclick="removeAvatar()">Remover</button>
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div class="profile-card-block">
+
+              <div class="profile-card-block" id="profile-account-form" oninput="profileAccountDirty()" onchange="profileAccountDirty()">
+                <div class="profile-block-title">Identificação</div>
                 <div class="form-grid">
                   <div class="form-group">
-                    <label class="form-label">Nome de exibição</label>
-                    <input class="form-control" id="profile-f-name">
+                    <label class="form-label" for="profile-f-name">Nome de exibição</label>
+                    <input class="form-control" id="profile-f-name" autocomplete="name">
                   </div>
                   <div class="form-group">
-                    <label class="form-label">Área</label>
+                    <label class="form-label" for="profile-f-role">Área</label>
                     <select class="form-control" id="profile-f-role"></select>
                   </div>
                   <div class="form-group full">
-                    <label class="form-label">Nome de usuário (login)</label>
-                    <input class="form-control" id="profile-f-username" placeholder="ex: ana.lima">
-                    <div class="profile-hint">Usado ao fazer login. Deve ser único.</div>
-                  </div>
-                  <div class="form-group">
-                    <label class="form-label">Nome no Discord</label>
-                    <input class="form-control" id="profile-f-discord" placeholder="ex: ana#0001 ou @ana">
-                    <div class="profile-hint">Só pra exibir no cartão de contato quando alguém clicar na sua foto.</div>
-                  </div>
-                  <div class="form-group">
-                    <label class="form-label">Telefone</label>
-                    <input class="form-control" id="profile-f-phone" type="tel" placeholder="ex: +55 (11) 91234-5678" autocomplete="tel">
-                    <div class="profile-hint">Aparece no cartão de contato. Use formato internacional se possível.</div>
+                    <label class="form-label" for="profile-f-username">Nome de usuário</label>
+                    <input class="form-control" id="profile-f-username" autocomplete="username" spellcheck="false">
+                    <div class="profile-hint">Usado para entrar e para te mencionar (@usuario). Precisa ser único.</div>
                   </div>
                 </div>
+
+                <div class="profile-block-title profile-block-title--spaced">Contato</div>
+                <div class="form-grid">
+                  <div class="form-group full">
+                    <label class="form-label" for="profile-f-email">E-mail</label>
+                    <input class="form-control" id="profile-f-email" type="email" autocomplete="email" spellcheck="false">
+                    <div class="profile-field-error" id="profile-f-email-error" hidden></div>
+                    <div class="profile-hint">Recebe os avisos que você escolher em Notificações e o link para redefinir a senha.</div>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="profile-f-phone">Telefone</label>
+                    <input class="form-control" id="profile-f-phone" type="tel" autocomplete="tel">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="profile-f-discord">Nome no Discord</label>
+                    <input class="form-control" id="profile-f-discord" spellcheck="false">
+                  </div>
+                </div>
+                <div class="profile-hint">Telefone e nome no Discord aparecem no seu cartão de contato, quando alguém clica na sua foto.</div>
+
                 <div class="profile-block-actions">
-                  <button class="btn btn-confirm" onclick="saveProfile()">Salvar</button>
+                  <span class="profile-dirty-note" id="profile-account-dirty" hidden>Alterações não salvas</span>
+                  <button class="btn btn-ghost" id="profile-account-cancel" hidden onclick="renderProfile()">Descartar</button>
+                  <button class="btn btn-confirm" id="profile-account-save" onclick="saveProfile()" disabled>Salvar</button>
                 </div>
               </div>
             </section>
 
-            <!-- ─── APARÊNCIA — tema, densidade, desktop ─── -->
-            <section class="profile-section" data-section="appearance" hidden>
-              <div class="profile-section-head">
-                <div>
-                  <div class="profile-section-title">Aparência</div>
-                  <div class="profile-section-sub">Personalize como o reWork se apresenta pra você.</div>
+            <!-- ─── AUSÊNCIA ─── -->
+            <section class="profile-section" data-section="away" hidden>
+              <header class="profile-section-head">
+                <h2 class="profile-section-title">Ausência</h2>
+                <p class="profile-section-sub">Vai tirar férias ou folga? Marque o período e o reWork segura as pontas.</p>
+              </header>
+              <div class="profile-card-block">
+                <div class="away-status" id="profile-away-status" hidden></div>
+                <div class="form-grid">
+                  <div class="form-group">
+                    <label class="form-label" for="profile-away-from">Primeiro dia fora</label>
+                    <input class="form-control" id="profile-away-from" type="date">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="profile-away-to">Último dia fora</label>
+                    <input class="form-control" id="profile-away-to" type="date">
+                  </div>
+                  <div class="form-group full">
+                    <label class="form-label" for="profile-away-sub">Quem cobre suas etapas</label>
+                    <select class="form-control" id="profile-away-sub"></select>
+                  </div>
+                </div>
+                <ul class="away-effects">
+                  <li><i data-lucide="git-branch" class="ic-sm"></i> Etapas que chegariam para você vão para quem cobre.</li>
+                  <li><i data-lucide="at-sign" class="ic-sm"></i> Quem te mencionar fica sabendo que você está fora e até quando.</li>
+                  <li><i data-lucide="bell-off" class="ic-sm"></i> E-mail e Discord ficam pausados. O sino continua guardando tudo para quando você voltar.</li>
+                </ul>
+                <div class="profile-block-actions">
+                  <button class="btn btn-ghost" id="profile-away-clear" onclick="clearProfileAway()" hidden>Já voltei</button>
+                  <button class="btn btn-confirm" onclick="saveProfileAway()">Salvar</button>
                 </div>
               </div>
-              <!-- Tema -->
+            </section>
+
+            <!-- ─── NOTIFICAÇÕES ─── -->
+            <section class="profile-section" data-section="notifications" hidden>
+              <header class="profile-section-head">
+                <h2 class="profile-section-title">Notificações</h2>
+                <p class="profile-section-sub">O sino do reWork recebe tudo. Aqui você escolhe o que também chega por e-mail e pelo Discord.</p>
+              </header>
+
+              <div class="profile-card-block profile-card-block--flush">
+                <div class="profile-block-title profile-block-title--pad">Canais</div>
+                <div id="profile-notif-channels"></div>
+              </div>
+
+              <div class="profile-card-block profile-card-block--flush">
+                <div class="profile-matrix-head">
+                  <div class="profile-block-title">O que chega em cada canal</div>
+                  <span class="profile-saved" id="profile-notif-saved" aria-live="polite"></span>
+                </div>
+                <div id="profile-notif-matrix"></div>
+              </div>
+            </section>
+
+            <!-- ─── APARÊNCIA ─── -->
+            <section class="profile-section" data-section="appearance" hidden>
+              <header class="profile-section-head">
+                <h2 class="profile-section-title">Aparência</h2>
+                <p class="profile-section-sub">Vale para este computador, exceto a cor de destaque, que acompanha você.</p>
+              </header>
               <div class="profile-card-block">
+                <div class="profile-block-title">Tema</div>
                 <div class="profile-row">
                   <div class="profile-row-info">
-                    <div class="profile-row-title">Modo do tema</div>
-                    <div class="profile-row-sub">Manual você escolhe; Sistema segue o tema do seu computador; Agendado troca sozinho na janela de horário que você definir.</div>
+                    <div class="profile-row-title">Modo</div>
+                    <div class="profile-row-sub">Manual: você escolhe. Sistema: segue o computador. Agendado: troca sozinho no horário que você definir.</div>
                   </div>
                   <div class="profile-theme-picker" id="profile-theme-mode-picker">
-                    <button type="button" class="profile-theme-opt" data-mode="manual" onclick="setProfileThemeMode('manual')">
-                      <i data-lucide="hand" class="ic-sm"></i> Manual
-                    </button>
-                    <button type="button" class="profile-theme-opt" data-mode="system" onclick="setProfileThemeMode('system')">
-                      <i data-lucide="monitor" class="ic-sm"></i> Sistema
-                    </button>
-                    <button type="button" class="profile-theme-opt" data-mode="scheduled" onclick="setProfileThemeMode('scheduled')">
-                      <i data-lucide="clock" class="ic-sm"></i> Agendado
-                    </button>
+                    <button type="button" class="profile-theme-opt" data-mode="manual" onclick="setProfileThemeMode('manual')"><i data-lucide="hand" class="ic-sm"></i> Manual</button>
+                    <button type="button" class="profile-theme-opt" data-mode="system" onclick="setProfileThemeMode('system')"><i data-lucide="monitor" class="ic-sm"></i> Sistema</button>
+                    <button type="button" class="profile-theme-opt" data-mode="scheduled" onclick="setProfileThemeMode('scheduled')"><i data-lucide="clock" class="ic-sm"></i> Agendado</button>
                   </div>
                 </div>
                 <div class="profile-row" id="profile-theme-manual-row">
                   <div class="profile-row-info">
                     <div class="profile-row-title">Tema</div>
-                    <div class="profile-row-sub">Modo claro para ambientes iluminados; escuro reduz cansaço em salas escuras.</div>
+                    <div class="profile-row-sub">Claro para ambientes iluminados. Escuro cansa menos a vista em salas escuras.</div>
                   </div>
                   <div class="profile-theme-picker" id="profile-theme-picker">
-                    <button type="button" class="profile-theme-opt" data-theme="light" onclick="setProfileTheme('light')">
-                      <i data-lucide="sun" class="ic-sm"></i> Claro
-                    </button>
-                    <button type="button" class="profile-theme-opt" data-theme="dark" onclick="setProfileTheme('dark')">
-                      <i data-lucide="moon" class="ic-sm"></i> Escuro
-                    </button>
+                    <button type="button" class="profile-theme-opt" data-theme="light" onclick="setProfileTheme('light')"><i data-lucide="sun" class="ic-sm"></i> Claro</button>
+                    <button type="button" class="profile-theme-opt" data-theme="dark" onclick="setProfileTheme('dark')"><i data-lucide="moon" class="ic-sm"></i> Escuro</button>
                   </div>
-                </div>
-                <div class="profile-row">
-                  <div class="profile-row-info">
-                    <div class="profile-row-title">Cor de destaque</div>
-                    <div class="profile-row-sub">Muda a cor de botões, seleções e indicadores. Vale no claro e no escuro, e acompanha você em qualquer computador.</div>
-                  </div>
-                  <div class="accent-picker" id="profile-accent-picker"></div>
                 </div>
                 <div class="profile-row" id="profile-theme-schedule-row" hidden>
                   <div class="profile-row-info">
-                    <div class="profile-row-title">Janela do modo escuro</div>
-                    <div class="profile-row-sub">Fica escuro entre estes horários (hora do seu computador). Pode cruzar meia-noite, ex.: 20:00 → 07:00.</div>
-                    <div class="profile-row-sub" id="profile-theme-schedule-now" style="margin-top:6px; opacity:.7;"></div>
+                    <div class="profile-row-title">Horário do modo escuro</div>
+                    <div class="profile-row-sub">Pela hora do seu computador. Pode passar da meia-noite, por exemplo 20:00 até 07:00.</div>
+                    <div class="profile-row-sub profile-row-sub--note" id="profile-theme-schedule-now"></div>
                   </div>
                   <div class="profile-theme-schedule">
                     <label class="profile-theme-schedule-field">
-                      <span>Escuro a partir de</span>
+                      <span>Escurece às</span>
                       <input type="time" id="profile-theme-schedule-start" value="20:00" onchange="onProfileThemeScheduleChange()" oninput="onProfileThemeScheduleChange()">
                     </label>
                     <label class="profile-theme-schedule-field">
-                      <span>Volta ao claro</span>
+                      <span>Clareia às</span>
                       <input type="time" id="profile-theme-schedule-end" value="07:00" onchange="onProfileThemeScheduleChange()" oninput="onProfileThemeScheduleChange()">
                     </label>
                   </div>
                 </div>
+                <div class="profile-row profile-row--stack">
+                  <div class="profile-row-info">
+                    <div class="profile-row-title">Cor de destaque</div>
+                    <div class="profile-row-sub">Botões, seleções e indicadores. Vale no claro e no escuro, em qualquer computador.</div>
+                  </div>
+                  <div class="accent-picker" id="profile-accent-picker"></div>
+                </div>
+              </div>
+
+              <div class="profile-card-block">
+                <div class="profile-block-title">Layout</div>
                 <div class="profile-row">
                   <div class="profile-row-info">
-                    <div class="profile-row-title">Densidade das tabelas</div>
-                    <div class="profile-row-sub">Compacta cabe mais linhas na tela; confortável dá mais respiro.</div>
+                    <div class="profile-row-title">Densidade das listas</div>
+                    <div class="profile-row-sub">Compacta mostra mais linhas. Confortável dá mais respiro.</div>
                   </div>
                   <div class="profile-theme-picker" id="profile-density-picker">
-                    <button type="button" class="profile-theme-opt" data-density="comfortable" onclick="setProfileDensity('comfortable')">
-                      <i data-lucide="align-justify" class="ic-sm"></i> Confortável
-                    </button>
-                    <button type="button" class="profile-theme-opt" data-density="compact" onclick="setProfileDensity('compact')">
-                      <i data-lucide="rows-3" class="ic-sm"></i> Compacta
-                    </button>
+                    <button type="button" class="profile-theme-opt" data-density="comfortable" onclick="setProfileDensity('comfortable')"><i data-lucide="align-justify" class="ic-sm"></i> Confortável</button>
+                    <button type="button" class="profile-theme-opt" data-density="compact" onclick="setProfileDensity('compact')"><i data-lucide="rows-3" class="ic-sm"></i> Compacta</button>
                   </div>
                 </div>
                 <div class="profile-row">
                   <div class="profile-row-info">
-                    <div class="profile-row-title">Notificações do sistema</div>
-                    <div class="profile-row-sub">Recebe alertas nativos do sistema (fora do navegador) quando algo importante acontece.</div>
+                    <div class="profile-row-title">Menu lateral recolhido</div>
+                    <div class="profile-row-sub">Mais espaço para listas e quadros. Dá para abrir a qualquer momento.</div>
                   </div>
-                  <div id="profile-desktop-notif-slot"></div>
-                </div>
-                <div class="profile-row">
-                  <div class="profile-row-info">
-                    <div class="profile-row-title">Sidebar colapsada por padrão</div>
-                    <div class="profile-row-sub">Mais espaço horizontal pra listas e boards. Você ainda pode expandir a qualquer momento.</div>
-                  </div>
-                  <label class="profile-switch">
+                  <label class="profile-switch" aria-label="Menu lateral recolhido">
                     <input type="checkbox" id="profile-sidebar-collapsed" onchange="setProfileSidebarCollapsed(this.checked)">
                     <span class="profile-switch-track"><span class="profile-switch-thumb"></span></span>
                   </label>
@@ -2923,224 +2987,137 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               </div>
             </section>
 
-            <!-- ─── NOTIFICAÇÕES ─── -->
-            <section class="profile-section" data-section="notifications" hidden>
-              <div class="profile-section-head">
-                <div>
-                  <div class="profile-section-title">Notificações</div>
-                  <div class="profile-section-sub">Configure quais eventos você recebe por DM no Discord e por e-mail.</div>
-                </div>
-              </div>
-
-              <!-- Preferências de DM no Discord — só aparece se o bot estiver configurado.
-                   Fica ACIMA das de e-mail porque DM é o canal preferido do time. -->
-              <div class="profile-card-block" id="profile-notif-discord-block" style="display:none;margin-bottom:16px">
-                <div class="profile-block-title">Notificações por DM no Discord</div>
-                <div class="profile-hint" style="margin-bottom:12px">Quando marcado, você recebe uma DM privada do bot em vez de (ou além de) e-mail. Marcações "usar padrão" seguem a configuração do time.</div>
-                <div id="profile-notif-discord-empty" class="profile-hint profile-hint--warn" style="display:none;margin-bottom:12px">
-                  ⚠️ Vincule sua conta do Discord na aba <strong>Integrações</strong> para começar a receber DMs.
-                </div>
-                <div class="profile-prefs-list" id="profile-discord-prefs-list">
-                  <!-- populado por renderProfile → renderDiscordPrefsList -->
-                </div>
-              </div>
-
-              <div class="profile-card-block">
-                <div class="profile-block-title" style="margin-bottom:6px">Notificações por e-mail</div>
-                <div id="profile-email-smtp-warning" class="profile-hint profile-hint--warn" style="display:none;margin-bottom:14px">
-                  ⚠️ O servidor não tem SMTP configurado. Mesmo cadastrando um e-mail, nenhuma mensagem será enviada até que o administrador configure as variáveis de ambiente <code>SMTP_HOST</code>, <code>SMTP_USER</code>, <code>SMTP_PASS</code> e <code>SMTP_FROM</code>.
-                </div>
-                <div class="form-group full">
-                  <label class="form-label">E-mail</label>
-                  <input class="form-control" id="profile-f-email" type="email" placeholder="ex: voce@empresa.com" autocomplete="email">
-                </div>
-                <div class="profile-prefs-list" style="margin-top:16px">
-                  <label class="profile-pref-row">
-                    <div class="profile-pref-info">
-                      <div class="profile-pref-title">Sou atribuído como responsável</div>
-                      <div class="profile-pref-sub">Alguém te escolheu manualmente pra tocar uma demanda.</div>
-                    </div>
-                    <input type="checkbox" id="profile-pref-assigned">
-                  </label>
-                  <label class="profile-pref-row">
-                    <div class="profile-pref-info">
-                      <div class="profile-pref-title">Sou responsável de nova etapa (automático)</div>
-                      <div class="profile-pref-sub">Uma demanda avançou pra uma etapa cujo responsável configurado é você.</div>
-                    </div>
-                    <input type="checkbox" id="profile-pref-stage_assigned">
-                  </label>
-                  <label class="profile-pref-row">
-                    <div class="profile-pref-info">
-                      <div class="profile-pref-title">Fui mencionado em comentário</div>
-                      <div class="profile-pref-sub">Alguém escreveu @seu.usuario num comentário.</div>
-                    </div>
-                    <input type="checkbox" id="profile-pref-mention">
-                  </label>
-                  <label class="profile-pref-row">
-                    <div class="profile-pref-info">
-                      <div class="profile-pref-title">Etapa mudou (demanda observada)</div>
-                      <div class="profile-pref-sub">Uma demanda que você observa avançou de etapa.</div>
-                    </div>
-                    <input type="checkbox" id="profile-pref-watch_stage">
-                  </label>
-                  <label class="profile-pref-row">
-                    <div class="profile-pref-info">
-                      <div class="profile-pref-title">Novo comentário (demanda observada)</div>
-                      <div class="profile-pref-sub">Alguém comentou numa demanda que você observa.</div>
-                    </div>
-                    <input type="checkbox" id="profile-pref-watch_comment">
-                  </label>
-                  <label class="profile-pref-row">
-                    <div class="profile-pref-info">
-                      <div class="profile-pref-title">Resumo diário</div>
-                      <div class="profile-pref-sub">Segunda a sexta, às 8h — um digest do que espera por você.</div>
-                    </div>
-                    <input type="checkbox" id="profile-pref-daily_digest">
-                  </label>
-                  <label class="profile-pref-row">
-                    <div class="profile-pref-info">
-                      <div class="profile-pref-title">Lembretes</div>
-                      <div class="profile-pref-sub">Os lembretes que você agendou numa demanda ("Lembrar depois").</div>
-                    </div>
-                    <input type="checkbox" id="profile-pref-reminder">
-                  </label>
-                </div>
-                <div class="profile-block-actions">
-                  <button class="btn btn-ghost" onclick="sendEmailTest()"><i data-lucide="send" class="ic-sm"></i> Enviar teste</button>
-                  <button class="btn btn-confirm" onclick="saveEmailSettings()">Salvar preferências</button>
-                </div>
-              </div>
-            </section>
-
-            <!-- ─── INTEGRAÇÕES — Discord + Google ─── -->
+            <!-- ─── INTEGRAÇÕES ─── -->
             <section class="profile-section" data-section="integrations" hidden>
-              <div class="profile-section-head">
-                <div>
-                  <div class="profile-section-title">Integrações</div>
-                  <div class="profile-section-sub">Conecte ferramentas externas à sua conta.</div>
-                </div>
-              </div>
+              <header class="profile-section-head">
+                <h2 class="profile-section-title">Integrações</h2>
+                <p class="profile-section-sub">Contas externas ligadas ao seu usuário.</p>
+              </header>
 
-              <!-- Discord -->
               <div class="profile-integration-card">
                 <div class="profile-integration-head">
-                  <div class="profile-integration-icon" style="background:rgba(88,101,242,0.15)">
-                    <img src="/discord.svg" width="24" height="24" alt="Discord">
+                  <div class="profile-integration-icon profile-integration-icon--discord">
+                    <img src="/discord.svg" width="22" height="22" alt="">
                   </div>
                   <div class="profile-integration-info">
                     <div class="profile-integration-name">Discord</div>
-                    <div class="profile-integration-sub">Receba menção no Discord ao virar responsável.</div>
+                    <div class="profile-integration-sub">Entrar com um clique e receber avisos por mensagem direta.</div>
                   </div>
+                  <span class="profile-status-chip" id="profile-discord-chip" hidden></span>
                 </div>
-                <!-- Bloco OAuth — visível se DISCORD_OAUTH_* configurado no server.
-                     renderProfileDiscordOAuth() alterna entre vincular/desvincular. -->
-                <div id="profile-discord-oauth-wrap" style="display:none;margin-top:14px">
-                  <div id="profile-discord-oauth-status" class="profile-hint" style="margin-bottom:10px"></div>
+                <div id="profile-discord-oauth-wrap" hidden>
+                  <div id="profile-discord-oauth-status" class="profile-hint"></div>
                   <div class="profile-block-actions">
-                    <button class="btn-discord-oauth" style="width:auto;padding:10px 16px;font-size:13px" id="profile-discord-oauth-btn" onclick="linkDiscord()">
-                      <img src="/discord.svg" width="18" height="18" alt="" aria-hidden="true" style="filter:brightness(0) invert(1)">
+                    <button class="btn btn-ghost" id="profile-discord-unlink-btn" hidden onclick="unlinkDiscord()"><i data-lucide="unlink" class="ic-sm"></i> Desvincular</button>
+                    <button class="btn-discord-oauth profile-discord-btn" id="profile-discord-oauth-btn" onclick="linkDiscord()">
+                      <img src="/discord.svg" width="16" height="16" alt="" aria-hidden="true">
                       <span id="profile-discord-oauth-btn-label">Vincular com Discord</span>
                     </button>
-                    <button class="btn btn-ghost" id="profile-discord-unlink-btn" style="display:none" onclick="unlinkDiscord()"><i data-lucide="unlink" class="ic-sm"></i> Desvincular</button>
                   </div>
                 </div>
-
-                <!-- Fallback manual — só aparece se OAuth do Discord NÃO está configurado no server.
-                     renderProfileDiscordOAuth() esconde este bloco quando o OAuth está disponível. -->
-                <div id="profile-discord-manual-wrap" class="form-group full" style="margin-top:14px">
-                  <label class="form-label">ID do usuário no Discord</label>
-                  <input class="form-control" id="profile-f-discord-id" placeholder="Ex: 123456789012345678" autocomplete="off">
-                  <div class="profile-hint">Configurações do Discord → <strong>Avançado</strong> → ative <strong>Modo Desenvolvedor</strong> → clique com o botão direito sobre seu nome → <strong>Copiar ID do Usuário</strong>.</div>
+                <div id="profile-discord-manual-wrap" class="form-group full profile-integration-body">
+                  <label class="form-label" for="profile-f-discord-id">ID do usuário no Discord</label>
+                  <input class="form-control" id="profile-f-discord-id" autocomplete="off" spellcheck="false" inputmode="numeric">
+                  <div class="profile-hint">No Discord: Configurações, Avançado, ative o Modo Desenvolvedor. Depois clique com o botão direito no seu nome e escolha Copiar ID do usuário.</div>
+                  <div class="profile-block-actions">
+                    <button class="btn btn-confirm" id="profile-discord-save-btn" onclick="saveDiscordId()">Salvar</button>
+                  </div>
                 </div>
-                <div class="profile-block-actions">
-                  <button class="btn btn-confirm" id="profile-discord-save-btn" onclick="saveDiscordId()">Salvar</button>
-                  <button class="btn btn-ghost" id="profile-discord-test-btn" onclick="testDiscordDM()" style="display:none"><i data-lucide="send" class="ic-sm"></i> Enviar DM de teste</button>
-                  <button class="btn btn-ghost" id="profile-discord-digest-btn" onclick="sendDiscordDigestNow()" style="display:none"><i data-lucide="sunrise" class="ic-sm"></i> Enviar resumo agora</button>
-                  <button class="btn btn-ghost" id="profile-discord-clear-btn" onclick="clearDiscordDMs()" style="display:none"><i data-lucide="trash-2" class="ic-sm"></i> Limpar histórico de DMs</button>
+                <div class="profile-integration-tools" id="profile-discord-tools" hidden>
+                  <div class="profile-block-title">Ferramentas</div>
+                  <div class="profile-tool-row">
+                    <button class="btn btn-ghost btn-sm" id="profile-discord-test-btn" onclick="testDiscordDM()"><i data-lucide="send" class="ic-sm"></i> Mensagem de teste</button>
+                    <button class="btn btn-ghost btn-sm" id="profile-discord-digest-btn" onclick="sendDiscordDigestNow()"><i data-lucide="sunrise" class="ic-sm"></i> Resumo do dia agora</button>
+                    <button class="btn btn-ghost btn-sm" id="profile-discord-clear-btn" onclick="clearDiscordDMs()"><i data-lucide="eraser" class="ic-sm"></i> Limpar mensagens do bot</button>
+                  </div>
                 </div>
-
-                <div class="profile-hint" style="margin-top:14px">As preferências de quais eventos disparam DM ficam na aba <strong>Notificações</strong>.</div>
-
               </div>
 
-              <!-- Google Calendar -->
               <div class="profile-integration-card" id="profile-google-panel">
                 <div class="profile-integration-head">
-                  <div class="profile-integration-icon" style="background:rgba(66,133,244,0.14)">
-                    <img src="/calendar.svg" width="24" height="24" alt="Google Calendar">
+                  <div class="profile-integration-icon profile-integration-icon--google">
+                    <img src="/calendar.svg" width="22" height="22" alt="">
                   </div>
                   <div class="profile-integration-info">
-                    <div class="profile-integration-name">Google Calendar</div>
+                    <div class="profile-integration-name">Google Agenda</div>
                     <div class="profile-integration-sub">Seus eventos aparecem junto com os blocos do reWork.</div>
                   </div>
                 </div>
-                <div id="profile-google-body" style="margin-top:14px">
-                  <div class="profile-hint">Carregando…</div>
+                <div id="profile-google-body" class="profile-integration-body">
+                  <div class="profile-skel"></div>
                 </div>
               </div>
             </section>
 
             <!-- ─── SEGURANÇA ─── -->
             <section class="profile-section" data-section="security" hidden>
-              <div class="profile-section-head">
-                <div>
-                  <div class="profile-section-title">Segurança</div>
-                  <div class="profile-section-sub">Senha e sessão.</div>
-                </div>
-              </div>
+              <header class="profile-section-head">
+                <h2 class="profile-section-title">Segurança</h2>
+                <p class="profile-section-sub">Senha e sessão neste computador.</p>
+              </header>
               <div class="profile-card-block">
-                <div class="profile-block-title">Alterar senha</div>
+                <div class="profile-block-title">Trocar senha</div>
                 <div class="form-grid">
-                  <div class="form-group">
-                    <label class="form-label">Senha atual</label>
+                  <div class="form-group full">
+                    <label class="form-label" for="profile-f-pass-current">Senha atual</label>
                     <input class="form-control" id="profile-f-pass-current" type="password" autocomplete="current-password">
                   </div>
                   <div class="form-group">
-                    <label class="form-label">Nova senha (mín. 6 caracteres)</label>
+                    <label class="form-label" for="profile-f-pass-new">Nova senha</label>
                     <input class="form-control" id="profile-f-pass-new" type="password" autocomplete="new-password">
+                    <div class="profile-hint">Pelo menos 6 caracteres.</div>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="profile-f-pass-confirm">Repita a nova senha</label>
+                    <input class="form-control" id="profile-f-pass-confirm" type="password" autocomplete="new-password">
+                    <div class="profile-field-error" id="profile-f-pass-error" hidden></div>
                   </div>
                 </div>
                 <div class="profile-block-actions">
-                  <button class="btn btn-primary" onclick="changePassword()">Alterar senha</button>
+                  <button class="btn btn-confirm" onclick="changePassword()">Trocar senha</button>
                 </div>
               </div>
-              <div class="profile-card-block" style="margin-top:16px">
+              <div class="profile-card-block">
                 <div class="profile-row">
                   <div class="profile-row-info">
-                    <div class="profile-row-title">Refazer tour de boas-vindas</div>
-                    <div class="profile-row-sub">Reabre o passo a passo pelas principais telas do sistema.</div>
+                    <div class="profile-row-title">Sair da conta</div>
+                    <div class="profile-row-sub">Encerra sua sessão neste computador.</div>
+                  </div>
+                  <button class="btn btn-danger" onclick="doLogout()"><i data-lucide="log-out" class="ic-sm"></i> Sair</button>
+                </div>
+              </div>
+            </section>
+
+            <!-- ─── AJUDA ─── -->
+            <section class="profile-section" data-section="help" hidden>
+              <header class="profile-section-head">
+                <h2 class="profile-section-title">Ajuda</h2>
+                <p class="profile-section-sub">Tour, novidades e documentos.</p>
+              </header>
+              <div class="profile-card-block">
+                <div class="profile-row">
+                  <div class="profile-row-info">
+                    <div class="profile-row-title">Tour de boas-vindas</div>
+                    <div class="profile-row-sub">Passa de novo pelas principais telas do reWork.</div>
                   </div>
                   <button class="btn btn-ghost" onclick="startWelcomeTour()"><i data-lucide="compass" class="ic-sm"></i> Refazer tour</button>
                 </div>
-              </div>
-              <div class="profile-card-block" style="margin-top:16px">
                 <div class="profile-row">
                   <div class="profile-row-info">
-                    <div class="profile-row-title">Notas de Atualização</div>
-                    <div class="profile-row-sub">Histórico completo do que mudou desde os primeiros releases.</div>
+                    <div class="profile-row-title">Notas de atualização</div>
+                    <div class="profile-row-sub">Tudo o que mudou desde as primeiras versões.</div>
                   </div>
                   <button class="btn btn-ghost" onclick="showAllReleaseNotes()"><i data-lucide="sparkles" class="ic-sm"></i> Ver notas</button>
                 </div>
-              </div>
-              <div class="profile-card-block" style="margin-top:16px">
                 <div class="profile-row">
                   <div class="profile-row-info">
                     <div class="profile-row-title">Documentos legais</div>
                     <div class="profile-row-sub">Termos de serviço e política de privacidade.</div>
                   </div>
-                  <div style="display:flex;gap:8px">
-                    <a class="btn btn-ghost" href="/termos" target="_blank" rel="noopener"><i data-lucide="file-text" class="ic-sm"></i> Termos</a>
-                    <a class="btn btn-ghost" href="/privacidade" target="_blank" rel="noopener"><i data-lucide="shield" class="ic-sm"></i> Privacidade</a>
+                  <div class="profile-row-actions">
+                    <a class="btn btn-ghost" href="/termos" target="_blank" rel="noopener">Termos</a>
+                    <a class="btn btn-ghost" href="/privacidade" target="_blank" rel="noopener">Privacidade</a>
                   </div>
-                </div>
-              </div>
-              <div class="profile-card-block" style="margin-top:16px">
-                <div class="profile-row">
-                  <div class="profile-row-info">
-                    <div class="profile-row-title">Sair da conta</div>
-                    <div class="profile-row-sub">Encerra a sua sessão neste dispositivo.</div>
-                  </div>
-                  <button class="btn btn-danger" onclick="doLogout()"><i data-lucide="log-out" class="ic-sm"></i> Sair</button>
                 </div>
               </div>
             </section>
@@ -4583,7 +4560,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260923flowdef4" defer></script>
+<script src="/js/boot.js?v=20260923perfil2" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
