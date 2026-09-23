@@ -5114,6 +5114,7 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
   padding-top: 20px;
 }
 .dash-section { display: flex; flex-direction: column; gap: 10px; }
+.dash-section[hidden] { display: none; }
 .dash-section-head {
   display: flex;
   align-items: baseline;
@@ -5395,6 +5396,17 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 .dash-hours-wrap.is-low .dash-hours-fill { background: var(--danger); }
 .dash-hours-wrap.is-mid .dash-hours-fill { background: #f59e0b; }
 .dash-hours-wrap.is-full .dash-hours-fill { background: #10b981; }
+/* Hoje e Semana: rótulo à esquerda, total à direita, barra embaixo.
+   Hoje em destaque; Semana em segundo plano (menor, barra fina e apagada). */
+.dash-hours-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.dash-hours-head .dash-hours-value { font-variant-numeric: tabular-nums; }
+.dash-hours-today .dash-hours-label { font-size: 13px; font-weight: 600; color: var(--text); }
+.dash-hours-week { gap: 5px; margin-top: 14px; }
+.dash-hours-week .dash-hours-label { font-size: 11.5px; color: var(--text-muted); }
+.dash-hours-week .dash-hours-value { font-size: 12.5px; font-weight: 600; }
+.dash-hours-week .dash-hours-value span { font-size: 11.5px; margin-left: 2px; }
+.dash-hours-week .dash-hours-track { height: 4px; }
+.dash-hours-week .dash-hours-fill { opacity: .55; }
 
 /* ── Menções ── linhas com avatar. */
 .dash-mention-row, .dash-blocked-row, .dash-activity-row {

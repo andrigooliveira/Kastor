@@ -5645,25 +5645,47 @@ function openDashFocusAll() {
 }
 
 /* Horas apontadas hoje — bar de progresso contra a meta padrão de 6h. */
+/* Horas de hoje (meta 8h) + da semana atual (meta 40h = 8h × seg–sex).
+   A semana vai de segunda a domingo: apontamento de sábado/domingo soma no
+   total, mas não aumenta a meta. Datas no fuso local (o start é ISO/UTC —
+   cortar a string contava apontamento das 21h+ no dia seguinte). */
 function renderDashHoursToday() {
   const el = $('dash-hours-today');
   const sub = $('dash-hours-sub');
   if (!el) return;
-  const today = todayStr();
-  let hoursToday = 0;
+  const localYmd = dt => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  const now = new Date();
+  const today = localYmd(now);
+  const monday = new Date(now);
+  monday.setHours(0, 0, 0, 0);
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+  const sunday = new Date(monday);
+  sunday.setDate(sunday.getDate() + 6);
+  const weekFrom = localYmd(monday), weekTo = localYmd(sunday);
+  let hoursToday = 0, hoursWeek = 0;
   (demands || []).forEach(d => (d.timeEntries || []).forEach(e => {
     if (e.userId !== me.id) return;
-    const when = ((e.start || e.createdAt || '') + '').slice(0, 10);
-    if (when === today) hoursToday += Number(e.hours) || 0;
+    const raw = e.start || e.createdAt;
+    if (!raw) return;
+    const dt = new Date(raw);
+    const when = isNaN(dt) ? String(raw).slice(0, 10) : localYmd(dt);
+    const h = Number(e.hours) || 0;
+    if (when === today) hoursToday += h;
+    if (when >= weekFrom && when <= weekTo) hoursWeek += h;
   }));
-  const goal = 8;
+  const status = pct => pct >= 100 ? 'is-full' : pct >= 60 ? 'is-mid' : 'is-low';
+  const goal = 8, weekGoal = 40;
   const pct = Math.min(100, Math.round((hoursToday / goal) * 100));
-  const status = pct >= 100 ? 'is-full' : pct >= 60 ? 'is-mid' : 'is-low';
+  const weekPct = Math.min(100, Math.round((hoursWeek / weekGoal) * 100));
   if (sub) sub.textContent = `Meta ${goal}h`;
-  el.innerHTML = `<div class="dash-hours-wrap ${status}">
-    <div class="dash-hours-value">${fmtHours(hoursToday)}<span>/${goal}h</span></div>
-    <div class="dash-hours-track"><div class="dash-hours-fill" style="width:${pct}%"></div></div>
+  // Mesma linha pras duas: rótulo à esquerda, total à direita, barra embaixo.
+  // Hoje em destaque (maior), Semana secundária.
+  const row = (cls, label, value, goalH, p) => `<div class="dash-hours-wrap ${cls} ${status(p)}">
+    <div class="dash-hours-head"><span class="dash-hours-label">${label}</span><span class="dash-hours-value">${fmtHours(value)}<span>/${goalH}h</span></span></div>
+    <div class="dash-hours-track"><div class="dash-hours-fill" style="width:${p}%"></div></div>
   </div>`;
+  el.innerHTML = row('dash-hours-today', 'Hoje', hoursToday, goal, pct)
+    + row('dash-hours-week', 'Semana', hoursWeek, weekGoal, weekPct);
 }
 
 /* Bloqueios — MINHAS demandas onde a etapa ATUAL é de outra pessoa há > 3 dias
