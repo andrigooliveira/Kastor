@@ -476,13 +476,16 @@ function seed(firstInstall) {
 }
 
 /* ─── HELPERS ─── */
-function publicUser(u) {
+function publicUser(u, opts) {
   if (!u) return null;
   // Nunca expõe tokens do Google — refresh_token é credencial de longa duração.
   // Também remove knownIps e releaseNotesSeenIds (metadados internos, sem uso
   // no frontend). Devolve booleano + info da conta pra frontend saber que tá conectado.
-  const { googleTokens, googleSyncTokens, knownIps, releaseNotesSeenIds, ...rest } = u;
+  // quickReplies (respostas prontas) são pessoais: só voltam pro próprio usuário.
+  // reminders/demandSeen/timeGapDismissed: estado pessoal com rota própria.
+  const { googleTokens, googleSyncTokens, knownIps, releaseNotesSeenIds, quickReplies, reminders, demandSeen, timeGapDismissed, ...rest } = u;
   rest.googleConnected = !!googleTokens;
+  if (opts && opts.self) rest.quickReplies = Array.isArray(quickReplies) ? quickReplies : null;
   return rest;
 }
 function sanitizeDiscordId(raw) {
@@ -530,9 +533,10 @@ const EMAIL_EVENT_LABELS = {
   watch_stage:    'Movimento de etapa em demanda que observo',
   watch_comment:  'Novo comentário em demanda que observo',
   daily_digest:   'Resumo diário (seg-sex, 8h) das minhas demandas',
+  reminder:       'Lembretes que eu agendei',
 };
 function defaultEmailPrefs() {
-  return { assigned: true, stage_assigned: true, mention: true, watch_stage: true, watch_comment: true, daily_digest: true };
+  return { assigned: true, stage_assigned: true, mention: true, watch_stage: true, watch_comment: true, daily_digest: true, reminder: true };
 }
 
 /* ── DISCORD DM PREFS ──
@@ -549,12 +553,14 @@ const DISCORD_EVENT_LABELS = {
   watch_stage:    'Movimento de etapa em demanda que observo',
   watch_comment:  'Novo comentário em demanda que observo',
   daily_digest:   'Resumo diário (seg-sex, 8h) das minhas demandas',
+  reminder:       'Lembretes que eu agendei',
 };
 // Nota: daily_digest é AGENDADO, não é chamado via notify(). Fica no map só
 // pra aparecer na UI de prefs e ser consultado por effectiveDiscordPref no
 // runDailyBotDMDigest. notify() nunca é invocado com type='daily_digest'.
 const DISCORD_HARDCODED_DEFAULTS = {
   assigned: false, stage_assigned: false, mention: true, watch_stage: false, watch_comment: false, daily_digest: true,
+  reminder: true, // a pessoa agendou pra ser lembrada — faz sentido chegar onde ela está
 };
 let _adminDiscordDefaultsCache = null;
 async function loadAdminDiscordDefaults() {
@@ -655,6 +661,12 @@ function buildEmailForNotification(type, ctx) {
       headline = '👀 Movimento em demanda que você observa';
       body = `<p style="margin:0 0 8px">A demanda <strong>${escHtml(demand.name)}</strong> avançou para a etapa <strong>${escHtml(stageName || '—')}</strong>.</p>`;
       break;
+    case 'reminder':
+      subject = `[reWork] Lembrete: ${demand.name}`;
+      headline = '⏰ Lembrete';
+      body = `<p style="margin:0 0 8px">Você pediu pra ser lembrado da demanda <strong>${escHtml(demand.name)}</strong>.</p>${commentText ? `
+<blockquote style="border-left:3px solid #7A00FF;padding:10px 14px;margin:12px 0;color:#444;background:#f5f3ff;border-radius:0 4px 4px 0">${escHtml(commentText.slice(0, 500))}</blockquote>` : ''}`;
+      break;
     case 'watch_comment':
       subject = `[reWork] Novo comentário (você observa): ${demand.name}`;
       headline = '👀 Novo comentário em demanda que você observa';
@@ -686,7 +698,7 @@ function buildDiscordDMForNotification(type, ctx) {
   const projSub = project ? `${project.name}${project.client ? ' · ' + project.client : ''}` : null;
   const triggerName = trigger ? trigger.name : null;
   const clip = (s, n) => { s = String(s || '').replace(/<[^>]+>/g,'').trim(); return s.length > n ? s.slice(0, n-1) + '…' : s; };
-  const COLORS = { assigned: 0x7A00FF, stage_assigned: 0x2b7fff, mention: 0xF5A718, watch_stage: 0xa1a1a1, watch_comment: 0xa1a1a1 };
+  const COLORS = { assigned: 0x7A00FF, stage_assigned: 0x2b7fff, mention: 0xF5A718, watch_stage: 0xa1a1a1, watch_comment: 0xa1a1a1, reminder: 0xF5A718 };
   let title, description = '';
   switch (type) {
     case 'assigned':
@@ -704,6 +716,10 @@ function buildDiscordDMForNotification(type, ctx) {
     case 'watch_stage':
       title = `👀 Etapa avançou: ${demand.name}`;
       description = `Nova etapa: **${stageName || '—'}**.`;
+      break;
+    case 'reminder':
+      title = `⏰ Lembrete: ${demand.name}`;
+      description = commentText ? `> ${clip(commentText, 300)}` : 'Você pediu pra ser lembrado desta demanda.';
       break;
     case 'watch_comment':
       title = `👀 Novo comentário: ${demand.name}`;
@@ -865,6 +881,7 @@ function notify(targetUserId, type, data, triggerUserId, baseUrl) {
     fromUser: triggerUserId || null,
     stageName: data.stageName || null,
     commentText: data.commentText || null,
+    ...(data.emoji ? { emoji: data.emoji } : {}),
     read: false, createdAt: nowISO()
   };
   // Fire-and-forget: notify() é síncrono no chamador, mas a escrita no Postgres
@@ -1866,7 +1883,7 @@ app.post('/api/login', (req, res) => {
   // Cookie httpOnly: JS no browser não consegue ler — protege contra XSS.
   // O `token` no body é mantido por compat (clientes antigos podiam usar Bearer).
   res.set('Set-Cookie', buildSessionCookie(token, { secure: isHttpsRequest(req) }));
-  res.json({ token, user: publicUser(user) });
+  res.json({ token, user: publicUser(user, { self: true }) });
 });
 
 /* Marca o tour de boas-vindas como visto — chamado pelo frontend depois
@@ -1917,8 +1934,8 @@ app.get('/api/me/release-notes', requireAuth, (req, res) => {
   const pending = all
     .filter(n => n && n.id && !seen.has(n.id))
     .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
-    .slice(0, 5)
-    .map(n => ({ id: n.id, date: n.date, title: n.title, highlights: Array.isArray(n.highlights) ? n.highlights : [] }));
+    .slice(0, 10)
+    .map(n => ({ id: n.id, date: n.date, title: n.title, highlight: !!n.highlight, highlights: Array.isArray(n.highlights) ? n.highlights : [] }));
   res.json({ notes: pending });
 });
 
@@ -1929,7 +1946,7 @@ app.get('/api/release-notes/all', requireAuth, (req, res) => {
   const sorted = all
     .filter(n => n && n.id)
     .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
-    .map(n => ({ id: n.id, date: n.date, title: n.title, highlights: Array.isArray(n.highlights) ? n.highlights : [] }));
+    .map(n => ({ id: n.id, date: n.date, title: n.title, highlight: !!n.highlight, highlights: Array.isArray(n.highlights) ? n.highlights : [] }));
   res.json({ notes: sorted });
 });
 
@@ -2064,7 +2081,7 @@ app.post('/api/me/discord/unlink', requireAuth, (req, res) => {
   }
   u.discordId = null;
   saveEntity('users', u);
-  res.json({ ok: true, user: publicUser(u) });
+  res.json({ ok: true, user: publicUser(u, { self: true }) });
 });
 
 /* ─── ESQUECI A SENHA / RESET POR E-MAIL ───
@@ -2124,13 +2141,13 @@ app.post('/api/reset-password', rateLimitPwReset, async (req, res) => {
 });
 
 app.get('/api/me', requireAuth, (req, res) => {
-  const me = publicUser(req.user);
+  const me = publicUser(req.user, { self: true });
   if (me) me._smtpEnabled = mailEnabled();
   res.json(me);
 });
 
 app.put('/api/me', requireAuth, (req, res) => {
-  const { name, role, avatar, currentPassword, newPassword, username, discordId, email, emailPrefs, discord, phone, discordPrefs } = req.body || {};
+  const { name, role, avatar, currentPassword, newPassword, username, discordId, email, emailPrefs, discord, phone, discordPrefs, quickReplies } = req.body || {};
   const u = req.user;
   if (typeof name === 'string' && name.trim()) u.name = name.trim();
   if (typeof role === 'string') u.role = role.trim();
@@ -2215,8 +2232,15 @@ app.put('/api/me', requireAuth, (req, res) => {
     }
     auth.setPassword(u.id, newPassword);
   }
+  // Respostas prontas dos comentários: lista de textos curtos (null = volta
+  // pras sugestões padrão do cliente).
+  if (quickReplies !== undefined) {
+    u.quickReplies = Array.isArray(quickReplies)
+      ? quickReplies.map(t => String(t || '').trim().slice(0, 500)).filter(Boolean).slice(0, 30)
+      : null;
+  }
   saveEntity('users', u);
-  res.json(publicUser(u));
+  res.json(publicUser(u, { self: true }));
 });
 
 /* Ping de presença — cliente bate de minuto em minuto. Não loga histórico,
@@ -6790,7 +6814,17 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
   }
   if (b.attachments !== undefined) {
     const oldIds = (d.attachments || []).map(a => a.id);
-    const newAtts = sanitizeAttachments(b.attachments);
+    let newAtts = sanitizeAttachments(b.attachments);
+    // Com a base (ids que o cliente tinha ao abrir o form), aplica só a
+    // diferença sobre a lista ATUAL: tira o que ele removeu e acrescenta o que
+    // ele pôs — anexo que outra pessoa adicionou no meio tempo continua.
+    if (Array.isArray(b.attachmentsBaseIds)) {
+      const base = new Set(b.attachmentsBaseIds.map(String));
+      const sent = new Set(newAtts.map(a => a.id));
+      const kept = (d.attachments || []).filter(a => !(base.has(a.id) && !sent.has(a.id)));
+      const keptIds = new Set(kept.map(a => a.id));
+      newAtts = kept.concat(newAtts.filter(a => !keptIds.has(a.id)));
+    }
     const newIds = newAtts.map(a => a.id);
     newAtts.filter(a => !oldIds.includes(a.id)).forEach(a => addHistory(d, req.user.id, 'attachment_added', { kind: a.kind, name: a.name }));
     (d.attachments || []).filter(a => !newIds.includes(a.id)).forEach(a => addHistory(d, req.user.id, 'attachment_removed', { kind: a.kind, name: a.name }));
@@ -6941,6 +6975,40 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
   if (!wasCompleted && d.completedAt) {
     fireWebhook('demand.completed', { demand: d, project, flow, user: req.user, owner, appBaseUrl: reqBase });
   }
+  broadcastChange('demand', 'update', { id: d.id, workspaceId: d.workspaceId, byUserId: req.user.id });
+  res.json(d);
+});
+
+/* Anexos um a um. O PUT acima troca a lista INTEIRA pela que o cliente mandou —
+   se duas pessoas anexam juntas (ou uma tela está desatualizada), o anexo da
+   outra some. Aqui o servidor só acrescenta/remove o item pedido sobre a lista
+   ATUAL dele, então nada de ninguém é sobrescrito. */
+app.post('/api/demands/:id/attachments', requireAuth, (req, res) => {
+  const d = getDemand(req, res); if (!d) return;
+  if (req.user.isFreelancer) return res.status(403).json({ error: 'Freelancers não podem alterar anexos' });
+  const incoming = Array.isArray(req.body?.attachments) ? req.body.attachments : [req.body?.attachment].filter(Boolean);
+  if (!incoming.length) return res.status(400).json({ error: 'Nenhum anexo enviado' });
+  const current = d.attachments || [];
+  if (tooManyAttachments(res, current.concat(incoming))) return;
+  const ids = new Set(current.map(a => a.id));
+  // Id repetido (retry do mesmo envio) não duplica.
+  const added = sanitizeAttachments(incoming).filter(a => !ids.has(a.id));
+  if (!added.length) return res.json(d);
+  added.forEach(a => addHistory(d, req.user.id, 'attachment_added', { kind: a.kind, name: a.name }));
+  d.attachments = current.concat(added);
+  saveEntity('demands', d);
+  broadcastChange('demand', 'update', { id: d.id, workspaceId: d.workspaceId, byUserId: req.user.id });
+  res.json(d);
+});
+app.delete('/api/demands/:id/attachments/:attId', requireAuth, (req, res) => {
+  const d = getDemand(req, res); if (!d) return;
+  if (req.user.isFreelancer) return res.status(403).json({ error: 'Freelancers não podem alterar anexos' });
+  const att = (d.attachments || []).find(a => a.id === req.params.attId);
+  // Já removido por outra pessoa: devolve o estado atual (idempotente).
+  if (!att) return res.json(d);
+  d.attachments = d.attachments.filter(a => a.id !== att.id);
+  addHistory(d, req.user.id, 'attachment_removed', { kind: att.kind, name: att.name });
+  saveEntity('demands', d);
   broadcastChange('demand', 'update', { id: d.id, workspaceId: d.workspaceId, byUserId: req.user.id });
   res.json(d);
 });
@@ -7642,6 +7710,226 @@ app.delete('/api/demands/:id/time/:entryId', requireAuth, (req, res) => {
 });
 
 /* Comentários com menção. `format`: 'html' (editor rich) ou 'text' (legacy). */
+/* ── FRASES RECORRENTES (autocompletar com Tab no comentário) ──
+   Aprende, por usuário, as SEQUÊNCIAS que ele repete no começo das linhas dos
+   próprios comentários — não a linha inteira: "Ajustes feitos, troquei a cor"
+   e "Ajustes feitos: alterei o título" contam os dois pra "Ajustes feitos".
+   Cada linha soma 1 pra cada prefixo de palavras dela (até PHRASE_MAX_WORDS);
+   link vira {link} (o cliente completa até ali e a pessoa cola o link).
+   Caixa, acento e pontuação no fim da palavra não diferenciam; a forma
+   sugerida é a que ele mais escreveu.
+   Entra com PHRASE_MIN_COUNT usos e sai se não foi escrita nos últimos
+   PHRASE_TTL_MS (vício abandonado some sozinho). Entre um prefixo e um mais
+   longo com a MESMA contagem, fica só o longo (o curto não acrescenta nada). */
+const PHRASE_MIN_COUNT = 5;
+const PHRASE_MAX_WORDS = 12;
+const PHRASE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const PHRASE_URL_RE = /\b(?:https?:\/\/|www\.)\S+/gi;
+function commentPhraseTokenKey(tok) {
+  return tok.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[.!?,;:…]+$/u, '');
+}
+function learnCommentPhrases(userId, now = Date.now()) {
+  const groups = new Map(); // key → { count, lastAt, words, variants: Map<texto, n> }
+  for (const d of db.demands) {
+    for (const c of d.comments || []) {
+      if (c.userId !== userId) continue;
+      const at = Date.parse(c.createdAt) || 0;
+      const plain = c.format === 'html' ? stripHtmlToText(c.text) : String(c.text || '');
+      const seen = new Set(); // mesma sequência em 2 linhas do comentário conta 1x
+      for (const line of plain.split('\n')) {
+        const toks = line.replace(PHRASE_URL_RE, '{link}').trim().split(/\s+/).filter(Boolean).slice(0, PHRASE_MAX_WORDS);
+        const keys = toks.map(commentPhraseTokenKey);
+        for (let k = 2; k <= toks.length; k++) {
+          const text = toks.slice(0, k).join(' ');
+          // Precisa de texto de verdade além de link/pontuação.
+          if (text.replace(/\{link\}/g, '').replace(/[^\p{L}\p{N}]/gu, '').length < 3) continue;
+          const key = keys.slice(0, k).join(' ');
+          if (seen.has(key)) continue;
+          seen.add(key);
+          let g = groups.get(key);
+          if (!g) groups.set(key, g = { count: 0, lastAt: 0, words: k, variants: new Map() });
+          g.count++;
+          if (at > g.lastAt) g.lastAt = at;
+          g.variants.set(text, (g.variants.get(text) || 0) + 1);
+        }
+      }
+    }
+  }
+  const alive = [...groups].filter(([, g]) => g.count >= PHRASE_MIN_COUNT && now - g.lastAt <= PHRASE_TTL_MS);
+  // Fechado: descarta o prefixo se um mais longo que começa com ele tem a mesma contagem.
+  const kept = alive.filter(([key, g]) => !alive.some(([k2, g2]) => g2.words > g.words && g2.count === g.count && k2.startsWith(key + ' ')));
+  return kept
+    // Vírgula/dois-pontos no fim é emenda do resto da frase — a pessoa escolhe a pontuação.
+    .map(([, g]) => ({ text: [...g.variants].sort((x, y) => y[1] - x[1])[0][0].replace(/[,;:]+$/, ''), count: g.count, lastAt: new Date(g.lastAt).toISOString() }))
+    .sort((x, y) => y.count - x.count || y.text.length - x.text.length)
+    .slice(0, 40);
+}
+/* ── LEMBRAR DEPOIS ──
+   Lembretes pessoais por demanda, guardados no próprio usuário (u.reminders).
+   runRemindersJob dispara na hora via notify(type 'reminder') — sino, e-mail
+   e DM do Discord conforme as preferências — e tira o lembrete da lista. */
+const REMINDERS_MAX = 100;
+function reminderView(r) {
+  const d = db.demands.find(x => x.id === r.demandId);
+  return { ...r, demandName: d ? d.name : '(demanda removida)' };
+}
+app.get('/api/me/reminders', requireAuth, (req, res) => {
+  res.json((req.user.reminders || []).map(reminderView));
+});
+app.post('/api/demands/:id/reminders', requireAuth, (req, res) => {
+  const d = getDemand(req, res); if (!d) return;
+  const at = Date.parse(req.body?.at);
+  if (!Number.isFinite(at)) return res.status(400).json({ error: 'Data do lembrete inválida' });
+  if (at < Date.now() - 60 * 1000) return res.status(400).json({ error: 'Escolha um horário no futuro' });
+  if (at > Date.now() + 366 * 24 * 60 * 60 * 1000) return res.status(400).json({ error: 'Lembrete pode ser de no máximo 1 ano' });
+  const u = req.user;
+  if (!Array.isArray(u.reminders)) u.reminders = [];
+  if (u.reminders.length >= REMINDERS_MAX) return res.status(400).json({ error: `Limite de ${REMINDERS_MAX} lembretes pendentes` });
+  const r = {
+    id: uid(), demandId: d.id, at: new Date(at).toISOString(),
+    note: String(req.body?.note || '').trim().slice(0, 300),
+    baseUrl: appBaseUrl(req), createdAt: nowISO()
+  };
+  u.reminders.push(r);
+  saveEntity('users', u);
+  res.status(201).json(reminderView(r));
+});
+app.delete('/api/me/reminders/:rid', requireAuth, (req, res) => {
+  const u = req.user;
+  const before = (u.reminders || []).length;
+  u.reminders = (u.reminders || []).filter(r => r.id !== req.params.rid);
+  if (u.reminders.length !== before) saveEntity('users', u);
+  res.json({ ok: true });
+});
+function runRemindersJob() {
+  const now = Date.now();
+  for (const u of db.users || []) {
+    if (!Array.isArray(u.reminders) || !u.reminders.length || u.active === false) continue;
+    const due = u.reminders.filter(r => Date.parse(r.at) <= now);
+    if (!due.length) continue;
+    u.reminders = u.reminders.filter(r => Date.parse(r.at) > now);
+    saveEntity('users', u);
+    for (const r of due) {
+      const d = db.demands.find(x => x.id === r.demandId && notDeleted(x));
+      if (!d) continue;
+      notify(u.id, 'reminder', { demandId: d.id, demandName: d.name, commentText: r.note || null }, null, r.baseUrl || process.env.PUBLIC_URL);
+    }
+  }
+}
+const _remindersInterval = setInterval(runRemindersJob, 30 * 1000);
+if (_remindersInterval.unref) _remindersInterval.unref();
+
+/* ── NOVIDADES DESDE A ÚLTIMA VISITA ──
+   Guarda quando cada pessoa abriu cada demanda pela última vez (u.demandSeen,
+   só as DEMAND_SEEN_MAX mais recentes). Abrir devolve a visita ANTERIOR — o
+   cliente destaca o que outras pessoas fizeram depois dela. */
+const DEMAND_SEEN_MAX = 400;
+app.post('/api/demands/:id/seen', requireAuth, (req, res) => {
+  const d = getDemand(req, res); if (!d) return;
+  const u = req.user;
+  const seen = (u.demandSeen && typeof u.demandSeen === 'object') ? u.demandSeen : {};
+  const prev = seen[d.id] || null;
+  delete seen[d.id];
+  seen[d.id] = nowISO(); // reinserir = vai pro fim (ordem de inserção = recência)
+  const keys = Object.keys(seen);
+  if (keys.length > DEMAND_SEEN_MAX) keys.slice(0, keys.length - DEMAND_SEEN_MAX).forEach(k => delete seen[k]);
+  u.demandSeen = seen;
+  saveEntity('users', u);
+  res.json({ prev });
+});
+
+/* ── ETAPAS ENTREGUES SEM APONTAMENTO ──
+   "Entregou" = moveu a demanda PRA FRENTE saindo da etapa X (histórico
+   stage_changed com ele como autor) nos últimos TIME_GAP_WINDOW_DAYS.
+   Pendência = não tem nenhum apontamento dele na etapa X dessa demanda.
+   Some quando ele aponta ou dispensa ("não precisa"). */
+const TIME_GAP_WINDOW_DAYS = 30;
+function stageIndexIn(flow, d, stageId) {
+  const order = Array.isArray(d.stageOrder) && d.stageOrder.length ? d.stageOrder : (flow?.stages || []).map(s => s.id);
+  return order.indexOf(stageId);
+}
+function stageLabelIn(flow, d, stageId) {
+  const custom = d.stageLabels && d.stageLabels[stageId];
+  if (custom) return custom;
+  const st = (flow?.stages || []).find(s => s.id === stageId) || (d.stageAdditions || []).find(s => s.id === stageId);
+  return st ? st.label : 'Etapa';
+}
+function timeGapsFor(user) {
+  const since = Date.now() - TIME_GAP_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  const dismissed = new Set(user.timeGapDismissed || []);
+  const out = new Map(); // demandId:stageId → gap (fica a entrega mais recente)
+  for (const d of db.demands) {
+    if (!notDeleted(d) || !canAccessWs(user, d.workspaceId)) continue;
+    const flow = db.flows.find(f => f.id === d.flowId);
+    for (const h of d.history || []) {
+      if (h.action !== 'stage_changed' || h.userId !== user.id || !h.details) continue;
+      const at = Date.parse(h.at) || 0;
+      if (at < since) continue;
+      const { fromId, toId } = h.details;
+      if (!fromId) continue;
+      const fi = stageIndexIn(flow, d, fromId), ti = stageIndexIn(flow, d, toId);
+      if (fi >= 0 && ti >= 0 && ti < fi) continue; // retrocedeu: não é entrega
+      const key = d.id + ':' + fromId;
+      if (dismissed.has(key)) continue;
+      if ((d.timeEntries || []).some(e => e.userId === user.id && e.stageId === fromId)) continue;
+      const prev = out.get(key);
+      if (prev && Date.parse(prev.deliveredAt) >= at) continue;
+      const project = db.projects.find(p => p.id === d.projectId);
+      out.set(key, {
+        key, demandId: d.id, demandName: d.name, stageId: fromId,
+        stageLabel: stageLabelIn(flow, d, fromId), deliveredAt: h.at,
+        client: project ? (project.client || '') : ''
+      });
+    }
+  }
+  return [...out.values()].sort((a, b) => Date.parse(b.deliveredAt) - Date.parse(a.deliveredAt));
+}
+app.get('/api/me/time-gaps', requireAuth, (req, res) => {
+  res.json(timeGapsFor(req.user));
+});
+app.post('/api/me/time-gaps/dismiss', requireAuth, (req, res) => {
+  const key = String(req.body?.key || '');
+  if (!/^[\w-]+:[\w-]+$/.test(key)) return res.status(400).json({ error: 'Pendência inválida' });
+  const u = req.user;
+  const list = Array.isArray(u.timeGapDismissed) ? u.timeGapDismissed : [];
+  if (!list.includes(key)) list.push(key);
+  u.timeGapDismissed = list.slice(-500);
+  saveEntity('users', u);
+  res.json({ ok: true });
+});
+/* Aviso diário (seg-sex, a partir das 17h no horário do servidor) no sino,
+   se a pessoa tiver pendências. 1x por dia. Clicar leva pro Início. */
+function runTimeGapNotifyJob() {
+  const now = new Date();
+  const dow = now.getDay();
+  if (dow === 0 || dow === 6 || now.getHours() < 17) return;
+  const ymd = today();
+  for (const u of db.users || []) {
+    if (u.active === false || u._lastTimeGapNotify === ymd) continue;
+    const gaps = timeGapsFor(u);
+    u._lastTimeGapNotify = ymd;
+    saveEntity('users', u);
+    if (!gaps.length) continue;
+    const n = {
+      id: uid(), userId: u.id, type: 'time_gap', demandId: null, demandName: '',
+      fromUser: null, stageName: null,
+      commentText: gaps.length === 1
+        ? `1 etapa entregue sem apontamento: ${gaps[0].demandName} · ${gaps[0].stageLabel}`
+        : `${gaps.length} etapas entregues sem apontamento`,
+      read: false, createdAt: nowISO()
+    };
+    store.insertNotification(n).catch(err => console.error('[time-gap] insert:', err.message));
+    store.trimNotificationsFor(u.id, NOTIFICATIONS_MAX_PER_USER).catch(() => {});
+    broadcastToUser(u.id, 'notification', 'create');
+  }
+}
+const _timeGapInterval = setInterval(runTimeGapNotifyJob, 15 * 60 * 1000);
+if (_timeGapInterval.unref) _timeGapInterval.unref();
+
+app.get('/api/me/comment-phrases', requireAuth, (req, res) => {
+  res.json(learnCommentPhrases(req.user.id));
+});
+
 app.post('/api/demands/:id/comment', requireAuth, (req, res) => {
   const d = getDemand(req, res); if (!d) return;
   const format = req.body?.format === 'html' ? 'html' : 'text';
@@ -7745,13 +8033,19 @@ app.delete('/api/demands/:id/comment/:cid', requireAuth, (req, res) => {
 });
 
 /* ── REAÇÕES EM COMENTÁRIOS ── */
-const ALLOWED_REACTIONS = ['👍', '❤️', '👀', '✅', '🎉'];
+// Qualquer emoji (um só — com modificador de tom, ZWJ ou bandeira). Nada de texto.
+const REACTION_EMOJI_RE = /^(?:\p{Extended_Pictographic}|\p{Regional_Indicator})[\p{Extended_Pictographic}\p{Emoji_Modifier}\p{Regional_Indicator}\u200d\ufe0f\u20e3]*$/u;
+function isReactionEmoji(e) { return typeof e === 'string' && e.length <= 24 && REACTION_EMOJI_RE.test(e); }
+// Toggle rápido (tira/põe) não gera uma notificação por clique: 1 por
+// comentário + pessoa + emoji a cada REACTION_NOTIFY_COOLDOWN_MS.
+const REACTION_NOTIFY_COOLDOWN_MS = 10 * 60 * 1000;
+const _reactionNotified = new Map();
 app.post('/api/demands/:id/comment/:cid/react', requireAuth, (req, res) => {
   const d = getDemand(req, res); if (!d) return;
   const c = d.comments.find(x => x.id === req.params.cid);
   if (!c) return res.status(404).json({ error: 'Comentário não encontrado' });
   const emoji = String((req.body && req.body.emoji) || '');
-  if (!ALLOWED_REACTIONS.includes(emoji)) return res.status(400).json({ error: 'Emoji inválido' });
+  if (!isReactionEmoji(emoji)) return res.status(400).json({ error: 'Emoji inválido' });
   if (!c.reactions || typeof c.reactions !== 'object') c.reactions = {};
   const arr = c.reactions[emoji] || [];
   const idx = arr.indexOf(req.user.id);
@@ -7761,6 +8055,16 @@ app.post('/api/demands/:id/comment/:cid/react', requireAuth, (req, res) => {
   else c.reactions[emoji] = arr;
   saveEntity('demands', d);
   emitDemand(req, d);
+  // Avisa o autor do comentário quando alguém REAGE (não ao tirar a reação).
+  if (idx < 0 && c.userId && c.userId !== req.user.id) {
+    const key = `${c.id}:${req.user.id}:${emoji}`;
+    const last = _reactionNotified.get(key) || 0;
+    if (Date.now() - last > REACTION_NOTIFY_COOLDOWN_MS) {
+      _reactionNotified.set(key, Date.now());
+      const plain = (c.format === 'html' ? stripHtmlToText(c.text) : String(c.text || '')).replace(/\s+/g, ' ').trim();
+      notify(c.userId, 'reaction', { demandId: d.id, demandName: d.name, emoji, commentText: plain.slice(0, 140) }, req.user.id, appBaseUrl(req));
+    }
+  }
   res.json(d);
 });
 

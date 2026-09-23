@@ -1,5 +1,86 @@
 [
   {
+    "id": "2026-09-22-sugestoes-fluxo-comentarios",
+    "date": "2026-09-22",
+    "title": "Sugestão de fluxo na criação de demandas e comentários que se completam sozinhos",
+    "highlights": [
+      "Ao criar uma demanda, o reWork lê o título e sugere o fluxo que mais combina. Ele entende abreviações e erros de digitação (por exemplo, \"LP\" vira Landing Page). É só uma sugestão: a escolha continua sendo sua.",
+      "As sugestões melhoram com o tempo: elas aprendem com as demandas que todos os squads já criaram, então fluxos novos também passam a ser reconhecidos.",
+      "Na mesma tela, o reWork avisa se já existe uma demanda parecida e mostra quais etapas costumam ser desativadas em pedidos desse tipo, como ajustes que pulam a etapa de Conteúdo.",
+      "Comentários com sugestão automática: quando você começa a escrever uma frase que costuma usar, como \"Ajustes feitos\" ou \"Segue:\", o resto aparece em cinza. Aperte Tab para completar.",
+      "As sugestões aprendem com o seu jeito de escrever: uma frase passa a ser sugerida depois de 5 usos e some sozinha se você ficar 30 dias sem usá-la.",
+      "Respostas prontas: guarde as frases que você mais usa e insira com um clique no ícone de balão do comentário, ou digitando / no começo do texto."
+    ],
+    "highlight": true
+  },
+  {
+    "id": "2026-09-22-anexos",
+    "date": "2026-09-22",
+    "highlight": true,
+    "title": "Anexos mais organizados e mais seguros",
+    "highlights": [
+      "Anexos agora aparecem em cartões com prévia, nome, tipo, tamanho e data de envio. Cada tipo de arquivo ganha um ícone e uma cor próprios (planilhas em verde, PDFs em vermelho, e assim por diante).",
+      "Links anexados mostram o ícone do site, como Dropbox, YouTube e Google Drive.",
+      "Dá para anexar qualquer tipo de arquivo, inclusive Illustrator, SVG e XML.",
+      "Planilhas baixam direto ao clicar, sem abrir uma tela de visualização vazia.",
+      "Corrigimos um problema que podia fazer anexos antigos sumirem ou serem baixados corrompidos. Agora, se um arquivo não estiver mais disponível, o reWork avisa em vez de baixar um arquivo quebrado.",
+      "Na Galeria, a data mostrada é a do envio do arquivo, o que deixa a ordenação correta, e nomes muito longos não quebram mais a lista.",
+      "Arquivos grandes (até 150 MB) mostram o progresso do envio."
+    ]
+  },
+  {
+    "id": "2026-09-22-agilidade",
+    "date": "2026-09-22",
+    "highlight": true,
+    "title": "Menos cliques no dia a dia",
+    "highlights": [
+      "Ao avançar uma etapa sem ter apontado horas nos últimos 15 minutos, aparece um pequeno menu com \"Apontar tempo e avançar\" ou \"Avançar sem apontar\".",
+      "Responsável e prazo ficam iguais na demanda e na aba Etapas: mudou em um lugar, muda no outro.",
+      "A exportação de demandas abre certinho no Excel, com cada informação na sua coluna, datas no formato brasileiro e o responsável incluído.",
+      "Na criação de demandas, o caminho cliente › projeto › fluxo aparece com as fotos e os ícones, como na página da demanda.",
+      "Imagens nos comentários se ajustam à largura, abrem em tela cheia com opção de baixar e podem ser redimensionadas. Os campos de texto também podem ser esticados na altura.",
+      "Na página da demanda, os apontamentos mostram o período logo ao lado do total de horas, mais fácil de ler."
+    ]
+  },
+  {
+    "id": "2026-09-21-presenca-tema",
+    "date": "2026-09-21",
+    "highlight": true,
+    "title": "Quem está na demanda, link rápido e tema automático",
+    "highlights": [
+      "Veja quem mais está com a demanda aberta agora: as fotos aparecem no topo, com uma bolinha verde.",
+      "Clique no título de uma demanda para copiar o link dela, na página da demanda, em Minhas Demandas e no quadro.",
+      "Tema automático em Perfil › Aparência: siga o tema do computador ou troque por horário (por exemplo, escuro das 20h às 7h)."
+    ]
+  },
+  {
+    "id": "2026-09-21-novo-visual",
+    "date": "2026-09-21",
+    "highlight": true,
+    "title": "Visual renovado em todo o reWork",
+    "highlights": [
+      "Início reorganizado em duas colunas, \"Agora\" e \"Próximos dias\", com \"Demandas recentes\" mostrando o que você movimentou por último.",
+      "Minhas Demandas e Demandas mais fáceis de ler: prioridade, etapa e prazo aparecem de relance, agrupados por Atrasadas, Hoje e Essa semana.",
+      "Página da demanda mais limpa: prioridade, prazos e datas numa linha só, e as seções de briefing, anexos e apontamentos mais organizadas.",
+      "Análises (Capacidade, Ritmo e Relatórios), Performance e Usuários com visual novo, incluindo um relatório de horas apontadas por cliente.",
+      "Clientes, projetos, fluxos e Agenda com o mesmo padrão visual. Nos fluxos, um aviso mostra quando há alterações não salvas.",
+      "Botões de confirmação (Salvar, Criar, Concluir) agora são verdes, o menu lateral foi reorganizado e o Manual do usuário ganhou visual novo."
+    ]
+  },
+  {
+    "id": "2026-09-14-hub-docs",
+    "date": "2026-09-14",
+    "highlight": true,
+    "title": "reWork Hub e reWork Docs",
+    "highlights": [
+      "Novo reWork Hub, o portal de entrada da plataforma, acessível pelo botão no topo.",
+      "reWork Docs: editor de documentos em que várias pessoas escrevem ao mesmo tempo.",
+      "Modelos prontos para começar rápido: briefing de projeto, escopo de trabalho, relatório, ata de reunião e one-pager.",
+      "Digite / para inserir listas de tarefas, caixas de destaque, colunas e outros blocos, e @ para mencionar alguém.",
+      "Importe documentos do Word e arquivos de texto, e anexe imagens que podem ser redimensionadas e baixadas."
+    ]
+  },
+  {
     "id": "2026-09-11-galeria-viewer",
     "date": "2026-09-11",
     "title": "Galeria unificada + visualização de PDF, DOCX e PPTX na plataforma",

@@ -4336,6 +4336,8 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
   border-radius: 10px; padding: 14px 16px; margin-bottom: 12px;
 }
 .release-note-card:last-child { margin-bottom: 0; }
+.release-note-card.is-highlight { background: var(--accent-dim); border-color: color-mix(in srgb, var(--accent) 45%, transparent); box-shadow: inset 3px 0 0 var(--accent); }
+.release-note-card.is-highlight .release-note-title { color: var(--accent-text); }
 .release-note-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
 .release-note-title { font-size: 14px; font-weight: 700; color: var(--text); }
 .release-note-date { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -5439,6 +5441,43 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 .dash-activity-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 .dash-activity-meta em { font-style: normal; }
 
+/* ── Sem apontamento ── mesma linha das "Paradas", com ações à direita. */
+.dash-gap-icon { width: 34px; display: flex; justify-content: center; color: #d97706; flex-shrink: 0; }
+.dash-gap-btn { flex-shrink: 0; }
+.dash-gap-row .dash-gap-dismiss { opacity: 1; }
+.dash-gap-row .dash-blocked-meta { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── Novidades desde a última visita (detalhe da demanda) ── */
+.dd-news {
+  display: flex; align-items: center; gap: 8px;
+  margin: 12px 0 4px; padding: 8px 10px 8px 12px;
+  border-radius: 8px; background: var(--accent-dim);
+  color: var(--text); font-size: 12.5px;
+}
+.dd-news > svg { color: var(--accent-text); flex-shrink: 0; }
+.dd-news-text { flex: 1; min-width: 0; }
+.dd-news .dd-news-close { opacity: 1; }
+.chat-comment.is-new { box-shadow: inset 3px 0 0 var(--accent); padding-left: 12px; }
+.att-card.is-new { position: relative; outline: 2px solid var(--accent); outline-offset: -1px; }
+.att-card.is-new::after {
+  content: 'Novo'; position: absolute; top: 6px; left: 6px; z-index: 2;
+  padding: 2px 6px; border-radius: 4px; background: var(--accent); color: #fff;
+  font-size: 9.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+}
+
+/* ── Lembrar depois (menu no topo do detalhe) ── */
+.remind-menu { width: 280px; gap: 2px; }
+.remind-menu .stages-edit-menu-item { display: flex; align-items: center; }
+.remind-when { margin-left: auto; font-size: 11px; color: var(--text-muted); }
+.remind-note { margin: 4px 4px 6px; width: auto; font-size: 12.5px; }
+.remind-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 12px; color: var(--text); border-radius: 6px; background: var(--surface-2); margin: 0 4px 4px; }
+.remind-row-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.remind-row .remind-cancel { opacity: 1; }
+.remind-custom { display: flex; gap: 6px; padding: 6px 4px 4px; margin-top: 4px; border-top: 1px solid var(--hairline); }
+.remind-custom .form-control { min-width: 0; font-size: 12px; padding: 4px 6px; }
+.remind-custom input[type="date"] { flex: 1.4; }
+.remind-custom input[type="time"] { flex: 1; }
+
 /* Demandas previstas — quadro heatmap 2×7 (14 dias úteis). Cor pela quantidade
    de demandas que devem CHEGAR na etapa da pessoa naquele dia. */
 .dash-forecast-grid {
@@ -6094,6 +6133,71 @@ body:has(#page-demand-detail.active) #toast-container { bottom: 96px; }
   max-height: 200px; overflow-y: auto; min-width: 200px; display: none;
 }
 .mention-pop.open { display: block; }
+/* Respostas prontas do compositor de comentário (fixed: o compositor corta overflow). */
+.qr-pop {
+  position: fixed; z-index: 1000;
+  display: flex; flex-direction: column;
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 8px;
+  box-shadow: var(--shadow-md); padding: 4px;
+  max-height: 300px;
+  animation: flowSuggestIn 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.qr-pop[hidden] { display: none; }
+.qr-head { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); padding: 6px 8px 4px; }
+.qr-list { overflow-y: auto; min-height: 0; }
+.qr-row { display: flex; align-items: center; gap: 2px; border-radius: 6px; }
+.qr-row:hover, .qr-row.is-first { background: var(--accent-dim); }
+.qr-item {
+  flex: 1; min-width: 0; text-align: left;
+  background: none; border: 0; padding: 7px 8px; cursor: pointer;
+  font: inherit; font-size: 12.5px; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.qr-del {
+  flex-shrink: 0; width: 24px; height: 24px; margin-right: 2px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: 0; border-radius: 5px; cursor: pointer;
+  color: var(--text-muted); opacity: 0;
+}
+.qr-row:hover .qr-del { opacity: 1; }
+.qr-del:hover { color: #dc2626; background: var(--surface-2); }
+@media (hover: none) { .qr-del { opacity: 1; } }
+.qr-empty { font-size: 12px; color: var(--text-muted); padding: 8px; }
+.qr-head-sub { margin-top: 4px; border-top: 1px solid var(--hairline); padding-top: 8px; }
+.qr-pin:hover { color: var(--accent-text); }
+/* Autocompletar do comentário: resto da frase em cinza após o cursor + dica Tab. */
+.comment-ghost {
+  position: fixed; z-index: 1000; pointer-events: none;
+  display: flex; align-items: center; gap: 6px;
+  white-space: pre; overflow: hidden;
+}
+.comment-ghost-text { color: var(--text-muted); opacity: .75; overflow: hidden; text-overflow: ellipsis; }
+.comment-ghost-kbd {
+  flex-shrink: 0;
+  font: 600 9.5px/1 -apple-system, 'SF Mono', Menlo, monospace;
+  padding: 2px 4px; border-radius: 4px;
+  border: 1px solid var(--hairline); color: var(--text-muted); background: var(--surface-2);
+}
+.qr-save {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 4px; padding: 7px 8px;
+  border: 0; border-top: 1px solid var(--hairline); border-radius: 0 0 6px 6px;
+  background: none; cursor: pointer; font: inherit; font-size: 12px; color: var(--accent-text);
+}
+.qr-save:disabled { color: var(--text-muted); opacity: .6; cursor: default; }
+/* Timer esquecido: cartão discreto sob o topbar (perto do timer). */
+.timer-check {
+  position: fixed; z-index: 1000; top: 64px; right: 16px;
+  width: min(320px, calc(100vw - 32px));
+  padding: 12px 14px;
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 10px;
+  box-shadow: var(--shadow-md);
+  animation: flowSuggestIn 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.timer-check-title { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--text); }
+.timer-check-title svg { color: #d97706; }
+.timer-check-sub { font-size: 12px; color: var(--text-muted); margin: 4px 0 10px; line-height: 1.4; }
+.timer-check-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .mention-opt { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: var(--radius-sm); cursor: pointer; font-size: 12px; }
 .mention-opt:hover, .mention-opt.active { background: var(--accent-dim); }
 
@@ -7591,6 +7695,56 @@ body.is-fullpage #page-notfound.active {
   transition: background .1s, transform .1s;
 }
 .chat-reaction-opt:hover { background: var(--surface-2); transform: scale(1.2); }
+.chat-reaction-more { color: var(--text-muted); border-left: 1px solid var(--hairline); border-radius: 0 6px 6px 0; margin-left: 2px; }
+.chat-reaction-more:hover { transform: none; color: var(--text); }
+/* Tooltip das reações: lista de quem reagiu (tokens do tema → claro/escuro). */
+.rx-tip {
+  position: fixed; z-index: 1100; pointer-events: none;
+  max-width: 220px; padding: 6px 10px; border-radius: 8px;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--hairline); box-shadow: var(--shadow-md);
+  font-size: 12px; line-height: 1.55; white-space: pre-line;
+  opacity: 0; transform: translateY(2px); transition: opacity .12s, transform .12s;
+}
+.rx-tip.open { opacity: 1; transform: none; }
+/* Seletor completo de emojis (emoji-picker-element) — cores do app. */
+.emoji-pop {
+  position: fixed; z-index: 1000;
+  border: 1px solid var(--hairline); border-radius: 10px; overflow: hidden;
+  background: var(--surface); box-shadow: var(--shadow-md);
+  animation: flowSuggestIn 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.emoji-pop-msg { width: 352px; padding: 40px 0; text-align: center; font-size: 12px; color: var(--text-muted); }
+/* Esqueleto enquanto o seletor carrega pela 1ª vez. */
+.emoji-pop-skel { width: 352px; height: 372px; padding: 12px 10px; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; }
+.emoji-skel-search { height: 32px; border-radius: 8px; background: var(--surface-2); }
+.emoji-skel-nav { display: flex; justify-content: space-between; padding: 0 4px 8px; border-bottom: 1px solid var(--hairline); }
+.emoji-skel-nav span { width: 22px; height: 22px; border-radius: 6px; background: var(--surface-2); }
+.emoji-skel-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; padding: 2px; }
+.emoji-skel-grid span { aspect-ratio: 1; border-radius: 50%; background: var(--surface-2); animation: emojiSkel 1.1s ease-in-out infinite alternate; }
+.emoji-skel-grid span:nth-child(3n) { animation-delay: .2s; }
+.emoji-skel-grid span:nth-child(5n) { animation-delay: .4s; }
+@keyframes emojiSkel { from { opacity: .45; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .emoji-skel-grid span { animation: none; } }
+.emoji-pop emoji-picker {
+  width: 352px; height: 372px;
+  --num-columns: 8;
+  --emoji-size: 1.4rem;
+  --emoji-padding: 0.4rem;
+  --category-emoji-size: 1.05rem;
+  --indicator-height: 2px;
+  --background: var(--surface);
+  --border-color: var(--hairline);
+  --border-size: 0;
+  --indicator-color: var(--accent);
+  --outline-color: var(--accent);
+  --input-border-color: var(--hairline);
+  --input-font-color: var(--text);
+  --input-placeholder-color: var(--text-muted);
+  --category-font-color: var(--text-muted);
+  --button-hover-background: var(--surface-2);
+  --button-active-background: var(--accent-dim);
+}
 /* Dropdown "..." — ações Editar/Excluir com ícone 14 + label. */
 .chat-comment-menu-wrap { position: relative; }
 .chat-comment-menu {

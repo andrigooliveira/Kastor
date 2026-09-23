@@ -55,6 +55,9 @@ let showArchivedProjects = false;
 let showArchivedUsers = false;
 let projAvatarData = null;
 let demandAttachments = [];
+// Ids dos anexos quando o modal de edição abriu — o server aplica só o que
+// mudou a partir daqui (não apaga anexo que outra pessoa pôs no meio tempo).
+let demandAttachmentsBaseIds = null;
 let detailView = 'main'; // 'main' | 'history' | 'stages'
 // Draft da sub-view de edição de etapas: { skipped: Set<stageId>, responsibles: {stageId: userId|null} }
 let stagesEditDraft = null;
@@ -4077,6 +4080,12 @@ async function enterApp() {
   }
   maybeShowWelcomeBanner();
   await fetchNotifications();
+  // Lembretes pendentes: acende o botão da demanda aberta quando chegam.
+  loadMyReminders().then(() => {
+    const btn = document.getElementById('detail-remind-btn');
+    const rs = detailId ? _remindersFor(detailId) : [];
+    if (btn && rs.length) { btn.classList.add('on'); btn.title = 'Lembrete ' + _fmtRemindWhen(rs[0].at); }
+  });
   startNotifPoll();
   startRealtimeSync(); // SSE — substitui polling agressivo de dados
   paintIcons();
@@ -4475,8 +4484,9 @@ function renderReleaseNotes(notes) {
     const [y, m, dd] = d.split('-');
     return `${dd}/${m}/${y.slice(2)}`;
   };
+  // highlight: entrada marcada em roxo no release-notes.json.
   wrap.innerHTML = notes.map(n => `
-    <div class="release-note-card">
+    <div class="release-note-card${n.highlight ? ' is-highlight' : ''}">
       <div class="release-note-head">
         <div class="release-note-title">${esc(n.title || '')}</div>
         <div class="release-note-date">${esc(fmt(n.date))}</div>
@@ -5478,6 +5488,7 @@ function renderDashboard() {
   renderDashForecast();
   renderDashActivityFeed(mineActive);
   renderDashBlocked(mineActive);
+  renderDashTimeGaps();
   renderDashRadar(activeSquadActive);
   renderDashRecentMine(activeSquadScope);
   renderDashPriorityDonut(mineActive);
@@ -11916,6 +11927,7 @@ function openNewDemand() {
   updateRecPreview();
   $('f-project').value = '';
   demandAttachments = [];
+  demandAttachmentsBaseIds = null;
   refreshFormAttList('f-attachments-list');
   applyPriorityDropdown('f-priority');
   // Inicia o wizard no step 1 (cliente). Reset completo do estado (inclui customização).
@@ -11970,6 +11982,7 @@ function openEditDemand(id) {
   updateRecPreview();
   $('f-project').value = d.projectId || '';
   demandAttachments = (d.attachments || []).slice();
+  demandAttachmentsBaseIds = demandAttachments.map(a => a.id);
   refreshFormAttList('f-attachments-list');
   onDemandProjectChange();
   $('f-flow').value = d.flowId;
@@ -11997,6 +12010,7 @@ async function saveDemand() {
     status: $('f-status').value,
     ownerId: $('f-owner-select').dataset.value || null,
     attachments: demandAttachments.slice(),
+    ...(editingId && demandAttachmentsBaseIds ? { attachmentsBaseIds: demandAttachmentsBaseIds } : {}),
     recurrence: recEnabled ? {
       enabled: true,
       pattern: $('f-rec-pattern').value,
@@ -12199,6 +12213,7 @@ function showDetail(id) {
   draftRestoreComment();
   refreshDetailDemand();
   startDetailPoll();
+  _markDemandSeen(id);
 }
 function demandById(id) { return demands.find(x => x.id === id) || null; }
 
@@ -12634,7 +12649,8 @@ function renderDetail() {
           ${renderReactions(c)}
           <div class="chat-reaction-wrap">
             <div class="chat-reaction-picker" id="reaction-picker-${c.id}">
-              ${REACTION_EMOJIS.map(e => `<button type="button" class="chat-reaction-opt" onclick="toggleReaction('${c.id}', '${e}'); closeReactionPickers()">${e}</button>`).join('')}
+              ${reactionPickerEmojis().map(e => `<button type="button" class="chat-reaction-opt" onclick="toggleReaction('${c.id}', '${e}'); closeReactionPickers()">${e}</button>`).join('')}
+              <button type="button" class="chat-reaction-opt chat-reaction-more" title="Outro emoji" onclick="openReactionEmojiPicker('${c.id}', this, event)"><i data-lucide="plus" class="ic-xs"></i></button>
             </div>
             <button class="chat-comment-act" title="Reagir" onclick="toggleChatReactionPicker('${c.id}', event)"><i data-lucide="smile" class="ic-xs"></i></button>
           </div>
@@ -12760,14 +12776,12 @@ function renderDetail() {
             <div class="dd-section-actions">
               <input type="file" id="detail-att-file-input" multiple style="display:none" onchange="handleDetailAttachmentFiles(event)">
               <button class="dd-icon-btn" title="Anexar arquivo" onclick="$('detail-att-file-input').click()"><i data-lucide="paperclip" class="ic-sm"></i></button>
-              <input type="file" id="detail-att-img-input" accept="image/*" multiple style="display:none" onchange="handleDetailAttachmentImages(event)">
-              <button class="dd-icon-btn" title="Anexar imagem" onclick="$('detail-att-img-input').click()"><i data-lucide="image" class="ic-sm"></i></button>
               <button class="dd-icon-btn" title="Anexar link" onclick="addDetailAttachmentLink()"><i data-lucide="link" class="ic-sm"></i></button>
             </div>
           </div>
           ${(d.attachments || []).length
             ? `<div class="demand-att-list" id="detail-attachments-list">${renderDemandAttList(d.attachments || [], true)}</div>`
-            : `<div class="demand-att-list" id="detail-attachments-list"><div class="dd-empty">Nenhum arquivo anexado.</div></div>`}
+            : `<div class="demand-att-list" id="detail-attachments-list"><div class="dd-empty">Nenhum arquivo anexado. Arraste arquivos ou cole (Ctrl+V) aqui.</div></div>`}
         </div>
 
         <!-- Section: Apontamentos -->
@@ -12794,6 +12808,7 @@ function renderDetail() {
           </div>
           <div class="detail-actions-right">
             ${renderWatcherStack(d)}
+            ${(() => { const rs = _remindersFor(d.id); return `<button class="detail-icon-btn ${rs.length ? 'on' : ''}" id="detail-remind-btn" title="${rs.length ? esc('Lembrete ' + _fmtRemindWhen(rs[0].at)) : 'Lembrar depois'}" onclick="openRemindMenu(this)"><i data-lucide="alarm-clock-plus" class="ic-sm"></i></button>`; })()}
             <button class="detail-icon-btn ${watching ? 'on' : ''}" title="${watching ? 'Observando · clique pra parar' : 'Observar esta demanda'}" onclick="toggleWatchCurrent()"><i data-lucide="eye" class="ic-sm"></i></button>
             <button class="detail-icon-btn danger" title="Excluir demanda" onclick="confirmDeleteCurrentDemand()"><i data-lucide="trash-2" class="ic-sm"></i></button>
           </div>
@@ -12833,11 +12848,12 @@ function renderDetail() {
                 <div class="chat-compose-input comment-input comment-input-ce is-empty" id="comment-input"
                      contenteditable="true" role="textbox" aria-multiline="true"
                      data-placeholder="Adicione um comentário"
-                     onfocus="document.getElementById('chat-compose').classList.add('is-active')"
-                     oninput="mentionWatchCE(this); draftSaveCommentCE(this); refreshToolbarState(); syncCommentEmptyState(this)"
-                     onkeydown="mentionKeys(event)"
-                     onkeyup="refreshToolbarState()"
-                     onmouseup="refreshToolbarState()"></div>
+                     onfocus="document.getElementById('chat-compose').classList.add('is-active'); ensureCommentPhrases()"
+                     onblur="hideCommentGhost()"
+                     oninput="mentionWatchCE(this); quickReplyWatch(this); draftSaveCommentCE(this); refreshToolbarState(); syncCommentEmptyState(this); _ghostDismissed = false; updateCommentGhost(this)"
+                     onkeydown="if (!commentGhostKeys(event) && !quickReplyKeys(event)) mentionKeys(event)"
+                     onkeyup="refreshToolbarState(); if (/^(Arrow|Home|End)/.test(event.key)) updateCommentGhost(this)"
+                     onmouseup="refreshToolbarState(); updateCommentGhost(this)"></div>
                 ${editorResizeGrip('comment-input')}
                 <div class="chat-compose-foot">
                   <div class="chat-compose-foot-left">
@@ -12845,6 +12861,7 @@ function renderDetail() {
                     <button class="chat-compose-icon" onclick="$('comment-file-input').click()" title="Anexar arquivo"><i data-lucide="paperclip" class="ic-xs"></i></button>
                     <input type="file" id="comment-img-input-2" accept="image/*" multiple style="display:none" onchange="handleCommentImages(event)">
                     <button class="chat-compose-icon" onclick="$('comment-img-input-2').click()" title="Imagem"><i data-lucide="image" class="ic-xs"></i></button>
+                    <button class="chat-compose-icon" onmousedown="event.preventDefault()" onclick="toggleQuickReplies(event)" title="Respostas prontas (ou digite /)"><i data-lucide="message-square-text" class="ic-xs"></i></button>
                   </div>
                   <div class="chat-compose-foot-right">
                     <button class="btn btn-ghost btn-sm" onclick="cancelCommentCompose()">Cancelar</button>
@@ -12852,6 +12869,7 @@ function renderDetail() {
                   </div>
                 </div>
                 <div class="mention-pop" id="mention-pop"></div>
+                <div class="qr-pop" id="qr-pop" hidden></div>
                 <div class="comment-pending-files" id="comment-pending-files"></div>
               </div>
             </div>
@@ -12942,6 +12960,7 @@ function renderDetail() {
   // recria o #dd-presence entre um heartbeat e o próximo (janela de 15s).
   const cachedPresence = _demandPresenceCache.get(detailId);
   if (cachedPresence) renderDetailPresence(cachedPresence);
+  _applyNewSinceMarks();
 }
 
 /* Owner picker — dropdown customizado com avatar do responsável atual */
@@ -16020,7 +16039,7 @@ function refreshFormAttList(listId) {
   $(listId).innerHTML = renderDemandAttList(demandAttachments, false);
   paintIcons();
 }
-function readDemandFiles(files, isImage, listId) {
+function readDemandFiles(files, listId) {
   [...files].forEach(file => {
     if (file.size > 150 * 1024 * 1024) { toast('Arquivo "' + file.name + '" excede 150 MB.', 'error'); return; }
     const reader = new FileReader();
@@ -16029,25 +16048,12 @@ function readDemandFiles(files, isImage, listId) {
         demandAttachments.push({ id: genAttId(), kind: 'file', name: file.name, type, data });
         refreshFormAttList(listId);
       };
-      if (isImage) {
-        const img = new Image();
-        img.onload = () => {
-          const max = 1200;
-          let w = img.width, h = img.height;
-          if (w > max || h > max) { const r = Math.min(max / w, max / h); w = Math.round(w * r); h = Math.round(h * r); }
-          const canvas = document.createElement('canvas');
-          canvas.width = w; canvas.height = h;
-          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-          finish(canvas.toDataURL('image/jpeg', 0.85), 'image/jpeg');
-        };
-        img.src = e.target.result;
-      } else finish(e.target.result, file.type);
+      finish(e.target.result, file.type);
     };
     reader.readAsDataURL(file);
   });
 }
-function handleDemandAttachmentFiles(ev, listId) { readDemandFiles(ev.target.files, false, listId); ev.target.value = ''; }
-function handleDemandAttachmentImages(ev, listId) { readDemandFiles(ev.target.files, true, listId); ev.target.value = ''; }
+function handleDemandAttachmentFiles(ev, listId) { readDemandFiles(ev.target.files, listId); ev.target.value = ''; }
 async function addDemandAttachmentLink(listId) {
   const url = await showPrompt({ title: 'Adicionar link', message: 'Cole o link abaixo:', placeholder: 'https://...' });
   if (!url) return;
@@ -16081,8 +16087,7 @@ async function handleDetailAttachmentFiles(ev) {
       const d = demandById(detailId);
       if (!d) return;
       const newAtt = { id: genAttId(), kind: 'file', name: saved.name, type: saved.type, data: saved.url };
-      const newAtts = (d.attachments || []).concat(newAtt);
-      const upd = await api('/demands/' + d.id, 'PUT', { attachments: newAtts });
+      const upd = await api('/demands/' + d.id + '/attachments', 'POST', { attachment: newAtt });
       patchDemand(upd);
       addedCount++;
     });
@@ -16090,65 +16095,13 @@ async function handleDetailAttachmentFiles(ev) {
   renderDetail();
   if (addedCount) toast(addedCount === 1 ? 'Anexo adicionado!' : `${addedCount} anexos adicionados!`);
 }
-async function handleDetailAttachmentImages(ev) {
-  const files = [...ev.target.files];
-  ev.target.value = '';
-  if (!files.length) return;
-  let addedCount = 0;
-  for (const file of files) {
-    if (file.size > 150 * 1024 * 1024) { toast('Arquivo "' + file.name + '" excede 150 MB.', 'error'); continue; }
-    // Resize antes do upload (mantém o comportamento do fluxo antigo: 1200px @ 0.85)
-    const resized = await _resizeImageFile(file, 1200, 0.85).catch(() => file);
-    await _uploadFileWithPlaceholder(resized, 'detail-attachments-list', async (saved) => {
-      const d = demandById(detailId);
-      if (!d) return;
-      const newAtt = { id: genAttId(), kind: 'file', name: saved.name, type: saved.type, data: saved.url };
-      const newAtts = (d.attachments || []).concat(newAtt);
-      const upd = await api('/demands/' + d.id, 'PUT', { attachments: newAtts });
-      patchDemand(upd);
-      addedCount++;
-    });
-  }
-  renderDetail();
-  if (addedCount) toast(addedCount === 1 ? 'Imagem adicionada!' : `${addedCount} imagens adicionadas!`);
-}
-/* Redimensiona uma imagem (File → File JPEG). Retorna o próprio arquivo se
-   já couber no `max` — evita re-encode desnecessário. */
-function _resizeImageFile(file, max, quality) {
-  return new Promise((resolve, reject) => {
-    if (!file.type || !file.type.startsWith('image/')) return resolve(file);
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        if (img.width <= max && img.height <= max && /^image\/(jpeg|jpg)$/i.test(file.type)) {
-          return resolve(file);
-        }
-        const r = Math.min(max / img.width, max / img.height, 1);
-        const w = Math.round(img.width * r), h = Math.round(img.height * r);
-        const canvas = document.createElement('canvas');
-        canvas.width = w; canvas.height = h;
-        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        canvas.toBlob((blob) => {
-          if (!blob) return reject(new Error('Falha ao gerar imagem'));
-          const outName = file.name.replace(/\.[a-z0-9]{1,10}$/i, '') + '.jpg';
-          resolve(new File([blob], outName, { type: 'image/jpeg' }));
-        }, 'image/jpeg', quality);
-      };
-      img.onerror = () => reject(new Error('Imagem inválida'));
-      img.src = e.target.result;
-    };
-    reader.onerror = () => reject(reader.error || new Error('Falha na leitura'));
-    reader.readAsDataURL(file);
-  });
-}
 async function addDetailAttachmentLink() {
   const d = demandById(detailId); if (!d) return;
   const url = await showPrompt({ title: 'Adicionar link', message: 'Cole o link abaixo:', placeholder: 'https://...' });
   if (!url) return;
-  const newAtts = (d.attachments || []).concat({ id: genAttId(), kind: 'link', name: url.trim(), url: normalizeUrl(url) });
+  const newAtt = { id: genAttId(), kind: 'link', name: url.trim(), url: normalizeUrl(url) };
   try {
-    const upd = await api('/demands/' + d.id, 'PUT', { attachments: newAtts });
+    const upd = await api('/demands/' + d.id + '/attachments', 'POST', { attachment: newAtt });
     patchDemand(upd);
     toast('Link adicionado!');
     renderDetail();
@@ -16159,7 +16112,7 @@ async function removeDetailAttachment(id) {
   const ok = await showConfirm({ title: 'Remover anexo', message: 'Tem certeza que deseja remover este anexo?', okLabel: 'Remover', danger: true });
   if (!ok) return;
   try {
-    const upd = await api('/demands/' + d.id, 'PUT', { attachments: (d.attachments || []).filter(a => a.id !== id) });
+    const upd = await api('/demands/' + d.id + '/attachments/' + encodeURIComponent(id), 'DELETE');
     patchDemand(upd);
     toast('Anexo removido.', 'warn');
     renderDetail();
@@ -16343,12 +16296,262 @@ async function _moveStageNow(demandId, dir) {
   try {
     const upd = await api('/demands/' + d.id, 'PUT', { status: next.id });
     patchDemand(upd);
-    toast(dir > 0 ? 'Etapa avançada: ' + next.label : 'Etapa retrocedida: ' + next.label);
+    const nextMine = dir > 0 ? _nextMyDemand(d.id) : null;
+    toast(dir > 0 ? 'Etapa avançada: ' + next.label : 'Etapa retrocedida: ' + next.label, 'success',
+      nextMine ? { label: 'Próxima demanda', fn: () => showDetail(nextMine.id) } : null);
     if (dir > 0) _celebrateIfCompleted(next, window.event);
     renderDetail();
     renderCurrent();
     fetchNotifications();
   } catch (e) { toast(e.message, 'error'); }
+}
+/* ── LEMBRAR DEPOIS ──
+   Lembretes pessoais por demanda (server: /api/me/reminders). Na hora marcada
+   chegam no sino e, conforme as preferências, por e-mail e DM do Discord. */
+let _myReminders = [];
+async function loadMyReminders() {
+  try { _myReminders = await api('/me/reminders'); } catch { _myReminders = []; }
+  return _myReminders;
+}
+function _remindersFor(demandId) {
+  return (_myReminders || []).filter(r => r.demandId === demandId).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+}
+function _fmtRemindWhen(iso) {
+  const d = new Date(iso);
+  const pad = n => String(n).padStart(2, '0');
+  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const day0 = new Date(); day0.setHours(0, 0, 0, 0);
+  const diff = Math.round((new Date(d).setHours(0, 0, 0, 0) - day0) / 86400000);
+  if (diff === 0) return `hoje às ${hm}`;
+  if (diff === 1) return `amanhã às ${hm}`;
+  const wd = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'][d.getDay()];
+  return `${wd}, ${pad(d.getDate())}/${pad(d.getMonth() + 1)} às ${hm}`;
+}
+function _remindPresetAt(kind) {
+  const d = new Date();
+  if (kind === 'in1h') return new Date(d.getTime() + 60 * 60 * 1000);
+  if (kind === 'in3h') return new Date(d.getTime() + 3 * 60 * 60 * 1000);
+  if (kind === 'tomorrow9') { d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d; }
+  if (kind === 'monday9') { d.setDate(d.getDate() + (((8 - d.getDay()) % 7) || 7)); d.setHours(9, 0, 0, 0); return d; }
+  return null;
+}
+function openRemindMenu(anchor) {
+  _closeRemindMenu();
+  const d = demandById(detailId);
+  if (!d || !anchor) return;
+  const existing = _remindersFor(d.id);
+  const preset = (kind, icon, label) => `<button type="button" class="stages-edit-menu-item" role="menuitem" onclick="createReminder('${kind}')"><i data-lucide="${icon}" class="ic-menu"></i> ${label} <span class="remind-when">${_fmtRemindWhen(_remindPresetAt(kind).toISOString())}</span></button>`;
+  const menu = document.createElement('div');
+  menu.className = 'advance-menu remind-menu';
+  menu.id = 'remind-menu';
+  menu.setAttribute('role', 'menu');
+  menu.innerHTML = `
+    <div class="advance-menu-note">Lembrar desta demanda no sino${me?.email || me?.discordId ? ', e-mail e Discord' : ''}</div>
+    ${existing.map(r => `
+      <div class="remind-row">
+        <i data-lucide="alarm-clock" class="ic-menu"></i>
+        <span class="remind-row-text"><strong>${esc(_fmtRemindWhen(r.at))}</strong>${r.note ? ' · ' + esc(r.note) : ''}</span>
+        <button type="button" class="qr-del remind-cancel" title="Cancelar lembrete" onclick="cancelReminder('${esc(r.id)}')"><i data-lucide="x" class="ic-xs"></i></button>
+      </div>`).join('')}
+    <input type="text" class="form-control remind-note" id="remind-note" maxlength="300" placeholder="Nota (opcional)">
+    ${preset('in1h', 'clock-1', 'Em 1 hora')}
+    ${preset('in3h', 'clock-3', 'Em 3 horas')}
+    ${preset('tomorrow9', 'sunrise', 'Amanhã cedo')}
+    ${preset('monday9', 'calendar', 'Segunda cedo')}
+    <div class="remind-custom">
+      <input type="date" class="form-control" id="remind-custom-date" data-fdp="native">
+      <input type="time" class="form-control" id="remind-custom-time" data-fdp="native" value="09:00">
+      <button type="button" class="btn btn-confirm btn-sm" onclick="createReminder('custom')">Agendar</button>
+    </div>`;
+  document.body.appendChild(menu);
+  paintIcons();
+  const r = anchor.getBoundingClientRect();
+  menu.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
+  menu.style.top = (r.bottom + 6) + 'px';
+  menu.querySelector('#remind-note')?.focus();
+  setTimeout(() => {
+    document.addEventListener('mousedown', _remindMenuOutside, true);
+    document.addEventListener('keydown', _remindMenuKey, true);
+    window.addEventListener('resize', _closeRemindMenu);
+  });
+}
+function _remindMenuOutside(e) { if (!e.target.closest('#remind-menu')) _closeRemindMenu(); }
+function _remindMenuKey(e) { if (e.key === 'Escape') { e.stopPropagation(); _closeRemindMenu(); } }
+function _closeRemindMenu() {
+  document.getElementById('remind-menu')?.remove();
+  document.removeEventListener('mousedown', _remindMenuOutside, true);
+  document.removeEventListener('keydown', _remindMenuKey, true);
+  window.removeEventListener('resize', _closeRemindMenu);
+}
+async function createReminder(kind) {
+  const d = demandById(detailId); if (!d) return;
+  let at = _remindPresetAt(kind);
+  if (kind === 'custom') {
+    const day = $('remind-custom-date')?.value, time = $('remind-custom-time')?.value || '09:00';
+    if (!day) { toast('Escolha o dia do lembrete.', 'warn'); return; }
+    at = new Date(`${day}T${time}`);
+  }
+  if (!at || isNaN(at)) return;
+  if (at.getTime() < Date.now()) { toast('Escolha um horário no futuro.', 'warn'); return; }
+  const note = ($('remind-note')?.value || '').trim();
+  try {
+    const r = await api('/demands/' + d.id + '/reminders', 'POST', { at: at.toISOString(), note });
+    _myReminders.push(r);
+    _closeRemindMenu();
+    toast(`Lembrete agendado para ${_fmtRemindWhen(r.at)}.`);
+    renderDetail();
+  } catch (e) { toast(e.message, 'error'); }
+}
+async function cancelReminder(id) {
+  try {
+    await api('/me/reminders/' + encodeURIComponent(id), 'DELETE');
+    _myReminders = _myReminders.filter(r => r.id !== id);
+    _closeRemindMenu();
+    toast('Lembrete cancelado.', 'warn');
+    renderDetail();
+  } catch (e) { toast(e.message, 'error'); }
+}
+// Lembrete que já disparou sai da lista local quando a notificação chega.
+setInterval(() => {
+  if (!_myReminders.length) return;
+  const before = _myReminders.length;
+  _myReminders = _myReminders.filter(r => Date.parse(r.at) > Date.now());
+  if (_myReminders.length !== before && currentPage === 'demand-detail') {
+    const btn = document.getElementById('detail-remind-btn');
+    if (btn && !_remindersFor(detailId).length) { btn.classList.remove('on'); btn.title = 'Lembrar depois'; }
+  }
+}, 30000);
+
+/* ── NOVIDADES DESDE A ÚLTIMA VISITA ──
+   Ao abrir a demanda o server devolve a visita anterior; comentários,
+   anexos e mudanças de etapa feitos por OUTRAS pessoas depois dela ganham
+   destaque + um resumo no topo. Primeira visita (sem anterior) não marca nada. */
+let _detailPrevSeen = null; // { id, prev, dismissed }
+async function _markDemandSeen(id) {
+  try {
+    const { prev } = await api('/demands/' + id + '/seen', 'POST');
+    if (detailId !== id) return;
+    _detailPrevSeen = { id, prev, dismissed: false };
+    _applyNewSinceMarks();
+  } catch {}
+}
+function _newSinceData(d, prevIso) {
+  const prev = Date.parse(prevIso);
+  const after = iso => (Date.parse(iso) || 0) > prev;
+  const comments = (d.comments || []).filter(c => c.userId !== me.id && after(c.createdAt));
+  const hist = (d.history || []).filter(h => after(h.at));
+  // Anexo novo = adicionado depois da visita e não por mim (o anexo não guarda
+  // o autor; o histórico guarda — "attachment_added" com o mesmo nome).
+  const mineAdded = new Set(hist.filter(h => h.action === 'attachment_added' && h.userId === me.id).map(h => h.details?.name));
+  const attachments = (d.attachments || []).filter(a => after(a.addedAt) && !mineAdded.has(a.name));
+  const stages = hist.filter(h => h.action === 'stage_changed' && h.userId !== me.id);
+  return { comments, attachments, stages };
+}
+function _applyNewSinceMarks() {
+  document.getElementById('dd-news')?.remove();
+  const s = _detailPrevSeen;
+  const d = demandById(detailId);
+  if (!s || !d || s.id !== d.id || !s.prev) return;
+  const n = _newSinceData(d, s.prev);
+  n.comments.forEach(c => document.getElementById('comment-' + c.id)?.classList.add('is-new'));
+  n.attachments.forEach(a => document.querySelector(`.att-card[data-id="${CSS.escape(a.id)}"]`)?.classList.add('is-new'));
+  if (s.dismissed || (!n.comments.length && !n.attachments.length && !n.stages.length)) return;
+  const flow = flowById(d.flowId);
+  const stageLabel = id => (d.stageLabels && d.stageLabels[id]) || flow?.stages.find(x => x.id === id)?.label || 'etapa';
+  const parts = [];
+  const lastStage = n.stages[n.stages.length - 1];
+  if (lastStage) parts.push(`etapa foi para <strong>${esc(stageLabel(lastStage.details?.toId))}</strong> por ${esc(userById(lastStage.userId)?.name || 'alguém')}`);
+  if (n.comments.length) parts.push(`${n.comments.length} comentário${n.comments.length > 1 ? 's' : ''} novo${n.comments.length > 1 ? 's' : ''}`);
+  if (n.attachments.length) parts.push(`${n.attachments.length} anexo${n.attachments.length > 1 ? 's' : ''} novo${n.attachments.length > 1 ? 's' : ''}`);
+  const ribbon = document.querySelector('#page-demand-detail .dd-ribbon');
+  if (!ribbon) return;
+  const box = document.createElement('div');
+  box.id = 'dd-news';
+  box.className = 'dd-news';
+  box.innerHTML = `<i data-lucide="sparkles" class="ic-sm"></i>
+    <span class="dd-news-text">Desde sua última visita (${esc(fmtRelativeTime(s.prev))}): ${parts.join(' · ')}</span>
+    <button type="button" class="qr-del dd-news-close" title="Dispensar" onclick="_dismissNewSince()"><i data-lucide="x" class="ic-xs"></i></button>`;
+  ribbon.insertAdjacentElement('afterend', box);
+  paintIcons(box);
+}
+function _dismissNewSince() {
+  if (_detailPrevSeen) _detailPrevSeen.dismissed = true;
+  document.getElementById('dd-news')?.remove();
+}
+// Comentou ou reagiu: a pessoa já viu o que tinha de novo — some tudo.
+function _clearNewSince() {
+  if (_detailPrevSeen) _detailPrevSeen.prev = null;
+  document.getElementById('dd-news')?.remove();
+  document.querySelectorAll('#page-demand-detail .is-new').forEach(el => el.classList.remove('is-new'));
+}
+
+/* ── SEM APONTAMENTO (Início) ──
+   Etapas que a pessoa entregou (avançou) nos últimos 30 dias sem apontar
+   tempo nelas (server: /api/me/time-gaps). "Apontar" abre a demanda com o
+   Registrar tempo já na etapa entregue; "×" dispensa ("não precisava"). */
+let _timeGapsCache = null; // { at, list }
+async function renderDashTimeGaps() {
+  const sec = document.getElementById('dash-section-timegaps');
+  const el = document.getElementById('dash-timegaps');
+  if (!sec || !el) return;
+  if (!_timeGapsCache || Date.now() - _timeGapsCache.at > 60000) {
+    try { _timeGapsCache = { at: Date.now(), list: await api('/me/time-gaps') }; }
+    catch { return; }
+  }
+  const list = _timeGapsCache.list || [];
+  sec.hidden = !list.length;
+  const count = document.getElementById('dash-timegaps-count');
+  if (count) { count.hidden = !list.length; count.textContent = String(list.length); }
+  if (!list.length) { el.innerHTML = ''; return; }
+  _dashLists.timegaps = list;
+  const MAX = 4;
+  el.innerHTML = list.slice(0, MAX).map(_dashTimeGapRowHtml).join('') + (list.length > MAX
+    ? `<a href="#" class="dash-more-link" onclick="event.preventDefault(); openDashTimeGapsAll()">Ver todas (${list.length})</a>` : '');
+  paintIcons(el);
+}
+function _dashTimeGapRowHtml(g) {
+  return `<div class="dash-blocked-row dash-gap-row" onclick="apontarTimeGap('${esc(g.key)}')">
+    <div class="dash-gap-icon"><i data-lucide="clock-alert" class="ic-sm"></i></div>
+    <div class="dash-blocked-body">
+      <div class="dash-blocked-name">${esc(g.demandName)}</div>
+      <div class="dash-blocked-meta">${esc(g.stageLabel)} · entregue ${esc(fmtRelativeTime(g.deliveredAt))}${g.client ? ' · ' + esc(g.client) : ''}</div>
+    </div>
+    <button type="button" class="btn btn-ghost btn-sm dash-gap-btn" onclick="event.stopPropagation(); apontarTimeGap('${esc(g.key)}')">Apontar</button>
+    <button type="button" class="qr-del dash-gap-dismiss" title="Não precisa apontar" onclick="event.stopPropagation(); dismissTimeGap('${esc(g.key)}')"><i data-lucide="x" class="ic-xs"></i></button>
+  </div>`;
+}
+function openDashTimeGapsAll() {
+  openDashMore('Sem apontamento', (_dashLists.timegaps || []).map(_dashTimeGapRowHtml).join(''));
+}
+function apontarTimeGap(key) {
+  const g = (_timeGapsCache?.list || []).find(x => x.key === key);
+  if (!g) return;
+  closeModal('dash-more-modal');
+  showDetail(g.demandId);
+  setTimeout(() => {
+    if (detailId === g.demandId) openRegisterTimeModal({ forStage: { demandId: g.demandId, id: g.stageId, label: g.stageLabel } });
+  }, 400);
+}
+async function dismissTimeGap(key) {
+  try {
+    await api('/me/time-gaps/dismiss', 'POST', { key });
+    if (_timeGapsCache) _timeGapsCache.list = _timeGapsCache.list.filter(g => g.key !== key);
+    closeModal('dash-more-modal');
+    renderDashTimeGaps();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+/* Próxima da fila da pessoa (mesma ordem padrão de Minhas Demandas: prazo
+   efetivo, depois prioridade). Oferecida no toast depois de avançar etapa. */
+function _nextMyDemand(excludeId) {
+  if (typeof myDemands !== 'function') return null;
+  return myDemands()
+    .filter(x => x.id !== excludeId && !isDone(x))
+    .sort((a, b) => {
+      const da = effDue(a) || '9999', db = effDue(b) || '9999';
+      if (da !== db) return da < db ? -1 : 1;
+      return (a.priority || 3) - (b.priority || 3);
+    })[0] || null;
 }
 /* ── CRONÔMETRO DE APONTAMENTO ──
    Estado por demanda. Persiste a hora de início e o acumulado mesmo que o modal
@@ -16381,6 +16584,7 @@ function restoreActiveTimer() {
     timerState[parsed.demandId] = parsed.state;
     if (parsed.state.running) ensureTimerInterval();
     renderTopbarTimer();
+    setTimeout(checkForgottenTimer, 1500);
   } catch {}
 }
 function _topbarTimerElapsed() {
@@ -16421,6 +16625,7 @@ function toggleTopbarTimer() {
     t.accumulatedMs += Date.now() - t.beginAt;
     t.running = false;
     t.beginAt = null;
+    hideTimerCheck();
   } else {
     t.running = true;
     t.beginAt = Date.now();
@@ -16450,6 +16655,16 @@ async function apontarFromTopbar() {
   if (ms < 60000) { toast('Não é possível apontar menos de 1 minuto.', 'warn'); return; }
   const hours = Math.round((ms / 3600000) * 100) / 100;
   if (!(hours > 0)) { toast('Não é possível apontar menos de 1 minuto.', 'warn'); return; }
+  const crossedDay = t.startedAt && new Date(t.startedAt).toDateString() !== new Date().toDateString();
+  if (ms >= TIMER_LONG_RUN_MS || crossedDay) {
+    const ok = await showConfirm({
+      title: `Apontar ${_fmtDurationShort(ms)}?`,
+      message: `O timer de <strong>${esc(d.name)}</strong> ficou ligado por ${_fmtDurationShort(ms)}${crossedDay ? ', começando em outro dia' : ''}. Se ele ficou ligado sem querer, cancele e use <em>Registrar tempo</em> na demanda pra ajustar.`,
+      okLabel: 'Apontar mesmo assim',
+      kind: 'warn'
+    });
+    if (!ok) return;
+  }
   // Formata como `YYYY-MM-DDTHH:mm` no fuso LOCAL — toISOString() converte pra
   // UTC e distorce o horário exibido depois (usuário em BRT via 13h em vez de 10h).
   const toLocalMinute = date => {
@@ -16523,6 +16738,7 @@ function refreshTimerUI() {
   paintIcons();
 }
 function tickTimer() {
+  if (Date.now() - _timerCheckAt > 30000) { _timerCheckAt = Date.now(); checkForgottenTimer(); }
   // Atualiza o clock do modal (se aberto na demanda ativa) + o clock do topbar.
   if (detailId) {
     const t = timerState[detailId];
@@ -16541,6 +16757,75 @@ function ensureTimerInterval() {
   if (timerInterval) return;
   timerInterval = setInterval(tickTimer, 1000);
 }
+/* ── TIMER ESQUECIDO ──
+   Timer rodando direto há TIMER_LONG_RUN_MS (ou que virou o dia) abre um
+   cartão discreto perguntando se a pessoa ainda está nisso. "Continuar" adia a
+   próxima pergunta; "Pausar e revisar" pausa e abre o Registrar tempo já
+   preenchido pra ajustar o horário antes de apontar. Vale também ao reabrir o
+   app com o timer ligado desde ontem (o estado fica no localStorage). */
+const TIMER_LONG_RUN_MS = 4 * 60 * 60 * 1000;
+let _timerCheckAt = 0;
+function _fmtDurationShort(ms) {
+  const min = Math.floor(ms / 60000);
+  const h = Math.floor(min / 60), m = min % 60;
+  return h ? `${h}h${m ? ' ' + m + 'min' : ''}` : `${m}min`;
+}
+function checkForgottenTimer() {
+  const t = activeTimerId ? timerState[activeTimerId] : null;
+  if (!t || !t.running || !t.beginAt) { hideTimerCheck(); return; }
+  const now = Date.now();
+  const crossedDay = new Date(t.beginAt).toDateString() !== new Date(now).toDateString();
+  const askAt = Math.max(t.beginAt + TIMER_LONG_RUN_MS, t.checkAfter || 0);
+  const dayPending = crossedDay && t.checkedDay !== new Date(now).toDateString();
+  if (now < askAt && !dayPending) return;
+  showTimerCheck(timerElapsedMs(t));
+}
+function showTimerCheck(elapsedMs) {
+  const d = demandById(activeTimerId);
+  let card = document.getElementById('timer-check');
+  if (!card) {
+    card = document.createElement('div');
+    card.id = 'timer-check';
+    card.className = 'timer-check';
+    card.setAttribute('role', 'alertdialog');
+    document.body.appendChild(card);
+  }
+  card.innerHTML = `
+    <div class="timer-check-title"><i data-lucide="alarm-clock" class="ic-sm"></i> Timer ligado há ${_fmtDurationShort(elapsedMs)}</div>
+    <div class="timer-check-sub">Em “${esc(d?.name || 'demanda')}”. Você ainda está trabalhando nisso?</div>
+    <div class="timer-check-actions">
+      <button type="button" class="btn btn-ghost btn-sm" onclick="timerCheckReview()">Pausar e revisar</button>
+      <button type="button" class="btn btn-confirm btn-sm" onclick="timerCheckContinue()">Sim, continuar</button>
+    </div>`;
+  paintIcons();
+}
+function hideTimerCheck() { document.getElementById('timer-check')?.remove(); }
+function timerCheckContinue() {
+  const t = activeTimerId ? timerState[activeTimerId] : null;
+  if (t) {
+    t.checkAfter = Date.now() + TIMER_LONG_RUN_MS;
+    t.checkedDay = new Date().toDateString();
+    saveActiveTimer();
+  }
+  hideTimerCheck();
+}
+function timerCheckReview() {
+  const id = activeTimerId;
+  const t = id ? timerState[id] : null;
+  hideTimerCheck();
+  if (!t) return;
+  if (t.running) {
+    t.accumulatedMs += Date.now() - t.beginAt;
+    t.running = false;
+    t.beginAt = null;
+    saveActiveTimer();
+    renderTopbarTimer();
+  }
+  if (!demandById(id)) return;
+  if (detailId !== id) showDetail(id);
+  // Espera o detalhe montar: o Registrar tempo lê o timer da demanda aberta.
+  setTimeout(() => { if (detailId === id) openRegisterTimeModal(); }, 400);
+}
 function toggleTimer() {
   const d = demandById(detailId); if (!d) return;
   const t = getTimer(detailId);
@@ -16553,6 +16838,7 @@ function toggleTimer() {
     // novos campos (data + hora separadas + horas/minutos).
     const modalOpen = document.getElementById('time-modal')?.classList.contains('open');
     if (modalOpen && typeof _prefillTimeModal === 'function') _prefillTimeModal();
+    hideTimerCheck();
     toast('Cronômetro pausado · ' + formatTimerClock(t.accumulatedMs));
   } else {
     // Iniciar/retomar. Só 1 timer rodando por vez — pausa outros ativos primeiro.
@@ -16577,6 +16863,7 @@ function toggleTimer() {
 }
 function resetTimer(demandId) {
   if (timerState[demandId]) delete timerState[demandId];
+  if (demandId === activeTimerId) hideTimerCheck();
   if (activeTimerId === demandId) { activeTimerId = null; saveActiveTimer(); renderTopbarTimer(); }
 }
 
@@ -16598,12 +16885,19 @@ function toIsoDateTime(v) {
 /* Abre o modal de "Registrar tempo" — layout novo: Início/Término em
    colunas com data+hora separadas, Horas/Minutos como inputs, chips de
    duração rápida (2h/1h/45m/30m/15m). Pre-popula com timer atual se houver. */
+// Etapa específica do apontamento (vindo de "Sem apontamento" no Início);
+// null = etapa atual da demanda, como sempre.
+let _timeForStage = null;
 function openRegisterTimeModal(opts) {
   // Aberto pelo botão "Registrar tempo" normal: descarta avanço pendente.
   if (!opts?.advanceAfter) _pendingAdvance = null;
+  _timeForStage = opts?.forStage || null;
   const hint = $('time-advance-hint');
   const pending = _pendingAdvance && _pendingAdvance.demandId === detailId;
-  if (hint) {
+  if (hint && _timeForStage) {
+    hint.hidden = false;
+    hint.innerHTML = `Apontamento na etapa <strong>${esc(_timeForStage.label)}</strong>, que você já entregou.`;
+  } else if (hint) {
     const d = pending ? demandById(detailId) : null;
     const flow = d ? flowById(d.flowId) : null;
     const active = flow ? activeStagesOf(d, flow) : [];
@@ -16723,9 +17017,12 @@ async function addTimeEntry() {
   const start = startDt ? startDt.toISOString() : null;
   const end   = endDt   ? endDt.toISOString()   : null;
   try {
-    const upd = await api('/demands/' + d.id + '/time', 'POST', { hours, start, end });
+    const forStage = _timeForStage && _timeForStage.demandId === d.id ? _timeForStage : null;
+    const upd = await api('/demands/' + d.id + '/time', 'POST', { hours, start, end, ...(forStage ? { stageId: forStage.id } : {}) });
     patchDemand(upd);
-    resetTimer(d.id);
+    _timeForStage = null;
+    _timeGapsCache = null; // o apontamento pode ter fechado uma pendência do Início
+    if (!forStage) resetTimer(d.id);
     toast('Horas apontadas!');
     closeModal('time-modal');
     const p = _pendingAdvance;
@@ -16970,7 +17267,7 @@ function toggleChatReactionPicker(commentId, ev) {
   const wasOpen = p?.classList.contains('open');
   closeReactionPickers();
   closeCommentMenus();
-  if (p && !wasOpen) p.classList.add('open');
+  if (p && !wasOpen) { p.classList.add('open'); warmEmojiPicker(); }
 }
 function closeReactionPickers() {
   document.querySelectorAll('.chat-reaction-picker.open').forEach(p => p.classList.remove('open'));
@@ -17033,6 +17330,9 @@ async function sendComment() {
       attachments: pendingAttachments
     });
     pendingAttachments = [];
+    hideCommentGhost();
+    ensureCommentPhrases(true);
+    _clearNewSince();
     draftClearComment(detailId); // rascunho salvou seu papel — pode sair
     // Limpa o compose ANTES de renderDetail — sem isso, o snapshot que roda no topo
     // do renderDetail captura o texto já enviado e o draftRestoreComment repõe.
@@ -17197,6 +17497,261 @@ function refreshToolbarState() {
    funcionam — draftRestoreComment aceita ambos os formatos. */
 const _DRAFT_KEY = id => 'kastor-draft-comment-' + id;
 let _draftSaveTimer = null;
+/* ── RESPOSTAS PRONTAS ──
+   Textos curtos por usuário (salvos em me.quickReplies no server; null = usa
+   as sugestões padrão). Abre pelo botão do compositor ou digitando "/" no
+   começo do comentário — aí filtra pelo que vem depois da barra e Enter usa
+   a primeira. */
+const QUICK_REPLY_DEFAULTS = [
+  'Enviado para aprovação do cliente.',
+  'Ajustes aplicados, pode conferir.',
+  'Aguardando material do cliente para seguir.',
+  'Arquivos finais anexados.',
+];
+let _qrFilter = null; // string quando aberto via "/", null quando pelo botão
+function quickRepliesOf() { return Array.isArray(me?.quickReplies) ? me.quickReplies : QUICK_REPLY_DEFAULTS; }
+function _qrVisible() {
+  const list = quickRepliesOf();
+  const f = _qrFilter ? norm(_qrFilter) : '';
+  return list.map((text, i) => ({ text, i })).filter(x => !f || norm(x.text).includes(f));
+}
+// Frases aprendidas que ainda não estão nas respostas salvas (mesmo filtro).
+function _qrLearnedVisible() {
+  const saved = new Set(quickRepliesOf().map(t => norm(t).replace(/[\s.!?]+$/, '')));
+  const f = _qrFilter ? norm(_qrFilter) : '';
+  return (_commentPhrases || [])
+    .map((p, i) => ({ ...p, i, label: p.text.replace(/\{link\}/g, '[link]') }))
+    .filter(p => !saved.has(norm(_phraseCompletion(p.text)).replace(/[\s.!?]+$/, '')))
+    .filter(p => !f || norm(p.label).includes(f));
+}
+function renderQuickReplies() {
+  const pop = $('qr-pop'); if (!pop) return;
+  const items = _qrVisible();
+  const learned = _qrLearnedVisible();
+  const el = $('comment-input');
+  const canSave = _qrFilter === null && el && el.innerText.trim();
+  pop.innerHTML = `
+    <div class="qr-head">Respostas prontas</div>
+    <div class="qr-list">
+      ${items.length ? items.map((x, n) => `
+        <div class="qr-row${_qrFilter !== null && n === 0 ? ' is-first' : ''}">
+          <button type="button" class="qr-item" onmousedown="event.preventDefault()" onclick="insertQuickReply(${x.i})">${esc(x.text)}</button>
+          <button type="button" class="qr-del" title="Remover" onmousedown="event.preventDefault()" onclick="removeQuickReply(${x.i})"><i data-lucide="x" class="ic-xs"></i></button>
+        </div>`).join('')
+      : (learned.length ? '' : `<div class="qr-empty">${_qrFilter ? 'Nenhuma resposta com “' + esc(_qrFilter) + '”.' : 'Nenhuma resposta salva.'}</div>`)}
+      ${learned.length ? `<div class="qr-head qr-head-sub">Do seu histórico</div>` + learned.map((p, n) => `
+        <div class="qr-row${_qrFilter !== null && !items.length && n === 0 ? ' is-first' : ''}">
+          <button type="button" class="qr-item" title="Você usou ${p.count} vezes" onmousedown="event.preventDefault()" onclick="insertLearnedPhrase(${p.i})">${esc(p.label)}</button>
+          <button type="button" class="qr-del qr-pin" title="Salvar nas respostas prontas" onmousedown="event.preventDefault()" onclick="pinLearnedPhrase(${p.i})"><i data-lucide="bookmark-plus" class="ic-xs"></i></button>
+        </div>`).join('') : ''}
+    </div>
+    <button type="button" class="qr-save" onmousedown="event.preventDefault()" onclick="saveQuickReplyFromInput()" ${canSave ? '' : 'disabled'}>
+      <i data-lucide="bookmark-plus" class="ic-xs"></i> Salvar texto atual como resposta
+    </button>`;
+  pop.hidden = false;
+  // Fixed (o compositor tem overflow:hidden): logo acima do campo de texto.
+  const r = (el || pop.parentElement).getBoundingClientRect();
+  pop.style.left = Math.max(8, r.left) + 'px';
+  pop.style.bottom = Math.max(8, window.innerHeight - r.top + 6) + 'px';
+  pop.style.width = Math.min(360, Math.max(260, r.width)) + 'px';
+  paintIcons();
+}
+function closeQuickReplies() {
+  const pop = $('qr-pop'); if (pop) pop.hidden = true;
+  _qrFilter = null;
+}
+function toggleQuickReplies(ev) {
+  ev?.stopPropagation();
+  const pop = $('qr-pop'); if (!pop) return;
+  if (!pop.hidden && _qrFilter === null) return closeQuickReplies();
+  _qrFilter = null;
+  renderQuickReplies();
+}
+function quickReplyWatch(el) {
+  const txt = (el.innerText || '').replace(/\u00a0/g, ' ').trim();
+  const m = txt.match(/^\/([^\s/]*)$/);
+  if (m) { _qrFilter = m[1]; renderQuickReplies(); }
+  else if (_qrFilter !== null) closeQuickReplies();
+}
+// true = tecla consumida (não repassa pro handler de menções).
+function quickReplyKeys(e) {
+  const pop = $('qr-pop');
+  if (!pop || pop.hidden) return false;
+  if (e.key === 'Escape') { e.preventDefault(); closeQuickReplies(); return true; }
+  if (e.key === 'Enter' && _qrFilter !== null) {
+    const first = _qrVisible()[0];
+    const learned = first ? null : _qrLearnedVisible()[0];
+    if (!first && !learned) return false;
+    e.preventDefault();
+    if (first) insertQuickReply(first.i); else insertLearnedPhrase(learned.i);
+    return true;
+  }
+  return false;
+}
+function insertQuickReply(i) { _insertCommentText(quickRepliesOf()[i]); }
+function insertLearnedPhrase(i) {
+  const p = (_commentPhrases || [])[i];
+  if (p) _insertCommentText(_phraseCompletion(p.text));
+}
+async function pinLearnedPhrase(i) {
+  const p = (_commentPhrases || [])[i];
+  if (!p) return;
+  const text = _phraseCompletion(p.text).trim();
+  const list = quickRepliesOf();
+  if (list.includes(text)) return;
+  if (await _saveQuickReplies(list.concat(text))) { toast('Resposta salva.'); renderQuickReplies(); }
+}
+function _insertCommentText(text) {
+  const el = $('comment-input');
+  if (!text || !el) return;
+  el.focus();
+  if (_qrFilter !== null) el.innerHTML = ''; // troca o "/filtro" pela resposta
+  // Caret fora do editor (abriu pelo botão sem clicar no texto): vai pro fim.
+  const sel = window.getSelection();
+  if (!sel.rangeCount || !el.contains(sel.anchorNode)) {
+    const r = document.createRange();
+    r.selectNodeContents(el); r.collapse(false);
+    sel.removeAllRanges(); sel.addRange(r);
+  }
+  document.execCommand('insertText', false, text);
+  closeQuickReplies();
+  document.getElementById('chat-compose')?.classList.add('is-active');
+  draftSaveCommentCE(el);
+  syncCommentEmptyState(el);
+}
+async function _saveQuickReplies(list) {
+  try {
+    me = await api('/me', 'PUT', { quickReplies: list });
+    return true;
+  } catch (e) { toast(e.message, 'error'); return false; }
+}
+async function saveQuickReplyFromInput() {
+  const el = $('comment-input');
+  const text = (el?.innerText || '').replace(/\u00a0/g, ' ').trim();
+  if (!text) return;
+  const list = quickRepliesOf();
+  if (list.includes(text)) { toast('Essa resposta já está salva.', 'info'); return; }
+  if (await _saveQuickReplies(list.concat(text))) { toast('Resposta salva.'); renderQuickReplies(); }
+}
+async function removeQuickReply(i) {
+  const list = quickRepliesOf().slice();
+  list.splice(i, 1);
+  if (await _saveQuickReplies(list)) renderQuickReplies();
+}
+document.addEventListener('click', e => {
+  const pop = document.getElementById('qr-pop');
+  if (!pop || pop.hidden || e.target.closest?.('#qr-pop')) return;
+  closeQuickReplies();
+});
+
+/* ── AUTOCOMPLETAR (texto-fantasma + Tab) ──
+   Enquanto a pessoa digita o COMEÇO de uma linha do comentário, sugere o resto
+   de uma sequência que ela costuma usar (aprendida no server a partir de 5
+   usos nos últimos 30 dias — ver learnCommentPhrases) ou de uma resposta
+   pronta salva. O resto aparece em
+   cinza depois do cursor; Tab aceita, Esc dispensa. Frase com link ("Segue:
+   {link}") completa só até o link. */
+let _commentPhrases = null;   // [{ text, count }] do server; null = não carregou
+let _phrasesLoading = null;
+let _ghostText = '';
+let _ghostDismissed = false;
+function ensureCommentPhrases(force) {
+  if (!force && (_commentPhrases || _phrasesLoading)) return _phrasesLoading;
+  _phrasesLoading = api('/me/comment-phrases')
+    .then(list => { _commentPhrases = Array.isArray(list) ? list : []; })
+    .catch(() => { _commentPhrases = _commentPhrases || []; })
+    .finally(() => { _phrasesLoading = null; });
+  return _phrasesLoading;
+}
+function _phraseCompletion(tpl) { return String(tpl || '').split('{link}')[0]; }
+function _ghostCandidates() {
+  const learned = (_commentPhrases || []).map(p => _phraseCompletion(p.text));
+  const saved = Array.isArray(me?.quickReplies) ? me.quickReplies : [];
+  return learned.concat(saved); // aprendidas já vêm da mais usada pra menos
+}
+function hideCommentGhost() {
+  _ghostText = '';
+  document.getElementById('comment-ghost')?.remove();
+}
+// Retângulo do cursor (range colapsado às vezes não tem rect — ex.: logo após
+// um <br>; aí mede com um marcador temporário).
+function _caretRect(range) {
+  const r = range.getClientRects()[0];
+  if (r && (r.width || r.height)) return r;
+  const mark = document.createElement('span');
+  mark.textContent = '\u200b';
+  range.insertNode(mark);
+  const rect = mark.getBoundingClientRect();
+  const parent = mark.parentNode;
+  mark.remove();
+  parent?.normalize();
+  return rect;
+}
+function updateCommentGhost(el) {
+  hideCommentGhost();
+  if (!el || _ghostDismissed || document.activeElement !== el) return;
+  if ($('mention-pop')?.classList.contains('open') || $('qr-pop')?.hidden === false) return;
+  // Completa a LINHA atual (as frases s\u00e3o aprendidas por come\u00e7o de linha).
+  const typed = (el.innerText || '').replace(/\u00a0/g, ' ').replace(/\n+$/, '').split('\n').pop();
+  if (typed.trim().length < 2) return;
+  const sel = window.getSelection();
+  if (!sel.rangeCount || !sel.isCollapsed || !el.contains(sel.anchorNode)) return;
+  const range = sel.getRangeAt(0);
+  // Só com o cursor no fim do texto (completar no meio confunde).
+  const after = document.createRange();
+  after.selectNodeContents(el);
+  after.setStart(range.endContainer, range.endOffset);
+  if (after.toString().replace(/\u200b/g, '').trim()) return;
+  const nt = norm(typed);
+  const hit = _ghostCandidates().find(c => c.length > typed.length && norm(c).startsWith(nt));
+  if (!hit) return;
+  _ghostText = hit.slice(typed.length);
+  const ghost = document.createElement('div');
+  ghost.id = 'comment-ghost';
+  ghost.className = 'comment-ghost';
+  ghost.style.font = getComputedStyle(el).font;
+  ghost.innerHTML = `<span class="comment-ghost-text"></span><kbd class="comment-ghost-kbd">Tab</kbd>`;
+  ghost.firstChild.textContent = _ghostText;
+  document.body.appendChild(ghost);
+  _placeCommentGhost(el);
+  requestAnimationFrame(() => _placeCommentGhost(el));
+  setTimeout(() => _placeCommentGhost(el), 250);
+}
+function _placeCommentGhost(el) {
+  const ghost = document.getElementById('comment-ghost');
+  const sel = window.getSelection();
+  if (!ghost || !sel.rangeCount || !el.contains(sel.anchorNode)) return;
+  const rect = _caretRect(sel.getRangeAt(0).cloneRange());
+  const box = el.getBoundingClientRect();
+  ghost.style.left = rect.right + 'px';
+  ghost.style.top = rect.top + 'px';
+  ghost.style.height = rect.height + 'px';
+  ghost.style.lineHeight = rect.height + 'px';
+  ghost.style.maxWidth = Math.max(0, box.right - rect.right - parseFloat(getComputedStyle(el).paddingRight || 0)) + 'px';
+}
+// true = tecla consumida. Tab (e Shift+Tab) nunca tira o foco do editor:
+// aceita a sugestão se houver; com o popup de menções aberto, segue pra ele.
+function commentGhostKeys(e) {
+  if (e.key === 'Tab') {
+    if ($('mention-pop')?.classList.contains('open')) return false;
+    e.preventDefault();
+    if (!_ghostText || e.shiftKey) return true;
+    const text = _ghostText;
+    hideCommentGhost();
+    document.execCommand('insertText', false, text); // dispara o input (rascunho etc.)
+    return true;
+  }
+  if (!_ghostText) return false;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    _ghostDismissed = true;
+    hideCommentGhost();
+    return true;
+  }
+  return false;
+}
+// Fantasma é position:fixed — some se algo rolar embaixo dele.
+document.addEventListener('scroll', () => { if (_ghostText) hideCommentGhost(); }, true);
 function draftSaveCommentCE(el) {
   if (!detailId) return;
   clearTimeout(_draftSaveTimer);
@@ -17667,6 +18222,7 @@ function startEditComment(cid) {
       <div class="chat-compose-input comment-input comment-input-ce" id="edit-comment-text-${cid}"
            contenteditable="true" role="textbox" aria-multiline="true"
            oninput="syncCommentEmptyState(this)"
+           onkeydown="if (event.key === 'Tab') event.preventDefault()"
            data-placeholder="Editar comentário…">${startHtml}</div>
       ${editorResizeGrip('edit-comment-text-' + cid)}
       <div class="comment-pending-files" id="edit-comment-files">${atts}</div>
@@ -17767,38 +18323,6 @@ function handleEditFiles(ev, cid) {
         const preview = a.type && a.type.startsWith('image/') ? `<img src="${a.data}" class="pending-thumb">` : '<i data-lucide="file" class="ic-sm"></i>';
         return `<span class="pending-file">${preview} ${esc(a.name)} <button class="icon-btn danger" onclick="removeEditAtt('${cid}', ${i})"><i data-lucide="x" class="ic-sm"></i></button></span>`;
       }).join('');
-    };
-    reader.readAsDataURL(file);
-  });
-  ev.target.value = '';
-}
-function handleEditImages(ev, cid) {
-  const el = document.getElementById('comment-' + cid);
-  [...ev.target.files].forEach(file => {
-    if (file.size > 150 * 1024 * 1024) { toast('"' + file.name + '" excede 150 MB.', 'error'); return; }
-    const reader = new FileReader();
-    reader.onload = e => {
-      const img = new Image();
-      img.onload = () => {
-        // 1920px + qualidade 0.9 — antes era 1200px @ 0.85 (screenshots ficavam
-        // borrados/pequenos). Server aceita bem maior (25 MB/imagem, 60 MB/desc).
-        const max = 1920;
-        let w = img.width, h = img.height;
-        if (w > max || h > max) { const r = Math.min(max / w, max / h); w = Math.round(w * r); h = Math.round(h * r); }
-        const canvas = document.createElement('canvas');
-        canvas.width = w; canvas.height = h;
-        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        const data = canvas.toDataURL('image/jpeg', 0.9);
-        const atts = JSON.parse(el.dataset.editAtts || '[]');
-        atts.push({ name: file.name, type: file.type, data });
-        el.dataset.editAtts = JSON.stringify(atts);
-        const container = $('edit-comment-files');
-        container.innerHTML = atts.map((a, i) => {
-          const preview = a.type && a.type.startsWith('image/') ? `<img src="${a.data}" class="pending-thumb">` : '<i data-lucide="file" class="ic-sm"></i>';
-          return `<span class="pending-file">${preview} ${esc(a.name)} <button class="icon-btn danger" onclick="removeEditAtt('${cid}', ${i})"><i data-lucide="x" class="ic-sm"></i></button></span>`;
-        }).join('');
-      };
-      img.src = e.target.result;
     };
     reader.readAsDataURL(file);
   });
@@ -19794,9 +20318,143 @@ function renderChecklist(d) {
   `;
 }
 
-/* ─── REAÇÕES EM COMENTÁRIOS ─── */
+/* ─── REAÇÕES EM COMENTÁRIOS ───
+   O seletor mostra até REACTION_PICKER_MAX emojis: os últimos que a pessoa usou
+   entram pela esquerda e empurram os padrões pra fora pela direita. O "+" abre
+   o seletor completo de emojis (openReactionEmojiPicker). */
 const REACTION_EMOJIS = ['👍', '❤️', '👀', '✅', '🎉'];
+const REACTION_PICKER_MAX = 6;
+function _recentReactionsKey() { return 'kastor-recent-reactions-' + (me?.id || 'anon'); }
+function _recentReactions() {
+  try { const v = JSON.parse(localStorage.getItem(_recentReactionsKey()) || '[]'); return Array.isArray(v) ? v : []; }
+  catch { return []; }
+}
+function _rememberReaction(emoji) {
+  const list = [emoji, ..._recentReactions().filter(e => e !== emoji)].slice(0, REACTION_PICKER_MAX);
+  try { localStorage.setItem(_recentReactionsKey(), JSON.stringify(list)); } catch {}
+}
+function reactionPickerEmojis() {
+  return [...new Set([..._recentReactions(), ...REACTION_EMOJIS])].slice(0, REACTION_PICKER_MAX);
+}
+/* Seletor completo de emojis (emoji-picker-element, em /vendor/emoji-picker):
+   categorias, busca em português, tom de pele e "usados com frequência".
+   Carregamento: warmEmojiPicker() baixa os módulos e popula o IndexedDB com
+   os dados assim que o seletor rápido abre (antes do clique no "+"). O
+   elemento é criado UMA vez e reaproveitado — reabrir é instantâneo. */
+const EMOJI_DATA_URL = '/vendor/emoji-picker/pt-data.json';
+let _emojiPickerMod = null;
+let _emojiWarm = null;
+let _emojiPickerEl = null;
+let _emojiPickTarget = null; // commentId que recebe o emoji clicado
+async function _ensureEmojiPicker() {
+  if (_emojiPickerMod) return _emojiPickerMod;
+  const [mod, i18n] = await Promise.all([
+    import('/vendor/emoji-picker/index.js'),
+    import('/vendor/emoji-picker/i18n/pt_BR.js').then(m => m.default)
+  ]);
+  _emojiPickerMod = { Picker: mod.Picker, Database: mod.Database, i18n };
+  return _emojiPickerMod;
+}
+function warmEmojiPicker() {
+  if (!_emojiWarm) {
+    _emojiWarm = _ensureEmojiPicker()
+      .then(lib => new lib.Database({ dataSource: EMOJI_DATA_URL, locale: 'pt' }).ready())
+      .catch(() => { _emojiWarm = null; });
+  }
+  return _emojiWarm;
+}
+// Retoque dentro do shadow DOM (as variáveis do app atravessam a fronteira).
+const EMOJI_PICKER_CSS = `
+  .pad-top { height: 4px; }
+  .search-row { padding: 8px 10px 6px; gap: 6px; }
+  input.search {
+    background: var(--surface-2); border: 1px solid transparent; border-radius: 8px;
+    padding: 7px 10px; font: inherit; font-size: 13px; color: var(--text);
+  }
+  input.search:focus { border-color: var(--accent); outline: none; }
+  .nav { padding: 0 6px; border-bottom: 1px solid var(--hairline); }
+  .nav-button { border-radius: 6px; }
+  .nav-button:hover { background: var(--surface-2); }
+  .indicator { border-radius: 2px; }
+  .tabpanel { padding: 4px 6px; scrollbar-width: thin; scrollbar-color: var(--hairline) transparent; }
+  button.emoji { border-radius: 8px; }
+  button.emoji:hover { background: var(--surface-2); }
+  .favorites { border-top: 1px solid var(--hairline); padding: 2px 6px; background: var(--surface); }
+  .message { color: var(--text-muted); font-size: 12.5px; }
+`;
+function _buildEmojiPicker(lib) {
+  const picker = new lib.Picker({ locale: 'pt', dataSource: EMOJI_DATA_URL, i18n: lib.i18n, skinToneEmoji: '👍' });
+  picker.addEventListener('emoji-click', e => {
+    const emoji = e.detail?.unicode;
+    const cid = _emojiPickTarget;
+    closeEmojiPop();
+    if (emoji && cid) toggleReaction(cid, emoji);
+  });
+  const style = document.createElement('style');
+  style.textContent = EMOJI_PICKER_CSS;
+  picker.shadowRoot?.appendChild(style);
+  return picker;
+}
+function _emojiPickerSkeleton() {
+  return `<div class="emoji-pop-skel" aria-label="Carregando emojis">
+    <div class="emoji-skel-search"></div>
+    <div class="emoji-skel-nav">${'<span></span>'.repeat(9)}</div>
+    <div class="emoji-skel-grid">${'<span></span>'.repeat(40)}</div>
+  </div>`;
+}
+async function openReactionEmojiPicker(commentId, anchor, ev) {
+  ev?.stopPropagation();
+  closeEmojiPop();
+  const r = anchor.getBoundingClientRect();
+  closeReactionPickers();
+  _emojiPickTarget = commentId;
+  const pop = document.createElement('div');
+  pop.id = 'emoji-pop';
+  pop.className = 'emoji-pop';
+  pop.innerHTML = _emojiPickerEl ? '' : _emojiPickerSkeleton();
+  document.body.appendChild(pop);
+  // Abre pra baixo se couber; senão pra cima. Alinhado pela direita do "+".
+  const H = 372, W = 352;
+  pop.style.left = Math.max(8, Math.min(window.innerWidth - W - 8, r.right - W)) + 'px';
+  pop.style.top = (r.bottom + 6 + H < window.innerHeight ? r.bottom + 6 : Math.max(8, r.top - 6 - H)) + 'px';
+  setTimeout(() => {
+    document.addEventListener('mousedown', _emojiPopOutside, true);
+    document.addEventListener('keydown', _emojiPopKey, true);
+    window.addEventListener('resize', closeEmojiPop);
+  });
+  if (!_emojiPickerEl) {
+    let lib;
+    try { lib = await _ensureEmojiPicker(); warmEmojiPicker(); }
+    catch (e) { pop.innerHTML = '<div class="emoji-pop-msg">Não deu pra carregar os emojis.</div>'; return; }
+    _emojiPickerEl = _emojiPickerEl || _buildEmojiPicker(lib);
+    if (!pop.isConnected) return;
+    pop.innerHTML = '';
+  }
+  const picker = _emojiPickerEl;
+  picker.classList.toggle('light', document.documentElement.dataset.theme === 'light');
+  picker.classList.toggle('dark', document.documentElement.dataset.theme !== 'light');
+  pop.appendChild(picker);
+  // Reabriu: busca limpa e foco nela (o campo fica dentro do shadow DOM).
+  const search = picker.shadowRoot?.querySelector('input.search');
+  if (search && search.value) { search.value = ''; search.dispatchEvent(new Event('input', { bubbles: true, composed: true })); }
+  setTimeout(() => search?.focus(), 60);
+}
+function _emojiPopOutside(e) { if (!e.target.closest?.('#emoji-pop')) closeEmojiPop(); }
+function _emojiPopKey(e) { if (e.key === 'Escape') { e.stopPropagation(); closeEmojiPop(); } }
+function closeEmojiPop() {
+  _emojiPickTarget = null;
+  document.getElementById('emoji-pop')?.remove();
+  document.removeEventListener('mousedown', _emojiPopOutside, true);
+  document.removeEventListener('keydown', _emojiPopKey, true);
+  window.removeEventListener('resize', closeEmojiPop);
+}
 async function toggleReaction(commentId, emoji) {
+  // Reagir marca como vistas as novidades da demanda (a pessoa já está nela).
+  const d = demandById(detailId);
+  const c = d && (d.comments || []).find(x => x.id === commentId);
+  const adding = !(c?.reactions?.[emoji] || []).includes(me?.id);
+  if (adding) _rememberReaction(emoji);
+  _clearNewSince();
   try {
     const upd = await api('/demands/' + detailId + '/comment/' + commentId + '/react', 'POST', { emoji });
     patchDemand(upd);
@@ -19824,6 +20482,40 @@ function toggleReactionPicker(commentId) {
     }, 50);
   }
 }
+/* Nomes de quem reagiu, um por linha (a própria pessoa primeiro). */
+function _reactionTipText(emoji, userIds) {
+  return [...userIds].sort((a, b) => (b === me?.id) - (a === me?.id))
+    .map(id => id === me?.id ? 'Você' : (userById(id)?.name || 'Alguém')).join('\n');
+}
+/* Tooltip das reações. O app desliga os tooltips globais (title/.tt), então
+   este é próprio e só atende [data-rx-tip]: aparece acima do chip. */
+let _rxTipEl = null, _rxTipTarget = null, _rxTipTimer = null;
+function _hideRxTip() {
+  clearTimeout(_rxTipTimer);
+  _rxTipTarget = null;
+  _rxTipEl?.classList.remove('open');
+}
+document.addEventListener('mouseover', e => {
+  const t = e.target.closest?.('[data-rx-tip]');
+  if (t === _rxTipTarget) return;
+  _hideRxTip();
+  if (!t) return;
+  _rxTipTarget = t;
+  _rxTipTimer = setTimeout(() => {
+    if (!t.isConnected || _rxTipTarget !== t) return;
+    if (!_rxTipEl) { _rxTipEl = document.createElement('div'); _rxTipEl.className = 'rx-tip'; document.body.appendChild(_rxTipEl); }
+    _rxTipEl.textContent = t.dataset.rxTip;
+    const r = t.getBoundingClientRect();
+    const w = _rxTipEl.offsetWidth, h = _rxTipEl.offsetHeight;
+    const left = Math.max(8, Math.min(window.innerWidth - w - 8, r.left + r.width / 2 - w / 2));
+    const top = r.top - h - 8 >= 8 ? r.top - h - 8 : r.bottom + 8;
+    _rxTipEl.style.left = left + 'px';
+    _rxTipEl.style.top = top + 'px';
+    _rxTipEl.classList.add('open');
+  }, 180);
+});
+window.addEventListener('scroll', _hideRxTip, true);
+document.addEventListener('mousedown', _hideRxTip, true);
 /* Retorna APENAS os chips de reações existentes (sem picker interno).
    O picker fica em `.chat-reaction-picker` do header — ver chat-comment. */
 function renderReactions(c) {
@@ -19834,8 +20526,7 @@ function renderReactions(c) {
   const chips = keys.map(emoji => {
     const userIds = reactions[emoji] || [];
     const mine = userIds.includes(myId);
-    const names = userIds.map(id => userById(id)?.name || '?').join(', ');
-    return `<button type="button" class="reaction-chip ${mine ? 'mine' : ''}" onclick="toggleReaction('${c.id}', '${emoji}')" title="${esc(names)}">
+    return `<button type="button" class="reaction-chip ${mine ? 'mine' : ''}" onclick="toggleReaction('${c.id}', '${emoji}')" data-rx-tip="${esc(_reactionTipText(emoji, userIds))}" aria-label="${esc(_reactionTipText(emoji, userIds))}">
       <span class="reaction-emoji">${emoji}</span>
       <span class="reaction-count">${userIds.length}</span>
     </button>`;
@@ -19880,6 +20571,27 @@ function setupDragDrop(containerSelector, targetListId, callback) {
   document.querySelectorAll(containerSelector).forEach(setup);
 }
 
+/* Colar pra anexar: Ctrl+V com arquivo/print na demanda aberta anexa direto.
+   Só quando o foco NÃO está num campo de texto (lá o colar é do editor — ex.:
+   imagem no rich text do comentário) e nenhum modal está aberto por cima. */
+document.addEventListener('paste', e => {
+  if (!detailId || !document.getElementById('detail-attachments-list')) return;
+  const t = e.target;
+  if (t && (t.closest?.('input, textarea, select, [contenteditable=""], [contenteditable="true"]'))) return;
+  if (document.querySelector('.modal-overlay.open, .modal.open, #att-preview-modal.open')) return;
+  const files = [...(e.clipboardData?.files || [])];
+  if (!files.length) return;
+  e.preventDefault();
+  // Print colado vem como "image.png" — dá um nome com data/hora.
+  const stamp = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const label = `Print ${stamp.getFullYear()}-${pad(stamp.getMonth() + 1)}-${pad(stamp.getDate())} ${pad(stamp.getHours())}-${pad(stamp.getMinutes())}-${pad(stamp.getSeconds())}`;
+  const named = files.map((f, i) => /^image\.\w+$/i.test(f.name || '') || !f.name
+    ? new File([f], `${label}${files.length > 1 ? ' (' + (i + 1) + ')' : ''}.${(f.name || '').match(/\.(\w+)$/)?.[1] || 'png'}`, { type: f.type })
+    : f);
+  processDroppedFiles(named, 'detail-attachments-list');
+});
+
 async function processDroppedFiles(files, listElementId) {
   // Filtra por tamanho antes de qualquer upload
   const accepted = [];
@@ -19897,8 +20609,7 @@ async function processDroppedFiles(files, listElementId) {
         const d = demandById(detailId);
         if (!d) return;
         const newAtt = { id: genAttId(), kind: 'file', name: saved.name, type: saved.type, data: saved.url };
-        const newAtts = (d.attachments || []).concat(newAtt);
-        const upd = await api('/demands/' + d.id, 'PUT', { attachments: newAtts });
+        const upd = await api('/demands/' + d.id + '/attachments', 'POST', { attachment: newAtt });
         patchDemand(upd);
         addedCount++;
       });
@@ -25841,6 +26552,7 @@ function renderProfile() {
   if ($('profile-pref-watch_stage'))   $('profile-pref-watch_stage').checked = prefs.watch_stage !== false;
   if ($('profile-pref-watch_comment')) $('profile-pref-watch_comment').checked = prefs.watch_comment !== false;
   if ($('profile-pref-daily_digest'))  $('profile-pref-daily_digest').checked = prefs.daily_digest !== false;
+  if ($('profile-pref-reminder'))      $('profile-pref-reminder').checked = prefs.reminder !== false;
   $('profile-email-smtp-warning').style.display = me._smtpEnabled === false ? '' : 'none';
   fillRoleSelect('profile-f-role', me.role || '');
   // Avatar grande no hero — mesmo esquema do sidebar, preserva classes extras.
@@ -26173,6 +26885,7 @@ async function saveEmailSettings() {
     watch_stage: $('profile-pref-watch_stage')?.checked ?? true,
     watch_comment: $('profile-pref-watch_comment')?.checked ?? true,
     daily_digest: $('profile-pref-daily_digest')?.checked ?? true,
+    reminder: $('profile-pref-reminder')?.checked ?? true,
   };
   try {
     me = await api('/me', 'PUT', { email: email || null, emailPrefs });
@@ -26783,6 +27496,14 @@ function notifMessage(n) {
     case 'mention':
       return `<strong>${esc(fromName)}</strong> mencionou você em <strong>${esc(n.demandName)}</strong>` +
         (n.commentText ? `<div class="notif-comment">${esc(n.commentText)}</div>` : '');
+    case 'reaction':
+      return `<strong>${esc(fromName)}</strong> reagiu ${esc(n.emoji || '')} ao seu comentário em <strong>${esc(n.demandName)}</strong>` +
+        (n.commentText ? `<div class="notif-comment">${esc(n.commentText)}</div>` : '');
+    case 'reminder':
+      return `Lembrete: <strong>${esc(n.demandName)}</strong>` +
+        (n.commentText ? `<div class="notif-comment">${esc(n.commentText)}</div>` : '');
+    case 'time_gap':
+      return `<strong>Apontamento pendente</strong><div class="notif-comment">${esc(n.commentText || '')}</div>`;
     default:
       return `Notificação sobre <strong>${esc(n.demandName)}</strong>`;
   }
@@ -26864,6 +27585,11 @@ async function openNotif(notifId, demandId) {
   }
   // fecha painel e abre a demanda
   $('notif-panel').classList.remove('open');
+  if (n && n.type === 'time_gap') {
+    goPage('dashboard');
+    setTimeout(() => document.getElementById('dash-section-timegaps')?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 300);
+    return;
+  }
   if (demandId && demands.find(d => d.id === demandId)) {
     showDetail(demandId);
   } else if (demandId) {

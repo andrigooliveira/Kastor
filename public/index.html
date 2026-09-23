@@ -737,6 +737,14 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                 <div id="dash-blocked"></div>
               </div>
 
+              <div class="dash-section" id="dash-section-timegaps" hidden>
+                <div class="dash-section-head">
+                  <h3 class="dash-section-title">Sem apontamento</h3>
+                  <span class="dash-section-count" id="dash-timegaps-count" hidden></span>
+                </div>
+                <div id="dash-timegaps"></div>
+              </div>
+
               <div class="dash-section" id="dash-section-hours">
                 <div class="dash-section-head">
                   <h3 class="dash-section-title">Horas hoje</h3>
@@ -2979,6 +2987,13 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                     </div>
                     <input type="checkbox" id="profile-pref-daily_digest">
                   </label>
+                  <label class="profile-pref-row">
+                    <div class="profile-pref-info">
+                      <div class="profile-pref-title">Lembretes</div>
+                      <div class="profile-pref-sub">Os lembretes que você agendou numa demanda ("Lembrar depois").</div>
+                    </div>
+                    <input type="checkbox" id="profile-pref-reminder">
+                  </label>
                 </div>
                 <div class="profile-block-actions">
                   <button class="btn btn-ghost" onclick="sendEmailTest()"><i data-lucide="send" class="ic-sm"></i> Enviar teste</button>
@@ -3246,8 +3261,6 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           <div class="demand-att-buttons">
             <input type="file" id="f-att-file-input" multiple style="display:none" onchange="handleDemandAttachmentFiles(event, 'f-attachments-list')">
             <button type="button" class="demand-att-btn" onclick="$('f-att-file-input').click()"><i data-lucide="paperclip" class="ic-sm"></i><span>Arquivo</span></button>
-            <input type="file" id="f-att-img-input" accept="image/*" multiple style="display:none" onchange="handleDemandAttachmentImages(event, 'f-attachments-list')">
-            <button type="button" class="demand-att-btn" onclick="$('f-att-img-input').click()"><i data-lucide="image" class="ic-sm"></i><span>Imagem</span></button>
             <button type="button" class="demand-att-btn" onclick="addDemandAttachmentLink('f-attachments-list')"><i data-lucide="link" class="ic-sm"></i><span>Link</span></button>
           </div>
           <div class="demand-att-list" id="f-attachments-list" style="margin-top:10px"></div>
@@ -3982,8 +3995,6 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <div class="demand-att-buttons">
               <input type="file" id="persona-att-file" multiple style="display:none" onchange="handleDemandAttachmentFiles(event, 'persona-attachments-list')">
               <button type="button" class="demand-att-btn" onclick="$('persona-att-file').click()"><i data-lucide="paperclip" class="ic-sm"></i><span>Arquivo</span></button>
-              <input type="file" id="persona-att-img" accept="image/*" multiple style="display:none" onchange="handleDemandAttachmentImages(event, 'persona-attachments-list')">
-              <button type="button" class="demand-att-btn" onclick="$('persona-att-img').click()"><i data-lucide="image" class="ic-sm"></i><span>Imagem</span></button>
               <button type="button" class="demand-att-btn" onclick="addDemandAttachmentLink('persona-attachments-list')"><i data-lucide="link" class="ic-sm"></i><span>Link</span></button>
             </div>
             <div class="demand-att-list" id="persona-attachments-list" style="margin-top:10px"></div>
@@ -4075,8 +4086,6 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <div class="demand-att-buttons">
               <input type="file" id="ndl-att-file" multiple style="display:none" onchange="handleDemandAttachmentFiles(event, 'ndl-attachments-list')">
               <button type="button" class="demand-att-btn" onclick="$('ndl-att-file').click()"><i data-lucide="paperclip" class="ic-sm"></i><span>Arquivo</span></button>
-              <input type="file" id="ndl-att-img" accept="image/*" multiple style="display:none" onchange="handleDemandAttachmentImages(event, 'ndl-attachments-list')">
-              <button type="button" class="demand-att-btn" onclick="$('ndl-att-img').click()"><i data-lucide="image" class="ic-sm"></i><span>Imagem</span></button>
               <button type="button" class="demand-att-btn" onclick="addDemandAttachmentLink('ndl-attachments-list')"><i data-lucide="link" class="ic-sm"></i><span>Link</span></button>
             </div>
             <div class="demand-att-list" id="ndl-attachments-list" style="margin-top:10px"></div>
@@ -4138,8 +4147,6 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           <div class="demand-att-buttons">
             <input type="file" id="eda-att-file" multiple style="display:none" onchange="handleDemandAttachmentFiles(event, 'eda-attachments-list')">
             <button type="button" class="demand-att-btn" onclick="$('eda-att-file').click()"><i data-lucide="paperclip" class="ic-sm"></i><span>Arquivo</span></button>
-            <input type="file" id="eda-att-img" accept="image/*" multiple style="display:none" onchange="handleDemandAttachmentImages(event, 'eda-attachments-list')">
-            <button type="button" class="demand-att-btn" onclick="$('eda-att-img').click()"><i data-lucide="image" class="ic-sm"></i><span>Imagem</span></button>
             <button type="button" class="demand-att-btn" onclick="addDemandAttachmentLink('eda-attachments-list')"><i data-lucide="link" class="ic-sm"></i><span>Link</span></button>
           </div>
           <div class="demand-att-list" id="eda-attachments-list" style="margin-top:10px"></div>
@@ -4566,7 +4573,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260922dlsafe" defer></script>
+<script src="/js/boot.js?v=20260922notes" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
