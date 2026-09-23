@@ -2012,12 +2012,6 @@ tr:hover td { background: var(--surface-2); }
    kanban — tabela lisa com refinamento tipográfico e sinal de prazo por
    posição+cor (barra sparkline por row).
    ═══════════════════════════════════════════════════════════════════════════ */
-.mine-head {
-  display: flex; align-items: center; justify-content: flex-end;
-  padding: 4px 0 12px 0; gap: 8px;
-}
-.mine-head-filters { display: inline-flex; gap: 8px; align-items: center; }
-
 .mine-table-wrap { padding: 0; }
 .mine-table-v2 { width: 100%; border-collapse: collapse; }
 .mine-table-v2 thead th {
@@ -19765,3 +19759,205 @@ a.gm-contact-value:hover { text-decoration: underline; }
 
 
 
+
+/* ═══════════════════════════════════════════════════════════════════
+   SISTEMA DE MOVIMENTO (v2)
+   Uma escala só pra plataforma inteira. Regras:
+   · Entrada usa --ease-out; saída usa --ease-in e é mais curta que a
+     entrada (a interface responde rápido e sai do caminho).
+   · Deslocamento pequeno (4-8px). Nada de scale < .97 nem bounce.
+   · Loop infinito só pra estado vivo de verdade (timer rodando,
+     skeleton). Nada de pulsar "pra chamar atenção".
+   · Stagger só na entrada da página (.page.is-entering, ligada pelo
+     goPage por ~700ms). Re-render por SSE não reanima nada.
+   Vem no fim do arquivo de propósito: sobrescreve as animações antigas.
+   ═══════════════════════════════════════════════════════════════════ */
+:root {
+  --dur-1: 120ms;   /* hover, press, troca de cor */
+  --dur-2: 200ms;   /* popover, troca de aba, saídas */
+  --dur-3: 280ms;   /* modal, página, toast */
+  --dur-4: 420ms;   /* entradas em cascata, momentos de sucesso */
+  --ease-in: cubic-bezier(.4, 0, 1, 1);
+  --ease-in-out: cubic-bezier(.65, 0, .35, 1);
+  --stagger: 32ms;
+}
+@keyframes rwFade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes rwRise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes rwPop  { from { opacity: 0; transform: translateY(4px) scale(.98); } to { opacity: 1; transform: none; } }
+
+/* ── Página: fade curto; o conteúdo sobe em cascata ── */
+.page.active { animation: rwFade var(--dur-2) var(--ease-out); }
+.page.is-entering .page-body > * {
+  animation: rwRise var(--dur-4) var(--ease-out) both;
+}
+.page.is-entering .page-body > :nth-child(2) { animation-delay: calc(var(--stagger) * 1); }
+.page.is-entering .page-body > :nth-child(3) { animation-delay: calc(var(--stagger) * 2); }
+.page.is-entering .page-body > :nth-child(4) { animation-delay: calc(var(--stagger) * 3); }
+.page.is-entering .page-body > :nth-child(5) { animation-delay: calc(var(--stagger) * 4); }
+.page.is-entering .page-body > :nth-child(n+6) { animation-delay: calc(var(--stagger) * 5); }
+/* Linhas de lista/tabela e cards: só fade em cascata (sem mover, pra não
+   "chover" conteúdo). Máximo de ~12 itens; o resto já entra junto. */
+.page.is-entering tbody tr,
+.page.is-entering .kanban-card,
+.page.is-entering .dash-mention-row,
+.page.is-entering .model-card,
+.page.is-entering .model-flow-card {
+  animation: rwFade var(--dur-3) var(--ease-out) both;
+  animation-delay: calc(var(--stagger) * 5);
+}
+.page.is-entering tbody tr:nth-child(1),  .page.is-entering .kanban-card:nth-child(1)  { animation-delay: calc(var(--stagger) * 2); }
+.page.is-entering tbody tr:nth-child(2),  .page.is-entering .kanban-card:nth-child(2)  { animation-delay: calc(var(--stagger) * 2.5); }
+.page.is-entering tbody tr:nth-child(3),  .page.is-entering .kanban-card:nth-child(3)  { animation-delay: calc(var(--stagger) * 3); }
+.page.is-entering tbody tr:nth-child(4),  .page.is-entering .kanban-card:nth-child(4)  { animation-delay: calc(var(--stagger) * 3.5); }
+.page.is-entering tbody tr:nth-child(5),  .page.is-entering .kanban-card:nth-child(5)  { animation-delay: calc(var(--stagger) * 4); }
+.page.is-entering tbody tr:nth-child(6),  .page.is-entering .kanban-card:nth-child(6)  { animation-delay: calc(var(--stagger) * 4.5); }
+
+/* Início: a cascata acima substitui as entradas próprias (cada uma tinha
+   distância e duração diferentes). Fora da entrada, nada anima. */
+.dash-greeting, .dash-greeting-sub, .dash-col, .dash-widget { animation: none; }
+.page.is-entering .dash-col { animation: rwRise var(--dur-4) var(--ease-out) both; }
+.page.is-entering .dash-col--next { animation-delay: calc(var(--stagger) * 3); }
+
+/* Troca de aba/seção dentro da página: fade rápido, sem deslocamento. */
+.dash-tab-panel:not([hidden]),
+.profile-section { animation: rwFade var(--dur-2) var(--ease-out); }
+
+/* ── Modal: cresce de .985 com fade; sai na mesma escala, mais rápido ── */
+.modal {
+  transition: transform var(--dur-3) var(--ease-out), opacity var(--dur-2) var(--ease-out);
+}
+.modal-overlay { transition: opacity var(--dur-2) var(--ease-out); }
+.modal-overlay:not(.open) { transition: opacity 160ms var(--ease-in); }
+.modal-overlay:not(.open) .modal {
+  transform: scale(.985);
+  transition: transform 160ms var(--ease-in), opacity 140ms var(--ease-in);
+}
+.confirm-icon { animation: rwPop var(--dur-3) var(--ease-out); }
+
+/* ── Popovers e menus: todos com a mesma entrada ── */
+.filter-cdrop.open .filter-cdrop-menu,
+.combobox.open .combobox-menu,
+.nav-more-popover,
+.advance-menu,
+.flow-suggest,
+.month-picker-popover.open { animation: rwPop var(--dur-2) var(--ease-out); }
+.filter-cdrop.drop-up.open .filter-cdrop-menu { animation: rwPop var(--dur-2) var(--ease-out); }
+
+/* ── Toast: entra de baixo, sai pro lado recolhendo a altura ──
+   A saída (.is-leaving) é disparada por dismissToast() no app.js. Passar
+   o mouse pausa o tempo (barra de progresso inclusa). */
+.toast { animation: rwPop var(--dur-3) var(--ease-out); }
+.toast:hover::after { animation-play-state: paused; }
+.toast.is-leaving {
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(24px);
+  padding-top: 0; padding-bottom: 0;
+  margin-bottom: -8px; /* compensa o gap do container enquanto a altura zera */
+  transition:
+    opacity 140ms var(--ease-in),
+    transform var(--dur-2) var(--ease-in),
+    height var(--dur-2) var(--ease-in-out) 80ms,
+    padding var(--dur-2) var(--ease-in-out) 80ms,
+    margin var(--dur-2) var(--ease-in-out) 80ms;
+}
+.toast-check { animation: rwPop var(--dur-3) var(--ease-out); }
+
+/* ── Menos ruído ──
+   Loops que pulsavam o tempo todo e o ripple central (que não segue o
+   clique) saem. O badge ainda dá um "pop" quando chega notificação nova
+   e o sino ainda balança uma vez. */
+.notif-badge.has-unread { animation: none; }
+.avatar.presence-online::before { animation: none; opacity: 0; }
+.btn-primary::after, .btn-confirm::after { display: none; }
+tr.demand-row:hover { transform: none; }
+.btn:active, .btn-primary:active { transform: scale(.98); transition-duration: 60ms; }
+
+/* ── Troca de tema: cross-fade da página inteira (View Transitions) ── */
+::view-transition-old(root),
+::view-transition-new(root) { animation-duration: var(--dur-3); animation-timing-function: var(--ease-in-out); }
+
+@media (prefers-reduced-motion: reduce) {
+  .page.is-entering *, .toast, .toast.is-leaving { animation: none !important; }
+  ::view-transition-old(root), ::view-transition-new(root) { animation: none !important; }
+}
+
+/* ── Marcador deslizante das abas (initTabIndicators no app.js) ──
+   line = sublinhado que desliza; pill = fundo do segmentado que desliza.
+   O estilo estático antigo da aba ativa some quando o grupo tem marcador. */
+.has-tab-ind { position: relative; }
+.rw-tab-ind {
+  position: absolute; left: 0; pointer-events: none;
+  width: var(--w, 0); opacity: 0;
+  transition:
+    transform var(--dur-3) var(--ease-out),
+    width var(--dur-3) var(--ease-out),
+    height var(--dur-3) var(--ease-out),
+    opacity var(--dur-2) var(--ease-out);
+}
+.has-tab-ind--line > .rw-tab-ind {
+  bottom: 0; height: 2px;
+  transform: translateX(var(--x, 0));
+  background: var(--accent); border-radius: 2px;
+}
+.has-tab-ind--line > .rw-tab-item.is-active { border-bottom-color: transparent !important; }
+.has-tab-ind--line > .dash-tab.is-active::after { display: none; }
+.has-tab-ind--pill > .rw-tab-ind {
+  top: 0; height: var(--h, 0);
+  transform: translate(var(--x, 0), var(--y, 0));
+  background: var(--surface); border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.12);
+}
+.has-tab-ind--pill > .rw-tab-item { position: relative; z-index: 1; }
+.has-tab-ind--pill > .rw-tab-item.is-active { background: transparent !important; box-shadow: none !important; }
+/* Cor do texto acompanha o marcador em vez de trocar seco. */
+.rw-tab-item { transition: color var(--dur-2) var(--ease-out); }
+
+/* ── Barras crescem na entrada da página ── */
+@keyframes rwGrowX { from { transform: scaleX(0); } to { transform: none; } }
+@keyframes rwReveal { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+.page.is-entering .dash-hours-fill { transform-origin: left center; animation: rwGrowX 700ms var(--ease-out) both; animation-delay: 120ms; }
+.page.is-entering .prio-bar { animation: rwReveal 700ms var(--ease-out) both; animation-delay: 120ms; }
+
+/* ── Comentário que acabou de chegar ── */
+@keyframes rwCommentIn {
+  0%   { opacity: 0; transform: translateY(8px); background: var(--accent-dim); }
+  25%  { opacity: 1; transform: none; background: var(--accent-dim); }
+  100% { background: transparent; }
+}
+.chat-comment.is-arriving { animation: rwCommentIn 1.6s var(--ease-out); border-radius: var(--radius-sm); }
+
+/* ── Conclusão de demanda: toast próprio + confete (celebrateCompletion) ──
+   Toast em roxo da marca com título + nome da demanda; um brilho atravessa
+   uma vez. O confete é animado via Web Animations no app.js; aqui só forma. */
+.toast-celebrate {
+  border-left: 3px solid var(--success);
+  background: color-mix(in oklab, var(--success) 10%, var(--glass-strong));
+}
+.toast-celebrate .toast-check { background: var(--success); color: #0F1114; }
+.toast-celebrate::after { background: var(--success); opacity: .55; }
+.toast-celebrate::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(100deg, transparent 35%, rgba(255,255,255,.28) 50%, transparent 65%);
+  transform: translateX(-100%);
+  animation: rwSheen 900ms 180ms var(--ease-out) forwards;
+}
+@keyframes rwSheen { to { transform: translateX(100%); } }
+.toast-title { display: block; font-weight: 600; }
+/* Toast é sempre uma linha por texto: cresce até caber (limite da tela) e,
+   se ainda assim não couber, corta com reticências. O botão de ação nunca
+   encolhe nem quebra. */
+.toast { max-width: min(560px, calc(100vw - 48px)); }
+.toast-msg, .toast-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.toast-action { white-space: nowrap; flex-shrink: 0; }
+.toast-sub {
+  display: block; margin-top: 2px; max-width: 320px;
+  font-size: 12px; font-weight: 500; color: var(--text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.confetti-layer { perspective: 600px; }
+.confetti-piece { animation: none; opacity: 1; will-change: transform, opacity; }
+.confetti-piece--rect  { width: 8px;  height: 11px; margin: -5px 0 0 -4px; border-radius: 2px; }
+.confetti-piece--strip { width: 4px;  height: 14px; margin: -7px 0 0 -2px; border-radius: 2px; }
+.confetti-piece--dot   { width: 7px;  height: 7px;  margin: -3px 0 0 -3px; border-radius: 50%; }
+@media (prefers-reduced-motion: reduce) { .toast-celebrate::before { display: none; } }

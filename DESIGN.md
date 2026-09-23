@@ -276,6 +276,24 @@ Bordas são raras. Onde existem, usam `--border` (dim de `--surface-3`) e são d
 
 Um card do detail-stage-card com cor dinâmica via CSS custom prop `--stage-color`. O componente muta cor de acordo com a etapa atual da demanda, mas mantém a mesma estrutura. É o momento onde o "brand" temporariamente vira "identidade daquela etapa" — reforça que a etapa é a unidade fundamental da UI (Princípio 1 do PRODUCT.md).
 
+## Motion
+
+Uma escala só, definida no bloco "SISTEMA DE MOVIMENTO (v2)" no fim do `style.css`.
+
+- **Durações:** `--dur-1` 120ms (hover, press), `--dur-2` 200ms (popover, troca de aba, saídas), `--dur-3` 280ms (modal, página, toast), `--dur-4` 420ms (cascata de entrada).
+- **Curvas:** entrada em `--ease-out`, saída em `--ease-in` e sempre mais curta que a entrada. `--ease-spring` fica pra `transform` de press/hover.
+- **Distância:** 4-8px de deslocamento, escala mínima .98. Sem bounce.
+- **Cascata:** só na entrada da página (`.page.is-entering`, ligada por `markPageEntering()` no `goPage`). Re-render por SSE ou filtro não reanima.
+- **Loops:** só pra estado vivo de verdade (timer rodando, skeleton). Nada pulsando pra chamar atenção.
+- **Saídas:** toasts recolhem com `dismissToast()`; modais encolhem pra .985 com fade.
+- **Tema:** troca vira cross-fade via View Transitions.
+- **Abas e segmentados:** um marcador por grupo desliza até a aba ativa (`initTabIndicators()`, lista em `TAB_IND_SETS`). Aba nova entra na lista, não ganha estilo próprio de ativo.
+- **Números e barras:** contam do zero e crescem só na entrada da página (`animateCounters()`).
+- **Conclusão:** demanda que cai numa etapa de conclusão (qualquer caminho) mostra o toast `celebrate` e o confete sai dele (`celebrateCompletion()`). Único momento com confete: comemoração que vira rotina perde a graça.
+- **Comentário novo:** sobe com fundo roxo que se apaga (`.chat-comment.is-arriving`).
+- **Prévia:** `/api/admin/motion-preview` (só admin) mostra tudo isso com o `style.css` real, em claro/escuro e câmera lenta.
+- **`prefers-reduced-motion`:** desliga tudo.
+
 ## Do's and Don'ts
 
 ### Do:

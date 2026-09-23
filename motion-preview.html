@@ -1,0 +1,528 @@
+<!doctype html>
+<!-- Prévia do sistema de movimento. Servida (só admin) em /api/admin/motion-preview.
+     Carrega o style.css REAL da plataforma: tudo o que anima aqui é a mesma
+     regra que roda no app. O JS abaixo só reproduz os gatilhos (classes) que
+     o app.js liga; as durações e curvas vêm do CSS. -->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Animações · reWork</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="stylesheet" href="/css/fonts.css?v=1">
+<link rel="stylesheet" href="/css/style.css?t=__TS__">
+<style>
+  html, body { height: auto !important; overflow: auto !important; }
+  body::before { display: none; }
+  .mp-top {
+    position: sticky; top: 0; z-index: 50;
+    display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+    padding: 12px 24px; background: var(--bg); border-bottom: 1px solid var(--hairline);
+  }
+  .mp-top h1 { font-size: 15px; font-weight: 700; margin: 0; letter-spacing: -.01em; }
+  .mp-top small { color: var(--text-muted); font-size: 12px; margin-right: auto; }
+  .mp-seg { display: inline-flex; padding: 2px; gap: 2px; background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 8px; }
+  .mp-seg button { border: 0; background: transparent; color: var(--text-muted); font: 600 12px/1 inherit; font-family: inherit; padding: 7px 11px; border-radius: 6px; cursor: pointer; }
+  .mp-seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+  .mp-wrap { max-width: 1240px; margin: 0 auto; padding: 24px 24px 80px; }
+  .mp-group { margin: 32px 0 12px; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); }
+  .mp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 16px; }
+  .mp-card { background: var(--surface); border-radius: var(--radius-lg); padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .mp-card.wide { grid-column: 1 / -1; }
+  @media (min-width: 780px) { .mp-card.span2 { grid-column: span 2; } }
+  .mp-head { display: flex; align-items: flex-start; gap: 12px; }
+  .mp-head div { flex: 1; min-width: 0; }
+  .mp-head strong { display: block; font-size: 14px; font-weight: 600; }
+  .mp-head p { margin: 4px 0 0; font-size: 12.5px; color: var(--text-dim); line-height: 1.45; }
+  .mp-spec { display: flex; flex-wrap: wrap; gap: 6px; }
+  .mp-spec span { font: 600 11px/1 'Geist Mono', ui-monospace, monospace; color: var(--text-muted); background: var(--surface-2); padding: 5px 7px; border-radius: 5px; font-variant-numeric: tabular-nums; }
+  .mp-stage {
+    position: relative; min-height: 180px; border-radius: var(--radius); background: var(--bg);
+    overflow: hidden; padding: 16px;
+    transform: translateZ(0); /* prende modal/toast (position: fixed) dentro do palco */
+  }
+  .mp-replay { flex-shrink: 0; }
+  .mp-note { font-size: 12px; color: var(--text-muted); margin: 0; }
+
+  /* Trilhas de duração/curva */
+  .mp-track { position: relative; height: 26px; display: flex; align-items: center; gap: 10px; }
+  .mp-track + .mp-track { margin-top: 8px; }
+  .mp-track label { width: 84px; flex-shrink: 0; font: 600 11px/1 'Geist Mono', ui-monospace, monospace; color: var(--text-muted); }
+  .mp-rail { position: relative; flex: 1; height: 26px; border-radius: 6px; background: var(--surface-2); }
+  .mp-dot { position: absolute; left: 3px; top: 3px; width: 20px; height: 20px; border-radius: 5px; background: var(--accent); }
+  .mp-rail.go .mp-dot { transform: translateX(calc(var(--rail-w) - 26px)); }
+
+  /* Mini página */
+  .mp-page.page { display: flex; flex-direction: column; overflow: visible; }
+  .mp-page .page-body { padding: 0; overflow: visible; display: flex; flex-direction: column; gap: 10px; }
+  .mp-block { height: 14px; border-radius: 4px; background: var(--surface-2); }
+  .mp-block.h { height: 22px; width: 45%; background: var(--surface-3); }
+  .mp-page table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .mp-page td { padding: 7px 8px; border-top: 1px solid var(--hairline); color: var(--text-dim); }
+
+  /* Comentário */
+  .mp-chat { display: flex; flex-direction: column; gap: 4px; }
+  .mp-cm-head { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+  .mp-av { width: 24px; height: 24px; border-radius: 50%; background: var(--accent-dim); color: var(--accent-text); display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; }
+  .mp-cm-time { color: var(--text-muted); font-size: 11px; margin-left: auto; }
+  .mp-chat .chat-comment { padding: 8px 10px; }
+  .mp-chat .chat-comment-body { padding-left: 32px; }
+
+  .mp-toasts { position: absolute; left: 16px; right: 16px; bottom: 16px; align-items: flex-end; display: flex; flex-direction: column-reverse; gap: 8px; }
+  .mp-removed { margin: 0; padding-left: 18px; font-size: 13px; color: var(--text-dim); line-height: 1.7; }
+  .mp-removed b { color: var(--text); font-weight: 600; }
+  @media (max-width: 520px) {
+    .mp-grid { grid-template-columns: 1fr; }
+    .mp-wrap, .mp-top { padding-left: 16px; padding-right: 16px; }
+  }
+</style>
+</head>
+<body>
+<header class="mp-top">
+  <h1>Animações</h1>
+  <small>Usa o style.css real. Editou o CSS, é só dar F5.</small>
+  <div class="mp-seg" id="mp-theme">
+    <button data-v="light">Claro</button><button data-v="dark">Escuro</button>
+  </div>
+  <div class="mp-seg" id="mp-speed">
+    <button data-v="1" class="on">1x</button><button data-v="0.25">Câmera lenta</button>
+  </div>
+  <button class="btn btn-primary btn-sm" onclick="replayAll()">Repetir todas</button>
+</header>
+
+<main class="mp-wrap">
+
+  <div class="mp-group">Base</div>
+  <div class="mp-grid">
+    <section class="mp-card" data-demo="durations">
+      <div class="mp-head"><div><strong>Durações</strong><p>Quatro tempos pra plataforma inteira. Quanto maior a área que se mexe, mais longo.</p></div>
+        <button class="btn btn-ghost btn-sm mp-replay">Repetir</button></div>
+      <div class="mp-stage" style="min-height:0">
+        <div class="mp-track"><label>dur-1 120</label><div class="mp-rail" style="--d:var(--dur-1)"><span class="mp-dot"></span></div></div>
+        <div class="mp-track"><label>dur-2 200</label><div class="mp-rail" style="--d:var(--dur-2)"><span class="mp-dot"></span></div></div>
+        <div class="mp-track"><label>dur-3 280</label><div class="mp-rail" style="--d:var(--dur-3)"><span class="mp-dot"></span></div></div>
+        <div class="mp-track"><label>dur-4 420</label><div class="mp-rail" style="--d:var(--dur-4)"><span class="mp-dot"></span></div></div>
+      </div>
+      <p class="mp-note">120 hover e clique · 200 menus, abas e saídas · 280 modal, página e toast · 420 cascata de entrada.</p>
+    </section>
+
+    <section class="mp-card" data-demo="curves">
+      <div class="mp-head"><div><strong>Curvas</strong><p>Entrar desacelera no fim; sair acelera. Mostradas a 700ms pra dar pra ver a forma.</p></div>
+        <button class="btn btn-ghost btn-sm mp-replay">Repetir</button></div>
+      <div class="mp-stage" style="min-height:0">
+        <div class="mp-track"><label>ease-out</label><div class="mp-rail" style="--d:700ms;--e:var(--ease-out)"><span class="mp-dot"></span></div></div>
+        <div class="mp-track"><label>ease-in</label><div class="mp-rail" style="--d:700ms;--e:var(--ease-in)"><span class="mp-dot"></span></div></div>
+        <div class="mp-track"><label>ease-in-out</label><div class="mp-rail" style="--d:700ms;--e:var(--ease-in-out)"><span class="mp-dot"></span></div></div>
+        <div class="mp-track"><label>spring</label><div class="mp-rail" style="--d:700ms;--e:var(--ease-spring)"><span class="mp-dot"></span></div></div>
+      </div>
+      <p class="mp-note">ease-out: tudo que entra · ease-in: tudo que sai · ease-in-out: troca de tema · spring: clique e hover.</p>
+    </section>
+  </div>
+
+  <div class="mp-group">Navegação</div>
+  <div class="mp-grid">
+    <section class="mp-card" data-demo="page">
+      <div class="mp-head"><div><strong>Entrada de página</strong><p>Fade curto e o conteúdo sobe em cascata. Linhas de tabela só aparecem em sequência, sem se mexer. Só roda ao trocar de página.</p></div>
+        <button class="btn btn-ghost btn-sm mp-replay">Repetir</button></div>
+      <div class="mp-spec"><span>fade 200ms</span><span>sobe 6px · 420ms</span><span>+32ms por bloco</span></div>
+      <div class="mp-stage">
+        <div class="page active mp-page" id="mp-page">
+          <div class="page-body">
+            <div class="mp-block h"></div>
+            <div class="mp-block" style="width:70%"></div>
+            <table><tbody>
+              <tr><td>Criativos Meta Ads · setembro</td><td>Revisão</td></tr>
+              <tr><td>Landing page Black Friday</td><td>Produção</td></tr>
+              <tr><td>Relatório mensal</td><td>Aprovação</td></tr>
+              <tr><td>Post carrossel · lançamento</td><td>Briefing</td></tr>
+              <tr><td>Vídeo institucional</td><td>Edição</td></tr>
+            </tbody></table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="mp-card" data-demo="tabs">
+      <div class="mp-head"><div><strong>Abas</strong><p>Um marcador só desliza até a aba clicada, em vez de o sublinhado pular. Vale pras abas do Início, Análises, detalhe da demanda, Recorrentes e Integrações.</p></div>
+        <button class="btn btn-ghost btn-sm mp-replay">Repetir</button></div>
+      <div class="mp-spec"><span>280ms · ease-out</span><span>cor do texto 200ms</span></div>
+      <div class="mp-stage" style="min-height:0">
+        <nav class="dash-tabs" role="tablist" data-tabs>
+          <button class="dash-tab is-active">Previsões</button>
+          <button class="dash-tab">Radar</button>
+          <button class="dash-tab">Atividade recente</button>
+        </nav>
+        <div class="detail-tabs" data-tabs style="margin-top:16px;padding:0">
+          <button class="detail-tab is-active">Comentários</button>
+          <button class="detail-tab">Checklist</button>
+          <button class="detail-tab">Formulários</button>
+          <button class="detail-tab">Etapas</button>
+        </div>
+      </div>
+      <p class="mp-note">Clique nas abas.</p>
+    </section>
+
+    <section class="mp-card" data-demo="seg">
+      <div class="mp-head"><div><strong>Seletor segmentado</strong><p>Mesmo princípio: o fundo claro desliza até a opção escolhida.</p></div>
+        <button class="btn btn-ghost btn-sm mp-replay">Repetir</button></div>
+      <div class="mp-spec"><span>280ms · ease-out</span></div>
+      <div class="mp-stage" style="min-height:0;display:flex;flex-direction:column;gap:14px;align-items:flex-start">
+        <div class="dash-widget-toggle" data-tabs>
+          <button class="dash-toggle-btn is-active">Previstas</button>
+          <button class="dash-toggle-btn">Prazos</button>
+        </div>
+        <div class="filter-toggle" data-tabs>
+          <button class="filter-toggle-btn is-active">Usuário</button>
+          <button class="filter-toggle-btn">Cliente</button>
+          <button class="filter-toggle-btn">Workspace</button>
+        </div>
+      </div>
+      <p class="mp-note">Clique nas opções.</p>
+    </section>
+
+    <section class="mp-card" data-demo="numbers">
+      <div class="mp-head"><div><strong>Números e barras</strong><p>Ao entrar na página, números contam do zero e barras crescem. Atualização em tempo real não reconta.</p></div>
+        <button class="btn btn-ghost btn-sm mp-replay">Repetir</button></div>
+      <div class="mp-spec"><span>contagem 700ms</span><span>barra 700ms · +120ms</span></div>
+      <div class="mp-stage">
+        <div class="page active mp-page" id="mp-numbers">
+          <div class="page-body">
+            <div class="dash-hours-wrap dash-hours-today is-mid">
+              <div class="dash-hours-head"><span class="dash-hours-label">Hoje</span><span class="dash-hours-value">5,5h<span>/8h</span></span></div>
+              <div class="dash-hours-track"><div class="dash-hours-fill" style="width:69%"></div></div>
+            </div>
+            <div class="dash-hours-wrap dash-hours-week is-full">
+              <div class="dash-hours-head"><span class="dash-hours-label">Semana</span><span class="dash-hours-value">31,7h<span>/40h</span></span></div>
+              <div class="dash-hours-track"><div class="dash-hours-fill" style="width:79%"></div></div>
+            </div>
+            <div class="prio-bar-widget">
+              <div class="prio-bar"><span class="prio-bar-fill" style="width:17%;background:#EF4444"></span><span class="prio-bar-fill" style="width:33%;background:#F97316"></span><span class="prio-bar-fill" style="width:33%;background:#EAB308"></span><span class="prio-bar-fill" style="width:17%;background:#3B82F6"></span></div>
+              <div class="prio-bar-legend">
+                <span class="prio-bar-item"><span class="prio-bar-dot" style="background:#EF4444"></span><span class="prio-bar-label">Imediata</span><span class="prio-bar-sep">·</span><span class="prio-bar-value">2</span><span class="prio-bar-sep">·</span><span class="prio-bar-pct">17%</span></span>
+                <span class="prio-bar-item"><span class="prio-bar-dot" style="background:#F97316"></span><span class="prio-bar-label">Alta</span><span class="prio-bar-sep">·</span><span class="prio-bar-value">4</span><span class="prio-bar-sep">·</span><span class="prio-bar-pct">33%</span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="mp-group">Camadas</div>
+  <div class="mp-grid">
+    <section class="mp-card" data-demo="modal">
+      <div class="mp-head"><div><strong>Modal</strong><p>Cresce de 98,5% com fade. Fecha na mesma escala, mais rápido que abriu.</p></div>
+        <button class="btn btn-ghost btn-sm mp-replay">Repetir</button></div>
+      <div class="mp-spec"><span>abre 280ms · ease-out</span><span>fecha 160ms · ease-in</span></div>
+      <div class="mp-stage" style="min-height:260px;display:flex;align-items:center;justify-content:center">
+        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('mp-modal').classList.add('open')">Abrir modal</button>
+        <div class="modal-overlay" id="mp-modal" onclick="if (event.target === this) closeMpModal()">
+          <div class="modal" style="max-width:320px">
+            <div class="modal-header"><div class="modal-title">Excluir demanda?</div><button class="modal-close" onclick="closeMpModal()">×</button></div>
+            <div class="modal-body" style="font-size:13px;color:var(--text-dim)">Ela vai pra lixeira e pode ser recuperada por 30 dias.
+              <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px"><button class="btn btn-ghost btn-sm" onclick="closeMpModal()">Cancelar</button><button class="btn btn-danger btn-sm" onclick="closeMpModal()">Excluir</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="mp-card" data-demo="menu">
+      <div class="mp-head"><div><strong>Menus e dropdowns</strong><p>Todos entram igual: 4px de subida, 98% de escala, 200ms.</p></div>
+        <button class="btn btn-ghost btn-sm mp-replay">Repetir</button></div>
+      <div class="mp-spec"><span>200ms · ease-out</span></div>
+      <div class="mp-stage" style="min-height:220px">
+        <div class="filter-cdrop" id="mp-cdrop" style="width:200px">
+          <button type="button" class="filter-cdrop-trigger" onclick="this.parentElement.classList.toggle('open')"><span class="filter-cdrop-label">Em andamento</span><i data-lucide="chevron-down" class="ic-xs"></i></button>
+          <div class="filter-cdrop-menu">
+            <div class="filter-cdrop-item">Todas</div>
+            <div class="filter-cdrop-item">Atrasadas</div>
+            <div class="filter-cdrop-item active">Em andamento</div>
+            <div class="filter-cdrop-item">Concluídas</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="mp-card" data-demo="toast">
+      <div class="mp-head"><div><strong>Toasts</strong><p>Entram de baixo, saem pro lado e os outros descem suavemente. Mouse em cima pausa o tempo.</p></div>
+        <button class="btn btn-ghost btn-sm mp-replay">Repetir</button></div>
+      <div class="mp-spec"><span>entra 280ms</span><span>sai 200ms + recolhe</span></div>
+      <div class="mp-stage" style="min-height:260px">
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn btn-ghost btn-sm" onclick="mpToast('Demanda salva.','success')">Sucesso</button>
+          <button class="btn btn-ghost btn-sm" onclick="mpToast('Maria está de férias até 03/10.','warn')">Aviso</button>
+          <button class="btn btn-ghost btn-sm" onclick="mpToast('Não foi possível salvar.','error')">Erro</button>
+        </div>
+        <div id="toast-container" class="mp-toasts"></div>
+      </div>
+    </section>
+  </div>
+
+  <div class="mp-group">Feedback</div>
+  <div class="mp-grid">
+    <section class="mp-card span2" data-demo="celebrate">
+      <div class="mp-head"><div><strong>Demanda concluída</strong><p>Quando uma demanda cai numa etapa de conclusão (seletor, Avançar, arrastar no kanban ou em lote), aparece este toast e o confete estoura dele.</p></div>
+        <button class="btn btn-ghost btn-sm mp-replay">Repetir</button></div>
+      <div class="mp-spec"><span>36 pedaços</span><span>1,3 a 2s · gravidade</span><span>toast 5s</span></div>
+      <div class="mp-stage" style="min-height:220px;overflow:visible">
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn btn-ghost btn-sm" onclick="mpCelebrate()">Uma demanda</button>
+          <button class="btn btn-ghost btn-sm" onclick="mpCelebrate(3)">Em lote</button>
+        </div>
+        <div id="mp-toast-celebrate" class="mp-toasts"></div>
+      </div>
+    </section>
+
+    <section class="mp-card" data-demo="comment">
+      <div class="mp-head"><div><strong>Comentário novo</strong><p>Quando chega um comentário (seu ou de outra pessoa, em tempo real), ele sobe com um fundo roxo que se apaga.</p></div>
+        <button class="btn btn-ghost btn-sm mp-replay">Repetir</button></div>
+      <div class="mp-spec"><span>1,6s · ease-out</span></div>
+      <div class="mp-stage">
+        <div class="mp-chat" id="mp-chat">
+          <div class="chat-comment"><div class="mp-cm-head"><span class="mp-av">AL</span><b>Ana Lima</b><span class="mp-cm-time">10:12</span></div><div class="chat-comment-body"><div class="chat-comment-text">Subi a primeira versão dos criativos.</div></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="mp-card" data-demo="press">
+      <div class="mp-head"><div><strong>Clique</strong><p>Botões afundam pra 98% no clique. Sem o efeito de onda que saía do centro.</p></div></div>
+      <div class="mp-spec"><span>press 60ms</span><span>solta 120ms · spring</span></div>
+      <div class="mp-stage" style="min-height:0;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn btn-primary">Nova demanda</button>
+        <button class="btn btn-ghost">Cancelar</button>
+        <button class="btn btn-danger">Excluir</button>
+      </div>
+      <p class="mp-note">Clique e segure.</p>
+    </section>
+
+    <section class="mp-card" data-demo="bell">
+      <div class="mp-head"><div><strong>Notificação nova</strong><p>O sino balança uma vez e o número dá um pulo. Depois fica parado: sem brilho pulsando o tempo todo.</p></div>
+        <button class="btn btn-ghost btn-sm mp-replay">Repetir</button></div>
+      <div class="mp-stage" style="min-height:0;display:flex;justify-content:center">
+        <div class="notif-wrap">
+          <button class="btn btn-ghost notif-bell" id="mp-bell">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1.5A4.5 4.5 0 003.5 6v2.5l-1.2 2a.75.75 0 00.65 1.13h10.1a.75.75 0 00.65-1.13l-1.2-2V6A4.5 4.5 0 008 1.5z" stroke="currentColor" stroke-width="1.4"/><path d="M6 11.63a2 2 0 004 0" stroke="currentColor" stroke-width="1.4"/></svg>
+            <span class="notif-badge has-unread" id="mp-badge">3</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="mp-card" data-demo="theme">
+      <div class="mp-head"><div><strong>Troca de tema</strong><p>Claro e escuro trocam com um cross-fade da tela inteira em vez de um corte seco.</p></div>
+        <button class="btn btn-ghost btn-sm mp-replay">Trocar tema</button></div>
+      <div class="mp-spec"><span>280ms · ease-in-out</span><span>View Transitions</span></div>
+      <p class="mp-note">Troca o tema desta página toda (igual ao botão da barra lateral).</p>
+    </section>
+  </div>
+
+  <div class="mp-group">Saíram</div>
+  <section class="mp-card wide">
+    <ul class="mp-removed">
+      <li><b>Brilho pulsando no número de notificações</b> o tempo todo enquanto havia não lidas.</li>
+      <li><b>Anel "respirando"</b> em todo avatar de quem está online. Continua o ponto verde, parado.</li>
+      <li><b>Onda no botão primário</b>, que saía do centro e não do ponto clicado.</li>
+      <li><b>"Levantar" das linhas da tabela</b> no hover, que deixava o texto borrado.</li>
+      <li><b>Entradas próprias do Início</b> (saudação, colunas e widgets, cada uma com tempo e distância diferentes). Agora seguem a cascata da página.</li>
+    </ul>
+    <p class="mp-note">Quem ativa "reduzir movimento" no sistema operacional não vê nenhuma dessas animações.</p>
+  </section>
+</main>
+
+<script src="/vendor/lucide.min.js"></script>
+<script>
+  // Velocidade: a câmera lenta reduz o playbackRate de toda animação/transição
+  // CSS (Web Animations) e alonga os timers abaixo na mesma proporção.
+  let rate = 1;
+  const T = ms => ms / rate;
+  const wait = ms => new Promise(r => setTimeout(r, T(ms)));
+  setInterval(() => { if (rate !== 1) document.getAnimations().forEach(a => { if (a.playbackRate !== rate) a.playbackRate = rate; }); }, 30);
+  const restart = el => { void el.offsetWidth; };
+
+  function seg(id, fn) {
+    const box = document.getElementById(id);
+    box.addEventListener('click', e => {
+      const b = e.target.closest('button'); if (!b) return;
+      box.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+      fn(b.dataset.v);
+    });
+  }
+  const isLight = () => document.documentElement.getAttribute('data-theme') === 'light';
+  function setTheme(v, animate) {
+    const apply = () => {
+      if (v === 'light') document.documentElement.setAttribute('data-theme', 'light');
+      else document.documentElement.removeAttribute('data-theme');
+      document.querySelectorAll('#mp-theme button').forEach(x => x.classList.toggle('on', x.dataset.v === v));
+      requestAnimationFrame(placeAllTabs);
+    };
+    if (animate && document.startViewTransition) document.startViewTransition(apply); else apply();
+  }
+  try { setTheme(localStorage.getItem('kastor-theme') === 'light' ? 'light' : 'dark'); } catch { setTheme('dark'); }
+  seg('mp-theme', v => setTheme(v, true));
+  seg('mp-speed', v => { rate = Number(v); if (rate === 1) document.getAnimations().forEach(a => a.playbackRate = 1); });
+
+  /* Marcador das abas (mesma ideia do initTabIndicators do app.js) */
+  function placeTabs(list, animate) {
+    const kind = list.classList.contains('dash-tabs') || list.classList.contains('detail-tabs') ? 'line' : 'pill';
+    const items = [...list.querySelectorAll(':scope > button')];
+    items.forEach(b => b.classList.add('rw-tab-item'));
+    list.classList.add('has-tab-ind', 'has-tab-ind--' + kind);
+    let ind = list.querySelector(':scope > .rw-tab-ind');
+    if (!ind) { ind = document.createElement('span'); ind.className = 'rw-tab-ind'; list.appendChild(ind); animate = false; }
+    const a = items.find(b => b.classList.contains('is-active'));
+    const inset = list.classList.contains('dash-tabs') ? 10 : 0;
+    if (!animate) ind.style.transition = 'none';
+    ind.style.setProperty('--x', (a.offsetLeft + inset) + 'px');
+    ind.style.setProperty('--w', (a.offsetWidth - inset * 2) + 'px');
+    ind.style.setProperty('--y', a.offsetTop + 'px');
+    ind.style.setProperty('--h', a.offsetHeight + 'px');
+    ind.style.opacity = '1';
+    if (!animate) { void ind.offsetWidth; ind.style.transition = ''; }
+  }
+  function placeAllTabs() { document.querySelectorAll('[data-tabs]').forEach(l => placeTabs(l, false)); }
+  document.querySelectorAll('[data-tabs]').forEach(list => {
+    list.addEventListener('click', e => {
+      const b = e.target.closest('button'); if (!b || b.parentElement !== list) return;
+      list.querySelectorAll(':scope > button').forEach(x => x.classList.toggle('is-active', x === b));
+      placeTabs(list, true);
+    });
+  });
+  document.fonts?.ready?.then(placeAllTabs);
+  window.addEventListener('resize', placeAllTabs);
+
+  /* Contagem (mesma regra do animateCounters do app.js) */
+  function countUp(scope) {
+    scope.querySelectorAll('.dash-hours-value, .prio-bar-value, .prio-bar-pct').forEach(el => {
+      const tn = el._tn || [...el.childNodes].find(n => n.nodeType === 3 && n.textContent.trim());
+      if (!tn) return;
+      el._tn = tn;
+      const src = el._orig || (el._orig = tn.textContent);
+      const m = src.match(/^(\s*)(\d+(?:,\d+)?)(\D*)$/); if (!m) return;
+      const dec = (m[2].split(',')[1] || '').length, to = parseFloat(m[2].replace(',', '.'));
+      const fmt = v => m[1] + v.toFixed(dec).replace('.', ',') + m[3];
+      const t0 = performance.now(), dur = T(700);
+      const tick = now => { const t = Math.min(1, (now - t0) / dur); tn.textContent = fmt((1 - Math.pow(1 - t, 3)) * to); if (t < 1) requestAnimationFrame(tick); };
+      tn.textContent = fmt(0); requestAnimationFrame(tick);
+    });
+  }
+
+  function enter(pageEl) {
+    clearTimeout(pageEl._t);
+    pageEl.classList.remove('is-entering', 'active'); restart(pageEl);
+    pageEl.classList.add('active', 'is-entering');
+    pageEl._t = setTimeout(() => pageEl.classList.remove('is-entering'), T(750));
+  }
+
+  /* Modal */
+  function closeMpModal() { document.getElementById('mp-modal').classList.remove('open'); }
+
+  /* Toast (mesma marcação e classes do toast() do app.js) */
+  const ICONS = {
+    warn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 8v5M12 16.5v.01"/></svg>',
+    error: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M8 8l8 8M16 8l-8 8"/></svg>'
+  };
+  function mpToast(msg, type, where = 'toast-container', action) {
+    const t = document.createElement('div');
+    t.className = 'toast toast-' + type;
+    if (type === 'success' || type === 'celebrate') t.innerHTML = '<span class="toast-check"><svg viewBox="0 0 24 24"><path d="M5 12 L10 17 L19 7"/></svg></span>';
+    else t.innerHTML = `<span class="toast-icon toast-icon-badge toast-icon-${type}">${ICONS[type]}</span>`;
+    const s = document.createElement('span'); s.className = 'toast-msg';
+    if (typeof msg === 'object') {
+      s.innerHTML = '<b class="toast-title"></b>' + (msg.sub ? '<span class="toast-sub"></span>' : '');
+      s.querySelector('.toast-title').textContent = msg.title;
+      if (msg.sub) s.querySelector('.toast-sub').textContent = msg.sub;
+    } else s.textContent = msg;
+    t.appendChild(s);
+    if (action) { const b = document.createElement('button'); b.type = 'button'; b.className = 'toast-action'; b.textContent = action; b.onclick = () => dismiss(t); t.appendChild(b); }
+    const dur = action ? 6000 : type === 'celebrate' ? 5000 : 3500;
+    t.style.setProperty('--toast-duration', T(dur) + 'ms');
+    document.getElementById(where).appendChild(t);
+    let remaining = T(dur), started = Date.now();
+    let timer = setTimeout(() => dismiss(t), remaining);
+    t.addEventListener('mouseenter', () => { clearTimeout(timer); remaining -= Date.now() - started; });
+    t.addEventListener('mouseleave', () => { started = Date.now(); timer = setTimeout(() => dismiss(t), Math.max(remaining, 800)); });
+    return t;
+  }
+
+  /* Confete: a função REAL do app.js, injetada pelo servidor. */
+  /*__CONFETTI_JS__*/
+  function mpCelebrate(n) {
+    const t = mpToast(n ? { title: n + ' demandas concluídas' } : { title: 'Demanda concluída', sub: 'Criativos Meta Ads · setembro' },
+      'celebrate', 'mp-toast-celebrate', n ? null : 'Próxima demanda');
+    requestAnimationFrame(() => {
+      const r = t.querySelector('.toast-check').getBoundingClientRect();
+      if (typeof spawnConfetti === 'function') spawnConfetti(r.left + r.width / 2, r.top + r.height / 2);
+    });
+  }
+  function dismiss(t) {
+    if (t._leaving) return; t._leaving = true;
+    t.style.height = t.offsetHeight + 'px'; restart(t);
+    t.classList.add('is-leaving'); t.style.height = '0px';
+    setTimeout(() => t.remove(), T(320));
+  }
+
+  /* Demos */
+  const DEMOS = {
+    async durations(card) { await rails(card); },
+    async curves(card) { await rails(card); },
+    async page() { enter(document.getElementById('mp-page')); },
+    async tabs(card) {
+      for (const list of card.querySelectorAll('[data-tabs]')) {
+        const items = [...list.querySelectorAll(':scope > button')];
+        for (const i of [items.length - 1, 1, 0]) {
+          items.forEach((x, j) => x.classList.toggle('is-active', j === i)); placeTabs(list, true); await wait(550);
+        }
+      }
+    },
+    async seg(card) { await DEMOS.tabs(card); },
+    async numbers() { const p = document.getElementById('mp-numbers'); enter(p); requestAnimationFrame(() => countUp(p)); },
+    async modal() {
+      const m = document.getElementById('mp-modal');
+      m.classList.remove('open'); await wait(250);
+      m.classList.add('open'); await wait(1400); m.classList.remove('open');
+    },
+    async menu() {
+      const c = document.getElementById('mp-cdrop');
+      c.classList.remove('open'); await wait(200); c.classList.add('open'); await wait(1400); c.classList.remove('open');
+    },
+    async toast() {
+      mpToast('Demanda salva.', 'success'); await wait(350);
+      mpToast('Maria está de férias até 03/10.', 'warn'); await wait(350);
+      mpToast('Não foi possível salvar.', 'error');
+    },
+    async celebrate() { mpCelebrate(); },
+    async comment() {
+      const chat = document.getElementById('mp-chat');
+      chat.querySelectorAll('.is-arriving').forEach(x => x.remove());
+      const el = document.createElement('div');
+      el.className = 'chat-comment is-arriving';
+      el.innerHTML = '<div class="mp-cm-head"><span class="mp-av">RS</span><b>Rafa Souza</b><span class="mp-cm-time">agora</span></div><div class="chat-comment-body"><div class="chat-comment-text">Aprovado! Pode seguir pra publicação.</div></div>';
+      chat.appendChild(el);
+    },
+    async bell() {
+      const bell = document.getElementById('mp-bell'), badge = document.getElementById('mp-badge');
+      bell.classList.remove('pulse'); badge.classList.remove('pop'); restart(bell);
+      badge.textContent = String(Number(badge.textContent) + 1);
+      bell.classList.add('pulse'); badge.classList.add('pop');
+    },
+    async theme() { setTheme(isLight() ? 'dark' : 'light', true); },
+  };
+  async function rails(card) {
+    const rs = card.querySelectorAll('.mp-rail');
+    rs.forEach(r => { r.style.setProperty('--rail-w', r.offsetWidth + 'px'); r.querySelector('.mp-dot').style.transition = 'none'; r.classList.remove('go'); });
+    restart(card); await wait(80);
+    rs.forEach(r => { r.querySelector('.mp-dot').style.transition = 'transform var(--d) var(--e, var(--ease-out))'; r.classList.add('go'); });
+  }
+  document.querySelectorAll('[data-demo]').forEach(card => {
+    card.querySelector('.mp-replay')?.addEventListener('click', () => DEMOS[card.dataset.demo]?.(card));
+  });
+  function replayAll() {
+    Object.keys(DEMOS).filter(k => k !== 'theme').forEach(k => {
+      const card = document.querySelector(`[data-demo="${k}"]`); if (card) DEMOS[k](card);
+    });
+  }
+  window.addEventListener('load', () => { window.lucide?.createIcons?.(); placeAllTabs(); replayAll(); });
+</script>
+</body>
+</html>

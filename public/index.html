@@ -1134,20 +1134,6 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
     <!-- ── MINHAS DEMANDAS ── -->
     <div class="page" id="page-mine">
       <div class="page-body">
-        <div class="mine-head">
-          <div class="mine-head-filters">
-            <select class="filter-select" id="mine-f-quick" onchange="renderMine()">
-              <option value="">Todas</option>
-              <option value="late">Atrasadas</option>
-              <option value="open">Em andamento</option>
-              <option value="done">Concluídas</option>
-            </select>
-            <div class="list-view-toggle">
-              <button class="btn btn-ghost btn-sm active" id="mine-view-list-btn" onclick="setMineView('list')" title="Lista"><i data-lucide="list" class="ic-sm"></i></button>
-              <button class="btn btn-ghost btn-sm" id="mine-view-cal-btn" onclick="setMineView('cal')" title="Calendário"><i data-lucide="calendar" class="ic-sm"></i></button>
-            </div>
-          </div>
-        </div>
         <div id="mine-view-list">
           <div class="table-wrap table-scroll mine-table-wrap">
             <table class="mine-table-v2">
@@ -1168,19 +1154,6 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             </table>
           </div>
         </div>
-        <div id="mine-view-cal" style="display:none">
-          <div class="calendar-nav">
-            <button class="btn btn-ghost" onclick="calNav('mine',-1)">&#8592;</button>
-            <div class="cal-title" id="cal-mine-title"></div>
-            <button class="btn btn-ghost" onclick="calNav('mine',1)">&#8594;</button>
-            <button class="btn btn-ghost" style="margin-left:auto" onclick="calToday('mine')">Hoje</button>
-          </div>
-          <div class="cal-grid">
-            <div class="cal-dow cal-dow--weekend">Dom</div><div class="cal-dow">Seg</div><div class="cal-dow">Ter</div><div class="cal-dow">Qua</div><div class="cal-dow">Qui</div><div class="cal-dow">Sex</div><div class="cal-dow cal-dow--weekend">Sáb</div>
-          </div>
-          <div class="cal-grid" id="cal-mine-body" style="margin-top:4px"></div>
-        </div>
-
         <div class="mine-agenda-panel mine-agenda-v2" id="mine-agenda-panel">
           <div class="mine-agenda-head-v2">
             <button type="button" class="mine-agenda-title-btn" onclick="_toggleMineAgenda()" title="Recolher/expandir">
@@ -4560,7 +4533,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260923perfil2" defer></script>
+<script src="/js/boot.js?v=20260923motion5" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

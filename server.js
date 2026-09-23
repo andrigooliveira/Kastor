@@ -2375,6 +2375,32 @@ app.get('/api/admin/email-preview/:key', requireAuth, (req, res) => {
   const html = sample.build().html;
   res.type('html').send(scheme ? html.replace('<html', `<html data-rw-scheme="${scheme}"`) : html);
 });
+// Prévia do sistema de movimento (motion-preview.html). Lido do disco a cada
+// request e com o style.css sem cache: editou o CSS, F5 mostra o novo.
+app.get('/api/admin/motion-preview', requireAuth, (req, res) => {
+  if (!req.user.isAdmin) return res.status(403).send('Apenas administradores.');
+  fs.readFile(path.join(__dirname, 'motion-preview.html'), 'utf8', (err, html) => {
+    if (err) return res.status(500).type('text/plain').send(err.message);
+    // O confete da prévia é a função real do app.js, recortada pelo nome e
+    // pelo par de chaves (funciona também no app.js minificado de produção,
+    // que mantém os nomes globais), pra prévia nunca divergir da plataforma.
+    let confetti = '';
+    try {
+      const js = fs.readFileSync(path.join(__dirname, 'public', 'js', 'app.js'), 'utf8');
+      const a = js.indexOf('function spawnConfetti(');
+      const open = a >= 0 ? js.indexOf('{', js.indexOf(')', a)) : -1;
+      if (open > 0) {
+        let depth = 0;
+        for (let i = open; i < js.length; i++) {
+          if (js[i] === '{') depth++;
+          else if (js[i] === '}' && --depth === 0) { confetti = js.slice(a, i + 1); break; }
+        }
+      }
+    } catch {}
+    res.set('Cache-Control', 'no-store').type('html')
+      .send(html.replace('__TS__', Date.now()).replace('/*__CONFETTI_JS__*/', () => confetti));
+  });
+});
 app.post('/api/admin/email-preview/:key/send', requireAuth, async (req, res) => {
   if (!req.user.isAdmin) return res.status(403).json({ error: 'Apenas administradores' });
   if (!mailEnabled()) return res.status(503).json({ error: 'SMTP não configurado' });

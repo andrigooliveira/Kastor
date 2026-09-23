@@ -1649,55 +1649,67 @@ function toastWithUndo(msg, undoFn) {
     }
   });
 }
-/* ── Confetti ──
-   Dispara N partículas coloridas caindo pra celebrar conclusão de demanda.
-   Puro DOM — sem canvas, sem lib. Auto-limpa depois da duração máxima. */
-const _CONFETTI_COLORS = ['#7A00FF', '#3CE3A0', '#F5A718', '#38BDF8', '#EF4444', '#F472B6'];
-function spawnConfetti(originX, originY, count = 14) {
+/* ── CONFETE ──
+   Explosão com física simples: cada pedaço sai da origem num ângulo pra
+   cima, perde velocidade e cai com gravidade, girando. A trajetória vira
+   keyframes da Web Animations API (sem canvas, sem lib). Cores: roxo da
+   marca (acento atual), verde de sucesso e três de apoio. */
+function spawnConfetti(originX, originY, count = 36) {
   if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#7A00FF';
+  const colors = [accent, accent, '#3CE3A0', '#F5A718', '#38BDF8', '#F472B6'];
+  const ox = originX != null ? originX : window.innerWidth - 60;
+  const oy = originY != null ? originY : window.innerHeight - 60;
   const layer = document.createElement('div');
   layer.className = 'confetti-layer';
-  // Se não veio origem, dispara do canto superior direito (perto do detalhe)
-  const ox = originX != null ? originX : window.innerWidth - 40;
-  const oy = originY != null ? originY : 100;
-  const durMax = 1800;
+  document.body.appendChild(layer);
+  let longest = 0;
   for (let i = 0; i < count; i++) {
     const p = document.createElement('span');
-    p.className = 'confetti-piece';
-    const color = _CONFETTI_COLORS[i % _CONFETTI_COLORS.length];
-    p.style.background = color;
-    p.style.left = (ox - 4) + 'px';
-    p.style.top  = oy + 'px';
-    // Espalhamento horizontal aleatório + queda vertical + rotação
-    const dx  = (Math.random() * 320 - 160).toFixed(0) + 'px';
-    const dy  = (140 + Math.random() * 200).toFixed(0) + 'px';
-    const rot = (Math.random() * 900 - 450).toFixed(0) + 'deg';
-    const dur = 900 + Math.random() * 900;
-    p.style.setProperty('--dx', dx);
-    p.style.setProperty('--dy', dy);
-    p.style.setProperty('--rot', rot);
-    p.style.setProperty('--confetti-dur', dur + 'ms');
-    p.style.animationDelay = (Math.random() * 120) + 'ms';
+    const shape = i % 3; // 0 retângulo, 1 fita, 2 bolinha
+    p.className = 'confetti-piece confetti-piece--' + ['rect', 'strip', 'dot'][shape];
+    p.style.background = colors[i % colors.length];
+    p.style.left = ox + 'px';
+    p.style.top = oy + 'px';
     layer.appendChild(p);
+    // Leque de ~110° apontado pra cima (levemente pra esquerda: a origem
+    // costuma estar no canto direito da tela).
+    const ang = (-90 - 12 + (Math.random() - 0.5) * 110) * Math.PI / 180;
+    const speed = 520 + Math.random() * 480;          // px/s
+    const vx = Math.cos(ang) * speed, vy = Math.sin(ang) * speed;
+    const g = 1100, drag = 0.9;                        // px/s², atrito do ar
+    const dur = 1300 + Math.random() * 700;
+    const spin = (Math.random() - 0.5) * 1440;
+    const tilt = Math.random() * 360;
+    const frames = [];
+    const N = 14;
+    for (let k = 0; k <= N; k++) {
+      const t = (k / N) * dur / 1000;
+      const damp = (1 - Math.pow(drag, t * 10)) / (1 - drag) / 10; // integra velocidade com atrito
+      const x = vx * damp;
+      const y = vy * damp + 0.5 * g * t * t;
+      frames.push({
+        transform: `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) rotate(${(tilt + spin * k / N).toFixed(0)}deg) rotateX(${(spin * 1.5 * k / N).toFixed(0)}deg)`,
+        opacity: k < N * 0.7 ? 1 : 1 - (k - N * 0.7) / (N * 0.3),
+      });
+    }
+    const delay = Math.random() * 60;
+    p.animate(frames, { duration: dur, delay, easing: 'linear', fill: 'forwards' });
+    longest = Math.max(longest, dur + delay);
   }
-  document.body.appendChild(layer);
-  setTimeout(() => layer.remove(), durMax + 200);
+  setTimeout(() => layer.remove(), longest + 100);
 }
-/* Wrapper: dispara confetti se a etapa NOVA marca a demanda como concluída.
-   Pega origem no botão que causou a mudança (event.target), fallback pro
-   centro do trigger de etapa no footer. */
-function _celebrateIfCompleted(newStage, ev) {
-  if (!newStage || !newStage.done) return;
-  let x, y;
-  const src = ev && ev.target && ev.target.closest ? ev.target.closest('button, .cdrop-item, [onclick]') : null;
-  if (src) {
-    const r = src.getBoundingClientRect();
-    x = r.left + r.width / 2;
-    y = r.top + r.height / 2;
-  }
-  spawnConfetti(x, y);
+/* Conclusão de demanda: toast próprio (título + nome da demanda) e confete
+   saindo do ícone do toast. Usado por todos os caminhos que concluem:
+   seletor de etapa, botão Avançar, arrastar no kanban e ação em lote. */
+function celebrateCompletion(title, sub, action = null) {
+  const t = toast({ title, sub }, 'celebrate', action);
+  requestAnimationFrame(() => {
+    const ic = t?.querySelector('.toast-check');
+    const r = (ic || t)?.getBoundingClientRect();
+    if (r) spawnConfetti(r.left + r.width / 2, r.top + r.height / 2);
+  });
 }
-
 const TOAST_ICONS = {
   error: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg>',
   warn:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>',
@@ -1708,7 +1720,7 @@ function toast(msg, type = 'success', action = null) {
   t.className = 'toast toast-' + type;
   // Success ganha o disco com checkmark que se desenha (SVG path com dasharray).
   // Os demais tipos ganham um ícone estático colorido conforme a severidade.
-  if (type === 'success') {
+  if (type === 'success' || type === 'celebrate') {
     const check = document.createElement('span');
     check.className = 'toast-check';
     check.innerHTML = '<svg viewBox="0 0 24 24"><path d="M5 12 L10 17 L19 7"/></svg>';
@@ -1721,7 +1733,14 @@ function toast(msg, type = 'success', action = null) {
   }
   const msgEl = document.createElement('span');
   msgEl.className = 'toast-msg';
-  msgEl.textContent = msg;
+  if (msg && typeof msg === 'object') {
+    // { title, sub }: título forte + linha de apoio (ex.: nome da demanda).
+    const ti = document.createElement('b'); ti.className = 'toast-title'; ti.textContent = msg.title || '';
+    msgEl.appendChild(ti);
+    if (msg.sub) { const su = document.createElement('span'); su.className = 'toast-sub'; su.textContent = msg.sub; msgEl.appendChild(su); }
+  } else {
+    msgEl.textContent = msg;
+  }
   t.appendChild(msgEl);
   let hasAction = false;
   if (action && action.label && typeof action.fn === 'function') {
@@ -1733,15 +1752,35 @@ function toast(msg, type = 'success', action = null) {
     btn.addEventListener('click', e => {
       e.stopPropagation();
       try { action.fn(); } catch (err) { console.error(err); }
-      t.remove();
+      dismissToast(t);
     });
     t.appendChild(btn);
   }
   // Sincroniza a barra de progresso da base do toast com o timeout real.
-  const durationMs = hasAction ? 6000 : 3500;
+  const durationMs = hasAction ? 6000 : type === 'celebrate' ? 5000 : 3500;
   t.style.setProperty('--toast-duration', durationMs + 'ms');
   $('toast-container').appendChild(t);
-  setTimeout(() => t.remove(), durationMs);
+  // Mouse em cima pausa o tempo (a barra pausa via CSS :hover).
+  let remaining = durationMs, startedAt = Date.now();
+  let timer = setTimeout(() => dismissToast(t), remaining);
+  t.addEventListener('mouseenter', () => { clearTimeout(timer); remaining -= Date.now() - startedAt; });
+  t.addEventListener('mouseleave', () => {
+    startedAt = Date.now();
+    timer = setTimeout(() => dismissToast(t), Math.max(remaining, 800));
+  });
+  return t;
+}
+/* Saída do toast: fixa a altura atual e deixa o CSS (.is-leaving) recolher,
+   pra os toasts de cima descerem suavemente em vez de pularem. */
+function dismissToast(t) {
+  if (!t || t._leaving || !t.isConnected) return;
+  t._leaving = true;
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { t.remove(); return; }
+  t.style.height = t.offsetHeight + 'px';
+  void t.offsetHeight;
+  t.classList.add('is-leaving');
+  t.style.height = '0px';
+  setTimeout(() => t.remove(), 320);
 }
 /* ─── ATALHOS DE TECLADO ─── */
 const KB_SHORTCUTS = [
@@ -3757,8 +3796,19 @@ function accentRgb() {
 }
 
 /* ─── TEMA (light/dark) ─── */
+/* Troca de tema depois do boot vira um cross-fade (View Transitions) em vez
+   de um corte seco. No boot e sem suporte, aplica direto. */
+let _themeApplied = false;
 function applyTheme(theme) {
   const t = theme === 'light' ? 'light' : 'dark';
+  const cur = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  const animate = _themeApplied && cur !== t && document.startViewTransition
+    && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  _themeApplied = true;
+  if (animate) { document.startViewTransition(() => _applyThemeNow(t)); return; }
+  _applyThemeNow(t);
+}
+function _applyThemeNow(t) {
   if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
   else document.documentElement.removeAttribute('data-theme');
   const lbl = document.getElementById('theme-toggle-label');
@@ -4100,6 +4150,7 @@ async function enterApp() {
   $('app').classList.add('active');
   initTooltips();
   initKeyboardShortcuts();
+  initTabIndicators();
   initAutoCdropObserver();
   initBuildVersionCheck();
   $('topbar-title').textContent = 'Início';
@@ -4124,6 +4175,8 @@ async function enterApp() {
   } else {
     applyRoute();
   }
+  // Primeira tela depois do login entra com a mesma cascata da navegação.
+  markPageEntering(document.querySelector('.page.active'));
   maybeShowWelcomeBanner();
   if (me && me.accentTheme !== undefined) applyAccentTheme(me.accentTheme || '');
   await fetchNotifications();
@@ -4794,6 +4847,95 @@ function renderNotFound() {
   if (el) el.textContent = location.pathname + (location.search || '');
   if (window.lucide?.createIcons) lucide.createIcons();
 }
+/* Liga a cascata de entrada da página (.is-entering no CSS) por uma janela
+   curta. Fora dela, re-renders (SSE, filtros) não reanimam nada. */
+function markPageEntering(el) {
+  if (!el) return;
+  clearTimeout(el._enterTimer);
+  el.classList.remove('is-entering');
+  void el.offsetWidth; // reinicia as animações se voltar pra mesma página rápido
+  el.classList.add('is-entering');
+  el._enterTimer = setTimeout(() => el.classList.remove('is-entering'), 750);
+  // renderCurrent roda logo depois do goPage; conta no frame seguinte.
+  requestAnimationFrame(() => animateCounters(el));
+}
+
+/* ── MARCADOR DESLIZANTE NAS ABAS ──
+   Em vez do sublinhado/fundo estático de cada aba ativa, um único marcador
+   por grupo desliza até a aba nova. Funciona sem mexer nos renders: um
+   MutationObserver percebe troca de .is-active (ou o grupo sendo recriado)
+   e reposiciona no próximo frame. Se o grupo é recriado via innerHTML, o
+   marcador novo nasce na posição antiga (memória por grupo) e desliza. */
+const TAB_IND_SETS = [
+  { item: '.dash-tab',            kind: 'line', inset: 10 },
+  { item: '.an-tab',              kind: 'line' },
+  { item: '.detail-tab',          kind: 'line' },
+  { item: '.rec-tab',             kind: 'line', thick: 3 },
+  { item: '.integrations-tab',    kind: 'line' },
+  { item: '.dash-toggle-btn',     kind: 'pill' },
+  { item: '.cap-heat-toggle-btn', kind: 'pill' },
+  { item: '.filter-toggle-btn',   kind: 'pill' },
+];
+const _tabIndMemory = new Map();
+let _tabIndRO = null;
+const _tabIndObserved = new WeakSet();
+function _placeTabInd(list, cfg, key) {
+  const items = [...list.children].filter(c => c.matches(cfg.item));
+  if (!items.length) return;
+  // Só adiciona classe se faltar: classList.add sempre gera mutation e
+  // realimentaria o observer.
+  items.forEach(b => { if (!b.classList.contains('rw-tab-item')) b.classList.add('rw-tab-item'); });
+  if (!list.classList.contains('has-tab-ind')) list.classList.add('has-tab-ind', 'has-tab-ind--' + cfg.kind);
+  if (_tabIndRO && !_tabIndObserved.has(list)) { _tabIndObserved.add(list); _tabIndRO.observe(list); }
+  let ind = [...list.children].find(c => c.classList.contains('rw-tab-ind'));
+  const fresh = !ind;
+  if (fresh) {
+    ind = document.createElement('span');
+    ind.className = 'rw-tab-ind';
+    ind.setAttribute('aria-hidden', 'true');
+    if (cfg.thick) ind.style.height = cfg.thick + 'px';
+    list.appendChild(ind);
+  }
+  if (!list.offsetWidth) return; // grupo escondido: o ResizeObserver chama de novo quando aparecer
+  const active = items.find(b => b.classList.contains('is-active'));
+  if (!active) { ind.style.opacity = '0'; ind._pos = null; return; }
+  const inset = cfg.inset || 0;
+  const pos = { x: active.offsetLeft + inset, w: active.offsetWidth - inset * 2, y: active.offsetTop, h: active.offsetHeight };
+  const same = (a, b) => a && b && a.x === b.x && a.w === b.w && a.y === b.y && a.h === b.h;
+  if (same(ind._pos, pos)) return;
+  const apply = q => {
+    ind.style.setProperty('--x', q.x + 'px'); ind.style.setProperty('--w', q.w + 'px');
+    ind.style.setProperty('--y', q.y + 'px'); ind.style.setProperty('--h', q.h + 'px');
+  };
+  const jump = q => { ind.style.transition = 'none'; apply(q); void ind.offsetWidth; ind.style.transition = ''; };
+  const from = fresh ? _tabIndMemory.get(key) : ind._pos;
+  if (!from) jump(pos);           // primeira aparição: posiciona sem animar
+  else { if (fresh) jump(from); apply(pos); }
+  ind.style.opacity = '1';
+  ind._pos = pos;
+  _tabIndMemory.set(key, pos);
+}
+function syncTabIndicators() {
+  TAB_IND_SETS.forEach(cfg => {
+    const lists = [];
+    document.querySelectorAll(cfg.item).forEach(b => { const p = b.parentElement; if (p && !lists.includes(p)) lists.push(p); });
+    lists.forEach((list, i) => _placeTabInd(list, cfg, cfg.item + '|' + (list.id || i)));
+  });
+}
+function initTabIndicators() {
+  let raf = 0;
+  const schedule = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; syncTabIndicators(); }); };
+  const itemSel = TAB_IND_SETS.map(c => c.item).join(',');
+  new MutationObserver(muts => {
+    for (const m of muts) {
+      if (m.type === 'attributes' ? m.target.matches?.(itemSel) : m.addedNodes.length) { schedule(); return; }
+    }
+  }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
+  if (window.ResizeObserver) _tabIndRO = new ResizeObserver(schedule);
+  window.addEventListener('resize', schedule);
+  document.fonts?.ready?.then(schedule);
+  schedule();
+}
 function goPage(page) {
   hideTooltip();
   // Freelancer só navega em Minhas Demandas, no próprio perfil e no detalhe
@@ -4813,6 +4955,7 @@ function goPage(page) {
   _markFiltersDirty(page);
   document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.page === page));
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + page));
+  if (prevPage !== page) markPageEntering(document.getElementById('page-' + page));
   // 404 renderiza fullpage — esconde sidebar + topbar via body class.
   document.body.classList.toggle('is-fullpage', page === 'notfound');
   _syncNavMoreActiveHint(page);
@@ -5229,7 +5372,7 @@ function renderCurrent() {
   switch (currentPage) {
     case 'dashboard':  renderDashboard(); break;
     case 'list':       renderList(); renderCalendar('all'); break;
-    case 'mine':       renderMine(); renderCalendar('mine'); break;
+    case 'mine':       renderMine(); break;
     case 'analytics':  renderAnalytics(); break;
     case 'performance': renderPerformance(); break;
     case 'agenda':     renderAgenda(); break;
@@ -6318,29 +6461,33 @@ function renderDashPriorityDonut(list) {
   </div>`;
 }
 
-/* Anima cada .metric-value de 0 até o número final usando easing.
-   Guarda o último valor renderizado em data-last-value para só animar
-   quando muda (assim filtros que mantêm o número não re-disparam). */
+/* Números contam do zero até o valor quando a página entra (chamado pelo
+   markPageEntering). Mexe só no primeiro nó de texto do elemento, então
+   "8h<span>/8h</span>" anima o 8h e preserva o resto. Aceita decimal com
+   vírgula e sufixo (h, %). Re-render no meio da contagem troca o nó de
+   texto e a animação só para: o valor novo já está certo. */
+const COUNT_UP_SEL = '.metric-value, .dash-hours-value, .dash-section-count, .prio-bar-value, .prio-bar-pct, .report-kpi-value, .rhy-kpi-value';
 function animateCounters(scope) {
   if (!scope) return;
-  const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const els = scope.querySelectorAll('.metric-value');
-  els.forEach(el => {
-    const raw = (el.textContent || '').trim();
-    const target = parseInt(raw.replace(/[^\d-]/g, ''), 10);
-    if (!Number.isFinite(target)) return;
-    if (el.dataset.lastValue === String(target)) return;
-    el.dataset.lastValue = String(target);
-    if (target === 0 || reduced) { el.textContent = String(target); return; }
-    const duration = 650;
-    const start = performance.now();
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  scope.querySelectorAll(COUNT_UP_SEL).forEach(el => {
+    if (!el.offsetParent) return;
+    const tn = [...el.childNodes].find(n => n.nodeType === 3 && n.textContent.trim());
+    if (!tn) return;
+    const m = tn.textContent.match(/^(\s*)(\d+(?:,\d+)?)(\D*)$/);
+    if (!m) return; // "1.234", datas, textos: fica como está
+    const decimals = (m[2].split(',')[1] || '').length;
+    const target = parseFloat(m[2].replace(',', '.'));
+    if (!target) return;
+    const duration = 700, start = performance.now();
     const ease = t => 1 - Math.pow(1 - t, 3);
+    const fmt = v => m[1] + v.toFixed(decimals).replace('.', ',') + m[3];
+    tn.textContent = fmt(0);
     function tick(now) {
+      if (!tn.isConnected) return;
       const t = Math.min(1, (now - start) / duration);
-      const v = Math.round(ease(t) * target);
-      el.textContent = String(v);
+      tn.textContent = fmt(ease(t) * target);
       if (t < 1) requestAnimationFrame(tick);
-      else el.textContent = String(target);
     }
     requestAnimationFrame(tick);
   });
@@ -8503,6 +8650,7 @@ async function moveDemandToStage(demandId, stageLabel, targetIndex) {
   }
 
   // Snapshot pra rollback
+  const wasDone          = isDone(d);
   const prevStatus       = d.status;
   const prevKanbanOrder  = d.kanbanOrder ?? null;
   const prevStageEntered = d.stageEnteredAt;
@@ -8541,7 +8689,8 @@ async function moveDemandToStage(demandId, stageLabel, targetIndex) {
                   || (upd.kanbanOrder ?? null) !== (newOrder ?? prevKanbanOrder)
                   || upd.ownerId !== d.ownerId;
     if (diverged) renderKanban();
-    toast(`Movido para "${target.label}"`, 'success');
+    if (target.done && !wasDone) celebrateCompletion('Demanda concluída', d.name);
+    else toast(`Movido para "${target.label}"`, 'success');
   } catch (err) {
     // Rollback
     d.status         = prevStatus;
@@ -8558,24 +8707,6 @@ function nowIsoLocal() { return new Date().toISOString(); }
 
 /* ─── MINHAS DEMANDAS ─── */
 let mineSortKey = 'deadline', mineSortAsc = true;
-let mineView = 'list'; // 'list' | 'cal' — persistido em localStorage
-try { mineView = localStorage.getItem('kastor-mine-view') || 'list'; } catch {}
-
-function setMineView(v) {
-  if (v !== 'list' && v !== 'cal') v = 'list';
-  mineView = v;
-  try { localStorage.setItem('kastor-mine-view', v); } catch {}
-  const listEl = $('mine-view-list');
-  const calEl  = $('mine-view-cal');
-  if (listEl) listEl.style.display = v === 'list' ? '' : 'none';
-  if (calEl)  calEl.style.display  = v === 'cal'  ? '' : 'none';
-  $('mine-view-list-btn')?.classList.toggle('active', v === 'list');
-  $('mine-view-cal-btn')?.classList.toggle('active', v === 'cal');
-  const title = $('mine-view-title');
-  if (title) title.textContent = v === 'list' ? 'Minha Lista' : 'Meu Calendário';
-  // Re-render pra garantir que a view alvo esteja fresca ao ser exibida.
-  if (v === 'cal') renderCalendar('mine');
-}
 /* Escopo: TODAS as demandas atribuídas ao usuário logado, através de todos
    os workspaces a que ele tem acesso (não só o workspace ativo). Ignora
    soft-deleted. */
@@ -8591,16 +8722,9 @@ function myDemands() {
   });
 }
 function renderMine() {
-  // Aplica a view salva (list/cal) — importante pra 1ª pintura + após navegar.
-  setMineView(mineView);
-  const fq = $('mine-f-quick').value;
-  applyFilterDropdown('mine-f-quick');
-  const list = myDemands().filter(d => {
-    if (fq === 'late') return isLate(d);
-    if (fq === 'open') return !isDone(d);
-    if (fq === 'done') return isDone(d);
-    return true;
-  }).sort((a,b) => {
+  // Só o que está em aberto: as seções da tabela (Atrasadas, Hoje, Essa
+  // semana, Próximos dias) já fazem o papel do antigo filtro.
+  const list = myDemands().filter(d => !isDone(d)).sort((a,b) => {
     let va, vb;
     if (mineSortKey === 'name')            { va = norm(a.name); vb = norm(b.name); }
     else if (mineSortKey === 'workspace')  { va = norm(wsById(a.workspaceId)?.name || ''); vb = norm(wsById(b.workspaceId)?.name || ''); }
@@ -8666,10 +8790,7 @@ function renderMine() {
 
   const body = $('mine-table-body');
   if (!list.length) {
-    body.innerHTML = `<tr><td colspan="6">${emptyState('Nenhuma demanda encontrada', 'Você não tem demandas neste filtro.', 'inbox')}</td></tr>`;
-  } else if (fq === 'done') {
-    // Filtro "Concluídas" — flat, sem seções (não faz sentido separar por prazo).
-    body.innerHTML = list.map(renderMineRow).join('');
+    body.innerHTML = `<tr><td colspan="6">${emptyState('Nada com você agora', 'Quando uma etapa for atribuída a você, ela aparece aqui.', 'inbox')}</td></tr>`;
   } else {
     // 4 seções por urgência de prazo. Cada seção mantém a ordenação corrente.
     const today = todayStr();
@@ -8708,9 +8829,8 @@ function renderMine() {
   }
 
   paintIcons(); // ícones de urgência de prazo
-  // Calendário e Agenda embed ficam sempre visíveis abaixo da tabela em
-  // "Minhas Demandas". Re-render junto pra refletir mudanças imediato.
-  if ($('cal-mine-body')) renderCalendar('mine');
+  // Agenda embed fica sempre visível abaixo da tabela em "Minhas Demandas".
+  // Re-render junto pra refletir mudanças imediato.
   if (typeof renderAgenda === 'function') renderAgenda();
   _applyMineAgendaCollapsed();
   _syncMineSortHeaders();
@@ -12817,7 +12937,7 @@ function renderDetail() {
     // Header (avatar + nome + ações) numa LINHA horizontal centralizada.
     // Corpo (texto/anexos) numa linha abaixo com padding-left pra alinhar
     // com o nome (não com o avatar).
-    return `<div class="chat-comment" id="comment-${c.id}">
+    return `<div class="chat-comment" id="comment-${c.id}" data-ts="${esc(c.createdAt || '')}">
       <div class="chat-comment-head">
         ${avatarHTML(u, 'avatar avatar-sm')}
         <span class="chat-comment-author">${esc(u?.name || '—')}</span>
@@ -13138,6 +13258,22 @@ function renderDetail() {
   if (cachedPresence) renderDetailPresence(cachedPresence);
   _applyNewSinceMarks();
   _applyMentionSeen();
+  _flagArrivingComments();
+}
+/* Comentário que acabou de chegar (meu ou de outra pessoa via SSE) entra
+   com destaque. Compara com os ids do render anterior da MESMA demanda e
+   exige createdAt recente, pra carga preguiçosa do histórico não acender tudo. */
+let _commentsSeen = { id: null, ids: new Set() };
+function _flagArrivingComments() {
+  const els = [...document.querySelectorAll('#page-demand-detail .chat-comment[id^="comment-"]')];
+  const same = _commentsSeen.id === detailId;
+  const now = Date.now();
+  els.forEach(el => {
+    if (!same || _commentsSeen.ids.has(el.id)) return;
+    const ts = Date.parse(el.dataset.ts || '');
+    if (ts && now - ts < 90000) el.classList.add('is-arriving');
+  });
+  _commentsSeen = { id: detailId, ids: new Set(els.map(e => e.id)) };
 }
 
 /* Owner picker — dropdown customizado com avatar do responsável atual */
@@ -13220,8 +13356,8 @@ async function pickStage(stageId, ev) {
   try {
     const upd = await api('/demands/' + d.id, 'PUT', { status: stageId });
     patchDemand(upd);
-    toast('Etapa atualizada!');
-    _celebrateIfCompleted(newStage, ev || (window.event));
+    if (newStage?.done) celebrateCompletion('Demanda concluída', d.name);
+    else toast('Etapa atualizada!');
     renderDetail();
     renderCurrent();
     fetchNotifications();
@@ -16474,9 +16610,9 @@ async function _moveStageNow(demandId, dir) {
     const upd = await api('/demands/' + d.id, 'PUT', { status: next.id });
     patchDemand(upd);
     const nextMine = dir > 0 ? _nextMyDemand(d.id) : null;
-    toast(dir > 0 ? 'Etapa avançada: ' + next.label : 'Etapa retrocedida: ' + next.label, 'success',
-      nextMine ? { label: 'Próxima demanda', fn: () => showDetail(nextMine.id) } : null);
-    if (dir > 0) _celebrateIfCompleted(next, window.event);
+    const nextAction = nextMine ? { label: 'Próxima demanda', fn: () => showDetail(nextMine.id) } : null;
+    if (dir > 0 && next.done) celebrateCompletion('Demanda concluída', d.name, nextAction);
+    else toast(dir > 0 ? 'Etapa avançada: ' + next.label : 'Etapa retrocedida: ' + next.label, 'success', nextAction);
     renderDetail();
     renderCurrent();
     fetchNotifications();
@@ -28289,9 +28425,13 @@ async function bulkRun(op, data, confirmMsg) {
     if (!ok) return;
   }
   try {
+    const wasDone = new Set(ids.filter(id => { const x = demandById(id); return x && isDone(x); }));
     const r = await api('/demands/bulk', 'POST', { ids, op, data });
     clearBulkSelection();
     await refreshData();
+    const justDone = op === 'setStatus'
+      ? ids.filter(id => { const x = demandById(id); return !wasDone.has(id) && x && isDone(x); })
+      : [];
     const skippedMsg = r.skipped ? ` · ${r.skipped} ignorada${r.skipped === 1 ? '' : 's'}` : '';
     if (op === 'delete' && r.undoable && Array.isArray(r.deletedIds) && r.deletedIds.length) {
       const dIds = r.deletedIds;
@@ -28299,6 +28439,10 @@ async function bulkRun(op, data, confirmMsg) {
         `${r.updated} demanda${r.updated === 1 ? '' : 's'} excluída${r.updated === 1 ? '' : 's'}${skippedMsg}`,
         () => Promise.all(dIds.map(id => api('/demands/' + id + '/undelete', 'POST').catch(() => {})))
       );
+    } else if (justDone.length) {
+      const n = justDone.length;
+      celebrateCompletion(n === 1 ? 'Demanda concluída' : `${n} demandas concluídas`,
+        n === 1 ? demandById(justDone[0])?.name : (skippedMsg ? skippedMsg.slice(3) : ''));
     } else {
       toast(`${r.updated} demanda${r.updated === 1 ? '' : 's'} atualizada${r.updated === 1 ? '' : 's'}${skippedMsg}`);
     }
