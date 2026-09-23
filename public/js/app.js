@@ -34616,6 +34616,7 @@ const _FS_GENERIC = new Set(['novo', 'novos', 'nova', 'novas', 'fluxo', 'fluxos'
   'externo', 'externa', 'outros', 'diversos', 'tipo', 'lancamento', 'lancamentos']);
 const _FS_STOP = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'em', 'no', 'na', 'nos', 'nas', 'para', 'pra', 'com', 'a', 'o', 'os', 'as', 'um', 'uma', 'por']);
 const FLOW_SUGGEST_MIN_SCORE = 3;
+const FLOW_SUGGEST_NAME_BONUS = 0.5; // desempata a favor do fluxo cujo NOME está no título
 
 const _flowSuggestKey = s => norm(s).replace(/[^a-z0-9]+/g, ' ').trim();
 
@@ -34697,7 +34698,7 @@ function _fsLoadLearnedTerms() {
   _fsLearned.loading = api('/flow-suggest/learned')
     .then(r => {
       const byFlowKey = new Map(Object.entries(r.terms || {})
-        .map(([key, list]) => [key, list.map(([term, w]) => _fsParseTerm(term, w))]));
+        .map(([key, list]) => [key, list.map(([term, w]) => ({ ..._fsParseTerm(term, w), raw: term }))]));
       _fsLearned = { at: Date.now(), byFlowKey, loading: null };
       _fsProfileCache.clear();
     })
@@ -34705,9 +34706,78 @@ function _fsLoadLearnedTerms() {
   return _fsLearned.loading;
 }
 
+/* ── DEFINIÇÃO DOS FLUXOS (âncora contra histórico mal treinado) ──
+   O que cada fluxo DIZ que é: dicionário forte/médio, nome e as palavras do
+   tipo de demanda que são só dele (tipo costuma ser categoria — "Inbound",
+   "Criação" — compartilhada por vários fluxos; aí não diferencia nada).
+   Serve pra descartar termo aprendido do histórico que pertence à definição
+   de OUTRO fluxo e não à do fluxo ao qual o histórico o ligou — sinal de
+   demandas cadastradas no fluxo errado no passado. Etapas próprias do fluxo
+   (raras nos outros) entram só como sinal fraco no perfil, sem vetar nada. */
+const _fsNorm = t => _flowSuggestKey(String(t || '').replace(/^=|\*$/g, '')).split(' ').filter(Boolean).map(_fsSingular).join(' ');
+let _fsDefCache = { sig: '', index: new Map(), stageWords: new Map() };
+function _fsDefinitions() {
+  const all = (typeof flows !== 'undefined' && Array.isArray(flows)) ? flows.filter(f => !f.deletedAt) : [];
+  const sig = all.map(f => f.id + ':' + f.name + ':' + (f.demandType || '') + ':' + (f.stages || []).map(x => x.label).join('/')).join('|');
+  if (sig === _fsDefCache.sig) return _fsDefCache;
+  const index = new Map(); // termo normalizado → Set(chaves de fluxo)
+  const own = (term, key) => {
+    const t = _fsNorm(term);
+    if (!t || !key) return;
+    if (!index.has(t)) index.set(t, new Set());
+    index.get(t).add(key);
+  };
+  const usefulWord = w => w.length >= 4 && !_FS_GENERIC.has(w) && !_FS_STOP.has(w);
+  // Palavra de etapa/tipo só é "própria" se aparece em poucos tipos de fluxo.
+  const stageKeysByWord = new Map(), typeKeysByWord = new Map();
+  const keys = new Set();
+  const count = (map, w, key) => { const sw = _fsSingular(w); if (!map.has(sw)) map.set(sw, new Set()); map.get(sw).add(key); };
+  all.forEach(f => {
+    const key = _flowSuggestKey(f.name);
+    if (!key) return;
+    keys.add(key);
+    (f.stages || []).forEach(st => _flowSuggestKey(st.label).split(' ').filter(usefulWord).forEach(w => count(stageKeysByWord, w, key)));
+    _flowSuggestKey(f.demandType || '').split(' ')
+      .filter(w => w.length >= 3 && !_FS_GENERIC.has(w) && !_FS_STOP.has(w)).forEach(w => count(typeKeysByWord, w, key));
+  });
+  const ownWords = (map, maxFlows) => {
+    const out = new Map(); // chave do fluxo → Set(palavras próprias)
+    map.forEach((ks, w) => {
+      if (ks.size > maxFlows) return;
+      ks.forEach(k => { if (!out.has(k)) out.set(k, new Set()); out.get(k).add(w); });
+    });
+    return out;
+  };
+  // Só com vários tipos de fluxo cadastrados dá pra dizer o que é "próprio".
+  const enough = keys.size >= 4;
+  const stageWords = enough ? ownWords(stageKeysByWord, 2) : new Map();
+  const typeWords = enough ? ownWords(typeKeysByWord, 1) : new Map();
+  all.forEach(f => {
+    const key = _flowSuggestKey(f.name);
+    if (!key) return;
+    const concept = _fsConceptFor(key);
+    if (concept?.exclude) return;
+    if (concept) [...(concept.s || []), ...(concept.m || [])].forEach(t => own(t, key));
+    own(key, key);
+    key.split(' ').filter(usefulWord).forEach(w => own(w, key));
+    (typeWords.get(key) || []).forEach(w => own(w, key));
+  });
+  _fsDefCache = { sig, index, stageWords, typeWords };
+  return _fsDefCache;
+}
+// Termo aprendido pra `key` que a definição de outro fluxo reivindica (e a dele não).
+function _fsLearnedConflicts(raw, key) {
+  const { index } = _fsDefinitions();
+  const t = _fsNorm(raw);
+  const owners = new Set(index.get(t) || []);
+  t.split(' ').forEach(w => (index.get(w) || []).forEach(k => owners.add(k)));
+  return owners.size > 0 && !owners.has(key);
+}
+
 const _fsProfileCache = new Map();
 function _fsProfile(flow) {
-  const cacheKey = flow.id + '|' + flow.name;
+  const defs = _fsDefinitions();
+  const cacheKey = flow.id + '|' + flow.name + '|' + (flow.demandType || '') + '|' + defs.sig.length;
   if (_fsProfileCache.has(cacheKey)) return _fsProfileCache.get(cacheKey);
   const key = _flowSuggestKey(flow.name);
   const concept = _fsConceptFor(key);
@@ -34716,14 +34786,21 @@ function _fsProfile(flow) {
     const terms = [];
     const add = (list, w) => (list || []).forEach(t => terms.push(_fsParseTerm(t, w)));
     if (concept) { add(concept.s, 3); add(concept.m, 2); add(concept.w, 1); }
-    terms.push(...(_fsLearned.byFlowKey.get(key) || []));
+    // Palavras do tipo de demanda que só este fluxo tem (ex.: "SEO") e etapas próprias.
+    (defs.typeWords.get(key) || []).forEach(w => terms.push(_fsParseTerm(w, 2)));
+    (defs.stageWords.get(key) || []).forEach(w => terms.push(_fsParseTerm(w, 1)));
+    // Histórico: só o que não contradiz a definição de outro fluxo.
+    terms.push(...(_fsLearned.byFlowKey.get(key) || []).filter(t => !_fsLearnedConflicts(t.raw, key)));
     // Fluxo sem dicionário depende só do nome: cada palavra dele já basta pra sugerir.
+    // Nome do próprio fluxo leva um bônus: "Ebook …" tem que ir pro fluxo eBook
+    // mesmo que o dicionário do Key Visual também cite ebook (capa de ebook).
+    const NAME = 3 + FLOW_SUGGEST_NAME_BONUS;
     const words = key.split(' ');
-    if (words.length > 1) terms.push(_fsParseTerm(key, 3));
+    if (words.length > 1) terms.push(_fsParseTerm(key, NAME));
     words.filter(w => w.length >= 4 && !_FS_GENERIC.has(w))
-      .forEach(w => terms.push(_fsParseTerm(w, words.length === 1 || !concept ? 3 : 2)));
+      .forEach(w => terms.push(_fsParseTerm(w, words.length === 1 || !concept ? NAME : 2)));
     const initials = words.filter(w => !_FS_STOP.has(w)).map(w => w[0]);
-    if (initials.length >= 2 && initials.length <= 4) terms.push(_fsParseTerm('=' + initials.join(''), 3));
+    if (initials.length >= 2 && initials.length <= 4) terms.push(_fsParseTerm('=' + initials.join(''), NAME));
     profile = {
       rank: concept ? FLOW_SUGGEST_CONCEPTS.indexOf(concept) : FLOW_SUGGEST_CONCEPTS.length,
       terms,
@@ -34754,8 +34831,20 @@ function _fsScore(profile, tokens) {
 
 /* Fluxo sugerido pro título, ou null. Não sugere se o fluxo escolhido pontua
    igual ou mais que o melhor candidato. */
+// "E-book"/"e-mail" viram "e book"/"e mail" na normalização; junta de volta
+// (só nesses casos: o "e" de "LP e KV" é conjunção).
+const _FS_E_JOIN = new Set(['book', 'books', 'mail', 'mails', 'commerce']);
+function _fsTitleTokens(title) {
+  const raw = _flowSuggestKey(title).split(' ').filter(Boolean);
+  const out = [];
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] === 'e' && _FS_E_JOIN.has(raw[i + 1])) { out.push('e' + raw[i + 1]); i++; }
+    else out.push(raw[i]);
+  }
+  return out;
+}
 function suggestFlowForTitle(title, currentFlowId, clientId) {
-  const tokens = _flowSuggestKey(title).split(' ').filter(Boolean);
+  const tokens = _fsTitleTokens(title);
   if (!tokens.length) return null;
   let best = null;
   let bestScore = 0;
