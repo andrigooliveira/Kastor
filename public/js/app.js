@@ -3549,7 +3549,12 @@ function _confirmWizardClose() {
     message: 'Você fez alterações que ainda não foram salvas. Deseja descartá-las e sair?',
     okLabel: 'Descartar e sair',
     danger: true
-  }).then(ok => { if (ok) attemptCloseModal('demand-modal'); });
+  }).then(ok => {
+    if (!ok) return;
+    // Descartou de propósito: o rascunho vai junto (ele é pra saída acidental — F5, aba fechada).
+    if (!editingId) _clearDemandDraft();
+    attemptCloseModal('demand-modal');
+  });
 }
 document.addEventListener('click', e => {
   // fecha dropdowns customizados ao clicar fora
@@ -11923,8 +11928,9 @@ function applyDemandTemplate() {
   toast('Template "' + t.name + '" aplicado!');
 }
 
-function openNewDemand() {
+function openNewDemand(opts) {
   editingId = null;
+  document.getElementById('demand-draft-banner')?.remove();
   // Zera o contexto de "vindo de tarefa" — só é setado por openNewDemandFromTask
   // logo depois desta chamada. Sem isso, fechar sem salvar deixa lixo pra próxima.
   _creatingFromTaskId = null;
@@ -11964,6 +11970,7 @@ function openNewDemand() {
   openModal('demand-modal');
   navPush('/demands/new');
   setTimeout(() => setupDragDrop('#demand-modal .modal-content', 'f-attachments-list', processDroppedFiles), 60);
+  if (!opts?.skipDraft) _restoreDemandDraft();
 }
 function openEditDemand(id) {
   const d = demands.find(x => x.id === id); if (!d) return;
@@ -12063,6 +12070,7 @@ async function saveDemand() {
     closeModal('demand-modal');
     await refreshData();
     if (detailId && editingId === detailId) renderDetail();
+    if (wasCreate) _clearDemandDraft();
     if (wasCreate && newId) {
       // Se veio de uma tarefa da lista, vincula a demanda recém-criada.
       // Sem await no toast/refresh — o link não pode bloquear a UX.
@@ -12085,6 +12093,107 @@ async function saveDemand() {
     toast(e.message, 'error');
   }
 }
+/* ── RASCUNHO DO CADASTRO DE DEMANDA ──
+   Enquanto a pessoa cria uma demanda, o que ela preencheu fica salvo no
+   navegador (por usuário). Se o modal fechar sem querer (clique fora, F5),
+   reabrir traz tudo de volta com um aviso e a opção de descartar. Some ao
+   criar a demanda. Arquivos anexados não entram (ficam só em memória até
+   salvar); links sim. Rascunho com mais de 7 dias é ignorado. */
+const DEMAND_DRAFT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+let _demandDraftTimer = null;
+let _restoringDemandDraft = false;
+function _demandDraftKey() { return 'kastor-demand-draft-' + (me?.id || 'anon'); }
+function _clearDemandDraft() {
+  clearTimeout(_demandDraftTimer);
+  try { localStorage.removeItem(_demandDraftKey()); } catch {}
+}
+function _collectDemandDraft() {
+  const text = html => String(html || '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').trim();
+  const draft = {
+    at: Date.now(),
+    step: wizardState.step,
+    clientId: wizardState.clientId, projectId: wizardState.projectId, flowId: wizardState.flowId,
+    customization: wizardState.customization || null,
+    name: $('f-name')?.value || '',
+    description: getRichValue('f-description') || '',
+    briefing: $('f-briefing')?.value || '',
+    deadline: $('f-deadline')?.value || '',
+    estimated: $('f-estimated')?.value || '',
+    priority: $('f-priority')?.value || '3',
+    checklist: (demandChecklistDraft || []).filter(it => (it.text || '').trim()),
+    links: (demandAttachments || []).filter(a => a.kind === 'link'),
+    fileCount: (demandAttachments || []).filter(a => a.kind !== 'link').length
+  };
+  const hasContent = draft.name.trim() || text(draft.description) || draft.briefing.trim()
+    || draft.checklist.length || draft.links.length;
+  return hasContent ? draft : null;
+}
+function _saveDemandDraftSoon() {
+  if (_restoringDemandDraft || editingId || !document.getElementById('demand-modal')?.classList.contains('open')) return;
+  clearTimeout(_demandDraftTimer);
+  _demandDraftTimer = setTimeout(() => {
+    if (editingId || !document.getElementById('demand-modal')?.classList.contains('open')) return;
+    const draft = _collectDemandDraft();
+    try {
+      if (draft) localStorage.setItem(_demandDraftKey(), JSON.stringify(draft));
+      else localStorage.removeItem(_demandDraftKey());
+    } catch {}
+  }, 400);
+}
+['input', 'change', 'click'].forEach(ev => document.addEventListener(ev, e => {
+  if (e.target.closest?.('#demand-modal')) _saveDemandDraftSoon();
+}, true));
+function _restoreDemandDraft() {
+  let draft = null;
+  try { draft = JSON.parse(localStorage.getItem(_demandDraftKey()) || 'null'); } catch {}
+  if (!draft || !draft.at || Date.now() - draft.at > DEMAND_DRAFT_MAX_AGE_MS) { _clearDemandDraft(); return; }
+  _restoringDemandDraft = true;
+  // Escolhas do assistente (só as que ainda existem).
+  const client = draft.clientId && clientById(draft.clientId);
+  const project = client && draft.projectId && projectById(draft.projectId);
+  const flow = project && draft.flowId && flowById(draft.flowId);
+  wizardState.clientId = client ? client.id : null;
+  wizardState.projectId = project ? project.id : null;
+  wizardState.flowId = flow ? flow.id : null;
+  if (flow && draft.customization) wizardState.customization = draft.customization;
+  // Marca o fluxo como já aplicado: sem isso o passo final limparia a descrição
+  // e o checklist pra colocar os padrões do fluxo por cima do rascunho.
+  if (flow) wizardLastFlowApplied = flow.id;
+  const step = !client ? 1 : !project ? 2 : !flow ? 3 : (WIZARD_STEPS.includes(draft.step) ? draft.step : 4);
+  wizardGoTo(step);
+  setTimeout(() => {
+    $('f-name').value = draft.name || '';
+    setRichValue('f-description', draft.description || '');
+    $('f-briefing').value = draft.briefing || '';
+    $('f-deadline').value = draft.deadline || '';
+    $('f-estimated').value = draft.estimated || '';
+    $('f-priority').value = draft.priority || '3';
+    applyPriorityDropdown('f-priority');
+    demandChecklistDraft = Array.isArray(draft.checklist) ? draft.checklist : [];
+    renderDemandChecklist();
+    demandAttachments = Array.isArray(draft.links) ? draft.links.slice() : [];
+    refreshFormAttList('f-attachments-list');
+    if (step === 4) renderFlowSuggestion();
+    _restoringDemandDraft = false;
+    const body = document.querySelector('#demand-modal .modal-body');
+    if (!body) return;
+    document.getElementById('demand-draft-banner')?.remove();
+    const banner = document.createElement('div');
+    banner.id = 'demand-draft-banner';
+    banner.className = 'demand-draft-banner';
+    banner.innerHTML = `<i data-lucide="history" class="ic-sm"></i>
+      <span>Rascunho recuperado (${esc(fmtRelativeTime(new Date(draft.at).toISOString()))}).${draft.fileCount ? ` ${draft.fileCount === 1 ? 'O arquivo anexado' : `Os ${draft.fileCount} arquivos anexados`} não fica${draft.fileCount === 1 ? '' : 'm'} no rascunho — anexe de novo.` : ''}</span>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="discardDemandDraft()">Descartar</button>`;
+    body.prepend(banner);
+    paintIcons(banner);
+    // Garante o aviso à vista (o foco no nome rolava o modal pra baixo).
+    setTimeout(() => { body.scrollTop = 0; }, 120);
+  }, 0);
+}
+function discardDemandDraft() {
+  _clearDemandDraft();
+  openNewDemand({ skipDraft: true });
+}
 // Estado do link tarefa→demanda: setado por openNewDemandFromTask, limpo em
 // saveDemand (sucesso) OU quando o modal é fechado sem salvar (openNewDemand).
 let _creatingFromTaskId = null;
@@ -12098,7 +12207,8 @@ function openNewDemandFromTask(taskId) {
   if (!project) return toast('Projeto da tarefa não encontrado', 'error');
   // Ativa o wizard limpo (mesmo caminho do openNewDemand), depois pula pra step 3
   // (fluxo) com cliente/projeto pré-definidos. O nome vai pré-preenchido no step 4.
-  openNewDemand();
+  // Sem rascunho aqui: o conteúdo vem da tarefa.
+  openNewDemand({ skipDraft: true });
   _creatingFromTaskId = t.id;
   // Ajusta o wizard state — precisa ir DEPOIS do openNewDemand (que zera tudo).
   wizardState = { step: 3, clientId: project.clientId || null, projectId: project.id, flowId: null };
@@ -17362,7 +17472,43 @@ async function sendComment() {
     syncCommentEmptyState(el);
     patchDemand(upd);
     renderDetail();
-    toast('Comentário enviado!');
+    // Link no comentário (entrega por Dropbox/Drive etc.) que ainda não está
+    // nos anexos: oferece anexar com um clique.
+    const demandId = detailId;
+    const newLinks = _linksNotAttached(demandById(demandId), _extractCommentLinks(html, plain));
+    if (newLinks.length) {
+      toast(newLinks.length === 1 ? 'Comentário enviado. Anexar o link à demanda?' : `Comentário enviado. Anexar os ${newLinks.length} links à demanda?`,
+        'success', { label: 'Anexar', fn: () => attachCommentLinks(demandId, newLinks) });
+    } else {
+      toast('Comentário enviado!');
+    }
+  } catch (e) { toast(e.message, 'error'); }
+}
+// URLs do comentário: texto digitado + href de links clicáveis. Tira
+// pontuação grudada no fim ("veja https://x.com/a." → sem o ponto).
+function _extractCommentLinks(html, plain) {
+  const found = [];
+  const push = u => {
+    const clean = String(u || '').replace(/&amp;/g, '&').replace(/[.,;:!?)\]}>'"]+$/, '');
+    if (/^https?:\/\/[^\s]+\.[^\s]+/i.test(clean)) found.push(clean);
+  };
+  (String(plain || '').match(/\bhttps?:\/\/[^\s<>"]+/gi) || []).forEach(push);
+  (String(html || '').match(/href="(https?:\/\/[^"]+)"/gi) || []).forEach(m => push(m.slice(6, -1)));
+  return [...new Set(found)];
+}
+function _linksNotAttached(d, urls) {
+  const norm = u => normalizeUrl(u).replace(/\/+$/, '').toLowerCase();
+  const have = new Set((d?.attachments || []).filter(a => a.kind === 'link').map(a => norm(a.url || a.name)));
+  const seen = new Set();
+  return urls.filter(u => { const k = norm(u); if (have.has(k) || seen.has(k)) return false; seen.add(k); return true; });
+}
+async function attachCommentLinks(demandId, urls) {
+  const attachments = urls.map(u => ({ id: genAttId(), kind: 'link', name: u, url: normalizeUrl(u) }));
+  try {
+    const upd = await api('/demands/' + demandId + '/attachments', 'POST', { attachments });
+    patchDemand(upd);
+    if (detailId === demandId) renderDetail();
+    toast(urls.length === 1 ? 'Link anexado!' : `${urls.length} links anexados!`);
   } catch (e) { toast(e.message, 'error'); }
 }
 // Serializa o conteúdo do editor pra envio. Normaliza <div><br></div> vazios
@@ -26411,7 +26557,7 @@ async function confirmDeleteDashboard(id) {
 }
 
 function useTemplate(tid) {
-  openNewDemand();
+  openNewDemand({ skipDraft: true }); // o conteúdo vem do template
   setTimeout(() => {
     $('f-template').value = tid;
     applyDemandTemplate();

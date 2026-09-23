@@ -4336,6 +4336,14 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
   border-radius: 10px; padding: 14px 16px; margin-bottom: 12px;
 }
 .release-note-card:last-child { margin-bottom: 0; }
+/* Aviso de rascunho recuperado no cadastro de demanda. */
+.demand-draft-banner {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 14px; padding: 8px 8px 8px 12px; border-radius: 8px;
+  background: var(--accent-dim); color: var(--text); font-size: 12.5px;
+}
+.demand-draft-banner > svg { color: var(--accent-text); flex-shrink: 0; }
+.demand-draft-banner > span { flex: 1; min-width: 0; }
 .release-note-card.is-highlight { background: var(--accent-dim); border-color: color-mix(in srgb, var(--accent) 45%, transparent); box-shadow: inset 3px 0 0 var(--accent); }
 .release-note-card.is-highlight .release-note-title { color: var(--accent-text); }
 .release-note-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px; }

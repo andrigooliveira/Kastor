@@ -6917,12 +6917,7 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
     const oldStageId = d.status;
     const prevStage = stageByIdForDemand(flow, d, oldStageId);
     stageChangeCtx = { prevStage, stage };
-    // Debounce de notificações: se a etapa anterior ficou < 10s, é provável que
-    // seja um clique errado (o usuário avança e volta). Nesse caso pula toda
-    // notificação/webhook de mudança de etapa pra não floodar responsáveis/watchers.
-    const prevEnteredMs = d.stageEnteredAt ? new Date(d.stageEnteredAt).getTime() : 0;
-    const heldMs = prevEnteredMs ? (Date.now() - prevEnteredMs) : Infinity;
-    const notifyStage = heldMs > 10000;
+    const ownerBeforeStage = d.ownerId;
     // fecha a etapa anterior no histórico
     const prev = d.stageHistory[d.stageHistory.length - 1];
     if (prev && !prev.leftAt) prev.leftAt = nowISO();
@@ -6932,7 +6927,6 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
     d.stageDueDate = resolveStageDueDate(stage, d, today());
     d.stageHistory.push({ stageId: stage.id, enteredAt: nowISO(), dueDate: d.stageDueDate });
     addHistory(d, req.user.id, 'stage_changed', { fromId: oldStageId, toId: stage.id });
-    if (notifyStage) fired.push('demand.stage_changed');
     // Responsável padrão da etapa assume a demanda (se configurado e sem override no payload).
     // Override por instância (d.stageResponsibles[stageId]) tem precedência sobre o padrão do fluxo.
     // Se a nova etapa não define responsável (autoOwner=null), LIMPA d.ownerId — evita herdar
@@ -6945,16 +6939,10 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
       d.ownerId = autoOwner || null;
       if (d.ownerId !== prevOwner) {
         addHistory(d, req.user.id, 'owner_auto_assigned', { fromId: prevOwner, toId: d.ownerId, byStage: stage.id });
-        if (notifyStage && d.ownerId && d.ownerId !== req.user.id) {
-          notify(d.ownerId, 'stage_assigned', { demandId: d.id, demandName: d.name, stageName: stage.label }, req.user.id, appBaseUrl(req));
-          fired.push('demand.stage_assigned');
-        }
       }
     }
-    // Notifica watchers da demanda sobre a mudança de etapa.
-    if (notifyStage) {
-      notifyWatchers(d, 'watch_stage', { demandId: d.id, demandName: d.name, stageName: stage.label }, req.user.id, appBaseUrl(req));
-    }
+    // Avisos (responsável, observadores, canal) só depois que a demanda para na etapa.
+    scheduleStageNotify(d, { prevStage, userId: req.user.id, baseUrl: appBaseUrl(req), ownerBefore: ownerBeforeStage, ownerExplicit: b.ownerId !== undefined });
     if (stage.done && !d.completedAt) d.completedAt = nowISO();
     if (!stage.done) d.completedAt = null;
   }
@@ -6979,6 +6967,55 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
   broadcastChange('demand', 'update', { id: d.id, workspaceId: d.workspaceId, byUserId: req.user.id });
   res.json(d);
 });
+
+/* ── AVISOS DE MUDANÇA DE ETAPA COM ESPERA ──
+   Responsável da etapa, observadores e webhooks (canal do Discord) só são
+   avisados depois que a demanda fica STAGE_NOTIFY_DELAY_MS na etapa nova.
+   Mudou de novo nesse intervalo (avançar 2 seguidas, clique errado): o aviso
+   pendente é trocado e só a etapa final avisa — "de" continua sendo a etapa
+   de antes da 1ª mudança. Voltou pra etapa de onde saiu: ninguém é avisado.
+   (Reinício do servidor dentro da janela perde o aviso pendente.) */
+const STAGE_NOTIFY_DELAY_MS = 60 * 1000;
+const _pendingStageNotify = new Map(); // demandId → entrada pendente
+function scheduleStageNotify(d, { prevStage, userId, baseUrl, ownerBefore, ownerExplicit }) {
+  const cur = _pendingStageNotify.get(d.id);
+  if (cur) clearTimeout(cur.timer);
+  const entry = {
+    // Início da sequência: preservado entre mudanças seguidas.
+    fromStageId: cur ? cur.fromStageId : (prevStage ? prevStage.id : null),
+    prevStage: cur ? cur.prevStage : prevStage,
+    ownerBefore: cur ? cur.ownerBefore : ownerBefore,
+    ownerExplicit: !!ownerExplicit || !!(cur && cur.ownerExplicit),
+    stageId: d.status, userId, baseUrl
+  };
+  entry.timer = setTimeout(() => fireStageNotify(d.id, entry), STAGE_NOTIFY_DELAY_MS);
+  if (entry.timer.unref) entry.timer.unref();
+  _pendingStageNotify.set(d.id, entry);
+}
+function fireStageNotify(demandId, entry) {
+  if (_pendingStageNotify.get(demandId) !== entry) return;
+  _pendingStageNotify.delete(demandId);
+  const d = db.demands.find(x => x.id === demandId);
+  if (!d || !notDeleted(d) || d.status !== entry.stageId) return;
+  if (entry.fromStageId === d.status) return; // voltou pra onde estava
+  const flow = db.flows.find(f => f.id === d.flowId);
+  const stage = stageByIdForDemand(flow, d, d.status);
+  if (!stage) return;
+  const data = { demandId: d.id, demandName: d.name, stageName: stage.label };
+  // Responsável só é avisado se a etapa trouxe OUTRA pessoa (e não foi quem mexeu,
+  // nem quando o responsável foi escolhido na mão no mesmo salvamento).
+  const ownerChanged = d.ownerId && d.ownerId !== entry.ownerBefore && !entry.ownerExplicit;
+  if (ownerChanged && d.ownerId !== entry.userId) notify(d.ownerId, 'stage_assigned', data, entry.userId, entry.baseUrl);
+  notifyWatchers(d, 'watch_stage', data, entry.userId, entry.baseUrl);
+  const ctx = {
+    demand: d, project: db.projects.find(p => p.id === d.projectId), flow, stage, prevStage: entry.prevStage,
+    user: db.users.find(u => u.id === entry.userId) || null,
+    owner: db.users.find(u => u.id === d.ownerId) || null,
+    appBaseUrl: entry.baseUrl
+  };
+  fireWebhook('demand.stage_changed', ctx);
+  if (ownerChanged) fireWebhook('demand.stage_assigned', ctx);
+}
 
 /* Anexos um a um. O PUT acima troca a lista INTEIRA pela que o cliente mandou —
    se duas pessoas anexam juntas (ou uma tela está desatualizada), o anexo da
@@ -7276,11 +7313,7 @@ app.post('/api/demands/bulk', requireAuth, rateLimitBulk, (req, res) => {
         if (realStage.id === d.status) { skipped++; continue; }
         const oldStageId = d.status;
         const prevStage = stageByIdForDemand(flow, d, oldStageId);
-        // Debounce igual ao PUT individual: se a etapa anterior ficou < 10s,
-        // suprime notificações/webhooks pra não floodar em clicks errados.
-        const prevEnteredMs = d.stageEnteredAt ? new Date(d.stageEnteredAt).getTime() : 0;
-        const heldMs = prevEnteredMs ? (Date.now() - prevEnteredMs) : Infinity;
-        const notifyStage = heldMs > 10000;
+        const ownerBeforeStage = d.ownerId;
         const prev = d.stageHistory[d.stageHistory.length - 1];
         if (prev && !prev.leftAt) prev.leftAt = nowISO();
         d.status = realStage.id;
@@ -7303,22 +7336,11 @@ app.post('/api/demands/bulk', requireAuth, rateLimitBulk, (req, res) => {
           const prevOwner = d.ownerId;
           d.ownerId = stageOwner;
           addHistory(d, req.user.id, 'owner_auto_assigned', { fromId: prevOwner, toId: d.ownerId, byStage: realStage.id });
-          if (notifyStage && d.ownerId && d.ownerId !== req.user.id) {
-            notify(d.ownerId, 'stage_assigned', { demandId: d.id, demandName: d.name, stageName: realStage.label }, req.user.id, appBaseUrl(req));
-          }
         }
-        // Watchers também recebem notificação de mudança de etapa (bulk).
-        if (notifyStage) {
-          notifyWatchers(d, 'watch_stage', { demandId: d.id, demandName: d.name, stageName: realStage.label }, req.user.id, appBaseUrl(req));
-        }
-        // Webhooks — mesmo conjunto de eventos do PUT individual.
+        // Avisos com espera, igual ao PUT individual.
         const owner = db.users.find(u => u.id === d.ownerId);
         const _bulkReqBase = appBaseUrl(req);
-        if (notifyStage) {
-          fireWebhook('demand.stage_changed', () => ({
-            demand: d, project: _bulkProj, flow, stage: realStage, prevStage, user: req.user, owner, appBaseUrl: _bulkReqBase
-          }));
-        }
+        scheduleStageNotify(d, { prevStage, userId: req.user.id, baseUrl: _bulkReqBase, ownerBefore: ownerBeforeStage });
         if (!wasCompleted && d.completedAt) {
           fireWebhook('demand.completed', () => ({
             demand: d, project: _bulkProj, flow, user: req.user, owner, appBaseUrl: _bulkReqBase
