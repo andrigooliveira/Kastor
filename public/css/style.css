@@ -8049,9 +8049,9 @@ body.is-fullpage #page-notfound.active {
 .appt-row:first-child { border-top: 0; padding-top: 6px; }
 .appt-row .appt-name { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; min-width: 130px; }
 .appt-row .appt-hours { color: var(--accent-text); font-weight: 700; font-size: 13px; min-width: 56px; }
-.appt-row .appt-time-range { display: flex; align-items: center; gap: 14px; flex: 1; justify-content: center; }
+.appt-row .appt-time-range { display: flex; align-items: center; gap: 6px; flex: 1; justify-content: flex-start; min-width: 0; }
 .appt-row .appt-range { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
-.appt-row .appt-arrow { color: var(--text-muted); }
+.appt-row .appt-arrow { color: var(--text-muted); width: 12px !important; height: 12px !important; flex-shrink: 0; opacity: .7; }
 .appt-row .appt-actions { display: flex; gap: 4px; margin-left: auto; }
 .appt-row .pill { white-space: nowrap; }
 
@@ -8252,12 +8252,12 @@ i[data-lucide]:not([class*=ic-]) { width: 16px; height: 16px; stroke-width: 2; }
 }
 .demand-att-name:hover { color: var(--accent-text); text-decoration: underline; }
 .demand-att-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-/* Grade de cards: no máximo 4 por linha (menos quando estreito), quebrando
-   pra próxima linha. */
+/* Grade de cards: quantos couberem por linha, quebrando pra próxima. O
+   auto-fill com mínimo de 140px mantém cada card abaixo de ~290px (se sobrar
+   espaço, entra mais um card na linha em vez de esticar os existentes). */
 .att-card-grid {
-  --att-cols: 4; --att-gap: 10px;
-  display: grid; gap: var(--att-gap);
-  grid-template-columns: repeat(auto-fill, minmax(max(140px, calc((100% - (var(--att-cols) - 1) * var(--att-gap)) / var(--att-cols))), 1fr));
+  display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
 }
 .att-card .att-gal-thumb { aspect-ratio: 4 / 3; }
 .att-card .att-gal-thumb-icon i, .att-card .att-gal-thumb-icon svg { width: 32px; height: 32px; }
@@ -8273,7 +8273,7 @@ i[data-lucide]:not([class*=ic-]) { width: 16px; height: 16px; stroke-width: 2; }
 /* Linha da Galeria em modo lista: miniatura pequena, favicon sem moldura. */
 .att-link-thumb-sm .att-link-favicon { width: 22px; height: 22px; padding: 0; border-radius: 5px; box-shadow: none; background: transparent; }
 .att-card-meta {
-  font-size: 11px; color: var(--text-muted);
+  font-size: 10px; color: var(--text-muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
 }
@@ -18065,11 +18065,17 @@ input[type="checkbox"]:checked {
   overflow: hidden;
   background: var(--surface);
 }
+/* Layout fixo: colunas de metadado têm largura própria e o nome fica com o
+   resto — sem isso, um nome longo (URL) alargava a tabela inteira. */
 .gal-explorer {
   width: 100%;
   border-collapse: collapse;
   font-family: inherit;
+  table-layout: fixed;
 }
+.gal-explorer .gal-col-name { overflow: hidden; }
+@media (max-width: 1024px) { .gal-explorer .gal-col-client { display: none; } }
+@media (max-width: 760px) { .gal-explorer .gal-col-type, .gal-explorer .gal-col-size { display: none; } }
 .gal-explorer thead th {
   text-align: left;
   padding: 8px 12px;
@@ -18118,8 +18124,8 @@ input[type="checkbox"]:checked {
   font-variant-numeric: tabular-nums;
 }
 .gal-row-name-wrap {
-  display: inline-flex; align-items: center;
-  gap: 10px; max-width: 100%;
+  display: flex; align-items: center;
+  gap: 10px; max-width: 100%; min-width: 0;
 }
 .gal-row-thumb {
   width: 28px; height: 28px; flex-shrink: 0;
@@ -18135,10 +18141,12 @@ input[type="checkbox"]:checked {
   font-size: 12.5px;
   color: var(--text);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  max-width: 100%;
+  max-width: 100%; min-width: 0;
 }
 .gal-row-demand {
   display: block;
+  max-width: calc(100% - 38px);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   background: none; border: 0; padding: 0;
   margin-top: 2px; margin-left: 38px;
   font-family: inherit;
@@ -18635,15 +18643,32 @@ input[type="checkbox"]:checked {
   backdrop-filter: blur(4px);
 }
 .att-gal-thumb { position: relative; }
-/* Cores por tipo — segue paleta consistente */
-.att-gal-ext-badge.ext-pdf { background: #dc2626; }
-.att-gal-ext-badge.ext-doc { background: #2563eb; }
-.att-gal-ext-badge.ext-ppt { background: #ea580c; }
-.att-gal-ext-badge.ext-xls { background: #16a34a; }
-.att-gal-ext-badge.ext-image { background: #7c3aed; }
-.att-gal-ext-badge.ext-video { background: #db2777; }
-.att-gal-ext-badge.ext-audio { background: #0891b2; }
-.att-gal-ext-badge.ext-link { background: #6b7280; }
+/* Cores por tipo de arquivo (attFileVisual no app.js). --ft é o tom cheio
+   (selo de extensão e ícone no tema claro); --ft-hi é o tom claro, pro ícone
+   no tema escuro. Sem classe ft-*, o ícone fica no cinza padrão. */
+.ft-xls     { --ft: #16a34a; --ft-hi: #4ade80; }
+.ft-doc     { --ft: #2563eb; --ft-hi: #60a5fa; }
+.ft-ppt     { --ft: #ea580c; --ft-hi: #fb923c; }
+.ft-pdf     { --ft: #dc2626; --ft-hi: #f87171; }
+.ft-text    { --ft: #64748b; --ft-hi: #94a3b8; }
+.ft-web     { --ft: #0d9488; --ft-hi: #2dd4bf; }
+.ft-code    { --ft: #4f46e5; --ft-hi: #818cf8; }
+.ft-archive { --ft: #d97706; --ft-hi: #fbbf24; }
+.ft-design  { --ft: #e11d48; --ft-hi: #fb7185; }
+.ft-font    { --ft: #475569; --ft-hi: #cbd5e1; }
+.ft-image   { --ft: #7c3aed; --ft-hi: #a78bfa; }
+.ft-video   { --ft: #db2777; --ft-hi: #f472b6; }
+.ft-audio   { --ft: #0891b2; --ft-hi: #22d3ee; }
+.ft-link    { --ft: #6b7280; --ft-hi: #9ca3af; }
+.ft-torrent { --ft: #65a30d; --ft-hi: #a3e635; }
+.ft-exec    { --ft: #57534e; --ft-hi: #a8a29e; }
+.att-gal-ext-badge[class*="ft-"] { background: var(--ft, rgba(0, 0, 0, 0.68)); }
+.att-gal-thumb-icon > i, .att-gal-thumb-icon > svg,
+.att-gal-list-thumb.att-gal-thumb-icon > svg,
+.gal-row-thumb--icon svg { color: var(--ft-hi, var(--text-muted)); }
+:root[data-theme="light"] .att-gal-thumb-icon > i,
+:root[data-theme="light"] .att-gal-thumb-icon > svg,
+:root[data-theme="light"] .gal-row-thumb--icon svg { color: var(--ft, var(--text-muted)); }
 
 /* Cover thumb gerado — pdf vira imagem, docx vira "papel" reduzido.
    `contain` mostra a página inteira com barras se a proporção não bate;

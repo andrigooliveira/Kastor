@@ -1591,7 +1591,18 @@ app.use('/uploads', requireAuth, (req, res, next) => {
     res.setHeader('Cache-Control', 'private, no-cache');
   }
   next();
-}, express.static(UPLOADS_DIR, { index: false, dotfiles: 'deny' }));
+}, express.static(UPLOADS_DIR, { index: false, dotfiles: 'deny' }), (req, res, next) => {
+  // Não achou: se o GC tinha levado pra lixeira, devolve e repete o pedido.
+  let name = '';
+  try { name = path.basename(decodeURIComponent(req.path)); } catch {}
+  if (restoreUploadFromTrash(name)) return res.redirect(307, req.originalUrl);
+  // 404 de verdade. Sem isso o pedido caía no fallback do SPA e voltava 200 com
+  // o index.html — que o download salvava com o nome e o tipo do anexo
+  // ("Apresentação.pptx" com HTML dentro = arquivo "corrompido").
+  res.removeHeader('Content-Disposition');
+  res.removeHeader('Cache-Control');
+  res.status(404).type('text/plain; charset=utf-8').send('Arquivo não encontrado');
+});
 
 /* Avatar público de cliente — rota SEM auth, usada por:
    - Bot do Discord (baixa a imagem pra usar como avatar da persona por-cliente
@@ -3300,6 +3311,8 @@ app.get('/api/gallery', requireAuth, (req, res) => {
     (d.attachments || []).forEach(a => {
       const item = {
         ...base,
+        // Data do upload (gravada no anexo); a da demanda só se o anexo não tiver.
+        addedAt: a.addedAt || base.addedAt,
         id: a.id,
         kind: a.kind || 'file',
         name: a.name || '',
@@ -3320,7 +3333,7 @@ app.get('/api/gallery', requireAuth, (req, res) => {
       (c.attachments || []).forEach(a => {
         const item = {
           ...base,
-          addedAt: c.at || c.createdAt || base.addedAt,
+          addedAt: a.addedAt || c.at || c.createdAt || base.addedAt,
           id: a.id,
           kind: a.kind || 'file',
           name: a.name || '',
@@ -6212,9 +6225,17 @@ function stripHtmlToText(html) {
     .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
     .trim();
 }
+// Teto de anexos por entidade. Acima disso a rota RECUSA (tooManyAttachments) —
+// antes a lista era cortada em silêncio e o anexo novo sumia depois de "salvo".
+const ATTACHMENTS_MAX = 200;
+function tooManyAttachments(res, arr) {
+  if (!Array.isArray(arr) || arr.length <= ATTACHMENTS_MAX) return false;
+  res.status(400).json({ error: `Limite de ${ATTACHMENTS_MAX} anexos atingido.` });
+  return true;
+}
 function sanitizeAttachments(arr) {
   if (!Array.isArray(arr)) return [];
-  return arr.slice(0, 20).map(a => {
+  return arr.slice(0, ATTACHMENTS_MAX).map(a => {
     if (a && a.kind === 'link') {
       return { id: a.id || uid(), kind: 'link', name: String(a.name || a.url || '').trim(), url: normalizeUrlSrv(a.url || a.name), addedAt: a.addedAt || nowISO() };
     }
@@ -6493,6 +6514,7 @@ function sanitizeRecurrence(r, existing) {
 app.post('/api/demands', requireAuth, (req, res) => {
   const b = req.body || {};
   if (!String(b.name || '').trim()) return res.status(400).json({ error: 'Nome da demanda é obrigatório' });
+  if (tooManyAttachments(res, b.attachments)) return;
   const project = db.projects.find(p => p.id === b.projectId);
   if (!project || !canAccessWs(req.user, project.workspaceId)) return res.status(400).json({ error: 'Selecione um projeto válido' });
   // Fluxo pode ser de qualquer workspace acessível (fluxos pertencem ao CLIENTE
@@ -6725,6 +6747,7 @@ app.get('/api/demands/:id', requireAuth, (req, res) => {
 app.put('/api/demands/:id', requireAuth, (req, res) => {
   const d = getDemand(req, res); if (!d) return;
   const b = req.body || {};
+  if (tooManyAttachments(res, b.attachments)) return;
   // Freelancer só pode mudar a etapa (avançar/retroceder) e a ordem no kanban.
   // Qualquer outro campo no body é bloqueado — evita edição indireta de descrição,
   // prazo, prioridade, responsável, etc.
@@ -7626,7 +7649,9 @@ app.post('/api/demands/:id/comment', requireAuth, (req, res) => {
   const text = format === 'html'
     ? sanitizeCommentHtml(rawText)
     : rawText.trim().slice(0, 10000);
-  const attachments = sanitizeAttachments(req.body?.attachments).slice(0, 10);
+  // Recusa em vez de cortar: antes o 11º anexo em diante sumia sem aviso.
+  if (Array.isArray(req.body?.attachments) && req.body.attachments.length > 10) return res.status(400).json({ error: 'Máximo de 10 anexos por comentário.' });
+  const attachments = sanitizeAttachments(req.body?.attachments);
   // Plain para extração de menções + validação de "vazio".
   const plain = format === 'html' ? stripHtmlToText(text) : text;
   if (!plain.trim() && !attachments.length && !/\<img\b/i.test(text)) {
@@ -7683,8 +7708,9 @@ app.put('/api/demands/:id/comment/:cid', requireAuth, (req, res) => {
   const text = format === 'html'
     ? sanitizeCommentHtml(rawText)
     : rawText.trim().slice(0, 10000);
+  if (Array.isArray(req.body?.attachments) && req.body.attachments.length > 10) return res.status(400).json({ error: 'Máximo de 10 anexos por comentário.' });
   const attachments = req.body?.attachments !== undefined
-    ? sanitizeAttachments(req.body.attachments).slice(0, 10)
+    ? sanitizeAttachments(req.body.attachments)
     : c.attachments;
   const plain = format === 'html' ? stripHtmlToText(text) : text;
   if (!plain.trim() && !(attachments && attachments.length) && !/\<img\b/i.test(text)) {
@@ -9908,59 +9934,93 @@ if (_recBoot.unref) _recBoot.unref();
 if (_recInterval.unref) _recInterval.unref();
 
 /* ── GC DE UPLOADS ÓRFÃOS ──
-   Varre data/uploads/ e apaga arquivos que nenhuma entidade referencia mais
-   (avatar de user/cliente/projeto, icon de fluxo, attachment de demanda,
-   attachment de comentário, template attachment, lista attachment).
-   Só apaga arquivos com mtime > MIN_AGE_MS pra evitar apagar upload recém-
-   criado que ainda não foi associado a nenhuma entidade (janela de segurança). */
+   Referência = qualquer "/uploads/<arquivo>" em QUALQUER campo de QUALQUER
+   entidade em memória (anexo em `data` ou `url`, <img> de rich text, avatar,
+   ícone, doc do Writer…). Varrer o JSON inteiro é de propósito: um campo novo
+   que guarde upload nunca vira "órfão" por esquecimento. (A versão anterior só
+   olhava `a.url`, e anexos de arquivo ficam em `a.data` — eram apagados.)
+   Nunca apaga direto: move pra uploads/.trash/ (não é servido, dotfiles deny)
+   e só esvazia a lixeira depois de UPLOADS_TRASH_KEEP_MS. Se o arquivo voltar
+   a ser referenciado ou for pedido em /uploads, ele volta sozinho. */
+const UPLOADS_TRASH_DIR = path.join(UPLOADS_DIR, '.trash');
+const UPLOADS_TRASH_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
 function collectReferencedUploads() {
   const refs = new Set();
-  const addIfLocal = (v) => {
-    if (typeof v === 'string' && v.startsWith('/uploads/')) refs.add(v);
-  };
-  for (const u of (db.users || []))    addIfLocal(u.avatar);
-  for (const c of (db.clients || []))  addIfLocal(c.avatar);
-  for (const p of (db.projects || [])) addIfLocal(p.avatar);
-  for (const f of (db.flows || []))    addIfLocal(f.icon);
-  for (const d of (db.demands || [])) {
-    for (const a of (d.attachments || [])) addIfLocal(a.url);
-    for (const c of (d.comments || [])) {
-      for (const a of (c.attachments || [])) addIfLocal(a.url);
+  const re = /\/uploads\/([A-Za-z0-9_.\-]+)/g;
+  for (const list of Object.values(db || {})) {
+    if (!Array.isArray(list)) continue;
+    for (const e of list) {
+      let json;
+      try { json = JSON.stringify(e); } catch { continue; }
+      if (!json || !json.includes('/uploads/')) continue;
+      for (const m of json.matchAll(re)) refs.add(m[1]);
     }
-  }
-  for (const t of (db.templates || [])) {
-    for (const a of (t.attachments || [])) addIfLocal(a.url);
-  }
-  for (const r of (db.recurrings || [])) {
-    for (const a of (r.attachments || [])) addIfLocal(a.url);
   }
   return refs;
 }
+// Tira um arquivo da lixeira de volta pra uploads/ (true se restaurou).
+function restoreUploadFromTrash(name) {
+  if (!name || name.startsWith('.') || name !== path.basename(name)) return false;
+  const from = path.join(UPLOADS_TRASH_DIR, name);
+  const to = path.join(UPLOADS_DIR, name);
+  if (!fs.existsSync(from) || fs.existsSync(to)) return false;
+  try { fs.renameSync(from, to); console.log(`  [uploads-gc] ${name} restaurado da lixeira`); return true; }
+  catch (e) { console.warn(`[uploads-gc] falha ao restaurar ${name}: ${e.message}`); return false; }
+}
 function runUploadsGc() {
   if (!fs.existsSync(UPLOADS_DIR)) return;
-  const MIN_AGE_MS = 24 * 60 * 60 * 1000; // 24h — evita apagar upload recém-criado
+  // Banco não carregado (ou vazio) faria TUDO parecer órfão — não arrisca.
+  if (!db || !Array.isArray(db.demands) || !db.demands.length) return;
+  const MIN_AGE_MS = 24 * 60 * 60 * 1000; // 24h — upload recém-criado ainda sem entidade
   const now = Date.now();
   const refs = collectReferencedUploads();
-  let deleted = 0, bytesFreed = 0;
+  let moved = 0, restored = 0, purged = 0;
   let files;
   try { files = fs.readdirSync(UPLOADS_DIR); } catch { return; }
   for (const name of files) {
-    if (name.startsWith('.')) continue;
-    const url = '/uploads/' + name;
-    if (refs.has(url)) continue;
+    if (name.startsWith('.') || refs.has(name)) continue;
     const full = path.join(UPLOADS_DIR, name);
     let stat;
     try { stat = fs.statSync(full); } catch { continue; }
     if (!stat.isFile()) continue;
-    if (now - stat.mtimeMs < MIN_AGE_MS) continue; // recente — deixa quieto
-    try { fs.unlinkSync(full); deleted++; bytesFreed += stat.size; } catch (e) {
-      console.warn(`[uploads-gc] falha ao apagar ${name}: ${e.message}`);
+    if (now - stat.mtimeMs < MIN_AGE_MS) continue;
+    try {
+      fs.mkdirSync(UPLOADS_TRASH_DIR, { recursive: true });
+      const dest = path.join(UPLOADS_TRASH_DIR, name);
+      fs.renameSync(full, dest);
+      // mtime = hora que entrou na lixeira (conta os 30 dias a partir daqui).
+      fs.utimesSync(dest, new Date(), new Date());
+      moved++;
+    } catch (e) {
+      console.warn(`[uploads-gc] falha ao mover ${name} pra lixeira: ${e.message}`);
     }
   }
-  if (deleted > 0) {
-    console.log(`  [uploads-gc] ${deleted} arquivo(s) órfão(s) apagado(s) (${Math.round(bytesFreed / 1024)}KB liberados)`);
+  let trash = [];
+  try { trash = fs.readdirSync(UPLOADS_TRASH_DIR); } catch {}
+  for (const name of trash) {
+    if (refs.has(name)) { if (restoreUploadFromTrash(name)) restored++; continue; }
+    const full = path.join(UPLOADS_TRASH_DIR, name);
+    try {
+      const stat = fs.statSync(full);
+      if (stat.isFile() && now - stat.mtimeMs > UPLOADS_TRASH_KEEP_MS) { fs.unlinkSync(full); purged++; }
+    } catch {}
+  }
+  if (moved || restored || purged) {
+    console.log(`  [uploads-gc] ${moved} órfão(s) na lixeira, ${restored} restaurado(s), ${purged} apagado(s) após 30 dias`);
   }
 }
+/* Diagnóstico no boot: referências a /uploads cujo arquivo não existe no disco
+   (nem na lixeira). Não conserta nada — só deixa visível no log. */
+function logMissingUploads() {
+  if (!db) return;
+  const missing = [...collectReferencedUploads()].filter(name =>
+    !fs.existsSync(path.join(UPLOADS_DIR, name)) && !fs.existsSync(path.join(UPLOADS_TRASH_DIR, name)));
+  if (missing.length) {
+    console.warn(`  [uploads] ${missing.length} arquivo(s) referenciado(s) sem arquivo no disco. Ex.: ${missing.slice(0, 5).join(', ')}`);
+  }
+}
+const _missingBoot = setTimeout(logMissingUploads, 15 * 1000);
+if (_missingBoot.unref) _missingBoot.unref();
 // Roda 30 min após o boot e a cada 7 dias.
 const _gcBoot = setTimeout(runUploadsGc, 30 * 60 * 1000);
 const _gcInterval = setInterval(runUploadsGc, 7 * 24 * 60 * 60 * 1000);

@@ -12577,7 +12577,7 @@ function renderDetail() {
       <span class="appt-hours">${fmtHours(e.hours)}</span>
       <span class="appt-time-range">
         <span class="appt-range">${e.start ? fmtDateTime(e.start) : '—'}</span>
-        <i data-lucide="arrow-right" class="ic-sm appt-arrow"></i>
+        <i data-lucide="chevron-right" class="appt-arrow"></i>
         <span class="appt-range">${e.end ? fmtDateTime(e.end) : '—'}</span>
       </span>
       ${st ? `<span class="pill" style="color:${st.color};background:${hexDim(st.color)};font-size:10px">${esc(st.label)}</span>` : ''}
@@ -14617,6 +14617,35 @@ function attKindFromName(name) {
   if (['xls','xlsx','csv'].includes(ext)) return 'xls';
   return 'other';
 }
+/* Ícone + tom de cor por extensão (cards sem prévia, Galeria). Extensão
+   desconhecida cai no ícone do tipo; tom "other" = cinza. */
+const ATT_FILE_TONES = [
+  ['xls',     'sheet',        'xls xlsx xlsm xlsb csv tsv ods numbers'],
+  ['doc',     'file-text',    'doc docx odt rtf pages'],
+  ['ppt',     'presentation', 'ppt pptx pps ppsx odp key'],
+  ['pdf',     'file-text',    'pdf'],
+  ['text',    'file-type',    'txt md log'],
+  ['web',     'globe',        'xml html htm xhtml rss'],
+  ['code',    'file-code',    'json js mjs ts jsx tsx css scss less php py rb go java c cpp cs sql sh bat ps1 yml yaml ini env'],
+  ['archive', 'file-archive', 'zip rar 7z tar gz tgz bz2 xz'],
+  ['design',  'pen-tool',     'ai eps psd psb indd idml xd sketch fig cdr afdesign afphoto'],
+  ['font',    'type',         'ttf otf woff woff2 eot'],
+  ['image',   'image',        'png jpg jpeg gif webp svg bmp avif heic heif tif tiff ico raw cr2 nef dng'],
+  ['video',   'video',        'mp4 mov webm mkv avi m4v wmv flv'],
+  ['audio',   'music',        'mp3 wav m4a ogg flac aac wma'],
+  ['torrent', 'magnet',       'torrent'],
+  ['exec',    'package',      'exe msi dmg apk pkg deb iso'],
+];
+const _attExtVisual = new Map();
+ATT_FILE_TONES.forEach(([tone, icon, exts]) => exts.split(' ').forEach(e => _attExtVisual.set(e, { tone, icon })));
+function attFileVisual(a) {
+  if (a.kind === 'link') return { tone: 'link', icon: 'link' };
+  const ext = ((a.name || '').match(/\.([a-z0-9]+)$/i)?.[1] || '').toLowerCase();
+  const hit = _attExtVisual.get(ext);
+  if (hit) return hit;
+  const kind = attGalKindOf(a);
+  return { tone: kind === 'other' ? 'other' : kind, icon: attIcon(kind) };
+}
 function attIcon(kind) {
   return {
     image: 'image', pdf: 'file-text', video: 'video', audio: 'music',
@@ -14649,7 +14678,14 @@ async function attClickDownload(ev, src, name) {
   const url = attDownloadUrl(src, name);
   try {
     const resp = await fetch(url, { credentials: 'same-origin' });
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    if (!resp.ok) {
+      // Resposta de erro nunca vira arquivo (antes o 404 chegava como HTML e era
+      // salvo com o nome do anexo).
+      toast(resp.status === 404
+        ? `"${name || 'Arquivo'}" não foi encontrado no servidor.`
+        : `Não deu pra baixar "${name || 'o arquivo'}" (HTTP ${resp.status}).`, 'error');
+      return false;
+    }
     const blob = await resp.blob();
     const objUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -14763,6 +14799,7 @@ function renderDemandAttList(list, withDelete) {
       </div>`;
     }
     const kind = attGalKindOf(a);
+    const vis = attFileVisual(a);
     const previewable = kind !== 'other';
     const rawSrc = a.data || a.url || '';
     const src = esc(rawSrc);
@@ -14777,7 +14814,7 @@ function renderDemandAttList(list, withDelete) {
     const meta = [ext ? ext.toUpperCase() : '', size ? fmtBytes(size) : '', date].filter(Boolean).map(esc).join(' · ');
     const thumb = kind === 'image' && rawSrc
       ? `<div class="att-gal-thumb att-gal-thumb-image" style="background-image:url('${src}')">`
-      : `<div class="att-gal-thumb att-gal-thumb-icon"><i data-lucide="${attIcon(kind)}"></i>`;
+      : `<div class="att-gal-thumb att-gal-thumb-icon ft-${vis.tone}"><i data-lucide="${vis.icon}"></i>`;
     const coverAttrs = _attCoverKind(a)
       ? `data-cover-key="${esc(_attCoverKey(a))}" data-att-id="${esc(a.id || '')}" data-att-size="${esc(String(a.size || 0))}" data-att-src="${src}" data-att-type="${esc(a.type || '')}" data-att-name="${esc(a.name || '')}"`
       : '';
@@ -15754,6 +15791,13 @@ function _pushGalleryItemUrl(a) {
 function openAttPreview(src, type, name, opts) {
   if (!src) return;
   opts = opts || {};
+  // Planilhas não têm viewer: baixa direto em vez de abrir o modal.
+  const _kindGuess = attPreviewKind(type) === 'other' ? attKindFromName(name) : attPreviewKind(type);
+  if (_kindGuess === 'xls') {
+    if (/^https?:\/\//i.test(src)) window.open(src, '_blank', 'noopener');
+    else attClickDownload(null, src, name);
+    return;
+  }
   // Se estamos na galeria global e não é uma abertura por URL direta,
   // tenta achar o attachment correspondente pra empurrar /gallery/<slug-id>.
   if (currentPage === 'gallery' && !opts._skipUrlPush) {
@@ -15836,20 +15880,6 @@ function openAttPreview(src, type, name, opts) {
       paintIcons();
     });
     return;
-  } else if (kind === 'xls') {
-    // XLSX/CSV: fallback Office Online (só URL http/https) ou download.
-    const isRemote = /^https?:\/\//i.test(src);
-    if (isRemote) {
-      const embedUrl = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(src);
-      el.innerHTML = header + `<div class="att-preview-body"><iframe src="${embedUrl}" class="att-preview-frame" title="${esc(name)}" allowfullscreen></iframe></div>`;
-    } else {
-      el.innerHTML = header + `<div class="att-preview-body"><div class="att-preview-unsupported">
-        <i data-lucide="${attIcon(kind)}" class="ic-lg"></i>
-        <div class="att-preview-unsupported-title">${esc(name || 'Arquivo')}</div>
-        <div class="att-preview-unsupported-sub">Planilhas não têm viewer inline aqui ainda. Baixe pra abrir na sua máquina.</div>
-        <a class="btn btn-primary" href="${dlSrc}" ${dlAttrs}><i data-lucide="download" class="ic-sm"></i> Baixar arquivo</a>
-      </div></div>`;
-    }
   } else {
     window.open(src, '_blank'); return;
   }
@@ -28236,7 +28266,7 @@ function _renderGalleryPageInner() {
 function _galleryPageTableHtml(items, st) {
   const cols = [
     { k: 'name', label: 'Nome',           className: 'gal-col-name' },
-    { k: 'date', label: 'Data mod.',      className: 'gal-col-date' },
+    { k: 'date', label: 'Enviado em',     className: 'gal-col-date' },
     { k: 'type', label: 'Tipo',           className: 'gal-col-type' },
     { k: 'size', label: 'Tamanho',        className: 'gal-col-size' },
   ];
@@ -28271,15 +28301,16 @@ function _galleryPageRowHtml(a) {
   const size = attSizeBytes(a);
   const dateLbl = a.addedAt ? fmtDate(a.addedAt) : '—';
   const kindLbl = (_attGalKindLabels.find(x => x.k === kind)?.label) || kind || '—';
-  const iconOnly = `<i data-lucide="${attIcon(kind)}" class="ic-sm gal-row-ico"></i>`;
+  const vis = attFileVisual(a);
+  const iconOnly = `<i data-lucide="${vis.icon}" class="ic-sm gal-row-ico"></i>`;
   const thumb = kind === 'image' && src
     ? `<span class="gal-row-thumb" style="background-image:url('${srcEsc}')"></span>`
-    : `<span class="gal-row-thumb gal-row-thumb--icon">${iconOnly}</span>`;
+    : `<span class="gal-row-thumb gal-row-thumb--icon ft-${vis.tone}">${iconOnly}</span>`;
   return `<tr class="gal-explorer-row" onclick="${openCall}">
     <td class="gal-col-name">
       <span class="gal-row-name-wrap">
         ${thumb}
-        <span class="gal-row-name">${nameEsc}</span>
+        <span class="gal-row-name" title="${nameEsc}">${nameEsc}</span>
       </span>
       ${demandEsc ? `<button type="button" class="gal-row-demand" title="Abrir demanda" onclick="${openDemandCall}">${demandEsc}</button>` : ''}
     </td>
@@ -28370,11 +28401,11 @@ function collectAllAttachments() {
     const clientName = proj?.client || (clientById(clientId)?.name || '');
     const workspaceId = d.workspaceId || null;
     (d.attachments || []).forEach(a => {
-      push({ ...a, demandId: d.id, demandName: d.name, projectId: d.projectId, projectName: proj?.name || '', clientId, clientName, workspaceId, addedAt: d.updatedAt || d.createdAt || '' });
+      push({ ...a, demandId: d.id, demandName: d.name, projectId: d.projectId, projectName: proj?.name || '', clientId, clientName, workspaceId, addedAt: a.addedAt || d.updatedAt || d.createdAt || '' });
     });
     (d.comments || []).forEach(c => {
       (c.attachments || []).forEach(a => {
-        push({ ...a, demandId: d.id, demandName: d.name, projectId: d.projectId, projectName: proj?.name || '', clientId, clientName, workspaceId, addedAt: c.at || c.createdAt || '' });
+        push({ ...a, demandId: d.id, demandName: d.name, projectId: d.projectId, projectName: proj?.name || '', clientId, clientName, workspaceId, addedAt: a.addedAt || c.at || c.createdAt || '' });
       });
     });
   });
@@ -28567,7 +28598,7 @@ function _globalGalleryTableHtml(items) {
   const cols = [
     { k: 'name',   label: 'Nome',      className: 'gal-col-name' },
     { k: 'client', label: 'Cliente',   className: 'gal-col-client' },
-    { k: 'date',   label: 'Data mod.', className: 'gal-col-date' },
+    { k: 'date',   label: 'Enviado em', className: 'gal-col-date' },
     { k: 'type',   label: 'Tipo',      className: 'gal-col-type' },
     { k: 'size',   label: 'Tamanho',   className: 'gal-col-size' },
   ];
@@ -28603,15 +28634,16 @@ function _globalGalleryRowHtml(a) {
   const size = attSizeBytes(a);
   const dateLbl = a.addedAt ? fmtDate(a.addedAt) : '—';
   const kindLbl = (_attGalKindLabels.find(x => x.k === kind)?.label) || kind || '—';
-  const iconOnly = `<i data-lucide="${attIcon(kind)}" class="ic-sm gal-row-ico"></i>`;
+  const vis = attFileVisual(a);
+  const iconOnly = `<i data-lucide="${vis.icon}" class="ic-sm gal-row-ico"></i>`;
   const thumb = kind === 'image' && src
     ? `<span class="gal-row-thumb" style="background-image:url('${srcEsc}')"></span>`
-    : `<span class="gal-row-thumb gal-row-thumb--icon">${iconOnly}</span>`;
+    : `<span class="gal-row-thumb gal-row-thumb--icon ft-${vis.tone}">${iconOnly}</span>`;
   return `<tr class="gal-explorer-row" onclick="${openCall}">
     <td class="gal-col-name">
       <span class="gal-row-name-wrap">
         ${thumb}
-        <span class="gal-row-name">${nameEsc}</span>
+        <span class="gal-row-name" title="${nameEsc}">${nameEsc}</span>
       </span>
       ${demandEsc ? `<button type="button" class="gal-row-demand" title="Abrir demanda" onclick="${openDemandCall}">${demandEsc}</button>` : ''}
     </td>
@@ -28636,12 +28668,13 @@ function _globalGalleryTileHtml(a) {
   const openDemandCall = `event.stopPropagation();showDetail('${esc(a.demandId)}')`;
   const coverKind = _attCoverKind(a);
   const ext = attExtOf(a);
-  const extBadge = ext ? `<span class="att-gal-ext-badge ext-${esc(kind)}">${esc(ext)}</span>` : '';
+  const vis = attFileVisual(a);
+  const extBadge = ext ? `<span class="att-gal-ext-badge ft-${vis.tone}">${esc(ext)}</span>` : '';
   const thumb = kind === 'image' && src
     ? `<div class="att-gal-thumb att-gal-thumb-image" style="background-image:url('${srcEsc}')">${extBadge}</div>`
     : kind === 'link'
       ? `<div class="att-gal-thumb att-gal-thumb-icon att-link-thumb">${linkThumbInner(normalizeUrl(a.url || a.name))}${extBadge}</div>`
-      : `<div class="att-gal-thumb att-gal-thumb-icon"><i data-lucide="${attIcon(kind)}"></i>${extBadge}</div>`;
+      : `<div class="att-gal-thumb att-gal-thumb-icon ft-${vis.tone}"><i data-lucide="${vis.icon}"></i>${extBadge}</div>`;
   const coverAttrs = coverKind
     ? `data-cover-key="${esc(_attCoverKey(a))}" data-att-id="${esc(a.id || '')}" data-att-size="${esc(String(a.size || 0))}" data-att-src="${srcEsc}" data-att-type="${esc(a.type || '')}" data-att-name="${esc(a.name || '')}"`
     : '';
@@ -28860,16 +28893,18 @@ function _applyAttCoverToTile(tileEl, cover, a) {
   if (!tileEl || !tileEl.isConnected) return;
   const thumb = tileEl.querySelector('.att-gal-thumb');
   if (!thumb) return;
+  // Os botões do card (Baixar/Remover) vivem dentro do thumb — sobrevivem à troca.
+  const actions = thumb.querySelector('.att-card-actions');
+  thumb.classList.remove('att-gal-thumb-icon');
   if (cover.kind === 'image') {
-    thumb.classList.remove('att-gal-thumb-icon');
     thumb.classList.add('att-gal-thumb-image', 'att-gal-thumb-cover');
     thumb.style.backgroundImage = `url('${cover.dataUrl}')`;
     thumb.innerHTML = '';
   } else if (cover.kind === 'html') {
-    thumb.classList.remove('att-gal-thumb-icon');
     thumb.classList.add('att-gal-thumb-docx');
     thumb.innerHTML = `<div class="att-gal-thumb-docx-page">${cover.html}</div>`;
   }
+  if (actions) thumb.appendChild(actions);
 }
 /* Observer único, reutilizado. Varre .att-gal-tile[data-cover-key] visíveis
    e enfileira o gerador. Uma vez processado, remove o atributo. */
@@ -28929,13 +28964,14 @@ function attGalTileHtml(a, view = 'grid') {
   const dateLbl = a.addedAt ? fmtDate(a.addedAt) : '';
   const kindLbl = (_attGalKindLabels.find(x => x.k === kind)?.label) || kind;
   const ext = attExtOf(a);
-  const extBadge = ext ? `<span class="att-gal-ext-badge ext-${esc(kind)}">${esc(ext)}</span>` : '';
+  const vis = attFileVisual(a);
+  const extBadge = ext ? `<span class="att-gal-ext-badge ft-${vis.tone}">${esc(ext)}</span>` : '';
   if (view === 'list') {
     const thumb = kind === 'image' && src
       ? `<div class="att-gal-list-thumb att-gal-thumb-image" style="background-image:url('${srcEsc}')"></div>`
       : kind === 'link'
         ? `<div class="att-gal-list-thumb att-gal-thumb-icon att-link-thumb att-link-thumb-sm">${linkThumbInner(normalizeUrl(a.url || a.name))}</div>`
-        : `<div class="att-gal-list-thumb att-gal-thumb-icon"><i data-lucide="${attIcon(kind)}"></i></div>`;
+        : `<div class="att-gal-list-thumb att-gal-thumb-icon ft-${vis.tone}"><i data-lucide="${vis.icon}"></i></div>`;
     return `<button type="button" class="att-gal-list-row" onclick="${openCall}">
       ${thumb}
       <div class="att-gal-list-main">
@@ -28956,7 +28992,7 @@ function attGalTileHtml(a, view = 'grid') {
     ? `<div class="att-gal-thumb att-gal-thumb-image" style="background-image:url('${srcEsc}')">${extBadge}</div>`
     : kind === 'link'
       ? `<div class="att-gal-thumb att-gal-thumb-icon att-link-thumb">${linkThumbInner(normalizeUrl(a.url || a.name))}${extBadge}</div>`
-      : `<div class="att-gal-thumb att-gal-thumb-icon"><i data-lucide="${attIcon(kind)}"></i>${extBadge}</div>`;
+      : `<div class="att-gal-thumb att-gal-thumb-icon ft-${vis.tone}"><i data-lucide="${vis.icon}"></i>${extBadge}</div>`;
   const coverAttrs = coverKind
     ? `data-cover-key="${esc(_attCoverKey(a))}" data-att-id="${esc(a.id || '')}" data-att-size="${esc(String(a.size || 0))}" data-att-src="${srcEsc}" data-att-type="${esc(a.type || '')}" data-att-name="${esc(a.name || '')}"`
     : '';
