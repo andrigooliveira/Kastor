@@ -2351,8 +2351,9 @@ app.post('/api/me/discord/clear-dms', requireAuth, async (req, res) => {
 app.post('/api/me/discord/digest', requireAuth, async (req, res) => {
   if (!discordBot.isEnabled()) return res.status(503).json({ error: 'Discord bot não configurado.' });
   if (!req.user.discordId) return res.status(400).json({ error: 'Cadastre seu ID do Discord no perfil antes.' });
-  const ok = await sendDiscordDMDigestForUser(req.user);
-  if (!ok) return res.json({ ok: false, note: 'Nada pra reportar hoje (nenhuma atrasada, nada vencendo hoje/próximos 3 dias, sem notif não lida). Comportamento normal — evita DM diária vazia.' });
+  const result = await sendDiscordDMDigestForUser(req.user);
+  if (result === 'empty') return res.json({ ok: false, note: 'Nada pra reportar hoje (nenhuma atrasada, nada vencendo hoje/próximos 3 dias, sem notif não lida). Comportamento normal — evita DM diária vazia.' });
+  if (!result) return res.status(502).json({ error: 'O Discord recusou a mensagem. Confira se você aceita mensagens diretas de membros do servidor e se o seu ID do Discord está certo.' });
   res.json({ ok: true });
 });
 
@@ -10351,9 +10352,13 @@ function digestBuildForUser(user) {
   const myDemands = db.demands.filter(d =>
     notDeleted(d) && d.ownerId === user.id && !d.completedAt && canAccessWs(user, d.workspaceId)
   );
-  const overdue = myDemands.filter(d => d.deadline && d.deadline < todayYmd);
-  const dueToday = myDemands.filter(d => d.deadline === todayYmd);
-  const dueSoon = myDemands.filter(d => d.deadline && d.deadline > todayYmd && d.deadline <= in3days);
+  // Prazo efetivo = prazo da etapa atual (o que o time usa), com o prazo final
+  // de reserva — mesma regra do app (effDue). Antes só olhava d.deadline, que
+  // quase nunca é preenchido: o resumo saía vazio e não era enviado.
+  const due = d => (d.stageDueDate || d.deadline || '').slice(0, 10);
+  const overdue = myDemands.filter(d => due(d) && due(d) < todayYmd);
+  const dueToday = myDemands.filter(d => due(d) === todayYmd);
+  const dueSoon = myDemands.filter(d => due(d) && due(d) > todayYmd && due(d) <= in3days);
   return { overdue, dueToday, dueSoon };
 }
 async function digestSendForUser(user, baseUrl) {
@@ -10371,7 +10376,7 @@ async function digestSendForUser(user, baseUrl) {
     ? `<ul style="margin:8px 0 0;padding-left:18px;color:#333;font-size:14px;line-height:1.7">${items.slice(0, 12).map(d => {
         const client = (db.projects.find(p => p.id === d.projectId) || {}).client || '';
         const link = url ? `<a href="${url}/demands/${d.id}" style="color:#7A00FF;text-decoration:none">${escHtml(d.name)}</a>` : escHtml(d.name);
-        const meta = [client, d.deadline].filter(Boolean).map(escHtml).join(' · ');
+        const meta = [client, d.stageDueDate || d.deadline].filter(Boolean).map(escHtml).join(' · ');
         return `<li>${link}${meta ? ` <span style="color:#888;font-size:12px">(${meta})</span>` : ''}</li>`;
       }).join('')}${items.length > 12 ? `<li style="color:#888;font-size:12px">…e mais ${items.length - 12}</li>` : ''}</ul>`
     : `<div style="color:#888;font-size:13px;margin-top:6px">${empty}</div>`;
@@ -10413,7 +10418,7 @@ async function runDailyDigest() {
   if (dow === 0 || dow === 6) return; // só seg-sex
   const hour = now.getHours();
   if (hour < 8 || hour > 9) return; // janela de 8h-9h (tolera atraso do interval)
-  const ymd = now.toISOString().slice(0, 10);
+  const ymd = today();
   let sent = 0, skipped = 0;
   for (const u of db.users) {
     if (!u.active || u.active === false) continue;
@@ -10454,11 +10459,12 @@ async function sendDiscordDMDigestForUser(user) {
     const list = await store.listNotificationsFor(user.id, 50);
     unreadNotifs = list.filter(n => !n.read);
   } catch {}
-  if (!overdue.length && !dueToday.length && !dueSoon.length && !unreadNotifs.length) return false;
+  // 'empty' = nada a reportar (não envia); true = enviada; false = o Discord recusou.
+  if (!overdue.length && !dueToday.length && !dueSoon.length && !unreadNotifs.length) return 'empty';
   const baseUrl = process.env.PUBLIC_URL || '';
   const fmt = (d) => {
     const proj = db.projects.find(p => p.id === d.projectId);
-    const url = baseUrl ? `${baseUrl}/#demand-${d.id}` : null;
+    const url = baseUrl ? `${baseUrl}/demands/${d.id}` : null;
     const line = url ? `[**${d.name}**](${url})` : `**${d.name}**`;
     const meta = [proj?.client, proj?.name].filter(Boolean).join(' · ');
     return meta ? `• ${line} — ${meta}` : `• ${line}`;
@@ -10482,6 +10488,7 @@ async function sendDiscordDMDigestForUser(user) {
     }],
   };
   const ok = await discordBot.sendDM(user.discordId, payload);
+  if (!ok) console.warn(`[discord-dm-digest] Discord recusou a DM de ${user.username} (DMs bloqueadas ou ID inválido?)`);
   return ok;
 }
 async function runDailyBotDMDigest() {
@@ -10491,22 +10498,26 @@ async function runDailyBotDMDigest() {
   if (dow === 0 || dow === 6) return; // só seg-sex
   const hour = now.getHours();
   if (hour < 8 || hour > 9) return;   // janela 8h-9h tolera atraso do interval
-  const ymd = now.toISOString().slice(0, 10);
+  const ymd = today();
   let sent = 0, skipped = 0;
   for (const u of db.users) {
     if (u.active === false) continue;
     if (!u.discordId) continue;
     if (!effectiveDiscordPref(u, 'daily_digest')) continue;
     if (u._lastDiscordDigestSent === ymd) { skipped++; continue; }
+    let result = false;
     try {
-      const didSend = await sendDiscordDMDigestForUser(u);
-      if (didSend) sent++;
+      result = await sendDiscordDMDigestForUser(u);
+      if (result === true) sent++;
     } catch (e) {
       console.warn(`[discord-dm-digest] falha ${u.username}:`, e.message);
     }
-    // Marca sempre (mesmo se não teve conteúdo) pra não reprocessar na janela
-    u._lastDiscordDigestSent = ymd;
-    saveEntity('users', u);
+    // Marca o dia quando enviou ou quando não havia nada. Se o Discord recusou,
+    // não marca: o próximo ciclo (15 min) tenta de novo dentro da janela.
+    if (result === true || result === 'empty') {
+      u._lastDiscordDigestSent = ymd;
+      saveEntity('users', u);
+    }
   }
   if (sent > 0) console.log(`  [discord-dm-digest] ${sent} DM(s) enviada(s) · ${skipped} pulada(s)`);
 }
