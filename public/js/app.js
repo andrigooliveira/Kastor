@@ -3715,6 +3715,46 @@ function openDocsFromWelcome() {
   goPage('help');
 }
 
+/* ─── TEMAS DE COR (cor de destaque) ───
+   Por cima do claro/escuro. Aplicado cedo pelo script do <head> (kastor-accent
+   no localStorage, sem piscar) e salvo no usuário (accentTheme) pra valer em
+   qualquer computador. '' = roxo (padrão, sem atributo). As cores estão no CSS
+   (:root[data-accent=…]); aqui só a lista e a amostra do seletor. */
+const ACCENT_THEMES = [
+  { id: '',        label: 'Roxo',    swatch: '#7A00FF' },
+  { id: 'azul',    label: 'Azul',    swatch: '#2563EB' },
+  { id: 'ciano',   label: 'Ciano',   swatch: '#0E7490' },
+  { id: 'rosa',    label: 'Rosa',    swatch: '#DB2777' },
+  { id: 'laranja', label: 'Laranja', swatch: '#C8460F' },
+  { id: 'grafite', label: 'Grafite', swatch: '#52525B' },
+];
+function _validAccent(id) { return ACCENT_THEMES.some(t => t.id === id) ? id : ''; }
+function applyAccentTheme(id) {
+  const a = _validAccent(id || '');
+  if (a) document.documentElement.setAttribute('data-accent', a);
+  else document.documentElement.removeAttribute('data-accent');
+  try { a ? localStorage.setItem('kastor-accent', a) : localStorage.removeItem('kastor-accent'); } catch {}
+}
+async function setProfileAccent(id) {
+  const a = _validAccent(id);
+  applyAccentTheme(a);
+  renderAccentPicker();
+  try { me = await api('/me', 'PUT', { accentTheme: a || null }); } catch (e) { toast(e.message, 'error'); }
+}
+function renderAccentPicker() {
+  const wrap = document.getElementById('profile-accent-picker');
+  if (!wrap) return;
+  const cur = document.documentElement.getAttribute('data-accent') || '';
+  wrap.innerHTML = ACCENT_THEMES.map(t => `
+    <button type="button" class="accent-opt${t.id === cur ? ' is-active' : ''}" style="--swatch:${t.swatch}" onclick="setProfileAccent('${t.id}')" aria-pressed="${t.id === cur}">
+      <span class="accent-swatch"></span>${t.label}
+    </button>`).join('');
+}
+// Componentes RGB do destaque atual — pra cores montadas no JS (heatmap, guias).
+function accentRgb() {
+  return (getComputedStyle(document.documentElement).getPropertyValue('--accent-rgb') || '122,0,255').trim();
+}
+
 /* ─── TEMA (light/dark) ─── */
 function applyTheme(theme) {
   const t = theme === 'light' ? 'light' : 'dark';
@@ -4084,6 +4124,7 @@ async function enterApp() {
     applyRoute();
   }
   maybeShowWelcomeBanner();
+  if (me && me.accentTheme !== undefined) applyAccentTheme(me.accentTheme || '');
   await fetchNotifications();
   // Lembretes pendentes: acende o botão da demanda aberta quando chegam.
   loadMyReminders().then(() => {
@@ -5020,14 +5061,14 @@ async function _mountDoc(container, key, section) {
         --bg: #161616; --surface: #262626; --surface-2: #363636; --surface-3: #474747;
         --hairline: rgba(255,255,255,0.06); --border: rgba(255,255,255,0.08);
         --text: #ECECEC; --text-dim: #B8B8B8; --text-muted: #A3A3A3;
-        --accent-soft: rgba(122,0,255,0.15);
+        --accent-soft: rgba(var(--accent-rgb, 122,0,255),0.15);
         --shadow: 0 12px 32px rgba(0,0,0,0.32);
       }
       :host([data-theme="light"]) {
         --bg: #F5F5F5; --surface: #FFFFFF; --surface-2: #F0F0F0; --surface-3: #E5E5E5;
         --hairline: rgba(0,0,0,0.07); --border: rgba(0,0,0,0.10);
         --text: #1A1A1A; --text-dim: #4A4A4A; --text-muted: #6B6B6B;
-        --accent-soft: rgba(122,0,255,0.10);
+        --accent-soft: rgba(var(--accent-rgb, 122,0,255),0.10);
         --shadow: 0 4px 20px rgba(0,0,0,0.06);
       }
     `;
@@ -11306,7 +11347,7 @@ function _capSparklineHtml(logStartYmd, logEndYmd) {
     const y = yAt(yMax * f);
     return `<line x1="0" x2="${W}" y1="${y}" y2="${y}" stroke="var(--border)" stroke-width="1" stroke-dasharray="2 3" opacity="0.4" vector-effect="non-scaling-stroke"/>`;
   }).join('');
-  const guide = `<line id="cap-spark-guide" x1="0" y1="0" x2="0" y2="${H}" stroke="rgba(122,0,255,0.5)" stroke-width="1" stroke-dasharray="2 3" vector-effect="non-scaling-stroke" style="opacity:0;pointer-events:none"/>`;
+  const guide = `<line id="cap-spark-guide" x1="0" y1="0" x2="0" y2="${H}" stroke="rgba(${accentRgb()},0.5)" stroke-width="1" stroke-dasharray="2 3" vector-effect="non-scaling-stroke" style="opacity:0;pointer-events:none"/>`;
   // Y-axis labels (HTML) — do topo (yMax) até 0.
   const yLabelsHtml = gridLevels.slice().reverse().map(f => {
     const v = yMax * f;
@@ -24824,7 +24865,7 @@ function _renderHeatmapWidget(w) {
     for (const ck of cols) {
       const v = cellVal(rk, ck);
       const t = max > 0 ? v / max : 0;
-      const bg = `rgba(122, 0, 255, ${(0.08 + t * 0.65).toFixed(3)})`;
+      const bg = `rgba(${accentRgb()}, ${(0.08 + t * 0.65).toFixed(3)})`;
       const color = t > 0.55 ? '#fff' : 'var(--text)';
       cellsFlat.push(`<div class="dw-heat-cell" style="background:${bg};color:${color}" title="${esc(rk)} × ${esc(ck)}: ${_fmtNum(v)}">${v > 0 ? _fmtNum(v) : ''}</div>`);
     }
@@ -26806,6 +26847,7 @@ function requestDesktopNotifications() {
 }
 /* Sincroniza os controles da aba Aparência com o estado global atual. */
 function syncProfileAppearanceUI() {
+  renderAccentPicker();
   const theme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
   document.querySelectorAll('#profile-theme-picker .profile-theme-opt').forEach(b => {
     b.classList.toggle('is-active', b.dataset.theme === theme);

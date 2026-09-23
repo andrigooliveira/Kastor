@@ -43,6 +43,9 @@
     }
     if (resolved === 'light') document.documentElement.setAttribute('data-theme', 'light');
     else document.documentElement.setAttribute('data-boot-theme', 'dark');
+    // Tema de cor (roxo = sem atributo). Mesma lista do ACCENT_THEMES no app.js.
+    var accent = localStorage.getItem('kastor-accent');
+    if (accent && /^(azul|ciano|rosa|laranja|grafite)$/.test(accent)) document.documentElement.setAttribute('data-accent', accent);
   } catch (e) {}
 })();
 </script>
@@ -2862,6 +2865,13 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                     </button>
                   </div>
                 </div>
+                <div class="profile-row">
+                  <div class="profile-row-info">
+                    <div class="profile-row-title">Cor de destaque</div>
+                    <div class="profile-row-sub">Muda a cor de botões, seleções e indicadores. Vale no claro e no escuro, e acompanha você em qualquer computador.</div>
+                  </div>
+                  <div class="accent-picker" id="profile-accent-picker"></div>
+                </div>
                 <div class="profile-row" id="profile-theme-schedule-row" hidden>
                   <div class="profile-row-info">
                     <div class="profile-row-title">Janela do modo escuro</div>
@@ -4573,7 +4583,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260923draft3" defer></script>
+<script src="/js/boot.js?v=20260923accent2" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

@@ -2147,7 +2147,7 @@ app.get('/api/me', requireAuth, (req, res) => {
 });
 
 app.put('/api/me', requireAuth, (req, res) => {
-  const { name, role, avatar, currentPassword, newPassword, username, discordId, email, emailPrefs, discord, phone, discordPrefs, quickReplies } = req.body || {};
+  const { name, role, avatar, currentPassword, newPassword, username, discordId, email, emailPrefs, discord, phone, discordPrefs, quickReplies, accentTheme } = req.body || {};
   const u = req.user;
   if (typeof name === 'string' && name.trim()) u.name = name.trim();
   if (typeof role === 'string') u.role = role.trim();
@@ -2231,6 +2231,12 @@ app.put('/api/me', requireAuth, (req, res) => {
       return res.status(400).json({ error: 'A nova senha deve ter pelo menos 6 caracteres' });
     }
     auth.setPassword(u.id, newPassword);
+  }
+  // Tema de cor (cor de destaque). null/'' = roxo padrão.
+  if (accentTheme !== undefined) {
+    const a = String(accentTheme || '');
+    if (a && !['azul', 'ciano', 'rosa', 'laranja', 'grafite'].includes(a)) return res.status(400).json({ error: 'Tema de cor inválido' });
+    u.accentTheme = a || null;
   }
   // Respostas prontas dos comentários: lista de textos curtos (null = volta
   // pras sugestões padrão do cliente).
@@ -7863,7 +7869,9 @@ app.post('/api/demands/:id/seen', requireAuth, (req, res) => {
 
 /* ── ETAPAS ENTREGUES SEM APONTAMENTO ──
    "Entregou" = moveu a demanda PRA FRENTE saindo da etapa X (histórico
-   stage_changed com ele como autor) nos últimos TIME_GAP_WINDOW_DAYS.
+   stage_changed com ele como autor) nos últimos TIME_GAP_WINDOW_DAYS, SENDO o
+   executor da etapa X (quem só ajustou/avançou etapa de outra pessoa — ex.:
+   quem monta as etapas da demanda — não tem o que apontar ali).
    Pendência = não tem nenhum apontamento dele na etapa X dessa demanda.
    Some quando ele aponta ou dispensa ("não precisa"). */
 const TIME_GAP_WINDOW_DAYS = 30;
@@ -7876,6 +7884,14 @@ function stageLabelIn(flow, d, stageId) {
   if (custom) return custom;
   const st = (flow?.stages || []).find(s => s.id === stageId) || (d.stageAdditions || []).find(s => s.id === stageId);
   return st ? st.label : 'Etapa';
+}
+// Executor de uma etapa: o definido na demanda (inclui etapas criadas nela e
+// trocas manuais), senão o padrão do fluxo (pessoa ou cargo no projeto/cliente).
+function stageResponsibleOf(d, flow, stageId) {
+  const inst = (d.stageResponsibles && typeof d.stageResponsibles === 'object') ? d.stageResponsibles[stageId] : undefined;
+  if (inst !== undefined) return inst || null;
+  const stage = stageByIdForDemand(flow, d, stageId);
+  return resolveStageOwner(stage, db.projects.find(p => p.id === d.projectId)) || null;
 }
 function timeGapsFor(user) {
   const since = Date.now() - TIME_GAP_WINDOW_DAYS * 24 * 60 * 60 * 1000;
@@ -7892,6 +7908,7 @@ function timeGapsFor(user) {
       if (!fromId) continue;
       const fi = stageIndexIn(flow, d, fromId), ti = stageIndexIn(flow, d, toId);
       if (fi >= 0 && ti >= 0 && ti < fi) continue; // retrocedeu: não é entrega
+      if (stageResponsibleOf(d, flow, fromId) !== user.id) continue; // etapa de outra pessoa
       const key = d.id + ':' + fromId;
       if (dismissed.has(key)) continue;
       if ((d.timeEntries || []).some(e => e.userId === user.id && e.stageId === fromId)) continue;
