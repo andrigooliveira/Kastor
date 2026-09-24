@@ -4926,8 +4926,9 @@ function toggleSidebarCollapse() {
    Menu por pessoa: NAV_CATALOG tem todas as páginas que podem ir pra barra;
    o menu mostra me.navMenu (chaves, na ordem) ou o padrão (NAV_DEFAULT).
    Itens seguidos da mesma seção formam um bloco (espaço entre blocos).
-   Documentação fica sempre no pé; a engrenagem ao lado abre Personalizar menu
-   e a tela Configurações. Links reais (<a href>): Ctrl/Cmd+clique abre em nova aba. */
+   O que ficou de fora aparece em "Mais" (lista ao lado da barra, com Editar
+   acesso rápido no pé). Documentação fica sempre no pé; a engrenagem ao lado
+   leva direto pras Configurações (perfil). Links reais (<a href>): Ctrl/Cmd+clique abre em nova aba. */
 const NAV_CATALOG = [
   { page: 'dashboard', label: 'Início', icon: 'house', sec: 'work', cls: 'freelancer-hide', desc: 'Seu dia: foco, paradas e próximos prazos.' },
   { page: 'mine', label: 'Minhas Demandas', icon: 'user-round', sec: 'work', count: 'mine', desc: 'Tudo que está com você, por prazo.' },
@@ -4983,13 +4984,20 @@ function renderSidebarNav() {
     const last = blocks[blocks.length - 1];
     if (last && last.sec === it.sec) last.items.push(it); else blocks.push({ sec: it.sec, items: [it] });
   });
-  nav.innerHTML = blocks.map(b => `<div class="sb-group">${b.items.map(_sbItemHTML).join('')}</div>`).join('')
+  // Mais aparece sempre (é onde fica Editar acesso rápido), menos pro freelancer.
+  const more = !(me?.isFreelancer && !me.isAdmin && !me.isModerator)
+    ? `<div class="sb-group"><button type="button" class="sb-item sb-more" id="sb-more" onclick="toggleSbMore(event)" aria-haspopup="menu" aria-expanded="false" data-label="Mais">
+        <i data-lucide="plus" class="sb-ic"></i><span class="sb-label">Mais</span><i data-lucide="chevron-right" class="sb-more-caret"></i></button></div>`
+    : '';
+  closeSbMore();
+  nav.innerHTML = blocks.map(b => `<div class="sb-group">${b.items.map(_sbItemHTML).join('')}</div>`).join('') + more
     + `<div class="sb-group sb-group--bottom">
         <div class="sb-bottom-row">
           ${_sbItemHTML(NAV_DOCS)}
-          <button type="button" class="sb-icon-btn sb-gear" id="sb-gear" onclick="toggleSbSettingsMenu(event)" aria-haspopup="menu" aria-expanded="false" aria-label="Configurações" data-label="Configurações">
+          <a class="sb-icon-btn sb-gear" id="sb-gear" href="/profile" aria-label="Configurações" data-label="Configurações"
+            onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); goPage('profile'); closeSidebar()">
             <i data-lucide="settings"></i>
-          </button>
+          </a>
         </div>
       </div>`;
   paintIcons(nav);
@@ -5005,55 +5013,87 @@ function syncSidebarActive(page) {
     n.classList.toggle('active', on);
     if (on) n.setAttribute('aria-current', 'page'); else n.removeAttribute('aria-current');
   });
-  // Perfil, Personalizar menu ou tela que não está no menu: acende a engrenagem.
-  const cfg = !found && (target === 'menu' || target === 'profile' || !!_navItem(target));
-  document.getElementById('sb-gear')?.classList.toggle('active', !!cfg);
+  // Tela que está em "Mais" (ou Editar acesso rápido) acende o Mais; o perfil, a engrenagem.
+  document.getElementById('sb-more')?.classList.toggle('active', !found && (target === 'menu' || !!_navItem(target)));
+  document.getElementById('sb-gear')?.classList.toggle('active', target === 'profile');
+  if (target === 'profile') document.getElementById('sb-gear')?.setAttribute('aria-current', 'page');
+  else document.getElementById('sb-gear')?.removeAttribute('aria-current');
 }
 
-/* Menu da engrenagem (abre pra cima; com a barra recolhida, pro lado). */
-function toggleSbSettingsMenu(ev) {
-  ev?.stopPropagation();
-  if (document.getElementById('sb-settings-menu')) { closeSbSettingsMenu(); return; }
-  const gear = document.getElementById('sb-gear');
-  const menu = document.createElement('div');
-  menu.id = 'sb-settings-menu';
-  menu.className = 'sb-pop';
-  menu.setAttribute('role', 'menu');
-  menu.innerHTML = `
-    ${me?.isFreelancer && !me.isAdmin && !me.isModerator ? '' : `<a role="menuitem" class="sb-pop-item" href="/menu" onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); closeSbSettingsMenu(); goPage('menu')"><i data-lucide="sliders-horizontal"></i>Personalizar menu</a>`}
-    <a role="menuitem" class="sb-pop-item" href="/profile" onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); closeSbSettingsMenu(); goPage('profile')"><i data-lucide="user-cog"></i>Configurações</a>`;
-  // No body (o nav rola e cortaria o menu), preso à engrenagem.
-  document.body.appendChild(menu);
-  const r = gear.getBoundingClientRect();
-  const row = gear.closest('.sb-bottom-row').getBoundingClientRect();
-  if (document.body.classList.contains('sidebar-collapsed') && window.innerWidth > 880) {
-    menu.style.left = (document.querySelector('.sidebar').getBoundingClientRect().right + 8) + 'px';
-    menu.style.bottom = (window.innerHeight - r.bottom) + 'px';
-  } else {
-    menu.style.left = row.left + 'px';
-    menu.style.width = row.width + 'px';
-    menu.style.bottom = (window.innerHeight - row.top + 6) + 'px';
-  }
-  gear.setAttribute('aria-expanded', 'true');
-  _hideSbTip();
-  paintIcons(menu);
-  menu.querySelector('.sb-pop-item')?.focus();
+
+/* "Mais": o que não está no acesso rápido, numa lista ao lado da barra
+   (um clique só). No celular a lista abre por cima da própria gaveta. */
+function _navHiddenItems() {
+  const on = new Set(_navMenuPages());
+  return NAV_CATALOG.filter(it => _navAllowed(it) && !on.has(it.page));
 }
-function closeSbSettingsMenu() {
-  document.getElementById('sb-settings-menu')?.remove();
-  document.getElementById('sb-gear')?.setAttribute('aria-expanded', 'false');
+function toggleSbMore(ev) {
+  ev?.stopPropagation();
+  if (document.getElementById('sb-more-panel')) { closeSbMore(); return; }
+  const btn = document.getElementById('sb-more');
+  const hidden = _navHiddenItems();
+  if (!btn) return;
+  const target = SB_PARENT[currentPage] || currentPage;
+  const panel = document.createElement('div');
+  panel.id = 'sb-more-panel';
+  panel.className = 'sb-flyout';
+  panel.setAttribute('role', 'menu');
+  panel.setAttribute('aria-label', 'Mais');
+  panel.innerHTML = MENU_SECTIONS.map(g => {
+    const items = hidden.filter(it => it.sec === g.sec);
+    if (!items.length) return '';
+    return `<div class="sb-flyout-group">
+      <div class="sb-flyout-title">${esc(g.title)}</div>
+      ${items.map(it => `<a role="menuitem" class="sb-flyout-item ${it.page === target ? 'active' : ''}" href="${PAGE_TO_PATH[it.page] || '/'}"
+          onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); closeSbMore(); goPage('${it.page}'); closeSidebar()">
+          <i data-lucide="${it.icon}"></i><span>${esc(it.label)}</span></a>`).join('')}
+    </div>`;
+  }).join('') + `<a role="menuitem" class="sb-flyout-foot" href="/menu" onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); closeSbMore(); goPage('menu'); closeSidebar()">
+      <i data-lucide="sliders-horizontal"></i><span>Editar acesso rápido</span></a>`;
+  document.body.appendChild(panel);
+  paintIcons(panel);
+  const sb = document.querySelector('.sidebar').getBoundingClientRect();
+  const r = btn.getBoundingClientRect();
+  const h = panel.offsetHeight;
+  if (window.innerWidth > 880) {
+    panel.style.left = (sb.right + 8) + 'px';
+    panel.style.top = Math.max(12, Math.min(r.top - 8, window.innerHeight - h - 12)) + 'px';
+  } else {
+    panel.style.left = (sb.left + 8) + 'px';
+    panel.style.width = (sb.width - 16) + 'px';
+    panel.style.top = Math.max(12, Math.min(r.bottom + 6, window.innerHeight - h - 12)) + 'px';
+  }
+  btn.setAttribute('aria-expanded', 'true');
+  btn.classList.add('is-open');
+  _hideSbTip();
+  panel.querySelector('.sb-flyout-item')?.focus();
+}
+function closeSbMore() {
+  document.getElementById('sb-more-panel')?.remove();
+  const btn = document.getElementById('sb-more');
+  btn?.setAttribute('aria-expanded', 'false');
+  btn?.classList.remove('is-open');
 }
 document.addEventListener('click', e => {
-  if (!e.target.closest?.('#sb-settings-menu, #sb-gear')) closeSbSettingsMenu();
+  if (!e.target.closest?.('#sb-more-panel, #sb-more')) closeSbMore();
 });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && document.getElementById('sb-settings-menu')) { closeSbSettingsMenu(); document.getElementById('sb-gear')?.focus(); }
+  const panel = document.getElementById('sb-more-panel');
+  if (!panel) return;
+  if (e.key === 'Escape') { closeSbMore(); document.getElementById('sb-more')?.focus(); return; }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    const items = [...panel.querySelectorAll('a')];
+    const i = items.indexOf(document.activeElement);
+    if (i < 0) return;
+    e.preventDefault();
+    items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus();
+  }
 });
-window.addEventListener('resize', () => closeSbSettingsMenu());
+window.addEventListener('resize', () => closeSbMore());
+window.addEventListener('scroll', e => { if (e.target?.id === 'sb-nav') closeSbMore(); }, true);
 
-/* Tela Personalizar menu (/menu): à esquerda o menu da pessoa na ordem
-   (arrasta pra ordenar), à direita todos os acessos com o interruptor
-   "no menu". Cada mudança salva sozinha em me.navMenu (null = padrão). */
+/* Tela Editar acesso rápido (/menu): à esquerda o acesso rápido da pessoa na
+   ordem (arrasta pra ordenar), à direita todos os acessos com o interruptor. Cada mudança salva sozinha em me.navMenu (null = padrão). */
 const MENU_SECTIONS = [
   { sec: 'work', title: 'Trabalho' },
   { sec: 'insight', title: 'Análise' },
@@ -5094,9 +5134,10 @@ function renderMenuPage() {
       <button type="button" class="nm-handle" aria-label="Mover ${esc(it.label)} (setas para cima e para baixo)" onkeydown="nmKeyMove(event, ${i})"><i data-lucide="grip-vertical"></i></button>
       <i data-lucide="${it.icon}" class="nm-ic"></i>
       <span class="nm-label">${esc(it.label)}</span>
-      <button type="button" class="nm-remove" onclick="toggleNavMenuItem('${page}', false)" aria-label="Tirar ${esc(it.label)} do menu" data-rx-tip="Tirar do menu"><i data-lucide="x"></i></button>
+      <button type="button" class="nm-remove" onclick="toggleNavMenuItem('${page}', false)" aria-label="Tirar ${esc(it.label)} do acesso rápido" data-rx-tip="Mover para Mais"><i data-lucide="x"></i></button>
     </li>`;
   }).join('') + (pages.length ? '' : '<li class="nm-empty">Nenhum item. Ligue os acessos ao lado.</li>')
+    + (() => { const n = _navHiddenItems().length; return `<li class="nm-row is-fixed"><span class="nm-handle" aria-hidden="true"></span><i data-lucide="plus" class="nm-ic"></i><span class="nm-label">Mais</span><span class="nm-fixed">${n ? `${n} ${n > 1 ? 'itens' : 'item'}` : 'vazio'}</span></li>`; })()
     + `<li class="nm-row is-fixed"><span class="nm-handle" aria-hidden="true"></span><i data-lucide="${NAV_DOCS.icon}" class="nm-ic"></i><span class="nm-label">${NAV_DOCS.label}</span><span class="nm-fixed">fixo</span></li>`;
   const inMenu = new Set(pages);
   groups.innerHTML = MENU_SECTIONS.map(g => {
@@ -5112,8 +5153,8 @@ function renderMenuPage() {
               <span class="st-ic"><i data-lucide="${it.icon}"></i></span>
               <span class="st-text"><span class="st-label">${esc(it.label)}</span><span class="st-desc">${esc(it.desc || '')}</span></span>
             </a>
-            <label class="nm-switch st-switch" data-rx-tip="${on ? 'No menu' : 'Fora do menu'}">
-              <input type="checkbox" ${on ? 'checked' : ''} onchange="toggleNavMenuItem('${it.page}', this.checked)" aria-label="Mostrar ${esc(it.label)} no menu">
+            <label class="nm-switch st-switch" data-rx-tip="${on ? 'No acesso rápido' : 'Em Mais'}">
+              <input type="checkbox" ${on ? 'checked' : ''} onchange="toggleNavMenuItem('${it.page}', this.checked)" aria-label="Mostrar ${esc(it.label)} no acesso rápido">
               <span class="nm-track" aria-hidden="true"></span>
             </label>
           </div>`;
@@ -5204,7 +5245,7 @@ const PAGE_TITLES = {
   recurring: 'Listas de tarefas', gallery: 'Galeria', help: 'Documentação', clientsModels: 'Modelos de Cliente',
   trash: 'Lixeira', recurringDemands: 'Demandas Recorrentes',
   devtools: 'Dev Tools', passwords: 'Cofre de Senhas', kb: 'Base de conhecimento',
-  forms: 'Formulários', dashboards: 'Dashboards', performance: 'Performance', menu: 'Personalizar menu',
+  forms: 'Formulários', dashboards: 'Dashboards', performance: 'Performance', menu: 'Editar acesso rápido',
   'post-editor': 'Editor de post', 'demand-detail': 'Demanda',
   notfound: 'Página não encontrada'
 };
