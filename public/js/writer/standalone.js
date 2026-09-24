@@ -95,7 +95,7 @@
     if (bundlePromise) return bundlePromise;
     bundlePromise = new Promise((resolve, reject) => {
       const s = document.createElement('script');
-      s.src = '/vendor/writer.bundle.js?v=20260917docsUX5';
+      s.src = '/vendor/writer.bundle.js?v=20260924pg8';
       s.async = true;
       s.onload = () => window.KastorWriter ? resolve(window.KastorWriter) : reject(new Error('bundle sem KastorWriter'));
       s.onerror = () => reject(new Error('Falha ao carregar o editor.'));
@@ -133,6 +133,12 @@
       app.className = 'kd-app is-list';
       await loadList();
       renderList();
+      // /hub/docs?novo=1 (botão "Novo documento" do Hub) → já abre os modelos
+      const qs = new URLSearchParams(location.search);
+      if (qs.has('novo')) {
+        history.replaceState({}, '', '/hub/docs');
+        _kdOpenTemplatesModal({ clientId: qs.get('cliente'), projectId: qs.get('projeto') });
+      }
     }
   }
 
@@ -164,6 +170,11 @@
     try {
       const boot = await api('/bootstrap');
       KD.workspaces = boot.workspaces || [];
+      // Referências da plataforma (#demanda, #cliente, #projeto)
+      KD.refData = {
+        demands: boot.demands || [], clients: boot.clients || [],
+        projects: boot.projects || [], flows: boot.flows || []
+      };
     } catch (e) { /* ok — sem lista de workspaces, ainda funciona pra criar em activeWs default */ }
 
     // Cache de users pra mostrar miniperfil no hover dos avatares de presença
@@ -251,53 +262,51 @@
   // Preferências persistidas via localStorage, mesmo namespace do Hub.
   function readPref(k, def) { try { return localStorage.getItem('kastor-hub-' + k) || def; } catch { return def; } }
   function savePref(k, v) { try { localStorage.setItem('kastor-hub-' + k, v); } catch {} }
-  const OWNER_LABEL = { mine: 'Pertencem a mim', any: 'Qualquer pessoa', shared: 'Compartilhados comigo' };
-  const TITLE_LABEL = { updated: 'Documentos recentes', created: 'Documentos por criação', title: 'Documentos por título' };
   KD.owner = readPref('owner', 'mine');
   KD.sort  = readPref('sort',  'updated');
   KD.view  = readPref('view',  'grid');
 
   function initRecentToolbar() {
-    // Labels iniciais
-    applyOwnerLabel(); applyTitleLabel(); applyViewIcon();
-    markSelectedInMenu('kd-recent-owner-menu', 'owner', KD.owner);
-    markSelectedInMenu('kd-recent-sort-menu',  'sort',  KD.sort);
-    // Delegates
-    $('kd-recent-owner-menu').addEventListener('click', (e) => {
-      const b = e.target.closest('button[data-owner]'); if (!b) return;
+    applyOwnerTabs(); applyViewIcon();
+    markSelectedInMenu('kd-recent-sort-menu', 'sort', KD.sort);
+    $('kd-owner-tabs').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-owner]'); if (!b) return;
       KD.owner = b.dataset.owner; savePref('owner', KD.owner);
-      applyOwnerLabel(); markSelectedInMenu('kd-recent-owner-menu', 'owner', KD.owner);
-      $('kd-recent-owner-menu').hidden = true;
-      renderList();
+      applyOwnerTabs(); renderList();
     });
     $('kd-recent-sort-menu').addEventListener('click', (e) => {
       const b = e.target.closest('button[data-sort]'); if (!b) return;
       KD.sort = b.dataset.sort; savePref('sort', KD.sort);
       markSelectedInMenu('kd-recent-sort-menu', 'sort', KD.sort);
-      applyTitleLabel();
       $('kd-recent-sort-menu').hidden = true;
       renderList();
     });
     document.addEventListener('click', (e) => {
-      if (e.target.closest('.kd-recent-menu, .kd-recent-select, [onclick*="kdRecentToggleMenu"]')) return;
-      ['kd-recent-owner-menu','kd-recent-sort-menu'].forEach(id => { const el = $(id); if (el) el.hidden = true; });
+      if (e.target.closest('.kd-recent-menu')) return;
+      const m = $('kd-recent-sort-menu'); if (m) m.hidden = true;
     });
   }
-  function applyOwnerLabel() { const el = $('kd-recent-owner-label'); if (el) el.textContent = OWNER_LABEL[KD.owner]; }
-  function applyTitleLabel() { const el = $('kd-recent-title'); if (el) el.textContent = TITLE_LABEL[KD.sort] || TITLE_LABEL.updated; }
+  function applyOwnerTabs() {
+    document.querySelectorAll('#kd-owner-tabs [data-owner]').forEach(b => {
+      const on = b.dataset.owner === KD.owner;
+      b.classList.toggle('is-active', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+  }
+  const KD_ICON_LIST = '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>';
+  const KD_ICON_GRID = '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>';
   function applyViewIcon() {
     const grid = $('kd-grid');
     const btn = $('kd-recent-view-btn');
-    if (!grid || !btn) return;
-    if (KD.view === 'list') {
-      grid.classList.add('is-list');
-      btn.title = 'Ver em grade';
-      $('kd-recent-view-icon').outerHTML = '<svg id="kd-recent-view-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>';
-    } else {
-      grid.classList.remove('is-list');
-      btn.title = 'Ver em lista';
-      $('kd-recent-view-icon').outerHTML = '<svg id="kd-recent-view-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>';
-    }
+    const ic = $('kd-recent-view-icon');
+    if (!grid || !btn || !ic) return;
+    const isList = KD.view === 'list';
+    grid.classList.toggle('is-list', isList);
+    btn.title = isList ? 'Ver em grade' : 'Ver em lista';
+    ['fill:none', 'stroke:currentColor', 'stroke-width:2', 'stroke-linecap:round', 'stroke-linejoin:round']
+      .forEach(kv => { const [k, v] = kv.split(':'); ic.setAttribute(k, v); });
+    ic.innerHTML = isList ? KD_ICON_GRID : KD_ICON_LIST;
+    requestAnimationFrame(() => window.__kdRescaleThumbs?.());
   }
   function markSelectedInMenu(menuId, key, val) {
     const menu = $(menuId); if (!menu) return;
@@ -305,10 +314,7 @@
   }
   window.kdRecentToggleMenu = function (which, ev) {
     ev && ev.stopPropagation();
-    const ids = { owner: 'kd-recent-owner-menu', sort: 'kd-recent-sort-menu' };
-    const open = $(ids[which]); if (!open) return;
-    Object.values(ids).forEach(id => { const el = $(id); if (el && el !== open) el.hidden = true; });
-    open.hidden = !open.hidden;
+    const m = $('kd-recent-sort-menu'); if (m) m.hidden = !m.hidden;
   };
   window.kdRecentToggleView = function () {
     KD.view = KD.view === 'grid' ? 'list' : 'grid';
@@ -337,13 +343,15 @@
 
     if (!list.length) {
       const msg = KD.searchQuery
-        ? 'Nenhum documento com "' + KD.searchQuery + '" no título.'
+        ? 'Nenhum documento com “' + esc(KD.searchQuery) + '” no título.'
         : (KD.owner === 'mine'
-          ? 'Você ainda não criou nenhum documento. Clique em "Em branco" pra começar.'
+          ? 'Você ainda não criou nenhum documento.'
           : KD.owner === 'shared'
             ? 'Ninguém compartilhou documentos com você ainda.'
-            : 'Nenhum documento disponível.');
-      grid.innerHTML = `<div class="kd-recent-empty">${msg}</div>`;
+            : 'Nenhum documento por aqui ainda.');
+      const cta = !KD.searchQuery && KD.owner !== 'shared'
+        ? '<button type="button" class="btn btn-primary btn-sm" onclick="_kdOpenTemplatesModal()">Criar o primeiro</button>' : '';
+      grid.innerHTML = `<div class="kd-recent-empty">${msg}${cta}</div>`;
       return;
     }
 
@@ -363,23 +371,26 @@
       const fullTitle = String(d.title || 'Sem título');
       const thumb = stripAnchors(d.thumbHTML || '');
       const thumbClass = thumb ? 'kd-recent-card-thumb' : 'kd-recent-card-thumb is-empty';
-      return `<div class="kd-recent-card" data-id="${esc(d.id)}" title="${esc(fullTitle)}">
+      const slug = docSlug(d);
+      return `<a class="kd-recent-card" href="/hub/docs/${esc(slug)}" data-id="${esc(d.id)}" title="${esc(fullTitle)}">
         <div class="${thumbClass}" aria-hidden="true">
           ${thumb ? `<div class="kd-recent-card-thumb-page">${thumb}</div>` : ''}
         </div>
         <div class="kd-recent-card-footer">
-          <div class="kd-recent-card-title">${esc(trunc(fullTitle))}</div>
-          <div class="kd-recent-card-footer-meta">
-            <span class="kd-recent-card-app-inline"><img src="/reworkdocs_icone.svg" alt=""></span>
+          <span class="kd-recent-card-app-inline"><img src="/reworkdocs_icone.svg" alt=""></span>
+          <span class="kd-recent-card-text">
+            <span class="kd-recent-card-title">${esc(fullTitle)}</span>
             <span class="kd-recent-card-meta-date">${esc(fmtDate(d.updatedAt || d.createdAt))}</span>
-          </div>
+          </span>
         </div>
-      </div>`;
+      </a>`;
     }).join('');
 
     // Click → abre editor
     grid.querySelectorAll('.kd-recent-card').forEach(c => {
-      c.addEventListener('click', () => {
+      c.addEventListener('click', (e) => {
+        if (e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
+        e.preventDefault();
         const d = KD.docsList.find(x => x.id === c.dataset.id);
         if (d) goEditor(d);
       });
@@ -393,6 +404,7 @@
         page.style.transform = 'scale(' + (t.clientWidth / THUMB_REF_WIDTH) + ')';
       });
     };
+    window.__kdRescaleThumbs = rescaleThumbs;
     rescaleThumbs();
     requestAnimationFrame(rescaleThumbs);
     if (!window.__kdThumbResizeBound) {
@@ -406,36 +418,25 @@
   }
   window.kdRenderList = renderList;
 
-  /* Search — expande input inline na toolbar quando clica na lupa.
-     ESC ou lupa novamente fecha e limpa filtro. */
-  window.kdRecentToggleSearch = function () {
-    const wrap = document.getElementById('kd-recent-search');
-    const input = document.getElementById('kd-recent-search-input');
-    if (!wrap || !input) return;
-    const open = !wrap.classList.contains('is-open');
-    if (open) {
-      wrap.classList.add('is-open');
-      input.hidden = false;
-      input.value = KD.searchQuery || '';
-      setTimeout(() => input.focus(), 30);
-    } else {
-      wrap.classList.remove('is-open');
-      input.hidden = true;
-      input.value = '';
-      if (KD.searchQuery) { KD.searchQuery = ''; renderList(); }
-    }
-  };
   window.kdRecentSearchInput = function (v) {
     KD.searchQuery = String(v || '');
     renderList();
   };
 
   // ── CRUD ──────────────────────────────────────────────────────────────
-  async function createDoc() {
-    const wsId = ($('kd-f-ws').value) || (KD.me?.workspaces && KD.me.workspaces[0]) || (KD.workspaces[0]?.id);
+  /* Squad do documento novo: o do cliente/projeto vinculado, senão o padrão. */
+  function _kdWsFor(link) {
+    const R = KD.refData || {};
+    const ent = link && (link.projectId ? (R.projects || []).find(x => x.id === link.projectId)
+                                        : link.clientId ? (R.clients || []).find(x => x.id === link.clientId) : null);
+    return (ent && ent.workspaceId) || ($('kd-f-ws').value) || (KD.me?.workspaces && KD.me.workspaces[0]) || (KD.workspaces[0]?.id);
+  }
+  async function createDoc(link) {
+    link = link && (link.clientId || link.projectId) ? link : {};
+    const wsId = _kdWsFor(link);
     if (!wsId) { toast('Sem squad disponível pra criar documento.', 'error'); return; }
     try {
-      const doc = await api('/writer', 'POST', { workspaceId: wsId, title: 'Sem título', content: null });
+      const doc = await api('/writer', 'POST', { workspaceId: wsId, title: 'Sem título', content: null, ...link });
       KD.docsList.unshift(doc);
       // Marca como rascunho recém-criado: se o user sair sem editar nada
       // (nem título nem conteúdo), o doc é removido no teardown/unload.
@@ -450,16 +451,17 @@
      Salva o HTML no doc VIA `content: {type: 'doc', content: [{type:...}]}`
      não funciona bem — melhor deixar vazio e injetar via setContent depois
      que o editor montar (goEditor faz isso via KD.pendingHtml). */
-  async function _kdCreateDocWith(html, title) {
-    const wsId = ($('kd-f-ws').value) || (KD.me?.workspaces && KD.me.workspaces[0]) || (KD.workspaces[0]?.id);
+  async function _kdCreateDocWith(html, title, link) {
+    link = link && (link.clientId || link.projectId) ? link : {};
+    const wsId = _kdWsFor(link);
     if (!wsId) { toast('Sem squad disponível pra criar documento.', 'error'); return; }
     try {
-      const doc = await api('/writer', 'POST', { workspaceId: wsId, title: title || 'Sem título', content: null });
+      // O HTML do modelo vira conteúdo do editor já na criação: o editor
+      // colaborativo semeia a partir dele ao abrir (sem setContent atrasado).
+      let content = null;
+      if (html) { try { content = (await ensureBundle()).htmlToJSON(html); } catch (e) { console.warn('[modelo]', e); } }
+      const doc = await api('/writer', 'POST', { workspaceId: wsId, title: title || 'Sem título', content, ...link });
       KD.docsList.unshift(doc);
-      // Marca que o editor deve inserir esse HTML no mount (é preferível
-      // fazer no onCreate do editor pra passar pelo schema-parser correto).
-      doc._justCreated = true;
-      doc._pendingHtml = html || '';
       goEditor(doc);
     } catch (e) { toast(e.message || 'Falha ao criar documento.', 'error'); }
   }
@@ -470,6 +472,24 @@
   function _kdToday() {
     const d = new Date();
     return String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0') + '/' + d.getFullYear();
+  }
+  /* Dados do cliente/projeto escolhido no modal pros modelos. Sem cliente,
+     os modelos mantêm o texto de exemplo. */
+  function _kdCtx(ctx, key, fallback) {
+    const c = ctx && ctx.client, pr = ctx && ctx.project;
+    if (key === 'client') return esc(c ? c.name : 'Acme Ltda');
+    if (key === 'me') return esc(KD.me?.name || KD.me?.username || '[seu nome]');
+    if (key === 'subject') return esc(pr ? pr.name : c ? c.name : fallback);
+    return '';
+  }
+  function _kdAboutClient(ctx) {
+    const c = ctx && ctx.client;
+    if (!c) return '';
+    const g = String(c.guidelines || '').trim();
+    const seg = String(c.segment || '').trim();
+    if (!g && !seg) return '';
+    const paras = g ? g.split(/\n{2,}/).map(t => '<p>' + esc(t).replace(/\n/g, '<br>') + '</p>').join('') : '';
+    return '<h2>Sobre o cliente</h2>' + (seg ? '<p><strong>Segmento:</strong> ' + esc(seg) + '</p>' : '') + paras;
   }
   const KD_TEMPLATES = [
     {
@@ -490,9 +510,10 @@
         <table class="kd-tp-table"><thead><tr><th>Marco</th><th>Data</th></tr></thead><tbody><tr><td>&nbsp;</td><td>&nbsp;</td></tr><tr><td>&nbsp;</td><td>&nbsp;</td></tr></tbody></table>
         <div class="kd-tp-callout">Precisa aprovação</div>
       </div>`,
-      html: () => [
-        '<h1>Briefing — Redesign do site institucional</h1>',
-        '<p><strong>Cliente:</strong> Acme Ltda &nbsp;·&nbsp; <strong>Data:</strong> ' + _kdToday() + ' &nbsp;·&nbsp; <strong>Responsável:</strong> [seu nome]</p>',
+      html: (ctx) => [
+        '<h1>Briefing — ' + _kdCtx(ctx, 'subject', 'Redesign do site institucional') + '</h1>',
+        '<p><strong>Cliente:</strong> ' + _kdCtx(ctx, 'client') + ' &nbsp;·&nbsp; <strong>Data:</strong> ' + _kdToday() + ' &nbsp;·&nbsp; <strong>Responsável:</strong> ' + _kdCtx(ctx, 'me') + '</p>',
+        _kdAboutClient(ctx),
         '<h2>1. Contexto</h2>',
         '<p>O site atual está no ar há 4 anos e não reflete mais o posicionamento da marca. A taxa de conversão do formulário caiu 35% no último semestre e a versão mobile tem problemas de layout.</p>',
         '<h2>2. Objetivos</h2>',
@@ -524,9 +545,9 @@
         <span class="kd-tp-line short"></span>
         <div class="kd-tp-callout kd-tp-callout-info">Aceite ↔ assinatura</div>
       </div>`,
-      html: () => [
-        '<h1>Escopo de Trabalho — Projeto Redesign</h1>',
-        '<p><strong>Contratante:</strong> Acme Ltda &nbsp;·&nbsp; <strong>Contratado:</strong> [Sua empresa] &nbsp;·&nbsp; <strong>Data:</strong> ' + _kdToday() + '</p>',
+      html: (ctx) => [
+        '<h1>Escopo de Trabalho — ' + _kdCtx(ctx, 'subject', 'Projeto Redesign') + '</h1>',
+        '<p><strong>Contratante:</strong> ' + _kdCtx(ctx, 'client') + ' &nbsp;·&nbsp; <strong>Contratado:</strong> [Sua empresa] &nbsp;·&nbsp; <strong>Data:</strong> ' + _kdToday() + '</p>',
         '<h2>1. Objeto</h2>',
         '<p>Prestação de serviços de design e desenvolvimento front-end para o site institucional da Contratante, conforme especificações detalhadas no briefing anexo.</p>',
         '<h2>2. Entregas</h2>',
@@ -550,9 +571,9 @@
         <div class="kd-tp-h2">Próximos passos</div>
         <span class="kd-tp-check">Ação 1</span><span class="kd-tp-check">Ação 2</span>
       </div>`,
-      html: () => [
+      html: (ctx) => [
         '<h1>Relatório Executivo — Q3 2026</h1>',
-        '<p><em>Preparado por: [seu nome] &nbsp;·&nbsp; Publicado em: ' + _kdToday() + '</em></p>',
+        '<p><em>Preparado por: ' + _kdCtx(ctx, 'me') + (ctx && ctx.client ? ' &nbsp;·&nbsp; Cliente: ' + _kdCtx(ctx, 'client') : '') + ' &nbsp;·&nbsp; Publicado em: ' + _kdToday() + '</em></p>',
         '<h2>Resumo executivo</h2>',
         '<p>O Q3 fechou 18% acima do trimestre anterior em MRR, puxado por 3 grandes contas fechadas no segmento enterprise. NPS subiu 8 pontos após a entrega do novo onboarding. Principal desafio: churn na base SMB cresceu para 4.2%.</p>',
         '<h2>Principais resultados</h2>',
@@ -580,10 +601,10 @@
         <div class="kd-tp-h2">Ações</div>
         <span class="kd-tp-check">@a — task</span><span class="kd-tp-check">@b — task</span>
       </div>`,
-      html: () => [
+      html: (ctx) => [
         '<h1>Ata — Sprint planning #14</h1>',
         '<p><strong>Data:</strong> ' + _kdToday() + ' &nbsp;·&nbsp; <strong>Horário:</strong> 10:00–11:30 &nbsp;·&nbsp; <strong>Local:</strong> Meet</p>',
-        '<p><strong>Presentes:</strong> [seu nome], Product Owner, Tech Lead, 2 devs, 1 designer</p>',
+        '<p><strong>Presentes:</strong> ' + _kdCtx(ctx, 'me') + (ctx && ctx.client ? ', equipe ' + _kdCtx(ctx, 'client') : ', Product Owner, Tech Lead, 2 devs, 1 designer') + '</p>',
         '<h2>Pauta</h2>',
         '<ol><li>Revisão do sprint anterior (velocity + entregas)</li><li>Priorização do backlog</li><li>Definição do escopo do próximo sprint</li></ol>',
         '<h2>Discussões e decisões</h2>',
@@ -607,7 +628,7 @@
         <div class="kd-tp-cols" style="grid-template-columns: 1fr 1fr"><div class="kd-tp-col"><strong>Problema</strong><br><span class="kd-tp-line full"></span></div><div class="kd-tp-col"><strong>Solução</strong><br><span class="kd-tp-line full"></span></div></div>
         <div class="kd-tp-cols"><div class="kd-tp-col"><strong>10x</strong></div><div class="kd-tp-col"><strong>30%</strong></div><div class="kd-tp-col"><strong>R$0</strong></div></div>
       </div>`,
-      html: () => [
+      html: (ctx) => [
         '<h1 style="text-align:center">Projeto Copiloto — one-pager</h1>',
         '<p style="text-align:center"><em>Assistente de IA que responde dúvidas de clientes usando a base de conhecimento da empresa</em></p>',
         '<div data-callout="true" data-variant="info"><p style="text-align:center"><strong>Reduz em 60% o tempo médio de resposta do suporte, mantendo a qualidade das respostas com fontes citadas.</strong></p></div>',
@@ -624,7 +645,15 @@
   /* Abre modal com grid de templates. Click → cria doc com o HTML do template.
      Cada card tem preview visual (mini-página estilizada) + meta (ícone, título,
      descrição). Grid é 3 colunas em desktop, 2 em tablet, 1 em mobile. */
-  function _kdOpenTemplatesModal() {
+  function _kdOpenTemplatesModal(preset) {
+    const R = KD.refData || {};
+    const sel = { clientId: null, projectId: null };
+    if (preset && preset.projectId) {
+      const pr = (R.projects || []).find(x => x.id === preset.projectId);
+      if (pr) { sel.projectId = pr.id; sel.clientId = pr.clientId || null; }
+    } else if (preset && preset.clientId && (R.clients || []).some(x => x.id === preset.clientId)) {
+      sel.clientId = preset.clientId;
+    }
     let overlay = document.getElementById('kd-templates-modal');
     if (overlay) overlay.remove();
     overlay = document.createElement('div');
@@ -634,6 +663,10 @@
       <div class="kd-modal kd-modal--wide">
         <div class="kd-modal-head">
           <div class="kd-modal-title">Novo documento</div>
+          <div class="kd-tpl-for">
+            <span>Para</span>
+            <button type="button" class="kd-tpl-for-btn" id="kd-tpl-for-btn"></button>
+          </div>
           <button type="button" class="kd-icon-btn" onclick="_kdCloseTemplatesModal()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
         </div>
         <div class="kd-modal-body">
@@ -656,15 +689,44 @@
     `;
     document.body.appendChild(overlay);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) _kdCloseTemplatesModal(); });
+    // "Para": cliente ou projeto (opcional) — preenche o modelo e vincula o doc
+    const forBtn = overlay.querySelector('#kd-tpl-for-btn');
+    const paintFor = () => {
+      const pr = sel.projectId && (R.projects || []).find(x => x.id === sel.projectId);
+      const cl = sel.clientId && (R.clients || []).find(x => x.id === sel.clientId);
+      forBtn.innerHTML = cl || pr
+        ? `<span class="kd-suggest-dot" style="background:${esc((pr || cl).color || '#7A00FF')}"></span>${esc(cl ? cl.name : '')}${pr ? `<span class="kd-tpl-for-sep">›</span>${esc(pr.name)}` : ''}`
+        : '<span class="kd-tpl-for-empty">Nenhum cliente</span>';
+      forBtn.insertAdjacentHTML('beforeend', '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>');
+    };
+    paintFor();
+    forBtn.addEventListener('click', () => {
+      window.KDUI?.pickEntity(forBtn, {
+        title: 'Documento para…', allowClear: !!(sel.clientId || sel.projectId),
+        current: sel.projectId ? { kind: 'project', id: sel.projectId } : sel.clientId ? { kind: 'client', id: sel.clientId } : null,
+        onPick: (it) => {
+          if (!it) { sel.clientId = null; sel.projectId = null; }
+          else if (it.kind === 'project') { const pr = (R.projects || []).find(x => x.id === it.id); sel.projectId = it.id; sel.clientId = pr?.clientId || null; }
+          else { sel.clientId = it.id; sel.projectId = null; }
+          paintFor();
+        }
+      });
+    });
     overlay.querySelectorAll('[data-key]').forEach(el => {
       el.addEventListener('click', () => {
         const t = KD_TEMPLATES.find(x => x.key === el.dataset.key);
         _kdCloseTemplatesModal();
         if (!t) return;
-        if (t.key === 'blank') return createDoc();
+        const link = { clientId: sel.clientId, projectId: sel.projectId };
+        if (t.key === 'blank') return createDoc(link);
+        const ctx = {
+          client: sel.clientId ? (R.clients || []).find(x => x.id === sel.clientId) : null,
+          project: sel.projectId ? (R.projects || []).find(x => x.id === sel.projectId) : null
+        };
         // html pode ser string OU function (que gera na hora, com data atual).
-        const html = typeof t.html === 'function' ? t.html() : t.html;
-        _kdCreateDocWith(html, t.title);
+        const html = typeof t.html === 'function' ? t.html(ctx) : t.html;
+        const subject = ctx.project ? ctx.project.name : ctx.client ? ctx.client.name : '';
+        _kdCreateDocWith(html, t.title + (subject ? ' — ' + subject : ''), link);
       });
     });
   }
@@ -727,19 +789,43 @@
   window._kdImportPickFile = _kdImportPickFile;
 
   /* Provider de items pro Mention (extension). Filtra usuários por query. */
+  /* Menções: mesma cara dos avatares da plataforma — foto quando tem, senão
+     a inicial sobre o degradê fixo da pessoa (mesmo hash do app.js). */
+  const KD_AVATAR_GRADIENTS = [
+    'linear-gradient(135deg, #FF6B6B 0%, #C92A2A 100%)', 'linear-gradient(135deg, #F8A055 0%, #D14A1F 100%)',
+    'linear-gradient(135deg, #FFB84D 0%, #B8860B 100%)', 'linear-gradient(135deg, #FFD93D 0%, #E07B00 100%)',
+    'linear-gradient(135deg, #8BC34A 0%, #2E7D32 100%)', 'linear-gradient(135deg, #4ECDC4 0%, #1B9E96 100%)',
+    'linear-gradient(135deg, #44BCD8 0%, #0277B6 100%)', 'linear-gradient(135deg, #6FA8DC 0%, #1A5490 100%)',
+    'linear-gradient(135deg, #4A6FE3 0%, #2E3B8E 100%)', 'linear-gradient(135deg, #7A6BE8 0%, #3F2DA5 100%)',
+    'linear-gradient(135deg, #9C6FE8 0%, #6128D7 100%)', 'linear-gradient(135deg, #C77DFF 0%, #7A00FF 100%)',
+    'linear-gradient(135deg, #E6A0E0 0%, #A93FA8 100%)', 'linear-gradient(135deg, #F472B6 0%, #BE185D 100%)'
+  ];
+  function _kdAvatarGradient(seed) {
+    const key = String(seed || '?');
+    let h = 0;
+    for (let i = 0; i < key.length; i++) h = ((h << 5) - h + key.charCodeAt(i)) >>> 0;
+    return KD_AVATAR_GRADIENTS[h % KD_AVATAR_GRADIENTS.length];
+  }
   window.kdMentionItems = (query) => {
     if (!KD.usersById) return [];
-    const q = String(query || '').toLowerCase();
-    const out = [];
+    const nrm = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const q = nrm(query).trim();
+    const rows = [];
     for (const u of KD.usersById.values()) {
-      const name = (u.name || '').toLowerCase();
-      const email = (u.email || '').toLowerCase();
-      if (!q || name.includes(q) || email.includes(q)) {
-        out.push({ id: u.id, name: u.name || 'Usuário', role: u.email || '', color: u.color || null, avatar: u.avatar || null });
-        if (out.length >= 8) break;
-      }
+      if (u.active === false) continue;
+      const name = nrm(u.name || u.username);
+      const hit = !q ? 2 : name.startsWith(q) ? 0 : name.split(/\s+/).some(w => w.startsWith(q)) ? 1 : (name.includes(q) || nrm(u.email).includes(q) || nrm(u.username).includes(q)) ? 2 : -1;
+      if (hit < 0) continue;
+      rows.push({ u, hit });
     }
-    return out;
+    rows.sort((a, b) => a.hit - b.hit || String(a.u.name || '').localeCompare(String(b.u.name || ''), 'pt-BR'));
+    return rows.slice(0, 8).map(({ u }) => ({
+      id: u.id,
+      name: u.name || u.username || 'Usuário',
+      role: [u.position, u.role].filter(Boolean).join(' · '),
+      color: _kdAvatarGradient(u.id || u.username || u.name),
+      avatar: u.avatar || null
+    }));
   };
 
   /* Retorna true se o doc atual é "vazio de nascença": foi criado agora,
@@ -786,15 +872,12 @@
       if (titleIn) { titleIn.value = doc.title || ''; titleIn.readOnly = true; }
       document.title = (doc.title || 'Documento') + ' — reWork Docs';
       // Esconde tudo que não faz sentido em modo público
-      const hides = ['kd-topbar-comments-btn', 'kd-topbar-share-btn'];
-      hides.forEach(id => { const el = document.getElementById(id) || document.querySelector('.' + id); if (el) el.hidden = true; });
-      document.querySelectorAll('.writer-topbar-actions .btn-icon').forEach(b => {
-        // Deixa só o botão de tema
-        const isTheme = b.getAttribute('title') === 'Alternar tema';
-        if (!isTheme) b.hidden = true;
+      // Visitante: sem menus, sem barra, sem voltar — só o documento e o tema
+      document.querySelectorAll('.writer-topbar-actions > button').forEach(b => {
+        if (b.getAttribute('title') !== 'Alternar tema') b.hidden = true;
       });
-      const backBtn = document.querySelector('.writer-topbar-back');
-      if (backBtn) backBtn.hidden = true;
+      document.querySelectorAll('.kd-ed-back, #kd-menubar, #writer-editor-toolbar, #kd-doc-link, #kd-approval-badge').forEach(el => { el.hidden = true; });
+      _kdPublicApprovalBar(token, doc);
 
       const mount = $('writer-editor-mount');
       mount.innerHTML = '';
@@ -809,6 +892,7 @@
           });
       KD.editor = editor.editor || editor;
       _kdOutlineRefresh();
+      _kdApplyLayout();
       setStatus('saved', 'Documento público (leitura)');
     } catch (e) {
       $('writer-editor-mount').innerHTML =
@@ -818,6 +902,70 @@
         </div>`;
       setStatus('error', 'Erro');
     }
+  }
+
+  /* Barra de aprovação no link público: aparece quando o time pediu
+     aprovação. O cliente aprova ou pede ajustes (com nome + comentário). */
+  function _kdPublicApprovalBar(token, doc) {
+    document.getElementById('kd-pub-approval')?.remove();
+    const a = doc.approval;
+    if (!a) return;
+    const bar = document.createElement('div');
+    bar.id = 'kd-pub-approval';
+    bar.className = 'kd-pub-approval';
+    const nameKey = 'kd-approver-name';
+    let savedName = ''; try { savedName = localStorage.getItem(nameKey) || ''; } catch {}
+    const paintDone = (ap) => {
+      const ok = ap.status === 'approved';
+      bar.className = 'kd-pub-approval is-done ' + (ok ? 'is-approved' : 'is-changes');
+      bar.innerHTML = `<div class="kd-pub-approval-text"><strong>${ok ? 'Documento aprovado' : 'Ajustes pedidos'}</strong>
+        <span>${esc(ap.decidedBy || '')}${ap.decidedAt ? ' · ' + esc(new Date(ap.decidedAt).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })) : ''}${ap.comment ? ' — ' + esc(ap.comment) : ''}</span></div>`;
+    };
+    if (a.status !== 'pending') { paintDone(a); document.querySelector('.writer-editor-view')?.appendChild(bar); return; }
+    bar.innerHTML = `
+      <div class="kd-pub-approval-text"><strong>Este documento aguarda sua aprovação</strong><span>Leia com calma e responda aqui mesmo.</span></div>
+      <div class="kd-pub-approval-actions">
+        <button type="button" class="btn btn-ghost" data-d="changes">Pedir ajustes</button>
+        <button type="button" class="btn btn-confirm" data-d="approved">Aprovar</button>
+      </div>`;
+    document.querySelector('.writer-editor-view')?.appendChild(bar);
+    bar.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-d]'); if (!b) return;
+      const decision = b.dataset.d;
+      const bd = document.createElement('div');
+      bd.className = 'kd-dialog-backdrop';
+      bd.innerHTML = `<div class="kd-dialog" role="dialog" aria-modal="true">
+        <div class="kd-dialog-head"><div class="kd-dialog-title">${decision === 'approved' ? 'Aprovar documento' : 'Pedir ajustes'}</div></div>
+        <form class="kd-dialog-body kd-dform">
+          <label class="kd-dform-field"><span>Seu nome</span><input name="name" maxlength="80" required value="${esc(savedName)}"></label>
+          <label class="kd-dform-field"><span>${decision === 'approved' ? 'Comentário (opcional)' : 'O que precisa mudar?'}</span><textarea name="comment" rows="4" maxlength="2000" ${decision === 'changes' ? 'required' : ''}></textarea></label>
+          <div class="kd-dform-actions">
+            <button type="button" class="btn btn-ghost" data-x>Cancelar</button>
+            <button type="submit" class="btn ${decision === 'approved' ? 'btn-confirm' : 'btn-primary'}">${decision === 'approved' ? 'Aprovar' : 'Enviar ajustes'}</button>
+          </div>
+        </form></div>`;
+      document.body.appendChild(bd);
+      const close = () => bd.remove();
+      bd.addEventListener('click', (ev) => { if (ev.target === bd || ev.target.closest('[data-x]')) close(); });
+      const form = bd.querySelector('form');
+      (savedName ? form.comment : form.name).focus();
+      form.addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        const btn = form.querySelector('[type="submit"]'); btn.disabled = true;
+        try {
+          const r = await fetch('/api/writer/public/' + encodeURIComponent(token) + '/approval', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ decision, name: form.name.value.trim(), comment: form.comment.value.trim() })
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.error || 'Não foi possível enviar.');
+          try { localStorage.setItem(nameKey, form.name.value.trim()); } catch {}
+          close();
+          paintDone(d.approval);
+          toast(decision === 'approved' ? 'Obrigado! Aprovação enviada.' : 'Obrigado! Ajustes enviados pro time.');
+        } catch (err) { toast(err.message, 'error'); btn.disabled = false; }
+      });
+    });
   }
 
   async function openEditor(id) {
@@ -850,8 +998,12 @@
         placeholder: canEdit ? 'Comece a escrever ou pressione / para comandos…' : 'Documento em modo leitura',
         autofocus: canEdit,
         editable: canEdit,
-        onUpdate: () => { KD.dirty = true; scheduleSave(); setStatus('dirty', 'Alterações não salvas'); _kdUpdateWordCount(); _kdOutlineRefresh(); _kdRefreshPaging(); _kdRenderCommentBubbles(); _kdRulerRefresh(); },
-        onSelectionUpdate: () => { renderToolbar(); _kdRulerRefresh(); },
+        onUpdate: () => {
+          KD.dirty = true; scheduleSave();
+          if (KD._status !== 'saving') setStatus('saving', 'Salvando…');
+          _kdAfterChange();
+        },
+        onSelectionUpdate: () => { _kdRulerRefresh(); },
         onStatus: (s) => {
           KD.connStatus = s;
           renderPresence();
@@ -884,9 +1036,11 @@
         }, 600);
       }
       _kdApplyRoleUI();
+      window.KDUI && window.KDUI.mount();
+      _kdRenderDocMeta();
       // Índice do doc: 1º render após o editor montar
       _kdOutlineRefresh();
-      _kdRefreshPaging();
+      _kdApplyLayout();
       _kdRulerRefresh();
       // Carrega threads + renderiza balões flutuantes (não depende do painel)
       kdCommentsLoad();
@@ -993,6 +1147,7 @@
     // Fire-and-forget: renderização da lista roda logo depois e o filter
     // local já foi aplicado no _kdDeleteUntouchedDoc.
     if (_kdCurrentDocIsUntouched()) _kdDeleteUntouchedDoc();
+    window.KDUI && window.KDUI.teardown();
     if (KD.collab) { try { KD.collab.destroy(); } catch {} KD.collab = null; }
     else if (KD.editor) { try { KD.editor.destroy(); } catch {} }
     KD.editor = null;
@@ -1202,6 +1357,16 @@
     if (el) el.remove();
   }
 
+  /* Tudo que depende do texto (contagem, índice, páginas, balões) roda
+     agrupado depois que a pessoa para de digitar — nunca a cada tecla. */
+  let _afterChangeT = null;
+  function _kdAfterChange() {
+    clearTimeout(_afterChangeT);
+    _afterChangeT = setTimeout(() => {
+      _afterChangeT = null;
+      _kdUpdateWordCount(); _kdOutlineRefresh(); _kdRenderCommentBubbles(); _kdRulerRefresh();
+    }, 180);
+  }
   function scheduleSave() {
     if (KD.saveTimer) clearTimeout(KD.saveTimer);
     KD.saveTimer = setTimeout(flushSave, 800);
@@ -1282,6 +1447,7 @@
   }
 
   function setStatus(state, text) {
+    KD._status = state;
     const el = $('writer-topbar-status');
     el.classList.remove('is-saving', 'is-saved', 'is-error');
     if (state === 'saving') el.classList.add('is-saving');
@@ -1291,169 +1457,8 @@
   }
 
   // ── Toolbar (mesma UI do app.js — dupla escrita por hora, ok) ──────────
-  function renderToolbar() {
-    const tb = $('writer-editor-toolbar');
-    const ed = KD.editor;
-    if (!tb || !ed) return;
-    const isActive = (n, a) => { try { return ed.isActive(n, a); } catch { return false; } };
-    const can = (fn, ...args) => { try { return ed.can()[fn]?.(...args) ?? true; } catch { return true; } };
-    const blockValue =
-      isActive('heading', { level: 1 }) ? 'h1' :
-      isActive('heading', { level: 2 }) ? 'h2' :
-      isActive('heading', { level: 3 }) ? 'h3' : 'p';
-
-    // Ícones inline (não temos lucide aqui)
-    const I = {
-      bold:      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 12a4 4 0 0 0 0-8H6v8"/><path d="M15 20a4 4 0 0 0 0-8H6v8Z"/></svg>',
-      italic:    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="4" x2="10" y2="4"/><line x1="14" y1="20" x2="5" y2="20"/><line x1="15" y1="4" x2="9" y2="20"/></svg>',
-      underline: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v7a6 6 0 0 0 12 0V3M4 21h16"/></svg>',
-      strike:    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4H9a3 3 0 0 0-2.83 4M14 12a4 4 0 0 1 0 8H6"/><line x1="4" y1="12" x2="20" y2="12"/></svg>',
-      code:      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
-      list:      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',
-      olist:     '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><path d="M4 6h1v4M4 10h2M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/></svg>',
-      quote:     '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h1v2c0 1.5-.5 3-2 4M14 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h1v2c0 1.5-.501 3-2 4"/></svg>',
-      pre:       '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>',
-      alignL:    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="17" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="17" y1="18" x2="3" y2="18"/></svg>',
-      alignC:    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="10" x2="6" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="18" y1="18" x2="6" y2="18"/></svg>',
-      alignR:    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="21" y1="10" x2="7" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="21" y1="18" x2="7" y2="18"/></svg>',
-      alignJ:    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="21" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="21" y1="18" x2="3" y2="18"/></svg>',
-      link:      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>',
-      table:     '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>',
-      image:     '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>',
-      hr:        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>',
-      paperclip: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 12-9.5 9.5a5.5 5.5 0 0 1-7.78-7.78L13.5 4.5a3.5 3.5 0 0 1 5 5L10 18a1.5 1.5 0 0 1-2.12-2.12L15.5 8"/></svg>',
-      upload:    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>',
-      comment:   '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
-      undo:      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/></svg>',
-      redo:      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5v0A5.5 5.5 0 0 0 9.5 20H13"/></svg>',
-      // "A" com barra colorida embaixo — indicador de cor de texto
-      textColor: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16"/><path d="M6 16 12 4l6 12"/><path d="M8 12h8"/></svg>',
-      // Marcador (highlighter)
-      highlight: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>'
-    };
-    // Fonte atual (pra marcar option selected)
-    const curFont = ed.getAttributes('textStyle')?.fontFamily || '';
-    // Cor atual (só usada pra pintar a barrinha no botão)
-    const curColor = ed.getAttributes('textStyle')?.color || '';
-    const curHi    = ed.getAttributes('highlight')?.color || '';
-    // Tamanho da fonte — extension armazena como string ("14pt", "18px", etc).
-    // Se não tiver mark, usa default do editor (11pt).
-    const curSize = _kdFmtFontSize(ed.getAttributes('textStyle')?.fontSize || '11pt');
-    const KD_FONTS = [
-      ['', 'Padrão'],
-      ['Arial, sans-serif', 'Arial'],
-      ['"Inter", sans-serif', 'Inter'],
-      ['Georgia, serif', 'Georgia'],
-      ['"Times New Roman", Times, serif', 'Times New Roman'],
-      ['"Courier New", Courier, monospace', 'Courier New'],
-      ['Verdana, sans-serif', 'Verdana'],
-      ['"Comic Sans MS", cursive', 'Comic Sans'],
-      ['"Trebuchet MS", sans-serif', 'Trebuchet MS'],
-      ['"Roboto", sans-serif', 'Roboto'],
-      ['"Open Sans", sans-serif', 'Open Sans'],
-      ['"Playfair Display", serif', 'Playfair']
-    ];
-
-    tb.innerHTML = `
-      <div class="writer-tb-group">
-        <select class="writer-tb-select" data-a="block">
-          <option value="p"  ${blockValue==='p'?'selected':''}>Parágrafo</option>
-          <option value="h1" ${blockValue==='h1'?'selected':''}>Título 1</option>
-          <option value="h2" ${blockValue==='h2'?'selected':''}>Título 2</option>
-          <option value="h3" ${blockValue==='h3'?'selected':''}>Título 3</option>
-        </select>
-        <select class="writer-tb-select writer-tb-select--font" data-a="font" title="Fonte">
-          ${KD_FONTS.map(([v, l]) => `<option value="${esc(v)}" style="font-family:${esc(v || 'inherit')}" ${curFont === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}
-        </select>
-        <div class="writer-tb-fontsize" title="Tamanho da fonte">
-          <button type="button" class="writer-tb-fs-btn" data-a="fontSizeDown" aria-label="Diminuir tamanho">−</button>
-          <input type="text" class="writer-tb-fs-input" data-a="fontSizeInput" value="${esc(curSize)}" inputmode="decimal" aria-label="Tamanho da fonte">
-          <button type="button" class="writer-tb-fs-btn" data-a="fontSizeUp" aria-label="Aumentar tamanho">+</button>
-        </div>
-      </div>
-      <div class="writer-tb-sep"></div>
-      <div class="writer-tb-group">
-        <button type="button" class="writer-tb-btn ${isActive('bold')?'is-active':''}"      data-a="toggleBold"      title="Negrito (Ctrl+B)">${I.bold}</button>
-        <button type="button" class="writer-tb-btn ${isActive('italic')?'is-active':''}"    data-a="toggleItalic"    title="Itálico (Ctrl+I)">${I.italic}</button>
-        <button type="button" class="writer-tb-btn ${isActive('underline')?'is-active':''}" data-a="toggleUnderline" title="Sublinhado (Ctrl+U)">${I.underline}</button>
-        <button type="button" class="writer-tb-btn ${isActive('strike')?'is-active':''}"    data-a="toggleStrike"    title="Tachado">${I.strike}</button>
-        <button type="button" class="writer-tb-btn ${isActive('code')?'is-active':''}"      data-a="toggleCode"      title="Código inline">${I.code}</button>
-      </div>
-      <div class="writer-tb-sep"></div>
-      <div class="writer-tb-group">
-        <button type="button" class="writer-tb-btn writer-tb-color-btn" data-a="pickTextColor" title="Cor do texto" style="--kd-mark-color:${esc(curColor || 'currentColor')}">${I.textColor}<span class="writer-tb-color-bar"></span></button>
-        <button type="button" class="writer-tb-btn writer-tb-color-btn" data-a="pickHighlight" title="Cor de destaque" style="--kd-mark-color:${esc(curHi || '#ffd400')}">${I.highlight}<span class="writer-tb-color-bar"></span></button>
-      </div>
-      <div class="writer-tb-sep"></div>
-      <div class="writer-tb-group">
-        <button type="button" class="writer-tb-btn ${isActive('bulletList')?'is-active':''}"  data-a="toggleBulletList"  title="Lista">${I.list}</button>
-        <button type="button" class="writer-tb-btn ${isActive('orderedList')?'is-active':''}" data-a="toggleOrderedList" title="Lista numerada">${I.olist}</button>
-        <button type="button" class="writer-tb-btn ${isActive('blockquote')?'is-active':''}"  data-a="toggleBlockquote"  title="Citação">${I.quote}</button>
-        <button type="button" class="writer-tb-btn ${isActive('codeBlock')?'is-active':''}"   data-a="toggleCodeBlock"   title="Bloco de código">${I.pre}</button>
-      </div>
-      <div class="writer-tb-sep"></div>
-      <div class="writer-tb-group">
-        <button type="button" class="writer-tb-btn ${isActive({textAlign:'left'})?'is-active':''}"    data-align="left"    title="Alinhar à esquerda">${I.alignL}</button>
-        <button type="button" class="writer-tb-btn ${isActive({textAlign:'center'})?'is-active':''}"  data-align="center"  title="Centralizar">${I.alignC}</button>
-        <button type="button" class="writer-tb-btn ${isActive({textAlign:'right'})?'is-active':''}"   data-align="right"   title="Alinhar à direita">${I.alignR}</button>
-        <button type="button" class="writer-tb-btn ${isActive({textAlign:'justify'})?'is-active':''}" data-align="justify" title="Justificar">${I.alignJ}</button>
-      </div>
-      <div class="writer-tb-sep"></div>
-      <div class="writer-tb-group">
-        <button type="button" class="writer-tb-btn ${isActive('link')?'is-active':''}" data-a="toggleLink" title="Link">${I.link}</button>
-        <button type="button" class="writer-tb-btn" data-a="uploadFile" title="Enviar arquivo do computador (imagem, PDF, etc)">${I.upload}</button>
-        <button type="button" class="writer-tb-btn" data-a="galleryPick" title="Anexar da Galeria">${I.paperclip}</button>
-        <button type="button" class="writer-tb-btn" data-a="insertTable" title="Tabela">${I.table}</button>
-        <button type="button" class="writer-tb-btn" data-a="insertImage" title="Imagem da Galeria">${I.image}</button>
-        <button type="button" class="writer-tb-btn" data-a="setHorizontalRule" title="Linha divisória">${I.hr}</button>
-        <button type="button" class="writer-tb-btn ${isActive('kastorComment')?'is-active':''}" data-a="commentSelection" title="Comentar seleção">${I.comment}</button>
-      </div>
-      <div class="writer-tb-sep"></div>
-      <div class="writer-tb-group">
-        <button type="button" class="writer-tb-btn" data-a="undo" ${can('undo')?'':'disabled'} title="Desfazer">${I.undo}</button>
-        <button type="button" class="writer-tb-btn" data-a="redo" ${can('redo')?'':'disabled'} title="Refazer">${I.redo}</button>
-      </div>
-    `;
-    tb.querySelectorAll('[data-a]').forEach(el => {
-      const a = el.dataset.a;
-      if (el.tagName === 'SELECT') {
-        if (a === 'font') {
-          el.addEventListener('change', () => {
-            const v = el.value;
-            if (!v) ed.chain().focus().unsetFontFamily().run();
-            else ed.chain().focus().setFontFamily(v).run();
-          });
-        } else {
-          el.addEventListener('change', () => setBlock(el.value));
-        }
-      } else if (el.tagName === 'INPUT' && a === 'fontSizeInput') {
-        // Enter aplica o valor digitado. Focus abre o menu de presets junto —
-        // usuário pode digitar OU selecionar. Blur aplica + fecha o menu (se
-        // o blur não foi pra dentro do menu).
-        const apply = () => _kdFontSizeApplyRaw(el.value);
-        el.addEventListener('change', apply);
-        el.addEventListener('keydown', (ev) => {
-          if (ev.key === 'Enter') { ev.preventDefault(); apply(); el.blur(); }
-          else if (ev.key === 'Escape') { _kdFontSizeMenuClose(); el.blur(); }
-        });
-        el.addEventListener('focus', (ev) => {
-          el.select();
-          _kdFontSizeMenuOpenForInput(el);
-        });
-        el.addEventListener('blur', (ev) => {
-          // Se o novo foco é dentro do menu, não fecha ainda
-          if (ev.relatedTarget && ev.relatedTarget.closest('.kd-fontsize-menu')) return;
-          apply();
-          _kdFontSizeMenuClose();
-        });
-      } else {
-        el.addEventListener('click', (ev) => runAction(a, ev));
-      }
-    });
-    tb.querySelectorAll('[data-align]').forEach(el => {
-      el.addEventListener('click', () => ed.chain().focus().setTextAlign(el.dataset.align).run());
-    });
-  }
+  // A barra de ferramentas mora no editor-ui.js (montada uma vez só).
+  function renderToolbar() { window.KDUI && window.KDUI.sync(); }
   function setBlock(v) {
     const ed = KD.editor; if (!ed) return;
     if (v === 'p') ed.chain().focus().setParagraph().run();
@@ -1601,112 +1606,184 @@
     document.documentElement.style.setProperty('--kd-sbw', Math.max(0, w) + 'px');
   }
 
+  /* Régua: números em cm contados a partir da margem (como no Google Docs),
+     traços a cada 2,5 mm e três marcadores — recuo da 1ª linha (em cima),
+     recuo à esquerda e à direita (embaixo). */
+  const KD_RULER_TYPES = ['paragraph', 'heading', 'bulletList', 'orderedList', 'blockquote'];
+  const KD_MARKER_SVG = {
+    down: '<svg width="13" height="10" viewBox="0 0 13 10"><path d="M1.5 1h10a.8.8 0 0 1 .6 1.3L7.1 8.6a.8.8 0 0 1-1.2 0L.9 2.3A.8.8 0 0 1 1.5 1Z"/></svg>',
+    up:   '<svg width="13" height="10" viewBox="0 0 13 10"><path d="M1.5 9h10a.8.8 0 0 0 .6-1.3L7.1 1.4a.8.8 0 0 0-1.2 0L.9 7.7A.8.8 0 0 0 1.5 9Z"/></svg>'
+  };
+  const KD_MARKER_LABEL = { first: 'Recuo da primeira linha', left: 'Recuo à esquerda', right: 'Recuo à direita' };
+
   function _kdRulerInit() {
     const ruler = $('kd-ruler');
     if (!ruler || ruler._kdInit) return;
     ruler._kdInit = true;
     _kdMeasureScrollbar();
-    // Ticks a cada 5mm, marcas maiores a cada 10mm. Sem números.
-    const ticks = document.createElement('div');
-    ticks.className = 'kd-ruler-ticks';
-    const parts = [];
-    for (let mm = 0; mm <= KD_PAPER_MM; mm += 5) {
-      const pct = (mm / KD_PAPER_MM) * 100;
-      const cls = (mm % 10 === 0) ? 'kd-ruler-tick major' : 'kd-ruler-tick';
-      parts.push(`<div class="${cls}" style="left:${pct}%"></div>`);
+    ruler.innerHTML = '';
+    // Traços e números num SVG só (nítido em qualquer zoom)
+    const W = KD_PAPER_MM;
+    const K = 96 / 25.4;                            // px por mm (CSS)
+    let marks = '';
+    // Posições contadas a partir da margem esquerda (0 = início do texto)
+    for (let rel = -25; rel <= W - KD_MARGIN_MM + 0.01; rel += 2.5) {
+      const mm = rel + KD_MARGIN_MM;
+      if (mm < 1 || mm > W - 1) continue;
+      const x = (mm * K).toFixed(1);
+      const q = ((rel % 10) + 10) % 10;             // posição dentro do cm
+      if (Math.abs(q) < 0.01 || Math.abs(q - 10) < 0.01) {
+        const n = Math.abs(Math.round(rel / 10));
+        if (n === 0) continue;                      // a própria margem fica sem número
+        marks += `<text x="${x}" y="14.5" text-anchor="middle">${n}</text>`;
+      } else {
+        const h = Math.abs(q - 5) < 0.01 ? 7 : 3.5;
+        marks += `<line x1="${x}" x2="${x}" y1="${11 - h / 2}" y2="${11 + h / 2}"/>`;
+      }
     }
-    ticks.innerHTML = parts.join('');
-    ruler.appendChild(ticks);
-    // Marcadores: is-first (topo, primeira linha), is-left/is-right (base)
-    const mkMarker = (cls) => {
-      const el = document.createElement('div');
-      el.className = 'kd-ruler-marker ' + cls;
+    // Desenhado em px CSS (a régua tem 210mm de largura = W * K px)
+    const svg = `<svg class="kd-ruler-scale" viewBox="0 0 ${(W * K).toFixed(1)} 22" aria-hidden="true">${marks}</svg>`;
+    ruler.insertAdjacentHTML('beforeend', `<div class="kd-ruler-margin is-l"></div><div class="kd-ruler-margin is-r"></div>${svg}`);
+    const mkMarker = (side, shape) => {
+      const el = document.createElement('button');
+      el.type = 'button';
+      el.tabIndex = -1;
+      el.className = 'kd-ruler-marker is-' + side;
+      el.title = KD_MARKER_LABEL[side] + ' · clique duplo zera';
+      el.setAttribute('aria-label', KD_MARKER_LABEL[side]);
+      el.innerHTML = KD_MARKER_SVG[shape];
       ruler.appendChild(el);
+      _kdRulerBindDrag(el, side);
       return el;
     };
-    ruler._first = mkMarker('is-first');
-    ruler._left  = mkMarker('is-left');
-    ruler._right = mkMarker('is-right');
-    ruler._tip   = document.createElement('div');
+    ruler._first = mkMarker('first', 'down');
+    ruler._left  = mkMarker('left', 'up');
+    ruler._right = mkMarker('right', 'up');
+    ruler._tip = document.createElement('div');
     ruler._tip.className = 'kd-ruler-tooltip';
     ruler.appendChild(ruler._tip);
-    _kdRulerBindDrag(ruler._first, 'first');
-    _kdRulerBindDrag(ruler._left,  'left');
-    _kdRulerBindDrag(ruler._right, 'right');
   }
+
+  /* Bloco cujo recuo a régua mostra: o mais externo recuável que contém o
+     cursor (lista/citação inteira, ou o parágrafo/título). */
+  function _kdIndentTarget() {
+    const sel = KD.editor?.state.selection;
+    if (!sel) return null;
+    const $f = sel.$from;
+    for (let d = 1; d <= $f.depth; d++) {
+      const n = $f.node(d);
+      if (KD_RULER_TYPES.includes(n.type.name)) return n;
+    }
+    // Seleção de vários blocos (ou Ctrl+A): a régua mostra o primeiro bloco
+    // da seleção e o arraste vale pra todos eles.
+    let first = null;
+    KD.editor.state.doc.nodesBetween(sel.from, sel.to, (n) => {
+      if (first) return false;
+      if (KD_RULER_TYPES.includes(n.type.name)) { first = n; return false; }
+    });
+    return first;
+  }
+
   function _kdRulerRefresh() {
     const ruler = $('kd-ruler');
     if (!ruler || !KD.editor) return;
     _kdRulerInit();
-    const sel = KD.editor.state.selection;
-    let l = 0, r = 0, f = 0;
-    try {
-      const node = sel.$from.parent;
-      if (node && node.attrs) {
-        l = Number(node.attrs.indentLeft || 0);
-        r = Number(node.attrs.indentRight || 0);
-        f = Number(node.attrs.firstLineIndent || 0);
-      }
-    } catch {}
-    const leftMm  = KD_MARGIN_MM + l;
-    const rightMm = KD_MARGIN_MM + r;
-    const firstMm = leftMm + f;             // first-line indent é RELATIVO ao left indent
-    ruler._left.style.left  = ((leftMm / KD_PAPER_MM) * 100) + '%';
-    ruler._right.style.left = (((KD_PAPER_MM - rightMm) / KD_PAPER_MM) * 100) + '%';
-    ruler._first.style.left = ((firstMm / KD_PAPER_MM) * 100) + '%';
-    ruler._left.dataset.mm  = leftMm.toFixed(1);
-    ruler._right.dataset.mm = rightMm.toFixed(1);
-    ruler._first.dataset.mm = firstMm.toFixed(1);
+    if (ruler.classList.contains('is-dragging')) return;
+    const node = _kdIndentTarget();
+    const a = node?.attrs || {};
+    const l = Number(a.indentLeft || 0), r = Number(a.indentRight || 0), f = Number(a.firstLineIndent || 0);
+    const firstOk = !!node && (node.type.name === 'paragraph' || node.type.name === 'heading');
+    _kdRulerPlace('left', KD_MARGIN_MM + l);
+    _kdRulerPlace('right', KD_PAPER_MM - KD_MARGIN_MM - r);
+    _kdRulerPlace('first', KD_MARGIN_MM + l + f);
+    ruler._first.hidden = !firstOk;
+    ruler.classList.toggle('is-disabled', !node);
   }
+  function _kdRulerPlace(side, mm) {
+    const ruler = $('kd-ruler');
+    const el = ruler && ruler['_' + side];
+    if (!el) return;
+    el.style.left = (mm / KD_PAPER_MM * 100) + '%';
+    el.dataset.mm = String(mm);
+  }
+
   function _kdRulerBindDrag(marker, side) {
-    marker.addEventListener('mousedown', (ev) => {
+    marker.addEventListener('dblclick', (ev) => {
+      ev.preventDefault();
+      if (!KD.editor || !['owner', 'editor'].includes(KD.myRole)) return;
+      const key = side === 'left' ? 'indentLeft' : side === 'right' ? 'indentRight' : 'firstLineIndent';
+      KD.editor.chain().focus().setBlockIndent({ [key]: 0 }).run();
+      _kdRulerRefresh();
+    });
+    marker.addEventListener('pointerdown', (ev) => {
+      if (ev.button !== 0) return;
       ev.preventDefault();
       const ruler = $('kd-ruler');
-      if (!ruler || !KD.editor) return;
+      if (!ruler || !KD.editor || !['owner', 'editor'].includes(KD.myRole) || !_kdIndentTarget()) return;
+      marker.setPointerCapture?.(ev.pointerId);
       const rect = ruler.getBoundingClientRect();
       const pxPerMm = rect.width / KD_PAPER_MM;
+      const startLeft = parseFloat(ruler._left.dataset.mm);
+      const startRight = parseFloat(ruler._right.dataset.mm);
+      const startFirstRel = parseFloat(ruler._first.dataset.mm) - startLeft;
       ruler.classList.add('is-dragging');
       marker.classList.add('is-dragging');
+      // Linha-guia vertical sobre a página
+      const center = document.querySelector('.writer-editor-center');
+      const guide = document.createElement('div');
+      guide.className = 'kd-ruler-guide';
+      center?.appendChild(guide);
+      const cRect = center?.getBoundingClientRect();
       const tip = ruler._tip;
+      let last = null;
       const move = (e) => {
-        let mm = Math.max(0, Math.min(KD_PAPER_MM, (e.clientX - rect.left) / pxPerMm));
-        // Snap 5mm
-        mm = Math.round(mm / KD_RULER_SNAP_MM) * KD_RULER_SNAP_MM;
+        const raw = (e.clientX - rect.left) / pxPerMm;
+        const step = e.altKey ? 0.5 : 2.5;
+        // Encaixe medido a partir da margem (ou do recuo esquerdo, na 1ª linha),
+        // pra os valores saírem redondos: 0,5 cm, 1 cm, 1,25 cm…
+        const snapFrom = (base) => base + Math.round((raw - base) / step) * step;
+        let mm = side === 'first' ? snapFrom(startLeft)
+               : side === 'right' ? KD_PAPER_MM - KD_MARGIN_MM - Math.round((KD_PAPER_MM - KD_MARGIN_MM - raw) / step) * step
+               : snapFrom(KD_MARGIN_MM);
+        let patch, shown;
         if (side === 'left') {
-          const rMm = KD_PAPER_MM - parseFloat(ruler._right.dataset.mm || KD_MARGIN_MM);
-          if (mm > rMm - 10) mm = rMm - 10;
-          if (mm < KD_MARGIN_MM) mm = KD_MARGIN_MM;
-          KD.editor.chain().focus().setBlockIndent({ indentLeft: mm - KD_MARGIN_MM }).run();
+          mm = Math.max(KD_MARGIN_MM, Math.min(mm, startRight - 20));
+          patch = { indentLeft: +(mm - KD_MARGIN_MM).toFixed(1) };
+          shown = mm - KD_MARGIN_MM;
+          _kdRulerPlace('first', mm + startFirstRel);   // a 1ª linha acompanha
         } else if (side === 'right') {
-          const lMm = parseFloat(ruler._left.dataset.mm || KD_MARGIN_MM);
-          if (mm < lMm + 10) mm = lMm + 10;
-          if (mm > KD_PAPER_MM - KD_MARGIN_MM) mm = KD_PAPER_MM - KD_MARGIN_MM;
-          KD.editor.chain().focus().setBlockIndent({ indentRight: KD_PAPER_MM - mm - KD_MARGIN_MM }).run();
-        } else { // 'first' — recuo da 1ª linha (relativo ao left indent)
-          const lMm = parseFloat(ruler._left.dataset.mm || KD_MARGIN_MM);
-          const rMm = KD_PAPER_MM - parseFloat(ruler._right.dataset.mm || KD_MARGIN_MM);
-          if (mm < lMm) mm = lMm;        // não pode ir antes do left indent
-          if (mm > rMm - 10) mm = rMm - 10;
-          KD.editor.chain().focus().setBlockIndent({ firstLineIndent: mm - lMm }).run();
+          mm = Math.min(KD_PAPER_MM - KD_MARGIN_MM, Math.max(mm, startLeft + 20));
+          patch = { indentRight: +(KD_PAPER_MM - KD_MARGIN_MM - mm).toFixed(1) };
+          shown = KD_PAPER_MM - KD_MARGIN_MM - mm;
+        } else {
+          mm = Math.max(startLeft, Math.min(mm, startRight - 20));
+          patch = { firstLineIndent: +(mm - startLeft).toFixed(1) };
+          shown = mm - startLeft;
         }
-        marker.style.left = ((mm / KD_PAPER_MM) * 100) + '%';
-        marker.dataset.mm = mm.toFixed(1);
-        tip.style.left = marker.style.left;
-        const displayCm = side === 'right'
-          ? (KD_PAPER_MM - mm - KD_MARGIN_MM) / 10
-          : side === 'first'
-            ? (mm - parseFloat(ruler._left.dataset.mm || KD_MARGIN_MM)) / 10
-            : (mm - KD_MARGIN_MM) / 10;
-        tip.textContent = displayCm.toFixed(1) + ' cm';
+        _kdRulerPlace(side, mm);
+        const key = JSON.stringify(patch);
+        if (key !== last) {                    // só aplica quando o valor muda
+          last = key;
+          KD.editor.commands.setBlockIndent(patch);
+        }
+        tip.textContent = KD_MARKER_LABEL[side] + ' · ' + (shown / 10).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 2 }) + ' cm';
+        tip.style.left = (mm / KD_PAPER_MM * 100) + '%';
+        if (cRect) guide.style.left = (rect.left + mm * pxPerMm - cRect.left) + 'px';
       };
       const up = () => {
-        window.removeEventListener('mousemove', move);
-        window.removeEventListener('mouseup', up);
+        marker.removeEventListener('pointermove', move);
+        marker.removeEventListener('pointerup', up);
+        marker.removeEventListener('pointercancel', up);
         ruler.classList.remove('is-dragging');
         marker.classList.remove('is-dragging');
+        guide.remove();
+        KD.editor?.commands.focus();
+        _kdRulerRefresh();
       };
-      window.addEventListener('mousemove', move);
-      window.addEventListener('mouseup', up);
+      marker.addEventListener('pointermove', move);
+      marker.addEventListener('pointerup', up);
+      marker.addEventListener('pointercancel', up);
+      move(ev);
     });
   }
 
@@ -3019,9 +3096,23 @@
     if (KDS.data.publicShareEnabled && KDS.data.publicShareUrl) {
       pubLinkBox.hidden = false;
       pubUrlIn.value = location.origin + KDS.data.publicShareUrl;
+      if (KD.currentDoc) KD.currentDoc._publicUrl = KDS.data.publicShareUrl;
     } else {
       pubLinkBox.hidden = true;
       pubUrlIn.value = '';
+    }
+    // Aprovação do cliente
+    const apBox = $('kd-share-approval');
+    if (apBox && KD.currentDoc) {
+      const a = KD.currentDoc.approval;
+      const st = a && KD_APPROVAL[a.status];
+      apBox.querySelector('.kd-share-approval-status').innerHTML = st
+        ? `<span class="kd-approval-badge ${st.cls}">${st.label}</span>${a.decidedBy ? ' <span class="kd-share-approval-by">por ' + esc(a.decidedBy) + '</span>' : ''}`
+        : '';
+      const btn = apBox.querySelector('[data-ap]');
+      btn.textContent = a && a.status === 'pending' ? 'Cancelar pedido' : (a ? 'Pedir de novo' : 'Pedir aprovação');
+      btn.dataset.ap = a && a.status === 'pending' ? 'cancel' : 'request';
+      btn.disabled = !['owner', 'editor'].includes(KD.myRole);
     }
   }
 
@@ -3098,6 +3189,7 @@
     }
   }
   window.kdSharePublicToggle = kdSharePublicToggle;
+  window.kdShareApproval = (btn) => btn.dataset.ap === 'cancel' ? _kdApprovalCancel() : _kdApprovalRequest();
 
   window.kdSharePublicCopy = function () {
     const inp = $('kd-share-public-url');
@@ -3572,16 +3664,6 @@
       if (KD.myRole === 'owner' || KD.myRole === 'editor') kdHistorySavePrompt();
       return;
     }
-    // Ctrl+K — link (padrão Google Docs)
-    if (k === 'k' && !ev.altKey && !ev.shiftKey) {
-      const canEdit = KD.myRole === 'owner' || KD.myRole === 'editor';
-      if (!canEdit) return;
-      // Se seleção vazia, não faz nada (evita override do focus browser)
-      if (KD.editor.state.selection.empty) return;
-      ev.preventDefault();
-      runAction('toggleLink');
-      return;
-    }
     // Ctrl+Alt+M ou Ctrl+/ — comentário na seleção
     if ((k === 'm' && ev.altKey) || k === '/') {
       const canComment = ['owner','editor','commenter'].includes(KD.myRole);
@@ -3595,10 +3677,10 @@
 
   // ── document.title sync ──────────────────────────────────────────────
   function _kdSyncTitle() {
-    let t = KD.currentDoc?.title || 'Kastor Docs';
+    let t = KD.currentDoc?.title || '';
     // Trunca pra tab do browser não virar barra horizontal quilométrica
     if (t.length > 60) t = t.slice(0, 58).trim() + '…';
-    document.title = t === 'Kastor Docs' ? t : t + ' — Kastor Docs';
+    document.title = t ? t + ' — reWork Docs' : 'reWork Docs';
   }
 
   // ── Word count + reading time (throttled) ────────────────────────────
@@ -3624,8 +3706,12 @@
   // Ações do menu Arquivo delegam pras funções já existentes. Menus não
   // populados por enquanto mostram toast "Em breve".
   const MENUBAR_ACTIONS = {
-    novo:         () => createDoc(),
-    duplicar:     () => toast('Em breve — em desenvolvimento.'),
+    novo:         () => _kdOpenTemplatesModal(KD.currentDoc ? { clientId: KD.currentDoc.clientId, projectId: KD.currentDoc.projectId } : null),
+    duplicar:     () => _kdDuplicateDoc(),
+    aprovacao:    () => _kdApprovalRequest(),
+    vincular:     () => _kdLinkPick(document.getElementById('kd-doc-link')),
+    'criar-demanda': () => _kdDemandFromSelection(),
+    'salvar-versao': () => window.kdHistorySavePrompt && kdHistorySavePrompt(),
     compartilhar: () => window.kdShareOpen && kdShareOpen(),
     'baixar-pdf':  () => _kdDirectExport('pdf'),
     'baixar-docx': () => _kdDirectExport('docx'),
@@ -3645,6 +3731,22 @@
     'select-all': () => { KD.editor && KD.editor.chain().focus().selectAll().run(); },
     'delete-selection': () => { KD.editor && KD.editor.chain().focus().deleteSelection().run(); }
   };
+  /* Arquivo > Fazer uma cópia: cria outro documento com o conteúdo atual
+     e abre numa aba nova (o original continua aberto). */
+  async function _kdDuplicateDoc() {
+    const doc = KD.currentDoc;
+    if (!doc || !KD.editor) return;
+    try {
+      const copy = await api('/writer', 'POST', {
+        workspaceId: doc.workspaceId,
+        title: 'Cópia de ' + (doc.title || 'Sem título'),
+        content: KD.editor.getJSON()
+      });
+      KD.docsList.unshift(copy);
+      window.open('/hub/docs/' + docSlug(copy), '_blank', 'noopener');
+      toast('Cópia criada');
+    } catch (e) { toast(e.message || 'Não foi possível copiar.', 'error'); }
+  }
   /* Cut/copy via document.execCommand — funciona em qualquer contentEditable
      e é o jeito mais compatível pra levar seleção do editor pra clipboard. */
   function _kdEditClipboard(op) {
@@ -3805,109 +3907,73 @@
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') _kdCloseMenubar(); });
 
-  // ── Pagination REAL ─────────────────────────────────────────────────
-  // Mede cada bloco top-level do ProseMirror e, se ele iria "vazar" pro fim
-  // da folha, aplica margin-top pra empurrá-lo pro início da próxima folha
-  // (após o gap). Ajusta o min-height do paper pra o gradient mostrar as
-  // folhas corretas + labels "Página N" na margem direita.
-  let _pagingTimer = null;
-  let _pageMetrics = null;
-  function _kdPageMetrics() {
-    if (_pageMetrics) return _pageMetrics;
-    const probe = document.createElement('div');
-    probe.style.cssText = 'position:absolute;top:-9999px;left:-9999px;visibility:hidden;height:297mm;width:1px';
-    document.body.appendChild(probe);
-    const pageH = probe.getBoundingClientRect().height || (297 * 96 / 25.4);
-    probe.remove();
-    // Altura útil de conteúdo = 297mm - 2 * 25.4mm de padding (top + bottom)
-    // do paper. Blocos precisam caber nesse espaço; ao ultrapassar, empurramos.
-    const padPx = 25.4 * (pageH / 297);
-    _pageMetrics = { pageH, gapH: 34, padPx, contentH: pageH - 2 * padPx };
-    return _pageMetrics;
+  // ── Formato: "Sem páginas" (padrão) ou "Páginas (A4)" ─────────────────
+  /* A paginação mora no bundle (extensão KdPages). Aqui: liga/desliga conforme
+     o formato do documento e desenha as folhas quando o motor avisa quantas
+     são. O formato é do documento (todo mundo vê igual). */
+  function _kdLayoutOf(doc) { return doc && doc.layout === 'pages' ? 'pages' : 'pageless'; }
+  function _kdApplyLayout() {
+    const mode = _kdLayoutOf(KD.currentDoc);
+    document.querySelector('.writer-editor-view')?.classList.toggle('is-pageless', mode !== 'pages');
+    const ed = KD.editor;
+    if (!ed || !ed.storage || !ed.storage.kdPages) return;
+    ed.storage.kdPages.onLayout = _kdDrawSheets;
+    ed.commands.setPagesEnabled(mode === 'pages');
   }
-  function _kdRefreshPaging() {
-    if (_pagingTimer) return;
-    _pagingTimer = setTimeout(() => {
-      _pagingTimer = null;
-      _kdRepaginate();
-    }, 120);
-  }
-  // Exposto pra debug via console: __kdRepaginate()
-  window.__kdRepaginate = () => _kdRepaginate();
-  function _kdRepaginate() {
+  function _kdDrawSheets({ pages, enabled, pageHeight, pageGap }) {
     const paper = document.querySelector('.writer-editor-paper');
     if (!paper) return;
-    const pm = paper.querySelector('.ProseMirror');
-    if (!pm || !KD.editor) return;
-    const bundle = window.KastorWriter;
-    if (!bundle || typeof bundle.setPaginationPushes !== 'function') return;
-    const { pageH, gapH, padPx } = _kdPageMetrics();
-
-    // 1) Limpa pushes anteriores via decoration API + reseta min-height
-    //    (mexer em style/dataset direto no DOM é revertido pela PM em ns)
-    bundle.setPaginationPushes(KD.editor, []);
-    paper.style.minHeight = pageH + 'px';
-    paper.querySelectorAll('.kd-page-label').forEach(n => n.remove());
-    void paper.offsetHeight;
-
-    // 2) Mede cada bloco top-level. Guarda TAMBÉM a posição PM de cada
-    //    um pra podermos endereçar via decoração depois.
-    const paperTop = paper.getBoundingClientRect().top;
-    const view = KD.editor.view;
-    const docNode = view.state.doc;
-    const measured = [];
-    docNode.forEach((node, offset) => {
-      // offset é a posição do início do node no doc
-      const dom = view.nodeDOM(offset);
-      if (!dom || dom.nodeType !== 1) return;
-      const r = dom.getBoundingClientRect();
-      measured.push({
-        pos: offset,
-        top: r.top - paperTop,
-        height: r.height
-      });
-    });
-
-    // 3) Loop iterativo com posições virtuais.
-    //    Fronteira útil = fim da folha MENOS a margem inferior (padPx). Assim
-    //    o bottom-margin de 25.4mm é respeitado, igual o top: o bloco só pode
-    //    ocupar de padPx até (pageH - padPx). Se ultrapassar, empurra pra
-    //    próxima folha (que também começa em +padPx do topo dela).
-    let offset = 0, pageIdx = 0;
-    const pushes = [];
-    for (const m of measured) {
-      const vTop = m.top + offset;
-      const vBottom = vTop + m.height;
-      const pageContentEnd = (pageIdx + 1) * pageH + pageIdx * gapH - padPx;
-      if (vBottom > pageContentEnd) {
-        if (m.height <= pageH - padPx * 2) {
-          const nextPageContentStart = (pageIdx + 1) * (pageH + gapH) + padPx;
-          const push = nextPageContentStart - vTop;
-          if (push > 0) {
-            pushes.push({ pos: m.pos, marginTop: Math.round(push) });
-            offset += push;
-          }
-          pageIdx++;
-        } else {
-          pageIdx += Math.ceil(m.height / pageH);
-        }
-      }
+    if (!enabled) {
+      paper.style.minHeight = '';
+      paper.querySelectorAll('.kd-page-label, .kd-page-sheet').forEach(n => n.remove());
+      paper.classList.remove('has-sheets');
+      return;
     }
-
-    // 4) Dispatch das decorações
-    bundle.setPaginationPushes(KD.editor, pushes);
-
-    // 5) Ajusta min-height + labels
-    const totalPages = pageIdx + 1;
-    paper.style.minHeight = (totalPages * pageH + (totalPages - 1) * gapH) + 'px';
-    for (let i = 1; i < totalPages; i++) {
-      const label = document.createElement('div');
-      label.className = 'kd-page-label';
-      label.textContent = 'Página ' + (i + 1);
-      label.style.top = (i * pageH + (i - 1) * gapH + gapH / 2) + 'px';
-      paper.appendChild(label);
+    const H = pageHeight, G = pageGap;
+    paper.style.minHeight = (pages * H + (pages - 1) * G) + 'px';
+    const sheets = paper.querySelectorAll('.kd-page-sheet');
+    for (let i = sheets.length; i < pages; i++) {
+      const sh = document.createElement('div');
+      sh.className = 'kd-page-sheet';
+      sh.setAttribute('aria-hidden', 'true');
+      paper.insertBefore(sh, paper.firstChild);
+    }
+    [...paper.querySelectorAll('.kd-page-sheet')].forEach((sh, i) => {
+      if (i >= pages) { sh.remove(); return; }
+      sh.style.top = (i * (H + G)) + 'px';
+      sh.style.height = H + 'px';
+    });
+    const labels = [...paper.querySelectorAll('.kd-page-label')];
+    for (let i = labels.length; i < pages - 1; i++) {
+      const l = document.createElement('div');
+      l.className = 'kd-page-label';
+      paper.appendChild(l);
+      labels.push(l);
+    }
+    labels.forEach((l, k) => {
+      if (k >= pages - 1) { l.remove(); return; }
+      l.textContent = 'Página ' + (k + 2);
+      l.style.top = ((k + 1) * H + k * G + G / 2) + 'px';
+    });
+    paper.classList.add('has-sheets');
+  }
+  async function _kdSetLayout(mode) {
+    const doc = KD.currentDoc;
+    if (!doc || (mode !== 'pages' && mode !== 'pageless') || _kdLayoutOf(doc) === mode) return;
+    doc.layout = mode;
+    _kdApplyLayout();
+    _kdRulerRefresh();
+    if (['owner', 'editor'].includes(KD.myRole)) {
+      try { await api('/writer/' + doc.id, 'PATCH', { layout: mode }); }
+      catch (e) { toast(e.message || 'Não foi possível salvar o formato.', 'error'); }
     }
   }
+  // Compat: o motor acompanha as mudanças sozinho (antes era por timer)
+  function _kdRefreshPaging() {}
+  // Impressão: o navegador pagina sozinho; a paginação da tela sai e volta depois
+  window.addEventListener('beforeprint', () => { KD.editor?.commands.setPagesEnabled(false); });
+  window.addEventListener('afterprint', () => _kdApplyLayout());
+  window.__kdRepaginate = () => KD.editor?.commands.repaginate();
 
   // ── Índice (outline) — H1/H2/H3 do doc ────────────────────────────────
   // Painel lateral direito. Refresh throttled em cada onUpdate do editor,
@@ -3966,6 +4032,309 @@
       }
     } catch {}
   })();
+
+  // ── Vínculo com cliente/projeto + aprovação (cabeçalho do editor) ─────
+  const KD_APPROVAL = {
+    pending:  { label: 'Aguardando aprovação', cls: 'is-pending' },
+    approved: { label: 'Aprovado', cls: 'is-approved' },
+    changes:  { label: 'Ajustes pedidos', cls: 'is-changes' }
+  };
+  function _kdRenderDocMeta() {
+    const doc = KD.currentDoc;
+    const linkBtn = $('kd-doc-link'), apBtn = $('kd-approval-badge');
+    if (!doc || !linkBtn || !apBtn) return;
+    const canEditDoc = ['owner', 'editor'].includes(KD.myRole);
+    const R = KD.refData || {};
+    const cl = doc.clientId && (R.clients || []).find(x => x.id === doc.clientId);
+    const pr = doc.projectId && (R.projects || []).find(x => x.id === doc.projectId);
+    if (cl || pr) {
+      linkBtn.hidden = false;
+      linkBtn.classList.remove('is-empty');
+      linkBtn.innerHTML = `<span class="kd-suggest-dot" style="background:${esc((pr || cl).color || '#7A00FF')}"></span>${esc(cl ? cl.name : '')}${pr ? `<span class="kd-tpl-for-sep">›</span>${esc(pr.name)}` : ''}`;
+      linkBtn.title = canEditDoc ? 'Trocar cliente ou projeto' : 'Vinculado a este cliente/projeto';
+    } else {
+      linkBtn.hidden = !canEditDoc;
+      linkBtn.classList.add('is-empty');
+      linkBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Cliente ou projeto';
+      linkBtn.title = 'Vincular este documento a um cliente ou projeto';
+    }
+    linkBtn.disabled = !canEditDoc;
+    const ap = doc.approval && KD_APPROVAL[doc.approval.status];
+    apBtn.hidden = !ap;
+    if (ap) {
+      apBtn.className = 'kd-approval-badge ' + ap.cls;
+      apBtn.textContent = ap.label;
+      apBtn.title = doc.approval.decidedBy ? ap.label + ' por ' + doc.approval.decidedBy : ap.label;
+    }
+  }
+  async function _kdPatchDoc(body) {
+    const doc = KD.currentDoc; if (!doc) return;
+    const r = await api('/writer/' + doc.id, 'PATCH', body);
+    doc.clientId = r.clientId; doc.projectId = r.projectId;
+    const li = KD.docsList.find(d => d.id === doc.id); if (li) { li.clientId = r.clientId; li.projectId = r.projectId; }
+    _kdRenderDocMeta();
+  }
+  function _kdLinkPick(anchor) {
+    const doc = KD.currentDoc;
+    if (!doc || !anchor || !window.KDUI) return;
+    window.KDUI.pickEntity(anchor, {
+      title: 'Vincular a…', allowClear: !!(doc.clientId || doc.projectId),
+      current: doc.projectId ? { kind: 'project', id: doc.projectId } : doc.clientId ? { kind: 'client', id: doc.clientId } : null,
+      onPick: async (it) => {
+        try {
+          if (!it) await _kdPatchDoc({ clientId: null, projectId: null });
+          else if (it.kind === 'project') await _kdPatchDoc({ projectId: it.id });
+          else await _kdPatchDoc({ clientId: it.id, projectId: null });
+          toast(it ? 'Documento vinculado a ' + it.label : 'Vínculo removido');
+        } catch (e) { toast(e.message || 'Não foi possível vincular.', 'error'); }
+      }
+    });
+  }
+  function _kdPublicUrlOf(doc) {
+    return doc && doc._publicUrl ? location.origin + doc._publicUrl : null;
+  }
+  async function _kdApprovalRequest() {
+    const doc = KD.currentDoc; if (!doc) return;
+    try {
+      const r = await api('/writer/' + doc.id + '/approval', 'POST', { action: 'request' });
+      doc.approval = r.approval; doc.publicShareEnabled = r.publicShareEnabled; doc._publicUrl = r.url;
+      _kdRenderDocMeta();
+      const url = _kdPublicUrlOf(doc);
+      try { await navigator.clipboard.writeText(url); toast('Link de aprovação copiado. Envie pro cliente.'); }
+      catch { toast('Pedido de aprovação criado. Copie o link em Compartilhar.'); }
+      if (!$('kd-share-modal').hidden) kdShareLoad();
+    } catch (e) { toast(e.message || 'Não foi possível pedir aprovação.', 'error'); }
+  }
+  async function _kdApprovalCancel() {
+    const doc = KD.currentDoc; if (!doc) return;
+    try {
+      const r = await api('/writer/' + doc.id + '/approval', 'POST', { action: 'cancel' });
+      doc.approval = r.approval;
+      _kdRenderDocMeta();
+      toast('Pedido de aprovação cancelado');
+      if (!$('kd-share-modal').hidden) kdShareLoad();
+    } catch (e) { toast(e.message || 'Falha ao cancelar.', 'error'); }
+  }
+  function _kdApprovalMenu(anchor) {
+    const doc = KD.currentDoc; if (!doc || !doc.approval || !window.KDUI) return;
+    const a = doc.approval, ap = KD_APPROVAL[a.status] || {};
+    const I = window.KDUI.icons;
+    const canEditDoc = ['owner', 'editor'].includes(KD.myRole);
+    const when = (iso) => iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+    window.KDUI.openMenu(anchor, [
+      { render: () => {
+        const d = document.createElement('div');
+        d.className = 'kd-approval-card';
+        d.innerHTML = `<div class="kd-approval-card-status ${ap.cls || ''}">${esc(ap.label || '')}</div>
+          <div class="kd-approval-card-sub">${a.status === 'pending'
+            ? 'Pedido em ' + esc(when(a.requestedAt)) + '. O cliente responde pelo link público.'
+            : esc((a.decidedBy || 'Cliente') + ' · ' + when(a.decidedAt))}</div>
+          ${a.comment ? `<div class="kd-approval-card-comment">${esc(a.comment)}</div>` : ''}`;
+        return d;
+      } },
+      { divider: true },
+      { label: 'Copiar link do cliente', icon: I.link, run: async () => {
+        let url = _kdPublicUrlOf(doc);
+        if (!url) { try { const p = await api('/writer/' + doc.id + '/permissions'); url = p.publicShareUrl ? location.origin + p.publicShareUrl : null; } catch {} }
+        if (url) navigator.clipboard?.writeText(url).then(() => toast('Link copiado'));
+        else toast('Ative o link público em Compartilhar.', 'error');
+      } },
+      canEditDoc && a.status !== 'pending' && { label: 'Pedir aprovação de novo', icon: I.history, run: _kdApprovalRequest },
+      canEditDoc && { label: a.status === 'pending' ? 'Cancelar pedido' : 'Tirar o selo', icon: I.close, danger: a.status === 'pending', run: _kdApprovalCancel }
+    ], { align: 'left', className: 'kd-pop--approval' });
+  }
+  window.kdLinkPick = (el) => _kdLinkPick(el);
+  window.kdApprovalMenu = (el) => _kdApprovalMenu(el);
+
+  // ── Criar demanda a partir do texto ────────────────────────────────
+  /* Seleção (ou o bloco do cursor) vira demanda: nome = primeira linha,
+     descrição = o trecho com formatação, itens de lista → checklist.
+     Depois insere a #referência da demanda logo após o trecho. */
+  function _kdDemandFromSelection() {
+    const ed = KD.editor, KW = window.KastorWriter;
+    if (!ed || !window.KDUI) return;
+    if (!['owner', 'editor'].includes(KD.myRole)) return;
+    let { from, to, empty } = ed.state.selection;
+    if (empty) {
+      const $f = ed.state.selection.$from;
+      const d = Math.max(1, $f.depth);
+      from = $f.before(d); to = $f.after(d);
+      ed.commands.setTextSelection({ from: from + 1, to: to - 1 });
+    }
+    const text = ed.state.doc.textBetween(from, to, '\n', ' ').trim();
+    if (!text) { toast('Selecione o texto que vai virar demanda.', 'error'); return; }
+    const firstLine = text.split('\n').map(t => t.trim()).find(Boolean) || '';
+    const items = [];
+    ed.state.doc.nodesBetween(from, to, (node) => {
+      if (node.type.name === 'listItem' || node.type.name === 'taskItem') {
+        const t = (node.firstChild ? node.firstChild.textContent : node.textContent).trim();
+        if (t) items.push(t.slice(0, 500));
+        return false;
+      }
+    });
+    let html = '';
+    try { html = KW.selectionHTML(ed); } catch {}
+    const R = KD.refData || {};
+    const doc = KD.currentDoc || {};
+    let projectId = doc.projectId || ((R.projects || []).find(p => p.clientId && p.clientId === doc.clientId && p.active !== false) || {}).id || null;
+    const useItems = items.length >= 2;
+    // Trecho que é só uma lista: o nome vem do título do documento
+    const nameGuess = (useItems && firstLine === items[0] ? (doc.title || firstLine) : firstLine).replace(/:\s*$/, '').slice(0, 140);
+    const bd = window.KDUI.dialog('Criar demanda', `
+      <form class="kd-dform" autocomplete="off">
+        <label class="kd-dform-field"><span>Nome</span><input name="name" maxlength="200" required value="${esc(nameGuess)}"></label>
+        <div class="kd-dform-row">
+          <div class="kd-dform-field"><span>Projeto</span><button type="button" class="kd-dform-pick" data-pick></button></div>
+          <label class="kd-dform-field kd-dform-field--sm"><span>Prazo</span><input type="date" name="deadline"></label>
+        </div>
+        ${useItems ? `<label class="kd-dform-check"><input type="checkbox" name="checklist" checked> Usar os ${items.length} itens da lista como checklist</label>` : ''}
+        <div class="kd-dform-preview"><span>Descrição</span><div class="kd-dform-preview-body">${html || esc(text)}</div></div>
+        <div class="kd-dform-actions">
+          <button type="button" class="btn btn-ghost" data-close>Cancelar</button>
+          <button type="submit" class="btn btn-primary">Criar demanda</button>
+        </div>
+      </form>`);
+    const form = bd.querySelector('form');
+    const pickBtn = form.querySelector('[data-pick]');
+    const paint = () => {
+      const pr = projectId && (R.projects || []).find(x => x.id === projectId);
+      const cl = pr && (R.clients || []).find(x => x.id === pr.clientId);
+      pickBtn.innerHTML = pr
+        ? `<span class="kd-suggest-dot" style="background:${esc(pr.color || '#7A00FF')}"></span>${cl ? esc(cl.name) + '<span class="kd-tpl-for-sep">›</span>' : ''}${esc(pr.name)}`
+        : '<span class="kd-tpl-for-empty">Escolha o projeto</span>';
+    };
+    paint();
+    pickBtn.addEventListener('click', () => window.KDUI.pickEntity(pickBtn, {
+      kinds: ['project'], title: 'Projeto da demanda', current: projectId ? { kind: 'project', id: projectId } : null,
+      onPick: (it) => { if (it) { projectId = it.id; paint(); } }
+    }));
+    setTimeout(() => form.querySelector('[name="name"]').select(), 30);
+    form.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const name = form.name.value.trim();
+      if (!name) return;
+      if (!projectId) { toast('Escolha o projeto da demanda.', 'error'); pickBtn.click(); return; }
+      const btn = form.querySelector('[type="submit"]');
+      btn.disabled = true; btn.textContent = 'Criando…';
+      try {
+        const body = { name, projectId, description: html || esc(text) };
+        if (form.deadline.value) body.deadline = form.deadline.value;
+        if (useItems && form.checklist?.checked) body.checklist = items.map(t => ({ text: t }));
+        const d = await api('/demands', 'POST', body);
+        (KD.refData ||= { demands: [], clients: [], projects: [], flows: [] }).demands.unshift(d);
+        bd.querySelector('[data-close]').click();
+        // Referência logo depois do trecho
+        const end = Math.min(to, ed.state.doc.content.size);
+        const $e = ed.state.doc.resolve(end);
+        const at = $e.parent.inlineContent ? end : Math.max(1, end - 1);
+        ed.chain().focus().insertContentAt(at, [{ type: 'text', text: ' ' }, { type: 'kdRef', attrs: { kind: 'demand', refId: d.id, label: d.name } }]).run();
+        toast('Demanda criada e ligada ao texto');
+      } catch (e) {
+        toast(e.message || 'Não foi possível criar a demanda.', 'error');
+        btn.disabled = false; btn.textContent = 'Criar demanda';
+      }
+    });
+  }
+
+  // ── Ponte pro editor-ui.js ────────────────────────────────────────────
+  KD.ui = {
+    toast,
+    prompt: (title, def, cb) => kdPromptModal(title, def, cb),
+    comment: () => kdCommentSelectionStart(),
+    gallery: (kind) => {
+      kdGalleryOpen();
+      if (kind) setTimeout(() => { const sel = $('kd-gal-f-kind'); if (sel) { sel.value = kind; kdGalleryRender(); } }, 50);
+    },
+    pickFile: (accept) => {
+      const input = document.createElement('input');
+      input.type = 'file'; input.multiple = true; input.style.display = 'none';
+      if (accept) input.accept = accept;
+      document.body.appendChild(input);
+      input.addEventListener('change', () => { [...(input.files || [])].forEach(_kdUploadAndInsert); input.remove(); });
+      input.click();
+    },
+    uploadFile: (f) => _kdUploadAndInsert(f),
+    colorPicker: (ev, kind) => _kdColorPickerOpen(ev, kind),
+    fontSizeStep: (d) => _kdFontSizeStep(d),
+    fontSizeApply: (v) => _kdFontSizeApplyRaw(v),
+    fontSizeMenuOpen: (inp) => _kdFontSizeMenuOpenForInput(inp),
+    fontSizeMenuClose: () => _kdFontSizeMenuClose(),
+    fmtFontSize: (v) => _kdFmtFontSize(v),
+    action: (name) => window.kdMenubarAction(name),
+    createDemand: () => _kdDemandFromSelection(),
+    linkPick: (el) => _kdLinkPick(el),
+    requestApproval: () => _kdApprovalRequest(),
+    repaginate: () => { KD.editor?.commands.repaginate(); _kdRulerRefresh(); },
+    layout: () => _kdLayoutOf(KD.currentDoc),
+    setLayout: (m) => _kdSetLayout(m)
+  };
+  // Atalhos dos comandos "/" que precisam de coisas daqui
+  window.kdEditorHooks = {
+    uploadImage: () => KD.ui.pickFile('image/*'),
+    gallery: () => KD.ui.gallery()
+  };
+
+  /* ── Referências da plataforma (#) ──────────────────────────────────
+     Busca em demandas, clientes e projetos que vieram no bootstrap. O chip
+     no texto pergunta o estado atual (etapa, cor) via kdRefResolve. */
+  const _refNorm = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const _refSlug = (name, id) => { const sl = slugify(name, 60); return sl ? sl + '-' + id : id; };
+  function _refStage(d) {
+    const flows = KD.refData?.flows || [];
+    const f = flows.find(x => x.id === d.flowId) || flows.find(x => (x.stages || []).some(st => st.id === d.status));
+    return f ? (f.stages || []).find(st => st.id === d.status) : null;
+  }
+  function _refInfo(kind, item) {
+    const R = KD.refData || {};
+    if (kind === 'demand') {
+      const st = _refStage(item);
+      const proj = (R.projects || []).find(p => p.id === item.projectId);
+      return {
+        kind, id: item.id, label: item.name || 'Demanda', kindLabel: 'Demanda',
+        sub: proj ? proj.name : '', status: st ? st.label : '', color: st?.color || '#7A00FF',
+        done: !!(st && st.done) || !!item.completedAt,
+        href: '/demands/' + _refSlug(item.name, item.id), group: 'Demandas'
+      };
+    }
+    if (kind === 'client') {
+      return { kind, id: item.id, label: item.name || 'Cliente', kindLabel: 'Cliente', sub: item.segment || '', color: item.color || '#0ea5e9', href: '/clients/' + _refSlug(item.name, item.id), group: 'Clientes' };
+    }
+    const cl = (R.clients || []).find(c => c.id === item.clientId);
+    return { kind, id: item.id, label: item.name || 'Projeto', kindLabel: 'Projeto', sub: cl ? cl.name : '', color: item.color || '#22c55e', href: '/projects/' + _refSlug(item.name, item.id), group: 'Projetos' };
+  }
+  window.kdRefResolve = (kind, id) => {
+    const R = KD.refData; if (!R || !id) return null;
+    const list = kind === 'demand' ? R.demands : kind === 'client' ? R.clients : R.projects;
+    const it = (list || []).find(x => x.id === id);
+    return it ? _refInfo(kind, it) : null;
+  };
+  window.kdRefItems = (query) => {
+    const R = KD.refData; if (!R) return [];
+    const q = _refNorm(query).trim();
+    const tokens = q.split(/\s+/).filter(Boolean);
+    // 0 = nome igual, 1 = começa com, 2 = alguma palavra começa com, 3 = contém
+    const score = (name) => {
+      const n = _refNorm(name);
+      if (!tokens.every(t => n.includes(t))) return -1;
+      if (n === q) return 0;
+      if (n.startsWith(q)) return 1;
+      if (tokens.every(t => n.split(/[^a-z0-9]+/).some(w => w.startsWith(t)))) return 2;
+      return 3;
+    };
+    const openDemand = (d) => { const st = _refStage(d); return !(st && st.done) && !d.completedAt; };
+    const group = (list, kind, n) => {
+      let rows = (list || []).map(x => ({ x, sc: q ? score(x.name) : 1 })).filter(r => r.sc >= 0);
+      if (kind === 'demand' && !q) rows = rows.filter(r => openDemand(r.x));
+      rows.sort((a, b) => a.sc - b.sc
+        || (kind === 'demand' ? (openDemand(b.x) - openDemand(a.x)) : 0)
+        || (q ? String(a.x.name).localeCompare(String(b.x.name), 'pt-BR') : String(b.x.createdAt || '').localeCompare(String(a.x.createdAt || ''))));
+      rows = rows.slice(0, n);
+      return { best: rows.length ? rows[0].sc : 9, items: rows.map(r => _refInfo(kind, r.x)) };
+    };
+    // Grupos na ordem do melhor resultado de cada um (empate: demandas primeiro)
+    const gs = [group(R.demands, 'demand', q ? 6 : 5), group(R.clients, 'client', q ? 4 : 3), group(R.projects, 'project', q ? 4 : 3)];
+    return gs.map((g, i) => ({ ...g, i })).sort((a, b) => a.best - b.best || a.i - b.i).flatMap(g => g.items);
+  };
 
   // ── Theme toggle ──────────────────────────────────────────────────────
   window.kdToggleTheme = function () {

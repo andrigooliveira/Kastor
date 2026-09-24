@@ -2009,6 +2009,20 @@ function _loadReleaseNotes() {
   return _releaseNotesCache.data;
 }
 function _todayYmd() { return new Date().toISOString().slice(0, 10); }
+/* Entrada pro cliente: "launch" (apresentação de produto) leva o bloco extra;
+   hideFor esconde de um tipo de conta (ex.: freelancer não usa o Docs). */
+function _releaseNoteOut(n) {
+  return {
+    id: n.id, date: n.date, title: n.title, highlight: !!n.highlight,
+    highlights: Array.isArray(n.highlights) ? n.highlights : [],
+    ...(n.kind === 'launch' && n.launch ? { kind: 'launch', launch: n.launch } : {})
+  };
+}
+function _releaseNoteVisible(n, user) {
+  const hide = Array.isArray(n.hideFor) ? n.hideFor : [];
+  if (hide.includes('freelancer') && user.isFreelancer) return false;
+  return true;
+}
 
 app.get('/api/me/release-notes', requireAuth, (req, res) => {
   const user = req.user;
@@ -2018,10 +2032,10 @@ app.get('/api/me/release-notes', requireAuth, (req, res) => {
   const all = _loadReleaseNotes();
   const seen = new Set(user.releaseNotesSeenIds || []);
   const pending = all
-    .filter(n => n && n.id && !seen.has(n.id))
+    .filter(n => n && n.id && !seen.has(n.id) && _releaseNoteVisible(n, user))
     .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
     .slice(0, 10)
-    .map(n => ({ id: n.id, date: n.date, title: n.title, highlight: !!n.highlight, highlights: Array.isArray(n.highlights) ? n.highlights : [] }));
+    .map(_releaseNoteOut);
   res.json({ notes: pending });
 });
 
@@ -2030,9 +2044,9 @@ app.get('/api/me/release-notes', requireAuth, (req, res) => {
 app.get('/api/release-notes/all', requireAuth, (req, res) => {
   const all = _loadReleaseNotes();
   const sorted = all
-    .filter(n => n && n.id)
+    .filter(n => n && n.id && _releaseNoteVisible(n, req.user))
     .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
-    .map(n => ({ id: n.id, date: n.date, title: n.title, highlight: !!n.highlight, highlights: Array.isArray(n.highlights) ? n.highlights : [] }));
+    .map(_releaseNoteOut);
   res.json({ notes: sorted });
 });
 
@@ -3721,6 +3735,14 @@ function stripWriterDoc(doc, { includeContent = false, user = null } = {}) {
     archived: !!doc.archived,
     createdAt: doc.createdAt || null,
     updatedAt: doc.updatedAt || null,
+    // Vínculo com o trabalho na plataforma (opcional)
+    clientId: doc.clientId || null,
+    projectId: doc.projectId || null,
+    // Pedido de aprovação do cliente pelo link público
+    approval: doc.approval || null,
+    // Formato: 'pageless' (bloco contínuo, padrão) ou 'pages' (folhas A4)
+    layout: doc.layout === 'pages' ? 'pages' : 'pageless',
+    publicShareEnabled: !!doc.publicShareEnabled,
     // Ajuda o cliente a decidir se abre em read-only, esconde botões, etc.
     myRole: user ? _writerRoleOf(user, doc) : null,
     // Preview do texto (linha) — fallback quando o thumbHTML tá vazio
@@ -3735,6 +3757,47 @@ function stripWriterDoc(doc, { includeContent = false, user = null } = {}) {
   return out;
 }
 
+/* Valida clientId/projectId vindos do cliente: precisam existir e estar num
+   squad que o usuário acessa. Projeto define o cliente se ele não vier. */
+function _writerLinkFrom(user, body) {
+  const out = {};
+  if ('projectId' in body) {
+    const p = body.projectId ? db.projects.find(x => x.id === body.projectId && notDeleted(x)) : null;
+    if (body.projectId && (!p || !canAccessWs(user, p.workspaceId))) return { error: 'Projeto inválido' };
+    out.projectId = p ? p.id : null;
+    if (p && !('clientId' in body)) out.clientId = p.clientId || null;
+  }
+  if ('clientId' in body) {
+    const c = body.clientId ? db.clients.find(x => x.id === body.clientId && notDeleted(x)) : null;
+    if (body.clientId && (!c || !canAccessWs(user, c.workspaceId))) return { error: 'Cliente inválido' };
+    out.clientId = c ? c.id : null;
+  }
+  // Projeto de outro cliente não fica vinculado junto
+  if (out.projectId && out.clientId) {
+    const p = db.projects.find(x => x.id === out.projectId);
+    if (p && p.clientId && p.clientId !== out.clientId) out.projectId = null;
+  }
+  return out;
+}
+
+/* Aviso no sino sobre um documento (aprovação do cliente). O item guarda
+   docId/docTitle; o app abre o documento ao clicar. */
+function notifyDoc(targetUserId, type, data) {
+  const user = db.users.find(u => u.id === targetUserId && u.active !== false);
+  if (!user) return;
+  const n = {
+    id: uid(), userId: targetUserId, type,
+    demandId: null, demandName: data.docTitle || '',
+    docId: data.docId, docTitle: data.docTitle || '',
+    fromUser: null, fromName: data.fromName || null,
+    commentText: data.commentText || null,
+    read: false, createdAt: nowISO()
+  };
+  store.insertNotification(n).catch(err => console.error('[notifyDoc] insert:', err.message));
+  store.trimNotificationsFor(targetUserId, NOTIFICATIONS_MAX_PER_USER).catch(() => {});
+  broadcastToUser(targetUserId, 'notification', 'create');
+}
+
 // GET /api/writer — lista docs do workspace (metadata; sem content)
 app.get('/api/writer', requireAuth, (req, res) => {
   const u = req.user;
@@ -3742,9 +3805,16 @@ app.get('/api/writer', requireAuth, (req, res) => {
   // Lista qualquer doc onde o user tem role (workspace-editor implícito OU
   // permission explícita — cobre também docs restritos compartilhados de
   // outros squads).
-  const list = (db.writerDocuments || [])
-    .filter(d => !d.deletedAt && writerCanRead(u, d))
-    .map(d => stripWriterDoc(d, { user: u }));
+  const { clientId, projectId, lite } = req.query;
+  let docs = (db.writerDocuments || []).filter(d => !d.deletedAt && writerCanRead(u, d));
+  if (clientId) docs = docs.filter(d => d.clientId === clientId);
+  if (projectId) docs = docs.filter(d => d.projectId === projectId);
+  // lite=1: sem prévia/miniatura (listas dentro da plataforma)
+  const list = docs.map(d => {
+    const o = stripWriterDoc(d, { user: u });
+    if (lite) { delete o.thumbHTML; delete o.preview; }
+    return o;
+  });
   res.json(list);
 });
 
@@ -3761,10 +3831,14 @@ app.post('/api/writer', requireAuth, express.json({ limit: '2mb' }), (req, res) 
   if (u.isFreelancer) return res.status(403).json({ error: 'Freelancer não pode criar documentos' });
   const wsId = String(req.body?.workspaceId || '').trim();
   if (!wsId || !canAccessWs(u, wsId)) return res.status(400).json({ error: 'workspaceId inválido' });
+  const link = _writerLinkFrom(u, req.body || {});
+  if (link.error) return res.status(400).json({ error: link.error });
   const now = nowISO();
   const doc = {
     id: uid(),
     workspaceId: wsId,
+    clientId: link.clientId || null,
+    projectId: link.projectId || null,
     title: String(req.body?.title || 'Sem título').slice(0, 200),
     icon: req.body?.icon ? String(req.body.icon).slice(0, 8) : null,
     ownerId: u.id,
@@ -3790,6 +3864,14 @@ app.patch('/api/writer/:id', requireAuth, express.json({ limit: '512kb' }), (req
     doc.icon = req.body.icon ? String(req.body.icon).slice(0, 8) : null;
   }
   if (typeof req.body?.archived === 'boolean') doc.archived = req.body.archived;
+  if (req.body?.layout === 'pages' || req.body?.layout === 'pageless') doc.layout = req.body.layout;
+  if (req.body && ('clientId' in req.body || 'projectId' in req.body)) {
+    const link = _writerLinkFrom(req.user, req.body);
+    if (link.error) return res.status(400).json({ error: link.error });
+    if ('clientId' in link) doc.clientId = link.clientId;
+    if ('projectId' in link) doc.projectId = link.projectId;
+    if ('clientId' in req.body && !link.clientId) doc.projectId = null;   // sem cliente, sem projeto
+  }
   doc.updatedAt = nowISO();
   saveEntity('writerDocuments', doc);
   res.json(stripWriterDoc(doc, { user: req.user }));
@@ -3915,6 +3997,56 @@ app.delete('/api/writer/:id/public-link', requireAuth, (req, res) => {
   res.json({ enabled: false });
 });
 
+/* ── Aprovação do cliente ─────────────────────────────────────────────
+   POST /api/writer/:id/approval { action: 'request' | 'cancel' }
+   Pedir aprovação liga o link público (é por ele que o cliente decide). */
+app.post('/api/writer/:id/approval', requireAuth, (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  if (!writerCanWrite(req.user, doc)) return res.status(404).json({ error: 'Documento não encontrado' });
+  const action = req.body?.action;
+  if (action === 'cancel') {
+    doc.approval = null;
+  } else if (action === 'request') {
+    if (!doc.publicShareToken) doc.publicShareToken = (uid() + uid()).replace(/-/g, '').slice(0, 32);
+    doc.publicShareEnabled = true;
+    doc.approval = { status: 'pending', requestedAt: nowISO(), requestedBy: req.user.id, version: doc.version || 0 };
+  } else {
+    return res.status(400).json({ error: 'Ação inválida' });
+  }
+  doc.updatedAt = nowISO();
+  saveEntity('writerDocuments', doc);
+  res.json({ approval: doc.approval, publicShareEnabled: !!doc.publicShareEnabled, url: doc.publicShareEnabled ? _writerPublicUrl(doc) : null });
+});
+
+/* POST /api/writer/public/:token/approval { decision: 'approved'|'changes', name, comment }
+   Sem login: quem tem o link responde. Só vale enquanto há pedido pendente. */
+const rateLimitDocApproval = makeRateLimit(new Map(), 10, 'respostas');
+app.post('/api/writer/public/:token/approval', rateLimitDocApproval, express.json({ limit: '32kb' }), (req, res) => {
+  const t = String(req.params.token || '');
+  const doc = (db.writerDocuments || []).find(d => t.length >= 8 && d.publicShareToken === t && d.publicShareEnabled && !d.deletedAt);
+  if (!doc) return res.status(404).json({ error: 'Documento não encontrado ou link revogado' });
+  if (!doc.approval || doc.approval.status !== 'pending') return res.status(409).json({ error: 'Este documento não está aguardando aprovação' });
+  const decision = req.body?.decision === 'approved' ? 'approved' : req.body?.decision === 'changes' ? 'changes' : null;
+  const name = String(req.body?.name || '').trim().slice(0, 80);
+  const comment = String(req.body?.comment || '').trim().slice(0, 2000);
+  if (!decision) return res.status(400).json({ error: 'Decisão inválida' });
+  if (!name) return res.status(400).json({ error: 'Informe seu nome' });
+  if (decision === 'changes' && !comment) return res.status(400).json({ error: 'Conte o que precisa ser ajustado' });
+  doc.approval = { ...doc.approval, status: decision, decidedAt: nowISO(), decidedBy: name, comment: comment || null };
+  if (!Array.isArray(doc.approvalHistory)) doc.approvalHistory = [];
+  doc.approvalHistory.push({ ...doc.approval });
+  doc.approvalHistory = doc.approvalHistory.slice(-50);
+  saveEntity('writerDocuments', doc);
+  // Avisa quem pediu e o dono
+  const targets = new Set([doc.approval.requestedBy, doc.ownerId].filter(Boolean));
+  for (const uidT of targets) {
+    notifyDoc(uidT, decision === 'approved' ? 'doc_approved' : 'doc_changes', {
+      docId: doc.id, docTitle: doc.title || 'Sem título', fromName: name, commentText: comment || null
+    });
+  }
+  res.json({ approval: { status: doc.approval.status, decidedAt: doc.approval.decidedAt, decidedBy: name, comment: doc.approval.comment } });
+});
+
 // GET /api/writer/public/:token — pega o doc via token (viewer-only, sem auth)
 app.get('/api/writer/public/:token', (req, res) => {
   const t = String(req.params.token || '');
@@ -3933,6 +4065,11 @@ app.get('/api/writer/public/:token', (req, res) => {
     updatedAt: doc.updatedAt,
     myRole: 'viewer',
     isPublic: true,
+    layout: doc.layout === 'pages' ? 'pages' : 'pageless',
+    approval: doc.approval ? {
+      status: doc.approval.status, decidedAt: doc.approval.decidedAt || null,
+      decidedBy: doc.approval.decidedBy || null, comment: doc.approval.comment || null
+    } : null,
     content: doc.content || null,
     version: doc.version || 0
   });
@@ -11360,6 +11497,8 @@ const _boot = loadDB().catch(err => {
   process.exit(1);
 });
 
+// Runtime de colaboração do Docs (setado no boot) — o shutdown salva as salas.
+let _docsRt = null;
 if (require.main === module) {
   _boot.then(async () => {
     const server = app.listen(PORT, () => console.log(`\n  fluxo. rodando em  →  http://localhost:${PORT}\n`));
@@ -11368,7 +11507,7 @@ if (require.main === module) {
     // http.Server que o Express usa (compartilha a porta, sem processo extra).
     try {
       const docsRt = require('./docs-rt.js');
-      await docsRt.setup(server, {
+      _docsRt = await docsRt.setup(server, {
         // Autentica via cookie de sessão (mesmo do Express)
         authenticate(req) {
           const cookies = parseCookies(req);
@@ -11443,6 +11582,11 @@ function setupGracefulShutdown(server) {
       sseClients.clear();
       if (closed) console.log(`[shutdown] ${closed} SSE clients encerrados`);
     } catch (e) { console.error('[shutdown] SSE:', e.message); }
+
+    // 1b) Salva o estado dos documentos abertos (colaboração em tempo real).
+    //     Sem isso um deploy perde até 30s de edição e docs novos voltam vazios.
+    try { if (_docsRt && _docsRt.persistAll) { _docsRt.persistAll(); console.log('[shutdown] documentos salvos'); } }
+    catch (e) { console.error('[shutdown] docs:', e.message); }
 
     // 2) Para de aceitar novas conexões + espera as em voo terminarem
     await new Promise((resolve) => {

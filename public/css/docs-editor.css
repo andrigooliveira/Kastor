@@ -1,0 +1,685 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   reWork Docs — editor
+   Cabeçalho, barra de ferramentas, menus e painéis flutuantes do editor.
+   Mesma linguagem da plataforma: superfícies com borda fina, roxo só no que
+   está ativo, botões .btn, Geist na interface. A folha continua "papel"
+   (branca, fonte do documento) em qualquer tema.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.writer-editor-view { font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+
+/* ── Cabeçalho ─────────────────────────────────────────────────────── */
+.kd-editor-header {
+  flex-shrink: 0;
+  background: var(--chrome-bg, var(--surface));
+  border-bottom: 1px solid var(--hairline);
+  position: relative; z-index: 6;
+}
+:root[data-theme="light"] .kd-editor-header { background: var(--chrome-bg, var(--surface)); }
+.writer-editor-topbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px 6px 16px;
+}
+.kd-ed-back { margin-right: 2px; text-decoration: none; flex-shrink: 0; }
+.kd-ed-logo { display: inline-flex; flex-shrink: 0; }
+.kd-ed-logo img { width: 34px; height: 34px; display: block; }
+.kd-ed-titlebox { display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 1px; }
+.kd-ed-titlerow { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.writer-editor-topbar .writer-title-input {
+  flex: 0 1 auto; min-width: 80px; max-width: min(520px, 50vw);
+  font-family: inherit; font-size: 17px; font-weight: 600; letter-spacing: -0.015em;
+  color: var(--text);
+  padding: 2px 6px; margin-left: -6px;
+  border: 1px solid transparent; border-radius: var(--radius-sm);
+  background: transparent;
+  field-sizing: content;
+}
+.writer-editor-topbar .writer-title-input:hover { border-color: var(--hairline-strong); background: transparent; }
+.writer-editor-topbar .writer-title-input:focus { border-color: var(--accent); box-shadow: var(--shadow-focus); background: var(--surface); }
+.writer-topbar-status {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 0; margin: 0; background: none;
+  font-size: 12px; color: var(--text-muted); white-space: nowrap;
+}
+.writer-status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); }
+.writer-topbar-status.is-saving .writer-status-dot { background: #f59e0b; }
+.writer-topbar-status.is-saved .writer-status-dot { background: #22c55e; }
+.writer-topbar-status.is-error { color: var(--danger); }
+.writer-topbar-status.is-error .writer-status-dot { background: var(--danger); }
+
+/* Menus (Arquivo, Editar…) */
+.kd-menubar { display: flex; align-items: center; gap: 0; margin-left: -8px; padding: 0; background: none; border: 0; }
+.kd-menubar-item {
+  height: 26px; padding: 0 8px;
+  border: 0; border-radius: var(--radius-sm); background: transparent;
+  font-family: inherit; font-size: 13px; font-weight: 500; color: var(--text-dim);
+  cursor: pointer;
+}
+.kd-menubar-item:hover, .kd-menubar-item.is-open { background: var(--surface-2); color: var(--text); }
+.kd-menubar-item:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+
+/* Ações à direita */
+.writer-topbar-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-shrink: 0; }
+.writer-topbar-actions .kd-ed-icon { width: 36px; height: 36px; padding: 0; justify-content: center; position: relative; }
+.writer-topbar-actions .kd-topbar-share-btn { height: 36px; padding: 0 14px; gap: 7px; width: auto !important; }
+.writer-topbar-actions .kd-topbar-share-btn span { font-size: 13px; font-weight: 600; }
+.kd-topbar-comments-badge {
+  position: absolute; top: 3px; right: 3px;
+  min-width: 15px; height: 15px; padding: 0 4px; border-radius: 999px;
+  background: var(--accent); color: #fff; font-size: 9.5px; font-weight: 700; line-height: 15px;
+}
+.kd-presence-stack { margin-right: 6px; padding-left: 6px; }
+
+/* ── Barra de ferramentas ──────────────────────────────────────────── */
+.writer-editor-toolbar {
+  display: flex; align-items: center; gap: 2px;
+  margin: 0 12px 8px; padding: 4px 6px;
+  min-height: 40px;
+  background: var(--surface-2);
+  border: 0; border-radius: 10px;
+  position: static;
+  flex-wrap: wrap;
+}
+.kd-tb-group { display: flex; align-items: center; gap: 1px; }
+.kd-tb-sep { width: 1px; height: 20px; background: var(--hairline-strong); margin: 0 5px; flex-shrink: 0; }
+.kd-tb-spacer { flex: 1; }
+.kd-tb-btn, .kd-tb-drop {
+  height: 30px; min-width: 30px; padding: 0 6px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  border: 0; border-radius: var(--radius-sm); background: transparent;
+  color: var(--text-dim); font-family: inherit; font-size: 13px; font-weight: 500;
+  cursor: pointer; position: relative;
+  transition: background .12s var(--ease-out), color .12s var(--ease-out);
+}
+.kd-tb-btn svg { width: 16px; height: 16px; flex-shrink: 0; }
+.kd-tb-btn:hover:not(:disabled), .kd-tb-drop:hover, .kd-tb-btn.is-open, .kd-tb-drop.is-open { background: color-mix(in oklab, var(--text) 8%, transparent); color: var(--text); }
+.kd-tb-btn.is-active { background: var(--accent-dim); color: var(--accent-text); }
+.kd-tb-btn:disabled { opacity: .35; cursor: default; }
+.kd-tb-btn:focus-visible, .kd-tb-drop:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+.kd-tb-btn[data-cmd="moreText"] { min-width: 18px; padding: 0 2px; }
+.kd-tb-btn--caret { padding: 0 3px 0 6px; gap: 1px; }
+.kd-tb-btn--caret > span { display: inline-flex; }
+.kd-tb-drop { justify-content: space-between; padding: 0 6px 0 9px; color: var(--text); }
+.kd-tb-drop span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.kd-tb-drop svg { color: var(--text-muted); flex-shrink: 0; }
+.kd-tb-drop--style { width: 124px; }
+.kd-tb-drop--font { width: 118px; }
+.kd-tb-color { flex-direction: column; gap: 0; padding-top: 3px; }
+.kd-tb-color svg { width: 15px; height: 15px; }
+.kd-tb-colorbar { width: 16px; height: 3px; border-radius: 2px; margin-top: 1px; box-shadow: inset 0 0 0 1px var(--hairline-strong); }
+.kd-tb-size { display: inline-flex; align-items: center; margin: 0 2px; }
+.kd-tb-size-btn {
+  width: 24px; height: 30px; border: 0; background: transparent; border-radius: var(--radius-sm);
+  font-size: 16px; line-height: 1; color: var(--text-dim); cursor: pointer;
+}
+.kd-tb-size-btn:hover { background: color-mix(in oklab, var(--text) 8%, transparent); color: var(--text); }
+.kd-tb-size-input {
+  width: 36px; height: 26px; text-align: center;
+  border: 1px solid var(--hairline-strong); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--text);
+  font-family: inherit; font-size: 13px; font-variant-numeric: tabular-nums;
+}
+.kd-tb-size-input:focus { outline: none; border-color: var(--accent); box-shadow: var(--shadow-focus); }
+
+/* ── Menus flutuantes (barra, menus do topo, alça do bloco) ─────────── */
+.kd-pop {
+  position: fixed; z-index: 10050;
+  min-width: 200px; max-width: 320px; max-height: min(70vh, 560px); overflow-y: auto;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 16px 40px -12px rgba(0, 0, 0, .28), 0 2px 6px rgba(0, 0, 0, .06);
+  font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  animation: kdPopIn .12s var(--ease-out);
+}
+@keyframes kdPopIn { from { opacity: 0; transform: translateY(-3px); } }
+@media (prefers-reduced-motion: reduce) { .kd-pop { animation: none; } }
+.kd-pop--menubar { min-width: 260px; }
+.kd-pop--fonts { max-height: 380px; }
+.kd-pop-item {
+  width: 100%; min-height: 32px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 5px 10px;
+  border: 0; border-radius: var(--radius-sm); background: transparent;
+  font-family: inherit; font-size: 13px; color: var(--text); text-align: left;
+  cursor: pointer;
+}
+.kd-pop-item:hover:not(:disabled), .kd-pop-item:focus-visible, .kd-pop-item.is-open { background: var(--surface-2); outline: none; }
+.kd-pop-item:disabled { opacity: .4; cursor: default; }
+.kd-pop-item.is-danger { color: var(--danger); }
+.kd-pop-item.is-danger .kd-pop-icon { color: var(--danger); }
+.kd-pop-check { width: 14px; display: inline-flex; color: var(--accent-text); flex-shrink: 0; }
+.kd-pop-icon { width: 16px; display: inline-flex; justify-content: center; color: var(--text-muted); flex-shrink: 0; }
+.kd-pop-icon svg { width: 16px; height: 16px; }
+.kd-pop-h { font-size: 11px; font-weight: 700; color: var(--text-muted); }
+.kd-pop-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kd-pop-kbd { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.kd-pop-sub { display: inline-flex; color: var(--text-muted); }
+.kd-pop-sep { height: 1px; background: var(--hairline); margin: 4px 6px; }
+.kd-pop-head { padding: 8px 10px 4px; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); }
+.kd-pop--styles .kd-pop-item { min-height: 36px; }
+.kd-pop--grid { min-width: 0; padding: 10px; }
+
+/* Grade de tamanho da tabela */
+.kd-grid-picker { display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.kd-grid-cells { display: grid; grid-template-columns: repeat(8, 18px); gap: 3px; }
+.kd-grid-cells span {
+  width: 18px; height: 18px; border-radius: 3px; cursor: pointer;
+  border: 1px solid var(--hairline-strong); background: var(--surface);
+}
+.kd-grid-cells span.is-on { background: var(--accent-dim); border-color: var(--accent); }
+.kd-grid-label { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+/* ── Menu da seleção ─────────────────────────────────────────────── */
+.kd-bubble, .kd-tablebar {
+  position: fixed; z-index: 10040;
+  display: flex; align-items: center; gap: 1px;
+  padding: 3px;
+  background: var(--surface);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 28px -10px rgba(0, 0, 0, .28), 0 1px 3px rgba(0, 0, 0, .06);
+  font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+.kd-bubble[hidden], .kd-tablebar[hidden], .kd-linkpop[hidden], .kd-handle[hidden], .kd-find[hidden] { display: none !important; }
+.kd-bubble button, .kd-tablebar button {
+  height: 30px; min-width: 30px; padding: 0 6px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  border: 0; border-radius: var(--radius-sm); background: transparent;
+  color: var(--text-dim); font-family: inherit; font-size: 12.5px; font-weight: 500;
+  cursor: pointer;
+}
+.kd-bubble button:hover, .kd-tablebar button:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+.kd-bubble button.is-active { background: var(--accent-dim); color: var(--accent-text); }
+.kd-tablebar button:disabled { opacity: .35; cursor: default; }
+.kd-bubble svg, .kd-tablebar svg { width: 16px; height: 16px; }
+.kd-bubble-drop { color: var(--text) !important; padding: 0 4px 0 8px !important; }
+.kd-bubble-drop svg { width: 12px; height: 12px; color: var(--text-muted); }
+.kd-bubble-sep { width: 1px; height: 18px; background: var(--hairline-strong); margin: 0 3px; }
+.kd-bubble-text { color: var(--text) !important; }
+.kd-bubble.is-comment-only > :not([data-b="comment"]) { display: none; }
+
+/* ── Painel de link ──────────────────────────────────────────────── */
+.kd-linkpop {
+  position: fixed; z-index: 10040;
+  display: flex; align-items: center; gap: 8px;
+  max-width: 420px; padding: 6px 6px 6px 10px;
+  background: var(--surface);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 28px -10px rgba(0, 0, 0, .28);
+  font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+.kd-linkpop-icon { display: inline-flex; color: var(--text-muted); }
+.kd-linkpop-icon svg { width: 14px; height: 14px; }
+.kd-linkpop-url { flex: 1; min-width: 0; font-size: 13px; color: var(--accent-text); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kd-linkpop-url:hover { text-decoration: underline; }
+.kd-linkpop-actions { display: flex; gap: 1px; border-left: 1px solid var(--hairline); padding-left: 4px; }
+.kd-linkpop-actions button {
+  width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center;
+  border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-dim); cursor: pointer;
+}
+.kd-linkpop-actions button:hover { background: var(--surface-2); color: var(--text); }
+.kd-linkpop-actions svg { width: 15px; height: 15px; }
+.kd-linkform { display: flex; align-items: center; gap: 6px; }
+.kd-linkform-input {
+  width: 230px; height: 32px; padding: 0 10px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--text);
+  font-family: inherit; font-size: 13px;
+}
+.kd-linkform-input[name="text"] { width: 150px; }
+.kd-linkform-input:focus { outline: none; border-color: var(--accent); box-shadow: var(--shadow-focus); }
+.kd-linkform .btn { height: 32px; }
+
+/* ── Alça dos blocos ─────────────────────────────────────────────── */
+.kd-handle { position: fixed; z-index: 30; display: flex; gap: 1px; }
+.kd-handle-btn {
+  width: 22px; height: 24px; display: inline-flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 5px; background: transparent;
+  color: #9aa0a6; cursor: pointer;
+}
+.kd-handle-btn svg { width: 16px; height: 16px; }
+.kd-handle-btn:hover { background: rgba(0, 0, 0, .06); color: #3c4043; }
+:root:not([data-theme="light"]) .kd-handle-btn { color: #80868b; }
+:root:not([data-theme="light"]) .kd-handle-btn:hover { background: rgba(255, 255, 255, .08); color: #e8eaed; }
+.kd-handle-grip { cursor: grab; }
+.kd-handle-grip:active { cursor: grabbing; }
+/* Linha de destino ao arrastar (dropcursor do ProseMirror) */
+.ProseMirror-dropcursor, .prosemirror-dropcursor-block { background: var(--accent) !important; height: 2px !important; }
+
+/* ── Régua ───────────────────────────────────────────────────────
+   Mesma largura da folha. Margens sombreadas, área do texto clara,
+   números em cm a partir da margem e marcadores roxos. */
+.kd-ruler-bar {
+  display: flex; justify-content: center; flex-shrink: 0;
+  padding: 8px var(--kd-sbw, 0px) 6px 0;
+  background: transparent;
+}
+:root[data-theme="light"] .writer-editor-center { background: #f1f3f6; }
+.writer-editor-center { background: color-mix(in oklab, #0a0a0a 60%, var(--bg)); }
+.kd-ruler {
+  position: relative; flex-shrink: 0;
+  width: 210mm; height: 22px;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .06), 0 1px 2px rgba(0, 0, 0, .05);
+  color: #6b7076;
+  user-select: none; -webkit-user-select: none;
+}
+:root:not([data-theme="light"]) .kd-ruler { background: #2a2a31; color: #9aa0a6; box-shadow: 0 0 0 1px rgba(255, 255, 255, .06); }
+.kd-ruler-margin {
+  position: absolute; top: 0; bottom: 0; width: 25.4mm;
+  background: #eceef1; pointer-events: none;
+}
+:root:not([data-theme="light"]) .kd-ruler-margin { background: #212127; }
+.kd-ruler-margin.is-l { left: 0; border-radius: 6px 0 0 6px; box-shadow: inset -1px 0 0 rgba(0, 0, 0, .06); }
+.kd-ruler-margin.is-r { right: 0; border-radius: 0 6px 6px 0; box-shadow: inset 1px 0 0 rgba(0, 0, 0, .06); }
+.kd-ruler-scale { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.kd-ruler-scale line { stroke: currentColor; stroke-width: 1; opacity: .7; shape-rendering: crispEdges; }
+.kd-ruler-scale text { fill: currentColor; font: 500 10px 'Geist', sans-serif; font-variant-numeric: tabular-nums; }
+.kd-ruler-marker {
+  position: absolute; z-index: 2;
+  width: 17px; height: 13px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  transform: translateX(-50%);
+  border: 0; background: none; cursor: ew-resize;
+  color: var(--accent);
+  touch-action: none;
+}
+.kd-ruler-marker[hidden] { display: none; }
+.kd-ruler-marker svg { fill: currentColor; filter: drop-shadow(0 1px 1px rgba(40, 0, 90, .25)); transition: transform .12s var(--ease-out); }
+.kd-ruler-marker.is-first { top: -6px; }
+.kd-ruler-marker.is-left, .kd-ruler-marker.is-right { bottom: -6px; }
+.kd-ruler-marker:hover svg, .kd-ruler-marker.is-dragging svg { transform: scale(1.18); }
+.kd-ruler-marker.is-first:hover svg, .kd-ruler-marker.is-first.is-dragging svg { transform-origin: 50% 0; }
+.kd-ruler-marker.is-left:hover svg, .kd-ruler-marker.is-right:hover svg { transform-origin: 50% 100%; }
+.kd-ruler-marker:focus-visible { outline: none; }
+.kd-ruler.is-disabled .kd-ruler-marker { opacity: .35; pointer-events: none; }
+.writer-editor-view:not([data-role="owner"]):not([data-role="editor"]) .kd-ruler-marker { display: none; }
+.kd-ruler-tooltip {
+  position: absolute; bottom: calc(100% + 8px); z-index: 3;
+  transform: translateX(-50%);
+  padding: 4px 8px; border-radius: 6px;
+  background: #1f1f24; color: #fff;
+  font: 600 11.5px 'Geist', sans-serif; white-space: nowrap;
+  pointer-events: none; opacity: 0; transition: opacity .12s;
+}
+:root:not([data-theme="light"]) .kd-ruler-tooltip { background: #f4f4f6; color: #111; }
+.kd-ruler.is-dragging .kd-ruler-tooltip { opacity: 1; }
+.kd-ruler-bar { position: relative; z-index: 3; }
+.kd-ruler-guide {
+  position: absolute; top: 36px; bottom: 0; z-index: 25; width: 0;
+  border-left: 1px dashed var(--accent);
+  pointer-events: none;
+}
+
+/* ── Buscar e substituir ─────────────────────────────────────────── */
+.writer-editor-center { position: relative; }
+.kd-find {
+  position: absolute; top: 10px; right: 18px; z-index: 20;
+  display: flex; flex-direction: column; gap: 6px;
+  width: 440px; max-width: calc(100% - 32px);
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-md);
+  box-shadow: 0 16px 40px -12px rgba(0, 0, 0, .3);
+  font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+.kd-find-row { display: flex; align-items: center; gap: 4px; }
+.kd-find-row[hidden] { display: none; }
+.kd-find-icon { width: 24px; display: inline-flex; justify-content: center; color: var(--text-muted); flex-shrink: 0; }
+.kd-find-icon svg { width: 15px; height: 15px; }
+.kd-find-input {
+  flex: 1; min-width: 0; height: 32px; padding: 0 8px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--text); font-family: inherit; font-size: 13px;
+}
+.kd-find-input:focus { outline: none; border-color: var(--accent); box-shadow: var(--shadow-focus); }
+.kd-find-count { font-size: 12px; color: var(--text-muted); white-space: nowrap; padding: 0 4px; font-variant-numeric: tabular-nums; }
+.kd-find-count.is-empty { color: var(--danger); }
+.kd-find-btn {
+  width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
+  border: 0; border-radius: var(--radius-sm); background: transparent;
+  color: var(--text-dim); font-family: inherit; font-size: 12px; font-weight: 700; cursor: pointer; flex-shrink: 0;
+}
+.kd-find-btn:hover { background: var(--surface-2); color: var(--text); }
+.kd-find-btn.is-on { background: var(--accent-dim); color: var(--accent-text); }
+.kd-find-btn svg { width: 15px; height: 15px; }
+.kd-find .btn-sm { height: 30px; padding: 0 10px; font-size: 12px; }
+#writer-editor-mount .kd-find-hit { background: rgba(250, 204, 21, .45); border-radius: 2px; }
+#writer-editor-mount .kd-find-hit.is-current { background: #f59e0b; color: #111 !important; box-shadow: 0 0 0 1px #f59e0b; }
+
+/* ── Área do documento ───────────────────────────────────────────── */
+:root[data-theme="light"] .writer-editor-scroll { background: #f1f3f6; }
+.writer-editor-scroll { padding-top: 24px; }
+/* Folhas: uma div por página (criadas na paginação). Até elas existirem,
+   o gradiente antigo segura o visual, mas sem o filter caro. */
+.writer-editor-paper { filter: none !important; }
+.writer-editor-paper.has-sheets { background: transparent !important; }
+.kd-page-sheet {
+  position: absolute; left: 0; right: 0; z-index: 0;
+  background: #fff; border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .05), 0 1px 3px rgba(0, 0, 0, .08), 0 6px 18px -8px rgba(0, 0, 0, .14);
+  pointer-events: none;
+}
+.writer-editor-paper #writer-editor-mount { position: relative; z-index: 1; }
+.writer-editor-view.is-pageless .kd-page-sheet { display: none; }
+/* Tipografia da folha: cores de papel em qualquer tema */
+.writer-editor-paper #writer-editor-mount .ProseMirror h1,
+.writer-editor-paper #writer-editor-mount .ProseMirror h2,
+.writer-editor-paper #writer-editor-mount .ProseMirror h3,
+.writer-editor-paper #writer-editor-mount .ProseMirror h4 { color: #1f1f1f; }
+#writer-editor-mount .ProseMirror h4 { font-size: 12pt; font-weight: 700; line-height: 1.35; margin: 14pt 0 4pt; }
+.writer-editor-paper #writer-editor-mount .ProseMirror a { color: #1a56db; text-decoration-color: rgba(26, 86, 219, .45); }
+.writer-editor-paper #writer-editor-mount .ProseMirror blockquote { color: #444; }
+.writer-editor-paper #writer-editor-mount .ProseMirror hr { background: #dadce0; }
+.writer-editor-paper #writer-editor-mount .ProseMirror table td,
+.writer-editor-paper #writer-editor-mount .ProseMirror table th { border-color: #c9ccd1; }
+.writer-editor-paper #writer-editor-mount .ProseMirror table th { background: #f1f3f4; }
+.writer-editor-paper #writer-editor-mount .ProseMirror code { background: #f1f3f4; color: #c7254e; }
+.writer-editor-paper #writer-editor-mount .ProseMirror sub,
+.writer-editor-paper #writer-editor-mount .ProseMirror sup { font-size: .72em; line-height: 0; }
+/* Placeholder por linha ("Digite / para comandos", "Título 2"…) */
+#writer-editor-mount .ProseMirror .is-empty::before {
+  content: attr(data-placeholder);
+  float: left; height: 0; pointer-events: none;
+  color: #9aa0a6;
+}
+#writer-editor-mount .ProseMirror p.is-editor-empty:first-child::before { color: #9aa0a6; opacity: 1; }
+/* Quebra de página */
+.kd-page-break {
+  position: relative; height: 22px; margin: 6px 0;
+  display: flex; align-items: center; justify-content: center;
+  cursor: default;
+}
+.kd-page-break::before { content: ''; position: absolute; left: 0; right: 0; top: 50%; border-top: 1px dashed #c4c7cc; }
+.kd-page-break::after {
+  content: 'Quebra de página'; position: relative;
+  padding: 0 10px; background: #fff;
+  font: 600 10px/1 'Geist', sans-serif; letter-spacing: .06em; text-transform: uppercase; color: #9aa0a6;
+}
+.kd-page-break.ProseMirror-selectednode::before { border-top-color: var(--accent); }
+@media print { .kd-page-break { break-after: page; height: 0; margin: 0; } .kd-page-break::before, .kd-page-break::after { display: none; } }
+
+/* ── Referências da plataforma (#) ──────────────────────────────── */
+.kd-ref {
+  display: inline-flex; align-items: center; gap: 5px; vertical-align: baseline;
+  max-width: 100%;
+  padding: 0 7px 0 6px; margin: 0 1px;
+  border-radius: 6px;
+  background: #f1f0fb; border: 1px solid #e2def8;
+  color: #2b2a33 !important; font-size: .9em; font-weight: 500; line-height: 1.35;
+  cursor: pointer; user-select: none;
+  text-decoration: none; text-indent: 0;
+  transition: border-color .12s, background .12s;
+}
+.kd-ref:hover { background: #ebe8fb; border-color: #cfc7f5; }
+.kd-ref.ProseMirror-selectednode { outline: 2px solid var(--accent); outline-offset: 1px; }
+.kd-ref-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.kd-ref-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 34ch; }
+.kd-ref-status {
+  font-size: .82em; font-weight: 600; color: #5f6368;
+  padding-left: 6px; border-left: 1px solid #d9d6ee; white-space: nowrap;
+}
+.kd-ref.is-done .kd-ref-label { text-decoration: line-through; color: #6b7280; }
+.kd-ref.is-missing { background: #f3f4f6; border-color: #e5e7eb; color: #9ca3af !important; cursor: default; }
+.kd-ref--client { background: #eef7fd; border-color: #d5ebf8; }
+.kd-ref--project { background: #eefaf2; border-color: #d3f0dd; }
+
+/* ── Sugestões (/ comandos, @ pessoas, # referências) ─────────────── */
+.kd-suggest {
+  position: fixed; z-index: 10060;
+  width: 320px; max-height: 360px; overflow-y: auto;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 16px 40px -12px rgba(0, 0, 0, .3);
+  font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+.kd-suggest[hidden] { display: none; }
+.kd-suggest--people { width: 280px; }
+.kd-suggest--refs { width: 380px; }
+.kd-suggest--refs .kd-suggest-meta { max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+.kd-suggest-group { padding: 8px 10px 4px; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); }
+.kd-suggest-item {
+  width: 100%; display: flex; align-items: center; gap: 10px;
+  padding: 6px 8px; border: 0; border-radius: var(--radius-sm); background: transparent;
+  font-family: inherit; text-align: left; color: var(--text); cursor: pointer;
+}
+.kd-suggest-item.is-selected { background: var(--surface-2); }
+.kd-suggest-icon {
+  width: 34px; height: 34px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--hairline-strong); border-radius: 8px; background: var(--surface);
+  color: var(--text-dim);
+}
+.kd-suggest-item.is-selected .kd-suggest-icon { border-color: color-mix(in oklab, var(--accent) 40%, var(--hairline-strong)); color: var(--accent-text); }
+.kd-slash-h { font-size: 12px; font-weight: 800; letter-spacing: -.02em; }
+.kd-suggest-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.kd-suggest-title { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kd-suggest-sub { font-size: 11.5px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kd-suggest-meta { font-size: 11px; color: var(--text-muted); white-space: nowrap; flex-shrink: 0; }
+.kd-suggest-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin: 0 4px; }
+.kd-suggest-avatar {
+  width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0; object-fit: cover;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 11px; font-weight: 700;
+}
+.kd-suggest-empty { padding: 14px 12px; font-size: 13px; color: var(--text-muted); }
+
+/* ── Formato "Sem páginas" (padrão): um bloco contínuo de texto ────────
+   Mesma largura e margens laterais da folha A4, então a régua vale igual. */
+.writer-editor-view.is-pageless .writer-editor-paper {
+  width: 210mm;
+  align-self: flex-start; height: auto;
+  min-height: calc(100vh - 220px) !important;
+  padding: 25.4mm 25.4mm 120px;
+  background: #fff !important;
+  filter: none;
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .05), 0 1px 3px rgba(0, 0, 0, .06), 0 10px 30px -18px rgba(0, 0, 0, .25);
+}
+.writer-editor-view.is-pageless .writer-editor-paper.has-sheets { background: #fff !important; }
+.writer-editor-view.is-pageless .kd-page-sheet,
+.writer-editor-view.is-pageless .kd-page-label,
+.writer-editor-view.is-pageless .kd-page-gap { display: none !important; }
+.writer-editor-view.is-pageless #writer-editor-mount .ProseMirror { min-height: 50vh; }
+.writer-editor-view.no-ruler .kd-ruler-bar { display: none; }
+.writer-editor-view.no-outline .kd-outline-panel { display: none; }
+@media (max-width: 900px) {
+  .writer-editor-view.is-pageless .writer-editor-paper { width: 100%; padding: 28px 20px 80px; border-radius: 0; }
+}
+
+/* ── Diálogos (contagem de palavras, atalhos) ───────────────────── */
+.kd-dialog-backdrop {
+  position: fixed; inset: 0; z-index: 10070;
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+  background: rgba(10, 10, 20, .45);
+}
+.kd-dialog {
+  width: 100%; max-width: 560px; max-height: 86vh; overflow: auto;
+  background: var(--surface); border: 1px solid var(--hairline-strong); border-radius: var(--radius-lg);
+  box-shadow: 0 32px 80px -20px rgba(0, 0, 0, .45);
+  font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  animation: kdPopIn .15s var(--ease-out);
+}
+.kd-dialog-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 16px 8px 20px; }
+.kd-dialog-title { font-size: 16px; font-weight: 700; letter-spacing: -.01em; }
+.kd-dialog-body { padding: 4px 20px 20px; }
+.kd-wc { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.kd-wc th { text-align: right; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); padding: 6px 0; }
+.kd-wc td { padding: 9px 0; border-top: 1px solid var(--hairline); }
+.kd-wc td:not(:first-child) { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; padding-left: 24px; }
+.kd-keys { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 28px; }
+.kd-keys h4 { margin: 12px 0 6px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); }
+.kd-keys-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 0; font-size: 13px; border-bottom: 1px solid var(--hairline); }
+.kd-keys-row kbd {
+  font-family: inherit; font-size: 11.5px; font-weight: 600; color: var(--text-dim); white-space: nowrap;
+  padding: 2px 6px; border-radius: 5px; background: var(--surface-2); box-shadow: inset 0 -1px 0 var(--hairline-strong);
+}
+@media (max-width: 640px) { .kd-keys { grid-template-columns: 1fr; } }
+
+/* ── Telas menores ───────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .writer-editor-topbar { padding: 8px 10px 4px; gap: 8px; }
+  .kd-ed-logo { display: none; }
+  .writer-topbar-actions .kd-topbar-share-btn span { display: none; }
+  .writer-topbar-actions .kd-topbar-share-btn { width: 36px !important; padding: 0; justify-content: center; }
+  .kd-menubar { overflow-x: auto; scrollbar-width: none; }
+  .writer-editor-toolbar { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 8px 6px; }
+  .kd-tb-spacer { display: none; }
+  .kd-handle { display: none !important; }
+}
+
+/* ── Seletor de cliente/projeto ─────────────────────────────────── */
+.kd-picker { width: 340px; max-width: calc(100vw - 16px); display: flex; flex-direction: column; overflow: hidden; }
+.kd-picker-search {
+  display: flex; align-items: center; gap: 8px;
+  margin: 2px 2px 4px; padding: 0 10px; height: 34px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-muted);
+}
+.kd-picker-search:focus-within { border-color: var(--accent); box-shadow: var(--shadow-focus); }
+.kd-picker-search svg { width: 14px; height: 14px; flex-shrink: 0; }
+.kd-picker-search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: var(--text); font-family: inherit; font-size: 13px; }
+.kd-picker-list { overflow-y: auto; max-height: 300px; }
+.kd-picker-group { padding: 8px 10px 4px; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); }
+.kd-picker .kd-pop-item.is-active { background: var(--surface-2); }
+.kd-picker .kd-pop-item.is-checked .kd-pop-label { color: var(--accent-text); font-weight: 600; }
+.kd-picker .kd-pop-kbd { max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── Vínculo com cliente/projeto e selo de aprovação (cabeçalho) ───── */
+.kd-doc-link, .kd-tpl-for-btn, .kd-dform-pick {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 320px;
+  height: 24px; padding: 0 9px;
+  border: 1px solid var(--hairline-strong); border-radius: var(--radius-pill);
+  background: var(--surface); color: var(--text);
+  font-family: inherit; font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden;
+  cursor: pointer;
+  transition: border-color .12s var(--ease-out), background .12s var(--ease-out);
+}
+.kd-doc-link:hover:not(:disabled), .kd-tpl-for-btn:hover, .kd-dform-pick:hover, .kd-doc-link.is-open, .kd-tpl-for-btn.is-open { border-color: color-mix(in oklab, var(--accent) 45%, var(--hairline-strong)); }
+.kd-doc-link:disabled { cursor: default; }
+.kd-doc-link.is-empty { border-style: dashed; color: var(--text-muted); }
+.kd-doc-link.is-empty:hover { color: var(--accent-text); }
+.kd-doc-link[hidden], .kd-approval-badge[hidden] { display: none; }
+.kd-doc-link .kd-suggest-dot, .kd-tpl-for-btn .kd-suggest-dot, .kd-dform-pick .kd-suggest-dot { margin: 0; width: 7px; height: 7px; }
+.kd-tpl-for-sep { color: var(--text-muted); margin: 0 1px; }
+.kd-tpl-for-empty { color: var(--text-muted); }
+.kd-approval-badge {
+  height: 22px; padding: 0 9px; border: 0; border-radius: var(--radius-pill);
+  font-family: inherit; font-size: 11.5px; font-weight: 600; white-space: nowrap; cursor: pointer;
+}
+.kd-approval-badge.is-pending { color: #b45309; background: color-mix(in oklab, #f59e0b 18%, transparent); }
+.kd-approval-badge.is-approved { color: #15803d; background: color-mix(in oklab, #22c55e 18%, transparent); }
+.kd-approval-badge.is-changes { color: var(--danger); background: var(--danger-dim); }
+:root:not([data-theme="light"]) .kd-approval-badge.is-pending { color: #fbbf24; }
+:root:not([data-theme="light"]) .kd-approval-badge.is-approved { color: #4ade80; }
+.kd-pop--approval { width: 300px; }
+.kd-approval-card { padding: 10px 10px 6px; display: flex; flex-direction: column; gap: 4px; }
+.kd-approval-card-status { font-size: 13.5px; font-weight: 700; }
+.kd-approval-card-status.is-pending { color: #b45309; }
+.kd-approval-card-status.is-approved { color: #15803d; }
+.kd-approval-card-status.is-changes { color: var(--danger); }
+.kd-approval-card-sub { font-size: 12px; color: var(--text-muted); line-height: 1.45; }
+.kd-approval-card-comment {
+  margin-top: 6px; padding: 8px 10px; border-radius: var(--radius-sm);
+  background: var(--surface-2); font-size: 12.5px; line-height: 1.5; white-space: pre-wrap;
+}
+
+/* Modal de modelos: "Para <cliente>" */
+.kd-modal-overlay .kd-modal-head { gap: 12px; align-self: stretch; width: 100%; box-sizing: border-box; }
+.kd-tpl-for { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; margin-right: 8px; font-size: 12.5px; color: var(--text-muted); }
+.kd-tpl-for-btn { height: 30px; padding: 0 10px 0 11px; font-size: 13px; }
+.kd-tpl-for-btn svg { color: var(--text-muted); flex-shrink: 0; }
+
+/* Compartilhar: aprovação */
+.kd-share-approval {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 14px 0; border-top: 1px solid var(--hairline);
+}
+.kd-share-approval .kd-share-restricted-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.kd-share-approval-by { font-size: 12px; font-weight: 400; color: var(--text-muted); }
+.kd-share-approval .kd-approval-badge { cursor: default; }
+.kd-share-approval .btn { flex-shrink: 0; }
+
+/* ── Formulários dos diálogos (criar demanda, aprovação) ─────────── */
+.kd-dform { display: flex; flex-direction: column; gap: 14px; }
+.kd-dform-row { display: flex; gap: 12px; align-items: flex-end; }
+.kd-dform-field { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
+.kd-dform-field--sm { flex: 0 0 160px; }
+.kd-dform-field > span, .kd-dform-preview > span { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); }
+.kd-dform input[type="text"], .kd-dform input:not([type]), .kd-dform input[type="date"], .kd-dform textarea {
+  width: 100%; box-sizing: border-box; padding: 9px 11px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--text); font-family: inherit; font-size: 13.5px;
+}
+.kd-dform textarea { resize: vertical; min-height: 90px; line-height: 1.5; }
+.kd-dform input:focus, .kd-dform textarea:focus { outline: none; border-color: var(--accent); box-shadow: var(--shadow-focus); }
+.kd-dform-pick { height: 38px; max-width: 100%; border-radius: var(--radius-sm); padding: 0 11px; font-size: 13.5px; justify-content: flex-start; }
+.kd-dform-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; }
+.kd-dform-check input { accent-color: var(--accent); width: 15px; height: 15px; }
+.kd-dform-preview { display: flex; flex-direction: column; gap: 6px; }
+.kd-dform-preview-body {
+  max-height: 160px; overflow: auto; padding: 10px 12px;
+  border: 1px solid var(--hairline); border-radius: var(--radius-sm); background: var(--surface-2);
+  font-size: 12.5px; line-height: 1.5; color: var(--text-dim);
+}
+.kd-dform-preview-body > :first-child { margin-top: 0; }
+.kd-dform-preview-body h1, .kd-dform-preview-body h2, .kd-dform-preview-body h3 { font-size: 13px; margin: 8px 0 4px; }
+.kd-dform-preview-body p { margin: 0 0 6px; }
+.kd-dform-preview-body ul, .kd-dform-preview-body ol { margin: 0 0 6px; padding-left: 18px; }
+.kd-dform-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; }
+@media (max-width: 560px) { .kd-dform-row { flex-direction: column; align-items: stretch; } .kd-dform-field--sm { flex: 1; } }
+
+/* ── Link público: barra de aprovação do cliente ─────────────────── */
+.kd-app.is-public .kd-ed-back, .kd-app.is-public #kd-menubar, .kd-app.is-public #writer-editor-toolbar,
+.kd-app.is-public .kd-ruler-marker, .kd-app.is-public .kd-ruler-bar { display: none !important; }
+.kd-pub-approval {
+  position: fixed; left: 50%; bottom: 20px; z-index: 50; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 24px;
+  width: min(720px, calc(100vw - 32px)); padding: 14px 14px 14px 20px;
+  background: var(--surface); border: 1px solid var(--hairline-strong); border-radius: var(--radius-lg);
+  box-shadow: 0 20px 50px -18px rgba(0, 0, 0, .35);
+  font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+.kd-pub-approval-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.kd-pub-approval-text strong { font-size: 14px; }
+.kd-pub-approval-text span { font-size: 12.5px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; }
+.kd-pub-approval-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.kd-pub-approval-actions .btn { height: 38px; padding: 0 16px; }
+.kd-pub-approval.is-approved { border-color: color-mix(in oklab, #22c55e 45%, var(--hairline)); }
+.kd-pub-approval.is-approved strong { color: #15803d; }
+.kd-pub-approval.is-changes strong { color: var(--danger); }
+@media (max-width: 600px) {
+  .kd-pub-approval { flex-direction: column; align-items: stretch; gap: 12px; bottom: 12px; }
+  .kd-pub-approval-actions .btn { flex: 1; justify-content: center; }
+}
+
+/* ── Tabelas: redimensionar colunas e linhas ─────────────────────── */
+#writer-editor-mount .ProseMirror .tableWrapper { overflow-x: auto; position: relative; }
+#writer-editor-mount .ProseMirror table td, #writer-editor-mount .ProseMirror table th { position: relative; }
+#writer-editor-mount .ProseMirror.resize-cursor, #writer-editor-mount .ProseMirror.resize-cursor * { cursor: col-resize !important; }
+#writer-editor-mount .ProseMirror .column-resize-handle {
+  position: absolute; top: -1px; bottom: -1px; right: -2px; width: 3px; z-index: 3;
+  background: var(--accent); pointer-events: none;
+}
+#writer-editor-mount .ProseMirror.kd-row-resize, #writer-editor-mount .ProseMirror.kd-row-resize * { cursor: row-resize !important; }
+body.kd-row-resizing, body.kd-row-resizing * { cursor: row-resize !important; user-select: none !important; }
+.kd-row-guide { position: fixed; z-index: 30; height: 3px; background: var(--accent); pointer-events: none; border-radius: 2px; }
+.kd-row-guide[hidden] { display: none; }
+
+/* Espaço da quebra de página dentro de um parágrafo (paginação) */
+#writer-editor-mount .ProseMirror .kd-page-gap {
+  display: inline-block; width: 100%; vertical-align: top;
+  pointer-events: none; user-select: none;
+}
+
+/* Quebra de página manual: no modo páginas ela só termina a folha (como no
+   Word/Docs, sem marcador); no modo sem páginas vira a linha tracejada. */
+.writer-editor-view:not(.is-pageless) .kd-page-break { height: 0; margin: 0; overflow: hidden; }
+.writer-editor-view:not(.is-pageless) .kd-page-break::before,
+.writer-editor-view:not(.is-pageless) .kd-page-break::after { display: none; }

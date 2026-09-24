@@ -6,9 +6,10 @@
    Exponho tudo o que o app.js precisa no window.KastorWriter — assim
    evito misturar módulos ES6 com o app.js monolítico legado.
    ═════════════════════════════════════════════════════════════════ */
-import { Editor, Extension, Node, Mark, mergeAttributes } from '@tiptap/core';
-import { Plugin, PluginKey } from '@tiptap/pm/state';
+import { Editor, Extension, Node, Mark, mergeAttributes, generateJSON } from '@tiptap/core';
+import { Plugin, PluginKey, NodeSelection, TextSelection } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
+import { DOMSerializer, Fragment } from '@tiptap/pm/model';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -33,7 +34,7 @@ import Collaboration from '@tiptap/extension-collaboration';
 import CollaborationCaret from '@tiptap/extension-collaboration-caret';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
-import { prosemirrorJSONToYDoc } from 'y-prosemirror';
+import { prosemirrorJSONToYXmlFragment } from 'y-prosemirror';
 
 // Lowlight singleton com os langs "common" (js, ts, py, bash, css, html,
 // json, md, sql, xml, yaml, etc). Suficiente pra 95% dos casos e ~40KB.
@@ -45,60 +46,82 @@ const lowlight = createLowlight(common);
    `opts.onUpdate`  = callback(editor, json) chamado a cada change (debounce feito fora)
    `opts.onSelectionUpdate` = callback(editor) — usado pra sincronizar toolbar
    `opts.placeholder` = texto do placeholder no primeiro parágrafo vazio */
+/* Placeholder por bloco: título vazio mostra "Título N"; linha vazia com o
+   cursor mostra a dica do "/"; documento vazio mostra o texto de boas-vindas. */
+function _kdPlaceholder(base) {
+  return ({ editor, node }) => {
+    if (node.type.name === 'heading') return 'Título ' + (node.attrs.level || 1);
+    if (editor.isEmpty) return base || 'Comece a escrever…';
+    return 'Digite / para comandos';
+  };
+}
+
+/* Extensões do editor — a MESMA lista pro editor local, o colaborativo e o
+   schema do seed do Yjs (se divergir, o y-prosemirror descarta nós). */
+function kdExtensions(opts = {}) {
+  return [
+    StarterKit.configure({
+      heading: { levels: [1, 2, 3, 4] },
+      // Link/Underline configurados abaixo; codeBlock vira CodeBlockLowlight.
+      link: false,
+      underline: false,
+      codeBlock: false,
+      // Com colaboração o undo/redo é o do Yjs (os dois juntos conflitam).
+      ...(opts.collab ? { undoRedo: false } : {})
+    }),
+    Underline,
+    Link.configure({
+      openOnClick: false,
+      autolink: true,
+      HTMLAttributes: { rel: 'noopener noreferrer nofollow', target: '_blank' }
+    }),
+    Placeholder.configure({
+      placeholder: _kdPlaceholder(opts.placeholder),
+      emptyEditorClass: 'is-editor-empty',
+      emptyNodeClass: 'is-empty'
+    }),
+    Table.configure({ resizable: true, HTMLAttributes: { class: 'writer-table' } }),
+    KdTableRow, TableHeader, TableCell,
+    KdImage.configure({ HTMLAttributes: { class: 'writer-image' } }),
+    TextAlign.configure({ types: ['heading', 'paragraph'] }),
+    KastorAttachment,
+    KastorComment,
+    PasteAsLink,
+    TextStyle,
+    FontFamily,
+    FontSize,
+    Color,
+    Highlight.configure({ multicolor: true }),
+    KdBlockIndent,
+    KdLineHeight,
+    KdSubscript,
+    KdSuperscript,
+    KdPages,
+    KdPageBreak,
+    KdSearch,
+    TaskList.configure({ HTMLAttributes: { class: 'kd-task-list' } }),
+    TaskItem.configure({ nested: true, HTMLAttributes: { class: 'kd-task-item' } }),
+    CodeBlockLowlight.configure({ lowlight, HTMLAttributes: { class: 'kd-code-block' } }),
+    KdCallout,
+    KdColumn,
+    KdColumnBlock,
+    KdMention,
+    KdReference,
+    ...(opts.schemaOnly ? [] : [KdRefSuggest]),
+    KdSlashCommand
+  ];
+}
+
 function createKastorEditor(mount, opts = {}) {
   const editor = new Editor({
     element: mount,
     editable: opts.editable !== false,
     autofocus: opts.autofocus === true ? 'start' : (opts.autofocus || false),
     content: opts.content || null,
-    extensions: [
-      StarterKit.configure({
-        heading: { levels: [1, 2, 3] },
-        // StarterKit v3 já inclui Link e Underline — desabilitamos aqui e
-        // adicionamos nossas versões configuradas explicitamente abaixo,
-        // pra evitar "duplicate extension names".
-        link: false,
-        underline: false,
-        // codeBlock desabilitado — usamos CodeBlockLowlight (com syntax
-        // highlighting via lowlight) registrado abaixo.
-        codeBlock: false
-      }),
-      Underline,
-      Link.configure({
-        openOnClick: false,           // clicar não navega dentro do editor
-        HTMLAttributes: { rel: 'noopener noreferrer nofollow', target: '_blank' }
-      }),
-      Placeholder.configure({
-        placeholder: opts.placeholder || 'Comece a escrever…',
-        emptyEditorClass: 'is-editor-empty'
-      }),
-      Table.configure({ resizable: true, HTMLAttributes: { class: 'writer-table' } }),
-      TableRow, TableHeader, TableCell,
-      KdImage.configure({ HTMLAttributes: { class: 'writer-image' } }),
-      TextAlign.configure({ types: ['heading', 'paragraph'] }),
-      KastorAttachment,
-      KastorComment,
-      PasteAsLink,
-      TextStyle,
-      FontFamily,
-      FontSize,
-      Color,
-      Highlight.configure({ multicolor: true }),
-      KdBlockIndent,
-      KdPagination,
-      // ── Novos ──
-      TaskList.configure({ HTMLAttributes: { class: 'kd-task-list' } }),
-      TaskItem.configure({ nested: true, HTMLAttributes: { class: 'kd-task-item' } }),
-      CodeBlockLowlight.configure({ lowlight, HTMLAttributes: { class: 'kd-code-block' } }),
-      KdCallout,
-      KdColumn,
-      KdColumnBlock,
-      KdMention,
-      KdSlashCommand
-    ],
+    extensions: kdExtensions({ placeholder: opts.placeholder }),
     onUpdate: ({ editor }) => {
       if (typeof opts.onUpdate === 'function') {
-        try { opts.onUpdate(editor, editor.getJSON()); } catch (e) { console.error('writer onUpdate:', e); }
+        try { opts.onUpdate(editor); } catch (e) { console.error('writer onUpdate:', e); }
       }
     },
     onSelectionUpdate: ({ editor }) => {
@@ -173,11 +196,18 @@ function createCollabEditor(mount, opts) {
   // e temos initialJSON, seedamos aplicando um update construído do JSON.
   provider.once('synced', () => {
     if (!opts.initialJSON) return;
-    const isEmpty = ydoc.getXmlFragment('default').length === 0
-                 && ydoc.share.has('default') === false;
+    // Fragmento vazio depois do sync = o doc nunca foi aberto em tempo real
+    // (criado com conteúdo, cópia, import). O share 'default' sempre existe
+    // aqui porque a extensão Collaboration o cria antes — não dá pra usar.
+    const isEmpty = ydoc.getXmlFragment('default').length === 0;
     if (isEmpty) {
       try {
-        const seed = prosemirrorJSONToYDoc(_schemaFromExtensions(), opts.initialJSON);
+        // Semente determinística: mesmo clientID fixo → duas abas semeando ao
+        // mesmo tempo geram itens idênticos e o Yjs descarta a cópia (em vez
+        // de duplicar o documento).
+        const seed = new Y.Doc();
+        seed.clientID = 1;
+        prosemirrorJSONToYXmlFragment(_schemaFromExtensions(), opts.initialJSON, seed.getXmlFragment('default'));
         const upd = Y.encodeStateAsUpdate(seed);
         Y.applyUpdate(ydoc, upd);
       } catch (e) {
@@ -194,51 +224,7 @@ function createCollabEditor(mount, opts) {
     // fim, evitando que o browser scrolle o paper até o fim do conteúdo.
     autofocus: opts.autofocus === true ? 'start' : (opts.autofocus || false),
     extensions: [
-      StarterKit.configure({
-        heading: { levels: [1, 2, 3] },
-        // codeBlock desabilitado — usamos CodeBlockLowlight abaixo.
-        codeBlock: false,
-        // StarterKit v3 embute link e underline — desabilita pra usar as
-        // nossas versões configuradas (Link com target _blank, etc).
-        link: false,
-        underline: false,
-        // Collaboration traz o próprio histórico (Yjs undo/redo). Se deixar
-        // o undoRedo do StarterKit ativo, os dois conflitam e undo local
-        // some. Sempre desabilitar quando usar Collaboration.
-        undoRedo: false
-      }),
-      Underline,
-      Link.configure({
-        openOnClick: false,
-        HTMLAttributes: { rel: 'noopener noreferrer nofollow', target: '_blank' }
-      }),
-      Placeholder.configure({
-        placeholder: opts.placeholder || 'Comece a escrever…',
-        emptyEditorClass: 'is-editor-empty'
-      }),
-      Table.configure({ resizable: true, HTMLAttributes: { class: 'writer-table' } }),
-      TableRow, TableHeader, TableCell,
-      KdImage.configure({ HTMLAttributes: { class: 'writer-image' } }),
-      TextAlign.configure({ types: ['heading', 'paragraph'] }),
-      KastorAttachment,
-      KastorComment,
-      PasteAsLink,
-      TextStyle,
-      FontFamily,
-      FontSize,
-      Color,
-      Highlight.configure({ multicolor: true }),
-      KdBlockIndent,
-      KdPagination,
-      // ── Novos ──
-      TaskList.configure({ HTMLAttributes: { class: 'kd-task-list' } }),
-      TaskItem.configure({ nested: true, HTMLAttributes: { class: 'kd-task-item' } }),
-      CodeBlockLowlight.configure({ lowlight, HTMLAttributes: { class: 'kd-code-block' } }),
-      KdCallout,
-      KdColumn,
-      KdColumnBlock,
-      KdMention,
-      KdSlashCommand,
+      ...kdExtensions({ placeholder: opts.placeholder, collab: true }),
       // Colab: substitui o history pelo Yjs undo/redo
       Collaboration.configure({ document: ydoc }),
       CollaborationCaret.configure({
@@ -257,7 +243,7 @@ function createCollabEditor(mount, opts) {
     ],
     onUpdate: ({ editor }) => {
       if (typeof opts.onUpdate === 'function') {
-        try { opts.onUpdate(editor, editor.getJSON()); } catch {}
+        try { opts.onUpdate(editor); } catch {}
       }
     },
     onSelectionUpdate: ({ editor }) => {
@@ -479,26 +465,342 @@ let _cachedSchema = null;
 function _schemaFromExtensions() {
   if (_cachedSchema) return _cachedSchema;
   const tmpMount = document.createElement('div');
-  const tmpEditor = new Editor({
-    element: tmpMount,
-    extensions: [
-      // Precisa refletir TODAS as extensions dos editores reais senão o
-      // prosemirrorJSONToYDoc dropa nodes desconhecidos durante seed inicial.
-      StarterKit.configure({ heading: { levels: [1, 2, 3] }, codeBlock: false, link: false, underline: false }),
-      Underline, Link, Placeholder,
-      Table, TableRow, TableHeader, TableCell,
-      KdImage, TextAlign.configure({ types: ['heading', 'paragraph'] }),
-      KastorAttachment, KastorComment, PasteAsLink,
-      TextStyle, FontFamily, FontSize, Color, Highlight.configure({ multicolor: true }),
-      KdBlockIndent,
-      TaskList, TaskItem.configure({ nested: true }),
-      CodeBlockLowlight.configure({ lowlight }),
-      KdCallout, KdColumn, KdColumnBlock, KdMention
-    ]
-  });
+  const tmpEditor = new Editor({ element: tmpMount, extensions: kdExtensions({ schemaOnly: true }) });
   _cachedSchema = tmpEditor.schema;
   tmpEditor.destroy();
   return _cachedSchema;
+}
+
+
+/* ── Linha de tabela com altura (arrastar a borda de baixo) ──────────── */
+const KdTableRow = TableRow.extend({
+  addAttributes() {
+    return {
+      ...(this.parent?.() || {}),
+      height: {
+        default: null,
+        parseHTML: (el) => parseInt(el.style.height, 10) || null,
+        renderHTML: (a) => a.height ? { style: 'height:' + a.height + 'px' } : {}
+      }
+    };
+  }
+});
+
+/* ── Espaçamento entre linhas (parágrafo/título) ─────────────────────── */
+const KdLineHeight = Extension.create({
+  name: 'kdLineHeight',
+  addGlobalAttributes() {
+    return [{
+      types: ['paragraph', 'heading'],
+      attributes: {
+        lineHeight: {
+          default: null,
+          parseHTML: (el) => el.style.lineHeight || null,
+          renderHTML: (a) => a.lineHeight ? { style: 'line-height:' + a.lineHeight } : {}
+        }
+      }
+    }];
+  },
+  addCommands() {
+    return {
+      setLineHeight: (value) => ({ tr, state, dispatch }) => {
+        const { from, to } = state.selection;
+        let changed = false;
+        state.doc.nodesBetween(from, to, (node, pos) => {
+          if (node.type.name === 'paragraph' || node.type.name === 'heading') {
+            if (dispatch) tr.setNodeMarkup(pos, undefined, { ...node.attrs, lineHeight: value || null });
+            changed = true;
+          }
+        });
+        return changed;
+      }
+    };
+  }
+});
+
+/* ── Sobrescrito / subscrito (exclusivos entre si) ────────────────────── */
+const KdSubscript = Mark.create({
+  name: 'subscript',
+  excludes: 'superscript',
+  parseHTML() { return [{ tag: 'sub' }, { style: 'vertical-align', getAttrs: v => v === 'sub' ? null : false }]; },
+  renderHTML({ HTMLAttributes }) { return ['sub', mergeAttributes(HTMLAttributes), 0]; },
+  addCommands() { return { toggleSubscript: () => ({ commands }) => commands.toggleMark(this.name) }; },
+  addKeyboardShortcuts() { return { 'Mod-,': () => this.editor.commands.toggleSubscript() }; }
+});
+const KdSuperscript = Mark.create({
+  name: 'superscript',
+  excludes: 'subscript',
+  parseHTML() { return [{ tag: 'sup' }, { style: 'vertical-align', getAttrs: v => v === 'super' ? null : false }]; },
+  renderHTML({ HTMLAttributes }) { return ['sup', mergeAttributes(HTMLAttributes), 0]; },
+  addCommands() { return { toggleSuperscript: () => ({ commands }) => commands.toggleMark(this.name) }; },
+  addKeyboardShortcuts() { return { 'Mod-.': () => this.editor.commands.toggleSuperscript() }; }
+});
+
+/* ── Quebra de página ────────────────────────────────────────────────────
+   Bloco atômico. Na tela a paginação empurra o bloco seguinte pra próxima
+   folha; no PDF/impressão vira page-break-after. */
+const KdPageBreak = Node.create({
+  name: 'kdPageBreak',
+  priority: 200,         // atalhos (Backspace/Delete) antes dos do núcleo (100)
+  group: 'block',
+  atom: true,
+  selectable: true,
+  parseHTML() { return [{ tag: 'div[data-page-break]' }]; },
+  renderHTML({ HTMLAttributes }) {
+    return ['div', mergeAttributes(HTMLAttributes, { 'data-page-break': 'true', class: 'kd-page-break' })];
+  },
+  addCommands() {
+    return {
+      /* Como no Word: Ctrl+Enter no meio do texto divide o parágrafo e o que
+         vem depois do cursor começa na folha seguinte (sem linha vazia extra). */
+      setPageBreak: () => ({ state, chain }) => {
+        const { $from, empty } = state.selection;
+        if (!empty || $from.depth !== 1 || !$from.parent.isTextblock) {
+          return chain().insertContent({ type: this.name }).createParagraphNear().run();
+        }
+        if ($from.parentOffset === 0) {
+          return chain().insertContentAt($from.before(1), { type: this.name }).run();
+        }
+        if ($from.parentOffset === $from.parent.content.size) {
+          const after = $from.after(1);
+          return chain().insertContentAt(after, [{ type: this.name }, { type: 'paragraph' }])
+            .setTextSelection(after + 2).run();
+        }
+        return chain().splitBlock().command(({ tr }) => {
+          const pos = tr.selection.$from.before(1);
+          tr.insert(pos, state.schema.nodes[this.name].create());
+          return true;
+        }).run();
+      }
+    };
+  },
+  addKeyboardShortcuts() {
+    const doc = () => this.editor.state.doc;
+    // Primeiro filho em toda a cadeia até o bloco de nível 1 (início "visual")
+    const atBlockStart = ($f) => { if ($f.parentOffset !== 0 || $f.depth < 1) return false; for (let d = 1; d < $f.depth; d++) if ($f.index(d) !== 0) return false; return true; };
+    const atBlockEnd = ($f) => { if ($f.parentOffset !== $f.parent.content.size || $f.depth < 1) return false; for (let d = 1; d < $f.depth; d++) if ($f.index(d) !== $f.node(d).childCount - 1) return false; return true; };
+    return {
+      'Mod-Enter': () => this.editor.commands.setPageBreak(),
+      // Backspace no começo da folha seguinte apaga a quebra (não junta blocos)
+      Backspace: () => {
+        const { $from, empty } = this.editor.state.selection;
+        if (!empty || !atBlockStart($from)) return false;
+        const idx = $from.index(0);
+        if (idx === 0 || doc().child(idx - 1).type.name !== this.name) return false;
+        const start = $from.before(1) - doc().child(idx - 1).nodeSize;
+        return this.editor.chain().deleteRange({ from: start, to: $from.before(1) }).run();
+      },
+      // Delete no fim do bloco antes da quebra também apaga só a quebra
+      Delete: () => {
+        const { $from, empty } = this.editor.state.selection;
+        if (!empty || !atBlockEnd($from)) return false;
+        const idx = $from.index(0);
+        if (idx >= doc().childCount - 1 || doc().child(idx + 1).type.name !== this.name) return false;
+        const start = $from.after(1);
+        return this.editor.chain().deleteRange({ from: start, to: start + doc().child(idx + 1).nodeSize }).run();
+      }
+    };
+  }
+});
+
+/* ── Buscar e substituir ─────────────────────────────────────────────────
+   Guarda o termo no storage da extensão e pinta os resultados com
+   decorações (não mexe no documento). Busca dentro de cada bloco de texto,
+   ignorando maiúsculas; o índice do resultado atual fica em storage.index. */
+const kdSearchKey = new PluginKey('kdSearch');
+function _kdFindAll(doc, term, caseSensitive) {
+  const out = [];
+  if (!term) return out;
+  const needle = caseSensitive ? term : term.toLowerCase();
+  doc.descendants((node, pos) => {
+    if (!node.isTextblock) return true;
+    let text = '';
+    node.forEach(child => { text += child.isText ? child.text : '￼'; });
+    const hay = caseSensitive ? text : text.toLowerCase();
+    let i = hay.indexOf(needle);
+    while (i !== -1) {
+      out.push({ from: pos + 1 + i, to: pos + 1 + i + needle.length });
+      i = hay.indexOf(needle, i + needle.length);
+    }
+    return false;
+  });
+  return out;
+}
+const KdSearch = Extension.create({
+  name: 'kdSearch',
+  addStorage() { return { term: '', caseSensitive: false, results: [], index: 0 }; },
+  addCommands() {
+    const refresh = (tr, dispatch) => { if (dispatch) dispatch(tr.setMeta(kdSearchKey, true)); return true; };
+    return {
+      setSearchTerm: (term, caseSensitive) => ({ tr, dispatch }) => {
+        this.storage.term = String(term || '');
+        if (caseSensitive != null) this.storage.caseSensitive = !!caseSensitive;
+        this.storage.index = 0;
+        return refresh(tr, dispatch);
+      },
+      searchStep: (dir) => ({ tr, dispatch }) => {
+        const n = this.storage.results.length;
+        if (!n) return false;
+        this.storage.index = (this.storage.index + (dir < 0 ? -1 : 1) + n) % n;
+        return refresh(tr, dispatch);
+      },
+      replaceCurrent: (text) => ({ tr, dispatch }) => {
+        const r = this.storage.results[this.storage.index];
+        if (!r) return false;
+        if (dispatch) {
+          if (text) tr.insertText(text, r.from, r.to); else tr.delete(r.from, r.to);
+          dispatch(tr.setMeta(kdSearchKey, true));
+        }
+        return true;
+      },
+      replaceAll: (text) => ({ tr, dispatch }) => {
+        const list = this.storage.results.slice().reverse();
+        if (!list.length) return false;
+        if (dispatch) {
+          for (const r of list) { if (text) tr.insertText(text, r.from, r.to); else tr.delete(r.from, r.to); }
+          dispatch(tr.setMeta(kdSearchKey, true));
+        }
+        return true;
+      }
+    };
+  },
+  addProseMirrorPlugins() {
+    const ext = this;
+    return [new Plugin({
+      key: kdSearchKey,
+      state: {
+        init: () => DecorationSet.empty,
+        apply(tr, old, _prev, state) {
+          const st = ext.storage;
+          if (!st.term) { st.results = []; return DecorationSet.empty; }
+          if (!tr.docChanged && !tr.getMeta(kdSearchKey)) return old;
+          st.results = _kdFindAll(state.doc, st.term, st.caseSensitive);
+          if (st.index >= st.results.length) st.index = 0;
+          return DecorationSet.create(state.doc, st.results.map((r, i) =>
+            Decoration.inline(r.from, r.to, { class: i === st.index ? 'kd-find-hit is-current' : 'kd-find-hit' })));
+        }
+      },
+      props: { decorations(state) { return kdSearchKey.getState(state); } }
+    })];
+  }
+});
+
+/* ── Referência à plataforma (#demanda, #cliente, #projeto) ───────────────
+   Chip inline que aponta pra uma entidade do reWork. O documento guarda só
+   tipo + id + nome no momento da inserção; o status/cor ao vivo vem de
+   window.kdRefResolve (populado pelo standalone.js com os dados do app). */
+const KdReference = Node.create({
+  name: 'kdRef',
+  group: 'inline',
+  inline: true,
+  atom: true,
+  selectable: true,
+  draggable: false,
+  addAttributes() {
+    return {
+      kind:  { default: 'demand', parseHTML: e => e.getAttribute('data-kd-ref'),   renderHTML: a => ({ 'data-kd-ref': a.kind }) },
+      refId: { default: null,     parseHTML: e => e.getAttribute('data-ref-id'),   renderHTML: a => ({ 'data-ref-id': a.refId }) },
+      label: { default: '',       parseHTML: e => e.getAttribute('data-label') || e.textContent, renderHTML: a => ({ 'data-label': a.label }) }
+    };
+  },
+  parseHTML() { return [{ tag: 'span[data-kd-ref]' }]; },
+  renderHTML({ node, HTMLAttributes }) {
+    return ['span', mergeAttributes(HTMLAttributes, { class: 'kd-ref kd-ref--' + node.attrs.kind }), '#' + (node.attrs.label || '')];
+  },
+  renderText({ node }) { return '#' + (node.attrs.label || ''); },
+  addNodeView() {
+    return ({ node }) => {
+      const dom = document.createElement('span');
+      const a = node.attrs;
+      const info = (typeof window !== 'undefined' && typeof window.kdRefResolve === 'function')
+        ? (window.kdRefResolve(a.kind, a.refId) || null) : null;
+      dom.className = 'kd-ref kd-ref--' + a.kind + (info ? '' : ' is-missing') + (info && info.done ? ' is-done' : '');
+      dom.setAttribute('data-kd-ref', a.kind);
+      dom.setAttribute('data-ref-id', a.refId || '');
+      dom.setAttribute('data-label', a.label || '');
+      dom.contentEditable = 'false';
+      const label = (info && info.label) || a.label || 'Item removido';
+      dom.title = info ? [info.kindLabel, info.label, info.sub].filter(Boolean).join(' · ') : 'Não encontrado na plataforma';
+      dom.innerHTML =
+        `<span class="kd-ref-dot" style="background:${_escAttr((info && info.color) || '#9ca3af')}"></span>` +
+        `<span class="kd-ref-label">${_escAttr(label)}</span>` +
+        (info && info.status ? `<span class="kd-ref-status">${_escAttr(info.status)}</span>` : '');
+      dom.addEventListener('click', (e) => {
+        if (!info || !info.href) return;
+        e.preventDefault();
+        window.open(info.href, '_blank', 'noopener');
+      });
+      return { dom };
+    };
+  }
+});
+
+/* Popup genérico das sugestões (@menção, #referência, /comando). `rowHTML`
+   desenha cada item; `pick(item, command)` executa a escolha. Itens com
+   `group` ganham um cabeçalho de seção quando o grupo muda. */
+function _kdSuggestRenderer({ className, empty, rowHTML, pick }) {
+  return () => {
+    let popup = null, selectedIndex = 0, items = [], command = null;
+    const draw = () => {
+      if (!popup) return;
+      if (!items.length) { popup.innerHTML = `<div class="kd-suggest-empty">${empty}</div>`; return; }
+      let html = '', lastGroup = null;
+      items.forEach((it, i) => {
+        if (it.group && it.group !== lastGroup) { html += `<div class="kd-suggest-group">${escapeHtml(it.group)}</div>`; lastGroup = it.group; }
+        html += `<button type="button" data-i="${i}" class="kd-suggest-item${i === selectedIndex ? ' is-selected' : ''}">${rowHTML(it)}</button>`;
+      });
+      popup.innerHTML = html;
+      popup.querySelector('.kd-suggest-item.is-selected')?.scrollIntoView({ block: 'nearest' });
+    };
+    const paintSel = () => {
+      popup?.querySelectorAll('.kd-suggest-item').forEach((el, i) => el.classList.toggle('is-selected', i === selectedIndex));
+      popup?.querySelector('.kd-suggest-item.is-selected')?.scrollIntoView({ block: 'nearest' });
+    };
+    const position = (props) => {
+      const rect = props?.clientRect?.();
+      if (!popup || !rect) return;
+      const pw = popup.offsetWidth || 300, ph = popup.offsetHeight || 320;
+      let x = rect.left, y = rect.bottom + 6;
+      if (x + pw > window.innerWidth - 8) x = window.innerWidth - pw - 8;
+      if (y + ph > window.innerHeight - 8) y = Math.max(8, rect.top - ph - 6);
+      popup.style.left = x + 'px'; popup.style.top = y + 'px';
+    };
+    const run = (i) => { const it = items[i]; if (!it || !command) return false; try { pick(it, command); } catch (e) { console.error('[suggest]', e); } return true; };
+    return {
+      onStart: (props) => {
+        popup = document.createElement('div');
+        popup.className = 'kd-suggest ' + className;
+        document.body.appendChild(popup);
+        items = props.items || []; selectedIndex = 0; command = props.command;
+        draw(); position(props);
+        popup.addEventListener('pointerdown', (e) => {
+          const el = e.target.closest('.kd-suggest-item'); if (!el) return;
+          e.preventDefault(); e.stopPropagation(); run(Number(el.dataset.i));
+        });
+        popup.addEventListener('mousemove', (e) => {
+          const el = e.target.closest('.kd-suggest-item'); if (!el) return;
+          const i = Number(el.dataset.i); if (i !== selectedIndex) { selectedIndex = i; paintSel(); }
+        });
+      },
+      onUpdate: (props) => {
+        items = props.items || []; command = props.command;
+        selectedIndex = Math.min(selectedIndex, Math.max(0, items.length - 1));
+        // Sem resultado depois de um espaço = a pessoa só está escrevendo
+        // (ex.: "#1 da lista"): esconde o popup em vez de insistir.
+        if (popup) popup.hidden = !items.length && /\s/.test(props.query || '');
+        draw(); position(props);
+      },
+      onKeyDown: ({ event }) => {
+        if (!popup || popup.hidden) return false;
+        if (event.key === 'ArrowDown') { if (items.length) { selectedIndex = (selectedIndex + 1) % items.length; paintSel(); } return true; }
+        if (event.key === 'ArrowUp') { if (items.length) { selectedIndex = (selectedIndex - 1 + items.length) % items.length; paintSel(); } return true; }
+        if (event.key === 'Enter' || event.key === 'Tab') return run(selectedIndex);
+        if (event.key === 'Escape') { popup.remove(); popup = null; return true; }
+        return false;
+      },
+      onExit: () => { popup?.remove(); popup = null; items = []; command = null; }
+    };
+  };
 }
 
 // Namespace global exposto pro app.js legado
@@ -629,131 +931,59 @@ const KdColumnBlock = Node.create({
 const KdMentionSuggestion = {
   char: '@',
   allowSpaces: false,
-  startOfLine: false,
   items: ({ query }) => {
-    // Delegado pra window.kdMentionItems se existir (populado pelo standalone.js
-    // com a lista de usuários do docs), senão array vazio.
+    // Lista de pessoas vem do standalone.js (window.kdMentionItems)
     if (typeof window !== 'undefined' && typeof window.kdMentionItems === 'function') {
-      try { return window.kdMentionItems(query) || []; } catch { return []; }
+      try { return (window.kdMentionItems(query) || []).slice(0, 8); } catch { return []; }
     }
     return [];
   },
-  render: () => {
-    let popup = null;
-    let selectedIndex = 0;
-    let currentItems = [];
-    let currentCommand = null;   // guarda command entre onStart/onKeyDown
-
-    const draw = () => {
-      if (!popup) return;
-      if (!currentItems.length) {
-        popup.innerHTML = '<div class="kd-mention-empty">Nenhum usuário</div>';
-        return;
-      }
-      const existing = popup.querySelectorAll('.kd-mention-item');
-      if (existing.length !== currentItems.length) {
-        popup.innerHTML = currentItems.map((it, i) => {
-          const avatar = it.avatar
-            ? `<img src="${it.avatar}" alt="" class="kd-mention-avatar">`
-            : `<div class="kd-mention-avatar kd-mention-avatar--initial" style="background:${it.color || '#7A00FF'}">${(it.name || '?').charAt(0).toUpperCase()}</div>`;
-          return `<button type="button" data-i="${i}" class="kd-mention-item${i === selectedIndex ? ' is-selected' : ''}">
-            ${avatar}<span class="kd-mention-name">${escapeHtml(it.name || '')}</span>
-            ${it.role ? `<span class="kd-mention-role">${escapeHtml(it.role)}</span>` : ''}
-          </button>`;
-        }).join('');
-      } else {
-        existing.forEach((el, i) => el.classList.toggle('is-selected', i === selectedIndex));
-      }
-      const sel = popup.querySelector('.kd-mention-item.is-selected');
-      if (sel) sel.scrollIntoView({ block: 'nearest' });
-    };
-    const position = (props) => {
-      if (!popup) return;
-      const rect = props?.clientRect?.();
-      if (!rect) return;
-      const pw = popup.offsetWidth || 260;
-      const ph = popup.offsetHeight || 200;
-      let x = rect.left, y = rect.bottom + 4;
-      if (x + pw > window.innerWidth - 8) x = window.innerWidth - pw - 8;
-      if (y + ph > window.innerHeight - 8) y = rect.top - ph - 4;
-      popup.style.left = x + 'px';
-      popup.style.top = y + 'px';
-    };
-    const runSelected = (idx) => {
-      const item = currentItems[idx];
-      if (!item || typeof currentCommand !== 'function') return false;
-      try { currentCommand({ id: item.id, label: item.name }); return true; }
-      catch (e) { console.error('[kd-mention]', e); return false; }
-    };
-    const bindPopupInteractions = () => {
-      popup.addEventListener('pointerdown', (e) => {
-        const el = e.target.closest('.kd-mention-item');
-        if (!el) return;
-        e.preventDefault();
-        e.stopPropagation();
-        runSelected(parseInt(el.dataset.i, 10));
-      });
-      popup.addEventListener('mouseover', (e) => {
-        const el = e.target.closest('.kd-mention-item');
-        if (!el) return;
-        const i = parseInt(el.dataset.i, 10);
-        if (i !== selectedIndex) { selectedIndex = i; draw(); }
-      });
-    };
-    return {
-      onStart: (props) => {
-        popup = document.createElement('div');
-        popup.className = 'kd-mention-popup';
-        document.body.appendChild(popup);
-        currentItems = props.items || [];
-        selectedIndex = 0;
-        currentCommand = props.command;
-        draw();
-        bindPopupInteractions();
-        position(props);
-      },
-      onUpdate: (props) => {
-        currentItems = props.items || [];
-        currentCommand = props.command;
-        selectedIndex = Math.min(selectedIndex, Math.max(0, currentItems.length - 1));
-        draw();
-        position(props);
-      },
-      onKeyDown: (props) => {
-        if (!popup) return false;
-        const k = props.event.key;
-        if (k === 'ArrowDown') {
-          if (!currentItems.length) return true;
-          selectedIndex = (selectedIndex + 1) % currentItems.length;
-          draw();
-          return true;
-        }
-        if (k === 'ArrowUp') {
-          if (!currentItems.length) return true;
-          selectedIndex = (selectedIndex - 1 + currentItems.length) % currentItems.length;
-          draw();
-          return true;
-        }
-        if (k === 'Enter' || k === 'Tab') {
-          if (runSelected(selectedIndex)) return true;
-          return false;
-        }
-        if (k === 'Escape') { popup.remove(); popup = null; return true; }
-        return false;
-      },
-      onExit: () => {
-        if (popup) { popup.remove(); popup = null; }
-        currentItems = [];
-        selectedIndex = 0;
-        currentCommand = null;
-      }
-    };
-  }
+  render: _kdSuggestRenderer({
+    className: 'kd-suggest--people',
+    empty: 'Ninguém com esse nome',
+    rowHTML: (it) => (it.avatar
+      ? `<img src="${_escAttr(it.avatar)}" alt="" class="kd-suggest-avatar">`
+      : `<span class="kd-suggest-avatar" style="background:${_escAttr(it.color || '#7A00FF')}">${escapeHtml((it.name || '?').charAt(0).toUpperCase())}</span>`)
+      + `<span class="kd-suggest-text"><span class="kd-suggest-title">${escapeHtml(it.name || '')}</span>${it.role ? `<span class="kd-suggest-sub">${escapeHtml(it.role)}</span>` : ''}</span>`,
+    pick: (it, command) => command({ id: it.id, label: it.name })
+  })
 };
 const KdMention = Mention.configure({
   HTMLAttributes: { class: 'kd-mention' },
   renderText: ({ node }) => `@${node.attrs.label || node.attrs.id}`,
   suggestion: KdMentionSuggestion
+});
+
+/* ── # referência: demandas, clientes e projetos da plataforma ─────── */
+const kdRefPluginKey = new PluginKey('kdRefSuggest');
+const KdRefSuggest = Extension.create({
+  name: 'kdRefSuggest',
+  addProseMirrorPlugins() {
+    return [Suggestion({
+      editor: this.editor,
+      pluginKey: kdRefPluginKey,
+      char: '#',
+      allowSpaces: true,
+      items: ({ query }) => {
+        if (typeof window === 'undefined' || typeof window.kdRefItems !== 'function') return [];
+        try { return window.kdRefItems(query) || []; } catch { return []; }
+      },
+      command: ({ editor, range, props }) => {
+        editor.chain().focus().insertContentAt(range, [
+          { type: 'kdRef', attrs: { kind: props.kind, refId: props.id, label: props.label } },
+          { type: 'text', text: ' ' }
+        ]).run();
+      },
+      render: _kdSuggestRenderer({
+        className: 'kd-suggest--refs',
+        empty: 'Nada encontrado na plataforma',
+        rowHTML: (it) => `<span class="kd-suggest-dot" style="background:${_escAttr(it.color || '#9ca3af')}"></span>`
+          + `<span class="kd-suggest-text"><span class="kd-suggest-title">${escapeHtml(it.label)}</span>${it.sub ? `<span class="kd-suggest-sub">${escapeHtml(it.sub)}</span>` : ''}</span>`
+          + (it.status ? `<span class="kd-suggest-meta">${escapeHtml(it.status)}</span>` : ''),
+        pick: (it, command) => command(it)
+      })
+    })];
+  }
 });
 
 /* ── Slash command: menu contextual em `/` pra inserir bloco ────────
@@ -763,31 +993,64 @@ const KdMention = Mention.configure({
 /* Match query contra um comando. Query pode ter múltiplos tokens (separados
    por espaço) e cada token precisa aparecer em algum lugar (title, keyword
    individual, ou title+keywords concatenados). Substring match, sem regex. */
+const _kdNorm = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 function _matchSlash(query, cmd) {
-  const q = String(query || '').toLowerCase().trim();
+  const q = _kdNorm(query).trim();
   if (!q) return true;
-  const haystack = (cmd.title + ' ' + (cmd.keywords || []).join(' ')).toLowerCase();
+  const haystack = _kdNorm(cmd.title + ' ' + (cmd.keywords || []).join(' '));
   const tokens = q.split(/\s+/).filter(Boolean);
   return tokens.every(t => haystack.includes(t));
 }
+const _SI = (d) => `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+const KD_SLASH_ICONS = {
+  text:  _SI('<path d="M4 7V4h16v3M9 20h6M12 4v16"/>'),
+  h:     (n) => `<span class="kd-slash-h">H${n}</span>`,
+  ul:    _SI('<line x1="9" y1="6" x2="20" y2="6"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="18" x2="20" y2="18"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/>'),
+  ol:    _SI('<line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><path d="M4 6h1v4M4 10h2M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/>'),
+  task:  _SI('<rect x="3" y="5" width="6" height="6" rx="1"/><path d="m3.5 17 2 2 4-4"/><line x1="13" y1="8" x2="21" y2="8"/><line x1="13" y1="17" x2="21" y2="17"/>'),
+  quote: _SI('<path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"/><path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-2.75 4v3c0 1 0 1 1 1z"/>'),
+  code:  _SI('<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>'),
+  hr:    _SI('<line x1="3" y1="12" x2="21" y2="12"/>'),
+  table: _SI('<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/>'),
+  info:  _SI('<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>'),
+  tip:   _SI('<path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/>'),
+  warn:  _SI('<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>'),
+  danger:_SI('<polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>'),
+  cols:  _SI('<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/>'),
+  cols3: _SI('<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/>'),
+  image: _SI('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>'),
+  clip:  _SI('<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>'),
+  page:  _SI('<path d="M4 4h16v6H4zM4 14h16v6H4z" stroke-dasharray="2 2"/>'),
+  date:  _SI('<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>'),
+  ref:   _SI('<line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/>'),
+  at:    _SI('<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/>')
+};
+const _hook = (name, ...args) => { try { window.kdEditorHooks?.[name]?.(...args); } catch (e) { console.error('[slash hook]', name, e); } };
 const KdSlashCommands = [
-  { key: 'h1', title: 'Título 1',            keywords: ['h1','título','heading'],       icon: 'H1', run: (ed, r) => ed.chain().deleteRange(r).setNode('heading', { level: 1 }).run() },
-  { key: 'h2', title: 'Título 2',            keywords: ['h2','subtítulo'],              icon: 'H2', run: (ed, r) => ed.chain().deleteRange(r).setNode('heading', { level: 2 }).run() },
-  { key: 'h3', title: 'Título 3',            keywords: ['h3'],                          icon: 'H3', run: (ed, r) => ed.chain().deleteRange(r).setNode('heading', { level: 3 }).run() },
-  { key: 'p',  title: 'Parágrafo',           keywords: ['p','paragrafo','texto'],       icon: '¶',  run: (ed, r) => ed.chain().deleteRange(r).setNode('paragraph').run() },
-  { key: 'ul', title: 'Lista com marcadores', keywords: ['lista','bullet','ul','marcadores'], icon: '•',  run: (ed, r) => ed.chain().deleteRange(r).toggleBulletList().run() },
-  { key: 'ol', title: 'Lista numerada',      keywords: ['numerada','ordenada','ol','1'], icon: '1.', run: (ed, r) => ed.chain().deleteRange(r).toggleOrderedList().run() },
-  { key: 'task', title: 'Lista de tarefas',  keywords: ['todo','task','checkbox','tarefa'], icon: '☑',  run: (ed, r) => ed.chain().deleteRange(r).toggleTaskList().run() },
-  { key: 'quote', title: 'Citação',          keywords: ['quote','citação','blockquote'], icon: '"',  run: (ed, r) => ed.chain().deleteRange(r).toggleBlockquote().run() },
-  { key: 'code', title: 'Bloco de código',   keywords: ['code','codigo'],               icon: '</>', run: (ed, r) => ed.chain().deleteRange(r).toggleCodeBlock().run() },
-  { key: 'hr', title: 'Linha divisória',     keywords: ['hr','divisor','divisória','separador'], icon: '—',  run: (ed, r) => ed.chain().deleteRange(r).setHorizontalRule().run() },
-  { key: 'table', title: 'Tabela',           keywords: ['table','tabela'],              icon: '▦',  run: (ed, r) => ed.chain().deleteRange(r).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
-  { key: 'callout-info',   title: 'Nota',       keywords: ['nota','info','callout'],   icon: 'ℹ',  run: (ed, r) => ed.chain().deleteRange(r).setCallout({ variant: 'info' }).run() },
-  { key: 'callout-tip',    title: 'Dica',       keywords: ['dica','tip'],              icon: '💡', run: (ed, r) => ed.chain().deleteRange(r).setCallout({ variant: 'tip' }).run() },
-  { key: 'callout-warn',   title: 'Aviso',      keywords: ['aviso','warn','atenção'],  icon: '⚠',  run: (ed, r) => ed.chain().deleteRange(r).setCallout({ variant: 'warn' }).run() },
-  { key: 'callout-danger', title: 'Importante', keywords: ['danger','importante','!!'], icon: '🚨', run: (ed, r) => ed.chain().deleteRange(r).setCallout({ variant: 'danger' }).run() },
-  { key: 'cols2', title: '2 colunas',        keywords: ['colunas','cols','2col','cols2'], icon: '⫲',  run: (ed, r) => ed.chain().deleteRange(r).setColumns(2).run() },
-  { key: 'cols3', title: '3 colunas',        keywords: ['colunas','cols','3col','cols3'], icon: '⫸',  run: (ed, r) => ed.chain().deleteRange(r).setColumns(3).run() }
+  { group: 'Texto', key: 'p',  title: 'Texto',            desc: 'Parágrafo comum',                 keywords: ['p','paragrafo','texto','normal'], icon: KD_SLASH_ICONS.text, run: (ed, r) => ed.chain().focus().deleteRange(r).setParagraph().run() },
+  { group: 'Texto', key: 'h1', title: 'Título 1',         desc: 'Seção principal',                 keywords: ['h1','titulo','heading'],         icon: KD_SLASH_ICONS.h(1), run: (ed, r) => ed.chain().focus().deleteRange(r).setNode('heading', { level: 1 }).run() },
+  { group: 'Texto', key: 'h2', title: 'Título 2',         desc: 'Subseção',                        keywords: ['h2','titulo','subtitulo'],       icon: KD_SLASH_ICONS.h(2), run: (ed, r) => ed.chain().focus().deleteRange(r).setNode('heading', { level: 2 }).run() },
+  { group: 'Texto', key: 'h3', title: 'Título 3',         desc: 'Tópico dentro da subseção',       keywords: ['h3','titulo'],                   icon: KD_SLASH_ICONS.h(3), run: (ed, r) => ed.chain().focus().deleteRange(r).setNode('heading', { level: 3 }).run() },
+  { group: 'Texto', key: 'h4', title: 'Título 4',         desc: 'Detalhe',                         keywords: ['h4','titulo'],                   icon: KD_SLASH_ICONS.h(4), run: (ed, r) => ed.chain().focus().deleteRange(r).setNode('heading', { level: 4 }).run() },
+  { group: 'Listas', key: 'ul', title: 'Lista com marcadores', desc: 'Tópicos simples',            keywords: ['lista','bullet','ul','marcadores'], icon: KD_SLASH_ICONS.ul, run: (ed, r) => ed.chain().focus().deleteRange(r).toggleBulletList().run() },
+  { group: 'Listas', key: 'ol', title: 'Lista numerada',  desc: 'Passos em ordem',                 keywords: ['numerada','ordenada','ol','1'],  icon: KD_SLASH_ICONS.ol, run: (ed, r) => ed.chain().focus().deleteRange(r).toggleOrderedList().run() },
+  { group: 'Listas', key: 'task', title: 'Lista de tarefas', desc: 'Itens pra marcar como feitos', keywords: ['todo','task','checkbox','tarefa','checklist'], icon: KD_SLASH_ICONS.task, run: (ed, r) => ed.chain().focus().deleteRange(r).toggleTaskList().run() },
+  { group: 'Plataforma', key: 'ref', title: 'Demanda, cliente ou projeto', desc: 'Liga o texto ao trabalho no reWork', keywords: ['demanda','cliente','projeto','referencia','#','link'], icon: KD_SLASH_ICONS.ref, run: (ed, r) => ed.chain().focus().deleteRange(r).insertContent('#').run() },
+  { group: 'Plataforma', key: 'mention', title: 'Mencionar pessoa', desc: 'Avisa alguém da equipe', keywords: ['mencao','pessoa','@','usuario'], icon: KD_SLASH_ICONS.at, run: (ed, r) => ed.chain().focus().deleteRange(r).insertContent('@').run() },
+  { group: 'Inserir', key: 'image', title: 'Imagem',      desc: 'Enviar do computador',            keywords: ['imagem','foto','upload','png','jpg'], icon: KD_SLASH_ICONS.image, run: (ed, r) => { ed.chain().focus().deleteRange(r).run(); _hook('uploadImage'); } },
+  { group: 'Inserir', key: 'gallery', title: 'Arquivo da Galeria', desc: 'Anexar algo que já está na plataforma', keywords: ['galeria','anexo','arquivo'], icon: KD_SLASH_ICONS.clip, run: (ed, r) => { ed.chain().focus().deleteRange(r).run(); _hook('gallery'); } },
+  { group: 'Inserir', key: 'table', title: 'Tabela',      desc: '3 × 3 com cabeçalho',             keywords: ['table','tabela','grade'],        icon: KD_SLASH_ICONS.table, run: (ed, r) => ed.chain().focus().deleteRange(r).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
+  { group: 'Inserir', key: 'date', title: 'Data de hoje', desc: 'Insere a data atual',             keywords: ['data','hoje','dia'],             icon: KD_SLASH_ICONS.date, run: (ed, r) => ed.chain().focus().deleteRange(r).insertContent(new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' }) + ' ').run() },
+  { group: 'Inserir', key: 'hr', title: 'Linha divisória', desc: 'Separa seções',                  keywords: ['hr','divisor','divisoria','separador','linha'], icon: KD_SLASH_ICONS.hr, run: (ed, r) => ed.chain().focus().deleteRange(r).setHorizontalRule().run() },
+  { group: 'Inserir', key: 'pagebreak', title: 'Quebra de página', desc: 'Continua na próxima folha', keywords: ['quebra','pagina','page','break'], icon: KD_SLASH_ICONS.page, run: (ed, r) => ed.chain().focus().deleteRange(r).setPageBreak().run() },
+  { group: 'Blocos', key: 'quote', title: 'Citação',      desc: 'Destaca uma fala ou trecho',      keywords: ['quote','citacao','blockquote'],  icon: KD_SLASH_ICONS.quote, run: (ed, r) => ed.chain().focus().deleteRange(r).toggleBlockquote().run() },
+  { group: 'Blocos', key: 'callout-info', title: 'Nota', desc: 'Caixa de informação',              keywords: ['nota','info','callout','caixa'], icon: KD_SLASH_ICONS.info, run: (ed, r) => ed.chain().focus().deleteRange(r).setCallout({ variant: 'info' }).run() },
+  { group: 'Blocos', key: 'callout-tip', title: 'Dica',   desc: 'Sugestão ou boa prática',         keywords: ['dica','tip','callout'],          icon: KD_SLASH_ICONS.tip, run: (ed, r) => ed.chain().focus().deleteRange(r).setCallout({ variant: 'tip' }).run() },
+  { group: 'Blocos', key: 'callout-warn', title: 'Aviso', desc: 'Ponto de atenção',                keywords: ['aviso','warn','atencao','callout'], icon: KD_SLASH_ICONS.warn, run: (ed, r) => ed.chain().focus().deleteRange(r).setCallout({ variant: 'warn' }).run() },
+  { group: 'Blocos', key: 'callout-danger', title: 'Importante', desc: 'Algo que não pode passar', keywords: ['danger','importante','critico','callout'], icon: KD_SLASH_ICONS.danger, run: (ed, r) => ed.chain().focus().deleteRange(r).setCallout({ variant: 'danger' }).run() },
+  { group: 'Blocos', key: 'cols2', title: '2 colunas',    desc: 'Texto lado a lado',               keywords: ['colunas','cols','2col'],         icon: KD_SLASH_ICONS.cols, run: (ed, r) => ed.chain().focus().deleteRange(r).setColumns(2).run() },
+  { group: 'Blocos', key: 'cols3', title: '3 colunas',    desc: 'Três blocos lado a lado',         keywords: ['colunas','cols','3col'],         icon: KD_SLASH_ICONS.cols3, run: (ed, r) => ed.chain().focus().deleteRange(r).setColumns(3).run() },
+  { group: 'Blocos', key: 'code', title: 'Bloco de código', desc: 'Com destaque de sintaxe',       keywords: ['code','codigo'],                 icon: KD_SLASH_ICONS.code, run: (ed, r) => ed.chain().focus().deleteRange(r).toggleCodeBlock().run() }
 ];
 const KdSlashCommand = Extension.create({
   name: 'kdSlashCommand',
@@ -816,119 +1079,13 @@ const KdSlashCommand = Extension.create({
         command: ({ editor, range, props }) => {
           try { props.run(editor, range); } catch (e) { console.error('[slash]', e); }
         },
-        render: () => {
-          let popup = null;
-          let selectedIndex = 0;
-          let currentItems = [];
-          // Guarda o `command` do último onStart pra usar em event handlers
-          // do popup (que rodam fora do fluxo do Suggestion). O props do
-          // onKeyDown NÃO carrega .command em versões atuais do @tiptap/
-          // suggestion — precisa manter separado.
-          let currentCommand = null;
-
-          const draw = () => {
-            if (!popup) return;
-            if (!currentItems.length) {
-              popup.innerHTML = '<div class="kd-slash-empty">Nada bate com isso</div>';
-              return;
-            }
-            const existingItems = popup.querySelectorAll('.kd-slash-item');
-            if (existingItems.length !== currentItems.length) {
-              popup.innerHTML = currentItems.map((it, i) => `
-                <button type="button" data-i="${i}" class="kd-slash-item${i === selectedIndex ? ' is-selected' : ''}">
-                  <span class="kd-slash-icon">${it.icon}</span>
-                  <span class="kd-slash-title">${escapeHtml(it.title)}</span>
-                </button>
-              `).join('');
-            } else {
-              existingItems.forEach((el, i) => el.classList.toggle('is-selected', i === selectedIndex));
-            }
-            const sel = popup.querySelector('.kd-slash-item.is-selected');
-            if (sel) sel.scrollIntoView({ block: 'nearest' });
-          };
-          const position = (props) => {
-            if (!popup) return;
-            const rect = props?.clientRect?.();
-            if (!rect) return;
-            const pw = popup.offsetWidth || 280;
-            const ph = popup.offsetHeight || 320;
-            let x = rect.left, y = rect.bottom + 4;
-            if (x + pw > window.innerWidth - 8) x = window.innerWidth - pw - 8;
-            if (y + ph > window.innerHeight - 8) y = rect.top - ph - 4;
-            popup.style.left = x + 'px';
-            popup.style.top = y + 'px';
-          };
-          const runSelected = (idx) => {
-            const item = currentItems[idx];
-            if (!item || typeof currentCommand !== 'function') return false;
-            try { currentCommand(item); return true; }
-            catch (e) { console.error('[kd-slash]', item?.key || '?', e); return false; }
-          };
-          const bindPopupInteractions = () => {
-            popup.addEventListener('pointerdown', (e) => {
-              const el = e.target.closest('.kd-slash-item');
-              if (!el) return;
-              e.preventDefault();
-              e.stopPropagation();
-              runSelected(parseInt(el.dataset.i, 10));
-            });
-            popup.addEventListener('mouseover', (e) => {
-              const el = e.target.closest('.kd-slash-item');
-              if (!el) return;
-              const i = parseInt(el.dataset.i, 10);
-              if (i !== selectedIndex) { selectedIndex = i; draw(); }
-            });
-          };
-          return {
-            onStart: (props) => {
-              popup = document.createElement('div');
-              popup.className = 'kd-slash-popup';
-              document.body.appendChild(popup);
-              currentItems = props.items || [];
-              selectedIndex = 0;
-              currentCommand = props.command;   // ← guarda pra usar depois
-              draw();
-              bindPopupInteractions();
-              position(props);
-            },
-            onUpdate: (props) => {
-              currentItems = props.items || [];
-              currentCommand = props.command;
-              selectedIndex = Math.min(selectedIndex, Math.max(0, currentItems.length - 1));
-              draw();
-              position(props);
-            },
-            onKeyDown: (props) => {
-              // Se popup foi fechado ou nunca abriu, deixa editor lidar.
-              if (!popup) return false;
-              const k = props.event.key;
-              if (k === 'ArrowDown') {
-                if (!currentItems.length) return true;
-                selectedIndex = (selectedIndex + 1) % currentItems.length;
-                draw();
-                return true;
-              }
-              if (k === 'ArrowUp') {
-                if (!currentItems.length) return true;
-                selectedIndex = (selectedIndex - 1 + currentItems.length) % currentItems.length;
-                draw();
-                return true;
-              }
-              if (k === 'Enter') {
-                if (runSelected(selectedIndex)) return true;
-                return false;
-              }
-              if (k === 'Escape') { popup.remove(); popup = null; return true; }
-              return false;
-            },
-            onExit: () => {
-              if (popup) { popup.remove(); popup = null; }
-              currentItems = [];
-              selectedIndex = 0;
-              currentCommand = null;
-            }
-          };
-        }
+        render: _kdSuggestRenderer({
+          className: 'kd-suggest--slash',
+          empty: 'Nenhum bloco com esse nome',
+          rowHTML: (it) => `<span class="kd-suggest-icon">${it.icon}</span>`
+            + `<span class="kd-suggest-text"><span class="kd-suggest-title">${escapeHtml(it.title)}</span><span class="kd-suggest-sub">${escapeHtml(it.desc || '')}</span></span>`,
+          pick: (it, command) => command(it)
+        })
       })
     ];
   }
@@ -999,6 +1156,9 @@ const KdBlockIndent = Extension.create({
             if (attrs.firstLineIndent  != null) newAttrs.firstLineIndent  = Math.max(0, attrs.firstLineIndent);
             if (dispatch) tr.setNodeMarkup(pos, undefined, newAttrs);
             modified = true;
+            // Lista/citação recua como um bloco só: não desce pros parágrafos
+            // de dentro (senão o recuo soma duas vezes).
+            if (node.type.name !== 'paragraph' && node.type.name !== 'heading') return false;
           }
         });
         return modified;
@@ -1007,56 +1167,465 @@ const KdBlockIndent = Extension.create({
   }
 });
 
-/* ── Pagination — decorações que aplicam margin-top em blocos específicos ──
-   ProseMirror sobrescreve inline styles no próximo microtask (reflete o
-   estado do doc no DOM). Pra empurrar visualmente um bloco pra próxima
-   página SEM alterar o doc, usamos decorações do tipo `Decoration.node`
-   que aplicam `style="margin-top:XXpx"` ao node correspondente. */
-const kdPaginationKey = new PluginKey('kdPagination');
-const KdPagination = Extension.create({
-  name: 'kdPagination',
-  addProseMirrorPlugins() {
-    return [
-      new Plugin({
-        key: kdPaginationKey,
-        state: {
-          init: () => DecorationSet.empty,
-          apply(tr, old) {
-            const meta = tr.getMeta(kdPaginationKey);
-            if (meta) return meta;
-            // Remapeia pra novas posições em cada transação
-            return old.map(tr.mapping, tr.doc);
+/* ═══ Paginação (formato "Páginas") ═══════════════════════════════════
+   Motor de páginas A4 sobre um único ProseMirror. Nada muda no documento:
+   tudo é decoração.
+     - "margin": margem no topo de um bloco pra ele começar na folha seguinte;
+     - "gap":    espaço invisível dentro de um parágrafo, antes da primeira
+                 linha que não coube (quebra na linha, como Word/Docs).
+
+   Unidades de fluxo:
+     - parágrafo/título → linhas (viúvas/órfãs: ≥ 2 linhas em cada folha);
+     - item de lista → o marcador desce junto com o texto; itens aninhados
+       são unidades próprias;
+     - caixas (citação, nota, tabela, código, imagem, colunas…) → inteiras;
+     - quebra de página → a próxima unidade abre folha nova;
+     - título não fica sozinho no pé da página (vai junto com o seguinte).
+
+   Roda num microtask logo depois de cada mudança — antes do navegador pintar,
+   então o texto nunca aparece na margem pra depois "pular". É incremental:
+   recomeça uma folha antes da mudança e para quando a paginação volta a
+   bater com a anterior. */
+const kdPagesKey = new PluginKey('kdPages');
+const KD_TEXT_UNITS = new Set(['paragraph', 'heading']);
+const KD_LIST_NODES = new Set(['bulletList', 'orderedList', 'taskList']);
+const KD_ITEM_NODES = new Set(['listItem', 'taskItem']);
+
+function _kdPushDeco(doc, p) {
+  if (p.kind === 'gap') {
+    const h = Math.max(0, Math.round(p.height));
+    return Decoration.widget(p.pos, () => {
+      const el = document.createElement('span');
+      el.className = 'kd-page-gap';
+      el.contentEditable = 'false';
+      el.setAttribute('aria-hidden', 'true');
+      el.style.height = h + 'px';
+      return el;
+    }, { side: -1, key: 'kdgap-' + h, ignoreSelection: true, kdPush: p });
+  }
+  const node = doc.nodeAt(p.pos);
+  if (!node) return null;
+  return Decoration.node(p.pos, p.pos + node.nodeSize, { style: 'margin-top:' + Math.round(p.margin) + 'px' }, { kdPush: p });
+}
+function _kdPagesSet(doc, pushes) {
+  const decos = [];
+  for (const p of pushes) { try { const d = _kdPushDeco(doc, p); if (d) decos.push(d); } catch (_) {} }
+  return decos.length ? DecorationSet.create(doc, decos) : DecorationSet.empty;
+}
+
+/* Unidades de fluxo na ordem do documento. Cada uma sabe o que empurrar
+   quando precisa abrir folha (o próprio bloco, o item da lista — marcador
+   junto — ou a lista inteira quando é o primeiro item). */
+function _kdFlowUnits(view) {
+  const units = [];
+  const dom = (pos) => { const d = view.nodeDOM(pos); return d && d.nodeType === 1 ? d : null; };
+  const add = (u) => { if (u.dom) units.push(u); };
+  const walkList = (list, listPos, climbPos) => {
+    list.forEach((item, off, idx) => {
+      const itemPos = listPos + 1 + off;
+      // Primeiro item: quem desce é a lista (senão a margem colapsa no pai)
+      const pushPos = idx === 0 ? climbPos : itemPos;
+      item.forEach((child, coff, cidx) => {
+        const cpos = itemPos + 1 + coff;
+        if (KD_LIST_NODES.has(child.type.name)) walkList(child, cpos, cpos);
+        else if (child.isTextblock) add({ kind: 'text', pos: cpos, node: child, dom: dom(cpos), pushPos: cidx === 0 ? pushPos : cpos, heading: false });
+        else add({ kind: 'box', pos: cpos, node: child, dom: dom(cpos), pushPos: cpos });
+      });
+    });
+  };
+  view.state.doc.forEach((node, pos) => {
+    const t = node.type.name;
+    if (t === 'kdPageBreak') units.push({ kind: 'break', pos, node });
+    else if (KD_TEXT_UNITS.has(t)) add({ kind: 'text', pos, node, dom: dom(pos), pushPos: pos, heading: t === 'heading' });
+    else if (KD_LIST_NODES.has(t)) walkList(node, pos, pos);
+    else add({ kind: 'box', pos, node, dom: dom(pos), pushPos: pos });
+  });
+  return units;
+}
+
+/* Linhas de um bloco de texto: caixa da LINHA (glifos + meia entrelinha),
+   posição do início de cada linha. Ignora o próprio espaço de paginação. */
+function _kdLinesOf(view, dom, paperTop) {
+  const cs = getComputedStyle(dom);
+  let lh = parseFloat(cs.lineHeight);
+  if (!(lh > 0)) lh = (parseFloat(cs.fontSize) || 14) * 1.2;
+  const rects = [];
+  const range = document.createRange();
+  const tw = document.createTreeWalker(dom, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
+    acceptNode: (n) => {
+      if (n.nodeType === 1) {
+        if (n.classList.contains('kd-page-gap')) return NodeFilter.FILTER_REJECT;
+        return (n.getAttribute('contenteditable') === 'false' || n.tagName === 'IMG' || n.tagName === 'BR') ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+      }
+      return n.nodeValue ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+    }
+  });
+  let n;
+  while ((n = tw.nextNode())) {
+    if (n.nodeType === 3) { range.selectNodeContents(n); for (const r of range.getClientRects()) if (r.height > 0) rects.push(r); }
+    else if (n.tagName !== 'BR') { const r = n.getBoundingClientRect(); if (r.height > 0) rects.push(r); }
+  }
+  if (!rects.length) {
+    const r = dom.getBoundingClientRect();
+    return [{ top: r.top - paperTop, bottom: r.bottom - paperTop, left: r.left, mid: (r.top + r.bottom) / 2, pos: null }];
+  }
+  rects.sort((a, b) => a.top - b.top || a.left - b.left);
+  const lines = [];
+  for (const r of rects) {
+    const last = lines[lines.length - 1];
+    if (last && r.top < last.gb - 2 && r.bottom > last.gt + 2) {
+      last.gt = Math.min(last.gt, r.top); last.gb = Math.max(last.gb, r.bottom); last.left = Math.min(last.left, r.left);
+    } else lines.push({ gt: r.top, gb: r.bottom, left: r.left });
+  }
+  return lines.map(l => {
+    const half = Math.max(0, (lh - (l.gb - l.gt)) / 2);
+    return { top: l.gt - half - paperTop, bottom: l.gb + half - paperTop, left: l.left, mid: (l.gt + l.gb) / 2, pos: null };
+  });
+}
+
+/* Linhas limpas de uma unidade de texto (sem o efeito dos empurrões) e a
+   posição do início de cada uma — achada por busca binária nos caracteres
+   (Range), bem mais rápido que posAtCoords. */
+function _kdCleanLines(view, u, paperTop, effBefore) {
+  const dom = u.dom;
+  const widgets = [...dom.querySelectorAll('.kd-page-gap')].map(w => ({ top: w.getBoundingClientRect().top - paperTop, h: parseFloat(w.style.height) || 0 }));
+  const shiftOf = (y) => effBefore + widgets.reduce((a, w) => a + (w.top < y - 1 ? w.h : 0), 0);
+  const lines = _kdLinesOf(view, dom, paperTop);
+  // Texto do bloco em ordem (ignora o próprio vão)
+  const texts = [];
+  const tw = document.createTreeWalker(dom, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.parentElement && n.parentElement.closest('.kd-page-gap')) || !n.nodeValue ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
+  });
+  let n; while ((n = tw.nextNode())) texts.push(n);
+  const range = document.createRange();
+  const charTop = (t, i) => { range.setStart(t, i); range.setEnd(t, i + 1); const r = range.getClientRects(); return r.length ? r[r.length - 1].top : range.getBoundingClientRect().top; };
+  const startOf = (lineTopAbs) => {
+    for (const t of texts) {
+      const len = t.nodeValue.length;
+      if (charTop(t, len - 1) < lineTopAbs) continue;              // texto todo acima
+      let lo = 0, hi = len - 1;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (charTop(t, mid) >= lineTopAbs) hi = mid; else lo = mid + 1; }
+      try { return view.posAtDOM(t, lo); } catch { return null; }
+    }
+    return null;
+  };
+  return lines.map((l, k) => {
+    // Vãos já aplicados acima desta linha, dentro do próprio bloco
+    const shift = shiftOf(l.top);
+    // 1ª posição cujo caractere começa nesta linha (topo da caixa da linha)
+    const pos = k === 0 ? u.pos + 1 : startOf(l.top + paperTop - 0.5);
+    return { top: l.top - shift, bottom: l.bottom - shift, left: l.left, pos };
+  });
+}
+
+class KdPager {
+  constructor(view, storage) {
+    this.view = view;
+    this.storage = storage;
+    this.dirtyFrom = 0;
+    this.dirtyTo = Infinity;     // fim do trecho alterado (no doc novo)
+    this.scheduled = false;
+    storage._pager = this;
+    this.onLoad = (e) => { if (e.target && e.target.tagName === 'IMG') { try { this.schedule(view.posAtDOM(e.target, 0)); } catch { this.schedule(0); } } };
+    view.dom.addEventListener('load', this.onLoad, true);
+    this.onResize = () => this.schedule(0);
+    window.addEventListener('resize', this.onResize);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => this.schedule(0));
+    this.schedule(0);
+  }
+  update(view, prev) {
+    if (view.state.doc !== prev.doc) {
+      const a = view.state.doc.content, b = prev.doc.content;
+      const at = b.findDiffStart(a);
+      const end = b.findDiffEnd(a);
+      this.schedule(at == null ? 0 : at, end ? end.b : Infinity);
+    }
+  }
+  destroy() {
+    this.view.dom.removeEventListener('load', this.onLoad, true);
+    window.removeEventListener('resize', this.onResize);
+    if (this.storage._pager === this) this.storage._pager = null;
+  }
+  schedule(from, to) {
+    this.dirtyFrom = Math.min(this.dirtyFrom, Math.max(0, from || 0));
+    this.dirtyTo = (this.dirtyTo === -1) ? (to == null ? Infinity : to) : Math.max(this.dirtyTo, to == null ? Infinity : to);
+    if (this.scheduled) return;
+    this.scheduled = true;
+    queueMicrotask(() => this.run());
+  }
+  commit(pushes, pages) {
+    const st = kdPagesKey.getState(this.view.state);
+    const same = st.pushes.length === pushes.length && st.pushes.every((p, i) =>
+      p.kind === pushes[i].kind && p.pos === pushes[i].pos && (p.height || p.margin) === (pushes[i].height || pushes[i].margin));
+    if (!same) {
+      const doc = this.view.state.doc;
+      this.view.dispatch(this.view.state.tr.setMeta(kdPagesKey, { decos: _kdPagesSet(doc, pushes), pushes, pages }).setMeta('addToHistory', false));
+    } else {
+      st.pages = pages;
+    }
+  }
+  run() {
+    this.scheduled = false;
+    const view = this.view, storage = this.storage;
+    if (view.isDestroyed) return;
+    let st = kdPagesKey.getState(view.state);
+    if (!storage.enabled) {
+      this.dirtyFrom = Infinity; this.dirtyTo = -1;
+      if (st.pushes.length) this.commit([], 1);
+      storage.onLayout && storage.onLayout({ pages: 1, enabled: false });
+      return;
+    }
+    if (view.composing) { setTimeout(() => this.schedule(0), 120); return; }
+    const paper = view.dom.closest('.writer-editor-paper');
+    if (!paper || !paper.offsetHeight) { this.dirtyFrom = Infinity; this.dirtyTo = -1; return; }
+    const from = this.dirtyFrom, to = this.dirtyTo;
+    this.dirtyFrom = Infinity;
+    this.dirtyTo = -1;
+
+    // Geometria da folha
+    const cs = getComputedStyle(paper);
+    const H = storage.pageHeight, G = storage.pageGap;
+    const padT = parseFloat(cs.paddingTop) || 0, padB = parseFloat(cs.paddingBottom) || 0;
+    const pageStart = (i) => i * (H + G) + padT;
+    const pageEnd = (i) => i * (H + G) + H - padB;
+    const usable = H - padT - padB;
+    const doc = view.state.doc;
+
+    /* Os empurrões atuais ficam no lugar; a posição "limpa" (sem eles) é a
+       medida menos o deslocamento de cada um — exato pros vãos (a altura) e
+       pras margens (margem − espaço natural, guardado ao criar). A margem
+       só perde a validade se a edição mexeu no bloco empurrado ou no
+       anterior a ele: essas saem antes de medir. */
+    let old = st.pushes;
+    const touched = (p) => {
+      if (p.kind !== 'margin') return false;
+      const node = doc.nodeAt(p.pos);
+      if (!node) return true;
+      const $p = doc.resolve(p.pos);
+      const idx = $p.index();
+      const prevStart = idx > 0 ? p.pos - $p.parent.child(idx - 1).nodeSize : p.pos;
+      return from <= p.pos + node.nodeSize && to + 1 >= prevStart;
+    };
+    const forced = this.forceUntrusted; this.forceUntrusted = null;
+    const untrusted = old.filter(p => touched(p) || p.pos === forced);
+    if (untrusted.length) {
+      old = old.filter(p => !untrusted.includes(p));
+      this.commit(old, st.pages);
+      st = kdPagesKey.getState(view.state);
+    }
+    const effTop = (pos) => {
+      let e = 0;
+      for (const p of old) { if (p.pos > pos) break; if (p.kind === 'margin' ? p.pos <= pos : p.pos < pos) e += p.effect; }
+      return e;
+    };
+    const effInside = (a_, b_) => {
+      let e = 0;
+      for (const p of old) { if (p.kind === 'gap' && p.pos > a_ && p.pos < b_) e += p.effect; }
+      return e;
+    };
+
+    // Recomeça uma folha antes da mudança (viúvas/órfãs/títulos dependem dela)
+    let keep = 0;
+    for (let i = 0; i < old.length; i++) { if (old[i].pos < from) keep = i + 1; else break; }
+    keep = Math.max(0, keep - 1);
+    const kept = old.slice(0, keep);
+    const stale = old.slice(keep);
+    const restartPos = kept.length ? kept[kept.length - 1].pos : -1;
+    let page = kept.length ? kept[kept.length - 1].page : 0;
+    let offset = kept.reduce((a_, p) => a_ + p.effect, 0);
+
+    const paperTop = paper.getBoundingClientRect().top;
+    const units = _kdFlowUnits(view);
+    const pushes = kept.slice();
+    const moved = new Set();
+    let forceNext = false, converged = false;
+    const domOf = (pos) => { const d = view.nodeDOM(pos); return d && d.nodeType === 1 ? d : null; };
+    const cleanRect = (u) => {
+      const r = u.dom.getBoundingClientRect();
+      const t = effTop(u.pos);
+      return { top: r.top - paperTop - t, bottom: r.bottom - paperTop - t - effInside(u.pos, u.pos + u.node.nodeSize) };
+    };
+    const addPush = (p) => {
+      // Quebra idêntica (mesmo lugar e folha) depois do trecho alterado: o
+      // resto do documento fica como estava.
+      const same = p.pos > to && stale.find(o => o.pos === p.pos && o.page === p.page && o.kind === p.kind);
+      pushes.push(p);
+      if (same) { for (const o of stale) if (o.pos > p.pos) pushes.push(o); converged = true; }
+    };
+    const pushUnit = (u) => {
+      const el = domOf(u.pushPos) || u.dom;
+      const top = el.getBoundingClientRect().top - paperTop - effTop(u.pushPos) + offset;
+      const amount = pageStart(page + 1) - top;
+      page++;
+      if (amount <= 0) return;
+      // Espaço natural (margens colapsadas) entre o bloco e o anterior, medido
+      // agora — sem empurrão nesse bloco (os tocados já saíram).
+      const prev = el.previousElementSibling;
+      const own = old.find(p => p.kind === 'margin' && p.pos === u.pushPos);
+      const natural = own ? own.natural
+        : prev ? Math.max(0, el.getBoundingClientRect().top - prev.getBoundingClientRect().bottom)
+        : (parseFloat(getComputedStyle(el).marginTop) || 0);
+      const margin = Math.round(natural + amount);
+      const effect = margin - natural;
+      offset += effect;
+      moved.add(u);
+      addPush({ kind: 'margin', pos: u.pushPos, margin, natural, effect, page });
+    };
+    const pushWithKeep = (idx) => {
+      let j = idx - 1;
+      while (j >= 0 && units[j].kind === 'text' && units[j].heading && !moved.has(units[j]) &&
+             cleanRect(units[j]).top + offset > pageStart(page) + 1 && units[j].pos > restartPos) j--;
+      pushUnit(j + 1 < idx ? units[j + 1] : units[idx]);
+    };
+
+    let lastUnit = null;
+    for (let i = 0; i < units.length && !converged; i++) {
+      const u = units[i];
+      if (u.pos + u.node.nodeSize <= restartPos) continue;
+      if (u.kind === 'break') { forceNext = true; continue; }
+      lastUnit = u;
+      const r = cleanRect(u);
+      if (forceNext) {
+        forceNext = false;
+        if (r.top + offset > pageStart(page) + 1) pushUnit(u);
+        if (converged) break;
+      }
+      let lines = null;                   // linhas limpas (lidas uma vez)
+      let guard = 0;
+      while (!converged && r.bottom + offset > pageEnd(page) + 0.5 && guard++ < 100) {
+        const top = r.top + offset;
+        if (top >= pageEnd(page) - 0.5 && u.pos > restartPos) { pushWithKeep(i); continue; }
+        if (u.kind === 'text') {
+          if (!lines) lines = _kdCleanLines(view, u, paperTop, effTop(u.pos));
+          const onPage = lines.filter(l => l.top + offset >= pageStart(page) - 2);
+          let fit = 0;
+          while (fit < onPage.length && onPage[fit].bottom + offset <= pageEnd(page) + 0.5) fit++;
+          const continuing = onPage.length < lines.length;
+          if (fit === onPage.length) break;
+          const blockH = r.bottom - r.top;
+          if (!continuing && (fit === 0 || (fit < 2 && lines.length >= 2))) {
+            if (blockH <= usable) { pushWithKeep(i); continue; }      // órfã: desce inteiro
           }
-        },
-        props: {
-          decorations(state) { return kdPaginationKey.getState(state); }
+          if (onPage.length - fit < 2 && fit >= 3) fit--;             // viúva: leva uma linha
+          if (fit === 0) { pushWithKeep(i); continue; }
+          const ln = onPage[fit];
+          const tStart = u.pos + 1, tEnd = u.pos + u.node.nodeSize - 1;
+          if (ln.pos == null || ln.pos <= tStart || ln.pos > tEnd) { if (blockH <= usable && !continuing) { pushWithKeep(i); continue; } break; }
+          const height = Math.round(pageStart(page + 1) - (ln.top + offset));
+          page++;
+          offset += height;
+          addPush({ kind: 'gap', pos: ln.pos, height, effect: height, page });
+          continue;
         }
-      })
-    ];
+        if (r.bottom - r.top <= usable && u.pos > restartPos) { pushWithKeep(i); continue; }
+        page = Math.max(page, Math.floor((r.bottom + offset) / (H + G)));
+        break;
+      }
+    }
+
+    pushes.sort((a_, b_) => a_.pos - b_.pos);
+    let pages = (pushes.length ? pushes[pushes.length - 1].page : 0) + 1;
+    if (converged) pages = Math.max(pages, st.pages || 1);
+    else if (lastUnit) { const r = cleanRect(lastUnit); pages = Math.max(pages, Math.floor((r.bottom + offset + padB - 1) / (H + G)) + 1); }
+    this.commit(pushes, pages);
+
+    /* Conferência dos empurrões novos (em geral 1 ou 2): cada um tem que
+       levar o conteúdo exatamente ao topo útil da folha. Se algum desviou,
+       repagina a partir dele no mesmo tick — ele sai e é remedido. */
+    const fresh = pushes.filter(p => !old.includes(p));
+    if (fresh.length && (this.retries || 0) < 2) {
+      const pt2 = paper.getBoundingClientRect().top;
+      const gapEls = fresh.some(p => p.kind === 'gap') ? [...view.dom.querySelectorAll('.kd-page-gap')] : [];
+      const bad = fresh.find(p => {
+        const want = pageStart(p.page);
+        if (p.kind === 'margin') {
+          const el = view.nodeDOM(p.pos);
+          return el && el.nodeType === 1 && Math.abs(el.getBoundingClientRect().top - pt2 - want) > 1.5;
+        }
+        const g = gapEls.find(x => { try { return view.posAtDOM(x, 0) === p.pos; } catch { return false; } });
+        return g && Math.abs(g.getBoundingClientRect().bottom - pt2 - want) > 1.5;
+      });
+      if (bad) {
+        this.retries = (this.retries || 0) + 1;
+        this.forceUntrusted = bad.pos;
+        this.schedule(bad.pos, bad.pos);
+        return;
+      }
+    }
+    this.retries = 0;
+    storage.onLayout && storage.onLayout({ pages, enabled: true, pageHeight: H, pageGap: G });
+  }
+}
+
+const KdPages = Extension.create({
+  name: 'kdPages',
+  addStorage() {
+    return {
+      enabled: false,
+      pageHeight: 297 * 96 / 25.4,
+      pageGap: 34,
+      onLayout: null,
+      _pager: null
+    };
+  },
+  addCommands() {
+    return {
+      /* Liga/desliga o formato "Páginas" (desligado = bloco contínuo) */
+      setPagesEnabled: (on) => () => {
+        this.storage.enabled = !!on;
+        this.storage._pager && this.storage._pager.schedule(0);
+        return true;
+      },
+      repaginate: () => () => { this.storage._pager && this.storage._pager.schedule(0); return true; }
+    };
+  },
+  addProseMirrorPlugins() {
+    const storage = this.storage;
+    return [new Plugin({
+      key: kdPagesKey,
+      state: {
+        init: () => ({ decos: DecorationSet.empty, pushes: [], pages: 1 }),
+        apply(tr, st) {
+          const meta = tr.getMeta(kdPagesKey);
+          if (meta) return meta;
+          if (!tr.docChanged) return st;
+          // A lista de empurrões sai das próprias decorações mapeadas: se o
+          // trecho foi apagado, a decoração some e o empurrão também.
+          const decos = st.decos.map(tr.mapping, tr.doc);
+          const pushes = decos.find().map(d => ({ ...d.spec.kdPush, pos: d.from })).sort((a, b) => a.pos - b.pos);
+          return { decos, pushes, pages: st.pages };
+        }
+      },
+      view: (view) => new KdPager(view, storage),
+      props: {
+        decorations(state) { return kdPagesKey.getState(state).decos; },
+        /* ↑/↓ na linha colada a um vão de página: pula direto pra linha do
+           outro lado (sem o cursor parar no espaço entre as folhas). */
+        handleKeyDown(view, event) {
+          if ((event.key !== 'ArrowDown' && event.key !== 'ArrowUp') || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return false;
+          const sel = view.state.selection;
+          if (!sel.empty) return false;
+          const gaps = kdPagesKey.getState(view.state).pushes.filter(p => p.kind === 'gap').map(p => p.pos);
+          if (!gaps.length) return false;
+          let here;
+          try { here = view.coordsAtPos(sel.head); } catch { return false; }
+          for (const g of gaps) {
+            let before, after;
+            try { before = view.coordsAtPos(Math.max(0, g - 1), -1); after = view.coordsAtPos(g, 1); } catch { continue; }
+            const down = event.key === 'ArrowDown' && sel.head <= g && Math.abs(here.top - before.top) < 4;
+            const up = event.key === 'ArrowUp' && sel.head >= g && Math.abs(here.top - after.top) < 4;
+            if (!down && !up) continue;
+            const target = view.posAtCoords({ left: here.left, top: (down ? after.top : before.top) + 2 });
+            if (!target) return false;
+            view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, target.pos)).scrollIntoView());
+            return true;
+          }
+          return false;
+        }
+      }
+    })];
   }
 });
-
-/* Aplica pushes de pagination na view. `pushes` = array de { pos, marginTop }
-   onde `pos` é a posição do node top-level e `marginTop` o valor em px.
-   Chamado do standalone.js após medir os blocos no DOM. */
-function setKdPaginationPushes(editor, pushes) {
-  if (!editor || !editor.view) return;
-  const doc = editor.view.state.doc;
-  const decos = [];
-  for (const p of (pushes || [])) {
-    if (p.pos == null || !p.marginTop) continue;
-    try {
-      const node = doc.nodeAt(p.pos);
-      if (!node) continue;
-      decos.push(Decoration.node(p.pos, p.pos + node.nodeSize, {
-        style: 'margin-top:' + p.marginTop + 'px'
-      }));
-    } catch (_) {}
-  }
-  const set = decos.length ? DecorationSet.create(doc, decos) : DecorationSet.empty;
-  const tr = editor.view.state.tr.setMeta(kdPaginationKey, set);
-  editor.view.dispatch(tr);
-}
 
 /* Editor somente-leitura — usado no viewer público. Sem colab (não conecta
    ao WS), sem autosave, sem toolbar. Só renderiza o PM JSON e permite scroll
@@ -1081,6 +1650,23 @@ window.KastorWriter = {
   toHTML: editorToHTML,
   toText: editorToText,
   emptyDoc,
-  setPaginationPushes: setKdPaginationPushes,
-  version: '0.2.0'
+  NodeSelection,
+  TextSelection,
+  /* HTML (modelo, importação) → conteúdo do editor, pelo mesmo schema */
+  htmlToJSON: (html) => generateJSON(String(html || ''), kdExtensions({ schemaOnly: true })),
+  /* HTML do trecho selecionado (descrição da demanda criada a partir dele) */
+  selectionHTML: (editor) => {
+    const { from, to, $from } = editor.state.selection;
+    const slice = editor.state.doc.slice(from, to);
+    // Seleção dentro de uma lista vem só com os itens: devolve a lista inteira
+    let frag = slice.content;
+    const shared = $from.node($from.sharedDepth(to));
+    if (['bulletList', 'orderedList', 'taskList'].includes(shared.type.name)) {
+      try { frag = Fragment.from(shared.type.create(shared.attrs, frag)); } catch {}
+    }
+    const div = document.createElement('div');
+    div.appendChild(DOMSerializer.fromSchema(editor.schema).serializeFragment(frag));
+    return div.innerHTML;
+  },
+  version: '0.3.0'
 };

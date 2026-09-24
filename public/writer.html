@@ -23,7 +23,9 @@
        gzipped) mas o cache-buster do app.js já reaproveita a mesma versão em cache
        do usuário na maior parte dos acessos. Pra Fase futura vale extrair só tokens
        + classes writer-* num CSS menor. -->
-  <link rel="stylesheet" href="/css/style.css?v=20260917importNewTab">
+  <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/css/fonts.css?v=1">
+  <link rel="stylesheet" href="/css/style.css?v=20260924docs1">
 
   <style>
     /* Reset do body pra editor standalone — sem margin, cor da plataforma. */
@@ -38,298 +40,122 @@
     .kd-app.is-list .writer-editor-view { display: none; }
     .kd-app.is-editor .kd-list-shell { display: none; }
 
-    /* Topbar da lista (usada quando estamos em /writer) */
-    .kd-list-shell { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-    .kd-list-topbar {
-      display: flex; align-items: center; gap: 14px;
-      padding: 14px 28px;
-      border-bottom: 1px solid var(--hairline);
-      background: var(--surface);
-      flex-shrink: 0;
+    /* ── Home do Docs (/hub/docs) ──
+       Mesma linguagem do Hub e da plataforma: topbar .topbar, título grande
+       da Início, abas com sublinhado roxo, botões .btn e cards de borda fina. */
+    .kd-list-shell {
+      flex: 1; display: flex; flex-direction: column; min-height: 0;
+      font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     }
-    .kd-topbar-back {
-      display: inline-flex; align-items: center; justify-content: center;
-      width: 32px; height: 32px;
-      border: 0;
-      background: transparent;
-      color: var(--text-2);
-      cursor: pointer;
-      text-decoration: none;
-      transition: color .15s, transform .12s;
+    .kd-list-shell a.btn { text-decoration: none; }
+    .kd-list-topbar { gap: 4px; flex-shrink: 0; }
+    .kd-list-topbar .topbar-back { margin-right: 14px; text-decoration: none; }
+    /* Marca: ícone do app + nome em texto (o wordmark em SVG tem traço fino
+       demais e borra no tamanho da topbar). */
+    .kd-brand { display: inline-flex; align-items: center; gap: 10px; color: var(--text); text-decoration: none; }
+    .kd-brand img { display: block; width: 28px; height: 28px; }
+    .kd-brand span { font-size: 17px; font-weight: 700; letter-spacing: -0.015em; }
+    .kd-tb-icon { width: 36px; height: 36px; padding: 0; justify-content: center; }
+    .kd-user-chip {
+      display: flex; align-items: center; gap: 9px;
+      padding-left: 12px; margin-left: 2px;
+      border-left: 1px solid var(--hairline);
+      font-size: 13px; font-weight: 600; color: var(--text);
     }
-    .kd-topbar-back:hover { color: var(--text); transform: translateX(-2px); }
-    .kd-brand { display: inline-flex; align-items: center; }
-    .kd-brand img { display: block; height: 34px; width: auto; }
-    .kd-topbar-spacer { flex: 1; }
+    .kd-user-avatar {
+      width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
+      background: var(--accent); color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 700; overflow: hidden;
+    }
+    .kd-user-avatar img { width: 100%; height: 100%; object-fit: cover; }
+    /* Botão de ícone dos modais/painéis do editor (compartilhar, comentários) */
     .kd-icon-btn {
-      width: 34px; height: 34px;
-      border-radius: 8px;
-      border: 1px solid transparent;
-      background: transparent;
-      color: var(--text-2);
-      cursor: pointer;
+      width: 34px; height: 34px; border-radius: 8px;
+      border: 1px solid transparent; background: transparent;
+      color: var(--text-dim); cursor: pointer;
       display: flex; align-items: center; justify-content: center;
     }
     .kd-icon-btn:hover { background: color-mix(in oklab, var(--text) 6%, transparent); color: var(--text); border-color: var(--hairline); }
-    .kd-user-chip {
-      display: flex; align-items: center; gap: 8px;
-      font-size: 13px; color: var(--text);
-      padding: 4px 10px 4px 4px;
-      border-radius: 999px;
-      background: color-mix(in oklab, var(--text) 5%, transparent);
-    }
-    .kd-user-avatar {
-      width: 28px; height: 28px;
-      border-radius: 50%;
-      background: var(--accent);
-      color: #fff;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 12px; font-weight: 700;
-      overflow: hidden;
-    }
-    .kd-user-avatar img { width: 100%; height: 100%; object-fit: cover; }
 
-    .kd-list-body {
-      flex: 1; overflow-y: auto;
-      padding: clamp(20px, 3vw, 32px) clamp(16px, 4vw, 40px);
-      max-width: 1280px; width: 100%;
-      margin: 0 auto;
-    }
-    @media (max-width: 600px) {
-      .kd-list-topbar { padding: 12px 16px; gap: 10px; }
-      .kd-brand img { height: 28px; }
-      .kd-user-chip { padding: 4px 10px 4px 4px; }
-      .kd-user-name { font-size: 12px; }
-      .kd-recent-toolbar { flex-wrap: wrap; gap: 8px; }
-      .kd-recent-title { font-size: 14px; }
-      .kd-recent-select { padding: 6px 8px 6px 10px; font-size: 12.5px; }
-      .kd-recent-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
-      .kd-new-grid { grid-template-columns: 160px; }
-    }
-    .kd-list-head {
-      display: flex; justify-content: space-between; align-items: flex-end; gap: 16px;
-      margin-bottom: 20px;
-      padding-bottom: 16px;
-      border-bottom: 1px solid var(--hairline);
-      flex-wrap: wrap;
-    }
-    .kd-list-head h1 {
-      font-size: 26px; font-weight: 700; letter-spacing: -.02em;
-      color: var(--text);
-      margin: 0;
-    }
-    .kd-list-head-sub {
-      font-size: 13.5px; color: var(--text-2);
-      margin-top: 6px;
-    }
-    .kd-toolbar {
-      display: flex; gap: 10px; align-items: center;
-      margin-bottom: 20px;
-      flex-wrap: wrap;
-    }
+    .kd-list-body { flex: 1; overflow-y: auto; padding: 28px 28px 56px; }
+    .kd-list-inner { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; }
+    .kd-list-title { margin: 0; }
 
-    /* ── Bloco: Novo documento ─────────────────────────────────────── */
-    .kd-block-title {
-      font-size: 15px; font-weight: 700; color: var(--text);
-      letter-spacing: -.005em;
-      margin-bottom: 14px;
-    }
-    .kd-new-block {
-      max-width: 1080px; width: 100%;
-      margin: 0 auto 32px;
-      padding: 0 4px;
-    }
-    .kd-new-grid {
-      display: grid;
-      grid-template-columns: repeat(2, 200px);   /* novo + upload lado a lado */
-      gap: 16px;
-    }
-    @media (max-width: 500px) { .kd-new-grid { grid-template-columns: 1fr; } }
-    /* Card "Em branco" — box com bg neutro do surface + só o "+" roxo
-       centralizado. Sem texto, sem fundo branco, aspect ratio de folha. */
-    .kd-new-card {
-      display: flex; align-items: center; justify-content: center;
-      aspect-ratio: 4 / 4.4;
-      background: var(--surface);
-      border: 1px solid var(--hairline);
-      border-radius: 12px;
-      cursor: pointer;
-      color: #7a00ff;
-      transition: transform .12s, border-color .15s, box-shadow .15s, color .15s;
-    }
-    .kd-new-card:hover {
-      transform: translateY(-2px);
-      border-color: color-mix(in oklab, #7a00ff 45%, var(--hairline));
-      box-shadow: 0 8px 22px -14px color-mix(in oklab, #7a00ff 40%, transparent);
-      color: #9333ea;
-    }
-    .kd-new-card svg { display: block; }
-    .kd-new-card-inner { display: flex; flex-direction: column; align-items: center; gap: 8px; }
-    .kd-new-card-label { font-size: 12px; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .04em; }
-    .kd-new-card:hover .kd-new-card-label { color: var(--accent); }
-
-    /* ── Bloco: Arquivos recentes (mesma linguagem visual do Hub) ── */
-    .kd-recent-block {
-      max-width: 1080px; width: 100%;
-      margin: 0 auto;
-      padding: 0 4px 40px;
-    }
+    /* Cabeçalho da lista: abas à esquerda, busca/ordem/visão à direita */
     .kd-recent-toolbar {
-      display: flex; justify-content: space-between; align-items: center;
-      padding-bottom: 12px;
-      gap: 12px;
+      display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap;
       border-bottom: 1px solid var(--hairline);
       margin-bottom: 16px;
     }
-    .kd-recent-title {
-      font-size: 15px; font-weight: 700; color: var(--text);
-      letter-spacing: -.005em;
+    .kd-recent-toolbar .dash-tabs { margin-bottom: -1px; }
+    .kd-recent-toolbar .dash-tab.is-active::after { bottom: -1px; }
+    .kd-recent-toolbar .dash-tab { padding: 10px 10px 12px; }
+    .kd-recent-toolbar-actions { display: flex; align-items: center; gap: 6px; position: relative; padding-bottom: 8px; }
+    .kd-recent-toolbar-actions .kd-tb-icon { width: 32px; height: 32px; }
+    .kd-search {
+      display: flex; align-items: center; gap: 8px;
+      height: 32px; width: 240px; padding: 0 10px;
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
+      color: var(--text-muted);
+      transition: border-color .15s var(--ease-out), box-shadow .15s var(--ease-out);
     }
-    .kd-recent-toolbar-actions {
-      display: flex; align-items: center; gap: 4px;
-      position: relative;
+    .kd-search:focus-within { border-color: var(--accent); box-shadow: var(--shadow-focus); }
+    .kd-search input {
+      flex: 1; min-width: 0; border: 0; outline: none; background: transparent;
+      font-family: inherit; font-size: 13px; color: var(--text);
     }
-    .kd-recent-select {
-      display: inline-flex; align-items: center; gap: 6px;
-      padding: 7px 8px 7px 12px;
-      background: transparent;
-      border: 0;
-      color: var(--text);
-      font-size: 13px; font-weight: 500;
-      cursor: pointer;
-      border-radius: 8px;
-      transition: background .12s;
-    }
-    .kd-recent-select:hover { background: color-mix(in oklab, var(--text) 6%, transparent); }
-    .kd-recent-search { display: inline-flex; align-items: center; }
-    .kd-recent-search-input {
-      background: var(--surface);
-      border: 1px solid var(--hairline);
-      border-radius: 8px;
-      padding: 7px 12px;
-      font-size: 13px;
-      color: var(--text);
-      width: 220px;
-      margin-left: 4px;
-      outline: none;
-      transition: border-color .12s, width .18s;
-    }
-    .kd-recent-search-input:focus { border-color: var(--accent); }
-    .kd-recent-search.is-open .kd-recent-search-input { display: inline-block; }
-    .kd-recent-search.is-open .kd-recent-icon-btn { color: var(--accent); }
-    .kd-recent-divider {
-      width: 1px; height: 20px;
-      background: var(--hairline);
-      margin: 0 6px;
-    }
-    .kd-recent-icon-btn {
-      width: 34px; height: 34px;
-      border-radius: 8px;
-      border: 0;
-      background: transparent;
-      color: var(--text-2);
-      cursor: pointer;
-      display: inline-flex; align-items: center; justify-content: center;
-      transition: background .12s, color .12s;
-    }
-    .kd-recent-icon-btn:hover { background: color-mix(in oklab, var(--text) 6%, transparent); color: var(--text); }
+    .kd-search input::placeholder { color: var(--text-muted); }
     .kd-recent-menu {
-      position: absolute; top: calc(100% + 4px); right: 0;
-      min-width: 200px;
-      background: var(--surface);
-      border: 1px solid var(--hairline);
-      border-radius: 10px;
-      padding: 4px;
+      position: absolute; top: calc(100% - 2px); right: 38px; z-index: 20;
+      min-width: 200px; padding: 4px;
       display: flex; flex-direction: column;
-      box-shadow: 0 16px 40px -12px rgba(0,0,0,.35);
-      z-index: 20;
+      background: var(--surface);
+      border: 1px solid var(--hairline-strong);
+      border-radius: var(--radius);
+      box-shadow: 0 16px 40px -12px rgba(0,0,0,.28);
     }
     .kd-recent-menu button {
-      text-align: left;
-      padding: 8px 12px;
-      background: transparent; border: 0;
-      color: var(--text);
-      font-size: 13px;
-      cursor: pointer;
-      border-radius: 6px;
+      text-align: left; padding: 8px 10px;
+      background: transparent; border: 0; border-radius: var(--radius-sm);
+      font-family: inherit; font-size: 13px; color: var(--text); cursor: pointer;
     }
-    .kd-recent-menu button:hover { background: color-mix(in oklab, var(--text) 6%, transparent); }
-    .kd-recent-menu button.is-selected { background: color-mix(in oklab, var(--accent) 14%, transparent); color: var(--accent); font-weight: 600; }
+    .kd-recent-menu button:hover { background: var(--surface-2); }
+    .kd-recent-menu button.is-selected { background: var(--accent-dim); color: var(--accent-text); font-weight: 600; }
 
-    /* Grid + card idêntico ao Hub — inclui folha + footer com ícone/data */
-    .kd-recent-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-      gap: 16px;
-    }
-    .kd-recent-grid.is-list {
-      display: flex; flex-direction: column;
-      gap: 0;
-    }
-    .kd-recent-grid.is-list .kd-recent-card {
-      flex-direction: row;
-      padding: 10px 14px;
-      align-items: center;
-      gap: 14px;
-      border-radius: 8px;
-    }
-    .kd-recent-grid.is-list .kd-recent-card:hover {
-      transform: none;
-      background: color-mix(in oklab, var(--accent) 5%, transparent);
-    }
-    .kd-recent-grid.is-list .kd-recent-card-thumb { display: none; }
-    .kd-recent-grid.is-list .kd-recent-card-footer { padding: 0; gap: 4px; flex: 1; min-width: 0; }
-    .kd-recent-grid.is-list .kd-recent-card-title {
-      -webkit-line-clamp: 1;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      display: block; font-size: 13.5px;
-    }
-    .kd-recent-grid.is-list .kd-recent-card-footer-meta {
-      min-width: 140px;
-      justify-content: flex-end;
-    }
+    /* Grade de documentos (igual ao Hub) */
+    .kd-recent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
     .kd-recent-card {
-      display: flex; flex-direction: column;
+      position: relative; display: flex; flex-direction: column; overflow: hidden;
       background: var(--surface);
       border: 1px solid var(--hairline);
-      border-radius: 12px;
-      text-decoration: none; color: inherit;
-      cursor: pointer;
-      overflow: hidden;
-      transition: transform .12s, border-color .15s, box-shadow .15s;
-      position: relative;
+      border-radius: var(--radius-md);
+      color: inherit; text-decoration: none; cursor: pointer;
+      transition: border-color .15s var(--ease-out), box-shadow .15s var(--ease-out), transform .12s var(--ease-out);
     }
     .kd-recent-card:hover {
-      transform: translateY(-2px);
       border-color: color-mix(in oklab, var(--accent) 45%, var(--hairline));
-      box-shadow: 0 8px 22px -14px color-mix(in oklab, var(--accent) 40%, transparent);
+      box-shadow: 0 8px 22px -14px color-mix(in oklab, var(--accent) 45%, transparent);
+      transform: translateY(-1px);
     }
+    .kd-recent-card:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
     .kd-recent-card-thumb {
-      position: relative;
-      aspect-ratio: 4 / 4.4;
-      background: #ffffff;
-      border-bottom: 1px solid var(--hairline);
-      overflow: hidden;
+      position: relative; aspect-ratio: 4 / 3.6; overflow: hidden;
+      background: #fff; border-bottom: 1px solid var(--hairline);
     }
     .kd-recent-card-thumb-page {
-      position: absolute; top: 0; left: 0;
-      width: 620px;
-      transform-origin: top left;
-      transform: scale(.32);
-      padding: 24px 32px;
-      color: #1a1a1a;
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-      font-size: 12px;
-      line-height: 1.45;
-      pointer-events: none;
+      position: absolute; top: 0; left: 0; width: 620px;
+      transform-origin: top left; transform: scale(.3);
+      padding: 24px 32px; pointer-events: none;
+      color: #1a1a1a; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 12px; line-height: 1.45;
     }
     .kd-recent-card-thumb-page * { max-width: 100%; }
     .kd-recent-card-thumb-page p { margin: 0 0 6px; }
     .kd-recent-card-thumb-page h1 { font-size: 22px; font-weight: 700; margin: 8px 0 6px; line-height: 1.2; }
     .kd-recent-card-thumb-page h2 { font-size: 17px; font-weight: 700; margin: 8px 0 4px; line-height: 1.25; }
     .kd-recent-card-thumb-page h3 { font-size: 14px; font-weight: 600; margin: 6px 0 4px; line-height: 1.3; }
-    .kd-recent-card-thumb-page ul,
-    .kd-recent-card-thumb-page ol { margin: 0 0 6px; padding-left: 20px; }
+    .kd-recent-card-thumb-page ul, .kd-recent-card-thumb-page ol { margin: 0 0 6px; padding-left: 20px; }
     .kd-recent-card-thumb-page li { margin: 0 0 2px; }
     .kd-recent-card-thumb-page blockquote { border-left: 3px solid #ccc; padding: 0 8px; margin: 6px 0; color: #666; }
     .kd-recent-card-thumb-page code { background: #f0f0f0; padding: 1px 3px; border-radius: 2px; }
@@ -337,50 +163,55 @@
     .kd-recent-card-thumb-page a { color: #7A00FF; text-decoration: none; }
     .kd-recent-card-thumb-page hr { border: 0; border-top: 1px solid #e0e0e0; margin: 6px 0; }
     .kd-recent-card-thumb-page table { border-collapse: collapse; width: 100%; margin: 6px 0; font-size: 11px; }
-    .kd-recent-card-thumb-page th,
-    .kd-recent-card-thumb-page td { border: 1px solid #ddd; padding: 3px 5px; }
+    .kd-recent-card-thumb-page th, .kd-recent-card-thumb-page td { border: 1px solid #ddd; padding: 3px 5px; }
     .kd-recent-card-thumb.is-empty::before {
-      content: '';
-      position: absolute;
-      inset: 18% 14% auto 14%;
-      height: 4px;
-      background: #f0f0f0;
-      border-radius: 2px;
+      content: ''; position: absolute; inset: 18% 14% auto 14%; height: 4px;
+      background: #f0f0f0; border-radius: 2px;
       box-shadow: 0 12px 0 #f4f4f4, 0 24px 0 #f4f4f4, 0 36px 0 #f4f4f4;
     }
     .kd-recent-card-thumb::after {
-      content: '';
-      position: absolute; left: 0; right: 0; bottom: 0; height: 35%;
+      content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 35%;
       background: linear-gradient(to bottom, transparent, rgba(255,255,255,.95));
       pointer-events: none;
     }
-    .kd-recent-card-footer {
-      display: flex; flex-direction: column;
-      gap: 4px;
-      padding: 10px 12px 10px;
-    }
-    .kd-recent-card-title {
-      font-size: 13px; font-weight: 600;
-      color: var(--text); line-height: 1.3;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      display: block;
-    }
-    .kd-recent-card-footer-meta {
-      display: flex; align-items: center; gap: 6px;
-      font-size: 11.5px; color: var(--text-2);
-      min-width: 0;
-    }
-    .kd-recent-card-app-inline { width: 14px; height: 14px; flex-shrink: 0; display: block; }
+    .kd-recent-card-footer { display: flex; align-items: center; gap: 10px; padding: 10px 12px; min-width: 0; }
+    .kd-recent-card-app-inline { width: 18px; height: 18px; flex-shrink: 0; display: block; }
     .kd-recent-card-app-inline img { width: 100%; height: 100%; display: block; }
-    .kd-recent-card-meta-date { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .kd-recent-card-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+    .kd-recent-card-title { font-size: 13px; font-weight: 600; line-height: 1.3; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .kd-recent-card-meta-date { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+    /* Lista: linhas com divisória, como na Início */
+    .kd-recent-grid.is-list { display: flex; flex-direction: column; gap: 0; }
+    .kd-recent-grid.is-list .kd-recent-card {
+      flex-direction: row; border: 0; border-radius: 0; background: transparent;
+      border-bottom: 1px solid var(--hairline);
+    }
+    .kd-recent-grid.is-list .kd-recent-card:last-child { border-bottom: 0; }
+    .kd-recent-grid.is-list .kd-recent-card:hover { transform: none; box-shadow: none; background: var(--surface-2); }
+    .kd-recent-grid.is-list .kd-recent-card-thumb { display: none; }
+    .kd-recent-grid.is-list .kd-recent-card-footer { flex: 1; padding: 11px 8px; }
+    .kd-recent-grid.is-list .kd-recent-card-text { flex-direction: row; align-items: baseline; justify-content: space-between; gap: 16px; }
+    .kd-recent-grid.is-list .kd-recent-card-title { font-size: 13.5px; font-weight: 500; }
+
     .kd-recent-empty {
       grid-column: 1 / -1;
-      padding: 40px 20px;
-      text-align: center;
-      color: var(--text-2);
-      font-size: 13px;
-      background: color-mix(in oklab, var(--text) 3%, transparent);
-      border-radius: 12px;
+      display: flex; flex-direction: column; align-items: center; gap: 12px;
+      padding: 40px 20px; text-align: center;
+      font-size: 13px; color: var(--text-muted);
+      border: 1px dashed var(--hairline-strong); border-radius: var(--radius-md);
+    }
+    .kd-recent-empty .btn { text-decoration: none; }
+
+    @media (max-width: 640px) {
+      .kd-list-topbar { padding: 12px 16px; }
+      .kd-user-name, .kd-tb-label { display: none; }
+      .kd-tb-btn { width: 36px; height: 36px; padding: 0; justify-content: center; }
+      .kd-list-body { padding: 20px 16px 40px; }
+      .kd-recent-toolbar { align-items: stretch; }
+      .kd-recent-toolbar-actions { width: 100%; }
+      .kd-search { flex: 1; width: auto; }
+      .kd-recent-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
     }
 
     /* Editor scroll: em standalone o header do editor JÁ é o do doc.
@@ -1228,131 +1059,6 @@
       flex-direction: column;
     }
     .writer-editor-scroll { flex: 1; min-width: 0; }
-
-    /* ── Régua horizontal + marcadores de indent ────────────────────
-       A régua fica sticky no topo da área de scroll, alinhada com a largura
-       do paper A4. Mostra marcas em cm, zonas de margem (padding do paper)
-       em tom mais escuro, e dois marcadores draggable (esquerda / direita)
-       que ajustam indentLeft/indentRight do parágrafo/bloco atual (ou de
-       todos os blocos na seleção). */
-    /* Bar container centralizado horizontalmente pra alinhar com o paper.
-       O padding-right compensa a scrollbar vertical do .writer-editor-scroll —
-       sem isso, o centro visual do scroll fica ~5px à esquerda do centro da
-       ruler-bar (pq scrollbar rouba largura do lado direito). Var `--kd-sbw`
-       é setada em JS via _kdMeasureScrollbar(). */
-    .kd-ruler-bar {
-      display: flex; justify-content: center;
-      flex-shrink: 0;
-      padding: 4px var(--kd-sbw, 0px) 0 0;
-      background: var(--bg);
-    }
-    .kd-ruler {
-      width: 210mm;
-      min-height: 20px;
-      height: 20px;
-      flex-shrink: 0;
-      z-index: 4;
-      background: var(--surface);
-      border: 1px solid var(--hairline);
-      border-radius: 3px 3px 0 0;
-      user-select: none;
-      -webkit-user-select: none;
-      box-sizing: border-box;
-      overflow: visible;    /* markers estouram embaixo/em cima do ruler */
-      position: relative;
-      color: var(--text-2);
-      /* Zona externa (margens) mais escura + zona interna (content) mais clara */
-      background:
-        linear-gradient(to right,
-          color-mix(in oklab, var(--text) 8%, transparent) 0,
-          color-mix(in oklab, var(--text) 8%, transparent) 25.4mm,
-          var(--surface) 25.4mm,
-          var(--surface) calc(210mm - 25.4mm),
-          color-mix(in oklab, var(--text) 8%, transparent) calc(210mm - 25.4mm),
-          color-mix(in oklab, var(--text) 8%, transparent) 210mm
-        );
-    }
-    :root[data-theme="light"] .kd-ruler {
-      background:
-        linear-gradient(to right,
-          #e0e0e0 0, #e0e0e0 25.4mm,
-          #ffffff 25.4mm, #ffffff calc(210mm - 25.4mm),
-          #e0e0e0 calc(210mm - 25.4mm), #e0e0e0 210mm
-        );
-    }
-    /* Ticks a cada 5mm — simples, sem números. Marcas maiores a cada 10mm. */
-    .kd-ruler-ticks {
-      position: absolute; left: 0; right: 0; top: 0; bottom: 0;
-      pointer-events: none;
-    }
-    .kd-ruler-tick {
-      position: absolute;
-      top: 0;
-      width: 1px;
-      background: currentColor;
-      opacity: .35;
-      height: 5px;
-    }
-    .kd-ruler-tick.major { height: 8px; opacity: .55; }
-
-    /* Marcadores draggable — snap 5mm.
-       .is-left  = triângulo apontando pra CIMA (margem esquerda)
-       .is-right = triângulo apontando pra CIMA (margem direita)
-       .is-first = triângulo apontando pra BAIXO (recuo da 1ª linha) */
-    .kd-ruler-marker {
-      position: absolute;
-      width: 14px;
-      cursor: ew-resize;
-      pointer-events: auto;
-      transform: translateX(-50%);
-      display: flex; align-items: center; justify-content: center;
-    }
-    .kd-ruler-marker.is-left,
-    .kd-ruler-marker.is-right {
-      bottom: -4px; height: 12px;
-    }
-    .kd-ruler-marker.is-left::before,
-    .kd-ruler-marker.is-right::before {
-      content: '';
-      width: 0; height: 0;
-      border-left: 7px solid transparent;
-      border-right: 7px solid transparent;
-      border-bottom: 9px solid var(--accent);
-      filter: drop-shadow(0 1px 1px rgba(0,0,0,.15));
-    }
-    .kd-ruler-marker.is-first {
-      top: -4px; height: 12px;
-    }
-    .kd-ruler-marker.is-first::before {
-      content: '';
-      width: 0; height: 0;
-      border-left: 7px solid transparent;
-      border-right: 7px solid transparent;
-      border-top: 9px solid color-mix(in oklab, var(--accent) 70%, #ff5aff);
-      filter: drop-shadow(0 1px 1px rgba(0,0,0,.15));
-    }
-    .kd-ruler-marker:hover.is-left::before,
-    .kd-ruler-marker:hover.is-right::before { border-bottom-color: color-mix(in oklab, var(--accent) 60%, #ff5aff); }
-    .kd-ruler-marker:hover.is-first::before { border-top-color: color-mix(in oklab, var(--accent) 60%, #7a00ff); }
-    .kd-ruler-marker.is-dragging.is-left::before,
-    .kd-ruler-marker.is-dragging.is-right::before { border-bottom-color: color-mix(in oklab, var(--accent) 60%, #ff5aff); }
-    .kd-ruler-marker.is-dragging.is-first::before { border-top-color: color-mix(in oklab, var(--accent) 60%, #7a00ff); }
-
-    /* Tooltip com cm atual durante drag */
-    .kd-ruler-tooltip {
-      position: absolute;
-      top: 24px;
-      transform: translateX(-50%);
-      background: var(--text);
-      color: var(--bg);
-      font-size: 11px; font-weight: 600;
-      padding: 2px 6px;
-      border-radius: 4px;
-      white-space: nowrap;
-      pointer-events: none;
-      opacity: 0; transition: opacity .12s;
-    }
-    .kd-ruler.is-dragging .kd-ruler-tooltip { opacity: 1; }
 
     /* Em telas menores que o paper, esconde a régua */
     @media (max-width: 900px) {
@@ -2392,6 +2098,8 @@
       text-decoration: none;
     }
   </style>
+  <!-- Editor (cabeçalho, barra, menus, painéis) — depois do <style> inline pra ter precedência -->
+  <link rel="stylesheet" href="/css/docs-editor.css?v=20260924pg1">
 </head>
 <body>
 
@@ -2403,22 +2111,32 @@
   <div id="kd-app" class="kd-app" hidden>
     <!-- Shell da LISTA (mostra em /writer sem doc slug) -->
     <div class="kd-list-shell">
-      <div class="kd-list-topbar">
-        <a class="kd-topbar-back" href="/hub" title="Voltar pro Hub" aria-label="Voltar">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+      <header class="topbar kd-list-topbar">
+        <a class="topbar-back" href="/hub" title="Voltar pro Hub" aria-label="Voltar pro Hub">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </a>
-        <div class="kd-brand">
-          <img id="kd-brand-logo" src="/reworkdocs_preto.svg" alt="reWork Docs">
+        <a class="kd-brand" href="/hub/docs" aria-label="reWork Docs">
+          <img src="/reworkdocs_icone.svg" alt="">
+          <span>Docs</span>
+        </a>
+        <div class="topbar-actions">
+          <button type="button" class="btn btn-ghost kd-tb-icon" onclick="kdToggleTheme()" title="Alternar tema" aria-label="Alternar tema">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+          </button>
+          <button type="button" class="btn btn-ghost kd-tb-btn" onclick="_kdImportPickFile()" title="Importar DOCX, PDF, TXT, MD ou HTML">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span class="kd-tb-label">Importar</span>
+          </button>
+          <button type="button" class="btn btn-primary kd-tb-btn" onclick="_kdOpenTemplatesModal()" title="Novo documento">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            <span class="kd-tb-label">Novo documento</span>
+          </button>
+          <div class="kd-user-chip" id="kd-user-chip" title="—">
+            <div class="kd-user-avatar" id="kd-user-avatar">?</div>
+            <span class="kd-user-name" id="kd-user-name">—</span>
+          </div>
         </div>
-        <div class="kd-topbar-spacer"></div>
-        <button type="button" class="kd-icon-btn" onclick="kdToggleTheme()" title="Alternar tema">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
-        </button>
-        <div class="kd-user-chip" id="kd-user-chip" title="—">
-          <div class="kd-user-avatar" id="kd-user-avatar">?</div>
-          <span id="kd-user-name">—</span>
-        </div>
-      </div>
+      </header>
 
       <div class="kd-list-body">
         <!-- Filtro de squad em estado escondido — o botão de criar precisa
@@ -2426,210 +2144,89 @@
              lógica existente sem quebrar. -->
         <select id="kd-f-ws" hidden onchange="kdRenderList()"></select>
 
-        <!-- BLOCO 1 — Novo documento -->
-        <div class="kd-new-block">
-          <div class="kd-block-title">Começar um novo documento</div>
-          <div class="kd-new-grid">
-            <button type="button" class="kd-new-card" onclick="_kdOpenTemplatesModal()" title="Novo documento (com template ou em branco)" aria-label="Novo documento">
-              <div class="kd-new-card-inner">
-                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-                <span class="kd-new-card-label">Novo</span>
-              </div>
-            </button>
-            <button type="button" class="kd-new-card" onclick="_kdImportPickFile()" title="Importar DOCX, PDF, TXT, MD, HTML" aria-label="Importar arquivo">
-              <div class="kd-new-card-inner">
-                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                <span class="kd-new-card-label">Upload</span>
-              </div>
-            </button>
-          </div>
-        </div>
+        <div class="kd-list-inner">
+          <h1 class="dash-greeting kd-list-title"><span class="dash-greeting-msg">Documentos</span></h1>
 
-        <!-- BLOCO 2 — Arquivos recentes (mesma linguagem do Hub) -->
-        <div class="kd-recent-block">
-          <div class="kd-recent-toolbar">
-            <div class="kd-recent-title" id="kd-recent-title">Documentos recentes</div>
-            <div class="kd-recent-toolbar-actions">
-              <!-- Busca em tempo real. Input fica escondido até clicar na lupa. -->
-              <div class="kd-recent-search" id="kd-recent-search">
-                <button type="button" class="kd-recent-icon-btn" id="kd-recent-search-btn" onclick="kdRecentToggleSearch()" title="Pesquisar por título">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <section>
+            <div class="kd-recent-toolbar">
+              <div class="dash-tabs" role="tablist" id="kd-owner-tabs">
+                <button type="button" class="dash-tab" role="tab" data-owner="mine">Meus</button>
+                <button type="button" class="dash-tab" role="tab" data-owner="shared">Compartilhados comigo</button>
+                <button type="button" class="dash-tab" role="tab" data-owner="any">Todos</button>
+              </div>
+              <div class="kd-recent-toolbar-actions">
+                <label class="kd-search">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                  <input type="search" id="kd-recent-search-input" placeholder="Buscar documentos" aria-label="Buscar documentos" oninput="kdRecentSearchInput(this.value)" onkeydown="if(event.key==='Escape'){this.value='';kdRecentSearchInput('')}">
+                </label>
+                <button type="button" class="btn btn-ghost kd-tb-icon" onclick="kdRecentToggleMenu('sort', event)" title="Ordenar" aria-label="Ordenar">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5h4M11 9h7M11 13h10M3 17l3 3 3-3M6 20V4"/></svg>
                 </button>
-                <input type="text" class="kd-recent-search-input" id="kd-recent-search-input" placeholder="Pesquisar documentos…" hidden oninput="kdRecentSearchInput(this.value)" onkeydown="if(event.key==='Escape') kdRecentToggleSearch()">
-              </div>
-
-              <div class="kd-recent-divider"></div>
-
-              <button type="button" class="kd-recent-select" id="kd-recent-owner-btn" onclick="kdRecentToggleMenu('owner', event)">
-                <span id="kd-recent-owner-label">Pertencem a mim</span>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-              </button>
-              <div class="kd-recent-menu" id="kd-recent-owner-menu" hidden>
-                <button type="button" data-owner="mine">Pertencem a mim</button>
-                <button type="button" data-owner="any">Qualquer pessoa</button>
-                <button type="button" data-owner="shared">Compartilhados comigo</button>
-              </div>
-
-              <div class="kd-recent-divider"></div>
-
-              <button type="button" class="kd-recent-icon-btn" id="kd-recent-view-btn" onclick="kdRecentToggleView()" title="Alternar visualização">
-                <svg id="kd-recent-view-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
-              </button>
-
-              <button type="button" class="kd-recent-icon-btn" id="kd-recent-sort-btn" onclick="kdRecentToggleMenu('sort', event)" title="Ordenar">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5h4M11 9h7M11 13h10M3 17l3 3 3-3M6 20V4"/></svg>
-              </button>
-              <div class="kd-recent-menu" id="kd-recent-sort-menu" hidden>
-                <button type="button" data-sort="updated">Última modificação</button>
-                <button type="button" data-sort="created">Data de criação</button>
-                <button type="button" data-sort="title">Nome (A-Z)</button>
+                <div class="kd-recent-menu" id="kd-recent-sort-menu" hidden>
+                  <button type="button" data-sort="updated">Última modificação</button>
+                  <button type="button" data-sort="created">Data de criação</button>
+                  <button type="button" data-sort="title">Nome (A-Z)</button>
+                </div>
+                <button type="button" class="btn btn-ghost kd-tb-icon" id="kd-recent-view-btn" onclick="kdRecentToggleView()" title="Ver em lista" aria-label="Alternar visualização">
+                  <svg id="kd-recent-view-icon" width="15" height="15" viewBox="0 0 24 24"></svg>
+                </button>
               </div>
             </div>
-          </div>
-          <div class="kd-recent-grid" id="kd-grid"></div>
+            <div class="kd-recent-grid" id="kd-grid"></div>
+          </section>
         </div>
       </div>
     </div>
 
     <!-- Shell do EDITOR (mostra em /writer/<slug>) — reusa .writer-editor-view do style.css -->
-    <div class="page-body writer-editor-view" id="writer-editor-view">
+    <div class="page-body writer-editor-view is-pageless" id="writer-editor-view">
       <!-- Header agrupado (topbar + menubar) com fade roxo compartilhado -->
+      <!-- Cabeçalho: voltar, ícone, título + status, menus e ações; embaixo a
+           barra de ferramentas (montada pelo editor-ui.js). -->
       <div class="kd-editor-header">
-      <div class="writer-editor-topbar">
-        <a class="writer-topbar-back" href="/hub/docs" title="Todos os documentos">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-        </a>
-        <input class="writer-title-input" id="writer-title-input" placeholder="Sem título" onchange="kdRenameCurrent(this.value)">
-        <div class="writer-topbar-status" id="writer-topbar-status">
-          <span class="writer-status-dot"></span>
-          <span class="writer-status-text">—</span>
-        </div>
-        <div class="writer-topbar-actions">
-          <button class="btn-icon kd-topbar-share-btn" onclick="kdShareOpen()" title="Compartilhar">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-            <span>Compartilhar</span>
-          </button>
-          <button class="btn-icon" onclick="kdHistoryOpen()" title="Histórico de versões">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>
-          </button>
-          <button class="btn-icon kd-topbar-comments-btn" id="kd-topbar-comments-btn" onclick="kdCommentsPanelToggle()" title="Comentários">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-            <span class="kd-topbar-comments-badge" id="kd-topbar-comments-badge" hidden>0</span>
-          </button>
-          <button class="btn-icon" onclick="kdToggleTheme()" title="Alternar tema">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
-          </button>
-          <!-- Exportar (kdExportMenu) e Excluir (kdConfirmDelete) foram movidos
-               pro menu Arquivo (kd-menubar). As funções continuam expostas em
-               window.* pra atalhos de teclado e chamadas internas. -->
-        </div>
-      </div>
-
-      <!-- Menubar estilo Google Docs — Arquivo / Editar / Ver / Inserir / Formatar -->
-      <div class="kd-menubar" id="kd-menubar">
-        <button type="button" class="kd-menubar-item" data-menu="arquivo" onclick="kdMenubarOpen('arquivo', event)">Arquivo</button>
-        <button type="button" class="kd-menubar-item" data-menu="editar" onclick="kdMenubarOpen('editar', event)">Editar</button>
-        <button type="button" class="kd-menubar-item" data-menu="ver" onclick="kdMenubarOpen('ver', event)">Ver</button>
-        <button type="button" class="kd-menubar-item" data-menu="inserir" onclick="kdMenubarOpen('inserir', event)">Inserir</button>
-        <button type="button" class="kd-menubar-item" data-menu="formatar" onclick="kdMenubarOpen('formatar', event)">Formatar</button>
-      </div>
-      </div><!-- /.kd-editor-header -->
-
-      <!-- Dropdowns dos menus — apenas Arquivo populado por enquanto -->
-      <div class="kd-menubar-dropdown" id="kd-menubar-dd-arquivo" hidden>
-        <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('novo')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-          <span>Novo documento</span>
-        </button>
-        <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('duplicar')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          <span>Fazer uma cópia</span>
-        </button>
-        <div class="kd-menubar-dd-divider"></div>
-        <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('compartilhar')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-          <span>Compartilhar</span>
-        </button>
-        <div class="kd-menubar-dd-sub" data-sub="baixar">
-          <button type="button" class="kd-menubar-dd-item kd-menubar-dd-item--submenu" onclick="kdMenubarToggleSub('baixar', event)">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            <span>Baixar</span>
-          </button>
-          <div class="kd-menubar-dd-sub-panel">
-            <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('baixar-pdf')"><span>PDF</span></button>
-            <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('baixar-docx')"><span>DOCX (Word)</span></button>
-            <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('baixar-html')"><span>HTML</span></button>
-            <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('baixar-txt')"><span>Texto (TXT)</span></button>
+        <div class="writer-editor-topbar">
+          <a class="topbar-back kd-ed-back" href="/hub/docs" title="Todos os documentos" aria-label="Todos os documentos">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+          </a>
+          <a class="kd-ed-logo" href="/hub/docs" title="reWork Docs"><img src="/reworkdocs_icone.svg" alt="reWork Docs"></a>
+          <div class="kd-ed-titlebox">
+            <div class="kd-ed-titlerow">
+              <input class="writer-title-input" id="writer-title-input" placeholder="Sem título" aria-label="Título do documento" onchange="kdRenameCurrent(this.value)" onkeydown="if(event.key==='Enter'){this.blur()}">
+              <div class="writer-topbar-status" id="writer-topbar-status">
+                <span class="writer-status-dot"></span>
+                <span class="writer-status-text">—</span>
+              </div>
+              <button type="button" class="kd-doc-link" id="kd-doc-link" onclick="kdLinkPick(this)" hidden></button>
+              <button type="button" class="kd-approval-badge" id="kd-approval-badge" onclick="kdApprovalMenu(this)" hidden></button>
+            </div>
+            <nav class="kd-menubar" id="kd-menubar" aria-label="Menus do documento">
+              <button type="button" class="kd-menubar-item" data-menu="arquivo">Arquivo</button>
+              <button type="button" class="kd-menubar-item" data-menu="editar">Editar</button>
+              <button type="button" class="kd-menubar-item" data-menu="ver">Ver</button>
+              <button type="button" class="kd-menubar-item" data-menu="inserir">Inserir</button>
+              <button type="button" class="kd-menubar-item" data-menu="formatar">Formatar</button>
+              <button type="button" class="kd-menubar-item" data-menu="ferramentas">Ferramentas</button>
+            </nav>
+          </div>
+          <div class="writer-topbar-actions">
+            <button type="button" class="btn btn-ghost kd-ed-icon kd-topbar-comments-btn" id="kd-topbar-comments-btn" onclick="kdCommentsPanelToggle()" title="Comentários" aria-label="Comentários">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              <span class="kd-topbar-comments-badge" id="kd-topbar-comments-badge" hidden>0</span>
+            </button>
+            <button type="button" class="btn btn-ghost kd-ed-icon" onclick="kdHistoryOpen()" title="Histórico de versões" aria-label="Histórico de versões">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+            </button>
+            <button type="button" class="btn btn-ghost kd-ed-icon" onclick="kdToggleTheme()" title="Alternar tema" aria-label="Alternar tema">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+            </button>
+            <button type="button" class="btn btn-primary kd-topbar-share-btn" onclick="kdShareOpen()" title="Compartilhar">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              <span>Compartilhar</span>
+            </button>
           </div>
         </div>
-        <div class="kd-menubar-dd-divider"></div>
-        <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('renomear')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-          <span>Renomear</span>
-        </button>
-        <button type="button" class="kd-menubar-dd-item kd-menubar-dd-item--danger" onclick="kdMenubarAction('lixeira')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-          <span>Mover para a lixeira</span>
-        </button>
-        <div class="kd-menubar-dd-divider"></div>
-        <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('historico')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>
-          <span>Histórico de versões</span>
-        </button>
-        <div class="kd-menubar-dd-divider"></div>
-        <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('imprimir')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-          <span>Imprimir</span>
-          <span class="kd-menubar-dd-shortcut">Ctrl+P</span>
-        </button>
+        <div class="writer-editor-toolbar" id="writer-editor-toolbar"></div>
       </div>
-
-      <!-- Dropdown do menu Editar -->
-      <div class="kd-menubar-dropdown" id="kd-menubar-dd-editar" hidden>
-        <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('undo')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/></svg>
-          <span>Desfazer</span>
-          <span class="kd-menubar-dd-shortcut">Ctrl+Z</span>
-        </button>
-        <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('redo')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5v0A5.5 5.5 0 0 0 9.5 20H13"/></svg>
-          <span>Refazer</span>
-          <span class="kd-menubar-dd-shortcut">Ctrl+Y</span>
-        </button>
-        <div class="kd-menubar-dd-divider"></div>
-        <button type="button" class="kd-menubar-dd-item" data-needs-selection onclick="kdMenubarAction('cut')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
-          <span>Recortar</span>
-          <span class="kd-menubar-dd-shortcut">Ctrl+X</span>
-        </button>
-        <button type="button" class="kd-menubar-dd-item" data-needs-selection onclick="kdMenubarAction('copy')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          <span>Copiar</span>
-          <span class="kd-menubar-dd-shortcut">Ctrl+C</span>
-        </button>
-        <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('paste')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
-          <span>Colar</span>
-          <span class="kd-menubar-dd-shortcut">Ctrl+V</span>
-        </button>
-        <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('paste-plain')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M9 12h6M9 16h4"/></svg>
-          <span>Colar sem formatação</span>
-          <span class="kd-menubar-dd-shortcut">Ctrl+Shift+V</span>
-        </button>
-        <div class="kd-menubar-dd-divider"></div>
-        <button type="button" class="kd-menubar-dd-item" onclick="kdMenubarAction('select-all')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/><rect x="7" y="7" width="10" height="10" rx="1"/></svg>
-          <span>Selecionar tudo</span>
-          <span class="kd-menubar-dd-shortcut">Ctrl+A</span>
-        </button>
-        <button type="button" class="kd-menubar-dd-item kd-menubar-dd-item--danger" data-needs-selection onclick="kdMenubarAction('delete-selection')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-          <span>Excluir</span>
-        </button>
-      </div>
-
-      <div class="writer-editor-toolbar" id="writer-editor-toolbar"></div>
       <div class="writer-editor-wrap">
         <!-- Painel de índice (outline) — coluna à esquerda, sem fundo -->
         <aside class="kd-outline-panel" id="kd-outline-panel">
@@ -2745,6 +2342,15 @@
           </div>
         </div>
 
+        <!-- Aprovação do cliente — pelo link público -->
+        <div class="kd-share-approval" id="kd-share-approval">
+          <div>
+            <div class="kd-share-restricted-title">Aprovação do cliente <span class="kd-share-approval-status"></span></div>
+            <div class="kd-share-restricted-sub">O cliente abre o link público e aprova ou pede ajustes. Você recebe o aviso no sino.</div>
+          </div>
+          <button type="button" class="btn btn-ghost btn-sm" data-ap="request" onclick="kdShareApproval(this)">Pedir aprovação</button>
+        </div>
+
         <label class="kd-share-restricted">
           <input type="checkbox" id="kd-share-restricted" onchange="kdShareToggleRestricted(this.checked)">
           <div>
@@ -2837,6 +2443,7 @@
 
   <div id="kd-toast" class="kd-toast"></div>
 
-  <script src="/js/writer/standalone.js?v=20260917importNewTab"></script>
+  <script src="/js/writer/standalone.js?v=20260924pg8"></script>
+  <script src="/js/writer/editor-ui.js?v=20260924pg1"></script>
 </body>
 </html>

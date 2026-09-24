@@ -4653,8 +4653,12 @@ function renderReleaseNotes(notes) {
     const [y, m, dd] = d.split('-');
     return `${dd}/${m}/${y.slice(2)}`;
   };
+  // Lançamentos (kind: 'launch') vêm primeiro e ganham o card de apresentação.
+  const ordered = notes.filter(n => n.kind === 'launch').concat(notes.filter(n => n.kind !== 'launch'));
+  const modal = $('release-notes-modal');
+  modal?.querySelector('.modal')?.classList.toggle('is-launch', ordered.some(n => n.kind === 'launch'));
   // highlight: entrada marcada em roxo no release-notes.json.
-  wrap.innerHTML = notes.map(n => `
+  wrap.innerHTML = ordered.map(n => n.kind === 'launch' ? releaseLaunchHTML(n) : `
     <div class="release-note-card${n.highlight ? ' is-highlight' : ''}">
       <div class="release-note-head">
         <div class="release-note-title">${esc(n.title || '')}</div>
@@ -4666,6 +4670,33 @@ function renderReleaseNotes(notes) {
     </div>
   `).join('');
   if (window.lucide) lucide.createIcons();
+}
+/* Card de apresentação de produto (ex.: reWork Docs beta): cabeçalho com
+   ícone e selo, frase de apresentação, grade de recursos e botão pra abrir. */
+function releaseLaunchHTML(n) {
+  const L = n.launch || {};
+  const feats = Array.isArray(L.features) ? L.features : [];
+  const safeHref = /^\/[a-z0-9/_-]*$/i.test(L.cta?.href || '') ? L.cta.href : null;
+  return `<section class="release-launch">
+    <div class="release-launch-hero">
+      ${L.icon && /^\/[\w.-]+\.svg$/.test(L.icon) ? `<img class="release-launch-icon" src="${esc(L.icon)}" alt="">` : ''}
+      <div class="release-launch-heading">
+        <div class="release-launch-kicker">${esc(L.kicker || 'Novo')}${L.badge ? `<span class="release-launch-badge">${esc(L.badge)}</span>` : ''}</div>
+        <h3 class="release-launch-title">${esc(n.title || '')}</h3>
+        ${L.tagline ? `<p class="release-launch-tagline">${esc(L.tagline)}</p>` : ''}
+      </div>
+    </div>
+    <div class="release-launch-grid">
+      ${feats.map(f => `<div class="release-launch-feat">
+        <span class="release-launch-feat-icon"><i data-lucide="${esc(f.icon || 'sparkles')}"></i></span>
+        <div><div class="release-launch-feat-title">${esc(f.title || '')}</div><div class="release-launch-feat-text">${esc(f.text || '')}</div></div>
+      </div>`).join('')}
+    </div>
+    <div class="release-launch-foot">
+      ${L.note ? `<p class="release-launch-note"><i data-lucide="flask-conical" class="ic-sm"></i><span>${esc(L.note)}</span></p>` : ''}
+      ${safeHref ? `<a class="btn btn-primary release-launch-cta" href="${esc(safeHref)}" target="_blank" rel="noopener">${esc(L.cta.label || 'Abrir')}<i data-lucide="arrow-up-right" class="ic-sm"></i></a>` : ''}
+    </div>
+  </section>`;
 }
 async function dismissReleaseNotes() {
   closeModal('release-notes-modal');
@@ -27741,6 +27772,42 @@ function toggleNotifPanel() {
   }
 }
 
+/* ─── Documentos vinculados (cliente/projeto) ───
+   Lista os documentos do reWork Docs ligados a este cliente/projeto. O
+   documento abre no Docs (outra aba); "Novo documento" já nasce vinculado. */
+async function renderLinkedDocs(kind, id) {
+  const el = $(kind + '-detail-docs');
+  if (!el) return;
+  if (me?.isFreelancer) { el.closest('.client-detail-section').hidden = true; return; }
+  el.innerHTML = '<div class="linked-docs-empty">Carregando…</div>';
+  let docs = [];
+  try { docs = await api('/writer?lite=1&' + (kind === 'client' ? 'clientId=' : 'projectId=') + encodeURIComponent(id)); }
+  catch { el.innerHTML = '<div class="linked-docs-empty">Não foi possível carregar os documentos.</div>'; return; }
+  if ((kind === 'client' ? currentClientId : currentProjectId) !== id) return;
+  docs.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+  if (!docs.length) {
+    el.innerHTML = `<div class="linked-docs-empty">Nenhum documento ${kind === 'client' ? 'deste cliente' : 'deste projeto'} ainda. Briefings, atas e escopos vinculados aparecem aqui.</div>`;
+    return;
+  }
+  const APPROVAL = { pending: ['Aguardando aprovação', 'is-pending'], approved: ['Aprovado', 'is-approved'], changes: ['Ajustes pedidos', 'is-changes'] };
+  el.innerHTML = docs.slice(0, 30).map(d => {
+    const ap = d.approval && APPROVAL[d.approval.status];
+    const proj = kind === 'client' && d.projectId ? projectById(d.projectId) : null;
+    return `<a class="linked-doc" href="/hub/docs/${esc(d.id)}" target="_blank" rel="noopener">
+      <img class="linked-doc-icon" src="/reworkdocs_icone.svg" alt="">
+      <span class="linked-doc-title">${esc(d.title || 'Sem título')}</span>
+      ${proj ? `<span class="linked-doc-meta">${esc(proj.name)}</span>` : ''}
+      ${ap ? `<span class="linked-doc-badge ${ap[1]}">${ap[0]}</span>` : ''}
+      <span class="linked-doc-date">${esc(fmtRelativeTime(d.updatedAt))}</span>
+    </a>`;
+  }).join('');
+}
+function newLinkedDoc(kind) {
+  const id = kind === 'client' ? currentClientId : currentProjectId;
+  if (!id) return;
+  window.open('/hub/docs?novo=1&' + (kind === 'client' ? 'cliente=' : 'projeto=') + encodeURIComponent(id), '_blank', 'noopener');
+}
+
 function notifMessage(n) {
   const from = userById(n.fromUser);
   const fromName = from ? from.name : 'Alguém';
@@ -27760,6 +27827,12 @@ function notifMessage(n) {
         (n.commentText ? `<div class="notif-comment">${esc(n.commentText)}</div>` : '');
     case 'time_gap':
       return `<strong>Apontamento pendente</strong><div class="notif-comment">${esc(n.commentText || '')}</div>`;
+    case 'doc_approved':
+      return `<strong>${esc(n.fromName || 'O cliente')}</strong> aprovou o documento <strong>${esc(n.docTitle || n.demandName)}</strong>` +
+        (n.commentText ? `<div class="notif-comment">${esc(n.commentText)}</div>` : '');
+    case 'doc_changes':
+      return `<strong>${esc(n.fromName || 'O cliente')}</strong> pediu ajustes no documento <strong>${esc(n.docTitle || n.demandName)}</strong>` +
+        (n.commentText ? `<div class="notif-comment">${esc(n.commentText)}</div>` : '');
     default:
       return `Notificação sobre <strong>${esc(n.demandName)}</strong>`;
   }
@@ -27841,6 +27914,10 @@ async function openNotif(notifId, demandId) {
   }
   // fecha painel e abre a demanda
   $('notif-panel').classList.remove('open');
+  if (n && n.docId) {
+    window.open('/hub/docs/' + encodeURIComponent(n.docId), '_blank', 'noopener');
+    return;
+  }
   if (n && n.type === 'time_gap') {
     goPage('dashboard');
     setTimeout(() => document.getElementById('dash-section-timegaps')?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 300);
@@ -30073,6 +30150,8 @@ function renderClientDetail(id) {
 
   // TEMPO DEDICADO
   renderClientTimeBlock(id);
+  // DOCUMENTOS vinculados (reWork Docs)
+  renderLinkedDocs('client', id);
   // GALERIA DE ANEXOS
   renderAttGallery('client');
   paintIcons();
@@ -30486,6 +30565,7 @@ function renderProjectDetail(id) {
   renderRoleCargoMatrix('project-detail-people', p, 'setProjectRoleCargoAssignment', id);
 
   renderProjectTimeBlock(id);
+  renderLinkedDocs('project', id);
   // GALERIA DE ANEXOS
   renderAttGallery('project');
   paintIcons();

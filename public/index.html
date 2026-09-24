@@ -1848,6 +1848,14 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             </div>
           </div>
 
+          <div class="client-detail-section" style="margin-top:32px">
+            <div class="linked-docs-head">
+              <div class="client-detail-section-label">DOCUMENTOS</div>
+              <button class="btn btn-ghost btn-sm freelancer-hide" onclick="newLinkedDoc('client')"><i data-lucide="file-plus" class="ic-sm"></i> Novo documento</button>
+            </div>
+            <div class="linked-docs" id="client-detail-docs"></div>
+          </div>
+
           <div class="client-detail-two-col" style="margin-top:32px">
             <div class="client-detail-section">
               <div class="client-detail-section-label">PESSOAS</div>
@@ -1917,6 +1925,14 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                 </div>
               </div>
             </div>
+          </div>
+
+          <div class="client-detail-section" style="margin-top:32px">
+            <div class="linked-docs-head">
+              <div class="client-detail-section-label">DOCUMENTOS</div>
+              <button class="btn btn-ghost btn-sm freelancer-hide" onclick="newLinkedDoc('project')"><i data-lucide="file-plus" class="ic-sm"></i> Novo documento</button>
+            </div>
+            <div class="linked-docs" id="project-detail-docs"></div>
           </div>
 
           <div class="client-detail-two-col" style="margin-top:32px">
@@ -4490,7 +4506,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260924busca3" defer></script>
+<script src="/js/boot.js?v=20260924docs3" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

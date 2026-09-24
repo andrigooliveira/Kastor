@@ -68,6 +68,13 @@ class Room {
 
     // Broadcast awareness updates
     this.awareness.on('update', ({ added, updated, removed }, origin) => {
+      // Lembra quais clientes cada conexão controla, pra limpar a presença
+      // (cursor/avatar) quando ela cair — senão fica um cursor fantasma.
+      if (origin && origin._room === this) {
+        if (!origin._awIds) origin._awIds = new Set();
+        for (const id of added.concat(updated)) origin._awIds.add(id);
+        for (const id of removed) origin._awIds.delete(id);
+      }
       const changed = added.concat(updated, removed);
       const enc = encoding.createEncoder();
       encoding.writeVarUint(enc, MSG_AWARENESS);
@@ -129,10 +136,7 @@ class Room {
   remove(conn) {
     this.conns.delete(conn);
     // Remove awareness pending do peer (client_ids que esse conn detinha)
-    const clientIds = [];
-    for (const [cid, st] of this.awareness.getStates()) {
-      if (st && st._connId === conn._connId) clientIds.push(cid);
-    }
+    const clientIds = Array.from(conn._awIds || []).filter(id => this.awareness.getStates().has(id));
     if (clientIds.length) {
       awarenessProtocol.removeAwarenessStates(this.awareness, clientIds, null);
     }
@@ -150,7 +154,11 @@ class Room {
 
   _schedulePersist() {
     if (this.persistTimer) return;
-    this.persistTimer = setTimeout(() => this._persistNow(), 30000);
+    // Sala nova (sem snapshot salvo): grava logo, pra um restart não perder o
+    // estado e obrigar outro cliente a semear de novo. Depois, a cada 30s.
+    const wait = this.fresh ? 2000 : 30000;
+    this.fresh = false;
+    this.persistTimer = setTimeout(() => this._persistNow(), wait);
   }
 
   _persistNow() {
@@ -233,16 +241,20 @@ async function setup(httpServer, opts = {}) {
     if (!room) {
       room = new Room(docId, { onPersist });
       rooms.set(docId, room);
-      // Reidrata do snapshot persistido
-      try {
-        const initial = await loadInitialState(docId);
-        if (initial && initial.byteLength > 0) {
-          Y.applyUpdate(room.doc, initial);
+      // Reidrata do snapshot persistido. Quem conectar enquanto isso espera
+      // (room.ready): senão sincroniza com a sala vazia, o cliente semeia o
+      // conteúdo de novo e ele duplica quando o snapshot chega.
+      room.ready = (async () => {
+        try {
+          const initial = await loadInitialState(docId);
+          if (initial && initial.byteLength > 0) Y.applyUpdate(room.doc, initial);
+          else room.fresh = true;   // nunca salvo: primeira persistência sai rápido
+        } catch (e) {
+          console.warn('[docs-rt] loadInitialState error:', e.message);
         }
-      } catch (e) {
-        console.warn('[docs-rt] loadInitialState error:', e.message);
-      }
+      })();
     }
+    await room.ready;
 
     ws.binaryType = 'arraybuffer';
     room.add(ws);

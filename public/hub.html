@@ -6,6 +6,8 @@
   <meta name="theme-color" content="#7A00FF">
   <title>reWork Hub</title>
   <link rel="icon" href="/reworkhub_simbol.svg" type="image/svg+xml">
+  <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/css/fonts.css?v=1">
 
   <!-- Aplica tema salvo antes de renderizar pra evitar flash. -->
   <script>
@@ -18,464 +20,202 @@
     })();
   </script>
 
-  <link rel="stylesheet" href="/css/style.css?v=20260911hub8">
+  <link rel="stylesheet" href="/css/style.css?v=20260924hub9">
 
   <style>
-    /* Reset — mesma base do writer.html mas hub tem próprio layout */
-    html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--text); font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
+    /* O Hub usa a mesma linguagem da plataforma: topbar, saudação da Início,
+       títulos de seção com hairline, botões .btn e cards com borda fina.
+       Só o que é próprio do Hub (cards de app e miniaturas) fica aqui. */
+    html, body { margin: 0; padding: 0; min-height: 100%; background: var(--bg); color: var(--text); }
     [hidden] { display: none !important; }
+    a.btn { text-decoration: none; }
 
-    /* ── Layout do Hub ── */
     .hub-app { display: flex; flex-direction: column; min-height: 100vh; }
 
-    /* Topbar do Hub */
-    .hub-topbar {
-      display: flex; align-items: center; gap: 14px;
-      padding: 14px 28px;
-      border-bottom: 1px solid var(--hairline);
-      background: var(--surface);
-      flex-shrink: 0;
-    }
-    .hub-topbar-back {
-      display: inline-flex; align-items: center; justify-content: center;
-      width: 32px; height: 32px;
-      border: 0;
-      background: transparent;
-      color: var(--text-2);
-      cursor: pointer;
-      text-decoration: none;
-      transition: color .15s, transform .12s;
-    }
-    .hub-topbar-back:hover { color: var(--text); transform: translateX(-2px); }
-    .hub-brand {
-      display: inline-flex; align-items: center;
-    }
-    .hub-brand img { display: block; height: 34px; width: auto; }
-    .hub-topbar-spacer { flex: 1; }
-    .hub-icon-btn {
-      width: 36px; height: 36px;
-      border-radius: 10px;
-      border: 1px solid transparent;
-      background: transparent;
-      color: var(--text-2);
-      cursor: pointer;
-      display: inline-flex; align-items: center; justify-content: center;
-      transition: background .15s, color .15s, border-color .15s;
-    }
-    .hub-icon-btn:hover { background: color-mix(in oklab, var(--text) 6%, transparent); color: var(--text); border-color: var(--hairline); }
-    .hub-user-chip {
-      display: flex; align-items: center; gap: 10px;
-      padding: 5px 14px 5px 5px;
-      border-radius: 999px;
-      background: color-mix(in oklab, var(--text) 5%, transparent);
+    /* ── Topbar (mesma da plataforma) ── */
+    .hub-topbar { gap: 4px; position: sticky; top: 0; }
+    .hub-topbar .topbar-back { margin-right: 14px; text-decoration: none; }
+    .hub-brand { display: inline-flex; align-items: center; }
+    .hub-brand img { display: block; height: 26px; width: auto; }
+    .hub-icon-btn { width: 36px; height: 36px; padding: 0; justify-content: center; }
+    .hub-user {
+      display: flex; align-items: center; gap: 9px;
+      padding-left: 12px; margin-left: 2px;
+      border-left: 1px solid var(--hairline);
+      font-size: 13px; font-weight: 600; color: var(--text);
     }
     .hub-user-avatar {
-      width: 30px; height: 30px;
-      border-radius: 50%;
-      background: var(--accent);
-      color: #fff;
+      width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
+      background: var(--accent); color: #fff;
       display: flex; align-items: center; justify-content: center;
-      font-size: 12px; font-weight: 700;
-      overflow: hidden;
+      font-size: 12px; font-weight: 700; overflow: hidden;
     }
     .hub-user-avatar img { width: 100%; height: 100%; object-fit: cover; }
-    .hub-user-name { font-size: 13px; font-weight: 500; color: var(--text); }
-
-    /* Body do Hub */
-    .hub-body {
-      flex: 1;
-      display: flex; flex-direction: column;
+    @media (max-width: 640px) {
+      .hub-topbar { padding: 12px 16px; }
+      .hub-user-name, .hub-new-label { display: none; }
+      .hub-new-btn { width: 36px; height: 36px; padding: 0; justify-content: center; }
     }
 
-    /* ── Bloco Hero: grid de apps + greeting, com fade roxo de fundo ── */
-    .hub-hero {
-      position: relative;
-      padding: 64px 32px 40px;
-      background:
-        radial-gradient(ellipse 800px 400px at 50% 0%, color-mix(in oklab, #7a00ff 22%, transparent), transparent 70%),
-        radial-gradient(ellipse 600px 300px at 15% 80%, color-mix(in oklab, #00e5ff 12%, transparent), transparent 65%),
-        radial-gradient(ellipse 600px 300px at 85% 80%, color-mix(in oklab, #ff5aff 10%, transparent), transparent 65%);
-      overflow: hidden;
-    }
-    :root[data-theme="light"] .hub-hero {
-      background:
-        radial-gradient(ellipse 900px 480px at 50% 0%, color-mix(in oklab, #7a00ff 12%, transparent), transparent 70%),
-        radial-gradient(ellipse 600px 300px at 15% 90%, color-mix(in oklab, #00b4d8 10%, transparent), transparent 65%),
-        radial-gradient(ellipse 600px 300px at 85% 90%, color-mix(in oklab, #ff5aff 8%, transparent), transparent 65%);
-    }
-    .hub-hero::after {
-      content: '';
-      position: absolute; left: 0; right: 0; bottom: 0; height: 60px;
-      background: linear-gradient(to bottom, transparent, var(--bg));
-      pointer-events: none;
-    }
-    .hub-hero-inner {
-      position: relative;
-      max-width: 1080px; width: 100%;
-      margin: 0 auto;
-      display: flex; flex-direction: column;
-      gap: 72px;                    /* respiro entre grid e "O que vamos criar…" */
-    }
+    /* ── Corpo ── */
+    .hub-body { flex: 1; padding: 28px 28px 56px; }
+    .hub-inner { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 40px; }
+    @media (max-width: 640px) { .hub-body { padding: 20px 16px 40px; } }
+    .hub-greeting { margin: 0; }
+    .hub-greeting .dash-greeting-sub { margin-top: 6px; }
 
-    /* Grid de apps — só ícones dos produtos, centralizados com respiro */
-    .hub-apps {
-      display: grid;
-      grid-template-columns: repeat(2, 168px);   /* cards menores */
-      gap: 48px;                                 /* respiro entre eles */
-      justify-content: center;
-    }
-    @media (max-width: 500px) {
-      .hub-apps { grid-template-columns: repeat(2, 140px); gap: 24px; }
-    }
-    /* Cards SÃO o SVG — zero padding, sem bg/borda. Os ícones dos produtos
-       já vêm com cantos arredondados dentro do próprio SVG (rx=92.93 no rect
-       de fundo), então o hover só faz scale + drop-shadow. */
-    .hub-app-card {
-      display: block;
-      aspect-ratio: 1 / 1;
-      padding: 0;
-      background: transparent;
-      border: 0;
-      text-decoration: none;
-      cursor: pointer;
-      transition: transform .18s ease, filter .18s;
-      position: relative;
-    }
-    .hub-app-card:hover:not(.is-disabled) {
-      transform: translateY(-4px) scale(1.03);
-      /* Glow herda cor da variável do card — cada produto tem o próprio tom. */
-      filter: drop-shadow(0 20px 34px color-mix(in oklab, var(--glow, var(--accent)) 60%, transparent));
-    }
-    /* Cores por produto — matching o gradient do SVG.
-       Docs        = aqua → violeta   → ponto médio azul elétrico
-       Presentations = laranja → violeta → ponto médio âmbar/rosa */
-    .hub-app-card[href="/hub/docs"]       { --glow: #4aa8ff; }
-    .hub-app-card[title*="Presentations"] { --glow: #ff7a3d; }
-    .hub-app-card.is-disabled { cursor: not-allowed; }
-    .hub-app-card.is-disabled .hub-app-svg { filter: grayscale(1); opacity: .55; }
-    .hub-app-svg { width: 100%; height: 100%; display: block; }
-    .hub-app-svg img { width: 100%; height: 100%; object-fit: contain; display: block; }
-    /* Placeholder ocupa a mesma área do card (com cantos arredondados
-       aproximando o `rx` do SVG real ≈ 16% do lado). */
-    .hub-app-svg-placeholder {
-      width: 100%; height: 100%;
-      border-radius: 16%;
-      background: color-mix(in oklab, var(--text) 8%, transparent);
-      display: inline-flex; align-items: center; justify-content: center;
-      color: color-mix(in oklab, var(--text) 30%, transparent);
-    }
-
-    /* Greeting maior — foco visual do hero */
-    .hub-greeting {
-      display: flex; flex-direction: column;
-      text-align: center;
-    }
-    .hub-greeting-q {
-      font-size: 48px; font-weight: 700; letter-spacing: -.03em;
-      line-height: 1.15;
-      background: linear-gradient(90deg, #00e5ff 0%, #7a00ff 55%, #ff5aff 100%);
-      -webkit-background-clip: text;
-      background-clip: text;
-      color: transparent;
-    }
-    :root[data-theme="light"] .hub-greeting-q {
-      background: linear-gradient(90deg, #00b4d8 0%, #7a00ff 55%, #d946ef 100%);
-      -webkit-background-clip: text;
-      background-clip: text;
-      color: transparent;
-    }
-    @media (max-width: 700px) { .hub-greeting-q { font-size: 34px; } }
-
-    /* ── Bloco Recentes — separado, fundo neutro ── */
-    .hub-recent-block {
-      padding: 20px 32px 60px;      /* gap texto→recentes reduzido */
-    }
-    .hub-recent-inner {
-      max-width: 1080px; width: 100%;
-      margin: 0 auto;
-      display: flex; flex-direction: column; gap: 16px;
-    }
-    /* Toolbar estilo Google Docs */
-    .hub-recent-toolbar {
-      display: flex; justify-content: space-between; align-items: center;
-      padding-bottom: 12px;
-      gap: 12px;
+    .hub-section { display: flex; flex-direction: column; }
+    .hub-section-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+      padding-bottom: 12px; margin-bottom: 16px;
       border-bottom: 1px solid var(--hairline);
     }
-    .hub-recent-title {
-      font-size: 15px; font-weight: 700; color: var(--text);
-      letter-spacing: -.005em;
-    }
-    .hub-recent-toolbar-actions {
-      display: flex; align-items: center; gap: 4px;
-      position: relative;
-    }
-    .hub-recent-select {
-      display: inline-flex; align-items: center; gap: 6px;
-      padding: 7px 8px 7px 12px;
-      background: transparent;
-      border: 0;
-      color: var(--text);
-      font-size: 13px; font-weight: 500;
-      cursor: pointer;
-      border-radius: 8px;
-      transition: background .12s;
-    }
-    .hub-recent-select:hover { background: color-mix(in oklab, var(--text) 6%, transparent); }
-    .hub-recent-divider {
-      width: 1px; height: 20px;
-      background: var(--hairline);
-      margin: 0 6px;
-    }
-    .hub-recent-icon-btn {
-      width: 34px; height: 34px;
-      border-radius: 8px;
-      border: 0;
-      background: transparent;
-      color: var(--text-2);
-      cursor: pointer;
-      display: inline-flex; align-items: center; justify-content: center;
-      text-decoration: none;
-      transition: background .12s, color .12s;
-    }
-    .hub-recent-icon-btn:hover { background: color-mix(in oklab, var(--text) 6%, transparent); color: var(--text); }
-    .hub-recent-icon-btn.is-active { color: var(--accent); background: color-mix(in oklab, var(--accent) 12%, transparent); }
-    .hub-recent-menu {
-      position: absolute; top: calc(100% + 4px); right: 0;
-      min-width: 200px;
-      background: var(--surface);
-      border: 1px solid var(--hairline);
-      border-radius: 10px;
-      padding: 4px;
-      display: flex; flex-direction: column;
-      box-shadow: 0 16px 40px -12px rgba(0,0,0,.35);
-      z-index: 20;
-    }
-    .hub-recent-menu button {
-      text-align: left;
-      padding: 8px 12px;
-      background: transparent; border: 0;
-      color: var(--text);
-      font-size: 13px;
-      cursor: pointer;
-      border-radius: 6px;
-    }
-    .hub-recent-menu button:hover { background: color-mix(in oklab, var(--text) 6%, transparent); }
-    .hub-recent-menu button.is-selected { background: color-mix(in oklab, var(--accent) 14%, transparent); color: var(--accent); font-weight: 600; }
+    .hub-section-head .dash-col-heading { margin: 0; }
 
-    /* View: lista (tabela) */
-    .hub-recent-grid.is-list {
-      display: flex; flex-direction: column;
-      gap: 0;
+    /* ── Aplicativos ── */
+    /* Os ícones dos produtos já trazem nome e forma: sem card nem texto. */
+    .hub-apps { display: flex; flex-wrap: wrap; gap: 20px; }
+    .hub-app-card {
+      display: block; width: 88px; height: 88px; border-radius: 20px;
+      transition: transform .15s var(--ease-out), filter .15s var(--ease-out);
     }
-    .hub-recent-grid.is-list .hub-recent-card {
-      flex-direction: row;
-      min-height: 0;
-      padding: 10px 14px;
-      align-items: center;
-      gap: 14px;
-      border-radius: 8px;
-    }
-    .hub-recent-grid.is-list .hub-recent-card:hover {
-      transform: none;
-      background: color-mix(in oklab, var(--accent) 5%, transparent);
-    }
-    .hub-recent-grid.is-list .hub-recent-card-thumb { display: none; }
-    .hub-recent-grid.is-list .hub-recent-card-footer { padding: 0; gap: 4px; flex: 1; min-width: 0; }
-    .hub-recent-grid.is-list .hub-recent-card-title {
-      -webkit-line-clamp: 1;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      display: block;
-      font-size: 13.5px;
-    }
-    .hub-recent-grid.is-list .hub-recent-card-footer-meta {
-      min-width: 140px;
-      justify-content: flex-end;
-    }
-    .hub-recent-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-      gap: 16px;
-    }
-    /* Card em modo grid — thumb no topo + footer compacto embaixo */
-    .hub-recent-card {
+    .hub-app-card img { width: 100%; height: 100%; display: block; }
+    a.hub-app-card:hover { transform: translateY(-2px); filter: drop-shadow(0 10px 18px color-mix(in oklab, var(--accent) 35%, transparent)); }
+    a.hub-app-card:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+    .hub-app-card.is-soon { cursor: not-allowed; filter: grayscale(1); opacity: .45; }
+
+    /* ── Documentos recentes: barra de ferramentas ── */
+    .hub-tools { display: flex; align-items: center; gap: 6px; position: relative; }
+    .hub-tools .btn { height: 32px; }
+    .hub-tools .hub-icon-btn { width: 32px; height: 32px; }
+    .hub-select svg { color: var(--text-muted); }
+    .hub-menu {
+      position: absolute; top: calc(100% + 6px); right: 0; z-index: 20;
+      min-width: 210px; padding: 4px;
       display: flex; flex-direction: column;
       background: var(--surface);
+      border: 1px solid var(--hairline-strong);
+      border-radius: var(--radius);
+      box-shadow: 0 16px 40px -12px rgba(0,0,0,.28);
+    }
+    .hub-menu button {
+      text-align: left; padding: 8px 10px;
+      background: transparent; border: 0; border-radius: var(--radius-sm);
+      font-family: inherit; font-size: 13px; color: var(--text); cursor: pointer;
+    }
+    .hub-menu button:hover { background: var(--surface-2); }
+    .hub-menu button.is-selected { background: var(--accent-dim); color: var(--accent-text); font-weight: 600; }
+    .hub-menu[data-for="sort"] { right: 38px; }
+
+    /* ── Documentos recentes: grade ── */
+    .hub-recent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
+    @media (max-width: 640px) { .hub-recent-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } }
+    .hub-recent-card {
+      position: relative; display: flex; flex-direction: column; overflow: hidden;
+      background: var(--surface);
       border: 1px solid var(--hairline);
-      border-radius: 12px;
-      text-decoration: none; color: inherit;
-      cursor: pointer;
-      overflow: hidden;
-      transition: transform .12s, border-color .15s, box-shadow .15s;
-      position: relative;
+      border-radius: var(--radius-md);
+      color: inherit; text-decoration: none;
+      transition: border-color .15s var(--ease-out), box-shadow .15s var(--ease-out), transform .12s var(--ease-out);
     }
     .hub-recent-card:hover {
-      transform: translateY(-2px);
       border-color: color-mix(in oklab, var(--accent) 45%, var(--hairline));
-      box-shadow: 0 8px 22px -14px color-mix(in oklab, var(--accent) 40%, transparent);
+      box-shadow: 0 8px 22px -14px color-mix(in oklab, var(--accent) 45%, transparent);
+      transform: translateY(-1px);
     }
-    /* Thumb: papel A4 genérico, sistema-gerado, sem conteúdo formatado.
-       Proporção retrato (~1/1.29) fica mais parecida com o Docs. */
-    .hub-recent-card-thumb {
-      position: relative;
-      aspect-ratio: 4 / 4.4;
-      background: #ffffff;               /* papel branco em qualquer tema */
-      border-bottom: 1px solid var(--hairline);
-      overflow: hidden;
+    .hub-recent-card:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+    /* Miniatura: começo da folha renderizado em tamanho real e escalado pra
+       caber no card (o JS recalibra o scale conforme a largura). */
+    .hub-recent-thumb {
+      position: relative; aspect-ratio: 4 / 3.6; overflow: hidden;
+      background: #fff; border-bottom: 1px solid var(--hairline);
     }
-    /* Wrapper interno: renderiza o conteúdo em tamanho "real" (A4 estreito)
-       e escala com transform pra caber dentro do thumb. Igual Google Docs
-       faz: mostra literalmente o começo da página em miniatura. */
-    .hub-recent-card-thumb-page {
-      position: absolute; top: 0; left: 0;
-      width: 620px;                      /* largura de referência da "folha" */
-      transform-origin: top left;
-      transform: scale(.32);             /* JS recalibra pra caber no card */
-      padding: 24px 32px;
-      color: #1a1a1a;
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-      font-size: 12px;
-      line-height: 1.45;
-      pointer-events: none;
+    .hub-recent-thumb-page {
+      position: absolute; top: 0; left: 0; width: 620px;
+      transform-origin: top left; transform: scale(.3);
+      padding: 24px 32px; pointer-events: none;
+      color: #1a1a1a; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 12px; line-height: 1.45;
     }
-    .hub-recent-card-thumb-page * { max-width: 100%; }
-    .hub-recent-card-thumb-page p { margin: 0 0 6px; }
-    .hub-recent-card-thumb-page h1 { font-size: 22px; font-weight: 700; margin: 8px 0 6px; line-height: 1.2; }
-    .hub-recent-card-thumb-page h2 { font-size: 17px; font-weight: 700; margin: 8px 0 4px; line-height: 1.25; }
-    .hub-recent-card-thumb-page h3 { font-size: 14px; font-weight: 600; margin: 6px 0 4px; line-height: 1.3; }
-    .hub-recent-card-thumb-page ul,
-    .hub-recent-card-thumb-page ol { margin: 0 0 6px; padding-left: 20px; }
-    .hub-recent-card-thumb-page li { margin: 0 0 2px; }
-    .hub-recent-card-thumb-page blockquote { border-left: 3px solid #ccc; padding: 0 8px; margin: 6px 0; color: #666; }
-    .hub-recent-card-thumb-page code { background: #f0f0f0; padding: 1px 3px; border-radius: 2px; }
-    .hub-recent-card-thumb-page pre { background: #f5f5f5; padding: 6px 8px; border-radius: 3px; overflow: hidden; }
-    .hub-recent-card-thumb-page a { color: #7A00FF; text-decoration: none; }
-    .hub-recent-card-thumb-page hr { border: 0; border-top: 1px solid #e0e0e0; margin: 6px 0; }
-    .hub-recent-card-thumb-page table { border-collapse: collapse; width: 100%; margin: 6px 0; font-size: 11px; }
-    .hub-recent-card-thumb-page th,
-    .hub-recent-card-thumb-page td { border: 1px solid #ddd; padding: 3px 5px; }
-    /* Estado vazio — folha em branco, só sutilezas */
-    .hub-recent-card-thumb.is-empty::before {
-      content: '';
-      position: absolute;
-      inset: 18% 14% auto 14%;
-      height: 4px;
-      background: #f0f0f0;
-      border-radius: 2px;
-      box-shadow:
-        0 12px 0 #f4f4f4,
-        0 24px 0 #f4f4f4,
-        0 36px 0 #f4f4f4;
+    .hub-recent-thumb-page * { max-width: 100%; }
+    .hub-recent-thumb-page p { margin: 0 0 6px; }
+    .hub-recent-thumb-page h1 { font-size: 22px; font-weight: 700; margin: 8px 0 6px; line-height: 1.2; }
+    .hub-recent-thumb-page h2 { font-size: 17px; font-weight: 700; margin: 8px 0 4px; line-height: 1.25; }
+    .hub-recent-thumb-page h3 { font-size: 14px; font-weight: 600; margin: 6px 0 4px; line-height: 1.3; }
+    .hub-recent-thumb-page ul, .hub-recent-thumb-page ol { margin: 0 0 6px; padding-left: 20px; }
+    .hub-recent-thumb-page li { margin: 0 0 2px; }
+    .hub-recent-thumb-page blockquote { border-left: 3px solid #ccc; padding: 0 8px; margin: 6px 0; color: #666; }
+    .hub-recent-thumb-page code { background: #f0f0f0; padding: 1px 3px; border-radius: 2px; }
+    .hub-recent-thumb-page pre { background: #f5f5f5; padding: 6px 8px; border-radius: 3px; overflow: hidden; }
+    .hub-recent-thumb-page a { color: #7A00FF; text-decoration: none; }
+    .hub-recent-thumb-page hr { border: 0; border-top: 1px solid #e0e0e0; margin: 6px 0; }
+    .hub-recent-thumb-page table { border-collapse: collapse; width: 100%; margin: 6px 0; font-size: 11px; }
+    .hub-recent-thumb-page th, .hub-recent-thumb-page td { border: 1px solid #ddd; padding: 3px 5px; }
+    .hub-recent-thumb.is-empty::before {
+      content: ''; position: absolute; inset: 18% 14% auto 14%; height: 4px;
+      background: #f0f0f0; border-radius: 2px;
+      box-shadow: 0 12px 0 #f4f4f4, 0 24px 0 #f4f4f4, 0 36px 0 #f4f4f4;
     }
-    /* Fade sutil no rodapé da folha pra dar profundidade / esconder corte de linha */
-    .hub-recent-card-thumb::after {
-      content: '';
-      position: absolute; left: 0; right: 0; bottom: 0; height: 35%;
+    .hub-recent-thumb::after {
+      content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 35%;
       background: linear-gradient(to bottom, transparent, rgba(255,255,255,.95));
       pointer-events: none;
     }
-    /* Footer compacto: nome + linha de meta (ícone tipo + data) */
-    .hub-recent-card-footer {
-      display: flex; flex-direction: column;
-      gap: 4px;
-      padding: 10px 12px 10px;
+    .hub-recent-info { display: flex; align-items: center; gap: 10px; padding: 10px 12px; min-width: 0; }
+    .hub-recent-app { width: 18px; height: 18px; flex-shrink: 0; }
+    .hub-recent-app img { width: 100%; height: 100%; display: block; }
+    .hub-recent-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+    .hub-recent-title { font-size: 13px; font-weight: 600; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .hub-recent-date { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+    /* ── Documentos recentes: lista (linhas como as da Início) ── */
+    .hub-recent-grid.is-list { display: flex; flex-direction: column; gap: 0; }
+    .hub-recent-grid.is-list .hub-recent-card {
+      flex-direction: row; border: 0; border-radius: 0; background: transparent;
+      border-bottom: 1px solid var(--hairline);
     }
-    .hub-recent-card-title {
-      font-size: 13px; font-weight: 600;
-      color: var(--text);
-      line-height: 1.3;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      display: block;
-    }
-    .hub-recent-card-footer-meta {
-      display: flex; align-items: center; gap: 6px;
-      font-size: 11.5px; color: var(--text-2);
-      min-width: 0;
-    }
-    .hub-recent-card-app-inline {
-      width: 14px; height: 14px;
-      flex-shrink: 0;
-      display: block;
-    }
-    .hub-recent-card-app-inline img { width: 100%; height: 100%; display: block; }
-    .hub-recent-card-meta-date { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .hub-recent-grid.is-list .hub-recent-card:last-child { border-bottom: 0; }
+    .hub-recent-grid.is-list .hub-recent-card:hover { transform: none; box-shadow: none; background: var(--surface-2); }
+    .hub-recent-grid.is-list .hub-recent-thumb { display: none; }
+    .hub-recent-grid.is-list .hub-recent-info { flex: 1; padding: 11px 8px; }
+    .hub-recent-grid.is-list .hub-recent-text { flex-direction: row; align-items: baseline; justify-content: space-between; gap: 16px; }
+    .hub-recent-grid.is-list .hub-recent-title { font-size: 13.5px; font-weight: 500; }
+
     .hub-recent-empty {
       grid-column: 1 / -1;
-      padding: 40px 20px;
-      text-align: center;
-      color: var(--text-2);
-      font-size: 13px;
-      background: color-mix(in oklab, var(--text) 3%, transparent);
-      border-radius: 12px;
+      display: flex; flex-direction: column; align-items: center; gap: 12px;
+      padding: 40px 20px; text-align: center;
+      font-size: 13px; color: var(--text-muted);
+      border: 1px dashed var(--hairline-strong); border-radius: var(--radius-md);
     }
+    .hub-skel { border: 1px solid var(--hairline); border-radius: var(--radius-md); overflow: hidden; background: var(--surface); }
+    .hub-skel-thumb { aspect-ratio: 4 / 3.6; background: var(--surface-2); }
+    .hub-skel-line { height: 10px; margin: 12px; width: 60%; border-radius: 4px; background: var(--surface-2); }
 
-    /* Auth wall */
+    /* ── Estados de entrada / login ── */
     .hub-auth-wall {
-      height: 100vh;
-      display: flex; align-items: center; justify-content: center;
-      flex-direction: column; gap: 18px;
-      padding: 24px; text-align: center;
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 16px; padding: 24px; text-align: center;
     }
-    .hub-auth-wall h2 { font-size: 22px; margin: 0; color: var(--text); }
-    .hub-auth-wall p { color: var(--text-2); font-size: 14px; max-width: 360px; margin: 0; }
-    .hub-auth-wall a {
-      display: inline-flex; align-items: center; gap: 8px;
-      padding: 10px 18px;
-      background: var(--accent); color: #fff;
-      border-radius: 10px;
-      font-weight: 600; font-size: 14px;
-      text-decoration: none;
-    }
-
-    /* ── Animação de entrada (mesma pegada do dashboard: fade + slide-up
-       com cubic-bezier(.16, 1, .3, 1) e stagger). Respeita prefers-reduced-motion. */
-    @keyframes hubIn {
-      from { opacity: 0; transform: translateY(14px); }
-      to   { opacity: 1; transform: translateY(0); }
-    }
-    @keyframes hubInSmall {
-      from { opacity: 0; transform: translateY(6px); }
-      to   { opacity: 1; transform: translateY(0); }
-    }
-    .hub-topbar      { animation: hubInSmall .5s cubic-bezier(.16,1,.3,1) both; }
-    .hub-app-card    { animation: hubIn .55s cubic-bezier(.16,1,.3,1) both; }
-    .hub-apps .hub-app-card:nth-child(1) { animation-delay: 80ms; }
-    .hub-apps .hub-app-card:nth-child(2) { animation-delay: 160ms; }
-    .hub-apps .hub-app-card:nth-child(3) { animation-delay: 240ms; }
-    .hub-apps .hub-app-card:nth-child(4) { animation-delay: 320ms; }
-    .hub-greeting-q  { animation: hubIn .55s .30s cubic-bezier(.16,1,.3,1) both; }
-    .hub-section-head{ animation: hubInSmall .5s .35s cubic-bezier(.16,1,.3,1) both; }
-    .hub-recent-card { animation: hubIn .5s cubic-bezier(.16,1,.3,1) both; }
-    .hub-recent-grid .hub-recent-card:nth-child(1) { animation-delay: .40s; }
-    .hub-recent-grid .hub-recent-card:nth-child(2) { animation-delay: .46s; }
-    .hub-recent-grid .hub-recent-card:nth-child(3) { animation-delay: .52s; }
-    .hub-recent-grid .hub-recent-card:nth-child(4) { animation-delay: .58s; }
-    .hub-recent-grid .hub-recent-card:nth-child(5) { animation-delay: .64s; }
-    .hub-recent-grid .hub-recent-card:nth-child(6) { animation-delay: .70s; }
-    .hub-recent-grid .hub-recent-card:nth-child(7) { animation-delay: .76s; }
-    .hub-recent-grid .hub-recent-card:nth-child(8) { animation-delay: .82s; }
-    @media (prefers-reduced-motion: reduce) {
-      .hub-topbar, .hub-app-card, .hub-greeting-q, .hub-section-head, .hub-recent-card {
-        animation: none;
-      }
-    }
-
+    .hub-auth-wall h2 { font-size: 22px; letter-spacing: -.02em; margin: 0; color: var(--text); }
+    .hub-auth-wall p { color: var(--text-muted); font-size: 14px; max-width: 360px; margin: 0; }
+    .hub-auth-wall .btn { text-decoration: none; }
     .hub-boot {
-      height: 100vh;
-      display: flex; align-items: center; justify-content: center;
-      flex-direction: column; gap: 14px;
-      color: var(--text-2); font-size: 13px;
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 14px; color: var(--text-muted); font-size: 13px;
     }
     .hub-spinner {
-      width: 28px; height: 28px;
-      border-radius: 50%;
-      border: 2.5px solid color-mix(in oklab, var(--accent) 30%, transparent);
-      border-top-color: var(--accent);
+      width: 26px; height: 26px; border-radius: 50%;
+      border: 2.5px solid var(--accent-dim); border-top-color: var(--accent);
       animation: hub-spin 800ms linear infinite;
     }
     @keyframes hub-spin { to { transform: rotate(360deg); } }
+
+    @keyframes hubIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+    .hub-section { animation: hubIn .5s var(--ease-out) both; }
+    .hub-section:nth-child(2) { animation-delay: 60ms; }
+    .hub-section:nth-child(3) { animation-delay: 120ms; }
+    @media (prefers-reduced-motion: reduce) { .hub-section { animation: none; } }
   </style>
 </head>
 <body>
@@ -489,96 +229,89 @@
     <img src="/reworkhub_simbol.svg" width="48" height="48" alt="">
     <h2>Faça login pra continuar</h2>
     <p>Você precisa estar autenticado na plataforma reWork pra abrir o Hub.</p>
-    <a href="/">Ir pra tela de login</a>
+    <a class="btn btn-primary" href="/">Ir pra tela de login</a>
   </div>
 
   <div id="hub-app" class="hub-app" hidden>
-    <!-- Topbar — voltar (chevron), logo Hub, tema + user -->
-    <div class="hub-topbar">
-      <a class="hub-topbar-back" href="/dashboard" title="Voltar pra plataforma" aria-label="Voltar">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+    <header class="topbar hub-topbar">
+      <a class="topbar-back" href="/dashboard" title="Voltar pra plataforma" aria-label="Voltar pra plataforma">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
       </a>
       <div class="hub-brand">
         <img id="hub-brand-logo" src="/reworkhub_preto.svg" alt="reWork Hub">
       </div>
-      <div class="hub-topbar-spacer"></div>
-      <button type="button" class="hub-icon-btn" onclick="hubToggleTheme()" title="Alternar tema">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
-      </button>
-      <div class="hub-user-chip">
-        <div class="hub-user-avatar" id="hub-user-avatar">?</div>
-        <span class="hub-user-name" id="hub-user-name">—</span>
-      </div>
-    </div>
-
-    <!-- Body: Hero (grid + greeting) + Recentes -->
-    <div class="hub-body">
-
-      <!-- HERO: grid + greeting com fade roxo -->
-      <div class="hub-hero">
-        <div class="hub-hero-inner">
-          <div class="hub-apps">
-            <a class="hub-app-card" href="/hub/docs" title="reWork Docs">
-              <div class="hub-app-svg"><img src="/reworkdocs_icone.svg" alt="reWork Docs"></div>
-            </a>
-            <div class="hub-app-card is-disabled" title="reWork Presentations — em breve">
-              <div class="hub-app-svg"><img src="/reworkpresentations_icone.svg" alt="reWork Presentations"></div>
-            </div>
-          </div>
-
-          <div class="hub-greeting">
-            <div class="hub-greeting-q">O que vamos criar hoje?</div>
-          </div>
+      <div class="topbar-actions">
+        <button type="button" class="btn btn-ghost hub-icon-btn" onclick="hubToggleTheme()" title="Alternar tema" aria-label="Alternar tema">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+        </button>
+        <a class="btn btn-primary hub-new-btn" href="/hub/docs?novo=1" title="Novo documento">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          <span class="hub-new-label">Novo documento</span>
+        </a>
+        <div class="hub-user">
+          <div class="hub-user-avatar" id="hub-user-avatar">?</div>
+          <span class="hub-user-name" id="hub-user-name">—</span>
         </div>
       </div>
+    </header>
 
-      <!-- Bloco separado: Arquivos recentes (estilo Google Docs) -->
-      <div class="hub-recent-block">
-        <div class="hub-recent-inner">
-          <div class="hub-recent-toolbar">
-            <div class="hub-recent-title" id="hub-recent-title">Documentos recentes</div>
-            <div class="hub-recent-toolbar-actions">
-              <!-- Filtro de ownership -->
-              <button type="button" class="hub-recent-select" id="hub-recent-owner-btn" onclick="hubRecentToggleMenu('owner', event)">
+    <main class="hub-body">
+      <div class="hub-inner">
+        <div class="dash-greeting hub-greeting">
+          <span class="dash-greeting-msg" id="hub-greeting">Olá!</span>
+          <div class="dash-greeting-sub">O que vamos criar hoje?</div>
+        </div>
+
+        <section class="hub-section" aria-labelledby="hub-apps-heading">
+          <header class="hub-section-head">
+            <h2 class="dash-col-heading" id="hub-apps-heading">Aplicativos</h2>
+          </header>
+          <div class="hub-apps">
+            <a class="hub-app-card" href="/hub/docs" title="reWork Docs" aria-label="reWork Docs">
+              <img src="/reworkdocs_icone.svg" alt="">
+            </a>
+            <div class="hub-app-card is-soon" title="reWork Presentations · em breve" aria-label="reWork Presentations, em breve" aria-disabled="true">
+              <img src="/reworkpresentations_icone.svg" alt="">
+            </div>
+          </div>
+        </section>
+
+        <section class="hub-section" aria-labelledby="hub-recent-title">
+          <header class="hub-section-head">
+            <h2 class="dash-col-heading" id="hub-recent-title">Documentos recentes</h2>
+            <div class="hub-tools">
+              <button type="button" class="btn btn-ghost btn-sm hub-select" onclick="hubRecentToggleMenu('owner', event)">
                 <span id="hub-recent-owner-label">Pertencem a mim</span>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
               </button>
-              <div class="hub-recent-menu" id="hub-recent-owner-menu" hidden>
+              <div class="hub-menu" id="hub-recent-owner-menu" data-for="owner" hidden>
                 <button type="button" data-owner="mine">Pertencem a mim</button>
                 <button type="button" data-owner="any">Qualquer pessoa</button>
                 <button type="button" data-owner="shared">Compartilhados comigo</button>
               </div>
-
-              <div class="hub-recent-divider"></div>
-
-              <!-- Toggle grid / lista -->
-              <button type="button" class="hub-recent-icon-btn" id="hub-recent-view-btn" onclick="hubRecentToggleView()" title="Alternar visualização">
-                <!-- ícone alterna via JS -->
-                <svg id="hub-recent-view-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+              <button type="button" class="btn btn-ghost hub-icon-btn" onclick="hubRecentToggleMenu('sort', event)" title="Ordenar" aria-label="Ordenar">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5h4M11 9h7M11 13h10M3 17l3 3 3-3M6 20V4"/></svg>
               </button>
-
-              <!-- Ordenação -->
-              <button type="button" class="hub-recent-icon-btn" id="hub-recent-sort-btn" onclick="hubRecentToggleMenu('sort', event)" title="Ordenar">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5h4M11 9h7M11 13h10M3 17l3 3 3-3M6 20V4"/></svg>
-              </button>
-              <div class="hub-recent-menu" id="hub-recent-sort-menu" hidden>
+              <div class="hub-menu" id="hub-recent-sort-menu" data-for="sort" hidden>
                 <button type="button" data-sort="updated">Última modificação</button>
                 <button type="button" data-sort="created">Data de criação</button>
                 <button type="button" data-sort="title">Nome (A-Z)</button>
               </div>
-
-              <!-- Abrir todos (equivalente à "pasta" do Google Docs) -->
-              <a class="hub-recent-icon-btn" href="/hub/docs" title="Ver todos">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-              </a>
+              <button type="button" class="btn btn-ghost hub-icon-btn" id="hub-recent-view-btn" onclick="hubRecentToggleView()" title="Ver em lista" aria-label="Alternar visualização">
+                <svg id="hub-recent-view-icon" width="15" height="15" viewBox="0 0 24 24"></svg>
+              </button>
+              <a class="btn btn-ghost btn-sm" href="/hub/docs">Ver todos</a>
             </div>
-          </div>
+          </header>
           <div class="hub-recent-grid" id="hub-recent-grid">
-            <div class="hub-recent-empty">Carregando…</div>
+            <div class="hub-skel"><div class="hub-skel-thumb"></div><div class="hub-skel-line"></div></div>
+            <div class="hub-skel"><div class="hub-skel-thumb"></div><div class="hub-skel-line"></div></div>
+            <div class="hub-skel"><div class="hub-skel-thumb"></div><div class="hub-skel-line"></div></div>
+            <div class="hub-skel"><div class="hub-skel-thumb"></div><div class="hub-skel-line"></div></div>
           </div>
-        </div>
+        </section>
       </div>
-    </div>
+    </main>
   </div>
 
   <script>
@@ -602,7 +335,9 @@
           if (d.toDateString() === now.toDateString()) return 'Hoje, ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
           const y = new Date(now); y.setDate(y.getDate() - 1);
           if (d.toDateString() === y.toDateString()) return 'Ontem';
-          return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+          const opts = { day: '2-digit', month: 'short' };
+          if (d.getFullYear() !== now.getFullYear()) opts.year = 'numeric';
+          return d.toLocaleDateString('pt-BR', opts);
         } catch { return ''; }
       }
       function slugify(s) {
@@ -610,22 +345,20 @@
           .replace(/[^a-z0-9]+/g, '-').replace(/(^-+|-+$)/g, '').slice(0, 60);
       }
 
-      // Troca o logo do Hub conforme tema (preto ↔ branco)
-      function syncBrandLogo() {
-        const img = document.getElementById('hub-brand-logo');
-        if (!img) return;
-        let cur = document.documentElement.getAttribute('data-theme');
-        if (!cur) cur = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-        img.src = cur === 'light' ? '/reworkhub_preto.svg' : '/reworkhub_branco.svg';
+      // Logo do Hub conforme o tema (preto ↔ branco)
+      function currentTheme() {
+        return document.documentElement.getAttribute('data-theme')
+          || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
       }
-      // Sync inicial (roda depois do DOM ready)
-      setTimeout(syncBrandLogo, 0);
+      function syncBrandLogo() {
+        const img = $('hub-brand-logo');
+        if (img) img.src = currentTheme() === 'light' ? '/reworkhub_preto.svg' : '/reworkhub_branco.svg';
+      }
+      syncBrandLogo();
 
-      // Toggle de tema (mesmo storage do Docs/Platform)
+      // Tema (mesmo storage da plataforma e do Docs)
       window.hubToggleTheme = function () {
-        let cur = document.documentElement.getAttribute('data-theme');
-        if (!cur) cur = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-        const next = cur === 'light' ? 'dark' : 'light';
+        const next = currentTheme() === 'light' ? 'dark' : 'light';
         document.documentElement.setAttribute('data-theme', next);
         try { localStorage.setItem('kastor-theme', next); } catch {}
         syncBrandLogo();
@@ -639,13 +372,17 @@
         if (msg) w.querySelector('p').textContent = msg;
       }
 
-      function greeting() {
+      // Mesma saudação da Início da plataforma
+      function greeting(first) {
         const h = new Date().getHours();
-        if (h < 6)  return 'Boa madrugada,';
-        if (h < 12) return 'Bom dia,';
-        if (h < 18) return 'Boa tarde,';
-        return 'Boa noite,';
+        if (h >= 23 || h < 6) return `Trabalhando tarde, ${first}?`;
+        if (h < 12) return `Bom dia, ${first}!`;
+        if (h < 18) return `Boa tarde, ${first}!`;
+        return `Boa noite, ${first}!`;
       }
+
+      const ICON_LIST = '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>';
+      const ICON_GRID = '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>';
 
       (async function boot() {
         let me;
@@ -657,27 +394,22 @@
           return showAuthWall(e.message || 'Erro ao autenticar.');
         }
 
-        // Header user
-        const nameEl = $('hub-user-name');
-        const avatarEl = $('hub-user-avatar');
         const displayName = me.name || me.username || 'Usuário';
-        nameEl.textContent = displayName;
+        $('hub-user-name').textContent = displayName;
+        const avatarEl = $('hub-user-avatar');
         if (me.avatar) {
           const img = document.createElement('img');
           img.src = me.avatar; img.alt = '';
           avatarEl.innerHTML = ''; avatarEl.appendChild(img);
         } else {
-          avatarEl.textContent = (displayName).charAt(0).toUpperCase();
+          avatarEl.textContent = displayName.charAt(0).toUpperCase();
         }
-        // greeting-hi foi removido do HTML — mantém suporte se voltar
-        const gh = $('hub-greeting-hi');
-        if (gh) gh.textContent = greeting() + ' ' + displayName.split(' ')[0];
+        $('hub-greeting').textContent = greeting(String(displayName).trim().split(/\s+/)[0]);
 
         $('hub-boot').hidden = true;
         $('hub-app').hidden = false;
 
-        // ── Toolbar de recentes (estilo Google Docs) ────────────────
-        // Preferências persistidas via localStorage
+        // ── Documentos recentes ────────────────────────────────────
         function readPref(k, def) { try { return localStorage.getItem('kastor-hub-' + k) || def; } catch { return def; } }
         function savePref(k, v) { try { localStorage.setItem('kastor-hub-' + k, v); } catch {} }
 
@@ -685,156 +417,119 @@
           owner: readPref('owner', 'mine'),        // mine | any | shared
           sort:  readPref('sort',  'updated'),     // updated | created | title
           view:  readPref('view',  'grid'),        // grid | list
-          all:   []
+          all:   null
         };
         const OWNER_LABEL = { mine: 'Pertencem a mim', any: 'Qualquer pessoa', shared: 'Compartilhados comigo' };
-        const TITLE_LABEL = { updated: 'Documentos recentes', created: 'Documentos por criação', title: 'Documentos por título' };
+        const TITLE_LABEL = { updated: 'Documentos recentes', created: 'Documentos por criação', title: 'Documentos por nome' };
 
-        function applyOwnerLabel() { $('hub-recent-owner-label').textContent = OWNER_LABEL[state.owner]; }
-        function applyTitleLabel() { $('hub-recent-title').textContent = TITLE_LABEL[state.sort] || TITLE_LABEL.updated; }
-        function applyViewIcon() {
-          const grid = $('hub-recent-grid');
-          const btn = $('hub-recent-view-btn');
-          if (state.view === 'list') {
-            grid.classList.add('is-list');
-            btn.title = 'Ver em grade';
-            $('hub-recent-view-icon').outerHTML = '<svg id="hub-recent-view-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>';
-          } else {
-            grid.classList.remove('is-list');
-            btn.title = 'Ver em lista';
-            $('hub-recent-view-icon').outerHTML = '<svg id="hub-recent-view-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>';
-          }
+        function applyLabels() {
+          $('hub-recent-owner-label').textContent = OWNER_LABEL[state.owner] || OWNER_LABEL.mine;
+          $('hub-recent-title').textContent = TITLE_LABEL[state.sort] || TITLE_LABEL.updated;
+          document.querySelectorAll('#hub-recent-owner-menu button').forEach(b => b.classList.toggle('is-selected', b.dataset.owner === state.owner));
+          document.querySelectorAll('#hub-recent-sort-menu button').forEach(b => b.classList.toggle('is-selected', b.dataset.sort === state.sort));
         }
-        function markSelectedInMenu(menuId, key, val) {
-          const menu = $(menuId);
-          menu.querySelectorAll('button').forEach(b => b.classList.toggle('is-selected', b.dataset[key] === val));
+        function applyView() {
+          const isList = state.view === 'list';
+          $('hub-recent-grid').classList.toggle('is-list', isList);
+          $('hub-recent-view-btn').title = isList ? 'Ver em grade' : 'Ver em lista';
+          const ic = $('hub-recent-view-icon');
+          ic.setAttribute('fill', 'none'); ic.setAttribute('stroke', 'currentColor'); ic.setAttribute('stroke-width', '2');
+          ic.setAttribute('stroke-linecap', 'round'); ic.setAttribute('stroke-linejoin', 'round');
+          ic.innerHTML = isList ? ICON_GRID : ICON_LIST;
+          rescaleThumbs();
         }
 
+        const MENUS = { owner: 'hub-recent-owner-menu', sort: 'hub-recent-sort-menu' };
+        function closeMenus(except) { Object.values(MENUS).forEach(id => { if (id !== except) $(id).hidden = true; }); }
         window.hubRecentToggleMenu = function (which, ev) {
           ev?.stopPropagation();
-          const ids = { owner: 'hub-recent-owner-menu', sort: 'hub-recent-sort-menu' };
-          const open = $(ids[which]);
-          Object.values(ids).forEach(id => { const el = $(id); if (el && el !== open) el.hidden = true; });
-          open.hidden = !open.hidden;
+          const m = $(MENUS[which]);
+          closeMenus(MENUS[which]);
+          m.hidden = !m.hidden;
         };
-        document.addEventListener('click', (e) => {
-          if (e.target.closest('.hub-recent-menu, .hub-recent-select, [onclick*="hubRecentToggleMenu"]')) return;
-          ['hub-recent-owner-menu','hub-recent-sort-menu'].forEach(id => { const el = $(id); if (el) el.hidden = true; });
-        });
-        // Menu items
-        $('hub-recent-owner-menu').addEventListener('click', (e) => {
+        document.addEventListener('click', e => { if (!e.target.closest('.hub-menu')) closeMenus(); });
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenus(); });
+        $('hub-recent-owner-menu').addEventListener('click', e => {
           const b = e.target.closest('button[data-owner]'); if (!b) return;
           state.owner = b.dataset.owner; savePref('owner', state.owner);
-          applyOwnerLabel(); markSelectedInMenu('hub-recent-owner-menu', 'owner', state.owner);
-          $('hub-recent-owner-menu').hidden = true;
-          renderRecent();
+          closeMenus(); applyLabels(); renderRecent();
         });
-        $('hub-recent-sort-menu').addEventListener('click', (e) => {
+        $('hub-recent-sort-menu').addEventListener('click', e => {
           const b = e.target.closest('button[data-sort]'); if (!b) return;
           state.sort = b.dataset.sort; savePref('sort', state.sort);
-          markSelectedInMenu('hub-recent-sort-menu', 'sort', state.sort);
-          applyTitleLabel();
-          $('hub-recent-sort-menu').hidden = true;
-          renderRecent();
+          closeMenus(); applyLabels(); renderRecent();
         });
-
         window.hubRecentToggleView = function () {
           state.view = state.view === 'grid' ? 'list' : 'grid';
           savePref('view', state.view);
-          applyViewIcon();
+          applyView();
         };
+
+        // Miniatura: a folha tem largura fixa e é escalada pra caber no card.
+        const THUMB_REF_WIDTH = 620;
+        function rescaleThumbs() {
+          document.querySelectorAll('#hub-recent-grid .hub-recent-thumb-page').forEach(page => {
+            const w = page.parentElement.clientWidth;
+            if (w) page.style.transform = 'scale(' + (w / THUMB_REF_WIDTH) + ')';
+          });
+        }
+        let rsRaf;
+        window.addEventListener('resize', () => { cancelAnimationFrame(rsRaf); rsRaf = requestAnimationFrame(rescaleThumbs); });
+
+        // O card é <a> e HTML não aceita <a> aninhado: links do documento
+        // viram <span> na miniatura (senão o card sai vazio).
+        const stripAnchors = html => String(html || '').replace(/<a\b[^>]*>/gi, '<span>').replace(/<\/a>/gi, '</span>');
 
         function renderRecent() {
           const grid = $('hub-recent-grid');
-          const myId = me && me.id;
+          if (!state.all) return;
           let list = state.all.slice();
-          if (state.owner === 'mine')   list = list.filter(d => d.ownerId === myId);
-          if (state.owner === 'shared') list = list.filter(d => d.ownerId !== myId);
+          if (state.owner === 'mine')   list = list.filter(d => d.ownerId === me.id);
+          if (state.owner === 'shared') list = list.filter(d => d.ownerId !== me.id);
           list.sort((a, b) => {
-            if (state.sort === 'title')   return (a.title || '').localeCompare(b.title || '');
+            if (state.sort === 'title')   return (a.title || '').localeCompare(b.title || '', 'pt-BR');
             if (state.sort === 'created') return (b.createdAt || '').localeCompare(a.createdAt || '');
             return (b.updatedAt || '').localeCompare(a.updatedAt || '');
           });
           if (!list.length) {
-            const msg = state.owner === 'mine'
-              ? 'Você ainda não criou nenhum documento. Abra o reWork Docs e comece o primeiro.'
-              : state.owner === 'shared'
-                ? 'Ninguém compartilhou documentos com você ainda.'
-                : 'Nenhum documento disponível.';
-            grid.innerHTML = `<div class="hub-recent-empty">${msg}</div>`;
+            const msg = state.owner === 'mine' ? 'Você ainda não criou nenhum documento.'
+              : state.owner === 'shared' ? 'Ninguém compartilhou documentos com você ainda.'
+              : 'Nenhum documento por aqui ainda.';
+            grid.innerHTML = `<div class="hub-recent-empty">${msg}${state.owner !== 'shared'
+              ? '<a class="btn btn-primary btn-sm" href="/hub/docs?novo=1">Criar o primeiro</a>' : ''}</div>`;
             return;
           }
-          const items = list.slice(0, 24);
-          const MAX_TITLE = 42; // corta com "..." depois disso
-          const trunc = (t) => {
-            const s = String(t || 'Sem título');
-            return s.length > MAX_TITLE ? s.slice(0, MAX_TITLE - 1).trimEnd() + '…' : s;
-          };
-          const THUMB_REF_WIDTH = 620; // width fixo do .hub-recent-card-thumb-page
-          // O card é <a>; HTML não aceita <a> aninhado. Se o thumb tiver
-          // links (mark link do PM), o browser fecha o <a> externo e o card
-          // fica vazio — mostra só o bg do surface (preto no dark).
-          // Solução: substitui <a>...</a> por <span>...</span>.
-          const stripAnchors = (html) => String(html || '')
-            .replace(/<a\b[^>]*>/gi, '<span>')
-            .replace(/<\/a>/gi, '</span>');
-          grid.innerHTML = items.map(d => {
+          grid.innerHTML = list.slice(0, 12).map(d => {
             const s = slugify(d.title || 'documento');
             const slug = (s ? s + '-' : '') + d.id;
-            const fullTitle = String(d.title || 'Sem título');
+            const title = String(d.title || 'Sem título');
             const thumb = stripAnchors(d.thumbHTML || '');
-            const thumbClass = thumb ? 'hub-recent-card-thumb' : 'hub-recent-card-thumb is-empty';
-            return `<a class="hub-recent-card" href="/hub/docs/${esc(slug)}" title="${esc(fullTitle)}">
-              <div class="${thumbClass}" aria-hidden="true">
-                ${thumb ? `<div class="hub-recent-card-thumb-page">${thumb}</div>` : ''}
+            return `<a class="hub-recent-card" href="/hub/docs/${esc(slug)}" title="${esc(title)}">
+              <div class="hub-recent-thumb${thumb ? '' : ' is-empty'}" aria-hidden="true">
+                ${thumb ? `<div class="hub-recent-thumb-page">${thumb}</div>` : ''}
               </div>
-              <div class="hub-recent-card-footer">
-                <div class="hub-recent-card-title">${esc(trunc(fullTitle))}</div>
-                <div class="hub-recent-card-footer-meta">
-                  <span class="hub-recent-card-app-inline"><img src="/reworkdocs_icone.svg" alt=""></span>
-                  <span class="hub-recent-card-meta-date">${esc(fmtDate(d.updatedAt || d.createdAt))}</span>
-                </div>
+              <div class="hub-recent-info">
+                <span class="hub-recent-app"><img src="/reworkdocs_icone.svg" alt=""></span>
+                <span class="hub-recent-text">
+                  <span class="hub-recent-title">${esc(title)}</span>
+                  <span class="hub-recent-date">${esc(fmtDate(d.updatedAt || d.createdAt))}</span>
+                </span>
               </div>
             </a>`;
           }).join('');
-
-          // Recalibra o transform:scale dos thumbs pra a folha caber
-          // exatamente na largura do card (que varia com o grid responsivo).
-          const rescaleThumbs = () => {
-            grid.querySelectorAll('.hub-recent-card-thumb').forEach(t => {
-              const page = t.querySelector('.hub-recent-card-thumb-page');
-              if (!page) return;
-              const scale = t.clientWidth / THUMB_REF_WIDTH;
-              page.style.transform = 'scale(' + scale + ')';
-            });
-          };
           rescaleThumbs();
-          // Uma vez após o reflow inicial + em resize
           requestAnimationFrame(rescaleThumbs);
-          if (!window.__hubThumbResizeBound) {
-            window.__hubThumbResizeBound = true;
-            let raf;
-            window.addEventListener('resize', () => {
-              cancelAnimationFrame(raf);
-              raf = requestAnimationFrame(rescaleThumbs);
-            });
-          }
         }
 
-        // Sync inicial da UI
-        applyOwnerLabel();
-        applyTitleLabel();
-        applyViewIcon();
-        markSelectedInMenu('hub-recent-owner-menu', 'owner', state.owner);
-        markSelectedInMenu('hub-recent-sort-menu',  'sort',  state.sort);
+        applyLabels();
+        applyView();
 
-        // Load
         try {
           const docs = await api('/writer');
           state.all = docs.filter(d => !d.deletedAt);
           renderRecent();
         } catch (e) {
-          $('hub-recent-grid').innerHTML = '<div class="hub-recent-empty">Falha ao carregar arquivos recentes.</div>';
+          $('hub-recent-grid').innerHTML = '<div class="hub-recent-empty">Não foi possível carregar os documentos. Recarregue a página pra tentar de novo.</div>';
         }
       })();
     })();

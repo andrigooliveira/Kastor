@@ -1,5 +1,68 @@
 [
   {
+    "id": "2026-09-24-rework-docs-beta",
+    "date": "2026-09-24",
+    "kind": "launch",
+    "hideFor": [
+      "freelancer"
+    ],
+    "title": "Conheça o reWork Docs",
+    "launch": {
+      "kicker": "Novo no reWork",
+      "badge": "Beta",
+      "icon": "/reworkdocs_icone.svg",
+      "tagline": "O editor de documentos da plataforma. Briefings, escopos, atas e relatórios agora ficam junto das demandas e dos clientes, e a equipe escreve tudo junta, ao mesmo tempo.",
+      "features": [
+        {
+          "icon": "users",
+          "title": "Escreva junto com a equipe",
+          "text": "Várias pessoas no mesmo documento, com o nome de cada uma no cursor e comentários direto no trecho."
+        },
+        {
+          "icon": "hash",
+          "title": "Ligado ao seu trabalho",
+          "text": "Digite # para citar uma demanda, um cliente ou um projeto. A etiqueta mostra a etapa atual e abre com um clique."
+        },
+        {
+          "icon": "list-checks",
+          "title": "Do texto para a demanda",
+          "text": "Selecione um trecho e clique em Criar demanda. Os itens de uma lista viram o checklist."
+        },
+        {
+          "icon": "badge-check",
+          "title": "Aprovação do cliente",
+          "text": "Mande o link: o cliente aprova ou pede ajustes sem precisar de login, e você recebe o aviso no sino."
+        },
+        {
+          "icon": "layout-template",
+          "title": "Modelos prontos",
+          "text": "Briefing, escopo, ata, relatório e one-pager, já preenchidos com os dados do cliente que você escolher."
+        },
+        {
+          "icon": "file-text",
+          "title": "Páginas ou texto corrido",
+          "text": "Escolha folhas A4, com quebras de página como no Word, ou um bloco contínuo. Baixe em PDF ou Word quando quiser."
+        },
+        {
+          "icon": "history",
+          "title": "Nada se perde",
+          "text": "Tudo é salvo sozinho, com histórico de versões para comparar e voltar a qualquer momento."
+        },
+        {
+          "icon": "folder-open",
+          "title": "Tudo no lugar certo",
+          "text": "Os documentos aparecem na página do cliente e do projeto, e você cria um novo por lá mesmo."
+        }
+      ],
+      "note": "Estamos em beta: o Docs vai receber ajustes nas próximas semanas. Sentiu falta de algo ou achou algum problema? Conte pra gente. Para abrir, use o ícone do reWork Hub no topo da tela.",
+      "cta": {
+        "label": "Abrir o reWork Docs",
+        "href": "/hub/docs"
+      }
+    },
+    "highlights": []
+  },
+  {
     "id": "2026-09-24-menu-lateral",
     "date": "2026-09-24",
     "highlight": true,
