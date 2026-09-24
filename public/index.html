@@ -298,149 +298,45 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
   <!-- Backdrop atrás da sidebar quando aberta em mobile -->
   <div class="menu-backdrop" id="menu-backdrop" onclick="closeSidebar()"></div>
   <!-- SIDEBAR -->
-  <aside class="sidebar">
-    <div class="sidebar-brand">
-      <!-- 3 variantes do logo — visibilidade controlada por CSS (tema + collapse):
-           expanded+dark  → branco; expanded+light → preto; collapsed → K icon -->
-      <img src="/rework_branco.svg" alt="reWork" class="sidebar-logo sidebar-logo-full-white">
-      <img src="/rework_preto.svg"  alt="reWork" class="sidebar-logo sidebar-logo-full-black">
-      <img src="/rework_logo.svg"   alt="reWork" class="sidebar-logo sidebar-logo-icon">
+  <aside class="sidebar sb" aria-label="Navegação principal">
+    <div class="sb-top">
+      <a class="sb-brand" href="/dashboard" onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); goPage('dashboard')" aria-label="reWork, ir para o Início">
+        <img src="/rework_branco.svg" alt="" class="sb-logo sb-logo--white">
+        <img src="/rework_preto.svg"  alt="" class="sb-logo sb-logo--black">
+        <img src="/rework_logo.svg"   alt="" class="sb-logo sb-logo--icon">
+      </a>
     </div>
-    <div class="ws-switch freelancer-hide" id="ws-switch">
-      <label class="filter-label">Squad</label>
-      <div class="filter-cdrop ws-cdrop" id="ws-cdrop">
-        <button type="button" class="filter-cdrop-trigger" onclick="toggleFilterCdrop(this.parentElement)">
-          <span class="ws-trigger-letter" id="ws-trigger-letter">?</span>
-          <span class="pill-dot ws-trigger-dot" id="ws-trigger-dot"></span>
-          <span class="filter-cdrop-label" id="ws-trigger-label">—</span>
-          <i data-lucide="chevron-down" class="ic-xs ws-trigger-chevron"></i>
+    <div class="ws-switch sb-ws freelancer-hide" id="ws-switch">
+      <div class="filter-cdrop ws-cdrop sb-ws-cdrop" id="ws-cdrop">
+        <button type="button" class="sb-ws-trigger" onclick="toggleFilterCdrop(this.parentElement)" aria-label="Trocar de squad" data-label="Trocar de squad">
+          <span class="ws-trigger-letter sb-ws-letter" id="ws-trigger-letter">?</span>
+          <span class="sb-ws-name" id="ws-trigger-label">—</span>
+          <i data-lucide="chevrons-up-down" class="sb-ws-caret"></i>
         </button>
         <div class="filter-cdrop-menu" id="ws-cdrop-menu"></div>
       </div>
     </div>
-    <nav class="sidebar-nav">
-      <div class="nav-section freelancer-hide">Visão Geral</div>
-      <div class="nav-item active freelancer-hide" data-page="dashboard" onclick="goPage('dashboard')">
-        <svg viewBox="0 0 16 16" fill="none"><path d="M2.5 7L8 2.5 13.5 7v6a1 1 0 01-1 1H3.5a1 1 0 01-1-1V7z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M6.5 14V9.5h3V14" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
-        Início
-      </div>
-      <div class="nav-section freelancer-hide">Execução</div>
-      <div class="nav-item freelancer-hide" data-page="list" onclick="goPage('list')">
-        <svg viewBox="0 0 16 16" fill="none"><path d="M2 4h12M2 8h12M2 12h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-        Demandas
-      </div>
-      <div class="nav-item" data-page="mine" onclick="goPage('mine')">
-        <svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="5" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M2.5 14c.8-2.6 3-4 5.5-4s4.7 1.4 5.5 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-        Minhas Demandas
-      </div>
-      <div class="nav-item freelancer-hide" data-page="agenda" onclick="goPage('agenda')">
-        <svg viewBox="0 0 16 16" fill="none"><rect x="2" y="3.5" width="12" height="11" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M5 1.5v3M11 1.5v3M2 6.5h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-        Agenda
-      </div>
-
-      <div class="nav-section freelancer-hide">Análise</div>
-      <div class="nav-item freelancer-hide" data-page="analytics" onclick="goPage('analytics')">
-        <svg viewBox="0 0 16 16" fill="none"><path d="M2 2v11a1 1 0 001 1h11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 11V8M8 11V5M11 11V9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-        Análises
-      </div>
-      <div class="nav-item freelancer-hide" data-page="performance" onclick="goPage('performance')">
-        <svg viewBox="0 0 16 16" fill="none"><path d="M1.5 12.5l4-4 3 3 5.5-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 5.5h4v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        Performance
-      </div>
-      <div class="nav-item freelancer-hide" data-page="dashboards" onclick="goPage('dashboards')">
-        <svg viewBox="0 0 16 16" fill="none"><rect x="1.5" y="1.5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.4"/><rect x="8.5" y="1.5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.4"/><rect x="1.5" y="8.5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.4"/><rect x="8.5" y="8.5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.4"/></svg>
-        Dashboards
-      </div>
-      <div class="nav-section freelancer-hide">Estrutura</div>
-      <div class="nav-item freelancer-hide" data-page="clients" onclick="goPage('clients')">
-        <svg viewBox="0 0 16 16" fill="none"><path d="M3 14V3.5a1 1 0 011-1h4a1 1 0 011 1V14M9 6.5h3a1 1 0 011 1V14M2 14h12M5.5 5.5v1M5.5 8.5v1M5.5 11.5v1M10.5 8.5v1M10.5 11.5v1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        Clientes
-      </div>
-      <div class="nav-item freelancer-hide" data-page="flows" id="nav-flows" onclick="goPage('flows')">
-        <svg viewBox="0 0 16 16" fill="none"><circle cx="3" cy="8" r="1.8" stroke="currentColor" stroke-width="1.5"/><circle cx="13" cy="3.5" r="1.8" stroke="currentColor" stroke-width="1.5"/><circle cx="13" cy="12.5" r="1.8" stroke="currentColor" stroke-width="1.5"/><path d="M4.7 7.2l6.5-3M4.7 8.8l6.5 3" stroke="currentColor" stroke-width="1.5"/></svg>
-        Fluxos de Demanda
-      </div>
-      <div class="nav-item freelancer-hide" data-page="recurring" onclick="goPage('recurring')">
-        <svg viewBox="0 0 16 16" fill="none"><path d="M3 4h10M3 8h10M3 12h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="0.5" y="2.5" width="2" height="2" rx="0.5" stroke="currentColor" stroke-width="1.2"/><rect x="0.5" y="6.5" width="2" height="2" rx="0.5" stroke="currentColor" stroke-width="1.2"/><rect x="0.5" y="10.5" width="2" height="2" rx="0.5" stroke="currentColor" stroke-width="1.2"/></svg>
-        Listas de tarefas
-      </div>
-      <div class="nav-item freelancer-hide" data-page="gallery" onclick="goPage('gallery')">
-        <svg viewBox="0 0 16 16" fill="none"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="5.5" cy="6.5" r="1.2" stroke="currentColor" stroke-width="1.3"/><path d="M2 11l3-3 2.5 2.5L11 6.5l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        Galeria
-      </div>
-      <!-- reWork Docs vive fora da SPA principal — acesso via topbar (topbar-app-btn) -->
-
-      <div class="nav-item nav-more-toggle freelancer-hide" id="nav-more-toggle" onclick="toggleNavMore(event)" title="Mais opções">
-        <svg viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-        Mais
-      </div>
-    </nav>
-    <div class="nav-more-popover" id="nav-more-popover" hidden>
-      <div class="nav-more-section">Execução</div>
-      <div class="nav-item freelancer-hide" data-page="recurringDemands" onclick="goPage('recurringDemands'); closeNavMore()">
-        <svg viewBox="0 0 16 16" fill="none"><path d="M2.5 6.5A5 5 0 0111.7 4.2l1.8 1.8M13.5 9.5A5 5 0 014.3 11.8L2.5 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.5 2.5v3.5H10M2.5 13.5V10h3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        Demandas Recorrentes
-      </div>
-      <div class="nav-more-section">Estrutura</div>
-      <div class="nav-item freelancer-hide" data-page="templates" onclick="goPage('templates'); closeNavMore()">
-        <svg viewBox="0 0 16 16" fill="none"><rect x="2.5" y="1.5" width="9" height="13" rx="1" stroke="currentColor" stroke-width="1.5"/><path d="M5 5h4M5 8h4M5 11h2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M13.5 3.5v10a1 1 0 01-1 1H11" stroke="currentColor" stroke-width="1.5"/></svg>
-        Templates
-      </div>
-      <div class="nav-item freelancer-hide" data-page="forms" onclick="goPage('forms'); closeNavMore()">
-        <svg viewBox="0 0 16 16" fill="none"><rect x="3" y="1.5" width="10" height="13" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="5.5" cy="5.5" r=".5" fill="currentColor"/><circle cx="5.5" cy="8" r=".5" fill="currentColor"/><circle cx="5.5" cy="10.5" r=".5" fill="currentColor"/></svg>
-        Formulários
-      </div>
-      <div class="nav-item freelancer-hide" data-page="kb" onclick="goPage('kb'); closeNavMore()">
-        <svg viewBox="0 0 16 16" fill="none"><path d="M2.5 3.5A1 1 0 013.5 2.5H8v11H3.5a1 1 0 01-1-1V3.5zM13.5 3.5A1 1 0 0012.5 2.5H8v11h4.5a1 1 0 001-1V3.5z" stroke="currentColor" stroke-width="1.4"/><path d="M5 5.5h1.5M5 7.5h1.5M9.5 5.5H11M9.5 7.5H11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
-        Base de conhecimento
-      </div>
-      <div class="nav-more-section">Configurações</div>
-      <div class="nav-item admin-only" data-page="integrations" id="nav-integrations" onclick="goPage('integrations'); closeNavMore()">
-        <svg viewBox="0 0 16 16" fill="none"><path d="M4 8h2.5a2 2 0 002-2V3.5M12 8H9.5a2 2 0 00-2 2v2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="3" cy="8" r="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="13" cy="8" r="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="7.5" cy="3.5" r="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="7.5" cy="12.5" r="1.5" stroke="currentColor" stroke-width="1.5"/></svg>
-        Integrações
-      </div>
-      <div class="nav-item admin-only" data-page="workspaces" id="nav-workspaces" onclick="goPage('workspaces'); closeNavMore()">
-        <svg viewBox="0 0 16 16" fill="none"><rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M1.5 6h13" stroke="currentColor" stroke-width="1.5"/></svg>
-        Squads
-      </div>
-      <div class="nav-item freelancer-hide" data-page="users" id="nav-users" onclick="goPage('users'); closeNavMore()">
-        <svg viewBox="0 0 16 16" fill="none"><circle cx="5.5" cy="5" r="2.5" stroke="currentColor" stroke-width="1.5"/><path d="M1.5 13c.6-2.2 2.2-3.3 4-3.3s3.4 1.1 4 3.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="11.5" cy="5.5" r="2" stroke="currentColor" stroke-width="1.5"/><path d="M11 9.8c1.8.1 3 1.1 3.5 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-        Usuários
-      </div>
-      <div class="nav-item freelancer-hide" data-page="passwords" id="nav-passwords" onclick="goPage('passwords'); closeNavMore()">
-        <svg viewBox="0 0 16 16" fill="none"><rect x="2.5" y="7" width="11" height="6.5" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M5 7V4.5a3 3 0 016 0V7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="10.25" r="1" fill="currentColor"/></svg>
-        Senhas
-      </div>
-      <div class="nav-item admin-only" data-page="trash" id="nav-trash" onclick="goPage('trash'); closeNavMore()">
-        <svg viewBox="0 0 16 16" fill="none"><path d="M2.5 4.5h11M6 4.5V3a1 1 0 011-1h2a1 1 0 011 1v1.5M4 4.5l.6 8a1.5 1.5 0 001.5 1.4h3.8a1.5 1.5 0 001.5-1.4l.6-8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M6.5 7.5v4M9.5 7.5v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-        Lixeira
-      </div>
-      <div class="nav-more-section">Ajuda</div>
-      <div class="nav-item freelancer-hide" data-page="help" onclick="goPage('help'); closeNavMore()">
-        <svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.25" stroke="currentColor" stroke-width="1.5"/><path d="M8 11V7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="5.25" r=".75" fill="currentColor"/></svg>
-        Documentação
-      </div>
-      <div class="nav-item admin-only full-admin-only" data-page="devtools" id="nav-devtools" onclick="goPage('devtools'); closeNavMore()">
-        <svg viewBox="0 0 16 16" fill="none"><path d="M6 4L2.5 8 6 12M10 4l3.5 4L10 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        Dev Tools
-      </div>
-    </div>
-    <div class="sidebar-footer">
-      <div class="sidebar-user" id="sidebar-user" onclick="toggleStatusMenu(event)" title="Status e perfil">
+    <button type="button" class="sb-search freelancer-hide" onclick="openCommandPalette()" data-label="Buscar (Ctrl K)">
+      <i data-lucide="search" class="sb-ic"></i><span class="sb-search-label">Buscar…</span><span class="sb-kbd" aria-hidden="true"><kbd>Ctrl</kbd><kbd>K</kbd></span>
+    </button>
+    <!-- Itens gerados por renderSidebarNav() a partir de SB_NAV (app.js) -->
+    <nav class="sb-nav" id="sb-nav" aria-label="Páginas"></nav>
+    <div class="sb-foot">
+      <div class="sidebar-user sb-user" id="sidebar-user" onclick="toggleStatusMenu(event)" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleStatusMenu(event)}" aria-label="Seu status e perfil" data-label="Status e perfil">
         <div class="avatar" id="sidebar-avatar">A</div>
-        <div class="sidebar-user-text">
-          <div class="sidebar-user-name" id="sidebar-uname">Usuário</div>
-          <div class="sidebar-user-status" id="sidebar-ustatus" hidden></div>
+        <div class="sb-user-text">
+          <div class="sb-user-name" id="sidebar-uname">Usuário</div>
+          <div class="sb-user-status" id="sidebar-ustatus" hidden></div>
         </div>
       </div>
-      <div class="sidebar-footer-actions">
-        <button class="sidebar-icon-btn" id="theme-toggle-btn" onclick="toggleTheme()" title="Alternar tema">
-          <svg class="theme-icon-sun" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="3" fill="currentColor"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-          <svg class="theme-icon-moon" viewBox="0 0 16 16" fill="none"><path d="M13 9.5A5.5 5.5 0 016.5 3a5.5 5.5 0 105.5 6.5 4.5 4.5 0 01-1 1 4.5 4.5 0 002-1z" fill="currentColor"/></svg>
+      <div class="sb-foot-actions">
+        <button type="button" class="sb-icon-btn" id="theme-toggle-btn" onclick="toggleTheme()" aria-label="Alternar tema" data-label="Alternar tema">
+          <i data-lucide="sun" class="theme-icon-sun"></i>
+          <i data-lucide="moon" class="theme-icon-moon"></i>
         </button>
-        <button class="sidebar-icon-btn" id="sidebar-collapse-btn" onclick="toggleSidebarCollapse()" title="Compactar / expandir sidebar">
-          <svg class="collapse-icon-collapse" viewBox="0 0 16 16" fill="none"><path d="M10.5 3.5L6 8l4.5 4.5M13 3.5L8.5 8l4.5 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <svg class="collapse-icon-expand" viewBox="0 0 16 16" fill="none"><path d="M5.5 3.5L10 8l-4.5 4.5M3 3.5L7.5 8 3 12.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <button type="button" class="sb-icon-btn sb-collapse" id="sidebar-collapse-btn" onclick="toggleSidebarCollapse()" aria-label="Recolher menu" data-label="Expandir menu">
+          <i data-lucide="chevrons-left" class="sb-collapse-close"></i>
+          <i data-lucide="chevrons-right" class="sb-collapse-open"></i>
         </button>
       </div>
     </div>
@@ -4544,7 +4440,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260924grid3" defer></script>
+<script src="/js/boot.js?v=20260924sidebar9" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

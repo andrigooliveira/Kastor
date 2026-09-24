@@ -808,7 +808,8 @@ body.user-freelancer .freelancer-hide { display: none !important; }
   --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
-  --sidebar-w: 230px;
+  --sidebar-w: 236px;
+  --sidebar-w-collapsed: 64px;
 }
 
 /* Light mode — sombras suaves com leve tint frio pra dar profundidade */
@@ -1289,7 +1290,7 @@ body::before {
 #app { display: none; }
 #app.active { display: flex; min-height: 100vh; }
 
-/* ── SIDEBAR ── */
+/* ── SIDEBAR ── (estilo no bloco "SIDEBAR v2", no fim do arquivo) */
 .sidebar {
   width: var(--sidebar-w);
   background: var(--chrome-bg);
@@ -1298,30 +1299,9 @@ body::before {
   position: fixed; top: 0; left: 0; bottom: 0; z-index: 100;
   transform: translateZ(0);
   contain: layout paint;
-  /* Anima a mudança de largura entre expanded (--sidebar-w) e collapsed (72px).
-     Timing curto e ease-out pra feedback snappy sem parecer "arrastando". */
   transition: width .22s var(--ease-out);
 }
-.sidebar-brand {
-  padding: 18px 20px; border-bottom: 1px solid var(--hairline);
-  display: flex; align-items: center; gap: 10px;
-  min-height: 76px;
-}
-/* 3 variantes do logo — CSS decide qual mostrar por (tema × collapse state).
-   Todas default hidden; regras específicas revelam a certa. */
-.sidebar-logo { height: 36px; width: auto; display: none; flex-shrink: 0; }
-/* Expanded + dark (tema padrão): wordmark branco */
-.sidebar-logo-full-white { display: block; }
-/* Expanded + light: wordmark preto */
-:root[data-theme="light"] .sidebar-logo-full-white { display: none; }
-:root[data-theme="light"] .sidebar-logo-full-black { display: block; }
-.sidebar-user {
-  padding: 8px 10px; display: flex; align-items: center; gap: 11px;
-  font-size: 12px; cursor: pointer; border-radius: var(--radius-sm);
-  transition: background .15s var(--ease-out);
-  flex: 1; min-width: 0;
-}
-.sidebar-user:hover { background: var(--surface-2); }
+
 .avatar {
   width: 32px; height: 32px; border-radius: var(--radius-pill);
   background: linear-gradient(135deg, var(--accent-dim), var(--accent-dim));
@@ -1334,215 +1314,12 @@ body::before {
 .avatar img { width: 100%; height: 100%; object-fit: cover; }
 .avatar-lg { width: 84px; height: 84px; font-size: 28px; }
 .avatar-xs { width: 22px; height: 22px; font-size: 9px; }
-.sidebar-user-name {
-  font-weight: 600; font-size: 13px; letter-spacing: -0.005em;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.sidebar-nav { flex: 1; padding: 14px 12px; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; }
-.nav-item {
-  display: flex; align-items: center; gap: 10px; padding: 10px 11px;
-  border-radius: var(--radius-sm); font-size: 13px; font-weight: 500;
-  color: var(--text-dim); cursor: pointer; text-decoration: none;
-  transition: background .18s var(--ease-out), color .18s var(--ease-out), transform .12s var(--ease-spring), padding-left .18s var(--ease-out);
-  position: relative;
-}
-.nav-item:hover { background: var(--surface-2); color: var(--text); padding-left: 14px; }
-.nav-item:active { transform: scale(0.98); }
-.nav-item.active {
-  background: var(--accent-dim); color: var(--accent-text); font-weight: 600;
-  padding-left: 14px;
-}
-/* Indicador vertical fininho na esquerda do item ativo — refinamento sutil. */
-.nav-item.active::before {
-  content: ''; position: absolute; left: 4px; top: 8px; bottom: 8px; width: 3px;
-  border-radius: 2px; background: var(--accent);
-}
-.nav-item svg { width: 16px; height: 16px; flex-shrink: 0; }
-/* Seções ficam como divisórias visuais — sem título. Título ainda existe no
-   HTML pra leitores de tela (aria-friendly) mas o texto é escondido. */
-.nav-section {
-  padding: 0; margin: 10px 12px;
-  height: 0; overflow: hidden;
-  font-size: 0; line-height: 0; color: transparent;
-  border-top: 1px solid var(--hairline);
-}
-.sidebar-nav > .nav-section:first-child {
-  border-top: none; margin-top: 0;
-}
-.sidebar-footer {
-  padding: 10px 14px; border-top: 1px solid var(--hairline);
-  display: flex; align-items: center; gap: 6px;
-}
-/* Botão "Mais" no rodapé da nav — abre popover com opções secundárias. */
-.nav-more-toggle { margin-top: 4px; }
-.nav-more-toggle.has-active-child { color: var(--accent-text); }
-.nav-more-toggle.has-active-child::after {
-  content: ''; width: 6px; height: 6px; border-radius: 50%;
-  background: var(--accent); margin-left: auto;
-}
-.nav-more-popover {
-  position: fixed;
-  z-index: 950;
-  min-width: 240px; max-width: 280px;
-  padding: 8px;
-  background: var(--surface);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-md, 10px);
-  box-shadow: var(--shadow-lg, 0 12px 28px rgba(0,0,0,.22));
-  flex-direction: column; gap: 2px;
-  max-height: calc(100vh - 40px);
-  overflow-y: auto;
-  animation: navMoreIn .14s var(--ease-out);
-}
-.nav-more-popover[hidden] { display: none !important; }
-.nav-more-popover:not([hidden]) { display: flex; }
-@keyframes navMoreIn {
-  from { opacity: 0; transform: translateX(-4px); }
-  to   { opacity: 1; transform: none; }
-}
-.nav-more-popover .nav-item {
-  padding: 9px 11px; font-size: 13px;
-}
-.nav-more-section {
-  font-size: 10px; font-weight: 700; color: var(--text-muted);
-  text-transform: uppercase; letter-spacing: .1em;
-  padding: 10px 8px 4px;
-}
-.nav-more-section:first-child { padding-top: 4px; }
-body.sidebar-collapsed .nav-more-toggle { justify-content: center; }
-body.sidebar-collapsed .nav-more-toggle.has-active-child::after { display: none; }
-.sidebar-footer-actions { display: flex; gap: 4px; flex-shrink: 0; }
 
-/* Icon button pra ações da sidebar (theme toggle, collapse) */
-.sidebar-icon-btn {
-  width: 30px; height: 30px; padding: 0;
-  background: transparent; border: none; border-radius: var(--radius-sm);
-  color: var(--text-muted); cursor: pointer;
-  display: inline-flex; align-items: center; justify-content: center;
-  transition: color .12s, background .12s;
-}
-.sidebar-icon-btn:hover { color: var(--text); background: var(--surface-2); }
-.sidebar-icon-btn svg { width: 16px; height: 16px; }
-
-/* Toggle visibility dos ícones sun/moon baseado no tema */
+/* Ícones sol/lua conforme o tema */
 .theme-icon-sun,
 .theme-icon-moon { display: none; }
 :root[data-theme="light"] .theme-icon-moon { display: block; }
 :root:not([data-theme="light"]) .theme-icon-sun { display: block; }
-
-/* Toggle collapse/expand chevrons baseado no estado */
-.collapse-icon-expand { display: none; }
-body.sidebar-collapsed .collapse-icon-collapse { display: none; }
-body.sidebar-collapsed .collapse-icon-expand { display: block; }
-
-/* Letter tile do workspace — só visível no modo colapsado */
-.ws-trigger-letter { display: none; }
-
-/* ── ESTADO COLAPSADO ──
-   Sidebar fica em 72px, mostra só ícones. Labels/wordmarks/textos escondidos. */
-body.sidebar-collapsed .sidebar { width: 72px !important; }
-body.sidebar-collapsed .main { margin-left: 72px !important; }
-
-/* Brand: só o ícone K centralizado. Wordmark sumido. */
-body.sidebar-collapsed .sidebar-brand {
-  justify-content: center; padding: 18px 0;
-  overflow: hidden;
-}
-/* Colapsado: esconde os wordmarks (branco + preto), mostra só o K icon
-   (rework_logo.svg) — igual em ambos os temas (SVG tem gradient purple fixo). */
-body.sidebar-collapsed .sidebar-logo-full-white,
-body.sidebar-collapsed .sidebar-logo-full-black {
-  display: none !important;
-}
-body.sidebar-collapsed .sidebar-logo-icon {
-  display: block !important;
-  height: 32px !important; width: auto !important;
-  max-width: 40px;
-}
-:root[data-theme="light"] body.sidebar-collapsed .sidebar-logo-icon {
-  display: block !important;
-}
-
-/* Nav items: perfeitamente centralizados, sem qualquer resquício de texto.
-   Escopo restrito à sidebar — nav-items do popover "Mais" moram no body
-   e mantêm seus rótulos visíveis mesmo com a sidebar colapsada. */
-body.sidebar-collapsed .sidebar-nav { padding: 8px 0; }
-body.sidebar-collapsed .sidebar .nav-item {
-  justify-content: center; align-items: center;
-  padding: 10px 0; margin: 0 auto; width: 40px;
-  gap: 0; font-size: 0; line-height: 0;
-  border-radius: var(--radius-sm);
-}
-body.sidebar-collapsed .sidebar .nav-item svg { width: 18px; height: 18px; }
-
-/* Section headers viram só linha divisória (mantém a separação visual). */
-body.sidebar-collapsed .sidebar .nav-section {
-  padding: 0; margin: 8px 16px;
-  height: 0; font-size: 0; line-height: 0;
-  border-top: 1px solid var(--hairline);
-  color: transparent;
-}
-body.sidebar-collapsed .sidebar .sidebar-nav > .nav-section:first-child {
-  border-top: none; margin-top: 0;
-}
-
-/* Nome do user sumido, avatar centralizado. */
-body.sidebar-collapsed .sidebar-user-name { display: none !important; }
-body.sidebar-collapsed .sidebar-user-text { display: none !important; }
-body.sidebar-collapsed .sidebar-footer {
-  flex-direction: column; align-items: center; gap: 6px;
-  padding: 10px 8px;
-}
-body.sidebar-collapsed .sidebar-user {
-  justify-content: center; padding: 4px 0;
-}
-body.sidebar-collapsed .sidebar-footer-actions { flex-direction: column; gap: 2px; }
-
-/* Workspace switcher: no colapsado vira um pill quadrado com a letra inicial. */
-body.sidebar-collapsed .ws-switch {
-  padding: 12px 8px; border-bottom: 1px solid var(--hairline);
-}
-body.sidebar-collapsed .ws-switch .filter-label { display: none; }
-/* Estas regras existem SÓ pra achatar o workspace-switcher da sidebar quando
-   colapsada. Escopadas ao .ws-switch — sem isso vazam pros filter-cdrops do
-   dashboard/list e apagam labels + fundos + bordas. */
-body.sidebar-collapsed .ws-switch .ws-trigger-dot,
-body.sidebar-collapsed .ws-switch .filter-cdrop-label,
-body.sidebar-collapsed .ws-switch .ws-trigger-chevron { display: none !important; }
-body.sidebar-collapsed .ws-switch .filter-cdrop-trigger {
-  justify-content: center; padding: 0;
-  background: transparent !important; border: none !important;
-}
-body.sidebar-collapsed .ws-trigger-letter {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 40px; height: 40px;
-  border-radius: var(--radius-sm);
-  background: var(--accent);
-  color: #fff; font-size: 16px; font-weight: 700;
-  letter-spacing: -0.02em;
-}
-/* Menu do dropdown quando colapsado — abre pra direita com posição fixa.
-   Precisa DESATIVAR o contain: layout paint do .sidebar pra o menu escapar. */
-body.sidebar-collapsed .sidebar {
-  contain: none;
-  overflow: visible;
-}
-/* O nav PRECISA continuar rolável no colapsado. Com overflow:visible o flex
-   item ganha min-height = conteúdo, não encolhe, e empurra o footer (botão de
-   expandir!) pra fora da viewport. Scrollbar escondida pra manter o visual
-   limpo nos 72px — a rolagem por wheel/trackpad continua funcionando. */
-body.sidebar-collapsed .sidebar-nav {
-  overflow-y: auto; overflow-x: hidden;
-  scrollbar-width: none;
-}
-body.sidebar-collapsed .sidebar-nav::-webkit-scrollbar { display: none; }
-/* Footer nunca encolhe — o botão de expandir tem que estar sempre alcançável. */
-.sidebar-footer { flex-shrink: 0; }
-body.sidebar-collapsed .ws-cdrop .filter-cdrop-menu {
-  left: calc(100% + 8px); top: 0;
-  min-width: 220px; z-index: 200;
-  box-shadow: var(--shadow-xl);
-}
 
 /* ── MAIN ── */
 .main {
@@ -5828,21 +5605,8 @@ body:has(#page-demand-detail.active) #toast-container { bottom: 96px; }
    v3 — Workspaces, horas, comentários, drag-stages
    ─────────────────────────────────────────────── */
 
-/* Workspace switcher na sidebar */
-.ws-switch { padding: 12px 16px; border-bottom: 1px solid var(--hairline); }
-.ws-switch .filter-label { margin-bottom: 6px; }
-.ws-switch.single { display: none; }
-/* Workspace cdrop ocupa toda a largura disponível */
-.ws-cdrop { min-width: 0; width: 100%; }
-.ws-cdrop .filter-cdrop-trigger { width: 100%; min-width: 0; padding: 0 10px 0 12px; }
-.ws-trigger-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-
-/* Faixa colorida do workspace ativo no topo da sidebar (ambient awareness) */
-.sidebar { border-top: 3px solid var(--current-ws-color, var(--accent)); }
-
 /* Scroll fades — gradient de transparência nas bordas de containers scrolláveis,
    indica que tem mais conteúdo. Padrão Apple visto em macOS/iOS. */
-.sidebar-nav,
 .kanban-column-body,
 .notif-list {
   -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
@@ -6340,7 +6104,7 @@ body:has(#page-demand-detail.active) #toast-container { bottom: 96px; }
   overflow: hidden;
   z-index: 1;
 }
-body.sidebar-collapsed #page-demand-detail.active { left: 72px; }
+body.sidebar-collapsed #page-demand-detail.active { left: var(--sidebar-w-collapsed); }
 #page-demand-detail.active #detail-content {
   flex: 1; min-height: 0; overflow: hidden;
   display: flex; height: 100%;
@@ -14719,7 +14483,6 @@ tr.dc-row td { vertical-align: middle; padding-top: 10px; padding-bottom: 10px; 
 .picker-list .avatar[data-user-id],
 .owner-picker-list .avatar[data-user-id],
 .select-menu .avatar[data-user-id],
-.sidebar-user .avatar[data-user-id],
 .owner-picker .avatar[data-user-id],
 .mention-pop .avatar[data-user-id],
 .chat-compose-wrap .avatar[data-user-id],
@@ -14864,8 +14627,6 @@ tr.demand-row {
 /* Bloquear seleção de texto em edit mode — texto nos gráficos não pode ser
    arrastado como seleção enquanto o usuário quer mover/redimensionar. */
 
-@media (max-width: 768px) {
-  }
 .dw-widget {
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
@@ -16047,37 +15808,6 @@ tr.demand-row {
 .kanban-card-due.late i,
 .kanban-card-due.late svg { color: var(--danger); }
 
-/* ── Sidebar: pill de fundo no hover + micro tint no ícone ── */
-.nav-item {
-  transition: background .22s var(--ease-out),
-              color .18s var(--ease-out),
-              transform .12s var(--ease-spring),
-              padding-left .22s var(--ease-out);
-}
-.nav-item svg { transition: color .18s var(--ease-out), transform .18s var(--ease-spring); }
-.nav-item:hover svg { color: var(--accent-text); transform: scale(1.08); }
-.nav-item.active svg { color: var(--accent); }
-/* Barrinha vertical do ativo — pequena animação de "entrar" */
-.nav-item.active::before {
-  animation: navActiveBar .32s var(--ease-spring);
-}
-@keyframes navActiveBar {
-  from { transform: scaleY(0.3); opacity: 0; }
-  to   { transform: scaleY(1); opacity: 1; }
-}
-
-/* Divisórias entre grupos ficam com um leve gradient em vez de linha seca */
-.nav-section {
-  border-top: none !important;
-  height: 1px !important;
-  background: linear-gradient(to right,
-    transparent 0%,
-    var(--hairline-strong) 30%,
-    var(--hairline-strong) 70%,
-    transparent 100%);
-  opacity: 0.75;
-}
-
 /* ── Chips de filtro: refinamento ── */
 .due-filter-chip {
   transition: background .18s var(--ease-out), border-color .18s var(--ease-out), transform .12s var(--ease-spring), box-shadow .18s var(--ease-out);
@@ -16352,15 +16082,6 @@ input[type="checkbox"]:checked {
 :root[data-theme="light"] .btn-secondary:hover {
   background: #fafafb;
   border-color: rgba(30, 30, 60, 0.12);
-}
-
-/* Nav item ativo em light — accent-dim mais colorido pra destacar */
-:root[data-theme="light"] .nav-item.active {
-  background: rgba(var(--accent-rgb), 0.08);
-  color: var(--accent-text);
-}
-:root[data-theme="light"] .nav-item:hover:not(.active) {
-  background: rgba(30, 30, 60, 0.04);
 }
 
 /* Hairlines internas de tabela/lista — bem leves em light pra não "cortar" o card */
@@ -18835,7 +18556,6 @@ a.gm-contact-value:hover { text-decoration: underline; }
 /* ── Popovers e menus: todos com a mesma entrada ── */
 .filter-cdrop.open .filter-cdrop-menu,
 .combobox.open .combobox-menu,
-.nav-more-popover,
 .advance-menu,
 .flow-suggest,
 .month-picker-popover.open { animation: rwPop var(--dur-2) var(--ease-out); }
@@ -19031,12 +18751,7 @@ tr.demand-row:hover { transform: none; }
 .status-meeting { --st-c: var(--warn);   --st-i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m16 13 5.2 3.5a.5.5 0 0 0 .8-.4V7.9a.5.5 0 0 0-.8-.4L16 10.5'/%3E%3Crect x='2' y='6' width='14' height='12' rx='2'/%3E%3C/svg%3E"); }
 .status-custom  { --st-c: #64748B;       --st-i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7.9 20A9 9 0 1 0 4 16.1L2 22Z'/%3E%3C/svg%3E"); }
 /* Barra lateral: nome + status em duas linhas */
-.sidebar-user-text { min-width: 0; display: flex; flex-direction: column; }
-.sidebar-user-status {
-  font-size: 11px; color: var(--text-muted); margin-top: 1px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.sidebar-user-status[hidden] { display: none; }
+
 /* Cartão de contato */
 .user-mini-card-status {
   display: flex; align-items: center; gap: 6px; margin-top: 8px;
@@ -19462,4 +19177,187 @@ body.dv-resizing[data-dv-resize="se"] * { cursor: nwse-resize !important; }
   .dv-grid > .dv-card--number { height: auto !important; min-height: 150px; }
   .dv-grid > .dv-add { position: relative; transform: none !important; width: auto !important; height: 56px !important; }
   .dv-grid > .dv-placeholder, .dv-grid .dv-rh { display: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   SIDEBAR v2 — itens gerados por renderSidebarNav() (SB_NAV, app.js)
+   Topo: logo + recolher · squad · busca · grupos que abrem/fecham ·
+   rodapé com você, documentação e tema. Recolhida (≥ 881px): 64px, só
+   ícones, com rótulo ao lado no hover (.sb-tip).
+   ═══════════════════════════════════════════════════════════════════ */
+.sidebar.sb { background: var(--sidebar); padding: 0; }
+
+/* Topo */
+.sb-top { display: flex; align-items: center; gap: 8px; padding: 24px 20px 20px; flex-shrink: 0; border-bottom: 1px solid var(--hairline); }
+.sb-brand { display: inline-flex; align-items: center; height: 38px; border-radius: var(--radius-sm); }
+.sb-brand:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.sb-logo { height: 34px; width: auto; display: none; }
+:root:not([data-theme="light"]) .sb-logo--white { display: block; }
+:root[data-theme="light"] .sb-logo--black { display: block; }
+.sb-icon-btn {
+  width: 30px; height: 30px; flex-shrink: 0; border: 0; border-radius: var(--radius-sm); background: none;
+  color: var(--text-muted); cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+}
+.sb-icon-btn:hover { background: var(--surface-2); color: var(--text); }
+.sb-icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sb-icon-btn svg { width: 16px; height: 16px; }
+/* Sol no escuro, lua no claro (ganha da regra genérica [data-lucide]). */
+.sb-icon-btn .theme-icon-sun, .sb-icon-btn .theme-icon-moon { display: none; }
+:root:not([data-theme="light"]) .sb-icon-btn .theme-icon-sun,
+:root[data-theme="light"] .sb-icon-btn .theme-icon-moon { display: block; }
+.sb-collapse-open { display: none; }
+/* Recolher: chevron apagado (mesmo tamanho do botão de tema), cor só no hover */
+.sb-icon-btn.sb-collapse { color: color-mix(in oklab, var(--text-muted) 70%, transparent); }
+.sb-icon-btn.sb-collapse:hover { color: var(--text); }
+
+/* Squad */
+.sb-ws { padding: 12px 12px 12px; flex-shrink: 0; }
+.ws-switch.single { display: none; }
+.ws-switch.single + .sb-search { margin-top: 12px; } /* um squad só: a busca encosta na divisória */
+.sb-ws-cdrop { width: 100%; min-width: 0; }
+.sb-ws-trigger {
+  width: 100%; display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 8px; border: 0; border-radius: 8px;
+  background: none; color: var(--text); cursor: pointer; text-align: left; font-family: inherit;
+  transition: background var(--dur-1) var(--ease-out);
+}
+.sb-ws-trigger:hover, .sb-ws-cdrop.open .sb-ws-trigger { background: var(--surface-2); }
+.sb-ws-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sb-ws-letter {
+  width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 12px; font-weight: 700; background: var(--accent);
+}
+.sb-ws-name { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sb-ws-caret { width: 14px; height: 14px; color: var(--text-muted); flex-shrink: 0; }
+.sb-ws-cdrop .filter-cdrop-menu { left: 0; right: 0; min-width: 0; z-index: 200; }
+
+/* Busca (paleta de comandos): parece um campo, com as teclas do atalho */
+.sb-search {
+  display: flex; align-items: center; gap: 10px; flex-shrink: 0; margin: 0 12px 20px; height: 38px; padding: 0 6px 0 8px;
+  border: 0; border-radius: 8px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--hairline-strong);
+  color: var(--text-muted); cursor: text; font-family: inherit; font-size: 13px; text-align: left;
+  transition: box-shadow var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+}
+:root:not([data-theme="light"]) .sb-search { background: color-mix(in oklab, var(--text) 4%, var(--sidebar)); }
+.sb-search:hover { color: var(--text-dim); box-shadow: inset 0 0 0 1px var(--border-active); }
+.sb-search:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.sb-search .sb-ic { width: 16px; height: 16px; margin-left: 2px; }
+.sb-search-label { flex: 1; }
+.sb-kbd { display: inline-flex; gap: 3px; }
+.sb-kbd kbd {
+  min-width: 20px; height: 20px; padding: 0 5px; display: inline-flex; align-items: center; justify-content: center;
+  font-family: inherit; font-size: 10.5px; font-weight: 600; color: var(--text-muted); border-radius: 5px;
+  background: var(--surface-2); box-shadow: inset 0 -1px 0 var(--hairline-strong);
+}
+
+/* Navegação */
+.sb-nav {
+  flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 4px 12px 16px;
+  display: flex; flex-direction: column; gap: 16px; scrollbar-width: thin;
+  border-top: 1px solid var(--hairline);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 10px, #000 calc(100% - 14px), transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0, #000 10px, #000 calc(100% - 14px), transparent 100%);
+}
+.sb-group--main { display: flex; flex-direction: column; gap: 2px; padding-top: 12px; }
+.sb-group-head {
+  width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 4px 8px; margin-bottom: 4px;
+  border: 0; border-radius: var(--radius-sm); background: none; cursor: pointer; font-family: inherit;
+  font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted);
+  transition: color var(--dur-1) var(--ease-out);
+}
+.sb-group-head:hover { color: var(--text-dim); }
+.sb-group-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sb-group-caret { width: 12px; height: 12px; opacity: 0; transform: rotate(-90deg); transition: transform var(--dur-2) var(--ease-out), opacity var(--dur-1) var(--ease-out); }
+.sb-group-head:hover .sb-group-caret, .sb-group-head:focus-visible .sb-group-caret, .sb-group:not(.is-open) .sb-group-caret { opacity: 1; }
+.sb-group.is-open .sb-group-caret { transform: none; }
+.sb-group-items { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--dur-3) var(--ease-out); }
+.sb-group.is-open > .sb-group-items { grid-template-rows: 1fr; }
+.sb-group-inner { min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 2px; }
+.sb-group[data-group]:not(.is-open) .sb-item { visibility: hidden; transition: visibility 0s var(--dur-3); }
+
+.sb-item {
+  position: relative; display: flex; align-items: center; gap: 12px; height: 34px; padding: 0 8px 0 10px; flex-shrink: 0;
+  border-radius: var(--radius-sm); color: var(--text-dim); text-decoration: none; cursor: pointer;
+  font-size: 13px; font-weight: 500; letter-spacing: -.005em;
+  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+}
+.sb-item:hover { background: var(--surface-2); color: var(--text); }
+.sb-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sb-ic { width: 16px; height: 16px; flex-shrink: 0; color: var(--text-muted); transition: color var(--dur-1) var(--ease-out); }
+.sb-item:hover .sb-ic { color: var(--text-dim); }
+.sb-item.active { background: var(--accent-dim); color: var(--accent-text); font-weight: 600; }
+.sb-item.active .sb-ic { color: var(--accent); }
+.sb-item.active::before {
+  content: ''; position: absolute; left: 0; top: 9px; bottom: 9px; width: 3px;
+  border-radius: 0 3px 3px 0; background: var(--accent);
+}
+.sb-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sb-count {
+  flex-shrink: 0; min-width: 20px; padding: 1px 6px; border-radius: var(--radius-pill); text-align: center;
+  font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-muted); background: var(--surface-2);
+}
+.sb-item.active .sb-count { background: var(--surface); color: var(--accent-text); }
+.sb-count.is-late { color: var(--danger); background: color-mix(in oklab, var(--danger) 13%, transparent); }
+
+/* Rodapé */
+.sb-foot { flex-shrink: 0; display: flex; align-items: center; gap: 4px; padding: 10px 12px 12px; border-top: 1px solid var(--hairline); }
+.sb-user {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 6px; border-radius: var(--radius-sm); cursor: pointer;
+  transition: background var(--dur-1) var(--ease-out);
+}
+.sb-user:hover { background: var(--surface-2); }
+.sb-user:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sb-user .avatar { width: 30px; height: 30px; }
+.sb-user { padding: 6px 6px 6px 8px; }
+.sb-user-text { min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.sb-user-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sb-user-status { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sb-user-status[hidden] { display: none; }
+.sb-foot-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+
+/* Rótulo lateral (sidebar recolhida) */
+.sb-tip {
+  position: fixed; z-index: 500; pointer-events: none; transform: translateY(-50%) translateX(-4px); opacity: 0;
+  padding: 6px 10px; border-radius: var(--radius-sm); white-space: nowrap;
+  background: var(--text); color: var(--bg); font-size: 12px; font-weight: 600;
+  box-shadow: var(--shadow-lg, 0 8px 20px rgba(0,0,0,.2));
+  transition: opacity var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out);
+}
+.sb-tip.is-on { opacity: 1; transform: translateY(-50%); }
+
+/* Recolhida (só desktop; no celular a sidebar é gaveta e fica sempre aberta) */
+@media (min-width: 881px) {
+  body.sidebar-collapsed .sidebar { width: var(--sidebar-w-collapsed); contain: none; overflow: visible; }
+  body.sidebar-collapsed .main { margin-left: var(--sidebar-w-collapsed); }
+  body.sidebar-collapsed .sb-top { justify-content: center; padding: 18px 0 14px; }
+  body.sidebar-collapsed .sb-logo { display: none !important; }
+  body.sidebar-collapsed .sb-logo--icon { display: block !important; height: 28px; }
+  body.sidebar-collapsed .sb-collapse-close { display: none; }
+  body.sidebar-collapsed .sb-collapse-open { display: block; }
+  body.sidebar-collapsed .sb-ws { padding: 0 0 8px; display: flex; justify-content: center; }
+  body.sidebar-collapsed .sb-ws-cdrop { width: auto; }
+  body.sidebar-collapsed .sb-ws-trigger { width: 44px; padding: 8px; justify-content: center; }
+  body.sidebar-collapsed .sb-ws-name, body.sidebar-collapsed .sb-ws-caret { display: none; }
+  body.sidebar-collapsed .sb-ws-cdrop .filter-cdrop-menu { left: calc(100% + 8px); right: auto; top: 0; min-width: 220px; box-shadow: var(--shadow-xl); }
+  body.sidebar-collapsed .sb-search { width: 44px; margin: 0 auto 8px; padding: 0; justify-content: center; background: none; box-shadow: none; cursor: pointer; }
+  body.sidebar-collapsed .sb-search:hover { background: var(--surface-2); }
+  body.sidebar-collapsed .sb-search-label, body.sidebar-collapsed .sb-kbd { display: none; }
+  body.sidebar-collapsed .sb-nav { padding: 8px 10px 12px; gap: 6px; scrollbar-width: none; }
+  body.sidebar-collapsed .sb-nav::-webkit-scrollbar { display: none; }
+  body.sidebar-collapsed .sb-group-head { height: 1px; padding: 0; margin: 6px 8px; font-size: 0; background: var(--hairline); pointer-events: none; }
+  body.sidebar-collapsed .sb-group-caret { display: none; }
+  body.sidebar-collapsed .sb-group-items { grid-template-rows: 1fr; }
+  body.sidebar-collapsed .sb-group .sb-item { visibility: visible; }
+  body.sidebar-collapsed .sb-item { width: 44px; padding: 0; margin: 0 auto; justify-content: center; }
+  body.sidebar-collapsed .sb-label { display: none; }
+  body.sidebar-collapsed .sb-count { position: absolute; top: 6px; right: 6px; min-width: 0; width: 8px; height: 8px; padding: 0; font-size: 0; background: var(--text-muted); }
+  body.sidebar-collapsed .sb-count:not(.is-late) { display: none; }
+  body.sidebar-collapsed .sb-count.is-late { background: var(--danger); box-shadow: 0 0 0 2px var(--sidebar); }
+  body.sidebar-collapsed .sb-foot { flex-direction: column; padding: 8px 0; gap: 4px; }
+  body.sidebar-collapsed .sb-user { flex: none; padding: 4px; }
+  body.sidebar-collapsed .sb-user-text { display: none; }
+  body.sidebar-collapsed .sb-foot-actions { flex-direction: column; }
+}
+@media (max-width: 880px) {
+  .sb-collapse, .sb-kbd { display: none; }
 }

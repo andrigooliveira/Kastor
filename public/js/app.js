@@ -1261,6 +1261,14 @@ function pickFilterCdrop(selId, value) {
 // capture=true pra rodar ANTES de qualquer stopPropagation em contêineres
 // aninhados (ex.: #advanced-filters-pop), garantindo que cdrops embutidos
 // dentro desses contêineres também fechem no click fora.
+// Esc fecha qualquer cdrop aberto (e devolve o menu portalado).
+document.addEventListener('keydown', ev => {
+  if (ev.key !== 'Escape') return;
+  const open = document.querySelectorAll('.filter-cdrop.open');
+  if (!open.length) return;
+  open.forEach(c => { c.classList.remove('open'); _resetFilterCdropMenu(c); });
+  ev.stopPropagation();
+}, true);
 document.addEventListener('click', ev => {
   if (ev.target.closest('.filter-cdrop')) return;
   const portalMenu = ev.target.closest('.filter-cdrop-menu[data-cdrop-portal]');
@@ -4026,6 +4034,7 @@ function _showUpdateBanner() {
 async function boot() {
   // Estado do collapse da sidebar aplicado ANTES do render pra evitar flash.
   applySidebarCollapseInit();
+  renderSidebarNav();
   // Rota pré-autenticação: /reset/<token> abre a tela de reset de senha
   // (pública — sem auth nem app carregado).
   const resetMatch = location.pathname.match(/^\/reset\/([A-Za-z0-9_-]+)$/);
@@ -4791,7 +4800,8 @@ function switchWorkspace(id) {
   _markFiltersDirty('list'); // faz o filtro de Workspace da aba Demandas seguir o atual
   // Fecha o dropdown do switcher
   const cdrop = $('ws-cdrop');
-  if (cdrop) cdrop.classList.remove('open');
+  // O menu é portalado pro body ao abrir: sem o reset ele ficaria na tela.
+  if (cdrop) { cdrop.classList.remove('open'); _resetFilterCdropMenu(cdrop); }
   // Integrações são UNIVERSAIS mas o array `webhooks` é global — invalida
   // deliberadamente pra que a próxima entrada na tela refaça o fetch e não
   // sirva um snapshot antigo (nem que fosse do outro squad, pra qualquer
@@ -4904,26 +4914,125 @@ async function setMyStatus(kind, minutes, text) {
 function toggleSidebarCollapse() {
   const isCollapsed = document.body.classList.toggle('sidebar-collapsed');
   try { localStorage.setItem('kastor-sidebar-collapsed', isCollapsed ? '1' : '0'); } catch {}
-  // Se o popover "Mais" tá aberto, reposiciona pra acompanhar a nova borda
-  // da sidebar (aguarda a transição de width acabar).
-  const pop = document.getElementById('nav-more-popover');
-  if (pop && !pop.hidden) setTimeout(_repositionNavMore, 240);
+  const btn = document.getElementById('sidebar-collapse-btn');
+  if (btn) btn.setAttribute('aria-label', isCollapsed ? 'Expandir menu' : 'Recolher menu');
+  _hideSbTip();
 }
-function _repositionNavMore() {
-  const pop = document.getElementById('nav-more-popover');
-  const btn = document.getElementById('nav-more-toggle');
-  if (!pop || pop.hidden || !btn) return;
-  const btnRect = btn.getBoundingClientRect();
-  const sidebarRect = document.querySelector('.sidebar')?.getBoundingClientRect();
-  const leftAnchor = (sidebarRect ? sidebarRect.right : btnRect.right) + 8;
-  pop.style.left = leftAnchor + 'px';
-  const pr = pop.getBoundingClientRect();
-  let top = btnRect.top;
-  if (top + pr.height > window.innerHeight - 8) {
-    top = Math.max(8, window.innerHeight - pr.height - 8);
+
+/* ── SIDEBAR ──
+   Itens em SB_NAV (grupos com título que abrem/fecham; estado por pessoa no
+   localStorage). Links reais (<a href>): Ctrl/Cmd+clique abre em nova aba.
+   Permissão continua pelas classes (freelancer-hide, admin-only…), que o CSS
+   esconde conforme o body. Grupo que contém a página ativa abre sozinho. */
+const SB_NAV = [
+  { items: [
+    { page: 'dashboard', label: 'Início', icon: 'house', cls: 'freelancer-hide' },
+    { page: 'mine', label: 'Minhas Demandas', icon: 'user-round', count: 'mine' },
+    { page: 'list', label: 'Demandas', icon: 'list', cls: 'freelancer-hide' },
+    { page: 'agenda', label: 'Agenda', icon: 'calendar', cls: 'freelancer-hide' },
+  ] },
+  { key: 'analise', label: 'Análise', cls: 'freelancer-hide', items: [
+    { page: 'analytics', label: 'Análises', icon: 'chart-column' },
+    { page: 'performance', label: 'Performance', icon: 'trending-up' },
+    { page: 'dashboards', label: 'Dashboards', icon: 'layout-dashboard' },
+  ] },
+  { key: 'estrutura', label: 'Estrutura', cls: 'freelancer-hide', items: [
+    { page: 'clients', label: 'Clientes', icon: 'building-2' },
+    { page: 'flows', label: 'Fluxos de Demanda', icon: 'workflow', id: 'nav-flows' },
+    { page: 'forms', label: 'Formulários', icon: 'clipboard-list' },
+    { page: 'templates', label: 'Templates', icon: 'files' },
+    { page: 'recurring', label: 'Listas de tarefas', icon: 'list-checks' },
+    { page: 'recurringDemands', label: 'Demandas Recorrentes', icon: 'repeat' },
+    { page: 'gallery', label: 'Galeria', icon: 'images' },
+    { page: 'kb', label: 'Base de conhecimento', icon: 'book-open' },
+  ] },
+  { key: 'config', label: 'Configurações', cls: 'freelancer-hide', closed: true, items: [
+    { page: 'users', label: 'Usuários', icon: 'users', id: 'nav-users', cls: 'freelancer-hide' },
+    { page: 'workspaces', label: 'Squads', icon: 'layers', id: 'nav-workspaces', cls: 'admin-only' },
+    { page: 'integrations', label: 'Integrações', icon: 'plug', id: 'nav-integrations', cls: 'admin-only' },
+    { page: 'passwords', label: 'Senhas', icon: 'key-round', id: 'nav-passwords', cls: 'freelancer-hide' },
+    { page: 'trash', label: 'Lixeira', icon: 'trash-2', id: 'nav-trash', cls: 'admin-only' },
+    { page: 'devtools', label: 'Dev Tools', icon: 'code-xml', id: 'nav-devtools', cls: 'admin-only full-admin-only' },
+  ] },
+  { key: 'ajuda', label: 'Ajuda', cls: 'freelancer-hide', items: [
+    { page: 'help', label: 'Documentação', icon: 'circle-help' },
+  ] },
+];
+function _sbGroupState() { try { return JSON.parse(localStorage.getItem('kastor-sb-groups') || '{}'); } catch { return {}; } }
+function renderSidebarNav() {
+  const nav = document.getElementById('sb-nav');
+  if (!nav) return;
+  const state = _sbGroupState();
+  const item = it => `<a class="sb-item ${it.cls || ''}" data-page="${it.page}"${it.id ? ` id="${it.id}"` : ''} href="${PAGE_TO_PATH[it.page] || '/'}" data-label="${esc(it.label)}"
+      onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); goPage('${it.page}'); closeSidebar()">
+      <i data-lucide="${it.icon}" class="sb-ic"></i><span class="sb-label">${esc(it.label)}</span>${it.count ? `<span class="sb-count" id="sb-count-${it.count}" hidden></span>` : ''}</a>`;
+  nav.innerHTML = SB_NAV.map(g => {
+    const items = g.items.map(item).join('');
+    if (!g.key) return `<div class="sb-group sb-group--main">${items}</div>`;
+    const open = state[g.key] ?? !g.closed;
+    return `<div class="sb-group ${g.cls || ''} ${open ? 'is-open' : ''}" data-group="${g.key}">
+      <button type="button" class="sb-group-head" onclick="toggleSbGroup('${g.key}')" aria-expanded="${open}" aria-controls="sb-g-${g.key}">
+        <span>${esc(g.label)}</span><i data-lucide="chevron-down" class="sb-group-caret"></i>
+      </button>
+      <div class="sb-group-items" id="sb-g-${g.key}"><div class="sb-group-inner">${items}</div></div>
+    </div>`;
+  }).join('');
+  paintIcons(document.querySelector('.sidebar'));
+  syncSidebarActive(currentPage);
+}
+function toggleSbGroup(key) {
+  const g = document.querySelector(`.sb-group[data-group="${key}"]`);
+  if (!g) return;
+  const open = g.classList.toggle('is-open');
+  g.querySelector('.sb-group-head')?.setAttribute('aria-expanded', String(open));
+  const st = _sbGroupState();
+  st[key] = open;
+  try { localStorage.setItem('kastor-sb-groups', JSON.stringify(st)); } catch {}
+}
+function syncSidebarActive(page) {
+  let activeEl = null;
+  document.querySelectorAll('.sb-item').forEach(n => {
+    const on = n.dataset.page === page;
+    n.classList.toggle('active', on);
+    if (on) { n.setAttribute('aria-current', 'page'); activeEl = n; } else n.removeAttribute('aria-current');
+  });
+  // Página dentro de um grupo fechado: abre o grupo (sem salvar a preferência).
+  const g = activeEl?.closest('.sb-group[data-group]');
+  if (g && !g.classList.contains('is-open')) {
+    g.classList.add('is-open');
+    g.querySelector('.sb-group-head')?.setAttribute('aria-expanded', 'true');
   }
-  pop.style.top = top + 'px';
 }
+// Contador de Minhas Demandas: em aberto; vermelho quando alguma está atrasada.
+function renderNavCounts() {
+  const el = document.getElementById('sb-count-mine');
+  if (!el || !me || typeof myDemands !== 'function') return;
+  const open = myDemands().filter(d => !isDone(d));
+  const today = todayStr();
+  const late = open.filter(d => { const due = effDue(d); return due && due < today; }).length;
+  el.hidden = !open.length;
+  el.textContent = open.length > 99 ? '99+' : String(open.length);
+  el.classList.toggle('is-late', late > 0);
+  el.setAttribute('aria-label', `${open.length} em aberto${late ? `, ${late} atrasada${late > 1 ? 's' : ''}` : ''}`);
+}
+/* Rótulo ao lado dos ícones quando a sidebar está recolhida (os tooltips
+   globais do app são desligados). Lê data-label. */
+let _sbTipEl = null;
+function _hideSbTip() { _sbTipEl?.classList.remove('is-on'); }
+document.addEventListener('mouseover', e => {
+  const t = document.body.classList.contains('sidebar-collapsed') && window.innerWidth > 880
+    ? e.target.closest?.('.sidebar [data-label]') : null;
+  if (!t) { _hideSbTip(); return; }
+  if (!_sbTipEl) { _sbTipEl = document.createElement('div'); _sbTipEl.className = 'sb-tip'; document.body.appendChild(_sbTipEl); }
+  const r = t.getBoundingClientRect();
+  const sr = document.querySelector('.sidebar').getBoundingClientRect();
+  const count = t.querySelector('.sb-count:not([hidden])');
+  _sbTipEl.textContent = t.dataset.label + (count ? ` · ${count.getAttribute('aria-label')}` : '');
+  _sbTipEl.style.left = (sr.right + 8) + 'px';
+  _sbTipEl.style.top = (r.top + r.height / 2) + 'px';
+  _sbTipEl.classList.add('is-on');
+});
+window.addEventListener('scroll', _hideSbTip, true);
 // Aplica estado inicial (chamado no boot).
 function applySidebarCollapseInit() {
   try {
@@ -5057,12 +5166,11 @@ function goPage(page) {
   currentPage = page;
   // Cada entrada na página força um restoreFilters na próxima render.
   _markFiltersDirty(page);
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.page === page));
+  syncSidebarActive(page);
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + page));
   if (prevPage !== page) markPageEntering(document.getElementById('page-' + page));
   // 404 renderiza fullpage — esconde sidebar + topbar via body class.
   document.body.classList.toggle('is-fullpage', page === 'notfound');
-  _syncNavMoreActiveHint(page);
   $('topbar-title').textContent = PAGE_TITLES[page] || '';
   // Saiu do detalhe pela navegação: oferece apontar o tempo que ficou nele.
   if (prevPage === 'demand-detail' && page !== 'demand-detail' && detailId) maybeSuggestTime(detailId);
@@ -5088,66 +5196,6 @@ function toggleSidebar() {
 function closeSidebar() {
   document.body.classList.remove('menu-open');
 }
-/* Popover "Mais" na sidebar — abre um card ancorado à direita do botão com
-   as opções secundárias (recorrentes, config, ajuda). */
-function toggleNavMore(ev) {
-  ev?.stopPropagation();
-  const pop = document.getElementById('nav-more-popover');
-  const btn = document.getElementById('nav-more-toggle');
-  if (!pop || !btn) return;
-  if (!pop.hidden) { closeNavMore(); return; }
-  // Move o popover pro body — sidebar tem `contain: layout paint`, que
-  // clipa filhos position:fixed dentro do seu box.
-  if (pop.parentElement !== document.body) document.body.appendChild(pop);
-  const btnRect = btn.getBoundingClientRect();
-  const sidebarRect = document.querySelector('.sidebar')?.getBoundingClientRect();
-  // Ancora pela borda direita da sidebar (funciona em modo compacto e normal).
-  const leftAnchor = (sidebarRect ? sidebarRect.right : btnRect.right) + 8;
-  pop.style.left = leftAnchor + 'px';
-  pop.hidden = false;
-  // Depois de ficar visível, mede altura pra manter dentro da viewport.
-  requestAnimationFrame(() => {
-    const pr = pop.getBoundingClientRect();
-    let top = btnRect.top;
-    if (top + pr.height > window.innerHeight - 8) {
-      top = Math.max(8, window.innerHeight - pr.height - 8);
-    }
-    pop.style.top = top + 'px';
-  });
-  if (window.lucide?.createIcons) lucide.createIcons({ nameAttr: 'data-lucide' });
-  setTimeout(() => document.addEventListener('mousedown', _navMoreOutside, true), 0);
-}
-function closeNavMore() {
-  const pop = document.getElementById('nav-more-popover');
-  if (pop) pop.hidden = true;
-  document.removeEventListener('mousedown', _navMoreOutside, true);
-}
-function _navMoreOutside(e) {
-  const pop = document.getElementById('nav-more-popover');
-  const btn = document.getElementById('nav-more-toggle');
-  if (!pop || pop.hidden) { document.removeEventListener('mousedown', _navMoreOutside, true); return; }
-  if (pop.contains(e.target) || btn?.contains(e.target)) return;
-  closeNavMore();
-}
-/* Se a página ativa vive dentro do "Mais", destaca o botão de toggle. */
-function _syncNavMoreActiveHint(page) {
-  const btn = document.getElementById('nav-more-toggle');
-  const pop = document.getElementById('nav-more-popover');
-  if (!btn || !pop) return;
-  const inMore = !!pop.querySelector(`.nav-item[data-page="${page}"]`);
-  btn.classList.toggle('has-active-child', inMore);
-}
-// Esc / resize fecham o popover.
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') {
-    const pop = document.getElementById('nav-more-popover');
-    if (pop && !pop.hidden) { e.preventDefault(); closeNavMore(); }
-  }
-});
-window.addEventListener('resize', () => {
-  const pop = document.getElementById('nav-more-popover');
-  if (pop && !pop.hidden) closeNavMore();
-});
 // Esc fecha o menu mobile quando aberto.
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && document.body.classList.contains('menu-open')) {
@@ -5554,7 +5602,7 @@ function renderCurrent() {
     case 'clientsModels': {
       // Subtela dentro da página Clientes — mesmo container, view diferente.
       // O nav ativa 'clients'; forçamos aqui pra o item da sidebar refletir.
-      document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.page === 'clients'));
+      syncSidebarActive('clients');
       document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-clients'));
       $('topbar-title').textContent = 'Modelos de Cliente';
       showClientsModelsView();
@@ -5582,6 +5630,7 @@ function renderCurrent() {
     case 'recurringDemands': renderRecurringDemands(); break;
     case 'profile':    renderProfile(); break;
   }
+  renderNavCounts();
   // Escopa a pintura de ícones na página ativa em vez do documento inteiro.
   paintIcons(document.querySelector('.page.active') || undefined);
 }

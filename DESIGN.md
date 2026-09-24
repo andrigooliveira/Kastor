@@ -266,11 +266,12 @@ Bordas são raras. Onde existem, usam `--border` (dim de `--surface-3`) e são d
 
 ### Navigation (Sidebar)
 
-- **Style:** fundo `--sidebar` (que em dark é `#17171c`), largura 230px, colapsa pra 44px. Ícones lucide 16px, label 13px weight 500.
-- **Item default:** texto `--text-dim`, ícone `--text-muted`. Sem fundo.
-- **Item hover:** fundo `--surface-2`, texto `--text`.
-- **Item active:** fundo `--accent-dim` (roxo 10%), texto `--accent-text` (`#5E00CC` em light, `--accent` em dark), ícone `--accent`. Barra vertical de 3px em `--accent` na esquerda do item.
-- **Mobile:** vira drawer overlay com backdrop.
+- **Estrutura:** logo + botão de recolher · seletor de squad (inicial colorida + nome) · "Buscar" (abre a paleta, Ctrl K) · grupos · rodapé com a pessoa (abre o menu de status), Documentação e tema. Itens vêm de `SB_NAV` em `app.js` (`renderSidebarNav`), como `<a href>` reais.
+- **Grupos:** o primeiro (Início, Minhas Demandas, Demandas, Agenda) não tem título. Análise, Estrutura e Configurações têm título 10px uppercase e abrem/fecham (preferência por pessoa; Configurações começa fechado). O grupo da página ativa abre sozinho.
+- **Item:** 34px de altura, ícone lucide 16px, label 13px weight 500, texto `--text-dim`, ícone `--text-muted`. Hover: fundo `--surface-2`.
+- **Item ativo:** fundo `--accent-dim`, texto `--accent-text` weight 600, ícone `--accent`, barra de 3px em `--accent` na borda esquerda.
+- **Contador:** Minhas Demandas mostra o total em aberto; fica vermelho quando há atrasada (recolhida: só o ponto vermelho).
+- **Largura:** 236px aberta, 64px recolhida (só no desktop; ícones com rótulo ao lado no hover). No celular vira gaveta, sempre aberta.
 
 ### Signature: Etapa/Stage Card
 
