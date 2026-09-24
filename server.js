@@ -484,7 +484,7 @@ function publicUser(u, opts) {
   // no frontend). Devolve booleano + info da conta pra frontend saber que tá conectado.
   // quickReplies (respostas prontas) são pessoais: só voltam pro próprio usuário.
   // reminders/demandSeen/timeGapDismissed: estado pessoal com rota própria.
-  const { googleTokens, googleSyncTokens, knownIps, releaseNotesSeenIds, quickReplies, reminders, demandSeen, timeGapDismissed, mentionDismissed, ...rest } = u;
+  const { googleTokens, googleSyncTokens, knownIps, releaseNotesSeenIds, quickReplies, reminders, demandSeen, timeGapDismissed, mentionDismissed, heldNotifs, ...rest } = u;
   rest.googleConnected = !!googleTokens;
   if (opts && opts.self) rest.quickReplies = Array.isArray(quickReplies) ? quickReplies : null;
   return rest;
@@ -533,7 +533,7 @@ const EMAIL_EVENT_LABELS = {
   mention:        'Mencionado em comentário',
   watch_stage:    'Movimento de etapa em demanda que observo',
   watch_comment:  'Novo comentário em demanda que observo',
-  daily_digest:   'Resumo diário (seg-sex, 8h) das minhas demandas',
+  daily_digest:   'Resumo diário das minhas demandas',
   reminder:       'Lembretes que eu agendei',
 };
 function defaultEmailPrefs() {
@@ -553,7 +553,7 @@ const DISCORD_EVENT_LABELS = {
   mention:        'Mencionado em comentário',
   watch_stage:    'Movimento de etapa em demanda que observo',
   watch_comment:  'Novo comentário em demanda que observo',
-  daily_digest:   'Resumo diário (seg-sex, 8h) das minhas demandas',
+  daily_digest:   'Resumo diário das minhas demandas',
   reminder:       'Lembretes que eu agendei',
 };
 // Nota: daily_digest é AGENDADO, não é chamado via notify(). Fica no map só
@@ -838,6 +838,105 @@ function awaySubstitute(userId) {
   return id;
 }
 
+/* ── STATUS PESSOAL ──
+   u.status = { kind: 'focus'|'meeting'|'custom', text, until (ISO|null), since }.
+   Expira sozinho (until). "Focado" segura e-mail e Discord: o aviso vai pro
+   sino na hora e entra em u.heldNotifs; quando o foco acaba, sai UM resumo
+   por canal (flushHeldNotifications). */
+const STATUS_KINDS = ['focus', 'meeting', 'custom'];
+function activeStatus(u, now = Date.now()) {
+  const st = u && u.status;
+  if (!st || !STATUS_KINDS.includes(st.kind)) return null;
+  if (st.until && Date.parse(st.until) <= now) return null;
+  return st;
+}
+function isFocused(u) { const st = activeStatus(u); return !!(st && st.kind === 'focus'); }
+const HELD_MAX = 60;
+const HELD_LABELS = { assigned: 'Você é o responsável', stage_assigned: 'Nova etapa pra você', mention: 'Menção',
+  watch_stage: 'Etapa avançou', watch_comment: 'Novo comentário', reminder: 'Lembrete', reaction: 'Reação', time_gap: 'Sem apontamento' };
+function holdNotification(user, type, data, triggerUserId, baseUrl) {
+  if (!Array.isArray(user.heldNotifs)) user.heldNotifs = [];
+  user.heldNotifs.push({
+    type, demandId: data.demandId || null, demandName: data.demandName || '',
+    stageName: data.stageName || null, triggerUserId: triggerUserId || null,
+    baseUrl: baseUrl || null, at: nowISO(),
+  });
+  if (user.heldNotifs.length > HELD_MAX) user.heldNotifs = user.heldNotifs.slice(-HELD_MAX);
+  saveEntity('users', user);
+}
+function flushHeldNotifications(user) {
+  const held = Array.isArray(user.heldNotifs) ? user.heldNotifs : [];
+  if (!held.length) return;
+  user.heldNotifs = [];
+  saveEntity('users', user);
+  if (isAway(user)) return; // de férias: fica só no sino, como qualquer aviso
+  const base = (held.find(h => h.baseUrl) || {}).baseUrl || process.env.PUBLIC_URL || '';
+  const toItem = h => {
+    const who = h.triggerUserId && db.users.find(x => x.id === h.triggerUserId);
+    return {
+      name: h.demandName || HELD_LABELS[h.type] || h.type,
+      href: base && h.demandId ? `${base}/demands/${h.demandId}` : null,
+      meta: [HELD_LABELS[h.type] || h.type, h.stageName, who && who.name].filter(Boolean).join(' · '),
+    };
+  };
+  const firstName = (user.name || '').split(/\s+/)[0] || user.name || '';
+  // Cada canal respeita as preferências da pessoa, aviso por aviso.
+  if (mailEnabled() && user.email) {
+    const prefs = user.emailPrefs || defaultEmailPrefs();
+    const items = held.filter(h => EMAIL_EVENT_LABELS[h.type] && prefs[h.type] !== false).map(toItem);
+    if (items.length) {
+      const { subject, html, text } = emailTpl.heldSummary({ firstName, items, baseUrl: base });
+      Promise.resolve(sendEmail(user.email, subject, html, text)).catch(e => console.warn('[held] e-mail:', e.message));
+    }
+  }
+  if (discordBot.isEnabled() && user.discordId) {
+    const items = held.filter(h => DISCORD_EVENT_LABELS[h.type] && effectiveDiscordPref(user, h.type)).map(toItem);
+    if (items.length) {
+      const lines = items.slice(0, 10).map(it => `• ${it.href ? `[**${it.name}**](${it.href})` : `**${it.name}**`} — ${it.meta}`).join('\n')
+        + (items.length > 10 ? `\n_…e mais ${items.length - 10}_` : '');
+      discordBot.sendDM(user.discordId, { embeds: [{
+        title: items.length === 1 ? '1 aviso enquanto você estava focado' : `${items.length} avisos enquanto você estava focado`,
+        description: lines, color: 0x7A00FF, footer: { text: 'reWork · fim do foco' }, timestamp: nowISO(),
+      }] }).catch(e => console.warn('[held] discord:', e.message));
+    }
+  }
+}
+// Foco que expirou sozinho (until) também solta o resumo — checa a cada minuto.
+const _heldFlushInterval = setInterval(() => {
+  for (const u of db.users) {
+    if (Array.isArray(u.heldNotifs) && u.heldNotifs.length && !isFocused(u)) flushHeldNotifications(u);
+  }
+}, 60 * 1000);
+if (_heldFlushInterval.unref) _heldFlushInterval.unref();
+
+/* ── HORÁRIO DO RESUMO DIÁRIO ── por pessoa: { hour (5-22), days [0-6] }. */
+const DEFAULT_DIGEST_SCHEDULE = { hour: 8, days: [1, 2, 3, 4, 5] };
+function digestScheduleOf(u) {
+  const sc = u && u.digestSchedule;
+  return sc && Number.isInteger(sc.hour) && Array.isArray(sc.days) && sc.days.length ? sc : DEFAULT_DIGEST_SCHEDULE;
+}
+// Janela de 2h a partir da hora escolhida (tolera o intervalo de 15 min e reboot).
+function digestDueNow(u, now = new Date()) {
+  const sc = digestScheduleOf(u);
+  if (!sc.days.includes(now.getDay())) return false;
+  const h = now.getHours();
+  return h >= sc.hour && h <= sc.hour + 1;
+}
+function digestScheduleLabel(u) {
+  const sc = digestScheduleOf(u);
+  const d = [...sc.days].sort((a, b) => a - b);
+  const NAMES = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+  let days;
+  if (d.join() === '1,2,3,4,5') days = 'nos dias úteis';
+  else if (d.length === 7) days = 'todos os dias';
+  else {
+    const names = d.map(i => NAMES[i]);
+    days = names.length === 1 ? `${d[0] === 0 || d[0] === 6 ? 'todo' : 'toda'} ${names[0]}` : names.slice(0, -1).join(', ') + ' e ' + names[names.length - 1] + ',';
+  }
+  return `${days} às ${sc.hour}h`;
+}
+const _greetFor = h => (h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite');
+
 function notify(targetUserId, type, data, triggerUserId, baseUrl) {
   if (!targetUserId || targetUserId === triggerUserId) return; // não notifica a si mesmo
   const user = db.users.find(u => u.id === targetUserId && u.active !== false);
@@ -864,6 +963,8 @@ function notify(targetUserId, type, data, triggerUserId, baseUrl) {
   broadcastToUser(targetUserId, 'notification', 'create');
   // Fora (férias/folga): só o sino. E-mail e Discord voltam quando ela voltar.
   if (isAway(user)) return;
+  // Focada: só o sino agora; e-mail e Discord saem num resumo quando o foco acabar.
+  if (isFocused(user)) { holdNotification(user, type, data, triggerUserId, baseUrl); return; }
   // Email opcional — depende de SMTP configurado, do usuário ter email e do tipo estar nas prefs
   if (mailEnabled() && user.email && EMAIL_EVENT_LABELS[type]) {
     const prefs = user.emailPrefs || defaultEmailPrefs();
@@ -2118,7 +2219,7 @@ app.get('/api/me', requireAuth, (req, res) => {
 });
 
 app.put('/api/me', requireAuth, (req, res) => {
-  const { name, role, avatar, currentPassword, newPassword, username, discordId, email, emailPrefs, discord, phone, discordPrefs, quickReplies, accentTheme, away } = req.body || {};
+  const { name, role, avatar, currentPassword, newPassword, username, discordId, email, emailPrefs, discord, phone, discordPrefs, quickReplies, accentTheme, away, status, digestSchedule } = req.body || {};
   const u = req.user;
   if (typeof name === 'string' && name.trim()) u.name = name.trim();
   if (typeof role === 'string') u.role = role.trim();
@@ -2224,6 +2325,38 @@ app.put('/api/me', requireAuth, (req, res) => {
         return res.status(400).json({ error: 'Substituto inválido' });
       }
       u.away = { from, to, substituteId: subId };
+    }
+  }
+  // Status pessoal (Focado / Em reunião / texto livre). null = limpa.
+  if (status !== undefined) {
+    if (!status) u.status = null;
+    else {
+      const kind = String(status.kind || '');
+      if (!STATUS_KINDS.includes(kind)) return res.status(400).json({ error: 'Status inválido' });
+      const text = kind === 'custom' ? String(status.text || '').trim().slice(0, 60) : null;
+      if (kind === 'custom' && !text) return res.status(400).json({ error: 'Escreva o status' });
+      let until = null;
+      if (status.until) {
+        const t = Date.parse(status.until);
+        if (!Number.isFinite(t) || t <= Date.now()) return res.status(400).json({ error: 'O horário de término já passou' });
+        if (t > Date.now() + 7 * 864e5) return res.status(400).json({ error: 'Duração máxima de 7 dias' });
+        until = new Date(t).toISOString();
+      }
+      u.status = { kind, text, until, since: nowISO() };
+    }
+    // Saiu do foco: solta o que ficou segurado.
+    if (!isFocused(u) && Array.isArray(u.heldNotifs) && u.heldNotifs.length) setImmediate(() => flushHeldNotifications(u));
+  }
+  // Horário do resumo diário. null = volta pro padrão (dias úteis, 8h).
+  if (digestSchedule !== undefined) {
+    if (!digestSchedule) u.digestSchedule = null;
+    else {
+      const hour = Number(digestSchedule.hour);
+      if (!Number.isInteger(hour) || hour < 5 || hour > 22) return res.status(400).json({ error: 'Horário inválido' });
+      const days = [...new Set((Array.isArray(digestSchedule.days) ? digestSchedule.days : []).map(Number))]
+        .filter(x => Number.isInteger(x) && x >= 0 && x <= 6).sort((a, b) => a - b);
+      if (!days.length) return res.status(400).json({ error: 'Escolha pelo menos um dia' });
+      u.digestSchedule = { hour, days };
     }
   }
   // Respostas prontas dos comentários: lista de textos curtos (null = volta
@@ -8311,19 +8444,38 @@ app.post('/api/demands/:id/comment/:cid/react', requireAuth, (req, res) => {
 /* ── CHECKLIST INTERNO ── */
 app.post('/api/demands/:id/checklist', requireAuth, (req, res) => {
   const d = getDemand(req, res); if (!d) return;
-  const text = String((req.body && req.body.text) || '').trim().slice(0, 500);
-  if (!text) return res.status(400).json({ error: 'Texto obrigatório' });
+  // `texts` (lista colada, até 50) ou `text` (um item).
+  const b = req.body || {};
+  const texts = (Array.isArray(b.texts) ? b.texts : [b.text])
+    .map(t => String(t || '').trim().slice(0, 500)).filter(Boolean).slice(0, 50);
+  if (!texts.length) return res.status(400).json({ error: 'Texto obrigatório' });
   if (!Array.isArray(d.checklist)) d.checklist = [];
-  const item = {
-    id: uid(), text,
-    done: false, doneBy: null, doneAt: null,
-    createdBy: req.user.id, createdAt: nowISO()
-  };
-  d.checklist.push(item);
-  addHistory(d, req.user.id, 'checklist_added', { itemId: item.id, text });
+  for (const text of texts) {
+    const item = {
+      id: uid(), text,
+      done: false, doneBy: null, doneAt: null,
+      createdBy: req.user.id, createdAt: nowISO()
+    };
+    d.checklist.push(item);
+    addHistory(d, req.user.id, 'checklist_added', { itemId: item.id, text });
+  }
   saveEntity('demands', d);
   emitDemand(req, d);
   res.status(201).json(d);
+});
+// Nova ordem do checklist (arrastar). Ids fora da lista mantêm a ordem no fim.
+app.put('/api/demands/:id/checklist-order', requireAuth, (req, res) => {
+  const d = getDemand(req, res); if (!d) return;
+  const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.map(String) : null;
+  if (!ids) return res.status(400).json({ error: 'Ordem inválida' });
+  const list = Array.isArray(d.checklist) ? d.checklist : [];
+  const pos = new Map(ids.map((id, i) => [id, i]));
+  d.checklist = list
+    .map((it, i) => ({ it, k: pos.has(it.id) ? pos.get(it.id) : ids.length + i }))
+    .sort((a, b) => a.k - b.k).map(x => x.it);
+  saveEntity('demands', d);
+  emitDemand(req, d);
+  res.json(d);
 });
 app.put('/api/demands/:id/checklist/:itemId', requireAuth, (req, res) => {
   const d = getDemand(req, res); if (!d) return;
@@ -10623,13 +10775,15 @@ async function digestSendForUser(user, baseUrl) {
   };
   const NOTIF_SHORT = { assigned: 'Responsável', stage_assigned: 'Nova etapa', mention: 'Menção', watch_stage: 'Etapa avançou',
     watch_comment: 'Novo comentário', reminder: 'Lembrete', reaction: 'Reação', time_gap: 'Sem apontamento' };
+  const sched = digestScheduleOf(user);
   const { subject, html } = emailTpl.digest({
     firstName: user.name.split(' ')[0], baseUrl: url, todayYmd: today(),
+    hour: sched.hour, scheduleLabel: digestScheduleLabel(user),
     overdue: overdue.map(toItem), dueToday: dueToday.map(toItem), dueSoon: dueSoon.map(toItem),
     unread: unreadNotifs.map(n => ({ name: n.demandName || NOTIF_SHORT[n.type] || n.type, meta: n.demandName ? NOTIF_SHORT[n.type] || '' : '',
       href: url && n.demandId ? `${url}/demands/${n.demandId}` : null })),
   });
-  const text = `Bom dia, ${user.name.split(' ')[0]}!\n\nEm atraso: ${overdue.length}\nVencem hoje: ${dueToday.length}\nPróximos 3 dias: ${dueSoon.length}\nNotificações não lidas: ${unreadNotifs.length}\n\nAbra: ${url}`;
+  const text = `${_greetFor(sched.hour)}, ${user.name.split(' ')[0]}!\n\nEm atraso: ${overdue.length}\nVencem hoje: ${dueToday.length}\nPróximos 3 dias: ${dueSoon.length}\nNotificações não lidas: ${unreadNotifs.length}\n\nAbra: ${url}`;
   try {
     await sendEmail(user.email, subject, html, text);
     return true;
@@ -10641,10 +10795,6 @@ async function digestSendForUser(user, baseUrl) {
 async function runDailyDigest() {
   if (!mailEnabled()) return;
   const now = new Date();
-  const dow = now.getDay(); // 0 dom .. 6 sáb
-  if (dow === 0 || dow === 6) return; // só seg-sex
-  const hour = now.getHours();
-  if (hour < 8 || hour > 9) return; // janela de 8h-9h (tolera atraso do interval)
   const ymd = today();
   let sent = 0, skipped = 0;
   for (const u of db.users) {
@@ -10653,6 +10803,7 @@ async function runDailyDigest() {
     if (isAway(u)) continue;
     const prefs = u.emailPrefs || defaultEmailPrefs();
     if (prefs.daily_digest === false) continue;
+    if (!digestDueNow(u, now)) continue; // dia e hora escolhidos pela pessoa
     if (u._lastDigestSent === ymd) { skipped++; continue; }
     const didSend = await digestSendForUser(u, process.env.PUBLIC_URL);
     if (didSend) sent++;
@@ -10707,7 +10858,7 @@ async function sendDiscordDMDigestForUser(user) {
   const firstName = (user.name || '').split(/\s+/)[0] || user.name || '';
   const payload = {
     embeds: [{
-      title: `☀️ Bom dia, ${firstName}!`,
+      title: `${digestScheduleOf(user).hour < 12 ? '☀️ ' : ''}${_greetFor(digestScheduleOf(user).hour)}, ${firstName}!`,
       description: `Aqui está o resumo do dia — ${new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}.`,
       color: overdue.length ? 0xEF5050 : 0x7A00FF,
       fields,
@@ -10722,10 +10873,6 @@ async function sendDiscordDMDigestForUser(user) {
 async function runDailyBotDMDigest() {
   if (!discordBot.isEnabled()) return;
   const now = new Date();
-  const dow = now.getDay(); // 0 dom .. 6 sáb
-  if (dow === 0 || dow === 6) return; // só seg-sex
-  const hour = now.getHours();
-  if (hour < 8 || hour > 9) return;   // janela 8h-9h tolera atraso do interval
   const ymd = today();
   let sent = 0, skipped = 0;
   for (const u of db.users) {
@@ -10733,6 +10880,7 @@ async function runDailyBotDMDigest() {
     if (!u.discordId) continue;
     if (isAway(u)) continue;
     if (!effectiveDiscordPref(u, 'daily_digest')) continue;
+    if (!digestDueNow(u, now)) continue; // dia e hora escolhidos pela pessoa
     if (u._lastDiscordDigestSent === ymd) { skipped++; continue; }
     let result = false;
     try {

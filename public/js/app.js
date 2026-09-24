@@ -918,7 +918,8 @@ function statePill(d) {
 function ownerName(d) { const u = userById(d.ownerId); return u ? u.name : '—'; }
 function avatarHTML(u, cls = 'avatar') {
   const pClass = presenceClassFor(u);
-  const fullCls = pClass ? `${cls} ${pClass}` : cls;
+  const st = statusOf(u);
+  const fullCls = [cls, pClass, st ? `has-status status-${st.kind}` : ''].filter(Boolean).join(' ');
   // data-user-id habilita o mini-card de contato (openUserMiniCard) via
   // event delegation em document. Ausente quando não há usuário identificável
   // (fallback "?" ou placeholders "—"). Ancestrais com [data-avatar-no-menu]
@@ -929,6 +930,31 @@ function avatarHTML(u, cls = 'avatar') {
   const seed = u ? (u.id || u.username || u.name || '?') : '?';
   return `<div class="${fullCls}"${idAttr} style="background:${avatarGradient(seed)};color:#fff;border:0;box-shadow:inset 0 0 0 1px rgba(255,255,255,0.08)">${esc(initial)}</div>`;
 }
+/* ── STATUS PESSOAL ──
+   { kind: focus|meeting|custom, text, until } no usuário. Vira um selo no
+   avatar, linha no cartão de contato, etiqueta na menção e texto na barra
+   lateral. "Focado" segura e-mail e Discord no servidor até acabar. */
+const STATUS_META = {
+  focus:   { label: 'Focado',     icon: 'headphones',     hint: 'E-mail e Discord ficam segurados até acabar.' },
+  meeting: { label: 'Em reunião', icon: 'video' },
+  custom:  { label: '',           icon: 'message-circle' },
+};
+function statusOf(u) {
+  const st = u && u.status;
+  if (!st || !STATUS_META[st.kind]) return null;
+  if (st.until && Date.parse(st.until) <= Date.now()) return null;
+  return st;
+}
+function statusText(st) { return st.kind === 'custom' ? (st.text || '') : STATUS_META[st.kind].label; }
+function statusUntilLabel(st) {
+  if (!st.until) return '';
+  const t = new Date(st.until);
+  const hm = `${t.getHours()}h${t.getMinutes() ? String(t.getMinutes()).padStart(2, '0') : ''}`;
+  const sameDay = t.toDateString() === new Date().toDateString();
+  return sameDay ? `até ${hm}` : `até ${String(t.getDate()).padStart(2, '0')}/${String(t.getMonth() + 1).padStart(2, '0')} ${hm}`;
+}
+function statusLabel(st) { return [statusText(st), statusUntilLabel(st)].filter(Boolean).join(' '); }
+
 /* Classe de presença que vira um anel ao redor do avatar.
    verde = ativo nos últimos 5min, amarelo = 5-30min, sem anel a partir de 30min. */
 function presenceClassFor(u) {
@@ -2713,6 +2739,7 @@ function openUserMiniCard(userId, anchorEl) {
       <div class="user-mini-card-heading">
         <div class="user-mini-card-name">${esc(u.name || '—')}</div>
         <div class="user-mini-card-role">${metaLine}</div>
+        ${statusOf(u) ? `<div class="user-mini-card-status status-${statusOf(u).kind}"><i data-lucide="${STATUS_META[statusOf(u).kind].icon}" class="ic-xs"></i> ${esc(statusLabel(statusOf(u)))}</div>` : ''}
         ${awayState(u) ? `<div class="user-mini-card-away"><i data-lucide="plane" class="ic-xs"></i> ${esc(awayLabel(u))}${awayState(u).sub ? ` · quem cobre: ${esc(awayState(u).sub.name.split(' ')[0])}` : ''}</div>` : ''}
       </div>
     </div>
@@ -3533,10 +3560,8 @@ function attemptCloseModal(id) {
 function closeDemandDetail() {
   const finish = () => {
     stopDetailPoll();
+    maybeSuggestTime(detailId);
     detailId = null;
-    // Limpa o pipeline visual do topbar (só faz sentido em demand-detail).
-    const topPipe = document.getElementById('topbar-pipeline');
-    if (topPipe) topPipe.innerHTML = '';
     // Volta pra rota anterior no histórico; se não houver, vai pro dashboard.
     if (history.length > 1) history.back();
     else { navPush('/dashboard'); applyRoute(); }
@@ -4787,6 +4812,12 @@ function renderSidebarUser() {
   // se avatarHTML virar a incluir mais classes (ex.: anel de presença).
   const av = $('sidebar-avatar');
   if (av) av.outerHTML = avatarHTML(me, 'avatar').replace(/class="([^"]+)"/, 'class="$1" id="sidebar-avatar"');
+  const stEl = $('sidebar-ustatus');
+  const st = statusOf(me);
+  if (stEl) { stEl.hidden = !st; stEl.textContent = st ? statusLabel(st) : ''; stEl.title = st ? statusLabel(st) : ''; }
+  // Status com prazo: re-renderiza quando expirar (o selo e o texto somem sozinhos).
+  clearTimeout(renderSidebarUser._t);
+  if (st && st.until) renderSidebarUser._t = setTimeout(renderSidebarUser, Math.max(1000, Date.parse(st.until) - Date.now() + 500));
   // Classes de permissão no body pra gate visual das seções:
   //   user-readonly     → nem admin nem moderador (esconde .admin-only)
   //   user-moderator    → moderador (esconde .full-admin-only, mas vê .admin-only)
@@ -4794,6 +4825,79 @@ function renderSidebarUser() {
   document.body.classList.toggle('user-readonly', !me.isAdmin && !me.isModerator);
   document.body.classList.toggle('user-moderator', !!me.isModerator && !me.isAdmin);
   document.body.classList.toggle('user-freelancer', !!me.isFreelancer && !me.isAdmin && !me.isModerator);
+}
+
+/* Menu de status (clique no seu nome na barra lateral). */
+function _statusUntil(minutes) {
+  if (minutes === 'today') { const t = new Date(); t.setHours(23, 59, 0, 0); return t.toISOString(); }
+  return minutes ? new Date(Date.now() + minutes * 60000).toISOString() : null;
+}
+function toggleStatusMenu(ev) {
+  ev?.stopPropagation();
+  const open = document.getElementById('status-menu');
+  if (open) { closeStatusMenu(); return; }
+  const st = statusOf(me);
+  const chips = (kind, opts) => opts.map(([label, v]) =>
+    `<button type="button" class="status-chip" onclick="setMyStatus('${kind}', ${typeof v === 'string' ? `'${v}'` : v})">${label}</button>`).join('');
+  const menu = document.createElement('div');
+  menu.id = 'status-menu';
+  menu.className = 'status-menu';
+  menu.setAttribute('role', 'dialog');
+  menu.setAttribute('aria-label', 'Status');
+  menu.innerHTML = `
+    <div class="status-menu-title">Seu status</div>
+    ${st ? `<div class="status-menu-current status-${st.kind}"><i data-lucide="${STATUS_META[st.kind].icon}" class="ic-sm"></i><span>${esc(statusLabel(st))}</span>
+      <button type="button" class="status-chip" onclick="setMyStatus(null)">Limpar</button></div>` : ''}
+    <div class="status-opt">
+      <div class="status-opt-head status-focus"><i data-lucide="headphones" class="ic-sm"></i><div><b>Focado</b><small>${STATUS_META.focus.hint}</small></div></div>
+      <div class="status-chips">${chips('focus', [['30 min', 30], ['1h', 60], ['2h', 120], ['Até o fim do dia', 'today']])}</div>
+    </div>
+    <div class="status-opt">
+      <div class="status-opt-head status-meeting"><i data-lucide="video" class="ic-sm"></i><div><b>Em reunião</b></div></div>
+      <div class="status-chips">${chips('meeting', [['30 min', 30], ['1h', 60], ['2h', 120]])}</div>
+    </div>
+    <div class="status-opt">
+      <div class="status-opt-head status-custom"><i data-lucide="message-circle" class="ic-sm"></i><div><b>Outro</b></div></div>
+      <form class="status-custom" onsubmit="event.preventDefault(); setMyStatus('custom', this.dur.value === 'none' ? null : (this.dur.value === 'today' ? 'today' : Number(this.dur.value)), this.txt.value)">
+        <input class="form-control" name="txt" maxlength="60" placeholder="Ex.: Gravando no estúdio" required>
+        <select class="status-dur" name="dur" aria-label="Duração">
+          <option value="60">1h</option><option value="120">2h</option><option value="240">4h</option>
+          <option value="today" selected>Hoje</option><option value="none">Sem prazo</option>
+        </select>
+        <button class="btn btn-confirm btn-sm" type="submit">Definir</button>
+      </form>
+    </div>
+    <button type="button" class="status-menu-link" onclick="closeStatusMenu(); goPage('profile')"><i data-lucide="user" class="ic-sm"></i> Abrir perfil</button>`;
+  document.body.appendChild(menu);
+  const r = document.getElementById('sidebar-user').getBoundingClientRect();
+  menu.style.left = Math.max(8, r.left) + 'px';
+  menu.style.bottom = (window.innerHeight - r.top + 8) + 'px';
+  paintIcons(menu);
+  setTimeout(() => {
+    document.addEventListener('mousedown', _statusMenuOutside, true);
+    document.addEventListener('keydown', _statusMenuKey, true);
+  }, 0);
+}
+function _statusMenuOutside(e) { if (!e.target.closest('#status-menu, #sidebar-user')) closeStatusMenu(); }
+function _statusMenuKey(e) { if (e.key === 'Escape') closeStatusMenu(); }
+function closeStatusMenu() {
+  document.getElementById('status-menu')?.remove();
+  document.removeEventListener('mousedown', _statusMenuOutside, true);
+  document.removeEventListener('keydown', _statusMenuKey, true);
+}
+async function setMyStatus(kind, minutes, text) {
+  const payload = kind ? { kind, until: _statusUntil(minutes), ...(kind === 'custom' ? { text: String(text || '').trim() } : {}) } : null;
+  try {
+    const upd = await api('/me', 'PUT', { status: payload });
+    me.status = upd.status || null;
+    const i = (users || []).findIndex(u => u.id === me.id);
+    if (i >= 0) users[i] = { ...users[i], status: me.status };
+    closeStatusMenu();
+    renderSidebarUser();
+    const st = statusOf(me);
+    if (!st) toast('Status limpo.');
+    else toast(st.kind === 'focus' ? `${statusLabel(st)}. E-mail e Discord ficam segurados até lá.` : `Status: ${statusLabel(st)}.`);
+  } catch (e) { toast(e.message, 'error'); }
 }
 
 /* Sidebar collapse — estado persistido em localStorage. */
@@ -4960,14 +5064,12 @@ function goPage(page) {
   document.body.classList.toggle('is-fullpage', page === 'notfound');
   _syncNavMoreActiveHint(page);
   $('topbar-title').textContent = PAGE_TITLES[page] || '';
+  // Saiu do detalhe pela navegação: oferece apontar o tempo que ficou nele.
+  if (prevPage === 'demand-detail' && page !== 'demand-detail' && detailId) maybeSuggestTime(detailId);
+  if (page !== 'demand-detail') { const mn = document.getElementById('topbar-mine-nav'); if (mn) { mn.hidden = true; mn.innerHTML = ''; } }
   // Botão Voltar aparece apenas na página de detalhe da demanda.
   const backBtn = document.getElementById('topbar-back');
   if (backBtn) backBtn.style.display = page === 'demand-detail' ? '' : 'none';
-  // Pipeline do topbar também é exclusivo de demand-detail.
-  if (page !== 'demand-detail') {
-    const topPipe = document.getElementById('topbar-pipeline');
-    if (topPipe) topPipe.innerHTML = '';
-  }
   renderCurrent();
   // Mudou de página → descarta filtros da anterior na URL (semântica é por-página).
   // Mesma página (renderCurrent voltando) → preserva a query pra não perder o estado.
@@ -5673,6 +5775,7 @@ function renderDashboard() {
     ? teamScope.filter(d => d.workspaceId === activeWs)
     : teamScope;
   const activeSquadActive = activeSquadScope.filter(d => !isDone(d));
+  renderDashClosing();
   renderDashFocus(mineActive);
   renderDashHoursToday();
   renderDashForecast();
@@ -5840,6 +5943,62 @@ function openDashFocusAll() {
    A semana vai de segunda a domingo: apontamento de sábado/domingo soma no
    total, mas não aumenta a meta. Datas no fuso local (o start é ISO/UTC —
    cortar a string contava apontamento das 21h+ no dia seguinte). */
+/* Fechamento do dia (a partir das 17h): quanto você apontou hoje e, por
+   demanda, o que ficou com ela aberta sem apontar, com apontamento num clique.
+   "Encerrar o dia" esconde até amanhã. */
+const CLOSING_FROM_HOUR = 17;
+function _closingDoneKey() { return 'kastor-closing-done-' + (me?.id || 'anon'); }
+function renderDashClosing() {
+  const sec = $('dash-section-closing'), el = $('dash-closing');
+  if (!sec || !el || !me) return;
+  const today = todayStr();
+  let done = false;
+  try { done = localStorage.getItem(_closingDoneKey()) === today; } catch {}
+  if (new Date().getHours() < CLOSING_FROM_HOUR || done) { sec.hidden = true; return; }
+  const localYmd = dt => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  const logged = {};
+  let total = 0;
+  (demands || []).forEach(d => (d.timeEntries || []).forEach(e => {
+    if (e.userId !== me.id) return;
+    const raw = e.start || e.createdAt;
+    if (!raw) return;
+    const dt = new Date(raw);
+    if ((isNaN(dt) ? String(raw).slice(0, 10) : localYmd(dt)) !== today) return;
+    const h = Number(e.hours) || 0;
+    logged[d.id] = (logged[d.id] || 0) + h;
+    total += h;
+  }));
+  const tracked = _activeLoad().secs;
+  const ids = new Set([...Object.keys(logged), ...Object.keys(tracked).filter(id => tracked[id] >= 5 * 60)]);
+  const rows = [...ids].map(id => demandById(id)).filter(Boolean).map(d => ({
+    d, logged: logged[d.id] || 0,
+    sugg: (tracked[d.id] || 0) >= 5 * 60 ? _roundActiveHours(tracked[d.id]) : 0,
+  })).sort((a, b) => (b.sugg - a.sugg) || (b.logged - a.logged));
+  sec.hidden = false;
+  const goal = 8;
+  const pending = rows.filter(r => r.sugg).reduce((acc, r) => acc + r.sugg, 0);
+  const sum = `<div class="dash-closing-sum">
+    <span><b>${fmtHours(total)}</b> apontadas hoje de ${goal}h</span>
+    ${pending ? `<span class="dash-closing-pending">~${fmtHm(pending)} com demandas abertas sem apontar</span>` : ''}
+  </div>`;
+  el.innerHTML = sum + (rows.length ? rows.map(r => `<div class="dash-closing-row">
+      <button type="button" class="dash-closing-name" onclick="showDetail('${r.d.id}')">${esc(r.d.name)}</button>
+      <span class="dash-closing-meta">${r.logged ? `${fmtHours(r.logged)} apontadas` : 'nada apontado'}${r.sugg ? ` · ${fmtHm(r.sugg)} aberta` : ''}</span>
+      ${r.sugg
+        ? `<button type="button" class="btn btn-ghost btn-sm" onclick="quickLogTime('${r.d.id}', ${r.sugg})">Apontar ${fmtHm(r.sugg)}</button>
+           <button type="button" class="dash-closing-x" onclick="ignoreClosingSuggestion('${r.d.id}')" title="Não apontar" aria-label="Não apontar"><i data-lucide="x" class="ic-xs"></i></button>`
+        : `<span class="dash-closing-ok" title="Apontado"><i data-lucide="check" class="ic-xs"></i></span>`}
+    </div>`).join('') : emptyMini('Nenhuma demanda aberta ou apontada hoje.'));
+  paintIcons(el);
+}
+function ignoreClosingSuggestion(demandId) { _activeConsume(demandId); renderDashClosing(); }
+function dismissDayClosing() {
+  try { localStorage.setItem(_closingDoneKey(), todayStr()); } catch {}
+  const sec = $('dash-section-closing');
+  if (sec) sec.hidden = true;
+  toast('Dia encerrado. Até amanhã!');
+}
+
 function renderDashHoursToday() {
   const el = $('dash-hours-today');
   const sub = $('dash-hours-sub');
@@ -8721,9 +8880,16 @@ function myDemands() {
     return true;
   });
 }
-function renderMine() {
-  // Só o que está em aberto: as seções da tabela (Atrasadas, Hoje, Essa
-  // semana, Próximos dias) já fazem o papel do antigo filtro.
+/* Ordem de Minhas Demandas: só o que está em aberto, em 4 seções por prazo
+   e, dentro de cada uma, a ordenação escolhida na tabela. Usada pela tabela
+   e pelas setas ‹ › do detalhe (renderMineNav), pra andarem na mesma ordem. */
+const MINE_SECTIONS = [
+  { key: 'atrasadas', label: 'Atrasadas',    cls: 'mgroup--late' },
+  { key: 'hoje',      label: 'Hoje',         cls: 'mgroup--today' },
+  { key: 'semana',    label: 'Essa semana',  cls: 'mgroup--week' },
+  { key: 'proximos',  label: 'Próximos dias', cls: 'mgroup--later' }
+];
+function mineSortedBuckets() {
   const list = myDemands().filter(d => !isDone(d)).sort((a,b) => {
     let va, vb;
     if (mineSortKey === 'name')            { va = norm(a.name); vb = norm(b.name); }
@@ -8735,6 +8901,29 @@ function renderMine() {
     else                                   { va = effDue(a) || '9999'; vb = effDue(b) || '9999'; }
     return (va < vb ? -1 : va > vb ? 1 : 0) * (mineSortAsc ? 1 : -1);
   });
+  const today = todayStr();
+  const now = new Date(today + 'T00:00:00');
+  // Fim da semana atual = próximo domingo (getDay 0=dom, 6=sab). "essa semana" = hoje..domingo.
+  const daysUntilSunday = (7 - now.getDay()) % 7;
+  const endOfWeek = new Date(now); endOfWeek.setDate(endOfWeek.getDate() + daysUntilSunday);
+  const endOfWeekYmd = endOfWeek.toISOString().slice(0, 10);
+  const buckets = { atrasadas: [], hoje: [], semana: [], proximos: [] };
+  for (const d of list) {
+    const due = effDue(d);
+    if (!due) { buckets.proximos.push(d); continue; }
+    if (due < today) buckets.atrasadas.push(d);
+    else if (due === today) buckets.hoje.push(d);
+    else if (due <= endOfWeekYmd) buckets.semana.push(d);
+    else buckets.proximos.push(d);
+  }
+  return { list, buckets };
+}
+function mineOrderIds() {
+  const { buckets } = mineSortedBuckets();
+  return MINE_SECTIONS.flatMap(sec => buckets[sec.key].map(d => d.id));
+}
+function renderMine() {
+  const { list, buckets } = mineSortedBuckets();
 
   const renderMineRow = (d) => {
     const p = projectById(d.projectId);
@@ -8793,28 +8982,7 @@ function renderMine() {
     body.innerHTML = `<tr><td colspan="6">${emptyState('Nada com você agora', 'Quando uma etapa for atribuída a você, ela aparece aqui.', 'inbox')}</td></tr>`;
   } else {
     // 4 seções por urgência de prazo. Cada seção mantém a ordenação corrente.
-    const today = todayStr();
-    const now = new Date(today + 'T00:00:00');
-    // Fim da semana atual = próximo domingo (getDay 0=dom, 6=sab). "essa semana" = hoje..domingo.
-    const daysUntilSunday = (7 - now.getDay()) % 7;
-    const endOfWeek = new Date(now); endOfWeek.setDate(endOfWeek.getDate() + daysUntilSunday);
-    const endOfWeekYmd = endOfWeek.toISOString().slice(0, 10);
-    const buckets = { atrasadas: [], hoje: [], semana: [], proximos: [] };
-    for (const d of list) {
-      const due = effDue(d);
-      if (!due) { buckets.proximos.push(d); continue; }
-      if (due < today) buckets.atrasadas.push(d);
-      else if (due === today) buckets.hoje.push(d);
-      else if (due <= endOfWeekYmd) buckets.semana.push(d);
-      else buckets.proximos.push(d);
-    }
-    const sections = [
-      { key: 'atrasadas', label: 'Atrasadas',    cls: 'mgroup--late' },
-      { key: 'hoje',      label: 'Hoje',         cls: 'mgroup--today' },
-      { key: 'semana',    label: 'Essa semana',  cls: 'mgroup--week' },
-      { key: 'proximos',  label: 'Próximos dias', cls: 'mgroup--later' }
-    ];
-    body.innerHTML = sections.map(sec => {
+    body.innerHTML = MINE_SECTIONS.map(sec => {
       const items = buckets[sec.key];
       if (!items.length) return '';
       return `<tr class="mgroup ${sec.cls}"><td colspan="6">
@@ -12485,6 +12653,7 @@ function editCurrentDemand() {
    dedicada — permite Ctrl+click pra nova aba, foco melhor, e Voltar do
    browser volta pra origem naturalmente. */
 function showDetail(id) {
+  if (detailId && detailId !== id) maybeSuggestTime(detailId);
   // Draft do editor de etapas é por-demanda — se muda a demanda, invalida o draft
   // anterior (senão o Etapas tab renderiza vazio porque a ordem tem IDs de outra).
   if (detailId !== id) {
@@ -12843,34 +13012,27 @@ function renderDetail() {
   const owner = userById(d.ownerId);
   const hasCustomization = Array.isArray(d.skippedStages) && d.skippedStages.length > 0;
 
-  // Pipeline: círculos numerados com cor da etapa (done/current pintados com a cor
-   // da própria etapa; futuras ficam neutras). Nome aparece via tooltip.
-   // A "trilha" preenchida vira uma sequência de segmentos coloridos — cada segmento
-   // usa a cor da etapa de DESTINO (o segmento entre 3 e 4 tem a cor da etapa 4).
+  // Trilha de etapas (topo do dossiê): etapa atual por extenso, posição e a
+  // próxima; embaixo, um segmento por etapa: feitas em tom neutro, a atual na
+  // cor dela, as futuras apagadas. Nome de cada uma no tooltip do segmento.
   const stepCount = active.length;
-  const fillPct = stepCount > 1 ? (idx / (stepCount - 1)) * 100 : (idx >= 0 ? 100 : 0);
-  const segments = [];
-  if (flow && stepCount > 1) {
-    // Renderiza segmento i→(i+1) até o atual (idx). Se etapa atual é a 0, sem segmentos.
-    for (let i = 0; i < idx; i++) {
-      const from = (i / (stepCount - 1)) * 100;
-      const to = ((i + 1) / (stepCount - 1)) * 100;
-      const destColor = active[i + 1]?.color || 'var(--accent)';
-      segments.push(`<div class="pipeline-bar-seg" style="left:${from.toFixed(2)}%;width:${(to - from).toFixed(2)}%;background:${esc(destColor)}"></div>`);
-    }
-  }
-  const pipeline = flow ? `
-    <div class="pipeline-bar" style="--fill:${Math.max(0, Math.min(100, fillPct))}%">
-      <div class="pipeline-bar-track"></div>
-      <div class="pipeline-bar-fill-multi">${segments.join('')}</div>
-      <div class="pipeline-bar-steps">
+  const cur = idx >= 0 ? active[idx] : null;
+  const nextStage = idx >= 0 ? active[idx + 1] : null;
+  const pipeline = flow && stepCount ? `
+    <div class="dd-stage" style="--stage-c:${esc(cur?.color || '#7A00FF')}">
+      <div class="dd-stage-kicker">Etapa ${idx >= 0 ? `${idx + 1} de ${stepCount}` : `de ${stepCount}`}</div>
+      <div class="dd-stage-head">
+        <div class="dd-stage-name">
+          <span class="dd-stage-dot"></span>
+          <span class="dd-stage-label">${esc(cur?.label || 'Sem etapa')}</span>
+        </div>
+        ${cur?.done ? `<span class="dd-stage-next is-done"><i data-lucide="check" class="ic-xs"></i> Concluída</span>`
+          : nextStage ? `<span class="dd-stage-next">Próxima: <b>${esc(nextStage.label)}</b></span>` : ''}
+      </div>
+      <div class="dd-stage-bar" role="img" aria-label="Etapa ${idx + 1} de ${stepCount}">
         ${active.map((s, i) => {
-          const stepPct = stepCount > 1 ? (i / (stepCount - 1)) * 100 : 50;
-          const state = i < idx ? 'done' : (i === idx ? 'current' : '');
-          const color = s.color || 'var(--accent)';
-          return `<div class="pipeline-bar-step ${state}" style="left:${stepPct}%;--step-color:${esc(color)}" data-tooltip="${esc(s.label)}">
-            <div class="pipeline-bar-dot">${i + 1}</div>
-          </div>`;
+          const state = i < idx ? 'is-done' : (i === idx ? 'is-current' : '');
+          return `<span class="dd-stage-seg ${state}" style="--seg-c:${esc(s.color || '#7A00FF')}" data-rx-tip="${i + 1}. ${esc(s.label)}${i === idx ? ' (atual)' : ''}"></span>`;
         }).join('')}
       </div>
     </div>` : '';
@@ -13017,6 +13179,8 @@ function renderDetail() {
               { clientName, projectName: projName, flowName })}
           </div>
         </div>
+
+        ${pipeline}
 
         <!-- Responsável (bloco próprio, interativo) -->
         <div class="dd-owner-row">
@@ -13223,9 +13387,6 @@ function renderDetail() {
 
   detailDirty = {};
   _updateComposeLock();
-  // Injeta pipeline visual no slot da topbar (centralizado ao lado de "Demanda").
-  const topPipe = document.getElementById('topbar-pipeline');
-  if (topPipe) topPipe.innerHTML = pipeline;
   // Split resizer: aplica largura salva + attach do drag.
   initDetailSplitResizer();
   // Restaura estado colapsado da coluna direita.
@@ -13259,6 +13420,25 @@ function renderDetail() {
   _applyNewSinceMarks();
   _applyMentionSeen();
   _flagArrivingComments();
+  renderMineNav();
+}
+/* Setas ‹ › no topo do detalhe: anda pelas minhas demandas na ordem da tabela
+   de Minhas Demandas. Some quando a demanda aberta não está na minha lista. */
+function renderMineNav() {
+  const el = document.getElementById('topbar-mine-nav');
+  if (!el) return;
+  const ids = currentPage === 'demand-detail' && detailId && me ? mineOrderIds() : [];
+  const i = ids.indexOf(detailId);
+  if (i < 0 || ids.length < 2) { el.hidden = true; el.innerHTML = ''; return; }
+  const prev = demandById(ids[i - 1]), next = demandById(ids[i + 1]);
+  const btn = (d, dir, icon) => d
+    ? `<button type="button" class="topbar-mine-btn" onclick="showDetail('${d.id}')" title="${dir}: ${esc(d.name)}" aria-label="${dir}"><i data-lucide="${icon}" class="ic-sm"></i></button>`
+    : `<button type="button" class="topbar-mine-btn" disabled aria-label="${dir}"><i data-lucide="${icon}" class="ic-sm"></i></button>`;
+  el.hidden = false;
+  el.innerHTML = btn(prev, 'Anterior', 'chevron-left')
+    + `<span class="topbar-mine-pos" title="Posição em Minhas Demandas">${i + 1} de ${ids.length}</span>`
+    + btn(next, 'Próxima', 'chevron-right');
+  paintIcons(el);
 }
 /* Comentário que acabou de chegar (meu ou de outra pessoa via SSE) entra
    com destaque. Compara com os ids do render anterior da MESMA demanda e
@@ -16982,6 +17162,73 @@ function _nextMyDemand(excludeId) {
       return (a.priority || 3) - (b.priority || 3);
     })[0] || null;
 }
+/* ── TEMPO COM A DEMANDA ABERTA ──
+   Conta, por demanda e por dia, o tempo com o detalhe aberto, a aba visível e
+   a pessoa mexendo (mouse/teclado nos últimos 2 min). Com o timer rodando não
+   conta: ele já mede. Qualquer apontamento na demanda zera o contador.
+   Ao sair da demanda com 15 min ou mais sem apontar, o toast oferece apontar
+   num clique; o Fechamento do dia (Início) mostra o que ficou. Só no navegador
+   da pessoa (localStorage), por dia. */
+const ACTIVE_TICK_MS = 15000;
+const ACTIVE_IDLE_MS = 2 * 60 * 1000;
+const SUGGEST_MIN_SECS = 15 * 60;
+let _lastInteraction = Date.now();
+['pointermove', 'pointerdown', 'keydown', 'wheel', 'scroll'].forEach(ev =>
+  document.addEventListener(ev, () => { _lastInteraction = Date.now(); }, { passive: true, capture: true }));
+function _activeKey() { return 'kastor-active-time-' + (me?.id || 'anon'); }
+function _activeLoad() {
+  let st = null;
+  try { st = JSON.parse(localStorage.getItem(_activeKey()) || 'null'); } catch {}
+  if (!st || st.date !== todayStr()) st = { date: todayStr(), secs: {}, offered: {} };
+  return st;
+}
+function _activeSave(st) { try { localStorage.setItem(_activeKey(), JSON.stringify(st)); } catch {} }
+setInterval(() => {
+  if (!me || currentPage !== 'demand-detail' || !detailId || document.hidden) return;
+  if (Date.now() - _lastInteraction > ACTIVE_IDLE_MS) return;
+  if (timerState[detailId]?.running) return;
+  const st = _activeLoad();
+  st.secs[detailId] = (st.secs[detailId] || 0) + ACTIVE_TICK_MS / 1000;
+  _activeSave(st);
+}, ACTIVE_TICK_MS);
+function _activeConsume(demandId) {
+  const st = _activeLoad();
+  delete st.secs[demandId]; delete st.offered[demandId];
+  _activeSave(st);
+}
+// Horas em múltiplos de 5 min (mínimo 5 min).
+function _roundActiveHours(secs) { return Math.max(5, Math.round(secs / 300) * 5) / 60; }
+function fmtHm(hours) {
+  const m = Math.round(hours * 60);
+  const h = Math.floor(m / 60), mm = m % 60;
+  return h ? (mm ? `${h}h${String(mm).padStart(2, '0')}` : `${h}h`) : `${mm} min`;
+}
+function maybeSuggestTime(demandId) {
+  if (!demandId || !me) return;
+  const st = _activeLoad();
+  const secs = st.secs[demandId] || 0;
+  // Só oferece de novo depois de mais 15 min: ignorar o toast vale como "agora não".
+  if (secs < SUGGEST_MIN_SECS || secs < (st.offered[demandId] || 0) + SUGGEST_MIN_SECS) return;
+  const d = demandById(demandId);
+  if (!d) return;
+  st.offered[demandId] = secs;
+  _activeSave(st);
+  const hours = _roundActiveHours(secs);
+  toast({ title: `Você ficou ${fmtHm(hours)} nesta demanda`, sub: d.name }, 'info',
+    { label: `Apontar ${fmtHm(hours)}`, fn: () => quickLogTime(demandId, hours) });
+}
+async function quickLogTime(demandId, hours) {
+  try {
+    const upd = await api('/demands/' + demandId + '/time', 'POST', { hours });
+    patchDemand(upd);
+    _activeConsume(demandId);
+    _timeGapsCache = null;
+    toast(`${fmtHm(hours)} apontadas.`);
+    if (detailId === demandId) renderDetail();
+    if (currentPage === 'dashboard') renderDashboard();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
 /* ── CRONÔMETRO DE APONTAMENTO ──
    Estado por demanda. Persiste a hora de início e o acumulado mesmo que o modal
    re-renderize. O cronômetro corre via setInterval atualizando o display. */
@@ -17106,6 +17353,7 @@ async function apontarFromTopbar() {
   try {
     const upd = await api('/demands/' + d.id + '/time', 'POST', { hours, start: startIso, end: endIso });
     patchDemand(upd);
+    _activeConsume(d.id);
     resetTimer(d.id);
     activeTimerId = null;
     saveActiveTimer();
@@ -17449,6 +17697,7 @@ async function addTimeEntry() {
     const forStage = _timeForStage && _timeForStage.demandId === d.id ? _timeForStage : null;
     const upd = await api('/demands/' + d.id + '/time', 'POST', { hours, start, end, ...(forStage ? { stageId: forStage.id } : {}) });
     patchDemand(upd);
+    _activeConsume(d.id);
     _timeForStage = null;
     _timeGapsCache = null; // o apontamento pode ter fechado uma pendência do Início
     if (!forStage) resetTimer(d.id);
@@ -17615,7 +17864,7 @@ function mentionWatchCE(el) {
   _mentionSavedTerm = m[0]; // inclui o @
   mentionIdx = 0;
   const userOpts = list.map(u => {
-    const away = awayState(u)?.active ? awayLabel(u) : '';
+    const away = awayState(u)?.active ? awayLabel(u) : (statusOf(u) ? statusText(statusOf(u)) : '');
     return `
     <div class="mention-opt" data-uname="${esc(u.username)}"
          onmousedown="event.preventDefault()"
@@ -20818,6 +21067,57 @@ async function addChecklistItem() {
     setTimeout(() => $('checklist-input')?.focus(), 60);
   } catch (e) { toast(e.message, 'error'); }
 }
+/* Colar uma lista (uma linha por item) cria todos de uma vez. Tira marcadores
+   comuns do começo da linha: "-", "*", "•", "1.", "1)", "[ ]", "[x]". */
+function _parseChecklistLines(text) {
+  return String(text || '').split(/\r?\n/)
+    .map(l => l.replace(/^\s*(?:[-*•·–—]|\d+[.)]|\[[ xX]?\])\s*/, '').trim())
+    .filter(Boolean);
+}
+async function checklistPaste(ev) {
+  const lines = _parseChecklistLines(ev.clipboardData?.getData('text/plain') || '');
+  if (lines.length < 2) return; // uma linha só: colagem normal no campo
+  ev.preventDefault();
+  try {
+    const upd = await api('/demands/' + detailId + '/checklist', 'POST', { texts: lines });
+    patchDemand(upd);
+    renderDetail();
+    setTimeout(() => $('checklist-input')?.focus(), 60);
+    toast(`${Math.min(lines.length, 50)} itens adicionados.`);
+  } catch (e) { toast(e.message, 'error'); }
+}
+/* Arrastar pra reordenar: move o item no DOM durante o arraste e salva a
+   ordem nova ao soltar. */
+let _ckDragging = null;
+function ckDragStart(ev) {
+  _ckDragging = ev.currentTarget;
+  ev.dataTransfer.effectAllowed = 'move';
+  try { ev.dataTransfer.setData('text/plain', _ckDragging.dataset.id); } catch {}
+  requestAnimationFrame(() => _ckDragging?.classList.add('is-dragging'));
+}
+function ckDragOver(ev) {
+  if (!_ckDragging) return;
+  ev.preventDefault();
+  const item = ev.currentTarget;
+  if (item === _ckDragging || item.parentElement !== _ckDragging.parentElement) return;
+  const r = item.getBoundingClientRect();
+  const after = ev.clientY > r.top + r.height / 2;
+  item.parentElement.insertBefore(_ckDragging, after ? item.nextSibling : item);
+}
+async function ckDragEnd() {
+  const el = _ckDragging;
+  _ckDragging = null;
+  if (!el) return;
+  el.classList.remove('is-dragging');
+  const ids = [...el.parentElement.querySelectorAll('.checklist-item[data-id]')].map(x => x.dataset.id);
+  const d = demandById(detailId);
+  if (!d || ids.join() === (d.checklist || []).map(i => i.id).join()) return;
+  try {
+    const upd = await api('/demands/' + detailId + '/checklist-order', 'PUT', { ids });
+    patchDemand(upd);
+  } catch (e) { toast(e.message, 'error'); }
+  renderDetail();
+}
 async function toggleChecklistItem(itemId, done) {
   try {
     const upd = await api('/demands/' + detailId + '/checklist/' + itemId, 'PUT', { done });
@@ -20843,7 +21143,9 @@ function renderChecklist(d) {
         ${items.map(it => {
           const author = userById(it.doneBy);
           const owner = it.ownerId ? userById(it.ownerId) : null;
-          return `<div class="checklist-item ${it.done ? 'done' : ''}">
+          return `<div class="checklist-item ${it.done ? 'done' : ''}" data-id="${it.id}" draggable="true"
+               ondragstart="ckDragStart(event)" ondragover="ckDragOver(event)" ondragend="ckDragEnd(event)">
+            <span class="checklist-grip" title="Arraste para reordenar" aria-hidden="true"><i data-lucide="grip-vertical" class="ic-xs"></i></span>
             <button type="button" class="checklist-check" onclick="toggleChecklistItem('${it.id}', ${!it.done})" title="${it.done ? 'Desmarcar' : 'Marcar como concluído'}">
               ${it.done ? '<i data-lucide="check" class="ic-sm"></i>' : ''}
             </button>
@@ -20855,7 +21157,7 @@ function renderChecklist(d) {
         }).join('')}
       </div>
       <div class="checklist-add">
-        <input class="form-control" id="checklist-input" placeholder="Adicionar item ao checklist…" onkeydown="if(event.key==='Enter'){event.preventDefault();addChecklistItem()}">
+        <input class="form-control" id="checklist-input" placeholder="Adicionar item (ou cole uma lista)…" onkeydown="if(event.key==='Enter'){event.preventDefault();addChecklistItem()}" onpaste="checklistPaste(event)">
         <button class="btn btn-ghost btn-sm" onclick="addChecklistItem()"><i data-lucide="plus" class="ic-sm"></i> Adicionar</button>
       </div>
     </div>
@@ -27618,7 +27920,7 @@ const PROFILE_NOTIF_EVENTS = [
     { key: 'watch_comment', title: 'Novo comentário', sub: 'Alguém comentou na demanda.' },
   ] },
   { group: 'Resumo', items: [
-    { key: 'daily_digest', title: 'Resumo do dia', sub: 'Dias úteis, às 8h: atrasos, prazos do dia e avisos não lidos.' },
+    { key: 'daily_digest', title: 'Resumo do dia', sub: 'Atrasos, prazos do dia e avisos não lidos, no horário escolhido abaixo.' },
   ] },
 ];
 async function renderProfileNotifications() {
@@ -27706,6 +28008,52 @@ async function renderProfileNotifications() {
   </div>
   ${dc ? '<div class="notif-matrix-foot">No Discord, o que você não mudar segue o padrão definido pelo time.</div>' : ''}`;
   paintIcons(chWrap);
+  renderProfileDigestSchedule();
+}
+/* Horário do resumo do dia: hora (5h a 22h) e dias da semana. Vale pro e-mail
+   e pro Discord. Salva a cada mudança. */
+const DIGEST_DEFAULT = { hour: 8, days: [1, 2, 3, 4, 5] };
+function renderProfileDigestSchedule() {
+  const el = $('profile-digest-schedule');
+  if (!el) return;
+  const sc = me.digestSchedule || DIGEST_DEFAULT;
+  const DAYS = [[1, 'Seg'], [2, 'Ter'], [3, 'Qua'], [4, 'Qui'], [5, 'Sex'], [6, 'Sáb'], [0, 'Dom']];
+  const hours = [];
+  for (let h = 5; h <= 22; h++) hours.push(`<option value="${h}" ${h === sc.hour ? 'selected' : ''}>${h}h</option>`);
+  el.innerHTML = `<div class="profile-row">
+      <div class="profile-row-info">
+        <div class="profile-row-title">Horário</div>
+        <div class="profile-row-sub">Vale para o e-mail e para o Discord.</div>
+      </div>
+      <select class="form-control digest-hour" id="profile-digest-hour" aria-label="Horário do resumo" onchange="saveDigestSchedule()">${hours.join('')}</select>
+    </div>
+    <div class="profile-row">
+      <div class="profile-row-info"><div class="profile-row-title">Dias</div></div>
+      <div class="digest-days" role="group" aria-label="Dias do resumo">
+        ${DAYS.map(([v, l]) => `<button type="button" class="digest-day ${sc.days.includes(v) ? 'is-on' : ''}" data-day="${v}" aria-pressed="${sc.days.includes(v)}" onclick="toggleDigestDay(this)">${l}</button>`).join('')}
+      </div>
+    </div>
+    <div class="profile-field-error" id="profile-digest-error" hidden></div>`;
+}
+function toggleDigestDay(btn) {
+  btn.classList.toggle('is-on');
+  btn.setAttribute('aria-pressed', btn.classList.contains('is-on'));
+  saveDigestSchedule();
+}
+async function saveDigestSchedule() {
+  const err = $('profile-digest-error');
+  const hour = Number($('profile-digest-hour')?.value || 8);
+  const days = [...document.querySelectorAll('#profile-digest-schedule .digest-day.is-on')].map(b => Number(b.dataset.day));
+  if (!days.length) {
+    if (err) { err.textContent = 'Escolha pelo menos um dia. Para parar de receber, desligue o Resumo do dia acima.'; err.hidden = false; }
+    return;
+  }
+  if (err) err.hidden = true;
+  try {
+    const upd = await api('/me', 'PUT', { digestSchedule: { hour, days } });
+    me.digestSchedule = upd.digestSchedule || null;
+    _flashProfileSaved();
+  } catch (e) { toast(e.message, 'error'); }
 }
 let _profileSavedTimer = null;
 function _flashProfileSaved() {
@@ -28113,7 +28461,8 @@ function renderNotifBadge() {
   if (bell) {
     bell.classList.toggle('has-unread', unread > 0);
     // Pulse + pop quando o contador AUMENTA (notificação nova chegou)
-    if (unread > _lastNotifUnread && _lastNotifUnread !== 0) {
+    const focused = statusOf(me)?.kind === 'focus';
+    if (unread > _lastNotifUnread && _lastNotifUnread !== 0 && !focused) {
       bell.classList.remove('pulse');
       void bell.offsetWidth; // força reflow para reaplicar a animação
       bell.classList.add('pulse');

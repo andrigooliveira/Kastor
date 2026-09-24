@@ -238,7 +238,7 @@ ${button(demandUrl, 'Abrir demanda')}`;
 
 /* Resumo diário. Itens: { name, href, client, stageLabel, stageColor, due }.
    `unread`: { name, href, meta }. */
-function digest({ firstName: fname, overdue, dueToday, dueSoon, unread, baseUrl, todayYmd }) {
+function digest({ firstName: fname, overdue, dueToday, dueSoon, unread, baseUrl, todayYmd, hour = 8, scheduleLabel }) {
   const tYmd = todayYmd || new Date().toISOString().slice(0, 10);
   const daysBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 864e5);
   const dateLabel = (() => { const d = new Date(tYmd + 'T12:00:00'); return `${DIAS[d.getDay()]}, ${d.getDate()} de ${MESES_LONGOS[d.getMonth()]}`; })();
@@ -294,7 +294,7 @@ function digest({ firstName: fname, overdue, dueToday, dueSoon, unread, baseUrl,
     </table>` : '';
 
   const content = `<div class="rw-baixa" style="${LABEL};color:${T.baixa}">${escHtml(dateLabel)}</div>
-<h1 class="rw-text" style="margin:8px 0 0;font-family:${FONT};font-size:28px;line-height:1.15;font-weight:700;letter-spacing:-0.02em;color:${T.text}">Bom dia, ${escHtml(fname)}</h1>
+<h1 class="rw-text" style="margin:8px 0 0;font-family:${FONT};font-size:28px;line-height:1.15;font-weight:700;letter-spacing:-0.02em;color:${T.text}">${greetingFor(hour)}, ${escHtml(fname)}</h1>
 ${paragraph(intro, 8)}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:24px"><tr>
   ${kpi(overdue.length, 'Em atraso', 'perigo')}${gap}${kpi(dueToday.length, 'Vencem hoje', 'aviso')}${gap}${kpi(dueSoon.length, 'Próximos 3 dias', 'neutro')}
@@ -306,8 +306,37 @@ ${unreadBlock}
 ${button(baseUrl, 'Abrir o reWork')}`;
   const subject = `[reWork] Resumo do dia — ${overdue.length + dueToday.length} pra hoje`;
   const preheader = [overdue.length && `${overdue.length} em atraso`, dueToday.length && `${dueToday.length} vencem hoje`, dueSoon.length && `${dueSoon.length} nos próximos dias`, unread.length && `${unread.length} não lidas`].filter(Boolean).join(' · ');
-  const html = layout({ subject, preheader, content, baseUrl, footer: 'Você recebe este resumo nos dias úteis às 8h.' });
+  const html = layout({ subject, preheader, content, baseUrl, footer: `Você recebe este resumo ${scheduleLabel || 'nos dias úteis às 8h'}. Dá pra mudar o horário no seu perfil.` });
   return { subject, html };
+}
+
+const greetingFor = h => (h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite');
+
+/* Avisos segurados durante o modo Focado: um e-mail só, quando o foco acaba.
+   items: [{ name, href, meta }] (meta = tipo do aviso + quem disparou). */
+function heldSummary({ firstName: fname, items, baseUrl }) {
+  const n = items.length;
+  const shown = items.slice(0, 12);
+  const rows = shown.map((it, i) => {
+    const line = i === 0 ? '' : `border-top:1px solid ${T.hairline};`;
+    const name = it.href
+      ? `<a href="${escHtml(it.href)}" class="rw-text" style="color:${T.text};text-decoration:none">${escHtml(it.name)}</a>`
+      : escHtml(it.name);
+    return `<tr><td class="rw-line" style="${line}padding:12px 0;vertical-align:top">
+      <div class="rw-text" style="font-size:14px;line-height:1.4;font-weight:600;color:${T.text}">${name}</div>
+      ${it.meta ? `<div class="rw-baixa" style="margin-top:2px;font-size:12px;line-height:1.5;color:${T.baixa}">${escHtml(it.meta)}</div>` : ''}
+    </td></tr>`;
+  }).join('');
+  const content = `${chip('Fim do foco', 'roxo')}
+${headline(n === 1 ? 'Chegou 1 aviso enquanto você estava focado' : `Chegaram ${n} avisos enquanto você estava focado`)}
+${paragraph(`Seguramos tudo pra não te interromper, ${strong(fname)}. Aqui está o que ficou pra ver.`)}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:20px">${rows}</table>
+${n > shown.length ? `<div class="rw-baixa" style="margin-top:6px;font-size:12px;color:${T.baixa}">…e mais ${n - shown.length}</div>` : ''}
+${button(baseUrl, 'Abrir o reWork')}`;
+  const subject = `[reWork] ${n === 1 ? '1 aviso' : `${n} avisos`} enquanto você estava focado`;
+  const html = layout({ subject, preheader: shown.slice(0, 3).map(x => x.name).join(' · '), content, baseUrl, footer: 'Avisos segurados pelo status Focado.' });
+  const text = `Enquanto você estava focado:\n\n` + items.map(x => `- ${x.name}${x.meta ? ' (' + x.meta + ')' : ''}${x.href ? '\n  ' + x.href : ''}`).join('\n');
+  return { subject, html, text };
 }
 
 function resetPassword({ name, link, baseUrl }) {
@@ -368,9 +397,17 @@ function previewSamples(baseUrl, me) {
       firstName: name.split(' ')[0], baseUrl: url, todayYmd, overdue: [], dueToday: [], dueSoon: [],
       unread: [{ name: 'Newsletter setembro', href: demandUrl, meta: 'Etapa avançou' }],
     }), text: '' }) },
+    { key: 'held', label: 'Avisos segurados (fim do foco)', build: () => heldSummary({
+      firstName: name.split(' ')[0], baseUrl: url,
+      items: [
+        { name: demand.name, href: demandUrl, meta: 'Menção · Carla Menezes' },
+        { name: 'Newsletter setembro', href: demandUrl, meta: 'Nova etapa pra você · Revisão' },
+        { name: 'KV Black Friday — variações pra redes', href: demandUrl, meta: 'Novo comentário · Rafa Souza' },
+      ],
+    }) },
     { key: 'reset', label: 'Redefinir senha', build: () => resetPassword({ name, link: `${url}/reset/exemplo-de-token-0000`, baseUrl: url }) },
     { key: 'test', label: 'Teste de e-mail (perfil)', build: () => testEmail({ name, baseUrl: url }) },
   ];
 }
 
-module.exports = { escHtml, layout, notification, digest, resetPassword, testEmail, previewSamples };
+module.exports = { escHtml, layout, notification, digest, heldSummary, resetPassword, testEmail, previewSamples };

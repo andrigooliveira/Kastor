@@ -426,9 +426,12 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       </div>
     </div>
     <div class="sidebar-footer">
-      <div class="sidebar-user" onclick="goPage('profile')" title="Abrir perfil">
+      <div class="sidebar-user" id="sidebar-user" onclick="toggleStatusMenu(event)" title="Status e perfil">
         <div class="avatar" id="sidebar-avatar">A</div>
-        <div class="sidebar-user-name" id="sidebar-uname">Usuário</div>
+        <div class="sidebar-user-text">
+          <div class="sidebar-user-name" id="sidebar-uname">Usuário</div>
+          <div class="sidebar-user-status" id="sidebar-ustatus" hidden></div>
+        </div>
       </div>
       <div class="sidebar-footer-actions">
         <button class="sidebar-icon-btn" id="theme-toggle-btn" onclick="toggleTheme()" title="Alternar tema">
@@ -454,8 +457,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
         <i data-lucide="arrow-left" class="ic-sm"></i>
       </button>
       <div class="topbar-title" id="topbar-title">Início</div>
-      <!-- Slot pra pipeline visual da demanda (populado por renderDetail) -->
-      <div class="topbar-pipeline-slot" id="topbar-pipeline"></div>
+      <!-- Setas entre as minhas demandas (só no detalhe; renderMineNav) -->
+      <div class="topbar-mine-nav" id="topbar-mine-nav" hidden></div>
       <div class="topbar-actions">
         <!-- Widget de timer ativo — persiste entre demandas. Nome da demanda clicável
              abre o modal correspondente. Só visível quando há um timer rodando ou pausado. -->
@@ -724,6 +727,15 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             </header>
 
             <div class="dash-flow">
+              <!-- Fechamento do dia (a partir das 17h) — renderDashClosing() -->
+              <div class="dash-section dash-closing" id="dash-section-closing" hidden>
+                <div class="dash-section-head">
+                  <h3 class="dash-section-title">Fechamento do dia</h3>
+                  <button type="button" class="dash-closing-done" onclick="dismissDayClosing()">Encerrar o dia</button>
+                </div>
+                <div id="dash-closing"></div>
+              </div>
+
               <div class="dash-section" id="dash-section-focus">
                 <div class="dash-section-head">
                   <h3 class="dash-section-title">Foco de hoje</h3>
@@ -2878,6 +2890,11 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                 </div>
                 <div id="profile-notif-matrix"></div>
               </div>
+
+              <div class="profile-card-block">
+                <div class="profile-block-title">Resumo do dia</div>
+                <div id="profile-digest-schedule"></div>
+              </div>
             </section>
 
             <!-- ─── APARÊNCIA ─── -->
@@ -4533,7 +4550,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260923motion5" defer></script>
+<script src="/js/boot.js?v=20260923etapas3" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
