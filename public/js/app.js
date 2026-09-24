@@ -24257,14 +24257,352 @@ async function confirmDeleteFormTemplate(id) {
   }
 }
 
-/* ── DASHBOARDS (fase 4) ──
-   Painéis com widgets configuráveis. Widget = { source: {templateId, fieldId?},
-   chartType: 'bar'|'kpi', kpiAggregate?: 'count'|'sum'|'avg' }. Renderização
-   das agregações mora aqui — server só valida a estrutura. */
+/* ══════════════════════════════════════════════════════════════════════
+   DASHBOARDS — painéis sobre respostas de formulários
+   Widget (formato v2, validado em sanitizeDashboardWidgets no server):
+     { id, title, templateId, viz: number|bar|line|table, metrics[1-4],
+       groupBy, seriesBy, bucket, orientation, limit, layout }
+   Filtros: fixos do dashboard (d.fixedFilters.dims, definidos por quem cria)
+   + visão de quem olha (_dvView: período, data considerada, comparação e
+   dimensões). A visão vai pra URL (?f=), então o link copiado abre filtrado.
+   Clicar numa barra ou linha de tabela filtra o painel todo por aquele valor.
+   Cores: paleta categórica validada (--viz-1..8), fixa por valor (a cor
+   segue o valor, não a posição no ranking); "Outros" em cinza.
+   ══════════════════════════════════════════════════════════════════════ */
 let _currentDashboardId = null;
+let _dashEditMode = false;
+/* Grade: 12 colunas × linhas de 44px com 12px de espaço (unidade = 56px).
+   Tamanho mínimo e padrão por formato, em colunas × linhas. */
+const DASH_COLS = 12;
+const DV_ROW = 44;
+const DV_GAP = 12;
+const DV_MIN = { number: { w: 2, h: 2 }, bar: { w: 3, h: 4 }, line: { w: 3, h: 4 }, table: { w: 3, h: 4 } };
+const DV_SIZE = { number: { w: 12, h: 3 }, bar: { w: 6, h: 6 }, line: { w: 6, h: 6 }, table: { w: 12, h: 6 } };
+const DV_MAX_SERIES = 6; // séries além disso viram "Outros"
 
 function dashboardById(id) { return (dashboards || []).find(d => d.id === id); }
+function canEditDashboards() { return !!(me && (me.isAdmin || me.isModerator)); }
 
+/* ── Dimensões, registros e métricas ─────────────────────────────────── */
+const DV_NONE = '__none__';
+const DV_OTHER = '__other__';
+const DV_BASE_DIMS = [
+  { key: 'client',      label: 'Cliente',               icon: 'building-2', quick: true },
+  { key: 'project',     label: 'Projeto',               icon: 'folder',     quick: true },
+  { key: 'submittedBy', label: 'Preenchido por',        icon: 'user',       quick: true },
+  { key: 'workspace',   label: 'Squad',                 icon: 'layers' },
+  { key: 'owner',       label: 'Responsável da demanda', icon: 'user-check' },
+  { key: 'flow',        label: 'Fluxo',                 icon: 'git-branch' },
+  { key: 'stage',       label: 'Etapa atual da demanda', icon: 'flag' },
+];
+const DV_TIME_DIMS = [
+  { key: 'week',  label: 'Semana', icon: 'calendar', time: true },
+  { key: 'month', label: 'Mês',    icon: 'calendar', time: true },
+];
+const DV_DATE_FIELDS = [
+  { key: 'submitted',       label: 'Preenchimento' },
+  { key: 'demandCreated',   label: 'Criação da demanda' },
+  { key: 'demandCompleted', label: 'Conclusão da demanda' },
+];
+const DV_AGG_LABEL = { count: 'Respostas', sum: 'Soma', avg: 'Média', min: 'Mínimo', max: 'Máximo' };
+
+function _dvRec(r) {
+  const d = r.demandId ? demandById(r.demandId) : null;
+  const p = d?.projectId ? projectById(d.projectId) : null;
+  return { r, d, p, clientId: p?.clientId || null };
+}
+function _dvTs(rec, dateField) {
+  const iso = dateField === 'demandCreated' ? rec.d?.createdAt
+    : dateField === 'demandCompleted' ? rec.d?.completedAt
+    : rec.r.submittedAt;
+  const t = iso ? Date.parse(iso) : NaN;
+  return Number.isFinite(t) ? t : null;
+}
+function _dvMonthKey(t) { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; }
+function _dvWeekKey(t) {
+  const d = new Date(t); d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // segunda-feira
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function _dvTimeLabel(key, kind) {
+  if (!key || key === DV_NONE) return 'Sem data';
+  const [y, m, d] = key.split('-').map(Number);
+  if (kind === 'month') return `${MONTHS[m - 1].slice(0, 3).toLowerCase()}/${String(y).slice(2)}`;
+  return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}`;
+}
+function _dvFieldOf(dimKey) {
+  if (!dimKey || !dimKey.startsWith('field:')) return null;
+  const fid = dimKey.slice(6);
+  for (const t of (formTemplates || [])) {
+    const f = (t.fields || []).find(x => x.id === fid);
+    if (f) return { t, f };
+  }
+  return null;
+}
+/* Definição de uma dimensão: rótulo, como ler o valor de um registro e o nome
+   de cada valor. Campos multiseleção devolvem lista (o registro entra em cada
+   valor). */
+function dvDim(key) {
+  const base = DV_BASE_DIMS.find(x => x.key === key) || DV_TIME_DIMS.find(x => x.key === key);
+  if (base) return base;
+  const hit = _dvFieldOf(key);
+  if (hit) return { key, label: hit.f.label, icon: 'list', field: hit.f, templateId: hit.t.id };
+  return null;
+}
+function dvDimValue(rec, key, dateField) {
+  switch (key) {
+    case 'client': return rec.clientId;
+    case 'project': return rec.p?.id || null;
+    case 'submittedBy': return rec.r.submittedBy || null;
+    case 'workspace': return rec.r.workspaceId || null;
+    case 'owner': return rec.d?.ownerId || null;
+    case 'flow': return rec.d?.flowId || null;
+    case 'stage': return rec.d ? (stageOf(rec.d)?.label || null) : null;
+    case 'month': { const t = _dvTs(rec, dateField); return t ? _dvMonthKey(t) : null; }
+    case 'week':  { const t = _dvTs(rec, dateField); return t ? _dvWeekKey(t) : null; }
+  }
+  if (key.startsWith('field:')) {
+    const v = rec.r.values?.[key.slice(6)];
+    if (Array.isArray(v)) return v.filter(x => x !== '' && x != null).map(String);
+    return v === '' || v == null ? null : String(v);
+  }
+  return null;
+}
+function _dvValuesOf(rec, key, dateField) {
+  const v = dvDimValue(rec, key, dateField);
+  if (Array.isArray(v)) return v.length ? v : [DV_NONE];
+  return [v == null ? DV_NONE : v];
+}
+function dvValueLabel(key, v) {
+  if (v === DV_NONE) return 'Sem valor';
+  if (v === DV_OTHER) return 'Outros';
+  switch (key) {
+    case 'client': return clientById(v)?.name || 'Cliente removido';
+    case 'project': return projectById(v)?.name || 'Projeto removido';
+    case 'submittedBy': case 'owner': return userById(v)?.name || 'Usuário removido';
+    case 'workspace': return wsById(v)?.name || 'Squad removido';
+    case 'flow': return flowById(v)?.name || 'Fluxo removido';
+    case 'month': case 'week': return _dvTimeLabel(v, key);
+  }
+  const hit = _dvFieldOf(key);
+  if (hit && Array.isArray(hit.f.options)) return hit.f.options.find(o => String(o.value) === v)?.label || v;
+  return String(v);
+}
+/* Ordem fixa dos valores de uma dimensão (base da cor estável): opções do
+   campo na ordem do formulário; tempo em ordem cronológica; o resto por nome. */
+function _dvValueOrder(key, values) {
+  const hit = _dvFieldOf(key);
+  if (hit && Array.isArray(hit.f.options) && hit.f.options.length) {
+    const idx = new Map(hit.f.options.map((o, i) => [String(o.value), i]));
+    return [...values].sort((a, b) => (idx.get(a) ?? 999) - (idx.get(b) ?? 999) || String(a).localeCompare(String(b)));
+  }
+  if (key === 'month' || key === 'week') return [...values].sort();
+  return [...values].sort((a, b) => norm(dvValueLabel(key, a)).localeCompare(norm(dvValueLabel(key, b))));
+}
+// Mapa valor → cor, calculado sobre TODAS as respostas do formulário (sem
+// filtro), pra filtrar nunca repintar quem sobrou. As 8 cores vão pros valores
+// mais frequentes (empate: ordem do campo); do 9º em diante é cinza. Cor
+// nunca se repete entre valores.
+const _dvColorCache = new Map();
+let _dvColorSrc = null; // respostas usadas no cache; chegou lista nova, recalcula
+function dvColorFor(templateId, key, value) {
+  if (value === DV_OTHER || value === DV_NONE) return 'var(--viz-other)';
+  if (_dvColorSrc !== formResponses) { _dvColorCache.clear(); _dvColorSrc = formResponses; }
+  const ck = templateId + '|' + key;
+  let map = _dvColorCache.get(ck);
+  if (!map) {
+    const freq = new Map();
+    for (const r of (formResponses || [])) if (r.templateId === templateId) {
+      for (const v of _dvValuesOf(_dvRec(r), key, 'submitted')) if (v !== DV_NONE) freq.set(v, (freq.get(v) || 0) + 1);
+    }
+    const order = _dvValueOrder(key, freq.keys());
+    const rank = new Map(order.map((v, i) => [v, i]));
+    order.sort((a, b) => freq.get(b) - freq.get(a) || rank.get(a) - rank.get(b));
+    map = new Map(order.slice(0, 8).map((v, i) => [v, i]));
+    _dvColorCache.set(ck, map);
+  }
+  const i = map.get(value);
+  return i == null ? 'var(--viz-other)' : `var(--viz-${i + 1})`;
+}
+function dvMetricValue(m, recs) {
+  if (!m || m.agg === 'count') return recs.length;
+  const vals = [];
+  for (const x of recs) { const n = Number(x.r.values?.[m.fieldId]); if (x.r.values?.[m.fieldId] !== '' && Number.isFinite(n)) vals.push(n); }
+  if (!vals.length) return m.agg === 'sum' ? 0 : null;
+  if (m.agg === 'sum') return vals.reduce((a, b) => a + b, 0);
+  if (m.agg === 'avg') return vals.reduce((a, b) => a + b, 0) / vals.length;
+  if (m.agg === 'min') return Math.min(...vals);
+  if (m.agg === 'max') return Math.max(...vals);
+  return null;
+}
+function dvMetricLabel(m, templateId) {
+  if (m.label) return m.label;
+  if (m.agg === 'count') return 'Respostas';
+  const f = formTemplateById(templateId)?.fields?.find(x => x.id === m.fieldId);
+  return `${DV_AGG_LABEL[m.agg]} de ${f ? f.label : 'campo removido'}`;
+}
+function dvFmt(v, compact) {
+  if (v == null || !Number.isFinite(v)) return '—';
+  const abs = Math.abs(v);
+  if (compact && abs >= 10000) return (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' mil';
+  const dec = Number.isInteger(v) ? 0 : abs < 10 ? 2 : 1;
+  return v.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: dec });
+}
+function dvAutoTitle(w) {
+  const m0 = w.metrics?.[0] || { agg: 'count' };
+  const what = w.viz === 'number' && (w.metrics || []).length > 1 ? 'Resumo' : dvMetricLabel(m0, w.templateId);
+  const by = (w.viz === 'bar' || w.viz === 'table') && w.groupBy ? ` por ${dvDim(w.groupBy)?.label.toLowerCase() || '—'}` : '';
+  const ser = w.seriesBy && w.viz !== 'number' ? ` e ${dvDim(w.seriesBy)?.label.toLowerCase() || '—'}` : '';
+  const when = w.viz === 'line' ? ' ao longo do tempo' : '';
+  return what + by + (by ? ser : (w.seriesBy ? ` por ${dvDim(w.seriesBy)?.label.toLowerCase() || '—'}` : '')) + when;
+}
+
+/* ── Visão (filtros de quem olha) ────────────────────────────────────── */
+function _dvEmptyView() { return { period: 'all', from: '', to: '', dateField: 'submitted', compare: true, dims: {} }; }
+let _dvView = _dvEmptyView();
+let _dvViewFor = null; // id do dashboard a que a visão pertence
+const DV_PERIODS = [
+  { key: 'all',       label: 'Todo o período' },
+  { key: '7d',        label: 'Últimos 7 dias' },
+  { key: '30d',       label: 'Últimos 30 dias' },
+  { key: '90d',       label: 'Últimos 90 dias' },
+  { key: 'month',     label: 'Este mês' },
+  { key: 'lastMonth', label: 'Mês passado' },
+  { key: 'quarter',   label: 'Este trimestre' },
+  { key: 'year',      label: 'Este ano' },
+];
+/* Faixa do período atual e a do período anterior de mesmo tamanho (pra
+   comparação). null = sem limite. */
+function dvPeriodRange(view = _dvView) {
+  const day0 = new Date(); day0.setHours(0, 0, 0, 0);
+  const endToday = day0.getTime() + 864e5 - 1;
+  let from = null, to = null, prevFrom = null, prevTo = null;
+  const rolling = n => { from = day0.getTime() - (n - 1) * 864e5; to = endToday; };
+  switch (view.period) {
+    case '7d': rolling(7); break;
+    case '30d': rolling(30); break;
+    case '90d': rolling(90); break;
+    case 'month': from = new Date(day0.getFullYear(), day0.getMonth(), 1).getTime(); to = endToday;
+      prevFrom = new Date(day0.getFullYear(), day0.getMonth() - 1, 1).getTime(); prevTo = from - 1; break;
+    case 'lastMonth': from = new Date(day0.getFullYear(), day0.getMonth() - 1, 1).getTime(); to = new Date(day0.getFullYear(), day0.getMonth(), 1).getTime() - 1;
+      prevFrom = new Date(day0.getFullYear(), day0.getMonth() - 2, 1).getTime(); prevTo = from - 1; break;
+    case 'quarter': { const q = Math.floor(day0.getMonth() / 3) * 3; from = new Date(day0.getFullYear(), q, 1).getTime(); to = endToday;
+      prevFrom = new Date(day0.getFullYear(), q - 3, 1).getTime(); prevTo = from - 1; break; }
+    case 'year': from = new Date(day0.getFullYear(), 0, 1).getTime(); to = endToday;
+      prevFrom = new Date(day0.getFullYear() - 1, 0, 1).getTime(); prevTo = from - 1; break;
+    case 'custom':
+      from = view.from ? Date.parse(view.from + 'T00:00:00') : null;
+      to = view.to ? Date.parse(view.to + 'T23:59:59.999') : null;
+      break;
+  }
+  if (from != null && to != null && prevFrom == null) { const len = to - from + 1; prevTo = from - 1; prevFrom = from - len; }
+  return { from, to, prevFrom, prevTo };
+}
+function dvPeriodLabel(view = _dvView) {
+  if (view.period === 'custom') {
+    const f = view.from ? fmtDate(view.from) : '…', t = view.to ? fmtDate(view.to) : '…';
+    return `${f} a ${t}`;
+  }
+  return DV_PERIODS.find(p => p.key === view.period)?.label || 'Todo o período';
+}
+/* Respostas de um formulário depois dos filtros fixos + visão.
+   opts.skipDim: ignora uma dimensão (contagem das opções no seletor).
+   opts.previous: usa o período anterior (comparação). */
+function dvRecords(dash, templateId, opts = {}) {
+  const view = _dvView;
+  const dims = {};
+  const fixed = dash?.fixedFilters?.dims || {};
+  for (const k in fixed) if (fixed[k]?.length) dims[k] = fixed[k];
+  for (const k in view.dims) if (view.dims[k]?.length && k !== opts.skipDim) dims[k] = view.dims[k];
+  const rg = dvPeriodRange(view);
+  const from = opts.previous ? rg.prevFrom : rg.from;
+  const to = opts.previous ? rg.prevTo : rg.to;
+  if (opts.previous && from == null && to == null) return null;
+  const out = [];
+  for (const r of (formResponses || [])) {
+    if (r.templateId !== templateId || r.deletedAt) continue;
+    const rec = _dvRec(r);
+    if (from != null || to != null) {
+      const t = _dvTs(rec, view.dateField);
+      if (t == null || (from != null && t < from) || (to != null && t > to)) continue;
+    }
+    let ok = true;
+    for (const k in dims) {
+      const def = dvDim(k);
+      // Filtro de campo só vale pro formulário dono do campo.
+      if (def?.templateId && def.templateId !== templateId) continue;
+      const vals = _dvValuesOf(rec, k, view.dateField);
+      if (!vals.some(v => dims[k].includes(v))) { ok = false; break; }
+    }
+    if (ok) out.push(rec);
+  }
+  return out;
+}
+/* Agrupa registros por valor de dimensão. Multiseleção: o registro entra em
+   cada valor que tiver. */
+function dvGroup(recs, key, dateField) {
+  const g = new Map();
+  for (const rec of recs) for (const v of _dvValuesOf(rec, key, dateField)) {
+    if (!g.has(v)) g.set(v, []);
+    g.get(v).push(rec);
+  }
+  return g;
+}
+function _dvTemplatesOf(d) {
+  const ids = new Set((d?.widgets || []).map(w => w.templateId).filter(Boolean));
+  if (d?.templateId) ids.add(d.templateId);
+  return [...ids].map(id => formTemplateById(id)).filter(Boolean);
+}
+
+/* Visão ↔ URL (?f=base64url(JSON)). */
+function _dvEncodeView(v) {
+  const slim = {};
+  if (v.period !== 'all') slim.p = v.period;
+  if (v.period === 'custom') { slim.a = v.from; slim.b = v.to; }
+  if (v.dateField !== 'submitted') slim.d = v.dateField;
+  if (!v.compare) slim.c = 0;
+  const dims = Object.fromEntries(Object.entries(v.dims).filter(([, a]) => a?.length));
+  if (Object.keys(dims).length) slim.f = dims;
+  if (!Object.keys(slim).length) return '';
+  return btoa(unescape(encodeURIComponent(JSON.stringify(slim)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function _dvDecodeView(s) {
+  const v = _dvEmptyView();
+  if (!s) return v;
+  try {
+    const o = JSON.parse(decodeURIComponent(escape(atob(s.replace(/-/g, '+').replace(/_/g, '/')))));
+    if (DV_PERIODS.some(p => p.key === o.p) || o.p === 'custom') v.period = o.p;
+    if (o.p === 'custom') { v.from = o.a || ''; v.to = o.b || ''; }
+    if (DV_DATE_FIELDS.some(x => x.key === o.d)) v.dateField = o.d;
+    if (o.c === 0) v.compare = false;
+    if (o.f && typeof o.f === 'object') for (const k in o.f) if (Array.isArray(o.f[k])) v.dims[k] = o.f[k].map(String);
+  } catch {}
+  return v;
+}
+function _dvSyncUrl() {
+  if (!_currentDashboardId) return;
+  const enc = _dvEncodeView(_dvView);
+  const url = '/dashboards/' + _currentDashboardId + (enc ? '?f=' + enc : '');
+  if (location.pathname + location.search !== url) history.replaceState(history.state, '', url);
+}
+function dvSetView(patch) {
+  Object.assign(_dvView, patch);
+  _dvSyncUrl();
+  const d = dashboardById(_currentDashboardId);
+  if (d) { _dvRenderFilters(d); _dvRenderWidgets(d); _renderDashRecords(d); }
+}
+function dvToggleDimValue(key, value) {
+  if (!key || value === DV_OTHER) return;
+  const cur = new Set(_dvView.dims[key] || []);
+  if (cur.has(value)) cur.delete(value); else cur.add(value);
+  const dims = { ..._dvView.dims };
+  if (cur.size) dims[key] = [...cur]; else delete dims[key];
+  dvSetView({ dims });
+}
+function dvClearDim(key) { const dims = { ..._dvView.dims }; delete dims[key]; dvSetView({ dims }); }
+function dvClearAll() { _dvView = { ..._dvEmptyView(), compare: _dvView.compare }; dvSetView({}); }
+
+/* ── Lista de dashboards ─────────────────────────────────────────────── */
 function renderDashboards() {
   const gridView = document.getElementById('dashboards-grid-view');
   const detailView = document.getElementById('dashboards-view');
@@ -24272,10 +24610,17 @@ function renderDashboards() {
   if (_currentDashboardId) {
     const d = dashboardById(_currentDashboardId);
     if (!d) { _currentDashboardId = null; renderDashboards(); return; }
+    // Entrou num dashboard: a visão vem da URL (link compartilhado) ou começa limpa.
+    if (_dvViewFor !== d.id) {
+      _dvViewFor = d.id;
+      _dvView = _dvDecodeView(new URLSearchParams(location.search).get('f'));
+      _dvColorCache.clear();
+    }
     gridView.style.display = 'none';
     detailView.style.display = '';
     _renderDashboardView(d);
   } else {
+    _dvViewFor = null;
     gridView.style.display = '';
     detailView.style.display = 'none';
     _renderDashboardsGrid();
@@ -24286,2953 +24631,1316 @@ function _renderDashboardsGrid() {
   const host = document.getElementById('dashboards-cards');
   if (!host) return;
   const q = norm(document.getElementById('dashboards-search')?.value || '');
-  // Universal: dashboards são visíveis pra todos, independente do squad.
   const list = (dashboards || [])
     .filter(d => !q || norm(d.name).includes(q) || norm(d.description || '').includes(q))
     .sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
   if (!list.length) {
     host.innerHTML = emptyState(
       q ? 'Nenhum dashboard bate com a busca' : 'Nenhum dashboard criado ainda',
-      me?.isAdmin ? 'Clique em "Novo dashboard" pra montar um painel de widgets.' : 'Só admin cria dashboards — peça pra criar um.',
+      canEditDashboards() ? 'Clique em "Novo dashboard" para montar um painel a partir de um formulário.' : 'Peça a um admin ou moderador para criar um.',
       'default'
     );
     return;
   }
-  // Cor derivada do nome — mesma cor sempre pra mesmo dashboard, sem estado extra.
-  const _dashPalette = ['#7A00FF','#3b82f6','#10b981','#f59e0b','#ec4899','#06b6d4','#f43f5e','#8b5cf6','#22c55e','#f97316'];
-  const _dashColor = (name) => {
-    let h = 0;
-    for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffff;
-    return _dashPalette[h % _dashPalette.length];
-  };
   host.innerHTML = list.map(d => {
-    const color = _dashColor(d.name || '');
     const wcount = (d.widgets || []).length;
+    const forms = _dvTemplatesOf(d).map(t => t.name);
     const desc = (d.description || '').trim();
-    return `<div class="dashboards-card" style="--dash-color:${esc(color)}" onclick="openDashboardView('${d.id}')">
+    return `<div class="dashboards-card" onclick="openDashboardView('${d.id}')">
       <div class="dashboards-card-head">
-        <div class="dashboards-card-icon" style="background:color-mix(in oklab, ${esc(color)} 15%, transparent); color:${esc(color)}">
-          <i data-lucide="layout-dashboard" class="ic-sm"></i>
-        </div>
+        <div class="dashboards-card-icon"><i data-lucide="layout-dashboard" class="ic-sm"></i></div>
         <div class="dashboards-card-name">${esc(d.name)}</div>
       </div>
       <div class="dashboards-card-desc">${desc ? esc(desc) : '<span class="dashboards-card-desc-empty">Sem descrição</span>'}</div>
       <div class="dashboards-card-foot">
-        <span class="dashboards-card-chip">
-          <i data-lucide="component" class="ic-xs"></i>
-          ${wcount} ${wcount === 1 ? 'widget' : 'widgets'}
-        </span>
+        ${forms.length ? `<span class="dashboards-card-chip"><i data-lucide="clipboard-list" class="ic-xs"></i>${esc(forms.join(', '))}</span>` : ''}
+        <span class="dashboards-card-chip"><i data-lucide="component" class="ic-xs"></i>${wcount} ${wcount === 1 ? 'widget' : 'widgets'}</span>
         <span class="dashboards-card-open"><i data-lucide="arrow-up-right" class="ic-sm"></i></span>
       </div>
     </div>`;
   }).join('');
 }
-let _dashEditMode = false;
-const DASH_COLS = 12;
-const DASH_DEFAULT_W = 4;
-const DASH_DEFAULT_H = 1;
-
+function openDashboardView(id) {
+  _currentDashboardId = id;
+  _dashEditMode = false;
+  _dvViewFor = null;
+  navPush('/dashboards/' + id);
+  renderDashboards();
+}
+function closeDashboardView() {
+  _currentDashboardId = null;
+  _dashEditMode = false;
+  _dvViewFor = null;
+  _dvClosePopover();
+  navReplace('/dashboards');
+  renderDashboards();
+}
 function toggleDashEditMode() {
-  if (!me?.isAdmin) return;
+  if (!canEditDashboards()) return;
   _dashEditMode = !_dashEditMode;
   const d = _currentDashboardId ? dashboardById(_currentDashboardId) : null;
   if (d) _renderDashboardView(d);
 }
 
-/* Auto-placement pra widgets sem layout: preenche linha por linha (L→R) com
-   w=4, h=1. Widgets com layout definido são respeitados. */
-function _computeEffectiveLayouts(widgets) {
-  const layouts = new Map();
-  const placed = []; // [{x,y,w,h}] pra checar colisão
-  const occupies = (l, x, y) => x >= l.x && x < l.x + l.w && y >= l.y && y < l.y + l.h;
-  const collides = (cand) => placed.some(l => !(cand.x + cand.w <= l.x || cand.x >= l.x + l.w || cand.y + cand.h <= l.y || cand.y >= l.y + l.h));
-  // Primeiro passe: registra layouts explícitos
-  for (const w of widgets) {
-    if (w.layout && Number.isInteger(w.layout.x)) {
-      layouts.set(w.id, { ...w.layout });
-      placed.push(layouts.get(w.id));
-    }
-  }
-  // Segundo passe: auto-place os que faltam
-  for (const w of widgets) {
-    if (layouts.has(w.id)) continue;
-    // Acha primeiro slot livre com w=DASH_DEFAULT_W, h=DASH_DEFAULT_H
-    let placedIt = false;
-    for (let y = 0; y < 500 && !placedIt; y++) {
-      for (let x = 0; x <= DASH_COLS - DASH_DEFAULT_W && !placedIt; x++) {
-        const cand = { x, y, w: DASH_DEFAULT_W, h: DASH_DEFAULT_H };
-        if (!collides(cand)) {
-          layouts.set(w.id, cand);
-          placed.push(cand);
-          placedIt = true;
-        }
-      }
-    }
-  }
-  return layouts;
-}
-/* Empty cells (só em edit mode). Descobre spans horizontais livres por linha.
-   Adiciona uma linha extra ao final pra permitir "empurrar" pra baixo. */
-function _computeEmptyCells(layouts, extraRows) {
-  let maxY = 0;
-  for (const l of layouts.values()) maxY = Math.max(maxY, l.y + l.h);
-  const rows = maxY + (extraRows || 1);
-  // occupancy[y] = boolean[12]
-  const occ = Array.from({ length: rows }, () => new Array(DASH_COLS).fill(false));
-  for (const l of layouts.values()) {
-    for (let dy = 0; dy < l.h && l.y + dy < rows; dy++) {
-      for (let dx = 0; dx < l.w; dx++) occ[l.y + dy][l.x + dx] = true;
-    }
-  }
-  const cells = [];
-  for (let y = 0; y < rows; y++) {
-    let x = 0;
-    while (x < DASH_COLS) {
-      if (occ[y][x]) { x++; continue; }
-      let end = x;
-      while (end < DASH_COLS && !occ[y][end]) end++;
-      cells.push({ x, y, w: end - x, h: 1 });
-      x = end;
-    }
-  }
-  return cells;
-}
+/* ── Tela do dashboard ───────────────────────────────────────────────── */
 function _renderDashboardView(d) {
   document.getElementById('dashboards-view-title').textContent = d.name;
   const descEl = document.getElementById('dashboards-view-desc');
   descEl.textContent = d.description || '';
   descEl.style.display = d.description ? '' : 'none';
-  _renderDashFilters(d);
   const editBtn = document.getElementById('dash-edit-toggle');
   if (editBtn) {
     editBtn.classList.toggle('is-active', _dashEditMode);
     editBtn.innerHTML = _dashEditMode
-      ? '<i data-lucide="check" class="ic-sm"></i> Sair do modo edição'
-      : '<i data-lucide="layout-grid" class="ic-sm"></i> Editar layout';
+      ? '<i data-lucide="check" class="ic-sm"></i> Concluir edição'
+      : '<i data-lucide="layout-grid" class="ic-sm"></i> Editar widgets';
   }
-  const grid = document.getElementById('dashboards-view-widgets');
-  grid.classList.toggle('edit-mode', _dashEditMode && !!me?.isAdmin);
-  if (!(d.widgets || []).length && !_dashEditMode) {
-    grid.innerHTML = `<div class="dw-widget" style="grid-column:1/-1"><div class="dw-widget-empty">Sem widgets ainda. ${me?.isAdmin ? 'Clique em "Editar layout" pra adicionar.' : ''}</div></div>`;
-    if (window.lucide?.createIcons) lucide.createIcons();
-    return;
-  }
-  const layouts = _computeEffectiveLayouts(d.widgets || []);
-  const widgetsHtml = (d.widgets || []).map(w => {
-    const l = layouts.get(w.id);
-    const style = l ? `grid-column:${l.x + 1}/span ${l.w};grid-row:${l.y + 1}/span ${l.h}` : '';
-    // Injeta o wrapper com data-widget-id + style, e coloca o conteúdo do widget dentro
-    // (removendo o <div class="dw-widget"> externo do renderWidget pra evitar dupla div).
-    const inner = renderWidget(w);
-    // O renderWidget retorna algo como `<div class="dw-widget">...</div>`. Substituo pela wrapper.
-    const contentMatch = inner.match(/^<div class="dw-widget"[^>]*>([\s\S]*)<\/div>\s*$/);
-    const contentHtml = contentMatch ? contentMatch[1] : inner;
-    const actions = me?.isAdmin ? `<div class="dw-widget-header-actions">
-      <button class="detail-icon-btn" title="Configurar widget" onclick="event.stopPropagation();openWidgetConfig('${_currentDashboardId}','${w.id}')"><i data-lucide="settings" class="ic-sm"></i></button>
-      <button class="detail-icon-btn danger" title="Remover widget" onclick="event.stopPropagation();confirmDeleteWidget('${_currentDashboardId}','${w.id}')"><i data-lucide="x" class="ic-sm"></i></button>
-    </div>` : '';
-    const resize = me?.isAdmin ? `
-      <div class="dw-resize-handle dw-resize-handle-e"  title="Redimensionar largura" onmousedown="_startWidgetResize(event,'${w.id}','e')"></div>
-      <div class="dw-resize-handle dw-resize-handle-s"  title="Redimensionar altura"  onmousedown="_startWidgetResize(event,'${w.id}','s')"></div>
-      <div class="dw-resize-handle dw-resize-handle-se" title="Redimensionar"          onmousedown="_startWidgetResize(event,'${w.id}','se')"></div>
-    ` : '';
-    return `<div class="dw-widget" data-widget-id="${w.id}" style="${style}" onmousedown="_startWidgetDrag(event,'${w.id}')">${actions}${contentHtml}${resize}</div>`;
-  }).join('');
-  let emptyHtml = '';
-  if (_dashEditMode && me?.isAdmin) {
-    const empties = _computeEmptyCells(layouts, 2);
-    emptyHtml = empties.map(c => `<div class="dw-cell-empty" style="grid-column:${c.x + 1}/span ${c.w};grid-row:${c.y + 1}/span ${c.h}" onclick="openWidgetConfig('${_currentDashboardId}',null,${c.x},${c.y},${c.w},${c.h})"><span class="dw-cell-empty-icon"><i data-lucide="plus" class="ic-sm"></i> Adicionar widget</span></div>`).join('');
-  }
-  grid.innerHTML = widgetsHtml + emptyHtml;
-  _flushLineHovers();
+  _dvRenderFilters(d);
+  _dvRenderWidgets(d);
   _renderDashRecords(d);
   if (window.lucide?.createIcons) lucide.createIcons();
 }
 
-/* Painel de registros no rodapé — só quando fora de edit mode. Lista TODAS as
-   respostas dos templates usados pelos widgets do dashboard, respeitando os
-   filtros globais. Colapsável (estado em memória por dashboard). */
+/* Barra de filtros: período, filtros fixos (cadeado), dimensões rápidas e
+   campos de escolha dos formulários, "+ Filtro" pro resto; à direita,
+   visões salvas, copiar link e limpar. */
+function _dvRenderFilters(d) {
+  const host = document.getElementById('dashboards-view-filters');
+  if (!host) return;
+  const templates = _dvTemplatesOf(d);
+  const multiT = templates.length > 1;
+  const fixed = d.fixedFilters?.dims || {};
+  const chipLabel = (key, vals) => {
+    const def = dvDim(key);
+    const name = def ? def.label : key;
+    if (!vals?.length) return esc(name);
+    const first = dvValueLabel(key, vals[0]);
+    return `${esc(name)}: <b>${esc(vals.length === 1 ? first : `${vals.length} selecionados`)}</b>`;
+  };
+  const fieldDims = [];
+  for (const t of templates) for (const f of (t.fields || [])) {
+    if (f.type === 'select' || f.type === 'multiselect') fieldDims.push('field:' + f.id);
+  }
+  const quick = [...DV_BASE_DIMS.filter(x => x.quick).map(x => x.key), ...fieldDims.slice(0, 4)];
+  const shown = new Set([...quick, ...Object.keys(_dvView.dims)]);
+  const more = [...DV_BASE_DIMS.map(x => x.key), ...fieldDims,
+    ...templates.flatMap(t => (t.fields || []).filter(f => f.type === 'text').map(f => 'field:' + f.id))]
+    .filter(k => !shown.has(k) && !fixed[k]);
+  const fixedChips = Object.keys(fixed).filter(k => fixed[k]?.length).map(k =>
+    `<span class="dv-chip is-fixed" title="Filtro fixo deste dashboard"><i data-lucide="lock" class="ic-xs"></i>${chipLabel(k, fixed[k])}</span>`).join('');
+  const dimChips = [...shown].filter(k => !fixed[k] && dvDim(k)).map(k => {
+    const vals = _dvView.dims[k] || [];
+    const def = dvDim(k);
+    const tName = multiT && def.templateId ? ` <span class="dv-chip-note">${esc(formTemplateById(def.templateId)?.name || '')}</span>` : '';
+    return `<span class="dv-chip ${vals.length ? 'is-active' : ''}">
+      <button type="button" class="dv-chip-btn" id="dvchip-${esc(k.replace(':', '-'))}" onclick="dvOpenDimPicker(this, '${esc(k)}')">
+        <i data-lucide="${def.icon || 'list'}" class="ic-xs"></i>${chipLabel(k, vals)}${tName}<i data-lucide="chevron-down" class="ic-xs dv-chip-caret"></i>
+      </button>
+      ${vals.length ? `<button type="button" class="dv-chip-x" onclick="dvClearDim('${esc(k)}')" aria-label="Limpar ${esc(def.label)}"><i data-lucide="x" class="ic-xs"></i></button>` : ''}
+    </span>`;
+  }).join('');
+  const periodActive = _dvView.period !== 'all';
+  const dateNote = _dvView.dateField !== 'submitted' ? ` · ${DV_DATE_FIELDS.find(x => x.key === _dvView.dateField).label.toLowerCase()}` : '';
+  const activeCount = (periodActive ? 1 : 0) + Object.values(_dvView.dims).filter(a => a?.length).length;
+  host.innerHTML = `<div class="dv-filters">
+    <div class="dv-filters-main">
+      <span class="dv-chip ${periodActive ? 'is-active' : ''}">
+        <button type="button" class="dv-chip-btn" id="dvchip-period" onclick="dvOpenPeriodPicker(this)">
+          <i data-lucide="calendar" class="ic-xs"></i><b>${esc(dvPeriodLabel())}</b>${esc(dateNote)}<i data-lucide="chevron-down" class="ic-xs dv-chip-caret"></i>
+        </button>
+      </span>
+      ${fixedChips}${dimChips}
+      ${more.length ? `<button type="button" class="dv-more" id="dvchip-more" onclick="dvOpenMoreFilters(this)"><i data-lucide="plus" class="ic-xs"></i> Filtro</button>` : ''}
+    </div>
+    <div class="dv-filters-side">
+      ${activeCount ? `<button type="button" class="dv-side-btn" onclick="dvClearAll()">Limpar filtros</button>` : ''}
+      <button type="button" class="dv-side-btn" id="dvchip-views" onclick="dvOpenViews(this)"><i data-lucide="bookmark" class="ic-xs"></i> Visões</button>
+      <button type="button" class="dv-side-btn" onclick="dvCopyLink()" title="Copia o link com os filtros atuais"><i data-lucide="link-2" class="ic-xs"></i> Copiar link</button>
+    </div>
+  </div>`;
+  host.dataset.more = JSON.stringify(more);
+  paintIcons(host);
+}
+function dvCopyLink() {
+  _dvSyncUrl();
+  navigator.clipboard?.writeText(location.origin + location.pathname + location.search)
+    .then(() => toast('Link copiado com os filtros atuais.'))
+    .catch(() => toast('Não foi possível copiar o link.', 'error'));
+}
+
+/* ── Popover genérico (um por vez) ───────────────────────────────────── */
+let _dvPop = null;
+function _dvClosePopover() {
+  if (!_dvPop) return;
+  _dvPop.el.remove();
+  document.removeEventListener('mousedown', _dvPop.outside, true);
+  document.removeEventListener('keydown', _dvPop.key, true);
+  _dvPop = null;
+}
+function _dvOpenPopover(anchor, html, { width = 280, onMount } = {}) {
+  const anchorId = anchor?.id;
+  if (_dvPop && _dvPop.anchorId === anchorId && anchorId) { _dvClosePopover(); return null; }
+  _dvClosePopover();
+  const el = document.createElement('div');
+  el.className = 'dv-pop';
+  el.style.width = width + 'px';
+  el.innerHTML = html;
+  document.body.appendChild(el);
+  const place = () => {
+    const a = anchorId ? document.getElementById(anchorId) : anchor;
+    if (!a) return;
+    const r = a.getBoundingClientRect();
+    const left = Math.max(8, Math.min(window.innerWidth - el.offsetWidth - 8, r.left));
+    const below = r.bottom + 6;
+    const top = below + el.offsetHeight > window.innerHeight - 8 ? Math.max(8, r.top - el.offsetHeight - 6) : below;
+    el.style.left = left + 'px';
+    el.style.top = top + 'px';
+  };
+  place();
+  const outside = e => { if (!el.contains(e.target) && !e.target.closest?.('#' + (anchorId || '__none'))) _dvClosePopover(); };
+  const key = e => { if (e.key === 'Escape') _dvClosePopover(); };
+  setTimeout(() => { document.addEventListener('mousedown', outside, true); document.addEventListener('keydown', key, true); }, 0);
+  _dvPop = { el, anchorId, outside, key, place };
+  paintIcons(el);
+  onMount?.(el);
+  return el;
+}
+
+/* Seletor de valores de uma dimensão: busca, múltipla escolha, contagem de
+   respostas por valor (considerando os outros filtros). Aplica na hora. */
+function dvOpenDimPicker(anchor, key) {
+  const d = dashboardById(_currentDashboardId);
+  const def = dvDim(key);
+  if (!d || !def) return;
+  const el = _dvOpenPopover(anchor, `<div class="dv-pop-head">${esc(def.label)}</div>
+    <div class="dv-pop-search"><i data-lucide="search" class="ic-xs"></i><input type="text" placeholder="Buscar…" oninput="_dvRenderDimList('${esc(key)}', this.value)"></div>
+    <div class="dv-pop-list" id="dv-dim-list"></div>
+    <div class="dv-pop-foot"><button type="button" class="dv-link" onclick="dvClearDim('${esc(key)}'); _dvRenderDimList('${esc(key)}')">Limpar</button><button type="button" class="btn btn-ghost btn-sm" onclick="_dvClosePopover()">Fechar</button></div>`,
+    { width: 300 });
+  if (!el) return;
+  _dvRenderDimList(key);
+  el.querySelector('input')?.focus();
+}
+function _dvRenderDimList(key, q) {
+  const list = document.getElementById('dv-dim-list');
+  const d = dashboardById(_currentDashboardId);
+  if (!list || !d) return;
+  if (q === undefined) q = _dvPop?.el.querySelector('.dv-pop-search input')?.value || '';
+  const def = dvDim(key);
+  const templates = def.templateId ? [formTemplateById(def.templateId)].filter(Boolean) : _dvTemplatesOf(d);
+  const counts = new Map();
+  for (const t of templates) {
+    for (const [v, recs] of dvGroup(dvRecords(d, t.id, { skipDim: key }), key, _dvView.dateField)) counts.set(v, (counts.get(v) || 0) + recs.length);
+  }
+  // Opções do campo aparecem mesmo sem resposta (contagem 0); o resto, só o que existe.
+  if (def.field?.options) def.field.options.forEach(o => { if (!counts.has(String(o.value))) counts.set(String(o.value), 0); });
+  const sel = new Set(_dvView.dims[key] || []);
+  sel.forEach(v => { if (!counts.has(v)) counts.set(v, 0); });
+  const nq = norm(q || '');
+  const vals = _dvValueOrder(key, [...counts.keys()].filter(v => v !== DV_NONE))
+    .concat(counts.has(DV_NONE) ? [DV_NONE] : [])
+    .filter(v => !nq || norm(dvValueLabel(key, v)).includes(nq));
+  list.innerHTML = vals.length ? vals.map(v => `<label class="dv-opt ${sel.has(v) ? 'is-on' : ''}">
+      <input type="checkbox" ${sel.has(v) ? 'checked' : ''} onchange="dvToggleDimValue('${esc(key)}', ${esc(JSON.stringify(v))}); _dvRenderDimList('${esc(key)}')">
+      <span class="dv-opt-label">${esc(dvValueLabel(key, v))}</span>
+      <span class="dv-opt-count">${counts.get(v)}</span>
+    </label>`).join('') : '<div class="dv-pop-empty">Nada encontrado.</div>';
+  _dvPop?.place();
+}
+function dvOpenMoreFilters(anchor) {
+  const host = document.getElementById('dashboards-view-filters');
+  let more = [];
+  try { more = JSON.parse(host?.dataset.more || '[]'); } catch {}
+  _dvOpenPopover(anchor, `<div class="dv-pop-head">Filtrar por</div><div class="dv-pop-list">
+    ${more.map(k => { const def = dvDim(k); return def ? `<button type="button" class="dv-menu-item" onclick="dvStartFilter('${esc(k)}')"><i data-lucide="${def.icon || 'list'}" class="ic-sm"></i>${esc(def.label)}</button>` : ''; }).join('')}
+  </div>`, { width: 260 });
+}
+// Escolheu uma dimensão em "+ Filtro": vira chip e abre o seletor dela.
+function dvStartFilter(key) {
+  _dvClosePopover();
+  const d = dashboardById(_currentDashboardId);
+  if (!d) return;
+  _dvView.dims[key] = _dvView.dims[key] || [];
+  _dvRenderFilters(d);
+  const chip = document.getElementById('dvchip-' + key.replace(':', '-'));
+  if (chip) dvOpenDimPicker(chip, key);
+}
+function dvOpenPeriodPicker(anchor) {
+  const el = _dvOpenPopover(anchor, '<div id="dv-period-body"></div>', { width: 300 });
+  if (el) _dvRenderPeriodBody();
+}
+function _dvRenderPeriodBody() {
+  const body = document.getElementById('dv-period-body');
+  if (!body) return;
+  const v = _dvView;
+  body.innerHTML = `<div class="dv-pop-head">Período</div>
+    <div class="dv-pop-list dv-pop-list--flat">
+      ${DV_PERIODS.map(p => `<button type="button" class="dv-menu-item ${v.period === p.key ? 'is-on' : ''}" onclick="dvSetView({ period: '${p.key}' }); _dvRenderPeriodBody()">
+        <span>${esc(p.label)}</span>${v.period === p.key ? '<i data-lucide="check" class="ic-sm"></i>' : ''}</button>`).join('')}
+    </div>
+    <div class="dv-pop-section">
+      <div class="dv-pop-label">Intervalo personalizado</div>
+      <div class="dv-range">
+        <input type="date" class="form-control" id="dv-range-from" value="${esc(v.period === 'custom' ? v.from : '')}" aria-label="De">
+        <span>a</span>
+        <input type="date" class="form-control" id="dv-range-to" value="${esc(v.period === 'custom' ? v.to : '')}" aria-label="Até">
+      </div>
+      <button type="button" class="btn btn-ghost btn-sm dv-range-apply" onclick="dvApplyCustomRange()">Aplicar intervalo</button>
+    </div>
+    <div class="dv-pop-section">
+      <div class="dv-pop-label">Data considerada</div>
+      <div class="dv-seg" role="group" aria-label="Data considerada">
+        ${DV_DATE_FIELDS.map(f => `<button type="button" class="${v.dateField === f.key ? 'is-on' : ''}" onclick="dvSetView({ dateField: '${f.key}' }); _dvRenderPeriodBody()">${esc(f.label)}</button>`).join('')}
+      </div>
+    </div>
+    <label class="dv-pop-toggle">
+      <input type="checkbox" ${v.compare ? 'checked' : ''} onchange="dvSetView({ compare: this.checked })">
+      <span>Comparar números com o período anterior</span>
+    </label>`;
+  paintIcons(body);
+  _dvPop?.place();
+}
+function dvApplyCustomRange() {
+  const from = document.getElementById('dv-range-from')?.value || '';
+  const to = document.getElementById('dv-range-to')?.value || '';
+  if (!from && !to) { toast('Escolha pelo menos uma das datas.', 'warn'); return; }
+  if (from && to && to < from) { toast('A data final vem antes da inicial.', 'warn'); return; }
+  dvSetView({ period: 'custom', from, to });
+  _dvRenderPeriodBody();
+}
+
+/* Visões salvas: combinações de filtros por pessoa e por dashboard. */
+function _dvViewsKey(dashId) { return `kastor-dash-views-${me?.id || 'anon'}-${dashId}`; }
+function _dvLoadViews(dashId) { try { return JSON.parse(localStorage.getItem(_dvViewsKey(dashId)) || '[]'); } catch { return []; } }
+function _dvSaveViews(dashId, list) { try { localStorage.setItem(_dvViewsKey(dashId), JSON.stringify(list.slice(0, 20))); } catch {} }
+function dvOpenViews(anchor) {
+  const el = _dvOpenPopover(anchor, '<div id="dv-views-body"></div>', { width: 300 });
+  if (el) _dvRenderViewsBody();
+}
+function _dvRenderViewsBody() {
+  const body = document.getElementById('dv-views-body');
+  if (!body) return;
+  const list = _dvLoadViews(_currentDashboardId);
+  body.innerHTML = `<div class="dv-pop-head">Visões salvas</div>
+    <div class="dv-pop-list">
+      ${list.length ? list.map(v => `<div class="dv-view-row">
+        <button type="button" class="dv-menu-item" onclick="dvApplySavedView('${esc(v.id)}')"><i data-lucide="bookmark" class="ic-sm"></i>${esc(v.name)}</button>
+        <button type="button" class="dv-view-del" onclick="dvDeleteSavedView('${esc(v.id)}')" aria-label="Excluir visão ${esc(v.name)}"><i data-lucide="x" class="ic-xs"></i></button>
+      </div>`).join('') : '<div class="dv-pop-empty">Salve os filtros que você usa sempre para voltar a eles num clique.</div>'}
+    </div>
+    <form class="dv-pop-section dv-view-new" onsubmit="event.preventDefault(); dvSaveCurrentView(this.nome.value)">
+      <input class="form-control" name="nome" maxlength="40" placeholder="Nome da visão atual" required>
+      <button class="btn btn-confirm btn-sm" type="submit">Salvar</button>
+    </form>`;
+  paintIcons(body);
+  _dvPop?.place();
+}
+function dvSaveCurrentView(name) {
+  const n = String(name || '').trim();
+  if (!n) return;
+  const list = _dvLoadViews(_currentDashboardId);
+  list.push({ id: Math.random().toString(36).slice(2, 10), name: n, view: JSON.parse(JSON.stringify(_dvView)) });
+  _dvSaveViews(_currentDashboardId, list);
+  toast(`Visão "${n}" salva.`);
+  _dvRenderViewsBody();
+}
+function dvApplySavedView(id) {
+  const v = _dvLoadViews(_currentDashboardId).find(x => x.id === id);
+  if (!v) return;
+  _dvClosePopover();
+  _dvView = { ..._dvEmptyView(), ...v.view, dims: { ...(v.view.dims || {}) } };
+  dvSetView({});
+}
+function dvDeleteSavedView(id) {
+  _dvSaveViews(_currentDashboardId, _dvLoadViews(_currentDashboardId).filter(x => x.id !== id));
+  _dvRenderViewsBody();
+}
+
+/* ── Grade: posições e reorganização ─────────────────────────────────
+   Nunca há sobreposição: _dvArrange aplica "gravidade" (cada card sobe até
+   encostar em outro) e, se houver um card fixo (o que está sendo arrastado
+   ou redimensionado), os outros desviam dele descendo. Os cards são
+   posicionados em px (absolute + transform) pra poderem deslizar. */
+function _dvCollide(a, b) { return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y; }
+function _dvClampItem(it, viz) {
+  const min = DV_MIN[viz] || DV_MIN.bar;
+  it.w = Math.max(min.w, Math.min(DASH_COLS, it.w | 0));
+  it.h = Math.max(min.h, Math.min(40, it.h | 0));
+  it.x = Math.max(0, Math.min(DASH_COLS - it.w, it.x | 0));
+  it.y = Math.max(0, it.y | 0);
+  return it;
+}
+function _dvArrange(items, fixedId) {
+  const fixed = items.find(i => i.id === fixedId);
+  const rest = items.filter(i => i !== fixed).sort((a, b) => a.y - b.y || a.x - b.x);
+  const placed = fixed ? [fixed] : [];
+  for (const it of rest) {
+    while (it.y > 0 && !placed.some(pl => _dvCollide({ ...it, y: it.y - 1 }, pl))) it.y--;
+    while (placed.some(pl => _dvCollide(it, pl))) it.y++;
+    placed.push(it);
+  }
+  return items;
+}
+// Itens da grade a partir dos widgets (sem layout vai pro fim), já organizados.
+function _dvItemsFor(dash) {
+  const items = (dash.widgets || []).map(w => _dvClampItem(
+    w.layout ? { id: w.id, ...w.layout } : { id: w.id, x: 0, y: 9999, ...(DV_SIZE[w.viz] || DV_SIZE.bar) }, w.viz));
+  return _dvArrange(items, null);
+}
+const _dvCloneItems = items => items.map(i => ({ ...i }));
+function _dvColW(grid) { return (grid.clientWidth - DV_GAP * (DASH_COLS - 1)) / DASH_COLS; }
+function _dvPx(it, colW) {
+  return {
+    left: it.x * (colW + DV_GAP), top: it.y * (DV_ROW + DV_GAP),
+    width: it.w * colW + (it.w - 1) * DV_GAP, height: it.h * DV_ROW + (it.h - 1) * DV_GAP,
+  };
+}
+function _dvPlace(el, px) {
+  el.style.transform = `translate(${px.left}px, ${px.top}px)`;
+  el.style.width = px.width + 'px';
+  el.style.height = px.height + 'px';
+}
+// Posiciona todos os cards (menos o que está na mão do usuário) e ajusta a altura.
+function _dvApply(grid, items, skipId) {
+  const colW = _dvColW(grid);
+  grid.style.setProperty('--dv-colw', colW + 'px');
+  let bottom = 0;
+  for (const it of items) {
+    bottom = Math.max(bottom, it.y + it.h);
+    if (it.id === skipId) continue;
+    const el = grid.querySelector(`.dw-widget[data-widget-id="${it.id}"]`);
+    if (el) _dvPlace(el, _dvPx(it, colW));
+  }
+  const add = grid.querySelector('.dv-add');
+  if (add) _dvPlace(add, _dvPx({ x: 0, y: bottom, w: DASH_COLS, h: 2 }, colW));
+  const rows = bottom + (add ? 2 : 0);
+  grid.style.height = Math.max(0, rows * (DV_ROW + DV_GAP) - DV_GAP) + 'px';
+}
+let _dvGridRO = null;
+let _dvItems = [];
+
+/* ── Widgets ─────────────────────────────────────────────────────────── */
+function _dvRenderWidgets(d) {
+  const grid = document.getElementById('dashboards-view-widgets');
+  if (!grid) return;
+  _dvLineHovers = [];
+  const editing = _dashEditMode && canEditDashboards();
+  grid.classList.toggle('edit-mode', editing);
+  const widgets = d.widgets || [];
+  if (!widgets.length && !editing) {
+    grid.classList.add('is-empty');
+    grid.style.height = '';
+    grid.innerHTML = `<div class="dw-widget dv-card dv-card--empty">
+      <div class="dv-empty"><i data-lucide="layout-dashboard"></i><b>Este dashboard ainda não tem widgets</b>
+      ${canEditDashboards() ? '<span>Clique em "Editar widgets" para adicionar números, gráficos e tabelas.</span>' : '<span>Um admin ou moderador pode adicionar.</span>'}</div></div>`;
+    paintIcons(grid);
+    return;
+  }
+  grid.classList.remove('is-empty');
+  _dvItems = _dvItemsFor(d);
+  const byId = new Map(widgets.map(w => [w.id, w]));
+  // Ordem do DOM = ordem de leitura (linha, coluna): é a ordem no celular e no Tab.
+  const ordered = [..._dvItems].sort((a, b) => a.y - b.y || a.x - b.x).map(it => byId.get(it.id));
+  grid.innerHTML = ordered.map(w => {
+    const actions = editing ? `<div class="dw-widget-header-actions">
+      <button class="detail-icon-btn" title="Editar widget" onclick="event.stopPropagation();openWidgetConfig('${d.id}','${w.id}')"><i data-lucide="pencil" class="ic-sm"></i></button>
+      <button class="detail-icon-btn danger" title="Remover widget" onclick="event.stopPropagation();confirmDeleteWidget('${d.id}','${w.id}')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>` : '';
+    const handles = editing ? `
+      <span class="dv-rh dv-rh-e" onpointerdown="_dvStartResize(event,'${w.id}','e')" aria-hidden="true"></span>
+      <span class="dv-rh dv-rh-s" onpointerdown="_dvStartResize(event,'${w.id}','s')" aria-hidden="true"></span>
+      <span class="dv-rh dv-rh-se" onpointerdown="_dvStartResize(event,'${w.id}','se')" aria-hidden="true"></span>` : '';
+    const editAttrs = editing
+      ? ` tabindex="0" role="group" aria-label="${esc(w.title || dvAutoTitle(w))}. Setas movem; Shift + setas redimensionam." onpointerdown="_dvStartDrag(event,'${w.id}')" onkeydown="_dvKeyLayout(event,'${w.id}')"`
+      : '';
+    return `<div class="dw-widget dv-card dv-card--${w.viz}" data-widget-id="${w.id}"${editAttrs}>
+      ${actions}${dvRenderWidgetInner(w, d)}${handles}</div>`;
+  }).join('') + (editing ? `<button type="button" class="dv-add" onclick="openWidgetConfig('${d.id}', null)"><i data-lucide="plus" class="ic-sm"></i> Adicionar widget</button>` : '');
+  grid.classList.add('no-anim'); // primeira colocação sem deslizar
+  _dvApply(grid, _dvItems);
+  void grid.offsetWidth;
+  grid.classList.remove('no-anim');
+  paintIcons(grid);
+  _dvBindLineHovers(grid);
+  if (!_dvGridRO && window.ResizeObserver) {
+    let lastW = 0;
+    _dvGridRO = new ResizeObserver(() => {
+      const g = document.getElementById('dashboards-view-widgets');
+      if (!g || g.clientWidth === lastW || g.classList.contains('is-empty')) return;
+      lastW = g.clientWidth;
+      g.classList.add('no-anim');
+      _dvApply(g, _dvItems);
+      void g.offsetWidth;
+      g.classList.remove('no-anim');
+    });
+    _dvGridRO.observe(grid);
+  }
+}
+function dvRenderWidgetInner(w, d) {
+  const t = formTemplateById(w.templateId);
+  const title = w.title || dvAutoTitle(w);
+  const head = sub => `<div class="dv-card-head"><div class="dv-card-title">${esc(title)}</div>${sub ? `<div class="dv-card-sub">${sub}</div>` : ''}</div>`;
+  if (!t) return head('') + `<div class="dv-empty dv-empty--sm"><span>O formulário deste widget foi excluído.</span></div>`;
+  const recs = dvRecords(d, w.templateId);
+  const multiT = _dvTemplatesOf(d).length > 1;
+  const subParts = [];
+  if (multiT) subParts.push(esc(t.name));
+  try {
+    if (w.viz === 'number') {
+      const rg = dvPeriodRange();
+      if (_dvView.compare && rg.prevFrom != null) subParts.push(`variação ${_dvCompareLabel()}`);
+      return head(subParts.join(' · ')) + _dvNumber(w, d, recs);
+    }
+    if (!recs.length) {
+      return head(subParts.join(' · ')) + `<div class="dv-empty dv-empty--sm"><span>Nenhuma resposta com os filtros atuais.</span>${_dvHasViewFilters() ? '<button type="button" class="dv-link" onclick="dvClearAll()">Limpar filtros</button>' : ''}</div>`;
+    }
+    if (w.viz === 'bar') return _dvBar(w, recs, head, subParts);
+    if (w.viz === 'line') return _dvLine(w, recs, head, subParts);
+    if (w.viz === 'table') return _dvTable(w, recs, head, subParts);
+  } catch (e) {
+    console.error('[dashboard] widget', w.id, e);
+    return head('') + '<div class="dv-empty dv-empty--sm"><span>Não foi possível montar este widget.</span></div>';
+  }
+  return head('');
+}
+// "vs. os 30 dias anteriores", "vs. o mês anterior"…
+function _dvCompareLabel() {
+  const p = _dvView.period;
+  if (p === 'month' || p === 'lastMonth') return 'vs. o mês anterior';
+  if (p === 'quarter') return 'vs. o trimestre anterior';
+  if (p === 'year') return 'vs. o ano anterior';
+  const n = { '7d': 7, '30d': 30, '90d': 90 }[p];
+  return n ? `vs. os ${n} dias anteriores` : 'vs. o período anterior';
+}
+function _dvHasViewFilters() { return _dvView.period !== 'all' || Object.values(_dvView.dims).some(a => a?.length); }
+const _dvMetricsOf = w => (w.metrics && w.metrics.length ? w.metrics : [{ agg: 'count' }]);
+
+/* Número: até 4 blocos (rótulo, valor e variação contra o período anterior). */
+function _dvNumber(w, d, recs) {
+  const prev = _dvView.compare ? dvRecords(d, w.templateId, { previous: true }) : null;
+  const ms = _dvMetricsOf(w);
+  const tiles = ms.map(m => {
+    const v = dvMetricValue(m, recs);
+    let delta = '';
+    if (prev) {
+      const pv = dvMetricValue(m, prev);
+      if (v != null && pv != null && pv !== 0) {
+        const pct = ((v - pv) / Math.abs(pv)) * 100;
+        const icon = Math.abs(pct) < 0.5 ? 'minus' : pct > 0 ? 'arrow-up-right' : 'arrow-down-right';
+        delta = `<div class="dv-num-delta"><i data-lucide="${icon}" class="ic-xs"></i><b>${Math.abs(pct) < 0.5 ? '0%' : Math.round(Math.abs(pct)) + '%'}</b></div>`;
+      } else if (v != null && pv === 0 && v !== 0) {
+        delta = `<div class="dv-num-delta"><i data-lucide="arrow-up-right" class="ic-xs"></i>antes 0</div>`;
+      }
+    }
+    return `<div class="dv-num"><div class="dv-num-label">${esc(dvMetricLabel(m, w.templateId))}</div>
+      <div class="dv-num-value">${dvFmt(v, true)}</div>${delta}</div>`;
+  }).join('');
+  return `<div class="dv-nums dv-nums--${ms.length}">${tiles}</div>`;
+}
+
+/* Categorias + séries de um widget de barras/tabela. Top N por valor; o resto
+   cai em "Outros" (recalculado sobre os registros, então média continua certa). */
+function _dvCategories(w, recs) {
+  const df = _dvView.dateField;
+  const groups = dvGroup(recs, w.groupBy, df);
+  const m0 = _dvMetricsOf(w)[0];
+  const isTime = w.groupBy === 'month' || w.groupBy === 'week';
+  let cats = [...groups.keys()];
+  if (isTime) cats = cats.filter(c => c !== DV_NONE).sort();
+  else cats.sort((a, b) => (dvMetricValue(m0, groups.get(b)) ?? -Infinity) - (dvMetricValue(m0, groups.get(a)) ?? -Infinity));
+  const limit = w.limit || 0;
+  let other = null;
+  if (!isTime && limit && cats.length > limit) {
+    const rest = cats.slice(limit);
+    const seen = new Set();
+    other = [];
+    for (const c of rest) for (const rec of groups.get(c)) if (!seen.has(rec)) { seen.add(rec); other.push(rec); }
+    cats = cats.slice(0, limit);
+    groups.set(DV_OTHER, other);
+    cats.push(DV_OTHER);
+  }
+  return { cats, groups, isTime, restCount: other ? groups.size - 1 - limit : 0 };
+}
+function _dvSeries(w, recs) {
+  // Série por valor de seriesBy (1ª métrica) ou uma série por métrica.
+  const cap = w.viz === 'line' ? 5 : DV_MAX_SERIES;
+  if (w.seriesBy) {
+    const g = dvGroup(recs, w.seriesBy, _dvView.dateField);
+    const m0 = _dvMetricsOf(w)[0];
+    let keys = [...g.keys()].sort((a, b) => (dvMetricValue(m0, g.get(b)) ?? 0) - (dvMetricValue(m0, g.get(a)) ?? 0));
+    let other = null;
+    if (keys.length > cap) {
+      other = new Set();
+      for (const k of keys.slice(cap - 1)) for (const rec of g.get(k)) other.add(rec);
+      keys = keys.slice(0, cap - 1);
+    }
+    // Ordem fixa (a mesma da cor) pra legenda não dançar entre filtros.
+    keys = _dvValueOrder(w.seriesBy, keys.filter(k => k !== DV_NONE)).concat(keys.includes(DV_NONE) ? [DV_NONE] : []);
+    const series = keys.map(k => ({ key: k, name: dvValueLabel(w.seriesBy, k), color: dvColorFor(w.templateId, w.seriesBy, k),
+      metric: m0, filter: rec => _dvValuesOf(rec, w.seriesBy, _dvView.dateField).includes(k) }));
+    if (other) series.push({ key: DV_OTHER, name: 'Outros', color: 'var(--viz-other)', metric: m0, filter: rec => other.has(rec) });
+    return series;
+  }
+  return _dvMetricsOf(w).map((m, i) => ({ key: 'm' + i, name: dvMetricLabel(m, w.templateId), color: `var(--viz-${i + 1})`, metric: m, filter: null }));
+}
+function _dvLegend(series) {
+  if (series.length < 2) return '';
+  return `<div class="dv-legend">${series.map(s => `<span class="dv-legend-item"><span class="dv-legend-key" style="background:${s.color}"></span>${esc(s.name)}</span>`).join('')}</div>`;
+}
+// Eixo com marcas redondas: passo 1, 2 ou 5 × 10ⁿ (~4 intervalos) e teto
+// no múltiplo seguinte. Contagens pequenas nunca ganham passo quebrado.
+function _dvAxis(max, integer) {
+  if (!(max > 0)) return { max: 1, ticks: [0, 1] };
+  const raw = max / 4;
+  const p = Math.pow(10, Math.floor(Math.log10(raw)));
+  let step = [1, 2, 5, 10].map(k => k * p).find(v => v >= raw) || 10 * p;
+  if (integer && step < 1) step = 1; // contagem não tem meia resposta
+  const top = Math.ceil(max / step) * step;
+  const ticks = [];
+  for (let v = 0; v <= top + step / 2; v += step) ticks.push(Math.round(v * 1e6) / 1e6);
+  return { max: top, ticks };
+}
+function _dvTip(rows, head) {
+  // Conteúdo do tooltip: valor em destaque, nome da série em segundo plano.
+  return `<div class="dv-tip-head">${esc(head)}</div>` + rows.map(r =>
+    `<div class="dv-tip-row"><span class="dv-tip-key" style="background:${r.color}"></span><b>${esc(r.value)}</b><span>${esc(r.name)}</span></div>`).join('');
+}
+
+/* Barras: horizontais quando há muitas categorias ou rótulos longos. Cada
+   barra (ou grupo) é alvo de hover e de clique (filtra o painel). */
+function _dvBar(w, recs, head, subParts) {
+  if (!w.groupBy) return head('') + '<div class="dv-empty dv-empty--sm"><span>Escolha como dividir as barras.</span></div>';
+  const { cats, groups, isTime } = _dvCategories(w, recs);
+  const series = _dvSeries(w, recs);
+  const vals = cats.map(c => series.map(s => dvMetricValue(s.metric, s.filter ? groups.get(c).filter(s.filter) : groups.get(c))));
+  const flat = vals.flat().filter(v => v != null);
+  const axis = _dvAxis(Math.max(0, ...flat), flat.every(Number.isInteger));
+  const max = axis.max;
+  const labels = cats.map(c => dvValueLabel(w.groupBy, c));
+  const horizontal = w.orientation === 'horizontal' || (w.orientation !== 'vertical' && !isTime && (cats.length > 6 || labels.some(l => l.length > 14)));
+  const clickable = !isTime && w.groupBy !== 'month' && w.groupBy !== 'week';
+  const selected = new Set(_dvView.dims[w.groupBy] || []);
+  const one = series.length === 1;
+  const barColor = (s, c) => (one && !w.seriesBy ? (c === DV_OTHER ? 'var(--viz-other)' : 'var(--viz-1)') : s.color);
+  const tipFor = (ci) => esc(_dvTip(series.map((s, si) => ({ color: barColor(s, cats[ci]), value: dvFmt(vals[ci][si]), name: s.name })), labels[ci]));
+  // Título automático já diz "por X"; só título próprio ganha o contexto embaixo.
+  if (w.title) subParts.push('por ' + esc((dvDim(w.groupBy)?.label || '').toLowerCase()));
+  if (w.seriesBy) subParts.push((w.title ? 'e ' : 'por ') + esc((dvDim(w.seriesBy)?.label || '').toLowerCase()));
+  let body;
+  if (horizontal) {
+    body = `<div class="dv-hbars">${cats.map((c, ci) => {
+      const canClick = clickable && c !== DV_OTHER;
+      return `<div class="dv-hbar-row ${canClick ? 'is-clickable' : ''} ${selected.has(c) ? 'is-selected' : ''}" data-tip="${tipFor(ci)}"
+        ${canClick ? `onclick="dvToggleDimValue('${esc(w.groupBy)}', ${esc(JSON.stringify(c))})" role="button" tabindex="0" onkeydown="if(event.key==='Enter')this.click()"` : ''}>
+        <span class="dv-hbar-label" title="${esc(labels[ci])}">${esc(labels[ci])}</span>
+        <span class="dv-hbar-bars">${series.map((s, si) => {
+          const v = vals[ci][si];
+          const pct = v == null ? 0 : Math.max(0, (v / max) * 100);
+          return `<span class="dv-hbar-line"><span class="dv-hbar" style="width:${pct.toFixed(2)}%;background:${barColor(s, c)}"></span><span class="dv-hbar-val">${dvFmt(v, true)}</span></span>`;
+        }).join('')}</span>
+      </div>`;
+    }).join('')}</div>`;
+  } else {
+    const ticks = axis.ticks;
+    body = `<div class="dv-vbars">
+      <div class="dv-vbars-grid">${ticks.map(tk => `<div class="dv-vbars-tick" style="bottom:${(tk / max) * 100}%"><span>${dvFmt(tk, true)}</span></div>`).join('')}</div>
+      <div class="dv-vbars-cols">${cats.map((c, ci) => {
+        const canClick = clickable && c !== DV_OTHER;
+        return `<div class="dv-vcol ${canClick ? 'is-clickable' : ''} ${selected.has(c) ? 'is-selected' : ''}" data-tip="${tipFor(ci)}"
+          ${canClick ? `onclick="dvToggleDimValue('${esc(w.groupBy)}', ${esc(JSON.stringify(c))})" role="button" tabindex="0" onkeydown="if(event.key==='Enter')this.click()"` : ''}>
+          <div class="dv-vcol-bars">${series.map((s, si) => {
+            const v = vals[ci][si];
+            const pct = v == null ? 0 : Math.max(0, (v / max) * 100);
+            return `<span class="dv-vbar" style="height:${pct.toFixed(2)}%;background:${barColor(s, c)}">${cats.length <= 12 && series.length <= 2 ? `<span class="dv-vbar-val">${dvFmt(v, true)}</span>` : ''}</span>`;
+          }).join('')}</div>
+          <div class="dv-vcol-label" title="${esc(labels[ci])}">${esc(labels[ci])}</div>
+        </div>`;
+      }).join('')}</div>
+    </div>`;
+  }
+  return `<div class="dv-card-head"><div class="dv-card-title">${esc(w.title || dvAutoTitle(w))}</div><div class="dv-card-sub">${subParts.filter(Boolean).join(' · ')}</div></div>
+    ${_dvLegend(series.map((s, i) => ({ ...s, color: barColor(s, cats[0]) })))}${body}`;
+}
+
+/* Linha no tempo: baldes por dia/semana/mês (automático pelo alcance), sem
+   buracos entre o primeiro e o último. Crosshair + tooltip com todas as séries. */
+let _dvLineHovers = [];
+function _dvBucketOf(t, bucket) {
+  const d = new Date(t); d.setHours(0, 0, 0, 0);
+  if (bucket === 'week') d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  if (bucket === 'month') d.setDate(1);
+  return d.getTime();
+}
+function _dvNextBucket(t, bucket) {
+  const d = new Date(t);
+  if (bucket === 'day') d.setDate(d.getDate() + 1);
+  else if (bucket === 'week') d.setDate(d.getDate() + 7);
+  else d.setMonth(d.getMonth() + 1);
+  return d.getTime();
+}
+function _dvBucketLabel(t, bucket) {
+  const d = new Date(t);
+  if (bucket === 'month') return `${MONTHS[d.getMonth()].slice(0, 3).toLowerCase()}/${String(d.getFullYear()).slice(2)}`;
+  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+function _dvLine(w, recs, head, subParts) {
+  const df = _dvView.dateField;
+  const stamped = recs.map(rec => [rec, _dvTs(rec, df)]).filter(([, t]) => t != null);
+  if (!stamped.length) return head('') + '<div class="dv-empty dv-empty--sm"><span>As respostas filtradas não têm essa data.</span></div>';
+  const tMin = Math.min(...stamped.map(x => x[1])), tMax = Math.max(...stamped.map(x => x[1]));
+  const span = (tMax - tMin) / 864e5;
+  const bucket = w.bucket && w.bucket !== 'auto' ? w.bucket : span <= 45 ? 'day' : span <= 240 ? 'week' : 'month';
+  const keys = [];
+  for (let k = _dvBucketOf(tMin, bucket), guard = 0; k <= _dvBucketOf(tMax, bucket) && guard < 400; k = _dvNextBucket(k, bucket), guard++) keys.push(k);
+  const byBucket = new Map(keys.map(k => [k, []]));
+  for (const [rec, t] of stamped) byBucket.get(_dvBucketOf(t, bucket))?.push(rec);
+  const series = _dvSeries(w, stamped.map(x => x[0]));
+  const data = series.map(s => keys.map(k => {
+    const rs = s.filter ? byBucket.get(k).filter(s.filter) : byBucket.get(k);
+    const v = dvMetricValue(s.metric, rs);
+    return v == null ? 0 : v;
+  }));
+  const axis = _dvAxis(Math.max(0, ...data.flat()), data.flat().every(Number.isInteger));
+  const max = axis.max;
+  const W = 1000, H = 300;
+  const x = i => keys.length === 1 ? W / 2 : (i / (keys.length - 1)) * W;
+  const y = v => H - (v / max) * H;
+  const paths = series.map((s, si) => {
+    const pts = data[si].map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`);
+    const area = series.length === 1 ? `<path d="M${pts.join(' L')} L${x(keys.length - 1).toFixed(1)},${H} L${x(0).toFixed(1)},${H} Z" fill="${s.color}" fill-opacity="0.1"/>` : '';
+    return `${area}<path d="M${pts.join(' L')}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`;
+  }).join('');
+  const ticks = axis.ticks;
+  const step = Math.max(1, Math.ceil(keys.length / 7));
+  const xl = keys.map((k, i) => (i % step === 0 || i === keys.length - 1) && !(i !== keys.length - 1 && keys.length - 1 - i < step / 2)
+    ? `<span class="dv-line-x" style="left:${(x(i) / W) * 100}%">${esc(_dvBucketLabel(k, bucket))}</span>` : '').join('');
+  // Ponto final de cada série (≥8px, anel na cor da superfície).
+  const ends = series.map((s, si) => `<span class="dv-line-dot" style="left:${(x(keys.length - 1) / W) * 100}%;top:${(y(data[si][keys.length - 1]) / H) * 100}%;background:${s.color}"></span>`).join('');
+  const id = 'dvl' + Math.random().toString(36).slice(2, 8);
+  _dvLineHovers.push({ id, keys: keys.map(k => _dvBucketLabel(k, bucket) + (bucket === 'week' ? ' (semana)' : '')), series, data, xPct: keys.map((k, i) => (x(i) / W) * 100), yPct: data.map(row => row.map(v => (y(v) / H) * 100)) });
+  const bucketName = { day: 'por dia', week: 'por semana', month: 'por mês' }[bucket];
+  subParts.push(bucketName);
+  if (w.seriesBy) subParts.push('por ' + esc((dvDim(w.seriesBy)?.label || '').toLowerCase()));
+  return `<div class="dv-card-head"><div class="dv-card-title">${esc(w.title || dvAutoTitle(w))}</div><div class="dv-card-sub">${subParts.filter(Boolean).join(' · ')}</div></div>
+    ${_dvLegend(series)}
+    <div class="dv-line" id="${id}">
+      <div class="dv-line-y">${ticks.map(tk => `<span style="bottom:${(tk / max) * 100}%">${dvFmt(tk, true)}</span>`).join('')}</div>
+      <div class="dv-line-plot">
+        <div class="dv-line-grid">${ticks.map(tk => `<span style="bottom:${(tk / max) * 100}%"></span>`).join('')}</div>
+        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${paths}</svg>
+        ${ends}
+        <span class="dv-line-cross"></span>
+        <div class="dv-line-marks"></div>
+        <div class="dv-line-x-axis">${xl}</div>
+      </div>
+    </div>`;
+}
+function _dvBindLineHovers(root) {
+  for (const h of _dvLineHovers) {
+    const host = root.querySelector('#' + h.id + ' .dv-line-plot');
+    if (!host) continue;
+    const cross = host.querySelector('.dv-line-cross');
+    const marks = host.querySelector('.dv-line-marks');
+    const move = e => {
+      const r = host.getBoundingClientRect();
+      const px = ((e.clientX - r.left) / r.width) * 100;
+      let i = 0, best = Infinity;
+      h.xPct.forEach((xp, j) => { const dd = Math.abs(xp - px); if (dd < best) { best = dd; i = j; } });
+      cross.style.left = h.xPct[i] + '%';
+      cross.classList.add('is-on');
+      marks.innerHTML = h.series.map((s, si) => `<span class="dv-line-dot" style="left:${h.xPct[i]}%;top:${h.yPct[si][i]}%;background:${s.color}"></span>`).join('');
+      _dvShowTip(e, _dvTip(h.series.map((s, si) => ({ color: s.color, value: dvFmt(h.data[si][i]), name: s.name })), h.keys[i]));
+    };
+    const leave = () => { cross.classList.remove('is-on'); marks.innerHTML = ''; _dvHideTip(); };
+    host.addEventListener('pointermove', move);
+    host.addEventListener('pointerleave', leave);
+  }
+}
+
+/* Tabela: linhas = groupBy; colunas = métricas ou valores de seriesBy (1ª
+   métrica). Total no rodapé. No cruzamento, fundo em um tom da cor da marca
+   proporcional ao valor. Clicar na linha filtra o painel. */
+function _dvTable(w, recs, head, subParts) {
+  if (!w.groupBy) return head('') + '<div class="dv-empty dv-empty--sm"><span>Escolha o que vira linha da tabela.</span></div>';
+  const { cats, groups, isTime } = _dvCategories(w, recs);
+  const series = _dvSeries(w, recs);
+  const pivot = !!w.seriesBy;
+  const cell = (rs, s) => dvMetricValue(s.metric, s.filter ? rs.filter(s.filter) : rs);
+  const rows = cats.map(c => ({ c, vals: series.map(s => cell(groups.get(c), s)), total: pivot ? dvMetricValue(series[0].metric, groups.get(c)) : null }));
+  const max = pivot ? Math.max(0, ...rows.flatMap(r => r.vals).filter(v => v != null)) : 0;
+  const clickable = !isTime;
+  const selected = new Set(_dvView.dims[w.groupBy] || []);
+  const heat = v => (pivot && v && max ? `style="background:color-mix(in oklab, var(--viz-1) ${Math.round(6 + (v / max) * 30)}%, transparent)"` : '');
+  const totals = series.map(s => cell(recs, s));
+  if (w.title) subParts.push('por ' + esc((dvDim(w.groupBy)?.label || '').toLowerCase()));
+  if (pivot && w.title) subParts.push('e ' + esc((dvDim(w.seriesBy)?.label || '').toLowerCase()));
+  return `<div class="dv-card-head"><div class="dv-card-title">${esc(w.title || dvAutoTitle(w))}</div><div class="dv-card-sub">${subParts.filter(Boolean).join(' · ')}</div></div>
+    <div class="dv-table-wrap"><table class="dv-table">
+      <thead><tr><th>${esc(dvDim(w.groupBy)?.label || '')}</th>${series.map(s => `<th class="num">${pivot ? `<span class="dv-th-key" style="background:${s.color}"></span>` : ''}${esc(s.name)}</th>`).join('')}${pivot ? '<th class="num">Total</th>' : ''}</tr></thead>
+      <tbody>${rows.map(r => {
+        const canClick = clickable && r.c !== DV_OTHER;
+        return `<tr class="${canClick ? 'is-clickable' : ''} ${selected.has(r.c) ? 'is-selected' : ''}" ${canClick ? `onclick="dvToggleDimValue('${esc(w.groupBy)}', ${esc(JSON.stringify(r.c))})"` : ''}>
+          <td class="dv-td-label">${esc(dvValueLabel(w.groupBy, r.c))}</td>
+          ${r.vals.map(v => `<td class="num" ${heat(v)}>${dvFmt(v)}</td>`).join('')}
+          ${pivot ? `<td class="num dv-td-total">${dvFmt(r.total)}</td>` : ''}
+        </tr>`;
+      }).join('')}</tbody>
+      <tfoot><tr><td>Total</td>${totals.map(v => `<td class="num">${dvFmt(v)}</td>`).join('')}${pivot ? `<td class="num">${dvFmt(dvMetricValue(series[0].metric, recs))}</td>` : ''}</tr></tfoot>
+    </table></div>`;
+}
+
+/* Tooltip único dos gráficos: segue o ponteiro; barras usam data-tip. */
+let _dvTipEl = null;
+function _dvShowTip(e, html) {
+  if (!_dvTipEl) { _dvTipEl = document.createElement('div'); _dvTipEl.className = 'dv-tip'; document.body.appendChild(_dvTipEl); }
+  _dvTipEl.innerHTML = html;
+  _dvTipEl.classList.add('is-on');
+  const w = _dvTipEl.offsetWidth, h = _dvTipEl.offsetHeight;
+  let left = e.clientX + 14, top = e.clientY - h - 12;
+  if (left + w > window.innerWidth - 8) left = e.clientX - w - 14;
+  if (top < 8) top = e.clientY + 16;
+  _dvTipEl.style.left = left + 'px';
+  _dvTipEl.style.top = top + 'px';
+}
+function _dvHideTip() { _dvTipEl?.classList.remove('is-on'); }
+document.addEventListener('pointermove', e => {
+  const t = e.target.closest?.('[data-tip]');
+  if (t && t.closest('.dv-card, .dv-ed-preview')) _dvShowTip(e, t.dataset.tip);
+  else if (_dvTipEl?.classList.contains('is-on') && !e.target.closest?.('.dv-line-plot')) _dvHideTip();
+}, { passive: true });
+
+/* ── Registros (tabela de respostas abaixo dos widgets) ─────────────── */
 const _dashRecordsOpen = new Set();
 function _renderDashRecords(d) {
   const host = document.getElementById('dashboards-view-records');
   if (!host) return;
   if (_dashEditMode || !d) { host.style.display = 'none'; host.innerHTML = ''; return; }
+  const templates = _dvTemplatesOf(d);
+  if (!templates.length) { host.style.display = 'none'; return; }
   host.style.display = '';
-  const templatesUsed = _templatesUsedIn(d);
-  const templateIds = new Set(templatesUsed.map(t => t.id));
-  // Se dashboard não usa nenhum template, mostra tudo (comportamento defensivo).
-  const base = (formResponses || []).filter(r => templateIds.size === 0 || templateIds.has(r.templateId));
-  // Aplica os filtros globais (período/squad/cliente/projeto/usuário/campo)
-  // sem escopar por template — usa null pra pular fieldFilters (que dependem de template).
-  // Nota: field filters ainda são aplicados por-linha via _applyDashFilters(list, templateId)
-  // pra respeitar os filtros de campo específicos do template dessa resposta.
-  const filtered = base.filter(r => _applyDashFilters([r], r.templateId).length > 0);
-  filtered.sort((a, b) => (b.submittedAt || '').localeCompare(a.submittedAt || ''));
+  const groups = templates.map(t => ({ t, rows: dvRecords(d, t.id).sort((a, b) => (b.r.submittedAt || '').localeCompare(a.r.submittedAt || '')) }));
+  const total = groups.reduce((a, g) => a + g.rows.length, 0);
   const isOpen = _dashRecordsOpen.has(d.id);
   host.className = 'dw-records-panel' + (isOpen ? ' is-open' : '');
-  // Agrupa por template — cada template tem seu próprio esqueleto de campos,
-  // então cada um vira uma tabela onde cada campo é uma coluna. Se o dashboard
-  // usa só um template, não mostra subtítulo (fica uma tabela única, limpa).
-  const groups = new Map();
-  for (const r of filtered) {
-    const key = r.templateId || '__none__';
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(r);
-  }
-  const bodyInner = filtered.length
-    ? Array.from(groups.entries()).map(([tid, rows]) => {
-        const t = formTemplateById(tid);
-        const fields = (t?.fields || []);
-        const showHeader = groups.size > 1;
-        const fieldHeaders = fields.map(f => `<th class="rec-field-col">${esc(f.label)}</th>`).join('');
-        const trs = rows.map(r => {
-          const u = userById(r.submittedBy);
-          const dm = r.demandId ? demandById(r.demandId) : null;
-          const demandLink = dm
-            ? `<a href="${esc(demandPath(dm.id))}" onclick="event.preventDefault();showDetail('${dm.id}')">${esc(dm.name || dm.id.slice(0,6))}</a>`
-            : '<span style="color:var(--text-muted)">—</span>';
-          const fieldTds = fields.map(f => {
-            const v = r.values?.[f.id];
-            if (v === null || v === undefined || v === '' || (Array.isArray(v) && !v.length)) {
-              return '<td class="rec-field-cell rec-field-empty">—</td>';
-            }
-            let display;
-            if (f.type === 'select') {
-              display = (f.options || []).find(o => o.value === v)?.label || v;
-            } else if (f.type === 'multiselect') {
-              const arr = Array.isArray(v) ? v : [v];
-              display = arr.map(val => (f.options || []).find(o => o.value === val)?.label || val).join(', ');
-            } else {
-              display = String(v);
-            }
-            return `<td class="rec-field-cell">${esc(display)}</td>`;
-          }).join('');
-          return `<tr>
-            <td class="rec-date">${_fmtRecordDate(r.submittedAt)}</td>
-            <td><span class="rec-user">${avatarHTML(u, 'avatar avatar-xs')} ${esc(u?.name || '—')}</span></td>
-            <td class="rec-demand">${demandLink}</td>
-            ${fieldTds}
-          </tr>`;
-        }).join('');
-        const header = showHeader
-          ? `<div class="dw-records-group-title">${esc(t?.name || 'Formulário excluído')} <span class="dw-records-group-count">${rows.length}</span></div>`
-          : '';
-        return `${header}<div class="dw-records-table-wrap"><table class="dw-records-table">
-          <thead><tr>
-            <th style="width:140px">Data</th>
-            <th>Preenchido por</th>
-            <th>Demanda</th>
-            ${fieldHeaders}
-          </tr></thead>
-          <tbody>${trs}</tbody>
-        </table></div>`;
-      }).join('')
-    : '<div class="dw-records-empty">Nenhum registro correspondente aos filtros ativos.</div>';
-  host.innerHTML = `
-    <div class="dw-records-header" onclick="_toggleDashRecords('${d.id}')">
-      <i data-lucide="table" class="ic-sm" style="color:var(--text-muted)"></i>
-      <span class="dw-records-title">Registros preenchidos</span>
-      <span class="dw-records-count">${filtered.length}</span>
-      <i data-lucide="chevron-down" class="ic-sm dw-records-toggle"></i>
-    </div>
-    <div class="dw-records-body">${bodyInner}</div>
-  `;
+  const fmtVal = (f, v) => {
+    if (v === null || v === undefined || v === '' || (Array.isArray(v) && !v.length)) return '<span class="dv-muted">—</span>';
+    if (f.type === 'select') return esc((f.options || []).find(o => String(o.value) === String(v))?.label || v);
+    if (f.type === 'multiselect') return esc((Array.isArray(v) ? v : [v]).map(x => (f.options || []).find(o => String(o.value) === String(x))?.label || x).join(', '));
+    return esc(String(v));
+  };
+  const tables = groups.filter(g => g.rows.length).map(({ t, rows }) => `
+    ${templates.length > 1 ? `<div class="dw-records-group-title">${esc(t.name)} <span class="dw-records-group-count">${rows.length}</span></div>` : ''}
+    <div class="dw-records-table-wrap"><table class="dw-records-table">
+      <thead><tr><th>Preenchido em</th><th>Por</th><th>Demanda</th>${(t.fields || []).map(f => `<th>${esc(f.label)}</th>`).join('')}</tr></thead>
+      <tbody>${rows.slice(0, 500).map(({ r, d: dm }) => {
+        const u = userById(r.submittedBy);
+        return `<tr><td class="rec-date">${_fmtRecordDate(r.submittedAt)}</td>
+          <td><span class="rec-user">${avatarHTML(u, 'avatar avatar-xs')} ${esc(u?.name || '—')}</span></td>
+          <td class="rec-demand">${dm ? `<a href="${esc(demandPath(dm.id))}" onclick="event.preventDefault();showDetail('${dm.id}')">${esc(dm.name)}</a>` : '<span class="dv-muted">—</span>'}</td>
+          ${(t.fields || []).map(f => `<td>${fmtVal(f, r.values?.[f.id])}</td>`).join('')}</tr>`;
+      }).join('')}</tbody>
+    </table></div>`).join('');
+  host.innerHTML = `<button type="button" class="dw-records-head" onclick="_toggleDashRecords('${d.id}')" aria-expanded="${isOpen}">
+      <i data-lucide="table" class="ic-sm"></i><span>Respostas</span><span class="dw-records-count">${total}</span>
+      <i data-lucide="chevron-down" class="ic-sm dw-records-caret"></i>
+    </button>
+    ${isOpen ? `<div class="dw-records-body">${total ? tables : '<div class="dv-empty dv-empty--sm"><span>Nenhuma resposta com os filtros atuais.</span></div>'}</div>` : ''}`;
+  paintIcons(host);
 }
 function _fmtRecordDate(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
   if (isNaN(d)) return '—';
-  const dd = String(d.getDate()).padStart(2, '0');
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const yyyy = d.getFullYear();
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mi = String(d.getMinutes()).padStart(2, '0');
-  return `${dd}/${mm}/${yyyy} ${hh}:${mi}`;
+  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 function _toggleDashRecords(dashId) {
-  if (_dashRecordsOpen.has(dashId)) _dashRecordsOpen.delete(dashId);
-  else _dashRecordsOpen.add(dashId);
+  if (_dashRecordsOpen.has(dashId)) _dashRecordsOpen.delete(dashId); else _dashRecordsOpen.add(dashId);
   const d = dashboardById(dashId);
   if (d) _renderDashRecords(d);
-  if (window.lucide?.createIcons) lucide.createIcons();
-}
-/* ── FILTROS do view mode ──
-   Estado local (não persiste no dashboard salvo — mas presets vão pra localStorage
-   por usuário/dashboard). Reseta ao entrar/sair da view. Aplica:
-   - período (submittedAt)
-   - workspaceId (squad)
-   - clientId + projectId (via demand → project → client)
-   - submittedBy (autor)
-   - fieldFilters: { [templateId]: { [fieldId]: [valuesAllowed] } } */
-function _emptyDashFilters() {
-  return {
-    period: 'all', dateFrom: '', dateTo: '',
-    workspaceId: '', clientId: '', projectId: '', submittedBy: '',
-    fieldFilters: {}
-  };
-}
-let _dashFilters = _emptyDashFilters();
-/* Drill-down: filtros dinâmicos aplicados ao clicar em segmentos dos widgets.
-   Map<dimKey, valueLabel>. Aplicado por cima dos filtros globais e afeta TODOS
-   os widgets do dashboard. Clicar duas vezes no mesmo valor remove o drill. */
-let _dashDrillDown = new Map();
-function _resetDashFilters() { _dashFilters = _emptyDashFilters(); _dashDrillDown.clear(); }
-function _dashDrillLabel(dimKey) {
-  const map = {
-    clientName: 'Cliente', projectName: 'Projeto', workspaceName: 'Squad',
-    flowName: 'Fluxo', userName: 'Executor', demandName: 'Demanda',
-    submitterName: 'Preenchido por',
-    deadlineMonth: 'Prazo (mês)', createdMonth: 'Criada (mês)',
-    day: 'Dia', week: 'Semana', month: 'Mês'
-  };
-  if (map[dimKey]) return map[dimKey];
-  if (dimKey.startsWith('field:')) return 'Campo';
-  return dimKey;
-}
-function _dashApplyDrillDown(dim, value) {
-  if (!dim || value === undefined || value === null) return;
-  if (_dashDrillDown.get(dim) === value) _dashDrillDown.delete(dim);
-  else _dashDrillDown.set(dim, value);
-  const d = _currentDashboardId ? dashboardById(_currentDashboardId) : null;
-  if (d) _renderDashboardView(d);
-}
-function _dashClearDrillDown(dim) {
-  if (!dim) _dashDrillDown.clear();
-  else _dashDrillDown.delete(dim);
-  const d = _currentDashboardId ? dashboardById(_currentDashboardId) : null;
-  if (d) _renderDashboardView(d);
-}
-/* Pivot/heatmap: um clique numa célula aplica os dois filtros (row + col) de uma vez.
-   Se ambos já estão ativos com os mesmos valores, remove os dois (toggle). */
-function _dashPivotCellDrill(rowDim, rowVal, colDim, colVal) {
-  if (!rowDim || !colDim) return;
-  const already = _dashDrillDown.get(rowDim) === rowVal && _dashDrillDown.get(colDim) === colVal;
-  if (already) { _dashDrillDown.delete(rowDim); _dashDrillDown.delete(colDim); }
-  else { _dashDrillDown.set(rowDim, rowVal); _dashDrillDown.set(colDim, colVal); }
-  const d = _currentDashboardId ? dashboardById(_currentDashboardId) : null;
-  if (d) _renderDashboardView(d);
-}
-function _dashFilterActiveCount() {
-  let n = 0;
-  if (_dashFilters.period !== 'all') n++;
-  if (_dashFilters.workspaceId) n++;
-  if (_dashFilters.clientId)    n++;
-  if (_dashFilters.projectId)   n++;
-  if (_dashFilters.submittedBy) n++;
-  for (const tid in (_dashFilters.fieldFilters || {})) {
-    for (const fid in (_dashFilters.fieldFilters[tid] || {})) {
-      const arr = _dashFilters.fieldFilters[tid][fid];
-      if (Array.isArray(arr) && arr.length) n++;
-    }
-  }
-  n += _dashDrillDown.size;
-  return n;
-}
-function _templatesUsedIn(dashboard) {
-  const ids = new Set((dashboard?.widgets || []).map(w => w.source?.templateId).filter(Boolean));
-  return [...ids].map(id => formTemplateById(id)).filter(Boolean);
-}
-function _renderDashFilters(d) {
-  const host = document.getElementById('dashboards-view-filters');
-  if (!host) return;
-  const wss = (workspaces || []).slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-  const clientsAll = (clients || []).filter(c => !c.deletedAt);
-  const clientsForWs = clientsAll
-    .filter(c => !_dashFilters.workspaceId || c.workspaceId === _dashFilters.workspaceId)
-    .sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-  const projectsForClient = (projects || [])
-    .filter(p => !p.deletedAt)
-    .filter(p => !_dashFilters.workspaceId || p.workspaceId === _dashFilters.workspaceId)
-    .filter(p => !_dashFilters.clientId || p.clientId === _dashFilters.clientId)
-    .sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-  // Usuários que já preencheram algum formulário (evita mostrar 300 opções irrelevantes)
-  const submitterIds = new Set((formResponses || []).map(r => r.submittedBy).filter(Boolean));
-  const submitters = (users || []).filter(u => submitterIds.has(u.id)).sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-  const templatesUsed = _templatesUsedIn(d);
-  const activeCount = _dashFilterActiveCount();
-  const presets = _dashPresetsFor(d.id);
-  const periodActive = _dashFilters.period !== 'all';
-  const wsActive     = !!_dashFilters.workspaceId;
-  const clActive     = !!_dashFilters.clientId;
-  const prjActive    = !!_dashFilters.projectId;
-  const subActive    = !!_dashFilters.submittedBy;
-  const uidBase      = 'dfsel_' + d.id;
-
-  // Cada filtro é um <select> nativo (padrão do app) transformado em .filter-cdrop
-  // via applyFilterDropdown() logo após o innerHTML. O `leadingIcon` insere o
-  // ícone dentro do trigger, alinhado com o resto do app.
-  const chip = (idSuffix, active, key, disabled, selectInner) => {
-    const clearBtn = active && key ? `<button type="button" class="df-fchip-x" title="Limpar" onclick="_setDashFilter('${key}', ${key === 'period' ? '\'all\'' : '\'\''})"><i data-lucide="x" class="ic-sm"></i></button>` : '';
-    // data-no-cdrop evita que o auto-cdrop passe primeiro com opts vazio; nosso wire()
-    // chama applyFilterDropdown manualmente com leadingIcon.
-    return `<span class="df-fchip${active ? ' is-active' : ''}${disabled ? ' is-disabled' : ''}">
-      <select id="${uidBase}_${idSuffix}" class="filter-select" data-no-cdrop ${disabled ? 'disabled' : ''}>${selectInner}</select>
-      ${clearBtn}
-    </span>`;
-  };
-
-  const periodOpts = `
-    <option value="all"    ${_dashFilters.period === 'all'    ? 'selected' : ''}>Período: tudo</option>
-    <option value="7d"     ${_dashFilters.period === '7d'     ? 'selected' : ''}>Últimos 7 dias</option>
-    <option value="30d"    ${_dashFilters.period === '30d'    ? 'selected' : ''}>Últimos 30 dias</option>
-    <option value="90d"    ${_dashFilters.period === '90d'    ? 'selected' : ''}>Últimos 90 dias</option>
-    <option value="year"   ${_dashFilters.period === 'year'   ? 'selected' : ''}>Este ano</option>
-    <option value="custom" ${_dashFilters.period === 'custom' ? 'selected' : ''}>Personalizado</option>`;
-  const wsOpts = `<option value="">Squad</option>` +
-    wss.map(w => `<option value="${esc(w.id)}" ${_dashFilters.workspaceId === w.id ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
-  const clOpts = `<option value="">Cliente</option>` +
-    clientsForWs.map(c => `<option value="${esc(c.id)}" ${_dashFilters.clientId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
-  const prjOpts = `<option value="">Projeto</option>` +
-    projectsForClient.map(p => `<option value="${esc(p.id)}" ${_dashFilters.projectId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
-  const subOpts = `<option value="">Preenchido por</option>` +
-    submitters.map(u => `<option value="${esc(u.id)}" ${_dashFilters.submittedBy === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
-
-  host.innerHTML = `
-    <div class="df-toolbar">
-      <div class="df-preset-wrap">
-        <span class="df-fchip">
-          <select id="${uidBase}_preset" class="filter-select" data-no-cdrop><option value="">Preset…</option>${presets.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}</select>
-        </span>
-        <button class="df-icon-btn" onclick="_promptSavePreset('${d.id}')" ${activeCount ? '' : 'disabled'} title="Salvar preset atual"><i data-lucide="bookmark-plus" class="ic-sm"></i></button>
-        ${presets.length ? `<button class="df-icon-btn" onclick="_managePresets('${d.id}')" title="Gerenciar presets (${presets.length})"><i data-lucide="list" class="ic-sm"></i></button>` : ''}
-      </div>
-      <div class="df-chips">
-        ${chip('period', periodActive, 'period', false, periodOpts)}
-        ${_dashFilters.period === 'custom' ? `
-          <input type="date" class="df-date-inline" value="${_dashFilters.dateFrom}" onchange="_setDashFilter('dateFrom', this.value)" title="Início">
-          <input type="date" class="df-date-inline" value="${_dashFilters.dateTo}"   onchange="_setDashFilter('dateTo', this.value)"   title="Fim">
-        ` : ''}
-        ${chip('ws',   wsActive, 'workspaceId', wss.length === 0, wsOpts)}
-        ${chip('cl',   clActive, 'clientId',    clientsForWs.length === 0, clOpts)}
-        ${clActive ? chip('prj', prjActive, 'projectId', projectsForClient.length === 0, prjOpts) : ''}
-        ${chip('sub',  subActive, 'submittedBy', submitters.length === 0, subOpts)}
-      </div>
-      <div class="df-toolbar-right">
-        ${activeCount ? `<button class="df-clear-btn" onclick="_clearDashFilters()" title="Limpar todos os filtros"><i data-lucide="x" class="ic-sm"></i> ${activeCount}</button>` : ''}
-      </div>
-    </div>
-    ${_dashDrillDown.size ? `<div class="df-extra df-drill-row">
-      ${[..._dashDrillDown.entries()].map(([dim, val]) => `
-        <span class="df-chip df-chip-drill">${esc(_dashDrillLabel(dim))}: ${esc(val)}<button title="Remover" onclick="_dashClearDrillDown('${esc(dim)}')"><i data-lucide="x" class="ic-sm"></i></button></span>
-      `).join('')}
-    </div>` : ''}
-  `;
-  // Transforma cada <select> em .filter-cdrop (padrão do app) com ícone à esquerda.
-  const wire = (suffix, icon, onchangeKey) => {
-    const id = uidBase + '_' + suffix;
-    const sel = document.getElementById(id);
-    if (!sel) return;
-    sel.addEventListener('change', () => _setDashFilter(onchangeKey, sel.value));
-    applyFilterDropdown(id, icon ? { leadingIcon: icon } : {});
-  };
-  wire('period', 'calendar',   'period');
-  wire('ws',     'layers',     'workspaceId');
-  wire('cl',     'users',      'clientId');
-  wire('prj',    'folder',     'projectId');
-  wire('sub',    'user-check', 'submittedBy');
-  const presetSel = document.getElementById(uidBase + '_preset');
-  if (presetSel) {
-    presetSel.addEventListener('change', () => _applyDashPreset(d.id, presetSel.value));
-    applyFilterDropdown(uidBase + '_preset', { leadingIcon: 'bookmark' });
-  }
-  if (window.lucide?.createIcons) lucide.createIcons();
-}
-/* Renderiza um dropdown por template com todos os campos filtráveis (select/multi). */
-function _renderTemplateFieldFilters(template) {
-  const filterableFields = (template.fields || []).filter(f => f.type === 'select' || f.type === 'multiselect');
-  if (!filterableFields.length) return '';
-  const chips = [];
-  const activeForTemplate = _dashFilters.fieldFilters?.[template.id] || {};
-  for (const fieldId in activeForTemplate) {
-    const vals = activeForTemplate[fieldId];
-    if (!Array.isArray(vals) || !vals.length) continue;
-    const field = filterableFields.find(f => f.id === fieldId);
-    if (!field) continue;
-    for (const val of vals) {
-      const opt = (field.options || []).find(o => o.value === val);
-      chips.push(`<span class="df-chip">${esc(template.name)} · ${esc(field.label)} = ${esc(opt?.label || val)}<button onclick="_toggleFieldFilter('${template.id}', '${field.id}', '${esc(val)}', false)"><i data-lucide="x" class="ic-xs"></i></button></span>`);
-    }
-  }
-  return `
-    <div class="df-field-group">
-      <span class="df-field-tmpl">${esc(template.name)}</span>
-      <select class="filter-select" onchange="_openFieldValuesPicker('${template.id}', this.value); this.value=''">
-        <option value="">+ Filtrar campo…</option>
-        ${filterableFields.map(f => `<option value="${esc(f.id)}">${esc(f.label)} (${f.type === 'multiselect' ? 'multi' : 'select'})</option>`).join('')}
-      </select>
-      ${chips.join('')}
-    </div>
-  `;
-}
-/* Popover simples pra escolher valores do campo. */
-function _openFieldValuesPicker(templateId, fieldId) {
-  if (!fieldId) return;
-  const t = formTemplateById(templateId);
-  const field = t?.fields?.find(f => f.id === fieldId);
-  if (!field?.options?.length) { toast('Este campo não tem opções', 'warn'); return; }
-  const current = new Set(_dashFilters.fieldFilters?.[templateId]?.[fieldId] || []);
-  const html = field.options.map(o => `
-    <label class="ff-multi-item">
-      <input type="checkbox" value="${esc(o.value)}" ${current.has(o.value) ? 'checked' : ''}>
-      ${esc(o.label)}
-    </label>
-  `).join('');
-  showConfirm({
-    title: `Filtrar por ${field.label}`,
-    message: `<div class="ff-multi-list" id="_df-picker-list">${html}</div>`,
-    okLabel: 'Aplicar',
-    danger: false
-  }).then(ok => {
-    if (!ok) return;
-    const picked = Array.from(document.querySelectorAll('#_df-picker-list input:checked')).map(el => el.value);
-    _dashFilters.fieldFilters = _dashFilters.fieldFilters || {};
-    _dashFilters.fieldFilters[templateId] = _dashFilters.fieldFilters[templateId] || {};
-    if (picked.length) _dashFilters.fieldFilters[templateId][fieldId] = picked;
-    else delete _dashFilters.fieldFilters[templateId][fieldId];
-    const d = _currentDashboardId ? dashboardById(_currentDashboardId) : null;
-    if (d) _renderDashboardView(d);
-  });
-}
-function _toggleFieldFilter(templateId, fieldId, val, on) {
-  _dashFilters.fieldFilters = _dashFilters.fieldFilters || {};
-  const tf = _dashFilters.fieldFilters[templateId] = _dashFilters.fieldFilters[templateId] || {};
-  const cur = new Set(tf[fieldId] || []);
-  if (on) cur.add(val); else cur.delete(val);
-  if (cur.size) tf[fieldId] = [...cur]; else delete tf[fieldId];
-  const d = _currentDashboardId ? dashboardById(_currentDashboardId) : null;
-  if (d) _renderDashboardView(d);
-}
-function _setDashFilter(key, val) {
-  _dashFilters[key] = val;
-  // Cascatas: trocar squad reseta cliente e projeto; trocar cliente reseta projeto.
-  if (key === 'workspaceId') { _dashFilters.clientId = ''; _dashFilters.projectId = ''; }
-  if (key === 'clientId')    { _dashFilters.projectId = ''; }
-  const d = _currentDashboardId ? dashboardById(_currentDashboardId) : null;
-  if (d) _renderDashboardView(d);
-}
-function _clearDashFilters() {
-  _resetDashFilters();
-  const d = _currentDashboardId ? dashboardById(_currentDashboardId) : null;
-  if (d) _renderDashboardView(d);
-}
-/* Aplica os filtros globais na lista de respostas. Chamado dentro de renderWidget.
-   fieldFilters são scoped por template — o filter só considera se o templateId
-   da resposta bater com a chave. */
-function _applyDashFilters(responses, templateId) {
-  if (!responses.length) return responses;
-  let cutoffMs = null;
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  if (_dashFilters.period === '7d')   cutoffMs = today.getTime() - 6 * 86400000;
-  if (_dashFilters.period === '30d')  cutoffMs = today.getTime() - 29 * 86400000;
-  if (_dashFilters.period === '90d')  cutoffMs = today.getTime() - 89 * 86400000;
-  if (_dashFilters.period === 'year') cutoffMs = new Date(today.getFullYear(), 0, 1).getTime();
-  const customFrom = _dashFilters.period === 'custom' && _dashFilters.dateFrom ? new Date(_dashFilters.dateFrom + 'T00:00:00').getTime() : null;
-  const customTo   = _dashFilters.period === 'custom' && _dashFilters.dateTo   ? new Date(_dashFilters.dateTo   + 'T23:59:59').getTime() : null;
-  const wantWs      = _dashFilters.workspaceId || null;
-  const wantClient  = _dashFilters.clientId    || null;
-  const wantProject = _dashFilters.projectId   || null;
-  const wantUser    = _dashFilters.submittedBy || null;
-  const needsDemand = !!(wantClient || wantProject);
-  const fieldFilter = templateId ? (_dashFilters.fieldFilters?.[templateId] || null) : null;
-  return responses.filter(r => {
-    const ts = new Date(r.submittedAt).getTime();
-    if (isNaN(ts)) return false;
-    if (cutoffMs !== null && ts < cutoffMs) return false;
-    if (customFrom !== null && ts < customFrom) return false;
-    if (customTo   !== null && ts > customTo)   return false;
-    if (wantWs   && r.workspaceId !== wantWs) return false;
-    if (wantUser && r.submittedBy !== wantUser) return false;
-    if (needsDemand) {
-      const d = r.demandId ? demandById(r.demandId) : null;
-      if (!d) return false;
-      if (wantProject && d.projectId !== wantProject) return false;
-      if (wantClient) {
-        const proj = d.projectId ? projectById(d.projectId) : null;
-        if (!proj || proj.clientId !== wantClient) return false;
-      }
-    }
-    if (fieldFilter) {
-      for (const fieldId in fieldFilter) {
-        const allowed = fieldFilter[fieldId];
-        if (!Array.isArray(allowed) || !allowed.length) continue;
-        const v = r.values?.[fieldId];
-        if (Array.isArray(v)) {
-          // multiselect: passa se qualquer valor da resposta bate com allowed
-          if (!v.some(x => allowed.includes(x))) return false;
-        } else {
-          if (!allowed.includes(v)) return false;
-        }
-      }
-    }
-    if (_dashDrillDown.size) {
-      const enriched = _wgtEnrich(r, 'form');
-      const wFake = { source: { kind: 'form', templateId } };
-      for (const [dim, val] of _dashDrillDown) {
-        if (_dimResolve(enriched, dim, wFake) !== val) return false;
-      }
-    }
-    return true;
-  });
 }
 
-/* ─── CROSS-DATA ENGINE ───
-   Abstração pra permitir widgets sobre 3 fontes:
-     - 'form'   → respostas de um formulário (compat original)
-     - 'demand' → uma linha por demanda
-     - 'time'   → uma linha por apontamento de horas
-   Cada registro é enriquecido com __demand/__project/__client pra que qualquer
-   dimensão possa ser resolvida uniformemente. */
-const DEMAND_DIMS = [
-  { key: 'clientName',    label: 'Cliente' },
-  { key: 'projectName',   label: 'Projeto' },
-  { key: 'workspaceName', label: 'Squad' },
-  { key: 'flowName',      label: 'Fluxo' },
-  { key: 'deadlineMonth', label: 'Prazo (mês)' },
-  { key: 'createdMonth',  label: 'Criada (mês)' }
-];
-const DEMAND_METRICS = [
-  { key: 'count',          label: 'Contagem de demandas', supports: ['sum'] },
-  { key: 'estimatedHours', label: 'Horas estimadas',      supports: ['sum','avg'] },
-  { key: 'realHours',      label: 'Horas realizadas',     supports: ['sum','avg'] }
-];
-const TIME_DIMS = [
-  { key: 'userName',      label: 'Executor' },
-  { key: 'clientName',    label: 'Cliente' },
-  { key: 'projectName',   label: 'Projeto' },
-  { key: 'workspaceName', label: 'Squad' },
-  { key: 'flowName',      label: 'Fluxo' },
-  { key: 'demandName',    label: 'Demanda' },
-  { key: 'day',           label: 'Dia' },
-  { key: 'week',          label: 'Semana' },
-  { key: 'month',         label: 'Mês' }
-];
-const TIME_METRICS = [
-  { key: 'count', label: 'Contagem de apontamentos', supports: ['sum'] },
-  { key: 'hours', label: 'Horas apontadas',          supports: ['sum','avg'] }
-];
-
-function _wgtKind(w) { return (w && w.source && w.source.kind) || 'form'; }
-
-function _wgtBaseRecords(w) {
-  const kind = _wgtKind(w);
-  if (kind === 'form') {
-    const tid = w.source?.templateId;
-    return (formResponses || []).filter(r => tid ? r.templateId === tid : true);
-  }
-  if (kind === 'demand') {
-    return (demands || []).filter(d => !d.deletedAt);
-  }
-  if (kind === 'time') {
-    const out = [];
-    for (const d of (demands || [])) {
-      if (d.deletedAt) continue;
-      for (const t of (d.timeEntries || [])) {
-        out.push(Object.assign({}, t, { demandId: d.id, demandName: d.name, workspaceId: d.workspaceId }));
-      }
-    }
-    return out;
-  }
-  return [];
-}
-
-function _wgtEnrich(r, kind) {
-  const d = kind === 'demand' ? r : (r.demandId ? demandById(r.demandId) : null);
-  const p = d?.projectId ? projectById(d.projectId) : null;
-  const c = p?.clientId ? clientById(p.clientId) : null;
-  return Object.assign({}, r, { __kind: kind, __demand: d, __project: p, __client: c });
-}
-
-function _wgtRecords(w) {
-  const kind = _wgtKind(w);
-  const enriched = _wgtBaseRecords(w).map(r => _wgtEnrich(r, kind));
-  return _wgtApplyFilters(enriched, w);
-}
-
-/* Timestamp de um registro conforme sua natureza — usa submittedAt (form) ou
-   createdAt (demand/time). Fallback pra 0 se ausente. */
-function _wgtRecordTs(r) {
-  const kind = r.__kind || 'form';
-  if (kind === 'form')   return new Date(r.submittedAt || 0).getTime();
-  if (kind === 'demand') return new Date(r.createdAt || 0).getTime();
-  if (kind === 'time')   return new Date(r.createdAt || 0).getTime();
-  return 0;
-}
-
-/* Aplica os filtros globais em records enriched. Reusa a mesma lógica de
-   _applyDashFilters, mas trabalha sobre records genéricos (form/demand/time). */
-function _wgtApplyFilters(records, w) {
-  if (!records.length) return records;
-  const kind = _wgtKind(w);
-  const templateId = kind === 'form' ? (w.source?.templateId || null) : null;
-  let cutoffMs = null;
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  if (_dashFilters.period === '7d')   cutoffMs = today.getTime() - 6 * 86400000;
-  if (_dashFilters.period === '30d')  cutoffMs = today.getTime() - 29 * 86400000;
-  if (_dashFilters.period === '90d')  cutoffMs = today.getTime() - 89 * 86400000;
-  if (_dashFilters.period === 'year') cutoffMs = new Date(today.getFullYear(), 0, 1).getTime();
-  const customFrom = _dashFilters.period === 'custom' && _dashFilters.dateFrom ? new Date(_dashFilters.dateFrom + 'T00:00:00').getTime() : null;
-  const customTo   = _dashFilters.period === 'custom' && _dashFilters.dateTo   ? new Date(_dashFilters.dateTo   + 'T23:59:59').getTime() : null;
-  const wantWs      = _dashFilters.workspaceId || null;
-  const wantClient  = _dashFilters.clientId    || null;
-  const wantProject = _dashFilters.projectId   || null;
-  const wantUser    = _dashFilters.submittedBy || null;
-  const fieldFilter = templateId ? (_dashFilters.fieldFilters?.[templateId] || null) : null;
-  return records.filter(r => {
-    const ts = _wgtRecordTs(r);
-    if (cutoffMs !== null && ts < cutoffMs) return false;
-    if (customFrom !== null && ts < customFrom) return false;
-    if (customTo   !== null && ts > customTo)   return false;
-    const d = r.__demand;
-    const wsId = kind === 'form' ? r.workspaceId : d?.workspaceId;
-    if (wantWs && wsId !== wantWs) return false;
-    if (wantUser) {
-      if (kind === 'form'   && r.submittedBy !== wantUser) return false;
-      if (kind === 'time'   && r.userId      !== wantUser) return false;
-      if (kind === 'demand' && d?.ownerId    !== wantUser) return false;
-    }
-    if (wantClient && r.__client?.id !== wantClient) return false;
-    if (wantProject && r.__project?.id !== wantProject) return false;
-    if (fieldFilter && kind === 'form') {
-      for (const fieldId in fieldFilter) {
-        const allowed = fieldFilter[fieldId];
-        if (!Array.isArray(allowed) || !allowed.length) continue;
-        const v = r.values?.[fieldId];
-        if (Array.isArray(v)) {
-          if (!v.some(x => allowed.includes(x))) return false;
-        } else {
-          if (!allowed.includes(v)) return false;
-        }
-      }
-    }
-    if (_dashDrillDown.size) {
-      for (const [dim, val] of _dashDrillDown) {
-        if (_dimResolve(r, dim, w) !== val) return false;
-      }
-    }
-    return true;
-  });
-}
-
-/* Resolve o valor de uma dimensão pra um registro. Retorna string (rótulo).
-   `dim` pode ser um dos DEMAND_DIMS/TIME_DIMS ou "field:<fieldId>" (form). */
-function _dimResolve(r, dim, w) {
-  const kind = r.__kind || _wgtKind(w);
-  const d = r.__demand;
-  if (dim === 'clientName')    return r.__client?.name || '— sem cliente —';
-  if (dim === 'projectName')   return r.__project?.name || '— sem projeto —';
-  if (dim === 'workspaceName') {
-    const wsId = kind === 'form' ? r.workspaceId : d?.workspaceId;
-    return wsById(wsId)?.name || '—';
-  }
-  if (dim === 'flowName')      return flowById(d?.flowId)?.name || '—';
-  if (dim === 'userName')      return userById(r.userId || r.submittedBy)?.name || '—';
-  if (dim === 'submitterName') return userById(r.submittedBy)?.name || '—';
-  if (dim === 'demandName')    return d?.name || r.demandName || '—';
-  if (dim === 'deadlineMonth') return (d?.deadline || '').slice(0, 7) || '— sem prazo —';
-  if (dim === 'createdMonth')  return (d?.createdAt || '').slice(0, 7) || '—';
-  if (dim === 'day')   return (r.createdAt || '').slice(0, 10) || '—';
-  if (dim === 'week') {
-    const s = (r.createdAt || '').slice(0, 10);
-    if (!s) return '—';
-    const dt = new Date(s + 'T00:00:00');
-    const y = dt.getFullYear();
-    const start = new Date(y, 0, 1);
-    const wk = Math.ceil((((dt - start) / 86400000) + start.getDay() + 1) / 7);
-    return `${y}-S${String(wk).padStart(2,'0')}`;
-  }
-  if (dim === 'month') return (r.createdAt || '').slice(0, 7) || '—';
-  if (typeof dim === 'string' && dim.startsWith('field:')) {
-    const fid = dim.slice(6);
-    const template = w.source?.templateId ? formTemplateById(w.source.templateId) : null;
-    const field = template?.fields?.find(f => f.id === fid);
-    const v = r.values?.[fid];
-    const labelOf = val => (field?.options || []).find(o => o.value === val)?.label || String(val);
-    if (Array.isArray(v)) return v.length ? v.map(labelOf).join(', ') : '—';
-    if (v === null || v === undefined || v === '') return '—';
-    return labelOf(v);
-  }
-  return '—';
-}
-
-/* Retorna a métrica numérica de um registro. Usa `metric` como identificador:
-   'count' (sempre 1), 'hours', 'estimatedHours', 'realHours', 'field:<id>'. */
-function _metricValue(r, metric, w) {
-  if (!metric || metric === 'count') return 1;
-  if (metric === 'hours')          return Number(r.hours) || 0;
-  if (metric === 'estimatedHours') return Number(r.__demand?.estimatedHours || r.estimatedHours) || 0;
-  if (metric === 'realHours') {
-    const d = r.__demand || r;
-    if (!Array.isArray(d.timeEntries)) return 0;
-    return d.timeEntries.reduce((s, t) => s + (Number(t.hours) || 0), 0);
-  }
-  if (typeof metric === 'string' && metric.startsWith('field:')) {
-    return Number(r.values?.[metric.slice(6)]) || 0;
-  }
-  return 0;
-}
-
-function _aggReduce(values, aggregate) {
-  if (!values.length) return 0;
-  if (aggregate === 'avg') return values.reduce((s, n) => s + n, 0) / values.length;
-  return values.reduce((s, n) => s + n, 0); // sum default
-}
-
-/* Lista dimensões/métricas disponíveis pra uma fonte. Pra 'form' precisa do templateId. */
-function _wgtDimsFor(kind, templateId) {
-  if (kind === 'demand') return DEMAND_DIMS;
-  if (kind === 'time')   return TIME_DIMS;
-  // form: dimensões vindas dos campos do template (select/multi/number)
-  // + usuário que preencheu + dimensões da demanda vinculada (via r.demandId).
-  const template = templateId ? formTemplateById(templateId) : null;
-  const fields = (template?.fields || []).filter(f => f.type === 'select' || f.type === 'multiselect' || f.type === 'number');
-  const fieldDims = fields.map(f => ({ key: 'field:' + f.id, label: 'Campo: ' + f.label + (f.type === 'number' ? ' (número)' : '') }));
-  return [
-    { key: 'submitterName', label: 'Preenchido por' },
-    ...fieldDims,
-    ...DEMAND_DIMS.map(d => ({ key: d.key, label: 'Demanda: ' + d.label }))
-  ];
-}
-function _wgtMetricsFor(kind, templateId) {
-  if (kind === 'demand') return DEMAND_METRICS;
-  if (kind === 'time')   return TIME_METRICS;
-  const template = templateId ? formTemplateById(templateId) : null;
-  const numFields = (template?.fields || []).filter(f => f.type === 'number');
-  const numMetrics = numFields.map(f => ({ key: 'field:' + f.id, label: 'Campo: ' + f.label, supports: ['sum','avg'] }));
-  return [{ key: 'count', label: 'Contagem de respostas', supports: ['sum'] }, ...numMetrics];
-}
-
-/* ── Widget: PIVOT TABLE ── */
-function _renderPivotWidget(w) {
-  const records = _wgtRecords(w);
-  const rowDim = w.pivot?.rowDim || null;
-  const colDim = w.pivot?.colDim || null;
-  const metric = w.pivot?.metric || 'count';
-  const aggregate = w.pivot?.aggregate || 'sum';
-  const title = w.title || 'Tabela dinâmica';
-  if (!rowDim) {
-    return `<div class="dw-widget"><div class="dw-widget-title">${esc(title)}</div><div class="dw-widget-empty">Configure a dimensão de linha.</div></div>`;
-  }
-  if (!records.length) {
-    return `<div class="dw-widget"><div class="dw-widget-title">${esc(title)}</div><div class="dw-widget-empty">Sem dados no filtro atual.</div></div>`;
-  }
-  const rowLabels = new Set(), colLabels = new Set();
-  const bucket = new Map(); // rowKey → colKey → values[]
-  for (const r of records) {
-    const rk = _dimResolve(r, rowDim, w);
-    const ck = colDim ? _dimResolve(r, colDim, w) : '__total__';
-    const v  = _metricValue(r, metric, w);
-    if (!bucket.has(rk)) bucket.set(rk, new Map());
-    const inner = bucket.get(rk);
-    if (!inner.has(ck)) inner.set(ck, []);
-    inner.get(ck).push(v);
-    rowLabels.add(rk);
-    colLabels.add(ck);
-  }
-  const rows = [...rowLabels].sort((a, b) => norm(a).localeCompare(norm(b)));
-  const cols = colDim ? [...colLabels].sort((a, b) => norm(a).localeCompare(norm(b))) : ['__total__'];
-  const cellVal = (rk, ck) => _aggReduce(bucket.get(rk)?.get(ck) || [], aggregate);
-  const rowTotals = new Map(rows.map(rk => [rk, _aggReduce(cols.flatMap(ck => bucket.get(rk)?.get(ck) || []), aggregate)]));
-  const colTotals = new Map(cols.map(ck => [ck, _aggReduce(rows.flatMap(rk => bucket.get(rk)?.get(ck) || []), aggregate)]));
-  const grandTotal = _aggReduce(rows.flatMap(rk => cols.flatMap(ck => bucket.get(rk)?.get(ck) || [])), aggregate);
-  const head = colDim
-    ? `<thead><tr><th></th>${cols.map(c => `<th class="pv-col-head" onclick="_dashApplyDrillDown('${esc(colDim)}', ${JSON.stringify(c).replace(/"/g,'&quot;')})" title="Drill: ${esc(_dashDrillLabel(colDim))} = ${esc(c)}">${esc(c)}</th>`).join('')}<th class="pv-total-head">Total</th></tr></thead>`
-    : `<thead><tr><th></th><th class="pv-total-head">${esc(_metricLabel(metric, aggregate))}</th></tr></thead>`;
-  const body = rows.map(rk => {
-    const cellsHtml = cols.map(ck => `<td class="pv-cell${colDim ? ' pv-drillable' : ''}" ${colDim ? `onclick="_dashPivotCellDrill('${esc(rowDim)}', ${JSON.stringify(rk).replace(/"/g,'&quot;')}, '${esc(colDim)}', ${JSON.stringify(ck).replace(/"/g,'&quot;')})"` : ''} title="${colDim ? esc(rk) + ' × ' + esc(ck) : esc(rk)}: ${_fmtNum(cellVal(rk, ck))}">${_fmtNum(cellVal(rk, ck))}</td>`).join('');
-    const rowTotal = colDim ? `<td class="pv-total-cell">${_fmtNum(rowTotals.get(rk))}</td>` : '';
-    return `<tr><th class="pv-row-head pv-drillable" onclick="_dashApplyDrillDown('${esc(rowDim)}', ${JSON.stringify(rk).replace(/"/g,'&quot;')})" title="Drill: ${esc(_dashDrillLabel(rowDim))} = ${esc(rk)}">${esc(rk)}</th>${cellsHtml}${rowTotal}</tr>`;
-  }).join('');
-  const footer = colDim ? `<tfoot><tr><th class="pv-total-head">Total</th>${cols.map(ck => `<td class="pv-total-cell">${_fmtNum(colTotals.get(ck))}</td>`).join('')}<td class="pv-total-cell pv-grand">${_fmtNum(grandTotal)}</td></tr></tfoot>` : '';
-  return `<div class="dw-widget">
-    <div class="dw-widget-title">${esc(title)}</div>
-    <div class="dw-pivot-wrap"><table class="dw-pivot-table">${head}<tbody>${body}</tbody>${footer}</table></div>
-  </div>`;
-}
-function _metricLabel(metric, aggregate) {
-  const m = { count: 'Contagem', hours: 'Horas', estimatedHours: 'Horas est.', realHours: 'Horas real.' };
-  const base = m[metric] || (metric.startsWith('field:') ? 'Campo' : metric);
-  if (aggregate === 'avg') return 'Média · ' + base;
-  return base;
-}
-
-/* ── Widget: COMBO (bar + line, dual axis) ──
-   Uma dimensão categórica no eixo X + duas métricas em eixos Y independentes:
-   barra à esquerda, linha à direita. Permite comparar volume × qualidade
-   (ex.: nº de demandas × horas realizadas por cliente). */
-function _renderComboWidget(w) {
-  const records = _wgtRecords(w);
-  const primary = w.combo?.primary;
-  const barSpec = w.combo?.bar || {};
-  const lineSpec = w.combo?.line || {};
-  const title = w.title || 'Combo';
-  if (!primary || !barSpec.metric || !lineSpec.metric) {
-    return `<div class="dw-widget"><div class="dw-widget-title">${esc(title)}</div><div class="dw-widget-empty">Configure a dimensão + as duas métricas.</div></div>`;
-  }
-  if (!records.length) {
-    return `<div class="dw-widget"><div class="dw-widget-title">${esc(title)}</div><div class="dw-widget-empty">Sem dados no filtro atual.</div></div>`;
-  }
-  const buckets = new Map(); // primaryVal → { bar: [], line: [] }
-  for (const r of records) {
-    const k = _dimResolve(r, primary, w);
-    if (!buckets.has(k)) buckets.set(k, { bar: [], line: [] });
-    const b = buckets.get(k);
-    b.bar.push(_metricValue(r, barSpec.metric, w));
-    b.line.push(_metricValue(r, lineSpec.metric, w));
-  }
-  const keys = [...buckets.keys()].sort((a, b) => norm(a).localeCompare(norm(b))).slice(0, 20);
-  const barVals = keys.map(k => _aggReduce(buckets.get(k).bar,  barSpec.aggregate  || 'sum'));
-  const lineVals = keys.map(k => _aggReduce(buckets.get(k).line, lineSpec.aggregate || 'sum'));
-  const barMax  = Math.max(1, ...barVals);
-  const lineMax = Math.max(1, ...lineVals);
-  const barColor = _widgetColor(0);
-  const lineColor = _widgetColor(2);
-  // Layout: 100% × 100% flex. Cada bar é uma coluna; a linha é sobreposta em SVG absoluto.
-  const groupsHtml = keys.map((k, i) => {
-    const bp = (barVals[i] / barMax) * 100;
-    return `<div class="dw-combo-group pv-drillable" onclick="_dashApplyDrillDown('${esc(primary)}', ${JSON.stringify(k).replace(/"/g,'&quot;')})" title="Drill: ${esc(_dashDrillLabel(primary))} = ${esc(k)}">
-      <div class="dw-combo-bar-col">
-        <span class="dw-combo-val">${_fmtNum(barVals[i])}</span>
-        <div class="dw-combo-bar" style="height:${bp}%;background:${barColor}"></div>
-      </div>
-      <div class="dw-combo-xlabel" title="${esc(k)}">${esc(k)}</div>
-    </div>`;
-  }).join('');
-  // Line overlay — SVG absoluto sobre o plot. y invertido (0 = topo).
-  const n = keys.length;
-  const pts = lineVals.map((v, i) => {
-    const x = n === 1 ? 50 : (i / (n - 1)) * 100;
-    const y = 100 - (v / lineMax) * 100;
-    return { x, y, v, k: keys[i] };
-  });
-  const path = pts.map((p, i) => (i === 0 ? 'M' : 'L') + p.x + ',' + p.y).join(' ');
-  const dotsHtml = pts.map(p => `<circle cx="${p.x}" cy="${p.y}" r="1.6" fill="${lineColor}"><title>${esc(p.k)}: ${_fmtNum(p.v)}</title></circle>`).join('');
-  const barMetricLbl  = _metricLabel(barSpec.metric,  barSpec.aggregate  || 'sum');
-  const lineMetricLbl = _metricLabel(lineSpec.metric, lineSpec.aggregate || 'sum');
-  return `<div class="dw-widget">
-    <div class="dw-widget-title-row">
-      <div class="dw-widget-title">${esc(title)}</div>
-      ${w.hideLegend ? '' : `<div class="dw-legend">
-        <span class="dw-legend-item"><span class="dw-legend-dot" style="background:${barColor}"></span>${esc(barMetricLbl)}</span>
-        <span class="dw-legend-item"><span class="dw-legend-dot" style="background:${lineColor};border-radius:1px"></span>${esc(lineMetricLbl)}</span>
-      </div>`}
-    </div>
-    <div class="dw-combo">
-      <div class="dw-combo-yaxis dw-combo-yaxis-left">
-        <span>${_fmtNum(barMax)}</span><span>${_fmtNum(barMax / 2)}</span><span>0</span>
-      </div>
-      <div class="dw-combo-plot">
-        <div class="dw-combo-grid"><span></span><span></span><span></span></div>
-        <div class="dw-combo-groups">${groupsHtml}</div>
-        <svg class="dw-combo-line" viewBox="0 0 100 100" preserveAspectRatio="none">
-          <path d="${path}" fill="none" stroke="${lineColor}" stroke-width="1.4" vector-effect="non-scaling-stroke"/>
-          ${dotsHtml}
-        </svg>
-      </div>
-      <div class="dw-combo-yaxis dw-combo-yaxis-right">
-        <span>${_fmtNum(lineMax)}</span><span>${_fmtNum(lineMax / 2)}</span><span>0</span>
-      </div>
-    </div>
-  </div>`;
-}
-
-/* ── Widget: SCATTER (dispersão) ──
-   Cada registro vira um ponto (x, y). Útil pra ver correlação entre duas
-   métricas numéricas (ex.: horas estimadas × horas realizadas). Opcionalmente
-   colore por uma dimensão categórica (`groupDim`). */
-function _renderScatterWidget(w) {
-  const records = _wgtRecords(w);
-  const xMetric = w.scatter?.x;
-  const yMetric = w.scatter?.y;
-  const groupDim = w.scatter?.groupDim || null;
-  const title = w.title || 'Dispersão';
-  if (!xMetric || !yMetric) {
-    return `<div class="dw-widget"><div class="dw-widget-title">${esc(title)}</div><div class="dw-widget-empty">Configure as métricas de X e Y.</div></div>`;
-  }
-  const pts = [];
-  for (const r of records) {
-    const x = _metricValue(r, xMetric, w);
-    const y = _metricValue(r, yMetric, w);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-    if (x === 0 && y === 0) continue; // zeros costumam significar "sem dado"
-    pts.push({ x, y, g: groupDim ? _dimResolve(r, groupDim, w) : null });
-  }
-  if (!pts.length) {
-    return `<div class="dw-widget"><div class="dw-widget-title">${esc(title)}</div><div class="dw-widget-empty">Sem pares (x, y) válidos.</div></div>`;
-  }
-  const xMax = Math.max(1, ...pts.map(p => p.x));
-  const yMax = Math.max(1, ...pts.map(p => p.y));
-  // Grupos → cores
-  const groups = groupDim ? [...new Set(pts.map(p => p.g))].slice(0, 8) : [];
-  const groupIdx = new Map(groups.map((g, i) => [g, i]));
-  const dots = pts.map(p => {
-    const cx = (p.x / xMax) * 100;
-    const cy = 100 - (p.y / yMax) * 100;
-    const color = groupDim ? _widgetColor(groupIdx.get(p.g) ?? 0) : _widgetColor(0);
-    const title = `x=${_fmtNum(p.x)}, y=${_fmtNum(p.y)}${p.g ? ' · ' + p.g : ''}`;
-    return `<circle cx="${cx}" cy="${cy}" r="1.4" fill="${color}" opacity="0.75"><title>${esc(title)}</title></circle>`;
-  }).join('');
-  // Linha y=x diagonal — referência visual pra correlação perfeita
-  const diagMax = Math.min(xMax, yMax);
-  const diagX = (diagMax / xMax) * 100;
-  const diagY = 100 - (diagMax / yMax) * 100;
-  const legendHtml = (groupDim && !w.hideLegend) ? `<div class="dw-legend">${groups.map((g, i) => `<span class="dw-legend-item"><span class="dw-legend-dot" style="background:${_widgetColor(i)}"></span>${esc(g)}</span>`).join('')}</div>` : '';
-  const xLabel = _metricLabel(xMetric, 'sum');
-  const yLabel = _metricLabel(yMetric, 'sum');
-  return `<div class="dw-widget">
-    <div class="dw-widget-title-row">
-      <div class="dw-widget-title">${esc(title)}</div>
-      ${legendHtml}
-    </div>
-    <div class="dw-scatter">
-      <div class="dw-scatter-yaxis"><span>${_fmtNum(yMax)}</span><span>${_fmtNum(yMax/2)}</span><span>0</span></div>
-      <div class="dw-scatter-plot">
-        <svg viewBox="0 0 100 100" preserveAspectRatio="none">
-          <line x1="0" y1="100" x2="${diagX}" y2="${diagY}" stroke="var(--border)" stroke-dasharray="2 2" vector-effect="non-scaling-stroke"/>
-          ${dots}
-        </svg>
-      </div>
-    </div>
-    <div class="dw-scatter-xaxis">
-      <span>0</span>
-      <span class="dw-scatter-xlbl">${esc(xLabel)} →</span>
-      <span>${_fmtNum(xMax)}</span>
-    </div>
-  </div>`;
-}
-
-/* ── Widget: TIMELINE ── (linha temporal com múltiplas métricas ou split por dimensão)
-   X = tempo (day/week/month, ou auto), Y = métrica numérica.
-   Dois modos:
-     - splitBy vazio: cada série de w.timeline.metrics vira uma linha
-     - splitBy setado: usa APENAS a 1ª métrica e gera uma linha por valor da dimensão */
-function _renderTimelineWidget(w) {
-  const records = _wgtRecords(w);
-  const bucketMode = w.timeline?.bucket && w.timeline.bucket !== 'auto'
-    ? w.timeline.bucket
-    : _chooseAutoBucketRecords(records);
-  const bucketLbl = bucketMode === 'day' ? 'diário' : (bucketMode === 'week' ? 'semanal' : 'mensal');
-  const seriesConfig = Array.isArray(w.timeline?.metrics) ? w.timeline.metrics : [];
-  const splitBy = w.timeline?.splitBy || null;
-  const title = w.title || 'Timeline';
-  if (!seriesConfig.length) {
-    return `<div class="dw-widget"><div class="dw-widget-title">${esc(title)}</div><div class="dw-widget-empty">Configure pelo menos uma métrica.</div></div>`;
-  }
-  if (!records.length) {
-    return `<div class="dw-widget"><div class="dw-widget-title">${esc(title)}</div><div class="dw-widget-empty">Sem dados no filtro atual.</div></div>`;
-  }
-  const buckets = new Map();
-  for (const r of records) {
-    const ts = _wgtRecordTs(r);
-    if (!ts) continue;
-    const key = _bucketKey(new Date(ts).toISOString(), bucketMode);
-    if (!key) continue;
-    if (!buckets.has(key)) buckets.set(key, []);
-    buckets.get(key).push(r);
-  }
-  if (!buckets.size) {
-    return `<div class="dw-widget"><div class="dw-widget-title">${esc(title)}</div><div class="dw-widget-empty">Sem dados no período.</div></div>`;
-  }
-  const sortedKeys = [...buckets.keys()].sort();
-  const xLabels = sortedKeys.map(k => _formatBucketLabel(k, bucketMode));
-  let series;
-  if (splitBy) {
-    const primaryMetric = seriesConfig[0];
-    // Escolhe até 8 valores mais frequentes da dimensão pra virar linhas.
-    const dimValues = new Map();
-    for (const r of records) {
-      const v = _dimResolve(r, splitBy, w);
-      dimValues.set(v, (dimValues.get(v) || 0) + 1);
-    }
-    const topVals = [...dimValues.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([v]) => v);
-    series = topVals.map((val, i) => ({
-      name: val,
-      color: _widgetColor(i),
-      values: sortedKeys.map(bk => {
-        const rs = buckets.get(bk).filter(r => _dimResolve(r, splitBy, w) === val);
-        return _timelineAgg(rs, primaryMetric, w);
-      })
-    }));
-  } else {
-    series = seriesConfig.map((sc, i) => ({
-      name: sc.label || _metricLabel(sc.metric, sc.aggregate),
-      color: _widgetColor(i),
-      values: sortedKeys.map(bk => _timelineAgg(buckets.get(bk), sc, w))
-    }));
-  }
-  const W = 1600, H = 360, PL = 140, PR = 30, PT = 20, PB = 60;
-  const innerW = W - PL - PR;
-  const innerH = H - PT - PB;
-  const rawMax = Math.max(1, ...series.flatMap(s => s.values));
-  const yMax = Math.max(4, Math.ceil(rawMax * 1.15));
-  const gridLevels = [];
-  for (let i = 0; i <= 5; i++) gridLevels.push(yMax * i / 5);
-  const xFor = i => PL + (sortedKeys.length <= 1 ? innerW / 2 : i * innerW / (sortedKeys.length - 1));
-  const yFor = v => PT + innerH - (v / yMax) * innerH;
-  const yEls = gridLevels.map(v => {
-    const y = yFor(v);
-    return `<line x1="${PL}" x2="${W - PR}" y1="${y}" y2="${y}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3 4" opacity="0.5" vector-effect="non-scaling-stroke"/>`;
-  }).join('');
-  const showArea = series.length === 1;
-  const pathParts = series.map(s => {
-    const pts = s.values.map((v, i) => [xFor(i), yFor(v)]);
-    const path = 'M ' + pts.map(p => `${p[0]} ${p[1]}`).join(' L ');
-    let area = '';
-    if (showArea) {
-      const last = pts[pts.length - 1], first = pts[0];
-      const baseY = PT + innerH;
-      area = `<path d="${path} L ${last[0]} ${baseY} L ${first[0]} ${baseY} Z" fill="${s.color}" fill-opacity="0.12"/>`;
-    }
-    return `${area}<path d="${path}" fill="none" stroke="${s.color}" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`;
-  }).join('');
-  const uid = 'tl' + Math.random().toString(36).slice(2, 8);
-  const dotsHtml = series.map(s => s.values.map((v, i) => {
-    const leftPct = (xFor(i) / W) * 100;
-    const topPct = (yFor(v) / H) * 100;
-    return `<div class="dw-line-dot" style="left:${leftPct}%;top:${topPct}%;background:${s.color}"></div>`;
-  }).join('')).join('');
-  const markerHtml = series.map((s, i) =>
-    `<div id="${uid}-mk-${i}" class="dw-line-marker" style="background:${s.color}"></div>`
-  ).join('');
-  const guideEl = `<line id="${uid}-guide" class="chart-guide" x1="0" y1="${PT}" x2="0" y2="${PT + innerH}" stroke="var(--text-muted)" stroke-width="1" stroke-dasharray="2 3" vector-effect="non-scaling-stroke" style="opacity:0;pointer-events:none"/>`;
-  const yLabelsHtml = gridLevels.map(v => {
-    const y = yFor(v);
-    const topPct = (y / H) * 100;
-    const label = Number.isInteger(v) ? String(v) : v.toFixed(1);
-    return `<span class="dw-line-ylabel" style="top:${topPct}%">${label}</span>`;
-  }).join('');
-  const labelStep = Math.max(1, Math.ceil(sortedKeys.length / 8));
-  const xLabelsHtml = sortedKeys.map((k, i) => {
-    if (i % labelStep !== 0 && i !== sortedKeys.length - 1) return '';
-    const leftPct = (xFor(i) / W) * 100;
-    return `<span class="dw-line-xlabel" style="left:${leftPct}%">${esc(xLabels[i])}</span>`;
-  }).join('');
-  const legend = (series.length > 1 && !w.hideLegend) ? `<div class="dw-legend dw-line-legend">${series.map(s => `<span class="dw-legend-item"><span class="dw-legend-dot" style="background:${s.color}"></span>${esc(s.name)}</span>`).join('')}</div>` : '';
-  const html = `<div class="dw-widget">
-    <div class="dw-widget-title-row">
-      <div class="dw-widget-title">${esc(title)}</div>
-      ${legend}
-    </div>
-    <div class="dw-line-wrap">
-      <div class="chart-hover-host dw-line-host" id="${uid}-host">
-        <svg viewBox="0 0 ${W} ${H}" class="dash-chart-svg" preserveAspectRatio="none">
-          ${yEls}${pathParts}${guideEl}
-        </svg>
-        <div class="dw-line-dots">${dotsHtml}</div>
-        <div class="dw-line-markers">${markerHtml}</div>
-        <div class="dw-line-axis-y">${yLabelsHtml}</div>
-        <div class="dw-line-axis-x">${xLabelsHtml}</div>
-        <div class="chart-tooltip" id="${uid}-tip"></div>
-      </div>
-      <div class="dw-kpi-label" style="margin-top:6px;font-size:11px">${bucketLbl}${splitBy ? ' · por ' + esc(_dashDrillLabel(splitBy)) : ''}</div>
-    </div>
-  </div>`;
-  _pendingLineHovers.push({
-    uid,
-    viewBoxW: W, viewBoxH: H,
-    points: sortedKeys.map((k, i) => ({
-      xVb: xFor(i),
-      xPct: (xFor(i) / W) * 100,
-      label: _formatBucketLabel(k, bucketMode),
-      series: series.map(s => ({
-        name: s.name,
-        value: s.values[i],
-        yPct: (yFor(s.values[i]) / H) * 100,
-        color: s.color
-      }))
-    })),
-    seriesCount: series.length
-  });
-  return html;
-}
-function _chooseAutoBucketRecords(records) {
-  if (!records.length) return 'day';
-  const ts = records.map(_wgtRecordTs).filter(t => t > 0);
-  if (!ts.length) return 'day';
-  const range = (Math.max(...ts) - Math.min(...ts)) / 86400000;
-  if (range <= 45)  return 'day';
-  if (range <= 240) return 'week';
-  return 'month';
-}
-function _timelineAgg(records, spec, w) {
-  const agg = spec?.aggregate || 'sum';
-  const metric = spec?.metric || 'count';
-  const vals = records.map(r => _metricValue(r, metric, w));
-  if (!vals.length) return 0;
-  if (agg === 'avg') return vals.reduce((s, n) => s + n, 0) / vals.length;
-  return vals.reduce((s, n) => s + n, 0);
-}
-
-/* ── Widget: HEATMAP ── (mesmo config do pivot, render como grade colorida) */
-function _renderHeatmapWidget(w) {
-  const records = _wgtRecords(w);
-  const rowDim = w.pivot?.rowDim || null;
-  const colDim = w.pivot?.colDim || null;
-  const metric = w.pivot?.metric || 'count';
-  const aggregate = w.pivot?.aggregate || 'sum';
-  const title = w.title || 'Heatmap';
-  if (!rowDim || !colDim) {
-    return `<div class="dw-widget"><div class="dw-widget-title">${esc(title)}</div><div class="dw-widget-empty">Heatmap precisa de dimensão de linha E coluna.</div></div>`;
-  }
-  if (!records.length) {
-    return `<div class="dw-widget"><div class="dw-widget-title">${esc(title)}</div><div class="dw-widget-empty">Sem dados no filtro atual.</div></div>`;
-  }
-  const rowLabels = new Set(), colLabels = new Set();
-  const bucket = new Map();
-  for (const r of records) {
-    const rk = _dimResolve(r, rowDim, w);
-    const ck = _dimResolve(r, colDim, w);
-    const v  = _metricValue(r, metric, w);
-    if (!bucket.has(rk)) bucket.set(rk, new Map());
-    const inner = bucket.get(rk);
-    if (!inner.has(ck)) inner.set(ck, []);
-    inner.get(ck).push(v);
-    rowLabels.add(rk);
-    colLabels.add(ck);
-  }
-  const rows = [...rowLabels].sort((a, b) => norm(a).localeCompare(norm(b)));
-  const cols = [...colLabels].sort((a, b) => norm(a).localeCompare(norm(b)));
-  const cellVal = (rk, ck) => _aggReduce(bucket.get(rk)?.get(ck) || [], aggregate);
-  let max = 0;
-  for (const rk of rows) for (const ck of cols) { const v = cellVal(rk, ck); if (v > max) max = v; }
-  // Grid flat: row 0 = header vazio + col labels; rows subsequentes = rowhead + N cells
-  const cellsFlat = [];
-  cellsFlat.push('<div class="dw-heat-corner"></div>');
-  for (const ck of cols) cellsFlat.push(`<div class="dw-heat-colhead" title="${esc(ck)}">${esc(ck)}</div>`);
-  for (const rk of rows) {
-    cellsFlat.push(`<div class="dw-heat-rowhead" title="${esc(rk)}">${esc(rk)}</div>`);
-    for (const ck of cols) {
-      const v = cellVal(rk, ck);
-      const t = max > 0 ? v / max : 0;
-      const bg = `rgba(${accentRgb()}, ${(0.08 + t * 0.65).toFixed(3)})`;
-      const color = t > 0.55 ? '#fff' : 'var(--text)';
-      cellsFlat.push(`<div class="dw-heat-cell" style="background:${bg};color:${color}" title="${esc(rk)} × ${esc(ck)}: ${_fmtNum(v)}">${v > 0 ? _fmtNum(v) : ''}</div>`);
-    }
-  }
-  return `<div class="dw-widget">
-    <div class="dw-widget-title">${esc(title)}</div>
-    <div class="dw-heat-wrap">
-      <div class="dw-heat-grid" style="grid-template-columns:auto repeat(${cols.length}, minmax(56px, 1fr))">
-        ${cellsFlat.join('')}
-      </div>
-    </div>
-  </div>`;
-}
-
-/* ── PRESETS de filtro (per-user localStorage) ──
-   Chave: dashPresets:{userId}:{dashboardId} → JSON array [{id,name,filters}]. */
-function _presetKey(dashboardId) {
-  const uid = me?.id || 'anon';
-  return `dashPresets:${uid}:${dashboardId}`;
-}
-function _dashPresetsFor(dashboardId) {
-  try { return JSON.parse(localStorage.getItem(_presetKey(dashboardId)) || '[]'); }
-  catch { return []; }
-}
-function _saveDashPresets(dashboardId, presets) {
-  try { localStorage.setItem(_presetKey(dashboardId), JSON.stringify(presets)); } catch {}
-}
-async function _promptSavePreset(dashboardId) {
-  const name = await showPrompt({
-    title: 'Salvar preset de filtro',
-    message: 'Nome do preset',
-    placeholder: 'Ex.: Q3 · Cliente X · Formato Story',
-    okLabel: 'Salvar'
-  });
-  if (!name || !name.trim()) return;
-  const list = _dashPresetsFor(dashboardId);
-  const preset = {
-    id: 'p_' + Math.random().toString(36).slice(2, 10),
-    name: name.trim(),
-    filters: JSON.parse(JSON.stringify(_dashFilters))
-  };
-  list.push(preset);
-  _saveDashPresets(dashboardId, list);
-  toast('Preset salvo', 'success');
-  const d = dashboardById(dashboardId);
-  if (d) _renderDashboardView(d);
-}
-function _applyDashPreset(dashboardId, presetId) {
-  if (!presetId) return;
-  const p = _dashPresetsFor(dashboardId).find(x => x.id === presetId);
-  if (!p) { toast('Preset não encontrado', 'warn'); return; }
-  _dashFilters = JSON.parse(JSON.stringify(p.filters));
-  const d = dashboardById(dashboardId);
-  if (d) _renderDashboardView(d);
-}
-async function _managePresets(dashboardId) {
-  const list = _dashPresetsFor(dashboardId);
-  if (!list.length) { toast('Nenhum preset ainda', 'warn'); return; }
-  const rowsHtml = list.map(p => `
-    <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
-      <span style="flex:1">${esc(p.name)}</span>
-      <button class="btn btn-ghost btn-sm" data-action="rename" data-id="${p.id}">Renomear</button>
-      <button class="btn btn-ghost btn-sm danger" data-action="delete" data-id="${p.id}">Excluir</button>
-    </div>
-  `).join('');
-  await showConfirm({
-    title: 'Gerenciar presets',
-    message: `<div id="_dp-manage">${rowsHtml}</div>`,
-    okLabel: 'Fechar',
-    danger: false
-  }).then(async () => {
-    // Handlers só ativos enquanto o modal está aberto — aqui já fechou, então só
-    // limpou. Ações são disparadas via listener adicionado no showConfirm below.
-  });
-}
-/* Delegated handler pra ações dentro do modal "Gerenciar presets". */
-document.addEventListener('click', async ev => {
-  const target = ev.target.closest('#_dp-manage [data-action]');
-  if (!target) return;
-  const dashboardId = _currentDashboardId;
-  if (!dashboardId) return;
-  const action = target.dataset.action;
-  const presetId = target.dataset.id;
-  const list = _dashPresetsFor(dashboardId);
-  const idx = list.findIndex(p => p.id === presetId);
-  if (idx < 0) return;
-  if (action === 'delete') {
-    const ok = await showConfirm({ title: 'Excluir preset', message: `Excluir "${esc(list[idx].name)}"?`, okLabel: 'Excluir', danger: true });
-    if (!ok) return;
-    list.splice(idx, 1);
-    _saveDashPresets(dashboardId, list);
-    target.closest('div').remove();
-    toast('Preset excluído', 'success');
-    const d = dashboardById(dashboardId);
-    if (d) _renderDashboardView(d);
-  } else if (action === 'rename') {
-    const name = await showPrompt({ title: 'Renomear preset', message: 'Novo nome', defaultValue: list[idx].name, okLabel: 'Salvar' });
-    if (!name || !name.trim()) return;
-    list[idx].name = name.trim();
-    _saveDashPresets(dashboardId, list);
-    target.closest('div').querySelector('span').textContent = list[idx].name;
-    toast('Preset renomeado', 'success');
-    const d = dashboardById(dashboardId);
-    if (d) _renderDashboardView(d);
-  }
-}, true);
-function openDashboardView(id) {
-  _currentDashboardId = id;
-  _resetDashFilters();
-  renderDashboards();
-  navPush('/dashboards/' + id);
-}
-function closeDashboardView() {
-  _currentDashboardId = null;
-  _resetDashFilters();
-  renderDashboards();
-  navReplace('/dashboards');
-}
-
-/* ── RENDERER de widget individual ──
-   Cada widget renderiza HTML/SVG a partir das responses do template em memória.
-   Filtra por workspace ativo pra manter escopo (mesmo squad que o dashboard). */
-function renderWidget(w) {
-  // Widgets fonte-agnósticos — funcionam pra form/demand/time.
-  if (w.chartType === 'pivot')   return _renderPivotWidget(w);
-  if (w.chartType === 'heatmap') return _renderHeatmapWidget(w);
-  if (w.chartType === 'combo')    return _renderComboWidget(w);
-  if (w.chartType === 'scatter')  return _renderScatterWidget(w);
-  if (w.chartType === 'timeline') return _renderTimelineWidget(w);
-  const kind = _wgtKind(w);
-  if (kind !== 'form') {
-    return `<div class="dw-widget">
-      <div class="dw-widget-title">${esc(w.title || 'Widget')}</div>
-      <div class="dw-widget-empty">Este tipo de gráfico só roda sobre formulários — pra ${esc(kind === 'demand' ? 'demandas' : 'apontamentos')} use Pivot, Heatmap, Combo ou Scatter.</div>
-    </div>`;
-  }
-  const t = formTemplateById(w.source?.templateId);
-  if (!t) {
-    return `<div class="dw-widget">
-      <div class="dw-widget-title">${esc(w.title || 'Widget')}</div>
-      <div class="dw-widget-empty">Formulário fonte foi excluído.</div>
-    </div>`;
-  }
-  // Dashboards são universais — usa todas as respostas do template que o user
-  // pode ver (já vieram filtradas por squad no bootstrap).
-  const baseList = (formResponses || []).filter(r => r.templateId === t.id);
-  const respList = _applyDashFilters(baseList, t.id);
-  if (w.chartType === 'kpi')  return _renderKpiWidget(w, t, respList);
-  if (w.chartType === 'bar')  return _renderBarWidget(w, t, respList);
-  if (w.chartType === 'barh') return _renderBarHorizontalWidget(w, t, respList);
-  if (w.chartType === 'pie')  return _renderPieWidget(w, t, respList);
-  if (w.chartType === 'line') return _renderLineWidget(w, t, respList);
-  return `<div class="dw-widget"><div class="dw-widget-title">${esc(w.title || 'Widget')}</div><div class="dw-widget-empty">Tipo de gráfico desconhecido.</div></div>`;
-}
-
-/* Paleta pra pie/line — bate com a variedade de fluxos/tipos do app.
-   Fixa (não usa CSS vars) porque SVG stroke precisa de valores concretos
-   e a paleta funciona bem tanto no tema claro quanto no escuro. */
-const _WIDGET_PALETTE = ['#7A00FF', '#00B4D8', '#F59E0B', '#10B981', '#EF4444', '#8B5CF6', '#F97316', '#0EA5E9'];
-function _widgetColor(i) { return _WIDGET_PALETTE[i % _WIDGET_PALETTE.length]; }
-
-/* Agrega respostas por opção/valor. Serve tanto pra bar quanto pra pie.
-   Retorna [[valueRaw, count, labelResolved], ...]. */
-function _aggregateCategorical(field, responses) {
-  const counts = new Map();
-  const isMulti = field.type === 'multiselect';
-  const isSelect = field.type === 'select' || isMulti;
-  if (isSelect) {
-    for (const o of (field.options || [])) counts.set(o.value, 0);
-    for (const r of responses) {
-      const v = r.values?.[field.id];
-      const arr = isMulti ? (Array.isArray(v) ? v : []) : (v ? [v] : []);
-      for (const val of arr) counts.set(val, (counts.get(val) || 0) + 1);
-    }
-  } else {
-    for (const r of responses) {
-      const v = r.values?.[field.id];
-      if (v === null || v === undefined || v === '') continue;
-      const key = String(v);
-      counts.set(key, (counts.get(key) || 0) + 1);
-    }
-  }
-  const labelFor = (val) => {
-    if (!isSelect) return val;
-    return (field.options || []).find(o => o.value === val)?.label || val;
-  };
-  return { entries: [...counts.entries()].map(([v, c]) => [v, c, labelFor(v)]), isSelect };
-}
-function _renderKpiWidget(w, template, responses) {
-  // Compara com período anterior (quando há um filtro de período ativo).
-  const prevResponses = _dashPreviousPeriodResponses(template.id);
-  // Multi-KPI: se kpiSeries vier, renderiza N mini-KPIs lado a lado.
-  if (Array.isArray(w.kpiSeries) && w.kpiSeries.length) {
-    const items = w.kpiSeries.map(s => {
-      const cur = _computeKpi(s, template, responses);
-      const prev = prevResponses ? _computeKpi(s, template, prevResponses) : null;
-      cur.delta = prev && !prev.error ? _computeDelta(cur, prev) : null;
-      return cur;
-    });
-    return `<div class="dw-widget">
-      <div class="dw-widget-title">${esc(w.title || template.name)}</div>
-      <div class="dw-kpi-multi">
-        ${items.map(it => `
-          <div class="dw-kpi-multi-item" ${it.error ? 'title="Campo fonte não existe mais"' : ''}>
-            <div class="dw-kpi-multi-value">${it.error ? '—' : it.display}</div>
-            ${it.delta ? _renderKpiDelta(it.delta, 'small') : ''}
-            <div class="dw-kpi-multi-label">${esc(it.label)}</div>
-          </div>
-        `).join('')}
-      </div>
-      ${responses.length === 0 ? '<div class="dw-kpi-label" style="margin-top:8px">sem respostas ainda</div>' : ''}
-    </div>`;
-  }
-  // Single KPI (comportamento original)
-  const single = _computeKpi({ label: '', aggregate: w.kpiAggregate || 'count', fieldId: w.source?.fieldId }, template, responses);
-  if (single.error) return `<div class="dw-widget"><div class="dw-widget-title">${esc(w.title || 'KPI')}</div><div class="dw-widget-empty">Campo fonte não existe mais.</div></div>`;
-  const prev = prevResponses ? _computeKpi({ label: '', aggregate: w.kpiAggregate || 'count', fieldId: w.source?.fieldId }, template, prevResponses) : null;
-  const delta = prev && !prev.error ? _computeDelta(single, prev) : null;
-  return `<div class="dw-widget">
-    <div class="dw-widget-title">${esc(w.title || template.name)}</div>
-    <div class="dw-kpi-value">${single.display}</div>
-    ${delta ? _renderKpiDelta(delta, 'large') : ''}
-    <div class="dw-kpi-label">${esc(single.subtitle)}${responses.length === 0 ? ' · sem respostas ainda' : ''}</div>
-  </div>`;
-}
-
-/* Retorna as respostas do período ANTERIOR de mesma duração ao filtro atual.
-   Null se não faz sentido (period=all ou custom sem datas). */
-function _dashPreviousPeriodResponses(templateId) {
-  const p = _dashFilters.period;
-  if (!p || p === 'all') return null;
-  const now = new Date(); now.setHours(0, 0, 0, 0);
-  let fromMs, toMs;
-  if (p === '7d')  { const n = 7  * 86400000; toMs = now.getTime() - n; fromMs = toMs - n; }
-  else if (p === '30d') { const n = 30 * 86400000; toMs = now.getTime() - n; fromMs = toMs - n; }
-  else if (p === '90d') { const n = 90 * 86400000; toMs = now.getTime() - n; fromMs = toMs - n; }
-  else if (p === 'year') {
-    const prevStart = new Date(now.getFullYear() - 1, 0, 1);
-    const prevEnd   = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate() + 1);
-    fromMs = prevStart.getTime(); toMs = prevEnd.getTime();
-  } else if (p === 'custom') {
-    if (!_dashFilters.dateFrom || !_dashFilters.dateTo) return null;
-    const cf = new Date(_dashFilters.dateFrom + 'T00:00:00').getTime();
-    const ct = new Date(_dashFilters.dateTo   + 'T23:59:59').getTime();
-    const span = ct - cf;
-    toMs = cf - 1; fromMs = toMs - span;
-  } else return null;
-  const saved = _dashFilters;
-  _dashFilters = Object.assign({}, saved, {
-    period: 'custom',
-    dateFrom: new Date(fromMs).toISOString().slice(0, 10),
-    dateTo:   new Date(toMs).toISOString().slice(0, 10)
-  });
-  const base = (formResponses || []).filter(r => r.templateId === templateId);
-  const prev = _applyDashFilters(base, templateId);
-  _dashFilters = saved;
-  return prev;
-}
-
-/* Calcula variação absoluta (atual - anterior) entre KPI atual e KPI anterior.
-   Retorna { diff, direction: 'up'|'down'|'flat', absCur, absPrev }. */
-function _computeDelta(cur, prev) {
-  const a = Number(cur.raw ?? parseFloat(String(cur.display).replace(/\./g, '').replace(',', '.'))) || 0;
-  const b = Number(prev.raw ?? parseFloat(String(prev.display).replace(/\./g, '').replace(',', '.'))) || 0;
-  const diff = a - b;
-  const dir = Math.abs(diff) < 0.005 ? 'flat' : (diff > 0 ? 'up' : 'down');
-  return { diff, direction: dir, absCur: a, absPrev: b };
-}
-function _renderKpiDelta(delta, size) {
-  const cls = 'dw-kpi-delta dw-kpi-delta-' + delta.direction + (size === 'small' ? ' dw-kpi-delta-sm' : '');
-  const arrow = delta.direction === 'up' ? '▲' : (delta.direction === 'down' ? '▼' : '•');
-  const sign = delta.diff > 0 ? '+' : (delta.diff < 0 ? '−' : '');
-  const val = _fmtNum(Math.abs(delta.diff));
-  const tip = `Anterior: ${_fmtNum(delta.absPrev)} · Atual: ${_fmtNum(delta.absCur)}`;
-  return `<span class="${cls}" title="${esc(tip)}">${arrow} ${sign}${val}</span>`;
-}
-/* Compute helper compartilhado entre single-KPI e multi-KPI. */
-function _computeKpi(spec, template, responses) {
-  const agg = spec.aggregate || 'count';
-  const label = spec.label || (agg === 'count' ? 'Total' : (agg === 'sum' ? 'Soma' : 'Média'));
-  if (agg === 'count') {
-    const value = responses.length;
-    return { display: String(value), raw: value, label, subtitle: 'respostas de "' + template.name + '"' };
-  }
-  const field = (template.fields || []).find(f => f.id === spec.fieldId);
-  if (!field) return { error: true, label, display: '—', raw: 0 };
-  const nums = responses.map(r => Number(r.values?.[field.id])).filter(n => Number.isFinite(n));
-  let value = 0;
-  let subtitle = '';
-  if (agg === 'sum') { value = nums.reduce((s, n) => s + n, 0); subtitle = 'soma de "' + field.label + '"'; }
-  if (agg === 'avg') { value = nums.length ? (nums.reduce((s, n) => s + n, 0) / nums.length) : 0; subtitle = 'média de "' + field.label + '"'; }
-  return { display: Number.isInteger(value) ? String(value) : value.toFixed(2), raw: value, label, subtitle };
-}
-/* Formata número pt-BR pra rótulos de gráfico. Inteiros sem decimal, floats
-   com no máximo 1 decimal. Milhares com ponto. */
-function _fmtNum(n) {
-  if (!Number.isFinite(n)) return '—';
-  if (Number.isInteger(n)) return n.toLocaleString('pt-BR');
-  return n.toLocaleString('pt-BR', { maximumFractionDigits: 1 });
-}
-/* Bar chart estilo colunas verticais (tipo Excel). Suporta single ou grouped
-   (via w.groupByFieldId). Renderiza com HTML/CSS pra ser 100% responsivo ao
-   tamanho do widget — bars usam height:% dentro de flex column. */
-function _renderBarWidget(w, template, responses) {
-  const primary = (template.fields || []).find(f => f.id === w.source.fieldId);
-  if (!primary) {
-    return `<div class="dw-widget"><div class="dw-widget-title">${esc(w.title || 'Barra')}</div><div class="dw-widget-empty">Campo fonte não existe mais.</div></div>`;
-  }
-  const groupField = w.groupByFieldId ? (template.fields || []).find(f => f.id === w.groupByFieldId) : null;
-  // Agrega
-  const primAgg = _aggregateCategorical(primary, responses);
-  const primEntries = primAgg.isSelect ? primAgg.entries : primAgg.entries.slice().sort((a, b) => b[1] - a[1]).slice(0, 10);
-  if (!primEntries.length) {
-    return `<div class="dw-widget">
-      <div class="dw-widget-title">${esc(w.title || (primary.label + ' — distribuição'))}</div>
-      <div class="dw-widget-empty">Sem respostas ainda</div>
-    </div>`;
-  }
-  // Séries (grouped ou single)
-  let series; // [{label, color, valuesByPrimary: Map<primVal, count>}]
-  if (groupField) {
-    const groupAgg = _aggregateCategorical(groupField, responses);
-    const groups = groupAgg.entries.filter(([, c]) => c > 0).sort((a, b) => b[1] - a[1]).slice(0, 6);
-    if (!groups.length) {
-      return `<div class="dw-widget">
-        <div class="dw-widget-title">${esc(w.title || (primary.label + ' × ' + groupField.label))}</div>
-        <div class="dw-widget-empty">Sem dados suficientes pra agrupar</div>
-      </div>`;
-    }
-    // Matrix 2D
-    const primIsMulti = primary.type === 'multiselect';
-    const grpIsMulti = groupField.type === 'multiselect';
-    const valsOf = (r, f, isMulti) => {
-      const v = r.values?.[f.id];
-      if (isMulti) return Array.isArray(v) ? v : [];
-      if (v === null || v === undefined || v === '') return [];
-      return [String(v)];
-    };
-    const matrix = new Map(); // primVal → Map<groupVal, count>
-    for (const r of responses) {
-      const pVals = valsOf(r, primary, primIsMulti);
-      const gVals = valsOf(r, groupField, grpIsMulti);
-      for (const pv of pVals) {
-        if (!matrix.has(pv)) matrix.set(pv, new Map());
-        const inner = matrix.get(pv);
-        for (const gv of gVals) inner.set(gv, (inner.get(gv) || 0) + 1);
-      }
-    }
-    series = groups.map(([gv, , glbl], gi) => {
-      const valuesByPrimary = new Map();
-      for (const [pv] of primEntries) valuesByPrimary.set(pv, matrix.get(pv)?.get(gv) || 0);
-      return { label: glbl, color: _widgetColor(gi), valuesByPrimary };
-    });
-  } else {
-    // Single series: cada primary tem 1 barra
-    const valuesByPrimary = new Map(primEntries.map(([pv, c]) => [pv, c]));
-    series = [{ label: primary.label, color: _widgetColor(0), valuesByPrimary }];
-  }
-  // Max value pra normalizar bar heights
-  let max = 0;
-  for (const s of series) for (const c of s.valuesByPrimary.values()) if (c > max) max = c;
-  if (max === 0) max = 1;
-  const total = responses.length;
-  // Y-axis ticks (0, max/2, max) — se max é pequeno inteiro, usa min de 5 pra evitar decimals
-  const yMax = Math.ceil(max);
-  const yMid = yMax / 2;
-  // Groups (categorias no eixo X)
-  const groupsHtml = primEntries.map(([pv, , plbl]) => {
-    const barsHtml = series.map(s => {
-      const c = s.valuesByPrimary.get(pv) || 0;
-      const pct = (c / yMax) * 100;
-      return `<div class="dw-vbar-column">
-        <span class="dw-vbar-value" style="visibility:${c > 0 ? 'visible' : 'hidden'}">${_fmtNum(c)}</span>
-        <div class="dw-vbar-bar" style="height:${pct}%;background:${s.color}" title="${esc(s.label)} · ${esc(plbl)}: ${_fmtNum(c)}"></div>
-      </div>`;
-    }).join('');
-    return `<div class="dw-vbar-group">
-      <div class="dw-vbar-bars">${barsHtml}</div>
-      <div class="dw-vbar-xlabel" title="${esc(plbl)}">${esc(plbl)}</div>
-    </div>`;
-  }).join('');
-  // Legenda só aparece se houver + de 1 série e não estiver escondida pelo widget.
-  const legendHtml = (series.length > 1 && !w.hideLegend)
-    ? `<div class="dw-legend dw-vbar-legend dw-vbar-legend-bottom">${series.map(s => `<span class="dw-legend-item"><span class="dw-legend-dot" style="background:${s.color}"></span>${esc(s.label)}</span>`).join('')}</div>`
-    : '';
-  // Quando barWrap=true, as colunas quebram em múltiplas linhas pra caber em widgets largos
-  // com muitas categorias. Cada barra tem largura mínima, e o y-axis fica escondido — os
-  // valores no topo de cada barra assumem esse papel.
-  const wrap = !!w.barWrap;
-  return `<div class="dw-widget">
-    <div class="dw-widget-title-row">
-      <div class="dw-widget-title">${esc(w.title || (groupField ? primary.label + ' × ' + groupField.label : primary.label))}</div>
-    </div>
-    <div class="dw-vbar${wrap ? ' is-wrap' : ''}">
-      ${wrap ? '' : `<div class="dw-vbar-yaxis">
-        <span>${_fmtNum(yMax)}</span>
-        <span>${_fmtNum(yMid)}</span>
-        <span>0</span>
-      </div>`}
-      <div class="dw-vbar-plot">
-        ${wrap ? '' : '<div class="dw-vbar-grid"><span></span><span></span><span></span></div>'}
-        <div class="dw-vbar-groups">${groupsHtml}</div>
-      </div>
-    </div>
-    ${legendHtml}
-    ${total ? `<div class="dw-kpi-label" style="margin-top:6px;font-size:11px">Total de respostas: ${total}</div>` : ''}
-  </div>`;
-}
-/* Bar chart HORIZONTAL — barras deitadas com label à esquerda + track + valor
-   à direita. Menos denso pra widgets estreitos. Suporta groupBy (barras
-   agrupadas em blocos por primary, uma sub-linha por group value). */
-function _renderBarHorizontalWidget(w, template, responses) {
-  const primary = (template.fields || []).find(f => f.id === w.source.fieldId);
-  if (!primary) {
-    return `<div class="dw-widget"><div class="dw-widget-title">${esc(w.title || 'Barras')}</div><div class="dw-widget-empty">Campo fonte não existe mais.</div></div>`;
-  }
-  const groupField = w.groupByFieldId ? (template.fields || []).find(f => f.id === w.groupByFieldId) : null;
-  const total = responses.length;
-  if (!groupField) {
-    // Single dimension
-    const { entries, isSelect } = _aggregateCategorical(primary, responses);
-    if (!isSelect) entries.sort((a, b) => b[1] - a[1]);
-    const top = isSelect ? entries : entries.slice(0, 10);
-    const max = Math.max(1, ...top.map(([, v]) => v));
-    const bars = top.map(([, count, lbl]) => {
-      const pct = (count / max) * 100;
-      return `<div class="dw-bar-row" title="${esc(lbl)}: ${count}">
-        <div class="dw-bar-label">${esc(lbl)}</div>
-        <div class="dw-bar-track"><div class="dw-bar-fill" style="width:${pct}%"></div></div>
-        <div class="dw-bar-value">${_fmtNum(count)}</div>
-      </div>`;
-    }).join('');
-    return `<div class="dw-widget">
-      <div class="dw-widget-title">${esc(w.title || (primary.label + ' — distribuição'))}</div>
-      ${bars ? `<div class="dw-bar-chart">${bars}</div>` : '<div class="dw-widget-empty">Sem respostas ainda</div>'}
-      ${total ? `<div class="dw-kpi-label" style="margin-top:10px">Total de respostas: ${total}</div>` : ''}
-    </div>`;
-  }
-  // Grouped: matriz 2D
-  const primAgg = _aggregateCategorical(primary, responses);
-  const primaries = primAgg.isSelect ? primAgg.entries : primAgg.entries.slice(0, 10);
-  const groupAgg = _aggregateCategorical(groupField, responses);
-  const groups = groupAgg.entries.filter(([, c]) => c > 0).sort((a, b) => b[1] - a[1]).slice(0, 6);
-  if (!primaries.length || !groups.length) {
-    return `<div class="dw-widget">
-      <div class="dw-widget-title">${esc(w.title || (primary.label + ' × ' + groupField.label))}</div>
-      <div class="dw-widget-empty">Sem dados suficientes pra agrupar</div>
-    </div>`;
-  }
-  const primIsMulti = primary.type === 'multiselect';
-  const grpIsMulti = groupField.type === 'multiselect';
-  const valsOf = (r, f, isMulti) => {
-    const v = r.values?.[f.id];
-    if (isMulti) return Array.isArray(v) ? v : [];
-    if (v === null || v === undefined || v === '') return [];
-    return [String(v)];
-  };
-  const matrix = new Map();
-  for (const r of responses) {
-    const pVals = valsOf(r, primary, primIsMulti);
-    const gVals = valsOf(r, groupField, grpIsMulti);
-    for (const pv of pVals) {
-      if (!matrix.has(pv)) matrix.set(pv, new Map());
-      const inner = matrix.get(pv);
-      for (const gv of gVals) inner.set(gv, (inner.get(gv) || 0) + 1);
-    }
-  }
-  let max = 1;
-  for (const [pv] of primaries) {
-    const inner = matrix.get(pv);
-    if (!inner) continue;
-    for (const c of inner.values()) if (c > max) max = c;
-  }
-  const blocks = primaries.map(([pv, , plbl]) => {
-    const inner = matrix.get(pv) || new Map();
-    const barsHtml = groups.map(([gv, , glbl], gi) => {
-      const c = inner.get(gv) || 0;
-      const pct = (c / max) * 100;
-      const color = _widgetColor(gi);
-      return `<div class="dw-bar-row" title="${esc(plbl)} · ${esc(glbl)}: ${c}">
-        <div class="dw-bar-label" style="padding-left:18px">${esc(glbl)}</div>
-        <div class="dw-bar-track"><div class="dw-bar-fill" style="width:${pct}%;background:${color}"></div></div>
-        <div class="dw-bar-value">${_fmtNum(c)}</div>
-      </div>`;
-    }).join('');
-    return `<div class="dw-bar-group">
-      <div class="dw-bar-group-label">${esc(plbl)}</div>
-      ${barsHtml}
-    </div>`;
-  }).join('');
-  const legend = w.hideLegend ? '' : `<div class="dw-legend">${groups.map(([, , glbl], gi) => `
-    <span class="dw-legend-item"><span class="dw-legend-dot" style="background:${_widgetColor(gi)}"></span>${esc(glbl)}</span>
-  `).join('')}</div>`;
-  return `<div class="dw-widget">
-    <div class="dw-widget-title-row">
-      <div class="dw-widget-title">${esc(w.title || (primary.label + ' × ' + groupField.label))}</div>
-      ${legend}
-    </div>
-    <div class="dw-bar-chart">${blocks}</div>
-    ${total ? `<div class="dw-kpi-label" style="margin-top:6px;font-size:11px">Total de respostas: ${total}</div>` : ''}
-  </div>`;
-}
-function _renderPieWidget(w, template, responses) {
-  const field = (template.fields || []).find(f => f.id === w.source.fieldId);
-  if (!field) {
-    return `<div class="dw-widget"><div class="dw-widget-title">${esc(w.title || 'Pizza')}</div><div class="dw-widget-empty">Campo fonte não existe mais.</div></div>`;
-  }
-  const { entries } = _aggregateCategorical(field, responses);
-  // Filtra opções zeradas (não gera fatia invisível) e ordena decrescente.
-  const nonZero = entries.filter(([, c]) => c > 0).sort((a, b) => b[1] - a[1]);
-  // Top-7 + "Outros" pra não poluir o donut.
-  let slices = nonZero;
-  if (nonZero.length > 8) {
-    const top = nonZero.slice(0, 7);
-    const rest = nonZero.slice(7).reduce((s, [, c]) => s + c, 0);
-    slices = [...top, ['__outros__', rest, 'Outros']];
-  }
-  const totalValue = slices.reduce((s, [, c]) => s + c, 0);
-  if (!totalValue) {
-    return `<div class="dw-widget">
-      <div class="dw-widget-title">${esc(w.title || (field.label + ' — pizza'))}</div>
-      <div class="dw-widget-empty">Sem respostas ainda</div>
-    </div>`;
-  }
-  // Donut: círculo com stroke-dasharray. Circunferência = 2πr, r=40 → C=251.33.
-  const R = 40;
-  const C = 2 * Math.PI * R;
-  let cumOffset = 0;
-  const arcs = slices.map(([, count], i) => {
-    const frac = count / totalValue;
-    const dash = frac * C;
-    const gap = C - dash;
-    const svgOffset = -cumOffset; // stroke-dashoffset gira o start point
-    cumOffset += dash;
-    return `<circle cx="50" cy="50" r="${R}" fill="none" stroke="${_widgetColor(i)}" stroke-width="16" stroke-dasharray="${dash} ${gap}" stroke-dashoffset="${svgOffset}" transform="rotate(-90 50 50)"><title>${esc(slices[i][2])}: ${count}</title></circle>`;
-  }).join('');
-  const legend = slices.map(([, count, lbl], i) => {
-    const pct = Math.round((count / totalValue) * 100);
-    return `<div class="dw-pie-legend-row">
-      <span class="dw-pie-legend-dot" style="background:${_widgetColor(i)}"></span>
-      <span class="dw-pie-legend-label" title="${esc(lbl)}">${esc(lbl)}</span>
-      <span class="dw-pie-legend-val">${count} · ${pct}%</span>
-    </div>`;
-  }).join('');
-  return `<div class="dw-widget">
-    <div class="dw-widget-title">${esc(w.title || (field.label + ' — pizza'))}</div>
-    <div class="dw-pie-wrap">
-      <svg class="dw-pie-svg" viewBox="0 0 100 100">
-        ${arcs}
-        <text x="50" y="50" class="dw-pie-center" fill="currentColor">${totalValue}</text>
-      </svg>
-      ${w.hideLegend ? '' : `<div class="dw-pie-legend">${legend}</div>`}
-    </div>
-  </div>`;
-}
-/* Bucketiza timestamps ISO por dia/semana/mês. week = YYYY-Www (ISO). month = YYYY-MM. */
-function _bucketKey(iso, bucket) {
-  const d = new Date(iso);
-  if (isNaN(d)) return null;
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  if (bucket === 'day')   return `${yyyy}-${mm}-${dd}`;
-  if (bucket === 'month') return `${yyyy}-${mm}`;
-  if (bucket === 'week') {
-    // Semana ISO: joga pra quinta-feira da mesma semana.
-    const tmp = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-    tmp.setUTCDate(tmp.getUTCDate() + 4 - (tmp.getUTCDay() || 7));
-    const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
-    const weekNo = Math.ceil((((tmp - yearStart) / 86400000) + 1) / 7);
-    return `${tmp.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
-  }
-  return null;
-}
-function _chooseAutoBucket(responses) {
-  if (!responses.length) return 'day';
-  const ts = responses.map(r => new Date(r.submittedAt).getTime()).filter(t => !isNaN(t));
-  if (!ts.length) return 'day';
-  const range = (Math.max(...ts) - Math.min(...ts)) / 86400000; // dias
-  if (range <= 45)  return 'day';
-  if (range <= 240) return 'week';
-  return 'month';
-}
-function _formatBucketLabel(key, bucket) {
-  if (bucket === 'day')   return key.slice(5).replace('-', '/'); // "MM/DD"
-  if (bucket === 'week')  return key.slice(5); // "Www"
-  if (bucket === 'month') { const [y, m] = key.split('-'); return `${m}/${y.slice(2)}`; } // "MM/YY"
-  return key;
-}
-function _renderLineWidget(w, template, responses) {
-  const agg = w.lineAggregate || 'count';
-  let field = null;
-  if (agg !== 'count') {
-    field = (template.fields || []).find(f => f.id === w.source.fieldId);
-    if (!field) {
-      return `<div class="dw-widget"><div class="dw-widget-title">${esc(w.title || 'Linha')}</div><div class="dw-widget-empty">Campo fonte não existe mais.</div></div>`;
-    }
-  }
-  const gbId = w.groupByFieldId || null;
-  const isSubmitterGroup = gbId === '__submitter__';
-  const groupField = (gbId && !isSubmitterGroup) ? (template.fields || []).find(f => f.id === gbId) : null;
-  const bucketMode = w.lineBucket && w.lineBucket !== 'auto' ? w.lineBucket : _chooseAutoBucket(responses);
-  const bucketLbl = bucketMode === 'day' ? 'diário' : bucketMode === 'week' ? 'semanal' : 'mensal';
-  const aggLbl = agg === 'count' ? 'contagem' : (agg === 'sum' ? 'soma' : 'média') + ` de "${field?.label}"`;
-  const buckets = new Map();
-  for (const r of responses) {
-    const key = _bucketKey(r.submittedAt, bucketMode);
-    if (!key) continue;
-    if (!buckets.has(key)) buckets.set(key, []);
-    buckets.get(key).push(r);
-  }
-  if (!buckets.size) {
-    return `<div class="dw-widget">
-      <div class="dw-widget-title">${esc(w.title || (template.name + ' — timeline'))}</div>
-      <div class="dw-widget-empty">Sem respostas ainda</div>
-    </div>`;
-  }
-  const sortedKeys = [...buckets.keys()].sort();
-  const xLabels = sortedKeys.map(k => _formatBucketLabel(k, bucketMode));
-  // Séries: single ou multi por groupBy (campo do form ou "Preenchido por")
-  let series; // [{name, color, values: number[]}]
-  if (isSubmitterGroup) {
-    // Agrupa por submittedBy — cada usuário vira uma série (top 6 por volume, outros agregados).
-    const counts = new Map();
-    for (const r of responses) counts.set(r.submittedBy, (counts.get(r.submittedBy) || 0) + 1);
-    const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]);
-    const topUsers = sorted.slice(0, 6).map(([uid]) => uid);
-    const otherUsers = sorted.slice(6).map(([uid]) => uid);
-    const seriesKeys = topUsers.map(uid => ({ key: uid, label: userById(uid)?.name || '— sem autor —' }));
-    if (otherUsers.length) seriesKeys.push({ key: '__outros__', label: 'Outros' });
-    series = seriesKeys.map((sk, si) => ({
-      name: sk.label, color: _widgetColor(si),
-      values: sortedKeys.map(bk => {
-        const rs = buckets.get(bk).filter(r => sk.key === '__outros__' ? otherUsers.includes(r.submittedBy) : r.submittedBy === sk.key);
-        return _lineBucketAggregate(rs, agg, field);
-      })
-    }));
-  } else if (groupField) {
-    const grpAgg = _aggregateCategorical(groupField, responses);
-    const sorted = grpAgg.entries.filter(([, c]) => c > 0).sort((a, b) => b[1] - a[1]);
-    const topGroups = sorted.slice(0, 6);
-    const otherGroups = sorted.slice(6).map(([v]) => v);
-    const isMulti = groupField.type === 'multiselect';
-    const seriesKeys = topGroups.map(([v, , lbl]) => ({ key: v, label: lbl }));
-    if (otherGroups.length) seriesKeys.push({ key: '__outros__', label: 'Outros' });
-    series = seriesKeys.map((sk, si) => {
-      const values = sortedKeys.map(bk => {
-        const rs = buckets.get(bk).filter(r => {
-          const v = r.values?.[groupField.id];
-          const arr = isMulti ? (Array.isArray(v) ? v : []) : (v ? [String(v)] : []);
-          if (sk.key === '__outros__') return arr.some(x => otherGroups.includes(x));
-          return arr.includes(sk.key);
-        });
-        return _lineBucketAggregate(rs, agg, field);
-      });
-      return { name: sk.label, color: _widgetColor(si), values };
-    });
-  } else {
-    series = [{
-      name: aggLbl,
-      color: '#7A00FF',
-      values: sortedKeys.map(bk => _lineBucketAggregate(buckets.get(bk), agg, field))
-    }];
-  }
-  // Geometria SVG — viewBox esticado horizontalmente, mas texto vai em overlay
-  // HTML (posicionado por %) pra evitar distorção. Todos os traços usam
-  // vector-effect="non-scaling-stroke" pra ficarem crisp em qualquer aspecto.
-  const W = 1600, H = 360, PL = 140, PR = 30, PT = 20, PB = 60;
-  const innerW = W - PL - PR;
-  const innerH = H - PT - PB;
-  const rawMax = Math.max(1, ...series.flatMap(s => s.values));
-  const yMax = Math.max(4, Math.ceil(rawMax * 1.15));
-  const gridSteps = 5;
-  const gridLevels = [];
-  for (let i = 0; i <= gridSteps; i++) gridLevels.push(yMax * i / gridSteps);
-  const xFor = i => PL + (sortedKeys.length <= 1 ? innerW / 2 : i * innerW / (sortedKeys.length - 1));
-  const yFor = v => PT + innerH - (v / yMax) * innerH;
-  // Gridlines Y (dashed) — só as linhas no SVG; labels vêm no overlay HTML
-  const yEls = gridLevels.map(v => {
-    const y = yFor(v);
-    return `<line x1="${PL}" x2="${W - PR}" y1="${y}" y2="${y}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3 4" opacity="0.5" vector-effect="non-scaling-stroke"/>`;
-  }).join('');
-  // Séries (linhas + área quando single) — vector-effect pra strokes ficarem crisp.
-  // Dots ficam em HTML overlay (SVG circles distorceriam por serem elípticos
-  // quando o viewBox esticado tem aspecto diferente do widget).
-  const showArea = series.length === 1;
-  const pathParts = series.map(s => {
-    const pts = s.values.map((v, i) => [xFor(i), yFor(v)]);
-    const path = 'M ' + pts.map(p => `${p[0]} ${p[1]}`).join(' L ');
-    let area = '';
-    if (showArea) {
-      const last = pts[pts.length - 1], first = pts[0];
-      const baseY = PT + innerH;
-      area = `<path d="${path} L ${last[0]} ${baseY} L ${first[0]} ${baseY} Z" fill="${s.color}" fill-opacity="0.12"/>`;
-    }
-    return `${area}<path d="${path}" fill="none" stroke="${s.color}" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`;
-  }).join('');
-  // Dots HTML — posicionados por % pra não distorcer
-  const uid = 'lw' + Math.random().toString(36).slice(2, 8);
-  const dotsHtml = series.map((s, si) => s.values.map((v, i) => {
-    const leftPct = (xFor(i) / W) * 100;
-    const topPct = (yFor(v) / H) * 100;
-    return `<div class="dw-line-dot" style="left:${leftPct}%;top:${topPct}%;background:${s.color}"></div>`;
-  }).join('')).join('');
-  // Hover markers em HTML também
-  const markerHtml = series.map((s, i) =>
-    `<div id="${uid}-mk-${i}" class="dw-line-marker" style="background:${s.color}"></div>`
-  ).join('');
-  // Guide line vertical fica no SVG (vertical, não distorce)
-  const guideEl = `<line id="${uid}-guide" class="chart-guide" x1="0" y1="${PT}" x2="0" y2="${PT + innerH}" stroke="var(--text-muted)" stroke-width="1" stroke-dasharray="2 3" vector-effect="non-scaling-stroke" style="opacity:0;pointer-events:none"/>`;
-  // Overlay HTML — labels sem distorção. Posições em % relativas ao container.
-  // Y axis: cada label na linha do grid correspondente (top:% baseado em H).
-  const yLabelsHtml = gridLevels.map(v => {
-    const y = yFor(v);
-    const topPct = (y / H) * 100;
-    const label = Number.isInteger(v) ? String(v) : v.toFixed(1);
-    return `<span class="dw-line-ylabel" style="top:${topPct}%">${label}</span>`;
-  }).join('');
-  // X axis: mostra 6-8 labels distribuídos
-  const maxLabels = 8;
-  const labelStep = Math.max(1, Math.ceil(sortedKeys.length / maxLabels));
-  const xLabelsHtml = sortedKeys.map((k, i) => {
-    if (i % labelStep !== 0 && i !== sortedKeys.length - 1) return '';
-    const leftPct = (xFor(i) / W) * 100;
-    return `<span class="dw-line-xlabel" style="left:${leftPct}%">${esc(xLabels[i])}</span>`;
-  }).join('');
-  const legend = (series.length > 1 && !w.hideLegend) ? `<div class="dw-legend dw-line-legend">${series.map(s => `<span class="dw-legend-item"><span class="dw-legend-dot" style="background:${s.color}"></span>${esc(s.name)}</span>`).join('')}</div>` : '';
-  const html = `<div class="dw-widget">
-    <div class="dw-widget-title-row">
-      <div class="dw-widget-title">${esc(w.title || (template.name + ' — timeline'))}</div>
-      ${legend}
-    </div>
-    <div class="dw-line-wrap">
-      <div class="chart-hover-host dw-line-host" id="${uid}-host">
-        <svg viewBox="0 0 ${W} ${H}" class="dash-chart-svg" preserveAspectRatio="none">
-          ${yEls}
-          ${pathParts}
-          ${guideEl}
-        </svg>
-        <div class="dw-line-dots">${dotsHtml}</div>
-        <div class="dw-line-markers">${markerHtml}</div>
-        <div class="dw-line-axis-y">${yLabelsHtml}</div>
-        <div class="dw-line-axis-x">${xLabelsHtml}</div>
-        <div class="chart-tooltip" id="${uid}-tip"></div>
-      </div>
-      <div class="dw-kpi-label" style="margin-top:6px;font-size:11px">${aggLbl} · ${bucketLbl}${groupField ? ' · por ' + esc(groupField.label) : ''}${isSubmitterGroup ? ' · por Preenchido por' : ''}</div>
-    </div>
-  </div>`;
-  // Empurra pra fila — attach do hover roda após innerHTML no _renderDashboardView.
-  _pendingLineHovers.push({
-    uid,
-    viewBoxW: W, viewBoxH: H,
-    points: sortedKeys.map((k, i) => ({
-      xVb: xFor(i),                   // pra guide SVG
-      xPct: (xFor(i) / W) * 100,      // pra tooltip HTML
-      label: _formatBucketLabel(k, bucketMode),
-      series: series.map(s => ({
-        name: s.name,
-        value: s.values[i],
-        yPct: (yFor(s.values[i]) / H) * 100,
-        color: s.color
-      }))
-    })),
-    seriesCount: series.length
-  });
-  return html;
-}
-let _pendingLineHovers = [];
-/* Hover handler específico do line widget — markers e labels são HTML overlay
-   (pra não distorcer), guide continua no SVG (linha vertical, insensível a
-   stretch horizontal). */
-function _flushLineHovers() {
-  const queue = _pendingLineHovers;
-  _pendingLineHovers = [];
-  for (const q of queue) {
-    const host = document.getElementById(q.uid + '-host');
-    if (!host || !q.points.length) continue;
-    _attachLineHover(host, q);
-  }
-}
-function _attachLineHover(host, q) {
-  const tip = document.getElementById(q.uid + '-tip');
-  const guide = document.getElementById(q.uid + '-guide');
-  const markers = Array.from({ length: q.seriesCount }, (_, i) => document.getElementById(q.uid + '-mk-' + i));
-  // Portala o tooltip pra <body> pra escapar do overflow:hidden do widget.
-  // Uso position:fixed + coords do viewport pra não depender do stacking do widget.
-  if (tip && tip.parentElement !== document.body) {
-    document.body.appendChild(tip);
-    tip.style.position = 'fixed';
-    tip.style.zIndex = '9999';
-    tip.style.pointerEvents = 'none';
-  }
-  let lastIdx = -1;
-  const onMove = (e) => {
-    const rect = host.getBoundingClientRect();
-    if (!rect.width) return;
-    const localX = e.clientX - rect.left;
-    const xPctMouse = (localX / rect.width) * 100;
-    // Acha ponto mais próximo por xPct
-    let best = 0, bestDist = Infinity;
-    for (let i = 0; i < q.points.length; i++) {
-      const d = Math.abs(q.points[i].xPct - xPctMouse);
-      if (d < bestDist) { bestDist = d; best = i; }
-    }
-    if (best === lastIdx) return;
-    lastIdx = best;
-    const p = q.points[best];
-    // Guide (SVG, em unidades de viewBox)
-    if (guide) {
-      guide.setAttribute('x1', p.xVb);
-      guide.setAttribute('x2', p.xVb);
-      guide.style.opacity = '1';
-    }
-    // Markers HTML — posicionados por %
-    p.series.forEach((s, i) => {
-      const m = markers[i];
-      if (!m) return;
-      m.style.left = p.xPct + '%';
-      m.style.top = s.yPct + '%';
-      m.style.background = s.color;
-      m.style.opacity = '1';
-    });
-    // Tooltip (portalado — coords em viewport)
-    if (tip) {
-      const lines = p.series.map(s => {
-        const dot = `<span class="chart-tip-dot" style="background:${s.color}"></span>`;
-        const val = Number.isInteger(s.value) ? String(s.value) : Number(s.value).toFixed(2);
-        return `<div class="chart-tip-row">${dot}<span class="chart-tip-label">${esc(s.name || '')}</span><span class="chart-tip-value">${esc(val)}</span></div>`;
-      }).join('');
-      tip.innerHTML = `<div class="chart-tip-head">${esc(p.label)}</div>${lines}`;
-      // Anchor no ponto do gráfico dentro do viewport.
-      const anchorX = rect.left + (p.xPct / 100) * rect.width;
-      const tipW = tip.offsetWidth || 160;
-      const tipH = tip.offsetHeight || 80;
-      let left = anchorX + 12;
-      // Se estoura à direita, joga pra esquerda do ponto
-      if (left + tipW > window.innerWidth - 8) left = anchorX - tipW - 12;
-      // Se ainda estoura à esquerda, cola no canto
-      if (left < 8) left = 8;
-      // Vertical: 8px acima do topo do host — se não couber, cola no topo do viewport
-      let top = rect.top - tipH - 8;
-      if (top < 8) top = rect.top + 8; // dentro do host se não couber acima
-      tip.style.left = left + 'px';
-      tip.style.top  = top + 'px';
-      tip.style.opacity = '1';
-    }
-  };
-  const onLeave = () => {
-    lastIdx = -1;
-    if (tip) tip.style.opacity = '0';
-    if (guide) guide.style.opacity = '0';
-    markers.forEach(m => m && (m.style.opacity = '0'));
-  };
-  host.addEventListener('mousemove', onMove);
-  host.addEventListener('mouseleave', onLeave);
-}
-function _lineBucketAggregate(rs, agg, field) {
-  if (agg === 'count') return rs.length;
-  const nums = rs.map(r => Number(r.values?.[field.id])).filter(n => Number.isFinite(n));
-  if (agg === 'sum') return nums.reduce((s, n) => s + n, 0);
-  if (agg === 'avg') return nums.length ? (nums.reduce((s, n) => s + n, 0) / nums.length) : 0;
-  return 0;
-}
-
-/* ── EDITOR de dashboard (modal simples: nome/descrição só) ──
-   Widgets moraram no canvas de edição (edit mode) — cada um tem seu próprio
-   modal `widget-config-modal` (openWidgetConfig). */
-let _deEditingId = null;
-
-function openDashboardEditor(dashId) {
-  if (!me?.isAdmin) { toast('Apenas administradores podem editar dashboards', 'warn'); return; }
-  _deEditingId = dashId || null;
-  const d = dashId ? dashboardById(dashId) : null;
-  document.getElementById('dashboard-editor-title').textContent = d ? 'Editar dashboard' : 'Novo dashboard';
-  document.getElementById('de-name').value = d?.name || '';
-  document.getElementById('de-description').value = d?.description || '';
-  openModal('dashboard-editor-modal');
-  navPush(dashId ? `/dashboards/${dashId}/edit` : '/dashboards/new');
-}
-
-/* ── WIDGET CONFIG (modal individual — abre ao clicar em célula vazia ou no
-   gear de um widget) ── */
-let _wcState = { dashboardId: null, widgetId: null, layout: null, kpiSeries: [] };
-
-function openWidgetConfig(dashboardId, widgetId, x, y, w, h) {
-  if (!me?.isAdmin) { toast('Apenas administradores podem editar widgets', 'warn'); return; }
-  const dash = dashboardById(dashboardId);
-  if (!dash) return;
-  const widget = widgetId ? (dash.widgets || []).find(x => x.id === widgetId) : null;
-  _wcState = {
-    dashboardId,
-    widgetId: widgetId || null,
-    layout: widget?.layout || (Number.isInteger(x) ? { x, y, w: Math.min(w || DASH_DEFAULT_W, DASH_COLS), h: h || DASH_DEFAULT_H } : null),
-    kpiSeries: widget?.kpiSeries ? JSON.parse(JSON.stringify(widget.kpiSeries)) : [],
-    pivot: widget?.pivot ? JSON.parse(JSON.stringify(widget.pivot)) : { rowDim: '', colDim: '', metric: 'count', aggregate: 'sum' },
-    combo: widget?.combo ? JSON.parse(JSON.stringify(widget.combo)) : { primary: '', bar: { metric: 'count', aggregate: 'sum' }, line: { metric: 'count', aggregate: 'sum' } },
-    scatter: widget?.scatter ? JSON.parse(JSON.stringify(widget.scatter)) : { x: '', y: '', groupDim: '' },
-    timeline: widget?.timeline ? JSON.parse(JSON.stringify(widget.timeline)) : { bucket: 'auto', metrics: [{ label: '', metric: 'count', aggregate: 'sum' }], splitBy: '' }
-  };
-  document.getElementById('wc-title').textContent = widget ? 'Editar widget' : 'Adicionar widget';
-  document.getElementById('wc-title-input').value = widget?.title || '';
-  document.getElementById('wc-chart-type').value = widget?.chartType || 'bar';
-  document.getElementById('wc-source-kind').value = widget?.source?.kind || 'form';
-  // Popular templates dropdown
-  const templates = (formTemplates || []).slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-  document.getElementById('wc-template').innerHTML = '<option value="">— Formulário —</option>' +
-    templates.map(t => `<option value="${esc(t.id)}" ${widget?.source?.templateId === t.id ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
-  // Popular agg dropdowns com valores do widget
-  document.getElementById('wc-agg').value = widget?.kpiAggregate || widget?.lineAggregate || 'count';
-  document.getElementById('wc-bucket').value = widget?.lineBucket || 'auto';
-  const bw = document.getElementById('wc-barwrap');
-  if (bw) bw.checked = !!widget?.barWrap;
-  const hl = document.getElementById('wc-hidelegend');
-  if (hl) hl.checked = !!widget?.hideLegend;
-  _wcRerenderFieldsAndOptions();
-  openModal('widget-config-modal');
-}
-
-function _wcMarkDirty() { /* placeholder — mudanças persistem só no save */ }
-function _wcOnSourceKindChange() { _wcRerenderFieldsAndOptions(); }
-function _wcOnPivotMetricChange() {
-  // Se métrica é count, força agregação = sum (irrelevante); senão libera avg.
-  const metric = document.getElementById('wc-pivot-metric').value;
-  const aggSel = document.getElementById('wc-pivot-agg');
-  if (metric === 'count') { aggSel.value = 'sum'; aggSel.disabled = true; }
-  else aggSel.disabled = false;
-}
-function _wcRefreshComboScatterDropdowns() {
-  const kind = document.getElementById('wc-source-kind').value || 'form';
-  const templateId = document.getElementById('wc-template').value || '';
-  const dims = _wgtDimsFor(kind, templateId);
-  const metrics = _wgtMetricsFor(kind, templateId);
-  const cb = _wcState.combo || {};
-  const sc = _wcState.scatter || {};
-  // Combo
-  const primSel = document.getElementById('wc-combo-primary');
-  const barMetSel = document.getElementById('wc-combo-bar-metric');
-  const barAggSel = document.getElementById('wc-combo-bar-agg');
-  const lineMetSel = document.getElementById('wc-combo-line-metric');
-  const lineAggSel = document.getElementById('wc-combo-line-agg');
-  if (primSel) {
-    primSel.innerHTML = '<option value="">— Selecione —</option>' + dims.map(d => `<option value="${esc(d.key)}" ${cb.primary === d.key ? 'selected' : ''}>${esc(d.label)}</option>`).join('');
-    barMetSel.innerHTML  = metrics.map(m => `<option value="${esc(m.key)}" ${cb.bar?.metric  === m.key ? 'selected' : ''}>${esc(m.label)}</option>`).join('');
-    lineMetSel.innerHTML = metrics.map(m => `<option value="${esc(m.key)}" ${cb.line?.metric === m.key ? 'selected' : ''}>${esc(m.label)}</option>`).join('');
-    barAggSel.value  = cb.bar?.aggregate  || 'sum';
-    lineAggSel.value = cb.line?.aggregate || 'sum';
-  }
-  // Scatter — só métricas numéricas fazem sentido em ambos eixos
-  const scX = document.getElementById('wc-scatter-x');
-  const scY = document.getElementById('wc-scatter-y');
-  const scG = document.getElementById('wc-scatter-group');
-  if (scX) {
-    scX.innerHTML = '<option value="">— Selecione —</option>' + metrics.filter(m => m.key !== 'count').map(m => `<option value="${esc(m.key)}" ${sc.x === m.key ? 'selected' : ''}>${esc(m.label)}</option>`).join('');
-    scY.innerHTML = '<option value="">— Selecione —</option>' + metrics.filter(m => m.key !== 'count').map(m => `<option value="${esc(m.key)}" ${sc.y === m.key ? 'selected' : ''}>${esc(m.label)}</option>`).join('');
-    scG.innerHTML = '<option value="">Sem agrupar</option>' + dims.map(d => `<option value="${esc(d.key)}" ${sc.groupDim === d.key ? 'selected' : ''}>${esc(d.label)}</option>`).join('');
-  }
-}
-function _wcRefreshTimelineDropdowns() {
-  const kind = document.getElementById('wc-source-kind').value || 'form';
-  const templateId = document.getElementById('wc-template').value || '';
-  const dims = _wgtDimsFor(kind, templateId);
-  const tl = _wcState.timeline || {};
-  document.getElementById('wc-timeline-bucket').value = tl.bucket || 'auto';
-  const splitSel = document.getElementById('wc-timeline-split');
-  splitSel.innerHTML = '<option value="">Sem dividir (mostra as métricas)</option>' +
-    dims.map(d => `<option value="${esc(d.key)}" ${tl.splitBy === d.key ? 'selected' : ''}>${esc(d.label)}</option>`).join('');
-  _wcRenderTimelineMetrics();
-}
-function _wcRenderTimelineMetrics() {
-  const host = document.getElementById('wc-timeline-metrics-list');
-  if (!host) return;
-  const kind = document.getElementById('wc-source-kind').value || 'form';
-  const templateId = document.getElementById('wc-template').value || '';
-  const metrics = _wgtMetricsFor(kind, templateId);
-  const list = _wcState.timeline?.metrics || [];
-  host.innerHTML = list.map((m, mi) => {
-    const optsHtml = metrics.map(mm => `<option value="${esc(mm.key)}" ${m.metric === mm.key ? 'selected' : ''}>${esc(mm.label)}</option>`).join('');
-    return `<div class="de-kpi-series-row">
-      <input class="form-control" placeholder="Rótulo (opcional)" value="${esc(m.label || '')}" oninput="_wcUpdateTimelineMetric(${mi}, 'label', this.value)">
-      <select class="form-control" onchange="_wcUpdateTimelineMetric(${mi}, 'metric', this.value)">${optsHtml}</select>
-      <select class="form-control" onchange="_wcUpdateTimelineMetric(${mi}, 'aggregate', this.value)">
-        <option value="sum" ${m.aggregate === 'sum' ? 'selected' : ''}>Soma</option>
-        <option value="avg" ${m.aggregate === 'avg' ? 'selected' : ''}>Média</option>
-      </select>
-      <button type="button" class="detail-icon-btn danger" title="Remover métrica" onclick="_wcRemoveTimelineMetric(${mi})" ${list.length <= 1 ? 'disabled' : ''}><i data-lucide="x" class="ic-sm"></i></button>
-    </div>`;
-  }).join('');
-  if (window.lucide?.createIcons) lucide.createIcons();
-}
-function _wcAddTimelineMetric() {
-  if (!Array.isArray(_wcState.timeline?.metrics)) _wcState.timeline.metrics = [];
-  if (_wcState.timeline.metrics.length >= 4) { toast('Máximo 4 métricas', 'warn'); return; }
-  _wcState.timeline.metrics.push({ label: '', metric: 'count', aggregate: 'sum' });
-  _wcRenderTimelineMetrics();
-}
-function _wcRemoveTimelineMetric(idx) {
-  if (!_wcState.timeline?.metrics) return;
-  if (_wcState.timeline.metrics.length <= 1) return;
-  _wcState.timeline.metrics.splice(idx, 1);
-  _wcRenderTimelineMetrics();
-}
-function _wcUpdateTimelineMetric(idx, key, val) {
-  const m = _wcState.timeline?.metrics?.[idx];
-  if (!m) return;
-  m[key] = val;
-  if (key === 'metric') _wcRenderTimelineMetrics();
-}
-function _wcRefreshPivotDropdowns() {
-  const kind = document.getElementById('wc-source-kind').value || 'form';
-  const templateId = document.getElementById('wc-template').value || '';
-  const dims = _wgtDimsFor(kind, templateId);
-  const metrics = _wgtMetricsFor(kind, templateId);
-  const pv = _wcState.pivot || {};
-  const rowSel = document.getElementById('wc-pivot-row');
-  const colSel = document.getElementById('wc-pivot-col');
-  const metSel = document.getElementById('wc-pivot-metric');
-  const aggSel = document.getElementById('wc-pivot-agg');
-  const chartType = document.getElementById('wc-chart-type').value;
-  const isHeat = chartType === 'heatmap';
-  rowSel.innerHTML = '<option value="">— Selecione —</option>' +
-    dims.map(d => `<option value="${esc(d.key)}" ${pv.rowDim === d.key ? 'selected' : ''}>${esc(d.label)}</option>`).join('');
-  colSel.innerHTML = (isHeat ? '<option value="">— Selecione —</option>' : '<option value="">Sem coluna</option>') +
-    dims.map(d => `<option value="${esc(d.key)}" ${pv.colDim === d.key ? 'selected' : ''}>${esc(d.label)}</option>`).join('');
-  metSel.innerHTML = metrics.map(m => `<option value="${esc(m.key)}" ${pv.metric === m.key ? 'selected' : ''}>${esc(m.label)}</option>`).join('');
-  aggSel.value = pv.aggregate || 'sum';
-  document.getElementById('wc-pivot-col-label').textContent = isHeat ? 'Dimensão de colunas' : 'Dimensão de colunas (opcional)';
-  _wcOnPivotMetricChange();
-}
-
-/* Re-renderiza dropdowns dependentes (fields, groupBy, kpi series) baseado no
-   estado atual do formulário — chamado sempre que tipo/template muda. */
-function _wcRerenderFieldsAndOptions() {
-  const chartType = document.getElementById('wc-chart-type').value;
-  const kind = document.getElementById('wc-source-kind').value || 'form';
-  const templateId = document.getElementById('wc-template').value;
-  const template = templateId ? formTemplateById(templateId) : null;
-  const fields = template?.fields || [];
-  const w = _wcState.widgetId ? (dashboardById(_wcState.dashboardId)?.widgets || []).find(x => x.id === _wcState.widgetId) : null;
-  const isPivot = chartType === 'pivot' || chartType === 'heatmap';
-  const isCombo = chartType === 'combo';
-  const isScatter = chartType === 'scatter';
-  const isTimeline = chartType === 'timeline';
-  const isCross = isPivot || isCombo || isScatter || isTimeline; // usa novas dropdowns/kind livre
-  const isKpi = chartType === 'kpi';
-  const isLine = chartType === 'line';
-  const isBarLike = chartType === 'bar' || chartType === 'barh';
-  const isCat = isBarLike || chartType === 'pie';
-  const isMultiKpi = isKpi && Array.isArray(_wcState.kpiSeries) && _wcState.kpiSeries.length > 0;
-  const agg = document.getElementById('wc-agg').value;
-  const noField = (isKpi && !isMultiKpi && agg === 'count') || (isLine && agg === 'count');
-  // Cross-widgets (pivot/heatmap/combo/scatter): usa dropdowns próprios; esconde os legados.
-  document.getElementById('wc-pivot-group').style.display    = isPivot    ? '' : 'none';
-  document.getElementById('wc-combo-group').style.display    = isCombo    ? '' : 'none';
-  document.getElementById('wc-scatter-group').style.display  = isScatter  ? '' : 'none';
-  document.getElementById('wc-timeline-group').style.display = isTimeline ? '' : 'none';
-  // Fonte de dados: só cross-widgets suportam kind ≠ form. Widgets clássicos forçam form.
-  const kindSel = document.getElementById('wc-source-kind');
-  if (!isCross && kind !== 'form') { kindSel.value = 'form'; }
-  const kindEff = kindSel.value;
-  document.getElementById('wc-template-group').style.display = kindEff === 'form' ? '' : 'none';
-  if (isCross) {
-    if (isPivot) _wcRefreshPivotDropdowns();
-    else if (isTimeline) _wcRefreshTimelineDropdowns();
-    else _wcRefreshComboScatterDropdowns();
-    document.getElementById('wc-field-group').style.display = 'none';
-    document.getElementById('wc-agg-group').style.display = 'none';
-    document.getElementById('wc-bucket-group').style.display = 'none';
-    document.getElementById('wc-groupby-group').style.display = 'none';
-    document.getElementById('wc-multi-kpi-group').style.display = 'none';
-    if (window.lucide?.createIcons) lucide.createIcons();
-    return;
-  }
-  // Field group visibility
-  const fieldGroup = document.getElementById('wc-field-group');
-  const fieldLabel = document.getElementById('wc-field-label');
-  const fieldSelect = document.getElementById('wc-field');
-  const needsNumeric = ((isKpi && !isMultiKpi) || isLine) && agg !== 'count';
-  if (isMultiKpi) {
-    fieldGroup.style.display = 'none';
-  } else if (noField) {
-    fieldGroup.style.display = 'none';
-  } else {
-    fieldGroup.style.display = '';
-    fieldLabel.textContent = needsNumeric ? 'Campo numérico' : 'Campo';
-    const filteredFields = fields.filter(f => needsNumeric ? f.type === 'number' : true);
-    const currentFieldId = w?.source?.fieldId || '';
-    fieldSelect.innerHTML = '<option value="">— Selecione —</option>' +
-      filteredFields.map(f => `<option value="${esc(f.id)}" ${currentFieldId === f.id ? 'selected' : ''}>${esc(f.label)} (${f.type})</option>`).join('');
-  }
-  // Agg group: kpi ou line
-  document.getElementById('wc-agg-group').style.display = (isKpi && !isMultiKpi) || isLine ? '' : 'none';
-  // Bucket: só line
-  document.getElementById('wc-bucket-group').style.display = isLine ? '' : 'none';
-  // barWrap só faz sentido em bar (vertical).
-  const bwGroup = document.getElementById('wc-barwrap-group');
-  if (bwGroup) bwGroup.style.display = chartType === 'bar' ? '' : 'none';
-  // hideLegend faz sentido em tipos com legenda (bar, barh, pie, line, combo, timeline, scatter).
-  const hlGroup = document.getElementById('wc-hidelegend-group');
-  const legendTypes = ['bar','barh','pie','line','combo','timeline','scatter'];
-  if (hlGroup) hlGroup.style.display = legendTypes.includes(chartType) ? '' : 'none';
-  // GroupBy: bar (vertical/horizontal) ou line. Além dos campos categóricos, oferece
-  // "Preenchido por" (sentinela __submitter__) — útil pra comparar séries por autor.
-  const groupByGroup = document.getElementById('wc-groupby-group');
-  const groupBySelect = document.getElementById('wc-groupby');
-  const catFields = fields.filter(f => (f.type === 'select' || f.type === 'multiselect'));
-  const showGroupBy = (isBarLike || isLine) && (catFields.length > 0 || isLine);
-  if (showGroupBy) {
-    groupByGroup.style.display = '';
-    const currentGroupBy = w?.groupByFieldId || '';
-    const selectedFieldId = fieldSelect.value;
-    const subOption = isLine
-      ? `<option value="__submitter__" ${currentGroupBy === '__submitter__' ? 'selected' : ''}>Preenchido por</option>`
-      : '';
-    groupBySelect.innerHTML = '<option value="">Sem agrupar</option>' + subOption +
-      catFields.filter(f => f.id !== selectedFieldId)
-        .map(f => `<option value="${esc(f.id)}" ${currentGroupBy === f.id ? 'selected' : ''}>${esc(f.label)}</option>`).join('');
-  } else {
-    groupByGroup.style.display = 'none';
-  }
-  // Multi-KPI group
-  document.getElementById('wc-multi-kpi-group').style.display = isKpi ? '' : 'none';
-  _wcRenderKpiSeries();
-  if (window.lucide?.createIcons) lucide.createIcons();
-}
-function _wcOnChartTypeChange() {
-  const chartType = document.getElementById('wc-chart-type').value;
-  // Ao trocar de tipo, reseta config específica do tipo antigo
-  if (chartType !== 'kpi') _wcState.kpiSeries = [];
-  if (chartType === 'line') { document.getElementById('wc-agg').value = document.getElementById('wc-agg').value || 'count'; }
-  _wcRerenderFieldsAndOptions();
-}
-function _wcOnTemplateChange() { _wcRerenderFieldsAndOptions(); }
-function _wcOnAggChange() { _wcRerenderFieldsAndOptions(); }
-function _wcRenderKpiSeries() {
-  const host = document.getElementById('wc-kpi-series-list');
-  if (!host) return;
-  const templateId = document.getElementById('wc-template').value;
-  const fields = (templateId ? formTemplateById(templateId)?.fields : []) || [];
-  const numFields = fields.filter(f => f.type === 'number');
-  host.innerHTML = (_wcState.kpiSeries || []).map((s, si) => {
-    const numOnly = s.aggregate === 'sum' || s.aggregate === 'avg';
-    const opts = numFields.map(f => `<option value="${esc(f.id)}" ${s.fieldId === f.id ? 'selected' : ''}>${esc(f.label)}</option>`).join('');
-    return `<div class="de-kpi-series-row">
-      <input class="form-control" placeholder="Rótulo" value="${esc(s.label || '')}" oninput="_wcUpdateKpiSeries(${si}, 'label', this.value)">
-      <select class="form-control" onchange="_wcUpdateKpiSeries(${si}, 'aggregate', this.value)">
-        <option value="count" ${s.aggregate === 'count' ? 'selected' : ''}>Contagem</option>
-        <option value="sum"   ${s.aggregate === 'sum'   ? 'selected' : ''}>Soma</option>
-        <option value="avg"   ${s.aggregate === 'avg'   ? 'selected' : ''}>Média</option>
-      </select>
-      ${numOnly ? `<select class="form-control" onchange="_wcUpdateKpiSeries(${si}, 'fieldId', this.value)">
-        <option value="">— Campo numérico —</option>${opts}
-      </select>` : '<div class="de-widget-row-note">Sem campo</div>'}
-      <button type="button" class="detail-icon-btn danger" title="Remover métrica" onclick="_wcRemoveKpiSeries(${si})"><i data-lucide="x" class="ic-sm"></i></button>
-    </div>`;
-  }).join('');
-  const hint = document.getElementById('wc-kpi-series-hint');
-  if (hint) hint.style.display = _wcState.kpiSeries.length ? 'none' : '';
-}
-function _wcAddKpiSeries() {
-  if (!Array.isArray(_wcState.kpiSeries)) _wcState.kpiSeries = [];
-  if (_wcState.kpiSeries.length >= 4) { toast('Máximo 4 métricas', 'warn'); return; }
-  _wcState.kpiSeries.push({ label: '', aggregate: 'count' });
-  _wcRerenderFieldsAndOptions();
-}
-function _wcRemoveKpiSeries(idx) {
-  _wcState.kpiSeries.splice(idx, 1);
-  _wcRerenderFieldsAndOptions();
-}
-function _wcUpdateKpiSeries(idx, key, val) {
-  const s = _wcState.kpiSeries?.[idx];
-  if (!s) return;
-  s[key] = val;
-  if (key === 'aggregate' && val === 'count') delete s.fieldId;
-  if (key === 'aggregate') _wcRenderKpiSeries();
-}
-
-async function saveWidgetConfig() {
-  const dashId = _wcState.dashboardId;
-  const dash = dashboardById(dashId);
-  if (!dash) return;
-  const chartType = document.getElementById('wc-chart-type').value;
-  const kind = document.getElementById('wc-source-kind').value || 'form';
-  const templateId = document.getElementById('wc-template').value;
-  const fieldId = document.getElementById('wc-field').value;
-  const agg = document.getElementById('wc-agg').value;
-  const bucket = document.getElementById('wc-bucket').value;
-  const groupBy = document.getElementById('wc-groupby').value;
-  const title = document.getElementById('wc-title-input').value.trim();
-  const isPivot = chartType === 'pivot' || chartType === 'heatmap';
-  const isCombo = chartType === 'combo';
-  const isScatter = chartType === 'scatter';
-  const isTimeline = chartType === 'timeline';
-  const isCross = isPivot || isCombo || isScatter || isTimeline;
-  // Pra cross-widgets qualquer kind vale; pra outros tipos precisa de form + template
-  if (!isCross && !templateId) { toast('Escolha um formulário', 'warn'); return; }
-  if (isCross && kind === 'form' && !templateId) { toast('Escolha um formulário (a fonte é form)', 'warn'); return; }
-  const isMultiKpi = chartType === 'kpi' && _wcState.kpiSeries.length > 0;
-  const widget = {
-    id: _wcState.widgetId || 'w_' + Math.random().toString(36).slice(2, 10),
-    title,
-    chartType,
-    source: kind === 'form' ? { kind: 'form', templateId } : { kind },
-    layout: _wcState.layout || undefined
-  };
-  if (isPivot) {
-    const rowDim = document.getElementById('wc-pivot-row').value;
-    const colDim = document.getElementById('wc-pivot-col').value;
-    const metric = document.getElementById('wc-pivot-metric').value;
-    const aggregate = document.getElementById('wc-pivot-agg').value || 'sum';
-    if (!rowDim) { toast('Escolha a dimensão de linhas', 'warn'); return; }
-    if (chartType === 'heatmap' && !colDim) { toast('Heatmap precisa de dimensão de colunas', 'warn'); return; }
-    widget.pivot = { rowDim, colDim: colDim || '', metric: metric || 'count', aggregate };
-  } else if (isCombo) {
-    const primary = document.getElementById('wc-combo-primary').value;
-    const barMetric = document.getElementById('wc-combo-bar-metric').value;
-    const barAgg    = document.getElementById('wc-combo-bar-agg').value || 'sum';
-    const lineMetric = document.getElementById('wc-combo-line-metric').value;
-    const lineAgg    = document.getElementById('wc-combo-line-agg').value || 'sum';
-    if (!primary) { toast('Escolha a dimensão do eixo X', 'warn'); return; }
-    if (!barMetric || !lineMetric) { toast('Escolha as duas métricas (barra e linha)', 'warn'); return; }
-    widget.combo = { primary, bar: { metric: barMetric, aggregate: barAgg }, line: { metric: lineMetric, aggregate: lineAgg } };
-  } else if (isScatter) {
-    const x = document.getElementById('wc-scatter-x').value;
-    const y = document.getElementById('wc-scatter-y').value;
-    const groupDim = document.getElementById('wc-scatter-group').value;
-    if (!x || !y) { toast('Escolha as métricas de X e Y', 'warn'); return; }
-    if (x === 'count' || y === 'count') { toast('Scatter não aceita "count" — escolha uma métrica numérica.', 'warn'); return; }
-    widget.scatter = { x, y, groupDim: groupDim || '' };
-  } else if (isTimeline) {
-    const bucket = document.getElementById('wc-timeline-bucket').value || 'auto';
-    const splitBy = document.getElementById('wc-timeline-split').value || '';
-    const metrics = (_wcState.timeline?.metrics || []).map(m => ({
-      label: String(m.label || '').trim().slice(0, 60),
-      metric: m.metric || 'count',
-      aggregate: m.aggregate === 'avg' ? 'avg' : 'sum'
-    })).filter(m => m.metric);
-    if (!metrics.length) { toast('Configure pelo menos uma métrica na timeline', 'warn'); return; }
-    widget.timeline = { bucket, metrics, splitBy };
-  }
-  if (chartType === 'bar' || chartType === 'barh' || chartType === 'pie') {
-    if (!fieldId) { toast('Escolha um campo', 'warn'); return; }
-    widget.source.fieldId = fieldId;
-    if ((chartType === 'bar' || chartType === 'barh') && groupBy) widget.groupByFieldId = groupBy;
-    if (chartType === 'bar' && document.getElementById('wc-barwrap')?.checked) widget.barWrap = true;
-  } else if (chartType === 'kpi') {
-    if (isMultiKpi) {
-      for (const s of _wcState.kpiSeries) {
-        if ((s.aggregate === 'sum' || s.aggregate === 'avg') && !s.fieldId) {
-          toast(`Métrica "${s.label || 'sem rótulo'}" precisa de campo numérico`, 'warn'); return;
-        }
-      }
-      widget.kpiSeries = _wcState.kpiSeries;
-    } else {
-      widget.kpiAggregate = agg;
-      if (agg !== 'count') {
-        if (!fieldId) { toast('Escolha um campo numérico', 'warn'); return; }
-        widget.source.fieldId = fieldId;
-      }
-    }
-  } else if (chartType === 'line') {
-    widget.lineAggregate = agg;
-    widget.lineBucket = bucket;
-    if (agg !== 'count') {
-      if (!fieldId) { toast('Escolha um campo numérico', 'warn'); return; }
-      widget.source.fieldId = fieldId;
-    }
-    if (groupBy) widget.groupByFieldId = groupBy;
-  }
-  if (document.getElementById('wc-hidelegend')?.checked) widget.hideLegend = true;
-  const existing = dash.widgets || [];
-  const nextWidgets = _wcState.widgetId
-    ? existing.map(x => x.id === _wcState.widgetId ? widget : x)
-    : [...existing, widget];
+/* ── Editar layout: arrastar, redimensionar e teclado ─────────────────
+   Durante o gesto: o card segue o ponteiro livremente, o marcador mostra onde
+   ele vai cair (na grade) e os outros desviam em tempo real. Ao soltar, tudo
+   se acomoda e o layout é salvo uma vez só, sem redesenhar os gráficos. */
+async function _dvSaveWidgets(dash, nextWidgets, errMsg) {
   try {
-    const saved = await api('/dashboards/' + dashId, 'PUT', { widgets: nextWidgets });
-    dashboards = dashboards.map(d => d.id === saved.id ? saved : d);
-    closeModal('widget-config-modal');
-    toast(_wcState.widgetId ? 'Widget atualizado' : 'Widget adicionado', 'success');
-    _renderDashboardView(dashboardById(dashId));
+    const saved = await api('/dashboards/' + dash.id, 'PUT', { widgets: nextWidgets });
+    dashboards = dashboards.map(x => x.id === saved.id ? saved : x);
+    _renderDashboardView(dashboardById(dash.id));
+    return saved;
   } catch (e) {
-    toast(e.message || 'Erro ao salvar widget', 'error');
+    toast(e.message || errMsg, 'error');
+    _renderDashboardView(dash);
+    return null;
   }
 }
-/* ── Helpers de ghost/collision ── */
-function _makeGhost(grid) {
-  const g = document.createElement('div');
-  g.className = 'dw-ghost';
-  grid.appendChild(g);
-  return g;
-}
-function _placeGhost(ghost, layout) {
-  ghost.style.gridColumn = `${layout.x + 1}/span ${layout.w}`;
-  ghost.style.gridRow = `${layout.y + 1}/span ${layout.h}`;
-}
-function _removeGhost(ghost) { if (ghost?.parentNode) ghost.parentNode.removeChild(ghost); }
-function _layoutConflicts(cand, ignoreId, widgets, effectiveLayouts) {
-  for (const w of widgets) {
-    if (w.id === ignoreId) continue;
-    const l = effectiveLayouts.get(w.id);
-    if (!l) continue;
-    if (!(cand.x + cand.w <= l.x || cand.x >= l.x + l.w || cand.y + cand.h <= l.y || cand.y >= l.y + l.h)) return true;
+// Salva só posições/tamanhos: atualiza local na hora e confirma no servidor.
+// Só a resposta do salvamento mais recente vale (um lento não desfaz o novo).
+let _dvCommitSeq = 0;
+async function _dvCommitLayout(dash, items) {
+  const map = new Map(items.map(i => [i.id, { x: i.x, y: i.y, w: i.w, h: i.h }]));
+  const before = dash.widgets;
+  const same = before.every(w => { const l = map.get(w.id); return w.layout && l && l.x === w.layout.x && l.y === w.layout.y && l.w === w.layout.w && l.h === w.layout.h; });
+  if (same) return;
+  const next = before.map(w => ({ ...w, layout: map.get(w.id) || w.layout }));
+  dash.widgets = next;
+  const seq = ++_dvCommitSeq;
+  try {
+    const saved = await api('/dashboards/' + dash.id, 'PUT', { widgets: next });
+    if (seq === _dvCommitSeq) dashboards = dashboards.map(x => x.id === saved.id ? saved : x);
+  } catch (e) {
+    if (seq !== _dvCommitSeq) return;
+    dash.widgets = before;
+    toast(e.message || 'Não foi possível salvar o layout.', 'error');
+    _renderDashboardView(dash);
   }
-  return false;
 }
-function _gridMetrics(grid) {
-  const rect = grid.getBoundingClientRect();
-  const st = getComputedStyle(grid);
-  const gap = parseFloat(st.rowGap || st.gap || '12');
-  const rowH = parseFloat(st.gridAutoRows) || 200;
-  const cellW = (rect.width - gap * (DASH_COLS - 1)) / DASH_COLS;
-  return { rect, gap, rowH, cellW };
+function _dvCanEditLayout() {
+  if (!canEditDashboards() || !_dashEditMode) return false;
+  if (window.innerWidth <= 768) { toast('Arraste e redimensione numa tela maior.', 'info'); return false; }
+  return true;
 }
-
-/* Resize handle (SE corner / E edge / S edge). Direction ∈ 'se','e','s'.
-   Mostra ghost com dimensões alvo + marca conflito em vermelho. Persist ao soltar. */
-function _startWidgetResize(ev, widgetId, direction) {
-  ev.preventDefault(); ev.stopPropagation();
-  const dashId = _currentDashboardId;
-  const dash = dashboardById(dashId);
-  const w = dash?.widgets?.find(x => x.id === widgetId);
-  if (!w) return;
+function _dvPlaceholder(grid) {
+  let ph = grid.querySelector('.dv-placeholder');
+  if (!ph) { ph = document.createElement('div'); ph.className = 'dv-placeholder'; grid.appendChild(ph); }
+  return ph;
+}
+// Rolagem automática quando o ponteiro encosta na borda da área rolável.
+function _dvAutoScroll(e) {
+  const sc = document.querySelector('#page-dashboards .page-body');
+  if (!sc) return;
+  const r = sc.getBoundingClientRect();
+  if (e.clientY > r.bottom - 48) sc.scrollTop += 14;
+  else if (e.clientY < r.top + 48) sc.scrollTop -= 14;
+}
+function _dvGesture(ev, widgetId, onMove) {
+  const dash = dashboardById(_currentDashboardId);
   const grid = document.getElementById('dashboards-view-widgets');
-  const widgetEl = grid?.querySelector(`.dw-widget[data-widget-id="${widgetId}"]`);
-  if (!grid || !widgetEl) return;
-  const { gap, rowH, cellW } = _gridMetrics(grid);
-  const effLayouts = _computeEffectiveLayouts(dash.widgets);
-  const startLayout = { ...(effLayouts.get(widgetId) || { x: 0, y: 0, w: DASH_DEFAULT_W, h: DASH_DEFAULT_H }) };
-  const layout = { ...startLayout };
-  const startX = ev.clientX;
-  const startY = ev.clientY;
-  const ghost = _makeGhost(grid);
-  _placeGhost(ghost, layout);
-  const cursorMap = { se: 'nwse-resize', e: 'ew-resize', s: 'ns-resize' };
-  document.body.style.cursor = cursorMap[direction] || 'nwse-resize';
-  function onMove(e) {
-    const dx = e.clientX - startX;
-    const dy = e.clientY - startY;
-    const dCols = Math.round(dx / (cellW + gap));
-    const dRows = Math.round(dy / (rowH + gap));
-    if (direction === 'se' || direction === 'e') {
-      layout.w = Math.max(1, Math.min(DASH_COLS - layout.x, startLayout.w + dCols));
-    }
-    if (direction === 'se' || direction === 's') {
-      layout.h = Math.max(1, Math.min(8, startLayout.h + dRows));
-    }
-    const conflict = _layoutConflicts(layout, widgetId, dash.widgets, effLayouts);
-    ghost.classList.toggle('is-conflict', conflict);
-    _placeGhost(ghost, layout);
-  }
-  async function onUp() {
-    document.removeEventListener('mousemove', onMove);
-    document.removeEventListener('mouseup', onUp);
-    document.body.style.cursor = '';
-    _removeGhost(ghost);
-    if (layout.w === startLayout.w && layout.h === startLayout.h) return;
-    const nextWidgets = (dash.widgets || []).map(x => x.id === widgetId ? { ...x, layout: { ...layout } } : x);
-    try {
-      const saved = await api('/dashboards/' + dashId, 'PUT', { widgets: nextWidgets });
-      dashboards = dashboards.map(d => d.id === saved.id ? saved : d);
-      _renderDashboardView(dashboardById(dashId));
-    } catch (e) {
-      toast(e.message || 'Erro ao salvar tamanho', 'error');
-      _renderDashboardView(dash);
-    }
-  }
-  document.addEventListener('mousemove', onMove);
-  document.addEventListener('mouseup', onUp);
-}
-
-/* Drag-to-reorder: mousedown num widget (fora de handles/botões) → drag → ghost
-   verde na posição livre / vermelho se colide. Solta → PUT novo layout. */
-function _startWidgetDrag(ev, widgetId) {
-  if (!me?.isAdmin || !_dashEditMode) return;
-  // Ignora clicks nos botões de ação e handles de resize.
-  if (ev.target.closest('.dw-widget-header-actions')) return;
-  if (ev.target.closest('.dw-resize-handle')) return;
+  const el = grid?.querySelector(`.dw-widget[data-widget-id="${widgetId}"]`);
+  if (!dash || !el) return;
   ev.preventDefault();
-  const dashId = _currentDashboardId;
-  const dash = dashboardById(dashId);
-  const widget = dash?.widgets?.find(x => x.id === widgetId);
-  if (!widget) return;
-  const grid = document.getElementById('dashboards-view-widgets');
-  const widgetEl = grid?.querySelector(`.dw-widget[data-widget-id="${widgetId}"]`);
-  if (!grid || !widgetEl) return;
-  const { rect, gap, rowH, cellW } = _gridMetrics(grid);
-  const effLayouts = _computeEffectiveLayouts(dash.widgets);
-  const startLayout = { ...(effLayouts.get(widgetId) || { x: 0, y: 0, w: DASH_DEFAULT_W, h: DASH_DEFAULT_H }) };
-  const wRect = widgetEl.getBoundingClientRect();
-  // Offset do mouse dentro do widget — pra o widget "seguir" naturalmente.
-  const offX = ev.clientX - wRect.left;
-  const offY = ev.clientY - wRect.top;
+  const base = _dvCloneItems(_dvItems);
+  const colW = _dvColW(grid);
+  const ph = _dvPlaceholder(grid);
+  let current = base;
   let moved = false;
-  const ghost = _makeGhost(grid);
-  _placeGhost(ghost, startLayout);
-  const layout = { ...startLayout };
-  function onMove(e) {
+  const ctx = { dash, grid, el, base, colW, rect: grid.getBoundingClientRect(), elRect: el.getBoundingClientRect(), item: base.find(i => i.id === widgetId) };
+  _dvPlace(ph, _dvPx(ctx.item, colW));
+  const scroller = document.querySelector('#page-dashboards .page-body');
+  const scroll0 = scroller?.scrollTop || 0;
+  const move = e => {
     if (!moved) {
-      const dx = Math.abs(e.clientX - ev.clientX);
-      const dy = Math.abs(e.clientY - ev.clientY);
-      if (dx < 4 && dy < 4) return;
+      if (Math.abs(e.clientX - ev.clientX) < 3 && Math.abs(e.clientY - ev.clientY) < 3) return;
       moved = true;
-      widgetEl.classList.add('is-dragging');
-      document.body.style.cursor = 'grabbing';
+      el.classList.add('is-grabbed');
+      grid.classList.add('is-arranging');
+      ph.classList.add('is-on');
     }
-    // Onde a top-left do widget cairia se o mouse mantivesse o offset
-    const relX = e.clientX - rect.left - offX;
-    const relY = e.clientY - rect.top - offY;
-    let x = Math.round(relX / (cellW + gap));
-    let y = Math.round(relY / (rowH + gap));
-    x = Math.max(0, Math.min(DASH_COLS - layout.w, x));
-    y = Math.max(0, y);
-    layout.x = x; layout.y = y;
-    const conflict = _layoutConflicts(layout, widgetId, dash.widgets, effLayouts);
-    ghost.classList.toggle('is-conflict', conflict);
-    _placeGhost(ghost, layout);
-  }
-  async function onUp() {
-    document.removeEventListener('mousemove', onMove);
-    document.removeEventListener('mouseup', onUp);
-    document.body.style.cursor = '';
-    widgetEl.classList.remove('is-dragging');
-    _removeGhost(ghost);
-    if (!moved) return;
-    if (layout.x === startLayout.x && layout.y === startLayout.y) return;
-    // Permite colocar em posição em conflito — usuário decide (feedback já mostrou
-    // vermelho). Server aceita — visual sobreposto até realocar.
-    const nextWidgets = (dash.widgets || []).map(x => x.id === widgetId ? { ...x, layout: { ...layout } } : x);
-    try {
-      const saved = await api('/dashboards/' + dashId, 'PUT', { widgets: nextWidgets });
-      dashboards = dashboards.map(d => d.id === saved.id ? saved : d);
-      _renderDashboardView(dashboardById(dashId));
-    } catch (e) {
-      toast(e.message || 'Erro ao mover', 'error');
-      _renderDashboardView(dash);
+    _dvAutoScroll(e);
+    ctx.scrollDy = (scroller?.scrollTop || 0) - scroll0;
+    const target = onMove(e, ctx); // devolve {x,y,w,h} na grade
+    const t = current.find(i => i.id === widgetId);
+    if (t.x !== target.x || t.y !== target.y || t.w !== target.w || t.h !== target.h) {
+      current = _dvCloneItems(base);
+      Object.assign(current.find(i => i.id === widgetId), target);
+      _dvArrange(current, widgetId);
+      _dvApply(grid, current, widgetId);
+      _dvPlace(ph, _dvPx(current.find(i => i.id === widgetId), colW));
     }
-  }
-  document.addEventListener('mousemove', onMove);
-  document.addEventListener('mouseup', onUp);
+  };
+  const up = () => {
+    document.removeEventListener('pointermove', move);
+    document.removeEventListener('pointerup', up);
+    document.removeEventListener('pointercancel', up);
+    document.body.classList.remove('dv-resizing');
+    ph.classList.remove('is-on');
+    el.classList.remove('is-grabbed');
+    grid.classList.remove('is-arranging');
+    if (!moved) { _dvApply(grid, _dvItems); return; }
+    _dvItems = _dvArrange(current, null);
+    _dvApply(grid, _dvItems);
+    _dvCommitLayout(dash, _dvItems);
+    // Gráficos com eixo em HTML se acomodam no tamanho novo.
+    const w = dash.widgets.find(x => x.id === widgetId);
+    if (w && (w.viz === 'line' || w.viz === 'bar')) setTimeout(() => _dvRedrawCard(dash, w.id), 220);
+  };
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', up);
+  document.addEventListener('pointercancel', up);
 }
-
+function _dvStartDrag(ev, widgetId) {
+  if (ev.button !== 0 || ev.target.closest('.dw-widget-header-actions, .dv-rh, a, button, input, select')) return;
+  if (!_dvCanEditLayout()) return;
+  _dvGesture(ev, widgetId, (e, c) => {
+    const left = c.elRect.left - c.rect.left + (e.clientX - ev.clientX);
+    const top = c.elRect.top - c.rect.top + (e.clientY - ev.clientY) + c.scrollDy;
+    c.el.style.transform = `translate(${left}px, ${top}px)`;
+    return {
+      x: Math.max(0, Math.min(DASH_COLS - c.item.w, Math.round(left / (c.colW + DV_GAP)))),
+      y: Math.max(0, Math.round(top / (DV_ROW + DV_GAP))),
+      w: c.item.w, h: c.item.h,
+    };
+  });
+}
+function _dvStartResize(ev, widgetId, dir) {
+  if (ev.button !== 0) return;
+  ev.stopPropagation();
+  if (!_dvCanEditLayout()) return;
+  document.body.classList.add('dv-resizing');
+  document.body.dataset.dvResize = dir;
+  const viz = dashboardById(_currentDashboardId)?.widgets.find(w => w.id === widgetId)?.viz;
+  const min = DV_MIN[viz] || DV_MIN.bar;
+  _dvGesture(ev, widgetId, (e, c) => {
+    const it = c.item;
+    const start = _dvPx(it, c.colW);
+    let width = start.width, height = start.height;
+    if (dir !== 's') width = Math.max(min.w * c.colW + (min.w - 1) * DV_GAP, Math.min((DASH_COLS - it.x) * (c.colW + DV_GAP) - DV_GAP, start.width + (e.clientX - ev.clientX)));
+    if (dir !== 'e') height = Math.max(min.h * DV_ROW + (min.h - 1) * DV_GAP, start.height + (e.clientY - ev.clientY) + c.scrollDy);
+    c.el.style.width = width + 'px';
+    c.el.style.height = height + 'px';
+    return {
+      x: it.x, y: it.y,
+      w: Math.max(min.w, Math.min(DASH_COLS - it.x, Math.round((width + DV_GAP) / (c.colW + DV_GAP)))),
+      h: Math.max(min.h, Math.min(40, Math.round((height + DV_GAP) / (DV_ROW + DV_GAP)))),
+    };
+  });
+}
+// Teclado (modo edição): setas movem, Shift + setas redimensionam.
+let _dvKeyTimer = null;
+function _dvKeyLayout(ev, widgetId) {
+  const k = ev.key;
+  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(k) || ev.target !== ev.currentTarget) return;
+  if (!canEditDashboards() || !_dashEditMode) return;
+  ev.preventDefault();
+  const dash = dashboardById(_currentDashboardId);
+  const grid = document.getElementById('dashboards-view-widgets');
+  const viz = dash?.widgets.find(w => w.id === widgetId)?.viz;
+  const items = _dvCloneItems(_dvItems);
+  const it = items.find(i => i.id === widgetId);
+  if (!it) return;
+  const dx = k === 'ArrowLeft' ? -1 : k === 'ArrowRight' ? 1 : 0;
+  const dy = k === 'ArrowUp' ? -1 : k === 'ArrowDown' ? 1 : 0;
+  if (ev.shiftKey) { it.w += dx; it.h += dy; } else { it.x += dx; it.y += dy; }
+  _dvClampItem(it, viz);
+  // Subir além de quem está acima: pula pra cima dele.
+  if (!ev.shiftKey && dy < 0) {
+    const above = items.filter(o => o !== it && _dvCollide(it, o));
+    if (above.length) it.y = Math.max(0, Math.min(...above.map(o => o.y)));
+  }
+  _dvArrange(items, widgetId);
+  _dvItems = _dvArrange(items, null);
+  _dvApply(grid, _dvItems);
+  const l = _dvItems.find(i => i.id === widgetId);
+  _dvAnnounce(ev.shiftKey ? `${l.w} colunas por ${l.h} linhas` : `Coluna ${l.x + 1}, linha ${l.y + 1}`);
+  clearTimeout(_dvKeyTimer);
+  _dvKeyTimer = setTimeout(() => _dvCommitLayout(dash, _dvItems), 600);
+}
+function _dvAnnounce(msg) {
+  let live = document.getElementById('dv-live');
+  if (!live) { live = document.createElement('div'); live.id = 'dv-live'; live.className = 'sr-only'; live.setAttribute('aria-live', 'polite'); document.body.appendChild(live); }
+  live.textContent = msg;
+}
+// Redesenha só o conteúdo de um card (sem mexer na grade).
+function _dvRedrawCard(dash, widgetId) {
+  const grid = document.getElementById('dashboards-view-widgets');
+  const el = grid?.querySelector(`.dw-widget[data-widget-id="${widgetId}"]`);
+  const w = dash.widgets.find(x => x.id === widgetId);
+  if (!el || !w) return;
+  const keep = [...el.querySelectorAll('.dw-widget-header-actions, .dv-rh')];
+  _dvLineHovers = [];
+  el.innerHTML = dvRenderWidgetInner(w, dash);
+  keep.forEach(k => el.appendChild(k));
+  paintIcons(el);
+  _dvBindLineHovers(el);
+}
 async function confirmDeleteWidget(dashId, widgetId) {
   const dash = dashboardById(dashId);
   const w = dash?.widgets?.find(x => x.id === widgetId);
   if (!w) return;
-  const ok = await showConfirm({
-    title: 'Remover widget',
-    message: `Remover <strong>${esc(w.title || 'este widget')}</strong> do dashboard?`,
-    okLabel: 'Remover',
-    danger: true
-  });
+  const ok = await showConfirm({ title: 'Remover widget', message: `Remover <strong>${esc(w.title || dvAutoTitle(w))}</strong> do dashboard?`, okLabel: 'Remover', danger: true });
   if (!ok) return;
-  try {
-    const nextWidgets = (dash.widgets || []).filter(x => x.id !== widgetId);
-    const saved = await api('/dashboards/' + dashId, 'PUT', { widgets: nextWidgets });
-    dashboards = dashboards.map(d => d.id === saved.id ? saved : d);
-    toast('Widget removido', 'success');
-    _renderDashboardView(dashboardById(dashId));
-  } catch (e) {
-    toast(e.message || 'Erro ao remover', 'error');
-  }
+  if (await _dvSaveWidgets(dash, dash.widgets.filter(x => x.id !== widgetId), 'Erro ao remover')) toast('Widget removido.');
 }
-function _deRenderWidgets() {
-  const host = document.getElementById('de-widgets-list');
-  const empty = document.getElementById('de-widgets-empty');
-  if (!host) return;
-  empty.style.display = 'none';
-  const templates = (formTemplates || []).slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-  host.innerHTML = [].map((w, idx) => {
-    const t = w.source?.templateId ? formTemplateById(w.source.templateId) : null;
-    const fields = t?.fields || [];
-    const isKpi = w.chartType === 'kpi';
-    const isLine = w.chartType === 'line';
-    const isBar = w.chartType === 'bar';
-    const isCat = isBar || w.chartType === 'pie';
-    const isMultiKpi = isKpi && Array.isArray(w.kpiSeries) && w.kpiSeries.length > 0;
-    const kpiNeedsField  = isKpi  && !isMultiKpi && (w.kpiAggregate  === 'sum' || w.kpiAggregate  === 'avg');
-    const lineNeedsField = isLine && (w.lineAggregate === 'sum' || w.lineAggregate === 'avg');
-    const noField = (isKpi && !isMultiKpi && w.kpiAggregate === 'count') || (isLine && w.lineAggregate === 'count');
-    const fieldOptions = fields
-      .filter(f => {
-        if (isCat) return true;
-        if (noField) return false;
-        return f.type === 'number';
-      })
-      .map(f => `<option value="${esc(f.id)}" ${w.source?.fieldId === f.id ? 'selected' : ''}>${esc(f.label)} <${f.type}></option>`)
-      .join('');
-    // Campos categóricos (pra groupBy). Bar/line podem agrupar por qualquer field categórico.
-    const groupFieldOptions = fields
-      .filter(f => f.type === 'select' || f.type === 'multiselect')
-      .filter(f => f.id !== w.source?.fieldId) // evita agrupar por si mesmo
-      .map(f => `<option value="${esc(f.id)}" ${w.groupByFieldId === f.id ? 'selected' : ''}>${esc(f.label)}</option>`)
-      .join('');
-    const kpiAggSelect = isKpi && !isMultiKpi ? `<select class="form-control" onchange="deUpdateWidget('${w.id}', 'kpiAggregate', this.value)">
-      <option value="count" ${w.kpiAggregate === 'count' ? 'selected' : ''}>Contagem</option>
-      <option value="sum"   ${w.kpiAggregate === 'sum'   ? 'selected' : ''}>Soma</option>
-      <option value="avg"   ${w.kpiAggregate === 'avg'   ? 'selected' : ''}>Média</option>
-    </select>` : '';
-    const lineAggSelect = isLine ? `<select class="form-control" onchange="deUpdateWidget('${w.id}', 'lineAggregate', this.value)">
-      <option value="count" ${w.lineAggregate === 'count' ? 'selected' : ''}>Contagem</option>
-      <option value="sum"   ${w.lineAggregate === 'sum'   ? 'selected' : ''}>Soma</option>
-      <option value="avg"   ${w.lineAggregate === 'avg'   ? 'selected' : ''}>Média</option>
-    </select>` : '';
-    const lineBucketSelect = isLine ? `<select class="form-control" onchange="deUpdateWidget('${w.id}', 'lineBucket', this.value)">
-      <option value="auto"  ${(w.lineBucket || 'auto') === 'auto'  ? 'selected' : ''}>Bucket auto</option>
-      <option value="day"   ${w.lineBucket === 'day'   ? 'selected' : ''}>Por dia</option>
-      <option value="week"  ${w.lineBucket === 'week'  ? 'selected' : ''}>Por semana</option>
-      <option value="month" ${w.lineBucket === 'month' ? 'selected' : ''}>Por mês</option>
-    </select>` : '';
-    // groupBy dropdown pra bar e line. Pra line também aceita sentinela "__submitter__"
-    // que agrupa por quem preencheu (útil quando o form não tem campo categórico).
-    const submitterOpt = isLine ? `<option value="__submitter__" ${w.groupByFieldId === '__submitter__' ? 'selected' : ''}>Preenchido por</option>` : '';
-    const groupBySelect = ((isBar || isLine) && (groupFieldOptions || isLine)) ? `<select class="form-control" onchange="deUpdateWidget('${w.id}', 'groupByFieldId', this.value)">
-      <option value="">Sem agrupar</option>
-      ${submitterOpt}
-      ${groupFieldOptions}
-    </select>` : '';
-    // Multi-KPI: editor de séries + botão adicionar
-    const multiKpiEditor = isKpi && isMultiKpi ? `
-      <div class="de-kpi-series">
-        <div class="de-kpi-series-head">Métricas</div>
-        ${w.kpiSeries.map((s, si) => {
-          const numOnly = s.aggregate === 'sum' || s.aggregate === 'avg';
-          const seriesFieldOptions = fields
-            .filter(f => f.type === 'number')
-            .map(f => `<option value="${esc(f.id)}" ${s.fieldId === f.id ? 'selected' : ''}>${esc(f.label)}</option>`)
-            .join('');
-          return `<div class="de-kpi-series-row">
-            <input class="form-control" placeholder="Rótulo" value="${esc(s.label || '')}" oninput="deUpdateKpiSeries('${w.id}', ${si}, 'label', this.value)">
-            <select class="form-control" onchange="deUpdateKpiSeries('${w.id}', ${si}, 'aggregate', this.value)">
-              <option value="count" ${s.aggregate === 'count' ? 'selected' : ''}>Contagem</option>
-              <option value="sum"   ${s.aggregate === 'sum'   ? 'selected' : ''}>Soma</option>
-              <option value="avg"   ${s.aggregate === 'avg'   ? 'selected' : ''}>Média</option>
-            </select>
-            ${numOnly ? `<select class="form-control" onchange="deUpdateKpiSeries('${w.id}', ${si}, 'fieldId', this.value)">
-              <option value="">— Campo numérico —</option>
-              ${seriesFieldOptions}
-            </select>` : '<div class="de-widget-row-note">Sem campo</div>'}
-            <button type="button" class="detail-icon-btn danger" title="Remover métrica" onclick="deRemoveKpiSeries('${w.id}', ${si})"><i data-lucide="x" class="ic-sm"></i></button>
-          </div>`;
-        }).join('')}
-        <div class="de-kpi-series-actions">
-          <button type="button" class="btn btn-ghost btn-sm" onclick="deAddKpiSeries('${w.id}')" ${w.kpiSeries.length >= 4 ? 'disabled title="Máx 4"' : ''}><i data-lucide="plus" class="ic-sm"></i> Adicionar métrica</button>
-          <button type="button" class="btn btn-ghost btn-sm" onclick="deExitMultiKpi('${w.id}')">Voltar a KPI único</button>
-        </div>
-      </div>
-    ` : '';
-    const kpiToMultiBtn = isKpi && !isMultiKpi ? `<button type="button" class="btn btn-ghost btn-sm" onclick="deEnterMultiKpi('${w.id}')" style="grid-column:1/-1;justify-self:start"><i data-lucide="plus" class="ic-sm"></i> Comparar múltiplas métricas</button>` : '';
-    return `<div class="de-widget-row" data-widget-id="${w.id}">
-      <div class="de-widget-row-head">
-        <input class="form-control" placeholder="Título do widget (opcional)" value="${esc(w.title || '')}" oninput="deUpdateWidget('${w.id}', 'title', this.value)">
-        <div class="fe-actions">
-          <button type="button" class="detail-icon-btn" title="Subir" ${idx === 0 ? 'disabled' : ''} onclick="deMoveWidget('${w.id}', -1)"><i data-lucide="arrow-up" class="ic-sm"></i></button>
-          <button type="button" class="detail-icon-btn" title="Descer" ${idx === _deWidgets.length - 1 ? 'disabled' : ''} onclick="deMoveWidget('${w.id}', 1)"><i data-lucide="arrow-down" class="ic-sm"></i></button>
-          <button type="button" class="detail-icon-btn danger" title="Remover" onclick="deRemoveWidget('${w.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
-        </div>
-      </div>
-      <div class="de-widget-row-fields">
-        <select class="form-control" onchange="deUpdateWidget('${w.id}', 'chartType', this.value)">
-          <option value="bar"  ${w.chartType === 'bar'  ? 'selected' : ''}>Gráfico de barras</option>
-          <option value="pie"  ${w.chartType === 'pie'  ? 'selected' : ''}>Pizza (donut)</option>
-          <option value="line" ${w.chartType === 'line' ? 'selected' : ''}>Linha (timeline)</option>
-          <option value="kpi"  ${w.chartType === 'kpi'  ? 'selected' : ''}>KPI (número grande)</option>
-        </select>
-        <select class="form-control" onchange="deUpdateWidget('${w.id}', 'templateId', this.value)">
-          <option value="">— Formulário —</option>
-          ${templates.map(tp => `<option value="${esc(tp.id)}" ${w.source?.templateId === tp.id ? 'selected' : ''}>${esc(tp.name)}</option>`).join('')}
-        </select>
-        ${isMultiKpi ? '' : (noField
-          ? '<div class="de-widget-row-note">Conta todas as respostas</div>'
-          : `<select class="form-control" onchange="deUpdateWidget('${w.id}', 'fieldId', this.value)" ${!t ? 'disabled' : ''}>
-              <option value="">${(kpiNeedsField || lineNeedsField) ? '— Campo numérico —' : '— Campo —'}</option>
-              ${fieldOptions}
-            </select>`)
-        }
-        ${kpiAggSelect}
-        ${lineAggSelect}
-        ${lineBucketSelect}
-        ${groupBySelect}
-        ${kpiToMultiBtn}
-      </div>
-      ${multiKpiEditor}
-    </div>`;
+
+/* ── Editor de widget (com prévia ao vivo) ───────────────────────────── */
+const DV_VIZ_META = [
+  { key: 'number', label: 'Número',         icon: 'hash',        hint: 'Totais e médias, com comparação' },
+  { key: 'bar',    label: 'Barras',         icon: 'bar-chart-3', hint: 'Comparar categorias' },
+  { key: 'line',   label: 'Linha no tempo', icon: 'line-chart',  hint: 'Evolução ao longo do tempo' },
+  { key: 'table',  label: 'Tabela',         icon: 'table-2',     hint: 'Cruzar duas dimensões' },
+];
+let _dvEd = null; // { dashId, widgetId, draft }
+function openWidgetConfig(dashId, widgetId, x, y, w, h) {
+  if (!canEditDashboards()) return;
+  const dash = dashboardById(dashId);
+  if (!dash) return;
+  const existing = widgetId ? dash.widgets.find(z => z.id === widgetId) : null;
+  const tid = existing?.templateId || dash.templateId || _dvTemplatesOf(dash)[0]?.id || formTemplates[0]?.id || null;
+  const draft = existing ? JSON.parse(JSON.stringify(existing)) : {
+    id: null, title: '', templateId: tid, viz: 'bar', metrics: [{ agg: 'count' }],
+    groupBy: _dvDefaultGroupBy(tid), seriesBy: null, bucket: 'auto', orientation: 'auto', limit: 10,
+    layout: null, // entra no fim da grade (_dvNextLayout), no tamanho padrão do formato
+  };
+  _dvEd = { dashId, widgetId: existing?.id || null, draft };
+  document.getElementById('wc-title').textContent = existing ? 'Editar widget' : 'Novo widget';
+  _dvEdRenderForm();
+  openModal('widget-config-modal');
+}
+function _dvDefaultGroupBy(tid) {
+  const f = (formTemplateById(tid)?.fields || []).find(x => x.type === 'select' || x.type === 'multiselect');
+  return f ? 'field:' + f.id : 'client';
+}
+function _dvDimOptionsFor(tid, { time = true } = {}) {
+  const t = formTemplateById(tid);
+  const fields = (t?.fields || []).filter(f => f.type !== 'number').map(f => ({ key: 'field:' + f.id, label: f.label, group: 'Campos do formulário' }));
+  const base = DV_BASE_DIMS.map(d => ({ key: d.key, label: d.label, group: 'Demanda e resposta' }));
+  const tm = time ? DV_TIME_DIMS.map(d => ({ key: d.key, label: d.label, group: 'Tempo' })) : [];
+  return [...fields, ...base, ...tm];
+}
+function _dvSelect(id, opts, value, onchange, placeholder) {
+  const groups = new Map();
+  for (const o of opts) { const g = o.group || ''; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(o); }
+  const inner = [...groups.entries()].map(([g, list]) => {
+    const os = list.map(o => `<option value="${esc(o.key)}" ${o.key === value ? 'selected' : ''}>${esc(o.label)}</option>`).join('');
+    return g ? `<optgroup label="${esc(g)}">${os}</optgroup>` : os;
   }).join('');
-  if (window.lucide?.createIcons) lucide.createIcons();
+  return `<select class="form-control" id="${id}" onchange="${onchange}">${placeholder !== undefined ? `<option value="">${esc(placeholder)}</option>` : ''}${inner}</select>`;
 }
-function deAddWidget() {
-  _deWidgets.push({
-    id: 'w_' + Math.random().toString(36).slice(2, 10),
-    title: '',
-    chartType: 'bar',
-    source: { templateId: null, fieldId: null }
-  });
-  _deRenderWidgets();
+function _dvEdRenderForm() {
+  const host = document.getElementById('dv-ed-form');
+  if (!host || !_dvEd) return;
+  const w = _dvEd.draft;
+  const t = formTemplateById(w.templateId);
+  const numFields = (t?.fields || []).filter(f => f.type === 'number');
+  const metricOpts = [{ key: 'count', label: 'Contar respostas' }];
+  for (const f of numFields) for (const agg of ['sum', 'avg', 'min', 'max']) metricOpts.push({ key: `${agg}:${f.id}`, label: `${DV_AGG_LABEL[agg]} de ${f.label}` });
+  const maxMetrics = w.viz === 'number' ? 4 : (w.seriesBy ? 1 : 4);
+  const metrics = _dvMetricsOf(w).slice(0, maxMetrics);
+  const needGroup = w.viz === 'bar' || w.viz === 'table';
+  const groupErr = needGroup && !w.groupBy;
+  host.innerHTML = `
+    <div class="dv-ed-field">
+      <label class="form-label" for="dv-ed-template">Formulário</label>
+      ${_dvSelect('dv-ed-template', (formTemplates || []).map(x => ({ key: x.id, label: x.name })), w.templateId, '_dvEdSet({ templateId: this.value, metrics: [{ agg: \'count\' }], groupBy: _dvDefaultGroupBy(this.value), seriesBy: null }, true)')}
+    </div>
+    <div class="dv-ed-field">
+      <span class="form-label">Formato</span>
+      <div class="dv-viz-pick" role="radiogroup" aria-label="Formato">
+        ${DV_VIZ_META.map(v => `<button type="button" role="radio" aria-checked="${w.viz === v.key}" class="dv-viz-opt ${w.viz === v.key ? 'is-on' : ''}" onclick="_dvEdSetViz('${v.key}')">
+          <i data-lucide="${v.icon}" class="ic-sm"></i><b>${v.label}</b><small>${v.hint}</small></button>`).join('')}
+      </div>
+    </div>
+    <div class="dv-ed-field">
+      <span class="form-label">${w.viz === 'number' ? 'Números' : 'O que medir'}</span>
+      <div class="dv-ed-metrics">
+        ${metrics.map((m, i) => `<div class="dv-ed-metric">
+          ${_dvSelect('dv-ed-m' + i, metricOpts, m.agg === 'count' ? 'count' : `${m.agg}:${m.fieldId}`, `_dvEdMetric(${i}, this.value)`)}
+          <input class="form-control" value="${esc(m.label || '')}" placeholder="${esc(dvMetricLabel({ ...m, label: '' }, w.templateId))}" oninput="_dvEdMetricLabel(${i}, this.value)" aria-label="Nome exibido">
+          ${metrics.length > 1 ? `<button type="button" class="detail-icon-btn" onclick="_dvEdRemoveMetric(${i})" aria-label="Remover"><i data-lucide="x" class="ic-sm"></i></button>` : ''}
+        </div>`).join('')}
+      </div>
+      ${metrics.length < maxMetrics ? `<button type="button" class="dv-link" onclick="_dvEdAddMetric()"><i data-lucide="plus" class="ic-xs"></i> Adicionar ${w.viz === 'number' ? 'número' : 'medida'}</button>` : ''}
+      ${!numFields.length ? '<div class="dv-ed-hint">Este formulário não tem campos numéricos, então só dá para contar respostas.</div>' : ''}
+    </div>
+    ${w.viz !== 'number' && w.viz !== 'line' ? `<div class="dv-ed-field">
+      <label class="form-label" for="dv-ed-group">${w.viz === 'table' ? 'Linhas da tabela' : 'Uma barra para cada'}</label>
+      ${_dvSelect('dv-ed-group', _dvDimOptionsFor(w.templateId), w.groupBy || '', '_dvEdSet({ groupBy: this.value || null })', 'Escolha…')}
+      ${groupErr ? '<div class="profile-field-error">Escolha como dividir.</div>' : ''}
+    </div>` : ''}
+    ${w.viz !== 'number' ? `<div class="dv-ed-field">
+      <label class="form-label" for="dv-ed-series">${w.viz === 'table' ? 'Colunas (opcional)' : w.viz === 'line' ? 'Uma linha para cada (opcional)' : 'Dividir cada barra por (opcional)'}</label>
+      ${_dvSelect('dv-ed-series', _dvDimOptionsFor(w.templateId, { time: false }).filter(o => o.key !== w.groupBy), w.seriesBy || '', '_dvEdSet({ seriesBy: this.value || null }, true)', w.viz === 'table' ? 'Uma coluna por medida' : 'Não dividir')}
+      ${w.seriesBy ? '<div class="dv-ed-hint">Com essa divisão, vale só a primeira medida.</div>' : ''}
+    </div>` : ''}
+    ${w.viz === 'bar' ? `<div class="dv-ed-row">
+      <div class="dv-ed-field"><label class="form-label" for="dv-ed-orient">Orientação</label>
+        ${_dvSelect('dv-ed-orient', [{ key: 'auto', label: 'Automática' }, { key: 'horizontal', label: 'Horizontal' }, { key: 'vertical', label: 'Vertical' }], w.orientation, '_dvEdSet({ orientation: this.value })')}</div>
+      <div class="dv-ed-field"><label class="form-label" for="dv-ed-limit">Mostrar</label>
+        ${_dvSelect('dv-ed-limit', [5, 10, 15, 20].map(n => ({ key: String(n), label: `${n} maiores` })).concat([{ key: '0', label: 'Todas' }]), String(w.limit), '_dvEdSet({ limit: Number(this.value) })')}</div>
+    </div>` : ''}
+    ${w.viz === 'table' ? `<div class="dv-ed-field"><label class="form-label" for="dv-ed-limit">Linhas</label>
+      ${_dvSelect('dv-ed-limit', [5, 10, 15, 20].map(n => ({ key: String(n), label: `${n} maiores` })).concat([{ key: '0', label: 'Todas' }]), String(w.limit), '_dvEdSet({ limit: Number(this.value) })')}</div>` : ''}
+    ${w.viz === 'line' ? `<div class="dv-ed-field"><label class="form-label" for="dv-ed-bucket">Agrupar tempo por</label>
+      ${_dvSelect('dv-ed-bucket', [{ key: 'auto', label: 'Automático' }, { key: 'day', label: 'Dia' }, { key: 'week', label: 'Semana' }, { key: 'month', label: 'Mês' }], w.bucket, '_dvEdSet({ bucket: this.value })')}</div>` : ''}
+    <div class="dv-ed-field">
+      <label class="form-label" for="dv-ed-title">Título (opcional)</label>
+      <input class="form-control" id="dv-ed-title" value="${esc(w.title || '')}" placeholder="${esc(dvAutoTitle(w))}" oninput="_dvEd.draft.title = this.value; _dvEdPreview()">
+    </div>`;
+  paintIcons(host);
+  _dvEdPreview();
 }
-function deRemoveWidget(wid) {
-  _deWidgets = _deWidgets.filter(w => w.id !== wid);
-  _deRenderWidgets();
+function _dvEdSet(patch, rerender) {
+  Object.assign(_dvEd.draft, patch);
+  if (rerender || 'groupBy' in patch) _dvEdRenderForm(); else _dvEdPreview();
 }
-function deMoveWidget(wid, delta) {
-  const idx = _deWidgets.findIndex(w => w.id === wid);
-  const target = idx + delta;
-  if (idx < 0 || target < 0 || target >= _deWidgets.length) return;
-  const [w] = _deWidgets.splice(idx, 1);
-  _deWidgets.splice(target, 0, w);
-  _deRenderWidgets();
+function _dvEdSetViz(viz) {
+  const w = _dvEd.draft;
+  w.viz = viz;
+  if ((viz === 'bar' || viz === 'table') && !w.groupBy) w.groupBy = _dvDefaultGroupBy(w.templateId);
+  if (viz === 'line' || viz === 'number') w.groupBy = null; // o eixo da linha já é o tempo
+  _dvEdRenderForm();
 }
-function deUpdateWidget(wid, key, val) {
-  const w = _deWidgets.find(x => x.id === wid);
-  if (!w) return;
-  if (key === 'title') { w.title = val; return; }
-  if (key === 'chartType') {
-    w.chartType = val;
-    // Defaults por tipo — limpa config específica dos outros tipos.
-    if (val === 'kpi')  { if (!w.kpiAggregate)  w.kpiAggregate  = 'count'; delete w.lineAggregate; delete w.lineBucket; delete w.groupByFieldId; }
-    if (val === 'line') { if (!w.lineAggregate) w.lineAggregate = 'count'; if (!w.lineBucket) w.lineBucket = 'auto'; delete w.kpiAggregate; delete w.kpiSeries; }
-    if (val === 'bar')  { delete w.kpiAggregate; delete w.kpiSeries; delete w.lineAggregate; delete w.lineBucket; }
-    if (val === 'pie')  { delete w.kpiAggregate; delete w.kpiSeries; delete w.lineAggregate; delete w.lineBucket; delete w.groupByFieldId; }
-    _deRenderWidgets();
-    return;
-  }
-  if (key === 'templateId') {
-    w.source = { templateId: val || null };
-    _deRenderWidgets();
-    return;
-  }
-  if (key === 'fieldId') {
-    w.source.fieldId = val || null;
-    return;
-  }
-  if (key === 'kpiAggregate') {
-    w.kpiAggregate = val;
-    if (val === 'count') w.source.fieldId = null;
-    _deRenderWidgets();
-    return;
-  }
-  if (key === 'lineAggregate') {
-    w.lineAggregate = val;
-    if (val === 'count') w.source.fieldId = null;
-    _deRenderWidgets();
-    return;
-  }
-  if (key === 'lineBucket') { w.lineBucket = val; return; }
-  if (key === 'groupByFieldId') { w.groupByFieldId = val || null; if (!val) delete w.groupByFieldId; return; }
+function _dvEdMetric(i, val) {
+  const ms = _dvMetricsOf(_dvEd.draft).slice();
+  const [agg, fieldId] = val === 'count' ? ['count'] : val.split(':');
+  ms[i] = { agg, ...(fieldId ? { fieldId } : {}), ...(ms[i]?.label ? { label: ms[i].label } : {}) };
+  _dvEd.draft.metrics = ms;
+  _dvEdRenderForm();
 }
-/* Multi-KPI helpers. Ao entrar em modo multi, seedamos a lista com a config
-   single atual (pra usuário não perder). Ao sair, limpa. */
-function deEnterMultiKpi(wid) {
-  const w = _deWidgets.find(x => x.id === wid);
-  if (!w) return;
-  const seed = { label: w.title || 'Total', aggregate: w.kpiAggregate || 'count' };
-  if (seed.aggregate !== 'count' && w.source?.fieldId) seed.fieldId = w.source.fieldId;
-  w.kpiSeries = [seed];
-  _deRenderWidgets();
+function _dvEdMetricLabel(i, val) {
+  const ms = _dvMetricsOf(_dvEd.draft).slice();
+  ms[i] = { ...ms[i], label: val };
+  if (!val) delete ms[i].label;
+  _dvEd.draft.metrics = ms;
+  _dvEdPreview();
 }
-function deExitMultiKpi(wid) {
-  const w = _deWidgets.find(x => x.id === wid);
-  if (!w) return;
-  delete w.kpiSeries;
-  _deRenderWidgets();
+function _dvEdAddMetric() {
+  const t = formTemplateById(_dvEd.draft.templateId);
+  const used = new Set(_dvMetricsOf(_dvEd.draft).map(m => m.fieldId));
+  const f = (t?.fields || []).find(x => x.type === 'number' && !used.has(x.id));
+  _dvEd.draft.metrics = [..._dvMetricsOf(_dvEd.draft), f ? { agg: 'avg', fieldId: f.id } : { agg: 'count' }];
+  _dvEdRenderForm();
 }
-function deAddKpiSeries(wid) {
-  const w = _deWidgets.find(x => x.id === wid);
-  if (!w?.kpiSeries || w.kpiSeries.length >= 4) return;
-  w.kpiSeries.push({ label: '', aggregate: 'count' });
-  _deRenderWidgets();
+function _dvEdRemoveMetric(i) {
+  _dvEd.draft.metrics = _dvMetricsOf(_dvEd.draft).filter((_, j) => j !== i);
+  _dvEdRenderForm();
 }
-function deRemoveKpiSeries(wid, idx) {
-  const w = _deWidgets.find(x => x.id === wid);
-  if (!w?.kpiSeries) return;
-  w.kpiSeries.splice(idx, 1);
-  if (!w.kpiSeries.length) delete w.kpiSeries;
-  _deRenderWidgets();
+function _dvEdPreview() {
+  const host = document.getElementById('dv-ed-preview');
+  const dash = _dvEd && dashboardById(_dvEd.dashId);
+  if (!host || !dash) return;
+  const w = { ..._dvEd.draft, id: _dvEd.draft.id || 'preview' };
+  _dvLineHovers = [];
+  host.innerHTML = `<div class="dw-widget dv-card dv-card--${w.viz}">${dvRenderWidgetInner(w, dash)}</div>`;
+  paintIcons(host);
+  _dvBindLineHovers(host);
+  const t = document.getElementById('dv-ed-title');
+  if (t) t.placeholder = dvAutoTitle(_dvEd.draft);
 }
-function deUpdateKpiSeries(wid, idx, key, val) {
-  const w = _deWidgets.find(x => x.id === wid);
-  const s = w?.kpiSeries?.[idx];
-  if (!s) return;
-  if (key === 'aggregate') {
-    s.aggregate = val;
-    if (val === 'count') delete s.fieldId;
-    _deRenderWidgets();
-    return;
-  }
-  if (key === 'fieldId') { s.fieldId = val || null; return; }
-  s[key] = val;
+async function saveWidgetConfig() {
+  if (!_dvEd) return;
+  const dash = dashboardById(_dvEd.dashId);
+  const w = _dvEd.draft;
+  if (!w.templateId) { toast('Escolha um formulário.', 'warn'); return; }
+  if ((w.viz === 'bar' || w.viz === 'table') && !w.groupBy) { toast('Escolha como dividir.', 'warn'); _dvEdRenderForm(); return; }
+  if (w.viz === 'number' || w.viz === 'line') w.groupBy = null;
+  if (w.viz === 'number') w.seriesBy = null;
+  if (w.seriesBy) w.metrics = _dvMetricsOf(w).slice(0, 1);
+  const next = _dvEd.widgetId
+    ? dash.widgets.map(x => x.id === _dvEd.widgetId ? { ...w, id: x.id } : x)
+    : [...dash.widgets, { ...w, id: 'w' + Math.random().toString(36).slice(2, 10), layout: w.layout || _dvNextLayout(dash, w.viz) }];
+  const btn = document.getElementById('dv-ed-save');
+  if (btn) btn.disabled = true;
+  const saved = await _dvSaveWidgets(dash, next, 'Erro ao salvar widget');
+  if (btn) btn.disabled = false;
+  if (saved) { closeModal('widget-config-modal'); toast(_dvEd?.widgetId ? 'Widget atualizado.' : 'Widget adicionado.'); _dvEd = null; }
+}
+function _dvNextLayout(dash, viz) {
+  const maxY = _dvItemsFor(dash).reduce((m, l) => Math.max(m, l.y + l.h), 0);
+  return { x: 0, y: maxY, ...(DV_SIZE[viz] || DV_SIZE.bar) };
+}
+
+/* ── Criar/editar dashboard (nome, formulário principal, filtros fixos) ── */
+let _dvDe = null; // { id, fixed: {dims} }
+function openDashboardEditor(dashId) {
+  if (!canEditDashboards()) return;
+  const d = dashId ? dashboardById(dashId) : null;
+  _dvDe = { id: d?.id || null, fixed: JSON.parse(JSON.stringify(d?.fixedFilters?.dims || {})) };
+  document.getElementById('dashboard-editor-title').textContent = d ? 'Configurações do dashboard' : 'Novo dashboard';
+  document.getElementById('de-name').value = d?.name || '';
+  document.getElementById('de-description').value = d?.description || '';
+  const sel = document.getElementById('de-template');
+  const tid = d?.templateId || _dvTemplatesOf(d)[0]?.id || formTemplates[0]?.id || '';
+  sel.innerHTML = (formTemplates || []).map(t => `<option value="${esc(t.id)}" ${t.id === tid ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
+  document.getElementById('de-suggest-row').hidden = !!d;
+  document.getElementById('de-suggest').checked = true;
+  _dvDeRenderFixed();
+  openModal('dashboard-editor-modal');
+  navPush(dashId ? `/dashboards/${dashId}/edit` : '/dashboards/new');
+}
+function _dvDeRenderFixed() {
+  const host = document.getElementById('de-fixed');
+  if (!host) return;
+  const tid = document.getElementById('de-template')?.value;
+  const t = formTemplateById(tid);
+  const keys = [...DV_BASE_DIMS.map(x => x.key), ...(t?.fields || []).filter(f => f.type === 'select' || f.type === 'multiselect').map(f => 'field:' + f.id)];
+  host.innerHTML = `<div class="dv-fixed-list">${keys.map(k => {
+    const def = dvDim(k);
+    if (!def) return '';
+    const vals = _dvDe.fixed[k] || [];
+    return `<span class="dv-chip ${vals.length ? 'is-active' : ''}"><button type="button" class="dv-chip-btn" id="defix-${esc(k.replace(':', '-'))}" onclick="_dvDeOpenFixed(this, '${esc(k)}')">
+      <i data-lucide="${def.icon || 'list'}" class="ic-xs"></i>${esc(def.label)}${vals.length ? `: <b>${esc(vals.length === 1 ? dvValueLabel(k, vals[0]) : vals.length + ' selecionados')}</b>` : ''}<i data-lucide="chevron-down" class="ic-xs dv-chip-caret"></i></button></span>`;
+  }).join('')}</div>`;
+  paintIcons(host);
+}
+function _dvDeOpenFixed(anchor, key) {
+  const def = dvDim(key);
+  const tid = document.getElementById('de-template')?.value;
+  const all = new Set();
+  for (const r of (formResponses || [])) if (!def.templateId || r.templateId === tid) _dvValuesOf(_dvRec(r), key, 'submitted').forEach(v => all.add(v));
+  if (def.field?.options) def.field.options.forEach(o => all.add(String(o.value)));
+  if (key === 'workspace') (workspaces || []).forEach(w => all.add(w.id));
+  if (key === 'client') (clients || []).filter(c => !c.deletedAt).forEach(c => all.add(c.id));
+  all.delete(DV_NONE);
+  const render = () => {
+    const sel = new Set(_dvDe.fixed[key] || []);
+    return _dvValueOrder(key, all).map(v => `<label class="dv-opt ${sel.has(v) ? 'is-on' : ''}"><input type="checkbox" ${sel.has(v) ? 'checked' : ''} onchange="_dvDeToggleFixed('${esc(key)}', ${esc(JSON.stringify(v))})"><span class="dv-opt-label">${esc(dvValueLabel(key, v))}</span></label>`).join('') || '<div class="dv-pop-empty">Sem valores ainda.</div>';
+  };
+  const el = _dvOpenPopover(anchor, `<div class="dv-pop-head">${esc(def.label)} (fixo)</div><div class="dv-pop-list" id="de-fixed-list">${render()}</div>`, { width: 280 });
+  if (el) el.style.zIndex = 10002;
+  _dvDe.renderFixedList = () => { const l = document.getElementById('de-fixed-list'); if (l) l.innerHTML = render(); };
+}
+function _dvDeToggleFixed(key, value) {
+  const cur = new Set(_dvDe.fixed[key] || []);
+  if (cur.has(value)) cur.delete(value); else cur.add(value);
+  if (cur.size) _dvDe.fixed[key] = [...cur]; else delete _dvDe.fixed[key];
+  _dvDe.renderFixedList?.();
+  _dvDeRenderFixed();
+}
+// Widgets sugeridos a partir do formulário (novo dashboard).
+function _dvSuggestedWidgets(tid) {
+  const t = formTemplateById(tid);
+  if (!t) return [];
+  const nums = (t.fields || []).filter(f => f.type === 'number');
+  const cats = (t.fields || []).filter(f => f.type === 'select' || f.type === 'multiselect');
+  const id = () => 'w' + Math.random().toString(36).slice(2, 10);
+  const out = [{ id: id(), templateId: tid, viz: 'number', title: 'Resumo', metrics: [{ agg: 'count', label: 'Respostas' }, ...nums.slice(0, 3).map(f => ({ agg: 'avg', fieldId: f.id }))], layout: { x: 0, y: 0, w: 12, h: 3 } }];
+  out.push({ id: id(), templateId: tid, viz: 'line', title: '', metrics: [{ agg: 'count' }], bucket: 'auto', layout: { x: 0, y: 3, w: cats.length ? 7 : 12, h: 6 } });
+  if (cats[0]) out.push({ id: id(), templateId: tid, viz: 'bar', title: '', metrics: [{ agg: 'count' }], groupBy: 'field:' + cats[0].id, orientation: 'auto', limit: 10, layout: { x: 7, y: 3, w: 5, h: 6 } });
+  out.push({ id: id(), templateId: tid, viz: 'table', title: '', metrics: [{ agg: 'count' }], groupBy: 'client', seriesBy: cats[1] ? 'field:' + cats[1].id : (cats[0] ? 'field:' + cats[0].id : null), limit: 10, layout: { x: 0, y: 9, w: 12, h: 6 } });
+  return out;
 }
 async function saveDashboard() {
   const name = document.getElementById('de-name').value.trim();
-  if (!name) { toast('Nome do dashboard é obrigatório', 'warn'); return; }
   const description = document.getElementById('de-description').value.trim();
+  const templateId = document.getElementById('de-template').value || null;
+  if (!name) { toast('Dê um nome ao dashboard.', 'warn'); document.getElementById('de-name').focus(); return; }
+  const body = { name, description, templateId, fixedFilters: { dims: _dvDe.fixed } };
   try {
     let saved;
-    if (_deEditingId) {
-      // PUT sem widgets: server preserva os existentes (só campos passados são atualizados)
-      saved = await api('/dashboards/' + _deEditingId, 'PUT', { name, description });
-      dashboards = dashboards.map(d => d.id === saved.id ? saved : d);
-    } else {
-      // Novo dashboard começa sem widgets — usuário adiciona pelo canvas
-      saved = await api('/dashboards', 'POST', { name, description, widgets: [], workspaceId: activeWs });
-      dashboards.push(saved);
-      _currentDashboardId = saved.id;
-    }
+    if (_dvDe.id) saved = await api('/dashboards/' + _dvDe.id, 'PUT', body);
+    else saved = await api('/dashboards', 'POST', { ...body, workspaceId: activeWs, widgets: document.getElementById('de-suggest').checked ? _dvSuggestedWidgets(templateId) : [] });
+    dashboards = [...dashboards.filter(x => x.id !== saved.id), saved];
+    _dvClosePopover();
     closeModal('dashboard-editor-modal');
-    toast(_deEditingId ? 'Dashboard atualizado' : 'Dashboard criado', 'success');
-    renderDashboards();
-  } catch (e) {
-    toast(e.message || 'Erro ao salvar', 'error');
-  }
+    toast(_dvDe.id ? 'Dashboard atualizado.' : 'Dashboard criado.');
+    openDashboardView(saved.id);
+  } catch (e) { toast(e.message || 'Erro ao salvar', 'error'); }
 }
 async function confirmDeleteDashboard(id) {
   const d = dashboardById(id);
   if (!d) return;
-  const ok = await showConfirm({
-    title: 'Excluir dashboard',
-    message: `Excluir o dashboard <strong>${esc(d.name)}</strong>?<br><br>Os formulários e respostas continuam intactos.`,
-    okLabel: 'Excluir',
-    danger: true
-  });
+  const ok = await showConfirm({ title: 'Excluir dashboard', message: `Excluir <strong>${esc(d.name)}</strong>? As respostas dos formulários continuam intactas.`, okLabel: 'Excluir', danger: true });
   if (!ok) return;
   try {
     await api('/dashboards/' + id, 'DELETE');
     dashboards = dashboards.filter(x => x.id !== id);
-    if (_currentDashboardId === id) _currentDashboardId = null;
-    toast('Dashboard excluído', 'success');
-    renderDashboards();
+    _currentDashboardId = null;
+    toast('Dashboard excluído.');
     navReplace('/dashboards');
-  } catch (e) {
-    toast(e.message || 'Erro ao excluir', 'error');
-  }
+    renderDashboards();
+  } catch (e) { toast(e.message || 'Erro ao excluir', 'error'); }
 }
 
 function useTemplate(tid) {

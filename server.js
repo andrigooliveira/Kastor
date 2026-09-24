@@ -4280,7 +4280,7 @@ app.get('/api/bootstrap', requireAuth, (req, res) => {
     discordChannels: canSeeWebhooks ? (db.discordChannels || []).map(publicBinding) : [],
     // Universais: qualquer autenticado vê todos os templates/dashboards.
     formTemplates:   (db.formTemplates || []).filter(notDeleted),
-    dashboards:      (db.dashboards    || []).filter(notDeleted),
+    dashboards:      (db.dashboards    || []).filter(notDeleted).map(publicDashboard),
     // Responses ficam escopadas: só respostas dos squads em que o user está.
     formResponses:   (db.formResponses || []).filter(r => notDeleted(r) && inWs(r)),
     // Informa ao cliente o range de schedules já carregados — pra saber
@@ -4864,33 +4864,13 @@ app.delete('/api/form-responses/:id', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-/* ── DASHBOARDS (fase 4) ──
-   Painéis com widgets configuráveis. Widget aponta pra um formTemplate + um
-   fieldId (pra bar) ou só templateId (pra KPI de contagem). Admin cria/edita
-   (todos visualizam). Renderização (agregação das responses → SVG) mora no
-   client — server só valida a estrutura. */
-const DASHBOARD_CHART_TYPES = ['bar', 'barh', 'kpi', 'pie', 'line', 'pivot', 'heatmap', 'combo', 'scatter', 'timeline'];
-const DASHBOARD_TIMELINE_BUCKETS = ['auto', 'day', 'week', 'month'];
-const DASHBOARD_SOURCE_KINDS = ['form', 'demand', 'time'];
-const DASHBOARD_PIVOT_METRICS = ['count', 'hours', 'estimatedHours', 'realHours'];
-const DASHBOARD_PIVOT_AGGREGATES = ['sum', 'avg'];
-// Dimensões válidas por fonte — o server só valida a shape (string com prefixo permitido),
-// mas mantém a lista pra prevenir chave arbitrária. field:<uuid> é permitido pra 'form'.
-const DASHBOARD_PIVOT_DIMS_COMMON = new Set([
-  'clientName','projectName','workspaceName','flowName','deadlineMonth','createdMonth',
-  'userName','submitterName','demandName','day','week','month'
-]);
-function _isValidPivotDim(d) {
-  if (typeof d !== 'string' || !d) return false;
-  if (DASHBOARD_PIVOT_DIMS_COMMON.has(d)) return true;
-  if (d.startsWith('field:') && d.length > 6 && d.length < 64) return true;
-  return false;
-}
-const DASHBOARD_KPI_AGGS = ['count', 'sum', 'avg'];
-const DASHBOARD_LINE_BUCKETS = ['auto', 'day', 'week', 'month'];
+/* ── DASHBOARDS ──
+   Painéis com widgets sobre respostas de formulários. Admin e moderador criam
+   e editam (todos visualizam). A agregação mora no client; o server só valida
+   a estrutura (sanitizeDashboardWidgets, abaixo). */
 const DASHBOARD_GRID_COLS = 12;
-/* Grid layout: x/y são 0-indexed, w/h em unidades (w cabe em 1..12, h em 1..8).
-   Se ausente, deixa null — cliente faz auto-placement. */
+/* Grid layout: x/y 0-indexed; w em colunas (1..12), h em linhas de 56px
+   (1..40). Se ausente, deixa null e o cliente posiciona no fim. */
 function sanitizeWidgetLayout(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const x = Number.isInteger(raw.x) ? raw.x : null;
@@ -4902,141 +4882,140 @@ function sanitizeWidgetLayout(raw) {
     x: Math.max(0, Math.min(DASHBOARD_GRID_COLS - 1, x)),
     y: Math.max(0, y),
     w: Math.max(1, Math.min(DASHBOARD_GRID_COLS - x, w)),
-    h: Math.max(1, Math.min(8, h))
+    h: Math.max(1, Math.min(40, h))
   };
+}
+/* ── DASHBOARDS v2 (só formulários) ──
+   Widget = { id, title, templateId, viz, metrics[], groupBy, seriesBy, bucket,
+   orientation, limit, layout }.
+     viz      number | bar | line | table
+     metrics  1-4 × { agg: count|sum|avg|min|max, fieldId? (campo numérico), label? }
+     groupBy  categorias (barras) ou linhas (tabela)
+     seriesBy uma série por valor (barras/linha) ou colunas (tabela); usa só a 1ª métrica
+   Dimensões: workspace, client, project, submittedBy, owner, flow, stage, month,
+   week, field:<id>. Widgets no formato antigo (chartType) são convertidos aqui,
+   na leitura e na gravação; os de fonte demanda/horas saem (fora do escopo). */
+const DV_VIZ = ['number', 'bar', 'line', 'table'];
+const DV_AGGS = ['count', 'sum', 'avg', 'min', 'max'];
+const DV_BUCKETS = ['auto', 'day', 'week', 'month'];
+const DV_ORIENT = ['auto', 'horizontal', 'vertical'];
+const DV_DIM_RE = /^(workspace|client|project|submittedBy|owner|flow|stage|month|week|field:[a-z0-9_-]{1,40})$/i;
+const DV_ID_RE = /^[a-z0-9_-]{1,40}$/i;
+const _dvDim = v => (typeof v === 'string' && DV_DIM_RE.test(v) ? v : null);
+function _dvMetric(m) {
+  if (!m || typeof m !== 'object') return null;
+  const agg = DV_AGGS.includes(m.agg) ? m.agg : 'count';
+  const fieldId = agg !== 'count' && typeof m.fieldId === 'string' && DV_ID_RE.test(m.fieldId) ? m.fieldId : null;
+  if (agg !== 'count' && !fieldId) return null;
+  const label = String(m.label || '').trim().slice(0, 60);
+  return { agg, ...(fieldId ? { fieldId } : {}), ...(label ? { label } : {}) };
+}
+// Formato antigo → v2. Dimensões antigas viram as novas; o que não tem par cai.
+const _DV_LEGACY_DIMS = { clientName: 'client', projectName: 'project', workspaceName: 'workspace', submitterName: 'submittedBy', flowName: 'flow', month: 'month', week: 'week' };
+const _dvLegacyDim = v => (typeof v === 'string' ? (v.startsWith('field:') ? v : (_DV_LEGACY_DIMS[v] || null)) : null);
+function _dvLegacyMetric(metric, aggregate, label) {
+  if (typeof metric === 'string' && metric.startsWith('field:')) {
+    return { agg: aggregate === 'avg' ? 'avg' : 'sum', fieldId: metric.slice(6), label };
+  }
+  return { agg: 'count', label };
+}
+function migrateLegacyDashboardWidget(w) {
+  const src = w.source || {};
+  if ((src.kind || 'form') !== 'form' || !src.templateId) return null;
+  const base = { id: w.id, title: w.title, templateId: src.templateId, layout: w.layout };
+  const ct = w.chartType;
+  if (ct === 'kpi') {
+    const series = Array.isArray(w.kpiSeries) && w.kpiSeries.length
+      ? w.kpiSeries.map(x => ({ agg: x.aggregate || 'count', fieldId: x.fieldId, label: x.label }))
+      : [{ agg: w.kpiAggregate || 'count', fieldId: src.fieldId }];
+    return { ...base, viz: 'number', metrics: series };
+  }
+  if (ct === 'bar' || ct === 'barh' || ct === 'pie') {
+    return { ...base, viz: 'bar', metrics: [{ agg: 'count' }],
+      groupBy: src.fieldId ? 'field:' + src.fieldId : null,
+      seriesBy: w.groupByFieldId ? 'field:' + w.groupByFieldId : null,
+      orientation: ct === 'barh' ? 'horizontal' : ct === 'bar' ? 'vertical' : 'auto' };
+  }
+  if (ct === 'line') {
+    return { ...base, viz: 'line', metrics: [{ agg: w.lineAggregate || 'count', fieldId: src.fieldId }],
+      seriesBy: w.groupByFieldId ? 'field:' + w.groupByFieldId : null, bucket: w.lineBucket };
+  }
+  if (ct === 'timeline') {
+    const tl = w.timeline || {};
+    return { ...base, viz: 'line', bucket: tl.bucket, seriesBy: _dvLegacyDim(tl.splitBy),
+      metrics: (tl.metrics || []).map(m => _dvLegacyMetric(m.metric, m.aggregate, m.label)) };
+  }
+  if (ct === 'pivot' || ct === 'heatmap') {
+    const pv = w.pivot || {};
+    return { ...base, viz: 'table', groupBy: _dvLegacyDim(pv.rowDim), seriesBy: _dvLegacyDim(pv.colDim),
+      metrics: [_dvLegacyMetric(pv.metric, pv.aggregate)] };
+  }
+  if (ct === 'combo') {
+    const cb = w.combo || {};
+    return { ...base, viz: 'table', groupBy: _dvLegacyDim(cb.primary),
+      metrics: [_dvLegacyMetric(cb.bar?.metric, cb.bar?.aggregate), _dvLegacyMetric(cb.line?.metric, cb.line?.aggregate)] };
+  }
+  return null; // scatter e afins não têm equivalente
 }
 function sanitizeDashboardWidgets(raw) {
   if (!Array.isArray(raw)) return [];
   const out = [];
   const seen = new Set();
-  for (const w of raw) {
+  for (let w of raw.slice(0, 40)) {
     if (!w || typeof w !== 'object') continue;
-    const chartType = DASHBOARD_CHART_TYPES.includes(w.chartType) ? w.chartType : 'bar';
-    const src = w.source || {};
-    const kind = DASHBOARD_SOURCE_KINDS.includes(src.kind) ? src.kind : 'form';
-    const templateId = typeof src.templateId === 'string' ? src.templateId : null;
-    // Só form requer templateId; cross widgets sobre demand/time não têm template.
-    if (kind === 'form' && !templateId) continue;
-    // Widgets clássicos (bar/pie/line/kpi) exigem kind=form (só operam sobre respostas).
-    const isPivotLike = chartType === 'pivot' || chartType === 'heatmap';
-    const isCross = isPivotLike || chartType === 'combo' || chartType === 'scatter' || chartType === 'timeline';
-    if (!isCross && kind !== 'form') continue;
-    let id = typeof w.id === 'string' && /^[a-z0-9_-]{1,40}$/i.test(w.id) ? w.id : uid();
+    if (!w.viz && w.chartType) w = migrateLegacyDashboardWidget(w);
+    if (!w || typeof w.templateId !== 'string' || !DV_ID_RE.test(w.templateId)) continue;
+    let id = typeof w.id === 'string' && DV_ID_RE.test(w.id) ? w.id : uid();
     if (seen.has(id)) id = uid();
     seen.add(id);
+    const metrics = (Array.isArray(w.metrics) ? w.metrics : []).map(_dvMetric).filter(Boolean).slice(0, 4);
     const widget = {
       id,
       title: String(w.title || '').trim().slice(0, 120),
-      chartType,
-      source: kind === 'form' ? { kind: 'form', templateId } : { kind }
+      templateId: w.templateId,
+      viz: DV_VIZ.includes(w.viz) ? w.viz : 'bar',
+      metrics: metrics.length ? metrics : [{ agg: 'count' }],
+      groupBy: _dvDim(w.groupBy),
+      seriesBy: _dvDim(w.seriesBy),
+      bucket: DV_BUCKETS.includes(w.bucket) ? w.bucket : 'auto',
+      orientation: DV_ORIENT.includes(w.orientation) ? w.orientation : 'auto',
+      limit: Number.isInteger(w.limit) && w.limit >= 0 && w.limit <= 50 ? w.limit : 10,
     };
     const layout = sanitizeWidgetLayout(w.layout);
     if (layout) widget.layout = layout;
-    if (w.hideLegend === true) widget.hideLegend = true;
-    if (isPivotLike) {
-      const pv = w.pivot || {};
-      const rowDim = _isValidPivotDim(pv.rowDim) ? pv.rowDim : null;
-      const colDim = _isValidPivotDim(pv.colDim) ? pv.colDim : '';
-      const metric = typeof pv.metric === 'string' && (DASHBOARD_PIVOT_METRICS.includes(pv.metric) || pv.metric.startsWith('field:'))
-        ? pv.metric : 'count';
-      const aggregate = DASHBOARD_PIVOT_AGGREGATES.includes(pv.aggregate) ? pv.aggregate : 'sum';
-      if (!rowDim) continue;                      // pivot precisa de linha
-      if (chartType === 'heatmap' && !colDim) continue;
-      widget.pivot = { rowDim, colDim, metric, aggregate };
-    } else if (chartType === 'combo') {
-      const cb = w.combo || {};
-      const primary = _isValidPivotDim(cb.primary) ? cb.primary : null;
-      const barMet  = typeof cb.bar?.metric  === 'string' && (DASHBOARD_PIVOT_METRICS.includes(cb.bar.metric)  || cb.bar.metric.startsWith('field:'))  ? cb.bar.metric  : 'count';
-      const lineMet = typeof cb.line?.metric === 'string' && (DASHBOARD_PIVOT_METRICS.includes(cb.line.metric) || cb.line.metric.startsWith('field:')) ? cb.line.metric : 'count';
-      const barAgg  = DASHBOARD_PIVOT_AGGREGATES.includes(cb.bar?.aggregate)  ? cb.bar.aggregate  : 'sum';
-      const lineAgg = DASHBOARD_PIVOT_AGGREGATES.includes(cb.line?.aggregate) ? cb.line.aggregate : 'sum';
-      if (!primary) continue;
-      widget.combo = { primary, bar: { metric: barMet, aggregate: barAgg }, line: { metric: lineMet, aggregate: lineAgg } };
-    } else if (chartType === 'scatter') {
-      const sc = w.scatter || {};
-      const x = typeof sc.x === 'string' && (DASHBOARD_PIVOT_METRICS.includes(sc.x) || sc.x.startsWith('field:')) ? sc.x : null;
-      const y = typeof sc.y === 'string' && (DASHBOARD_PIVOT_METRICS.includes(sc.y) || sc.y.startsWith('field:')) ? sc.y : null;
-      const groupDim = _isValidPivotDim(sc.groupDim) ? sc.groupDim : '';
-      if (!x || !y) continue;
-      if (x === 'count' || y === 'count') continue;
-      widget.scatter = { x, y, groupDim };
-    } else if (chartType === 'timeline') {
-      const tl = w.timeline || {};
-      const bucket = DASHBOARD_TIMELINE_BUCKETS.includes(tl.bucket) ? tl.bucket : 'auto';
-      const rawMetrics = Array.isArray(tl.metrics) ? tl.metrics.slice(0, 4) : [];
-      const metrics = [];
-      for (const m of rawMetrics) {
-        if (!m || typeof m !== 'object') continue;
-        const metric = typeof m.metric === 'string' && (DASHBOARD_PIVOT_METRICS.includes(m.metric) || m.metric.startsWith('field:'))
-          ? m.metric : null;
-        if (!metric) continue;
-        const aggregate = DASHBOARD_PIVOT_AGGREGATES.includes(m.aggregate) ? m.aggregate : 'sum';
-        metrics.push({ label: String(m.label || '').trim().slice(0, 60), metric, aggregate });
-      }
-      if (!metrics.length) continue;
-      const splitBy = _isValidPivotDim(tl.splitBy) ? tl.splitBy : '';
-      widget.timeline = { bucket, metrics, splitBy };
-    } else if (chartType === 'bar' || chartType === 'barh' || chartType === 'pie') {
-      const fieldId = typeof src.fieldId === 'string' ? src.fieldId : null;
-      if (!fieldId) continue; // bar/barh/pie sem field não faz sentido
-      widget.source.fieldId = fieldId;
-      // Bar (vertical e horizontal) suporta groupBy pra 2ª dimensão. Pie ignora.
-      if ((chartType === 'bar' || chartType === 'barh') && typeof w.groupByFieldId === 'string' && w.groupByFieldId) {
-        widget.groupByFieldId = w.groupByFieldId;
-      }
-      if (chartType === 'bar' && w.barWrap === true) widget.barWrap = true;
-    } else if (chartType === 'kpi') {
-      // Multi-KPI: se kpiSeries vier, ignora kpiAggregate/source.fieldId antigos
-      // e usa a lista. Retrocompatível: se kpiSeries vazio, mantém single KPI.
-      const rawSeries = Array.isArray(w.kpiSeries) ? w.kpiSeries : [];
-      const series = [];
-      for (const s of rawSeries.slice(0, 4)) { // limite defensivo
-        if (!s || typeof s !== 'object') continue;
-        const agg = DASHBOARD_KPI_AGGS.includes(s.aggregate) ? s.aggregate : 'count';
-        const item = { label: String(s.label || '').trim().slice(0, 60), aggregate: agg };
-        if (agg !== 'count') {
-          if (typeof s.fieldId !== 'string' || !s.fieldId) continue;
-          item.fieldId = s.fieldId;
-        }
-        series.push(item);
-      }
-      if (series.length) {
-        widget.kpiSeries = series;
-      } else {
-        const agg = DASHBOARD_KPI_AGGS.includes(w.kpiAggregate) ? w.kpiAggregate : 'count';
-        widget.kpiAggregate = agg;
-        if (agg !== 'count') {
-          const fieldId = typeof src.fieldId === 'string' ? src.fieldId : null;
-          if (!fieldId) continue;
-          widget.source.fieldId = fieldId;
-        }
-      }
-    } else if (chartType === 'line') {
-      const agg = DASHBOARD_KPI_AGGS.includes(w.lineAggregate) ? w.lineAggregate : 'count';
-      const bucket = DASHBOARD_LINE_BUCKETS.includes(w.lineBucket) ? w.lineBucket : 'auto';
-      widget.lineAggregate = agg;
-      widget.lineBucket = bucket;
-      if (agg !== 'count') {
-        const fieldId = typeof src.fieldId === 'string' ? src.fieldId : null;
-        if (!fieldId) continue;
-        widget.source.fieldId = fieldId;
-      }
-      // Line também suporta groupBy pra múltiplas séries (uma linha por valor).
-      if (typeof w.groupByFieldId === 'string' && w.groupByFieldId) {
-        widget.groupByFieldId = w.groupByFieldId;
-      }
-    }
     out.push(widget);
   }
   return out;
 }
+// Filtros fixos do dashboard: { dims: { [dim]: [valores] } }.
+function sanitizeDashboardFilters(raw) {
+  const dims = {};
+  const src = raw && typeof raw === 'object' && raw.dims && typeof raw.dims === 'object' ? raw.dims : {};
+  for (const k of Object.keys(src).slice(0, 20)) {
+    if (!_dvDim(k) || k === 'month' || k === 'week') continue;
+    const vals = (Array.isArray(src[k]) ? src[k] : []).map(v => String(v).slice(0, 120)).filter(Boolean).slice(0, 50);
+    if (vals.length) dims[k] = vals;
+  }
+  return { dims };
+}
+const _dvTemplateId = v => (typeof v === 'string' && DV_ID_RE.test(v) ? v : null);
+/* Grade v2 (d.grid === 2): linhas de 56px. Dashboards antigos usavam linhas
+   de ~212px; cada uma vira 4 das novas (mesma altura na tela). */
+function _dvGridWidgets(d) {
+  const ws = Array.isArray(d.widgets) ? d.widgets : [];
+  if (d.grid === 2) return ws;
+  return ws.map(w => (w && w.layout && Number.isInteger(w.layout.h)
+    ? { ...w, layout: { ...w.layout, y: w.layout.y * 4, h: w.layout.h * 4 } } : w));
+}
+const publicDashboard = d => ({ ...d, grid: 2, widgets: sanitizeDashboardWidgets(_dvGridWidgets(d)), fixedFilters: sanitizeDashboardFilters(d.fixedFilters) });
 
 app.get('/api/dashboards', requireAuth, (req, res) => {
-  // Dashboards são UNIVERSAIS — visíveis a todos autenticados.
-  res.json((db.dashboards || []).filter(notDeleted));
+  // Dashboards são UNIVERSAIS — visíveis a todos autenticados. Widgets no
+  // formato antigo saem convertidos (a gravação converte de vez).
+  res.json((db.dashboards || []).filter(notDeleted).map(publicDashboard));
 });
 
-app.post('/api/dashboards', requireAuth, adminOnly, (req, res) => {
+app.post('/api/dashboards', requireAuth, modOrAdmin, (req, res) => {
   const b = req.body || {};
   const name = String(b.name || '').trim();
   if (!name) return res.status(400).json({ error: 'Nome do dashboard é obrigatório' });
@@ -5047,7 +5026,10 @@ app.post('/api/dashboards', requireAuth, adminOnly, (req, res) => {
     workspaceId: ws,
     name,
     description: String(b.description || '').trim(),
+    templateId: _dvTemplateId(b.templateId),
+    fixedFilters: sanitizeDashboardFilters(b.fixedFilters),
     widgets: sanitizeDashboardWidgets(b.widgets),
+    grid: 2,
     createdBy: req.user.id,
     createdAt: nowISO(),
     updatedAt: nowISO()
@@ -5056,23 +5038,28 @@ app.post('/api/dashboards', requireAuth, adminOnly, (req, res) => {
   db.dashboards.push(d);
   saveEntity('dashboards', d);
   broadcastChange('dashboard', 'create', { id: d.id, workspaceId: d.workspaceId, byUserId: req.user.id });
-  res.status(201).json(d);
+  res.status(201).json(publicDashboard(d));
 });
 
-app.put('/api/dashboards/:id', requireAuth, adminOnly, (req, res) => {
+app.put('/api/dashboards/:id', requireAuth, modOrAdmin, (req, res) => {
   const d = (db.dashboards || []).find(x => x.id === req.params.id && notDeleted(x));
   if (!d) return res.status(404).json({ error: 'Dashboard não encontrado' });
   const b = req.body || {};
   if (typeof b.name === 'string' && b.name.trim()) d.name = b.name.trim();
   if (typeof b.description === 'string') d.description = b.description.trim();
-  if (b.widgets !== undefined) d.widgets = sanitizeDashboardWidgets(b.widgets);
+  if (b.templateId !== undefined) d.templateId = _dvTemplateId(b.templateId);
+  if (b.fixedFilters !== undefined) d.fixedFilters = sanitizeDashboardFilters(b.fixedFilters);
+  // Sempre regrava widgets e grade no formato v2 (converte os antigos na primeira
+  // edição). O cliente já manda os widgets na grade nova.
+  d.widgets = sanitizeDashboardWidgets(b.widgets !== undefined ? b.widgets : _dvGridWidgets(d));
+  d.grid = 2;
   d.updatedAt = nowISO();
   saveEntity('dashboards', d);
   broadcastChange('dashboard', 'update', { id: d.id, workspaceId: d.workspaceId, byUserId: req.user.id });
-  res.json(d);
+  res.json(publicDashboard(d));
 });
 
-app.delete('/api/dashboards/:id', requireAuth, adminOnly, (req, res) => {
+app.delete('/api/dashboards/:id', requireAuth, modOrAdmin, (req, res) => {
   const d = (db.dashboards || []).find(x => x.id === req.params.id && notDeleted(x));
   if (!d) return res.status(404).json({ error: 'Dashboard não encontrado' });
   softDelete('dashboards', d, req.user.id);

@@ -1492,20 +1492,14 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       <div class="page-body">
         <!-- Lista de dashboards (grid) -->
         <div id="dashboards-grid-view">
-          <div class="capacity-hero">
-            <div class="capacity-hero-main">
-              <h2 class="capacity-title">Dashboards</h2>
-              <div class="capacity-subtitle">Painéis com widgets pra cruzar dados de formulários, demandas e horas apontadas — filtre por período, squad, cliente e projeto.</div>
-            </div>
-            <button class="btn btn-primary btn-sm admin-only" onclick="openDashboardEditor(null)">
-              <i data-lucide="plus" class="ic-sm"></i> Novo dashboard
-            </button>
-          </div>
           <div class="dashboards-searchbar">
             <div class="filter-input-wrap">
               <i data-lucide="search" class="filter-input-icon ic-sm"></i>
               <input class="filter-input filter-input--with-icon" id="dashboards-search" placeholder="Buscar dashboard…" oninput="renderDashboards()">
             </div>
+            <button class="btn btn-primary admin-only" onclick="openDashboardEditor(null)">
+              <i data-lucide="plus" class="ic-sm"></i> Novo dashboard
+            </button>
           </div>
           <div id="dashboards-cards" class="dashboards-cards"></div>
         </div>
@@ -1515,14 +1509,14 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <button class="btn btn-ghost btn-sm" onclick="closeDashboardView()"><i data-lucide="arrow-left" class="ic-sm"></i> Voltar</button>
             <div class="dashboards-view-title" id="dashboards-view-title"></div>
             <div class="dashboards-view-actions admin-only">
-              <button class="btn btn-ghost btn-sm" id="dash-edit-toggle" onclick="toggleDashEditMode()"><i data-lucide="layout-grid" class="ic-sm"></i> Editar layout</button>
-              <button class="btn btn-ghost btn-sm" onclick="openDashboardEditor(_currentDashboardId)"><i data-lucide="pencil" class="ic-sm"></i> Editar nome</button>
+              <button class="btn btn-ghost btn-sm" id="dash-edit-toggle" onclick="toggleDashEditMode()"><i data-lucide="layout-grid" class="ic-sm"></i> Editar widgets</button>
+              <button class="btn btn-ghost btn-sm" onclick="openDashboardEditor(_currentDashboardId)"><i data-lucide="settings-2" class="ic-sm"></i> Configurações</button>
               <button class="btn btn-ghost btn-sm danger" onclick="confirmDeleteDashboard(_currentDashboardId)"><i data-lucide="trash-2" class="ic-sm"></i> Excluir</button>
             </div>
           </div>
           <div id="dashboards-view-desc" class="dashboards-view-desc"></div>
           <div id="dashboards-view-filters" class="dashboards-view-filters"></div>
-          <div id="dashboards-view-widgets" class="dw-widget-grid dw-canvas"></div>
+          <div id="dashboards-view-widgets" class="dv-grid"></div>
           <div id="dashboards-view-records" class="dw-records-panel"></div>
         </div>
       </div>
@@ -4550,7 +4544,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260923etapas3" defer></script>
+<script src="/js/boot.js?v=20260924grid3" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
@@ -4721,210 +4715,62 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
     <div class="modal modal-md">
       <div class="modal-header">
         <div class="modal-title" id="dashboard-editor-title">Novo dashboard</div>
-        <button class="modal-close" onclick="closeModal('dashboard-editor-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+        <button class="modal-close" onclick="_dvClosePopover(); closeModal('dashboard-editor-modal')"><i data-lucide="x" class="ic-sm"></i></button>
       </div>
       <div class="modal-body">
         <div class="form-grid">
           <div class="form-group full">
-            <label class="form-label">Nome *</label>
-            <input class="form-control" id="de-name" placeholder="Ex: Produção da equipe criativa">
+            <label class="form-label" for="de-name">Nome *</label>
+            <input class="form-control" id="de-name" placeholder="Ex.: Produção da equipe de criação">
           </div>
           <div class="form-group full">
-            <label class="form-label">Descrição (opcional)</label>
+            <label class="form-label" for="de-description">Descrição (opcional)</label>
             <textarea class="form-control" id="de-description" rows="2" placeholder="Aparece abaixo do título."></textarea>
           </div>
+          <div class="form-group full">
+            <label class="form-label" for="de-template">Formulário principal</label>
+            <select class="form-control" id="de-template" onchange="_dvDeRenderFixed()"></select>
+            <div class="dv-ed-hint">Novos widgets começam com ele. Cada widget pode usar outro formulário.</div>
+          </div>
+          <div class="form-group full">
+            <span class="form-label">Filtros fixos (opcional)</span>
+            <div class="dv-ed-hint" style="margin:0 0 8px">Valem para todo mundo e não podem ser removidos na tela. Ex.: só a squad Imob.</div>
+            <div id="de-fixed"></div>
+          </div>
+          <label class="form-group full dv-check" id="de-suggest-row">
+            <input type="checkbox" id="de-suggest" checked>
+            <span><b>Começar com widgets sugeridos</b><small>Resumo em números, respostas ao longo do tempo, barras pelo primeiro campo de escolha e uma tabela por cliente.</small></span>
+          </label>
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-ghost" onclick="closeModal('dashboard-editor-modal')">Cancelar</button>
+        <button class="btn btn-ghost" onclick="_dvClosePopover(); closeModal('dashboard-editor-modal')">Cancelar</button>
         <button class="btn btn-confirm" onclick="saveDashboard()">Salvar</button>
       </div>
     </div>
   </div>
 
-  <!-- ── WIDGET CONFIG — configura UM widget individual (adicionar ou editar) ── -->
+  <!-- ── WIDGET — editor com prévia ao vivo (openWidgetConfig) ── -->
   <div class="modal-overlay" id="widget-config-modal">
-    <div class="modal modal-lg">
+    <div class="modal modal-xl dv-ed-modal">
       <div class="modal-header">
-        <div class="modal-title" id="wc-title">Configurar widget</div>
+        <div class="modal-title" id="wc-title">Novo widget</div>
         <button class="modal-close" onclick="closeModal('widget-config-modal')"><i data-lucide="x" class="ic-sm"></i></button>
       </div>
-      <div class="modal-body">
-        <div class="form-grid">
-          <div class="form-group full">
-            <label class="form-label">Título do widget (opcional)</label>
-            <input class="form-control" id="wc-title-input" placeholder="Deixe em branco pra usar um título automático">
-          </div>
-          <div class="form-group">
-            <label class="form-label">Tipo de visualização</label>
-            <select class="form-control" id="wc-chart-type" onchange="_wcOnChartTypeChange()">
-              <option value="bar">Barras verticais (colunas)</option>
-              <option value="barh">Barras horizontais</option>
-              <option value="pie">Pizza (donut)</option>
-              <option value="line">Linha (timeline)</option>
-              <option value="kpi">KPI (número grande)</option>
-              <option value="pivot">Tabela dinâmica (cross-tab)</option>
-              <option value="heatmap">Heatmap</option>
-              <option value="combo">Combo (barra + linha, eixo duplo)</option>
-              <option value="scatter">Dispersão (scatter)</option>
-              <option value="timeline">Timeline (múltiplas métricas ou por dimensão)</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Fonte de dados</label>
-            <select class="form-control" id="wc-source-kind" onchange="_wcOnSourceKindChange()">
-              <option value="form">Formulário</option>
-              <option value="demand">Demandas</option>
-              <option value="time">Apontamentos de horas</option>
-            </select>
-          </div>
-          <div class="form-group" id="wc-template-group">
-            <label class="form-label">Formulário</label>
-            <select class="form-control" id="wc-template" onchange="_wcOnTemplateChange()"></select>
-          </div>
-          <div class="form-group full" id="wc-pivot-group" style="display:none">
-            <div class="form-grid form-grid-3">
-              <div class="form-group">
-                <label class="form-label">Dimensão de linhas</label>
-                <select class="form-control" id="wc-pivot-row" onchange="_wcMarkDirty()"></select>
-              </div>
-              <div class="form-group">
-                <label class="form-label" id="wc-pivot-col-label">Dimensão de colunas (opcional)</label>
-                <select class="form-control" id="wc-pivot-col" onchange="_wcMarkDirty()"></select>
-              </div>
-              <div class="form-group">
-                <label class="form-label">Métrica</label>
-                <select class="form-control" id="wc-pivot-metric" onchange="_wcOnPivotMetricChange()"></select>
-              </div>
-              <div class="form-group">
-                <label class="form-label">Agregação</label>
-                <select class="form-control" id="wc-pivot-agg">
-                  <option value="sum">Soma</option>
-                  <option value="avg">Média</option>
-                </select>
-              </div>
-            </div>
-          </div>
-          <div class="form-group full" id="wc-combo-group" style="display:none">
-            <div class="form-grid form-grid-3">
-              <div class="form-group">
-                <label class="form-label">Dimensão (eixo X)</label>
-                <select class="form-control" id="wc-combo-primary"></select>
-              </div>
-              <div class="form-group">
-                <label class="form-label">Métrica das barras (eixo Y esquerdo)</label>
-                <select class="form-control" id="wc-combo-bar-metric"></select>
-              </div>
-              <div class="form-group">
-                <label class="form-label">Agregação da barra</label>
-                <select class="form-control" id="wc-combo-bar-agg">
-                  <option value="sum">Soma</option>
-                  <option value="avg">Média</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label class="form-label">Métrica da linha (eixo Y direito)</label>
-                <select class="form-control" id="wc-combo-line-metric"></select>
-              </div>
-              <div class="form-group">
-                <label class="form-label">Agregação da linha</label>
-                <select class="form-control" id="wc-combo-line-agg">
-                  <option value="sum">Soma</option>
-                  <option value="avg">Média</option>
-                </select>
-              </div>
-            </div>
-          </div>
-          <div class="form-group full" id="wc-scatter-group" style="display:none">
-            <div class="form-grid form-grid-3">
-              <div class="form-group">
-                <label class="form-label">Métrica X</label>
-                <select class="form-control" id="wc-scatter-x"></select>
-              </div>
-              <div class="form-group">
-                <label class="form-label">Métrica Y</label>
-                <select class="form-control" id="wc-scatter-y"></select>
-              </div>
-              <div class="form-group">
-                <label class="form-label">Colorir por (opcional)</label>
-                <select class="form-control" id="wc-scatter-group"></select>
-              </div>
-            </div>
-          </div>
-          <div class="form-group full" id="wc-timeline-group" style="display:none">
-            <div class="form-grid form-grid-3">
-              <div class="form-group">
-                <label class="form-label">Agrupar tempo em</label>
-                <select class="form-control" id="wc-timeline-bucket">
-                  <option value="auto">Automático</option>
-                  <option value="day">Dia</option>
-                  <option value="week">Semana</option>
-                  <option value="month">Mês</option>
-                </select>
-              </div>
-              <div class="form-group" style="grid-column:span 2">
-                <label class="form-label">Dividir por (opcional — desativa múltiplas métricas, usa só a 1ª)</label>
-                <select class="form-control" id="wc-timeline-split"></select>
-              </div>
-            </div>
-            <label class="form-label" style="display:flex;align-items:center;justify-content:space-between;margin-top:8px">
-              <span>Métricas (1 a 4)</span>
-              <button type="button" class="btn btn-ghost btn-sm" onclick="_wcAddTimelineMetric()"><i data-lucide="plus" class="ic-sm"></i> Adicionar métrica</button>
-            </label>
-            <div id="wc-timeline-metrics-list" class="de-kpi-series" style="border:0;padding:0;margin:0"></div>
-            <div id="wc-timeline-metrics-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px">Cada métrica vira uma linha. Quando "Dividir por" está setado, só a 1ª é usada e cada valor da dimensão vira uma linha.</div>
-          </div>
-          <div class="form-group" id="wc-field-group">
-            <label class="form-label" id="wc-field-label">Campo</label>
-            <select class="form-control" id="wc-field"></select>
-          </div>
-          <div class="form-group" id="wc-agg-group" style="display:none">
-            <label class="form-label">Agregação</label>
-            <select class="form-control" id="wc-agg" onchange="_wcOnAggChange()">
-              <option value="count">Contagem</option>
-              <option value="sum">Soma</option>
-              <option value="avg">Média</option>
-            </select>
-          </div>
-          <div class="form-group" id="wc-bucket-group" style="display:none">
-            <label class="form-label">Agrupar tempo em</label>
-            <select class="form-control" id="wc-bucket">
-              <option value="auto">Automático</option>
-              <option value="day">Dia</option>
-              <option value="week">Semana</option>
-              <option value="month">Mês</option>
-            </select>
-          </div>
-          <div class="form-group" id="wc-groupby-group" style="display:none">
-            <label class="form-label">Agrupar por (2ª dimensão)</label>
-            <select class="form-control" id="wc-groupby">
-              <option value="">Sem agrupar</option>
-            </select>
-          </div>
-          <div class="form-group" id="wc-barwrap-group" style="display:none">
-            <label class="form-check" style="align-items:flex-start;margin-top:22px"><input type="checkbox" id="wc-barwrap"> Quebrar colunas em múltiplas linhas (widgets largos)</label>
-          </div>
-          <div class="form-group" id="wc-hidelegend-group" style="display:none">
-            <label class="form-check" style="align-items:flex-start;margin-top:22px"><input type="checkbox" id="wc-hidelegend"> Ocultar legenda do widget</label>
-          </div>
-          <div class="form-group full" id="wc-multi-kpi-group" style="display:none">
-            <label class="form-label" style="display:flex;align-items:center;justify-content:space-between">
-              <span>Múltiplas métricas (KPI)</span>
-              <button type="button" class="btn btn-ghost btn-sm" onclick="_wcAddKpiSeries()"><i data-lucide="plus" class="ic-sm"></i> Adicionar métrica</button>
-            </label>
-            <div id="wc-kpi-series-list" class="de-kpi-series" style="border:0;padding:0;margin:0"></div>
-            <div id="wc-kpi-series-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px">Deixe vazio pra usar um único KPI (configurado acima).</div>
-          </div>
+      <div class="modal-body dv-ed">
+        <div class="dv-ed-form" id="dv-ed-form"></div>
+        <div class="dv-ed-side">
+          <div class="dv-ed-side-label">Prévia com os filtros atuais</div>
+          <div class="dv-ed-preview" id="dv-ed-preview"></div>
         </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-ghost" onclick="closeModal('widget-config-modal')">Cancelar</button>
-        <button class="btn btn-confirm" onclick="saveWidgetConfig()">Salvar</button>
+        <button class="btn btn-confirm" id="dv-ed-save" onclick="saveWidgetConfig()">Salvar widget</button>
       </div>
     </div>
   </div>
 
-  <!-- ── FORMULÁRIO — preenchimento de resposta (fields renderizados dinamicamente em JS) ── -->
   <div class="modal-overlay" id="form-fill-modal">
     <div class="modal modal-md">
       <div class="modal-header">
