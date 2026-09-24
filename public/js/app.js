@@ -4728,6 +4728,75 @@ async function showAllReleaseNotes() {
   }
 }
 
+/* ─── NOVIDADES NO INÍCIO ─── bloco resumido do lançamento mais recente
+   (kind: 'launch', hoje o reWork Docs) logo abaixo da saudação. "Ver completo"
+   abre o card inteiro no modal; o X grava o id num cookie e o bloco não volta
+   (um lançamento novo, com outro id, aparece de novo). */
+const DASH_UPDATES_COOKIE = 'rw_home_updates_closed';
+let _dashUpdatesNote;          // undefined = não buscado; null = nada a mostrar
+let _dashUpdatesLoading = false;
+function _dashUpdatesClosedIds() {
+  const m = document.cookie.match(new RegExp('(?:^|;\\s*)' + DASH_UPDATES_COOKIE + '=([^;]*)'));
+  if (!m) return [];
+  try { return decodeURIComponent(m[1]).split(',').filter(Boolean); } catch { return []; }
+}
+function _dashUpdatesSetClosed(id) {
+  const ids = _dashUpdatesClosedIds().filter(x => x !== id).concat(id).slice(-20);
+  const secure = location.protocol === 'https:' ? '; Secure' : '';
+  document.cookie = `${DASH_UPDATES_COOKIE}=${encodeURIComponent(ids.join(','))}; Max-Age=31536000; Path=/; SameSite=Lax${secure}`;
+}
+async function renderDashUpdates() {
+  const el = $('dash-updates');
+  if (!el) return;
+  if (_dashUpdatesNote === undefined) {
+    if (_dashUpdatesLoading) return;
+    _dashUpdatesLoading = true;
+    try {
+      const r = await api('/release-notes/all');
+      _dashUpdatesNote = ((r && r.notes) || []).find(n => n.kind === 'launch' && n.launch) || null;
+    } catch { _dashUpdatesNote = null; }
+    _dashUpdatesLoading = false;
+  }
+  const n = _dashUpdatesNote;
+  if (!n || _dashUpdatesClosedIds().includes(n.id)) { el.hidden = true; el.innerHTML = ''; return; }
+  const L = n.launch;
+  const feats = (Array.isArray(L.features) ? L.features : []).slice(0, 4);
+  const icon = L.icon && /^\/[\w.-]+\.svg$/.test(L.icon) ? L.icon : null;
+  el.innerHTML = `
+    <div class="dash-updates-main">
+      ${icon ? `<img class="dash-updates-icon" src="${esc(icon)}" alt="">` : ''}
+      <div class="dash-updates-text">
+        <div class="dash-updates-kicker">${esc(L.kicker || 'Novidade')}${L.badge ? `<span class="release-launch-badge">${esc(L.badge)}</span>` : ''}</div>
+        <div class="dash-updates-title">${esc(n.title || '')}</div>
+        ${L.tagline ? `<p class="dash-updates-tagline">${esc(L.tagline)}</p>` : ''}
+        ${feats.length ? `<ul class="dash-updates-feats">${feats.map(f => `<li><i data-lucide="${esc(f.icon || 'sparkles')}"></i>${esc(f.title || '')}</li>`).join('')}</ul>` : ''}
+      </div>
+      <button type="button" class="btn btn-ghost dash-updates-open" onclick="openDashUpdates()">Ver completo<i data-lucide="arrow-right" class="ic-sm"></i></button>
+    </div>
+    <button type="button" class="dash-updates-close" onclick="closeDashUpdates()" aria-label="Fechar novidades" title="Fechar"><i data-lucide="x" class="ic-sm"></i></button>`;
+  el.hidden = false;
+  paintIcons();
+}
+function openDashUpdates() {
+  const n = _dashUpdatesNote;
+  if (!n) return;
+  _releaseNotesPending = []; // só consulta: não mexe no controle diário do modal
+  const intro = $('release-notes-intro');
+  const closeBtn = $('release-notes-close-btn');
+  if (intro) intro.textContent = 'Novidade na plataforma.';
+  if (closeBtn) closeBtn.textContent = 'Fechar';
+  renderReleaseNotes([n]);
+  openModal('release-notes-modal');
+}
+function closeDashUpdates() {
+  const n = _dashUpdatesNote;
+  if (n) _dashUpdatesSetClosed(n.id);
+  const el = $('dash-updates');
+  if (el) { el.hidden = true; el.innerHTML = ''; }
+}
+window.openDashUpdates = openDashUpdates;
+window.closeDashUpdates = closeDashUpdates;
+
 async function loadAll() {
   // Uma única request substitui os 16 GETs antigos — em conexões lentas
   // isso economiza ~15 RTTs (300-500ms cada em mobile). Fallback pro
@@ -6079,6 +6148,7 @@ function renderDashboard() {
   // Dashboard individualizado: sempre no escopo do usuário logado.
   if (!me?.id) return;
   renderDashGreeting();
+  renderDashUpdates();
   const mine = _dashMyDemands();
   const mineActive = mine.filter(d => !isDone(d));
   const teamScope = dashScopedDemands();

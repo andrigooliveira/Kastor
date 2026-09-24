@@ -4752,6 +4752,47 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 }
 .dash-greeting-sub b { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
 .dash-greeting-sep { color: var(--hairline); margin: 0 4px; }
+/* Novidades resumidas no Início (abaixo da saudação) — renderDashUpdates(). */
+.dash-updates {
+  position: relative;
+  margin: -8px 0 28px;
+  padding: 18px 52px 18px 20px;
+  border: 1px solid var(--hairline); border-radius: 14px;
+  background:
+    radial-gradient(ellipse 420px 140px at 0% 0%, color-mix(in oklab, #00b4d8 12%, transparent), transparent 70%),
+    radial-gradient(ellipse 420px 160px at 100% 0%, color-mix(in oklab, var(--accent) 14%, transparent), transparent 70%),
+    var(--surface-2);
+  animation: greetingIn .6s .08s cubic-bezier(.16,1,.3,1) both;
+}
+.dash-updates-main { display: flex; align-items: center; gap: 18px; }
+.dash-updates-icon { width: 48px; height: 48px; flex-shrink: 0; filter: drop-shadow(0 6px 14px rgba(60, 60, 200, .22)); }
+.dash-updates-text { flex: 1; min-width: 0; }
+.dash-updates-kicker {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--accent-text);
+}
+.dash-updates-title { margin: 2px 0 4px; font-size: 17px; font-weight: 700; letter-spacing: -0.015em; color: var(--text); }
+.dash-updates-tagline {
+  margin: 0; font-size: 13px; line-height: 1.5; color: var(--text-dim); max-width: 90ch;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.dash-updates-feats { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 10px 0 0; padding: 0; list-style: none; }
+.dash-updates-feats li { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-muted); }
+.dash-updates-feats li svg { width: 14px; height: 14px; color: var(--accent-text); }
+.dash-updates-open { flex-shrink: 0; gap: 6px; }
+.dash-updates-close {
+  position: absolute; top: 10px; right: 10px;
+  width: 28px; height: 28px; border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; background: transparent; color: var(--text-muted); cursor: pointer;
+}
+.dash-updates-close:hover { background: var(--surface); color: var(--text); }
+@media (max-width: 720px) {
+  .dash-updates { padding: 16px 44px 16px 16px; }
+  .dash-updates-main { flex-direction: column; align-items: flex-start; gap: 12px; }
+  .dash-updates-icon { width: 40px; height: 40px; }
+}
+@media (prefers-reduced-motion: reduce) { .dash-updates { animation: none; } }
 @keyframes greetingIn {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
