@@ -2124,13 +2124,167 @@ function _godmodeRenderDetail(d) {
   paintIcons();
 }
 
-/* ─── PALETA DE COMANDOS (⌘K) ───
-   Modal central com input de busca. Lista ações de navegação + demandas
-   do workspace ativo que casam com o termo. Navegação por teclado:
-   ↑ ↓ Enter Esc. Hover do mouse também atualiza o item ativo. */
+/* ─── BUSCA (Ctrl K) ───
+   Uma lista só, em seções curtas. Sem texto: 3 recentes, 3 mais usados e
+   3 das minhas demandas (ações aparecem ao digitar). Com texto: um índice montado na abertura
+   (acento e caixa ignorados, várias palavras = todas precisam casar), com os
+   resultados agrupados por tipo. ↑ ↓ andam; Enter abre; Esc limpa e depois fecha.
+   Uso por pessoa em localStorage: cada demanda/cliente/projeto/tela aberta
+   (por aqui ou pelo app) conta pra Recentes e Mais usados.
+   Desempenho: o índice é montado uma vez por abertura, a lista só redesenha
+   o necessário, um listener só (delegação) e os ícones vêm de um cache de SVG. */
 let cmdkOpen = false;
-let cmdkActiveIdx = 0;
-let cmdkResults = [];
+let _cmdk = { q: '', items: [], active: 0, index: null };
+// Grupos dos resultados com texto (na ordem do melhor resultado de cada um).
+const CMDK_GROUPS = [
+  { kinds: ['page', 'action'], title: 'Telas e ações', max: 5 },
+  { kinds: ['demand'], title: 'Demandas', max: 8 },
+  { kinds: ['client'], title: 'Clientes', max: 5 },
+  { kinds: ['project'], title: 'Projetos', max: 5 },
+  { kinds: ['user'], title: 'Pessoas', max: 5 },
+];
+const CMDK_KIND_LABEL = { demand: 'Demanda', client: 'Cliente', project: 'Projeto', user: 'Pessoa', page: 'Tela', action: 'Ação', lista: 'Lista', recurring: 'Recorrente', flow: 'Fluxo' };
+
+/* Uso (Recentes / Mais usados): { chave: { n, t } }, chaves 'd:id' 'c:id' 'p:id' 'u:id' 'pg:pagina' 'a:acao'. */
+let _cmdkUse = null, _cmdkUseTimer = null;
+const _cmdkUseKey = () => 'kastor-cmdk-use-' + (me?.id || 'anon');
+function _cmdkUsage() {
+  if (!_cmdkUse) { try { _cmdkUse = JSON.parse(localStorage.getItem(_cmdkUseKey()) || '{}') || {}; } catch { _cmdkUse = {}; } }
+  return _cmdkUse;
+}
+function cmdkTrack(key) {
+  if (!me || !key) return;
+  const u = _cmdkUsage();
+  u[key] = { n: (u[key]?.n || 0) + 1, t: Date.now() };
+  clearTimeout(_cmdkUseTimer);
+  _cmdkUseTimer = setTimeout(() => {
+    const keys = Object.keys(u);
+    if (keys.length > 250) keys.sort((a, b) => u[a].t - u[b].t).slice(0, keys.length - 250).forEach(k => delete u[k]);
+    try { localStorage.setItem(_cmdkUseKey(), JSON.stringify(u)); } catch {}
+  }, 400);
+}
+
+/* Ações (curtas) — telas vêm do catálogo do menu (NAV_CATALOG). */
+function _cmdkActions() {
+  return [
+    { id: 'new-demand', icon: 'plus', label: 'Nova demanda', hint: 'N', run: () => openNewDemand() },
+    { id: 'new-client', icon: 'building-2', label: 'Novo cliente', staff: true, run: () => openClientModal(null) },
+    { id: 'new-lista', icon: 'list-checks', label: 'Nova lista recorrente', staff: true, run: () => openNovaListaModal() },
+    { id: 'status', icon: 'headphones', label: 'Mudar meu status', run: () => toggleStatusMenu() },
+    { id: 'profile', icon: 'user-cog', label: 'Configurações (meu perfil)', run: () => goPage('profile') },
+    { id: 'quick', icon: 'sliders-horizontal', label: 'Editar acesso rápido', staff: true, run: () => goPage('menu') },
+    { id: 'theme', icon: 'sun-moon', label: 'Alternar tema claro/escuro', run: () => toggleTheme() },
+    { id: 'sidebar', icon: 'panel-left', label: 'Recolher/expandir menu lateral', run: () => toggleSidebarCollapse() },
+    { id: 'shortcuts', icon: 'keyboard', label: 'Atalhos de teclado', hint: '?', run: () => showShortcutsHelp() },
+  ].filter(a => !a.staff || !(me?.isFreelancer && !me.isAdmin && !me.isModerator))
+   .map(a => ({ key: 'a:' + a.id, kind: 'action', icon: a.icon, label: a.label, hint: a.hint, run: a.run }));
+}
+function _cmdkPages() {
+  const extra = [
+    { page: 'profile', label: 'Meu perfil', icon: 'user-cog' },
+    { page: 'help', label: 'Documentação', icon: 'circle-help', cls: 'freelancer-hide' },
+    { page: 'analytics', tab: 'capacity', label: 'Análises · Capacidade', icon: 'gauge', cls: 'freelancer-hide' },
+    { page: 'analytics', tab: 'rhythm', label: 'Análises · Ritmo', icon: 'activity', cls: 'freelancer-hide' },
+    { page: 'analytics', tab: 'reports', label: 'Análises · Relatórios', icon: 'timer', cls: 'freelancer-hide' },
+  ];
+  return [...NAV_CATALOG, ...extra].filter(_navAllowed).map(p => ({
+    key: 'pg:' + p.page + (p.tab ? ':' + p.tab : ''), kind: 'page', icon: p.icon, label: p.label,
+    run: () => { goPage(p.page); if (p.tab) setTimeout(() => setAnalyticsTab(p.tab), 30); },
+  }));
+}
+// Índice da busca: montado ao abrir (os dados mudam pouco enquanto a busca está aberta).
+function _cmdkBuildIndex() {
+  const out = [];
+  const add = it => { it.hay = norm(it.label); it.haySub = norm(it.sub || ''); out.push(it); };
+  const inWs = x => !activeWs || x.workspaceId === activeWs;
+  (clients || []).filter(c => !c.deletedAt && inWs(c)).forEach(c => add({ key: 'c:' + c.id, kind: 'client', icon: 'building-2', label: c.name, run: () => openClient(c.id) }));
+  (projects || []).filter(p => !p.deletedAt && inWs(p)).forEach(p => add({ key: 'p:' + p.id, kind: 'project', icon: 'folder', label: p.name,
+    sub: clientById(p.clientId)?.name || p.client || '', run: () => openProjectDetail(p.id) }));
+  (demands || []).filter(d => !d.deletedAt && inWs(d)).forEach(d => {
+    const p = projectById(d.projectId);
+    add({ key: 'd:' + d.id, kind: 'demand', icon: isDone(d) ? 'circle-check' : 'square', label: d.name, done: isDone(d),
+      sub: [clientById(p?.clientId)?.name, p?.name].filter(Boolean).join(' · '), run: () => showDetail(d.id) });
+  });
+  (users || []).filter(u => u.active !== false && !u.deletedAt).forEach(u => add({ key: 'u:' + u.id, kind: 'user', icon: 'user', label: u.name,
+    sub: u.role || (u.username ? '@' + u.username : ''), run: () => { if (me?.isAdmin) openUserModal(u.id); else goPage('users'); } }));
+  _cmdkPages().forEach(add);
+  _cmdkActions().forEach(add);
+  return out;
+}
+// Casa todas as palavras (no nome ou no complemento). Nome vale mais; começo de palavra vale mais.
+function _cmdkScore(it, tokens) {
+  let s = 0;
+  for (const t of tokens) {
+    const i = it.hay.indexOf(t);
+    if (i >= 0) { s += i === 0 ? 40 : it.hay[i - 1] === ' ' ? 26 : 12; continue; }
+    const j = it.haySub.indexOf(t);
+    if (j < 0) return -1;
+    s += j === 0 || it.haySub[j - 1] === ' ' ? 8 : 4;
+  }
+  const u = _cmdkUsage()[it.key];
+  if (u) s += Math.min(24, u.n * 3) + (Date.now() - u.t < 3 * 864e5 ? 8 : 0);
+  if (it.done) s -= 15;
+  if (it.kind === 'page' || it.kind === 'action') s += 6;
+  return s;
+}
+function _cmdkSearch(q) {
+  const tokens = norm(q).split(/\s+/).filter(Boolean);
+  const scored = [];
+  for (const it of _cmdk.index) { const sc = _cmdkScore(it, tokens); if (sc >= 0) scored.push([sc, it]); }
+  scored.sort((a, b) => b[0] - a[0] || a[1].label.length - b[1].label.length);
+  return scored.map(x => x[1]);
+}
+// Resolve uma chave de uso no item atual (some quem foi apagado ou saiu do squad).
+function _cmdkResolve(key) { return _cmdk.byKey?.get(key) || null; }
+function _cmdkTabItems(tab) {
+  const u = _cmdkUsage();
+  if (tab === 'actions') return _cmdk.index.filter(it => it.kind === 'action').map((it, i) => [it, u[it.key]?.n || 0, i])
+    .sort((a, b) => b[1] - a[1] || a[2] - b[2]).map(x => x[0]);
+  if (tab === 'mine') {
+    const today = todayStr();
+    return myDemands().filter(d => !isDone(d))
+      .sort((a, b) => (effDue(a) || '9999').localeCompare(effDue(b) || '9999'))
+      .slice(0, 30).map(d => {
+        const it = _cmdkResolve('d:' + d.id); if (!it) return null;
+        const due = effDue(d);
+        return { ...it, meta: due ? (due < today ? 'Atrasada' : due === today ? 'Hoje' : fmtPfpShort(due)) : '', late: !!due && due < today };
+      }).filter(Boolean);
+  }
+  const keys = Object.keys(u);
+  if (tab === 'recent') keys.sort((a, b) => u[b].t - u[a].t);
+  // Mais usados: contagem com peso por recência (meia-vida de 14 dias).
+  else keys.sort((a, b) => u[b].n * Math.pow(0.5, (Date.now() - u[b].t) / (14 * 864e5)) - u[a].n * Math.pow(0.5, (Date.now() - u[a].t) / (14 * 864e5)));
+  const out = [];
+  for (const k of keys) {
+    const it = _cmdkResolve(k);
+    if (!it || (tab === 'recent' && it.kind === 'action')) continue;
+    out.push(tab === 'recent' ? { ...it, meta: fmtRelativeTime(new Date(u[k].t).toISOString()).replace(/^há /, '') } : it);
+    if (out.length >= 12) break;
+  }
+  return out;
+}
+
+/* Ícones: cache do SVG pronto por nome (lucide só roda pra ícone novo). */
+const _cmdkSvg = {};
+const _cmdkIcon = n => _cmdkSvg[n] || `<i data-lucide="${n}"></i>`;
+function _cmdkHarvestIcons(root) {
+  if (root.querySelector('i[data-lucide]')) paintIcons(root);
+  root.querySelectorAll('svg[data-lucide]').forEach(s => { const n = s.getAttribute('data-lucide'); if (!_cmdkSvg[n]) _cmdkSvg[n] = s.outerHTML; });
+}
+// Destaca o trecho que casou (sem acento/caixa) no nome.
+function _cmdkMark(label, tokens) {
+  if (!tokens.length) return esc(label);
+  const n = norm(label);
+  const hit = new Array(label.length).fill(false);
+  tokens.forEach(t => { let i = n.indexOf(t); while (i >= 0 && t) { for (let k = i; k < i + t.length; k++) hit[k] = true; i = n.indexOf(t, i + t.length); } });
+  let html = '', on = false;
+  for (let i = 0; i < label.length; i++) {
+    if (hit[i] !== on) { html += hit[i] ? '<mark>' : '</mark>'; on = hit[i]; }
+    html += esc(label[i]);
+  }
+  return html + (on ? '</mark>' : '');
+}
+
 function openCommandPalette() {
   let el = document.getElementById('cmdk');
   if (!el) {
@@ -2138,245 +2292,125 @@ function openCommandPalette() {
     el.id = 'cmdk';
     el.className = 'cmdk-overlay';
     el.innerHTML = `
-      <div class="cmdk-card" role="dialog" aria-label="Paleta de comandos">
+      <div class="cmdk-card" role="dialog" aria-modal="true" aria-label="Buscar">
         <div class="cmdk-input-wrap">
-          <i data-lucide="search" class="ic-sm cmdk-input-icon"></i>
-          <input class="cmdk-input" id="cmdk-input" placeholder="Buscar cliente, demanda, projeto, lista, recorrente, fluxo, usuário ou ação…" autocomplete="off" spellcheck="false">
+          <i data-lucide="search" class="cmdk-input-icon"></i>
+          <input class="cmdk-input" id="cmdk-input" placeholder="Buscar demanda, cliente, projeto, pessoa ou tela…" autocomplete="off" spellcheck="false"
+            role="combobox" aria-expanded="true" aria-controls="cmdk-results" aria-autocomplete="list">
           <kbd class="cmdk-hint-kbd">Esc</kbd>
         </div>
-        <div class="cmdk-results" id="cmdk-results"></div>
-        <div class="cmdk-foot">
-          <span><kbd>↑</kbd><kbd>↓</kbd> navegar</span>
-          <span><kbd>↵</kbd> selecionar</span>
-          <span><kbd>esc</kbd> fechar</span>
-        </div>
+        <div class="cmdk-results" id="cmdk-results" role="listbox" aria-label="Resultados"></div>
       </div>`;
     document.body.appendChild(el);
-    el.addEventListener('click', ev => { if (ev.target === el) closeCommandPalette(); });
+    el.addEventListener('mousedown', ev => { if (ev.target === el) closeCommandPalette(); });
     const input = el.querySelector('#cmdk-input');
-    input.addEventListener('input', renderCommandPalette);
+    input.addEventListener('input', () => { _cmdk.q = input.value; _cmdk.active = 0; _cmdkRender(); });
     input.addEventListener('keydown', cmdkOnKey);
+    const res = el.querySelector('#cmdk-results');
+    res.addEventListener('mousemove', ev => {
+      const row = ev.target.closest('.cmdk-item');
+      if (row && +row.dataset.i !== _cmdk.active) { _cmdk.active = +row.dataset.i; _cmdkPaintActive(false); }
+    });
+    res.addEventListener('click', ev => { const row = ev.target.closest('.cmdk-item'); if (row) cmdkRun(_cmdk.items[+row.dataset.i]); });
+    paintIcons(el.querySelector('.cmdk-input-wrap'));
   }
+  _cmdk.index = _cmdkBuildIndex();
+  _cmdk.byKey = new Map(_cmdk.index.map(it => [it.key, it]));
+  _cmdk.q = '';
+  _cmdk.active = 0;
   el.querySelector('#cmdk-input').value = '';
-  cmdkActiveIdx = 0;
   el.classList.add('open');
   cmdkOpen = true;
-  renderCommandPalette();
-  setTimeout(() => { const i = document.getElementById('cmdk-input'); if (i) i.focus(); }, 30);
+  _cmdkRender();
+  requestAnimationFrame(() => document.getElementById('cmdk-input')?.focus());
 }
 function closeCommandPalette() {
-  const el = document.getElementById('cmdk');
-  if (!el) return;
-  el.classList.remove('open');
+  document.getElementById('cmdk')?.classList.remove('open');
   cmdkOpen = false;
 }
 function cmdkOnKey(e) {
-  if (e.key === 'Escape') { e.preventDefault(); closeCommandPalette(); return; }
-  if (e.key === 'ArrowDown') { e.preventDefault(); cmdkActiveIdx = Math.min(cmdkResults.length - 1, cmdkActiveIdx + 1); paintCmdkActive(); }
-  else if (e.key === 'ArrowUp') { e.preventDefault(); cmdkActiveIdx = Math.max(0, cmdkActiveIdx - 1); paintCmdkActive(); }
-  else if (e.key === 'Enter') {
+  const n = _cmdk.items.length;
+  if (e.key === 'Escape') {
+    e.preventDefault(); e.stopPropagation();
+    if (_cmdk.q) { e.target.value = ''; _cmdk.q = ''; _cmdk.active = 0; _cmdkRender(); } else closeCommandPalette();
+  } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     e.preventDefault();
-    const r = cmdkResults[cmdkActiveIdx];
-    if (r) cmdkRun(r);
+    if (n) { _cmdk.active = (_cmdk.active + (e.key === 'ArrowDown' ? 1 : -1) + n) % n; _cmdkPaintActive(true); }
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (_cmdk.items[_cmdk.active]) cmdkRun(_cmdk.items[_cmdk.active]);
   }
 }
-function paintCmdkActive() {
-  const items = document.querySelectorAll('#cmdk-results .cmdk-item');
-  items.forEach((it, i) => it.classList.toggle('active', i === cmdkActiveIdx));
-  const active = items[cmdkActiveIdx];
-  if (active && active.scrollIntoView) active.scrollIntoView({ block: 'nearest' });
+function _cmdkPaintActive(scroll) {
+  const rows = document.querySelectorAll('#cmdk-results .cmdk-item');
+  rows.forEach((r, i) => { const on = i === _cmdk.active; r.classList.toggle('active', on); r.setAttribute('aria-selected', on); });
+  const act = rows[_cmdk.active];
+  document.getElementById('cmdk-input')?.setAttribute('aria-activedescendant', act ? act.id : '');
+  if (scroll && act) act.scrollIntoView({ block: 'nearest' });
 }
-function cmdkRun(r) {
+function cmdkRun(it) {
+  if (!it) return;
   closeCommandPalette();
-  setTimeout(() => { try { r.run(); } catch (err) { console.error(err); } }, 60);
+  // Entidades e telas contam pelo próprio app (showDetail, goPage…); ações contam aqui.
+  if (it.kind === 'action') cmdkTrack(it.key);
+  setTimeout(() => { try { it.run(); } catch (err) { console.error(err); } }, 0);
 }
-function cmdkActions() {
-  const acts = [
-    // Ações de criação — no topo pra achar rápido.
-    { icon: 'plus',         label: 'Nova demanda',                  kind: 'Ação',     run: () => typeof openNewDemand === 'function' && openNewDemand() },
-    { icon: 'plus',         label: 'Novo cliente',                  kind: 'Ação',     run: () => typeof openClientModal === 'function' && openClientModal(null) },
-    { icon: 'plus',         label: 'Nova lista recorrente',         kind: 'Ação',     run: () => typeof openNovaListaModal === 'function' && openNovaListaModal() },
-    // Navegação — telas principais
-    { icon: 'home',         label: 'Ir para Início',                kind: 'Navegar',  run: () => goPage('dashboard') },
-    { icon: 'list',         label: 'Ir para Demandas',              kind: 'Navegar',  run: () => goPage('list') },
-    { icon: 'user',         label: 'Ir para Minhas Demandas',       kind: 'Navegar',  run: () => goPage('mine') },
-    { icon: 'bar-chart-3',  label: 'Ir para Análises · Capacidade', kind: 'Navegar',  run: () => { goPage('analytics'); setTimeout(() => typeof setAnalyticsTab === 'function' && setAnalyticsTab('capacity'), 30); } },
-    { icon: 'activity',     label: 'Ir para Análises · Ritmo',       kind: 'Navegar',  run: () => { goPage('analytics'); setTimeout(() => typeof setAnalyticsTab === 'function' && setAnalyticsTab('rhythm'), 30); } },
-    { icon: 'timer',        label: 'Ir para Análises · Relatórios',  kind: 'Navegar',  run: () => { goPage('analytics'); setTimeout(() => typeof setAnalyticsTab === 'function' && setAnalyticsTab('reports'), 30); } },
-    { icon: 'line-chart',   label: 'Ir para Performance', kind: 'Navegar',  run: () => goPage('performance') },
-    { icon: 'calendar',     label: 'Ir para Agenda',                kind: 'Navegar',  run: () => goPage('agenda') },
-    { icon: 'calendar',     label: 'Ir para Calendário (Demandas)', kind: 'Navegar',  run: () => { goPage('list'); setTimeout(() => typeof setListView === 'function' && setListView('calendar'), 50); } },
-    { icon: 'kanban',       label: 'Ir para Kanban (Demandas)',     kind: 'Navegar',  run: () => { goPage('list'); setTimeout(() => typeof setListView === 'function' && setListView('kanban'), 50); } },
-    { icon: 'building-2',   label: 'Ir para Clientes',              kind: 'Navegar',  run: () => goPage('clients') },
-    { icon: 'folder',       label: 'Ir para Projetos',              kind: 'Navegar',  run: () => goPage('projects') },
-    { icon: 'workflow',     label: 'Ir para Fluxos',                kind: 'Navegar',  run: () => goPage('flows') },
-    { icon: 'refresh-ccw',  label: 'Ir para Recorrentes · Demandas',kind: 'Navegar',  run: () => { goPage('recurring'); setTimeout(() => typeof setRecurringTab === 'function' && setRecurringTab('demandas'), 30); } },
-    { icon: 'list-checks',  label: 'Ir para Recorrentes · Listas',  kind: 'Navegar',  run: () => { goPage('recurring'); setTimeout(() => typeof setRecurringTab === 'function' && setRecurringTab('listas'), 30); } },
-    { icon: 'file-text',    label: 'Ir para Templates',             kind: 'Navegar',  run: () => goPage('templates') },
-    { icon: 'user-circle',  label: 'Ir para Perfil',                kind: 'Navegar',  run: () => goPage('profile') },
-    { icon: 'info',         label: 'Ir para Documentação',          kind: 'Navegar',  run: () => goPage('help') },
-  ];
-  // Usuários: visível pra todos.
-  acts.push({ icon: 'users',    label: 'Ir para Usuários',     kind: 'Navegar', run: () => goPage('users') });
-  acts.push({ icon: 'repeat',   label: 'Ir para Demandas Recorrentes', kind: 'Navegar', run: () => goPage('recurringDemands') });
-  // Workspaces, Integrações e Lixeira: admin + moderador (mesmo gate do sidebar).
-  if (me?.isAdmin || me?.isModerator) {
-    acts.push({ icon: 'layers',  label: 'Ir para Squads',   kind: 'Navegar', run: () => goPage('workspaces') });
-    acts.push({ icon: 'webhook', label: 'Ir para Integrações',  kind: 'Navegar', run: () => goPage('integrations') });
-    acts.push({ icon: 'trash-2', label: 'Ir para Lixeira',      kind: 'Navegar', run: () => goPage('trash') });
-  }
-  acts.push({ icon: 'sun-moon',  label: 'Alternar tema (claro/escuro)', kind: 'Ação', run: () => typeof toggleTheme === 'function' && toggleTheme() });
-  acts.push({ icon: 'panel-left',label: 'Alternar sidebar (colapsar)',  kind: 'Ação', run: () => typeof toggleSidebarCollapse === 'function' && toggleSidebarCollapse() });
-  acts.push({ icon: 'keyboard',  label: 'Mostrar atalhos de teclado',   kind: 'Ação', run: () => showShortcutsHelp() });
-  return acts;
-}
-function renderCommandPalette() {
-  const input = document.getElementById('cmdk-input');
+function _cmdkRender() {
   const out = document.getElementById('cmdk-results');
-  if (!input || !out) return;
-  const q = (input.value || '').trim().toLowerCase();
-  const allActions = cmdkActions();
-  const acts = q
-    ? allActions.filter(a => a.label.toLowerCase().includes(q))
-    : allActions;
-  let dems = [], projs = [], flws = [], usrs = [], clis = [], lstas = [], recs = [];
+  if (!out) return;
+  const q = _cmdk.q.trim();
+  const tokens = norm(q).split(/\s+/).filter(Boolean);
+  let sections;
   if (q) {
-    // Clientes — no topo (topo da hierarquia).
-    clis = (Array.isArray(clients) ? clients : [])
-      .filter(c => !activeWs || c.workspaceId === activeWs)
-      .filter(c => c.name && c.name.toLowerCase().includes(q))
-      .slice(0, 6)
-      .map(c => {
-        const projCount = projects.filter(p => p.clientId === c.id && p.active !== false).length;
-        return {
-          icon: 'building-2',
-          label: c.name,
-          kind: 'Cliente',
-          sub: `${projCount} projeto${projCount === 1 ? '' : 's'}`,
-          run: () => openClient(c.id)
-        };
-      });
-    dems = (Array.isArray(demands) ? demands : [])
-      .filter(d => !activeWs || d.workspaceId === activeWs)
-      .filter(d => d.name && d.name.toLowerCase().includes(q))
-      .slice(0, 8)
-      .map(d => ({
-        icon: 'square',
-        label: d.name,
-        kind: 'Demanda',
-        sub: (projectById(d.projectId)?.name || ''),
-        run: () => showDetail(d.id)
-      }));
-    projs = (typeof wsProjects === 'function' ? wsProjects() : [])
-      .filter(p => (p.name && p.name.toLowerCase().includes(q)) || (p.client && p.client.toLowerCase().includes(q)))
-      .slice(0, 6)
-      .map(p => ({
-        icon: 'folder',
-        label: p.name,
-        kind: 'Projeto',
-        sub: p.client || '',
-        // Detalhe de projeto agora tem view própria — muito mais útil que o modal.
-        run: () => (typeof openProjectDetail === 'function' ? openProjectDetail(p.id) : openProjectModal(p.id))
-      }));
-    // Listas recorrentes (templates apenas — instâncias aplicadas ficam ocultas).
-    lstas = (Array.isArray(listas) ? listas : [])
-      .filter(l => (!activeWs || l.workspaceId === activeWs) && !l.sourceListaId)
-      .filter(l => l.name && l.name.toLowerCase().includes(q))
-      .slice(0, 5)
-      .map(l => {
-        const c = l.clientId ? clientById(l.clientId) : null;
-        const p = l.projectId ? projectById(l.projectId) : null;
-        const sub = c ? `${c.name}${p ? ` · ${p.name}` : ''}` : (p ? p.name : 'Cliente');
-        return {
-          icon: 'list-checks',
-          label: l.name,
-          kind: 'Lista',
-          sub,
-          run: () => { goPage('recurring'); setTimeout(() => typeof setRecurringTab === 'function' && setRecurringTab('listas'), 30); }
-        };
-      });
-    // Demandas recorrentes.
-    recs = (Array.isArray(recurrings) ? recurrings : [])
-      .filter(r => (!activeWs || r.workspaceId === activeWs))
-      .filter(r => r.name && r.name.toLowerCase().includes(q))
-      .slice(0, 5)
-      .map(r => {
-        const c = r.clientId ? clientById(r.clientId) : null;
-        const p = r.projectId ? projectById(r.projectId) : null;
-        const sub = c ? `${c.name}${p ? ` · ${p.name}` : ''}` : (p ? p.name : '');
-        return {
-          icon: 'refresh-ccw',
-          label: r.name,
-          kind: 'Recorrente',
-          sub,
-          run: () => (typeof openRecurringModal === 'function' ? openRecurringModal(r.id) : goPage('recurring'))
-        };
-      });
-    flws = (typeof wsFlows === 'function' ? wsFlows() : [])
-      .filter(f => f.name && f.name.toLowerCase().includes(q))
-      .slice(0, 5)
-      .map(f => ({
-        icon: 'workflow',
-        label: f.name,
-        kind: 'Fluxo',
-        sub: f.demandType || '',
-        run: () => { if (me && me.isAdmin) openFlowModal(f.id); else goPage('flows'); }
-      }));
-    usrs = (typeof wsUsers === 'function' ? wsUsers() : [])
-      .filter(u => (u.name && u.name.toLowerCase().includes(q)) || (u.username && u.username.toLowerCase().includes(q)))
-      .slice(0, 5)
-      .map(u => ({
-        icon: 'user',
-        label: u.name,
-        kind: 'Usuário',
-        sub: u.role || u.username || '',
-        run: () => { if (me && me.isAdmin) openUserModal(u.id); else goPage('users'); }
-      }));
+    const all = _cmdkSearch(q);
+    const firstAt = g => all.findIndex(it => g.kinds.includes(it.kind));
+    sections = CMDK_GROUPS.map(g => ({ g, at: firstAt(g) })).filter(x => x.at >= 0).sort((a, b) => a.at - b.at)
+      .map(({ g }) => ({ title: g.title, kind: true, items: all.filter(it => g.kinds.includes(it.kind)).slice(0, g.max) }));
+  } else {
+    // Sem texto: seções curtas, sem repetir item entre elas.
+    const used = new Set();
+    const take = (list, n) => {
+      const out = [];
+      for (const it of list) { if (out.length >= n) break; if (!used.has(it.key)) { used.add(it.key); out.push(it); } }
+      return out;
+    };
+    sections = [
+      { title: 'Recentes', kind: true, items: take(_cmdkTabItems('recent'), 3) },
+      { title: 'Mais usados', kind: true, items: take(_cmdkTabItems('top'), 3) },
+      { title: 'Minhas demandas', items: take(_cmdkTabItems('mine'), 3) },
+    ].filter(sec => sec.items.length);
   }
-  cmdkResults = [...acts, ...clis, ...dems, ...projs, ...lstas, ...recs, ...flws, ...usrs];
-  if (cmdkActiveIdx >= cmdkResults.length) cmdkActiveIdx = Math.max(0, cmdkResults.length - 1);
-  if (!cmdkResults.length) {
-    out.innerHTML = `<div class="cmdk-empty">Nada encontrado${q ? ` para "${esc(q)}"` : ''}</div>`;
-    return;
-  }
+  const items = [];
   let html = '';
-  let idx = 0;
-  const renderItem = (r) => {
-    const active = idx === cmdkActiveIdx ? ' active' : '';
-    const sub = r.sub ? `<span class="cmdk-item-sub"> · ${esc(r.sub)}</span>` : '';
-    const item = `<div class="cmdk-item${active}" data-i="${idx}">
-      <i data-lucide="${r.icon}" class="ic-sm cmdk-item-icon"></i>
-      <span class="cmdk-item-label">${esc(r.label)}${sub}</span>
-      <span class="cmdk-item-kind">${esc(r.kind)}</span>
-    </div>`;
-    idx++;
-    return item;
-  };
-  const ENTITY_KINDS = ['Cliente','Demanda','Projeto','Lista','Recorrente','Fluxo','Usuário'];
-  const sections = [
-    { title: 'Ações & navegação', items: cmdkResults.filter(r => !ENTITY_KINDS.includes(r.kind)) },
-    { title: 'Clientes',          items: cmdkResults.filter(r => r.kind === 'Cliente') },
-    { title: 'Demandas',          items: cmdkResults.filter(r => r.kind === 'Demanda') },
-    { title: 'Projetos',          items: cmdkResults.filter(r => r.kind === 'Projeto') },
-    { title: 'Listas',            items: cmdkResults.filter(r => r.kind === 'Lista') },
-    { title: 'Demandas recorrentes', items: cmdkResults.filter(r => r.kind === 'Recorrente') },
-    { title: 'Fluxos',            items: cmdkResults.filter(r => r.kind === 'Fluxo') },
-    { title: 'Usuários',          items: cmdkResults.filter(r => r.kind === 'Usuário') }
-  ];
   for (const sec of sections) {
-    if (!sec.items.length) continue;
-    html += `<div class="cmdk-section">${sec.title}</div>`;
-    sec.items.forEach(r => { html += renderItem(r); });
+    html += `<div class="cmdk-section" role="presentation">${esc(sec.title)}</div>`;
+    for (const it of sec.items) {
+      const i = items.push(it) - 1;
+      const right = it.meta ? `<span class="cmdk-item-meta ${it.late ? 'is-late' : ''}">${esc(it.meta)}</span>`
+        : it.hint ? `<kbd class="cmdk-item-kbd">${esc(it.hint)}</kbd>` : '';
+      const kind = sec.kind && CMDK_KIND_LABEL[it.kind];
+      html += `<div class="cmdk-item ${it.done ? 'is-done' : ''}" id="cmdk-opt-${i}" data-i="${i}" role="option" aria-selected="false">
+        <span class="cmdk-item-icon">${_cmdkIcon(it.icon)}</span>
+        <span class="cmdk-item-text"><span class="cmdk-item-label">${_cmdkMark(it.label, tokens)}</span>${it.sub ? `<span class="cmdk-item-sub">${esc(it.sub)}</span>` : ''}</span>
+        ${right}${kind ? `<span class="cmdk-item-kind">${kind}</span>` : ''}
+      </div>`;
+    }
   }
-  out.innerHTML = html;
-  out.querySelectorAll('.cmdk-item').forEach(it => {
-    it.addEventListener('mouseenter', () => { cmdkActiveIdx = parseInt(it.dataset.i, 10); paintCmdkActive(); });
-    it.addEventListener('click', () => {
-      const r = cmdkResults[parseInt(it.dataset.i, 10)];
-      if (r) cmdkRun(r);
-    });
-  });
-  paintIcons();
+  _cmdk.items = items;
+  if (_cmdk.active >= items.length) _cmdk.active = Math.max(0, items.length - 1);
+  out.innerHTML = items.length ? html : `<div class="cmdk-empty">${q ? `Nada encontrado para “${esc(q)}”.` : 'Nada por aqui ainda. Digite para buscar.'}</div>`;
+  // Sem texto a lista não rola: em tela baixa, some o que não cabe (nada cortado pela metade).
+  if (!q) {
+    while (items.length > 1 && out.scrollHeight > out.clientHeight + 1) {
+      const rows = out.querySelectorAll('.cmdk-item');
+      rows[rows.length - 1].remove();
+      items.pop();
+      if (out.lastElementChild?.classList.contains('cmdk-section')) out.lastElementChild.remove();
+    }
+  }
+  _cmdkHarvestIcons(document.getElementById('cmdk'));
+  out.scrollTop = 0;
+  _cmdkPaintActive(false);
 }
 function showShortcutsHelp() {
   let el = document.getElementById('shortcuts-help');
@@ -5359,6 +5393,7 @@ function goPage(page) {
   if (page !== 'flows') currentClientView = null;
   const prevPage = currentPage;
   currentPage = page;
+  if (prevPage !== page && (page === 'profile' || page === 'help' || _navItem(page))) cmdkTrack('pg:' + page);
   // Cada entrada na página força um restoreFilters na próxima render.
   _markFiltersDirty(page);
   syncSidebarActive(page);
@@ -13110,6 +13145,7 @@ function editCurrentDemand() {
    dedicada — permite Ctrl+click pra nova aba, foco melhor, e Voltar do
    browser volta pra origem naturalmente. */
 function showDetail(id) {
+  cmdkTrack('d:' + id);
   if (detailId && detailId !== id) maybeSuggestTime(detailId);
   // Draft do editor de etapas é por-demanda — se muda a demanda, invalida o draft
   // anterior (senão o Etapas tab renderiza vazio porque a ordem tem IDs de outra).
@@ -28237,6 +28273,7 @@ function renderClients() {
 function openClient(id) {
   const c = clientById(id);
   if (!c) { toast('Cliente não encontrado', 'error'); renderClients(); return; }
+  cmdkTrack('c:' + id);
   currentClientId = id;
   currentProjectId = null;
   showClientDetailView();
@@ -28921,6 +28958,7 @@ function showProjectReportView() {
 function openProjectDetail(id) {
   const p = projectById(id);
   if (!p) { toast('Projeto não encontrado', 'error'); return; }
+  cmdkTrack('p:' + id);
   // Garante que estamos na página certa (URL direta pode entrar por outro tab).
   if (currentPage !== 'clients') goPage('clients');
   currentProjectId = id;
