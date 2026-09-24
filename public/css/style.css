@@ -2466,9 +2466,22 @@ tr:hover td { background: var(--surface-2); }
 }
 .advanced-filters-lbl small { color: var(--text-muted); font-weight: 400; font-size: 10.5px; margin-left: 4px; }
 /* Range de datas: dois inputs pequenos lado-a-lado com separador "até". */
-.af-date-range { display: flex; align-items: center; gap: 6px; }
-.af-date-input { flex: 1; min-width: 0; height: 34px; padding: 0 8px; font-size: 12px; }
-.af-date-sep { font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
+/* Datas dos filtros avançados: botão com o intervalo + calendário (rc) embutido */
+.af-date-field { display: flex; align-items: center; gap: 4px; }
+.af-date-trigger { flex: 1; min-width: 0; height: 36px; padding: 0 10px; display: flex; align-items: center; gap: 8px; text-align: left; }
+.af-date-trigger .ic-xs { flex-shrink: 0; color: var(--text-muted); }
+.af-date-trigger.filtering .ic-xs { color: var(--accent); }
+.af-date-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; }
+.af-date-caret { transition: transform var(--dur-2) var(--ease-out); }
+.af-date-trigger[aria-expanded="true"] .af-date-caret { transform: rotate(180deg); }
+.af-date-clear {
+  width: 30px; height: 30px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; border: 0;
+  border-radius: var(--radius-sm); background: none; color: var(--text-muted); cursor: pointer;
+}
+.af-date-clear:hover { background: var(--surface-2); color: var(--text); }
+.af-date-clear[hidden] { display: none; }
+.af-date-cal { margin-top: 6px; padding: 10px 8px 6px; border-radius: var(--radius-sm); box-shadow: inset 0 0 0 1px var(--hairline); }
+.af-date-cal[hidden] { display: none; }
 .filters-bar .filter-input-wrap { flex: 1 1 180px; min-width: 140px; max-width: 260px; }
 .filters-bar .filter-input,
 .filters-bar .filter-input-wrap .filter-input--with-icon {
@@ -2630,13 +2643,12 @@ tr:hover td { background: var(--surface-2); }
 /* Picker da Capacidade fica no canto direito do section-head — abre alinhado à
    direita pra não vazar pra fora do conteúdo. */
 #cap-pfp-popover { left: auto; right: 0; }
-/* Dias além do limite de largura do range ficam desabilitados no calendário. */
-.pfp-day:disabled { opacity: 0.28; cursor: not-allowed; pointer-events: none; }
-.pfp-presets { display: flex; flex-direction: column; padding: 8px 0; }
+/* Atalhos: mesmo tamanho dos itens dos outros filtros (.filter-cdrop-item) */
+.pfp-presets { display: flex; flex-direction: column; gap: 1px; padding: 6px; }
 .pfp-preset-btn {
-  padding: 8px 18px;
-  background: none; border: 0; color: var(--text);
-  text-align: left; font-family: inherit; font-size: 13.5px;
+  padding: 8px 11px;
+  background: none; border: 0; border-radius: 8px; color: var(--text);
+  text-align: left; font-family: inherit; font-size: 12px;
   cursor: pointer;
   transition: background .12s;
 }
@@ -2647,46 +2659,6 @@ tr:hover td { background: var(--surface-2); }
   padding: 12px 14px;
   border-top: 1px solid var(--hairline);
 }
-.pfp-cal-head {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 8px;
-}
-.pfp-cal-title { font-size: 13px; font-weight: 600; color: var(--text); }
-.pfp-cal-nav {
-  background: none; border: 0; padding: 4px 6px;
-  color: var(--text-muted); cursor: pointer;
-  border-radius: 4px;
-  display: inline-flex; align-items: center; justify-content: center;
-  transition: color .12s, background .12s;
-}
-.pfp-cal-nav:hover { color: var(--accent); background: var(--surface-2); }
-.pfp-cal-dow {
-  display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px;
-  margin-bottom: 4px;
-}
-.pfp-cal-dow span {
-  text-align: center; font-size: 10.5px; color: var(--text-muted);
-  padding: 4px 0; font-weight: 600;
-}
-.pfp-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
-.pfp-day {
-  height: 32px; padding: 0;
-  border: 0; background: none; color: var(--text);
-  border-radius: 6px; font-family: inherit; font-size: 13px;
-  cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  transition: background .12s, color .12s;
-}
-.pfp-day:hover { background: var(--surface-2); }
-.pfp-day.other { color: var(--text-muted); opacity: 0.55; }
-.pfp-day.today { outline: 1px solid var(--accent); outline-offset: -1px; }
-/* Fundo do intervalo entre start e end — accent com alpha, visível em ambos os temas. */
-.pfp-day.range-mid { background: rgba(var(--accent-rgb), 0.22); color: var(--accent-text); border-radius: 4px; }
-.pfp-day.range-start,
-.pfp-day.range-end,
-.pfp-day.range-single {
-  background: var(--accent); color: #fff; font-weight: 600;
-}
 .pfp-footer {
   display: flex; justify-content: space-between; align-items: center;
   padding: 8px 14px;
@@ -2694,7 +2666,7 @@ tr:hover td { background: var(--surface-2); }
 }
 .pfp-footer-btn {
   background: none; border: 0; padding: 6px 10px;
-  color: var(--text-muted); font-size: 13px; font-family: inherit;
+  color: var(--text-muted); font-size: 12px; font-family: inherit;
   cursor: pointer; border-radius: 6px;
   transition: color .12s, background .12s;
 }
@@ -11792,28 +11764,8 @@ kbd {
   letter-spacing: -0.015em;
   font-variant-numeric: tabular-nums;
 }
-/* Toggle período — pill flat sem accent cheio, ativo com surface + shadow */
-.client-time-periods {
-  display: inline-flex;
-  gap: 2px;
-  padding: 3px;
-  background: var(--surface-3);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  flex-wrap: nowrap;
-}
-.client-time-period {
-  font-size: 11px !important; padding: 4px 10px !important;
-  background: transparent !important; border: 0 !important;
-  color: var(--text-dim) !important; font-weight: 500 !important;
-  box-shadow: none !important;
-}
-.client-time-period.active {
-  background: var(--surface) !important;
-  color: var(--text) !important;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.18) !important;
-}
-.client-time-period.active:hover { filter: none; }
+/* Período do Tempo dedicado (ctp-*): abre alinhado à direita do bloco */
+.client-time-picker .pfp-popover { left: auto; right: 0; }
 
 .client-time-row {
   display: grid;
@@ -15074,17 +15026,9 @@ tr.demand-row {
   opacity: 0.5;
   cursor: not-allowed;
 }
-.perf-custom-dates { min-width: 260px; }
-.perf-daterange {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-}
-.perf-daterange input[type="date"] {
-  padding: 6px 10px;
-  font-size: 12.5px;
-  height: 34px;
-}
+/* Período (perf-pfp): mesma altura dos selects ao lado; abre alinhado à direita */
+.perf-control .filter-period-trigger { height: 40px; }
+#perf-pfp-popover, #rhy-popover { left: auto; right: 0; }
 /* Botões-ícone dos filtros (atualizar, config). Sem label, sem borda, só
    um hover discreto pra afirmar clicabilidade. 16×16 no ícone. */
 .perf-icon-btn {
@@ -18920,9 +18864,45 @@ tr.demand-row:hover { transform: none; }
 .dv-menu-item:hover { background: var(--surface-2); }
 .dv-menu-item.is-on { font-weight: 600; }
 .dv-menu-item.is-on svg { color: var(--accent-text); }
-.dv-range { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
-.dv-range .form-control { flex: 1; min-width: 0; height: 32px; font-size: 12.5px; padding: 0 8px; }
-.dv-range-apply { margin-top: 8px; width: 100%; }
+/* Calendário de intervalo compartilhado (rc em app.js): Dashboards, Demandas,
+   Capacidade, Relatórios e Agenda. Início/fim em círculo, faixa entre eles. */
+.rc { user-select: none; }
+.rc-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.rc-title { font-size: 13px; font-weight: 600; color: var(--text); text-transform: capitalize; }
+.rc-nav {
+  width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: var(--radius-sm);
+  background: none; color: var(--text-muted); cursor: pointer; transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+}
+.rc-nav svg { width: 16px; height: 16px; }
+.rc-nav:hover { background: var(--surface-2); color: var(--text); }
+.rc-nav:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.rc-week, .rc-grid { display: grid; grid-template-columns: repeat(7, 1fr); }
+.rc-week span { height: 22px; display: flex; align-items: center; justify-content: center; font-size: 10.5px; font-weight: 600; color: var(--text-muted); }
+.rc-grid { row-gap: 2px; }
+.rc-day {
+  position: relative; height: 34px; border: 0; background: none; padding: 0; cursor: pointer; z-index: 0;
+  font-family: inherit; font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--text-dim);
+}
+/* Faixa do trecho (atrás) e a bolinha do dia (na frente) */
+.rc-day::before { content: ''; position: absolute; inset: 2px 0; z-index: -2; }
+.rc-day::after {
+  content: ''; position: absolute; top: 2px; bottom: 2px; left: 50%; width: 30px; margin-left: -15px; z-index: -1;
+  border-radius: 50%; transition: background var(--dur-1) var(--ease-out);
+}
+.rc-day:hover::after { background: var(--surface-2); }
+.rc-day:hover { color: var(--text); }
+.rc-day:focus-visible { outline: none; }
+.rc-day:focus-visible::after { box-shadow: 0 0 0 2px var(--accent); }
+.rc-day:disabled { opacity: .3; cursor: not-allowed; }
+.rc-day:disabled::after { background: none; }
+.rc-day.is-today { color: var(--accent-text); font-weight: 700; }
+.rc-day.is-in::before { background: var(--accent-dim); }
+.rc-day.is-start:not(.is-end)::before { background: var(--accent-dim); left: 50%; }
+.rc-day.is-end:not(.is-start)::before { background: var(--accent-dim); right: 50%; }
+.rc-day.is-start::after, .rc-day.is-end::after { background: var(--accent); }
+.rc-day.is-start, .rc-day.is-end { color: #fff; font-weight: 600; }
+.rc-day.is-in { color: var(--text); }
+.rc-hint { margin-top: 6px; min-height: 16px; font-size: 11.5px; color: var(--text-muted); text-align: center; }
 .dv-seg { display: flex; padding: 2px; gap: 2px; border-radius: 8px; background: var(--surface-2); }
 .dv-seg button { flex: 1; border: 0; background: none; border-radius: 6px; padding: 6px 4px; cursor: pointer; font-family: inherit; font-size: 11px; font-weight: 600; line-height: 1.2; color: var(--text-muted); }
 .dv-seg button.is-on { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
@@ -18962,6 +18942,12 @@ tr.demand-row:hover { transform: none; }
 .dv-nums--3 .dv-num-value, .dv-nums--4 .dv-num-value { font-size: 26px; }
 .dv-num-delta { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: 11.5px; color: var(--text-muted); }
 .dv-num-delta b { color: var(--text-dim); font-weight: 600; }
+/* Tendência com comparação de período: queda, aumento, estável */
+.dv-num.is-up { --dv-trend: var(--success); }
+.dv-num.is-down { --dv-trend: var(--danger); }
+.dv-num.is-flat { --dv-trend: var(--sky); }
+.dv-num:is(.is-up, .is-down, .is-flat) .dv-num-value { color: var(--dv-trend); }
+.dv-num:is(.is-up, .is-down, .is-flat) .dv-num-delta, .dv-num:is(.is-up, .is-down, .is-flat) .dv-num-delta b { color: color-mix(in oklab, var(--dv-trend) 82%, var(--text)); }
 
 /* Barras horizontais: rótulo | barra (até 24px) | valor na ponta */
 .dv-hbars { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }

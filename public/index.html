@@ -767,15 +767,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             </button>
             <div class="pfp-popover" id="pfp-popover" onclick="event.stopPropagation()">
               <div class="pfp-presets" id="pfp-presets"></div>
-              <div class="pfp-cal">
-                <div class="pfp-cal-head">
-                  <button type="button" class="pfp-cal-nav" onclick="pfpNav(-1)" title="Mês anterior"><i data-lucide="chevron-left" class="ic-sm"></i></button>
-                  <span class="pfp-cal-title" id="pfp-cal-title"></span>
-                  <button type="button" class="pfp-cal-nav" onclick="pfpNav(1)" title="Próximo mês"><i data-lucide="chevron-right" class="ic-sm"></i></button>
-                </div>
-                <div class="pfp-cal-dow"><span>D</span><span>S</span><span>T</span><span>Q</span><span>Q</span><span>S</span><span>S</span></div>
-                <div class="pfp-cal-grid" id="pfp-cal-grid"></div>
-              </div>
+              <div class="pfp-cal"><div id="pfp-rc"></div></div>
               <div class="pfp-footer">
                 <button type="button" class="pfp-footer-btn" onclick="pfpClear()">Limpar</button>
                 <button type="button" class="pfp-footer-btn" onclick="pfpToday()">Hoje</button>
@@ -874,20 +866,28 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                 <div class="af-section">
                   <div class="af-section-head">Datas</div>
                   <div class="advanced-filters-row">
-                    <span class="advanced-filters-lbl">Criada entre</span>
-                    <div class="af-date-range">
-                      <input type="date" class="filter-select af-date-input" id="filter-created-from" onchange="renderList(); _updateAdvancedFiltersBadge()">
-                      <span class="af-date-sep">até</span>
-                      <input type="date" class="filter-select af-date-input" id="filter-created-to" onchange="renderList(); _updateAdvancedFiltersBadge()">
+                    <span class="advanced-filters-lbl" id="af-date-created-lbl">Criada entre</span>
+                    <div class="af-date-field">
+                      <button type="button" class="filter-select af-date-trigger" id="af-date-created" onclick="afDateToggle('created')" aria-expanded="false" aria-controls="af-cal-created" aria-labelledby="af-date-created-lbl af-date-created-label">
+                        <i data-lucide="calendar" class="ic-xs"></i><span class="af-date-label" id="af-date-created-label">Qualquer data</span><i data-lucide="chevron-down" class="ic-xs af-date-caret"></i>
+                      </button>
+                      <button type="button" class="af-date-clear" id="af-date-created-clear" onclick="afDateClear('created')" aria-label="Limpar criada entre" hidden><i data-lucide="x" class="ic-xs"></i></button>
                     </div>
+                    <div class="af-date-cal" id="af-cal-created" hidden><div id="af-rc-created"></div></div>
+                    <input type="hidden" id="filter-created-from" value="">
+                    <input type="hidden" id="filter-created-to" value="">
                   </div>
                   <div class="advanced-filters-row">
-                    <span class="advanced-filters-lbl">Concluída entre</span>
-                    <div class="af-date-range">
-                      <input type="date" class="filter-select af-date-input" id="filter-completed-from" onchange="renderList(); _updateAdvancedFiltersBadge()">
-                      <span class="af-date-sep">até</span>
-                      <input type="date" class="filter-select af-date-input" id="filter-completed-to" onchange="renderList(); _updateAdvancedFiltersBadge()">
+                    <span class="advanced-filters-lbl" id="af-date-completed-lbl">Concluída entre</span>
+                    <div class="af-date-field">
+                      <button type="button" class="filter-select af-date-trigger" id="af-date-completed" onclick="afDateToggle('completed')" aria-expanded="false" aria-controls="af-cal-completed" aria-labelledby="af-date-completed-lbl af-date-completed-label">
+                        <i data-lucide="calendar" class="ic-xs"></i><span class="af-date-label" id="af-date-completed-label">Qualquer data</span><i data-lucide="chevron-down" class="ic-xs af-date-caret"></i>
+                      </button>
+                      <button type="button" class="af-date-clear" id="af-date-completed-clear" onclick="afDateClear('completed')" aria-label="Limpar concluída entre" hidden><i data-lucide="x" class="ic-xs"></i></button>
                     </div>
+                    <div class="af-date-cal" id="af-cal-completed" hidden><div id="af-rc-completed"></div></div>
+                    <input type="hidden" id="filter-completed-from" value="">
+                    <input type="hidden" id="filter-completed-to" value="">
                   </div>
                 </div>
 
@@ -1128,15 +1128,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                 </button>
                 <div class="pfp-popover" id="cap-pfp-popover" onclick="event.stopPropagation()">
                   <div class="pfp-presets" id="cap-pfp-presets"></div>
-                  <div class="pfp-cal">
-                    <div class="pfp-cal-head">
-                      <button type="button" class="pfp-cal-nav" onclick="capPfpNav(-1)" title="Mês anterior"><i data-lucide="chevron-left" class="ic-sm"></i></button>
-                      <span class="pfp-cal-title" id="cap-pfp-cal-title"></span>
-                      <button type="button" class="pfp-cal-nav" onclick="capPfpNav(1)" title="Próximo mês"><i data-lucide="chevron-right" class="ic-sm"></i></button>
-                    </div>
-                    <div class="pfp-cal-dow"><span>D</span><span>S</span><span>T</span><span>Q</span><span>Q</span><span>S</span><span>S</span></div>
-                    <div class="pfp-cal-grid" id="cap-pfp-cal-grid"></div>
-                  </div>
+                  <div class="pfp-cal"><div id="cap-rc"></div></div>
                   <div class="pfp-footer">
                     <button type="button" class="pfp-footer-btn" onclick="capPfpResetDefault()">Padrão</button>
                     <button type="button" class="pfp-footer-btn" onclick="capPfpToday()">Hoje</button>
@@ -1163,12 +1155,22 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               <div class="rhythm-subtitle">Diagnóstico semanal de gargalos — quem tá no ritmo, quem tá devendo.</div>
             </div>
             <div class="rhythm-header-actions">
-              <select class="filter-select" id="rhythm-week" onchange="renderRhythm()">
-                <option value="0">Semana atual</option>
-                <option value="-1">Semana passada</option>
-                <option value="-2">Há 2 semanas</option>
-                <option value="-3">Há 3 semanas</option>
-              </select>
+              <!-- Semana: atalhos + calendário em modo semana (rhy-*, calendário rc). -->
+              <div class="filter-period-picker">
+                <button type="button" class="filter-period-trigger" id="rhy-trigger" onclick="rhyToggle(event)" aria-haspopup="dialog">
+                  <span id="rhy-label">Semana atual</span>
+                  <i data-lucide="chevron-down" class="ic-xs"></i>
+                </button>
+                <div class="pfp-popover" id="rhy-popover" onclick="event.stopPropagation()">
+                  <div class="pfp-presets" id="rhy-presets"></div>
+                  <div class="pfp-cal"><div id="rhy-rc"></div></div>
+                  <div class="pfp-footer">
+                    <span></span>
+                    <button type="button" class="pfp-footer-btn" onclick="rcToday('rhy-rc')">Hoje</button>
+                  </div>
+                </div>
+              </div>
+              <input type="hidden" id="rhythm-week" value="0">
             </div>
           </div>
           <div class="rhythm-filter-bar">
@@ -1203,12 +1205,24 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             </div>
             <div class="capacity-filterbar-group">
               <span class="capacity-filterbar-label"><i data-lucide="calendar-range" class="ic-xs"></i> Período</span>
-              <select id="reports-period" onchange="renderReports()">
-                <option value="30">Últimos 30 dias</option>
-                <option value="90" selected>Últimos 90 dias</option>
-                <option value="365">Último ano</option>
-                <option value="all">Todo o período</option>
-              </select>
+              <!-- Período: atalhos + intervalo no calendário (rep-pfp-*, calendário rc). -->
+              <div class="filter-period-picker">
+                <button type="button" class="filter-period-trigger" id="rep-pfp-trigger" onclick="repPfpToggle(event)">
+                  <span id="rep-pfp-label">Últimos 90 dias</span>
+                  <i data-lucide="chevron-down" class="ic-xs"></i>
+                </button>
+                <div class="pfp-popover" id="rep-pfp-popover" onclick="event.stopPropagation()">
+                  <div class="pfp-presets" id="rep-pfp-presets"></div>
+                  <div class="pfp-cal"><div id="rep-rc"></div></div>
+                  <div class="pfp-footer">
+                    <button type="button" class="pfp-footer-btn" onclick="repPfpReset()">Padrão</button>
+                    <button type="button" class="pfp-footer-btn" onclick="rcToday('rep-rc')">Hoje</button>
+                  </div>
+                </div>
+              </div>
+              <input type="hidden" id="reports-period" value="90">
+              <input type="hidden" id="reports-period-start" value="">
+              <input type="hidden" id="reports-period-end" value="">
             </div>
             <div class="capacity-filterbar-spacer"></div>
             <button class="capacity-export-btn" onclick="clearReportFilters()" title="Limpar filtros">
@@ -1248,21 +1262,24 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             </div>
             <div class="perf-control">
               <label class="filter-label">Período</label>
-              <select class="filter-select" id="perf-period" onchange="_perfOnPeriodChange()">
-                <option value="30" selected>Últimos 30 dias</option>
-                <option value="7">Últimos 7 dias</option>
-                <option value="mtd">Este mês</option>
-                <option value="90">Últimos 90 dias</option>
-                <option value="365">Último ano</option>
-                <option value="custom">Personalizado…</option>
-              </select>
-            </div>
-            <div class="perf-control perf-custom-dates" id="perf-custom-dates" style="display:none">
-              <label class="filter-label">De · até</label>
-              <div class="perf-daterange">
-                <input type="date" class="filter-select" id="perf-start" onchange="renderPerformance()">
-                <input type="date" class="filter-select" id="perf-end" onchange="renderPerformance()">
+              <!-- Período: atalhos + intervalo no calendário (perf-pfp-*, calendário rc). -->
+              <div class="filter-period-picker">
+                <button type="button" class="filter-period-trigger" id="perf-pfp-trigger" onclick="perfPfpToggle(event)" aria-haspopup="dialog">
+                  <span id="perf-pfp-label">Últimos 30 dias</span>
+                  <i data-lucide="chevron-down" class="ic-xs"></i>
+                </button>
+                <div class="pfp-popover" id="perf-pfp-popover" onclick="event.stopPropagation()">
+                  <div class="pfp-presets" id="perf-pfp-presets"></div>
+                  <div class="pfp-cal"><div id="perf-rc"></div></div>
+                  <div class="pfp-footer">
+                    <button type="button" class="pfp-footer-btn" onclick="perfPfpReset()">Padrão</button>
+                    <button type="button" class="pfp-footer-btn" onclick="rcToday('perf-rc')">Hoje</button>
+                  </div>
+                </div>
               </div>
+              <input type="hidden" id="perf-period" value="30">
+              <input type="hidden" id="perf-start" value="">
+              <input type="hidden" id="perf-end" value="">
             </div>
             <button class="perf-icon-btn" onclick="renderPerformance()" title="Atualizar dados" aria-label="Atualizar"><i data-lucide="refresh-cw" class="ic-md"></i></button>
             <button class="perf-icon-btn" id="perf-config-btn" onclick="togglePerfConfig()" title="Configurar webhook" aria-label="Configurar webhook" style="display:none"><i data-lucide="settings" class="ic-md"></i></button>
@@ -1844,12 +1861,19 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                   <span class="client-time-label">HORAS APONTADAS</span>
                   <span class="client-time-value" id="client-time-value">0h</span>
                 </div>
-                <div class="client-time-periods">
-                  <button class="btn btn-ghost btn-sm client-time-period" data-period="7" onclick="setClientTimePeriod('7')">Últimos 7 dias</button>
-                  <button class="btn btn-ghost btn-sm client-time-period" data-period="14" onclick="setClientTimePeriod('14')">Últimos 14 dias</button>
-                  <button class="btn btn-ghost btn-sm client-time-period" data-period="30" onclick="setClientTimePeriod('30')">Últimos 30 dias</button>
-                  <button class="btn btn-ghost btn-sm client-time-period active" data-period="90" onclick="setClientTimePeriod('90')">Últimos 90 dias</button>
-                  <button class="btn btn-ghost btn-sm client-time-period" data-period="all" onclick="setClientTimePeriod('all')">Desde o início</button>
+                <div class="filter-period-picker client-time-picker">
+                  <button type="button" class="filter-period-trigger" id="ctp-client-trigger" onclick="ctpToggle('client', event)" aria-haspopup="dialog">
+                    <span id="ctp-client-label">Últimos 90 dias</span>
+                    <i data-lucide="chevron-down" class="ic-xs"></i>
+                  </button>
+                  <div class="pfp-popover" id="ctp-client-popover" onclick="event.stopPropagation()">
+                    <div class="pfp-presets" id="ctp-client-presets"></div>
+                    <div class="pfp-cal"><div id="ctp-client-rc"></div></div>
+                    <div class="pfp-footer">
+                      <button type="button" class="pfp-footer-btn" onclick="ctpPick('client', '90')">Padrão</button>
+                      <button type="button" class="pfp-footer-btn" onclick="rcToday('ctp-client-rc')">Hoje</button>
+                    </div>
+                  </div>
                 </div>
               </div>
               <div id="client-time-chart" style="margin-top:14px"></div>
@@ -1911,12 +1935,19 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                   <span class="client-time-label">HORAS APONTADAS</span>
                   <span class="client-time-value" id="project-time-value">0h</span>
                 </div>
-                <div class="client-time-periods">
-                  <button class="btn btn-ghost btn-sm project-time-period" data-period="7" onclick="setProjectTimePeriod('7')">Últimos 7 dias</button>
-                  <button class="btn btn-ghost btn-sm project-time-period" data-period="14" onclick="setProjectTimePeriod('14')">Últimos 14 dias</button>
-                  <button class="btn btn-ghost btn-sm project-time-period" data-period="30" onclick="setProjectTimePeriod('30')">Últimos 30 dias</button>
-                  <button class="btn btn-ghost btn-sm project-time-period active" data-period="90" onclick="setProjectTimePeriod('90')">Últimos 90 dias</button>
-                  <button class="btn btn-ghost btn-sm project-time-period" data-period="all" onclick="setProjectTimePeriod('all')">Desde o início</button>
+                <div class="filter-period-picker client-time-picker">
+                  <button type="button" class="filter-period-trigger" id="ctp-project-trigger" onclick="ctpToggle('project', event)" aria-haspopup="dialog">
+                    <span id="ctp-project-label">Últimos 90 dias</span>
+                    <i data-lucide="chevron-down" class="ic-xs"></i>
+                  </button>
+                  <div class="pfp-popover" id="ctp-project-popover" onclick="event.stopPropagation()">
+                    <div class="pfp-presets" id="ctp-project-presets"></div>
+                    <div class="pfp-cal"><div id="ctp-project-rc"></div></div>
+                    <div class="pfp-footer">
+                      <button type="button" class="pfp-footer-btn" onclick="ctpPick('project', '90')">Padrão</button>
+                      <button type="button" class="pfp-footer-btn" onclick="rcToday('ctp-project-rc')">Hoje</button>
+                    </div>
+                  </div>
                 </div>
               </div>
               <div id="project-time-chart" style="margin-top:14px"></div>
@@ -4459,7 +4490,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260924sidebar18" defer></script>
+<script src="/js/boot.js?v=20260924cal5" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

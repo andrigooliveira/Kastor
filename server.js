@@ -10305,9 +10305,13 @@ app.get('/api/reports/sla', requireAuth, rateLimitReport, (req, res) => {
   if (requested.some(w => !ids.includes(w))) return res.status(403).json({ error: 'Sem acesso' });
   const wsFilter = requested.length ? requested : ids;
 
-  // Período retroativo
-  let startDate = null;
-  if (period !== 'all') {
+  // Período retroativo, ou intervalo escolhido no calendário (period=custom&from&to)
+  let startDate = null, endDate = null;
+  const ymdQ = v => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null);
+  if (period === 'custom') {
+    startDate = ymdQ(req.query.from);
+    endDate = ymdQ(req.query.to);
+  } else if (period !== 'all') {
     const days = parseInt(period, 10) || 30;
     const d = new Date(); d.setDate(d.getDate() - days);
     startDate = d.toISOString().slice(0, 10);
@@ -10322,7 +10326,8 @@ app.get('/api/reports/sla', requireAuth, rateLimitReport, (req, res) => {
   if (projectId) demands = demands.filter(d => d.projectId === projectId);
   if (flowId) demands = demands.filter(d => d.flowId === flowId);
 
-  const completed = demands.filter(d => d.completedAt && (!startDate || d.completedAt.slice(0,10) >= startDate));
+  const completed = demands.filter(d => d.completedAt && (!startDate || d.completedAt.slice(0,10) >= startDate)
+    && (!endDate || d.completedAt.slice(0,10) <= endDate));
 
   // Tempo médio total: criação até conclusão (em horas)
   const totalHours = completed.map(d => (new Date(d.completedAt) - new Date(d.createdAt)) / 3600000);
@@ -10419,7 +10424,8 @@ app.get('/api/reports/sla', requireAuth, rateLimitReport, (req, res) => {
   const effByClient = {}; // clientId -> { name, hours, demands:Set }
   demands.forEach(d => {
     const entries = (d.timeEntries || []).filter(e =>
-      Number(e.hours) > 0 && (!startDate || String(e.createdAt || '').slice(0,10) >= startDate));
+      Number(e.hours) > 0 && (!startDate || String(e.createdAt || '').slice(0,10) >= startDate)
+       && (!endDate || String(e.createdAt || '').slice(0,10) <= endDate));
     if (!entries.length) return;
     demandsWithLog++;
     const flow = db.flows.find(f => f.id === d.flowId);

@@ -425,7 +425,7 @@ const FILTER_KEYS = {
   dashboard: { storage: 'kastor-filters-dashboard', ids: ['dash-f-user','dash-f-squad','dash-f-client','dash-f-period','dash-f-type'] },
   capacity:  { storage: 'kastor-filters-capacity',  ids: ['capacity-period','capacity-period-start','capacity-period-end','capacity-squads'] },
   clients:   { storage: 'kastor-filters-clients',   ids: ['client-search','client-f-ws'] },
-  reports:   { storage: 'kastor-filters-reports',   ids: ['reports-ws','reports-client','reports-project','reports-period'] }
+  reports:   { storage: 'kastor-filters-reports',   ids: ['reports-ws','reports-client','reports-project','reports-period','reports-period-start','reports-period-end'] }
 };
 /* Mapa: DOM id → nome curto do query param. Filtros presentes aqui são espelhados
    pra URL (pra permitir compartilhar link já filtrado). Se um DOM id não estiver
@@ -453,7 +453,7 @@ const FILTER_URL_KEYS = {
   clients: { 'client-search': 'q', 'client-f-ws': 'ws' },
   reports: {
     'reports-ws': 'ws', 'reports-client': 'client', 'reports-project': 'project',
-    'reports-period': 'period'
+    'reports-period': 'period', 'reports-period-start': 'from', 'reports-period-end': 'to'
   }
 };
 /* Sobrescreve filtros nos elementos DOM com o que estiver no query da URL.
@@ -7235,6 +7235,175 @@ function exportCapacityCsv() {
   toast(`${rows.length} linha${rows.length === 1 ? '' : 's'} exportada${rows.length === 1 ? '' : 's'}.`);
 }
 
+/* ── CALENDÁRIO DE INTERVALO (rc) ── um só pra todos os seletores de período
+   (Dashboards, Demandas, Capacidade, Relatórios e Agenda). Estilo reserva:
+     mode 'range': 1º clique marca o início, o 2º o fim (passando o mouse mostra
+                   o trecho) e chama onRange(de, até). maxDays limita a largura.
+     mode 'week':  um clique escolhe o dia; previewFor(dia) diz qual faixa o
+                   clique vai mostrar (a Agenda pula pra semana do dia).
+     mode 'day':   um clique escolhe o dia.
+   max ('AAAA-MM-DD') desabilita os dias depois dele.
+   Estado por instância em _rc[id]; o HTML vai no elemento de mesmo id, que
+   pode ser recriado (rcRender redesenha a partir do estado). Setas do teclado
+   andam pelos dias. */
+const _rc = {};
+const rcYmd = t => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const rcDmy = s => s ? s.slice(8, 10) + '/' + s.slice(5, 7) + '/' + s.slice(0, 4) : '';
+const _rcAdd = (s, n) => { const d = new Date(s + 'T12:00:00'); d.setDate(d.getDate() + n); return rcYmd(d); };
+function rcMount(id, cfg) {
+  // Mês inicial: cfg.month (data ou 'AAAA-MM-DD'), senão o fim/início da seleção, senão hoje.
+  const anchor = cfg.month ? (typeof cfg.month === 'string' ? cfg.month : rcYmd(cfg.month)) : (cfg.to || cfg.from || todayStr());
+  const base = new Date(anchor + 'T12:00:00');
+  _rc[id] = { cfg, from: cfg.from || '', to: cfg.to || '', picking: false, hover: '',
+    focus: cfg.to || cfg.from || todayStr(), month: new Date(base.getFullYear(), base.getMonth(), 1) };
+  rcRender(id);
+}
+// Troca a seleção (ex.: escolheu um atalho) sem perder o mês visível.
+function rcSet(id, from, to) {
+  const c = _rc[id]; if (!c) return;
+  Object.assign(c, { from: from || '', to: to || '', picking: false, hover: '' });
+  rcRender(id);
+}
+function _rcBand(c) {
+  if (c.cfg.mode === 'week' && c.hover && c.cfg.previewFor) return c.cfg.previewFor(c.hover);
+  let a = c.from, b = c.picking ? (c.hover || '') : c.to;
+  if (a && b && b < a) [a, b] = [b, a];
+  return [a, b];
+}
+function _rcDisabled(c, s) {
+  if (c.cfg.max && s > c.cfg.max) return true;
+  const max = c.cfg.maxDays;
+  if (!max || !c.picking || !c.from) return false;
+  return Math.abs((Date.parse(s) - Date.parse(c.from)) / 864e5) >= max;
+}
+function rcRender(id) {
+  const host = document.getElementById(id);
+  const c = _rc[id];
+  if (!host || !c) return;
+  const y = c.month.getFullYear(), m = c.month.getMonth();
+  const mm = String(m + 1).padStart(2, '0');
+  const title = c.month.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).replace(' de ', ' ');
+  const first = new Date(y, m, 1).getDay();
+  const days = new Date(y, m + 1, 0).getDate();
+  const today = todayStr();
+  const [a, b] = _rcBand(c);
+  const focusInMonth = c.focus.slice(0, 7) === `${y}-${mm}`;
+  let cells = '';
+  for (let i = 0; i < first; i++) cells += '<span class="rc-pad"></span>';
+  for (let d = 1; d <= days; d++) {
+    const s = `${y}-${mm}-${String(d).padStart(2, '0')}`;
+    cells += `<button type="button" class="${_rcDayCls(s, a, b, today)}" data-d="${s}" tabindex="${(focusInMonth ? s === c.focus : d === 1) ? 0 : -1}"
+      aria-label="${rcDmy(s)}" aria-pressed="${s === a || s === b}"${_rcDisabled(c, s) ? ' disabled' : ''}>${d}</button>`;
+  }
+  let hint = '';
+  if (c.cfg.mode === 'range' && c.cfg.hint !== false) {
+    const n = a && b ? Math.round((Date.parse(b) - Date.parse(a)) / 864e5) + 1 : 0;
+    hint = c.picking ? `Início em ${rcDmy(c.from)}. Agora escolha o dia final.`
+      : a && b ? `${rcDmy(a)} a ${rcDmy(b)} · ${n} ${n > 1 ? 'dias' : 'dia'}`
+      : 'Clique no dia inicial e depois no final.';
+    if (c.picking && c.cfg.maxDays) hint += ` Até ${c.cfg.maxDays} dias.`;
+  }
+  host.classList.add('rc');
+  host.innerHTML = `<div class="rc-head">
+      <button type="button" class="rc-nav" onclick="rcNav('${id}', -1)" aria-label="Mês anterior"><i data-lucide="chevron-left"></i></button>
+      <span class="rc-title" aria-live="polite">${esc(title)}</span>
+      <button type="button" class="rc-nav" onclick="rcNav('${id}', 1)" aria-label="Próximo mês"><i data-lucide="chevron-right"></i></button>
+    </div>
+    <div class="rc-week" aria-hidden="true"><span>D</span><span>S</span><span>T</span><span>Q</span><span>Q</span><span>S</span><span>S</span></div>
+    <div class="rc-grid" role="group" aria-label="${esc(title)}"
+      onclick="rcClick(event, '${id}')" onmouseover="rcHover(event, '${id}')" onmouseleave="rcLeave('${id}')" onkeydown="rcKey(event, '${id}')">${cells}</div>
+    ${hint ? `<div class="rc-hint">${esc(hint)}</div>` : ''}`;
+  paintIcons(host);
+  c.cfg.onRender?.();
+}
+function _rcDayCls(s, a, b, today) {
+  const cls = ['rc-day'];
+  if (s === today) cls.push('is-today');
+  if (a && s === a) cls.push('is-start');
+  if ((b && s === b) || (a && !b && s === a)) cls.push('is-end');
+  if (a && b && s > a && s < b) cls.push('is-in');
+  return cls.join(' ');
+}
+function rcNav(id, delta) {
+  const c = _rc[id]; if (!c) return;
+  c.month = new Date(c.month.getFullYear(), c.month.getMonth() + delta, 1);
+  const f = new Date(c.focus + 'T12:00:00');
+  const day = Math.min(f.getDate(), new Date(c.month.getFullYear(), c.month.getMonth() + 1, 0).getDate());
+  c.focus = rcYmd(new Date(c.month.getFullYear(), c.month.getMonth(), day));
+  rcRender(id);
+}
+function rcToday(id) {
+  const c = _rc[id]; if (!c) return;
+  const t = new Date();
+  c.month = new Date(t.getFullYear(), t.getMonth(), 1);
+  c.focus = todayStr();
+  rcRender(id);
+}
+function rcClick(e, id) {
+  const btn = e.target.closest('.rc-day');
+  if (btn && !btn.disabled) rcPick(id, btn.dataset.d);
+}
+function rcPick(id, s) {
+  const c = _rc[id]; if (!c) return;
+  c.focus = s;
+  if (c.cfg.mode !== 'range') {
+    c.hover = '';
+    c.cfg.onPick?.(s);
+    return;
+  }
+  if (!c.picking) {
+    Object.assign(c, { from: s, to: '', hover: s, picking: true });
+    rcRender(id); _rcRefocus(id);
+    return;
+  }
+  let [a, b] = [c.from, s];
+  if (b < a) [a, b] = [b, a];
+  Object.assign(c, { from: a, to: b, picking: false, hover: '' });
+  rcRender(id);
+  c.cfg.onRange?.(a, b);
+  _rcRefocus(id);
+}
+function _rcRefocus(id) { document.querySelector(`#${id} .rc-day[data-d="${_rc[id]?.focus}"]`)?.focus(); }
+// Prévia do trecho: só troca classes, sem redesenhar a grade.
+function _rcPaint(id) {
+  const c = _rc[id];
+  const [a, b] = _rcBand(c);
+  document.querySelectorAll(`#${id} .rc-day`).forEach(el => {
+    const s = el.dataset.d;
+    el.classList.toggle('is-start', !!a && s === a);
+    el.classList.toggle('is-end', (!!b && s === b) || (!!a && !b && s === a));
+    el.classList.toggle('is-in', !!a && !!b && s > a && s < b);
+  });
+}
+function rcHover(e, id) {
+  const c = _rc[id];
+  const btn = e.target.closest?.('.rc-day');
+  if (!c || !btn || btn.disabled || btn.dataset.d === c.hover) return;
+  if (!c.picking && c.cfg.mode !== 'week') return;
+  c.hover = btn.dataset.d;
+  _rcPaint(id);
+}
+function rcLeave(id) {
+  const c = _rc[id];
+  if (!c || c.cfg.mode !== 'week' || !c.hover) return;
+  c.hover = '';
+  _rcPaint(id);
+}
+function rcKey(e, id) {
+  const btn = e.target.closest?.('.rc-day');
+  const step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 }[e.key];
+  if (!btn || !step) return;
+  e.preventDefault();
+  const c = _rc[id];
+  const next = _rcAdd(btn.dataset.d, step);
+  c.focus = next;
+  if (c.picking || c.cfg.mode === 'week') c.hover = next;
+  const d = new Date(next + 'T12:00:00');
+  if (d.getMonth() !== c.month.getMonth() || d.getFullYear() !== c.month.getFullYear()) c.month = new Date(d.getFullYear(), d.getMonth(), 1);
+  rcRender(id);
+  _rcRefocus(id);
+}
+
 /* ─── Popover do filtro Período (pfp) ───
    Substitui o select + inputs de data. Presets no topo + calendário com range
    selecionável embaixo + rodapé (Limpar/Hoje). Estado persistido nos 3 hidden
@@ -7250,7 +7419,6 @@ const PFP_PRESETS = [
 ];
 const PFP_MONTHS = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 let _pfpOpen = false;
-let _pfpView = null; // { year, month } — mês visível no calendário
 
 function togglePfp(evt) {
   if (evt) evt.stopPropagation();
@@ -7258,15 +7426,13 @@ function togglePfp(evt) {
 }
 function openPfp() {
   const pop = $('pfp-popover'); if (!pop) return;
-  // Ponto de partida do mês visível: o start (se custom) ou hoje.
-  const start = $('filter-period-start')?.value || '';
-  const base = start ? new Date(start + 'T00:00:00') : new Date();
-  _pfpView = { year: base.getFullYear(), month: base.getMonth() };
   _closeOtherPopovers('pfp');
   pop.classList.add('open');
   _pfpOpen = true;
   pfpRenderPresets();
-  pfpRenderCal();
+  const custom = $('filter-period').value === 'custom';
+  rcMount('pfp-rc', { mode: 'range', onRange: pfpApplyRange,
+    from: custom ? $('filter-period-start').value : '', to: custom ? $('filter-period-end').value : '' });
   paintIcons();
 }
 function closePfp() {
@@ -7297,57 +7463,14 @@ function pfpRenderPresets() {
 function pfpHasRange() {
   return !!($('filter-period-start')?.value || $('filter-period-end')?.value);
 }
+// Calendário compartilhado (rc): reflete o intervalo personalizado dos inputs.
 function pfpRenderCal() {
-  const grid = $('pfp-cal-grid');
-  const title = $('pfp-cal-title');
-  if (!grid || !title || !_pfpView) return;
-  const { year, month } = _pfpView;
-  title.textContent = `${PFP_MONTHS[month]} · ${year}`;
-
-  const firstDow = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const daysInPrev  = new Date(year, month, 0).getDate();
-
-  const startISO = $('filter-period-start').value || '';
-  const endISO   = $('filter-period-end').value || '';
-  const todayISO = todayStr();
-
-  // Monta 42 células (6 semanas) — leadings do mês anterior + mês atual + trailings.
-  const cells = [];
-  for (let i = firstDow - 1; i >= 0; i--) {
-    cells.push({ day: daysInPrev - i, month: month - 1, year: month === 0 ? year - 1 : year, other: true });
-  }
-  for (let d = 1; d <= daysInMonth; d++) cells.push({ day: d, month, year, other: false });
-  while (cells.length < 42) {
-    const last = cells[cells.length - 1];
-    const nxt = new Date(last.year, last.month, last.day + 1);
-    cells.push({ day: nxt.getDate(), month: nxt.getMonth(), year: nxt.getFullYear(), other: true });
-  }
-
-  grid.innerHTML = cells.map(c => {
-    const iso = `${c.year}-${String(c.month + 1).padStart(2, '0')}-${String(c.day).padStart(2, '0')}`;
-    const cls = ['pfp-day'];
-    if (c.other) cls.push('other');
-    if (iso === todayISO) cls.push('today');
-    if (startISO && endISO) {
-      if (iso === startISO && iso === endISO) cls.push('range-single');
-      else if (iso === startISO) cls.push('range-start');
-      else if (iso === endISO)   cls.push('range-end');
-      else if (iso > startISO && iso < endISO) cls.push('range-mid');
-    } else if (startISO && iso === startISO) {
-      cls.push('range-single');
-    }
-    return `<button type="button" class="${cls.join(' ')}" data-iso="${iso}" onclick="pfpPickDay('${iso}')">${c.day}</button>`;
-  }).join('');
+  const c = _rc['pfp-rc'];
+  if (!c || c.picking) return;
+  const custom = $('filter-period').value === 'custom';
+  rcSet('pfp-rc', custom ? $('filter-period-start').value : '', custom ? $('filter-period-end').value : '');
 }
-function pfpNav(delta) {
-  if (!_pfpView) return;
-  _pfpView.month += delta;
-  if (_pfpView.month < 0)  { _pfpView.month = 11; _pfpView.year--; }
-  if (_pfpView.month > 11) { _pfpView.month = 0;  _pfpView.year++; }
-  pfpRenderCal();
-  paintIcons();
-}
+function pfpNav(delta) { rcNav('pfp-rc', delta); }
 function pfpPickPreset(val) {
   // Preset limpa o range custom (mutuamente exclusivos).
   $('filter-period').value = val || '';
@@ -7357,27 +7480,13 @@ function pfpPickPreset(val) {
   pfpUpdateTriggerLabel();
   renderList();
 }
-function pfpPickDay(iso) {
-  const startEl = $('filter-period-start');
-  const endEl = $('filter-period-end');
-  const start = startEl.value, end = endEl.value;
-  // Ciclo: (1) nada selecionado → define start; (2) só start → define end (ou reinicia
-  // se o clique for antes do start); (3) range completo → reinicia com o novo start.
-  let newStart, newEnd, done = false;
-  if (!start || (start && end)) {
-    newStart = iso; newEnd = '';
-  } else if (iso < start) {
-    newStart = iso; newEnd = '';
-  } else {
-    newStart = start; newEnd = iso; done = true;
-  }
-  startEl.value = newStart;
-  endEl.value = newEnd;
+// Intervalo completo no calendário: filtra na hora e deixa o popover aberto.
+function pfpApplyRange(from, to) {
+  $('filter-period-start').value = from;
+  $('filter-period-end').value = to;
   $('filter-period').value = 'custom';
   pfpRenderPresets();
-  pfpRenderCal();
   pfpUpdateTriggerLabel();
-  if (done) closePfp();
   renderList();
 }
 function pfpClear() {
@@ -7385,17 +7494,12 @@ function pfpClear() {
   $('filter-period-start').value = '';
   $('filter-period-end').value = '';
   pfpRenderPresets();
-  pfpRenderCal();
+  rcSet('pfp-rc', '', '');
   pfpUpdateTriggerLabel();
   renderList();
 }
-function pfpToday() {
-  // Só volta o mês visível pra o atual — não altera filtro nem seleção.
-  const t = new Date();
-  _pfpView = { year: t.getFullYear(), month: t.getMonth() };
-  pfpRenderCal();
-  paintIcons();
-}
+// Só volta o mês visível pro atual — não altera filtro nem seleção.
+function pfpToday() { rcToday('pfp-rc'); }
 function pfpUpdateTriggerLabel() {
   const trg = $('pfp-trigger'); if (!trg) return;
   const lbl = $('pfp-label');
@@ -7446,15 +7550,15 @@ function capPfpAddDays(iso, n) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 let _capPfpOpen = false;
-let _capPfpView = null;
 function capPfpToggle(evt) { if (evt) evt.stopPropagation(); if (_capPfpOpen) capPfpClose(); else capPfpOpen(); }
 function capPfpOpen() {
   const pop = $('cap-pfp-popover'); if (!pop) return;
-  const start = $('capacity-period-start')?.value || '';
-  const base = start ? new Date(start + 'T00:00:00') : new Date();
-  _capPfpView = { year: base.getFullYear(), month: base.getMonth() };
   pop.classList.add('open'); _capPfpOpen = true;
-  capPfpRenderPresets(); capPfpRenderCal(); paintIcons();
+  capPfpRenderPresets();
+  const custom = $('capacity-period').value === 'custom';
+  rcMount('cap-rc', { mode: 'range', maxDays: CAP_MAX_RANGE_DAYS, onRange: capPfpApplyRange,
+    from: custom ? $('capacity-period-start').value : '', to: custom ? $('capacity-period-end').value : '' });
+  paintIcons();
 }
 function capPfpClose() { const pop = $('cap-pfp-popover'); if (pop) pop.classList.remove('open'); _capPfpOpen = false; }
 document.addEventListener('click', (e) => {
@@ -7474,82 +7578,32 @@ function capPfpRenderPresets() {
   ).join('');
 }
 function capPfpRenderCal() {
-  const grid = $('cap-pfp-cal-grid'), title = $('cap-pfp-cal-title');
-  if (!grid || !title || !_capPfpView) return;
-  const { year, month } = _capPfpView;
-  title.textContent = `${PFP_MONTHS[month]} · ${year}`;
-  const firstDow = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const daysInPrev = new Date(year, month, 0).getDate();
-  const startISO = $('capacity-period-start').value || '';
-  const endISO = $('capacity-period-end').value || '';
-  const todayISO = todayStr();
-  // Escolhendo o FIM do range: desabilita dias além do limite de largura.
-  const maxEndISO = (startISO && !endISO) ? capPfpAddDays(startISO, CAP_MAX_RANGE_DAYS - 1) : '';
-  const cells = [];
-  for (let i = firstDow - 1; i >= 0; i--) cells.push({ day: daysInPrev - i, month: month - 1, year: month === 0 ? year - 1 : year, other: true });
-  for (let d = 1; d <= daysInMonth; d++) cells.push({ day: d, month, year, other: false });
-  while (cells.length < 42) {
-    const last = cells[cells.length - 1];
-    const nxt = new Date(last.year, last.month, last.day + 1);
-    cells.push({ day: nxt.getDate(), month: nxt.getMonth(), year: nxt.getFullYear(), other: true });
-  }
-  grid.innerHTML = cells.map(c => {
-    const iso = `${c.year}-${String(c.month + 1).padStart(2, '0')}-${String(c.day).padStart(2, '0')}`;
-    const cls = ['pfp-day'];
-    if (c.other) cls.push('other');
-    if (iso === todayISO) cls.push('today');
-    if (startISO && endISO) {
-      if (iso === startISO && iso === endISO) cls.push('range-single');
-      else if (iso === startISO) cls.push('range-start');
-      else if (iso === endISO) cls.push('range-end');
-      else if (iso > startISO && iso < endISO) cls.push('range-mid');
-    } else if (startISO && iso === startISO) cls.push('range-single');
-    const disabled = maxEndISO && iso > maxEndISO;
-    return `<button type="button" class="${cls.join(' ')}" data-iso="${iso}" ${disabled ? 'disabled' : ''} onclick="capPfpPickDay('${iso}')">${c.day}</button>`;
-  }).join('');
+  const c = _rc['cap-rc'];
+  if (!c || c.picking) return;
+  const custom = $('capacity-period').value === 'custom';
+  rcSet('cap-rc', custom ? $('capacity-period-start').value : '', custom ? $('capacity-period-end').value : '');
 }
-function capPfpNav(delta) {
-  if (!_capPfpView) return;
-  _capPfpView.month += delta;
-  if (_capPfpView.month < 0) { _capPfpView.month = 11; _capPfpView.year--; }
-  if (_capPfpView.month > 11) { _capPfpView.month = 0; _capPfpView.year++; }
-  capPfpRenderCal(); paintIcons();
-}
+function capPfpNav(delta) { rcNav('cap-rc', delta); }
 function capPfpPickPreset(val) {
   $('capacity-period').value = val || '7';
   $('capacity-period-start').value = '';
   $('capacity-period-end').value = '';
   capPfpClose(); capPfpUpdateLabel(); renderCapacity();
 }
-function capPfpPickDay(iso) {
-  const startEl = $('capacity-period-start'), endEl = $('capacity-period-end');
-  const start = startEl.value, end = endEl.value;
-  let newStart, newEnd, done = false;
-  if (!start || (start && end)) { newStart = iso; newEnd = ''; }
-  else if (iso < start) { newStart = iso; newEnd = ''; }
-  else { newStart = start; newEnd = iso; done = true; }
-  if (done) {
-    const maxEnd = capPfpAddDays(newStart, CAP_MAX_RANGE_DAYS - 1);
-    if (newEnd > maxEnd) newEnd = maxEnd; // trava a largura do range
-  }
-  startEl.value = newStart; endEl.value = newEnd;
+// Intervalo completo (o calendário já trava a largura em CAP_MAX_RANGE_DAYS).
+function capPfpApplyRange(from, to) {
+  $('capacity-period-start').value = from;
+  $('capacity-period-end').value = to;
   $('capacity-period').value = 'custom';
-  capPfpRenderPresets(); capPfpRenderCal(); capPfpUpdateLabel();
-  // Só re-renderiza quando o range fica completo (evita render com meia seleção).
-  if (done) { capPfpClose(); renderCapacity(); }
+  capPfpRenderPresets(); capPfpUpdateLabel(); renderCapacity();
 }
 function capPfpResetDefault() {
   $('capacity-period').value = '7';
   $('capacity-period-start').value = '';
   $('capacity-period-end').value = '';
-  capPfpRenderPresets(); capPfpRenderCal(); capPfpUpdateLabel(); renderCapacity();
+  capPfpRenderPresets(); rcSet('cap-rc', '', ''); capPfpUpdateLabel(); renderCapacity();
 }
-function capPfpToday() {
-  const t = new Date();
-  _capPfpView = { year: t.getFullYear(), month: t.getMonth() };
-  capPfpRenderCal(); paintIcons();
-}
+function capPfpToday() { rcToday('cap-rc'); }
 function capPfpUpdateLabel() {
   const trg = $('cap-pfp-trigger'); if (!trg) return;
   const lbl = $('cap-pfp-label');
@@ -7575,7 +7629,6 @@ function capPfpSync() {
    embaixo do trigger clicado. */
 let _agdpOpen = false;
 let _agdpAnchor = null;    // 'week' | 'day' | 'mine-week'
-let _agdpView = null;      // { year, month }
 
 function agdpToggle(anchor, evt) {
   if (evt) evt.stopPropagation();
@@ -7585,11 +7638,6 @@ function agdpToggle(anchor, evt) {
 function agdpOpen(anchor) {
   agdpClose();
   _agdpAnchor = anchor;
-  let base;
-  if (anchor === 'day')         base = new Date(agendaTeamDate || new Date());
-  else if (anchor === 'mine-week') base = new Date();
-  else                          base = new Date(agendaWeekStart || new Date());
-  _agdpView = { year: base.getFullYear(), month: base.getMonth() };
   const pop = _agdpEnsurePopover();
   _agdpPosition(pop, anchor);
   pop.classList.add('open');
@@ -7619,15 +7667,7 @@ function _agdpEnsurePopover() {
   pop.className = 'agdp-popover pfp-popover';
   pop.addEventListener('click', (e) => e.stopPropagation());
   pop.innerHTML = `
-    <div class="pfp-cal" style="border-top:0">
-      <div class="pfp-cal-head">
-        <button type="button" class="pfp-cal-nav" onclick="agdpNav(-1)" title="Mês anterior"><i data-lucide="chevron-left" class="ic-sm"></i></button>
-        <span class="pfp-cal-title" id="agdp-cal-title"></span>
-        <button type="button" class="pfp-cal-nav" onclick="agdpNav(1)" title="Próximo mês"><i data-lucide="chevron-right" class="ic-sm"></i></button>
-      </div>
-      <div class="pfp-cal-dow"><span>D</span><span>S</span><span>T</span><span>Q</span><span>Q</span><span>S</span><span>S</span></div>
-      <div class="pfp-cal-grid" id="agdp-cal-grid"></div>
-    </div>
+    <div class="pfp-cal" style="border-top:0"><div id="agdp-rc"></div></div>
     <div class="pfp-footer">
       <button type="button" class="pfp-footer-btn" onclick="agdpClose()">Fechar</button>
       <button type="button" class="pfp-footer-btn" onclick="agdpToday()">Hoje</button>
@@ -7647,72 +7687,23 @@ function _agdpPosition(pop, anchor) {
   pop.style.top = (r.bottom + 6) + 'px';
   pop.style.left = left + 'px';
 }
+// Calendário compartilhado (rc). Modo dia: o dia escolhido. Modo semana: a
+// faixa visível, e passar o mouse mostra a faixa que o clique vai abrir.
 function agdpRender() {
-  const title = document.getElementById('agdp-cal-title');
-  const grid = document.getElementById('agdp-cal-grid');
-  if (!title || !grid || !_agdpView) return;
-  const { year, month } = _agdpView;
-  title.textContent = `${PFP_MONTHS[month]} · ${year}`;
-
-  const firstDow = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const daysInPrev  = new Date(year, month, 0).getDate();
-
-  // Destaque: dia selecionado (modo day) ou faixa da semana visualizada (modo week).
-  let weekStartIso = '', weekEndIso = '', selectedIso = '';
-  if (_agdpAnchor === 'day') {
-    const d = agendaTeamDate || new Date();
-    selectedIso = agendaYmd(d);
-  } else {
-    const ws = _agdpAnchor === 'mine-week' ? agendaWeekStartFor(new Date()) : (agendaWeekStart || agendaWeekStartFor(new Date()));
-    const totalDays = 7 * (agendaWeeks || 2);
-    const wsCopy = new Date(ws);
-    const end = new Date(wsCopy);
-    end.setDate(end.getDate() + totalDays - 1);
-    weekStartIso = agendaYmd(wsCopy);
-    weekEndIso = agendaYmd(end);
-  }
-  const todayISO = todayStr();
-  const cells = [];
-  for (let i = firstDow - 1; i >= 0; i--) {
-    cells.push({ day: daysInPrev - i, month: month - 1, year: month === 0 ? year - 1 : year, other: true });
-  }
-  for (let d = 1; d <= daysInMonth; d++) cells.push({ day: d, month, year, other: false });
-  while (cells.length < 42) {
-    const last = cells[cells.length - 1];
-    const nxt = new Date(last.year, last.month, last.day + 1);
-    cells.push({ day: nxt.getDate(), month: nxt.getMonth(), year: nxt.getFullYear(), other: true });
-  }
-  grid.innerHTML = cells.map(c => {
-    const iso = `${c.year}-${String(c.month + 1).padStart(2, '0')}-${String(c.day).padStart(2, '0')}`;
-    const cls = ['pfp-day'];
-    if (c.other) cls.push('other');
-    if (iso === todayISO) cls.push('today');
-    if (_agdpAnchor === 'day') {
-      if (iso === selectedIso) cls.push('range-single');
-    } else if (weekStartIso && weekEndIso && iso >= weekStartIso && iso <= weekEndIso) {
-      if (iso === weekStartIso && iso === weekEndIso) cls.push('range-single');
-      else if (iso === weekStartIso) cls.push('range-start');
-      else if (iso === weekEndIso) cls.push('range-end');
-      else cls.push('range-mid');
-    }
-    return `<button type="button" class="${cls.join(' ')}" data-iso="${iso}" onclick="agdpPickDay('${iso}')">${c.day}</button>`;
-  }).join('');
+  const total = 7 * (agendaWeeks || 2);
+  const band = d => {
+    const ws = agendaWeekStartFor(d);
+    const end = new Date(ws); end.setDate(end.getDate() + total - 1);
+    return [agendaYmd(ws), agendaYmd(end)];
+  };
+  let from, to;
+  if (_agdpAnchor === 'day') from = to = agendaYmd(agendaTeamDate || new Date());
+  else [from, to] = band(_agdpAnchor === 'mine-week' ? new Date() : (agendaWeekStart || new Date()));
+  rcMount('agdp-rc', { mode: _agdpAnchor === 'day' ? 'day' : 'week', from, to, month: from,
+    previewFor: iso => band(new Date(iso + 'T00:00:00')), onPick: agdpPickDay });
 }
-function agdpNav(delta) {
-  if (!_agdpView) return;
-  _agdpView.month += delta;
-  if (_agdpView.month < 0)  { _agdpView.month = 11; _agdpView.year--; }
-  if (_agdpView.month > 11) { _agdpView.month = 0;  _agdpView.year++; }
-  agdpRender();
-  paintIcons();
-}
-function agdpToday() {
-  const t = new Date();
-  _agdpView = { year: t.getFullYear(), month: t.getMonth() };
-  agdpRender();
-  paintIcons();
-}
+function agdpNav(delta) { rcNav('agdp-rc', delta); }
+function agdpToday() { rcToday('agdp-rc'); }
 function agdpPickDay(iso) {
   const d = new Date(iso + 'T00:00:00');
   if (_agdpAnchor === 'day') {
@@ -7954,6 +7945,7 @@ function _closeOtherPopovers(except) {
 }
 function closeAdvancedFilters() {
   document.getElementById('advanced-filters-pop')?.classList.remove('open');
+  _afDateCloseAll();
   document.getElementById('advanced-filters-btn')?.classList.remove('is-open');
   closeSaveFilterWizard(true);
 }
@@ -8001,6 +7993,56 @@ function _updateAdvancedFiltersBadge() {
   badge.textContent = String(count);
   badge.style.display = count > 0 ? '' : 'none';
   _syncSavedFilterLabel();
+  _afDateSyncLabels();
+}
+/* Datas dos filtros avançados (Criada entre / Concluída entre): um botão com
+   o intervalo que abre o calendário compartilhado (rc) ali mesmo, dentro do
+   popover — nada abre por fora, então escolher o dia não fecha os filtros.
+   Valores continuam nos hidden inputs filter-<tipo>-from/-to (AAAA-MM-DD). */
+const AF_DATE_KEYS = ['created', 'completed'];
+function afDateToggle(key) {
+  const panel = document.getElementById('af-cal-' + key);
+  if (!panel) return;
+  const willOpen = panel.hidden;
+  _afDateCloseAll();
+  if (!willOpen) return;
+  panel.hidden = false;
+  document.getElementById('af-date-' + key)?.setAttribute('aria-expanded', 'true');
+  rcMount('af-rc-' + key, { mode: 'range',
+    from: $(`filter-${key}-from`).value, to: $(`filter-${key}-to`).value,
+    onRange: (a, b) => {
+      $(`filter-${key}-from`).value = a;
+      $(`filter-${key}-to`).value = b;
+      renderList();
+      _updateAdvancedFiltersBadge();
+    } });
+  panel.scrollIntoView({ block: 'nearest' });
+}
+function _afDateCloseAll() {
+  AF_DATE_KEYS.forEach(k => {
+    const p = document.getElementById('af-cal-' + k);
+    if (p) p.hidden = true;
+    document.getElementById('af-date-' + k)?.setAttribute('aria-expanded', 'false');
+  });
+}
+function afDateClear(key) {
+  $(`filter-${key}-from`).value = '';
+  $(`filter-${key}-to`).value = '';
+  if (!document.getElementById('af-cal-' + key)?.hidden) rcSet('af-rc-' + key, '', '');
+  renderList();
+  _updateAdvancedFiltersBadge();
+}
+function _afDateSyncLabels() {
+  AF_DATE_KEYS.forEach(k => {
+    const f = $(`filter-${k}-from`)?.value || '', t = $(`filter-${k}-to`)?.value || '';
+    const lbl = document.getElementById(`af-date-${k}-label`);
+    if (!lbl) return;
+    lbl.textContent = f && t ? `${fmtPfpShort(f)} → ${fmtPfpShort(t)}`
+      : f ? `A partir de ${fmtPfpShort(f)}` : t ? `Até ${fmtPfpShort(t)}` : 'Qualquer data';
+    document.getElementById('af-date-' + k)?.classList.toggle('filtering', !!(f || t));
+    const clr = document.getElementById(`af-date-${k}-clear`);
+    if (clr) clr.hidden = !(f || t);
+  });
 }
 
 /* ─── FILTROS SALVOS (per-user, localStorage) ───
@@ -9389,9 +9431,85 @@ function clearReportSquads() {
   renderReports();
 }
 
+/* ─── Período dos RELATÓRIOS ───
+   Atalhos + intervalo no calendário (rc). Estado nos hidden inputs
+   reports-period ('30' | '90' | '365' | 'all' | 'custom'), -start e -end,
+   persistidos em FILTER_KEYS['reports']. Atalho aparece no calendário como o
+   trecho que ele cobre. */
+const REP_PFP_PRESETS = [
+  { val: '30',  label: 'Últimos 30 dias' },
+  { val: '90',  label: 'Últimos 90 dias' },
+  { val: '365', label: 'Último ano' },
+  { val: 'all', label: 'Todo o período' },
+];
+let _repPfpOpen = false;
+function repPfpToggle(evt) { if (evt) evt.stopPropagation(); if (_repPfpOpen) repPfpClose(); else repPfpOpen(); }
+function _repPfpRange() {
+  const p = $('reports-period')?.value || '90';
+  if (p === 'custom') return [$('reports-period-start')?.value || '', $('reports-period-end')?.value || ''];
+  const days = parseInt(p, 10);
+  if (!days) return ['', ''];
+  const t = todayStr();
+  return [_rcAdd(t, -days), t];
+}
+function repPfpOpen() {
+  const pop = $('rep-pfp-popover'); if (!pop) return;
+  pop.classList.add('open'); _repPfpOpen = true;
+  repPfpRenderPresets();
+  const [from, to] = _repPfpRange();
+  rcMount('rep-rc', { mode: 'range', from, to, onRange: repPfpApplyRange });
+  paintIcons();
+}
+function repPfpClose() { $('rep-pfp-popover')?.classList.remove('open'); _repPfpOpen = false; }
+document.addEventListener('click', (e) => {
+  if (!_repPfpOpen) return;
+  const pop = $('rep-pfp-popover'), trg = $('rep-pfp-trigger');
+  if ((pop && pop.contains(e.target)) || (trg && trg.contains(e.target))) return;
+  repPfpClose();
+});
+document.addEventListener('keydown', (e) => { if (_repPfpOpen && e.key === 'Escape') { e.preventDefault(); repPfpClose(); } });
+function repPfpRenderPresets() {
+  const wrap = $('rep-pfp-presets'); if (!wrap) return;
+  const cur = $('reports-period').value;
+  wrap.innerHTML = REP_PFP_PRESETS.map(p =>
+    `<button type="button" class="pfp-preset-btn ${p.val === cur ? 'active' : ''}" onclick="repPfpPickPreset('${p.val}')">${esc(p.label)}</button>`
+  ).join('');
+}
+function repPfpPickPreset(val) {
+  $('reports-period').value = val;
+  $('reports-period-start').value = '';
+  $('reports-period-end').value = '';
+  repPfpClose(); renderReports();
+}
+function repPfpApplyRange(from, to) {
+  $('reports-period').value = 'custom';
+  $('reports-period-start').value = from;
+  $('reports-period-end').value = to;
+  repPfpRenderPresets(); renderReports();
+}
+function repPfpReset() {
+  $('reports-period').value = '90';
+  $('reports-period-start').value = '';
+  $('reports-period-end').value = '';
+  repPfpRenderPresets();
+  const [from, to] = _repPfpRange();
+  rcSet('rep-rc', from, to);
+  renderReports();
+}
+function repPfpUpdateLabel() {
+  const trg = $('rep-pfp-trigger'); if (!trg) return;
+  const p = $('reports-period').value || '90';
+  const s = $('reports-period-start').value, e = $('reports-period-end').value;
+  const text = p === 'custom'
+    ? ((s && e) ? `${fmtPfpShort(s)} → ${fmtPfpShort(e)}` : 'Personalizado')
+    : (REP_PFP_PRESETS.find(x => x.val === p)?.label || 'Últimos 90 dias');
+  const lbl = $('rep-pfp-label'); if (lbl) lbl.textContent = text;
+  trg.classList.toggle('filtering', p !== '90');
+}
 function clearReportFilters() {
   ['reports-ws', 'reports-client', 'reports-project'].forEach(id => { const el = $(id); if (el) el.value = ''; });
   const per = $('reports-period'); if (per) per.value = '90';
+  ['reports-period-start', 'reports-period-end'].forEach(id => { const el = $(id); if (el) el.value = ''; });
   renderReports();
 }
 
@@ -9406,7 +9524,7 @@ async function renderReports() {
   // o valor via saveFilters/restoreFilters normalmente.
   applyFilterDropdown('reports-client',  { clientIcon: true });
   applyFilterDropdown('reports-project', { projectIcon: true });
-  applyFilterDropdown('reports-period',  {});
+  repPfpUpdateLabel();
   paintIcons();
   const period = ($('reports-period') && $('reports-period').value) || '90';
   const wsPick     = ($('reports-ws') && $('reports-ws').value) || '';
@@ -9420,6 +9538,10 @@ async function renderReports() {
   let data;
   try {
     const qs = new URLSearchParams({ period });
+    if (period === 'custom') {
+      qs.set('from', $('reports-period-start')?.value || '');
+      qs.set('to', $('reports-period-end')?.value || '');
+    }
     if (wsPick)     qs.set('workspaceId', wsPick);
     if (clientPick) qs.set('clientId', clientPick);
     if (projPick)   qs.set('projectId', projPick);
@@ -10169,6 +10291,7 @@ function renderRhythm() {
   if (!body) return;
   const sel = $('rhythm-week');
   const offset = sel ? parseInt(sel.value, 10) || 0 : 0;
+  rhyUpdateLabel();
   const { monday, friday, sunday } = _rhythmWeekBounds(offset);
 
   _renderRhythmSquadFilter();
@@ -10453,21 +10576,115 @@ function _perfResolvePeriod(preset) {
   const prevStart = addDays(prevEnd, -(n - 1));
   return { start: fmt(start), end: fmt(today), prevStart: fmt(prevStart), prevEnd: fmt(prevEnd) };
 }
-function _perfOnPeriodChange() {
-  const period = $('perf-period')?.value || '30';
-  const dates = $('perf-custom-dates');
-  if (dates) dates.style.display = period === 'custom' ? '' : 'none';
-  if (period === 'custom') {
-    // Pré-preenche com últimos 30 dias na 1ª vez.
-    const s = $('perf-start'), e = $('perf-end');
-    if (s && !s.value) {
-      const today = new Date(); today.setHours(0,0,0,0);
-      const start = new Date(today); start.setDate(start.getDate() - 29);
-      s.value = start.toISOString().slice(0, 10);
-      e.value = today.toISOString().slice(0, 10);
-    }
-  }
-  renderPerformance();
+/* ─── Período da PERFORMANCE ───
+   Atalhos + intervalo no calendário (rc). Estado nos hidden inputs
+   perf-period ('7' | '30' | 'mtd' | '90' | '365' | 'custom'), perf-start e
+   perf-end, lidos por _perfResolvePeriod. O atalho aparece no calendário
+   como o trecho que ele cobre. */
+const PERF_PFP_PRESETS = [
+  { val: '7',   label: 'Últimos 7 dias' },
+  { val: '30',  label: 'Últimos 30 dias' },
+  { val: 'mtd', label: 'Este mês' },
+  { val: '90',  label: 'Últimos 90 dias' },
+  { val: '365', label: 'Último ano' },
+];
+let _perfPfpOpen = false;
+function perfPfpToggle(evt) { if (evt) evt.stopPropagation(); if (_perfPfpOpen) perfPfpClose(); else perfPfpOpen(); }
+function perfPfpOpen() {
+  const pop = $('perf-pfp-popover'); if (!pop) return;
+  pop.classList.add('open'); _perfPfpOpen = true;
+  perfPfpRenderPresets();
+  const r = _perfResolvePeriod($('perf-period').value || '30');
+  rcMount('perf-rc', { mode: 'range', from: r.start, to: r.end, onRange: perfPfpApplyRange });
+  paintIcons();
+}
+function perfPfpClose() { $('perf-pfp-popover')?.classList.remove('open'); _perfPfpOpen = false; }
+document.addEventListener('click', (e) => {
+  if (!_perfPfpOpen) return;
+  const pop = $('perf-pfp-popover'), trg = $('perf-pfp-trigger');
+  if ((pop && pop.contains(e.target)) || (trg && trg.contains(e.target))) return;
+  perfPfpClose();
+});
+document.addEventListener('keydown', (e) => { if (_perfPfpOpen && e.key === 'Escape') { e.preventDefault(); perfPfpClose(); } });
+function perfPfpRenderPresets() {
+  const wrap = $('perf-pfp-presets'); if (!wrap) return;
+  const cur = $('perf-period').value;
+  wrap.innerHTML = PERF_PFP_PRESETS.map(p =>
+    `<button type="button" class="pfp-preset-btn ${p.val === cur ? 'active' : ''}" onclick="perfPfpPickPreset('${p.val}')">${esc(p.label)}</button>`
+  ).join('');
+}
+function perfPfpPickPreset(val) {
+  $('perf-period').value = val;
+  $('perf-start').value = '';
+  $('perf-end').value = '';
+  perfPfpClose(); renderPerformance();
+}
+function perfPfpApplyRange(from, to) {
+  $('perf-period').value = 'custom';
+  $('perf-start').value = from;
+  $('perf-end').value = to;
+  perfPfpRenderPresets(); renderPerformance();
+}
+function perfPfpReset() {
+  perfPfpPickPreset('30');
+}
+function perfPfpUpdateLabel() {
+  const trg = $('perf-pfp-trigger'); if (!trg) return;
+  const p = $('perf-period').value || '30';
+  const s = $('perf-start').value, e = $('perf-end').value;
+  const text = p === 'custom' && s && e ? `${fmtPfpShort(s)} → ${fmtPfpShort(e)}`
+    : (PERF_PFP_PRESETS.find(x => x.val === p)?.label || 'Últimos 30 dias');
+  const lbl = $('perf-pfp-label'); if (lbl) lbl.textContent = text;
+  trg.classList.toggle('filtering', p !== '30');
+}
+
+/* ─── Semana do RITMO ───
+   Atalhos + calendário em modo semana (rc): passar o mouse mostra a semana
+   (seg → dom) e o clique abre ela. Semanas futuras ficam de fora. Valor no
+   hidden #rhythm-week = deslocamento em semanas (0 atual, -1 passada…). */
+const RHY_PRESETS = [0, -1, -2, -3];
+const _rhyLabel = off => off === 0 ? 'Semana atual' : off === -1 ? 'Semana passada' : `Há ${-off} semanas`;
+let _rhyOpen = false;
+function _rhyOffsetOf(iso) {
+  const d = new Date(iso + 'T12:00:00');
+  const mon = new Date(d.getFullYear(), d.getMonth(), d.getDate() - (d.getDay() + 6) % 7);
+  return Math.round((mon - _rhythmWeekBounds(0).monday) / (7 * 864e5));
+}
+function _rhyBand(off) { const b = _rhythmWeekBounds(off); return [rcYmd(b.monday), rcYmd(b.sunday)]; }
+function rhyToggle(evt) { if (evt) evt.stopPropagation(); if (_rhyOpen) rhyClose(); else rhyOpen(); }
+function rhyOpen() {
+  const pop = $('rhy-popover'); if (!pop) return;
+  pop.classList.add('open'); _rhyOpen = true;
+  rhyRenderPresets();
+  const [from, to] = _rhyBand(parseInt($('rhythm-week').value, 10) || 0);
+  rcMount('rhy-rc', { mode: 'week', from, to, max: _rhyBand(0)[1],
+    previewFor: iso => _rhyBand(_rhyOffsetOf(iso)), onPick: iso => rhyPick(_rhyOffsetOf(iso)) });
+  paintIcons();
+}
+function rhyClose() { $('rhy-popover')?.classList.remove('open'); _rhyOpen = false; }
+document.addEventListener('click', (e) => {
+  if (!_rhyOpen) return;
+  const pop = $('rhy-popover'), trg = $('rhy-trigger');
+  if ((pop && pop.contains(e.target)) || (trg && trg.contains(e.target))) return;
+  rhyClose();
+});
+document.addEventListener('keydown', (e) => { if (_rhyOpen && e.key === 'Escape') { e.preventDefault(); rhyClose(); } });
+function rhyRenderPresets() {
+  const wrap = $('rhy-presets'); if (!wrap) return;
+  const cur = parseInt($('rhythm-week').value, 10) || 0;
+  wrap.innerHTML = RHY_PRESETS.map(o =>
+    `<button type="button" class="pfp-preset-btn ${o === cur ? 'active' : ''}" onclick="rhyPick(${o})">${_rhyLabel(o)}</button>`
+  ).join('');
+}
+function rhyPick(off) {
+  $('rhythm-week').value = String(Math.min(0, off));
+  rhyClose(); renderRhythm();
+}
+function rhyUpdateLabel() {
+  const trg = $('rhy-trigger'); if (!trg) return;
+  const off = parseInt($('rhythm-week').value, 10) || 0;
+  const lbl = $('rhy-label'); if (lbl) lbl.textContent = _rhyLabel(off);
+  trg.classList.toggle('filtering', off !== 0);
 }
 /* Trocar de squad zera cliente, plataforma E campanha — fluxo progressivo. */
 function _perfOnSquadChange() {
@@ -10597,7 +10814,7 @@ async function renderPerformance() {
   // Campanha: se cliente mudou, o select já foi rebuildado e o value some.
   const campaignPicked = $('perf-campaign')?.value;
   if (campaignPicked !== undefined) _perfState.campaign = campaignPicked;
-  _perfSyncPeriodVisibility();
+  perfPfpUpdateLabel();
   const workspaceId = _perfState.workspaceId;
   const clientId = _perfState.clientId;
   const period = ($('perf-period')?.value) || '30';
@@ -10666,11 +10883,6 @@ async function renderPerformance() {
     body.innerHTML = `<div class="perf-empty perf-error"><i data-lucide="alert-triangle" class="ic-lg"></i><div>Erro ao carregar: ${esc(e.message || 'desconhecido')}</div></div>`;
     if (window.lucide?.createIcons) lucide.createIcons();
   }
-}
-function _perfSyncPeriodVisibility() {
-  const period = $('perf-period')?.value || '30';
-  const dates = $('perf-custom-dates');
-  if (dates) dates.style.display = period === 'custom' ? '' : 'none';
 }
 function _perfUpdateTimestamp(date) {
   const el = $('perf-updated-at');
@@ -25112,7 +25324,7 @@ function dvStartFilter(key) {
 }
 function dvOpenPeriodPicker(anchor) {
   const el = _dvOpenPopover(anchor, '<div id="dv-period-body"></div>', { width: 300 });
-  if (el) _dvRenderPeriodBody();
+  if (el) { _dvCalInit(); _dvRenderPeriodBody(); }
 }
 function _dvRenderPeriodBody() {
   const body = document.getElementById('dv-period-body');
@@ -25120,17 +25332,12 @@ function _dvRenderPeriodBody() {
   const v = _dvView;
   body.innerHTML = `<div class="dv-pop-head">Período</div>
     <div class="dv-pop-list dv-pop-list--flat">
-      ${DV_PERIODS.map(p => `<button type="button" class="dv-menu-item ${v.period === p.key ? 'is-on' : ''}" onclick="dvSetView({ period: '${p.key}' }); _dvRenderPeriodBody()">
+      ${DV_PERIODS.map(p => `<button type="button" class="dv-menu-item ${v.period === p.key ? 'is-on' : ''}" onclick="dvSetView({ period: '${p.key}' }); _dvCalInit(); _dvRenderPeriodBody()">
         <span>${esc(p.label)}</span>${v.period === p.key ? '<i data-lucide="check" class="ic-sm"></i>' : ''}</button>`).join('')}
     </div>
     <div class="dv-pop-section">
       <div class="dv-pop-label">Intervalo personalizado</div>
-      <div class="dv-range">
-        <input type="date" class="form-control" id="dv-range-from" value="${esc(v.period === 'custom' ? v.from : '')}" aria-label="De">
-        <span>a</span>
-        <input type="date" class="form-control" id="dv-range-to" value="${esc(v.period === 'custom' ? v.to : '')}" aria-label="Até">
-      </div>
-      <button type="button" class="btn btn-ghost btn-sm dv-range-apply" onclick="dvApplyCustomRange()">Aplicar intervalo</button>
+      <div id="dv-cal"></div>
     </div>
     <div class="dv-pop-section">
       <div class="dv-pop-label">Data considerada</div>
@@ -25143,15 +25350,18 @@ function _dvRenderPeriodBody() {
       <span>Comparar números com o período anterior</span>
     </label>`;
   paintIcons(body);
+  rcRender('dv-cal');
   _dvPop?.place();
 }
-function dvApplyCustomRange() {
-  const from = document.getElementById('dv-range-from')?.value || '';
-  const to = document.getElementById('dv-range-to')?.value || '';
-  if (!from && !to) { toast('Escolha pelo menos uma das datas.', 'warn'); return; }
-  if (from && to && to < from) { toast('A data final vem antes da inicial.', 'warn'); return; }
-  dvSetView({ period: 'custom', from, to });
-  _dvRenderPeriodBody();
+/* Intervalo personalizado: calendário compartilhado (rc). Sem período
+   personalizado, mostra o trecho do atalho escolhido (ex.: últimos 30 dias). */
+function _dvCalInit() {
+  const v = _dvView;
+  let from = '', to = '';
+  if (v.period === 'custom') { from = v.from || ''; to = v.to || ''; }
+  else { const rg = dvPeriodRange(v); if (rg.from != null) from = rcYmd(rg.from); if (rg.to != null) to = rcYmd(rg.to); }
+  rcMount('dv-cal', { mode: 'range', from, to, onRender: () => _dvPop?.place(),
+    onRange: (a, b) => { dvSetView({ period: 'custom', from: a, to: b }); _dvRenderPeriodBody(); } });
 }
 
 /* Visões salvas: combinações de filtros por pessoa e por dashboard. */
@@ -25366,18 +25576,23 @@ function _dvNumber(w, d, recs) {
   const ms = _dvMetricsOf(w);
   const tiles = ms.map(m => {
     const v = dvMetricValue(m, recs);
-    let delta = '';
+    // Com comparação de período: número e variação pintados pela tendência
+    // (queda vermelho, aumento verde, estável azul).
+    let delta = '', trend = '';
     if (prev) {
       const pv = dvMetricValue(m, prev);
       if (v != null && pv != null && pv !== 0) {
         const pct = ((v - pv) / Math.abs(pv)) * 100;
-        const icon = Math.abs(pct) < 0.5 ? 'minus' : pct > 0 ? 'arrow-up-right' : 'arrow-down-right';
-        delta = `<div class="dv-num-delta"><i data-lucide="${icon}" class="ic-xs"></i><b>${Math.abs(pct) < 0.5 ? '0%' : Math.round(Math.abs(pct)) + '%'}</b></div>`;
-      } else if (v != null && pv === 0 && v !== 0) {
-        delta = `<div class="dv-num-delta"><i data-lucide="arrow-up-right" class="ic-xs"></i>antes 0</div>`;
+        trend = Math.abs(pct) < 0.5 ? 'flat' : pct > 0 ? 'up' : 'down';
+        const icon = { flat: 'minus', up: 'arrow-up-right', down: 'arrow-down-right' }[trend];
+        const word = { flat: 'estável', up: 'aumento de', down: 'queda de' }[trend];
+        delta = `<div class="dv-num-delta"><i data-lucide="${icon}" class="ic-xs"></i><span class="sr-only">${word}</span><b>${trend === 'flat' ? '0%' : Math.round(Math.abs(pct)) + '%'}</b></div>`;
+      } else if (v != null && pv === 0) {
+        trend = v === 0 ? 'flat' : 'up';
+        delta = `<div class="dv-num-delta"><i data-lucide="${v === 0 ? 'minus' : 'arrow-up-right'}" class="ic-xs"></i>${v === 0 ? '<b>0%</b>' : 'antes 0'}</div>`;
       }
     }
-    return `<div class="dv-num"><div class="dv-num-label">${esc(dvMetricLabel(m, w.templateId))}</div>
+    return `<div class="dv-num${trend ? ` is-${trend}` : ''}"><div class="dv-num-label">${esc(dvMetricLabel(m, w.templateId))}</div>
       <div class="dv-num-value">${dvFmt(v, true)}</div>${delta}</div>`;
   }).join('');
   return `<div class="dv-nums dv-nums--${ms.length}">${tiles}</div>`;
@@ -29825,10 +30040,92 @@ function renderClientDetail(id) {
   paintIcons();
 }
 
-function setClientTimePeriod(p) {
-  currentClientPeriod = p;
-  document.querySelectorAll('.client-time-period').forEach(b => b.classList.toggle('active', b.dataset.period === p));
-  if (currentClientId) renderClientTimeBlock(currentClientId);
+/* ─── Período do TEMPO DEDICADO (cliente e projeto) ───
+   Atalhos + intervalo no calendário (rc). O período fica em
+   currentClientPeriod / currentProjectPeriod ('7' | '14' | '30' | '90' |
+   'all' | 'custom'), e o intervalo em currentClientRange / currentProjectRange. */
+const CTP_PRESETS = [['7', 'Últimos 7 dias'], ['14', 'Últimos 14 dias'], ['30', 'Últimos 30 dias'], ['90', 'Últimos 90 dias'], ['all', 'Desde o início']];
+let currentClientRange = null, currentProjectRange = null;
+const _CTP = {
+  client: {
+    get: () => [currentClientPeriod, currentClientRange],
+    set: (p, r) => { currentClientPeriod = p; currentClientRange = r; },
+    render: () => { if (currentClientId) renderClientTimeBlock(currentClientId); },
+  },
+  project: {
+    get: () => [currentProjectPeriod, currentProjectRange],
+    set: (p, r) => { currentProjectPeriod = p; currentProjectRange = r; },
+    render: () => { if (currentProjectId) renderProjectTimeBlock(currentProjectId); },
+  },
+};
+/* Janela do período: from/to em AAAA-MM-DD pra filtrar apontamentos (null =
+   sem limite), end = último dia, days = tamanho (capacidade) e chartDays =
+   quantos dias o gráfico mostra. */
+function _timeWindow(period, range) {
+  const today0 = new Date(); today0.setHours(0, 0, 0, 0);
+  if (period === 'custom' && range?.from && range?.to) {
+    const end = new Date(range.to + 'T00:00:00');
+    const days = Math.round((end - new Date(range.from + 'T00:00:00')) / 864e5) + 1;
+    return { from: range.from, to: range.to, end, days, chartDays: Math.min(366, days) };
+  }
+  if (period === 'all') return { from: null, to: null, end: today0, days: 30, chartDays: 30 };
+  const n = parseInt(period, 10) || 90;
+  const from = new Date(today0); from.setDate(from.getDate() - (n - 1));
+  return { from: from.toISOString().slice(0, 10), to: null, end: today0, days: n, chartDays: Math.min(90, n) };
+}
+let _ctpOpen = null;
+function ctpToggle(kind, evt) {
+  if (evt) evt.stopPropagation();
+  const was = _ctpOpen;
+  ctpClose();
+  if (was !== kind) ctpOpen(kind);
+}
+function ctpOpen(kind) {
+  const pop = $(`ctp-${kind}-popover`); if (!pop) return;
+  pop.classList.add('open'); _ctpOpen = kind;
+  ctpRenderPresets(kind);
+  const [p, r] = _CTP[kind].get();
+  let from = '', to = '';
+  if (p === 'custom' && r) ({ from, to } = r);
+  else if (p !== 'all') { from = _timeWindow(p).from; to = todayStr(); }
+  rcMount(`ctp-${kind}-rc`, { mode: 'range', from, to, onRange: (a, b) => {
+    _CTP[kind].set('custom', { from: a, to: b });
+    ctpRenderPresets(kind);
+    _CTP[kind].render();
+  } });
+  paintIcons();
+}
+function ctpClose() {
+  if (!_ctpOpen) return;
+  $(`ctp-${_ctpOpen}-popover`)?.classList.remove('open');
+  _ctpOpen = null;
+}
+document.addEventListener('click', (e) => {
+  if (!_ctpOpen) return;
+  const pop = $(`ctp-${_ctpOpen}-popover`), trg = $(`ctp-${_ctpOpen}-trigger`);
+  if ((pop && pop.contains(e.target)) || (trg && trg.contains(e.target))) return;
+  ctpClose();
+});
+document.addEventListener('keydown', (e) => { if (_ctpOpen && e.key === 'Escape') { e.preventDefault(); ctpClose(); } });
+function ctpRenderPresets(kind) {
+  const wrap = $(`ctp-${kind}-presets`); if (!wrap) return;
+  const [cur] = _CTP[kind].get();
+  wrap.innerHTML = CTP_PRESETS.map(([v, l]) =>
+    `<button type="button" class="pfp-preset-btn ${v === cur ? 'active' : ''}" onclick="ctpPick('${kind}', '${v}')">${esc(l)}</button>`
+  ).join('');
+}
+function ctpPick(kind, p) {
+  _CTP[kind].set(p, null);
+  ctpClose();
+  _CTP[kind].render();
+}
+function ctpUpdateLabel(kind) {
+  const trg = $(`ctp-${kind}-trigger`); if (!trg) return;
+  const [p, r] = _CTP[kind].get();
+  const text = p === 'custom' && r ? `${fmtPfpShort(r.from)} → ${fmtPfpShort(r.to)}`
+    : (CTP_PRESETS.find(([v]) => v === p)?.[1] || 'Últimos 90 dias');
+  const lbl = $(`ctp-${kind}-label`); if (lbl) lbl.textContent = text;
+  trg.classList.toggle('filtering', p !== '90');
 }
 
 async function setClientRoleAssignment(clientId, roleName, userId) {
@@ -29952,17 +30249,11 @@ function renderClientTimeBlock(clientId) {
   const projs = projects.filter(p => p.clientId === clientId);
   const projIds = new Set(projs.map(p => p.id));
   // Filtra time entries
-  const today0 = new Date(); today0.setHours(0,0,0,0);
-  let fromYmd = null;
-  if (currentClientPeriod !== 'all') {
-    const days = parseInt(currentClientPeriod, 10) || 90;
-    const from = new Date(today0); from.setDate(from.getDate() - (days - 1));
-    fromYmd = from.toISOString().slice(0,10);
-  }
+  ctpUpdateLabel('client');
+  const win = _timeWindow(currentClientPeriod, currentClientRange);
   const inRange = (e) => {
-    if (!fromYmd) return true;
     const when = ((e.start || e.createdAt || '') + '').slice(0,10);
-    return when >= fromYmd;
+    return (!win.from || when >= win.from) && (!win.to || when <= win.to);
   };
   let totalHours = 0;
   const byUser = new Map();
@@ -29982,10 +30273,9 @@ function renderClientTimeBlock(clientId) {
   $('client-time-value').textContent = fmtHours(totalHours);
 
   // Lista de usuários — ordenado por horas (decrescente) + barra de progresso
-  const days = currentClientPeriod === 'all' ? 30 : parseInt(currentClientPeriod, 10);
   let businessDays = 0;
-  for (let i = 0; i < days; i++) {
-    const d = new Date(today0); d.setDate(d.getDate() - i);
+  for (let i = 0; i < win.days; i++) {
+    const d = new Date(win.end); d.setDate(d.getDate() - i);
     if (d.getDay() !== 0 && d.getDay() !== 6) businessDays++;
   }
   const capacity = businessDays * 8;
@@ -30032,9 +30322,8 @@ function renderClientTimeBlock(clientId) {
       return;
     }
     const buckets = [];
-    const dayCount = currentClientPeriod === 'all' ? 30 : Math.min(90, parseInt(currentClientPeriod, 10) || 30);
-    for (let i = dayCount - 1; i >= 0; i--) {
-      const d = new Date(today0); d.setDate(d.getDate() - i);
+    for (let i = win.chartDays - 1; i >= 0; i--) {
+      const d = new Date(win.end); d.setDate(d.getDate() - i);
       const ymd = d.toISOString().slice(0,10);
       buckets.push({ ymd, hours: byDay.get(ymd) || 0, day: d });
     }
@@ -30194,12 +30483,6 @@ async function confirmDeleteTask(taskId) {
   } catch (e) { toast(e.message, 'error'); }
 }
 
-function setProjectTimePeriod(period) {
-  currentProjectPeriod = period;
-  document.querySelectorAll('.project-time-period').forEach(b => b.classList.toggle('active', b.dataset.period === period));
-  if (currentProjectId) renderProjectTimeBlock(currentProjectId);
-}
-
 async function setProjectRoleAssignment(projectId, roleName, userId) {
   const p = projectById(projectId);
   if (!p) return;
@@ -30214,17 +30497,11 @@ async function setProjectRoleAssignment(projectId, roleName, userId) {
 }
 
 function renderProjectTimeBlock(projectId) {
-  const today0 = new Date(); today0.setHours(0,0,0,0);
-  let fromYmd = null;
-  if (currentProjectPeriod !== 'all') {
-    const days = parseInt(currentProjectPeriod, 10) || 90;
-    const from = new Date(today0); from.setDate(from.getDate() - (days - 1));
-    fromYmd = from.toISOString().slice(0,10);
-  }
+  ctpUpdateLabel('project');
+  const win = _timeWindow(currentProjectPeriod, currentProjectRange);
   const inRange = (e) => {
-    if (!fromYmd) return true;
     const when = ((e.start || e.createdAt || '') + '').slice(0,10);
-    return when >= fromYmd;
+    return (!win.from || when >= win.from) && (!win.to || when <= win.to);
   };
   let totalHours = 0;
   const byUser = new Map();
@@ -30244,10 +30521,9 @@ function renderProjectTimeBlock(projectId) {
   $('project-time-value').textContent = fmtHours(totalHours);
 
   // Lista de usuários — mesmo layout do cliente.
-  const days = currentProjectPeriod === 'all' ? 30 : parseInt(currentProjectPeriod, 10);
   let businessDays = 0;
-  for (let i = 0; i < days; i++) {
-    const d = new Date(today0); d.setDate(d.getDate() - i);
+  for (let i = 0; i < win.days; i++) {
+    const d = new Date(win.end); d.setDate(d.getDate() - i);
     if (d.getDay() !== 0 && d.getDay() !== 6) businessDays++;
   }
   const capacity = businessDays * 8;
@@ -30292,9 +30568,8 @@ function renderProjectTimeBlock(projectId) {
       return;
     }
     const buckets = [];
-    const dayCount = currentProjectPeriod === 'all' ? 30 : Math.min(90, parseInt(currentProjectPeriod, 10) || 30);
-    for (let i = dayCount - 1; i >= 0; i--) {
-      const d = new Date(today0); d.setDate(d.getDate() - i);
+    for (let i = win.chartDays - 1; i >= 0; i--) {
+      const d = new Date(win.end); d.setDate(d.getDate() - i);
       const ymd = d.toISOString().slice(0,10);
       buckets.push({ ymd, hours: byDay.get(ymd) || 0, day: d });
     }
