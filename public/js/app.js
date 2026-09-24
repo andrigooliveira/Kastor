@@ -107,7 +107,8 @@ const PAGE_TO_PATH = {
   forms:        '/forms',
   dashboards:   '/dashboards',
   performance:  '/performance',
-  gallery:      '/gallery'
+  gallery:      '/gallery',
+  menu:         '/menu'
   // Kastor Docs (writer) NÃO tá aqui — é uma página standalone servida em /writer
   // por um HTML próprio (public/writer.html). Não passa pelo SPA principal.
 };
@@ -4835,6 +4836,9 @@ function renderSidebarUser() {
   document.body.classList.toggle('user-readonly', !me.isAdmin && !me.isModerator);
   document.body.classList.toggle('user-moderator', !!me.isModerator && !me.isAdmin);
   document.body.classList.toggle('user-freelancer', !!me.isFreelancer && !me.isAdmin && !me.isModerator);
+  // O menu depende do papel e do menu salvo da pessoa: redesenha quando mudam.
+  const navKey = [me.isAdmin, me.isModerator, me.isFreelancer, JSON.stringify(me.navMenu || null)].join('|');
+  if (navKey !== renderSidebarUser._nav) { renderSidebarUser._nav = navKey; renderSidebarNav(); }
 }
 
 /* Menu de status (clique no seu nome na barra lateral). */
@@ -4876,8 +4880,7 @@ function toggleStatusMenu(ev) {
         </select>
         <button class="btn btn-confirm btn-sm" type="submit">Definir</button>
       </form>
-    </div>
-    <button type="button" class="status-menu-link" onclick="closeStatusMenu(); goPage('profile')"><i data-lucide="user" class="ic-sm"></i> Abrir perfil</button>`;
+    </div>`;
   document.body.appendChild(menu);
   const r = document.getElementById('sidebar-user').getBoundingClientRect();
   menu.style.left = Math.max(8, r.left) + 'px';
@@ -4920,88 +4923,239 @@ function toggleSidebarCollapse() {
 }
 
 /* ── SIDEBAR ──
-   Itens em SB_NAV (grupos com título que abrem/fecham; estado por pessoa no
-   localStorage). Links reais (<a href>): Ctrl/Cmd+clique abre em nova aba.
-   Permissão continua pelas classes (freelancer-hide, admin-only…), que o CSS
-   esconde conforme o body. Grupo que contém a página ativa abre sozinho. */
-const SB_NAV = [
-  { items: [
-    { page: 'dashboard', label: 'Início', icon: 'house', cls: 'freelancer-hide' },
-    { page: 'mine', label: 'Minhas Demandas', icon: 'user-round', count: 'mine' },
-    { page: 'list', label: 'Demandas', icon: 'list', cls: 'freelancer-hide' },
-    { page: 'agenda', label: 'Agenda', icon: 'calendar', cls: 'freelancer-hide' },
-  ] },
-  { key: 'analise', label: 'Análise', cls: 'freelancer-hide', items: [
-    { page: 'analytics', label: 'Análises', icon: 'chart-column' },
-    { page: 'performance', label: 'Performance', icon: 'trending-up' },
-    { page: 'dashboards', label: 'Dashboards', icon: 'layout-dashboard' },
-  ] },
-  { key: 'estrutura', label: 'Estrutura', cls: 'freelancer-hide', items: [
-    { page: 'clients', label: 'Clientes', icon: 'building-2' },
-    { page: 'flows', label: 'Fluxos de Demanda', icon: 'workflow', id: 'nav-flows' },
-    { page: 'forms', label: 'Formulários', icon: 'clipboard-list' },
-    { page: 'templates', label: 'Templates', icon: 'files' },
-    { page: 'recurring', label: 'Listas de tarefas', icon: 'list-checks' },
-    { page: 'recurringDemands', label: 'Demandas Recorrentes', icon: 'repeat' },
-    { page: 'gallery', label: 'Galeria', icon: 'images' },
-    { page: 'kb', label: 'Base de conhecimento', icon: 'book-open' },
-  ] },
-  { key: 'config', label: 'Configurações', cls: 'freelancer-hide', closed: true, items: [
-    { page: 'users', label: 'Usuários', icon: 'users', id: 'nav-users', cls: 'freelancer-hide' },
-    { page: 'workspaces', label: 'Squads', icon: 'layers', id: 'nav-workspaces', cls: 'admin-only' },
-    { page: 'integrations', label: 'Integrações', icon: 'plug', id: 'nav-integrations', cls: 'admin-only' },
-    { page: 'passwords', label: 'Senhas', icon: 'key-round', id: 'nav-passwords', cls: 'freelancer-hide' },
-    { page: 'trash', label: 'Lixeira', icon: 'trash-2', id: 'nav-trash', cls: 'admin-only' },
-    { page: 'devtools', label: 'Dev Tools', icon: 'code-xml', id: 'nav-devtools', cls: 'admin-only full-admin-only' },
-  ] },
-  { key: 'ajuda', label: 'Ajuda', cls: 'freelancer-hide', items: [
-    { page: 'help', label: 'Documentação', icon: 'circle-help' },
-  ] },
+   Menu por pessoa: NAV_CATALOG tem todas as páginas que podem ir pra barra;
+   o menu mostra me.navMenu (chaves, na ordem) ou o padrão (NAV_DEFAULT).
+   Itens seguidos da mesma seção formam um bloco (espaço entre blocos).
+   Documentação fica sempre no pé; a engrenagem ao lado abre Personalizar menu
+   e a tela Configurações. Links reais (<a href>): Ctrl/Cmd+clique abre em nova aba. */
+const NAV_CATALOG = [
+  { page: 'dashboard', label: 'Início', icon: 'house', sec: 'work', cls: 'freelancer-hide', desc: 'Seu dia: foco, paradas e próximos prazos.' },
+  { page: 'mine', label: 'Minhas Demandas', icon: 'user-round', sec: 'work', count: 'mine', desc: 'Tudo que está com você, por prazo.' },
+  { page: 'list', label: 'Demandas', icon: 'list', sec: 'work', cls: 'freelancer-hide', desc: 'Todas as demandas do squad, com filtros.' },
+  { page: 'agenda', label: 'Agenda', icon: 'calendar', sec: 'work', cls: 'freelancer-hide', desc: 'Entregas e eventos no calendário.' },
+  { page: 'clients', label: 'Clientes', icon: 'building-2', sec: 'work', cls: 'freelancer-hide', desc: 'Clientes, projetos e relatórios.' },
+  { page: 'dashboards', label: 'Dashboards', icon: 'layout-dashboard', sec: 'insight', cls: 'freelancer-hide', desc: 'Painéis sobre as respostas dos formulários.' },
+  { page: 'analytics', label: 'Análises', icon: 'chart-column', sec: 'insight', cls: 'freelancer-hide', desc: 'Capacidade, ritmo e relatórios.' },
+  { page: 'performance', label: 'Performance', icon: 'trending-up', sec: 'insight', cls: 'freelancer-hide', desc: 'Entregas e prazos por pessoa e área.' },
+  { page: 'gallery', label: 'Galeria', icon: 'images', sec: 'content', cls: 'freelancer-hide', desc: 'Imagens e arquivos das demandas, por cliente.' },
+  { page: 'kb', label: 'Base de conhecimento', icon: 'book-open', sec: 'content', cls: 'freelancer-hide', desc: 'Artigos e processos da equipe.' },
+  { page: 'flows', label: 'Fluxos de Demanda', icon: 'workflow', sec: 'ops', cls: 'freelancer-hide', desc: 'Etapas, responsáveis e prazos de cada tipo de demanda.' },
+  { page: 'forms', label: 'Formulários', icon: 'clipboard-list', sec: 'ops', cls: 'freelancer-hide', desc: 'Formulários de pedido e as respostas recebidas.' },
+  { page: 'templates', label: 'Templates', icon: 'files', sec: 'ops', cls: 'freelancer-hide', desc: 'Modelos prontos para abrir demandas mais rápido.' },
+  { page: 'recurring', label: 'Listas de tarefas', icon: 'list-checks', sec: 'ops', cls: 'freelancer-hide', desc: 'Checklists que se repetem na rotina da equipe.' },
+  { page: 'recurringDemands', label: 'Demandas Recorrentes', icon: 'repeat', sec: 'ops', cls: 'freelancer-hide', desc: 'Demandas criadas sozinhas numa agenda fixa.' },
+  { page: 'users', label: 'Usuários', icon: 'users', sec: 'admin', cls: 'freelancer-hide', desc: 'Pessoas, papéis e acessos.' },
+  { page: 'workspaces', label: 'Squads', icon: 'layers', sec: 'admin', cls: 'admin-only', desc: 'Times e quem faz parte de cada um.' },
+  { page: 'integrations', label: 'Integrações', icon: 'plug', sec: 'admin', cls: 'admin-only', desc: 'Discord, webhooks e outros serviços.' },
+  { page: 'passwords', label: 'Senhas', icon: 'key-round', sec: 'admin', cls: 'freelancer-hide', desc: 'Cofre de senhas compartilhadas.' },
+  { page: 'trash', label: 'Lixeira', icon: 'trash-2', sec: 'admin', cls: 'admin-only', desc: 'Itens apagados, para restaurar.' },
+  { page: 'devtools', label: 'Dev Tools', icon: 'code-xml', sec: 'admin', cls: 'admin-only full-admin-only', desc: 'Rotas ocultas e atalhos técnicos.' },
 ];
-function _sbGroupState() { try { return JSON.parse(localStorage.getItem('kastor-sb-groups') || '{}'); } catch { return {}; } }
+const NAV_DEFAULT = ['dashboard', 'mine', 'list', 'agenda', 'clients', 'dashboards', 'analytics', 'performance', 'gallery', 'kb'];
+const NAV_DOCS = { page: 'help', label: 'Documentação', icon: 'circle-help', cls: 'freelancer-hide' };
+// Páginas sem item próprio que "pertencem" a outro item.
+const SB_PARENT = { projects: 'clients', clientsModels: 'flows' };
+const _navItem = page => NAV_CATALOG.find(it => it.page === page);
+// Mesma regra das classes de permissão no body (renderSidebarUser).
+function _navAllowed(it) {
+  if (!me) return true;
+  const c = (it.cls || '').split(' ');
+  const staff = me.isAdmin || me.isModerator;
+  if (me.isFreelancer && !staff && (c.includes('freelancer-hide') || c.includes('admin-only'))) return false;
+  if (!staff && c.includes('admin-only')) return false;
+  if (!me.isAdmin && c.includes('full-admin-only')) return false;
+  return true;
+}
+function _navMenuPages() {
+  const saved = Array.isArray(me?.navMenu) ? me.navMenu : NAV_DEFAULT;
+  return saved.filter(p => _navItem(p) && _navAllowed(_navItem(p)));
+}
+function _sbItemHTML(it) {
+  return `<a class="sb-item ${it.cls || ''}" data-page="${it.page}" href="${PAGE_TO_PATH[it.page] || '/'}" data-label="${esc(it.label)}"
+      onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); goPage('${it.page}'); closeSidebar()">
+      <i data-lucide="${it.icon}" class="sb-ic"></i><span class="sb-label">${esc(it.label)}</span>${it.count ? `<span class="sb-count" id="sb-count-${it.count}" hidden></span>` : ''}</a>`;
+}
 function renderSidebarNav() {
   const nav = document.getElementById('sb-nav');
   if (!nav) return;
-  const state = _sbGroupState();
-  const item = it => `<a class="sb-item ${it.cls || ''}" data-page="${it.page}"${it.id ? ` id="${it.id}"` : ''} href="${PAGE_TO_PATH[it.page] || '/'}" data-label="${esc(it.label)}"
-      onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); goPage('${it.page}'); closeSidebar()">
-      <i data-lucide="${it.icon}" class="sb-ic"></i><span class="sb-label">${esc(it.label)}</span>${it.count ? `<span class="sb-count" id="sb-count-${it.count}" hidden></span>` : ''}</a>`;
-  nav.innerHTML = SB_NAV.map(g => {
-    const items = g.items.map(item).join('');
-    if (!g.key) return `<div class="sb-group sb-group--main">${items}</div>`;
-    const open = state[g.key] ?? !g.closed;
-    return `<div class="sb-group ${g.cls || ''} ${open ? 'is-open' : ''}" data-group="${g.key}">
-      <button type="button" class="sb-group-head" onclick="toggleSbGroup('${g.key}')" aria-expanded="${open}" aria-controls="sb-g-${g.key}">
-        <span>${esc(g.label)}</span><i data-lucide="chevron-down" class="sb-group-caret"></i>
-      </button>
-      <div class="sb-group-items" id="sb-g-${g.key}"><div class="sb-group-inner">${items}</div></div>
-    </div>`;
-  }).join('');
-  paintIcons(document.querySelector('.sidebar'));
+  const blocks = [];
+  _navMenuPages().map(_navItem).forEach(it => {
+    const last = blocks[blocks.length - 1];
+    if (last && last.sec === it.sec) last.items.push(it); else blocks.push({ sec: it.sec, items: [it] });
+  });
+  nav.innerHTML = blocks.map(b => `<div class="sb-group">${b.items.map(_sbItemHTML).join('')}</div>`).join('')
+    + `<div class="sb-group sb-group--bottom">
+        <div class="sb-bottom-row">
+          ${_sbItemHTML(NAV_DOCS)}
+          <button type="button" class="sb-icon-btn sb-gear" id="sb-gear" onclick="toggleSbSettingsMenu(event)" aria-haspopup="menu" aria-expanded="false" aria-label="Configurações" data-label="Configurações">
+            <i data-lucide="settings"></i>
+          </button>
+        </div>
+      </div>`;
+  paintIcons(nav);
   syncSidebarActive(currentPage);
-}
-function toggleSbGroup(key) {
-  const g = document.querySelector(`.sb-group[data-group="${key}"]`);
-  if (!g) return;
-  const open = g.classList.toggle('is-open');
-  g.querySelector('.sb-group-head')?.setAttribute('aria-expanded', String(open));
-  const st = _sbGroupState();
-  st[key] = open;
-  try { localStorage.setItem('kastor-sb-groups', JSON.stringify(st)); } catch {}
+  renderNavCounts();
 }
 function syncSidebarActive(page) {
-  let activeEl = null;
+  const target = SB_PARENT[page] || page;
+  let found = false;
   document.querySelectorAll('.sb-item').forEach(n => {
-    const on = n.dataset.page === page;
+    const on = n.dataset.page === target;
+    found = found || on;
     n.classList.toggle('active', on);
-    if (on) { n.setAttribute('aria-current', 'page'); activeEl = n; } else n.removeAttribute('aria-current');
+    if (on) n.setAttribute('aria-current', 'page'); else n.removeAttribute('aria-current');
   });
-  // Página dentro de um grupo fechado: abre o grupo (sem salvar a preferência).
-  const g = activeEl?.closest('.sb-group[data-group]');
-  if (g && !g.classList.contains('is-open')) {
-    g.classList.add('is-open');
-    g.querySelector('.sb-group-head')?.setAttribute('aria-expanded', 'true');
+  // Perfil, Personalizar menu ou tela que não está no menu: acende a engrenagem.
+  const cfg = !found && (target === 'menu' || target === 'profile' || !!_navItem(target));
+  document.getElementById('sb-gear')?.classList.toggle('active', !!cfg);
+}
+
+/* Menu da engrenagem (abre pra cima; com a barra recolhida, pro lado). */
+function toggleSbSettingsMenu(ev) {
+  ev?.stopPropagation();
+  if (document.getElementById('sb-settings-menu')) { closeSbSettingsMenu(); return; }
+  const gear = document.getElementById('sb-gear');
+  const menu = document.createElement('div');
+  menu.id = 'sb-settings-menu';
+  menu.className = 'sb-pop';
+  menu.setAttribute('role', 'menu');
+  menu.innerHTML = `
+    ${me?.isFreelancer && !me.isAdmin && !me.isModerator ? '' : `<a role="menuitem" class="sb-pop-item" href="/menu" onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); closeSbSettingsMenu(); goPage('menu')"><i data-lucide="sliders-horizontal"></i>Personalizar menu</a>`}
+    <a role="menuitem" class="sb-pop-item" href="/profile" onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); closeSbSettingsMenu(); goPage('profile')"><i data-lucide="user-cog"></i>Configurações</a>`;
+  // No body (o nav rola e cortaria o menu), preso à engrenagem.
+  document.body.appendChild(menu);
+  const r = gear.getBoundingClientRect();
+  const row = gear.closest('.sb-bottom-row').getBoundingClientRect();
+  if (document.body.classList.contains('sidebar-collapsed') && window.innerWidth > 880) {
+    menu.style.left = (document.querySelector('.sidebar').getBoundingClientRect().right + 8) + 'px';
+    menu.style.bottom = (window.innerHeight - r.bottom) + 'px';
+  } else {
+    menu.style.left = row.left + 'px';
+    menu.style.width = row.width + 'px';
+    menu.style.bottom = (window.innerHeight - row.top + 6) + 'px';
   }
+  gear.setAttribute('aria-expanded', 'true');
+  _hideSbTip();
+  paintIcons(menu);
+  menu.querySelector('.sb-pop-item')?.focus();
+}
+function closeSbSettingsMenu() {
+  document.getElementById('sb-settings-menu')?.remove();
+  document.getElementById('sb-gear')?.setAttribute('aria-expanded', 'false');
+}
+document.addEventListener('click', e => {
+  if (!e.target.closest?.('#sb-settings-menu, #sb-gear')) closeSbSettingsMenu();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && document.getElementById('sb-settings-menu')) { closeSbSettingsMenu(); document.getElementById('sb-gear')?.focus(); }
+});
+window.addEventListener('resize', () => closeSbSettingsMenu());
+
+/* Tela Personalizar menu (/menu): à esquerda o menu da pessoa na ordem
+   (arrasta pra ordenar), à direita todos os acessos com o interruptor
+   "no menu". Cada mudança salva sozinha em me.navMenu (null = padrão). */
+const MENU_SECTIONS = [
+  { sec: 'work', title: 'Trabalho' },
+  { sec: 'insight', title: 'Análise' },
+  { sec: 'content', title: 'Conteúdo' },
+  { sec: 'ops', title: 'Operação' },
+  { sec: 'admin', title: 'Administração' },
+];
+let _navSaveTimer = null;
+function _setNavMenu(pages) {
+  const def = NAV_DEFAULT.filter(p => _navAllowed(_navItem(p)));
+  const isDefault = pages.length === def.length && pages.every((p, i) => p === def[i]);
+  me.navMenu = isDefault ? null : pages;
+  renderSidebarNav();
+  if (currentPage === 'menu') renderMenuPage();
+  clearTimeout(_navSaveTimer);
+  _navSaveTimer = setTimeout(async () => {
+    try {
+      await api('/me', 'PUT', { navMenu: me.navMenu });
+      const el = document.getElementById('menu-saved');
+      if (el) { el.classList.add('is-on'); clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove('is-on'), 1600); }
+    } catch (e) { toast(e.message, 'error'); }
+  }, 350);
+}
+function toggleNavMenuItem(page, on) {
+  const pages = _navMenuPages().filter(p => p !== page);
+  if (on) pages.push(page);
+  _setNavMenu(pages);
+}
+function resetNavMenu() { _setNavMenu(NAV_DEFAULT.filter(p => _navAllowed(_navItem(p)))); }
+function renderMenuPage() {
+  const list = document.getElementById('menu-order');
+  const groups = document.getElementById('menu-groups');
+  if (!list || !groups) return;
+  const pages = _navMenuPages();
+  list.innerHTML = pages.map((page, i) => {
+    const it = _navItem(page);
+    return `<li class="nm-row" data-page="${page}" draggable="true" ondragstart="nmDragStart(event)" ondragover="nmDragOver(event)" ondragend="nmDragEnd()">
+      <button type="button" class="nm-handle" aria-label="Mover ${esc(it.label)} (setas para cima e para baixo)" onkeydown="nmKeyMove(event, ${i})"><i data-lucide="grip-vertical"></i></button>
+      <i data-lucide="${it.icon}" class="nm-ic"></i>
+      <span class="nm-label">${esc(it.label)}</span>
+      <button type="button" class="nm-remove" onclick="toggleNavMenuItem('${page}', false)" aria-label="Tirar ${esc(it.label)} do menu" data-rx-tip="Tirar do menu"><i data-lucide="x"></i></button>
+    </li>`;
+  }).join('') + (pages.length ? '' : '<li class="nm-empty">Nenhum item. Ligue os acessos ao lado.</li>')
+    + `<li class="nm-row is-fixed"><span class="nm-handle" aria-hidden="true"></span><i data-lucide="${NAV_DOCS.icon}" class="nm-ic"></i><span class="nm-label">${NAV_DOCS.label}</span><span class="nm-fixed">fixo</span></li>`;
+  const inMenu = new Set(pages);
+  groups.innerHTML = MENU_SECTIONS.map(g => {
+    const items = NAV_CATALOG.filter(it => it.sec === g.sec && _navAllowed(it));
+    if (!items.length) return '';
+    return `<section class="st-group">
+      <h2 class="st-group-title">${esc(g.title)}</h2>
+      <div class="st-grid">
+        ${items.map(it => {
+          const on = inMenu.has(it.page);
+          return `<div class="st-card">
+            <a class="st-link" href="${PAGE_TO_PATH[it.page] || '/'}" onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); goPage('${it.page}')">
+              <span class="st-ic"><i data-lucide="${it.icon}"></i></span>
+              <span class="st-text"><span class="st-label">${esc(it.label)}</span><span class="st-desc">${esc(it.desc || '')}</span></span>
+            </a>
+            <label class="nm-switch st-switch" data-rx-tip="${on ? 'No menu' : 'Fora do menu'}">
+              <input type="checkbox" ${on ? 'checked' : ''} onchange="toggleNavMenuItem('${it.page}', this.checked)" aria-label="Mostrar ${esc(it.label)} no menu">
+              <span class="nm-track" aria-hidden="true"></span>
+            </label>
+          </div>`;
+        }).join('')}
+      </div>
+    </section>`;
+  }).join('');
+  paintIcons(list);
+  paintIcons(groups);
+}
+let _nmDragEl = null;
+function nmDragStart(e) {
+  _nmDragEl = e.currentTarget;
+  _nmDragEl.classList.add('is-dragging');
+  e.dataTransfer.effectAllowed = 'move';
+  try { e.dataTransfer.setData('text/plain', _nmDragEl.dataset.page); } catch {}
+}
+function nmDragOver(e) {
+  if (!_nmDragEl) return;
+  e.preventDefault();
+  const row = e.currentTarget;
+  if (row === _nmDragEl) return;
+  const r = row.getBoundingClientRect();
+  row.parentElement.insertBefore(_nmDragEl, e.clientY < r.top + r.height / 2 ? row : row.nextSibling);
+}
+function nmDragEnd() {
+  if (!_nmDragEl) return;
+  _nmDragEl.classList.remove('is-dragging');
+  _nmDragEl = null;
+  const pages = [...document.querySelectorAll('#menu-order .nm-row[data-page]')].map(r => r.dataset.page);
+  if (pages.join() !== _navMenuPages().join()) _setNavMenu(pages); else renderMenuPage();
+}
+function nmKeyMove(e, i) {
+  const dir = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0;
+  if (!dir) return;
+  e.preventDefault();
+  const pages = _navMenuPages();
+  const j = i + dir;
+  if (j < 0 || j >= pages.length) return;
+  [pages[i], pages[j]] = [pages[j], pages[i]];
+  _setNavMenu(pages);
+  document.querySelectorAll('#menu-order .nm-handle')[j]?.focus();
 }
 // Contador de Minhas Demandas: em aberto; vermelho quando alguma está atrasada.
 function renderNavCounts() {
@@ -5050,7 +5204,7 @@ const PAGE_TITLES = {
   recurring: 'Listas de tarefas', gallery: 'Galeria', help: 'Documentação', clientsModels: 'Modelos de Cliente',
   trash: 'Lixeira', recurringDemands: 'Demandas Recorrentes',
   devtools: 'Dev Tools', passwords: 'Cofre de Senhas', kb: 'Base de conhecimento',
-  forms: 'Formulários', dashboards: 'Dashboards', performance: 'Performance',
+  forms: 'Formulários', dashboards: 'Dashboards', performance: 'Performance', menu: 'Personalizar menu',
   'post-editor': 'Editor de post', 'demand-detail': 'Demanda',
   notfound: 'Página não encontrada'
 };
@@ -5530,6 +5684,7 @@ function renderCurrent() {
     case 'recurring':  renderRecurring(); break;
     case 'integrations': renderIntegrations(); setIntegrationsTab(_integrationsTab || 'discord'); break;
     case 'devtools':   renderDevTools(); break;
+    case 'menu':       renderMenuPage(); break;
     case 'passwords':  renderPasswords(); break;
     case 'kb':         renderKbFromRoute(); break;
     case 'forms':      renderForms(); break;

@@ -482,11 +482,15 @@ function publicUser(u, opts) {
   // Nunca expõe tokens do Google — refresh_token é credencial de longa duração.
   // Também remove knownIps e releaseNotesSeenIds (metadados internos, sem uso
   // no frontend). Devolve booleano + info da conta pra frontend saber que tá conectado.
-  // quickReplies (respostas prontas) são pessoais: só voltam pro próprio usuário.
+  // quickReplies (respostas prontas) e navMenu (menu lateral personalizado) são
+  // pessoais: só voltam pro próprio usuário.
   // reminders/demandSeen/timeGapDismissed: estado pessoal com rota própria.
-  const { googleTokens, googleSyncTokens, knownIps, releaseNotesSeenIds, quickReplies, reminders, demandSeen, timeGapDismissed, mentionDismissed, heldNotifs, ...rest } = u;
+  const { googleTokens, googleSyncTokens, knownIps, releaseNotesSeenIds, quickReplies, reminders, demandSeen, timeGapDismissed, mentionDismissed, heldNotifs, navMenu, ...rest } = u;
   rest.googleConnected = !!googleTokens;
-  if (opts && opts.self) rest.quickReplies = Array.isArray(quickReplies) ? quickReplies : null;
+  if (opts && opts.self) {
+    rest.quickReplies = Array.isArray(quickReplies) ? quickReplies : null;
+    rest.navMenu = Array.isArray(navMenu) ? navMenu : null;
+  }
   return rest;
 }
 function sanitizeDiscordId(raw) {
@@ -2219,7 +2223,7 @@ app.get('/api/me', requireAuth, (req, res) => {
 });
 
 app.put('/api/me', requireAuth, (req, res) => {
-  const { name, role, avatar, currentPassword, newPassword, username, discordId, email, emailPrefs, discord, phone, discordPrefs, quickReplies, accentTheme, away, status, digestSchedule } = req.body || {};
+  const { name, role, avatar, currentPassword, newPassword, username, discordId, email, emailPrefs, discord, phone, discordPrefs, quickReplies, accentTheme, away, status, digestSchedule, navMenu } = req.body || {};
   const u = req.user;
   if (typeof name === 'string' && name.trim()) u.name = name.trim();
   if (typeof role === 'string') u.role = role.trim();
@@ -2364,6 +2368,13 @@ app.put('/api/me', requireAuth, (req, res) => {
   if (quickReplies !== undefined) {
     u.quickReplies = Array.isArray(quickReplies)
       ? quickReplies.map(t => String(t || '').trim().slice(0, 500)).filter(Boolean).slice(0, 30)
+      : null;
+  }
+  // Menu lateral personalizado: chaves de página, na ordem (null = menu padrão).
+  // O cliente ignora chaves que não conhece ou que a pessoa não pode ver.
+  if (navMenu !== undefined) {
+    u.navMenu = Array.isArray(navMenu)
+      ? [...new Set(navMenu.map(String))].filter(k => /^[a-zA-Z]{1,40}$/.test(k)).slice(0, 40)
       : null;
   }
   saveEntity('users', u);

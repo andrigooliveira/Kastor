@@ -1,5 +1,20 @@
 [
   {
+    "id": "2026-09-24-menu-lateral",
+    "date": "2026-09-24",
+    "highlight": true,
+    "title": "Menu lateral novo, do seu jeito",
+    "highlights": [
+      "O menu lateral ficou mais enxuto e mostra só o que se usa no dia a dia: Início, Minhas Demandas, Demandas, Agenda, Clientes, Dashboards, Análises, Performance, Galeria e Base de conhecimento.",
+      "Agora você monta o seu menu: clique na engrenagem ao lado de Documentação, no pé do menu, e escolha Personalizar menu. Ligue o que quer ver, desligue o que não usa e arraste os itens para mudar a ordem.",
+      "Nada sumiu: Fluxos, Formulários, Templates, Usuários e as outras telas estão todas em Personalizar menu, com uma breve descrição. Se você usa alguma com frequência, é só ligar para ela aparecer no menu.",
+      "Sua escolha fica salva na sua conta e vale em qualquer computador. Mudou de ideia? Use Restaurar padrão.",
+      "Na mesma engrenagem, Configurações abre o seu perfil. Clicar no seu nome continua servindo para definir o seu status.",
+      "Minhas Demandas mostra quantas estão em aberto, e o número fica vermelho quando alguma está atrasada.",
+      "A busca fica no topo do menu, logo abaixo do squad. Para ganhar espaço na tela, recolha o menu pela seta dupla no canto de baixo e fiquem só os ícones."
+    ]
+  },
+  {
     "id": "2026-09-22-sugestoes-fluxo-comentarios",
     "date": "2026-09-22",
     "title": "Sugestão de fluxo na criação de demandas e comentários que se completam sozinhos",

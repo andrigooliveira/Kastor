@@ -266,8 +266,10 @@ Bordas são raras. Onde existem, usam `--border` (dim de `--surface-3`) e são d
 
 ### Navigation (Sidebar)
 
-- **Estrutura:** logo + botão de recolher · seletor de squad (inicial colorida + nome) · "Buscar" (abre a paleta, Ctrl K) · grupos · rodapé com a pessoa (abre o menu de status), Documentação e tema. Itens vêm de `SB_NAV` em `app.js` (`renderSidebarNav`), como `<a href>` reais.
-- **Grupos:** o primeiro (Início, Minhas Demandas, Demandas, Agenda) não tem título. Análise, Estrutura e Configurações têm título 10px uppercase e abrem/fecham (preferência por pessoa; Configurações começa fechado). O grupo da página ativa abre sozinho.
+- **Estrutura:** logo · seletor de squad (inicial colorida + nome) · "Buscar" (abre a paleta, Ctrl K) · itens · Documentação + engrenagem · rodapé com a pessoa (abre o menu de status), tema e recolher. Renderizado por `renderSidebarNav` em `app.js`, como `<a href>` reais.
+- **Menu padrão** (`NAV_DEFAULT`): Início, Minhas Demandas, Demandas, Agenda, Clientes · Dashboards, Análises, Performance · Galeria, Base de conhecimento. Itens seguidos da mesma seção (`sec` em `NAV_CATALOG`) formam um bloco; o espaço entre blocos substitui títulos.
+- **Personalizar menu** (`/menu`, `renderMenuPage`): à esquerda "Seu menu" na ordem (arrastar ou setas na alça; x tira), à direita todos os acessos que a pessoa pode ver, em cartões por seção com interruptor "no menu". Cada mudança salva sozinha em `me.navMenu` no servidor (`null` = padrão).
+- **Pé fixo:** Documentação sempre visível; ao lado, a engrenagem discreta abre "Personalizar menu" e "Configurações" (o perfil). A engrenagem acende no perfil, no Personalizar menu e em telas que não estão no menu.
 - **Item:** 34px de altura, ícone lucide 16px, label 13px weight 500, texto `--text-dim`, ícone `--text-muted`. Hover: fundo `--surface-2`.
 - **Item ativo:** fundo `--accent-dim`, texto `--accent-text` weight 600, ícone `--accent`, barra de 3px em `--accent` na borda esquerda.
 - **Contador:** Minhas Demandas mostra o total em aberto; fica vermelho quando há atrasada (recolhida: só o ponto vermelho).

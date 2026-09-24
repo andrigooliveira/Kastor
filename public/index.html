@@ -2618,6 +2618,25 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
     </div>
 
     <!-- ── DEV TOOLS (admin) — hub de links pra rotas sem entrada no menu ── -->
+    <!-- ── PERSONALIZAR MENU ── menu da barra + todos os acessos (renderMenuPage) -->
+    <div class="page" id="page-menu">
+      <div class="page-body">
+        <div class="st-head">
+          <p class="st-intro">Escolha o que aparece na barra lateral. Tudo que não estiver lá continua aqui.</p>
+          <span class="menu-saved" id="menu-saved" aria-live="polite"><i data-lucide="check" class="ic-xs"></i> Salvo</span>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="resetNavMenu()"><i data-lucide="rotate-ccw" class="ic-sm"></i> Restaurar padrão</button>
+        </div>
+        <div class="menu-layout">
+          <aside class="menu-preview" aria-label="Seu menu">
+            <h2 class="st-group-title">Seu menu</h2>
+            <p class="menu-preview-hint">Arraste para mudar a ordem.</p>
+            <ul class="nm-list" id="menu-order"></ul>
+          </aside>
+          <div class="menu-groups" id="menu-groups"></div>
+        </div>
+      </div>
+    </div>
+
     <div class="page" id="page-devtools">
       <div class="page-body">
         <div class="section-head" style="margin-bottom:8px">
@@ -4440,7 +4459,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260924sidebar9" defer></script>
+<script src="/js/boot.js?v=20260924sidebar16" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
