@@ -7,6 +7,8 @@
      - Tabela `notifications` é dedicada (escrita frequente, busca por usuário).
      - Tabela `password_resets` separada por mesmo motivo.
      - Tabela `kv` pra flags simples (versão de schema, install:completed, etc.).
+     - Tabelas `auth_*` guardam senhas (cifradas), sessões (só o hash do
+       token) e chaves de acesso (WebAuthn). Antes viviam em data/auth.enc.
 
    Por que assim e não tabelas por entidade?
      - Schema permanece flexível enquanto o código ainda evolui.
@@ -31,7 +33,16 @@ const ENTITY_TYPES = [
   // guarda { id, workspaceId, title, icon, ownerId, permissions[], content (PM JSON),
   // updatedAt, createdAt, archived, deletedAt }. Conteúdo colaborativo (Yjs
   // binary) virá em tabela dedicada quando entrar Fase 2 — por ora JSON serve.
-  'writerDocuments'
+  'writerDocuments',
+  // Convites por e-mail: { id, email, name, kind, role, position, workspaces[],
+  // tokenHash, tokenEnc, invitedBy, expiresAt, acceptedAt, revokedAt, ... }.
+  'invites',
+  // reWork Console (platform-console.js): superadmins da plataforma, pedidos
+  // da lista de espera e o registro de ações do console.
+  'platformAdmins', 'accessRequests', 'platformAudit',
+  // Organizações (tenancy.js): a organização e o vínculo pessoa ↔ organização
+  // (nível de permissão, squads, área e cargo naquela organização).
+  'organizations', 'memberships'
 ];
 
 function createStore(config = {}) {
@@ -89,6 +100,32 @@ function createStore(config = {}) {
       CREATE TABLE IF NOT EXISTS kv (
         k TEXT PRIMARY KEY,
         v TEXT
+      );
+
+      /* Credenciais e sessões (secure-store.js mantém tudo em memória e
+         grava aqui). secret = {salt, hash} cifrado com a chave mestra, então
+         um vazamento só do banco não expõe nem os hashes. Sessão guarda só o
+         SHA-256 do token — o token em si vive apenas no cookie. */
+      CREATE TABLE IF NOT EXISTS auth_credentials (
+        user_id     TEXT   PRIMARY KEY,
+        secret      TEXT   NOT NULL,
+        updated_at  BIGINT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS auth_sessions (
+        token_hash    TEXT   PRIMARY KEY,
+        user_id       TEXT   NOT NULL,
+        created_at    BIGINT NOT NULL,
+        expires_at    BIGINT,
+        last_seen_at  BIGINT,
+        data          JSONB  NOT NULL DEFAULT '{}'::jsonb
+      );
+      CREATE INDEX IF NOT EXISTS idx_auth_sessions_user
+        ON auth_sessions (user_id);
+      CREATE TABLE IF NOT EXISTS auth_webauthn (
+        user_id        TEXT  NOT NULL,
+        credential_id  TEXT  NOT NULL,
+        data           JSONB NOT NULL,
+        PRIMARY KEY (user_id, credential_id)
       );
 
       /* Snapshots diários de marketing por (client, platform, campaign, date).
@@ -355,6 +392,56 @@ function createStore(config = {}) {
     );
   }
 
+  // ── CREDENCIAIS / SESSÕES (secure-store.js) ──
+  async function authLoadAll() {
+    const [c, s, w] = await Promise.all([
+      pool.query('SELECT user_id, secret FROM auth_credentials'),
+      pool.query('SELECT token_hash, user_id, created_at, expires_at, last_seen_at, data FROM auth_sessions'),
+      pool.query('SELECT user_id, credential_id, data FROM auth_webauthn')
+    ]);
+    return { credentials: c.rows, sessions: s.rows, webauthn: w.rows };
+  }
+  async function authUpsertCredential(userId, secret, client) {
+    await (client || pool).query(
+      `INSERT INTO auth_credentials (user_id, secret, updated_at) VALUES ($1, $2, $3)
+       ON CONFLICT (user_id) DO UPDATE SET secret = EXCLUDED.secret, updated_at = EXCLUDED.updated_at`,
+      [userId, secret, Date.now()]
+    );
+  }
+  async function authDeleteCredential(userId) {
+    await pool.query('DELETE FROM auth_credentials WHERE user_id = $1', [userId]);
+  }
+  async function authUpsertSession(rec, client) {
+    await (client || pool).query(
+      `INSERT INTO auth_sessions (token_hash, user_id, created_at, expires_at, last_seen_at, data)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+       ON CONFLICT (token_hash) DO UPDATE
+         SET expires_at = EXCLUDED.expires_at, last_seen_at = EXCLUDED.last_seen_at, data = EXCLUDED.data`,
+      [rec.tokenHash, rec.userId, rec.createdAt, rec.expiresAt || null, rec.lastSeenAt || null, JSON.stringify(rec.data || {})]
+    );
+  }
+  async function authDeleteSession(tokenHash) {
+    await pool.query('DELETE FROM auth_sessions WHERE token_hash = $1', [tokenHash]);
+  }
+  async function authDeleteSessionsForUser(userId, exceptHash) {
+    if (exceptHash) await pool.query('DELETE FROM auth_sessions WHERE user_id = $1 AND token_hash <> $2', [userId, exceptHash]);
+    else await pool.query('DELETE FROM auth_sessions WHERE user_id = $1', [userId]);
+  }
+  async function authDeleteExpiredSessions(now) {
+    await pool.query('DELETE FROM auth_sessions WHERE expires_at IS NOT NULL AND expires_at <= $1', [now]);
+  }
+  async function authUpsertWebauthn(userId, credentialId, data, client) {
+    await (client || pool).query(
+      `INSERT INTO auth_webauthn (user_id, credential_id, data) VALUES ($1, $2, $3::jsonb)
+       ON CONFLICT (user_id, credential_id) DO UPDATE SET data = EXCLUDED.data`,
+      [userId, credentialId, JSON.stringify(data)]
+    );
+  }
+  async function authDeleteWebauthn(userId, credentialId) {
+    if (credentialId == null) await pool.query('DELETE FROM auth_webauthn WHERE user_id = $1', [userId]);
+    else await pool.query('DELETE FROM auth_webauthn WHERE user_id = $1 AND credential_id = $2', [userId, credentialId]);
+  }
+
   async function ping() { await pool.query('SELECT 1'); }
   async function close() { await pool.end(); }
 
@@ -466,6 +553,9 @@ function createStore(config = {}) {
     markAllNotificationsReadFor, deleteAllNotificationsFor, trimNotificationsFor,
     insertReset, getReset, markResetUsed, cleanupResets,
     getKv, setKv,
+    authLoadAll, authUpsertCredential, authDeleteCredential,
+    authUpsertSession, authDeleteSession, authDeleteSessionsForUser, authDeleteExpiredSessions,
+    authUpsertWebauthn, authDeleteWebauthn,
     upsertMarketingSnapshots, listMarketingSnapshots,
     ping, close,
     _pool: pool // exposto pra inspeção em testes

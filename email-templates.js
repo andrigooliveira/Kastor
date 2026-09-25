@@ -352,6 +352,117 @@ ${button(link, 'Criar nova senha')}
   return { subject, html, text };
 }
 
+/* Convite pra entrar no reWork. `inviter` = quem convidou; `access` = rótulo
+   do nível (Equipe, Moderador…); `squads` = nomes dos squads liberados. */
+function invite({ name, inviter, org, access, squads, link, expiresAt, baseUrl, isOwner }) {
+  const who = inviter || 'A equipe';
+  if (isOwner) return ownerInvite({ name, org, link, expiresAt, baseUrl });
+  const subject = org ? `${who} convidou você para a ${org} no reWork` : `${who} convidou você para o reWork`;
+  const hello = name ? `Olá, ${strong(firstName(name))}. ` : 'Olá! ';
+  const squadList = Array.isArray(squads) && squads.length ? squads : [];
+  const details = [
+    access ? `Acesso: ${strong(access)}` : '',
+    squadList.length ? `${squadList.length > 1 ? 'Squads' : 'Squad'}: ${squadList.map(n => strong(n)).join(', ')}` : ''
+  ].filter(Boolean).join('<br>');
+  const days = expiresAt ? Math.max(1, Math.round((Date.parse(expiresAt) - Date.now()) / 864e5)) : 7;
+  const content = `${chip('Convite', 'roxo')}
+${headline('Você foi convidado para o reWork')}
+${paragraph(`${hello}${strong(who)} chamou você para a equipe${org ? ` ${strong(org)}` : ''} no reWork, onde ficam as demandas, os prazos e as entregas do time.`)}
+${details ? paragraph(details, 14) : ''}
+${button(link, 'Aceitar convite')}
+<p class="rw-baixa" style="margin:24px 0 0;font-size:12px;line-height:1.6;color:${T.baixa}">O convite vale por <strong>${days} ${days === 1 ? 'dia' : 'dias'}</strong>. Você cria sua senha ao aceitar. Se não esperava este e-mail, pode ignorar.</p>
+<p class="rw-baixa" style="margin:12px 0 0;font-size:11px;line-height:1.5;color:${T.baixa};word-break:break-all">${escHtml(link)}</p>`;
+  const html = layout({ subject, preheader: `${who} chamou você para a equipe.`, content, baseUrl, footer: 'Este e-mail foi enviado porque alguém da equipe convidou este endereço para o reWork.' });
+  const text = `${name ? `Olá ${name}! ` : 'Olá! '}${who} convidou você para o reWork.\n\nAceite o convite e crie sua senha por este link (vale por ${days} dias):\n\n${link}\n\nSe não esperava este e-mail, pode ignorar.`;
+  return { subject, html, text };
+}
+
+/* Lista de espera: confirmação pra quem pediu acesso. */
+const TEAM_SIZE_LABEL = { '1-5': '1 a 5 pessoas', '6-15': '6 a 15 pessoas', '16-50': '16 a 50 pessoas', '51-200': '51 a 200 pessoas', '200+': 'Mais de 200 pessoas' };
+function accessRequestReceived({ name, company, baseUrl }) {
+  const subject = 'Recebemos seu pedido de acesso ao reWork';
+  const content = `${chip('Lista de espera', 'roxo')}
+${headline('Seu pedido chegou')}
+${paragraph(`Olá, ${strong(firstName(name))}! Recebemos o pedido de acesso ao reWork para ${strong(company)}.`)}
+${paragraph('Estamos abrindo o reWork aos poucos, para acompanhar de perto cada equipe que entra. Vamos analisar seu pedido e responder neste e-mail.', 8)}`;
+  const html = layout({ subject, preheader: 'Vamos analisar e responder neste e-mail.', content, baseUrl, footer: 'Você recebeu este e-mail porque pediu acesso ao reWork.' });
+  const text = `Olá ${name}! Recebemos o pedido de acesso ao reWork para ${company}. Vamos analisar e responder neste e-mail.`;
+  return { subject, html, text };
+}
+
+/* Lista de espera: aviso pros superadmins do console. */
+function accessRequestNew({ request, consoleUrl, baseUrl }) {
+  const r = request || {};
+  const subject = `[reWork Console] Novo pedido de acesso: ${r.company}`;
+  const rows = [
+    ['Nome', r.name], ['E-mail', r.email], ['Empresa', r.company],
+    ['Equipe', TEAM_SIZE_LABEL[r.teamSize] || r.teamSize], ['Cargo', r.role], ['Telefone', r.phone], ['Site', r.website]
+  ].filter(([, v]) => v).map(([k, v]) => `${escHtml(k)}: ${strong(v)}`).join('<br>');
+  const content = `${chip('Lista de espera', 'roxo')}
+${headline('Novo pedido de acesso')}
+${paragraph(rows)}
+${r.message ? paragraph(`“${escHtml(r.message)}”`, 14) : ''}
+${button(consoleUrl, 'Abrir no console')}`;
+  const html = layout({ subject, preheader: `${r.name} · ${r.company}`, content, baseUrl, footer: 'Aviso do reWork Console para superadmins da plataforma.' });
+  const text = `Novo pedido de acesso ao reWork\n\n${r.name} <${r.email}>\n${r.company} · ${TEAM_SIZE_LABEL[r.teamSize] || r.teamSize}\n\n${r.message || ''}\n\n${consoleUrl}`;
+  return { subject, html, text };
+}
+
+/* Convite pra ser superadmin do console. */
+function consoleAdminInvite({ name, inviter, link, baseUrl }) {
+  const subject = 'Seu acesso ao reWork Console';
+  const content = `${chip('Console', 'neutro')}
+${headline('Você agora é superadmin')}
+${paragraph(`Olá, ${strong(firstName(name))}. ${strong(inviter || 'Um superadmin')} deu a você acesso ao reWork Console, o painel da plataforma.`)}
+${paragraph('Crie sua senha e cadastre um app autenticador (Google Authenticator, Authy, 1Password) — ele gera o código pedido em cada entrada.', 8)}
+${button(link, 'Ativar meu acesso')}
+<p class="rw-baixa" style="margin:24px 0 0;font-size:12px;line-height:1.6;color:${T.baixa}">O link vale por <strong>48 horas</strong> e só pode ser usado uma vez.</p>`;
+  const html = layout({ subject, preheader: 'O link vale por 48 horas.', content, baseUrl, footer: 'Este e-mail foi enviado por um superadmin do reWork Console.' });
+  const text = `Olá ${name}! ${inviter || 'Um superadmin'} deu a você acesso ao reWork Console. Ative em até 48h:\n\n${link}`;
+  return { subject, html, text };
+}
+
+/* Console: redefinir a senha (o código do app continua sendo pedido). */
+function consoleResetPassword({ name, link, baseUrl }) {
+  const subject = '[reWork Console] Redefinir sua senha';
+  const content = `${chip('Console', 'neutro')}
+${headline('Redefinir a senha do console')}
+${paragraph(`Olá, ${strong(firstName(name))}. Recebemos um pedido para redefinir a senha do seu acesso ao reWork Console.`)}
+${button(link, 'Criar nova senha')}
+<p class="rw-baixa" style="margin:24px 0 0;font-size:12px;line-height:1.6;color:${T.baixa}">O link vale por <strong>1 hora</strong>. Na próxima entrada o console continua pedindo o código do app autenticador. Se não foi você, ignore este e-mail.</p>`;
+  const html = layout({ subject, preheader: 'O link vale por 1 hora.', content, baseUrl, footer: 'Aviso de segurança do reWork Console.' });
+  const text = `Olá ${name}, redefina a senha do reWork Console em até 1h:\n\n${link}\n\nSe não foi você, ignore.`;
+  return { subject, html, text };
+}
+
+/* Console: aviso aos outros superadmins de que houve recuperação pelo servidor. */
+function consoleRecoveryNotice({ name, email, baseUrl }) {
+  const subject = '[reWork Console] Acesso recuperado pelo servidor';
+  const content = `${chip('Segurança', 'neutro')}
+${headline('Um acesso foi recuperado pelo servidor')}
+${paragraph(`O acesso de ${strong(name)} (${escHtml(email)}) ao reWork Console foi redefinido usando a recuperação pelo servidor (CONSOLE_RECOVERY_TOKEN).`)}
+${paragraph('Se isso não era esperado, confira a Auditoria do console e troque o valor da variável no servidor.', 8)}`;
+  const html = layout({ subject, preheader: `${name} teve o acesso redefinido.`, content, baseUrl, footer: 'Aviso de segurança do reWork Console.' });
+  const text = `O acesso de ${name} (${email}) ao reWork Console foi redefinido pela recuperação do servidor. Se não era esperado, confira a Auditoria.`;
+  return { subject, html, text };
+}
+
+/* Convite pro dono de uma organização nova (pedido aprovado na lista de espera). */
+function ownerInvite({ name, org, link, expiresAt, baseUrl }) {
+  const subject = `Sua organização ${org || ''} no reWork está pronta`.replace(/\s+/g, ' ');
+  const days = expiresAt ? Math.max(1, Math.round((Date.parse(expiresAt) - Date.now()) / 864e5)) : 7;
+  const content = `${chip('Acesso liberado', 'roxo')}
+${headline('Seu acesso ao reWork foi aprovado')}
+${paragraph(`${name ? `Olá, ${strong(firstName(name))}! ` : 'Olá! '}O pedido de acesso${org ? ` da ${strong(org)}` : ''} foi aprovado. A organização já está criada e você é o dono dela.`)}
+${paragraph('Crie sua conta pelo botão abaixo. Depois é só convidar a equipe, criar os squads e cadastrar os clientes.', 8)}
+${button(link, 'Criar minha conta')}
+<p class="rw-baixa" style="margin:24px 0 0;font-size:12px;line-height:1.6;color:${T.baixa}">O link vale por <strong>${days} ${days === 1 ? 'dia' : 'dias'}</strong>. Se já tem conta no reWork, é só confirmar sua senha.</p>
+<p class="rw-baixa" style="margin:12px 0 0;font-size:11px;line-height:1.5;color:${T.baixa};word-break:break-all">${escHtml(link)}</p>`;
+  const html = layout({ subject, preheader: 'A organização já está criada. Falta só você.', content, baseUrl, footer: 'Você recebeu este e-mail porque pediu acesso ao reWork.' });
+  const text = `${name ? `Olá ${name}! ` : ''}O pedido de acesso${org ? ` da ${org}` : ''} ao reWork foi aprovado. Crie sua conta (link vale ${days} dias):\n\n${link}`;
+  return { subject, html, text };
+}
+
 function testEmail({ name, baseUrl }) {
   const subject = '[reWork] Teste de notificação por e-mail';
   const content = `${chip('Tudo certo', 'roxo')}
@@ -406,8 +517,14 @@ function previewSamples(baseUrl, me) {
       ],
     }) },
     { key: 'reset', label: 'Redefinir senha', build: () => resetPassword({ name, link: `${url}/reset/exemplo-de-token-0000`, baseUrl: url }) },
+    { key: 'invite', label: 'Convite para a equipe', build: () => invite({ name: 'Carla Menezes', inviter: name, access: 'Equipe', squads: ['Imob', 'Performance'], link: `${url}/convite/exemplo-de-token-0000`, expiresAt: new Date(Date.now() + 7 * 864e5).toISOString(), baseUrl: url }) },
+    { key: 'access_received', label: 'Lista de espera: pedido recebido', build: () => accessRequestReceived({ name: 'Paula Reis', company: 'Agência Norte', baseUrl: url }) },
+    { key: 'access_new', label: 'Lista de espera: aviso ao console', build: () => accessRequestNew({ request: { name: 'Paula Reis', email: 'paula@agencianorte.com', company: 'Agência Norte', teamSize: '6-15', role: 'Diretora de operações', message: 'Hoje controlamos tudo em planilha e queremos organizar as demandas por cliente.' }, consoleUrl: `${url}/console/lista-de-espera`, baseUrl: url }) },
+    { key: 'console_invite', label: 'Convite de superadmin', build: () => consoleAdminInvite({ name: 'Vinicius Ricarte', inviter: name, link: `${url}/console/ativar/exemplo-0000`, baseUrl: url }) },
+    { key: 'console_reset', label: 'Console: redefinir senha', build: () => consoleResetPassword({ name, link: `${url}/console/redefinir/exemplo-0000`, baseUrl: url }) },
+    { key: 'console_recovery', label: 'Console: recuperação pelo servidor', build: () => consoleRecoveryNotice({ name: 'Vinicius Ricarte', email: 'vinicius@exemplo.com', baseUrl: url }) },
     { key: 'test', label: 'Teste de e-mail (perfil)', build: () => testEmail({ name, baseUrl: url }) },
   ];
 }
 
-module.exports = { escHtml, layout, notification, digest, heldSummary, resetPassword, testEmail, previewSamples };
+module.exports = { escHtml, layout, notification, digest, heldSummary, resetPassword, invite, accessRequestReceived, accessRequestNew, consoleAdminInvite, consoleResetPassword, consoleRecoveryNotice, testEmail, previewSamples };

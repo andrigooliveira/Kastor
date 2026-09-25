@@ -94,6 +94,7 @@ const PAGE_TO_PATH = {
   projects:     '/projects',
   flows:        '/flows',
   workspaces:   '/workspaces',
+  org:          '/organizacao',
   users:        '/users',
   integrations: '/integrations',
   profile:      '/profile',
@@ -278,6 +279,7 @@ function parseRoute(path) {
   // também; o applyRoute detecta e redireciona pra forma canônica.
   if ((m = p.match(/^\/flows\/([^/]+)$/)))                  return { page: 'flows',        view: 'client-flows', clientId: extractRouteId(m[1]) };
   if ((m = p.match(/^\/users\/new$/)))                      return { page: 'users',        modal: 'user',    op: 'new' };
+  if ((m = p.match(/^\/users\/invite$/)))                   return { page: 'users',        modal: 'user',    op: 'invite' };
   if ((m = p.match(/^\/users\/([^/]+)$/)))                  return { page: 'users',        modal: 'user',    op: 'edit', id: m[1] };
   if ((m = p.match(/^\/integrations\/webhooks\/new$/)))     return { page: 'integrations', modal: 'webhook', op: 'new' };
   if ((m = p.match(/^\/integrations\/webhooks\/([^/]+)$/))) return { page: 'integrations', modal: 'webhook', op: 'edit', id: m[1] };
@@ -352,7 +354,8 @@ function applyRoute() {
     } else if (r.modal === 'flow' && me?.isAdmin) {
       if (typeof openFlowModal === 'function') openFlowModal(r.op === 'edit' ? r.id : null);
     } else if (r.modal === 'user' && me?.isAdmin) {
-      if (typeof openUserModal === 'function') openUserModal(r.op === 'edit' ? r.id : null);
+      if (r.op === 'invite' && typeof openInviteModal === 'function') openInviteModal();
+      else if (typeof openUserModal === 'function') openUserModal(r.op === 'edit' ? r.id : null);
     } else if (r.modal === 'webhook' && me?.isAdmin) {
       if (typeof openWebhookModal === 'function') openWebhookModal(r.op === 'edit' ? r.id : null);
     } else if (r.modal === 'form' && me?.isAdmin) {
@@ -3499,6 +3502,8 @@ function showConfirm(opts) {
   const okBtn = $('confirm-ok-btn');
   okBtn.textContent = o.okLabel;
   okBtn.className = 'btn ' + (o.danger ? 'btn-danger' : 'btn-confirm');
+  const cancelBtn = $('confirm-cancel-btn');
+  if (cancelBtn) cancelBtn.textContent = o.cancelLabel;
   // Ícone tematizado: injeta antes da mensagem se ainda não existe
   const kind = o.kind || (o.danger ? 'danger' : 'info');
   const ICONS = {
@@ -4900,7 +4905,532 @@ async function refreshData() {
 }
 
 /* ─── WORKSPACE SWITCH ─── */
+/* ─── ORGANIZAÇÃO ───
+   Seletor no topo da barra lateral, sempre visível. O menu mostra a
+   organização atual, atalhos de gestão e, se a pessoa estiver em mais de uma,
+   as outras. Trocar recarrega o app na organização escolhida (a sessão guarda
+   a organização ativa). As configurações ficam na página /organizacao. */
+const ORG_ROLE_LABEL = { owner: 'Dono', admin: 'Administrador', mod: 'Moderador', equipe: 'Equipe', free: 'Freelancer' };
+/* Jornada da organização: cada dia da semana (0=dom … 6=sáb) com as horas
+   de trabalho e, na jornada personalizada, o término (o Fechamento do dia
+   aparece 1h antes). Usada na meta de horas do Início, na capacidade em
+   Análises e no Fechamento do dia. */
+function orgDailyHours() { return Number(me?.org?.settings?.dailyHours) || 8; }
+function orgSchedule() { return me?.org?.settings?.schedule || null; }
+function orgWeek() {
+  const sc = orgSchedule();
+  if (sc && Array.isArray(sc.week)) return sc.week;
+  const h = orgDailyHours();
+  return [1, 2, 3, 4, 5, 6, 0].map(day => ({ day, on: day >= 1 && day <= 5, hours: day >= 1 && day <= 5 ? h : 0 }));
+}
+function orgHoursFor(dow) { const d = orgWeek().find(x => x.day === dow); return d && d.on ? (Number(d.hours) || 0) : 0; }
+function orgWorkdays() { return orgWeek().filter(d => d.on).map(d => d.day); }
+function orgWeeklyHours() { return orgWeek().reduce((a, d) => a + (d.on ? (Number(d.hours) || 0) : 0), 0); }
+function orgClosingHour(dow = new Date().getDay()) {
+  const d = orgWeek().find(x => x.day === dow);
+  if (!d || !d.on || !d.end) return 17;
+  const [h, m] = String(d.end).split(':').map(Number);
+  return Math.max(0, h + m / 60 - 1);
+}
+/* 8 → "8", 8.5 → "8,5" (metas no Início) */
+const _goalH = (h) => String(Math.round(h * 10) / 10).replace('.', ',');
+const ORG_WEEKDAYS = [[1, 'Seg', 'Segunda'], [2, 'Ter', 'Terça'], [3, 'Qua', 'Quarta'], [4, 'Qui', 'Quinta'], [5, 'Sex', 'Sexta'], [6, 'Sáb', 'Sábado'], [0, 'Dom', 'Domingo']];
+function _orgInitials(name) {
+  return String(name || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
+}
+function _orgTile(org, cls, extra) {
+  const attrs = extra ? ' ' + extra : '';
+  if (org && org.logo) return `<span class="${cls} has-logo"${attrs} style="background-image:url('${esc(org.logo)}')"></span>`;
+  return `<span class="${cls}"${attrs}>${esc(_orgInitials(org?.name))}</span>`;
+}
+function _closeOrgMenu() {
+  const cdrop = $('org-cdrop');
+  if (cdrop) { cdrop.classList.remove('open'); _resetFilterCdropMenu(cdrop); }
+}
+const _canInvite = () => me.isAdmin || (me.isModerator && me.org?.settings?.modsCanInvite !== false);
+let _orgLoading = null;
+function renderOrgSwitch() {
+  const wrap = $('org-switch');
+  if (!wrap || !me) return;
+  if (!me.org || !Array.isArray(me.orgs)) {
+    // Login devolve o usuário sem a organização: busca uma vez.
+    if (!_orgLoading) _orgLoading = api('/orgs').then(r => {
+      me.orgs = r.items || [];
+      me.org = me.orgs.find(o => o.id === r.current) || me.orgs[0] || null;
+      renderOrgSwitch();
+    }).catch(() => {}).finally(() => { _orgLoading = null; });
+    return;
+  }
+  const org = me.org;
+  const tile = $('org-trigger-tile');
+  if (tile) tile.outerHTML = _orgTile(org, 'sb-org-tile', 'id="org-trigger-tile"');
+  $('org-trigger-label').textContent = org.name;
+  $('org-trigger-role').textContent = ORG_ROLE_LABEL[org.role] || '';
+  const menu = $('org-cdrop-menu');
+  if (!menu) return;
+  const people = users.filter(u => u.active !== false).length;
+  const others = me.orgs.filter(o => o.id !== org.id);
+  const action = (icon, label, fn) => `
+    <button type="button" class="orgmenu-action" onclick="${fn}">
+      <i data-lucide="${icon}" class="orgmenu-action-ic"></i>
+      <span class="orgmenu-action-label">${label}</span>
+    </button>`;
+  menu.innerHTML = `
+    <div class="orgmenu-current">
+      ${_orgTile(org, 'orgmenu-tile')}
+      <div class="orgmenu-current-text">
+        <div class="orgmenu-current-name">${esc(org.name)}</div>
+        <div class="orgmenu-current-meta">${esc(ORG_ROLE_LABEL[org.role] || '')}${people ? ` · ${people} ${people === 1 ? 'pessoa' : 'pessoas'}` : ''}</div>
+      </div>
+    </div>
+    <div class="orgmenu-group">
+      ${me.isOwner ? action('settings-2', 'Configurações da organização', "_closeOrgMenu();goPage('org')") : ''}
+      ${me.isAdmin ? action('users', 'Pessoas e permissões', "_closeOrgMenu();goPage('users')") : ''}
+      ${_canInvite() ? action('user-plus', 'Convidar pessoas', "_closeOrgMenu();goPage('users');setTimeout(openInviteModal,150)") : ''}
+    </div>
+    ${others.length ? `<div class="orgmenu-group">
+      <div class="orgmenu-label">Trocar de organização</div>
+      ${others.map(o => `
+        <button type="button" class="orgmenu-org" onclick="switchOrg('${esc(o.id)}')">
+          ${_orgTile(o, 'orgmenu-org-tile')}
+          <span class="orgmenu-org-name">${esc(o.name)}</span>
+          <span class="orgmenu-org-role">${esc(ORG_ROLE_LABEL[o.role] || '')}</span>
+        </button>`).join('')}
+    </div>` : ''}`;
+  paintIcons(menu);
+  paintIcons(wrap);
+}
+async function switchOrg(id) {
+  _closeOrgMenu();
+  if (!me?.org || id === me.org.id) return;
+  try {
+    await api('/orgs/switch', 'POST', { orgId: id });
+    // Squad ativo e filtros são da organização anterior.
+    try { localStorage.removeItem('fluxo_ws'); } catch {}
+    location.href = '/dashboard';
+  } catch (e) { toast(e.message, 'error'); }
+}
+function openOrgSettings() { _closeOrgMenu(); if (me?.isOwner) goPage('org'); }
+
+/* ─── PÁGINA: CONFIGURAÇÕES DA ORGANIZAÇÃO (/organizacao) ───
+   Seções por papel: todo mundo vê Geral e Jornada; admin/moderador veem
+   Pessoas, Squads e Integrações; admin exporta os dados; o dono muda nome e
+   logo e transfere. _orgDraft guarda o que foi editado e ainda não salvo. */
+let _orgDraft = null;
+function _orgFreshDraft() {
+  const org = me.org || {};
+  const sc = orgSchedule() || {};
+  const custom = sc.mode === 'custom';
+  // Dias sem horário (folga ou jornada simples) começam com o horário do
+  // primeiro dia ligado, ou 9h–18h com 1h de intervalo.
+  const firstOn = custom ? (sc.week || []).find(w => w.on && w.start) : null;
+  const base = firstOn ? { start: firstOn.start, end: firstOn.end, breakMinutes: firstOn.breakMinutes } : { start: '09:00', end: '18:00', breakMinutes: 60 };
+  const week = ORG_WEEKDAYS.map(([day]) => {
+    const w = (sc.week || []).find(x => x.day === day);
+    if (custom && w && w.on) return { day, on: true, start: w.start, end: w.end, breakMinutes: Number(w.breakMinutes) || 0 };
+    return { day, on: custom ? false : day >= 1 && day <= 5, ...base };
+  });
+  return {
+    name: org.name || '', logo: org.logo || null, transferOpen: false,
+    schedMode: custom ? 'custom' : 'simple',
+    dailyHours: custom ? (sc.simpleHours || 8) : orgDailyHours(),
+    week
+  };
+}
+function _orgMergeSaved(org) {
+  me.org = { ...me.org, ...org };
+  me.orgs = (me.orgs || []).map(o => o.id === org.id ? { ...o, ...org } : o);
+  renderOrgSwitch();
+}
+function renderOrgPage() {
+  const host = $('org-page-body');
+  if (!host || !me?.org) return;
+  if (!_orgDraft || _orgDraft.orgId !== me.org.id) _orgDraft = { ..._orgFreshDraft(), orgId: me.org.id };
+  const org = me.org, d = _orgDraft;
+  const owner = !!me.isOwner, admin = !!me.isAdmin, mod = !!me.isModerator;
+  const ownerUser = userById(org.ownerId);
+  const all = users;
+  const active = all.filter(u => u.active !== false);
+  const count = (role) => active.filter(u => u.orgRole === role).length;
+  const created = org.createdAt ? new Date(org.createdAt).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' }) : '—';
+  const st = org.settings || {};
+  const integ = org.integrations || {};
+  const identityDirty = owner && (d.name.trim() !== org.name || (d.logo || null) !== (org.logo || null));
+  const candidates = active.filter(u => u.id !== me.id && u.orgRole !== 'free').sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  const pendingInv = (invites || []).filter(i => i.status === 'pending').length;
+
+  const sections = [
+    { id: 'geral', label: 'Geral', icon: 'building-2', show: true },
+    { id: 'pessoas', label: 'Pessoas e acesso', icon: 'users', show: admin || mod },
+    { id: 'squads', label: 'Squads', icon: 'layers', show: admin || mod },
+    { id: 'jornada', label: 'Jornada de trabalho', icon: 'clock', show: true },
+    { id: 'integracoes', label: 'Integrações', icon: 'plug', show: admin || mod },
+    { id: 'dados', label: 'Dados', icon: 'database', show: admin },
+    { id: 'perigo', label: 'Zona de perigo', icon: 'triangle-alert', show: owner },
+  ].filter(x => x.show);
+
+  const head = (title, hint, extra) => `<header class="orgp-card-head"><div><h2 class="orgp-card-title">${title}</h2>${hint ? `<p class="orgp-card-hint">${hint}</p>` : ''}</div>${extra || ''}</header>`;
+  const stat = (label, value, tone) => `<div class="orgp-stat${tone ? ' is-' + tone : ''}"><div class="orgp-stat-value">${value}</div><div class="orgp-stat-label">${label}</div></div>`;
+  const integRow = (icon, name, on, onText, offText) => `<div class="orgp-integ">
+      <span class="orgp-integ-ic"><i data-lucide="${icon}" class="ic-sm"></i></span>
+      <span class="orgp-integ-name">${name}</span>
+      <span class="orgp-integ-status ${on ? 'is-on' : ''}"><i data-lucide="${on ? 'check' : 'minus'}" class="ic-xs"></i>${on ? onText : offText}</span>
+    </div>`;
+
+  const squadRows = (workspaces || []).slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name))).map(w => {
+    const ppl = active.filter(u => u.orgRole === 'owner' || u.orgRole === 'admin' || (u.workspaces || []).includes(w.id)).length;
+    const cl = clients.filter(c => c.workspaceId === w.id && c.active !== false && !c.deletedAt).length;
+    const open = demands.filter(x => x.workspaceId === w.id && !x.completedAt && !x.deletedAt).length;
+    return `<tr><td><span class="pill-dot" style="background:${esc(w.color || '#7A00FF')};margin-right:8px"></span>${esc(w.name)}</td><td class="num">${ppl}</td><td class="num">${cl}</td><td class="num">${open}</td></tr>`;
+  }).join('');
+
+  host.innerHTML = `<div class="orgp">
+    <nav class="orgp-nav" aria-label="Seções">
+      ${sections.map(x => `<a href="#orgp-${x.id}" class="orgp-nav-link" data-sec="orgp-${x.id}" onclick="event.preventDefault();_orgGoSection('orgp-${x.id}')"><i data-lucide="${x.icon}" class="ic-sm"></i>${x.label}</a>`).join('')}
+    </nav>
+    <div class="orgp-main">
+
+      <section class="orgp-card" id="orgp-geral">
+        ${head('Geral', owner ? 'Nome e logo aparecem no seletor da barra lateral e nos convites.' : 'Só o dono da organização muda o nome e o logo.')}
+        <div class="orgm-identity">
+          <div class="orgm-logo${owner ? ' is-editable' : ''}"${owner ? ` role="button" tabindex="0" title="Trocar logo" onclick="$('org-logo-file').click()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();$('org-logo-file').click()}"` : ''}>
+            ${_orgTile({ name: d.name || org.name, logo: d.logo }, 'orgm-logo-tile')}
+            ${owner ? `<span class="orgm-logo-overlay"><i data-lucide="camera" class="ic-sm"></i></span>` : ''}
+          </div>
+          <div class="orgm-identity-fields">
+            ${owner ? `
+              <label class="form-label" for="orgp-name">Nome da organização</label>
+              <input class="form-control" id="orgp-name" maxlength="80" value="${esc(d.name)}" oninput="_orgDraft.name=this.value;_orgIdentitySync()" onkeydown="if(event.key==='Enter'){event.preventDefault();saveOrgIdentity()}">
+              <div class="orgm-logo-actions">
+                <button class="btn btn-ghost btn-sm" type="button" onclick="$('org-logo-file').click()"><i data-lucide="upload" class="ic-sm"></i> ${d.logo ? 'Trocar logo' : 'Enviar logo'}</button>
+                ${d.logo ? `<button class="btn btn-ghost btn-sm" type="button" onclick="_orgDraft.logo=null;renderOrgPage()">Remover</button>` : ''}
+                <span class="orgm-logo-hint">Quadrado, PNG, JPG ou SVG, até 2 MB</span>
+              </div>
+              <input type="file" id="org-logo-file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden onchange="onOrgLogoPicked(event)">`
+            : `<div class="orgm-name-static">${esc(org.name)}</div>`}
+          </div>
+        </div>
+        <div class="orgm-facts orgp-facts">
+          <div class="orgm-fact"><span class="orgm-fact-k">Dono</span><span class="orgm-fact-v">${esc(ownerUser?.name || '—')}</span></div>
+          <div class="orgm-fact"><span class="orgm-fact-k">Seu acesso</span><span class="orgm-fact-v">${esc(ORG_ROLE_LABEL[org.role] || '')}</span></div>
+          <div class="orgm-fact"><span class="orgm-fact-k">Criada em</span><span class="orgm-fact-v">${esc(created)}</span></div>
+        </div>
+        ${owner ? `<footer class="orgp-card-foot"><button class="btn btn-confirm btn-sm" id="orgp-save-identity" onclick="saveOrgIdentity()" ${identityDirty && d.name.trim() ? '' : 'disabled'}>Salvar alterações</button></footer>` : ''}
+      </section>
+
+      ${admin || mod ? `<section class="orgp-card" id="orgp-pessoas">
+        ${head('Pessoas e acesso', `${active.length} ${active.length === 1 ? 'pessoa ativa' : 'pessoas ativas'}${pendingInv ? ` · ${pendingInv} ${pendingInv === 1 ? 'convite pendente' : 'convites pendentes'}` : ''}.`,
+          `<div class="orgp-head-actions">${_canInvite() ? `<button class="btn btn-ghost btn-sm" onclick="goPage('users');setTimeout(openInviteModal,150)"><i data-lucide="user-plus" class="ic-sm"></i> Convidar</button>` : ''}${admin ? `<button class="btn btn-ghost btn-sm" onclick="goPage('users')">Gerenciar pessoas</button>` : ''}</div>`)}
+        <div class="orgp-stats">
+          ${stat('Dono', count('owner'))}
+          ${stat('Administradores', count('admin'))}
+          ${stat('Moderadores', count('mod'))}
+          ${stat('Equipe', count('equipe'))}
+          ${stat('Freelancers', count('free'))}
+          ${stat('Desativados', all.length - active.length, 'muted')}
+        </div>
+        <div class="orgp-setting">
+          <div class="orgp-setting-text">
+            <div class="orgp-setting-title">Moderadores podem convidar pessoas</div>
+            <div class="orgp-setting-hint">Só como Equipe ou Freelancer, e só nos squads deles. Desligado, apenas administradores convidam.</div>
+          </div>
+          <label class="orgp-switch${admin ? '' : ' is-readonly'}">
+            <input type="checkbox" ${st.modsCanInvite !== false ? 'checked' : ''} ${admin ? '' : 'disabled'} onchange="saveOrgSetting({ modsCanInvite: this.checked })">
+            <span class="orgp-switch-track" aria-hidden="true"></span>
+          </label>
+        </div>
+      </section>
+
+      <section class="orgp-card" id="orgp-squads">
+        ${head('Squads', 'Cada squad tem seus clientes, projetos, fluxos e demandas. Quem vê cada squad é definido em Pessoas.',
+          admin ? `<div class="orgp-head-actions"><button class="btn btn-ghost btn-sm" onclick="goPage('workspaces')">Gerenciar squads</button></div>` : '')}
+        ${squadRows ? `<div class="table-wrap"><table class="orgp-table">
+          <thead><tr><th>Squad</th><th class="num">Pessoas</th><th class="num">Clientes</th><th class="num">Demandas abertas</th></tr></thead>
+          <tbody>${squadRows}</tbody></table></div>` : `<p class="orgp-empty">Nenhum squad ainda.</p>`}
+      </section>` : ''}
+
+      <section class="orgp-card" id="orgp-jornada">
+        ${head('Jornada de trabalho', 'Base da meta de horas no Início, da capacidade da equipe em Análises e do horário do Fechamento do dia.')}
+        <div class="orgp-seg" role="tablist" aria-label="Tipo de jornada">
+          <button type="button" role="tab" class="orgp-seg-btn${d.schedMode === 'simple' ? ' is-active' : ''}" aria-selected="${d.schedMode === 'simple'}" onclick="_orgDraft.schedMode='simple';renderOrgPage()">Simples</button>
+          <button type="button" role="tab" class="orgp-seg-btn${d.schedMode === 'custom' ? ' is-active' : ''}" aria-selected="${d.schedMode === 'custom'}" onclick="_orgDraft.schedMode='custom';renderOrgPage()">Personalizada</button>
+        </div>
+        ${d.schedMode === 'simple' ? `
+        <div class="orgp-setting">
+          <div class="orgp-setting-text">
+            <div class="orgp-setting-title">Horas por dia</div>
+            <div class="orgp-setting-hint">De segunda a sexta</div>
+          </div>
+          <div class="orgp-hours">
+            <button class="orgp-step" type="button" aria-label="Menos meia hora" onclick="_orgStepHours(-0.5)">−</button>
+            <input class="form-control orgp-hours-input" id="orgp-hours" type="number" min="1" max="16" step="0.5" value="${esc(String(d.dailyHours))}" oninput="_orgDraft.dailyHours=Number(this.value);_orgScheduleSync()">
+            <button class="orgp-step" type="button" aria-label="Mais meia hora" onclick="_orgStepHours(0.5)">+</button>
+            <span class="orgp-hours-unit">h/dia</span>
+          </div>
+        </div>` : `
+        <div class="orgp-week" role="table" aria-label="Horário por dia da semana">
+          ${d.week.map((w, i) => {
+            const name = ORG_WEEKDAYS.find(x => x[0] === w.day)[2];
+            return `<div class="orgp-weekrow${w.on ? '' : ' is-off'}" role="row">
+              <label class="orgp-switch orgp-switch--sm" title="${w.on ? 'Dia de trabalho' : 'Folga'}">
+                <input type="checkbox" ${w.on ? 'checked' : ''} aria-label="${name}: dia de trabalho" onchange="_orgWeekSet(${i}, 'on', this.checked)">
+                <span class="orgp-switch-track" aria-hidden="true"></span>
+              </label>
+              <span class="orgp-weekday" role="rowheader">${name}</span>
+              ${w.on ? `
+              <input class="form-control orgp-week-time" type="time" value="${esc(w.start)}" aria-label="${name}: início" oninput="_orgWeekSet(${i}, 'start', this.value)">
+              <span class="orgp-week-sep">às</span>
+              <input class="form-control orgp-week-time" type="time" value="${esc(w.end)}" aria-label="${name}: término" oninput="_orgWeekSet(${i}, 'end', this.value)">
+              <select class="form-control orgp-week-break" aria-label="${name}: intervalo" onchange="_orgWeekSet(${i}, 'breakMinutes', Number(this.value))">
+                ${[[0, 'Sem intervalo'], [15, '15 min de intervalo'], [30, '30 min de intervalo'], [45, '45 min de intervalo'], [60, '1h de intervalo'], [90, '1h30 de intervalo'], [120, '2h de intervalo']].map(([v, l]) => `<option value="${v}"${Number(w.breakMinutes) === v ? ' selected' : ''}>${l}</option>`).join('')}
+              </select>
+              <span class="orgp-week-hours" id="orgp-wh-${i}">${_orgDayLabel(w)}</span>` : `<span class="orgp-week-off">Folga</span>`}
+            </div>`;
+          }).join('')}
+        </div>
+        ${d.week.filter(w => w.on).length > 1 ? `<div class="orgp-week-actions"><button class="btn btn-ghost btn-sm" type="button" onclick="_orgCopyFirstDay()"><i data-lucide="copy" class="ic-sm"></i> Copiar o horário de ${esc(ORG_WEEKDAYS.find(x => x[0] === d.week.find(w => w.on).day)[2].toLowerCase())} para os outros dias ligados</button></div>` : ''}`}
+        <div class="orgp-summary" id="orgp-summary">${_orgScheduleSummary()}</div>
+        <footer class="orgp-card-foot"><button class="btn btn-confirm btn-sm" id="orgp-save-hours" onclick="saveOrgSchedule()" disabled>Salvar jornada</button></footer>
+      </section>
+
+      ${admin || mod ? `<section class="orgp-card" id="orgp-integracoes">
+        ${head('Integrações', 'O que está ligado nesta organização.', admin ? `<div class="orgp-head-actions"><button class="btn btn-ghost btn-sm" onclick="goPage('integrations')">Abrir integrações</button></div>` : '')}
+        <div class="orgp-integs">
+          ${integRow('mail', 'E-mail', integ.email, 'Ativo', 'Não configurado no servidor')}
+          ${integRow('message-circle', 'Discord', integ.discord, 'Ativo', 'Indisponível nesta organização')}
+          ${integRow('trending-up', 'Performance (n8n)', integ.performance, 'Ativo', 'Indisponível nesta organização')}
+          ${integRow('calendar', 'Google Agenda', integ.google, 'Cada pessoa conecta no perfil', 'Não configurado no servidor')}
+        </div>
+      </section>` : ''}
+
+      ${admin ? `<section class="orgp-card" id="orgp-dados">
+        ${head('Dados', 'Baixe tudo o que é da organização num arquivo JSON: squads, clientes, projetos, fluxos, demandas com horas e comentários, documentos e a lista de pessoas.')}
+        <div class="orgp-row">
+          <p class="orgp-muted">O cofre de senhas e as credenciais não entram no arquivo.</p>
+          <a class="btn btn-ghost btn-sm" href="/api/org/export" download><i data-lucide="download" class="ic-sm"></i> Exportar dados</a>
+        </div>
+      </section>` : ''}
+
+      ${owner ? `<section class="orgp-card orgm-danger" id="orgp-perigo">
+        ${head('Zona de perigo', '')}
+        <div class="orgm-danger-row">
+          <div>
+            <div class="orgm-danger-title">Transferir a organização</div>
+            <div class="orgm-danger-text">A pessoa escolhida vira a dona e você passa a ser administrador.</div>
+          </div>
+          ${d.transferOpen ? '' : `<button class="btn btn-danger btn-sm" type="button" ${candidates.length ? '' : 'disabled title="Convide mais alguém antes"'} onclick="_orgDraft.transferOpen=true;renderOrgPage()">Transferir…</button>`}
+        </div>
+        ${d.transferOpen ? `<div class="orgm-transfer">
+          <div class="form-group"><label class="form-label" for="orgm-to">Novo dono</label>
+            <select class="form-control" id="orgm-to"><option value="">Escolha uma pessoa…</option>${candidates.map(u => `<option value="${esc(u.id)}">${esc(u.name)}</option>`).join('')}</select></div>
+          <div class="form-group"><label class="form-label" for="orgm-pass">Sua senha</label>
+            <input class="form-control" id="orgm-pass" type="password" autocomplete="current-password"></div>
+          <div class="orgm-transfer-actions">
+            <button class="btn btn-ghost btn-sm" type="button" onclick="_orgDraft.transferOpen=false;renderOrgPage()">Cancelar</button>
+            <button class="btn btn-danger btn-sm" type="button" onclick="transferOrg()">Transferir organização</button>
+          </div>
+        </div>` : ''}
+        <div class="orgm-danger-row orgp-danger-sep">
+          <div>
+            <div class="orgm-danger-title">Excluir a organização</div>
+            <div class="orgm-danger-text">Em breve. Por enquanto, fale com o suporte do reWork.</div>
+          </div>
+          <button class="btn btn-danger btn-sm" type="button" disabled>Excluir…</button>
+        </div>
+      </section>` : ''}
+    </div>
+  </div>`;
+  paintIcons(host);
+  _orgScheduleSync();
+  _orgWatchSections(host);
+  if ((admin || mod) && !_invitesLoadedAt) loadInvites().then(() => { if (currentPage === 'org') renderOrgPage(); });
+}
+/* Menu lateral da página: marca a seção visível enquanto rola. */
+let _orgSpy = null;
+function _orgSetActive(id) {
+  document.querySelectorAll('.orgp-nav-link').forEach(a => a.classList.toggle('is-active', a.dataset.sec === id));
+}
+function _orgGoSection(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  _orgSetActive(id);
+  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function _orgWatchSections(host) {
+  if (_orgSpy) _orgSpy.disconnect();
+  const cards = [...host.querySelectorAll('.orgp-card[id]')];
+  if (!cards.length || typeof IntersectionObserver === 'undefined') return;
+  const visible = new Map();
+  _orgSpy = new IntersectionObserver((entries) => {
+    entries.forEach(e => visible.set(e.target.id, e.isIntersecting ? e.boundingClientRect.top : null));
+    // A seção ativa é a primeira visível na parte de cima da tela.
+    const first = cards.find(c => visible.get(c.id) != null);
+    if (first) _orgSetActive(first.id);
+  }, { rootMargin: '-15% 0px -60% 0px' });
+  cards.forEach(c => _orgSpy.observe(c));
+  if (!document.querySelector('.orgp-nav-link.is-active')) _orgSetActive(cards[0].id);
+}
+function _orgIdentitySync() {
+  const btn = $('orgp-save-identity');
+  const org = me.org, d = _orgDraft;
+  if (btn) btn.disabled = !(d.name.trim() && (d.name.trim() !== org.name || (d.logo || null) !== (org.logo || null)));
+  const tile = document.querySelector('.orgm-logo-tile');
+  if (tile && !d.logo) tile.textContent = _orgInitials(d.name || org.name);
+}
+/* Conta da jornada a partir do rascunho: { weekly, days, avg, error }. */
+const _hhmmMins = (v) => { const m = /^(\d{2}):(\d{2})$/.exec(v || ''); return m ? Number(m[1]) * 60 + Number(m[2]) : NaN; };
+function _orgDayHours(w) {
+  const a = _hhmmMins(w.start), b = _hhmmMins(w.end);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a) return NaN;
+  return (b - a - (Number(w.breakMinutes) || 0)) / 60;
+}
+const _fmtH = (h) => { const hh = Math.floor(h), mm = Math.round((h - hh) * 60); return mm === 60 ? `${hh + 1}h` : mm ? `${hh}h${String(mm).padStart(2, '0')}` : `${hh}h`; };
+function _orgDayLabel(w) {
+  const h = _orgDayHours(w);
+  if (!Number.isFinite(h)) return '<span class="is-error">Horário inválido</span>';
+  if (h < 0.5 || h > 16) return `<span class="is-error">${h <= 0 ? 'Sem horas' : _fmtH(h)}</span>`;
+  return _fmtH(h);
+}
+function _orgScheduleCalc(d) {
+  if (d.schedMode === 'simple') {
+    const h = Number(d.dailyHours);
+    if (!(h >= 1 && h <= 16)) return { error: 'As horas por dia precisam ficar entre 1 e 16.' };
+    return { weekly: h * 5, days: 5, avg: h };
+  }
+  const on = d.week.filter(w => w.on);
+  if (!on.length) return { error: 'Deixe pelo menos um dia de trabalho ligado.' };
+  let weekly = 0;
+  for (const w of on) {
+    const name = ORG_WEEKDAYS.find(x => x[0] === w.day)[2].toLowerCase();
+    const h = _orgDayHours(w);
+    if (!Number.isFinite(h)) return { error: `Em ${name}, o término precisa ser depois do início.` };
+    if (h < 0.5 || h > 16) return { error: `A jornada de ${name} precisa ficar entre 30 min e 16 horas.` };
+    weekly += h;
+  }
+  return { weekly, days: on.length, avg: weekly / on.length };
+}
+function _orgScheduleSummary() {
+  const d = _orgDraft;
+  if (!d) return '';
+  const c = _orgScheduleCalc(d);
+  if (c.error) return `<span class="orgp-summary-error"><i data-lucide="circle-alert" class="ic-sm"></i>${esc(c.error)}</span>`;
+  const extra = d.schedMode === 'custom' ? ` · média de ${_fmtH(c.avg)} por dia · o Fechamento do dia aparece 1h antes do término de cada dia` : '';
+  return `<i data-lucide="clock" class="ic-sm"></i><span><b>${_fmtH(c.weekly)} por semana</b> em ${c.days} ${c.days === 1 ? 'dia' : 'dias'}${d.schedMode === 'simple' ? ` · ${_fmtH(c.avg)} por dia` : extra}</span>`;
+}
+/* Rascunho diferente do salvo? */
+function _orgScheduleDirty() {
+  const d = _orgDraft, sc = orgSchedule() || {};
+  const savedCustom = sc.mode === 'custom';
+  if ((d.schedMode === 'custom') !== savedCustom) return true;
+  if (d.schedMode === 'simple') return Number(d.dailyHours) !== orgDailyHours();
+  const key = (list) => list.filter(w => w.on).map(w => `${w.day}|${w.start}|${w.end}|${Number(w.breakMinutes) || 0}`).sort().join(',');
+  return key(d.week) !== key(sc.week || []);
+}
+function _orgScheduleSync() {
+  const sum = $('orgp-summary');
+  if (sum) { sum.innerHTML = _orgScheduleSummary(); paintIcons(sum); }
+  const btn = $('orgp-save-hours');
+  if (btn) btn.disabled = !!_orgScheduleCalc(_orgDraft).error || !_orgScheduleDirty();
+}
+function _orgStepHours(delta) {
+  const v = Math.min(16, Math.max(1, (Number(_orgDraft.dailyHours) || 8) + delta));
+  _orgDraft.dailyHours = v;
+  const input = $('orgp-hours');
+  if (input) input.value = v;
+  _orgScheduleSync();
+}
+/* Mexe num dia da jornada personalizada. Ligar/desligar redesenha a linha;
+   horário e intervalo só atualizam a conta (sem perder o foco do campo). */
+function _orgWeekSet(i, field, value) {
+  const w = _orgDraft.week[i];
+  if (!w) return;
+  w[field] = value;
+  if (field === 'on') { renderOrgPage(); return; }
+  const lbl = $('orgp-wh-' + i);
+  if (lbl) lbl.innerHTML = _orgDayLabel(w);
+  _orgScheduleSync();
+}
+function _orgCopyFirstDay() {
+  const on = _orgDraft.week.filter(w => w.on);
+  if (on.length < 2) return;
+  const src = on[0];
+  on.slice(1).forEach(w => { w.start = src.start; w.end = src.end; w.breakMinutes = src.breakMinutes; });
+  renderOrgPage();
+}
+async function saveOrgSchedule() {
+  const d = _orgDraft;
+  const settings = d.schedMode === 'simple'
+    ? { dailyHours: d.dailyHours, schedule: { mode: 'simple' } }
+    : { schedule: { mode: 'custom', week: d.week.map(w => ({ day: w.day, on: !!w.on, start: w.start, end: w.end, breakMinutes: Number(w.breakMinutes) || 0 })) } };
+  const btn = $('orgp-save-hours');
+  if (btn) { btn.disabled = true; btn.textContent = 'Salvando…'; }
+  try {
+    _orgMergeSaved(await api('/org', 'PUT', { settings }));
+    const keep = { name: d.name, logo: d.logo };
+    _orgDraft = { ..._orgFreshDraft(), ...keep, orgId: me.org.id };
+    renderOrgPage();
+    toast(`Jornada salva: ${_fmtH(orgWeeklyHours())} por semana.`, 'success');
+  } catch (e) {
+    toast(e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Salvar jornada'; }
+  }
+}
+async function saveOrgIdentity() {
+  const d = _orgDraft;
+  if (!d || !d.name.trim()) { toast('Informe o nome da organização.', 'error'); return; }
+  const btn = $('orgp-save-identity');
+  if (btn) { btn.disabled = true; btn.textContent = 'Salvando…'; }
+  try {
+    _orgMergeSaved(await api('/org', 'PUT', { name: d.name.trim(), logo: d.logo || null }));
+    _orgDraft = null;
+    renderOrgPage();
+    toast('Organização atualizada.', 'success');
+  } catch (e) {
+    toast(e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Salvar alterações'; }
+  }
+}
+async function saveOrgSetting(patch) {
+  try {
+    _orgMergeSaved(await api('/org', 'PUT', { settings: patch }));
+    renderOrgPage();
+    toast('Ajuste salvo.', 'success');
+  } catch (e) { toast(e.message, 'error'); renderOrgPage(); }
+}
+async function onOrgLogoPicked(evt) {
+  const file = (evt.target.files || [])[0];
+  evt.target.value = '';
+  if (!file || !/^image\//.test(file.type)) return;
+  if (file.size > 2 * 1024 * 1024) { toast('Logo muito grande (máx 2 MB).', 'warn'); return; }
+  const reader = new FileReader();
+  const dataUri = await new Promise(res => { reader.onload = () => res(reader.result); reader.readAsDataURL(file); });
+  try {
+    const up = await api('/uploads', 'POST', { data: dataUri, name: file.name });
+    _orgDraft.logo = up.url;
+    renderOrgPage();
+  } catch (e) { toast('Falha ao subir o logo: ' + (e.message || ''), 'error'); }
+}
+async function transferOrg() {
+  const to = $('orgm-to')?.value;
+  const password = $('orgm-pass')?.value || '';
+  if (!to) { toast('Escolha quem vai ser o novo dono.', 'error'); return; }
+  if (!password) { toast('Digite sua senha para confirmar.', 'error'); $('orgm-pass')?.focus(); return; }
+  const who = userById(to);
+  const ok = await showConfirm({
+    title: 'Transferir a organização',
+    message: `<strong>${esc(who?.name || '')}</strong> passa a ser dono(a) de <strong>${esc(me.org.name)}</strong> e você vira administrador. Só a nova pessoa dona consegue desfazer.`,
+    okLabel: 'Transferir', cancelLabel: 'Voltar', danger: true
+  });
+  if (!ok) return;
+  try {
+    await api('/org/transfer', 'POST', { userId: to, password });
+    toast('Organização transferida.', 'success');
+    setTimeout(() => location.reload(), 600);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
 function renderWsSwitch() {
+  renderOrgSwitch();
   const wrap = $('ws-switch');
   wrap.classList.toggle('single', workspaces.length <= 1);
   const active = wsById(activeWs);
@@ -5374,7 +5904,7 @@ function applySidebarCollapseInit() {
 const PAGE_TITLES = {
   dashboard: 'Início', list: 'Demandas', mine: 'Minhas Demandas',
   clients: 'Clientes', projects: 'Projetos', flows: 'Fluxos de Demanda',
-  workspaces: 'Squads', users: 'Usuários', profile: 'Meu Perfil',
+  workspaces: 'Squads', users: 'Usuários', profile: 'Meu Perfil', org: 'Organização',
   analytics: 'Análises', templates: 'Templates', integrations: 'Integrações', agenda: 'Agenda',
   recurring: 'Listas de tarefas', gallery: 'Galeria', help: 'Documentação', clientsModels: 'Modelos de Cliente',
   trash: 'Lixeira', recurringDemands: 'Demandas Recorrentes',
@@ -5567,6 +6097,7 @@ const DEVTOOLS_GROUPS = [
       { label: 'Novo Projeto',      path: '/projects/new',               icon: 'folder-plus' },
       { label: 'Novo Fluxo',        path: '/flows/new',                  icon: 'workflow' },
       { label: 'Novo Usuário',      path: '/users/new',                  icon: 'user-plus' },
+      { label: 'Convidar pessoa',   path: '/users/invite',               icon: 'send' },
       { label: 'Nova Integração',   path: '/integrations/webhooks/new',  icon: 'webhook' },
       { label: 'Nova Recorrente',   path: '/recurring/new',              icon: 'repeat' },
     ]
@@ -5956,6 +6487,7 @@ function renderCurrent() {
       break;
     }
     case 'workspaces': renderWorkspaces(); break;
+    case 'org': if (me?.isOwner) renderOrgPage(); else goPage('dashboard'); break;
     case 'users':      renderUsers(); break;
     case 'trash':      renderTrash(); break;
     case 'recurringDemands': renderRecurringDemands(); break;
@@ -6327,7 +6859,6 @@ function openDashFocusAll() {
 /* Fechamento do dia (a partir das 17h): quanto você apontou hoje e, por
    demanda, o que ficou com ela aberta sem apontar, com apontamento num clique.
    "Encerrar o dia" esconde até amanhã. */
-const CLOSING_FROM_HOUR = 17;
 function _closingDoneKey() { return 'kastor-closing-done-' + (me?.id || 'anon'); }
 function renderDashClosing() {
   const sec = $('dash-section-closing'), el = $('dash-closing');
@@ -6335,7 +6866,8 @@ function renderDashClosing() {
   const today = todayStr();
   let done = false;
   try { done = localStorage.getItem(_closingDoneKey()) === today; } catch {}
-  if (new Date().getHours() < CLOSING_FROM_HOUR || done) { sec.hidden = true; return; }
+  const _now = new Date();
+  if (_now.getHours() + _now.getMinutes() / 60 < orgClosingHour() || done) { sec.hidden = true; return; }
   const localYmd = dt => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
   const logged = {};
   let total = 0;
@@ -6356,10 +6888,10 @@ function renderDashClosing() {
     sugg: (tracked[d.id] || 0) >= 5 * 60 ? _roundActiveHours(tracked[d.id]) : 0,
   })).sort((a, b) => (b.sugg - a.sugg) || (b.logged - a.logged));
   sec.hidden = false;
-  const goal = 8;
+  const goal = orgHoursFor(new Date().getDay());
   const pending = rows.filter(r => r.sugg).reduce((acc, r) => acc + r.sugg, 0);
   const sum = `<div class="dash-closing-sum">
-    <span><b>${fmtHours(total)}</b> apontadas hoje de ${goal}h</span>
+    <span><b>${fmtHours(total)}</b> apontadas hoje${goal > 0 ? ` de ${_goalH(goal)}h` : ' (dia de folga)'}</span>
     ${pending ? `<span class="dash-closing-pending">~${fmtHm(pending)} com demandas abertas sem apontar</span>` : ''}
   </div>`;
   el.innerHTML = sum + (rows.length ? rows.map(r => `<div class="dash-closing-row">
@@ -6405,18 +6937,19 @@ function renderDashHoursToday() {
     if (when >= weekFrom && when <= weekTo) hoursWeek += h;
   }));
   const status = pct => pct >= 100 ? 'is-full' : pct >= 60 ? 'is-mid' : 'is-low';
-  const goal = 8, weekGoal = 40;
-  const pct = Math.min(100, Math.round((hoursToday / goal) * 100));
-  const weekPct = Math.min(100, Math.round((hoursWeek / weekGoal) * 100));
-  if (sub) sub.textContent = `Meta ${goal}h`;
+  const goal = orgHoursFor(new Date().getDay()), weekGoal = orgWeeklyHours();
+  const dayOff = goal <= 0;
+  const pct = dayOff ? (hoursToday > 0 ? 100 : 0) : Math.min(100, Math.round((hoursToday / goal) * 100));
+  const weekPct = weekGoal > 0 ? Math.min(100, Math.round((hoursWeek / weekGoal) * 100)) : 0;
+  if (sub) sub.textContent = dayOff ? 'Hoje é folga' : `Meta ${_goalH(goal)}h`;
   // Mesma linha pras duas: rótulo à esquerda, total à direita, barra embaixo.
   // Hoje em destaque (maior), Semana secundária.
   const row = (cls, label, value, goalH, p) => `<div class="dash-hours-wrap ${cls} ${status(p)}">
     <div class="dash-hours-head"><span class="dash-hours-label">${label}</span><span class="dash-hours-value">${fmtHours(value)}<span>/${goalH}h</span></span></div>
     <div class="dash-hours-track"><div class="dash-hours-fill" style="width:${p}%"></div></div>
   </div>`;
-  el.innerHTML = row('dash-hours-today', 'Hoje', hoursToday, goal, pct)
-    + row('dash-hours-week', 'Semana', hoursWeek, weekGoal, weekPct);
+  el.innerHTML = row('dash-hours-today', dayOff ? 'Hoje · folga' : 'Hoje', hoursToday, _goalH(goal), pct)
+    + row('dash-hours-week', 'Semana', hoursWeek, _goalH(weekGoal), weekPct);
 }
 
 /* Bloqueios — MINHAS demandas onde a etapa ATUAL é de outra pessoa há > 3 dias
@@ -12043,13 +12576,13 @@ function renderCapacity() {
   // Conta dias úteis (seg–sex, exclui sáb 6 e dom 0) entre capStart e capEnd inclusive.
   // 5 dias úteis × 8h = 40h por semana cheia.
   const capPeriodDays = Math.round((capEnd - capStart) / 86400000) + 1;
-  let businessDays = 0;
+  // Soma as horas de cada dia do período pela jornada da organização.
+  let businessDays = 0, capacityHours = 0;
   for (let i = 0; i < capPeriodDays; i++) {
     const d = new Date(capStart); d.setDate(d.getDate() + i);
-    const dow = d.getDay();
-    if (dow !== 0 && dow !== 6) businessDays++;
+    const h = orgHoursFor(d.getDay());
+    if (h > 0) { businessDays++; capacityHours += h; }
   }
-  const capacityHours = businessDays * 8;
 
   // Atualiza estado visual dos botões do segmented control
   ['team', 'project', 'client'].forEach(v => {
@@ -15109,11 +15642,12 @@ function renderDetailStages(d) {
                 return (diff ?? '—') + 'd';
               })()}</span>
               <div class="stages-edit-resp-wrap">
+                ${effDone ? `<div class="stage-done-noowner is-compact" title="A etapa de conclusão encerra a demanda: não tem responsável."><i data-lucide="flag" class="ic-sm"></i>Sem responsável</div>` : `
                 <select id="${selectId}" class="form-control" data-cdrop-icon="user" onchange="setStageResponsibleDraft('${s.id}', this.value)">
                   ${!currentResp && !hasRespOverride ? '<option value="__default__" selected>Selecionar executor…</option>' : ''}
                   <option value="" ${hasRespOverride && currentResp === null ? 'selected' : ''}>— Sem responsável —</option>
                   ${sortedUsers.map(u => `<option value="${u.id}" ${currentResp === u.id ? 'selected' : ''} ${u.id === defaultRespId ? 'data-default="1"' : ''}>${esc(u.name)}</option>`).join('')}
-                </select>
+                </select>`}
               </div>
               <div class="stages-edit-menu-wrap">
                 <button type="button" class="stages-edit-menu-btn" title="Mais ações" onclick="toggleStageMenu('${s.id}', event)"><i data-lucide="more-horizontal" class="ic-md"></i></button>
@@ -20796,9 +21330,10 @@ function renderStageRows() {
       <div class="stage-grip" draggable="true" ondragstart="stageDragStart(event,${i})" title="Arraste para reordenar"><i data-lucide="grip-vertical" class="ic-sm"></i></div>
       <button type="button" class="color-swatch-trigger stage-color" style="background:${s.color}" onclick="openColorPicker(this, (c) => { stageRows[${i}].color = c; this.style.background = c; flowModalDirty = true; }, stageRows[${i}].color)" title="Cor da etapa"></button>
       <input class="form-control" value="${esc(s.label)}" placeholder="Nome da etapa" oninput="stageRows[${i}].label=this.value">
+      ${s.done ? `<div class="stage-done-noowner" title="A etapa de conclusão encerra a demanda: não tem área nem responsável."><i data-lucide="flag" class="ic-sm"></i>Etapa de conclusão: sem responsável</div>` : `
       <select id="stage-role-${i}" class="form-control stage-role" title="Área desta etapa" onchange="setStageRoleFilter(${i}, this.value)">${fnOpts}</select>
       <select id="stage-cargo-${i}" class="form-control stage-cargo" title="Cargo (opcional) — resolve pela matriz Área×Cargo do cliente" onchange="setStagePositionFilter(${i}, this.value)" ${roleFilter ? '' : 'disabled'}>${cargoOpts}</select>
-      <select id="stage-resp-${i}" class="form-control stage-resp" title="Responsável padrão da etapa" onchange="setStageResponsible(${i}, this.value)">${respHtml}</select>
+      <select id="stage-resp-${i}" class="form-control stage-resp" title="Responsável padrão da etapa" onchange="setStageResponsible(${i}, this.value)">${respHtml}</select>`}
       <div class="stage-days-inline" title="Prazo da etapa (em dias)">
         <input class="form-control" type="number" min="1" placeholder="—" value="${s.deadlineDays || ''}" oninput="stageRows[${i}].deadlineDays=this.value?Number(this.value):null">
         <span class="stage-days-unit">d</span>
@@ -20812,7 +21347,8 @@ function renderStageRows() {
   }).join('');
   // Cdrop em todos os 3 selects da linha (Área, Cargo, Responsável) — visual
   // consistente com o resto da plataforma no estado aberto.
-  stageRows.forEach((_, i) => {
+  stageRows.forEach((s, i) => {
+    if (s.done) return;
     applyFilterDropdown(`stage-role-${i}`);
     applyFilterDropdown(`stage-cargo-${i}`);
     applyFilterDropdown(`stage-resp-${i}`, { userIcon: true });
@@ -20879,6 +21415,8 @@ function setStageResponsible(i, value) {
 function toggleStageDone(i) {
   if (!stageRows[i]) return;
   stageRows[i].done = !stageRows[i].done;
+  // Etapa de conclusão não tem responsável.
+  if (stageRows[i].done) Object.assign(stageRows[i], { roleFilter: null, responsibleId: null, responsibleRole: null, responsiblePosition: null });
   flowModalDirty = true;
   renderStageRows();
 }
@@ -21064,6 +21602,7 @@ async function deleteWs(id) {
 
 /* ─── USUÁRIOS (admin) ─── */
 function renderUsers() {
+  loadInvites();
   const activeUsers = users.filter(u => u.active !== false);
   const archivedUsers = users.filter(u => u.active === false);
   const displayList = (showArchivedUsers ? users : activeUsers).slice().sort((a, b) => {
@@ -21110,9 +21649,9 @@ function renderUsers() {
     const wsNames = u.isAdmin
       ? '<span style="color:var(--text-muted);font-size:12px">Todos (admin)</span>'
       : (u.workspaces || []).map(id => wsById(id)).filter(Boolean).map(w => `<span class="pill pill-muted" style="font-size:10px">${esc(w.name)}</span>`).join(' ') || '—';
-    const kebab = me.isAdmin ? _usKebabMenu('user-' + u.id, [
+    const kebab = me.isAdmin && (!u.isOwner || me.isOwner) ? _usKebabMenu('user-' + u.id, [
       { icon: 'pencil', label: 'Editar', onclick: `openUserModal('${u.id}')` },
-      (u.id !== me.id ? (u.active !== false
+      (u.id !== me.id && !u.isOwner ? (u.active !== false
         ? { icon: 'user-x', label: 'Desativar', danger: true, onclick: `toggleUser('${u.id}')` }
         : { icon: 'user-check', label: 'Reativar', onclick: `toggleUser('${u.id}')` }) : null)
     ].filter(Boolean)) : '';
@@ -21122,7 +21661,9 @@ function renderUsers() {
       <td>${esc(u.role || '—')}</td>
       <td>${esc(u.position || '—')}</td>
       <td>${wsNames}</td>
-      <td>${u.isAdmin
+      <td>${u.isOwner
+        ? '<span class="pill pill-owner">Dono</span>'
+        : u.isAdmin
         ? '<span class="pill pill-admin">Admin</span>'
         : (u.isModerator
           ? '<span class="pill pill-moderator">Moderador</span>'
@@ -26595,9 +27136,34 @@ async function deleteRole(id) {
     await refreshData();
   } catch (e) { toast(e.message, 'error'); }
 }
-function openUserModal(id) {
+/* O modal de usuário tem 3 modos: cadastrar (senha inicial), editar e
+   convidar (só e-mail; a pessoa cria a senha pelo link). */
+let _userModalMode = 'new';
+function _applyUserModalMode(mode) {
+  _userModalMode = mode;
+  const invite = mode === 'invite';
+  $('user-modal-title').textContent = invite ? 'Convidar pessoa' : (mode === 'edit' ? 'Editar Usuário' : 'Cadastrar Usuário');
+  $('u-name-label').textContent = invite ? 'Nome (opcional)' : 'Nome completo *';
+  $('u-access-hint').textContent = invite
+    ? 'A pessoa recebe um link por e-mail e cria a própria senha.'
+    : 'Login + senha inicial. Contato só se quiser notificações.';
+  $('u-username-group').hidden = invite;
+  $('u-password-group').hidden = invite;
+  $('u-discord-group').hidden = invite;
+  $('u-email-group').classList.toggle('um-col-2', invite);
+  $('u-email-label').textContent = invite ? 'E-mail *' : 'E-mail (opcional)';
+  $('u-email-hint').textContent = invite
+    ? 'O convite chega nesse e-mail e vale por 7 dias.'
+    : 'Para entrar e receber avisos de demandas e menções.';
+  $('u-save-btn').textContent = invite ? 'Enviar convite' : 'Salvar Usuário';
+}
+function openInviteModal() {
+  openUserModal(null, { invite: true });
+}
+function openUserModal(id, opts) {
   editingUserId = id || null;
-  $('user-modal-title').textContent = id ? 'Editar Usuário' : 'Cadastrar Usuário';
+  const invite = !id && !!(opts && opts.invite);
+  _applyUserModalMode(invite ? 'invite' : (id ? 'edit' : 'new'));
   const u = id ? userById(id) : null;
   $('u-name').value = u?.name || '';
   fillRoleSelect('u-role', u?.role || '');
@@ -26616,8 +27182,17 @@ function openUserModal(id) {
     : 'equipe';
   const kindEl = document.querySelector(`input[name="u-role-kind"][value="${kind}"]`);
   if (kindEl) kindEl.checked = true;
-  const selected = u ? (u.workspaces || []) : [activeWs];
-  $('u-workspaces').innerHTML = [...workspaces]
+  // Dono: a permissão só muda transferindo a organização.
+  const isOwnerRow = !!u?.isOwner;
+  const modInvite = invite && !me.isAdmin;
+  document.querySelectorAll('input[name="u-role-kind"]').forEach(r => { r.disabled = isOwnerRow; });
+  $('u-opt-admin').hidden = modInvite;
+  $('u-opt-mod').hidden = modInvite;
+  $('u-perm-hint').textContent = isOwnerRow
+    ? 'Dono da organização: para mudar, transfira a organização.'
+    : modInvite ? 'Como moderador, você convida como Equipe ou Freelancer, nos seus squads.' : 'Squads liberados + nível de acesso.';
+  const selected = u ? (u.workspaces || []) : (activeWs && (!modInvite || (me.workspaces || []).includes(activeWs)) ? [activeWs] : []);
+  $('u-workspaces').innerHTML = [...workspaces].filter(w => !modInvite || (me.workspaces || []).includes(w.id))
     .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt-BR', { sensitivity: 'base' }))
     .map(w => {
       const color = w.color || '#7A00FF';
@@ -26629,13 +27204,15 @@ function openUserModal(id) {
     </label>`;
     }).join('');
   openModal('user-modal');
-  navPush(id ? '/users/' + id : '/users/new');
+  navPush(id ? '/users/' + id : (invite ? '/users/invite' : '/users/new'));
+  if (invite) setTimeout(() => $('u-email').focus(), 60);
 }
 /* Radio group cuida da exclusividade — handlers legados mantidos como no-op
    pra caso algum lugar chame externamente. */
 function onUserAdminChange() { /* radio-driven agora */ }
 function onUserModeratorChange() { /* radio-driven agora */ }
 async function saveUser() {
+  if (_userModalMode === 'invite') return saveInvite();
   const wsSel = [...$('u-workspaces').querySelectorAll('input:checked')].map(i => i.value);
   const payload = {
     name: $('u-name').value, role: $('u-role').value,
@@ -26664,13 +27241,158 @@ async function saveUser() {
   } catch (e) { toast(e.message, 'error'); }
 }
 async function resetUserPassword(id) {
-  const pass = prompt('Nova senha para ' + (userById(id)?.name || 'o usuário') + ' (mín. 6 caracteres):');
+  const pass = prompt('Nova senha para ' + (userById(id)?.name || 'o usuário') + ' (mín. 8 caracteres):');
   if (!pass) return;
   try {
     await api('/users/' + id, 'PUT', { password: pass });
     toast('Senha redefinida. Envie a nova senha para a pessoa.');
   } catch (e) { toast(e.message, 'error'); }
 }
+/* ─── CONVITES (admin) ───
+   Convites pendentes e vencidos aparecem no Quadro da equipe. Carregados sob
+   demanda (só admin), com cache curto, e recarregados depois de cada ação. */
+let invites = [];
+let invitesEmailEnabled = true;
+let _invitesLoadedAt = 0;
+let _invitesLoading = null;
+async function loadInvites(force) {
+  if (!me?.isAdmin && !me?.isModerator) return;
+  if (!force && Date.now() - _invitesLoadedAt < 30000) { renderInvites(); return; }
+  if (_invitesLoading) return _invitesLoading;
+  _invitesLoading = (async () => {
+    try {
+      const r = await api('/invites');
+      invites = Array.isArray(r.invites) ? r.invites : [];
+      invitesEmailEnabled = r.emailEnabled !== false;
+      _invitesLoadedAt = Date.now();
+    } catch { /* sem lista de convites — o resto da página segue */ }
+    _invitesLoading = null;
+    renderInvites();
+  })();
+  return _invitesLoading;
+}
+function _invitePermPill(kind) {
+  if (kind === 'admin') return '<span class="pill pill-admin">Admin</span>';
+  if (kind === 'mod') return '<span class="pill pill-moderator">Moderador</span>';
+  if (kind === 'free') return '<span class="pill pill-freelancer">Freelancer</span>';
+  return '<span class="pill pill-muted">Equipe</span>';
+}
+function renderInvites() {
+  const sec = $('invites-section');
+  if (!sec) return;
+  if ((!me?.isAdmin && !me?.isModerator) || !invites.length) { sec.hidden = true; return; }
+  sec.hidden = false;
+  $('invites-count').textContent = invites.length;
+  $('invites-hint').textContent = invitesEmailEnabled
+    ? 'Aguardando a pessoa aceitar. Cada link vale por 7 dias.'
+    : 'O envio de e-mail não está configurado no servidor: copie o link e mande para a pessoa.';
+  $('invites-table-body').innerHTML = invites.map(inv => {
+    const expired = inv.status === 'expired';
+    const days = Math.ceil((Date.parse(inv.expiresAt) - Date.now()) / 864e5);
+    const squads = inv.kind === 'admin'
+      ? '<span style="color:var(--text-muted);font-size:12px">Todos (admin)</span>'
+      : (inv.workspaces || []).map(id => wsById(id)).filter(Boolean).map(w => `<span class="pill pill-muted" style="font-size:10px">${esc(w.name)}</span>`).join(' ') || '—';
+    const by = inv.invitedByName ? ` por ${esc(String(inv.invitedByName).split(' ')[0])}` : '';
+    const sent = inv.lastSentAt
+      ? `Enviado ${fmtRelativeTime(inv.lastSentAt)}${by}`
+      : `Criado ${fmtRelativeTime(inv.createdAt)}${by} <span class="inv-nomail">· e-mail não enviado</span>`;
+    const status = expired
+      ? '<span class="inv-status is-expired">Vencido</span>'
+      : `<span class="inv-status">${days <= 1 ? 'Vence hoje' : `Vence em ${days} dias`}</span>`;
+    const kebab = _usKebabMenu('invite-' + inv.id, [
+      expired ? null : { icon: 'link', label: 'Copiar link', onclick: `copyInviteLink('${inv.id}')` },
+      { icon: 'send', label: expired ? 'Renovar e reenviar' : 'Reenviar e-mail', onclick: `resendInvite('${inv.id}')` },
+      { icon: 'x-circle', label: 'Cancelar convite', danger: true, onclick: `revokeInvite('${inv.id}')` }
+    ].filter(Boolean));
+    return `<tr class="mrow${expired ? ' is-expired' : ''}">
+      <td class="mcol-name">
+        <div class="inv-person">
+          <span class="inv-avatar" aria-hidden="true"><i data-lucide="mail" class="ic-sm"></i></span>
+          <div class="inv-person-text">
+            <div class="inv-email">${esc(inv.email)}</div>
+            ${inv.name ? `<div class="inv-name">${esc(inv.name)}</div>` : ''}
+          </div>
+        </div>
+      </td>
+      <td>${_invitePermPill(inv.kind)}</td>
+      <td>${squads}</td>
+      <td class="inv-sent">${sent}</td>
+      <td>${status}</td>
+      <td class="us-col-kebab">${kebab}</td>
+    </tr>`;
+  }).join('');
+}
+/* Sem SMTP (ou falha no envio): mostra o link pra copiar e mandar à mão. */
+async function _inviteLinkFallback(link, email, reason) {
+  const why = reason === 'smtp_not_configured'
+    ? 'O envio de e-mail não está configurado no servidor, então o convite não foi enviado.'
+    : 'Não conseguimos enviar o e-mail agora.';
+  const ok = await showConfirm({
+    title: 'Convite criado',
+    message: `${why} Copie o link e mande para <strong>${esc(email)}</strong> por onde preferir. Ele vale por 7 dias.<div class="inv-link-box">${esc(link)}</div>`,
+    okLabel: 'Copiar link',
+    cancelLabel: 'Fechar',
+    kind: 'info'
+  });
+  if (ok) copyToClipboard(link, 'Link do convite');
+}
+async function saveInvite() {
+  const email = ($('u-email').value || '').trim();
+  const wsSel = [...$('u-workspaces').querySelectorAll('input:checked')].map(i => i.value);
+  const kind = document.querySelector('input[name="u-role-kind"]:checked')?.value || 'equipe';
+  if (!email) { toast('Informe o e-mail da pessoa.', 'error'); $('u-email').focus(); return; }
+  if (kind !== 'admin' && !wsSel.length) { toast('Escolha pelo menos um squad para a pessoa acessar.', 'error'); return; }
+  const btn = $('u-save-btn');
+  btn.disabled = true;
+  btn.textContent = 'Enviando…';
+  try {
+    const r = await api('/invites', 'POST', {
+      email, name: $('u-name').value.trim(), kind, workspaces: wsSel,
+      role: $('u-role').value || '', position: $('u-position') ? ($('u-position').value || '') : ''
+    });
+    closeModal('user-modal');
+    await loadInvites(true);
+    if (r.emailSent) toast(`Convite enviado para ${email}.`, 'success');
+    else _inviteLinkFallback(r.link, email, r.emailError);
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = _userModalMode === 'invite' ? 'Enviar convite' : 'Salvar Usuário';
+  }
+}
+async function copyInviteLink(id) {
+  try {
+    const r = await api('/invites/' + id + '/link');
+    copyToClipboard(r.link, 'Link do convite');
+  } catch (e) { toast(e.message, 'error'); }
+}
+async function resendInvite(id) {
+  const inv = invites.find(i => i.id === id);
+  try {
+    const r = await api('/invites/' + id + '/resend', 'POST');
+    await loadInvites(true);
+    if (r.emailSent) toast(`Convite reenviado para ${inv?.email || 'a pessoa'}.`, 'success');
+    else _inviteLinkFallback(r.link, inv?.email || '', r.emailError);
+  } catch (e) { toast(e.message, 'error'); }
+}
+async function revokeInvite(id) {
+  const inv = invites.find(i => i.id === id);
+  const ok = await showConfirm({
+    title: 'Cancelar convite',
+    message: `O link enviado para <strong>${esc(inv?.email || '')}</strong> deixa de funcionar. Você pode convidar de novo depois.`,
+    okLabel: 'Cancelar convite',
+    cancelLabel: 'Voltar',
+    danger: true
+  });
+  if (!ok) return;
+  try {
+    await api('/invites/' + id, 'DELETE');
+    await loadInvites(true);
+    toast('Convite cancelado.', 'warn');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
 async function toggleUser(id) {
   const u = userById(id); if (!u) return;
   try {
@@ -27897,6 +28619,8 @@ function notifMessage(n) {
         (n.commentText ? `<div class="notif-comment">${esc(n.commentText)}</div>` : '');
     case 'time_gap':
       return `<strong>Apontamento pendente</strong><div class="notif-comment">${esc(n.commentText || '')}</div>`;
+    case 'invite_accepted':
+      return `<strong>${esc(from ? from.name : (n.demandName || 'Alguém'))}</strong> aceitou o convite e entrou no reWork`;
     case 'doc_approved':
       return `<strong>${esc(n.fromName || 'O cliente')}</strong> aprovou o documento <strong>${esc(n.docTitle || n.demandName)}</strong>` +
         (n.commentText ? `<div class="notif-comment">${esc(n.commentText)}</div>` : '');
@@ -27986,6 +28710,11 @@ async function openNotif(notifId, demandId) {
   $('notif-panel').classList.remove('open');
   if (n && n.docId) {
     window.open('/hub/docs/' + encodeURIComponent(n.docId), '_blank', 'noopener');
+    return;
+  }
+  if (n && n.type === 'invite_accepted') {
+    await refreshData();
+    goPage('users');
     return;
   }
   if (n && n.type === 'time_gap') {
@@ -34129,7 +34858,7 @@ function renderWizardCustomization() {
       <span class="wizard-cust-drag" title="Arraste pra reordenar"><i data-lucide="grip-vertical" class="ic-md"></i></span>
       <button type="button" class="color-swatch-trigger wizard-cust-color-lg" style="background:${esc(color)}" onclick="openColorPicker(this, (c) => { wizardCustSetColor('${stageId}', c); this.style.background = c; }, '${esc(color)}')" title="Cor da etapa"></button>
       <input type="text" class="wizard-cust-name" value="${esc(label)}" placeholder="Nome da etapa" oninput="wizardCustSetLabel('${stageId}', this.value)">
-      <select class="wizard-cust-resp" data-cdrop-icon="user" data-default-value="${esc(defaultUserId || '')}" onchange="wizardCustSetResp('${stageId}', this.value)">${roleOpts}</select>
+      ${done ? `<div class="stage-done-noowner is-compact wizard-cust-resp" title="A etapa de conclusão encerra a demanda: não tem executor."><i data-lucide="flag" class="ic-sm"></i>Sem executor</div>` : `<select class="wizard-cust-resp" data-cdrop-icon="user" data-default-value="${esc(defaultUserId || '')}" onchange="wizardCustSetResp('${stageId}', this.value)">${roleOpts}</select>`}
       <input type="date" class="wizard-cust-date ${hasDateAnchor ? 'is-customized' : ''}" data-fdp-display="short" data-fdp-no-weekend="1" value="${endDate}" onchange="wizardCustSetDate('${stageId}', this.value)">
       <span class="wizard-cust-days-plain" title="Prazo calculado a partir das datas — herdado do fluxo. Edite a data pra alterar.">${(computedDays ?? '—') + 'd'}</span>
       <button type="button" class="cust-icon-toggle cust-toggle-done ${done ? 'on' : ''}" title="${done ? 'Etapa final — conclui a demanda' : 'Marcar como etapa final (conclui a demanda)'}" onclick="wizardCustSetDone('${stageId}', ${!done})"><i data-lucide="flag" class="ic-md"></i></button>

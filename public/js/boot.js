@@ -71,7 +71,7 @@
   // Tela de login usa fundo claro sempre (independente do tema do app),
   // então força o logo preto. O HTML default é branco.
   try {
-    document.querySelectorAll('#login-screen .login-logo img, #reset-screen .login-logo img').forEach(img => {
+    document.querySelectorAll('#login-screen .login-logo img, #reset-screen .login-logo img, #invite-screen .login-logo img').forEach(img => {
       img.setAttribute('src', '/rework_preto.svg');
     });
   } catch {}
@@ -181,7 +181,7 @@
     const password = $('login-password').value;
     const err = $('login-error');
     err.textContent = '';
-    if (!username || !password) { err.textContent = 'Informe usuário e senha.'; return; }
+    if (!username || !password) { err.textContent = 'Informe seu e-mail (ou usuário) e a senha.'; return; }
     try {
       const data = await api('/login', 'POST', { username, password });
       // Overlay obrigatório de 2s pós-login (feedback deliberado da autenticação).
@@ -209,7 +209,7 @@
     const p2 = $('reset-confirm-pass').value;
     const err = $('reset-error');
     err.textContent = '';
-    if (!p1 || p1.length < 6) { err.textContent = 'A senha precisa ter pelo menos 6 caracteres.'; return; }
+    if (!p1 || p1.length < 8) { err.textContent = 'A senha precisa ter pelo menos 8 caracteres.'; return; }
     if (p1 !== p2) { err.textContent = 'As senhas não conferem.'; return; }
     try {
       await api('/reset-password', 'POST', { token: _resetToken, newPassword: p1 });
@@ -218,6 +218,160 @@
     } catch (e) {
       err.textContent = e.message || 'Erro ao redefinir senha.';
     }
+  }
+
+  // ── Convite (URL /convite/<token>) ──────────────────────────────────
+  // Tela própria, sem o app.js: mostra quem convidou, pede nome, usuário e
+  // senha, e ao aceitar a sessão já vem no cookie — entra direto.
+  let _inviteToken = null;
+  let _invitePassMin = 8;
+  let _inviteExisting = false; // e-mail já tem conta: só confirma a senha
+  const INVITE_USERNAME_RE = /^[a-z0-9][a-z0-9._-]{2,31}$/;
+  const INVITE_PROBLEMS = {
+    accepted: 'Convite já usado',
+    revoked: 'Convite cancelado',
+    expired: 'Convite vencido',
+    account_exists: 'Você já tem conta',
+    invalid: 'Convite não encontrado'
+  };
+  function inviteShow(which) {
+    ['invite-loading', 'invite-form', 'invite-problem'].forEach(id => { const el = $(id); if (el) el.hidden = id !== which; });
+  }
+  function inviteProblem(status, text) {
+    $('invite-problem-title').textContent = INVITE_PROBLEMS[status] || 'Convite indisponível';
+    $('invite-problem-text').textContent = text || 'Não foi possível abrir este convite.';
+    inviteShow('invite-problem');
+  }
+  function inviteInitials(name) {
+    return String(name || '?').trim().split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
+  }
+  function inviteChip(text, muted) {
+    const el = document.createElement('span');
+    el.className = 'invite-chip' + (muted ? ' invite-chip--muted' : '');
+    el.textContent = text;
+    return el;
+  }
+  async function showInviteScreen(token) {
+    _inviteToken = token;
+    const ls = $('login-screen'); if (ls) ls.classList.remove('is-visible');
+    $('invite-screen').classList.add('is-visible');
+    hideBootLoading();
+    inviteShow('invite-loading');
+    let res, data = null;
+    try {
+      res = await fetch('/api/invites/public/' + encodeURIComponent(token), { credentials: 'same-origin' });
+      try { data = await res.json(); } catch {}
+    } catch {
+      inviteProblem('', 'Sem conexão com o servidor. Confira sua internet e recarregue a página.');
+      return;
+    }
+    if (!res.ok || !data) { inviteProblem(data && data.status, data && data.error); return; }
+
+    const kicker = $('invite-kicker');
+    kicker.textContent = '';
+    const isOwnerInvite = data.access === 'Dono da organização';
+    const b = document.createElement('b');
+    b.textContent = isOwnerInvite ? 'Pedido aprovado' : (data.inviterName || 'A equipe');
+    kicker.appendChild(b);
+    if (!isOwnerInvite) kicker.appendChild(document.createTextNode(data.orgName ? ` convidou você para a ${data.orgName}` : ' convidou você'));
+    _inviteExisting = !!data.accountExists;
+    $('invite-title').textContent = isOwnerInvite
+      ? `${data.orgName || 'Sua organização'} está pronta`
+      : _inviteExisting ? `Entrar na ${data.orgName || 'organização'}` : 'Crie sua conta no reWork';
+    $('invite-new-only').hidden = _inviteExisting;
+    const note = $('invite-existing-note');
+    note.hidden = !_inviteExisting;
+    if (_inviteExisting) note.textContent = `Você já tem conta no reWork${data.existingName ? ` como ${data.existingName}` : ''}. Confirme sua senha para entrar ${data.orgName ? `na ${data.orgName}` : 'na organização'}; ela aparece no seletor de organizações.`;
+    $('invite-password-label').textContent = _inviteExisting ? 'Sua senha do reWork' : 'Senha';
+    const passEl = $('invite-password');
+    passEl.setAttribute('autocomplete', _inviteExisting ? 'current-password' : 'new-password');
+    $('invite-submit').textContent = _inviteExisting ? 'Entrar na organização' : (isOwnerInvite ? 'Criar conta e começar' : 'Criar conta e entrar');
+    const av = $('invite-avatar');
+    if (data.access === 'Dono da organização') {
+      av.style.backgroundImage = 'url("/rework_logo.svg")';
+      av.style.backgroundColor = '#f3ecff';
+      av.style.backgroundSize = '60%';
+      av.textContent = '';
+    } else if (data.inviterAvatar && /^\/uploads\/[\w.-]+$/.test(data.inviterAvatar)) {
+      av.style.backgroundImage = `url("${data.inviterAvatar}")`;
+      av.textContent = '';
+    } else {
+      av.textContent = inviteInitials(data.inviterName);
+    }
+    const meta = $('invite-meta');
+    meta.textContent = '';
+    if (data.access) meta.appendChild(inviteChip(data.access));
+    (data.squads || []).forEach(n => meta.appendChild(inviteChip(n, true)));
+    $('invite-email').textContent = data.email;
+    $('invite-name').value = data.name || '';
+    $('invite-username').value = data.suggestedUsername || '';
+    _invitePassMin = data.passwordMin || 8;
+    passEl.placeholder = _inviteExisting ? '' : `Mínimo de ${_invitePassMin} caracteres`;
+    inviteShow('invite-form');
+    setTimeout(() => { const f = _inviteExisting || $('invite-name').value ? passEl : $('invite-name'); if (f) f.focus(); }, 60);
+  }
+  function inviteFieldError(field, msg) {
+    const map = { name: 'invite-name', username: 'invite-username', password: 'invite-password', terms: 'invite-terms' };
+    const el = map[field] && $(map[field]);
+    if (el) { el.classList.add('is-invalid'); if (field !== 'terms') el.focus(); }
+    $('invite-error').textContent = msg;
+  }
+  async function doAcceptInvite() {
+    const err = $('invite-error');
+    const btn = $('invite-submit');
+    err.textContent = '';
+    ['invite-name', 'invite-username', 'invite-password', 'invite-terms'].forEach(id => $(id).classList.remove('is-invalid'));
+    const body = {
+      name: $('invite-name').value.trim(),
+      username: $('invite-username').value.trim().toLowerCase(),
+      password: $('invite-password').value,
+      acceptTerms: $('invite-terms').checked
+    };
+    if (_inviteExisting) {
+      if (!body.password) return inviteFieldError('password', 'Digite sua senha do reWork.');
+    } else {
+      if (!body.name) return inviteFieldError('name', 'Informe seu nome.');
+      if (!INVITE_USERNAME_RE.test(body.username)) return inviteFieldError('username', 'Use de 3 a 32 caracteres: letras minúsculas, números, ponto, hífen ou sublinhado.');
+      if (body.password.length < _invitePassMin) return inviteFieldError('password', `A senha precisa ter pelo menos ${_invitePassMin} caracteres.`);
+    }
+    if (!body.acceptTerms) return inviteFieldError('terms', 'Aceite os Termos e a Política de Privacidade para continuar.');
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = _inviteExisting ? 'Entrando…' : 'Criando sua conta…';
+    let res, data = null;
+    try {
+      res = await fetch(`/api/invites/public/${encodeURIComponent(_inviteToken)}/${_inviteExisting ? 'join' : 'accept'}`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      try { data = await res.json(); } catch {}
+    } catch {
+      btn.disabled = false; btn.textContent = label;
+      err.textContent = 'Sem conexão com o servidor. Tente de novo.';
+      return;
+    }
+    if (!res.ok) {
+      btn.disabled = false; btn.textContent = label;
+      if (data && data.field) return inviteFieldError(data.field, data.error);
+      if (data && data.status) return inviteProblem(data.status, data.error);
+      err.textContent = (data && data.error) || 'Não foi possível criar a conta.';
+      return;
+    }
+    // Conta criada e sessão aberta (cookie): entra no app.
+    history.replaceState(null, '', '/');
+    showBootLoading(1200);
+    $('invite-screen').classList.remove('is-visible');
+    await loadFullApp(data.user);
+  }
+  function toggleInvitePassword() {
+    const input = $('invite-password');
+    const btn = $('invite-pass-toggle');
+    const show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    btn.textContent = show ? 'Ocultar' : 'Mostrar';
+    btn.setAttribute('aria-label', show ? 'Ocultar senha' : 'Mostrar senha');
+    input.focus();
   }
 
   // "Esqueci minha senha" — usa prompt nativo (barato, correto). O fluxo
@@ -251,7 +405,7 @@
           'missing-params':  'O Discord não devolveu os parâmetros esperados. Tente de novo.',
           'invalid-state':   'Sessão de OAuth expirou (mais de 10 min). Tente de novo.',
           'exchange-failed': 'Falha ao validar o retorno do Discord. Tente de novo em alguns segundos.',
-          'no-account':      'Nenhuma conta reWork está vinculada a esse Discord. Peça pra alguém da coordenação vincular seu ID, ou entre com usuário/senha.',
+          'no-account':      'Nenhuma conta reWork está vinculada a esse Discord. Entre com e-mail e senha e vincule o Discord no seu perfil. Se recebeu um convite, use o link do e-mail.',
           'already-linked':  'Esse Discord já está vinculado a outra conta reWork.',
           'user-not-found':  'Usuário não encontrado. Faça login de novo e tente vincular.'
         };
@@ -271,6 +425,8 @@
   window.doResetPassword = doResetPassword;
   window.showForgotPassword = showForgotPassword;
   window.loginWithDiscord = loginWithDiscord;
+  window.doAcceptInvite = doAcceptInvite;
+  window.toggleInvitePassword = toggleInvitePassword;
 
   // ── Boot flow ─────────────────────────────────────────────────────────
   (async function boot() {
@@ -278,6 +434,12 @@
     const resetMatch = location.pathname.match(/^\/reset\/([A-Za-z0-9_-]+)$/);
     if (resetMatch) {
       showResetScreen(resetMatch[1]);
+      return;
+    }
+    // Convite pra criar conta
+    const inviteMatch = location.pathname.match(/^\/convite\/([A-Za-z0-9_-]+)$/);
+    if (inviteMatch) {
+      showInviteScreen(inviteMatch[1]);
       return;
     }
 

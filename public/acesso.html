@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#7A00FF">
+  <title>Pedir acesso ao reWork</title>
+  <meta name="description" content="O reWork organiza a operação de agências e times de marketing: demandas, prazos, horas e entregas. Peça acesso para a sua equipe.">
+  <link rel="icon" href="/rework_logo.svg" type="image/svg+xml">
+  <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/css/fonts.css?v=1">
+  <style>
+    :root { --accent: #7A00FF; --accent-text: #5E00CC; --danger: #e7000b; --radius: 10px; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { min-height: 100%; }
+    body { background: #fff; color: #111; font: 14px/1.5 'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; }
+    [hidden] { display: none !important; }
+    a { color: var(--accent-text); }
+    .page { display: flex; min-height: 100vh; }
+    .hero {
+      flex: 1 1 50%; margin: 10px 0 10px 10px; border-radius: 20px; position: sticky; top: 10px; height: calc(100vh - 20px);
+      background: var(--accent) url('/login-hero.jpg') center / cover no-repeat; color: #fff;
+      padding: 40px 44px; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden;
+    }
+    .hero::before { content: ''; position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(180deg, rgba(0,0,0,.3), rgba(0,0,0,0) 35%, rgba(0,0,0,0) 60%, rgba(0,0,0,.4)); pointer-events: none; }
+    .hero > * { position: relative; }
+    .hero-logo { height: 30px; width: auto; align-self: flex-start; }
+    .hero-title { font-size: 44px; font-weight: 600; line-height: 1.1; letter-spacing: -.03em; max-width: 560px; text-shadow: 0 1px 12px rgba(0,0,0,.25); }
+    .hero-list { list-style: none; margin-top: 28px; display: grid; gap: 12px; max-width: 460px; }
+    .hero-list li { display: flex; gap: 12px; align-items: flex-start; font-size: 15px; line-height: 1.45; color: rgba(255,255,255,.92); }
+    .hero-list svg { flex: 0 0 20px; width: 20px; height: 20px; margin-top: 1px; }
+    .hero-foot { font-size: 12px; letter-spacing: .04em; color: rgba(255,255,255,.85); }
+    .side { flex: 1 1 50%; display: flex; justify-content: center; align-items: center; padding: 56px 32px 40px; }
+    .box { width: 100%; max-width: 440px; }
+    .brand { height: 34px; margin-bottom: 36px; display: none; }
+    h1 { font-size: 26px; font-weight: 600; letter-spacing: -.025em; line-height: 1.2; }
+    .lead { color: #4a4a4a; margin: 8px 0 28px; font-size: 14.5px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; min-width: 0; }
+    label.l { font-size: 12.5px; font-weight: 500; color: #3a3a3a; }
+    .opt { color: #8a8a8a; font-weight: 400; }
+    input.i, select.i, textarea.i {
+      width: 100%; height: 44px; padding: 0 14px; border-radius: var(--radius); border: 1px solid transparent;
+      background: #f5f5f5; color: #111; font: inherit; outline: none; transition: border-color .15s, box-shadow .15s, background .15s;
+    }
+    textarea.i { height: auto; min-height: 96px; padding: 12px 14px; resize: vertical; }
+    select.i { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23737373' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; padding-right: 36px; }
+    .i:hover { background-color: #ededed; }
+    .i:focus { background-color: #f5f5f5; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(122,0,255,.14); }
+    .i.is-invalid { border-color: var(--danger); }
+    .consent { display: flex; gap: 10px; align-items: flex-start; font-size: 12.5px; color: #4a4a4a; margin: 4px 0 14px; cursor: pointer; }
+    .consent input { width: 16px; height: 16px; margin-top: 2px; accent-color: var(--accent); flex: 0 0 auto; }
+    .consent.is-invalid { color: var(--danger); }
+    .err { color: var(--danger); font-size: 12.5px; min-height: 18px; margin-bottom: 10px; }
+    .btn { width: 100%; height: 46px; border: 0; border-radius: var(--radius); background: var(--accent); color: #fff; font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; transition: filter .15s, transform .1s; }
+    .btn:hover { filter: brightness(1.08); }
+    .btn:active { transform: scale(.99); }
+    .btn:disabled { opacity: .7; cursor: progress; }
+    .foot { margin-top: 20px; font-size: 12.5px; color: #737373; text-align: center; }
+    .hp { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
+    .done { text-align: left; }
+    .done-icon { width: 48px; height: 48px; border-radius: 50%; background: #f3ecff; color: var(--accent); display: grid; place-items: center; margin-bottom: 18px; }
+    .done-icon svg { width: 24px; height: 24px; }
+    @media (max-width: 960px) {
+      .hero { display: none; }
+      .brand { display: block; }
+      .side { padding: 32px 20px; }
+      .row { grid-template-columns: 1fr; gap: 0; }
+    }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <aside class="hero" aria-hidden="true">
+      <div>
+        <div class="hero-title">A operação da sua agência, num lugar só.</div>
+        <ul class="hero-list">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Cada demanda passa pelas etapas certas e sempre tem um responsável.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Horas apontadas por cliente, sem planilha paralela.</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Briefings, escopos e aprovações do cliente no mesmo lugar.</li>
+        </ul>
+      </div>
+      <div class="hero-foot">reWork</div>
+    </aside>
+    <main class="side">
+      <div class="box">
+        <img class="brand" src="/rework_preto.svg" alt="reWork">
+
+        <form id="f" novalidate>
+          <h1>Peça acesso para sua equipe</h1>
+          <p class="lead">Estamos abrindo o reWork aos poucos. Conte um pouco sobre vocês e respondemos por e-mail.</p>
+
+          <div class="row">
+            <div class="field"><label class="l" for="name">Seu nome</label><input class="i" id="name" name="name" autocomplete="name" maxlength="120"></div>
+            <div class="field"><label class="l" for="email">E-mail de trabalho</label><input class="i" id="email" name="email" type="email" autocomplete="email" maxlength="200"></div>
+          </div>
+          <div class="row">
+            <div class="field"><label class="l" for="company">Empresa ou agência</label><input class="i" id="company" name="company" autocomplete="organization" maxlength="120"></div>
+            <div class="field"><label class="l" for="role">Seu cargo <span class="opt">(opcional)</span></label><input class="i" id="role" name="role" autocomplete="organization-title" maxlength="80"></div>
+          </div>
+          <div class="row">
+            <div class="field"><label class="l" for="teamSize">Tamanho da equipe</label>
+              <select class="i" id="teamSize" name="teamSize">
+                <option value="">Escolha</option>
+                <option value="1-5">1 a 5 pessoas</option>
+                <option value="6-15">6 a 15 pessoas</option>
+                <option value="16-50">16 a 50 pessoas</option>
+                <option value="51-200">51 a 200 pessoas</option>
+                <option value="200+">Mais de 200</option>
+              </select></div>
+            <div class="field"><label class="l" for="phone">WhatsApp <span class="opt">(opcional)</span></label><input class="i" id="phone" name="phone" type="tel" autocomplete="tel" maxlength="40"></div>
+          </div>
+          <div class="row">
+            <div class="field"><label class="l" for="website">Site <span class="opt">(opcional)</span></label><input class="i" id="website" name="website" autocomplete="url" maxlength="200" placeholder="agencia.com.br"></div>
+            <div class="field"><label class="l" for="source">Como conheceu <span class="opt">(opcional)</span></label>
+              <select class="i" id="source" name="source">
+                <option value="">Escolha</option>
+                <option value="indicacao">Indicação</option>
+                <option value="google">Google</option>
+                <option value="instagram">Instagram</option>
+                <option value="linkedin">LinkedIn</option>
+                <option value="evento">Evento</option>
+                <option value="outro">Outro</option>
+              </select></div>
+          </div>
+          <div class="field"><label class="l" for="message">O que vocês querem organizar? <span class="opt">(opcional)</span></label>
+            <textarea class="i" id="message" name="message" maxlength="2000" placeholder="Ex.: hoje as demandas chegam pelo WhatsApp e ninguém sabe em que etapa estão."></textarea></div>
+
+          <div class="hp" aria-hidden="true"><label>Não preencha<input name="company_site" tabindex="-1" autocomplete="off"></label></div>
+
+          <label class="consent" id="consent-row"><input type="checkbox" id="consent" name="consent"><span>Concordo com o uso destes dados para analisarem meu pedido, conforme a <a href="/privacidade" target="_blank" rel="noopener">Política de Privacidade</a>.</span></label>
+          <div class="err" id="err" role="alert"></div>
+          <button class="btn" type="submit" id="send">Pedir acesso</button>
+          <p class="foot">Já tem conta? <a href="/">Entrar no reWork</a></p>
+        </form>
+
+        <div class="done" id="done" hidden>
+          <div class="done-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></div>
+          <h1>Pedido recebido</h1>
+          <p class="lead" id="done-text">Vamos analisar e responder por e-mail. Enquanto isso, fique de olho na caixa de entrada (e no spam).</p>
+          <p class="foot" style="text-align:left"><a href="/">Voltar para o reWork</a></p>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script src="/js/acesso.js?v=20260925c1"></script>
+</body>
+</html>

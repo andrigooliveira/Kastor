@@ -160,6 +160,42 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 #reset-screen input{background:#f5f5f5;color:#111}
 #reset-screen::before{content:'';position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse 60% 50% at 20% 20%,rgba(122,0,255,.10),transparent 70%),radial-gradient(ellipse 50% 40% at 80% 80%,rgba(122,0,255,.06),transparent 70%)}
 #reset-screen.open{display:flex}
+/* Aceite de convite (/convite/<token>) — mesmo split da tela de login. */
+#invite-screen{position:fixed;inset:0;background:#fff;color:#111;display:none;align-items:stretch;z-index:9999}
+#invite-screen.is-visible{display:flex}
+#invite-screen .login-split-right{overflow-y:auto;padding:48px 32px 72px;align-items:flex-start}
+#invite-screen .login-box--bare{margin:auto 0}
+#invite-screen .login-box--bare .login-logo{margin-bottom:40px}
+#invite-screen .login-box--bare button{margin-top:6px}
+.invite-head{display:flex;align-items:center;gap:12px}
+.invite-avatar{width:40px;height:40px;border-radius:50%;flex:0 0 auto;background:var(--accent) center/cover no-repeat;color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;letter-spacing:.02em}
+.invite-kicker{font-size:13px;color:#4a4a4a;line-height:1.4}
+.invite-kicker b{color:#111;font-weight:600}
+.invite-title{font-size:22px;font-weight:600;letter-spacing:-.02em;color:#111;line-height:1.25}
+.invite-meta{display:flex;flex-wrap:wrap;gap:6px;margin:16px 0 24px}
+.invite-chip{font-size:12px;line-height:1;padding:6px 10px;border-radius:999px;background:#f3ecff;color:#5E00CC;font-weight:500}
+.invite-chip--muted{background:#f5f5f5;color:#4a4a4a}
+.invite-label{display:block;font-size:12px;font-weight:500;color:#4a4a4a;margin:0 0 6px}
+.invite-email{padding:12px 16px;border-radius:var(--radius-sm);background:#fafafa;border:1px dashed #e0e0e0;font-size:14px;color:#4a4a4a;margin-bottom:14px;overflow-wrap:anywhere}
+.invite-field-hint{font-size:11px;line-height:1.5;color:#737373;margin:-6px 0 14px}
+.invite-pass{position:relative}
+.login-box .invite-pass input{padding-right:84px}
+.login-box .invite-pass-toggle{position:absolute;right:6px;top:6px;width:auto;margin:0!important;padding:7px 10px;background:transparent;color:#5E00CC;box-shadow:none;font-size:12px;font-weight:500}
+.login-box .invite-pass-toggle:hover{background:#f3ecff;filter:none;box-shadow:none}
+.invite-terms{display:flex;gap:10px;align-items:flex-start;font-size:12px;line-height:1.5;color:#4a4a4a;margin:2px 0 12px;cursor:pointer}
+.login-box .invite-terms input{width:16px;height:16px;margin:2px 0 0;padding:0;flex:0 0 auto;accent-color:var(--accent);cursor:pointer}
+.invite-terms a{color:#5E00CC}
+.login-box input.is-invalid{border-color:var(--danger)}
+.login-box button:disabled{opacity:.7;cursor:progress;transform:none}
+.invite-skel{height:14px;border-radius:6px;background:linear-gradient(90deg,#f0f0f0,#f8f8f8,#f0f0f0);background-size:200% 100%;animation:invite-skel 1.2s linear infinite;margin-bottom:12px}
+@keyframes invite-skel{to{background-position:-200% 0}}
+.invite-problem-title{font-size:22px;font-weight:600;color:#111;margin-bottom:8px;letter-spacing:-.02em}
+.invite-problem-text{font-size:14px;color:#4a4a4a;line-height:1.55;margin-bottom:24px}
+.invite-problem a.invite-problem-cta{display:block;text-align:center;padding:13px;border-radius:var(--radius-sm);background:var(--accent);color:#fff;font-size:14px;font-weight:600;text-decoration:none}
+.login-hint a{color:#5E00CC}
+.invite-existing-note{font-size:13px;line-height:1.55;color:#4a4a4a;background:#f7f3ff;border-radius:var(--radius-sm);padding:10px 12px;margin:0 0 14px}
+@media (max-width:900px){#invite-screen .login-split-right{padding:32px 20px 72px}}
+@media (prefers-reduced-motion:reduce){.invite-skel{animation:none}}
 @media (max-width:900px){.login-split-left{display:none}.login-split-right{flex:1 1 100%}}
 </style>
 <script type="text/javascript">
@@ -255,7 +291,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
   <main class="login-split-right">
     <div class="login-box login-box--bare">
       <div class="login-logo"><img src="/rework_branco.svg" alt="reWork"></div>
-      <input type="text" id="login-username" placeholder="Usuário" autocomplete="username" onkeydown="if(event.key==='Enter'){event.preventDefault();$('login-password').focus();}">
+      <input type="text" id="login-username" placeholder="E-mail ou usuário" autocomplete="username" onkeydown="if(event.key==='Enter'){event.preventDefault();$('login-password').focus();}">
       <input type="password" id="login-password" placeholder="Senha" autocomplete="current-password" onkeydown="if(event.key==='Enter'){event.preventDefault();doLogin();}">
       <a href="#" class="login-forgot login-forgot--inline" onclick="event.preventDefault();showForgotPassword()">Esqueci minha senha</a>
       <div class="login-error" id="login-error"></div>
@@ -269,9 +305,79 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
         Entrar com Discord
       </button>
     </div>
-      <div class="login-hint">Acessos são criados internamente pela equipe.</div>
+      <div class="login-hint">Recebeu um convite? Abra o link do e-mail para criar sua conta.<br>Quer o reWork na sua equipe? <a href="/acesso">Peça acesso</a></div>
     </div>
     <!-- Rodapé com links legais — sempre acessíveis mesmo antes do login. -->
+    <div class="login-legal-footer">
+      <a href="/termos" target="_blank" rel="noopener">Termos de Serviço</a>
+      <span class="login-legal-sep">·</span>
+      <a href="/privacidade" target="_blank" rel="noopener">Política de Privacidade</a>
+    </div>
+  </main>
+</div>
+
+<!-- CONVITE — exibido quando a URL é /convite/<token> (boot.js) -->
+<div id="invite-screen">
+  <aside class="login-split-left">
+    <div class="login-split-headline">Sua equipe te chamou.<br>Falta só você.</div>
+    <div class="login-split-credit">Criado por Andrigo Oliveira</div>
+  </aside>
+  <main class="login-split-right">
+    <div class="login-box login-box--bare">
+      <div class="login-logo"><img src="/rework_branco.svg" alt="reWork"></div>
+
+      <div id="invite-loading" aria-live="polite">
+        <div class="invite-skel" style="width:55%"></div>
+        <div class="invite-skel" style="width:85%;height:22px"></div>
+        <div class="invite-skel" style="width:40%;margin-bottom:28px"></div>
+        <div class="invite-skel" style="height:44px"></div>
+        <div class="invite-skel" style="height:44px"></div>
+      </div>
+
+      <form id="invite-form" hidden onsubmit="event.preventDefault();doAcceptInvite()" novalidate>
+        <div class="invite-head">
+          <span class="invite-avatar" id="invite-avatar" aria-hidden="true"></span>
+          <div>
+            <div class="invite-kicker" id="invite-kicker"></div>
+            <div class="invite-title" id="invite-title">Crie sua conta no reWork</div>
+          </div>
+        </div>
+        <div class="invite-meta" id="invite-meta"></div>
+
+        <span class="invite-label">E-mail</span>
+        <div class="invite-email" id="invite-email"></div>
+
+        <div id="invite-new-only">
+          <label class="invite-label" for="invite-name">Seu nome</label>
+          <input type="text" id="invite-name" autocomplete="name" maxlength="120" placeholder="Como a equipe vai te ver">
+
+          <label class="invite-label" for="invite-username">Nome de usuário</label>
+          <input type="text" id="invite-username" autocomplete="username" maxlength="32" spellcheck="false" autocapitalize="off">
+          <div class="invite-field-hint">Aparece nas @menções. Letras minúsculas, números, ponto ou hífen.</div>
+        </div>
+        <p class="invite-existing-note" id="invite-existing-note" hidden></p>
+
+        <label class="invite-label" for="invite-password" id="invite-password-label">Senha</label>
+        <div class="invite-pass">
+          <input type="password" id="invite-password" autocomplete="new-password" placeholder="Mínimo de 8 caracteres">
+          <button type="button" class="invite-pass-toggle" id="invite-pass-toggle" onclick="toggleInvitePassword()" aria-label="Mostrar senha">Mostrar</button>
+        </div>
+
+        <label class="invite-terms">
+          <input type="checkbox" id="invite-terms">
+          <span>Li e aceito os <a href="/termos" target="_blank" rel="noopener">Termos de Serviço</a> e a <a href="/privacidade" target="_blank" rel="noopener">Política de Privacidade</a>.</span>
+        </label>
+        <div class="login-error" id="invite-error" role="alert"></div>
+        <button type="submit" id="invite-submit">Criar conta e entrar</button>
+        <div class="login-hint">Já tem conta? <a href="/">Entrar</a></div>
+      </form>
+
+      <div id="invite-problem" class="invite-problem" hidden>
+        <div class="invite-problem-title" id="invite-problem-title"></div>
+        <p class="invite-problem-text" id="invite-problem-text"></p>
+        <a href="/" class="invite-problem-cta">Ir para o login</a>
+      </div>
+    </div>
     <div class="login-legal-footer">
       <a href="/termos" target="_blank" rel="noopener">Termos de Serviço</a>
       <span class="login-legal-sep">·</span>
@@ -285,7 +391,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
   <div class="login-box">
     <div class="login-logo"><img src="/rework_branco.svg" alt="reWork"></div>
     <div class="login-sub">Definir nova senha</div>
-    <input type="password" id="reset-new-pass" placeholder="Nova senha (mín. 6 caracteres)" autocomplete="new-password">
+    <input type="password" id="reset-new-pass" placeholder="Nova senha (mín. 8 caracteres)" autocomplete="new-password">
     <input type="password" id="reset-confirm-pass" placeholder="Confirmar nova senha" autocomplete="new-password" onkeydown="if(event.key==='Enter'){event.preventDefault();doResetPassword();}">
     <div class="login-error" id="reset-error"></div>
     <button onclick="doResetPassword()">Definir nova senha</button>
@@ -306,10 +412,22 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
         <img src="/rework_logo.svg"   alt="" class="sb-logo sb-logo--icon">
       </a>
     </div>
+    <!-- Organização: sempre visível (mesmo com uma só) — renderOrgSwitch() -->
+    <div class="sb-org" id="org-switch">
+      <div class="filter-cdrop ws-cdrop sb-ws-cdrop" id="org-cdrop">
+        <button type="button" class="sb-ws-trigger sb-org-trigger" onclick="toggleFilterCdrop(this.parentElement)" aria-label="Trocar de organização" data-label="Organização">
+          <span class="sb-org-tile" id="org-trigger-tile">?</span>
+          <span class="sb-org-text"><span class="sb-ws-name" id="org-trigger-label">—</span><span class="sb-org-role" id="org-trigger-role"></span></span>
+          <i data-lucide="chevrons-up-down" class="sb-ws-caret"></i>
+        </button>
+        <div class="filter-cdrop-menu sb-org-menu" id="org-cdrop-menu"></div>
+      </div>
+    </div>
     <div class="ws-switch sb-ws freelancer-hide" id="ws-switch">
       <div class="filter-cdrop ws-cdrop sb-ws-cdrop" id="ws-cdrop">
         <button type="button" class="sb-ws-trigger" onclick="toggleFilterCdrop(this.parentElement)" aria-label="Trocar de squad" data-label="Trocar de squad">
           <span class="ws-trigger-letter sb-ws-letter" id="ws-trigger-letter">?</span>
+          <span class="sb-ws-kicker">Squad</span>
           <span class="sb-ws-name" id="ws-trigger-label">—</span>
           <i data-lucide="chevrons-up-down" class="sb-ws-caret"></i>
         </button>
@@ -2324,6 +2442,11 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       </div>
     </div>
 
+    <!-- ── ORGANIZAÇÃO: configurações (renderOrgPage) ── -->
+    <div class="page" id="page-org">
+      <div class="page-body" id="org-page-body"></div>
+    </div>
+
     <!-- ── USUÁRIOS (admin) ── -->
     <div class="page" id="page-users">
       <div class="page-body us-dossier">
@@ -2335,11 +2458,35 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           </div>
           <div class="us-header-actions">
             <button class="btn btn-ghost btn-sm" id="user-archive-toggle" onclick="toggleArchivedUsers()">Ver desativados</button>
-            <button class="btn btn-primary btn-sm admin-only full-admin-only" onclick="openUserModal()"><i data-lucide="user-plus" class="ic-sm"></i> Cadastrar usuário</button>
+            <button class="btn btn-ghost btn-sm admin-only full-admin-only" onclick="openUserModal()" title="Cria a conta com uma senha inicial, sem mandar convite">Cadastrar sem convite</button>
+            <button class="btn btn-primary btn-sm admin-only" onclick="openInviteModal()"><i data-lucide="send" class="ic-sm"></i> Convidar pessoa</button>
           </div>
         </div>
 
         <div class="uws-filter" id="users-ws-filter"></div>
+
+        <!-- Convites pendentes/vencidos — renderInvites() (só admin, some quando vazio) -->
+        <div class="us-section" id="invites-section" hidden>
+          <div class="us-section-head">
+            <span class="us-section-title">Convites <span class="inv-count" id="invites-count"></span></span>
+            <span class="us-section-hint" id="invites-hint"></span>
+          </div>
+          <div class="table-wrap mine-table-wrap">
+            <table class="mine-table-v2 inv-table">
+              <thead>
+                <tr>
+                  <th>E-mail</th>
+                  <th>Permissão</th>
+                  <th>Squads</th>
+                  <th>Envio</th>
+                  <th>Situação</th>
+                  <th class="us-col-kebab"></th>
+                </tr>
+              </thead>
+              <tbody id="invites-table-body"></tbody>
+            </table>
+          </div>
+        </div>
 
         <!-- Section: tabela mine-v2 do quadro -->
         <div class="us-section">
@@ -3014,7 +3161,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                   <div class="form-group">
                     <label class="form-label" for="profile-f-pass-new">Nova senha</label>
                     <input class="form-control" id="profile-f-pass-new" type="password" autocomplete="new-password">
-                    <div class="profile-hint">Pelo menos 6 caracteres.</div>
+                    <div class="profile-hint">Pelo menos 8 caracteres.</div>
                   </div>
                   <div class="form-group">
                     <label class="form-label" for="profile-f-pass-confirm">Repita a nova senha</label>
@@ -4335,7 +4482,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
         </div>
         <div class="um-grid">
           <div class="form-group um-col-2">
-            <label class="form-label">Nome completo *</label>
+            <label class="form-label" id="u-name-label">Nome completo *</label>
             <input class="form-control" id="u-name" placeholder="Ex: Ana Lima">
           </div>
           <div class="form-group">
@@ -4353,24 +4500,24 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       <div class="um-section">
         <div class="um-section-head">
           <span class="um-section-title">Acesso</span>
-          <span class="um-section-hint">Login + senha inicial. Contato só se quiser notificações.</span>
+          <span class="um-section-hint" id="u-access-hint">Login + senha inicial. Contato só se quiser notificações.</span>
         </div>
         <div class="um-grid">
           <div class="form-group" id="u-username-group">
             <label class="form-label">Nome de usuário (login) *</label>
             <input class="form-control" id="u-username" placeholder="Ex: ana.lima" autocomplete="off">
           </div>
-          <div class="form-group">
+          <div class="form-group" id="u-password-group">
             <label class="form-label" id="u-password-label">Senha inicial *</label>
-            <input class="form-control" id="u-password" type="text" placeholder="Mín. 6 caracteres" autocomplete="off">
+            <input class="form-control" id="u-password" type="text" placeholder="Mín. 8 caracteres" autocomplete="off">
             <div class="um-field-hint">A pessoa pode trocar depois no próprio perfil.</div>
           </div>
-          <div class="form-group">
-            <label class="form-label">E-mail (opcional)</label>
+          <div class="form-group" id="u-email-group">
+            <label class="form-label" id="u-email-label">E-mail (opcional)</label>
             <input class="form-control" id="u-email" type="email" placeholder="ana.lima@empresa.com" autocomplete="off">
-            <div class="um-field-hint">Para notificações de demandas e menções.</div>
+            <div class="um-field-hint" id="u-email-hint">Para entrar e receber avisos de demandas e menções.</div>
           </div>
-          <div class="form-group">
+          <div class="form-group" id="u-discord-group">
             <label class="form-label">ID do Discord (opcional)</label>
             <input class="form-control" id="u-discord-id" placeholder="Ex: 123456789012345678" autocomplete="off">
             <div class="um-field-hint">Necessário para menção no Discord ao virar responsável.</div>
@@ -4382,19 +4529,19 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       <div class="um-section">
         <div class="um-section-head">
           <span class="um-section-title">Permissões</span>
-          <span class="um-section-hint">Squads liberados + nível de acesso.</span>
+          <span class="um-section-hint" id="u-perm-hint">Squads liberados + nível de acesso.</span>
         </div>
         <div class="form-group um-col-2">
           <label class="form-label">Acesso aos squads</label>
           <div class="ws-checklist" id="u-workspaces"></div>
         </div>
         <div class="um-role-options">
-          <label class="um-role-opt um-role-opt--admin" title="Gerencia squads, usuários e fluxos em toda a plataforma">
+          <label class="um-role-opt um-role-opt--admin" id="u-opt-admin" title="Gerencia pessoas, squads e configurações da organização">
             <input type="radio" name="u-role-kind" id="u-admin" value="admin">
             <div class="um-role-icon"><i data-lucide="shield" class="ic-md"></i></div>
             <div class="um-role-name">Administrador</div>
           </label>
-          <label class="um-role-opt um-role-opt--mod" title="Gerencia fluxos, funções, webhooks e integrações nos squads liberados">
+          <label class="um-role-opt um-role-opt--mod" id="u-opt-mod" title="Coordena os squads liberados: fluxos, clientes, horas da equipe e convites">
             <input type="radio" name="u-role-kind" id="u-moderator" value="mod">
             <div class="um-role-icon"><i data-lucide="gavel" class="ic-md"></i></div>
             <div class="um-role-name">Moderador</div>
@@ -4414,7 +4561,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('user-modal')">Cancelar</button>
-      <button class="btn btn-confirm" onclick="saveUser()">Salvar Usuário</button>
+      <button class="btn btn-confirm" id="u-save-btn" onclick="saveUser()">Salvar Usuário</button>
     </div>
   </div>
 </div>
@@ -4470,7 +4617,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       <div id="confirm-message" style="font-size:13px;line-height:1.6;color:var(--text-dim)"></div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="confirmCancel()">Cancelar</button>
+      <button class="btn btn-ghost" id="confirm-cancel-btn" onclick="confirmCancel()">Cancelar</button>
       <button class="btn btn-confirm" id="confirm-ok-btn" onclick="confirmAccept()">Confirmar</button>
     </div>
   </div>
@@ -4509,7 +4656,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260924novidades1" defer></script>
+<script src="/js/boot.js?v=20260925jor2" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

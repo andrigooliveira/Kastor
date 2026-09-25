@@ -35,6 +35,7 @@ const {
   generateAuthenticationOptions, verifyAuthenticationResponse
 } = require('@simplewebauthn/server');
 const { createStore, ENTITY_TYPES } = require('./db-store');
+const { createTenancy } = require('./tenancy');
 const googleCal  = require('./google-cal');
 const discordBot = require('./discord-bot');
 const discordOAuth = require('./discord-oauth');
@@ -54,7 +55,13 @@ const DATA_DIR = process.env.KASTOR_DATA_DIR || path.join(__dirname, 'data');
      - DATABASE_URL=postgres://user:pass@host:port/db
      - Alternativa: variáveis PGHOST, PGUSER, PGPASSWORD, PGDATABASE, PGPORT. */
 const store = createStore();
-let db = null;
+/* `rawDb` é o cache em memória com TODAS as organizações. O código usa `db`,
+   que dentro de uma requisição autenticada só enxerga a organização ativa
+   (ver tenancy.js). Fora de requisição (boot, jobs) `db` vê tudo. */
+let rawDb = null;
+let consoleApi = null; // platform-console.js (montado mais abaixo)
+const tenancy = createTenancy({ getRaw: () => rawDb, onMemberChange: (m) => saveEntity('memberships', m) });
+const db = tenancy.db;
 let _dirtyEntities = new Map(); // key: `${type}|${id}` → { type, entity|id, op: 'upsert'|'remove' }
 
 function defaultDB() {
@@ -109,10 +116,11 @@ async function loadDB() {
   // Cria schema (idempotente) — CREATE TABLE IF NOT EXISTS.
   await store.init();
   // Carrega cache em memória a partir do Postgres.
-  db = await store.loadAllToCache();
+  rawDb = await store.loadAllToCache();
   for (const t of ENTITY_TYPES) if (!Array.isArray(db[t])) db[t] = [];
   if (!Array.isArray(db.notifications)) db.notifications = [];
-  auth.load();
+  // Senhas e sessões: Postgres (importa o data/auth.enc antigo na 1ª vez).
+  await auth.init(store);
   const firstInstall = await isFirstInstall();
   migrate(firstInstall);
   seed(firstInstall);
@@ -126,6 +134,9 @@ async function loadDB() {
   // Migração de folders legados do cofre — cria entidades a partir do campo
   // string `folder` que existia antes. Idempotente.
   try { _migrateLegacyPasswordFolders(); } catch (e) { console.warn('migrateLegacyPasswordFolders:', e.message); }
+  migrateOrgs();
+  clearDoneStageOwners();
+  if (consoleApi) consoleApi.ensureDefaultAdmin();
   await flushDirty(); // garante que entidades criadas no seed/migrate sejam persistidas
 }
 
@@ -189,7 +200,7 @@ function extractInlineBase64() {
 
 // Termos de sugestão de fluxo aprendidos do histórico — ver learnFlowTerms().
 const FLOW_LEARN_SOURCE_TYPES = new Set(['demands', 'flows', 'clients', 'projects']);
-let _flowLearnCache = null;
+let _flowLearnCache = new Map(); // orgId → { terms, computedAt }
 
 /* Marca uma entidade como "suja" pra ser persistida no próximo flush.
    Hot paths podem chamar saveEntity diretamente pra ganhar latência. */
@@ -197,9 +208,21 @@ function markDirty(type, entityOrId, op = 'upsert') {
   const id = (op === 'remove') ? entityOrId : (entityOrId && entityOrId.id);
   if (!id) return;
   _dirtyEntities.set(`${type}|${id}`, { type, op, entity: op === 'upsert' ? entityOrId : null, id });
-  if (FLOW_LEARN_SOURCE_TYPES.has(type)) _flowLearnCache = null;
+  if (FLOW_LEARN_SOURCE_TYPES.has(type)) _flowLearnCache.clear();
 }
-function saveEntity(type, entity)   { markDirty(type, entity, 'upsert'); scheduleFlush(); }
+function saveEntity(type, entity) {
+  stampOrg(type, entity);
+  markDirty(type, entity, 'upsert');
+  // Permissões/squads do usuário moram no vínculo com a organização ativa.
+  if (type === 'users' && entity && rawDb) { const m = tenancy.memberFor(entity); if (m) markDirty('memberships', m, 'upsert'); }
+  scheduleFlush();
+}
+/* Item novo criado dentro de uma organização, sem squad: pertence a ela. */
+function stampOrg(type, e) {
+  const org = tenancy.currentOrgId();
+  if (!org || !e || typeof e !== 'object' || tenancy.UNSCOPED.has(type) || type === 'users' || type === 'organizations') return;
+  if (!e.orgId && !e.workspaceId) e.orgId = org;
+}
 function removeEntity(type, id)     { markDirty(type, id, 'remove'); scheduleFlush(); }
 
 let saveTimer = null;
@@ -261,6 +284,100 @@ function addDays(ymd, days) {
   return _ymdOf(base);
 }
 
+/* ─── ORGANIZAÇÕES: migração da instalação de uma empresa só ───
+   Idempotente. Na primeira vez: cria a organização (ORG_NAME, padrão "WSI"),
+   põe nela todos os squads e itens "da instalação", e cria o vínculo de cada
+   pessoa com exatamente as permissões de hoje. O dono é ORG_OWNER (usuário
+   ou e-mail) ou, sem ele, o admin ativo mais antigo — dá pra trocar depois
+   no console. Em todo boot: liga os campos calculados dos usuários. */
+function migrateOrgs() {
+  const r = rawDb;
+  for (const k of ['organizations', 'memberships']) if (!Array.isArray(r[k])) r[k] = [];
+  let org = r.organizations.find(o => o.isDefault) || r.organizations[0];
+  if (!org) {
+    const firstWs = (r.workspaces || []).map(w => w.createdAt).filter(Boolean).sort()[0];
+    org = {
+      id: 'org_' + uid(), name: String(process.env.ORG_NAME || 'WSI').trim().slice(0, 80) || 'WSI',
+      logo: null, ownerId: null, status: 'active', isDefault: true,
+      createdAt: firstWs || nowISO(), createdBy: 'migration'
+    };
+    r.organizations.push(org);
+    markDirty('organizations', org, 'upsert');
+    console.log(`  [orgs] organização "${org.name}" criada com os dados atuais`);
+  }
+  let stamped = 0, created = 0;
+  for (const w of (r.workspaces || [])) if (!w.orgId) { w.orgId = org.id; markDirty('workspaces', w, 'upsert'); stamped++; }
+  for (const t of ENTITY_TYPES) {
+    if (tenancy.UNSCOPED.has(t) || ['users', 'workspaces', 'memberships', 'organizations'].includes(t)) continue;
+    for (const e of (r[t] || [])) {
+      if (e && !e.orgId && !e.workspaceId) { e.orgId = org.id; markDirty(t, e, 'upsert'); stamped++; }
+    }
+  }
+  for (const u of (r.users || [])) {
+    if (tenancy.membershipsOf(u.id).length) continue;
+    const role = u.isAdmin ? 'admin' : u.isModerator ? 'mod' : u.isFreelancer ? 'free' : 'equipe';
+    const m = {
+      id: uid(), orgId: org.id, userId: u.id, role,
+      workspaces: Array.isArray(u.workspaces) ? u.workspaces.slice() : [],
+      area: u.role || '', position: u.position || null, active: u.active !== false,
+      createdAt: u.createdAt || nowISO(), invitedBy: null
+    };
+    r.memberships.push(m);
+    markDirty('memberships', m, 'upsert');
+    created++;
+  }
+  if (!org.ownerId) {
+    const userOf = (m) => r.users.find(u => u.id === m.userId);
+    const cands = r.memberships.filter(m => m.orgId === org.id && m.active !== false);
+    const want = String(process.env.ORG_OWNER || '').trim().toLowerCase();
+    let pick = want ? cands.find(m => { const u = userOf(m); return u && (String(u.username).toLowerCase() === want || String(u.email || '').toLowerCase() === want); }) : null;
+    if (!pick) pick = cands.filter(m => m.role === 'admin').sort((a, b) => String(userOf(a)?.createdAt || '').localeCompare(String(userOf(b)?.createdAt || '')))[0];
+    if (pick) {
+      pick.role = 'owner';
+      org.ownerId = pick.userId;
+      markDirty('memberships', pick, 'upsert');
+      markDirty('organizations', org, 'upsert');
+      console.log(`  [orgs] dono de "${org.name}": ${userOf(pick)?.name || pick.userId}`);
+    }
+  }
+  (r.users || []).forEach(u => tenancy.attachUser(u));
+  if (created || stamped) console.log(`  [orgs] ${created} vínculo(s) criado(s), ${stamped} item(ns) ligados à organização`);
+}
+
+/* Etapa de conclusão não tem responsável: limpa o que ficou nos fluxos antigos. */
+function clearDoneStageOwners() {
+  let n = 0;
+  for (const f of (rawDb.flows || [])) {
+    let changed = false;
+    for (const st of (f.stages || [])) {
+      if (st.done && (st.responsibleId || st.responsibleRole || st.roleFilter || st.responsiblePosition)) {
+        st.responsibleId = null; st.responsibleRole = null; st.roleFilter = null; st.responsiblePosition = null;
+        changed = true;
+      }
+    }
+    if (changed) { markDirty('flows', f, 'upsert'); n++; }
+  }
+  if (n) console.log(`  [fluxos] responsável removido da etapa de conclusão em ${n} fluxo(s)`);
+}
+
+/* Cria o vínculo de um usuário novo (cadastro manual ou convite) e liga os
+   campos calculados. Lê as permissões dos campos antigos do objeto, se houver. */
+function adoptUser(user, orgId, opts = {}) {
+  const role = opts.role || (user.isAdmin ? 'admin' : user.isModerator ? 'mod' : user.isFreelancer ? 'free' : 'equipe');
+  const m = {
+    id: uid(), orgId, userId: user.id, role,
+    workspaces: Array.isArray(opts.workspaces) ? opts.workspaces.slice() : (Array.isArray(user.workspaces) ? user.workspaces.slice() : []),
+    area: opts.area !== undefined ? String(opts.area || '') : (user.role || ''),
+    position: opts.position !== undefined ? (opts.position || null) : (user.position || null),
+    active: true, createdAt: nowISO(), invitedBy: opts.invitedBy || null
+  };
+  rawDb.memberships.push(m);
+  markDirty('memberships', m, 'upsert');
+  tenancy.attachUser(user);
+  return m;
+}
+const allUsers = () => (rawDb && rawDb.users) || [];
+
 /* ─── MIGRAÇÃO de bases antigas ─── */
 function migrate(firstInstall) {
   // Workspace padrão "Geral" — SÓ na primeira instalação. Depois, se o usuário
@@ -272,17 +389,13 @@ function migrate(firstInstall) {
 
   db.users.forEach(u => {
     // Move senhas antigas (embutidas no usuário) para o cofre criptografado
-    if (u.passHash && u.salt && !auth.hasPassword(u.id)) {
-      auth._store().credentials[u.id] = { salt: u.salt, hash: u.passHash };
-      auth.save();
-    }
+    if (u.passHash && u.salt) auth.importLegacyCredential(u.id, u.salt, u.passHash);
     delete u.passHash; delete u.salt;
     if (!Array.isArray(u.workspaces)) u.workspaces = db.workspaces.map(w => w.id);
   });
   // Tokens antigos que viviam no db.json
   if (Array.isArray(db.tokens)) {
-    db.tokens.forEach(t => { if (t && t.token) auth._store().tokens.push(t); });
-    auth.save();
+    db.tokens.forEach(t => auth.importLegacyToken(t));
     delete db.tokens;
   }
 
@@ -487,12 +600,63 @@ function publicUser(u, opts) {
   // reminders/demandSeen/timeGapDismissed: estado pessoal com rota própria.
   const { googleTokens, googleSyncTokens, knownIps, releaseNotesSeenIds, quickReplies, reminders, demandSeen, timeGapDismissed, mentionDismissed, heldNotifs, navMenu, ...rest } = u;
   rest.googleConnected = !!googleTokens;
+  // Permissões e squads vêm do vínculo com a organização ativa.
+  rest.isAdmin = !!u.isAdmin; rest.isModerator = !!u.isModerator; rest.isFreelancer = !!u.isFreelancer;
+  rest.isOwner = !!u.isOwner; rest.orgRole = u.orgRole || null;
+  rest.workspaces = Array.isArray(u.workspaces) ? u.workspaces.slice() : [];
+  rest.role = u.role || ''; rest.position = u.position || null; rest.active = u.active !== false;
   if (opts && opts.self) {
     rest.quickReplies = Array.isArray(quickReplies) ? quickReplies : null;
     rest.navMenu = Array.isArray(navMenu) ? navMenu : null;
   }
   return rest;
 }
+/* ── IDENTIDADE ──
+   Regras de conta compartilhadas por cadastro manual, convite e perfil. */
+const PASSWORD_MIN = 8;
+const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{2,31}$/;
+const USERNAME_RULE = 'O nome de usuário precisa ter de 3 a 32 caracteres: letras minúsculas, números, ponto, hífen ou sublinhado.';
+function normEmail(e) { return String(e || '').trim().toLowerCase(); }
+/* Conta (ativa ou não) que já usa esse e-mail — o e-mail identifica a pessoa. */
+function userByEmail(email, exceptId) {
+  const e = normEmail(email);
+  if (!e) return null;
+  return allUsers().find(u => u.id !== exceptId && u.email && u.email.toLowerCase() === e) || null;
+}
+function usernameTaken(username, exceptId) {
+  const n = String(username || '').trim().toLowerCase();
+  return allUsers().some(u => u.id !== exceptId && String(u.username || '').toLowerCase() === n);
+}
+/* Sugestão de nome de usuário a partir do e-mail (ou do nome), sem acento
+   e sem colidir com os existentes: ana.lima, ana.lima2… */
+function suggestUsername(email, name) {
+  const src = String(email || '').split('@')[0] || String(name || '');
+  let base = src.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '.').replace(/[._-]{2,}/g, '.').replace(/^[._-]+|[._-]+$/g, '').slice(0, 28);
+  if (base.length < 3) base = (base + 'usuario').slice(0, 28);
+  let cand = base, i = 1;
+  while (usernameTaken(cand)) cand = `${base}${++i}`;
+  return cand;
+}
+/* Metadados da sessão (lista de sessões ativas / auditoria). */
+function sessionMeta(req) {
+  return { ip: clientIp(req), ua: String(req.headers['user-agent'] || '').slice(0, 200) };
+}
+/* Abre a sessão (cookie httpOnly) e devolve o token. */
+function startSession(req, res, user) {
+  const token = auth.addToken(user.id, sessionMeta(req));
+  res.set('Set-Cookie', buildSessionCookie(token, { secure: isHttpsRequest(req) }));
+  return token;
+}
+/* Registra o IP no histórico do usuário (auditoria). Guarda os últimos 20. */
+function recordLoginIp(user, ip) {
+  if (!Array.isArray(user.knownIps)) user.knownIps = [];
+  if (user.knownIps.includes(ip)) return;
+  user.knownIps.push(ip);
+  if (user.knownIps.length > 20) user.knownIps = user.knownIps.slice(-20);
+  saveEntity('users', user);
+}
+
 function sanitizeDiscordId(raw) {
   if (raw === null || raw === undefined) return null;
   const s = String(raw).trim();
@@ -576,14 +740,29 @@ async function loadAdminDiscordDefaults() {
     _adminDiscordDefaultsCache = { ...DISCORD_HARDCODED_DEFAULTS, ...parsed };
   } catch { _adminDiscordDefaultsCache = { ...DISCORD_HARDCODED_DEFAULTS }; }
 }
-function getAdminDiscordDefaults() { return _adminDiscordDefaultsCache || { ...DISCORD_HARDCODED_DEFAULTS }; }
+/* Padrões por organização (org.discordDefaults). A organização original usa
+   o valor antigo (kv global) enquanto não salvar um próprio. */
+function getAdminDiscordDefaults() {
+  const org = tenancy.orgById(tenancy.currentOrgId()) || (rawDb && (rawDb.organizations || []).find(o => o.isDefault));
+  if (org && org.discordDefaults) return { ...DISCORD_HARDCODED_DEFAULTS, ...org.discordDefaults };
+  if (!org || org.isDefault) return _adminDiscordDefaultsCache || { ...DISCORD_HARDCODED_DEFAULTS };
+  return { ...DISCORD_HARDCODED_DEFAULTS };
+}
 async function saveAdminDiscordDefaults(next) {
   const clean = {};
   for (const k of Object.keys(DISCORD_EVENT_LABELS)) {
     if (typeof next[k] === 'boolean') clean[k] = next[k];
   }
+  const org = tenancy.orgById(tenancy.currentOrgId());
+  if (org) { org.discordDefaults = clean; saveEntity('organizations', org); return; }
   _adminDiscordDefaultsCache = { ...DISCORD_HARDCODED_DEFAULTS, ...clean };
   await store.setKv('discordAdminDefaults', JSON.stringify(_adminDiscordDefaultsCache));
+}
+/* Bot do Discord e webhook do n8n são da instalação: por enquanto só a
+   organização original (WSI) usa. */
+function installationOrgOnly(req, res, next) {
+  if (req.org && req.org.isDefault) return next();
+  return res.status(403).json({ error: 'Esta integração ainda não está disponível para a sua organização.' });
 }
 function effectiveDiscordPref(user, event) {
   if (!DISCORD_EVENT_LABELS[event]) return false;
@@ -690,12 +869,23 @@ function buildDiscordDMForNotification(type, ctx) {
   return { embeds: [embed], allowed_mentions: { parse: [] } };
 }
 
-function wsIdsFor(user) {
-  if (user.isAdmin) return db.workspaces.map(w => w.id);
-  return Array.isArray(user.workspaces) ? user.workspaces : [];
-}
+/* Acesso a squads: vem do vínculo da pessoa com a organização DONA do squad.
+   Dentro de uma requisição, só squads da organização ativa contam. */
 function canAccessWs(user, wsId) {
-  return user.isAdmin || (Array.isArray(user.workspaces) && user.workspaces.includes(wsId));
+  if (!user || !wsId) return false;
+  const orgId = tenancy.wsOrgId(wsId);
+  if (!orgId) return false;
+  const cur = tenancy.currentOrgId();
+  if (cur && cur !== orgId) return false;
+  const m = tenancy.memberIn(user.id, orgId);
+  if (!m || m.active === false) return false;
+  return m.role === 'owner' || m.role === 'admin' || (Array.isArray(m.workspaces) && m.workspaces.includes(wsId));
+}
+function wsIdsFor(user) {
+  if (!user) return [];
+  const cur = tenancy.currentOrgId();
+  const orgIds = cur ? [cur] : tenancy.activeMemberships(user.id).map(m => m.orgId);
+  return (rawDb.workspaces || []).filter(w => orgIds.includes(w.orgId) && canAccessWs(user, w.id)).map(w => w.id);
 }
 
 /* Parse minimal de Cookie: header → objeto { nome: valor }. Evita dep externa. */
@@ -736,17 +926,27 @@ function requireAuth(req, res, next) {
     const header = req.headers.authorization || '';
     if (header.startsWith('Bearer ')) token = header.slice(7);
   }
-  const userId = auth.userIdForToken(token);
-  const user = userId && db.users.find(u => u.id === userId && u.active !== false);
+  const session = auth.sessionForToken(token);
+  const user = session && allUsers().find(u => u.id === session.userId);
   if (!user) return res.status(401).json({ error: 'Não autenticado' });
-  // Freelancer: bloqueia globalmente mutações fora da whitelist. Endpoints
-  // permitidos ainda aplicam checks internos (freelancerHasDemandAccess,
-  // ownership em comentários/checklist/time, e limite de campos no PUT).
-  if (user.isFreelancer && !freelancerCanMutate(req.method, req.path)) {
-    return res.status(403).json({ error: 'Freelancers não têm permissão para essa ação' });
-  }
-  req.user = user; req.token = token;
-  next();
+  // Organização ativa: a da sessão, se a pessoa ainda tiver vínculo ativo;
+  // senão a última usada; senão a mais antiga.
+  const ms = tenancy.activeMemberships(user.id);
+  if (!ms.length) return res.status(401).json({ error: 'Sua conta não faz parte de nenhuma organização ativa.', code: 'no_org' });
+  let m = ms.find(x => x.orgId === (session.data && session.data.orgId)) || tenancy.primaryMembership(user);
+  if (!m || m.active === false) m = ms[0];
+  if (!session.data || session.data.orgId !== m.orgId) auth.setSessionData(token, { orgId: m.orgId });
+  tenancy.run(m.orgId, () => {
+    // Freelancer: bloqueia globalmente mutações fora da whitelist. Endpoints
+    // permitidos ainda aplicam checks internos (freelancerHasDemandAccess,
+    // ownership em comentários/checklist/time, e limite de campos no PUT).
+    if (user.isFreelancer && !freelancerCanMutate(req.method, req.path)) {
+      return res.status(403).json({ error: 'Freelancers não têm permissão para essa ação' });
+    }
+    req.user = user; req.token = token;
+    req.org = tenancy.orgById(m.orgId); req.membership = m;
+    next();
+  });
 }
 
 /* Whitelist de rotas que um freelancer pode acessar via método mutante (POST/PUT/DELETE/PATCH).
@@ -770,6 +970,7 @@ const FREELANCER_ALLOWED_MUTATIONS = [
   { m: 'PUT',    re: /^\/api\/me$/ },
   { m: 'POST',   re: /^\/api\/me(\/.*)?$/ },
   { m: 'POST',   re: /^\/api\/logout$/ },
+  { m: 'POST',   re: /^\/api\/orgs\/switch$/ },
   { m: 'POST',   re: /^\/api\/uploads$/ },
   { m: 'PUT',    re: /^\/api\/notifications(\/.*)?$/ },
   { m: 'DELETE', re: /^\/api\/notifications(\/.*)?$/ },
@@ -945,8 +1146,10 @@ function notify(targetUserId, type, data, triggerUserId, baseUrl) {
   if (!targetUserId || targetUserId === triggerUserId) return; // não notifica a si mesmo
   const user = db.users.find(u => u.id === targetUserId && u.active !== false);
   if (!user) return;
+  const nDemand = data.demandId ? (rawDb.demands || []).find(x => x.id === data.demandId) : null;
   const n = {
     id: uid(), userId: targetUserId, type,
+    orgId: (nDemand && tenancy.wsOrgId(nDemand.workspaceId)) || tenancy.currentOrgId() || null,
     demandId: data.demandId || null,
     demandName: data.demandName || '',
     fromUser: triggerUserId || null,
@@ -1850,7 +2053,7 @@ app.post('/api/marketing/ingest', express.json({ limit: '5mb' }), async (req, re
    um workspace que contém esse cliente. */
 /* Config do webhook — admin ou moderador. Devolve o token pra colar no n8n.
    Não trafega o token pra usuários comuns. */
-app.get('/api/marketing/webhook-config', requireAuth, modOrAdmin, (req, res) => {
+app.get('/api/marketing/webhook-config', requireAuth, modOrAdmin, installationOrgOnly, (req, res) => {
   res.json({ token: MARKETING_TOKEN || '', endpoint: '/api/marketing/ingest' });
 });
 
@@ -1941,34 +2144,29 @@ app.post('/api/login', (req, res) => {
     return res.status(429).json({ error: `Muitas tentativas. Aguarde ${retryAfter}s antes de tentar de novo.`, retryAfter });
   }
   const { username, password } = req.body || {};
-  const user = db.users.find(u => u.username.toLowerCase() === String(username || '').trim().toLowerCase());
-  if (!user || !auth.verifyPassword(user.id, password)) {
+  // Entra com o nome de usuário ou com o e-mail da conta. Bases antigas podem
+  // ter o mesmo e-mail em duas contas: vale a que tiver essa senha.
+  const ident = String(username || '').trim().toLowerCase();
+  const candidates = ident ? db.users.filter(u =>
+    String(u.username || '').toLowerCase() === ident || (u.email && u.email.toLowerCase() === ident)
+  ) : [];
+  const user = candidates.find(u => auth.verifyPassword(u.id, password)) || null;
+  if (!user) {
     rec.count++;
     _loginAttempts.set(ip, rec);
     return res.status(401).json({ error: 'Usuário ou senha incorretos' });
   }
-  if (user.active === false) {
+  if (!tenancy.activeMemberships(user.id).length) {
     rec.count++;
     _loginAttempts.set(ip, rec);
-    return res.status(403).json({ error: 'Usuário desativado. Fale com a coordenação.' });
+    return res.status(403).json({ error: 'Seu acesso está desativado. Fale com a coordenação da sua equipe.' });
   }
   // Sucesso: zera o contador desse IP
   _loginAttempts.delete(ip);
-  // Registra o IP no histórico do usuário (audit + heurística de "primeiro
-  // acesso"). Se knownIps ainda não existia, este é o primeiro login e o
-  // frontend deve exibir o tour de boas-vindas — desde que hasSeenTour ainda
-  // não esteja marcado (usuário pode ter dispensado antes de completar).
-  if (!Array.isArray(user.knownIps)) user.knownIps = [];
-  if (!user.knownIps.includes(ip)) {
-    user.knownIps.push(ip);
-    // Cap simples pra não crescer indefinidamente (guarda últimos 20).
-    if (user.knownIps.length > 20) user.knownIps = user.knownIps.slice(-20);
-    saveEntity('users', user);
-  }
-  const token = auth.addToken(user.id);
+  recordLoginIp(user, ip);
   // Cookie httpOnly: JS no browser não consegue ler — protege contra XSS.
   // O `token` no body é mantido por compat (clientes antigos podiam usar Bearer).
-  res.set('Set-Cookie', buildSessionCookie(token, { secure: isHttpsRequest(req) }));
+  const token = startSession(req, res, user);
   res.json({ token, user: publicUser(user, { self: true }) });
 });
 
@@ -2162,8 +2360,7 @@ app.get('/api/auth/discord/callback', async (req, res) => {
   if (!user) {
     return res.redirect('/?discord=error&reason=' + encodeURIComponent('no-account'));
   }
-  const token = auth.addToken(user.id);
-  res.set('Set-Cookie', buildSessionCookie(token, { secure: isHttpsRequest(req) }));
+  startSession(req, res, user);
   return res.redirect('/?discord=logged-in');
 });
 
@@ -2215,7 +2412,7 @@ app.post('/api/forgot-password', rateLimitPwReset, async (req, res) => {
 app.post('/api/reset-password', rateLimitPwReset, async (req, res) => {
   const { token, newPassword } = req.body || {};
   if (!token || typeof newPassword !== 'string') return res.status(400).json({ error: 'Token e nova senha são obrigatórios.' });
-  if (newPassword.length < 6) return res.status(400).json({ error: 'A nova senha deve ter pelo menos 6 caracteres.' });
+  if (newPassword.length < PASSWORD_MIN) return res.status(400).json({ error: `A nova senha deve ter pelo menos ${PASSWORD_MIN} caracteres.` });
   await store.cleanupResets();
   const rec = await store.getReset(String(token));
   if (!rec || rec.used || rec.expiresAt < Date.now()) {
@@ -2232,7 +2429,11 @@ app.post('/api/reset-password', rateLimitPwReset, async (req, res) => {
 
 app.get('/api/me', requireAuth, (req, res) => {
   const me = publicUser(req.user, { self: true });
-  if (me) me._smtpEnabled = mailEnabled();
+  if (me) {
+    me._smtpEnabled = mailEnabled();
+    me.org = orgPublic(req.org, req.membership.role);
+    me.orgs = myOrgs(req.user);
+  }
   res.json(me);
 });
 
@@ -2266,7 +2467,12 @@ app.put('/api/me', requireAuth, (req, res) => {
     if (email === null || email === '') {
       u.email = null;
     } else if (isValidEmail(email)) {
-      u.email = String(email).trim().toLowerCase();
+      const next = normEmail(email);
+      if (next !== (u.email || '').toLowerCase()) {
+        if (userByEmail(next, u.id)) return res.status(409).json({ error: 'Esse e-mail já está em uso por outra conta.' });
+        u.email = next;
+        u.emailVerifiedAt = null;
+      }
     } else {
       return res.status(400).json({ error: 'E-mail inválido.' });
     }
@@ -2294,7 +2500,7 @@ app.put('/api/me', requireAuth, (req, res) => {
     const trimmed = username.trim().toLowerCase();
     if (!/^[a-z0-9._-]+$/.test(trimmed)) return res.status(400).json({ error: 'Usuário deve conter apenas letras, números, pontos, hífens e underlines' });
     if (trimmed.length < 3) return res.status(400).json({ error: 'Mínimo 3 caracteres' });
-    if (db.users.some(x => x.id !== u.id && x.username.toLowerCase() === trimmed)) return res.status(409).json({ error: 'Esse nome de usuário já está em uso' });
+    if (allUsers().some(x => x.id !== u.id && x.username.toLowerCase() === trimmed)) return res.status(409).json({ error: 'Esse nome de usuário já está em uso' });
     u.username = trimmed;
   }
   if (avatar !== undefined) {
@@ -2317,10 +2523,12 @@ app.put('/api/me', requireAuth, (req, res) => {
     if (!auth.verifyPassword(u.id, currentPassword)) {
       return res.status(400).json({ error: 'Senha atual incorreta' });
     }
-    if (String(newPassword).length < 6) {
-      return res.status(400).json({ error: 'A nova senha deve ter pelo menos 6 caracteres' });
+    if (String(newPassword).length < PASSWORD_MIN) {
+      return res.status(400).json({ error: `A nova senha deve ter pelo menos ${PASSWORD_MIN} caracteres` });
     }
     auth.setPassword(u.id, newPassword);
+    // Troca de senha encerra as outras sessões (fica só esta).
+    auth.dropTokensFor(u.id, req.token);
   }
   // Tema de cor (cor de destaque). null/'' = roxo padrão.
   if (accentTheme !== undefined) {
@@ -2650,14 +2858,14 @@ app.post('/api/me/discord/test', requireAuth, async (req, res) => {
    in-memory no bot helper (5min TTL). */
 
 // Lista os guilds em que o bot está — pra popular o dropdown na UI.
-app.get('/api/discord/guilds', requireAuth, adminOnly, async (req, res) => {
+app.get('/api/discord/guilds', requireAuth, adminOnly, installationOrgOnly, async (req, res) => {
   if (!discordBot.isEnabled()) return res.status(503).json({ error: 'Discord bot não configurado.' });
   const guilds = await discordBot.listGuilds();
   res.json(guilds);
 });
 
 // Canais de texto de um guild — dropdown do canal na UI.
-app.get('/api/discord/guilds/:guildId/channels', requireAuth, adminOnly, async (req, res) => {
+app.get('/api/discord/guilds/:guildId/channels', requireAuth, adminOnly, installationOrgOnly, async (req, res) => {
   if (!discordBot.isEnabled()) return res.status(503).json({ error: 'Discord bot não configurado.' });
   const channels = await discordBot.listGuildChannels(req.params.guildId);
   res.json(channels);
@@ -2678,7 +2886,7 @@ app.get('/api/discord/client-channels', requireAuth, (req, res) => {
   res.json(binds);
 });
 
-app.post('/api/discord/client-channels', requireAuth, adminOnly, async (req, res) => {
+app.post('/api/discord/client-channels', requireAuth, adminOnly, installationOrgOnly, async (req, res) => {
   if (!discordBot.isEnabled()) return res.status(503).json({ error: 'Discord bot não configurado.' });
   const { clientId, guildId, channelId, channelName, events, active } = req.body || {};
   const client = db.clients.find(c => c.id === clientId);
@@ -3785,8 +3993,10 @@ function _writerLinkFrom(user, body) {
 function notifyDoc(targetUserId, type, data) {
   const user = db.users.find(u => u.id === targetUserId && u.active !== false);
   if (!user) return;
+  const nDoc = (rawDb.writerDocuments || []).find(x => x.id === data.docId);
   const n = {
     id: uid(), userId: targetUserId, type,
+    orgId: (nDoc && tenancy.wsOrgId(nDoc.workspaceId)) || tenancy.currentOrgId() || null,
     demandId: null, demandName: data.docTitle || '',
     docId: data.docId, docTitle: data.docTitle || '',
     fromUser: null, fromName: data.fromName || null,
@@ -4400,7 +4610,7 @@ app.get('/api/bootstrap', requireAuth, (req, res) => {
 
   res.json({
     workspaces:      db.workspaces.filter(w => ids.includes(w.id)),
-    users:           db.users.map(publicUser),
+    users:           visibleUsersFor(u).map(x => publicUser(x)),
     clients:         db.clients.filter(c => inWs(c) && notDeleted(c) && clientOK(c)),
     projects:        db.projects.filter(p => inWs(p) && notDeleted(p) && projectOK(p)),
     flows:           db.flows.filter(f => inWs(f) && notDeleted(f) && flowOK(f)),
@@ -4480,14 +4690,25 @@ app.delete('/api/workspaces/:id', requireAuth, adminOnly, (req, res) => {
 });
 
 /* ── USUÁRIOS ── */
-app.get('/api/users', requireAuth, (req, res) => res.json(db.users.map(publicUser)));
+/* Freelancer vê só quem aparece nas demandas dele (e ele mesmo). */
+function visibleUsersFor(user) {
+  if (!user.isFreelancer) return db.users;
+  const ids = new Set([user.id]);
+  for (const d of db.demands) {
+    if (!notDeleted(d) || !freelancerHasDemandAccess(user, d)) continue;
+    [d.ownerId, d.createdBy, ...Object.values(d.stageResponsibles || {}), ...(d.watchers || []),
+      ...(d.comments || []).map(c => c.userId), ...(d.timeEntries || []).map(e => e.userId)].forEach(id => id && ids.add(id));
+  }
+  return db.users.filter(u => ids.has(u.id));
+}
+app.get('/api/users', requireAuth, (req, res) => res.json(visibleUsersFor(req.user).map(u => publicUser(u))));
 
 app.post('/api/users', requireAuth, adminOnly, (req, res) => {
   const { username, password, name, role, position, isAdmin, isModerator, isFreelancer, workspaces, discordId, email } = req.body || {};
   const uname = String(username || '').trim().toLowerCase();
   if (!uname || !password) return res.status(400).json({ error: 'Usuário e senha são obrigatórios' });
-  if (String(password).length < 6) return res.status(400).json({ error: 'A senha deve ter pelo menos 6 caracteres' });
-  if (db.users.some(u => u.username.toLowerCase() === uname)) {
+  if (String(password).length < PASSWORD_MIN) return res.status(400).json({ error: `A senha deve ter pelo menos ${PASSWORD_MIN} caracteres` });
+  if (allUsers().some(u => u.username.toLowerCase() === uname)) {
     return res.status(409).json({ error: 'Este nome de usuário já existe' });
   }
   let did = null;
@@ -4498,7 +4719,8 @@ app.post('/api/users', requireAuth, adminOnly, (req, res) => {
   let mail = null;
   if (email) {
     if (!isValidEmail(email)) return res.status(400).json({ error: 'E-mail inválido.' });
-    mail = String(email).trim().toLowerCase();
+    mail = normEmail(email);
+    if (userByEmail(mail)) return res.status(409).json({ error: 'Esse e-mail já está em uso por outra conta.' });
   }
   const wsList = Array.isArray(workspaces) ? workspaces.filter(id => db.workspaces.some(w => w.id === id)) : [];
   const user = {
@@ -4515,8 +4737,11 @@ app.post('/api/users', requireAuth, adminOnly, (req, res) => {
     emailPrefs: defaultEmailPrefs(), createdAt: nowISO()
   };
   db.users.push(user);
+  adoptUser(user, req.org.id, { invitedBy: req.user.id });
   auth.setPassword(user.id, password);
   saveEntity('users', user);
+  // Conta criada à mão pra quem tinha convite pendente: o convite perde o sentido.
+  if (mail) closeInvitesFor(mail, req.user.id);
   res.status(201).json(publicUser(user));
 });
 
@@ -4524,6 +4749,13 @@ app.put('/api/users/:id', requireAuth, adminOnly, (req, res) => {
   const u = db.users.find(x => x.id === req.params.id);
   if (!u) return res.status(404).json({ error: 'Usuário não encontrado' });
   const { name, role, position, isAdmin, isModerator, isFreelancer, active, password, workspaces, discordId, email } = req.body || {};
+  if (u.isOwner && !req.user.isOwner) return res.status(403).json({ error: 'Só o dono edita a conta do dono da organização.' });
+  if (u.isOwner && active === false) return res.status(400).json({ error: 'Transfira a organização para outra pessoa antes de desativar o dono.' });
+  // A conta pode estar em outras organizações: senha e e-mail são da pessoa.
+  const otherOrgs = tenancy.membershipsOf(u.id).some(m => m.orgId !== req.org.id);
+  if (otherOrgs && (password || (email !== undefined && normEmail(email) !== normEmail(u.email)))) {
+    return res.status(403).json({ error: 'Essa pessoa também faz parte de outras organizações: senha e e-mail só ela muda (no perfil ou em "Esqueci minha senha").' });
+  }
   if (typeof name === 'string' && name.trim()) u.name = name.trim();
   if (typeof role === 'string') u.role = role.trim();
   if (typeof position === 'string') u.position = position.trim() || null;
@@ -4543,7 +4775,12 @@ app.put('/api/users/:id', requireAuth, adminOnly, (req, res) => {
     if (email === null || email === '') {
       u.email = null;
     } else if (isValidEmail(email)) {
-      u.email = String(email).trim().toLowerCase();
+      const next = normEmail(email);
+      if (next !== (u.email || '').toLowerCase()) {
+        if (userByEmail(next, u.id)) return res.status(409).json({ error: 'Esse e-mail já está em uso por outra conta.' });
+        u.email = next;
+        u.emailVerifiedAt = null;
+      }
     } else {
       return res.status(400).json({ error: 'E-mail inválido.' });
     }
@@ -4571,11 +4808,509 @@ app.put('/api/users/:id', requireAuth, adminOnly, (req, res) => {
     if (!active) auth.dropTokensFor(u.id);
   }
   if (password) {
-    if (String(password).length < 6) return res.status(400).json({ error: 'A senha deve ter pelo menos 6 caracteres' });
+    if (String(password).length < PASSWORD_MIN) return res.status(400).json({ error: `A senha deve ter pelo menos ${PASSWORD_MIN} caracteres` });
     auth.setPassword(u.id, password);
   }
   saveEntity('users', u);
   res.json(publicUser(u));
+});
+
+/* ── CONVITES ──
+   Admin (ou moderador, com limites) convida por e-mail pra organização ativa;
+   a pessoa abre /convite/<token> e:
+     - sem conta: escolhe nome de usuário e senha;
+     - com conta no reWork (outra organização): confirma a senha e ganha o
+       vínculo com esta organização.
+   O token só existe no link: guardamos o SHA-256 (pra achar o convite) e uma
+   cópia cifrada (pro admin copiar o link de novo). Vale 7 dias; reenviar
+   renova o prazo. Aceitar confirma o e-mail. O convite de DONO só sai do
+   console (organização nova aprovada na lista de espera). */
+const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const INVITE_KINDS = { owner: 'Dono da organização', admin: 'Administrador', mod: 'Moderador', equipe: 'Equipe', free: 'Freelancer' };
+const _invitePublicAttempts = new Map();
+const rateLimitInvitePublic = makeRateLimit(_invitePublicAttempts, 20, 'tentativas');
+const _inviteSends = new Map();
+const rateLimitInviteSend = makeRateLimit(_inviteSends, 40, 'convites', req => 'u:' + (req.user?.id || clientIp(req)), 60 * 60 * 1000);
+
+function inviteStatus(inv) {
+  if (inv.acceptedAt) return 'accepted';
+  if (inv.revokedAt) return 'revoked';
+  if (!inv.expiresAt || Date.parse(inv.expiresAt) <= Date.now()) return 'expired';
+  return 'pending';
+}
+// Público (sem organização ativa): procura em todas as organizações.
+function inviteByToken(token) {
+  if (!token || !/^[A-Za-z0-9_-]{20,100}$/.test(String(token))) return null;
+  const h = auth.hashToken(token);
+  return (rawDb.invites || []).find(i => i.tokenHash === h) || null;
+}
+function inviteToken(inv) {
+  try { return auth.decryptString(inv.tokenEnc) || null; } catch { return null; }
+}
+function inviteLinkFor(req, token) { return `${appBaseUrl(req)}/convite/${token}`; }
+function inviteSquadNames(inv) {
+  if (inv.kind === 'admin' || inv.kind === 'owner') return [];
+  return (inv.workspaces || []).map(id => (rawDb.workspaces || []).find(w => w.id === id)?.name).filter(Boolean);
+}
+function publicInvite(inv) {
+  const by = allUsers().find(u => u.id === inv.invitedBy);
+  return {
+    id: inv.id, email: inv.email, name: inv.name || '',
+    kind: inv.kind, role: inv.role || '', position: inv.position || null,
+    workspaces: inv.workspaces || [],
+    invitedBy: inv.invitedBy || null, invitedByName: by ? by.name : (inv.invitedByName || null),
+    createdAt: inv.createdAt, expiresAt: inv.expiresAt,
+    lastSentAt: inv.lastSentAt || null, sendCount: inv.sendCount || 0,
+    status: inviteStatus(inv)
+  };
+}
+/* Valida os campos do convite. Moderador só convida Equipe/Freelancer pros
+   squads dele. */
+function inviteFieldsFrom(body, inviter) {
+  const b = body || {};
+  const email = normEmail(b.email);
+  if (!email || !isValidEmail(email)) return { error: 'Informe um e-mail válido.' };
+  const kind = ['admin', 'mod', 'equipe', 'free'].includes(b.kind) ? b.kind : 'equipe';
+  let workspaces = Array.isArray(b.workspaces) ? [...new Set(b.workspaces)].filter(id => db.workspaces.some(w => w.id === id)) : [];
+  if (inviter && !inviter.isAdmin) {
+    if (kind !== 'equipe' && kind !== 'free') return { error: 'Moderadores convidam só como Equipe ou Freelancer.' };
+    const mine = new Set(inviter.workspaces || []);
+    if (workspaces.some(id => !mine.has(id))) return { error: 'Você só pode liberar squads em que você está.' };
+  }
+  if (kind !== 'admin' && !workspaces.length) return { error: 'Escolha pelo menos um squad para a pessoa acessar.' };
+  if (kind === 'admin') workspaces = [];
+  return {
+    email, kind, workspaces,
+    name: String(b.name || '').trim().slice(0, 120),
+    role: String(b.role || '').trim().slice(0, 80),
+    position: String(b.position || '').trim().slice(0, 80) || null
+  };
+}
+function newInviteRecord(fields, orgId, invitedBy) {
+  const token = crypto.randomBytes(24).toString('base64url');
+  const inv = {
+    id: uid(), orgId, ...fields,
+    tokenHash: auth.hashToken(token), tokenEnc: auth.encryptString(token),
+    invitedBy: invitedBy || null, createdAt: nowISO(),
+    expiresAt: new Date(Date.now() + INVITE_TTL_MS).toISOString(),
+    lastSentAt: null, sendCount: 0
+  };
+  return { inv, token };
+}
+async function sendInviteEmail(req, inv, token) {
+  if (!mailEnabled()) return { sent: false, reason: 'smtp_not_configured' };
+  const by = allUsers().find(u => u.id === inv.invitedBy);
+  const org = tenancy.orgById(inv.orgId);
+  const baseUrl = appBaseUrl(req);
+  const { subject, html, text } = emailTpl.invite({
+    name: inv.name, inviter: by?.name || inv.invitedByName, org: org?.name, access: INVITE_KINDS[inv.kind],
+    squads: inviteSquadNames(inv), link: inviteLinkFor(req, token), expiresAt: inv.expiresAt, baseUrl, isOwner: inv.kind === 'owner'
+  });
+  return sendEmail(inv.email, subject, html, text);
+}
+/* Fecha convites abertos pra um e-mail na organização ativa (conta criada
+   por outro caminho). */
+function closeInvitesFor(email, byUserId) {
+  const e = normEmail(email);
+  for (const inv of db.invites) {
+    if (inv.email === e && !inv.acceptedAt && !inv.revokedAt) {
+      inv.revokedAt = nowISO(); inv.revokedBy = byUserId || null; inv.tokenEnc = null;
+      saveEntity('invites', inv);
+    }
+  }
+}
+/* Moderador vê e mexe só nos convites que ele mesmo criou. */
+const canManageInvite = (user, inv) => user.isAdmin || inv.invitedBy === user.id;
+
+app.get('/api/invites', requireAuth, modOrAdmin, (req, res) => {
+  const list = db.invites
+    .filter(i => { const st = inviteStatus(i); return (st === 'pending' || st === 'expired') && i.kind !== 'owner' && canManageInvite(req.user, i); })
+    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
+    .map(publicInvite);
+  res.json({ invites: list, emailEnabled: mailEnabled() });
+});
+
+app.post('/api/invites', requireAuth, modOrAdmin, rateLimitInviteSend, async (req, res) => {
+  if (!req.user.isAdmin && !orgSettings(req.org).modsCanInvite) return res.status(403).json({ error: 'Nesta organização só administradores convidam pessoas.' });
+  const f = inviteFieldsFrom(req.body, req.user);
+  if (f.error) return res.status(400).json({ error: f.error });
+  const existing = userByEmail(f.email);
+  const already = existing && tenancy.memberIn(existing.id, req.org.id);
+  if (already) {
+    return res.status(409).json({
+      error: already.active === false
+        ? 'Essa pessoa já fez parte da organização e está desativada. Reative na lista em vez de convidar.'
+        : 'Essa pessoa já faz parte da organização.',
+      code: 'already_member', userId: existing.id
+    });
+  }
+  const open = db.invites.find(i => i.email === f.email && inviteStatus(i) === 'pending');
+  if (open) return res.status(409).json({ error: 'Já existe um convite pendente para esse e-mail. Use "Reenviar" na lista de convites.', code: 'invite_pending', inviteId: open.id });
+  // Convite vencido pro mesmo e-mail sai da lista — o novo substitui.
+  closeInvitesFor(f.email, req.user.id);
+  const { inv, token } = newInviteRecord(f, req.org.id, req.user.id);
+  db.invites.push(inv);
+  const mail = await sendInviteEmail(req, inv, token);
+  if (mail.sent) { inv.lastSentAt = nowISO(); inv.sendCount = 1; }
+  saveEntity('invites', inv);
+  res.status(201).json({ invite: publicInvite(inv), link: inviteLinkFor(req, token), emailSent: !!mail.sent, emailError: mail.sent ? null : mail.reason });
+});
+
+/* Reenvia o e-mail e renova o prazo (serve também pra convite vencido). */
+app.post('/api/invites/:id/resend', requireAuth, modOrAdmin, rateLimitInviteSend, async (req, res) => {
+  const inv = db.invites.find(i => i.id === req.params.id);
+  if (!inv || inv.acceptedAt || inv.revokedAt || !canManageInvite(req.user, inv)) return res.status(404).json({ error: 'Convite não encontrado.' });
+  const existing = userByEmail(inv.email);
+  if (existing && tenancy.memberIn(existing.id, inv.orgId)) return res.status(409).json({ error: 'Essa pessoa já faz parte da organização.' });
+  let token = inviteToken(inv);
+  if (!token) {
+    token = crypto.randomBytes(24).toString('base64url');
+    inv.tokenHash = auth.hashToken(token); inv.tokenEnc = auth.encryptString(token);
+  }
+  inv.expiresAt = new Date(Date.now() + INVITE_TTL_MS).toISOString();
+  const mail = await sendInviteEmail(req, inv, token);
+  if (mail.sent) { inv.lastSentAt = nowISO(); inv.sendCount = (inv.sendCount || 0) + 1; }
+  saveEntity('invites', inv);
+  res.json({ invite: publicInvite(inv), link: inviteLinkFor(req, token), emailSent: !!mail.sent, emailError: mail.sent ? null : mail.reason });
+});
+
+app.get('/api/invites/:id/link', requireAuth, modOrAdmin, (req, res) => {
+  const inv = db.invites.find(i => i.id === req.params.id);
+  if (!inv || inviteStatus(inv) !== 'pending' || !canManageInvite(req.user, inv)) return res.status(404).json({ error: 'Convite não encontrado ou vencido.' });
+  const token = inviteToken(inv);
+  if (!token) return res.status(410).json({ error: 'Não foi possível recuperar o link. Reenvie o convite.' });
+  res.json({ link: inviteLinkFor(req, token) });
+});
+
+app.delete('/api/invites/:id', requireAuth, modOrAdmin, (req, res) => {
+  const inv = db.invites.find(i => i.id === req.params.id);
+  if (!inv || inv.acceptedAt || inv.revokedAt || !canManageInvite(req.user, inv)) return res.status(404).json({ error: 'Convite não encontrado.' });
+  inv.revokedAt = nowISO(); inv.revokedBy = req.user.id; inv.tokenEnc = null;
+  saveEntity('invites', inv);
+  res.json({ ok: true });
+});
+
+/* Público: dados pra tela de aceite. Não expõe nada além do próprio convite. */
+function inviteGate(inv) {
+  if (!inv) return { code: 404, body: { status: 'invalid', error: 'Convite não encontrado. Confira se o link está completo.' } };
+  const st = inviteStatus(inv);
+  if (st === 'accepted') return { code: 410, body: { status: st, error: 'Este convite já foi aceito. Entre com seu e-mail e senha.' } };
+  if (st === 'revoked') return { code: 410, body: { status: st, error: 'Este convite foi cancelado. Peça um novo para quem te convidou.' } };
+  if (st === 'expired') return { code: 410, body: { status: st, error: 'Este convite venceu. Peça para quem te convidou reenviar.' } };
+  if (!tenancy.orgActive(inv.orgId)) return { code: 410, body: { status: 'invalid', error: 'Esta organização não está mais disponível.' } };
+  const u = userByEmail(inv.email);
+  const m = u && tenancy.memberIn(u.id, inv.orgId);
+  if (m) return { code: 409, body: { status: 'account_exists', error: 'Você já faz parte desta organização. Entre com sua conta.' } };
+  return null;
+}
+app.get('/api/invites/public/:token', rateLimitInvitePublic, (req, res) => {
+  const inv = inviteByToken(req.params.token);
+  const gate = inviteGate(inv);
+  if (gate) return res.status(gate.code).json(gate.body);
+  const by = allUsers().find(u => u.id === inv.invitedBy);
+  const org = tenancy.orgById(inv.orgId);
+  const existing = userByEmail(inv.email);
+  res.json({
+    status: 'pending', email: inv.email, name: inv.name || '',
+    orgName: org ? org.name : null, orgLogo: org ? (org.logo || null) : null,
+    inviterName: by ? by.name : (inv.invitedByName || null), inviterAvatar: by ? (by.avatar || null) : null,
+    access: INVITE_KINDS[inv.kind], squads: inviteSquadNames(inv),
+    expiresAt: inv.expiresAt, passwordMin: PASSWORD_MIN,
+    // Já tem conta no reWork (em outra organização): só confirma a senha.
+    accountExists: !!existing,
+    existingName: existing ? existing.name : null,
+    suggestedUsername: existing ? null : suggestUsername(inv.email, inv.name)
+  });
+});
+
+const INVITE_ROLE = { owner: 'owner', admin: 'admin', mod: 'mod', equipe: 'equipe', free: 'free' };
+/* Liga a pessoa à organização do convite, fecha o convite e abre a sessão já
+   nessa organização. */
+function joinFromInvite(req, res, inv, user) {
+  const m = adoptUser(user, inv.orgId, {
+    role: INVITE_ROLE[inv.kind] || 'equipe',
+    workspaces: (inv.workspaces || []).filter(id => tenancy.wsOrgId(id) === inv.orgId),
+    area: inv.role || '', position: inv.position || null, invitedBy: inv.invitedBy || null
+  });
+  if (inv.kind === 'owner') {
+    const org = tenancy.orgById(inv.orgId);
+    if (org) { org.ownerId = user.id; saveEntity('organizations', org); }
+  }
+  user.lastOrgId = inv.orgId;
+  if (!user.emailVerifiedAt) user.emailVerifiedAt = nowISO();
+  saveEntity('users', user);
+  inv.acceptedAt = nowISO(); inv.acceptedUserId = user.id; inv.tokenEnc = null;
+  saveEntity('invites', inv);
+  recordLoginIp(user, clientIp(req));
+  const token = startSession(req, res, user);
+  auth.setSessionData(token, { orgId: inv.orgId });
+  // Avisa quem convidou (só no sino), dentro da organização do convite.
+  if (inv.invitedBy) tenancy.run(inv.orgId, () => notify(inv.invitedBy, 'invite_accepted', { demandName: user.name }, user.id, appBaseUrl(req)));
+  return m;
+}
+
+app.post('/api/invites/public/:token/accept', rateLimitInvitePublic, (req, res) => {
+  const inv = inviteByToken(req.params.token);
+  const gate = inviteGate(inv);
+  if (gate) return res.status(gate.code).json(gate.body);
+  if (userByEmail(inv.email)) return res.status(409).json({ error: 'Esse e-mail já tem conta no reWork. Confirme sua senha para entrar na organização.', code: 'use_existing' });
+  const { name, username, password, acceptTerms } = req.body || {};
+  const nm = String(name || '').trim().slice(0, 120);
+  if (!nm) return res.status(400).json({ error: 'Informe seu nome.', field: 'name' });
+  const un = String(username || '').trim().toLowerCase();
+  if (!USERNAME_RE.test(un)) return res.status(400).json({ error: USERNAME_RULE, field: 'username' });
+  if (usernameTaken(un)) return res.status(409).json({ error: 'Esse nome de usuário já está em uso. Escolha outro.', field: 'username' });
+  if (typeof password !== 'string' || password.length < PASSWORD_MIN) return res.status(400).json({ error: `A senha precisa ter pelo menos ${PASSWORD_MIN} caracteres.`, field: 'password' });
+  if (password.length > 200) return res.status(400).json({ error: 'Senha longa demais.', field: 'password' });
+  if (acceptTerms !== true) return res.status(400).json({ error: 'Aceite os Termos de Serviço e a Política de Privacidade para continuar.', field: 'terms' });
+  const now = nowISO();
+  const user = {
+    id: uid(), username: un, name: nm, avatar: null,
+    discordId: null, email: inv.email, emailVerifiedAt: now,
+    emailPrefs: defaultEmailPrefs(), createdAt: now,
+    invitedBy: inv.invitedBy || null, inviteId: inv.id, termsAcceptedAt: now
+  };
+  rawDb.users.push(user);
+  auth.setPassword(user.id, password);
+  joinFromInvite(req, res, inv, user);
+  res.status(201).json({ user: tenancy.run(inv.orgId, () => publicUser(user, { self: true })) });
+});
+
+/* Conta existente entrando numa organização nova: confirma a senha. */
+app.post('/api/invites/public/:token/join', rateLimitInvitePublic, (req, res) => {
+  const inv = inviteByToken(req.params.token);
+  const gate = inviteGate(inv);
+  if (gate) return res.status(gate.code).json(gate.body);
+  const user = userByEmail(inv.email);
+  if (!user) return res.status(409).json({ error: 'Esse e-mail ainda não tem conta. Crie sua conta pelo convite.', code: 'use_new' });
+  const { password, acceptTerms } = req.body || {};
+  if (!auth.verifyPassword(user.id, password)) return res.status(401).json({ error: 'Senha incorreta.', field: 'password' });
+  if (acceptTerms !== true) return res.status(400).json({ error: 'Aceite os Termos de Serviço e a Política de Privacidade para continuar.', field: 'terms' });
+  if (!user.termsAcceptedAt) user.termsAcceptedAt = nowISO();
+  joinFromInvite(req, res, inv, user);
+  res.status(201).json({ user: tenancy.run(inv.orgId, () => publicUser(user, { self: true })) });
+});
+
+/* ── ORGANIZAÇÕES (lado do app) ── */
+/* Ajustes da organização (com padrões).
+   Jornada: modo "simple" (horas por dia, seg–sex) ou "custom" (cada dia da
+   semana com início/término/intervalo próprios; as horas saem da conta).
+   Guardado como schedule.week = { "1": {start,end,breakMinutes}, … } só com
+   os dias de trabalho (0=dom … 6=sáb). O formato anterior (days + um
+   horário único) é lido e convertido. */
+const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const _mins = (hhmm) => { const [h, m] = String(hhmm).split(':').map(Number); return h * 60 + m; };
+const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0];
+function _dayHours(d) { return Math.max(0, (_mins(d.end) - _mins(d.start) - (Number(d.breakMinutes) || 0)) / 60); }
+function _storedWeek(sc) {
+  if (sc.week && typeof sc.week === 'object') return sc.week;
+  // formato anterior: mesmos horários pros dias escolhidos
+  if (Array.isArray(sc.days) && sc.days.length && HHMM_RE.test(sc.start) && HHMM_RE.test(sc.end)) {
+    return Object.fromEntries(sc.days.map(d => [String(d), { start: sc.start, end: sc.end, breakMinutes: Number(sc.breakMinutes) || 0 }]));
+  }
+  return null;
+}
+function orgSettings(org) {
+  const st = (org && org.settings) || {};
+  const dh = Number(st.dailyHours);
+  const simpleHours = dh >= 1 && dh <= 16 ? dh : 8;
+  const sc = st.schedule || {};
+  const stored = sc.mode === 'custom' ? _storedWeek(sc) : null;
+  const custom = !!(stored && Object.keys(stored).length);
+  const week = WEEK_ORDER.map(day => {
+    const d = custom ? stored[String(day)] : null;
+    if (custom && d && HHMM_RE.test(d.start) && HHMM_RE.test(d.end)) {
+      const breakMinutes = Number(d.breakMinutes) || 0;
+      return { day, on: true, start: d.start, end: d.end, breakMinutes, hours: Math.round(_dayHours({ ...d, breakMinutes }) * 100) / 100 };
+    }
+    if (!custom && day >= 1 && day <= 5) return { day, on: true, start: null, end: null, breakMinutes: null, hours: simpleHours };
+    return { day, on: false, start: null, end: null, breakMinutes: null, hours: 0 };
+  });
+  const on = week.filter(d => d.on);
+  const weeklyHours = Math.round(on.reduce((a, d) => a + d.hours, 0) * 100) / 100;
+  return {
+    // Média por dia de trabalho (compatível com quem ainda lê um número só).
+    dailyHours: custom ? Math.round((weeklyHours / Math.max(1, on.length)) * 100) / 100 : simpleHours,
+    weeklyHours,
+    modsCanInvite: st.modsCanInvite !== false,
+    schedule: { mode: custom ? 'custom' : 'simple', week, simpleHours }
+  };
+}
+function orgPublic(org, role) {
+  return {
+    id: org.id, name: org.name, logo: org.logo || null, ownerId: org.ownerId || null, createdAt: org.createdAt, role: role || null,
+    settings: orgSettings(org),
+    // O que está disponível nesta organização (bot e n8n são da instalação original).
+    integrations: {
+      discord: !!org.isDefault && discordBot.isEnabled(),
+      performance: !!org.isDefault,
+      email: mailEnabled(),
+      google: googleCal.isConfigured()
+    }
+  };
+}
+function myOrgs(user) {
+  return tenancy.activeMemberships(user.id)
+    .map(m => ({ m, org: tenancy.orgById(m.orgId) }))
+    .filter(x => x.org)
+    .sort((a, b) => a.org.name.localeCompare(b.org.name, 'pt-BR'))
+    .map(x => orgPublic(x.org, x.m.role));
+}
+app.get('/api/orgs', requireAuth, (req, res) => {
+  res.json({ current: req.org.id, items: myOrgs(req.user) });
+});
+app.post('/api/orgs/switch', requireAuth, (req, res) => {
+  const orgId = String((req.body || {}).orgId || '');
+  const m = tenancy.activeMemberships(req.user.id).find(x => x.orgId === orgId);
+  if (!m) return res.status(404).json({ error: 'Organização não encontrada.' });
+  auth.setSessionData(req.token, { orgId });
+  req.user.lastOrgId = orgId;
+  saveEntity('users', req.user);
+  res.json({ ok: true, org: orgPublic(tenancy.orgById(orgId), m.role) });
+});
+app.get('/api/org', requireAuth, (req, res) => {
+  const owner = allUsers().find(u => u.id === req.org.ownerId);
+  res.json({ ...orgPublic(req.org, req.membership.role), ownerName: owner ? owner.name : null });
+});
+/* Configurações da organização: só o dono. */
+app.put('/api/org', requireAuth, (req, res) => {
+  if (!req.user.isOwner) return res.status(403).json({ error: 'Só o dono muda as configurações da organização.' });
+  const { name, logo, settings } = req.body || {};
+  if (settings && typeof settings === 'object') {
+    const next = { ...(req.org.settings || {}) };
+    if (settings.dailyHours !== undefined) {
+      const dh = Math.round(Number(settings.dailyHours) * 2) / 2;
+      if (!(dh >= 1 && dh <= 16)) return res.status(400).json({ error: 'A jornada precisa ficar entre 1 e 16 horas por dia.', field: 'dailyHours' });
+      next.dailyHours = dh;
+    }
+    if (typeof settings.modsCanInvite === 'boolean') next.modsCanInvite = settings.modsCanInvite;
+    if (settings.schedule && typeof settings.schedule === 'object') {
+      const sc = settings.schedule;
+      if (sc.mode === 'simple') {
+        next.schedule = { ...(next.schedule || {}), mode: 'simple' };
+      } else if (sc.mode === 'custom') {
+        const DAY_NAME = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+        const list = Array.isArray(sc.week) ? sc.week : [];
+        const week = {};
+        for (const d of list) {
+          const day = Number(d && d.day);
+          if (!Number.isInteger(day) || day < 0 || day > 6 || !d.on) continue;
+          const nm = DAY_NAME[day];
+          if (!HHMM_RE.test(d.start) || !HHMM_RE.test(d.end)) return res.status(400).json({ error: `Informe o início e o término de ${nm}.`, field: 'week', day });
+          if (_mins(d.end) <= _mins(d.start)) return res.status(400).json({ error: `Em ${nm}, o término precisa ser depois do início.`, field: 'week', day });
+          const brk = Number(d.breakMinutes) || 0;
+          if (brk < 0 || brk > 240) return res.status(400).json({ error: `O intervalo de ${nm} precisa ficar entre 0 e 4 horas.`, field: 'week', day });
+          const hours = _dayHours({ start: d.start, end: d.end, breakMinutes: brk });
+          if (hours < 0.5 || hours > 16) return res.status(400).json({ error: `A jornada de ${nm} precisa ficar entre 30 min e 16 horas.`, field: 'week', day });
+          week[String(day)] = { start: d.start, end: d.end, breakMinutes: brk };
+        }
+        if (!Object.keys(week).length) return res.status(400).json({ error: 'Deixe pelo menos um dia de trabalho ligado.', field: 'week' });
+        next.schedule = { mode: 'custom', week };
+      }
+    }
+    req.org.settings = next;
+  }
+  if (name !== undefined) {
+    const nm = String(name || '').trim().slice(0, 80);
+    if (nm.length < 2) return res.status(400).json({ error: 'O nome precisa ter pelo menos 2 caracteres.', field: 'name' });
+    req.org.name = nm;
+  }
+  if (logo !== undefined) {
+    if (logo && !/^\/uploads\/[\w.-]+$/.test(String(logo))) return res.status(400).json({ error: 'Logo inválido.' });
+    req.org.logo = logo || null;
+  }
+  req.org.updatedAt = nowISO();
+  saveEntity('organizations', req.org);
+  res.json(orgPublic(req.org, req.membership.role));
+});
+/* Exportar os dados da organização (dono e admins). Não inclui o cofre de
+   senhas, credenciais nem dados pessoais de outras organizações. */
+const ORG_EXPORT_SKIP = new Set(['passwords', 'passwordAudits', 'passwordFolders', 'googleEvents', 'invites', 'memberships', 'users']);
+app.get('/api/org/export', requireAuth, (req, res) => {
+  if (!req.user.isOwner) return res.status(403).json({ error: 'Só o dono exporta os dados da organização.' });
+  const out = {
+    exportedAt: nowISO(), exportedBy: req.user.name,
+    organization: { id: req.org.id, name: req.org.name, createdAt: req.org.createdAt, settings: orgSettings(req.org) },
+    people: db.users.map(u => ({
+      id: u.id, name: u.name, username: u.username, email: u.email || null,
+      access: u.orgRole, area: u.role || '', position: u.position || null,
+      squads: (u.workspaces || []).slice(), active: u.active !== false
+    }))
+  };
+  for (const t of ENTITY_TYPES) {
+    if (ORG_EXPORT_SKIP.has(t) || tenancy.UNSCOPED.has(t) || t === 'organizations') continue;
+    const list = db[t];
+    if (Array.isArray(list) && list.length) out[t] = list.filter(notDeleted);
+  }
+  const slug = String(req.org.name || 'organizacao').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'organizacao';
+  res.set('Content-Disposition', `attachment; filename="rework-${slug}-${today()}.json"`);
+  res.type('application/json').send(JSON.stringify(out, null, 2));
+});
+
+/* Transferir a posse: o dono atual vira administrador. */
+app.post('/api/org/transfer', requireAuth, (req, res) => {
+  if (!req.user.isOwner) return res.status(403).json({ error: 'Só o dono pode transferir a organização.' });
+  const target = tenancy.memberIn(String((req.body || {}).userId || ''), req.org.id);
+  if (!target || target.active === false) return res.status(404).json({ error: 'Escolha uma pessoa ativa da organização.' });
+  if (target.userId === req.user.id) return res.status(400).json({ error: 'Você já é o dono.' });
+  if (!auth.verifyPassword(req.user.id, (req.body || {}).password)) return res.status(400).json({ error: 'Senha incorreta.', field: 'password' });
+  req.membership.role = 'admin';
+  target.role = 'owner';
+  target.workspaces = [];
+  req.org.ownerId = target.userId;
+  saveEntity('memberships', req.membership);
+  saveEntity('memberships', target);
+  saveEntity('organizations', req.org);
+  res.json({ ok: true });
+});
+
+/* Organização nova (console → lista de espera aprovada): squad "Geral", fluxo
+   padrão e convite de DONO pro e-mail do pedido. */
+function defaultFlowStages() {
+  return [
+    { id: uid(), label: 'Backlog',     color: '#64748B', done: false, responsibleId: null, deadlineDays: null },
+    { id: uid(), label: 'Em produção', color: '#7A00FF', done: false, responsibleId: null, deadlineDays: 3 },
+    { id: uid(), label: 'Em revisão',  color: '#F59E0B', done: false, responsibleId: null, deadlineDays: 1 },
+    { id: uid(), label: 'Aprovação',   color: '#38BDF8', done: false, responsibleId: null, deadlineDays: 2 },
+    { id: uid(), label: 'Concluída',   color: '#22D3A5', done: true,  responsibleId: null, deadlineDays: null }
+  ];
+}
+async function createOrgWithOwner(req, { name, ownerEmail, ownerName, requestId, createdBy }) {
+  const now = nowISO();
+  const org = { id: 'org_' + uid(), name: String(name).trim().slice(0, 80), logo: null, ownerId: null, status: 'active', createdAt: now, createdBy: createdBy || 'console', fromRequestId: requestId || null };
+  rawDb.organizations.push(org);
+  saveEntity('organizations', org);
+  const ws = { id: uid(), orgId: org.id, name: 'Geral', color: '#7A00FF', createdAt: now };
+  rawDb.workspaces.push(ws);
+  saveEntity('workspaces', ws);
+  const flow = { id: uid(), workspaceId: ws.id, projectId: null, clientId: null, client: null, icon: null, name: 'Fluxo padrão', demandType: 'Geral', stages: defaultFlowStages(), defaultDescription: '', defaultChecklist: [], createdAt: now };
+  rawDb.flows.push(flow);
+  saveEntity('flows', flow);
+  const dt = { id: uid(), orgId: org.id, name: 'Geral', createdAt: now };
+  rawDb.demandTypes.push(dt);
+  saveEntity('demandTypes', dt);
+  const { inv, token } = newInviteRecord({ email: normEmail(ownerEmail), kind: 'owner', workspaces: [], name: String(ownerName || '').trim().slice(0, 120), role: '', position: null }, org.id, null);
+  inv.invitedByName = 'Equipe reWork';
+  rawDb.invites.push(inv);
+  const mail = await sendInviteEmail(req, inv, token);
+  if (mail.sent) { inv.lastSentAt = nowISO(); inv.sendCount = 1; }
+  saveEntity('invites', inv);
+  return { org, link: inviteLinkFor(req, token), emailSent: !!mail.sent };
+}
+
+/* ── reWork CONSOLE (/console) + lista de espera (/acesso) ──
+   Painel da plataforma com contas e sessão próprias — ver platform-console.js. */
+consoleApi = require('./platform-console')(app, {
+  getDb: () => rawDb, tenancy, createOrgWithOwner, store, auth, saveEntity, removeEntity, uid, nowISO, notDeleted,
+  makeRateLimit, clientIp, parseCookies, isHttpsRequest, isValidEmail,
+  mailEnabled, sendEmail, emailTpl, appBaseUrl,
+  uploadsDir: UPLOADS_DIR, buildSha: BUILD_SHA, publicDir: path.join(__dirname, 'public'),
+  integrations: () => ({
+    smtp: mailEnabled(),
+    discordBot: discordBot.isEnabled(),
+    discordLogin: discordOAuth.isConfigured(),
+    google: googleCal.isConfigured()
+  })
 });
 
 /* ── FUNÇÕES (roles) ── */
@@ -6108,10 +6843,13 @@ function learnFlowTerms({ demands, flows, clients, projects }) {
 }
 
 app.get('/api/flow-suggest/learned', requireAuth, (req, res) => {
-  if (!_flowLearnCache) {
-    _flowLearnCache = { terms: learnFlowTerms(db), computedAt: nowISO() };
+  // Aprendido só com os dados da organização ativa — cache separado por organização.
+  let cached = _flowLearnCache.get(req.org.id);
+  if (!cached) {
+    cached = { terms: learnFlowTerms(db), computedAt: nowISO() };
+    _flowLearnCache.set(req.org.id, cached);
   }
-  res.json(_flowLearnCache);
+  res.json(cached);
 });
 
 /* Etapas que demandas parecidas costumam desativar — mesmo tipo de fluxo (nome),
@@ -6246,8 +6984,12 @@ function sanitizeStages(stages) {
   })).filter(s => s.label);
   if (clean.length < 2) return null;
   if (!clean.some(s => s.done)) clean[clean.length - 1].done = true;
+  // Etapa de conclusão não tem responsável (senão a demanda "concluída" cai
+  // no colo de alguém e gera aviso à toa).
+  clean.forEach(s => { if (s.done) Object.assign(s, NO_STAGE_OWNER); });
   return clean;
 }
+const NO_STAGE_OWNER = { roleFilter: null, responsibleId: null, responsibleRole: null, responsiblePosition: null };
 
 // Resolve o responsável de uma etapa pra uma demanda específica.
 // Nova lógica (matriz Área × Cargo):
@@ -6270,7 +7012,7 @@ function _pickFromAssignment(assign, cargo) {
   return null;
 }
 function resolveStageOwner(stage, project) {
-  if (!stage) return null;
+  if (!stage || stage.done) return null;
   if (stage.responsibleRole) {
     const role = stage.responsibleRole;
     const cargo = stage.responsiblePosition || null;
@@ -6515,6 +7257,8 @@ function resolveStageDueDate(stage, d, baseYmd) {
    tab Etapas. Estes helpers espelham o lado "demanda" no lado "etapa". */
 function syncCurrentStageResponsible(d) {
   if (!d.status) return;
+  const flow = db.flows.find(f => f.id === d.flowId);
+  if (stageByIdForDemand(flow, d, d.status)?.done) return;
   if (!d.stageResponsibles || typeof d.stageResponsibles !== 'object') d.stageResponsibles = {};
   d.stageResponsibles[d.status] = d.ownerId || null;
 }
@@ -6992,6 +7736,7 @@ app.post('/api/demands', requireAuth, (req, res) => {
   if (b.stageResponsibles && typeof b.stageResponsibles === 'object') {
     for (const sid of Object.keys(b.stageResponsibles)) {
       if (!validStageIds.has(sid)) continue;
+      if (flow.stages.find(x => x.id === sid)?.done) continue; // conclusão: sem responsável
       const v = b.stageResponsibles[sid];
       if (v === null) { initStageResp[sid] = null; continue; }
       if (typeof v !== 'string' || !v) continue;
@@ -7021,7 +7766,7 @@ app.post('/api/demands', requireAuth, (req, res) => {
       if (!label) continue;
       const days = Number.isInteger(Number(s.deadlineDays)) && Number(s.deadlineDays) >= 0 ? Number(s.deadlineDays) : null;
       let respId = null;
-      if (typeof s.responsibleId === 'string' && s.responsibleId) {
+      if (!s.done && typeof s.responsibleId === 'string' && s.responsibleId) {
         const u = db.users.find(x => x.id === s.responsibleId && x.active !== false);
         if (u && canAccessWs(u, project.workspaceId)) respId = u.id;
       }
@@ -7315,7 +8060,7 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
     if (b.ownerId === undefined) {
       const instOverride = (d.stageResponsibles && typeof d.stageResponsibles === 'object') ? d.stageResponsibles[stage.id] : undefined;
       const projForResolve = db.projects.find(p => p.id === d.projectId);
-      const autoOwner = awaySubstitute((instOverride !== undefined) ? instOverride : (resolveStageOwner(stage, projForResolve) || null));
+      const autoOwner = stage.done ? null : awaySubstitute((instOverride !== undefined) ? instOverride : (resolveStageOwner(stage, projForResolve) || null));
       const prevOwner = d.ownerId;
       d.ownerId = autoOwner || null;
       if (d.ownerId !== prevOwner) {
@@ -7432,8 +8177,12 @@ app.delete('/api/demands/:id/attachments/:attId', requireAuth, (req, res) => {
   res.json(d);
 });
 
+/* Excluir demanda: moderador e acima excluem qualquer uma do squad; a equipe
+   só as que ela mesma criou. */
+const canDeleteDemand = (user, d) => user.isAdmin || user.isModerator || d.createdBy === user.id;
 app.delete('/api/demands/:id', requireAuth, (req, res) => {
   const d = getDemand(req, res); if (!d) return;
+  if (!canDeleteDemand(req.user, d)) return res.status(403).json({ error: 'Você só pode excluir demandas que você criou.' });
   softDelete('demands', d, req.user.id);
   broadcastChange('demand', 'delete', { id: d.id, workspaceId: d.workspaceId, byUserId: req.user.id });
   res.json({ ok: true, undoable: true, purgeAt: Date.parse(d.deletedAt) + UNDO_PURGE_MS });
@@ -7644,11 +8393,13 @@ app.post('/api/demands/bulk', requireAuth, rateLimitBulk, (req, res) => {
     const wsIdForBroadcast = targets[0]?.workspaceId || null;
     // Soft delete — o cliente mostra "N demandas excluídas · Desfazer".
     // Retorna a lista de IDs pra o frontend poder chamar undelete de todos.
-    targets.forEach(d => softDelete('demands', d, req.user.id));
-    updated = targets.length;
+    const deletable = targets.filter(d => canDeleteDemand(req.user, d));
+    deletable.forEach(d => softDelete('demands', d, req.user.id));
+    updated = deletable.length;
     skipped = ids.length - updated;
     broadcastChange('demand', 'bulk', { workspaceId: wsIdForBroadcast, byUserId: req.user.id });
-    return res.json({ updated, skipped, errors, undoable: true, deletedIds: targets.map(d => d.id) });
+    if (deletable.length < targets.length) errors.push('Algumas demandas não foram excluídas: você só pode excluir as que criou.');
+    return res.json({ updated, skipped, errors, undoable: true, deletedIds: deletable.map(d => d.id) });
   }
   for (const d of targets) {
     try {
@@ -7712,7 +8463,7 @@ app.post('/api/demands/bulk', requireAuth, rateLimitBulk, (req, res) => {
         // tem precedência sobre o padrão do fluxo/projeto — senão o bulk reatribui
         // errado as demandas com responsável customizado por etapa.
         const _instOverride = (d.stageResponsibles && typeof d.stageResponsibles === 'object') ? d.stageResponsibles[realStage.id] : undefined;
-        const stageOwner = awaySubstitute(((_instOverride !== undefined) ? _instOverride : (resolveStageOwner(realStage, _bulkProj) || null)) || null);
+        const stageOwner = realStage.done ? null : awaySubstitute(((_instOverride !== undefined) ? _instOverride : (resolveStageOwner(realStage, _bulkProj) || null)) || null);
         if (stageOwner !== d.ownerId) {
           const prevOwner = d.ownerId;
           d.ownerId = stageOwner;
@@ -7804,7 +8555,7 @@ app.put('/api/demands/:id/skipped-stages', requireAuth, (req, res) => {
       if (!label) continue;
       const days = Number.isInteger(Number(s.deadlineDays)) && Number(s.deadlineDays) >= 0 ? Number(s.deadlineDays) : null;
       let respId = null;
-      if (typeof s.responsibleId === 'string' && s.responsibleId) {
+      if (!s.done && typeof s.responsibleId === 'string' && s.responsibleId) {
         const u = db.users.find(x => x.id === s.responsibleId && x.active !== false);
         if (u && canAccessWs(u, d.workspaceId)) respId = u.id;
       }
@@ -8082,7 +8833,7 @@ app.put('/api/demands/:id/time/:entryId', requireAuth, (req, res) => {
   const d = getDemand(req, res); if (!d) return;
   const e = d.timeEntries.find(x => x.id === req.params.entryId);
   if (!e) return res.status(404).json({ error: 'Apontamento não encontrado' });
-  if (e.userId !== req.user.id && !req.user.isAdmin) {
+  if (e.userId !== req.user.id && !req.user.isAdmin && !req.user.isModerator) {
     return res.status(403).json({ error: 'Você só pode editar seus próprios apontamentos' });
   }
   const b = req.body || {};
@@ -8103,7 +8854,7 @@ app.put('/api/demands/:id/time/:entryId', requireAuth, (req, res) => {
 app.delete('/api/demands/:id/time/:entryId', requireAuth, (req, res) => {
   const d = getDemand(req, res); if (!d) return;
   const e = d.timeEntries.find(x => x.id === req.params.entryId);
-  if (e && e.userId !== req.user.id && !req.user.isAdmin) {
+  if (e && e.userId !== req.user.id && !req.user.isAdmin && !req.user.isModerator) {
     return res.status(403).json({ error: 'Você só pode remover seus próprios apontamentos' });
   }
   if (e) addHistory(d, req.user.id, 'time_removed', { hours: e.hours, stageId: e.stageId });
@@ -8320,6 +9071,8 @@ function stageLabelIn(flow, d, stageId) {
 // Executor de uma etapa: o definido na demanda (inclui etapas criadas nela e
 // trocas manuais), senão o padrão do fluxo (pessoa ou cargo no projeto/cliente).
 function stageResponsibleOf(d, flow, stageId) {
+  const st = stageByIdForDemand(flow, d, stageId);
+  if (st && st.done) return null;
   const inst = (d.stageResponsibles && typeof d.stageResponsibles === 'object') ? d.stageResponsibles[stageId] : undefined;
   if (inst !== undefined) return inst || null;
   const stage = stageByIdForDemand(flow, d, stageId);
@@ -10637,7 +11390,8 @@ app.get('/api/reports/sla', requireAuth, rateLimitReport, (req, res) => {
 // Persistência direto no Postgres (tabela dedicada, INDEX(user_id, created_at)).
 app.get('/api/notifications', requireAuth, async (req, res) => {
   try {
-    res.json(await store.listNotificationsFor(req.user.id, 100));
+    const list = await store.listNotificationsFor(req.user.id, 100);
+    res.json(list.filter(n => !n.orgId || n.orgId === req.org.id));
   } catch (e) { res.status(500).json({ error: 'Erro ao carregar notificações' }); }
 });
 
@@ -11520,9 +12274,13 @@ if (require.main === module) {
         },
         // Autoriza acesso ao doc — mesmo escopo do REST
         async canAccess(docId, userId) {
-          const user = db.users.find(u => u.id === userId);
-          const doc = (db.writerDocuments || []).find(d => d.id === docId);
-          return writerCanRead(user, doc);
+          const doc = (rawDb.writerDocuments || []).find(d => d.id === docId);
+          const orgId = doc && tenancy.wsOrgId(doc.workspaceId);
+          if (!orgId) return false;
+          return tenancy.run(orgId, () => {
+            const user = db.users.find(u => u.id === userId);
+            return !!user && user.active !== false && writerCanRead(user, doc);
+          });
         },
         // Carrega snapshot Yjs prévio (base64 em db)
         async loadInitialState(docId) {
@@ -11599,6 +12357,7 @@ function setupGracefulShutdown(server) {
     // 3) Flush do buffer de writes + fecha pool do Postgres
     try {
       await flushDirty(); // grava writes pendentes do buffer 30ms
+      await auth.flush(); // senhas/sessões pendentes
       if (store && typeof store.close === 'function') {
         await store.close();
         console.log('[shutdown] Postgres pool fechado');
@@ -11621,6 +12380,7 @@ function setupGracefulShutdown(server) {
   process.on('uncaughtException', async (err) => {
     console.error('[uncaughtException]', err);
     try { await flushDirty(); } catch {}
+    try { await auth.flush(); } catch {}
     process.exit(1);
   });
 }
