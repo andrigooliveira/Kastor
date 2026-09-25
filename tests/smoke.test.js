@@ -844,6 +844,89 @@ test('E-mail: vincular pede senha e link, e passado o prazo a conta sem e-mail s
   }
 });
 
+test('Duas etapas: código por e-mail obrigatório, app autenticador e recuperação', async () => {
+  const outbox = [];
+  app._test.setMailTransport({ sendMail: async (m) => { outbox.push(m); } });
+  const codeOf = (m) => (String(m && m.text).match(/(\d{6})/) || [])[1];
+  const lastCode = () => codeOf([...outbox].reverse().find(m => /código de acesso/i.test(m.subject)));
+  const login = (username, password = 'senha-forte-1') => postJson('/api/login', { username, password });
+  const cookieOf = (r) => (r.headers.get('set-cookie') || '').split(';')[0];
+  // Entra passando pelo código do e-mail
+  async function loginWithCode(username, password) {
+    const lg = await login(username, password);
+    assert.equal(lg.status, 200, JSON.stringify(lg.body));
+    assert.equal(lg.body.twoFactor && lg.body.twoFactor.method, 'email', 'e-mail confirmado = código obrigatório');
+    const ok = await postJson('/api/login/2fa', { ticket: lg.body.twoFactor.ticket, code: lastCode() });
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    return cookieOf(ok);
+  }
+  try {
+    // E-mail confirmado: o código por e-mail já vem ligado, sem ativar nada
+    let lg = await login('sem.email');
+    assert.equal(lg.body.twoFactor.method, 'email');
+    assert.ok(!cookieOf(lg), 'sem sessão antes do código');
+    assert.ok(!lg.body.user);
+    const t1 = lg.body.twoFactor.ticket;
+    const code = lastCode();
+    assert.ok(code);
+    assert.equal((await postJson('/api/login/2fa', { ticket: t1, code: code === '111111' ? '222222' : '111111' })).status, 400);
+    let ok = await postJson('/api/login/2fa', { ticket: t1, code });
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    let c = cookieOf(ok);
+    assert.ok(c);
+    assert.equal((await postJson('/api/login/2fa', { ticket: t1, code })).status, 410, 'o ticket vale uma vez');
+    let me = (await req('/api/me', { headers: { Cookie: c } })).body;
+    assert.equal(me.twoFactor.method, 'email');
+    assert.equal(me.twoFactor.app, false);
+    // Não dá pra desligar o código por e-mail nem "ativar" ele de novo
+    assert.equal((await call('POST', '/api/me/2fa/disable', c, { password: 'senha-forte-1' })).status, 400);
+    assert.equal((await call('POST', '/api/me/2fa/start', c, { method: 'email', password: 'senha-forte-1' })).status, 400);
+    // App autenticador (opcional) substitui o e-mail
+    assert.equal((await call('POST', '/api/me/2fa/start', c, { method: 'totp', password: 'errada' })).status, 400);
+    let r = await call('POST', '/api/me/2fa/start', c, { method: 'totp', password: 'senha-forte-1' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.match(r.body.qr, /<svg/);
+    const secret = r.body.secret.replace(/\s/g, '');
+    assert.equal((await call('POST', '/api/me/2fa/confirm', c, { code: '000000' })).status, 400);
+    const s0 = nowStep(); // fixa o passo: evita falhar na virada dos 30s
+    r = await call('POST', '/api/me/2fa/confirm', c, { code: totpAt(secret, s0) });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.recoveryCodes.length, 10);
+    assert.equal(r.body.user.twoFactor.method, 'totp');
+    assert.ok(!/secretEnc|"hash"/.test(JSON.stringify(r.body)), 'nada de segredo na resposta');
+    const rc = r.body.recoveryCodes;
+    // Login com o app (o código já usado no cadastro não vale de novo)
+    outbox.length = 0;
+    lg = await login('sem.email@exemplo.com');
+    assert.equal(lg.body.twoFactor.method, 'totp');
+    assert.equal(outbox.filter(m => /código de acesso/i.test(m.subject)).length, 0, 'com o app, não manda e-mail');
+    assert.equal((await postJson('/api/login/2fa', { ticket: lg.body.twoFactor.ticket, code: totpAt(secret, s0) })).status, 400, 'código reusado');
+    ok = await postJson('/api/login/2fa', { ticket: lg.body.twoFactor.ticket, code: totpAt(secret, s0 + 1) });
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    // Código de recuperação vale uma vez só
+    lg = await login('sem.email');
+    ok = await postJson('/api/login/2fa', { ticket: lg.body.twoFactor.ticket, code: rc[0], recovery: true });
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    assert.equal(ok.body.usedRecovery, true);
+    assert.equal(ok.body.user.twoFactor.recoveryLeft, 9);
+    lg = await login('sem.email');
+    assert.equal((await postJson('/api/login/2fa', { ticket: lg.body.twoFactor.ticket, code: rc[0], recovery: true })).status, 400);
+    // Admin tira o app de quem perdeu o celular: volta o código por e-mail
+    const admin = await loginWithCode('admin', 'admin123');
+    const sem = (await req('/api/users', { headers: { Cookie: admin } })).body.find(u => u.username === 'sem.email');
+    assert.equal(sem.twoFactorMethod, 'totp');
+    assert.ok(!JSON.stringify(sem).includes('secretEnc'));
+    assert.equal((await call('POST', `/api/users/${sem.id}/2fa/reset`, admin, {})).status, 200);
+    await loginWithCode('sem.email');
+  } finally {
+    app._test.setMailTransport(undefined);
+  }
+  // Sem envio de e-mail no servidor, fica só a senha (ninguém fica trancado)
+  const plain = await login('sem.email');
+  assert.ok(!plain.body.twoFactor);
+  assert.ok(cookieOf(plain));
+});
+
 test('Planos: limites de pessoas e de armazenamento definidos no console', async () => {
   const put = (body) => call('PUT', `/api/console/orgs/${betaOrgId}/plan`, consoleCookie, body);
   // Nasce no Teste; os 14 dias começaram quando a dona aceitou o convite

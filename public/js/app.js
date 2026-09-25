@@ -5311,6 +5311,179 @@ window.sendEmailConfirmNow = sendEmailConfirmNow;
 window.cancelEmailLink = cancelEmailLink;
 window._elmSync = _elmSync;
 
+/* ── Verificação em duas etapas (Perfil › Segurança) ──
+   Código por e-mail: obrigatório, liga sozinho com o e-mail confirmado.
+   App autenticador: opcional, substitui o e-mail enquanto ativo (com códigos
+   de recuperação). Ativar/desativar o app pede a senha. */
+const TF_LABEL = { email: 'Código por e-mail', totp: 'App autenticador' };
+let _tf = null; // estado do modal
+function renderProfile2fa() {
+  const box = $('profile-2fa');
+  if (!box || !me) return;
+  const tf = me.twoFactor;
+  const app = !!(tf && tf.app);
+  const emailOn = !!(tf && tf.method === 'email');
+  const since = app && tf.enabledAt ? new Date(tf.enabledAt).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
+  const chipOn = '<span class="profile-status-chip profile-status-chip--ok"><i data-lucide="check"></i>Ativo</span>';
+  const row = (on, icon, title, chip, sub, actions) => `<div class="tf-opt${on ? ' is-on' : ''}">
+      <span class="tf-opt-ic"><i data-lucide="${icon}"></i></span>
+      <div class="tf-opt-info"><div class="tf-opt-title">${title}${chip}</div><div class="tf-opt-sub">${sub}</div></div>
+      ${actions ? `<div class="tf-opt-actions">${actions}</div>` : ''}
+    </div>`;
+  // 1) Código por e-mail — obrigatório (não tem botão de desligar)
+  const emailRow = !me.emailVerified
+    ? row(false, 'mail', 'Código por e-mail', '<span class="tf-tag">Obrigatório</span>', 'Liga sozinho assim que você confirmar o seu e-mail.', `<button class="btn btn-ghost btn-sm" onclick="openEmailLinkModal()">Confirmar e-mail</button>`)
+    : app
+    ? row(false, 'mail', 'Código por e-mail', '<span class="profile-status-chip profile-status-chip--muted">Substituído pelo app</span>', `Enquanto o app autenticador estiver ativo, o login pede o código do app em vez do e-mail.`, '')
+    : row(emailOn, 'mail', 'Código por e-mail', emailOn ? chipOn : '', emailOn ? `A cada login, mandamos um código de 6 dígitos para ${esc(me.email)}. Vem ligado com o e-mail confirmado.` : 'O envio de e-mails não está ativo no servidor.', '');
+  // 2) App autenticador — opcional, mais seguro
+  const appRow = app
+    ? row(true, 'smartphone', 'App autenticador', chipOn, `Desde ${since}. ${tf.recoveryLeft === 1 ? 'Resta 1 código' : `Restam ${tf.recoveryLeft} códigos`} de recuperação.`,
+        `<button class="btn btn-ghost btn-sm" onclick="open2faRegen()">Novos códigos de recuperação</button><button class="btn btn-ghost btn-sm" onclick="open2faDisable()">Desativar</button>`)
+    : row(false, 'smartphone', 'App autenticador', '<span class="tf-tag">Opcional · mais seguro</span>', 'Código do Google Authenticator, 1Password ou similar, no lugar do código por e-mail. Funciona sem internet.',
+        `<button class="btn btn-confirm btn-sm" onclick="open2faSetup('totp')">Ativar</button>`);
+  box.innerHTML = emailRow + appRow;
+  paintIcons();
+}
+function close2faModal() {
+  // Com códigos de recuperação na tela, só fecha depois de marcar que guardou.
+  if (_tf && _tf.step === 'codes' && !_tf.saved) { toast('Guarde os códigos e marque a confirmação antes de fechar.', 'error'); return; }
+  _tf = null;
+  closeModal('twofa-modal');
+}
+function _tfRender() {
+  const t = _tf;
+  const body = $('tf-body'), foot = $('tf-foot');
+  const pass = `<div class="form-group"><label class="form-label" for="tf-pass">Sua senha do reWork</label>
+    <input class="form-control" id="tf-pass" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter'){event.preventDefault();_tfNext()}"></div>`;
+  const err = `<div class="login-error" id="tf-error" role="alert" style="margin:10px 0 0"></div>`;
+  let title = 'Verificação em duas etapas', html = '', btns = '';
+  const cancel = `<button class="btn btn-ghost" onclick="close2faModal()">Cancelar</button>`;
+  if (t.step === 'password') {
+    title = t.action === 'disable' ? 'Desativar o app autenticador' : t.action === 'regen' ? 'Novos códigos de recuperação' : TF_LABEL[t.method];
+    html = `<p class="tf-lead">${t.action === 'disable' ? 'O login volta a pedir o código enviado para o seu e-mail. Confirme com a sua senha.'
+      : t.action === 'regen' ? 'Os códigos antigos param de valer. Confirme com a sua senha.'
+      : t.method === 'email' ? 'Vamos mandar um código para o seu e-mail para confirmar. Primeiro, a sua senha.'
+      : 'Vamos mostrar um QR Code para você ler no app. Primeiro, a sua senha.'}</p>${pass}${err}`;
+    btns = `${cancel}<button class="btn ${t.action === 'disable' ? 'btn-danger' : 'btn-confirm'}" id="tf-go" onclick="_tfNext()">${t.action === 'disable' ? 'Desativar' : 'Continuar'}</button>`;
+  } else if (t.step === 'code' && t.method === 'email') {
+    title = 'Código por e-mail';
+    html = `<p class="tf-lead">Mandamos um código de 6 dígitos para <b>${esc(t.emailHint || '')}</b>. Digite aqui para ativar.</p>
+      <input class="form-control tf-code" id="tf-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" onkeydown="if(event.key==='Enter'){event.preventDefault();_tfNext()}">${err}`;
+    btns = `${cancel}<button class="btn btn-confirm" id="tf-go" onclick="_tfNext()">Ativar</button>`;
+  } else if (t.step === 'code') {
+    title = 'App autenticador';
+    html = `<ol class="tf-steps"><li>Abra o app autenticador no celular e adicione uma conta.</li><li>Leia o QR Code (ou digite a chave).</li><li>Digite o código de 6 dígitos que aparecer.</li></ol>
+      <div class="tf-qr">${t.qr}</div>
+      <div class="tf-secret"><code id="tf-secret">${esc(t.secret)}</code><button class="btn btn-ghost btn-sm" type="button" onclick="navigator.clipboard.writeText($('tf-secret').textContent.replace(/\s/g,'')).then(()=>toast('Chave copiada'))">Copiar</button></div>
+      <input class="form-control tf-code" id="tf-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" onkeydown="if(event.key==='Enter'){event.preventDefault();_tfNext()}">${err}`;
+    btns = `${cancel}<button class="btn btn-confirm" id="tf-go" onclick="_tfNext()">Ativar</button>`;
+  } else if (t.step === 'codes') {
+    title = 'Guarde os códigos de recuperação';
+    html = `<p class="tf-lead">Se perder o celular, cada código abaixo substitui o do app <b>uma vez</b>. Guarde num lugar seguro (gerenciador de senhas, por exemplo). Eles não aparecem de novo.</p>
+      <div class="tf-codes">${t.codes.map(c => `<code>${esc(c)}</code>`).join('')}</div>
+      <div class="tf-codes-actions">
+        <button class="btn btn-ghost btn-sm" type="button" onclick="_tfCopyCodes()"><i data-lucide="copy" class="ic-sm"></i> Copiar</button>
+        <button class="btn btn-ghost btn-sm" type="button" onclick="_tfDownloadCodes()"><i data-lucide="download" class="ic-sm"></i> Baixar .txt</button>
+      </div>
+      <label class="tf-check"><input type="checkbox" onchange="_tf.saved=this.checked;$('tf-go').disabled=!this.checked"> Guardei os códigos</label>`;
+    btns = `<button class="btn btn-confirm" id="tf-go" onclick="_tf.saved=true;close2faModal()" disabled>Concluir</button>`;
+  } else if (t.step === 'done') {
+    title = TF_LABEL[t.method];
+    html = `<div class="tf-done"><span class="tf-done-ic"><i data-lucide="shield-check"></i></span>
+      <p class="tf-lead" style="margin:0">Pronto: a partir do próximo login, o reWork pede também o código enviado para o seu e-mail.</p></div>`;
+    btns = `<button class="btn btn-confirm" onclick="close2faModal()">Fechar</button>`;
+  }
+  $('tf-title').textContent = title;
+  body.innerHTML = html;
+  foot.innerHTML = btns;
+  paintIcons();
+  setTimeout(() => { const i = $('tf-pass') || $('tf-code'); if (i) i.focus(); }, 60);
+}
+function _tfOpen(state) {
+  _tf = state;
+  // Conta sem senha (só Discord) pula a senha.
+  if (_tf.step === 'password' && me.hasPassword === false) { _tfRender(); openModal('twofa-modal'); return _tfNext(); }
+  _tfRender();
+  openModal('twofa-modal');
+}
+function open2faSetup(method) { _tfOpen({ action: 'setup', method, step: 'password' }); }
+function open2faDisable() { _tfOpen({ action: 'disable', method: me.twoFactor?.method, step: 'password' }); }
+function open2faRegen() { _tfOpen({ action: 'regen', method: 'totp', step: 'password' }); }
+async function _tfNext() {
+  const t = _tf;
+  if (!t) return;
+  const errEl = $('tf-error');
+  if (errEl) errEl.textContent = '';
+  const btn = $('tf-go');
+  if (btn) btn.disabled = true;
+  try {
+    if (t.step === 'password') {
+      const password = $('tf-pass') ? $('tf-pass').value : '';
+      if (me.hasPassword !== false && !password) { if (errEl) errEl.textContent = 'Digite a sua senha.'; return; }
+      if (t.action === 'disable') {
+        const r = await api('/me/2fa/disable', 'POST', { password });
+        me = { ...me, ...r.user }; renderProfile2fa();
+        _tf = null; closeModal('twofa-modal'); toast('App autenticador desativado. O login volta a pedir o código por e-mail.');
+        return;
+      }
+      if (t.action === 'regen') {
+        const r = await api('/me/2fa/recovery-codes', 'POST', { password });
+        me = { ...me, ...r.user }; renderProfile2fa();
+        Object.assign(t, { step: 'codes', codes: r.recoveryCodes, saved: false });
+        return _tfRender();
+      }
+      const r = await api('/me/2fa/start', 'POST', { method: t.method, password });
+      Object.assign(t, { step: 'code', emailHint: r.emailHint, qr: r.qr, secret: r.secret });
+      return _tfRender();
+    }
+    if (t.step === 'code') {
+      const code = ($('tf-code').value || '').replace(/\s/g, '');
+      if (!/^\d{6}$/.test(code)) { if (errEl) errEl.textContent = 'Digite os 6 números do código.'; return; }
+      const r = await api('/me/2fa/confirm', 'POST', { code });
+      me = { ...me, ...r.user }; renderProfile2fa();
+      if (r.recoveryCodes) Object.assign(t, { step: 'codes', codes: r.recoveryCodes, saved: false });
+      else t.step = 'done';
+      return _tfRender();
+    }
+  } catch (e) {
+    const el = $('tf-error');
+    if (el) el.textContent = e.message; else toast(e.message, 'error');
+  } finally {
+    const b = $('tf-go');
+    if (b && _tf && _tf.step !== 'codes') b.disabled = false;
+  }
+}
+function _tfCodesText() { return `Códigos de recuperação do reWork (${me.email || me.username})\nCada um vale uma vez.\n\n` + (_tf?.codes || []).join('\n') + '\n'; }
+function _tfCopyCodes() { navigator.clipboard.writeText(_tfCodesText()).then(() => toast('Códigos copiados')).catch(() => toast('Não foi possível copiar', 'error')); }
+function _tfDownloadCodes() {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([_tfCodesText()], { type: 'text/plain' }));
+  a.download = 'rework-codigos-de-recuperacao.txt';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+async function resetUser2fa() {
+  const u = editingUserId ? userById(editingUserId) : null;
+  if (!u) return;
+  const ok = await showConfirm({ title: 'Remover verificação', message: `Remover o app autenticador de <b>${esc(u.name)}</b>? O login volta a pedir o código enviado para o e-mail da pessoa. Ela recebe um aviso.`, okLabel: 'Remover', danger: true });
+  if (!ok) return;
+  try {
+    const r = await api(`/users/${u.id}/2fa/reset`, 'POST', {});
+    Object.assign(u, r);
+    $('u-2fa-row').hidden = true;
+    toast('App autenticador removido.');
+  } catch (e) { toast(e.message, 'error'); }
+}
+window.open2faSetup = open2faSetup;
+window.open2faDisable = open2faDisable;
+window.open2faRegen = open2faRegen;
+window.close2faModal = close2faModal;
+window._tfNext = _tfNext;
+window._tfCopyCodes = _tfCopyCodes;
+window._tfDownloadCodes = _tfDownloadCodes;
+window.resetUser2fa = resetUser2fa;
+
 /* Plano da organização (só leitura: quem muda é o suporte, no console). */
 function _orgBytes(n) {
   const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0, v = Number(n) || 0;
@@ -27498,6 +27671,12 @@ function openUserModal(id, opts) {
   $('u-password').value = '';
   $('u-password-label').textContent = id ? 'Nova senha (deixe em branco para manter)' : 'Senha inicial *';
   $('u-email').value = u?.email || '';
+  // Verificação em duas etapas: admin só vê e pode remover (quem perdeu o celular).
+  const tfRow = $('u-2fa-row');
+  if (tfRow) {
+    tfRow.hidden = !(id && u?.twoFactorMethod === 'totp');
+    if (!tfRow.hidden) $('u-2fa-text').textContent = 'Entra com o app autenticador. Remova só se a pessoa perdeu o celular: o login volta a pedir o código por e-mail.';
+  }
   // E-mail é da pessoa: com e-mail cadastrado, só ela troca (perfil).
   const emailLocked = !!(id && u?.email);
   $('u-email').disabled = emailLocked;
@@ -27746,6 +27925,7 @@ function renderProfile() {
   $('profile-f-name').value = me.name || '';
   $('profile-f-username').value = me.username || '';
   renderProfileEmail();
+  renderProfile2fa();
   $('profile-f-phone').value = me.phone || '';
   $('profile-f-discord').value = me.discord || '';
   $('profile-f-discord-id').value = me.discordId || '';

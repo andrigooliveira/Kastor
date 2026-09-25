@@ -36,6 +36,7 @@ const {
 } = require('@simplewebauthn/server');
 const { createStore, ENTITY_TYPES } = require('./db-store');
 const { createTenancy } = require('./tenancy');
+const totp = require('./totp');
 const googleCal  = require('./google-cal');
 const discordBot = require('./discord-bot');
 const discordOAuth = require('./discord-oauth');
@@ -598,8 +599,9 @@ function publicUser(u, opts) {
   // quickReplies (respostas prontas) e navMenu (menu lateral personalizado) são
   // pessoais: só voltam pro próprio usuário.
   // reminders/demandSeen/timeGapDismissed: estado pessoal com rota própria.
-  const { googleTokens, googleSyncTokens, knownIps, releaseNotesSeenIds, quickReplies, reminders, demandSeen, timeGapDismissed, mentionDismissed, heldNotifs, navMenu, emailChange, ...rest } = u;
+  const { googleTokens, googleSyncTokens, knownIps, releaseNotesSeenIds, quickReplies, reminders, demandSeen, timeGapDismissed, mentionDismissed, heldNotifs, navMenu, emailChange, twoFactor, twoFactorSetup, ...rest } = u;
   rest.googleConnected = !!googleTokens;
+  rest.twoFactorMethod = twoFactorMethodOf(u);
   rest.emailVerified = !!(u.email && u.emailVerifiedAt);
   // Permissões e squads vêm do vínculo com a organização ativa.
   rest.isAdmin = !!u.isAdmin; rest.isModerator = !!u.isModerator; rest.isFreelancer = !!u.isFreelancer;
@@ -615,6 +617,13 @@ function publicUser(u, opts) {
     rest.emailDeadline = EMAIL_DEADLINE;
     rest.emailRequired = emailEnforced() && !emailLinked(u);
     rest.hasPassword = auth.hasPassword(u.id);
+    const tfMethod = twoFactorMethodOf(u);
+    rest.twoFactor = tfMethod ? {
+      method: tfMethod,
+      app: tfMethod === 'totp',
+      enabledAt: tfMethod === 'totp' ? twoFactor.enabledAt : (u.emailVerifiedAt || null),
+      recoveryLeft: tfMethod === 'totp' ? (twoFactor.recovery || []).filter(c => !c.usedAt).length : 0
+    } : null;
   }
   return rest;
 }
@@ -805,6 +814,15 @@ let _mailTransport;
 function getMailTransport() {
   if (_mailTransport !== undefined) return _mailTransport;
   const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_SECURE } = process.env;
+  // Desenvolvimento: SMTP_HOST=log não manda nada, só escreve o e-mail no log
+  // (pra testar confirmação e códigos de acesso sem servidor de e-mail).
+  if (SMTP_HOST === 'log' && process.env.NODE_ENV !== 'production') {
+    _mailTransport = { sendMail: async (m) => { console.log(`
+[email:log] para ${m.to} · ${m.subject}
+${m.text}
+`); } };
+    return _mailTransport;
+  }
   if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
     _mailTransport = null;
     return null;
@@ -2178,7 +2196,7 @@ function makeRateLimit(bucket, max, label = 'requisições', keyFn = clientIp, w
   };
 }
 const rateLimitPwReset = makeRateLimit(_pwResetAttempts, PWRESET_MAX_PER_MIN, 'tentativas');
-app.post('/api/login', (req, res) => {
+app.post('/api/login', async (req, res) => {
   const ip = clientIp(req);
   const now = Date.now();
   let rec = _loginAttempts.get(ip);
@@ -2213,11 +2231,215 @@ app.post('/api/login', (req, res) => {
   }
   // Sucesso: zera o contador desse IP
   _loginAttempts.delete(ip);
+  // Verificação em duas etapas: a senha certa só libera o segundo passo.
+  if (twoFactorOn(user)) {
+    const t = await startTwoFactorTicket(req, user, 'password');
+    if (t.error) return res.status(t.status || 500).json({ error: t.error });
+    return res.json({ twoFactor: t.public });
+  }
   recordLoginIp(user, ip);
   // Cookie httpOnly: JS no browser não consegue ler — protege contra XSS.
   // O `token` no body é mantido por compat (clientes antigos podiam usar Bearer).
   const token = startSession(req, res, user);
   res.json({ token, user: publicUser(user, { self: true }) });
+});
+
+/* ─── VERIFICAÇÃO EM DUAS ETAPAS ───
+   Dois níveis:
+     - "email" (obrigatório): toda conta com e-mail confirmado recebe um código
+       de 6 dígitos a cada login — liga sozinho quando o e-mail é confirmado
+       (sem SMTP no servidor, fica só a senha);
+     - "totp" (opcional, mais forte): app autenticador (Google Authenticator,
+       1Password…), com 10 códigos de recuperação de uso único. Enquanto
+       ativo, substitui o código por e-mail; desativar volta pro e-mail.
+   Só o app fica gravado na conta (u.twoFactor); o e-mail sai do vínculo.
+   Login (senha ou Discord) → ticket em memória (10 min, 5 tentativas) →
+   /api/login/2fa confere o código e aí sim abre a sessão. Segredo do app
+   fica cifrado com a chave mestra; códigos (e-mail e recuperação), só o hash. */
+const TWOFA_TICKET_TTL_MS = 10 * 60 * 1000;
+const TWOFA_MAX_ATTEMPTS = 5;
+const TWOFA_RESEND_COOLDOWN_MS = 30 * 1000;
+const _twoFaTickets = new Map(); // ticket → { userId, method, codeHash, exp, attempts, sends, lastSentAt, via }
+setInterval(() => { const t = Date.now(); for (const [k, v] of _twoFaTickets) if (v.exp < t) _twoFaTickets.delete(k); }, 60 * 1000).unref();
+function twoFactorMethodOf(u) {
+  if (!u) return null;
+  if (u.twoFactor && u.twoFactor.method === 'totp' && u.twoFactor.secretEnc) return 'totp';
+  return emailLinked(u) && mailEnabled() ? 'email' : null;
+}
+const twoFactorOn = (u) => !!twoFactorMethodOf(u);
+const emailCode = () => String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+const codeHash = (salt, code) => totp.sha256('2fa:' + salt + ':' + String(code || '').replace(/\D/g, ''));
+function maskEmail(e) {
+  const [name, dom] = String(e || '').split('@');
+  if (!dom) return '';
+  const shown = name.length <= 2 ? name[0] : name.slice(0, 2);
+  return `${shown}${'•'.repeat(Math.max(2, Math.min(6, name.length - shown.length)))}@${dom}`;
+}
+async function sendLoginCode(req, user, code) {
+  const baseUrl = appBaseUrl(req);
+  const m = emailTpl.loginCode({ name: user.name, code, baseUrl, ip: clientIp(req) });
+  return sendEmail(user.email, m.subject, m.html, m.text);
+}
+/* Cria o ticket do segundo passo (e manda o código, se for por e-mail). */
+async function startTwoFactorTicket(req, user, via) {
+  const method = twoFactorMethodOf(user);
+  if (method === 'email' && (!user.email || !mailEnabled())) {
+    return { status: 503, error: 'Não conseguimos mandar o código de acesso por e-mail agora. Fale com um administrador da sua organização.' };
+  }
+  for (const [k, v] of _twoFaTickets) if (v.userId === user.id) _twoFaTickets.delete(k);
+  const ticket = crypto.randomBytes(24).toString('base64url');
+  const rec = { userId: user.id, method, codeHash: null, exp: Date.now() + TWOFA_TICKET_TTL_MS, attempts: 0, sends: 0, lastSentAt: 0, via };
+  if (method === 'email') {
+    const code = emailCode();
+    rec.codeHash = codeHash(ticket, code);
+    const sent = await sendLoginCode(req, user, code);
+    if (!sent || !sent.sent) return { status: 502, error: 'Não conseguimos mandar o código de acesso agora. Tente de novo em alguns minutos.' };
+    rec.sends = 1; rec.lastSentAt = Date.now();
+  }
+  _twoFaTickets.set(ticket, rec);
+  return { ticket, public: twoFactorTicketPublic(ticket, rec, user) };
+}
+function twoFactorTicketPublic(ticket, rec, user) {
+  return {
+    ticket, method: rec.method,
+    emailHint: rec.method === 'email' ? maskEmail(user.email) : null,
+    recoveryLeft: rec.method === 'totp' ? ((user.twoFactor && user.twoFactor.recovery) || []).filter(c => !c.usedAt).length : 0,
+    expiresAt: new Date(rec.exp).toISOString()
+  };
+}
+/* Confere um código contra o método da conta. `extra` = recovery (bool). */
+function checkTwoFactorCode(user, rec, ticket, code, useRecovery) {
+  const tf = user.twoFactor;
+  if (useRecovery) {
+    if (!tf) return false;
+    const h = totp.sha256('rc:' + totp.normRecovery(code));
+    const rc = (tf.recovery || []).find(c => !c.usedAt && totp.safeEqual(c.hash, h));
+    if (!rc) return false;
+    rc.usedAt = nowISO();
+    return 'recovery';
+  }
+  if (rec.method === 'email') return !!rec.codeHash && totp.safeEqual(rec.codeHash, codeHash(ticket, code));
+  if (rec.method === 'totp' && tf) {
+    let secret = null;
+    try { secret = auth.decryptString(tf.secretEnc); } catch {}
+    const step = secret ? totp.totpVerify(secret, code, tf.lastStep) : null;
+    if (step === null) return false;
+    tf.lastStep = step;
+    return true;
+  }
+  return false;
+}
+const rateLimitTwoFa = makeRateLimit(new Map(), 15, 'tentativas');
+app.get('/api/login/2fa/:ticket', rateLimitTwoFa, (req, res) => {
+  const rec = _twoFaTickets.get(String(req.params.ticket));
+  const user = rec && rec.exp > Date.now() && allUsers().find(u => u.id === rec.userId);
+  if (!user || !twoFactorOn(user)) return res.status(410).json({ error: 'Esta etapa de acesso expirou. Entre de novo.' });
+  res.json(twoFactorTicketPublic(req.params.ticket, rec, user));
+});
+app.post('/api/login/2fa', rateLimitTwoFa, (req, res) => {
+  const { ticket, code, recovery } = req.body || {};
+  const rec = _twoFaTickets.get(String(ticket || ''));
+  if (!rec || rec.exp <= Date.now()) return res.status(410).json({ error: 'O código expirou. Entre de novo para receber outro.', code: 'expired' });
+  const user = allUsers().find(u => u.id === rec.userId);
+  if (!user || !twoFactorOn(user) || !tenancy.activeMemberships(user.id).length) { _twoFaTickets.delete(ticket); return res.status(410).json({ error: 'Entre de novo.', code: 'expired' }); }
+  if (recovery && rec.method !== 'totp') return res.status(400).json({ error: 'Esta conta não usa códigos de recuperação.' });
+  const ok = checkTwoFactorCode(user, rec, ticket, code, !!recovery);
+  if (!ok) {
+    rec.attempts++;
+    if (rec.attempts >= TWOFA_MAX_ATTEMPTS) { _twoFaTickets.delete(ticket); return res.status(429).json({ error: 'Muitas tentativas erradas. Entre de novo.', code: 'expired' }); }
+    return res.status(400).json({ error: recovery ? 'Código de recuperação inválido ou já usado.' : 'Código incorreto. Confira e tente de novo.', attemptsLeft: TWOFA_MAX_ATTEMPTS - rec.attempts });
+  }
+  _twoFaTickets.delete(ticket);
+  saveEntity('users', user); // passo do app / código de recuperação usado
+  recordLoginIp(user, clientIp(req));
+  const token = startSession(req, res, user);
+  res.json({ token, user: publicUser(user, { self: true }), usedRecovery: ok === 'recovery' });
+});
+app.post('/api/login/2fa/resend', rateLimitTwoFa, async (req, res) => {
+  const ticket = String((req.body || {}).ticket || '');
+  const rec = _twoFaTickets.get(ticket);
+  if (!rec || rec.exp <= Date.now()) return res.status(410).json({ error: 'Esta etapa expirou. Entre de novo.', code: 'expired' });
+  if (rec.method !== 'email') return res.status(400).json({ error: 'Use o código do app autenticador.' });
+  const wait = rec.lastSentAt + TWOFA_RESEND_COOLDOWN_MS - Date.now();
+  if (wait > 0) return res.status(429).json({ error: `Aguarde ${Math.ceil(wait / 1000)}s para pedir outro código.`, retryAfter: Math.ceil(wait / 1000) });
+  if (rec.sends >= 5) return res.status(429).json({ error: 'Muitos códigos pedidos. Entre de novo mais tarde.' });
+  const user = allUsers().find(u => u.id === rec.userId);
+  if (!user) return res.status(410).json({ error: 'Entre de novo.', code: 'expired' });
+  const code = emailCode();
+  rec.codeHash = codeHash(ticket, code);
+  rec.attempts = 0;
+  rec.exp = Date.now() + TWOFA_TICKET_TTL_MS;
+  const sent = await sendLoginCode(req, user, code);
+  if (!sent || !sent.sent) return res.status(502).json({ error: 'Não conseguimos mandar o código agora. Tente de novo em alguns minutos.' });
+  rec.sends++; rec.lastSentAt = Date.now();
+  res.json({ ok: true, expiresAt: new Date(rec.exp).toISOString() });
+});
+
+/* Ativar / desativar no perfil. Sempre pede a senha (se a conta tem uma). */
+function checkOwnPassword(u, password) {
+  return !auth.hasPassword(u.id) || auth.verifyPassword(u.id, password);
+}
+function twoFactorNotice(req, u, enabled, method) {
+  if (!u.email || !mailEnabled()) return;
+  const m = emailTpl.twoFactorNotice({ name: u.name, enabled, method, baseUrl: appBaseUrl(req) });
+  setImmediate(() => sendEmail(u.email, m.subject, m.html, m.text));
+}
+const rateLimitTwoFaSetup = makeRateLimit(new Map(), 10, 'tentativas', req => 'u:' + (req.user?.id || clientIp(req)), 10 * 60 * 1000);
+app.post('/api/me/2fa/start', requireAuth, rateLimitTwoFaSetup, async (req, res) => {
+  const u = req.user;
+  const { method, password } = req.body || {};
+  // O código por e-mail já vem ligado com o e-mail confirmado: aqui só o app.
+  if (method !== 'totp') return res.status(400).json({ error: 'O código por e-mail já fica ativo quando o e-mail é confirmado. Aqui você só ativa o app autenticador.' });
+  if (!checkOwnPassword(u, password)) return res.status(400).json({ error: 'Senha incorreta.', field: 'password' });
+  const enr = await totp.totpEnrollment('reWork', u.email || u.username);
+  u.twoFactorSetup = { method, secretEnc: auth.encryptString(enr.secret), expiresAt: new Date(Date.now() + 20 * 60 * 1000).toISOString(), attempts: 0 };
+  saveEntity('users', u);
+  res.json({ method, secret: enr.secretGrouped, otpauth: enr.otpauth, qr: enr.qr });
+});
+app.post('/api/me/2fa/confirm', requireAuth, rateLimitTwoFaSetup, (req, res) => {
+  const u = req.user;
+  const setup = u.twoFactorSetup;
+  if (!setup || Date.parse(setup.expiresAt) <= Date.now()) return res.status(410).json({ error: 'O cadastro expirou. Comece de novo.' });
+  const code = String((req.body || {}).code || '');
+  let secret = null;
+  try { secret = auth.decryptString(setup.secretEnc); } catch {}
+  const step = secret ? totp.totpVerify(secret, code, null) : null;
+  const ok = step !== null;
+  const secretEnc = setup.secretEnc;
+  if (!ok) {
+    setup.attempts = (setup.attempts || 0) + 1;
+    if (setup.attempts >= TWOFA_MAX_ATTEMPTS) { delete u.twoFactorSetup; saveEntity('users', u); return res.status(429).json({ error: 'Muitas tentativas erradas. Comece de novo.' }); }
+    saveEntity('users', u);
+    return res.status(400).json({ error: 'Código incorreto. Confira e tente de novo.' });
+  }
+  const recoveryCodes = totp.newRecoveryCodes();
+  const tf = {
+    method: 'totp', enabledAt: nowISO(), secretEnc, lastStep: step,
+    recovery: recoveryCodes.map(c => ({ hash: totp.sha256('rc:' + totp.normRecovery(c)), usedAt: null }))
+  };
+  u.twoFactor = tf;
+  delete u.twoFactorSetup;
+  saveEntity('users', u);
+  twoFactorNotice(req, u, true, tf.method);
+  res.json({ ok: true, user: publicUser(u, { self: true }), recoveryCodes });
+});
+app.post('/api/me/2fa/disable', requireAuth, rateLimitTwoFaSetup, (req, res) => {
+  const u = req.user;
+  if (twoFactorMethodOf(u) !== 'totp') return res.status(400).json({ error: 'O código por e-mail é obrigatório e não pode ser desligado.' });
+  if (!checkOwnPassword(u, (req.body || {}).password)) return res.status(400).json({ error: 'Senha incorreta.', field: 'password' });
+  delete u.twoFactor; delete u.twoFactorSetup;
+  saveEntity('users', u);
+  twoFactorNotice(req, u, false, 'totp');
+  res.json({ ok: true, user: publicUser(u, { self: true }) });
+});
+app.post('/api/me/2fa/recovery-codes', requireAuth, rateLimitTwoFaSetup, (req, res) => {
+  const u = req.user;
+  if (twoFactorMethodOf(u) !== 'totp') return res.status(400).json({ error: 'Os códigos de recuperação são do app autenticador.' });
+  if (!checkOwnPassword(u, (req.body || {}).password)) return res.status(400).json({ error: 'Senha incorreta.', field: 'password' });
+  const codes = totp.newRecoveryCodes();
+  u.twoFactor.recovery = codes.map(c => ({ hash: totp.sha256('rc:' + totp.normRecovery(c)), usedAt: null }));
+  saveEntity('users', u);
+  res.json({ ok: true, recoveryCodes: codes, user: publicUser(u, { self: true }) });
 });
 
 /* Marca o tour de boas-vindas como visto — chamado pelo frontend depois
@@ -2416,6 +2638,11 @@ app.get('/api/auth/discord/callback', async (req, res) => {
   const user = db.users.find(u => u.discordId === profile.id && u.active !== false);
   if (!user) {
     return res.redirect('/?discord=error&reason=' + encodeURIComponent('no-account'));
+  }
+  if (twoFactorOn(user)) {
+    const t = await startTwoFactorTicket(req, user, 'discord');
+    if (t.error) return res.redirect('/?discord=error&reason=' + encodeURIComponent('2fa-unavailable'));
+    return res.redirect('/?dois-fatores=' + encodeURIComponent(t.ticket));
   }
   startSession(req, res, user);
   return res.redirect('/?discord=logged-in');
@@ -4924,6 +5151,21 @@ app.put('/api/users/:id', requireAuth, adminOnly, (req, res) => {
   res.json(publicUser(u));
 });
 
+/* Admin tira a verificação em duas etapas de quem perdeu o celular/acesso.
+   Mesma regra da senha: não mexe no dono (a não ser o próprio dono) nem em
+   quem também está em outra organização. */
+app.post('/api/users/:id/2fa/reset', requireAuth, adminOnly, (req, res) => {
+  const u = db.users.find(x => x.id === req.params.id);
+  if (!u) return res.status(404).json({ error: 'Usuário não encontrado' });
+  if (u.isOwner && !req.user.isOwner) return res.status(403).json({ error: 'Só o dono mexe na conta do dono da organização.' });
+  if (tenancy.membershipsOf(u.id).some(m => m.orgId !== req.org.id)) return res.status(403).json({ error: 'Essa pessoa também faz parte de outras organizações: peça ajuda ao suporte do reWork.' });
+  if (twoFactorMethodOf(u) !== 'totp') return res.json(publicUser(u));
+  delete u.twoFactor; delete u.twoFactorSetup;
+  saveEntity('users', u);
+  twoFactorNotice(req, u, false, 'totp');
+  res.json(publicUser(u));
+});
+
 /* ── CONVITES ──
    Admin (ou moderador, com limites) convida por e-mail pra organização ativa;
    a pessoa abre /convite/<token> e:
@@ -5152,7 +5394,7 @@ app.get('/api/invites/public/:token', rateLimitInvitePublic, (req, res) => {
 const INVITE_ROLE = { owner: 'owner', admin: 'admin', mod: 'mod', equipe: 'equipe', free: 'free' };
 /* Liga a pessoa à organização do convite, fecha o convite e abre a sessão já
    nessa organização. */
-function joinFromInvite(req, res, inv, user) {
+function joinFromInvite(req, res, inv, user, opts = {}) {
   const m = adoptUser(user, inv.orgId, {
     role: INVITE_ROLE[inv.kind] || 'equipe',
     workspaces: (inv.workspaces || []).filter(id => tenancy.wsOrgId(id) === inv.orgId),
@@ -5167,9 +5409,11 @@ function joinFromInvite(req, res, inv, user) {
   saveEntity('users', user);
   inv.acceptedAt = nowISO(); inv.acceptedUserId = user.id; inv.tokenEnc = null;
   saveEntity('invites', inv);
-  recordLoginIp(user, clientIp(req));
-  const token = startSession(req, res, user);
-  auth.setSessionData(token, { orgId: inv.orgId });
+  if (!opts.noSession) {
+    recordLoginIp(user, clientIp(req));
+    const token = startSession(req, res, user);
+    auth.setSessionData(token, { orgId: inv.orgId });
+  }
   // Avisa quem convidou (só no sino), dentro da organização do convite.
   if (inv.invitedBy) tenancy.run(inv.orgId, () => notify(inv.invitedBy, 'invite_accepted', { demandName: user.name }, user.id, appBaseUrl(req)));
   return m;
@@ -5213,8 +5457,10 @@ app.post('/api/invites/public/:token/join', rateLimitInvitePublic, (req, res) =>
   if (!auth.verifyPassword(user.id, password)) return res.status(401).json({ error: 'Senha incorreta.', field: 'password' });
   if (acceptTerms !== true) return res.status(400).json({ error: 'Aceite os Termos de Serviço e a Política de Privacidade para continuar.', field: 'terms' });
   if (!user.termsAcceptedAt) user.termsAcceptedAt = nowISO();
-  joinFromInvite(req, res, inv, user);
-  res.status(201).json({ user: tenancy.run(inv.orgId, () => publicUser(user, { self: true })) });
+  // Com verificação em duas etapas, entra na organização mas faz o login normal.
+  const needs2fa = twoFactorOn(user);
+  joinFromInvite(req, res, inv, user, { noSession: needs2fa });
+  res.status(201).json({ user: tenancy.run(inv.orgId, () => publicUser(user, { self: true })), loginRequired: needs2fa });
 });
 
 /* ── ORGANIZAÇÕES (lado do app) ── */

@@ -46,8 +46,6 @@ const CONSOLE_COOKIE = 'rework_console';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const TICKET_TTL_MS = 10 * 60 * 1000;
 const RESET_TTL_MS = 60 * 60 * 1000;
-const RECOVERY_CODES = 10;
-const RECOVERY_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
 const ACTIVATION_TTL_MS = 48 * 60 * 60 * 1000;
 const PASSWORD_MIN = 12;
 const AUDIT_MAX = 3000;
@@ -58,66 +56,9 @@ const REQUEST_STATUSES = ['new', 'reviewing', 'approved', 'rejected'];
 const TEAM_SIZES = ['1-5', '6-15', '16-50', '51-200', '200+'];
 const SOURCES = ['indicacao', 'google', 'instagram', 'linkedin', 'evento', 'outro'];
 
-/* ── TOTP (RFC 6238: HMAC-SHA1, 6 dígitos, passo de 30s) ── */
-const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-function b32encode(buf) {
-  let bits = 0, value = 0, out = '';
-  for (const byte of buf) {
-    value = (value << 8) | byte; bits += 8;
-    while (bits >= 5) { out += B32[(value >>> (bits - 5)) & 31]; bits -= 5; }
-  }
-  if (bits > 0) out += B32[(value << (5 - bits)) & 31];
-  return out;
-}
-function b32decode(str) {
-  const clean = String(str || '').toUpperCase().replace(/[^A-Z2-7]/g, '');
-  let bits = 0, value = 0;
-  const out = [];
-  for (const ch of clean) {
-    value = (value << 5) | B32.indexOf(ch); bits += 5;
-    if (bits >= 8) { out.push((value >>> (bits - 8)) & 255); bits -= 8; }
-  }
-  return Buffer.from(out);
-}
-function hotp(secret, counter) {
-  const msg = Buffer.alloc(8);
-  msg.writeBigUInt64BE(BigInt(counter));
-  const h = crypto.createHmac('sha1', secret).update(msg).digest();
-  const o = h[h.length - 1] & 0xf;
-  return String((h.readUInt32BE(o) & 0x7fffffff) % 1000000).padStart(6, '0');
-}
-/* Devolve o passo aceito (pra impedir reuso do mesmo código) ou null. */
-function totpVerify(secretB32, code, lastStep) {
-  const c = String(code || '').replace(/\D/g, '');
-  if (c.length !== 6) return null;
-  const secret = b32decode(secretB32);
-  const step = Math.floor(Date.now() / 30000);
-  for (const w of [0, -1, 1]) {
-    const s = step + w;
-    if (lastStep && s <= lastStep) continue;
-    const expected = hotp(secret, s);
-    if (crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(c))) return s;
-  }
-  return null;
-}
-
-function safeEqual(a, b) {
-  const x = Buffer.from(String(a || '')), y = Buffer.from(String(b || ''));
-  return x.length === y.length && crypto.timingSafeEqual(x, y);
-}
-const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
-const normRecovery = (c) => String(c || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-/* Códigos de recuperação: xxxx-xxxx, sem letras ambíguas (0/o, 1/l/i). */
-function newRecoveryCodes() {
-  const codes = [];
-  while (codes.length < RECOVERY_CODES) {
-    const bytes = crypto.randomBytes(8);
-    const raw = [...bytes].map(b => RECOVERY_ALPHABET[b % RECOVERY_ALPHABET.length]).join('');
-    const code = raw.slice(0, 4) + '-' + raw.slice(4);
-    if (!codes.includes(code)) codes.push(code);
-  }
-  return codes;
-}
+/* TOTP, códigos de recuperação e comparações seguras: totp.js (compartilhado
+   com a verificação em duas etapas do reWork). */
+const { b32encode, totpVerify, hotp, b32decode, safeEqual, sha256, normRecovery, newRecoveryCodes } = require('./totp');
 
 module.exports = function setupConsole(app, deps) {
   // O `db` do server é trocado no boot (loadDB) — lê sempre o atual.

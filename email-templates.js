@@ -372,6 +372,36 @@ ${link}
 Se não foi você, ignore.`;
   return { subject, html, text };
 }
+/* Código de acesso (verificação em duas etapas por e-mail). */
+function loginCode({ name, code, baseUrl, ip }) {
+  const subject = `[reWork] Seu código de acesso: ${code}`;
+  const content = `${chip('Segurança', 'neutro')}
+${headline('Seu código de acesso')}
+${paragraph(`Olá, ${strong(firstName(name))}. Use este código para terminar de entrar no reWork:`)}
+<div class="rw-text" style="margin:22px 0 4px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:34px;font-weight:700;letter-spacing:.3em;color:${T.text}">${escHtml(code)}</div>
+<p class="rw-baixa" style="margin:18px 0 0;font-size:12px;line-height:1.6;color:${T.baixa}">O código vale por <strong>10 minutos</strong>.${ip ? ` Pedido feito do endereço ${escHtml(ip)}.` : ''} Se não foi você, alguém sabe a sua senha: troque-a no seu perfil.</p>`;
+  const html = layout({ subject, preheader: `Código: ${code} · vale 10 minutos.`, content, baseUrl, footer: 'Você recebe este e-mail porque ativou a verificação em duas etapas.' });
+  const text = `Seu código de acesso ao reWork: ${code}
+
+Vale por 10 minutos. Se não foi você, troque a sua senha.`;
+  return { subject, html, text };
+}
+/* Aviso: verificação em duas etapas ativada/desativada. */
+function twoFactorNotice({ name, enabled, method, baseUrl }) {
+  const how = method === 'totp' ? 'app autenticador' : 'código por e-mail';
+  const subject = enabled ? '[reWork] App autenticador ativado' : '[reWork] App autenticador desativado';
+  const content = `${chip('Segurança', 'neutro')}
+${headline(enabled ? 'App autenticador ativado' : 'App autenticador desativado')}
+${paragraph(enabled
+    ? `Olá, ${strong(firstName(name))}. A partir de agora, entrar no reWork pede também o ${strong(how)}.`
+    : `Olá, ${strong(firstName(name))}. O app autenticador foi desligado na sua conta. Entrar volta a pedir o código enviado para o seu e-mail.`)}
+${paragraph('Se não foi você, entre no reWork, troque a sua senha e fale com a coordenação da sua equipe.')}
+${button(baseUrl, 'Abrir o reWork')}`;
+  const html = layout({ subject, preheader: enabled ? `Agora o login pede o ${how}.` : 'O login voltou a pedir o código por e-mail.', content, baseUrl, footer: 'Aviso de segurança da sua conta no reWork.' });
+  const text = enabled ? `O app autenticador foi ativado na sua conta do reWork.` : `O app autenticador foi desativado na sua conta do reWork; o login volta a pedir o código por e-mail. Se não foi você, troque a senha.`;
+  return { subject, html, text };
+}
+
 /* Aviso pro endereço ANTIGO quando alguém pede a troca (segurança). */
 function emailChangeNotice({ name, newEmail, baseUrl }) {
   const subject = '[reWork] Pedido para trocar o e-mail da sua conta';
@@ -550,6 +580,8 @@ function previewSamples(baseUrl, me) {
       ],
     }) },
     { key: 'reset', label: 'Redefinir senha', build: () => resetPassword({ name, link: `${url}/reset/exemplo-de-token-0000`, baseUrl: url }) },
+    { key: 'login_code', label: 'Código de acesso (2 etapas)', build: () => loginCode({ name, code: '482913', baseUrl: url, ip: '189.40.12.7' }) },
+    { key: 'twofa_on', label: 'Verificação em duas etapas ativada', build: () => twoFactorNotice({ name, enabled: true, method: 'totp', baseUrl: url }) },
     { key: 'email_confirm', label: 'Confirmar e-mail', build: () => emailConfirm({ name, email: 'andrigo@exemplo.com', link: `${url}/confirmar-email/exemplo-de-token-0000`, baseUrl: url }) },
     { key: 'email_change', label: 'Confirmar e-mail novo (troca)', build: () => emailConfirm({ name, email: 'novo@exemplo.com', link: `${url}/confirmar-email/exemplo-de-token-0000`, baseUrl: url, isChange: true }) },
     { key: 'email_change_notice', label: 'Aviso de troca de e-mail (endereço antigo)', build: () => emailChangeNotice({ name, newEmail: 'novo@exemplo.com', baseUrl: url }) },
@@ -563,4 +595,4 @@ function previewSamples(baseUrl, me) {
   ];
 }
 
-module.exports = { escHtml, layout, notification, digest, heldSummary, resetPassword, emailConfirm, emailChangeNotice, invite, accessRequestReceived, accessRequestNew, consoleAdminInvite, consoleResetPassword, consoleRecoveryNotice, testEmail, previewSamples };
+module.exports = { escHtml, layout, notification, digest, heldSummary, resetPassword, emailConfirm, emailChangeNotice, loginCode, twoFactorNotice, invite, accessRequestReceived, accessRequestNew, consoleAdminInvite, consoleResetPassword, consoleRecoveryNotice, testEmail, previewSamples };

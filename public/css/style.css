@@ -3153,6 +3153,41 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 .profile-row-actions { display: flex; gap: 8px; flex-shrink: 0; }
 .profile-row--stack { flex-direction: column; align-items: flex-start; gap: 12px; }
 
+/* Segurança › verificação em duas etapas */
+.profile-2fa-intro { margin: -6px 0 14px; font-size: 13px; line-height: 1.55; color: var(--text-dim); max-width: 70ch; }
+.tf-opt { display: flex; align-items: center; gap: 14px; padding: 14px 0; }
+.tf-opt + .tf-opt { border-top: 1px solid var(--hairline); }
+.tf-opt-ic { width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0; display: grid; place-items: center; background: var(--surface-2); color: var(--text-dim); }
+.tf-opt-ic svg { width: 18px; height: 18px; }
+.tf-opt.is-on .tf-opt-ic { background: color-mix(in oklab, var(--success) 14%, transparent); color: var(--success); }
+.tf-opt-info { flex: 1; min-width: 0; }
+.tf-opt-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13.5px; font-weight: 600; color: var(--text); }
+.tf-opt-sub { font-size: 12.5px; color: var(--text-muted); margin-top: 2px; line-height: 1.5; }
+.tf-opt-actions { display: flex; gap: 8px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+.tf-tag { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; padding: 2px 7px; border-radius: 999px; background: var(--accent-dim); color: var(--accent-text); }
+.tf-lead { margin: 0 0 14px; font-size: 13px; line-height: 1.6; color: var(--text-dim); }
+.tf-lead b { color: var(--text); }
+.tf-steps { margin: 0 0 14px; padding-left: 18px; font-size: 13px; line-height: 1.7; color: var(--text-dim); }
+.tf-qr { width: 184px; height: 184px; margin: 4px auto 12px; padding: 10px; border-radius: 12px; background: #fff; }
+.tf-qr svg { width: 100%; height: 100%; display: block; }
+.tf-secret { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 8px 8px 12px; border-radius: 8px; border: 1px dashed var(--hairline-strong); background: var(--surface-2); margin-bottom: 16px; }
+.tf-secret code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; letter-spacing: .04em; color: var(--text); word-break: break-all; }
+.tf-code { text-align: center; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 22px !important; letter-spacing: .3em; height: 50px !important; }
+.tf-codes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; padding: 14px; border-radius: 10px; background: var(--surface-2); border: 1px dashed var(--hairline-strong); margin-bottom: 12px; }
+.tf-codes code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; letter-spacing: .06em; text-align: center; padding: 3px 0; color: var(--text); }
+.tf-codes-actions { display: flex; gap: 8px; margin-bottom: 14px; }
+#twofa-modal .btn:disabled { opacity: .45; cursor: not-allowed; filter: none; box-shadow: none; }
+.tf-check { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-dim); cursor: pointer; }
+.tf-check input { width: 16px; height: 16px; accent-color: var(--accent); }
+.tf-done { text-align: center; padding: 6px 0 2px; }
+.tf-done-ic { width: 48px; height: 48px; border-radius: 14px; display: inline-grid; place-items: center; background: color-mix(in oklab, var(--success) 14%, transparent); color: var(--success); margin-bottom: 10px; }
+.tf-done-ic svg { width: 24px; height: 24px; }
+.um-2fa { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); }
+.um-2fa[hidden] { display: none; }
+.um-2fa-ic { color: var(--success); display: inline-flex; }
+.um-2fa-text { flex: 1; min-width: 0; font-size: 12.5px; color: var(--text-dim); }
+@media (max-width: 560px) { .tf-opt { flex-wrap: wrap; } .tf-opt-actions { width: 100%; justify-content: flex-start; padding-left: 50px; } }
+
 /* Foto */
 .profile-photo-row { display: flex; align-items: center; gap: 18px; }
 .profile-photo-av .avatar { width: 64px; height: 64px; font-size: 22px; }

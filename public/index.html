@@ -141,6 +141,17 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 .login-box button:active{transform:scale(.985)}
 .login-error{color:var(--danger);font-size:12px;min-height:16px;margin-bottom:10px}
 .login-error.is-ok{color:var(--success,#16a34a)}
+/* Login › segundo passo (verificação em duas etapas) */
+.l2-kicker{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#5E00CC;margin-bottom:8px}
+.l2-text{font-size:14px;line-height:1.6;color:#4a4a4a;margin:8px 0 20px}
+.l2-text b{color:#111;font-weight:600}
+.login-box input.l2-code{text-align:center;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:24px;letter-spacing:.35em;padding-left:.35em;height:56px}
+.login-box input.l2-code.is-recovery{font-size:18px;letter-spacing:.12em;padding-left:.12em}
+.l2-links{display:flex;flex-direction:column;align-items:center;gap:10px;margin-top:18px}
+.l2-links a{color:#5E00CC;font-size:13px;text-decoration:none}
+.l2-links a:hover{text-decoration:underline}
+.l2-links a[aria-disabled="true"]{color:#9a9a9a;pointer-events:none}
+.l2-links .l2-back{color:#737373}
 .login-hint{color:#737373;font-size:11px;margin-top:22px;line-height:1.6}
 .login-legal-footer{position:absolute;bottom:20px;left:0;right:0;text-align:center;font-size:11px;color:#a1a1a1;letter-spacing:.02em}
 .login-legal-footer a{color:#737373;text-decoration:none;transition:color .12s var(--ease-out)}
@@ -301,6 +312,23 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
   <main class="login-split-right">
     <div class="login-box login-box--bare">
       <div class="login-logo"><img src="/rework_branco.svg" alt="reWork"></div>
+
+      <!-- Segundo passo: código do e-mail ou do app autenticador (boot.js) -->
+      <div id="login-2fa" hidden>
+        <div class="l2-kicker">Verificação em duas etapas</div>
+        <div class="invite-title" id="l2-title">Confirme que é você</div>
+        <p class="l2-text" id="l2-text"></p>
+        <input type="text" id="l2-code" class="l2-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" aria-label="Código" onkeydown="if(event.key==='Enter'){event.preventDefault();doLogin2fa();}">
+        <div class="login-error" id="l2-error" role="alert"></div>
+        <button type="button" id="l2-submit" onclick="doLogin2fa()">Entrar</button>
+        <div class="l2-links">
+          <a href="#" id="l2-resend" onclick="event.preventDefault();resendLogin2fa()">Reenviar código</a>
+          <a href="#" id="l2-recovery" onclick="event.preventDefault();toggleLogin2faRecovery()">Usar um código de recuperação</a>
+          <a href="#" class="l2-back" onclick="event.preventDefault();cancelLogin2fa()">Voltar</a>
+        </div>
+      </div>
+
+      <div id="login-main">
       <input type="text" id="login-username" placeholder="E-mail ou usuário" autocomplete="username" onkeydown="if(event.key==='Enter'){event.preventDefault();$('login-password').focus();}">
       <input type="password" id="login-password" placeholder="Senha" autocomplete="current-password" onkeydown="if(event.key==='Enter'){event.preventDefault();doLogin();}">
       <a href="#" class="login-forgot login-forgot--inline" onclick="event.preventDefault();showForgotPassword()">Esqueci minha senha</a>
@@ -316,6 +344,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       </button>
     </div>
       <div class="login-hint">Recebeu um convite? Abra o link do e-mail para criar sua conta.<br>Quer o reWork na sua equipe? <a href="/acesso">Peça acesso</a></div>
+      </div>
     </div>
     <!-- Rodapé com links legais — sempre acessíveis mesmo antes do login. -->
     <div class="login-legal-footer">
@@ -3204,8 +3233,13 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <section class="profile-section" data-section="security" hidden>
               <header class="profile-section-head">
                 <h2 class="profile-section-title">Segurança</h2>
-                <p class="profile-section-sub">Senha e sessão neste computador.</p>
+                <p class="profile-section-sub">Senha, verificação em duas etapas e sessão neste computador.</p>
               </header>
+              <div class="profile-card-block">
+                <div class="profile-block-title">Verificação em duas etapas</div>
+                <p class="profile-2fa-intro">Além da senha, o login pede um código. O código por e-mail é obrigatório e liga sozinho com o e-mail confirmado; o app autenticador é opcional e ainda mais seguro.</p>
+                <div id="profile-2fa"></div>
+              </div>
               <div class="profile-card-block">
                 <div class="profile-block-title">Trocar senha</div>
                 <div class="form-grid">
@@ -4577,6 +4611,11 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <input class="form-control" id="u-discord-id" placeholder="Ex: 123456789012345678" autocomplete="off">
             <div class="um-field-hint">Necessário para menção no Discord ao virar responsável.</div>
           </div>
+          <div class="um-2fa um-col-2" id="u-2fa-row" hidden>
+            <span class="um-2fa-ic"><i data-lucide="shield-check" class="ic-sm"></i></span>
+            <span class="um-2fa-text" id="u-2fa-text"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="u-2fa-reset" onclick="resetUser2fa()">Remover</button>
+          </div>
         </div>
       </div>
 
@@ -4662,6 +4701,18 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 </div>
 
 <!-- MODAL: CONFIRMAÇÃO GENÉRICA -->
+<!-- Verificação em duas etapas: ativar, desativar, códigos novos — open2fa*() -->
+<div class="modal-overlay" id="twofa-modal">
+  <div class="modal modal-sm" data-no-outside-close="1">
+    <div class="modal-header">
+      <div class="modal-title" id="tf-title">Verificação em duas etapas</div>
+      <button class="modal-close" onclick="close2faModal()" aria-label="Fechar"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body" id="tf-body"></div>
+    <div class="modal-footer" id="tf-foot"></div>
+  </div>
+</div>
+
 <!-- Vincular / confirmar / trocar e-mail — openEmailLinkModal() -->
 <div class="modal-overlay" id="email-link-modal">
   <div class="modal modal-sm" data-no-outside-close="1">
@@ -4742,7 +4793,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260925card1" defer></script>
+<script src="/js/boot.js?v=20260925tfa3" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

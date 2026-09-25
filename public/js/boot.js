@@ -88,7 +88,7 @@
     });
     let data = null;
     try { data = await res.json(); } catch {}
-    if (!res.ok) throw new Error((data && data.error) || 'Erro de rede');
+    if (!res.ok) throw Object.assign(new Error((data && data.error) || 'Erro de rede'), { status: res.status, data });
     return data;
   }
 
@@ -184,6 +184,8 @@
     if (!username || !password) { err.textContent = 'Informe seu e-mail (ou usuário) e a senha.'; return; }
     try {
       const data = await api('/login', 'POST', { username, password });
+      // Verificação em duas etapas: a senha certa só abre o segundo passo.
+      if (data.twoFactor) { showLogin2fa(data.twoFactor); return; }
       // Overlay obrigatório de 2s pós-login (feedback deliberado da autenticação).
       showBootLoading(2000);
       // Sessão emitida via cookie. Carrega app.js com o `me` já resolvido
@@ -359,11 +361,20 @@
       err.textContent = (data && data.error) || 'Não foi possível criar a conta.';
       return;
     }
-    // Conta criada e sessão aberta (cookie): entra no app.
     history.replaceState(null, '', '/');
-    showBootLoading(1200);
     $('invite-screen').classList.remove('is-visible');
-    await loadFullApp(data.user);
+    // Conta com verificação em duas etapas: já está na organização, mas entra
+    // pelo login normal (senha + código).
+    if (data.loginRequired) {
+      showLoginScreen();
+      const u = $('login-username'); if (u && data.user) u.value = data.user.email || data.user.username || '';
+      const le = $('login-error'); if (le) { le.textContent = 'Pronto, você entrou na organização. Agora entre com a sua senha e o código.'; le.classList.add('is-ok'); }
+      setTimeout(() => { const p = $('login-password'); if (p) p.focus(); }, 80);
+      return;
+    }
+    // Conta criada e sessão aberta (cookie): entra no app.
+    showBootLoading(1200);
+    await enterAfterAuth(data.user);
   }
   function toggleInvitePassword() {
     const input = $('invite-password');
@@ -428,6 +439,105 @@
   window.loginWithDiscord = loginWithDiscord;
   window.doAcceptInvite = doAcceptInvite;
   window.toggleInvitePassword = toggleInvitePassword;
+
+  // ── Verificação em duas etapas (segundo passo do login) ────────────────
+  // Senha (ou Discord) certa → ticket; aqui a pessoa digita o código do
+  // e-mail ou do app (ou um código de recuperação) e só então entra.
+  let _l2 = null;
+  let _l2ResendT = null;
+  function showLogin2fa(info) {
+    _l2 = { ...info, recovery: false };
+    const ls = $('login-screen'); if (ls) ls.classList.add('is-visible');
+    $('login-main').hidden = true;
+    $('login-2fa').hidden = false;
+    renderLogin2fa();
+    hideBootLoading();
+  }
+  function renderLogin2fa() {
+    const email = _l2.method === 'email';
+    const rec = _l2.recovery;
+    $('l2-title').textContent = rec ? 'Use um código de recuperação' : email ? 'Digite o código do e-mail' : 'Digite o código do app';
+    $('l2-text').innerHTML = rec
+      ? 'Digite um dos códigos de recuperação que você guardou ao ativar o app. Cada um vale uma vez.'
+      : email ? 'Mandamos um código de 6 dígitos para <b></b>. Ele vale por 10 minutos.'
+      : 'Abra o app autenticador (Google Authenticator, 1Password…) e digite o código de 6 dígitos do reWork.';
+    const b = $('l2-text').querySelector('b'); if (b) b.textContent = _l2.emailHint || 'o seu e-mail';
+    const input = $('l2-code');
+    input.value = '';
+    input.classList.toggle('is-recovery', rec);
+    input.maxLength = rec ? 9 : 6;
+    input.placeholder = rec ? 'xxxx-xxxx' : '000000';
+    input.inputMode = rec ? 'text' : 'numeric';
+    $('l2-error').textContent = '';
+    $('l2-resend').hidden = !email;
+    $('l2-recovery').hidden = email;
+    $('l2-recovery').textContent = rec ? 'Usar o código do app' : 'Usar um código de recuperação';
+    setTimeout(() => input.focus(), 60);
+  }
+  function toggleLogin2faRecovery() { if (_l2) { _l2.recovery = !_l2.recovery; renderLogin2fa(); } }
+  function cancelLogin2fa(msg) {
+    _l2 = null;
+    $('login-2fa').hidden = true;
+    $('login-main').hidden = false;
+    const pw = $('login-password'); if (pw) pw.value = '';
+    const le = $('login-error'); if (le) { le.textContent = msg || ''; le.classList.remove('is-ok'); }
+    setTimeout(() => { const u = $('login-username'); if (u) (u.value ? pw : u).focus(); }, 60);
+  }
+  async function doLogin2fa() {
+    if (!_l2) return;
+    const code = ($('l2-code').value || '').trim();
+    const err = $('l2-error');
+    err.textContent = '';
+    if (!_l2.recovery && !/^\d{6}$/.test(code.replace(/\s/g, ''))) { err.textContent = 'Digite os 6 números do código.'; return; }
+    if (_l2.recovery && code.replace(/[^a-z0-9]/gi, '').length < 8) { err.textContent = 'Digite o código de recuperação completo.'; return; }
+    const btn = $('l2-submit');
+    btn.disabled = true; btn.textContent = 'Conferindo…';
+    try {
+      const r = await api('/login/2fa', 'POST', { ticket: _l2.ticket, code, recovery: _l2.recovery || undefined });
+      if (r.usedRecovery) {
+        const left = r.user && r.user.twoFactor ? r.user.twoFactor.recoveryLeft : 0;
+        try { sessionStorage.setItem('rw-email-notice', JSON.stringify({ ok: true, text: `Você usou um código de recuperação. ${left === 1 ? 'Resta 1' : `Restam ${left}`}. Gere novos em Perfil › Segurança se precisar.` })); } catch {}
+      }
+      _l2 = null;
+      history.replaceState(null, '', '/');
+      showBootLoading(1200);
+      await enterAfterAuth(r.user);
+    } catch (e) {
+      if (e.status === 410 || (e.data && e.data.code === 'expired')) return cancelLogin2fa(e.message);
+      err.textContent = e.message || 'Não foi possível conferir o código.';
+      $('l2-code').select();
+    } finally {
+      btn.disabled = false; btn.textContent = 'Entrar';
+    }
+  }
+  async function resendLogin2fa() {
+    if (!_l2) return;
+    const link = $('l2-resend');
+    const err = $('l2-error');
+    link.setAttribute('aria-disabled', 'true');
+    try {
+      await api('/login/2fa/resend', 'POST', { ticket: _l2.ticket });
+      err.textContent = 'Enviamos um código novo.';
+      err.classList.add('is-ok');
+      let left = 30;
+      clearInterval(_l2ResendT);
+      link.textContent = `Reenviar código (${left}s)`;
+      _l2ResendT = setInterval(() => {
+        left--;
+        if (left <= 0) { clearInterval(_l2ResendT); link.textContent = 'Reenviar código'; link.removeAttribute('aria-disabled'); }
+        else link.textContent = `Reenviar código (${left}s)`;
+      }, 1000);
+    } catch (e) {
+      link.removeAttribute('aria-disabled');
+      if (e.status === 410) return cancelLogin2fa(e.message);
+      err.classList.remove('is-ok');
+      err.textContent = e.message || 'Não foi possível reenviar.';
+    }
+  }
+  window.doLogin2fa = doLogin2fa;
+  window.resendLogin2fa = resendLogin2fa;
+  window.toggleLogin2faRecovery = toggleLogin2faRecovery;
+  window.cancelLogin2fa = cancelLogin2fa;
 
   // ── E-mail obrigatório (depois do prazo) ─────────────────────────────
   // Conta sem e-mail confirmado entra, mas só vê esta tela — o app nem
@@ -515,7 +625,7 @@
     let notice;
     try {
       const r = await api('/email/confirm', 'POST', { token });
-      notice = { ok: true, text: `E-mail ${r.email} confirmado. Você já pode entrar com ele.` };
+      notice = { ok: true, text: `E-mail ${r.email} confirmado. Você já pode entrar com ele, e o login passa a pedir também um código enviado para esse e-mail.` };
     } catch (e) {
       notice = { ok: false, text: e.message || 'Não foi possível confirmar o e-mail.' };
     }
@@ -526,6 +636,13 @@
 
   // ── Boot flow ─────────────────────────────────────────────────────────
   (async function boot() {
+    const twoFaTicket = new URLSearchParams(location.search).get('dois-fatores');
+    if (twoFaTicket) {
+      history.replaceState(null, '', '/');
+      try { showLogin2fa(await api('/login/2fa/' + encodeURIComponent(twoFaTicket))); }
+      catch (e) { showLoginScreen(); const le = $('login-error'); if (le) le.textContent = e.message || 'Entre de novo.'; }
+      return;
+    }
     const emailMatch = location.pathname.match(/^\/confirmar-email\/([A-Za-z0-9_-]+)$/);
     const emailNotice = emailMatch ? await confirmEmailFromLink(emailMatch[1]) : null;
     // Reset de senha via link do email
