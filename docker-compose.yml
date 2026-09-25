@@ -117,6 +117,15 @@ services:
       # Sem essa var, o endpoint devolve 503.
       MARKETING_WEBHOOK_TOKEN: ${MARKETING_WEBHOOK_TOKEN:-}
 
+      # Organizações: só valem no PRIMEIRO boot com organizações (migração).
+      # ORG_OWNER = usuário ou e-mail de quem vira dono da organização atual
+      # (sem ela, vira o admin ativo mais antigo); ORG_NAME = nome dela (WSI).
+      ORG_OWNER: ${ORG_OWNER:-}
+      ORG_NAME: ${ORG_NAME:-}
+      # reWork Console: token de uso único pra recuperar o acesso de superadmin
+      # (POST /api/console/recover). Deixe vazio quando não estiver usando.
+      CONSOLE_RECOVERY_TOKEN: ${CONSOLE_RECOVERY_TOKEN:-}
+
     volumes:
       # Volume nomeado — sobrevive a rebuilds/updates. Contém uploads dos
       # usuários e secret.bin (criptografia local do auth). BACKUP DISSO

@@ -116,6 +116,18 @@ jobs:
         if: ${{ success() && env.PORTAINER_WEBHOOK_URL != '' }}
         env:
           PORTAINER_WEBHOOK_URL: ${{ secrets.PORTAINER_WEBHOOK_URL }}
+        # Tenta algumas vezes com espera crescente: um 403/5xx passageiro (filtro
+        # na frente do Portainer, redeploy anterior ainda rodando) não derruba o
+        # deploy. Em falha, mostra o status, o `server:` e o começo da resposta
+        # pra dar pra saber quem recusou — sem imprimir a URL (tem o token).
         run: |
-          curl -fsSL -X POST --max-time 30 "$PORTAINER_WEBHOOK_URL"
-          echo "Portainer webhook disparado."
+          for wait in 0 15 45 90; do
+            [ "$wait" -gt 0 ] && { echo "Nova tentativa em ${wait}s…"; sleep "$wait"; }
+            code=$(curl -sS -o /tmp/pt_body -D /tmp/pt_head -w '%{http_code}' -X POST --max-time 60 "$PORTAINER_WEBHOOK_URL" || echo 000)
+            if [ "${code:0:1}" = "2" ]; then echo "Portainer webhook disparado (HTTP $code)."; exit 0; fi
+            echo "Portainer respondeu HTTP $code"
+            grep -i '^server:' /tmp/pt_head || true
+            head -c 300 /tmp/pt_body 2>/dev/null; echo
+          done
+          echo "::error::Webhook do Portainer falhou depois de 4 tentativas (último HTTP $code)."
+          exit 1
