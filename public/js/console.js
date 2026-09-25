@@ -627,17 +627,62 @@
     barChart(document.getElementById('ch-created'), dailyData(d.series.created), { title: 'Demandas criadas por dia, últimos 30 dias', valueName: 'Demandas', format: v => `${num(v)} ${v === 1 ? 'demanda' : 'demandas'}` });
   }
 
+  /* ── Planos e limites ── */
+  // Teste: mostra o prazo (ou que ainda não começou) no próprio selo.
+  function planPill(p) {
+    if (p.trial) {
+      if (p.readOnly) return `<span class="c-pill c-pill--bad">${icon('lock')}Teste vencido</span>`;
+      if (!p.trialEndsAt) return `<span class="c-pill c-pill--warn">Teste · aguardando o dono</span>`;
+      return `<span class="c-pill c-pill--warn">Teste · ${p.trialDaysLeft === 1 ? '1 dia' : `${num(p.trialDaysLeft)} dias`}</span>`;
+    }
+    return `<span class="c-pill ${p.id === 'custom' ? 'c-pill--info' : 'c-pill--accent'}">${esc(p.name)}</span>`;
+  }
+  const gb = (n) => `${new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(n)} GB`;
+  const planLimits = (p) => [
+    p.users == null ? 'pessoas sem limite' : `até ${num(p.users)} pessoas`,
+    p.storageGb == null ? 'armazenamento sem limite' : gb(p.storageGb),
+    p.fileMb == null ? 'arquivos no teto do servidor' : `arquivos até ${num(p.fileMb)} MB`
+  ].join(' · ');
+  const trialLine = (p) => !p.trial ? '' : p.readOnly
+    ? `Teste venceu em ${dateTime(p.trialEndsAt).split(',')[0]}: a organização está só para consulta até você escolher um plano.`
+    : p.trialEndsAt ? `Teste até ${dateTime(p.trialEndsAt).split(',')[0]} (${p.trialDaysLeft === 1 ? 'falta 1 dia' : `faltam ${num(p.trialDaysLeft)} dias`}). Depois fica só para consulta.`
+    : 'O teste de 14 dias começa quando o dono aceitar o convite.';
+  // Pessoas: mostra "usados / limite" quando há limite.
+  const seatsCell = (o) => o.usage && o.usage.plan.users != null
+    ? `${num(o.usage.seats.used)}<span class="c-of"> / ${num(o.usage.plan.users)}</span>` : num(o.members);
+  function usageMeter(label, used, limit, fmt, foot) {
+    const pct = limit ? Math.min(100, (used / limit) * 100) : 0;
+    const tone = !limit ? '' : used >= limit ? ' is-full' : pct >= 85 ? ' is-high' : '';
+    return `<div class="c-usage${tone}">
+      <div class="c-usage-top"><span class="c-usage-label">${label}</span><span class="c-usage-num"><b>${fmt(used)}</b>${limit != null ? ` de ${fmt(limit)}` : ' · sem limite'}</span></div>
+      <div class="c-usage-bar" role="progressbar" aria-label="${esc(label)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct)}"><span style="width:${limit ? Math.max(pct, used > 0 ? 1.5 : 0) : 0}%"></span></div>
+      ${foot ? `<div class="c-usage-foot">${foot}</div>` : ''}
+    </div>`;
+  }
+  const TEAM_PLAN = { '1-5': 'essencial', '6-15': 'equipe', '16-50': 'agencia', '51-200': 'custom', '200+': 'custom' };
+
   /* compact: versão enxuta pra coluna da visão geral. */
   function orgTable(items, compact) {
     if (!items.length) return `<div class="c-empty">${icon('building-2')}<div>Nenhuma organização.</div></div>`;
     const cols = compact
       ? [['Pessoas', o => num(o.members)], ['Abertas', o => num(o.demandsOpen)], ['Horas 30d', o => hrs(o.hours30)]]
-      : [['Pessoas', o => num(o.members)], ['Ativas 30d', o => num(o.active30)], ['Squads', o => num(o.squads)], ['Abertas', o => num(o.demandsOpen)], ['Horas 30d', o => hrs(o.hours30)]];
+      : [['Pessoas', seatsCell], ['Ativas 30d', o => num(o.active30)], ['Arquivos', o => bytes(o.usage ? o.usage.storage.bytes : 0)], ['Abertas', o => num(o.demandsOpen)], ['Horas 30d', o => hrs(o.hours30)]];
     return `<div class="c-table-wrap"><table class="c-table">
-      <thead><tr><th>Organização</th>${cols.map(([h]) => `<th class="num">${h}</th>`).join('')}<th>Última atividade</th></tr></thead>
+      <thead><tr><th>Organização</th>${compact ? '' : '<th>Plano</th>'}${cols.map(([h]) => `<th class="num">${h}</th>`).join('')}<th>Última atividade</th></tr></thead>
       <tbody>${items.map(o => `<tr class="is-link" data-href="/console/organizacoes/${esc(o.id)}">
         <td><div class="c-cell-main">${esc(o.name)}</div><div class="c-cell-sub">${o.owner ? esc(o.owner.name) : (o.ownerInvite ? '<span class="c-pill c-pill--warn">Aguardando o dono</span>' : 'Sem dono')} · desde ${o.createdAt ? dateTime(o.createdAt).split(',')[0] : '—'}</div></td>
+        ${compact ? '' : `<td>${o.usage ? planPill(o.usage.plan) : '—'}</td>`}
         ${cols.map(([, fn]) => `<td class="num">${fn(o)}</td>`).join('')}<td style="white-space:nowrap">${rel(o.lastActivityAt)}</td></tr>`).join('')}</tbody>
+    </table></div>`;
+  }
+  function deletedTable(items) {
+    return `<div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>Organização</th><th>Excluída</th><th class="num">Pessoas</th><th>Apagada de vez em</th></tr></thead>
+      <tbody>${items.map(x => `<tr class="is-link" data-href="/console/organizacoes/${esc(x.id)}">
+        <td><div class="c-cell-main">${esc(x.name)}</div><div class="c-cell-sub">${x.owner ? esc(x.owner.name) : 'Sem dono'}</div></td>
+        <td style="white-space:nowrap">${rel(x.deletedAt)}${x.deletedBy ? `<div class="c-cell-sub">por ${esc(x.deletedBy)}</div>` : ''}</td>
+        <td class="num">${num(x.members)}</td>
+        <td style="white-space:nowrap"><span class="c-pill ${x.daysLeft <= 3 ? 'c-pill--bad' : 'c-pill--warn'}">${x.daysLeft === 0 ? 'hoje' : x.daysLeft === 1 ? '1 dia' : `${x.daysLeft} dias`}</span><div class="c-cell-sub">${dateTime(x.purgeAt).split(',')[0]}</div></td></tr>`).join('')}</tbody>
     </table></div>`;
   }
   document.addEventListener('click', (ev) => {
@@ -651,7 +696,11 @@
     let d;
     try { d = await api('/console/orgs'); }
     catch (e) { if (e.silent) return; main.innerHTML = pageHead('Organizações'); return errorBlock(main, e, pageOrgs); }
-    main.innerHTML = pageHead('Organizações', 'Quem usa o reWork e como está usando. Organizações novas nascem da lista de espera.') + `<section class="c-card">${orgTable(d.items)}</section>`;
+    state.plans = d.plans;
+    main.innerHTML = pageHead('Organizações', 'Quem usa o reWork e como está usando. Organizações novas nascem da lista de espera.') + `<section class="c-card">${orgTable(d.items)}</section>
+      ${(d.deleted || []).length ? `<section class="c-card" style="margin-top:16px">
+        <div class="c-card-head"><div><div class="c-card-title">Excluídas</div><div class="c-card-sub">Ninguém acessa. Os dados ficam guardados por 30 dias e dá para restaurar; depois disso somem de vez.</div></div></div>
+        ${deletedTable(d.deleted)}</section>` : ''}`;
     paint();
   }
 
@@ -661,6 +710,8 @@
     let d;
     try { d = await api('/console/orgs/' + encodeURIComponent(id)); }
     catch (e) { if (e.silent) return; main.innerHTML = pageHead('Organização', '', '', { href: '/console/organizacoes', label: 'Organizações' }); return errorBlock(main, e, () => pageOrg(id)); }
+    state.plans = d.plans;
+    if (d.deleted) return renderDeletedOrg(main, id, d.deleted);
     const o = d.org;
     const months = d.hoursByMonth.map(m => { const [yy, mm] = m.key.split('-').map(Number); return { value: m.value, short: MONTHS[mm - 1], label: `${MONTHS[mm - 1]} ${yy}` }; });
     const ownerLine = o.owner
@@ -675,6 +726,7 @@
         ${kpi('Demandas', 'kanban-square', num(o.demandsTotal), `${num(o.demandsOpen)} abertas agora`)}
         ${kpi('Horas apontadas', 'clock', hrs(o.hoursTotal), `${hrs(o.hours30)} nos últimos 30 dias`)}
       </div>
+      ${planCard(o)}
       <div class="c-grid-2" style="margin-bottom:16px">
         <section class="c-card"><div class="c-card-head"><div><div class="c-card-title">Demandas criadas por dia</div><div class="c-card-sub">Últimos 30 dias</div></div></div><div class="c-card-body"><div id="ch-org-created"></div></div></section>
         <section class="c-card"><div class="c-card-head"><div><div class="c-card-title">Horas apontadas por mês</div><div class="c-card-sub">Últimos 6 meses</div></div></div><div class="c-card-body"><div id="ch-org-hours"></div></div></section>
@@ -687,6 +739,17 @@
       <section class="c-card">
         <div class="c-card-head"><div class="c-card-title">Pessoas</div><input class="c-input" id="m-search" placeholder="Buscar por nome ou e-mail" style="max-width:260px;height:32px" aria-label="Buscar pessoas"></div>
         <div class="c-table-wrap"><table class="c-table"><thead><tr><th>Nome</th><th>Área · cargo</th><th>Acesso</th><th>Squads</th><th>Último acesso</th><th>Situação</th></tr></thead><tbody id="m-body"></tbody></table></div>
+      </section>
+      <section class="c-card c-danger" style="margin-top:16px">
+        <div class="c-card-head"><div class="c-card-title">Dados e exclusão</div></div>
+        <div class="c-danger-row">
+          <div><div class="c-danger-title">Baixar backup</div><div class="c-hint">Arquivo JSON com squads, clientes, projetos, fluxos, demandas, documentos e a lista de pessoas. O cofre de senhas não entra.</div></div>
+          <a class="c-btn c-btn--sm" href="/api/console/orgs/${esc(o.id)}/export" download>${icon('download')}Baixar backup</a>
+        </div>
+        <div class="c-danger-row">
+          <div><div class="c-danger-title">Excluir organização</div><div class="c-hint">${o.isDefault ? 'É a organização principal desta instalação: não pode ser excluída.' : 'Ninguém mais entra, na hora. Os dados ficam guardados por 30 dias (dá para restaurar aqui) e depois são apagados de vez.'}</div></div>
+          <button class="c-btn c-btn--sm c-btn--danger" id="org-del-btn" ${o.isDefault ? 'disabled' : ''}>${icon('trash-2')}Excluir…</button>
+        </div>
       </section>`;
     const body = document.getElementById('m-body');
     const renderMembers = (q) => {
@@ -720,9 +783,164 @@
         catch (e) { busy(ev.currentTarget, false); fieldError(f, 'userId', e.message); }
       });
     });
+    document.getElementById('org-plan-btn').addEventListener('click', () => planModal(o, () => pageOrg(id)));
+    document.getElementById('org-del-btn')?.addEventListener('click', () => deleteOrgModal(o, id));
     paint();
     barChart(document.getElementById('ch-org-created'), dailyData(d.series.created), { title: 'Demandas criadas por dia', valueName: 'Demandas', format: v => `${num(v)} ${v === 1 ? 'demanda' : 'demandas'}`, height: 170 });
     barChart(document.getElementById('ch-org-hours'), months, { title: 'Horas apontadas por mês', valueName: 'Horas', format: hrs, height: 170 });
+  }
+
+  function planCard(o) {
+    const u = o.usage, p = u.plan;
+    const seatsFoot = `${num(u.seats.members)} ${u.seats.members === 1 ? 'pessoa ativa' : 'pessoas ativas'}${u.seats.pending ? ` + ${num(u.seats.pending)} ${u.seats.pending === 1 ? 'convite pendente' : 'convites pendentes'}` : ''}`;
+    return `<section class="c-card" style="margin-bottom:16px">
+      <div class="c-card-head"><div><div class="c-card-title">Plano e limites</div><div class="c-card-sub">${planPill(p)}${p.trial ? `<span class="c-pill" style="margin-left:6px">${esc(p.name)}</span>` : ''}<span style="margin-left:8px">${esc(planLimits(p))}</span></div></div>
+        <button class="c-btn c-btn--sm" id="org-plan-btn">${icon('sliders-horizontal')}Mudar plano</button></div>
+      <div class="c-card-body">
+        ${p.trial ? `<div class="c-banner ${p.readOnly ? 'c-banner--bad' : 'c-banner--warn'}" style="margin:0 0 14px">${icon(p.readOnly ? 'lock' : 'hourglass')}<div>${esc(trialLine(p))}</div></div>` : ''}
+        <div class="c-usage-grid">
+          ${usageMeter('Pessoas', u.seats.used, p.users, num, seatsFoot)}
+          ${usageMeter('Armazenamento', u.storage.bytes, p.storageBytes, bytes, `${num(u.storage.files)} ${u.storage.files === 1 ? 'arquivo' : 'arquivos'} · atualiza a cada 10 min`)}
+        </div>
+        ${(p.users != null && u.seats.used >= p.users) || (p.storageBytes != null && u.storage.bytes >= p.storageBytes)
+          ? `<div class="c-banner c-banner--warn" style="margin:14px 0 0">${icon('triangle-alert')}<div>Limite atingido: ${p.users != null && u.seats.used >= p.users ? 'novos convites e reativações ficam bloqueados' : ''}${p.users != null && u.seats.used >= p.users && p.storageBytes != null && u.storage.bytes >= p.storageBytes ? ' e ' : ''}${p.storageBytes != null && u.storage.bytes >= p.storageBytes ? 'novos arquivos são recusados' : ''}. Ninguém perde acesso nem dados.</div></div>` : ''}
+      </div>
+    </section>`;
+  }
+  function planModal(o, done) {
+    const cur = o.usage.plan;
+    const plans = state.plans || [];
+    let sel = cur.id;
+    const optHTML = (p) => `<label class="c-plan-opt">
+        <input type="radio" name="planId" value="${esc(p.id)}"${p.id === sel ? ' checked' : ''}>
+        <span class="c-plan-opt-main"><span class="c-plan-opt-name">${esc(p.name)}${p.id === cur.id ? '<span class="c-pill" style="margin-left:8px">Atual</span>' : ''}</span>
+        <span class="c-plan-opt-sub">${p.id === 'custom' ? 'Você define os limites (caminho do Enterprise)' : esc(planLimits(p)) + (p.trial ? ' · 14 dias, depois só consulta' : '')}</span></span></label>`;
+    const m = modal('Mudar plano', `<form id="f-plan" novalidate>
+        <div class="c-plan-opts">${plans.map(optHTML).join('')}</div>
+        <div id="plan-trial" class="c-plan-custom"${sel === 'teste' ? '' : ' hidden'}>
+          <div class="c-field" style="grid-column:1/-1"><label class="c-label" for="pl-days">Dias de teste a partir de hoje</label><input class="c-input" id="pl-days" name="trialDays" type="number" min="0" max="90" step="1" inputmode="numeric" placeholder="${cur.trial && cur.trialEndsAt ? `Manter o prazo atual (${dateTime(cur.trialEndsAt).split(',')[0]})` : 'Padrão: 14 dias'}">
+            <span class="c-hint">${cur.trial && cur.readOnly ? 'Informe os dias para reabrir o teste.' : 'Use para estender o teste de quem está avaliando. 0 encerra o teste agora.'}</span></div>
+        </div>
+        <div id="plan-custom" class="c-plan-custom c-plan-custom--3"${sel === 'custom' ? '' : ' hidden'}>
+          <div class="c-field"><label class="c-label" for="pl-users">Pessoas</label><input class="c-input" id="pl-users" name="users" type="number" min="1" step="1" inputmode="numeric" placeholder="Sem limite" value="${cur.id === 'custom' && cur.users != null ? cur.users : ''}"></div>
+          <div class="c-field"><label class="c-label" for="pl-storage">Armazenamento (GB)</label><input class="c-input" id="pl-storage" name="storageGb" type="number" min="1" step="0.5" inputmode="decimal" placeholder="Sem limite" value="${cur.id === 'custom' && cur.storageGb != null ? cur.storageGb : ''}"></div>
+          <div class="c-field"><label class="c-label" for="pl-file">Por arquivo (MB)</label><input class="c-input" id="pl-file" name="fileMb" type="number" min="1" step="1" inputmode="numeric" placeholder="Teto do servidor" value="${cur.id === 'custom' && cur.fileMb != null ? cur.fileMb : ''}"></div>
+          <p class="c-hint" style="grid-column:1/-1;margin-top:-6px">Em branco = sem limite (o arquivo segue o teto do servidor).</p>
+        </div>
+        <div id="plan-warn"></div>
+        <div class="c-error" role="alert"></div></form>`,
+      `<button class="c-btn" data-close>Cancelar</button><button class="c-btn c-btn--primary" id="pl-go">Salvar plano</button>`);
+    m.el.querySelector('.c-modal').classList.add('c-modal--wide');
+    const f = m.el.querySelector('#f-plan');
+    const limitsNow = () => {
+      if (sel !== 'custom') return plans.find(p => p.id === sel);
+      const v = (x) => (x === '' ? null : Number(x));
+      return { users: v(f.users.value), storageGb: v(f.storageGb.value) };
+    };
+    const warn = () => {
+      const l = limitsNow() || {};
+      const msgs = [];
+      if (l.users != null && o.usage.seats.used > l.users) msgs.push(`a organização já ocupa ${num(o.usage.seats.used)} lugares (acima de ${num(l.users)})`);
+      if (l.storageGb != null && o.usage.storage.bytes > l.storageGb * 1024 ** 3) msgs.push(`já usa ${bytes(o.usage.storage.bytes)} de arquivos (acima de ${gb(l.storageGb)})`);
+      f.querySelector('#plan-warn').innerHTML = msgs.length
+        ? `<div class="c-banner c-banner--warn" style="margin:4px 0 12px">${icon('triangle-alert')}<div>Abaixo do uso atual: ${msgs.join(' e ')}. Ninguém perde acesso nem arquivos, mas novos convites e envios ficam bloqueados até voltar ao limite.</div></div>` : '';
+      paint();
+    };
+    f.addEventListener('change', (e) => {
+      if (e.target.name === 'planId') { sel = e.target.value; f.querySelector('#plan-custom').hidden = sel !== 'custom'; f.querySelector('#plan-trial').hidden = sel !== 'teste'; }
+      warn();
+    });
+    f.addEventListener('input', warn);
+    warn();
+    const go = async () => {
+      const btn = m.el.querySelector('#pl-go');
+      busy(btn, true, 'Salvando…');
+      const body = { planId: sel };
+      if (sel === 'custom') { body.users = f.users.value === '' ? null : Number(f.users.value); body.storageGb = f.storageGb.value === '' ? null : Number(f.storageGb.value); body.fileMb = f.fileMb.value === '' ? null : Number(f.fileMb.value); }
+      if (sel === 'teste' && f.trialDays.value !== '') body.trialDays = Number(f.trialDays.value);
+      try { await api(`/console/orgs/${encodeURIComponent(o.id)}/plan`, { method: 'PUT', body }); m.close(); toast('Plano atualizado.'); done(); }
+      catch (e) { busy(btn, false); fieldError(f, e.data && e.data.field, e.message); }
+    };
+    m.el.querySelector('#pl-go').addEventListener('click', go);
+    f.addEventListener('submit', (e) => { e.preventDefault(); go(); });
+  }
+  /* Confirmação digitando o nome (excluir / apagar de vez). */
+  function confirmNameModal({ title, intro, name, button, withReason, run }) {
+    const m = modal(title, `<form id="f-conf" novalidate>
+        <div style="font-size:13.5px;color:var(--text-dim);margin-bottom:14px">${intro}</div>
+        ${withReason ? `<div class="c-field"><label class="c-label" for="cf-reason">Motivo (opcional, fica na auditoria)</label><textarea class="c-textarea" id="cf-reason" name="reason" maxlength="500" rows="2" placeholder="Ex.: cliente cancelou, pediu para encerrar a conta"></textarea></div>` : ''}
+        <div class="c-field"><label class="c-label" for="cf-name">Digite <b>${esc(name)}</b> para confirmar</label><input class="c-input" id="cf-name" name="confirm" autocomplete="off" spellcheck="false"></div>
+        <div class="c-error" role="alert"></div></form>`,
+      `<button class="c-btn" data-close>Cancelar</button><button class="c-btn c-btn--danger-solid" id="cf-go" disabled>${esc(button)}</button>`);
+    const f = m.el.querySelector('#f-conf');
+    const btn = m.el.querySelector('#cf-go');
+    const same = () => f.confirm.value.trim().toLowerCase() === String(name).trim().toLowerCase();
+    f.confirm.addEventListener('input', () => { btn.disabled = !same(); });
+    setTimeout(() => f.confirm.focus(), 30);
+    const go = async () => {
+      if (!same()) return;
+      busy(btn, true, 'Aguarde…');
+      try { await run({ confirm: f.confirm.value, reason: withReason ? f.reason.value : undefined }); m.close(); }
+      catch (e) { busy(btn, false); btn.disabled = !same(); fieldError(f, e.data && e.data.field, e.message); }
+    };
+    btn.addEventListener('click', go);
+    f.addEventListener('submit', (e) => { e.preventDefault(); go(); });
+  }
+  function deleteOrgModal(o, id) {
+    confirmNameModal({
+      title: 'Excluir organização', name: o.name, button: 'Excluir organização', withReason: true,
+      intro: `<p style="margin-bottom:8px"><b>${num(o.members)} ${o.members === 1 ? 'pessoa perde' : 'pessoas perdem'} o acesso na hora.</b> Quem também faz parte de outra organização continua entrando nela.</p>
+        <p>Os dados ficam guardados por <b>30 dias</b>: nesse prazo dá para restaurar tudo ou baixar o backup aqui no console. Depois, somem de vez (junto com as contas que não fazem parte de outra organização).</p>`,
+      run: async (b) => {
+        await api(`/console/orgs/${encodeURIComponent(id)}/delete`, { method: 'POST', body: b });
+        toast('Organização excluída. Fica guardada por 30 dias.');
+        pageOrg(id);
+      }
+    });
+  }
+  function renderDeletedOrg(main, id, x) {
+    const crumb = { href: '/console/organizacoes', label: 'Organizações' };
+    main.innerHTML = pageHead(esc(x.name), `Excluída ${rel(x.deletedAt)}${x.deletedBy ? ` por ${esc(x.deletedBy)}` : ''}`, '', crumb) + `
+      <div class="c-banner c-banner--bad">${icon('archive')}<div><b>Ninguém acessa esta organização.</b> Os dados ficam guardados até <b>${dateTime(x.purgeAt)}</b> (${x.daysLeft === 0 ? 'hoje' : x.daysLeft === 1 ? 'falta 1 dia' : `faltam ${x.daysLeft} dias`}) e depois são apagados de vez.</div></div>
+      <section class="c-card">
+        <div class="c-card-body">
+          <dl class="c-dl c-dl--left">
+            <dt>Dono</dt><dd>${x.owner ? `${esc(x.owner.name)}${x.owner.email ? ` · ${esc(x.owner.email)}` : ''}` : '—'}</dd>
+            <dt>Pessoas</dt><dd>${num(x.members)}</dd>
+            <dt>Plano</dt><dd>${esc(x.plan.name)} · ${esc(planLimits(x.plan))}</dd>
+            <dt>Criada em</dt><dd>${x.createdAt ? dateTime(x.createdAt).split(',')[0] : '—'}</dd>
+            <dt>Excluída em</dt><dd>${dateTime(x.deletedAt)}${x.deletedBy ? ` por ${esc(x.deletedBy)}` : ''}</dd>
+            ${x.reason ? `<dt>Motivo</dt><dd>${esc(x.reason)}</dd>` : ''}
+          </dl>
+        </div>
+        <div class="c-danger-row">
+          <div><div class="c-danger-title">Restaurar</div><div class="c-hint">Volta tudo como estava: pessoas, squads, demandas, arquivos e plano.</div></div>
+          <button class="c-btn c-btn--sm c-btn--primary" id="org-restore">${icon('rotate-ccw')}Restaurar</button>
+        </div>
+        <div class="c-danger-row">
+          <div><div class="c-danger-title">Baixar backup</div><div class="c-hint">Arquivo JSON com tudo o que é da organização.</div></div>
+          <a class="c-btn c-btn--sm" href="/api/console/orgs/${esc(id)}/export" download>${icon('download')}Baixar backup</a>
+        </div>
+        <div class="c-danger-row">
+          <div><div class="c-danger-title">Apagar agora</div><div class="c-hint">Não espera os 30 dias. Não dá para desfazer.</div></div>
+          <button class="c-btn c-btn--sm c-btn--danger" id="org-purge">${icon('trash-2')}Apagar de vez…</button>
+        </div>
+      </section>`;
+    paint();
+    document.getElementById('org-restore').addEventListener('click', async (e) => {
+      busy(e.currentTarget, true, 'Restaurando…');
+      try { await api(`/console/orgs/${encodeURIComponent(id)}/restore`, { method: 'POST' }); toast('Organização restaurada.'); pageOrg(id); }
+      catch (err) { busy(e.currentTarget, false); fail(err); }
+    });
+    document.getElementById('org-purge').addEventListener('click', () => confirmNameModal({
+      title: 'Apagar de vez', name: x.name, button: 'Apagar de vez',
+      intro: `<p>Apaga agora, sem esperar os 30 dias: itens, convites, notificações, arquivos que só ela usava e as contas que não fazem parte de outra organização. <b>Não dá para desfazer.</b> Se quiser guardar uma cópia, baixe o backup antes.</p>`,
+      run: async (b) => {
+        const r = await api(`/console/orgs/${encodeURIComponent(id)}`, { method: 'DELETE', body: b });
+        toast(`Apagada de vez: ${num(r.items)} itens, ${num(r.accounts)} contas, ${num(r.files)} arquivos.`);
+        go('/console/organizacoes');
+      }
+    }));
   }
 
   /* ═════════════ Lista de espera ═════════════ */
@@ -732,7 +950,7 @@
     let d;
     try { d = await api('/console/access-requests'); }
     catch (e) { if (e.silent) return; return errorBlock(main, e, pageWaitlist); }
-    state.wl.items = d.items; state.counts = d.counts;
+    state.wl.items = d.items; state.counts = d.counts; state.plans = d.plans;
     const wanted = params.get('id');
     if (wanted) {
       const r = d.items.find(x => x.id === wanted);
@@ -794,7 +1012,9 @@
         <div class="c-actions">${next.map(([s, l, ic, cls]) => `<button class="c-btn c-btn--sm ${cls}" data-status="${s}">${icon(ic)}${l}</button>`).join('')}
           <button class="c-btn c-btn--sm c-btn--ghost" data-copy="${esc(r.email)}">${icon('copy')}Copiar e-mail</button></div>
         ${r.orgId
-          ? `<p class="c-hint" style="margin-top:10px">${icon('building-2')} Organização <a href="/console/organizacoes/${esc(r.orgId)}" data-link>${esc(r.orgName || 'criada')}</a>: o convite de dono foi para ${esc(r.email)}.</p>`
+          ? (r.orgPurgedAt
+            ? `<p class="c-hint" style="margin-top:10px">${icon('building-2')} A organização ${esc(r.orgName || '')} foi apagada de vez em ${dateTime(r.orgPurgedAt).split(',')[0]}.</p>`
+            : `<p class="c-hint" style="margin-top:10px">${icon('building-2')} Organização <a href="/console/organizacoes/${esc(r.orgId)}" data-link>${esc(r.orgName || 'criada')}</a>: o convite de dono foi para ${esc(r.email)}.</p>`)
           : r.status !== 'rejected' ? `<button class="c-btn c-btn--primary c-btn--sm" style="margin-top:10px" data-create-org>${icon('building-2')}Aprovar e criar organização</button>
              <p class="c-hint" style="margin-top:8px">Cria a organização com um squad "Geral" e manda o convite de dono para ${esc(r.email)}.</p>` : ''}
       </div>
@@ -828,6 +1048,9 @@
     main.querySelector('[data-create-org]')?.addEventListener('click', () => {
       const m = modal('Aprovar e criar organização', `<form id="f-org" novalidate>
           <div class="c-field"><label class="c-label" for="org-name">Nome da organização</label><input class="c-input" id="org-name" name="name" maxlength="80" value="${esc(r.company)}"></div>
+          <div class="c-field"><label class="c-label" for="org-plan">Plano</label>
+            <select class="c-select" id="org-plan" name="planId">${(state.plans || []).map(p => `<option value="${esc(p.id)}"${p.id === 'teste' ? ' selected' : ''}>${esc(p.name)} · ${esc(p.id === 'custom' ? 'sem limites (ajuste depois)' : p.trial ? '14 dias grátis' : planLimits(p))}</option>`).join('')}</select>
+            <span class="c-hint">O teste de 14 dias começa quando o dono aceitar o convite. Tamanho da equipe informado: ${esc(TEAM[r.teamSize] || r.teamSize)}${TEAM_PLAN[r.teamSize] ? ` (plano provável depois: ${esc(((state.plans || []).find(p => p.id === TEAM_PLAN[r.teamSize]) || {}).name || '')})` : ''}.</span></div>
           <p class="c-hint">Criamos a organização com um squad "Geral" e o fluxo padrão, e <b>${esc(r.name)}</b> recebe o convite para criar a conta como dono.</p>
           <div class="c-error" role="alert" style="margin-top:10px"></div></form>`,
         `<button class="c-btn" data-close>Cancelar</button><button class="c-btn c-btn--primary" id="org-go">Criar e convidar</button>`);
@@ -837,7 +1060,7 @@
         const btn = m.el.querySelector('#org-go');
         busy(btn, true, 'Criando…');
         try {
-          const out = await api(`/console/access-requests/${encodeURIComponent(r.id)}/create-org`, { method: 'POST', body: { name: f.name.value } });
+          const out = await api(`/console/access-requests/${encodeURIComponent(r.id)}/create-org`, { method: 'POST', body: { name: f.name.value, planId: f.planId ? f.planId.value : undefined } });
           m.close();
           const i = state.wl.items.findIndex(x => x.id === r.id);
           const prev = state.wl.items[i].status;

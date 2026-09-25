@@ -186,8 +186,9 @@
       const data = await api('/login', 'POST', { username, password });
       // Overlay obrigatório de 2s pós-login (feedback deliberado da autenticação).
       showBootLoading(2000);
-      // Sessão emitida via cookie. Carrega app.js com o `me` já resolvido.
-      await loadFullApp(data.user);
+      // Sessão emitida via cookie. Carrega app.js com o `me` já resolvido
+      // (ou a tela de e-mail obrigatório, se a conta ainda não vinculou).
+      await enterAfterAuth(data.user);
     } catch (e) {
       err.textContent = e.message || 'Erro ao entrar';
     }
@@ -428,8 +429,105 @@
   window.doAcceptInvite = doAcceptInvite;
   window.toggleInvitePassword = toggleInvitePassword;
 
+  // ── E-mail obrigatório (depois do prazo) ─────────────────────────────
+  // Conta sem e-mail confirmado entra, mas só vê esta tela — o app nem
+  // carrega (e o servidor recusa o resto da API).
+  let _egMe = null;
+  function showEmailGate(me) {
+    _egMe = me;
+    const ls = $('login-screen'); if (ls) ls.classList.remove('is-visible');
+    $('eg-who').textContent = me.name || me.username || '';
+    const pend = me.pendingEmail;
+    if (pend) { egShowSent(pend.email); }
+    else egShowForm();
+    $('email-gate').classList.add('is-visible');
+    hideBootLoading();
+  }
+  function egShowForm() {
+    const me = _egMe;
+    $('eg-sent').hidden = true;
+    $('eg-form').hidden = false;
+    $('eg-title').textContent = me.email ? 'Confirme seu e-mail para continuar' : 'Vincule um e-mail para continuar';
+    const d = new Date(me.emailDeadline);
+    const quando = isNaN(d) ? '' : ` em ${d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}`;
+    $('eg-text').innerHTML = (me.email
+      ? `O prazo para confirmar o e-mail das contas do reWork acabou${quando}. Sua conta tem o e-mail <b></b>: envie o link de confirmação e abra o e-mail. Assim que confirmar, tudo volta ao normal.`
+      : `O prazo para vincular um e-mail às contas do reWork acabou${quando}. Informe o seu e-mail para receber o link de confirmação. Assim que confirmar, tudo volta ao normal.`);
+    const b = $('eg-text').querySelector('b'); if (b) b.textContent = me.email;
+    $('eg-email').value = (me.pendingEmail && me.pendingEmail.email) || me.email || '';
+    $('eg-pass').value = '';
+    $('eg-error').textContent = '';
+    egSync();
+    setTimeout(() => { const i = $('eg-email').value ? ($('eg-pass-wrap').hidden ? $('eg-submit') : $('eg-pass')) : $('eg-email'); if (i) i.focus(); }, 60);
+  }
+  function egShowSent(addr) {
+    $('eg-form').hidden = true;
+    $('eg-sent').hidden = false;
+    $('eg-sent-text').innerHTML = 'Mandamos um link para <b></b>. Abra o e-mail, toque em <b>Confirmar e-mail</b> e depois volte aqui. O link vale 24 horas; se não chegar em alguns minutos, veja no spam.';
+    $('eg-sent-text').querySelector('b').textContent = addr;
+  }
+  // Senha só quando é um e-mail diferente do da conta (e a conta tem senha).
+  function egSync() {
+    const me = _egMe || {};
+    const typed = ($('eg-email').value || '').trim().toLowerCase();
+    const same = !!me.email && typed === String(me.email).toLowerCase();
+    $('eg-pass-wrap').hidden = same || me.hasPassword === false;
+  }
+  async function egSubmit() {
+    const email = ($('eg-email').value || '').trim();
+    const err = $('eg-error');
+    err.textContent = '';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { err.textContent = 'Confira o e-mail. Ele precisa ter o formato nome@empresa.com.'; $('eg-email').focus(); return; }
+    const needPass = !$('eg-pass-wrap').hidden;
+    const password = $('eg-pass').value;
+    if (needPass && !password) { err.textContent = 'Digite a sua senha do reWork.'; $('eg-pass').focus(); return; }
+    const btn = $('eg-submit');
+    btn.disabled = true; btn.textContent = 'Enviando…';
+    try {
+      const r = await api('/me/email', 'POST', needPass ? { email, password } : { email });
+      if (r && r.user) _egMe = { ..._egMe, ...r.user };
+      egShowSent(email.toLowerCase());
+    } catch (e) {
+      err.textContent = e.message || 'Não foi possível enviar.';
+    } finally {
+      btn.disabled = false; btn.textContent = 'Enviar link de confirmação';
+    }
+  }
+  async function egLogout() {
+    try { await api('/logout', 'POST'); } catch {}
+    location.href = '/';
+  }
+  // /api/me completo (com os campos do e-mail) e decide: tela restrita ou app.
+  async function enterAfterAuth(me) {
+    if (!me || me.emailDeadline === undefined) me = await api('/me');
+    if (me && me.emailRequired) { showEmailGate(me); return; }
+    await loadFullApp(me);
+  }
+  window.egSubmit = egSubmit;
+  window.egSync = egSync;
+  window.egShowForm = egShowForm;
+  window.egLogout = egLogout;
+
+  // ── Confirmação de e-mail (URL /confirmar-email/<token>) ─────────────────
+  // Confirma e segue o boot normal: logado, abre o app com um aviso; senão,
+  // mostra o resultado na tela de login.
+  async function confirmEmailFromLink(token) {
+    let notice;
+    try {
+      const r = await api('/email/confirm', 'POST', { token });
+      notice = { ok: true, text: `E-mail ${r.email} confirmado. Você já pode entrar com ele.` };
+    } catch (e) {
+      notice = { ok: false, text: e.message || 'Não foi possível confirmar o e-mail.' };
+    }
+    try { sessionStorage.setItem('rw-email-notice', JSON.stringify(notice)); } catch {}
+    history.replaceState(null, '', '/');
+    return notice;
+  }
+
   // ── Boot flow ─────────────────────────────────────────────────────────
   (async function boot() {
+    const emailMatch = location.pathname.match(/^\/confirmar-email\/([A-Za-z0-9_-]+)$/);
+    const emailNotice = emailMatch ? await confirmEmailFromLink(emailMatch[1]) : null;
     // Reset de senha via link do email
     const resetMatch = location.pathname.match(/^\/reset\/([A-Za-z0-9_-]+)$/);
     if (resetMatch) {
@@ -451,10 +549,15 @@
     // de login → app.
     try {
       const me = await api('/me');
-      await loadFullApp(me);
+      await enterAfterAuth(me);
     } catch {
       // Deslogado — revela a tela de login e some com o overlay.
       showLoginScreen();
+      if (emailNotice) {
+        const le = $('login-error');
+        if (le) { le.textContent = emailNotice.text; le.classList.toggle('is-ok', !!emailNotice.ok); }
+        try { sessionStorage.removeItem('rw-email-notice'); } catch {}
+      }
       const u = $('login-username'); if (u) setTimeout(() => u.focus(), 100);
       // Prefetch dos assets pesados em background enquanto o user digita.
       // rel=prefetch tem prioridade baixa (não compete com o LCP do login),

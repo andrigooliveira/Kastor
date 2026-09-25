@@ -338,6 +338,10 @@ function createStore(config = {}) {
   async function deleteAllNotificationsFor(userId) {
     await pool.query('DELETE FROM notifications WHERE user_id = $1', [userId]);
   }
+  // Organização excluída de vez: some com o sino dela (todas as pessoas).
+  async function deleteNotificationsForOrg(orgId) {
+    await pool.query("DELETE FROM notifications WHERE data->>'orgId' = $1", [orgId]);
+  }
   async function trimNotificationsFor(userId, keep) {
     // Mantém as `keep` notificações mais recentes, apaga o resto.
     await pool.query(
@@ -550,7 +554,7 @@ function createStore(config = {}) {
     upsert, upsertMany, remove, get, listByType, listByWorkspace,
     loadAllToCache, applyBatch,
     insertNotification, listNotificationsFor, markNotificationRead, markNotificationReadIfOwner,
-    markAllNotificationsReadFor, deleteAllNotificationsFor, trimNotificationsFor,
+    markAllNotificationsReadFor, deleteAllNotificationsFor, deleteNotificationsForOrg, trimNotificationsFor,
     insertReset, getReset, markResetUsed, cleanupResets,
     getKv, setKv,
     authLoadAll, authUpsertCredential, authDeleteCredential,

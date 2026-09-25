@@ -219,7 +219,9 @@ function createTenancy({ getRaw, onMemberChange }) {
       (v) => { const m = memberFor(user); if (!m) return; m.workspaces = Array.isArray(v) ? v : []; changed(m); });
     def('role', () => memberFor(user)?.area || '', (v) => { const m = memberFor(user); if (!m) return; m.area = String(v || ''); changed(m); });
     def('position', () => memberFor(user)?.position || null, (v) => { const m = memberFor(user); if (!m) return; m.position = v || null; changed(m); });
-    def('active', () => { const m = memberFor(user); return !!m && m.active !== false; }, (v) => {
+    // Organização excluída/suspensa: a pessoa fica "inativa" nela (jobs de
+    // e-mail, lembretes etc. que rodam fora de contexto pulam essa conta).
+    def('active', () => { const m = memberFor(user); return !!m && m.active !== false && orgActive(m.orgId); }, (v) => {
       const m = memberFor(user); if (!m) return; m.active = !!v; changed(m);
     });
     // Gravação no banco: dados da pessoa + retrato do vínculo principal (mantém

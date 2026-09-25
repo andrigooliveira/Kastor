@@ -36,6 +36,9 @@ process.env.FLUXO_SECRET = 'test-secret-for-tests-only-not-prod';
 process.env.PORT = '0';
 process.env.CONSOLE_SETUP_TOKEN = 'setup-token-de-teste';
 process.env.CONSOLE_RECOVERY_TOKEN = 'recuperacao-servidor-de-teste';
+// Prazo do e-mail já passou; só vale quando há envio de e-mail (sem SMTP nos
+// testes, só no teste do vínculo, que liga um envio falso).
+process.env.EMAIL_REQUIRED_AFTER = '2020-01-01T00:00:00Z';
 
 // Pool separado só pra limpar tabelas ANTES do server subir. Sem isso, o boot
 // pula o seed (flag install:completed já setada de execução anterior) e o
@@ -347,9 +350,9 @@ test('Convite: criar, abrir, aceitar e entrar', async () => {
   const forbidden = await postJson('/api/invites', { email: 'x@exemplo.com', kind: 'equipe', workspaces: [ws.body.id] }, { headers: { Cookie: c2 } });
   assert.equal(forbidden.status, 403);
 
-  // E-mail continua único: perfil não pode pegar o e-mail de outra conta
+  // Perfil não troca o e-mail digitando (só com senha + link)
   const clash = await req('/api/me', { method: 'PUT', headers: { Cookie: c2, 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'admin@exemplo.com' }) });
-  assert.equal(clash.status, 409);
+  assert.equal(clash.status, 400);
 });
 
 test('Convite cancelado não abre', async () => {
@@ -764,6 +767,200 @@ test('Fluxos: etapa de conclusão não tem responsável', async () => {
   assert.equal(moved.status, 200, JSON.stringify(moved.body));
   assert.equal(moved.body.ownerId, null);
   assert.ok(moved.body.completedAt);
+});
+
+test('E-mail: vincular pede senha e link, e passado o prazo a conta sem e-mail só vê a confirmação', async () => {
+  const admin = await loginCookie('admin', 'admin123');
+  const boot = (await req('/api/bootstrap', { headers: { Cookie: admin } })).body;
+  const created = await call('POST', '/api/users', admin, { username: 'sem.email', password: 'senha-forte-1', name: 'Sem Email', workspaces: [boot.workspaces[0].id] });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const c = await loginCookie('sem.email', 'senha-forte-1');
+  // Conta com e-mail cadastrado pelo admin (ainda não confirmado)
+  assert.equal((await call('POST', '/api/users', admin, { username: 'com.email', password: 'senha-forte-1', name: 'Com Email', email: 'com.email@exemplo.com', workspaces: [boot.workspaces[0].id] })).status, 201);
+  const c3 = await loginCookie('com.email', 'senha-forte-1');
+  const outbox = [];
+  app._test.setMailTransport({ sendMail: async (m) => { outbox.push(m); } });
+  const tokenOf = (m) => (String(m.text).match(/confirmar-email\/([A-Za-z0-9_-]+)/) || [])[1];
+  const tiny = 'data:text/plain;base64,' + Buffer.from('oi').toString('base64');
+  try {
+    let me = (await req('/api/me', { headers: { Cookie: c } })).body;
+    assert.equal(me.emailVerified, false);
+    assert.equal(me.emailRequired, true, 'prazo passou');
+    const blocked = await call('POST', '/api/uploads', c, { name: 'a.txt', data: tiny });
+    assert.equal(blocked.status, 403);
+    assert.equal(blocked.body.code, 'email_required');
+    // Acesso restrito: nem leitura, só o necessário pra confirmar
+    const bootBlocked = await req('/api/bootstrap', { headers: { Cookie: c } });
+    assert.equal(bootBlocked.status, 403);
+    assert.equal(bootBlocked.body.code, 'email_required');
+    assert.equal((await req('/api/demands', { headers: { Cookie: c } })).status, 403);
+    assert.equal((await call('PUT', '/api/me', c, { name: 'Outro nome' })).status, 403);
+    assert.equal((await req('/api/me', { headers: { Cookie: c } })).status, 200);
+    assert.equal((await call('POST', '/api/me/email', c, { email: 'sem.email@exemplo.com' })).status, 400, 'pede a senha');
+    assert.equal((await call('POST', '/api/me/email', c, { email: 'sem.email@exemplo.com', password: 'errada' })).status, 400);
+    assert.equal((await call('POST', '/api/me/email', c, { email: 'admin@exemplo.com', password: 'senha-forte-1' })).status, 409, 'e-mail de outra conta');
+    let r = await call('POST', '/api/me/email', c, { email: 'Sem.Email@Exemplo.com', password: 'senha-forte-1' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.user.email, null, 'só muda depois do link');
+    assert.equal(r.body.user.pendingEmail.email, 'sem.email@exemplo.com');
+    assert.ok(!JSON.stringify(r.body).includes('tokenHash'));
+    assert.equal(outbox.length, 1);
+    assert.equal(outbox[0].to, 'sem.email@exemplo.com');
+    const token = tokenOf(outbox[0]);
+    assert.ok(token);
+    const users = (await req('/api/users', { headers: { Cookie: admin } })).body;
+    assert.ok(!JSON.stringify(users).includes('tokenHash'), 'lista de pessoas não vaza o pedido');
+    // Confirmar (sem login) vincula; o link não vale duas vezes
+    assert.equal((await postJson('/api/email/confirm', { token })).status, 200);
+    assert.equal((await postJson('/api/email/confirm', { token })).status, 410);
+    me = (await req('/api/me', { headers: { Cookie: c } })).body;
+    assert.equal(me.email, 'sem.email@exemplo.com');
+    assert.equal(me.emailVerified, true);
+    assert.equal(me.emailRequired, false);
+    assert.equal((await call('POST', '/api/uploads', c, { name: 'a.txt', data: tiny })).status, 200, 'volta a gravar');
+    assert.equal((await req('/api/bootstrap', { headers: { Cookie: c } })).status, 200, 'e a ler');
+    assert.equal((await call('PUT', '/api/me', c, { email: 'x@exemplo.com' })).status, 400, 'não troca digitando');
+    await loginCookie('sem.email@exemplo.com', 'senha-forte-1');
+    // Trocar: link pro novo e aviso pro antigo; cancelar invalida o link
+    outbox.length = 0;
+    r = await call('POST', '/api/me/email', c, { email: 'novo.email@exemplo.com', password: 'senha-forte-1' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    await flushed();
+    assert.deepEqual(outbox.map(m => m.to).sort(), ['novo.email@exemplo.com', 'sem.email@exemplo.com']);
+    const t2 = tokenOf(outbox.find(m => m.to === 'novo.email@exemplo.com'));
+    assert.equal((await call('POST', '/api/me/email/cancel', c, {})).body.user.pendingEmail, null);
+    assert.equal((await postJson('/api/email/confirm', { token: t2 })).status, 410);
+    assert.equal((await req('/api/me', { headers: { Cookie: c } })).body.email, 'sem.email@exemplo.com');
+    // Confirmar o e-mail que já está na conta dispensa a senha
+    outbox.length = 0;
+    assert.equal((await call('POST', '/api/me/email', c3, { email: 'com.email@exemplo.com' })).status, 200);
+    assert.equal((await postJson('/api/email/confirm', { token: tokenOf(outbox[0]) })).status, 200);
+    assert.equal((await req('/api/me', { headers: { Cookie: c3 } })).body.emailVerified, true);
+    // Admin não troca o e-mail de quem já tem
+    const sem = users.find(u => u.username === 'sem.email');
+    assert.equal((await call('PUT', '/api/users/' + sem.id, admin, { email: 'outro@exemplo.com' })).status, 403);
+  } finally {
+    app._test.setMailTransport(undefined);
+  }
+});
+
+test('Planos: limites de pessoas e de armazenamento definidos no console', async () => {
+  const put = (body) => call('PUT', `/api/console/orgs/${betaOrgId}/plan`, consoleCookie, body);
+  // Nasce no Teste; os 14 dias começaram quando a dona aceitou o convite
+  const beta = (await req('/api/console/orgs', { headers: { Cookie: consoleCookie } })).body.items.find(o => o.id === betaOrgId);
+  assert.equal(beta.usage.plan.id, 'teste');
+  assert.ok(beta.usage.plan.trialEndsAt);
+  assert.equal(beta.usage.plan.trialDaysLeft, 14);
+  assert.equal(beta.usage.plan.users, 5);
+  // Beta tem 2 pessoas (Bia e o admin da WSI). Personalizado: 3 pessoas, ~1 MB.
+  let r = await put({ planId: 'custom', users: 3, storageGb: 0.001 });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.usage.plan.users, 3);
+  assert.equal(r.body.usage.seats.members, 2);
+  assert.equal((await put({ planId: 'custom', users: -1 })).status, 400);
+  assert.equal((await put({ planId: 'ouro' })).status, 400);
+  const ws = (await req('/api/bootstrap', { headers: { Cookie: betaCookie } })).body.workspaces[0].id;
+  const i1 = await call('POST', '/api/invites', betaCookie, { email: 'terceira@beta.com', kind: 'equipe', workspaces: [ws] });
+  assert.equal(i1.status, 201, JSON.stringify(i1.body));
+  const i2 = await call('POST', '/api/invites', betaCookie, { email: 'quarta@beta.com', kind: 'equipe', workspaces: [ws] });
+  assert.equal(i2.status, 403);
+  assert.equal(i2.body.code, 'seat_limit');
+  assert.match(i2.body.error, /limite de 3 pessoas/);
+  assert.equal((await call('POST', '/api/users', betaCookie, { username: 'manual.beta', password: 'senha-forte-1', name: 'Manual', workspaces: [ws] })).status, 403, 'cadastro manual também conta');
+  const org = (await req('/api/org', { headers: { Cookie: betaCookie } })).body;
+  assert.equal(org.usage.seats.used, 3, '2 pessoas + 1 convite');
+  assert.equal(org.usage.plan.name, 'Personalizado');
+  // O limite baixou depois do convite: o aceite é barrado
+  await put({ planId: 'custom', users: 2, storageGb: 0.001 });
+  const pub = await req('/api/invites/public/' + i1.body.link.split('/convite/')[1]);
+  assert.equal(pub.status, 403);
+  assert.equal(pub.body.status, 'seat_limit');
+  // Armazenamento: o 2º arquivo de 600 KB passa do limite
+  const file = 'data:application/octet-stream;base64,' + Buffer.alloc(600 * 1024, 7).toString('base64');
+  const up1 = await call('POST', '/api/uploads', betaCookie, { name: 'a.bin', data: file });
+  assert.equal(up1.status, 200, JSON.stringify(up1.body));
+  const up2 = await call('POST', '/api/uploads', betaCookie, { name: 'b.bin', data: file });
+  assert.equal(up2.status, 507);
+  assert.equal(up2.body.code, 'storage_limit');
+  // Plano de catálogo usa os limites dele
+  // Limite por arquivo (Personalizado com 1 MB por arquivo)
+  await put({ planId: 'custom', fileMb: 1 });
+  const big = 'data:application/octet-stream;base64,' + Buffer.alloc(1200 * 1024, 7).toString('base64');
+  const up3 = await call('POST', '/api/uploads', betaCookie, { name: 'grande.bin', data: big });
+  assert.equal(up3.status, 413);
+  assert.equal(up3.body.code, 'file_limit');
+  assert.equal((await call('POST', '/api/uploads', betaCookie, { name: 'b.bin', data: file })).status, 200);
+  r = await put({ planId: 'agencia' });
+  assert.equal(r.body.usage.plan.users, 30);
+  assert.equal(r.body.usage.plan.storageGb, 30);
+  assert.equal(r.body.usage.plan.fileMb, 100);
+  assert.equal((await call('POST', '/api/uploads', betaCookie, { name: 'b.bin', data: file })).status, 200);
+  const audit = (await req('/api/console/audit', { headers: { Cookie: consoleCookie } })).body.items;
+  assert.ok(audit.some(e => e.action === 'org_plan_changed'));
+});
+
+test('Teste grátis vencido: a organização fica só para consulta', async () => {
+  const put = (body) => call('PUT', `/api/console/orgs/${betaOrgId}/plan`, consoleCookie, body);
+  let r = await put({ planId: 'teste', trialDays: 0 });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.usage.plan.readOnly, true);
+  const me = (await req('/api/me', { headers: { Cookie: betaCookie } })).body;
+  assert.equal(me.org.planInfo.readOnly, true);
+  assert.equal((await req('/api/bootstrap', { headers: { Cookie: betaCookie } })).status, 200, 'lê normalmente');
+  const w = await call('PUT', '/api/org', betaCookie, { name: 'Beta Nova' });
+  assert.equal(w.status, 403);
+  assert.equal(w.body.code, 'read_only');
+  assert.equal((await call('POST', '/api/invites', betaCookie, { email: 'x@beta.com', kind: 'equipe' })).status, 403);
+  assert.equal((await call('POST', '/api/me/ping', betaCookie, {})).status !== 403, true, 'o que é da própria pessoa continua');
+  // Reabrir o teste por mais 3 dias libera de novo
+  r = await put({ planId: 'teste', trialDays: 3 });
+  assert.equal(r.body.usage.plan.readOnly, false);
+  assert.equal(r.body.usage.plan.trialDaysLeft, 3);
+  assert.equal((await call('PUT', '/api/org', betaCookie, { name: 'Beta' })).status, 200);
+});
+
+test('Organização excluída: some na hora, fica 30 dias, restaura e apaga de vez', async () => {
+  const H = { headers: { Cookie: consoleCookie } };
+  const wsi = (await req('/api/console/orgs', H)).body.items.find(o => o.name === 'WSI');
+  assert.equal((await call('POST', `/api/console/orgs/${wsi.id}/delete`, consoleCookie, { confirm: 'WSI' })).status, 400, 'a principal não sai');
+  assert.equal((await call('POST', `/api/console/orgs/${betaOrgId}/delete`, consoleCookie, { confirm: 'Outra' })).status, 400, 'nome errado');
+  let r = await call('POST', `/api/console/orgs/${betaOrgId}/delete`, consoleCookie, { confirm: 'beta', reason: 'teste' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.daysLeft, 30);
+  // Quem só está na Beta perde o acesso na hora
+  assert.equal((await req('/api/me', { headers: { Cookie: betaCookie } })).status, 401);
+  const lg = await postJson('/api/login', { username: 'bia.souza', password: 'senha-da-bia-1' });
+  assert.equal(lg.status, 403);
+  assert.match(lg.body.error, /não está mais disponível/);
+  // Quem também está na WSI continua, só com a WSI
+  const admin = await loginCookie('admin', 'admin123');
+  assert.deepEqual((await req('/api/me', { headers: { Cookie: admin } })).body.orgs.map(o => o.name), ['WSI']);
+  // Console: sai da lista, entra nas excluídas, backup disponível
+  const list = (await req('/api/console/orgs', H)).body;
+  assert.ok(!list.items.some(o => o.id === betaOrgId));
+  assert.ok(list.deleted.some(o => o.id === betaOrgId && o.reason === 'teste'));
+  const bk = await fetch(baseUrl + `/api/console/orgs/${betaOrgId}/export`, H);
+  assert.equal(bk.status, 200);
+  const data = await bk.json();
+  assert.equal(data.organization.name, 'Beta');
+  assert.ok(data.people.some(p => p.username === 'bia.souza'));
+  // Restaurar devolve tudo
+  assert.equal((await call('POST', `/api/console/orgs/${betaOrgId}/restore`, consoleCookie)).status, 200);
+  await loginCookie('bia.souza', 'senha-da-bia-1');
+  // Apagar de vez: só excluída, com o nome
+  assert.equal((await call('DELETE', `/api/console/orgs/${betaOrgId}`, consoleCookie, { confirm: 'Beta' })).status, 404);
+  await call('POST', `/api/console/orgs/${betaOrgId}/delete`, consoleCookie, { confirm: 'Beta' });
+  assert.equal((await call('DELETE', `/api/console/orgs/${betaOrgId}`, consoleCookie, { confirm: 'x' })).status, 400);
+  r = await call('DELETE', `/api/console/orgs/${betaOrgId}`, consoleCookie, { confirm: 'Beta' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.ok(r.body.items > 0);
+  assert.equal(r.body.accounts, 1, 'só a conta da Bia (o admin segue na WSI)');
+  assert.equal((await postJson('/api/login', { username: 'bia.souza', password: 'senha-da-bia-1' })).status, 401, 'conta apagada');
+  await loginCookie('admin', 'admin123');
+  assert.equal((await req(`/api/console/orgs/${betaOrgId}`, H)).status, 404);
+  await flushed();
+  const left = await _cleanupPool.query("SELECT type FROM entities WHERE data->>'orgId' = $1 OR id = $1", [betaOrgId]);
+  assert.deepEqual(left.rows.map(x => x.type), ['accessRequests'], 'da Beta só sobra o pedido da lista de espera (histórico)');
 });
 
 // Mantido por último pra não interferir nos testes acima (5 falhas zeram em sucesso).

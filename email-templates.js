@@ -352,6 +352,39 @@ ${button(link, 'Criar nova senha')}
   return { subject, html, text };
 }
 
+/* Confirmação de e-mail (vincular, confirmar o atual ou trocar). Vai pro
+   endereço NOVO: só vale depois que a pessoa abre o link. */
+function emailConfirm({ name, email, link, baseUrl, isChange }) {
+  const subject = isChange ? '[reWork] Confirme seu novo e-mail' : '[reWork] Confirme seu e-mail';
+  const content = `${chip('Conta', 'neutro')}
+${headline(isChange ? 'Confirme seu novo e-mail' : 'Confirme seu e-mail')}
+${paragraph(`Olá, ${strong(firstName(name))}. ${isChange
+    ? `Você pediu para trocar o e-mail da sua conta no reWork para ${strong(email)}.`
+    : `Falta só confirmar que ${strong(email)} é seu para vincular à sua conta no reWork.`} Depois de confirmar, você também pode entrar com esse e-mail.`)}
+${button(link, 'Confirmar e-mail')}
+<p class="rw-baixa" style="margin:24px 0 0;font-size:12px;line-height:1.6;color:${T.baixa}">O link vale por <strong>24 horas</strong> e só pode ser usado uma vez. Se não foi você, ignore este e-mail: nada muda na conta.</p>
+<p class="rw-baixa" style="margin:12px 0 0;font-size:11px;line-height:1.5;color:${T.baixa};word-break:break-all">${escHtml(link)}</p>`;
+  const html = layout({ subject, preheader: 'O link vale por 24 horas.', content, baseUrl, footer: 'Este e-mail foi enviado porque alguém pediu para vincular este endereço a uma conta do reWork.' });
+  const text = `Olá ${name}, abra este link em até 24h para confirmar ${email} na sua conta do reWork:
+
+${link}
+
+Se não foi você, ignore.`;
+  return { subject, html, text };
+}
+/* Aviso pro endereço ANTIGO quando alguém pede a troca (segurança). */
+function emailChangeNotice({ name, newEmail, baseUrl }) {
+  const subject = '[reWork] Pedido para trocar o e-mail da sua conta';
+  const content = `${chip('Segurança', 'neutro')}
+${headline('Pedido para trocar o seu e-mail')}
+${paragraph(`Olá, ${strong(firstName(name))}. Alguém com a sua senha pediu para trocar o e-mail da sua conta no reWork para ${strong(newEmail)}. A troca só acontece quando o link enviado para o endereço novo for aberto.`)}
+${paragraph('Se foi você, não precisa fazer nada. Se não foi, entre no reWork, cancele a troca no seu perfil e troque a sua senha.')}
+${button(baseUrl, 'Abrir o reWork')}`;
+  const html = layout({ subject, preheader: `Troca para ${newEmail} aguardando confirmação.`, content, baseUrl, footer: 'Aviso de segurança da sua conta no reWork.' });
+  const text = `Olá ${name}, pediram para trocar o e-mail da sua conta no reWork para ${newEmail}. Se não foi você, entre no reWork, cancele a troca no perfil e troque a senha.`;
+  return { subject, html, text };
+}
+
 /* Convite pra entrar no reWork. `inviter` = quem convidou; `access` = rótulo
    do nível (Equipe, Moderador…); `squads` = nomes dos squads liberados. */
 function invite({ name, inviter, org, access, squads, link, expiresAt, baseUrl, isOwner }) {
@@ -517,6 +550,9 @@ function previewSamples(baseUrl, me) {
       ],
     }) },
     { key: 'reset', label: 'Redefinir senha', build: () => resetPassword({ name, link: `${url}/reset/exemplo-de-token-0000`, baseUrl: url }) },
+    { key: 'email_confirm', label: 'Confirmar e-mail', build: () => emailConfirm({ name, email: 'andrigo@exemplo.com', link: `${url}/confirmar-email/exemplo-de-token-0000`, baseUrl: url }) },
+    { key: 'email_change', label: 'Confirmar e-mail novo (troca)', build: () => emailConfirm({ name, email: 'novo@exemplo.com', link: `${url}/confirmar-email/exemplo-de-token-0000`, baseUrl: url, isChange: true }) },
+    { key: 'email_change_notice', label: 'Aviso de troca de e-mail (endereço antigo)', build: () => emailChangeNotice({ name, newEmail: 'novo@exemplo.com', baseUrl: url }) },
     { key: 'invite', label: 'Convite para a equipe', build: () => invite({ name: 'Carla Menezes', inviter: name, access: 'Equipe', squads: ['Imob', 'Performance'], link: `${url}/convite/exemplo-de-token-0000`, expiresAt: new Date(Date.now() + 7 * 864e5).toISOString(), baseUrl: url }) },
     { key: 'access_received', label: 'Lista de espera: pedido recebido', build: () => accessRequestReceived({ name: 'Paula Reis', company: 'Agência Norte', baseUrl: url }) },
     { key: 'access_new', label: 'Lista de espera: aviso ao console', build: () => accessRequestNew({ request: { name: 'Paula Reis', email: 'paula@agencianorte.com', company: 'Agência Norte', teamSize: '6-15', role: 'Diretora de operações', message: 'Hoje controlamos tudo em planilha e queremos organizar as demandas por cliente.' }, consoleUrl: `${url}/console/lista-de-espera`, baseUrl: url }) },
@@ -527,4 +563,4 @@ function previewSamples(baseUrl, me) {
   ];
 }
 
-module.exports = { escHtml, layout, notification, digest, heldSummary, resetPassword, invite, accessRequestReceived, accessRequestNew, consoleAdminInvite, consoleResetPassword, consoleRecoveryNotice, testEmail, previewSamples };
+module.exports = { escHtml, layout, notification, digest, heldSummary, resetPassword, emailConfirm, emailChangeNotice, invite, accessRequestReceived, accessRequestNew, consoleAdminInvite, consoleResetPassword, consoleRecoveryNotice, testEmail, previewSamples };

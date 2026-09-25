@@ -598,8 +598,9 @@ function publicUser(u, opts) {
   // quickReplies (respostas prontas) e navMenu (menu lateral personalizado) são
   // pessoais: só voltam pro próprio usuário.
   // reminders/demandSeen/timeGapDismissed: estado pessoal com rota própria.
-  const { googleTokens, googleSyncTokens, knownIps, releaseNotesSeenIds, quickReplies, reminders, demandSeen, timeGapDismissed, mentionDismissed, heldNotifs, navMenu, ...rest } = u;
+  const { googleTokens, googleSyncTokens, knownIps, releaseNotesSeenIds, quickReplies, reminders, demandSeen, timeGapDismissed, mentionDismissed, heldNotifs, navMenu, emailChange, ...rest } = u;
   rest.googleConnected = !!googleTokens;
+  rest.emailVerified = !!(u.email && u.emailVerifiedAt);
   // Permissões e squads vêm do vínculo com a organização ativa.
   rest.isAdmin = !!u.isAdmin; rest.isModerator = !!u.isModerator; rest.isFreelancer = !!u.isFreelancer;
   rest.isOwner = !!u.isOwner; rest.orgRole = u.orgRole || null;
@@ -608,6 +609,12 @@ function publicUser(u, opts) {
   if (opts && opts.self) {
     rest.quickReplies = Array.isArray(quickReplies) ? quickReplies : null;
     rest.navMenu = Array.isArray(navMenu) ? navMenu : null;
+    // Vínculo de e-mail: prazo, troca aguardando o link e se já está bloqueando.
+    const pending = emailChange && Date.parse(emailChange.expiresAt) > Date.now() ? emailChange : null;
+    rest.pendingEmail = pending ? { email: pending.email, expiresAt: pending.expiresAt, sentAt: pending.sentAt } : null;
+    rest.emailDeadline = EMAIL_DEADLINE;
+    rest.emailRequired = emailEnforced() && !emailLinked(u);
+    rest.hasPassword = auth.hasPassword(u.id);
   }
   return rest;
 }
@@ -617,6 +624,24 @@ const PASSWORD_MIN = 8;
 const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{2,31}$/;
 const USERNAME_RULE = 'O nome de usuário precisa ter de 3 a 32 caracteres: letras minúsculas, números, ponto, hífen ou sublinhado.';
 function normEmail(e) { return String(e || '').trim().toLowerCase(); }
+/* E-mail vinculado = cadastrado E confirmado pelo link. Até o prazo, quem não
+   tem só vê o aviso no Início; depois do prazo, a conta continua entrando
+   (usuário, e-mail ou Discord), mas a API só responde o necessário pra tela
+   de confirmação — nada do app abre até vincular. Sem SMTP o prazo não é
+   cobrado (ninguém conseguiria confirmar). */
+const EMAIL_DEADLINE = new Date(process.env.EMAIL_REQUIRED_AFTER || '2026-09-30T23:59:59-03:00').toISOString();
+const EMAIL_CONFIRM_TTL_MS = 24 * 60 * 60 * 1000;
+const emailLinked = (u) => !!(u && u.email && u.emailVerifiedAt);
+const emailEnforced = () => mailEnabled() && Date.now() > Date.parse(EMAIL_DEADLINE);
+const EMAIL_GATE_ALLOWED = [
+  ['GET', /^\/api\/me$/],
+  ['POST', /^\/api\/me\/email(\/cancel)?$/],
+  ['POST', /^\/api\/logout$/]
+];
+function emailBlock(user, method, reqPath) {
+  if (!emailEnforced() || emailLinked(user)) return false;
+  return !EMAIL_GATE_ALLOWED.some(([m, re]) => m === method && re.test(reqPath));
+}
 /* Conta (ativa ou não) que já usa esse e-mail — o e-mail identifica a pessoa. */
 function userByEmail(email, exceptId) {
   const e = normEmail(email);
@@ -874,7 +899,7 @@ function buildDiscordDMForNotification(type, ctx) {
 function canAccessWs(user, wsId) {
   if (!user || !wsId) return false;
   const orgId = tenancy.wsOrgId(wsId);
-  if (!orgId) return false;
+  if (!orgId || !tenancy.orgActive(orgId)) return false;
   const cur = tenancy.currentOrgId();
   if (cur && cur !== orgId) return false;
   const m = tenancy.memberIn(user.id, orgId);
@@ -942,6 +967,12 @@ function requireAuth(req, res, next) {
     // ownership em comentários/checklist/time, e limite de campos no PUT).
     if (user.isFreelancer && !freelancerCanMutate(req.method, req.path)) {
       return res.status(403).json({ error: 'Freelancers não têm permissão para essa ação' });
+    }
+    if (readOnlyBlock(tenancy.orgById(m.orgId), req.method, req.path)) {
+      return res.status(403).json({ error: READ_ONLY_ERROR, code: 'read_only' });
+    }
+    if (emailBlock(user, req.method, req.path)) {
+      return res.status(403).json({ error: 'Confirme um e-mail na sua conta para continuar usando o reWork.', code: 'email_required' });
     }
     req.user = user; req.token = token;
     req.org = tenancy.orgById(m.orgId); req.membership = m;
@@ -1825,12 +1856,19 @@ function saveUploadFromDataUri(dataUri, originalName) {
   }
   const buf = Buffer.from(m[2], 'base64');
   if (!buf.length || buf.length > UPLOAD_MAX_BYTES) return null;
+  // Dentro de uma organização: respeita o armazenamento do plano.
+  const upOrgId = tenancy.currentOrgId();
+  if (upOrgId) {
+    const upOrg = tenancy.orgById(upOrgId);
+    if (buf.length > orgPlan(upOrg).fileBytes || storageLimitError(upOrg, buf.length)) return null;
+  }
   // Nome sanitizado + extensão FORÇADA (garante que browser reconheça o file
   // no /uploads/ estático via mime lookup por extensão).
   const rawBase = String(originalName || 'file').replace(/\.[a-z0-9]{1,10}$/i, '');
   const safeBase = rawBase.replace(/[^\w.\-]/g, '_').slice(0, 80) || 'file';
   const filename = uid() + '-' + safeBase + '.' + ext;
   fs.writeFileSync(path.join(UPLOADS_DIR, filename), buf);
+  if (upOrgId) noteOrgUpload(upOrgId, buf.length);
   return {
     url: '/uploads/' + filename,
     name: originalName || (safeBase + '.' + ext),
@@ -1851,6 +1889,14 @@ const rateLimitReport = makeRateLimit(new Map(), 40, 'consultas de relatório', 
 app.post('/api/uploads', (req, res, next) => requireAuth(req, res, next), rateLimitUpload, (req, res) => {
   const { name, data } = req.body || {};
   if (!data) return res.status(400).json({ error: 'data (data URI base64) é obrigatório' });
+  // 507 (e não 413): o 413 o cliente lê como limite do proxy.
+  const incoming = Math.floor((String(data).length - String(data).indexOf(',') - 1) * 0.75);
+  const plan = orgPlan(req.org);
+  if (incoming > plan.fileBytes) {
+    return res.status(413).json({ error: `Arquivo maior que ${fmtBytes(plan.fileBytes)}, o limite por arquivo do plano ${plan.name}.`, code: 'file_limit' });
+  }
+  const full = storageLimitError(req.org, incoming);
+  if (full) return res.status(507).json({ error: full, code: 'storage_limit' });
   const saved = saveUploadFromDataUri(data, name);
   if (!saved) {
     return res.status(400).json({
@@ -2159,7 +2205,11 @@ app.post('/api/login', (req, res) => {
   if (!tenancy.activeMemberships(user.id).length) {
     rec.count++;
     _loginAttempts.set(ip, rec);
-    return res.status(403).json({ error: 'Seu acesso está desativado. Fale com a coordenação da sua equipe.' });
+    // Vínculo ainda ativo, mas numa organização excluída/suspensa.
+    const closed = tenancy.membershipsOf(user.id).some(m => m.active !== false && !tenancy.orgActive(m.orgId));
+    return res.status(403).json({ error: closed
+      ? 'A organização da sua conta não está mais disponível no reWork. Fale com o dono da organização.'
+      : 'Seu acesso está desativado. Fale com a coordenação da sua equipe.' });
   }
   // Sucesso: zera o contador desse IP
   _loginAttempts.delete(ip);
@@ -2249,6 +2299,13 @@ app.get('/api/release-notes/all', requireAuth, (req, res) => {
 });
 
 /* Marca notas como vistas + registra data pra rate limit diário. Idempotente. */
+/* Botão "Novidades" da barra lateral: guarda a novidade mais recente que a
+   pessoa já abriu por ali (o ponto some até sair uma nova). */
+app.post('/api/me/news-seen', requireAuth, (req, res) => {
+  const id = typeof req.body?.id === 'string' ? req.body.id.slice(0, 80) : '';
+  if (id && req.user.newsSeenId !== id) { req.user.newsSeenId = id; saveEntity('users', req.user); }
+  res.json({ ok: true });
+});
 app.post('/api/me/release-notes-seen', requireAuth, (req, res) => {
   const user = req.user;
   const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(x => typeof x === 'string').slice(0, 50) : [];
@@ -2427,6 +2484,64 @@ app.post('/api/reset-password', rateLimitPwReset, async (req, res) => {
   res.json({ ok: true });
 });
 
+/* ─── VÍNCULO DE E-MAIL ───
+   Vincular, confirmar o atual ou trocar: o link vai pro endereço (novo) e o
+   e-mail da conta só muda quando a pessoa abre o link. Trocar pede a senha;
+   confirmar o e-mail que já está na conta, não. O token só existe no link —
+   guardamos o SHA-256. */
+const rateLimitEmailLink = makeRateLimit(new Map(), 6, 'envios', req => 'u:' + (req.user?.id || clientIp(req)), 60 * 60 * 1000);
+app.post('/api/me/email', requireAuth, rateLimitEmailLink, async (req, res) => {
+  const u = req.user;
+  const { email, password } = req.body || {};
+  if (!isValidEmail(email)) return res.status(400).json({ error: 'Confira o e-mail. Ele precisa ter o formato nome@empresa.com.', field: 'email' });
+  const next = normEmail(email);
+  const current = normEmail(u.email);
+  if (next === current && emailLinked(u)) return res.status(400).json({ error: 'Esse já é o e-mail confirmado da sua conta.', field: 'email' });
+  const isChange = !!current && next !== current;
+  // Confirmar o próprio e-mail atual dispensa a senha; vincular/trocar, não.
+  // Conta sem senha (entra só pelo Discord): a sessão já é a prova de quem é.
+  if (next !== current && auth.hasPassword(u.id)) {
+    if (!auth.verifyPassword(u.id, password)) return res.status(400).json({ error: 'Senha incorreta.', field: 'password' });
+  }
+  if (userByEmail(next, u.id)) return res.status(409).json({ error: 'Esse e-mail já está em outra conta do reWork. Use outro ou peça ajuda ao suporte.', field: 'email' });
+  if (!mailEnabled()) return res.status(503).json({ error: 'O envio de e-mails não está ativo no servidor. Fale com um administrador.' });
+  const token = crypto.randomBytes(24).toString('base64url');
+  u.emailChange = { email: next, tokenHash: auth.hashToken(token), expiresAt: new Date(Date.now() + EMAIL_CONFIRM_TTL_MS).toISOString(), sentAt: nowISO() };
+  saveEntity('users', u);
+  const baseUrl = appBaseUrl(req);
+  const mail = emailTpl.emailConfirm({ name: u.name, email: next, link: `${baseUrl}/confirmar-email/${token}`, baseUrl, isChange });
+  const sent = await sendEmail(next, mail.subject, mail.html, mail.text);
+  // Troca de um e-mail já confirmado: avisa o endereço antigo.
+  if (isChange && emailLinked(u)) {
+    const n = emailTpl.emailChangeNotice({ name: u.name, newEmail: next, baseUrl });
+    setImmediate(() => sendEmail(u.email, n.subject, n.html, n.text));
+  }
+  if (!sent || !sent.sent) return res.status(502).json({ error: 'Não conseguimos enviar o e-mail agora. Tente de novo em alguns minutos.' });
+  res.json({ ok: true, user: publicUser(u, { self: true }) });
+});
+app.post('/api/me/email/cancel', requireAuth, (req, res) => {
+  if (req.user.emailChange) { delete req.user.emailChange; saveEntity('users', req.user); }
+  res.json({ ok: true, user: publicUser(req.user, { self: true }) });
+});
+/* Público: o link do e-mail. Não precisa estar logado (pode abrir em outro
+   aparelho) — o token prova que a pessoa recebeu no endereço. */
+const rateLimitEmailConfirm = makeRateLimit(new Map(), 20, 'tentativas');
+app.post('/api/email/confirm', rateLimitEmailConfirm, (req, res) => {
+  const token = String((req.body || {}).token || '');
+  if (!/^[A-Za-z0-9_-]{20,100}$/.test(token)) return res.status(400).json({ error: 'Link inválido. Confira se ele veio completo.' });
+  const h = auth.hashToken(token);
+  const u = allUsers().find(x => x.emailChange && x.emailChange.tokenHash === h);
+  if (!u) return res.status(410).json({ error: 'Este link já foi usado ou foi substituído por um mais novo.' });
+  if (Date.parse(u.emailChange.expiresAt) <= Date.now()) return res.status(410).json({ error: 'Este link venceu (vale 24 horas). Peça um novo no seu perfil.' });
+  const next = u.emailChange.email;
+  if (userByEmail(next, u.id)) return res.status(409).json({ error: 'Esse e-mail acabou de ser vinculado a outra conta. Use outro endereço.' });
+  u.email = next;
+  u.emailVerifiedAt = nowISO();
+  delete u.emailChange;
+  saveEntity('users', u);
+  res.json({ ok: true, email: next, name: u.name });
+});
+
 app.get('/api/me', requireAuth, (req, res) => {
   const me = publicUser(req.user, { self: true });
   if (me) {
@@ -2463,19 +2578,9 @@ app.put('/api/me', requireAuth, (req, res) => {
       u.discordId = did;
     }
   }
-  if (email !== undefined) {
-    if (email === null || email === '') {
-      u.email = null;
-    } else if (isValidEmail(email)) {
-      const next = normEmail(email);
-      if (next !== (u.email || '').toLowerCase()) {
-        if (userByEmail(next, u.id)) return res.status(409).json({ error: 'Esse e-mail já está em uso por outra conta.' });
-        u.email = next;
-        u.emailVerifiedAt = null;
-      }
-    } else {
-      return res.status(400).json({ error: 'E-mail inválido.' });
-    }
+  // E-mail só muda pelo fluxo com senha + link de confirmação (/api/me/email).
+  if (email !== undefined && normEmail(email) !== normEmail(u.email)) {
+    return res.status(400).json({ error: 'Para vincular ou trocar o e-mail, use "Trocar e-mail" no perfil: pedimos a sua senha e mandamos um link de confirmação.', field: 'email' });
   }
   if (emailPrefs && typeof emailPrefs === 'object') {
     const prev = u.emailPrefs || defaultEmailPrefs();
@@ -4707,6 +4812,8 @@ app.post('/api/users', requireAuth, adminOnly, (req, res) => {
   const { username, password, name, role, position, isAdmin, isModerator, isFreelancer, workspaces, discordId, email } = req.body || {};
   const uname = String(username || '').trim().toLowerCase();
   if (!uname || !password) return res.status(400).json({ error: 'Usuário e senha são obrigatórios' });
+  const seatErr = seatLimitError(req.org);
+  if (seatErr) return res.status(403).json({ error: seatErr, code: 'seat_limit' });
   if (String(password).length < PASSWORD_MIN) return res.status(400).json({ error: `A senha deve ter pelo menos ${PASSWORD_MIN} caracteres` });
   if (allUsers().some(u => u.username.toLowerCase() === uname)) {
     return res.status(409).json({ error: 'Este nome de usuário já existe' });
@@ -4751,7 +4858,16 @@ app.put('/api/users/:id', requireAuth, adminOnly, (req, res) => {
   const { name, role, position, isAdmin, isModerator, isFreelancer, active, password, workspaces, discordId, email } = req.body || {};
   if (u.isOwner && !req.user.isOwner) return res.status(403).json({ error: 'Só o dono edita a conta do dono da organização.' });
   if (u.isOwner && active === false) return res.status(400).json({ error: 'Transfira a organização para outra pessoa antes de desativar o dono.' });
+  if (active === true && u.active === false) {
+    const seatErr = seatLimitError(req.org);
+    if (seatErr) return res.status(403).json({ error: seatErr, code: 'seat_limit' });
+  }
   // A conta pode estar em outras organizações: senha e e-mail são da pessoa.
+  // E-mail é da pessoa: só ela troca (perfil, com senha e link). O admin
+  // pode, no máximo, sugerir um pra quem ainda não tem — fica a confirmar.
+  if (email !== undefined && u.email && normEmail(email) !== normEmail(u.email)) {
+    return res.status(403).json({ error: 'O e-mail é da própria pessoa: ela troca no perfil, com a senha e um link de confirmação.' });
+  }
   const otherOrgs = tenancy.membershipsOf(u.id).some(m => m.orgId !== req.org.id);
   if (otherOrgs && (password || (email !== undefined && normEmail(email) !== normEmail(u.email)))) {
     return res.status(403).json({ error: 'Essa pessoa também faz parte de outras organizações: senha e e-mail só ela muda (no perfil ou em "Esqueci minha senha").' });
@@ -4771,19 +4887,12 @@ app.put('/api/users/:id', requireAuth, adminOnly, (req, res) => {
       u.discordId = did;
     }
   }
-  if (email !== undefined) {
-    if (email === null || email === '') {
-      u.email = null;
-    } else if (isValidEmail(email)) {
-      const next = normEmail(email);
-      if (next !== (u.email || '').toLowerCase()) {
-        if (userByEmail(next, u.id)) return res.status(409).json({ error: 'Esse e-mail já está em uso por outra conta.' });
-        u.email = next;
-        u.emailVerifiedAt = null;
-      }
-    } else {
-      return res.status(400).json({ error: 'E-mail inválido.' });
-    }
+  if (email !== undefined && !u.email && email) {
+    if (!isValidEmail(email)) return res.status(400).json({ error: 'E-mail inválido.' });
+    const next = normEmail(email);
+    if (userByEmail(next, u.id)) return res.status(409).json({ error: 'Esse e-mail já está em uso por outra conta.' });
+    u.email = next;
+    u.emailVerifiedAt = null; // a pessoa confirma pelo aviso no Início
   }
   if (typeof isAdmin === 'boolean') {
     if (!isAdmin && u.isAdmin && db.users.filter(x => x.isAdmin && x.active !== false).length <= 1) {
@@ -4946,6 +5055,8 @@ app.post('/api/invites', requireAuth, modOrAdmin, rateLimitInviteSend, async (re
   }
   const open = db.invites.find(i => i.email === f.email && inviteStatus(i) === 'pending');
   if (open) return res.status(409).json({ error: 'Já existe um convite pendente para esse e-mail. Use "Reenviar" na lista de convites.', code: 'invite_pending', inviteId: open.id });
+  const seatErr = seatLimitError(req.org);
+  if (seatErr) return res.status(403).json({ error: seatErr, code: 'seat_limit' });
   // Convite vencido pro mesmo e-mail sai da lista — o novo substitui.
   closeInvitesFor(f.email, req.user.id);
   const { inv, token } = newInviteRecord(f, req.org.id, req.user.id);
@@ -4962,6 +5073,11 @@ app.post('/api/invites/:id/resend', requireAuth, modOrAdmin, rateLimitInviteSend
   if (!inv || inv.acceptedAt || inv.revokedAt || !canManageInvite(req.user, inv)) return res.status(404).json({ error: 'Convite não encontrado.' });
   const existing = userByEmail(inv.email);
   if (existing && tenancy.memberIn(existing.id, inv.orgId)) return res.status(409).json({ error: 'Essa pessoa já faz parte da organização.' });
+  // Vencido volta a ocupar um lugar ao ser renovado.
+  if (inviteStatus(inv) === 'expired') {
+    const seatErr = seatLimitError(req.org);
+    if (seatErr) return res.status(403).json({ error: seatErr, code: 'seat_limit' });
+  }
   let token = inviteToken(inv);
   if (!token) {
     token = crypto.randomBytes(24).toString('base64url');
@@ -4998,6 +5114,16 @@ function inviteGate(inv) {
   if (st === 'revoked') return { code: 410, body: { status: st, error: 'Este convite foi cancelado. Peça um novo para quem te convidou.' } };
   if (st === 'expired') return { code: 410, body: { status: st, error: 'Este convite venceu. Peça para quem te convidou reenviar.' } };
   if (!tenancy.orgActive(inv.orgId)) return { code: 410, body: { status: 'invalid', error: 'Esta organização não está mais disponível.' } };
+  if (orgPlan(tenancy.orgById(inv.orgId)).readOnly) {
+    return { code: 403, body: { status: 'read_only', error: 'Esta organização está só para consulta no momento (o teste grátis acabou). Fale com quem te convidou.' } };
+  }
+  // O convite já ocupa um lugar; aqui só barra se o limite baixou depois dele.
+  if (inv.kind !== 'owner') {
+    const plan = orgPlan(tenancy.orgById(inv.orgId));
+    if (plan.users != null && orgSeats(inv.orgId).members >= plan.users) {
+      return { code: 403, body: { status: 'seat_limit', error: 'Esta organização chegou ao limite de pessoas do plano. Peça para quem te convidou liberar um lugar e tente de novo.' } };
+    }
+  }
   const u = userByEmail(inv.email);
   const m = u && tenancy.memberIn(u.id, inv.orgId);
   if (m) return { code: 409, body: { status: 'account_exists', error: 'Você já faz parte desta organização. Entre com sua conta.' } };
@@ -5034,7 +5160,7 @@ function joinFromInvite(req, res, inv, user) {
   });
   if (inv.kind === 'owner') {
     const org = tenancy.orgById(inv.orgId);
-    if (org) { org.ownerId = user.id; saveEntity('organizations', org); }
+    if (org) { org.ownerId = user.id; startTrialIfPending(org); saveEntity('organizations', org); }
   }
   user.lastOrgId = inv.orgId;
   if (!user.emailVerifiedAt) user.emailVerifiedAt = nowISO();
@@ -5092,6 +5218,214 @@ app.post('/api/invites/public/:token/join', rateLimitInvitePublic, (req, res) =>
 });
 
 /* ── ORGANIZAÇÕES (lado do app) ── */
+
+/* Planos e limites.
+   Cada organização guarda org.plan = { id, users, storageGb }. Os planos do
+   catálogo trazem os limites prontos; "Personalizado" usa os números
+   gravados na própria organização (null = sem limite) — é o caminho do
+   Enterprise. Organização sem plano (as de antes dos planos) conta como
+   Personalizado sem limites.
+   Pessoas: vínculos ativos + convites pendentes (freelancer também conta).
+   Armazenamento: arquivos enviados (/uploads) que algum item da organização
+   usa — anexos, imagens de comentários, avatares de clientes, logo…
+   Régua: ~1 GB por pessoa, pensada pra um servidor só (disco e memória).
+
+   Teste: organização nova (lista de espera) nasce no plano Teste; os 14 dias
+   contam a partir de quando o dono aceita o convite. Vencido, a organização
+   fica só pra consulta (lê tudo, não grava nada) até o console mudar o plano. */
+const GB = 1024 ** 3, MB = 1024 ** 2;
+const TRIAL_DAYS = 14;
+const PLANS = [
+  { id: 'teste', name: 'Teste', users: 5, storageGb: 2, fileMb: 25, trial: true },
+  { id: 'essencial', name: 'Essencial', users: 5, storageGb: 5, fileMb: 25 },
+  { id: 'equipe', name: 'Equipe', users: 15, storageGb: 15, fileMb: 50 },
+  { id: 'agencia', name: 'Agência', users: 30, storageGb: 30, fileMb: 100 },
+  { id: 'custom', name: 'Personalizado', users: null, storageGb: null, fileMb: null }
+];
+const planById = (id) => PLANS.find(p => p.id === id) || null;
+function orgPlan(org) {
+  const saved = (org && org.plan) || {};
+  const base = planById(saved.id) || planById('custom');
+  const custom = base.id === 'custom';
+  const users = custom ? (Number(saved.users) > 0 ? Math.floor(Number(saved.users)) : null) : base.users;
+  const storageGb = custom ? (Number(saved.storageGb) > 0 ? Number(saved.storageGb) : null) : base.storageGb;
+  // Sem limite próprio, vale o teto do servidor (UPLOAD_MAX_BYTES).
+  const fileMb = custom ? (Number(saved.fileMb) > 0 ? Math.min(Number(saved.fileMb), UPLOAD_MAX_BYTES / MB) : null) : base.fileMb;
+  const trialEndsAt = base.trial ? (saved.trialEndsAt || null) : null;
+  const left = trialEndsAt ? Date.parse(trialEndsAt) - Date.now() : null;
+  return {
+    id: base.id, name: base.name, users, storageGb, storageBytes: storageGb == null ? null : Math.round(storageGb * GB),
+    fileMb, fileBytes: fileMb == null ? UPLOAD_MAX_BYTES : Math.round(fileMb * MB),
+    trial: !!base.trial, trialEndsAt,
+    trialDaysLeft: left == null ? null : Math.max(0, Math.ceil(left / 864e5)),
+    readOnly: left != null && left <= 0
+  };
+}
+// O relógio do teste começa quando o dono entra (o convite pode esperar dias).
+function startTrialIfPending(org) {
+  if (!org || !org.plan || org.plan.id !== 'teste' || org.plan.trialEndsAt) return false;
+  org.plan.trialStartedAt = nowISO();
+  org.plan.trialEndsAt = new Date(Date.now() + TRIAL_DAYS * 864e5).toISOString();
+  return true;
+}
+/* Organização só pra consulta (teste vencido): GET passa; mutação só as da
+   própria pessoa (perfil, sair, trocar de organização, notificações). */
+const READ_ONLY_ALLOWED = /^\/api\/(me(\/.*)?|logout|orgs\/switch|notifications(\/.*)?|presence(\/.*)?|google(\/.*)?)$/;
+function readOnlyBlock(org, method, reqPath) {
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return false;
+  if (!org || !orgPlan(org).readOnly) return false;
+  return !READ_ONLY_ALLOWED.test(reqPath);
+}
+const READ_ONLY_ERROR = 'O teste grátis desta organização acabou. Os dados continuam aqui, só para consulta, até a organização escolher um plano.';
+function orgSeats(orgId) {
+  const members = (rawDb.memberships || []).filter(m => m.orgId === orgId && m.active !== false).length;
+  const pending = (rawDb.invites || []).filter(i => i.orgId === orgId && inviteStatus(i) === 'pending').length;
+  return { members, pending, used: members + pending };
+}
+function fmtBytes(n) {
+  const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0, v = Number(n) || 0;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return `${v.toLocaleString('pt-BR', { maximumFractionDigits: v < 10 ? 1 : 0 })} ${u[i]}`;
+}
+/* Arquivos: nome único por upload e conteúdo que não muda → o peso pode ficar
+   em cache. Zero não entra (o arquivo pode aparecer depois / voltar da lixeira). */
+const _uploadBytes = new Map();
+function _uploadFileBytes(name) {
+  if (_uploadBytes.has(name)) return _uploadBytes.get(name);
+  let n = 0;
+  try { n = fs.statSync(path.join(UPLOADS_DIR, name)).size; } catch {}
+  if (n) _uploadBytes.set(name, n);
+  return n;
+}
+const UPLOAD_REF_RE = /\/uploads\/([A-Za-z0-9_.\-]+)/g;
+/* Arquivos que cada organização usa: Map orgId → Set(nomes). Contas de pessoa
+   (avatar) ficam de fora — são da pessoa, não da organização. */
+function uploadRefsByOrg() {
+  const out = new Map();
+  for (const [type, list] of Object.entries(rawDb || {})) {
+    if (!Array.isArray(list) || type === 'users') continue;
+    if (tenancy.UNSCOPED.has(type) && type !== 'organizations') continue;
+    for (const e of list) {
+      const orgId = type === 'organizations' ? e.id : tenancy.orgOf(type, e);
+      if (!orgId) continue;
+      let json;
+      try { json = JSON.stringify(e); } catch { continue; }
+      if (!json || !json.includes('/uploads/')) continue;
+      let set = out.get(orgId);
+      if (!set) out.set(orgId, set = new Set());
+      for (const m of json.matchAll(UPLOAD_REF_RE)) set.add(m[1]);
+    }
+  }
+  return out;
+}
+let _orgStorage = { at: 0, byOrg: new Map() };
+const ORG_STORAGE_TTL_MS = 10 * 60 * 1000;
+function orgStorageAll(force) {
+  if (!force && Date.now() - _orgStorage.at < ORG_STORAGE_TTL_MS) return _orgStorage.byOrg;
+  const byOrg = new Map();
+  for (const [orgId, names] of uploadRefsByOrg()) {
+    let bytes = 0, files = 0;
+    for (const n of names) { const b = _uploadFileBytes(n); if (b) { bytes += b; files++; } }
+    byOrg.set(orgId, { bytes, files });
+  }
+  _orgStorage = { at: Date.now(), byOrg };
+  return byOrg;
+}
+const orgStorage = (orgId) => orgStorageAll().get(orgId) || { bytes: 0, files: 0 };
+// Upload recém-feito ainda não está em nenhum item: soma na hora pro limite valer.
+function noteOrgUpload(orgId, bytes) {
+  const byOrg = orgStorageAll();
+  const cur = byOrg.get(orgId) || { bytes: 0, files: 0 };
+  byOrg.set(orgId, { bytes: cur.bytes + bytes, files: cur.files + 1 });
+}
+function orgUsage(org) {
+  const st = orgStorage(org.id);
+  return { plan: orgPlan(org), seats: orgSeats(org.id), storage: { bytes: st.bytes, files: st.files } };
+}
+/* Mensagem de limite (ou null). `extra` = quantos lugares a ação vai ocupar. */
+function seatLimitError(org, extra = 1) {
+  if (!org) return null;
+  const plan = orgPlan(org);
+  if (plan.users == null) return null;
+  const s = orgSeats(org.id);
+  if (s.used + extra <= plan.users) return null;
+  const pend = s.pending ? `, contando ${s.pending} ${s.pending === 1 ? 'convite pendente' : 'convites pendentes'}` : '';
+  return `A organização chegou ao limite de ${plan.users} pessoas do plano ${plan.name}${pend}. Desative alguém, cancele um convite ou fale com o suporte do reWork para aumentar o limite.`;
+}
+function storageLimitError(org, incomingBytes) {
+  if (!org) return null;
+  const plan = orgPlan(org);
+  if (plan.storageBytes == null) return null;
+  const used = orgStorage(org.id).bytes;
+  if (used + (incomingBytes || 0) <= plan.storageBytes) return null;
+  return `Sem espaço: a organização já usa ${fmtBytes(used)} dos ${fmtBytes(plan.storageBytes)} do plano ${plan.name}. Apague arquivos que não usa mais ou fale com o suporte do reWork para aumentar o limite.`;
+}
+
+/* Exclusão definitiva (console, 30 dias depois de excluir ou "apagar agora"):
+   tira do banco tudo o que é da organização, os vínculos, os convites, o sino
+   dela e os arquivos que só ela usava. Quem não faz parte de mais nenhuma
+   organização tem a conta apagada junto (senha, sessões, chaves de acesso). */
+function purgeOrg(org) {
+  const orgId = org.id;
+  const r = rawDb;
+  const refs = uploadRefsByOrg();
+  const mine = refs.get(orgId) || new Set();
+  const keep = new Set();
+  for (const [id, set] of refs) if (id !== orgId) set.forEach(n => keep.add(n));
+  for (const u of r.users || []) {
+    let json = '';
+    try { json = JSON.stringify(u); } catch {}
+    for (const m of json.matchAll(UPLOAD_REF_RE)) keep.add(m[1]);
+  }
+  // Calcula tudo antes de remover: é o squad que diz a organização de cada item.
+  const doomed = [];
+  for (const t of ENTITY_TYPES) {
+    if (t === 'users' || t === 'organizations' || tenancy.UNSCOPED.has(t) || !Array.isArray(r[t])) continue;
+    const gone = new Set(r[t].filter(e => tenancy.orgOf(t, e) === orgId));
+    if (gone.size) doomed.push([t, gone]);
+  }
+  const memberIds = new Set((r.memberships || []).filter(m => m.orgId === orgId).map(m => m.userId));
+  let items = 0;
+  for (const [t, gone] of doomed) {
+    r[t] = r[t].filter(e => !gone.has(e));
+    gone.forEach(e => removeEntity(t, e.id));
+    items += gone.size;
+  }
+  let accounts = 0;
+  for (const userId of memberIds) {
+    const u = (r.users || []).find(x => x.id === userId);
+    if (!u) continue;
+    if (tenancy.membershipsOf(userId).length) {
+      if (u.lastOrgId === orgId) { u.lastOrgId = null; saveEntity('users', u); }
+      continue;
+    }
+    r.users = r.users.filter(x => x !== u);
+    removeEntity('users', userId);
+    auth.removeCredentials(userId);
+    try { auth.webauthnRemoveAll(userId); } catch {}
+    store.deleteAllNotificationsFor(userId).catch(() => {});
+    accounts++;
+  }
+  store.deleteNotificationsForOrg(orgId).catch(e => console.warn('[orgs] limpar notificações:', e.message));
+  let files = 0;
+  for (const n of mine) {
+    if (keep.has(n)) continue;
+    for (const dir of [UPLOADS_DIR, UPLOADS_TRASH_DIR]) {
+      try { fs.unlinkSync(path.join(dir, n)); files++; } catch {}
+    }
+    _uploadBytes.delete(n);
+  }
+  // Pedido da lista de espera que originou a organização fica (histórico).
+  for (const req of (r.accessRequests || []).filter(x => x.orgId === orgId)) {
+    req.orgPurgedAt = nowISO(); req.orgNameAtPurge = org.name;
+    saveEntity('accessRequests', req);
+  }
+  r.organizations = (r.organizations || []).filter(o => o !== org);
+  removeEntity('organizations', orgId);
+  _orgStorage.at = 0;
+  console.log(`  [orgs] "${org.name}" apagada de vez: ${items} item(ns), ${accounts} conta(s), ${files} arquivo(s)`);
+  return { items, accounts, files };
+}
 /* Ajustes da organização (com padrões).
    Jornada: modo "simple" (horas por dia, seg–sex) ou "custom" (cada dia da
    semana com início/término/intervalo próprios; as horas saem da conta).
@@ -5140,6 +5474,8 @@ function orgPublic(org, role) {
   return {
     id: org.id, name: org.name, logo: org.logo || null, ownerId: org.ownerId || null, createdAt: org.createdAt, role: role || null,
     settings: orgSettings(org),
+    planInfo: (({ id, name, trial, trialEndsAt, trialDaysLeft, readOnly, fileBytes }) => ({ id, name, trial, trialEndsAt, trialDaysLeft, readOnly, fileBytes }))(orgPlan(org)),
+    ...(role === 'owner' || role === 'admin' ? { usage: orgUsage(org) } : {}),
     // O que está disponível nesta organização (bot e n8n são da instalação original).
     integrations: {
       discord: !!org.isDefault && discordBot.isEnabled(),
@@ -5226,25 +5562,33 @@ app.put('/api/org', requireAuth, (req, res) => {
 /* Exportar os dados da organização (dono e admins). Não inclui o cofre de
    senhas, credenciais nem dados pessoais de outras organizações. */
 const ORG_EXPORT_SKIP = new Set(['passwords', 'passwordAudits', 'passwordFolders', 'googleEvents', 'invites', 'memberships', 'users']);
+function buildOrgExport(org, exportedBy) {
+  return tenancy.run(org.id, () => {
+    const out = {
+      exportedAt: nowISO(), exportedBy,
+      organization: { id: org.id, name: org.name, createdAt: org.createdAt, settings: orgSettings(org), plan: orgPlan(org) },
+      people: db.users.map(u => ({
+        id: u.id, name: u.name, username: u.username, email: u.email || null,
+        access: u.orgRole, area: u.role || '', position: u.position || null,
+        squads: (u.workspaces || []).slice(), active: u.active !== false
+      }))
+    };
+    for (const t of ENTITY_TYPES) {
+      if (ORG_EXPORT_SKIP.has(t) || tenancy.UNSCOPED.has(t) || t === 'organizations') continue;
+      const list = db[t];
+      if (Array.isArray(list) && list.length) out[t] = list.filter(notDeleted);
+    }
+    return out;
+  });
+}
+const orgExportFilename = (org) => {
+  const slug = String(org.name || 'organizacao').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'organizacao';
+  return `rework-${slug}-${today()}.json`;
+};
 app.get('/api/org/export', requireAuth, (req, res) => {
   if (!req.user.isOwner) return res.status(403).json({ error: 'Só o dono exporta os dados da organização.' });
-  const out = {
-    exportedAt: nowISO(), exportedBy: req.user.name,
-    organization: { id: req.org.id, name: req.org.name, createdAt: req.org.createdAt, settings: orgSettings(req.org) },
-    people: db.users.map(u => ({
-      id: u.id, name: u.name, username: u.username, email: u.email || null,
-      access: u.orgRole, area: u.role || '', position: u.position || null,
-      squads: (u.workspaces || []).slice(), active: u.active !== false
-    }))
-  };
-  for (const t of ENTITY_TYPES) {
-    if (ORG_EXPORT_SKIP.has(t) || tenancy.UNSCOPED.has(t) || t === 'organizations') continue;
-    const list = db[t];
-    if (Array.isArray(list) && list.length) out[t] = list.filter(notDeleted);
-  }
-  const slug = String(req.org.name || 'organizacao').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'organizacao';
-  res.set('Content-Disposition', `attachment; filename="rework-${slug}-${today()}.json"`);
-  res.type('application/json').send(JSON.stringify(out, null, 2));
+  res.set('Content-Disposition', `attachment; filename="${orgExportFilename(req.org)}"`);
+  res.type('application/json').send(JSON.stringify(buildOrgExport(req.org, req.user.name), null, 2));
 });
 
 /* Transferir a posse: o dono atual vira administrador. */
@@ -5302,6 +5646,7 @@ async function createOrgWithOwner(req, { name, ownerEmail, ownerName, requestId,
    Painel da plataforma com contas e sessão próprias — ver platform-console.js. */
 consoleApi = require('./platform-console')(app, {
   getDb: () => rawDb, tenancy, createOrgWithOwner, store, auth, saveEntity, removeEntity, uid, nowISO, notDeleted,
+  plans: PLANS, orgPlan, orgUsage, buildOrgExport, orgExportFilename, purgeOrg, fmtBytes, TRIAL_DAYS, uploadMaxMb: UPLOAD_MAX_BYTES / MB,
   makeRateLimit, clientIp, parseCookies, isHttpsRequest, isValidEmail,
   mailEnabled, sendEmail, emailTpl, appBaseUrl,
   uploadsDir: UPLOADS_DIR, buildSha: BUILD_SHA, publicDir: path.join(__dirname, 'public'),
@@ -11459,6 +11804,7 @@ function runRecurrenceJob() {
   db.demands.slice().forEach(parent => {
     if (!parent.recurrence || !parent.recurrence.enabled) return;
     if (!notDeleted(parent)) return; // parent na lixeira não gera
+    if (!tenancy.orgActive(tenancy.orgOf('demands', parent))) return; // organização excluída/suspensa
     if (!isRecurrenceDueToday(parent.recurrence, ymd)) return;
     const project = db.projects.find(p => p.id === parent.projectId);
     if (!project || project.active === false || !notDeleted(project)) return;
@@ -12276,9 +12622,10 @@ if (require.main === module) {
         async canAccess(docId, userId) {
           const doc = (rawDb.writerDocuments || []).find(d => d.id === docId);
           const orgId = doc && tenancy.wsOrgId(doc.workspaceId);
-          if (!orgId) return false;
+          if (!orgId || orgPlan(tenancy.orgById(orgId)).readOnly) return false;
           return tenancy.run(orgId, () => {
             const user = db.users.find(u => u.id === userId);
+            if (user && emailEnforced() && !emailLinked(user)) return false;
             return !!user && user.active !== false && writerCanRead(user, doc);
           });
         },
@@ -12386,3 +12733,5 @@ function setupGracefulShutdown(server) {
 }
 module.exports = app;
 module.exports.ready = _boot;
+// Só pros testes: troca o envio de e-mail por um falso (undefined = volta ao .env).
+module.exports._test = { setMailTransport(t) { _mailTransport = t; } };

@@ -26,6 +26,16 @@
 
    Também mora aqui a lista de espera: o formulário público /acesso grava em
    db.accessRequests e o console revisa.
+
+   Planos e exclusão de organização:
+     - plano de cada organização (Teste de 14 dias, Essencial/Equipe/Agência
+       ou Personalizado, com limites próprios de pessoas, armazenamento e
+       tamanho de arquivo) — catálogo e contas no server.js (PLANS, orgPlan,
+       orgUsage). Organização nova nasce no Teste;
+     - excluir = a organização some pra todo mundo na hora, mas os dados
+       ficam guardados por 30 dias: dá pra restaurar ou baixar o backup
+       (JSON) pelo console. Passado o prazo (ou em "apagar agora"), o
+       purgeOrg do server apaga tudo de vez.
    ─────────────────────────────────────────────────────────────── */
 const crypto = require('crypto');
 const fs = require('fs');
@@ -41,6 +51,7 @@ const RECOVERY_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
 const ACTIVATION_TTL_MS = 48 * 60 * 60 * 1000;
 const PASSWORD_MIN = 12;
 const AUDIT_MAX = 3000;
+const ORG_KEEP_DAYS = 30;
 const ISSUER = 'reWork Console';
 
 const REQUEST_STATUSES = ['new', 'reviewing', 'approved', 'rejected'];
@@ -111,7 +122,7 @@ function newRecoveryCodes() {
 module.exports = function setupConsole(app, deps) {
   // O `db` do server é trocado no boot (loadDB) — lê sempre o atual.
   const db = new Proxy({}, { get: (_, key) => deps.getDb()[key] });
-  const { tenancy, createOrgWithOwner } = deps;
+  const { tenancy, createOrgWithOwner, plans, orgPlan, orgUsage, buildOrgExport, orgExportFilename, purgeOrg, TRIAL_DAYS, uploadMaxMb } = deps;
   const {
     store, auth, saveEntity, removeEntity, uid, nowISO, notDeleted,
     makeRateLimit, clientIp, parseCookies, isHttpsRequest, isValidEmail,
@@ -188,8 +199,8 @@ module.exports = function setupConsole(app, deps) {
     const who = actor || req.consoleAdmin || null;
     const entry = {
       id: uid(), action, details: details || null,
-      adminId: who ? who.id : null, adminName: who ? who.name : null,
-      ip: clientIp(req), at: nowISO()
+      adminId: who ? who.id : null, adminName: who ? who.name : (req ? null : 'Sistema'),
+      ip: req ? clientIp(req) : null, at: nowISO()
     };
     db.platformAudit.push(entry);
     saveEntity('platformAudit', entry);
@@ -516,10 +527,25 @@ module.exports = function setupConsole(app, deps) {
       hours30: Math.round(hours30 * 10) / 10,
       hoursTotal: Math.round(hoursTotal * 10) / 10,
       docs: inOrg('writerDocuments', org.id).filter(notDeleted).length,
-      lastActivityAt: lastActivity ? new Date(lastActivity).toISOString() : null
+      lastActivityAt: lastActivity ? new Date(lastActivity).toISOString() : null,
+      usage: orgUsage(org)
     };
   }
   const allOrgs = () => (db.organizations || []).filter(o => !o.deletedAt);
+  const deletedOrgs = () => (db.organizations || []).filter(o => o.deletedAt);
+  const orgById = (id) => (db.organizations || []).find(o => o.id === id) || null;
+  function deletedSummary(org) {
+    const members = membersOf(org.id).filter(m => m.active !== false).length;
+    const owner = userById(org.ownerId);
+    return {
+      id: org.id, name: org.name, isDefault: !!org.isDefault, createdAt: org.createdAt || null,
+      owner: owner ? { id: owner.id, name: owner.name, email: owner.email || null } : null,
+      members, deletedAt: org.deletedAt, deletedBy: org.deletedBy || null, purgeAt: org.purgeAt,
+      daysLeft: Math.max(0, Math.ceil((Date.parse(org.purgeAt) - now()) / DAY)),
+      reason: org.deleteReason || null,
+      plan: orgPlan(org)
+    };
+  }
   /* Série diária dos últimos `days` dias (data local do servidor). */
   function dailySeries(days, pickTime, orgId) {
     const out = [];
@@ -578,12 +604,18 @@ module.exports = function setupConsole(app, deps) {
   });
 
   app.get('/api/console/orgs', requireConsole, (req, res) => {
-    res.json({ items: allOrgs().map(orgSummary).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')) });
+    res.json({
+      items: allOrgs().map(orgSummary).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')),
+      deleted: deletedOrgs().map(deletedSummary).sort((a, b) => String(a.purgeAt).localeCompare(String(b.purgeAt))),
+      plans
+    });
   });
 
   app.get('/api/console/orgs/:id', requireConsole, (req, res) => {
-    const org = allOrgs().find(o => o.id === req.params.id);
-    if (!org) return res.status(404).json({ error: 'Organização não encontrada.' });
+    const org = orgById(req.params.id);
+    if (!org) return res.status(404).json({ error: 'Organização não encontrada. Se foi apagada de vez, os dados não existem mais.' });
+    // Excluída: só o que precisa pra decidir (restaurar, baixar o backup, apagar).
+    if (org.deletedAt) return res.json({ deleted: deletedSummary(org), plans });
     const seen = auth.lastSeenByUser();
     const wsList = inOrg('workspaces', org.id);
     const wsName = Object.fromEntries(wsList.map(w => [w.id, w.name]));
@@ -624,8 +656,116 @@ module.exports = function setupConsole(app, deps) {
       if (slot) slot.value = Math.round((slot.value + (Number(e.hours) || 0)) * 10) / 10;
     }
     audit(req, 'org_viewed', { orgId: org.id, name: org.name });
-    res.json({ org: orgSummary(org), members, squads, hoursByMonth: months, series: { created: dailySeries(30, d => ts(d.createdAt), org.id) } });
+    res.json({ org: orgSummary(org), members, squads, hoursByMonth: months, series: { created: dailySeries(30, d => ts(d.createdAt), org.id) }, plans });
   });
+
+  /* ── Plano e limites ── */
+  const LIMIT_MAX = 100000;
+  app.put('/api/console/orgs/:id/plan', requireConsole, (req, res) => {
+    const org = allOrgs().find(o => o.id === req.params.id);
+    if (!org) return res.status(404).json({ error: 'Organização não encontrada.' });
+    const b = req.body || {};
+    const base = plans.find(p => p.id === b.planId);
+    if (!base) return res.status(400).json({ error: 'Escolha um plano.', field: 'planId' });
+    const next = { id: base.id };
+    const prevSaved = org.plan || {};
+    if (base.id === 'teste') {
+      // Dias de teste a partir de hoje; sem informar, mantém o prazo atual (ou
+      // começa quando o dono entrar, se ainda não entrou).
+      if (b.trialDays !== undefined && b.trialDays !== null && b.trialDays !== '') {
+        const days = Number(b.trialDays);
+        // 0 = encerra o teste agora (a organização fica só pra consulta).
+        if (!Number.isInteger(days) || days < 0 || days > 90) return res.status(400).json({ error: 'Dias de teste: use um número inteiro entre 0 (encerrar agora) e 90.', field: 'trialDays' });
+        next.trialEndsAt = new Date(now() + days * DAY).toISOString();
+      } else if (prevSaved.id === 'teste' && prevSaved.trialEndsAt) {
+        next.trialEndsAt = prevSaved.trialEndsAt;
+      } else if (org.ownerId) {
+        next.trialEndsAt = new Date(now() + TRIAL_DAYS * DAY).toISOString();
+      }
+      if (next.trialEndsAt) next.trialStartedAt = prevSaved.id === 'teste' && prevSaved.trialStartedAt ? prevSaved.trialStartedAt : nowISO();
+    }
+    if (base.id === 'custom') {
+      // null/vazio = sem limite
+      const num = (v, field, label, int) => {
+        if (v === null || v === undefined || v === '') return { value: null };
+        const n = Number(v);
+        // Armazenamento aceita fração (0,5 GB; o mínimo de 0,001 GB ≈ 1 MB serve pra teste).
+        if (!Number.isFinite(n) || n < (int ? 1 : 0.001) || n > LIMIT_MAX || (int && !Number.isInteger(n))) return { error: `${label}: use um número ${int ? 'inteiro ' : ''}entre 1 e ${LIMIT_MAX.toLocaleString('pt-BR')}, ou deixe em branco para não limitar.`, field };
+        return { value: int ? n : Math.round(n * 1000) / 1000 };
+      };
+      const users = num(b.users, 'users', 'Pessoas', true);
+      if (users.error) return res.status(400).json(users);
+      const storage = num(b.storageGb, 'storageGb', 'Armazenamento', false);
+      if (storage.error) return res.status(400).json(storage);
+      let fileMb = null;
+      if (b.fileMb !== undefined && b.fileMb !== null && b.fileMb !== '') {
+        fileMb = Number(b.fileMb);
+        if (!Number.isInteger(fileMb) || fileMb < 1 || fileMb > uploadMaxMb) return res.status(400).json({ error: `Tamanho por arquivo: use um número inteiro entre 1 e ${uploadMaxMb} MB, ou deixe em branco (${uploadMaxMb} MB).`, field: 'fileMb' });
+      }
+      next.users = users.value; next.storageGb = storage.value; next.fileMb = fileMb;
+    }
+    const before = orgPlan(org);
+    org.plan = { ...next, changedAt: nowISO(), changedBy: req.consoleAdmin.name };
+    saveEntity('organizations', org);
+    const after = orgPlan(org);
+    const lim = (p) => `${p.name} (${p.users == null ? 'sem limite de pessoas' : p.users + ' pessoas'}, ${p.storageGb == null ? 'sem limite de armazenamento' : p.storageGb + ' GB'}, arquivos até ${p.fileMb == null ? uploadMaxMb : p.fileMb} MB${p.trialEndsAt ? `, teste até ${p.trialEndsAt.slice(0, 10)}` : ''})`;
+    audit(req, 'org_plan_changed', { orgId: org.id, name: org.name, from: lim(before), to: lim(after) });
+    res.json(orgSummary(org));
+  });
+
+  /* ── Exclusão (guarda 30 dias), restauração, backup e apagar de vez ── */
+  const sameName = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+  app.post('/api/console/orgs/:id/delete', requireConsole, (req, res) => {
+    const org = allOrgs().find(o => o.id === req.params.id);
+    if (!org) return res.status(404).json({ error: 'Organização não encontrada.' });
+    if (org.isDefault) return res.status(400).json({ error: 'A organização principal desta instalação não pode ser excluída.' });
+    if (!sameName((req.body || {}).confirm, org.name)) return res.status(400).json({ error: 'Digite o nome da organização exatamente como aparece para confirmar.', field: 'confirm' });
+    const at = new Date();
+    org.deletedAt = at.toISOString();
+    org.deletedBy = req.consoleAdmin.name;
+    org.purgeAt = new Date(at.getTime() + ORG_KEEP_DAYS * DAY).toISOString();
+    org.deleteReason = clip((req.body || {}).reason, 500) || null;
+    saveEntity('organizations', org);
+    audit(req, 'org_deleted', { orgId: org.id, name: org.name, purgeAt: org.purgeAt, reason: org.deleteReason });
+    res.json(deletedSummary(org));
+  });
+  app.post('/api/console/orgs/:id/restore', requireConsole, (req, res) => {
+    const org = deletedOrgs().find(o => o.id === req.params.id);
+    if (!org) return res.status(404).json({ error: 'Organização excluída não encontrada.' });
+    delete org.deletedAt; delete org.deletedBy; delete org.purgeAt; delete org.deleteReason;
+    org.restoredAt = nowISO();
+    saveEntity('organizations', org);
+    audit(req, 'org_restored', { orgId: org.id, name: org.name });
+    res.json(orgSummary(org));
+  });
+  app.get('/api/console/orgs/:id/export', requireConsole, (req, res) => {
+    const org = orgById(req.params.id);
+    if (!org) return res.status(404).json({ error: 'Organização não encontrada.' });
+    audit(req, 'org_exported', { orgId: org.id, name: org.name });
+    res.set('Content-Disposition', `attachment; filename="${orgExportFilename(org)}"`);
+    res.type('application/json').send(JSON.stringify(buildOrgExport(org, `reWork Console · ${req.consoleAdmin.name}`), null, 2));
+  });
+  app.delete('/api/console/orgs/:id', requireConsole, (req, res) => {
+    const org = deletedOrgs().find(o => o.id === req.params.id);
+    if (!org) return res.status(404).json({ error: 'Só dá para apagar de vez uma organização que já foi excluída.' });
+    if (!sameName((req.body || {}).confirm, org.name)) return res.status(400).json({ error: 'Digite o nome da organização exatamente como aparece para confirmar.', field: 'confirm' });
+    const result = purgeOrg(org);
+    audit(req, 'org_purged', { orgId: org.id, name: org.name, ...result, early: true });
+    res.json({ ok: true, ...result });
+  });
+  // Passados os 30 dias, apaga sozinho (confere de hora em hora).
+  function runOrgPurgeJob() {
+    const t = now();
+    for (const org of deletedOrgs()) {
+      if (!org.purgeAt || Date.parse(org.purgeAt) > t) continue;
+      try {
+        const result = purgeOrg(org);
+        audit(null, 'org_purged', { orgId: org.id, name: org.name, ...result, early: false });
+      } catch (e) { console.error(`[console] falha ao apagar "${org.name}":`, e.message); }
+    }
+  }
+  const _purgeBoot = setTimeout(runOrgPurgeJob, 2 * 60 * 1000); _purgeBoot.unref();
+  setInterval(runOrgPurgeJob, 60 * 60 * 1000).unref();
 
   /* Trocar o dono (suporte da plataforma). O dono anterior vira administrador. */
   app.post('/api/console/orgs/:id/owner', requireConsole, (req, res) => {
@@ -652,7 +792,8 @@ module.exports = function setupConsole(app, deps) {
       message: r.message || '', status: r.status, notes: r.notes || [],
       createdAt: r.createdAt, updatedAt: r.updatedAt || r.createdAt,
       reviewedBy: r.reviewedBy || null, reviewedAt: r.reviewedAt || null, submissions: r.submissions || 1,
-      orgId: r.orgId || null, orgName: r.orgId ? ((db.organizations || []).find(o => o.id === r.orgId) || {}).name || null : null
+      orgId: r.orgId || null, orgName: r.orgId ? ((db.organizations || []).find(o => o.id === r.orgId) || {}).name || r.orgNameAtPurge || null : null,
+      orgPurgedAt: r.orgPurgedAt || null
     };
   }
   const clip = (v, n) => String(v || '').trim().slice(0, n);
@@ -699,7 +840,7 @@ module.exports = function setupConsole(app, deps) {
     const items = db.accessRequests.slice()
       .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
       .map(publicRequest);
-    res.json({ items, counts: requestCounts() });
+    res.json({ items, counts: requestCounts(), plans });
   });
 
   app.patch('/api/console/access-requests/:id', requireConsole, (req, res) => {
@@ -733,7 +874,10 @@ module.exports = function setupConsole(app, deps) {
     if (r.orgId) return res.status(409).json({ error: 'A organização deste pedido já foi criada.' });
     const name = clip((req.body || {}).name || r.company, 80);
     if (name.length < 2) return res.status(400).json({ error: 'Informe o nome da organização.', field: 'name' });
+    // Sem escolha, nasce no Teste (os 14 dias começam quando o dono entrar).
+    const plan = plans.find(p => p.id === (req.body || {}).planId) || plans.find(p => p.id === 'teste');
     const { org, link, emailSent } = await createOrgWithOwner(req, { name, ownerEmail: r.email, ownerName: r.name, requestId: r.id, createdBy: req.consoleAdmin.id });
+    if (plan) { org.plan = { id: plan.id, changedAt: nowISO(), changedBy: req.consoleAdmin.name }; saveEntity('organizations', org); }
     const at = nowISO();
     const from = r.status;
     r.status = 'approved'; r.orgId = org.id;
@@ -742,7 +886,7 @@ module.exports = function setupConsole(app, deps) {
       ...(from !== 'approved' ? [{ id: uid(), kind: 'status', from, to: 'approved', by: req.consoleAdmin.name, at }] : []),
       { id: uid(), kind: 'org', text: `Organização "${org.name}" criada e convite de dono enviado para ${r.email}.`, by: req.consoleAdmin.name, at }];
     saveEntity('accessRequests', r);
-    audit(req, 'org_created', { orgId: org.id, name: org.name, email: r.email });
+    audit(req, 'org_created', { orgId: org.id, name: org.name, email: r.email, plan: orgPlan(org).name });
     res.status(201).json({ request: publicRequest(r), org: orgSummary(org), link, emailSent });
   });
 
@@ -823,5 +967,5 @@ module.exports = function setupConsole(app, deps) {
   app.get(/^\/console(?:\/.*)?$/, (req, res) => { noindex(res); res.sendFile(path.join(publicDir, 'console.html')); });
   app.get(/^\/acesso\/?$/, (req, res) => res.sendFile(path.join(publicDir, 'acesso.html')));
 
-  return { totpVerify, hotp, b32decode, ensureDefaultAdmin };
+  return { totpVerify, hotp, b32decode, ensureDefaultAdmin, runOrgPurgeJob };
 };

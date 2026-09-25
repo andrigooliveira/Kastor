@@ -562,6 +562,7 @@ async function api(path, method = 'GET', body) {
   if (!res.ok) {
     const e = new Error(data.error || `Erro ${res.status}`);
     e._apiKind = 'server';
+    if (res.status === 403 && data.code === 'email_required' && !window.__emailGateReload) { window.__emailGateReload = true; setTimeout(() => location.reload(), 300); }
     throw e;
   }
   return data;
@@ -4267,6 +4268,7 @@ async function enterApp() {
   // antes de tirar o overlay de loading — evita ver skeleton "acender" um instante.
   requestAnimationFrame(() => requestAnimationFrame(() => {
     if (typeof window.hideBootLoading === 'function') window.hideBootLoading();
+    handleEmailLinkOnEnter();
     // Tour de boas-vindas — normalmente só no primeiro login (hasSeenTour !== true).
     // `?tour=1` na URL força reabrir (pra QA e pra o botão "Refazer tour").
     const forceTour = new URLSearchParams(location.search).get('tour') === '1';
@@ -4733,6 +4735,41 @@ async function showAllReleaseNotes() {
   }
 }
 
+/* ─── NOVIDADES NA BARRA LATERAL ─── abre o histórico completo. O ponto
+   aparece enquanto a novidade mais recente não foi aberta por ali
+   (me.newsSeenId guarda a última aberta). */
+let _latestNewsId;              // undefined = não buscado; null = sem novidades
+let _latestNewsLoading = false;
+async function renderSidebarNewsDot() {
+  const dot = $('sb-news-dot');
+  if (!dot || !me) return;
+  if (_latestNewsId === undefined) {
+    if (_latestNewsLoading) return;
+    _latestNewsLoading = true;
+    try {
+      const r = await api('/release-notes/all');
+      const notes = (r && r.notes) || [];
+      const newest = notes.slice().sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))[0];
+      _latestNewsId = newest ? newest.id : null;
+    } catch { _latestNewsId = null; }
+    _latestNewsLoading = false;
+  }
+  const on = !!_latestNewsId && _latestNewsId !== me.newsSeenId;
+  const d = $('sb-news-dot');
+  if (d) d.hidden = !on;
+  $('sb-news')?.classList.toggle('has-dot', on);
+}
+async function openSidebarNews() {
+  closeSidebar();
+  await showAllReleaseNotes();
+  if (_latestNewsId && me && me.newsSeenId !== _latestNewsId) {
+    me.newsSeenId = _latestNewsId;
+    renderSidebarNewsDot();
+    try { await api('/me/news-seen', 'POST', { id: _latestNewsId }); } catch {}
+  }
+}
+window.openSidebarNews = openSidebarNews;
+
 /* ─── NOVIDADES NO INÍCIO ─── bloco resumido do lançamento mais recente
    (kind: 'launch', hoje o reWork Docs) logo abaixo da saudação. "Ver completo"
    abre o card inteiro no modal; o X grava o id num cookie e o bloco não volta
@@ -4949,7 +4986,36 @@ function _closeOrgMenu() {
 }
 const _canInvite = () => me.isAdmin || (me.isModerator && me.org?.settings?.modsCanInvite !== false);
 let _orgLoading = null;
+/* Faixa no topo: teste grátis (dono/admin, com os dias que faltam) ou teste
+   vencido (todo mundo — a organização está só para consulta). */
+function renderPlanBanner() {
+  const main = document.querySelector('main.main');
+  if (!main) return;
+  let el = $('plan-banner');
+  const p = me && me.org && me.org.planInfo;
+  const manager = !!(me && (me.isOwner || me.isAdmin));
+  const key = 'rw-trial-banner-' + (me && me.org ? me.org.id : '');
+  let dismissed = false;
+  try { dismissed = sessionStorage.getItem(key) === '1'; } catch {}
+  const show = p && p.trial && (p.readOnly || (manager && p.trialEndsAt && !dismissed));
+  if (!show) { if (el) el.remove(); return; }
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'plan-banner';
+    el.setAttribute('role', 'status');
+    const top = main.querySelector('.topbar');
+    top ? top.insertAdjacentElement('afterend', el) : main.prepend(el);
+  }
+  const days = p.trialDaysLeft;
+  el.className = 'plan-banner' + (p.readOnly ? ' is-locked' : days <= 3 ? ' is-soon' : '');
+  el.innerHTML = p.readOnly
+    ? `<i data-lucide="lock" class="ic-sm"></i><span><b>O teste grátis de ${esc(me.org.name)} acabou.</b> Tudo continua aqui para consulta, mas nada novo pode ser criado ou alterado. ${me.isOwner ? 'Fale com o suporte do reWork para escolher um plano.' : 'Fale com o dono da organização.'}</span>`
+    : `<i data-lucide="hourglass" class="ic-sm"></i><span><b>Teste grátis: ${days === 1 ? 'falta 1 dia' : `faltam ${days} dias`}.</b> Depois disso a organização fica só para consulta até escolher um plano.</span>
+       <button type="button" class="plan-banner-close" title="Dispensar" aria-label="Dispensar" onclick="try{sessionStorage.setItem('${key}','1')}catch(e){};this.parentElement.remove()"><i data-lucide="x" class="ic-sm"></i></button>`;
+  if (window.lucide?.createIcons) lucide.createIcons();
+}
 function renderOrgSwitch() {
+  renderPlanBanner();
   const wrap = $('org-switch');
   if (!wrap || !me) return;
   if (!me.org || !Array.isArray(me.orgs)) {
@@ -5042,6 +5108,218 @@ function _orgMergeSaved(org) {
   me.orgs = (me.orgs || []).map(o => o.id === org.id ? { ...o, ...org } : o);
   renderOrgSwitch();
 }
+/* ── Vínculo de e-mail ──
+   Toda conta precisa de um e-mail confirmado até o prazo (me.emailDeadline).
+   Sem e-mail: vincula (e-mail + senha). Com e-mail não confirmado: só manda o
+   link. Troca: senha + link pro endereço novo. Passado o prazo, a conta sem
+   e-mail só consulta (o servidor recusa gravações) até confirmar. */
+function _emailState() {
+  if (!me) return null;
+  if (me.emailVerified) return 'ok';
+  if (me.pendingEmail) return 'pending';
+  return me.email ? 'unconfirmed' : 'missing';
+}
+function _emailDeadlineLabel() {
+  const d = new Date(me.emailDeadline);
+  if (isNaN(d)) return '';
+  const wd = d.toLocaleDateString('pt-BR', { weekday: 'long' }).replace('-feira', '');
+  const dm = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  return `${wd}, ${dm}, às ${String(d.getHours()).padStart(2, '0')}h${String(d.getMinutes()).padStart(2, '0')}`;
+}
+function renderEmailLinkCard() {
+  const el = $('dash-email');
+  if (!el) return;
+  const st = _emailState();
+  if (!st || st === 'ok') { el.hidden = true; el.innerHTML = ''; return; }
+  const late = !!me.emailRequired;
+  const left = Math.ceil((Date.parse(me.emailDeadline) - Date.now()) / 864e5);
+  const when = late ? 'Prazo encerrado' : `Até ${_emailDeadlineLabel()}${left > 0 && left <= 7 ? ` · ${left === 1 ? 'falta 1 dia' : `faltam ${left} dias`}` : ''}`;
+  const pend = me.pendingEmail;
+  const cfg = {
+    missing: {
+      title: 'Vincule um e-mail à sua conta',
+      text: late
+        ? 'O prazo acabou: até vincular um e-mail, sua conta fica só para consulta. Leva um minuto.'
+        : 'Todas as contas do reWork vão precisar de um e-mail confirmado. Com ele você entra pelo e-mail e recupera a senha sozinho. Depois do prazo, contas sem e-mail confirmado ficam com o acesso restrito: só entram para confirmar o e-mail.',
+      actions: `<button class="btn btn-confirm" onclick="openEmailLinkModal()"><i data-lucide="mail-plus" class="ic-sm"></i> Vincular e-mail</button>`
+    },
+    unconfirmed: {
+      title: 'Confirme o seu e-mail',
+      text: `Sua conta tem o e-mail <b>${esc(me.email)}</b>, mas ele ainda não foi confirmado. Vamos mandar um link para ele: é só abrir e tocar em Confirmar e-mail. Depois do prazo, contas sem e-mail confirmado ficam com o acesso restrito.`,
+      actions: `<button class="btn btn-confirm" onclick="sendEmailConfirmNow(this)"><i data-lucide="send" class="ic-sm"></i> Enviar link de confirmação</button>
+        <button class="btn btn-ghost" onclick="openEmailLinkModal('change')">Usar outro e-mail</button>`
+    },
+    pending: {
+      title: 'Falta abrir o link no seu e-mail',
+      text: `Enviamos um link para <b>${esc(pend ? pend.email : '')}</b>. Abra o e-mail e toque em Confirmar e-mail (vale 24 horas). Não achou? Veja no spam ou reenvie.`,
+      actions: `<button class="btn btn-ghost" onclick="${pend && me.email && pend.email === me.email ? 'sendEmailConfirmNow(this)' : "openEmailLinkModal('resend')"}"><i data-lucide="rotate-cw" class="ic-sm"></i> Reenviar</button>
+        <button class="btn btn-ghost" onclick="openEmailLinkModal('change')">Usar outro e-mail</button>`
+    }
+  }[st];
+  el.className = 'dash-email' + (late ? ' is-late' : '');
+  el.innerHTML = `
+    <span class="dash-email-ic"><i data-lucide="${st === 'pending' ? 'mail-check' : 'mail-warning'}"></i></span>
+    <div class="dash-email-text">
+      <div class="dash-email-kicker">${esc(when)}</div>
+      <div class="dash-email-title">${cfg.title}</div>
+      <p class="dash-email-desc">${cfg.text}</p>
+    </div>
+    <div class="dash-email-actions">${cfg.actions}</div>`;
+  el.hidden = false;
+  paintIcons();
+}
+function renderProfileEmail() {
+  const box = $('profile-email-box');
+  if (!box || !me) return;
+  const st = _emailState();
+  const chip = st === 'ok' ? '<span class="profile-email-chip is-ok"><i data-lucide="check" class="ic-xs"></i>Confirmado</span>'
+    : st === 'unconfirmed' ? '<span class="profile-email-chip is-warn">Não confirmado</span>'
+    : st === 'pending' ? '<span class="profile-email-chip is-warn">Aguardando o link</span>' : '';
+  const pend = me.pendingEmail;
+  box.innerHTML = `
+    <div class="profile-email-main">
+      <span class="profile-email-addr${me.email ? '' : ' is-empty'}">${me.email ? esc(me.email) : 'Nenhum e-mail vinculado'}</span>${chip}
+    </div>
+    ${pend && pend.email !== me.email ? `<div class="profile-email-pending">Troca para <b>${esc(pend.email)}</b> aguardando a confirmação pelo link. <a href="#" onclick="event.preventDefault();cancelEmailLink()">Cancelar troca</a></div>` : ''}
+    <div class="profile-email-actions">
+      ${st === 'missing' ? `<button class="btn btn-confirm btn-sm" type="button" onclick="openEmailLinkModal()">Vincular e-mail</button>`
+        : `${st !== 'ok' && me.email ? `<button class="btn btn-ghost btn-sm" type="button" onclick="sendEmailConfirmNow(this)">Enviar link de confirmação</button>` : ''}
+           <button class="btn btn-ghost btn-sm" type="button" onclick="openEmailLinkModal('change')">Trocar e-mail</button>`}
+    </div>`;
+  paintIcons();
+}
+let _elmMode = 'link';
+function openEmailLinkModal(mode) {
+  if (!me) return;
+  const st = _emailState();
+  _elmMode = mode || (st === 'missing' ? 'link' : st === 'ok' ? 'change' : 'confirm');
+  const locked = !!me.emailRequired && st !== 'ok';
+  $('elm-title').textContent = _elmMode === 'change' ? 'Trocar e-mail' : _elmMode === 'resend' ? 'Reenviar o link' : 'Vincular e-mail';
+  $('elm-intro').innerHTML = _elmMode === 'change'
+    ? `Digite o novo e-mail e a sua senha. O e-mail da conta só muda quando você abrir o link que vamos mandar para o endereço novo.${me.emailVerified ? ` Avisamos também o endereço atual (${esc(me.email)}).` : ''}`
+    : locked ? 'O prazo acabou: vincule um e-mail para voltar a usar o reWork. Vamos mandar um link para confirmar.'
+    : `Vamos mandar um link para confirmar que o e-mail é seu. Prazo: ${esc(_emailDeadlineLabel())}.`;
+  $('elm-email').value = _elmMode === 'resend' && me.pendingEmail ? me.pendingEmail.email : (_elmMode === 'change' ? '' : (me.email || ''));
+  $('elm-pass').value = '';
+  $('elm-error').textContent = '';
+  $('elm-form').hidden = false;
+  $('elm-sent').hidden = true;
+  $('elm-close').hidden = locked;
+  _elmSync();
+  _elmFoot('form');
+  openModal('email-link-modal');
+  setTimeout(() => ($('elm-email').value ? $('elm-pass') : $('elm-email')).focus(), 60);
+}
+// Senha só quando o endereço é diferente do e-mail atual da conta.
+function _elmSync() {
+  const typed = ($('elm-email').value || '').trim().toLowerCase();
+  const same = !!me.email && typed === String(me.email).toLowerCase();
+  $('elm-pass-group').hidden = same || me.hasPassword === false;
+}
+function _elmFoot(which) {
+  const locked = !!me.emailRequired && _emailState() !== 'ok';
+  $('elm-foot').innerHTML = which === 'sent'
+    ? `<button class="btn btn-ghost" type="button" onclick="openEmailLinkModal('change')">Usar outro e-mail</button><button class="btn btn-confirm" type="button" onclick="closeEmailLinkModal(true)">Entendi</button>`
+    : `${locked ? `<button class="btn btn-ghost" type="button" onclick="doLogout()">Sair</button>` : `<button class="btn btn-ghost" type="button" onclick="closeEmailLinkModal()">Cancelar</button>`}
+       <button class="btn btn-confirm" type="button" id="elm-go" onclick="submitEmailLink()">Enviar link</button>`;
+}
+function closeEmailLinkModal(force) {
+  if (!force && me && me.emailRequired && _emailState() === 'missing') return; // prazo vencido: precisa vincular
+  closeModal('email-link-modal');
+}
+function _emailApplyUser(user) {
+  if (user) me = { ...me, ...user };
+  renderEmailLinkCard();
+  renderProfileEmail();
+}
+function _elmShowSent(addr) {
+  $('elm-form').hidden = true;
+  $('elm-sent').hidden = false;
+  $('elm-sent-text').innerHTML = `Abra o e-mail que mandamos para <b>${esc(addr)}</b> e toque em <b>Confirmar e-mail</b>. O link vale 24 horas. Não chegou em alguns minutos? Veja no spam.`;
+  $('elm-close').hidden = false;
+  _elmFoot('sent');
+  paintIcons();
+}
+async function submitEmailLink() {
+  const email = ($('elm-email').value || '').trim();
+  const err = $('elm-error');
+  err.textContent = '';
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { err.textContent = 'Confira o e-mail. Ele precisa ter o formato nome@empresa.com.'; $('elm-email').focus(); return; }
+  const needPass = !$('elm-pass-group').hidden;
+  const password = $('elm-pass').value;
+  if (needPass && !password) { err.textContent = 'Digite a sua senha do reWork.'; $('elm-pass').focus(); return; }
+  const btn = $('elm-go');
+  if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
+  try {
+    const r = await api('/me/email', 'POST', needPass ? { email, password } : { email });
+    _emailApplyUser(r.user);
+    _elmShowSent(email.toLowerCase());
+  } catch (e) {
+    err.textContent = e.message;
+    if (btn) { btn.disabled = false; btn.textContent = 'Enviar link'; }
+  }
+}
+// Confirmar o e-mail que já está na conta: um clique, sem senha.
+async function sendEmailConfirmNow(btn) {
+  if (!me || !me.email) return openEmailLinkModal();
+  if (btn) btn.disabled = true;
+  try {
+    const r = await api('/me/email', 'POST', { email: me.email });
+    _emailApplyUser(r.user);
+    toast('Link enviado para ' + me.email + '. Abra o e-mail para confirmar.');
+  } catch (e) { toast(e.message, 'error'); }
+  finally { if (btn) btn.disabled = false; }
+}
+async function cancelEmailLink() {
+  try { const r = await api('/me/email/cancel', 'POST', {}); _emailApplyUser(r.user); toast('Troca de e-mail cancelada.'); }
+  catch (e) { toast(e.message, 'error'); }
+}
+// Volta do link de confirmação (boot.js guarda o resultado) e prazo vencido.
+function handleEmailLinkOnEnter() {
+  let n = null;
+  try { n = JSON.parse(sessionStorage.getItem('rw-email-notice') || 'null'); sessionStorage.removeItem('rw-email-notice'); } catch {}
+  if (n) toast(n.text, n.ok ? undefined : 'error');
+}
+window.openEmailLinkModal = openEmailLinkModal;
+window.closeEmailLinkModal = closeEmailLinkModal;
+window.submitEmailLink = submitEmailLink;
+window.sendEmailConfirmNow = sendEmailConfirmNow;
+window.cancelEmailLink = cancelEmailLink;
+window._elmSync = _elmSync;
+
+/* Plano da organização (só leitura: quem muda é o suporte, no console). */
+function _orgBytes(n) {
+  const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0, v = Number(n) || 0;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return `${v.toLocaleString('pt-BR', { maximumFractionDigits: v < 10 ? 1 : 0 })} ${u[i]}`;
+}
+function _orgMeter(label, used, limit, fmt, foot) {
+  const pct = limit ? Math.min(100, (used / limit) * 100) : 0;
+  const tone = !limit ? '' : used >= limit ? ' is-full' : pct >= 85 ? ' is-high' : '';
+  return `<div class="orgp-meter${tone}">
+    <div class="orgp-meter-top"><span class="orgp-meter-label">${label}</span><span class="orgp-meter-num"><b>${fmt(used)}</b>${limit != null ? ` de ${fmt(limit)}` : ' · sem limite'}</span></div>
+    <div class="orgp-meter-bar" role="progressbar" aria-label="${esc(label)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct)}"><span style="width:${limit ? Math.max(pct, used > 0 ? 1.5 : 0) : 0}%"></span></div>
+    ${foot ? `<div class="orgp-meter-foot">${foot}</div>` : ''}
+  </div>`;
+}
+function _orgPlanSection(u, head) {
+  const p = u.plan;
+  const n = (v) => Number(v || 0).toLocaleString('pt-BR');
+  const seatsFoot = `${n(u.seats.members)} ${u.seats.members === 1 ? 'pessoa ativa' : 'pessoas ativas'}${u.seats.pending ? ` + ${n(u.seats.pending)} ${u.seats.pending === 1 ? 'convite pendente' : 'convites pendentes'}` : ''} · freelancers contam`;
+  const full = (p.users != null && u.seats.used >= p.users) || (p.storageBytes != null && u.storage.bytes >= p.storageBytes);
+  const trial = p.trial ? (p.readOnly
+    ? `<p class="orgp-plan-full"><i data-lucide="lock" class="ic-sm"></i>O teste acabou em ${new Date(p.trialEndsAt).toLocaleDateString('pt-BR')}: a organização está só para consulta até escolher um plano.</p>`
+    : p.trialEndsAt ? `<p class="orgp-plan-trial"><i data-lucide="hourglass" class="ic-sm"></i>Teste grátis até ${new Date(p.trialEndsAt).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' })} (${p.trialDaysLeft === 1 ? 'falta 1 dia' : `faltam ${p.trialDaysLeft} dias`}). Depois, fica só para consulta até escolher um plano.</p>` : '') : '';
+  return `<section class="orgp-card" id="orgp-plano">
+    ${head(`Plano ${esc(p.name)}`, `Quantas pessoas e quanto espaço de arquivos a organização pode usar. Cada arquivo pode ter até ${_orgBytes(p.fileBytes)}. Para mudar de plano ou aumentar os limites, fale com o suporte do reWork.`)}
+    ${trial}
+    <div class="orgp-meters">
+      ${_orgMeter('Pessoas', u.seats.used, p.users, n, seatsFoot)}
+      ${_orgMeter('Armazenamento', u.storage.bytes, p.storageBytes, _orgBytes, `${n(u.storage.files)} ${u.storage.files === 1 ? 'arquivo' : 'arquivos'} em anexos, comentários e imagens`)}
+    </div>
+    ${full ? `<p class="orgp-plan-full"><i data-lucide="triangle-alert" class="ic-sm"></i>Limite atingido: ${p.users != null && u.seats.used >= p.users ? 'novos convites ficam bloqueados' : 'novos arquivos são recusados'} até liberar espaço ou mudar de plano.</p>` : ''}
+  </section>`;
+}
 function renderOrgPage() {
   const host = $('org-page-body');
   if (!host || !me?.org) return;
@@ -5061,6 +5339,7 @@ function renderOrgPage() {
 
   const sections = [
     { id: 'geral', label: 'Geral', icon: 'building-2', show: true },
+    { id: 'plano', label: 'Plano', icon: 'gauge', show: !!org.usage },
     { id: 'pessoas', label: 'Pessoas e acesso', icon: 'users', show: admin || mod },
     { id: 'squads', label: 'Squads', icon: 'layers', show: admin || mod },
     { id: 'jornada', label: 'Jornada de trabalho', icon: 'clock', show: true },
@@ -5117,6 +5396,8 @@ function renderOrgPage() {
         </div>
         ${owner ? `<footer class="orgp-card-foot"><button class="btn btn-confirm btn-sm" id="orgp-save-identity" onclick="saveOrgIdentity()" ${identityDirty && d.name.trim() ? '' : 'disabled'}>Salvar alterações</button></footer>` : ''}
       </section>
+
+      ${org.usage ? _orgPlanSection(org.usage, head) : ''}
 
       ${admin || mod ? `<section class="orgp-card" id="orgp-pessoas">
         ${head('Pessoas e acesso', `${active.length} ${active.length === 1 ? 'pessoa ativa' : 'pessoas ativas'}${pendingInv ? ` · ${pendingInv} ${pendingInv === 1 ? 'convite pendente' : 'convites pendentes'}` : ''}.`,
@@ -5233,9 +5514,9 @@ function renderOrgPage() {
         <div class="orgm-danger-row orgp-danger-sep">
           <div>
             <div class="orgm-danger-title">Excluir a organização</div>
-            <div class="orgm-danger-text">Em breve. Por enquanto, fale com o suporte do reWork.</div>
+            <div class="orgm-danger-text">Peça ao suporte do reWork. Os dados ficam guardados por 30 dias antes de serem apagados, e dá para voltar atrás nesse prazo. Baixe uma cópia em Dados antes, se quiser.</div>
           </div>
-          <button class="btn btn-danger btn-sm" type="button" disabled>Excluir…</button>
+          <button class="btn btn-danger btn-sm" type="button" disabled title="Feito pelo suporte do reWork">Excluir…</button>
         </div>
       </section>` : ''}
     </div>
@@ -5657,8 +5938,13 @@ function renderSidebarNav() {
   nav.innerHTML = blocks.map(b => `<div class="sb-group">${b.items.map(_sbItemHTML).join('')}</div>`).join('') + more
     + `<div class="sb-group sb-group--bottom">
         <div class="sb-bottom-row">
-          ${_sbItemHTML(NAV_DOCS)}
-          <a class="sb-icon-btn sb-gear" id="sb-gear" href="/profile" aria-label="Configurações" data-label="Configurações"
+          <button type="button" class="sb-icon-btn sb-news" id="sb-news" onclick="openSidebarNews()" data-label="Novidades" aria-label="Novidades" title="Novidades">
+            <i data-lucide="sparkles"></i><span class="sb-news-dot" id="sb-news-dot" hidden></span></button>
+          <a class="sb-icon-btn sb-docs ${NAV_DOCS.cls}" id="sb-docs" href="${PAGE_TO_PATH[NAV_DOCS.page] || '/help'}" aria-label="${NAV_DOCS.label}" title="${NAV_DOCS.label}" data-label="${NAV_DOCS.label}"
+            onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); goPage('${NAV_DOCS.page}'); closeSidebar()">
+            <i data-lucide="${NAV_DOCS.icon}"></i>
+          </a>
+          <a class="sb-icon-btn sb-gear" id="sb-gear" href="/profile" aria-label="Configurações" title="Configurações" data-label="Configurações"
             onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); goPage('profile'); closeSidebar()">
             <i data-lucide="settings"></i>
           </a>
@@ -5667,6 +5953,7 @@ function renderSidebarNav() {
   paintIcons(nav);
   syncSidebarActive(currentPage);
   renderNavCounts();
+  renderSidebarNewsDot();
 }
 function syncSidebarActive(page) {
   const target = SB_PARENT[page] || page;
@@ -5680,6 +5967,7 @@ function syncSidebarActive(page) {
   // Tela que está em "Mais" (ou Editar acesso rápido) acende o Mais; o perfil, a engrenagem.
   document.getElementById('sb-more')?.classList.toggle('active', !found && (target === 'menu' || !!_navItem(target)));
   document.getElementById('sb-gear')?.classList.toggle('active', target === 'profile');
+  document.getElementById('sb-docs')?.classList.toggle('active', target === 'help');
   if (target === 'profile') document.getElementById('sb-gear')?.setAttribute('aria-current', 'page');
   else document.getElementById('sb-gear')?.removeAttribute('aria-current');
 }
@@ -6680,6 +6968,7 @@ function renderDashboard() {
   // Dashboard individualizado: sempre no escopo do usuário logado.
   if (!me?.id) return;
   renderDashGreeting();
+  renderEmailLinkCard();
   renderDashUpdates();
   const mine = _dashMyDemands();
   const mineActive = mine.filter(d => !isDone(d));
@@ -17543,6 +17832,10 @@ function closeAttPreview() {
 
 function genAttId() { return 'a' + Math.random().toString(36).slice(2,10); }
 
+// Tamanho máximo por arquivo: o do plano da organização (teto do servidor: 150 MB).
+function _maxUploadBytes() { return (me && me.org && me.org.planInfo && me.org.planInfo.fileBytes) || 150 * 1024 * 1024; }
+function _maxUploadLabel() { return `${Math.round(_maxUploadBytes() / 1048576)} MB`; }
+
 /* ── UPLOAD COM PROGRESSO ──
    Faz POST /api/uploads via XHR pra ter onprogress (fetch não suporta upload
    progress). Resolve com { url, name, type, size }. Retorna também um handle
@@ -17563,9 +17856,11 @@ function _uploadFileXHR(file, onProgress, registerXhr) {
           try { resolve(JSON.parse(xhr.responseText)); }
           catch { reject(new Error('Resposta inválida do servidor')); }
         } else {
-          const msg = xhr.status === 413
+          let serverMsg = null;
+          try { serverMsg = JSON.parse(xhr.responseText).error || null; } catch {}
+          const msg = serverMsg || (xhr.status === 413
             ? 'Arquivo grande demais (proxy retornou 413) — aumente client_max_body_size no Nginx Proxy Manager.'
-            : `HTTP ${xhr.status}`;
+            : `HTTP ${xhr.status}`);
           reject(new Error(msg));
         }
       };
@@ -17662,7 +17957,7 @@ function refreshFormAttList(listId) {
 }
 function readDemandFiles(files, listId) {
   [...files].forEach(file => {
-    if (file.size > 150 * 1024 * 1024) { toast('Arquivo "' + file.name + '" excede 150 MB.', 'error'); return; }
+    if (file.size > _maxUploadBytes()) { toast('Arquivo "' + file.name + '" excede ' + _maxUploadLabel() + ', o limite por arquivo do seu plano.', 'error'); return; }
     const reader = new FileReader();
     reader.onload = e => {
       const finish = (data, type) => {
@@ -17702,7 +17997,7 @@ async function handleDetailAttachmentFiles(ev) {
   if (!files.length) return;
   let addedCount = 0;
   for (const file of files) {
-    if (file.size > 150 * 1024 * 1024) { toast('Arquivo "' + file.name + '" excede 150 MB.', 'error'); continue; }
+    if (file.size > _maxUploadBytes()) { toast('Arquivo "' + file.name + '" excede ' + _maxUploadLabel() + ', o limite por arquivo do seu plano.', 'error'); continue; }
     await _uploadFileWithPlaceholder(file, 'detail-attachments-list', async (saved) => {
       // Re-lookup a cada iteração — patchDemand trocou a referência.
       const d = demandById(detailId);
@@ -19739,7 +20034,7 @@ function renderPendingFiles() {
 function removePending(i) { pendingAttachments.splice(i, 1); renderPendingFiles(); }
 function readFilesAsBase64(files, isImage) {
   [...files].forEach(file => {
-    if (file.size > 150 * 1024 * 1024) { toast('Arquivo "' + file.name + '" excede 150 MB.', 'error'); return; }
+    if (file.size > _maxUploadBytes()) { toast('Arquivo "' + file.name + '" excede ' + _maxUploadLabel() + ', o limite por arquivo do seu plano.', 'error'); return; }
     const reader = new FileReader();
     reader.onload = e => {
       if (isImage) {
@@ -20231,7 +20526,7 @@ function removeEditAtt(cid, idx) {
 function handleEditFiles(ev, cid) {
   const el = document.getElementById('comment-' + cid);
   [...ev.target.files].forEach(file => {
-    if (file.size > 150 * 1024 * 1024) { toast('"' + file.name + '" excede 150 MB.', 'error'); return; }
+    if (file.size > _maxUploadBytes()) { toast('"' + file.name + '" excede ' + _maxUploadLabel() + ', o limite por arquivo do seu plano.', 'error'); return; }
     const reader = new FileReader();
     reader.onload = e => {
       const atts = JSON.parse(el.dataset.editAtts || '[]');
@@ -21626,6 +21921,9 @@ function renderUsers() {
   if (headerCounter) {
     const parts = [`${activeUsers.length} ativos`];
     if (archivedUsers.length) parts.push(`${archivedUsers.length} desativados`);
+    // Prazo do e-mail: quantas pessoas ativas ainda não confirmaram.
+    const noMail = activeUsers.filter(u => !u.emailVerified).length;
+    if (noMail) parts.push(`${noMail} sem e-mail confirmado`);
     parts.push(`${roles.length} áreas`);
     parts.push(`${(positions || []).length} cargos`);
     headerCounter.textContent = parts.join(' · ');
@@ -21657,7 +21955,9 @@ function renderUsers() {
     ].filter(Boolean)) : '';
     return `<tr class="mrow" style="${u.active === false ? 'opacity:.55' : ''}">
       <td class="mcol-name">${cellUser(u)}</td>
-      <td style="color:var(--text-dim)">${esc(u.username)}</td>
+      <td style="color:var(--text-dim)">${esc(u.username)}${u.emailVerified
+        ? `<div class="us-email" title="E-mail confirmado">${esc(u.email)}</div>`
+        : `<div class="us-email is-missing" title="${u.email ? 'A pessoa ainda não confirmou o e-mail' : 'A pessoa ainda não vinculou um e-mail'}"><i data-lucide="mail-warning" class="ic-xs"></i>${u.email ? 'Não confirmado' : 'Sem e-mail'}</div>`}</td>
       <td>${esc(u.role || '—')}</td>
       <td>${esc(u.position || '—')}</td>
       <td>${wsNames}</td>
@@ -22578,7 +22878,7 @@ async function processDroppedFiles(files, listElementId) {
   // Filtra por tamanho antes de qualquer upload
   const accepted = [];
   for (const file of files) {
-    if (file.size > 150 * 1024 * 1024) { toast(`${file.name}: arquivo muito grande (máx 150MB)`, 'error'); continue; }
+    if (file.size > _maxUploadBytes()) { toast(`${file.name}: arquivo muito grande (máx. ${_maxUploadLabel()} no seu plano)`, 'error'); continue; }
     accepted.push(file);
   }
   if (!accepted.length) return;
@@ -27174,6 +27474,12 @@ function openUserModal(id, opts) {
   $('u-password').value = '';
   $('u-password-label').textContent = id ? 'Nova senha (deixe em branco para manter)' : 'Senha inicial *';
   $('u-email').value = u?.email || '';
+  // E-mail é da pessoa: com e-mail cadastrado, só ela troca (perfil).
+  const emailLocked = !!(id && u?.email);
+  $('u-email').disabled = emailLocked;
+  if (id) $('u-email-hint').textContent = emailLocked
+    ? (u.emailVerified ? 'Confirmado pela pessoa. Só ela troca, no perfil, com a senha e um link de confirmação.' : 'Ainda não confirmado: a pessoa vê um aviso no Início para confirmar.')
+    : 'Se preencher, a pessoa confirma pelo aviso no Início antes de valer.';
   $('u-discord-id').value = u?.discordId || '';
   // Radio group: admin/mod/equipe/free — Equipe é o default (nenhum bit especial).
   const kind = u?.isAdmin ? 'admin'
@@ -27222,7 +27528,7 @@ async function saveUser() {
     isFreelancer: !!($('u-freelancer') && $('u-freelancer').checked),
     workspaces: wsSel,
     discordId: ($('u-discord-id').value || '').trim() || null,
-    email: ($('u-email').value || '').trim() || null
+    email: $('u-email').disabled ? undefined : (($('u-email').value || '').trim() || null)
   };
   const pass = $('u-password').value;
   try {
@@ -27415,12 +27721,11 @@ function renderProfile() {
   // Conta
   $('profile-f-name').value = me.name || '';
   $('profile-f-username').value = me.username || '';
-  $('profile-f-email').value = me.email || '';
+  renderProfileEmail();
   $('profile-f-phone').value = me.phone || '';
   $('profile-f-discord').value = me.discord || '';
   $('profile-f-discord-id').value = me.discordId || '';
   fillRoleSelect('profile-f-role', me.role || '');
-  _setFieldError('profile-f-email', '');
   _profileAccountBase = _profileAccountSnapshot();
   profileAccountDirty();
   syncProfileAppearanceUI();
@@ -27471,7 +27776,7 @@ function goProfileField(id) {
    pendente e Salvar habilitado só quando algo mudou. */
 let _profileAccountBase = '';
 function _profileAccountSnapshot() {
-  return JSON.stringify(['name', 'role', 'username', 'email', 'phone', 'discord'].map(k => ($('profile-f-' + k)?.value || '').trim()));
+  return JSON.stringify(['name', 'role', 'username', 'phone', 'discord'].map(k => ($('profile-f-' + k)?.value || '').trim()));
 }
 function profileAccountDirty() {
   const dirty = _profileAccountSnapshot() !== _profileAccountBase;
@@ -27825,7 +28130,7 @@ async function disconnectGoogleCalendar() {
   } catch (e) { toast(e.message, 'error'); }
 }
 async function sendEmailTest(btn) {
-  if (!me.email) { goProfileField('profile-f-email'); return; }
+  if (!me.email) { openEmailLinkModal(); return; }
   if (btn) btn.disabled = true;
   try {
     await api('/me/email/test', 'POST');
@@ -27834,13 +28139,6 @@ async function sendEmailTest(btn) {
   finally { if (btn) btn.disabled = false; }
 }
 async function saveProfile() {
-  const email = ($('profile-f-email').value || '').trim();
-  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    _setFieldError('profile-f-email', 'Confira o e-mail. Ele precisa ter o formato nome@empresa.com.');
-    $('profile-f-email').focus();
-    return;
-  }
-  _setFieldError('profile-f-email', '');
   const btn = $('profile-account-save');
   if (btn) btn.disabled = true;
   try {
@@ -27848,7 +28146,6 @@ async function saveProfile() {
       name: $('profile-f-name').value,
       role: $('profile-f-role').value,
       username: $('profile-f-username').value,
-      email: email || null,
       phone: $('profile-f-phone').value,
       discord: $('profile-f-discord').value,
     });
@@ -27856,8 +28153,7 @@ async function saveProfile() {
     renderSidebarUser(); renderProfile();
     await refreshData();
   } catch (e) {
-    if (/e-?mail/i.test(e.message)) _setFieldError('profile-f-email', e.message);
-    else toast(e.message, 'error');
+    toast(e.message, 'error');
     profileAccountDirty();
   }
 }
@@ -27976,8 +28272,8 @@ async function renderProfileNotifications() {
     <div class="profile-channel-actions">
       ${!smtp ? chip('muted', 'Indisponível')
         : hasEmail ? `<button class="btn btn-ghost btn-sm" onclick="sendEmailTest(this)">Enviar teste</button>
-                      <button class="btn btn-ghost btn-sm" onclick="goProfileField('profile-f-email')">Alterar</button>`
-        : `<button class="btn btn-confirm btn-sm" onclick="goProfileField('profile-f-email')">Adicionar e-mail</button>`}
+                      <button class="btn btn-ghost btn-sm" onclick="openEmailLinkModal('change')">Alterar</button>`
+        : `<button class="btn btn-confirm btn-sm" onclick="openEmailLinkModal()">Adicionar e-mail</button>`}
     </div>
   </div>`;
   const dcRow = !dc ? '' : `<div class="profile-channel">
