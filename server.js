@@ -5316,7 +5316,7 @@ app.post('/api/users/:id/2fa/reset', requireAuth, adminOnly, (req, res) => {
    renova o prazo. Aceitar confirma o e-mail. O convite de DONO só sai do
    console (organização nova aprovada na lista de espera). */
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const INVITE_KINDS = { owner: 'Dono da organização', admin: 'Administrador', mod: 'Moderador', equipe: 'Equipe', free: 'Freelancer' };
+const INVITE_KINDS = { owner: 'Dono da organização', admin: 'Administrador', mod: 'Moderador', equipe: 'Membro', free: 'Freelancer' };
 const _invitePublicAttempts = new Map();
 const rateLimitInvitePublic = makeRateLimit(_invitePublicAttempts, 20, 'tentativas');
 const _inviteSends = new Map();
@@ -5354,7 +5354,7 @@ function publicInvite(inv) {
     status: inviteStatus(inv)
   };
 }
-/* Valida os campos do convite. Moderador só convida Equipe/Freelancer pros
+/* Valida os campos do convite. Moderador só convida Membro/Freelancer pros
    equipes dele. */
 function inviteFieldsFrom(body, inviter) {
   const b = body || {};
@@ -5363,7 +5363,7 @@ function inviteFieldsFrom(body, inviter) {
   const kind = ['admin', 'mod', 'equipe', 'free'].includes(b.kind) ? b.kind : 'equipe';
   let workspaces = Array.isArray(b.workspaces) ? [...new Set(b.workspaces)].filter(id => db.workspaces.some(w => w.id === id)) : [];
   if (inviter && !inviter.isAdmin) {
-    if (kind !== 'equipe' && kind !== 'free') return { error: 'Moderadores convidam só como Equipe ou Freelancer.' };
+    if (kind !== 'equipe' && kind !== 'free') return { error: 'Moderadores convidam só como Membro ou Freelancer.' };
     const mine = new Set(inviter.workspaces || []);
     if (workspaces.some(id => !mine.has(id))) return { error: 'Você só pode liberar equipes em que você está.' };
   }

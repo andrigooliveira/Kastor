@@ -416,7 +416,7 @@ ${button(baseUrl, 'Abrir o reWork')}`;
 }
 
 /* Convite pra entrar no reWork. `inviter` = quem convidou; `access` = rótulo
-   do nível (Equipe, Moderador…); `squads` = nomes das equipes liberadas. */
+   do nível (Membro, Moderador…); `squads` = nomes das equipes liberadas. */
 function invite({ name, inviter, org, access, squads, link, expiresAt, baseUrl, isOwner }) {
   const who = inviter || 'A equipe';
   if (isOwner) return ownerInvite({ name, org, link, expiresAt, baseUrl });
@@ -585,7 +585,7 @@ function previewSamples(baseUrl, me) {
     { key: 'email_confirm', label: 'Confirmar e-mail', build: () => emailConfirm({ name, email: 'andrigo@exemplo.com', link: `${url}/confirmar-email/exemplo-de-token-0000`, baseUrl: url }) },
     { key: 'email_change', label: 'Confirmar e-mail novo (troca)', build: () => emailConfirm({ name, email: 'novo@exemplo.com', link: `${url}/confirmar-email/exemplo-de-token-0000`, baseUrl: url, isChange: true }) },
     { key: 'email_change_notice', label: 'Aviso de troca de e-mail (endereço antigo)', build: () => emailChangeNotice({ name, newEmail: 'novo@exemplo.com', baseUrl: url }) },
-    { key: 'invite', label: 'Convite para a equipe', build: () => invite({ name: 'Carla Menezes', inviter: name, access: 'Equipe', squads: ['Imob', 'Performance'], link: `${url}/convite/exemplo-de-token-0000`, expiresAt: new Date(Date.now() + 7 * 864e5).toISOString(), baseUrl: url }) },
+    { key: 'invite', label: 'Convite para a equipe', build: () => invite({ name: 'Carla Menezes', inviter: name, access: 'Membro', squads: ['Imob', 'Performance'], link: `${url}/convite/exemplo-de-token-0000`, expiresAt: new Date(Date.now() + 7 * 864e5).toISOString(), baseUrl: url }) },
     { key: 'access_received', label: 'Lista de espera: pedido recebido', build: () => accessRequestReceived({ name: 'Paula Reis', company: 'Agência Norte', baseUrl: url }) },
     { key: 'access_new', label: 'Lista de espera: aviso ao console', build: () => accessRequestNew({ request: { name: 'Paula Reis', email: 'paula@agencianorte.com', company: 'Agência Norte', teamSize: '6-15', role: 'Diretora de operações', message: 'Hoje controlamos tudo em planilha e queremos organizar as demandas por cliente.' }, consoleUrl: `${url}/console/lista-de-espera`, baseUrl: url }) },
     { key: 'console_invite', label: 'Convite de superadmin', build: () => consoleAdminInvite({ name: 'Vinicius Ricarte', inviter: name, link: `${url}/console/ativar/exemplo-0000`, baseUrl: url }) },

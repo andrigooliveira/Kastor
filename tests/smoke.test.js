@@ -646,7 +646,7 @@ test('Organizações: nada da WSI aparece na Beta (e vice-versa)', async () => {
 });
 
 test('Organizações: conta existente entra numa segunda organização e troca entre elas', async () => {
-  // A dona da Beta convida o admin da WSI como Equipe
+  // A dona da Beta convida o admin da WSI como Membro
   const betaBoot = (await req('/api/bootstrap', { headers: { Cookie: betaCookie } })).body;
   const inv = await call('POST', '/api/invites', betaCookie, { email: 'admin@exemplo.com', kind: 'equipe', workspaces: [betaBoot.workspaces[0].id] });
   assert.equal(inv.status, 201, JSON.stringify(inv.body));
@@ -659,9 +659,9 @@ test('Organizações: conta existente entra numa segunda organização e troca e
   const cookie = (j.headers.get('set-cookie') || '').split(';')[0];
   let me = (await req('/api/me', { headers: { Cookie: cookie } })).body;
   assert.equal(me.org.name, 'Beta', 'entra direto na organização do convite');
-  assert.equal(me.isAdmin, false, 'na Beta é Equipe');
+  assert.equal(me.isAdmin, false, 'na Beta é Membro');
   assert.equal(me.orgs.length, 2);
-  // Equipe não convida nem exclui demanda dos outros
+  // Membro não convida nem exclui demanda dos outros
   assert.equal((await call('POST', '/api/invites', cookie, { email: 'x@y.com', kind: 'equipe', workspaces: [betaBoot.workspaces[0].id] })).status, 403);
   // Troca pra WSI: volta a ser dono e vê a demanda secreta
   const sw = await call('POST', '/api/orgs/switch', cookie, { orgId: me.orgs.find(o => o.name === 'WSI').id });
@@ -707,7 +707,7 @@ test('Permissões: equipe só exclui o que criou; moderador exclui do squad', as
   const mine = await call('POST', '/api/demands', eq, { name: 'Minha demanda', projectId: boot.projects[0].id, flowId: boot.flows[0].id });
   assert.equal(mine.status, 201, JSON.stringify(mine.body));
   assert.equal((await call('DELETE', '/api/demands/' + mine.body.id, eq)).status, 200, 'exclui a que criou');
-  // Moderador convida só Equipe/Freelancer nos squads dele
+  // Moderador convida só Membro/Freelancer nas equipes dele
   assert.equal((await call('POST', '/api/invites', mod, { email: 'novo.adm@exemplo.com', kind: 'admin' })).status, 400);
   assert.equal((await call('POST', '/api/invites', mod, { email: 'novo.eq@exemplo.com', kind: 'equipe', workspaces: [ws] })).status, 201);
   assert.equal((await call('DELETE', '/api/demands/' + wsiDemandId, mod)).status, 200, 'moderador exclui do squad');

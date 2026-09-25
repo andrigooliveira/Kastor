@@ -2405,7 +2405,7 @@ function _godmodeRenderList() {
   el.innerHTML = filtered.map(u => {
     const activeCls = u.id === _godmodeSelectedId ? ' is-active' : '';
     const dotCls = u.online ? 'gm-dot gm-dot--online' : 'gm-dot gm-dot--offline';
-    const rolePart = u.isAdmin ? 'Admin' : (u.isModerator ? 'Moderador' : (u.isFreelancer ? 'Freelancer' : (u.role || 'Equipe')));
+    const rolePart = u.isAdmin ? 'Admin' : (u.isModerator ? 'Moderador' : (u.isFreelancer ? 'Freelancer' : (u.role || 'Membro')));
     const viewing = u.viewing
       ? `<div class="gm-user-view">olhando <strong>${esc(u.viewing.demandName)}</strong></div>`
       : (u.online ? '<div class="gm-user-view gm-user-view--muted">online, sem demanda aberta</div>' : `<div class="gm-user-view gm-user-view--muted">visto ${u.lastSeen ? _gmTimeAgo(u.lastSeen) : 'nunca'}</div>`);
@@ -2461,7 +2461,7 @@ function _godmodeRenderDetail(d) {
   const u = d.user;
   const p = d.presence;
   const s = d.stats;
-  const rolePart = u.isAdmin ? 'Admin' : (u.isModerator ? 'Moderador' : (u.isFreelancer ? 'Freelancer' : (u.role || 'Equipe')));
+  const rolePart = u.isAdmin ? 'Admin' : (u.isModerator ? 'Moderador' : (u.isFreelancer ? 'Freelancer' : (u.role || 'Membro')));
   const contactRow = (label, value, href) => value
     ? `<div class="gm-contact-row"><span class="gm-contact-label">${esc(label)}</span>${href ? `<a class="gm-contact-value" href="${esc(href)}">${esc(value)}</a>` : `<span class="gm-contact-value">${esc(value)}</span>`}</div>`
     : '';
@@ -3184,7 +3184,7 @@ function openUserMiniCard(userId, anchorEl) {
   // Header: nome, depois "Cargo · Área" (cargo=position, área=role). Só
   // mostra o separador se ambos existirem — se um faltar, exibe só o outro.
   const position = (u.position || '').trim();
-  const role = (u.role || (u.isAdmin ? 'Administrador' : 'Equipe') || '').trim();
+  const role = (u.role || (u.isAdmin ? 'Administrador' : 'Membro') || '').trim();
   const metaParts = [position, role].filter(Boolean);
   const metaLine = metaParts.length
     ? metaParts.map(esc).join(' <span class="user-mini-card-sep">·</span> ')
@@ -5592,7 +5592,7 @@ async function refreshData() {
    organização atual, atalhos de gestão e, se a pessoa estiver em mais de uma,
    as outras. Trocar recarrega o app na organização escolhida (a sessão guarda
    a organização ativa). As configurações ficam na página /organizacao. */
-const ORG_ROLE_LABEL = { owner: 'Dono', admin: 'Administrador', mod: 'Moderador', equipe: 'Equipe', free: 'Freelancer' };
+const ORG_ROLE_LABEL = { owner: 'Dono', admin: 'Administrador', mod: 'Moderador', equipe: 'Membro', free: 'Freelancer' };
 /* Jornada da organização: cada dia da semana (0=dom … 6=sáb) com as horas
    de trabalho e, na jornada personalizada, o término (o Fechamento do dia
    aparece 1h antes). Usada na meta de horas do Início, na capacidade em
@@ -6562,14 +6562,14 @@ function renderOrgPage() {
           ${stat('Dono', count('owner'))}
           ${stat('Administradores', count('admin'))}
           ${stat('Moderadores', count('mod'))}
-          ${stat('Equipe', count('equipe'))}
+          ${stat('Membros', count('equipe'))}
           ${stat('Freelancers', count('free'))}
           ${stat('Desativados', all.length - active.length, 'muted')}
         </div>
         <div class="orgp-setting">
           <div class="orgp-setting-text">
             <div class="orgp-setting-title">Moderadores podem convidar pessoas</div>
-            <div class="orgp-setting-hint">Só como Equipe ou Freelancer, e só nas equipes deles. Desligado, apenas administradores convidam.</div>
+            <div class="orgp-setting-hint">Só como Membro ou Freelancer, e só nas equipes deles. Desligado, apenas administradores convidam.</div>
           </div>
           <label class="orgp-switch${admin ? '' : ' is-readonly'}">
             <input type="checkbox" ${st.modsCanInvite !== false ? 'checked' : ''} ${admin ? '' : 'disabled'} onchange="saveOrgSetting({ modsCanInvite: this.checked })">
@@ -23100,7 +23100,7 @@ function renderUsers() {
     else if (userSortKey === 'role')     { va = norm(a.role || ''); vb = norm(b.role || ''); }
     else if (userSortKey === 'position') { va = norm(a.position || ''); vb = norm(b.position || ''); }
     else if (userSortKey === 'ws')       { va = (a.workspaces || []).length; vb = (b.workspaces || []).length; }
-    else if (userSortKey === 'admin')    { const rank = u => u.isAdmin ? 0 : (u.isModerator ? 1 : (u.isFreelancer ? 3 : 2)); va = rank(a); vb = rank(b); }
+    else if (userSortKey === 'admin')    { const rank = u => u.isOwner ? 0 : u.isAdmin ? 1 : (u.isModerator ? 2 : (u.isFreelancer ? 4 : 3)); va = rank(a); vb = rank(b); }
     else if (userSortKey === 'active')   { va = a.active !== false ? 0 : 1; vb = b.active !== false ? 0 : 1; }
     else { va = norm(a.name); vb = norm(b.name); }
     return (va < vb ? -1 : va > vb ? 1 : 0) * userSortDir;
@@ -23162,7 +23162,7 @@ function renderUsers() {
           ? '<span class="pill pill-moderator">Moderador</span>'
           : (u.isFreelancer
             ? '<span class="pill pill-freelancer">Freelancer</span>'
-            : '<span class="pill pill-muted">Equipe</span>'))}</td>
+            : '<span class="pill pill-muted">Membro</span>'))}</td>
       <td>${u.active !== false ? '<span class="pill pill-success">Ativo</span>' : '<span class="pill pill-muted">Desativado</span>'}</td>
       <td class="us-col-kebab">${kebab}</td>
     </tr>`;
@@ -28681,7 +28681,7 @@ function openUserModal(id, opts) {
     ? (u.emailVerified ? 'Confirmado pela pessoa. Só ela troca, no perfil, com a senha e um link de confirmação.' : 'Ainda não confirmado: a pessoa vê um aviso no Início para confirmar.')
     : 'Se preencher, a pessoa confirma pelo aviso no Início antes de valer.';
   $('u-discord-id').value = u?.discordId || '';
-  // Radio group: admin/mod/equipe/free — Equipe é o default (nenhum bit especial).
+  // Radio group: admin/mod/equipe/free — Membro (equipe) é o default (nenhum bit especial).
   const kind = u?.isAdmin ? 'admin'
     : u?.isModerator ? 'mod'
     : u?.isFreelancer ? 'free'
@@ -28696,7 +28696,7 @@ function openUserModal(id, opts) {
   $('u-opt-mod').hidden = modInvite;
   $('u-perm-hint').textContent = isOwnerRow
     ? 'Dono da organização: para mudar, transfira a organização.'
-    : modInvite ? 'Como moderador, você convida como Equipe ou Freelancer, nas suas equipes.' : 'Equipes liberadas + nível de acesso.';
+    : modInvite ? 'Como moderador, você convida como Membro ou Freelancer, nas suas equipes.' : 'Equipes liberadas + nível de acesso.';
   const selected = u ? (u.workspaces || []) : (activeWs && (!modInvite || (me.workspaces || []).includes(activeWs)) ? [activeWs] : []);
   $('u-workspaces').innerHTML = [...workspaces].filter(w => !modInvite || (me.workspaces || []).includes(w.id))
     .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt-BR', { sensitivity: 'base' }))
@@ -28783,7 +28783,7 @@ function _invitePermPill(kind) {
   if (kind === 'admin') return '<span class="pill pill-admin">Admin</span>';
   if (kind === 'mod') return '<span class="pill pill-moderator">Moderador</span>';
   if (kind === 'free') return '<span class="pill pill-freelancer">Freelancer</span>';
-  return '<span class="pill pill-muted">Equipe</span>';
+  return '<span class="pill pill-muted">Membro</span>';
 }
 /* Lugares do plano no topo do Quadro da equipe: ativos + convites pendentes
    contra o limite de pessoas. Só pra quem convida (admin/moderador). */

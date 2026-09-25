@@ -704,7 +704,7 @@
     paint();
   }
 
-  const ACCESS = { owner: ['Dono', 'c-pill--accent'], admin: ['Admin', 'c-pill--accent'], mod: ['Moderador', 'c-pill--info'], equipe: ['Equipe', ''], free: ['Freelancer', 'c-pill--warn'] };
+  const ACCESS = { owner: ['Dono', 'c-pill--accent'], admin: ['Admin', 'c-pill--accent'], mod: ['Moderador', 'c-pill--info'], equipe: ['Membro', ''], free: ['Freelancer', 'c-pill--warn'] };
   async function pageOrg(id) {
     const main = shell('orgs', pageHead('Organização', '', '', { href: '/console/organizacoes', label: 'Organizações' }) + `<div class="c-kpis">${[1, 2, 3, 4, 5].map(() => `<div class="c-kpi">${skel(40)}</div>`).join('')}</div>`);
     let d;
