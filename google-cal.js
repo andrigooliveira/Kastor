@@ -31,10 +31,10 @@ function pruneStates() {
   }
 }
 
-function makeState(userId) {
+function makeState(userId, ret) {
   pruneStates();
   const token = crypto.randomBytes(16).toString('hex');
-  stateStore.set(token, { userId, createdAt: Date.now() });
+  stateStore.set(token, { userId, ret: ret || null, createdAt: Date.now() });
   return token;
 }
 

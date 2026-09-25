@@ -336,6 +336,13 @@ test('Convite: criar, abrir, aceitar e entrar', async () => {
   assert.deepEqual(me.body.workspaces, [ws.body.id]);
   assert.equal(me.body.isAdmin, false);
   assert.ok(me.body.emailVerifiedAt);
+  // Conta nova por convite abre os primeiros passos até concluir/pular
+  assert.equal(me.body.onboardingPending, true);
+  assert.equal(me.body.onboardingPendingAt, undefined);
+  const obDone = await req('/api/me/onboarding/done', { method: 'POST', headers: { Cookie: cookie } });
+  assert.equal(obDone.status, 200);
+  assert.equal(obDone.body.user.onboardingPending, false);
+  assert.equal((await req('/api/me', { headers: { Cookie: cookie } })).body.onboardingPending, false);
 
   // Link usado não serve de novo; o convite sai da lista
   const used = await req('/api/invites/public/' + token);
@@ -1065,6 +1072,96 @@ test('Organização excluída: some na hora, fica 30 dias, restaura e apaga de v
 });
 
 // Mantido por último pra não interferir nos testes acima (5 falhas zeram em sucesso).
+test('Entrar com Google e com Discord: vincula pelo e-mail confirmado e não pede o código', async () => {
+  const gl = require('../google-login');
+  const dc = require('../discord-oauth');
+  const ENV = {
+    GOOGLE_LOGIN_CLIENT_ID: 'gid.apps.googleusercontent.com', GOOGLE_LOGIN_CLIENT_SECRET: 'gsecret',
+    GOOGLE_LOGIN_REDIRECT_URI: 'http://127.0.0.1/api/auth/google/callback',
+    DISCORD_OAUTH_CLIENT_ID: '1', DISCORD_OAUTH_CLIENT_SECRET: 'dsecret',
+    DISCORD_OAUTH_REDIRECT_URI: 'http://127.0.0.1/api/auth/discord/callback'
+  };
+  const saved = Object.fromEntries(Object.keys(ENV).map(k => [k, process.env[k]]));
+  const origG = gl.exchangeCodeForProfile, origD = dc.exchangeCodeForProfile;
+  const gProfiles = {
+    ninguem: { sub: 'g-0', email: 'ninguem@exemplo.com', emailVerified: true },
+    naoverif: { sub: 'g-1', email: 'nova.pessoa@exemplo.com', emailVerified: false },
+    nova: { sub: 'g-2', email: 'nova.pessoa@exemplo.com', emailVerified: true },
+    adminNova: { sub: 'g-2', email: 'nova.pessoa@exemplo.com', emailVerified: true },
+    admin: { sub: 'g-9', email: 'admin.pessoal@gmail.com', emailVerified: true }
+  };
+  gl.exchangeCodeForProfile = async (code) => gProfiles[code];
+  dc.exchangeCodeForProfile = async () => ({ id: '424242424242424242', username: 'nova' });
+  Object.assign(process.env, ENV);
+  const outbox = [];
+  const manual = (p, cookie) => fetch(baseUrl + p, { redirect: 'manual', headers: cookie ? { Cookie: cookie } : {} });
+  const stateFrom = async (p, cookie) => {
+    const r = await manual(p, cookie);
+    assert.equal(r.status, 302);
+    return new URL(r.headers.get('location')).searchParams.get('state');
+  };
+  const callback = async (kind, code, state) => {
+    const r = await manual(`/api/auth/${kind}/callback?code=${code}&state=${state}`);
+    return { location: r.headers.get('location'), cookie: (r.headers.get('set-cookie') || '').split(';')[0] };
+  };
+  try {
+    assert.equal((await req('/api/auth/google/status')).body.configured, true);
+    // Discord vinculado ainda sem envio de e-mail (senha pura), pra entrar depois
+    const nova = await loginCookie('nova.pessoa', 'senha-forte-1');
+    let st = await stateFrom('/api/auth/discord/link/start', nova);
+    assert.equal((await callback('discord', 'x', st)).location, '/profile?discord=linked');
+    // Com e-mail ativo a conta tem o código obrigatório no login por senha...
+    app._test.setMailTransport({ sendMail: async (m) => { outbox.push(m); } });
+    const pw = await postJson('/api/login', { username: 'nova.pessoa', password: 'senha-forte-1' });
+    assert.ok(pw.body.twoFactor, 'senha pede o código');
+    // ...mas pelo Discord entra direto
+    st = await stateFrom('/api/auth/discord/start');
+    let cb = await callback('discord', 'x', st);
+    assert.equal(cb.location, '/?discord=logged-in');
+    assert.ok(cb.cookie, 'Discord abre a sessão sem código');
+
+    // Google: e-mail que não é de ninguém / não verificado no Google → sem conta
+    const start = await manual('/api/auth/google/start');
+    assert.match(start.headers.get('location'), /^https:\/\/accounts\.google\.com\//);
+    const s1 = new URL(start.headers.get('location')).searchParams.get('state');
+    assert.equal((await callback('google', 'ninguem', s1)).location, '/?google-login=error&reason=no-account');
+    st = await stateFrom('/api/auth/google/start');
+    assert.equal((await callback('google', 'naoverif', st)).location, '/?google-login=error&reason=no-account');
+    // E-mail verificado igual ao confirmado da conta: vincula e entra, sem código
+    outbox.length = 0;
+    st = await stateFrom('/api/auth/google/start');
+    cb = await callback('google', 'nova', st);
+    assert.equal(cb.location, '/?google-login=logged-in');
+    assert.ok(cb.cookie);
+    assert.equal(outbox.length, 0, 'nenhum código mandado');
+    let me = (await req('/api/me', { headers: { Cookie: cb.cookie } })).body;
+    assert.equal(me.username, 'nova.pessoa');
+    assert.equal(me.googleLogin.email, 'nova.pessoa@exemplo.com');
+    assert.ok(!JSON.stringify(me).includes('g-2'), 'o sub não sai do servidor');
+    // State inválido e cancelamento
+    assert.equal((await callback('google', 'nova', 'nao-existe')).location, '/?google-login=error&reason=invalid-state');
+    assert.equal((await manual('/api/auth/google/callback?error=access_denied')).headers.get('location'), '/?google-login=error&reason=cancelled');
+
+    // Vincular pelo Perfil: conta Google de outra pessoa é recusada
+    app._test.setMailTransport(undefined);
+    const admin = await loginCookie('admin', 'admin123');
+    st = await stateFrom('/api/auth/google/link/start', admin);
+    assert.equal((await callback('google', 'adminNova', st)).location, '/profile?aba=security&google-login=error&reason=already-linked');
+    st = await stateFrom('/api/auth/google/link/start', admin);
+    assert.equal((await callback('google', 'admin', st)).location, '/profile?aba=security&google-login=linked');
+    me = (await req('/api/me', { headers: { Cookie: admin } })).body;
+    assert.equal(me.googleLogin.email, 'admin.pessoal@gmail.com');
+    const un = await call('POST', '/api/me/google-login/unlink', admin, {});
+    assert.equal(un.status, 200);
+    assert.equal(un.body.user.googleLogin, null);
+  } finally {
+    app._test.setMailTransport(undefined);
+    gl.exchangeCodeForProfile = origG;
+    dc.exchangeCodeForProfile = origD;
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+});
+
 test('Rate limit: 6ª tentativa errada seguida devolve 429', async () => {
   for (let i = 0; i < 5; i++) {
     await postJson('/api/login', { username: 'admin', password: 'errada-' + i });

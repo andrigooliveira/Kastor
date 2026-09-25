@@ -562,7 +562,7 @@
   const TEAM = { '1-5': '1 a 5 pessoas', '6-15': '6 a 15 pessoas', '16-50': '16 a 50 pessoas', '51-200': '51 a 200 pessoas', '200+': 'Mais de 200' };
   const SOURCE = { indicacao: 'Indicação', google: 'Google', instagram: 'Instagram', linkedin: 'LinkedIn', evento: 'Evento', outro: 'Outro' };
   const statusPill = (s) => `<span class="c-pill ${(STATUS[s] || {}).cls || ''}">${esc((STATUS[s] || { label: s }).label)}</span>`;
-  const INTEGRATIONS = { smtp: 'E-mail (SMTP)', discordBot: 'Bot do Discord', discordLogin: 'Login com Discord', google: 'Google Agenda' };
+  const INTEGRATIONS = { smtp: 'E-mail (SMTP)', discordBot: 'Bot do Discord', discordLogin: 'Login com Discord', googleLogin: 'Login com Google', google: 'Google Agenda' };
 
   async function pageOverview() {
     const main = shell('overview', pageHead('Visão geral', 'Tudo o que acontece na plataforma, em um lugar.') +

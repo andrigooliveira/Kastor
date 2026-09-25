@@ -172,6 +172,7 @@
   function showLoginScreen() {
     const ls = $('login-screen');
     if (ls) ls.classList.add('is-visible');
+    checkGoogleLoginAvailable();
     hideBootLoading();
   }
 
@@ -403,6 +404,46 @@
   // Discord OAuth — redirect direto, sem depender do app.js.
   function loginWithDiscord() { window.location.href = '/api/auth/discord/start'; }
 
+  // ── Entrar com Google ─────────────────────────────────────────────────
+  // O botão só aparece com o login do Google configurado no servidor.
+  function loginWithGoogle() { window.location.href = '/api/auth/google/start'; }
+  let _googleLoginChecked = false;
+  function checkGoogleLoginAvailable() {
+    if (_googleLoginChecked) return;
+    _googleLoginChecked = true;
+    fetch('/api/auth/google/status', { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { const b = $('login-google-btn'); if (b && d && d.configured) b.hidden = false; })
+      .catch(() => {});
+  }
+  const GOOGLE_LOGIN_ERRORS = {
+    'not-configured':  'O login com Google não está habilitado neste servidor.',
+    'start-failed':    'Não foi possível abrir o login do Google. Tente de novo.',
+    'cancelled':       'Login com Google cancelado.',
+    'google-error':    'O Google não concluiu o login. Tente de novo.',
+    'missing-params':  'O Google não devolveu os dados esperados. Tente de novo.',
+    'invalid-state':   'A tentativa expirou (mais de 10 min). Tente de novo.',
+    'exchange-failed': 'Não deu para confirmar sua conta Google. Tente de novo em alguns segundos.',
+    'no-account':      'Nenhuma conta reWork usa esse e-mail do Google. Entre com usuário e senha e vincule o Google em Perfil › Segurança. Se recebeu um convite, use o link do e-mail.',
+    'ambiguous':       'Esse e-mail está em mais de uma conta reWork. Entre com usuário e senha e vincule o Google em Perfil › Segurança.',
+    'org-closed':      'A organização da sua conta não está mais disponível no reWork. Fale com o dono da organização.',
+    'no-access':       'Seu acesso está desativado. Fale com a coordenação da sua equipe.',
+    'already-linked':  'Essa conta Google já está vinculada a outra conta reWork.',
+    'user-not-found':  'Usuário não encontrado. Entre de novo e tente vincular.'
+  };
+  function googleLoginErrorMessage(reason) {
+    return GOOGLE_LOGIN_ERRORS[reason] || 'Não foi possível concluir o login com Google.';
+  }
+  window.googleLoginErrorMessage = googleLoginErrorMessage;
+  // Erro do "Entrar com Google" na tela de login (deslogado): mostra e limpa a URL.
+  function showGoogleLoginErrorOnLogin() {
+    const q = new URLSearchParams(location.search);
+    if (q.get('google-login') !== 'error') return;
+    const el = $('login-error');
+    if (el) { el.textContent = googleLoginErrorMessage(q.get('reason') || ''); el.classList.remove('is-ok'); }
+    history.replaceState(null, '', location.pathname);
+  }
+
   // Processa retorno do callback OAuth do Discord — ?discord=... na URL.
   // Se veio sucesso (logged-in/linked), deixa o app processar; se veio erro,
   // mostra na tela de login.
@@ -437,6 +478,7 @@
   window.doResetPassword = doResetPassword;
   window.showForgotPassword = showForgotPassword;
   window.loginWithDiscord = loginWithDiscord;
+  window.loginWithGoogle = loginWithGoogle;
   window.doAcceptInvite = doAcceptInvite;
   window.toggleInvitePassword = toggleInvitePassword;
 
@@ -670,6 +712,7 @@
     } catch {
       // Deslogado — revela a tela de login e some com o overlay.
       showLoginScreen();
+      showGoogleLoginErrorOnLogin();
       if (emailNotice) {
         const le = $('login-error');
         if (le) { le.textContent = emailNotice.text; le.classList.toggle('is-ok', !!emailNotice.ok); }

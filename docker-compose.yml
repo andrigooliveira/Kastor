@@ -111,6 +111,13 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
 
+      # ── Entrar com Google (opcional, projeto/cliente OAuth próprio) ──
+      # Redirect URI = URL pública HTTPS + /api/auth/google/callback,
+      # cadastrado no cliente OAuth do Google Cloud. Sem as 3, o botão some.
+      GOOGLE_LOGIN_CLIENT_ID: ${GOOGLE_LOGIN_CLIENT_ID:-}
+      GOOGLE_LOGIN_CLIENT_SECRET: ${GOOGLE_LOGIN_CLIENT_SECRET:-}
+      GOOGLE_LOGIN_REDIRECT_URI: ${GOOGLE_LOGIN_REDIRECT_URI:-}
+
       # ── Marketing (webhook n8n) ─────────────────────────
       # Token estático que o n8n envia em X-Marketing-Token pra POST em
       # /api/marketing/ingest. Gere com:  openssl rand -hex 24

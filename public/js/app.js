@@ -4086,6 +4086,7 @@ async function boot() {
   // Processa o retorno do callback OAuth do Discord — ?discord=... na URL.
   // Feito ANTES do /me pra que o toast de erro apareça mesmo na tela de login.
   handleDiscordCallbackQuery();
+  handleGoogleLoginQuery();
   // Se boot.js já pré-carregou o `me` (fluxo cold-load ou pós-login), usa
   // direto. Evita segundo /api/me em cada carregamento. Fallback pro fetch
   // preserva testes / carregamentos alternativos onde boot.js não rodou.
@@ -4150,6 +4151,22 @@ function handleDiscordCallbackQuery() {
         if (el) el.textContent = msg;
       }
     }, 200);
+  }
+}
+
+/* Retorno do "Entrar com Google" já logado (?google-login=logged-in|linked|
+   error): avisa e limpa a URL. Deslogado, o boot.js mostra o erro no login. */
+function handleGoogleLoginQuery() {
+  const u = new URL(location.href);
+  const st = u.searchParams.get('google-login');
+  if (!st) return;
+  const reason = u.searchParams.get('reason') || '';
+  u.searchParams.delete('google-login'); u.searchParams.delete('reason');
+  history.replaceState(null, '', u.pathname + u.search + u.hash);
+  if (st === 'linked') setTimeout(() => { try { toast('Conta Google vinculada. Já dá para entrar com ela.'); } catch {} }, 400);
+  else if (st === 'error') {
+    const msg = typeof window.googleLoginErrorMessage === 'function' ? window.googleLoginErrorMessage(reason) : 'Não foi possível concluir com o Google.';
+    setTimeout(() => { try { toast(msg, reason === 'cancelled' ? 'warn' : 'error'); } catch {} }, 400);
   }
 }
 
@@ -4269,6 +4286,8 @@ async function enterApp() {
   requestAnimationFrame(() => requestAnimationFrame(() => {
     if (typeof window.hideBootLoading === 'function') window.hideBootLoading();
     handleEmailLinkOnEnter();
+    // Conta nova por convite: primeiros passos antes do tour (ele segue ao concluir).
+    if (me && me.onboardingPending) { openOnboarding(); return; }
     // Tour de boas-vindas — normalmente só no primeiro login (hasSeenTour !== true).
     // `?tour=1` na URL força reabrir (pra QA e pra o botão "Refazer tour").
     const forceTour = new URLSearchParams(location.search).get('tour') === '1';
@@ -4283,6 +4302,182 @@ async function enterApp() {
     }
   }));
 }
+
+/* ─── PRIMEIROS PASSOS ───────────────────────────────────────────────
+   Conta nova vinda de convite (me.onboardingPending): antes do tour, uma tela
+   com foto (grande, em destaque), telefone e botões de vincular Discord e
+   Google Agenda. Tudo opcional; concluir ou pular fecha de vez
+   (POST /me/onboarding/done). Discord e Google saem pro OAuth com
+   ?ret=onboarding e voltam pro / — a tela reabre enquanto a pendência
+   existir, já com o vínculo feito. */
+let _ob = null; // { google, discordOAuth, loading, busy }
+function _obPhoneDigits(v) { return String(v || '').replace(/\D/g, ''); }
+// Máscara BR: (11) 98765-4321. Começando com + fica livre (número de fora).
+function _obFormatPhone(v) {
+  v = String(v || '');
+  if (v.trim().startsWith('+')) return '+' + v.replace(/[^\d ]/g, '').replace(/^\s+/, '').slice(0, 20);
+  const d = _obPhoneDigits(v).slice(0, 11);
+  if (d.length <= 2) return d ? '(' + d : '';
+  if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+}
+const _obPhoneOk = (v) => _obPhoneDigits(v).length >= 10;
+const OB_PHONE_HINT = 'Com DDD. Fora do Brasil, comece com +';
+
+async function openOnboarding() {
+  const scr = $('onboarding-screen');
+  if (!scr || !me) return;
+  _ob = { google: null, discordOAuth: false, loading: true, busy: false };
+  const first = String(me.name || me.username || '').trim().split(/\s+/)[0];
+  $('ob-title').textContent = first ? `Boas-vindas, ${first}!` : 'Boas-vindas!';
+  $('ob-kicker').textContent = me.org && me.org.name ? `Primeiros passos · ${me.org.name}` : 'Primeiros passos';
+  $('ob-error').textContent = '';
+  const phone = $('ob-phone');
+  phone.value = _obFormatPhone(me.phone || '');
+  phone.classList.remove('is-invalid');
+  const hint = $('ob-phone-hint');
+  hint.textContent = OB_PHONE_HINT; hint.classList.remove('is-bad');
+  scr.classList.add('is-visible');
+  document.body.style.overflow = 'hidden';
+  _obRenderPhoto();
+  _obRenderConnects();
+  paintIcons(scr);
+  // Volta do OAuth do Google (?google=connected|error): avisa e limpa a URL.
+  const u = new URL(location.href);
+  const g = u.searchParams.get('google');
+  if (g) {
+    if (g === 'connected') toast('Google Agenda conectada!');
+    else toast('Não deu para conectar a Google Agenda (' + (u.searchParams.get('reason') || 'erro') + '). Tente de novo.', 'error');
+    u.searchParams.delete('google'); u.searchParams.delete('reason');
+    history.replaceState(null, '', u.pathname + u.search + u.hash);
+  }
+  const [gs, ds] = await Promise.all([
+    api('/google/status').catch(() => null),
+    fetch('/api/auth/discord/status', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : null).catch(() => null)
+  ]);
+  if (!_ob) return;
+  _ob.google = gs;
+  _ob.discordOAuth = !!(ds && ds.configured);
+  _ob.loading = false;
+  _obRenderConnects();
+}
+
+function _obRenderPhoto() {
+  const img = $('ob-photo-img');
+  const has = !!me.avatar;
+  $('ob-photo').classList.toggle('is-empty', !has);
+  if (has) {
+    img.textContent = '';
+    img.style.background = '';
+    img.style.backgroundImage = `url("${me.avatar}")`;
+  } else {
+    img.style.backgroundImage = '';
+    img.style.background = avatarGradient(me.id || me.username || me.name || '?');
+    img.textContent = String(me.name || me.username || '?').trim().charAt(0).toUpperCase();
+  }
+  $('ob-photo-link').textContent = has ? 'Trocar foto' : 'Adicionar foto';
+}
+
+// Botões de vincular. Cada um só aparece com a integração configurada no
+// servidor (ou já vinculada); vinculado vira uma faixa verde.
+function _obRenderConnects() {
+  const box = $('ob-connects');
+  const o = _ob;
+  if (!box || !o) return;
+  if (o.loading) { box.innerHTML = '<div class="ob-connect-skel"></div><div class="ob-connect-skel"></div>'; box.hidden = false; return; }
+  const out = [];
+  const discordImg = '<img src="/discord.svg" alt="" aria-hidden="true">';
+  if (me.discordId) out.push(`<div class="ob-linked">${discordImg}Discord vinculado<i data-lucide="check"></i></div>`);
+  else if (o.discordOAuth) out.push(`<button type="button" class="ob-connect is-discord" data-ob-connect="discord"><img src="/discord.svg" alt="" aria-hidden="true" style="filter:brightness(0) invert(1)">Vincular Discord</button>`);
+  const g = o.google;
+  if (g && g.connected) {
+    const who = g.account && (g.account.email || g.account.name);
+    out.push(`<div class="ob-linked"><i data-lucide="calendar-check"></i>Google Agenda conectada${who ? ` <small>· ${esc(who)}</small>` : ''}</div>`);
+  } else if (g && g.configured) {
+    out.push('<button type="button" class="ob-connect is-google" data-ob-connect="google"><i data-lucide="calendar-days"></i>Conectar Google Agenda</button>');
+  }
+  box.innerHTML = out.join('');
+  box.hidden = !out.length;
+  box.querySelectorAll('[data-ob-connect]').forEach(el => { el.onclick = () => obConnect(el.dataset.obConnect, el); });
+  paintIcons(box);
+}
+
+function obPhoneInput(el) {
+  const atEnd = el.selectionStart === el.value.length;
+  el.value = _obFormatPhone(el.value);
+  if (atEnd) el.selectionStart = el.selectionEnd = el.value.length;
+  el.classList.remove('is-invalid');
+  const hint = $('ob-phone-hint');
+  hint.classList.remove('is-bad');
+  hint.textContent = OB_PHONE_HINT;
+  $('ob-error').textContent = '';
+}
+
+// Salva o telefone digitado (antes de sair pro OAuth e ao concluir).
+async function _obSavePhone({ strict } = {}) {
+  const phone = ($('ob-phone').value || '').trim();
+  if (phone === (me.phone || '')) return;
+  if (phone && !_obPhoneOk(phone)) {
+    if (!strict) return;
+    $('ob-phone').classList.add('is-invalid');
+    const hint = $('ob-phone-hint');
+    hint.textContent = 'Faltam dígitos: inclua o DDD.'; hint.classList.add('is-bad');
+    $('ob-phone').focus();
+    throw new Error('Confira o telefone ou deixe em branco.');
+  }
+  me = await api('/me', 'PUT', { phone: phone || null });
+}
+
+async function obConnect(kind, btn) {
+  if (!_ob || _ob.busy) return;
+  _ob.busy = true;
+  if (btn) btn.disabled = true;
+  try { await _obSavePhone(); } catch {}
+  location.href = kind === 'google' ? '/api/google/auth?ret=onboarding' : '/api/auth/discord/link/start?ret=onboarding';
+}
+
+async function obAvatarPicked(ev) {
+  const file = ev.target.files[0];
+  ev.target.value = '';
+  if (!file || !_ob) return;
+  if (!/^image\//.test(file.type)) { toast('Escolha uma imagem (JPG, PNG…).', 'error'); return; }
+  try {
+    me = await api('/me', 'PUT', { avatar: await _squareAvatarData(file, 320) });
+    renderSidebarUser();
+    _obRenderPhoto();
+  } catch (e) { toast(e.message || 'Não foi possível enviar a foto.', 'error'); }
+}
+
+async function finishOnboarding(skip) {
+  if (!_ob || _ob.busy) return;
+  const btn = $('ob-finish');
+  $('ob-error').textContent = '';
+  _ob.busy = true; btn.disabled = true;
+  try {
+    // Pular não salva telefone incompleto; concluir pede pra corrigir.
+    await _obSavePhone({ strict: !skip });
+    const r = await api('/me/onboarding/done', 'POST');
+    if (r && r.user) me = { ...me, ...r.user };
+  } catch (e) {
+    $('ob-error').textContent = e.message || 'Não foi possível salvar. Tente de novo.';
+    _ob.busy = false; btn.disabled = false;
+    return;
+  }
+  _ob = null;
+  me.onboardingPending = false;
+  $('onboarding-screen').classList.remove('is-visible');
+  document.body.style.overflow = '';
+  btn.disabled = false;
+  renderSidebarUser();
+  // Segue o fluxo normal da primeira entrada: tour (ou novidades).
+  if (me.hasSeenTour !== true) setTimeout(() => { try { startWelcomeTour(); } catch {} }, 400);
+  else setTimeout(() => { try { maybeShowReleaseNotes(); } catch {} }, 600);
+}
+window.openOnboarding = openOnboarding;
+window.finishOnboarding = finishOnboarding;
+window.obAvatarPicked = obAvatarPicked;
+window.obPhoneInput = obPhoneInput;
 
 /* ─── TOUR DE BOAS-VINDAS ─────────────────────────────────────────────
    Overlay que destaca elementos-chave da interface pra novos usuários.
@@ -5613,6 +5808,52 @@ function renderProfile2fa() {
   box.innerHTML = emailRow + appRow;
   paintIcons();
 }
+/* Perfil › Segurança › Entrar com Google. O bloco só aparece com o login
+   do Google configurado no servidor (ou com uma conta já vinculada). */
+let _googleLoginConfigured = null;
+async function renderProfileGoogleLogin() {
+  const block = $('profile-google-login-block'), box = $('profile-google-login');
+  if (!block || !box || !me) return;
+  if (_googleLoginConfigured === null) {
+    try { _googleLoginConfigured = !!(await fetch('/api/auth/google/status', { credentials: 'same-origin' }).then(r => r.json())).configured; }
+    catch { _googleLoginConfigured = false; }
+  }
+  const gl = me.googleLogin;
+  block.hidden = !_googleLoginConfigured && !gl;
+  if (block.hidden) return;
+  const ic = '<span class="tf-opt-ic"><img src="/google.svg" width="18" height="18" alt="" aria-hidden="true"></span>';
+  box.innerHTML = gl
+    ? `<div class="tf-opt is-on">${ic}
+        <div class="tf-opt-info"><div class="tf-opt-title">Conta Google<span class="profile-status-chip profile-status-chip--ok"><i data-lucide="check"></i>Vinculada</span></div>
+          <div class="tf-opt-sub">${gl.email ? `${esc(gl.email)}. ` : ''}Na tela de entrada, use <b>Entrar com Google</b>: entra direto, sem o código da verificação em duas etapas.</div></div>
+        <div class="tf-opt-actions">${_googleLoginConfigured ? '<button class="btn btn-ghost btn-sm" onclick="linkGoogleLogin()">Trocar conta</button>' : ''}<button class="btn btn-ghost btn-sm" onclick="unlinkGoogleLogin()">Desvincular</button></div>
+      </div>`
+    : `<div class="tf-opt">${ic}
+        <div class="tf-opt-info"><div class="tf-opt-title">Conta Google</div>
+          <div class="tf-opt-sub">Entre com um clique pela sua conta Google, sem digitar a senha. Se o e-mail do Google for o mesmo da sua conta, o primeiro login já vincula sozinho.</div></div>
+        <div class="tf-opt-actions"><button class="btn btn-confirm btn-sm" onclick="linkGoogleLogin()">Vincular</button></div>
+      </div>`;
+  paintIcons(box);
+}
+function linkGoogleLogin() { window.location.href = '/api/auth/google/link/start'; }
+async function unlinkGoogleLogin() {
+  const ok = await showConfirm({
+    title: 'Desvincular conta Google',
+    message: 'Você não vai mais conseguir usar o botão "Entrar com Google" até vincular de novo. Continuar?',
+    okLabel: 'Desvincular',
+    danger: true
+  });
+  if (!ok) return;
+  try {
+    const r = await api('/me/google-login/unlink', 'POST');
+    if (r.user) me = { ...me, ...r.user };
+    if (!r.user || !r.user.googleLogin) me.googleLogin = null;
+    toast('Conta Google desvinculada.', 'warn');
+    renderProfileGoogleLogin();
+  } catch (e) { toast(e.message, 'error'); }
+}
+window.linkGoogleLogin = linkGoogleLogin;
+window.unlinkGoogleLogin = unlinkGoogleLogin;
 function close2faModal() {
   // Com códigos de recuperação na tela, só fecha depois de marcar que guardou.
   if (_tf && _tf.step === 'codes' && !_tf.saved) { toast('Guarde os códigos e marque a confirmação antes de fechar.', 'error'); return; }
@@ -28215,6 +28456,7 @@ function renderProfile() {
   $('profile-f-username').value = me.username || '';
   renderProfileEmail();
   renderProfile2fa();
+  renderProfileGoogleLogin();
   $('profile-f-phone').value = me.phone || '';
   $('profile-f-discord').value = me.discord || '';
   $('profile-f-discord-id').value = me.discordId || '';
@@ -29229,28 +29471,34 @@ async function changePassword() {
     toast('Senha trocada');
   } catch (e) { fail(e.message); }
 }
-function handleAvatarUpload(ev) {
+// Recorta a imagem no centro e reduz pra 160×160 (JPEG): foto de perfil.
+function _squareAvatarData(file, size = 160) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onload = e => { img.src = e.target.result; };
+    reader.onerror = () => reject(new Error('Não foi possível ler a imagem.'));
+    img.onerror = () => reject(new Error('Imagem inválida.'));
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = size; canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      const min = Math.min(img.width, img.height);
+      ctx.drawImage(img, (img.width - min) / 2, (img.height - min) / 2, min, min, 0, 0, size, size);
+      resolve(canvas.toDataURL('image/jpeg', 0.85));
+    };
+    reader.readAsDataURL(file);
+  });
+}
+async function handleAvatarUpload(ev) {
   const file = ev.target.files[0];
-  if (!file) return;
-  const img = new Image();
-  const reader = new FileReader();
-  reader.onload = e => { img.src = e.target.result; };
-  img.onload = async () => {
-    const size = 160;
-    const canvas = document.createElement('canvas');
-    canvas.width = size; canvas.height = size;
-    const ctx = canvas.getContext('2d');
-    const min = Math.min(img.width, img.height);
-    ctx.drawImage(img, (img.width - min) / 2, (img.height - min) / 2, min, min, 0, 0, size, size);
-    const data = canvas.toDataURL('image/jpeg', 0.85);
-    try {
-      me = await api('/me', 'PUT', { avatar: data });
-      toast('Foto de perfil atualizada!');
-      renderSidebarUser(); renderProfile();
-    } catch (e2) { toast(e2.message, 'error'); }
-  };
-  reader.readAsDataURL(file);
   ev.target.value = '';
+  if (!file) return;
+  try {
+    me = await api('/me', 'PUT', { avatar: await _squareAvatarData(file) });
+    toast('Foto de perfil atualizada!');
+    renderSidebarUser(); renderProfile();
+  } catch (e2) { toast(e2.message, 'error'); }
 }
 async function removeAvatar() {
   try {

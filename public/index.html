@@ -166,6 +166,17 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 .btn-discord-oauth:hover{filter:brightness(1.08);box-shadow:0 4px 12px rgba(88,101,242,.36),inset 0 1px 0 rgba(255,255,255,.18)}
 .btn-discord-oauth:active{transform:scale(.985)}
 .btn-discord-oauth svg{flex:0 0 auto}
+.btn-google-oauth{width:100%;margin-top:10px;padding:12px;background:#fff;color:#1f1f1f;border:1px solid #dadce0;border-radius:var(--radius-sm);font-family:inherit;font-size:14px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:10px;cursor:pointer;letter-spacing:-.01em;transition:transform .12s var(--ease-spring),background .15s,border-color .15s,box-shadow .15s}
+.btn-google-oauth:hover{background:#f8f9fa;border-color:#c6c9ce;box-shadow:0 1px 3px rgba(60,64,67,.15)}
+.btn-google-oauth:active{transform:scale(.985)}
+.btn-google-oauth img{flex:0 0 auto}
+.login-box.login-box--bare .btn-google-oauth{margin-top:10px}
+.btn-google-oauth[hidden]{display:none}
+/* ".login-box button" (roxo) vencia as cores de marca: reforça Discord e Google. */
+.login-box .btn-discord-oauth{background:#5865F2;color:#fff;box-shadow:0 1px 2px rgba(88,101,242,.22),inset 0 1px 0 rgba(255,255,255,.14)}
+.login-box .btn-discord-oauth:hover{filter:brightness(1.08);box-shadow:0 4px 12px rgba(88,101,242,.36),inset 0 1px 0 rgba(255,255,255,.18)}
+.login-box .btn-google-oauth{background:#fff;color:#1f1f1f;border:1px solid #dadce0;box-shadow:none;padding:11px}
+.login-box .btn-google-oauth:hover{filter:none;background:#f8f9fa;border-color:#c6c9ce;box-shadow:0 1px 3px rgba(60,64,67,.15)}
 #reset-screen{display:none;align-items:center;justify-content:center;min-height:100vh;position:fixed;inset:0;background:#fff;color:#111;z-index:10000}
 #reset-screen .login-box{background:#fff;border:1px solid #e5e5e5;color:#111}
 #reset-screen .login-sub{color:#4a4a4a}
@@ -342,6 +353,11 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
         <img src="/discord.svg" width="20" height="20" alt="" aria-hidden="true" style="filter:brightness(0) invert(1)">
         Entrar com Discord
       </button>
+      <!-- "Entrar com Google": aparece só com GOOGLE_LOGIN_* no servidor. -->
+      <button type="button" class="btn-google-oauth" id="login-google-btn" onclick="loginWithGoogle()" hidden>
+        <img src="/google.svg" width="18" height="18" alt="" aria-hidden="true">
+        Entrar com Google
+      </button>
     </div>
       <div class="login-hint">Recebeu um convite? Abra o link do e-mail para criar sua conta.<br>Quer o reWork na sua equipe? <a href="/acesso">Peça acesso</a></div>
       </div>
@@ -396,6 +412,37 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       <a href="/privacidade" target="_blank" rel="noopener">Política de Privacidade</a>
     </div>
   </main>
+</div>
+
+<!-- Primeiros passos: conta recém-criada por convite. Coluna centralizada:
+     foto grande, telefone e botões de vincular (Discord, Google Agenda). -->
+<div id="onboarding-screen" aria-labelledby="ob-title" role="dialog" aria-modal="true">
+  <div class="ob-wrap">
+    <div class="ob-box">
+      <div class="ob-logo"><img src="/rework_preto.svg" alt="reWork"></div>
+      <button type="button" class="ob-photo" id="ob-photo" onclick="$('ob-avatar-input').click()" aria-label="Escolher foto de perfil">
+        <span class="ob-photo-img" id="ob-photo-img"></span>
+        <span class="ob-photo-badge" aria-hidden="true"><i data-lucide="camera"></i></span>
+      </button>
+      <button type="button" class="ob-photo-link" id="ob-photo-link" onclick="$('ob-avatar-input').click()">Adicionar foto</button>
+      <div class="ob-kicker" id="ob-kicker">Primeiros passos</div>
+      <h1 class="ob-title" id="ob-title">Boas-vindas!</h1>
+      <p class="ob-text">Deixe seu perfil pronto para a equipe. Tudo opcional: o que ficar para depois continua em <b>Perfil</b>.</p>
+      <label class="ob-label" for="ob-phone">Telefone</label>
+      <input type="tel" class="ob-input" id="ob-phone" autocomplete="tel" inputmode="tel" placeholder="(11) 98765-4321" maxlength="22" oninput="obPhoneInput(this)">
+      <div class="ob-hint" id="ob-phone-hint"></div>
+      <div class="ob-connects" id="ob-connects"></div>
+      <div class="login-error ob-error" id="ob-error" role="alert"></div>
+      <button type="button" class="ob-primary" id="ob-finish" onclick="finishOnboarding()">Entrar no reWork</button>
+      <button type="button" class="ob-skip" id="ob-skip" onclick="finishOnboarding(true)">Pular por agora</button>
+      <input type="file" id="ob-avatar-input" accept="image/*" hidden onchange="obAvatarPicked(event)">
+    </div>
+    <div class="ob-legal">
+      <a href="/termos" target="_blank" rel="noopener">Termos de Serviço</a>
+      <span aria-hidden="true">·</span>
+      <a href="/privacidade" target="_blank" rel="noopener">Política de Privacidade</a>
+    </div>
+  </div>
 </div>
 
 <!-- CONVITE — exibido quando a URL é /convite/<token> (boot.js) -->
@@ -3238,8 +3285,12 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               </header>
               <div class="profile-card-block">
                 <div class="profile-block-title">Verificação em duas etapas</div>
-                <p class="profile-2fa-intro">Além da senha, o login pede um código. O código por e-mail é obrigatório e liga sozinho com o e-mail confirmado; o app autenticador é opcional e ainda mais seguro.</p>
+                <p class="profile-2fa-intro">Além da senha, o login pede um código. O código por e-mail é obrigatório e liga sozinho com o e-mail confirmado; o app autenticador é opcional e ainda mais seguro. Entrar com Google ou Discord não pede o código.</p>
                 <div id="profile-2fa"></div>
+              </div>
+              <div class="profile-card-block" id="profile-google-login-block" hidden>
+                <div class="profile-block-title">Entrar com Google</div>
+                <div id="profile-google-login"></div>
               </div>
               <div class="profile-card-block">
                 <div class="profile-block-title">Trocar senha</div>
@@ -4814,7 +4865,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260925stn6" defer></script>
+<script src="/js/boot.js?v=20260925gl2" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

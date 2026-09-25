@@ -40,6 +40,7 @@ const totp = require('./totp');
 const googleCal  = require('./google-cal');
 const discordBot = require('./discord-bot');
 const discordOAuth = require('./discord-oauth');
+const googleLogin = require('./google-login');
 const emailTpl   = require('./email-templates');
 
 const PORT    = process.env.PORT || 3000;
@@ -599,7 +600,7 @@ function publicUser(u, opts) {
   // quickReplies (respostas prontas) e navMenu (menu lateral personalizado) são
   // pessoais: só voltam pro próprio usuário.
   // reminders/demandSeen/timeGapDismissed: estado pessoal com rota própria.
-  const { googleTokens, googleSyncTokens, knownIps, releaseNotesSeenIds, quickReplies, reminders, demandSeen, timeGapDismissed, mentionDismissed, heldNotifs, navMenu, emailChange, twoFactor, twoFactorSetup, ...rest } = u;
+  const { googleTokens, googleSyncTokens, knownIps, releaseNotesSeenIds, quickReplies, reminders, demandSeen, timeGapDismissed, mentionDismissed, heldNotifs, navMenu, emailChange, twoFactor, twoFactorSetup, onboardingPendingAt, googleLogin: gLogin, ...rest } = u;
   rest.googleConnected = !!googleTokens;
   rest.twoFactorMethod = twoFactorMethodOf(u);
   rest.emailVerified = !!(u.email && u.emailVerifiedAt);
@@ -617,6 +618,11 @@ function publicUser(u, opts) {
     rest.emailDeadline = EMAIL_DEADLINE;
     rest.emailRequired = emailEnforced() && !emailLinked(u);
     rest.hasPassword = auth.hasPassword(u.id);
+    // Conta nova vinda de convite: mostra a tela de primeiros passos (foto,
+    // telefone, Google Agenda, Discord) até a pessoa concluir ou pular.
+    rest.onboardingPending = !!onboardingPendingAt;
+    // Entrar com Google: só o e-mail da conta vinculada (o sub fica no servidor).
+    rest.googleLogin = gLogin && gLogin.sub ? { email: gLogin.email || null, linkedAt: gLogin.linkedAt || null } : null;
     const tfMethod = twoFactorMethodOf(u);
     rest.twoFactor = tfMethod ? {
       method: tfMethod,
@@ -2454,6 +2460,17 @@ app.post('/api/me/tour-complete', requireAuth, (req, res) => {
   res.json({ ok: true, hasSeenTour: true });
 });
 
+/* Primeiros passos (conta criada por convite) concluídos ou pulados. */
+app.post('/api/me/onboarding/done', requireAuth, (req, res) => {
+  const user = req.user;
+  if (user.onboardingPendingAt) {
+    delete user.onboardingPendingAt;
+    user.onboardingDoneAt = nowISO();
+    saveEntity('users', user);
+  }
+  res.json({ ok: true, user: publicUser(user, { self: true }) });
+});
+
 /* ─── RELEASE NOTES / NOTAS DE ATUALIZAÇÃO ─────────────────────────────
    Fonte: release-notes.json na raiz do projeto (versionado no git).
    Devs adicionam entradas antes do deploy. Estrutura de cada entrada:
@@ -2598,7 +2615,7 @@ app.get('/api/auth/discord/link/start', requireAuth, rateLimitDiscordOAuth, (req
     return res.redirect('/profile?discord=error&reason=not-configured');
   }
   try {
-    const state = discordOAuth.makeState('link', req.user.id);
+    const state = discordOAuth.makeState('link', req.user.id, req.query.ret === 'onboarding' ? 'onboarding' : null);
     return res.redirect(discordOAuth.getAuthUrl(state));
   } catch (e) {
     console.error('[discord-oauth/link]', e.message);
@@ -2618,20 +2635,21 @@ app.get('/api/auth/discord/callback', async (req, res) => {
     profile = await discordOAuth.exchangeCodeForProfile(String(code));
   } catch (e) {
     console.error('[discord-oauth/callback]', e.message);
-    const back = entry.mode === 'link' ? '/profile' : '/';
+    const back = entry.mode === 'link' && entry.ret !== 'onboarding' ? '/profile' : '/';
     return res.redirect(back + '?discord=error&reason=' + encodeURIComponent('exchange-failed'));
   }
 
   if (entry.mode === 'link') {
+    const back = entry.ret === 'onboarding' ? '/' : '/profile'; // primeiros passos voltam pro /
     const user = db.users.find(u => u.id === entry.userId && u.active !== false);
     if (!user) return res.redirect('/?discord=error&reason=user-not-found');
     const clash = db.users.find(u => u.id !== user.id && u.discordId === profile.id);
     if (clash) {
-      return res.redirect('/profile?discord=error&reason=' + encodeURIComponent('already-linked'));
+      return res.redirect(back + '?discord=error&reason=' + encodeURIComponent('already-linked'));
     }
     user.discordId = profile.id;
     saveEntity('users', user);
-    return res.redirect('/profile?discord=linked');
+    return res.redirect(back + '?discord=linked');
   }
 
   // mode = 'login' — resolve user por discordId
@@ -2639,11 +2657,9 @@ app.get('/api/auth/discord/callback', async (req, res) => {
   if (!user) {
     return res.redirect('/?discord=error&reason=' + encodeURIComponent('no-account'));
   }
-  if (twoFactorOn(user)) {
-    const t = await startTwoFactorTicket(req, user, 'discord');
-    if (t.error) return res.redirect('/?discord=error&reason=' + encodeURIComponent('2fa-unavailable'));
-    return res.redirect('/?dois-fatores=' + encodeURIComponent(t.ticket));
-  }
+  // Entrar pelo Discord não pede o código da verificação em duas etapas: a
+  // conta do Discord já é o segundo fator (decisão de produto).
+  recordLoginIp(user, clientIp(req));
   startSession(req, res, user);
   return res.redirect('/?discord=logged-in');
 });
@@ -2661,6 +2677,112 @@ app.post('/api/me/discord/unlink', requireAuth, (req, res) => {
     });
   }
   u.discordId = null;
+  saveEntity('users', u);
+  res.json({ ok: true, user: publicUser(u, { self: true }) });
+});
+
+/* ─── ENTRAR COM GOOGLE (OpenID Connect) ───
+   Mesmo desenho do Discord: 'login' (start público) e 'link' (start com
+   sessão, no Perfil). A conta Google fica em u.googleLogin = { sub, email,
+   linkedAt }; o sub é o id fixo da conta Google.
+   No login, sem vínculo ainda, vale o e-mail: se o Google diz que o e-mail
+   é verificado e ele bate com o e-mail CONFIRMADO de uma conta reWork, o
+   vínculo é feito na hora. Nunca cria conta (cadastro é por convite).
+   Sem código da verificação em duas etapas (igual ao Discord): a conta
+   Google já faz esse papel.
+   Falhas voltam pra / ou /profile com ?google-login=error&reason=<slug>. */
+const _googleLoginAttempts = new Map(); // ip → { count, resetAt }
+const rateLimitGoogleLogin = makeRateLimit(_googleLoginAttempts, 5, 'tentativas');
+
+app.get('/api/auth/google/status', (req, res) => {
+  res.json({ configured: googleLogin.isConfigured() });
+});
+
+app.get('/api/auth/google/start', rateLimitGoogleLogin, (req, res) => {
+  if (!googleLogin.isConfigured()) return res.redirect('/?google-login=error&reason=not-configured');
+  try {
+    return res.redirect(googleLogin.getAuthUrl(googleLogin.makeState('login', null)));
+  } catch (e) {
+    console.error('[google-login/start]', e.message);
+    return res.redirect('/?google-login=error&reason=start-failed');
+  }
+});
+
+app.get('/api/auth/google/link/start', requireAuth, rateLimitGoogleLogin, (req, res) => {
+  if (!googleLogin.isConfigured()) return res.redirect('/profile?aba=security&google-login=error&reason=not-configured');
+  try {
+    return res.redirect(googleLogin.getAuthUrl(googleLogin.makeState('link', req.user.id)));
+  } catch (e) {
+    console.error('[google-login/link]', e.message);
+    return res.redirect('/profile?aba=security&google-login=error&reason=start-failed');
+  }
+});
+
+function googleLoginOwner(sub) {
+  return db.users.find(u => u.googleLogin && u.googleLogin.sub === sub) || null;
+}
+
+app.get('/api/auth/google/callback', async (req, res) => {
+  const { code, state, error } = req.query;
+  const entry = state ? googleLogin.popState(String(state)) : null;
+  const back = entry && entry.mode === 'link' ? '/profile?aba=security&' : '/?';
+  const fail = (reason) => res.redirect(back + 'google-login=error&reason=' + encodeURIComponent(reason));
+  // Cancelou na tela do Google: volta sem alarde.
+  if (error) return fail(error === 'access_denied' ? 'cancelled' : 'google-error');
+  if (!code || !state) return fail('missing-params');
+  if (!entry) return fail('invalid-state');
+
+  let profile;
+  try {
+    profile = await googleLogin.exchangeCodeForProfile(String(code));
+  } catch (e) {
+    console.error('[google-login/callback]', e.message);
+    return fail('exchange-failed');
+  }
+
+  if (entry.mode === 'link') {
+    const user = db.users.find(u => u.id === entry.userId && u.active !== false);
+    if (!user) return fail('user-not-found');
+    const owner = googleLoginOwner(profile.sub);
+    if (owner && owner.id !== user.id) return fail('already-linked');
+    user.googleLogin = { sub: profile.sub, email: profile.email, linkedAt: nowISO() };
+    saveEntity('users', user);
+    return res.redirect('/profile?aba=security&google-login=linked');
+  }
+
+  // mode = 'login': conta já vinculada, senão o e-mail confirmado.
+  let user = googleLoginOwner(profile.sub);
+  if (user && user.active === false) user = null;
+  if (!user && profile.email && profile.emailVerified) {
+    const matches = db.users.filter(u => u.active !== false && emailLinked(u) && normEmail(u.email) === profile.email && !(u.googleLogin && u.googleLogin.sub));
+    if (matches.length > 1) return fail('ambiguous');
+    if (matches.length === 1) {
+      user = matches[0];
+      user.googleLogin = { sub: profile.sub, email: profile.email, linkedAt: nowISO() };
+      saveEntity('users', user);
+    }
+  }
+  if (!user) return fail('no-account');
+  if (!tenancy.activeMemberships(user.id).length) {
+    const closed = tenancy.membershipsOf(user.id).some(m => m.active !== false && !tenancy.orgActive(m.orgId));
+    return fail(closed ? 'org-closed' : 'no-access');
+  }
+  // Como no Discord, entrar pelo Google não pede o código da verificação em
+  // duas etapas: a própria conta Google faz esse papel.
+  recordLoginIp(user, clientIp(req));
+  startSession(req, res, user);
+  return res.redirect('/?google-login=logged-in');
+});
+
+/* Desvincula a conta Google. Sem senha (e sem Discord), a pessoa ficaria
+   sem como entrar: pede pra definir uma senha antes. */
+app.post('/api/me/google-login/unlink', requireAuth, (req, res) => {
+  const u = req.user;
+  if (!u.googleLogin) return res.json({ ok: true, user: publicUser(u, { self: true }) });
+  if (!auth.hasPassword(u.id) && !u.discordId) {
+    return res.status(400).json({ error: 'Sua conta não tem senha: desvincular o Google te deixaria sem como entrar. Defina uma senha primeiro.' });
+  }
+  delete u.googleLogin;
   saveEntity('users', u);
   res.json({ ok: true, user: publicUser(u, { self: true }) });
 });
@@ -3375,7 +3497,7 @@ app.get('/api/google/auth', requireAuth, (req, res) => {
     );
   }
   try {
-    const state = googleCal.makeState(req.user.id);
+    const state = googleCal.makeState(req.user.id, req.query.ret === 'onboarding' ? 'onboarding' : null);
     const url = googleCal.getAuthUrl(state);
     res.redirect(url);
   } catch (e) {
@@ -3388,19 +3510,21 @@ app.get('/api/google/auth', requireAuth, (req, res) => {
 // de volta pro perfil com feedback.
 app.get('/api/google/callback', async (req, res) => {
   const { code, state, error } = req.query;
-  if (error) return res.redirect('/profile?google=error&reason=' + encodeURIComponent(error));
-  if (!code || !state) return res.redirect('/profile?google=error&reason=missing-params');
-  const entry = googleCal.popState(String(state));
-  if (!entry) return res.redirect('/profile?google=error&reason=invalid-state');
+  const entry = state ? googleCal.popState(String(state)) : null;
+  // Conexão iniciada nos primeiros passos volta pra lá (a tela abre no /).
+  const back = entry && entry.ret === 'onboarding' ? '/' : '/profile';
+  if (error) return res.redirect(back + '?google=error&reason=' + encodeURIComponent(error));
+  if (!code || !state) return res.redirect(back + '?google=error&reason=missing-params');
+  if (!entry) return res.redirect(back + '?google=error&reason=invalid-state');
   const user = db.users.find(u => u.id === entry.userId);
-  if (!user) return res.redirect('/profile?google=error&reason=user-not-found');
+  if (!user) return res.redirect(back + '?google=error&reason=user-not-found');
   try {
     const tokens = await googleCal.exchangeCode(String(code));
     if (!tokens.refresh_token) {
       // Google só dá refresh_token na primeira autorização (ou com prompt=consent
       // + access_type=offline, que já pedimos). Se ainda assim não veio, algo tá
       // errado — abortamos.
-      return res.redirect('/profile?google=error&reason=no-refresh-token');
+      return res.redirect(back + '?google=error&reason=no-refresh-token');
     }
     const account = await googleCal.getUserInfo(tokens);
     // Fetch inicial dos calendários — permite escolher já ao concluir a conexão.
@@ -3410,10 +3534,10 @@ app.get('/api/google/callback', async (req, res) => {
     // Auto-seleciona só o primary — outros ficam disponíveis pra o usuário marcar.
     user.googleCalendars = calendars.map(c => ({ ...c, selected: c.primary }));
     saveEntity('users', user);
-    res.redirect('/profile?google=connected');
+    res.redirect(back + '?google=connected');
   } catch (e) {
     console.error('[google/callback]', e);
-    res.redirect('/profile?google=error&reason=' + encodeURIComponent(e.message || 'unknown'));
+    res.redirect(back + '?google=error&reason=' + encodeURIComponent(e.message || 'unknown'));
   }
 });
 
@@ -5438,7 +5562,8 @@ app.post('/api/invites/public/:token/accept', rateLimitInvitePublic, (req, res) 
     id: uid(), username: un, name: nm, avatar: null,
     discordId: null, email: inv.email, emailVerifiedAt: now,
     emailPrefs: defaultEmailPrefs(), createdAt: now,
-    invitedBy: inv.invitedBy || null, inviteId: inv.id, termsAcceptedAt: now
+    invitedBy: inv.invitedBy || null, inviteId: inv.id, termsAcceptedAt: now,
+    onboardingPendingAt: now
   };
   rawDb.users.push(user);
   auth.setPassword(user.id, password);
@@ -5964,6 +6089,7 @@ consoleApi = require('./platform-console')(app, {
     smtp: mailEnabled(),
     discordBot: discordBot.isEnabled(),
     discordLogin: discordOAuth.isConfigured(),
+    googleLogin: googleLogin.isConfigured(),
     google: googleCal.isConfigured()
   })
 });
