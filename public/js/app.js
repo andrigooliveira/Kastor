@@ -5311,6 +5311,274 @@ window.sendEmailConfirmNow = sendEmailConfirmNow;
 window.cancelEmailLink = cancelEmailLink;
 window._elmSync = _elmSync;
 
+/* ── Nomes de etapa pré-definidos ──
+   Todo campo de nome de etapa (.stage-name-input — fluxos, modelos de cliente,
+   Customizar demanda e Detalhes) abre uma lista com os nomes da organização
+   (me.org.settings.stagePresets). Escolher um preenche o nome (e a cor, onde
+   a linha tem cor: data-color-fn/data-color-arg). Digitar livre = nome
+   personalizado. Moderadores e admins editam a lista (Gerenciar nomes). */
+function stagePresets() { return (me && me.org && me.org.settings && me.org.settings.stagePresets) || []; }
+const _stNorm = (v) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+let _snm = null; // { input, typed, active, items }
+function _snmMenu() {
+  let m = document.getElementById('stage-name-menu');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'stage-name-menu';
+    m.className = 'stage-name-menu';
+    m.setAttribute('role', 'listbox');
+    // Não deixa o clique no menu tirar o foco do campo (senão fecha antes de escolher).
+    m.addEventListener('mousedown', (e) => e.preventDefault());
+    document.body.appendChild(m);
+  }
+  return m;
+}
+function _snmOpen(input) {
+  _snm = { input, typed: false, active: -1, items: [] };
+  _snmRender();
+  window.addEventListener('scroll', _snmPlace, true);
+  window.addEventListener('resize', _snmPlace);
+}
+function _snmClose() {
+  document.getElementById('stage-name-menu')?.remove();
+  window.removeEventListener('scroll', _snmPlace, true);
+  window.removeEventListener('resize', _snmPlace);
+  _snm = null;
+}
+function _snmPlace() {
+  if (!_snm) return;
+  const m = document.getElementById('stage-name-menu');
+  if (!m || !_snm.input.isConnected) return _snmClose();
+  const r = _snm.input.getBoundingClientRect();
+  const w = Math.max(r.width, 240);
+  m.style.width = w + 'px';
+  m.style.left = Math.min(r.left, window.innerWidth - w - 8) + 'px';
+  const below = window.innerHeight - r.bottom;
+  const h = m.offsetHeight;
+  if (below < h + 12 && r.top > below) { m.style.top = ''; m.style.bottom = (window.innerHeight - r.top + 4) + 'px'; }
+  else { m.style.bottom = ''; m.style.top = (r.bottom + 4) + 'px'; }
+}
+function _snmRender() {
+  if (!_snm) return;
+  const val = _snm.input.value || '';
+  const q = _stNorm(val);
+  const all = stagePresets();
+  // Enquanto não digitou, mostra a lista toda; digitando, filtra.
+  const list = _snm.typed && q ? all.filter(p => _stNorm(p.label).includes(q)) : all;
+  const exact = all.find(p => _stNorm(p.label) === q);
+  _snm.items = list.map(p => ({ kind: 'preset', p }));
+  const custom = val.trim() && !exact;
+  if (custom) _snm.items.push({ kind: 'custom', label: val.trim() });
+  if (_snm.active >= _snm.items.length) _snm.active = _snm.items.length - 1;
+  const m = _snmMenu();
+  m.innerHTML = `
+    <div class="snm-list">
+      ${list.length ? list.map((p, i) => `<div class="snm-item${_snm.active === i ? ' is-active' : ''}${exact && exact.id === p.id ? ' is-current' : ''}" role="option" data-i="${i}">
+        <span class="snm-dot" style="background:${esc(p.color)}"></span><span class="snm-label">${esc(p.label)}</span>${p.done ? '<span class="snm-done" title="Etapa de conclusão"><i data-lucide="flag" class="ic-xs"></i></span>' : ''}${exact && exact.id === p.id ? '<i data-lucide="check" class="ic-xs snm-check"></i>' : ''}</div>`).join('')
+        : `<div class="snm-empty">Nenhum nome da lista tem “${esc(val.trim())}”.</div>`}
+    </div>
+    <div class="snm-foot">
+      ${custom
+        ? `<div class="snm-item snm-custom${_snm.active === _snm.items.length - 1 ? ' is-active' : ''}" role="option" data-i="${_snm.items.length - 1}"><i data-lucide="pencil" class="ic-xs"></i><span class="snm-label">Usar “${esc(val.trim())}” (personalizado)</span></div>`
+        : `<div class="snm-hint"><i data-lucide="pencil" class="ic-xs"></i>Personalizado: é só digitar outro nome</div>`}
+      ${me && (me.isAdmin || me.isModerator) ? `<button type="button" class="snm-manage" onclick="openStagePresetsModal()">Gerenciar nomes</button>` : ''}
+    </div>`;
+  m.querySelectorAll('.snm-item[data-i]').forEach(el => el.addEventListener('click', () => _snmPick(Number(el.dataset.i))));
+  paintIcons(m);
+  _snmPlace();
+  m.querySelector('.snm-item.is-active')?.scrollIntoView({ block: 'nearest' });
+}
+function _snmPick(i) {
+  if (!_snm) return;
+  const it = _snm.items[i];
+  const input = _snm.input;
+  if (!it) return;
+  if (it.kind === 'preset') {
+    input.value = it.p.label;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    const fn = input.dataset.colorFn;
+    if (fn && typeof window[fn] === 'function') window[fn](input.dataset.colorArg, it.p.color, input);
+    // Nome de conclusão (Concluída, Cancelada…): a etapa vira a final.
+    const doneFn = input.dataset.doneFn;
+    if (it.p.done && doneFn && typeof window[doneFn] === 'function') {
+      _snmClose();
+      window[doneFn](input.dataset.colorArg, input);
+      return;
+    }
+  }
+  _snmClose();
+  // Personalizado: fica no campo pra continuar editando; preset: segue o fluxo.
+  if (it.kind === 'custom') input.focus();
+  else input.blur();
+}
+document.addEventListener('focusin', (e) => {
+  const input = e.target.closest && e.target.closest('input.stage-name-input');
+  if (!input || input.disabled || input.readOnly) return;
+  if (_snm && _snm.input === input) return;
+  _snmOpen(input);
+});
+document.addEventListener('focusout', (e) => {
+  if (_snm && e.target === _snm.input) setTimeout(() => { if (_snm && document.activeElement !== _snm.input) _snmClose(); }, 120);
+});
+document.addEventListener('input', (e) => {
+  if (_snm && e.target === _snm.input) { _snm.typed = true; _snm.active = _snm.input.value.trim() ? 0 : -1; _snmRender(); }
+}, true);
+document.addEventListener('keydown', (e) => {
+  if (!_snm || e.target !== _snm.input) return;
+  const n = _snm.items.length;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (!n) return;
+    _snm.active = (_snm.active + (e.key === 'ArrowDown' ? 1 : -1) + n) % n;
+    _snmRender();
+  } else if (e.key === 'Enter') {
+    if (_snm.active >= 0 && _snm.items[_snm.active]) { e.preventDefault(); _snmPick(_snm.active); }
+    else _snmClose();
+  } else if (e.key === 'Escape') {
+    e.stopPropagation();
+    _snmClose();
+  } else if (e.key === 'Tab') {
+    _snmClose();
+  }
+}, true);
+// Cor da etapa quando a linha tem cor (atualiza também a bolinha da linha).
+function _paintRowSwatch(input, color) {
+  const row = input.closest('.stage-row, .tfl-stage-row, .wizard-cust-row-v2');
+  const sw = row && row.querySelector('.color-swatch-trigger');
+  if (sw) sw.style.background = color;
+}
+function flowStagePresetColor(i, color, input) {
+  const r = stageRows[Number(i)];
+  if (!r) return;
+  r.color = color; flowModalDirty = true;
+  _paintRowSwatch(input, color);
+}
+function tflStagePresetColor(i, color, input) { tflSetStage(Number(i), 'color', color); _paintRowSwatch(input, color); }
+function wizardStagePresetColor(stageId, color, input) { wizardCustSetColor(stageId, color); _paintRowSwatch(input, color); }
+// Nome de conclusão escolhido: marca a etapa como final (se ainda não é).
+function flowStagePresetDone(i) { const r = stageRows[Number(i)]; if (r && !r.done) toggleStageDone(Number(i)); }
+function tflStagePresetDone(i) { const r = _tflCtx && _tflCtx.stages[Number(i)]; if (r && !r.done) tflToggleDone(Number(i)); }
+function wizardStagePresetDone(stageId) { wizardCustSetDone(stageId, true); }
+function detailStagePresetDone(stageId, input) {
+  const row = input && input.closest('.stages-edit-row');
+  if (row && !row.classList.contains('is-done')) toggleStageDoneDraft(stageId);
+}
+window.flowStagePresetDone = flowStagePresetDone;
+window.tflStagePresetDone = tflStagePresetDone;
+window.wizardStagePresetDone = wizardStagePresetDone;
+window.detailStagePresetDone = detailStagePresetDone;
+function _focusStageNameIn(rowSelector) {
+  setTimeout(() => {
+    const input = document.querySelector(`${rowSelector} input.stage-name-input`);
+    if (input) { input.focus(); input.select(); }
+  }, 30);
+}
+function _focusLastStageName(listSelector) {
+  setTimeout(() => {
+    const all = document.querySelectorAll(`${listSelector} input.stage-name-input`);
+    const input = all[all.length - 1];
+    if (input) { input.focus(); input.select(); }
+  }, 30);
+}
+window.flowStagePresetColor = flowStagePresetColor;
+window.tflStagePresetColor = tflStagePresetColor;
+window.wizardStagePresetColor = wizardStagePresetColor;
+
+/* Gerenciar a lista (moderadores e admins). */
+let _spDraft = null;
+function openStagePresetsModal() {
+  _snmClose();
+  if (!me || !(me.isAdmin || me.isModerator)) return;
+  _spDraft = stagePresets().map(p => ({ ...p }));
+  _spRender();
+  openModal('stage-presets-modal');
+}
+function _spRender() {
+  const list = $('sp-list');
+  if (!list) return;
+  list.innerHTML = _spDraft.map((p, i) => `<div class="sp-row${p.done ? ' is-done' : ''}" data-i="${i}"
+        ondragover="_spDragOver(event, ${i})" ondragleave="_spDragLeave(event)" ondrop="_spDrop(event, ${i})">
+      <span class="sp-grip" draggable="true" title="Arraste para reordenar" ondragstart="_spDragStart(event, ${i})" ondragend="_spDragEnd()"><i data-lucide="grip-vertical" class="ic-sm"></i></span>
+      <span class="sp-num">${String(i + 1).padStart(2, '0')}</span>
+      <button type="button" class="color-swatch-trigger" style="background:${esc(p.color)}" title="Cor" onclick="openColorPicker(this, (c) => { _spDraft[${i}].color = c; this.style.background = c; }, '${esc(p.color)}')"></button>
+      <input class="form-control" value="${esc(p.label)}" maxlength="60" placeholder="Nome da etapa" oninput="_spDraft[${i}].label=this.value">
+      <button type="button" class="icon-btn sp-done${p.done ? ' on' : ''}" title="${p.done ? 'Etapa de conclusão (clique para desmarcar)' : 'Marcar como etapa de conclusão'}" onclick="_spDraft[${i}].done=!_spDraft[${i}].done; _spRender()"><i data-lucide="flag" class="ic-sm"></i></button>
+      <button type="button" class="icon-btn danger" title="Remover" onclick="_spDraft.splice(${i}, 1); _spRender()"><i data-lucide="trash-2" class="ic-sm"></i></button>
+    </div>`).join('') || '<p class="sp-empty">Nenhum nome ainda.</p>';
+  // Duas colunas lidas de cima pra baixo (1–13 à esquerda, o resto à direita).
+  list.style.setProperty('--sp-rows', Math.max(1, Math.ceil(_spDraft.length / 2)));
+  $('sp-count').textContent = `${_spDraft.length} ${_spDraft.length === 1 ? 'nome' : 'nomes'}`;
+  paintIcons(list);
+}
+/* Arrastar pela alça pra reordenar: metade de cima do nome = solta antes,
+   metade de baixo = depois. */
+let _spDragFrom = null;
+function _spDragStart(e, i) {
+  _spDragFrom = i;
+  e.dataTransfer.effectAllowed = 'move';
+  try { e.dataTransfer.setData('text/plain', String(i)); } catch {}
+  const row = e.target.closest('.sp-row');
+  if (row) { e.dataTransfer.setDragImage(row, 16, row.offsetHeight / 2); setTimeout(() => row.classList.add('is-dragging'), 0); }
+}
+function _spDragOver(e, i) {
+  if (_spDragFrom === null) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  const row = e.currentTarget;
+  const r = row.getBoundingClientRect();
+  const after = e.clientY > r.top + r.height / 2;
+  document.querySelectorAll('#sp-list .sp-row.drop-before, #sp-list .sp-row.drop-after').forEach(x => { if (x !== row) x.classList.remove('drop-before', 'drop-after'); });
+  row.classList.toggle('drop-after', after);
+  row.classList.toggle('drop-before', !after);
+}
+function _spDragLeave(e) {
+  if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.classList.remove('drop-before', 'drop-after');
+}
+function _spDrop(e, i) {
+  e.preventDefault();
+  const from = _spDragFrom;
+  const after = e.currentTarget.classList.contains('drop-after');
+  _spDragEnd();
+  if (from === null) return;
+  let to = after ? i + 1 : i;
+  if (from < to) to--;
+  if (to === from) return;
+  const [item] = _spDraft.splice(from, 1);
+  _spDraft.splice(to, 0, item);
+  _spRender();
+}
+function _spDragEnd() {
+  _spDragFrom = null;
+  document.querySelectorAll('#sp-list .sp-row').forEach(x => x.classList.remove('is-dragging', 'drop-before', 'drop-after'));
+}
+window._spDragStart = _spDragStart;
+window._spDragOver = _spDragOver;
+window._spDragLeave = _spDragLeave;
+window._spDrop = _spDrop;
+window._spDragEnd = _spDragEnd;
+function spAdd() {
+  _spDraft.push({ id: '', label: '', color: '#3B82F6', done: false });
+  _spRender();
+  const inputs = $('sp-list').querySelectorAll('input');
+  inputs[inputs.length - 1]?.focus();
+}
+async function spSave() {
+  const btn = $('sp-save');
+  const clean = _spDraft.map(p => ({ ...p, label: String(p.label || '').trim() })).filter(p => p.label);
+  if (!clean.length) return toast('Deixe pelo menos um nome na lista.', 'error');
+  btn.disabled = true;
+  try {
+    const org = await api('/org/stage-presets', 'PUT', { presets: clean });
+    _orgMergeSaved(org);
+    closeModal('stage-presets-modal');
+    toast('Lista de nomes de etapa salva.');
+  } catch (e) { toast(e.message, 'error'); }
+  finally { btn.disabled = false; }
+}
+window.openStagePresetsModal = openStagePresetsModal;
+window.spAdd = spAdd;
+window.spSave = spSave;
+
 /* ── Verificação em duas etapas (Perfil › Segurança) ──
    Código por e-mail: obrigatório, liga sozinho com o e-mail confirmado.
    App autenticador: opcional, substitui o e-mail enquanto ativo (com códigos
@@ -15142,7 +15410,21 @@ async function pickStage(stageId, ev) {
     return;
   }
   document.querySelectorAll('.cdrop.open').forEach(c => c.classList.remove('open'));
-  // Precisa achar a nova stage no fluxo ANTES do await pra celebrar após save.
+  const flow = flowById(d.flowId);
+  const active = flow ? activeStagesOf(d, flow) : [];
+  const forward = active.findIndex(s => s.id === stageId) > active.findIndex(s => s.id === d.status);
+  // Mesmo lembrete do botão de avançar: pular pra frente sem apontar tempo.
+  if (forward && !_hasRecentTimeEntry(d)) {
+    _pendingAdvance = { demandId: d.id, dir: 1, stageId };
+    _openAdvanceMenu(document.querySelector('#stage-cdrop .cdrop-trigger'), d, { align: 'left' });
+    return;
+  }
+  await _setStageNow(d.id, stageId);
+}
+/* Troca direta de etapa (picker). Precisa achar a etapa nova ANTES do await
+   pra celebrar a conclusão depois de salvar. */
+async function _setStageNow(demandId, stageId) {
+  const d = demandById(demandId); if (!d) return;
   const flow = flowById(d.flowId);
   const active = flow ? activeStagesOf(d, flow) : [];
   const newStage = active.find(s => s.id === stageId);
@@ -15150,7 +15432,7 @@ async function pickStage(stageId, ev) {
     const upd = await api('/demands/' + d.id, 'PUT', { status: stageId });
     patchDemand(upd);
     if (newStage?.done) celebrateCompletion('Demanda concluída', d.name);
-    else toast('Etapa atualizada!');
+    else toast(newStage ? 'Etapa atualizada: ' + newStage.label : 'Etapa atualizada!');
     renderDetail();
     renderCurrent();
     fetchNotifications();
@@ -15447,6 +15729,7 @@ function addStageToDraft() {
   else stagesEditDraft.order.push(newId);
   renderDetailStages(d);
   refreshStagesEditButtons(d);
+  _focusStageNameIn(`.stages-edit-row[data-stage-id="${newId}"]`);
 }
 /* Remove uma addition da demanda. Se for uma addition NOVA (só client-side),
    apenas retira do draft; se for uma addition já persistida, marca pra remoção. */
@@ -16116,7 +16399,7 @@ function renderDetailStages(d) {
                     title="Arraste pra reordenar"><i data-lucide="grip-vertical" class="ic-md"></i></span>
               <span class="stages-edit-num">${String(i + 1).padStart(2, '0')}</span>
               <span class="pill-dot" style="background:${s.color}"></span>
-              <input class="form-control stages-edit-label-input" value="${esc(currentLabel)}" placeholder="${esc(s.label)}" oninput="setStageLabelDraft('${s.id}', this.value)" maxlength="80">
+              <input class="form-control stages-edit-label-input stage-name-input" value="${esc(currentLabel)}" placeholder="${esc(s.label)}" autocomplete="off" oninput="setStageLabelDraft('${s.id}', this.value)" data-done-fn="detailStagePresetDone" data-color-arg="${s.id}" maxlength="80">
               <input type="date" class="stages-edit-date-input ${hasDateAnchor ? 'is-customized' : ''}" data-fdp-display="short" data-fdp-no-weekend="1"
                      value="${endDate || ''}"
                      ${isFlowStage || isAddition ? '' : 'disabled'}
@@ -18321,10 +18604,11 @@ function startEditDemandTitle(el) {
 }
 
 /* Avançar etapa sem ter apontado tempo na demanda nos últimos 15 min abre um
-   lembrete (apontar e avançar / avançar sem apontar). Fechar o lembrete não
+   lembrete (apontar e avançar / avançar sem apontar) — pelo botão de avançar
+   ou escolhendo uma etapa mais à frente no seletor. Fechar o lembrete não
    avança. `_pendingAdvance` sobrevive ao modal de tempo pra avançar ao salvar. */
 const ADVANCE_TIME_WINDOW_MS = 15 * 60 * 1000;
-let _pendingAdvance = null; // { demandId, dir }
+let _pendingAdvance = null; // { demandId, dir, stageId? } — stageId: etapa escolhida no seletor
 
 function _hasRecentTimeEntry(d) {
   const since = Date.now() - ADVANCE_TIME_WINDOW_MS;
@@ -18348,7 +18632,7 @@ async function moveStage(dir) {
 
 /* Mini menu ancorado no botão de avançar (abre pra cima — o rodapé fica no fim
    da tela). Clique fora / Esc fecha sem avançar. */
-function _openAdvanceMenu(anchor, d) {
+function _openAdvanceMenu(anchor, d, opts) {
   _closeAdvanceMenu();
   if (!anchor) return;
   const t = timerState[d.id];
@@ -18364,7 +18648,9 @@ function _openAdvanceMenu(anchor, d) {
   document.body.appendChild(menu);
   paintIcons();
   const r = anchor.getBoundingClientRect();
-  menu.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
+  // Botão de avançar: alinha pela direita; seletor de etapa: pela esquerda.
+  if (opts && opts.align === 'left') menu.style.left = Math.max(8, r.left) + 'px';
+  else menu.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
   menu.style.bottom = (window.innerHeight - r.top + 6) + 'px';
   menu.querySelector('button')?.focus();
   // Registra depois do clique atual — senão o próprio clique que abriu já fecharia.
@@ -18391,7 +18677,7 @@ function advanceWithoutTime() {
   _closeAdvanceMenu();
   const p = _pendingAdvance;
   _pendingAdvance = null;
-  if (p) _moveStageNow(p.demandId, p.dir);
+  if (p) _moveStageNow(p.demandId, p.dir, p.stageId);
 }
 
 function advanceWithTime() {
@@ -18399,7 +18685,8 @@ function advanceWithTime() {
   openRegisterTimeModal({ advanceAfter: true });
 }
 
-async function _moveStageNow(demandId, dir) {
+async function _moveStageNow(demandId, dir, stageId) {
+  if (stageId) return _setStageNow(demandId, stageId); // veio do seletor de etapa
   const d = demandById(demandId); if (!d) return;
   const flow = flowById(d.flowId); if (!flow) return;
   const active = activeStagesOf(d, flow);
@@ -19198,7 +19485,9 @@ function openRegisterTimeModal(opts) {
     const d = pending ? demandById(detailId) : null;
     const flow = d ? flowById(d.flowId) : null;
     const active = flow ? activeStagesOf(d, flow) : [];
-    const next = active[active.findIndex(s => s.id === d?.status) + 1];
+    const next = pending && _pendingAdvance.stageId
+      ? active.find(s => s.id === _pendingAdvance.stageId)
+      : active[active.findIndex(s => s.id === d?.status) + 1];
     hint.hidden = !next;
     hint.innerHTML = next ? `Ao registrar, a demanda avança para <strong>${esc(next.label)}</strong>.` : '';
   }
@@ -19325,7 +19614,7 @@ async function addTimeEntry() {
     closeModal('time-modal');
     const p = _pendingAdvance;
     _pendingAdvance = null;
-    if (p && p.demandId === d.id) await _moveStageNow(p.demandId, p.dir);
+    if (p && p.demandId === d.id) await _moveStageNow(p.demandId, p.dir, p.stageId);
     else renderDetail();
   } catch (e) { toast(e.message, 'error'); }
 }
@@ -21821,7 +22110,7 @@ function renderStageRows() {
          ondragleave="stageDragLeave(event)" ondrop="stageDrop(event,${i})" ondragend="stageDragEnd()">
       <div class="stage-grip" draggable="true" ondragstart="stageDragStart(event,${i})" title="Arraste para reordenar"><i data-lucide="grip-vertical" class="ic-sm"></i></div>
       <button type="button" class="color-swatch-trigger stage-color" style="background:${s.color}" onclick="openColorPicker(this, (c) => { stageRows[${i}].color = c; this.style.background = c; flowModalDirty = true; }, stageRows[${i}].color)" title="Cor da etapa"></button>
-      <input class="form-control" value="${esc(s.label)}" placeholder="Nome da etapa" oninput="stageRows[${i}].label=this.value">
+      <input class="form-control stage-name-input" value="${esc(s.label)}" placeholder="Nome da etapa" autocomplete="off" oninput="stageRows[${i}].label=this.value" data-color-fn="flowStagePresetColor" data-done-fn="flowStagePresetDone" data-color-arg="${i}">
       ${s.done ? `<div class="stage-done-noowner" title="A etapa de conclusão encerra a demanda: não tem área nem responsável."><i data-lucide="flag" class="ic-sm"></i>Etapa de conclusão: sem responsável</div>` : `
       <select id="stage-role-${i}" class="form-control stage-role" title="Área desta etapa" onchange="setStageRoleFilter(${i}, this.value)">${fnOpts}</select>
       <select id="stage-cargo-${i}" class="form-control stage-cargo" title="Cargo (opcional) — resolve pela matriz Área×Cargo do cliente" onchange="setStagePositionFilter(${i}, this.value)" ${roleFilter ? '' : 'disabled'}>${cargoOpts}</select>
@@ -30146,7 +30435,7 @@ function renderTflStages() {
          ondrop="tflStageDrop(event,${i})" ondragend="tflStageDragEnd()">
       <div class="tfl-stage-grip" draggable="true" ondragstart="tflStageDragStart(event,${i})" title="Arraste para reordenar"><i data-lucide="grip-vertical" class="ic-sm"></i></div>
       <button type="button" class="color-swatch-trigger tfl-stage-color" style="background:${esc(color)}" onclick="openColorPicker(this, (c) => { tflSetStage(${i}, 'color', c); this.style.background = c; }, '${esc(color)}')" title="Cor da etapa"></button>
-      <input type="text" class="wizard-cust-name" placeholder="Nome da etapa" value="${esc(s.label || '')}" oninput="tflSetStage(${i}, 'label', this.value)">
+      <input type="text" class="wizard-cust-name stage-name-input" placeholder="Nome da etapa" autocomplete="off" value="${esc(s.label || '')}" oninput="tflSetStage(${i}, 'label', this.value)" data-color-fn="tflStagePresetColor" data-done-fn="tflStagePresetDone" data-color-arg="${i}">
       <div class="wizard-cust-days-inline" title="Prazo da etapa (em dias)">
         <input type="number" class="wizard-cust-days" min="0" step="1" placeholder="—" value="${s.deadlineDays ?? ''}" oninput="tflSetStage(${i}, 'deadlineDays', this.value === '' ? null : Number(this.value))">
         <span class="wizard-cust-days-unit">d</span>
@@ -30200,6 +30489,7 @@ function tflAddStage() {
   if (!_tflCtx) return;
   _tflCtx.stages.push({ label: '', color: '#7A00FF', done: false, deadlineDays: null, responsibleRole: null });
   renderTflStages();
+  _focusLastStageName('#tfl-stages-list');
 }
 function tflRemoveStage(idx) {
   if (!_tflCtx) return;
@@ -35357,7 +35647,7 @@ function renderWizardCustomization() {
     return `<div class="wizard-cust-row-v2 ${skipped ? 'is-skipped' : ''} ${isAddition ? 'is-added' : ''}" draggable="true" data-stage-id="${stageId}">
       <span class="wizard-cust-drag" title="Arraste pra reordenar"><i data-lucide="grip-vertical" class="ic-md"></i></span>
       <button type="button" class="color-swatch-trigger wizard-cust-color-lg" style="background:${esc(color)}" onclick="openColorPicker(this, (c) => { wizardCustSetColor('${stageId}', c); this.style.background = c; }, '${esc(color)}')" title="Cor da etapa"></button>
-      <input type="text" class="wizard-cust-name" value="${esc(label)}" placeholder="Nome da etapa" oninput="wizardCustSetLabel('${stageId}', this.value)">
+      <input type="text" class="wizard-cust-name stage-name-input" value="${esc(label)}" placeholder="Nome da etapa" autocomplete="off" oninput="wizardCustSetLabel('${stageId}', this.value)" data-color-fn="wizardStagePresetColor" data-done-fn="wizardStagePresetDone" data-color-arg="${stageId}">
       ${done ? `<div class="stage-done-noowner is-compact wizard-cust-resp" title="A etapa de conclusão encerra a demanda: não tem executor."><i data-lucide="flag" class="ic-sm"></i>Sem executor</div>` : `<select class="wizard-cust-resp" data-cdrop-icon="user" data-default-value="${esc(defaultUserId || '')}" onchange="wizardCustSetResp('${stageId}', this.value)">${roleOpts}</select>`}
       <input type="date" class="wizard-cust-date ${hasDateAnchor ? 'is-customized' : ''}" data-fdp-display="short" data-fdp-no-weekend="1" value="${endDate}" onchange="wizardCustSetDate('${stageId}', this.value)">
       <span class="wizard-cust-days-plain" title="Prazo calculado a partir das datas — herdado do fluxo. Edite a data pra alterar.">${(computedDays ?? '—') + 'd'}</span>
@@ -35688,6 +35978,7 @@ function wizardAddCustStage() {
     wizardState.customization.stageOrder.push(newStage.id);
   }
   renderWizardCustomization();
+  _focusStageNameIn(`[data-stage-id="${newStage.id}"]`);
 }
 function wizardCustRemoveAddition(id) {
   const cust = wizardState.customization;

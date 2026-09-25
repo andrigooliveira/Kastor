@@ -2384,7 +2384,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               <i data-lucide="search" class="filter-input-icon ic-sm"></i>
               <input class="filter-input filter-input--with-icon" id="flow-search" placeholder="Buscar cliente…" oninput="renderFlows()">
             </div>
-            <button class="btn btn-ghost btn-sm admin-only" style="margin-left:auto" onclick="openDemandTypesModal()"><i data-lucide="tag" class="ic-sm"></i> Gerenciar tipos</button>
+            <button class="btn btn-ghost btn-sm admin-only" style="margin-left:auto" onclick="openStagePresetsModal()"><i data-lucide="list-checks" class="ic-sm"></i> Nomes de etapa</button>
+            <button class="btn btn-ghost btn-sm admin-only" onclick="openDemandTypesModal()"><i data-lucide="tag" class="ic-sm"></i> Gerenciar tipos</button>
           </div>
           <div class="flow-grid" id="flow-clients-grid"></div>
         </div>
@@ -4701,6 +4702,26 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 </div>
 
 <!-- MODAL: CONFIRMAÇÃO GENÉRICA -->
+<!-- Nomes de etapa pré-definidos (moderadores e admins) — openStagePresetsModal() -->
+<div class="modal-overlay" id="stage-presets-modal" data-no-autofocus="1">
+  <div class="modal sp-modal" data-no-outside-close="1">
+    <div class="modal-header">
+      <div class="modal-title">Nomes de etapa</div>
+      <button class="modal-close" onclick="closeModal('stage-presets-modal')" aria-label="Fechar"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <p class="sp-intro">Aparecem como sugestão sempre que alguém nomeia uma etapa (fluxos, modelos de cliente, Customizar demanda e Detalhes). Quem precisar ainda pode digitar um nome personalizado. A <i data-lucide="flag" class="ic-xs sp-intro-flag"></i> marca nomes de conclusão: escolher um deles torna a etapa a final. Mudar a lista não renomeia etapas que já existem.</p>
+      <div class="sp-list" id="sp-list"></div>
+      <button type="button" class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="spAdd()"><i data-lucide="plus" class="ic-sm"></i> Adicionar nome</button>
+    </div>
+    <div class="modal-footer">
+      <span class="sp-count" id="sp-count"></span>
+      <button class="btn btn-ghost" onclick="closeModal('stage-presets-modal')">Cancelar</button>
+      <button class="btn btn-confirm" id="sp-save" onclick="spSave()">Salvar lista</button>
+    </div>
+  </div>
+</div>
+
 <!-- Verificação em duas etapas: ativar, desativar, códigos novos — open2fa*() -->
 <div class="modal-overlay" id="twofa-modal">
   <div class="modal modal-sm" data-no-outside-close="1">
@@ -4793,7 +4814,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260925tfa3" defer></script>
+<script src="/js/boot.js?v=20260925stn6" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

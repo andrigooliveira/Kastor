@@ -742,6 +742,24 @@ test('Organização: ajustes, exportação e quem pode mudar', async () => {
   await call('PUT', '/api/org', admin, { settings: { dailyHours: 8, modsCanInvite: true, schedule: { mode: 'simple' } } });
 });
 
+test('Nomes de etapa: lista padrão, moderador edita, equipe não', async () => {
+  const admin = await loginCookie('admin', 'admin123');
+  let org = (await req('/api/org', { headers: { Cookie: admin } })).body;
+  assert.ok(org.settings.stagePresets.length >= 10, 'começa com a lista sugerida');
+  assert.ok(org.settings.stagePresets.some(p => p.label === 'Criação'));
+  const mod = await loginCookie('pessoa.mod', 'senha-forte-1');
+  const eq = await loginCookie('pessoa.equipe', 'senha-forte-1');
+  const list = [{ label: 'Briefing', color: '#0EA5E9' }, { label: 'Criação', color: '#7A00FF' }, { label: 'Aprovação do cliente', color: '#F97316' }];
+  assert.equal((await call('PUT', '/api/org/stage-presets', eq, { presets: list })).status, 403, 'equipe não edita');
+  assert.equal((await call('PUT', '/api/org/stage-presets', mod, { presets: [...list, { label: 'criação' }] })).status, 400, 'nome repetido');
+  assert.equal((await call('PUT', '/api/org/stage-presets', mod, { presets: [] })).status, 400);
+  const r = await call('PUT', '/api/org/stage-presets', mod, { presets: list });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(r.body.settings.stagePresets.map(p => p.label), ['Briefing', 'Criação', 'Aprovação do cliente']);
+  org = (await req('/api/org', { headers: { Cookie: eq } })).body;
+  assert.equal(org.settings.stagePresets.length, 3, 'todo mundo recebe a lista nova');
+});
+
 test('Fluxos: etapa de conclusão não tem responsável', async () => {
   const admin = await loginCookie('admin', 'admin123');
   const boot = (await req('/api/bootstrap', { headers: { Cookie: admin } })).body;

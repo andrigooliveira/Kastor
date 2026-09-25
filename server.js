@@ -5690,6 +5690,52 @@ function _storedWeek(sc) {
   }
   return null;
 }
+/* Nomes de etapa pré-definidos (seletor nos fluxos, modelos de cliente,
+   personalização e detalhes da demanda). Cada organização tem a sua lista;
+   moderadores e admins editam. "Personalizado" continua livre pra todos.
+   done = nome de etapa de conclusão (escolher marca a etapa como final). */
+const DEFAULT_STAGE_PRESETS = [
+  ['A fazer', '#64748B'],
+  ['Elaboração de Pauta', '#6366F1'],
+  ['Direcionamento de Conteúdo', '#0EA5E9'],
+  ['Direcionamento', '#38BDF8'],
+  ['[Aprovação] Pauta', '#F59E0B'],
+  ['Conteúdo', '#3B82F6'],
+  ['[Aprovação Interna] Conteúdo', '#F59E0B'],
+  ['[Aprovação Externa] Conteúdo', '#F97316'],
+  ['[Ajuste] Conteúdo', '#EF4444'],
+  ['Criação', '#2563EB'],
+  ['[Aprovação Interna] Criação', '#F59E0B'],
+  ['[Aprovação Externa] Criação', '#F97316'],
+  ['[Ajuste] Criação', '#DC2626'],
+  ['[Revisão] Conteúdo', '#EC4899'],
+  ['[Criação] Fechamento de Arquivo', '#1D4ED8'],
+  ['Migração e Integração', '#14B8A6'],
+  ['Configuração de Tag Manager', '#0D9488'],
+  ['Desenvolvimento', '#06B6D4'],
+  ['Blueprint', '#8B5CF6'],
+  ['Programar Postagens', '#10B981'],
+  ['Veiculação', '#22C55E'],
+  ['Conferência', '#F43F5E'],
+  ['Validação', '#E11D48'],
+  ['Concluída', '#22D3A5', true],
+  ['Cancelada', '#9CA3AF', true]
+].map(([label, color, done], i) => ({ id: 'sp' + (i + 1), label, color, done: !!done }));
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+const STAGE_PRESETS_MAX = 60;
+function validStagePresets(list) {
+  if (!Array.isArray(list) || !list.length) return null;
+  const seen = new Set();
+  const out = [];
+  for (const p of list.slice(0, STAGE_PRESETS_MAX)) {
+    const label = String((p && p.label) || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+    const key = label.toLowerCase();
+    if (!label || seen.has(key)) continue;
+    seen.add(key);
+    out.push({ id: /^[\w-]{1,40}$/.test(String(p.id || '')) ? String(p.id) : 'sp' + crypto.randomBytes(4).toString('hex'), label, color: HEX_COLOR_RE.test(p.color) ? p.color : '#7A00FF', done: !!p.done });
+  }
+  return out.length ? out : null;
+}
 function orgSettings(org) {
   const st = (org && org.settings) || {};
   const dh = Number(st.dailyHours);
@@ -5713,6 +5759,7 @@ function orgSettings(org) {
     dailyHours: custom ? Math.round((weeklyHours / Math.max(1, on.length)) * 100) / 100 : simpleHours,
     weeklyHours,
     modsCanInvite: st.modsCanInvite !== false,
+    stagePresets: validStagePresets(st.stagePresets) || DEFAULT_STAGE_PRESETS,
     schedule: { mode: custom ? 'custom' : 'simple', week, simpleHours }
   };
 }
@@ -5805,6 +5852,23 @@ app.put('/api/org', requireAuth, (req, res) => {
   saveEntity('organizations', req.org);
   res.json(orgPublic(req.org, req.membership.role));
 });
+/* Lista de nomes de etapa: moderadores e admins. */
+app.put('/api/org/stage-presets', requireAuth, modOrAdmin, (req, res) => {
+  const raw = (req.body || {}).presets;
+  if (!Array.isArray(raw)) return res.status(400).json({ error: 'Lista inválida.' });
+  if (raw.length > STAGE_PRESETS_MAX) return res.status(400).json({ error: `No máximo ${STAGE_PRESETS_MAX} nomes.` });
+  const names = raw.map(p => String((p && p.label) || '').trim().toLowerCase()).filter(Boolean);
+  const dup = names.find((n, i) => names.indexOf(n) !== i);
+  if (dup) return res.status(400).json({ error: `O nome "${dup}" aparece duas vezes.` });
+  if (raw.some(p => !String((p && p.label) || '').trim())) return res.status(400).json({ error: 'Todo nome precisa de um texto.' });
+  const list = validStagePresets(raw);
+  if (!list) return res.status(400).json({ error: 'Deixe pelo menos um nome na lista.' });
+  req.org.settings = { ...(req.org.settings || {}), stagePresets: list };
+  req.org.updatedAt = nowISO();
+  saveEntity('organizations', req.org);
+  res.json(orgPublic(req.org, req.membership.role));
+});
+
 /* Exportar os dados da organização (dono e admins). Não inclui o cofre de
    senhas, credenciais nem dados pessoais de outras organizações. */
 const ORG_EXPORT_SKIP = new Set(['passwords', 'passwordAudits', 'passwordFolders', 'googleEvents', 'invites', 'memberships', 'users']);
