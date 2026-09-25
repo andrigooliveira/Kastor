@@ -37,7 +37,12 @@ COPY package*.json ./
 
 # --omit=dev pula devDependencies (não temos, mas vale o hábito).
 # --no-audit e --no-fund reduzem noise no log de build.
-RUN npm install --omit=dev --no-audit --no-fund
+# fetch-retries: o registry às vezes derruba a conexão no meio (ECONNRESET);
+# em vez de falhar o build, o npm tenta de novo com espera crescente.
+RUN npm config set fetch-retries 5 \
+ && npm config set fetch-retry-mintimeout 20000 \
+ && npm config set fetch-retry-maxtimeout 120000 \
+ && npm install --omit=dev --no-audit --no-fund
 
 # Copia o resto do projeto. .dockerignore filtra o que NÃO deve entrar
 # (node_modules local, .env, data/, .git, etc — ver .dockerignore).
