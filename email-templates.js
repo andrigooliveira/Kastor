@@ -416,7 +416,7 @@ ${button(baseUrl, 'Abrir o reWork')}`;
 }
 
 /* Convite pra entrar no reWork. `inviter` = quem convidou; `access` = rótulo
-   do nível (Equipe, Moderador…); `squads` = nomes dos squads liberados. */
+   do nível (Equipe, Moderador…); `squads` = nomes das equipes liberadas. */
 function invite({ name, inviter, org, access, squads, link, expiresAt, baseUrl, isOwner }) {
   const who = inviter || 'A equipe';
   if (isOwner) return ownerInvite({ name, org, link, expiresAt, baseUrl });
@@ -425,7 +425,7 @@ function invite({ name, inviter, org, access, squads, link, expiresAt, baseUrl, 
   const squadList = Array.isArray(squads) && squads.length ? squads : [];
   const details = [
     access ? `Acesso: ${strong(access)}` : '',
-    squadList.length ? `${squadList.length > 1 ? 'Squads' : 'Squad'}: ${squadList.map(n => strong(n)).join(', ')}` : ''
+    squadList.length ? `${squadList.length > 1 ? 'Equipes' : 'Equipe'}: ${squadList.map(n => strong(n)).join(', ')}` : ''
   ].filter(Boolean).join('<br>');
   const days = expiresAt ? Math.max(1, Math.round((Date.parse(expiresAt) - Date.now()) / 864e5)) : 7;
   const content = `${chip('Convite', 'roxo')}
@@ -517,7 +517,7 @@ function ownerInvite({ name, org, link, expiresAt, baseUrl }) {
   const content = `${chip('Acesso liberado', 'roxo')}
 ${headline('Seu acesso ao reWork foi aprovado')}
 ${paragraph(`${name ? `Olá, ${strong(firstName(name))}! ` : 'Olá! '}O pedido de acesso${org ? ` da ${strong(org)}` : ''} foi aprovado. A organização já está criada e você é o dono dela.`)}
-${paragraph('Crie sua conta pelo botão abaixo. Depois é só convidar a equipe, criar os squads e cadastrar os clientes.', 8)}
+${paragraph('Crie sua conta pelo botão abaixo. Depois é só convidar as pessoas, criar as equipes e cadastrar os clientes.', 8)}
 ${button(link, 'Criar minha conta')}
 <p class="rw-baixa" style="margin:24px 0 0;font-size:12px;line-height:1.6;color:${T.baixa}">O link vale por <strong>${days} ${days === 1 ? 'dia' : 'dias'}</strong>. Se já tem conta no reWork, é só confirmar sua senha.</p>
 <p class="rw-baixa" style="margin:12px 0 0;font-size:11px;line-height:1.5;color:${T.baixa};word-break:break-all">${escHtml(link)}</p>`;

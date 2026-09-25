@@ -68,22 +68,40 @@ let sortAsc = true;
 const calState = { all: new Date(), mine: new Date() };
 const MONTHS = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 
-/* ─── ROUTING — cada tela e modal tem URL própria em inglês ───
+/* ─── ROUTING — cada tela, modal e opção tem URL própria em inglês ───
+   Tudo mora debaixo da organização: /<id-da-org>/<caminho>. O roteador só
+   enxerga o "caminho do app" (sem a organização): appPath() tira o prefixo da
+   URL e orgUrl() põe de volta. A organização da URL vai em toda chamada da API
+   (X-Org-Id), então duas abas em organizações diferentes não se misturam.
+   Links sem organização (antigos, e-mails) ganham a organização atual.
+
    Páginas (raiz):
-     /dashboard, /demands, /my-demands, /capacity, /templates,
-     /projects, /flows, /workspaces, /users, /integrations, /profile
+     /home (Início), /dashboard (Dashboards), /demands, /my-demands, /analytics,
+     /agenda, /projects, /flows, /workspaces, /users, /integrations, /profile…
    Modais (subrota):
      /demands/new, /demands/<id>, /demands/<id>/edit
      /projects/new, /projects/<id>
      /flows/new, /flows/<id>
      /users/new, /users/<id>
      /integrations/webhooks/new, /integrations/webhooks/<id>
+     …e os de MODAL_ROUTES (abaixo)
+   Opções (abas/visões): /demands/kanban, /profile/security, /agenda/team…
+     — trocam a URL sem empilhar histórico (replaceState).
 
    Convenção: ações do usuário (goPage, openX, closeModal) escrevem na URL via
    pushState/replaceState; o popstate handler reaplica a rota silenciosamente
    (sem reescrever a URL) pra evitar loops. */
+const ORG_PATH_RE = /^\/(org_[A-Za-z0-9_-]+)(?=\/|$)/;
+function urlOrgId(pathname) { return ((pathname || location.pathname).match(ORG_PATH_RE) || [])[1] || null; }
+// Organização desta aba: começa pela da URL; enterApp confirma com o /me.
+let _orgId = urlOrgId();
+function appPath(pathname) { return (pathname || location.pathname).replace(ORG_PATH_RE, '') || '/'; }
+function orgUrl(path) {
+  if (!_orgId || typeof path !== 'string' || path[0] !== '/' || ORG_PATH_RE.test(path)) return path;
+  return '/' + _orgId + (path === '/' ? '' : path);
+}
 const PAGE_TO_PATH = {
-  dashboard:    '/dashboard',
+  dashboard:    '/home',
   list:         '/demands',
   mine:         '/my-demands',
   analytics:    '/analytics',
@@ -94,7 +112,7 @@ const PAGE_TO_PATH = {
   projects:     '/projects',
   flows:        '/flows',
   workspaces:   '/workspaces',
-  org:          '/organizacao',
+  org:          '/organization',
   users:        '/users',
   integrations: '/integrations',
   profile:      '/profile',
@@ -106,7 +124,7 @@ const PAGE_TO_PATH = {
   passwords:    '/passwords',
   kb:           '/knowledge-base',
   forms:        '/forms',
-  dashboards:   '/dashboards',
+  dashboards:   '/dashboard',
   performance:  '/performance',
   gallery:      '/gallery',
   menu:         '/menu'
@@ -181,34 +199,74 @@ function pageUrlFor(page)  {
   if (page === 'analytics') {
     let tab = 'capacity';
     try { tab = localStorage.getItem('kastor-an-tab') || 'capacity'; } catch {}
-    const map = { reports: '/analytics/reports', capacity: '/analytics/capacity', rhythm: '/analytics/rhythm' };
+    const map = { reports: '/analytics/reports', capacity: '/analytics/capacity' + _capacityViewSuffix(), rhythm: '/analytics/rhythm' };
     return map[tab] || '/analytics/capacity';
   }
   // Detalhe da demanda: URL vem do id atual (senão cai pra dashboard).
   if (page === 'demand-detail') {
-    return detailId ? demandPath(detailId) : '/dashboard';
+    return detailId ? demandPath(detailId) + _optSuffix(() => detailActiveTab !== 'comments' ? '/' + detailActiveTab : '') : '/home';
   }
-  // 404: preserva a URL digitada (não canoniza pra /dashboard).
-  if (page === 'notfound') return location.pathname;
-  return PAGE_TO_PATH[page] || '/dashboard';
+  // Páginas com aba/visão: o caminho carrega a opção atual.
+  if (page === 'dashboard') return '/home' + _optSuffix(() => _dashNextTab !== 'forecast' ? '/' + _dashNextTab : '');
+  if (page === 'list') return '/demands' + _optSuffix(() => listView === 'kanban' ? (kanbanMode === 'stage' ? '/kanban/stages' : '/kanban') : listView === 'cal' ? '/calendar' : '');
+  if (page === 'agenda') return '/agenda' + _optSuffix(() => agendaMode === 'team' ? '/team' : agendaWeeks === 1 ? '/week' : '/two-weeks');
+  if (page === 'profile') return '/profile' + _optSuffix(() => _profileSection !== 'account' ? '/' + _profileSection : '');
+  if (page === 'integrations') return '/integrations' + _optSuffix(() => '/' + _integrationsTab);
+  if (page === 'passwords') return '/passwords' + _optSuffix(() => pwState.selectedFolderId && pwState.selectedFolderId !== '__all__' ? '/folders/' + pwState.selectedFolderId : '');
+  // 404: preserva a URL digitada (não canoniza pra /home).
+  if (page === 'notfound') return appPath();
+  return PAGE_TO_PATH[page] || '/home';
 }
+// Lê o estado de uma opção sem quebrar se a variável ainda não existe (boot).
+function _optSuffix(fn) { try { return fn() || ''; } catch { return ''; } }
+function _capacityViewSuffix() { return _optSuffix(() => capacityView === 'project' ? '/projects' : capacityView === 'client' ? '/clients' : ''); }
 function currentPageUrl()  { return pageUrlFor(currentPage); }
 function navPush(path, opts) {
   if (_routerSilent) return;
   const keepSearch = !opts || opts.keepSearch !== false;
-  const target = path + (keepSearch ? location.search : '');
+  const target = orgUrl(path) + (keepSearch ? location.search : '');
   if (location.pathname + location.search === target) return;
   history.pushState(null, '', target);
 }
 function navReplace(path, opts) {
   if (_routerSilent) return;
   const keepSearch = !opts || opts.keepSearch !== false;
-  const target = path + (keepSearch ? location.search : '');
+  const target = orgUrl(path) + (keepSearch ? location.search : '');
   if (location.pathname + location.search === target) return;
   history.replaceState(null, '', target);
 }
 function parseRoute(path) {
   const p = (path || '/').replace(/\/+$/, '') || '/';
+  if (p === '/') return { page: 'dashboard' };
+  // Modais com caminho próprio (MODAL_ROUTES) — antes das regras genéricas.
+  for (const [modalId, mr] of Object.entries(MODAL_ROUTES)) {
+    const mm = p.match(mr.match);
+    if (mm) return { page: typeof mr.page === 'function' ? mr.page(mm) : mr.page, modalRoute: modalId, args: mm.slice(1) };
+  }
+  // Opções (abas/visões) de cada página.
+  {
+    let mm;
+    if ((mm = p.match(/^\/home\/(forecast|radar|activity|prio|recent)$/))) return { page: 'dashboard', dashTab: mm[1] };
+    if (p === '/demands')                 return { page: 'list', listView: 'table' };
+    if (p === '/demands/kanban')          return { page: 'list', listView: 'kanban', kanbanMode: 'attention' };
+    if (p === '/demands/kanban/stages')   return { page: 'list', listView: 'kanban', kanbanMode: 'stage' };
+    if (p === '/demands/calendar')        return { page: 'list', listView: 'cal' };
+    if (p === '/agenda/week')             return { page: 'agenda', agendaMode: 'individual', agendaWeeks: 1 };
+    if (p === '/agenda/two-weeks')        return { page: 'agenda', agendaMode: 'individual', agendaWeeks: 2 };
+    if (p === '/agenda/team')             return { page: 'agenda', agendaMode: 'team' };
+    if ((mm = p.match(/^\/profile\/([a-z-]+)$/)) && PROFILE_SECTIONS.includes(mm[1])) return { page: 'profile', section: mm[1] };
+    if (p === '/profile') {
+      const aba = new URLSearchParams(location.search).get('aba'); // formato antigo (?aba=)
+      return { page: 'profile', section: PROFILE_SECTIONS.includes(aba) ? aba : 'account' };
+    }
+    if ((mm = p.match(/^\/organization\/([a-z-]+)$/)) && ORG_SECTION_PATHS[mm[1]]) return { page: 'org', section: mm[1] };
+    if (p === '/organizacao')             return { page: 'org', legacy: true }; // nome antigo
+    if ((mm = p.match(/^\/integrations\/(discord|webhooks)$/))) return { page: 'integrations', tab: mm[1] };
+    if ((mm = p.match(/^\/passwords\/folders\/([^/]+)$/))) return { page: 'passwords', folderId: mm[1] };
+    if ((mm = p.match(/^\/demands\/([^/]+)\/(checklist|forms|activity|stages)$/)) && mm[1] !== 'new') return { page: 'demand-detail', id: extractRouteId(mm[1]), detailTab: mm[2] };
+    if ((mm = p.match(/^\/clients\/([^/]+)\/gallery$/)))  return { page: 'clients', view: 'gallery', galleryKind: 'client', id: extractRouteId(mm[1]) };
+    if ((mm = p.match(/^\/projects\/([^/]+)\/gallery$/))) return { page: 'clients', view: 'gallery', galleryKind: 'project', id: extractRouteId(mm[1]) };
+  }
   // /recurring bare (sem sub-rota) → sinaliza tab pra applyRoute redirecionar
   // pra URL canônica (/recurring/demands ou /recurring/lists) via setRecurringTab.
   if (p === '/recurring') {
@@ -229,7 +287,9 @@ function parseRoute(path) {
     try { tab = localStorage.getItem('kastor-an-tab') || 'capacity'; } catch {}
     return { page: 'analytics', tab };
   }
-  if (p === '/analytics/capacity' || p === '/capacity') return { page: 'analytics', tab: 'capacity' };
+  if (p === '/analytics/capacity' || p === '/capacity') return { page: 'analytics', tab: 'capacity', capView: 'team' };
+  if (p === '/analytics/capacity/projects')             return { page: 'analytics', tab: 'capacity', capView: 'project' };
+  if (p === '/analytics/capacity/clients')              return { page: 'analytics', tab: 'capacity', capView: 'client' };
   if (p === '/analytics/reports'  || p === '/reports')  return { page: 'analytics', tab: 'reports' };
   if (p === '/analytics/rhythm')                        return { page: 'analytics', tab: 'rhythm' };
   // Performance agora é uma página isolada. URL legacy /analytics/performance
@@ -285,9 +345,9 @@ function parseRoute(path) {
   if ((m = p.match(/^\/integrations\/webhooks\/([^/]+)$/))) return { page: 'integrations', modal: 'webhook', op: 'edit', id: m[1] };
   if ((m = p.match(/^\/forms\/new$/)))                      return { page: 'forms',        modal: 'form',    op: 'new' };
   if ((m = p.match(/^\/forms\/([^/]+)$/)))                  return { page: 'forms',        modal: 'form',    op: 'edit', id: m[1] };
-  if ((m = p.match(/^\/dashboards\/new$/)))                 return { page: 'dashboards',   modal: 'dashboard', op: 'new' };
-  if ((m = p.match(/^\/dashboards\/([^/]+)\/edit$/)))       return { page: 'dashboards',   modal: 'dashboard', op: 'edit', id: m[1] };
-  if ((m = p.match(/^\/dashboards\/([^/]+)$/)))             return { page: 'dashboards',   view: 'detail', id: m[1] };
+  if ((m = p.match(/^\/dashboard\/new$/)))                  return { page: 'dashboards',   modal: 'dashboard', op: 'new' };
+  if ((m = p.match(/^\/dashboard\/([^/]+)\/edit$/)))        return { page: 'dashboards',   modal: 'dashboard', op: 'edit', id: m[1] };
+  if ((m = p.match(/^\/dashboard\/([^/]+)$/)))              return { page: 'dashboards',   view: 'detail', id: m[1] };
   // Tabs específicas — precedem o modal edit pra não bater com o regex genérico.
   if ((m = p.match(/^\/recurring\/demands$/)))              return { page: 'recurring',    tab: 'demandas' };
   if ((m = p.match(/^\/recurring\/lists$/)))                return { page: 'recurring',    tab: 'listas' };
@@ -297,11 +357,14 @@ function parseRoute(path) {
   return { page: 'notfound', path: path || p };
 }
 function applyRoute() {
-  const r = parseRoute(location.pathname);
+  const r = parseRoute(appPath());
   // Todas as telas são navegáveis. Telas administrativas viram readonly pra
   // usuários comuns via .admin-only no DOM (toggle por body.user-readonly).
   _routerSilent = true;
   try {
+    // 0) Opções que a página lê ao renderizar (aba/visão) — antes do goPage,
+    //    pra primeira pintura já sair certa.
+    _applyRouteStateBeforeRender(r);
     // 1) Página — se já estamos nela (boot inicial), força renderCurrent
     //    pra preencher os skeletons. Sem isso, dashboard fica em loading
     //    eterno até o usuário navegar e voltar.
@@ -309,10 +372,11 @@ function applyRoute() {
     else renderCurrent();
     // 2) Fecha qualquer modal roteado aberto (modais transitórios como
     //    confirm/prompt/picker/cmdk ficam intactos).
-    const ROUTED = ['demand-modal','project-modal','flow-modal','user-modal','webhook-modal','recurring-modal','form-editor-modal','dashboard-editor-modal'];
+    const ROUTED = ['demand-modal','project-modal','flow-modal','user-modal','webhook-modal','client-modal','recurring-modal','form-editor-modal','dashboard-editor-modal', ...Object.keys(MODAL_ROUTES)];
     document.querySelectorAll('.modal-overlay.open').forEach(m => {
       if (ROUTED.includes(m.id)) m.classList.remove('open');
     });
+    _modalRouteStack.length = 0;
     // 3) Página de detalhe da demanda (era modal) — carrega o conteúdo,
     //    troca workspace se preciso e inicia poll de refresh.
     if (r.page === 'demand-detail' && r.id) {
@@ -377,6 +441,12 @@ function applyRoute() {
     if (r.page === 'analytics' && r.tab && typeof setAnalyticsTab === 'function') {
       setAnalyticsTab(r.tab);
     }
+    // 4c) Demais opções (abas e visões) + modais com caminho próprio.
+    _applyRouteOptions(r);
+    if (r.modalRoute) {
+      const mr = MODAL_ROUTES[r.modalRoute];
+      try { Promise.resolve(mr.open(...(r.args || []))).catch(() => {}); } catch (e) { console.warn('[route] modal', r.modalRoute, e); }
+    }
     // 5) Canonicaliza a URL. Se veio um link antigo (`/clients/<id>`) ou com slug
     //    desatualizado, reescreve pra forma `slug-<id>` corrente. Ignora se a
     //    entidade não está no cache — quando carregar, o próprio open* rewrita.
@@ -385,7 +455,39 @@ function applyRoute() {
     _routerSilent = false;
   }
 }
+/* Estado de aba/visão que o render da página lê — setado antes de desenhar. */
+function _applyRouteStateBeforeRender(r) {
+  if (r.page === 'profile' && r.section) _profileSection = r.section;
+  if (r.page === 'integrations' && r.tab) _integrationsTab = r.tab;
+  if (r.page === 'analytics' && r.capView) capacityView = r.capView;
+  if (r.page === 'passwords' && r.folderId) pwState.selectedFolderId = r.folderId;
+  if (r.page === 'list' && r.kanbanMode && r.kanbanMode !== kanbanMode) {
+    kanbanMode = r.kanbanMode;
+    try { localStorage.setItem('kastor-kanban-mode', kanbanMode); } catch {}
+  }
+}
+/* Aplica a aba/visão da rota depois que a página está na tela. */
+function _applyRouteOptions(r) {
+  if (r.page === 'dashboard' && !r.modalRoute) setDashNextTab(r.dashTab || 'forecast');
+  if (r.page === 'list' && r.listView) setListView(r.listView);
+  if (r.page === 'agenda' && r.agendaMode) {
+    setAgendaMode(r.agendaMode);
+    if (r.agendaWeeks) setAgendaView(r.agendaWeeks);
+  }
+  if (r.page === 'profile' && r.section) setProfileSection(r.section, { keepUrl: true });
+  if (r.page === 'integrations' && r.tab) setIntegrationsTab(r.tab);
+  if (r.page === 'demand-detail' && r.id && !r.modalRoute) setDemandDetailTab(r.detailTab || 'comments');
+  if (r.page === 'org') {
+    const sec = r.section ? ORG_SECTION_PATHS[r.section] : null;
+    if (sec) setTimeout(() => _orgGoSection('orgp-' + sec), 80);
+  }
+  if (r.view === 'gallery' && r.id) {
+    if (r.galleryKind === 'project') goProjectGallery(r.id);
+    else goClientGallery(r.id);
+  }
+}
 function _canonicalizeUrlFromRoute(r) {
+  if (r && r.legacy && r.page === 'org') { history.replaceState(null, '', orgUrl('/organization') + location.search + location.hash); return; }
   if (!r || !r.id) return;
   let canonical = null;
   if (r.modal === 'detail' || (r.modal === 'demand' && r.op === 'edit')) {
@@ -412,12 +514,315 @@ function _canonicalizeUrlFromRoute(r) {
       if (f && f.clientId) canonical = flowPath(f.clientId, f.id);
     }
   }
-  if (canonical && canonical !== location.pathname) {
+  if (canonical && canonical !== appPath()) {
     // history.replaceState direto — bypassa _routerSilent, sem re-disparar popstate.
-    history.replaceState(null, '', canonical + location.search + location.hash);
+    history.replaceState(null, '', orgUrl(canonical) + location.search + location.hash);
   }
 }
 window.addEventListener('popstate', applyRoute);
+
+/* ─── MODAIS COM CAMINHO PRÓPRIO ───
+   Cada entrada liga um modal a um caminho do app:
+     match  → regex do caminho (os grupos viram os argumentos de open)
+     page   → página de fundo quando o caminho é aberto direto (F5, link)
+     path() → caminho enquanto o modal está aberto, lido do estado atual
+              (null = sem caminho nesse contexto)
+     open() → reabre o modal a partir do caminho
+     parent() → (opcional) pra onde voltar ao fechar quando o modal veio da
+              URL; sem ele, volta pra página de fundo
+   openModal() grava o caminho na URL (pushState) e closeModal() volta pra URL
+   de antes (replaceState). Modais de confirmação (confirm, prompt, pickers,
+   excluir cliente/projeto, escopo de exclusão) ficam de fora de propósito. */
+const ORG_SECTION_PATHS = { plan: 'plano', general: 'geral', people: 'pessoas', teams: 'squads', schedule: 'jornada', integrations: 'integracoes', data: 'dados', danger: 'perigo' };
+const _routeQuery = (obj) => {
+  const sp = new URLSearchParams();
+  Object.entries(obj || {}).forEach(([k, v]) => { if (v != null && v !== '') sp.set(k, v); });
+  const qs = sp.toString();
+  return qs ? '?' + qs : '';
+};
+const _routeParam = (k) => new URLSearchParams(location.search).get(k) || null;
+// Contexto dos botões "Adicionar" das recorrentes (cliente/projeto/área/dono/lista) ↔ query.
+const REC_CTX_KEYS = { clientId: 'client', projectId: 'project', roleId: 'role', ownerId: 'owner', listaId: 'list' };
+function _recCtxQuery(ctx) { const o = {}; Object.entries(REC_CTX_KEYS).forEach(([k, q]) => { o[q] = ctx && ctx[k]; }); return _routeQuery(o); }
+function _recCtxFromQuery() { const o = {}; Object.entries(REC_CTX_KEYS).forEach(([k, q]) => { const v = _routeParam(q); if (v) o[k] = v; }); return o; }
+// Abre a demanda do caminho (troca de equipe se precisar) — base dos modais da demanda.
+function _openDemandFromRoute(id) {
+  const d = demandById(id);
+  if (d && d.workspaceId && d.workspaceId !== activeWs) switchWorkspace(d.workspaceId);
+  if (detailId !== id || currentPage !== 'demand-detail') showDetail(id);
+}
+// Bloco da agenda: caminho + pré-seleção (dia, horário, pessoa) na query.
+let _scheduleRoutePreset = null;
+function _schedulePath(suffix) {
+  const base = editingScheduleId ? '/agenda/blocks/' + editingScheduleId : '/agenda/blocks/new';
+  const p = !editingScheduleId && _scheduleRoutePreset;
+  return base + (suffix || '') + (p ? _routeQuery({ date: p.date, start: p.startMin, end: p.endMin, user: p.userId }) : '');
+}
+function _schedulePresetFromQuery() {
+  const date = _routeParam('date');
+  if (!date) return undefined;
+  const n = (k) => { const v = Number(_routeParam(k)); return Number.isFinite(v) && v > 0 ? v : undefined; };
+  return { date, startMin: n('start'), endMin: n('end'), userId: _routeParam('user') || undefined };
+}
+const DASH_MORE_OPENERS = {
+  focus: () => openDashFocusAll(), blocked: () => openDashBlockedAll(), activity: () => openDashActivityAll(),
+  radar: () => openDashRadarAll(), recent: () => openDashRecentMineAll(), 'top-owners': () => openDashTopOwnersAll(),
+  mentions: () => openDashMentionsAll(), 'time-gaps': () => openDashTimeGapsAll()
+};
+let _dashMoreKey = null;
+let _forecastDayOpen = null;
+let _wcRoute = null;          // { dashId, widgetId } do widget em edição
+let _gcalOpenId = null;       // evento do Google aberto no modal
+const _gcalEventsById = new Map(); // eventos do Google pintados na agenda (pro caminho /agenda/google/<id>)
+const TF_ACTION_PATHS = { app: ['setup', 'totp'], email: ['setup', 'email'], disable: ['disable'], 'recovery-codes': ['regen'] };
+
+const MODAL_ROUTES = {
+  /* Início */
+  'release-notes-modal': { match: /^\/news$/, page: 'dashboard', path: () => '/news', open: () => showAllReleaseNotes() },
+  'forecast-modal': {
+    match: /^\/home\/forecast\/(\d{4}-\d{2}-\d{2})$/, page: 'dashboard',
+    path: () => _forecastDayOpen ? '/home/forecast/' + _forecastDayOpen : null,
+    open: (ymd) => { setDashNextTab('forecast'); openForecastDay(ymd); }
+  },
+  'dash-more-modal': {
+    match: /^\/home\/more\/([a-z-]+)$/, page: 'dashboard',
+    path: () => _dashMoreKey ? '/home/more/' + _dashMoreKey : null,
+    open: (key) => DASH_MORE_OPENERS[key] && DASH_MORE_OPENERS[key]()
+  },
+  /* Demandas */
+  'saved-filters-modal': { match: /^\/demands\/saved-filters$/, page: 'list', path: () => '/demands/saved-filters', open: () => openManageSavedFiltersModal() },
+  'time-modal': {
+    match: /^\/demands\/([^/]+)\/time\/new$/, page: 'demand-detail',
+    path: () => detailId && currentPage === 'demand-detail' ? demandPath(detailId) + '/time/new' : null,
+    open: (seg) => { _openDemandFromRoute(extractRouteId(seg)); openRegisterTimeModal(); }
+  },
+  'form-picker-modal': {
+    match: /^\/demands\/([^/]+)\/forms\/new$/, page: 'demand-detail',
+    path: () => _fpDemandId ? demandPath(_fpDemandId) + '/forms/new' : null,
+    open: (seg) => { const id = extractRouteId(seg); _openDemandFromRoute(id); openFormPicker(id); }
+  },
+  'form-fill-modal': {
+    match: /^\/(?:demands\/([^/]+)\/forms\/([^/]+)|forms\/([^/]+)\/fill)$/, page: (m) => m[1] ? 'demand-detail' : 'forms',
+    path: () => !_ffTemplateId ? null : _ffDemandId ? demandPath(_ffDemandId) + '/forms/' + _ffTemplateId : '/forms/' + _ffTemplateId + '/fill',
+    open: (seg, tid, tidAlone) => {
+      if (!seg) return openFormFill(tidAlone, null);
+      const id = extractRouteId(seg);
+      _openDemandFromRoute(id);
+      openFormFill(tid, id);
+    }
+  },
+  /* Clientes e modelos */
+  'client-public-links-modal': {
+    match: /^\/clients\/([^/]+)\/public-links$/, page: 'clients',
+    path: () => _cplState.clientId ? clientPath(_cplState.clientId) + '/public-links' : null,
+    open: (seg) => { const id = extractRouteId(seg); openClient(id); openClientPublicLinksModal(id); }
+  },
+  'client-template-save-modal': {
+    match: /^\/clients\/([^/]+)\/edit\/save-as-model$/, page: 'clients',
+    path: () => editingClientId ? clientPath(editingClientId) + '/edit/save-as-model' : null,
+    parent: () => editingClientId ? clientPath(editingClientId) + '/edit' : null,
+    open: (seg) => { openClientModal(extractRouteId(seg)); openSaveClientTemplate(); }
+  },
+  'new-model-modal': { match: /^\/clients\/models\/new$/, page: 'clientsModels', path: () => '/clients/models/new', open: () => openNewModelModal() },
+  'template-flow-modal': {
+    match: /^\/clients\/models\/([^/]+)\/projects\/(\d+)\/flows\/(new|\d+)$/, page: 'clientsModels',
+    path: () => _tflCtx ? `/clients/models/${_tflCtx.tplId}/projects/${_tflCtx.pIdx}/flows/${_tflCtx.fIdx == null ? 'new' : _tflCtx.fIdx}` : null,
+    open: (tplId, pIdx, fIdx) => openTemplateFlowModal(tplId, Number(pIdx), fIdx === 'new' ? null : Number(fIdx))
+  },
+  /* Fluxos */
+  'dupflow-modal': {
+    match: /^\/flows\/(?:([^/]+)\/)?([^/]+)\/duplicate$/, page: 'flows',
+    path: () => {
+      const f = flowById(duplicatingFlowId);
+      if (!f) return null;
+      return (f.clientId && clientById(f.clientId) ? flowPath(f.clientId, f) : '/flows/' + f.id) + '/duplicate';
+    },
+    parent: () => { const f = flowById(duplicatingFlowId); return f && f.clientId && clientById(f.clientId) ? flowClientPath(f.clientId) : null; },
+    open: (cseg, fseg) => {
+      const f = flowById(extractRouteId(fseg));
+      if (!f) return;
+      if (f.clientId && clientById(f.clientId)) openClientFlows(f.clientId);
+      openDuplicateFlow(f.id);
+    }
+  },
+  'stage-presets-modal': { match: /^\/flows\/stage-names$/, page: 'flows', path: () => '/flows/stage-names', open: () => openStagePresetsModal() },
+  'dtype-manage-modal': { match: /^\/flows\/demand-types$/, page: 'flows', path: () => '/flows/demand-types', open: () => openDemandTypesModal() },
+  /* Recorrentes e listas */
+  'nova-lista-modal': {
+    match: /^\/recurring\/lists\/(?:new|([^/]+)\/edit)$/, page: 'recurring',
+    path: () => _editingListaId ? `/recurring/lists/${_editingListaId}/edit` : '/recurring/lists/new',
+    open: (id) => { setRecurringTab('listas'); id ? openEditListaModal(id) : openNovaListaModal(); }
+  },
+  'duplicar-lista-modal': {
+    match: /^\/recurring\/lists\/([^/]+)\/duplicate$/, page: 'recurring',
+    path: () => _duplicatingListaId ? `/recurring/lists/${_duplicatingListaId}/duplicate` : null,
+    open: (id) => { setRecurringTab('listas'); openDuplicarListaModal(id); }
+  },
+  'nova-demanda-lista-modal': {
+    match: /^\/recurring\/lists\/([^/]+)\/demands\/new$/, page: 'recurring',
+    path: () => _ndlState.listaId ? `/recurring/lists/${_ndlState.listaId}/demands/new` : null,
+    open: (id) => { setRecurringTab('listas'); openNovaDemandaListaModal(id); }
+  },
+  'adicionar-lista-modal': {
+    match: /^\/recurring\/demands\/add-list$/, page: 'recurring',
+    path: () => '/recurring/demands/add-list' + _recCtxQuery(_adicionarListaCtx),
+    open: () => { setRecurringTab('demandas'); openAdicionarListaModal(_recCtxFromQuery()); }
+  },
+  'personalizada-modal': {
+    match: /^\/recurring\/demands\/new$/, page: 'recurring',
+    path: () => '/recurring/demands/new' + _recCtxQuery(_personaState.ctx),
+    open: () => { const ctx = _recCtxFromQuery(); setRecurringTab(ctx.listaId ? 'listas' : 'demandas'); openPersonalizadaModal(ctx); }
+  },
+  'editar-demanda-aplicada-modal': {
+    match: /^\/recurring\/demands\/([^/]+)\/edit$/, page: 'recurring',
+    path: () => _edaEditingId ? `/recurring/demands/${_edaEditingId}/edit` : null,
+    open: (id) => { openEditarDemandaAplicadaModal(id); }
+  },
+  /* Agenda */
+  'schedule-modal': {
+    match: /^\/agenda\/blocks\/(?:new|([^/]+))$/, page: 'agenda',
+    path: () => _schedulePath(),
+    open: (id) => openScheduleModal(id || null, id ? undefined : _schedulePresetFromQuery())
+  },
+  'sch-recur-custom-modal': {
+    match: /^\/agenda\/blocks\/(?:new|([^/]+))\/recurrence$/, page: 'agenda',
+    path: () => _schedulePath('/recurrence'),
+    parent: () => _schedulePath(),
+    open: (id) => { openScheduleModal(id || null, id ? undefined : _schedulePresetFromQuery()); openScheduleRecurCustomModal(); }
+  },
+  'agenda-team-picker-modal': {
+    match: /^\/agenda\/team\/people$/, page: 'agenda', path: () => '/agenda/team/people',
+    open: () => { setAgendaMode('team'); openAgendaTeamPicker(); }
+  },
+  'gcal-event-modal': {
+    match: /^\/agenda\/google\/([^/]+)$/, page: 'agenda',
+    path: () => _gcalOpenId ? '/agenda/google/' + encodeURIComponent(_gcalOpenId) : null,
+    // Os eventos do Google chegam depois da agenda: tenta por alguns segundos.
+    open: (id) => {
+      const want = decodeURIComponent(id);
+      let tries = 0;
+      const tryOpen = () => {
+        const gb = _gcalEventsById.get(want);
+        if (gb) return openGoogleEventDetail(gb);
+        if (++tries < 20) setTimeout(tryOpen, 250);
+      };
+      tryOpen();
+    }
+  },
+  /* Estrutura e pessoas */
+  'ws-modal': {
+    match: /^\/workspaces\/(?:new|([^/]+)\/edit)$/, page: 'workspaces',
+    path: () => editingWsId ? `/workspaces/${editingWsId}/edit` : '/workspaces/new',
+    open: (id) => openWsModal(id || null)
+  },
+  'role-modal': {
+    match: /^\/users\/areas\/(?:new|([^/]+))$/, page: 'users',
+    path: () => editingRoleId ? '/users/areas/' + editingRoleId : '/users/areas/new',
+    open: (id) => openRoleModal(id || null)
+  },
+  'position-modal': {
+    match: /^\/users\/positions\/(?:new|([^/]+))$/, page: 'users',
+    path: () => editingPositionId ? '/users/positions/' + editingPositionId : '/users/positions/new',
+    open: (id) => openPositionModal(id || null)
+  },
+  /* Perfil */
+  'email-link-modal': {
+    match: /^\/profile\/account\/email$/, page: 'profile',
+    path: () => '/profile/account/email' + (_elmMode && _elmMode !== 'link' ? _routeQuery({ mode: _elmMode }) : ''),
+    open: () => { setProfileSection('account', { keepUrl: true }); openEmailLinkModal(_routeParam('mode') || undefined); }
+  },
+  'twofa-modal': {
+    match: /^\/profile\/security\/two-factor\/(app|email|disable|recovery-codes)$/, page: 'profile',
+    path: () => {
+      if (!_tf) return null;
+      const key = Object.keys(TF_ACTION_PATHS).find(k => TF_ACTION_PATHS[k][0] === _tf.action && (!TF_ACTION_PATHS[k][1] || TF_ACTION_PATHS[k][1] === _tf.method));
+      return key ? '/profile/security/two-factor/' + key : null;
+    },
+    open: (key) => {
+      setProfileSection('security', { keepUrl: true });
+      if (key === 'app') open2faSetup('totp');
+      else if (key === 'email') open2faSetup('email');
+      else if (key === 'disable') open2faDisable();
+      else open2faRegen();
+    }
+  },
+  /* Integrações e dashboards */
+  'dc-modal': {
+    match: /^\/integrations\/discord\/channels\/(?:new|([^/]+))$/, page: 'integrations',
+    path: () => _dcEditingId ? '/integrations/discord/channels/' + _dcEditingId : '/integrations/discord/channels/new',
+    open: (id) => { setIntegrationsTab('discord'); openDiscordChannelModal(id || null); }
+  },
+  'widget-config-modal': {
+    match: /^\/dashboard\/([^/]+)\/widgets\/(?:new|([^/]+))$/, page: 'dashboards',
+    path: () => _wcRoute ? `/dashboard/${_wcRoute.dashId}/widgets/${_wcRoute.widgetId || 'new'}` : null,
+    open: (dashId, widgetId) => { _currentDashboardId = dashId; renderDashboards(); openWidgetConfig(dashId, widgetId || null); }
+  },
+  /* Senhas */
+  'pw-audit-modal': { match: /^\/passwords\/audit$/, page: 'passwords', path: () => '/passwords/audit', open: () => openPwAuditModal() },
+  'pw-biometria-modal': { match: /^\/passwords\/biometrics$/, page: 'passwords', path: () => '/passwords/biometrics', open: () => openPwBiometriaModal() },
+  'pw-webauthn-register-modal': { match: /^\/passwords\/biometrics\/new$/, page: 'passwords', path: () => '/passwords/biometrics/new', open: () => openPwRegisterWizard() },
+  'pw-folder-modal': {
+    match: /^\/passwords\/folders\/(?:new|([^/]+)\/edit)$/, page: 'passwords',
+    path: () => _pwFolderEditingId ? `/passwords/folders/${_pwFolderEditingId}/edit` : '/passwords/folders/new',
+    open: async (id) => { if (id) await loadPwFolders(); openPwFolderEditor(id || null); }
+  },
+  'pw-folder-unlock-modal': {
+    match: /^\/passwords\/folders\/([^/]+)\/unlock$/, page: 'passwords',
+    path: () => _pwPendingUnlockFolderId ? `/passwords/folders/${_pwPendingUnlockFolderId}/unlock` : null,
+    open: async (id) => { await loadPwFolders(); openFolderUnlockModal(id); }
+  },
+  'pw-wizard-modal': {
+    match: /^\/passwords\/(?:new|entries\/([^/]+)\/edit)$/, page: 'passwords',
+    path: () => { const id = $('pw-edit-id')?.value; return id ? `/passwords/entries/${id}/edit` : '/passwords/new'; },
+    open: async (id) => {
+      await renderPasswords();
+      if (id && !pwState.entries.find(x => x.id === id)) { toast('Destrave a pasta dessa entrada para editar.', 'warn'); return; }
+      openPwWizard(id || null);
+    }
+  },
+  /* Base de conhecimento */
+  'post-embed-modal': {
+    match: /^\/knowledge-base\/(?:new|([^/]+)\/edit)\/embed$/, page: 'post-editor',
+    path: () => /^\/knowledge-base\/(new|[^/]+\/edit)(\/embed)?$/.test(appPath()) ? appPath().replace(/\/embed$/, '') + '/embed' : null,
+    parent: () => appPath().replace(/\/embed$/, ''),
+    // O editor lê o caminho (sem o /embed) ao renderizar; o modal abre logo depois.
+    open: () => setTimeout(() => openPostEmbedModal(), 120)
+  }
+};
+const _modalRouteStack = []; // [{ id, url, returnUrl }]
+function _pushModalRoute(id) {
+  const mr = MODAL_ROUTES[id];
+  if (!mr) return;
+  // Aberto pela própria URL (F5, link, voltar/avançar): a URL já é a do modal;
+  // ao fechar, volta pra página de fundo.
+  if (_routerSilent) { _modalRouteStack.push({ id, url: location.pathname + location.search, returnUrl: null }); return; }
+  let path = null;
+  try { path = mr.path(); } catch { path = null; }
+  if (!path) return;
+  // Já está na URL do modal (aberto pela rota, mas de forma assíncrona): nada a empilhar.
+  if (orgUrl(path.split('?')[0]) === location.pathname) { _modalRouteStack.push({ id, url: location.pathname + location.search, returnUrl: null }); return; }
+  const returnUrl = location.pathname + location.search + location.hash;
+  navPush(path, { keepSearch: false });
+  _modalRouteStack.push({ id, url: location.pathname + location.search, returnUrl });
+}
+function _popModalRoute(id) {
+  const i = _modalRouteStack.map(e => e.id).lastIndexOf(id);
+  if (i < 0) return;
+  const [entry] = _modalRouteStack.splice(i);
+  // Só volta se a URL ainda é a do modal (a pessoa pode ter navegado com ele aberto).
+  if (_routerSilent || location.pathname + location.search !== entry.url) return;
+  let back = entry.returnUrl;
+  if (!back) {
+    const mr = MODAL_ROUTES[id];
+    let parent = null;
+    try { parent = mr && mr.parent ? mr.parent() : null; } catch {}
+    back = orgUrl(parent || currentPageUrl());
+  }
+  history.replaceState(null, '', back);
+  // Modal de baixo aberto junto pela mesma URL (ex.: bloco + recorrência): passa a valer a nova.
+  const top = _modalRouteStack[_modalRouteStack.length - 1];
+  if (top && top.url === entry.url) top.url = location.pathname + location.search;
+}
 
 /* ─── PERSISTÊNCIA DE FILTROS POR TELA ───
    Cada tela com filtros salva um snapshot do estado em localStorage. Restaura
@@ -542,7 +947,8 @@ async function api(path, method = 'GET', body) {
     res = await fetch('/api' + path, {
       method,
       credentials: 'same-origin', // envia o cookie httpOnly de sessão
-      headers: { 'Content-Type': 'application/json' },
+      // Organização desta aba (da URL) — o servidor responde por ela.
+      headers: _orgId ? { 'Content-Type': 'application/json', 'X-Org-Id': _orgId } : { 'Content-Type': 'application/json' },
       body: body !== undefined ? JSON.stringify(body) : undefined
     });
   } catch (netErr) {
@@ -2083,7 +2489,7 @@ function _godmodeRenderDetail(d) {
         ${avatarHTML(u, 'avatar avatar-lg').replace(/data-user-id="[^"]+"/, '')}
         <div class="gm-detail-heading">
           <div class="gm-detail-name">${esc(u.name)} <span class="gm-detail-user">@${esc(u.username)}</span></div>
-          <div class="gm-detail-sub">${esc(rolePart)} · ${wsNames.length ? esc(wsNames.join(', ')) : 'sem squad'}${u.active === false ? ' · <span class="gm-user-inactive">inativo</span>' : ''}</div>
+          <div class="gm-detail-sub">${esc(rolePart)} · ${wsNames.length ? esc(wsNames.join(', ')) : 'sem equipe'}${u.active === false ? ' · <span class="gm-user-inactive">inativo</span>' : ''}</div>
           <div class="gm-detail-state">
             <span class="gm-dot ${p.online ? 'gm-dot--online' : 'gm-dot--offline'}"></span>
             ${p.online ? `${p.tabCount} ${p.tabCount > 1 ? 'abas abertas' : 'aba aberta'}` : `offline · visto ${_gmTimeAgo(u.lastSeen)}`}
@@ -2631,7 +3037,9 @@ function hideTooltip() {
 function openModal(id) {
   const el = $(id);
   if (!el) return;
+  const wasOpen = el.classList.contains('open');
   el.classList.add('open');
+  if (!wasOpen) _pushModalRoute(id); // modal com caminho próprio → URL
   paintIcons();
   // Auto-focus no primeiro campo editável do modal (input/textarea/select visível e habilitado).
   // Se algum open*() específico chamar .focus() depois, prevalece. Skip com data-no-autofocus.
@@ -2653,6 +3061,7 @@ function closeModal(id) {
   $(id).classList.remove('open');
   // Modais com rota própria → ao fechar reescreve URL pro destino apropriado.
   if (ROUTED_MODAL_IDS.includes(id)) navReplace(currentPageUrl());
+  else _popModalRoute(id);
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -2699,7 +3108,7 @@ async function _resolveDiscordUser(discordId) {
    uma ação natural (selecionar item de menu, trocar responsável, inserir
    @menção, etc). */
 const AVATAR_MENU_SUPPRESSORS = [
-  '.filter-cdrop-menu',      // filtros multi-select (Squad, Usuário, Cliente…)
+  '.filter-cdrop-menu',      // filtros multi-select (Equipe, Usuário, Cliente…)
   '.cdrop-menu',             // combos customizados (dropdown de owner-picker etc)
   '.combo-menu',             // combos legacy
   '.picker-list',            // pickers de bulk actions (owner, stage, priority)
@@ -3613,7 +4022,7 @@ function closeDemandDetail() {
     detailId = null;
     // Volta pra rota anterior no histórico; se não houver, vai pro dashboard.
     if (history.length > 1) history.back();
-    else { navPush('/dashboard'); applyRoute(); }
+    else { navPush('/home'); applyRoute(); }
   };
   if (hasUnsavedDetailEdits && hasUnsavedDetailEdits()) {
     showConfirm({
@@ -4230,6 +4639,34 @@ async function doResetPassword() {
   }
 }
 
+/* Põe a organização na URL. Três casos:
+   - URL sem organização (link antigo, e-mail, "/"): ganha a atual, e os
+     caminhos que mudaram de nome são traduzidos (/dashboard → /home,
+     /dashboards → /dashboard, /organizacao → /organization);
+   - URL de uma organização em que a pessoa não está: avisa e troca pela atual;
+   - URL certa: nada a fazer. */
+const LEGACY_PATHS = [
+  [/^\/dashboard(?=\/|$)/, '/home'],
+  [/^\/dashboards(?=\/|$)/, '/dashboard'],
+  [/^\/organizacao(?=\/|$)/, '/organization']
+];
+function _resolveOrgInUrl() {
+  const current = me && me.org && me.org.id;
+  if (!current) return;
+  const fromUrl = urlOrgId();
+  let rest = appPath();
+  if (!fromUrl) {
+    if (rest === '/index.html') rest = '/';
+    for (const [re, to] of LEGACY_PATHS) if (re.test(rest)) { rest = rest.replace(re, to); break; }
+  } else if (fromUrl !== current) {
+    setTimeout(() => { try { toast('Você não faz parte dessa organização. Abrimos ' + me.org.name + '.', 'warn'); } catch {} }, 600);
+    rest = '/';
+  }
+  _orgId = current;
+  const target = orgUrl(rest);
+  if (target !== location.pathname) history.replaceState(null, '', target + location.search + location.hash);
+}
+
 async function enterApp() {
   // Dispara loadAll() ANTES dos setups síncronos — enquanto o servidor
   // devolve o bootstrap (rede), o browser executa initTooltips/keys/etc
@@ -4256,14 +4693,27 @@ async function enterApp() {
   renderSidebarUser();
   renderWsSwitch();
   dashUserInit = false;
+  // Organização da aba: a do /me (o servidor já respeitou a da URL se a pessoa
+  // faz parte dela). A URL passa a ser /<id-da-org>/…
+  if (me && !me.org) {
+    // O login devolve o usuário sem a organização: busca uma vez.
+    try {
+      const r = await api('/orgs');
+      me.orgs = r.items || [];
+      me.org = me.orgs.find(o => o.id === r.current) || me.orgs[0] || null;
+    } catch {}
+  }
+  _resolveOrgInUrl();
+  renderSidebarNav(); // links do menu com a organização
   // Carrega rota inicial. Compat: links antigos #demand-<id> são migrados
   // pra /demands/<id> antes de aplicar a rota.
   const legacyHash = (location.hash || '').match(/^#demand-([A-Za-z0-9_-]+)/);
   if (legacyHash) {
-    history.replaceState(null, '', '/demands/' + legacyHash[1] + location.search);
+    history.replaceState(null, '', orgUrl('/demands/' + legacyHash[1]) + location.search);
   }
-  if (location.pathname === '/' || location.pathname === '/index.html') {
+  if (appPath() === '/' || appPath() === '/index.html') {
     goPage('dashboard');
+    history.replaceState(null, '', orgUrl(pageUrlFor('dashboard')) + location.search + location.hash);
   } else {
     applyRoute();
   }
@@ -4582,7 +5032,7 @@ const TOUR_STEPS = [
     target: '#an-tab-rhythm',
     position: 'auto',
     title: 'Análises — Ritmo',
-    body: 'Burndown semanal por squad. A linha ideal segue os prazos combinados — se a linha real fica acima dela, o squad está atrasado. Leitura assertiva do ritmo da semana.'
+    body: 'Burndown semanal por equipe. A linha ideal segue os prazos combinados — se a linha real fica acima dela, a equipe está atrasada. Leitura assertiva do ritmo da semana.'
   },
   // 13. Clientes
   {
@@ -5266,16 +5716,16 @@ async function switchOrg(id) {
   if (!me?.org || id === me.org.id) return;
   try {
     await api('/orgs/switch', 'POST', { orgId: id });
-    // Squad ativo e filtros são da organização anterior.
+    // Equipe ativa e filtros são da organização anterior.
     try { localStorage.removeItem('fluxo_ws'); } catch {}
-    location.href = '/dashboard';
+    location.href = '/' + id + '/home';
   } catch (e) { toast(e.message, 'error'); }
 }
 function openOrgSettings() { _closeOrgMenu(); if (me?.isOwner) goPage('org'); }
 
 /* ─── PÁGINA: CONFIGURAÇÕES DA ORGANIZAÇÃO (/organizacao) ───
    Seções por papel: todo mundo vê Geral e Jornada; admin/moderador veem
-   Pessoas, Squads e Integrações; admin exporta os dados; o dono muda nome e
+   Pessoas, Equipes e Integrações; admin exporta os dados; o dono muda nome e
    logo e transfere. _orgDraft guarda o que foi editado e ainda não salvo. */
 let _orgDraft = null;
 function _orgFreshDraft() {
@@ -6047,7 +6497,7 @@ function renderOrgPage() {
     { id: 'geral', label: 'Geral', icon: 'building-2', show: true },
     { id: 'plano', label: 'Plano', icon: 'gauge', show: !!org.usage },
     { id: 'pessoas', label: 'Pessoas e acesso', icon: 'users', show: admin || mod },
-    { id: 'squads', label: 'Squads', icon: 'layers', show: admin || mod },
+    { id: 'squads', label: 'Equipes', icon: 'layers', show: admin || mod },
     { id: 'jornada', label: 'Jornada de trabalho', icon: 'clock', show: true },
     { id: 'integracoes', label: 'Integrações', icon: 'plug', show: admin || mod },
     { id: 'dados', label: 'Dados', icon: 'database', show: admin },
@@ -6119,7 +6569,7 @@ function renderOrgPage() {
         <div class="orgp-setting">
           <div class="orgp-setting-text">
             <div class="orgp-setting-title">Moderadores podem convidar pessoas</div>
-            <div class="orgp-setting-hint">Só como Equipe ou Freelancer, e só nos squads deles. Desligado, apenas administradores convidam.</div>
+            <div class="orgp-setting-hint">Só como Equipe ou Freelancer, e só nas equipes deles. Desligado, apenas administradores convidam.</div>
           </div>
           <label class="orgp-switch${admin ? '' : ' is-readonly'}">
             <input type="checkbox" ${st.modsCanInvite !== false ? 'checked' : ''} ${admin ? '' : 'disabled'} onchange="saveOrgSetting({ modsCanInvite: this.checked })">
@@ -6129,11 +6579,11 @@ function renderOrgPage() {
       </section>
 
       <section class="orgp-card" id="orgp-squads">
-        ${head('Squads', 'Cada squad tem seus clientes, projetos, fluxos e demandas. Quem vê cada squad é definido em Pessoas.',
-          admin ? `<div class="orgp-head-actions"><button class="btn btn-ghost btn-sm" onclick="goPage('workspaces')">Gerenciar squads</button></div>` : '')}
+        ${head('Equipes', 'Cada equipe tem seus clientes, projetos, fluxos e demandas. Quem vê cada equipe é definido em Pessoas.',
+          admin ? `<div class="orgp-head-actions"><button class="btn btn-ghost btn-sm" onclick="goPage('workspaces')">Gerenciar equipes</button></div>` : '')}
         ${squadRows ? `<div class="table-wrap"><table class="orgp-table">
-          <thead><tr><th>Squad</th><th class="num">Pessoas</th><th class="num">Clientes</th><th class="num">Demandas abertas</th></tr></thead>
-          <tbody>${squadRows}</tbody></table></div>` : `<p class="orgp-empty">Nenhum squad ainda.</p>`}
+          <thead><tr><th>Equipe</th><th class="num">Pessoas</th><th class="num">Clientes</th><th class="num">Demandas abertas</th></tr></thead>
+          <tbody>${squadRows}</tbody></table></div>` : `<p class="orgp-empty">Nenhuma equipe ainda.</p>`}
       </section>` : ''}
 
       <section class="orgp-card" id="orgp-jornada">
@@ -6191,7 +6641,7 @@ function renderOrgPage() {
       </section>` : ''}
 
       ${admin ? `<section class="orgp-card" id="orgp-dados">
-        ${head('Dados', 'Baixe tudo o que é da organização num arquivo JSON: squads, clientes, projetos, fluxos, demandas com horas e comentários, documentos e a lista de pessoas.')}
+        ${head('Dados', 'Baixe tudo o que é da organização num arquivo JSON: equipes, clientes, projetos, fluxos, demandas com horas e comentários, documentos e a lista de pessoas.')}
         <div class="orgp-row">
           <p class="orgp-muted">O cofre de senhas e as credenciais não entram no arquivo.</p>
           <a class="btn btn-ghost btn-sm" href="/api/org/export" download><i data-lucide="download" class="ic-sm"></i> Exportar dados</a>
@@ -6241,6 +6691,8 @@ function _orgGoSection(id) {
   const el = document.getElementById(id);
   if (!el) return;
   _orgSetActive(id);
+  const key = Object.keys(ORG_SECTION_PATHS).find(k => 'orgp-' + ORG_SECTION_PATHS[k] === id);
+  if (currentPage === 'org' && key) navReplace('/organization/' + key);
   el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 function _orgWatchSections(host) {
@@ -6461,7 +6913,7 @@ function switchWorkspace(id) {
   webhooks = [];
   renderWsSwitch();
   renderCurrent();
-  toast('Squad: ' + (wsById(id)?.name || ''), 'success');
+  toast('Equipe: ' + (wsById(id)?.name || ''), 'success');
 }
 
 /* ─── NAVEGAÇÃO ─── */
@@ -6583,7 +7035,7 @@ function toggleSidebarCollapse() {
 const NAV_CATALOG = [
   { page: 'dashboard', label: 'Início', icon: 'house', sec: 'work', cls: 'freelancer-hide', desc: 'Seu dia: foco, paradas e próximos prazos.' },
   { page: 'mine', label: 'Minhas Demandas', icon: 'user-round', sec: 'work', count: 'mine', desc: 'Tudo que está com você, por prazo.' },
-  { page: 'list', label: 'Demandas', icon: 'list', sec: 'work', cls: 'freelancer-hide', desc: 'Todas as demandas do squad, com filtros.' },
+  { page: 'list', label: 'Demandas', icon: 'list', sec: 'work', cls: 'freelancer-hide', desc: 'Todas as demandas da equipe, com filtros.' },
   { page: 'agenda', label: 'Agenda', icon: 'calendar', sec: 'work', cls: 'freelancer-hide', desc: 'Entregas e eventos no calendário.' },
   { page: 'clients', label: 'Clientes', icon: 'building-2', sec: 'work', cls: 'freelancer-hide', desc: 'Clientes, projetos e relatórios.' },
   { page: 'dashboards', label: 'Dashboards', icon: 'layout-dashboard', sec: 'insight', cls: 'freelancer-hide', desc: 'Painéis sobre as respostas dos formulários.' },
@@ -6597,7 +7049,7 @@ const NAV_CATALOG = [
   { page: 'recurring', label: 'Listas de tarefas', icon: 'list-checks', sec: 'ops', cls: 'freelancer-hide', desc: 'Checklists que se repetem na rotina da equipe.' },
   { page: 'recurringDemands', label: 'Demandas Recorrentes', icon: 'repeat', sec: 'ops', cls: 'freelancer-hide', desc: 'Demandas criadas sozinhas numa agenda fixa.' },
   { page: 'users', label: 'Usuários', icon: 'users', sec: 'admin', cls: 'freelancer-hide', desc: 'Pessoas, papéis e acessos.' },
-  { page: 'workspaces', label: 'Squads', icon: 'layers', sec: 'admin', cls: 'admin-only', desc: 'Times e quem faz parte de cada um.' },
+  { page: 'workspaces', label: 'Equipes', icon: 'layers', sec: 'admin', cls: 'admin-only', desc: 'Times e quem faz parte de cada um.' },
   { page: 'integrations', label: 'Integrações', icon: 'plug', sec: 'admin', cls: 'admin-only', desc: 'Discord, webhooks e outros serviços.' },
   { page: 'passwords', label: 'Senhas', icon: 'key-round', sec: 'admin', cls: 'freelancer-hide', desc: 'Cofre de senhas compartilhadas.' },
   { page: 'trash', label: 'Lixeira', icon: 'trash-2', sec: 'admin', cls: 'admin-only', desc: 'Itens apagados, para restaurar.' },
@@ -6623,7 +7075,7 @@ function _navMenuPages() {
   return saved.filter(p => _navItem(p) && _navAllowed(_navItem(p)));
 }
 function _sbItemHTML(it) {
-  return `<a class="sb-item ${it.cls || ''}" data-page="${it.page}" href="${PAGE_TO_PATH[it.page] || '/'}" data-label="${esc(it.label)}"
+  return `<a class="sb-item ${it.cls || ''}" data-page="${it.page}" href="${orgUrl(PAGE_TO_PATH[it.page] || '/')}" data-label="${esc(it.label)}"
       onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); goPage('${it.page}'); closeSidebar()">
       <i data-lucide="${it.icon}" class="sb-ic"></i><span class="sb-label">${esc(it.label)}</span>${it.count ? `<span class="sb-count" id="sb-count-${it.count}" hidden></span>` : ''}</a>`;
 }
@@ -6646,7 +7098,7 @@ function renderSidebarNav() {
         <div class="sb-bottom-row">
           <button type="button" class="sb-icon-btn sb-news" id="sb-news" onclick="openSidebarNews()" data-label="Novidades" aria-label="Novidades" title="Novidades">
             <i data-lucide="sparkles"></i><span class="sb-news-dot" id="sb-news-dot" hidden></span></button>
-          <a class="sb-icon-btn sb-docs ${NAV_DOCS.cls}" id="sb-docs" href="${PAGE_TO_PATH[NAV_DOCS.page] || '/help'}" aria-label="${NAV_DOCS.label}" title="${NAV_DOCS.label}" data-label="${NAV_DOCS.label}"
+          <a class="sb-icon-btn sb-docs ${NAV_DOCS.cls}" id="sb-docs" href="${orgUrl(PAGE_TO_PATH[NAV_DOCS.page] || '/help')}" aria-label="${NAV_DOCS.label}" title="${NAV_DOCS.label}" data-label="${NAV_DOCS.label}"
             onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); goPage('${NAV_DOCS.page}'); closeSidebar()">
             <i data-lucide="${NAV_DOCS.icon}"></i>
           </a>
@@ -6702,7 +7154,7 @@ function toggleSbMore(ev) {
     if (!items.length) return '';
     return `<div class="sb-flyout-group">
       <div class="sb-flyout-title">${esc(g.title)}</div>
-      ${items.map(it => `<a role="menuitem" class="sb-flyout-item ${it.page === target ? 'active' : ''}" href="${PAGE_TO_PATH[it.page] || '/'}"
+      ${items.map(it => `<a role="menuitem" class="sb-flyout-item ${it.page === target ? 'active' : ''}" href="${orgUrl(PAGE_TO_PATH[it.page] || '/')}"
           onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); closeSbMore(); goPage('${it.page}'); closeSidebar()">
           <i data-lucide="${it.icon}"></i><span>${esc(it.label)}</span></a>`).join('')}
     </div>`;
@@ -6807,7 +7259,7 @@ function renderMenuPage() {
         ${items.map(it => {
           const on = inMenu.has(it.page);
           return `<div class="st-card">
-            <a class="st-link" href="${PAGE_TO_PATH[it.page] || '/'}" onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); goPage('${it.page}')">
+            <a class="st-link" href="${orgUrl(PAGE_TO_PATH[it.page] || '/')}" onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); goPage('${it.page}')">
               <span class="st-ic"><i data-lucide="${it.icon}"></i></span>
               <span class="st-text"><span class="st-label">${esc(it.label)}</span><span class="st-desc">${esc(it.desc || '')}</span></span>
             </a>
@@ -6898,7 +7350,7 @@ function applySidebarCollapseInit() {
 const PAGE_TITLES = {
   dashboard: 'Início', list: 'Demandas', mine: 'Minhas Demandas',
   clients: 'Clientes', projects: 'Projetos', flows: 'Fluxos de Demanda',
-  workspaces: 'Squads', users: 'Usuários', profile: 'Meu Perfil', org: 'Organização',
+  workspaces: 'Equipes', users: 'Usuários', profile: 'Meu Perfil', org: 'Organização',
   analytics: 'Análises', templates: 'Templates', integrations: 'Integrações', agenda: 'Agenda',
   recurring: 'Listas de tarefas', gallery: 'Galeria', help: 'Documentação', clientsModels: 'Modelos de Cliente',
   trash: 'Lixeira', recurringDemands: 'Demandas Recorrentes',
@@ -6910,7 +7362,7 @@ const PAGE_TITLES = {
 /* Render da 404 — popula o path digitado e pinta ícones do botão. */
 function renderNotFound() {
   const el = document.getElementById('nf-path');
-  if (el) el.textContent = location.pathname + (location.search || '');
+  if (el) el.textContent = appPath() + (location.search || '');
   if (window.lucide?.createIcons) lucide.createIcons();
 }
 /* Liga a cascata de entrada da página (.is-entering no CSS) por uma janela
@@ -7076,7 +7528,7 @@ const DEVTOOLS_GROUPS = [
     hint: 'A entrada no menu abre a aba default — links diretos fixam a aba.',
     links: [
       { label: 'Análises · Capacidade',    path: '/analytics/capacity', icon: 'gauge',       desc: 'Aba de capacidade da página Análises.' },
-      { label: 'Análises · Ritmo',         path: '/analytics/rhythm',   icon: 'activity',    desc: 'Burndown por squad e resumo semanal.' },
+      { label: 'Análises · Ritmo',         path: '/analytics/rhythm',   icon: 'activity',    desc: 'Burndown por equipe e resumo semanal.' },
       { label: 'Análises · Relatórios',    path: '/analytics/reports',  icon: 'file-bar-chart', desc: 'Aba de relatórios da página Análises.' },
       { label: 'Recorrentes · Demandas',   path: '/recurring/demands',  icon: 'refresh-ccw', desc: 'Aba de demandas recorrentes.' },
       { label: 'Recorrentes · Listas',     path: '/recurring/lists',    icon: 'list-checks', desc: 'Aba de listas recorrentes.' },
@@ -7114,7 +7566,7 @@ function renderDevTools() {
       </div>
       <div class="dt-grid">
         ${g.links.map(l => `
-          <a class="dt-card" href="${esc(l.path)}" onclick="devToolsOpen(event, '${esc(l.path)}')">
+          <a class="dt-card" href="${esc(orgUrl(l.path))}" onclick="devToolsOpen(event, '${esc(l.path)}')">
             <div class="dt-card-icon"><i data-lucide="${esc(l.icon || 'link')}" class="ic-sm"></i></div>
             <div class="dt-card-body">
               <div class="dt-card-label">${esc(l.label)}</div>
@@ -7135,7 +7587,7 @@ function devToolsOpen(evt, path) {
   if (!evt) return;
   if (evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.button === 1) return; // deixa o browser
   evt.preventDefault();
-  history.pushState(null, '', path);
+  history.pushState(null, '', orgUrl(path));
   applyRoute();
 }
 /* ─── HELP NATIVA ───
@@ -7179,7 +7631,7 @@ async function _fetchDocContent(key) {
 async function renderDocsFromRoute() {
   const container = document.getElementById('docs-container');
   if (!container) return;
-  const path = location.pathname;
+  const path = appPath();
   let key = 'manual', section = null;
   let m;
   if ((m = path.match(/^\/help\/manual\/([a-z0-9-]+)$/))) { key = 'manual'; section = m[1]; }
@@ -7397,7 +7849,7 @@ function renderCurrent() {
     case 'clients': {
       // Decide entre grid, detalhe de cliente ou detalhe de projeto sem perder estado
       // quando refreshData() roda com um modal aberto (URL temporariamente em /projects/<id>/edit).
-      const path = location.pathname;
+      const path = appPath();
       const isOnGridUrl = path === '/clients' || path === '/clients/';
       const clientDetailMatch = path.match(/^\/clients\/([^/]+)$/);
       const projectDetailMatch = path.match(/^\/projects\/([^/]+)$/);
@@ -7739,6 +8191,7 @@ function setDashNextTab(tab) {
     panel.hidden = !show;
     panel.classList.toggle('is-active', show);
   });
+  if (currentPage === 'dashboard') navPush(pageUrlFor('dashboard'));
 }
 window.setDashNextTab = setDashNextTab;
 
@@ -7842,6 +8295,7 @@ function _dashFocusRowHtml(d) {
   </div>`;
 }
 function openDashFocusAll() {
+  _dashMoreKey = 'focus';
   const items = _dashLists.focus || [];
   openDashMore('Meu foco de hoje', items.map(_dashFocusRowHtml).join('') || '<div class="dash-empty-inline">Nada esperando por você.</div>');
 }
@@ -7993,6 +8447,7 @@ function _dashBlockedRowHtml({ d, stage, ownerId, days }) {
   </div>`;
 }
 function openDashBlockedAll() {
+  _dashMoreKey = 'blocked';
   const items = _dashLists.blocked || [];
   openDashMore('Paradas', items.map(_dashBlockedRowHtml).join('') || '<div class="dash-empty-inline">Nada travado.</div>');
 }
@@ -8037,6 +8492,7 @@ function _dashActivityRowHtml({ d, h }) {
   </div>`;
 }
 function openDashActivityAll() {
+  _dashMoreKey = 'activity';
   const items = _dashLists.activity || [];
   openDashMore('Atividade recente', items.map(_dashActivityRowHtml).join('') || '<div class="dash-empty-inline">Sem atividade nova.</div>');
 }
@@ -8203,6 +8659,7 @@ function renderDashForecast() {
 function openForecastDay(ymdStr) {
   const items = (_forecastByDay && _forecastByDay.get(ymdStr)) || [];
   if (!items.length) return;
+  _forecastDayOpen = ymdStr;
   const dt = new Date(ymdStr + 'T12:00:00');
   const label = dt.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit' }).replace('-feira', '');
   const titleEl = $('forecast-modal-title');
@@ -8235,7 +8692,7 @@ function openForecastDay(ymdStr) {
 // filtros permite remover o filtro sem editar a URL manualmente.
 function goToDayInList(ymdStr) {
   // Preserva query params existentes; troca só o due.
-  const url = '/demands?due=' + encodeURIComponent(ymdStr);
+  const url = orgUrl('/demands') + '?due=' + encodeURIComponent(ymdStr);
   history.pushState(null, '', url);
   goPage('list');
 }
@@ -8300,14 +8757,14 @@ function renderDashRadar(squadActive) {
   });
 
   if (sub) {
-    sub.textContent = `${withOverdue.length} projeto${withOverdue.length === 1 ? '' : 's'} com atraso no squad`;
+    sub.textContent = `${withOverdue.length} projeto${withOverdue.length === 1 ? '' : 's'} com atraso na equipe`;
   }
   // Badge de alerta na tab Radar — dot vermelho com contador quando houver
   // projetos precisando atenção. Some quando 0.
   _setDashTabBadge('radar', withOverdue.length);
 
   if (!withOverdue.length) {
-    el.innerHTML = `<div class="dash-empty-inline">Nenhum projeto do squad com atraso. 🎉</div>`;
+    el.innerHTML = `<div class="dash-empty-inline">Nenhum projeto da equipe com atraso. 🎉</div>`;
     return;
   }
 
@@ -8335,6 +8792,7 @@ function _dashRadarCardHtml({ p, projDemands, overdue }) {
   </div>`;
 }
 function openDashRadarAll() {
+  _dashMoreKey = 'radar';
   const items = _dashLists.radar || [];
   openDashMore('Radar de projetos', `<div class="dash-radar-grid">${items.map(_dashRadarCardHtml).join('')}</div>` || '<div class="dash-empty-inline">Nenhum projeto com atraso.</div>');
 }
@@ -8431,6 +8889,7 @@ function _kdRelTime(iso) {
   return `há ${mo}mês${mo === 1 ? '' : 'es'}`;
 }
 function openDashRecentMineAll() {
+  _dashMoreKey = 'recent';
   const rows = _dashLists.recentMine || [];
   openDashMore('Demandas recentes', rows.map(_dashRecentMineRowHtml).join('') || '<div class="dash-empty-inline">Nenhuma.</div>');
 }
@@ -8490,6 +8949,7 @@ function _dashTopOwnerRowHtml(r, max) {
   </div>`;
 }
 function openDashTopOwnersAll() {
+  _dashMoreKey = 'top-owners';
   const { rows = [], max = 1 } = _dashLists.topOwners || {};
   openDashMore('Top responsáveis · mês', rows.map(r => _dashTopOwnerRowHtml(r, max)).join('') || '<div class="dash-empty-inline">Nenhuma entrega no mês.</div>');
 }
@@ -8770,6 +9230,7 @@ function setListView(v) {
   });
   if (v === 'cal') renderCalendar('all');
   if (v === 'kanban') renderKanban();
+  if (currentPage === 'list') navPush(pageUrlFor('list'));
 }
 /* Kebab menu da barra de filtros — agrupa Lista/Kanban/Calendário + Export CSV. */
 function toggleListViewMenu(ev) {
@@ -8836,7 +9297,7 @@ function exportDemandsCsv() {
   const list = listFilteredDemands();
   if (!list.length) { toast('Não há demandas pra exportar com os filtros atuais.', 'warn'); return; }
   const headers = [
-    'ID', 'Nome', 'Squad', 'Cliente', 'Projeto', 'Fluxo', 'Etapa atual',
+    'ID', 'Nome', 'Equipe', 'Cliente', 'Projeto', 'Fluxo', 'Etapa atual',
     'Responsável', 'Prioridade', 'Prazo etapa', 'Horas apontadas',
     'Criada em', 'Concluída em', 'Status'
   ];
@@ -9889,7 +10350,7 @@ function _populateAdvancedSelectors(userOpts) {
   }
 }
 /* Multi-select de Participantes — CSV no #filter-participant. Reusa o pattern
-   do multi de Squads: popover com checkboxes + avatar do user. */
+   do multi de Equipes: popover com checkboxes + avatar do user. */
 function _renderParticipantMultiMenu(userOpts) {
   const menu = document.getElementById('filter-participant-menu');
   const label = document.getElementById('filter-participant-label');
@@ -9986,11 +10447,11 @@ function _renderWorkspaceMultiMenu(accessibleWs) {
     </label>`;
   }).join('') + (wsSet.size ? `<button type="button" class="filter-multi-clear" onclick="clearWsMulti()">Limpar seleção</button>` : '');
   // Label do trigger
-  if (!wsSet.size) label.textContent = 'Squads';
+  if (!wsSet.size) label.textContent = 'Equipes';
   else if (wsSet.size === 1) {
     const w = accessibleWs.find(x => wsSet.has(x.id));
-    label.textContent = w ? w.name : '1 squad';
-  } else label.textContent = wsSet.size + ' squads';
+    label.textContent = w ? w.name : '1 equipe';
+  } else label.textContent = wsSet.size + ' equipes';
 }
 function toggleWsMulti(ev) {
   ev?.stopPropagation();
@@ -10417,6 +10878,7 @@ function setKanbanMode(m) {
   kanbanMode = (m === 'stage') ? 'stage' : 'attention';
   localStorage.setItem('kastor-kanban-mode', kanbanMode);
   renderKanban();
+  if (currentPage === 'list' && listView === 'kanban') navPush(pageUrlFor('list'));
 }
 function syncKanbanModeToggle() {
   document.querySelectorAll('.kanban-mode-toggle .client-status-btn[data-kmode]')
@@ -11018,6 +11480,7 @@ let capacityView = 'team'; // 'team' | 'project' | 'client'
 function setCapacityView(v) {
   capacityView = v;
   renderCapacity();
+  if (currentPage === 'analytics') navPush(pageUrlFor('analytics'));
 }
 
 /* ─── RELATÓRIOS / SLA ───
@@ -11443,7 +11906,7 @@ function setAnalyticsTab(tab) {
   _anTab = tab;
   try { localStorage.setItem('kastor-an-tab', tab); } catch {}
   syncAnalyticsTab();
-  const paths = { reports: '/analytics/reports', capacity: '/analytics/capacity', rhythm: '/analytics/rhythm' };
+  const paths = { reports: '/analytics/reports', capacity: '/analytics/capacity' + _capacityViewSuffix(), rhythm: '/analytics/rhythm' };
   navPush(paths[tab]);
   renderAnalyticsActive();
 }
@@ -11456,7 +11919,7 @@ function renderAnalytics() {
    Tudo deriva do cache local de demandas — nenhuma request extra. Fonte de verdade:
      - abertura: d.createdAt
      - entrega : d.completedAt
-     - squad   : d.workspaceId
+     - equipe   : d.workspaceId
      - prazo   : d.deadline (pra contar atrasadas)
    Semana útil é seg→sex (5 dias), referência = seleção do dropdown (0=atual, -1=passada).
    O range de agregação vai até domingo pra contabilizar entregas de fim de semana,
@@ -11555,7 +12018,7 @@ function _rhythmSummary(list, monday, sunday) {
 }
 
 /* SVG mini burndown. `series.start` = abertas no fim de domingo (véspera).
-   Se o squad começou a semana com 0 aberto e não abriu nada, mostra placeholder. */
+   Se a equipe começou a semana com 0 aberto e não abriu nada, mostra placeholder. */
 /* Render do gráfico:
    - SVG (100% × 200px, preserveAspectRatio=none) desenha SÓ as linhas/dots
      que usam vector-effect=non-scaling-stroke pra não deformar visualmente.
@@ -11695,7 +12158,7 @@ function _rhythmAnalyze(wsName, summary, series) {
   }
 
   const text =
-    `Squad ${wsName} — ${label.toLowerCase()}${kind !== 'sem-mov' ? ` (${detail})` : ''}. ` +
+    `Equipe ${wsName} — ${label.toLowerCase()}${kind !== 'sem-mov' ? ` (${detail})` : ''}. ` +
     `Entregou ${summary.delivered}, ${summary.overdue} atrasada${summary.overdue === 1 ? '' : 's'}, ${summary.open} em aberto` +
     `${summary.created ? `, ${summary.created} nova${summary.created === 1 ? '' : 's'} na semana` : ''}.`;
 
@@ -11745,7 +12208,7 @@ function _renderRhythmCard(ws, monday, sunday) {
 }
 
 /* Modo combinado: 1 card com N linhas coloridas (uma por squad).
-   Cada squad usa sua cor própria. Tooltip separa por squad no hover do dia. */
+   Cada equipe usa sua cor própria. Tooltip separa por equipe no hover do dia. */
 function _renderRhythmCombined(monday, sunday) {
   const list = _rhythmAccessibleWs().filter(w => _rhythmSquadFilter.has(w.id));
   const perSquad = list.map(ws => {
@@ -11769,7 +12232,7 @@ function _renderRhythmCombined(monday, sunday) {
 
   return `<div class="rhythm-card rhythm-card--combined">
     <div class="rhythm-card-head">
-      <div class="rhythm-card-title">Comparativo · ${list.length} squads</div>
+      <div class="rhythm-card-title">Comparativo · ${list.length} equipes</div>
       <div class="rhythm-legend rhythm-legend--inline">${legend}</div>
     </div>
     <div class="rhythm-card-chart">${svg}</div>
@@ -11938,7 +12401,7 @@ function _renderRhythmSquadFilter() {
   const hint = _rhythmSquadFilter.size >= 2
     ? '<span class="uws-hint">Combinado num gráfico</span>'
     : '<span class="uws-hint">Vazio = todos separados</span>';
-  host.innerHTML = `<span class="uws-label">Squads</span>${chips}${clear}${hint}`;
+  host.innerHTML = `<span class="uws-label">Equipes</span>${chips}${clear}${hint}`;
 }
 function toggleRhythmSquad(id) {
   if (_rhythmSquadFilter.has(id)) _rhythmSquadFilter.delete(id);
@@ -11961,7 +12424,7 @@ function renderRhythm() {
   _renderRhythmSquadFilter();
 
   const all = _rhythmAccessibleWs();
-  if (!all.length) { body.innerHTML = '<div class="empty-state">Sem squads acessíveis.</div>'; return; }
+  if (!all.length) { body.innerHTML = '<div class="empty-state">Sem equipes acessíveis.</div>'; return; }
 
   const fmtDate = d => d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
   const rangeLabel = document.getElementById('rhythm-week-range');
@@ -11972,7 +12435,7 @@ function renderRhythm() {
     ? all.filter(w => _rhythmSquadFilter.has(w.id))
     : all;
   if (!list.length) {
-    body.innerHTML = '<div class="empty-state">Nenhum squad na seleção.</div>';
+    body.innerHTML = '<div class="empty-state">Nenhuma equipe na seleção.</div>';
     return;
   }
 
@@ -12362,7 +12825,7 @@ function _perfOnSquadChange() {
   renderPerformance();
 }
 /* Popula o <select> de squads com os workspaces acessíveis ao user.
-   Default: squad ativo na sidebar (activeWs). Fallback: primeiro acessível. */
+   Default: equipe ativa na sidebar (activeWs). Fallback: primeiro acessível. */
 function _perfPopulateSquads() {
   const sel = $('perf-squad');
   if (!sel) return;
@@ -12377,12 +12840,12 @@ function _perfPopulateSquads() {
   _perfSaveClient();
   sel.innerHTML = accessible.length
     ? accessible.map(w => `<option value="${esc(w.id)}" ${w.id === selected ? 'selected' : ''}>${esc(w.name)}</option>`).join('')
-    : '<option value="">Nenhum squad disponível</option>';
+    : '<option value="">Nenhuma equipe disponível</option>';
   applyFilterDropdown('perf-squad');
 }
 /* Popula o <select> de campanha com as distintas presentes nos rows.
    Habilitado só quando há cliente específico selecionado — sem cliente,
-   a lista teria todas as campanhas de todos os clientes do squad e o
+   a lista teria todas as campanhas de todos os clientes da equipe e o
    filtro perderia sentido. */
 function _perfPopulateCampaigns(rows) {
   const sel = $('perf-campaign');
@@ -12407,14 +12870,14 @@ function _perfPopulateCampaigns(rows) {
   applyFilterDropdown('perf-campaign');
 }
 /* Popula o <select> de plataforma com as distintas presentes nos rows atuais.
-   Disabled sem squad. "" = todas. Mantém a seleção do user se ainda existir
+   Disabled sem equipe. "" = todas. Mantém a seleção do user se ainda existir
    nos dados novos; senão cai pra "". */
 function _perfPopulatePlatforms(rows) {
   const sel = $('perf-platform');
   if (!sel) return;
   const wsId = _perfState.workspaceId;
   if (!wsId) {
-    sel.innerHTML = '<option value="">— Selecione um squad primeiro</option>';
+    sel.innerHTML = '<option value="">— Selecione uma equipe primeiro</option>';
     sel.disabled = true;
     _perfState.platform = '';
     _perfSaveClient();
@@ -12433,14 +12896,14 @@ function _perfPopulatePlatforms(rows) {
   applyFilterDropdown('perf-platform');
 }
 /* Popula o <select> de cliente restrito ao squad escolhido (`_perfState.workspaceId`).
-   Fluxo progressivo: cliente só aparece depois que o squad foi definido. Vazio
-   (opção "— Todos os clientes") = agrega squad inteiro. */
+   Fluxo progressivo: cliente só aparece depois que a equipe foi definida. Vazio
+   (opção "— Todos os clientes") = agrega equipe inteira. */
 function _perfPopulateClients(overrideId) {
   const sel = $('perf-client');
   if (!sel) return;
   const wsId = _perfState.workspaceId;
   if (!wsId) {
-    sel.innerHTML = '<option value="">— Selecione um squad primeiro</option>';
+    sel.innerHTML = '<option value="">— Selecione uma equipe primeiro</option>';
     sel.disabled = true;
     _perfState.clientId = '';
     _perfSaveClient();
@@ -12457,7 +12920,7 @@ function _perfPopulateClients(overrideId) {
   const selected = stillValid ? prev : '';
   _perfState.clientId = selected;
   _perfSaveClient();
-  const allOpt = `<option value="" ${!selected ? 'selected' : ''}>— Todos os clientes do squad</option>`;
+  const allOpt = `<option value="" ${!selected ? 'selected' : ''}>— Todos os clientes da equipe</option>`;
   sel.innerHTML = allOpt + accessible.map(c => `<option value="${esc(c.id)}" ${c.id === selected ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
   applyFilterDropdown('perf-client', { clientIcon: true });
 }
@@ -12487,8 +12950,8 @@ async function renderPerformance() {
   const nameEl = $('perf-client-name');
   if (nameEl) {
     if (client) nameEl.textContent = client.name;
-    else if (ws) nameEl.textContent = `Squad ${ws.name} — todos os clientes`;
-    else nameEl.textContent = 'Selecione um squad';
+    else if (ws) nameEl.textContent = `Equipe ${ws.name} — todos os clientes`;
+    else nameEl.textContent = 'Selecione uma equipe';
   }
   // Config: só faz sentido pra admin E com cliente específico selecionado
   // (o token é único, mas o clientId no exemplo depende do cliente).
@@ -12499,7 +12962,7 @@ async function renderPerformance() {
   if (!workspaceId) {
     _perfPopulatePlatforms([]);
     _perfPopulateCampaigns([]);
-    body.innerHTML = '<div class="perf-empty"><i data-lucide="bar-chart-3" class="ic-lg"></i><div>Selecione um squad pra começar.</div></div>';
+    body.innerHTML = '<div class="perf-empty"><i data-lucide="bar-chart-3" class="ic-lg"></i><div>Selecione uma equipe pra começar.</div></div>';
     _perfUpdateTimestamp(null);
     if (window.lucide?.createIcons) lucide.createIcons();
     return;
@@ -12538,7 +13001,7 @@ async function renderPerformance() {
     _perfUpdateTimestamp(_perfState.updatedAt);
     if (!curRows.length) {
       if (client) body.innerHTML = _perfRenderEmptyOrConfig(client);
-      else body.innerHTML = `<div class="perf-empty"><i data-lucide="inbox" class="ic-lg"></i><div>Sem dados nesse período${plat ? ` pra plataforma ${esc(plat)}` : ` pra ${esc(ws?.name || 'esse squad')}`}.</div><div class="perf-empty-hint">${plat ? 'Ajuste o filtro de plataforma ou o período.' : 'Nenhum cliente do squad recebeu snapshots no intervalo.'}</div></div>`;
+      else body.innerHTML = `<div class="perf-empty"><i data-lucide="inbox" class="ic-lg"></i><div>Sem dados nesse período${plat ? ` pra plataforma ${esc(plat)}` : ` pra ${esc(ws?.name || 'essa equipe')}`}.</div><div class="perf-empty-hint">${plat ? 'Ajuste o filtro de plataforma ou o período.' : 'Nenhum cliente da equipe recebeu snapshots no intervalo.'}</div></div>`;
       if (window.lucide?.createIcons) lucide.createIcons();
       return;
     }
@@ -13514,7 +13977,7 @@ function capResolveWindow() {
 /* ─── Filtro de squads da Capacidade (multi, estilo Usuários) ───
    Estado no hidden #capacity-squads (CSV) → persistido via FILTER_KEYS.
    Semântica: vazio = workspace ativo (comportamento clássico); com seleção,
-   os dados (pessoas, demandas, horas, mapa) agregam os squads escolhidos. */
+   os dados (pessoas, demandas, horas, mapa) agregam as equipes escolhidas. */
 let capSquadFilter = new Set();
 function capScopeWsIds() { return capSquadFilter.size ? [...capSquadFilter] : [activeWs]; }
 function capScopeDemands() {
@@ -13542,7 +14005,7 @@ function renderCapSquadFilter() {
   }).join('');
   const clear = capSquadFilter.size ? `<button type="button" class="uws-clear" onclick="clearCapSquadFilter()">Limpar</button>` : '';
   const hint = capSquadFilter.size ? '' : `<span class="uws-hint">Vazio = workspace atual</span>`;
-  host.innerHTML = `<span class="uws-label">Squads</span>${chips}${clear}${hint}`;
+  host.innerHTML = `<span class="uws-label">Equipes</span>${chips}${clear}${hint}`;
 }
 function toggleCapSquad(id) {
   if (capSquadFilter.has(id)) capSquadFilter.delete(id); else capSquadFilter.add(id);
@@ -14032,7 +14495,7 @@ function renderCapacityTeam(startYmd, endYmd, businessDays, capacityHours, logSt
       <div class="capacity-side">${_capSparklineHtml(logStartYmd, logEndYmd)}</div>
     </div>
   `;
-  if (!rows.length) $('capacity-list').innerHTML = emptyState('Sem usuários ativos', 'Cadastre usuários e atribua-os a este squad.', 'users');
+  if (!rows.length) $('capacity-list').innerHTML = emptyState('Sem usuários ativos', 'Cadastre usuários e atribua-os a esta equipe.', 'users');
   _wireCapSparkline();
 }
 
@@ -14108,7 +14571,7 @@ function renderCapacityAggregate(kind, startYmd, endYmd, businessDays, capacityH
         <div class="cap-kpi-main">
           <div class="cap-kpi-label">${kind === 'project' ? 'Projetos ativos' : 'Clientes ativos'}</div>
           <div class="cap-kpi-value">${rows.length}</div>
-          <div class="cap-kpi-sub">${capSquadFilter.size ? `em ${capSquadFilter.size} squad${capSquadFilter.size === 1 ? '' : 's'}` : `no squad ${esc(wsById(activeWs)?.name || '')}`}</div>
+          <div class="cap-kpi-sub">${capSquadFilter.size ? `em ${capSquadFilter.size} equipe${capSquadFilter.size === 1 ? '' : 's'}` : `na equipe ${esc(wsById(activeWs)?.name || '')}`}</div>
         </div>
       </div>
       <div class="cap-kpi is-team" data-tooltip="${kind === 'project' ? 'Projeto' : 'Cliente'} que mais concentrou horas — indica onde o esforço se acumulou.">
@@ -14689,7 +15152,7 @@ async function openApplyListaToProjectModal(listaId) {
       const cmp = norm(ca).localeCompare(norm(cb));
       return cmp !== 0 ? cmp : norm(a.name).localeCompare(norm(b.name));
     });
-  if (!wsProjs.length) return toast('Nenhum projeto ativo neste squad', 'warn');
+  if (!wsProjs.length) return toast('Nenhum projeto ativo nesta equipe', 'warn');
   const opts = wsProjs.map(p => {
     const c = clientById(p.clientId);
     return { value: p.id, label: c ? `${c.name} · ${p.name}` : p.name };
@@ -14754,7 +15217,7 @@ async function deleteDemand() {
     await api('/demands/' + delId, 'DELETE');
     closeModal('demand-modal');
     // Demanda excluída → sai da página de detalhe se estivermos nela.
-    if (currentPage === 'demand-detail') { detailId = null; stopDetailPoll(); navPush('/dashboard'); applyRoute(); }
+    if (currentPage === 'demand-detail') { detailId = null; stopDetailPoll(); navPush('/home'); applyRoute(); }
     else detailId = null;
     toastWithUndo('Demanda excluída.', () => api('/demands/' + delId + '/undelete', 'POST'));
     await refreshData();
@@ -14788,7 +15251,7 @@ function showDetail(id) {
   // Se ainda não estamos na página, navega — applyRoute fará o goPage.
   // keepSearch:false — descarta query-string herdada da rota anterior (ex.: /demandas?ws=…);
   // sem isso os links compartilhados de demanda vinham com ?ws=xxx pendurado.
-  const targetPath = demandPath(id);
+  const targetPath = demandPath(id) + (detailActiveTab !== 'comments' ? '/' + detailActiveTab : '');
   if (currentPage !== 'demand-detail') {
     navPush(targetPath, { keepSearch: false });
     goPage('demand-detail');
@@ -15020,7 +15483,7 @@ window.addEventListener('beforeunload', () => {
     const url = '/api/presence/demand/' + _demandPresenceCurrentId;
     // fetch com keepalive funciona em navegadores modernos e sobrevive ao unload.
     // sendBeacon não suporta método DELETE, então esta é a alternativa correta.
-    fetch(url, { method: 'DELETE', credentials: 'same-origin', keepalive: true }).catch(() => {});
+    fetch(url, { method: 'DELETE', credentials: 'same-origin', keepalive: true, headers: _orgId ? { 'X-Org-Id': _orgId } : {} }).catch(() => {});
   } catch {}
 });
 
@@ -15121,6 +15584,7 @@ function setDemandDetailTab(name) {
   if (name === 'activity') _renderActivityTab(d);
   if (name === 'stages')   _renderStagesTab(d);
   if (name === 'forms')    _renderFormsTab(d);
+  if (currentPage === 'demand-detail' && detailId) navPush(pageUrlFor('demand-detail'), { keepSearch: false });
   paintIcons();
 }
 function renderDetail() {
@@ -16829,7 +17293,7 @@ function renderRecurringDemands() {
   const wsSel = $('rd-ws-filter');
   if (wsSel) {
     const myWs = workspaces.slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-    wsSel.innerHTML = `<option value="all">Todos os squads</option>` +
+    wsSel.innerHTML = `<option value="all">Todas as equipes</option>` +
       myWs.map(w => `<option value="${w.id}">${esc(w.name)}</option>`).join('');
     if (![...wsSel.options].some(o => o.value === _rdWsFilter)) _rdWsFilter = 'all';
     wsSel.value = _rdWsFilter;
@@ -16844,7 +17308,7 @@ function renderRecurringDemands() {
   if (!mine.length) {
     body.innerHTML = `<div class="rd-empty">
       <div class="rd-empty-icon"><i data-lucide="repeat"></i></div>
-      <div class="rd-empty-title">Nenhuma demanda recorrente${_rdWsFilter !== 'all' ? ' neste squad' : ''}</div>
+      <div class="rd-empty-title">Nenhuma demanda recorrente${_rdWsFilter !== 'all' ? ' nesta equipe' : ''}</div>
       <div class="rd-empty-sub">Ao criar ou editar uma demanda, ative <strong>"Tornar esta demanda recorrente"</strong> para ela se repetir automaticamente.</div>
     </div>`;
     paintIcons();
@@ -17210,7 +17674,7 @@ async function confirmDeleteCurrentDemand() {
     stopDetailPoll();
     detailId = null;
     // Sai da página de detalhe (era modal → agora navega pra origem).
-    if (currentPage === 'demand-detail') { navPush('/dashboard'); applyRoute(); }
+    if (currentPage === 'demand-detail') { navPush('/home'); applyRoute(); }
     toastWithUndo('Demanda excluída.', () => api('/demands/' + delId + '/undelete', 'POST'));
     await refreshData();
   } catch (e) { toast(e.message, 'error'); }
@@ -18432,7 +18896,7 @@ let _attPreviewReturnUrl = null;
 function _pushGalleryItemUrl(a) {
   if (currentPage !== 'gallery') return;
   const slug = _attSlug(a);
-  const target = '/gallery/' + slug + (location.search || '');
+  const target = orgUrl('/gallery/' + slug) + (location.search || '');
   if (location.pathname + location.search !== target) {
     _attPreviewReturnUrl = _globalGalStateToUrl();
     history.pushState(null, '', target);
@@ -19210,6 +19674,7 @@ function _dashMentionRowHtml(m) {
   </div>`;
 }
 function openDashMentionsAll() {
+  _dashMoreKey = 'mentions';
   openDashMore('Esperando sua resposta', (_dashLists.mentions || []).map(_dashMentionRowHtml).join(''));
 }
 function openPendingMention(key) {
@@ -19278,6 +19743,7 @@ function _dashTimeGapRowHtml(g) {
   </div>`;
 }
 function openDashTimeGapsAll() {
+  _dashMoreKey = 'time-gaps';
   openDashMore('Sem apontamento', (_dashLists.timegaps || []).map(_dashTimeGapRowHtml).join(''));
 }
 function apontarTimeGap(key) {
@@ -22589,7 +23055,7 @@ function sortWsBy(key) {
 }
 function openWsModal(id) {
   editingWsId = id || null;
-  $('ws-modal-title').textContent = id ? 'Editar Squad' : 'Novo Squad';
+  $('ws-modal-title').textContent = id ? 'Editar Equipe' : 'Nova Equipe';
   const w = id ? wsById(id) : null;
   $('ws-name').value = w?.name || '';
   setColorValue('ws-color', w?.color || '#7A00FF');
@@ -22601,15 +23067,15 @@ async function saveWs() {
     if (editingWsId) await api('/workspaces/' + editingWsId, 'PUT', payload);
     else await api('/workspaces', 'POST', payload);
     closeModal('ws-modal');
-    toast(editingWsId ? 'Squad atualizado!' : 'Squad criado! Libere o acesso da equipe na aba Usuários.');
+    toast(editingWsId ? 'Equipe atualizada!' : 'Equipe criada! Libere o acesso das pessoas na aba Usuários.');
     await refreshData();
   } catch (e) { toast(e.message, 'error'); }
 }
 async function deleteWs(id) {
   const w = wsById(id);
   const ok = await showConfirm({
-    title: 'Excluir squad',
-    message: `Excluir o squad <strong>${esc(w?.name || '')}</strong>?<br><br>Todos os projetos, fluxos e demandas dele serão removidos. <strong>Essa ação não pode ser desfeita.</strong>`,
+    title: 'Excluir equipe',
+    message: `Excluir a equipe <strong>${esc(w?.name || '')}</strong>?<br><br>Todos os projetos, fluxos e demandas dela serão removidos. <strong>Essa ação não pode ser desfeita.</strong>`,
     okLabel: 'Excluir definitivamente',
     danger: true
   });
@@ -22617,7 +23083,7 @@ async function deleteWs(id) {
   try {
     await api('/workspaces/' + id, 'DELETE');
     if (activeWs === id) { activeWs = null; }
-    toast('Squad excluído.', 'warn');
+    toast('Equipe excluída.', 'warn');
     await refreshData();
   } catch (e) { toast(e.message, 'error'); }
 }
@@ -22718,7 +23184,7 @@ function renderUsersWsFilter() {
     </button>`;
   }).join('');
   const clear = usersWsFilter.size ? `<button class="uws-clear" onclick="clearUsersWsFilter()">Limpar</button>` : '';
-  host.innerHTML = `<span class="uws-label">Squads</span>${chips}${clear}<span class="uws-hint">Admins sempre aparecem</span>`;
+  host.innerHTML = `<span class="uws-label">Equipes</span>${chips}${clear}<span class="uws-hint">Admins sempre aparecem</span>`;
 }
 function toggleUsersWsFilter(id) {
   if (usersWsFilter.has(id)) usersWsFilter.delete(id);
@@ -22927,7 +23393,7 @@ async function renderIntegrations() {
     // Cache-buster explícito no URL — se algum proxy/service-worker estiver
     // devolvendo resposta antiga, o timestamp garante request novo.
     webhooks = await api('/webhooks?_=' + Date.now());
-    console.debug(`[integrations] carregou ${webhooks.length} webhook(s) universais (squad ativo: ${activeWs || '—'})`);
+    console.debug(`[integrations] carregou ${webhooks.length} webhook(s) universais (equipe ativa: ${activeWs || '—'})`);
   } catch (e) { /* ignore */ }
   // Integrações são UNIVERSAIS — não recortam por squad (o server já devolve todas).
   const allHooks = webhooks.slice();
@@ -22943,7 +23409,7 @@ async function renderIntegrations() {
   if (fSquad) {
     const wsList = (typeof workspaces !== 'undefined' ? workspaces : [])
       .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-    fillSelect(fSquad, wsList.map(w => ({ value: w.id, label: w.name })), pickSquad, 'Todos os squads');
+    fillSelect(fSquad, wsList.map(w => ({ value: w.id, label: w.name })), pickSquad, 'Todas as equipes');
   }
   // Usuários — filtra por squad (workspaceIds contém squad) se selecionado.
   if (fTarget) {
@@ -25917,7 +26383,7 @@ function renderTemplates() {
 }
 
 /* ── FORMULÁRIOS ──
-   Página admin pra CRUD de formTemplates. Lista os templates do squad ativo
+   Página admin pra CRUD de formTemplates. Lista os templates da equipe ativa
    e abre o editor (modal form-editor-modal) pra criar/editar/duplicar.
    Deletar é soft-delete (a rota do server preserva o registro pra manter
    referência de respostas antigas). */
@@ -26452,7 +26918,7 @@ const DV_BASE_DIMS = [
   { key: 'client',      label: 'Cliente',               icon: 'building-2', quick: true },
   { key: 'project',     label: 'Projeto',               icon: 'folder',     quick: true },
   { key: 'submittedBy', label: 'Preenchido por',        icon: 'user',       quick: true },
-  { key: 'workspace',   label: 'Squad',                 icon: 'layers' },
+  { key: 'workspace',   label: 'Equipe',                 icon: 'layers' },
   { key: 'owner',       label: 'Responsável da demanda', icon: 'user-check' },
   { key: 'flow',        label: 'Fluxo',                 icon: 'git-branch' },
   { key: 'stage',       label: 'Etapa atual da demanda', icon: 'flag' },
@@ -26542,7 +27008,7 @@ function dvValueLabel(key, v) {
     case 'client': return clientById(v)?.name || 'Cliente removido';
     case 'project': return projectById(v)?.name || 'Projeto removido';
     case 'submittedBy': case 'owner': return userById(v)?.name || 'Usuário removido';
-    case 'workspace': return wsById(v)?.name || 'Squad removido';
+    case 'workspace': return wsById(v)?.name || 'Equipe removida';
     case 'flow': return flowById(v)?.name || 'Fluxo removido';
     case 'month': case 'week': return _dvTimeLabel(v, key);
   }
@@ -26744,7 +27210,7 @@ function _dvDecodeView(s) {
 function _dvSyncUrl() {
   if (!_currentDashboardId) return;
   const enc = _dvEncodeView(_dvView);
-  const url = '/dashboards/' + _currentDashboardId + (enc ? '?f=' + enc : '');
+  const url = orgUrl('/dashboard/' + _currentDashboardId) + (enc ? '?f=' + enc : '');
   if (location.pathname + location.search !== url) history.replaceState(history.state, '', url);
 }
 function dvSetView(patch) {
@@ -26826,7 +27292,7 @@ function openDashboardView(id) {
   _currentDashboardId = id;
   _dashEditMode = false;
   _dvViewFor = null;
-  navPush('/dashboards/' + id);
+  navPush('/dashboard/' + id);
   renderDashboards();
 }
 function closeDashboardView() {
@@ -26834,7 +27300,7 @@ function closeDashboardView() {
   _dashEditMode = false;
   _dvViewFor = null;
   _dvClosePopover();
-  navReplace('/dashboards');
+  navReplace('/dashboard');
   renderDashboards();
 }
 function toggleDashEditMode() {
@@ -27601,7 +28067,7 @@ function _renderDashRecords(d) {
         const u = userById(r.submittedBy);
         return `<tr><td class="rec-date">${_fmtRecordDate(r.submittedAt)}</td>
           <td><span class="rec-user">${avatarHTML(u, 'avatar avatar-xs')} ${esc(u?.name || '—')}</span></td>
-          <td class="rec-demand">${dm ? `<a href="${esc(demandPath(dm.id))}" onclick="event.preventDefault();showDetail('${dm.id}')">${esc(dm.name)}</a>` : '<span class="dv-muted">—</span>'}</td>
+          <td class="rec-demand">${dm ? `<a href="${esc(orgUrl(demandPath(dm.id)))}" onclick="event.preventDefault();showDetail('${dm.id}')">${esc(dm.name)}</a>` : '<span class="dv-muted">—</span>'}</td>
           ${(t.fields || []).map(f => `<td>${fmtVal(f, r.values?.[f.id])}</td>`).join('')}</tr>`;
       }).join('')}</tbody>
     </table></div>`).join('');
@@ -27838,6 +28304,7 @@ const DV_VIZ_META = [
 let _dvEd = null; // { dashId, widgetId, draft }
 function openWidgetConfig(dashId, widgetId, x, y, w, h) {
   if (!canEditDashboards()) return;
+  _wcRoute = { dashId, widgetId: widgetId || null };
   const dash = dashboardById(dashId);
   if (!dash) return;
   const existing = widgetId ? dash.widgets.find(z => z.id === widgetId) : null;
@@ -28022,7 +28489,7 @@ function openDashboardEditor(dashId) {
   document.getElementById('de-suggest').checked = true;
   _dvDeRenderFixed();
   openModal('dashboard-editor-modal');
-  navPush(dashId ? `/dashboards/${dashId}/edit` : '/dashboards/new');
+  navPush(dashId ? `/dashboard/${dashId}/edit` : '/dashboard/new');
 }
 function _dvDeRenderFixed() {
   const host = document.getElementById('de-fixed');
@@ -28103,7 +28570,7 @@ async function confirmDeleteDashboard(id) {
     dashboards = dashboards.filter(x => x.id !== id);
     _currentDashboardId = null;
     toast('Dashboard excluído.');
-    navReplace('/dashboards');
+    navReplace('/dashboard');
     renderDashboards();
   } catch (e) { toast(e.message || 'Erro ao excluir', 'error'); }
 }
@@ -28229,7 +28696,7 @@ function openUserModal(id, opts) {
   $('u-opt-mod').hidden = modInvite;
   $('u-perm-hint').textContent = isOwnerRow
     ? 'Dono da organização: para mudar, transfira a organização.'
-    : modInvite ? 'Como moderador, você convida como Equipe ou Freelancer, nos seus squads.' : 'Squads liberados + nível de acesso.';
+    : modInvite ? 'Como moderador, você convida como Equipe ou Freelancer, nas suas equipes.' : 'Equipes liberadas + nível de acesso.';
   const selected = u ? (u.workspaces || []) : (activeWs && (!modInvite || (me.workspaces || []).includes(activeWs)) ? [activeWs] : []);
   $('u-workspaces').innerHTML = [...workspaces].filter(w => !modInvite || (me.workspaces || []).includes(w.id))
     .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt-BR', { sensitivity: 'base' }))
@@ -28292,6 +28759,7 @@ async function resetUserPassword(id) {
    demanda (só admin), com cache curto, e recarregados depois de cada ação. */
 let invites = [];
 let invitesEmailEnabled = true;
+let inviteSeats = null; // { members, pending, used, limit, planName } — lugares do plano
 let _invitesLoadedAt = 0;
 let _invitesLoading = null;
 async function loadInvites(force) {
@@ -28303,6 +28771,7 @@ async function loadInvites(force) {
       const r = await api('/invites');
       invites = Array.isArray(r.invites) ? r.invites : [];
       invitesEmailEnabled = r.emailEnabled !== false;
+      inviteSeats = r.seats || null;
       _invitesLoadedAt = Date.now();
     } catch { /* sem lista de convites — o resto da página segue */ }
     _invitesLoading = null;
@@ -28316,7 +28785,21 @@ function _invitePermPill(kind) {
   if (kind === 'free') return '<span class="pill pill-freelancer">Freelancer</span>';
   return '<span class="pill pill-muted">Equipe</span>';
 }
+/* Lugares do plano no topo do Quadro da equipe: ativos + convites pendentes
+   contra o limite de pessoas. Só pra quem convida (admin/moderador). */
+function renderUserSeats() {
+  const el = $('users-seats');
+  if (!el) return;
+  const s = inviteSeats;
+  if ((!me?.isAdmin && !me?.isModerator) || !s) { el.hidden = true; return; }
+  const n = (v) => Number(v || 0).toLocaleString('pt-BR');
+  const foot = `${n(s.members)} ${s.members === 1 ? 'pessoa ativa' : 'pessoas ativas'}${s.pending ? ` + ${n(s.pending)} ${s.pending === 1 ? 'convite pendente' : 'convites pendentes'}` : ''} · freelancers contam`
+    + (s.limit != null && s.used >= s.limit ? ' · <b>limite atingido: novos convites ficam bloqueados</b>' : '');
+  el.hidden = false;
+  el.innerHTML = _orgMeter(`Pessoas${s.planName ? ` · plano ${esc(s.planName)}` : ''}`, s.used, s.limit, n, foot);
+}
 function renderInvites() {
+  renderUserSeats();
   const sec = $('invites-section');
   if (!sec) return;
   if ((!me?.isAdmin && !me?.isModerator) || !invites.length) { sec.hidden = true; return; }
@@ -28380,7 +28863,7 @@ async function saveInvite() {
   const wsSel = [...$('u-workspaces').querySelectorAll('input:checked')].map(i => i.value);
   const kind = document.querySelector('input[name="u-role-kind"]:checked')?.value || 'equipe';
   if (!email) { toast('Informe o e-mail da pessoa.', 'error'); $('u-email').focus(); return; }
-  if (kind !== 'admin' && !wsSel.length) { toast('Escolha pelo menos um squad para a pessoa acessar.', 'error'); return; }
+  if (kind !== 'admin' && !wsSel.length) { toast('Escolha pelo menos uma equipe para a pessoa acessar.', 'error'); return; }
   const btn = $('u-save-btn');
   btn.disabled = true;
   btn.textContent = 'Enviando…';
@@ -28438,6 +28921,7 @@ async function toggleUser(id) {
     await api('/users/' + id, 'PUT', { active: u.active === false });
     toast(u.active === false ? 'Usuário reativado.' : 'Usuário desativado.', 'warn');
     await refreshData();
+    loadInvites(true); // lugares do plano mudaram
   } catch (e) { toast(e.message, 'error'); }
 }
 
@@ -28469,12 +28953,19 @@ function renderProfile() {
   renderProfileDiscordOAuth();
   renderProfileNotifications().catch(() => {});
   renderProfileAway();
+  // ?aba= é o formato antigo (links de e-mail e retornos de OAuth): vira caminho.
   const want = new URLSearchParams(location.search).get('aba');
-  setProfileSection(PROFILE_SECTIONS.includes(want) ? want : _profileSection, { keepUrl: true });
+  if (PROFILE_SECTIONS.includes(want)) {
+    _profileSection = want;
+    const u = new URL(location.href);
+    u.searchParams.delete('aba');
+    history.replaceState(history.state, '', orgUrl(pageUrlFor('profile')) + u.search + u.hash);
+  }
+  setProfileSection(_profileSection, { keepUrl: true });
   if (typeof paintIcons === 'function') paintIcons();
 }
-/* Navegação entre seções do perfil. A aba vai pra URL (?aba=) pra dar F5
-   e compartilhar o caminho ("Perfil › Notificações") sem se perder. */
+/* Navegação entre seções do perfil. A aba vai pro caminho (/profile/<aba>)
+   pra dar F5 e compartilhar ("Perfil › Notificações") sem se perder. */
 const PROFILE_SECTIONS = ['account', 'away', 'notifications', 'appearance', 'integrations', 'security', 'help'];
 let _profileSection = 'account';
 function setProfileSection(name, opts = {}) {
@@ -28489,13 +28980,7 @@ function setProfileSection(name, opts = {}) {
   document.querySelectorAll('#page-profile .profile-section').forEach(sec => {
     sec.hidden = sec.dataset.section !== name;
   });
-  if (currentPage === 'profile' && !opts.keepUrl) {
-    try {
-      const u = new URL(location.href);
-      u.searchParams.set('aba', name);
-      history.replaceState(history.state, '', u.pathname + u.search + u.hash);
-    } catch {}
-  }
+  if (currentPage === 'profile' && !opts.keepUrl) navReplace(pageUrlFor('profile'));
   if (changed && !opts.keepUrl) document.getElementById('page-profile')?.scrollIntoView({ block: 'start' });
 }
 // Leva até um campo da Conta (ex.: "Adicionar e-mail" na aba Notificações).
@@ -29159,6 +29644,7 @@ function setIntegrationsTab(name) {
     p.hidden = p.dataset.intPanel !== name;
   });
   if (name === 'discord') renderDiscordIntegrationsPanel().catch(() => {});
+  if (currentPage === 'integrations') navPush(pageUrlFor('integrations'));
   if (typeof paintIcons === 'function') paintIcons(document.getElementById('page-integrations'));
 }
 
@@ -29765,7 +30251,7 @@ async function openNotif(notifId, demandId) {
     // demanda pode estar em outro workspace; recarrega dados
     await refreshData();
     if (demands.find(d => d.id === demandId)) showDetail(demandId);
-    else toast('Demanda não encontrada (pode ter sido excluída ou estar em outro squad).', 'warn');
+    else toast('Demanda não encontrada (pode ter sido excluída ou estar em outra equipe).', 'warn');
   }
 }
 
@@ -29973,19 +30459,19 @@ function openBulkProjectPicker() {
   const ids = [...selectedDemandIds];
   const wsSet = new Set(ids.map(id => demandById(id)?.workspaceId).filter(Boolean));
   if (wsSet.size !== 1) {
-    toast('As demandas selecionadas estão em squads diferentes — mude uma de cada vez.', 'error');
+    toast('As demandas selecionadas estão em equipes diferentes — mude uma de cada vez.', 'error');
     return;
   }
   const wsId = [...wsSet][0];
   const projs = (projects || [])
     .filter(p => p.workspaceId === wsId && p.active !== false)
     .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-  if (!projs.length) { toast('Nenhum projeto disponível no squad.', 'error'); return; }
+  if (!projs.length) { toast('Nenhum projeto disponível na equipe.', 'error'); return; }
   const opts = projs.map(p => ({
     value: p.id,
     label: p.client ? `${p.name} · ${p.client}` : p.name
   }));
-  showCustomPicker('Mudar projeto', 'Selecione o novo projeto (mesmo squad):', opts, (val) => bulkRun('setProject', { projectId: val }));
+  showCustomPicker('Mudar projeto', 'Selecione o novo projeto (mesma equipe):', opts, (val) => bulkRun('setProject', { projectId: val }));
 }
 
 /* Picker dedicado — lista de botões. Reconstrói o conteúdo a cada chamada. */
@@ -30106,7 +30592,7 @@ function renderClients() {
   if (fwSel) {
     const prev = fwSel.value;
     const accessibleWs = workspaces.filter(w => me.isAdmin || (me.workspaces || []).includes(w.id));
-    fwSel.innerHTML = '<option value="">Todos os squads</option>' +
+    fwSel.innerHTML = '<option value="">Todas as equipes</option>' +
       accessibleWs.map(w => `<option value="${w.id}">${esc(w.name)}</option>`).join('');
     if ([...fwSel.options].some(o => o.value === prev)) fwSel.value = prev;
     applyFilterDropdown('client-f-ws');
@@ -31056,7 +31542,7 @@ function goClientGallery(id) {
   if (currentPage !== 'clients') goPage('clients');
   currentClientId = id;
   currentProjectId = null;
-  navPush('/clients/' + id + '/gallery');
+  navPush(clientPath(id) + '/gallery');
   showGalleryPageView('client', id);
 }
 function goProjectGallery(id) {
@@ -31065,7 +31551,7 @@ function goProjectGallery(id) {
   if (currentPage !== 'clients') goPage('clients');
   currentProjectId = id;
   currentClientId = p.clientId || null;
-  navPush('/projects/' + id + '/gallery');
+  navPush(projectPath(id) + '/gallery');
   showGalleryPageView('project', id);
 }
 function closeGalleryPage() {
@@ -31248,7 +31734,7 @@ function galleryPageSetView(v) {
 }
 
 /* ─── Galeria GLOBAL ─── mini-drive: TODOS os anexos, TODOS os clientes.
-   Ignora squad — usa `demands` e `projects` da store como estão (backend já
+   Ignora equipe — usa `demands` e `projects` da store como estão (backend já
    respeita permissões do usuário; a página apenas não filtra por workspace). */
 const _globalGalState = {
   search: '', kind: '',
@@ -31378,7 +31864,7 @@ function _idFromAttSlug(slug) {
 /* Se a URL atual é /gallery/<slug-id>, tenta abrir o preview do item. */
 let _galleryItemUrlPending = false;
 function _tryOpenGalleryItemFromUrl() {
-  const m = location.pathname.match(/^\/gallery\/([^/]+)$/);
+  const m = appPath().match(/^\/gallery\/([^/]+)$/);
   if (!m) return;
   const wanted = _idFromAttSlug(m[1]);
   const items = collectAllAttachments();
@@ -31413,7 +31899,7 @@ function _globalGalStateToUrl() {
   if (st.clientIds instanceof Set && st.clientIds.size)     p.set('clients', [...st.clientIds].join(','));
   if (st.workspaceIds instanceof Set && st.workspaceIds.size) p.set('squads',  [...st.workspaceIds].join(','));
   const qs = p.toString();
-  return '/gallery' + (qs ? '?' + qs : '');
+  return orgUrl('/gallery') + (qs ? '?' + qs : '');
 }
 function _globalGalStateFromUrl() {
   const st = _globalGalState;
@@ -31634,7 +32120,7 @@ function _renderGGMulti(kind, items) {
     ? [...(clients || [])].map(c => ({ id: c.id, name: c.name, color: c.color || '#7A00FF' }))
     : [...(workspaces || [])].map(w => ({ id: w.id, name: w.name, color: w.color || '#7A00FF' }));
   // "Sem <cliente/squad>" quando existir
-  if (counts.get('__none__')) options.push({ id: '__none__', name: kind === 'client' ? 'Sem cliente' : 'Sem squad', color: 'var(--text-muted)' });
+  if (counts.get('__none__')) options.push({ id: '__none__', name: kind === 'client' ? 'Sem cliente' : 'Sem equipe', color: 'var(--text-muted)' });
   const sorted = options
     .map(o => ({ ...o, n: counts.get(o.id) || 0 }))
     .sort((a, b) => b.n - a.n);
@@ -31642,12 +32128,12 @@ function _renderGGMulti(kind, items) {
   const validIds = new Set(options.map(o => o.id));
   [...set].forEach(id => { if (!validIds.has(id)) set.delete(id); });
   // Label
-  if (!set.size) label.textContent = kind === 'client' ? 'Cliente' : 'Squad';
+  if (!set.size) label.textContent = kind === 'client' ? 'Cliente' : 'Equipe';
   else if (set.size === 1) {
     const o = options.find(x => set.has(x.id));
-    label.textContent = o ? o.name : (kind === 'client' ? '1 cliente' : '1 squad');
+    label.textContent = o ? o.name : (kind === 'client' ? '1 cliente' : '1 equipe');
   } else {
-    label.textContent = `${set.size} ${kind === 'client' ? 'clientes' : 'squads'}`;
+    label.textContent = `${set.size} ${kind === 'client' ? 'clientes' : 'equipes'}`;
   }
   // Filtering visual state
   wrap.classList.toggle('filtering', set.size > 0);
@@ -32138,7 +32624,7 @@ function renderRoleCargoMatrix(elId, entity, handlerName, entityId) {
     </div>`;
   }).filter(Boolean).join('');
 
-  el.innerHTML = cards || `<div class="client-people-empty">Nenhum usuário no squad deste cliente tem área definida.</div>`;
+  el.innerHTML = cards || `<div class="client-people-empty">Nenhum usuário na equipe deste cliente tem área definida.</div>`;
   paintIcons();
 }
 function _matrixRow(area, cargo, candidates, entity, handlerName, entityId) {
@@ -34024,6 +34510,7 @@ function setAgendaView(n) {
   agendaWeeks = n === 1 ? 1 : 2;
   document.querySelectorAll('.agenda-view-btn').forEach(b => b.classList.toggle('active', Number(b.dataset.view) === agendaWeeks));
   renderAgenda();
+  if (currentPage === 'agenda') navPush(pageUrlFor('agenda'));
 }
 function onAgendaUserChange() {
   agendaUserId = $('agenda-user').value || null;
@@ -34050,6 +34537,7 @@ function setAgendaMode(mode) {
   if (viewTog) viewTog.style.display = agendaMode === 'individual' ? '' : 'none';
   updateAgendaTeamBtnLabel();
   renderAgenda();
+  if (currentPage === 'agenda') navPush(pageUrlFor('agenda'));
 }
 function updateAgendaTeamBtnLabel() {
   const lbl = $('agenda-team-btn-lbl');
@@ -34704,6 +35192,7 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
           <span>${esc(gb.summary)}</span>
           ${meetIcon}
         </div>`;
+      if (gb.id) _gcalEventsById.set(gb.id, gb);
       block.addEventListener('click', () => openGoogleEventDetail(gb));
       grid.appendChild(block);
     });
@@ -34835,6 +35324,7 @@ function showEventReminder(ev) {
 // Modal enxuto pro evento Google — título + horário + botão "Abrir no Google Calendar".
 // Cria o overlay on-demand pra não poluir o HTML com mais um modal fixo.
 function openGoogleEventDetail(gb) {
+  _gcalOpenId = gb.id || null;
   const startHH = String(Math.floor(gb.startMin / 60)).padStart(2, '0');
   const startMM = String(gb.startMin % 60).padStart(2, '0');
   const endHH = String(Math.floor(gb.endMin / 60)).padStart(2, '0');
@@ -35380,6 +35870,7 @@ function pickScheduleKind(k) {
 
 function openScheduleModal(id, preset) {
   editingScheduleId = id || null;
+  _scheduleRoutePreset = id ? null : (preset || null);
   _schedulePresetUserId = preset?.userId || null;
   const s = id ? schedules.find(x => x.id === id) : null;
   $('schedule-modal-title').textContent = s ? 'Editar bloco' : 'Agendar bloco';
@@ -36722,7 +37213,7 @@ function _fsConceptFor(flowKey) {
 }
 
 /* Termos aprendidos do histórico — calculados no servidor sobre as demandas de
-   TODOS os squads (GET /api/flow-suggest/learned), pra equipe nova já herdar o
+   TODAS as equipes (GET /api/flow-suggest/learned), pra equipe nova já herdar o
    que as outras ensinaram. Recarrega ao abrir o wizard se tiver mais de 5 min. */
 const FLOW_LEARN_TTL_MS = 5 * 60 * 1000;
 let _fsLearned = { at: 0, byFlowKey: new Map(), loading: null };
@@ -36948,7 +37439,7 @@ function dismissSimilarDemands(key) {
 }
 
 /* ─── Etapas que demandas parecidas costumam desativar ───
-   Calculado no servidor (todos os squads). Só etapas do meio: a primeira é
+   Calculado no servidor (todas as equipes). Só etapas do meio: a primeira é
    sempre a inicial e as de conclusão não se desativam. */
 let _skipSug = { key: '', data: null };
 function _requestStageSkips(title) {
@@ -37703,6 +38194,7 @@ async function selectPwFolder(folderId) {
   }
   _updatePwEntriesHeader();
   renderPwFolders(); // atualiza is-active
+  if (currentPage === 'passwords') navPush(pageUrlFor('passwords'));
 }
 /* Header da coluna direita: mostra nome + TTL badge + botão Travar. */
 function _updatePwEntriesHeader() {
@@ -38080,7 +38572,7 @@ async function loadPosts() {
   catch (e) { kbState.posts = []; }
 }
 async function renderKbFromRoute() {
-  const path = location.pathname;
+  const path = appPath();
   const m = path.match(/^\/knowledge-base\/([a-z0-9-]+)$/);
   const postId = m ? extractRouteId(m[1]) : null;
   await loadPosts();
@@ -38213,7 +38705,7 @@ async function openPostDetail(id, fromRoute) {
   const contribs = (p.contributorIds || []).map(userById).filter(Boolean);
   const dt = p.updatedAt ? new Date(p.updatedAt).toLocaleString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
   const isAuthorOrPriv = p.authorId === me?.id || me?.isAdmin || me?.isModerator;
-  const canEdit = true; // qualquer um do squad edita (colaborativo)
+  const canEdit = true; // qualquer um da equipe edita (colaborativo)
   const detBody = $('kb-detail-content');
   detBody.innerHTML = `
     <div class="kb-detail-head">
@@ -38275,7 +38767,8 @@ function openPostEditor(id) {
 }
 async function renderPostEditorFromRoute() {
   // Precisa dos posts carregados antes de decidir edit vs new — só ler pela rota.
-  const path = location.pathname;
+  // (/embed no fim = modal de incorporar aberto por cima do editor.)
+  const path = appPath().replace(/\/embed$/, '');
   const editMatch = path.match(/^\/knowledge-base\/([a-z0-9-]+)\/edit$/);
   const isNew = path === '/knowledge-base/new';
   if (editMatch && !kbState.posts.length) await loadPosts();

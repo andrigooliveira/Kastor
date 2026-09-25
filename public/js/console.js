@@ -722,7 +722,7 @@
       <div class="c-kpis">
         ${kpi('Pessoas', 'users', num(o.members), `${num(o.admins)} admins · ${num(o.freelancers)} freelancers · ${num(o.deactivated)} desativadas`)}
         ${kpi('Ativas em 30 dias', 'activity', num(o.active30), `${num(o.active7)} nos últimos 7 dias`)}
-        ${kpi('Squads e clientes', 'layers', `${num(o.squads)} · ${num(o.clients)}`, `${num(o.projects)} projetos`)}
+        ${kpi('Equipes e clientes', 'layers', `${num(o.squads)} · ${num(o.clients)}`, `${num(o.projects)} projetos`)}
         ${kpi('Demandas', 'kanban-square', num(o.demandsTotal), `${num(o.demandsOpen)} abertas agora`)}
         ${kpi('Horas apontadas', 'clock', hrs(o.hoursTotal), `${hrs(o.hours30)} nos últimos 30 dias`)}
       </div>
@@ -732,18 +732,18 @@
         <section class="c-card"><div class="c-card-head"><div><div class="c-card-title">Horas apontadas por mês</div><div class="c-card-sub">Últimos 6 meses</div></div></div><div class="c-card-body"><div id="ch-org-hours"></div></div></section>
       </div>
       <section class="c-card" style="margin-bottom:16px">
-        <div class="c-card-head"><div class="c-card-title">Squads</div><span class="c-card-sub">${num(d.squads.length)} squads</span></div>
-        <div class="c-table-wrap"><table class="c-table"><thead><tr><th>Squad</th><th class="num">Pessoas</th><th class="num">Clientes</th><th class="num">Abertas</th><th class="num">Total de demandas</th></tr></thead>
+        <div class="c-card-head"><div class="c-card-title">Equipes</div><span class="c-card-sub">${num(d.squads.length)} equipes</span></div>
+        <div class="c-table-wrap"><table class="c-table"><thead><tr><th>Equipe</th><th class="num">Pessoas</th><th class="num">Clientes</th><th class="num">Abertas</th><th class="num">Total de demandas</th></tr></thead>
         <tbody>${d.squads.map(s => `<tr><td><span class="c-dot" style="background:${esc(s.color)};margin-right:8px"></span>${esc(s.name)}</td><td class="num">${num(s.members)}</td><td class="num">${num(s.clients)}</td><td class="num">${num(s.open)}</td><td class="num">${num(s.total)}</td></tr>`).join('')}</tbody></table></div>
       </section>
       <section class="c-card">
         <div class="c-card-head"><div class="c-card-title">Pessoas</div><input class="c-input" id="m-search" placeholder="Buscar por nome ou e-mail" style="max-width:260px;height:32px" aria-label="Buscar pessoas"></div>
-        <div class="c-table-wrap"><table class="c-table"><thead><tr><th>Nome</th><th>Área · cargo</th><th>Acesso</th><th>Squads</th><th>Último acesso</th><th>Situação</th></tr></thead><tbody id="m-body"></tbody></table></div>
+        <div class="c-table-wrap"><table class="c-table"><thead><tr><th>Nome</th><th>Área · cargo</th><th>Acesso</th><th>Equipes</th><th>Último acesso</th><th>Situação</th></tr></thead><tbody id="m-body"></tbody></table></div>
       </section>
       <section class="c-card c-danger" style="margin-top:16px">
         <div class="c-card-head"><div class="c-card-title">Dados e exclusão</div></div>
         <div class="c-danger-row">
-          <div><div class="c-danger-title">Baixar backup</div><div class="c-hint">Arquivo JSON com squads, clientes, projetos, fluxos, demandas, documentos e a lista de pessoas. O cofre de senhas não entra.</div></div>
+          <div><div class="c-danger-title">Baixar backup</div><div class="c-hint">Arquivo JSON com equipes, clientes, projetos, fluxos, demandas, documentos e a lista de pessoas. O cofre de senhas não entra.</div></div>
           <a class="c-btn c-btn--sm" href="/api/console/orgs/${esc(o.id)}/export" download>${icon('download')}Baixar backup</a>
         </div>
         <div class="c-danger-row">
@@ -914,7 +914,7 @@
           </dl>
         </div>
         <div class="c-danger-row">
-          <div><div class="c-danger-title">Restaurar</div><div class="c-hint">Volta tudo como estava: pessoas, squads, demandas, arquivos e plano.</div></div>
+          <div><div class="c-danger-title">Restaurar</div><div class="c-hint">Volta tudo como estava: pessoas, equipes, demandas, arquivos e plano.</div></div>
           <button class="c-btn c-btn--sm c-btn--primary" id="org-restore">${icon('rotate-ccw')}Restaurar</button>
         </div>
         <div class="c-danger-row">
@@ -1016,7 +1016,7 @@
             ? `<p class="c-hint" style="margin-top:10px">${icon('building-2')} A organização ${esc(r.orgName || '')} foi apagada de vez em ${dateTime(r.orgPurgedAt).split(',')[0]}.</p>`
             : `<p class="c-hint" style="margin-top:10px">${icon('building-2')} Organização <a href="/console/organizacoes/${esc(r.orgId)}" data-link>${esc(r.orgName || 'criada')}</a>: o convite de dono foi para ${esc(r.email)}.</p>`)
           : r.status !== 'rejected' ? `<button class="c-btn c-btn--primary c-btn--sm" style="margin-top:10px" data-create-org>${icon('building-2')}Aprovar e criar organização</button>
-             <p class="c-hint" style="margin-top:8px">Cria a organização com um squad "Geral" e manda o convite de dono para ${esc(r.email)}.</p>` : ''}
+             <p class="c-hint" style="margin-top:8px">Cria a organização com uma equipe "Geral" e manda o convite de dono para ${esc(r.email)}.</p>` : ''}
       </div>
       <div class="c-detail-section"><div class="c-section-label">Anotações</div>
         <form id="wl-note" novalidate><textarea class="c-textarea" name="note" placeholder="Contexto, próxima conversa, impressões…" maxlength="2000"></textarea>
@@ -1051,7 +1051,7 @@
           <div class="c-field"><label class="c-label" for="org-plan">Plano</label>
             <select class="c-select" id="org-plan" name="planId">${(state.plans || []).map(p => `<option value="${esc(p.id)}"${p.id === 'teste' ? ' selected' : ''}>${esc(p.name)} · ${esc(p.id === 'custom' ? 'sem limites (ajuste depois)' : p.trial ? '14 dias grátis' : planLimits(p))}</option>`).join('')}</select>
             <span class="c-hint">O teste de 14 dias começa quando o dono aceitar o convite. Tamanho da equipe informado: ${esc(TEAM[r.teamSize] || r.teamSize)}${TEAM_PLAN[r.teamSize] ? ` (plano provável depois: ${esc(((state.plans || []).find(p => p.id === TEAM_PLAN[r.teamSize]) || {}).name || '')})` : ''}.</span></div>
-          <p class="c-hint">Criamos a organização com um squad "Geral" e o fluxo padrão, e <b>${esc(r.name)}</b> recebe o convite para criar a conta como dono.</p>
+          <p class="c-hint">Criamos a organização com uma equipe "Geral" e o fluxo padrão, e <b>${esc(r.name)}</b> recebe o convite para criar a conta como dono.</p>
           <div class="c-error" role="alert" style="margin-top:10px"></div></form>`,
         `<button class="c-btn" data-close>Cancelar</button><button class="c-btn c-btn--primary" id="org-go">Criar e convidar</button>`);
       const f = m.el.querySelector('#f-org');

@@ -74,7 +74,7 @@
       "Sua escolha fica salva na sua conta e vale em qualquer computador. Mudou de ideia? Use Restaurar padrão.",
       "A engrenagem ao lado de Documentação leva direto para as suas configurações. Clicar no seu nome continua servindo para definir o seu status.",
       "Minhas Demandas mostra quantas estão em aberto, e o número fica vermelho quando alguma está atrasada.",
-      "A busca fica no topo do menu, logo abaixo do squad. Para ganhar espaço na tela, recolha o menu pela seta dupla no canto de baixo e fiquem só os ícones."
+      "A busca fica no topo do menu, logo abaixo da equipe. Para ganhar espaço na tela, recolha o menu pela seta dupla no canto de baixo e fiquem só os ícones."
     ]
   },
   {
@@ -83,7 +83,7 @@
     "title": "Sugestão de fluxo na criação de demandas e comentários que se completam sozinhos",
     "highlights": [
       "Ao criar uma demanda, o reWork lê o título e sugere o fluxo que mais combina. Ele entende abreviações e erros de digitação (por exemplo, \"LP\" vira Landing Page). É só uma sugestão: a escolha continua sendo sua.",
-      "As sugestões melhoram com o tempo: elas aprendem com as demandas que todos os squads já criaram, então fluxos novos também passam a ser reconhecidos.",
+      "As sugestões melhoram com o tempo: elas aprendem com as demandas que todas as equipes já criaram, então fluxos novos também passam a ser reconhecidos.",
       "Na mesma tela, o reWork avisa se já existe uma demanda parecida e mostra quais etapas costumam ser desativadas em pedidos desse tipo, como ajustes que pulam a etapa de Conteúdo.",
       "Comentários com sugestão automática: quando você começa a escrever uma frase que costuma usar, como \"Ajustes feitos\" ou \"Segue:\", o resto aparece em cinza. Aperte Tab para completar.",
       "As sugestões aprendem com o seu jeito de escrever: uma frase passa a ser sugerida depois de 5 usos e some sozinha se você ficar 30 dias sem usá-la.",
@@ -163,8 +163,8 @@
     "date": "2026-09-11",
     "title": "Galeria unificada + visualização de PDF, DOCX e PPTX na plataforma",
     "highlights": [
-      "Nova página 'Galeria' no menu lateral: mini-drive com todos os arquivos anexados nas demandas de todos os clientes — sem depender do squad ativo.",
-      "Filtros por squad, cliente e tipo (imagens, PDFs, docs, slides, planilhas, vídeos, áudios, links); busca por nome, cliente, projeto ou demanda; ordenação por data, nome, peso, tipo ou cliente.",
+      "Nova página 'Galeria' no menu lateral: mini-drive com todos os arquivos anexados nas demandas de todos os clientes — sem depender da equipe ativa.",
+      "Filtros por equipe, cliente e tipo (imagens, PDFs, docs, slides, planilhas, vídeos, áudios, links); busca por nome, cliente, projeto ou demanda; ordenação por data, nome, peso, tipo ou cliente.",
       "Cada arquivo tem sua URL própria (/gallery/nome-id) — dá pra compartilhar link direto pro item, e voltar/avançar do browser funciona certinho.",
       "Visualização inline dos formatos Office (PPTX, DOCX, XLSX) fiel ao original — a plataforma converte no servidor com LibreOffice e mostra as páginas em alta resolução via pdf.js, com zoom que mantém nitidez.",
       "PDFs e imagens ganham botões de zoom (+/−) e o modal ocupa a tela inteira em fundo escuro pra melhor leitura.",
@@ -187,7 +187,7 @@
     "date": "2026-09-09",
     "title": "Aba Ritmo em Análises e link público por cliente",
     "highlights": [
-      "Nova aba 'Ritmo' em Análises: burndown semanal por squad com linha ideal baseada nos prazos combinados.",
+      "Nova aba 'Ritmo' em Análises: burndown semanal por equipe com linha ideal baseada nos prazos combinados.",
       "Compartilhamento por cliente: gere links públicos read-only (com pause/revoke) pra stakeholders acompanharem o pipeline sem login."
     ]
   }

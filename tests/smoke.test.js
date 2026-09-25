@@ -671,6 +671,18 @@ test('Organizações: conta existente entra numa segunda organização e troca e
   assert.equal(me.isOwner, true);
   assert.equal((await call('GET', '/api/demands/' + wsiDemandId, cookie)).status, 200);
   assert.equal((await call('POST', '/api/orgs/switch', cookie, { orgId: 'org_inexistente' })).status, 404);
+  // A aba diz a organização pelo cabeçalho X-Org-Id (vem da URL /<id-da-org>/…):
+  // responde por ela sem mexer na sessão; organização alheia é ignorada.
+  const betaId = me.orgs.find(o => o.name === 'Beta').id;
+  const orgName = async (headers) => (await req('/api/org', { headers: { Cookie: cookie, ...headers } })).body.name;
+  assert.equal(await orgName({ 'X-Org-Id': betaId }), 'Beta');
+  assert.equal(await orgName({}), 'WSI', 'sem cabeçalho segue a sessão');
+  assert.notEqual((await req('/api/demands/' + wsiDemandId, { headers: { Cookie: cookie, 'X-Org-Id': betaId } })).status, 200, 'na Beta a demanda da WSI não aparece');
+  assert.equal(await orgName({ 'X-Org-Id': 'org_inexistente' }), 'WSI');
+  // Abrir o app (/me) numa organização faz dela a "última usada"
+  assert.equal((await req('/api/me', { headers: { Cookie: cookie, 'X-Org-Id': betaId } })).body.org.name, 'Beta');
+  assert.equal(await orgName({}), 'Beta');
+  await call('POST', '/api/orgs/switch', cookie, { orgId: me.orgs.find(o => o.name === 'WSI').id });
   // A dona da Beta não pode mudar a senha de quem também está em outra organização
   const wsiAdminInBeta = (await req('/api/users', { headers: { Cookie: betaCookie } })).body.find(u => u.username === 'admin');
   assert.ok(wsiAdminInBeta, 'agora aparece na Beta');

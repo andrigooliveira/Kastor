@@ -6735,6 +6735,8 @@ body.is-resizing-detail * { cursor: col-resize !important; user-select: none !im
   gap: 16px; flex-wrap: wrap;
 }
 .us-header-block { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.us-seats { margin-top: 10px; width: min(360px, 100%); }
+.us-seats .orgp-meter-foot b { color: var(--danger, #EF4444); font-weight: 600; }
 .us-header-actions {
   display: inline-flex; align-items: center; gap: 8px;
   flex-shrink: 0;

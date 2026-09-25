@@ -80,10 +80,15 @@
   function $(id) { return document.getElementById(id); }
 
   async function api(path, method, body) {
+    // Organização da URL (/<id-da-org>/…) — o /me já volta com ela.
+    const org = (location.pathname.match(/^\/(org_[A-Za-z0-9_-]+)(?=\/|$)/) || [])[1];
+    const headers = {};
+    if (body) headers['Content-Type'] = 'application/json';
+    if (org) headers['X-Org-Id'] = org;
     const res = await fetch('/api' + path, {
       method: method || 'GET',
       credentials: 'same-origin',
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      headers,
       body: body ? JSON.stringify(body) : undefined,
     });
     let data = null;

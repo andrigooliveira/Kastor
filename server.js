@@ -4,7 +4,7 @@
    Credenciais ficam num arquivo criptografado separado (auth.enc).
 
    Novidades desta versão:
-   • Workspaces (squads) com acesso por usuário
+   • Workspaces (equipes) com acesso por usuário
    • Fluxos vinculados a projeto (exclusivos) + duplicação
    • Etapas com responsável, prazo em dias e cor
    • Prazo da etapa começa a contar quando a demanda avança
@@ -288,7 +288,7 @@ function addDays(ymd, days) {
 
 /* ─── ORGANIZAÇÕES: migração da instalação de uma empresa só ───
    Idempotente. Na primeira vez: cria a organização (ORG_NAME, padrão "WSI"),
-   põe nela todos os squads e itens "da instalação", e cria o vínculo de cada
+   põe nela todas as equipes e itens "da instalação", e cria o vínculo de cada
    pessoa com exatamente as permissões de hoje. O dono é ORG_OWNER (usuário
    ou e-mail) ou, sem ele, o admin ativo mais antigo — dá pra trocar depois
    no console. Em todo boot: liga os campos calculados dos usuários. */
@@ -713,9 +713,13 @@ function appBaseUrl(req) {
   const host = req.get('host') || '';
   return host ? `${proto}://${host}` : '';
 }
+/* Link da demanda no app: /<id-da-org>/demands/<id>. Sem organização
+   conhecida, cai no /demands/<id> (o app completa com a organização atual). */
 function demandLinkFor(baseUrl, demandId) {
   if (!baseUrl || !demandId) return null;
-  return `${baseUrl}/#demand-${demandId}`;
+  const d = (rawDb.demands || []).find(x => x.id === demandId);
+  const orgId = d ? tenancy.wsOrgId(d.workspaceId) : null;
+  return `${baseUrl}${orgId ? '/' + orgId : ''}/demands/${demandId}`;
 }
 
 /* Deriva uma versão curta e estável a partir do path do avatar. Usado como
@@ -919,7 +923,7 @@ function buildDiscordDMForNotification(type, ctx) {
 }
 
 /* Acesso a squads: vem do vínculo da pessoa com a organização DONA do squad.
-   Dentro de uma requisição, só squads da organização ativa contam. */
+   Dentro de uma requisição, só equipes da organização ativa contam. */
 function canAccessWs(user, wsId) {
   if (!user || !wsId) return false;
   const orgId = tenancy.wsOrgId(wsId);
@@ -978,13 +982,17 @@ function requireAuth(req, res, next) {
   const session = auth.sessionForToken(token);
   const user = session && allUsers().find(u => u.id === session.userId);
   if (!user) return res.status(401).json({ error: 'Não autenticado' });
-  // Organização ativa: a da sessão, se a pessoa ainda tiver vínculo ativo;
-  // senão a última usada; senão a mais antiga.
+  // Organização ativa: a pedida pela aba (X-Org-Id, que vem da URL
+  // /<id-da-org>/…), se a pessoa tiver vínculo ativo nela; senão a da sessão;
+  // senão a última usada; senão a mais antiga. O cabeçalho não mexe na sessão
+  // — duas abas em organizações diferentes convivem.
   const ms = tenancy.activeMemberships(user.id);
   if (!ms.length) return res.status(401).json({ error: 'Sua conta não faz parte de nenhuma organização ativa.', code: 'no_org' });
-  let m = ms.find(x => x.orgId === (session.data && session.data.orgId)) || tenancy.primaryMembership(user);
+  const wanted = String(req.headers['x-org-id'] || '').trim();
+  const sessOrg = session.data && session.data.orgId;
+  let m = (wanted && ms.find(x => x.orgId === wanted)) || ms.find(x => x.orgId === sessOrg) || tenancy.primaryMembership(user);
   if (!m || m.active === false) m = ms[0];
-  if (!session.data || session.data.orgId !== m.orgId) auth.setSessionData(token, { orgId: m.orgId });
+  if (!sessOrg || (!wanted && sessOrg !== m.orgId)) auth.setSessionData(token, { orgId: m.orgId });
   tenancy.run(m.orgId, () => {
     // Freelancer: bloqueia globalmente mutações fora da whitelist. Endpoints
     // permitidos ainda aplicam checks internos (freelancerHasDemandAccess,
@@ -1135,7 +1143,7 @@ function flushHeldNotifications(user) {
     const who = h.triggerUserId && db.users.find(x => x.id === h.triggerUserId);
     return {
       name: h.demandName || HELD_LABELS[h.type] || h.type,
-      href: base && h.demandId ? `${base}/demands/${h.demandId}` : null,
+      href: base && h.demandId ? demandLinkFor(base, h.demandId) : null,
       meta: [HELD_LABELS[h.type] || h.type, h.stageName, who && who.name].filter(Boolean).join(' · '),
     };
   };
@@ -2153,7 +2161,7 @@ app.get('/api/marketing/performance', requireAuth, async (req, res) => {
   } else {
     // Modo squad: agrega todos os clientes ativos daquele workspace que o user pode ver.
     if (!canAccessWs(req.user, workspaceId)) {
-      return res.status(403).json({ error: 'Sem acesso a esse squad' });
+      return res.status(403).json({ error: 'Sem acesso a essa equipe' });
     }
     const clientsInWs = db.clients.filter(c => c.workspaceId === workspaceId && notDeleted(c) && c.active !== false);
     ids = clientsInWs.map(c => c.id);
@@ -2893,6 +2901,13 @@ app.post('/api/email/confirm', rateLimitEmailConfirm, (req, res) => {
 
 app.get('/api/me', requireAuth, (req, res) => {
   const me = publicUser(req.user, { self: true });
+  // A aba abriu numa organização (URL): ela vira a "última usada" — é pra lá
+  // que vão os links sem organização e as abas novas.
+  const sess = auth.sessionForToken(req.token);
+  if (sess && (!sess.data || sess.data.orgId !== req.org.id)) {
+    auth.setSessionData(req.token, { orgId: req.org.id });
+    if (req.user.lastOrgId !== req.org.id) { req.user.lastOrgId = req.org.id; saveEntity('users', req.user); }
+  }
   if (me) {
     me._smtpEnabled = mailEnabled();
     me.org = orgPublic(req.org, req.membership.role);
@@ -3734,7 +3749,7 @@ app.get('/api/google/meeting-hours', requireAuth, (req, res) => {
   const accessibleWs = wsIdsFor(req.user);
   let scopeWsIds = accessibleWs;
   if (wsId) {
-    if (!accessibleWs.includes(wsId)) return res.status(403).json({ error: 'Squad fora do escopo' });
+    if (!accessibleWs.includes(wsId)) return res.status(403).json({ error: 'Equipe fora do escopo' });
     scopeWsIds = [wsId];
   }
   const wsSet = new Set(scopeWsIds);
@@ -4422,7 +4437,7 @@ function stripWriterDoc(doc, { includeContent = false, user = null } = {}) {
 }
 
 /* Valida clientId/projectId vindos do cliente: precisam existir e estar num
-   squad que o usuário acessa. Projeto define o cliente se ele não vier. */
+   equipe que o usuário acessa. Projeto define o cliente se ele não vier. */
 function _writerLinkFrom(user, body) {
   const out = {};
   if ('projectId' in body) {
@@ -5105,7 +5120,7 @@ app.get('/api/bootstrap', requireAuth, (req, res) => {
 
 app.post('/api/workspaces', requireAuth, adminOnly, (req, res) => {
   const { name, color } = req.body || {};
-  if (!String(name || '').trim()) return res.status(400).json({ error: 'Nome do squad é obrigatório' });
+  if (!String(name || '').trim()) return res.status(400).json({ error: 'Nome da equipe é obrigatório' });
   const w = { id: uid(), name: String(name).trim(), color: color || '#7A00FF', createdAt: nowISO() };
   db.workspaces.push(w);
   saveEntity('workspaces', w);
@@ -5119,7 +5134,7 @@ app.post('/api/workspaces', requireAuth, adminOnly, (req, res) => {
 
 app.put('/api/workspaces/:id', requireAuth, adminOnly, (req, res) => {
   const w = db.workspaces.find(x => x.id === req.params.id);
-  if (!w) return res.status(404).json({ error: 'Squad não encontrado' });
+  if (!w) return res.status(404).json({ error: 'Equipe não encontrada' });
   const { name, color } = req.body || {};
   if (typeof name === 'string' && name.trim()) w.name = name.trim();
   if (color) w.color = color;
@@ -5130,7 +5145,7 @@ app.put('/api/workspaces/:id', requireAuth, adminOnly, (req, res) => {
 app.delete('/api/workspaces/:id', requireAuth, adminOnly, (req, res) => {
   if (db.workspaces.length <= 1) return res.status(400).json({ error: 'É preciso manter pelo menos um workspace' });
   const hasProjects = db.projects.some(p => p.workspaceId === req.params.id);
-  if (hasProjects) return res.status(409).json({ error: 'Este squad possui projetos. Mova ou exclua-os antes.' });
+  if (hasProjects) return res.status(409).json({ error: 'Esta equipe possui projetos. Mova ou exclua-os antes.' });
   const orphanFlows = db.flows.filter(f => f.workspaceId === req.params.id);
   db.workspaces = db.workspaces.filter(x => x.id !== req.params.id);
   db.flows = db.flows.filter(f => f.workspaceId !== req.params.id);
@@ -5340,7 +5355,7 @@ function publicInvite(inv) {
   };
 }
 /* Valida os campos do convite. Moderador só convida Equipe/Freelancer pros
-   squads dele. */
+   equipes dele. */
 function inviteFieldsFrom(body, inviter) {
   const b = body || {};
   const email = normEmail(b.email);
@@ -5350,9 +5365,9 @@ function inviteFieldsFrom(body, inviter) {
   if (inviter && !inviter.isAdmin) {
     if (kind !== 'equipe' && kind !== 'free') return { error: 'Moderadores convidam só como Equipe ou Freelancer.' };
     const mine = new Set(inviter.workspaces || []);
-    if (workspaces.some(id => !mine.has(id))) return { error: 'Você só pode liberar squads em que você está.' };
+    if (workspaces.some(id => !mine.has(id))) return { error: 'Você só pode liberar equipes em que você está.' };
   }
-  if (kind !== 'admin' && !workspaces.length) return { error: 'Escolha pelo menos um squad para a pessoa acessar.' };
+  if (kind !== 'admin' && !workspaces.length) return { error: 'Escolha pelo menos uma equipe para a pessoa acessar.' };
   if (kind === 'admin') workspaces = [];
   return {
     email, kind, workspaces,
@@ -5402,7 +5417,10 @@ app.get('/api/invites', requireAuth, modOrAdmin, (req, res) => {
     .filter(i => { const st = inviteStatus(i); return (st === 'pending' || st === 'expired') && i.kind !== 'owner' && canManageInvite(req.user, i); })
     .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
     .map(publicInvite);
-  res.json({ invites: list, emailEnabled: mailEnabled() });
+  // Lugares do plano (pessoas ativas + convites pendentes da organização toda),
+  // mostrados no Quadro da equipe.
+  const plan = orgPlan(req.org);
+  res.json({ invites: list, emailEnabled: mailEnabled(), seats: { ...orgSeats(req.org.id), limit: plan.users, planName: plan.name } });
 });
 
 app.post('/api/invites', requireAuth, modOrAdmin, rateLimitInviteSend, async (req, res) => {
@@ -6299,7 +6317,7 @@ app.post('/api/templates', requireAuth, (req, res) => {
   const b = req.body || {};
   if (!String(b.name || '').trim()) return res.status(400).json({ error: 'Nome do template é obrigatório' });
   const ws = b.workspaceId && canAccessWs(req.user, b.workspaceId) ? b.workspaceId : wsIdsFor(req.user)[0];
-  if (!ws) return res.status(400).json({ error: 'Squad inválido' });
+  if (!ws) return res.status(400).json({ error: 'Equipe inválida' });
   const t = {
     id: uid(),
     workspaceId: ws,
@@ -6390,7 +6408,7 @@ app.post('/api/form-templates', requireAuth, adminOnly, (req, res) => {
   const name = String(b.name || '').trim();
   if (!name) return res.status(400).json({ error: 'Nome do formulário é obrigatório' });
   const ws = b.workspaceId && canAccessWs(req.user, b.workspaceId) ? b.workspaceId : wsIdsFor(req.user)[0];
-  if (!ws) return res.status(400).json({ error: 'Squad inválido' });
+  if (!ws) return res.status(400).json({ error: 'Equipe inválida' });
   const fields = sanitizeFormFields(b.fields);
   const t = {
     id: uid(),
@@ -6432,7 +6450,7 @@ app.delete('/api/form-templates/:id', requireAuth, adminOnly, (req, res) => {
 });
 
 /* ── RESPOSTAS DE FORMULÁRIOS ──
-   Qualquer usuário do squad pode preencher. Deletar só o autor ou admin.
+   Qualquer usuário da equipe pode preencher. Deletar só o autor ou admin.
    Sem PUT no MVP: pra "corrigir" uma resposta, o usuário deleta e resubmete
    (mantém a auditoria simples). Values são validados contra os fields do
    template atual — se o template mudou depois, campos ausentes viram null. */
@@ -6492,13 +6510,13 @@ app.post('/api/form-responses', requireAuth, (req, res) => {
   if (b.demandId) {
     const d = (db.demands || []).find(x => x.id === b.demandId);
     if (!d) return res.status(400).json({ error: 'Demanda inválida' });
-    if (!canAccessWs(req.user, d.workspaceId)) return res.status(403).json({ error: 'Sem acesso ao squad da demanda' });
+    if (!canAccessWs(req.user, d.workspaceId)) return res.status(403).json({ error: 'Sem acesso à equipe da demanda' });
     demandId = d.id;
     workspaceId = d.workspaceId;
   } else {
     // Standalone: mantém no squad do template (compat) e valida acesso.
     workspaceId = template.workspaceId;
-    if (workspaceId && !canAccessWs(req.user, workspaceId)) return res.status(403).json({ error: 'Sem acesso a este squad' });
+    if (workspaceId && !canAccessWs(req.user, workspaceId)) return res.status(403).json({ error: 'Sem acesso a esta equipe' });
   }
   const { values, missingRequired, errors } = sanitizeResponseValues(template, b.values);
   if (missingRequired.length) return res.status(400).json({ error: `Campos obrigatórios: ${missingRequired.join(', ')}` });
@@ -6684,7 +6702,7 @@ app.post('/api/dashboards', requireAuth, modOrAdmin, (req, res) => {
   const name = String(b.name || '').trim();
   if (!name) return res.status(400).json({ error: 'Nome do dashboard é obrigatório' });
   const ws = b.workspaceId && canAccessWs(req.user, b.workspaceId) ? b.workspaceId : wsIdsFor(req.user)[0];
-  if (!ws) return res.status(400).json({ error: 'Squad inválido' });
+  if (!ws) return res.status(400).json({ error: 'Equipe inválida' });
   const d = {
     id: uid(),
     workspaceId: ws,
@@ -6778,7 +6796,7 @@ app.post('/api/clients', requireAuth, (req, res) => {
   const exists = db.clients.some(c =>
     c.workspaceId === wsId && (c.name || '').trim().toLowerCase() === b.name.trim().toLowerCase()
   );
-  if (exists) return res.status(409).json({ error: 'Já existe um cliente com esse nome neste squad.' });
+  if (exists) return res.status(409).json({ error: 'Já existe um cliente com esse nome nesta equipe.' });
   const c = buildClientPayload(b, {
     id: uid(),
     workspaceId: wsId,
@@ -6809,7 +6827,7 @@ app.put('/api/clients/:id', requireAuth, (req, res) => {
       x.id !== c.id && x.workspaceId === c.workspaceId &&
       (x.name || '').trim().toLowerCase() === b.name.trim().toLowerCase()
     );
-    if (dup) return res.status(409).json({ error: 'Já existe outro cliente com esse nome neste squad.' });
+    if (dup) return res.status(409).json({ error: 'Já existe outro cliente com esse nome nesta equipe.' });
   }
   // Move pra outro workspace? Permitido pra admins, com revalidação
   if (b.workspaceId && b.workspaceId !== c.workspaceId && canAccessWs(req.user, b.workspaceId)) {
@@ -7298,12 +7316,12 @@ app.post('/api/clients/from-template', requireAuth, (req, res) => {
   // Modelo é global — o workspace do cliente vem SEMPRE do body (o switcher do
   // topbar); fallback pro primeiro workspace acessível se não veio explícito.
   const wsId = b.workspaceId && canAccessWs(req.user, b.workspaceId) ? b.workspaceId : wsIdsFor(req.user)[0];
-  if (!wsId || !canAccessWs(req.user, wsId)) return res.status(403).json({ error: 'Sem acesso ao squad.' });
+  if (!wsId || !canAccessWs(req.user, wsId)) return res.status(403).json({ error: 'Sem acesso à equipe.' });
   const newName = String(b.name || '').trim();
   if (!newName) return res.status(400).json({ error: 'Nome do cliente é obrigatório.' });
   // Bloqueia duplicidade
   if (db.clients.some(c => c.workspaceId === wsId && (c.name || '').trim().toLowerCase() === newName.toLowerCase())) {
-    return res.status(409).json({ error: 'Já existe um cliente com esse nome neste squad.' });
+    return res.status(409).json({ error: 'Já existe um cliente com esse nome nesta equipe.' });
   }
 
   const createdProjects = [];
@@ -7402,7 +7420,7 @@ app.post('/api/projects', requireAuth, (req, res) => {
     return res.status(400).json({ error: 'Selecione um cliente cadastrado pro projeto.' });
   }
   if (!canAccessWs(req.user, clientEntity.workspaceId)) {
-    return res.status(403).json({ error: 'Sem acesso ao squad deste cliente.' });
+    return res.status(403).json({ error: 'Sem acesso à equipe deste cliente.' });
   }
   let avatarUrl = null;
   if (avatar) {
@@ -7552,7 +7570,7 @@ app.post('/api/projects/:id/duplicate', requireAuth, (req, res) => {
 /* ── SUGESTÃO DE FLUXO — termos aprendidos do histórico ──
    Palavras (e pares de palavras seguidas) de títulos que aparecem muito num tipo
    de fluxo e pouco nos outros viram termos daquele fluxo. Roda sobre TODAS as
-   demandas (todos os squads) pra que equipe nova já herde o que as outras
+   demandas (todas as equipes) pra que equipe nova já herde o que as outras
    ensinaram; a resposta só leva os termos, nunca títulos.
    - Agrupa pelo NOME do fluxo: cópias em clientes diferentes somam.
    - Ignora fluxos curinga (Personalizado), que misturam de tudo.
@@ -7634,7 +7652,7 @@ app.get('/api/flow-suggest/learned', requireAuth, (req, res) => {
 });
 
 /* Etapas que demandas parecidas costumam desativar — mesmo tipo de fluxo (nome),
-   título com 2+ palavras em comum e 50%+ de sobreposição, de TODOS os squads.
+   título com 2+ palavras em comum e 50%+ de sobreposição, de TODAS as equipes.
    Palavras de ação ("ajuste", "reenvio") contam aqui: são elas que dizem que a
    demanda é pequena e pula etapas. Sugere a etapa se 60%+ das parecidas (mín. 2)
    desativaram. Etapas são casadas pelo rótulo — cada cliente tem sua cópia do fluxo. */
@@ -9287,7 +9305,7 @@ app.post('/api/demands/bulk', requireAuth, rateLimitBulk, (req, res) => {
         const proj = db.projects.find(p => p.id === newPid && (req.user.isAdmin || wsIds.includes(p.workspaceId)));
         if (!proj) { skipped++; errors.push({ id: d.id, error: 'Projeto inválido.' }); continue; }
         if (proj.workspaceId !== d.workspaceId) {
-          skipped++; errors.push({ id: d.id, error: 'Projeto de outro squad.' }); continue;
+          skipped++; errors.push({ id: d.id, error: 'Projeto de outra equipe.' }); continue;
         }
         if (newPid !== d.projectId) {
           const from = d.projectId;
@@ -10388,7 +10406,7 @@ app.post('/api/schedules', requireAuth, (req, res) => {
     if (!free) return res.status(400).json({ error: 'Título é obrigatório em blocos livres.' });
     const wsId = String(b.workspaceId || '');
     if (!wsId || !canAccessWs(req.user, wsId)) {
-      return res.status(400).json({ error: 'Squad inválido pro bloco livre.' });
+      return res.status(400).json({ error: 'Equipe inválida pro bloco livre.' });
     }
     // Recorrência opcional: expande em N cópias, todas com o mesmo recurrenceGroupId
     // pra permitir edição/exclusão em série depois.
@@ -10939,12 +10957,12 @@ function _applyListaHandler(req, res) {
   if (projectIdIn) {
     project = db.projects.find(p => p.id === projectIdIn && notDeleted(p));
     if (!project) return res.status(404).json({ error: 'Projeto não encontrado' });
-    if (!canAccessWs(req.user, project.workspaceId)) return res.status(403).json({ error: 'Sem acesso ao squad do projeto' });
+    if (!canAccessWs(req.user, project.workspaceId)) return res.status(403).json({ error: 'Sem acesso à equipe do projeto' });
     client = project.clientId ? db.clients.find(c => c.id === project.clientId) : null;
   } else {
     client = db.clients.find(c => c.id === clientIdIn && notDeleted(c));
     if (!client) return res.status(404).json({ error: 'Cliente não encontrado' });
-    if (!canAccessWs(req.user, client.workspaceId)) return res.status(403).json({ error: 'Sem acesso ao squad do cliente' });
+    if (!canAccessWs(req.user, client.workspaceId)) return res.status(403).json({ error: 'Sem acesso à equipe do cliente' });
   }
   const items = Array.isArray(lista.items) ? lista.items : [];
   if (!items.length) return res.status(400).json({ error: 'A lista está vazia' });
@@ -10992,7 +11010,7 @@ app.delete('/api/apply-lista/:applicationId', requireAuth, (req, res) => {
   const affected = (db.tasks || []).filter(t => t.applicationId === applicationId);
   if (!affected.length) return res.status(404).json({ error: 'Aplicação não encontrada' });
   const wsId = affected[0].workspaceId;
-  if (!canAccessWs(req.user, wsId)) return res.status(403).json({ error: 'Sem acesso ao squad' });
+  if (!canAccessWs(req.user, wsId)) return res.status(403).json({ error: 'Sem acesso à equipe' });
   const includeDemands = req.query.includeDemands !== '0';
   let deletedDemands = 0;
   for (const t of affected) {
@@ -11061,7 +11079,7 @@ app.get('/api/webhooks', requireAuth, modOrAdmin, (req, res) => {
   res.set('Expires', '0');
   const raw = db.webhooks || [];
   const list = raw.map(({ workspaceId, ...rest }) => rest);
-  console.log(`[webhooks/get] user=${req.user.username} → ${list.length} webhook(s) (cache tem ${raw.length}; universais, sem filtro por squad)`);
+  console.log(`[webhooks/get] user=${req.user.username} → ${list.length} webhook(s) (cache tem ${raw.length}; universais, sem filtro por equipe)`);
   res.json(list);
 });
 function validateTargetUser(targetUserId) {
@@ -11705,7 +11723,7 @@ app.post('/api/passwords/webauthn/auth/finish', requireAuth, async (req, res) =>
 /* ─── BASE DE CONHECIMENTO (posts) ───
    Posts com HTML sanitizado (permite iframes de domínios whitelist), tags
    normalizadas, autor + contributors auto-mantidos. Escopo per-squad como
-   demais entidades (aparecem só nos squads que o user pertence). */
+   demais entidades (aparecem só nas equipes que o user pertence). */
 const POST_TAG_MAX_LEN = 40;
 const POST_TAGS_MAX = 12;
 const POST_TITLE_MAX = 180;
@@ -11756,7 +11774,7 @@ app.post('/api/posts', requireAuth, (req, res) => {
   const title = String(b.title || '').trim().slice(0, POST_TITLE_MAX);
   if (!title) return res.status(400).json({ error: 'Título obrigatório' });
   const wsId = b.workspaceId || wsIdsFor(req.user)[0];
-  if (!wsId || !canAccessWs(req.user, wsId)) return res.status(403).json({ error: 'Sem acesso ao squad' });
+  if (!wsId || !canAccessWs(req.user, wsId)) return res.status(403).json({ error: 'Sem acesso à equipe' });
   const now = nowISO();
   const p = {
     id: uid(),
@@ -11792,7 +11810,7 @@ app.put('/api/posts/:id', requireAuth, (req, res) => {
     p.coverImage = /^\/uploads\// .test(b.coverImage) ? b.coverImage : '';
   }
   if (b.workspaceId && b.workspaceId !== p.workspaceId) {
-    if (!canAccessWs(req.user, b.workspaceId)) return res.status(403).json({ error: 'Sem acesso ao squad destino' });
+    if (!canAccessWs(req.user, b.workspaceId)) return res.status(403).json({ error: 'Sem acesso à equipe destino' });
     p.workspaceId = b.workspaceId;
   }
   // Contributors: adiciona editor se não é o autor e ainda não estava na lista.
@@ -12444,7 +12462,7 @@ async function digestSendForUser(user, baseUrl) {
     const st = emailStageOf(d);
     return {
       name: d.name,
-      href: url ? `${url}/demands/${d.id}` : null,
+      href: url ? demandLinkFor(url, d.id) : null,
       client: (db.projects.find(p => p.id === d.projectId) || {}).client || '',
       stageLabel: st && st.label, stageColor: st && st.color,
       due: (d.stageDueDate || d.deadline || '').slice(0, 10),
@@ -12458,7 +12476,7 @@ async function digestSendForUser(user, baseUrl) {
     hour: sched.hour, scheduleLabel: digestScheduleLabel(user),
     overdue: overdue.map(toItem), dueToday: dueToday.map(toItem), dueSoon: dueSoon.map(toItem),
     unread: unreadNotifs.map(n => ({ name: n.demandName || NOTIF_SHORT[n.type] || n.type, meta: n.demandName ? NOTIF_SHORT[n.type] || '' : '',
-      href: url && n.demandId ? `${url}/demands/${n.demandId}` : null })),
+      href: url && n.demandId ? demandLinkFor(url, n.demandId) : null })),
   });
   const text = `${_greetFor(sched.hour)}, ${user.name.split(' ')[0]}!\n\nEm atraso: ${overdue.length}\nVencem hoje: ${dueToday.length}\nPróximos 3 dias: ${dueSoon.length}\nNotificações não lidas: ${unreadNotifs.length}\n\nAbra: ${url}`;
   try {
@@ -12520,7 +12538,7 @@ async function sendDiscordDMDigestForUser(user) {
   const baseUrl = process.env.PUBLIC_URL || '';
   const fmt = (d) => {
     const proj = db.projects.find(p => p.id === d.projectId);
-    const url = baseUrl ? `${baseUrl}/demands/${d.id}` : null;
+    const url = baseUrl ? demandLinkFor(baseUrl, d.id) : null;
     const line = url ? `[**${d.name}**](${url})` : `**${d.name}**`;
     const meta = [proj?.client, proj?.name].filter(Boolean).join(' · ');
     return meta ? `• ${line} — ${meta}` : `• ${line}`;

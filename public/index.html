@@ -535,7 +535,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
   <!-- SIDEBAR -->
   <aside class="sidebar sb" aria-label="Navegação principal">
     <div class="sb-top">
-      <a class="sb-brand" href="/dashboard" onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); goPage('dashboard')" aria-label="reWork, ir para o Início">
+      <a class="sb-brand" href="/" onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); goPage('dashboard')" aria-label="reWork, ir para o Início">
         <img src="/rework_branco.svg" alt="" class="sb-logo sb-logo--white">
         <img src="/rework_preto.svg"  alt="" class="sb-logo sb-logo--black">
         <img src="/rework_logo.svg"   alt="" class="sb-logo sb-logo--icon">
@@ -554,9 +554,9 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
     </div>
     <div class="ws-switch sb-ws freelancer-hide" id="ws-switch">
       <div class="filter-cdrop ws-cdrop sb-ws-cdrop" id="ws-cdrop">
-        <button type="button" class="sb-ws-trigger" onclick="toggleFilterCdrop(this.parentElement)" aria-label="Trocar de squad" data-label="Trocar de squad">
+        <button type="button" class="sb-ws-trigger" onclick="toggleFilterCdrop(this.parentElement)" aria-label="Trocar de equipe" data-label="Trocar de equipe">
           <span class="ws-trigger-letter sb-ws-letter" id="ws-trigger-letter">?</span>
-          <span class="sb-ws-kicker">Squad</span>
+          <span class="sb-ws-kicker">Equipe</span>
           <span class="sb-ws-name" id="ws-trigger-label">—</span>
           <i data-lucide="chevrons-up-down" class="sb-ws-caret"></i>
         </button>
@@ -1001,7 +1001,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           <!-- Squad: multi-select via popover com checkboxes; estado em CSV no hidden input. -->
           <div class="filter-multi-wrap" id="filter-workspace-wrap">
             <button type="button" class="filter-multi-trigger" id="filter-workspace-trigger" onclick="toggleWsMulti(event)">
-              <span class="filter-multi-label" id="filter-workspace-label">Squads</span>
+              <span class="filter-multi-label" id="filter-workspace-label">Equipes</span>
               <i data-lucide="chevron-down" class="ic-xs"></i>
             </button>
             <div class="filter-multi-menu" id="filter-workspace-menu" onclick="event.stopPropagation()"></div>
@@ -1304,7 +1304,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                     <button type="button" class="mth-prio-sort" onclick="sortMine('priority')" title="Ordenar por prioridade"><i data-lucide="flag" class="ic-xs"></i></button>
                     <span class="mth-sort" onclick="sortMine('name')">Demanda <i data-lucide="chevrons-up-down" class="ic-xs"></i></span>
                   </th>
-                  <th style="cursor:pointer" onclick="sortMine('workspace')">Squad <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                  <th style="cursor:pointer" onclick="sortMine('workspace')">Equipe <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   <th style="cursor:pointer" onclick="sortMine('client')">Cliente <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   <th style="cursor:pointer" onclick="sortMine('project')">Projeto <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   <th style="cursor:pointer" onclick="sortMine('status')">Etapa <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
@@ -1351,7 +1351,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       <div class="page-body">
         <!-- Aba CAPACIDADE — layout unificado v2:
              Linha 1 ("capa"):  título + subtitle + toggle da visão à direita.
-             Linha 2 ("filtros"): squads + período + export numa fileira só.
+             Linha 2 ("filtros"): equipes + período + export numa fileira só.
              Isso reduz a fricção de "onde fica cada filtro?". -->
         <div id="an-tab-capacity" class="an-tab-panel">
           <div class="capacity-hero">
@@ -1367,7 +1367,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           </div>
           <div class="capacity-filterbar">
             <div class="capacity-filterbar-group">
-              <span class="capacity-filterbar-label"><i data-lucide="users" class="ic-xs"></i> Squads</span>
+              <span class="capacity-filterbar-label"><i data-lucide="users" class="ic-xs"></i> Equipes</span>
               <div class="uws-filter capacity-squad-filter-inline" id="capacity-squad-filter"></div>
               <input type="hidden" id="capacity-squads" value="">
             </div>
@@ -1404,7 +1404,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
         <div id="an-tab-rhythm" class="an-tab-panel" style="display:none">
           <div class="rhythm-header rhythm-header-v2">
             <div class="rhythm-header-main">
-              <h2 class="rhythm-title">Ritmo por squad</h2>
+              <h2 class="rhythm-title">Ritmo por equipe</h2>
               <div class="rhythm-subtitle">Diagnóstico semanal de gargalos — quem tá no ritmo, quem tá devendo.</div>
             </div>
             <div class="rhythm-header-actions">
@@ -1444,7 +1444,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           </div>
           <div class="capacity-filterbar rep-filterbar">
             <div class="capacity-filterbar-group">
-              <span class="capacity-filterbar-label"><i data-lucide="users" class="ic-xs"></i> Squads</span>
+              <span class="capacity-filterbar-label"><i data-lucide="users" class="ic-xs"></i> Equipes</span>
               <div class="rep-squads" id="reports-squad-filter"></div>
               <input type="hidden" id="reports-ws" value="">
             </div>
@@ -1498,7 +1498,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           </div>
           <div class="perf-controls">
             <div class="perf-control">
-              <label class="filter-label">Squad</label>
+              <label class="filter-label">Equipe</label>
               <select class="filter-select" id="perf-squad" onchange="_perfOnSquadChange()"></select>
             </div>
             <div class="perf-control">
@@ -1900,7 +1900,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               <i data-lucide="search" class="filter-input-icon ic-sm"></i>
               <input class="filter-input filter-input--with-icon" id="wh-f-search" placeholder="Buscar integração…" oninput="renderIntegrations()">
             </div>
-            <select class="filter-select" id="wh-f-squad" onchange="onIntegrationsSquadChange()"><option value="">Todos os squads</option></select>
+            <select class="filter-select" id="wh-f-squad" onchange="onIntegrationsSquadChange()"><option value="">Todas as equipes</option></select>
             <div class="filter-toggle" id="wh-scope-toggle" role="tablist">
               <button type="button" class="filter-toggle-btn is-active" data-scope="user" onclick="setIntegrationsScope('user')">Usuário</button>
               <button type="button" class="filter-toggle-btn" data-scope="client" onclick="setIntegrationsScope('client')">Cliente</button>
@@ -1972,13 +1972,13 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
     </div>
 
     <!-- ── GALERIA GLOBAL ── mini-drive com anexos de TODOS os clientes,
-         independente do squad ativo do usuário. -->
+         independente da equipe ativa do usuário. -->
     <div class="page" id="page-gallery">
       <div class="page-body">
         <div class="gallery-page-head" style="margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--hairline)">
           <div class="gallery-page-title-wrap">
             <div class="gallery-page-title">Galeria</div>
-            <div class="gallery-page-sub">Mini-drive com todos os arquivos de mídia da plataforma — independente de squad.</div>
+            <div class="gallery-page-sub">Mini-drive com todos os arquivos de mídia da plataforma — independente de equipe.</div>
           </div>
         </div>
         <div class="gallery-page-toolbar">
@@ -1990,7 +1990,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           <div class="filter-multi-wrap gallery-multi-wrap" id="gg-ws-wrap">
             <button type="button" class="filter-multi-trigger gallery-multi-trigger" onclick="ggToggleMulti(event, 'ws')">
               <i data-lucide="users" class="ic-xs"></i>
-              <span class="filter-multi-label" id="gg-ws-label">Squad</span>
+              <span class="filter-multi-label" id="gg-ws-label">Equipe</span>
               <i data-lucide="chevron-down" class="ic-xs"></i>
             </button>
             <div class="filter-multi-menu" id="gg-ws-menu" onclick="event.stopPropagation()"></div>
@@ -2031,7 +2031,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               <i data-lucide="search" class="filter-input-icon ic-sm"></i>
               <input class="filter-input filter-input--with-icon" id="client-search" placeholder="Buscar cliente…" oninput="renderClients()">
             </div>
-            <select class="filter-select" id="client-f-ws" onchange="renderClients()"><option value="">Todos os squads</option></select>
+            <select class="filter-select" id="client-f-ws" onchange="renderClients()"><option value="">Todas as equipes</option></select>
             <div class="filter-group-label">
               <span class="filter-group-label-text">Situação</span>
               <div class="client-status-toggle">
@@ -2553,13 +2553,13 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
     <div class="page" id="page-workspaces">
       <div class="page-body">
         <div class="section-head" style="justify-content:flex-end">
-          <button class="btn btn-primary btn-sm admin-only full-admin-only" onclick="openWsModal()">+ Novo Squad</button>
+          <button class="btn btn-primary btn-sm admin-only full-admin-only" onclick="openWsModal()">+ Nova Equipe</button>
         </div>
         <div class="table-wrap table-scroll">
           <table>
             <thead>
               <tr>
-                <th style="cursor:pointer" onclick="sortWsBy('name')">Squad <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                <th style="cursor:pointer" onclick="sortWsBy('name')">Equipe <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                 <th style="cursor:pointer" onclick="sortWsBy('clients')">Clientes <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                 <th style="cursor:pointer" onclick="sortWsBy('projects')">Projetos <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                 <th style="cursor:pointer" onclick="sortWsBy('members')">Membros <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
@@ -2570,7 +2570,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           </table>
         </div>
         <div style="font-size:12px;color:var(--text-muted);margin-top:14px;line-height:1.6">
-          Cada squad tem projetos e fluxos próprios, isolados dos demais. Defina quem acessa cada squad na aba <strong>Usuários</strong>.
+          Cada equipe tem projetos e fluxos próprios, isolados das demais equipes. Defina quem acessa cada equipe na aba <strong>Usuários</strong>.
         </div>
       </div>
     </div>
@@ -2587,7 +2587,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
         <div class="us-header">
           <div class="us-header-block">
             <h2 class="capacity-title">Quadro da equipe</h2>
-            <div class="capacity-subtitle" id="users-header-counter">Auditoria de responsabilidades, permissões e squads.</div>
+            <div class="capacity-subtitle" id="users-header-counter">Auditoria de responsabilidades, permissões e equipes.</div>
+            <div class="us-seats" id="users-seats" hidden></div>
           </div>
           <div class="us-header-actions">
             <button class="btn btn-ghost btn-sm" id="user-archive-toggle" onclick="toggleArchivedUsers()">Ver desativados</button>
@@ -2610,7 +2611,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                 <tr>
                   <th>E-mail</th>
                   <th>Permissão</th>
-                  <th>Squads</th>
+                  <th>Equipes</th>
                   <th>Envio</th>
                   <th>Situação</th>
                   <th class="us-col-kebab"></th>
@@ -2635,7 +2636,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                   <th class="mth-sort" onclick="sortUsersBy('username')">Usuário <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   <th class="mth-sort" onclick="sortUsersBy('role')">Área <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   <th class="mth-sort" onclick="sortUsersBy('position')">Cargo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                  <th class="mth-sort" onclick="sortUsersBy('ws')">Squads <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                  <th class="mth-sort" onclick="sortUsersBy('ws')">Equipes <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   <th class="mth-sort" onclick="sortUsersBy('admin')">Permissão <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   <th class="mth-sort" onclick="sortUsersBy('active')">Situação <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   <th class="us-col-kebab"></th>
@@ -2695,7 +2696,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       <div class="page-body">
         <div class="section-head" style="justify-content:flex-end">
           <div class="rd-filter">
-            <label class="filter-label" for="rd-ws-filter">Squad</label>
+            <label class="filter-label" for="rd-ws-filter">Equipe</label>
             <select class="form-control" id="rd-ws-filter" onchange="onRdWsFilterChange()"></select>
           </div>
         </div>
@@ -3688,7 +3689,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <input class="form-control" id="c-name" placeholder="Ex: BRZ Empreendimentos" autocomplete="off">
           </div>
           <div class="form-group">
-            <label class="form-label">Squad</label>
+            <label class="form-label">Equipe</label>
             <select class="form-control" id="c-workspace"></select>
           </div>
           <div class="form-group">
@@ -3846,7 +3847,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
         </div>
         <div class="form-group full" id="sch-title-row" style="display:none">
           <label class="form-label">Título</label>
-          <input class="form-control" id="sch-title" type="text" maxlength="200" placeholder="Ex.: Reunião de squad, Foco, Almoço…">
+          <input class="form-control" id="sch-title" type="text" maxlength="200" placeholder="Ex.: Reunião de equipe, Foco, Almoço…">
         </div>
         <div class="form-group full" id="sch-kind-row" style="display:none">
           <label class="form-label">Tipo</label>
@@ -4583,14 +4584,14 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 <div class="modal-overlay" id="ws-modal">
   <div class="modal modal-md">
     <div class="modal-header">
-      <div class="modal-title" id="ws-modal-title">Novo Squad</div>
+      <div class="modal-title" id="ws-modal-title">Nova Equipe</div>
       <button class="modal-close" onclick="closeModal('ws-modal')"><i data-lucide="x" class="ic-sm"></i></button>
     </div>
     <div class="modal-body">
       <div class="form-grid">
         <div class="form-group">
-          <label class="form-label">Nome do Squad *</label>
-          <input class="form-control" id="ws-name" placeholder="Ex: Squad Imobiliário">
+          <label class="form-label">Nome da Equipe *</label>
+          <input class="form-control" id="ws-name" placeholder="Ex: Equipe Imobiliária">
         </div>
         <div class="form-group">
           <label class="form-label">Cor</label>
@@ -4601,7 +4602,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('ws-modal')">Cancelar</button>
-      <button class="btn btn-confirm" onclick="saveWs()">Salvar Squad</button>
+      <button class="btn btn-confirm" onclick="saveWs()">Salvar Equipe</button>
     </div>
   </div>
 </div>
@@ -4675,24 +4676,24 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       <div class="um-section">
         <div class="um-section-head">
           <span class="um-section-title">Permissões</span>
-          <span class="um-section-hint" id="u-perm-hint">Squads liberados + nível de acesso.</span>
+          <span class="um-section-hint" id="u-perm-hint">Equipes liberadas + nível de acesso.</span>
         </div>
         <div class="form-group um-col-2">
-          <label class="form-label">Acesso aos squads</label>
+          <label class="form-label">Acesso às equipes</label>
           <div class="ws-checklist" id="u-workspaces"></div>
         </div>
         <div class="um-role-options">
-          <label class="um-role-opt um-role-opt--admin" id="u-opt-admin" title="Gerencia pessoas, squads e configurações da organização">
+          <label class="um-role-opt um-role-opt--admin" id="u-opt-admin" title="Gerencia pessoas, equipes e configurações da organização">
             <input type="radio" name="u-role-kind" id="u-admin" value="admin">
             <div class="um-role-icon"><i data-lucide="shield" class="ic-md"></i></div>
             <div class="um-role-name">Administrador</div>
           </label>
-          <label class="um-role-opt um-role-opt--mod" id="u-opt-mod" title="Coordena os squads liberados: fluxos, clientes, horas da equipe e convites">
+          <label class="um-role-opt um-role-opt--mod" id="u-opt-mod" title="Coordena as equipes liberadas: fluxos, clientes, horas da equipe e convites">
             <input type="radio" name="u-role-kind" id="u-moderator" value="mod">
             <div class="um-role-icon"><i data-lucide="gavel" class="ic-md"></i></div>
             <div class="um-role-name">Moderador</div>
           </label>
-          <label class="um-role-opt um-role-opt--team" title="Acesso padrão — abre, comenta e move demandas nos squads liberados">
+          <label class="um-role-opt um-role-opt--team" title="Acesso padrão — abre, comenta e move demandas nas equipes liberadas">
             <input type="radio" name="u-role-kind" id="u-equipe" value="equipe" checked>
             <div class="um-role-icon"><i data-lucide="users" class="ic-md"></i></div>
             <div class="um-role-name">Equipe</div>
@@ -4865,7 +4866,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260925gl2" defer></script>
+<script src="/js/boot.js?v=20260925rt1" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
@@ -4911,7 +4912,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             </select>
           </div>
           <div class="form-group full" style="margin-top:-6px">
-            <div class="webhook-hint">Restrinja o disparo a um cliente e/ou projeto específico. Deixe em <strong>Todos</strong> para receber os eventos de <strong>todos os squads</strong>.</div>
+            <div class="webhook-hint">Restrinja o disparo a um cliente e/ou projeto específico. Deixe em <strong>Todos</strong> para receber os eventos de <strong>todas as equipes</strong>.</div>
           </div>
           <div class="form-group full">
             <label class="form-label">Usuário alvo (opcional)</label>
@@ -5055,7 +5056,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           </div>
           <div class="form-group full">
             <span class="form-label">Filtros fixos (opcional)</span>
-            <div class="dv-ed-hint" style="margin:0 0 8px">Valem para todo mundo e não podem ser removidos na tela. Ex.: só a squad Imob.</div>
+            <div class="dv-ed-hint" style="margin:0 0 8px">Valem para todo mundo e não podem ser removidos na tela. Ex.: só a equipe Imob.</div>
             <div id="de-fixed"></div>
           </div>
           <label class="form-group full dv-check" id="de-suggest-row">
