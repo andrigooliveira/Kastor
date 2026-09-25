@@ -2904,6 +2904,7 @@ tr:hover td { background: var(--surface-2); }
 /* Delta temporal em KPI — inline puro: seta + porcentagem, sem chrome extra */
 
 .form-group { display: flex; flex-direction: column; gap: 6px; }
+.form-group[hidden] { display: none; }
 .form-group.full { grid-column: 1 / -1; }
 .form-label { font-size: 11px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: .06em; }
 .form-label-hint { color: var(--text-muted); font-weight: 500; text-transform: none; letter-spacing: 0; margin-left: 4px; }
@@ -4753,40 +4754,66 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 .dash-greeting-sub b { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
 .dash-greeting-sep { color: var(--hairline); margin: 0 4px; }
 /* Novidades resumidas no Início (abaixo da saudação) — renderDashUpdates(). */
-/* Início › vínculo de e-mail (obrigatório até o prazo; não fecha) */
+/* Início › vínculo de e-mail (obrigatório até o prazo; não fecha).
+   Esquerda: o que fazer + passos; direita: contagem até o prazo. */
 .dash-email {
-  display: flex; align-items: center; gap: 16px;
-  margin: -8px 0 20px; padding: 16px 18px;
-  border: 1px solid color-mix(in oklab, var(--accent) 45%, var(--hairline));
-  border-radius: 14px;
-  background:
-    radial-gradient(ellipse 380px 140px at 0% 0%, color-mix(in oklab, var(--accent) 16%, transparent), transparent 70%),
-    var(--surface-2);
+  position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  margin: 0 0 24px; border: 1px solid var(--hairline); border-radius: 16px;
+  background: var(--surface-2); overflow: hidden;
   animation: greetingIn .6s .04s cubic-bezier(.16,1,.3,1) both;
 }
-.dash-email.is-late {
-  border-color: color-mix(in oklab, var(--danger) 55%, var(--hairline));
-  background:
-    radial-gradient(ellipse 380px 140px at 0% 0%, color-mix(in oklab, var(--danger) 14%, transparent), transparent 70%),
-    var(--surface-2);
-}
+.dash-email[hidden] { display: none; }
+.dash-email::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 3px; background: var(--accent); }
+.dash-email.is-soon::before { background: var(--warn); }
+.dash-email.is-late::before { background: var(--danger); }
+.dash-email-body { display: flex; gap: 16px; padding: 20px 22px 20px 24px; min-width: 0; }
 .dash-email-ic {
-  width: 44px; height: 44px; border-radius: 12px; flex-shrink: 0; display: grid; place-items: center;
-  background: color-mix(in oklab, var(--accent) 16%, transparent); color: var(--accent-text);
+  width: 40px; height: 40px; border-radius: 12px; flex-shrink: 0; display: grid; place-items: center;
+  background: var(--accent-dim); color: var(--accent-text);
 }
-.dash-email.is-late .dash-email-ic { background: color-mix(in oklab, var(--danger) 14%, transparent); color: var(--danger); }
-.dash-email-ic svg { width: 22px; height: 22px; }
-.dash-email-text { flex: 1; min-width: 0; }
-.dash-email-kicker { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--accent-text); }
-.dash-email.is-late .dash-email-kicker { color: var(--danger); }
-.dash-email-title { margin: 2px 0 4px; font-size: 16px; font-weight: 700; letter-spacing: -0.015em; color: var(--text); }
-.dash-email-desc { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text-dim); max-width: 80ch; }
-.dash-email-desc b { color: var(--text); font-weight: 600; overflow-wrap: anywhere; }
-.dash-email-actions { display: flex; gap: 8px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+.dash-email-ic svg { width: 20px; height: 20px; }
+.dash-email-main { min-width: 0; flex: 1; }
+.dash-email-title { font-size: 17px; font-weight: 700; letter-spacing: -0.015em; color: var(--text); line-height: 1.3; }
+.dash-email-sub { margin: 4px 0 0; font-size: 13.5px; line-height: 1.55; color: var(--text-dim); max-width: 70ch; }
+.dash-email-sub b { color: var(--text); font-weight: 600; overflow-wrap: anywhere; }
+.dash-email-steps { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 16px 0 18px; padding: 0; list-style: none; }
+.dash-email-step { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 500; color: var(--text-muted); white-space: nowrap; }
+.dash-email-step-n {
+  width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; flex-shrink: 0;
+  border: 1px solid var(--hairline-strong); font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.dash-email-step-n svg { width: 12px; height: 12px; }
+.dash-email-step.is-active { color: var(--text); }
+.dash-email-step.is-active .dash-email-step-n { background: var(--accent); border-color: var(--accent); color: #fff; }
+.dash-email-step.is-done .dash-email-step-n { background: var(--success-dim); border-color: transparent; color: var(--success); }
+.dash-email-step-sep { width: 22px; height: 1px; background: var(--hairline-strong); flex-shrink: 0; }
+.dash-email-actions { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .dash-email-actions .btn { gap: 6px; }
-@media (max-width: 760px) {
-  .dash-email { flex-direction: column; align-items: flex-start; }
-  .dash-email-actions { justify-content: flex-start; }
+.dash-email-link {
+  border: 0; background: none; padding: 0; font: inherit; font-size: 13px; color: var(--text-dim); cursor: pointer;
+  text-decoration: underline; text-decoration-color: var(--hairline-strong); text-underline-offset: 3px;
+}
+.dash-email-link:hover { color: var(--text); text-decoration-color: currentColor; }
+.dash-email-clock {
+  min-width: 190px; padding: 20px 24px; display: flex; flex-direction: column; justify-content: center;
+  border-left: 1px solid var(--hairline); background: color-mix(in oklab, var(--accent) 5%, transparent);
+}
+.dash-email-clock-num { font-size: 36px; font-weight: 700; letter-spacing: -0.04em; line-height: 1; color: var(--text); font-variant-numeric: tabular-nums; }
+.dash-email-clock-unit { margin-left: 6px; font-size: 14px; font-weight: 600; letter-spacing: 0; color: var(--text-dim); }
+.dash-email-clock-when { margin-top: 10px; font-size: 12.5px; font-weight: 600; color: var(--text); }
+.dash-email-clock-note { margin-top: 2px; font-size: 12px; line-height: 1.45; color: var(--text-muted); }
+.dash-email.is-soon .dash-email-clock { background: color-mix(in oklab, var(--warn) 7%, transparent); }
+.dash-email.is-soon .dash-email-clock-num { color: var(--warn); }
+.dash-email.is-late .dash-email-clock-num { color: var(--danger); font-size: 22px; letter-spacing: -0.02em; }
+@media (max-width: 860px) {
+  .dash-email { grid-template-columns: minmax(0, 1fr); }
+  .dash-email-clock { border-left: 0; border-top: 1px solid var(--hairline); flex-direction: row; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; padding: 14px 22px 14px 24px; min-width: 0; }
+  .dash-email-clock-num { font-size: 24px; }
+  .dash-email-clock-when, .dash-email-clock-note { margin-top: 0; }
+}
+@media (max-width: 520px) {
+  .dash-email-body { flex-direction: column; gap: 12px; }
+  .dash-email-step-sep { display: none; }
 }
 
 .us-email { margin-top: 2px; font-size: 11.5px; color: var(--text-muted); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -5132,39 +5132,63 @@ function renderEmailLinkCard() {
   const st = _emailState();
   if (!st || st === 'ok') { el.hidden = true; el.innerHTML = ''; return; }
   const late = !!me.emailRequired;
-  const left = Math.ceil((Date.parse(me.emailDeadline) - Date.now()) / 864e5);
-  const when = late ? 'Prazo encerrado' : `Até ${_emailDeadlineLabel()}${left > 0 && left <= 7 ? ` · ${left === 1 ? 'falta 1 dia' : `faltam ${left} dias`}` : ''}`;
+  const ms = Date.parse(me.emailDeadline) - Date.now();
+  const soon = !late && ms < 2 * 864e5;
   const pend = me.pendingEmail;
+  // Passos: 1 informar/enviar · 2 abrir o link · pronto
+  const step = st === 'pending' ? 2 : 1;
+  const stepHTML = (n, label) => {
+    const cls = n < step ? 'is-done' : n === step ? 'is-active' : '';
+    return `<li class="dash-email-step ${cls}"><span class="dash-email-step-n">${n < step ? '<i data-lucide="check"></i>' : n}</span>${label}</li>`;
+  };
   const cfg = {
     missing: {
+      icon: 'mail-plus',
       title: 'Vincule um e-mail à sua conta',
-      text: late
-        ? 'O prazo acabou: até vincular um e-mail, sua conta fica só para consulta. Leva um minuto.'
-        : 'Todas as contas do reWork vão precisar de um e-mail confirmado. Com ele você entra pelo e-mail e recupera a senha sozinho. Depois do prazo, contas sem e-mail confirmado ficam com o acesso restrito: só entram para confirmar o e-mail.',
-      actions: `<button class="btn btn-confirm" onclick="openEmailLinkModal()"><i data-lucide="mail-plus" class="ic-sm"></i> Vincular e-mail</button>`
+      sub: 'Obrigatório para todas as contas do reWork. Com ele você também entra pelo e-mail e recupera a senha sozinho.',
+      first: 'Informar o e-mail',
+      actions: `<button class="btn btn-primary" onclick="openEmailLinkModal()">Vincular e-mail<i data-lucide="arrow-right" class="ic-sm"></i></button>`
     },
     unconfirmed: {
+      icon: 'mail',
       title: 'Confirme o seu e-mail',
-      text: `Sua conta tem o e-mail <b>${esc(me.email)}</b>, mas ele ainda não foi confirmado. Vamos mandar um link para ele: é só abrir e tocar em Confirmar e-mail. Depois do prazo, contas sem e-mail confirmado ficam com o acesso restrito.`,
-      actions: `<button class="btn btn-confirm" onclick="sendEmailConfirmNow(this)"><i data-lucide="send" class="ic-sm"></i> Enviar link de confirmação</button>
-        <button class="btn btn-ghost" onclick="openEmailLinkModal('change')">Usar outro e-mail</button>`
+      sub: `<b>${esc(me.email)}</b> está na sua conta, mas ainda não foi confirmado.`,
+      first: 'Enviar o link',
+      actions: `<button class="btn btn-primary" onclick="sendEmailConfirmNow(this)"><i data-lucide="send" class="ic-sm"></i>Enviar link de confirmação</button>
+        <button class="dash-email-link" onclick="openEmailLinkModal('change')">Usar outro e-mail</button>`
     },
     pending: {
-      title: 'Falta abrir o link no seu e-mail',
-      text: `Enviamos um link para <b>${esc(pend ? pend.email : '')}</b>. Abra o e-mail e toque em Confirmar e-mail (vale 24 horas). Não achou? Veja no spam ou reenvie.`,
-      actions: `<button class="btn btn-ghost" onclick="${pend && me.email && pend.email === me.email ? 'sendEmailConfirmNow(this)' : "openEmailLinkModal('resend')"}"><i data-lucide="rotate-cw" class="ic-sm"></i> Reenviar</button>
-        <button class="btn btn-ghost" onclick="openEmailLinkModal('change')">Usar outro e-mail</button>`
+      icon: 'mail-check',
+      title: 'Agora é só abrir o link',
+      sub: `Enviamos para <b>${esc(pend ? pend.email : '')}</b>. O link vale 24 horas; se não chegou, veja no spam.`,
+      first: 'Enviar o link',
+      actions: `<button class="btn btn-ghost" onclick="${pend && me.email && pend.email === me.email ? 'sendEmailConfirmNow(this)' : "openEmailLinkModal('resend')"}"><i data-lucide="rotate-cw" class="ic-sm"></i>Reenviar</button>
+        <button class="dash-email-link" onclick="openEmailLinkModal('change')">Usar outro e-mail</button>`
     }
   }[st];
-  el.className = 'dash-email' + (late ? ' is-late' : '');
+  // Contagem: dias (ou horas no último dia) até o prazo.
+  let num, unit;
+  if (late) { num = 'Encerrado'; unit = ''; }
+  else if (ms >= 864e5) { num = Math.ceil(ms / 864e5); unit = num === 1 ? 'dia' : 'dias'; }
+  else { num = Math.max(1, Math.ceil(ms / 36e5)); unit = num === 1 ? 'hora' : 'horas'; }
+  el.className = 'dash-email' + (late ? ' is-late' : soon ? ' is-soon' : '');
   el.innerHTML = `
-    <span class="dash-email-ic"><i data-lucide="${st === 'pending' ? 'mail-check' : 'mail-warning'}"></i></span>
-    <div class="dash-email-text">
-      <div class="dash-email-kicker">${esc(when)}</div>
-      <div class="dash-email-title">${cfg.title}</div>
-      <p class="dash-email-desc">${cfg.text}</p>
+    <div class="dash-email-body">
+      <span class="dash-email-ic"><i data-lucide="${cfg.icon}"></i></span>
+      <div class="dash-email-main">
+        <div class="dash-email-title">${cfg.title}</div>
+        <p class="dash-email-sub">${cfg.sub}</p>
+        <ol class="dash-email-steps" aria-label="Passos">
+          ${stepHTML(1, cfg.first)}<li class="dash-email-step-sep" aria-hidden="true"></li>${stepHTML(2, 'Abrir o link no e-mail')}<li class="dash-email-step-sep" aria-hidden="true"></li>${stepHTML(3, 'Pronto')}
+        </ol>
+        <div class="dash-email-actions">${cfg.actions}</div>
+      </div>
     </div>
-    <div class="dash-email-actions">${cfg.actions}</div>`;
+    <div class="dash-email-clock" role="note">
+      <div class="dash-email-clock-num">${num}${unit ? `<span class="dash-email-clock-unit">${unit}</span>` : ''}</div>
+      <div class="dash-email-clock-when">${late ? 'O prazo acabou' : `Até ${esc(_emailDeadlineLabel())}`}</div>
+      <div class="dash-email-clock-note">${late ? 'Confirme para liberar o acesso.' : 'Depois disso, o acesso fica restrito até confirmar.'}</div>
+    </div>`;
   el.hidden = false;
   paintIcons();
 }
