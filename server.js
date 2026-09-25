@@ -116,6 +116,7 @@ async function loadDB() {
   const firstInstall = await isFirstInstall();
   migrate(firstInstall);
   seed(firstInstall);
+  applyAdminPasswordReset();
   await markInstallComplete(); // idempotente — grava a flag no primeiro boot com esse código
   // Extrai anexos/avatares base64 que ainda estejam dentro das entidades
   // pra arquivos em data/uploads. Idempotente — não toca quem já está em URL.
@@ -127,6 +128,30 @@ async function loadDB() {
   // string `folder` que existia antes. Idempotente.
   try { _migrateLegacyPasswordFolders(); } catch (e) { console.warn('migrateLegacyPasswordFolders:', e.message); }
   await flushDirty(); // garante que entidades criadas no seed/migrate sejam persistidas
+}
+
+/* Recuperação de acesso sem shell: com ADMIN_RESET_PASSWORD definida, cada boot
+   redefine a senha do admin (ou do login em ADMIN_RESET_LOGIN, se houver mais
+   de um admin) e derruba as sessões dele. Remova a variável depois de entrar. */
+function applyAdminPasswordReset() {
+  const pwd = process.env.ADMIN_RESET_PASSWORD;
+  if (!pwd) return;
+  const admins = db.users.filter(u => u.isAdmin && u.active !== false && !u.deletedAt);
+  const login = String(process.env.ADMIN_RESET_LOGIN || '').trim().toLowerCase();
+  const alvo = login
+    ? admins.find(u => String(u.username || '').toLowerCase() === login)
+    : (admins.length === 1 ? admins[0] : null);
+  if (!alvo) {
+    console.warn(`› ADMIN_RESET_PASSWORD ignorada: defina ADMIN_RESET_LOGIN com um destes logins de admin: ${admins.map(u => u.username).join(', ') || '(nenhum admin)'}`);
+    return;
+  }
+  if (pwd.length < 6) {
+    console.warn('› ADMIN_RESET_PASSWORD ignorada: a senha precisa ter pelo menos 6 caracteres.');
+    return;
+  }
+  auth.setPassword(alvo.id, pwd);
+  auth.dropTokensFor(alvo.id);
+  console.log(`› ADMIN_RESET_PASSWORD: senha do admin "${alvo.username}" redefinida. Entre e remova a variável.`);
 }
 
 /* Semeia a biblioteca de tipos de demanda a partir dos tipos já usados nos fluxos.
