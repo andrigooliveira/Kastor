@@ -37,7 +37,7 @@ services:
     # Imagem publicada pelo GitHub Actions no GitHub Container Registry.
     # O tag :latest sempre aponta pro build mais recente da main.
     # Pra congelar em um SHA específico, troque por :abc123def...
-    image: ghcr.io/andrigooliveira/kastor:cfa9475c90d680b6260209aa7d6d50673142343a
+    image: ghcr.io/andrigooliveira/kastor:ae5b6ff17b63dcf34c86f2758a0d6d655cd52380
 
     # Bloco `deploy:` só faz sentido em modo Swarm (compose CLI simples ignora).
     deploy:
