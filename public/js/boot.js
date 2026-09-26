@@ -18,6 +18,7 @@
 
 (function () {
   'use strict';
+  const LOCALE = (window.I18N && window.I18N.locale) || 'pt-BR';
 
   // Versão pro cache-bust dos assets pesados (bate com o v= do HTML).
   const ASSET_VERSION = document.currentScript?.src?.match(/[?&]v=([^&]+)/)?.[1] || '';
@@ -606,7 +607,7 @@
     $('eg-form').hidden = false;
     $('eg-title').textContent = me.email ? 'Confirme seu e-mail para continuar' : 'Vincule um e-mail para continuar';
     const d = new Date(me.emailDeadline);
-    const quando = isNaN(d) ? '' : ` em ${d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}`;
+    const quando = isNaN(d) ? '' : ` ${window.I18N && I18N.lang === 'en' ? 'on' : 'em'} ${d.toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit' })}`;
     $('eg-text').innerHTML = (me.email
       ? `O prazo para confirmar o e-mail das contas do reWork acabou${quando}. Sua conta tem o e-mail <b></b>: envie o link de confirmação e abra o e-mail. Assim que confirmar, tudo volta ao normal.`
       : `O prazo para vincular um e-mail às contas do reWork acabou${quando}. Informe o seu e-mail para receber o link de confirmação. Assim que confirmar, tudo volta ao normal.`);
@@ -656,7 +657,9 @@
   }
   // /api/me completo (com os campos do e-mail) e decide: tela restrita ou app.
   async function enterAfterAuth(me) {
-    if (!me || me.emailDeadline === undefined) me = await api('/me');
+    if (!me || me.emailDeadline === undefined || me.uiLang === undefined) me = await api('/me');
+    // Idioma da conta diferente do desta página: guarda e recarrega nele.
+    if (me && window.I18N && I18N.remember(me.uiLang, me.uiLocale)) { location.reload(); return; }
     if (me && me.emailRequired) { showEmailGate(me); return; }
     await loadFullApp(me);
   }

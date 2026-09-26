@@ -4,6 +4,8 @@
    ─────────────────────────────────────────────────────────────── */
 
 /* ─── ESTADO ─── */
+// Formato de data/número do idioma da tela (i18n.js); português por padrão.
+const LOCALE = (typeof window !== 'undefined' && window.I18N && window.I18N.locale) || 'pt-BR';
 // O token de sessão vive em um cookie httpOnly setado pelo server (kastor_session).
 // O JS não tem acesso a ele — proteção contra XSS. O frontend só sabe SE está
 // autenticado quando /api/me responde 200.
@@ -66,7 +68,32 @@ let listView = 'table';
 let sortKey = 'deadline';
 let sortAsc = true;
 const calState = { all: new Date(), mine: new Date() };
-const MONTHS = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+// Meses no idioma da tela (em inglês vêm do Intl). monthYear(): "Março de 2026" / "March 2026".
+const IS_PT = !/^en/i.test(LOCALE);
+function _intlMonths(style) {
+  return Array.from({ length: 12 }, (_, i) => {
+    const s = new Intl.DateTimeFormat(LOCALE, { month: style, timeZone: 'UTC' }).format(Date.UTC(2020, i, 15)).replace(/\.$/, '');
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  });
+}
+const MONTHS = IS_PT ? ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'] : _intlMonths('long');
+const monthYear = (m0, y) => (IS_PT ? `${MONTHS[m0]} de ${y}` : `${MONTHS[m0]} ${y}`);
+// Dia/mês na ordem do idioma: 31/12 (pt, en-GB…) ou 12/31 (en-US). Mês de 1 a 12.
+const _MD_FIRST = (() => {
+  try { const p = new Intl.DateTimeFormat(LOCALE, { day: '2-digit', month: '2-digit' }).formatToParts(new Date(2020, 11, 31)); return p.findIndex(x => x.type === 'month') < p.findIndex(x => x.type === 'day'); }
+  catch { return false; }
+})();
+function fmtDM(d, m) {
+  const dd = String(d).padStart(2, '0'), mm = String(m).padStart(2, '0');
+  return _MD_FIRST ? `${mm}/${dd}` : `${dd}/${mm}`;
+}
+const fmtDMY = (d, m, y) => `${fmtDM(d, m)}/${y}`;
+// "A, B e C" / "A, B, and C" no idioma da tela.
+function _listJoin(arr) {
+  const a = (arr || []).map(String);
+  try { return new Intl.ListFormat(LOCALE, { style: 'long', type: 'conjunction' }).format(a); }
+  catch { return a.length <= 1 ? a.join('') : a.slice(0, -1).join(', ') + (IS_PT ? ' e ' : ' and ') + a[a.length - 1]; }
+}
 
 /* ─── ROUTING — cada tela, modal e opção tem URL própria em inglês ───
    Tudo mora debaixo da organização: /<id-da-org>/<caminho>. O roteador só
@@ -1292,7 +1319,7 @@ function debounce(fn, ms = 150) {
 function fmtDate(s) {
   if (!s) return '—';
   const [y,m,d] = String(s).slice(0,10).split('-');
-  return `${d}/${m}/${y}`;
+  return fmtDMY(d, m, y);
 }
 /* Formato curto "dd/mm" — sem ano. Usado nas colunas Prazo/Conclusão da lista
    de /demands pra dar respiro entre colunas. Contexto (mês/dia) já dá pra
@@ -1300,12 +1327,12 @@ function fmtDate(s) {
 function fmtDateShort(s) {
   if (!s) return '—';
   const [, m, d] = String(s).slice(0,10).split('-');
-  return `${d}/${m}`;
+  return fmtDM(d, m);
 }
 function fmtDateTime(iso) {
   if (!iso) return '—';
   const dt = new Date(iso);
-  return dt.toLocaleDateString('pt-BR') + ' ' + dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  return dt.toLocaleDateString(LOCALE) + ' ' + dt.toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' });
 }
 function fmtHours(h) {
   const v = Math.round(Number(h || 0) * 100) / 100;
@@ -1371,7 +1398,7 @@ function statusUntilLabel(st) {
   const t = new Date(st.until);
   const hm = `${t.getHours()}h${t.getMinutes() ? String(t.getMinutes()).padStart(2, '0') : ''}`;
   const sameDay = t.toDateString() === new Date().toDateString();
-  return sameDay ? `até ${hm}` : `até ${String(t.getDate()).padStart(2, '0')}/${String(t.getMonth() + 1).padStart(2, '0')} ${hm}`;
+  return sameDay ? `até ${hm}` : `até ${fmtDM(t.getDate(), t.getMonth() + 1)} ${hm}`;
 }
 function statusLabel(st) { return [statusText(st), statusUntilLabel(st)].filter(Boolean).join(' '); }
 
@@ -1497,7 +1524,10 @@ function applyFilterDropdown(selId, opts = {}) {
     // data-default="1" no <option> vira flag isDefault no item do cdrop —
     // usado pra highlightar a opção "padrão do fluxo" no menu do executor.
     if (o.dataset && o.dataset.default) opt.isDefault = true;
-    if (opts.userIcon && o.value) {
+    // data-flag="BR" no <option> → bandeira antes do nome (seletor de idioma).
+    if (o.dataset && o.dataset.flag) {
+      opt.avatar = flagSVG(o.dataset.flag);
+    } else if (opts.userIcon && o.value) {
       const u = userById(o.value);
       if (u) opt.avatar = avatarHTML(u, 'avatar filter-cdrop-avatar');
     } else if (opts.projectIcon && o.value) {
@@ -3557,7 +3587,7 @@ function flowIconBackgroundStyle(icon) {
    Formato do valor mantido por tipo:
      - date            → YYYY-MM-DD
      - datetime-local  → YYYY-MM-DDTHH:MM */
-const FDP_MONTHS = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+const FDP_MONTHS = MONTHS;
 let fdpTarget = null;        // input atualmente vinculado ao picker
 let fdpMode = 'date';        // 'date' | 'datetime'
 let fdpViewDate = null;      // {year, month} mostrado no calendário
@@ -3585,9 +3615,9 @@ function fdpFormatDisplay(value, mode, displayFmt) {
   const p = fdpParse(value);
   if (!p) return '';
   if (displayFmt === 'short') {
-    return `${String(p.day).padStart(2, '0')}/${String(p.month + 1).padStart(2, '0')}`;
+    return fmtDM(p.day, p.month + 1);
   }
-  const d = `${String(p.day).padStart(2, '0')}/${String(p.month + 1).padStart(2, '0')}/${p.year}`;
+  const d = fmtDMY(p.day, p.month + 1, p.year);
   if (mode === 'datetime') return `${d} ${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`;
   return d;
 }
@@ -3599,7 +3629,7 @@ function fdpRenderGrid() {
   const grid = document.getElementById('fdp-grid');
   const title = document.querySelector('.fdp-title');
   const { year, month } = fdpViewDate;
-  title.innerHTML = `${FDP_MONTHS[month]} de ${year} <i data-lucide="chevron-down" class="ic-xs"></i>`;
+  title.innerHTML = `${monthYear(month, year)} <i data-lucide="chevron-down" class="ic-xs"></i>`;
 
   const firstDay = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -3878,9 +3908,10 @@ function fdpConvertAll() {
     inp.type = 'text';
     inp.setAttribute('readonly', 'readonly');
     inp.setAttribute('autocomplete', 'off');
+    const datePh = IS_PT ? 'dd/mm/aaaa' : (_MD_FIRST ? 'mm/dd/yyyy' : 'dd/mm/yyyy');
     const placeholder = displayFmt === 'short'
-      ? 'dd/mm'
-      : (mode === 'datetime' ? 'dd/mm/aaaa --:--' : 'dd/mm/aaaa');
+      ? datePh.slice(0, 5)
+      : (mode === 'datetime' ? datePh + ' --:--' : datePh);
     inp.setAttribute('placeholder', placeholder);
     inp.dataset.fdp = mode;
     inp._fdpValue = isoVal || '';
@@ -4677,6 +4708,8 @@ function _resolveOrgInUrl() {
 }
 
 async function enterApp() {
+  // Idioma da conta diferente do desta página (ex.: mudou em outro aparelho).
+  if (me && window.I18N && I18N.remember(me.uiLang, me.uiLocale)) { location.reload(); return; }
   // Dispara loadAll() ANTES dos setups síncronos — enquanto o servidor
   // devolve o bootstrap (rede), o browser executa initTooltips/keys/etc
   // em paralelo. Sem isso a sequência era: setup síncrono (~50ms) →
@@ -4748,19 +4781,103 @@ async function enterApp() {
     handleEmailLinkOnEnter();
     // Conta nova por convite: primeiros passos antes do tour (ele segue ao concluir).
     if (me && me.onboardingPending) { openOnboarding(); return; }
-    // Tour de boas-vindas — normalmente só no primeiro login (hasSeenTour !== true).
-    // `?tour=1` na URL força reabrir (pra QA e pra o botão "Refazer tour").
-    const forceTour = new URLSearchParams(location.search).get('tour') === '1';
-    if (me && (me.hasSeenTour !== true || forceTour)) {
-      if (forceTour) {
-        history.replaceState(null, '', location.pathname);
-      }
-      setTimeout(() => { try { startWelcomeTour(); } catch {} }, 600);
-    } else {
-      // Se não tem tour, checa notas de atualização (também respeita rate limit).
-      setTimeout(() => { try { maybeShowReleaseNotes(); } catch {} }, 800);
-    }
+    // Dono de organização no teste: escolha de plano antes do tour.
+    if (_planIntroDue()) { openPlanIntro().then(shown => { if (!shown) _afterFirstSteps(); }); return; }
+    _afterFirstSteps();
   }));
+}
+
+// Depois dos primeiros passos: tour de boas-vindas (ou as novidades).
+function _afterFirstSteps() {
+  // Tour de boas-vindas — normalmente só no primeiro login (hasSeenTour !== true).
+  // `?tour=1` na URL força reabrir (pra QA e pra o botão "Refazer tour").
+  const forceTour = new URLSearchParams(location.search).get('tour') === '1';
+  if (me && (me.hasSeenTour !== true || forceTour)) {
+    if (forceTour) {
+      history.replaceState(null, '', location.pathname);
+    }
+    setTimeout(() => { try { startWelcomeTour(); } catch {} }, 600);
+  } else {
+    // Se não tem tour, checa notas de atualização (também respeita rate limit).
+    setTimeout(() => { try { maybeShowReleaseNotes(); } catch {} }, 800);
+  }
+}
+
+/* ─── PLANO NOS PRIMEIROS PASSOS ─────────────────────────────────────
+   Dono de organização no teste que ainda não viu a escolha de plano
+   (me.org.planIntroPending): logo depois do perfil, antes do tour, uma tela
+   com plano, ciclo e forma de pagamento. "Continuar" abre a página de
+   assinatura já preenchida (onde vão a nota fiscal e o pagamento); "Seguir
+   no teste" fecha. Nos dois casos não aparece de novo (POST /billing/intro-done).
+   Sem cobrança ligada no reWork, a tela não abre (e volta a valer depois). */
+let _pi = null; // { data, planId, cycle, method, busy }
+const _planIntroDue = () => !!(me && me.isOwner && me.org && me.org.planIntroPending && currentPage !== 'billingCheckout');
+async function openPlanIntro() {
+  let d;
+  try { d = await api('/billing'); } catch { return false; }
+  if (!d.enabled || !d.canManage || !d.catalog || !d.catalog.length) return false;
+  _bil.data = d;
+  _pi = { data: d, planId: (d.catalog.find(p => p.id === 'equipe') || d.catalog[0]).id, cycle: 'YEARLY', method: 'CREDIT_CARD', busy: false };
+  const p = d.plan;
+  $('pi-kicker').textContent = me.org && me.org.name ? `Primeiros passos · ${me.org.name}` : 'Primeiros passos';
+  $('pi-text').innerHTML = p.trial && !p.readOnly && p.trialEndsAt
+    ? `Vocês têm teste grátis até <b>${esc(_bilDate(p.trialEndsAt, { day: 'numeric', month: 'long' }))}</b>. Assinando agora, a primeira cobrança só acontece quando o teste acabar.`
+    : 'Escolha um plano para continuar usando o reWork. Dá para mudar depois.';
+  $('pi-error').textContent = '';
+  _piRender();
+  const scr = $('plan-intro-screen');
+  scr.classList.add('is-visible');
+  document.body.style.overflow = 'hidden';
+  paintIcons(scr);
+  $('pi-go').focus();
+  return true;
+}
+function _piRender() {
+  const o = _pi;
+  if (!o) return;
+  const d = o.data, yearly = o.cycle === 'YEARLY';
+  const radio = (on) => `role="radio" aria-checked="${on}" tabindex="${on ? 0 : -1}"`;
+  $('pi-cycle').innerHTML = [['MONTHLY', 'Mensal', ''], ['YEARLY', 'Anual', '<em>2 meses grátis</em>']]
+    .map(([k, l, extra]) => `<button type="button" class="${k === o.cycle ? 'is-on' : ''}" ${radio(k === o.cycle)} onclick="_piSet('cycle','${k}')">${l}${extra}</button>`).join('');
+  $('pi-plans').innerHTML = d.catalog.map(p => {
+    const on = p.id === o.planId;
+    const price = p.prices[o.cycle];
+    return `<button type="button" class="pi-plan${on ? ' is-on' : ''}" ${radio(on)} onclick="_piSet('planId','${p.id}')">
+      ${p.id === 'equipe' ? '<span class="pi-plan-tag">Mais escolhido</span>' : ''}
+      <span class="pi-plan-name">${esc(p.name)}</span>
+      <span class="pi-plan-price"><b>${_bilMoney(yearly ? Math.round(price / 12) : price)}</b>/mês</span>
+      <span class="pi-plan-bill">${yearly ? `${_bilMoney(price)} por ano` : 'cobrado todo mês'}</span>
+      <span class="pi-plan-feats">Até ${p.users} pessoas · ${p.storageGb} GB</span>
+    </button>`;
+  }).join('');
+  const methods = _bilMethodsOn();
+  if (!methods.some(m => m.id === o.method)) o.method = methods[0].id;
+  $('pi-methods').innerHTML = methods.map(m => `<button type="button" class="pi-method${m.id === o.method ? ' is-on' : ''}" ${radio(m.id === o.method)} onclick="_piSet('method','${m.id}')"><i data-lucide="${m.icon}"></i>${esc(m.label)}</button>`).join('');
+  const m = methods.find(x => x.id === o.method);
+  $('pi-hint').textContent = o.method === 'PIX_AUTOMATIC' ? `${m.hint} O banco pede o primeiro Pix na hora da autorização.` : m.hint;
+  paintIcons($('plan-intro-screen'));
+}
+function _piSet(k, v) { if (_pi) { _pi[k] = v; _piRender(); } }
+async function _piClose() {
+  try { await api('/billing/intro-done', 'POST', {}); } catch {}
+  if (me && me.org) me.org.planIntroPending = false;
+  $('plan-intro-screen').classList.remove('is-visible');
+  document.body.style.overflow = '';
+}
+async function planIntroGo() {
+  if (!_pi || _pi.busy) return;
+  _pi.busy = true; $('pi-go').disabled = true;
+  const { planId, cycle, method } = _pi;
+  await _piClose();
+  _pi = null; $('pi-go').disabled = false;
+  openBillingCheckout(planId, cycle, method);
+}
+async function planIntroSkip() {
+  if (!_pi || _pi.busy) return;
+  _pi.busy = true;
+  await _piClose();
+  _pi = null;
+  _afterFirstSteps();
 }
 
 /* ─── PRIMEIROS PASSOS ───────────────────────────────────────────────
@@ -4930,6 +5047,8 @@ async function finishOnboarding(skip) {
   document.body.style.overflow = '';
   btn.disabled = false;
   renderSidebarUser();
+  // Dono de organização no teste: escolha de plano antes do tour.
+  if (_planIntroDue() && await openPlanIntro()) return;
   // Segue o fluxo normal da primeira entrada: tour (ou novidades).
   if (me.hasSeenTour !== true) setTimeout(() => { try { startWelcomeTour(); } catch {} }, 400);
   else setTimeout(() => { try { maybeShowReleaseNotes(); } catch {} }, 600);
@@ -5313,7 +5432,7 @@ function renderReleaseNotes(notes) {
   const fmt = d => {
     if (!d) return '';
     const [y, m, dd] = d.split('-');
-    return `${dd}/${m}/${y.slice(2)}`;
+    return fmtDMY(dd, m, y.slice(2));
   };
   // Lançamentos (kind: 'launch') vêm primeiro e ganham o card de apresentação.
   const ordered = notes.filter(n => n.kind === 'launch').concat(notes.filter(n => n.kind !== 'launch'));
@@ -5664,7 +5783,7 @@ function renderPlanBanner() {
     top ? top.insertAdjacentElement('afterend', el) : main.prepend(el);
   }
   const cta = (label) => me.isOwner ? `<button type="button" class="btn btn-primary btn-sm plan-banner-cta" onclick="goPage('billing')">${label}</button>` : '';
-  const fmt = (iso) => new Date(iso).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' });
+  const fmt = (iso) => new Date(iso).toLocaleDateString(LOCALE, { day: 'numeric', month: 'long' });
   const days = p.trialDaysLeft;
   if (trialShow) {
     el.className = 'plan-banner' + (p.readOnly ? ' is-locked' : days <= 3 ? ' is-soon' : '');
@@ -5753,13 +5872,28 @@ function openOrgSettings() { _closeOrgMenu(); if (me?.isOwner) goPage('org'); }
    do Asaas (billing.js no servidor): cartão vai pra página de pagamento do
    Asaas; Pix e boleto abrem a fatura. */
 let _bil = { data: null, cycle: null, payments: null, loading: false, polls: 0 };
-const BIL_METHOD_LABEL = { CREDIT_CARD: 'Cartão de crédito', PIX: 'Pix', BOLETO: 'Boleto' };
+const BIL_METHOD_LABEL = { CREDIT_CARD: 'Cartão de crédito', PIX_AUTOMATIC: 'Pix Automático', PIX: 'Pix', BOLETO: 'Boleto' };
+const BIL_CARD_BRAND = { VISA: 'Visa', MASTERCARD: 'Mastercard', ELO: 'Elo', AMEX: 'American Express', HIPERCARD: 'Hipercard', DINERS: 'Diners', DISCOVER: 'Discover', JCB: 'JCB', CABAL: 'Cabal' };
+// Forma de pagamento como aparece na tela: "Visa •••• 4242", "Pix Automático"…
+function _bilMethodShort(b) {
+  const pm = b && b.paymentMethod;
+  if (pm && pm.card && pm.card.last4) return `${BIL_CARD_BRAND[pm.card.brand] || 'Cartão'} •••• ${pm.card.last4}`;
+  return BIL_METHOD_LABEL[b && b.method] || '—';
+}
+// Data "AAAA-MM-DD" + n meses (31/jan + 1 = 28 ou 29/fev), igual ao servidor.
+function _bilAddMonths(ymd, n) {
+  const [y, m, d] = String(ymd).split('-').map(Number);
+  const t = new Date(Date.UTC(y, m - 1 + n, 1));
+  const last = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 0)).getUTCDate();
+  t.setUTCDate(Math.min(d, last));
+  return t.toISOString().slice(0, 10);
+}
 const BIL_PAY_STATUS = {
   PENDING: ['Aguardando', ''], OVERDUE: ['Atrasada', 'is-bad'], RECEIVED: ['Paga', 'is-good'], CONFIRMED: ['Paga', 'is-good'],
   RECEIVED_IN_CASH: ['Paga', 'is-good'], REFUNDED: ['Estornada', ''], REFUND_REQUESTED: ['Estorno pedido', ''], CHARGEBACK_REQUESTED: ['Contestada', 'is-bad']
 };
-const _bilMoney = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: Number.isInteger(Number(v)) ? 0 : 2 });
-const _bilDate = (iso, opts) => iso ? new Date(String(iso).length === 10 ? iso + 'T12:00:00' : iso).toLocaleDateString('pt-BR', opts || { day: 'numeric', month: 'long', year: 'numeric' }) : '—';
+const _bilMoney = (v) => Number(v || 0).toLocaleString(LOCALE, { style: 'currency', currency: 'BRL', minimumFractionDigits: Number.isInteger(Number(v)) ? 0 : 2 });
+const _bilDate = (iso, opts) => iso ? new Date(String(iso).length === 10 ? iso + 'T12:00:00' : iso).toLocaleDateString(LOCALE, opts || { day: 'numeric', month: 'long', year: 'numeric' }) : '—';
 const _bilPlanName = (id) => (_bil.data?.catalog.find(p => p.id === id) || {}).name || id;
 const _bilCycleLabel = (c) => c === 'YEARLY' ? 'anual' : 'mensal';
 
@@ -5790,6 +5924,7 @@ async function renderBilling(force) {
       ${d.sandbox ? '<span class="bil-sandbox" title="Nenhuma cobrança é real neste modo"><i data-lucide="flask-conical" class="ic-xs"></i>Modo de teste</span>' : ''}
     </header>
     ${_bilCurrentCard(d)}
+    ${_bilMethodCard(d)}
     ${!d.enabled ? `<div class="bil-note"><i data-lucide="info" class="ic-sm"></i><span>O pagamento pelo reWork ainda não está disponível. Para assinar agora, fale com o suporte do reWork.</span></div>` : ''}
     <section class="bil-plans-wrap${hasSub ? ' is-secondary' : ''}" id="bil-plans" aria-label="Planos">
       <div class="bil-plans-head">
@@ -5832,22 +5967,25 @@ function _bilCurrentCard(d) {
   let pills = '', line = '', cta = '', facts = [];
   const pay = (url, label) => url ? `<a class="btn btn-primary" href="${esc(url)}" target="_blank" rel="noopener">${label || 'Pagar fatura'}<i data-lucide="external-link" class="ic-sm"></i></a>` : '';
   const choose = d.canManage && d.enabled ? `<button type="button" class="btn btn-primary" onclick="document.getElementById('bil-plans')?.scrollIntoView({ behavior: 'smooth', block: 'start' })">Escolher plano</button>` : '';
+  // Assinatura começada e não concluída (cartão no Asaas ou QR do Pix Automático).
+  const resume = d.canManage && b.pending ? _bilResumeButton(b.pending, 'btn btn-primary') : '';
   if (!hasSub) {
     if (p.trial && !p.readOnly && p.trialEndsAt) {
       pills = pill('Teste grátis', 'is-info');
       line = 'Assinando agora, a primeira cobrança só acontece quando o teste acabar.';
       facts = [['Teste grátis até', short(p.trialEndsAt)], ['Faltam', `${p.trialDaysLeft} ${p.trialDaysLeft === 1 ? 'dia' : 'dias'}`]];
-      cta = choose;
+      cta = resume || choose;
+      if (resume) line = _bilPendingLine(b.pending);
     } else if (p.trial && p.readOnly) {
       pills = pill('Teste encerrado', 'is-bad');
-      line = 'A organização está só para consulta. Assine um plano para voltar a criar e editar.';
-      cta = choose;
+      line = resume ? _bilPendingLine(b.pending) : 'A organização está só para consulta. Assine um plano para voltar a criar e editar.';
+      cta = resume || choose;
     } else {
       line = 'Plano definido pelo suporte do reWork.';
     }
   } else {
     const perCycle = b.value ? `${_bilMoney(b.value)}<span>/${b.cycle === 'YEARLY' ? 'ano' : 'mês'}</span>` : '—';
-    const method = esc(BIL_METHOD_LABEL[b.method] || '—');
+    const method = esc(_bilMethodShort(b));
     const cycle = b.cycle === 'YEARLY' ? 'Anual' : 'Mensal';
     if (b.status === 'canceled' || p.canceled) {
       pills = pill('Cancelada', 'is-bad');
@@ -5857,11 +5995,11 @@ function _bilCurrentCard(d) {
       cta = d.canManage && d.enabled ? `<button type="button" class="btn btn-primary" onclick="openBillingCheckout('${esc(b.planId)}', '${esc(b.cycle)}', '${esc(b.method)}')">Assinar de novo</button>` : '';
     } else if (b.status === 'pending') {
       pills = pill('Aguardando pagamento', 'is-warn');
-      line = b.pending && b.pending.method === 'CREDIT_CARD'
-        ? 'Falta concluir o cadastro do cartão na página de pagamento do Asaas.'
+      line = b.pending ? _bilPendingLine(b.pending)
+        : b.method === 'PIX_AUTOMATIC' ? 'Falta pagar o primeiro Pix pelo QR Code. Assim que ele cair, o plano é liberado.'
         : 'Assim que a primeira fatura for paga, o plano é liberado. Pix cai na hora; boleto leva até 3 dias úteis.';
       facts = [['Primeira cobrança', 'Hoje'], ['Valor', perCycle], ['Pagamento', method], ['Ciclo', cycle]];
-      cta = b.pending && b.pending.url ? pay(b.pending.url, 'Continuar pagamento') : pay(b.pendingInvoiceUrl);
+      cta = resume || pay(b.pendingInvoiceUrl);
     } else if (b.status === 'past_due' || p.overdue) {
       pills = pill('Pagamento atrasado', 'is-bad');
       line = p.readOnly ? 'A organização está só para consulta até o pagamento.' : `Pague até ${_bilDate(p.graceEndsAt, { day: 'numeric', month: 'long' })} para a organização não ficar só para consulta.`;
@@ -5880,10 +6018,9 @@ function _bilCurrentCard(d) {
   const links = d.canManage && d.enabled && active
     ? `<div class="bil-current-foot">
         <button type="button" class="bil-current-link" onclick="openBillingCheckout('${esc(b.nextPlanId || b.planId)}', '${b.cycle === 'YEARLY' ? 'MONTHLY' : 'YEARLY'}', '${esc(b.method || '')}')"><i data-lucide="repeat" class="ic-xs"></i>${b.cycle === 'YEARLY' ? 'Mudar para mensal' : 'Mudar para anual'}</button>
-        <button type="button" class="bil-current-link" onclick="openBillingCheckout('${esc(b.nextPlanId || b.planId)}', '${esc(b.cycle)}')"><i data-lucide="credit-card" class="ic-xs"></i>Trocar forma de pagamento</button>
         <button type="button" class="bil-current-link is-danger" onclick="cancelBillingSubscription()">Cancelar assinatura</button>
       </div>` : '';
-  const n = (v) => Number(v || 0).toLocaleString('pt-BR');
+  const n = (v) => Number(v || 0).toLocaleString(LOCALE);
   return `<section class="bil-current">
     <div class="bil-current-top">
       <div class="bil-current-id">
@@ -5904,6 +6041,76 @@ function _bilCurrentCard(d) {
   </section>`;
 }
 
+/* Assinatura/troca em andamento: botão pra voltar pro cartão no Asaas ou pro
+   QR do Pix Automático, e a frase que explica o que falta. */
+function _bilResumeButton(pd, cls) {
+  if (pd.method === 'CREDIT_CARD' && pd.url) return `<a class="${cls}" href="${esc(pd.url)}">Continuar pagamento<i data-lucide="arrow-right" class="ic-sm"></i></a>`;
+  if (pd.method === 'PIX_AUTOMATIC' && pd.qr) return `<button type="button" class="${cls}" onclick="openBillingCheckout('${esc(pd.planId)}', '${esc(pd.cycle)}', 'PIX_AUTOMATIC', { resume: true })"><i data-lucide="qr-code" class="ic-sm"></i>Continuar pagamento</button>`;
+  return '';
+}
+function _bilPendingLine(pd) {
+  const what = `${esc(_bilPlanName(pd.planId))} · ${_bilCycleLabel(pd.cycle)}`;
+  return pd.method === 'PIX_AUTOMATIC'
+    ? `Falta pagar o primeiro Pix e autorizar o Pix Automático no app do banco (${what}).`
+    : `Falta concluir o cadastro do cartão na página de pagamento do Asaas (${what}).`;
+}
+
+/* Forma de pagamento — a que as próximas cobranças usam, e as trocas:
+   cartão novo, outra conta no Pix Automático, ou outra forma. Toda troca
+   passa pela página de assinatura e só vale na próxima cobrança. */
+function _bilMethodCard(d) {
+  const b = d.billing, p = d.plan;
+  const active = b.status && b.status !== 'none' && b.status !== 'canceled' && !p.canceled;
+  if (!d.canManage || !active || !b.method) return '';
+  const pm = b.paymentMethod || { type: b.method };
+  const plan = esc(b.nextPlanId || b.planId), cyc = esc(b.cycle);
+  let icon = 'credit-card', title = esc(_bilMethodShort(b)), sub = '', warn = '';
+  if (pm.type === 'CREDIT_CARD') {
+    sub = pm.card ? 'Cartão de crédito · cobrança automática' : 'Cobrança automática no cartão cadastrado no Asaas';
+  } else if (pm.type === 'PIX_AUTOMATIC') {
+    icon = 'repeat';
+    const st = pm.pixAuto && pm.pixAuto.status;
+    if (st === 'ACTIVE') sub = `Débito automático autorizado no banco${pm.pixAuto.activatedAt ? ` em ${_bilDate(pm.pixAuto.activatedAt, { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}`;
+    else if (st === 'REFUSED' || st === 'CANCELLED' || st === 'EXPIRED') {
+      sub = 'A autorização não está valendo';
+      warn = `O banco ${st === 'CANCELLED' ? 'cancelou' : 'não confirmou'} o Pix Automático, então as próximas cobranças não saem sozinhas. Autorize de novo ou escolha outra forma${p.paidUntil ? ` antes de ${_bilDate(p.paidUntil, { day: 'numeric', month: 'long' })}` : ''}.`;
+    } else sub = 'Aguardando o banco confirmar a autorização';
+  } else if (pm.type === 'PIX') {
+    icon = 'qr-code'; title = 'Pix por fatura'; sub = 'A fatura Pix chega por e-mail a cada cobrança';
+  } else if (pm.type === 'BOLETO') {
+    icon = 'barcode'; sub = 'O boleto chega por e-mail a cada cobrança';
+  }
+  const btn = (label, method, mode, primary) => `<button type="button" class="btn ${primary ? 'btn-primary' : 'btn-ghost'} btn-sm" onclick="openBillingCheckout('${plan}', '${cyc}', ${method ? `'${method}'` : 'null'}, { mode: '${mode}' })">${label}</button>`;
+  const actions = [
+    pm.type === 'CREDIT_CARD' ? btn('Trocar cartão', 'CREDIT_CARD', 'card') : '',
+    pm.type === 'PIX_AUTOMATIC' ? btn(warn ? 'Autorizar de novo' : 'Trocar conta', 'PIX_AUTOMATIC', 'pixacct', !!warn) : '',
+    btn('Trocar forma de pagamento', null, 'method')
+  ].join('');
+  // Troca começada e não concluída.
+  const pd = b.pending;
+  const pendingNote = pd ? `<div class="bil-pm-pending">
+      <i data-lucide="clock" class="ic-sm"></i>
+      <span>Troca para <b>${esc(pd.method === 'CREDIT_CARD' ? 'cartão novo' : BIL_METHOD_LABEL[pd.method] || pd.method)}</b> ainda não concluída.</span>
+      ${_bilResumeButton(pd, 'bil-co-link')}
+      <button type="button" class="bil-co-link is-muted" onclick="discardBillingPending()">Desistir</button>
+    </div>` : '';
+  const next = p.paidUntil && Date.parse(p.paidUntil) > Date.now() ? _bilDate(p.paidUntil, { day: 'numeric', month: 'long' }) : null;
+  return `<section class="bil-card bil-pm" aria-label="Forma de pagamento">
+    <div class="bil-card-row"><h2 class="bil-h3">Forma de pagamento</h2>${next ? `<span class="bil-muted">Usada na próxima cobrança, em ${next}.</span>` : ''}</div>
+    <div class="bil-pm-row">
+      <span class="bil-pm-ic${warn ? ' is-bad' : ''}" aria-hidden="true"><i data-lucide="${icon}"></i></span>
+      <div class="bil-pm-main"><b>${title}</b><span>${sub}</span></div>
+      <div class="bil-pm-actions">${actions}</div>
+    </div>
+    ${warn ? `<p class="bil-pm-warn"><i data-lucide="alert-triangle" class="ic-xs"></i><span>${warn}</span></p>` : ''}
+    ${pendingNote}
+  </section>`;
+}
+async function discardBillingPending() {
+  try { await api('/billing/pending/discard', 'POST', {}); await renderBilling(true); }
+  catch (e) { toast(e.message, 'error'); }
+}
+
 function _bilPlanCard(d, p) {
   const b = d.billing;
   const cyc = _bil.cycle;
@@ -5915,6 +6122,8 @@ function _bilPlanCard(d, p) {
   let btn = '';
   if (d.canManage && d.enabled) {
     if (isCurrent) btn = '<button type="button" class="btn btn-ghost btn-sm bil-plan-btn" disabled>Plano atual</button>';
+    // Pix Automático: o valor fica na autorização do banco, então trocar de plano passa pela assinatura.
+    else if (hasSub && b.cycle === cyc && b.method === 'PIX_AUTOMATIC') btn = `<button type="button" class="btn btn-ghost btn-sm bil-plan-btn" onclick="openBillingCheckout('${p.id}', '${cyc}', 'PIX_AUTOMATIC')">Mudar para este</button>`;
     else if (hasSub && b.cycle === cyc) btn = `<button type="button" class="btn btn-ghost btn-sm bil-plan-btn" onclick="changeBillingPlan('${p.id}')">Mudar para este</button>`;
     else if (hasSub) btn = `<button type="button" class="btn btn-ghost btn-sm bil-plan-btn" onclick="openBillingCheckout('${p.id}', '${cyc}', '${esc(b.method || '')}')">Mudar para ${cyc === 'YEARLY' ? 'anual' : 'mensal'}</button>`;
     else btn = `<button type="button" class="btn btn-primary btn-sm bil-plan-btn" onclick="openBillingCheckout('${p.id}', '${cyc}')">Assinar</button>`;
@@ -5975,42 +6184,63 @@ async function _bilRefreshOrg() {
    Escolhas à esquerda (plano, ciclo, forma, nota fiscal) e o resumo com o
    botão à direita. A escolha vai pra URL (dá pra mandar o link pronto) e o
    que foi digitado fica em _bilCo, então voltar e avançar não perde nada. */
-let _bilCo = null;      // { planId, cycle, method, editDoc, name, email, doc }
+let _bilCo = null;      // { planId, cycle, method, mode, editDoc, name, email, doc, phone, addr, editAddr, qr }
 let _bilCoWant = null;  // escolha vinda de um botão, antes da página montar
+let _bilCoPollT = null; // espera o primeiro Pix do Pix Automático
 const BIL_METHODS = [
-  { id: 'CREDIT_CARD', label: 'Cartão', icon: 'credit-card', hint: 'Cobrança automática no cartão. Você cadastra o cartão na página segura do Asaas.' },
-  { id: 'PIX', label: 'Pix', icon: 'qr-code', hint: 'A fatura Pix chega por e-mail a cada cobrança. O pagamento cai na hora.' },
+  { id: 'CREDIT_CARD', label: 'Cartão de crédito', icon: 'credit-card', hint: 'Cobrança automática no cartão. Você cadastra o cartão na página segura do Asaas.' },
+  { id: 'PIX_AUTOMATIC', label: 'Pix Automático', icon: 'repeat', hint: 'Você autoriza uma vez no app do banco e as cobranças saem sozinhas da sua conta.' },
+  { id: 'PIX', label: 'Pix por fatura', icon: 'qr-code', hint: 'A fatura Pix chega por e-mail a cada cobrança. O pagamento cai na hora.' },
   { id: 'BOLETO', label: 'Boleto', icon: 'barcode', hint: 'O boleto chega por e-mail a cada cobrança. Compensa em até 3 dias úteis.' }
 ];
+// Formas que o servidor oferece agora (Pix Automático depende da conta do Asaas).
+const _bilMethodsOn = () => BIL_METHODS.filter(m => (_bil.data?.methods || ['CREDIT_CARD', 'PIX', 'BOLETO']).includes(m.id));
+const BIL_CO_MODE_TITLE = { card: 'Trocar cartão', pixacct: 'Trocar conta do Pix Automático', method: 'Trocar forma de pagamento' };
 function billingCheckoutPath() {
   const c = _bilCo || _bilCoWant;
   return '/billing/checkout' + (c ? _routeQuery({ plan: c.planId, cycle: c.cycle, method: c.method }) : '');
 }
-function openBillingCheckout(planId, cycle, method) {
+// opts.mode: 'card' | 'pixacct' | 'method' (título da troca); opts.resume: volta pro QR já gerado.
+function openBillingCheckout(planId, cycle, method, opts) {
   if (_bil.data && !_bil.data.canManage) return toast('Só o dono da organização cuida do plano.', 'warn');
   _bilCo = null;
-  _bilCoWant = { planId, cycle: cycle === 'MONTHLY' ? 'MONTHLY' : 'YEARLY', method: BIL_METHODS.some(m => m.id === method) ? method : null };
+  _bilCoWant = { planId, cycle: cycle === 'MONTHLY' ? 'MONTHLY' : 'YEARLY', method: BIL_METHODS.some(m => m.id === method) ? method : null, mode: (opts && opts.mode) || null, resume: !!(opts && opts.resume) };
   goPage('billingCheckout');
 }
 function _bilCoInit(want) {
   const d = _bil.data;
   const p = d.catalog.find(x => x.id === want.planId) || d.catalog.find(x => x.id === 'equipe') || d.catalog[0];
   const cust = d.billing.customer || {};
+  const on = _bilMethodsOn().map(m => m.id);
+  // "Trocar forma de pagamento" começa numa forma diferente da atual.
+  let method = on.includes(want.method) ? want.method : null;
+  if (!method && want.mode === 'method') method = on.find(m => m !== d.billing.method) || null;
+  if (!method) method = on.includes(d.billing.method) ? d.billing.method : on[0];
   _bilCo = {
     planId: p.id,
     cycle: want.cycle === 'MONTHLY' ? 'MONTHLY' : 'YEARLY',
-    method: BIL_METHODS.some(m => m.id === want.method) ? want.method : (d.billing.method || 'CREDIT_CARD'),
+    method, mode: want.mode || null,
     editDoc: !cust.doc,
     name: cust.name || d.defaults.name || '',
     email: cust.email || d.defaults.email || '',
-    doc: ''
+    doc: '',
+    // Cartão: o Asaas exige telefone e endereço do cliente.
+    phone: cust.phone ? _obFormatPhone(cust.phone) : '',
+    addr: { postalCode: '', address: '', addressNumber: '', complement: '', province: '', city: '', state: '', ...(cust.addr || {}) },
+    editAddr: !(cust.addr && cust.addr.postalCode),
+    qr: null
   };
+  // Volta pro QR do Pix Automático ainda válido.
+  const pd = d.billing.pending;
+  if (want.resume && pd && pd.method === 'PIX_AUTOMATIC' && pd.qr) {
+    Object.assign(_bilCo, { planId: pd.planId, cycle: pd.cycle, method: 'PIX_AUTOMATIC', qr: { ...pd.qr, coverFrom: pd.coverFrom, value: pd.value } });
+  }
 }
 async function renderBillingCheckout() {
   const host = $('billing-checkout-body');
   if (!host) return;
-  if (!_bil.data) {
-    host.innerHTML = `<div class="bil-co-page">${skeletonMetrics()}</div>`;
+  if (!_bil.data || _bilCoWant?.resume) {
+    if (!_bil.data) host.innerHTML = `<div class="bil-co-page">${skeletonMetrics()}</div>`;
     try { _bil.data = await api('/billing'); }
     catch (e) { host.innerHTML = `<div class="bil-co-page">${emptyState('Não foi possível carregar os planos', esc(e.message), 'alert-circle')}</div>`; return; }
   }
@@ -6041,17 +6271,14 @@ async function renderBillingCheckout() {
           <h2 class="bil-co-h">Plano</h2>
           <div class="bil-co-list" role="radiogroup" aria-label="Plano" id="bil-co-plans"></div>
         </section>
-        <section class="bil-co-sec bil-co-sec--row">
-          <div>
-            <h2 class="bil-co-h">Cobrança</h2>
-            <div class="bil-co-seg" role="radiogroup" aria-label="Cobrança" id="bil-co-cycles"></div>
-          </div>
-          <div>
-            <h2 class="bil-co-h">Pagamento</h2>
-            <div class="bil-co-seg" role="radiogroup" aria-label="Forma de pagamento" id="bil-co-methods"></div>
-          </div>
+        <section class="bil-co-sec">
+          <h2 class="bil-co-h">Cobrança</h2>
+          <div class="bil-co-seg" role="radiogroup" aria-label="Cobrança" id="bil-co-cycles"></div>
         </section>
-        <p class="bil-co-hint" id="bil-co-method-hint"></p>
+        <section class="bil-co-sec">
+          <h2 class="bil-co-h">Forma de pagamento</h2>
+          <div class="bil-co-list" role="radiogroup" aria-label="Forma de pagamento" id="bil-co-methods"></div>
+        </section>
         <section class="bil-co-sec">
           <h2 class="bil-co-h">Nota fiscal</h2>
           <div class="bil-co-fields">
@@ -6059,15 +6286,11 @@ async function renderBillingCheckout() {
             <div class="bil-co-field" id="bil-co-doc-saved" hidden><span>CPF ou CNPJ</span><div class="bil-co-docsaved"><b id="bil-co-doc-mask"></b><button type="button" class="bil-co-link" onclick="_bilCoEditDoc()">Alterar</button></div></div>
             <label class="bil-co-field" id="bil-co-doc-wrap"><span>CPF ou CNPJ</span><input class="form-control" id="bil-co-doc" inputmode="numeric" maxlength="18" oninput="_bilDocMask(this);_bilCo.doc=this.value" autocomplete="off" placeholder="Só números" value="${esc(c.doc)}"></label>
             <label class="bil-co-field bil-co-field--full"><span>E-mail para faturas e notas</span><input class="form-control" id="bil-co-email" type="email" maxlength="160" autocomplete="email" value="${esc(c.email)}" oninput="_bilCo.email=this.value"></label>
+            <div class="bil-co-field--full" id="bil-co-contact"></div>
           </div>
         </section>
       </div>
-      <aside class="bil-co-side" aria-label="Resumo">
-        <div class="bil-co-sum" id="bil-co-summary"></div>
-        <div class="bil-co-error" id="bil-co-error" role="alert"></div>
-        <button class="btn btn-primary bil-co-cta" id="bil-co-go" onclick="submitBillingCheckout()">Continuar</button>
-        <p class="bil-co-secure"><i data-lucide="lock" class="ic-xs"></i><span>Pagamento processado pelo Asaas. O reWork não vê nem guarda os dados do cartão.</span></p>
-      </aside>
+      <aside class="bil-co-side" aria-label="Resumo" id="bil-co-side"></aside>
     </div>
   </div>`;
   _bilCoRender();
@@ -6081,11 +6304,14 @@ function _bilCoRender() {
   const yearly = c.cycle === 'YEARLY';
   const price = p.prices[c.cycle];
   const perMonth = (x) => yearly ? Math.round(x.prices.YEARLY / 12) : x.prices.MONTHLY;
-  const method = BIL_METHODS.find(m => m.id === c.method);
+  const methods = _bilMethodsOn();
+  if (!methods.some(m => m.id === c.method)) c.method = methods[0].id;
+  const method = methods.find(m => m.id === c.method);
+  const pixAuto = c.method === 'PIX_AUTOMATIC';
 
-  $('bil-co-title').textContent = changing ? 'Mudar assinatura' : 'Assinar o reWork';
+  $('bil-co-title').textContent = changing ? (BIL_CO_MODE_TITLE[c.mode] || 'Mudar assinatura') : 'Assinar o reWork';
   $('bil-co-subtitle').textContent = changing && b.planId
-    ? `Hoje: ${_bilPlanName(b.planId)} · ${_bilCycleLabel(b.cycle)} · ${BIL_METHOD_LABEL[b.method] || ''}`
+    ? `Hoje: ${_bilPlanName(b.planId)} · ${_bilCycleLabel(b.cycle)} · ${_bilMethodShort(b)}`
     : 'Escolha o plano e a forma de pagamento. Dá para mudar depois.';
 
   const radio = (on) => `role="radio" aria-checked="${on}" tabindex="${on ? 0 : -1}"`;
@@ -6099,15 +6325,25 @@ function _bilCoRender() {
   }).join('');
   $('bil-co-cycles').innerHTML = [['MONTHLY', 'Mensal', ''], ['YEARLY', 'Anual', '<em>−2 meses</em>']]
     .map(([k, l, extra]) => `<button type="button" class="${k === c.cycle ? 'is-on' : ''}" ${radio(k === c.cycle)} onclick="_bilCoSet('cycle','${k}')">${l}${extra}</button>`).join('');
-  $('bil-co-methods').innerHTML = BIL_METHODS
-    .map(m => `<button type="button" class="${m.id === c.method ? 'is-on' : ''}" ${radio(m.id === c.method)} onclick="_bilCoSet('method','${m.id}')"><i data-lucide="${m.icon}" class="ic-xs"></i>${m.label}</button>`).join('');
-  $('bil-co-method-hint').textContent = method.hint;
+  $('bil-co-methods').innerHTML = methods.map(m => {
+    const on = m.id === c.method;
+    const current = changing && b.method === m.id;
+    return `<button type="button" class="bil-co-row bil-co-row--method${on ? ' is-on' : ''}" ${radio(on)} onclick="_bilCoSet('method','${m.id}')">
+      <span class="bil-co-dot" aria-hidden="true"></span>
+      <i data-lucide="${m.icon}" class="bil-co-row-ic" aria-hidden="true"></i>
+      <span class="bil-co-row-main"><b>${esc(m.label)}${current ? ' <em class="bil-co-row-tag">Atual</em>' : ''}</b><span>${esc(m.hint)}</span></span>
+    </button>`;
+  }).join('');
 
   // CPF/CNPJ já salvo: mostra mascarado com "Alterar" em vez de pedir de novo.
   const saved = b.customer && b.customer.doc;
   $('bil-co-doc-saved').hidden = !saved || c.editDoc;
   $('bil-co-doc-wrap').hidden = !!saved && !c.editDoc;
   if (saved) $('bil-co-doc-mask').textContent = b.customer.doc;
+  _bilCoRenderContact();
+
+  const side = $('bil-co-side');
+  if (c.qr) { _bilCoRenderQr(side); paintIcons($('bil-co-methods')); return; }
 
   // Resumo
   const today = new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10);
@@ -6115,26 +6351,162 @@ function _bilCoRender() {
   const saving = yearly ? p.prices.MONTHLY * 12 - p.prices.YEARLY : 0;
   const founder = d.founder.mine || (d.founder.open && !changing);
   const row = (k, v) => `<div class="bil-co-sum-row"><span>${k}</span><b>${v}</b></div>`;
-  $('bil-co-summary').innerHTML = `
-    <div class="bil-co-sum-kicker">Resumo${d.sandbox ? ' <span class="bil-co-sandbox">Modo de teste</span>' : ''}</div>
-    <div class="bil-co-sum-plan">${esc(p.name)}${founder ? '<span class="bil-co-founder"><i data-lucide="sparkles" class="ic-xs"></i>Preço de fundador</span>' : ''}</div>
-    <div class="bil-co-sum-price"><b>${_bilMoney(price)}</b><span>/${yearly ? 'ano' : 'mês'}</span></div>
-    <div class="bil-co-sum-sub">${yearly ? `Equivale a ${_bilMoney(Math.round(price / 12))}/mês · economia de ${_bilMoney(saving)} no ano` : `Até ${p.users} pessoas · ${p.storageGb} GB`}</div>
-    <div class="bil-co-sum-rows">
-      ${row('Primeira cobrança', later ? _bilDate(d.startDate, { day: 'numeric', month: 'short' }).replace('.', '') : 'Hoje')}
-      ${row('Renova', yearly ? 'Todo ano' : 'Todo mês')}
-      ${row('Pagamento', method.label)}
+  const short = (ymd) => _bilDate(ymd, { day: 'numeric', month: 'short' }).replace('.', '');
+  // Pix Automático: o banco pede o 1º Pix agora; ele paga o período que começa em startDate.
+  const coverTo = _bilAddMonths(d.startDate, yearly ? 12 : 1);
+  const payNow = pixAuto || !later;
+  const note = pixAuto
+    ? `Para autorizar o Pix Automático, o banco pede o primeiro Pix agora. Ele paga de ${short(d.startDate)} a ${short(coverTo)}; depois, o débito sai sozinho ${yearly ? 'todo ano' : 'todo mês'}.`
+    : later ? (changing ? 'A troca vale quando o período já pago acabar. Nada é cobrado agora.' : 'Nada é cobrado durante o teste grátis.') : '';
+  side.innerHTML = `
+    <div class="bil-co-sum">
+      <div class="bil-co-sum-kicker">Resumo${d.sandbox ? ' <span class="bil-co-sandbox">Modo de teste</span>' : ''}</div>
+      <div class="bil-co-sum-plan">${esc(p.name)}${founder ? '<span class="bil-co-founder"><i data-lucide="sparkles" class="ic-xs"></i>Preço de fundador</span>' : ''}</div>
+      <div class="bil-co-sum-price"><b>${_bilMoney(price)}</b><span>/${yearly ? 'ano' : 'mês'}</span></div>
+      <div class="bil-co-sum-sub">${yearly ? `Equivale a ${_bilMoney(Math.round(price / 12))}/mês · economia de ${_bilMoney(saving)} no ano` : `Até ${p.users} pessoas · ${p.storageGb} GB`}</div>
+      <div class="bil-co-sum-rows">
+        ${row(pixAuto ? 'Débito automático a partir de' : 'Primeira cobrança', pixAuto ? short(coverTo) : later ? short(d.startDate) : 'Hoje')}
+        ${row('Renova', yearly ? 'Todo ano' : 'Todo mês')}
+        ${row('Pagamento', method.label)}
+      </div>
+      <div class="bil-co-sum-total"><span>Você paga hoje</span><b>${payNow ? _bilMoney(price) : _bilMoney(0)}</b></div>
+      ${note ? `<p class="bil-co-sum-note">${note}</p>` : ''}
     </div>
-    <div class="bil-co-sum-total"><span>Você paga hoje</span><b>${later ? _bilMoney(0) : _bilMoney(price)}</b></div>
-    ${later ? `<p class="bil-co-sum-note">${changing ? 'A troca vale quando o período já pago acabar.' : 'Nada é cobrado durante o teste grátis.'}</p>` : ''}`;
-  $('bil-co-go').innerHTML = c.method === 'CREDIT_CARD'
-    ? 'Ir para o pagamento <i data-lucide="arrow-right" class="ic-sm"></i>'
-    : `Gerar ${c.method === 'PIX' ? 'fatura Pix' : 'boleto'}`;
+    <div class="bil-co-error" id="bil-co-error" role="alert"></div>
+    <button class="btn btn-primary bil-co-cta" id="bil-co-go" onclick="submitBillingCheckout()">${
+      c.method === 'CREDIT_CARD' ? `${c.mode === 'card' ? 'Cadastrar cartão novo' : 'Ir para o pagamento'} <i data-lucide="arrow-right" class="ic-sm"></i>`
+      : pixAuto ? '<i data-lucide="qr-code" class="ic-sm"></i> Gerar QR Code'
+      : `Gerar ${c.method === 'PIX' ? 'fatura Pix' : 'boleto'}`}</button>
+    <p class="bil-co-secure"><i data-lucide="lock" class="ic-xs"></i><span>${pixAuto ? 'Pagamento e autorização feitos no app do seu banco. O reWork não vê os dados da sua conta.' : 'Pagamento processado pelo Asaas. O reWork não vê nem guarda os dados do cartão.'}</span></p>`;
   paintIcons($('billing-checkout-body'));
+}
+
+/* Telefone e endereço de cobrança — só no cartão (o checkout do Asaas recusa
+   cliente sem eles). O CEP preenche rua, bairro e cidade (ViaCEP, pelo
+   servidor). Já salvos, aparecem resumidos com "Alterar". */
+function _bilCoRenderContact() {
+  const host = $('bil-co-contact'), c = _bilCo;
+  if (!host || !c) return;
+  if (c.method !== 'CREDIT_CARD') { host.innerHTML = ''; host.hidden = true; return; }
+  host.hidden = false;
+  const a = c.addr;
+  const place = [a.city, a.state].filter(Boolean).join('/');
+  const savedLine = `${esc(a.address)}, ${esc(a.addressNumber)}${a.complement ? ' · ' + esc(a.complement) : ''} — ${esc(a.province)}${place ? ', ' + esc(place) : ''}`;
+  const inp = (id, key, label, attrs, cls) => `<label class="bil-co-field${cls ? ' ' + cls : ''}"><span>${label}</span><input class="form-control" id="bil-co-${id}" value="${esc(a[key] || '')}" oninput="_bilCo.addr.${key}=this.value" ${attrs || ''}></label>`;
+  host.innerHTML = `<div class="bil-co-contact">
+    <p class="bil-co-contact-note"><i data-lucide="info" class="ic-xs"></i><span>Para pagar com cartão, o Asaas pede telefone e endereço de cobrança.</span></p>
+    <div class="bil-co-fields">
+      <label class="bil-co-field"><span>Telefone</span><input class="form-control" id="bil-co-phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="16" placeholder="(11) 98765-4321" value="${esc(c.phone)}" oninput="this.value=_obFormatPhone(this.value);_bilCo.phone=this.value"></label>
+      ${c.editAddr ? `
+        <label class="bil-co-field"><span>CEP</span><input class="form-control" id="bil-co-cep" inputmode="numeric" autocomplete="postal-code" maxlength="9" placeholder="00000-000" value="${esc(_bilCepMask(a.postalCode))}" oninput="_bilCoCep(this)"></label>
+        ${inp('street', 'address', 'Rua', 'maxlength="120" autocomplete="address-line1"', 'bil-co-field--full')}
+        ${inp('number', 'addressNumber', 'Número', 'maxlength="20" placeholder="Ou S/N"')}
+        ${inp('compl', 'complement', 'Complemento (opcional)', 'maxlength="80" autocomplete="address-line2"')}
+        ${inp('district', 'province', 'Bairro', 'maxlength="80"')}
+        <div class="bil-co-field"><span>Cidade</span><div class="bil-co-docsaved" id="bil-co-city">${place ? esc(place) : '<span class="bil-muted">Pelo CEP</span>'}</div></div>`
+      : `<div class="bil-co-field bil-co-field--full"><span>Endereço de cobrança</span><div class="bil-co-docsaved"><b class="bil-co-addr-line">${savedLine}</b><button type="button" class="bil-co-link" onclick="_bilCoEditAddr()">Alterar</button></div></div>`}
+    </div>
+  </div>`;
+  paintIcons(host);
+}
+const _bilCepMask = (v) => { const d = String(v || '').replace(/\D/g, '').slice(0, 8); return d.length > 5 ? d.slice(0, 5) + '-' + d.slice(5) : d; };
+function _bilCoEditAddr() {
+  if (!_bilCo) return;
+  _bilCo.editAddr = true;
+  _bilCoRenderContact();
+  $('bil-co-cep')?.focus();
+}
+async function _bilCoCep(el) {
+  el.value = _bilCepMask(el.value);
+  const d = el.value.replace(/\D/g, '');
+  _bilCo.addr.postalCode = d;
+  if (d.length !== 8 || _bilCo._cepAsked === d) return;
+  _bilCo._cepAsked = d;
+  try {
+    const r = await api('/billing/cep/' + d);
+    if (!_bilCo || _bilCo.addr.postalCode !== d) return;
+    Object.assign(_bilCo.addr, { address: r.address || _bilCo.addr.address, province: r.province || _bilCo.addr.province, city: r.city, state: r.state });
+    if ($('bil-co-street')) $('bil-co-street').value = _bilCo.addr.address;
+    if ($('bil-co-district')) $('bil-co-district').value = _bilCo.addr.province;
+    if ($('bil-co-city')) $('bil-co-city').textContent = [r.city, r.state].filter(Boolean).join('/');
+    $(r.address ? 'bil-co-number' : 'bil-co-street')?.focus();
+  } catch (e) {
+    const err = $('bil-co-error'); if (err) err.textContent = e.message;
+  }
+}
+
+/* QR Code do Pix Automático: o primeiro Pix paga o período e, no mesmo
+   passo, o banco pede a autorização das próximas cobranças. A página espera
+   o aviso do Asaas (GET /billing a cada poucos segundos). */
+function _bilCoRenderQr(side) {
+  const c = _bilCo, q = c.qr;
+  const yearly = c.cycle === 'YEARLY';
+  const short = (ymd) => _bilDate(ymd, { day: 'numeric', month: 'short' }).replace('.', '');
+  const period = q.coverFrom ? `de ${short(q.coverFrom)} a ${short(_bilAddMonths(q.coverFrom, yearly ? 12 : 1))}` : (yearly ? 'o primeiro ano' : 'o primeiro mês');
+  const exp = q.expiresAt ? new Date(q.expiresAt).toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' }) : null;
+  side.innerHTML = `<div class="bil-qr">
+    <div class="bil-co-sum-kicker">Pix Automático${_bil.data.sandbox ? ' <span class="bil-co-sandbox">Modo de teste</span>' : ''}</div>
+    <h2 class="bil-qr-title">Pague o 1º Pix e autorize</h2>
+    <ol class="bil-qr-steps">
+      <li>No app do banco, escaneie o QR Code ou use o Pix Copia e Cola.</li>
+      <li>Pague ${q.value ? `<b>${_bilMoney(q.value)}</b>` : 'o valor'}: ele cobre ${period}.</li>
+      <li>Confirme a autorização. Depois disso, o débito sai sozinho ${yearly ? 'todo ano' : 'todo mês'}.</li>
+    </ol>
+    ${q.image ? `<img class="bil-qr-img" src="data:image/png;base64,${esc(q.image)}" alt="QR Code do Pix" width="200" height="200">` : ''}
+    ${q.payload ? `<div class="bil-qr-copy"><input class="form-control" id="bil-qr-code" readonly value="${esc(q.payload)}" aria-label="Pix Copia e Cola" onfocus="this.select()"><button type="button" class="btn btn-ghost btn-sm" onclick="_bilCopyPix()"><i data-lucide="copy" class="ic-xs"></i>Copiar</button></div>` : ''}
+    <div class="bil-qr-wait" role="status"><span class="bil-qr-spin" aria-hidden="true"></span><span>Esperando o pagamento${exp ? ` · o código vale até ${exp}` : ''}</span></div>
+    <div class="bil-co-error" id="bil-co-error" role="alert"></div>
+    <button type="button" class="bil-co-link" onclick="_bilCoDiscardQr()">Escolher outra forma de pagamento</button>
+  </div>`;
+  paintIcons(side);
+  _bilCoPoll();
+}
+function _bilCopyPix() {
+  const el = $('bil-qr-code');
+  if (!el) return;
+  const done = () => toast('Código Pix copiado.', 'success');
+  (navigator.clipboard ? navigator.clipboard.writeText(el.value) : Promise.reject()).then(done)
+    .catch(() => { el.select(); document.execCommand('copy'); done(); });
+}
+function _bilCoPoll() {
+  clearTimeout(_bilCoPollT);
+  _bilCoPollT = setTimeout(async () => {
+    const c = _bilCo;
+    if (!c || !c.qr || currentPage !== 'billingCheckout') return;
+    let d;
+    try { d = await api('/billing'); } catch { return _bilCoPoll(); }
+    if (_bilCo !== c || !c.qr) return;
+    _bil.data = d;
+    const b = d.billing, pd = b.pending;
+    if (b.method === 'PIX_AUTOMATIC' && b.paymentMethod?.pixAuto && (!pd || pd.method !== 'PIX_AUTOMATIC')) {
+      toast('Pix recebido. O Pix Automático está ligado para as próximas cobranças.', 'success');
+      _bilCo = null; _bil.cycle = null; _bil.payments = null;
+      goPage('billing'); _bilRefreshOrg();
+      return;
+    }
+    // Sem pendência: o Asaas avisou que o QR expirou ou o banco recusou.
+    const expired = c.qr.expiresAt && Date.parse(c.qr.expiresAt) < Date.now();
+    if (!pd || pd.method !== 'PIX_AUTOMATIC' || expired) {
+      c.qr = null; _bilCoRender();
+      $('bil-co-error').textContent = expired ? 'O QR Code expirou. Gere outro.' : 'O QR Code expirou ou o banco não concluiu a autorização. Gere outro para tentar de novo.';
+      return;
+    }
+    _bilCoPoll();
+  }, 4000);
+}
+async function _bilCoDiscardQr() {
+  if (!_bilCo) return;
+  _bilCo.qr = null;
+  clearTimeout(_bilCoPollT);
+  try { const r = await api('/billing/pending/discard', 'POST', {}); _bil.data = { ..._bil.data, billing: r.billing }; } catch {}
+  _bilCo.method = _bilMethodsOn().find(m => m.id !== 'PIX_AUTOMATIC')?.id || _bilCo.method;
+  _bilCoRender();
 }
 function _bilCoSet(k, v) {
   if (!_bilCo) return;
   _bilCo[k] = v;
+  // Mudou a escolha com um QR na tela: o QR era de outra combinação.
+  if (_bilCo.qr) { _bilCo.qr = null; clearTimeout(_bilCoPollT); }
   _bilCoRender();
   // A URL acompanha a escolha (dá pra mandar o link já com plano, ciclo e forma).
   if (currentPage === 'billingCheckout') history.replaceState(history.state, '', orgUrl(billingCheckoutPath()));
@@ -6162,8 +6534,20 @@ async function submitBillingCheckout() {
   const label = btn.innerHTML;
   btn.textContent = 'Preparando…';
   try {
-    const r = await api('/billing/checkout', 'POST', { planId: c.planId, cycle: c.cycle, method: c.method, name: c.name, cpfCnpj: doc, email: c.email });
+    const body = { planId: c.planId, cycle: c.cycle, method: c.method, name: c.name, cpfCnpj: doc, email: c.email };
+    if (c.method === 'CREDIT_CARD') {
+      body.phone = String(c.phone || '').replace(/\D/g, '');
+      // Endereço em branco = o servidor usa o salvo.
+      if (c.editAddr) Object.assign(body, c.addr);
+    }
+    const r = await api('/billing/checkout', 'POST', body);
     if (r.kind === 'checkout' && r.url) { location.href = r.url; return; }
+    if (r.kind === 'pix_auto') {
+      if (r.billing) _bil.data = { ..._bil.data, billing: r.billing };
+      c.qr = { ...r.qr, coverFrom: r.coverFrom, value: _bil.data.catalog.find(x => x.id === c.planId).prices[c.cycle] };
+      _bilCoRender();
+      return;
+    }
     if (r.url) { window.open(r.url, '_blank', 'noopener'); toast('Fatura gerada. Ela também chega por e-mail.', 'success'); }
     else toast(`Assinatura feita. A primeira fatura chega por e-mail perto de ${_bilDate(r.firstDueDate, { day: 'numeric', month: 'long' })}.`, 'success');
     _bilCo = null;
@@ -6171,9 +6555,11 @@ async function submitBillingCheckout() {
     goPage('billing');
     _bilRefreshOrg();
   } catch (e) {
-    err.textContent = e.message;
     if (/cpf|cnpj/i.test(e.message) && !c.editDoc) { c.editDoc = true; _bilCoRender(); }
-    btn.disabled = false; btn.innerHTML = label; paintIcons(btn);
+    if (/CEP|rua|bairro|número do endereço/i.test(e.message) && !c.editAddr) { c.editAddr = true; _bilCoRenderContact(); }
+    const out = $('bil-co-error'), b2 = $('bil-co-go');
+    if (out) out.textContent = e.message;
+    if (b2) { b2.disabled = false; b2.innerHTML = label; paintIcons(b2); }
   }
 }
 
@@ -6417,7 +6803,7 @@ async function renderSupportTicket() {
       <header class="sup-msg-head">
         ${m.from === 'staff' ? '<span class="avatar notif-avatar notif-avatar-system sup-msg-av" style="background-image:url(\'/rework.jpg\')"></span>' : avatarHTML(me, 'avatar sup-msg-av')}
         <b>${m.from === 'staff' ? 'Equipe reWork' : esc(m.authorName)}</b>
-        <span>${esc(new Date(m.at).toLocaleString('pt-BR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))}</span>
+        <span>${esc(new Date(m.at).toLocaleString(LOCALE, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))}</span>
       </header>
       <div class="sup-msg-body">${esc(m.body).replace(/\n/g, '<br>')}</div>
       ${(m.files || []).length ? `<div class="sup-msg-files">${m.files.map(f => f.type.startsWith('image/')
@@ -6534,8 +6920,8 @@ function _emailState() {
 function _emailDeadlineLabel() {
   const d = new Date(me.emailDeadline);
   if (isNaN(d)) return '';
-  const wd = d.toLocaleDateString('pt-BR', { weekday: 'long' }).replace('-feira', '');
-  const dm = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  const wd = d.toLocaleDateString(LOCALE, { weekday: 'long' }).replace('-feira', '');
+  const dm = d.toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit' });
   return `${wd}, ${dm}, às ${String(d.getHours()).padStart(2, '0')}h${String(d.getMinutes()).padStart(2, '0')}`;
 }
 function renderEmailLinkCard() {
@@ -7003,7 +7389,7 @@ function renderProfile2fa() {
   const tf = me.twoFactor;
   const app = !!(tf && tf.app);
   const emailOn = !!(tf && tf.method === 'email');
-  const since = app && tf.enabledAt ? new Date(tf.enabledAt).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
+  const since = app && tf.enabledAt ? new Date(tf.enabledAt).toLocaleDateString(LOCALE, { day: 'numeric', month: 'long', year: 'numeric' }) : '';
   const chipOn = '<span class="profile-status-chip profile-status-chip--ok"><i data-lucide="check"></i>Ativo</span>';
   const row = (on, icon, title, chip, sub, actions) => `<div class="tf-opt${on ? ' is-on' : ''}">
       <span class="tf-opt-ic"><i data-lucide="${icon}"></i></span>
@@ -7214,25 +7600,25 @@ window.resetUser2fa = resetUser2fa;
 function _orgBytes(n) {
   const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0, v = Number(n) || 0;
   while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
-  return `${v.toLocaleString('pt-BR', { maximumFractionDigits: v < 10 ? 1 : 0 })} ${u[i]}`;
+  return `${v.toLocaleString(LOCALE, { maximumFractionDigits: v < 10 ? 1 : 0 })} ${u[i]}`;
 }
 function _orgMeter(label, used, limit, fmt, foot) {
   const pct = limit ? Math.min(100, (used / limit) * 100) : 0;
   const tone = !limit ? '' : used >= limit ? ' is-full' : pct >= 85 ? ' is-high' : '';
   return `<div class="orgp-meter${tone}">
-    <div class="orgp-meter-top"><span class="orgp-meter-label">${label}</span><span class="orgp-meter-num"><b>${fmt(used)}</b>${limit != null ? ` de ${fmt(limit)}` : ' · sem limite'}</span></div>
+    <div class="orgp-meter-top"><span class="orgp-meter-label">${label}</span><span class="orgp-meter-num"><b>${fmt(used)}</b>${limit != null ? ` ${IS_PT ? 'de' : 'of'} ${fmt(limit)}` : ' · sem limite'}</span></div>
     <div class="orgp-meter-bar" role="progressbar" aria-label="${esc(label)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct)}"><span style="width:${limit ? Math.max(pct, used > 0 ? 1.5 : 0) : 0}%"></span></div>
     ${foot ? `<div class="orgp-meter-foot">${foot}</div>` : ''}
   </div>`;
 }
 function _orgPlanSection(u, head) {
   const p = u.plan;
-  const n = (v) => Number(v || 0).toLocaleString('pt-BR');
+  const n = (v) => Number(v || 0).toLocaleString(LOCALE);
   const seatsFoot = `${n(u.seats.members)} ${u.seats.members === 1 ? 'pessoa ativa' : 'pessoas ativas'}${u.seats.pending ? ` + ${n(u.seats.pending)} ${u.seats.pending === 1 ? 'convite pendente' : 'convites pendentes'}` : ''} · freelancers contam`;
   const full = (p.users != null && u.seats.used >= p.users) || (p.storageBytes != null && u.storage.bytes >= p.storageBytes);
   const trial = p.trial ? (p.readOnly
-    ? `<p class="orgp-plan-full"><i data-lucide="lock" class="ic-sm"></i>O teste acabou em ${new Date(p.trialEndsAt).toLocaleDateString('pt-BR')}: a organização está só para consulta até escolher um plano.</p>`
-    : p.trialEndsAt ? `<p class="orgp-plan-trial"><i data-lucide="hourglass" class="ic-sm"></i>Teste grátis até ${new Date(p.trialEndsAt).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' })} (${p.trialDaysLeft === 1 ? 'falta 1 dia' : `faltam ${p.trialDaysLeft} dias`}). Depois, fica só para consulta até escolher um plano.</p>` : '') : '';
+    ? `<p class="orgp-plan-full"><i data-lucide="lock" class="ic-sm"></i>O teste acabou em ${new Date(p.trialEndsAt).toLocaleDateString(LOCALE)}: a organização está só para consulta até escolher um plano.</p>`
+    : p.trialEndsAt ? `<p class="orgp-plan-trial"><i data-lucide="hourglass" class="ic-sm"></i>Teste grátis até ${new Date(p.trialEndsAt).toLocaleDateString(LOCALE, { day: 'numeric', month: 'long' })} (${p.trialDaysLeft === 1 ? 'falta 1 dia' : `faltam ${p.trialDaysLeft} dias`}). Depois, fica só para consulta até escolher um plano.</p>` : '') : '';
   return `<section class="orgp-card" id="orgp-plano">
     ${head(`Plano ${esc(p.name)}`, `Quantas pessoas e quanto espaço de arquivos a organização pode usar. Cada arquivo pode ter até ${_orgBytes(p.fileBytes)}.`,
       me.isOwner ? `<div class="orgp-head-actions"><button class="btn btn-ghost btn-sm" onclick="goPage('billing')"><i data-lucide="credit-card" class="ic-sm"></i> Plano e pagamento</button></div>` : '')}
@@ -7244,6 +7630,56 @@ function _orgPlanSection(u, head) {
     ${full ? `<p class="orgp-plan-full"><i data-lucide="triangle-alert" class="ic-sm"></i>Limite atingido: ${p.users != null && u.seats.used >= p.users ? 'novos convites ficam bloqueados' : 'novos arquivos são recusados'} até liberar espaço ou mudar de plano.</p>` : ''}
   </section>`;
 }
+/* País e idioma da organização. O país define o idioma padrão (Brasil e
+   Portugal em português, o resto em inglês); o dono pode fixar um idioma.
+   Quem escolheu um idioma no próprio perfil não muda. */
+function _orgLocaleCard(org, owner, head) {
+  const I = window.I18N;
+  const country = org.country || 'BR';
+  const byCountry = I ? I.langForCountry(country) : 'pt';
+  const cName = (c) => (I ? I.countryName(c, I.locale) : c);
+  const langName = (l) => langLabelHTML(l);
+  if (!owner) {
+    return `<section class="orgp-card" id="orgp-idioma">
+        ${head('País e idioma', 'Só o dono da organização muda o país e o idioma.')}
+        <div class="orgm-facts orgp-facts">
+          <div class="orgm-fact"><span class="orgm-fact-k">País</span><span class="orgm-fact-v">${esc(cName(country))}</span></div>
+          <div class="orgm-fact"><span class="orgm-fact-k">Idioma padrão</span><span class="orgm-fact-v">${langName(org.effectiveLang || byCountry)}</span></div>
+        </div>
+      </section>`;
+  }
+  const countries = I ? I.COUNTRIES.map(c => [c, cName(c)]).sort((a, b) => a[1].localeCompare(b[1], I.locale)) : [[country, country]];
+  return `<section class="orgp-card" id="orgp-idioma">
+      ${head('País e idioma', 'O idioma padrão vale para quem não escolheu um no próprio perfil. Brasil e Portugal ficam em português; os outros países, em inglês.')}
+      <div class="orgp-locale">
+        <div>
+          <label class="form-label" for="orgp-country">País</label>
+          <select class="form-control" id="orgp-country" translate="no" onchange="saveOrgLocale()">${countries.map(([c, nm]) => `<option value="${c}"${c === country ? ' selected' : ''}>${esc(nm)}</option>`).join('')}</select>
+        </div>
+        <div>
+          <label class="form-label" for="orgp-lang">Idioma padrão</label>
+          <select class="form-control" id="orgp-lang" onchange="saveOrgLocale()">
+            <option value="" data-flag="${LANG_FLAG[byCountry]}"${!org.lang ? ' selected' : ''}>Pelo país (${LANG_NATIVE[byCountry]})</option>
+            <option value="pt" data-flag="BR"${org.lang === 'pt' ? ' selected' : ''} translate="no">Português</option>
+            <option value="en" data-flag="US"${org.lang === 'en' ? ' selected' : ''} translate="no">English</option>
+          </select>
+        </div>
+      </div>
+    </section>`;
+}
+async function saveOrgLocale() {
+  const country = $('orgp-country')?.value;
+  const lang = $('orgp-lang')?.value || null;
+  try {
+    const org = await api('/org', 'PUT', { country, lang });
+    me.org = { ...me.org, ...org };
+    toast('País e idioma salvos.');
+    // Quem segue a organização (inclusive você, se não escolheu outro) passa a ver no idioma novo.
+    const eff = me.lang || org.effectiveLang;
+    if (window.I18N && I18N.remember(eff, I18N.localeFor(eff, org.country))) { setTimeout(() => location.reload(), 600); return; }
+    renderOrgPage();
+  } catch (e) { toast(e.message, 'error'); }
+}
 function renderOrgPage() {
   const host = $('org-page-body');
   if (!host || !me?.org) return;
@@ -7254,7 +7690,7 @@ function renderOrgPage() {
   const all = users;
   const active = all.filter(u => u.active !== false);
   const count = (role) => active.filter(u => u.orgRole === role).length;
-  const created = org.createdAt ? new Date(org.createdAt).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' }) : '—';
+  const created = org.createdAt ? new Date(org.createdAt).toLocaleDateString(LOCALE, { day: 'numeric', month: 'long', year: 'numeric' }) : '—';
   const st = org.settings || {};
   const integ = org.integrations || {};
   const identityDirty = owner && (d.name.trim() !== org.name || (d.logo || null) !== (org.logo || null));
@@ -7263,6 +7699,7 @@ function renderOrgPage() {
 
   const sections = [
     { id: 'geral', label: 'Geral', icon: 'building-2', show: true },
+    { id: 'idioma', label: 'País e idioma', icon: 'globe', show: true },
     { id: 'plano', label: 'Plano', icon: 'gauge', show: !!org.usage },
     { id: 'pessoas', label: 'Pessoas e acesso', icon: 'users', show: admin || mod },
     { id: 'squads', label: 'Equipes', icon: 'layers', show: admin || mod },
@@ -7320,6 +7757,8 @@ function renderOrgPage() {
         </div>
         ${owner ? `<footer class="orgp-card-foot"><button class="btn btn-confirm btn-sm" id="orgp-save-identity" onclick="saveOrgIdentity()" ${identityDirty && d.name.trim() ? '' : 'disabled'}>Salvar alterações</button></footer>` : ''}
       </section>
+
+      ${_orgLocaleCard(org, owner, head)}
 
       ${org.usage ? _orgPlanSection(org.usage, head) : ''}
 
@@ -8369,9 +8808,13 @@ function devToolsOpen(evt, path) {
    passa a usar rotas SPA `/help/manual/:sec` e `/help/erros/:sec` — a URL
    é a fonte da verdade, deep-links funcionam nativamente.
    NOTA: renomeado de /docs pra /help — /docs agora é o Kastor Docs (editor). */
-const DOCS_MAP = {
+// Em inglês, a mesma documentação traduzida (mesmos ids de seção e links).
+const DOCS_MAP = IS_PT ? {
   manual: { url: '/help/Manual-do-Usuario.html', title: 'Manual do Usuário' },
   erros:  { url: '/help/Codigos-de-Erro.html',   title: 'Códigos de Erro' }
+} : {
+  manual: { url: '/help/User-Manual.html', title: 'User Manual' },
+  erros:  { url: '/help/Error-Codes.html', title: 'Error Codes' }
 };
 const _docsCache = {}; // { key: { style, body, initialBodyClass } }
 async function _fetchDocContent(key) {
@@ -9284,7 +9727,7 @@ function _plainPreview(html, max) {
 function _fmtShortDate(ymd) {
   if (!ymd) return '';
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ymd);
-  return m ? `${m[3]}/${m[2]}` : ymd;
+  return m ? fmtDM(m[3], m[2]) : ymd;
 }
 function _fmtRelTime(iso) {
   if (!iso) return '';
@@ -9423,11 +9866,11 @@ function renderDashForecast() {
     const n = byDay.get(k).length;
     const lvl = forecastLevel(n);
     const isToday = k === todayK;
-    const wd = dt.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '').toUpperCase();
+    const wd = dt.toLocaleDateString(LOCALE, { weekday: 'short' }).replace('.', '').toUpperCase();
     return `<div class="dash-forecast-cell fc-${lvl} ${isToday ? 'is-today' : ''} ${n ? '' : 'is-empty'}"
                  ${n ? `onclick="openForecastDay('${k}')"` : ''}>
       <div class="dash-forecast-day">${isToday ? 'HOJE' : esc(wd)}</div>
-      <div class="dash-forecast-date">${String(dt.getDate()).padStart(2, '0')}/${String(dt.getMonth() + 1).padStart(2, '0')}</div>
+      <div class="dash-forecast-date">${fmtDM(dt.getDate(), dt.getMonth() + 1)}</div>
       <div class="dash-forecast-count">${n || ''}</div>
     </div>`;
   }).join('');
@@ -9438,7 +9881,7 @@ function openForecastDay(ymdStr) {
   if (!items.length) return;
   _forecastDayOpen = ymdStr;
   const dt = new Date(ymdStr + 'T12:00:00');
-  const label = dt.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit' }).replace('-feira', '');
+  const label = dt.toLocaleDateString(LOCALE, { weekday: 'long', day: '2-digit', month: '2-digit' }).replace('-feira', '');
   const titleEl = $('forecast-modal-title');
   if (titleEl) titleEl.textContent = 'Demandas previstas — ' + label;
   const rows = items.slice()
@@ -9497,7 +9940,7 @@ function renderDueFilterChip() {
   if (!wrap) return;
   const due = currentDueFilter();
   if (!due) { wrap.style.display = 'none'; wrap.innerHTML = ''; return; }
-  const label = new Date(due + 'T12:00:00').toLocaleDateString('pt-BR', {
+  const label = new Date(due + 'T12:00:00').toLocaleDateString(LOCALE, {
     weekday: 'long', day: '2-digit', month: 'long', year: 'numeric'
   });
   wrap.style.display = '';
@@ -9883,7 +10326,7 @@ function renderDashChart(list) {
     if (i % labelStep !== 0 && i !== days - 1) return '';
     const dd = String(b.date.getDate()).padStart(2, '0');
     const mm = String(b.date.getMonth() + 1).padStart(2, '0');
-    return `<text x="${xAt(i)}" y="${h - 12}" fill="var(--text-muted)" font-size="11" text-anchor="middle">${dd}/${mm}</text>`;
+    return `<text x="${xAt(i)}" y="${h - 12}" fill="var(--text-muted)" font-size="11" text-anchor="middle">${fmtDM(dd, mm)}</text>`;
   }).join('');
 
   // Y labels + gridlines
@@ -9913,7 +10356,7 @@ function renderDashChart(list) {
   // Wire hover — pra cada bucket, monta uma "série" com (y, value, color) por linha visível
   const tipPoints = buckets.map((b, i) => ({
     x: xAt(i),
-    label: b.date.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }),
+    label: b.date.toLocaleDateString(LOCALE, { weekday: 'short', day: '2-digit', month: '2-digit' }),
     series: visible.map(l => ({ name: l.label, value: b[l.key], y: yAt(b[l.key]), color: l.color }))
   }));
   const host = $('dash-chart-host');
@@ -10083,9 +10526,9 @@ function exportDemandsCsv() {
   const brDate = v => {
     if (!v) return '';
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
-    if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+    if (m) return fmtDMY(m[3], m[2], m[1]);
     const dt = new Date(v);
-    return isNaN(dt) ? '' : dt.toLocaleDateString('pt-BR');
+    return isNaN(dt) ? '' : dt.toLocaleDateString(LOCALE);
   };
   const rows = list.map(d => {
     const p = projectById(d.projectId);
@@ -10150,7 +10593,7 @@ function exportCapacityCsv() {
    andam pelos dias. */
 const _rc = {};
 const rcYmd = t => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
-const rcDmy = s => s ? s.slice(8, 10) + '/' + s.slice(5, 7) + '/' + s.slice(0, 4) : '';
+const rcDmy = s => s ? fmtDMY(s.slice(8, 10), s.slice(5, 7), s.slice(0, 4)) : '';
 const _rcAdd = (s, n) => { const d = new Date(s + 'T12:00:00'); d.setDate(d.getDate() + n); return rcYmd(d); };
 function rcMount(id, cfg) {
   // Mês inicial: cfg.month (data ou 'AAAA-MM-DD'), senão o fim/início da seleção, senão hoje.
@@ -10184,7 +10627,7 @@ function rcRender(id) {
   if (!host || !c) return;
   const y = c.month.getFullYear(), m = c.month.getMonth();
   const mm = String(m + 1).padStart(2, '0');
-  const title = c.month.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).replace(' de ', ' ');
+  const title = c.month.toLocaleDateString(LOCALE, { month: 'long', year: 'numeric' }).replace(' de ', ' ');
   const first = new Date(y, m, 1).getDay();
   const days = new Date(y, m + 1, 0).getDate();
   const today = todayStr();
@@ -10319,7 +10762,7 @@ const PFP_PRESETS = [
   { val: 'lastmonth', label: 'Mês passado' },
   { val: '90',        label: 'Últimos 90 dias' }
 ];
-const PFP_MONTHS = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+const PFP_MONTHS = MONTHS;
 let _pfpOpen = false;
 
 function togglePfp(evt) {
@@ -11700,7 +12143,7 @@ function renderKanbanAttention(board) {
    e a POSIÇÃO relativa da etapa no fluxo define as 3 bandas ativas. Assim funciona
    pra qualquer nome de etapa, em qualquer fluxo, sem configuração nem adivinhação. */
 const STAGE_BANDS = [
-  { key: 'start', label: 'Início',       color: '#64748B' }, // slate
+  { key: 'start', label: IS_PT ? 'Início' : 'Starting', color: '#64748B' }, // slate ("Início" no dicionário é a página Início)
   { key: 'mid',   label: 'Em andamento', color: '#3B82F6' }, // azul
   { key: 'final', label: 'Reta final',   color: '#7A00FF' }, // roxo accent
   { key: 'done',  label: 'Concluído',    color: '#12B886' }, // verde
@@ -12844,7 +13287,7 @@ function _rhythmSvg(series) {
     const real = series.real[i];
     const idealVal = series.ideal[i];
     const dateStr = series.days[i]
-      ? series.days[i].toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+      ? series.days[i].toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit' })
       : '';
     const label = `${d} ${dateStr}`;
     return `<div class="rhythm-x-hover"
@@ -13081,7 +13524,7 @@ function _rhythmCombinedSvg(perSquad) {
   const bandW = 100 / N;
   const hoversHtml = dow.map((d, i) => {
     const dateStr = perSquad[0]?.series.days[i]
-      ? perSquad[0].series.days[i].toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+      ? perSquad[0].series.days[i].toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit' })
       : '';
     const breakdown = perSquad.map(p => ({
       name: p.ws.name,
@@ -13203,7 +13646,7 @@ function renderRhythm() {
   const all = _rhythmAccessibleWs();
   if (!all.length) { body.innerHTML = '<div class="empty-state">Sem equipes acessíveis.</div>'; return; }
 
-  const fmtDate = d => d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  const fmtDate = d => d.toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit' });
   const rangeLabel = document.getElementById('rhythm-week-range');
   if (rangeLabel) rangeLabel.textContent = `${fmtDate(monday)} → ${fmtDate(friday)}`;
 
@@ -14108,28 +14551,28 @@ function _perfSeriesByDate(rows) {
 function _perfFmtBRL(v) {
   const n = Number(v) || 0;
   const abs = Math.abs(n);
-  if (abs >= 1e6) return `R$ ${(n / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} mi`;
-  if (abs >= 1e3) return `R$ ${(n / 1e3).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} mil`;
-  return `R$ ${n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  if (abs >= 1e6) return `R$ ${(n / 1e6).toLocaleString(LOCALE, { maximumFractionDigits: 1 })} mi`;
+  if (abs >= 1e3) return `R$ ${(n / 1e3).toLocaleString(LOCALE, { maximumFractionDigits: 1 })} mil`;
+  return `R$ ${n.toLocaleString(LOCALE, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 function _perfFmtBRLexact(v) {
-  return `R$ ${(Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `R$ ${(Number(v) || 0).toLocaleString(LOCALE, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 function _perfFmtNum(v) {
   const n = Number(v) || 0;
   const abs = Math.abs(n);
-  if (abs >= 1e6) return `${(n / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} mi`;
-  if (abs >= 1e3) return `${(n / 1e3).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} mil`;
-  return n.toLocaleString('pt-BR');
+  if (abs >= 1e6) return `${(n / 1e6).toLocaleString(LOCALE, { maximumFractionDigits: 1 })} mi`;
+  if (abs >= 1e3) return `${(n / 1e3).toLocaleString(LOCALE, { maximumFractionDigits: 1 })} mil`;
+  return n.toLocaleString(LOCALE);
 }
-function _perfFmtInt(v) { return (Number(v) || 0).toLocaleString('pt-BR'); }
+function _perfFmtInt(v) { return (Number(v) || 0).toLocaleString(LOCALE); }
 function _perfFmtPct(v, dp = 1) {
-  return `${(Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: dp, maximumFractionDigits: dp })}%`;
+  return `${(Number(v) || 0).toLocaleString(LOCALE, { minimumFractionDigits: dp, maximumFractionDigits: dp })}%`;
 }
 function _perfFmtDate(iso) {
   if (!iso) return '';
   const [y, m, d] = iso.split('-');
-  return `${d}/${m}`;
+  return fmtDM(d, m);
 }
 /* Render principal — dispara render dos blocos em ordem. */
 function _perfRender(host, curRows, prevRows) {
@@ -15011,7 +15454,7 @@ function _capSparklineHtml(logStartYmd, logEndYmd) {
   const xLabelsHtml = idxsToLabel.map(i => {
     const dt = days[i];
     const pct = days.length <= 1 ? 50 : (i * 100 / (days.length - 1));
-    const lbl = `${String(dt.getDate()).padStart(2, '0')}/${String(dt.getMonth() + 1).padStart(2, '0')}`;
+    const lbl = fmtDM(dt.getDate(), dt.getMonth() + 1);
     let align = 'center';
     if (i === 0) align = 'left';
     else if (i === days.length - 1) align = 'right';
@@ -15087,7 +15530,7 @@ function _wireCapSparkline() {
       .filter(c => c.hrs > 0)
       .sort((a, b) => b.hrs - a.hrs);
     const total = contribs.reduce((s, c) => s + c.hrs, 0);
-    const dateLabel = dt.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }).replace(/\.$/, '');
+    const dateLabel = dt.toLocaleDateString(LOCALE, { weekday: 'short', day: '2-digit', month: '2-digit' }).replace(/\.$/, '');
     const lines = contribs.length
       ? contribs.slice(0, 8).map(c =>
           `<div class="chart-tip-row"><span class="chart-tip-dot" style="background:${c.color}"></span><span class="chart-tip-label">${esc(c.user.name.split(' ')[0])}</span><span class="chart-tip-value">${fmtHours(c.hrs)}</span></div>`
@@ -16799,7 +17242,7 @@ function renderMineNav() {
     : `<button type="button" class="topbar-mine-btn" disabled aria-label="${dir}"><i data-lucide="${icon}" class="ic-sm"></i></button>`;
   el.hidden = false;
   el.innerHTML = btn(prev, 'Anterior', 'chevron-left')
-    + `<span class="topbar-mine-pos" title="Posição em Minhas Demandas">${i + 1} de ${ids.length}</span>`
+    + `<span class="topbar-mine-pos" title="Posição em Minhas Demandas">${T('{0} de {1}', i + 1, ids.length)}</span>`
     + btn(next, 'Próxima', 'chevron-right');
   paintIcons(el);
 }
@@ -17668,7 +18111,7 @@ function setStageDateDraft(stageId, isoDate) {
 /* Formata YYYY-MM-DD → dd/mm (usado nas mensagens de erro do editor). */
 function _fmtDayMonth(ymd) {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ymd || '');
-  return m ? `${m[3]}/${m[2]}` : ymd;
+  return m ? fmtDM(m[3], m[2]) : ymd;
 }
 /* Tooltip transitório que aparece perto do campo de data de uma etapa. */
 function _showStageDateTooltip(stageId, message) {
@@ -18674,7 +19117,7 @@ function renderDemandAttList(list, withDelete) {
     // abre a confirmação, que repinta os ícones (lucide troca o <svg> clicado) e
     // o alvo já está fora do DOM quando o clique chega ao card.
     const actionsAttrs = 'class="att-card-actions" onclick="event.stopPropagation()"';
-    const date = a.addedAt ? new Date(a.addedAt).toLocaleDateString('pt-BR') : '';
+    const date = a.addedAt ? new Date(a.addedAt).toLocaleDateString(LOCALE) : '';
     if (a.kind === 'link') {
       const url = normalizeUrl(a.url || a.name);
       let host = '';
@@ -20206,6 +20649,7 @@ function _fmtRemindWhen(iso) {
   const diff = Math.round((new Date(d).setHours(0, 0, 0, 0) - day0) / 86400000);
   if (diff === 0) return `hoje às ${hm}`;
   if (diff === 1) return `amanhã às ${hm}`;
+  if (!IS_PT) return `${d.toLocaleDateString(LOCALE, { weekday: 'short', day: '2-digit', month: '2-digit' })} at ${hm}`;
   const wd = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'][d.getDay()];
   return `${wd}, ${pad(d.getDate())}/${pad(d.getMonth() + 1)} às ${hm}`;
 }
@@ -20339,7 +20783,7 @@ function _applyMentionSeen() {
   if (!st || !d || st.id !== d.id) return;
   const comments = d.comments || [];
   const first = u => (u?.name || '—').split(' ')[0];
-  const list = arr => arr.length <= 1 ? arr.join('') : arr.slice(0, -1).join(', ') + ' e ' + arr[arr.length - 1];
+  const list = arr => _listJoin(arr);
   comments.forEach(c => {
     const el = document.getElementById('comment-' + c.id);
     if (!el) return;
@@ -20942,11 +21386,12 @@ function toIsoDateTime(v) {
   // Já está em ISO
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)) return v.slice(0, 16);
   // Formato display: dd/mm/aaaa HH:MM
+  // (em inglês americano o display é mm/dd/aaaa — ver fmtDM)
   const m = v.match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})$/);
-  if (m) return `${m[3]}-${m[2]}-${m[1]}T${m[4]}:${m[5]}`;
+  if (m) return _MD_FIRST ? `${m[3]}-${m[1]}-${m[2]}T${m[4]}:${m[5]}` : `${m[3]}-${m[2]}-${m[1]}T${m[4]}:${m[5]}`;
   // Formato display sem hora
   const md = v.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (md) return `${md[3]}-${md[2]}-${md[1]}T00:00`;
+  if (md) return _MD_FIRST ? `${md[3]}-${md[1]}-${md[2]}T00:00` : `${md[3]}-${md[2]}-${md[1]}T00:00`;
   return null;
 }
 
@@ -21126,7 +21571,7 @@ function startEditTimeEntry(eid) {
       <input class="form-control" id="ae-hours" type="number" min="0" step="0.25" value="${e.hours}">
     </div>
     <div class="form-group" style="margin:0;flex:2;min-width:160px">
-      <label class="form-label">Início</label>
+      <label class="form-label" data-en="Start">Início</label>
       <input class="form-control" id="ae-start" type="datetime-local" value="${toLocal(e.start)}">
     </div>
     <div class="form-group" style="margin:0;flex:2;min-width:160px">
@@ -24737,7 +25182,7 @@ function toggleReactionPicker(commentId) {
 /* Nomes de quem reagiu, um por linha (a própria pessoa primeiro). */
 function _reactionTipText(emoji, userIds) {
   return [...userIds].sort((a, b) => (b === me?.id) - (a === me?.id))
-    .map(id => id === me?.id ? 'Você' : (userById(id)?.name || 'Alguém')).join('\n');
+    .map(id => id === me?.id ? T('Você') : (userById(id)?.name || T('Alguém'))).join('\n');
 }
 /* Tooltip das reações. O app desliga os tooltips globais (title/.tt), então
    este é próprio e só atende [data-rx-tip]: aparece acima do chip. */
@@ -27733,7 +28178,7 @@ function _dvTimeLabel(key, kind) {
   if (!key || key === DV_NONE) return 'Sem data';
   const [y, m, d] = key.split('-').map(Number);
   if (kind === 'month') return `${MONTHS[m - 1].slice(0, 3).toLowerCase()}/${String(y).slice(2)}`;
-  return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}`;
+  return fmtDM(d, m);
 }
 function _dvFieldOf(dimKey) {
   if (!dimKey || !dimKey.startsWith('field:')) return null;
@@ -27842,24 +28287,28 @@ function dvMetricValue(m, recs) {
 }
 function dvMetricLabel(m, templateId) {
   if (m.label) return m.label;
-  if (m.agg === 'count') return 'Respostas';
+  if (m.agg === 'count') return T('Respostas');
   const f = formTemplateById(templateId)?.fields?.find(x => x.id === m.fieldId);
-  return `${DV_AGG_LABEL[m.agg]} de ${f ? f.label : 'campo removido'}`;
+  return T('{0} de {1}', T(DV_AGG_LABEL[m.agg]), f ? f.label : T('campo removido'));
 }
+// Pedaços dos títulos dos painéis ("por status", "e cliente") no idioma da tela.
+const _dvDimL = (key) => T(dvDim(key)?.label || '—').toLowerCase();
+const _dvBy = (key) => `${IS_PT ? 'por' : 'by'} ${_dvDimL(key)}`;
+const _dvAnd = (key) => `${IS_PT ? 'e' : 'and'} ${_dvDimL(key)}`;
 function dvFmt(v, compact) {
   if (v == null || !Number.isFinite(v)) return '—';
   const abs = Math.abs(v);
-  if (compact && abs >= 10000) return (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' mil';
+  if (compact && abs >= 10000) return (v / 1000).toLocaleString(LOCALE, { maximumFractionDigits: 1 }) + ' mil';
   const dec = Number.isInteger(v) ? 0 : abs < 10 ? 2 : 1;
-  return v.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: dec });
+  return v.toLocaleString(LOCALE, { minimumFractionDigits: 0, maximumFractionDigits: dec });
 }
 function dvAutoTitle(w) {
   const m0 = w.metrics?.[0] || { agg: 'count' };
-  const what = w.viz === 'number' && (w.metrics || []).length > 1 ? 'Resumo' : dvMetricLabel(m0, w.templateId);
-  const by = (w.viz === 'bar' || w.viz === 'table') && w.groupBy ? ` por ${dvDim(w.groupBy)?.label.toLowerCase() || '—'}` : '';
-  const ser = w.seriesBy && w.viz !== 'number' ? ` e ${dvDim(w.seriesBy)?.label.toLowerCase() || '—'}` : '';
-  const when = w.viz === 'line' ? ' ao longo do tempo' : '';
-  return what + by + (by ? ser : (w.seriesBy ? ` por ${dvDim(w.seriesBy)?.label.toLowerCase() || '—'}` : '')) + when;
+  const what = w.viz === 'number' && (w.metrics || []).length > 1 ? T('Resumo') : dvMetricLabel(m0, w.templateId);
+  const by = (w.viz === 'bar' || w.viz === 'table') && w.groupBy ? ' ' + _dvBy(w.groupBy) : '';
+  const ser = w.seriesBy && w.viz !== 'number' ? ' ' + _dvAnd(w.seriesBy) : '';
+  const when = w.viz === 'line' ? (IS_PT ? ' ao longo do tempo' : ' over time') : '';
+  return what + by + (by ? ser : (w.seriesBy ? ' ' + _dvBy(w.seriesBy) : '')) + when;
 }
 
 /* ── Visão (filtros de quem olha) ────────────────────────────────────── */
@@ -27906,7 +28355,7 @@ function dvPeriodRange(view = _dvView) {
 function dvPeriodLabel(view = _dvView) {
   if (view.period === 'custom') {
     const f = view.from ? fmtDate(view.from) : '…', t = view.to ? fmtDate(view.to) : '…';
-    return `${f} a ${t}`;
+    return IS_PT ? `${f} a ${t}` : `${f} – ${t}`;
   }
   return DV_PERIODS.find(p => p.key === view.period)?.label || 'Todo o período';
 }
@@ -28632,8 +29081,8 @@ function _dvBar(w, recs, head, subParts) {
   const barColor = (s, c) => (one && !w.seriesBy ? (c === DV_OTHER ? 'var(--viz-other)' : 'var(--viz-1)') : s.color);
   const tipFor = (ci) => esc(_dvTip(series.map((s, si) => ({ color: barColor(s, cats[ci]), value: dvFmt(vals[ci][si]), name: s.name })), labels[ci]));
   // Título automático já diz "por X"; só título próprio ganha o contexto embaixo.
-  if (w.title) subParts.push('por ' + esc((dvDim(w.groupBy)?.label || '').toLowerCase()));
-  if (w.seriesBy) subParts.push((w.title ? 'e ' : 'por ') + esc((dvDim(w.seriesBy)?.label || '').toLowerCase()));
+  if (w.title) subParts.push(esc(_dvBy(w.groupBy)));
+  if (w.seriesBy) subParts.push(esc(w.title ? _dvAnd(w.seriesBy) : _dvBy(w.seriesBy)));
   let body;
   if (horizontal) {
     body = `<div class="dv-hbars">${cats.map((c, ci) => {
@@ -28689,7 +29138,7 @@ function _dvNextBucket(t, bucket) {
 function _dvBucketLabel(t, bucket) {
   const d = new Date(t);
   if (bucket === 'month') return `${MONTHS[d.getMonth()].slice(0, 3).toLowerCase()}/${String(d.getFullYear()).slice(2)}`;
-  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+  return fmtDM(d.getDate(), d.getMonth() + 1);
 }
 function _dvLine(w, recs, head, subParts) {
   const df = _dvView.dateField;
@@ -28780,8 +29229,8 @@ function _dvTable(w, recs, head, subParts) {
   const selected = new Set(_dvView.dims[w.groupBy] || []);
   const heat = v => (pivot && v && max ? `style="background:color-mix(in oklab, var(--viz-1) ${Math.round(6 + (v / max) * 30)}%, transparent)"` : '');
   const totals = series.map(s => cell(recs, s));
-  if (w.title) subParts.push('por ' + esc((dvDim(w.groupBy)?.label || '').toLowerCase()));
-  if (pivot && w.title) subParts.push('e ' + esc((dvDim(w.seriesBy)?.label || '').toLowerCase()));
+  if (w.title) subParts.push(esc(_dvBy(w.groupBy)));
+  if (pivot && w.title) subParts.push(esc(_dvAnd(w.seriesBy)));
   return `<div class="dv-card-head"><div class="dv-card-title">${esc(w.title || dvAutoTitle(w))}</div><div class="dv-card-sub">${subParts.filter(Boolean).join(' · ')}</div></div>
     <div class="dv-table-wrap"><table class="dv-table">
       <thead><tr><th>${esc(dvDim(w.groupBy)?.label || '')}</th>${series.map(s => `<th class="num">${pivot ? `<span class="dv-th-key" style="background:${s.color}"></span>` : ''}${esc(s.name)}</th>`).join('')}${pivot ? '<th class="num">Total</th>' : ''}</tr></thead>
@@ -28859,7 +29308,7 @@ function _fmtRecordDate(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
   if (isNaN(d)) return '—';
-  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return `${fmtDMY(d.getDate(), d.getMonth() + 1, d.getFullYear())} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 function _toggleDashRecords(dashId) {
   if (_dashRecordsOpen.has(dashId)) _dashRecordsOpen.delete(dashId); else _dashRecordsOpen.add(dashId);
@@ -29123,7 +29572,7 @@ function _dvEdRenderForm() {
   const t = formTemplateById(w.templateId);
   const numFields = (t?.fields || []).filter(f => f.type === 'number');
   const metricOpts = [{ key: 'count', label: 'Contar respostas' }];
-  for (const f of numFields) for (const agg of ['sum', 'avg', 'min', 'max']) metricOpts.push({ key: `${agg}:${f.id}`, label: `${DV_AGG_LABEL[agg]} de ${f.label}` });
+  for (const f of numFields) for (const agg of ['sum', 'avg', 'min', 'max']) metricOpts.push({ key: `${agg}:${f.id}`, label: T('{0} de {1}', T(DV_AGG_LABEL[agg]), f.label) });
   const maxMetrics = w.viz === 'number' ? 4 : (w.seriesBy ? 1 : 4);
   const metrics = _dvMetricsOf(w).slice(0, maxMetrics);
   const needGroup = w.viz === 'bar' || w.viz === 'table';
@@ -29569,7 +30018,7 @@ function renderUserSeats() {
   if (!el) return;
   const s = inviteSeats;
   if ((!me?.isAdmin && !me?.isModerator) || !s) { el.hidden = true; return; }
-  const n = (v) => Number(v || 0).toLocaleString('pt-BR');
+  const n = (v) => Number(v || 0).toLocaleString(LOCALE);
   const foot = `${n(s.members)} ${s.members === 1 ? 'pessoa ativa' : 'pessoas ativas'}${s.pending ? ` + ${n(s.pending)} ${s.pending === 1 ? 'convite pendente' : 'convites pendentes'}` : ''} · freelancers contam`
     + (s.limit != null && s.used >= s.limit ? ' · <b>limite atingido: novos convites ficam bloqueados</b>' : '');
   el.hidden = false;
@@ -29892,9 +30341,53 @@ function requestDesktopNotifications() {
     }
   });
 }
+/* ─── IDIOMA DA PESSOA ───
+   '' = segue a organização (o país dela define: Brasil/Portugal em português,
+   o resto em inglês). Fica salvo no usuário; a página recarrega no idioma novo
+   (o i18n.js traduz a interface enquanto ela é montada). */
+const LANG_NATIVE = { pt: 'Português', en: 'English' };
+/* Bandeira de cada idioma (SVG inline: emoji de bandeira não aparece no
+   Windows). Português → Brasil, English → Estados Unidos. */
+const LANG_FLAG = { pt: 'BR', en: 'US' };
+function flagSVG(code) {
+  if (code === 'BR') return `<svg class="lang-flag" viewBox="0 0 20 14" aria-hidden="true"><rect width="20" height="14" fill="#009C3B"/><path d="M10 1.6 18.4 7 10 12.4 1.6 7Z" fill="#FFDF00"/><circle cx="10" cy="7" r="3.2" fill="#002776"/><path d="M6.9 6.3c2.1-.4 4.4.1 6.1 1.3" stroke="#fff" stroke-width=".7" fill="none"/></svg>`;
+  if (code === 'US') {
+    const stripes = Array.from({ length: 7 }, (_, i) => `<rect y="${(i * 2 * 14 / 13).toFixed(2)}" width="20" height="${(14 / 13).toFixed(2)}" fill="#B22234"/>`).join('');
+    return `<svg class="lang-flag" viewBox="0 0 20 14" aria-hidden="true"><rect width="20" height="14" fill="#fff"/>${stripes}<rect width="8.6" height="${(7 * 14 / 13).toFixed(2)}" fill="#3C3B6E"/></svg>`;
+  }
+  return '';
+}
+// "🇧🇷 Português" — nome do idioma na própria língua, com a bandeira.
+const langLabelHTML = (l) => `<span class="lang-label" translate="no">${flagSVG(LANG_FLAG[l])}${LANG_NATIVE[l] || l}</span>`;
+function renderLangPicker() {
+  const wrap = document.getElementById('profile-lang-picker');
+  if (!wrap) return;
+  const cur = (me && me.lang) || '';
+  wrap.querySelectorAll('[data-lang]').forEach(b => {
+    const on = b.dataset.lang === cur;
+    b.classList.toggle('is-active', on);
+    b.setAttribute('aria-pressed', String(on));
+  });
+  const sub = document.getElementById('profile-lang-sub');
+  wrap.querySelectorAll('[data-flag]').forEach(el => { if (!el.firstChild) el.outerHTML = flagSVG(el.dataset.flag); });
+  const orgLang = me && me.org && me.org.effectiveLang;
+  if (sub && orgLang) sub.innerHTML = T('Por padrão, segue o idioma da organização: {0}.', langLabelHTML(orgLang));
+}
+async function setProfileLang(lang) {
+  const next = lang || null;
+  if (((me && me.lang) || null) === next) return;
+  try {
+    const u = await api('/me', 'PUT', { lang: next });
+    me = { ...me, ...u };
+    const eff = next || (me.org && me.org.effectiveLang) || 'pt';
+    if (window.I18N && I18N.remember(eff, I18N.localeFor(eff, me.org && me.org.country))) { location.reload(); return; }
+    renderLangPicker();
+  } catch (e) { toast(e.message, 'error'); }
+}
 /* Sincroniza os controles da aba Aparência com o estado global atual. */
 function syncProfileAppearanceUI() {
   renderAccentPicker();
+  renderLangPicker();
   const theme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
   document.querySelectorAll('#profile-theme-picker .profile-theme-opt').forEach(b => {
     b.classList.toggle('is-active', b.dataset.theme === theme);
@@ -30055,7 +30548,7 @@ function formatRelativeTime(iso) {
   if (diffSec < 60) return 'agora mesmo';
   if (diffSec < 3600) return Math.floor(diffSec / 60) + ' min atrás';
   if (diffSec < 86400) return Math.floor(diffSec / 3600) + ' h atrás';
-  return new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+  return new Date(iso).toLocaleDateString(LOCALE, { day: '2-digit', month: 'short' });
 }
 
 async function saveGoogleCalendarSelection() {
@@ -33601,7 +34094,7 @@ function renderClientTimeBlock(clientId) {
     const host = $('cli-chart-host');
     if (host && points.length) {
       const tipPoints = buckets.map((b, i) => ({
-        x: points[i][0], label: new Date(b.ymd + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }),
+        x: points[i][0], label: new Date(b.ymd + 'T12:00:00').toLocaleDateString(LOCALE, { weekday: 'short', day: '2-digit', month: '2-digit' }),
         series: [{ name: 'Horas', value: b.hours, y: points[i][1], color: '#3CE3A0' }]
       }));
       attachChartHover(host, {
@@ -33845,7 +34338,7 @@ function renderProjectTimeBlock(projectId) {
     const host = $('proj-chart-host');
     if (host && points.length) {
       const tipPoints = buckets.map((b, i) => ({
-        x: points[i][0], label: new Date(b.ymd + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }),
+        x: points[i][0], label: new Date(b.ymd + 'T12:00:00').toLocaleDateString(LOCALE, { weekday: 'short', day: '2-digit', month: '2-digit' }),
         series: [{ name: 'Horas', value: b.hours, y: points[i][1], color: '#3CE3A0' }]
       }));
       attachChartHover(host, {
@@ -33919,7 +34412,7 @@ async function downloadClientReport() {
   const ym = currentReportMonth || new Date().toISOString().slice(0,7);
   const [year, mon] = ym.split('-').map(Number);
   const monthNum = ym.split('-')[1] || '';
-  const monthLabel = `${MONTHS[mon - 1]} de ${year}`;
+  const monthLabel = monthYear(mon - 1, year);
   const sanitize = (s) => String(s || '').replace(/[\\/:*?"<>|]/g, '').trim();
   const filename = `Relatório Mensal ${monthNum} - ${sanitize(c.name)} - reWork.pdf`;
 
@@ -34194,7 +34687,7 @@ async function downloadClientReport() {
 
     // ── Footer em cada página ──
     const totalPages = doc.internal.getNumberOfPages();
-    const genLabel = `Gerado em ${new Date().toLocaleString('pt-BR')} · reWork`;
+    const genLabel = `Gerado em ${new Date().toLocaleString(LOCALE)} · reWork`;
     for (let i = 1; i <= totalPages; i++) {
       doc.setPage(i);
       doc.setFont('helvetica', 'normal');
@@ -34216,7 +34709,7 @@ async function downloadClientReport() {
 // Reutilizável: cada "kind" (client, project) tem seus IDs de DOM e uma
 // dupla getMonth/setMonth. Só uma instância pode estar aberta por vez —
 // _mpState guarda kind ativo + ano em exibição.
-const MONTHS_SHORT = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+const MONTHS_SHORT = IS_PT ? ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'] : _intlMonths('short');
 const MP_KIND = {
   client: {
     pickerId: 'report-month-picker',
@@ -34296,7 +34789,7 @@ function renderMp(kind) {
   const ym = cfg.getMonth() || new Date().toISOString().slice(0,7);
   const [y, m] = ym.split('-').map(Number);
   const lbl = $(cfg.labelId);
-  if (lbl) lbl.textContent = `${MONTHS[m - 1]} de ${y}`;
+  if (lbl) lbl.textContent = monthYear(m - 1, y);
   if (_mpState?.kind === kind) renderMpGrid();
 }
 function renderMpGrid() {
@@ -34327,7 +34820,7 @@ function renderClientReport(clientId) {
   if (!c) return;
   const ym = currentReportMonth || new Date().toISOString().slice(0,7);
   const [y, m] = ym.split('-').map(Number);
-  const monthLabel = `${MONTHS[m - 1]} de ${y}`;
+  const monthLabel = monthYear(m - 1, y);
 
   // Popula seletor de mês (label + grid do popover).
   renderMp('client');
@@ -34335,7 +34828,7 @@ function renderClientReport(clientId) {
   // Header
   $('report-client-name').textContent = c.name;
   $('report-period-label').textContent = monthLabel;
-  $('report-generated-at').textContent = new Date().toLocaleString('pt-BR');
+  $('report-generated-at').textContent = new Date().toLocaleString(LOCALE);
 
   // Escopo: projetos do cliente + demandas desses projetos.
   const projs = projects.filter(p => p.clientId === c.id);
@@ -34493,7 +34986,7 @@ function renderProjectReport(projectId) {
   const c = p.clientId ? clientById(p.clientId) : null;
   const ym = currentProjectReportMonth || new Date().toISOString().slice(0,7);
   const [y, m] = ym.split('-').map(Number);
-  const monthLabel = `${MONTHS[m - 1]} de ${y}`;
+  const monthLabel = monthYear(m - 1, y);
 
   renderMp('project');
 
@@ -34501,7 +34994,7 @@ function renderProjectReport(projectId) {
   $('preport-eyebrow').textContent = c ? `RELATÓRIO MENSAL · PROJETO DE ${c.name.toUpperCase()}` : 'RELATÓRIO MENSAL · PROJETO';
   $('preport-title').textContent = p.name;
   $('preport-period-label').textContent = monthLabel;
-  $('preport-generated-at').textContent = new Date().toLocaleString('pt-BR');
+  $('preport-generated-at').textContent = new Date().toLocaleString(LOCALE);
 
   // Escopo: só demandas deste projeto.
   const projectDemands = demands.filter(d => d.projectId === projectId);
@@ -34631,7 +35124,7 @@ async function downloadProjectReport() {
   const ym = currentProjectReportMonth || new Date().toISOString().slice(0,7);
   const [year, mon] = ym.split('-').map(Number);
   const monthNum = ym.split('-')[1] || '';
-  const monthLabel = `${MONTHS[mon - 1]} de ${year}`;
+  const monthLabel = monthYear(mon - 1, year);
   const sanitize = (s) => String(s || '').replace(/[\\/:*?"<>|]/g, '').trim();
   const clientPart = c ? ` - ${sanitize(c.name)}` : '';
   const filename = `Relatório Mensal ${monthNum} - ${sanitize(p.name)}${clientPart} - reWork.pdf`;
@@ -34855,7 +35348,7 @@ async function downloadProjectReport() {
 
     // Footer.
     const totalPages = doc.internal.getNumberOfPages();
-    const genLabel = `Gerado em ${new Date().toLocaleString('pt-BR')} · reWork`;
+    const genLabel = `Gerado em ${new Date().toLocaleString(LOCALE)} · reWork`;
     for (let i = 1; i <= totalPages; i++) {
       doc.setPage(i);
       doc.setFont('helvetica', 'normal'); doc.setFontSize(7);
@@ -35083,7 +35576,7 @@ function renderClientPublicLinksList() {
   const sorted = [...arr].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   list.innerHTML = sorted.map(l => {
     const url = `${location.origin}/public/client/${l.token}`;
-    const created = l.createdAt ? new Date(l.createdAt).toLocaleDateString('pt-BR') : '';
+    const created = l.createdAt ? new Date(l.createdAt).toLocaleDateString(LOCALE) : '';
     const inactive = !l.active;
     return `<div class="share-link ${inactive ? 'is-inactive' : ''}">
       <div class="share-link-header">
@@ -35647,7 +36140,7 @@ function renderAgenda() {
     const dl = $('agenda-day-label');
     if (dl) {
       const d = agendaTeamDate || new Date();
-      dl.textContent = d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }).replace('.', '');
+      dl.textContent = d.toLocaleDateString(LOCALE, { weekday: 'short', day: '2-digit', month: '2-digit' }).replace('.', '');
     }
   }
 }
@@ -35667,7 +36160,7 @@ function renderAgendaInto(wrapId, weekLabelId, userId) {
   const first = days[0], last = days[days.length - 1];
   const wkLabel = document.getElementById(weekLabelId);
   if (wkLabel && first && last && !useTeam) {
-    const fmt = (d) => d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+    const fmt = (d) => d.toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit' });
     wkLabel.textContent = `${fmt(first)} → ${fmt(last)}`;
   }
   if (useTeam) {
@@ -35746,8 +36239,8 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
       head.classList.add('is-user-header');
       head.innerHTML = `${avatarHTML(u, 'avatar avatar-sm')}<span class="agenda-user-head-name">${esc(u.name)}</span><span class="day-cap ${capClass}">${esc(capLabel)}</span>`;
     } else {
-      const dayName = d.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '').toUpperCase();
-      const dayDate = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+      const dayName = d.toLocaleDateString(LOCALE, { weekday: 'short' }).replace('.', '').toUpperCase();
+      const dayDate = d.toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit' });
       const schedMin = schedules
         .filter(s => s.userId === agendaUserIdLocal && s.date === c._ymd)
         .filter(s => s.demandId || s.kind === 'meeting')
@@ -36404,10 +36897,11 @@ let _scheduleRecurrence = null;
 
 /* Labels dinâmicas do dropdown de recorrência, estilo Google Calendar.
    Populadas a partir da data selecionada no modal (usa o dow/nth/mês do dia). */
-const WEEKDAY_LONG = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+const WEEKDAY_LONG = IS_PT ? ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado']
+  : Array.from({ length: 7 }, (_, i) => new Intl.DateTimeFormat(LOCALE, { weekday: 'long', timeZone: 'UTC' }).format(Date.UTC(2020, 7, 2 + i)));
 const WEEKDAY_SHORT = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
 const WEEKDAY_ORDINAL = ['primeiro(a)', 'segundo(a)', 'terceiro(a)', 'quarto(a)', 'último(a)'];
-const MONTHS_LONG = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const MONTHS_LONG = IS_PT ? ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'] : MONTHS;
 
 // Popula o <select id="sch-recur"> baseado na data escolhida (dow/nth/mês).
 // Restaura seleção anterior quando possível — mantém "personalizado" após reabrir.
@@ -36474,17 +36968,17 @@ function _updateScheduleRecurInfo() {
   const unit = r.interval === 1 ? unitSingular[r.pattern] : unitPlural[r.pattern];
   parts.push(`A cada ${r.interval} ${unit}`);
   if (r.pattern === 'weekly' && r.byWeekday && r.byWeekday.length) {
-    parts.push(`em ${r.byWeekday.map(i => WEEKDAY_LONG[i]).join(', ')}`);
+    parts.push(`${IS_PT ? 'em' : 'on'} ${_listJoin(r.byWeekday.map(i => WEEKDAY_LONG[i]))}`);
   }
   if (r.count) parts.push(`por ${r.count} ocorrências`);
   else if (r.until) parts.push(`até ${_fmtBrShort(r.until)}`);
   else parts.push('por até 2 anos');
-  info.textContent = parts.join(' · ');
+  info.textContent = parts.map(p => T(p)).join(' · ');
   info.style.display = '';
 }
 function _fmtBrShort(ymd) {
   const [y, m, d] = ymd.split('-');
-  return `${d}/${m}/${y}`;
+  return fmtDMY(d, m, y);
 }
 
 // Modal "Recorrência personalizada" — criado on-demand (sem poluir index.html).
@@ -39336,7 +39830,7 @@ async function loadPwAudit() {
 function fmtAuditWhen(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
-  return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleString(LOCALE, { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
 /* ─── BASE DE CONHECIMENTO ─────────────────────────────────────
@@ -39410,7 +39904,7 @@ function renderKbGrid() {
   wrap.innerHTML = list.map(p => {
     const author = userById(p.authorId);
     const excerpt = _stripHtml(p.content || '').slice(0, 160);
-    const dt = p.updatedAt ? new Date(p.updatedAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }) : '';
+    const dt = p.updatedAt ? new Date(p.updatedAt).toLocaleDateString(LOCALE, { day: '2-digit', month: 'short' }) : '';
     const tagsHtml = (p.tags || []).slice(0, 4).map(t => `<span class="kb-tag">${esc(t)}</span>`).join('');
     const contribs = (p.contributorIds || []).length;
     const cover = p.coverImage
@@ -39488,7 +39982,7 @@ async function openPostDetail(id, fromRoute) {
   if (!fromRoute) navPush(postPath(p));
   const author = userById(p.authorId);
   const contribs = (p.contributorIds || []).map(userById).filter(Boolean);
-  const dt = p.updatedAt ? new Date(p.updatedAt).toLocaleString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
+  const dt = p.updatedAt ? new Date(p.updatedAt).toLocaleString(LOCALE, { day: '2-digit', month: 'short', year: 'numeric' }) : '';
   const isAuthorOrPriv = p.authorId === me?.id || me?.isAdmin || me?.isModerator;
   const canEdit = true; // qualquer um da equipe edita (colaborativo)
   const detBody = $('kb-detail-content');

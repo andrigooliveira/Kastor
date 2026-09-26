@@ -11,6 +11,7 @@
    ═══════════════════════════════════════════════════════════════════════ */
 (function () {
   'use strict';
+  const LOCALE = (window.I18N && window.I18N.locale) || 'pt-BR';
 
   const KD = window.KD = {
     me: null,
@@ -60,10 +61,10 @@
       const dt = new Date(iso);
       const now = new Date();
       if (dt.toDateString() === now.toDateString())
-        return 'Hoje, ' + dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        return 'Hoje, ' + dt.toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' });
       const y = new Date(now); y.setDate(y.getDate() - 1);
       if (dt.toDateString() === y.toDateString()) return 'Ontem';
-      return dt.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+      return dt.toLocaleDateString(LOCALE, { day: '2-digit', month: 'short' });
     } catch { return ''; }
   }
   function jsonToText(n) {
@@ -95,7 +96,7 @@
     if (bundlePromise) return bundlePromise;
     bundlePromise = new Promise((resolve, reject) => {
       const s = document.createElement('script');
-      s.src = '/vendor/writer.bundle.js?v=20260924pg8';
+      s.src = '/vendor/writer.bundle.js?v=20260926i2';
       s.async = true;
       s.onload = () => window.KastorWriter ? resolve(window.KastorWriter) : reject(new Error('bundle sem KastorWriter'));
       s.onerror = () => reject(new Error('Falha ao carregar o editor.'));
@@ -471,7 +472,7 @@
   /* Retorna a data de hoje no formato DD/MM/AAAA. */
   function _kdToday() {
     const d = new Date();
-    return String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0') + '/' + d.getFullYear();
+    return d.toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit', year: 'numeric' });
   }
   /* Dados do cliente/projeto escolhido no modal pros modelos. Sem cliente,
      os modelos mantêm o texto de exemplo. */
@@ -724,9 +725,11 @@
           project: sel.projectId ? (R.projects || []).find(x => x.id === sel.projectId) : null
         };
         // html pode ser string OU function (que gera na hora, com data atual).
-        const html = typeof t.html === 'function' ? t.html(ctx) : t.html;
+        // Modelos escritos em português: no idioma da tela quando não for pt.
+        const raw = typeof t.html === 'function' ? t.html(ctx) : t.html;
+        const html = window.I18N && I18N.html ? I18N.html(raw) : raw;
         const subject = ctx.project ? ctx.project.name : ctx.client ? ctx.client.name : '';
-        _kdCreateDocWith(html, t.title + (subject ? ' — ' + subject : ''), link);
+        _kdCreateDocWith(html, window.T(t.title) + (subject ? ' — ' + subject : ''), link);
       });
     });
   }
@@ -919,7 +922,7 @@
       const ok = ap.status === 'approved';
       bar.className = 'kd-pub-approval is-done ' + (ok ? 'is-approved' : 'is-changes');
       bar.innerHTML = `<div class="kd-pub-approval-text"><strong>${ok ? 'Documento aprovado' : 'Ajustes pedidos'}</strong>
-        <span>${esc(ap.decidedBy || '')}${ap.decidedAt ? ' · ' + esc(new Date(ap.decidedAt).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })) : ''}${ap.comment ? ' — ' + esc(ap.comment) : ''}</span></div>`;
+        <span>${esc(ap.decidedBy || '')}${ap.decidedAt ? ' · ' + esc(new Date(ap.decidedAt).toLocaleString(LOCALE, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })) : ''}${ap.comment ? ' — ' + esc(ap.comment) : ''}</span></div>`;
     };
     if (a.status !== 'pending') { paintDone(a); document.querySelector('.writer-editor-view')?.appendChild(bar); return; }
     bar.innerHTML = `
@@ -995,7 +998,7 @@
         wsUrl: wsUrlBase,
         initialJSON: doc.content || bundle.emptyDoc(),
         user,
-        placeholder: canEdit ? 'Comece a escrever ou pressione / para comandos…' : 'Documento em modo leitura',
+        placeholder: window.T(canEdit ? 'Comece a escrever ou pressione / para comandos…' : 'Documento em modo leitura'),
         autofocus: canEdit,
         editable: canEdit,
         onUpdate: () => {
@@ -1766,7 +1769,7 @@
           last = key;
           KD.editor.commands.setBlockIndent(patch);
         }
-        tip.textContent = KD_MARKER_LABEL[side] + ' · ' + (shown / 10).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 2 }) + ' cm';
+        tip.textContent = KD_MARKER_LABEL[side] + ' · ' + (shown / 10).toLocaleString(LOCALE, { minimumFractionDigits: 1, maximumFractionDigits: 2 }) + ' cm';
         tip.style.left = (mm / KD_PAPER_MM * 100) + '%';
         if (cRect) guide.style.left = (rect.left + mm * pxPerMm - cRect.left) + 'px';
       };
@@ -3031,8 +3034,8 @@
       const now = new Date();
       const diffH = (now - d) / 36e5;
       if (diffH < 1) return Math.max(1, Math.round(diffH * 60)) + 'min';
-      if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-      return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+      if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' });
+      return d.toLocaleDateString(LOCALE, { day: '2-digit', month: 'short' });
     } catch { return ''; }
   }
 
@@ -3404,10 +3407,10 @@
       const d = new Date(iso);
       const now = new Date();
       const sameDay = d.toDateString() === now.toDateString();
-      if (sameDay) return 'Hoje, ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      if (sameDay) return 'Hoje, ' + d.toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' });
       const y = new Date(now); y.setDate(y.getDate() - 1);
-      if (d.toDateString() === y.toDateString()) return 'Ontem, ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-      return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }) + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      if (d.toDateString() === y.toDateString()) return 'Ontem, ' + d.toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' });
+      return d.toLocaleDateString(LOCALE, { day: '2-digit', month: 'short', year: 'numeric' }) + ' ' + d.toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' });
     } catch { return ''; }
   }
 
@@ -4120,7 +4123,7 @@
     const a = doc.approval, ap = KD_APPROVAL[a.status] || {};
     const I = window.KDUI.icons;
     const canEditDoc = ['owner', 'editor'].includes(KD.myRole);
-    const when = (iso) => iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+    const when = (iso) => iso ? new Date(iso).toLocaleString(LOCALE, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
     window.KDUI.openMenu(anchor, [
       { render: () => {
         const d = document.createElement('div');

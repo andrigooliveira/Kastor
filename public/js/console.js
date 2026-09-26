@@ -19,6 +19,12 @@
   const hrs = (n) => `${new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 }).format(Number(n) || 0)} h`;
   const initials = (n) => String(n || '?').trim().split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
   const MONTHS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  // País e idioma das organizações (lista e nomes vêm do i18n.js, em português).
+  const I = window.I18N;
+  const countryName = (c) => (c && I ? I.countryName(c, 'pt-BR') : (c || '—'));
+  const LANG_NAME = { pt: 'português', en: 'inglês' };
+  const countryOptions = (sel) => (I ? I.COUNTRIES.map(c => [c, countryName(c)]).sort((a, b) => a[1].localeCompare(b[1], 'pt-BR')) : [])
+    .map(([c, nm]) => `<option value="${c}"${c === sel ? ' selected' : ''}>${esc(nm)}</option>`).join('');
   function dateTime(iso) {
     if (!iso) return '—';
     const d = new Date(iso);
@@ -724,8 +730,9 @@
     const ownerLine = o.owner
       ? `Dono: <b>${esc(o.owner.name)}</b>${o.owner.email ? ` (${esc(o.owner.email)})` : ''}`
       : o.ownerInvite ? `Aguardando ${esc(o.ownerInvite.email)} aceitar o convite de dono${o.ownerInvite.expired ? ' (convite vencido)' : ''}` : 'Sem dono';
-    const ownerBtn = d.members.some(m => m.active) ? `<button class="c-btn c-btn--sm" id="org-owner-btn">${icon('crown')}Trocar dono</button>` : '';
-    main.innerHTML = pageHead(esc(o.name), `${ownerLine} · desde ${o.createdAt ? dateTime(o.createdAt).split(',')[0] : '—'} · última atividade ${rel(o.lastActivityAt)}`, ownerBtn, { href: '/console/organizacoes', label: 'Organizações' }) + `
+    const ownerBtn = `<button class="c-btn c-btn--sm" id="org-locale-btn">${icon('globe')}País e idioma</button>` + (d.members.some(m => m.active) ? `<button class="c-btn c-btn--sm" id="org-owner-btn">${icon('crown')}Trocar dono</button>` : '');
+    const localeLine = `${esc(countryName(o.country || 'BR'))} · ${LANG_NAME[o.effectiveLang] || o.effectiveLang}${o.lang ? ' (fixado)' : ''}`;
+    main.innerHTML = pageHead(esc(o.name), `${ownerLine} · ${localeLine} · desde ${o.createdAt ? dateTime(o.createdAt).split(',')[0] : '—'} · última atividade ${rel(o.lastActivityAt)}`, ownerBtn, { href: '/console/organizacoes', label: 'Organizações' }) + `
       <div class="c-kpis">
         ${kpi('Pessoas', 'users', num(o.members), `${num(o.admins)} admins · ${num(o.freelancers)} freelancers · ${num(o.deactivated)} desativadas`)}
         ${kpi('Ativas em 30 dias', 'activity', num(o.active30), `${num(o.active7)} nos últimos 7 dias`)}
@@ -789,6 +796,26 @@
         busy(ev.currentTarget, true, 'Trocando…');
         try { await api(`/console/orgs/${encodeURIComponent(id)}/owner`, { method: 'POST', body: { userId: f.userId.value } }); m.close(); toast('Dono trocado.'); pageOrg(id); }
         catch (e) { busy(ev.currentTarget, false); fieldError(f, 'userId', e.message); }
+      });
+    });
+    document.getElementById('org-locale-btn').addEventListener('click', () => {
+      const m = modal('País e idioma', `<form id="f-locale" novalidate>
+          <div class="c-field"><label class="c-label" for="lc-country">País</label>
+            <select class="c-select" id="lc-country" name="country">${countryOptions(o.country || 'BR')}</select></div>
+          <div class="c-field"><label class="c-label" for="lc-lang">Idioma padrão</label>
+            <select class="c-select" id="lc-lang" name="lang">
+              <option value=""${!o.lang ? ' selected' : ''}>Pelo país</option>
+              <option value="pt"${o.lang === 'pt' ? ' selected' : ''}>Português</option>
+              <option value="en"${o.lang === 'en' ? ' selected' : ''}>Inglês</option>
+            </select>
+            <span class="c-hint">Vale para quem não escolheu um idioma no próprio perfil.</span></div>
+          <div class="c-error" role="alert"></div></form>`,
+        `<button class="c-btn" data-close>Cancelar</button><button class="c-btn c-btn--primary" id="lc-go">Salvar</button>`);
+      m.el.querySelector('#lc-go').addEventListener('click', async (ev) => {
+        const f = m.el.querySelector('#f-locale');
+        busy(ev.currentTarget, true, 'Salvando…');
+        try { await api(`/console/orgs/${encodeURIComponent(id)}/locale`, { method: 'PUT', body: { country: f.country.value, lang: f.lang.value || null } }); m.close(); toast('País e idioma salvos.'); pageOrg(id); }
+        catch (e) { busy(ev.currentTarget, false); fieldError(f, (e.data && e.data.field) || 'country', e.message); }
       });
     });
     document.getElementById('org-plan-btn').addEventListener('click', () => planModal(o, () => pageOrg(id)));
@@ -1010,6 +1037,7 @@
       <div class="c-detail-section"><div class="c-facts">
         ${fact('E-mail', `<a href="mailto:${esc(r.email)}">${esc(r.email)}</a>`)}
         ${fact('Telefone', esc(r.phone))}
+        ${fact('País', r.country ? esc(countryName(r.country)) : '')}
         ${fact('Tamanho da equipe', esc(TEAM[r.teamSize] || r.teamSize))}
         ${fact('Como conheceu', esc(SOURCE[r.source] || ''))}
         ${fact('Site', site ? `<a href="${esc(site)}" target="_blank" rel="noopener noreferrer">${esc(r.website)}</a>` : '')}
@@ -1056,6 +1084,9 @@
     main.querySelector('[data-create-org]')?.addEventListener('click', () => {
       const m = modal('Aprovar e criar organização', `<form id="f-org" novalidate>
           <div class="c-field"><label class="c-label" for="org-name">Nome da organização</label><input class="c-input" id="org-name" name="name" maxlength="80" value="${esc(r.company)}"></div>
+          <div class="c-field"><label class="c-label" for="org-country">País</label>
+            <select class="c-select" id="org-country" name="country">${countryOptions(r.country || 'BR')}</select>
+            <span class="c-hint">Define o idioma da organização (Brasil e Portugal em português, os outros em inglês). Dá para mudar depois.</span></div>
           <div class="c-field"><label class="c-label" for="org-plan">Plano</label>
             <select class="c-select" id="org-plan" name="planId">${(state.plans || []).map(p => `<option value="${esc(p.id)}"${p.id === 'teste' ? ' selected' : ''}>${esc(p.name)} · ${esc(p.id === 'custom' ? 'sem limites (ajuste depois)' : p.trial ? '14 dias grátis' : planLimits(p))}</option>`).join('')}</select>
             <span class="c-hint">O teste de 30 dias começa quando o dono aceitar o convite. Tamanho da equipe informado: ${esc(TEAM[r.teamSize] || r.teamSize)}${TEAM_PLAN[r.teamSize] ? ` (plano provável depois: ${esc(((state.plans || []).find(p => p.id === TEAM_PLAN[r.teamSize]) || {}).name || '')})` : ''}.</span></div>
@@ -1068,7 +1099,7 @@
         const btn = m.el.querySelector('#org-go');
         busy(btn, true, 'Criando…');
         try {
-          const out = await api(`/console/access-requests/${encodeURIComponent(r.id)}/create-org`, { method: 'POST', body: { name: f.name.value, planId: f.planId ? f.planId.value : undefined } });
+          const out = await api(`/console/access-requests/${encodeURIComponent(r.id)}/create-org`, { method: 'POST', body: { name: f.name.value, country: f.country.value, planId: f.planId ? f.planId.value : undefined } });
           m.close();
           const i = state.wl.items.findIndex(x => x.id === r.id);
           const prev = state.wl.items[i].status;
@@ -1244,7 +1275,7 @@
   /* ═════════════ Pagamentos (Asaas) ═════════════ */
   const money = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(v) || 0);
   const BIL_STATUS = { active: ['Ativa', 'c-pill--good'], pending: ['Aguardando pagamento', 'c-pill--warn'], past_due: ['Atrasada', 'c-pill--bad'], canceled: ['Cancelada', ''], none: ['Sem assinatura', ''] };
-  const BIL_METHOD = { CREDIT_CARD: 'Cartão', PIX: 'Pix', BOLETO: 'Boleto' };
+  const BIL_METHOD = { CREDIT_CARD: 'Cartão', PIX_AUTOMATIC: 'Pix Automático', PIX: 'Pix', BOLETO: 'Boleto' };
   const bilStatusPill = (s) => { const [l, c] = BIL_STATUS[s] || [s, '']; return `<span class="c-pill ${c}">${l}</span>`; };
   const shortDate = (iso) => iso ? new Date(String(iso).length === 10 ? iso + 'T12:00:00' : iso).toLocaleDateString('pt-BR') : '—';
 
@@ -1300,6 +1331,12 @@
               <div class="c-error" role="alert"></div>
               <div class="c-actions" style="margin-top:12px"><button class="c-btn c-btn--sm" type="submit">Salvar</button></div>
             </form>
+            ${d.configured ? `<form id="f-pa" novalidate style="margin-top:18px;padding-top:14px;border-top:1px solid var(--c-line, rgba(127,127,127,.2))">
+              <label class="c-check"><input type="checkbox" name="pixAutomatic"${d.pixAutomatic ? ' checked' : ''}> Oferecer <b>Pix Automático</b></label>
+              <span class="c-hint">Só ligue se o Pix Automático estiver liberado na conta do Asaas (conta PJ aprovada, CNPJ com 6 meses ou mais). Ao salvar, o webhook passa a receber os avisos de autorização.</span>
+              <div class="c-error" role="alert"></div>
+              <div class="c-actions" style="margin-top:10px"><button class="c-btn c-btn--sm" type="submit">Salvar</button></div>
+            </form>` : ''}
             <div class="c-table-wrap" style="margin-top:16px"><table class="c-table"><thead><tr><th>Plano</th><th style="text-align:right">Mensal</th><th style="text-align:right">Anual</th><th style="text-align:right">Fundador</th></tr></thead><tbody>${priceRows}</tbody></table></div>
             <p class="c-hint" style="margin-top:8px">Os preços ficam no código (billing.js). Mudar não afeta fundadores nem o valor das assinaturas já criadas no Asaas.</p>
           </div>
@@ -1330,15 +1367,28 @@
         pageBilling();
       } catch (err) { fieldError(fd, err.data && err.data.field, err.message); }
     });
+    const fp = document.getElementById('f-pa');
+    fp?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        await api('/console/billing', { method: 'PUT', body: { env: d.env, pixAutomatic: fp.pixAutomatic.checked } });
+        toast(fp.pixAutomatic.checked ? 'Pix Automático ligado.' : 'Pix Automático desligado.');
+        pageBilling();
+      } catch (err) { fieldError(fp, err.data && err.data.field, err.message); }
+    });
     document.getElementById('bl-test')?.addEventListener('click', async (e) => {
       const btn = e.currentTarget, out = document.getElementById('bl-test-out');
       busy(btn, true, 'Testando…');
       try {
         const r = await api('/console/billing/test', { method: 'POST' });
         const w = r.webhook || {};
-        out.innerHTML = `<div class="c-banner ${r.key && w.enabled && !w.interrupted ? '' : 'c-banner--warn'}" style="margin-top:12px">${icon(r.key ? 'check' : 'triangle-alert')}<div>
+        const site = r.site || {};
+        // Checkout do cartão: o Asaas só aceita voltar pro site cadastrado na conta.
+        const siteMsg = !r.key || site.error ? '' : site.ok ? ` Site da conta: ${esc(site.registered)}.`
+          : ` <b>Site da conta no Asaas ${site.registered ? `é ${esc(site.registered)}` : 'não está preenchido'}</b>: o pagamento com cartão falha até ele ser ${esc(site.expected)} (Minha Conta › Informações).`;
+        out.innerHTML = `<div class="c-banner ${r.key && w.enabled && !w.interrupted && (site.ok || site.error) ? '' : 'c-banner--warn'}" style="margin-top:12px">${icon(r.key ? 'check' : 'triangle-alert')}<div>
           ${r.key ? 'Chave aceita pelo Asaas.' : `Chave recusada: ${esc(r.error || '')}`}
-          ${r.key ? (w.error ? ` Webhook não encontrado (${esc(w.error)}) — salve a chave de novo para recadastrar.` : w.interrupted ? ' <b>Fila do webhook pausada</b> no Asaas (muitas falhas seguidas): reative em Integrações › Webhooks.' : w.enabled ? ' Webhook ativo.' : ' Webhook desativado no Asaas.') : ''}</div></div>`;
+          ${r.key ? (w.error ? ` Webhook não encontrado (${esc(w.error)}) — salve a chave de novo para recadastrar.` : w.interrupted ? ' <b>Fila do webhook pausada</b> no Asaas (muitas falhas seguidas): reative em Integrações › Webhooks.' : w.enabled ? ' Webhook ativo.' : ' Webhook desativado no Asaas.') : ''}${siteMsg}</div></div>`;
         paint();
       } catch (err) { fail(err); }
       busy(btn, false);
@@ -1347,7 +1397,7 @@
 
   function billingCard(b) {
     if (!b) return `<section class="c-card" style="margin-bottom:16px"><div class="c-card-head"><div><div class="c-card-title">Assinatura</div><div class="c-card-sub">Sem assinatura pelo Asaas. O plano, se houver, foi definido aqui no console.</div></div></div></section>`;
-    const EV = { subscribed: 'Assinou', checkout: 'Abriu o pagamento', paid: 'Pagamento confirmado', overdue: 'Pagamento atrasou', canceled: 'Cancelou', plan_changed: 'Mudou de plano', refunded: 'Estorno', chargeback: 'Contestação', card_refused: 'Cartão recusado' };
+    const EV = { subscribed: 'Assinou', checkout: 'Abriu o pagamento', paid: 'Pagamento confirmado', overdue: 'Pagamento atrasou', canceled: 'Cancelou', plan_changed: 'Mudou de plano', refunded: 'Estorno', chargeback: 'Contestação', card_refused: 'Cartão recusado', pix_auto_refused: 'Pix Automático recusado', pix_auto_cancelled: 'Pix Automático cancelado', pix_auto_expired: 'Pix Automático expirou' };
     return `<section class="c-card" style="margin-bottom:16px">
       <div class="c-card-head"><div><div class="c-card-title">Assinatura</div>
         <div class="c-card-sub">${bilStatusPill(b.status)}${b.founder ? ' <span class="c-pill c-pill--accent">Fundador</span>' : ''}
@@ -1515,7 +1565,8 @@
     recovery_codes_issued: 'Gerou códigos de recuperação novos', password_changed: 'Trocou a senha',
     password_reset_requested: 'Pediu para redefinir a senha', password_reset: 'Redefiniu a senha por e-mail',
     server_recovery: 'Acesso recuperado pelo servidor', server_recovery_failed: 'Recuperação pelo servidor com código errado',
-    org_created: 'Criou uma organização', org_owner_changed: 'Trocou o dono de uma organização'
+    org_created: 'Criou uma organização', org_owner_changed: 'Trocou o dono de uma organização',
+    org_locale_changed: 'Mudou o país ou o idioma de uma organização'
   };
   const WARN_ACTIONS = new Set(['login_failed', 'two_factor_failed', 'recovery_code_failed', 'server_recovery_failed', 'server_recovery', 'recovery_code_used']);
   function auditDetails(e) {
@@ -1524,6 +1575,7 @@
     if (e.action === 'login' && d.via === 'recovery_code') return 'Com código de recuperação';
     if (e.action === 'request_status') return `${esc(d.email)}: ${esc((STATUS[d.from] || { label: d.from }).label)} → ${esc((STATUS[d.to] || { label: d.to }).label)}`;
     if (e.action === 'org_owner_changed') return `${esc(d.name)} → ${esc(d.owner)}`;
+    if (e.action === 'org_locale_changed') return `${esc(d.name)}: ${esc(d.from)} → ${esc(d.to)}`;
     if (e.action === 'org_created') return `${esc(d.name)} · dono: ${esc(d.email)}`;
     if (e.action === 'org_viewed') return esc(d.name || '');
     if (d.email) return esc(d.email);

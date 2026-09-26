@@ -546,7 +546,7 @@ test('Console: recuperação pelo servidor vale uma vez e redefine o acesso', as
 
 test('Lista de espera: formulário público e revisão no console', async () => {
   const H = { headers: { Cookie: consoleCookie } };
-  const base = { name: 'Paula Reis', email: 'paula@agencia.com', company: 'Agência Norte', teamSize: '6-15', consent: true, elapsedMs: 8000 };
+  const base = { name: 'Paula Reis', email: 'paula@agencia.com', company: 'Agência Norte', country: 'BR', teamSize: '6-15', consent: true, elapsedMs: 8000 };
   assert.equal((await postJson('/api/access-requests', { ...base, email: 'nao-e-email' })).status, 400);
   assert.equal((await postJson('/api/access-requests', { ...base, consent: false })).status, 400);
   assert.equal((await postJson('/api/access-requests', { ...base, email: 'robo@spam.com', company_site: 'x' })).status, 201, 'isca responde ok');
@@ -585,7 +585,7 @@ test('Organizações: migração cria a WSI com o dono e o seletor', async () =>
 });
 
 test('Organizações: aprovar pedido no console cria a organização e convida o dono', async () => {
-  const pedido = { name: 'Bia Souza', email: 'bia@beta.com', company: 'Agência Beta', teamSize: '1-5', consent: true, elapsedMs: 5000 };
+  const pedido = { name: 'Bia Souza', email: 'bia@beta.com', company: 'Agência Beta', country: 'BR', teamSize: '1-5', consent: true, elapsedMs: 5000 };
   // Outro IP: o formulário tem limite de 5 pedidos a cada 10 min por IP.
   assert.equal((await postJson('/api/access-requests', pedido, { headers: { 'X-Forwarded-For': '10.9.9.9' } })).status, 201);
   const list = await req('/api/console/access-requests', { headers: { Cookie: consoleCookie } });
@@ -1045,6 +1045,7 @@ test('Cobrança (Asaas): conectar pelo console, assinar, webhook, trocar plano e
   const got = [];
   const subs = {};
   let nSub = 0;
+  let checkoutError = null;
   const fake = http.createServer((rq, rs) => {
     let raw = '';
     rq.on('data', c => { raw += c; });
@@ -1063,8 +1064,11 @@ test('Cobrança (Asaas): conectar pelo console, assinar, webhook, trocar plano e
       if (u === '/subscriptions' && rq.method === 'POST') { const id = 'sub_' + (++nSub); subs[id] = body; return send(200, { id, ...body }); }
       let m;
       if ((m = u.match(/^\/subscriptions\/([^/]+)\/payments$/))) return send(200, { data: [{ id: 'pay_' + m[1], status: 'PENDING', invoiceUrl: 'https://asaas.test/i/' + m[1], dueDate: subs[m[1]].nextDueDate }] });
-      if ((m = u.match(/^\/subscriptions\/([^/]+)$/))) return send(200, { id: m[1], deleted: rq.method === 'DELETE' });
-      if (u === '/checkouts') return send(200, { id: 'chk_1' });
+      if ((m = u.match(/^\/subscriptions\/([^/]+)$/))) return send(200, { id: m[1], deleted: rq.method === 'DELETE', ...(rq.method === 'GET' ? { creditCard: { creditCardNumber: '4242', creditCardBrand: 'VISA' } } : {}) });
+      if (u === '/checkouts') return checkoutError ? send(400, { errors: [{ description: checkoutError }] }) : send(200, { id: 'chk_1' });
+      if (u === '/pix/automatic/authorizations' && rq.method === 'POST') return send(200, { id: 'auth_1', status: 'CREATED', ...body, payload: '00020126pixcopiaecola', encodedImage: 'iVBORw0KGgo=', immediateQrCode: { ...body.immediateQrCode, expirationDate: '2099-01-01 12:00:00' } });
+      if ((m = u.match(/^\/pix\/automatic\/authorizations\/([^/]+)$/))) return send(200, { id: m[1], status: 'CANCELLED' });
+      if (u === '/myAccount/commercialInfo/') return send(200, { site: 'https://outro-site.com.br' });
       if (u.startsWith('/payments')) return send(200, { data: [{ id: 'pay_sub_1', status: 'RECEIVED', value: 79, dueDate: '2026-01-01', billingType: 'PIX', invoiceUrl: 'https://asaas.test/i/1' }] });
       send(404, { errors: [{ description: 'não achei ' + u }] });
     });
@@ -1149,31 +1153,102 @@ test('Cobrança (Asaas): conectar pelo console, assinar, webhook, trocar plano e
     assert.equal(org.planInfo.readOnly, false);
 
     // Assinar de novo no cartão: página do Asaas; a assinatura chega pelo webhook.
-    const card = await call('POST', '/api/billing/checkout', betaCookie, { ...pix, method: 'CREDIT_CARD', cycle: 'YEARLY', planId: 'equipe' });
+    // Cartão: o checkout do Asaas recusa cliente sem telefone e endereço — o reWork pede antes.
+    const noPhone = await call('POST', '/api/billing/checkout', betaCookie, { ...pix, method: 'CREDIT_CARD', cycle: 'YEARLY', planId: 'equipe' });
+    assert.equal(noPhone.status, 400);
+    assert.equal(noPhone.body.field, 'phone');
+    const addr = { phone: '(11) 98765-4321', postalCode: '01310-100', address: 'Avenida Paulista', addressNumber: '1000', complement: '', province: 'Bela Vista', city: 'São Paulo', state: 'SP' };
+    assert.equal((await call('POST', '/api/billing/checkout', betaCookie, { ...pix, ...addr, addressNumber: '', method: 'CREDIT_CARD', cycle: 'YEARLY', planId: 'equipe' })).body.field, 'addressNumber');
+    const card = await call('POST', '/api/billing/checkout', betaCookie, { ...pix, ...addr, method: 'CREDIT_CARD', cycle: 'YEARLY', planId: 'equipe' });
     assert.equal(card.status, 200, JSON.stringify(card.body));
     assert.equal(card.body.kind, 'checkout');
     assert.ok(card.body.url.endsWith('chk_1'));
     const chk = got.find(g => g.url === '/checkouts').body;
     assert.deepEqual(chk.chargeTypes, ['RECURRENT']);
+    const custPut = got.filter(g => g.url === '/customers/cus_1' && g.method === 'PUT').pop().body;
+    assert.equal(custPut.phone, '11987654321');
+    assert.equal(custPut.postalCode, '01310100');
+    assert.equal(custPut.addressNumber, '1000');
+    assert.equal(custPut.province, 'Bela Vista');
     assert.equal(chk.subscription.cycle, 'YEARLY');
     assert.equal(chk.items[0].value, 1790);
+    assert.ok(chk.items[0].imageBase64 && chk.items[0].imageBase64.length > 100, 'o checkout de produção exige imagem no item');
+    assert.ok(chk.items[0].description.length <= 150);
     await webhook({ id: 'evt_3', event: 'SUBSCRIPTION_CREATED', subscription: { id: 'sub_card', customer: 'cus_1', value: 1790, cycle: 'YEARLY' } });
     b = (await req('/api/billing', { headers: { Cookie: betaCookie } })).body;
     assert.equal(b.billing.method, 'CREDIT_CARD');
     assert.equal(b.billing.cycle, 'YEARLY');
     assert.equal(b.billing.planId, 'equipe');
     assert.equal(b.billing.founder, true);
+    // Bandeira e final do cartão vêm da assinatura no Asaas.
+    await new Promise(r => setTimeout(r, 150));
+    b = (await req('/api/billing', { headers: { Cookie: betaCookie } })).body;
+    assert.deepEqual(b.billing.paymentMethod.card, { brand: 'VISA', last4: '4242' });
+    assert.equal(b.billing.paymentMethod.type, 'CREDIT_CARD');
+
+    // Recusa do Asaas (ex.: domínio do retorno diferente do site da conta) volta como 400 com a explicação, não 502.
+    checkoutError = 'O domínio da URL de sucesso não é o mesmo cadastrado em sua conta.';
+    assert.equal(b.billing.customer.addr.postalCode, '01310100');
+    const bad = await call('POST', '/api/billing/checkout', betaCookie, { ...pix, method: 'CREDIT_CARD' });
+    checkoutError = null;
+    assert.equal(bad.status, 400, JSON.stringify(bad.body));
+    assert.match(bad.body.error, /Minha Conta › Informações/);
+    const test1 = (await call('POST', '/api/console/billing/test', consoleCookie, {})).body;
+    assert.equal(test1.site.ok, false, 'o console avisa que o site cadastrado no Asaas é outro');
+    assert.equal(test1.site.registered, 'outro-site.com.br');
+
+    // Pix Automático: desligado não entra; ligado no console, o webhook passa a receber os avisos.
+    const pa = { ...pix, method: 'PIX_AUTOMATIC' };
+    assert.equal((await call('POST', '/api/billing/checkout', betaCookie, pa)).body.field, 'method');
+    const on = await call('PUT', '/api/console/billing', consoleCookie, { env: 'sandbox', pixAutomatic: true });
+    assert.equal(on.status, 200, JSON.stringify(on.body));
+    assert.ok(got.filter(g => g.url === '/webhooks/wh_1' && g.method === 'PUT').pop().body.events.includes('PIX_AUTOMATIC_RECURRING_AUTHORIZATION_ACTIVATED'));
+    b = (await req('/api/billing', { headers: { Cookie: betaCookie } })).body;
+    assert.ok(b.methods.includes('PIX_AUTOMATIC'));
+    const qr = await call('POST', '/api/billing/checkout', betaCookie, pa);
+    assert.equal(qr.status, 200, JSON.stringify(qr.body));
+    assert.equal(qr.body.kind, 'pix_auto');
+    assert.equal(qr.body.qr.payload, '00020126pixcopiaecola');
+    const authBody = got.filter(g => g.url === '/pix/automatic/authorizations').pop().body;
+    assert.equal(authBody.paymentCreationMode, 'SUBSCRIPTION');
+    assert.equal(authBody.frequency, 'MONTHLY');
+    assert.equal(authBody.immediateQrCode.originalValue, 79);
+    assert.equal(authBody.startDate, require('../billing')._test.addMonths(qr.body.coverFrom, 1), 'o débito automático começa um ciclo depois do 1º Pix');
+    assert.ok(authBody.contractId.length <= 35 && authBody.description.length <= 35);
+    b = (await req('/api/billing', { headers: { Cookie: betaCookie } })).body;
+    assert.equal(b.billing.pending.method, 'PIX_AUTOMATIC');
+    assert.equal(b.billing.pending.qr.payload, '00020126pixcopiaecola');
+    // 1º Pix pago: paga o período, liga o Pix Automático e apaga a assinatura do cartão.
+    await webhook({ id: 'evt_pa1', event: 'PAYMENT_RECEIVED', payment: { id: 'pay_pa1', customer: 'cus_1', billingType: 'PIX', value: 79, dueDate: qr.body.coverFrom, status: 'RECEIVED', pixAutomaticAuthorizationId: 'auth_1' } });
+    b = (await req('/api/billing', { headers: { Cookie: betaCookie } })).body;
+    assert.equal(b.billing.method, 'PIX_AUTOMATIC');
+    assert.equal(b.billing.pending, null);
+    assert.equal(b.billing.planId, 'essencial');
+    assert.equal(b.billing.paymentMethod.pixAuto.status, 'CREATED');
+    assert.ok(got.some(g => g.url === '/subscriptions/sub_card' && g.method === 'DELETE'), 'a assinatura do cartão sai');
+    assert.ok(Date.parse(b.plan.paidUntil) > Date.parse(qr.body.coverFrom) + 27 * 864e5);
+    await webhook({ id: 'evt_pa2', event: 'PIX_AUTOMATIC_RECURRING_AUTHORIZATION_ACTIVATED', authorization: { id: 'auth_1', customerId: 'cus_1', status: 'ACTIVE', subscriptionId: 'sub_pa' } });
+    b = (await req('/api/billing', { headers: { Cookie: betaCookie } })).body;
+    assert.equal(b.billing.paymentMethod.pixAuto.status, 'ACTIVE');
+    // Mudar de plano com Pix Automático pede autorização nova.
+    assert.equal((await call('POST', '/api/billing/plan', betaCookie, { planId: 'equipe' })).body.code, 'reauthorize');
+    assert.equal((await call('POST', '/api/billing/intro-done', betaCookie, {})).status, 200);
 
     // Console vê a assinatura e o fundador.
     const cv = (await req('/api/console/billing', { headers: { Cookie: consoleCookie } })).body;
     assert.equal(cv.founder.used, 1);
     const od = (await req('/api/console/orgs/' + betaOrgId, { headers: { Cookie: consoleCookie } })).body;
-    assert.equal(od.billing.subscriptionId, 'sub_card');
+    assert.equal(od.billing.subscriptionId, 'sub_pa');
     assert.ok(od.billing.log.length >= 4);
 
     // Quem não é dono não mexe.
     await call('POST', '/api/orgs/switch', admin, { orgId: (await req('/api/me', { headers: { Cookie: admin } })).body.orgs.find(o => o.name === 'WSI').id });
     assert.equal((await call('POST', '/api/billing/cancel', admin, {})).status, 400, 'a WSI não tem assinatura');
+    // Cancelar com Pix Automático também cancela a autorização no banco.
+    const cancel2 = await call('POST', '/api/billing/cancel', betaCookie, {});
+    assert.equal(cancel2.status, 200, JSON.stringify(cancel2.body));
+    assert.ok(got.some(g => g.url === '/pix/automatic/authorizations/auth_1' && g.method === 'DELETE'));
+    assert.ok(got.some(g => g.url === '/subscriptions/sub_pa' && g.method === 'DELETE'));
   } finally {
     delete process.env.ASAAS_API_BASE;
     await new Promise(r => fake.close(r));

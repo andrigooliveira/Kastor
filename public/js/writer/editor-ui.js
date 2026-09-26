@@ -15,6 +15,7 @@
    ═══════════════════════════════════════════════════════════════════════ */
 (function () {
   'use strict';
+  const LOCALE = (window.I18N && window.I18N.locale) || 'pt-BR';
 
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -736,7 +737,7 @@
       const st = e.storage.kdSearch;
       const n = st.results.length;
       const count = this.el.querySelector('[data-f="count"]');
-      count.textContent = st.term ? (n ? (st.index + 1) + ' de ' + n : 'Nenhum resultado') : '';
+      count.textContent = st.term ? (n ? window.T('{0} de {1}', st.index + 1, n) : 'Nenhum resultado') : '';
       count.classList.toggle('is-empty', !!st.term && !n);
       if (scroll && n) requestAnimationFrame(() => {
         document.querySelector('.kd-find-hit.is-current')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -1113,7 +1114,7 @@
         { divider: true },
         { label: 'Demanda, cliente ou projeto', icon: I.ref, kbd: '#', disabled: !editable, run: () => c().insertContent('#').run() },
         { label: 'Menção a pessoa', icon: I.at, kbd: '@', disabled: !editable, run: () => c().insertContent('@').run() },
-        { label: 'Data de hoje', icon: I.date, disabled: !editable, run: () => c().insertContent(new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' }) + ' ').run() },
+        { label: 'Data de hoje', icon: I.date, disabled: !editable, run: () => c().insertContent(new Date().toLocaleDateString(LOCALE, { day: '2-digit', month: 'long', year: 'numeric' }) + ' ').run() },
         { divider: true },
         { label: 'Linha divisória', icon: I.hr, disabled: !editable, run: () => c().setHorizontalRule().run() },
         { label: 'Quebra de página', icon: I.page, kbd: 'Mod+Enter', disabled: !editable, run: () => c().setPageBreak().run() },
@@ -1207,7 +1208,7 @@
     let paragraphs = 0;
     e.state.doc.descendants(n => { if (n.isTextblock && n.textContent.trim()) paragraphs++; });
     const pages = document.querySelectorAll('.kd-page-sheet').length || 1;
-    const n = (v) => v.toLocaleString('pt-BR');
+    const n = (v) => v.toLocaleString(LOCALE);
     const row = (l, a, b) => `<tr><td>${l}</td>${part ? `<td>${n(b)}</td>` : ''}<td>${n(a)}</td></tr>`;
     dialog('Contagem de palavras', `<table class="kd-wc">
       ${part ? '<thead><tr><th></th><th>Seleção</th><th>Documento</th></tr></thead>' : ''}

@@ -43,7 +43,32 @@ function mix(hex, pct, base) {
 const MESES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 const MESES_LONGOS = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
 const DIAS = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
-const fmtDue = ymd => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ymd || ''); return m ? `${Number(m[3])} ${MESES[Number(m[2]) - 1]}` : ''; };
+const EN_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const EN_MON_L = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const EN_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/* ── Idioma ──
+   Os modelos são escritos em português. withLang(lang, tr, fn) monta um modelo
+   em outro idioma (tr = tradutor do public/js/i18n.js, com o dicionário
+   public/i18n/<lang>.js). t('Olá, {0}.', x) traduz a frase inteira e só depois
+   encaixa os valores — que podem ser HTML (nome em negrito etc.). */
+let _lang = 'pt', _tr = null;
+function withLang(lang, tr, fn) {
+  const prev = [_lang, _tr];
+  _lang = lang || 'pt';
+  _tr = _lang === 'pt' ? null : (tr || null);
+  try { return fn(); } finally { [_lang, _tr] = prev; }
+}
+function t(s, ...args) {
+  const hit = _tr ? _tr.tx(s) : null;
+  const base = hit == null ? s : hit;
+  return args.length ? base.replace(/\{(\d+)\}/g, (m, i) => (args[+i] !== undefined ? String(args[+i]) : m)) : base;
+}
+const fmtDue = ymd => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ymd || '');
+  if (!m) return '';
+  return _lang === 'en' ? `${EN_MON[Number(m[2]) - 1]} ${Number(m[3])}` : `${Number(m[3])} ${MESES[Number(m[2]) - 1]}`;
+};
 const firstName = n => String(n || '').trim().split(/\s+/)[0] || '';
 const initials = n => String(n || '?').trim().split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
 
@@ -85,9 +110,9 @@ function layout({ subject, preheader = '', content, footer, baseUrl, darkCss = [
   const logo = baseUrl
     ? `<img src="${escHtml(baseUrl)}/favicon.png" width="22" height="22" alt="" style="display:block;border:0;width:22px;height:22px">`
     : '';
-  const prefs = baseUrl ? ` <a href="${escHtml(baseUrl)}/profile" class="rw-baixa" style="color:${T.baixa};text-decoration:underline">Ajustar notificações</a>` : '';
+  const prefs = baseUrl ? ` <a href="${escHtml(baseUrl)}/profile" class="rw-baixa" style="color:${T.baixa};text-decoration:underline">${t('Ajustar notificações')}</a>` : '';
   return `<!doctype html>
-<html lang="pt-BR"><head>
+<html lang="${_lang === 'pt' ? 'pt-BR' : _lang}"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light dark">
@@ -112,7 +137,7 @@ ${schemeCss(darkCss)}
 ${content}
     </td></tr>
     <tr><td class="rw-baixa" style="padding:20px 8px 0;font-family:${FONT};font-size:12px;line-height:1.55;color:${T.baixa}">
-      ${footer || 'Você recebe este e-mail porque tem uma conta no reWork.'}${prefs}
+      ${footer || t('Você recebe este e-mail porque tem uma conta no reWork.')}${prefs}
     </td></tr>
   </table>
 </td></tr>
@@ -134,9 +159,14 @@ const button = (href, label) => href ? `<table role="presentation" cellpadding="
   <td style="border-radius:6px;background:${T.roxo}">
     <a href="${escHtml(href)}" style="display:inline-block;padding:12px 22px;font-family:${FONT};font-size:14px;font-weight:600;line-height:1;color:#ffffff;text-decoration:none;border-radius:6px">${escHtml(label)}</a>
   </td></tr></table>` : '';
+// Nota pequena no rodapé do cartão (validade do link etc.).
+const note = html => `<p class="rw-baixa" style="margin:24px 0 0;font-size:12px;line-height:1.6;color:${T.baixa}">${html}</p>`;
+const linkLine = link => `<p class="rw-baixa" style="margin:12px 0 0;font-size:11px;line-height:1.5;color:${T.baixa};word-break:break-all">${escHtml(link)}</p>`;
+const days = n => (n === 1 ? t('{0} dia', n) : t('{0} dias', n));
 
 // Comentário: autor + texto com a marca roxa à esquerda (como no app).
-function commentBlock(author, text, verb = 'comentou') {
+function commentBlock(author, text, verb) {
+  if (verb === undefined) verb = t('comentou');
   const body = escHtml(String(text || '').trim().slice(0, 600)).replace(/\n/g, '<br>');
   const head = author ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:10px"><tr>
       <td class="rw-chip" style="width:26px;height:26px;border-radius:999px;background:${T.roxoDim};color:${T.roxoText};font-size:10px;font-weight:700;text-align:center;vertical-align:middle">${escHtml(initials(author))}</td>
@@ -155,10 +185,10 @@ function demandCard({ demand, project, stage, due }) {
   const stageLine = stage && stage.label
     ? `<span style="display:inline-block;width:8px;height:8px;border-radius:999px;background:${color};vertical-align:middle"></span><span class="rw-text" style="vertical-align:middle;padding-left:6px;font-size:13px;font-weight:600;color:${T.text}">${escHtml(stage.label)}</span>`
     : '';
-  const dueLine = due ? `<span class="rw-baixa" style="vertical-align:middle;padding-left:${stageLine ? 12 : 0}px;font-size:13px;color:${T.baixa};${NUM}">Prazo ${escHtml(fmtDue(due))}</span>` : '';
+  const dueLine = due ? `<span class="rw-baixa" style="vertical-align:middle;padding-left:${stageLine ? 12 : 0}px;font-size:13px;color:${T.baixa};${NUM}">${t('Prazo {0}', escHtml(fmtDue(due)))}</span>` : '';
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:24px"><tr>
     <td class="rw-stagecard" style="background:${mix(color, 0.06, T.surface)};border:1px solid ${mix(color, 0.22, T.surface)};border-left:3px solid ${color};border-radius:10px;padding:16px 18px">
-      <div class="rw-baixa" style="${LABEL};color:${T.baixa}">Demanda</div>
+      <div class="rw-baixa" style="${LABEL};color:${T.baixa}">${t('Demanda')}</div>
       <div class="rw-text" style="margin-top:6px;font-size:15px;line-height:1.35;font-weight:600;letter-spacing:-0.005em;color:${T.text}">${escHtml(demand.name)}</div>
       ${where ? `<div class="rw-media" style="margin-top:2px;font-size:13px;line-height:1.5;color:${T.media}">${where}</div>` : ''}
       ${stageLine || dueLine ? `<div style="margin-top:12px">${stageLine}${dueLine}</div>` : ''}
@@ -180,40 +210,42 @@ function notification(type, ctx) {
   let subject, tag, tone = 'roxo', title, lead = '', extra = '', preheader;
   switch (type) {
     case 'assigned':
-      subject = `[reWork] Você é o responsável: ${demand.name}`;
-      tag = 'Responsável'; title = 'Você é o responsável por esta demanda';
-      lead = who ? `${strong(who)} passou a demanda pra você${stageName ? ` na etapa ${strong(stageName)}` : ''}.` : `A demanda foi atribuída a você${stageName ? ` na etapa ${strong(stageName)}` : ''}.`;
+      subject = t('[reWork] Você é o responsável: {0}', demand.name);
+      tag = t('Responsável'); title = t('Você é o responsável por esta demanda');
+      lead = who
+        ? (stageName ? t('{0} passou a demanda pra você na etapa {1}.', strong(who), strong(stageName)) : t('{0} passou a demanda pra você.', strong(who)))
+        : (stageName ? t('A demanda foi atribuída a você na etapa {0}.', strong(stageName)) : t('A demanda foi atribuída a você.'));
       preheader = `${demand.name}${stageName ? ' · ' + stageName : ''}`;
       break;
     case 'stage_assigned':
-      subject = `[reWork] Nova etapa para você: ${demand.name}`;
-      tag = 'Nova etapa'; title = `A etapa ${escHtml(stageName || '—')} é sua`;
-      lead = `A demanda avançou e agora está com você.`;
-      preheader = `${demand.name} chegou na etapa ${stageName || '—'}`;
+      subject = t('[reWork] Nova etapa para você: {0}', demand.name);
+      tag = t('Nova etapa'); title = t('A etapa {0} é sua', escHtml(stageName || '—'));
+      lead = t('A demanda avançou e agora está com você.');
+      preheader = t('{0} chegou na etapa {1}', demand.name, stageName || '—');
       break;
     case 'mention':
-      subject = `[reWork] Mencionado em: ${demand.name}`;
-      tag = 'Menção'; title = who ? `${escHtml(who)} mencionou você` : 'Você foi mencionado';
+      subject = t('[reWork] Mencionado em: {0}', demand.name);
+      tag = t('Menção'); title = who ? t('{0} mencionou você', escHtml(who)) : t('Você foi mencionado');
       extra = commentBlock(who, commentText);
       preheader = String(commentText || '').slice(0, 120);
       break;
     case 'watch_stage':
-      subject = `[reWork] Etapa avançou (você observa): ${demand.name}`;
-      tag = 'Observando'; tone = 'neutro'; title = 'Uma demanda que você observa avançou';
-      lead = `Agora está na etapa ${strong(stageName || '—')}.`;
+      subject = t('[reWork] Etapa avançou (você observa): {0}', demand.name);
+      tag = t('Observando'); tone = 'neutro'; title = t('Uma demanda que você observa avançou');
+      lead = t('Agora está na etapa {0}.', strong(stageName || '—'));
       preheader = `${demand.name} → ${stageName || '—'}`;
       break;
     case 'watch_comment':
-      subject = `[reWork] Novo comentário (você observa): ${demand.name}`;
-      tag = 'Observando'; tone = 'neutro'; title = 'Novo comentário numa demanda que você observa';
+      subject = t('[reWork] Novo comentário (você observa): {0}', demand.name);
+      tag = t('Observando'); tone = 'neutro'; title = t('Novo comentário numa demanda que você observa');
       extra = commentBlock(who, commentText);
       preheader = `${who ? who + ': ' : ''}${String(commentText || '').slice(0, 120)}`;
       break;
     case 'reminder':
-      subject = `[reWork] Lembrete: ${demand.name}`;
-      tag = 'Lembrete'; tone = 'aviso'; title = 'Seu lembrete chegou';
-      lead = 'Você pediu pra ser lembrado desta demanda.';
-      extra = commentText ? commentBlock('Sua anotação', commentText, '') : '';
+      subject = t('[reWork] Lembrete: {0}', demand.name);
+      tag = t('Lembrete'); tone = 'aviso'; title = t('Seu lembrete chegou');
+      lead = t('Você pediu pra ser lembrado desta demanda.');
+      extra = commentText ? commentBlock(t('Sua anotação'), commentText, '') : '';
       preheader = commentText ? String(commentText).slice(0, 120) : demand.name;
       break;
     default:
@@ -224,15 +256,15 @@ ${headline(title)}
 ${lead ? paragraph(lead) : ''}
 ${extra}
 ${demandCard({ demand, project, stage, due })}
-${button(demandUrl, 'Abrir demanda')}`;
+${button(demandUrl, t('Abrir demanda'))}`;
   const html = layout({ subject, preheader, content, baseUrl, darkCss: stageCardDark(stage),
-    footer: 'Você recebe este aviso porque ativou as notificações por e-mail no reWork.' });
+    footer: t('Você recebe este aviso porque ativou as notificações por e-mail no reWork.') });
   const plain = s => String(s || '').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
   const text = [plain(title), lead && plain(lead), commentText && `"${String(commentText).slice(0, 600)}"`,
-    `\nDemanda: ${demand.name}`,
-    project && `Projeto: ${[project.client, project.name].filter(Boolean).join(' · ')}`,
-    stage && stage.label && `Etapa: ${stage.label}`,
-    demandUrl && `\nAbrir: ${demandUrl}`].filter(Boolean).join('\n');
+    `\n${t('Demanda: {0}', demand.name)}`,
+    project && t('Projeto: {0}', [project.client, project.name].filter(Boolean).join(' · ')),
+    stage && stage.label && t('Etapa: {0}', stage.label),
+    demandUrl && `\n${t('Abrir: {0}', demandUrl)}`].filter(Boolean).join('\n');
   return { subject, html, text };
 }
 
@@ -241,7 +273,12 @@ ${button(demandUrl, 'Abrir demanda')}`;
 function digest({ firstName: fname, overdue, dueToday, dueSoon, unread, baseUrl, todayYmd, hour = 8, scheduleLabel }) {
   const tYmd = todayYmd || new Date().toISOString().slice(0, 10);
   const daysBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 864e5);
-  const dateLabel = (() => { const d = new Date(tYmd + 'T12:00:00'); return `${DIAS[d.getDay()]}, ${d.getDate()} de ${MESES_LONGOS[d.getMonth()]}`; })();
+  const dateLabel = (() => {
+    const d = new Date(tYmd + 'T12:00:00');
+    return _lang === 'en'
+      ? `${EN_DAYS[d.getDay()]}, ${EN_MON_L[d.getMonth()]} ${d.getDate()}`
+      : `${DIAS[d.getDay()]}, ${d.getDate()} de ${MESES_LONGOS[d.getMonth()]}`;
+  })();
 
   const kpi = (n, label, tone) => {
     const color = n ? (tone === 'perigo' ? T.perigo : tone === 'aviso' ? T.aviso : T.text) : T.baixa;
@@ -278,17 +315,17 @@ function digest({ firstName: fname, overdue, dueToday, dueSoon, unread, baseUrl,
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:4px">
       ${shown.map((it, i) => { const [w, c, col] = whenFn(it); return row(it, w, c, col, i === 0); }).join('')}
     </table>
-    ${items.length > shown.length ? `<div class="rw-baixa" style="margin-top:6px;font-size:12px;color:${T.baixa}">…e mais ${items.length - shown.length}</div>` : ''}`;
+    ${items.length > shown.length ? `<div class="rw-baixa" style="margin-top:6px;font-size:12px;color:${T.baixa}">${t('…e mais {0}', items.length - shown.length)}</div>` : ''}`;
   };
-  const late = it => { const n = daysBetween(it.due, tYmd); return [n === 1 ? 'há 1 dia' : `há ${n} dias`, 'rw-perigo', T.perigo]; };
-  const todayW = () => ['hoje', 'rw-aviso', T.aviso];
-  const soon = it => { const n = daysBetween(tYmd, it.due); return [n === 1 ? 'amanhã' : fmtDue(it.due), 'rw-media', T.media]; };
+  const late = it => { const n = daysBetween(it.due, tYmd); return [n === 1 ? t('há 1 dia') : t('há {0} dias', n), 'rw-perigo', T.perigo]; };
+  const todayW = () => [t('hoje'), 'rw-aviso', T.aviso];
+  const soon = it => { const n = daysBetween(tYmd, it.due); return [n === 1 ? t('amanhã') : fmtDue(it.due), 'rw-media', T.media]; };
 
   const total = overdue.length + dueToday.length + dueSoon.length;
   const intro = total
-    ? `Você tem ${strong(total === 1 ? '1 demanda' : `${total} demandas`)} com prazo pedindo atenção.`
-    : 'Nenhum prazo apertado hoje. Só alguns avisos que ficaram pra trás.';
-  const unreadBlock = unread.length ? `<div class="rw-baixa" style="margin-top:28px;${LABEL};color:${T.baixa}">Notificações não lidas · ${unread.length}</div>
+    ? t('Você tem {0} com prazo pedindo atenção.', strong(total === 1 ? t('1 demanda') : t('{0} demandas', total)))
+    : t('Nenhum prazo apertado hoje. Só alguns avisos que ficaram pra trás.');
+  const unreadBlock = unread.length ? `<div class="rw-baixa" style="margin-top:28px;${LABEL};color:${T.baixa}">${t('Notificações não lidas · {0}', unread.length)}</div>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:4px">
       ${unread.slice(0, 8).map((n, i) => row({ name: n.name, href: n.href, client: n.meta }, '', '', T.baixa, i === 0)).join('')}
     </table>` : '';
@@ -297,20 +334,20 @@ function digest({ firstName: fname, overdue, dueToday, dueSoon, unread, baseUrl,
 <h1 class="rw-text" style="margin:8px 0 0;font-family:${FONT};font-size:28px;line-height:1.15;font-weight:700;letter-spacing:-0.02em;color:${T.text}">${greetingFor(hour)}, ${escHtml(fname)}</h1>
 ${paragraph(intro, 8)}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:24px"><tr>
-  ${kpi(overdue.length, 'Em atraso', 'perigo')}${gap}${kpi(dueToday.length, 'Vencem hoje', 'aviso')}${gap}${kpi(dueSoon.length, 'Próximos 3 dias', 'neutro')}
+  ${kpi(overdue.length, t('Em atraso'), 'perigo')}${gap}${kpi(dueToday.length, t('Vencem hoje'), 'aviso')}${gap}${kpi(dueSoon.length, t('Próximos 3 dias'), 'neutro')}
 </tr></table>
-${section('Em atraso', overdue, late)}
-${section('Vencem hoje', dueToday, todayW)}
-${section('Próximos 3 dias', dueSoon, soon)}
+${section(t('Em atraso'), overdue, late)}
+${section(t('Vencem hoje'), dueToday, todayW)}
+${section(t('Próximos 3 dias'), dueSoon, soon)}
 ${unreadBlock}
-${button(baseUrl, 'Abrir o reWork')}`;
-  const subject = `[reWork] Resumo do dia — ${overdue.length + dueToday.length} pra hoje`;
-  const preheader = [overdue.length && `${overdue.length} em atraso`, dueToday.length && `${dueToday.length} vencem hoje`, dueSoon.length && `${dueSoon.length} nos próximos dias`, unread.length && `${unread.length} não lidas`].filter(Boolean).join(' · ');
-  const html = layout({ subject, preheader, content, baseUrl, footer: `Você recebe este resumo ${scheduleLabel || 'nos dias úteis às 8h'}. Dá pra mudar o horário no seu perfil.` });
+${button(baseUrl, t('Abrir o reWork'))}`;
+  const subject = t('[reWork] Resumo do dia — {0} pra hoje', overdue.length + dueToday.length);
+  const preheader = [overdue.length && t('{0} em atraso', overdue.length), dueToday.length && t('{0} vencem hoje', dueToday.length), dueSoon.length && t('{0} nos próximos dias', dueSoon.length), unread.length && t('{0} não lidas', unread.length)].filter(Boolean).join(' · ');
+  const html = layout({ subject, preheader, content, baseUrl, footer: t('Você recebe este resumo {0}. Dá pra mudar o horário no seu perfil.', scheduleLabel || t('nos dias úteis às 8h')) });
   return { subject, html };
 }
 
-const greetingFor = h => (h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite');
+const greetingFor = h => t(h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite');
 
 /* Avisos segurados durante o modo Focado: um e-mail só, quando o foco acaba.
    items: [{ name, href, meta }] (meta = tipo do aviso + quem disparou). */
@@ -327,129 +364,127 @@ function heldSummary({ firstName: fname, items, baseUrl }) {
       ${it.meta ? `<div class="rw-baixa" style="margin-top:2px;font-size:12px;line-height:1.5;color:${T.baixa}">${escHtml(it.meta)}</div>` : ''}
     </td></tr>`;
   }).join('');
-  const content = `${chip('Fim do foco', 'roxo')}
-${headline(n === 1 ? 'Chegou 1 aviso enquanto você estava focado' : `Chegaram ${n} avisos enquanto você estava focado`)}
-${paragraph(`Seguramos tudo pra não te interromper, ${strong(fname)}. Aqui está o que ficou pra ver.`)}
+  const content = `${chip(t('Fim do foco'), 'roxo')}
+${headline(n === 1 ? t('Chegou 1 aviso enquanto você estava focado') : t('Chegaram {0} avisos enquanto você estava focado', n))}
+${paragraph(t('Seguramos tudo pra não te interromper, {0}. Aqui está o que ficou pra ver.', strong(fname)))}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:20px">${rows}</table>
-${n > shown.length ? `<div class="rw-baixa" style="margin-top:6px;font-size:12px;color:${T.baixa}">…e mais ${n - shown.length}</div>` : ''}
-${button(baseUrl, 'Abrir o reWork')}`;
-  const subject = `[reWork] ${n === 1 ? '1 aviso' : `${n} avisos`} enquanto você estava focado`;
-  const html = layout({ subject, preheader: shown.slice(0, 3).map(x => x.name).join(' · '), content, baseUrl, footer: 'Avisos segurados pelo status Focado.' });
-  const text = `Enquanto você estava focado:\n\n` + items.map(x => `- ${x.name}${x.meta ? ' (' + x.meta + ')' : ''}${x.href ? '\n  ' + x.href : ''}`).join('\n');
+${n > shown.length ? `<div class="rw-baixa" style="margin-top:6px;font-size:12px;color:${T.baixa}">${t('…e mais {0}', n - shown.length)}</div>` : ''}
+${button(baseUrl, t('Abrir o reWork'))}`;
+  const subject = n === 1 ? t('[reWork] 1 aviso enquanto você estava focado') : t('[reWork] {0} avisos enquanto você estava focado', n);
+  const html = layout({ subject, preheader: shown.slice(0, 3).map(x => x.name).join(' · '), content, baseUrl, footer: t('Avisos segurados pelo status Focado.') });
+  const text = `${t('Enquanto você estava focado:')}\n\n` + items.map(x => `- ${x.name}${x.meta ? ' (' + x.meta + ')' : ''}${x.href ? '\n  ' + x.href : ''}`).join('\n');
   return { subject, html, text };
 }
 
 function resetPassword({ name, link, baseUrl }) {
-  const subject = '[reWork] Redefinir sua senha';
-  const content = `${chip('Conta', 'neutro')}
-${headline('Redefinir sua senha')}
-${paragraph(`Olá, ${strong(firstName(name))}. Recebemos um pedido pra redefinir a senha da sua conta. Toque no botão abaixo pra criar uma nova.`)}
-${button(link, 'Criar nova senha')}
-<p class="rw-baixa" style="margin:24px 0 0;font-size:12px;line-height:1.6;color:${T.baixa}">O link vale por <strong>1 hora</strong> e só pode ser usado uma vez. Se não foi você, ignore este e-mail — sua senha continua a mesma.</p>
-<p class="rw-baixa" style="margin:12px 0 0;font-size:11px;line-height:1.5;color:${T.baixa};word-break:break-all">${escHtml(link)}</p>`;
-  const html = layout({ subject, preheader: 'O link vale por 1 hora.', content, baseUrl, footer: 'Este e-mail foi enviado porque alguém pediu pra redefinir a senha desta conta.' });
-  const text = `Olá ${name}, abra este link em 1h pra redefinir sua senha:\n\n${link}\n\nSe não foi você, ignore.`;
+  const subject = t('[reWork] Redefinir sua senha');
+  const content = `${chip(t('Conta'), 'neutro')}
+${headline(t('Redefinir sua senha'))}
+${paragraph(t('Olá, {0}. Recebemos um pedido pra redefinir a senha da sua conta. Toque no botão abaixo pra criar uma nova.', strong(firstName(name))))}
+${button(link, t('Criar nova senha'))}
+${note(t('O link vale por {0} e só pode ser usado uma vez. Se não foi você, ignore este e-mail — sua senha continua a mesma.', `<strong>${t('1 hora')}</strong>`))}
+${linkLine(link)}`;
+  const html = layout({ subject, preheader: t('O link vale por 1 hora.'), content, baseUrl, footer: t('Este e-mail foi enviado porque alguém pediu pra redefinir a senha desta conta.') });
+  const text = `${t('Olá {0}, abra este link em 1h pra redefinir sua senha:', name)}\n\n${link}\n\n${t('Se não foi você, ignore.')}`;
   return { subject, html, text };
 }
 
 /* Confirmação de e-mail (vincular, confirmar o atual ou trocar). Vai pro
    endereço NOVO: só vale depois que a pessoa abre o link. */
 function emailConfirm({ name, email, link, baseUrl, isChange }) {
-  const subject = isChange ? '[reWork] Confirme seu novo e-mail' : '[reWork] Confirme seu e-mail';
-  const content = `${chip('Conta', 'neutro')}
-${headline(isChange ? 'Confirme seu novo e-mail' : 'Confirme seu e-mail')}
-${paragraph(`Olá, ${strong(firstName(name))}. ${isChange
-    ? `Você pediu para trocar o e-mail da sua conta no reWork para ${strong(email)}.`
-    : `Falta só confirmar que ${strong(email)} é seu para vincular à sua conta no reWork.`} Depois de confirmar, você também pode entrar com esse e-mail.`)}
-${button(link, 'Confirmar e-mail')}
-<p class="rw-baixa" style="margin:24px 0 0;font-size:12px;line-height:1.6;color:${T.baixa}">O link vale por <strong>24 horas</strong> e só pode ser usado uma vez. Se não foi você, ignore este e-mail: nada muda na conta.</p>
-<p class="rw-baixa" style="margin:12px 0 0;font-size:11px;line-height:1.5;color:${T.baixa};word-break:break-all">${escHtml(link)}</p>`;
-  const html = layout({ subject, preheader: 'O link vale por 24 horas.', content, baseUrl, footer: 'Este e-mail foi enviado porque alguém pediu para vincular este endereço a uma conta do reWork.' });
-  const text = `Olá ${name}, abra este link em até 24h para confirmar ${email} na sua conta do reWork:
-
-${link}
-
-Se não foi você, ignore.`;
+  const subject = isChange ? t('[reWork] Confirme seu novo e-mail') : t('[reWork] Confirme seu e-mail');
+  const content = `${chip(t('Conta'), 'neutro')}
+${headline(isChange ? t('Confirme seu novo e-mail') : t('Confirme seu e-mail'))}
+${paragraph(isChange
+    ? t('Olá, {0}. Você pediu para trocar o e-mail da sua conta no reWork para {1}. Depois de confirmar, você também pode entrar com esse e-mail.', strong(firstName(name)), strong(email))
+    : t('Olá, {0}. Falta só confirmar que {1} é seu para vincular à sua conta no reWork. Depois de confirmar, você também pode entrar com esse e-mail.', strong(firstName(name)), strong(email)))}
+${button(link, t('Confirmar e-mail'))}
+${note(t('O link vale por {0} e só pode ser usado uma vez. Se não foi você, ignore este e-mail: nada muda na conta.', `<strong>${t('24 horas')}</strong>`))}
+${linkLine(link)}`;
+  const html = layout({ subject, preheader: t('O link vale por 24 horas.'), content, baseUrl, footer: t('Este e-mail foi enviado porque alguém pediu para vincular este endereço a uma conta do reWork.') });
+  const text = `${t('Olá {0}, abra este link em até 24h para confirmar {1} na sua conta do reWork:', name, email)}\n\n${link}\n\n${t('Se não foi você, ignore.')}`;
   return { subject, html, text };
 }
 /* Código de acesso (verificação em duas etapas por e-mail). */
 function loginCode({ name, code, baseUrl, ip }) {
-  const subject = `[reWork] Seu código de acesso: ${code}`;
-  const content = `${chip('Segurança', 'neutro')}
-${headline('Seu código de acesso')}
-${paragraph(`Olá, ${strong(firstName(name))}. Use este código para terminar de entrar no reWork:`)}
+  const subject = t('[reWork] Seu código de acesso: {0}', code);
+  const content = `${chip(t('Segurança'), 'neutro')}
+${headline(t('Seu código de acesso'))}
+${paragraph(t('Olá, {0}. Use este código para terminar de entrar no reWork:', strong(firstName(name))))}
 <div class="rw-text" style="margin:22px 0 4px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:34px;font-weight:700;letter-spacing:.3em;color:${T.text}">${escHtml(code)}</div>
-<p class="rw-baixa" style="margin:18px 0 0;font-size:12px;line-height:1.6;color:${T.baixa}">O código vale por <strong>10 minutos</strong>.${ip ? ` Pedido feito do endereço ${escHtml(ip)}.` : ''} Se não foi você, alguém sabe a sua senha: troque-a no seu perfil.</p>`;
-  const html = layout({ subject, preheader: `Código: ${code} · vale 10 minutos.`, content, baseUrl, footer: 'Você recebe este e-mail porque ativou a verificação em duas etapas.' });
-  const text = `Seu código de acesso ao reWork: ${code}
-
-Vale por 10 minutos. Se não foi você, troque a sua senha.`;
+<p class="rw-baixa" style="margin:18px 0 0;font-size:12px;line-height:1.6;color:${T.baixa}">${ip
+    ? t('O código vale por {0}. Pedido feito do endereço {1}. Se não foi você, alguém sabe a sua senha: troque-a no seu perfil.', `<strong>${t('10 minutos')}</strong>`, escHtml(ip))
+    : t('O código vale por {0}. Se não foi você, alguém sabe a sua senha: troque-a no seu perfil.', `<strong>${t('10 minutos')}</strong>`)}</p>`;
+  const html = layout({ subject, preheader: t('Código: {0} · vale 10 minutos.', code), content, baseUrl, footer: t('Você recebe este e-mail porque ativou a verificação em duas etapas.') });
+  const text = `${t('Seu código de acesso ao reWork: {0}', code)}\n\n${t('Vale por 10 minutos. Se não foi você, troque a sua senha.')}`;
   return { subject, html, text };
 }
 /* Aviso: verificação em duas etapas ativada/desativada. */
 function twoFactorNotice({ name, enabled, method, baseUrl }) {
-  const how = method === 'totp' ? 'app autenticador' : 'código por e-mail';
-  const subject = enabled ? '[reWork] App autenticador ativado' : '[reWork] App autenticador desativado';
-  const content = `${chip('Segurança', 'neutro')}
-${headline(enabled ? 'App autenticador ativado' : 'App autenticador desativado')}
+  const how = method === 'totp' ? t('app autenticador') : t('código por e-mail');
+  const subject = enabled ? t('[reWork] App autenticador ativado') : t('[reWork] App autenticador desativado');
+  const content = `${chip(t('Segurança'), 'neutro')}
+${headline(enabled ? t('App autenticador ativado') : t('App autenticador desativado'))}
 ${paragraph(enabled
-    ? `Olá, ${strong(firstName(name))}. A partir de agora, entrar no reWork pede também o ${strong(how)}.`
-    : `Olá, ${strong(firstName(name))}. O app autenticador foi desligado na sua conta. Entrar volta a pedir o código enviado para o seu e-mail.`)}
-${paragraph('Se não foi você, entre no reWork, troque a sua senha e fale com a coordenação da sua equipe.')}
-${button(baseUrl, 'Abrir o reWork')}`;
-  const html = layout({ subject, preheader: enabled ? `Agora o login pede o ${how}.` : 'O login voltou a pedir o código por e-mail.', content, baseUrl, footer: 'Aviso de segurança da sua conta no reWork.' });
-  const text = enabled ? `O app autenticador foi ativado na sua conta do reWork.` : `O app autenticador foi desativado na sua conta do reWork; o login volta a pedir o código por e-mail. Se não foi você, troque a senha.`;
+    ? t('Olá, {0}. A partir de agora, entrar no reWork pede também o {1}.', strong(firstName(name)), strong(how))
+    : t('Olá, {0}. O app autenticador foi desligado na sua conta. Entrar volta a pedir o código enviado para o seu e-mail.', strong(firstName(name))))}
+${paragraph(t('Se não foi você, entre no reWork, troque a sua senha e fale com a coordenação da sua equipe.'))}
+${button(baseUrl, t('Abrir o reWork'))}`;
+  const html = layout({ subject, preheader: enabled ? t('Agora o login pede o {0}.', how) : t('O login voltou a pedir o código por e-mail.'), content, baseUrl, footer: t('Aviso de segurança da sua conta no reWork.') });
+  const text = enabled ? t('O app autenticador foi ativado na sua conta do reWork.') : t('O app autenticador foi desativado na sua conta do reWork; o login volta a pedir o código por e-mail. Se não foi você, troque a senha.');
   return { subject, html, text };
 }
 
 /* Aviso pro endereço ANTIGO quando alguém pede a troca (segurança). */
 function emailChangeNotice({ name, newEmail, baseUrl }) {
-  const subject = '[reWork] Pedido para trocar o e-mail da sua conta';
-  const content = `${chip('Segurança', 'neutro')}
-${headline('Pedido para trocar o seu e-mail')}
-${paragraph(`Olá, ${strong(firstName(name))}. Alguém com a sua senha pediu para trocar o e-mail da sua conta no reWork para ${strong(newEmail)}. A troca só acontece quando o link enviado para o endereço novo for aberto.`)}
-${paragraph('Se foi você, não precisa fazer nada. Se não foi, entre no reWork, cancele a troca no seu perfil e troque a sua senha.')}
-${button(baseUrl, 'Abrir o reWork')}`;
-  const html = layout({ subject, preheader: `Troca para ${newEmail} aguardando confirmação.`, content, baseUrl, footer: 'Aviso de segurança da sua conta no reWork.' });
-  const text = `Olá ${name}, pediram para trocar o e-mail da sua conta no reWork para ${newEmail}. Se não foi você, entre no reWork, cancele a troca no perfil e troque a senha.`;
+  const subject = t('[reWork] Pedido para trocar o e-mail da sua conta');
+  const content = `${chip(t('Segurança'), 'neutro')}
+${headline(t('Pedido para trocar o seu e-mail'))}
+${paragraph(t('Olá, {0}. Alguém com a sua senha pediu para trocar o e-mail da sua conta no reWork para {1}. A troca só acontece quando o link enviado para o endereço novo for aberto.', strong(firstName(name)), strong(newEmail)))}
+${paragraph(t('Se foi você, não precisa fazer nada. Se não foi, entre no reWork, cancele a troca no seu perfil e troque a sua senha.'))}
+${button(baseUrl, t('Abrir o reWork'))}`;
+  const html = layout({ subject, preheader: t('Troca para {0} aguardando confirmação.', newEmail), content, baseUrl, footer: t('Aviso de segurança da sua conta no reWork.') });
+  const text = t('Olá {0}, pediram para trocar o e-mail da sua conta no reWork para {1}. Se não foi você, entre no reWork, cancele a troca no perfil e troque a senha.', name, newEmail);
   return { subject, html, text };
 }
 
 /* Convite pra entrar no reWork. `inviter` = quem convidou; `access` = rótulo
    do nível (Membro, Moderador…); `squads` = nomes das equipes liberadas. */
 function invite({ name, inviter, org, access, squads, link, expiresAt, baseUrl, isOwner }) {
-  const who = inviter || 'A equipe';
+  const who = inviter || t('A equipe');
   if (isOwner) return ownerInvite({ name, org, link, expiresAt, baseUrl });
-  const subject = org ? `${who} convidou você para a ${org} no reWork` : `${who} convidou você para o reWork`;
-  const hello = name ? `Olá, ${strong(firstName(name))}. ` : 'Olá! ';
+  const subject = org ? t('{0} convidou você para a {1} no reWork', who, org) : t('{0} convidou você para o reWork', who);
+  const hello = name ? t('Olá, {0}.', strong(firstName(name))) : t('Olá!');
   const squadList = Array.isArray(squads) && squads.length ? squads : [];
   const details = [
-    access ? `Acesso: ${strong(access)}` : '',
-    squadList.length ? `${squadList.length > 1 ? 'Equipes' : 'Equipe'}: ${squadList.map(n => strong(n)).join(', ')}` : ''
+    access ? t('Acesso: {0}', strong(t(access))) : '',
+    squadList.length ? (squadList.length > 1 ? t('Equipes: {0}', squadList.map(n => strong(t(n))).join(', ')) : t('Equipe: {0}', strong(t(squadList[0])))) : ''
   ].filter(Boolean).join('<br>');
-  const days = expiresAt ? Math.max(1, Math.round((Date.parse(expiresAt) - Date.now()) / 864e5)) : 7;
-  const content = `${chip('Convite', 'roxo')}
-${headline('Você foi convidado para o reWork')}
-${paragraph(`${hello}${strong(who)} chamou você para a equipe${org ? ` ${strong(org)}` : ''} no reWork, onde ficam as demandas, os prazos e as entregas do time.`)}
+  const n = expiresAt ? Math.max(1, Math.round((Date.parse(expiresAt) - Date.now()) / 864e5)) : 7;
+  const content = `${chip(t('Convite'), 'roxo')}
+${headline(t('Você foi convidado para o reWork'))}
+${paragraph(`${hello} ${org
+    ? t('{0} chamou você para a equipe {1} no reWork, onde ficam as demandas, os prazos e as entregas do time.', strong(who), strong(org))
+    : t('{0} chamou você para a equipe no reWork, onde ficam as demandas, os prazos e as entregas do time.', strong(who))}`)}
 ${details ? paragraph(details, 14) : ''}
-${button(link, 'Aceitar convite')}
-<p class="rw-baixa" style="margin:24px 0 0;font-size:12px;line-height:1.6;color:${T.baixa}">O convite vale por <strong>${days} ${days === 1 ? 'dia' : 'dias'}</strong>. Você cria sua senha ao aceitar. Se não esperava este e-mail, pode ignorar.</p>
-<p class="rw-baixa" style="margin:12px 0 0;font-size:11px;line-height:1.5;color:${T.baixa};word-break:break-all">${escHtml(link)}</p>`;
-  const html = layout({ subject, preheader: `${who} chamou você para a equipe.`, content, baseUrl, footer: 'Este e-mail foi enviado porque alguém da equipe convidou este endereço para o reWork.' });
-  const text = `${name ? `Olá ${name}! ` : 'Olá! '}${who} convidou você para o reWork.\n\nAceite o convite e crie sua senha por este link (vale por ${days} dias):\n\n${link}\n\nSe não esperava este e-mail, pode ignorar.`;
+${button(link, t('Aceitar convite'))}
+${note(t('O convite vale por {0}. Você cria sua senha ao aceitar. Se não esperava este e-mail, pode ignorar.', `<strong>${days(n)}</strong>`))}
+${linkLine(link)}`;
+  const html = layout({ subject, preheader: t('{0} chamou você para a equipe.', who), content, baseUrl, footer: t('Este e-mail foi enviado porque alguém da equipe convidou este endereço para o reWork.') });
+  const text = `${name ? t('Olá {0}!', name) : t('Olá!')} ${t('{0} convidou você para o reWork.', who)}\n\n${t('Aceite o convite e crie sua senha por este link (vale por {0}):', days(n))}\n\n${link}\n\n${t('Se não esperava este e-mail, pode ignorar.')}`;
   return { subject, html, text };
 }
 
 /* Lista de espera: confirmação pra quem pediu acesso. */
 const TEAM_SIZE_LABEL = { '1-5': '1 a 5 pessoas', '6-15': '6 a 15 pessoas', '16-50': '16 a 50 pessoas', '51-200': '51 a 200 pessoas', '200+': 'Mais de 200 pessoas' };
 function accessRequestReceived({ name, company, baseUrl }) {
-  const subject = 'Recebemos seu pedido de acesso ao reWork';
-  const content = `${chip('Lista de espera', 'roxo')}
-${headline('Seu pedido chegou')}
-${paragraph(`Olá, ${strong(firstName(name))}! Recebemos o pedido de acesso ao reWork para ${strong(company)}.`)}
-${paragraph('Estamos abrindo o reWork aos poucos, para acompanhar de perto cada equipe que entra. Vamos analisar seu pedido e responder neste e-mail.', 8)}`;
-  const html = layout({ subject, preheader: 'Vamos analisar e responder neste e-mail.', content, baseUrl, footer: 'Você recebeu este e-mail porque pediu acesso ao reWork.' });
-  const text = `Olá ${name}! Recebemos o pedido de acesso ao reWork para ${company}. Vamos analisar e responder neste e-mail.`;
+  const subject = t('Recebemos seu pedido de acesso ao reWork');
+  const content = `${chip(t('Lista de espera'), 'roxo')}
+${headline(t('Seu pedido chegou'))}
+${paragraph(t('Olá, {0}! Recebemos o pedido de acesso ao reWork para {1}.', strong(firstName(name)), strong(company)))}
+${paragraph(t('Estamos abrindo o reWork aos poucos, para acompanhar de perto cada equipe que entra. Vamos analisar seu pedido e responder neste e-mail.'), 8)}`;
+  const html = layout({ subject, preheader: t('Vamos analisar e responder neste e-mail.'), content, baseUrl, footer: t('Você recebeu este e-mail porque pediu acesso ao reWork.') });
+  const text = t('Olá {0}! Recebemos o pedido de acesso ao reWork para {1}. Vamos analisar e responder neste e-mail.', name, company);
   return { subject, html, text };
 }
 
@@ -512,28 +547,31 @@ ${paragraph('Se isso não era esperado, confira a Auditoria do console e troque 
 
 /* Convite pro dono de uma organização nova (pedido aprovado na lista de espera). */
 function ownerInvite({ name, org, link, expiresAt, baseUrl }) {
-  const subject = `Sua organização ${org || ''} no reWork está pronta`.replace(/\s+/g, ' ');
-  const days = expiresAt ? Math.max(1, Math.round((Date.parse(expiresAt) - Date.now()) / 864e5)) : 7;
-  const content = `${chip('Acesso liberado', 'roxo')}
-${headline('Seu acesso ao reWork foi aprovado')}
-${paragraph(`${name ? `Olá, ${strong(firstName(name))}! ` : 'Olá! '}O pedido de acesso${org ? ` da ${strong(org)}` : ''} foi aprovado. A organização já está criada e você é o dono dela.`)}
-${paragraph('Crie sua conta pelo botão abaixo. Depois é só convidar as pessoas, criar as equipes e cadastrar os clientes.', 8)}
-${button(link, 'Criar minha conta')}
-<p class="rw-baixa" style="margin:24px 0 0;font-size:12px;line-height:1.6;color:${T.baixa}">O link vale por <strong>${days} ${days === 1 ? 'dia' : 'dias'}</strong>. Se já tem conta no reWork, é só confirmar sua senha.</p>
-<p class="rw-baixa" style="margin:12px 0 0;font-size:11px;line-height:1.5;color:${T.baixa};word-break:break-all">${escHtml(link)}</p>`;
-  const html = layout({ subject, preheader: 'A organização já está criada. Falta só você.', content, baseUrl, footer: 'Você recebeu este e-mail porque pediu acesso ao reWork.' });
-  const text = `${name ? `Olá ${name}! ` : ''}O pedido de acesso${org ? ` da ${org}` : ''} ao reWork foi aprovado. Crie sua conta (link vale ${days} dias):\n\n${link}`;
+  const subject = org ? t('Sua organização {0} no reWork está pronta', org) : t('Sua organização no reWork está pronta');
+  const n = expiresAt ? Math.max(1, Math.round((Date.parse(expiresAt) - Date.now()) / 864e5)) : 7;
+  const hello = name ? t('Olá, {0}!', strong(firstName(name))) : t('Olá!');
+  const content = `${chip(t('Acesso liberado'), 'roxo')}
+${headline(t('Seu acesso ao reWork foi aprovado'))}
+${paragraph(`${hello} ${org
+    ? t('O pedido de acesso da {0} foi aprovado. A organização já está criada e você é o dono dela.', strong(org))
+    : t('O pedido de acesso foi aprovado. A organização já está criada e você é o dono dela.')}`)}
+${paragraph(t('Crie sua conta pelo botão abaixo. Depois é só convidar as pessoas, criar as equipes e cadastrar os clientes.'), 8)}
+${button(link, t('Criar minha conta'))}
+${note(t('O link vale por {0}. Se já tem conta no reWork, é só confirmar sua senha.', `<strong>${days(n)}</strong>`))}
+${linkLine(link)}`;
+  const html = layout({ subject, preheader: t('A organização já está criada. Falta só você.'), content, baseUrl, footer: t('Você recebeu este e-mail porque pediu acesso ao reWork.') });
+  const text = `${name ? t('Olá {0}!', name) + ' ' : ''}${org ? t('O pedido de acesso da {0} ao reWork foi aprovado.', org) : t('O pedido de acesso ao reWork foi aprovado.')} ${t('Crie sua conta (link vale {0}):', days(n))}\n\n${link}`;
   return { subject, html, text };
 }
 
 function testEmail({ name, baseUrl }) {
-  const subject = '[reWork] Teste de notificação por e-mail';
-  const content = `${chip('Tudo certo', 'roxo')}
-${headline('Seus e-mails estão chegando')}
-${paragraph(`Olá, ${strong(firstName(name))}! Este é um teste do canal de e-mails do reWork.`)}
-${paragraph('A partir de agora você recebe aqui os avisos de demandas, menções e o resumo do dia — conforme o que estiver ligado no seu perfil.', 8)}`;
-  const html = layout({ subject, preheader: 'Canal de e-mails funcionando.', content, baseUrl });
-  const text = `Olá ${name}! Este é um teste do canal de e-mails do reWork.`;
+  const subject = t('[reWork] Teste de notificação por e-mail');
+  const content = `${chip(t('Tudo certo'), 'roxo')}
+${headline(t('Seus e-mails estão chegando'))}
+${paragraph(t('Olá, {0}! Este é um teste do canal de e-mails do reWork.', strong(firstName(name))))}
+${paragraph(t('A partir de agora você recebe aqui os avisos de demandas, menções e o resumo do dia — conforme o que estiver ligado no seu perfil.'), 8)}`;
+  const html = layout({ subject, preheader: t('Canal de e-mails funcionando.'), content, baseUrl });
+  const text = t('Olá {0}! Este é um teste do canal de e-mails do reWork.', name);
   return { subject, html, text };
 }
 
@@ -616,17 +654,17 @@ ${button(link, 'Responder no console')}`;
 
 /* Suporte: resposta da equipe → quem abriu o chamado. */
 function supportToCustomer({ ticket, message, link, baseUrl }) {
-  const t = ticket || {}, m = message || {};
-  const closed = t.status === 'closed';
-  const subject = `[reWork] Resposta ao chamado #${t.number}: ${t.subject}`;
-  const content = `${chip(`Suporte · #${t.number}`, 'roxo')}
-${headline(closed ? 'Seu chamado foi respondido e resolvido' : 'Respondemos seu chamado')}
-${paragraph(`Olá, ${strong(firstName(t.userName))}. A equipe do reWork respondeu ${strong(t.subject)}:`, 10)}
+  const tk = ticket || {}, m = message || {};
+  const closed = tk.status === 'closed';
+  const subject = t('[reWork] Resposta ao chamado #{0}: {1}', tk.number, tk.subject);
+  const content = `${chip(t('Suporte · #{0}', tk.number), 'roxo')}
+${headline(closed ? t('Seu chamado foi respondido e resolvido') : t('Respondemos seu chamado'))}
+${paragraph(t('Olá, {0}. A equipe do reWork respondeu {1}:', strong(firstName(tk.userName)), strong(tk.subject)), 10)}
 ${paragraph(escHtml(m.body || '').replace(/\n/g, '<br>'), 14)}
-${button(link, closed ? 'Ver o chamado' : 'Responder')}`;
-  const html = layout({ subject, preheader: String(m.body || '').slice(0, 90), content, baseUrl, footer: 'Você recebeu este e-mail porque abriu um chamado no suporte do reWork.' });
-  const text = `Olá ${firstName(t.userName)}! A equipe do reWork respondeu seu chamado #${t.number} (${t.subject}):\n\n${m.body || ''}\n\n${link}`;
+${button(link, closed ? t('Ver o chamado') : t('Responder'))}`;
+  const html = layout({ subject, preheader: String(m.body || '').slice(0, 90), content, baseUrl, footer: t('Você recebeu este e-mail porque abriu um chamado no suporte do reWork.') });
+  const text = `${t('Olá {0}! A equipe do reWork respondeu seu chamado #{1} ({2}):', firstName(tk.userName), tk.number, tk.subject)}\n\n${m.body || ''}\n\n${link}`;
   return { subject, html, text };
 }
 
-module.exports = { supportToStaff, supportToCustomer, escHtml, layout, notification, digest, heldSummary, resetPassword, emailConfirm, emailChangeNotice, loginCode, twoFactorNotice, invite, accessRequestReceived, accessRequestNew, consoleAdminInvite, consoleResetPassword, consoleRecoveryNotice, testEmail, previewSamples };
+module.exports = { withLang, supportToStaff, supportToCustomer, escHtml, layout, notification, digest, heldSummary, resetPassword, emailConfirm, emailChangeNotice, loginCode, twoFactorNotice, invite, accessRequestReceived, accessRequestNew, consoleAdminInvite, consoleResetPassword, consoleRecoveryNotice, testEmail, previewSamples };

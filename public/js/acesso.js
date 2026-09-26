@@ -8,6 +8,21 @@
   const openedAt = Date.now();
   const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+  // País (define o idioma da organização): lista no idioma da tela, já
+  // escolhido pelo idioma do navegador (pt-BR → Brasil, en-GB → Reino Unido…).
+  (function fillCountries() {
+    const I = window.I18N;
+    const sel = f.elements.country;
+    if (!I || !sel) return;
+    const loc = I.locale || 'pt-BR';
+    const opts = I.COUNTRIES.map(c => [c, I.countryName(c, loc)]).sort((a, b) => a[1].localeCompare(b[1], loc));
+    for (const [c, nm] of opts) sel.add(new Option(nm, c));
+    const nav = String((navigator.languages && navigator.languages[0]) || navigator.language || '');
+    const region = (nav.match(/-([A-Za-z]{2})$/) || [])[1];
+    const guess = I.validCountry(region) || (/^pt/i.test(nav) ? 'BR' : '');
+    if (guess) sel.value = guess;
+  })();
+
   function invalid(field, msg) {
     f.querySelectorAll('.is-invalid').forEach(el => el.classList.remove('is-invalid'));
     const el = field === 'consent' ? document.getElementById('consent-row') : f.elements[field];
@@ -22,13 +37,14 @@
     const v = (k) => (f.elements[k].value || '').trim();
     const body = {
       name: v('name'), email: v('email'), company: v('company'), role: v('role'),
-      teamSize: v('teamSize'), phone: v('phone'), website: v('website'), source: v('source'),
+      teamSize: v('teamSize'), country: v('country'), phone: v('phone'), website: v('website'), source: v('source'),
       message: v('message'), consent: f.elements.consent.checked,
       company_site: v('company_site'), elapsedMs: Date.now() - openedAt
     };
     if (body.name.length < 2) return invalid('name', 'Informe seu nome.');
     if (!EMAIL_RE.test(body.email)) return invalid('email', 'Informe um e-mail válido.');
     if (body.company.length < 2) return invalid('company', 'Informe o nome da empresa ou agência.');
+    if (!body.country) return invalid('country', 'Escolha o país.');
     if (!body.teamSize) return invalid('teamSize', 'Escolha o tamanho da equipe.');
     if (!body.consent) return invalid('consent', 'Marque a concordância para enviar.');
     btn.disabled = true;

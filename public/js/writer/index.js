@@ -36,6 +36,9 @@ import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 import { prosemirrorJSONToYXmlFragment } from 'y-prosemirror';
 
+// Formato de data/número do idioma da tela (i18n.js); português por padrão.
+const LOCALE = (typeof window !== 'undefined' && window.I18N && window.I18N.locale) || 'pt-BR';
+
 // Lowlight singleton com os langs "common" (js, ts, py, bash, css, html,
 // json, md, sql, xml, yaml, etc). Suficiente pra 95% dos casos e ~40KB.
 const lowlight = createLowlight(common);
@@ -50,9 +53,12 @@ const lowlight = createLowlight(common);
    cursor mostra a dica do "/"; documento vazio mostra o texto de boas-vindas. */
 function _kdPlaceholder(base) {
   return ({ editor, node }) => {
-    if (node.type.name === 'heading') return 'Título ' + (node.attrs.level || 1);
-    if (editor.isEmpty) return base || 'Comece a escrever…';
-    return 'Digite / para comandos';
+    // O placeholder vive dentro do editor (contenteditable), fora do alcance do
+    // tradutor da página: já sai no idioma da tela.
+    const tr = (typeof window !== 'undefined' && window.T) || ((s) => s);
+    if (node.type.name === 'heading') return tr('Título {0}', node.attrs.level || 1);
+    if (editor.isEmpty) return base || tr('Comece a escrever…');
+    return tr('Digite / para comandos');
   };
 }
 
@@ -1040,7 +1046,7 @@ const KdSlashCommands = [
   { group: 'Inserir', key: 'image', title: 'Imagem',      desc: 'Enviar do computador',            keywords: ['imagem','foto','upload','png','jpg'], icon: KD_SLASH_ICONS.image, run: (ed, r) => { ed.chain().focus().deleteRange(r).run(); _hook('uploadImage'); } },
   { group: 'Inserir', key: 'gallery', title: 'Arquivo da Galeria', desc: 'Anexar algo que já está na plataforma', keywords: ['galeria','anexo','arquivo'], icon: KD_SLASH_ICONS.clip, run: (ed, r) => { ed.chain().focus().deleteRange(r).run(); _hook('gallery'); } },
   { group: 'Inserir', key: 'table', title: 'Tabela',      desc: '3 × 3 com cabeçalho',             keywords: ['table','tabela','grade'],        icon: KD_SLASH_ICONS.table, run: (ed, r) => ed.chain().focus().deleteRange(r).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
-  { group: 'Inserir', key: 'date', title: 'Data de hoje', desc: 'Insere a data atual',             keywords: ['data','hoje','dia'],             icon: KD_SLASH_ICONS.date, run: (ed, r) => ed.chain().focus().deleteRange(r).insertContent(new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' }) + ' ').run() },
+  { group: 'Inserir', key: 'date', title: 'Data de hoje', desc: 'Insere a data atual',             keywords: ['data','hoje','dia'],             icon: KD_SLASH_ICONS.date, run: (ed, r) => ed.chain().focus().deleteRange(r).insertContent(new Date().toLocaleDateString(LOCALE, { day: '2-digit', month: 'long', year: 'numeric' }) + ' ').run() },
   { group: 'Inserir', key: 'hr', title: 'Linha divisória', desc: 'Separa seções',                  keywords: ['hr','divisor','divisoria','separador','linha'], icon: KD_SLASH_ICONS.hr, run: (ed, r) => ed.chain().focus().deleteRange(r).setHorizontalRule().run() },
   { group: 'Inserir', key: 'pagebreak', title: 'Quebra de página', desc: 'Continua na próxima folha', keywords: ['quebra','pagina','page','break'], icon: KD_SLASH_ICONS.page, run: (ed, r) => ed.chain().focus().deleteRange(r).setPageBreak().run() },
   { group: 'Blocos', key: 'quote', title: 'Citação',      desc: 'Destaca uma fala ou trecho',      keywords: ['quote','citacao','blockquote'],  icon: KD_SLASH_ICONS.quote, run: (ed, r) => ed.chain().focus().deleteRange(r).toggleBlockquote().run() },

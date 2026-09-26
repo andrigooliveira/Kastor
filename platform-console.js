@@ -41,6 +41,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const QRCode = require('qrcode');
+const i18n = require('./public/js/i18n.js');
 
 const CONSOLE_COOKIE = 'rework_console';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -67,7 +68,7 @@ module.exports = function setupConsole(app, deps) {
   const {
     store, auth, saveEntity, removeEntity, uid, nowISO, notDeleted,
     makeRateLimit, clientIp, parseCookies, isHttpsRequest, isValidEmail,
-    mailEnabled, sendEmail, emailTpl, appBaseUrl, uploadsDir, buildSha, integrations, publicDir
+    mailEnabled, sendEmail, emailTpl, appBaseUrl, uploadsDir, buildSha, integrations, publicDir, mailIn
   } = deps;
 
   const now = () => Date.now();
@@ -267,7 +268,7 @@ module.exports = function setupConsole(app, deps) {
       saveEntity('platformAdmins', a);
       const link = `${appBaseUrl(req)}/console/redefinir/${token}`;
       const m = emailTpl.consoleResetPassword({ name: a.name, link, baseUrl: appBaseUrl(req) });
-      setImmediate(() => sendEmail(a.email, m.subject, m.html, m.text));
+      setImmediate(() => sendEmail(a.email, m.subject, m.html, m.text, { lang: 'pt' }));
       audit(req, 'password_reset_requested', null, a);
     }
     res.json({ ok: true, emailEnabled: true });
@@ -325,7 +326,7 @@ module.exports = function setupConsole(app, deps) {
     if (mailEnabled()) {
       const others = db.platformAdmins.filter(x => x.id !== a.id && x.active !== false && x.totpEnabledAt);
       const m = emailTpl.consoleRecoveryNotice({ name: a.name, email: a.email, baseUrl: appBaseUrl(req) });
-      for (const o of others) setImmediate(() => sendEmail(o.email, m.subject, m.html, m.text));
+      for (const o of others) setImmediate(() => sendEmail(o.email, m.subject, m.html, m.text, { lang: 'pt' }));
     }
     res.json({ link, name: a.name });
   });
@@ -449,6 +450,7 @@ module.exports = function setupConsole(app, deps) {
     const ownerInvite = !org.ownerId ? (db.invites || []).filter(i => i.orgId === org.id && i.kind === 'owner' && !i.revokedAt).sort((x, y) => String(y.createdAt).localeCompare(String(x.createdAt)))[0] : null;
     return {
       id: org.id, name: org.name, logo: org.logo || null, isDefault: !!org.isDefault,
+      country: org.country || null, lang: org.lang || null, effectiveLang: i18n.validLang(org.lang) || i18n.langForCountry(org.country),
       status: org.status || 'active', createdAt: org.createdAt || null,
       owner: owner ? { id: owner.id, name: owner.name, email: owner.email || null } : null,
       ownerInvite: ownerInvite ? { email: ownerInvite.email, expiresAt: ownerInvite.expiresAt, accepted: !!ownerInvite.acceptedAt, expired: Date.parse(ownerInvite.expiresAt) <= t } : null,
@@ -655,6 +657,24 @@ module.exports = function setupConsole(app, deps) {
     res.json(orgSummary(org));
   });
 
+  /* ── País e idioma (o idioma padrão da organização vem do país) ── */
+  app.put('/api/console/orgs/:id/locale', requireConsole, (req, res) => {
+    const org = allOrgs().find(o => o.id === req.params.id);
+    if (!org) return res.status(404).json({ error: 'Organização não encontrada.' });
+    const b = req.body || {};
+    const country = i18n.validCountry(b.country);
+    if (!country) return res.status(400).json({ error: 'Escolha um país da lista.', field: 'country' });
+    if (b.lang && !i18n.validLang(b.lang)) return res.status(400).json({ error: 'Idioma inválido.', field: 'lang' });
+    const label = (o) => `${o.country || 'BR'} · ${o.lang || 'idioma pelo país'}`;
+    const from = label(org);
+    org.country = country;
+    org.lang = i18n.validLang(b.lang);
+    org.updatedAt = nowISO();
+    saveEntity('organizations', org);
+    audit(req, 'org_locale_changed', { orgId: org.id, name: org.name, from, to: label(org) });
+    res.json(orgSummary(org));
+  });
+
   /* ── Exclusão (guarda 30 dias), restauração, backup e apagar de vez ── */
   const sameName = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
   app.post('/api/console/orgs/:id/delete', requireConsole, (req, res) => {
@@ -730,7 +750,7 @@ module.exports = function setupConsole(app, deps) {
   function publicRequest(r) {
     return {
       id: r.id, name: r.name, email: r.email, company: r.company, website: r.website || '',
-      teamSize: r.teamSize, role: r.role || '', phone: r.phone || '', source: r.source || '',
+      teamSize: r.teamSize, country: r.country || null, role: r.role || '', phone: r.phone || '', source: r.source || '',
       message: r.message || '', status: r.status, notes: r.notes || [],
       createdAt: r.createdAt, updatedAt: r.updatedAt || r.createdAt,
       reviewedBy: r.reviewedBy || null, reviewedAt: r.reviewedAt || null, submissions: r.submissions || 1,
@@ -748,10 +768,12 @@ module.exports = function setupConsole(app, deps) {
     if (name.length < 2) return res.status(400).json({ error: 'Informe seu nome.', field: 'name' });
     if (!isValidEmail(email)) return res.status(400).json({ error: 'Informe um e-mail válido.', field: 'email' });
     if (company.length < 2) return res.status(400).json({ error: 'Informe o nome da empresa ou agência.', field: 'company' });
+    const country = i18n.validCountry(b.country);
+    if (!country) return res.status(400).json({ error: 'Escolha o país.', field: 'country' });
     if (!TEAM_SIZES.includes(b.teamSize)) return res.status(400).json({ error: 'Escolha o tamanho da equipe.', field: 'teamSize' });
     if (b.consent !== true) return res.status(400).json({ error: 'Aceite a Política de Privacidade para enviar.', field: 'consent' });
     const fields = {
-      name, email, company,
+      name, email, company, country,
       website: clip(b.website, 200), teamSize: b.teamSize, role: clip(b.role, 80), phone: clip(b.phone, 40),
       source: SOURCES.includes(b.source) ? b.source : '', message: clip(b.message, 2000)
     };
@@ -769,10 +791,12 @@ module.exports = function setupConsole(app, deps) {
     if (mailEnabled()) {
       const baseUrl = appBaseUrl(req);
       setImmediate(() => {
-        const mine = emailTpl.accessRequestReceived({ name, company, baseUrl });
-        sendEmail(email, mine.subject, mine.html, mine.text);
+        // Quem pediu recebe no idioma do país informado; o aviso do console, em português.
+        const lang = i18n.langForCountry(country);
+        const mine = mailIn ? mailIn(lang, () => emailTpl.accessRequestReceived({ name, company, baseUrl })) : emailTpl.accessRequestReceived({ name, company, baseUrl });
+        sendEmail(email, mine.subject, mine.html, mine.text, { lang });
         const notice = emailTpl.accessRequestNew({ request: fields, consoleUrl: `${baseUrl}/console/lista-de-espera?id=${r.id}`, baseUrl });
-        for (const a of db.platformAdmins) if (a.active !== false && a.totpEnabledAt) sendEmail(a.email, notice.subject, notice.html, notice.text);
+        for (const a of db.platformAdmins) if (a.active !== false && a.totpEnabledAt) sendEmail(a.email, notice.subject, notice.html, notice.text, { lang: 'pt' });
       });
     }
     res.status(201).json({ ok: true });
@@ -818,7 +842,8 @@ module.exports = function setupConsole(app, deps) {
     if (name.length < 2) return res.status(400).json({ error: 'Informe o nome da organização.', field: 'name' });
     // Sem escolha, nasce no Teste (os 14 dias começam quando o dono entrar).
     const plan = plans.find(p => p.id === (req.body || {}).planId) || plans.find(p => p.id === 'teste');
-    const { org, link, emailSent } = await createOrgWithOwner(req, { name, ownerEmail: r.email, ownerName: r.name, requestId: r.id, createdBy: req.consoleAdmin.id });
+    const country = i18n.validCountry((req.body || {}).country) || r.country || 'BR';
+    const { org, link, emailSent } = await createOrgWithOwner(req, { name, ownerEmail: r.email, ownerName: r.name, requestId: r.id, createdBy: req.consoleAdmin.id, country });
     if (plan) { org.plan = { id: plan.id, changedAt: nowISO(), changedBy: req.consoleAdmin.name }; saveEntity('organizations', org); }
     const at = nowISO();
     const from = r.status;
@@ -846,7 +871,7 @@ module.exports = function setupConsole(app, deps) {
   async function sendActivation(req, a, link) {
     if (!mailEnabled()) return { sent: false, reason: 'smtp_not_configured' };
     const m = emailTpl.consoleAdminInvite({ name: a.name, inviter: req.consoleAdmin.name, link, baseUrl: appBaseUrl(req) });
-    return sendEmail(a.email, m.subject, m.html, m.text);
+    return sendEmail(a.email, m.subject, m.html, m.text, { lang: 'pt' });
   }
 
   app.post('/api/console/admins', requireConsole, async (req, res) => {

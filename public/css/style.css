@@ -20118,6 +20118,51 @@ body.dv-resizing[data-dv-resize="se"] * { cursor: nwse-resize !important; }
 }
 @media (prefers-reduced-motion: reduce) { #onboarding-screen.is-visible { animation: none; } .ob-connect-skel { animation: none; } }
 
+/* Plano nos primeiros passos — mesma cara da tela de primeiros passos */
+#plan-intro-screen { position: fixed; inset: 0; z-index: 9998; display: none; background: #fff; color: #111; overflow-y: auto; }
+#plan-intro-screen.is-visible { display: block; animation: ob-in .32s var(--ease-out) both; }
+.pi-box { width: 640px; }
+.pi-text { max-width: 52ch; margin-bottom: 22px; }
+.pi-cycle { display: inline-flex; padding: 3px; gap: 2px; border-radius: 10px; background: #f4f4f5; margin-bottom: 16px; }
+.pi-cycle button { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 16px; border: 0; border-radius: 8px; background: transparent; color: #525252; font: inherit; font-size: 13px; font-weight: 550; cursor: pointer; }
+.pi-cycle button.is-on { background: #fff; color: #111; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.pi-cycle em { font-style: normal; font-size: 11px; font-weight: 600; color: #15803d; }
+.pi-plans { align-self: stretch; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 22px; }
+.pi-plan {
+  position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 16px 14px 14px; text-align: left;
+  border: 1px solid #e4e4e7; border-radius: 12px; background: #fff; color: #111; font: inherit; cursor: pointer;
+  transition: border-color .15s var(--ease-out), box-shadow .15s var(--ease-out);
+}
+.pi-plan:hover { border-color: #c4c4c8; }
+.pi-plan.is-on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent), 0 6px 18px -10px rgba(94, 0, 204, .5); }
+.pi-plan-tag { position: absolute; top: -9px; left: 12px; height: 18px; padding: 0 7px; border-radius: 999px; font-size: 10.5px; font-weight: 600; display: inline-flex; align-items: center; background: var(--accent); color: #fff; }
+.pi-plan-name { font-size: 14px; font-weight: 650; }
+.pi-plan-price { font-size: 12.5px; color: #737373; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.pi-plan-price b { font-size: 22px; font-weight: 700; letter-spacing: -.03em; color: #111; }
+.pi-plan-bill { font-size: 11.5px; color: #737373; font-variant-numeric: tabular-nums; }
+.pi-plan-feats { font-size: 12px; color: #525252; margin-top: 8px; }
+.pi-label { margin-bottom: 8px; }
+.pi-methods { align-self: stretch; display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+.pi-method {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 42px; padding: 0 12px; border-radius: 10px;
+  border: 1px solid #e4e4e7; background: #fff; color: #333; font: inherit; font-size: 13px; font-weight: 550; cursor: pointer; white-space: nowrap;
+}
+.pi-method svg { width: 16px; height: 16px; color: #737373; }
+.pi-method:hover { border-color: #c4c4c8; }
+.pi-method.is-on { border-color: var(--accent); color: #111; box-shadow: inset 0 0 0 1px var(--accent); }
+.pi-method.is-on svg { color: #5E00CC; }
+.pi-plan:focus-visible, .pi-method:focus-visible, .pi-cycle button:focus-visible { outline: 2px solid color-mix(in oklab, var(--accent) 55%, transparent); outline-offset: 2px; }
+.pi-hint { align-self: stretch; text-align: left; font-size: 12px; line-height: 1.5; color: #737373; margin: 8px 0 22px; min-height: 18px; }
+.pi-go { max-width: 380px; }
+@media (max-width: 600px) {
+  .pi-plans { grid-template-columns: minmax(0, 1fr); }
+  .pi-plan { flex-direction: row; flex-wrap: wrap; align-items: baseline; column-gap: 10px; }
+  .pi-plan-name { flex: 1 1 100%; }
+  .pi-plan-price { margin-top: 2px; }
+  .pi-plan-feats { flex: 1 1 100%; margin-top: 2px; }
+}
+@media (prefers-reduced-motion: reduce) { #plan-intro-screen.is-visible { animation: none; } }
+
 /* ─── Plano e pagamento (/billing) ─── */
 .bil { max-width: 980px; display: flex; flex-direction: column; gap: 16px; }
 .bil-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
@@ -20287,6 +20332,59 @@ body.dv-resizing[data-dv-resize="se"] * { cursor: nwse-resize !important; }
 .bil-current-link.is-danger:hover { text-decoration: underline; }
 .bil-current-link:focus-visible { outline: 2px solid var(--border-active); outline-offset: 2px; border-radius: 4px; }
 
+/* Forma de pagamento */
+.bil-pm .bil-card-row { margin-bottom: 12px; }
+.bil-pm-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.bil-pm-ic { width: 40px; height: 40px; border-radius: 10px; flex-shrink: 0; display: grid; place-items: center; background: var(--surface-2); color: var(--text-dim); }
+.bil-pm-ic svg { width: 18px; height: 18px; }
+.bil-pm-ic.is-bad { background: var(--danger-dim); color: var(--danger); }
+.bil-pm-main { flex: 1; min-width: 180px; display: flex; flex-direction: column; gap: 2px; }
+.bil-pm-main b { font-size: 14px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.bil-pm-main span { font-size: 12.5px; color: var(--text-muted); }
+.bil-pm-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.bil-pm-warn { display: flex; gap: 8px; align-items: flex-start; margin: 14px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--danger-dim); color: var(--danger); font-size: 12.5px; line-height: 1.45; }
+.bil-pm-warn svg { flex-shrink: 0; margin-top: 2px; }
+.bil-pm-pending { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--hairline); font-size: 12.5px; color: var(--text-dim); }
+.bil-pm-pending > svg { color: var(--warn); flex-shrink: 0; }
+.bil-pm-pending > span { flex: 1; min-width: 180px; }
+.bil-pm-pending .bil-co-link { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; }
+.bil-co-link.is-muted { color: var(--text-muted); }
+@media (max-width: 560px) {
+  .bil-pm-actions { width: 100%; }
+  .bil-pm-actions .btn { flex: 1; justify-content: center; }
+}
+
+/* Checkout: forma de pagamento em lista (ícone + explicação) */
+.bil-co-row--method { align-items: flex-start; }
+.bil-co-row--method .bil-co-dot { margin-top: 2px; }
+.bil-co-row-ic { width: 16px; height: 16px; flex-shrink: 0; margin-top: 2px; color: var(--text-muted); }
+.bil-co-row--method.is-on .bil-co-row-ic { color: var(--accent-text); }
+.bil-co-row--method .bil-co-row-main span { line-height: 1.45; }
+.bil-co-row-tag { font-style: normal; font-size: 10.5px; font-weight: 600; color: var(--text-muted); background: var(--surface-2); padding: 1px 6px; border-radius: 999px; margin-left: 6px; vertical-align: 1px; }
+
+/* Checkout: telefone e endereço de cobrança (só no cartão) */
+#bil-co-contact[hidden] { display: none; }
+.bil-co-contact { padding-top: 14px; margin-top: 2px; border-top: 1px solid var(--hairline); }
+.bil-co-contact-note { display: flex; gap: 6px; align-items: flex-start; font-size: 12.5px; color: var(--text-muted); margin: 0 0 12px; line-height: 1.45; }
+.bil-co-contact-note svg { flex-shrink: 0; margin-top: 2px; }
+.bil-co-contact .bil-co-docsaved { min-width: 0; }
+.bil-co-addr-line { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+/* QR Code do Pix Automático (no lugar do resumo) */
+.bil-qr { display: flex; flex-direction: column; gap: 12px; }
+.bil-qr-title { margin: 2px 0 0; font-size: 16px; font-weight: 700; color: var(--text); letter-spacing: -.01em; }
+.bil-qr-steps { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; line-height: 1.45; color: var(--text-dim); }
+.bil-qr-steps b { color: var(--text); font-variant-numeric: tabular-nums; }
+.bil-qr-img { align-self: center; width: 200px; height: 200px; border-radius: 10px; background: #fff; padding: 8px; border: 1px solid var(--hairline-strong); image-rendering: pixelated; }
+.bil-qr-copy { display: flex; gap: 6px; }
+.bil-qr-copy .form-control { flex: 1; min-width: 0; font-family: var(--font-mono, ui-monospace, monospace); font-size: 11.5px; }
+.bil-qr-copy .btn { gap: 4px; flex-shrink: 0; }
+.bil-qr-wait { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-muted); }
+.bil-qr-spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--hairline-strong); border-top-color: var(--accent); animation: bil-spin .9s linear infinite; flex-shrink: 0; }
+@keyframes bil-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .bil-qr-spin { animation-duration: 2.4s; } }
+.bil-qr > .bil-co-link { align-self: flex-start; }
+
 /* Outros planos (segundo plano quando já há assinatura) */
 .bil-h3 { font-size: 13.5px; font-weight: 600; color: var(--text); margin: 0; }
 .bil-plans-wrap.is-secondary { margin-top: 12px; }
@@ -20405,3 +20503,17 @@ body.dv-resizing[data-dv-resize="se"] * { cursor: nwse-resize !important; }
   .sup-reply-foot { flex-direction: column; align-items: stretch; }
   .sup-reply-actions { justify-content: flex-end; }
 }
+
+/* Organização → País e idioma */
+.orgp-locale { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; }
+@media (max-width: 640px) { .orgp-locale { grid-template-columns: 1fr; } }
+
+/* Inglês: textos escritos pelo CSS (content:) — o i18n.js põe lang="en-…" no <html> */
+:root[lang^="en"] .att-card.is-new::after { content: 'New'; }
+:root[lang^="en"] .comment-compose.drag-over::after { content: 'Drop to attach to the comment'; }
+:root[lang^="en"] .docs-container:not([data-doc])::before { content: 'Loading…'; }
+
+/* Bandeira dos idiomas (Perfil › Aparência e Organização › País e idioma) */
+.lang-flag { display: inline-block; width: 18px; height: 12.6px; border-radius: 2px; flex-shrink: 0; vertical-align: -2px; box-shadow: 0 0 0 1px rgba(0,0,0,.14); }
+.lang-label { display: inline-flex; align-items: center; gap: 5px; vertical-align: bottom; }
+.lang-label .lang-flag { width: 16px; height: 11.2px; }

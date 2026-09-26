@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>reWork — Error Codes</title>
+<style>
+  :root {
+    --bg: #0B0B10;
+    --surface: #14141C;
+    --surface-2: #1B1B26;
+    --surface-3: #22222F;
+    --hairline: rgba(255,255,255,0.08);
+    --border: rgba(255,255,255,0.14);
+    --text: #ECECF1;
+    --text-dim: #B4B4C0;
+    --text-muted: #7C7C8A;
+    --accent: #7A00FF;
+    --accent-2: #9B4BFF;
+    --accent-soft: rgba(122,0,255,0.14);
+    --danger: #F26D6D;
+    --success: #22D3A5;
+    --warn: #F59E0B;
+    --info: #38BDF8;
+    --radius: 10px;
+    --radius-lg: 14px;
+    --shadow: 0 4px 24px rgba(0,0,0,0.35);
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #F7F7FB;
+      --surface: #FFFFFF;
+      --surface-2: #F1F1F6;
+      --surface-3: #E8E8F0;
+      --hairline: rgba(0,0,0,0.06);
+      --border: rgba(0,0,0,0.14);
+      --text: #14141C;
+      --text-dim: #4B4B58;
+      --text-muted: #7C7C8A;
+      --accent-soft: rgba(122,0,255,0.10);
+      --shadow: 0 4px 20px rgba(0,0,0,0.08);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+    background: var(--bg); color: var(--text);
+    font-size: 15px; line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  .layout {
+    display: grid; grid-template-columns: 300px 1fr;
+    min-height: 100vh;
+  }
+  aside.toc {
+    /* Altura total do viewport pra o background da barra chegar até o rodapé
+       do container visível. `align-self:start` + sticky mantêm a barra grudada
+       no topo do container de scroll (docs-container no embed do SPA; window
+       no standalone). Overflow interno preserva scroll quando o TOC é longo. */
+    position: sticky; top: 0; align-self: start;
+    height: 100vh; overflow-y: auto;
+    background: var(--surface); border-right: 1px solid var(--hairline);
+    padding: 28px 20px 40px;
+  }
+  aside.toc header { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  aside.toc .logo {
+    width: 34px; height: 34px;
+    display: block;
+    object-fit: contain;
+    flex-shrink: 0;
+  }
+  aside.toc h1 { font-size: 15px; margin: 0; letter-spacing: -0.01em; }
+  aside.toc .subtitle { color: var(--text-muted); font-size: 12px; margin: 0 0 14px 0; }
+  aside.toc .rel {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; color: var(--accent-2);
+    padding: 6px 10px; border-radius: 6px;
+    background: var(--accent-soft); text-decoration: none;
+    margin-bottom: 18px;
+  }
+  aside.toc .rel:hover { background: rgba(122,0,255,0.22); }
+  aside.toc nav ol { list-style: none; padding: 0; margin: 0; counter-reset: sec; }
+  aside.toc nav li { counter-increment: sec; margin: 2px 0; }
+  aside.toc nav > ol > li > a::before {
+    content: counter(sec, decimal-leading-zero);
+    color: var(--text-muted);
+    font-family: var(--mono);
+    font-size: 10.5px; margin-right: 8px; letter-spacing: 0.02em;
+  }
+  aside.toc nav a {
+    display: block; padding: 6px 10px;
+    color: var(--text-dim); text-decoration: none;
+    font-size: 13px; border-radius: 6px;
+    border-left: 2px solid transparent;
+    cursor: pointer; transition: background .12s, color .12s, border-color .12s;
+  }
+  aside.toc nav a:hover { background: var(--surface-2); color: var(--text); }
+  aside.toc nav a.active {
+    background: var(--accent-soft); color: var(--text);
+    border-left-color: var(--accent);
+  }
+
+  main { padding: 60px min(80px, 6vw) 120px; max-width: 920px; }
+  main .kicker {
+    display: inline-block; padding: 4px 10px;
+    background: var(--accent-soft); color: var(--accent-2);
+    border-radius: 100px; font-size: 11px; font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+  main h1.doc-title { font-size: 42px; line-height: 1.1; margin: 0 0 12px; letter-spacing: -0.02em; }
+  main .lead { font-size: 17px; color: var(--text-dim); max-width: 640px; margin: 0 0 40px; }
+
+  section {
+    padding-top: 48px; margin-top: 24px;
+    border-top: 1px solid var(--hairline);
+    scroll-margin-top: 20px;
+  }
+  section.no-divider { border-top: none; padding-top: 32px; margin-top: 12px; }
+  h2 { font-size: 28px; letter-spacing: -0.015em; margin: 0 0 8px; }
+  h2 .num {
+    display: inline-block; color: var(--accent-2);
+    font-family: var(--mono); font-size: 14px; font-weight: 500;
+    margin-right: 14px; vertical-align: middle; letter-spacing: 0.04em;
+  }
+  section .section-intro { color: var(--text-dim); margin: 0 0 24px; }
+  h3 { font-size: 19px; margin: 34px 0 8px; letter-spacing: -0.01em; scroll-margin-top: 20px; }
+  p { margin: 10px 0 14px; }
+  ul, ol { padding-left: 22px; margin: 10px 0 18px; }
+  li { margin: 4px 0; }
+  li > strong { color: var(--text); }
+
+  code {
+    font-family: var(--mono); font-size: 0.88em;
+    background: var(--surface-2); padding: 1px 6px;
+    border-radius: 4px; color: var(--text);
+  }
+  pre {
+    background: var(--surface-2);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 12.5px; line-height: 1.55;
+    margin: 14px 0 18px;
+  }
+
+  .callout {
+    display: flex; gap: 12px; padding: 14px 16px;
+    border-radius: var(--radius); background: var(--surface);
+    border: 1px solid var(--hairline);
+    margin: 18px 0; font-size: 14px;
+  }
+  .callout .ic {
+    flex-shrink: 0; width: 22px; height: 22px;
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 13px; margin-top: 1px;
+  }
+  .callout.tip { border-color: rgba(34,211,165,0.28); background: rgba(34,211,165,0.06); }
+  .callout.tip .ic { background: var(--success); color: #06251A; }
+  .callout.warn { border-color: rgba(245,158,11,0.32); background: rgba(245,158,11,0.06); }
+  .callout.warn .ic { background: var(--warn); color: #3D1D00; }
+  .callout.info { border-color: rgba(56,189,248,0.32); background: rgba(56,189,248,0.06); }
+  .callout.info .ic { background: var(--info); color: #052939; }
+  .callout .body { min-width: 0; }
+  .callout .body strong { display: block; margin-bottom: 2px; }
+
+  table {
+    width: 100%; border-collapse: collapse;
+    margin: 16px 0; font-size: 13.5px;
+  }
+  th, td {
+    text-align: left; padding: 10px 12px;
+    border-bottom: 1px solid var(--hairline);
+    vertical-align: top;
+  }
+  th { color: var(--text-dim); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+  td code { font-size: 0.9em; }
+
+  .err-card {
+    background: var(--surface); border: 1px solid var(--hairline);
+    border-radius: var(--radius); padding: 20px 22px;
+    margin: 16px 0;
+    scroll-margin-top: 20px;
+  }
+  .err-head { display: flex; align-items: center; gap: 14px; margin-bottom: 10px; }
+  .err-code {
+    font-family: var(--mono); font-size: 28px; font-weight: 700;
+    letter-spacing: -0.02em; line-height: 1;
+  }
+  .err-pill {
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em;
+    padding: 3px 8px; border-radius: 100px; text-transform: uppercase;
+  }
+  .err-pill.p-2xx { background: rgba(34,211,165,0.14); color: var(--success); }
+  .err-pill.p-3xx { background: rgba(56,189,248,0.14); color: var(--info); }
+  .err-pill.p-4xx { background: rgba(245,158,11,0.14); color: var(--warn); }
+  .err-pill.p-5xx { background: rgba(242,109,109,0.14); color: var(--danger); }
+  .err-title { font-size: 18px; font-weight: 700; }
+  .err-body { color: var(--text-dim); font-size: 14px; }
+  .err-body p { margin: 8px 0; }
+  .err-body h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text); margin: 14px 0 4px; }
+  .err-body ul { margin: 6px 0 12px; padding-left: 20px; }
+  .err-body li { color: var(--text-dim); }
+
+  footer { padding: 40px 0 20px; color: var(--text-muted); font-size: 12px; text-align: center; }
+
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    aside.toc {
+      /* Em mobile: colapsável via <details>. Só a <summary> "Sumário" fica
+         visível por default; o <nav> aparece no clique. Evita que o TOC de 800px
+         empurre todo o conteúdo pra baixo. */
+      position: static; max-height: none; height: auto;
+      border-right: none; border-bottom: 1px solid var(--hairline);
+      padding: 12px 16px;
+    }
+    aside.toc header { display: none; }
+    aside.toc .subtitle, aside.toc .rel { display: none; }
+    aside.toc nav { display: none; padding-top: 8px; }
+    aside.toc.is-open nav { display: block; }
+    aside.toc .toc-toggle {
+      display: flex; align-items: center; justify-content: space-between;
+      width: 100%; padding: 6px 4px;
+      background: none; border: 0; color: var(--text);
+      font-family: inherit; font-size: 13px; font-weight: 700;
+      cursor: pointer;
+    }
+    aside.toc .toc-toggle::after {
+      content: '▾'; color: var(--text-muted); transition: transform .15s;
+    }
+    aside.toc.is-open .toc-toggle::after { transform: rotate(180deg); }
+    main { padding: 24px 20px 80px; }
+    main h1.doc-title { font-size: 26px; }
+  }
+  /* Em desktop, o botão de toggle não existe */
+  .toc-toggle { display: none; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="toc" id="toc">
+    <button type="button" class="toc-toggle" onclick="this.parentElement.classList.toggle('is-open')">
+      <span>Contents</span>
+    </button>
+    <header>
+      <img class="logo" src="/rework_logo.svg" alt="reWork">
+      <h1>Error Codes</h1>
+    </header>
+    <div class="subtitle">reWork · reference</div>
+    <a href="Manual-do-Usuario.html" class="rel">← User Manual</a>
+    <nav>
+      <ol>
+        <li><a href="#como-le">How to read errors</a></li>
+        <li><a href="#familias">Code families</a></li>
+        <li><a href="#usados">Codes used by reWork</a></li>
+        <li><a href="#detalhe-400">400 — Bad request</a></li>
+        <li><a href="#detalhe-401">401 — Not authenticated</a></li>
+        <li><a href="#detalhe-403">403 — No permission</a></li>
+        <li><a href="#detalhe-404">404 — Not found</a></li>
+        <li><a href="#detalhe-409">409 — Conflict</a></li>
+        <li><a href="#detalhe-413">413 — Payload too large</a></li>
+        <li><a href="#detalhe-415">415 — Unsupported type</a></li>
+        <li><a href="#detalhe-429">429 — Too many attempts</a></li>
+        <li><a href="#detalhe-500">500 — Internal error</a></li>
+        <li><a href="#detalhe-502">502 — Bad gateway</a></li>
+        <li><a href="#detalhe-503">503 — Service unavailable</a></li>
+        <li><a href="#rede">Network errors (no HTTP)</a></li>
+        <li><a href="#vault">Password Vault errors</a></li>
+        <li><a href="#webauthn">Biometrics errors (WebAuthn)</a></li>
+        <li><a href="#glossario">Glossary</a></li>
+      </ol>
+    </nav>
+  </aside>
+
+  <main>
+    <div class="kicker">Technical reference</div>
+    <h1 class="doc-title">reWork error codes</h1>
+    <p class="lead">What each HTTP code means on this platform, when it shows up, and how to fix it. Covers errors the client sees as a toast, messages in the browser console and codes that show up in the server log.</p>
+
+    <section id="como-le" class="no-divider">
+      <h2><span class="num">01</span>How to read errors</h2>
+      <p>All reWork error responses follow the format:</p>
+      <pre>{ "error": "Human-readable message" }</pre>
+      <p>The client shows a red <strong>toast</strong> with that message when the call fails. In the browser console, the log line shows <code>GET/POST /api/... → NNN</code> where <code>NNN</code> is the HTTP code. On the server, each request is logged as <code>METHOD /path → NNN Xms</code>.</p>
+      <div class="callout tip">
+        <div class="ic">i</div>
+        <div class="body">
+          <strong>Where to see the logs</strong>
+          Client: <kbd>F12</kbd> → Console tab. Server: the terminal where <code>node server.js</code> runs (or <code>docker logs</code> in production).
+        </div>
+      </div>
+    </section>
+
+    <section id="familias">
+      <h2><span class="num">02</span>HTTP code families</h2>
+      <p>Codes are grouped by their first digit:</p>
+      <table>
+        <thead><tr><th style="width:80px">Range</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>2xx</code></td><td>Success — the server accepted and processed the request.</td></tr>
+          <tr><td><code>3xx</code></td><td>Redirect — the client needs to go to another URL. reWork rarely uses it.</td></tr>
+          <tr><td><code>4xx</code></td><td><strong>Client error</strong> — something in the request is wrong (invalid data, no permission, missing). The user/frontend needs to adjust.</td></tr>
+          <tr><td><code>5xx</code></td><td><strong>Server error</strong> — the server knew what to do but failed to do it. Report a bug.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="usados">
+      <h2><span class="num">03</span>Codes reWork uses</h2>
+      <p>Every HTTP code the reWork backend produces today, sorted by approximate frequency:</p>
+      <table>
+        <thead><tr><th>Code</th><th>Name</th><th>Main use</th></tr></thead>
+        <tbody>
+          <tr><td><code>200</code></td><td>OK</td><td>Standard response to a successful GET/PUT/DELETE.</td></tr>
+          <tr><td><code>201</code></td><td>Created</td><td>A POST created an entity (task, client, project, comment, password entry, etc.).</td></tr>
+          <tr><td><code>204</code></td><td>No Content</td><td>Action completed with no response body (rare in reWork).</td></tr>
+          <tr><td><code>400</code></td><td>Bad Request</td><td>Invalid payload — required field missing, value out of range, wrong format.</td></tr>
+          <tr><td><code>401</code></td><td>Unauthorized</td><td>No valid session — cookie expired or not sent. The client forces sign-out.</td></tr>
+          <tr><td><code>403</code></td><td>Forbidden</td><td>Authenticated, but without permission for this action. Also returned when the vault is locked.</td></tr>
+          <tr><td><code>404</code></td><td>Not Found</td><td>Route doesn't exist, or the requested entity (id) doesn't exist / was deleted.</td></tr>
+          <tr><td><code>409</code></td><td>Conflict</td><td>Duplicate — username, email or unique name already in use.</td></tr>
+          <tr><td><code>413</code></td><td>Payload Too Large</td><td>Request body larger than the limit (200KB for light routes, 75MB for uploads).</td></tr>
+          <tr><td><code>415</code></td><td>Unsupported Media Type</td><td>Upload MIME outside the allowlist (only images/PDF/etc.).</td></tr>
+          <tr><td><code>429</code></td><td>Too Many Requests</td><td>Rate limit — too many attempts in a short time (sign-in, comments).</td></tr>
+          <tr><td><code>500</code></td><td>Internal Server Error</td><td>Unhandled exception on the server. Report it.</td></tr>
+          <tr><td><code>502</code></td><td>Bad Gateway</td><td>External service (Discord webhook, Google Calendar) failed.</td></tr>
+          <tr><td><code>503</code></td><td>Service Unavailable</td><td>Database unavailable or boot hasn't finished yet.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- ────────────── Details ────────────── -->
+    <section id="detalhe-400">
+      <div class="err-card">
+        <div class="err-head">
+          <div class="err-code">400</div>
+          <div>
+            <div class="err-title">Bad Request · Invalid request</div>
+            <span class="err-pill p-4xx">Client</span>
+          </div>
+        </div>
+        <div class="err-body">
+          <p>The server understood the request, but the content is invalid. It's the most common code in reWork because it covers all form validation on the backend.</p>
+          <h4>Frequent examples</h4>
+          <ul>
+            <li><code>"Name is required"</code> — empty string field where it's required</li>
+            <li><code>"Invalid URL"</code> — webhook with a non-HTTP endpoint</li>
+            <li><code>"Name too long (max. 60)"</code> — exceeded the length</li>
+            <li><code>"Invalid date."</code> — due date not in <code>YYYY-MM-DD</code></li>
+            <li><code>"Select at least one event"</code> — webhook with no events chosen</li>
+            <li><code>"Password is required"</code> — vault unlock without filling it in</li>
+          </ul>
+          <h4>How to fix</h4>
+          <p>Read the toast message — it always points to the field/rule violated. Fix it and resend.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="detalhe-401">
+      <div class="err-card">
+        <div class="err-head">
+          <div class="err-code">401</div>
+          <div>
+            <div class="err-title">Unauthorized · Not authenticated</div>
+            <span class="err-pill p-4xx">Client</span>
+          </div>
+        </div>
+        <div class="err-body">
+          <p>Session cookie missing, invalid or expired. The <code>requireAuth</code> middleware returns <code>401</code> before processing the route.</p>
+          <h4>What happens on the client</h4>
+          <p>The <code>api()</code> helper detects the 401 and calls <code>forceLogout()</code> — it redirects to the sign-in screen without showing a toast (avoids noise on a page that's just waiting for the cookie).</p>
+          <h4>How to fix</h4>
+          <ul>
+            <li>Sign in again</li>
+            <li>If it persists, check whether the cookie is being sent (F12 → Application → Cookies)</li>
+            <li>Check the session TTL via the <code>KASTOR_SESSION_DAYS</code> env var (default 30)</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="detalhe-403">
+      <div class="err-card">
+        <div class="err-head">
+          <div class="err-code">403</div>
+          <div>
+            <div class="err-title">Forbidden · No permission</div>
+            <span class="err-pill p-4xx">Client</span>
+          </div>
+        </div>
+        <div class="err-body">
+          <p>Authenticated, but the action isn't allowed for this user. Unlike 401, signing in again doesn't help — the permission is really missing.</p>
+          <h4>Typical cases</h4>
+          <ul>
+            <li><code>"Only admins can do this"</code> — admin-only route called by a non-admin</li>
+            <li><code>"Only moderators or admins can do this"</code> — moderator/admin route called by a member</li>
+            <li><code>"No access to the team."</code> — trying to read/edit an entity of a workspace the user isn't in</li>
+            <li><code>"vault_locked"</code> — password vault locked (unlock it first)</li>
+          </ul>
+          <h4>How to fix</h4>
+          <p>Ask an admin to raise your access level or to add you to the team. For the vault: unlock with password or biometrics.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="detalhe-404">
+      <div class="err-card">
+        <div class="err-head">
+          <div class="err-code">404</div>
+          <div>
+            <div class="err-title">Not Found</div>
+            <span class="err-pill p-4xx">Client</span>
+          </div>
+        </div>
+        <div class="err-body">
+          <p>Either the route doesn't exist, or the entity requested by id isn't in the cache/database (it was deleted, or the id is wrong).</p>
+          <h4>Examples</h4>
+          <ul>
+            <li><code>"Task not found"</code> — opening an old link after the task was deleted</li>
+            <li><code>"Client/Project/Workflow not found"</code> — the same for other entities</li>
+            <li><code>"Unknown credential"</code> — trying to authenticate with a removed WebAuthn credential</li>
+          </ul>
+          <h4>How to fix</h4>
+          <p>Confirm the id in the URL. If it came from an old link, the entity may have been moved to the Trash (an admin/moderator can restore it at <code>/trash</code>). Outdated slugs don't cause a 404 — the parser extracts the id from the end of the URL.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="detalhe-409">
+      <div class="err-card">
+        <div class="err-head">
+          <div class="err-code">409</div>
+          <div>
+            <div class="err-title">Conflict</div>
+            <span class="err-pill p-4xx">Client</span>
+          </div>
+        </div>
+        <div class="err-body">
+          <p>Attempt to create/update an entity that violates uniqueness.</p>
+          <h4>Examples</h4>
+          <ul>
+            <li><code>"That username is already taken"</code> — adding a user</li>
+            <li><code>"That email is already in use by another account."</code> — adding a user</li>
+            <li><code>"That type already exists"</code> — task type library</li>
+          </ul>
+          <h4>How to fix</h4>
+          <p>Choose another value. To bring back a deactivated user with the same name, reactivate them instead of creating them again.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="detalhe-413">
+      <div class="err-card">
+        <div class="err-head">
+          <div class="err-code">413</div>
+          <div>
+            <div class="err-title">Payload Too Large</div>
+            <span class="err-pill p-4xx">Client</span>
+          </div>
+        </div>
+        <div class="err-body">
+          <p>The request body (JSON, upload) is larger than the limit configured in <code>express.json()</code>. The 413 is fired by Express's middleware <em>before</em> the route runs, so the message comes as plain text (not in the <code>{ error: ... }</code> format).</p>
+          <h4>Current limits</h4>
+          <table>
+            <thead><tr><th>Route</th><th>Limit</th></tr></thead>
+            <tbody>
+              <tr><td><code>/api/uploads</code>, <code>/api/demands*</code>, <code>/api/demands/:id/comment</code>, <code>/api/me</code>, <code>/api/users*</code>, <code>/api/projects*</code></td><td><strong>75 MB</strong></td></tr>
+              <tr><td>All other routes</td><td><strong>200 KB</strong></td></tr>
+              <tr><td>Sanitized comment HTML (within the 75MB)</td><td><strong>200 KB</strong> after cleanup</td></tr>
+            </tbody>
+          </table>
+          <p>Besides these, each plan has its own per-file limit (see <em>Organization → Plan</em>).</p>
+          <h4>Typical causes</h4>
+          <ul>
+            <li>Attachment/avatar above ~50MB (base64 overhead turns it into ~75MB)</li>
+            <li>Too many inline images in a single comment</li>
+            <li>A file above the plan's per-file limit</li>
+          </ul>
+          <h4>How to fix</h4>
+          <ul>
+            <li>Compress the image before sending</li>
+            <li>Reduce the number of inline images in the comment</li>
+            <li>For large files, share a link (Drive, etc.) instead of uploading</li>
+          </ul>
+          <div class="callout warn">
+            <div class="ic">!</div>
+            <div class="body">
+              <strong>Sign on the client</strong>
+              Since the 413 comes as plain text, the toast may show a generic message like "Error 413". Checking the console (Network tab) confirms it.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="detalhe-415">
+      <div class="err-card">
+        <div class="err-head">
+          <div class="err-code">415</div>
+          <div>
+            <div class="err-title">Unsupported Media Type</div>
+            <span class="err-pill p-4xx">Client</span>
+          </div>
+        </div>
+        <div class="err-body">
+          <p>Upload with a MIME outside the allowlist. reWork blocks it for security:</p>
+          <h4>Allowed MIMEs</h4>
+          <ul>
+            <li><code>image/png</code>, <code>image/jpeg</code>, <code>image/gif</code>, <code>image/webp</code></li>
+            <li><code>application/pdf</code></li>
+            <li>Other common formats (docx, xlsx, txt, zip)</li>
+          </ul>
+          <h4>Blocked on purpose</h4>
+          <ul>
+            <li><code>text/html</code>, <code>application/xhtml+xml</code> — same-origin XSS</li>
+            <li><code>image/svg+xml</code> — can carry a <code>&lt;script&gt;</code></li>
+            <li><code>application/xml</code>, <code>text/xml</code> — XXE in some viewers</li>
+          </ul>
+          <h4>How to fix</h4>
+          <p>Convert the file to one of the accepted formats (e.g. export SVG as PNG, HTML as PDF).</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="detalhe-429">
+      <div class="err-card">
+        <div class="err-head">
+          <div class="err-code">429</div>
+          <div>
+            <div class="err-title">Too Many Requests</div>
+            <span class="err-pill p-4xx">Client</span>
+          </div>
+        </div>
+        <div class="err-body">
+          <p>The rate limit kicked in. reWork uses per-user buckets (falling back to IP when not authenticated) on sensitive routes.</p>
+          <h4>Rate-limited routes</h4>
+          <ul>
+            <li><strong>Sign-in</strong> — a few attempts every few minutes per IP</li>
+            <li><strong>Posting comments</strong> — flood protection</li>
+            <li><strong>Sending password resets and codes</strong></li>
+          </ul>
+          <h4>How to fix</h4>
+          <p>Wait the time shown in the <code>Retry-After</code> header (the toast shows the seconds). After that, the bucket resets. Clicking again doesn't help — each attempt restarts the timer.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="detalhe-500">
+      <div class="err-card">
+        <div class="err-head">
+          <div class="err-code">500</div>
+          <div>
+            <div class="err-title">Internal Server Error</div>
+            <span class="err-pill p-5xx">Server</span>
+          </div>
+        </div>
+        <div class="err-body">
+          <p>An unhandled exception happened inside a route. That's a <strong>bug</strong> — the route should have validated beforehand.</p>
+          <h4>What to do</h4>
+          <ul>
+            <li>Copy the toast + the URL of the screen where it happened</li>
+            <li>If possible, open the console (<kbd>F12</kbd>) and copy the details of the <code>/api/...</code> call</li>
+            <li>Open a ticket under <em>Support</em> with steps to reproduce</li>
+          </ul>
+          <h4>Known cases</h4>
+          <ul>
+            <li>Failed to decrypt a vault entry — the master key was changed without migrating; old entries become unreadable</li>
+            <li>Failed to start WebAuthn registration — inconsistent RP config between begin/finish (the domain changed in the middle)</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="detalhe-502">
+      <div class="err-card">
+        <div class="err-head">
+          <div class="err-code">502</div>
+          <div>
+            <div class="err-title">Bad Gateway · External service failed</div>
+            <span class="err-pill p-5xx">Server</span>
+          </div>
+        </div>
+        <div class="err-body">
+          <p>reWork tried to reach an external service and got an error or a timeout. It's not a reWork problem — it's the endpoint being called.</p>
+          <h4>Where it shows up</h4>
+          <ul>
+            <li><strong>Webhook test</strong> — the Discord/Slack/n8n endpoint returned HTTP ≥ 400 or didn't respond within 10s</li>
+            <li><strong>Google Calendar sync</strong> — Google API down or token expired</li>
+            <li><strong>Link title</strong> — origin server slow or blocked the fetch</li>
+          </ul>
+          <h4>How to fix</h4>
+          <p>Try again in a few minutes. If it persists, check the external service's status. For webhooks, review the URL — it may be malformed or disabled at the destination.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="detalhe-503">
+      <div class="err-card">
+        <div class="err-head">
+          <div class="err-code">503</div>
+          <div>
+            <div class="err-title">Service Unavailable</div>
+            <span class="err-pill p-5xx">Server</span>
+          </div>
+        </div>
+        <div class="err-body">
+          <p>The server is up but can't serve requests right now. Situations:</p>
+          <ul>
+            <li>Postgres unreachable (network, credential, container down)</li>
+            <li>Boot still in progress — migration/seed running</li>
+            <li>Corrupted encrypted storage</li>
+          </ul>
+          <h4>How to fix</h4>
+          <p>Wait a few seconds and try again (boot finishes quickly). If it persists for more than 1 min, check the container/process logs for the real error.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="rede">
+      <h2><span class="num">14</span>Network errors (no HTTP code)</h2>
+      <p>When the request doesn't even reach the server, the client shows:</p>
+      <div class="callout warn">
+        <div class="ic">!</div>
+        <div class="body">
+          <strong>"No connection to the server. Try again in a moment."</strong>
+          The Wi-Fi dropped, the container restarted, DNS failed, or the browser blocked it (firewall/proxy). It's not an HTTP error — the fetch didn't even complete.
+        </div>
+      </div>
+      <p>Quick diagnosis:</p>
+      <ol>
+        <li>Open another tab: if <code>google.com</code> doesn't load, it's the network</li>
+        <li>Try reloading: if the bare page doesn't open, it's the server</li>
+        <li>Check the console (Network): a <code>(failed)</code> status confirms a network failure</li>
+      </ol>
+    </section>
+
+    <section id="vault">
+      <h2><span class="num">15</span>Password Vault errors</h2>
+      <p>The vault has specific codes besides the generic ones:</p>
+      <table>
+        <thead><tr><th>Code / message</th><th>What it means</th><th>How to fix</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>403 vault_locked</code></td>
+            <td>The vault session expired (15 min of inactivity) or was never unlocked.</td>
+            <td>The client takes you back to the unlock screen automatically. Type your password or use biometrics.</td>
+          </tr>
+          <tr>
+            <td><code>401 Incorrect password</code></td>
+            <td>Unlock with the wrong password. Doesn't create an audit entry (avoids enumeration).</td>
+            <td>Check the password. If you forgot it, use "I forgot my password" on the sign-in screen.</td>
+          </tr>
+          <tr>
+            <td><code>500 Failed to decrypt…</code></td>
+            <td>The master key on disk changed; the old ciphertext became garbage.</td>
+            <td>Restore the master key backup. Without it, the affected entries need to be added again.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="webauthn">
+      <h2><span class="num">16</span>Biometrics errors (WebAuthn)</h2>
+      <p>The <code>/api/passwords/webauthn/*</code> endpoints have specific codes besides the standard ones. There are also browser-side errors that <em>don't</em> reach the server:</p>
+      <h3>From the server</h3>
+      <ul>
+        <li><code>"Registration session expired"</code> — the challenge has a 5-min TTL. Start the registration again.</li>
+        <li><code>"Session expired"</code> — the same, for authentication. Reopen the modal.</li>
+        <li><code>"Registration not verified" / "Invalid signature"</code> — the authenticator's response failed FIDO verification. Usually clock drift or a buggy browser; try another device.</li>
+        <li><code>"Unknown credential"</code> — the credential was removed between begin and finish (rare).</li>
+        <li><code>"No credentials registered"</code> — tried to unlock without registering anything first.</li>
+      </ul>
+      <h3>From the browser (JavaScript)</h3>
+      <ul>
+        <li><code>NotAllowedError</code> — the user canceled the OS prompt, or the operation timed out. The client shows "Canceled".</li>
+        <li><code>InvalidStateError</code> — this authenticator is already registered (caught by <code>excludeCredentials</code>).</li>
+        <li><code>NotSupportedError</code> — no authenticator available on the device (no Windows Hello, no Touch ID, no FIDO key).</li>
+      </ul>
+    </section>
+
+    <section id="glossario">
+      <h2><span class="num">17</span>Quick glossary</h2>
+      <ul>
+        <li><strong>Middleware</strong> — a layer that runs before the route (auth, body parser, rate limit).</li>
+        <li><strong>Rate limit</strong> — a cap of N requests in X seconds per key (user or IP).</li>
+        <li><strong>Payload</strong> — the request body (JSON, file).</li>
+        <li><strong>MIME</strong> — the declared content type (<code>image/png</code>, <code>application/pdf</code>).</li>
+        <li><strong>RP (Relying Party)</strong> — the site that trusts the authenticator. Here, reWork's domain.</li>
+        <li><strong>Challenge</strong> — a random value the server sends for the authenticator to sign (prevents replay).</li>
+        <li><strong>Assertion</strong> — the signature returned by the authenticator. The server verifies it with the stored public key.</li>
+        <li><strong>Sanitizer</strong> — a filter that removes dangerous tags/scripts before accepting HTML (used in comments).</li>
+      </ul>
+    </section>
+
+    <footer>reWork · Error Codes · <a href="Manual-do-Usuario.html" style="color:var(--accent-2);text-decoration:none">Back to the Manual</a></footer>
+  </main>
+</div>
+
+<script>
+  // Light TOC scrollspy — highlights the visible section
+  const links = document.querySelectorAll('aside.toc nav a[href^="#"]');
+  const idToLink = {};
+  links.forEach(a => { const id = a.getAttribute('href').slice(1); idToLink[id] = a; });
+  const io = new IntersectionObserver(entries => {
+    entries.forEach(en => {
+      const link = idToLink[en.target.id];
+      if (!link) return;
+      if (en.isIntersecting) {
+        Object.values(idToLink).forEach(l => l.classList.remove('active'));
+        link.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-40% 0px -50% 0px' });
+  document.querySelectorAll('section[id], .err-card[id]').forEach(s => io.observe(s));
+</script>
+</body>
+</html>

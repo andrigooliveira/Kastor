@@ -683,3 +683,6 @@ body.kd-row-resizing, body.kd-row-resizing * { cursor: row-resize !important; us
 .writer-editor-view:not(.is-pageless) .kd-page-break { height: 0; margin: 0; overflow: hidden; }
 .writer-editor-view:not(.is-pageless) .kd-page-break::before,
 .writer-editor-view:not(.is-pageless) .kd-page-break::after { display: none; }
+
+/* Inglês: texto escrito pelo CSS (o i18n.js põe lang="en-…" no <html>) */
+:root[lang^="en"] .kd-page-break::after { content: 'Page break'; }

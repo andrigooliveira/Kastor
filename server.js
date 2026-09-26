@@ -42,6 +42,7 @@ const discordBot = require('./discord-bot');
 const discordOAuth = require('./discord-oauth');
 const googleLogin = require('./google-login');
 const emailTpl   = require('./email-templates');
+const i18n       = require('./public/js/i18n.js'); // idiomas: país/idioma da organização, idioma da pessoa
 
 const PORT    = process.env.PORT || 3000;
 // KASTOR_DATA_DIR sobrescreve o diretório de uploads e do auth.enc.
@@ -858,9 +859,47 @@ function mailEnabled() { return !!getMailTransport(); }
 function fromAddress() {
   return process.env.SMTP_FROM || `reWork <${process.env.SMTP_USER || 'noreply@localhost'}>`;
 }
-async function sendEmail(to, subject, html, text) {
+/* Idioma do e-mail: o pedido (opts.lang), senão o de quem recebe (conta com
+   esse e-mail: idioma da pessoa → da organização), senão português. Os
+   modelos são escritos em português e traduzidos aqui, pelo dicionário. */
+function emailLangFor(to, fallback) {
+  const addr = normEmail(String(to || '').replace(/^.*<([^>]+)>.*$/, '$1'));
+  const u = addr ? allUsers().find(x => normEmail(x.email) === addr) : null;
+  return u ? userLang(u) : (i18n.validLang(fallback) || 'pt');
+}
+/* Datas que os modelos escrevem em português ("12 mar", "segunda, 5 de
+   outubro") → inglês ("Mar 12", "Monday, October 5"). */
+const _PT_MON = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+const _PT_MON_L = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const _PT_DAY = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+const _EN_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const _EN_MON_L = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const _EN_DAY = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const _RE_DAY_DATE = new RegExp(`(${_PT_DAY.join('|')})(?:-feira)?, (\\d{1,2}) de (${_PT_MON_L.join('|')})`, 'gi');
+const _RE_LONG_DATE = new RegExp(`\\b(\\d{1,2}) de (${_PT_MON_L.join('|')})(?: de (\\d{4}))?`, 'gi');
+const _RE_SHORT_DATE = new RegExp(`\\b(\\d{1,2}) (${_PT_MON.join('|')})\\b`, 'g');
+function emailDatesEn(s) {
+  return String(s)
+    .replace(_RE_DAY_DATE, (m, d, n, mo) => `${_EN_DAY[_PT_DAY.indexOf(d.toLowerCase())]}, ${_EN_MON_L[_PT_MON_L.indexOf(mo.toLowerCase())]} ${n}`)
+    .replace(_RE_LONG_DATE, (m, n, mo, y) => `${_EN_MON_L[_PT_MON_L.indexOf(mo.toLowerCase())]} ${n}${y ? ', ' + y : ''}`)
+    .replace(_RE_SHORT_DATE, (m, n, mo) => `${_EN_MON[_PT_MON.indexOf(mo)]} ${n}`);
+}
+// Monta um e-mail (email-templates.js) no idioma de quem vai receber.
+const mailIn = (lang, build) => emailTpl.withLang(lang, translatorFor(lang), build);
+async function sendEmail(to, subject, html, text, opts) {
   const t = getMailTransport();
   if (!t || !to) return { sent: false, reason: !t ? 'smtp_not_configured' : 'no_recipient' };
+  const lang = (opts && i18n.validLang(opts.lang)) || emailLangFor(to, opts && opts.fallbackLang);
+  // Modelo já montado noutro idioma (mailIn → <html lang="en">) não passa de novo
+  // pelo dicionário; o resto (modelo em português) é traduzido aqui.
+  const localized = /<html[^>]*\blang="(?!pt)/i.test(html || '');
+  if (lang !== 'pt' && !localized) {
+    const tr = translatorFor(lang);
+    subject = tr.T(emailDatesEn(subject));
+    if (html) html = tr.html(emailDatesEn(html)).replace(/<html([^>]*)\blang="pt-BR"/i, `<html$1lang="${lang}"`);
+    // Texto puro: primeiro inteiro (os modelos quebram linhas no meio das frases), senão linha a linha.
+    if (text) { const t0 = emailDatesEn(String(text)); const whole = tr.tx(t0); text = whole != null ? whole : t0.split('\n').map(l => tr.T(l)).join('\n'); }
+  }
   try {
     await t.sendMail({ from: fromAddress(), to, subject, html, text });
     return { sent: true };
@@ -1156,7 +1195,7 @@ function flushHeldNotifications(user) {
     const prefs = user.emailPrefs || defaultEmailPrefs();
     const items = held.filter(h => EMAIL_EVENT_LABELS[h.type] && prefs[h.type] !== false).map(toItem);
     if (items.length) {
-      const { subject, html, text } = emailTpl.heldSummary({ firstName, items, baseUrl: base });
+      const { subject, html, text } = mailIn(userLang(user), () => emailTpl.heldSummary({ firstName, items, baseUrl: base }));
       Promise.resolve(sendEmail(user.email, subject, html, text)).catch(e => console.warn('[held] e-mail:', e.message));
     }
   }
@@ -1196,6 +1235,14 @@ function digestDueNow(u, now = new Date()) {
 function digestScheduleLabel(u) {
   const sc = digestScheduleOf(u);
   const d = [...sc.days].sort((a, b) => a - b);
+  if (userLang(u) === 'en') {
+    const EN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const hour = `${sc.hour}:00`;
+    if (d.join() === '1,2,3,4,5') return `on weekdays at ${hour}`;
+    if (d.length === 7) return `every day at ${hour}`;
+    const names = d.map(i => EN[i]);
+    return `${names.length === 1 ? 'every ' + names[0] : 'on ' + names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1]} at ${hour}`;
+  }
   const NAMES = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
   let days;
   if (d.join() === '1,2,3,4,5') days = 'nos dias úteis';
@@ -1289,7 +1336,7 @@ function sendNotificationEmail(user, type, data, triggerUserId, baseUrl) {
     demandUrl: demandLinkFor(base, demand.id),
     baseUrl: base,
   };
-  const built = buildEmailForNotification(type, ctx);
+  const built = mailIn(userLang(user), () => buildEmailForNotification(type, ctx));
   if (!built) return;
   sendEmail(user.email, built.subject, built.html, built.text);
 }
@@ -2294,7 +2341,7 @@ function maskEmail(e) {
 }
 async function sendLoginCode(req, user, code) {
   const baseUrl = appBaseUrl(req);
-  const m = emailTpl.loginCode({ name: user.name, code, baseUrl, ip: clientIp(req) });
+  const m = mailIn(userLang(user), () => emailTpl.loginCode({ name: user.name, code, baseUrl, ip: clientIp(req) }));
   return sendEmail(user.email, m.subject, m.html, m.text);
 }
 /* Cria o ticket do segundo passo (e manda o código, se for por e-mail). */
@@ -2398,7 +2445,7 @@ function checkOwnPassword(u, password) {
 }
 function twoFactorNotice(req, u, enabled, method) {
   if (!u.email || !mailEnabled()) return;
-  const m = emailTpl.twoFactorNotice({ name: u.name, enabled, method, baseUrl: appBaseUrl(req) });
+  const m = mailIn(userLang(u), () => emailTpl.twoFactorNotice({ name: u.name, enabled, method, baseUrl: appBaseUrl(req) }));
   setImmediate(() => sendEmail(u.email, m.subject, m.html, m.text));
 }
 const rateLimitTwoFaSetup = makeRateLimit(new Map(), 10, 'tentativas', req => 'u:' + (req.user?.id || clientIp(req)), 10 * 60 * 1000);
@@ -2822,7 +2869,7 @@ app.post('/api/forgot-password', rateLimitPwReset, async (req, res) => {
   await store.insertReset({ token, userId: user.id, expiresAt, used: false, createdAt: nowISO() });
   const baseUrl = appBaseUrl(req);
   const link = `${baseUrl}/reset/${token}`;
-  const { subject, html, text } = emailTpl.resetPassword({ name: user.name, link, baseUrl });
+  const { subject, html, text } = mailIn(userLang(user), () => emailTpl.resetPassword({ name: user.name, link, baseUrl }));
   setImmediate(() => sendEmail(user.email, subject, html, text));
   res.json({ ok: true });
 });
@@ -2869,11 +2916,11 @@ app.post('/api/me/email', requireAuth, rateLimitEmailLink, async (req, res) => {
   u.emailChange = { email: next, tokenHash: auth.hashToken(token), expiresAt: new Date(Date.now() + EMAIL_CONFIRM_TTL_MS).toISOString(), sentAt: nowISO() };
   saveEntity('users', u);
   const baseUrl = appBaseUrl(req);
-  const mail = emailTpl.emailConfirm({ name: u.name, email: next, link: `${baseUrl}/confirmar-email/${token}`, baseUrl, isChange });
+  const mail = mailIn(userLang(u), () => emailTpl.emailConfirm({ name: u.name, email: next, link: `${baseUrl}/confirmar-email/${token}`, baseUrl, isChange }));
   const sent = await sendEmail(next, mail.subject, mail.html, mail.text);
   // Troca de um e-mail já confirmado: avisa o endereço antigo.
   if (isChange && emailLinked(u)) {
-    const n = emailTpl.emailChangeNotice({ name: u.name, newEmail: next, baseUrl });
+    const n = mailIn(userLang(u), () => emailTpl.emailChangeNotice({ name: u.name, newEmail: next, baseUrl }));
     setImmediate(() => sendEmail(u.email, n.subject, n.html, n.text));
   }
   if (!sent || !sent.sent) return res.status(502).json({ error: 'Não conseguimos enviar o e-mail agora. Tente de novo em alguns minutos.' });
@@ -2915,12 +2962,15 @@ app.get('/api/me', requireAuth, (req, res) => {
     me._smtpEnabled = mailEnabled();
     me.org = orgPublic(req.org, req.membership.role);
     me.orgs = myOrgs(req.user);
+    // Idioma da tela: o da pessoa, senão o da organização.
+    me.uiLang = userLang(req.user, req.org);
+    me.uiLocale = i18n.localeFor(me.uiLang, req.org.country);
   }
   res.json(me);
 });
 
 app.put('/api/me', requireAuth, (req, res) => {
-  const { name, role, avatar, currentPassword, newPassword, username, discordId, email, emailPrefs, discord, phone, discordPrefs, quickReplies, accentTheme, away, status, digestSchedule, navMenu } = req.body || {};
+  const { name, role, avatar, currentPassword, newPassword, username, discordId, email, emailPrefs, discord, phone, discordPrefs, quickReplies, accentTheme, away, status, digestSchedule, navMenu, lang } = req.body || {};
   const u = req.user;
   if (typeof name === 'string' && name.trim()) u.name = name.trim();
   if (typeof role === 'string') u.role = role.trim();
@@ -3001,6 +3051,11 @@ app.put('/api/me', requireAuth, (req, res) => {
     auth.setPassword(u.id, newPassword);
     // Troca de senha encerra as outras sessões (fica só esta).
     auth.dropTokensFor(u.id, req.token);
+  }
+  // Idioma da pessoa. null = segue o da organização.
+  if (lang !== undefined) {
+    if (lang !== null && lang !== '' && !i18n.validLang(lang)) return res.status(400).json({ error: 'Idioma inválido.' });
+    u.lang = i18n.validLang(lang);
   }
   // Tema de cor (cor de destaque). null/'' = roxo padrão.
   if (accentTheme !== undefined) {
@@ -3116,7 +3171,7 @@ app.post('/api/me/ping', requireAuth, (req, res) => {
 app.post('/api/me/email/test', requireAuth, async (req, res) => {
   if (!mailEnabled()) return res.status(503).json({ error: 'SMTP não configurado no servidor. Defina as variáveis SMTP_HOST, SMTP_USER, SMTP_PASS antes de testar.' });
   if (!req.user.email) return res.status(400).json({ error: 'Cadastre um e-mail no seu perfil antes de testar.' });
-  const t = emailTpl.testEmail({ name: req.user.name, baseUrl: appBaseUrl(req) });
+  const t = mailIn(userLang(req.user, req.org), () => emailTpl.testEmail({ name: req.user.name, baseUrl: appBaseUrl(req) }));
   const result = await sendEmail(req.user.email, t.subject, t.html, t.text);
   if (!result.sent) return res.status(502).json({ error: 'Falha ao enviar: ' + (result.reason || 'erro desconhecido') });
   res.json({ ok: true });
@@ -5395,11 +5450,13 @@ async function sendInviteEmail(req, inv, token) {
   const by = allUsers().find(u => u.id === inv.invitedBy);
   const org = tenancy.orgById(inv.orgId);
   const baseUrl = appBaseUrl(req);
-  const { subject, html, text } = emailTpl.invite({
+  // Quem já tem conta recebe no idioma dela; quem não tem, no da organização.
+  const lang = emailLangFor(inv.email, orgLang(org));
+  const { subject, html, text } = mailIn(lang, () => emailTpl.invite({
     name: inv.name, inviter: by?.name || inv.invitedByName, org: org?.name, access: INVITE_KINDS[inv.kind],
     squads: inviteSquadNames(inv), link: inviteLinkFor(req, token), expiresAt: inv.expiresAt, baseUrl, isOwner: inv.kind === 'owner'
-  });
-  return sendEmail(inv.email, subject, html, text);
+  }));
+  return sendEmail(inv.email, subject, html, text, { lang });
 }
 /* Fecha convites abertos pra um e-mail na organização ativa (conta criada
    por outro caminho). */
@@ -5929,12 +5986,35 @@ function orgSettings(org) {
     schedule: { mode: custom ? 'custom' : 'simple', week, simpleHours }
   };
 }
+/* Idioma: o da organização vem do país (Brasil/Portugal… → português, resto →
+   inglês), a não ser que o dono tenha fixado um; o da pessoa sobrescreve. */
+function orgLang(org) { return i18n.validLang(org && org.lang) || i18n.langForCountry(org && org.country); }
+/* Tradutor do servidor (e-mails, textos criados no idioma da organização).
+   O dicionário é o mesmo do navegador: public/i18n/<idioma>.js. */
+const _translators = {};
+const _identity = { T: (s) => s, tx: () => null, html: (h) => h };
+function translatorFor(lang) {
+  if (!lang || lang === 'pt') return _identity;
+  if (!_translators[lang]) {
+    try { _translators[lang] = i18n.createTranslator(require(`./public/i18n/${lang}.js`)); }
+    catch (e) { console.warn(`[i18n] dicionário ${lang} indisponível:`, e.message); _translators[lang] = _identity; }
+  }
+  return _translators[lang];
+}
+function userLang(u, org) {
+  if (u && i18n.validLang(u.lang)) return u.lang;
+  if (!org && u) { const m = tenancy.primaryMembership(u); org = m ? tenancy.orgById(m.orgId) : null; }
+  return orgLang(org);
+}
 function orgPublic(org, role) {
   return {
     id: org.id, name: org.name, logo: org.logo || null, ownerId: org.ownerId || null, createdAt: org.createdAt, role: role || null,
+    country: org.country || null, lang: org.lang || null, effectiveLang: orgLang(org),
     settings: orgSettings(org),
     planInfo: (({ id, name, trial, trialEndsAt, trialDaysLeft, readOnly, readOnlyReason, fileBytes, paidUntil, overdue, canceled, graceEndsAt }) => ({ id, name, trial, trialEndsAt, trialDaysLeft, readOnly, readOnlyReason, fileBytes, paidUntil, overdue, canceled, graceEndsAt }))(orgPlan(org)),
     billingStatus: (org.billing && org.billing.status) || 'none',
+    // Organização no teste que o dono ainda não viu a escolha de plano (primeiros passos).
+    planIntroPending: !org.billingIntroAt && !!(org.plan && org.plan.id === 'teste') && !(org.billing && (org.billing.subscriptionId || org.billing.pixAuth)),
     ...(role === 'owner' || role === 'admin' ? { usage: orgUsage(org) } : {}),
     // O que está disponível nesta organização (bot e n8n são da instalação original).
     integrations: {
@@ -5971,7 +6051,16 @@ app.get('/api/org', requireAuth, (req, res) => {
 /* Configurações da organização: só o dono. */
 app.put('/api/org', requireAuth, (req, res) => {
   if (!req.user.isOwner) return res.status(403).json({ error: 'Só o dono muda as configurações da organização.' });
-  const { name, logo, settings } = req.body || {};
+  const { name, logo, settings, country, lang } = req.body || {};
+  if (country !== undefined) {
+    const c = i18n.validCountry(country);
+    if (!c) return res.status(400).json({ error: 'Escolha um país da lista.', field: 'country' });
+    req.org.country = c;
+  }
+  if (lang !== undefined) {
+    if (lang !== null && lang !== '' && !i18n.validLang(lang)) return res.status(400).json({ error: 'Idioma inválido.', field: 'lang' });
+    req.org.lang = i18n.validLang(lang);
+  }
   if (settings && typeof settings === 'object') {
     const next = { ...(req.org.settings || {}) };
     if (settings.dailyHours !== undefined) {
@@ -6087,31 +6176,33 @@ app.post('/api/org/transfer', requireAuth, (req, res) => {
 
 /* Organização nova (console → lista de espera aprovada): squad "Geral", fluxo
    padrão e convite de DONO pro e-mail do pedido. */
-function defaultFlowStages() {
+function defaultFlowStages(tr) {
   return [
-    { id: uid(), label: 'Backlog',     color: '#64748B', done: false, responsibleId: null, deadlineDays: null },
-    { id: uid(), label: 'Em produção', color: '#7A00FF', done: false, responsibleId: null, deadlineDays: 3 },
-    { id: uid(), label: 'Em revisão',  color: '#F59E0B', done: false, responsibleId: null, deadlineDays: 1 },
-    { id: uid(), label: 'Aprovação',   color: '#38BDF8', done: false, responsibleId: null, deadlineDays: 2 },
-    { id: uid(), label: 'Concluída',   color: '#22D3A5', done: true,  responsibleId: null, deadlineDays: null }
+    { id: uid(), label: 'Backlog',        color: '#64748B', done: false, responsibleId: null, deadlineDays: null },
+    { id: uid(), label: tr('Em produção'), color: '#7A00FF', done: false, responsibleId: null, deadlineDays: 3 },
+    { id: uid(), label: tr('Em revisão'),  color: '#F59E0B', done: false, responsibleId: null, deadlineDays: 1 },
+    { id: uid(), label: tr('Aprovação'),   color: '#38BDF8', done: false, responsibleId: null, deadlineDays: 2 },
+    { id: uid(), label: tr('Concluída'),   color: '#22D3A5', done: true,  responsibleId: null, deadlineDays: null }
   ];
 }
-async function createOrgWithOwner(req, { name, ownerEmail, ownerName, requestId, createdBy }) {
+async function createOrgWithOwner(req, { name, ownerEmail, ownerName, requestId, createdBy, country }) {
   const now = nowISO();
-  const org = { id: 'org_' + uid(), name: String(name).trim().slice(0, 80), logo: null, ownerId: null, status: 'active', createdAt: now, createdBy: createdBy || 'console', fromRequestId: requestId || null };
+  const org = { id: 'org_' + uid(), name: String(name).trim().slice(0, 80), logo: null, ownerId: null, status: 'active', country: i18n.validCountry(country) || 'BR', createdAt: now, createdBy: createdBy || 'console', fromRequestId: requestId || null };
   rawDb.organizations.push(org);
   saveEntity('organizations', org);
-  const ws = { id: uid(), orgId: org.id, name: 'Geral', color: '#7A00FF', createdAt: now };
+  // Equipe, fluxo e tipo iniciais já no idioma da organização.
+  const tr = translatorFor(orgLang(org)).T;
+  const ws = { id: uid(), orgId: org.id, name: tr('Geral'), color: '#7A00FF', createdAt: now };
   rawDb.workspaces.push(ws);
   saveEntity('workspaces', ws);
-  const flow = { id: uid(), workspaceId: ws.id, projectId: null, clientId: null, client: null, icon: null, name: 'Fluxo padrão', demandType: 'Geral', stages: defaultFlowStages(), defaultDescription: '', defaultChecklist: [], createdAt: now };
+  const flow = { id: uid(), workspaceId: ws.id, projectId: null, clientId: null, client: null, icon: null, name: tr('Fluxo padrão'), demandType: tr('Geral'), stages: defaultFlowStages(tr), defaultDescription: '', defaultChecklist: [], createdAt: now };
   rawDb.flows.push(flow);
   saveEntity('flows', flow);
-  const dt = { id: uid(), orgId: org.id, name: 'Geral', createdAt: now };
+  const dt = { id: uid(), orgId: org.id, name: tr('Geral'), createdAt: now };
   rawDb.demandTypes.push(dt);
   saveEntity('demandTypes', dt);
   const { inv, token } = newInviteRecord({ email: normEmail(ownerEmail), kind: 'owner', workspaces: [], name: String(ownerName || '').trim().slice(0, 120), role: '', position: null }, org.id, null);
-  inv.invitedByName = 'Equipe reWork';
+  inv.invitedByName = translatorFor(orgLang(org)).T('Equipe reWork');
   rawDb.invites.push(inv);
   const mail = await sendInviteEmail(req, inv, token);
   if (mail.sent) { inv.lastSentAt = nowISO(); inv.sendCount = 1; }
@@ -6127,7 +6218,7 @@ consoleApi = require('./platform-console')(app, {
   getDb: () => rawDb, tenancy, createOrgWithOwner, store, auth, saveEntity, removeEntity, uid, nowISO, notDeleted,
   plans: PLANS, orgPlan, orgUsage, buildOrgExport, orgExportFilename, purgeOrg, fmtBytes, TRIAL_DAYS, uploadMaxMb: UPLOAD_MAX_BYTES / MB,
   makeRateLimit, clientIp, parseCookies, isHttpsRequest, isValidEmail,
-  mailEnabled, sendEmail, emailTpl, appBaseUrl,
+  mailEnabled, sendEmail, emailTpl, appBaseUrl, mailIn,
   uploadsDir: UPLOADS_DIR, buildSha: BUILD_SHA, publicDir: path.join(__dirname, 'public'),
   integrations: () => ({
     smtp: mailEnabled(),
@@ -6141,7 +6232,7 @@ consoleApi = require('./platform-console')(app, {
 });
 supportApi = require('./support')(app, {
   getDb: () => rawDb, dataDir: DATA_DIR, saveEntity, removeEntity, uid, nowISO, requireAuth, orgPlan, store, broadcastToUser, makeRateLimit,
-  buildSha: BUILD_SHA, sendEmail, mailEnabled, emailTpl, appBaseUrl,
+  buildSha: BUILD_SHA, sendEmail, mailEnabled, emailTpl, appBaseUrl, mailIn, emailLangFor,
   requireConsole: consoleApi.requireConsole, audit: consoleApi.audit
 });
 billingApi = require('./billing')(app, {
@@ -7043,6 +7134,8 @@ app.get('/api/public/client/:token', (req, res) => {
     },
     projects: projectsPublic,
     demands: demandsPublic,
+    // Idioma do painel: o da organização do cliente.
+    lang: orgLang(tenancy.orgById(tenancy.orgOf('clients', hitClient))),
     generatedAt: nowISO()
   });
 });
@@ -12509,14 +12602,16 @@ async function digestSendForUser(user, baseUrl) {
   const NOTIF_SHORT = { assigned: 'Responsável', stage_assigned: 'Nova etapa', mention: 'Menção', watch_stage: 'Etapa avançou',
     watch_comment: 'Novo comentário', reminder: 'Lembrete', reaction: 'Reação', time_gap: 'Sem apontamento' };
   const sched = digestScheduleOf(user);
-  const { subject, html } = emailTpl.digest({
+  const ulang = userLang(user);
+  const tl = translatorFor(ulang).T;
+  const { subject, html } = mailIn(ulang, () => emailTpl.digest({
     firstName: user.name.split(' ')[0], baseUrl: url, todayYmd: today(),
     hour: sched.hour, scheduleLabel: digestScheduleLabel(user),
     overdue: overdue.map(toItem), dueToday: dueToday.map(toItem), dueSoon: dueSoon.map(toItem),
-    unread: unreadNotifs.map(n => ({ name: n.demandName || NOTIF_SHORT[n.type] || n.type, meta: n.demandName ? NOTIF_SHORT[n.type] || '' : '',
+    unread: unreadNotifs.map(n => ({ name: n.demandName || tl(NOTIF_SHORT[n.type] || n.type), meta: n.demandName ? tl(NOTIF_SHORT[n.type] || '') : '',
       href: url && n.demandId ? demandLinkFor(url, n.demandId) : null })),
-  });
-  const text = `${_greetFor(sched.hour)}, ${user.name.split(' ')[0]}!\n\nEm atraso: ${overdue.length}\nVencem hoje: ${dueToday.length}\nPróximos 3 dias: ${dueSoon.length}\nNotificações não lidas: ${unreadNotifs.length}\n\nAbra: ${url}`;
+  }));
+  const text = `${tl(_greetFor(sched.hour))}, ${user.name.split(' ')[0]}!\n\n${tl('Em atraso')}: ${overdue.length}\n${tl('Vencem hoje')}: ${dueToday.length}\n${tl('Próximos 3 dias')}: ${dueSoon.length}\n${tl('Notificações não lidas')}: ${unreadNotifs.length}\n\n${tl('Abrir: {0}', url)}`;
   try {
     await sendEmail(user.email, subject, html, text);
     return true;

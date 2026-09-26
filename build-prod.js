@@ -64,6 +64,15 @@ function rewriteCacheBusters(buildSha) {
   } else {
     console.log('  · public/index.html: nenhum cache-buster encontrado');
   }
+  // Outras páginas carregam o i18n.js (e, por ele, o dicionário /i18n/<idioma>.js
+  // com a mesma versão): o cache-buster acompanha o deploy.
+  for (const page of ['acesso.html', 'console.html', 'hub.html', 'writer.html', 'public-client.html']) {
+    const pagePath = path.join(__dirname, 'public', page);
+    if (!fs.existsSync(pagePath)) continue;
+    const orig = fs.readFileSync(pagePath, 'utf8');
+    const next = orig.replace(/(\/js\/i18n\.js\?v=)[a-zA-Z0-9._-]+/g, `$1${version}`);
+    if (next !== orig) { fs.writeFileSync(pagePath, next); console.log(`  ✓ public/${page}: i18n.js → ?v=${version}`); }
+  }
   // sw.js — const SW_VERSION = '...';
   const swPath = path.join(__dirname, 'public/sw.js');
   const swOrig = fs.readFileSync(swPath, 'utf8');

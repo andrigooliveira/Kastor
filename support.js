@@ -41,7 +41,7 @@ const SUBJECT_MAX = 140;
 
 module.exports = function setupSupport(app, deps) {
   const db = new Proxy({}, { get: (_, key) => deps.getDb()[key] });
-  const { dataDir, saveEntity, removeEntity, uid, nowISO, requireAuth, requireConsole, audit, sendEmail, mailEnabled, emailTpl, appBaseUrl, orgPlan, store, broadcastToUser, makeRateLimit, buildSha } = deps;
+  const { dataDir, saveEntity, removeEntity, uid, nowISO, requireAuth, requireConsole, audit, sendEmail, mailEnabled, emailTpl, appBaseUrl, orgPlan, store, broadcastToUser, makeRateLimit, buildSha, mailIn, emailLangFor } = deps;
   const filesDir = path.join(dataDir, 'support');
   fs.mkdirSync(filesDir, { recursive: true });
   const list = () => db.supportTickets || [];
@@ -122,14 +122,17 @@ module.exports = function setupSupport(app, deps) {
     const base = appBaseUrl(req);
     const mail = emailTpl.supportToStaff({ ticket: t, message, kind, link: `${base}/console/suporte/${t.id}`, baseUrl: base, categoryLabel: CATEGORIES[t.category] || t.category });
     for (const addr of to) {
-      try { await sendEmail(addr, mail.subject, mail.html, mail.text); } catch (e) { console.warn('[support] e-mail pro console', e.message); }
+      // Console: sempre em português.
+      try { await sendEmail(addr, mail.subject, mail.html, mail.text, { lang: 'pt' }); } catch (e) { console.warn('[support] e-mail pro console', e.message); }
     }
   }
   async function notifyCustomer(req, t, message) {
     const base = appBaseUrl(req);
     const link = `${base}/${t.orgId}/support/${t.number}`;
     if (mailEnabled() && t.email) {
-      const mail = emailTpl.supportToCustomer({ ticket: t, message, link, baseUrl: base });
+      // No idioma de quem abriu o chamado.
+      const lang = emailLangFor ? emailLangFor(t.email) : 'pt';
+      const mail = mailIn ? mailIn(lang, () => emailTpl.supportToCustomer({ ticket: t, message, link, baseUrl: base })) : emailTpl.supportToCustomer({ ticket: t, message, link, baseUrl: base });
       try { await sendEmail(t.email, mail.subject, mail.html, mail.text); } catch (e) { console.warn('[support] e-mail pro cliente', e.message); }
     }
     // Aviso no sino (vale na organização do chamado).

@@ -2,6 +2,8 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
+<!-- Idioma: roda antes de tudo (carrega o dicionário quando não é português). -->
+<script src="/js/i18n.js?v=20260926f1"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>reWork</title>
 <link rel="icon" type="image/png" href="/favicon.png">
@@ -441,6 +443,28 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       <a href="/termos" target="_blank" rel="noopener">Termos de Serviço</a>
       <span aria-hidden="true">·</span>
       <a href="/privacidade" target="_blank" rel="noopener">Política de Privacidade</a>
+    </div>
+  </div>
+</div>
+
+<!-- PLANO NOS PRIMEIROS PASSOS — dono de organização no teste que ainda não
+     escolheu plano (me.org.planIntroPending). Assinar leva pra página de
+     assinatura já com a escolha feita; seguir no teste fecha de vez (app.js). -->
+<div id="plan-intro-screen" aria-labelledby="pi-title" role="dialog" aria-modal="true">
+  <div class="ob-wrap">
+    <div class="ob-box pi-box">
+      <div class="ob-logo"><img src="/rework_preto.svg" alt="reWork"></div>
+      <div class="ob-kicker" id="pi-kicker">Primeiros passos</div>
+      <h1 class="ob-title" id="pi-title">Escolha o plano</h1>
+      <p class="ob-text pi-text" id="pi-text"></p>
+      <div class="pi-cycle" id="pi-cycle" role="radiogroup" aria-label="Cobrança"></div>
+      <div class="pi-plans" id="pi-plans" role="radiogroup" aria-label="Plano"></div>
+      <div class="ob-label pi-label">Forma de pagamento</div>
+      <div class="pi-methods" id="pi-methods" role="radiogroup" aria-label="Forma de pagamento"></div>
+      <p class="pi-hint" id="pi-hint"></p>
+      <div class="login-error ob-error" id="pi-error" role="alert"></div>
+      <button type="button" class="ob-primary pi-go" id="pi-go" onclick="planIntroGo()">Continuar para o pagamento</button>
+      <button type="button" class="ob-skip" id="pi-skip" onclick="planIntroSkip()">Seguir no teste grátis por enquanto</button>
     </div>
   </div>
 </div>
@@ -3155,8 +3179,22 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <section class="profile-section" data-section="appearance" hidden>
               <header class="profile-section-head">
                 <h2 class="profile-section-title">Aparência</h2>
-                <p class="profile-section-sub">Vale para este computador, exceto a cor de destaque, que acompanha você.</p>
+                <p class="profile-section-sub">Vale para este computador, exceto o idioma e a cor de destaque, que acompanham você.</p>
               </header>
+              <div class="profile-card-block">
+                <div class="profile-block-title">Idioma</div>
+                <div class="profile-row">
+                  <div class="profile-row-info">
+                    <div class="profile-row-title">Idioma do reWork</div>
+                    <div class="profile-row-sub" id="profile-lang-sub">Por padrão, segue o idioma da organização.</div>
+                  </div>
+                  <div class="profile-theme-picker" id="profile-lang-picker">
+                    <button type="button" class="profile-theme-opt" data-lang="" onclick="setProfileLang('')"><i data-lucide="building-2" class="ic-sm"></i> Da organização</button>
+                    <button type="button" class="profile-theme-opt" data-lang="pt" onclick="setProfileLang('pt')" translate="no"><span data-flag="BR"></span>Português</button>
+                    <button type="button" class="profile-theme-opt" data-lang="en" onclick="setProfileLang('en')" translate="no"><span data-flag="US"></span>English</button>
+                  </div>
+                </div>
+              </div>
               <div class="profile-card-block">
                 <div class="profile-block-title">Tema</div>
                 <div class="profile-row">
@@ -3552,7 +3590,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               </div>
               <div class="rec-dates">
                 <div class="rec-field">
-                  <span class="rec-field-label">Início</span>
+                  <span class="rec-field-label" data-en="Start">Início</span>
                   <input id="f-rec-start" class="rec-date" type="date" oninput="updateRecPreview()">
                 </div>
                 <div class="rec-field">
@@ -3601,7 +3639,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       <!-- Início | Término -->
       <div class="time-row time-row-2col">
         <div class="time-col">
-          <div class="time-col-title">Início</div>
+          <div class="time-col-title" data-en="Start">Início</div>
           <input type="date" class="form-control time-input" id="time-start-date" onchange="onTimeStartChange()">
           <input type="time" class="form-control time-input" id="time-start-time" onchange="onTimeStartChange()">
         </div>
@@ -3878,7 +3916,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           <div id="sch-when" style="font-size:13px;color:var(--text-dim)"></div>
         </div>
         <div class="form-group">
-          <label class="form-label">Início</label>
+          <label class="form-label" data-en="Start">Início</label>
           <input class="form-control" id="sch-start" type="time" step="900">
         </div>
         <div class="form-group">
@@ -4881,7 +4919,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260926sp2" defer></script>
+<script src="/js/boot.js?v=20260926f1" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

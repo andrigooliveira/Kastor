@@ -1,0 +1,1483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>reWork — User Manual</title>
+<link rel="stylesheet" href="/css/fonts.css">
+<style>
+  /* ═══ Impeccable tokens (design.json) — dark-first, light polished ═══ */
+  :root {
+    --bg: #0c0c10;
+    --surface: #17171c;
+    --surface-2: #22222a;
+    --surface-3: #2e2e38;
+    --hairline: rgba(255,255,255,0.06);
+    --border: rgba(255,255,255,0.12);
+    --text: #f5f5f7;
+    --text-dim: #b8b8b8;
+    --text-muted: #a1a1a1;
+    --text-faint: #6b6b74;
+    --accent: #7A00FF;
+    --accent-hover: #9b3dff;
+    --accent-soft: rgba(122,0,255,0.10);
+    --accent-dim: rgba(122,0,255,0.22);
+    --success: #16a34a;
+    --warn: #b57100;
+    --info: #2b7fff;
+    --danger: #e7000b;
+    --radius-sm: 6px;
+    --radius: 10px;
+    --radius-lg: 12px;
+    --shadow-xs: 0 1px 2px rgba(0,0,0,0.18);
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.20), 0 1px 2px rgba(0,0,0,0.12);
+    --shadow-focus: 0 0 0 4px rgba(122,0,255,0.10);
+    --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f5f5f8;
+      --surface: #ffffff;
+      --surface-2: #eeeef2;
+      --surface-3: #e4e4ea;
+      --hairline: rgba(0,0,0,0.06);
+      --border: rgba(0,0,0,0.12);
+      --text: #111114;
+      --text-dim: #4a4a55;
+      --text-muted: #6b6b74;
+      --text-faint: #a1a1a1;
+      --accent-soft: rgba(122,0,255,0.08);
+      --accent-dim: rgba(122,0,255,0.18);
+      --shadow-focus: 0 0 0 4px rgba(122,0,255,0.14);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg); color: var(--text);
+    font-size: 15px; line-height: 1.6;
+    letter-spacing: -0.005em;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* ── Header (chrome sticky) ────────────────────────────
+     Glass entra aqui porque É chrome (design.json permite). */
+  .doc-header {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 14px 32px;
+    background: color-mix(in oklab, var(--surface) 82%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--hairline);
+  }
+  .doc-brand { display: flex; align-items: center; gap: 12px; }
+  .doc-brand .logo {
+    width: 32px; height: 32px;
+    display: block;
+    object-fit: contain;
+    flex-shrink: 0;
+  }
+  .doc-brand h1 { font-size: 14px; margin: 0; letter-spacing: -0.01em; font-weight: 700; }
+  .doc-brand .subtitle {
+    color: var(--text-muted); font-size: 10px; margin: 0;
+    font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  }
+  .doc-header .rel {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12.5px; color: var(--accent);
+    padding: 6px 12px; border-radius: var(--radius-sm);
+    background: var(--accent-soft); text-decoration: none;
+    font-weight: 600;
+    transition: background 150ms var(--ease-out);
+  }
+  .doc-header .rel:hover { background: var(--accent-dim); }
+  body.on-home .doc-header .home-crumb { display: none; }
+  .doc-header .home-crumb {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 12px; border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-dim); font-size: 12.5px; font-weight: 600;
+    font-family: inherit; cursor: pointer;
+    text-decoration: none; border: none;
+    transition: background 120ms var(--ease-out), color 120ms var(--ease-out);
+  }
+  .doc-header .home-crumb:hover { background: var(--surface-2); color: var(--text); }
+
+  /* ── Home view (grid + search) ───────────────────────── */
+  .home-view { max-width: 1120px; margin: 0 auto; padding: 56px 32px 96px; }
+  body:not(.on-home) .home-view { display: none; }
+  .home-hero { margin-bottom: 32px; }
+  .home-hero .hero-label {
+    display: inline-block;
+    font-size: 10px; font-weight: 700;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 12px;
+  }
+  .home-hero h1 {
+    font-size: clamp(28px, 3.4vw, 36px);
+    line-height: 1.08;
+    letter-spacing: -0.02em;
+    font-weight: 700;
+    margin: 0 0 8px;
+    color: var(--text);
+  }
+  .home-hero p {
+    font-size: 15px; color: var(--text-dim);
+    margin: 0; max-width: 560px;
+  }
+  .home-search {
+    position: relative;
+    margin: 28px 0 40px;
+    max-width: 560px;
+  }
+  .home-search input {
+    width: 100%; padding: 11px 14px 11px 42px;
+    background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--hairline); border-radius: var(--radius-sm);
+    font-family: inherit; font-size: 13.5px;
+    outline: none;
+    transition: border-color 120ms var(--ease-out), box-shadow 120ms var(--ease-out);
+  }
+  .home-search input::placeholder { color: var(--text-faint); }
+  .home-search input:hover { border-color: var(--border); }
+  .home-search input:focus-visible {
+    border-color: var(--accent);
+    box-shadow: var(--shadow-focus);
+  }
+  .home-search::before {
+    content: ''; position: absolute;
+    left: 14px; top: 50%; transform: translateY(-50%);
+    width: 16px; height: 16px;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b6b74' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><path d='m21 21-4.3-4.3'/></svg>");
+    background-repeat: no-repeat;
+    pointer-events: none;
+  }
+  .doc-cards {
+    display: grid; gap: 10px;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  }
+  /* Tonal Layer Rule — card default é flat surface, hover troca tom (não borda) */
+  .doc-card {
+    display: flex; flex-direction: column; align-items: flex-start;
+    padding: 18px 18px 16px; gap: 6px; text-align: left;
+    background: var(--surface);
+    border: none; border-radius: var(--radius);
+    cursor: pointer; font-family: inherit;
+    transition: background 150ms var(--ease-out), transform 120ms var(--ease-spring);
+    position: relative; overflow: hidden;
+  }
+  .doc-card::before {
+    content: ''; position: absolute;
+    left: 0; top: 12px; bottom: 12px; width: 2px;
+    background: var(--accent);
+    border-radius: 0 2px 2px 0;
+    opacity: 0;
+    transition: opacity 150ms var(--ease-out);
+  }
+  .doc-card:hover { background: var(--surface-2); }
+  .doc-card:hover::before { opacity: 1; }
+  .doc-card:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+    background: var(--surface-2);
+  }
+  .doc-card:focus-visible::before { opacity: 1; }
+  /* Avatar = número monospace tabular-nums (Numeric Tabular Rule) */
+  .doc-card-avatar {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 28px; height: 20px; padding: 0 2px;
+    background: transparent; color: var(--text-faint);
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 11px; font-weight: 500;
+    letter-spacing: 0;
+    margin-bottom: 2px;
+    transition: color 150ms var(--ease-out);
+  }
+  .doc-card:hover .doc-card-avatar,
+  .doc-card:focus-visible .doc-card-avatar { color: var(--accent); }
+  .doc-card-group {
+    /* Label Small-Caps Rule: 10px 700 uppercase 0.08em, sempre */
+    font-size: 10px; font-weight: 700; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.08em;
+    line-height: 1;
+  }
+  .doc-card-name {
+    font-size: 15px; font-weight: 700; color: var(--text);
+    letter-spacing: -0.01em; line-height: 1.25;
+    margin: 2px 0 4px;
+  }
+  .doc-card-desc {
+    font-size: 12.5px; color: var(--text-dim);
+    line-height: 1.5;
+  }
+  .doc-card.hidden { display: none; }
+  .home-empty {
+    text-align: center; color: var(--text-muted);
+    font-size: 13px; padding: 40px 0;
+    font-weight: 500;
+  }
+
+  /* ── Section view (leitura) ─────────────────────────── */
+  main.section-view { max-width: 760px; margin: 0 auto; padding: 48px min(60px, 5vw) 96px; }
+  body.on-home main.section-view { display: none; }
+  main section { display: none; }
+  main section.is-active { display: block; }
+
+  /* Kicker vira label small-caps (Roxo Signal Rule: sem pill roxa cheia) */
+  .kicker {
+    display: inline-block;
+    font-size: 10px; font-weight: 700;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 12px;
+  }
+  h1.doc-title {
+    font-size: clamp(28px, 3.6vw, 36px);
+    line-height: 1.1;
+    margin: 0 0 12px;
+    letter-spacing: -0.02em;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .lead {
+    font-size: 15.5px; color: var(--text-dim);
+    max-width: 640px; margin: 0 0 40px;
+    line-height: 1.55;
+  }
+
+  /* h2/h3 sem border-top (Tonal Layer Rule: espaço em vez de borda) */
+  h2 {
+    font-size: 20px; margin: 44px 0 8px;
+    letter-spacing: -0.01em; font-weight: 700;
+    color: var(--text);
+  }
+  h2:first-of-type { margin-top: 24px; }
+  h3 { font-size: 15px; margin: 24px 0 6px; letter-spacing: -0.005em; font-weight: 700; color: var(--text); }
+  h4 {
+    font-size: 10px; margin: 20px 0 6px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700;
+  }
+  p { margin: 8px 0 12px; color: var(--text-dim); }
+  ul, ol { padding-left: 20px; margin: 8px 0 16px; color: var(--text-dim); }
+  li { margin: 4px 0; }
+  li > strong { color: var(--text); font-weight: 600; }
+  a { color: var(--accent); text-decoration: none; border-bottom: 1px solid transparent; transition: border-color 120ms var(--ease-out); }
+  a:hover { border-bottom-color: var(--accent); }
+  em { color: var(--text); font-style: italic; }
+
+  code {
+    font-family: var(--mono); font-size: 0.86em;
+    background: var(--surface-2); padding: 1px 6px;
+    border-radius: 4px; color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+  kbd {
+    font-family: var(--mono); font-size: 0.82em;
+    background: var(--surface-3);
+    padding: 2px 6px; border-radius: 5px;
+    color: var(--text); white-space: nowrap;
+    box-shadow: inset 0 -1px 0 rgba(0,0,0,0.28);
+    font-weight: 500;
+  }
+  pre {
+    background: var(--surface-2);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    overflow-x: auto; font-family: var(--mono);
+    font-size: 12.5px; line-height: 1.55; margin: 14px 0 18px;
+  }
+  pre code { background: transparent; padding: 0; border-radius: 0; }
+
+  /* Callouts — flat surface tom + faixa vertical colorida à esquerda
+     (padrão detail-stage-card do design.json). Sem border cheia. */
+  .callout {
+    position: relative;
+    display: flex; gap: 12px; padding: 14px 16px 14px 22px;
+    border-radius: var(--radius); background: var(--surface);
+    margin: 16px 0; font-size: 13.5px; line-height: 1.55;
+    overflow: hidden;
+  }
+  .callout::before {
+    content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+    background: var(--callout-color, var(--accent));
+  }
+  .callout .ic {
+    flex-shrink: 0; width: 22px; height: 22px; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 12px; margin-top: 1px;
+    color: #fff; font-family: var(--mono);
+    background: var(--callout-color, var(--accent));
+  }
+  .callout.tip   { --callout-color: var(--success); background: color-mix(in oklab, var(--success) 6%, var(--surface)); }
+  .callout.warn  { --callout-color: var(--warn);    background: color-mix(in oklab, var(--warn) 6%, var(--surface)); }
+  .callout.info  { --callout-color: var(--info);    background: color-mix(in oklab, var(--info) 6%, var(--surface)); }
+  .callout.admin { --callout-color: var(--accent);  background: color-mix(in oklab, var(--accent) 6%, var(--surface)); }
+  .callout .body { min-width: 0; }
+  .callout .body strong { display: block; margin-bottom: 2px; color: var(--text); font-weight: 700; }
+  .callout .body p { margin: 0; color: var(--text-dim); }
+
+  /* Cards de sub-grid: flat surface, sem borda default */
+  .grid-2 {
+    display: grid; gap: 8px;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    margin: 14px 0;
+  }
+  .card {
+    background: var(--surface); border: none;
+    border-radius: var(--radius); padding: 14px 16px;
+  }
+  .card h4 { margin: 0 0 6px; text-transform: none; letter-spacing: -0.005em; font-size: 14px; color: var(--text); font-weight: 700; }
+  .card p  { margin: 0; font-size: 13px; color: var(--text-dim); }
+
+  /* Step list — flat surface, numeração tabular */
+  .step-list { counter-reset: step; list-style: none; padding: 0; margin: 18px 0; }
+  .step-list li {
+    counter-increment: step;
+    position: relative; padding: 12px 14px 12px 44px;
+    background: var(--surface); border: none;
+    border-radius: var(--radius); margin: 6px 0;
+    color: var(--text-dim); font-size: 14px;
+  }
+  .step-list li::before {
+    content: counter(step); position: absolute;
+    left: 12px; top: 12px; width: 22px; height: 22px;
+    border-radius: 50%; background: var(--accent-soft); color: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-variant-numeric: tabular-nums;
+    font-size: 11.5px; font-weight: 600;
+  }
+  .step-list li strong { color: var(--text); font-weight: 600; }
+
+  table {
+    width: 100%; border-collapse: collapse;
+    margin: 14px 0; font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  th, td {
+    text-align: left; padding: 10px 12px;
+    border-bottom: 1px solid var(--hairline); vertical-align: top;
+  }
+  th {
+    color: var(--text-muted); font-weight: 700; font-size: 10px;
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  td { color: var(--text-dim); }
+
+  /* Pills / chips — status chip pattern do design.json */
+  .pill {
+    display: inline-flex; align-items: center;
+    padding: 3px 8px; border-radius: 999px;
+    font-size: 10px; font-weight: 700;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    line-height: 1;
+  }
+  .pill-admin { background: var(--accent-soft); color: var(--accent); }
+  .pill-mod   { background: color-mix(in oklab, var(--warn) 14%, transparent); color: var(--warn); }
+  .pill-new   { background: color-mix(in oklab, var(--success) 14%, transparent); color: var(--success); }
+
+  /* Prev/Next — ghost button pattern, sem border top no container */
+  .section-nav {
+    display: flex; justify-content: space-between; gap: 8px;
+    margin-top: 56px;
+  }
+  .section-nav .nav-btn {
+    flex: 1; min-width: 0;
+    padding: 12px 16px; border-radius: var(--radius);
+    background: var(--surface); border: none;
+    color: var(--text-dim); font-family: inherit; font-size: 13px;
+    cursor: pointer; text-align: left;
+    transition: background 150ms var(--ease-out), color 150ms var(--ease-out), transform 120ms var(--ease-spring);
+  }
+  .section-nav .nav-btn:hover {
+    background: var(--surface-2); color: var(--text);
+  }
+  .section-nav .nav-btn:hover .nav-dir { color: var(--accent); }
+  .section-nav .nav-btn:active { transform: scale(0.985); }
+  .section-nav .nav-btn:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+  .section-nav .nav-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .section-nav .nav-btn .nav-dir {
+    display: block; font-size: 10px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 3px;
+    font-weight: 700;
+    transition: color 150ms var(--ease-out);
+  }
+  .section-nav .nav-btn .nav-title { font-weight: 600; letter-spacing: -0.005em; }
+  .section-nav .nav-btn.next { text-align: right; }
+
+  footer {
+    margin: 72px 0 24px;
+    color: var(--text-muted); font-size: 11px;
+    text-align: center; padding-top: 24px;
+    letter-spacing: 0.02em;
+  }
+  footer a { color: var(--text-muted); border-bottom: 1px solid transparent; }
+  footer a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+
+  @media (max-width: 900px) {
+    .doc-header { padding: 12px 16px; }
+    .home-view { padding: 32px 16px 80px; }
+    main.section-view { padding: 32px 16px 72px; }
+    .doc-cards { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+    .doc-card { padding: 16px 14px 14px; }
+    .section-nav { flex-direction: column; }
+    .section-nav .nav-btn.next { text-align: left; }
+  }
+</style>
+</head>
+<body class="on-home">
+
+<!-- ── Doc header ─────────────────────────────── -->
+<div class="doc-header">
+  <div class="doc-brand">
+    <img class="logo" src="/rework_logo.svg" alt="reWork">
+    <div>
+      <h1>reWork</h1>
+      <p class="subtitle">User manual</p>
+    </div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <button type="button" class="home-crumb" onclick="showHome()">← All topics</button>
+    <a href="Codigos-de-Erro.html" class="rel">Error codes →</a>
+  </div>
+</div>
+
+<!-- ── HOME: search + card grid ─────────────────────── -->
+<div class="home-view">
+  <div class="home-hero">
+    <h1>reWork Manual</h1>
+    <p>Choose a topic or search by keyword.</p>
+  </div>
+  <div class="home-search">
+    <input id="doc-search" type="search" placeholder="Search by keyword (e.g. vault, biometrics, kanban, schedule…)" autocomplete="off">
+  </div>
+  <div class="doc-cards" id="doc-cards">
+    <!-- Basics -->
+    <button class="doc-card" data-section="bem-vindo" data-group="Basics" data-kw="introduction start overview chapters introducao inicio visao geral">
+      <div class="doc-card-avatar">01</div>
+      <div class="doc-card-name">Welcome</div>
+      <div class="doc-card-group">Basics</div>
+      <div class="doc-card-desc">What the platform does and how this manual is organized.</div>
+    </button>
+    <button class="doc-card" data-section="primeiros-passos" data-group="Basics" data-kw="login sign in password tour orientation first access sign out logout">
+      <div class="doc-card-avatar">02</div>
+      <div class="doc-card-name">Getting started</div>
+      <div class="doc-card-group">Basics</div>
+      <div class="doc-card-desc">Sign in, a tour of the screen, changing the default password.</div>
+    </button>
+    <button class="doc-card" data-section="conceitos" data-group="Basics" data-kw="team workspace client project workflow task stage role area position">
+      <div class="doc-card-avatar">03</div>
+      <div class="doc-card-name">Concepts</div>
+      <div class="doc-card-group">Basics</div>
+      <div class="doc-card-desc">Team, client, project, workflow and task — the basic vocabulary.</div>
+    </button>
+
+    <!-- Daily use -->
+    <button class="doc-card" data-section="perfil" data-group="Daily use" data-kw="profile photo email discord google calendar password avatar preferences language">
+      <div class="doc-card-avatar">04</div>
+      <div class="doc-card-name">My Profile</div>
+      <div class="doc-card-group">Daily use</div>
+      <div class="doc-card-desc">Photo, email, Discord, Google Calendar and password.</div>
+    </button>
+    <button class="doc-card" data-section="criar-demanda" data-group="Daily use" data-kw="create new wizard 4 steps new task request name briefing due date priority assignee deliverable checklist attachment">
+      <div class="doc-card-avatar">05</div>
+      <div class="doc-card-name">Create a task</div>
+      <div class="doc-card-group">Daily use</div>
+      <div class="doc-card-desc">The 4-step wizard and every field in the form.</div>
+    </button>
+    <button class="doc-card" data-section="trabalhando" data-group="Daily use" data-kw="detail pipeline stage due date priority checklist deliverable attachment comment reaction mention image link timer hours history list kanban calendar filter shareable url bulk actions">
+      <div class="doc-card-avatar">06</div>
+      <div class="doc-card-name">Working on a task</div>
+      <div class="doc-card-group">Daily use</div>
+      <div class="doc-card-desc">Anatomy of the detail: pipeline, checklist, timer, comments, history.</div>
+    </button>
+    <button class="doc-card" data-section="rotina" data-group="Daily use" data-kw="my tasks weekly schedule block individual team google calendar meeting recurrence mobile 1 week">
+      <div class="doc-card-avatar">07</div>
+      <div class="doc-card-name">My Tasks and Schedule</div>
+      <div class="doc-card-group">Daily use</div>
+      <div class="doc-card-desc">What I need to do today and in the coming days.</div>
+    </button>
+    <button class="doc-card" data-section="notificacoes" data-group="Daily use" data-kw="notification bell badge email discord mention alert">
+      <div class="doc-card-avatar">08</div>
+      <div class="doc-card-name">Notifications</div>
+      <div class="doc-card-group">Daily use</div>
+      <div class="doc-card-desc">Bell, email and Discord — channels and how to set them up.</div>
+    </button>
+
+    <!-- Organization -->
+    <button class="doc-card" data-section="clientes" data-group="Organization" data-kw="client project create archive delete trash report pdf monthly assets documentation template">
+      <div class="doc-card-avatar">09</div>
+      <div class="doc-card-name">Clients and Projects</div>
+      <div class="doc-card-group">Organization</div>
+      <div class="doc-card-desc">Add, organize, archive and generate a monthly PDF report.</div>
+    </button>
+    <button class="doc-card" data-section="fluxos" data-group="Organization" data-kw="workflow stage sla position checklist default description task type library orphans duplicate">
+      <div class="doc-card-avatar">10</div>
+      <div class="doc-card-name">Task Workflows</div>
+      <div class="doc-card-group">Organization</div>
+      <div class="doc-card-desc">Stages, SLAs, positions and duplication. Managing types and orphans.</div>
+    </button>
+    <button class="doc-card" data-section="listas" data-group="Organization" data-kw="list to-do apply project duplicate copy recurring monthly automation repetitive">
+      <div class="doc-card-avatar">11</div>
+      <div class="doc-card-name">Lists and Recurring</div>
+      <div class="doc-card-group">Organization</div>
+      <div class="doc-card-desc">Lists you can apply to projects and tasks that come back every month.</div>
+    </button>
+    <button class="doc-card" data-section="templates" data-group="Organization" data-kw="template model task preset client onboarding structure reuse">
+      <div class="doc-card-avatar">12</div>
+      <div class="doc-card-name">Templates</div>
+      <div class="doc-card-group">Organization</div>
+      <div class="doc-card-desc">Task presets and whole reusable client structures.</div>
+    </button>
+
+    <!-- Analysis -->
+    <button class="doc-card" data-section="dashboard" data-group="Analysis" data-kw="dashboard kpi forecast heatmap radar throughput donut priority hours meeting board">
+      <div class="doc-card-avatar">13</div>
+      <div class="doc-card-name">Dashboard</div>
+      <div class="doc-card-group">Analysis</div>
+      <div class="doc-card-desc">KPIs, forecast heatmap, radar, throughput and the hours panel.</div>
+    </button>
+    <button class="doc-card" data-section="analises" data-group="Analysis" data-kw="analytics capacity report team project client output pieces artwork variations stage sla">
+      <div class="doc-card-avatar">14</div>
+      <div class="doc-card-name">Analytics</div>
+      <div class="doc-card-group">Analysis</div>
+      <div class="doc-card-desc">Forecast capacity and retrospective reports.</div>
+    </button>
+
+    <!-- Administration -->
+    <button class="doc-card" data-section="squads-usuarios" data-group="Administration" data-kw="team workspace user role area position admin moderator deactivate reset password permission">
+      <div class="doc-card-avatar">15</div>
+      <div class="doc-card-name">Teams and Users</div>
+      <div class="doc-card-group">Administration</div>
+      <div class="doc-card-desc">Organizational structure, roles and permissions.</div>
+    </button>
+    <button class="doc-card" data-section="integracoes" data-group="Administration" data-kw="integration webhook discord slack make n8n zapier event payload mention">
+      <div class="doc-card-avatar">16</div>
+      <div class="doc-card-name">Integrations</div>
+      <div class="doc-card-group">Administration</div>
+      <div class="doc-card-desc">Discord webhooks (embed) and Raw JSON for Make/n8n/etc.</div>
+    </button>
+    <button class="doc-card" data-section="cofre" data-group="Administration" data-kw="vault password biometrics pin webauthn windows hello touch id fido key encryption audit history">
+      <div class="doc-card-avatar">17</div>
+      <div class="doc-card-name">Password Vault</div>
+      <div class="doc-card-group">Administration</div>
+      <div class="doc-card-desc">Keeps credentials with AES-256. Unlock with password or biometrics.</div>
+    </button>
+    <button class="doc-card" data-section="bastidores" data-group="Administration" data-kw="trash soft delete restore purge dev tools hidden route slug shareable url">
+      <div class="doc-card-avatar">18</div>
+      <div class="doc-card-name">Trash and Dev Tools</div>
+      <div class="doc-card-group">Administration</div>
+      <div class="doc-card-desc">Restore deleted items, hidden routes and friendly URLs.</div>
+    </button>
+
+    <!-- Reference -->
+    <button class="doc-card" data-section="atalhos" data-group="Reference" data-kw="shortcut keyboard command palette ctrl k g d n mobile responsive productivity">
+      <div class="doc-card-avatar">19</div>
+      <div class="doc-card-name">Shortcuts</div>
+      <div class="doc-card-group">Reference</div>
+      <div class="doc-card-desc">Command palette, G+letter shortcuts, filters as links.</div>
+    </button>
+    <button class="doc-card" data-section="faq" data-group="Reference" data-kw="faq frequently asked questions forgot password transfer team delete user left assignee offline bug error">
+      <div class="doc-card-avatar">20</div>
+      <div class="doc-card-name">FAQ</div>
+      <div class="doc-card-group">Reference</div>
+      <div class="doc-card-desc">Frequently asked questions with quick answers.</div>
+    </button>
+  </div>
+  <div class="home-empty" id="home-empty" style="display:none">No topics found. Try another word.</div>
+</div>
+
+<!-- ── SECTION VIEW: reading ─────────────────────────── -->
+<main class="section-view">
+    <!-- ============ 01 · WELCOME ============ -->
+    <section id="bem-vindo">
+      <span class="kicker">Basics · 01</span>
+      <h1 class="doc-title">Welcome to reWork</h1>
+      <p class="lead">reWork is a task management platform for marketing teams and agencies. This manual follows a progressive order — newcomers can read it from start to finish; people who already use it can jump straight to the section they need.</p>
+
+      <h2>What you can do here</h2>
+      <ul>
+        <li><strong>Create and follow tasks</strong> — every marketing work request becomes a task with a workflow, assignee, due date and full history.</li>
+        <li><strong>See the team's weekly schedule</strong> — time blocks, meetings (via Google Calendar) and assigned tasks.</li>
+        <li><strong>Automate the repetitive</strong> — to-do lists you can apply to new projects, monthly recurring tasks, Discord integrations.</li>
+        <li><strong>Measure capacity and delivery</strong> — dashboard with forecast, delays, throughput and reports by client/project.</li>
+        <li><strong>Keep logins safe</strong> — encrypted password vault that unlocks with biometrics.</li>
+      </ul>
+
+      <h2>How this manual is organized</h2>
+      <p>Six chapters, from the most basic to the most advanced:</p>
+      <div class="grid-2">
+        <div class="card"><h4>Basics</h4><p>What it is, how to sign in, and the five concepts that show up everywhere.</p></div>
+        <div class="card"><h4>Daily use</h4><p>The routine of whoever works on tasks: create, work, see the schedule, get notifications.</p></div>
+        <div class="card"><h4>Organization</h4><p>Clients, projects, workflows, lists — the skeleton tasks live on.</p></div>
+        <div class="card"><h4>Analysis</h4><p>Dashboard and reports to see workload, delivery and where things get stuck.</p></div>
+        <div class="card"><h4>Administration</h4><p>Teams, users, integrations, vault — what only admins/moderators touch.</p></div>
+        <div class="card"><h4>Reference</h4><p>Shortcuts, frequently asked questions, error codes (documented separately).</p></div>
+      </div>
+
+      <div class="callout tip">
+        <div class="ic">i</div>
+        <div class="body">
+          <strong>Reading tip</strong>
+          Each section stands on its own — open the one you care about. If you want to send a passage to someone, the address changes with the section (<code>...#conceitos</code>), so just copy the URL.
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 02 · GETTING STARTED ============ -->
+    <section id="primeiros-passos">
+      <span class="kicker">Basics · 02</span>
+      <h1 class="doc-title">Getting started</h1>
+      <p class="lead">Sign in, a first look around the screen and how to change the default password. If you already use it, skip to <a href="#conceitos">Concepts</a>.</p>
+
+      <h2>Signing in for the first time</h2>
+      <ol class="step-list">
+        <li>Accept the invite you got by email and create your password (or get a <strong>username</strong> and a <strong>temporary password</strong> from the admin).</li>
+        <li>Open reWork's address in the browser (or the desktop app).</li>
+        <li>Enter your email or username + password on the sign-in screen, plus the code sent to your email.</li>
+        <li>You land straight on <strong>Home</strong>.</li>
+      </ol>
+      <div class="callout warn">
+        <div class="ic">!</div>
+        <div class="body">
+          <strong>Change the default password</strong>
+          If you got a temporary password, go to <em>Profile → Security</em> as soon as you sign in and set a password of your own. An admin can also reset your password if you forget it.
+        </div>
+      </div>
+
+      <h2>A tour of the screen</h2>
+      <p>Three fixed areas on every page:</p>
+      <ul>
+        <li><strong>Sidebar (left)</strong> — <em>team</em> switcher at the top + grouped navigation. On screens &lt; 880px it becomes a drawer opened by the hamburger.</li>
+        <li><strong>Top bar</strong> — screen title + active timer (when there is one) + notification bell + <em>+ New Task</em> button.</li>
+        <li><strong>Main area</strong> — the content of the chosen screen. Filters sit at the top of this area, almost always mirrored in the URL so you can share them.</li>
+      </ul>
+
+      <h2>Change your password</h2>
+      <p>Sidebar → click your name/photo at the bottom → <strong>My Profile</strong> → <em>Security</em> section. You need the current password to confirm.</p>
+
+      <h2>Language</h2>
+      <p>reWork follows your organization's language (set by its country). To use another one, go to <em>My Profile → Appearance → Language</em>.</p>
+
+      <h2>Sign out</h2>
+      <p>Profile → <em>Sign out</em> button. Ends the session in this browser. You stay signed in on other devices.</p>
+    </section>
+
+    <!-- ============ 03 · CONCEPTS ============ -->
+    <section id="conceitos">
+      <span class="kicker">Basics · 03</span>
+      <h1 class="doc-title">Core concepts</h1>
+      <p class="lead">Five words that show up almost everywhere. Get comfortable with them before diving into the rest.</p>
+
+      <h2>Team (workspace)</h2>
+      <p>A slice of the operation — usually a group of clients served by one crew. Each user belongs to one or more teams (admins see all of them). The <strong>team switcher</strong> at the top of the sidebar filters everything you see: clients, projects, tasks, dashboards.</p>
+      <p>Many things are <em>per team</em>: clients, projects, workflows, lists. Others are <em>organization-wide</em>: integrations (Discord webhooks), task types, the to-do list library.</p>
+
+      <h2>Client</h2>
+      <p>A company/brand you serve. It lives inside a team. Each client can have several <strong>projects</strong>.</p>
+
+      <h2>Project</h2>
+      <p>A specific effort within a client — "Social Media 2026", "Corporate Landing Page", "Black Friday Campaign". It links tasks to the appropriate <em>workflow</em>. A client with no project still works, but the structure gets shallow.</p>
+
+      <h2>Workflow</h2>
+      <p>The sequence of stages a task goes through until it's done. E.g.: <em>Briefing → Creative → Review → Approval → Publishing</em>. Each stage has an assignee (by position), an SLA (deadline in days) and an optional checklist. Workflows live inside a client and can be reused across several projects.</p>
+
+      <h2>Task</h2>
+      <p>The unit of work — a specific request ("banner for event X"). It follows the workflow of the project it was born in and carries due dates, comments, deliverables, attachments, checklist and history. A task is what shows up on the Schedule, on the Kanban and in My Tasks.</p>
+
+      <div class="callout tip">
+        <div class="ic">i</div>
+        <div class="body">
+          <strong>Rule of thumb</strong>
+          Team &gt; Client &gt; Project &gt; Task. A workflow is a <em>recipe</em> applied to the project — several of its tasks follow the same step by step.
+        </div>
+      </div>
+
+      <h3>Terms that show up later</h3>
+      <ul>
+        <li><strong>Stage</strong> — each step within the workflow. A task is always in <em>one</em> stage.</li>
+        <li><strong>Assignee</strong> — who's working on the task NOW. It changes as the task moves through stages (derived from the position).</li>
+        <li><strong>Current stage due date</strong> vs <strong>Final due date</strong> — the first belongs to the stage the task is in; the second is the overall deadline, if any.</li>
+        <li><strong>Area</strong> — the user's "function" (Creative, Social Media, Development, etc.). It determines which stages they "pull".</li>
+        <li><strong>Position</strong> — hierarchy within the area (Analyst, Director, etc.). Independent from the area.</li>
+      </ul>
+    </section>
+
+    <!-- ============ 04 · PROFILE ============ -->
+    <section id="perfil">
+      <span class="kicker">Daily use · 04</span>
+      <h1 class="doc-title">My Profile</h1>
+      <p class="lead">Everything about you — photo, contact, personal integrations, language and password. Get there from the bottom of the sidebar (name + avatar).</p>
+
+      <h2>Photo, name and role</h2>
+      <p>The profile photo accepts PNG/JPG/GIF/WebP. It's optimized automatically so it doesn't eat up storage. Name and area/position are set by the admin when you're added, but you can adjust your display name.</p>
+
+      <h2>Email for notifications</h2>
+      <p>With a confirmed email, reWork sends important alerts there (mentions, assigned tasks, approvals). You can turn each event type on or off under <em>Notifications</em>.</p>
+
+      <h2>Discord (personal)</h2>
+      <p>Paste your Discord <strong>user ID</strong> (not the username). When a webhook posts in the channel tagging you, Discord sends a real notification (sound/badge).</p>
+      <p><strong>How to get the ID:</strong> Discord Settings → <em>Advanced</em> → turn on <em>Developer Mode</em>; right-click your name in the chat → <em>Copy User ID</em>.</p>
+
+      <h2>Google Calendar</h2>
+      <p>Connects your calendar so reWork pulls your meetings and shows them on the <em>Schedule</em> and on <em>Home</em>.</p>
+      <ol class="step-list">
+        <li>Profile → Integrations → <em>Connect Google Calendar</em>.</li>
+        <li>Allow <strong>read-only</strong> access in Google's popup.</li>
+        <li>Done: events show up in blue on the Schedule.</li>
+      </ol>
+      <div class="callout info">
+        <div class="ic">i</div>
+        <div class="body">
+          <strong>Read-only</strong>
+          reWork doesn't create, edit or delete events in your calendar. It only reads.
+        </div>
+      </div>
+
+      <h3>How meetings look on the Schedule</h3>
+      <ul>
+        <li><strong>Solid outline</strong> — you accepted the invite.</li>
+        <li><strong>Blue outline</strong> — no response yet.</li>
+        <li><strong>Red outline + strikethrough</strong> — you declined; it doesn't count as busy time.</li>
+      </ul>
+
+      <h2>Change password</h2>
+      <p>You need the current password to set a new one. At least 8 characters. If you forgot it, use "I forgot my password" on the sign-in screen.</p>
+    </section>
+
+    <!-- ============ 05 · CREATE A TASK ============ -->
+    <section id="criar-demanda">
+      <span class="kicker">Daily use · 05</span>
+      <h1 class="doc-title">Create a task</h1>
+      <p class="lead">The <em>+ New Task</em> button lives at the top right of every screen. It opens a 4-step wizard that makes sure the task is born in the right place.</p>
+
+      <h2>The wizard</h2>
+      <ol class="step-list">
+        <li><strong>Client</strong> — search or click the card. Only active clients of the current team show up.</li>
+        <li><strong>Project</strong> — same, filtered by the chosen client. If the client has only 1 project, the wizard skips this step.</li>
+        <li><strong>Task type / Workflow</strong> — if the project has a single workflow, it goes straight to the form. If it has several, choose the type (Creative, Social Media, etc.) and the appropriate workflow.</li>
+        <li><strong>Details</strong> — name, briefing, due date, priority, initial assignee, checklist, attachments. Only the name is required.</li>
+      </ol>
+
+      <h2>Form fields</h2>
+      <table>
+        <thead><tr><th>Field</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Name</strong></td><td>Short title. Shows up in lists, notifications, kanban.</td></tr>
+          <tr><td><strong>Briefing</strong></td><td>Rich text with inline attachments. It's the "context of the work".</td></tr>
+          <tr><td><strong>Final due date</strong></td><td>The task's overall deadline (optional).</td></tr>
+          <tr><td><strong>Current stage due date</strong></td><td>Deadline of the stage in progress. Derived from the workflow's SLA by default, editable.</td></tr>
+          <tr><td><strong>Priority</strong></td><td>1 (critical) to 4 (low). Affects sorting and the Radar.</td></tr>
+          <tr><td><strong>Assignee</strong></td><td>Overrides the stage's "natural puller". Useful when a specific analyst needs to take it.</td></tr>
+          <tr><td><strong>Deliverable (user)</strong></td><td>Who makes the final delivery. Shows up in the Discord notification.</td></tr>
+          <tr><td><strong>Pieces / Artwork / Variations</strong></td><td>Free counters — used in the output report.</td></tr>
+          <tr><td><strong>Checklist</strong></td><td>Overrides the stage's default checklist.</td></tr>
+          <tr><td><strong>Attachments</strong></td><td>PNG/JPG/GIF/WebP/PDF/DOCX/XLSX/TXT/ZIP. The per-file limit depends on your plan.</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout tip">
+        <div class="ic">✓</div>
+        <div class="body">
+          <strong>Shortcut</strong>
+          <kbd>N</kbd> on any screen opens the wizard directly (outside text fields).
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 06 · WORKING ON A TASK ============ -->
+    <section id="trabalhando">
+      <span class="kicker">Daily use · 06</span>
+      <h1 class="doc-title">Working on a task</h1>
+      <p class="lead">Click a row in the list or a card on the kanban to open the detail. That's where 90% of the work happens. The URL becomes <code>/demands/slug-id</code> — copy it to share a direct link to the detail.</p>
+
+      <h2>Anatomy of the detail</h2>
+      <ul>
+        <li><strong>Header</strong> — name, client/project/type, and actions in the corner (archive, checklist, history, X).</li>
+        <li><strong>Visual pipeline</strong> — numbered dots showing every stage of the workflow. The current one pulses; completed ones are filled in.</li>
+        <li><strong>Central panel</strong> — assignee, due dates, workflow, timer, buttons to move the stage forward/back.</li>
+        <li><strong>Side tabs</strong> — Description, Checklist, Attachments, Comments, Hours, History.</li>
+      </ul>
+
+      <h2>Pipeline and stages</h2>
+      <p>A task is always in <em>one</em> stage. To move forward: the <strong>right arrow</strong> button at the bottom (or pick the target stage directly on the pipeline). To go back: the left arrow. Each change is logged in the history with timestamp + user.</p>
+      <p>When a task enters a stage, reWork:</p>
+      <ul>
+        <li>Recalculates the assignee (based on the stage's position)</li>
+        <li>Recalculates the "stage due date" (the stage's SLA from today)</li>
+        <li>Notifies the new assignee (in-app + email + Discord, according to their preferences)</li>
+        <li>Fires the <code>demand.stage</code> webhook to the appropriate integrations</li>
+      </ul>
+
+      <h2>Due dates and priority</h2>
+      <p>Two due dates coexist: the <strong>final</strong> one (overall deadline) and the <strong>current stage</strong> one. In lists, the <em>Effective due date</em> field uses the stage's date if there is one, otherwise the final one.</p>
+      <p>Due date color:</p>
+      <ul>
+        <li><strong>Green</strong> — in the future, comfortable margin</li>
+        <li><strong>Yellow</strong> — due in ≤2 days</li>
+        <li><strong>Red</strong> — was due yesterday or earlier (overdue)</li>
+      </ul>
+      <p>Priority 1 is red, 2 orange, 3 yellow, 4 blue. Used as a tiebreaker in sorting and in the dashboard's "Priority" widget.</p>
+
+      <h2>Checklist</h2>
+      <p>Each stage can have a default checklist (set in the workflow). When the task enters the stage, the default items become checkable items. You can add items specific to this task with the <em>+</em> button.</p>
+
+      <h2>Deliverables</h2>
+      <p>Pieces, Artwork and Variations are editable counters. They don't affect the workflow; they're reported under <em>Analytics → Reports → Output</em>.</p>
+
+      <h2>Attachments</h2>
+      <p>Drag files straight into the modal or click <em>+ Attachment</em>. Accepted formats: PNG, JPG, GIF, WebP, PDF, DOCX, XLSX, TXT, ZIP. SVG and HTML are blocked for security. The per-file limit depends on the plan (see <a href="Codigos-de-Erro.html#detalhe-413">error 413</a> if you go over).</p>
+
+      <h2>Comments</h2>
+      <p>Rich text with formatting:</p>
+      <ul>
+        <li><strong>Bold, italic, underline</strong> — toolbar buttons or <kbd>Ctrl/⌘</kbd>+<kbd>B/I/U</kbd></li>
+        <li><strong>Numbered and bulleted lists</strong></li>
+        <li><strong>Links</strong> — the link button opens an inline popover (it doesn't take you off the screen); paste the URL, press Enter</li>
+        <li><strong>Inline images</strong> — paste or drag them; they're embedded in the comment's HTML (they don't become attachments).</li>
+        <li><strong>Mentions</strong> — type <code>@</code> to open the user picker. The person mentioned gets an in-app + email + Discord notification.</li>
+        <li><strong>Emoji reactions</strong> — click the reaction icon to open the picker; add 👍 or similar without having to reply.</li>
+      </ul>
+
+      <h2>Timer and time tracking</h2>
+      <p>The <strong>▶</strong> button starts a timer. It stays visible in the top bar on every screen (switched task? the timer keeps going). Buttons:</p>
+      <ul>
+        <li><strong>Pause/Resume</strong> — pausing keeps the time accumulated</li>
+        <li><strong>Check ✓</strong> — log the measured hours</li>
+        <li><strong>X</strong> — discard without logging</li>
+      </ul>
+      <p>You can also log hours manually by typing start/end/hours. Logged hours count toward Home, Capacity and the output report.</p>
+
+      <h2>History</h2>
+      <p>The <em>History</em> tab shows every state change: creation, stage moves forward/back, time entries, field edits, archiving. Each row has timestamp + user. It's an immutable <em>audit trail</em>.</p>
+
+      <h2>Task list views</h2>
+      <p>On the <em>Tasks</em> page, three ways to see the same data (toggle in the filter):</p>
+      <div class="grid-2">
+        <div class="card"><h4>Table</h4><p>Sortable columns: name, team, project, client, type, status, assignee, stage due date, priority.</p></div>
+        <div class="card"><h4>Kanban</h4><p>Columns by stage OR by attention (On time / Overdue / No due date). Drag cards to move them.</p></div>
+        <div class="card"><h4>Calendar</h4><p>Monthly view with colored dots on the days. Click a day to filter the tasks due that day.</p></div>
+      </div>
+
+      <h2>Filters — the URL is shareable</h2>
+      <p>Every filter you apply (search, team, client, project, user, period, status) is <strong>mirrored in the URL</strong> as a query. Applied <em>?client=abc&amp;status=late</em>? Paste the link in the chat and whoever opens it sees exactly the same filtered view.</p>
+      <p>When you switch pages, the query is dropped (it makes no sense to carry Tasks filters over to Home).</p>
+
+      <h2>Bulk actions</h2>
+      <p>Check the box on several rows in the table → a floating bar shows up at the bottom with: assign, change status, delete, and more.</p>
+    </section>
+
+    <!-- ============ 07 · MY TASKS AND SCHEDULE ============ -->
+    <section id="rotina">
+      <span class="kicker">Daily use · 07</span>
+      <h1 class="doc-title">My Tasks and Schedule</h1>
+      <p class="lead">Two screens designed for "what do I need to do now and in the coming days".</p>
+
+      <h2>My Tasks</h2>
+      <p>Pre-applied filter: <em>Assignee = you</em>. It's the same engine as the Tasks screen, but focused. You see the weekly schedule embedded at the bottom — blocks, meetings and tasks due soon, all together.</p>
+
+      <h2>Schedule</h2>
+      <p>Hourly grid per business day (Mon–Fri). Two modes, switched with the toggle:</p>
+      <ul>
+        <li><strong>Individual</strong> — one user, 1 or 2 weeks visible</li>
+        <li><strong>Team</strong> — several users side by side, a single day</li>
+      </ul>
+
+      <h3>Navigation</h3>
+      <p>The <kbd>&lt;</kbd> <kbd>&gt;</kbd> arrows jump a week/day. The <strong>date label</strong> is clickable — it opens a mini calendar to jump straight to any day. The <em>Today</em> button goes back to the current one.</p>
+
+      <h3>Create a block</h3>
+      <p>Drag on an empty time slot → <em>Schedule block</em> modal:</p>
+      <ul>
+        <li><strong>Free</strong> — a generic block (internal meeting, lunch, focus); it <strong>doesn't count</strong> toward the working day. Supports recurrence (daily, weekly, monthly, custom).</li>
+        <li><strong>Task</strong> — linked to the task; it counts toward the working day.</li>
+      </ul>
+
+      <h3>Edit and move</h3>
+      <p>Drag the block to move it; drag the bottom edge to resize. Click to edit/delete. Recurring blocks ask for the scope when deleting: <em>only this one</em>, <em>from this day on</em>, or <em>the whole series</em>.</p>
+
+      <h3>Google Calendar</h3>
+      <p>If you connected it (see <a href="#perfil">Profile</a>), your meetings show up in blue. You don't edit them — they're read-only. <em>Accepted</em> meeting time counts toward the working day.</p>
+
+      <div class="callout tip">
+        <div class="ic">i</div>
+        <div class="body">
+          <strong>Mobile</strong>
+          On screens &lt; 640px, the Schedule opens in <em>1 week</em> by default (2 weeks don't fit in portrait). You can still switch to Team mode (single day), which works better on a phone.
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 08 · NOTIFICATIONS ============ -->
+    <section id="notificacoes">
+      <span class="kicker">Daily use · 08</span>
+      <h1 class="doc-title">Notifications</h1>
+      <p class="lead">Three possible channels: in-app (bell), email, Discord. Each user controls individually which ones they want to receive.</p>
+
+      <h2>Top bar bell</h2>
+      <p>The red counter shows how many are unread. Click to open the panel. Actions: mark all as read; clear all; clicking a notification opens the related task. Old notifications disappear after a while (a limit so they don't pile up).</p>
+
+      <h2>Events that generate notifications</h2>
+      <table>
+        <thead><tr><th>Event</th><th>Notifies</th></tr></thead>
+        <tbody>
+          <tr><td>Task created with you as the assignee</td><td>Assignee</td></tr>
+          <tr><td>Stage moved and is now yours</td><td>New assignee</td></tr>
+          <tr><td>You were mentioned in a comment</td><td>Person mentioned</td></tr>
+          <tr><td>Someone reacted to your comment</td><td>Comment author (optional)</td></tr>
+          <tr><td>A task you created was approved/completed</td><td>Creator</td></tr>
+          <tr><td>Stage due date is today/tomorrow</td><td>Assignee (in-app)</td></tr>
+        </tbody>
+      </table>
+
+      <h2>Email</h2>
+      <p>With a confirmed email in your Profile, you get the same notifications there. To turn them off by type: the switches in <em>Profile → Notifications</em> (mentions yes, due dates no, etc.).</p>
+
+      <h2>Discord</h2>
+      <p>Requires your <strong>Discord ID</strong> in your Profile AND a <strong>webhook</strong> set up by the admin pointing to the desired channel. Mentions go out as a real <code>@you</code> on Discord (triggering a sound/badge notification).</p>
+    </section>
+
+    <!-- ============ 09 · CLIENTS AND PROJECTS ============ -->
+    <section id="clientes">
+      <span class="kicker">Organization · 09</span>
+      <h1 class="doc-title">Clients and Projects</h1>
+      <p class="lead">How to add, organize and generate reports for the clients your team serves. Requires moderator or admin permission to create/edit.</p>
+
+      <h2>Create a client</h2>
+      <ol class="step-list">
+        <li>Menu → <em>Clients</em> → <em>+ New Client</em> button.</li>
+        <li>Fill in the name, industry and avatar (optional).</li>
+        <li>Choose the team (moderators only see their own teams).</li>
+        <li>Save. The client shows up in the grid.</li>
+      </ol>
+
+      <h2>Apply a template</h2>
+      <p>If there's already a similar client, use <em>Start from a template</em> when creating — it copies projects and workflows from an existing <em>client template</em> (see <a href="#templates">Templates</a>). Ideal when you serve several clients with an identical structure.</p>
+
+      <h2>Exploring the client</h2>
+      <p>Click a card to open the detail:</p>
+      <ul>
+        <li><strong>Projects tab</strong> — lists the projects, <em>+ New Project</em> button.</li>
+        <li><strong>Workflows tab</strong> — shortcut to the client's Workflows.</li>
+        <li><strong>Assets tab</strong> — useful links (Drive, Notion, etc.) the team shares.</li>
+        <li><strong>Documents tab</strong> — briefings, contracts, guidelines.</li>
+      </ul>
+
+      <h2>Projects</h2>
+      <p>A project belongs to a client. It has a name, avatar, default workflow, active/archived status. The project's tasks inherit its workflow (they can be overridden if the project accepts multiple workflows).</p>
+      <p>The <em>/projects</em> page (not linked in the menu, reachable through Dev Tools) shows the global list of all projects with filters by client/status.</p>
+
+      <h2>Archive vs. delete</h2>
+      <ul>
+        <li><strong>Archive</strong> — the client/project disappears from the active lists but the history stays intact. Reverting takes 1 click.</li>
+        <li><strong>Delete</strong> — goes to the <a href="#bastidores">Trash</a> (soft delete). It stays there for 30 days and is purged automatically. While it's in the Trash, an admin/moderator can restore it.</li>
+      </ul>
+
+      <h2>Monthly PDF report</h2>
+      <p>In the client detail, the <em>Report</em> button. Choose the month → it generates a PDF with: cover (logo + name + month), list of projects and completed tasks, hours logged per analyst, deliverables, output chart. Great for closing the month with the client or for internal records.</p>
+      <p>There's also a <em>Project report</em> (same thing, smaller scope) and the <a href="#analises">Analytics · Reports</a> dashboard for a view without a PDF.</p>
+    </section>
+
+    <!-- ============ 10 · WORKFLOWS ============ -->
+    <section id="fluxos">
+      <span class="kicker">Organization · 10</span>
+      <h1 class="doc-title">Task Workflows</h1>
+      <p class="lead">Workflows are the "recipe" tasks follow. They define the stages, who works on each one, how many days each has and what needs to be done.</p>
+
+      <h2>Where they are</h2>
+      <p>Menu → <em>Task Workflows</em>. A view of <strong>client cards</strong> (each card = one client + a workflow counter). Click a client to see and edit its workflows. Requires moderator or admin.</p>
+
+      <h2>Create a workflow</h2>
+      <ol class="step-list">
+        <li>Inside the client → <em>+ New Workflow</em>.</li>
+        <li>Name (e.g. "Instagram static post"), icon (lucide library), task type (dropdown with the organization-wide library).</li>
+        <li>Add the stages in order: each stage has a <em>name</em>, <em>assignee position</em>, <em>SLA in business days</em>, <em>default description</em>, <em>default checklist</em>.</li>
+        <li>Save. The workflow can now be used in new tasks of the project that points to it.</li>
+      </ol>
+
+      <h3>About stages</h3>
+      <ul>
+        <li><strong>Position</strong> — uses the assignee's area/position. When the task enters the stage, the "natural puller" is any team user with that position. It can be overridden per task.</li>
+        <li><strong>SLA</strong> — in business days. It becomes the stage's deadline. 0 = same day; 5 = one week.</li>
+        <li><strong>Default description</strong> — text shown in the panel when the task enters the stage (a "how to do it" tip).</li>
+        <li><strong>Default checklist</strong> — checkable items. The task gets an editable copy (it doesn't affect the original workflow).</li>
+      </ul>
+
+      <h2>Task types</h2>
+      <p>The <em>Manage types</em> button opens the organization-wide library (shared across teams). Create/rename/delete here.</p>
+      <div class="callout warn">
+        <div class="ic">!</div>
+        <div class="body">
+          <strong>Orphans</strong>
+          The modal has an <em>Orphans (N)</em> accordion at the bottom — it lists "type" values that exist in some workflow but aren't in the library. Two actions: <em>Promote</em> (adds it to the library) or <em>Clear</em> (erases the Type field in every workflow that uses it). Useful to clean up loose strings that clutter the Home filter.
+        </div>
+      </div>
+
+      <h2>Duplicate a workflow to another project</h2>
+      <p>Workflow detail → <em>Duplicate</em> button. Choose the target client/project. It copies the stage structure + defaults; tasks created afterwards in the target use the new workflow without affecting the original.</p>
+    </section>
+
+    <!-- ============ 11 · LISTS AND RECURRING ============ -->
+    <section id="listas">
+      <span class="kicker">Organization · 11</span>
+      <h1 class="doc-title">To-do lists and Recurring tasks</h1>
+      <p class="lead">Two tools to <em>automate the repetitive</em>: template lists you can apply to projects, and tasks that come back every month.</p>
+
+      <h2>To-do lists</h2>
+      <p>The <em>To-do lists</em> page. Each list is a collection of items ({name, optional task type}). They're <strong>organization-wide</strong> — visible to every team.</p>
+
+      <h3>Apply to a project</h3>
+      <p>On the list card → <em>Apply to a project</em> button. Choose client + project. reWork creates the corresponding items using the project's workflow (or asks if there's ambiguity), anchoring each item's type.</p>
+
+      <h3>Duplicate</h3>
+      <p>The <em>copy</em> icon on the card. It creates "Original List - Copy" (or " - Copy 2/3/..." if one already exists). It keeps items and settings; you can rename and adjust before applying.</p>
+
+      <h2>Recurring Tasks</h2>
+      <p>Menu → <em>Recurring Tasks</em>. Each rule has: client, project, workflow, assignee, recurrence, and all the task fields (name, briefing, priority, deliverables). On the scheduled day, the task is created automatically.</p>
+
+      <div class="callout info">
+        <div class="ic">i</div>
+        <div class="body">
+          <strong>When to use each</strong>
+          To-do list = "when I create a new project of this kind, apply these N items". Recurring = "every X of the month, create this specific task".
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 12 · TEMPLATES ============ -->
+    <section id="templates">
+      <span class="kicker">Organization · 12</span>
+      <h1 class="doc-title">Templates</h1>
+      <p class="lead">Two ways to reuse: <em>task templates</em> (a pre-filled form) and <em>client templates</em> (a whole reusable structure).</p>
+
+      <h2>Task templates</h2>
+      <p>Menu → <em>Templates</em>. Each template keeps a preset of fields: name, briefing, priority, checklist, deliverables. When creating a new task, the wizard offers the template in the last step.</p>
+      <p>Useful for "standard static post", "final artwork approval", "campaign review" — anything you fill in the same way every time.</p>
+
+      <h2>Client Templates</h2>
+      <p>The <em>/clients/models</em> page (reachable through the <em>Templates</em> button inside Clients, or through Dev Tools). A template groups a ready-made structure:</p>
+      <ul>
+        <li>Projects and their workflows</li>
+        <li>Initial to-do lists</li>
+        <li>Default assets/links</li>
+      </ul>
+      <p>When creating a new client, you choose a template and reWork instantiates everything. It cuts new client onboarding from hours to minutes.</p>
+    </section>
+
+    <!-- ============ 13 · DASHBOARD ============ -->
+    <section id="dashboard">
+      <span class="kicker">Analysis · 13</span>
+      <h1 class="doc-title">Dashboard</h1>
+      <p class="lead">The home screen. It consolidates the state of the operation in widgets. All the filters at the top (team, user, client, period, type) change the URL — a shareable link.</p>
+
+      <h2>KPIs at the top</h2>
+      <div class="grid-2">
+        <div class="card"><h4>In progress</h4><p>Open tasks within the filter.</p></div>
+        <div class="card"><h4>Overdue</h4><p>Effective deadline already passed.</p></div>
+        <div class="card"><h4>Delivered this month</h4><p>Completed in the current month.</p></div>
+        <div class="card"><h4>Hours logged</h4><p>Total in the current month.</p></div>
+        <div class="card"><h4>Meeting hours</h4><p>From Google Calendar, within the period filter.</p></div>
+      </div>
+
+      <h2>Upcoming tasks</h2>
+      <p>Heatmap of <strong>14 business days</strong>. Each cell = how many tasks fall on that business day, colored by intensity (green 1-3 → yellow 4-6 → orange 7-9 → red 10+). Click a day to open the list of that day's tasks.</p>
+
+      <h2>Overdue</h2>
+      <p>Cards of the tasks past their due date — X days, name, project, assignee. Sorted by days overdue, descending.</p>
+
+      <h2>Priority (donut)</h2>
+      <p>Distribution of open tasks by priority (1-4). Colored segments: red / orange / yellow / blue.</p>
+
+      <h2>Project radar</h2>
+      <p>Projects with at least one overdue task. If everything is on time, a celebration emoji shows up.</p>
+
+      <h2>Top assignees · month</h2>
+      <p>Who delivered the most tasks in the current month. The bar is proportional to the total.</p>
+
+      <h2>Throughput (12 weeks)</h2>
+      <p>Stacked bars — how many were delivered on time (green) vs late (orange) per week. A quality trend.</p>
+
+      <h2>Hours panel</h2>
+      <p>Distribution of time entries: by analyst, by client, by project. Within the global filter.</p>
+
+      <div class="callout tip">
+        <div class="ic">i</div>
+        <div class="body">
+          <strong>Filters in the URL</strong>
+          Applied <em>?squad=X&amp;period=month</em> and want to share it? Just copy the URL from the address bar. Whoever opens it sees exactly the same slice.
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 14 · ANALYTICS ============ -->
+    <section id="analises">
+      <span class="kicker">Analysis · 14</span>
+      <h1 class="doc-title">Analytics</h1>
+      <p class="lead">Tabs on the <em>Analytics</em> page: <strong>Capacity</strong> (what's coming), <strong>Rhythm</strong> (the week's pace) and <strong>Reports</strong> (what already happened).</p>
+
+      <h2>Capacity</h2>
+      <p>Forecasts the team's workload over the next N days — presets of 7/14/30 days or <em>This month</em>. A custom range is available.</p>
+      <h3>Sub-tabs</h3>
+      <ul>
+        <li><strong>Team</strong> — workload per assignee (forecast hours ÷ capacity). Green = room to spare, yellow = tight, red = overloaded.</li>
+        <li><strong>Project</strong> — the same, by project.</li>
+        <li><strong>Client</strong> — the same, by client.</li>
+      </ul>
+      <h3>Top cards</h3>
+      <p>Total capacity of the period (business days × hours per day set in the organization × N people), open tasks in scope, active people with access to the team.</p>
+      <h3>Team output in the period</h3>
+      <p>Hours logged, unique pieces delivered, artwork, variations — free counters.</p>
+
+      <h2>Reports</h2>
+      <p>A retrospective view. Filters: workspace, client, project, period. It shows:</p>
+      <ul>
+        <li><strong>KPIs</strong> — total delivered, on time, late, approval rate</li>
+        <li><strong>Stages unified by name</strong> — actual vs. planned average SLA; identifies where tasks spend too much time. If you have "Approval" in several workflows of several clients, it all aggregates under a single bar.</li>
+        <li><strong>Assignee ranking</strong> — quantity delivered + quality (% on time).</li>
+      </ul>
+    </section>
+
+    <!-- ============ 15 · TEAMS AND USERS ============ -->
+    <section id="squads-usuarios">
+      <span class="kicker">Administration · 15</span>
+      <h1 class="doc-title">Teams and Users</h1>
+      <p class="lead">Organizational structure. Teams are managed by admins; all users are managed here. <span class="pill pill-admin">admin</span></p>
+
+      <h2>Teams (workspaces)</h2>
+      <p>Menu → <em>Teams</em>. Each team has a name, an identifying color and members (users with access). Members can be in several teams at the same time. Admins see all of them by default.</p>
+
+      <h3>Team color</h3>
+      <p>It shows up in the sidebar (the colored bar of the active team), in the team switcher pill, and in some views that combine teams. Choose contrasting colors if you serve many teams.</p>
+
+      <h2>Users</h2>
+      <p>Menu → <em>Users</em>. Grid + table. Columns: name, username, area, position, teams, access level, status.</p>
+
+      <h3>Invite someone</h3>
+      <ol class="step-list">
+        <li><em>Invite</em>. Enter the person's email.</li>
+        <li>Choose the <strong>access level</strong> (Admin, Moderator, Member or Freelancer).</li>
+        <li>Check the teams the person can access, and optionally the <strong>Area</strong> and <strong>Position</strong>.</li>
+        <li>Send. The person gets a link by email (valid for 7 days) and creates their own password.</li>
+      </ol>
+
+      <h3>Access levels</h3>
+      <table>
+        <thead><tr><th>Level</th><th>Can</th></tr></thead>
+        <tbody>
+          <tr><td><span class="pill pill-admin">Owner</span></td><td>Everything an admin can, plus the organization's settings, plan and billing, and transferring the organization.</td></tr>
+          <tr><td><span class="pill pill-admin">Admin</span></td><td>Everything in the organization. Creates teams and invites people, edits workflows, accesses Dev Tools, sees the vault history.</td></tr>
+          <tr><td><span class="pill pill-mod">Moderator</span></td><td>Creates and edits clients/projects/workflows <em>of the teams they belong to</em>. Sees the vault history. Can invite Members and Freelancers when the organization allows it.</td></tr>
+          <tr><td>Member</td><td>Works on the tasks of the teams they have access to. Uses the vault. Doesn't edit the structure.</td></tr>
+          <tr><td>Freelancer</td><td>Only the tasks they're on — can move stages forward/back and comment.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Areas and Positions</h3>
+      <p>On the same page, the <em>Team areas</em> table lists all areas with a user count. Positions are independent and defined for the whole organization. Admins edit both.</p>
+
+      <h3>Deactivate vs. delete</h3>
+      <p><strong>Deactivate</strong> keeps the user in the history but they can't sign in and don't show up in dropdowns. Deactivated users can be reactivated with 1 click.</p>
+    </section>
+
+    <!-- ============ 16 · INTEGRATIONS ============ -->
+    <section id="integracoes">
+      <span class="kicker">Administration · 16</span>
+      <h1 class="doc-title">Integrations — Webhooks</h1>
+      <p class="lead">Notify external services when events happen on tasks. Discord has its own format (nice embeds); other services get raw JSON. <span class="pill pill-admin">admin</span></p>
+
+      <h2>How it works</h2>
+      <p>Each webhook has:</p>
+      <ul>
+        <li><strong>URL</strong> — the HTTPS endpoint to post to</li>
+        <li><strong>Format</strong> — Discord (embed with title/fields/color) or Raw JSON</li>
+        <li><strong>Events</strong> — which triggers fire it (created, stage changed, user mentioned, completed, etc.)</li>
+        <li><strong>Target (optional)</strong> — only notifies when the event involves this specific user</li>
+        <li><strong>Scope (optional)</strong> — only a specific client/project</li>
+      </ul>
+
+      <div class="callout warn">
+        <div class="ic">!</div>
+        <div class="body">
+          <strong>Organization-wide</strong>
+          Webhooks apply to <strong>all teams</strong> — they aren't filtered by the active team. If you create a webhook while in Team A, it fires for tasks of any team.
+        </div>
+      </div>
+
+      <h2>Set up Discord</h2>
+      <ol class="step-list">
+        <li>In Discord: target channel → <em>Edit Channel</em> → <em>Integrations</em> → <em>Webhooks</em> → <em>New Webhook</em> → copy the URL.</li>
+        <li>In reWork: <em>Integrations → + New Integration</em>. Paste the URL, choose the <em>Discord</em> format.</li>
+        <li>Check the events you care about.</li>
+        <li>(Optional) Restrict it to a target user or client/project.</li>
+        <li>Save. Use the <em>Send test</em> button to post a test message.</li>
+      </ol>
+
+      <h3>Real mentions on Discord</h3>
+      <p>If the users involved filled in their <em>Discord ID</em> in the Profile, messages use <code>&lt;@ID&gt;</code> — which triggers a real notification (sound/badge). Without an ID, only the name shows up as text.</p>
+
+      <h2>Raw JSON</h2>
+      <p>A generic format for Make, n8n, Zapier and internal endpoints. The payload contains: event, the whole task (id, name, status, due date…), project, client, the user who triggered it, timestamp.</p>
+    </section>
+
+    <!-- ============ 17 · PASSWORD VAULT ============ -->
+    <section id="cofre">
+      <span class="kicker">Administration · 17</span>
+      <h1 class="doc-title">Password Vault</h1>
+      <p class="lead">Keeps tool credentials (Google Ads, Meta, client platforms) with AES-256-GCM encryption on disk. Entries are organized in folders; only people with access to a folder see its passwords.</p>
+
+      <h2>Unlock</h2>
+      <p>Menu → <em>Passwords</em>. Each folder shows up <strong>locked</strong>. Two ways to unlock:</p>
+      <ul>
+        <li><strong>Password</strong> — type your reWork account password. It stays unlocked for 15 minutes of inactivity (renewed on every action).</li>
+        <li><strong>Biometrics / PIN</strong> — the "Open with biometrics / PIN" button if you registered a device. Windows Hello, Touch ID, device PIN, FIDO2 key.</li>
+      </ul>
+
+      <h2>Add / edit / delete entries</h2>
+      <p>The <em>+ New entry</em> button. Fields: Name, Link, Email, Username, Password. The <em>generate random password</em> button creates a strong 20-character password.</p>
+      <p>In the table, the password shows as <code>••••••••</code>. The eye button reveals it for 20s (auto-hides) and logs the action in the history. Edit and delete icons on the right.</p>
+
+      <h2>Register biometrics/PIN</h2>
+      <p>The <em>Access</em> button at the top (only shows up if the browser supports WebAuthn) → <em>Access</em> modal → <em>+ Add access method</em>.</p>
+      <ol class="step-list">
+        <li>Choose the type: <strong>Biometrics</strong> (fingerprint, face) or <strong>PIN</strong> (device PIN).</li>
+        <li>Give it a name to recognize it later ("Work laptop", "Personal iPhone").</li>
+        <li>Continue → the operating system asks you to authenticate (Windows Hello, Touch ID, etc.).</li>
+        <li>Authenticated → credential registered. It shows up in the list.</li>
+      </ol>
+      <div class="callout info">
+        <div class="ic">i</div>
+        <div class="body">
+          <strong>Strictly personal</strong>
+          Each user only sees and registers their own WebAuthn credentials. Not even admins can access yours. You need to register one on each device/browser you use.
+        </div>
+      </div>
+
+      <h2>History (admin/moderator)</h2>
+      <p>The <em>History</em> button at the top (visible only to admins/moderators). A modal with an immutable log: who unlocked, viewed, created, edited, deleted what and when. Filters by user and by entry. Colored tags per action.</p>
+      <p>Attempts to unlock with a <strong>wrong password</strong> aren't logged (so brute-force attempts can't be enumerated). Details of what was edited (name, password, email, etc.) show up in the Details column.</p>
+
+      <h2>Security in depth</h2>
+      <ul>
+        <li>Each password is encrypted with AES-256-GCM before leaving the process memory.</li>
+        <li>The master key lives on the server — losing it makes the passwords unreadable. <strong>Back it up.</strong></li>
+        <li>A locked vault returns 403 <code>vault_locked</code> on every read — the client forces you back to the unlock screen.</li>
+        <li>Revealing a password records the access in the history with the entry's name.</li>
+      </ul>
+    </section>
+
+    <!-- ============ 18 · BEHIND THE SCENES ============ -->
+    <section id="bastidores">
+      <span class="kicker">Administration · 18</span>
+      <h1 class="doc-title">Trash and Dev Tools</h1>
+      <p class="lead">Tools that stay in the background: where whatever you delete goes, and a hub for routes that have no menu entry.</p>
+
+      <h2>Trash</h2>
+      <p>Menu → <em>Trash</em>. Lists everything that was soft-deleted — clients, projects, workflows, tasks, lists — with when it was deleted, by whom, and how many days ago. <span class="pill pill-admin">admin</span> <span class="pill pill-mod">moderator</span></p>
+      <ul>
+        <li><strong>Restore</strong> — puts the item back in the normal lists, with all links intact.</li>
+        <li><strong>Delete forever</strong> — permanent removal. No way back.</li>
+      </ul>
+      <p>Automatic purge: items stay in the trash for <strong>30 days</strong> and are then deleted without manual intervention.</p>
+
+      <h2>Dev Tools</h2>
+      <p>Menu → <em>Dev Tools</em>. Only admins see it. It's a hub of cards with direct links to routes that:</p>
+      <ul>
+        <li><strong>Exist</strong> in the router but have no menu entry (e.g. <em>Registered Projects</em> at <code>/projects</code>, <em>Workflow Templates</em> at <code>/clients/models</code>, <em>Error Codes</em>)</li>
+        <li><strong>Are sub-tabs</strong> that the menu entry opens on the default one (Analytics · Capacity/Reports, Recurring · Tasks/Lists)</li>
+        <li><strong>Are creation modals</strong> — shortcuts to open the new task, new client, new workflow wizard, etc. directly</li>
+      </ul>
+
+      <h2>Routes with friendly names</h2>
+      <p>URLs of clients, projects and tasks use <em>slug + id</em> so they're readable:</p>
+      <pre>/clients/red-cdb89429c3da
+/projects/marketing-management-c11e108fba86
+/demands/due-date-test-3e63859860d9</pre>
+      <p>Old URLs with just the id keep working — the parser always extracts the final id. If the name changes, the next navigation canonicalizes to the new URL via replaceState. Ideal for sharing a readable link in the chat.</p>
+    </section>
+
+    <!-- ============ 19 · SHORTCUTS ============ -->
+    <section id="atalhos">
+      <span class="kicker">Reference · 19</span>
+      <h1 class="doc-title">Shortcuts and productivity</h1>
+      <p class="lead">A handful of shortcuts that save clicks.</p>
+
+      <h2>Command palette</h2>
+      <p><kbd>Ctrl</kbd>+<kbd>K</kbd> (or <kbd>⌘</kbd>+<kbd>K</kbd>) opens the command palette — fuzzy search across pages, tasks, clients, projects, workflows, users, recurring tasks. Enter navigates right away.</p>
+
+      <h2>Navigation shortcuts</h2>
+      <p>The <kbd>G</kbd> prefix + a letter jumps to a screen:</p>
+      <table>
+        <thead><tr><th>Shortcut</th><th>Goes to</th></tr></thead>
+        <tbody>
+          <tr><td><kbd>G</kbd> <kbd>D</kbd></td><td>Home</td></tr>
+          <tr><td><kbd>G</kbd> <kbd>L</kbd></td><td>Tasks</td></tr>
+          <tr><td><kbd>G</kbd> <kbd>M</kbd></td><td>My Tasks</td></tr>
+          <tr><td><kbd>G</kbd> <kbd>A</kbd></td><td>Schedule</td></tr>
+          <tr><td><kbd>G</kbd> <kbd>C</kbd></td><td>Clients</td></tr>
+          <tr><td><kbd>G</kbd> <kbd>F</kbd></td><td>Workflows</td></tr>
+        </tbody>
+      </table>
+
+      <h2>Quick actions</h2>
+      <table>
+        <thead><tr><th>Shortcut</th><th>Does</th></tr></thead>
+        <tbody>
+          <tr><td><kbd>N</kbd></td><td>Opens the new task wizard</td></tr>
+          <tr><td><kbd>/</kbd></td><td>Focuses the current screen's search field</td></tr>
+          <tr><td><kbd>?</kbd></td><td>Shows the full list of shortcuts</td></tr>
+          <tr><td><kbd>Esc</kbd></td><td>Closes the open modal</td></tr>
+          <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>Posts the comment (inside the editor)</td></tr>
+        </tbody>
+      </table>
+
+      <h2>Filters as links</h2>
+      <p>Since filters live in the URL, you can <strong>bookmark</strong> a favorite view: "client X's overdue tasks", "my team's open tasks this month", etc. Paste the URL into your browser bookmarks.</p>
+
+      <h2>Mobile</h2>
+      <p>Every screen is responsive. The sidebar becomes a drawer below 880px; filters stack; tables get their own horizontal scroll; modals become almost full screen. The Schedule switches to 1 week automatically on screens below 640px. Full feature parity — no screen is blocked on mobile.</p>
+    </section>
+
+    <!-- ============ 20 · FAQ ============ -->
+    <section id="faq">
+      <span class="kicker">Reference · 20</span>
+      <h1 class="doc-title">Frequently asked questions</h1>
+      <p class="lead">Quick answers to the most common questions.</p>
+
+      <h3>I forgot my password. What do I do?</h3>
+      <p>Use "I forgot my password" on the sign-in screen: we send a link to your confirmed email. If you don't have an email linked, ask an admin for help.</p>
+
+      <h3>How do I move a task to another team?</h3>
+      <p>Task detail → <em>Edit</em> → change the client. The team comes from the client. You need access to the target team.</p>
+
+      <h3>Can I delete a task "for good"?</h3>
+      <p>Deleting sends it to the Trash. There, an admin/moderator uses <em>Delete forever</em>. The automatic purge also removes it after 30 days.</p>
+
+      <h3>A user left the company. What do I do?</h3>
+      <p>Deactivate them in <em>Users</em> (don't delete — you'd lose history). Their tasks stay intact; you can reassign them manually or leave them as they are. If they come back, reactivate them with 1 click.</p>
+
+      <h3>How is the "assignee" chosen for each stage?</h3>
+      <p>If you <em>didn't override</em> it when creating/editing, it comes from the <strong>stage's area/position</strong> — the team user with that area and position is notified. If you set it manually on the task, that one stays.</p>
+
+      <h3>What happens if I delete a client with open tasks?</h3>
+      <p>The client goes to the Trash, along with its tasks and projects. While there, everything can be restored. After 30 days, it's purged for good (everything is lost).</p>
+
+      <h3>My Discord notifications don't arrive.</h3>
+      <p>Check: (1) you filled in the ID (not the username) in the Profile; (2) the Discord webhook or bot is active; (3) the triggering event involves you (mention, you're the assignee, etc.); (4) you allow direct messages from server members.</p>
+
+      <h3>How do I see how many hours I logged this month?</h3>
+      <p>Home → the hours goal card. For detail: Analytics → Capacity → the hours logged sub-tab.</p>
+
+      <h3>Does reWork work offline?</h3>
+      <p>No. Every action needs a network connection to sync with the server. A Service Worker caches the app files so it opens fast, but the data lives on the server. If the connection drops, you see a "No connection" toast.</p>
+
+      <h3>How do I report a bug?</h3>
+      <p>Use <em>Support</em> in the menu to open a ticket: tell us the URL, what you were doing and the error that shows up. A screenshot helps a lot. If it's a specific HTTP code (401, 413, etc.), the <a href="Codigos-de-Erro.html">Error Codes documentation</a> explains what it means.</p>
+    </section>
+
+    <!-- Prev/Next between sections -->
+    <div class="section-nav" id="section-nav">
+      <button type="button" class="nav-btn prev" onclick="showPrev()"><span class="nav-dir">← Previous</span><span class="nav-title" id="nav-prev-title">—</span></button>
+      <button type="button" class="nav-btn next" onclick="showNext()"><span class="nav-dir">Next →</span><span class="nav-title" id="nav-next-title">—</span></button>
+    </div>
+
+    <footer>reWork · User Manual · <a href="Codigos-de-Erro.html" style="color:var(--accent-2);text-decoration:none">Error codes</a></footer>
+  </main>
+
+<script>
+  // ── Home ↔ sections router, with search and prev/next ────
+  const cards = [...document.querySelectorAll('.doc-card')];
+  const sections = document.querySelectorAll('main section');
+  const order = cards.map(c => c.dataset.section); // ordem canonica dos tópicos
+  const titleById = Object.fromEntries(cards.map(c => [c.dataset.section, c.querySelector('.doc-card-name').textContent]));
+
+  function normalize(s) {
+    return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  }
+
+  function showHome() {
+    document.body.classList.add('on-home');
+    history.replaceState(null, '', location.pathname + location.search);
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }
+  function showSection(id) {
+    if (!id || !document.getElementById(id)) { showHome(); return; }
+    document.body.classList.remove('on-home');
+    sections.forEach(s => s.classList.toggle('is-active', s.id === id));
+    // Atualiza prev/next
+    const idx = order.indexOf(id);
+    const prev = idx > 0 ? order[idx - 1] : null;
+    const next = idx >= 0 && idx < order.length - 1 ? order[idx + 1] : null;
+    const prevBtn = document.querySelector('.nav-btn.prev');
+    const nextBtn = document.querySelector('.nav-btn.next');
+    prevBtn.disabled = !prev;
+    nextBtn.disabled = !next;
+    document.getElementById('nav-prev-title').textContent = prev ? titleById[prev] : '—';
+    document.getElementById('nav-next-title').textContent = next ? titleById[next] : '—';
+    prevBtn.dataset.target = prev || '';
+    nextBtn.dataset.target = next || '';
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }
+  function showPrev() {
+    const t = document.querySelector('.nav-btn.prev').dataset.target;
+    if (t) navigate(t);
+  }
+  function showNext() {
+    const t = document.querySelector('.nav-btn.next').dataset.target;
+    if (t) navigate(t);
+  }
+  function navigate(id) {
+    history.replaceState(null, '', '#' + id);
+    showSection(id);
+  }
+  // Clique num card
+  cards.forEach(c => c.addEventListener('click', () => navigate(c.dataset.section)));
+
+  // Search — filtra cards por título, grupo e keywords
+  const searchInput = document.getElementById('doc-search');
+  const emptyMsg = document.getElementById('home-empty');
+  function onDocSearch() {
+    const q = normalize(searchInput.value.trim());
+    let visible = 0;
+    cards.forEach(c => {
+      if (!q) {
+        c.classList.remove('hidden'); visible++;
+        return;
+      }
+      const hay = normalize(
+        (c.querySelector('.doc-card-name')?.textContent || '') + ' ' +
+        (c.dataset.group || '') + ' ' +
+        (c.dataset.kw || '') + ' ' +
+        (c.querySelector('.doc-card-desc')?.textContent || '')
+      );
+      const hit = q.split(/\s+/).every(part => hay.includes(part));
+      c.classList.toggle('hidden', !hit);
+      if (hit) visible++;
+    });
+    emptyMsg.style.display = visible ? 'none' : '';
+  }
+  searchInput.addEventListener('input', onDocSearch);
+  // Esc no search limpa
+  searchInput.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { searchInput.value = ''; onDocSearch(); }
+  });
+
+  // Hash routing
+  window.addEventListener('hashchange', () => {
+    const id = location.hash.slice(1);
+    id ? showSection(id) : showHome();
+  });
+
+  // Boot: se URL tem hash → seção; senão → home
+  const bootId = location.hash.slice(1);
+  if (bootId) showSection(bootId);
+  else showHome();
+</script>
+</body>
+</html>
