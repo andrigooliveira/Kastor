@@ -119,6 +119,10 @@
     if (p === '/console/organizacoes') return pageOrgs();
     if (org) return pageOrg(org[1]);
     if (p === '/console/lista-de-espera') return pageWaitlist();
+    if (p === '/console/suporte') return pageSupport();
+    const sup = p.match(/^\/console\/suporte\/([\w-]+)$/);
+    if (sup) return pageSupportTicket(sup[1]);
+    if (p === '/console/pagamentos') return pageBilling();
     if (p === '/console/administradores') return pageAdmins();
     if (p === '/console/auditoria') return pageAudit();
     go('/console', true);
@@ -425,6 +429,8 @@
     { key: 'overview', href: '/console', label: 'Visão geral', icon: 'layout-dashboard' },
     { key: 'orgs', href: '/console/organizacoes', label: 'Organizações', icon: 'building-2' },
     { key: 'waitlist', href: '/console/lista-de-espera', label: 'Lista de espera', icon: 'inbox', count: () => state.counts && state.counts.new },
+    { key: 'support', href: '/console/suporte', label: 'Suporte', icon: 'life-buoy', count: () => state.supportOpen },
+    { key: 'billing', href: '/console/pagamentos', label: 'Pagamentos', icon: 'credit-card' },
     { key: 'admins', href: '/console/administradores', label: 'Superadmins', icon: 'shield-check' },
     { key: 'audit', href: '/console/auditoria', label: 'Auditoria', icon: 'scroll-text' },
   ];
@@ -572,6 +578,7 @@
     try { d = await api('/console/overview'); }
     catch (e) { if (e.silent) return; main.innerHTML = pageHead('Visão geral'); return errorBlock(main, e, pageOverview); }
     state.counts = d.waitlist.counts;
+    if (d.support) setSupportCount(d.support.open);
     const o = d.totals, s = d.system;
     const nav = document.querySelector('.c-nav a[href="/console/lista-de-espera"]');
     if (nav && state.counts.new && !nav.querySelector('.c-nav-count')) nav.insertAdjacentHTML('beforeend', `<span class="c-nav-count">${state.counts.new}</span>`);
@@ -646,7 +653,7 @@
   const trialLine = (p) => !p.trial ? '' : p.readOnly
     ? `Teste venceu em ${dateTime(p.trialEndsAt).split(',')[0]}: a organização está só para consulta até você escolher um plano.`
     : p.trialEndsAt ? `Teste até ${dateTime(p.trialEndsAt).split(',')[0]} (${p.trialDaysLeft === 1 ? 'falta 1 dia' : `faltam ${num(p.trialDaysLeft)} dias`}). Depois fica só para consulta.`
-    : 'O teste de 14 dias começa quando o dono aceitar o convite.';
+    : 'O teste de 30 dias começa quando o dono aceitar o convite.';
   // Pessoas: mostra "usados / limite" quando há limite.
   const seatsCell = (o) => o.usage && o.usage.plan.users != null
     ? `${num(o.usage.seats.used)}<span class="c-of"> / ${num(o.usage.plan.users)}</span>` : num(o.members);
@@ -727,6 +734,7 @@
         ${kpi('Horas apontadas', 'clock', hrs(o.hoursTotal), `${hrs(o.hours30)} nos últimos 30 dias`)}
       </div>
       ${planCard(o)}
+      ${billingCard(d.billing)}
       <div class="c-grid-2" style="margin-bottom:16px">
         <section class="c-card"><div class="c-card-head"><div><div class="c-card-title">Demandas criadas por dia</div><div class="c-card-sub">Últimos 30 dias</div></div></div><div class="c-card-body"><div id="ch-org-created"></div></div></section>
         <section class="c-card"><div class="c-card-head"><div><div class="c-card-title">Horas apontadas por mês</div><div class="c-card-sub">Últimos 6 meses</div></div></div><div class="c-card-body"><div id="ch-org-hours"></div></div></section>
@@ -814,7 +822,7 @@
     const optHTML = (p) => `<label class="c-plan-opt">
         <input type="radio" name="planId" value="${esc(p.id)}"${p.id === sel ? ' checked' : ''}>
         <span class="c-plan-opt-main"><span class="c-plan-opt-name">${esc(p.name)}${p.id === cur.id ? '<span class="c-pill" style="margin-left:8px">Atual</span>' : ''}</span>
-        <span class="c-plan-opt-sub">${p.id === 'custom' ? 'Você define os limites (caminho do Enterprise)' : esc(planLimits(p)) + (p.trial ? ' · 14 dias, depois só consulta' : '')}</span></span></label>`;
+        <span class="c-plan-opt-sub">${p.id === 'custom' ? 'Você define os limites (caminho do Enterprise)' : esc(planLimits(p)) + (p.trial ? ' · 30 dias, depois só consulta' : '')}</span></span></label>`;
     const m = modal('Mudar plano', `<form id="f-plan" novalidate>
         <div class="c-plan-opts">${plans.map(optHTML).join('')}</div>
         <div id="plan-trial" class="c-plan-custom"${sel === 'teste' ? '' : ' hidden'}>
@@ -1050,7 +1058,7 @@
           <div class="c-field"><label class="c-label" for="org-name">Nome da organização</label><input class="c-input" id="org-name" name="name" maxlength="80" value="${esc(r.company)}"></div>
           <div class="c-field"><label class="c-label" for="org-plan">Plano</label>
             <select class="c-select" id="org-plan" name="planId">${(state.plans || []).map(p => `<option value="${esc(p.id)}"${p.id === 'teste' ? ' selected' : ''}>${esc(p.name)} · ${esc(p.id === 'custom' ? 'sem limites (ajuste depois)' : p.trial ? '14 dias grátis' : planLimits(p))}</option>`).join('')}</select>
-            <span class="c-hint">O teste de 14 dias começa quando o dono aceitar o convite. Tamanho da equipe informado: ${esc(TEAM[r.teamSize] || r.teamSize)}${TEAM_PLAN[r.teamSize] ? ` (plano provável depois: ${esc(((state.plans || []).find(p => p.id === TEAM_PLAN[r.teamSize]) || {}).name || '')})` : ''}.</span></div>
+            <span class="c-hint">O teste de 30 dias começa quando o dono aceitar o convite. Tamanho da equipe informado: ${esc(TEAM[r.teamSize] || r.teamSize)}${TEAM_PLAN[r.teamSize] ? ` (plano provável depois: ${esc(((state.plans || []).find(p => p.id === TEAM_PLAN[r.teamSize]) || {}).name || '')})` : ''}.</span></div>
           <p class="c-hint">Criamos a organização com uma equipe "Geral" e o fluxo padrão, e <b>${esc(r.name)}</b> recebe o convite para criar a conta como dono.</p>
           <div class="c-error" role="alert" style="margin-top:10px"></div></form>`,
         `<button class="c-btn" data-close>Cancelar</button><button class="c-btn c-btn--primary" id="org-go">Criar e convidar</button>`);
@@ -1104,6 +1112,246 @@
       `<button class="c-btn" data-close>Fechar</button><button class="c-btn c-btn--primary" id="m-copy">${icon('copy')}Copiar link</button>`);
     m.el.querySelector('#m-copy').addEventListener('click', () => { copy(link, 'Link'); m.close(); });
   }
+  /* ═════════════ Suporte (chamados) ═════════════ */
+  const SUP_STATUS = { open: ['Aguardando a equipe', 'c-pill--warn'], answered: ['Respondido', 'c-pill--info'], closed: ['Resolvido', ''] };
+  const supPill = (s) => { const [l, c] = SUP_STATUS[s] || [s, '']; return `<span class="c-pill ${c}">${l}</span>`; };
+  const supFilter = { value: 'active' };
+  function setSupportCount(n) {
+    state.supportOpen = n;
+    const a = document.querySelector('.c-nav a[href="/console/suporte"]');
+    if (!a) return;
+    a.querySelector('.c-nav-count')?.remove();
+    if (n) a.insertAdjacentHTML('beforeend', `<span class="c-nav-count">${n}</span>`);
+  }
+
+  async function pageSupport() {
+    const main = shell('support', pageHead('Suporte', 'Chamados abertos pelas pessoas no reWork. Quem espera resposta aparece primeiro.') + `<div class="c-card"><div class="c-card-body">${skel(160)}</div></div>`);
+    let d;
+    try { d = await api('/console/support?status=' + encodeURIComponent(supFilter.value)); }
+    catch (e) { if (e.silent) return; return errorBlock(main, e, pageSupport); }
+    setSupportCount(d.counts.open);
+    const tabs = [['active', 'Em andamento', d.counts.open + d.counts.answered], ['open', 'Aguardando a equipe', d.counts.open], ['answered', 'Respondidos', d.counts.answered], ['closed', 'Resolvidos', d.counts.closed]];
+    main.innerHTML = pageHead('Suporte', 'Chamados abertos pelas pessoas no reWork. Quem espera resposta aparece primeiro.') + `
+      ${!d.emailEnabled ? `<div class="c-banner c-banner--warn" style="margin-bottom:16px">${icon('mail-x')}<div>O envio de e-mail não está configurado no servidor: os avisos de chamado novo não saem por e-mail. Acompanhe por aqui.</div></div>`
+        : !d.staffEmails ? `<div class="c-banner c-banner--warn" style="margin-bottom:16px">${icon('mail-x')}<div>Nenhum superadmin ativo tem e-mail cadastrado, então os avisos não saem por e-mail.</div></div>` : ''}
+      <div class="c-tabs" role="tablist">${tabs.map(([k, l, n]) => `<button class="c-tab${supFilter.value === k ? ' is-active' : ''}" role="tab" aria-selected="${supFilter.value === k}" data-sup="${k}">${l}<span class="c-tab-count">${num(n)}</span></button>`).join('')}</div>
+      <section class="c-card">${d.items.length ? `<div class="c-table-wrap"><table class="c-table">
+        <thead><tr><th>Chamado</th><th>Quem abriu</th><th>Organização</th><th>Situação</th><th>Atualizado</th></tr></thead>
+        <tbody>${d.items.map(t => `<tr class="c-row-link" data-go="/console/suporte/${esc(t.id)}">
+          <td><a href="/console/suporte/${esc(t.id)}" data-link class="c-cell-main">${t.unread ? '<span class="c-dot c-dot--accent" style="margin-right:6px"></span>' : ''}#${t.number} · ${esc(t.subject)}</a><div class="c-cell-sub">${esc(t.categoryLabel)} · ${t.lastFrom === 'staff' ? 'Equipe' : 'Cliente'}: ${esc(t.preview)}</div></td>
+          <td><div class="c-cell-main">${esc(t.userName)}</div><div class="c-cell-sub">@${esc(t.username)}${t.email ? ' · ' + esc(t.email) : ''}</div></td>
+          <td>${esc(t.orgName)}</td>
+          <td>${supPill(t.status)}</td>
+          <td>${rel(t.updatedAt)}</td></tr>`).join('')}</tbody></table></div>`
+        : `<div class="c-empty">${icon('life-buoy')}<div>Nenhum chamado aqui.</div></div>`}</section>`;
+    paint();
+    main.querySelectorAll('[data-sup]').forEach(b => b.addEventListener('click', () => { supFilter.value = b.dataset.sup; pageSupport(); }));
+    main.querySelectorAll('tr[data-go]').forEach(tr => tr.addEventListener('click', (e) => { if (!e.target.closest('a')) go(tr.dataset.go); }));
+  }
+
+  async function pageSupportTicket(id) {
+    const crumb = { href: '/console/suporte', label: 'Suporte' };
+    const main = shell('support', pageHead('Chamado', '', '', crumb) + `<div class="c-card"><div class="c-card-body">${skel(200)}</div></div>`);
+    let t;
+    try { t = await api('/console/support/' + encodeURIComponent(id)); }
+    catch (e) { if (e.silent) return; return errorBlock(main, e, () => pageSupportTicket(id)); }
+    const fileUrl = (f) => `/api/console/support/${encodeURIComponent(t.id)}/files/${encodeURIComponent(f.id)}`;
+    const ctx = t.context || {};
+    const ua = String(ctx.userAgent || '');
+    const browser = /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'Outro';
+    const os = /Windows/.test(ua) ? 'Windows' : /Mac OS X/.test(ua) ? 'macOS' : /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Linux/.test(ua) ? 'Linux' : '';
+    const ROLE = { owner: 'Dono', admin: 'Administrador', mod: 'Moderador', equipe: 'Membro', free: 'Freelancer' };
+    const msgHTML = (m) => `<div class="c-sup-msg${m.from === 'staff' ? ' is-staff' : ''}">
+        <div class="c-sup-msg-head"><b>${m.from === 'staff' ? esc(m.staffName || 'Equipe') + ' <span class="c-pill c-pill--accent">Equipe</span>' : esc(m.authorName)}</b><span>${dateTime(m.at)}</span></div>
+        <div class="c-quote c-sup-body">${esc(m.body)}</div>
+        ${(m.files || []).length ? `<div class="c-sup-files">${m.files.map(f => f.type.startsWith('image/')
+          ? `<a class="c-sup-img" href="${fileUrl(f)}" target="_blank" rel="noopener" title="${esc(f.name)}"><img src="${fileUrl(f)}" alt="${esc(f.name)}" loading="lazy"></a>`
+          : `<a class="c-btn c-btn--sm" href="${fileUrl(f)}" target="_blank" rel="noopener">${icon('file-text')}${esc(f.name)}</a>`).join('')}</div>` : ''}
+      </div>`;
+    main.innerHTML = pageHead(`#${t.number} · ${esc(t.subject)}`, `${esc(t.categoryLabel)} · aberto ${rel(t.createdAt)}`, supPill(t.status), crumb) + `
+      <div class="c-sup-grid">
+        <div class="c-sup-main">
+          <div class="c-sup-thread">${t.messages.map(msgHTML).join('')}</div>
+          <section class="c-card" style="margin-top:14px"><div class="c-card-body">
+            <form id="f-sup" novalidate>
+              <div class="c-field"><label class="c-label" for="sup-msg">Responder para ${esc(t.userName.split(' ')[0])}</label>
+                <textarea class="c-input c-textarea" id="sup-msg" name="message" rows="5" placeholder="A resposta vai por e-mail (${esc(t.email || 'sem e-mail cadastrado')}) e aparece no sino do app."></textarea></div>
+              <div class="c-error" role="alert"></div>
+              <div class="c-actions" style="margin-top:10px;justify-content:flex-end">
+                <button type="button" class="c-btn c-btn--sm" id="sup-reply-close">${icon('check')}Responder e resolver</button>
+                <button type="submit" class="c-btn c-btn--sm c-btn--primary" id="sup-reply">${icon('send')}Responder</button>
+              </div>
+            </form>
+          </div></section>
+        </div>
+        <aside class="c-sup-side">
+          <section class="c-card"><div class="c-card-body">
+            <div class="c-section-label">Quem abriu</div>
+            <dl class="c-dl c-dl--left" style="margin-top:10px">
+              <dt>Nome</dt><dd>${esc(t.userName)}</dd>
+              <dt>Usuário</dt><dd>@${esc(t.username)}</dd>
+              <dt>E-mail</dt><dd>${t.email ? `<a href="mailto:${esc(t.email)}">${esc(t.email)}</a>` : '—'}</dd>
+              <dt>Organização</dt><dd><a href="/console/organizacoes/${esc(t.orgId)}" data-link>${esc(t.orgName)}</a></dd>
+              <dt>Plano</dt><dd>${esc(t.orgPlan || ctx.plan || '—')}</dd>
+              <dt>Acesso</dt><dd>${esc(ROLE[ctx.role] || ctx.role || '—')}</dd>
+            </dl>
+            ${t.otherTickets ? `<p class="c-hint" style="margin-top:10px">${t.otherTickets} ${t.otherTickets === 1 ? 'outro chamado' : 'outros chamados'} dessa pessoa.</p>` : ''}
+          </div></section>
+          <section class="c-card" style="margin-top:12px"><div class="c-card-body">
+            <div class="c-section-label">Contexto</div>
+            <dl class="c-dl c-dl--left" style="margin-top:10px">
+              <dt>Página</dt><dd class="mono">${esc(ctx.path || '—')}</dd>
+              <dt>Navegador</dt><dd>${esc(browser)}${os ? ' · ' + esc(os) : ''}</dd>
+              <dt>Tela</dt><dd>${esc(ctx.screen || '—')}</dd>
+              <dt>Versão</dt><dd class="mono">${esc(ctx.build ? String(ctx.build).slice(0, 7) : '—')}</dd>
+            </dl>
+          </div></section>
+          <section class="c-card" style="margin-top:12px"><div class="c-card-body">
+            <div class="c-section-label">Situação</div>
+            <select class="c-select" id="sup-status" style="margin-top:10px">${Object.entries(SUP_STATUS).map(([k, [l]]) => `<option value="${k}"${t.status === k ? ' selected' : ''}>${l}</option>`).join('')}</select>
+          </div></section>
+        </aside>
+      </div>`;
+    paint();
+    const f = document.getElementById('f-sup');
+    const send = async (close) => {
+      const btn = document.getElementById(close ? 'sup-reply-close' : 'sup-reply');
+      busy(btn, true, 'Enviando…');
+      try {
+        await api(`/console/support/${encodeURIComponent(t.id)}/reply`, { method: 'POST', body: { message: f.message.value, close } });
+        toast(close ? 'Resposta enviada e chamado resolvido.' : 'Resposta enviada.');
+        pageSupportTicket(id);
+      } catch (e) { busy(btn, false); fieldError(f, 'message', e.message); }
+    };
+    f.addEventListener('submit', (e) => { e.preventDefault(); send(false); });
+    document.getElementById('sup-reply-close').addEventListener('click', () => send(true));
+    document.getElementById('sup-status').addEventListener('change', async (e) => {
+      try { await api(`/console/support/${encodeURIComponent(t.id)}/status`, { method: 'POST', body: { status: e.target.value } }); toast('Situação atualizada.'); pageSupportTicket(id); }
+      catch (err) { fail(err); }
+    });
+    setTimeout(() => f.message.focus(), 50);
+  }
+
+  /* ═════════════ Pagamentos (Asaas) ═════════════ */
+  const money = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(v) || 0);
+  const BIL_STATUS = { active: ['Ativa', 'c-pill--good'], pending: ['Aguardando pagamento', 'c-pill--warn'], past_due: ['Atrasada', 'c-pill--bad'], canceled: ['Cancelada', ''], none: ['Sem assinatura', ''] };
+  const BIL_METHOD = { CREDIT_CARD: 'Cartão', PIX: 'Pix', BOLETO: 'Boleto' };
+  const bilStatusPill = (s) => { const [l, c] = BIL_STATUS[s] || [s, '']; return `<span class="c-pill ${c}">${l}</span>`; };
+  const shortDate = (iso) => iso ? new Date(String(iso).length === 10 ? iso + 'T12:00:00' : iso).toLocaleDateString('pt-BR') : '—';
+
+  async function pageBilling() {
+    const main = shell('billing', pageHead('Pagamentos', 'Cobrança dos planos pelo Asaas: chave de API, webhook, preço de fundador e quem está pagando.') + `<div class="c-card"><div class="c-card-body">${skel(160)}</div></div>`);
+    let d;
+    try { d = await api('/console/billing'); }
+    catch (e) { if (e.silent) return; return errorBlock(main, e, pageBilling); }
+    const st = d.stats;
+    const orgRow = (o, extra) => `<tr><td><a href="/console/organizacoes/${esc(o.id)}" data-link class="c-cell-main">${esc(o.name)}</a><div class="c-cell-sub">${esc(o.planName)}${o.founder ? ' · fundador' : ''}</div></td>
+      <td>${bilStatusPill(o.status)}</td><td>${o.cycle ? (o.cycle === 'YEARLY' ? 'Anual' : 'Mensal') : '—'}${o.method ? ' · ' + BIL_METHOD[o.method] : ''}</td>
+      <td style="text-align:right">${o.value ? money(o.value) : '—'}</td><td>${extra(o)}</td></tr>`;
+    const table = (title, rows, extraHead, extra, empty) => `<section class="c-card" style="margin-top:16px">
+      <div class="c-card-head"><div class="c-card-title">${title}</div></div>
+      ${rows.length ? `<div class="c-table-wrap"><table class="c-table"><thead><tr><th>Organização</th><th>Situação</th><th>Ciclo</th><th style="text-align:right">Valor</th><th>${extraHead}</th></tr></thead>
+        <tbody>${rows.map(o => orgRow(o, extra)).join('')}</tbody></table></div>` : `<div class="c-card-body"><div class="c-hint">${empty}</div></div>`}
+    </section>`;
+    const priceRows = d.plans.map(p => `<tr><td class="c-cell-main">${esc(p.name)}</td><td style="text-align:right">${money(d.prices[p.id].MONTHLY)}</td><td style="text-align:right">${money(d.prices[p.id].YEARLY)}</td><td style="text-align:right">${money(d.founderPrices[p.id].MONTHLY)} · ${money(d.founderPrices[p.id].YEARLY)}</td></tr>`).join('');
+    main.innerHTML = pageHead('Pagamentos', 'Cobrança dos planos pelo Asaas: chave de API, webhook, preço de fundador e quem está pagando.') + `
+      <div class="c-kpis">
+        ${kpi('Receita mensal (MRR)', 'trending-up', money(st.mrr), 'anuais contam 1/12')}
+        ${kpi('Assinaturas ativas', 'badge-check', num(st.subscribers), Object.entries(st.byPlan).map(([k, v]) => `${esc((d.plans.find(p => p.id === k) || {}).name || k)}: ${v}`).join(' · ') || '—')}
+        ${kpi('Atrasadas', 'alarm-clock', num(st.pastDue.length), 'passam a só consulta após a carência')}
+        ${kpi('Aguardando 1º pagamento', 'hourglass', num(st.pending.length), '')}
+        ${kpi('Fundadores', 'sparkles', `${num(d.founder.used)} de ${num(d.founder.slots)}`, d.founder.until ? `até ${shortDate(d.founder.until)}` : 'sem data limite')}
+      </div>
+      <div class="c-grid-2" style="margin-top:16px">
+        <section class="c-card">
+          <div class="c-card-head"><div><div class="c-card-title">Conexão com o Asaas</div>
+            <div class="c-card-sub">${d.configured ? `<span class="c-pill c-pill--good">${icon('plug')}Conectado</span> <span class="c-pill ${d.env === 'production' ? 'c-pill--accent' : 'c-pill--warn'}">${d.env === 'production' ? 'Produção' : 'Sandbox (teste)'}</span> <span style="margin-left:6px">chave ···${esc(d.apiKeyLast4 || '')}</span>` : '<span class="c-pill c-pill--warn">Não configurado</span>'}</div></div>
+            ${d.configured ? `<button class="c-btn c-btn--sm" id="bl-test">${icon('activity')}Testar conexão</button>` : ''}</div>
+          <div class="c-card-body">
+            <form id="f-bl" novalidate>
+              <div class="c-field"><label class="c-label" for="bl-env">Ambiente</label>
+                <select class="c-select" id="bl-env" name="env"><option value="sandbox"${d.env !== 'production' ? ' selected' : ''}>Sandbox — teste, sem dinheiro de verdade</option><option value="production"${d.env === 'production' ? ' selected' : ''}>Produção — cobranças reais</option></select></div>
+              <div class="c-field"><label class="c-label" for="bl-key">Chave de API${d.configured ? ' (deixe em branco para manter a atual)' : ''}</label>
+                <input class="c-input mono" id="bl-key" name="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="${d.env === 'production' ? '$aact_prod_…' : '$aact_hmlg_…'}">
+                <span class="c-hint">No Asaas: Integrações › Chaves de API › Gerar chave. Fica guardada criptografada e não aparece de novo.</span></div>
+              <p class="c-hint">Ao salvar, o reWork confere a chave e cadastra sozinho o webhook em <span class="mono">${esc(d.webhook ? d.webhook.url : d.suggestedWebhookUrl)}</span>.</p>
+              <div class="c-error" role="alert"></div>
+              <div class="c-actions" style="margin-top:12px"><button class="c-btn c-btn--primary c-btn--sm" id="bl-save" type="submit">${d.configured ? 'Salvar' : 'Conectar'}</button></div>
+            </form>
+            ${d.updatedAt ? `<p class="c-hint" style="margin-top:10px">Última alteração ${rel(d.updatedAt)}${d.updatedBy ? ` por ${esc(d.updatedBy)}` : ''}.</p>` : ''}
+            <div id="bl-test-out"></div>
+          </div>
+        </section>
+        <section class="c-card">
+          <div class="c-card-head"><div><div class="c-card-title">Preço de fundador</div><div class="c-card-sub">Quem assina primeiro fica com o preço de lançamento para sempre.</div></div></div>
+          <div class="c-card-body">
+            <form id="f-fd" novalidate>
+              <div class="c-field"><label class="c-label" for="fd-slots">Vagas</label><input class="c-input" id="fd-slots" name="founderSlots" type="number" min="0" step="1" value="${d.founder.slots}"></div>
+              <div class="c-field"><label class="c-label" for="fd-until">Vale para quem assinar até</label><input class="c-input" id="fd-until" name="founderUntil" type="date" value="${esc(d.founder.until || '')}"><span class="c-hint">Em branco = sem data; termina quando as vagas acabarem.</span></div>
+              <div class="c-error" role="alert"></div>
+              <div class="c-actions" style="margin-top:12px"><button class="c-btn c-btn--sm" type="submit">Salvar</button></div>
+            </form>
+            <div class="c-table-wrap" style="margin-top:16px"><table class="c-table"><thead><tr><th>Plano</th><th style="text-align:right">Mensal</th><th style="text-align:right">Anual</th><th style="text-align:right">Fundador</th></tr></thead><tbody>${priceRows}</tbody></table></div>
+            <p class="c-hint" style="margin-top:8px">Os preços ficam no código (billing.js). Mudar não afeta fundadores nem o valor das assinaturas já criadas no Asaas.</p>
+          </div>
+        </section>
+      </div>
+      ${table('Atrasadas', st.pastDue, 'Carência até', o => shortDate(o.graceEndsAt), 'Nenhuma assinatura atrasada.')}
+      ${table('Aguardando o primeiro pagamento', st.pending, 'Desde', () => '', 'Ninguém aguardando.')}
+      ${table('Testes acabando em 7 dias (sem assinatura)', st.trialsEnding, 'Teste até', o => shortDate(o.trialEndsAt), 'Nenhum teste acabando.')}
+      ${table('Assinaturas ativas', st.subscribers_list, 'Pago até', o => shortDate(o.paidUntil), 'Nenhuma assinatura ainda.')}`;
+    paint();
+    const f = document.getElementById('f-bl');
+    f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('bl-save');
+      busy(btn, true, 'Conferindo…');
+      try {
+        await api('/console/billing', { method: 'PUT', body: { env: f.env.value, apiKey: f.apiKey.value.trim() || undefined } });
+        toast('Asaas conectado. Webhook cadastrado.');
+        pageBilling();
+      } catch (err) { busy(btn, false); fieldError(f, err.data && err.data.field, err.message); }
+    });
+    const fd = document.getElementById('f-fd');
+    fd.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        await api('/console/billing', { method: 'PUT', body: { env: d.env, founderSlots: Number(fd.founderSlots.value), founderUntil: fd.founderUntil.value || '' } });
+        toast('Preço de fundador salvo.');
+        pageBilling();
+      } catch (err) { fieldError(fd, err.data && err.data.field, err.message); }
+    });
+    document.getElementById('bl-test')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget, out = document.getElementById('bl-test-out');
+      busy(btn, true, 'Testando…');
+      try {
+        const r = await api('/console/billing/test', { method: 'POST' });
+        const w = r.webhook || {};
+        out.innerHTML = `<div class="c-banner ${r.key && w.enabled && !w.interrupted ? '' : 'c-banner--warn'}" style="margin-top:12px">${icon(r.key ? 'check' : 'triangle-alert')}<div>
+          ${r.key ? 'Chave aceita pelo Asaas.' : `Chave recusada: ${esc(r.error || '')}`}
+          ${r.key ? (w.error ? ` Webhook não encontrado (${esc(w.error)}) — salve a chave de novo para recadastrar.` : w.interrupted ? ' <b>Fila do webhook pausada</b> no Asaas (muitas falhas seguidas): reative em Integrações › Webhooks.' : w.enabled ? ' Webhook ativo.' : ' Webhook desativado no Asaas.') : ''}</div></div>`;
+        paint();
+      } catch (err) { fail(err); }
+      busy(btn, false);
+    });
+  }
+
+  function billingCard(b) {
+    if (!b) return `<section class="c-card" style="margin-bottom:16px"><div class="c-card-head"><div><div class="c-card-title">Assinatura</div><div class="c-card-sub">Sem assinatura pelo Asaas. O plano, se houver, foi definido aqui no console.</div></div></div></section>`;
+    const EV = { subscribed: 'Assinou', checkout: 'Abriu o pagamento', paid: 'Pagamento confirmado', overdue: 'Pagamento atrasou', canceled: 'Cancelou', plan_changed: 'Mudou de plano', refunded: 'Estorno', chargeback: 'Contestação', card_refused: 'Cartão recusado' };
+    return `<section class="c-card" style="margin-bottom:16px">
+      <div class="c-card-head"><div><div class="c-card-title">Assinatura</div>
+        <div class="c-card-sub">${bilStatusPill(b.status)}${b.founder ? ' <span class="c-pill c-pill--accent">Fundador</span>' : ''}
+          <span style="margin-left:8px">${b.cycle ? (b.cycle === 'YEARLY' ? 'Anual' : 'Mensal') : ''}${b.method ? ' · ' + BIL_METHOD[b.method] : ''}${b.value ? ' · ' + money(b.value) : ''}${b.paidUntil ? ' · pago até ' + shortDate(b.paidUntil) : ''}</span></div></div></div>
+      <div class="c-card-body">
+        ${b.customer ? `<p class="c-hint">Nota fiscal para ${esc(b.customer.name || '')} · ${esc(b.customer.doc || '')} · ${esc(b.customer.email || '')}${b.subscriptionId ? ` · assinatura <span class="mono">${esc(b.subscriptionId)}</span>` : ''}</p>` : ''}
+        ${(b.log || []).length ? `<div class="c-table-wrap" style="margin-top:10px"><table class="c-table"><thead><tr><th>Quando</th><th>O quê</th><th>Detalhe</th><th style="text-align:right">Valor</th></tr></thead><tbody>
+          ${b.log.map(l => `<tr><td>${dateTime(l.at)}</td><td>${esc(EV[l.event] || l.event)}</td><td class="c-cell-sub">${esc(l.detail || '')}</td><td style="text-align:right">${l.value ? money(l.value) : ''}</td></tr>`).join('')}
+        </tbody></table></div>` : ''}
+      </div>
+    </section>`;
+  }
+
   async function pageAdmins() {
     const addBtn = `<button class="c-btn c-btn--primary c-btn--sm" id="add-admin">${icon('user-plus')}Adicionar superadmin</button>`;
     const main = shell('admins', pageHead('Superadmins', 'Quem tem acesso a este console. Contas separadas das contas do reWork.', addBtn) + `<div class="c-card"><div class="c-card-body">${skel(120)}</div></div>`);

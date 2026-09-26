@@ -2580,6 +2580,21 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       <div class="page-body" id="org-page-body"></div>
     </div>
 
+    <!-- ── PLANO E PAGAMENTO (/billing) — renderBilling() ── -->
+    <div class="page" id="page-billing">
+      <div class="page-body" id="billing-page-body"></div>
+    </div>
+
+    <!-- ── SUPORTE — renderSupport() / renderSupportNew() / renderSupportTicket() ── -->
+    <div class="page" id="page-support"><div class="page-body" id="support-page-body"></div></div>
+    <div class="page" id="page-supportNew"><div class="page-body" id="support-new-body"></div></div>
+    <div class="page" id="page-supportTicket"><div class="page-body" id="support-ticket-body"></div></div>
+
+    <!-- ── ASSINATURA (/billing/checkout) — renderBillingCheckout() ── -->
+    <div class="page" id="page-billingCheckout">
+      <div class="page-body" id="billing-checkout-body"></div>
+    </div>
+
     <!-- ── USUÁRIOS (admin) ── -->
     <div class="page" id="page-users">
       <div class="page-body us-dossier">
@@ -4866,7 +4881,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260925rt2" defer></script>
+<script src="/js/boot.js?v=20260926sp1" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

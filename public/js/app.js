@@ -113,6 +113,10 @@ const PAGE_TO_PATH = {
   flows:        '/flows',
   workspaces:   '/workspaces',
   org:          '/organization',
+  billing:      '/billing',
+  billingCheckout: '/billing/checkout',
+  support:      '/support',
+  supportNew:   '/support/new',
   users:        '/users',
   integrations: '/integrations',
   profile:      '/profile',
@@ -206,6 +210,9 @@ function pageUrlFor(page)  {
   if (page === 'demand-detail') {
     return detailId ? demandPath(detailId) + _optSuffix(() => detailActiveTab !== 'comments' ? '/' + detailActiveTab : '') : '/home';
   }
+  // Assinatura: plano, ciclo e forma escolhidos vão na query.
+  if (page === 'billingCheckout') return _optSuffix(() => billingCheckoutPath()) || '/billing/checkout';
+  if (page === 'supportTicket') return '/support' + _optSuffix(() => _sup.ticketNumber ? '/' + _sup.ticketNumber : '');
   // Páginas com aba/visão: o caminho carrega a opção atual.
   if (page === 'dashboard') return '/home' + _optSuffix(() => _dashNextTab !== 'forecast' ? '/' + _dashNextTab : '');
   if (page === 'list') return '/demands' + _optSuffix(() => listView === 'kanban' ? (kanbanMode === 'stage' ? '/kanban/stages' : '/kanban') : listView === 'cal' ? '/calendar' : '');
@@ -247,6 +254,7 @@ function parseRoute(path) {
   {
     let mm;
     if ((mm = p.match(/^\/home\/(forecast|radar|activity|prio|recent)$/))) return { page: 'dashboard', dashTab: mm[1] };
+    if ((mm = p.match(/^\/support\/(\d+)$/))) return { page: 'supportTicket', ticket: mm[1] };
     if (p === '/demands')                 return { page: 'list', listView: 'table' };
     if (p === '/demands/kanban')          return { page: 'list', listView: 'kanban', kanbanMode: 'attention' };
     if (p === '/demands/kanban/stages')   return { page: 'list', listView: 'kanban', kanbanMode: 'stage' };
@@ -458,6 +466,7 @@ function applyRoute() {
 /* Estado de aba/visão que o render da página lê — setado antes de desenhar. */
 function _applyRouteStateBeforeRender(r) {
   if (r.page === 'profile' && r.section) _profileSection = r.section;
+  if (r.page === 'supportTicket' && r.ticket && _sup.ticketNumber !== r.ticket) { _sup.ticketNumber = r.ticket; _sup.ticket = null; }
   if (r.page === 'integrations' && r.tab) _integrationsTab = r.tab;
   if (r.page === 'analytics' && r.capView) capacityView = r.capView;
   if (r.page === 'passwords' && r.folderId) pwState.selectedFolderId = r.folderId;
@@ -4722,6 +4731,7 @@ async function enterApp() {
   maybeShowWelcomeBanner();
   if (me && me.accentTheme !== undefined) applyAccentTheme(me.accentTheme || '');
   await fetchNotifications();
+  refreshSupportDot();
   // Lembretes pendentes: acende o botão da demanda aberta quando chegam.
   loadMyReminders().then(() => {
     const btn = document.getElementById('detail-remind-btn');
@@ -5642,8 +5652,10 @@ function renderPlanBanner() {
   const key = 'rw-trial-banner-' + (me && me.org ? me.org.id : '');
   let dismissed = false;
   try { dismissed = sessionStorage.getItem(key) === '1'; } catch {}
-  const show = p && p.trial && (p.readOnly || (manager && p.trialEndsAt && !dismissed));
-  if (!show) { if (el) el.remove(); return; }
+  const trialShow = p && p.trial && (p.readOnly || (manager && p.trialEndsAt && !dismissed));
+  // Pago e atrasado/cancelado: aparece pra todo mundo quando trava; antes disso, só pra quem gerencia.
+  const billShow = p && !p.trial && p.paidUntil && (p.readOnly || (manager && (p.overdue || (p.canceled && Date.parse(p.paidUntil) - Date.now() < 7 * 864e5))));
+  if (!trialShow && !billShow) { if (el) el.remove(); return; }
   if (!el) {
     el = document.createElement('div');
     el.id = 'plan-banner';
@@ -5651,12 +5663,23 @@ function renderPlanBanner() {
     const top = main.querySelector('.topbar');
     top ? top.insertAdjacentElement('afterend', el) : main.prepend(el);
   }
+  const cta = (label) => me.isOwner ? `<button type="button" class="btn btn-primary btn-sm plan-banner-cta" onclick="goPage('billing')">${label}</button>` : '';
+  const fmt = (iso) => new Date(iso).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' });
   const days = p.trialDaysLeft;
-  el.className = 'plan-banner' + (p.readOnly ? ' is-locked' : days <= 3 ? ' is-soon' : '');
-  el.innerHTML = p.readOnly
-    ? `<i data-lucide="lock" class="ic-sm"></i><span><b>O teste grátis de ${esc(me.org.name)} acabou.</b> Tudo continua aqui para consulta, mas nada novo pode ser criado ou alterado. ${me.isOwner ? 'Fale com o suporte do reWork para escolher um plano.' : 'Fale com o dono da organização.'}</span>`
-    : `<i data-lucide="hourglass" class="ic-sm"></i><span><b>Teste grátis: ${days === 1 ? 'falta 1 dia' : `faltam ${days} dias`}.</b> Depois disso a organização fica só para consulta até escolher um plano.</span>
-       <button type="button" class="plan-banner-close" title="Dispensar" aria-label="Dispensar" onclick="try{sessionStorage.setItem('${key}','1')}catch(e){};this.parentElement.remove()"><i data-lucide="x" class="ic-sm"></i></button>`;
+  if (trialShow) {
+    el.className = 'plan-banner' + (p.readOnly ? ' is-locked' : days <= 3 ? ' is-soon' : '');
+    el.innerHTML = p.readOnly
+      ? `<i data-lucide="lock" class="ic-sm"></i><span><b>O teste grátis de ${esc(me.org.name)} acabou.</b> Tudo continua aqui para consulta, mas nada novo pode ser criado ou alterado. ${me.isOwner ? 'Escolha um plano para voltar a editar.' : 'Fale com o dono da organização.'}</span>${cta('Escolher plano')}`
+      : `<i data-lucide="hourglass" class="ic-sm"></i><span><b>Teste grátis: ${days === 1 ? 'falta 1 dia' : `faltam ${days} dias`}.</b> Depois disso a organização fica só para consulta até escolher um plano.</span>${cta('Ver planos')}
+         <button type="button" class="plan-banner-close" title="Dispensar" aria-label="Dispensar" onclick="try{sessionStorage.setItem('${key}','1')}catch(e){};this.parentElement.remove()"><i data-lucide="x" class="ic-sm"></i></button>`;
+  } else {
+    el.className = 'plan-banner ' + (p.readOnly ? 'is-locked' : 'is-soon');
+    el.innerHTML = p.readOnly
+      ? `<i data-lucide="lock" class="ic-sm"></i><span><b>${p.readOnlyReason === 'canceled' ? `A assinatura de ${esc(me.org.name)} foi encerrada.` : `O pagamento de ${esc(me.org.name)} está atrasado.`}</b> Tudo continua aqui para consulta, mas nada novo pode ser criado ou alterado. ${me.isOwner ? '' : 'Fale com o dono da organização.'}</span>${cta(p.readOnlyReason === 'canceled' ? 'Assinar de novo' : 'Pagar agora')}`
+      : p.canceled
+        ? `<i data-lucide="calendar-x" class="ic-sm"></i><span><b>Assinatura cancelada:</b> a organização funciona normalmente até ${fmt(p.paidUntil)}. Depois, fica só para consulta.</span>${cta('Assinar de novo')}`
+        : `<i data-lucide="alert-triangle" class="ic-sm"></i><span><b>Pagamento atrasado.</b> Pague até ${fmt(p.graceEndsAt)} para a organização não ficar só para consulta.</span>${cta('Pagar agora')}`;
+  }
   if (window.lucide?.createIcons) lucide.createIcons();
 }
 function renderOrgSwitch() {
@@ -5696,6 +5719,7 @@ function renderOrgSwitch() {
     </div>
     <div class="orgmenu-group">
       ${me.isOwner ? action('settings-2', 'Configurações da organização', "_closeOrgMenu();goPage('org')") : ''}
+      ${me.isOwner ? action('credit-card', 'Plano e pagamento', "_closeOrgMenu();goPage('billing')") : ''}
       ${me.isAdmin ? action('users', 'Pessoas e permissões', "_closeOrgMenu();goPage('users')") : ''}
       ${_canInvite() ? action('user-plus', 'Convidar pessoas', "_closeOrgMenu();goPage('users');setTimeout(openInviteModal,150)") : ''}
     </div>
@@ -5722,6 +5746,732 @@ async function switchOrg(id) {
   } catch (e) { toast(e.message, 'error'); }
 }
 function openOrgSettings() { _closeOrgMenu(); if (me?.isOwner) goPage('org'); }
+
+/* ─── PÁGINA: PLANO E PAGAMENTO (/billing) ───
+   Planos com preço (mensal/anual), situação da assinatura, uso e faturas.
+   Só o dono assina, troca e cancela; os demais só veem. A cobrança em si é
+   do Asaas (billing.js no servidor): cartão vai pra página de pagamento do
+   Asaas; Pix e boleto abrem a fatura. */
+let _bil = { data: null, cycle: null, payments: null, loading: false, polls: 0 };
+const BIL_METHOD_LABEL = { CREDIT_CARD: 'Cartão de crédito', PIX: 'Pix', BOLETO: 'Boleto' };
+const BIL_PAY_STATUS = {
+  PENDING: ['Aguardando', ''], OVERDUE: ['Atrasada', 'is-bad'], RECEIVED: ['Paga', 'is-good'], CONFIRMED: ['Paga', 'is-good'],
+  RECEIVED_IN_CASH: ['Paga', 'is-good'], REFUNDED: ['Estornada', ''], REFUND_REQUESTED: ['Estorno pedido', ''], CHARGEBACK_REQUESTED: ['Contestada', 'is-bad']
+};
+const _bilMoney = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: Number.isInteger(Number(v)) ? 0 : 2 });
+const _bilDate = (iso, opts) => iso ? new Date(String(iso).length === 10 ? iso + 'T12:00:00' : iso).toLocaleDateString('pt-BR', opts || { day: 'numeric', month: 'long', year: 'numeric' }) : '—';
+const _bilPlanName = (id) => (_bil.data?.catalog.find(p => p.id === id) || {}).name || id;
+const _bilCycleLabel = (c) => c === 'YEARLY' ? 'anual' : 'mensal';
+
+async function renderBilling(force) {
+  const host = $('billing-page-body');
+  if (!host) return;
+  if (!_bil.data || force) {
+    if (!_bil.data) host.innerHTML = `<div class="bil">${skeletonMetrics()}</div>`;
+    try { _bil.data = await api('/billing'); }
+    catch (e) { host.innerHTML = `<div class="bil">${emptyState('Não foi possível carregar o plano', esc(e.message), 'alert-circle')}</div>`; return; }
+    if (force) _bil.cycle = null; // depois de assinar/trocar, o seletor mostra o ciclo da assinatura
+    if (_bil.data.canManage && _bil.data.billing.customer) {
+      api('/billing/payments').then(r => { _bil.payments = r.items || []; _bilRenderPayments(); }).catch(() => { _bil.payments = []; _bilRenderPayments(); });
+    }
+  }
+  const d = _bil.data;
+  const b = d.billing;
+  if (!_bil.cycle) _bil.cycle = b.cycle || 'YEARLY';
+  _bilHandleReturn();
+  // Com assinatura, os outros planos ficam em segundo plano; sem, são o próximo passo.
+  const hasSub = b.status && b.status !== 'none' && b.status !== 'canceled';
+  host.innerHTML = `<div class="bil">
+    <header class="bil-head">
+      <div>
+        <h1 class="bil-title">Plano e pagamento</h1>
+        <p class="bil-sub">${d.canManage ? 'O plano da organização, a cobrança e as faturas.' : 'Plano da organização. Só o dono muda o plano e cuida do pagamento.'}</p>
+      </div>
+      ${d.sandbox ? '<span class="bil-sandbox" title="Nenhuma cobrança é real neste modo"><i data-lucide="flask-conical" class="ic-xs"></i>Modo de teste</span>' : ''}
+    </header>
+    ${_bilCurrentCard(d)}
+    ${!d.enabled ? `<div class="bil-note"><i data-lucide="info" class="ic-sm"></i><span>O pagamento pelo reWork ainda não está disponível. Para assinar agora, fale com o suporte do reWork.</span></div>` : ''}
+    <section class="bil-plans-wrap${hasSub ? ' is-secondary' : ''}" id="bil-plans" aria-label="Planos">
+      <div class="bil-plans-head">
+        <div>
+          <h2 class="${hasSub ? 'bil-h3' : 'bil-h2'}">${hasSub ? 'Outros planos' : 'Escolha um plano'}</h2>
+          ${hasSub ? '<p class="bil-muted" style="margin:2px 0 0">Subir de plano libera os limites na hora; descer vale a partir da próxima cobrança.</p>' : ''}
+        </div>
+        <div class="bil-cycle" role="radiogroup" aria-label="Ciclo de cobrança">
+          <button type="button" role="radio" aria-checked="${_bil.cycle === 'MONTHLY'}" class="${_bil.cycle === 'MONTHLY' ? 'is-on' : ''}" onclick="setBillingCycle('MONTHLY')">Mensal</button>
+          <button type="button" role="radio" aria-checked="${_bil.cycle === 'YEARLY'}" class="${_bil.cycle === 'YEARLY' ? 'is-on' : ''}" onclick="setBillingCycle('YEARLY')">Anual <span class="bil-cycle-save">2 meses grátis</span></button>
+        </div>
+      </div>
+      ${d.founder.open && !b.founder && (!b.status || b.status === 'none') ? `<p class="bil-founder-note"><i data-lucide="sparkles" class="ic-sm"></i><span><b>Preço de fundador:</b> as primeiras ${d.founder.slots} organizações a assinar${d.founder.until ? ` até ${_bilDate(d.founder.until, { day: 'numeric', month: 'long' })}` : ''} mantêm este preço para sempre. Restam ${d.founder.left} ${d.founder.left === 1 ? 'vaga' : 'vagas'}.</span></p>` : ''}
+      <div class="bil-plans">${d.catalog.map(p => _bilPlanCard(d, p)).join('')}
+        <article class="bil-plan bil-plan--custom">
+          <div class="bil-plan-name">Enterprise</div>
+          <div class="bil-plan-price"><span class="bil-plan-amount">Sob consulta</span></div>
+          <ul class="bil-plan-feats"><li><i data-lucide="check" class="ic-xs"></i>Mais de 30 pessoas</li><li><i data-lucide="check" class="ic-xs"></i>Espaço e limites sob medida</li><li><i data-lucide="check" class="ic-xs"></i>Contrato e nota por empresa</li></ul>
+          <p class="bil-plan-foot">Fale com o suporte do reWork.</p>
+        </article>
+      </div>
+    </section>
+    ${d.canManage && b.customer ? `<section class="bil-card">
+      <div class="bil-card-row"><h2 class="bil-h3">Faturas</h2><span class="bil-muted">A nota fiscal chega por e-mail em ${esc(b.customer.email || '')}.</span></div>
+      <div id="bil-payments">${_bil.payments ? '' : '<div class="bil-muted">Carregando…</div>'}</div>
+    </section>` : ''}
+  </div>`;
+  if (_bil.payments) _bilRenderPayments();
+  paintIcons(host);
+}
+function setBillingCycle(c) { _bil.cycle = c === 'MONTHLY' ? 'MONTHLY' : 'YEARLY'; renderBilling(); }
+
+/* Cartão do plano atual — o destaque da página: nome, situação, próxima
+   cobrança, valor, forma de pagamento, uso e as ações. */
+function _bilCurrentCard(d) {
+  const b = d.billing, p = d.plan;
+  const pill = (txt, tone) => `<span class="bil-pill ${tone || ''}">${txt}</span>`;
+  const short = (iso) => _bilDate(iso, { day: 'numeric', month: 'short', year: 'numeric' }).replace(' de ', ' ').replace('.', '');
+  const hasSub = b.status && b.status !== 'none';
+  let pills = '', line = '', cta = '', facts = [];
+  const pay = (url, label) => url ? `<a class="btn btn-primary" href="${esc(url)}" target="_blank" rel="noopener">${label || 'Pagar fatura'}<i data-lucide="external-link" class="ic-sm"></i></a>` : '';
+  const choose = d.canManage && d.enabled ? `<button type="button" class="btn btn-primary" onclick="document.getElementById('bil-plans')?.scrollIntoView({ behavior: 'smooth', block: 'start' })">Escolher plano</button>` : '';
+  if (!hasSub) {
+    if (p.trial && !p.readOnly && p.trialEndsAt) {
+      pills = pill('Teste grátis', 'is-info');
+      line = 'Assinando agora, a primeira cobrança só acontece quando o teste acabar.';
+      facts = [['Teste grátis até', short(p.trialEndsAt)], ['Faltam', `${p.trialDaysLeft} ${p.trialDaysLeft === 1 ? 'dia' : 'dias'}`]];
+      cta = choose;
+    } else if (p.trial && p.readOnly) {
+      pills = pill('Teste encerrado', 'is-bad');
+      line = 'A organização está só para consulta. Assine um plano para voltar a criar e editar.';
+      cta = choose;
+    } else {
+      line = 'Plano definido pelo suporte do reWork.';
+    }
+  } else {
+    const perCycle = b.value ? `${_bilMoney(b.value)}<span>/${b.cycle === 'YEARLY' ? 'ano' : 'mês'}</span>` : '—';
+    const method = esc(BIL_METHOD_LABEL[b.method] || '—');
+    const cycle = b.cycle === 'YEARLY' ? 'Anual' : 'Mensal';
+    if (b.status === 'canceled' || p.canceled) {
+      pills = pill('Cancelada', 'is-bad');
+      const until = p.paidUntil && Date.parse(p.paidUntil) > Date.now();
+      line = until ? 'Nenhuma cobrança nova será feita. Depois dessa data, a organização fica só para consulta.' : 'A organização está só para consulta. Assine de novo para voltar a editar.';
+      facts = [[until ? 'Acesso até' : 'Encerrada em', p.paidUntil ? short(p.paidUntil) : '—'], ['Valor', perCycle], ['Pagamento', method], ['Ciclo', cycle]];
+      cta = d.canManage && d.enabled ? `<button type="button" class="btn btn-primary" onclick="openBillingCheckout('${esc(b.planId)}', '${esc(b.cycle)}', '${esc(b.method)}')">Assinar de novo</button>` : '';
+    } else if (b.status === 'pending') {
+      pills = pill('Aguardando pagamento', 'is-warn');
+      line = b.pending && b.pending.method === 'CREDIT_CARD'
+        ? 'Falta concluir o cadastro do cartão na página de pagamento do Asaas.'
+        : 'Assim que a primeira fatura for paga, o plano é liberado. Pix cai na hora; boleto leva até 3 dias úteis.';
+      facts = [['Primeira cobrança', 'Hoje'], ['Valor', perCycle], ['Pagamento', method], ['Ciclo', cycle]];
+      cta = b.pending && b.pending.url ? pay(b.pending.url, 'Continuar pagamento') : pay(b.pendingInvoiceUrl);
+    } else if (b.status === 'past_due' || p.overdue) {
+      pills = pill('Pagamento atrasado', 'is-bad');
+      line = p.readOnly ? 'A organização está só para consulta até o pagamento.' : `Pague até ${_bilDate(p.graceEndsAt, { day: 'numeric', month: 'long' })} para a organização não ficar só para consulta.`;
+      facts = [['Venceu em', p.paidUntil ? short(p.paidUntil) : '—'], ['Valor', perCycle], ['Pagamento', method], ['Ciclo', cycle]];
+      cta = pay(b.pendingInvoiceUrl, 'Pagar agora');
+    } else {
+      pills = pill('Ativa', 'is-good');
+      const first = p.paidUntil && b.lastPaymentAt == null;
+      line = first ? 'A primeira cobrança acontece quando o teste grátis acabar.' : 'A cobrança é automática; a fatura e a nota chegam por e-mail.';
+      facts = [[first ? 'Primeira cobrança' : 'Próxima cobrança', p.paidUntil ? short(p.paidUntil) : '—'], ['Valor', perCycle], ['Pagamento', method], ['Ciclo', cycle]];
+    }
+  }
+  if (b.founder) pills += pill('<i data-lucide="sparkles" class="ic-xs"></i>Preço de fundador', 'is-accent');
+  const next = b.nextPlanId ? `<p class="bil-current-next"><i data-lucide="arrow-down-right" class="ic-xs"></i>Muda para ${esc(_bilPlanName(b.nextPlanId))} na próxima cobrança.</p>` : '';
+  const active = hasSub && b.status !== 'canceled' && !p.canceled;
+  const links = d.canManage && d.enabled && active
+    ? `<div class="bil-current-foot">
+        <button type="button" class="bil-current-link" onclick="openBillingCheckout('${esc(b.nextPlanId || b.planId)}', '${b.cycle === 'YEARLY' ? 'MONTHLY' : 'YEARLY'}', '${esc(b.method || '')}')"><i data-lucide="repeat" class="ic-xs"></i>${b.cycle === 'YEARLY' ? 'Mudar para mensal' : 'Mudar para anual'}</button>
+        <button type="button" class="bil-current-link" onclick="openBillingCheckout('${esc(b.nextPlanId || b.planId)}', '${esc(b.cycle)}')"><i data-lucide="credit-card" class="ic-xs"></i>Trocar forma de pagamento</button>
+        <button type="button" class="bil-current-link is-danger" onclick="cancelBillingSubscription()">Cancelar assinatura</button>
+      </div>` : '';
+  const n = (v) => Number(v || 0).toLocaleString('pt-BR');
+  return `<section class="bil-current">
+    <div class="bil-current-top">
+      <div class="bil-current-id">
+        <div class="bil-current-kicker">Plano atual</div>
+        <div class="bil-current-name">${esc(p.name)}</div>
+        ${pills ? `<div class="bil-pills">${pills}</div>` : ''}
+        ${line ? `<p class="bil-current-line">${line}</p>` : ''}
+        ${next}
+      </div>
+      ${cta ? `<div class="bil-current-cta">${cta}</div>` : ''}
+    </div>
+    ${facts.length ? `<dl class="bil-current-facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>` : ''}
+    <div class="bil-current-usage orgp-meters">
+      ${_orgMeter('Pessoas', d.seats.used, p.users, n, `${n(d.seats.members)} ${d.seats.members === 1 ? 'pessoa ativa' : 'pessoas ativas'}${d.seats.pending ? ` + ${n(d.seats.pending)} ${d.seats.pending === 1 ? 'convite pendente' : 'convites pendentes'}` : ''} · freelancers contam`)}
+      ${_orgMeter('Armazenamento', d.storage.bytes, p.storageBytes, _orgBytes, `${n(d.storage.files)} ${d.storage.files === 1 ? 'arquivo' : 'arquivos'} · até ${_orgBytes(p.fileBytes)} por arquivo`)}
+    </div>
+    ${links}
+  </section>`;
+}
+
+function _bilPlanCard(d, p) {
+  const b = d.billing;
+  const cyc = _bil.cycle;
+  const price = p.prices[cyc];
+  const monthlyEq = cyc === 'YEARLY' ? price / 12 : price;
+  const hasSub = b.status && b.status !== 'none' && b.status !== 'canceled' && b.planId;
+  const currentId = hasSub ? (b.nextPlanId || b.planId) : null;
+  const isCurrent = hasSub && currentId === p.id && b.cycle === cyc;
+  let btn = '';
+  if (d.canManage && d.enabled) {
+    if (isCurrent) btn = '<button type="button" class="btn btn-ghost btn-sm bil-plan-btn" disabled>Plano atual</button>';
+    else if (hasSub && b.cycle === cyc) btn = `<button type="button" class="btn btn-ghost btn-sm bil-plan-btn" onclick="changeBillingPlan('${p.id}')">Mudar para este</button>`;
+    else if (hasSub) btn = `<button type="button" class="btn btn-ghost btn-sm bil-plan-btn" onclick="openBillingCheckout('${p.id}', '${cyc}', '${esc(b.method || '')}')">Mudar para ${cyc === 'YEARLY' ? 'anual' : 'mensal'}</button>`;
+    else btn = `<button type="button" class="btn btn-primary btn-sm bil-plan-btn" onclick="openBillingCheckout('${p.id}', '${cyc}')">Assinar</button>`;
+  }
+  const featured = p.id === 'equipe';
+  const std = p.standard && p.standard[cyc] > price ? `<span class="bil-plan-was">${_bilMoney(p.standard[cyc])}</span>` : '';
+  return `<article class="bil-plan${isCurrent ? ' is-current' : ''}${featured ? ' is-featured' : ''}">
+    ${featured ? '<span class="bil-plan-tag">Mais escolhido</span>' : ''}
+    <div class="bil-plan-name">${esc(p.name)}</div>
+    <div class="bil-plan-price">${std}<span class="bil-plan-amount">${_bilMoney(cyc === 'YEARLY' ? Math.round(monthlyEq) : price)}</span><span class="bil-plan-per">/mês</span></div>
+    <div class="bil-plan-bill">${cyc === 'YEARLY' ? `${_bilMoney(price)} por ano` : 'cobrado todo mês'}</div>
+    <ul class="bil-plan-feats">
+      <li><i data-lucide="users" class="ic-xs"></i>Até ${p.users} pessoas</li>
+      <li><i data-lucide="hard-drive" class="ic-xs"></i>${p.storageGb} GB de arquivos</li>
+      <li><i data-lucide="paperclip" class="ic-xs"></i>Arquivos de até ${p.fileMb} MB</li>
+    </ul>
+    ${btn}
+  </article>`;
+}
+
+function _bilRenderPayments() {
+  const el = $('bil-payments');
+  if (!el) return;
+  const items = _bil.payments || [];
+  if (!items.length) { el.innerHTML = '<div class="bil-muted">Nenhuma fatura ainda.</div>'; return; }
+  el.innerHTML = `<div class="table-wrap"><table class="bil-table">
+    <thead><tr><th>Vencimento</th><th>Valor</th><th>Forma</th><th>Situação</th><th></th></tr></thead>
+    <tbody>${items.map(x => {
+      const [label, tone] = BIL_PAY_STATUS[x.status] || [x.status, ''];
+      return `<tr><td>${_bilDate(x.dueDate, { day: '2-digit', month: '2-digit', year: 'numeric' })}</td><td class="num">${_bilMoney(x.value)}</td><td>${esc(BIL_METHOD_LABEL[x.method] || x.method || '')}</td>
+        <td><span class="bil-pill ${tone}">${label}</span></td>
+        <td class="num">${x.invoiceUrl ? `<a class="bil-link" href="${esc(x.invoiceUrl)}" target="_blank" rel="noopener">${x.status === 'PENDING' || x.status === 'OVERDUE' ? 'Pagar' : 'Ver'}<i data-lucide="external-link" class="ic-xs"></i></a>` : ''}</td></tr>`;
+    }).join('')}</tbody></table></div>`;
+  paintIcons(el);
+}
+
+/* Volta da página de pagamento do Asaas (?pagamento=ok|cancelado|expirado). */
+function _bilHandleReturn() {
+  const u = new URL(location.href);
+  const st = u.searchParams.get('pagamento');
+  if (!st) return;
+  u.searchParams.delete('pagamento');
+  history.replaceState(history.state, '', u.pathname + u.search + u.hash);
+  if (st === 'ok') {
+    toast('Pagamento enviado. O plano é atualizado assim que o Asaas confirmar (em geral, alguns segundos).', 'success');
+    // O aviso do Asaas chega logo depois: recarrega algumas vezes.
+    _bil.polls = 6;
+    const tick = () => { if (_bil.polls-- <= 0 || currentPage !== 'billing') return; renderBilling(true).then(() => { if (_bil.data?.billing.status === 'pending') setTimeout(tick, 4000); else _bilRefreshOrg(); }); };
+    setTimeout(tick, 3000);
+  } else if (st === 'cancelado') toast('Pagamento não concluído. Você pode tentar de novo quando quiser.', 'warn');
+  else if (st === 'expirado') toast('A página de pagamento expirou. Comece de novo.', 'warn');
+}
+async function _bilRefreshOrg() {
+  try { const o = await api('/org'); me.org = { ...me.org, ...o }; renderPlanBanner(); } catch {}
+}
+
+/* ─── PÁGINA: ASSINATURA (/billing/checkout?plan=&cycle=&method=) ───
+   Escolhas à esquerda (plano, ciclo, forma, nota fiscal) e o resumo com o
+   botão à direita. A escolha vai pra URL (dá pra mandar o link pronto) e o
+   que foi digitado fica em _bilCo, então voltar e avançar não perde nada. */
+let _bilCo = null;      // { planId, cycle, method, editDoc, name, email, doc }
+let _bilCoWant = null;  // escolha vinda de um botão, antes da página montar
+const BIL_METHODS = [
+  { id: 'CREDIT_CARD', label: 'Cartão', icon: 'credit-card', hint: 'Cobrança automática no cartão. Você cadastra o cartão na página segura do Asaas.' },
+  { id: 'PIX', label: 'Pix', icon: 'qr-code', hint: 'A fatura Pix chega por e-mail a cada cobrança. O pagamento cai na hora.' },
+  { id: 'BOLETO', label: 'Boleto', icon: 'barcode', hint: 'O boleto chega por e-mail a cada cobrança. Compensa em até 3 dias úteis.' }
+];
+function billingCheckoutPath() {
+  const c = _bilCo || _bilCoWant;
+  return '/billing/checkout' + (c ? _routeQuery({ plan: c.planId, cycle: c.cycle, method: c.method }) : '');
+}
+function openBillingCheckout(planId, cycle, method) {
+  if (_bil.data && !_bil.data.canManage) return toast('Só o dono da organização cuida do plano.', 'warn');
+  _bilCo = null;
+  _bilCoWant = { planId, cycle: cycle === 'MONTHLY' ? 'MONTHLY' : 'YEARLY', method: BIL_METHODS.some(m => m.id === method) ? method : null };
+  goPage('billingCheckout');
+}
+function _bilCoInit(want) {
+  const d = _bil.data;
+  const p = d.catalog.find(x => x.id === want.planId) || d.catalog.find(x => x.id === 'equipe') || d.catalog[0];
+  const cust = d.billing.customer || {};
+  _bilCo = {
+    planId: p.id,
+    cycle: want.cycle === 'MONTHLY' ? 'MONTHLY' : 'YEARLY',
+    method: BIL_METHODS.some(m => m.id === want.method) ? want.method : (d.billing.method || 'CREDIT_CARD'),
+    editDoc: !cust.doc,
+    name: cust.name || d.defaults.name || '',
+    email: cust.email || d.defaults.email || '',
+    doc: ''
+  };
+}
+async function renderBillingCheckout() {
+  const host = $('billing-checkout-body');
+  if (!host) return;
+  if (!_bil.data) {
+    host.innerHTML = `<div class="bil-co-page">${skeletonMetrics()}</div>`;
+    try { _bil.data = await api('/billing'); }
+    catch (e) { host.innerHTML = `<div class="bil-co-page">${emptyState('Não foi possível carregar os planos', esc(e.message), 'alert-circle')}</div>`; return; }
+  }
+  const d = _bil.data;
+  if (!d.canManage) { toast('Só o dono da organização cuida do plano.', 'warn'); goPage('billing'); return; }
+  if (!_bilCo) {
+    const q = new URLSearchParams(location.search);
+    _bilCoInit(_bilCoWant || { planId: q.get('plan'), cycle: q.get('cycle'), method: q.get('method') });
+    _bilCoWant = null;
+    history.replaceState(history.state, '', orgUrl(billingCheckoutPath()));
+  }
+  const c = _bilCo;
+  const back = `<a class="bil-back" href="${esc(orgUrl('/billing'))}" onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return;event.preventDefault();goPage('billing')"><i data-lucide="arrow-left" class="ic-sm"></i>Plano e pagamento</a>`;
+  if (!d.enabled) {
+    host.innerHTML = `<div class="bil-co-page">${back}<div class="bil-note"><i data-lucide="info" class="ic-sm"></i><span>O pagamento pelo reWork ainda não está disponível. Para assinar agora, fale com o suporte do reWork.</span></div></div>`;
+    paintIcons(host);
+    return;
+  }
+  host.innerHTML = `<div class="bil-co-page">
+    ${back}
+    <header class="bil-co-head">
+      <h1 class="bil-title" id="bil-co-title"></h1>
+      <p class="bil-sub" id="bil-co-subtitle"></p>
+    </header>
+    <div class="bil-co bil-co--page">
+      <div class="bil-co-main">
+        <section class="bil-co-sec">
+          <h2 class="bil-co-h">Plano</h2>
+          <div class="bil-co-list" role="radiogroup" aria-label="Plano" id="bil-co-plans"></div>
+        </section>
+        <section class="bil-co-sec bil-co-sec--row">
+          <div>
+            <h2 class="bil-co-h">Cobrança</h2>
+            <div class="bil-co-seg" role="radiogroup" aria-label="Cobrança" id="bil-co-cycles"></div>
+          </div>
+          <div>
+            <h2 class="bil-co-h">Pagamento</h2>
+            <div class="bil-co-seg" role="radiogroup" aria-label="Forma de pagamento" id="bil-co-methods"></div>
+          </div>
+        </section>
+        <p class="bil-co-hint" id="bil-co-method-hint"></p>
+        <section class="bil-co-sec">
+          <h2 class="bil-co-h">Nota fiscal</h2>
+          <div class="bil-co-fields">
+            <label class="bil-co-field"><span>Nome ou razão social</span><input class="form-control" id="bil-co-name" maxlength="120" autocomplete="organization" value="${esc(c.name)}" oninput="_bilCo.name=this.value"></label>
+            <div class="bil-co-field" id="bil-co-doc-saved" hidden><span>CPF ou CNPJ</span><div class="bil-co-docsaved"><b id="bil-co-doc-mask"></b><button type="button" class="bil-co-link" onclick="_bilCoEditDoc()">Alterar</button></div></div>
+            <label class="bil-co-field" id="bil-co-doc-wrap"><span>CPF ou CNPJ</span><input class="form-control" id="bil-co-doc" inputmode="numeric" maxlength="18" oninput="_bilDocMask(this);_bilCo.doc=this.value" autocomplete="off" placeholder="Só números" value="${esc(c.doc)}"></label>
+            <label class="bil-co-field bil-co-field--full"><span>E-mail para faturas e notas</span><input class="form-control" id="bil-co-email" type="email" maxlength="160" autocomplete="email" value="${esc(c.email)}" oninput="_bilCo.email=this.value"></label>
+          </div>
+        </section>
+      </div>
+      <aside class="bil-co-side" aria-label="Resumo">
+        <div class="bil-co-sum" id="bil-co-summary"></div>
+        <div class="bil-co-error" id="bil-co-error" role="alert"></div>
+        <button class="btn btn-primary bil-co-cta" id="bil-co-go" onclick="submitBillingCheckout()">Continuar</button>
+        <p class="bil-co-secure"><i data-lucide="lock" class="ic-xs"></i><span>Pagamento processado pelo Asaas. O reWork não vê nem guarda os dados do cartão.</span></p>
+      </aside>
+    </div>
+  </div>`;
+  _bilCoRender();
+}
+function _bilCoRender() {
+  const d = _bil.data, c = _bilCo;
+  if (!d || !c || !$('bil-co-plans')) return;
+  const b = d.billing;
+  const p = d.catalog.find(x => x.id === c.planId);
+  const changing = b.status && b.status !== 'none' && b.status !== 'canceled';
+  const yearly = c.cycle === 'YEARLY';
+  const price = p.prices[c.cycle];
+  const perMonth = (x) => yearly ? Math.round(x.prices.YEARLY / 12) : x.prices.MONTHLY;
+  const method = BIL_METHODS.find(m => m.id === c.method);
+
+  $('bil-co-title').textContent = changing ? 'Mudar assinatura' : 'Assinar o reWork';
+  $('bil-co-subtitle').textContent = changing && b.planId
+    ? `Hoje: ${_bilPlanName(b.planId)} · ${_bilCycleLabel(b.cycle)} · ${BIL_METHOD_LABEL[b.method] || ''}`
+    : 'Escolha o plano e a forma de pagamento. Dá para mudar depois.';
+
+  const radio = (on) => `role="radio" aria-checked="${on}" tabindex="${on ? 0 : -1}"`;
+  $('bil-co-plans').innerHTML = d.catalog.map(x => {
+    const on = x.id === c.planId;
+    return `<button type="button" class="bil-co-row${on ? ' is-on' : ''}" ${radio(on)} onclick="_bilCoSet('planId','${x.id}')">
+      <span class="bil-co-dot" aria-hidden="true"></span>
+      <span class="bil-co-row-main"><b>${esc(x.name)}</b><span>Até ${x.users} pessoas · ${x.storageGb} GB de arquivos</span></span>
+      <span class="bil-co-row-price"><b>${_bilMoney(perMonth(x))}</b><span>/mês</span></span>
+    </button>`;
+  }).join('');
+  $('bil-co-cycles').innerHTML = [['MONTHLY', 'Mensal', ''], ['YEARLY', 'Anual', '<em>−2 meses</em>']]
+    .map(([k, l, extra]) => `<button type="button" class="${k === c.cycle ? 'is-on' : ''}" ${radio(k === c.cycle)} onclick="_bilCoSet('cycle','${k}')">${l}${extra}</button>`).join('');
+  $('bil-co-methods').innerHTML = BIL_METHODS
+    .map(m => `<button type="button" class="${m.id === c.method ? 'is-on' : ''}" ${radio(m.id === c.method)} onclick="_bilCoSet('method','${m.id}')"><i data-lucide="${m.icon}" class="ic-xs"></i>${m.label}</button>`).join('');
+  $('bil-co-method-hint').textContent = method.hint;
+
+  // CPF/CNPJ já salvo: mostra mascarado com "Alterar" em vez de pedir de novo.
+  const saved = b.customer && b.customer.doc;
+  $('bil-co-doc-saved').hidden = !saved || c.editDoc;
+  $('bil-co-doc-wrap').hidden = !!saved && !c.editDoc;
+  if (saved) $('bil-co-doc-mask').textContent = b.customer.doc;
+
+  // Resumo
+  const today = new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10);
+  const later = d.startDate > today;
+  const saving = yearly ? p.prices.MONTHLY * 12 - p.prices.YEARLY : 0;
+  const founder = d.founder.mine || (d.founder.open && !changing);
+  const row = (k, v) => `<div class="bil-co-sum-row"><span>${k}</span><b>${v}</b></div>`;
+  $('bil-co-summary').innerHTML = `
+    <div class="bil-co-sum-kicker">Resumo${d.sandbox ? ' <span class="bil-co-sandbox">Modo de teste</span>' : ''}</div>
+    <div class="bil-co-sum-plan">${esc(p.name)}${founder ? '<span class="bil-co-founder"><i data-lucide="sparkles" class="ic-xs"></i>Preço de fundador</span>' : ''}</div>
+    <div class="bil-co-sum-price"><b>${_bilMoney(price)}</b><span>/${yearly ? 'ano' : 'mês'}</span></div>
+    <div class="bil-co-sum-sub">${yearly ? `Equivale a ${_bilMoney(Math.round(price / 12))}/mês · economia de ${_bilMoney(saving)} no ano` : `Até ${p.users} pessoas · ${p.storageGb} GB`}</div>
+    <div class="bil-co-sum-rows">
+      ${row('Primeira cobrança', later ? _bilDate(d.startDate, { day: 'numeric', month: 'short' }).replace('.', '') : 'Hoje')}
+      ${row('Renova', yearly ? 'Todo ano' : 'Todo mês')}
+      ${row('Pagamento', method.label)}
+    </div>
+    <div class="bil-co-sum-total"><span>Você paga hoje</span><b>${later ? _bilMoney(0) : _bilMoney(price)}</b></div>
+    ${later ? `<p class="bil-co-sum-note">${changing ? 'A troca vale quando o período já pago acabar.' : 'Nada é cobrado durante o teste grátis.'}</p>` : ''}`;
+  $('bil-co-go').innerHTML = c.method === 'CREDIT_CARD'
+    ? 'Ir para o pagamento <i data-lucide="arrow-right" class="ic-sm"></i>'
+    : `Gerar ${c.method === 'PIX' ? 'fatura Pix' : 'boleto'}`;
+  paintIcons($('billing-checkout-body'));
+}
+function _bilCoSet(k, v) {
+  if (!_bilCo) return;
+  _bilCo[k] = v;
+  _bilCoRender();
+  // A URL acompanha a escolha (dá pra mandar o link já com plano, ciclo e forma).
+  if (currentPage === 'billingCheckout') history.replaceState(history.state, '', orgUrl(billingCheckoutPath()));
+}
+function _bilCoEditDoc() {
+  if (!_bilCo) return;
+  _bilCo.editDoc = true;
+  _bilCoRender();
+  $('bil-co-doc').focus();
+}
+function _bilDocMask(el) {
+  const d = el.value.replace(/\D/g, '').slice(0, 14);
+  el.value = d.length <= 11
+    ? d.replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d{1,2})$/, '$1-$2')
+    : d.replace(/^(\d{2})(\d)/, '$1.$2').replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3').replace(/\.(\d{3})(\d)/, '.$1/$2').replace(/(\d{4})(\d)/, '$1-$2');
+}
+async function submitBillingCheckout() {
+  const c = _bilCo, err = $('bil-co-error');
+  if (!c) return;
+  err.textContent = '';
+  // CPF/CNPJ em branco com um já salvo = o servidor usa o salvo.
+  const doc = c.editDoc ? String(c.doc || '').replace(/\D/g, '') : '';
+  const btn = $('bil-co-go');
+  btn.disabled = true;
+  const label = btn.innerHTML;
+  btn.textContent = 'Preparando…';
+  try {
+    const r = await api('/billing/checkout', 'POST', { planId: c.planId, cycle: c.cycle, method: c.method, name: c.name, cpfCnpj: doc, email: c.email });
+    if (r.kind === 'checkout' && r.url) { location.href = r.url; return; }
+    if (r.url) { window.open(r.url, '_blank', 'noopener'); toast('Fatura gerada. Ela também chega por e-mail.', 'success'); }
+    else toast(`Assinatura feita. A primeira fatura chega por e-mail perto de ${_bilDate(r.firstDueDate, { day: 'numeric', month: 'long' })}.`, 'success');
+    _bilCo = null;
+    _bil.data = null; _bil.cycle = null; _bil.payments = null;
+    goPage('billing');
+    _bilRefreshOrg();
+  } catch (e) {
+    err.textContent = e.message;
+    if (/cpf|cnpj/i.test(e.message) && !c.editDoc) { c.editDoc = true; _bilCoRender(); }
+    btn.disabled = false; btn.innerHTML = label; paintIcons(btn);
+  }
+}
+
+async function changeBillingPlan(planId) {
+  const d = _bil.data, b = d?.billing;
+  if (!b) return;
+  const cur = d.catalog.find(x => x.id === b.planId), next = d.catalog.find(x => x.id === planId);
+  const up = next.users > cur.users;
+  const ok = await showConfirm({
+    title: `Mudar para ${next.name}?`,
+    message: up
+      ? `Os limites do ${next.name} valem agora. A partir da próxima cobrança, o valor passa a ser ${_bilMoney(next.prices[b.cycle])}/${b.cycle === 'YEARLY' ? 'ano' : 'mês'}.`
+      : `Você continua no ${cur.name} até a próxima cobrança; depois passa para o ${next.name}, por ${_bilMoney(next.prices[b.cycle])}/${b.cycle === 'YEARLY' ? 'ano' : 'mês'}.`,
+    okLabel: `Mudar para ${next.name}`
+  });
+  if (!ok) return;
+  try { await api('/billing/plan', 'POST', { planId }); toast('Plano atualizado.', 'success'); await renderBilling(true); _bilRefreshOrg(); }
+  catch (e) { toast(e.message, 'error'); }
+}
+async function cancelBillingSubscription() {
+  const p = _bil.data?.plan;
+  const until = p && p.paidUntil && Date.parse(p.paidUntil) > Date.now() ? _bilDate(p.paidUntil) : null;
+  const ok = await showConfirm({
+    title: 'Cancelar a assinatura?',
+    message: `${until ? `A organização continua funcionando normalmente até ${until}.` : 'A organização passa a ficar só para consulta.'} Depois disso, os dados ficam guardados, só para consulta, até vocês assinarem de novo. Nenhuma cobrança nova é feita.`,
+    okLabel: 'Cancelar assinatura', cancelLabel: 'Manter', danger: true
+  });
+  if (!ok) return;
+  try { await api('/billing/cancel', 'POST', {}); toast('Assinatura cancelada.', 'warn'); await renderBilling(true); _bilRefreshOrg(); }
+  catch (e) { toast(e.message, 'error'); }
+}
+
+/* ─── SUPORTE (/support, /support/new, /support/<nº>) ───
+   Botão "Suporte" fixo na barra do topo. A pessoa abre chamados, acompanha a
+   conversa e responde; a equipe do reWork responde pelo console. Cada
+   chamado leva nome, usuário, e-mail, organização e a página de onde veio. */
+let _sup = { items: null, categories: null, email: null, emailEnabled: true, ticket: null, ticketNumber: null, from: null, files: [], replyFiles: [], draft: null, unread: 0 };
+const SUP_STATUS = { open: ['Com a equipe', 'is-info'], answered: ['Respondido', 'is-accent'], closed: ['Resolvido', ''] };
+const SUP_CATEGORY_HINT = {
+  duvida: 'Conte o que você quer fazer e onde ficou em dúvida.',
+  problema: 'O que você fez, o que esperava que acontecesse e o que aconteceu. Um print ajuda muito.',
+  cobranca: 'Conte o que precisa sobre o plano, a fatura ou a nota fiscal.',
+  conta: 'Conte o que está acontecendo com o acesso (senha, e-mail, verificação em duas etapas…).',
+  sugestao: 'O que faria o reWork funcionar melhor para vocês?',
+  outro: 'Conte como podemos ajudar.'
+};
+const SUP_CATEGORY_ICON = { duvida: 'circle-help', problema: 'bug', cobranca: 'credit-card', conta: 'key-round', sugestao: 'lightbulb', outro: 'message-circle' };
+const _supPill = (status) => { const [l, t] = SUP_STATUS[status] || [status, '']; return `<span class="bil-pill ${t}">${l}</span>`; };
+const _supWhen = (iso) => fmtRelativeTime(iso);
+
+/* Botão do topo: guarda de onde a pessoa veio (vai junto no chamado). */
+function openSupport() {
+  if (currentPage !== 'support' && currentPage !== 'supportNew' && currentPage !== 'supportTicket') _sup.from = appPath() + (location.search || '');
+  goPage('support');
+}
+function openSupportNew(category) {
+  _sup.draft = { category: category || '', subject: '', message: '' };
+  _sup.files = [];
+  goPage('supportNew');
+}
+function openSupportTicket(number) {
+  _sup.ticketNumber = String(number);
+  _sup.ticket = null;
+  _sup.replyFiles = [];
+  goPage('supportTicket');
+}
+async function _supLoadList() {
+  const r = await api('/support/tickets');
+  _sup.items = r.items || [];
+  _sup.categories = r.categories || {};
+  _sup.email = r.email;
+  _sup.emailEnabled = r.emailEnabled !== false;
+  _supSetDot(_sup.items.filter(t => t.unread).length);
+}
+function _supSetDot(n) {
+  _sup.unread = n;
+  const dot = $('support-dot');
+  if (dot) dot.hidden = !n;
+}
+async function refreshSupportDot() {
+  try { await _supLoadList(); } catch {}
+}
+const _supBack = (label, fn) => `<a class="bil-back" href="${esc(orgUrl('/support'))}" onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return;event.preventDefault();${fn}"><i data-lucide="arrow-left" class="ic-sm"></i>${label}</a>`;
+
+/* Lista */
+async function renderSupport() {
+  const host = $('support-page-body');
+  if (!host) return;
+  if (!_sup.items) host.innerHTML = `<div class="sup">${skeletonTableRows(4, 4)}</div>`;
+  try { await _supLoadList(); }
+  catch (e) { host.innerHTML = `<div class="sup">${emptyState('Não foi possível carregar os chamados', esc(e.message), 'alert-circle')}</div>`; return; }
+  const items = _sup.items;
+  const open = items.filter(t => t.status !== 'closed');
+  const closed = items.filter(t => t.status === 'closed');
+  const row = (t) => `<a class="sup-row${t.unread ? ' is-unread' : ''}" href="${esc(orgUrl('/support/' + t.number))}" onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return;event.preventDefault();openSupportTicket(${t.number})">
+      <span class="sup-row-ic"><i data-lucide="${SUP_CATEGORY_ICON[t.category] || 'message-circle'}" class="ic-sm"></i></span>
+      <span class="sup-row-main">
+        <span class="sup-row-title">${t.unread ? '<span class="sup-unread-dot" aria-label="Resposta nova"></span>' : ''}${esc(t.subject)}</span>
+        <span class="sup-row-sub">#${t.number} · ${esc(t.categoryLabel)} · ${t.lastFrom === 'staff' ? 'Equipe reWork' : 'Você'}: ${esc(t.preview)}</span>
+      </span>
+      <span class="sup-row-side">${_supPill(t.status)}<span class="sup-row-when">${esc(_supWhen(t.updatedAt))}</span></span>
+    </a>`;
+  host.innerHTML = `<div class="sup">
+    <header class="bil-head">
+      <div>
+        <h1 class="bil-title">Suporte</h1>
+        <p class="bil-sub">Fale com a equipe do reWork. Respondemos por aqui${_sup.emailEnabled && _sup.email ? ` e por e-mail (${esc(_sup.email)})` : ''}.</p>
+      </div>
+      <button type="button" class="btn btn-primary" onclick="openSupportNew()"><i data-lucide="plus" class="ic-sm"></i>Abrir chamado</button>
+    </header>
+    ${items.length ? `
+      ${open.length ? `<section class="sup-group"><h2 class="bil-h3">Em andamento</h2><div class="sup-list">${open.map(row).join('')}</div></section>` : ''}
+      ${closed.length ? `<section class="sup-group"><h2 class="bil-h3">Resolvidos</h2><div class="sup-list">${closed.map(row).join('')}</div></section>` : ''}
+    ` : `<section class="sup-empty">
+        <div class="sup-empty-ic"><i data-lucide="life-buoy"></i></div>
+        <h2 class="sup-empty-title">Precisa de ajuda?</h2>
+        <p class="sup-empty-sub">Abra um chamado e a equipe do reWork responde por aqui${_sup.emailEnabled ? ' e por e-mail' : ''}. Dúvidas, algo que não funcionou, plano e pagamento — tudo passa por aqui.</p>
+        <div class="sup-quick">${Object.entries(_sup.categories).map(([k, l]) => `<button type="button" class="sup-quick-btn" onclick="openSupportNew('${k}')"><i data-lucide="${SUP_CATEGORY_ICON[k] || 'message-circle'}" class="ic-sm"></i>${esc(l)}</button>`).join('')}</div>
+      </section>`}
+    <p class="sup-foot"><i data-lucide="book-open" class="ic-xs"></i><span>Antes de abrir, vale olhar o <a href="${esc(orgUrl('/help'))}" onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return;event.preventDefault();goPage('help')">Manual do usuário</a>.</span></p>
+  </div>`;
+  paintIcons(host);
+}
+
+/* Abrir chamado */
+async function renderSupportNew() {
+  const host = $('support-new-body');
+  if (!host) return;
+  if (!_sup.categories) { try { await _supLoadList(); } catch {} }
+  if (!_sup.draft) {
+    const q = new URLSearchParams(location.search);
+    _sup.draft = { category: _sup.categories && _sup.categories[q.get('assunto')] ? q.get('assunto') : '', subject: '', message: '' };
+  }
+  const d = _sup.draft;
+  const cats = _sup.categories || {};
+  const org = me && me.org ? me.org.name : '';
+  host.innerHTML = `<div class="sup sup--form">
+    ${_supBack('Suporte', "goPage('support')")}
+    <header class="bil-co-head">
+      <h1 class="bil-title">Abrir chamado</h1>
+      <p class="bil-sub">Quanto mais detalhe, mais rápido a gente resolve.</p>
+    </header>
+    <form class="sup-form" onsubmit="event.preventDefault();submitSupportTicket()" novalidate>
+      <section>
+        <h2 class="bil-co-h">Assunto</h2>
+        <div class="sup-cats" role="radiogroup" aria-label="Assunto">${Object.entries(cats).map(([k, l]) => `<button type="button" role="radio" aria-checked="${d.category === k}" class="sup-cat${d.category === k ? ' is-on' : ''}" onclick="_supSetCategory('${k}')"><i data-lucide="${SUP_CATEGORY_ICON[k] || 'message-circle'}" class="ic-sm"></i>${esc(l)}</button>`).join('')}</div>
+      </section>
+      <label class="bil-co-field"><span>Título</span><input class="form-control" id="sup-subject" maxlength="140" placeholder="Ex.: Não consigo anexar arquivos na demanda" value="${esc(d.subject)}" oninput="_sup.draft.subject=this.value"></label>
+      <label class="bil-co-field"><span>Descrição</span><textarea class="form-control sup-textarea" id="sup-message" rows="7" maxlength="8000" placeholder="${esc(SUP_CATEGORY_HINT[d.category] || 'Conte como podemos ajudar.')}" oninput="_sup.draft.message=this.value">${esc(d.message)}</textarea></label>
+      <div class="sup-files" id="sup-files"></div>
+      <div class="sup-form-foot">
+        <label class="sup-attach"><input type="file" accept="image/png,image/jpeg,image/webp,image/gif,application/pdf" multiple hidden onchange="_supAddFiles(this, 'files')"><i data-lucide="paperclip" class="ic-sm"></i>Anexar print ou PDF</label>
+        <span class="sup-attach-hint">Até 4 arquivos, 5 MB cada.</span>
+      </div>
+      <div class="sup-context"><i data-lucide="info" class="ic-xs"></i><span>Junto com o chamado vão seu nome e usuário (@${esc(me?.username || '')}), ${me?.email ? `o e-mail ${esc(me.email)}, ` : ''}a organização ${esc(org)} e a página em que você estava, para a equipe entender o contexto.</span></div>
+      <div class="bil-co-error" id="sup-error" role="alert"></div>
+      <div class="sup-actions">
+        <button type="button" class="btn btn-ghost" onclick="goPage('support')">Cancelar</button>
+        <button type="submit" class="btn btn-primary" id="sup-send"><i data-lucide="send" class="ic-sm"></i>Enviar chamado</button>
+      </div>
+    </form>
+  </div>`;
+  _supRenderFiles('files', 'sup-files');
+  paintIcons(host);
+  if (!d.category) setTimeout(() => host.querySelector('.sup-cat')?.focus(), 50);
+  else setTimeout(() => $('sup-subject')?.focus(), 50);
+}
+function _supSetCategory(k) {
+  if (!_sup.draft) return;
+  _sup.draft.category = k;
+  document.querySelectorAll('.sup-cat').forEach(b => { const on = b.getAttribute('onclick').includes(`'${k}'`); b.classList.toggle('is-on', on); b.setAttribute('aria-checked', on); });
+  const ta = $('sup-message');
+  if (ta) ta.placeholder = SUP_CATEGORY_HINT[k] || '';
+  $('sup-subject')?.focus();
+}
+/* Anexos → data URI (o servidor grava; até 4 × 5 MB). */
+function _supAddFiles(input, key) {
+  const list = _sup[key];
+  const picked = [...(input.files || [])];
+  input.value = '';
+  for (const f of picked) {
+    if (list.length >= 4) { toast('Até 4 arquivos por mensagem.', 'warn'); break; }
+    if (!/^(image\/(png|jpeg|webp|gif)|application\/pdf)$/.test(f.type)) { toast(`${f.name}: só imagens ou PDF.`, 'warn'); continue; }
+    if (f.size > 5 * 1024 * 1024) { toast(`${f.name} passa de 5 MB.`, 'warn'); continue; }
+    const item = { name: f.name, type: f.type, size: f.size, dataUrl: null };
+    list.push(item);
+    const r = new FileReader();
+    r.onload = () => { item.dataUrl = r.result; _supRenderFiles(key, key === 'files' ? 'sup-files' : 'sup-reply-files'); };
+    r.readAsDataURL(f);
+  }
+  _supRenderFiles(key, key === 'files' ? 'sup-files' : 'sup-reply-files');
+}
+function _supRenderFiles(key, hostId) {
+  const host = $(hostId);
+  if (!host) return;
+  const list = _sup[key];
+  host.innerHTML = list.map((f, i) => `<span class="sup-file">
+      ${f.type.startsWith('image/') && f.dataUrl ? `<img src="${f.dataUrl}" alt="">` : `<i data-lucide="${f.type === 'application/pdf' ? 'file-text' : 'image'}" class="ic-sm"></i>`}
+      <span class="sup-file-name">${esc(f.name)}</span>
+      <button type="button" class="sup-file-x" aria-label="Remover ${esc(f.name)}" onclick="_sup['${key}'].splice(${i},1);_supRenderFiles('${key}','${hostId}')"><i data-lucide="x" class="ic-xs"></i></button>
+    </span>`).join('');
+  paintIcons(host);
+}
+async function submitSupportTicket() {
+  const d = _sup.draft, err = $('sup-error');
+  err.textContent = '';
+  if (_sup.files.some(f => !f.dataUrl)) { err.textContent = 'Espere os anexos terminarem de carregar.'; return; }
+  const btn = $('sup-send');
+  btn.disabled = true;
+  try {
+    const t = await api('/support/tickets', 'POST', {
+      category: d.category, subject: d.subject, message: d.message,
+      files: _sup.files.map(f => ({ name: f.name, dataUrl: f.dataUrl })),
+      context: { path: _sup.from || null, screen: `${window.innerWidth}×${window.innerHeight}` }
+    });
+    _sup.draft = null; _sup.files = []; _sup.items = null;
+    toast(`Chamado #${t.number} aberto. A equipe do reWork já foi avisada.`, 'success');
+    _sup.ticket = t; _sup.ticketNumber = String(t.number);
+    goPage('supportTicket');
+  } catch (e) {
+    err.textContent = e.message;
+    btn.disabled = false;
+  }
+}
+
+/* Conversa */
+async function renderSupportTicket() {
+  const host = $('support-ticket-body');
+  if (!host) return;
+  const num = _sup.ticketNumber;
+  if (!num) { goPage('support'); return; }
+  if (!_sup.ticket || String(_sup.ticket.number) !== num) {
+    host.innerHTML = `<div class="sup">${skeletonTableRows(3, 3)}</div>`;
+    try { _sup.ticket = await api('/support/tickets/' + encodeURIComponent(num)); }
+    catch (e) { host.innerHTML = `<div class="sup">${_supBack('Suporte', "goPage('support')")}${emptyState('Chamado não encontrado', esc(e.message), 'life-buoy')}</div>`; paintIcons(host); return; }
+    refreshSupportDot();
+  }
+  const t = _sup.ticket;
+  const fileUrl = (f) => `/api/support/tickets/${t.number}/files/${encodeURIComponent(f.id)}`;
+  const msg = (m) => `<article class="sup-msg${m.from === 'staff' ? ' is-staff' : ''}">
+      <header class="sup-msg-head">
+        ${m.from === 'staff' ? '<span class="avatar notif-avatar notif-avatar-system sup-msg-av" style="background-image:url(\'/rework.jpg\')"></span>' : avatarHTML(me, 'avatar sup-msg-av')}
+        <b>${m.from === 'staff' ? 'Equipe reWork' : esc(m.authorName)}</b>
+        <span>${esc(new Date(m.at).toLocaleString('pt-BR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))}</span>
+      </header>
+      <div class="sup-msg-body">${esc(m.body).replace(/\n/g, '<br>')}</div>
+      ${(m.files || []).length ? `<div class="sup-msg-files">${m.files.map(f => f.type.startsWith('image/')
+        ? `<a class="sup-msg-img" href="${fileUrl(f)}" target="_blank" rel="noopener" title="${esc(f.name)}"><img src="${fileUrl(f)}" alt="${esc(f.name)}" loading="lazy"></a>`
+        : `<a class="sup-file" href="${fileUrl(f)}" target="_blank" rel="noopener"><i data-lucide="file-text" class="ic-sm"></i><span class="sup-file-name">${esc(f.name)}</span></a>`).join('')}</div>` : ''}
+    </article>`;
+  const closed = t.status === 'closed';
+  host.innerHTML = `<div class="sup sup--ticket">
+    ${_supBack('Suporte', "goPage('support')")}
+    <header class="sup-ticket-head">
+      <div class="sup-ticket-kicker">#${t.number} · ${esc(t.categoryLabel)} · aberto ${esc(_supWhen(t.createdAt))}</div>
+      <h1 class="bil-title">${esc(t.subject)}</h1>
+      <div class="bil-pills">${_supPill(t.status)}</div>
+    </header>
+    <div class="sup-thread">${t.messages.map(msg).join('')}</div>
+    <section class="sup-reply">
+      ${closed ? '<p class="sup-reply-note"><i data-lucide="check-circle-2" class="ic-sm"></i>Chamado resolvido. Se ainda precisar, responda aqui e ele é reaberto.</p>'
+        : t.status === 'answered' ? '<p class="sup-reply-note is-accent"><i data-lucide="message-circle" class="ic-sm"></i>A equipe respondeu. Resolveu? Marque como resolvido, ou responda se ainda precisar.</p>'
+        : '<p class="sup-reply-note"><i data-lucide="clock" class="ic-sm"></i>Com a equipe do reWork. Você recebe a resposta aqui e por e-mail.</p>'}
+      <textarea class="form-control sup-textarea" id="sup-reply" rows="4" maxlength="8000" placeholder="Escreva sua mensagem"></textarea>
+      <div class="sup-files" id="sup-reply-files"></div>
+      <div class="bil-co-error" id="sup-reply-error" role="alert"></div>
+      <div class="sup-reply-foot">
+        <label class="sup-attach"><input type="file" accept="image/png,image/jpeg,image/webp,image/gif,application/pdf" multiple hidden onchange="_supAddFiles(this, 'replyFiles')"><i data-lucide="paperclip" class="ic-sm"></i>Anexar</label>
+        <span class="sup-reply-actions">
+          ${closed ? '' : '<button type="button" class="btn btn-ghost" onclick="closeSupportTicket()">Marcar como resolvido</button>'}
+          <button type="button" class="btn btn-primary" id="sup-reply-send" onclick="sendSupportReply()"><i data-lucide="send" class="ic-sm"></i>${closed ? 'Reabrir e enviar' : 'Enviar'}</button>
+        </span>
+      </div>
+    </section>
+  </div>`;
+  _supRenderFiles('replyFiles', 'sup-reply-files');
+  paintIcons(host);
+}
+async function sendSupportReply() {
+  const t = _sup.ticket, err = $('sup-reply-error');
+  const body = ($('sup-reply')?.value || '').trim();
+  err.textContent = '';
+  if (!body) { err.textContent = 'Escreva a mensagem.'; return; }
+  if (_sup.replyFiles.some(f => !f.dataUrl)) { err.textContent = 'Espere os anexos terminarem de carregar.'; return; }
+  const btn = $('sup-reply-send');
+  btn.disabled = true;
+  try {
+    _sup.ticket = await api(`/support/tickets/${t.number}/messages`, 'POST', { message: body, files: _sup.replyFiles.map(f => ({ name: f.name, dataUrl: f.dataUrl })) });
+    _sup.replyFiles = [];
+    toast('Mensagem enviada.', 'success');
+    renderSupportTicket();
+  } catch (e) { err.textContent = e.message; btn.disabled = false; }
+}
+async function closeSupportTicket() {
+  const t = _sup.ticket;
+  try { _sup.ticket = await api(`/support/tickets/${t.number}/close`, 'POST', {}); toast('Chamado marcado como resolvido.', 'success'); renderSupportTicket(); }
+  catch (e) { toast(e.message, 'error'); }
+}
 
 /* ─── PÁGINA: CONFIGURAÇÕES DA ORGANIZAÇÃO (/organizacao) ───
    Seções por papel: todo mundo vê Geral e Jornada; admin/moderador veem
@@ -6467,7 +7217,8 @@ function _orgPlanSection(u, head) {
     ? `<p class="orgp-plan-full"><i data-lucide="lock" class="ic-sm"></i>O teste acabou em ${new Date(p.trialEndsAt).toLocaleDateString('pt-BR')}: a organização está só para consulta até escolher um plano.</p>`
     : p.trialEndsAt ? `<p class="orgp-plan-trial"><i data-lucide="hourglass" class="ic-sm"></i>Teste grátis até ${new Date(p.trialEndsAt).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' })} (${p.trialDaysLeft === 1 ? 'falta 1 dia' : `faltam ${p.trialDaysLeft} dias`}). Depois, fica só para consulta até escolher um plano.</p>` : '') : '';
   return `<section class="orgp-card" id="orgp-plano">
-    ${head(`Plano ${esc(p.name)}`, `Quantas pessoas e quanto espaço de arquivos a organização pode usar. Cada arquivo pode ter até ${_orgBytes(p.fileBytes)}. Para mudar de plano ou aumentar os limites, fale com o suporte do reWork.`)}
+    ${head(`Plano ${esc(p.name)}`, `Quantas pessoas e quanto espaço de arquivos a organização pode usar. Cada arquivo pode ter até ${_orgBytes(p.fileBytes)}.`,
+      me.isOwner ? `<div class="orgp-head-actions"><button class="btn btn-ghost btn-sm" onclick="goPage('billing')"><i data-lucide="credit-card" class="ic-sm"></i> Plano e pagamento</button></div>` : '')}
     ${trial}
     <div class="orgp-meters">
       ${_orgMeter('Pessoas', u.seats.used, p.users, n, seatsFoot)}
@@ -7102,7 +7853,11 @@ function renderSidebarNav() {
             onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); goPage('${NAV_DOCS.page}'); closeSidebar()">
             <i data-lucide="${NAV_DOCS.icon}"></i>
           </a>
-          <a class="sb-icon-btn sb-gear" id="sb-gear" href="/profile" aria-label="Configurações" title="Configurações" data-label="Configurações"
+          <a class="sb-icon-btn sb-support" id="sb-support" href="${orgUrl('/support')}" aria-label="Suporte" title="Suporte" data-label="Suporte"
+            onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); openSupport(); closeSidebar()">
+            <i data-lucide="life-buoy"></i><span class="sb-news-dot" id="support-dot"${(() => { try { return _sup.unread ? '' : ' hidden'; } catch { return ' hidden'; } })()}></span>
+          </a>
+          <a class="sb-icon-btn sb-gear" id="sb-gear" href="${orgUrl('/profile')}" aria-label="Configurações" title="Configurações" data-label="Configurações"
             onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); goPage('profile'); closeSidebar()">
             <i data-lucide="settings"></i>
           </a>
@@ -7356,7 +8111,7 @@ const PAGE_TITLES = {
   trash: 'Lixeira', recurringDemands: 'Demandas Recorrentes',
   devtools: 'Dev Tools', passwords: 'Cofre de Senhas', kb: 'Base de conhecimento',
   forms: 'Formulários', dashboards: 'Dashboards', performance: 'Performance', menu: 'Editar acesso rápido',
-  'post-editor': 'Editor de post', 'demand-detail': 'Demanda',
+  'post-editor': 'Editor de post', 'demand-detail': 'Demanda', billing: 'Plano e pagamento', billingCheckout: 'Assinatura', support: 'Suporte', supportNew: 'Abrir chamado', supportTicket: 'Chamado',
   notfound: 'Página não encontrada'
 };
 /* Render da 404 — popula o path digitado e pinta ícones do botão. */
@@ -7460,7 +8215,7 @@ function goPage(page) {
   // de uma demanda. Qualquer outra URL cai em 'mine' — evita telas quebradas
   // por dados filtrados (clientes/projetos/fluxos vêm reduzidos do backend).
   if (me?.isFreelancer) {
-    const FREE_ALLOWED = new Set(['mine', 'profile', 'demand-detail']);
+    const FREE_ALLOWED = new Set(['mine', 'profile', 'demand-detail', 'support', 'supportNew', 'supportTicket']);
     if (!FREE_ALLOWED.has(page)) page = 'mine';
   }
   // Sair da página de Fluxos zera a subview de cliente. Ficar nela (ou entrar
@@ -7934,6 +8689,11 @@ function renderCurrent() {
     }
     case 'workspaces': renderWorkspaces(); break;
     case 'org': if (me?.isOwner) renderOrgPage(); else goPage('dashboard'); break;
+    case 'billing': renderBilling(); break;
+    case 'billingCheckout': renderBillingCheckout(); break;
+    case 'support': renderSupport(); break;
+    case 'supportNew': renderSupportNew(); break;
+    case 'supportTicket': renderSupportTicket(); break;
     case 'users':      renderUsers(); break;
     case 'trash':      renderTrash(); break;
     case 'recurringDemands': renderRecurringDemands(); break;
@@ -30147,6 +30907,9 @@ function notifMessage(n) {
     case 'doc_approved':
       return `<strong>${esc(n.fromName || 'O cliente')}</strong> aprovou o documento <strong>${esc(n.docTitle || n.demandName)}</strong>` +
         (n.commentText ? `<div class="notif-comment">${esc(n.commentText)}</div>` : '');
+    case 'support_reply':
+      return `<strong>Equipe reWork</strong> respondeu seu chamado <strong>#${esc(n.ticketNumber || '')} · ${esc(n.demandName)}</strong>` +
+        (n.commentText ? `<div class="notif-comment">${esc(n.commentText)}</div>` : '');
     case 'doc_changes':
       return `<strong>${esc(n.fromName || 'O cliente')}</strong> pediu ajustes no documento <strong>${esc(n.docTitle || n.demandName)}</strong>` +
         (n.commentText ? `<div class="notif-comment">${esc(n.commentText)}</div>` : '');
@@ -30233,6 +30996,10 @@ async function openNotif(notifId, demandId) {
   $('notif-panel').classList.remove('open');
   if (n && n.docId) {
     window.open('/hub/docs/' + encodeURIComponent(n.docId), '_blank', 'noopener');
+    return;
+  }
+  if (n && n.type === 'support_reply') {
+    openSupportTicket(n.ticketNumber);
     return;
   }
   if (n && n.type === 'invite_accepted') {
@@ -36068,6 +36835,7 @@ function onSseMessage(ev) {
   // só quando algo realmente chegou pro user.
   if (data.entity === 'notification') {
     fetchNotifications().catch(() => {});
+    refreshSupportDot(); // resposta nova do suporte acende o botão do topo
     return;
   }
   // Presença ao vivo: só nos interessa se o evento é da demanda que o usuário

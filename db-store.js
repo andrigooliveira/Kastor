@@ -42,7 +42,9 @@ const ENTITY_TYPES = [
   'platformAdmins', 'accessRequests', 'platformAudit',
   // Organizações (tenancy.js): a organização e o vínculo pessoa ↔ organização
   // (nível de permissão, squads, área e cargo naquela organização).
-  'organizations', 'memberships'
+  'organizations', 'memberships',
+  // Suporte (support.js): chamados abertos no app e respondidos no console.
+  'supportTickets'
 ];
 
 function createStore(config = {}) {

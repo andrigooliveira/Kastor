@@ -595,4 +595,38 @@ function previewSamples(baseUrl, me) {
   ];
 }
 
-module.exports = { escHtml, layout, notification, digest, heldSummary, resetPassword, emailConfirm, emailChangeNotice, loginCode, twoFactorNotice, invite, accessRequestReceived, accessRequestNew, consoleAdminInvite, consoleResetPassword, consoleRecoveryNotice, testEmail, previewSamples };
+/* Suporte: chamado novo / resposta do cliente → superadmins. */
+function supportToStaff({ ticket, message, kind, link, baseUrl, categoryLabel }) {
+  const t = ticket || {}, m = message || {};
+  const what = kind === 'new' ? 'Chamado novo' : kind === 'reopened' ? 'Chamado reaberto' : 'Nova resposta do cliente';
+  const subject = `[Suporte #${t.number}] ${kind === 'new' ? '' : 'Re: '}${t.subject}`;
+  const who = [['De', `${t.userName} (@${t.username})`], ['E-mail', t.email || '—'], ['Organização', t.orgName], ['Assunto', categoryLabel]]
+    .map(([k, v]) => `${escHtml(k)}: ${strong(v)}`).join('<br>');
+  const files = (m.files || []).length ? paragraph(`${(m.files || []).length} ${(m.files || []).length === 1 ? 'anexo' : 'anexos'} no console.`, 10) : '';
+  const content = `${chip(`${what} · #${t.number}`, kind === 'new' ? 'roxo' : 'aviso')}
+${headline(escHtml(t.subject))}
+${paragraph(who, 12)}
+${paragraph(escHtml(m.body || '').replace(/\n/g, '<br>'), 16)}
+${files}
+${button(link, 'Responder no console')}`;
+  const html = layout({ subject, preheader: `${t.userName} · ${t.orgName}`, content, baseUrl, footer: 'Aviso do reWork Console para superadmins da plataforma.' });
+  const text = `${what} #${t.number}: ${t.subject}\n\nDe: ${t.userName} (@${t.username}) <${t.email || '—'}>\nOrganização: ${t.orgName}\nAssunto: ${categoryLabel}\n\n${m.body || ''}\n\nResponder: ${link}`;
+  return { subject, html, text };
+}
+
+/* Suporte: resposta da equipe → quem abriu o chamado. */
+function supportToCustomer({ ticket, message, link, baseUrl }) {
+  const t = ticket || {}, m = message || {};
+  const closed = t.status === 'closed';
+  const subject = `[reWork] Resposta ao chamado #${t.number}: ${t.subject}`;
+  const content = `${chip(`Suporte · #${t.number}`, 'roxo')}
+${headline(closed ? 'Seu chamado foi respondido e resolvido' : 'Respondemos seu chamado')}
+${paragraph(`Olá, ${strong(firstName(t.userName))}. A equipe do reWork respondeu ${strong(t.subject)}:`, 10)}
+${paragraph(escHtml(m.body || '').replace(/\n/g, '<br>'), 14)}
+${button(link, closed ? 'Ver o chamado' : 'Responder')}`;
+  const html = layout({ subject, preheader: String(m.body || '').slice(0, 90), content, baseUrl, footer: 'Você recebeu este e-mail porque abriu um chamado no suporte do reWork.' });
+  const text = `Olá ${firstName(t.userName)}! A equipe do reWork respondeu seu chamado #${t.number} (${t.subject}):\n\n${m.body || ''}\n\n${link}`;
+  return { subject, html, text };
+}
+
+module.exports = { supportToStaff, supportToCustomer, escHtml, layout, notification, digest, heldSummary, resetPassword, emailConfirm, emailChangeNotice, loginCode, twoFactorNotice, invite, accessRequestReceived, accessRequestNew, consoleAdminInvite, consoleResetPassword, consoleRecoveryNotice, testEmail, previewSamples };

@@ -123,6 +123,7 @@ async function loadDB() {
   if (!Array.isArray(db.notifications)) db.notifications = [];
   // Senhas e sessões: Postgres (importa o data/auth.enc antigo na 1ª vez).
   await auth.init(store);
+  if (billingApi) await billingApi.loadConfig(); // chave do Asaas etc. (console › Pagamentos)
   const firstInstall = await isFirstInstall();
   migrate(firstInstall);
   seed(firstInstall);
@@ -1001,7 +1002,7 @@ function requireAuth(req, res, next) {
       return res.status(403).json({ error: 'Freelancers não têm permissão para essa ação' });
     }
     if (readOnlyBlock(tenancy.orgById(m.orgId), req.method, req.path)) {
-      return res.status(403).json({ error: READ_ONLY_ERROR, code: 'read_only' });
+      return res.status(403).json({ error: readOnlyError(tenancy.orgById(m.orgId)), code: 'read_only' });
     }
     if (emailBlock(user, req.method, req.path)) {
       return res.status(403).json({ error: 'Confirme um e-mail na sua conta para continuar usando o reWork.', code: 'email_required' });
@@ -1036,6 +1037,7 @@ const FREELANCER_ALLOWED_MUTATIONS = [
   { m: 'POST',   re: /^\/api\/orgs\/switch$/ },
   { m: 'POST',   re: /^\/api\/uploads$/ },
   { m: 'PUT',    re: /^\/api\/notifications(\/.*)?$/ },
+  { m: 'POST',   re: /^\/api\/support\/tickets(\/[^/]+\/(messages|close))?$/ },
   { m: 'DELETE', re: /^\/api\/notifications(\/.*)?$/ },
 ];
 function freelancerCanMutate(method, path) {
@@ -1755,7 +1757,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use((req, res, next) => {
-  const isUpload = /^\/api\/(uploads|demands(\/[^/]+(\/comment)?)?$|me$|users(\/[^/]+)?$|projects(\/[^/]+)?$|writer\/import$)/.test(req.path);
+  const isUpload = /^\/api\/(support\/tickets(\/[^/]+\/messages)?|uploads|demands(\/[^/]+(\/comment)?)?$|me$|users(\/[^/]+)?$|projects(\/[^/]+)?$|writer\/import$)/.test(req.path);
   return (isUpload ? jsonLg : jsonSm)(req, res, next);
 });
 /* Static do SPA — política de cache diferenciada:
@@ -5619,15 +5621,20 @@ app.post('/api/invites/public/:token/join', rateLimitInvitePublic, (req, res) =>
    usa — anexos, imagens de comentários, avatares de clientes, logo…
    Régua: ~1 GB por pessoa, pensada pra um servidor só (disco e memória).
 
-   Teste: organização nova (lista de espera) nasce no plano Teste; os 14 dias
+   Teste: organização nova (lista de espera) nasce no plano Teste; os 30 dias
    contam a partir de quando o dono aceita o convite. Vencido, a organização
-   fica só pra consulta (lê tudo, não grava nada) até o console mudar o plano. */
+   fica só pra consulta (lê tudo, não grava nada) até assinar um plano.
+
+   Plano pago pelo Asaas (billing.js): org.plan traz paidUntil ("pago até").
+   Passado ele, BILLING_GRACE_DAYS de carência; depois, só consulta. Plano
+   mudado à mão no console não tem paidUntil e nunca trava. */
 const GB = 1024 ** 3, MB = 1024 ** 2;
-const TRIAL_DAYS = 14;
+const { BILLING_GRACE_DAYS } = require('./billing');
+const TRIAL_DAYS = 30;
 const PLANS = [
   { id: 'teste', name: 'Teste', users: 5, storageGb: 2, fileMb: 25, trial: true },
   { id: 'essencial', name: 'Essencial', users: 5, storageGb: 5, fileMb: 25 },
-  { id: 'equipe', name: 'Equipe', users: 15, storageGb: 15, fileMb: 50 },
+  { id: 'equipe', name: 'Profissional', users: 15, storageGb: 15, fileMb: 50 },
   { id: 'agencia', name: 'Agência', users: 30, storageGb: 30, fileMb: 100 },
   { id: 'custom', name: 'Personalizado', users: null, storageGb: null, fileMb: null }
 ];
@@ -5642,12 +5649,22 @@ function orgPlan(org) {
   const fileMb = custom ? (Number(saved.fileMb) > 0 ? Math.min(Number(saved.fileMb), UPLOAD_MAX_BYTES / MB) : null) : base.fileMb;
   const trialEndsAt = base.trial ? (saved.trialEndsAt || null) : null;
   const left = trialEndsAt ? Date.parse(trialEndsAt) - Date.now() : null;
+  // Pago pelo Asaas: vale até paidUntil (+ carência, se não foi cancelado).
+  const paidUntil = !base.trial && saved.paidUntil ? saved.paidUntil : null;
+  const canceled = !!(paidUntil && saved.canceled);
+  const paidMs = paidUntil ? Date.parse(paidUntil) : null;
+  const graceEndsAt = paidUntil && !canceled ? new Date(paidMs + BILLING_GRACE_DAYS * 864e5).toISOString() : paidUntil;
+  const unpaid = paidUntil ? Date.now() > Date.parse(graceEndsAt) : false;
+  const trialOver = left != null && left <= 0;
   return {
     id: base.id, name: base.name, users, storageGb, storageBytes: storageGb == null ? null : Math.round(storageGb * GB),
     fileMb, fileBytes: fileMb == null ? UPLOAD_MAX_BYTES : Math.round(fileMb * MB),
     trial: !!base.trial, trialEndsAt,
     trialDaysLeft: left == null ? null : Math.max(0, Math.ceil(left / 864e5)),
-    readOnly: left != null && left <= 0
+    paidUntil, canceled, graceEndsAt,
+    overdue: !!(paidUntil && Date.now() > paidMs),
+    readOnly: trialOver || unpaid,
+    readOnlyReason: trialOver ? 'trial' : unpaid ? (canceled ? 'canceled' : 'unpaid') : null
   };
 }
 // O relógio do teste começa quando o dono entra (o convite pode esperar dias).
@@ -5659,13 +5676,18 @@ function startTrialIfPending(org) {
 }
 /* Organização só pra consulta (teste vencido): GET passa; mutação só as da
    própria pessoa (perfil, sair, trocar de organização, notificações). */
-const READ_ONLY_ALLOWED = /^\/api\/(me(\/.*)?|logout|orgs\/switch|notifications(\/.*)?|presence(\/.*)?|google(\/.*)?)$/;
+const READ_ONLY_ALLOWED = /^\/api\/(me(\/.*)?|logout|orgs\/switch|notifications(\/.*)?|presence(\/.*)?|google(\/.*)?|billing(\/.*)?|support(\/.*)?)$/;
 function readOnlyBlock(org, method, reqPath) {
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return false;
   if (!org || !orgPlan(org).readOnly) return false;
   return !READ_ONLY_ALLOWED.test(reqPath);
 }
-const READ_ONLY_ERROR = 'O teste grátis desta organização acabou. Os dados continuam aqui, só para consulta, até a organização escolher um plano.';
+const READ_ONLY_ERRORS = {
+  trial: 'O teste grátis desta organização acabou. Os dados continuam aqui, só para consulta, até a organização escolher um plano.',
+  unpaid: 'O pagamento do plano desta organização está atrasado. Os dados continuam aqui, só para consulta, até o pagamento ser feito.',
+  canceled: 'A assinatura desta organização foi cancelada. Os dados continuam aqui, só para consulta, até a organização assinar de novo.'
+};
+const readOnlyError = (org) => READ_ONLY_ERRORS[orgPlan(org).readOnlyReason] || READ_ONLY_ERRORS.trial;
 function orgSeats(orgId) {
   const members = (rawDb.memberships || []).filter(m => m.orgId === orgId && m.active !== false).length;
   const pending = (rawDb.invites || []).filter(i => i.orgId === orgId && inviteStatus(i) === 'pending').length;
@@ -5910,7 +5932,8 @@ function orgPublic(org, role) {
   return {
     id: org.id, name: org.name, logo: org.logo || null, ownerId: org.ownerId || null, createdAt: org.createdAt, role: role || null,
     settings: orgSettings(org),
-    planInfo: (({ id, name, trial, trialEndsAt, trialDaysLeft, readOnly, fileBytes }) => ({ id, name, trial, trialEndsAt, trialDaysLeft, readOnly, fileBytes }))(orgPlan(org)),
+    planInfo: (({ id, name, trial, trialEndsAt, trialDaysLeft, readOnly, readOnlyReason, fileBytes, paidUntil, overdue, canceled, graceEndsAt }) => ({ id, name, trial, trialEndsAt, trialDaysLeft, readOnly, readOnlyReason, fileBytes, paidUntil, overdue, canceled, graceEndsAt }))(orgPlan(org)),
+    billingStatus: (org.billing && org.billing.status) || 'none',
     ...(role === 'owner' || role === 'admin' ? { usage: orgUsage(org) } : {}),
     // O que está disponível nesta organização (bot e n8n são da instalação original).
     integrations: {
@@ -6097,6 +6120,8 @@ async function createOrgWithOwner(req, { name, ownerEmail, ownerName, requestId,
 
 /* ── reWork CONSOLE (/console) + lista de espera (/acesso) ──
    Painel da plataforma com contas e sessão próprias — ver platform-console.js. */
+let billingApi = null; // billing.js (cobrança pelo Asaas) — montado logo abaixo do console
+let supportApi = null; // support.js (chamados) — idem
 consoleApi = require('./platform-console')(app, {
   getDb: () => rawDb, tenancy, createOrgWithOwner, store, auth, saveEntity, removeEntity, uid, nowISO, notDeleted,
   plans: PLANS, orgPlan, orgUsage, buildOrgExport, orgExportFilename, purgeOrg, fmtBytes, TRIAL_DAYS, uploadMaxMb: UPLOAD_MAX_BYTES / MB,
@@ -6109,7 +6134,19 @@ consoleApi = require('./platform-console')(app, {
     discordLogin: discordOAuth.isConfigured(),
     googleLogin: googleLogin.isConfigured(),
     google: googleCal.isConfigured()
-  })
+  }),
+  orgBilling: (org) => (billingApi ? billingApi.consoleOrgBilling(org) : null),
+  supportOpenCount: () => (supportApi ? supportApi.openCount() : 0)
+});
+supportApi = require('./support')(app, {
+  getDb: () => rawDb, dataDir: DATA_DIR, saveEntity, uid, nowISO, requireAuth, orgPlan, store, broadcastToUser, makeRateLimit,
+  buildSha: BUILD_SHA, sendEmail, mailEnabled, emailTpl, appBaseUrl,
+  requireConsole: consoleApi.requireConsole, audit: consoleApi.audit
+});
+billingApi = require('./billing')(app, {
+  getDb: () => rawDb, store, auth, saveEntity, nowISO, requireAuth,
+  plans: PLANS, orgPlan, orgUsage, appBaseUrl,
+  requireConsole: consoleApi.requireConsole, audit: consoleApi.audit
 });
 
 /* ── FUNÇÕES (roles) ── */

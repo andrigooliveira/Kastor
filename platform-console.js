@@ -28,7 +28,7 @@
    db.accessRequests e o console revisa.
 
    Planos e exclusão de organização:
-     - plano de cada organização (Teste de 14 dias, Essencial/Equipe/Agência
+     - plano de cada organização (Teste de 30 dias, Essencial/Profissional/Agência
        ou Personalizado, com limites próprios de pessoas, armazenamento e
        tamanho de arquivo) — catálogo e contas no server.js (PLANS, orgPlan,
        orgUsage). Organização nova nasce no Teste;
@@ -529,6 +529,7 @@ module.exports = function setupConsole(app, deps) {
         hours30: Math.round(sum('hours30') * 10) / 10
       },
       series: { created: dailySeries(30, d => ts(d.createdAt)), completed: dailySeries(30, d => ts(d.completedAt)) },
+      support: { open: deps.supportOpenCount ? deps.supportOpenCount() : 0 },
       waitlist: {
         counts: requestCounts(),
         latest: db.accessRequests.slice().sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 5).map(publicRequest)
@@ -597,7 +598,7 @@ module.exports = function setupConsole(app, deps) {
       if (slot) slot.value = Math.round((slot.value + (Number(e.hours) || 0)) * 10) / 10;
     }
     audit(req, 'org_viewed', { orgId: org.id, name: org.name });
-    res.json({ org: orgSummary(org), members, squads, hoursByMonth: months, series: { created: dailySeries(30, d => ts(d.createdAt), org.id) }, plans });
+    res.json({ org: orgSummary(org), members, squads, hoursByMonth: months, series: { created: dailySeries(30, d => ts(d.createdAt), org.id) }, plans, billing: deps.orgBilling ? deps.orgBilling(org) : null });
   });
 
   /* ── Plano e limites ── */
@@ -908,5 +909,5 @@ module.exports = function setupConsole(app, deps) {
   app.get(/^\/console(?:\/.*)?$/, (req, res) => { noindex(res); res.sendFile(path.join(publicDir, 'console.html')); });
   app.get(/^\/acesso\/?$/, (req, res) => res.sendFile(path.join(publicDir, 'acesso.html')));
 
-  return { totpVerify, hotp, b32decode, ensureDefaultAdmin, runOrgPurgeJob };
+  return { totpVerify, hotp, b32decode, ensureDefaultAdmin, runOrgPurgeJob, requireConsole, audit };
 };

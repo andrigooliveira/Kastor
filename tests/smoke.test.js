@@ -966,11 +966,11 @@ test('Duas etapas: código por e-mail obrigatório, app autenticador e recupera�
 
 test('Planos: limites de pessoas e de armazenamento definidos no console', async () => {
   const put = (body) => call('PUT', `/api/console/orgs/${betaOrgId}/plan`, consoleCookie, body);
-  // Nasce no Teste; os 14 dias começaram quando a dona aceitou o convite
+  // Nasce no Teste; os 30 dias começaram quando a dona aceitou o convite
   const beta = (await req('/api/console/orgs', { headers: { Cookie: consoleCookie } })).body.items.find(o => o.id === betaOrgId);
   assert.equal(beta.usage.plan.id, 'teste');
   assert.ok(beta.usage.plan.trialEndsAt);
-  assert.equal(beta.usage.plan.trialDaysLeft, 14);
+  assert.equal(beta.usage.plan.trialDaysLeft, 30);
   assert.equal(beta.usage.plan.users, 5);
   // Beta tem 2 pessoas (Bia e o admin da WSI). Personalizado: 3 pessoas, ~1 MB.
   let r = await put({ planId: 'custom', users: 3, storageGb: 0.001 });
@@ -1037,6 +1037,207 @@ test('Teste grátis vencido: a organização fica só para consulta', async () =
   assert.equal(r.body.usage.plan.readOnly, false);
   assert.equal(r.body.usage.plan.trialDaysLeft, 3);
   assert.equal((await call('PUT', '/api/org', betaCookie, { name: 'Beta' })).status, 200);
+});
+
+test('Cobrança (Asaas): conectar pelo console, assinar, webhook, trocar plano e cancelar', async () => {
+  // Asaas falso: responde o mínimo e guarda o que recebeu.
+  const http = require('node:http');
+  const got = [];
+  const subs = {};
+  let nSub = 0;
+  const fake = http.createServer((rq, rs) => {
+    let raw = '';
+    rq.on('data', c => { raw += c; });
+    rq.on('end', () => {
+      const body = raw ? JSON.parse(raw) : null;
+      got.push({ method: rq.method, url: rq.url, body, key: rq.headers['access_token'] });
+      const send = (code, obj) => { rs.writeHead(code, { 'Content-Type': 'application/json' }); rs.end(JSON.stringify(obj)); };
+      if (rq.headers['access_token'] !== '$aact_hmlg_chave_de_teste') return send(401, { errors: [{ description: 'Chave inválida' }] });
+      const u = rq.url;
+      if (u === '/finance/balance') return send(200, { balance: 0 });
+      if (u === '/webhooks' && rq.method === 'GET') return send(200, { data: [] });
+      if (u === '/webhooks' && rq.method === 'POST') return send(200, { id: 'wh_1', ...body });
+      if (u === '/webhooks/wh_1') return send(200, { id: 'wh_1', enabled: true, interrupted: false, url: 'x' });
+      if (u === '/customers' && rq.method === 'POST') return send(200, { id: 'cus_1' });
+      if (u.startsWith('/customers/')) return send(200, { id: 'cus_1' });
+      if (u === '/subscriptions' && rq.method === 'POST') { const id = 'sub_' + (++nSub); subs[id] = body; return send(200, { id, ...body }); }
+      let m;
+      if ((m = u.match(/^\/subscriptions\/([^/]+)\/payments$/))) return send(200, { data: [{ id: 'pay_' + m[1], status: 'PENDING', invoiceUrl: 'https://asaas.test/i/' + m[1], dueDate: subs[m[1]].nextDueDate }] });
+      if ((m = u.match(/^\/subscriptions\/([^/]+)$/))) return send(200, { id: m[1], deleted: rq.method === 'DELETE' });
+      if (u === '/checkouts') return send(200, { id: 'chk_1' });
+      if (u.startsWith('/payments')) return send(200, { data: [{ id: 'pay_sub_1', status: 'RECEIVED', value: 79, dueDate: '2026-01-01', billingType: 'PIX', invoiceUrl: 'https://asaas.test/i/1' }] });
+      send(404, { errors: [{ description: 'não achei ' + u }] });
+    });
+  });
+  await new Promise(r => fake.listen(0, '127.0.0.1', r));
+  process.env.ASAAS_API_BASE = `http://127.0.0.1:${fake.address().port}`;
+  try {
+    // Sem configurar: página mostra, mas não assina.
+    let b = (await req('/api/billing', { headers: { Cookie: betaCookie } })).body;
+    assert.equal(b.enabled, false);
+    assert.equal(b.canManage, true, 'a Bia é dona da Beta');
+    assert.equal(b.catalog.find(p => p.id === 'equipe').name, 'Profissional');
+    const pix = { planId: 'essencial', cycle: 'MONTHLY', method: 'PIX', name: 'Agência Beta LTDA', cpfCnpj: '529.982.247-25', email: 'financeiro@beta.com' };
+    assert.equal((await call('POST', '/api/billing/checkout', betaCookie, pix)).status, 503);
+
+    // Console: chave errada é recusada; a certa conecta e cadastra o webhook.
+    assert.equal((await call('PUT', '/api/console/billing', consoleCookie, { env: 'sandbox', apiKey: '$aact_hmlg_errada' })).status, 400);
+    const cfgR = await call('PUT', '/api/console/billing', consoleCookie, { env: 'sandbox', apiKey: '$aact_hmlg_chave_de_teste', founderSlots: 20 });
+    assert.equal(cfgR.status, 200, JSON.stringify(cfgR.body));
+    assert.equal(cfgR.body.configured, true);
+    assert.equal(cfgR.body.apiKeyLast4, 'este');
+    const hook = got.find(g => g.url === '/webhooks' && g.method === 'POST').body;
+    assert.ok(hook.authToken.length >= 32 && hook.events.includes('PAYMENT_RECEIVED'));
+    assert.ok(!JSON.stringify((await req('/api/console/billing', { headers: { Cookie: consoleCookie } })).body).includes('chave_de_teste'), 'a chave nunca volta');
+    const hookToken = hook.authToken;
+    const webhook = (ev, token = hookToken) => req('/api/billing/webhook', { method: 'POST', headers: { 'Content-Type': 'application/json', 'asaas-access-token': token }, body: JSON.stringify(ev) });
+
+    // Só o dono assina; CPF inválido é recusado.
+    const admin = await loginCookie('admin', 'admin123');
+    assert.equal((await call('POST', '/api/billing/checkout', betaCookie, { ...pix, cpfCnpj: '111.111.111-11' })).body.field, 'cpfCnpj');
+    b = (await req('/api/billing', { headers: { Cookie: betaCookie } })).body;
+    assert.equal(b.enabled, true);
+    assert.equal(b.founder.open, true);
+    assert.equal(b.catalog.find(p => p.id === 'essencial').prices.MONTHLY, 79);
+
+    // Pix: assinatura criada na hora, fatura devolvida; durante o teste o plano já vale.
+    const co = await call('POST', '/api/billing/checkout', betaCookie, pix);
+    assert.equal(co.status, 200, JSON.stringify(co.body));
+    assert.equal(co.body.kind, 'invoice');
+    assert.equal(subs.sub_1.billingType, 'PIX');
+    assert.equal(subs.sub_1.value, 79);
+    assert.equal(subs.sub_1.cycle, 'MONTHLY');
+    assert.equal(subs.sub_1.customer, 'cus_1');
+    const cust = got.find(g => g.url === '/customers' && g.method === 'POST').body;
+    assert.equal(cust.cpfCnpj, '52998224725');
+    assert.equal(cust.externalReference, betaOrgId);
+
+    // Webhook: sem token não entra; pagamento confirmado estende o "pago até".
+    assert.equal((await webhook({ id: 'evt_x', event: 'PAYMENT_RECEIVED', payment: {} }, 'x'.repeat(64))).status, 401);
+    const due = subs.sub_1.nextDueDate;
+    const ev = { id: 'evt_1', event: 'PAYMENT_RECEIVED', payment: { id: 'pay_sub_1', customer: 'cus_1', subscription: 'sub_1', value: 79, dueDate: due, billingType: 'PIX', status: 'RECEIVED' } };
+    assert.equal((await webhook(ev)).body.result, 'ok');
+    assert.equal((await webhook(ev)).body.result, 'duplicate', 'o Asaas pode mandar de novo');
+    let org = (await req('/api/org', { headers: { Cookie: betaCookie } })).body;
+    assert.equal(org.planInfo.id, 'essencial');
+    assert.equal(org.planInfo.readOnly, false);
+    assert.ok(Date.parse(org.planInfo.paidUntil) > Date.parse(due) + 27 * 864e5, 'pago por um mês a partir do vencimento');
+    assert.equal(org.billingStatus, 'active');
+
+    // Subir de plano: vale na hora; o valor novo vai pra assinatura.
+    const up = await call('POST', '/api/billing/plan', betaCookie, { planId: 'agencia' });
+    assert.equal(up.status, 200, JSON.stringify(up.body));
+    assert.equal(up.body.plan.id, 'agencia');
+    assert.equal(got.filter(g => g.url === '/subscriptions/sub_1' && g.method === 'PUT').pop().body.value, 299);
+
+    // Atraso: marca, mas não trava antes da carência.
+    await webhook({ id: 'evt_2', event: 'PAYMENT_OVERDUE', payment: { id: 'pay_2', customer: 'cus_1', subscription: 'sub_1', value: 299, invoiceUrl: 'https://asaas.test/i/2' } });
+    b = (await req('/api/billing', { headers: { Cookie: betaCookie } })).body;
+    assert.equal(b.billing.status, 'past_due');
+    assert.equal(b.billing.pendingInvoiceUrl, 'https://asaas.test/i/2');
+    assert.equal(b.plan.readOnly, false);
+
+    // Faturas vêm do Asaas; só o dono vê.
+    assert.equal((await req('/api/billing/payments', { headers: { Cookie: betaCookie } })).body.items.length, 1);
+
+    // Cancelar: apaga no Asaas; funciona até o fim do pago.
+    const cancel = await call('POST', '/api/billing/cancel', betaCookie, {});
+    assert.equal(cancel.status, 200, JSON.stringify(cancel.body));
+    assert.ok(got.some(g => g.url === '/subscriptions/sub_1' && g.method === 'DELETE'));
+    org = (await req('/api/org', { headers: { Cookie: betaCookie } })).body;
+    assert.equal(org.planInfo.canceled, true);
+    assert.equal(org.planInfo.readOnly, false);
+
+    // Assinar de novo no cartão: página do Asaas; a assinatura chega pelo webhook.
+    const card = await call('POST', '/api/billing/checkout', betaCookie, { ...pix, method: 'CREDIT_CARD', cycle: 'YEARLY', planId: 'equipe' });
+    assert.equal(card.status, 200, JSON.stringify(card.body));
+    assert.equal(card.body.kind, 'checkout');
+    assert.ok(card.body.url.endsWith('chk_1'));
+    const chk = got.find(g => g.url === '/checkouts').body;
+    assert.deepEqual(chk.chargeTypes, ['RECURRENT']);
+    assert.equal(chk.subscription.cycle, 'YEARLY');
+    assert.equal(chk.items[0].value, 1790);
+    await webhook({ id: 'evt_3', event: 'SUBSCRIPTION_CREATED', subscription: { id: 'sub_card', customer: 'cus_1', value: 1790, cycle: 'YEARLY' } });
+    b = (await req('/api/billing', { headers: { Cookie: betaCookie } })).body;
+    assert.equal(b.billing.method, 'CREDIT_CARD');
+    assert.equal(b.billing.cycle, 'YEARLY');
+    assert.equal(b.billing.planId, 'equipe');
+    assert.equal(b.billing.founder, true);
+
+    // Console vê a assinatura e o fundador.
+    const cv = (await req('/api/console/billing', { headers: { Cookie: consoleCookie } })).body;
+    assert.equal(cv.founder.used, 1);
+    const od = (await req('/api/console/orgs/' + betaOrgId, { headers: { Cookie: consoleCookie } })).body;
+    assert.equal(od.billing.subscriptionId, 'sub_card');
+    assert.ok(od.billing.log.length >= 4);
+
+    // Quem não é dono não mexe.
+    await call('POST', '/api/orgs/switch', admin, { orgId: (await req('/api/me', { headers: { Cookie: admin } })).body.orgs.find(o => o.name === 'WSI').id });
+    assert.equal((await call('POST', '/api/billing/cancel', admin, {})).status, 400, 'a WSI não tem assinatura');
+  } finally {
+    delete process.env.ASAAS_API_BASE;
+    await new Promise(r => fake.close(r));
+    // Volta a Beta pro teste (os próximos testes contam com isso).
+    await call('PUT', `/api/console/orgs/${betaOrgId}/plan`, consoleCookie, { planId: 'teste', trialDays: 3 });
+  }
+});
+
+test('Suporte: abrir chamado com anexo, console responde, cliente vê e responde', async () => {
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+  // Validação
+  assert.equal((await call('POST', '/api/support/tickets', betaCookie, { category: 'x', subject: 'Teste', message: 'mensagem longa o bastante' })).body.field, 'category');
+  assert.equal((await call('POST', '/api/support/tickets', betaCookie, { category: 'problema', subject: 'Teste', message: 'curta' })).body.field, 'message');
+  assert.equal((await call('POST', '/api/support/tickets', betaCookie, { category: 'problema', subject: 'Anexo ruim', message: 'mensagem longa o bastante', files: [{ name: 'a.html', dataUrl: 'data:text/html;base64,PGgxPg==' }] })).body.field, 'files');
+  // Abre
+  const c = await call('POST', '/api/support/tickets', betaCookie, {
+    category: 'problema', subject: 'Não consigo anexar arquivo', message: 'Quando anexo um PDF na demanda dá erro.',
+    files: [{ name: 'print.png', dataUrl: png }], context: { path: '/demands/abc', screen: '1440×900' }
+  });
+  assert.equal(c.status, 201, JSON.stringify(c.body));
+  const n = c.body.number;
+  assert.ok(n > 1000);
+  assert.equal(c.body.status, 'open');
+  assert.equal(c.body.orgName, 'Beta');
+  assert.equal(c.body.messages[0].files.length, 1);
+  const fileId = c.body.messages[0].files[0].id;
+  // Lista só os meus
+  assert.ok((await req('/api/support/tickets', { headers: { Cookie: betaCookie } })).body.items.some(t => t.number === n));
+  const admin = await loginCookie('admin', 'admin123');
+  assert.equal((await req('/api/support/tickets/' + n, { headers: { Cookie: admin } })).status, 404, 'chamado de outra pessoa não aparece');
+  // Anexo: dono e console veem; outros não
+  const f1 = await fetch(baseUrl + `/api/support/tickets/${n}/files/${fileId}`, { headers: { Cookie: betaCookie } });
+  assert.equal(f1.status, 200);
+  assert.equal(f1.headers.get('content-type'), 'image/png');
+  assert.equal((await fetch(baseUrl + `/api/support/tickets/${n}/files/${fileId}`, { headers: { Cookie: admin } })).status, 404);
+
+  // Console: vê com quem abriu, organização e contexto
+  const list = (await req('/api/console/support', { headers: { Cookie: consoleCookie } })).body;
+  const row = list.items.find(t => t.number === n);
+  assert.ok(row && row.unread);
+  assert.equal(row.username, 'bia.souza');
+  assert.equal(row.orgName, 'Beta');
+  assert.ok(list.counts.open >= 1);
+  const det = (await req('/api/console/support/' + row.id, { headers: { Cookie: consoleCookie } })).body;
+  assert.equal(det.context.path, '/demands/abc');
+  assert.equal(det.email, 'bia@beta.com');
+  assert.equal((await fetch(baseUrl + `/api/console/support/${row.id}/files/${fileId}`, { headers: { Cookie: consoleCookie } })).status, 200);
+  assert.equal((await req('/api/console/support/' + row.id)).status, 401, 'sem sessão do console, nada');
+
+  // Console responde → respondido, aviso no sino da pessoa
+  const r = await call('POST', `/api/console/support/${row.id}/reply`, consoleCookie, { message: 'Oi Bia! Já corrigimos, tenta de novo?' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.status, 'answered');
+  await new Promise(res => setTimeout(res, 150));
+  const notifs = (await req('/api/notifications', { headers: { Cookie: betaCookie } })).body;
+  assert.ok(notifs.some(x => x.type === 'support_reply' && x.ticketNumber === n));
+  const mine = (await req('/api/support/tickets/' + n, { headers: { Cookie: betaCookie } })).body;
+  assert.equal(mine.messages[1].authorName, 'Equipe reWork', 'o cliente vê "Equipe reWork", não o nome do superadmin');
+
+  // Cliente responde → volta pra equipe; resolve; responder reabre
+  assert.equal((await call('POST', `/api/support/tickets/${n}/messages`, betaCookie, { message: 'Funcionou, obrigada!' })).body.status, 'open');
+  assert.equal((await call('POST', `/api/support/tickets/${n}/close`, betaCookie, {})).body.status, 'closed');
+  assert.equal((await call('POST', `/api/support/tickets/${n}/messages`, betaCookie, { message: 'Voltou a dar erro.' })).body.status, 'open');
+  assert.equal((await call('POST', `/api/console/support/${row.id}/status`, consoleCookie, { status: 'closed' })).body.status, 'closed');
 });
 
 test('Organização excluída: some na hora, fica 30 dias, restaura e apaga de vez', async () => {
