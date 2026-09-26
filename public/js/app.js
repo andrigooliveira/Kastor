@@ -6448,6 +6448,7 @@ async function renderSupportTicket() {
         </span>
       </div>
     </section>
+    <div class="sup-danger"><button type="button" class="sup-delete" onclick="deleteSupportTicket()"><i data-lucide="trash-2" class="ic-xs"></i>Excluir chamado</button></div>
   </div>`;
   _supRenderFiles('replyFiles', 'sup-reply-files');
   paintIcons(host);
@@ -6466,6 +6467,22 @@ async function sendSupportReply() {
     toast('Mensagem enviada.', 'success');
     renderSupportTicket();
   } catch (e) { err.textContent = e.message; btn.disabled = false; }
+}
+async function deleteSupportTicket() {
+  const t = _sup.ticket;
+  if (!t) return;
+  const ok = await showConfirm({
+    title: `Excluir o chamado #${t.number}?`,
+    message: 'A conversa e os anexos são apagados de vez, para você e para a equipe do reWork. Não dá para desfazer.',
+    okLabel: 'Excluir chamado', danger: true
+  });
+  if (!ok) return;
+  try {
+    await api(`/support/tickets/${t.number}`, 'DELETE');
+    _sup.ticket = null; _sup.ticketNumber = null; _sup.items = null;
+    toast('Chamado excluído.', 'warn');
+    goPage('support');
+  } catch (e) { toast(e.message, 'error'); }
 }
 async function closeSupportTicket() {
   const t = _sup.ticket;

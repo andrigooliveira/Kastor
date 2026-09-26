@@ -1038,6 +1038,7 @@ const FREELANCER_ALLOWED_MUTATIONS = [
   { m: 'POST',   re: /^\/api\/uploads$/ },
   { m: 'PUT',    re: /^\/api\/notifications(\/.*)?$/ },
   { m: 'POST',   re: /^\/api\/support\/tickets(\/[^/]+\/(messages|close))?$/ },
+  { m: 'DELETE', re: /^\/api\/support\/tickets\/[^/]+$/ },
   { m: 'DELETE', re: /^\/api\/notifications(\/.*)?$/ },
 ];
 function freelancerCanMutate(method, path) {
@@ -6139,7 +6140,7 @@ consoleApi = require('./platform-console')(app, {
   supportOpenCount: () => (supportApi ? supportApi.openCount() : 0)
 });
 supportApi = require('./support')(app, {
-  getDb: () => rawDb, dataDir: DATA_DIR, saveEntity, uid, nowISO, requireAuth, orgPlan, store, broadcastToUser, makeRateLimit,
+  getDb: () => rawDb, dataDir: DATA_DIR, saveEntity, removeEntity, uid, nowISO, requireAuth, orgPlan, store, broadcastToUser, makeRateLimit,
   buildSha: BUILD_SHA, sendEmail, mailEnabled, emailTpl, appBaseUrl,
   requireConsole: consoleApi.requireConsole, audit: consoleApi.audit
 });

@@ -1168,7 +1168,7 @@
           ? `<a class="c-sup-img" href="${fileUrl(f)}" target="_blank" rel="noopener" title="${esc(f.name)}"><img src="${fileUrl(f)}" alt="${esc(f.name)}" loading="lazy"></a>`
           : `<a class="c-btn c-btn--sm" href="${fileUrl(f)}" target="_blank" rel="noopener">${icon('file-text')}${esc(f.name)}</a>`).join('')}</div>` : ''}
       </div>`;
-    main.innerHTML = pageHead(`#${t.number} · ${esc(t.subject)}`, `${esc(t.categoryLabel)} · aberto ${rel(t.createdAt)}`, supPill(t.status), crumb) + `
+    main.innerHTML = pageHead(`#${t.number} · ${esc(t.subject)}`, `${esc(t.categoryLabel)} · aberto ${rel(t.createdAt)}`, supPill(t.status) + `<button class="c-btn c-btn--sm c-btn--danger" id="sup-del">${icon('trash-2')}Excluir…</button>`, crumb) + `
       <div class="c-sup-grid">
         <div class="c-sup-main">
           <div class="c-sup-thread">${t.messages.map(msgHTML).join('')}</div>
@@ -1228,6 +1228,15 @@
     document.getElementById('sup-status').addEventListener('change', async (e) => {
       try { await api(`/console/support/${encodeURIComponent(t.id)}/status`, { method: 'POST', body: { status: e.target.value } }); toast('Situação atualizada.'); pageSupportTicket(id); }
       catch (err) { fail(err); }
+    });
+    document.getElementById('sup-del').addEventListener('click', () => {
+      const m = modal(`Excluir o chamado #${t.number}?`, `<p style="font-size:13.5px;color:var(--text-dim)">A conversa e os anexos são apagados de vez, aqui e para ${esc(t.userName)} no reWork. Não dá para desfazer. A exclusão fica registrada na auditoria.</p>`,
+        `<button class="c-btn" data-close>Cancelar</button><button class="c-btn c-btn--danger-solid" id="sup-del-go">${icon('trash-2')}Excluir chamado</button>`);
+      m.el.querySelector('#sup-del-go').addEventListener('click', async (ev) => {
+        busy(ev.currentTarget, true, 'Excluindo…');
+        try { await api('/console/support/' + encodeURIComponent(t.id), { method: 'DELETE' }); m.close(); toast(`Chamado #${t.number} excluído.`); go('/console/suporte'); }
+        catch (e) { busy(ev.currentTarget, false); fail(e); }
+      });
     });
     setTimeout(() => f.message.focus(), 50);
   }

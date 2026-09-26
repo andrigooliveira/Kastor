@@ -20395,6 +20395,10 @@ body.dv-resizing[data-dv-resize="se"] * { cursor: nwse-resize !important; }
 .sup-reply { background: var(--surface); border: 1px solid var(--hairline-strong); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
 .sup-reply-note { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--text-muted); margin: 0; }
 .sup-reply-note.is-accent { color: var(--accent-text); }
+.sup-danger { display: flex; justify-content: flex-end; }
+.sup-delete { display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; padding: 4px 0; font: inherit; font-size: 12.5px; font-weight: 550; color: var(--text-muted); cursor: pointer; }
+.sup-delete:hover { color: var(--danger); }
+.sup-delete:focus-visible { outline: 2px solid var(--border-active); outline-offset: 2px; border-radius: 4px; }
 @media (max-width: 560px) {
   .sup-row-side .sup-row-when { display: none; }
   .sup-form { padding: 18px; }

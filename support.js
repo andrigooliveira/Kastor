@@ -13,6 +13,9 @@
    Situação: open (esperando a equipe) → answered (esperando o cliente) →
    closed (resolvido). Responder um resolvido reabre.
 
+   Excluir (quem abriu, pelo app; ou um superadmin, pelo console) apaga o
+   chamado e os anexos de vez, pros dois lados.
+
    Os chamados moram em db.supportTickets (fora do filtro de organização: o
    console vê todos; no app cada pessoa só vê os próprios). Anexos ficam em
    DATA_DIR/support/ e só saem pelas rotas daqui (dono do chamado ou console).
@@ -38,7 +41,7 @@ const SUBJECT_MAX = 140;
 
 module.exports = function setupSupport(app, deps) {
   const db = new Proxy({}, { get: (_, key) => deps.getDb()[key] });
-  const { dataDir, saveEntity, uid, nowISO, requireAuth, requireConsole, audit, sendEmail, mailEnabled, emailTpl, appBaseUrl, orgPlan, store, broadcastToUser, makeRateLimit, buildSha } = deps;
+  const { dataDir, saveEntity, removeEntity, uid, nowISO, requireAuth, requireConsole, audit, sendEmail, mailEnabled, emailTpl, appBaseUrl, orgPlan, store, broadcastToUser, makeRateLimit, buildSha } = deps;
   const filesDir = path.join(dataDir, 'support');
   fs.mkdirSync(filesDir, { recursive: true });
   const list = () => db.supportTickets || [];
@@ -61,6 +64,15 @@ module.exports = function setupSupport(app, deps) {
       out.push({ id, name: String((f && f.name) || id).slice(0, 120), type, size: buf.length });
     }
     return { files: out };
+  }
+  /* Apaga o chamado e os anexos (de vez, pros dois lados). */
+  function deleteTicket(t) {
+    for (const f of (t.messages || []).flatMap(m => m.files || [])) {
+      try { fs.unlinkSync(path.join(filesDir, f.id)); } catch {}
+    }
+    const i = db.supportTickets.indexOf(t);
+    if (i >= 0) db.supportTickets.splice(i, 1);
+    removeEntity('supportTickets', t.id);
   }
   function sendFile(res, ticket, fileId) {
     const ok = ticket && (ticket.messages || []).some(m => (m.files || []).some(f => f.id === fileId));
@@ -208,6 +220,13 @@ module.exports = function setupSupport(app, deps) {
     res.json(detail(t, false));
   });
 
+  app.delete('/api/support/tickets/:number', requireAuth, (req, res) => {
+    const t = findMine(req);
+    if (!t) return res.status(404).json({ error: 'Chamado não encontrado.' });
+    deleteTicket(t);
+    res.json({ deleted: true });
+  });
+
   app.get('/api/support/tickets/:number/files/:file', requireAuth, (req, res) => sendFile(res, findMine(req), req.params.file));
 
   /* ── Console: superadmins ── */
@@ -264,6 +283,14 @@ module.exports = function setupSupport(app, deps) {
     saveEntity('supportTickets', t);
     audit(req, 'support_status', { ticket: t.number, org: t.orgName, status });
     res.json(detail(t, true));
+  });
+
+  app.delete('/api/console/support/:id', requireConsole, (req, res) => {
+    const t = findAny(req);
+    if (!t) return res.status(404).json({ error: 'Chamado não encontrado.' });
+    audit(req, 'support_deleted', { ticket: t.number, org: t.orgName, subject: t.subject, from: t.username });
+    deleteTicket(t);
+    res.json({ deleted: true });
   });
 
   app.get('/api/console/support/:id/files/:file', requireConsole, (req, res) => sendFile(res, findAny(req), req.params.file));

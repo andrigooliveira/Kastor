@@ -1238,6 +1238,18 @@ test('Suporte: abrir chamado com anexo, console responde, cliente vê e responde
   assert.equal((await call('POST', `/api/support/tickets/${n}/close`, betaCookie, {})).body.status, 'closed');
   assert.equal((await call('POST', `/api/support/tickets/${n}/messages`, betaCookie, { message: 'Voltou a dar erro.' })).body.status, 'open');
   assert.equal((await call('POST', `/api/console/support/${row.id}/status`, consoleCookie, { status: 'closed' })).body.status, 'closed');
+
+  // Excluir: quem abriu apaga o próprio (some pros dois lados, com os anexos)
+  assert.equal((await req('/api/support/tickets/' + n, { method: 'DELETE', headers: { Cookie: admin } })).status, 404, 'outra pessoa não exclui');
+  assert.equal((await req('/api/support/tickets/' + n, { method: 'DELETE', headers: { Cookie: betaCookie } })).status, 200);
+  assert.equal((await req('/api/support/tickets/' + n, { headers: { Cookie: betaCookie } })).status, 404);
+  assert.equal((await req('/api/console/support/' + row.id, { headers: { Cookie: consoleCookie } })).status, 404);
+  assert.equal((await fetch(baseUrl + `/api/console/support/${row.id}/files/${fileId}`, { headers: { Cookie: consoleCookie } })).status, 404);
+  // Console exclui qualquer um
+  const c2 = await call('POST', '/api/support/tickets', betaCookie, { category: 'duvida', subject: 'Outro chamado', message: 'Mais uma dúvida de teste aqui.' });
+  const id2 = (await req('/api/console/support?status=all', { headers: { Cookie: consoleCookie } })).body.items.find(x => x.number === c2.body.number).id;
+  assert.equal((await req('/api/console/support/' + id2, { method: 'DELETE', headers: { Cookie: consoleCookie } })).status, 200);
+  assert.equal((await req('/api/support/tickets/' + c2.body.number, { headers: { Cookie: betaCookie } })).status, 404);
 });
 
 test('Organização excluída: some na hora, fica 30 dias, restaura e apaga de vez', async () => {
