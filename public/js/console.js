@@ -119,7 +119,10 @@
     if (!state.me) {
       return renderLogin();
     }
-    if (p === '/console/entrar' || p === '/console/configurar') return go('/console', true);
+    if (p === '/console/entrar' || p === '/console/configurar') return go(firstAllowed(), true);
+    const areaOf = { '/console': 'overview', '/console/organizacoes': 'orgs', '/console/lista-de-espera': 'waitlist', '/console/suporte': 'support', '/console/pagamentos': 'billing', '/console/auditoria': 'audit' };
+    const area = areaOf[p] || (p.startsWith('/console/organizacoes/') ? 'orgs' : p.startsWith('/console/suporte/') ? 'support' : null);
+    if (area && !canArea(area)) { if (firstAllowed() !== p) return go(firstAllowed(), true); }
     const org = p.match(/^\/console\/organizacoes\/([\w-]+)$/);
     if (p === '/console') return pageOverview();
     if (p === '/console/organizacoes') return pageOrgs();
@@ -131,7 +134,7 @@
     if (p === '/console/pagamentos') return pageBilling();
     if (p === '/console/administradores') return pageAdmins();
     if (p === '/console/auditoria') return pageAudit();
-    go('/console', true);
+    go(firstAllowed(), true);
   }
 
   /* ═════════════ Entrada ═════════════ */
@@ -434,23 +437,30 @@
   const NAV = [
     { key: 'overview', href: '/console', label: 'Visão geral', icon: 'layout-dashboard' },
     { key: 'orgs', href: '/console/organizacoes', label: 'Organizações', icon: 'building-2' },
-    { key: 'waitlist', href: '/console/lista-de-espera', label: 'Lista de espera', icon: 'inbox', count: () => state.counts && state.counts.new },
+    { key: 'waitlist', href: '/console/lista-de-espera', label: 'CRM', icon: 'kanban', count: () => state.counts && state.counts.new },
     { key: 'support', href: '/console/suporte', label: 'Suporte', icon: 'life-buoy', count: () => state.supportOpen },
     { key: 'billing', href: '/console/pagamentos', label: 'Pagamentos', icon: 'credit-card' },
-    { key: 'admins', href: '/console/administradores', label: 'Superadmins', icon: 'shield-check' },
+    { key: 'admins', href: '/console/administradores', label: 'Equipe e cargos', icon: 'shield-check' },
     { key: 'audit', href: '/console/auditoria', label: 'Auditoria', icon: 'scroll-text' },
   ];
+  /* Cargo da conta (state.me.perms): o menu só mostra o que ela pode ver; nas
+     áreas só de leitura, um aviso no topo (o servidor recusa as mudanças). */
+  const canArea = (area, level) => { const p = state.me && state.me.perms && state.me.perms[area]; return p === 'edit' || (level !== 'edit' && p === 'view'); };
+  const canEdit = (area) => area === 'admins' ? !!(state.me && state.me.isSuper) : canArea(area, 'edit');
+  const firstAllowed = () => (NAV.find(n => canArea(n.key)) || NAV[0]).href;
   function shell(active, content) {
     const theme = document.documentElement.getAttribute('data-theme');
+    const readOnly = active && active !== 'admins' && canArea(active) && !canEdit(active);
     $app.innerHTML = `<div class="c-shell">
       <aside class="c-side" aria-label="Navegação do console">
         <div class="c-side-brand"><img src="/rework_logo.svg" alt=""><span class="c-brand-name">reWork</span><span class="c-brand-tag">Console</span></div>
-        <nav class="c-nav">${NAV.map(n => {
+        <nav class="c-nav">${NAV.filter(n => n.key === 'admins' || canArea(n.key)).map(n => {
           const c = n.count ? n.count() : 0;
-          return `<a href="${n.href}" data-link class="${n.key === active ? 'is-active' : ''}"${n.key === active ? ' aria-current="page"' : ''}>${icon(n.icon)}${n.label}${c ? `<span class="c-nav-count">${c}</span>` : ''}</a>`;
+          const label = n.key === 'admins' && !canArea('admins') ? 'Minha conta' : n.label;
+          return `<a href="${n.href}" data-link class="${n.key === active ? 'is-active' : ''}"${n.key === active ? ' aria-current="page"' : ''}>${icon(n.icon)}${label}${c ? `<span class="c-nav-count">${c}</span>` : ''}</a>`;
         }).join('')}</nav>
         <div class="c-side-foot">
-          <div class="c-me"><div class="c-me-name">${esc(state.me.name)}</div><div class="c-me-mail">${esc(state.me.email)}</div></div>
+          <div class="c-me"><div class="c-me-name">${esc(state.me.name)}</div><div class="c-me-mail">${esc(state.me.roleName || '')} · ${esc(state.me.email)}</div></div>
           <button class="c-icon-btn" id="c-theme" title="${theme === 'light' ? 'Tema escuro' : 'Tema claro'}" aria-label="Trocar tema">${icon(theme === 'light' ? 'moon' : 'sun')}</button>
           <button class="c-icon-btn" id="c-logout" title="Sair" aria-label="Sair">${icon('log-out')}</button>
         </div>
@@ -461,6 +471,7 @@
           <img src="/rework_logo.svg" alt=""><span class="c-brand-name">reWork</span><span class="c-brand-tag">Console</span>
         </div>
         ${state.me.twoFactorExempt ? `<div class="c-banner c-banner--warn c-shell-banner" role="status">${icon('shield-alert')}<div><b>Você está no acesso padrão do console</b> (admin/admin123, sem verificação em duas etapas). Crie o seu superadmin pessoal e depois desative este acesso em <a href="/console/administradores" data-link>Superadmins</a>.</div></div>` : ''}
+        ${readOnly ? `<div class="c-banner c-shell-banner" role="status">${icon('eye')}<div>Seu cargo (<b>${esc(state.me.roleName || '')}</b>) só permite <b>ver</b> esta área.</div></div>` : ''}
         <main class="c-main" id="c-main">${content}</main>
       </div>
     </div>`;
@@ -565,12 +576,20 @@
   }
 
   /* ═════════════ Visão geral ═════════════ */
+  // Etapas do funil do CRM (na ordem do quadro). As antigas só aparecem na auditoria.
   const STATUS = {
     new: { label: 'Novo', cls: 'c-pill--accent' },
+    contacted: { label: 'Contato feito', cls: 'c-pill--info' },
+    demo: { label: 'Demonstração', cls: 'c-pill--info' },
+    proposal: { label: 'Proposta', cls: 'c-pill--warn' },
+    trial: { label: 'Em teste', cls: 'c-pill--accent' },
+    won: { label: 'Cliente', cls: 'c-pill--good' },
+    lost: { label: 'Perdido', cls: '' },
     reviewing: { label: 'Em análise', cls: 'c-pill--info' },
     approved: { label: 'Aprovado', cls: 'c-pill--good' },
     rejected: { label: 'Recusado', cls: '' }
   };
+  const STAGE_ORDER = ['new', 'contacted', 'demo', 'proposal', 'trial', 'won', 'lost'];
   const TEAM = { '1-5': '1 a 5 pessoas', '6-15': '6 a 15 pessoas', '16-50': '16 a 50 pessoas', '51-200': '51 a 200 pessoas', '200+': 'Mais de 200' };
   const SOURCE = { indicacao: 'Indicação', google: 'Google', instagram: 'Instagram', linkedin: 'LinkedIn', evento: 'Evento', outro: 'Outro' };
   const statusPill = (s) => `<span class="c-pill ${(STATUS[s] || {}).cls || ''}">${esc((STATUS[s] || { label: s }).label)}</span>`;
@@ -594,7 +613,7 @@
         ${kpi('Pessoas ativas', 'users', num(o.active30), `de ${num(o.people)} · ${num(o.active7)} nos últimos 7 dias`)}
         ${kpi('Demandas abertas', 'kanban-square', num(o.demandsOpen), `30 dias: ${num(o.created30)} novas, ${num(o.completed30)} concluídas`)}
         ${kpi('Horas apontadas', 'clock', hrs(o.hours30), 'Últimos 30 dias')}
-        ${kpi('Lista de espera', 'inbox', num(d.waitlist.counts.new), `${num(d.waitlist.counts.new)} ${d.waitlist.counts.new === 1 ? 'novo' : 'novos'} · ${num(d.waitlist.counts.reviewing)} em análise`)}
+        ${kpi('CRM', 'kanban', num(d.waitlist.counts.new), `${d.waitlist.counts.new === 1 ? 'lead novo' : 'leads novos'} · ${num((d.waitlist.counts.contacted || 0) + (d.waitlist.counts.demo || 0) + (d.waitlist.counts.proposal || 0))} em negociação · ${num(d.waitlist.counts.trial || 0)} em teste`)}
       </div>
       <div class="c-grid-2">
         <div class="c-stack">
@@ -978,10 +997,24 @@
     }));
   }
 
-  /* ═════════════ Lista de espera ═════════════ */
+  /* ═════════════ CRM (antiga lista de espera) ═════════════
+     Leads do formulário público pelo funil de vendas. Quadro (kanban, com
+     arrastar e soltar entre etapas) ou lista com abas; nos dois, o detalhe do
+     lead fica ao lado, com as etapas, "Aprovar e criar organização" e as
+     anotações. Mudar de etapa também dá pelo detalhe (teclado). */
+  function crmView() { try { return localStorage.getItem('rework-console-crm-view') === 'list' ? 'list' : 'board'; } catch (_) { return 'board'; } }
+  function setCrmView(v) { state.wl.view = v; try { localStorage.setItem('rework-console-crm-view', v); } catch (_) {} }
+  const CRM_HEAD_SUB = 'Leads que pediram acesso pelo formulário público, do primeiro contato até virar cliente.';
+  const crmHead = () => pageHead('CRM', CRM_HEAD_SUB, `<div class="c-actions">
+      <div class="c-seg" role="radiogroup" aria-label="Visualização">
+        <label class="c-seg-opt"><input type="radio" name="crm-view" value="board"${state.wl.view === 'board' ? ' checked' : ''}><span>${icon('kanban')}Quadro</span></label>
+        <label class="c-seg-opt"><input type="radio" name="crm-view" value="list"${state.wl.view === 'list' ? ' checked' : ''}><span>${icon('list')}Lista</span></label>
+      </div>
+      <a class="c-btn c-btn--sm" href="/acesso" target="_blank" rel="noopener">${icon('external-link')}Ver formulário</a></div>`);
   async function pageWaitlist() {
     const params = new URLSearchParams(location.search);
-    const main = shell('waitlist', pageHead('Lista de espera', 'Agências que pediram acesso pelo formulário público.', `<a class="c-btn c-btn--sm" href="/acesso" target="_blank" rel="noopener">${icon('external-link')}Ver formulário</a>`) + `<div class="c-card"><div class="c-card-body">${skel(160)}</div></div>`);
+    if (!state.wl.view) state.wl.view = crmView();
+    const main = shell('waitlist', crmHead() + `<div class="c-card"><div class="c-card-body">${skel(160)}</div></div>`);
     let d;
     try { d = await api('/console/access-requests'); }
     catch (e) { if (e.silent) return; return errorBlock(main, e, pageWaitlist); }
@@ -989,49 +1022,97 @@
     const wanted = params.get('id');
     if (wanted) {
       const r = d.items.find(x => x.id === wanted);
-      if (r) { state.wl.selected = r.id; state.wl.filter = r.status; }
-    }
+      if (r) { state.wl.selected = r.id; if (state.wl.view === 'list') state.wl.filter = r.status; }
+    } else if (state.wl.view === 'board') state.wl.selected = null;
     renderWaitlist(main);
   }
+  const leadCard = (r) => `<span class="c-avatar">${esc(initials(r.name))}</span>
+    <span class="c-wl-main"><span class="c-wl-top"><span class="c-wl-name">${esc(r.company)}</span><span class="c-wl-when">${rel(r.updatedAt || r.createdAt)}</span></span>
+    <span class="c-wl-meta" style="display:block">${esc(r.name)} · ${esc(TEAM[r.teamSize] || r.teamSize)}</span>
+    ${r.orgId && !r.orgPurgedAt ? `<span class="c-crm-org">${icon('building-2')}${esc(r.orgName || 'Organização')}</span>` : ''}</span>`;
   function renderWaitlist(main) {
     const { items } = state.wl;
+    const edit = canEdit('waitlist');
     const counts = { all: items.length, ...state.counts };
-    const tabs = [['new', 'Novos'], ['reviewing', 'Em análise'], ['approved', 'Aprovados'], ['rejected', 'Recusados'], ['all', 'Todos']];
-    const list = items.filter(r => state.wl.filter === 'all' || r.status === state.wl.filter);
-    if (!list.some(r => r.id === state.wl.selected)) state.wl.selected = list[0] ? list[0].id : null;
     const sel = items.find(r => r.id === state.wl.selected);
-    main.innerHTML = pageHead('Lista de espera', 'Agências que pediram acesso pelo formulário público.', `<a class="c-btn c-btn--sm" href="/acesso" target="_blank" rel="noopener">${icon('external-link')}Ver formulário</a>`) + `
-      <div class="c-tabs" role="tablist">${tabs.map(([k, l]) => `<button class="c-tab${state.wl.filter === k ? ' is-active' : ''}" role="tab" aria-selected="${state.wl.filter === k}" data-filter="${k}">${l}<span class="c-tab-count">${num(counts[k] || 0)}</span></button>`).join('')}</div>
-      ${items.length ? `<div class="c-wl">
-        <section class="c-card c-wl-list">${list.length ? list.map(r => `
-          <button class="c-wl-item${r.id === state.wl.selected ? ' is-active' : ''}" data-id="${esc(r.id)}">
-            <span class="c-avatar">${esc(initials(r.name))}</span>
-            <span class="c-wl-main"><span class="c-wl-top"><span class="c-wl-name">${esc(r.company)}</span><span class="c-wl-when">${rel(r.createdAt)}</span></span>
-            <span class="c-wl-meta" style="display:block">${esc(r.name)} · ${esc(TEAM[r.teamSize] || r.teamSize)}</span></span>
-          </button>`).join('') : `<div class="c-empty">Nenhum pedido nesta aba.</div>`}</section>
-        <section class="c-card c-detail" id="wl-detail">${sel ? detailHTML(sel) : `<div class="c-empty">Escolha um pedido.</div>`}</section>
-      </div>` : `<div class="c-card"><div class="c-empty">${icon('inbox')}<div>Nenhum pedido ainda.</div><div class="c-hint" style="margin-top:6px">Divulgue o formulário: <a href="/acesso" target="_blank" rel="noopener">${esc(location.origin)}/acesso</a></div></div></div>`}`;
+    let body;
+    if (!items.length) {
+      body = `<div class="c-card"><div class="c-empty">${icon('inbox')}<div>Nenhum lead ainda.</div><div class="c-hint" style="margin-top:6px">Divulgue o formulário: <a href="/acesso" target="_blank" rel="noopener">${esc(location.origin)}/acesso</a></div></div></div>`;
+    } else if (state.wl.view === 'board') {
+      const col = (k) => {
+        const list = items.filter(r => r.status === k).sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)));
+        return `<section class="c-crm-col${k === 'lost' ? ' is-lost' : ''}" data-stage="${k}" aria-label="${esc(STATUS[k].label)}">
+          <div class="c-crm-col-head"><span class="c-crm-dot ${STATUS[k].cls}"></span>${esc(STATUS[k].label)}<span class="c-tab-count">${num(list.length)}</span></div>
+          <div class="c-crm-cards">${list.map(r => `<button class="c-crm-card${r.id === state.wl.selected ? ' is-active' : ''}" data-id="${esc(r.id)}"${edit ? ' draggable="true"' : ''}>${leadCard(r)}</button>`).join('') || '<div class="c-crm-empty">Solte aqui</div>'}</div>
+        </section>`;
+      };
+      body = `<div class="c-crm${sel ? ' has-detail' : ''}">
+        <div class="c-crm-board">${STAGE_ORDER.map(col).join('')}</div>
+        ${sel ? `<section class="c-card c-detail c-crm-drawer" id="wl-detail"><button class="c-icon-btn c-crm-close" data-close-detail aria-label="Fechar">${icon('x')}</button>${detailHTML(sel)}</section>` : ''}
+      </div>`;
+    } else {
+      const tabs = [...STAGE_ORDER.map(k => [k, STATUS[k].label]), ['all', 'Todos']];
+      const list = items.filter(r => state.wl.filter === 'all' || r.status === state.wl.filter);
+      if (!list.some(r => r.id === state.wl.selected)) state.wl.selected = list[0] ? list[0].id : null;
+      const s2 = items.find(r => r.id === state.wl.selected);
+      body = `<div class="c-tabs" role="tablist">${tabs.map(([k, l]) => `<button class="c-tab${state.wl.filter === k ? ' is-active' : ''}" role="tab" aria-selected="${state.wl.filter === k}" data-filter="${k}">${l}<span class="c-tab-count">${num(counts[k] || 0)}</span></button>`).join('')}</div>
+        <div class="c-wl">
+          <section class="c-card c-wl-list">${list.length ? list.map(r => `<button class="c-wl-item${r.id === state.wl.selected ? ' is-active' : ''}" data-id="${esc(r.id)}">${leadCard(r)}</button>`).join('') : `<div class="c-empty">Nenhum lead nesta etapa.</div>`}</section>
+          <section class="c-card c-detail" id="wl-detail">${s2 ? detailHTML(s2) : `<div class="c-empty">Escolha um lead.</div>`}</section>
+        </div>`;
+    }
+    main.innerHTML = crmHead() + body;
     paint();
+    main.querySelectorAll('input[name="crm-view"]').forEach(inp => inp.addEventListener('change', () => { setCrmView(inp.value); if (inp.value === 'list' && sel) state.wl.filter = sel.status; renderWaitlist(main); }));
     main.querySelectorAll('[data-filter]').forEach(b => b.addEventListener('click', () => { state.wl.filter = b.dataset.filter; state.wl.selected = null; renderWaitlist(main); }));
-    main.querySelectorAll('.c-wl-item[data-id]').forEach(b => b.addEventListener('click', () => {
+    main.querySelectorAll('.c-wl-item[data-id], .c-crm-card[data-id]').forEach(b => b.addEventListener('click', () => {
       state.wl.selected = b.dataset.id;
       history.replaceState(null, '', '/console/lista-de-espera?id=' + b.dataset.id);
       renderWaitlist(main);
       if (window.innerWidth < 1180) document.getElementById('wl-detail')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }));
-    if (sel) bindDetail(main, sel);
+    main.querySelector('[data-close-detail]')?.addEventListener('click', () => { state.wl.selected = null; history.replaceState(null, '', '/console/lista-de-espera'); renderWaitlist(main); });
+    if (state.wl.view === 'board' && edit) bindBoardDrag(main);
+    const cur = items.find(r => r.id === state.wl.selected);
+    if (cur && document.getElementById('wl-detail')) bindDetail(main, cur);
     const nav = document.querySelector('.c-nav a[href="/console/lista-de-espera"] .c-nav-count');
     if (nav) { if (state.counts.new) nav.textContent = state.counts.new; else nav.remove(); }
+  }
+  // Muda a etapa (quadro, detalhe) e acerta as contagens.
+  async function moveLead(main, id, stage, btn) {
+    const i = state.wl.items.findIndex(x => x.id === id);
+    if (i < 0 || state.wl.items[i].status === stage) return;
+    if (btn) busy(btn, true, 'Salvando…');
+    try {
+      const upd = await api('/console/access-requests/' + encodeURIComponent(id), { method: 'PATCH', body: { status: stage } });
+      const prev = state.wl.items[i].status;
+      state.wl.items[i] = upd;
+      if (prev !== upd.status) { state.counts[prev]--; state.counts[upd.status]++; }
+      if (state.wl.view === 'list' && state.wl.filter !== 'all') state.wl.filter = upd.status;
+      toast(`${upd.company} → ${STATUS[upd.status].label}.`);
+      renderWaitlist(main);
+    } catch (e) { if (btn) busy(btn, false); fail(e); renderWaitlist(main); }
+  }
+  function bindBoardDrag(main) {
+    let dragId = null;
+    main.querySelectorAll('.c-crm-card[draggable]').forEach(c => {
+      c.addEventListener('dragstart', (e) => { dragId = c.dataset.id; c.classList.add('is-dragging'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', dragId); });
+      c.addEventListener('dragend', () => { c.classList.remove('is-dragging'); main.querySelectorAll('.c-crm-col.is-over').forEach(x => x.classList.remove('is-over')); });
+    });
+    main.querySelectorAll('.c-crm-col').forEach(col => {
+      col.addEventListener('dragover', (e) => { if (!dragId) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; col.classList.add('is-over'); });
+      col.addEventListener('dragleave', (e) => { if (!col.contains(e.relatedTarget)) col.classList.remove('is-over'); });
+      col.addEventListener('drop', (e) => {
+        e.preventDefault(); col.classList.remove('is-over');
+        const id = dragId || e.dataTransfer.getData('text/plain'); dragId = null;
+        if (id) moveLead(main, id, col.dataset.stage);
+      });
+    });
   }
   function detailHTML(r) {
     const fact = (k, v) => v ? `<div><div class="c-fact-k">${k}</div><div class="c-fact-v">${v}</div></div>` : '';
     const site = r.website ? (/^https?:\/\//i.test(r.website) ? r.website : 'https://' + r.website) : '';
-    const next = {
-      new: [['reviewing', 'Colocar em análise', 'search', ''], ['rejected', 'Recusar', 'x', 'c-btn--danger']],
-      reviewing: [['rejected', 'Recusar', 'x', 'c-btn--danger'], ['new', 'Voltar para novos', 'undo-2', '']],
-      approved: [['reviewing', 'Voltar para análise', 'undo-2', '']],
-      rejected: [['reviewing', 'Reabrir', 'undo-2', '']]
-    }[r.status] || [];
+    const edit = canEdit('waitlist');
     return `<div class="c-detail-head"><span class="c-avatar">${esc(initials(r.name))}</span>
         <div style="flex:1;min-width:0"><div class="c-detail-name">${esc(r.company)}</div><div class="c-detail-company">${esc(r.name)}${r.role ? ` · ${esc(r.role)}` : ''}</div></div>${statusPill(r.status)}</div>
       <div class="c-detail-section"><div class="c-facts">
@@ -1044,43 +1125,26 @@
         ${fact('Pedido em', `${dateTime(r.createdAt)}${r.submissions > 1 ? ` · enviado ${r.submissions}×` : ''}`)}
       </div></div>
       ${r.message ? `<div class="c-detail-section"><div class="c-section-label">O que querem organizar</div><div class="c-quote">${esc(r.message)}</div></div>` : ''}
-      <div class="c-detail-section"><div class="c-section-label">Decisão</div>
-        <div class="c-actions">${next.map(([s, l, ic, cls]) => `<button class="c-btn c-btn--sm ${cls}" data-status="${s}">${icon(ic)}${l}</button>`).join('')}
-          <button class="c-btn c-btn--sm c-btn--ghost" data-copy="${esc(r.email)}">${icon('copy')}Copiar e-mail</button></div>
+      <div class="c-detail-section"><div class="c-section-label">Etapa</div>
+        <div class="c-crm-stages" role="group" aria-label="Mudar etapa">${STAGE_ORDER.map(k => `<button class="c-btn c-btn--sm${k === r.status ? ' is-current' : ''}${k === 'lost' ? ' c-btn--ghost' : ''}" data-status="${k}"${k === r.status || !edit ? ' disabled' : ''}${k === r.status ? ' aria-current="step"' : ''}>${esc(STATUS[k].label)}</button>`).join('')}</div>
+        <div class="c-actions" style="margin-top:10px"><button class="c-btn c-btn--sm c-btn--ghost" data-copy="${esc(r.email)}">${icon('copy')}Copiar e-mail</button></div>
         ${r.orgId
           ? (r.orgPurgedAt
             ? `<p class="c-hint" style="margin-top:10px">${icon('building-2')} A organização ${esc(r.orgName || '')} foi apagada de vez em ${dateTime(r.orgPurgedAt).split(',')[0]}.</p>`
-            : `<p class="c-hint" style="margin-top:10px">${icon('building-2')} Organização <a href="/console/organizacoes/${esc(r.orgId)}" data-link>${esc(r.orgName || 'criada')}</a>: o convite de dono foi para ${esc(r.email)}.</p>`)
-          : r.status !== 'rejected' ? `<button class="c-btn c-btn--primary c-btn--sm" style="margin-top:10px" data-create-org>${icon('building-2')}Aprovar e criar organização</button>
-             <p class="c-hint" style="margin-top:8px">Cria a organização com uma equipe "Geral" e manda o convite de dono para ${esc(r.email)}.</p>` : ''}
+            : `<p class="c-hint" style="margin-top:10px">${icon('building-2')} Organização <a href="/console/organizacoes/${esc(r.orgId)}" data-link>${esc(r.orgName || 'criada')}</a>: o convite de dono foi para ${esc(r.email)}.${r.status === 'won' ? ' Já é cliente pagante.' : ''}</p>`)
+          : r.status !== 'lost' && edit ? `<button class="c-btn c-btn--primary c-btn--sm" style="margin-top:10px" data-create-org>${icon('building-2')}Aprovar e criar organização</button>
+             <p class="c-hint" style="margin-top:8px">Cria a organização com uma equipe "Geral", manda o convite de dono para ${esc(r.email)} e move o lead para Em teste.</p>` : ''}
       </div>
       <div class="c-detail-section"><div class="c-section-label">Anotações</div>
-        <form id="wl-note" novalidate><textarea class="c-textarea" name="note" placeholder="Contexto, próxima conversa, impressões…" maxlength="2000"></textarea>
-        <div style="display:flex;justify-content:flex-end;margin-top:8px"><button class="c-btn c-btn--sm" type="submit">Adicionar anotação</button></div></form>
+        ${edit ? `<form id="wl-note" novalidate><textarea class="c-textarea" name="note" placeholder="Contexto, próxima conversa, impressões…" maxlength="2000"></textarea>
+        <div style="display:flex;justify-content:flex-end;margin-top:8px"><button class="c-btn c-btn--sm" type="submit">Adicionar anotação</button></div></form>` : ''}
         ${r.notes && r.notes.length ? `<ul class="c-timeline">${r.notes.slice().reverse().map(n => n.kind === 'status'
           ? `<li class="is-status"><div><div class="c-tl-text">${esc(n.by)} mudou para <b>${esc((STATUS[n.to] || { label: n.to }).label)}</b></div><div class="c-tl-meta">${dateTime(n.at)}</div></div></li>`
           : `<li><div><div class="c-tl-text">${esc(n.text)}</div><div class="c-tl-meta">${esc(n.by)} · ${dateTime(n.at)}</div></div></li>`).join('')}</ul>` : ''}
       </div>`;
   }
   function bindDetail(main, r) {
-    const update = async (body, btn) => {
-      if (btn) busy(btn, true, 'Salvando…');
-      try {
-        const upd = await api('/console/access-requests/' + encodeURIComponent(r.id), { method: 'PATCH', body });
-        const i = state.wl.items.findIndex(x => x.id === r.id);
-        const prev = state.wl.items[i].status;
-        state.wl.items[i] = upd;
-        if (prev !== upd.status) {
-          state.counts[prev]--; state.counts[upd.status]++;
-          // Acompanha o pedido até a aba da nova situação.
-          if (state.wl.filter !== 'all') state.wl.filter = upd.status;
-          state.wl.selected = upd.id;
-          toast(`Pedido marcado como ${(STATUS[upd.status] || {}).label.toLowerCase()}.`);
-        }
-        renderWaitlist(main);
-      } catch (e) { if (btn) busy(btn, false); fail(e); }
-    };
-    main.querySelectorAll('[data-status]').forEach(b => b.addEventListener('click', () => update({ status: b.dataset.status }, b)));
+    main.querySelectorAll('#wl-detail [data-status]').forEach(b => b.addEventListener('click', () => moveLead(main, r.id, b.dataset.status, b)));
     main.querySelector('[data-create-org]')?.addEventListener('click', () => {
       const m = modal('Aprovar e criar organização', `<form id="f-org" novalidate>
           <div class="c-field"><label class="c-label" for="org-name">Nome da organização</label><input class="c-input" id="org-name" name="name" maxlength="80" value="${esc(r.company)}"></div>
@@ -1104,8 +1168,8 @@
           const i = state.wl.items.findIndex(x => x.id === r.id);
           const prev = state.wl.items[i].status;
           state.wl.items[i] = out.request;
-          if (prev !== 'approved') { state.counts[prev]--; state.counts.approved++; }
-          if (state.wl.filter !== 'all') state.wl.filter = 'approved';
+          if (prev !== out.request.status) { state.counts[prev]--; state.counts[out.request.status]++; }
+          if (state.wl.view === 'list' && state.wl.filter !== 'all') state.wl.filter = out.request.status;
           state.wl.selected = r.id;
           renderWaitlist(main);
           if (out.emailSent) toast(`Organização criada. Convite enviado para ${r.email}.`);
@@ -1117,11 +1181,18 @@
     });
     main.querySelector('[data-copy]')?.addEventListener('click', (e) => copy(e.currentTarget.dataset.copy, 'E-mail'));
     const f = document.getElementById('wl-note');
-    f.addEventListener('submit', (ev) => {
+    f?.addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const text = f.note.value.trim();
       if (!text) return f.note.focus();
-      update({ note: text }, f.querySelector('button'));
+      const btn = f.querySelector('button');
+      busy(btn, true, 'Salvando…');
+      try {
+        const upd = await api('/console/access-requests/' + encodeURIComponent(r.id), { method: 'PATCH', body: { note: text } });
+        const i = state.wl.items.findIndex(x => x.id === r.id);
+        state.wl.items[i] = upd;
+        renderWaitlist(main);
+      } catch (e) { busy(btn, false); fail(e); }
     });
   }
 
@@ -1293,7 +1364,21 @@
       ${rows.length ? `<div class="c-table-wrap"><table class="c-table"><thead><tr><th>Organização</th><th>Situação</th><th>Ciclo</th><th style="text-align:right">Valor</th><th>${extraHead}</th></tr></thead>
         <tbody>${rows.map(o => orgRow(o, extra)).join('')}</tbody></table></div>` : `<div class="c-card-body"><div class="c-hint">${empty}</div></div>`}
     </section>`;
-    const priceRows = d.plans.map(p => `<tr><td class="c-cell-main">${esc(p.name)}</td><td style="text-align:right">${money(d.prices[p.id].MONTHLY)}</td><td style="text-align:right">${money(d.prices[p.id].YEARLY)}</td><td style="text-align:right">${money(d.founderPrices[p.id].MONTHLY)} · ${money(d.founderPrices[p.id].YEARLY)}</td></tr>`).join('');
+    /* Preços: mensal, desconto do anual (%) e anual de cada plano, nas duas
+       tabelas. Os três campos andam juntos: mudar o mensal mantém o desconto,
+       mudar o desconto recalcula o anual, mudar o anual recalcula o desconto. */
+    const editPrices = canEdit('billing');
+    const pct = (m, y) => m > 0 ? Math.round((1 - y / (m * 12)) * 1000) / 10 : 0;
+    const priceTable = (key, table, title, sub) => `<div class="c-price-block" data-table="${key}">
+      <div class="c-card-title" style="font-size:13.5px;margin:4px 0 2px">${title}</div><div class="c-hint" style="margin-bottom:8px">${sub}</div>
+      <div class="c-table-wrap"><table class="c-table c-price-table"><thead><tr><th>Plano</th><th>Mensal</th><th>Desconto no anual</th><th>Anual</th><th></th></tr></thead><tbody>
+      ${d.plans.map(p => { const t = table[p.id]; return `<tr data-plan="${p.id}">
+        <td class="c-cell-main">${esc(p.name)}</td>
+        <td><span class="c-price-cell"><small>R$</small><input class="c-input" name="${key}.${p.id}.MONTHLY" data-k="m" type="number" min="0" step="0.01" inputmode="decimal" value="${t.MONTHLY}"${editPrices ? '' : ' disabled'} aria-label="${esc(p.name)}: mensal"></span></td>
+        <td><span class="c-price-cell"><input class="c-input c-input--pct" data-k="p" type="number" min="0" max="99" step="0.1" inputmode="decimal" value="${pct(t.MONTHLY, t.YEARLY)}"${editPrices ? '' : ' disabled'} aria-label="${esc(p.name)}: desconto no anual"><small>%</small></span></td>
+        <td><span class="c-price-cell"><small>R$</small><input class="c-input" name="${key}.${p.id}.YEARLY" data-k="y" type="number" min="0" step="0.01" inputmode="decimal" value="${t.YEARLY}"${editPrices ? '' : ' disabled'} aria-label="${esc(p.name)}: anual"></span></td>
+        <td class="c-price-eq" data-eq></td></tr>`; }).join('')}
+      </tbody></table></div></div>`;
     main.innerHTML = pageHead('Pagamentos', 'Cobrança dos planos pelo Asaas: chave de API, webhook, preço de fundador e quem está pagando.') + `
       <div class="c-kpis">
         ${kpi('Receita mensal (MRR)', 'trending-up', money(st.mrr), 'anuais contam 1/12')}
@@ -1337,11 +1422,22 @@
               <div class="c-error" role="alert"></div>
               <div class="c-actions" style="margin-top:10px"><button class="c-btn c-btn--sm" type="submit">Salvar</button></div>
             </form>` : ''}
-            <div class="c-table-wrap" style="margin-top:16px"><table class="c-table"><thead><tr><th>Plano</th><th style="text-align:right">Mensal</th><th style="text-align:right">Anual</th><th style="text-align:right">Fundador</th></tr></thead><tbody>${priceRows}</tbody></table></div>
-            <p class="c-hint" style="margin-top:8px">Os preços ficam no código (billing.js). Mudar não afeta fundadores nem o valor das assinaturas já criadas no Asaas.</p>
           </div>
         </section>
       </div>
+      <section class="c-card" style="margin-top:16px">
+        <div class="c-card-head"><div><div class="c-card-title">Preços dos planos</div>
+          <div class="c-card-sub">Valem para assinaturas novas e trocas de plano. Quem já assina continua pagando o valor atual no Asaas.</div></div></div>
+        <div class="c-card-body">
+          <form id="f-prices" novalidate>
+            ${priceTable('prices', d.prices, 'Preço normal', 'O que aparece para quem assina depois das vagas de fundador.')}
+            <div style="height:16px"></div>
+            ${priceTable('founderPrices', d.founderPrices, 'Preço de fundador', 'Para as primeiras organizações (vagas e prazo acima). Fica travado para elas.')}
+            <div class="c-error" role="alert" style="margin-top:12px"></div>
+            ${editPrices ? '<div class="c-actions"><button class="c-btn c-btn--primary c-btn--sm" id="pr-save" type="submit">Salvar preços</button></div>' : ''}
+          </form>
+        </div>
+      </section>
       ${table('Atrasadas', st.pastDue, 'Carência até', o => shortDate(o.graceEndsAt), 'Nenhuma assinatura atrasada.')}
       ${table('Aguardando o primeiro pagamento', st.pending, 'Desde', () => '', 'Ninguém aguardando.')}
       ${table('Testes acabando em 7 dias (sem assinatura)', st.trialsEnding, 'Teste até', o => shortDate(o.trialEndsAt), 'Nenhum teste acabando.')}
@@ -1366,6 +1462,34 @@
         toast('Preço de fundador salvo.');
         pageBilling();
       } catch (err) { fieldError(fd, err.data && err.data.field, err.message); }
+    });
+    const fpr = document.getElementById('f-prices');
+    const num2 = (v) => Math.round(Number(v) * 100) / 100;
+    const syncRow = (tr, from) => {
+      const m = tr.querySelector('[data-k="m"]'), p = tr.querySelector('[data-k="p"]'), y = tr.querySelector('[data-k="y"]');
+      if (from === 'm' || from === 'p') y.value = num2(Number(m.value) * 12 * (1 - Number(p.value) / 100));
+      else if (from === 'y') p.value = pct(Number(m.value), Number(y.value));
+      const mv = Number(m.value), yv = Number(y.value);
+      const free = mv > 0 ? Math.round(((mv * 12 - yv) / mv) * 10) / 10 : 0;
+      tr.querySelector('[data-eq]').textContent = mv > 0 && yv > 0 ? `${money(yv / 12)}/mês no anual${free > 0 ? ` · −${Math.round((1 - yv / (mv * 12)) * 100)}%` : ''}` : '';
+    };
+    fpr.querySelectorAll('tr[data-plan]').forEach(tr => {
+      syncRow(tr);
+      tr.querySelectorAll('input').forEach(inp => inp.addEventListener('input', () => syncRow(tr, inp.dataset.k)));
+    });
+    fpr.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const read = (key) => Object.fromEntries(d.plans.map(p => {
+        const tr = fpr.querySelector(`[data-table="${key}"] tr[data-plan="${p.id}"]`);
+        return [p.id, { MONTHLY: num2(tr.querySelector('[data-k="m"]').value), YEARLY: num2(tr.querySelector('[data-k="y"]').value) }];
+      }));
+      const btn = document.getElementById('pr-save');
+      busy(btn, true, 'Salvando…');
+      try {
+        await api('/console/billing', { method: 'PUT', body: { env: d.env, prices: read('prices'), founderPrices: read('founderPrices') } });
+        toast('Preços salvos.');
+        pageBilling();
+      } catch (err) { busy(btn, false); fieldError(fpr, err.data && err.data.field, err.message); }
     });
     const fp = document.getElementById('f-pa');
     fp?.addEventListener('submit', async (e) => {
@@ -1411,14 +1535,30 @@
     </section>`;
   }
 
+  /* Equipe e cargos. Toda conta chega aqui (é onde fica "Sua conta": senha e
+     códigos de recuperação); a lista da equipe e os cargos aparecem com a
+     área "Equipe do console", e só o Superadmin muda alguma coisa. */
+  const LEVEL_LABEL = { view: 'Ver', edit: 'Editar' };
+  function permsSummary(r, areas) {
+    if (r.builtIn) return 'Tudo, inclusive a equipe e os cargos';
+    const parts = areas.filter(a => r.perms[a.key]).map(a => `${a.label}${r.perms[a.key] === 'edit' ? '' : ' (ver)'}`);
+    return parts.join(' · ') || 'Nenhuma área';
+  }
   async function pageAdmins() {
-    const addBtn = `<button class="c-btn c-btn--primary c-btn--sm" id="add-admin">${icon('user-plus')}Adicionar superadmin</button>`;
-    const main = shell('admins', pageHead('Superadmins', 'Quem tem acesso a este console. Contas separadas das contas do reWork.', addBtn) + `<div class="c-card"><div class="c-card-body">${skel(120)}</div></div>`);
-    let d;
-    try { d = await api('/console/admins'); }
-    catch (e) { if (e.silent) return; return errorBlock(main, e, pageAdmins); }
-    const meRow = d.items.find(a => a.id === d.me) || {};
+    const seeTeam = canArea('admins');
+    const isSuper = !!state.me.isSuper;
+    const title = seeTeam ? 'Equipe e cargos' : 'Minha conta';
+    const sub = seeTeam ? 'Quem tem acesso a este console e o que cada cargo pode fazer. Contas separadas das contas do reWork.' : 'Sua conta no console.';
+    const addBtn = isSuper ? `<button class="c-btn c-btn--primary c-btn--sm" id="add-admin">${icon('user-plus')}Adicionar pessoa</button>` : '';
+    const main = shell('admins', pageHead(title, sub, addBtn) + `<div class="c-card"><div class="c-card-body">${skel(120)}</div></div>`);
+    let d = null;
+    if (seeTeam) {
+      try { d = await api('/console/admins'); }
+      catch (e) { if (e.silent) return; return errorBlock(main, e, pageAdmins); }
+    }
+    const meRow = (d && d.items.find(a => a.id === d.me)) || state.me;
     const left = meRow.recoveryLeft || 0;
+    const onlySuper = d ? d.items.filter(a => a.active !== false && a.twoFactor && a.roleId === 'superadmin').length <= 1 : false;
     const accountCard = meRow.twoFactorExempt ? `
       <section class="c-card c-account">
         <div class="c-account-main">
@@ -1432,53 +1572,77 @@
           <button class="c-btn c-btn--sm c-btn--primary" id="acc-add">${icon('user-plus')}Adicionar superadmin</button>
           <button class="c-btn c-btn--sm" id="acc-pass">${icon('lock')}Trocar senha</button>
         </div>
-      </section>` : null;
-    main.innerHTML = pageHead('Superadmins', 'Quem tem acesso a este console. Contas separadas das contas do reWork.', addBtn) + (accountCard || `
+      </section>` : `
       <section class="c-card c-account">
         <div class="c-account-main">
           <div class="c-card-title">Sua conta</div>
           <div class="c-account-facts">
+            <span class="c-pill c-pill--accent">${icon('shield-check')}${esc(meRow.roleName || state.me.roleName || '')}</span>
             <span class="c-pill c-pill--good">${icon('smartphone')}App autenticador</span>
             ${left > 3 ? `<span class="c-pill c-pill--good">${icon('key-round')}${left} códigos de recuperação</span>`
               : left > 0 ? `<span class="c-pill c-pill--warn">${icon('key-round')}Só ${left} ${left === 1 ? 'código' : 'códigos'} de recuperação</span>`
               : `<span class="c-pill c-pill--bad">${icon('triangle-alert')}Sem códigos de recuperação</span>`}
           </div>
-          ${left <= 3 ? `<p class="c-hint" style="margin-top:8px">${d.items.filter(a => a.active !== false && a.twoFactor).length <= 1 ? 'Você é o único superadmin: sem códigos, perder o celular só se resolve pelo servidor.' : 'Gere códigos novos para não depender de outro superadmin se perder o celular.'}</p>` : ''}
+          ${left <= 3 ? `<p class="c-hint" style="margin-top:8px">${onlySuper && isSuper ? 'Você é o único superadmin: sem códigos, perder o celular só se resolve pelo servidor.' : 'Gere códigos novos para não depender de outra pessoa se perder o celular.'}</p>` : ''}
         </div>
         <div class="c-actions">
           <button class="c-btn c-btn--sm${left <= 3 ? ' c-btn--primary' : ''}" id="acc-codes">${icon('key-round')}Gerar códigos novos</button>
           <button class="c-btn c-btn--sm" id="acc-pass">${icon('lock')}Trocar senha</button>
         </div>
-      </section>`) + `
+      </section>`;
+    const roleOptions = (sel) => d.roles.map(r => `<option value="${esc(r.id)}"${r.id === sel ? ' selected' : ''}>${esc(r.name)}</option>`).join('');
+    const teamCard = !d ? '' : `
       <section class="c-card"><div class="c-table-wrap"><table class="c-table">
-        <thead><tr><th>Nome</th><th>Verificação em duas etapas</th><th>Situação</th><th>Último acesso</th><th></th></tr></thead>
+        <thead><tr><th>Nome</th><th>Cargo</th><th>Verificação em duas etapas</th><th>Situação</th><th>Último acesso</th><th></th></tr></thead>
         <tbody>${d.items.map(a => {
           const status = a.active === false ? '<span class="c-pill">Desativado</span>'
             : a.twoFactorExempt ? '<span class="c-pill c-pill--warn">Ativo · acesso padrão</span>'
             : a.pendingActivation || !a.twoFactor ? '<span class="c-pill c-pill--warn">Aguardando ativação</span>' : '<span class="c-pill c-pill--good">Ativo</span>';
           const mine = a.id === d.me;
-          const actions = mine ? '<span class="c-cell-sub">Você</span>' : `<div class="c-actions" style="justify-content:flex-end">
+          const roleCell = isSuper && !mine && !a.isDefaultAccount && a.active !== false
+            ? `<select class="c-select c-select--sm" data-role="${a.id}" aria-label="Cargo de ${esc(a.name)}">${roleOptions(a.roleId)}</select>`
+            : esc(a.roleName || '');
+          const actions = mine ? '<span class="c-cell-sub">Você</span>' : !isSuper ? '' : `<div class="c-actions" style="justify-content:flex-end">
             ${a.active !== false && !a.twoFactorExempt ? `<button class="c-btn c-btn--sm" data-reset="${a.id}" title="Gera um link para criar senha e cadastrar o app de novo">${icon('key-round')}Novo link</button>` : ''}
             <button class="c-btn c-btn--sm ${a.active !== false ? 'c-btn--danger' : ''}" data-toggle="${a.id}" data-active="${a.active !== false}">${a.active !== false ? 'Desativar' : 'Reativar'}</button></div>`;
           return `<tr><td><div class="c-cell-main">${esc(a.name)}</div><div class="c-cell-sub">${esc(a.email)}</div></td>
+            <td>${roleCell}</td>
             <td>${a.twoFactor ? `<span class="c-pill c-pill--good">${icon('smartphone')}App cadastrado</span>` : a.twoFactorExempt ? '<span class="c-pill">Não usa</span>' : '<span class="c-pill">Pendente</span>'}</td>
             <td>${status}</td><td>${rel(a.lastLoginAt)}</td><td style="text-align:right">${actions}</td></tr>`;
         }).join('')}</tbody></table></div></section>`;
+    const rolesCard = !d ? '' : `
+      <section class="c-card" style="margin-top:16px">
+        <div class="c-card-head"><div><div class="c-card-title">Cargos</div><div class="c-card-sub">O que cada cargo vê e muda no console. Editar inclui ver.</div></div>
+          ${isSuper ? `<button class="c-btn c-btn--sm" id="add-role">${icon('plus')}Novo cargo</button>` : ''}</div>
+        <div class="c-table-wrap"><table class="c-table">
+          <thead><tr><th>Cargo</th><th>Acesso</th><th style="text-align:right">Pessoas</th><th></th></tr></thead>
+          <tbody>${d.roles.map(r => `<tr><td class="c-cell-main">${esc(r.name)}${r.builtIn ? ' <span class="c-pill">Fixo</span>' : ''}</td>
+            <td class="c-cell-sub">${esc(permsSummary(r, d.areas))}</td>
+            <td style="text-align:right">${num(r.members)}</td>
+            <td style="text-align:right">${isSuper && !r.builtIn ? `<div class="c-actions" style="justify-content:flex-end"><button class="c-btn c-btn--sm" data-edit-role="${esc(r.id)}">Editar</button><button class="c-btn c-btn--sm c-btn--danger" data-del-role="${esc(r.id)}">Apagar</button></div>` : ''}</td></tr>`).join('')}</tbody>
+        </table></div>
+      </section>`;
+    main.innerHTML = pageHead(title, sub, addBtn) + accountCard + teamCard + rolesCard;
     paint();
-    document.getElementById('add-admin').addEventListener('click', () => {
-      const m = modal('Adicionar superadmin', `<form id="f-admin" novalidate>
+
+    document.getElementById('add-admin')?.addEventListener('click', () => {
+      const m = modal('Adicionar pessoa ao console', `<form id="f-admin" novalidate>
           <div class="c-field"><label class="c-label" for="ad-name">Nome</label><input class="c-input" id="ad-name" name="name" autocomplete="off"></div>
           <div class="c-field"><label class="c-label" for="ad-email">E-mail</label><input class="c-input" id="ad-email" name="email" type="email" autocomplete="off"></div>
-          <p class="c-hint">A pessoa recebe um link para criar a senha e cadastrar o app autenticador. Superadmins veem todas as organizações e a lista de espera.</p>
+          <div class="c-field"><label class="c-label" for="ad-role">Cargo</label><select class="c-select" id="ad-role" name="roleId">${roleOptions('superadmin')}</select>
+            <span class="c-hint" id="ad-role-hint"></span></div>
+          <p class="c-hint">A pessoa recebe um link para criar a senha e cadastrar o app autenticador.</p>
           <div class="c-error" role="alert" style="margin-top:10px"></div></form>`,
         `<button class="c-btn" data-close>Cancelar</button><button class="c-btn c-btn--primary" id="ad-save">Enviar convite</button>`);
       const f = m.el.querySelector('#f-admin');
+      const hint = () => { const r = d.roles.find(x => x.id === f.roleId.value); m.el.querySelector('#ad-role-hint').textContent = r ? permsSummary(r, d.areas) : ''; };
+      f.roleId.addEventListener('change', hint); hint();
       setTimeout(() => f.name.focus(), 30);
       const save = async () => {
         const btn = m.el.querySelector('#ad-save');
         busy(btn, true, 'Enviando…');
         try {
-          const r = await api('/console/admins', { method: 'POST', body: { name: f.name.value, email: f.email.value } });
+          const r = await api('/console/admins', { method: 'POST', body: { name: f.name.value, email: f.email.value, roleId: f.roleId.value } });
           m.close();
           if (r.emailSent) toast(`Convite enviado para ${r.admin.email}.`);
           else linkModal('Convite criado', 'O envio de e-mail não está configurado. Mande este link para a pessoa por um canal seguro:', r.link);
@@ -1488,7 +1652,7 @@
       m.el.querySelector('#ad-save').addEventListener('click', save);
       f.addEventListener('submit', (e) => { e.preventDefault(); save(); });
     });
-    document.getElementById('acc-add')?.addEventListener('click', () => document.getElementById('add-admin').click());
+    document.getElementById('acc-add')?.addEventListener('click', () => document.getElementById('add-admin')?.click());
     document.getElementById('acc-codes')?.addEventListener('click', () => {
       const m = modal('Gerar códigos novos', `<form id="f-codes" novalidate>
           <p style="font-size:13.5px;color:var(--text-dim);margin-bottom:14px">Os códigos antigos deixam de valer. Confirme com o código atual do app autenticador.</p>
@@ -1506,6 +1670,7 @@
           const shown = modal('Seus códigos de recuperação', `<p style="font-size:13.5px;color:var(--text-dim);margin-bottom:14px">Guarde agora: eles não aparecem de novo. Cada um substitui o código do app uma vez.</p>${recoveryCodesHTML(r.recoveryCodes)}`,
             `<button class="c-btn c-btn--primary" data-close>Já guardei</button>`);
           bindRecoveryCodes(shown.el, r.recoveryCodes);
+          state.me = { ...state.me, ...r.admin };
           pageAdmins();
         } catch (e) { busy(btn, false); fieldError(f, 'code', e.message); }
       };
@@ -1548,7 +1713,53 @@
     main.querySelectorAll('[data-toggle]').forEach(b => b.addEventListener('click', async () => {
       const activate = b.dataset.active !== 'true';
       busy(b, true, '…');
-      try { await api(`/console/admins/${b.dataset.toggle}`, { method: 'PATCH', body: { active: activate } }); toast(activate ? 'Superadmin reativado.' : 'Superadmin desativado.'); pageAdmins(); }
+      try { await api(`/console/admins/${b.dataset.toggle}`, { method: 'PATCH', body: { active: activate } }); toast(activate ? 'Conta reativada.' : 'Conta desativada.'); pageAdmins(); }
+      catch (e) { busy(b, false); fail(e); }
+    }));
+    main.querySelectorAll('[data-role]').forEach(sel => sel.addEventListener('change', async () => {
+      const a = d.items.find(x => x.id === sel.dataset.role);
+      sel.disabled = true;
+      try { await api(`/console/admins/${sel.dataset.role}`, { method: 'PATCH', body: { roleId: sel.value } }); toast(`${a ? a.name : 'Conta'} agora é ${sel.options[sel.selectedIndex].text}.`); pageAdmins(); }
+      catch (e) { sel.value = a ? a.roleId : sel.value; sel.disabled = false; fail(e); }
+    }));
+    const roleModal = (r) => {
+      const m = modal(r ? `Editar cargo: ${r.name}` : 'Novo cargo', `<form id="f-role" novalidate>
+          <div class="c-field"><label class="c-label" for="rl-name">Nome do cargo</label><input class="c-input" id="rl-name" name="name" maxlength="40" value="${esc(r ? r.name : '')}" placeholder="Ex.: Financeiro" autocomplete="off"></div>
+          <div class="c-label" style="margin-bottom:6px">O que pode fazer</div>
+          <div class="c-table-wrap"><table class="c-table c-perm-table"><tbody>
+            ${d.areas.map(a => {
+              const cur = (r && r.perms[a.key]) || '';
+              const opts = [['', 'Sem acesso'], ...a.levels.map(l => [l, LEVEL_LABEL[l]])];
+              return `<tr><td class="c-cell-main">${esc(a.label)}</td><td><div class="c-seg" role="radiogroup" aria-label="${esc(a.label)}">${opts.map(([v, l]) => `<label class="c-seg-opt"><input type="radio" name="p_${a.key}" value="${v}"${cur === v ? ' checked' : ''}><span>${l}</span></label>`).join('')}</div></td></tr>`;
+            }).join('')}
+          </tbody></table></div>
+          <p class="c-hint" style="margin-top:8px">Equipe do console: quem tem "Ver" enxerga a equipe e os cargos, mas só um Superadmin muda.</p>
+          <div class="c-error" role="alert" style="margin-top:10px"></div></form>`,
+        `<button class="c-btn" data-close>Cancelar</button><button class="c-btn c-btn--primary" id="rl-save">${r ? 'Salvar' : 'Criar cargo'}</button>`);
+      const f = m.el.querySelector('#f-role');
+      setTimeout(() => f.name.focus(), 30);
+      const save = async () => {
+        const btn = m.el.querySelector('#rl-save');
+        const perms = {};
+        d.areas.forEach(a => { const v = (f.querySelector(`input[name="p_${a.key}"]:checked`) || {}).value; if (v) perms[a.key] = v; });
+        busy(btn, true, 'Salvando…');
+        try {
+          await api(r ? `/console/roles/${r.id}` : '/console/roles', { method: r ? 'PUT' : 'POST', body: { name: f.name.value, perms } });
+          m.close();
+          toast(r ? 'Cargo salvo.' : 'Cargo criado.');
+          pageAdmins();
+        } catch (e) { busy(btn, false); fieldError(f, e.data && e.data.field, e.message); }
+      };
+      m.el.querySelector('#rl-save').addEventListener('click', save);
+      f.addEventListener('submit', (e) => { e.preventDefault(); save(); });
+    };
+    document.getElementById('add-role')?.addEventListener('click', () => roleModal(null));
+    main.querySelectorAll('[data-edit-role]').forEach(b => b.addEventListener('click', () => roleModal(d.roles.find(r => r.id === b.dataset.editRole))));
+    main.querySelectorAll('[data-del-role]').forEach(b => b.addEventListener('click', async () => {
+      const r = d.roles.find(x => x.id === b.dataset.delRole);
+      if (!r || !confirm(`Apagar o cargo "${r.name}"?`)) return;
+      busy(b, true, '…');
+      try { await api(`/console/roles/${r.id}`, { method: 'DELETE' }); toast('Cargo apagado.'); pageAdmins(); }
       catch (e) { busy(b, false); fail(e); }
     }));
   }
@@ -1566,7 +1777,9 @@
     password_reset_requested: 'Pediu para redefinir a senha', password_reset: 'Redefiniu a senha por e-mail',
     server_recovery: 'Acesso recuperado pelo servidor', server_recovery_failed: 'Recuperação pelo servidor com código errado',
     org_created: 'Criou uma organização', org_owner_changed: 'Trocou o dono de uma organização',
-    org_locale_changed: 'Mudou o país ou o idioma de uma organização'
+    org_locale_changed: 'Mudou o país ou o idioma de uma organização',
+    admin_role_changed: 'Mudou o cargo de uma conta', role_created: 'Criou um cargo', role_updated: 'Editou um cargo', role_deleted: 'Apagou um cargo',
+    billing_config: 'Mudou a configuração de pagamentos'
   };
   const WARN_ACTIONS = new Set(['login_failed', 'two_factor_failed', 'recovery_code_failed', 'server_recovery_failed', 'server_recovery', 'recovery_code_used']);
   function auditDetails(e) {
@@ -1578,6 +1791,8 @@
     if (e.action === 'org_locale_changed') return `${esc(d.name)}: ${esc(d.from)} → ${esc(d.to)}`;
     if (e.action === 'org_created') return `${esc(d.name)} · dono: ${esc(d.email)}`;
     if (e.action === 'org_viewed') return esc(d.name || '');
+    if (e.action === 'admin_role_changed') return `${esc(d.email)}: ${esc(d.from)} → ${esc(d.to)}`;
+    if (e.action === 'role_created' || e.action === 'role_updated' || e.action === 'role_deleted') return esc(d.name || '');
     if (d.email) return esc(d.email);
     return '';
   }

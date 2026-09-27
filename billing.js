@@ -35,14 +35,20 @@
        fim do período já pago e apaga a antiga.
 
    Preço de fundador: as primeiras N organizações a assinar (até a data do
-   console) guardam founder = true e pagam FOUNDER_PRICES pra sempre, mesmo
-   que PRICES suba depois.
+   console) guardam founder = true e pagam a tabela de fundador pra sempre,
+   mesmo que a tabela normal suba depois.
+
+   Preços: o console (Pagamentos) edita as duas tabelas — mensal e anual de
+   cada plano (o desconto do anual é a diferença pra 12 mensalidades). Ficam
+   em config.prices / config.founderPrices; sem nada salvo, valem PRICES e
+   FOUNDER_PRICES daqui. Mudar preço não mexe no valor das assinaturas que já
+   existem no Asaas: vale pra assinatura nova e troca de plano.
    ─────────────────────────────────────────────────────────────── */
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
-const PRICES = {
+const PRICES = { // padrão (o console pode mudar)
   essencial: { MONTHLY: 79, YEARLY: 790 },
   equipe:    { MONTHLY: 179, YEARLY: 1790 },
   agencia:   { MONTHLY: 299, YEARLY: 2990 }
@@ -177,6 +183,24 @@ module.exports = function setupBilling(app, deps) {
   const hasSubscription = (b) => !!(b && (b.subscriptionId || (b.pixAuth && b.pixAuth.id)));
 
   /* ── Preços ── */
+  const mergeTable = (base, saved) => Object.fromEntries(PAID_PLANS.map(id => [id, { ...base[id], ...((saved && saved[id]) || {}) }]));
+  const prices = () => mergeTable(PRICES, cfg().prices);
+  const founderPrices = () => mergeTable(FOUNDER_PRICES, cfg().founderPrices);
+  // Tabela vinda do console: todo plano com mensal e anual em reais (até centavos).
+  function parseTable(input, label) {
+    if (!input || typeof input !== 'object') return { error: `Tabela ${label} inválida.` };
+    const out = {};
+    for (const id of PAID_PLANS) {
+      const row = input[id] || {};
+      const m = Math.round(Number(row.MONTHLY) * 100) / 100, y = Math.round(Number(row.YEARLY) * 100) / 100;
+      const name = planById(id).name;
+      if (!(m >= 5 && m <= 100000)) return { error: `${name} (${label}): mensal precisa ficar entre R$ 5 e R$ 100.000.`, field: `${id}.MONTHLY` };
+      if (!(y >= 5 && y <= 1200000)) return { error: `${name} (${label}): anual precisa ficar entre R$ 5 e R$ 1.200.000.`, field: `${id}.YEARLY` };
+      if (y > m * 12) return { error: `${name} (${label}): o anual não pode custar mais que 12 mensalidades (${(m * 12).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}).`, field: `${id}.YEARLY` };
+      out[id] = { MONTHLY: m, YEARLY: y };
+    }
+    return { table: out };
+  }
   function founderInfo() {
     const slots = Number.isInteger(cfg().founderSlots) ? cfg().founderSlots : 20;
     const used = (db.organizations || []).filter(o => o.billing && o.billing.founder).length;
@@ -186,10 +210,10 @@ module.exports = function setupBilling(app, deps) {
   }
   function priceTableFor(org) {
     const b = org && org.billing;
-    if (b && b.founder) return FOUNDER_PRICES;
+    if (b && b.founder) return founderPrices();
     // Quem ainda não assinou e cabe nas vagas de fundador vê o preço de fundador.
-    if (!hasSubscription(b) && founderInfo().open) return FOUNDER_PRICES;
-    return PRICES;
+    if (!hasSubscription(b) && founderInfo().open) return founderPrices();
+    return prices();
   }
   function priceFor(org, planId, cycle) {
     const t = priceTableFor(org)[planId];
@@ -199,7 +223,7 @@ module.exports = function setupBilling(app, deps) {
     const table = priceTableFor(org);
     return PAID_PLANS.map(id => {
       const p = planById(id);
-      return { id, name: p.name, users: p.users, storageGb: p.storageGb, fileMb: p.fileMb, prices: table[id], standard: PRICES[id] };
+      return { id, name: p.name, users: p.users, storageGb: p.storageGb, fileMb: p.fileMb, prices: table[id], standard: prices()[id] };
     });
   }
 
@@ -554,7 +578,7 @@ module.exports = function setupBilling(app, deps) {
 
     const b = ensureBilling(org);
     const founder = !!b.founder || (!hasSubscription(b) && founderInfo().open);
-    const value = (founder ? FOUNDER_PRICES : PRICES)[planId][cycle];
+    const value = (founder ? founderPrices() : prices())[planId][cycle];
     const planName = planById(planId).name;
     const description = `reWork ${planName} · ${cycle === 'YEARLY' ? 'anual' : 'mensal'} · ${org.name}`.slice(0, 250);
     try {
@@ -743,7 +767,7 @@ module.exports = function setupBilling(app, deps) {
       updatedAt: cfg().updatedAt || null, updatedBy: cfg().updatedBy || null,
       founder: founderInfo(),
       pixAutomatic: !!cfg().pixAutomatic,
-      prices: PRICES, founderPrices: FOUNDER_PRICES,
+      prices: prices(), founderPrices: founderPrices(), defaultPrices: PRICES, defaultFounderPrices: FOUNDER_PRICES,
       plans: PAID_PLANS.map(id => ({ id, name: planById(id).name })),
       stats: {
         mrr: Math.round(mrr * 100) / 100, subscribers: subs.length, byPlan,
@@ -769,6 +793,16 @@ module.exports = function setupBilling(app, deps) {
     if (bd.founderUntil !== undefined) {
       if (bd.founderUntil && !/^\d{4}-\d{2}-\d{2}$/.test(bd.founderUntil)) return res.status(400).json({ error: 'Data inválida.', field: 'founderUntil' });
       next.founderUntil = bd.founderUntil || null;
+    }
+    if (bd.prices !== undefined) {
+      const r = parseTable(bd.prices, 'preço normal');
+      if (r.error) return res.status(400).json({ error: r.error, field: 'prices.' + r.field });
+      next.prices = r.table;
+    }
+    if (bd.founderPrices !== undefined) {
+      const r = parseTable(bd.founderPrices, 'fundador');
+      if (r.error) return res.status(400).json({ error: r.error, field: 'founderPrices.' + r.field });
+      next.founderPrices = r.table;
     }
     const pixChanged = typeof bd.pixAutomatic === 'boolean' && bd.pixAutomatic !== !!cfg().pixAutomatic;
     if (typeof bd.pixAutomatic === 'boolean') next.pixAutomatic = bd.pixAutomatic;
@@ -805,7 +839,7 @@ module.exports = function setupBilling(app, deps) {
     }
     next.updatedAt = nowISO(); next.updatedBy = req.consoleAdmin.name;
     await saveConfig(next);
-    audit(req, 'billing_config', { env: next.env, key: newKey ? '…' + next.apiKeyLast4 : 'mantida', founderSlots: next.founderSlots, founderUntil: next.founderUntil || null, pixAutomatic: !!next.pixAutomatic });
+    audit(req, 'billing_config', { env: next.env, key: newKey ? '…' + next.apiKeyLast4 : 'mantida', founderSlots: next.founderSlots, founderUntil: next.founderUntil || null, pixAutomatic: !!next.pixAutomatic, ...(bd.prices || bd.founderPrices ? { prices: next.prices || null, founderPrices: next.founderPrices || null } : {}) });
     res.json(consoleView(req));
   });
 
@@ -837,7 +871,7 @@ module.exports = function setupBilling(app, deps) {
     return b ? { ...publicBilling(org), subscriptionId: b.subscriptionId || null, customerId: b.customerId || null, log: (b.log || []).slice(0, 20) } : null;
   }
 
-  return { loadConfig, enabled, consoleOrgBilling, BILLING_GRACE_DAYS, PRICES };
+  return { loadConfig, enabled, consoleOrgBilling, BILLING_GRACE_DAYS, prices };
 };
 module.exports.BILLING_GRACE_DAYS = BILLING_GRACE_DAYS;
 module.exports._test = { validCpf, validCnpj, endOfCycle, addMonths, ymdBr };

@@ -81,6 +81,25 @@ svg.lucide { width: 16px; height: 16px; stroke-width: 1.75; flex-shrink: 0; }
 .c-input:focus, .c-textarea:focus, .c-select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
 .c-input.is-invalid { border-color: var(--bad); }
 .c-hint { font-size: 12px; color: var(--text-muted); }
+.c-select--sm { height: 32px; width: auto; min-width: 150px; padding: 0 8px; font-size: 13px; }
+
+/* Cargos: nível por área (Sem acesso / Ver / Editar) */
+.c-perm-table td { padding: 8px 12px; }
+.c-seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: 9px; background: var(--surface-2); border: 1px solid var(--hairline); }
+.c-seg-opt { position: relative; cursor: pointer; }
+.c-seg-opt input { position: absolute; opacity: 0; pointer-events: none; }
+.c-seg-opt span { display: inline-flex; align-items: center; height: 28px; padding: 0 12px; border-radius: 6px; font-size: 12.5px; font-weight: 550; color: var(--text-dim); white-space: nowrap; gap: 6px; }
+.c-seg-opt span svg { width: 14px; height: 14px; }
+.c-seg-opt input:checked + span { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.14); }
+.c-seg-opt input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Pagamentos: tabela de preços editável */
+.c-price-table td { padding: 8px 12px; }
+.c-price-table .c-input { height: 34px; width: 120px; text-align: right; font-variant-numeric: tabular-nums; }
+.c-price-table .c-input.c-input--pct { width: 80px; }
+.c-price-cell { display: inline-flex; align-items: center; gap: 6px; }
+.c-price-cell small { color: var(--text-muted); font-size: 12px; }
+.c-price-eq { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .c-error { font-size: 12.5px; color: var(--bad); min-height: 18px; margin: -4px 0 10px; }
 
 /* ── Telas de entrada ── */
@@ -226,6 +245,41 @@ svg.lucide { width: 16px; height: 16px; stroke-width: 1.75; flex-shrink: 0; }
 .c-wl-when { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
 .c-wl-meta { font-size: 12.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .c-detail { position: sticky; top: 24px; }
+
+/* CRM: quadro por etapa (arrastar entre colunas) + detalhe ao lado */
+.c-crm { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+.c-crm.has-detail { grid-template-columns: minmax(0, 1fr) 400px; }
+.c-crm-board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(158px, 1fr); gap: 8px; overflow-x: auto; padding-bottom: 8px; min-height: 360px; }
+.c-crm-col { display: flex; flex-direction: column; min-width: 0; border-radius: var(--radius-md, 12px); background: var(--surface-2); border: 1px solid var(--hairline); transition: border-color .15s, background .15s; }
+.c-crm-col.is-lost { opacity: .85; }
+.c-crm-col.is-over { border-color: var(--accent); background: var(--accent-dim); }
+.c-crm-col-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; font-size: 12.5px; font-weight: 600; color: var(--text-dim); border-bottom: 1px solid var(--hairline); }
+.c-crm-col-head .c-tab-count { margin-left: auto; }
+.c-crm-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0; }
+.c-crm-dot.c-pill--accent { background: var(--accent); }
+.c-crm-dot.c-pill--info { background: var(--info, #3b82f6); }
+.c-crm-dot.c-pill--warn { background: var(--warn); }
+.c-crm-dot.c-pill--good { background: var(--good); }
+.c-crm-cards { display: flex; flex-direction: column; gap: 8px; padding: 8px; flex: 1; }
+.c-crm-card { display: flex; gap: 10px; align-items: flex-start; width: 100%; text-align: left; padding: 10px; border-radius: 10px; border: 1px solid var(--hairline); background: var(--surface); color: var(--text); font: inherit; cursor: pointer; transition: box-shadow .15s, border-color .15s; }
+.c-crm-card[draggable="true"] { cursor: grab; }
+.c-crm-card:hover { border-color: var(--border); box-shadow: 0 2px 8px -4px rgba(0,0,0,.25); }
+.c-crm-card.is-active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.c-crm-card.is-dragging { opacity: .45; }
+.c-crm-card .c-avatar { width: 28px; height: 28px; font-size: 11px; }
+.c-crm-card .c-wl-top { flex-wrap: wrap; gap: 2px 8px; }
+.c-crm-org { display: inline-flex; align-items: center; gap: 4px; margin-top: 6px; font-size: 11.5px; font-weight: 550; color: var(--accent-text); }
+.c-crm-org svg { width: 12px; height: 12px; }
+.c-crm-empty { font-size: 12px; color: var(--text-muted); text-align: center; padding: 18px 6px; border: 1px dashed var(--hairline); border-radius: 10px; }
+.c-crm-drawer { position: sticky; top: 24px; max-height: calc(100vh - 48px); overflow-y: auto; }
+.c-crm-close { position: absolute; top: 10px; right: 10px; }
+.c-crm-drawer .c-detail-head { padding-right: 48px; }
+.c-crm-stages { display: flex; flex-wrap: wrap; gap: 6px; }
+.c-crm-stages .c-btn.is-current { background: var(--accent); border-color: var(--accent); color: #fff; opacity: 1; }
+@media (max-width: 1180px) {
+  .c-crm.has-detail { grid-template-columns: minmax(0, 1fr); }
+  .c-crm-drawer { position: static; max-height: none; }
+}
 .c-detail-head { display: flex; gap: 14px; align-items: center; padding: 18px 18px 16px; border-bottom: 1px solid var(--hairline); }
 .c-detail-head .c-avatar { width: 44px; height: 44px; font-size: 15px; }
 .c-detail-name { font-size: 17px; font-weight: 650; letter-spacing: -.02em; }

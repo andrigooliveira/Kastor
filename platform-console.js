@@ -24,8 +24,12 @@
         tela /console/recuperar redefine senha E app de qualquer superadmin.
         Cada valor do token vale uma vez só.
 
-   Também mora aqui a lista de espera: o formulário público /acesso grava em
-   db.accessRequests e o console revisa.
+   Também mora aqui o CRM (antiga lista de espera): o formulário público
+   /acesso grava em db.accessRequests e o console leva cada lead pelo funil
+   (REQUEST_STAGES). Pedidos gravados com as situações antigas (reviewing,
+   approved, rejected) são lidos pelo equivalente novo (LEGACY_STAGE), sem
+   reescrever o banco. Lead em teste cuja organização já pagou aparece como
+   Cliente.
 
    Planos e exclusão de organização:
      - plano de cada organização (Teste de 30 dias, Essencial/Profissional/Agência
@@ -53,7 +57,10 @@ const AUDIT_MAX = 3000;
 const ORG_KEEP_DAYS = 30;
 const ISSUER = 'reWork Console';
 
-const REQUEST_STATUSES = ['new', 'reviewing', 'approved', 'rejected'];
+// Funil do CRM, na ordem do quadro. "lost" fica à parte.
+const REQUEST_STAGES = ['new', 'contacted', 'demo', 'proposal', 'trial', 'won', 'lost'];
+const OPEN_STAGES = ['new', 'contacted', 'demo', 'proposal'];
+const LEGACY_STAGE = { reviewing: 'contacted', approved: 'trial', rejected: 'lost' };
 const TEAM_SIZES = ['1-5', '6-15', '16-50', '51-200', '200+'];
 const SOURCES = ['indicacao', 'google', 'instagram', 'linkedin', 'evento', 'outro'];
 
@@ -91,6 +98,68 @@ module.exports = function setupConsole(app, deps) {
   const canEnter = (a) => a && a.active !== false && (a.totpEnabledAt || a.twoFactorExempt);
   const normEmail = (e) => String(e || '').trim().toLowerCase();
 
+  /* ── Cargos do console ──
+     Cada conta tem um cargo (admin.roleId). "Superadmin" é fixo e pode tudo;
+     os outros são criados no console, com um nível por área: sem acesso,
+     ver ou editar. A checagem é central (requireConsole, pelo caminho da
+     rota): GET = ver, o resto = editar. Contas e cargos só o Superadmin
+     edita (senão um cargo poderia se dar mais poder). Conta sem roleId
+     (as de antes dos cargos) = Superadmin. */
+  const PERM_AREAS = [
+    { key: 'overview', label: 'Visão geral', levels: ['view'] },
+    { key: 'orgs', label: 'Organizações', levels: ['view', 'edit'] },
+    { key: 'waitlist', label: 'Lista de espera', levels: ['view', 'edit'] },
+    { key: 'support', label: 'Suporte', levels: ['view', 'edit'] },
+    { key: 'billing', label: 'Pagamentos', levels: ['view', 'edit'] },
+    { key: 'admins', label: 'Equipe do console', levels: ['view'] },
+    { key: 'audit', label: 'Auditoria', levels: ['view'] }
+  ];
+  const ROLES_KV = 'console:roles';
+  const SUPERADMIN_ROLE = { id: 'superadmin', name: 'Superadmin', builtIn: true, perms: Object.fromEntries(PERM_AREAS.map(a => [a.key, 'edit'])) };
+  const DEFAULT_ROLES = [
+    { id: 'role_financeiro', name: 'Financeiro', perms: { overview: 'view', orgs: 'view', billing: 'edit', audit: 'view' } },
+    { id: 'role_suporte', name: 'Suporte', perms: { overview: 'view', orgs: 'view', waitlist: 'view', support: 'edit' } },
+    { id: 'role_comercial', name: 'Comercial', perms: { overview: 'view', orgs: 'view', waitlist: 'edit' } }
+  ];
+  let roles = DEFAULT_ROLES;
+  async function loadRoles() {
+    try { const raw = await store.getKv(ROLES_KV); roles = raw ? JSON.parse(raw) : DEFAULT_ROLES; } catch { roles = DEFAULT_ROLES; }
+  }
+  const saveRoles = () => store.setKv(ROLES_KV, JSON.stringify(roles));
+  const isSuper = (a) => !!a && (a.isDefaultAccount || !a.roleId || a.roleId === 'superadmin');
+  // Cargo apagado ou sumido = sem acesso a nada (nunca vira Superadmin por engano).
+  const roleOf = (a) => isSuper(a) ? SUPERADMIN_ROLE : (roles.find(r => r.id === a.roleId) || { id: a.roleId, name: 'Sem cargo', perms: {} });
+  function can(a, area, level) {
+    const p = roleOf(a).perms[area];
+    return p === 'edit' || (level === 'view' && p === 'view');
+  }
+  // Limpa o que vem do formulário: só áreas e níveis que existem.
+  function cleanPerms(input) {
+    const out = {};
+    for (const a of PERM_AREAS) {
+      const v = input && input[a.key];
+      if (a.levels.includes(v)) out[a.key] = v;
+    }
+    return out;
+  }
+  const AREA_BY_PATH = [
+    [/^\/api\/console\/overview/, 'overview'],
+    [/^\/api\/console\/orgs/, 'orgs'],
+    [/^\/api\/console\/access-requests/, 'waitlist'],
+    [/^\/api\/console\/support/, 'support'],
+    [/^\/api\/console\/billing/, 'billing'],
+    [/^\/api\/console\/(admins|roles)/, 'admins'],
+    [/^\/api\/console\/audit/, 'audit']
+  ];
+  function areaFor(req) {
+    const p = String(req.originalUrl || req.url || '').split('?')[0];
+    const hit = AREA_BY_PATH.find(([re]) => re.test(p));
+    if (!hit) return null; // /me, /logout: toda conta
+    // Baixar o backup de uma organização é leitura, mas pesa como edição.
+    const edit = !['GET', 'HEAD'].includes(req.method) || /\/orgs\/[^/]+\/export$/.test(p);
+    return { area: hit[1], level: edit ? 'edit' : 'view' };
+  }
+
   /* ── Sessão do console ── */
   function sessionCookie(req, token) {
     const secure = isHttpsRequest(req) ? '; Secure' : '';
@@ -110,6 +179,11 @@ module.exports = function setupConsole(app, deps) {
     const r = adminFromReq(req);
     if (!r) return res.status(401).json({ error: 'Sessão do console expirada. Entre de novo.' });
     req.consoleAdmin = r.admin; req.consoleToken = r.token;
+    const need = areaFor(req);
+    if (need && !can(r.admin, need.area, need.level)) {
+      const label = (PERM_AREAS.find(a => a.key === need.area) || {}).label || need.area;
+      return res.status(403).json({ error: `Seu cargo (${roleOf(r.admin).name}) não permite ${need.level === 'view' ? 'ver' : 'mudar'} ${label}.`, code: 'forbidden' });
+    }
     next();
   }
   function startSession(req, res, admin) {
@@ -125,9 +199,12 @@ module.exports = function setupConsole(app, deps) {
       twoFactor: !!a.totpEnabledAt, pendingActivation: !a.passwordSetAt && !a.twoFactorExempt,
       isDefaultAccount: !!a.isDefaultAccount, twoFactorExempt: !!a.twoFactorExempt,
       recoveryLeft: (a.recoveryCodes || []).filter(c => !c.usedAt).length,
-      createdAt: a.createdAt, lastLoginAt: a.lastLoginAt || null
+      createdAt: a.createdAt, lastLoginAt: a.lastLoginAt || null,
+      roleId: roleOf(a).id, roleName: roleOf(a).name
     };
   }
+  // A própria conta: o que o cargo deixa ver/editar (o console monta o menu com isso).
+  const meView = (a) => ({ ...publicAdmin(a), isSuper: isSuper(a), perms: roleOf(a).perms });
   /* Gera e grava (só o hash) um jogo novo de códigos; devolve os códigos em texto. */
   function issueRecoveryCodes(admin) {
     const codes = newRecoveryCodes();
@@ -203,7 +280,7 @@ module.exports = function setupConsole(app, deps) {
     if (admin.twoFactorExempt) {
       startSession(req, res, admin);
       audit(req, 'login', { via: 'default_account' }, admin);
-      return res.json({ ok: true, step: 'done', admin: publicAdmin(admin) });
+      return res.json({ ok: true, step: 'done', admin: meView(admin) });
     }
     if (!admin.totpEnabledAt) return res.json(await enrollPayload(admin));
     res.json({ step: 'totp', ticket: newTicket(admin.id, 'totp') });
@@ -251,7 +328,7 @@ module.exports = function setupConsole(app, deps) {
     tickets.delete(ticket);
     startSession(req, res, admin);
     audit(req, 'login', usedRecovery ? { via: 'recovery_code' } : null, admin);
-    res.json({ ok: true, admin: publicAdmin(admin), recoveryCodes, usedRecovery });
+    res.json({ ok: true, admin: meView(admin), recoveryCodes, usedRecovery });
   });
 
   /* ── "Esqueci a senha" por e-mail: troca só a senha; o app continua valendo ── */
@@ -360,7 +437,7 @@ module.exports = function setupConsole(app, deps) {
   });
 
   /* ───────────── Sessão ───────────── */
-  app.get('/api/console/me', requireConsole, (req, res) => res.json(publicAdmin(req.consoleAdmin)));
+  app.get('/api/console/me', requireConsole, (req, res) => res.json(meView(req.consoleAdmin)));
 
   // Ações sensíveis da própria conta pedem o código atual do app.
   function checkFreshCode(admin, code) {
@@ -508,9 +585,19 @@ module.exports = function setupConsole(app, deps) {
     }
     return out;
   }
+  // Etapa do lead: situação antiga vira a nova; em teste com organização pagante = Cliente.
+  function stageOf(r) {
+    const st = LEGACY_STAGE[r.status] || (REQUEST_STAGES.includes(r.status) ? r.status : 'new');
+    if (st === 'trial' && r.orgId) {
+      const org = (db.organizations || []).find(o => o.id === r.orgId);
+      const b = org && org.billing;
+      if (b && b.lastPaymentAt && b.status !== 'canceled') return 'won';
+    }
+    return st;
+  }
   function requestCounts() {
-    const c = { new: 0, reviewing: 0, approved: 0, rejected: 0 };
-    for (const r of db.accessRequests) if (c[r.status] !== undefined) c[r.status]++;
+    const c = Object.fromEntries(REQUEST_STAGES.map(k => [k, 0]));
+    for (const r of db.accessRequests) c[stageOf(r)]++;
     return c;
   }
 
@@ -534,7 +621,7 @@ module.exports = function setupConsole(app, deps) {
       support: { open: deps.supportOpenCount ? deps.supportOpenCount() : 0 },
       waitlist: {
         counts: requestCounts(),
-        latest: db.accessRequests.slice().sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 5).map(publicRequest)
+        latest: !can(req.consoleAdmin, 'waitlist', 'view') ? [] : db.accessRequests.slice().sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 5).map(publicRequest)
       },
       system: {
         build: buildSha, node: process.version,
@@ -600,7 +687,7 @@ module.exports = function setupConsole(app, deps) {
       if (slot) slot.value = Math.round((slot.value + (Number(e.hours) || 0)) * 10) / 10;
     }
     audit(req, 'org_viewed', { orgId: org.id, name: org.name });
-    res.json({ org: orgSummary(org), members, squads, hoursByMonth: months, series: { created: dailySeries(30, d => ts(d.createdAt), org.id) }, plans, billing: deps.orgBilling ? deps.orgBilling(org) : null });
+    res.json({ org: orgSummary(org), members, squads, hoursByMonth: months, series: { created: dailySeries(30, d => ts(d.createdAt), org.id) }, plans, billing: deps.orgBilling && can(req.consoleAdmin, 'billing', 'view') ? deps.orgBilling(org) : null, canBilling: can(req.consoleAdmin, 'billing', 'view') });
   });
 
   /* ── Plano e limites ── */
@@ -751,7 +838,7 @@ module.exports = function setupConsole(app, deps) {
     return {
       id: r.id, name: r.name, email: r.email, company: r.company, website: r.website || '',
       teamSize: r.teamSize, country: r.country || null, role: r.role || '', phone: r.phone || '', source: r.source || '',
-      message: r.message || '', status: r.status, notes: r.notes || [],
+      message: r.message || '', status: stageOf(r), notes: (r.notes || []).map(n => n.kind === 'status' ? { ...n, from: LEGACY_STAGE[n.from] || n.from, to: LEGACY_STAGE[n.to] || n.to } : n),
       createdAt: r.createdAt, updatedAt: r.updatedAt || r.createdAt,
       reviewedBy: r.reviewedBy || null, reviewedAt: r.reviewedAt || null, submissions: r.submissions || 1,
       orgId: r.orgId || null, orgName: r.orgId ? ((db.organizations || []).find(o => o.id === r.orgId) || {}).name || r.orgNameAtPurge || null : null,
@@ -779,7 +866,7 @@ module.exports = function setupConsole(app, deps) {
     };
     const at = nowISO();
     // Mesmo e-mail com pedido ainda aberto: atualiza em vez de duplicar.
-    let r = db.accessRequests.find(x => x.email === email && (x.status === 'new' || x.status === 'reviewing'));
+    let r = db.accessRequests.find(x => x.email === email && OPEN_STAGES.includes(stageOf(x)));
     if (r) {
       Object.assign(r, fields, { updatedAt: at, submissions: (r.submissions || 1) + 1 });
     } else {
@@ -815,9 +902,9 @@ module.exports = function setupConsole(app, deps) {
     const { status, note } = req.body || {};
     const at = nowISO();
     if (status !== undefined) {
-      if (!REQUEST_STATUSES.includes(status)) return res.status(400).json({ error: 'Situação inválida.' });
-      if (status !== r.status) {
-        const from = r.status;
+      if (!REQUEST_STAGES.includes(status)) return res.status(400).json({ error: 'Etapa inválida.' });
+      if (status !== stageOf(r)) {
+        const from = stageOf(r);
         r.status = status;
         r.reviewedBy = req.consoleAdmin.name; r.reviewedAt = at;
         r.notes = [...(r.notes || []), { id: uid(), kind: 'status', from, to: status, by: req.consoleAdmin.name, at }];
@@ -846,20 +933,30 @@ module.exports = function setupConsole(app, deps) {
     const { org, link, emailSent } = await createOrgWithOwner(req, { name, ownerEmail: r.email, ownerName: r.name, requestId: r.id, createdBy: req.consoleAdmin.id, country });
     if (plan) { org.plan = { id: plan.id, changedAt: nowISO(), changedBy: req.consoleAdmin.name }; saveEntity('organizations', org); }
     const at = nowISO();
-    const from = r.status;
-    r.status = 'approved'; r.orgId = org.id;
+    const from = stageOf(r);
+    r.status = 'trial'; r.orgId = org.id;
     r.reviewedBy = req.consoleAdmin.name; r.reviewedAt = at; r.updatedAt = at;
     r.notes = [...(r.notes || []),
-      ...(from !== 'approved' ? [{ id: uid(), kind: 'status', from, to: 'approved', by: req.consoleAdmin.name, at }] : []),
+      ...(from !== 'trial' ? [{ id: uid(), kind: 'status', from, to: 'trial', by: req.consoleAdmin.name, at }] : []),
       { id: uid(), kind: 'org', text: `Organização "${org.name}" criada e convite de dono enviado para ${r.email}.`, by: req.consoleAdmin.name, at }];
     saveEntity('accessRequests', r);
     audit(req, 'org_created', { orgId: org.id, name: org.name, email: r.email, plan: orgPlan(org).name });
     res.status(201).json({ request: publicRequest(r), org: orgSummary(org), link, emailSent });
   });
 
-  /* ───────────── Superadmins ───────────── */
+  /* ───────────── Equipe do console (contas e cargos) ───────────── */
+  // Mexer em contas e cargos: só Superadmin (o cargo "Equipe do console" dá só leitura).
+  const superOnly = (req, res, next) => {
+    if (!isSuper(req.consoleAdmin)) return res.status(403).json({ error: 'Só um Superadmin mexe nas contas e nos cargos do console.', code: 'forbidden' });
+    next();
+  };
+  const roleExists = (id) => id === 'superadmin' || roles.some(r => r.id === id);
+  // Sobra pelo menos um Superadmin ativo sem esta conta?
+  const otherSupers = (id) => db.platformAdmins.filter(x => x.id !== id && canEnter(x) && isSuper(x)).length;
+  const publicRole = (r) => ({ id: r.id, name: r.name, builtIn: !!r.builtIn, perms: r.perms, members: db.platformAdmins.filter(a => a.active !== false && roleOf(a).id === r.id).length });
+
   app.get('/api/console/admins', requireConsole, (req, res) => {
-    res.json({ items: db.platformAdmins.map(publicAdmin), me: req.consoleAdmin.id });
+    res.json({ items: db.platformAdmins.map(publicAdmin), me: req.consoleAdmin.id, canEdit: isSuper(req.consoleAdmin), roles: [SUPERADMIN_ROLE, ...roles].map(publicRole), areas: PERM_AREAS });
   });
 
   function activationLink(req, a) {
@@ -874,26 +971,28 @@ module.exports = function setupConsole(app, deps) {
     return sendEmail(a.email, m.subject, m.html, m.text, { lang: 'pt' });
   }
 
-  app.post('/api/console/admins', requireConsole, async (req, res) => {
+  app.post('/api/console/admins', requireConsole, superOnly, async (req, res) => {
     const nm = clip((req.body || {}).name, 120);
     const em = normEmail((req.body || {}).email);
+    const roleId = String((req.body || {}).roleId || 'superadmin');
     if (!nm) return res.status(400).json({ error: 'Informe o nome.', field: 'name' });
     if (!isValidEmail(em)) return res.status(400).json({ error: 'Informe um e-mail válido.', field: 'email' });
-    if (db.platformAdmins.some(a => a.email === em)) return res.status(409).json({ error: 'Já existe um superadmin com esse e-mail.', field: 'email' });
-    const a = { id: 'pa_' + crypto.randomBytes(8).toString('hex'), name: nm, email: em, active: true, createdAt: nowISO(), createdBy: req.consoleAdmin.id, passwordSetAt: null, totpSecretEnc: null, totpEnabledAt: null, totpLastStep: null };
+    if (!roleExists(roleId)) return res.status(400).json({ error: 'Escolha um cargo.', field: 'roleId' });
+    if (db.platformAdmins.some(a => a.email === em)) return res.status(409).json({ error: 'Já existe uma conta do console com esse e-mail.', field: 'email' });
+    const a = { id: 'pa_' + crypto.randomBytes(8).toString('hex'), name: nm, email: em, roleId, active: true, createdAt: nowISO(), createdBy: req.consoleAdmin.id, passwordSetAt: null, totpSecretEnc: null, totpEnabledAt: null, totpLastStep: null };
     const link = activationLink(req, a);
     db.platformAdmins.push(a);
     saveEntity('platformAdmins', a);
     const mail = await sendActivation(req, a, link);
-    audit(req, 'admin_invited', { adminId: a.id, email: em });
+    audit(req, 'admin_invited', { adminId: a.id, email: em, role: roleOf(a).name });
     res.status(201).json({ admin: publicAdmin(a), link, emailSent: !!mail.sent });
   });
 
   /* Novo link de ativação. Serve também pra quem perdeu o celular: a pessoa
      define senha nova e cadastra o app de novo. */
-  app.post('/api/console/admins/:id/reset', requireConsole, async (req, res) => {
+  app.post('/api/console/admins/:id/reset', requireConsole, superOnly, async (req, res) => {
     const a = db.platformAdmins.find(x => x.id === req.params.id);
-    if (!a || a.active === false) return res.status(404).json({ error: 'Superadmin não encontrado.' });
+    if (!a || a.active === false) return res.status(404).json({ error: 'Conta não encontrada.' });
     if (a.id === req.consoleAdmin.id) return res.status(400).json({ error: 'Peça para outro superadmin gerar o seu link.' });
     if (a.twoFactorExempt) return res.status(400).json({ error: 'O acesso padrão não usa link de ativação. Desative-o e use a sua conta.' });
     const link = activationLink(req, a);
@@ -904,15 +1003,24 @@ module.exports = function setupConsole(app, deps) {
     res.json({ admin: publicAdmin(a), link, emailSent: !!mail.sent });
   });
 
-  app.patch('/api/console/admins/:id', requireConsole, (req, res) => {
+  app.patch('/api/console/admins/:id', requireConsole, superOnly, (req, res) => {
     const a = db.platformAdmins.find(x => x.id === req.params.id);
-    if (!a) return res.status(404).json({ error: 'Superadmin não encontrado.' });
-    const { active } = req.body || {};
+    if (!a) return res.status(404).json({ error: 'Conta não encontrada.' });
+    const { active, roleId } = req.body || {};
+    if (roleId !== undefined && roleId !== roleOf(a).id) {
+      if (!roleExists(roleId)) return res.status(400).json({ error: 'Cargo não encontrado.', field: 'roleId' });
+      if (a.id === req.consoleAdmin.id) return res.status(400).json({ error: 'Você não pode mudar o próprio cargo. Peça para outro Superadmin.' });
+      if (a.isDefaultAccount) return res.status(400).json({ error: 'O acesso padrão é sempre Superadmin.' });
+      if (isSuper(a) && roleId !== 'superadmin' && canEnter(a) && !otherSupers(a.id)) return res.status(400).json({ error: 'É preciso manter pelo menos um Superadmin ativo.' });
+      const from = roleOf(a).name;
+      a.roleId = roleId;
+      saveEntity('platformAdmins', a);
+      audit(req, 'admin_role_changed', { adminId: a.id, email: a.email, from, to: roleOf(a).name });
+    }
     if (typeof active === 'boolean' && active !== (a.active !== false)) {
       if (!active) {
         if (a.id === req.consoleAdmin.id) return res.status(400).json({ error: 'Você não pode desativar a própria conta.' });
-        const left = db.platformAdmins.filter(x => x.id !== a.id && canEnter(x)).length;
-        if (!left) return res.status(400).json({ error: 'É preciso manter pelo menos um superadmin ativo.' });
+        if (isSuper(a) && !otherSupers(a.id)) return res.status(400).json({ error: 'É preciso manter pelo menos um Superadmin ativo.' });
         auth.dropTokensFor(a.id);
       }
       a.active = active;
@@ -921,6 +1029,46 @@ module.exports = function setupConsole(app, deps) {
       audit(req, active ? 'admin_reactivated' : 'admin_deactivated', { adminId: a.id, email: a.email });
     }
     res.json(publicAdmin(a));
+  });
+
+  // Cargos: nome + nível por área. O Superadmin é fixo.
+  function roleInput(req, res, current) {
+    const b = req.body || {};
+    const name = clip(b.name, 40);
+    if (name.length < 2) { res.status(400).json({ error: 'Dê um nome ao cargo.', field: 'name' }); return null; }
+    if (name.toLowerCase() === 'superadmin' || roles.some(r => r !== current && r.name.toLowerCase() === name.toLowerCase())) { res.status(409).json({ error: 'Já existe um cargo com esse nome.', field: 'name' }); return null; }
+    const perms = cleanPerms(b.perms);
+    if (!Object.keys(perms).length) { res.status(400).json({ error: 'Dê acesso a pelo menos uma área.', field: 'perms' }); return null; }
+    return { name, perms };
+  }
+  app.post('/api/console/roles', requireConsole, superOnly, async (req, res) => {
+    const v = roleInput(req, res, null);
+    if (!v) return;
+    const r = { id: 'role_' + crypto.randomBytes(5).toString('hex'), ...v, createdAt: nowISO() };
+    roles = [...roles, r];
+    await saveRoles();
+    audit(req, 'role_created', { name: r.name, perms: r.perms });
+    res.status(201).json(publicRole(r));
+  });
+  app.put('/api/console/roles/:id', requireConsole, superOnly, async (req, res) => {
+    const r = roles.find(x => x.id === req.params.id);
+    if (!r) return res.status(404).json({ error: req.params.id === 'superadmin' ? 'O cargo Superadmin não muda.' : 'Cargo não encontrado.' });
+    const v = roleInput(req, res, r);
+    if (!v) return;
+    Object.assign(r, v, { updatedAt: nowISO() });
+    await saveRoles();
+    audit(req, 'role_updated', { name: r.name, perms: r.perms });
+    res.json(publicRole(r));
+  });
+  app.delete('/api/console/roles/:id', requireConsole, superOnly, async (req, res) => {
+    const r = roles.find(x => x.id === req.params.id);
+    if (!r) return res.status(404).json({ error: 'Cargo não encontrado.' });
+    const using = db.platformAdmins.filter(a => a.active !== false && a.roleId === r.id).length;
+    if (using) return res.status(400).json({ error: `${using} ${using === 1 ? 'conta usa' : 'contas usam'} este cargo. Mude o cargo delas antes de apagar.` });
+    roles = roles.filter(x => x !== r);
+    await saveRoles();
+    audit(req, 'role_deleted', { name: r.name });
+    res.json({ ok: true });
   });
 
   /* ───────────── Auditoria ───────────── */
@@ -934,5 +1082,5 @@ module.exports = function setupConsole(app, deps) {
   app.get(/^\/console(?:\/.*)?$/, (req, res) => { noindex(res); res.sendFile(path.join(publicDir, 'console.html')); });
   app.get(/^\/acesso\/?$/, (req, res) => res.sendFile(path.join(publicDir, 'acesso.html')));
 
-  return { totpVerify, hotp, b32decode, ensureDefaultAdmin, runOrgPurgeJob, requireConsole, audit };
+  return { totpVerify, hotp, b32decode, ensureDefaultAdmin, loadRoles, runOrgPurgeJob, requireConsole, audit, can };
 };

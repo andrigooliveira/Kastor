@@ -5593,5 +5593,11 @@
 "Informe o bairro do endereço de cobrança.": "Enter the billing address neighborhood.",
 "CEP com 8 números.": "ZIP code must have 8 digits.",
 "CEP não encontrado. Confira ou preencha o endereço à mão.": "ZIP code not found. Check it or fill in the address manually.",
-"Não deu para buscar o CEP agora. Preencha o endereço à mão.": "Couldn't look up the ZIP code right now. Fill in the address manually."
+"Não deu para buscar o CEP agora. Preencha o endereço à mão.": "Couldn't look up the ZIP code right now. Fill in the address manually.",
+"{0} meses grátis": "{0} months free",
+"1 mês grátis": "1 month free",
+"−{0} meses": "−{0} months",
+"−1 mês": "−1 month",
+"até {0}% de desconto": "up to {0}% off",
+"até −{0}%": "up to −{0}%"
 });

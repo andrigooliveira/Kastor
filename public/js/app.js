@@ -4837,7 +4837,8 @@ function _piRender() {
   if (!o) return;
   const d = o.data, yearly = o.cycle === 'YEARLY';
   const radio = (on) => `role="radio" aria-checked="${on}" tabindex="${on ? 0 : -1}"`;
-  $('pi-cycle').innerHTML = [['MONTHLY', 'Mensal', ''], ['YEARLY', 'Anual', '<em>2 meses grátis</em>']]
+  const tag = _bilYearlyTag(d.catalog);
+  $('pi-cycle').innerHTML = [['MONTHLY', 'Mensal', ''], ['YEARLY', 'Anual', tag ? `<em>${tag}</em>` : '']]
     .map(([k, l, extra]) => `<button type="button" class="${k === o.cycle ? 'is-on' : ''}" ${radio(k === o.cycle)} onclick="_piSet('cycle','${k}')">${l}${extra}</button>`).join('');
   $('pi-plans').innerHTML = d.catalog.map(p => {
     const on = p.id === o.planId;
@@ -5896,6 +5897,15 @@ const _bilMoney = (v) => Number(v || 0).toLocaleString(LOCALE, { style: 'currenc
 const _bilDate = (iso, opts) => iso ? new Date(String(iso).length === 10 ? iso + 'T12:00:00' : iso).toLocaleDateString(LOCALE, opts || { day: 'numeric', month: 'long', year: 'numeric' }) : '—';
 const _bilPlanName = (id) => (_bil.data?.catalog.find(p => p.id === id) || {}).name || id;
 const _bilCycleLabel = (c) => c === 'YEARLY' ? 'anual' : 'mensal';
+/* Selo do anual, pelos preços do console: "−17%" (o desconto em relação a 12
+   mensalidades). Planos com descontos diferentes: "até −20%". Sem desconto, nada. */
+function _bilYearlyTag(catalog) {
+  const pcts = (catalog || []).map(p => p.prices).filter(x => x && x.MONTHLY > 0)
+    .map(x => Math.round((1 - x.YEARLY / (x.MONTHLY * 12)) * 100));
+  if (!pcts.length || pcts.every(p => p <= 0)) return '';
+  const max = Math.max(...pcts);
+  return pcts.every(p => p === max) ? `−${max}%` : `até −${max}%`;
+}
 
 async function renderBilling(force) {
   const host = $('billing-page-body');
@@ -5934,7 +5944,7 @@ async function renderBilling(force) {
         </div>
         <div class="bil-cycle" role="radiogroup" aria-label="Ciclo de cobrança">
           <button type="button" role="radio" aria-checked="${_bil.cycle === 'MONTHLY'}" class="${_bil.cycle === 'MONTHLY' ? 'is-on' : ''}" onclick="setBillingCycle('MONTHLY')">Mensal</button>
-          <button type="button" role="radio" aria-checked="${_bil.cycle === 'YEARLY'}" class="${_bil.cycle === 'YEARLY' ? 'is-on' : ''}" onclick="setBillingCycle('YEARLY')">Anual <span class="bil-cycle-save">2 meses grátis</span></button>
+          <button type="button" role="radio" aria-checked="${_bil.cycle === 'YEARLY'}" class="${_bil.cycle === 'YEARLY' ? 'is-on' : ''}" onclick="setBillingCycle('YEARLY')">Anual${_bilYearlyTag(d.catalog) ? ` <span class="bil-cycle-save">${_bilYearlyTag(d.catalog)}</span>` : ''}</button>
         </div>
       </div>
       ${d.founder.open && !b.founder && (!b.status || b.status === 'none') ? `<p class="bil-founder-note"><i data-lucide="sparkles" class="ic-sm"></i><span><b>Preço de fundador:</b> as primeiras ${d.founder.slots} organizações a assinar${d.founder.until ? ` até ${_bilDate(d.founder.until, { day: 'numeric', month: 'long' })}` : ''} mantêm este preço para sempre. Restam ${d.founder.left} ${d.founder.left === 1 ? 'vaga' : 'vagas'}.</span></p>` : ''}
@@ -6323,7 +6333,8 @@ function _bilCoRender() {
       <span class="bil-co-row-price"><b>${_bilMoney(perMonth(x))}</b><span>/mês</span></span>
     </button>`;
   }).join('');
-  $('bil-co-cycles').innerHTML = [['MONTHLY', 'Mensal', ''], ['YEARLY', 'Anual', '<em>−2 meses</em>']]
+  const yTag = _bilYearlyTag(d.catalog);
+  $('bil-co-cycles').innerHTML = [['MONTHLY', 'Mensal', ''], ['YEARLY', 'Anual', yTag ? `<em>${yTag}</em>` : '']]
     .map(([k, l, extra]) => `<button type="button" class="${k === c.cycle ? 'is-on' : ''}" ${radio(k === c.cycle)} onclick="_bilCoSet('cycle','${k}')">${l}${extra}</button>`).join('');
   $('bil-co-methods').innerHTML = methods.map(m => {
     const on = m.id === c.method;

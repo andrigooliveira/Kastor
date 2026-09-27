@@ -466,6 +466,53 @@ test('Console: superadmin pessoal é convidado e ativa com o app autenticador', 
   assert.equal((await req('/api/console/me', { headers: { Cookie: defaultConsoleCookie } })).status, 401, 'sessão do acesso padrão cai');
 });
 
+test('Console: cargos limitam o que cada conta vê e muda', async () => {
+  const as = (m, p, c, b) => req(p, { method: m, headers: { Cookie: c, 'Content-Type': 'application/json' }, body: b ? JSON.stringify(b) : undefined });
+  const list = (await req('/api/console/admins', { headers: { Cookie: consoleCookie } })).body;
+  assert.ok(list.roles.some(r => r.id === 'role_suporte'), 'cargos padrão: Financeiro, Suporte, Comercial');
+  const root = list.items.find(a => a.email === 'root@exemplo.com');
+  assert.equal(root.roleId, 'superadmin', 'conta sem cargo = Superadmin');
+  // Cargo novo: precisa de alguma área; "Equipe do console" vai no máximo até ver.
+  assert.equal((await as('POST', '/api/console/roles', consoleCookie, { name: 'Vazio', perms: {} })).status, 400);
+  const role = await as('POST', '/api/console/roles', consoleCookie, { name: 'Leitura', perms: { overview: 'view', orgs: 'view', billing: 'edit', admins: 'edit' } });
+  assert.equal(role.status, 201, JSON.stringify(role.body));
+  assert.equal(role.body.perms.admins, undefined, 'editar a equipe é só do Superadmin');
+  // Conta com cargo Suporte.
+  const inv = await as('POST', '/api/console/admins', consoleCookie, { name: 'Sara Suporte', email: 'sara@exemplo.com', roleId: 'role_suporte' });
+  assert.equal(inv.status, 201, JSON.stringify(inv.body));
+  const ip = { headers: { 'X-Forwarded-For': '10.8.8.8' } };
+  const act = await postJson('/api/console/activate/' + inv.body.link.split('/console/ativar/')[1], { password: 'senha-muito-forte-2' }, ip);
+  assert.equal(act.status, 200, JSON.stringify(act.body));
+  const v = await postJson('/api/console/login/verify', { ticket: act.body.ticket, code: totpAt(act.body.secret.replace(/\s/g, ''), nowStep()) }, ip);
+  assert.equal(v.status, 200, JSON.stringify(v.body));
+  const sara = (v.headers.get('set-cookie') || '').split(';')[0];
+  const me = (await req('/api/console/me', { headers: { Cookie: sara } })).body;
+  assert.equal(me.roleName, 'Suporte');
+  assert.equal(me.isSuper, false);
+  assert.equal(me.perms.support, 'edit');
+  assert.equal((await req('/api/console/support', { headers: { Cookie: sara } })).status, 200);
+  assert.equal((await req('/api/console/billing', { headers: { Cookie: sara } })).status, 403);
+  const orgs = await req('/api/console/orgs', { headers: { Cookie: sara } });
+  assert.equal(orgs.status, 200, 'vê as organizações');
+  const blocked = await as('PUT', `/api/console/orgs/${orgs.body.items[0].id}/plan`, sara, { planId: 'essencial' });
+  assert.equal(blocked.status, 403, 'mas não muda');
+  assert.match(blocked.body.error, /Suporte/);
+  assert.equal((await req('/api/console/admins', { headers: { Cookie: sara } })).status, 403, 'Suporte não vê a equipe');
+  assert.equal((await as('POST', '/api/console/roles', sara, { name: 'Tudo', perms: { billing: 'edit' } })).status, 403);
+  assert.equal((await req('/api/console/me', { headers: { Cookie: sara } })).status, 200, 'a própria conta sempre abre');
+  // Superadmin troca o cargo e vale na hora; o próprio cargo não muda.
+  const ch = await as('PATCH', `/api/console/admins/${inv.body.admin.id}`, consoleCookie, { roleId: role.body.id });
+  assert.equal(ch.status, 200, JSON.stringify(ch.body));
+  assert.equal(ch.body.roleName, 'Leitura');
+  assert.equal((await req('/api/console/billing', { headers: { Cookie: sara } })).status, 200);
+  assert.equal((await req('/api/console/support', { headers: { Cookie: sara } })).status, 403);
+  assert.equal((await as('PATCH', `/api/console/admins/${root.id}`, consoleCookie, { roleId: 'role_suporte' })).status, 400);
+  // Cargo em uso não é apagado.
+  assert.equal((await as('DELETE', `/api/console/roles/${role.body.id}`, consoleCookie)).status, 400);
+  assert.equal((await as('PATCH', `/api/console/admins/${inv.body.admin.id}`, consoleCookie, { active: false })).status, 200);
+  assert.equal((await as('DELETE', `/api/console/roles/${role.body.id}`, consoleCookie)).status, 200);
+});
+
 test('Console: sessões do reWork e do console não se misturam', async () => {
   const rw = await loginCookie('admin', 'admin123');
   assert.equal((await req('/api/console/me', { headers: { Cookie: rw } })).status, 401, 'sessão do reWork não abre o console');
@@ -558,13 +605,15 @@ test('Lista de espera: formulário público e revisão no console', async () => 
   const mine = list.body.items.filter(r => r.email === 'paula@agencia.com');
   assert.equal(mine.length, 1, 'reenvio atualiza o mesmo pedido');
   assert.equal(mine[0].submissions, 2);
-  const p = await req('/api/console/access-requests/' + mine[0].id, { method: 'PATCH', headers: { ...H.headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'approved', note: 'Ligar na segunda.' }) });
+  const p = await req('/api/console/access-requests/' + mine[0].id, { method: 'PATCH', headers: { ...H.headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'demo', note: 'Ligar na segunda.' }) });
   assert.equal(p.status, 200);
-  assert.equal(p.body.status, 'approved');
+  assert.equal(p.body.status, 'demo');
+  // Etapa que não existe no funil é recusada.
+  assert.equal((await req('/api/console/access-requests/' + mine[0].id, { method: 'PATCH', headers: { ...H.headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'xyz' }) })).status, 400);
   assert.equal(p.body.notes.length, 2);
   const ov = await req('/api/console/overview', H);
   assert.equal(ov.status, 200);
-  assert.equal(ov.body.waitlist.counts.approved, 1);
+  assert.equal(ov.body.waitlist.counts.demo, 1);
   assert.equal(ov.body.series.created.length, 30);
   const audit = await req('/api/console/audit', H);
   assert.ok(audit.body.items.some(e => e.action === 'request_status'));
@@ -592,7 +641,7 @@ test('Organizações: aprovar pedido no console cria a organização e convida o
   const r = list.body.items.find(x => x.email === 'bia@beta.com');
   const c = await call('POST', `/api/console/access-requests/${r.id}/create-org`, consoleCookie, { name: 'Beta' });
   assert.equal(c.status, 201, JSON.stringify(c.body));
-  assert.equal(c.body.request.status, 'approved');
+  assert.equal(c.body.request.status, 'trial', 'organização criada = lead em teste');
   assert.equal(c.body.org.name, 'Beta');
   betaOrgId = c.body.org.id;
   assert.equal((await call('POST', `/api/console/access-requests/${r.id}/create-org`, consoleCookie, { name: 'Beta 2' })).status, 409, 'não cria duas vezes');
@@ -1249,6 +1298,21 @@ test('Cobrança (Asaas): conectar pelo console, assinar, webhook, trocar plano e
     assert.equal(cancel2.status, 200, JSON.stringify(cancel2.body));
     assert.ok(got.some(g => g.url === '/pix/automatic/authorizations/auth_1' && g.method === 'DELETE'));
     assert.ok(got.some(g => g.url === '/subscriptions/sub_pa' && g.method === 'DELETE'));
+
+    // Preços pelo console: anual acima de 12 mensalidades é recusado; o resto vale na hora no catálogo.
+    const table = (e, q, a) => ({ essencial: e, equipe: q, agencia: a });
+    const tooMuch = await call('PUT', '/api/console/billing', consoleCookie, { env: 'sandbox', founderPrices: table({ MONTHLY: 89, YEARLY: 1100 }, { MONTHLY: 179, YEARLY: 1790 }, { MONTHLY: 299, YEARLY: 2990 }) });
+    assert.equal(tooMuch.status, 400);
+    assert.equal(tooMuch.body.field, 'founderPrices.essencial.YEARLY');
+    const newPrices = await call('PUT', '/api/console/billing', consoleCookie, { env: 'sandbox', prices: table({ MONTHLY: 99, YEARLY: 950 }, { MONTHLY: 199, YEARLY: 1990 }, { MONTHLY: 329, YEARLY: 3290 }), founderPrices: table({ MONTHLY: 89, YEARLY: 801.5 }, { MONTHLY: 179, YEARLY: 1790 }, { MONTHLY: 299, YEARLY: 2990 }) });
+    assert.equal(newPrices.status, 200, JSON.stringify(newPrices.body));
+    assert.equal(newPrices.body.prices.essencial.MONTHLY, 99);
+    b = (await req('/api/billing', { headers: { Cookie: betaCookie } })).body;
+    const ess = b.catalog.find(p => p.id === 'essencial');
+    assert.deepEqual(ess.prices, { MONTHLY: 89, YEARLY: 801.5 }, 'fundador vê a tabela de fundador');
+    assert.equal(ess.standard.MONTHLY, 99);
+    // Volta ao padrão (os próximos testes contam com os preços de lançamento).
+    await call('PUT', '/api/console/billing', consoleCookie, { env: 'sandbox', prices: newPrices.body.defaultPrices, founderPrices: newPrices.body.defaultFounderPrices });
   } finally {
     delete process.env.ASAAS_API_BASE;
     await new Promise(r => fake.close(r));

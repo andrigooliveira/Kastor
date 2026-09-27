@@ -125,6 +125,7 @@ async function loadDB() {
   // Senhas e sessões: Postgres (importa o data/auth.enc antigo na 1ª vez).
   await auth.init(store);
   if (billingApi) await billingApi.loadConfig(); // chave do Asaas etc. (console › Pagamentos)
+  if (consoleApi) await consoleApi.loadRoles(); // cargos do console
   const firstInstall = await isFirstInstall();
   migrate(firstInstall);
   seed(firstInstall);
@@ -2074,7 +2075,7 @@ app.get('/api/public/client-avatar/:clientId', (req, res) => {
 /* BUILD_SHA vem do env (setado no Dockerfile via ARG do GitHub Actions).
    É o identificador da build atual — se o cliente detectar que mudou desde
    o load da página, sabe que o server foi atualizado e oferece um reload. */
-const BUILD_SHA = String(process.env.BUILD_SHA || 'dev').slice(0, 40);
+const BUILD_SHA = String(process.env.BUILD_SHA || process.env.RENDER_GIT_COMMIT || 'dev').slice(0, 40);
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, uptime: Math.round(process.uptime()), ts: nowISO(), build: BUILD_SHA });
 });
