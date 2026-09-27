@@ -276,11 +276,13 @@ module.exports = function setupBilling(app, deps) {
 
   // Data em que a assinatura nova começa a cobrar: o dia seguinte ao fim do
   // período já pago, ou o dia em que o teste acaba; sem nada disso, hoje.
+  // Cancelada conta também: o que já foi pago vale até o fim, então quem
+  // assina de novo nesse meio tempo só volta a pagar quando ele acabar.
   function startDateFor(org) {
     const p = orgPlan(org);
     const now = Date.now();
     const candidates = [];
-    if (p.paidUntil && !p.canceled && Date.parse(p.paidUntil) > now) candidates.push(Date.parse(p.paidUntil));
+    if (p.paidUntil && Date.parse(p.paidUntil) > now) candidates.push(Date.parse(p.paidUntil));
     if (p.trial && p.trialEndsAt && Date.parse(p.trialEndsAt) > now) candidates.push(Date.parse(p.trialEndsAt));
     if (!candidates.length) return ymdBr();
     return ymdBr(Math.max(...candidates) + 60e3);
@@ -307,7 +309,8 @@ module.exports = function setupBilling(app, deps) {
     if (b.founder === undefined || b.founder === null) b.founder = false;
     if (intent.founder) b.founder = true;
     const p = orgPlan(org);
-    const paidAhead = p.paidUntil && !p.canceled && Date.parse(p.paidUntil) > Date.now();
+    // Período já pago ainda valendo (inclusive de assinatura cancelada).
+    const paidAhead = p.paidUntil && Date.parse(p.paidUntil) > Date.now();
     const inTrial = p.trial && p.trialEndsAt && Date.parse(p.trialEndsAt) > Date.now();
     b.status = paidAhead || inTrial ? 'active' : 'pending';
     // Assinou durante o teste: o plano escolhido vale já, até o fim do teste
@@ -315,7 +318,9 @@ module.exports = function setupBilling(app, deps) {
     if (inTrial) {
       org.plan = { id: intent.planId, paidUntil: p.trialEndsAt, source: 'billing', changedAt: nowISO(), changedBy: 'Assinatura' };
     } else if (paidAhead) {
-      // Troca de ciclo/forma: plano atual segue até o fim do pago.
+      // Troca de ciclo/forma, ou assinou de novo antes do fim do pago: o plano
+      // atual segue até lá e a cancelada volta a valer (com carência).
+      if (p.canceled) { b.canceledAt = null; b.cancelReason = null; }
       org.plan = { ...org.plan, canceled: false };
     }
     logEvent(b, { event: 'subscribed', detail: `${planById(intent.planId).name} · ${intent.cycle === 'YEARLY' ? 'anual' : 'mensal'} · ${METHOD_LABEL[intent.method]}` });

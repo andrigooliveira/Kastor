@@ -1220,6 +1220,8 @@ test('Cobrança (Asaas): conectar pelo console, assinar, webhook, trocar plano e
     assert.equal(custPut.addressNumber, '1000');
     assert.equal(custPut.province, 'Bela Vista');
     assert.equal(chk.subscription.cycle, 'YEARLY');
+    // Cancelou com período pago sobrando: a assinatura nova só cobra quando ele acabar (nada de cobrar em dobro).
+    assert.equal(chk.subscription.nextDueDate, require('../billing')._test.ymdBr(Date.parse(org.planInfo.paidUntil) + 60e3) + ' 12:00:00');
     assert.equal(chk.items[0].value, 1790);
     assert.ok(chk.items[0].imageBase64 && chk.items[0].imageBase64.length > 100, 'o checkout de produção exige imagem no item');
     assert.ok(chk.items[0].description.length <= 150);
@@ -1229,6 +1231,8 @@ test('Cobrança (Asaas): conectar pelo console, assinar, webhook, trocar plano e
     assert.equal(b.billing.cycle, 'YEARLY');
     assert.equal(b.billing.planId, 'equipe');
     assert.equal(b.billing.founder, true);
+    assert.equal(b.billing.status, 'active', 'assinar de novo antes do fim do pago reativa na hora');
+    assert.equal(b.plan.canceled, false);
     // Bandeira e final do cartão vêm da assinatura no Asaas.
     await new Promise(r => setTimeout(r, 150));
     b = (await req('/api/billing', { headers: { Cookie: betaCookie } })).body;

@@ -6368,7 +6368,10 @@ function _bilCoRender() {
   const payNow = pixAuto || !later;
   const note = pixAuto
     ? `Para autorizar o Pix Automático, o banco pede o primeiro Pix agora. Ele paga de ${short(d.startDate)} a ${short(coverTo)}; depois, o débito sai sozinho ${yearly ? 'todo ano' : 'todo mês'}.`
-    : later ? (changing ? 'A troca vale quando o período já pago acabar. Nada é cobrado agora.' : 'Nada é cobrado durante o teste grátis.') : '';
+    : later ? (changing ? 'A troca vale quando o período já pago acabar. Nada é cobrado agora.'
+      // Cancelou e ainda tem período pago: a assinatura nova só cobra quando ele acabar.
+      : b.status === 'canceled' ? `O período já pago continua valendo. A assinatura nova começa a cobrar em ${short(d.startDate)}; nada é cobrado agora.`
+      : 'Nada é cobrado durante o teste grátis.') : '';
   side.innerHTML = `
     <div class="bil-co-sum">
       <div class="bil-co-sum-kicker">Resumo${d.sandbox ? ' <span class="bil-co-sandbox">Modo de teste</span>' : ''}</div>
