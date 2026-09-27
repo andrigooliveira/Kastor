@@ -126,6 +126,7 @@ async function loadDB() {
   await auth.init(store);
   if (billingApi) await billingApi.loadConfig(); // chave do Asaas etc. (console › Pagamentos)
   if (consoleApi) await consoleApi.loadRoles(); // cargos do console
+  await plansApi.load(billingApi ? billingApi.legacyPrices() : null); // planos (console › Planos)
   const firstInstall = await isFirstInstall();
   migrate(firstInstall);
   seed(firstInstall);
@@ -5689,15 +5690,11 @@ app.post('/api/invites/public/:token/join', rateLimitInvitePublic, (req, res) =>
    mudado à mão no console não tem paidUntil e nunca trava. */
 const GB = 1024 ** 3, MB = 1024 ** 2;
 const { BILLING_GRACE_DAYS } = require('./billing');
-const TRIAL_DAYS = 30;
-const PLANS = [
-  { id: 'teste', name: 'Teste', users: 5, storageGb: 2, fileMb: 25, trial: true },
-  { id: 'essencial', name: 'Essencial', users: 5, storageGb: 5, fileMb: 25 },
-  { id: 'equipe', name: 'Profissional', users: 15, storageGb: 15, fileMb: 50 },
-  { id: 'agencia', name: 'Agência', users: 30, storageGb: 30, fileMb: 100 },
-  { id: 'custom', name: 'Personalizado', users: null, storageGb: null, fileMb: null }
-];
-const planById = (id) => PLANS.find(p => p.id === id) || null;
+// Catálogo editável no console (plans.js). PLANS é o array vivo: carregado no
+// boot (loadDB) e mudado no lugar quando o console salva.
+const plansApi = require('./plans').createPlans({ store, uploadMaxMb: UPLOAD_MAX_BYTES / MB });
+const PLANS = plansApi.list;
+const planById = plansApi.byId;
 function orgPlan(org) {
   const saved = (org && org.plan) || {};
   const base = planById(saved.id) || planById('custom');
@@ -5728,9 +5725,10 @@ function orgPlan(org) {
 }
 // O relógio do teste começa quando o dono entra (o convite pode esperar dias).
 function startTrialIfPending(org) {
-  if (!org || !org.plan || org.plan.id !== 'teste' || org.plan.trialEndsAt) return false;
+  const trial = plansApi.trialPlan();
+  if (!org || !org.plan || !trial || org.plan.id !== trial.id || org.plan.trialEndsAt) return false;
   org.plan.trialStartedAt = nowISO();
-  org.plan.trialEndsAt = new Date(Date.now() + TRIAL_DAYS * 864e5).toISOString();
+  org.plan.trialEndsAt = new Date(Date.now() + plansApi.trialDays() * 864e5).toISOString();
   return true;
 }
 /* Organização só pra consulta (teste vencido): GET passa; mutação só as da
@@ -6015,7 +6013,7 @@ function orgPublic(org, role) {
     planInfo: (({ id, name, trial, trialEndsAt, trialDaysLeft, readOnly, readOnlyReason, fileBytes, paidUntil, overdue, canceled, graceEndsAt }) => ({ id, name, trial, trialEndsAt, trialDaysLeft, readOnly, readOnlyReason, fileBytes, paidUntil, overdue, canceled, graceEndsAt }))(orgPlan(org)),
     billingStatus: (org.billing && org.billing.status) || 'none',
     // Organização no teste que o dono ainda não viu a escolha de plano (primeiros passos).
-    planIntroPending: !org.billingIntroAt && !!(org.plan && org.plan.id === 'teste') && !(org.billing && (org.billing.subscriptionId || org.billing.pixAuth)),
+    planIntroPending: !org.billingIntroAt && !!(org.plan && planById(org.plan.id) && planById(org.plan.id).kind === 'trial') && !(org.billing && (org.billing.subscriptionId || org.billing.pixAuth)),
     ...(role === 'owner' || role === 'admin' ? { usage: orgUsage(org) } : {}),
     // O que está disponível nesta organização (bot e n8n são da instalação original).
     integrations: {
@@ -6217,7 +6215,7 @@ let billingApi = null; // billing.js (cobrança pelo Asaas) — montado logo aba
 let supportApi = null; // support.js (chamados) — idem
 consoleApi = require('./platform-console')(app, {
   getDb: () => rawDb, tenancy, createOrgWithOwner, store, auth, saveEntity, removeEntity, uid, nowISO, notDeleted,
-  plans: PLANS, orgPlan, orgUsage, buildOrgExport, orgExportFilename, purgeOrg, fmtBytes, TRIAL_DAYS, uploadMaxMb: UPLOAD_MAX_BYTES / MB,
+  plans: PLANS, orgPlan, orgUsage, buildOrgExport, orgExportFilename, purgeOrg, fmtBytes, trialDays: plansApi.trialDays, uploadMaxMb: UPLOAD_MAX_BYTES / MB,
   makeRateLimit, clientIp, parseCookies, isHttpsRequest, isValidEmail,
   mailEnabled, sendEmail, emailTpl, appBaseUrl, mailIn,
   uploadsDir: UPLOADS_DIR, buildSha: BUILD_SHA, publicDir: path.join(__dirname, 'public'),
@@ -6238,9 +6236,10 @@ supportApi = require('./support')(app, {
 });
 billingApi = require('./billing')(app, {
   getDb: () => rawDb, store, auth, saveEntity, nowISO, requireAuth,
-  plans: PLANS, orgPlan, orgUsage, appBaseUrl,
+  plans: PLANS, plansApi, orgPlan, orgUsage, appBaseUrl, sendEmail, mailEnabled, emailTpl,
   requireConsole: consoleApi.requireConsole, audit: consoleApi.audit
 });
+require('./plans').setupPlanRoutes(app, { plans: plansApi, requireConsole: consoleApi.requireConsole, audit: consoleApi.audit, getDb: () => rawDb, saveEntity });
 
 /* ── FUNÇÕES (roles) ── */
 app.get('/api/roles', requireAuth, (req, res) => res.json(db.roles));

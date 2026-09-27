@@ -5599,5 +5599,22 @@
 "−{0} meses": "−{0} months",
 "−1 mês": "−1 month",
 "até {0}% de desconto": "up to {0}% off",
-"até −{0}%": "up to −{0}%"
+"até −{0}%": "up to −{0}%",
+"Falar com a equipe": "Talk to our team",
+"Atualizar pedido": "Update request",
+"Mais de {0} pessoas": "More than {0} people",
+"Equipes grandes": "Large teams",
+"Peça ao dono da organização para falar com a equipe do reWork.": "Ask the organization owner to contact the reWork team.",
+"Enterprise: conte o que vocês precisam": "Enterprise: tell us what you need",
+"A equipe do reWork responde por e-mail, em até 1 dia útil, com uma proposta sob medida.": "The reWork team replies by email within 1 business day with a tailored proposal.",
+"Quantas pessoas vão usar?": "How many people will use it?",
+"Telefone (opcional)": "Phone (optional)",
+"O que vocês precisam?": "What do you need?",
+"Enviar pedido": "Send request",
+"Pelo menos 20 caracteres ({0}/20)": "At least 20 characters ({0}/20)",
+"Pedido enviado. A equipe do reWork vai falar com você por e-mail.": "Request sent. The reWork team will contact you by email.",
+"Pedido enviado em {0}. A equipe do reWork vai falar com você.": "Request sent on {0}. The reWork team will contact you.",
+"Só o dono ou um admin da organização pede o Enterprise.": "Only the organization owner or an admin can request Enterprise.",
+"Informe quantas pessoas vão usar o reWork.": "Tell us how many people will use reWork.",
+"Conte um pouco mais do que vocês precisam (pelo menos 20 caracteres).": "Tell us a bit more about what you need (at least 20 characters)."
 });

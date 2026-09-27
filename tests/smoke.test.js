@@ -1303,20 +1303,61 @@ test('Cobrança (Asaas): conectar pelo console, assinar, webhook, trocar plano e
     assert.ok(got.some(g => g.url === '/pix/automatic/authorizations/auth_1' && g.method === 'DELETE'));
     assert.ok(got.some(g => g.url === '/subscriptions/sub_pa' && g.method === 'DELETE'));
 
-    // Preços pelo console: anual acima de 12 mensalidades é recusado; o resto vale na hora no catálogo.
-    const table = (e, q, a) => ({ essencial: e, equipe: q, agencia: a });
-    const tooMuch = await call('PUT', '/api/console/billing', consoleCookie, { env: 'sandbox', founderPrices: table({ MONTHLY: 89, YEARLY: 1100 }, { MONTHLY: 179, YEARLY: 1790 }, { MONTHLY: 299, YEARLY: 2990 }) });
+    // Planos (console › Planos): preço de fundador acima de 12 mensalidades é recusado; o resto vale na hora no catálogo.
+    const plansList = (await req('/api/console/plans', { headers: { Cookie: consoleCookie } })).body;
+    assert.ok(plansList.items.some(p => p.kind === 'trial') && plansList.items.some(p => p.kind === 'custom'), 'Teste e Personalizado são fixos');
+    const essBefore = plansList.items.find(p => p.id === 'essencial');
+    const tooMuch = await call('PUT', '/api/console/plans/essencial', consoleCookie, { founderPrices: { MONTHLY: 89, YEARLY: 1100 } });
     assert.equal(tooMuch.status, 400);
-    assert.equal(tooMuch.body.field, 'founderPrices.essencial.YEARLY');
-    const newPrices = await call('PUT', '/api/console/billing', consoleCookie, { env: 'sandbox', prices: table({ MONTHLY: 99, YEARLY: 950 }, { MONTHLY: 199, YEARLY: 1990 }, { MONTHLY: 329, YEARLY: 3290 }), founderPrices: table({ MONTHLY: 89, YEARLY: 801.5 }, { MONTHLY: 179, YEARLY: 1790 }, { MONTHLY: 299, YEARLY: 2990 }) });
-    assert.equal(newPrices.status, 200, JSON.stringify(newPrices.body));
-    assert.equal(newPrices.body.prices.essencial.MONTHLY, 99);
+    assert.equal(tooMuch.body.field, 'founderPrices.YEARLY');
+    const upd = await call('PUT', '/api/console/plans/essencial', consoleCookie, { prices: { MONTHLY: 99, YEARLY: 950 }, founderPrices: { MONTHLY: 89, YEARLY: 801.5 } });
+    assert.equal(upd.status, 200, JSON.stringify(upd.body));
     b = (await req('/api/billing', { headers: { Cookie: betaCookie } })).body;
     const ess = b.catalog.find(p => p.id === 'essencial');
-    assert.deepEqual(ess.prices, { MONTHLY: 89, YEARLY: 801.5 }, 'fundador vê a tabela de fundador');
+    assert.deepEqual(ess.prices, { MONTHLY: 89, YEARLY: 801.5 }, 'fundador vê o preço de fundador');
     assert.equal(ess.standard.MONTHLY, 99);
-    // Volta ao padrão (os próximos testes contam com os preços de lançamento).
-    await call('PUT', '/api/console/billing', consoleCookie, { env: 'sandbox', prices: newPrices.body.defaultPrices, founderPrices: newPrices.body.defaultFounderPrices });
+    // Plano novo: aparece à venda; "Mais escolhido" é um só; sem uso, dá para apagar.
+    const created = await call('POST', '/api/console/plans', consoleCookie, { name: 'Startup', users: 3, storageGb: 1.5, fileMb: 10, prices: { MONTHLY: 39, YEARLY: 390 }, founderPrices: null, featured: true });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    assert.equal(created.body.id, 'startup');
+    assert.equal((await call('POST', '/api/console/plans', consoleCookie, { name: 'startup', users: 3, storageGb: 1, fileMb: 10, prices: { MONTHLY: 39, YEARLY: 390 } })).body.field, 'name', 'nome repetido');
+    b = (await req('/api/billing', { headers: { Cookie: betaCookie } })).body;
+    assert.equal(b.catalog[0].id, 'startup', 'do mais barato ao mais caro');
+    assert.deepEqual(b.catalog.filter(p => p.featured).map(p => p.id), ['startup']);
+    // Tirar da venda: some da página de planos e não dá para assinar.
+    assert.equal((await call('PUT', '/api/console/plans/startup', consoleCookie, { archived: true })).status, 200);
+    b = (await req('/api/billing', { headers: { Cookie: betaCookie } })).body;
+    assert.ok(!b.catalog.some(p => p.id === 'startup'));
+    assert.equal((await call('POST', '/api/billing/checkout', betaCookie, { ...pix, planId: 'startup' })).body.field, 'planId');
+    assert.equal((await call('DELETE', '/api/console/plans/startup', consoleCookie)).status, 200);
+    // Plano em uso não é apagado; fixos também não.
+    const inUse = await call('DELETE', '/api/console/plans/essencial', consoleCookie);
+    assert.equal(inUse.status, 409, 'a Beta está no Essencial');
+    assert.equal((await call('DELETE', '/api/console/plans/teste', consoleCookie)).status, 400);
+    // Duração do teste.
+    const trialUpd = await call('PUT', '/api/console/plans/teste', consoleCookie, { trialDays: 21 });
+    assert.equal(trialUpd.status, 200, JSON.stringify(trialUpd.body));
+    assert.equal(trialUpd.body.trialDays, 21);
+    assert.equal((await call('PUT', '/api/console/plans/teste', consoleCookie, { trialDays: 0 })).body.field, 'trialDays');
+    // Volta ao padrão (os próximos testes contam com os preços e o teste de lançamento).
+    await call('PUT', '/api/console/plans/essencial', consoleCookie, { prices: essBefore.prices, founderPrices: null });
+    await call('PUT', '/api/console/plans/equipe', consoleCookie, { featured: true });
+    await call('PUT', '/api/console/plans/teste', consoleCookie, { trialDays: 30 });
+
+    // Enterprise: o dono conta o que precisa e vira lead de upsell no CRM (sem duplicar).
+    assert.equal((await call('POST', '/api/billing/enterprise', betaCookie, { people: 40, message: 'curto' })).body.field, 'message');
+    const ent = await call('POST', '/api/billing/enterprise', betaCookie, { people: 40, phone: '11999990000', message: 'Somos 40 pessoas em duas unidades e precisamos de 80 GB para vídeos.' });
+    assert.equal(ent.status, 201, JSON.stringify(ent.body));
+    assert.equal(ent.body.enterprise.people, 40);
+    assert.equal((await call('POST', '/api/billing/enterprise', betaCookie, { people: 45, message: 'Atualizando: agora são 45 pessoas e três unidades.' })).status, 201);
+    const leads = (await req('/api/console/access-requests', { headers: { Cookie: consoleCookie } })).body.items.filter(r => r.kind === 'upsell' && r.orgId === betaOrgId);
+    assert.equal(leads.length, 1, 'pedido aberto é atualizado, não duplicado');
+    assert.equal(leads[0].people, 45);
+    assert.equal(leads[0].status, 'new');
+    assert.equal(leads[0].submissions, 2);
+    b = (await req('/api/billing', { headers: { Cookie: betaCookie } })).body;
+    assert.equal(b.enterprise.people, 45);
+    assert.equal(b.canRequestEnterprise, true);
   } finally {
     delete process.env.ASAAS_API_BASE;
     await new Promise(r => fake.close(r));
@@ -1436,7 +1477,7 @@ test('Organização excluída: some na hora, fica 30 dias, restaura e apaga de v
   assert.equal((await req(`/api/console/orgs/${betaOrgId}`, H)).status, 404);
   await flushed();
   const left = await _cleanupPool.query("SELECT type FROM entities WHERE data->>'orgId' = $1 OR id = $1", [betaOrgId]);
-  assert.deepEqual(left.rows.map(x => x.type), ['accessRequests'], 'da Beta só sobra o pedido da lista de espera (histórico)');
+  assert.ok(left.rows.length >= 1 && left.rows.every(x => x.type === 'accessRequests'), 'da Beta só sobram os leads do CRM (histórico: pedido de acesso e de Enterprise)');
 });
 
 // Mantido por último pra não interferir nos testes acima (5 falhas zeram em sucesso).

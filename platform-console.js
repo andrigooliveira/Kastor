@@ -29,7 +29,8 @@
    (REQUEST_STAGES). Pedidos gravados com as situações antigas (reviewing,
    approved, rejected) são lidos pelo equivalente novo (LEGACY_STAGE), sem
    reescrever o banco. Lead em teste cuja organização já pagou aparece como
-   Cliente.
+   Cliente. Leads kind 'upsell' vêm do pedido de Enterprise de uma organização
+   que já usa o reWork (billing.js, /api/billing/enterprise).
 
    Planos e exclusão de organização:
      - plano de cada organização (Teste de 30 dias, Essencial/Profissional/Agência
@@ -71,7 +72,10 @@ const { b32encode, totpVerify, hotp, b32decode, safeEqual, sha256, normRecovery,
 module.exports = function setupConsole(app, deps) {
   // O `db` do server é trocado no boot (loadDB) — lê sempre o atual.
   const db = new Proxy({}, { get: (_, key) => deps.getDb()[key] });
-  const { tenancy, createOrgWithOwner, plans, orgPlan, orgUsage, buildOrgExport, orgExportFilename, purgeOrg, TRIAL_DAYS, uploadMaxMb } = deps;
+  const { tenancy, createOrgWithOwner, plans, orgPlan, orgUsage, buildOrgExport, orgExportFilename, purgeOrg, trialDays, uploadMaxMb } = deps;
+  // Teste e Personalizado pelo tipo (os ids não mudam, mas o catálogo é editável).
+  const isTrial = (p) => !!p && (p.kind === 'trial' || p.trial === true);
+  const trialPlanOf = () => plans.find(isTrial);
   const {
     store, auth, saveEntity, removeEntity, uid, nowISO, notDeleted,
     makeRateLimit, clientIp, parseCookies, isHttpsRequest, isValidEmail,
@@ -147,7 +151,7 @@ module.exports = function setupConsole(app, deps) {
     [/^\/api\/console\/orgs/, 'orgs'],
     [/^\/api\/console\/access-requests/, 'waitlist'],
     [/^\/api\/console\/support/, 'support'],
-    [/^\/api\/console\/billing/, 'billing'],
+    [/^\/api\/console\/(billing|plans)/, 'billing'],
     [/^\/api\/console\/(admins|roles)/, 'admins'],
     [/^\/api\/console\/audit/, 'audit']
   ];
@@ -588,7 +592,7 @@ module.exports = function setupConsole(app, deps) {
   // Etapa do lead: situação antiga vira a nova; em teste com organização pagante = Cliente.
   function stageOf(r) {
     const st = LEGACY_STAGE[r.status] || (REQUEST_STAGES.includes(r.status) ? r.status : 'new');
-    if (st === 'trial' && r.orgId) {
+    if (st === 'trial' && r.orgId && r.kind !== 'upsell') {
       const org = (db.organizations || []).find(o => o.id === r.orgId);
       const b = org && org.billing;
       if (b && b.lastPaymentAt && b.status !== 'canceled') return 'won';
@@ -700,20 +704,20 @@ module.exports = function setupConsole(app, deps) {
     if (!base) return res.status(400).json({ error: 'Escolha um plano.', field: 'planId' });
     const next = { id: base.id };
     const prevSaved = org.plan || {};
-    if (base.id === 'teste') {
+    if (isTrial(base)) {
       // Dias de teste a partir de hoje; sem informar, mantém o prazo atual (ou
       // começa quando o dono entrar, se ainda não entrou).
       if (b.trialDays !== undefined && b.trialDays !== null && b.trialDays !== '') {
         const days = Number(b.trialDays);
         // 0 = encerra o teste agora (a organização fica só pra consulta).
-        if (!Number.isInteger(days) || days < 0 || days > 90) return res.status(400).json({ error: 'Dias de teste: use um número inteiro entre 0 (encerrar agora) e 90.', field: 'trialDays' });
+        if (!Number.isInteger(days) || days < 0 || days > 365) return res.status(400).json({ error: 'Dias de teste: use um número inteiro entre 0 (encerrar agora) e 365.', field: 'trialDays' });
         next.trialEndsAt = new Date(now() + days * DAY).toISOString();
-      } else if (prevSaved.id === 'teste' && prevSaved.trialEndsAt) {
+      } else if (prevSaved.id === base.id && prevSaved.trialEndsAt) {
         next.trialEndsAt = prevSaved.trialEndsAt;
       } else if (org.ownerId) {
-        next.trialEndsAt = new Date(now() + TRIAL_DAYS * DAY).toISOString();
+        next.trialEndsAt = new Date(now() + trialDays() * DAY).toISOString();
       }
-      if (next.trialEndsAt) next.trialStartedAt = prevSaved.id === 'teste' && prevSaved.trialStartedAt ? prevSaved.trialStartedAt : nowISO();
+      if (next.trialEndsAt) next.trialStartedAt = prevSaved.id === base.id && prevSaved.trialStartedAt ? prevSaved.trialStartedAt : nowISO();
     }
     if (base.id === 'custom') {
       // null/vazio = sem limite
@@ -842,7 +846,8 @@ module.exports = function setupConsole(app, deps) {
       createdAt: r.createdAt, updatedAt: r.updatedAt || r.createdAt,
       reviewedBy: r.reviewedBy || null, reviewedAt: r.reviewedAt || null, submissions: r.submissions || 1,
       orgId: r.orgId || null, orgName: r.orgId ? ((db.organizations || []).find(o => o.id === r.orgId) || {}).name || r.orgNameAtPurge || null : null,
-      orgPurgedAt: r.orgPurgedAt || null
+      orgPurgedAt: r.orgPurgedAt || null,
+      kind: r.kind === 'upsell' ? 'upsell' : 'lead', people: r.people || null, currentPlan: r.currentPlan || null
     };
   }
   const clip = (v, n) => String(v || '').trim().slice(0, n);
@@ -866,7 +871,7 @@ module.exports = function setupConsole(app, deps) {
     };
     const at = nowISO();
     // Mesmo e-mail com pedido ainda aberto: atualiza em vez de duplicar.
-    let r = db.accessRequests.find(x => x.email === email && OPEN_STAGES.includes(stageOf(x)));
+    let r = db.accessRequests.find(x => x.email === email && x.kind !== 'upsell' && OPEN_STAGES.includes(stageOf(x)));
     if (r) {
       Object.assign(r, fields, { updatedAt: at, submissions: (r.submissions || 1) + 1 });
     } else {
@@ -927,8 +932,8 @@ module.exports = function setupConsole(app, deps) {
     if (r.orgId) return res.status(409).json({ error: 'A organização deste pedido já foi criada.' });
     const name = clip((req.body || {}).name || r.company, 80);
     if (name.length < 2) return res.status(400).json({ error: 'Informe o nome da organização.', field: 'name' });
-    // Sem escolha, nasce no Teste (os 14 dias começam quando o dono entrar).
-    const plan = plans.find(p => p.id === (req.body || {}).planId) || plans.find(p => p.id === 'teste');
+    // Sem escolha, nasce no Teste (os dias começam quando o dono entrar).
+    const plan = plans.find(p => p.id === (req.body || {}).planId && (p.kind !== 'paid' || !p.archived)) || trialPlanOf();
     const country = i18n.validCountry((req.body || {}).country) || r.country || 'BR';
     const { org, link, emailSent } = await createOrgWithOwner(req, { name, ownerEmail: r.email, ownerName: r.name, requestId: r.id, createdBy: req.consoleAdmin.id, country });
     if (plan) { org.plan = { id: plan.id, changedAt: nowISO(), changedBy: req.consoleAdmin.name }; saveEntity('organizations', org); }

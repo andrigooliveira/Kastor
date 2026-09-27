@@ -489,20 +489,23 @@ ${paragraph(t('Estamos abrindo o reWork aos poucos, para acompanhar de perto cad
 }
 
 /* Lista de espera: aviso pros superadmins do console. */
-function accessRequestNew({ request, consoleUrl, baseUrl }) {
+/* upsell = pedido de Enterprise de uma organização que já usa o reWork. */
+function accessRequestNew({ request, consoleUrl, baseUrl, upsell }) {
   const r = request || {};
-  const subject = `[reWork Console] Novo pedido de acesso: ${r.company}`;
+  const subject = upsell ? `[reWork Console] Pedido de Enterprise: ${r.company}` : `[reWork Console] Novo pedido de acesso: ${r.company}`;
   const rows = [
-    ['Nome', r.name], ['E-mail', r.email], ['Empresa', r.company],
-    ['Equipe', TEAM_SIZE_LABEL[r.teamSize] || r.teamSize], ['Cargo', r.role], ['Telefone', r.phone], ['Site', r.website]
-  ].filter(([, v]) => v).map(([k, v]) => `${escHtml(k)}: ${strong(v)}`).join('<br>');
-  const content = `${chip('Lista de espera', 'roxo')}
-${headline('Novo pedido de acesso')}
+    ['Nome', r.name], ['E-mail', r.email], [upsell ? 'Organização' : 'Empresa', r.company],
+    upsell ? ['Plano atual', r.currentPlan] : null,
+    upsell ? ['Pessoas', r.people] : ['Equipe', TEAM_SIZE_LABEL[r.teamSize] || r.teamSize],
+    ['Cargo', r.role], ['Telefone', r.phone], ['Site', r.website]
+  ].filter(x => x && x[1]).map(([k, v]) => `${escHtml(k)}: ${strong(v)}`).join('<br>');
+  const content = `${chip(upsell ? 'CRM · Enterprise' : 'Lista de espera', 'roxo')}
+${headline(upsell ? 'Pedido de Enterprise' : 'Novo pedido de acesso')}
 ${paragraph(rows)}
 ${r.message ? paragraph(`“${escHtml(r.message)}”`, 14) : ''}
 ${button(consoleUrl, 'Abrir no console')}`;
   const html = layout({ subject, preheader: `${r.name} · ${r.company}`, content, baseUrl, footer: 'Aviso do reWork Console para superadmins da plataforma.' });
-  const text = `Novo pedido de acesso ao reWork\n\n${r.name} <${r.email}>\n${r.company} · ${TEAM_SIZE_LABEL[r.teamSize] || r.teamSize}\n\n${r.message || ''}\n\n${consoleUrl}`;
+  const text = `${upsell ? 'Pedido de Enterprise' : 'Novo pedido de acesso ao reWork'}\n\n${r.name} <${r.email}>\n${r.company} · ${upsell ? `${r.people} pessoas · plano ${r.currentPlan || ''}` : TEAM_SIZE_LABEL[r.teamSize] || r.teamSize}\n\n${r.message || ''}\n\n${consoleUrl}`;
   return { subject, html, text };
 }
 

@@ -401,3 +401,15 @@ svg.lucide { width: 16px; height: 16px; stroke-width: 1.75; flex-shrink: 0; }
 .c-sup-img { display: block; width: 140px; height: 96px; border-radius: var(--radius-sm); overflow: hidden; border: 1px solid var(--hairline); }
 .c-sup-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
 @media (max-width: 900px) { .c-sup-grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* Planos (console › Planos) */
+.c-table tr.is-muted td { opacity: .6; }
+.c-plan-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 12px; }
+.c-plan-prices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 12px; margin-top: 4px; }
+.c-plan-prices .c-plan-eq { grid-column: 1 / -1; margin: -6px 0 8px; }
+#pm-founder[hidden] { display: none; }
+@media (max-width: 560px) { .c-plan-grid, .c-plan-prices { grid-template-columns: minmax(0, 1fr); } }
+
+/* CRM: lead de upsell (pedido de Enterprise de quem já é cliente) */
+.c-crm-upsell { display: inline-flex; align-items: center; gap: 4px; margin-top: 6px; margin-right: 8px; font-size: 11.5px; font-weight: 600; color: var(--good); }
+.c-crm-upsell svg { width: 12px; height: 12px; }

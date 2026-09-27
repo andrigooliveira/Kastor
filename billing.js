@@ -38,28 +38,18 @@
    console) guardam founder = true e pagam a tabela de fundador pra sempre,
    mesmo que a tabela normal suba depois.
 
-   Preços: o console (Pagamentos) edita as duas tabelas — mensal e anual de
-   cada plano (o desconto do anual é a diferença pra 12 mensalidades). Ficam
-   em config.prices / config.founderPrices; sem nada salvo, valem PRICES e
-   FOUNDER_PRICES daqui. Mudar preço não mexe no valor das assinaturas que já
-   existem no Asaas: vale pra assinatura nova e troca de plano.
+   Planos e preços: catálogo do console › Planos (plans.js). Cada plano pago
+   tem prices e, opcional, founderPrices (sem ele, fundador paga o normal).
+   Mudar preço não mexe no valor das assinaturas que já existem no Asaas:
+   vale pra assinatura nova e troca de plano.
+
+   Enterprise: o dono (ou admin) pede pela página de planos
+   (/api/billing/enterprise); vira lead "upsell" no CRM do console.
    ─────────────────────────────────────────────────────────────── */
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
-const PRICES = { // padrão (o console pode mudar)
-  essencial: { MONTHLY: 79, YEARLY: 790 },
-  equipe:    { MONTHLY: 179, YEARLY: 1790 },
-  agencia:   { MONTHLY: 299, YEARLY: 2990 }
-};
-// Preço de lançamento, travado pra quem entrou como fundador.
-const FOUNDER_PRICES = {
-  essencial: { MONTHLY: 79, YEARLY: 790 },
-  equipe:    { MONTHLY: 179, YEARLY: 1790 },
-  agencia:   { MONTHLY: 299, YEARLY: 2990 }
-};
-const PAID_PLANS = Object.keys(PRICES);
 const CYCLES = { MONTHLY: 1, YEARLY: 12 };
 const METHODS = ['CREDIT_CARD', 'PIX_AUTOMATIC', 'PIX', 'BOLETO'];
 const METHOD_LABEL = { CREDIT_CARD: 'Cartão de crédito', PIX_AUTOMATIC: 'Pix Automático', PIX: 'Pix', BOLETO: 'Boleto' };
@@ -130,6 +120,10 @@ module.exports = function setupBilling(app, deps) {
   const db = new Proxy({}, { get: (_, key) => deps.getDb()[key] });
   const { store, auth, saveEntity, nowISO, requireAuth, plans, orgPlan, orgUsage, appBaseUrl, requireConsole, audit } = deps;
   const planById = (id) => plans.find(p => p.id === id) || null;
+  const planName = (id) => (planById(id) || { name: id }).name;
+  // Planos à venda (catálogo do console), do mais barato ao mais caro.
+  const paidPlans = () => (deps.plansApi ? deps.plansApi.paidPlans() : plans.filter(p => p.kind === 'paid' && !p.archived));
+  const isPaid = (p) => !!p && p.kind === 'paid' && !!p.prices;
   const orgById = (id) => (db.organizations || []).find(o => o.id === id) || null;
 
   /* ── Configuração (KV, chave criptografada) ── */
@@ -182,25 +176,10 @@ module.exports = function setupBilling(app, deps) {
   // Tem assinatura (ou autorização de Pix Automático, que pode ainda não ter o id da assinatura).
   const hasSubscription = (b) => !!(b && (b.subscriptionId || (b.pixAuth && b.pixAuth.id)));
 
-  /* ── Preços ── */
-  const mergeTable = (base, saved) => Object.fromEntries(PAID_PLANS.map(id => [id, { ...base[id], ...((saved && saved[id]) || {}) }]));
-  const prices = () => mergeTable(PRICES, cfg().prices);
-  const founderPrices = () => mergeTable(FOUNDER_PRICES, cfg().founderPrices);
-  // Tabela vinda do console: todo plano com mensal e anual em reais (até centavos).
-  function parseTable(input, label) {
-    if (!input || typeof input !== 'object') return { error: `Tabela ${label} inválida.` };
-    const out = {};
-    for (const id of PAID_PLANS) {
-      const row = input[id] || {};
-      const m = Math.round(Number(row.MONTHLY) * 100) / 100, y = Math.round(Number(row.YEARLY) * 100) / 100;
-      const name = planById(id).name;
-      if (!(m >= 5 && m <= 100000)) return { error: `${name} (${label}): mensal precisa ficar entre R$ 5 e R$ 100.000.`, field: `${id}.MONTHLY` };
-      if (!(y >= 5 && y <= 1200000)) return { error: `${name} (${label}): anual precisa ficar entre R$ 5 e R$ 1.200.000.`, field: `${id}.YEARLY` };
-      if (y > m * 12) return { error: `${name} (${label}): o anual não pode custar mais que 12 mensalidades (${(m * 12).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}).`, field: `${id}.YEARLY` };
-      out[id] = { MONTHLY: m, YEARLY: y };
-    }
-    return { table: out };
-  }
+  /* ── Preços (do catálogo de planos) ── */
+  const pricesOf = (p, founder) => (founder && p.founderPrices) || p.prices;
+  // Preços que o console de Pagamentos guardava antes do catálogo (migração, 1x).
+  const legacyPrices = () => ({ prices: cfg().prices || null, founderPrices: cfg().founderPrices || null });
   function founderInfo() {
     const slots = Number.isInteger(cfg().founderSlots) ? cfg().founderSlots : 20;
     const used = (db.organizations || []).filter(o => o.billing && o.billing.founder).length;
@@ -208,24 +187,29 @@ module.exports = function setupBilling(app, deps) {
     const open = used < slots && (!until || ymdBr() <= until);
     return { slots, used, left: Math.max(0, slots - used), until, open };
   }
-  function priceTableFor(org) {
+  // Fundador (já é, ou ainda não assinou e cabe nas vagas) paga a tabela de fundador.
+  function founderFor(org) {
     const b = org && org.billing;
-    if (b && b.founder) return founderPrices();
-    // Quem ainda não assinou e cabe nas vagas de fundador vê o preço de fundador.
-    if (!hasSubscription(b) && founderInfo().open) return founderPrices();
-    return prices();
+    if (b && b.founder) return true;
+    return !hasSubscription(b) && founderInfo().open;
   }
   function priceFor(org, planId, cycle) {
-    const t = priceTableFor(org)[planId];
-    return t ? t[cycle] : null;
+    const p = planById(planId);
+    return isPaid(p) ? pricesOf(p, founderFor(org))[cycle] : null;
   }
+  // Planos à venda + o da assinatura atual (mesmo fora da venda, pra ela ver o dela).
   function catalogFor(org) {
-    const table = priceTableFor(org);
-    return PAID_PLANS.map(id => {
-      const p = planById(id);
-      return { id, name: p.name, users: p.users, storageGb: p.storageGb, fileMb: p.fileMb, prices: table[id], standard: prices()[id] };
-    });
+    const founder = founderFor(org);
+    const b = org && org.billing;
+    const list = paidPlans().slice();
+    for (const id of [b && b.planId, b && b.nextPlanId]) {
+      const p = id && planById(id);
+      if (isPaid(p) && !list.includes(p)) list.push(p);
+    }
+    return list.map(p => ({ id: p.id, name: p.name, users: p.users, storageGb: p.storageGb, fileMb: p.fileMb, prices: pricesOf(p, founder), standard: p.prices, featured: !!p.featured, archived: !!p.archived }));
   }
+  // Pode assinar/mudar para este plano: à venda, ou o próprio plano atual.
+  const canPick = (org, id) => { const p = planById(id); const b = org && org.billing; return isPaid(p) && (!p.archived || (b && (b.planId === id || b.nextPlanId === id))); };
 
   /* ── Estado da organização ── */
   function ensureBilling(org) {
@@ -323,7 +307,7 @@ module.exports = function setupBilling(app, deps) {
       if (p.canceled) { b.canceledAt = null; b.cancelReason = null; }
       org.plan = { ...org.plan, canceled: false };
     }
-    logEvent(b, { event: 'subscribed', detail: `${planById(intent.planId).name} · ${intent.cycle === 'YEARLY' ? 'anual' : 'mensal'} · ${METHOD_LABEL[intent.method]}` });
+    logEvent(b, { event: 'subscribed', detail: `${planName(intent.planId)} · ${intent.cycle === 'YEARLY' ? 'anual' : 'mensal'} · ${METHOD_LABEL[intent.method]}` });
     if (oldId) b.replaced = [...(b.replaced || []), oldId].slice(-10);
     saveEntity('organizations', org);
     await dropOld(oldId, oldAuth);
@@ -509,7 +493,9 @@ module.exports = function setupBilling(app, deps) {
       methods: methodsOffered(),
       startDate: startDateFor(org),
       graceDays: BILLING_GRACE_DAYS,
-      defaults: { name: org.name, email: req.user.email || '' }
+      defaults: { name: org.name, email: req.user.email || '' },
+      enterprise: enterpriseState(org),
+      canRequestEnterprise: !!(req.user.isOwner || req.user.isAdmin)
     });
   });
 
@@ -523,6 +509,52 @@ module.exports = function setupBilling(app, deps) {
       if (!j || j.erro) return res.status(404).json({ error: 'CEP não encontrado. Confira ou preencha o endereço à mão.' });
       res.json({ postalCode: cep, address: j.logradouro || '', province: j.bairro || '', city: j.localidade || '', state: j.uf || '' });
     } catch { res.status(502).json({ error: 'Não deu para buscar o CEP agora. Preencha o endereço à mão.' }); }
+  });
+
+  /* ── Enterprise (upsell) ──
+     O dono ou um admin conta o que precisa na página de planos; vira lead
+     "upsell" no CRM do console (db.accessRequests, kind 'upsell', com orgId),
+     e os superadmins recebem aviso por e-mail. Pedido aberto da mesma
+     organização é atualizado em vez de duplicado. */
+  const OPEN_STAGES = ['new', 'contacted', 'demo', 'proposal', 'reviewing'];
+  const openUpsell = (org) => (db.accessRequests || []).filter(r => r.kind === 'upsell' && r.orgId === org.id && OPEN_STAGES.includes(r.status))
+    .sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)))[0] || null;
+  function enterpriseState(org) {
+    const r = openUpsell(org);
+    return r ? { requestedAt: r.updatedAt || r.createdAt, people: r.people || null, message: r.message || '' } : null;
+  }
+  const teamSizeFor = (n) => n <= 5 ? '1-5' : n <= 15 ? '6-15' : n <= 50 ? '16-50' : n <= 200 ? '51-200' : '200+';
+  app.post('/api/billing/enterprise', requireAuth, async (req, res) => {
+    if (!req.user.isOwner && !req.user.isAdmin) return res.status(403).json({ error: 'Só o dono ou um admin da organização pede o Enterprise.' });
+    const org = req.org;
+    const bd = req.body || {};
+    const message = String(bd.message || '').trim().slice(0, 2000);
+    const people = Number(bd.people);
+    const phone = String(bd.phone || '').trim().slice(0, 40);
+    if (!Number.isInteger(people) || people < 1 || people > 100000) return res.status(400).json({ error: 'Informe quantas pessoas vão usar o reWork.', field: 'people' });
+    if (message.length < 20) return res.status(400).json({ error: 'Conte um pouco mais do que vocês precisam (pelo menos 20 caracteres).', field: 'message' });
+    if (!Array.isArray(db.accessRequests)) return res.status(503).json({ error: 'Não deu para registrar agora. Tente de novo em instantes.' });
+    const at = nowISO();
+    const fields = {
+      name: req.user.name || req.user.username || '', email: req.user.email || '', company: org.name, country: org.country || 'BR',
+      teamSize: teamSizeFor(people), people, phone, role: req.user.isOwner ? 'Dono da organização' : 'Admin da organização',
+      message, currentPlan: orgPlan(org).name
+    };
+    let r = openUpsell(org);
+    if (r) {
+      Object.assign(r, fields, { updatedAt: at, submissions: (r.submissions || 1) + 1 });
+    } else {
+      r = { id: crypto.randomBytes(6).toString('hex'), kind: 'upsell', source: 'upsell', orgId: org.id, ...fields, status: 'new', notes: [], createdAt: at, updatedAt: at, submissions: 1 };
+      db.accessRequests.push(r);
+    }
+    saveEntity('accessRequests', r);
+    // Aviso pros superadmins (se o e-mail estiver configurado).
+    if (deps.mailEnabled && deps.mailEnabled() && deps.emailTpl && deps.emailTpl.accessRequestNew) {
+      const baseUrl = appBaseUrl(req);
+      const m = deps.emailTpl.accessRequestNew({ request: fields, consoleUrl: `${baseUrl}/console/lista-de-espera?id=${r.id}`, baseUrl, upsell: true });
+      setImmediate(() => { for (const a of (db.platformAdmins || [])) if (a.active !== false && a.totpEnabledAt) deps.sendEmail(a.email, m.subject, m.html, m.text, { lang: 'pt' }); });
+    }
+    res.status(201).json({ enterprise: enterpriseState(org) });
   });
 
   // Dono viu a escolha de plano dos primeiros passos (assinando ou seguindo no teste).
@@ -546,7 +578,7 @@ module.exports = function setupBilling(app, deps) {
     const planId = String(bd.planId || '');
     const cycle = String(bd.cycle || '');
     const method = String(bd.method || '');
-    if (!PAID_PLANS.includes(planId)) return res.status(400).json({ error: 'Escolha um plano.', field: 'planId' });
+    if (!canPick(org, planId)) return res.status(400).json({ error: 'Escolha um plano.', field: 'planId' });
     if (!CYCLES[cycle]) return res.status(400).json({ error: 'Escolha mensal ou anual.', field: 'cycle' });
     if (!methodsOffered().includes(method)) return res.status(400).json({ error: method === 'PIX_AUTOMATIC' ? 'O Pix Automático ainda não está disponível. Escolha outra forma de pagamento.' : 'Escolha a forma de pagamento.', field: 'method' });
     const name = String(bd.name || '').trim().slice(0, 120);
@@ -583,9 +615,9 @@ module.exports = function setupBilling(app, deps) {
 
     const b = ensureBilling(org);
     const founder = !!b.founder || (!hasSubscription(b) && founderInfo().open);
-    const value = (founder ? founderPrices() : prices())[planId][cycle];
-    const planName = planById(planId).name;
-    const description = `reWork ${planName} · ${cycle === 'YEARLY' ? 'anual' : 'mensal'} · ${org.name}`.slice(0, 250);
+    const value = pricesOf(planById(planId), founder)[cycle];
+    const planLabel = planName(planId);
+    const description = `reWork ${planLabel} · ${cycle === 'YEARLY' ? 'anual' : 'mensal'} · ${org.name}`.slice(0, 250);
     try {
       // Cliente no Asaas (um por organização).
       const customerBody = { name, cpfCnpj: doc, email, externalReference: org.id, notificationDisabled: false };
@@ -605,7 +637,7 @@ module.exports = function setupBilling(app, deps) {
       if (method === 'CREDIT_CARD') {
         const base = appBaseUrl(req);
         const back = `${base}/${org.id}/billing`;
-        const item = { name: `reWork ${planName}`.slice(0, 30), description: description.slice(0, 150), quantity: 1, value };
+        const item = { name: `reWork ${planLabel}`.slice(0, 30), description: description.slice(0, 150), quantity: 1, value };
         if (itemImage()) item.imageBase64 = itemImage();
         const co = await asaas('POST', '/checkouts', {
           billingTypes: ['CREDIT_CARD'], chargeTypes: ['RECURRENT'], minutesToExpire: 120,
@@ -617,7 +649,7 @@ module.exports = function setupBilling(app, deps) {
         }, { site: base.replace(/^https?:\/\//, '') });
         const url = co.link || (CHECKOUT_URLS[cfg().env] || CHECKOUT_URLS.sandbox) + co.id;
         b.pending = { ...intent, checkoutId: co.id, url };
-        logEvent(b, { event: 'checkout', detail: `${planName} · cartão` });
+        logEvent(b, { event: 'checkout', detail: `${planLabel} · cartão` });
         saveEntity('organizations', org);
         return res.json({ url, kind: 'checkout' });
       }
@@ -631,9 +663,9 @@ module.exports = function setupBilling(app, deps) {
           contractId: `rw${org.id}${Date.now().toString(36)}`.slice(0, 35),
           startDate: addMonths(nextDueDate, months),
           value,
-          description: `reWork ${planName}`.slice(0, 35),
+          description: `reWork ${planLabel}`.slice(0, 35),
           paymentCreationMode: 'SUBSCRIPTION',
-          immediateQrCode: { expirationSeconds: PIX_QR_SECONDS, originalValue: value, description: `reWork ${planName} · 1º ${cycle === 'YEARLY' ? 'ano' : 'mês'}`.slice(0, 35) }
+          immediateQrCode: { expirationSeconds: PIX_QR_SECONDS, originalValue: value, description: `reWork ${planLabel} · 1º ${cycle === 'YEARLY' ? 'ano' : 'mês'}`.slice(0, 35) }
         });
         const iq = a.immediateQrCode || {};
         const qr = {
@@ -645,7 +677,7 @@ module.exports = function setupBilling(app, deps) {
         // Autorização anterior que ainda esperava o primeiro Pix: some.
         const prev = b.pending && b.pending.method === 'PIX_AUTOMATIC' ? b.pending.authorizationId : null;
         b.pending = { ...intent, authorizationId: a.id, subscriptionId: a.subscriptionId || null, coverFrom: nextDueDate, qr };
-        logEvent(b, { event: 'checkout', detail: `${planName} · Pix Automático` });
+        logEvent(b, { event: 'checkout', detail: `${planLabel} · Pix Automático` });
         saveEntity('organizations', org);
         if (prev && prev !== a.id) dropOld(null, prev);
         return res.json({ kind: 'pix_auto', qr, coverFrom: nextDueDate, billing: publicBilling(org) });
@@ -676,19 +708,19 @@ module.exports = function setupBilling(app, deps) {
     const org = req.org;
     const b = ensureBilling(org);
     const planId = String((req.body || {}).planId || '');
-    if (!PAID_PLANS.includes(planId)) return res.status(400).json({ error: 'Escolha um plano.' });
+    if (!canPick(org, planId)) return res.status(400).json({ error: 'Escolha um plano.' });
     if (!hasSubscription(b) || b.status === 'canceled') return res.status(400).json({ error: 'A organização não tem assinatura ativa. Assine um plano primeiro.' });
     const current = b.nextPlanId || b.planId;
     if (planId === current) return res.json({ billing: publicBilling(org) });
     // O valor do Pix Automático fica na autorização do banco: plano novo pede autorização nova.
     if (b.method === 'PIX_AUTOMATIC') return res.status(409).json({ error: 'Com Pix Automático, mudar de plano pede uma nova autorização no banco.', code: 'reauthorize' });
-    const up = (planById(planId).users || 0) > (planById(b.planId).users || 0);
+    const up = (planById(planId).users || 0) > ((planById(b.planId) || {}).users || 0);
     if (!up) { const err = checkFits(org, planId); if (err) return res.status(400).json({ error: err }); }
     const value = priceFor(org, planId, b.cycle);
     try {
       await asaas('PUT', '/subscriptions/' + b.subscriptionId, {
         value, updatePendingPayments: true,
-        description: `reWork ${planById(planId).name} · ${b.cycle === 'YEARLY' ? 'anual' : 'mensal'} · ${org.name}`.slice(0, 250)
+        description: `reWork ${planName(planId)} · ${b.cycle === 'YEARLY' ? 'anual' : 'mensal'} · ${org.name}`.slice(0, 250)
       });
     } catch (e) { return res.status(e.status || 500).json({ error: e.message }); }
     b.value = value;
@@ -699,7 +731,7 @@ module.exports = function setupBilling(app, deps) {
     } else {
       b.nextPlanId = planId; // desce no próximo pagamento
     }
-    logEvent(b, { event: 'plan_changed', detail: `${planById(current).name} → ${planById(planId).name}${up ? '' : ' (na próxima cobrança)'}` });
+    logEvent(b, { event: 'plan_changed', detail: `${planName(current)} → ${planName(planId)}${up ? '' : ' (na próxima cobrança)'}` });
     saveEntity('organizations', org);
     res.json({ billing: publicBilling(org), plan: orgPlan(org) });
   });
@@ -772,8 +804,7 @@ module.exports = function setupBilling(app, deps) {
       updatedAt: cfg().updatedAt || null, updatedBy: cfg().updatedBy || null,
       founder: founderInfo(),
       pixAutomatic: !!cfg().pixAutomatic,
-      prices: prices(), founderPrices: founderPrices(), defaultPrices: PRICES, defaultFounderPrices: FOUNDER_PRICES,
-      plans: PAID_PLANS.map(id => ({ id, name: planById(id).name })),
+      plans: plans.filter(isPaid).map(p => ({ id: p.id, name: p.name, archived: !!p.archived })),
       stats: {
         mrr: Math.round(mrr * 100) / 100, subscribers: subs.length, byPlan,
         pastDue: orgs.filter(o => o.billing && o.billing.status === 'past_due').map(row),
@@ -798,16 +829,6 @@ module.exports = function setupBilling(app, deps) {
     if (bd.founderUntil !== undefined) {
       if (bd.founderUntil && !/^\d{4}-\d{2}-\d{2}$/.test(bd.founderUntil)) return res.status(400).json({ error: 'Data inválida.', field: 'founderUntil' });
       next.founderUntil = bd.founderUntil || null;
-    }
-    if (bd.prices !== undefined) {
-      const r = parseTable(bd.prices, 'preço normal');
-      if (r.error) return res.status(400).json({ error: r.error, field: 'prices.' + r.field });
-      next.prices = r.table;
-    }
-    if (bd.founderPrices !== undefined) {
-      const r = parseTable(bd.founderPrices, 'fundador');
-      if (r.error) return res.status(400).json({ error: r.error, field: 'founderPrices.' + r.field });
-      next.founderPrices = r.table;
     }
     const pixChanged = typeof bd.pixAutomatic === 'boolean' && bd.pixAutomatic !== !!cfg().pixAutomatic;
     if (typeof bd.pixAutomatic === 'boolean') next.pixAutomatic = bd.pixAutomatic;
@@ -844,7 +865,7 @@ module.exports = function setupBilling(app, deps) {
     }
     next.updatedAt = nowISO(); next.updatedBy = req.consoleAdmin.name;
     await saveConfig(next);
-    audit(req, 'billing_config', { env: next.env, key: newKey ? '…' + next.apiKeyLast4 : 'mantida', founderSlots: next.founderSlots, founderUntil: next.founderUntil || null, pixAutomatic: !!next.pixAutomatic, ...(bd.prices || bd.founderPrices ? { prices: next.prices || null, founderPrices: next.founderPrices || null } : {}) });
+    audit(req, 'billing_config', { env: next.env, key: newKey ? '…' + next.apiKeyLast4 : 'mantida', founderSlots: next.founderSlots, founderUntil: next.founderUntil || null, pixAutomatic: !!next.pixAutomatic });
     res.json(consoleView(req));
   });
 
@@ -876,7 +897,7 @@ module.exports = function setupBilling(app, deps) {
     return b ? { ...publicBilling(org), subscriptionId: b.subscriptionId || null, customerId: b.customerId || null, log: (b.log || []).slice(0, 20) } : null;
   }
 
-  return { loadConfig, enabled, consoleOrgBilling, BILLING_GRACE_DAYS, prices };
+  return { loadConfig, enabled, consoleOrgBilling, BILLING_GRACE_DAYS, legacyPrices };
 };
 module.exports.BILLING_GRACE_DAYS = BILLING_GRACE_DAYS;
 module.exports._test = { validCpf, validCnpj, endOfCycle, addMonths, ymdBr };

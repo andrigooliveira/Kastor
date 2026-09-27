@@ -4817,7 +4817,7 @@ async function openPlanIntro() {
   try { d = await api('/billing'); } catch { return false; }
   if (!d.enabled || !d.canManage || !d.catalog || !d.catalog.length) return false;
   _bil.data = d;
-  _pi = { data: d, planId: (d.catalog.find(p => p.id === 'equipe') || d.catalog[0]).id, cycle: 'YEARLY', method: 'CREDIT_CARD', busy: false };
+  _pi = { data: d, planId: (d.catalog.find(p => p.featured) || d.catalog[0]).id, cycle: 'YEARLY', method: 'CREDIT_CARD', busy: false };
   const p = d.plan;
   $('pi-kicker').textContent = me.org && me.org.name ? `Primeiros passos · ${me.org.name}` : 'Primeiros passos';
   $('pi-text').innerHTML = p.trial && !p.readOnly && p.trialEndsAt
@@ -4844,7 +4844,7 @@ function _piRender() {
     const on = p.id === o.planId;
     const price = p.prices[o.cycle];
     return `<button type="button" class="pi-plan${on ? ' is-on' : ''}" ${radio(on)} onclick="_piSet('planId','${p.id}')">
-      ${p.id === 'equipe' ? '<span class="pi-plan-tag">Mais escolhido</span>' : ''}
+      ${p.featured ? '<span class="pi-plan-tag">Mais escolhido</span>' : ''}
       <span class="pi-plan-name">${esc(p.name)}</span>
       <span class="pi-plan-price"><b>${_bilMoney(yearly ? Math.round(price / 12) : price)}</b>/mês</span>
       <span class="pi-plan-bill">${yearly ? `${_bilMoney(price)} por ano` : 'cobrado todo mês'}</span>
@@ -5872,7 +5872,7 @@ function openOrgSettings() { _closeOrgMenu(); if (me?.isOwner) goPage('org'); }
    Só o dono assina, troca e cancela; os demais só veem. A cobrança em si é
    do Asaas (billing.js no servidor): cartão vai pra página de pagamento do
    Asaas; Pix e boleto abrem a fatura. */
-let _bil = { data: null, cycle: null, payments: null, loading: false, polls: 0 };
+let _bil = { data: null, cycle: null, payments: null, loading: false, polls: 0, ent: null }; // ent = formulário do Enterprise aberto
 const BIL_METHOD_LABEL = { CREDIT_CARD: 'Cartão de crédito', PIX_AUTOMATIC: 'Pix Automático', PIX: 'Pix', BOLETO: 'Boleto' };
 const BIL_CARD_BRAND = { VISA: 'Visa', MASTERCARD: 'Mastercard', ELO: 'Elo', AMEX: 'American Express', HIPERCARD: 'Hipercard', DINERS: 'Diners', DISCOVER: 'Discover', JCB: 'JCB', CABAL: 'Cabal' };
 // Forma de pagamento como aparece na tela: "Visa •••• 4242", "Pix Automático"…
@@ -5949,14 +5949,10 @@ async function renderBilling(force) {
       </div>
       ${d.founder.open && !b.founder && (!b.status || b.status === 'none') ? `<p class="bil-founder-note"><i data-lucide="sparkles" class="ic-sm"></i><span><b>Preço de fundador:</b> as primeiras ${d.founder.slots} organizações a assinar${d.founder.until ? ` até ${_bilDate(d.founder.until, { day: 'numeric', month: 'long' })}` : ''} mantêm este preço para sempre. Restam ${d.founder.left} ${d.founder.left === 1 ? 'vaga' : 'vagas'}.</span></p>` : ''}
       <div class="bil-plans">${d.catalog.map(p => _bilPlanCard(d, p)).join('')}
-        <article class="bil-plan bil-plan--custom">
-          <div class="bil-plan-name">Enterprise</div>
-          <div class="bil-plan-price"><span class="bil-plan-amount">Sob consulta</span></div>
-          <ul class="bil-plan-feats"><li><i data-lucide="check" class="ic-xs"></i>Mais de 30 pessoas</li><li><i data-lucide="check" class="ic-xs"></i>Espaço e limites sob medida</li><li><i data-lucide="check" class="ic-xs"></i>Contrato e nota por empresa</li></ul>
-          <p class="bil-plan-foot">Fale com o suporte do reWork.</p>
-        </article>
+        ${_bilEnterpriseCard(d)}
       </div>
     </section>
+    ${_bil.ent && _bil.ent.open ? _bilEnterpriseForm(d) : ''}
     ${d.canManage && b.customer ? `<section class="bil-card">
       <div class="bil-card-row"><h2 class="bil-h3">Faturas</h2><span class="bil-muted">A nota fiscal chega por e-mail em ${esc(b.customer.email || '')}.</span></div>
       <div id="bil-payments">${_bil.payments ? '' : '<div class="bil-muted">Carregando…</div>'}</div>
@@ -5964,6 +5960,71 @@ async function renderBilling(force) {
   </div>`;
   if (_bil.payments) _bilRenderPayments();
   paintIcons(host);
+}
+/* Enterprise (sob consulta): o dono ou um admin conta o que precisa e o
+   pedido cai no CRM do reWork como upsell (POST /billing/enterprise). */
+function _bilEnterpriseCard(d) {
+  const e = d.enterprise;
+  const maxUsers = Math.max(0, ...d.catalog.map(p => p.users || 0));
+  let foot;
+  if (e) foot = `<p class="bil-plan-foot bil-ent-sent"><i data-lucide="check-circle-2" class="ic-xs"></i>Pedido enviado em ${_bilDate(e.requestedAt, { day: 'numeric', month: 'short' }).replace('.', '')}. A equipe do reWork vai falar com você.</p>
+      ${d.canRequestEnterprise ? '<button type="button" class="btn btn-ghost btn-sm bil-plan-btn" onclick="openEnterpriseForm()">Atualizar pedido</button>' : ''}`;
+  else if (d.canRequestEnterprise) foot = '<button type="button" class="btn btn-primary btn-sm bil-plan-btn" onclick="openEnterpriseForm()">Falar com a equipe</button>';
+  else foot = '<p class="bil-plan-foot">Peça ao dono da organização para falar com a equipe do reWork.</p>';
+  return `<article class="bil-plan bil-plan--custom">
+    <div class="bil-plan-name">Enterprise</div>
+    <div class="bil-plan-price"><span class="bil-plan-amount">Sob consulta</span></div>
+    <ul class="bil-plan-feats"><li><i data-lucide="check" class="ic-xs"></i>${maxUsers ? `Mais de ${maxUsers} pessoas` : 'Equipes grandes'}</li><li><i data-lucide="check" class="ic-xs"></i>Espaço e limites sob medida</li><li><i data-lucide="check" class="ic-xs"></i>Contrato e nota por empresa</li></ul>
+    ${foot}
+  </article>`;
+}
+function _bilEnterpriseForm(d) {
+  const e = _bil.ent;
+  return `<section class="bil-card bil-ent" id="bil-ent" aria-labelledby="bil-ent-title">
+    <div class="bil-card-row"><h2 class="bil-h3" id="bil-ent-title">Enterprise: conte o que vocês precisam</h2></div>
+    <p class="bil-muted bil-ent-intro">A equipe do reWork responde por e-mail, em até 1 dia útil, com uma proposta sob medida.</p>
+    <div class="bil-ent-fields">
+      <label class="bil-co-field"><span>Quantas pessoas vão usar?</span><input class="form-control" id="bil-ent-people" type="number" min="1" step="1" inputmode="numeric" value="${esc(String(e.people || ''))}" oninput="_bil.ent.people=this.value"></label>
+      <label class="bil-co-field"><span>Telefone (opcional)</span><input class="form-control" id="bil-ent-phone" type="tel" inputmode="tel" maxlength="22" autocomplete="tel" placeholder="(11) 98765-4321" value="${esc(e.phone || '')}" oninput="this.value=_obFormatPhone(this.value);_bil.ent.phone=this.value"></label>
+      <label class="bil-co-field bil-co-field--full"><span>O que vocês precisam?</span><textarea class="form-control bil-ent-msg" id="bil-ent-msg" rows="5" maxlength="2000" placeholder="Ex.: somos 45 pessoas em 3 unidades, precisamos de mais espaço para vídeos, contrato anual com nota por CNPJ e ajuda na implantação." oninput="_bil.ent.msg=this.value;_bilEntCount()">${esc(e.msg || '')}</textarea><small class="bil-muted" id="bil-ent-count"></small></label>
+    </div>
+    <div class="bil-co-error" id="bil-ent-error" role="alert"></div>
+    <div class="bil-ent-actions">
+      <button type="button" class="btn btn-ghost btn-sm" onclick="closeEnterpriseForm()">Cancelar</button>
+      <button type="button" class="btn btn-primary btn-sm" id="bil-ent-go" onclick="submitEnterprise()">Enviar pedido</button>
+    </div>
+  </section>`;
+}
+function _bilEntCount() {
+  const el = $('bil-ent-count'), n = String((_bil.ent && _bil.ent.msg) || '').trim().length;
+  if (el) el.textContent = n < 20 ? `Pelo menos 20 caracteres (${n}/20)` : `${n}/2000`;
+}
+function openEnterpriseForm() {
+  const d = _bil.data;
+  const prev = d && d.enterprise;
+  _bil.ent = { open: true, people: (prev && prev.people) || (d && d.seats ? Math.max(d.seats.used, 1) : ''), phone: _obFormatPhone((me && me.phone) || ''), msg: (prev && prev.message) || '' };
+  renderBilling();
+  const el = $('bil-ent');
+  if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); setTimeout(() => $('bil-ent-msg')?.focus(), 350); }
+  _bilEntCount();
+}
+function closeEnterpriseForm() { _bil.ent = null; renderBilling(); }
+async function submitEnterprise() {
+  const e = _bil.ent, err = $('bil-ent-error'), btn = $('bil-ent-go');
+  if (!e) return;
+  err.textContent = '';
+  btn.disabled = true; btn.textContent = 'Enviando…';
+  try {
+    const r = await api('/billing/enterprise', 'POST', { people: Number(e.people), phone: String(e.phone || '').replace(/[^\d+]/g, ''), message: e.msg || '' });
+    _bil.data.enterprise = r.enterprise;
+    _bil.ent = null;
+    toast('Pedido enviado. A equipe do reWork vai falar com você por e-mail.', 'success');
+    renderBilling();
+  } catch (x) {
+    err.textContent = x.message;
+    btn.disabled = false; btn.textContent = 'Enviar pedido';
+    if (/pessoas/i.test(x.message)) $('bil-ent-people')?.focus(); else $('bil-ent-msg')?.focus();
+  }
 }
 function setBillingCycle(c) { _bil.cycle = c === 'MONTHLY' ? 'MONTHLY' : 'YEARLY'; renderBilling(); }
 
@@ -6138,7 +6199,7 @@ function _bilPlanCard(d, p) {
     else if (hasSub) btn = `<button type="button" class="btn btn-ghost btn-sm bil-plan-btn" onclick="openBillingCheckout('${p.id}', '${cyc}', '${esc(b.method || '')}')">Mudar para ${cyc === 'YEARLY' ? 'anual' : 'mensal'}</button>`;
     else btn = `<button type="button" class="btn btn-primary btn-sm bil-plan-btn" onclick="openBillingCheckout('${p.id}', '${cyc}')">Assinar</button>`;
   }
-  const featured = p.id === 'equipe';
+  const featured = !!p.featured;
   const std = p.standard && p.standard[cyc] > price ? `<span class="bil-plan-was">${_bilMoney(p.standard[cyc])}</span>` : '';
   return `<article class="bil-plan${isCurrent ? ' is-current' : ''}${featured ? ' is-featured' : ''}">
     ${featured ? '<span class="bil-plan-tag">Mais escolhido</span>' : ''}
@@ -6219,7 +6280,7 @@ function openBillingCheckout(planId, cycle, method, opts) {
 }
 function _bilCoInit(want) {
   const d = _bil.data;
-  const p = d.catalog.find(x => x.id === want.planId) || d.catalog.find(x => x.id === 'equipe') || d.catalog[0];
+  const p = d.catalog.find(x => x.id === want.planId) || d.catalog.find(x => x.featured) || d.catalog[0];
   const cust = d.billing.customer || {};
   const on = _bilMethodsOn().map(m => m.id);
   // "Trocar forma de pagamento" começa numa forma diferente da atual.

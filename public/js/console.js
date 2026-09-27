@@ -120,7 +120,7 @@
       return renderLogin();
     }
     if (p === '/console/entrar' || p === '/console/configurar') return go(firstAllowed(), true);
-    const areaOf = { '/console': 'overview', '/console/organizacoes': 'orgs', '/console/lista-de-espera': 'waitlist', '/console/suporte': 'support', '/console/pagamentos': 'billing', '/console/auditoria': 'audit' };
+    const areaOf = { '/console': 'overview', '/console/organizacoes': 'orgs', '/console/lista-de-espera': 'waitlist', '/console/suporte': 'support', '/console/pagamentos': 'billing', '/console/planos': 'billing', '/console/auditoria': 'audit' };
     const area = areaOf[p] || (p.startsWith('/console/organizacoes/') ? 'orgs' : p.startsWith('/console/suporte/') ? 'support' : null);
     if (area && !canArea(area)) { if (firstAllowed() !== p) return go(firstAllowed(), true); }
     const org = p.match(/^\/console\/organizacoes\/([\w-]+)$/);
@@ -132,6 +132,7 @@
     const sup = p.match(/^\/console\/suporte\/([\w-]+)$/);
     if (sup) return pageSupportTicket(sup[1]);
     if (p === '/console/pagamentos') return pageBilling();
+    if (p === '/console/planos') return pagePlans();
     if (p === '/console/administradores') return pageAdmins();
     if (p === '/console/auditoria') return pageAudit();
     go(firstAllowed(), true);
@@ -440,13 +441,15 @@
     { key: 'waitlist', href: '/console/lista-de-espera', label: 'CRM', icon: 'kanban', count: () => state.counts && state.counts.new },
     { key: 'support', href: '/console/suporte', label: 'Suporte', icon: 'life-buoy', count: () => state.supportOpen },
     { key: 'billing', href: '/console/pagamentos', label: 'Pagamentos', icon: 'credit-card' },
+    { key: 'plans', area: 'billing', href: '/console/planos', label: 'Planos', icon: 'layers' },
     { key: 'admins', href: '/console/administradores', label: 'Equipe e cargos', icon: 'shield-check' },
     { key: 'audit', href: '/console/auditoria', label: 'Auditoria', icon: 'scroll-text' },
   ];
   /* Cargo da conta (state.me.perms): o menu só mostra o que ela pode ver; nas
      áreas só de leitura, um aviso no topo (o servidor recusa as mudanças). */
-  const canArea = (area, level) => { const p = state.me && state.me.perms && state.me.perms[area]; return p === 'edit' || (level !== 'edit' && p === 'view'); };
-  const canEdit = (area) => area === 'admins' ? !!(state.me && state.me.isSuper) : canArea(area, 'edit');
+  const AREA_OF_NAV = { plans: 'billing' };
+  const canArea = (area, level) => { area = AREA_OF_NAV[area] || area; const p = state.me && state.me.perms && state.me.perms[area]; return p === 'edit' || (level !== 'edit' && p === 'view'); };
+  const canEdit = (area) => area === 'admins' ? !!(state.me && state.me.isSuper) : canArea(AREA_OF_NAV[area] || area, 'edit');
   const firstAllowed = () => (NAV.find(n => canArea(n.key)) || NAV[0]).href;
   function shell(active, content) {
     const theme = document.documentElement.getAttribute('data-theme');
@@ -591,7 +594,7 @@
   };
   const STAGE_ORDER = ['new', 'contacted', 'demo', 'proposal', 'trial', 'won', 'lost'];
   const TEAM = { '1-5': '1 a 5 pessoas', '6-15': '6 a 15 pessoas', '16-50': '16 a 50 pessoas', '51-200': '51 a 200 pessoas', '200+': 'Mais de 200' };
-  const SOURCE = { indicacao: 'Indicação', google: 'Google', instagram: 'Instagram', linkedin: 'LinkedIn', evento: 'Evento', outro: 'Outro' };
+  const SOURCE = { indicacao: 'Indicação', google: 'Google', instagram: 'Instagram', linkedin: 'LinkedIn', evento: 'Evento', outro: 'Outro', upsell: 'Pedido de Enterprise (já é cliente)' };
   const statusPill = (s) => `<span class="c-pill ${(STATUS[s] || {}).cls || ''}">${esc((STATUS[s] || { label: s }).label)}</span>`;
   const INTEGRATIONS = { smtp: 'E-mail (SMTP)', discordBot: 'Bot do Discord', discordLogin: 'Login com Discord', googleLogin: 'Login com Google', google: 'Google Agenda' };
 
@@ -678,7 +681,7 @@
   const trialLine = (p) => !p.trial ? '' : p.readOnly
     ? `Teste venceu em ${dateTime(p.trialEndsAt).split(',')[0]}: a organização está só para consulta até você escolher um plano.`
     : p.trialEndsAt ? `Teste até ${dateTime(p.trialEndsAt).split(',')[0]} (${p.trialDaysLeft === 1 ? 'falta 1 dia' : `faltam ${num(p.trialDaysLeft)} dias`}). Depois fica só para consulta.`
-    : 'O teste de 30 dias começa quando o dono aceitar o convite.';
+    : 'O teste começa quando o dono aceitar o convite.';
   // Pessoas: mostra "usados / limite" quando há limite.
   const seatsCell = (o) => o.usage && o.usage.plan.users != null
     ? `${num(o.usage.seats.used)}<span class="c-of"> / ${num(o.usage.plan.users)}</span>` : num(o.members);
@@ -868,11 +871,11 @@
     const optHTML = (p) => `<label class="c-plan-opt">
         <input type="radio" name="planId" value="${esc(p.id)}"${p.id === sel ? ' checked' : ''}>
         <span class="c-plan-opt-main"><span class="c-plan-opt-name">${esc(p.name)}${p.id === cur.id ? '<span class="c-pill" style="margin-left:8px">Atual</span>' : ''}</span>
-        <span class="c-plan-opt-sub">${p.id === 'custom' ? 'Você define os limites (caminho do Enterprise)' : esc(planLimits(p)) + (p.trial ? ' · 30 dias, depois só consulta' : '')}</span></span></label>`;
+        <span class="c-plan-opt-sub">${p.id === 'custom' ? 'Você define os limites (caminho do Enterprise)' : esc(planLimits(p)) + (p.trial ? ` · ${p.trialDays || 30} dias, depois só consulta` : '') + (p.archived ? ' · fora da venda' : '')}</span></span></label>`;
     const m = modal('Mudar plano', `<form id="f-plan" novalidate>
-        <div class="c-plan-opts">${plans.map(optHTML).join('')}</div>
-        <div id="plan-trial" class="c-plan-custom"${sel === 'teste' ? '' : ' hidden'}>
-          <div class="c-field" style="grid-column:1/-1"><label class="c-label" for="pl-days">Dias de teste a partir de hoje</label><input class="c-input" id="pl-days" name="trialDays" type="number" min="0" max="90" step="1" inputmode="numeric" placeholder="${cur.trial && cur.trialEndsAt ? `Manter o prazo atual (${dateTime(cur.trialEndsAt).split(',')[0]})` : 'Padrão: 14 dias'}">
+        <div class="c-plan-opts">${plans.filter(x => !x.archived || x.id === cur.id).map(optHTML).join('')}</div>
+        <div id="plan-trial" class="c-plan-custom"${((plans || []).find(x => x.id === sel) || {}).trial ? '' : ' hidden'}>
+          <div class="c-field" style="grid-column:1/-1"><label class="c-label" for="pl-days">Dias de teste a partir de hoje</label><input class="c-input" id="pl-days" name="trialDays" type="number" min="0" max="365" step="1" inputmode="numeric" placeholder="${cur.trial && cur.trialEndsAt ? `Manter o prazo atual (${dateTime(cur.trialEndsAt).split(',')[0]})` : `Padrão: ${((plans || []).find(x => x.trial) || {}).trialDays || 30} dias`}">
             <span class="c-hint">${cur.trial && cur.readOnly ? 'Informe os dias para reabrir o teste.' : 'Use para estender o teste de quem está avaliando. 0 encerra o teste agora.'}</span></div>
         </div>
         <div id="plan-custom" class="c-plan-custom c-plan-custom--3"${sel === 'custom' ? '' : ' hidden'}>
@@ -901,7 +904,7 @@
       paint();
     };
     f.addEventListener('change', (e) => {
-      if (e.target.name === 'planId') { sel = e.target.value; f.querySelector('#plan-custom').hidden = sel !== 'custom'; f.querySelector('#plan-trial').hidden = sel !== 'teste'; }
+      if (e.target.name === 'planId') { sel = e.target.value; f.querySelector('#plan-custom').hidden = sel !== 'custom'; f.querySelector('#plan-trial').hidden = !((plans || []).find(x => x.id === sel) || {}).trial; }
       warn();
     });
     f.addEventListener('input', warn);
@@ -911,7 +914,7 @@
       busy(btn, true, 'Salvando…');
       const body = { planId: sel };
       if (sel === 'custom') { body.users = f.users.value === '' ? null : Number(f.users.value); body.storageGb = f.storageGb.value === '' ? null : Number(f.storageGb.value); body.fileMb = f.fileMb.value === '' ? null : Number(f.fileMb.value); }
-      if (sel === 'teste' && f.trialDays.value !== '') body.trialDays = Number(f.trialDays.value);
+      if (((plans || []).find(x => x.id === sel) || {}).trial && f.trialDays.value !== '') body.trialDays = Number(f.trialDays.value);
       try { await api(`/console/orgs/${encodeURIComponent(o.id)}/plan`, { method: 'PUT', body }); m.close(); toast('Plano atualizado.'); done(); }
       catch (e) { busy(btn, false); fieldError(f, e.data && e.data.field, e.message); }
     };
@@ -1029,6 +1032,7 @@
   const leadCard = (r) => `<span class="c-avatar">${esc(initials(r.name))}</span>
     <span class="c-wl-main"><span class="c-wl-top"><span class="c-wl-name">${esc(r.company)}</span><span class="c-wl-when">${rel(r.updatedAt || r.createdAt)}</span></span>
     <span class="c-wl-meta" style="display:block">${esc(r.name)} · ${esc(TEAM[r.teamSize] || r.teamSize)}</span>
+    ${r.kind === 'upsell' ? `<span class="c-crm-upsell">${icon('trending-up')}Upsell · Enterprise</span>` : ''}
     ${r.orgId && !r.orgPurgedAt ? `<span class="c-crm-org">${icon('building-2')}${esc(r.orgName || 'Organização')}</span>` : ''}</span>`;
   function renderWaitlist(main) {
     const { items } = state.wl;
@@ -1119,12 +1123,14 @@
         ${fact('E-mail', `<a href="mailto:${esc(r.email)}">${esc(r.email)}</a>`)}
         ${fact('Telefone', esc(r.phone))}
         ${fact('País', r.country ? esc(countryName(r.country)) : '')}
-        ${fact('Tamanho da equipe', esc(TEAM[r.teamSize] || r.teamSize))}
+        ${r.kind === 'upsell' ? fact('Pedido', 'Enterprise · upsell') : ''}
+        ${r.kind === 'upsell' ? fact('Plano atual', esc(r.currentPlan || '')) : ''}
+        ${r.kind === 'upsell' && r.people ? fact('Pessoas', num(r.people)) : fact('Tamanho da equipe', esc(TEAM[r.teamSize] || r.teamSize))}
         ${fact('Como conheceu', esc(SOURCE[r.source] || ''))}
         ${fact('Site', site ? `<a href="${esc(site)}" target="_blank" rel="noopener noreferrer">${esc(r.website)}</a>` : '')}
         ${fact('Pedido em', `${dateTime(r.createdAt)}${r.submissions > 1 ? ` · enviado ${r.submissions}×` : ''}`)}
       </div></div>
-      ${r.message ? `<div class="c-detail-section"><div class="c-section-label">O que querem organizar</div><div class="c-quote">${esc(r.message)}</div></div>` : ''}
+      ${r.message ? `<div class="c-detail-section"><div class="c-section-label">${r.kind === 'upsell' ? 'O que precisam' : 'O que querem organizar'}</div><div class="c-quote">${esc(r.message)}</div></div>` : ''}
       <div class="c-detail-section"><div class="c-section-label">Etapa</div>
         <div class="c-crm-stages" role="group" aria-label="Mudar etapa">${STAGE_ORDER.map(k => `<button class="c-btn c-btn--sm${k === r.status ? ' is-current' : ''}${k === 'lost' ? ' c-btn--ghost' : ''}" data-status="${k}"${k === r.status || !edit ? ' disabled' : ''}${k === r.status ? ' aria-current="step"' : ''}>${esc(STATUS[k].label)}</button>`).join('')}</div>
         <div class="c-actions" style="margin-top:10px"><button class="c-btn c-btn--sm c-btn--ghost" data-copy="${esc(r.email)}">${icon('copy')}Copiar e-mail</button></div>
@@ -1152,8 +1158,8 @@
             <select class="c-select" id="org-country" name="country">${countryOptions(r.country || 'BR')}</select>
             <span class="c-hint">Define o idioma da organização (Brasil e Portugal em português, os outros em inglês). Dá para mudar depois.</span></div>
           <div class="c-field"><label class="c-label" for="org-plan">Plano</label>
-            <select class="c-select" id="org-plan" name="planId">${(state.plans || []).map(p => `<option value="${esc(p.id)}"${p.id === 'teste' ? ' selected' : ''}>${esc(p.name)} · ${esc(p.id === 'custom' ? 'sem limites (ajuste depois)' : p.trial ? '14 dias grátis' : planLimits(p))}</option>`).join('')}</select>
-            <span class="c-hint">O teste de 30 dias começa quando o dono aceitar o convite. Tamanho da equipe informado: ${esc(TEAM[r.teamSize] || r.teamSize)}${TEAM_PLAN[r.teamSize] ? ` (plano provável depois: ${esc(((state.plans || []).find(p => p.id === TEAM_PLAN[r.teamSize]) || {}).name || '')})` : ''}.</span></div>
+            <select class="c-select" id="org-plan" name="planId">${(state.plans || []).filter(p => !p.archived).map(p => `<option value="${esc(p.id)}"${p.trial ? ' selected' : ''}>${esc(p.name)} · ${esc(p.id === 'custom' ? 'sem limites (ajuste depois)' : p.trial ? `${p.trialDays || 30} dias grátis` : planLimits(p))}</option>`).join('')}</select>
+            <span class="c-hint">O teste começa quando o dono aceitar o convite. Tamanho da equipe informado: ${esc(TEAM[r.teamSize] || r.teamSize)}${TEAM_PLAN[r.teamSize] ? ` (plano provável depois: ${esc(((state.plans || []).find(p => p.id === TEAM_PLAN[r.teamSize]) || {}).name || '')})` : ''}.</span></div>
           <p class="c-hint">Criamos a organização com uma equipe "Geral" e o fluxo padrão, e <b>${esc(r.name)}</b> recebe o convite para criar a conta como dono.</p>
           <div class="c-error" role="alert" style="margin-top:10px"></div></form>`,
         `<button class="c-btn" data-close>Cancelar</button><button class="c-btn c-btn--primary" id="org-go">Criar e convidar</button>`);
@@ -1364,21 +1370,6 @@
       ${rows.length ? `<div class="c-table-wrap"><table class="c-table"><thead><tr><th>Organização</th><th>Situação</th><th>Ciclo</th><th style="text-align:right">Valor</th><th>${extraHead}</th></tr></thead>
         <tbody>${rows.map(o => orgRow(o, extra)).join('')}</tbody></table></div>` : `<div class="c-card-body"><div class="c-hint">${empty}</div></div>`}
     </section>`;
-    /* Preços: mensal, desconto do anual (%) e anual de cada plano, nas duas
-       tabelas. Os três campos andam juntos: mudar o mensal mantém o desconto,
-       mudar o desconto recalcula o anual, mudar o anual recalcula o desconto. */
-    const editPrices = canEdit('billing');
-    const pct = (m, y) => m > 0 ? Math.round((1 - y / (m * 12)) * 1000) / 10 : 0;
-    const priceTable = (key, table, title, sub) => `<div class="c-price-block" data-table="${key}">
-      <div class="c-card-title" style="font-size:13.5px;margin:4px 0 2px">${title}</div><div class="c-hint" style="margin-bottom:8px">${sub}</div>
-      <div class="c-table-wrap"><table class="c-table c-price-table"><thead><tr><th>Plano</th><th>Mensal</th><th>Desconto no anual</th><th>Anual</th><th></th></tr></thead><tbody>
-      ${d.plans.map(p => { const t = table[p.id]; return `<tr data-plan="${p.id}">
-        <td class="c-cell-main">${esc(p.name)}</td>
-        <td><span class="c-price-cell"><small>R$</small><input class="c-input" name="${key}.${p.id}.MONTHLY" data-k="m" type="number" min="0" step="0.01" inputmode="decimal" value="${t.MONTHLY}"${editPrices ? '' : ' disabled'} aria-label="${esc(p.name)}: mensal"></span></td>
-        <td><span class="c-price-cell"><input class="c-input c-input--pct" data-k="p" type="number" min="0" max="99" step="0.1" inputmode="decimal" value="${pct(t.MONTHLY, t.YEARLY)}"${editPrices ? '' : ' disabled'} aria-label="${esc(p.name)}: desconto no anual"><small>%</small></span></td>
-        <td><span class="c-price-cell"><small>R$</small><input class="c-input" name="${key}.${p.id}.YEARLY" data-k="y" type="number" min="0" step="0.01" inputmode="decimal" value="${t.YEARLY}"${editPrices ? '' : ' disabled'} aria-label="${esc(p.name)}: anual"></span></td>
-        <td class="c-price-eq" data-eq></td></tr>`; }).join('')}
-      </tbody></table></div></div>`;
     main.innerHTML = pageHead('Pagamentos', 'Cobrança dos planos pelo Asaas: chave de API, webhook, preço de fundador e quem está pagando.') + `
       <div class="c-kpis">
         ${kpi('Receita mensal (MRR)', 'trending-up', money(st.mrr), 'anuais contam 1/12')}
@@ -1426,17 +1417,9 @@
         </section>
       </div>
       <section class="c-card" style="margin-top:16px">
-        <div class="c-card-head"><div><div class="c-card-title">Preços dos planos</div>
-          <div class="c-card-sub">Valem para assinaturas novas e trocas de plano. Quem já assina continua pagando o valor atual no Asaas.</div></div></div>
-        <div class="c-card-body">
-          <form id="f-prices" novalidate>
-            ${priceTable('prices', d.prices, 'Preço normal', 'O que aparece para quem assina depois das vagas de fundador.')}
-            <div style="height:16px"></div>
-            ${priceTable('founderPrices', d.founderPrices, 'Preço de fundador', 'Para as primeiras organizações (vagas e prazo acima). Fica travado para elas.')}
-            <div class="c-error" role="alert" style="margin-top:12px"></div>
-            ${editPrices ? '<div class="c-actions"><button class="c-btn c-btn--primary c-btn--sm" id="pr-save" type="submit">Salvar preços</button></div>' : ''}
-          </form>
-        </div>
+        <div class="c-card-head"><div><div class="c-card-title">Planos e preços</div>
+          <div class="c-card-sub">Limites, preços, descontos do anual, preço de fundador e duração do teste ficam em <a href="/console/planos" data-link>Planos</a>.</div></div>
+          <a class="c-btn c-btn--sm" href="/console/planos" data-link>${icon('layers')}Abrir Planos</a></div>
       </section>
       ${table('Atrasadas', st.pastDue, 'Carência até', o => shortDate(o.graceEndsAt), 'Nenhuma assinatura atrasada.')}
       ${table('Aguardando o primeiro pagamento', st.pending, 'Desde', () => '', 'Ninguém aguardando.')}
@@ -1462,34 +1445,6 @@
         toast('Preço de fundador salvo.');
         pageBilling();
       } catch (err) { fieldError(fd, err.data && err.data.field, err.message); }
-    });
-    const fpr = document.getElementById('f-prices');
-    const num2 = (v) => Math.round(Number(v) * 100) / 100;
-    const syncRow = (tr, from) => {
-      const m = tr.querySelector('[data-k="m"]'), p = tr.querySelector('[data-k="p"]'), y = tr.querySelector('[data-k="y"]');
-      if (from === 'm' || from === 'p') y.value = num2(Number(m.value) * 12 * (1 - Number(p.value) / 100));
-      else if (from === 'y') p.value = pct(Number(m.value), Number(y.value));
-      const mv = Number(m.value), yv = Number(y.value);
-      const free = mv > 0 ? Math.round(((mv * 12 - yv) / mv) * 10) / 10 : 0;
-      tr.querySelector('[data-eq]').textContent = mv > 0 && yv > 0 ? `${money(yv / 12)}/mês no anual${free > 0 ? ` · −${Math.round((1 - yv / (mv * 12)) * 100)}%` : ''}` : '';
-    };
-    fpr.querySelectorAll('tr[data-plan]').forEach(tr => {
-      syncRow(tr);
-      tr.querySelectorAll('input').forEach(inp => inp.addEventListener('input', () => syncRow(tr, inp.dataset.k)));
-    });
-    fpr.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const read = (key) => Object.fromEntries(d.plans.map(p => {
-        const tr = fpr.querySelector(`[data-table="${key}"] tr[data-plan="${p.id}"]`);
-        return [p.id, { MONTHLY: num2(tr.querySelector('[data-k="m"]').value), YEARLY: num2(tr.querySelector('[data-k="y"]').value) }];
-      }));
-      const btn = document.getElementById('pr-save');
-      busy(btn, true, 'Salvando…');
-      try {
-        await api('/console/billing', { method: 'PUT', body: { env: d.env, prices: read('prices'), founderPrices: read('founderPrices') } });
-        toast('Preços salvos.');
-        pageBilling();
-      } catch (err) { busy(btn, false); fieldError(fpr, err.data && err.data.field, err.message); }
     });
     const fp = document.getElementById('f-pa');
     fp?.addEventListener('submit', async (e) => {
@@ -1517,6 +1472,148 @@
       } catch (err) { fail(err); }
       busy(btn, false);
     });
+  }
+
+  /* ═════════════ Planos ═════════════
+     Catálogo que a página de planos do reWork mostra: o Teste (duração e
+     limites), os planos à venda (limites, mensal/anual com desconto, preço
+     de fundador opcional, destaque) e o Personalizado (limites por
+     organização). Plano em uso não é apagado: sai da venda. Área Pagamentos. */
+  const pctOff = (m, y) => m > 0 ? Math.round((1 - y / (m * 12)) * 1000) / 10 : 0;
+  async function pagePlans() {
+    const edit = canEdit('billing');
+    const addBtn = edit ? `<button class="c-btn c-btn--primary c-btn--sm" id="add-plan">${icon('plus')}Novo plano</button>` : '';
+    const head = () => pageHead('Planos', 'O que cada plano dá e quanto custa. É o que aparece na página de planos do reWork.', addBtn);
+    const main = shell('plans', head() + `<div class="c-card"><div class="c-card-body">${skel(160)}</div></div>`);
+    let d;
+    try { d = await api('/console/plans'); }
+    catch (e) { if (e.silent) return; return errorBlock(main, e, pagePlans); }
+    const trial = d.items.find(p => p.kind === 'trial');
+    const paid = d.items.filter(p => p.kind === 'paid');
+    const custom = d.items.find(p => p.kind === 'custom');
+    const lim = (p) => `${num(p.users)} ${p.users === 1 ? 'pessoa' : 'pessoas'} · ${String(p.storageGb).replace('.', ',')} GB · arquivos até ${num(p.fileMb)} MB`;
+    const inUse = (u) => u.orgs || u.subscriptions ? `${num(u.orgs)} ${u.orgs === 1 ? 'organização' : 'organizações'}${u.subscriptions ? ` · ${num(u.subscriptions)} ${u.subscriptions === 1 ? 'assinatura' : 'assinaturas'}` : ''}` : '<span class="c-cell-sub">Ninguém</span>';
+    const priceCell = (t) => t ? `${money(t.MONTHLY)}<div class="c-cell-sub">${money(t.YEARLY)}/ano${pctOff(t.MONTHLY, t.YEARLY) > 0 ? ` · −${Math.round(pctOff(t.MONTHLY, t.YEARLY))}%` : ''}</div>` : '—';
+    main.innerHTML = head() + `
+      ${trial ? `<section class="c-card">
+        <div class="c-card-head"><div><div class="c-card-title">${esc(trial.name)} <span class="c-pill c-pill--warn">Teste grátis</span></div>
+          <div class="c-card-sub">Toda organização nova começa aqui. Os dias contam a partir de quando o dono aceita o convite; acabou o teste sem assinar, fica só para consulta.</div></div>
+          ${edit ? `<button class="c-btn c-btn--sm" data-edit-plan="${esc(trial.id)}">Editar</button>` : ''}</div>
+        <div class="c-card-body"><div class="c-facts">
+          <div><div class="c-fact-k">Duração</div><div class="c-fact-v">${num(trial.trialDays)} dias</div></div>
+          <div><div class="c-fact-k">Limites</div><div class="c-fact-v">${lim(trial)}</div></div>
+          <div><div class="c-fact-k">Em teste agora</div><div class="c-fact-v">${inUse(trial.usage)}</div></div>
+        </div></div>
+      </section>` : ''}
+      <section class="c-card" style="margin-top:16px">
+        <div class="c-card-head"><div><div class="c-card-title">Planos à venda</div>
+          <div class="c-card-sub">Mudar limites vale na hora para quem está no plano. Mudar preço vale para assinaturas novas e trocas de plano; quem já assina continua pagando o valor atual no Asaas.</div></div></div>
+        <div class="c-table-wrap"><table class="c-table">
+          <thead><tr><th>Plano</th><th>Limites</th><th>Preço</th><th>Fundador</th><th>Em uso</th><th></th></tr></thead>
+          <tbody>${paid.map(p => `<tr${p.archived ? ' class="is-muted"' : ''}>
+            <td><div class="c-cell-main">${esc(p.name)}</div><div class="c-cell-sub">${p.featured ? '<span class="c-pill c-pill--accent">Mais escolhido</span> ' : ''}${p.archived ? '<span class="c-pill">Fora da venda</span>' : ''}</div></td>
+            <td class="c-cell-sub">${lim(p)}</td>
+            <td>${priceCell(p.prices)}</td>
+            <td>${p.founderPrices ? priceCell(p.founderPrices) : '<span class="c-cell-sub">Igual ao normal</span>'}</td>
+            <td>${inUse(p.usage)}</td>
+            <td style="text-align:right">${edit ? `<div class="c-actions" style="justify-content:flex-end">
+              <button class="c-btn c-btn--sm" data-edit-plan="${esc(p.id)}">Editar</button>
+              <button class="c-btn c-btn--sm" data-archive="${esc(p.id)}" data-archived="${p.archived}">${p.archived ? 'Voltar à venda' : 'Tirar da venda'}</button>
+              <button class="c-btn c-btn--sm c-btn--danger" data-del-plan="${esc(p.id)}"${p.usage.inUse ? ' disabled title="Em uso: tire da venda em vez de apagar"' : ''}>Apagar</button></div>` : ''}</td>
+          </tr>`).join('') || `<tr><td colspan="6"><div class="c-empty">Nenhum plano à venda.</div></td></tr>`}</tbody>
+        </table></div>
+      </section>
+      ${custom ? `<section class="c-card" style="margin-top:16px">
+        <div class="c-card-head"><div><div class="c-card-title">${esc(custom.name)} <span class="c-pill c-pill--info">Enterprise</span></div>
+          <div class="c-card-sub">Não aparece para venda: os limites são definidos por organização, em Organizações › Plano. Pedidos de Enterprise feitos pela página de planos chegam no CRM como upsell.</div></div></div>
+        <div class="c-card-body"><div class="c-facts"><div><div class="c-fact-k">Em uso</div><div class="c-fact-v">${inUse(custom.usage)}</div></div></div></div>
+      </section>` : ''}`;
+    paint();
+    document.getElementById('add-plan')?.addEventListener('click', () => catalogPlanModal(d, null));
+    main.querySelectorAll('[data-edit-plan]').forEach(b => b.addEventListener('click', () => catalogPlanModal(d, d.items.find(p => p.id === b.dataset.editPlan))));
+    main.querySelectorAll('[data-archive]').forEach(b => b.addEventListener('click', async () => {
+      const archived = b.dataset.archived !== 'true';
+      busy(b, true, '…');
+      try { await api(`/console/plans/${encodeURIComponent(b.dataset.archive)}`, { method: 'PUT', body: { archived } }); toast(archived ? 'Plano fora da venda. Quem já usa continua.' : 'Plano de volta à venda.'); pagePlans(); }
+      catch (e) { busy(b, false); fail(e); }
+    }));
+    main.querySelectorAll('[data-del-plan]').forEach(b => b.addEventListener('click', async () => {
+      const p = d.items.find(x => x.id === b.dataset.delPlan);
+      if (!p || !confirm(`Apagar o plano "${p.name}"? Não dá para desfazer.`)) return;
+      busy(b, true, '…');
+      try { await api(`/console/plans/${encodeURIComponent(p.id)}`, { method: 'DELETE' }); toast('Plano apagado.'); pagePlans(); }
+      catch (e) { busy(b, false); fail(e); }
+    }));
+  }
+  // Mensal, desconto (%) e anual andam juntos (mudar um recalcula o outro).
+  const priceFields = (key, t, label) => `<div class="c-plan-prices" data-prices="${key}">
+      <div class="c-field"><label class="c-label">${label} · mensal (R$)</label><input class="c-input" name="${key}.MONTHLY" data-k="m" type="number" min="0" step="0.01" inputmode="decimal" value="${t ? t.MONTHLY : ''}"></div>
+      <div class="c-field"><label class="c-label">Desconto no anual (%)</label><input class="c-input" data-k="p" type="number" min="0" max="99" step="0.1" inputmode="decimal" value="${t ? pctOff(t.MONTHLY, t.YEARLY) : 16.7}"></div>
+      <div class="c-field"><label class="c-label">Anual (R$)</label><input class="c-input" name="${key}.YEARLY" data-k="y" type="number" min="0" step="0.01" inputmode="decimal" value="${t ? t.YEARLY : ''}"></div>
+      <div class="c-hint c-plan-eq" data-eq></div>
+    </div>`;
+  function bindPrices(box) {
+    const r2 = (v) => Math.round(Number(v) * 100) / 100;
+    const m = box.querySelector('[data-k="m"]'), p = box.querySelector('[data-k="p"]'), y = box.querySelector('[data-k="y"]');
+    const eq = () => { const mv = Number(m.value), yv = Number(y.value); box.querySelector('[data-eq]').textContent = mv > 0 && yv > 0 ? `No anual: ${money(yv / 12)}/mês · selo "−${Math.round(pctOff(mv, yv))}%" na página de planos` : ''; };
+    m.addEventListener('input', () => { y.value = r2(Number(m.value) * 12 * (1 - Number(p.value) / 100)); eq(); });
+    p.addEventListener('input', () => { y.value = r2(Number(m.value) * 12 * (1 - Number(p.value) / 100)); eq(); });
+    y.addEventListener('input', () => { p.value = pctOff(Number(m.value), Number(y.value)); eq(); });
+    eq();
+  }
+  function catalogPlanModal(d, p) {
+    const isTrialP = p && p.kind === 'trial';
+    const isCustom = p && p.kind === 'custom';
+    const uploadMax = d.uploadMaxMb || 150;
+    const limits = isCustom ? '' : `<div class="c-plan-grid">
+        <div class="c-field"><label class="c-label" for="pm-users">Pessoas</label><input class="c-input" id="pm-users" name="users" type="number" min="1" step="1" value="${p ? p.users : ''}"></div>
+        <div class="c-field"><label class="c-label" for="pm-storage">Armazenamento (GB)</label><input class="c-input" id="pm-storage" name="storageGb" type="number" min="0.1" step="0.1" value="${p ? p.storageGb : ''}"></div>
+        <div class="c-field"><label class="c-label" for="pm-file">Tamanho por arquivo (MB)</label><input class="c-input" id="pm-file" name="fileMb" type="number" min="1" max="${uploadMax}" step="1" value="${p ? p.fileMb : 25}"><span class="c-hint">Máximo do servidor: ${uploadMax} MB</span></div>
+      </div>`;
+    const body = `<form id="f-plan" novalidate>
+        <div class="c-field"><label class="c-label" for="pm-name">Nome</label><input class="c-input" id="pm-name" name="name" maxlength="40" value="${esc(p ? p.name : '')}" placeholder="Ex.: Startup" autocomplete="off"></div>
+        ${isTrialP ? `<div class="c-field"><label class="c-label" for="pm-days">Duração do teste (dias)</label><input class="c-input" id="pm-days" name="trialDays" type="number" min="1" max="365" step="1" value="${p.trialDays}"><span class="c-hint">Vale para organizações novas. Quem já está em teste mantém o prazo (dá para mudar em Organizações).</span></div>` : ''}
+        ${limits}
+        ${!p || p.kind === 'paid' ? `
+          ${priceFields('prices', p && p.prices, 'Preço')}
+          <label class="c-check" style="margin-top:4px"><input type="checkbox" name="hasFounder"${p && p.founderPrices ? ' checked' : ''}> Preço diferente para fundadores</label>
+          <div id="pm-founder"${p && p.founderPrices ? '' : ' hidden'}>${priceFields('founderPrices', p && p.founderPrices, 'Fundador')}</div>
+          <label class="c-check" style="margin-top:8px"><input type="checkbox" name="featured"${p && p.featured ? ' checked' : ''}> Destacar como <b>Mais escolhido</b></label>` : ''}
+        ${isCustom ? '<p class="c-hint">Os limites do Personalizado são definidos em cada organização (Organizações › Plano).</p>' : ''}
+        <div class="c-error" role="alert" style="margin-top:12px"></div></form>`;
+    const m = modal(p ? `Editar plano: ${p.name}` : 'Novo plano', body, `<button class="c-btn" data-close>Cancelar</button><button class="c-btn c-btn--primary" id="pm-save">${p ? 'Salvar' : 'Criar plano'}</button>`);
+    m.el.querySelector('.c-modal')?.classList.add('c-modal--wide');
+    const f = m.el.querySelector('#f-plan');
+    f.querySelectorAll('[data-prices]').forEach(bindPrices);
+    f.hasFounder?.addEventListener('change', () => { f.querySelector('#pm-founder').hidden = !f.hasFounder.checked; });
+    setTimeout(() => f.name.focus(), 30);
+    const r2 = (v) => Math.round(Number(v) * 100) / 100;
+    const readPrices = (key) => { const box = f.querySelector(`[data-prices="${key}"]`); return { MONTHLY: r2(box.querySelector('[data-k="m"]').value), YEARLY: r2(box.querySelector('[data-k="y"]').value) }; };
+    const save = async () => {
+      const btn = m.el.querySelector('#pm-save');
+      const out = { name: f.name.value };
+      if (!isCustom) Object.assign(out, { users: Number(f.users.value), storageGb: Number(f.storageGb.value), fileMb: Number(f.fileMb.value) });
+      if (isTrialP) out.trialDays = Number(f.trialDays.value);
+      if (!p || p.kind === 'paid') {
+        out.prices = readPrices('prices');
+        out.founderPrices = f.hasFounder.checked ? readPrices('founderPrices') : null;
+        out.featured = f.featured.checked;
+      }
+      busy(btn, true, 'Salvando…');
+      try {
+        await api(p ? `/console/plans/${encodeURIComponent(p.id)}` : '/console/plans', { method: p ? 'PUT' : 'POST', body: out });
+        m.close();
+        toast(p ? 'Plano salvo.' : 'Plano criado.');
+        pagePlans();
+      } catch (e) {
+        busy(btn, false);
+        // Erro visível: no campo (se houver) e na mensagem embaixo.
+        fieldError(f, e.data && e.data.field, e.message);
+        if (e.data && /founderPrices/.test(e.data.field || '')) { f.hasFounder.checked = true; f.querySelector('#pm-founder').hidden = false; }
+      }
+    };
+    m.el.querySelector('#pm-save').addEventListener('click', save);
+    f.addEventListener('submit', (e) => { e.preventDefault(); save(); });
   }
 
   function billingCard(b) {
