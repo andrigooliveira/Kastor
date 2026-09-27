@@ -88,7 +88,8 @@ function rewriteCacheBusters(buildSha) {
 (async () => {
   console.log('› build-prod: minificando assets in-place...');
   // No Render não há BUILD_SHA do CI: usa o commit que ele está publicando.
-  const buildSha = (process.env.BUILD_SHA || process.env.RENDER_GIT_COMMIT || '').trim();
+  const raw = (process.env.BUILD_SHA || process.env.RENDER_GIT_COMMIT || '').trim();
+  const buildSha = raw === 'dev' ? '' : raw; // 'dev' fixo deixaria o cache velho entre deploys
   if (buildSha) console.log(`  BUILD_SHA=${buildSha}`);
   else console.log('  BUILD_SHA vazio — usando fallback dev-<ts>');
   rewriteCacheBusters(buildSha);

@@ -13,8 +13,11 @@ FROM node:22-alpine
 # Alimenta o build-prod.js (que reescreve os cache-busters do index.html e o
 # SW_VERSION do sw.js) e vira ENV do runtime (server expõe em /api/health, o
 # cliente checa periodicamente pra oferecer reload em versão nova).
-ARG BUILD_SHA=dev
-ENV BUILD_SHA=$BUILD_SHA
+# No Render não há CI: ele passa o commit em RENDER_GIT_COMMIT. Sem nenhum
+# dos dois, o build-prod usa dev-<hora do build> (muda a cada deploy).
+ARG BUILD_SHA=
+ARG RENDER_GIT_COMMIT=
+ENV BUILD_SHA=${BUILD_SHA:-$RENDER_GIT_COMMIT}
 
 # Alpine não vem com o /home/node populado; roda como root simplifica volumes
 # de dados (uploads/auth.enc mount) sem se preocupar com uid/gid.
