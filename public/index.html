@@ -297,6 +297,16 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 <div id="app">
   <!-- Backdrop atrás da sidebar quando aberta em mobile -->
   <div class="menu-backdrop" id="menu-backdrop" onclick="closeSidebar()"></div>
+  <!-- Barra de navegação inferior (só celular, ≤760px) + botão flutuante de
+       nova demanda. Ativo sincronizado por syncBottomNav() no goPage. -->
+  <nav class="mnav" id="mnav" aria-label="Navegação principal">
+    <button type="button" class="mnav-item freelancer-hide" data-page="dashboard" onclick="goPage('dashboard')"><i data-lucide="house"></i><span>Início</span></button>
+    <button type="button" class="mnav-item" data-page="mine" onclick="goPage('mine')"><i data-lucide="user-round"></i><span>Minhas</span><b class="mnav-badge" id="mnav-count-mine" hidden></b></button>
+    <button type="button" class="mnav-item freelancer-hide" data-page="list" onclick="goPage('list')"><i data-lucide="list"></i><span>Demandas</span></button>
+    <button type="button" class="mnav-item freelancer-hide" data-page="agenda" onclick="goPage('agenda')"><i data-lucide="calendar"></i><span>Agenda</span></button>
+    <button type="button" class="mnav-item" data-page="more" onclick="toggleSidebar()"><i data-lucide="menu"></i><span>Mais</span></button>
+  </nav>
+  <button type="button" class="mnav-fab freelancer-hide" id="mnav-fab" onclick="openNewDemand()" aria-label="Nova demanda"><i data-lucide="plus"></i></button>
   <!-- SIDEBAR -->
   <aside class="sidebar sb" aria-label="Navegação principal">
     <div class="sb-top">
@@ -748,6 +758,10 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <i data-lucide="search" class="filter-input-icon ic-sm"></i>
             <input class="filter-input filter-input--with-icon" id="search-input" placeholder="Buscar demanda…" oninput="renderListDebounced()">
           </div>
+          <!-- Celular: os filtros ficam recolhidos atrás deste botão (toggleMobileFilters). -->
+          <button type="button" class="filters-mtoggle" id="filters-mtoggle" onclick="toggleMobileFilters()" aria-expanded="false">
+            <i data-lucide="sliders-horizontal" class="ic-sm"></i><span>Filtros</span><b class="filters-mtoggle-count" id="filters-mtoggle-count" hidden></b>
+          </button>
           <!-- Squad: multi-select via popover com checkboxes; estado em CSV no hidden input. -->
           <div class="filter-multi-wrap" id="filter-workspace-wrap">
             <button type="button" class="filter-multi-trigger" id="filter-workspace-trigger" onclick="toggleWsMulti(event)">
@@ -4509,7 +4523,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260924novidades1" defer></script>
+<script src="/js/boot.js?v=20260928mobile1" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
