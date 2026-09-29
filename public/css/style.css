@@ -20591,7 +20591,6 @@ body.dv-resizing[data-dv-resize="se"] * { cursor: nwse-resize !important; }
   body.is-detail .main { padding-bottom: calc(76px + var(--mnav-safe)); }
   /* Tela cheia (404/login) e modal aberto: sem barra */
   body.is-fullpage .mnav, body.is-fullpage .mnav-fab { display: none; }
-  body:has(.modal-overlay.open) .mnav-fab { display: none; }
 
   /* ── Topo: título da página no lugar do hambúrguer e do "+" ── */
   .menu-toggle { display: none !important; }
@@ -20645,21 +20644,22 @@ body.dv-resizing[data-dv-resize="se"] * { cursor: nwse-resize !important; }
 /* MOBILE v2 — Listas de demandas (Minhas Demandas, Demandas, etc.) como
    cartões. As linhas .mrow da tabela viram um grid de 3 linhas:
      nome · cliente/projeto · etapa, responsável e prazo.
-   A cor da prioridade vira a borda esquerda do cartão. */
+   A cor da prioridade vira a borda esquerda do cartão. Só nas tabelas de
+   demanda (.mdt no HTML) — sem :has(), que pesa em celular fraco. */
 .filters-mtoggle { display: none; }
 @media (max-width: 760px) {
-  .table-wrap:has(> .mine-table-v2 tr.mrow[data-prio]), .table-scroll:has(> .mine-table-v2 tr.mrow[data-prio]) {
+  .mdt-wrap {
     overflow: visible !important; border: 0 !important; background: transparent !important;
     box-shadow: none !important; padding: 0 !important; border-radius: 0 !important;
   }
-  .mine-table-v2:has(tr.mrow[data-prio]) { display: block; min-width: 0 !important; width: 100%; border: 0; background: transparent; }
-  .mine-table-v2:has(tr.mrow[data-prio]) thead { display: none; }
-  .mine-table-v2:has(tr.mrow[data-prio]) tbody { display: flex; flex-direction: column; gap: 8px; }
-  .mine-table-v2:has(tr.mrow[data-prio]) tr.mgroup { display: block; background: transparent; }
-  .mine-table-v2:has(tr.mrow[data-prio]) tr.mgroup > td { display: block; padding: 14px 2px 2px; border: 0; background: transparent; }
-  .mine-table-v2:has(tr.mrow[data-prio]) tr.mgroup:first-child > td { padding-top: 0; }
+  .mine-table-v2.mdt { display: block; min-width: 0 !important; width: 100%; border: 0; background: transparent; }
+  .mine-table-v2.mdt thead { display: none; }
+  .mine-table-v2.mdt tbody { display: flex; flex-direction: column; gap: 8px; }
+  .mine-table-v2.mdt tr.mgroup { display: block; background: transparent; }
+  .mine-table-v2.mdt tr.mgroup > td { display: block; padding: 14px 2px 2px; border: 0; background: transparent; }
+  .mine-table-v2.mdt tr.mgroup:first-child > td { padding-top: 0; }
 
-  .mine-table-v2:has(tr.mrow[data-prio]) tr.mrow[data-prio] {
+  .mine-table-v2.mdt tr.mrow[data-prio] {
     display: grid;
     grid-template-columns: fit-content(58%) minmax(0, 1fr) auto;
     grid-template-areas:
@@ -20677,44 +20677,44 @@ body.dv-resizing[data-dv-resize="se"] * { cursor: nwse-resize !important; }
     -webkit-tap-highlight-color: transparent;
     transition: background .12s var(--ease-out);
   }
-  .mine-table-v2:has(tr.mrow[data-prio]) tr.mrow[data-prio]:active { background: var(--surface-2); }
-  .mine-table-v2:has(tr.mrow[data-prio]) tr.mrow[data-prio][data-prio="1"] { border-left-color: #EF4444; }
-  .mine-table-v2:has(tr.mrow[data-prio]) tr.mrow[data-prio][data-prio="2"] { border-left-color: #FB7415; }
-  .mine-table-v2:has(tr.mrow[data-prio]) tr.mrow[data-prio][data-prio="3"] { border-left-color: #FACC15; }
-  .mine-table-v2:has(tr.mrow[data-prio]) tr.mrow[data-prio][data-prio="4"] { border-left-color: #60A5FA; }
-  .mine-table-v2:has(tr.mrow[data-prio]) tr.mrow[data-prio] > td {
+  .mine-table-v2.mdt tr.mrow[data-prio]:active { background: var(--surface-2); }
+  .mine-table-v2.mdt tr.mrow[data-prio][data-prio="1"] { border-left-color: #EF4444; }
+  .mine-table-v2.mdt tr.mrow[data-prio][data-prio="2"] { border-left-color: #FB7415; }
+  .mine-table-v2.mdt tr.mrow[data-prio][data-prio="3"] { border-left-color: #FACC15; }
+  .mine-table-v2.mdt tr.mrow[data-prio][data-prio="4"] { border-left-color: #60A5FA; }
+  .mine-table-v2.mdt tr.mrow[data-prio] > td {
     display: block; padding: 0 !important; border: 0 !important;
     background: transparent !important; min-width: 0; max-width: none; height: auto;
   }
-  .mine-table-v2:has(tr.mrow[data-prio]) tr.mrow[data-prio]:hover > td { background: transparent !important; }
-  .mine-table-v2:has(tr.mrow[data-prio]) tr.mrow[data-prio] > td.mcol-name { grid-area: name; margin-bottom: 2px; width: auto !important; min-width: 0 !important; max-width: none !important; }
-  .mine-table-v2:has(tr.mrow[data-prio]) .mname { font-size: 15px; font-weight: 600; line-height: 1.35; white-space: normal; color: var(--text); }
-  .mine-table-v2:has(tr.mrow[data-prio]) .mname-row { display: block; }
-  .mine-table-v2:has(tr.mrow[data-prio]) .mrow-copy { display: none; }
-  .mine-table-v2:has(tr.mrow[data-prio]) tr.mrow[data-prio] > td.mcol-client { grid-area: client; }
-  .mine-table-v2:has(tr.mrow[data-prio]) tr.mrow[data-prio] > td.mcol-project { grid-area: project; }
-  .mine-table-v2:has(tr.mrow[data-prio]) tr.mrow[data-prio] > td.mcol-client,
-  .mine-table-v2:has(tr.mrow[data-prio]) tr.mrow[data-prio] > td.mcol-project {
+  .mine-table-v2.mdt tr.mrow[data-prio]:hover > td { background: transparent !important; }
+  .mine-table-v2.mdt tr.mrow[data-prio] > td.mcol-name { grid-area: name; margin-bottom: 2px; width: auto !important; min-width: 0 !important; max-width: none !important; }
+  .mine-table-v2.mdt .mname { font-size: 15px; font-weight: 600; line-height: 1.35; white-space: normal; color: var(--text); }
+  .mine-table-v2.mdt .mname-row { display: block; }
+  .mine-table-v2.mdt .mrow-copy { display: none; }
+  .mine-table-v2.mdt tr.mrow[data-prio] > td.mcol-client { grid-area: client; }
+  .mine-table-v2.mdt tr.mrow[data-prio] > td.mcol-project { grid-area: project; }
+  .mine-table-v2.mdt tr.mrow[data-prio] > td.mcol-client,
+  .mine-table-v2.mdt tr.mrow[data-prio] > td.mcol-project {
     font-size: 12.5px; color: var(--text-muted);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .mine-table-v2:has(tr.mrow[data-prio]) tr.mrow[data-prio] > td.mcol-project::before { content: "·"; margin-right: 6px; opacity: .6; }
-  .mine-table-v2:has(tr.mrow[data-prio]) tr.mrow[data-prio] > td.mcol-stage { grid-area: stage; margin-top: 6px; }
-  .mine-table-v2:has(tr.mrow[data-prio]) tr.mrow[data-prio] > td.mcol-owner { grid-area: owner; margin-top: 6px; }
-  .mine-table-v2:has(tr.mrow[data-prio]) tr.mrow[data-prio] > td.mcol-due { grid-area: due; margin-top: 6px; justify-self: end; }
-  .mine-table-v2:has(tr.mrow[data-prio]) tr.mrow[data-prio] > td.mcol-squad,
-  .mine-table-v2:has(tr.mrow[data-prio]) tr.mrow[data-prio] > td.mcol-bulk,
-  .mine-table-v2:has(tr.mrow[data-prio]) tr.mrow[data-prio] > td.col-bulk-check { display: none; }
-  body.bulk-mode .mine-table-v2:has(tr.mrow[data-prio]) tr.mrow[data-prio] > td.mcol-bulk { display: block; position: absolute; }
-  .mine-table-v2:has(tr.mrow[data-prio]) .mstage { font-size: 11.5px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .mine-table-v2:has(tr.mrow[data-prio]) .mowner { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
-  .mine-table-v2:has(tr.mrow[data-prio]) .mowner .avatar { width: 20px; height: 20px; font-size: 10px; flex-shrink: 0; }
-  .mine-table-v2:has(tr.mrow[data-prio]) .mowner-name { font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .mine-table-v2:has(tr.mrow[data-prio]) .mdue { min-width: 0; }
-  .mine-table-v2:has(tr.mrow[data-prio]) .mdue-bar { display: none; }
-  .mine-table-v2:has(tr.mrow[data-prio]) .mdue-line { display: flex; gap: 6px; align-items: baseline; justify-content: flex-end; white-space: nowrap; }
-  .mine-table-v2:has(tr.mrow[data-prio]) .mdue-date { font-size: 12.5px; font-weight: 600; }
-  .mine-table-v2:has(tr.mrow[data-prio]) .mdue-rel { font-size: 11.5px; }
+  .mine-table-v2.mdt tr.mrow[data-prio] > td.mcol-project::before { content: "·"; margin-right: 6px; opacity: .6; }
+  .mine-table-v2.mdt tr.mrow[data-prio] > td.mcol-stage { grid-area: stage; margin-top: 6px; }
+  .mine-table-v2.mdt tr.mrow[data-prio] > td.mcol-owner { grid-area: owner; margin-top: 6px; }
+  .mine-table-v2.mdt tr.mrow[data-prio] > td.mcol-due { grid-area: due; margin-top: 6px; justify-self: end; }
+  .mine-table-v2.mdt tr.mrow[data-prio] > td.mcol-squad,
+  .mine-table-v2.mdt tr.mrow[data-prio] > td.mcol-bulk,
+  .mine-table-v2.mdt tr.mrow[data-prio] > td.col-bulk-check { display: none; }
+  body.bulk-mode .mine-table-v2.mdt tr.mrow[data-prio] > td.mcol-bulk { display: block; position: absolute; }
+  .mine-table-v2.mdt .mstage { font-size: 11.5px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mine-table-v2.mdt .mowner { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+  .mine-table-v2.mdt .mowner .avatar { width: 20px; height: 20px; font-size: 10px; flex-shrink: 0; }
+  .mine-table-v2.mdt .mowner-name { font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mine-table-v2.mdt .mdue { min-width: 0; }
+  .mine-table-v2.mdt .mdue-bar { display: none; }
+  .mine-table-v2.mdt .mdue-line { display: flex; gap: 6px; align-items: baseline; justify-content: flex-end; white-space: nowrap; }
+  .mine-table-v2.mdt .mdue-date { font-size: 12.5px; font-weight: 600; }
+  .mine-table-v2.mdt .mdue-rel { font-size: 11.5px; }
 
   /* ── Filtros da lista de Demandas: busca + linha de ações; o resto abre
         embaixo ao tocar em "Filtros" ── */
@@ -20815,7 +20815,7 @@ body.dv-resizing[data-dv-resize="se"] * { cursor: nwse-resize !important; }
   .agenda-toolbar .agenda-week-label { flex: 1; text-align: center; }
   .agenda-toolbar .agenda-spacer { display: none; }
   #agenda-view-toggle-weeks { display: none !important; }
-  .agenda-grid-wrap:has(.agl) { overflow: visible; border: 0; background: transparent; padding: 0; }
+  .agenda-grid-wrap.is-list { overflow: visible; border: 0; background: transparent; padding: 0; }
 }
 .agl { display: flex; flex-direction: column; gap: 18px; }
 .agl-day { display: flex; flex-direction: column; gap: 6px; }
@@ -20876,4 +20876,15 @@ body.dv-resizing[data-dv-resize="se"] * { cursor: nwse-resize !important; }
   .att-gal-sort-btns::-webkit-scrollbar { display: none; }
   .perf-controls { display: flex; flex-direction: column; align-items: stretch; gap: 12px; }
   .perf-control, .perf-control .filter-select, .perf-control .filter-period-trigger, .perf-control select { width: 100%; max-width: none; }
+}
+
+/* MOBILE v2 — desempenho em celular intermediário.
+   · Modais fechados não são desenhados: com opacity 0 e backdrop-filter cada
+     um virava uma camada do tamanho da tela (~50 no DOM) e estourava a
+     memória de vídeo — o navegador deixava pedaços da página em branco.
+   · No celular, sem backdrop-filter (o fundo escuro translúcido continua). */
+.modal-overlay:not(.open) { visibility: hidden; transition: opacity 160ms var(--ease-in), visibility 0s linear 160ms; }
+@media (max-width: 760px) {
+  *, *::before, *::after { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+  .modal-overlay { background: rgba(0,0,0,.66); }
 }

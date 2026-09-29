@@ -36273,6 +36273,7 @@ function renderAgendaInto(wrapId, weekLabelId, userId) {
   // de Minhas Demandas), mesmo a escondida — cada uma custa centenas de células.
   const page = wrap.closest('.page');
   if (page && !page.classList.contains('active')) return;
+  wrap.classList.remove('is-list'); // buildAgendaList liga de novo no celular
   // Modo Time só na página standalone (não em Minhas Demandas embed).
   const isStandalone = (wrapId === 'agenda-grid-wrap');
   const useTeam = isStandalone && agendaMode === 'team';
@@ -36357,6 +36358,7 @@ function buildAgendaList(wrap, userId, days) {
       ${canEdit ? `<button type="button" class="agl-add" onclick="openScheduleModal(null, { userId: '${userId}', date: '${ymd}' })"><i data-lucide="plus" class="ic-xs"></i> Agendar</button>` : ''}
     </section>`;
   }).join('');
+  wrap.classList.add('is-list');
   wrap.innerHTML = `<div class="agl">${html}</div>`;
   // Eventos do Google: abre o mesmo detalhe da grade.
   wrap.querySelectorAll('[data-gcal]').forEach(btn => {

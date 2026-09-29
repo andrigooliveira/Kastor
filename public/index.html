@@ -66,7 +66,8 @@ body{background:var(--bg);color:var(--text);font-family:'Geist','Segoe UI',syste
    é setado pelo script inline no head antes do body renderizar). */
 #app-loading-screen{position:fixed;inset:0;background:#fff;display:flex;align-items:center;justify-content:center;z-index:100000;transition:opacity .2s ease-out}
 :root[data-boot-theme="dark"] #app-loading-screen{background:#0c0c10}
-#app-loading-screen.is-hidden{opacity:0;pointer-events:none}
+#app-loading-screen.is-hidden{opacity:0;pointer-events:none;visibility:hidden;transition:opacity .2s ease-out,visibility 0s linear .2s}
+#app-loading-screen.is-hidden .rework-mark-part{animation:none} /* escondido: sem animação infinita gastando CPU/GPU */
 /* Enquanto o overlay está visível, trava o scroll do document — evita
    scrollbars aparecendo por conteúdo que ainda vai renderizar por trás.
    Aplica em html E body (body.overflow-x:hidden do style.css deixaria y solto). */
@@ -1252,8 +1253,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
         <div class="list-views-container">
           <div id="list-table-view">
-            <div class="table-wrap table-scroll mine-table-wrap">
-              <table class="mine-table-v2 is-demands">
+            <div class="table-wrap table-scroll mine-table-wrap mdt-wrap">
+              <table class="mine-table-v2 mdt is-demands">
                 <thead>
                   <tr>
                     <th class="col-bulk-check"><input type="checkbox" class="bulk-check-all" id="bulk-check-all" onclick="toggleBulkSelectAll(this.checked)" title="Selecionar todas"></th>
@@ -1279,8 +1280,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                 <span class="done-table-title">Concluídas</span>
                 <span class="done-table-count" id="done-table-count">0</span>
               </button>
-              <div class="table-wrap table-scroll mine-table-wrap done-table-body-wrap" id="done-table-body-wrap" style="display:none">
-                <table class="mine-table-v2 is-demands is-done">
+              <div class="table-wrap table-scroll mine-table-wrap mdt-wrap done-table-body-wrap" id="done-table-body-wrap" style="display:none">
+                <table class="mine-table-v2 mdt is-demands is-done">
                   <thead>
                     <tr>
                       <th class="col-bulk-check"></th>
@@ -1334,8 +1335,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
     <div class="page" id="page-mine">
       <div class="page-body">
         <div id="mine-view-list">
-          <div class="table-wrap table-scroll mine-table-wrap">
-            <table class="mine-table-v2">
+          <div class="table-wrap table-scroll mine-table-wrap mdt-wrap">
+            <table class="mine-table-v2 mdt">
               <thead>
                 <tr>
                   <th class="mth-sortable">
@@ -4933,7 +4934,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260929mobile1" defer></script>
+<script src="/js/boot.js?v=20260929perf1" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
