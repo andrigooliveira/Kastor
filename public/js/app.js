@@ -1402,16 +1402,32 @@ function statusUntilLabel(st) {
 }
 function statusLabel(st) { return [statusText(st), statusUntilLabel(st)].filter(Boolean).join(' '); }
 
-/* Classe de presença que vira um anel ao redor do avatar.
-   verde = ativo nos últimos 5min, amarelo = 5-30min, sem anel a partir de 30min. */
+/* Classe de presença do avatar — vira o indicador no canto (estilo Discord):
+   bolinha verde = ativo nos últimos 5min, amarela = 5-30min, nada depois.
+   Ativo só pelo celular (sem computador nos últimos 5min) vira o ícone de
+   celular. Pings antigos sem aparelho contam como computador. */
 function presenceClassFor(u) {
   if (!u || !u.lastSeen) return '';
-  const t = new Date(u.lastSeen).getTime();
-  if (!Number.isFinite(t)) return '';
-  const diffMin = (Date.now() - t) / 60000;
-  if (diffMin < 5)  return 'presence-online';
+  const mins = iso => { const t = iso ? Date.parse(iso) : NaN; return Number.isFinite(t) ? (Date.now() - t) / 60000 : Infinity; };
+  const diffMin = mins(u.lastSeen);
+  if (diffMin < 5) {
+    const mobile = mins(u.lastSeenMobile) < 5;
+    const desktop = mins(u.lastSeenDesktop) < 5 || (!u.lastSeenMobile && !u.lastSeenDesktop);
+    return mobile && !desktop ? 'presence-online presence-mobile' : 'presence-online';
+  }
   if (diffMin < 30) return 'presence-away';
   return '';
+}
+/* Aparelho desta aba. "Versão para computador" no navegador do celular troca
+   o user agent e passa a contar como computador — igual ao Discord web. */
+function clientDevice() {
+  const uad = navigator.userAgentData;
+  if (uad && typeof uad.mobile === 'boolean') return uad.mobile ? 'mobile' : 'desktop';
+  const ua = navigator.userAgent || '';
+  if (/Mobi|Android|iPhone|iPod/i.test(ua)) return 'mobile';
+  // iPad no iPadOS 13+ se apresenta como Mac; o toque denuncia.
+  if (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) return 'mobile';
+  return 'desktop';
 }
 // Gera um gradiente determinístico a partir de um seed (id do usuário) — cada
 // pessoa ganha sua cor consistente, mantendo bom contraste com texto branco.
@@ -31935,8 +31951,12 @@ let _presencePingTimer = null;
 async function pingPresence() {
   if (document.hidden) return; // sem ping em aba de background — status vai virar "offline" naturalmente
   try {
-    const r = await api('/me/ping', 'POST', {});
-    if (r && r.lastSeen && me) me.lastSeen = r.lastSeen;
+    const r = await api('/me/ping', 'POST', { device: clientDevice() });
+    if (r && r.lastSeen && me) {
+      me.lastSeen = r.lastSeen;
+      me.lastSeenMobile = r.lastSeenMobile;
+      me.lastSeenDesktop = r.lastSeenDesktop;
+    }
     // Atualiza lastSeen dos demais usuários — necessário pra dot deles
     try {
       const freshUsers = await api('/users');

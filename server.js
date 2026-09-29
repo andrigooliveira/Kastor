@@ -3189,10 +3189,15 @@ setInterval(() => {
 }, 30 * 60 * 1000);
 
 app.post('/api/me/ping', requireAuth, (req, res) => {
-  req.user.lastSeen = nowISO();
+  const now = nowISO();
+  req.user.lastSeen = now;
+  // Aparelho da aba que pingou (detectado no cliente). Guardado separado pra
+  // quem está com computador E celular abertos aparecer como computador.
+  if (req.body?.device === 'mobile') req.user.lastSeenMobile = now;
+  else req.user.lastSeenDesktop = now;
   _touchActivityBucket(req.user.id);
   saveEntity('users', req.user);
-  res.json({ ok: true, lastSeen: req.user.lastSeen });
+  res.json({ ok: true, lastSeen: now, lastSeenMobile: req.user.lastSeenMobile || null, lastSeenDesktop: req.user.lastSeenDesktop || null });
 });
 
 app.post('/api/me/email/test', requireAuth, async (req, res) => {

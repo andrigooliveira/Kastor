@@ -3875,12 +3875,11 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 .cap-heat-cell.load-2 { background: rgba(234,179,8,0.12);  border-color: #EAB308; color: #B58900; }
 .cap-heat-cell.load-3 { background: rgba(249,115,22,0.12); border-color: #F97316; color: #EA580C; }
 .cap-heat-cell.load-4 { background: rgba(239,68,68,0.12);  border-color: #EF4444; color: #EF4444; }
-/* Avatares do mapa de prazos sem anel de presença (outline + breathing) — só a foto/inicial.
-   Inclui .presence-* pra ganhar especificidade sobre as regras de presença que vêm
-   DEPOIS no arquivo (senão a ordem de fonte faz o anel voltar). */
-.cap-heat-user .avatar.presence-online,
-.cap-heat-user .avatar.presence-away { outline: none; }
-.cap-heat-user .avatar.presence-online::before { display: none; }
+/* Avatares do mapa de prazos sem indicador de presença — só a foto/inicial.
+   Mesma especificidade das regras de presença (que vêm DEPOIS no arquivo),
+   por isso o !important. */
+.cap-heat-user .avatar.presence-online:not(.has-status)::after,
+.cap-heat-user .avatar.presence-away:not(.has-status)::after { display: none !important; }
 
 /* ── RELATÓRIOS / SLA ──
    Tela de métricas de tempo por etapa (gargalos), lead time, pontualidade,
@@ -10670,23 +10669,31 @@ kbd {
 .topbar-timer-btn.is-primary:hover { background: var(--accent-hover, var(--accent)); }
 .topbar-timer-btn.is-danger:hover { background: rgba(239,68,68,0.15); color: #EF4444; border-color: #EF4444; }
 
-/* ─── PRESENCE RING — anel ao redor da foto ─── */
+/* ─── PRESENÇA — indicador no canto do avatar (estilo Discord) ───
+   Bolinha verde (online), amarela (ausente) ou celular verde (online só pelo
+   celular). O recorte em volta é um box-shadow na cor da superfície. Status
+   pessoal (.has-status, mais abaixo) ocupa o mesmo canto e tem prioridade. */
 .avatar { position: relative; }
-.avatar.presence-online {
-  outline: 2px solid #3CE3A0;
-  outline-offset: 1.5px;
+.avatar.presence-online:not(.has-status),
+.avatar.presence-away:not(.has-status) { overflow: visible; }
+.avatar.presence-online:not(.has-status)::after,
+.avatar.presence-away:not(.has-status)::after {
+  content: ''; position: absolute; right: -2px; bottom: -2px;
+  width: clamp(8px, 34%, 14px); height: clamp(8px, 34%, 14px);
+  border-radius: 50%;
+  background: #3CE3A0;
+  box-shadow: 0 0 0 2px var(--surface);
+  pointer-events: none;
 }
-.avatar.presence-away {
-  outline: 2px solid #F5A718;
-  outline-offset: 1.5px;
-}
-/* Em avatares pequenos (kanban stack, calendário) o anel encosta mais pra não engordar muito */
-.avatar-stack-avatar.presence-online,
-.avatar-stack-avatar.presence-away,
-.cal-event-avatar.presence-online,
-.cal-event-avatar.presence-away {
-  outline-width: 1.5px;
-  outline-offset: 1px;
+.avatar.presence-away:not(.has-status)::after { background: #F5A718; }
+/* Celular: retângulo verde com a "tela" recortada na cor da superfície */
+.avatar.presence-mobile:not(.has-status)::after {
+  width: clamp(7px, 24%, 10px); height: clamp(11px, 38%, 15px);
+  right: -1px; bottom: -3px;
+  border-radius: 2.5px;
+  background:
+    linear-gradient(var(--surface), var(--surface)) center 38% / 58% 52% no-repeat,
+    #3CE3A0;
 }
 
 /* Footer do inline edit (descrição/briefing) com indicador de auto-save. */
@@ -13181,22 +13188,6 @@ tr.demand-row:hover {
   transition: transform .35s var(--ease-out), opacity .01s;
 }
 
-/* ── Presence ring: breathing sutil no online ──
-   Um segundo outline "fantasma" pulsando pra sinalizar "vivo agora". */
-.avatar.presence-online::before {
-  content: '';
-  position: absolute; inset: -3px;
-  border-radius: inherit;
-  border: 2px solid #3CE3A0;
-  opacity: 0;
-  pointer-events: none;
-  animation: presenceBreath 2.6s var(--ease-out) infinite;
-}
-@keyframes presenceBreath {
-  0%   { transform: scale(0.85); opacity: 0.55; }
-  70%  { transform: scale(1.15); opacity: 0; }
-  100% { transform: scale(1.15); opacity: 0; }
-}
 
 /* ── Notif badge: pulse contínuo enquanto tem não lidas ──
    O badge já tem glow via .has-unread; adicionamos um pulse leve que
@@ -18784,7 +18775,6 @@ a.gm-contact-value:hover { text-decoration: underline; }
    clique) saem. O badge ainda dá um "pop" quando chega notificação nova
    e o sino ainda balança uma vez. */
 .notif-badge.has-unread { animation: none; }
-.avatar.presence-online::before { animation: none; opacity: 0; }
 .btn-primary::after, .btn-confirm::after { display: none; }
 tr.demand-row:hover { transform: none; }
 .btn:active, .btn-primary:active { transform: scale(.98); transition-duration: 60ms; }
