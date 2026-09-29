@@ -8401,6 +8401,7 @@ function renderSidebarNav() {
 }
 function syncSidebarActive(page) {
   const target = SB_PARENT[page] || page;
+  syncBottomNav(target);
   let found = false;
   document.querySelectorAll('.sb-item').forEach(n => {
     const on = n.dataset.page === target;
@@ -8416,6 +8417,21 @@ function syncSidebarActive(page) {
   else document.getElementById('sb-gear')?.removeAttribute('aria-current');
 }
 
+/* Barra inferior do celular: acende a aba da página atual; o que não tem aba
+   própria (clientes, análises, perfil…) acende o "Mais". O detalhe da demanda
+   não acende nada — é uma página "dentro" das listas. */
+function syncBottomNav(target) {
+  const items = document.querySelectorAll('#mnav .mnav-item');
+  if (!items.length) return;
+  const tabs = ['dashboard', 'mine', 'list', 'agenda'];
+  const key = tabs.includes(target) ? target : (target === 'demand-detail' ? '' : 'more');
+  items.forEach(n => {
+    const on = n.dataset.page === key;
+    n.classList.toggle('is-active', on);
+    if (on) n.setAttribute('aria-current', 'page'); else n.removeAttribute('aria-current');
+  });
+  document.body.classList.toggle('is-detail', target === 'demand-detail');
+}
 
 /* "Mais": o que não está no acesso rápido, numa lista ao lado da barra
    (um clique só). No celular a lista abre por cima da própria gaveta. */
@@ -8605,6 +8621,13 @@ function renderNavCounts() {
   el.textContent = open.length > 99 ? '99+' : String(open.length);
   el.classList.toggle('is-late', late > 0);
   el.setAttribute('aria-label', `${open.length} em aberto${late ? `, ${late} atrasada${late > 1 ? 's' : ''}` : ''}`);
+  // Mesmo número na aba "Minhas" da barra inferior do celular.
+  const mb = document.getElementById('mnav-count-mine');
+  if (mb) {
+    mb.hidden = el.hidden;
+    mb.textContent = el.textContent;
+    mb.classList.toggle('is-late', late > 0);
+  }
 }
 /* Rótulo ao lado dos ícones quando a sidebar está recolhida (os tooltips
    globais do app são desligados). Lê data-label. */
@@ -11404,6 +11427,26 @@ function clearAdvancedFilters() {
   renderList();
   _updateAdvancedFiltersBadge();
 }
+/* Celular: os filtros da lista de Demandas ficam recolhidos atrás do botão
+   "Filtros"; o número conta os que estão em uso (fora a busca e o squad). */
+function toggleMobileFilters(force) {
+  const bar = document.querySelector('#page-list .filters-bar');
+  const btn = document.getElementById('filters-mtoggle');
+  if (!bar || !btn) return;
+  const open = typeof force === 'boolean' ? force : !bar.classList.contains('is-mopen');
+  bar.classList.toggle('is-mopen', open);
+  btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+function _syncMobileFiltersCount() {
+  const el = document.getElementById('filters-mtoggle-count');
+  if (!el) return;
+  let n = 0;
+  ['filter-user', 'filter-client', 'filter-project', 'filter-period'].forEach(id => { if ((document.getElementById(id)?.value || '').trim()) n++; });
+  _AF_VALUE_IDS.forEach(id => { if ((document.getElementById(id)?.value || '').trim()) n++; });
+  _AF_CHECKBOX_IDS.forEach(id => { if (document.getElementById(id)?.checked) n++; });
+  el.textContent = String(n);
+  el.hidden = n === 0;
+}
 function _updateAdvancedFiltersBadge() {
   const badge = document.getElementById('advanced-filters-badge');
   if (!badge) return;
@@ -11412,6 +11455,7 @@ function _updateAdvancedFiltersBadge() {
   _AF_CHECKBOX_IDS.forEach(id => { if (document.getElementById(id)?.checked) count++; });
   badge.textContent = String(count);
   badge.style.display = count > 0 ? '' : 'none';
+  _syncMobileFiltersCount();
   _syncSavedFilterLabel();
   _afDateSyncLabels();
 }
@@ -11812,6 +11856,7 @@ function renderList() {
   // (o rebuild dos options abaixo respeita o value setado aqui via prevUser).
   const firstEnter = !_filtersRestored['list'];
   restoreFilters('list');
+  _syncMobileFiltersCount();
   // Ao ENTRAR na aba Demandas, o filtro de Squad vem travado no workspace
   // atual (activeWs) — apenas 1 squad selecionado por padrão.
   const wsInput = $('filter-workspace');
@@ -36247,7 +36292,83 @@ function renderAgendaInto(wrapId, weekLabelId, userId) {
     return;
   }
   if (!userId) { wrap.innerHTML = '<div class="agenda-empty">Sem usuário pra exibir.</div>'; return; }
+  if (isMobileLayout()) { buildAgendaList(wrap, userId, days); return; }
   buildAgendaGrid(wrap, userId, days);
+}
+
+/* Celular (≤760px): a grade de horários com arrastar/redimensionar não cabe
+   nem funciona bem no dedo. Mostra os mesmos dados em lista por dia: blocos
+   agendados e eventos do Google em ordem de horário, mais as demandas da
+   pessoa com prazo naquele dia. Tocar num bloco abre a demanda (ou edita o
+   bloco livre); "Agendar" abre o modal já com o dia preenchido. */
+function isMobileLayout() {
+  return !!(window.matchMedia && window.matchMedia('(max-width: 760px)').matches);
+}
+function buildAgendaList(wrap, userId, days) {
+  const hm = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+  const todayYmd = agendaYmd(new Date());
+  const tmr = new Date(); tmr.setDate(tmr.getDate() + 1);
+  const tomorrowYmd = agendaYmd(tmr);
+  const canEdit = !!(me && (me.isAdmin || userId === me.id));
+  const mine = demands.filter(d => d.ownerId === userId && !isDone(d));
+  const gcals = []; // eventos do Google renderizados, pelo índice em data-gcal
+  const html = days.map(day => {
+    const ymd = agendaYmd(day);
+    const items = [];
+    schedules.filter(s => s.userId === userId && s.date === ymd).forEach(s => {
+      const isFree = !s.demandId;
+      const d = isFree ? null : demandById(s.demandId);
+      const p = d ? projectById(d.projectId) : null;
+      const c = p && p.clientId ? clientById(p.clientId) : null;
+      const k = isFree ? scheduleKindOf(s.kind) : null;
+      const color = isFree ? (s.color || k.color || '#7A00FF') : (s.stageColorSnapshot || p?.color || '#7A00FF');
+      items.push({
+        start: s.startMin, end: s.endMin, color,
+        title: isFree ? (s.title || k.label) : (d ? d.name : '(demanda removida)'),
+        meta: isFree ? k.label : [c?.name, p?.name].filter(Boolean).join(' · '),
+        onclick: d ? `showDetail('${d.id}')` : (isFree && canEdit ? `openScheduleModal('${s.id}')` : '')
+      });
+    });
+    (googleEventsForUser[userId] || []).map(ev => googleEventToBlock(ev, ymd)).filter(Boolean).forEach(g => {
+      items.push({ start: g.startMin, end: g.endMin, color: g.backgroundColor, title: g.summary, meta: 'Google Agenda', gcal: gcals.push(g) - 1 });
+    });
+    items.sort((a, b) => a.start - b.start);
+    const due = mine.filter(d => effDue(d) === ymd);
+    const mins = items.filter(it => it.gcal === undefined).reduce((sum, it) => sum + (it.end - it.start), 0);
+    const label = ymd === todayYmd ? 'Hoje' : ymd === tomorrowYmd ? 'Amanhã'
+      : day.toLocaleDateString('pt-BR', { weekday: 'long' }).replace('-feira', '');
+    const date = day.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+    const rows = items.map(it => `
+      <button type="button" class="agl-item" style="--block-color:${esc(it.color)}" ${it.gcal !== undefined ? `data-gcal="${it.gcal}"` : (it.onclick ? `onclick="${it.onclick}"` : 'disabled')}>
+        <span class="agl-time">${hm(it.start)}<small>${hm(it.end)}</small></span>
+        <span class="agl-body"><span class="agl-title">${esc(it.title)}</span>${it.meta ? `<span class="agl-meta">${esc(it.meta)}</span>` : ''}</span>
+      </button>`).join('');
+    const dues = due.map(d => `
+      <button type="button" class="agl-due" onclick="showDetail('${d.id}')">
+        <i data-lucide="flag" class="ic-xs"></i><span>${esc(d.name)}</span>
+      </button>`).join('');
+    return `<section class="agl-day${ymd === todayYmd ? ' is-today' : ''}">
+      <header class="agl-day-head">
+        <span class="agl-day-name">${esc(label)}</span><span class="agl-day-date">${date}</span>
+        <span class="agl-day-hours">${fmtHm(mins / 60)} agendadas</span>
+      </header>
+      ${rows || (dues ? '' : '<div class="agl-empty">Nada agendado.</div>')}
+      ${dues ? `<div class="agl-dues"><div class="agl-dues-lbl">Prazos do dia</div>${dues}</div>` : ''}
+      ${canEdit ? `<button type="button" class="agl-add" onclick="openScheduleModal(null, { userId: '${userId}', date: '${ymd}' })"><i data-lucide="plus" class="ic-xs"></i> Agendar</button>` : ''}
+    </section>`;
+  }).join('');
+  wrap.innerHTML = `<div class="agl">${html}</div>`;
+  // Eventos do Google: abre o mesmo detalhe da grade.
+  wrap.querySelectorAll('[data-gcal]').forEach(btn => {
+    btn.addEventListener('click', () => openGoogleEventDetail(gcals[+btn.dataset.gcal]));
+  });
+  paintIcons(wrap);
+}
+// Girou o celular / redimensionou a janela passando do limite: refaz a agenda.
+if (window.matchMedia) {
+  window.matchMedia('(max-width: 760px)').addEventListener?.('change', () => {
+    if (currentPage === 'agenda' || currentPage === 'mine') renderAgenda();
+  });
 }
 
 function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {

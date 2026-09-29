@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Bash",
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch",
+      "SendUserFile",
+      "Artifact",
+      "mcp__github",
+      "mcp__Claude_Code_Remote"
+    ],
+    "ask": [
+      "Bash(git push --force*)",
+      "Bash(git push -f*)"
+    ]
+  }
+}
