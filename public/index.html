@@ -4,12 +4,15 @@
 <meta charset="UTF-8">
 <!-- Idioma: roda antes de tudo (carrega o dicionário quando não é português). -->
 <script src="/js/i18n.js?v=20260926f1"></script>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>reWork</title>
 <link rel="icon" type="image/png" href="/favicon.png">
-<link rel="apple-touch-icon" href="/favicon.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.json">
-<meta name="theme-color" content="#7A00FF">
+<!-- Cor da barra do sistema: acompanha o tema (script abaixo e _applyThemeNow). -->
+<meta name="theme-color" id="meta-theme-color" content="#17171c">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="application-name" content="reWork">
 <meta name="apple-mobile-web-app-title" content="reWork">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -45,6 +48,10 @@
     }
     if (resolved === 'light') document.documentElement.setAttribute('data-theme', 'light');
     else document.documentElement.setAttribute('data-boot-theme', 'dark');
+    var mtc = document.getElementById('meta-theme-color');
+    if (mtc) mtc.setAttribute('content', resolved === 'light' ? '#fafafb' : '#17171c');
+    // Aberto como app instalado (tela inicial): sem barra do navegador.
+    if ((window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone) document.documentElement.classList.add('is-standalone');
     // Tema de cor (roxo = sem atributo). Mesma lista do ACCENT_THEMES no app.js.
     var accent = localStorage.getItem('kastor-accent');
     if (accent && /^(azul|ciano|rosa|laranja|grafite)$/.test(accent)) document.documentElement.setAttribute('data-accent', accent);
@@ -902,6 +909,9 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
         <!-- Novidades resumidas — renderDashUpdates(). Fechar grava cookie. -->
         <div class="dash-updates" id="dash-updates" hidden></div>
+
+        <!-- Celular: convite pra instalar como app — renderPwaInstall(). -->
+        <div class="pwa-install" id="pwa-install" hidden></div>
 
         <div class="dash-split">
           <!-- Coluna esquerda: AGORA -->

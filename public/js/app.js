@@ -4350,6 +4350,8 @@ function applyTheme(theme) {
 function _applyThemeNow(t) {
   if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
   else document.documentElement.removeAttribute('data-theme');
+  // Barra do sistema (celular / app instalado) na cor do topo do tema.
+  document.getElementById('meta-theme-color')?.setAttribute('content', t === 'light' ? '#fafafb' : '#17171c');
   const lbl = document.getElementById('theme-toggle-label');
   if (lbl) lbl.textContent = t === 'light' ? 'Modo claro' : 'Modo escuro';
   const btn = document.getElementById('theme-toggle-btn');
@@ -5629,6 +5631,65 @@ function closeDashUpdates() {
 }
 window.openDashUpdates = openDashUpdates;
 window.closeDashUpdates = closeDashUpdates;
+
+/* ─── INSTALAR COMO APP (celular) ───
+   Cartão no Início convidando a instalar o reWork na tela inicial.
+   · Android/Chrome: usa o evento beforeinstallprompt guardado pelo boot.js.
+   · iPhone/iPad (Safari): não existe botão do sistema — mostra o caminho
+     Compartilhar › Adicionar à Tela de Início.
+   Some se já está instalado (display-mode standalone), no desktop e por 30
+   dias depois de dispensado. */
+const PWA_DISMISS_KEY = 'rw-pwa-install-dismissed';
+function isStandaloneApp() {
+  return !!((window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone);
+}
+function _isIosSafari() {
+  const ua = navigator.userAgent || '';
+  const ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  return ios && /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua);
+}
+function renderPwaInstall() {
+  const el = $('pwa-install');
+  if (!el) return;
+  let dismissedAt = 0;
+  try { dismissedAt = +localStorage.getItem(PWA_DISMISS_KEY) || 0; } catch {}
+  const evt = window.__rwInstallEvt;
+  const ios = _isIosSafari();
+  const show = isMobileLayout() && !isStandaloneApp() && (evt || ios)
+    && Date.now() - dismissedAt > 30 * 24 * 3600 * 1000;
+  if (!show) { el.hidden = true; el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <img class="pwa-install-icon" src="/icons/icon-192.png" alt="">
+    <div class="pwa-install-text">
+      <div class="pwa-install-title">Instale o reWork no celular</div>
+      ${evt
+        ? '<div class="pwa-install-sub">Abre em tela cheia, direto da tela inicial, como um aplicativo.</div>'
+        : '<div class="pwa-install-sub">Toque em <i data-lucide="share" class="ic-xs"></i> <b>Compartilhar</b> e depois em <b>Adicionar à Tela de Início</b>.</div>'}
+    </div>
+    ${evt ? '<button type="button" class="btn btn-primary btn-sm pwa-install-btn" onclick="installPwa()">Instalar</button>' : ''}
+    <button type="button" class="pwa-install-close" onclick="dismissPwaInstall()" aria-label="Agora não" title="Agora não"><i data-lucide="x" class="ic-sm"></i></button>`;
+  el.hidden = false;
+  paintIcons(el);
+}
+async function installPwa() {
+  const evt = window.__rwInstallEvt;
+  if (!evt) return;
+  window.__rwInstallEvt = null;
+  try {
+    evt.prompt();
+    const choice = await evt.userChoice;
+    if (choice && choice.outcome === 'dismissed') dismissPwaInstall();
+  } catch {}
+  renderPwaInstall();
+}
+function dismissPwaInstall() {
+  try { localStorage.setItem(PWA_DISMISS_KEY, String(Date.now())); } catch {}
+  const el = $('pwa-install');
+  if (el) { el.hidden = true; el.innerHTML = ''; }
+}
+window.installPwa = installPwa;
+window.dismissPwaInstall = dismissPwaInstall;
+document.addEventListener('rw:installable', () => { if (currentPage === 'dashboard') renderPwaInstall(); });
 
 async function loadAll() {
   // Uma única request substitui os 16 GETs antigos — em conexões lentas
@@ -9462,6 +9523,7 @@ function renderDashboard() {
   renderDashGreeting();
   renderEmailLinkCard();
   renderDashUpdates();
+  renderPwaInstall();
   const mine = _dashMyDemands();
   const mineActive = mine.filter(d => !isDone(d));
   const teamScope = dashScopedDemands();
@@ -20759,6 +20821,7 @@ async function _moveStageNow(demandId, dir, stageId) {
     patchDemand(upd);
     const nextMine = dir > 0 ? _nextMyDemand(d.id) : null;
     const nextAction = nextMine ? { label: 'Próxima demanda', fn: () => showDetail(nextMine.id) } : null;
+    haptic(dir > 0 && next.done ? 18 : 10);
     if (dir > 0 && next.done) celebrateCompletion('Demanda concluída', d.name, nextAction);
     else toast(dir > 0 ? 'Etapa avançada: ' + next.label : 'Etapa retrocedida: ' + next.label, 'success', nextAction);
     renderDetail();
@@ -36386,6 +36449,195 @@ function buildAgendaList(wrap, userId, days) {
   });
   paintIcons(wrap);
 }
+/* ─── GESTOS NO CELULAR (≤760px) ───
+   · Puxar pra atualizar: no topo de Início, Minhas, Demandas e Agenda.
+   · Deslizar da borda esquerda pra voltar: no detalhe da demanda (o iPhone
+     instalado como app não tem botão/gesto de voltar do sistema).
+   · Deslizar o cartão de demanda pra esquerda: mostra Apontar e Avançar.
+   · Vibração curta (haptic) quando o gesto "pega" e ao concluir ações.
+   Tudo passivo: nenhum listener bloqueia a rolagem nativa. */
+function haptic(ms = 8) { try { navigator.vibrate?.(ms); } catch {} }
+function _gestureBlocked() {
+  return !isMobileLayout() || document.body.classList.contains('menu-open')
+    || !!document.querySelector('.modal-overlay.open');
+}
+
+// Puxar pra atualizar
+const PTR_PAGES = new Set(['dashboard', 'mine', 'list', 'agenda']);
+const PTR_TRIGGER = 70;
+let _ptr = null; // { y0, x0, dist, armed }
+let _ptrBusy = false;
+function _ptrEl() {
+  let el = document.getElementById('ptr');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'ptr'; el.className = 'ptr'; el.setAttribute('aria-hidden', 'true');
+    el.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+function _ptrShow(dist, spinning) {
+  const el = _ptrEl();
+  const p = Math.min(1, dist / PTR_TRIGGER);
+  el.classList.toggle('is-ready', p >= 1);
+  el.classList.toggle('is-spinning', !!spinning);
+  el.style.opacity = String(Math.min(1, p * 1.4));
+  el.style.transform = `translate(-50%, ${Math.round(Math.min(dist, PTR_TRIGGER + 20))}px) rotate(${Math.round(p * 270)}deg)`;
+}
+function _ptrHide() {
+  const el = document.getElementById('ptr');
+  if (!el) return;
+  el.classList.remove('is-ready', 'is-spinning');
+  el.style.opacity = '0';
+  el.style.transform = 'translate(-50%, 0) rotate(0deg)';
+}
+document.addEventListener('touchstart', e => {
+  if (_ptrBusy || e.touches.length !== 1 || _gestureBlocked() || !PTR_PAGES.has(currentPage)) return;
+  if (window.scrollY > 0) return;
+  const t = e.touches[0];
+  _ptr = { y0: t.clientY, x0: t.clientX, dist: 0, armed: false };
+}, { passive: true });
+document.addEventListener('touchmove', e => {
+  if (!_ptr) return;
+  const t = e.touches[0];
+  const dy = t.clientY - _ptr.y0, dx = t.clientX - _ptr.x0;
+  if (window.scrollY > 0 || (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 10)) { _ptr = null; _ptrHide(); return; }
+  _ptr.dist = Math.max(0, dy * 0.5);
+  if (_ptr.dist > 4) _ptrShow(_ptr.dist, false);
+  if (!_ptr.armed && _ptr.dist >= PTR_TRIGGER) { _ptr.armed = true; haptic(); }
+  if (_ptr.armed && _ptr.dist < PTR_TRIGGER) _ptr.armed = false;
+}, { passive: true });
+document.addEventListener('touchend', async () => {
+  if (!_ptr) return;
+  const go = _ptr.dist >= PTR_TRIGGER;
+  _ptr = null;
+  if (!go) { _ptrHide(); return; }
+  _ptrBusy = true;
+  _ptrShow(PTR_TRIGGER, true);
+  try { await refreshData(); } catch {}
+  _ptrBusy = false;
+  _ptrHide();
+}, { passive: true });
+
+// Deslizar da borda esquerda pra voltar (detalhe da demanda)
+let _edge = null; // { x0, y0, dx, active }
+document.addEventListener('touchstart', e => {
+  if (e.touches.length !== 1 || currentPage !== 'demand-detail' || _gestureBlocked()) return;
+  const t = e.touches[0];
+  if (t.clientX > 24) return;
+  _edge = { x0: t.clientX, y0: t.clientY, dx: 0, active: false };
+}, { passive: true });
+document.addEventListener('touchmove', e => {
+  if (!_edge) return;
+  const t = e.touches[0];
+  const dx = t.clientX - _edge.x0, dy = t.clientY - _edge.y0;
+  if (!_edge.active) {
+    if (Math.abs(dy) > 12 && Math.abs(dy) > dx) { _edge = null; return; }
+    if (dx < 12) return;
+    _edge.active = true;
+  }
+  _edge.dx = Math.max(0, dx);
+  const page = document.getElementById('page-demand-detail');
+  if (page) { page.style.transition = 'none'; page.style.transform = `translateX(${_edge.dx}px)`; page.style.opacity = String(1 - Math.min(0.35, _edge.dx / 900)); }
+}, { passive: true });
+document.addEventListener('touchend', () => {
+  if (!_edge) return;
+  const go = _edge.active && _edge.dx > Math.min(110, window.innerWidth * 0.28);
+  _edge = null;
+  const page = document.getElementById('page-demand-detail');
+  if (!page) return;
+  page.style.transition = 'transform .18s ease-out, opacity .18s ease-out';
+  if (go) {
+    haptic();
+    page.style.transform = `translateX(${window.innerWidth}px)`;
+    setTimeout(() => { page.style.transition = page.style.transform = page.style.opacity = ''; closeDemandDetail(); }, 170);
+  } else {
+    page.style.transform = ''; page.style.opacity = '';
+    setTimeout(() => { page.style.transition = ''; }, 200);
+  }
+}, { passive: true });
+
+// Deslizar o cartão de demanda pra esquerda → Apontar / Avançar
+const SWIPE_OPEN = 148;
+let _sw = null;          // { row, x0, y0, dx, active }
+let _swOpenRow = null;   // cartão aberto no momento
+let _swSuppressClick = false;
+function _swRowActions(row) {
+  let a = row.querySelector('.mrow-swipe');
+  if (!a) {
+    const id = row.dataset.demandId || (row.getAttribute('onclick') || '').match(/'([^']+)'/)?.[1];
+    if (!id) return null;
+    a = document.createElement('td');
+    a.className = 'mrow-swipe';
+    a.innerHTML = `<button type="button" class="mrow-swipe-btn is-time" data-act="time" data-id="${esc(id)}"><i data-lucide="clock" class="ic-sm"></i><span>Apontar</span></button>`
+      + `<button type="button" class="mrow-swipe-btn is-next" data-act="next" data-id="${esc(id)}"><i data-lucide="chevrons-right" class="ic-sm"></i><span>Avançar</span></button>`;
+    row.appendChild(a);
+    paintIcons(a);
+  }
+  return a;
+}
+function _swSet(row, x, animate) {
+  row.style.transition = animate ? 'transform .2s ease-out' : 'none';
+  row.style.transform = x ? `translateX(${x}px)` : '';
+}
+function closeSwipedRow() {
+  if (_swOpenRow) { _swSet(_swOpenRow, 0, true); _swOpenRow.classList.remove('is-swiped'); _swOpenRow = null; }
+}
+document.addEventListener('touchstart', e => {
+  if (e.touches.length !== 1 || _gestureBlocked()) return;
+  const row = e.target.closest('.mine-table-v2.mdt tr.mrow[data-prio]');
+  if (!row || e.target.closest('.mrow-swipe')) return;
+  if (_swOpenRow && _swOpenRow !== row) closeSwipedRow();
+  const t = e.touches[0];
+  _sw = { row, x0: t.clientX, y0: t.clientY, dx: 0, active: false, base: row.classList.contains('is-swiped') ? -SWIPE_OPEN : 0 };
+}, { passive: true });
+document.addEventListener('touchmove', e => {
+  if (!_sw) return;
+  const t = e.touches[0];
+  const dx = t.clientX - _sw.x0, dy = t.clientY - _sw.y0;
+  if (!_sw.active) {
+    if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) { _sw = null; return; }
+    if (Math.abs(dx) < 12) return;
+    _sw.active = true;
+    if (!_swRowActions(_sw.row)) { _sw = null; return; }
+  }
+  _sw.dx = dx;
+  const x = Math.max(-SWIPE_OPEN - 30, Math.min(0, _sw.base + dx));
+  _swSet(_sw.row, x, false);
+}, { passive: true });
+document.addEventListener('touchend', () => {
+  if (!_sw) return;
+  const { row, active, base, dx } = _sw;
+  _sw = null;
+  if (!active) return;
+  _swSuppressClick = true; setTimeout(() => { _swSuppressClick = false; }, 350);
+  const open = base + dx < -SWIPE_OPEN / 2;
+  _swSet(row, open ? -SWIPE_OPEN : 0, true);
+  row.classList.toggle('is-swiped', open);
+  if (open && !base) haptic();
+  _swOpenRow = open ? row : null;
+}, { passive: true });
+// Clique: depois de um deslize não abre a demanda; tocar num cartão aberto fecha.
+document.addEventListener('click', e => {
+  const btn = e.target.closest('.mrow-swipe-btn');
+  if (btn) {
+    e.stopPropagation(); e.preventDefault();
+    const id = btn.dataset.id, act = btn.dataset.act;
+    closeSwipedRow();
+    haptic();
+    showDetail(id);
+    // A ação usa o fluxo do detalhe (apontar antes de avançar, etapas personalizadas…).
+    setTimeout(() => { if (detailId === id) (act === 'next' ? moveStage(1) : openRegisterTimeModal()); }, 350);
+    return;
+  }
+  const row = e.target.closest('.mine-table-v2.mdt tr.mrow[data-prio]');
+  if (row && (_swSuppressClick || row.classList.contains('is-swiped'))) {
+    e.stopPropagation(); e.preventDefault();
+    if (!_swSuppressClick) closeSwipedRow();
+  } else if (_swOpenRow && !row) closeSwipedRow();
+}, true);
+
 // Girou o celular / redimensionou a janela passando do limite: refaz a agenda.
 if (window.matchMedia) {
   window.matchMedia('(max-width: 760px)').addEventListener?.('change', () => {
@@ -39243,10 +39495,12 @@ async function clearTrashGroup(type, label) {
    Silencioso — falha de registro (localhost sem HTTPS em prod, extensão
    bloqueando) não impede o app de funcionar como página normal. */
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js', { scope: '/' })
-      .catch(err => console.warn('[SW] registro falhou:', err.message));
-  });
+  // O app.js carrega depois do login (boot.js), normalmente com o 'load' já
+  // disparado — esperar por ele deixava o SW sem registrar.
+  const regSW = () => navigator.serviceWorker.register('/sw.js', { scope: '/' })
+    .catch(err => console.warn('[SW] registro falhou:', err.message));
+  if (document.readyState === 'complete') regSW();
+  else window.addEventListener('load', regSW);
 }
 
 /* ─── COFRE DE SENHAS ─────────────────────────────────────────

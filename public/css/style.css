@@ -20878,3 +20878,74 @@ body.dv-resizing[data-dv-resize="se"] * { cursor: nwse-resize !important; }
   *, *::before, *::after { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
   .modal-overlay { background: rgba(0,0,0,.66); }
 }
+
+/* ═══ APP NO CELULAR — instalação, tela até a borda e toque ═══ */
+/* Cartão "Instalar o reWork" (Início, só celular — renderPwaInstall) */
+.pwa-install {
+  display: flex; align-items: center; gap: 12px;
+  margin: 0 0 20px; padding: 12px 12px 12px 14px;
+  border: 1px solid var(--hairline); border-radius: 14px;
+  background: var(--surface);
+}
+.pwa-install[hidden] { display: none; }
+.pwa-install-icon { width: 44px; height: 44px; border-radius: 11px; flex-shrink: 0; }
+.pwa-install-text { flex: 1; min-width: 0; }
+.pwa-install-title { font-size: 14px; font-weight: 700; color: var(--text); }
+.pwa-install-sub { font-size: 12.5px; line-height: 1.45; color: var(--text-muted); margin-top: 2px; }
+.pwa-install-sub svg { width: 13px; height: 13px; vertical-align: -2px; color: var(--accent-text); }
+.pwa-install-btn { flex-shrink: 0; }
+.pwa-install-close {
+  flex-shrink: 0; align-self: flex-start;
+  width: 28px; height: 28px; border-radius: 8px; border: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; color: var(--text-muted); cursor: pointer;
+}
+
+@media (max-width: 760px) {
+  /* Tela até a borda (viewport-fit=cover): o topo desce abaixo da barra de
+     status/entalhe e a barra de baixo já respeita a área de gestos. */
+  .topbar { padding-top: calc(10px + env(safe-area-inset-top, 0px)); padding-left: calc(16px + env(safe-area-inset-left, 0px)); padding-right: calc(16px + env(safe-area-inset-right, 0px)); }
+  .detail-tabs { top: calc(56px + env(safe-area-inset-top, 0px)); }
+  .sidebar { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .mnav { padding-left: calc(4px + env(safe-area-inset-left, 0px)); padding-right: calc(4px + env(safe-area-inset-right, 0px)); }
+  .modal-overlay .modal { padding-bottom: env(safe-area-inset-bottom, 0px); }
+
+  /* Toque com cara de app */
+  html, body { -webkit-tap-highlight-color: transparent; overscroll-behavior-y: none; }
+  a, button, .btn, [onclick], .mrow, .mnav-item, .agl-item { touch-action: manipulation; }
+  .mnav, .mnav-fab, .btn, .topbar, .detail-footer-v2, .mine-table-v2.mdt tr.mrow { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  /* iPhone dá zoom ao focar campo com fonte < 16px */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea { font-size: max(16px, 1em); }
+}
+
+/* Gestos no celular — puxar pra atualizar (#ptr) e ações do cartão deslizado */
+.ptr {
+  position: fixed; left: 50%; z-index: 84;
+  top: calc(64px + env(safe-area-inset-top, 0px));
+  width: 36px; height: 36px; margin-top: -40px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface); color: var(--text-muted);
+  box-shadow: 0 4px 14px rgba(0,0,0,.28), 0 0 0 1px var(--hairline);
+  opacity: 0; transform: translate(-50%, 0);
+  transition: opacity .15s ease-out, transform .2s ease-out;
+  pointer-events: none;
+}
+.ptr svg { width: 18px; height: 18px; }
+.ptr.is-ready { color: var(--accent-text); }
+.ptr.is-spinning svg { animation: ptrSpin .7s linear infinite; }
+@keyframes ptrSpin { to { transform: rotate(360deg); } }
+@media (max-width: 760px) {
+  .mine-table-v2.mdt tbody { overflow-x: clip; }
+  .mine-table-v2.mdt tr.mrow[data-prio] { position: relative; }
+  .mine-table-v2.mdt tr.mrow[data-prio] > td.mrow-swipe {
+    position: absolute; top: 0; bottom: 0; left: calc(100% + 8px);
+    width: 140px; display: flex !important; gap: 6px; padding: 0 !important;
+  }
+  .mrow-swipe-btn {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+    border: 0; border-radius: 12px; color: #fff; font: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer;
+  }
+  .mrow-swipe-btn svg { width: 18px; height: 18px; }
+  .mrow-swipe-btn.is-time { background: #475569; }
+  .mrow-swipe-btn.is-next { background: var(--accent); }
+}

@@ -18,7 +18,7 @@
    hora; o usuário pega os assets novos no próximo reload, sem prompt. O activate
    limpa os caches de versões antigas pra não acumular lixo. */
 
-const SW_VERSION   = '2026-07-31a';
+const SW_VERSION   = '2026-09-30a';
 const STATIC_CACHE = `rework-static-${SW_VERSION}`;
 
 /* App shell mínimo pré-cacheado no install. Só recursos com URL estável (sem
@@ -32,6 +32,8 @@ const PRECACHE_URLS = [
   '/rework_branco.svg',
   '/rework_preto.svg',
   '/rework_logo.svg',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
 ];
 
 self.addEventListener('install', event => {
@@ -87,6 +89,19 @@ self.addEventListener('fetch', event => {
           return res;
         })
         .catch(() => caches.match('/').then(r => r || caches.match(req)))
+    );
+    return;
+  }
+
+  // Manifesto do app → network-first: ícones/atalhos novos chegam sem esperar
+  // o SW trocar de versão; offline cai no cache.
+  if (url.pathname === '/manifest.json') {
+    event.respondWith(
+      fetch(req).then(res => {
+        const copy = res.clone();
+        caches.open(STATIC_CACHE).then(c => c.put(req, copy)).catch(() => {});
+        return res;
+      }).catch(() => caches.match(req))
     );
     return;
   }

@@ -18,6 +18,18 @@
 
 (function () {
   'use strict';
+
+  // PWA: o Chrome dispara 'beforeinstallprompt' logo no começo, antes do
+  // app.js existir. Guarda o evento pro cartão "Instalar o reWork" usar depois.
+  window.addEventListener('beforeinstallprompt', function (e) {
+    e.preventDefault();
+    window.__rwInstallEvt = e;
+    document.dispatchEvent(new Event('rw:installable'));
+  });
+  window.addEventListener('appinstalled', function () {
+    window.__rwInstallEvt = null;
+    document.dispatchEvent(new Event('rw:installable'));
+  });
   const LOCALE = (window.I18N && window.I18N.locale) || 'pt-BR';
 
   // Versão pro cache-bust dos assets pesados (bate com o v= do HTML).
