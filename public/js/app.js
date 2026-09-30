@@ -9524,6 +9524,7 @@ function renderDashboard() {
   renderEmailLinkCard();
   renderDashUpdates();
   renderPwaInstall();
+  renderPushPrompt();
   const mine = _dashMyDemands();
   const mineActive = mine.filter(d => !isDone(d));
   const teamScope = dashScopedDemands();
@@ -30622,23 +30623,137 @@ function syncProfileAppearanceUI() {
   if (sbCheck) sbCheck.checked = document.body.classList.contains('sidebar-collapsed');
   renderDesktopNotifSlot();
 }
-function renderDesktopNotifSlot() {
+async function renderDesktopNotifSlot() {
   const slot = document.getElementById('profile-desktop-notif-slot');
-  if (slot) {
-    let html;
-    if (!('Notification' in window)) {
-      html = `<span class="profile-status-chip profile-status-chip--muted">Não suportado</span>`;
-    } else if (Notification.permission === 'granted') {
-      html = `<span class="profile-status-chip profile-status-chip--ok"><i data-lucide="check" class="ic-xs"></i> Ativado</span>`;
-    } else if (Notification.permission === 'denied') {
-      html = `<span class="profile-status-chip profile-status-chip--err">Bloqueado no navegador</span>`;
-    } else {
-      html = `<button class="btn btn-ghost btn-sm" onclick="requestDesktopNotifications()">Ativar</button>`;
+  if (!slot) return;
+  const chip = (kind, txt) => `<span class="profile-status-chip profile-status-chip--${kind}">${txt}</span>`;
+  let html;
+  if (!pushSupported()) {
+    // iPhone/iPad só recebem push com o app instalado na tela inicial.
+    html = _isIosSafari() && !isStandaloneApp() ? chip('muted', 'Instale o app na tela inicial') : chip('muted', 'Não suportado');
+  } else if (Notification.permission === 'denied') {
+    html = chip('err', 'Bloqueado no navegador');
+  } else if (await getPushSubscription()) {
+    html = `<button class="btn btn-ghost btn-sm" onclick="testPush(this)">Enviar teste</button>
+            <button class="btn btn-ghost btn-sm" onclick="disablePush()">Desativar</button>`;
+  } else {
+    html = `<button class="btn btn-confirm btn-sm" onclick="enablePush(this)">Ativar</button>`;
+  }
+  slot.innerHTML = html;
+  if (typeof paintIcons === 'function') paintIcons();
+}
+
+/* ─── PUSH ───
+   Inscreve este aparelho no Web Push (chave pública do servidor) e registra a
+   inscrição em /api/me/push. O service worker (sw.js) mostra a notificação e,
+   ao tocar, abre/foca o app na demanda. */
+function pushSupported() {
+  return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+}
+async function getPushSubscription() {
+  if (!pushSupported()) return null;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration('/');
+    return reg ? await reg.pushManager.getSubscription() : null;
+  } catch { return null; }
+}
+function _b64ToUint8(b64) {
+  const pad = '='.repeat((4 - b64.length % 4) % 4);
+  const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(raw, c => c.charCodeAt(0));
+}
+async function enablePush(btn) {
+  if (!pushSupported()) return toast('Este navegador não recebe notificações push.', 'error');
+  if (btn) btn.disabled = true;
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') {
+      toast(perm === 'denied' ? 'Bloqueado. Libere as notificações nas configurações do site.' : 'Permissão não concedida.', 'warn');
+      return;
     }
-    slot.innerHTML = html;
-    if (typeof paintIcons === 'function') paintIcons();
+    await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+    const reg = await navigator.serviceWorker.ready;
+    const { publicKey } = await api('/push/key');
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: _b64ToUint8(publicKey) });
+    await api('/me/push', 'POST', { subscription: sub.toJSON(), device: clientDevice() });
+    haptic(12);
+    toast('Notificações ativadas neste aparelho.');
+    dismissPushPrompt(true);
+  } catch (e) {
+    toast(e.message || 'Não foi possível ativar as notificações.', 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+    renderDesktopNotifSlot();
   }
 }
+async function disablePush() {
+  const sub = await getPushSubscription();
+  if (sub) {
+    try { await api('/me/push', 'DELETE', { endpoint: sub.endpoint }); } catch {}
+    try { await sub.unsubscribe(); } catch {}
+  }
+  toast('Notificações desativadas neste aparelho.');
+  renderDesktopNotifSlot();
+}
+async function testPush(btn) {
+  if (btn) btn.disabled = true;
+  try { await api('/me/push/test', 'POST'); toast('Teste enviado. Deve chegar em alguns segundos.'); }
+  catch (e) { toast(e.message, 'error'); }
+  finally { if (btn) setTimeout(() => { btn.disabled = false; }, 3000); }
+}
+// Na abertura: se este aparelho já tinha push, reenvia a inscrição (o servidor
+// pode ter descartado, ou o navegador renovado as chaves).
+async function syncPushSubscription() {
+  if (!pushSupported() || Notification.permission !== 'granted') return;
+  const sub = await getPushSubscription();
+  if (sub) api('/me/push', 'POST', { subscription: sub.toJSON(), device: clientDevice() }).catch(() => {});
+}
+// Tocar numa notificação com o app já aberto: o SW pede pra navegar até a URL.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', e => {
+    const d = e.data || {};
+    if (d.type !== 'rw:navigate' || !d.url) return;
+    try {
+      const u = new URL(d.url, location.origin);
+      if (u.origin !== location.origin) return;
+      history.pushState(null, '', u.pathname + u.search);
+      applyRoute();
+    } catch {}
+  });
+}
+
+/* Convite pra ativar o push no Início — só com o app instalado no celular
+   (onde o push faz mais diferença) e permissão ainda não pedida. */
+const PUSH_PROMPT_KEY = 'rw-push-prompt-dismissed';
+async function renderPushPrompt() {
+  const el = $('push-prompt');
+  if (!el) return;
+  let dismissed = false;
+  try { dismissed = !!localStorage.getItem(PUSH_PROMPT_KEY); } catch {}
+  const show = !dismissed && isMobileLayout() && isStandaloneApp() && pushSupported()
+    && Notification.permission === 'default' && !(await getPushSubscription());
+  if (!show) { el.hidden = true; el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <span class="pwa-install-icon push-prompt-icon"><i data-lucide="bell-ring"></i></span>
+    <div class="pwa-install-text">
+      <div class="pwa-install-title">Receba os avisos no celular</div>
+      <div class="pwa-install-sub">Menções, demandas atribuídas e lembretes, mesmo com o app fechado.</div>
+    </div>
+    <button type="button" class="btn btn-primary btn-sm pwa-install-btn" onclick="enablePush(this)">Ativar</button>
+    <button type="button" class="pwa-install-close" onclick="dismissPushPrompt()" aria-label="Agora não" title="Agora não"><i data-lucide="x" class="ic-sm"></i></button>`;
+  el.hidden = false;
+  paintIcons(el);
+}
+function dismissPushPrompt(silent) {
+  if (!silent) { try { localStorage.setItem(PUSH_PROMPT_KEY, '1'); } catch {} }
+  const el = $('push-prompt');
+  if (el) { el.hidden = true; el.innerHTML = ''; }
+}
+window.enablePush = enablePush;
+window.disablePush = disablePush;
+window.testPush = testPush;
+window.dismissPushPrompt = dismissPushPrompt;
 
 // Mostra toast quando a URL vem de ?google=connected|error do callback.
 // Limpa a query pra não re-disparar em navegações subsequentes.
@@ -30977,10 +31092,10 @@ async function renderProfileNotifications() {
     </div>
   </div>`;
   const browserRow = `<div class="profile-channel">
-    <span class="profile-channel-ic"><i data-lucide="monitor"></i></span>
+    <span class="profile-channel-ic"><i data-lucide="${clientDevice() === 'mobile' ? 'smartphone' : 'monitor'}"></i></span>
     <div class="profile-channel-info">
-      <div class="profile-row-title">Alertas do navegador</div>
-      <div class="profile-row-sub">Aparecem no canto da tela mesmo com o reWork em outra aba.</div>
+      <div class="profile-row-title">Notificações neste aparelho</div>
+      <div class="profile-row-sub">Menções, demandas atribuídas e lembretes chegam mesmo com o reWork fechado.</div>
     </div>
     <div class="profile-channel-actions" id="profile-desktop-notif-slot"></div>
   </div>`;
@@ -31467,6 +31582,8 @@ async function removeAvatar() {
 let _lastNotifUnread = 0;
 function renderNotifBadge() {
   const unread = notifications.filter(n => !n.read).length;
+  // Selo no ícone do app instalado (Android/desktop; iPhone com app instalado).
+  try { if (unread > 0) navigator.setAppBadge?.(unread); else navigator.clearAppBadge?.(); } catch {}
   // Título da aba: "(3) reWork" — quem deixa a aba aberta vê sem entrar nela.
   const baseTitle = document.title.replace(/^\(\d+\+?\)\s*/, '');
   document.title = unread > 0 ? `(${unread > 99 ? '99+' : unread}) ${baseTitle}` : baseTitle;
@@ -32040,6 +32157,7 @@ enterApp = async function patchedEnterApp() {
   // Restaura o timer ativo salvo (localStorage) — se estava rodando, retoma.
   restoreActiveTimer();
   startPresence();
+  syncPushSubscription();
 };
 
 /* ─── CLIENTES — Página, detalhe e modais ─── */

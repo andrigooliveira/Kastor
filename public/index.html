@@ -912,6 +912,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
         <!-- Celular: convite pra instalar como app — renderPwaInstall(). -->
         <div class="pwa-install" id="pwa-install" hidden></div>
+        <!-- App instalado: convite pra ativar o push — renderPushPrompt(). -->
+        <div class="pwa-install" id="push-prompt" hidden></div>
 
         <div class="dash-split">
           <!-- Coluna esquerda: AGORA -->
@@ -3178,7 +3180,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <section class="profile-section" data-section="notifications" hidden>
               <header class="profile-section-head">
                 <h2 class="profile-section-title">Notificações</h2>
-                <p class="profile-section-sub">O sino do reWork recebe tudo. Aqui você escolhe o que também chega por e-mail e pelo Discord.</p>
+                <p class="profile-section-sub">O sino do reWork recebe tudo. Aqui você escolhe o que também chega por e-mail e pelo Discord, e ativa os avisos neste aparelho.</p>
               </header>
 
               <div class="profile-card-block profile-card-block--flush">

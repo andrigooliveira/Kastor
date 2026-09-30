@@ -629,7 +629,7 @@ function publicUser(u, opts) {
   // quickReplies (respostas prontas) e navMenu (menu lateral personalizado) são
   // pessoais: só voltam pro próprio usuário.
   // reminders/demandSeen/timeGapDismissed: estado pessoal com rota própria.
-  const { googleTokens, googleSyncTokens, knownIps, releaseNotesSeenIds, quickReplies, reminders, demandSeen, timeGapDismissed, mentionDismissed, heldNotifs, navMenu, emailChange, twoFactor, twoFactorSetup, onboardingPendingAt, googleLogin: gLogin, ...rest } = u;
+  const { googleTokens, googleSyncTokens, pushSubs, knownIps, releaseNotesSeenIds, quickReplies, reminders, demandSeen, timeGapDismissed, mentionDismissed, heldNotifs, navMenu, emailChange, twoFactor, twoFactorSetup, onboardingPendingAt, googleLogin: gLogin, ...rest } = u;
   rest.googleConnected = !!googleTokens;
   rest.twoFactorMethod = twoFactorMethodOf(u);
   rest.emailVerified = !!(u.email && u.emailVerifiedAt);
@@ -1308,6 +1308,7 @@ function notify(targetUserId, type, data, triggerUserId, baseUrl) {
   // sem esperar o poll de 5min. Se cliente não está conectado por SSE
   // (mobile em background, tab fechada), pega no próximo poll ou no next boot.
   broadcastToUser(targetUserId, 'notification', 'create');
+  sendPushFor(user, n);
   // Fora (férias/folga): só o sino. E-mail e Discord voltam quando ela voltar.
   if (isAway(user)) return;
   // Focada: só o sino agora; e-mail e Discord saem num resumo quando o foco acabar.
@@ -1323,6 +1324,96 @@ function notify(targetUserId, type, data, triggerUserId, baseUrl) {
   if (discordBot.isEnabled() && user.discordId && DISCORD_EVENT_LABELS[type] && effectiveDiscordPref(user, type)) {
     setImmediate(() => sendNotificationDiscordDM(user, type, data, triggerUserId, baseUrl));
   }
+}
+
+/* ── PUSH (notificação no celular/navegador com o app fechado) ──
+   Web Push padrão (VAPID). As chaves saem de VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY
+   ou são geradas uma vez e guardadas no KV `push:vapid` — funciona sem
+   configurar nada. Cada aparelho que ativa vira uma inscrição em
+   user.pushSubs (máx. 10); inscrição que o serviço de push recusa (404/410)
+   é descartada. Mesma regra do e-mail/Discord: Fora e Focado não recebem. */
+const webpush = require('web-push');
+let _vapidReady = null;
+function vapidKeys() {
+  if (_vapidReady) return _vapidReady;
+  _vapidReady = (async () => {
+    let keys = null;
+    if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+      keys = { publicKey: process.env.VAPID_PUBLIC_KEY, privateKey: process.env.VAPID_PRIVATE_KEY };
+    } else {
+      keys = await store.getKv('push:vapid');
+      if (!keys || !keys.publicKey) {
+        keys = webpush.generateVAPIDKeys();
+        await store.setKv('push:vapid', keys);
+      }
+    }
+    const pub = String(process.env.PUBLIC_URL || '');
+    webpush.setVapidDetails(/^https:\/\//.test(pub) ? pub : 'mailto:noreply@rework.app', keys.publicKey, keys.privateKey);
+    return keys;
+  })().catch(err => { _vapidReady = null; throw err; });
+  return _vapidReady;
+}
+function _demandPathFor(demandId) {
+  const d = (rawDb.demands || []).find(x => x.id === demandId);
+  const orgId = d ? tenancy.wsOrgId(d.workspaceId) : null;
+  return `${orgId ? '/' + orgId : ''}/demands/${demandId}`;
+}
+// Título/texto da notificação — mesmo conteúdo do sino (notifMessage no app),
+// no idioma da pessoa.
+function pushContentFor(n, lang) {
+  const from = n.fromUser ? db.users.find(u => u.id === n.fromUser) : null;
+  const en = lang === 'en';
+  const who = (from && from.name) || n.fromName || (en ? 'Someone' : 'Alguém');
+  const dn = n.demandName || (en ? 'Demand' : 'Demanda');
+  const c = n.commentText ? String(n.commentText).slice(0, 180) : '';
+  if (en) switch (n.type) {
+    case 'assigned':       return { title: dn, body: `${who} assigned this demand to you${n.stageName ? ' at ' + n.stageName : ''}` };
+    case 'stage_assigned': return { title: dn, body: `Moved to ${n.stageName || 'the next stage'} and is now yours` };
+    case 'mention':        return { title: `${who} mentioned you`, body: c ? `${dn}: ${c}` : dn };
+    case 'reaction':       return { title: `${who} reacted ${n.emoji || ''} to your comment`.trim(), body: c ? `${dn}: ${c}` : dn };
+    case 'reminder':       return { title: `Reminder: ${dn}`, body: c || 'Tap to open the demand' };
+    case 'watch_stage':    return { title: dn, body: `Moved to ${n.stageName || 'another stage'}` };
+    case 'watch_comment':  return { title: `${who} commented on ${dn}`, body: c };
+    case 'invite_accepted':return { title: 'New team member', body: `${from ? from.name : dn} accepted the invite and joined reWork` };
+    case 'doc_approved':   return { title: 'Document approved', body: `${n.fromName || 'The client'} approved ${n.docTitle || dn}${c ? ': ' + c : ''}` };
+    case 'doc_changes':    return { title: 'Changes requested', body: `${n.fromName || 'The client'} requested changes to ${n.docTitle || dn}${c ? ': ' + c : ''}` };
+    case 'test':           return { title: 'Notifications on', body: "This is how reWork alerts will arrive on this device." };
+    default:               return { title: 'reWork', body: `Update on ${dn}` };
+  }
+  switch (n.type) {
+    case 'assigned':       return { title: dn, body: `${who} atribuiu esta demanda para você${n.stageName ? ' na etapa ' + n.stageName : ''}` };
+    case 'stage_assigned': return { title: dn, body: `Avançou para ${n.stageName || 'a próxima etapa'} e agora está com você` };
+    case 'mention':        return { title: `${who} mencionou você`, body: c ? `${dn}: ${c}` : dn };
+    case 'reaction':       return { title: `${who} reagiu ${n.emoji || ''} ao seu comentário`.trim(), body: c ? `${dn}: ${c}` : dn };
+    case 'reminder':       return { title: `Lembrete: ${dn}`, body: c || 'Toque para abrir a demanda' };
+    case 'watch_stage':    return { title: dn, body: `Mudou para ${n.stageName || 'outra etapa'}` };
+    case 'watch_comment':  return { title: `${who} comentou em ${dn}`, body: c };
+    case 'invite_accepted':return { title: 'Novo membro na equipe', body: `${from ? from.name : dn} aceitou o convite e entrou no reWork` };
+    case 'doc_approved':   return { title: 'Documento aprovado', body: `${n.fromName || 'O cliente'} aprovou ${n.docTitle || dn}${c ? ': ' + c : ''}` };
+    case 'doc_changes':    return { title: 'Ajustes pedidos', body: `${n.fromName || 'O cliente'} pediu ajustes em ${n.docTitle || dn}${c ? ': ' + c : ''}` };
+    case 'test':           return { title: 'Notificações ativadas', body: 'É assim que os avisos do reWork vão chegar neste aparelho.' };
+    default:               return { title: 'reWork', body: `Novidade em ${dn}` };
+  }
+}
+function sendPushFor(user, n) {
+  const subs = Array.isArray(user.pushSubs) ? user.pushSubs : [];
+  if (!subs.length || isAway(user) || isFocused(user)) return;
+  const { title, body } = pushContentFor(n, userLang(user));
+  const url = n.demandId ? _demandPathFor(n.demandId) : (n.docId ? '/hub/docs' : '/');
+  const payload = JSON.stringify({ title, body, url, tag: n.demandId || n.docId || n.id, notificationId: n.id });
+  setImmediate(async () => {
+    try { await vapidKeys(); } catch (e) { console.error('[push] vapid:', e.message); return; }
+    const dead = [];
+    await Promise.all(subs.map(sub => webpush.sendNotification(sub, payload, { TTL: 24 * 3600, urgency: 'high' })
+      .catch(err => {
+        if (err.statusCode === 404 || err.statusCode === 410) dead.push(sub.endpoint);
+        else console.error('[push] envio:', err.statusCode || '', err.message);
+      })));
+    if (dead.length) {
+      user.pushSubs = (user.pushSubs || []).filter(s => !dead.includes(s.endpoint));
+      saveEntity('users', user);
+    }
+  });
 }
 
 /* Wrapper que monta ctx igual ao email e chama o bot. Fire-and-forget. */
@@ -3188,6 +3279,37 @@ setInterval(() => {
   }
 }, 30 * 60 * 1000);
 
+/* Push: chave pública pro navegador assinar + (des)inscrição do aparelho. */
+app.get('/api/push/key', requireAuth, async (req, res) => {
+  try { const k = await vapidKeys(); res.json({ publicKey: k.publicKey }); }
+  catch (e) { res.status(503).json({ error: 'Notificações push indisponíveis no servidor.' }); }
+});
+app.post('/api/me/push', requireAuth, (req, res) => {
+  const sub = req.body && req.body.subscription;
+  const ok = sub && typeof sub.endpoint === 'string' && /^https:\/\//.test(sub.endpoint) && sub.endpoint.length < 1000
+    && sub.keys && typeof sub.keys.p256dh === 'string' && typeof sub.keys.auth === 'string';
+  if (!ok) return res.status(400).json({ error: 'Inscrição inválida.' });
+  const u = req.user;
+  const clean = { endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth },
+    device: req.body.device === 'mobile' ? 'mobile' : 'desktop', createdAt: nowISO() };
+  u.pushSubs = [clean, ...(u.pushSubs || []).filter(s => s.endpoint !== sub.endpoint)].slice(0, 10);
+  saveEntity('users', u);
+  res.json({ ok: true, count: u.pushSubs.length });
+});
+app.delete('/api/me/push', requireAuth, (req, res) => {
+  const endpoint = req.body && req.body.endpoint;
+  const u = req.user;
+  u.pushSubs = (u.pushSubs || []).filter(s => s.endpoint !== endpoint);
+  saveEntity('users', u);
+  res.json({ ok: true, count: u.pushSubs.length });
+});
+app.post('/api/me/push/test', requireAuth, (req, res) => {
+  const u = req.user;
+  if (!(u.pushSubs || []).length) return res.status(400).json({ error: 'Ative as notificações neste aparelho primeiro.' });
+  sendPushFor(u, { id: uid(), type: 'test', demandName: '', fromUser: null });
+  res.json({ ok: true });
+});
+
 app.post('/api/me/ping', requireAuth, (req, res) => {
   const now = nowISO();
   req.user.lastSeen = now;
@@ -4567,6 +4689,7 @@ function notifyDoc(targetUserId, type, data) {
   store.insertNotification(n).catch(err => console.error('[notifyDoc] insert:', err.message));
   store.trimNotificationsFor(targetUserId, NOTIFICATIONS_MAX_PER_USER).catch(() => {});
   broadcastToUser(targetUserId, 'notification', 'create');
+  sendPushFor(user, n);
 }
 
 // GET /api/writer — lista docs do workspace (metadata; sem content)

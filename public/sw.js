@@ -18,7 +18,7 @@
    hora; o usuário pega os assets novos no próximo reload, sem prompt. O activate
    limpa os caches de versões antigas pra não acumular lixo. */
 
-const SW_VERSION   = '2026-09-30a';
+const SW_VERSION   = '2026-10-01a';
 const STATIC_CACHE = `rework-static-${SW_VERSION}`;
 
 /* App shell mínimo pré-cacheado no install. Só recursos com URL estável (sem
@@ -120,4 +120,46 @@ self.addEventListener('fetch', event => {
       });
     })
   );
+});
+
+/* ── PUSH ──
+   O servidor manda { title, body, url, tag }. Mostra a notificação com o
+   ícone do app e acende o selo no ícone da tela inicial (onde o sistema
+   suporta). Tocar abre/foca o app já na demanda. */
+self.addEventListener('push', event => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch (e) { data = { body: event.data && event.data.text() }; }
+  const title = data.title || 'reWork';
+  event.waitUntil((async () => {
+    // App aberto e em primeiro plano: o sino do próprio app já avisa.
+    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    if (wins.some(w => w.focused && w.visibilityState === 'visible')) return;
+    await Promise.all([
+    self.registration.showNotification(title, {
+      body: data.body || '',
+      icon: '/icons/icon-192.png',
+      badge: '/icons/badge-96.png',
+      tag: data.tag || undefined,
+      renotify: !!data.tag,
+      data: { url: data.url || '/' },
+    }),
+      self.navigator && self.navigator.setAppBadge ? self.navigator.setAppBadge().catch(() => {}) : null,
+    ]);
+  })());
+});
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const target = new URL((event.notification.data && event.notification.data.url) || '/', self.location.origin).href;
+  event.waitUntil((async () => {
+    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const win = wins.find(w => new URL(w.url).origin === self.location.origin);
+    if (win) {
+      // App aberto: foca e pede pra ele navegar (sem recarregar tudo).
+      await win.focus();
+      win.postMessage({ type: 'rw:navigate', url: target });
+      return;
+    }
+    await self.clients.openWindow(target);
+  })());
 });
