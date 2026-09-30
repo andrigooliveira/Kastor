@@ -149,7 +149,10 @@
   // Tempo mínimo visível é parametrizável — showBootLoading(ms) reinicia
   // o timer e força o overlay a ficar pelo menos `ms` desde ali. Default 1s
   // pro cold load; pós-login usa 2s (feedback deliberado da autenticação).
-  const DEFAULT_MIN_LOADING_MS = 1000;
+  // Celular de quem já tem sessão (esqueleto do app): sem espera mínima — a
+  // sensação de app nativo pede abrir o quanto antes.
+  const DEFAULT_MIN_LOADING_MS = document.documentElement.classList.contains('rw-hint-app')
+    && window.matchMedia && matchMedia('(max-width: 760px)').matches ? 150 : 1000;
   let _minLoadingMs = DEFAULT_MIN_LOADING_MS;
   let _loadingHideT = null;
   let _loadingShownAt = Date.now(); // considera o próprio pageload

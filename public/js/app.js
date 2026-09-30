@@ -994,6 +994,8 @@ async function api(path, method = 'GET', body) {
     throw e;
   }
   if (res.status === 401) { forceLogout(); const e = new Error('Não autenticado'); e._apiSilent = true; throw e; }
+  // Sem internet, o service worker responde com a última cópia salva.
+  if (res.headers.get('X-Rw-Cache') === '1') setOfflineMode(true);
   const data = await res.json().catch(() => ({}));
   if (res.status === 429) {
     const retry = res.headers.get('Retry-After');
@@ -4262,6 +4264,11 @@ async function doLogout() {
 }
 function forceLogout() {
   me = null;
+  // Dados salvos pra uso sem internet e a dica de "tem sessão" (esqueleto do
+  // carregamento) não sobrevivem ao logout.
+  try { localStorage.removeItem('rw-session-hint'); } catch {}
+  try { navigator.serviceWorker?.controller?.postMessage({ type: 'rw:logout' }); } catch {}
+  try { window.caches?.delete('rework-api-v1'); } catch {}
   clearInterval(notifPollTimer);
   // Limpa qualquer resíduo do mecanismo antigo (fluxo_token em localStorage)
   try { localStorage.removeItem('fluxo_token'); } catch {}
@@ -5631,6 +5638,33 @@ function closeDashUpdates() {
 }
 window.openDashUpdates = openDashUpdates;
 window.closeDashUpdates = closeDashUpdates;
+
+/* ─── SEM INTERNET ───
+   Quando o service worker responde com a cópia salva (ou o navegador avisa
+   que caiu a conexão), mostra uma faixa discreta embaixo do topo. Voltando a
+   internet, some e recarrega os dados. */
+let _offlineMode = false;
+function setOfflineMode(on) {
+  on = !!on;
+  if (on === _offlineMode) return;
+  _offlineMode = on;
+  let bar = document.getElementById('offline-bar');
+  if (on && !bar) {
+    bar = document.createElement('div');
+    bar.id = 'offline-bar'; bar.className = 'offline-bar'; bar.setAttribute('role', 'status');
+    bar.innerHTML = '<i data-lucide="wifi-off" class="ic-xs"></i><span>Sem conexão · mostrando os últimos dados salvos</span>';
+    document.body.appendChild(bar);
+    paintIcons(bar);
+  }
+  if (bar) bar.classList.toggle('is-on', on);
+  document.body.classList.toggle('is-offline', on);
+}
+window.addEventListener('offline', () => { if (me) setOfflineMode(true); });
+window.addEventListener('online', () => {
+  if (!_offlineMode) return;
+  setOfflineMode(false);
+  if (me && typeof refreshData === 'function') refreshData().catch(() => {});
+});
 
 /* ─── INSTALAR COMO APP (celular) ───
    Cartão no Início convidando a instalar o reWork na tela inicial.
@@ -8860,6 +8894,9 @@ function goPage(page) {
   _markFiltersDirty(page);
   syncSidebarActive(page);
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + page));
+  // Celular: entrar na demanda desliza da direita; sair volta pela esquerda.
+  document.body.dataset.nav = page === 'demand-detail' && prevPage !== 'demand-detail' ? 'push'
+    : prevPage === 'demand-detail' && page !== 'demand-detail' ? 'pop' : '';
   if (prevPage !== page) markPageEntering(document.getElementById('page-' + page));
   // 404 renderiza fullpage — esconde sidebar + topbar via body class.
   document.body.classList.toggle('is-fullpage', page === 'notfound');
@@ -32158,6 +32195,7 @@ enterApp = async function patchedEnterApp() {
   restoreActiveTimer();
   startPresence();
   syncPushSubscription();
+  try { localStorage.setItem('rw-session-hint', '1'); } catch {}
 };
 
 /* ─── CLIENTES — Página, detalhe e modais ─── */
@@ -36656,8 +36694,9 @@ document.addEventListener('touchmove', e => {
     _edge.active = true;
   }
   _edge.dx = Math.max(0, dx);
+  // left (não transform): transform no ancestral descolaria o rodapé fixo.
   const page = document.getElementById('page-demand-detail');
-  if (page) { page.style.transition = 'none'; page.style.transform = `translateX(${_edge.dx}px)`; page.style.opacity = String(1 - Math.min(0.35, _edge.dx / 900)); }
+  if (page) { page.style.transition = 'none'; page.style.position = 'relative'; page.style.left = `${_edge.dx}px`; page.style.opacity = String(1 - Math.min(0.35, _edge.dx / 900)); }
 }, { passive: true });
 document.addEventListener('touchend', () => {
   if (!_edge) return;
@@ -36665,14 +36704,16 @@ document.addEventListener('touchend', () => {
   _edge = null;
   const page = document.getElementById('page-demand-detail');
   if (!page) return;
-  page.style.transition = 'transform .18s ease-out, opacity .18s ease-out';
+  page.style.transition = 'left .18s ease-out, opacity .18s ease-out';
+  const reset = () => { page.style.transition = page.style.left = page.style.position = page.style.opacity = ''; };
   if (go) {
     haptic();
-    page.style.transform = `translateX(${window.innerWidth}px)`;
-    setTimeout(() => { page.style.transition = page.style.transform = page.style.opacity = ''; closeDemandDetail(); }, 170);
+    page.style.left = `${window.innerWidth}px`;
+    // Sai pela direita; a lista entra sem a animação de "voltar" (o gesto já foi).
+    setTimeout(() => { reset(); closeDemandDetail(); document.body.dataset.nav = ''; }, 170);
   } else {
-    page.style.transform = ''; page.style.opacity = '';
-    setTimeout(() => { page.style.transition = ''; }, 200);
+    page.style.left = ''; page.style.opacity = '';
+    setTimeout(reset, 200);
   }
 }, { passive: true });
 

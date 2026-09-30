@@ -20952,3 +20952,34 @@ body.dv-resizing[data-dv-resize="se"] * { cursor: nwse-resize !important; }
 /* Convite pra ativar o push (Início, app instalado) — mesmo cartão da instalação */
 .push-prompt-icon { display: inline-flex; align-items: center; justify-content: center; background: var(--accent-dim); color: var(--accent-text); }
 .push-prompt-icon svg { width: 22px; height: 22px; }
+
+/* Sem internet — faixa embaixo do topo (setOfflineMode) */
+.offline-bar {
+  position: fixed; left: 50%; z-index: 86;
+  top: calc(64px + env(safe-area-inset-top, 0px));
+  transform: translate(-50%, -8px); opacity: 0; pointer-events: none;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px; border-radius: 999px;
+  background: var(--surface); color: var(--text-dim);
+  box-shadow: 0 4px 14px rgba(0,0,0,.25), 0 0 0 1px var(--hairline);
+  font-size: 12px; font-weight: 500; white-space: nowrap;
+  transition: opacity .2s ease-out, transform .2s ease-out;
+}
+.offline-bar.is-on { opacity: 1; transform: translate(-50%, 0); }
+.offline-bar svg { width: 14px; height: 14px; color: var(--warn); }
+
+/* Transição entre lista e demanda (celular): entra pela direita, volta pela
+   esquerda. Na demanda usa left (não transform) pra não descolar o rodapé fixo. */
+@media (max-width: 760px) {
+  body[data-nav="push"] #page-demand-detail.is-entering { position: relative; animation: mPushIn .24s cubic-bezier(.2,.8,.2,1) both; }
+  body[data-nav="pop"] .page.is-entering .page-body { animation: mPopIn .22s cubic-bezier(.2,.8,.2,1) both !important; }
+}
+@keyframes mPushIn { from { left: 42%; opacity: .35; } to { left: 0; opacity: 1; } }
+@keyframes mPopIn { from { transform: translateX(-16%); opacity: .5; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  body[data-nav] #page-demand-detail.is-entering, body[data-nav] .page.is-entering .page-body { animation: none !important; }
+}
+/* A coluna direita é container (container-type), o que a tornava a referência
+   do rodapé "fixo" — no celular ele ficava no fim da coluna, não na tela. O
+   @media (max-width: 900px) já cobre o que o @container fazia. */
+@media (max-width: 760px) { .detail-col-right { container-type: normal; } }

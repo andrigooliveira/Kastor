@@ -52,6 +52,8 @@
     if (mtc) mtc.setAttribute('content', resolved === 'light' ? '#fafafb' : '#17171c');
     // Aberto como app instalado (tela inicial): sem barra do navegador.
     if ((window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone) document.documentElement.classList.add('is-standalone');
+    // Já entrou antes neste aparelho: o carregamento mostra o esqueleto do app.
+    if (localStorage.getItem('rw-session-hint')) document.documentElement.classList.add('rw-hint-app');
     // Tema de cor (roxo = sem atributo). Mesma lista do ACCENT_THEMES no app.js.
     var accent = localStorage.getItem('kastor-accent');
     if (accent && /^(azul|ciano|rosa|laranja|grafite)$/.test(accent)) document.documentElement.setAttribute('data-accent', accent);
@@ -74,6 +76,21 @@ body{background:var(--bg);color:var(--text);font-family:'Geist','Segoe UI',syste
 #app-loading-screen{position:fixed;inset:0;background:#fff;display:flex;align-items:center;justify-content:center;z-index:100000;transition:opacity .2s ease-out}
 :root[data-boot-theme="dark"] #app-loading-screen{background:#0c0c10}
 #app-loading-screen.is-hidden{opacity:0;pointer-events:none;visibility:hidden;transition:opacity .2s ease-out,visibility 0s linear .2s}
+.app-skel{display:none}
+@media (max-width:760px){
+  html.rw-hint-app #app-loading-screen{flex-direction:column;align-items:stretch;justify-content:flex-start}
+  html.rw-hint-app #app-loading-screen .app-loading-mark{display:none}
+  html.rw-hint-app .app-skel{display:flex;flex-direction:column;width:100%;min-height:100%}
+  .app-skel-top{display:flex;align-items:center;justify-content:space-between;padding:calc(18px + env(safe-area-inset-top,0px)) 16px 16px;border-bottom:1px solid rgba(128,128,128,.14)}
+  .app-skel-body{flex:1;display:flex;flex-direction:column;gap:12px;padding:20px 16px}
+  .app-skel-nav{display:flex;justify-content:space-around;padding:14px 8px calc(14px + env(safe-area-inset-bottom,0px));border-top:1px solid rgba(128,128,128,.14)}
+  .sk{display:block;border-radius:10px;background:rgba(128,128,128,.16);animation:skPulse 1.2s ease-in-out infinite alternate}
+  .sk-title{width:120px;height:18px}.sk-dot{width:34px;height:34px;border-radius:10px}
+  .sk-h1{width:70%;height:28px;margin-bottom:6px}.sk-label{width:90px;height:14px;margin-top:10px}
+  .sk-card{height:92px;border-radius:12px}.sk-card--tall{height:130px}
+  .app-skel-nav .sk{width:26px;height:26px;border-radius:8px}
+  @keyframes skPulse{from{opacity:.55}to{opacity:1}}
+}
 #app-loading-screen.is-hidden .rework-mark-part{animation:none} /* escondido: sem animação infinita gastando CPU/GPU */
 /* Enquanto o overlay está visível, trava o scroll do document — evita
    scrollbars aparecendo por conteúdo que ainda vai renderizar por trás.
@@ -264,6 +281,17 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 <!-- OVERLAY DE LOADING — visível ANTES de tudo (login, app, reset).
      boot.js/app.js escondem quando a UI está pronta. Reduz flash inicial. -->
 <div id="app-loading-screen" aria-hidden="true" role="presentation">
+  <!-- Celular com sessão: esqueleto do app (topo, cartões, barra) em vez do logo. -->
+  <div class="app-skel" aria-hidden="true">
+    <div class="app-skel-top"><span class="sk sk-title"></span><span class="sk sk-dot"></span></div>
+    <div class="app-skel-body">
+      <span class="sk sk-h1"></span>
+      <span class="sk sk-card sk-card--tall"></span>
+      <span class="sk sk-label"></span>
+      <span class="sk sk-card"></span><span class="sk sk-card"></span><span class="sk sk-card"></span>
+    </div>
+    <div class="app-skel-nav"><span class="sk"></span><span class="sk"></span><span class="sk"></span><span class="sk"></span><span class="sk"></span></div>
+  </div>
   <div class="app-loading-mark">
     <svg viewBox="0 0 1221.96 1211.57" xmlns="http://www.w3.org/2000/svg">
       <defs>

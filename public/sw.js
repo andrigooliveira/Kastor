@@ -18,7 +18,7 @@
    hora; o usuário pega os assets novos no próximo reload, sem prompt. O activate
    limpa os caches de versões antigas pra não acumular lixo. */
 
-const SW_VERSION   = '2026-10-01a';
+const SW_VERSION   = '2026-10-01b';
 const STATIC_CACHE = `rework-static-${SW_VERSION}`;
 
 /* App shell mínimo pré-cacheado no install. Só recursos com URL estável (sem
@@ -60,6 +60,33 @@ self.addEventListener('activate', event => {
   })());
 });
 
+const API_CACHE = 'rework-api-v1';
+const OFFLINE_API = new Set(['/api/me', '/api/bootstrap', '/api/notifications', '/api/users', '/api/schedules']);
+function _apiCacheKey(req, url) {
+  const org = req.headers.get('X-Org-Id') || '';
+  return new Request(url.origin + url.pathname + url.search + (url.search ? '&' : '?') + '__org=' + encodeURIComponent(org));
+}
+async function apiNetworkFirst(req, url) {
+  const key = _apiCacheKey(req, url);
+  try {
+    const res = await fetch(req);
+    if (res && res.status === 200) {
+      const copy = res.clone();
+      caches.open(API_CACHE).then(c => c.put(key, copy)).catch(() => {});
+    }
+    return res;
+  } catch (err) {
+    const cached = await caches.match(key, { cacheName: API_CACHE });
+    if (!cached) throw err;
+    const headers = new Headers(cached.headers);
+    headers.set('X-Rw-Cache', '1');
+    return new Response(await cached.blob(), { status: 200, headers });
+  }
+}
+self.addEventListener('message', event => {
+  if (event.data && event.data.type === 'rw:logout') event.waitUntil(caches.delete(API_CACHE));
+});
+
 self.addEventListener('fetch', event => {
   const req = event.request;
 
@@ -72,7 +99,16 @@ self.addEventListener('fetch', event => {
   // Só mesma origem — não intercepta Google Fonts, CDNs, etc.
   if (url.origin !== self.location.origin) return;
 
-  // API (inclui o SSE /api/stream): sempre rede, nunca cache.
+  // Leitura sem internet: as poucas rotas que montam o app (sessão, dados,
+  // notificações, pessoas) vão pra rede primeiro e, sem conexão, respondem
+  // com a última cópia salva (marcada com X-Rw-Cache: 1). A chave inclui a
+  // organização da aba (X-Org-Id). Só respostas 200 são guardadas; o logout
+  // apaga tudo (mensagem rw:logout).
+  if (OFFLINE_API.has(url.pathname)) {
+    event.respondWith(apiNetworkFirst(req, url));
+    return;
+  }
+  // Resto da API (inclui o SSE /api/stream): sempre rede, nunca cache.
   if (url.pathname.startsWith('/api/')) return;
 
   // Conteúdo de usuário autenticado: passa direto, sem cachear no SW.
