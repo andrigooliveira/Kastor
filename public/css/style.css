@@ -20812,6 +20812,10 @@ body.dv-resizing[data-dv-resize="se"] * { cursor: nwse-resize !important; }
 .agl-day-head { display: flex; align-items: baseline; gap: 8px; padding: 0 2px 2px; }
 .agl-day-name { font-size: 15px; font-weight: 700; text-transform: capitalize; color: var(--text); }
 .agl-day.is-today .agl-day-name { color: var(--accent-text); }
+.agl-person .agl-day-head { align-items: center; }
+.agl-person .agl-day-head .avatar { width: 26px; height: 26px; font-size: 11px; flex-shrink: 0; }
+.agl-person .agl-day-name { text-transform: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agl-person .agl-day-name small { font-weight: 500; color: var(--text-dim); font-size: 12px; }
 .agl-day-date { font-size: 13px; color: var(--text-muted); }
 .agl-day-hours { margin-left: auto; font-size: 12px; color: var(--text-muted); }
 .agl-item {

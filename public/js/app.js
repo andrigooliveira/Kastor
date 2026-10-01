@@ -36176,7 +36176,7 @@ function setAgendaMode(mode) {
     if (me?.id) agendaTeamUsers = [me.id];
   }
   if (agendaMode === 'team' && !agendaTeamDate) agendaTeamDate = new Date();
-  document.querySelectorAll('.agenda-mode-btn').forEach(b => b.classList.toggle('is-active', b.dataset.mode === agendaMode));
+  document.querySelectorAll('.agenda-mode-btn').forEach(b => { const on = b.dataset.mode === agendaMode; b.classList.toggle('is-active', on); b.classList.toggle('active', on); });
   const single = $('agenda-user-pick-single');
   const team = $('agenda-user-pick-team');
   const navW = $('agenda-nav-week');
@@ -36544,6 +36544,7 @@ function renderAgendaInto(wrapId, weekLabelId, userId) {
       wrap.innerHTML = '<div class="agenda-empty">Escolha pessoas pra montar a vista de time.</div>';
       return;
     }
+    if (isMobileLayout()) { buildAgendaTeamList(wrap, days[0]); return; }
     buildAgendaGrid(wrap, null, days, { team: true });
     return;
   }
@@ -36560,59 +36561,47 @@ function renderAgendaInto(wrapId, weekLabelId, userId) {
 function isMobileLayout() {
   return !!(window.matchMedia && window.matchMedia('(max-width: 760px)').matches);
 }
-function buildAgendaList(wrap, userId, days) {
-  const hm = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
-  const todayYmd = agendaYmd(new Date());
-  const tmr = new Date(); tmr.setDate(tmr.getDate() + 1);
-  const tomorrowYmd = agendaYmd(tmr);
+function _aglHm(m) { return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; }
+/* Blocos (agendados + Google) e prazos de uma pessoa num dia, já em HTML.
+   gcals acumula os eventos do Google pra ligar o clique depois. */
+function _aglDayParts(userId, ymd, gcals) {
   const canEdit = !!(me && (me.isAdmin || userId === me.id));
-  const mine = demands.filter(d => d.ownerId === userId && !isDone(d));
-  const gcals = []; // eventos do Google renderizados, pelo índice em data-gcal
-  const html = days.map(day => {
-    const ymd = agendaYmd(day);
-    const items = [];
-    schedules.filter(s => s.userId === userId && s.date === ymd).forEach(s => {
-      const isFree = !s.demandId;
-      const d = isFree ? null : demandById(s.demandId);
-      const p = d ? projectById(d.projectId) : null;
-      const c = p && p.clientId ? clientById(p.clientId) : null;
-      const k = isFree ? scheduleKindOf(s.kind) : null;
-      const color = isFree ? (s.color || k.color || '#7A00FF') : (s.stageColorSnapshot || p?.color || '#7A00FF');
-      items.push({
-        start: s.startMin, end: s.endMin, color,
-        title: isFree ? (s.title || k.label) : (d ? d.name : '(demanda removida)'),
-        meta: isFree ? k.label : [c?.name, p?.name].filter(Boolean).join(' · '),
-        onclick: d ? `showDetail('${d.id}')` : (isFree && canEdit ? `openScheduleModal('${s.id}')` : '')
-      });
+  const items = [];
+  schedules.filter(s => s.userId === userId && s.date === ymd).forEach(s => {
+    const isFree = !s.demandId;
+    const d = isFree ? null : demandById(s.demandId);
+    const p = d ? projectById(d.projectId) : null;
+    const c = p && p.clientId ? clientById(p.clientId) : null;
+    const k = isFree ? scheduleKindOf(s.kind) : null;
+    const color = isFree ? (s.color || k.color || '#7A00FF') : (s.stageColorSnapshot || p?.color || '#7A00FF');
+    items.push({
+      start: s.startMin, end: s.endMin, color,
+      title: isFree ? (s.title || k.label) : (d ? d.name : '(demanda removida)'),
+      meta: isFree ? k.label : [c?.name, p?.name].filter(Boolean).join(' · '),
+      onclick: d ? `showDetail('${d.id}')` : (isFree && canEdit ? `openScheduleModal('${s.id}')` : '')
     });
-    (googleEventsForUser[userId] || []).map(ev => googleEventToBlock(ev, ymd)).filter(Boolean).forEach(g => {
-      items.push({ start: g.startMin, end: g.endMin, color: g.backgroundColor, title: g.summary, meta: 'Google Agenda', gcal: gcals.push(g) - 1 });
-    });
-    items.sort((a, b) => a.start - b.start);
-    const due = mine.filter(d => effDue(d) === ymd);
-    const mins = items.filter(it => it.gcal === undefined).reduce((sum, it) => sum + (it.end - it.start), 0);
-    const label = ymd === todayYmd ? 'Hoje' : ymd === tomorrowYmd ? 'Amanhã'
-      : day.toLocaleDateString('pt-BR', { weekday: 'long' }).replace('-feira', '');
-    const date = day.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-    const rows = items.map(it => `
+  });
+  (googleEventsForUser[userId] || []).map(ev => googleEventToBlock(ev, ymd)).filter(Boolean).forEach(g => {
+    items.push({ start: g.startMin, end: g.endMin, color: g.backgroundColor, title: g.summary, meta: 'Google Agenda', gcal: gcals.push(g) - 1 });
+  });
+  items.sort((a, b) => a.start - b.start);
+  const due = demands.filter(d => d.ownerId === userId && !isDone(d) && effDue(d) === ymd);
+  const mins = items.filter(it => it.gcal === undefined).reduce((sum, it) => sum + (it.end - it.start), 0);
+  const rows = items.map(it => `
       <button type="button" class="agl-item" style="--block-color:${esc(it.color)}" ${it.gcal !== undefined ? `data-gcal="${it.gcal}"` : (it.onclick ? `onclick="${it.onclick}"` : 'disabled')}>
-        <span class="agl-time">${hm(it.start)}<small>${hm(it.end)}</small></span>
+        <span class="agl-time">${_aglHm(it.start)}<small>${_aglHm(it.end)}</small></span>
         <span class="agl-body"><span class="agl-title">${esc(it.title)}</span>${it.meta ? `<span class="agl-meta">${esc(it.meta)}</span>` : ''}</span>
       </button>`).join('');
-    const dues = due.map(d => `
+  const dues = due.map(d => `
       <button type="button" class="agl-due" onclick="showDetail('${d.id}')">
         <i data-lucide="flag" class="ic-xs"></i><span>${esc(d.name)}</span>
       </button>`).join('');
-    return `<section class="agl-day${ymd === todayYmd ? ' is-today' : ''}">
-      <header class="agl-day-head">
-        <span class="agl-day-name">${esc(label)}</span><span class="agl-day-date">${date}</span>
-        <span class="agl-day-hours">${fmtHm(mins / 60)} agendadas</span>
-      </header>
-      ${rows || (dues ? '' : '<div class="agl-empty">Nada agendado.</div>')}
+  const body = `${rows || (dues ? '' : '<div class="agl-empty">Nada agendado.</div>')}
       ${dues ? `<div class="agl-dues"><div class="agl-dues-lbl">Prazos do dia</div>${dues}</div>` : ''}
-      ${canEdit ? `<button type="button" class="agl-add" onclick="openScheduleModal(null, { userId: '${userId}', date: '${ymd}' })"><i data-lucide="plus" class="ic-xs"></i> Agendar</button>` : ''}
-    </section>`;
-  }).join('');
+      ${canEdit ? `<button type="button" class="agl-add" onclick="openScheduleModal(null, { userId: '${userId}', date: '${ymd}' })"><i data-lucide="plus" class="ic-xs"></i> Agendar</button>` : ''}`;
+  return { body, mins };
+}
+function _aglMount(wrap, html, gcals) {
   wrap.classList.add('is-list');
   wrap.innerHTML = `<div class="agl">${html}</div>`;
   // Eventos do Google: abre o mesmo detalhe da grade.
@@ -36620,6 +36609,45 @@ function buildAgendaList(wrap, userId, days) {
     btn.addEventListener('click', () => openGoogleEventDetail(gcals[+btn.dataset.gcal]));
   });
   paintIcons(wrap);
+}
+function buildAgendaList(wrap, userId, days) {
+  const todayYmd = agendaYmd(new Date());
+  const tmr = new Date(); tmr.setDate(tmr.getDate() + 1);
+  const tomorrowYmd = agendaYmd(tmr);
+  const gcals = []; // eventos do Google renderizados, pelo índice em data-gcal
+  const html = days.map(day => {
+    const ymd = agendaYmd(day);
+    const { body, mins } = _aglDayParts(userId, ymd, gcals);
+    const label = ymd === todayYmd ? 'Hoje' : ymd === tomorrowYmd ? 'Amanhã'
+      : day.toLocaleDateString('pt-BR', { weekday: 'long' }).replace('-feira', '');
+    const date = day.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+    return `<section class="agl-day${ymd === todayYmd ? ' is-today' : ''}">
+      <header class="agl-day-head">
+        <span class="agl-day-name">${esc(label)}</span><span class="agl-day-date">${date}</span>
+        <span class="agl-day-hours">${fmtHm(mins / 60)} agendadas</span>
+      </header>
+      ${body}
+    </section>`;
+  }).join('');
+  _aglMount(wrap, html, gcals);
+}
+/* Modo Time no celular: um bloco por pessoa no dia escolhido (no lugar das
+   colunas lado a lado, que não cabem). Quem tem menos horas agendadas
+   aparece primeiro — é quem tem espaço pra receber trabalho. */
+function buildAgendaTeamList(wrap, day) {
+  const ymd = agendaYmd(day);
+  const gcals = [];
+  const people = agendaTeamUsers.map(userById).filter(Boolean).map(u => ({ u, ...(_aglDayParts(u.id, ymd, gcals)) }))
+    .sort((a, b) => a.mins - b.mins || norm(a.u.name).localeCompare(norm(b.u.name)));
+  const html = people.map(({ u, body, mins }) => `<section class="agl-day agl-person">
+      <header class="agl-day-head">
+        ${avatarHTML(u)}
+        <span class="agl-day-name">${esc(u.name)}${u.id === me?.id ? ' <small>(você)</small>' : ''}</span>
+        <span class="agl-day-hours">${fmtHm(mins / 60)} agendadas</span>
+      </header>
+      ${body}
+    </section>`).join('');
+  _aglMount(wrap, html, gcals);
 }
 /* ─── GESTOS NO CELULAR (≤760px) ───
    · Puxar pra atualizar: no topo de Início, Minhas, Demandas e Agenda.
