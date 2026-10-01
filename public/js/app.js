@@ -30714,6 +30714,7 @@ async function enablePush(btn) {
     let sub = await reg.pushManager.getSubscription();
     if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: _b64ToUint8(publicKey) });
     await api('/me/push', 'POST', { subscription: sub.toJSON(), device: clientDevice() });
+    try { me = await api('/me'); if (currentPage === 'profile') renderProfileNotifications(); } catch {}
     haptic(12);
     toast('Notificações ativadas neste aparelho.');
     dismissPushPrompt(true);
@@ -30731,6 +30732,7 @@ async function disablePush() {
     try { await sub.unsubscribe(); } catch {}
   }
   toast('Notificações desativadas neste aparelho.');
+  try { me = await api('/me'); if (currentPage === 'profile') { renderProfileNotifications(); return; } } catch {}
   renderDesktopNotifSlot();
 }
 async function testPush(btn) {
@@ -31139,7 +31141,11 @@ async function renderProfileNotifications() {
   chWrap.innerHTML = emailRow + dcRow + browserRow;
   renderDesktopNotifSlot();
 
-  const cols = 1 + (dc ? 1 : 0);
+  const cols = 2 + (dc ? 1 : 0);
+  // Push: vale pra todos os aparelhos onde a pessoa ativou (contagem vem do /me).
+  const PUSH_KEYS = new Set(['mention', 'assigned', 'stage_assigned', 'reminder', 'watch_stage', 'watch_comment']);
+  const pprefs = me.pushPrefs || {};
+  const pushOn = (me.pushDevices || 0) > 0;
   const sw = (on, disabled, handler, label) => `<label class="profile-switch" aria-label="${esc(label)}">
       <input type="checkbox" ${on ? 'checked' : ''} ${disabled ? 'disabled' : ''} onchange="${handler}">
       <span class="profile-switch-track"><span class="profile-switch-thumb"></span></span>
@@ -31159,6 +31165,7 @@ async function renderProfileNotifications() {
         </div>
         <div class="notif-cell" role="cell">${sw(eOn, !emailOk, `setProfileEmailPref('${it.key}', this)`, it.title + ' por e-mail')}</div>
         ${dc ? `<div class="notif-cell" role="cell">${hasDc ? sw(dVal, !dcLinked, `setProfileDiscordPref('${it.key}', this)`, it.title + ' no Discord') : '<span class="notif-cell-na">-</span>'}</div>` : ''}
+        <div class="notif-cell" role="cell">${PUSH_KEYS.has(it.key) ? sw(pprefs[it.key] !== false, !pushOn, `setProfilePushPref('${it.key}', this)`, it.title + ' no aparelho') : '<span class="notif-cell-na">-</span>'}</div>
       </div>`;
     }).join('')}`).join('');
   const colHead = (name, note) => `<div class="notif-col-head" role="columnheader">${name}${note ? `<small>${note}</small>` : ''}</div>`;
@@ -31167,6 +31174,7 @@ async function renderProfileNotifications() {
       <div></div>
       ${colHead('E-mail', !smtp ? 'indisponível' : !hasEmail ? 'sem e-mail' : '')}
       ${dc ? colHead('Discord', dcLinked ? '' : 'não vinculado') : ''}
+      ${colHead('Push', pushOn ? '' : 'inativo')}
     </div>
     ${rows}
   </div>
@@ -31229,6 +31237,14 @@ function _flashProfileSaved() {
   clearTimeout(_profileSavedTimer);
   _profileSavedTimer = setTimeout(() => el.classList.remove('is-on'), 1600);
 }
+async function setProfilePushPref(key, input) {
+  const val = input.checked;
+  try {
+    me = await api('/me', 'PUT', { pushPrefs: { [key]: val } });
+    _flashProfileSaved();
+  } catch (e) { input.checked = !val; toast(e.message, 'error'); }
+}
+window.setProfilePushPref = setProfilePushPref;
 async function setProfileEmailPref(key, input) {
   const val = input.checked;
   try {

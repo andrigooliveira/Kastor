@@ -633,6 +633,7 @@ function publicUser(u, opts) {
   rest.googleConnected = !!googleTokens;
   rest.twoFactorMethod = twoFactorMethodOf(u);
   rest.emailVerified = !!(u.email && u.emailVerifiedAt);
+  rest.pushDevices = Array.isArray(pushSubs) ? pushSubs.length : 0; // só a contagem, nunca as inscrições
   // Permissões e squads vêm do vínculo com a organização ativa.
   rest.isAdmin = !!u.isAdmin; rest.isModerator = !!u.isModerator; rest.isFreelancer = !!u.isFreelancer;
   rest.isOwner = !!u.isOwner; rest.orgRole = u.orgRole || null;
@@ -1395,9 +1396,12 @@ function pushContentFor(n, lang) {
     default:               return { title: 'reWork', body: `Novidade em ${dn}` };
   }
 }
+// Tipos que a pessoa liga/desliga no Perfil (coluna Push); o resto sempre vai.
+const PUSH_PREF_KEYS = ['mention', 'assigned', 'stage_assigned', 'reminder', 'watch_stage', 'watch_comment'];
 function sendPushFor(user, n) {
   const subs = Array.isArray(user.pushSubs) ? user.pushSubs : [];
   if (!subs.length || isAway(user) || isFocused(user)) return;
+  if (n.type !== 'test' && user.pushPrefs && user.pushPrefs[n.type] === false) return;
   const { title, body } = pushContentFor(n, userLang(user));
   const url = n.demandId ? _demandPathFor(n.demandId) : (n.docId ? '/hub/docs' : '/');
   const payload = JSON.stringify({ title, body, url, tag: n.demandId || n.docId || n.id, notificationId: n.id });
@@ -3088,7 +3092,7 @@ app.get('/api/me', requireAuth, (req, res) => {
 });
 
 app.put('/api/me', requireAuth, (req, res) => {
-  const { name, role, avatar, currentPassword, newPassword, username, discordId, email, emailPrefs, discord, phone, discordPrefs, quickReplies, accentTheme, away, status, digestSchedule, navMenu, lang } = req.body || {};
+  const { name, role, avatar, currentPassword, newPassword, username, discordId, email, emailPrefs, pushPrefs, discord, phone, discordPrefs, quickReplies, accentTheme, away, status, digestSchedule, navMenu, lang } = req.body || {};
   const u = req.user;
   if (typeof name === 'string' && name.trim()) u.name = name.trim();
   if (typeof role === 'string') u.role = role.trim();
@@ -3124,6 +3128,12 @@ app.put('/api/me', requireAuth, (req, res) => {
       if (typeof emailPrefs[k] === 'boolean') next[k] = emailPrefs[k];
     }
     u.emailPrefs = next;
+  }
+  // pushPrefs — por tipo de aviso; o que não estiver aqui segue ligado.
+  if (pushPrefs && typeof pushPrefs === 'object') {
+    const next = { ...(u.pushPrefs || {}) };
+    for (const k of PUSH_PREF_KEYS) if (typeof pushPrefs[k] === 'boolean') next[k] = pushPrefs[k];
+    u.pushPrefs = next;
   }
   // discordPrefs — parcial: chaves undefined caem no admin default. null explícito
   // remove o override daquela chave (volta a usar o default do time).
