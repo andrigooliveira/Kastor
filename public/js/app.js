@@ -24610,9 +24610,9 @@ function renderUsers() {
       <td style="color:var(--text-dim)">${esc(u.username)}${u.emailVerified
         ? `<div class="us-email" title="E-mail confirmado">${esc(u.email)}</div>`
         : `<div class="us-email is-missing" title="${u.email ? 'A pessoa ainda não confirmou o e-mail' : 'A pessoa ainda não vinculou um e-mail'}"><i data-lucide="mail-warning" class="ic-xs"></i>${u.email ? 'Não confirmado' : 'Sem e-mail'}</div>`}</td>
-      <td>${esc(u.role || '—')}</td>
-      <td>${esc(u.position || '—')}</td>
-      <td>${wsNames}</td>
+      <td class="${u.role ? '' : 'is-blank'}"><span class="mlbl">Área</span>${esc(u.role || '—')}</td>
+      <td class="${u.position ? '' : 'is-blank'}"><span class="mlbl">Cargo</span>${esc(u.position || '—')}</td>
+      <td class="mc-ws">${wsNames}</td>
       <td>${u.isOwner
         ? '<span class="pill pill-owner">Dono</span>'
         : u.isAdmin
@@ -24622,7 +24622,7 @@ function renderUsers() {
           : (u.isFreelancer
             ? '<span class="pill pill-freelancer">Freelancer</span>'
             : '<span class="pill pill-muted">Membro</span>'))}</td>
-      <td>${u.active !== false ? '<span class="pill pill-success">Ativo</span>' : '<span class="pill pill-muted">Desativado</span>'}</td>
+      <td class="${u.active !== false ? 'is-blank' : ''}">${u.active !== false ? '<span class="pill pill-success">Ativo</span>' : '<span class="pill pill-muted">Desativado</span>'}</td>
       <td class="us-col-kebab">${kebab}</td>
     </tr>`;
   }).join('');
@@ -24680,7 +24680,7 @@ function renderRoles() {
     ]) : '';
     return `<tr class="mrow">
       <td class="mcol-name"><strong>${esc(r.name)}</strong></td>
-      <td>${count} ${count === 1 ? 'usuário' : 'usuários'}</td>
+      <td class="mc-dim">${count} ${count === 1 ? 'usuário' : 'usuários'}</td>
       <td class="us-col-kebab">${kebab}</td>
     </tr>`;
   }).join('') : `<tr><td colspan="3">${emptyState('Nenhuma área cadastrada', 'Adicione áreas para organizar a equipe.', 'users')}</td></tr>`;
@@ -24763,7 +24763,7 @@ function renderPositions() {
     ]) : '';
     return `<tr class="mrow">
       <td class="mcol-name"><strong>${esc(p.name)}</strong></td>
-      <td>${count} ${count === 1 ? 'usuário' : 'usuários'}</td>
+      <td class="mc-dim">${count} ${count === 1 ? 'usuário' : 'usuários'}</td>
       <td class="us-col-kebab">${kebab}</td>
     </tr>`;
   }).join('') : `<tr><td colspan="3">${emptyState('Nenhum cargo cadastrado', 'Adicione cargos (Diretor de Arte, Copywriter Sênior, etc).', 'briefcase')}</td></tr>`;
@@ -27876,11 +27876,11 @@ function renderForms() {
       const respCount = formResponseCountFor(t.id);
       const canEdit = !!me?.isAdmin;
       return `<tr class="row-hover-actions">
-        <td><strong>${esc(t.name)}</strong>${t.description ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px">${esc(t.description.slice(0, 80))}${t.description.length > 80 ? '…' : ''}</div>` : ''}</td>
-        <td>${(t.fields || []).length}</td>
-        <td>${respCount}</td>
-        <td>${creator ? esc(creator.name) : '<span style="color:var(--text-muted)">—</span>'}</td>
-        <td>
+        <td class="mcol-name"><strong>${esc(t.name)}</strong>${t.description ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px">${esc(t.description.slice(0, 80))}${t.description.length > 80 ? '…' : ''}</div>` : ''}</td>
+        <td class="mc-dim"><span class="mlbl">Campos</span>${(t.fields || []).length}</td>
+        <td class="mc-dim"><span class="mlbl">Respostas</span>${respCount}</td>
+        <td class="mc-dim ${creator ? '' : 'is-blank'}"><span class="mlbl">Criado por</span>${creator ? esc(creator.name) : '<span style="color:var(--text-muted)">—</span>'}</td>
+        <td class="mc-act">
           <div class="row-actions">
             ${canEdit ? `<button class="detail-icon-btn" title="Editar" onclick="openFormEditor('${t.id}')"><i data-lucide="pencil" class="ic-sm"></i></button>` : ''}
             ${canEdit ? `<button class="detail-icon-btn" title="Duplicar" onclick="duplicateFormTemplate('${t.id}')"><i data-lucide="copy" class="ic-sm"></i></button>` : ''}

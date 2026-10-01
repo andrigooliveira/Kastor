@@ -20983,3 +20983,71 @@ body.dv-resizing[data-dv-resize="se"] * { cursor: nwse-resize !important; }
    do rodapé "fixo" — no celular ele ficava no fim da coluna, não na tela. O
    @media (max-width: 900px) já cobre o que o @container fazia. */
 @media (max-width: 760px) { .detail-col-right { container-type: normal; } }
+
+/* Rótulo de célula que só aparece quando a tabela vira cartão no celular. */
+.mlbl { display: none; }
+
+/* MOBILE v2 — Telas administrativas: tabelas .mcard (Usuários, Áreas, Cargos,
+   Convites, Formulários) viram cartões; grades de Fluxos e Projetos viram
+   lista compacta; botões do topo do cliente/projeto numa linha só. */
+@media (max-width: 760px) {
+  .mcard-wrap { overflow: visible; border: 0; background: transparent; }
+  .table-wrap > table.mcard { display: block; width: 100%; min-width: 0 !important; border: 0; background: transparent; }
+  table.mcard thead { display: none; }
+  table.mcard tbody { display: flex; flex-direction: column; gap: 8px; }
+  table.mcard tr {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px;
+    padding: 12px 12px 12px 14px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  }
+  table.mcard tr::before { content: ''; order: 0; flex-basis: 100%; height: 0; }
+  table.mcard tr > td {
+    display: block; padding: 0 !important; border: 0 !important; background: transparent !important;
+    order: 1; width: auto !important; min-width: 0; font-size: 12.5px;
+  }
+  table.mcard tr:hover > td { background: transparent !important; }
+  table.mcard tr > td.mcol-name { order: -2; flex: 1 1 0; font-size: 14px; border-left: 0 !important; }
+  table.mcard tr > td.us-col-kebab,
+  table.mcard tr > td.mc-act { order: -1; flex: 0 0 auto; }
+  table.mcard tr > td[colspan] { order: 1; flex: 1 1 100%; }
+  table.mcard tr > td[colspan] { margin: -12px -12px -12px -14px; }
+  table.mcard tr > td.is-blank { display: none; }
+  table.mcard tr > td.mc-ws:empty { display: none; }
+  table.mcard .mc-dim { color: var(--text-dim); }
+  table.mcard .mlbl {
+    display: inline; margin-right: 4px;
+    font-size: 11px; color: var(--text-muted);
+  }
+  table.mcard .mlbl::after { content: ':'; }
+  table.mcard .row-actions { opacity: 1; }
+  table.mcard .us-email { display: inline-flex; margin-left: 6px; }
+  .us-taxonomy-grid { grid-template-columns: minmax(0, 1fr) !important; }
+  .us-section-hint { flex-basis: 100%; order: 3; }
+
+  /* Fluxos (clientes) e projetos do cliente: linha com avatar à esquerda. */
+  .flow-grid { grid-template-columns: minmax(0, 1fr) !important; gap: 8px !important; }
+  .flow-grid > .flow-card {
+    display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto;
+    column-gap: 12px; row-gap: 2px; align-items: center;
+    padding: 12px 14px; text-align: left; min-height: 0;
+  }
+  .flow-grid > .flow-card > :first-child {
+    grid-row: 1 / span 2; width: 40px !important; height: 40px !important; min-width: 0; margin: 0 !important; font-size: 16px;
+  }
+  .flow-grid > .flow-card > .flow-card-name { margin: 0; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .flow-grid > .flow-card > .flow-card-sub { margin: 0; text-align: left; }
+
+  /* Topo do cliente/projeto: botões lado a lado, rolando de lado se faltar espaço. */
+  #clients-view-detail > .filters-bar,
+  #projects-view-detail > .filters-bar {
+    flex-direction: row !important; flex-wrap: wrap; gap: 8px;
+  }
+  #clients-view-detail > .filters-bar > *,
+  #projects-view-detail > .filters-bar > * { flex: 0 0 auto; width: auto !important; white-space: nowrap; }
+  #clients-view-detail > .filters-bar > div:empty,
+  #projects-view-detail > .filters-bar > div:empty { display: none; }
+  /* Fluxos: atalhos (Nomes de etapa, Gerenciar tipos) lado a lado embaixo da busca. */
+  #flows-view-clients > .filters-bar { flex-direction: row !important; flex-wrap: wrap; gap: 8px; }
+  #flows-view-clients > .filters-bar > .filter-input-wrap { flex: 1 1 100%; }
+  #flows-view-clients > .filters-bar > .btn { flex: 1 1 0; width: auto !important; }
+}

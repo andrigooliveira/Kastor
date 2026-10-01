@@ -1715,8 +1715,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <i data-lucide="plus" class="ic-sm"></i> Novo formulário
           </button>
         </div>
-        <div class="table-wrap table-scroll">
-          <table>
+        <div class="table-wrap table-scroll mcard-wrap">
+          <table class="mcard">
             <thead>
               <tr>
                 <th>Formulário</th>
@@ -2699,8 +2699,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <span class="us-section-title">Convites <span class="inv-count" id="invites-count"></span></span>
             <span class="us-section-hint" id="invites-hint"></span>
           </div>
-          <div class="table-wrap mine-table-wrap">
-            <table class="mine-table-v2 inv-table">
+          <div class="table-wrap mine-table-wrap mcard-wrap">
+            <table class="mine-table-v2 inv-table mcard">
               <thead>
                 <tr>
                   <th>E-mail</th>
@@ -2722,8 +2722,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <span class="us-section-title">Pessoas</span>
             <span class="us-section-hint" id="users-section-hint">Ordenado por nome. Clique no cabeçalho pra reordenar.</span>
           </div>
-          <div class="table-wrap mine-table-wrap">
-            <table class="mine-table-v2">
+          <div class="table-wrap mine-table-wrap mcard-wrap">
+            <table class="mine-table-v2 mcard">
               <thead>
                 <tr>
                   <th class="mth-sort" onclick="sortUsersBy('name')">Nome <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
@@ -2749,8 +2749,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               <span class="us-section-hint">Função ou especialidade (Criação, BEO…).</span>
               <button class="btn btn-primary btn-sm admin-only us-section-cta" onclick="openRoleModal()"><i data-lucide="plus" class="ic-sm"></i> Nova área</button>
             </div>
-            <div class="table-wrap mine-table-wrap">
-              <table class="mine-table-v2">
+            <div class="table-wrap mine-table-wrap mcard-wrap">
+              <table class="mine-table-v2 mcard">
                 <thead>
                   <tr>
                     <th class="mth-sort" onclick="sortRolesBy('name')">Área <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
@@ -2768,8 +2768,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               <span class="us-section-hint">Posição na hierarquia (Diretor, Analista…).</span>
               <button class="btn btn-primary btn-sm admin-only us-section-cta" onclick="openPositionModal()"><i data-lucide="plus" class="ic-sm"></i> Novo cargo</button>
             </div>
-            <div class="table-wrap mine-table-wrap">
-              <table class="mine-table-v2">
+            <div class="table-wrap mine-table-wrap mcard-wrap">
+              <table class="mine-table-v2 mcard">
                 <thead>
                   <tr>
                     <th class="mth-sort" onclick="sortPositionsBy('name')">Cargo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
@@ -4974,7 +4974,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20260929perf1" defer></script>
+<script src="/js/boot.js?v=20261001adm1" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
