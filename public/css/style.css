@@ -21055,3 +21055,33 @@ body.dv-resizing[data-dv-resize="se"] * { cursor: nwse-resize !important; }
   #flows-view-clients > .filters-bar > .filter-input-wrap { flex: 1 1 100%; }
   #flows-view-clients > .filters-bar > .btn { flex: 1 1 0; width: auto !important; }
 }
+
+/* Nova demanda curta (celular, criação): "Mais opções" esconde o que é raro. */
+.dw-more-wrap, .dw-cust-link { display: none; }
+@media (max-width: 760px) {
+  #demand-modal.dw-short .dw-more-wrap { display: block; }
+  #demand-modal.dw-short:not(.dw-more-open) .dw-extra { display: none !important; }
+  #demand-modal.dw-short.dw-more-open .dw-cust-link { display: block; }
+  .dw-more-btn {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap; width: 100%;
+    padding: 12px 14px; border-radius: 12px;
+    background: var(--surface-2); border: 1px dashed var(--border);
+    color: var(--text); font: inherit; font-size: 14px; font-weight: 600; text-align: left;
+  }
+  .dw-more-btn small { flex-basis: 100%; order: 3; font-size: 12px; font-weight: 400; color: var(--text-muted); padding-left: 24px; }
+  .dw-more-chev { margin-left: auto; transition: transform .2s ease; }
+  #demand-modal.dw-more-open .dw-more-chev { transform: rotate(180deg); }
+  #demand-modal.dw-short #f-description { min-height: 0; }
+  #demand-modal.dw-short .wizard-card-grid { grid-template-columns: minmax(0, 1fr) !important; gap: 8px; }
+  #demand-modal.dw-short .wizard-card {
+    display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 12px;
+    padding: 10px 12px; text-align: left; min-height: 0;
+  }
+  #demand-modal.dw-short .wizard-card-avatar { grid-row: 1 / span 2; width: 40px; height: 40px; margin: 0; font-size: 16px; }
+  #demand-modal.dw-short .wizard-card-name,
+  #demand-modal.dw-short .wizard-card-sub { text-align: left; margin: 0; }
+  #demand-modal.dw-short .wizard-card-name:last-child { grid-row: 1 / span 2; }
+  #demand-modal.dw-short #save-as-template-btn { display: none !important; }
+  #demand-modal.dw-short .demand-wizard-footer { flex-wrap: nowrap; }
+  #demand-modal.dw-short #f-owner-select * { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+}

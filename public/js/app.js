@@ -38153,8 +38153,31 @@ let wizardLastFlowApplied = null;
 const WIZARD_STEPS = [1, 2, 3, 'cust', 4];
 function wizardStepIndex(s) { return WIZARD_STEPS.indexOf(s); }
 
+/* Celular, criando (não editando): versão curta do wizard. Um toque no cartão
+   já avança, cliente com um projeto só / projeto com um fluxo só pulam a
+   escolha, o passo Customizar sai do caminho (fica num botão em "Mais
+   opções") e o formulário final mostra só nome, prioridade, responsável e
+   descrição. */
+function _dwShort() { return isMobileLayout() && !editingId; }
+function _dwSingleChoice(step) {
+  if (step === 2) {
+    const list = projects.filter(p => p.clientId === wizardState.clientId && p.active !== false);
+    return list.length === 1 ? list[0].id : null;
+  }
+  if (step === 3) {
+    const list = flowsForClient(wizardState.clientId);
+    return list.length === 1 ? list[0].id : null;
+  }
+  return null;
+}
 function wizardGoTo(n) {
   wizardState.step = n;
+  if (n === 1) wizardState.autoSkipped = [];
+  const modal = $('demand-modal');
+  if (modal) {
+    modal.classList.toggle('dw-short', _dwShort());
+    if (n === 1 || editingId) modal.classList.remove('dw-more-open');
+  }
   // Mostra só o step ativo
   WIZARD_STEPS.forEach(s => {
     const el = document.getElementById('dw-step-' + s);
@@ -38184,14 +38207,41 @@ function wizardGoTo(n) {
 }
 
 function wizardBack() {
-  const idx = wizardStepIndex(wizardState.step);
+  let idx = wizardStepIndex(wizardState.step);
   if (idx <= 0) return;
-  wizardGoTo(WIZARD_STEPS[idx - 1]);
+  let prev = WIZARD_STEPS[idx - 1];
+  if (_dwShort()) {
+    // Volta por cima do Customizar e das escolhas que foram feitas sozinhas.
+    const skipped = wizardState.autoSkipped || [];
+    while (idx > 1 && (prev === 'cust' || skipped.includes(prev))) { idx--; prev = WIZARD_STEPS[idx - 1]; }
+    wizardState.autoSkipped = skipped.filter(s => wizardStepIndex(s) < wizardStepIndex(prev));
+  }
+  wizardGoTo(prev);
 }
 function wizardNext() {
-  const idx = wizardStepIndex(wizardState.step);
+  let idx = wizardStepIndex(wizardState.step);
   if (idx < 0 || idx >= WIZARD_STEPS.length - 1) return;
-  wizardGoTo(WIZARD_STEPS[idx + 1]);
+  let next = WIZARD_STEPS[idx + 1];
+  if (_dwShort()) {
+    for (;;) {
+      if (next === 'cust') { next = 4; break; }
+      const only = _dwSingleChoice(next);
+      if (!only) break;
+      if (next === 2) { wizardState.projectId = only; wizardState.flowId = null; }
+      else { wizardState.flowId = only; wizardPushRecent('flow', only); }
+      (wizardState.autoSkipped ||= []).push(next);
+      next = WIZARD_STEPS[wizardStepIndex(next) + 1];
+    }
+  }
+  wizardGoTo(next);
+}
+function toggleDemandMoreOptions() {
+  const modal = $('demand-modal');
+  if (!modal) return;
+  const open = modal.classList.toggle('dw-more-open');
+  const btn = $('dw-more-btn');
+  if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  if (open) setTimeout(() => btn?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 30);
 }
 function updateWizardNextEnabled() {
   const btn = $('dw-next-btn');
@@ -38695,7 +38745,8 @@ function wizardCustRemoveAddition(id) {
 
 /* Renderizadores dos 3 grids de seleção. Card click = seleciona; dblclick = avança. */
 function _wizardCardHandlers(el, onSelect) {
-  el.addEventListener('click', () => onSelect(false));
+  // No celular não tem duplo clique: um toque escolhe e já avança.
+  el.addEventListener('click', () => onSelect(_dwShort()));
   el.addEventListener('dblclick', () => onSelect(true));
 }
 

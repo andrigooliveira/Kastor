@@ -5641,5 +5641,8 @@
 "Bloqueado. Libere as notificações nas configurações do site.": "Blocked. Allow notifications in the site settings.",
 "Permissão não concedida.": "Permission not granted.",
 "Não foi possível ativar as notificações.": "Couldn't turn on notifications.",
-"Agora não": "Not now"
+"Agora não": "Not now",
+"Mais opções": "More options",
+"briefing, anexos, etapas, checklist, recorrência": "briefing, attachments, stages, checklist, recurrence",
+"Personalizar etapas e checklist": "Customize stages and checklist"
 });

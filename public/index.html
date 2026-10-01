@@ -3583,13 +3583,21 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           <label class="form-label">Descrição</label>
           <textarea class="form-control" id="f-description" rows="5" placeholder="Detalhe o que precisa ser feito, referências, contexto…"></textarea>
         </div>
+        <!-- Celular: o resto do formulário fica atrás de "Mais opções" -->
+        <div class="form-group full dw-more-wrap">
+          <button type="button" class="dw-more-btn" id="dw-more-btn" aria-expanded="false" onclick="toggleDemandMoreOptions()">
+            <i data-lucide="sliders-horizontal" class="ic-sm"></i><span>Mais opções</span>
+            <small>briefing, anexos, etapas, checklist, recorrência</small>
+            <i data-lucide="chevron-down" class="ic-sm dw-more-chev"></i>
+          </button>
+        </div>
         <!-- 4. LINK DO BRIEFING — floating label -->
-        <div class="form-group form-group-float full">
+        <div class="form-group form-group-float full dw-extra">
           <input class="form-control" id="f-briefing" type="url" placeholder=" ">
           <label for="f-briefing">Link do Briefing</label>
         </div>
         <!-- 5. ANEXOS (acima do checklist) -->
-        <div class="form-group full">
+        <div class="form-group full dw-extra">
           <label class="form-label">Anexos</label>
           <div class="demand-att-buttons">
             <input type="file" id="f-att-file-input" multiple style="display:none" onchange="handleDemandAttachmentFiles(event, 'f-attachments-list')">
@@ -3599,15 +3607,18 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           <div class="demand-att-list" id="f-attachments-list" style="margin-top:10px"></div>
         </div>
         <!-- 6. CHECKLIST (vem do flow.defaultChecklist, editável antes de salvar) -->
-        <div class="form-group full" id="f-checklist-group" style="display:none">
+        <div class="form-group full dw-extra" id="f-checklist-group" style="display:none">
           <label class="form-label">Checklist Inicial <span class="qty-cell-hint" title="Itens que a demanda terá ao ser criada. Vem do fluxo, mas você pode editar, adicionar responsável, remover ou incluir novos.">?</span></label>
           <div class="chk-list" id="f-checklist-list"></div>
           <button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addDemandChecklistItem()"><i data-lucide="plus" class="ic-sm"></i> Adicionar item</button>
         </div>
+        <div class="form-group full dw-extra dw-cust-link">
+          <button type="button" class="btn btn-ghost btn-sm" onclick="wizardGoTo('cust')"><i data-lucide="list-checks" class="ic-sm"></i> Personalizar etapas e checklist</button>
+        </div>
         </div><!-- /form-grid -->
 
         <!-- RECORRÊNCIA — gera cópias automáticas desta demanda no tempo. -->
-        <div class="form-group full">
+        <div class="form-group full dw-extra">
           <div class="rec-card" id="f-rec-card">
             <label class="rec-head">
               <span class="rec-head-icon"><i data-lucide="repeat"></i></span>
@@ -4974,7 +4985,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20261001pact1" defer></script>
+<script src="/js/boot.js?v=20261001nd1" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
