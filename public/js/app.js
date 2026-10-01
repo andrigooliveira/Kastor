@@ -4783,6 +4783,7 @@ async function enterApp() {
     history.replaceState(null, '', orgUrl(pageUrlFor('dashboard')) + location.search + location.hash);
   } else {
     applyRoute();
+    consumePushAction();
   }
   // Primeira tela depois do login entra com a mesma cascata da navegação.
   markPageEntering(document.querySelector('.page.active'));
@@ -30752,14 +30753,28 @@ async function syncPushSubscription() {
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('message', e => {
     const d = e.data || {};
+    if (d.type === 'rw:notif-refresh') { fetchNotifications(); return; }
     if (d.type !== 'rw:navigate' || !d.url) return;
     try {
       const u = new URL(d.url, location.origin);
       if (u.origin !== location.origin) return;
       history.pushState(null, '', u.pathname + u.search);
       applyRoute();
+      consumePushAction();
     } catch {}
   });
+}
+/* Botão "Avançar etapa" da notificação: a URL chega com ?rwact=next. Tira o
+   parâmetro e dispara o mesmo Avançar do detalhe (com o lembrete de apontar). */
+function consumePushAction() {
+  const params = new URLSearchParams(location.search);
+  const act = params.get('rwact');
+  if (!act) return;
+  params.delete('rwact');
+  const qs = params.toString();
+  history.replaceState(history.state, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
+  const id = detailId;
+  if (act === 'next' && id) setTimeout(() => { if (detailId === id) moveStage(1); }, 450);
 }
 
 /* Convite pra ativar o push no Início — só com o app instalado no celular

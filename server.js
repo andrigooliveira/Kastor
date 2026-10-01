@@ -1396,15 +1396,28 @@ function pushContentFor(n, lang) {
     default:               return { title: 'reWork', body: `Novidade em ${dn}` };
   }
 }
+/* Botões da notificação (Android/desktop; o iPhone ignora). "next" abre a
+   demanda e dispara o Avançar do app, que pede o apontamento antes; "read"
+   marca como lida sem abrir. O navegador mostra no máximo 2. */
+function pushActionsFor(n, lang) {
+  if (!n.demandId) return [];
+  const en = lang === 'en';
+  const open = { action: 'open', title: en ? 'Open' : 'Abrir' };
+  if (n.type === 'assigned' || n.type === 'stage_assigned') return [{ action: 'next', title: en ? 'Advance stage' : 'Avançar etapa' }, open];
+  if (['mention', 'watch_comment', 'reaction', 'watch_stage', 'reminder'].includes(n.type)) return [open, { action: 'read', title: en ? 'Mark as read' : 'Marcar como lida' }];
+  return [];
+}
 // Tipos que a pessoa liga/desliga no Perfil (coluna Push); o resto sempre vai.
 const PUSH_PREF_KEYS = ['mention', 'assigned', 'stage_assigned', 'reminder', 'watch_stage', 'watch_comment'];
 function sendPushFor(user, n) {
   const subs = Array.isArray(user.pushSubs) ? user.pushSubs : [];
   if (!subs.length || isAway(user) || isFocused(user)) return;
   if (n.type !== 'test' && user.pushPrefs && user.pushPrefs[n.type] === false) return;
-  const { title, body } = pushContentFor(n, userLang(user));
+  const lang = userLang(user);
+  const { title, body } = pushContentFor(n, lang);
   const url = n.demandId ? _demandPathFor(n.demandId) : (n.docId ? '/hub/docs' : '/');
-  const payload = JSON.stringify({ title, body, url, tag: n.demandId || n.docId || n.id, notificationId: n.id });
+  const actions = pushActionsFor(n, lang);
+  const payload = JSON.stringify({ title, body, url, tag: n.demandId || n.docId || n.id, notificationId: n.id, actions });
   setImmediate(async () => {
     try { await vapidKeys(); } catch (e) { console.error('[push] vapid:', e.message); return; }
     const dead = [];

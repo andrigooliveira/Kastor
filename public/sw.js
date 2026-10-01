@@ -18,7 +18,7 @@
    hora; o usuário pega os assets novos no próximo reload, sem prompt. O activate
    limpa os caches de versões antigas pra não acumular lixo. */
 
-const SW_VERSION   = '2026-10-01b';
+const SW_VERSION   = '2026-10-01c';
 const STATIC_CACHE = `rework-static-${SW_VERSION}`;
 
 /* App shell mínimo pré-cacheado no install. Só recursos com URL estável (sem
@@ -177,7 +177,8 @@ self.addEventListener('push', event => {
       badge: '/icons/badge-96.png',
       tag: data.tag || undefined,
       renotify: !!data.tag,
-      data: { url: data.url || '/' },
+      actions: Array.isArray(data.actions) ? data.actions.slice(0, 2) : [],
+      data: { url: data.url || '/', notificationId: data.notificationId || null },
     }),
       self.navigator && self.navigator.setAppBadge ? self.navigator.setAppBadge().catch(() => {}) : null,
     ]);
@@ -186,9 +187,21 @@ self.addEventListener('push', event => {
 
 self.addEventListener('notificationclick', event => {
   event.notification.close();
-  const target = new URL((event.notification.data && event.notification.data.url) || '/', self.location.origin).href;
+  const nd = event.notification.data || {};
+  const url = new URL(nd.url || '/', self.location.origin);
+  // "Avançar etapa": abre a demanda e o app dispara o Avançar (com o lembrete de apontar).
+  if (event.action === 'next') url.searchParams.set('rwact', 'next');
+  const target = url.href;
   event.waitUntil((async () => {
     const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    if (event.action === 'read') {
+      // Marca como lida sem abrir o app; se ele estiver aberto, atualiza o sino.
+      if (nd.notificationId) {
+        await fetch('/api/notifications/' + encodeURIComponent(nd.notificationId) + '/read', { method: 'PUT', credentials: 'same-origin' }).catch(() => {});
+      }
+      wins.forEach(w => w.postMessage({ type: 'rw:notif-refresh' }));
+      return;
+    }
     const win = wins.find(w => new URL(w.url).origin === self.location.origin);
     if (win) {
       // App aberto: foca e pede pra ele navegar (sem recarregar tudo).
