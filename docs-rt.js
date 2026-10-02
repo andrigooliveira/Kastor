@@ -115,6 +115,13 @@ class Room {
       const dec = decoding.createDecoder(new Uint8Array(data));
       const type = decoding.readVarUint(dec);
       if (type === MSG_SYNC) {
+        // Só leitura: aceita o pedido de estado (step 1) e ignora alterações
+        // (step 2 / update) — senão um leitor editaria pelo socket.
+        if (conn._canWrite === false) {
+          const peek = decoding.createDecoder(new Uint8Array(data));
+          decoding.readVarUint(peek);
+          if (decoding.readVarUint(peek) !== syncProtocol.messageYjsSyncStep1) return;
+        }
         const enc = encoding.createEncoder();
         encoding.writeVarUint(enc, MSG_SYNC);
         // readSyncMessage aplica step2/updates no doc e escreve resposta em enc
@@ -213,7 +220,9 @@ async function setup(httpServer, opts = {}) {
   httpServer.on('upgrade', async (req, socket, head) => {
     const u = url.parse(req.url, true);
     const m = u.pathname && u.pathname.match(/^\/rt\/docs\/([a-f0-9-]+)$/i);
-    if (!m) return; // deixa outros handlers (SSE não usa WS, então tudo bem)
+    // Único handler de upgrade do servidor: caminho desconhecido fecha na hora
+    // (antes ficava pendurado pra sempre, segurando o socket).
+    if (!m) { socket.destroy(); return; }
     const docId = m[1];
 
     let userId = null;
@@ -231,6 +240,8 @@ async function setup(httpServer, opts = {}) {
 
     wss.handleUpgrade(req, socket, head, (ws) => {
       ws._userId = userId;
+      // canAccess: true/'write' = edita; 'read' = só acompanha.
+      ws._canWrite = allowed !== 'read';
       ws._connId = Math.random().toString(36).slice(2);
       wss.emit('connection', ws, req, docId);
     });

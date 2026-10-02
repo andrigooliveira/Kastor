@@ -24,6 +24,8 @@ try {
 const express     = require('express');
 const compression = require('compression');
 const crypto     = require('crypto');
+const net        = require('net');
+const dnsPromises = require('dns').promises;
 const fs         = require('fs');
 const os         = require('os');
 const path       = require('path');
@@ -1668,7 +1670,8 @@ function eventRelevantToTarget(event, ctx, targetUserId) {
    hostnames sem ponto (ex.: "postgres", "localhost", "redis"). */
 function isPrivateOrLocalHostname(hostname) {
   if (!hostname) return true;
-  const h = hostname.toLowerCase();
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (net.isIP(h)) return isPrivateIp(h);
   if (h === 'localhost' || !h.includes('.')) return true; // "localhost", "redis", "postgres"…
   // IPv4
   const v4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
@@ -1698,13 +1701,39 @@ function isSafeWebhookUrl(rawUrl) {
 /* fetch com timeout via AbortController. Sem isso, um webhook lento segura
    uma conexão do pool pra sempre. 10s cobre 99% dos casos legítimos. */
 async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
+  // Toda requisição de saída (webhooks, título de link) passa por aqui: o
+  // destino precisa resolver só pra IP público, e redirect nunca é seguido
+  // sozinho (quem precisa, como o título de link, segue e revalida cada salto).
+  await assertPublicUrl(url);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    return await fetch(url, { redirect: 'manual', ...options, signal: controller.signal });
   } finally {
     clearTimeout(timer);
   }
+}
+/* SSRF: o texto do host não basta — "meu-dominio.com" pode resolver pra
+   127.0.0.1 ou 169.254.169.254 e passava pela checagem por texto. Resolve o
+   DNS e recusa se QUALQUER endereço for interno. */
+function isPrivateIp(ip) {
+  let a = String(ip || '').toLowerCase().replace(/^\[|\]$/g, '');
+  const mapped = a.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mapped) a = mapped[1];
+  if (net.isIPv4(a)) {
+    const [x, y] = a.split('.').map(Number);
+    return x === 0 || x === 10 || x === 127 || (x === 169 && y === 254) || (x === 172 && y >= 16 && y <= 31)
+      || (x === 192 && y === 168) || (x === 100 && y >= 64 && y <= 127) || x >= 224;
+  }
+  if (net.isIPv6(a)) return a === '::' || a === '::1' || /^f[cd]/.test(a) || /^fe[89ab]/.test(a) || a.startsWith('::ffff:');
+  return true;
+}
+async function assertPublicUrl(rawUrl) {
+  const u = new URL(rawUrl);
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error('URL bloqueada: protocolo inválido');
+  const host = u.hostname.replace(/^\[|\]$/g, '');
+  const addrs = net.isIP(host) ? [{ address: host }] : await dnsPromises.lookup(host, { all: true });
+  if (!addrs.length || addrs.some(x => isPrivateIp(x.address))) throw new Error('URL bloqueada: aponta para a rede interna');
 }
 
 // Roteamento por cliente/projeto. Um webhook sem filtro (clientId/projectId nulos)
@@ -2251,7 +2280,8 @@ app.post('/api/marketing/ingest', express.json({ limit: '5mb' }), async (req, re
     return res.status(503).json({ error: 'MARKETING_WEBHOOK_TOKEN não configurado no server' });
   }
   const token = String(req.headers['x-marketing-token'] || '').trim();
-  if (token !== MARKETING_TOKEN) return res.status(401).json({ error: 'Token inválido' });
+  const tokOk = token.length === MARKETING_TOKEN.length && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(MARKETING_TOKEN));
+  if (!tokOk) return res.status(401).json({ error: 'Token inválido' });
   const rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
   if (!rows) return res.status(400).json({ error: 'Body precisa de { rows: [...] }' });
   if (rows.length > 5000) return res.status(413).json({ error: 'Lote máximo: 5000 rows' });
@@ -2370,6 +2400,9 @@ app.get('/api/marketing/performance', requireAuth, async (req, res) => {
 const _loginAttempts = new Map(); // ip → { count, resetAt }
 const _pwResetAttempts = new Map(); // ip → { count, resetAt }
 const LOGIN_MAX_PER_MIN = 5;
+const LOGIN_ACCT_MAX_FAILS = 10;
+const LOGIN_ACCT_WINDOW_MS = 15 * 60 * 1000;
+const _loginFailsByAcct = new Map(); // identificador → { count, windowEnd, until }
 const PWRESET_MAX_PER_MIN = 5;
 function clientIp(req) {
   const fwd = (req.headers['x-forwarded-for'] || '').split(',')[0].trim();
@@ -2410,6 +2443,14 @@ app.post('/api/login', async (req, res) => {
   // Entra com o nome de usuário ou com o e-mail da conta. Bases antigas podem
   // ter o mesmo e-mail em duas contas: vale a que tiver essa senha.
   const ident = String(username || '').trim().toLowerCase();
+  // Limite por CONTA, além do por IP: o IP vem do X-Forwarded-For, que quem
+  // ataca troca a cada tentativa. 10 erros em 15 min seguram a conta 15 min.
+  const acct = _loginFailsByAcct.get(ident);
+  if (ident && acct && acct.until > now) {
+    const retryAfter = Math.ceil((acct.until - now) / 1000);
+    res.set('Retry-After', String(retryAfter));
+    return res.status(429).json({ error: `Muitas tentativas nesta conta. Aguarde ${Math.ceil(retryAfter / 60)} min ou redefina a senha.`, retryAfter });
+  }
   const candidates = ident ? db.users.filter(u =>
     String(u.username || '').toLowerCase() === ident || (u.email && u.email.toLowerCase() === ident)
   ) : [];
@@ -2417,6 +2458,15 @@ app.post('/api/login', async (req, res) => {
   if (!user) {
     rec.count++;
     _loginAttempts.set(ip, rec);
+    if (ident) {
+      const a = _loginFailsByAcct.get(ident);
+      const cur = a && a.windowEnd > now ? a : { count: 0, windowEnd: now + LOGIN_ACCT_WINDOW_MS, until: 0 };
+      cur.count++;
+      if (cur.count >= LOGIN_ACCT_MAX_FAILS) { cur.until = now + LOGIN_ACCT_WINDOW_MS; cur.count = 0; cur.windowEnd = now + LOGIN_ACCT_WINDOW_MS; }
+      _loginFailsByAcct.set(ident, cur);
+      // Nomes inventados aos milhares não podem encher a memória.
+      if (_loginFailsByAcct.size > 5000) for (const [k, v] of _loginFailsByAcct) if (v.windowEnd <= now && v.until <= now) _loginFailsByAcct.delete(k);
+    }
     return res.status(401).json({ error: 'Usuário ou senha incorretos' });
   }
   if (!tenancy.activeMemberships(user.id).length) {
@@ -2428,8 +2478,9 @@ app.post('/api/login', async (req, res) => {
       ? 'A organização da sua conta não está mais disponível no reWork. Fale com o dono da organização.'
       : 'Seu acesso está desativado. Fale com a coordenação da sua equipe.' });
   }
-  // Sucesso: zera o contador desse IP
+  // Sucesso: zera o contador desse IP e o da conta
   _loginAttempts.delete(ip);
+  _loginFailsByAcct.delete(ident);
   // Verificação em duas etapas: a senha certa só libera o segundo passo.
   if (twoFactorOn(user)) {
     const t = await startTwoFactorTicket(req, user, 'password');
@@ -4897,7 +4948,9 @@ function _writerPublicUrl(doc) {
 app.post('/api/writer/:id/public-link', requireAuth, (req, res) => {
   const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
   if (!writerCanShare(req.user, doc)) return res.status(403).json({ error: 'Só o dono pode gerar link público' });
-  if (!doc.publicShareToken) doc.publicShareToken = (uid() + uid()).replace(/-/g, '').slice(0, 32);
+  // Reativar depois de revogar gera link NOVO — o antigo (que pode ter vazado)
+  // continua morto. Enquanto ativo, o mesmo link segue valendo.
+  if (!doc.publicShareToken || !doc.publicShareEnabled) doc.publicShareToken = crypto.randomBytes(24).toString('hex');
   doc.publicShareEnabled = true;
   doc.updatedAt = nowISO();
   saveEntity('writerDocuments', doc);
@@ -8385,6 +8438,8 @@ function normalizeUrlSrv(raw) {
   const s = String(raw).trim();
   if (!s) return '';
   if (/^https?:\/\//i.test(s)) return s;
+  // javascript:/data:/vbscript:/file: viram link clicável que roda código — recusa.
+  if (/^(javascript|data|vbscript|file|blob):/i.test(s.replace(/[\x00-\x20]+/g, ''))) return '';
   if (/^[a-z][a-z0-9+.-]*:/i.test(s)) return s;
   return 'https://' + s;
 }
@@ -8407,6 +8462,16 @@ const COMMENT_HTML_ATTR_ALLOWLIST = {
 // Cabe várias imagens grandes coladas; o sanitizer converte data URIs em /uploads,
 // então o valor GRAVADO em disco/DB fica sempre em KB.
 const COMMENT_HTML_MAX_LEN = 60 * 1024 * 1024;
+/* href/src perigoso: o navegador ignora tabs, quebras e controles dentro da
+   URL ("java\nscript:" vira javascript:), então limpa antes de olhar o esquema.
+   data: só como imagem (src); javascript:/vbscript:/file:/blob: nunca. */
+function _unsafeUrlAttr(name, val) {
+  if (name !== 'href' && name !== 'src') return false;
+  const v = String(val || '').replace(/[\x00-\x20]+/g, '').toLowerCase();
+  if (/^(javascript|vbscript|file|blob):/.test(v)) return true;
+  if (v.startsWith('data:')) return !(name === 'src' && /^data:image\/(png|jpe?g|gif|webp);/.test(v));
+  return false;
+}
 function sanitizeCommentHtml(input) {
   let html = String(input == null ? '' : input);
   if (html.length > COMMENT_HTML_MAX_LEN) html = html.slice(0, COMMENT_HTML_MAX_LEN);
@@ -8455,7 +8520,7 @@ function _sanitizeCommentAttrs(tag, raw) {
     if (!allowed.includes(name)) continue;
     if (name.startsWith('on')) continue; // paranoia — allowlist já bloqueia, mas fica explícito
     const val = m[2] !== undefined ? m[2] : m[3];
-    if ((name === 'href' || name === 'src') && /^\s*javascript:/i.test(val)) continue;
+    if (_unsafeUrlAttr(name, val)) continue;
     if (tag === 'span' && name === 'class' && val !== 'mention') continue;
     if (tag === 'a' && name === 'target' && val !== '_blank') continue;
     if (tag === 'a' && name === 'rel' && !/^(noopener|noreferrer|(noopener\s+noreferrer))$/.test(val)) continue;
@@ -8502,6 +8567,9 @@ function sanitizeAttachments(arr) {
       const saved = saveUploadFromDataUri(data, a.name);
       if (saved) data = saved.url;
     }
+    // Arquivo vira link no app: só caminho interno ou http(s). javascript:,
+    // data: que sobrou etc. são descartados (anexo some em vez de virar XSS).
+    if (!/^\/(?!\/)/.test(data) && !/^https?:\/\//i.test(data)) data = '';
     const size = uploadSizeOf(data) || (Number(a.size) > 0 ? Math.round(Number(a.size)) : 0);
     return { id: a.id || uid(), kind: 'file', name: String(a.name || 'arquivo'), type: String(a.type || ''), data, ...(size ? { size } : {}), addedAt: a.addedAt || nowISO() };
   }).filter(a => a.kind === 'link' ? a.url : a.data);
@@ -8710,7 +8778,7 @@ function _sanitizePostAttrs(tag, raw) {
     // Isso é crítico pra URLs com query strings (`?a=1&b=2`) — que somos praticamente
     // todos os embeds (Loom, Figma, YouTube com params, etc.).
     const val = _decodeHtmlEntities(m[2] !== undefined ? m[2] : m[3]);
-    if ((name === 'href' || name === 'src') && /^\s*javascript:/i.test(val)) continue;
+    if (_unsafeUrlAttr(name, val)) continue;
     if (tag === 'a' && name === 'target' && val !== '_blank') continue;
     if (tag === 'a' && name === 'rel' && !/^(noopener|noreferrer|(noopener\s+noreferrer))$/.test(val)) continue;
     out.push(` ${name}="${escAttr(val)}"`);
@@ -11560,6 +11628,10 @@ function _folderLock(token, folderId) {
 }
 function requireFolderUnlock(folderId, req, res) {
   if (!folderId) { res.status(400).json({ error: 'folder_required' }); return false; }
+  // Pasta de outra equipe (ou freelancer): some, mesmo que o token tenha
+  // destravado antes — a checagem vale em toda leitura/escrita de entrada.
+  const f = (db.passwordFolders || []).find(x => x.id === folderId && notDeleted(x));
+  if (!f || !_folderVisibleTo(f, req.user)) { res.status(404).json({ error: 'Pasta não encontrada' }); return false; }
   const until = _folderUntil(req.token, folderId);
   if (!until) { res.status(403).json({ error: 'folder_locked' }); return false; }
   _folderTouch(req.token, folderId); // sliding
@@ -11611,9 +11683,13 @@ app.get('/api/passwords/status', requireAuth, (req, res) => {
    TTL 15min sliding). Cada abertura + reveal fica registrado em audit.
    Auto-migração: passwords antigos com `folder: string` viram folder entities
    agrupados por (workspaceId, folder) na primeira leitura. */
-function _folderVisibleTo(_folder, _user) {
-  // Todos veem todas as pastas — o "acesso" real é via unlock por senha.
-  return true;
+function _folderVisibleTo(folder, user) {
+  // Quem é da equipe da pasta vê a pasta; o acesso às senhas ainda pede o
+  // unlock com a senha da conta. Freelancer não usa o cofre. Pasta sem equipe
+  // (dado antigo) fica visível pra quem é da organização, como antes.
+  if (!folder || !user || user.isFreelancer) return false;
+  if (!folder.workspaceId) return true;
+  return canAccessWs(user, folder.workspaceId);
 }
 function _migrateLegacyPasswordFolders() {
   if (!Array.isArray(db.passwordFolders)) db.passwordFolders = [];
@@ -11695,7 +11771,7 @@ app.get('/api/password-folders', requireAuth, (req, res) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
   if (!Array.isArray(db.passwordFolders)) db.passwordFolders = [];
   const list = db.passwordFolders
-    .filter(f => notDeleted(f))
+    .filter(f => notDeleted(f) && _folderVisibleTo(f, req.user))
     .map(f => {
       const item = _passwordFolderItem(f, req.user);
       // Adiciona flag `unlocked` e `unlockedUntil` pra client saber estado.
@@ -11711,7 +11787,7 @@ app.get('/api/password-folders', requireAuth, (req, res) => {
 // Unlock por pasta — autentica com a senha da conta. TTL sliding 15min.
 app.post('/api/password-folders/:id/unlock', requireAuth, (req, res) => {
   const folder = (db.passwordFolders || []).find(f => f.id === req.params.id && notDeleted(f));
-  if (!folder) return res.status(404).json({ error: 'Pasta não encontrada' });
+  if (!folder || !_folderVisibleTo(folder, req.user)) return res.status(404).json({ error: 'Pasta não encontrada' });
   const pw = String((req.body || {}).password || '');
   if (!pw) return res.status(400).json({ error: 'Senha obrigatória' });
   if (!auth.verifyPassword(req.user.id, pw)) {
@@ -11735,6 +11811,7 @@ app.post('/api/password-folders', requireAuth, (req, res) => {
   const name = String(b.name || '').trim().slice(0, 60);
   if (!name) return res.status(400).json({ error: 'Nome obrigatório' });
   const wsId = b.workspaceId || wsIdsFor(req.user)[0] || null;
+  if (wsId && !canAccessWs(req.user, wsId)) return res.status(403).json({ error: 'Você não faz parte dessa equipe' });
   const folder = {
     id: uid(),
     workspaceId: wsId,
@@ -12013,7 +12090,7 @@ app.post('/api/passwords/webauthn/auth/finish', requireAuth, async (req, res) =>
     const folderId = String((req.body || {}).folderId || '').trim();
     if (folderId) {
       const folder = (db.passwordFolders || []).find(f => f.id === folderId && notDeleted(f));
-      if (!folder) return res.status(404).json({ error: 'Pasta não encontrada' });
+      if (!folder || !_folderVisibleTo(folder, req.user)) return res.status(404).json({ error: 'Pasta não encontrada' });
       const until = _folderTouch(req.token, folder.id);
       _logPasswordAudit(req.user.id, folder.id, 'folder_unlock', { method: 'webauthn', name: folder.name, credentialID: cred.credentialID });
       return res.json({ ok: true, folderId: folder.id, until, ttlMs: VAULT_UNLOCK_TTL_MS });
@@ -13389,7 +13466,11 @@ if (require.main === module) {
           return tenancy.run(orgId, () => {
             const user = db.users.find(u => u.id === userId);
             if (user && emailEnforced() && !emailLinked(user)) return false;
-            return !!user && user.active !== false && writerCanRead(user, doc);
+            if (!user || user.active === false || !writerCanRead(user, doc)) return false;
+            // Leitor só recebe; quem comenta precisa gravar a marca do comentário
+            // no texto, então comentarista e editor enviam alterações.
+            const r = _writerRoleOf(user, doc);
+            return WRITER_ROLE_RANK[r] >= WRITER_ROLE_RANK.commenter ? 'write' : 'read';
           });
         },
         // Carrega snapshot Yjs prévio (base64 em db)

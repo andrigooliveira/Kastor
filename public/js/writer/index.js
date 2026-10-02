@@ -329,15 +329,15 @@ const KastorAttachment = Node.create({
 
       if (a.isImage && a.url) {
         dom.innerHTML =
-          `<a class="kastor-att-img-link" href="${_escAttr(a.url)}" target="_blank" rel="noopener">
-             <img class="kastor-att-img" src="${_escAttr(a.url)}" alt="${_escAttr(a.name)}" loading="lazy">
+          `<a class="kastor-att-img-link" href="${_escAttr(_safeAttUrl(a.url))}" target="_blank" rel="noopener">
+             <img class="kastor-att-img" src="${_escAttr(_safeAttUrl(a.url))}" alt="${_escAttr(a.name)}" loading="lazy">
            </a>`;
       } else {
         const ext = (a.name || '').split('.').pop().toUpperCase().slice(0, 5) || 'FILE';
         // Layout minimalista: só o nome e a extensão. Sem tamanho, sem borda,
         // sem estilo de link. Fica com peso visual leve dentro do texto.
         dom.innerHTML =
-          `<a class="kastor-att-card" href="${_escAttr(a.url || '#')}" target="_blank" rel="noopener">
+          `<a class="kastor-att-card" href="${_escAttr(_safeAttUrl(a.url))}" target="_blank" rel="noopener">
              <div class="kastor-att-name">${_escAttr(a.name || 'arquivo')}</div>
              <div class="kastor-att-ext">${_escAttr(ext)}</div>
            </a>`;
@@ -453,6 +453,15 @@ const KastorComment = Mark.create({
     };
   }
 });
+
+/* URL de anexo vinda do conteúdo do documento (JSON que qualquer editor grava):
+   só caminho interno ou http(s). javascript:/data: viram '#', senão um clique
+   no cartão rodaria código no app — inclusive no link público. */
+function _safeAttUrl(u) {
+  const s = String(u || '').trim();
+  if (/^\/(?!\/)/.test(s) || /^https?:\/\//i.test(s)) return s;
+  return '#';
+}
 
 function _escAttr(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));

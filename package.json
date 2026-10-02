@@ -4,7 +4,7 @@
   "description": "reWork — Gestão de Demandas de Marketing (multiusuário, persistente)",
   "main": "server.js",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "scripts": {
     "start": "node server.js",
@@ -45,7 +45,7 @@
     "googleapis": "^173.0.0",
     "lowlight": "^3.3.0",
     "lucide": "^1.18.0",
-    "nodemailer": "^9.0.1",
+    "nodemailer": "^10.0.13",
     "pg": "^8.13.0",
     "qrcode": "^1.5.4",
     "web-push": "^3.6.7",

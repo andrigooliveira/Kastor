@@ -1027,6 +1027,14 @@ window.addEventListener('unhandledrejection', ev => {
 /* ─── HELPERS ─── */
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+/* Valor dentro de string JS num atributo de evento (onclick="f('…')"). O
+   navegador decodifica &#39; de volta pra ' ANTES de rodar o JS, então esc()
+   não protege ali: uma aspa no valor fechava a string e rodava código. Aqui
+   cada caractere perigoso vira escape JS (\x27), que sobrevive à decodificação. */
+const jsq = s => String(s ?? '').replace(/[\\'"&<>`\r\n\u2028\u2029]/g, c => {
+  const n = c.charCodeAt(0);
+  return n > 255 ? '\\u' + n.toString(16).padStart(4, '0') : '\\x' + n.toString(16).padStart(2, '0');
+});
 const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
 /* ─── Prioridade ─── */
@@ -1061,11 +1069,26 @@ function normalizeUrl(raw) {
   if (!s) return '';
   // Já tem protocolo: mantém
   if (/^https?:\/\//i.test(s)) return s;
+  // Esquemas que executam ou embutem conteúdo (javascript:, data:…) nunca viram link.
+  if (UNSAFE_URL_RE.test(s)) return '';
   // Outros protocolos (mailto:, tel:, ftp:, etc.) — mantém como está
   if (/^[a-z][a-z0-9+.-]*:/i.test(s)) return s;
   // Prepend https://
   return 'https://' + s;
 }
+// Navegador ignora espaços/controles no começo e tabs/quebras no meio do esquema
+// ("java\tscript:"), então limpa antes de testar.
+const UNSAFE_URL_RE = { test: u => /^(javascript|data|vbscript|file|blob):/i.test(String(u || '').replace(/[\x00-\x20]+/g, '')) };
+/* Link de anexo/arquivo: caminho interno (/uploads/…) passa direto; o resto
+   segue normalizeUrl (que recusa javascript:/data:). Vazio vira '#'. */
+function safeUrl(raw) {
+  const s = String(raw || '').trim();
+  if (/^\/(?!\/)/.test(s)) return s;
+  return normalizeUrl(s) || '#';
+}
+/* Valor dentro de url('…') em style="": aspas, parênteses e espaços viram %XX
+   (não fecham a função CSS) e o resto passa pelo esc() do atributo. */
+const cssu = s => esc(String(s ?? '').replace(/['"()\\\s]/g, c => '%' + c.charCodeAt(0).toString(16).padStart(2, '0')));
 /* Detecta URLs dentro de texto livre e converte em <a target=_blank>. Recebe string JÁ ESCAPADA. */
 function linkifyEscaped(escaped) {
   // Padrão: protocolo opcional + domínio + path. Adiciona https:// se omitido.
@@ -1476,7 +1499,7 @@ function projectAvatarHTML(p, cls = 'avatar') {
 /* "Cliente › Projeto › Fluxo" com foto/letra/ícone de cada um — cabeçalho do
    detalhe da demanda e do wizard. `fallback` cobre nomes sem entidade carregada. */
 function demandCrumbItemsHTML(client, project, flow, fallback = {}) {
-  const imgAv = url => `<span class="dd-crumb-avatar" style="background-image:url('${esc(url)}')"></span>`;
+  const imgAv = url => `<span class="dd-crumb-avatar" style="background-image:url('${cssu(url)}')"></span>`;
   const letterAv = (name, color) => {
     const c = color || '#7A00FF';
     return `<span class="dd-crumb-avatar" style="background:${hexDim(c)};color:${c}">${esc((name || '?').charAt(0).toUpperCase())}</span>`;
@@ -1574,7 +1597,7 @@ function applyFilterDropdown(selId, opts = {}) {
     </button>
     <div class="filter-cdrop-menu">
       ${options.map(o => `
-        <div class="filter-cdrop-item ${o.value === value ? 'active' : ''} ${o.isDefault ? 'is-default' : ''}" onclick="pickFilterCdrop('${esc(selId)}', this.dataset.v)" data-v="${esc(o.value)}">
+        <div class="filter-cdrop-item ${o.value === value ? 'active' : ''} ${o.isDefault ? 'is-default' : ''}" onclick="pickFilterCdrop('${jsq(selId)}', this.dataset.v)" data-v="${esc(o.value)}">
           ${o.avatar || ''}
           <span>${esc(o.label)}</span>
           ${o.isDefault ? '<span class="filter-cdrop-default-tag">Padrão</span>' : ''}
@@ -2466,7 +2489,7 @@ function _godmodeRenderList() {
     const viewing = u.viewing
       ? `<div class="gm-user-view">olhando <strong>${esc(u.viewing.demandName)}</strong></div>`
       : (u.online ? '<div class="gm-user-view gm-user-view--muted">online, sem demanda aberta</div>' : `<div class="gm-user-view gm-user-view--muted">visto ${u.lastSeen ? _gmTimeAgo(u.lastSeen) : 'nunca'}</div>`);
-    return `<button type="button" class="gm-user${activeCls}" onclick="godmodeSelectUser('${esc(u.id)}')">
+    return `<button type="button" class="gm-user${activeCls}" onclick="godmodeSelectUser('${jsq(u.id)}')">
       <span class="${dotCls}"></span>
       <span class="gm-user-avatar">${avatarHTML(u, 'avatar avatar-sm').replace(/data-user-id="[^"]+"/, '')}</span>
       <span class="gm-user-body">
@@ -2538,7 +2561,7 @@ function _godmodeRenderDetail(d) {
     </div>`;
   }).join('') || '<div class="gm-empty">Sem atividade registrada.</div>';
   const assignedHtml = (d.assignedDemands || []).length
-    ? `<ul class="gm-list">${d.assignedDemands.map(x => `<li class="gm-list-item"><button class="gm-jump" onclick="closeGodmode(); showDetail('${esc(x.id)}')">${esc(x.name)}</button>${x.deadline ? `<span class="gm-list-meta">prazo ${esc(fmtDate(x.deadline))}</span>` : ''}</li>`).join('')}</ul>`
+    ? `<ul class="gm-list">${d.assignedDemands.map(x => `<li class="gm-list-item"><button class="gm-jump" onclick="closeGodmode(); showDetail('${jsq(x.id)}')">${esc(x.name)}</button>${x.deadline ? `<span class="gm-list-meta">prazo ${esc(fmtDate(x.deadline))}</span>` : ''}</li>`).join('')}</ul>`
     : '<div class="gm-empty">Nenhuma demanda ativa atribuída.</div>';
   el.innerHTML = `
     <div class="gm-detail">
@@ -2550,7 +2573,7 @@ function _godmodeRenderDetail(d) {
           <div class="gm-detail-state">
             <span class="gm-dot ${p.online ? 'gm-dot--online' : 'gm-dot--offline'}"></span>
             ${p.online ? `${p.tabCount} ${p.tabCount > 1 ? 'abas abertas' : 'aba aberta'}` : `offline · visto ${_gmTimeAgo(u.lastSeen)}`}
-            ${p.viewing ? ` · olhando <button class="gm-jump" onclick="closeGodmode(); showDetail('${esc(p.viewing.demandId)}')">${esc(p.viewing.demandName)}</button> desde ${_gmTimeAgo(p.viewing.since)}` : ''}
+            ${p.viewing ? ` · olhando <button class="gm-jump" onclick="closeGodmode(); showDetail('${jsq(p.viewing.demandId)}')">${esc(p.viewing.demandName)}</button> desde ${_gmTimeAgo(p.viewing.since)}` : ''}
           </div>
         </div>
       </div>
@@ -3530,7 +3553,7 @@ function openLucidePicker(currentIcon, onPick) {
       grid.innerHTML = '<div style="color:var(--text-muted);padding:20px;text-align:center">Não foi possível carregar a biblioteca de ícones.</div>';
     } else {
       grid.innerHTML = names.map(n =>
-        `<button type="button" class="lucide-picker-item" data-name="${esc(n)}" title="${esc(n)}" onclick="pickLucideIcon('${esc(n)}')"><i data-lucide="${esc(n)}"></i></button>`
+        `<button type="button" class="lucide-picker-item" data-name="${esc(n)}" title="${esc(n)}" onclick="pickLucideIcon('${jsq(n)}')"><i data-lucide="${esc(n)}"></i></button>`
       ).join('');
       paintIcons();
     }
@@ -4332,7 +4355,7 @@ function renderAccentPicker() {
   if (!wrap) return;
   const cur = document.documentElement.getAttribute('data-accent') || '';
   wrap.innerHTML = ACCENT_THEMES.map(t => `
-    <button type="button" class="accent-opt${t.id === cur ? ' is-active' : ''}" style="--swatch:${t.swatch}" onclick="setProfileAccent('${t.id}')" aria-pressed="${t.id === cur}">
+    <button type="button" class="accent-opt${t.id === cur ? ' is-active' : ''}" style="--swatch:${t.swatch}" onclick="setProfileAccent('${jsq(t.id)}')" aria-pressed="${t.id === cur}">
       <span class="accent-swatch"></span>${t.label}
     </button>`).join('');
 }
@@ -4865,11 +4888,11 @@ function _piRender() {
   const radio = (on) => `role="radio" aria-checked="${on}" tabindex="${on ? 0 : -1}"`;
   const tag = _bilYearlyTag(d.catalog);
   $('pi-cycle').innerHTML = [['MONTHLY', 'Mensal', ''], ['YEARLY', 'Anual', tag ? `<em>${tag}</em>` : '']]
-    .map(([k, l, extra]) => `<button type="button" class="${k === o.cycle ? 'is-on' : ''}" ${radio(k === o.cycle)} onclick="_piSet('cycle','${k}')">${l}${extra}</button>`).join('');
+    .map(([k, l, extra]) => `<button type="button" class="${k === o.cycle ? 'is-on' : ''}" ${radio(k === o.cycle)} onclick="_piSet('cycle','${jsq(k)}')">${l}${extra}</button>`).join('');
   $('pi-plans').innerHTML = d.catalog.map(p => {
     const on = p.id === o.planId;
     const price = p.prices[o.cycle];
-    return `<button type="button" class="pi-plan${on ? ' is-on' : ''}" ${radio(on)} onclick="_piSet('planId','${p.id}')">
+    return `<button type="button" class="pi-plan${on ? ' is-on' : ''}" ${radio(on)} onclick="_piSet('planId','${jsq(p.id)}')">
       ${p.featured ? '<span class="pi-plan-tag">Mais escolhido</span>' : ''}
       <span class="pi-plan-name">${esc(p.name)}</span>
       <span class="pi-plan-price"><b>${_bilMoney(yearly ? Math.round(price / 12) : price)}</b>/mês</span>
@@ -4879,7 +4902,7 @@ function _piRender() {
   }).join('');
   const methods = _bilMethodsOn();
   if (!methods.some(m => m.id === o.method)) o.method = methods[0].id;
-  $('pi-methods').innerHTML = methods.map(m => `<button type="button" class="pi-method${m.id === o.method ? ' is-on' : ''}" ${radio(m.id === o.method)} onclick="_piSet('method','${m.id}')"><i data-lucide="${m.icon}"></i>${esc(m.label)}</button>`).join('');
+  $('pi-methods').innerHTML = methods.map(m => `<button type="button" class="pi-method${m.id === o.method ? ' is-on' : ''}" ${radio(m.id === o.method)} onclick="_piSet('method','${jsq(m.id)}')"><i data-lucide="${m.icon}"></i>${esc(m.label)}</button>`).join('');
   const m = methods.find(x => x.id === o.method);
   $('pi-hint').textContent = o.method === 'PIX_AUTOMATIC' ? `${m.hint} O banco pede o primeiro Pix na hora da autorização.` : m.hint;
   paintIcons($('plan-intro-screen'));
@@ -5864,7 +5887,7 @@ function _orgInitials(name) {
 }
 function _orgTile(org, cls, extra) {
   const attrs = extra ? ' ' + extra : '';
-  if (org && org.logo) return `<span class="${cls} has-logo"${attrs} style="background-image:url('${esc(org.logo)}')"></span>`;
+  if (org && org.logo) return `<span class="${cls} has-logo"${attrs} style="background-image:url('${cssu(org.logo)}')"></span>`;
   return `<span class="${cls}"${attrs}>${esc(_orgInitials(org?.name))}</span>`;
 }
 function _closeOrgMenu() {
@@ -5903,7 +5926,7 @@ function renderPlanBanner() {
     el.innerHTML = p.readOnly
       ? `<i data-lucide="lock" class="ic-sm"></i><span><b>O teste grátis de ${esc(me.org.name)} acabou.</b> Tudo continua aqui para consulta, mas nada novo pode ser criado ou alterado. ${me.isOwner ? 'Escolha um plano para voltar a editar.' : 'Fale com o dono da organização.'}</span>${cta('Escolher plano')}`
       : `<i data-lucide="hourglass" class="ic-sm"></i><span><b>Teste grátis: ${days === 1 ? 'falta 1 dia' : `faltam ${days} dias`}.</b> Depois disso a organização fica só para consulta até escolher um plano.</span>${cta('Ver planos')}
-         <button type="button" class="plan-banner-close" title="Dispensar" aria-label="Dispensar" onclick="try{sessionStorage.setItem('${key}','1')}catch(e){};this.parentElement.remove()"><i data-lucide="x" class="ic-sm"></i></button>`;
+         <button type="button" class="plan-banner-close" title="Dispensar" aria-label="Dispensar" onclick="try{sessionStorage.setItem('${jsq(key)}','1')}catch(e){};this.parentElement.remove()"><i data-lucide="x" class="ic-sm"></i></button>`;
   } else {
     el.className = 'plan-banner ' + (p.readOnly ? 'is-locked' : 'is-soon');
     el.innerHTML = p.readOnly
@@ -5958,7 +5981,7 @@ function renderOrgSwitch() {
     ${others.length ? `<div class="orgmenu-group">
       <div class="orgmenu-label">Trocar de organização</div>
       ${others.map(o => `
-        <button type="button" class="orgmenu-org" onclick="switchOrg('${esc(o.id)}')">
+        <button type="button" class="orgmenu-org" onclick="switchOrg('${jsq(o.id)}')">
           ${_orgTile(o, 'orgmenu-org-tile')}
           <span class="orgmenu-org-name">${esc(o.name)}</span>
           <span class="orgmenu-org-role">${esc(ORG_ROLE_LABEL[o.role] || '')}</span>
@@ -6175,7 +6198,7 @@ function _bilCurrentCard(d) {
       const until = p.paidUntil && Date.parse(p.paidUntil) > Date.now();
       line = until ? 'Nenhuma cobrança nova será feita. Depois dessa data, a organização fica só para consulta.' : 'A organização está só para consulta. Assine de novo para voltar a editar.';
       facts = [[until ? 'Acesso até' : 'Encerrada em', p.paidUntil ? short(p.paidUntil) : '—'], ['Valor', perCycle], ['Pagamento', method], ['Ciclo', cycle]];
-      cta = d.canManage && d.enabled ? `<button type="button" class="btn btn-primary" onclick="openBillingCheckout('${esc(b.planId)}', '${esc(b.cycle)}', '${esc(b.method)}')">Assinar de novo</button>` : '';
+      cta = d.canManage && d.enabled ? `<button type="button" class="btn btn-primary" onclick="openBillingCheckout('${jsq(b.planId)}', '${jsq(b.cycle)}', '${jsq(b.method)}')">Assinar de novo</button>` : '';
     } else if (b.status === 'pending') {
       pills = pill('Aguardando pagamento', 'is-warn');
       line = b.pending ? _bilPendingLine(b.pending)
@@ -6200,7 +6223,7 @@ function _bilCurrentCard(d) {
   const active = hasSub && b.status !== 'canceled' && !p.canceled;
   const links = d.canManage && d.enabled && active
     ? `<div class="bil-current-foot">
-        <button type="button" class="bil-current-link" onclick="openBillingCheckout('${esc(b.nextPlanId || b.planId)}', '${b.cycle === 'YEARLY' ? 'MONTHLY' : 'YEARLY'}', '${esc(b.method || '')}')"><i data-lucide="repeat" class="ic-xs"></i>${b.cycle === 'YEARLY' ? 'Mudar para mensal' : 'Mudar para anual'}</button>
+        <button type="button" class="bil-current-link" onclick="openBillingCheckout('${jsq(b.nextPlanId || b.planId)}', '${jsq(b.cycle === 'YEARLY' ? 'MONTHLY' : 'YEARLY')}', '${jsq(b.method || '')}')"><i data-lucide="repeat" class="ic-xs"></i>${b.cycle === 'YEARLY' ? 'Mudar para mensal' : 'Mudar para anual'}</button>
         <button type="button" class="bil-current-link is-danger" onclick="cancelBillingSubscription()">Cancelar assinatura</button>
       </div>` : '';
   const n = (v) => Number(v || 0).toLocaleString(LOCALE);
@@ -6228,7 +6251,7 @@ function _bilCurrentCard(d) {
    QR do Pix Automático, e a frase que explica o que falta. */
 function _bilResumeButton(pd, cls) {
   if (pd.method === 'CREDIT_CARD' && pd.url) return `<a class="${cls}" href="${esc(pd.url)}">Continuar pagamento<i data-lucide="arrow-right" class="ic-sm"></i></a>`;
-  if (pd.method === 'PIX_AUTOMATIC' && pd.qr) return `<button type="button" class="${cls}" onclick="openBillingCheckout('${esc(pd.planId)}', '${esc(pd.cycle)}', 'PIX_AUTOMATIC', { resume: true })"><i data-lucide="qr-code" class="ic-sm"></i>Continuar pagamento</button>`;
+  if (pd.method === 'PIX_AUTOMATIC' && pd.qr) return `<button type="button" class="${cls}" onclick="openBillingCheckout('${jsq(pd.planId)}', '${jsq(pd.cycle)}', 'PIX_AUTOMATIC', { resume: true })"><i data-lucide="qr-code" class="ic-sm"></i>Continuar pagamento</button>`;
   return '';
 }
 function _bilPendingLine(pd) {
@@ -6263,7 +6286,7 @@ function _bilMethodCard(d) {
   } else if (pm.type === 'BOLETO') {
     icon = 'barcode'; sub = 'O boleto chega por e-mail a cada cobrança';
   }
-  const btn = (label, method, mode, primary) => `<button type="button" class="btn ${primary ? 'btn-primary' : 'btn-ghost'} btn-sm" onclick="openBillingCheckout('${plan}', '${cyc}', ${method ? `'${method}'` : 'null'}, { mode: '${mode}' })">${label}</button>`;
+  const btn = (label, method, mode, primary) => `<button type="button" class="btn ${primary ? 'btn-primary' : 'btn-ghost'} btn-sm" onclick="openBillingCheckout('${jsq(plan)}', '${jsq(cyc)}', ${method ? `'${jsq(method)}'` : 'null'}, { mode: '${jsq(mode)}' })">${label}</button>`;
   const actions = [
     pm.type === 'CREDIT_CARD' ? btn('Trocar cartão', 'CREDIT_CARD', 'card') : '',
     pm.type === 'PIX_AUTOMATIC' ? btn(warn ? 'Autorizar de novo' : 'Trocar conta', 'PIX_AUTOMATIC', 'pixacct', !!warn) : '',
@@ -6306,10 +6329,10 @@ function _bilPlanCard(d, p) {
   if (d.canManage && d.enabled) {
     if (isCurrent) btn = '<button type="button" class="btn btn-ghost btn-sm bil-plan-btn" disabled>Plano atual</button>';
     // Pix Automático: o valor fica na autorização do banco, então trocar de plano passa pela assinatura.
-    else if (hasSub && b.cycle === cyc && b.method === 'PIX_AUTOMATIC') btn = `<button type="button" class="btn btn-ghost btn-sm bil-plan-btn" onclick="openBillingCheckout('${p.id}', '${cyc}', 'PIX_AUTOMATIC')">Mudar para este</button>`;
-    else if (hasSub && b.cycle === cyc) btn = `<button type="button" class="btn btn-ghost btn-sm bil-plan-btn" onclick="changeBillingPlan('${p.id}')">Mudar para este</button>`;
-    else if (hasSub) btn = `<button type="button" class="btn btn-ghost btn-sm bil-plan-btn" onclick="openBillingCheckout('${p.id}', '${cyc}', '${esc(b.method || '')}')">Mudar para ${cyc === 'YEARLY' ? 'anual' : 'mensal'}</button>`;
-    else btn = `<button type="button" class="btn btn-primary btn-sm bil-plan-btn" onclick="openBillingCheckout('${p.id}', '${cyc}')">Assinar</button>`;
+    else if (hasSub && b.cycle === cyc && b.method === 'PIX_AUTOMATIC') btn = `<button type="button" class="btn btn-ghost btn-sm bil-plan-btn" onclick="openBillingCheckout('${jsq(p.id)}', '${jsq(cyc)}', 'PIX_AUTOMATIC')">Mudar para este</button>`;
+    else if (hasSub && b.cycle === cyc) btn = `<button type="button" class="btn btn-ghost btn-sm bil-plan-btn" onclick="changeBillingPlan('${jsq(p.id)}')">Mudar para este</button>`;
+    else if (hasSub) btn = `<button type="button" class="btn btn-ghost btn-sm bil-plan-btn" onclick="openBillingCheckout('${jsq(p.id)}', '${jsq(cyc)}', '${jsq(b.method || '')}')">Mudar para ${cyc === 'YEARLY' ? 'anual' : 'mensal'}</button>`;
+    else btn = `<button type="button" class="btn btn-primary btn-sm bil-plan-btn" onclick="openBillingCheckout('${jsq(p.id)}', '${jsq(cyc)}')">Assinar</button>`;
   }
   const featured = !!p.featured;
   const std = p.standard && p.standard[cyc] > price ? `<span class="bil-plan-was">${_bilMoney(p.standard[cyc])}</span>` : '';
@@ -6500,7 +6523,7 @@ function _bilCoRender() {
   const radio = (on) => `role="radio" aria-checked="${on}" tabindex="${on ? 0 : -1}"`;
   $('bil-co-plans').innerHTML = d.catalog.map(x => {
     const on = x.id === c.planId;
-    return `<button type="button" class="bil-co-row${on ? ' is-on' : ''}" ${radio(on)} onclick="_bilCoSet('planId','${x.id}')">
+    return `<button type="button" class="bil-co-row${on ? ' is-on' : ''}" ${radio(on)} onclick="_bilCoSet('planId','${jsq(x.id)}')">
       <span class="bil-co-dot" aria-hidden="true"></span>
       <span class="bil-co-row-main"><b>${esc(x.name)}</b><span>Até ${x.users} pessoas · ${x.storageGb} GB de arquivos</span></span>
       <span class="bil-co-row-price"><b>${_bilMoney(perMonth(x))}</b><span>/mês</span></span>
@@ -6508,11 +6531,11 @@ function _bilCoRender() {
   }).join('');
   const yTag = _bilYearlyTag(d.catalog);
   $('bil-co-cycles').innerHTML = [['MONTHLY', 'Mensal', ''], ['YEARLY', 'Anual', yTag ? `<em>${yTag}</em>` : '']]
-    .map(([k, l, extra]) => `<button type="button" class="${k === c.cycle ? 'is-on' : ''}" ${radio(k === c.cycle)} onclick="_bilCoSet('cycle','${k}')">${l}${extra}</button>`).join('');
+    .map(([k, l, extra]) => `<button type="button" class="${k === c.cycle ? 'is-on' : ''}" ${radio(k === c.cycle)} onclick="_bilCoSet('cycle','${jsq(k)}')">${l}${extra}</button>`).join('');
   $('bil-co-methods').innerHTML = methods.map(m => {
     const on = m.id === c.method;
     const current = changing && b.method === m.id;
-    return `<button type="button" class="bil-co-row bil-co-row--method${on ? ' is-on' : ''}" ${radio(on)} onclick="_bilCoSet('method','${m.id}')">
+    return `<button type="button" class="bil-co-row bil-co-row--method${on ? ' is-on' : ''}" ${radio(on)} onclick="_bilCoSet('method','${jsq(m.id)}')">
       <span class="bil-co-dot" aria-hidden="true"></span>
       <i data-lucide="${m.icon}" class="bil-co-row-ic" aria-hidden="true"></i>
       <span class="bil-co-row-main"><b>${esc(m.label)}${current ? ' <em class="bil-co-row-tag">Atual</em>' : ''}</b><span>${esc(m.hint)}</span></span>
@@ -6864,7 +6887,7 @@ async function renderSupport() {
         <div class="sup-empty-ic"><i data-lucide="life-buoy"></i></div>
         <h2 class="sup-empty-title">Precisa de ajuda?</h2>
         <p class="sup-empty-sub">Abra um chamado e a equipe do reWork responde por aqui${_sup.emailEnabled ? ' e por e-mail' : ''}. Dúvidas, algo que não funcionou, plano e pagamento — tudo passa por aqui.</p>
-        <div class="sup-quick">${Object.entries(_sup.categories).map(([k, l]) => `<button type="button" class="sup-quick-btn" onclick="openSupportNew('${k}')"><i data-lucide="${SUP_CATEGORY_ICON[k] || 'message-circle'}" class="ic-sm"></i>${esc(l)}</button>`).join('')}</div>
+        <div class="sup-quick">${Object.entries(_sup.categories).map(([k, l]) => `<button type="button" class="sup-quick-btn" onclick="openSupportNew('${jsq(k)}')"><i data-lucide="${SUP_CATEGORY_ICON[k] || 'message-circle'}" class="ic-sm"></i>${esc(l)}</button>`).join('')}</div>
       </section>`}
     <p class="sup-foot"><i data-lucide="book-open" class="ic-xs"></i><span>Antes de abrir, vale olhar o <a href="${esc(orgUrl('/help'))}" onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return;event.preventDefault();goPage('help')">Manual do usuário</a>.</span></p>
   </div>`;
@@ -6892,7 +6915,7 @@ async function renderSupportNew() {
     <form class="sup-form" onsubmit="event.preventDefault();submitSupportTicket()" novalidate>
       <section>
         <h2 class="bil-co-h">Assunto</h2>
-        <div class="sup-cats" role="radiogroup" aria-label="Assunto">${Object.entries(cats).map(([k, l]) => `<button type="button" role="radio" aria-checked="${d.category === k}" class="sup-cat${d.category === k ? ' is-on' : ''}" onclick="_supSetCategory('${k}')"><i data-lucide="${SUP_CATEGORY_ICON[k] || 'message-circle'}" class="ic-sm"></i>${esc(l)}</button>`).join('')}</div>
+        <div class="sup-cats" role="radiogroup" aria-label="Assunto">${Object.entries(cats).map(([k, l]) => `<button type="button" role="radio" aria-checked="${d.category === k}" class="sup-cat${d.category === k ? ' is-on' : ''}" onclick="_supSetCategory('${jsq(k)}')"><i data-lucide="${SUP_CATEGORY_ICON[k] || 'message-circle'}" class="ic-sm"></i>${esc(l)}</button>`).join('')}</div>
       </section>
       <label class="bil-co-field"><span>Título</span><input class="form-control" id="sup-subject" maxlength="140" placeholder="Ex.: Não consigo anexar arquivos na demanda" value="${esc(d.subject)}" oninput="_sup.draft.subject=this.value"></label>
       <label class="bil-co-field"><span>Descrição</span><textarea class="form-control sup-textarea" id="sup-message" rows="7" maxlength="8000" placeholder="${esc(SUP_CATEGORY_HINT[d.category] || 'Conte como podemos ajudar.')}" oninput="_sup.draft.message=this.value">${esc(d.message)}</textarea></label>
@@ -6946,7 +6969,7 @@ function _supRenderFiles(key, hostId) {
   host.innerHTML = list.map((f, i) => `<span class="sup-file">
       ${f.type.startsWith('image/') && f.dataUrl ? `<img src="${f.dataUrl}" alt="">` : `<i data-lucide="${f.type === 'application/pdf' ? 'file-text' : 'image'}" class="ic-sm"></i>`}
       <span class="sup-file-name">${esc(f.name)}</span>
-      <button type="button" class="sup-file-x" aria-label="Remover ${esc(f.name)}" onclick="_sup['${key}'].splice(${i},1);_supRenderFiles('${key}','${hostId}')"><i data-lucide="x" class="ic-xs"></i></button>
+      <button type="button" class="sup-file-x" aria-label="Remover ${esc(f.name)}" onclick="_sup['${jsq(key)}'].splice(${i},1);_supRenderFiles('${jsq(key)}','${jsq(hostId)}')"><i data-lucide="x" class="ic-xs"></i></button>
     </span>`).join('');
   paintIcons(host);
 }
@@ -7485,7 +7508,7 @@ function _spRender() {
         ondragover="_spDragOver(event, ${i})" ondragleave="_spDragLeave(event)" ondrop="_spDrop(event, ${i})">
       <span class="sp-grip" draggable="true" title="Arraste para reordenar" ondragstart="_spDragStart(event, ${i})" ondragend="_spDragEnd()"><i data-lucide="grip-vertical" class="ic-sm"></i></span>
       <span class="sp-num">${String(i + 1).padStart(2, '0')}</span>
-      <button type="button" class="color-swatch-trigger" style="background:${esc(p.color)}" title="Cor" onclick="openColorPicker(this, (c) => { _spDraft[${i}].color = c; this.style.background = c; }, '${esc(p.color)}')"></button>
+      <button type="button" class="color-swatch-trigger" style="background:${esc(p.color)}" title="Cor" onclick="openColorPicker(this, (c) => { _spDraft[${i}].color = c; this.style.background = c; }, '${jsq(p.color)}')"></button>
       <input class="form-control" value="${esc(p.label)}" maxlength="60" placeholder="Nome da etapa" oninput="_spDraft[${i}].label=this.value">
       <button type="button" class="icon-btn sp-done${p.done ? ' on' : ''}" title="${p.done ? 'Etapa de conclusão (clique para desmarcar)' : 'Marcar como etapa de conclusão'}" onclick="_spDraft[${i}].done=!_spDraft[${i}].done; _spRender()"><i data-lucide="flag" class="ic-sm"></i></button>
       <button type="button" class="icon-btn danger" title="Remover" onclick="_spDraft.splice(${i}, 1); _spRender()"><i data-lucide="trash-2" class="ic-sm"></i></button>
@@ -8282,7 +8305,7 @@ function renderWsSwitch() {
     const sorted = [...workspaces].sort((a, b) =>
       (a.name || '').localeCompare(b.name || '', 'pt-BR', { sensitivity: 'base' }));
     menu.innerHTML = sorted.map(w => `
-      <div class="filter-cdrop-item ${w.id === activeWs ? 'active' : ''}" onclick="switchWorkspace('${w.id}')">
+      <div class="filter-cdrop-item ${w.id === activeWs ? 'active' : ''}" onclick="switchWorkspace('${jsq(w.id)}')">
         <span class="pill-dot" style="background:${w.color || 'var(--accent)'}"></span>
         <span>${esc(w.name)}</span>
       </div>`).join('');
@@ -8349,7 +8372,7 @@ function toggleStatusMenu(ev) {
   if (open) { closeStatusMenu(); return; }
   const st = statusOf(me);
   const chips = (kind, opts) => opts.map(([label, v]) =>
-    `<button type="button" class="status-chip" onclick="setMyStatus('${kind}', ${typeof v === 'string' ? `'${v}'` : v})">${label}</button>`).join('');
+    `<button type="button" class="status-chip" onclick="setMyStatus('${jsq(kind)}', ${typeof v === 'string' ? `'${jsq(v)}'` : v})">${label}</button>`).join('');
   const menu = document.createElement('div');
   menu.id = 'status-menu';
   menu.className = 'status-menu';
@@ -8470,7 +8493,7 @@ function _navMenuPages() {
 }
 function _sbItemHTML(it) {
   return `<a class="sb-item ${it.cls || ''}" data-page="${it.page}" href="${orgUrl(PAGE_TO_PATH[it.page] || '/')}" data-label="${esc(it.label)}"
-      onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); goPage('${it.page}'); closeSidebar()">
+      onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); goPage('${jsq(it.page)}'); closeSidebar()">
       <i data-lucide="${it.icon}" class="sb-ic"></i><span class="sb-label">${esc(it.label)}</span>${it.count ? `<span class="sb-count" id="sb-count-${it.count}" hidden></span>` : ''}</a>`;
 }
 function renderSidebarNav() {
@@ -8493,7 +8516,7 @@ function renderSidebarNav() {
           <button type="button" class="sb-icon-btn sb-news" id="sb-news" onclick="openSidebarNews()" data-label="Novidades" aria-label="Novidades" title="Novidades">
             <i data-lucide="sparkles"></i><span class="sb-news-dot" id="sb-news-dot" hidden></span></button>
           <a class="sb-icon-btn sb-docs ${NAV_DOCS.cls}" id="sb-docs" href="${orgUrl(PAGE_TO_PATH[NAV_DOCS.page] || '/help')}" aria-label="${NAV_DOCS.label}" title="${NAV_DOCS.label}" data-label="${NAV_DOCS.label}"
-            onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); goPage('${NAV_DOCS.page}'); closeSidebar()">
+            onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); goPage('${jsq(NAV_DOCS.page)}'); closeSidebar()">
             <i data-lucide="${NAV_DOCS.icon}"></i>
           </a>
           <a class="sb-icon-btn sb-support" id="sb-support" href="${orgUrl('/support')}" aria-label="Suporte" title="Suporte" data-label="Suporte"
@@ -8573,7 +8596,7 @@ function toggleSbMore(ev) {
     return `<div class="sb-flyout-group">
       <div class="sb-flyout-title">${esc(g.title)}</div>
       ${items.map(it => `<a role="menuitem" class="sb-flyout-item ${it.page === target ? 'active' : ''}" href="${orgUrl(PAGE_TO_PATH[it.page] || '/')}"
-          onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); closeSbMore(); goPage('${it.page}'); closeSidebar()">
+          onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); closeSbMore(); goPage('${jsq(it.page)}'); closeSidebar()">
           <i data-lucide="${it.icon}"></i><span>${esc(it.label)}</span></a>`).join('')}
     </div>`;
   }).join('') + `<a role="menuitem" class="sb-flyout-foot" href="/menu" onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); closeSbMore(); goPage('menu'); closeSidebar()">
@@ -8662,7 +8685,7 @@ function renderMenuPage() {
       <button type="button" class="nm-handle" aria-label="Mover ${esc(it.label)} (setas para cima e para baixo)" onkeydown="nmKeyMove(event, ${i})"><i data-lucide="grip-vertical"></i></button>
       <i data-lucide="${it.icon}" class="nm-ic"></i>
       <span class="nm-label">${esc(it.label)}</span>
-      <button type="button" class="nm-remove" onclick="toggleNavMenuItem('${page}', false)" aria-label="Tirar ${esc(it.label)} do acesso rápido" data-rx-tip="Mover para Mais"><i data-lucide="x"></i></button>
+      <button type="button" class="nm-remove" onclick="toggleNavMenuItem('${jsq(page)}', false)" aria-label="Tirar ${esc(it.label)} do acesso rápido" data-rx-tip="Mover para Mais"><i data-lucide="x"></i></button>
     </li>`;
   }).join('') + (pages.length ? '' : '<li class="nm-empty">Nenhum item. Ligue os acessos ao lado.</li>')
     + (() => { const n = _navHiddenItems().length; return `<li class="nm-row is-fixed"><span class="nm-handle" aria-hidden="true"></span><i data-lucide="plus" class="nm-ic"></i><span class="nm-label">Mais</span><span class="nm-fixed">${n ? `${n} ${n > 1 ? 'itens' : 'item'}` : 'vazio'}</span></li>`; })()
@@ -8677,12 +8700,12 @@ function renderMenuPage() {
         ${items.map(it => {
           const on = inMenu.has(it.page);
           return `<div class="st-card">
-            <a class="st-link" href="${orgUrl(PAGE_TO_PATH[it.page] || '/')}" onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); goPage('${it.page}')">
+            <a class="st-link" href="${orgUrl(PAGE_TO_PATH[it.page] || '/')}" onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); goPage('${jsq(it.page)}')">
               <span class="st-ic"><i data-lucide="${it.icon}"></i></span>
               <span class="st-text"><span class="st-label">${esc(it.label)}</span><span class="st-desc">${esc(it.desc || '')}</span></span>
             </a>
             <label class="nm-switch st-switch" data-rx-tip="${on ? 'No acesso rápido' : 'Em Mais'}">
-              <input type="checkbox" ${on ? 'checked' : ''} onchange="toggleNavMenuItem('${it.page}', this.checked)" aria-label="Mostrar ${esc(it.label)} no acesso rápido">
+              <input type="checkbox" ${on ? 'checked' : ''} onchange="toggleNavMenuItem('${jsq(it.page)}', this.checked)" aria-label="Mostrar ${esc(it.label)} no acesso rápido">
               <span class="nm-track" aria-hidden="true"></span>
             </label>
           </div>`;
@@ -8994,7 +9017,7 @@ function renderDevTools() {
       </div>
       <div class="dt-grid">
         ${g.links.map(l => `
-          <a class="dt-card" href="${esc(orgUrl(l.path))}" onclick="devToolsOpen(event, '${esc(l.path)}')">
+          <a class="dt-card" href="${esc(orgUrl(l.path))}" onclick="devToolsOpen(event, '${jsq(l.path)}')">
             <div class="dt-card-icon"><i data-lucide="${esc(l.icon || 'link')}" class="ic-sm"></i></div>
             <div class="dt-card-body">
               <div class="dt-card-label">${esc(l.label)}</div>
@@ -9725,7 +9748,7 @@ function _dashFocusRowHtml(d) {
   } else {
     dueBadge = `<span class="dash-focus-due">sem prazo</span>`;
   }
-  return `<div class="dash-focus-row" onclick="closeModal('dash-more-modal'); showDetail('${esc(d.id)}')">
+  return `<div class="dash-focus-row" onclick="closeModal('dash-more-modal'); showDetail('${jsq(d.id)}')">
     <div class="dash-focus-body">
       <div class="dash-focus-name">${esc(d.name)}</div>
       <div class="dash-focus-meta">${cur ? `<span class="pill-dot" style="background:${cur.color}"></span>${esc(cur.label)}` : ''} ${p ? '· ' + esc(p.name) : ''}</div>
@@ -9783,11 +9806,11 @@ function renderDashClosing() {
     ${pending ? `<span class="dash-closing-pending">~${fmtHm(pending)} com demandas abertas sem apontar</span>` : ''}
   </div>`;
   el.innerHTML = sum + (rows.length ? rows.map(r => `<div class="dash-closing-row">
-      <button type="button" class="dash-closing-name" onclick="showDetail('${r.d.id}')">${esc(r.d.name)}</button>
+      <button type="button" class="dash-closing-name" onclick="showDetail('${jsq(r.d.id)}')">${esc(r.d.name)}</button>
       <span class="dash-closing-meta">${r.logged ? `${fmtHours(r.logged)} apontadas` : 'nada apontado'}${r.sugg ? ` · ${fmtHm(r.sugg)} aberta` : ''}</span>
       ${r.sugg
-        ? `<button type="button" class="btn btn-ghost btn-sm" onclick="quickLogTime('${r.d.id}', ${r.sugg})">Apontar ${fmtHm(r.sugg)}</button>
-           <button type="button" class="dash-closing-x" onclick="ignoreClosingSuggestion('${r.d.id}')" title="Não apontar" aria-label="Não apontar"><i data-lucide="x" class="ic-xs"></i></button>`
+        ? `<button type="button" class="btn btn-ghost btn-sm" onclick="quickLogTime('${jsq(r.d.id)}', ${r.sugg})">Apontar ${fmtHm(r.sugg)}</button>
+           <button type="button" class="dash-closing-x" onclick="ignoreClosingSuggestion('${jsq(r.d.id)}')" title="Não apontar" aria-label="Não apontar"><i data-lucide="x" class="ic-xs"></i></button>`
         : `<span class="dash-closing-ok" title="Apontado"><i data-lucide="check" class="ic-xs"></i></span>`}
     </div>`).join('') : emptyMini('Nenhuma demanda aberta ou apontada hoje.'));
   paintIcons(el);
@@ -9876,7 +9899,7 @@ function renderDashBlocked(mineActive) {
 }
 function _dashBlockedRowHtml({ d, stage, ownerId, days }) {
   const owner = userById(ownerId);
-  return `<div class="dash-blocked-row" onclick="closeModal('dash-more-modal'); showDetail('${esc(d.id)}')">
+  return `<div class="dash-blocked-row" onclick="closeModal('dash-more-modal'); showDetail('${jsq(d.id)}')">
     <div class="dash-blocked-days"><strong>${days}</strong><span>d</span></div>
     <div class="dash-blocked-body">
       <div class="dash-blocked-name">${esc(d.name)}</div>
@@ -9922,7 +9945,7 @@ function renderDashActivityFeed(mineActive) {
 function _dashActivityRowHtml({ d, h }) {
   const u = userById(h.userId);
   const desc = _historyText(d, h);
-  return `<div class="dash-activity-row" onclick="closeModal('dash-more-modal'); showDetail('${esc(d.id)}')">
+  return `<div class="dash-activity-row" onclick="closeModal('dash-more-modal'); showDetail('${jsq(d.id)}')">
     ${avatarHTML(u, 'avatar avatar-xs')}
     <div class="dash-activity-body">
       <div class="dash-activity-desc"><strong>${esc(u?.name || 'Alguém')}</strong> ${desc}</div>
@@ -10087,7 +10110,7 @@ function renderDashForecast() {
     const isToday = k === todayK;
     const wd = dt.toLocaleDateString(LOCALE, { weekday: 'short' }).replace('.', '').toUpperCase();
     return `<div class="dash-forecast-cell fc-${lvl} ${isToday ? 'is-today' : ''} ${n ? '' : 'is-empty'}"
-                 ${n ? `onclick="openForecastDay('${k}')"` : ''}>
+                 ${n ? `onclick="openForecastDay('${jsq(k)}')"` : ''}>
       <div class="dash-forecast-day">${isToday ? 'HOJE' : esc(wd)}</div>
       <div class="dash-forecast-date">${fmtDM(dt.getDate(), dt.getMonth() + 1)}</div>
       <div class="dash-forecast-count">${n || ''}</div>
@@ -10108,7 +10131,7 @@ function openForecastDay(ymdStr) {
     .map(it => {
       const d = it.d;
       const p = projectById(d.projectId);
-      return `<tr onclick="closeModal('forecast-modal'); showDetail('${esc(d.id)}')">
+      return `<tr onclick="closeModal('forecast-modal'); showDetail('${jsq(d.id)}')">
         <td class="fc-td-name">${esc(d.name)}${p ? `<div class="fc-td-sub" style="font-size:11px;font-weight:400">${esc(p.name)}</div>` : ''}</td>
         <td>${esc(it.stageLabel)}</td>
         <td style="text-align:center">${it.remaining}</td>
@@ -10221,7 +10244,7 @@ function _dashRadarCardHtml({ p, projDemands, overdue }) {
   const status = ratio > 0.2 ? 'critical' : 'warn';
   const label = `${overdue} atrasada${overdue === 1 ? '' : 's'}`;
   return `<div class="dash-radar-card dash-radar-${status}"
-               onclick="closeModal('dash-more-modal'); openProjectDetail('${esc(p.id)}')"
+               onclick="closeModal('dash-more-modal'); openProjectDetail('${jsq(p.id)}')"
                title="${esc(p.name)} · ${label} · ${total} demanda${total === 1 ? '' : 's'} abertas">
     <div class="dash-radar-body">
       <div class="dash-radar-name">${esc(p.name)}</div>
@@ -10300,7 +10323,7 @@ function _dashRecentMineRowHtml(d) {
   const projName = proj?.name || '';
   const when = d.updatedAt || d.createdAt || '';
   const rel = when ? _kdRelTime(when) : '';
-  return `<div class="dash-recent-row" onclick="showDetail('${esc(d.id)}')" role="button">
+  return `<div class="dash-recent-row" onclick="showDetail('${jsq(d.id)}')" role="button">
     <div class="dash-recent-dot" style="background:${esc(stageColor)}"></div>
     <div class="dash-recent-body">
       <div class="dash-recent-title" title="${esc(d.name)}">${esc(d.name)}</div>
@@ -10645,7 +10668,7 @@ function renderHoursBoard(list) {
       ${dList.length ? dList.map(x => {
         const u = groupByUser ? userById(x.userId) : null;
         return `<div class="hours-demand-row">
-          <span class="hours-demand-name" onclick="showDetail('${x.d.id}')">${esc(x.d.name)}</span>
+          <span class="hours-demand-name" onclick="showDetail('${jsq(x.d.id)}')">${esc(x.d.name)}</span>
           <span class="pill pill-muted" style="font-size:10px">${esc(projectById(x.d.projectId)?.name || '—')}</span>
           ${groupByUser ? `<span class="hours-demand-user">${u ? avatarHTML(u) + '<span>' + esc(u.name.split(' ')[0]) + '</span>' : '<span style="color:var(--text-muted)">—</span>'}</span>` : ''}
           <span class="hours-demand-val">${fmtHours(x.hours)}</span>
@@ -10869,13 +10892,13 @@ function rcRender(id) {
   }
   host.classList.add('rc');
   host.innerHTML = `<div class="rc-head">
-      <button type="button" class="rc-nav" onclick="rcNav('${id}', -1)" aria-label="Mês anterior"><i data-lucide="chevron-left"></i></button>
+      <button type="button" class="rc-nav" onclick="rcNav('${jsq(id)}', -1)" aria-label="Mês anterior"><i data-lucide="chevron-left"></i></button>
       <span class="rc-title" aria-live="polite">${esc(title)}</span>
-      <button type="button" class="rc-nav" onclick="rcNav('${id}', 1)" aria-label="Próximo mês"><i data-lucide="chevron-right"></i></button>
+      <button type="button" class="rc-nav" onclick="rcNav('${jsq(id)}', 1)" aria-label="Próximo mês"><i data-lucide="chevron-right"></i></button>
     </div>
     <div class="rc-week" aria-hidden="true"><span>D</span><span>S</span><span>T</span><span>Q</span><span>Q</span><span>S</span><span>S</span></div>
     <div class="rc-grid" role="group" aria-label="${esc(title)}"
-      onclick="rcClick(event, '${id}')" onmouseover="rcHover(event, '${id}')" onmouseleave="rcLeave('${id}')" onkeydown="rcKey(event, '${id}')">${cells}</div>
+      onclick="rcClick(event, '${jsq(id)}')" onmouseover="rcHover(event, '${jsq(id)}')" onmouseleave="rcLeave('${jsq(id)}')" onkeydown="rcKey(event, '${jsq(id)}')">${cells}</div>
     ${hint ? `<div class="rc-hint">${esc(hint)}</div>` : ''}`;
   paintIcons(host);
   c.cfg.onRender?.();
@@ -11021,7 +11044,7 @@ function pfpRenderPresets() {
   const wrap = $('pfp-presets'); if (!wrap) return;
   const cur = $('filter-period').value;
   wrap.innerHTML = PFP_PRESETS.map(p => `
-    <button type="button" class="pfp-preset-btn ${p.val === cur && !pfpHasRange() ? 'active' : ''}" onclick="pfpPickPreset('${p.val}')">${esc(p.label)}</button>
+    <button type="button" class="pfp-preset-btn ${p.val === cur && !pfpHasRange() ? 'active' : ''}" onclick="pfpPickPreset('${jsq(p.val)}')">${esc(p.label)}</button>
   `).join('');
 }
 function pfpHasRange() {
@@ -11138,7 +11161,7 @@ function capPfpRenderPresets() {
   const wrap = $('cap-pfp-presets'); if (!wrap) return;
   const cur = $('capacity-period').value;
   wrap.innerHTML = CAP_PFP_PRESETS.map(p =>
-    `<button type="button" class="pfp-preset-btn ${p.val === cur && !capPfpHasRange() ? 'active' : ''}" onclick="capPfpPickPreset('${p.val}')">${esc(p.label)}</button>`
+    `<button type="button" class="pfp-preset-btn ${p.val === cur && !capPfpHasRange() ? 'active' : ''}" onclick="capPfpPickPreset('${jsq(p.val)}')">${esc(p.label)}</button>`
   ).join('');
 }
 function capPfpRenderCal() {
@@ -11692,7 +11715,7 @@ function _renderSavedFiltersMenu() {
   if (bar) bar.style.display = saved.length ? '' : 'none';
   if (!saved.length) { menu.innerHTML = ''; return; }
   const rows = saved.map(sf => `
-    <div class="filter-cdrop-item ${sf.id === _appliedSavedFilterId ? 'active' : ''}" onclick="applySavedFilter('${esc(sf.id)}')">
+    <div class="filter-cdrop-item ${sf.id === _appliedSavedFilterId ? 'active' : ''}" onclick="applySavedFilter('${jsq(sf.id)}')">
       <i data-lucide="bookmark" class="ic-xs"></i>
       <span>${esc(sf.name)}</span>
     </div>`).join('');
@@ -11763,9 +11786,9 @@ function openManageSavedFiltersModal() {
   const listHtml = saved.length
     ? saved.map(sf => `
       <div class="saved-filters-manage-item" data-sfid="${esc(sf.id)}">
-        <input type="text" value="${esc(sf.name)}" maxlength="60" onchange="renameSavedFilter('${esc(sf.id)}', this.value)">
-        <button type="button" class="sf-icon-btn" title="Aplicar" onclick="event.stopPropagation(); applySavedFilter('${esc(sf.id)}'); closeModal('saved-filters-modal')"><i data-lucide="play"></i></button>
-        <button type="button" class="sf-icon-btn danger" title="Excluir" onclick="event.stopPropagation(); deleteSavedFilter('${esc(sf.id)}')"><i data-lucide="trash-2"></i></button>
+        <input type="text" value="${esc(sf.name)}" maxlength="60" onchange="renameSavedFilter('${jsq(sf.id)}', this.value)">
+        <button type="button" class="sf-icon-btn" title="Aplicar" onclick="event.stopPropagation(); applySavedFilter('${jsq(sf.id)}'); closeModal('saved-filters-modal')"><i data-lucide="play"></i></button>
+        <button type="button" class="sf-icon-btn danger" title="Excluir" onclick="event.stopPropagation(); deleteSavedFilter('${jsq(sf.id)}')"><i data-lucide="trash-2"></i></button>
       </div>`).join('')
     : '<div class="saved-filter-empty">Você ainda não salvou nenhum filtro.</div>';
   body.innerHTML = `<div class="saved-filters-manage-list">${listHtml}</div>`;
@@ -11824,7 +11847,7 @@ function _renderParticipantMultiMenu(userOpts) {
   menu.innerHTML = userOpts.map(u => {
     const on = set.has(u.id);
     return `<label class="filter-multi-item">
-      <input type="checkbox" ${on ? 'checked' : ''} onchange="toggleParticipantMultiItem('${esc(u.id)}', this.checked)">
+      <input type="checkbox" ${on ? 'checked' : ''} onchange="toggleParticipantMultiItem('${jsq(u.id)}', this.checked)">
       ${avatarHTML(u, 'avatar avatar-xs')}
       <span class="filter-multi-item-lbl">${esc(u.name)}</span>
     </label>`;
@@ -11901,7 +11924,7 @@ function _renderWorkspaceMultiMenu(accessibleWs) {
   menu.innerHTML = accessibleWs.map(w => {
     const on = wsSet.has(w.id);
     return `<label class="filter-multi-item">
-      <input type="checkbox" ${on ? 'checked' : ''} onchange="toggleWsMultiItem('${esc(w.id)}', this.checked)">
+      <input type="checkbox" ${on ? 'checked' : ''} onchange="toggleWsMultiItem('${jsq(w.id)}', this.checked)">
       <span class="filter-multi-item-dot" style="background:${esc(w.color || 'var(--accent)')}"></span>
       <span class="filter-multi-item-lbl">${esc(w.name)}</span>
     </label>`;
@@ -12129,8 +12152,8 @@ function renderList() {
     const doneTd = isDone
       ? `<td class="mcol-done">${d.completedAt ? `<span class="mdue-date">${esc(fmtDateShort(d.completedAt))}</span>` : '<span class="mmuted">—</span>'}</td>`
       : '';
-    return `<tr class="mrow demand-row ${sel ? 'selected' : ''}" data-prio="${prio.value}" data-due="${u}" data-demand-id="${d.id}"${sectionAttr} onclick="onDemandRowClick(event, '${d.id}')" title="Prioridade: ${esc(prio.label)}">
-      <td class="col-bulk-check mcol-bulk"><input type="checkbox" class="bulk-check-row" ${sel ? 'checked' : ''} onclick="event.stopPropagation();toggleDemandSelection('${d.id}', this.checked)"></td>
+    return `<tr class="mrow demand-row ${sel ? 'selected' : ''}" data-prio="${prio.value}" data-due="${u}" data-demand-id="${d.id}"${sectionAttr} onclick="onDemandRowClick(event, '${jsq(d.id)}')" title="Prioridade: ${esc(prio.label)}">
+      <td class="col-bulk-check mcol-bulk"><input type="checkbox" class="bulk-check-row" ${sel ? 'checked' : ''} onclick="event.stopPropagation();toggleDemandSelection('${jsq(d.id)}', this.checked)"></td>
       <td class="mcol-name col-demand-name">
         <div class="mname">${esc(d.name)}</div>
       </td>
@@ -12179,7 +12202,7 @@ function renderList() {
       if (!items.length) return '';
       const collapsed = _listCollapsedSections.has(sec.key);
       const caret = collapsed ? 'chevron-right' : 'chevron-down';
-      const headRow = `<tr class="mgroup ${sec.cls} ${collapsed ? 'is-collapsed' : ''}" data-section="${sec.key}" onclick="toggleListSection('${sec.key}')">
+      const headRow = `<tr class="mgroup ${sec.cls} ${collapsed ? 'is-collapsed' : ''}" data-section="${sec.key}" onclick="toggleListSection('${jsq(sec.key)}')">
         <td colspan="7">
           <div class="mgroup-inner">
             <i data-lucide="${caret}" class="ic-sm mgroup-caret"></i>
@@ -12486,9 +12509,9 @@ function kanbanCard(d) {
     ? `<span class="kanban-card-due ${late ? 'late' : ''}"><i data-lucide="${late ? 'alert-triangle' : 'calendar'}" class="ic-xs"></i> ${esc(fmtDate(due))}</span>`
     : '';
   return `
-    <div class="kanban-card" draggable="true" data-demand-id="${d.id}" style="--card-stage:${esc(stageColor)}" onclick="showDetail('${d.id}')">
+    <div class="kanban-card" draggable="true" data-demand-id="${d.id}" style="--card-stage:${esc(stageColor)}" onclick="showDetail('${jsq(d.id)}')">
       <div class="kanban-card-top">${priorityPill(d.priority)}${statusPill(d)}${stageAgeChip(d)}
-        <button type="button" class="kanban-card-copy" title="Copiar link" aria-label="Copiar link" onclick="copyDemandLink('${d.id}', event)">
+        <button type="button" class="kanban-card-copy" title="Copiar link" aria-label="Copiar link" onclick="copyDemandLink('${jsq(d.id)}', event)">
           <i data-lucide="link-2" class="ic-xs"></i>
         </button>
       </div>
@@ -12834,11 +12857,11 @@ function renderMine() {
            <div class="mdue-bar"><span class="mdue-bar-fill" style="width:${barFill}%"></span></div>
          </div>`
       : '<span class="mmuted">—</span>';
-    return `<tr class="mrow" data-prio="${prio.value}" data-due="${u}" onclick="showDetail('${d.id}')" title="Prioridade: ${esc(prio.label)}">
+    return `<tr class="mrow" data-prio="${prio.value}" data-due="${u}" onclick="showDetail('${jsq(d.id)}')" title="Prioridade: ${esc(prio.label)}">
       <td class="mcol-name">
         <div class="mname-row">
           <div class="mname">${esc(d.name)}</div>
-          <button type="button" class="mrow-copy" title="Copiar link" aria-label="Copiar link" onclick="copyDemandLink('${d.id}', event)">
+          <button type="button" class="mrow-copy" title="Copiar link" aria-label="Copiar link" onclick="copyDemandLink('${jsq(d.id)}', event)">
             <i data-lucide="link-2" class="ic-xs"></i>
           </button>
         </div>
@@ -13000,7 +13023,7 @@ function renderReportSquadChips(accessibleWs, wsSet) {
   const host = $('reports-squad-filter'); if (!host) return;
   const chips = accessibleWs.map(w => {
     const on = wsSet.has(w.id);
-    return `<button type="button" class="uws-chip${on ? ' is-active' : ''}" onclick="toggleReportSquad('${esc(w.id)}')">
+    return `<button type="button" class="uws-chip${on ? ' is-active' : ''}" onclick="toggleReportSquad('${jsq(w.id)}')">
       <span class="uws-chip-dot" style="background:${esc(w.color || 'var(--accent)')}"></span>${esc(w.name)}
     </button>`;
   }).join('');
@@ -13060,7 +13083,7 @@ function repPfpRenderPresets() {
   const wrap = $('rep-pfp-presets'); if (!wrap) return;
   const cur = $('reports-period').value;
   wrap.innerHTML = REP_PFP_PRESETS.map(p =>
-    `<button type="button" class="pfp-preset-btn ${p.val === cur ? 'active' : ''}" onclick="repPfpPickPreset('${p.val}')">${esc(p.label)}</button>`
+    `<button type="button" class="pfp-preset-btn ${p.val === cur ? 'active' : ''}" onclick="repPfpPickPreset('${jsq(p.val)}')">${esc(p.label)}</button>`
   ).join('');
 }
 function repPfpPickPreset(val) {
@@ -13217,7 +13240,7 @@ function buildReportsHTML(data) {
   // ── Demandas mais lentas (criação → conclusão) ──
   const slowest = data.slowest || [];
   const slowRows = slowest.length ? slowest.map(d => `
-    <button type="button" class="rep-slow-row" onclick="showDetail('${esc(d.id)}')">
+    <button type="button" class="rep-slow-row" onclick="showDetail('${jsq(d.id)}')">
       <span class="rep-slow-name">${esc(d.name)}</span>
       <span class="rep-slow-proj">${esc(d.projectName || '—')}</span>
       <span class="rep-slow-dur">${fmtDur(d.hours)}</span>
@@ -13661,7 +13684,7 @@ function _renderRhythmCard(ws, monday, sunday) {
           <span class="rhythm-stat"><b>${summary.open}</b> em aberto</span>
         </div>
       </div>
-      <button class="rhythm-copy-btn" onclick="_rhythmCopySummary(this, '${textEsc}')" title="Copiar resumo pra Slack / reunião" aria-label="Copiar resumo">
+      <button class="rhythm-copy-btn" onclick="_rhythmCopySummary(this, '${jsq(info.text)}')" title="Copiar resumo pra Slack / reunião" aria-label="Copiar resumo">
         <i data-lucide="copy"></i>
       </button>
     </div>
@@ -13854,7 +13877,7 @@ function _renderRhythmSquadFilter() {
   if (list.length <= 1) { host.innerHTML = ''; return; }
   const chips = list.map(w => {
     const on = _rhythmSquadFilter.has(w.id);
-    return `<button type="button" class="uws-chip${on ? ' is-active' : ''}" onclick="toggleRhythmSquad('${esc(w.id)}')">
+    return `<button type="button" class="uws-chip${on ? ' is-active' : ''}" onclick="toggleRhythmSquad('${jsq(w.id)}')">
       <span class="uws-chip-dot" style="background:${esc(w.color || 'var(--accent)')}"></span>${esc(w.name)}
     </button>`;
   }).join('');
@@ -14198,7 +14221,7 @@ function perfPfpRenderPresets() {
   const wrap = $('perf-pfp-presets'); if (!wrap) return;
   const cur = $('perf-period').value;
   wrap.innerHTML = PERF_PFP_PRESETS.map(p =>
-    `<button type="button" class="pfp-preset-btn ${p.val === cur ? 'active' : ''}" onclick="perfPfpPickPreset('${p.val}')">${esc(p.label)}</button>`
+    `<button type="button" class="pfp-preset-btn ${p.val === cur ? 'active' : ''}" onclick="perfPfpPickPreset('${jsq(p.val)}')">${esc(p.label)}</button>`
   ).join('');
 }
 function perfPfpPickPreset(val) {
@@ -14514,7 +14537,7 @@ function _perfBuildConfigPanel(client, isEmpty) {
           <div class="perf-config-label">Endpoint</div>
           <div class="perf-config-value">
             <code>POST ${esc(url)}</code>
-            <button class="perf-copy" onclick="_perfCopy(this, '${esc(url)}')" title="Copiar"><i data-lucide="copy" class="ic-sm"></i></button>
+            <button class="perf-copy" onclick="_perfCopy(this, '${jsq(url)}')" title="Copiar"><i data-lucide="copy" class="ic-sm"></i></button>
           </div>
         </div>
         <div class="perf-config-field">
@@ -14529,7 +14552,7 @@ function _perfBuildConfigPanel(client, isEmpty) {
           <div class="perf-config-label">clientId (obrigatório em todo row)</div>
           <div class="perf-config-value">
             <code>${esc(clientId)}</code>
-            <button class="perf-copy" onclick="_perfCopy(this, '${esc(clientId)}')" title="Copiar"><i data-lucide="copy" class="ic-sm"></i></button>
+            <button class="perf-copy" onclick="_perfCopy(this, '${jsq(clientId)}')" title="Copiar"><i data-lucide="copy" class="ic-sm"></i></button>
           </div>
         </div>
       </div>
@@ -15284,7 +15307,7 @@ function _perfTh(key, label) {
   const active = _perfState.sort?.key === key;
   const dir = active ? _perfState.sort.dir : '';
   const icon = active ? (dir === 'asc' ? '▲' : '▼') : '⇅';
-  return `<th class="perf-th-sortable${active ? ' is-active' : ''}" onclick="_perfSetSort('${key}')">${esc(label)} <span class="perf-th-sort-icon">${icon}</span></th>`;
+  return `<th class="perf-th-sortable${active ? ' is-active' : ''}" onclick="_perfSetSort('${jsq(key)}')">${esc(label)} <span class="perf-th-sort-icon">${icon}</span></th>`;
 }
 function _perfSetSort(key) {
   const cur = _perfState.sort || { key: 'leads', dir: 'desc' };
@@ -15460,7 +15483,7 @@ function renderCapSquadFilter() {
   if (accessibleWs.length <= 1) { host.innerHTML = ''; return; }
   const chips = accessibleWs.map(w => {
     const on = capSquadFilter.has(w.id);
-    return `<button type="button" class="uws-chip${on ? ' is-active' : ''}" onclick="toggleCapSquad('${esc(w.id)}')">
+    return `<button type="button" class="uws-chip${on ? ' is-active' : ''}" onclick="toggleCapSquad('${jsq(w.id)}')">
       <span class="uws-chip-dot" style="background:${esc(w.color || 'var(--accent)')}"></span>${esc(w.name)}
     </button>`;
   }).join('');
@@ -15891,7 +15914,7 @@ function renderCapacityTeam(startYmd, endYmd, businessDays, capacityHours, logSt
       return da.localeCompare(db);
     });
     return `<div class="cap-row ${r.status} ${expanded ? 'is-expanded' : ''}" data-uid="${esc(r.u.id)}">
-      <button type="button" class="cap-row-head" onclick="capToggleRow('${esc(r.u.id)}')" aria-expanded="${expanded}">
+      <button type="button" class="cap-row-head" onclick="capToggleRow('${jsq(r.u.id)}')" aria-expanded="${expanded}">
         <div class="cap-row-user">
           ${avatarHTML(r.u, 'avatar cap-row-avatar')}
           <div class="cap-row-user-info">
@@ -15933,7 +15956,7 @@ function renderCapacityTeam(startYmd, endYmd, businessDays, capacityHours, logSt
               const s = stageOf(d);
               const due = effDue(d);
               const late = isLate(d);
-              return `<a class="cap-demand" onclick="showDetail('${esc(d.id)}'); event.stopPropagation()">
+              return `<a class="cap-demand" onclick="showDetail('${jsq(d.id)}'); event.stopPropagation()">
                 <span class="cap-demand-stage" style="background:${esc(s?.color || 'var(--accent)')}"></span>
                 <span class="cap-demand-name">${esc(d.name)}</span>
                 <span class="cap-demand-project">${esc(p?.name || '—')}${p?.client ? ' · ' + esc(p.client) : ''}</span>
@@ -16126,7 +16149,7 @@ function renderCalendar(which) {
         const avatarHtml = owner
           ? avatarHTML(owner, 'avatar cal-event-avatar')
           : `<span class="cal-event-dot" style="background:${fg}"></span>`;
-        return `<div class="cal-event" onclick="showDetail('${d.id}')" data-tooltip="${esc(d.name)}${owner ? ' · ' + esc(owner.name) : ''}" style="background:${bg};color:${fg}">
+        return `<div class="cal-event" onclick="showDetail('${jsq(d.id)}')" data-tooltip="${esc(d.name)}${owner ? ' · ' + esc(owner.name) : ''}" style="background:${bg};color:${fg}">
           ${avatarHtml}
           <span class="cal-event-name">${esc(d.name)}</span>
         </div>`;
@@ -17103,10 +17126,10 @@ function renderDetail() {
       ${st ? `<span class="pill" style="color:${st.color};background:${hexDim(st.color)};font-size:10px">${esc(st.label)}</span>` : ''}
       <div class="appt-actions">
         ${(canEdit || canDel) ? `<div class="chat-comment-menu-wrap appt-menu-wrap">
-          <button class="chat-comment-act" title="Mais" onclick="toggleApptMenu('${e.id}', event)"><i data-lucide="more-horizontal" class="ic-xs"></i></button>
+          <button class="chat-comment-act" title="Mais" onclick="toggleApptMenu('${jsq(e.id)}', event)"><i data-lucide="more-horizontal" class="ic-xs"></i></button>
           <div class="chat-comment-menu appt-menu" id="appt-menu-${e.id}">
-            ${canEdit ? `<button class="chat-comment-menu-item" onclick="closeApptMenus(); startEditTimeEntry('${e.id}')"><i data-lucide="pencil" class="ic-menu"></i> Editar</button>` : ''}
-            ${canDel ? `<button class="chat-comment-menu-item danger" onclick="closeApptMenus(); confirmDeleteTimeEntry('${e.id}')"><i data-lucide="trash-2" class="ic-menu"></i> Excluir</button>` : ''}
+            ${canEdit ? `<button class="chat-comment-menu-item" onclick="closeApptMenus(); startEditTimeEntry('${jsq(e.id)}')"><i data-lucide="pencil" class="ic-menu"></i> Editar</button>` : ''}
+            ${canDel ? `<button class="chat-comment-menu-item danger" onclick="closeApptMenus(); confirmDeleteTimeEntry('${jsq(e.id)}')"><i data-lucide="trash-2" class="ic-menu"></i> Excluir</button>` : ''}
           </div>
         </div>` : ''}
       </div>
@@ -17154,17 +17177,17 @@ function renderDetail() {
           ${renderReactions(c)}
           <div class="chat-reaction-wrap">
             <div class="chat-reaction-picker" id="reaction-picker-${c.id}">
-              ${reactionPickerEmojis().map(e => `<button type="button" class="chat-reaction-opt" onclick="toggleReaction('${c.id}', '${e}'); closeReactionPickers()">${e}</button>`).join('')}
-              <button type="button" class="chat-reaction-opt chat-reaction-more" title="Outro emoji" onclick="openReactionEmojiPicker('${c.id}', this, event)"><i data-lucide="plus" class="ic-xs"></i></button>
+              ${reactionPickerEmojis().map(e => `<button type="button" class="chat-reaction-opt" onclick="toggleReaction('${jsq(c.id)}', '${jsq(e)}'); closeReactionPickers()">${e}</button>`).join('')}
+              <button type="button" class="chat-reaction-opt chat-reaction-more" title="Outro emoji" onclick="openReactionEmojiPicker('${jsq(c.id)}', this, event)"><i data-lucide="plus" class="ic-xs"></i></button>
             </div>
-            <button class="chat-comment-act" title="Reagir" onclick="toggleChatReactionPicker('${c.id}', event)"><i data-lucide="smile" class="ic-xs"></i></button>
+            <button class="chat-comment-act" title="Reagir" onclick="toggleChatReactionPicker('${jsq(c.id)}', event)"><i data-lucide="smile" class="ic-xs"></i></button>
           </div>
           <span class="chat-comment-time">${fmtDateTime(c.createdAt)}${c.editedAt ? ' · editado' : ''}</span>
           ${(canEdit || canDel) ? `<div class="chat-comment-menu-wrap">
-            <button class="chat-comment-act" title="Mais" onclick="toggleCommentMenu('${c.id}', event)"><i data-lucide="more-horizontal" class="ic-xs"></i></button>
+            <button class="chat-comment-act" title="Mais" onclick="toggleCommentMenu('${jsq(c.id)}', event)"><i data-lucide="more-horizontal" class="ic-xs"></i></button>
             <div class="chat-comment-menu" id="comment-menu-${c.id}">
-              ${canEdit ? `<button class="chat-comment-menu-item" onclick="closeCommentMenus(); startEditComment('${c.id}')"><i data-lucide="pencil" class="ic-menu"></i> Editar</button>` : ''}
-              ${canDel ? `<button class="chat-comment-menu-item danger" onclick="closeCommentMenus(); confirmDeleteComment('${c.id}')"><i data-lucide="trash-2" class="ic-menu"></i> Excluir</button>` : ''}
+              ${canEdit ? `<button class="chat-comment-menu-item" onclick="closeCommentMenus(); startEditComment('${jsq(c.id)}')"><i data-lucide="pencil" class="ic-menu"></i> Editar</button>` : ''}
+              ${canDel ? `<button class="chat-comment-menu-item danger" onclick="closeCommentMenus(); confirmDeleteComment('${jsq(c.id)}')"><i data-lucide="trash-2" class="ic-menu"></i> Excluir</button>` : ''}
             </div>
           </div>` : ''}
         </div>
@@ -17212,7 +17235,7 @@ function renderDetail() {
             <div class="detail-title" title="Clique para renomear" onclick="startEditDemandTitle(this)">${esc(d.name)}</div>
             <div class="dd-title-actions">
               <div id="dd-presence" class="dd-presence" aria-live="polite"></div>
-              <button type="button" class="dd-title-copy" title="Copiar link" aria-label="Copiar link" onclick="copyDemandLink('${d.id}', event)">
+              <button type="button" class="dd-title-copy" title="Copiar link" aria-label="Copiar link" onclick="copyDemandLink('${jsq(d.id)}', event)">
                 <i data-lucide="link-2" class="ic-sm"></i>
               </button>
             </div>
@@ -17479,7 +17502,7 @@ function renderMineNav() {
   if (i < 0 || ids.length < 2) { el.hidden = true; el.innerHTML = ''; return; }
   const prev = demandById(ids[i - 1]), next = demandById(ids[i + 1]);
   const btn = (d, dir, icon) => d
-    ? `<button type="button" class="topbar-mine-btn" onclick="showDetail('${d.id}')" title="${dir}: ${esc(d.name)}" aria-label="${dir}"><i data-lucide="${icon}" class="ic-sm"></i></button>`
+    ? `<button type="button" class="topbar-mine-btn" onclick="showDetail('${jsq(d.id)}')" title="${dir}: ${esc(d.name)}" aria-label="${dir}"><i data-lucide="${icon}" class="ic-sm"></i></button>`
     : `<button type="button" class="topbar-mine-btn" disabled aria-label="${dir}"><i data-lucide="${icon}" class="ic-sm"></i></button>`;
   el.hidden = false;
   el.innerHTML = btn(prev, 'Anterior', 'chevron-left')
@@ -17522,7 +17545,7 @@ function buildOwnerPicker(d, owner) {
           <span>Sem responsável</span>
         </div>
         ${list.map(u => `
-          <div class="cdrop-item ${u.id === d.ownerId ? 'active' : ''}" onclick="changeOwner('${u.id}')">
+          <div class="cdrop-item ${u.id === d.ownerId ? 'active' : ''}" onclick="changeOwner('${jsq(u.id)}')">
             ${avatarHTML(u)}
             <span>${esc(u.name)}${u.role ? ' · ' + esc(u.role) : ''}</span>
           </div>`).join('')}
@@ -17548,7 +17571,7 @@ function buildStagePicker(d, flow) {
       </div>
       <div class="cdrop-menu">
         ${stages.map(s => `
-          <div class="cdrop-item ${s.id === d.status ? 'active' : ''}" onclick="pickStage('${s.id}', event)">
+          <div class="cdrop-item ${s.id === d.status ? 'active' : ''}" onclick="pickStage('${jsq(s.id)}', event)">
             <span class="cdrop-dot" style="background:${s.color}"></span>
             <span>${esc(s.label)}</span>
           </div>`).join('')}
@@ -18565,11 +18588,11 @@ function renderDetailStages(d) {
                     title="Arraste pra reordenar"><i data-lucide="grip-vertical" class="ic-md"></i></span>
               <span class="stages-edit-num">${String(i + 1).padStart(2, '0')}</span>
               <span class="pill-dot" style="background:${s.color}"></span>
-              <input class="form-control stages-edit-label-input stage-name-input" value="${esc(currentLabel)}" placeholder="${esc(s.label)}" autocomplete="off" oninput="setStageLabelDraft('${s.id}', this.value)" data-done-fn="detailStagePresetDone" data-color-arg="${s.id}" maxlength="80">
+              <input class="form-control stages-edit-label-input stage-name-input" value="${esc(currentLabel)}" placeholder="${esc(s.label)}" autocomplete="off" oninput="setStageLabelDraft('${jsq(s.id)}', this.value)" data-done-fn="detailStagePresetDone" data-color-arg="${s.id}" maxlength="80">
               <input type="date" class="stages-edit-date-input ${hasDateAnchor ? 'is-customized' : ''}" data-fdp-display="short" data-fdp-no-weekend="1"
                      value="${endDate || ''}"
                      ${isFlowStage || isAddition ? '' : 'disabled'}
-                     onchange="setStageDateDraft('${s.id}', this.value)">
+                     onchange="setStageDateDraft('${jsq(s.id)}', this.value)">
               <span class="stages-edit-sla-days" title="Dias úteis pra executar (não conta sábado/domingo). Edite a data pra alterar. O padrão vem do fluxo.">${(() => {
                 const prev = prevActiveEnds[i] || baselineYmd;
                 // Diff em dias ÚTEIS — evita mostrar "6d" quando 2 são fim de semana.
@@ -18578,18 +18601,18 @@ function renderDetailStages(d) {
               })()}</span>
               <div class="stages-edit-resp-wrap">
                 ${effDone ? `<div class="stage-done-noowner is-compact" title="A etapa de conclusão encerra a demanda: não tem responsável."><i data-lucide="flag" class="ic-sm"></i>Sem responsável</div>` : `
-                <select id="${selectId}" class="form-control" data-cdrop-icon="user" onchange="setStageResponsibleDraft('${s.id}', this.value)">
+                <select id="${selectId}" class="form-control" data-cdrop-icon="user" onchange="setStageResponsibleDraft('${jsq(s.id)}', this.value)">
                   ${!currentResp && !hasRespOverride ? '<option value="__default__" selected>Selecionar executor…</option>' : ''}
                   <option value="" ${hasRespOverride && currentResp === null ? 'selected' : ''}>— Sem responsável —</option>
                   ${sortedUsers.map(u => `<option value="${u.id}" ${currentResp === u.id ? 'selected' : ''} ${u.id === defaultRespId ? 'data-default="1"' : ''}>${esc(u.name)}</option>`).join('')}
                 </select>`}
               </div>
               <div class="stages-edit-menu-wrap">
-                <button type="button" class="stages-edit-menu-btn" title="Mais ações" onclick="toggleStageMenu('${s.id}', event)"><i data-lucide="more-horizontal" class="ic-md"></i></button>
+                <button type="button" class="stages-edit-menu-btn" title="Mais ações" onclick="toggleStageMenu('${jsq(s.id)}', event)"><i data-lucide="more-horizontal" class="ic-md"></i></button>
                 <div class="stages-edit-menu" id="${menuId}">
-                  <button class="stages-edit-menu-item ${effDone ? 'is-active-done' : ''}" onclick="closeStageMenus(); toggleStageDoneDraft('${s.id}')"><i data-lucide="flag" class="ic-menu"></i> ${doneItemLabel}</button>
-                  <button class="stages-edit-menu-item" ${activeDisabled ? 'disabled' : ''} title="${activeDisabled ? 'Etapa atual — mude antes de desativar' : ''}" onclick="closeStageMenus(); toggleStageDraft('${s.id}')"><i data-lucide="${isOn ? 'eye-off' : 'eye'}" class="ic-menu"></i> ${activeItemLabel}</button>
-                  ${isAddition ? `<button class="stages-edit-menu-item danger" ${isCurrent ? 'disabled' : ''} title="${isCurrent ? 'Etapa atual — não pode remover' : ''}" onclick="closeStageMenus(); removeStageAdditionDraft('${s.id}')"><i data-lucide="trash-2" class="ic-menu"></i> Excluir etapa</button>` : ''}
+                  <button class="stages-edit-menu-item ${effDone ? 'is-active-done' : ''}" onclick="closeStageMenus(); toggleStageDoneDraft('${jsq(s.id)}')"><i data-lucide="flag" class="ic-menu"></i> ${doneItemLabel}</button>
+                  <button class="stages-edit-menu-item" ${activeDisabled ? 'disabled' : ''} title="${activeDisabled ? 'Etapa atual — mude antes de desativar' : ''}" onclick="closeStageMenus(); toggleStageDraft('${jsq(s.id)}')"><i data-lucide="${isOn ? 'eye-off' : 'eye'}" class="ic-menu"></i> ${activeItemLabel}</button>
+                  ${isAddition ? `<button class="stages-edit-menu-item danger" ${isCurrent ? 'disabled' : ''} title="${isCurrent ? 'Etapa atual — não pode remover' : ''}" onclick="closeStageMenus(); removeStageAdditionDraft('${jsq(s.id)}')"><i data-lucide="trash-2" class="ic-menu"></i> Excluir etapa</button>` : ''}
                 </div>
               </div>
             </div>`;
@@ -18794,14 +18817,14 @@ function rdRowHTML(d) {
   return `<div class="rd-item${paused ? ' paused' : ''}">
     <div class="rd-item-icon"><i data-lucide="repeat" class="ic-sm"></i></div>
     <div class="rd-item-main">
-      <div class="rd-item-name" onclick="showDetail('${d.id}')" title="Abrir demanda">${esc(d.name)}${paused ? ' <span class="rd-paused-tag">pausada</span>' : ''}</div>
+      <div class="rd-item-name" onclick="showDetail('${jsq(d.id)}')" title="Abrir demanda">${esc(d.name)}${paused ? ' <span class="rd-paused-tag">pausada</span>' : ''}</div>
       <div class="rd-item-sched">${esc(metaBits.join(' · '))}</div>
       ${ctxBits.length ? `<div class="rd-item-ctx">${ctxBits.join(' · ')}</div>` : ''}
     </div>
     <div class="rd-item-actions">
-      <button class="btn btn-ghost btn-sm" onclick="openEditDemand('${d.id}')" title="Editar demanda / recorrência"><i data-lucide="pencil" class="ic-sm"></i></button>
-      <button class="btn btn-ghost btn-sm" onclick="toggleRecurringPause('${d.id}')" title="${paused ? 'Retomar' : 'Pausar'}"><i data-lucide="${paused ? 'play' : 'pause'}" class="ic-sm"></i></button>
-      <button class="btn btn-ghost btn-sm rd-end-btn" onclick="endRecurring('${d.id}')" title="Encerrar recorrência"><i data-lucide="x" class="ic-sm"></i></button>
+      <button class="btn btn-ghost btn-sm" onclick="openEditDemand('${jsq(d.id)}')" title="Editar demanda / recorrência"><i data-lucide="pencil" class="ic-sm"></i></button>
+      <button class="btn btn-ghost btn-sm" onclick="toggleRecurringPause('${jsq(d.id)}')" title="${paused ? 'Retomar' : 'Pausar'}"><i data-lucide="${paused ? 'play' : 'pause'}" class="ic-sm"></i></button>
+      <button class="btn btn-ghost btn-sm rd-end-btn" onclick="endRecurring('${jsq(d.id)}')" title="Encerrar recorrência"><i data-lucide="x" class="ic-sm"></i></button>
     </div>
   </div>`;
 }
@@ -19351,7 +19374,7 @@ function linkThumbInner(url) {
 function renderDemandAttList(list, withDelete) {
   if (!list || !list.length) return '<div class="hours-empty" style="text-align:left">Nenhum arquivo anexado.</div>';
   const cards = list.map(a => {
-    const removeCall = withDelete ? `removeDetailAttachment('${esc(a.id)}')` : `removeFormAttachment('${esc(a.id)}', 'f-attachments-list')`;
+    const removeCall = withDelete ? `removeDetailAttachment('${jsq(a.id)}')` : `removeFormAttachment('${jsq(a.id)}', 'f-attachments-list')`;
     const removeBtn = `<button type="button" class="att-card-act danger" title="Remover" onclick="${removeCall}"><i data-lucide="x" class="ic-sm"></i></button>`;
     // Clique nos botões (baixar/remover) não abre o card: a propagação é cortada
     // no contêiner das ações. Checar event.target no card não serve — o botão
@@ -19363,7 +19386,7 @@ function renderDemandAttList(list, withDelete) {
       const url = normalizeUrl(a.url || a.name);
       let host = '';
       try { host = new URL(url).hostname.replace(/^www\./, ''); } catch {}
-      return `<div class="att-gal-tile att-card" data-id="${esc(a.id)}" title="${esc(a.name || a.url)}" onclick="window.open('${esc(url)}', '_blank', 'noopener')">
+      return `<div class="att-gal-tile att-card" data-id="${esc(a.id)}" title="${esc(a.name || a.url)}" onclick="window.open('${jsq(url)}', '_blank', 'noopener')">
         <div class="att-gal-thumb att-gal-thumb-icon att-link-thumb">${linkThumbInner(url)}
           <div ${actionsAttrs}>${removeBtn}</div>
         </div>
@@ -19381,14 +19404,14 @@ function renderDemandAttList(list, withDelete) {
     const dlSrc = esc(attDownloadUrl(rawSrc, a.name));
     const dlAttrs = attDownloadAttrs(rawSrc, a.name);
     const openCall = previewable
-      ? `openAttPreview('${src}', '${esc(a.type || '')}', '${esc(a.name || '')}')`
+      ? `openAttPreview('${jsq(src)}', '${jsq(a.type || '')}', '${jsq(a.name || '')}')`
       : `this.querySelector('.att-card-dl').click()`;
     const ext = attExtOf(a);
     const baseName = (a.name || 'arquivo').replace(/\.[a-z0-9]{1,6}$/i, '');
     const size = attSizeBytes(a);
     const meta = [ext ? ext.toUpperCase() : '', size ? fmtBytes(size) : '', date].filter(Boolean).map(esc).join(' · ');
     const thumb = kind === 'image' && rawSrc
-      ? `<div class="att-gal-thumb att-gal-thumb-image" style="background-image:url('${src}')">`
+      ? `<div class="att-gal-thumb att-gal-thumb-image" style="background-image:url('${cssu(src)}')">`
       : `<div class="att-gal-thumb att-gal-thumb-icon ft-${vis.tone}"><i data-lucide="${vis.icon}"></i>`;
     const coverAttrs = _attCoverKind(a)
       ? `data-cover-key="${esc(_attCoverKey(a))}" data-att-id="${esc(a.id || '')}" data-att-size="${esc(String(a.size || 0))}" data-att-src="${src}" data-att-type="${esc(a.type || '')}" data-att-name="${esc(a.name || '')}"`
@@ -20531,7 +20554,7 @@ function _renderUploadPlaceholder(item) {
       <span class="upload-donut-pct">${pct}%</span>
     </div>
     <span class="demand-att-name" title="${esc(item.name)}">${esc(item.name)}</span>
-    <button class="detail-icon-btn danger" title="Cancelar" onclick="_cancelUpload('${esc(item.id)}')"><i data-lucide="x" class="ic-sm"></i></button>
+    <button class="detail-icon-btn danger" title="Cancelar" onclick="_cancelUpload('${jsq(item.id)}')"><i data-lucide="x" class="ic-sm"></i></button>
   </div>`;
 }
 
@@ -20908,7 +20931,7 @@ function openRemindMenu(anchor) {
   const d = demandById(detailId);
   if (!d || !anchor) return;
   const existing = _remindersFor(d.id);
-  const preset = (kind, icon, label) => `<button type="button" class="stages-edit-menu-item" role="menuitem" onclick="createReminder('${kind}')"><i data-lucide="${icon}" class="ic-menu"></i> ${label} <span class="remind-when">${_fmtRemindWhen(_remindPresetAt(kind).toISOString())}</span></button>`;
+  const preset = (kind, icon, label) => `<button type="button" class="stages-edit-menu-item" role="menuitem" onclick="createReminder('${jsq(kind)}')"><i data-lucide="${icon}" class="ic-menu"></i> ${label} <span class="remind-when">${_fmtRemindWhen(_remindPresetAt(kind).toISOString())}</span></button>`;
   const menu = document.createElement('div');
   menu.className = 'advance-menu remind-menu';
   menu.id = 'remind-menu';
@@ -20919,7 +20942,7 @@ function openRemindMenu(anchor) {
       <div class="remind-row">
         <i data-lucide="alarm-clock" class="ic-menu"></i>
         <span class="remind-row-text"><strong>${esc(_fmtRemindWhen(r.at))}</strong>${r.note ? ' · ' + esc(r.note) : ''}</span>
-        <button type="button" class="qr-del remind-cancel" title="Cancelar lembrete" onclick="cancelReminder('${esc(r.id)}')"><i data-lucide="x" class="ic-xs"></i></button>
+        <button type="button" class="qr-del remind-cancel" title="Cancelar lembrete" onclick="cancelReminder('${jsq(r.id)}')"><i data-lucide="x" class="ic-xs"></i></button>
       </div>`).join('')}
     <input type="text" class="form-control remind-note" id="remind-note" maxlength="300" placeholder="Nota (opcional)">
     ${preset('in1h', 'clock-1', 'Em 1 hora')}
@@ -21126,14 +21149,14 @@ async function renderDashMentions() {
 function _dashMentionRowHtml(m) {
   const u = userById(m.fromUserId);
   const via = m.viaRole ? ` <span class="dash-mention-via">@${esc(roleSlug(m.viaRole))}</span>` : '';
-  return `<div class="dash-blocked-row dash-gap-row dash-mention-row" onclick="openPendingMention('${esc(m.key)}')">
+  return `<div class="dash-blocked-row dash-gap-row dash-mention-row" onclick="openPendingMention('${jsq(m.key)}')">
     <div class="dash-mention-av">${avatarHTML(u, 'avatar avatar-sm').replace(/data-user-id="[^"]+"/, '')}</div>
     <div class="dash-blocked-body">
       <div class="dash-blocked-name">${esc(u?.name || '—')}${via}<span class="dash-mention-text"> — ${esc(m.preview || 'anexo')}</span></div>
       <div class="dash-blocked-meta">${esc(m.demandName)}${m.client ? ' · ' + esc(m.client) : ''} · ${esc(fmtRelativeTime(m.createdAt))}</div>
     </div>
-    <button type="button" class="btn btn-ghost btn-sm dash-gap-btn" onclick="event.stopPropagation(); openPendingMention('${esc(m.key)}')">Responder</button>
-    <button type="button" class="qr-del dash-gap-dismiss" title="Não precisa responder" onclick="event.stopPropagation(); dismissPendingMention('${esc(m.key)}')"><i data-lucide="x" class="ic-xs"></i></button>
+    <button type="button" class="btn btn-ghost btn-sm dash-gap-btn" onclick="event.stopPropagation(); openPendingMention('${jsq(m.key)}')">Responder</button>
+    <button type="button" class="qr-del dash-gap-dismiss" title="Não precisa responder" onclick="event.stopPropagation(); dismissPendingMention('${jsq(m.key)}')"><i data-lucide="x" class="ic-xs"></i></button>
   </div>`;
 }
 function openDashMentionsAll() {
@@ -21195,14 +21218,14 @@ async function renderDashTimeGaps() {
   paintIcons(el);
 }
 function _dashTimeGapRowHtml(g) {
-  return `<div class="dash-blocked-row dash-gap-row" onclick="apontarTimeGap('${esc(g.key)}')">
+  return `<div class="dash-blocked-row dash-gap-row" onclick="apontarTimeGap('${jsq(g.key)}')">
     <div class="dash-gap-icon"><i data-lucide="clock-alert" class="ic-sm"></i></div>
     <div class="dash-blocked-body">
       <div class="dash-blocked-name">${esc(g.demandName)}</div>
       <div class="dash-blocked-meta">${esc(g.stageLabel)} · entregue ${esc(fmtRelativeTime(g.deliveredAt))}${g.client ? ' · ' + esc(g.client) : ''}</div>
     </div>
-    <button type="button" class="btn btn-ghost btn-sm dash-gap-btn" onclick="event.stopPropagation(); apontarTimeGap('${esc(g.key)}')">Apontar</button>
-    <button type="button" class="qr-del dash-gap-dismiss" title="Não precisa apontar" onclick="event.stopPropagation(); dismissTimeGap('${esc(g.key)}')"><i data-lucide="x" class="ic-xs"></i></button>
+    <button type="button" class="btn btn-ghost btn-sm dash-gap-btn" onclick="event.stopPropagation(); apontarTimeGap('${jsq(g.key)}')">Apontar</button>
+    <button type="button" class="qr-del dash-gap-dismiss" title="Não precisa apontar" onclick="event.stopPropagation(); dismissTimeGap('${jsq(g.key)}')"><i data-lucide="x" class="ic-xs"></i></button>
   </div>`;
 }
 function openDashTimeGapsAll() {
@@ -21822,7 +21845,7 @@ function startEditTimeEntry(eid) {
     </div>
     <div style="display:flex;gap:6px;align-items:end;padding-bottom:4px">
       <button class="btn btn-ghost btn-sm" onclick="renderDetail()">Cancelar</button>
-      <button class="btn btn-confirm btn-sm" onclick="saveEditTimeEntry('${eid}')">Salvar</button>
+      <button class="btn btn-confirm btn-sm" onclick="saveEditTimeEntry('${jsq(eid)}')">Salvar</button>
     </div>
   </div>`;
   paintIcons();
@@ -21914,7 +21937,7 @@ function mentionWatch(ta) {
   if (!list.length) { pop.classList.remove('open'); return; }
   mentionIdx = 0;
   pop.innerHTML = list.map((u, i) => `
-    <div class="mention-opt ${i === 0 ? 'active' : ''}" data-uname="${esc(u.username)}" onclick="pickMention('${esc(u.username)}')">
+    <div class="mention-opt ${i === 0 ? 'active' : ''}" data-uname="${esc(u.username)}" onclick="pickMention('${jsq(u.username)}')">
       ${avatarHTML(u)} <span class="user-mini"><span class="user-mini-name">${esc(u.name)}</span><span class="user-mini-role">@${esc(u.username)}</span></span>
     </div>`).join('');
   pop.classList.add('open');
@@ -21948,14 +21971,14 @@ function mentionWatchCE(el) {
     return `
     <div class="mention-opt" data-uname="${esc(u.username)}"
          onmousedown="event.preventDefault()"
-         onclick="pickMentionCE('${esc(u.username)}')">
+         onclick="pickMentionCE('${jsq(u.username)}')">
       ${avatarHTML(u)} <span class="user-mini"><span class="user-mini-name">${esc(u.name)}</span><span class="user-mini-role">@${esc(u.username)}${away ? ` <span class="mention-away">${esc(away)}</span>` : ''}</span></span>
     </div>`;
   });
   const roleOpts = roleList.map(r => `
     <div class="mention-opt mention-opt--role" data-uname="${esc(r.slug)}"
          onmousedown="event.preventDefault()"
-         onclick="pickMentionCE('${esc(r.slug)}')">
+         onclick="pickMentionCE('${jsq(r.slug)}')">
       <span class="mention-role-ic"><i data-lucide="users" class="ic-xs"></i></span>
       <span class="user-mini"><span class="user-mini-name">${esc(r.name)}</span><span class="user-mini-role">@${esc(r.slug)} · ${esc(r.members.map(u => (u.name || '').split(' ')[0]).join(', '))}</span></span>
     </div>`);
@@ -22745,18 +22768,18 @@ function renderRichEditor({ id, initial, placeholder, minHeight }) {
   const isEmpty = !initialHtml.trim();
   return `<div class="rich-editor-wrap">
     <div class="rich-toolbar">
-      <button type="button" class="rich-tool" title="Negrito (Ctrl+B)" onmousedown="event.preventDefault()" onclick="execRichCmd('${id}','bold')"><i data-lucide="bold" class="ic-xs"></i></button>
-      <button type="button" class="rich-tool" title="Itálico" onmousedown="event.preventDefault()" onclick="execRichCmd('${id}','italic')"><i data-lucide="italic" class="ic-xs"></i></button>
-      <button type="button" class="rich-tool" title="Sublinhado" onmousedown="event.preventDefault()" onclick="execRichCmd('${id}','underline')"><i data-lucide="underline" class="ic-xs"></i></button>
-      <button type="button" class="rich-tool" title="Tachado" onmousedown="event.preventDefault()" onclick="execRichCmd('${id}','strikeThrough')"><i data-lucide="strikethrough" class="ic-xs"></i></button>
+      <button type="button" class="rich-tool" title="Negrito (Ctrl+B)" onmousedown="event.preventDefault()" onclick="execRichCmd('${jsq(id)}','bold')"><i data-lucide="bold" class="ic-xs"></i></button>
+      <button type="button" class="rich-tool" title="Itálico" onmousedown="event.preventDefault()" onclick="execRichCmd('${jsq(id)}','italic')"><i data-lucide="italic" class="ic-xs"></i></button>
+      <button type="button" class="rich-tool" title="Sublinhado" onmousedown="event.preventDefault()" onclick="execRichCmd('${jsq(id)}','underline')"><i data-lucide="underline" class="ic-xs"></i></button>
+      <button type="button" class="rich-tool" title="Tachado" onmousedown="event.preventDefault()" onclick="execRichCmd('${jsq(id)}','strikeThrough')"><i data-lucide="strikethrough" class="ic-xs"></i></button>
       <span class="chat-tool-sep"></span>
-      <button type="button" class="rich-tool" title="Lista numerada" onmousedown="event.preventDefault()" onclick="execRichCmd('${id}','insertOrderedList')"><i data-lucide="list-ordered" class="ic-xs"></i></button>
-      <button type="button" class="rich-tool" title="Lista com marcadores" onmousedown="event.preventDefault()" onclick="execRichCmd('${id}','insertUnorderedList')"><i data-lucide="list" class="ic-xs"></i></button>
-      <button type="button" class="rich-tool" title="Checklist" onmousedown="event.preventDefault()" onclick="execRichCmd('${id}','insertUnorderedList')"><i data-lucide="list-checks" class="ic-xs"></i></button>
+      <button type="button" class="rich-tool" title="Lista numerada" onmousedown="event.preventDefault()" onclick="execRichCmd('${jsq(id)}','insertOrderedList')"><i data-lucide="list-ordered" class="ic-xs"></i></button>
+      <button type="button" class="rich-tool" title="Lista com marcadores" onmousedown="event.preventDefault()" onclick="execRichCmd('${jsq(id)}','insertUnorderedList')"><i data-lucide="list" class="ic-xs"></i></button>
+      <button type="button" class="rich-tool" title="Checklist" onmousedown="event.preventDefault()" onclick="execRichCmd('${jsq(id)}','insertUnorderedList')"><i data-lucide="list-checks" class="ic-xs"></i></button>
       <span class="chat-tool-sep"></span>
-      <button type="button" class="rich-tool" title="Citação" onmousedown="event.preventDefault()" onclick="execRichCmd('${id}','formatBlock','BLOCKQUOTE')"><i data-lucide="quote" class="ic-xs"></i></button>
+      <button type="button" class="rich-tool" title="Citação" onmousedown="event.preventDefault()" onclick="execRichCmd('${jsq(id)}','formatBlock','BLOCKQUOTE')"><i data-lucide="quote" class="ic-xs"></i></button>
       <span class="chat-tool-sep"></span>
-      <input type="file" id="rich-img-input-${id}" accept="image/*" multiple style="display:none" onchange="handleRichImages(event, '${id}')">
+      <input type="file" id="rich-img-input-${id}" accept="image/*" multiple style="display:none" onchange="handleRichImages(event, '${jsq(id)}')">
       <button type="button" class="rich-tool" title="Imagem" onmousedown="event.preventDefault()" onclick="document.getElementById('rich-img-input-${id}').click()"><i data-lucide="image" class="ic-xs"></i></button>
     </div>
     <div class="rich-editor-input ${isEmpty ? 'is-empty' : ''}" id="${id}"
@@ -23074,7 +23097,7 @@ function startEditComment(cid) {
   _updateComposeLock();
   const atts = (c.attachments || []).map((a, i) => {
     const preview = a.type && a.type.startsWith('image/') ? `<img src="${a.data}" class="pending-thumb">` : '<i data-lucide="file" class="ic-sm"></i>';
-    return `<span class="pending-file">${preview} ${esc(a.name)} <button class="icon-btn danger" onclick="removeEditAtt('${cid}', ${i})" title="Remover"><i data-lucide="x" class="ic-sm"></i></button></span>`;
+    return `<span class="pending-file">${preview} ${esc(a.name)} <button class="icon-btn danger" onclick="removeEditAtt('${jsq(cid)}', ${i})" title="Remover"><i data-lucide="x" class="ic-sm"></i></button></span>`;
   }).join('');
   const startHtml = c.format === 'html'
     ? (c.text || '')
@@ -23084,13 +23107,13 @@ function startEditComment(cid) {
   el.innerHTML = `
     <div class="chat-compose is-active chat-compose-editing" id="chat-compose-edit-${cid}">
       <div class="chat-compose-toolbar">
-        <button type="button" class="chat-tool" title="Negrito" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${cid}','bold')"><i data-lucide="bold" class="ic-xs"></i></button>
-        <button type="button" class="chat-tool" title="Itálico" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${cid}','italic')"><i data-lucide="italic" class="ic-xs"></i></button>
-        <button type="button" class="chat-tool" title="Sublinhado" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${cid}','underline')"><i data-lucide="underline" class="ic-xs"></i></button>
-        <button type="button" class="chat-tool" title="Tachado" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${cid}','strikeThrough')"><i data-lucide="strikethrough" class="ic-xs"></i></button>
+        <button type="button" class="chat-tool" title="Negrito" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${jsq(cid)}','bold')"><i data-lucide="bold" class="ic-xs"></i></button>
+        <button type="button" class="chat-tool" title="Itálico" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${jsq(cid)}','italic')"><i data-lucide="italic" class="ic-xs"></i></button>
+        <button type="button" class="chat-tool" title="Sublinhado" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${jsq(cid)}','underline')"><i data-lucide="underline" class="ic-xs"></i></button>
+        <button type="button" class="chat-tool" title="Tachado" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${jsq(cid)}','strikeThrough')"><i data-lucide="strikethrough" class="ic-xs"></i></button>
         <span class="chat-tool-sep"></span>
-        <button type="button" class="chat-tool" title="Lista numerada" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${cid}','insertOrderedList')"><i data-lucide="list-ordered" class="ic-xs"></i></button>
-        <button type="button" class="chat-tool" title="Lista com marcadores" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${cid}','insertUnorderedList')"><i data-lucide="list" class="ic-xs"></i></button>
+        <button type="button" class="chat-tool" title="Lista numerada" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${jsq(cid)}','insertOrderedList')"><i data-lucide="list-ordered" class="ic-xs"></i></button>
+        <button type="button" class="chat-tool" title="Lista com marcadores" onmousedown="event.preventDefault()" onclick="execEditCommentCmd('${jsq(cid)}','insertUnorderedList')"><i data-lucide="list" class="ic-xs"></i></button>
       </div>
       <div class="chat-compose-input comment-input comment-input-ce" id="edit-comment-text-${cid}"
            contenteditable="true" role="textbox" aria-multiline="true"
@@ -23101,14 +23124,14 @@ function startEditComment(cid) {
       <div class="comment-pending-files" id="edit-comment-files">${atts}</div>
       <div class="chat-compose-foot">
         <div class="chat-compose-foot-left">
-          <input type="file" id="edit-file-input" multiple style="display:none" onchange="handleEditFiles(event,'${cid}')">
+          <input type="file" id="edit-file-input" multiple style="display:none" onchange="handleEditFiles(event,'${jsq(cid)}')">
           <button class="chat-compose-icon" onclick="$('edit-file-input').click()" title="Anexar arquivo"><i data-lucide="paperclip" class="ic-xs"></i></button>
-          <input type="file" id="edit-img-input" accept="image/*" multiple style="display:none" onchange="handleEditImagesInline(event,'${cid}')">
+          <input type="file" id="edit-img-input" accept="image/*" multiple style="display:none" onchange="handleEditImagesInline(event,'${jsq(cid)}')">
           <button class="chat-compose-icon" onclick="$('edit-img-input').click()" title="Imagem"><i data-lucide="image" class="ic-xs"></i></button>
         </div>
         <div class="chat-compose-foot-right">
-          <button class="btn btn-ghost btn-sm" onclick="cancelEditComment('${cid}')">Cancelar</button>
-          <button class="btn btn-confirm btn-sm" onclick="saveEditComment('${cid}')">Salvar</button>
+          <button class="btn btn-ghost btn-sm" onclick="cancelEditComment('${jsq(cid)}')">Cancelar</button>
+          <button class="btn btn-confirm btn-sm" onclick="saveEditComment('${jsq(cid)}')">Salvar</button>
         </div>
       </div>
     </div>`;
@@ -23177,7 +23200,7 @@ function removeEditAtt(cid, idx) {
   const container = $('edit-comment-files');
   container.innerHTML = atts.map((a, i) => {
     const preview = a.type && a.type.startsWith('image/') ? `<img src="${a.data}" class="pending-thumb">` : '<i data-lucide="file" class="ic-sm"></i>';
-    return `<span class="pending-file">${preview} ${esc(a.name)} <button class="icon-btn danger" onclick="removeEditAtt('${cid}', ${i})"><i data-lucide="x" class="ic-sm"></i></button></span>`;
+    return `<span class="pending-file">${preview} ${esc(a.name)} <button class="icon-btn danger" onclick="removeEditAtt('${jsq(cid)}', ${i})"><i data-lucide="x" class="ic-sm"></i></button></span>`;
   }).join('');
 }
 function handleEditFiles(ev, cid) {
@@ -23194,7 +23217,7 @@ function handleEditFiles(ev, cid) {
       const container = $('edit-comment-files');
       container.innerHTML = atts.map((a, i) => {
         const preview = a.type && a.type.startsWith('image/') ? `<img src="${a.data}" class="pending-thumb">` : '<i data-lucide="file" class="ic-sm"></i>';
-        return `<span class="pending-file">${preview} ${esc(a.name)} <button class="icon-btn danger" onclick="removeEditAtt('${cid}', ${i})"><i data-lucide="x" class="ic-sm"></i></button></span>`;
+        return `<span class="pending-file">${preview} ${esc(a.name)} <button class="icon-btn danger" onclick="removeEditAtt('${jsq(cid)}', ${i})"><i data-lucide="x" class="ic-sm"></i></button></span>`;
       }).join('');
     };
     reader.readAsDataURL(file);
@@ -23291,10 +23314,10 @@ function renderProjects() {
     const canManageProject = !!(me.isAdmin || me.isModerator);
     const actions = canManageProject ? `
       <div class="row-actions">
-        <button class="detail-icon-btn" title="Editar" onclick="openProjectModal('${p.id}')"><i data-lucide="pencil" class="ic-sm"></i></button>
-        <button class="detail-icon-btn" title="Duplicar" onclick="duplicateProject('${p.id}')"><i data-lucide="copy" class="ic-sm"></i></button>
-        ${p.active !== false ? `<button class="detail-icon-btn" title="Arquivar" onclick="archiveProject('${p.id}')"><i data-lucide="archive" class="ic-sm"></i></button>` : `<button class="detail-icon-btn" title="Restaurar" onclick="archiveProject('${p.id}')"><i data-lucide="archive-restore" class="ic-sm"></i></button>`}
-        <button class="detail-icon-btn danger" title="Excluir" onclick="confirmDeleteProject('${p.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
+        <button class="detail-icon-btn" title="Editar" onclick="openProjectModal('${jsq(p.id)}')"><i data-lucide="pencil" class="ic-sm"></i></button>
+        <button class="detail-icon-btn" title="Duplicar" onclick="duplicateProject('${jsq(p.id)}')"><i data-lucide="copy" class="ic-sm"></i></button>
+        ${p.active !== false ? `<button class="detail-icon-btn" title="Arquivar" onclick="archiveProject('${jsq(p.id)}')"><i data-lucide="archive" class="ic-sm"></i></button>` : `<button class="detail-icon-btn" title="Restaurar" onclick="archiveProject('${jsq(p.id)}')"><i data-lucide="archive-restore" class="ic-sm"></i></button>`}
+        <button class="detail-icon-btn danger" title="Excluir" onclick="confirmDeleteProject('${jsq(p.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
       </div>
     ` : '';
     return `<tr class="row-hover-actions" style="${p.active === false ? 'opacity:.55' : ''}">
@@ -23634,7 +23657,7 @@ function renderFlows() {
       </div>`;
     }
     const subLabel = g.flows.length === 0 ? 'Sem fluxos · clique pra criar' : `${g.flows.length} fluxo${g.flows.length === 1 ? '' : 's'}`;
-    return `<div class="flow-card" onclick="openClientFlows('${esc(g.key).replace(/'/g, "\\'")}')">
+    return `<div class="flow-card" onclick="openClientFlows('${jsq(g.key)}')">
       ${avatarHtml}
       <div class="flow-card-name">${esc(g.label)}</div>
       <div class="flow-card-sub">${esc(subLabel)}</div>
@@ -23748,12 +23771,12 @@ function renderClientFlows(client) {
         ? `<div class="flow-card-icon flow-card-icon--lucide"><i data-lucide="${esc(f.icon.slice(7))}" class="ic-md"></i></div>`
         : `<div class="flow-card-icon" style="background-image:url('${f.icon}');background-size:cover;background-position:center"></div>`;
     const adminActions = me.isAdmin ? `<div class="flow-card-actions" onclick="event.stopPropagation()">
-        <button class="detail-icon-btn" title="Duplicar" onclick="openDuplicateFlow('${f.id}')"><i data-lucide="copy" class="ic-xs"></i></button>
-        <button class="detail-icon-btn danger" title="Excluir" onclick="deleteFlow('${f.id}')"><i data-lucide="trash-2" class="ic-xs"></i></button>
+        <button class="detail-icon-btn" title="Duplicar" onclick="openDuplicateFlow('${jsq(f.id)}')"><i data-lucide="copy" class="ic-xs"></i></button>
+        <button class="detail-icon-btn danger" title="Excluir" onclick="deleteFlow('${jsq(f.id)}')"><i data-lucide="trash-2" class="ic-xs"></i></button>
       </div>` : '';
     // Usuário comum: pode abrir o modal (modo somente leitura), mas não vê
     // ações de edição. Admin abre no modo edição normal.
-    const clickAttr = `onclick="openFlowModal('${f.id}')"`;
+    const clickAttr = `onclick="openFlowModal('${jsq(f.id)}')"`;
     const isOpen = editingFlowId === f.id;
     return `<div class="flow-card flow-card-flow ${isOpen ? 'is-open' : ''}" data-flow-id="${f.id}" ${clickAttr}>
       ${iconHtml}
@@ -24024,11 +24047,11 @@ function renderTypeCombo(inputId, menuId) {
   const matches = q ? all.filter(t => norm(t.name).includes(q)) : all;
   const exact = all.some(t => norm(t.name) === q);
   let html = matches.map(t =>
-    `<div class="dtype-opt" data-name="${esc(t.name)}" onmousedown="event.preventDefault()" onclick="pickTypeCombo('${inputId}','${menuId}', this.dataset.name)">${esc(t.name)}</div>`
+    `<div class="dtype-opt" data-name="${esc(t.name)}" onmousedown="event.preventDefault()" onclick="pickTypeCombo('${jsq(inputId)}','${jsq(menuId)}', this.dataset.name)">${esc(t.name)}</div>`
   ).join('');
   if (!matches.length && !raw) html = `<div class="dtype-empty">Nenhum tipo cadastrado. Digite pra criar um.</div>`;
   if (raw && !exact) {
-    html += `<div class="dtype-add" onmousedown="event.preventDefault()" onclick="createTypeCombo('${inputId}','${menuId}')"><i data-lucide="plus" class="ic-sm"></i> Adicionar “${esc(raw)}”</div>`;
+    html += `<div class="dtype-add" onmousedown="event.preventDefault()" onclick="createTypeCombo('${jsq(inputId)}','${jsq(menuId)}')"><i data-lucide="plus" class="ic-sm"></i> Adicionar “${esc(raw)}”</div>`;
   }
   menu.innerHTML = html;
   paintIcons();
@@ -24079,8 +24102,8 @@ function renderDemandTypesTable() {
       <td>${esc(t.name)}</td>
       <td>
         <div class="row-actions">
-          <button class="icon-btn" title="Renomear" onclick="editDemandType('${t.id}')"><i data-lucide="pencil" class="ic-sm"></i></button>
-          <button class="icon-btn danger" title="Excluir" onclick="deleteDemandType('${t.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
+          <button class="icon-btn" title="Renomear" onclick="editDemandType('${jsq(t.id)}')"><i data-lucide="pencil" class="ic-sm"></i></button>
+          <button class="icon-btn danger" title="Excluir" onclick="deleteDemandType('${jsq(t.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
         </div>
       </td>
     </tr>`).join('');
@@ -24130,8 +24153,8 @@ function renderOrphanDemandTypes() {
       <td>${o.count}</td>
       <td>
         <div class="row-actions">
-          <button class="btn btn-ghost btn-sm" title="Adicionar à biblioteca" onclick="promoteOrphanDemandType('${nameAttr}')"><i data-lucide="library-big" class="ic-sm"></i> Promover</button>
-          <button class="btn btn-ghost btn-sm" title="Limpar campo Tipo em todos os fluxos que usam" onclick="clearOrphanDemandType('${nameAttr}')"><i data-lucide="eraser" class="ic-sm"></i> Limpar</button>
+          <button class="btn btn-ghost btn-sm" title="Adicionar à biblioteca" onclick="promoteOrphanDemandType('${jsq(nameAttr)}')"><i data-lucide="library-big" class="ic-sm"></i> Promover</button>
+          <button class="btn btn-ghost btn-sm" title="Limpar campo Tipo em todos os fluxos que usam" onclick="clearOrphanDemandType('${jsq(nameAttr)}')"><i data-lucide="eraser" class="ic-sm"></i> Limpar</button>
         </div>
       </td>
     </tr>`;
@@ -24500,8 +24523,8 @@ function renderWorkspaces() {
     const nProj = nProjectsOf(w.id);
     const nUsers = nMembersOf(w.id);
     const actions = me.isAdmin ? `<div class="row-actions">
-          <button class="detail-icon-btn" title="Editar" onclick="openWsModal('${w.id}')"><i data-lucide="pencil" class="ic-sm"></i></button>
-          <button class="detail-icon-btn danger" title="Excluir" onclick="deleteWs('${w.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
+          <button class="detail-icon-btn" title="Editar" onclick="openWsModal('${jsq(w.id)}')"><i data-lucide="pencil" class="ic-sm"></i></button>
+          <button class="detail-icon-btn danger" title="Excluir" onclick="deleteWs('${jsq(w.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
         </div>` : '';
     return `<tr class="row-hover-actions">
       <td class="mcol-name"><span class="pill" style="color:${w.color || '#7A00FF'};background:${hexDim(w.color)}"><span class="pill-dot" style="background:${w.color || '#7A00FF'}"></span>${esc(w.name)}</span></td>
@@ -24643,7 +24666,7 @@ function renderUsersWsFilter() {
   if (!accessible.length) { host.innerHTML = ''; return; }
   const chips = accessible.map(w => {
     const on = usersWsFilter.has(w.id);
-    return `<button class="uws-chip${on ? ' is-active' : ''}" onclick="toggleUsersWsFilter('${esc(w.id)}')">
+    return `<button class="uws-chip${on ? ' is-active' : ''}" onclick="toggleUsersWsFilter('${jsq(w.id)}')">
       <span class="uws-chip-dot" style="background:${esc(w.color || 'var(--accent)')}"></span>${esc(w.name)}
     </button>`;
   }).join('');
@@ -24973,9 +24996,9 @@ async function renderIntegrations() {
       <td>${eventChips}${moreCount > 0 ? `<span class="pill pill-muted" style="font-size:9px">+${moreCount}</span>` : ''}</td>
       <td>${statusPill}${h.lastError ? `<div style="font-size:10px;color:var(--danger);margin-top:2px">${esc(h.lastError.slice(0, 50))}</div>` : ''}</td>
       <td>${me.isAdmin ? `<div class="row-actions">
-          <button class="detail-icon-btn" title="Editar" onclick="openWebhookModal('${h.id}')"><i data-lucide="pencil" class="ic-sm"></i></button>
-          <button class="detail-icon-btn" title="Enviar teste" onclick="testWebhookById('${h.id}')"><i data-lucide="send" class="ic-sm"></i></button>
-          <button class="detail-icon-btn danger" title="Excluir" onclick="confirmDeleteWebhook('${h.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
+          <button class="detail-icon-btn" title="Editar" onclick="openWebhookModal('${jsq(h.id)}')"><i data-lucide="pencil" class="ic-sm"></i></button>
+          <button class="detail-icon-btn" title="Enviar teste" onclick="testWebhookById('${jsq(h.id)}')"><i data-lucide="send" class="ic-sm"></i></button>
+          <button class="detail-icon-btn danger" title="Excluir" onclick="confirmDeleteWebhook('${jsq(h.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
         </div>` : ''}
       </td>
     </tr>`;
@@ -25238,13 +25261,13 @@ function renderChecklist(d) {
           return `<div class="checklist-item ${it.done ? 'done' : ''}" data-id="${it.id}" draggable="true"
                ondragstart="ckDragStart(event)" ondragover="ckDragOver(event)" ondragend="ckDragEnd(event)">
             <span class="checklist-grip" title="Arraste para reordenar" aria-hidden="true"><i data-lucide="grip-vertical" class="ic-xs"></i></span>
-            <button type="button" class="checklist-check" onclick="toggleChecklistItem('${it.id}', ${!it.done})" title="${it.done ? 'Desmarcar' : 'Marcar como concluído'}">
+            <button type="button" class="checklist-check" onclick="toggleChecklistItem('${jsq(it.id)}', ${!it.done})" title="${it.done ? 'Desmarcar' : 'Marcar como concluído'}">
               ${it.done ? '<i data-lucide="check" class="ic-sm"></i>' : ''}
             </button>
             <span class="checklist-text">${esc(it.text)}</span>
             ${owner ? `<span class="checklist-owner" title="Responsável: ${esc(owner.name)}">${avatarHTML(owner, 'avatar checklist-owner-av')}</span>` : ''}
             ${it.done && author ? `<span class="checklist-meta">por ${esc(author.name.split(' ')[0])} · ${esc(fmtDate(it.doneAt))}</span>` : ''}
-            <button type="button" class="detail-icon-btn checklist-del" onclick="removeChecklistItem('${it.id}')" title="Remover"><i data-lucide="x" class="ic-xs"></i></button>
+            <button type="button" class="detail-icon-btn checklist-del" onclick="removeChecklistItem('${jsq(it.id)}')" title="Remover"><i data-lucide="x" class="ic-xs"></i></button>
           </div>`;
         }).join('')}
       </div>
@@ -25465,7 +25488,7 @@ function renderReactions(c) {
   const chips = keys.map(emoji => {
     const userIds = reactions[emoji] || [];
     const mine = userIds.includes(myId);
-    return `<button type="button" class="reaction-chip ${mine ? 'mine' : ''}" onclick="toggleReaction('${c.id}', '${emoji}')" data-rx-tip="${esc(_reactionTipText(emoji, userIds))}" aria-label="${esc(_reactionTipText(emoji, userIds))}">
+    return `<button type="button" class="reaction-chip ${mine ? 'mine' : ''}" onclick="toggleReaction('${jsq(c.id)}', '${jsq(emoji)}')" data-rx-tip="${esc(_reactionTipText(emoji, userIds))}" aria-label="${esc(_reactionTipText(emoji, userIds))}">
       <span class="reaction-emoji">${emoji}</span>
       <span class="reaction-count">${userIds.length}</span>
     </button>`;
@@ -25715,7 +25738,7 @@ function syncRecurringGroupByPills(isAll) {
     try { localStorage.setItem('kastor-rec-groupby', _recGroupBy); } catch {}
   }
   wrap.innerHTML = opts.map(([k, label]) =>
-    `<button class="rec-groupby-btn ${k === _recGroupBy ? 'is-active' : ''}" data-groupby="${k}" onclick="setRecurringGroupBy('${k}')">${label}</button>`
+    `<button class="rec-groupby-btn ${k === _recGroupBy ? 'is-active' : ''}" data-groupby="${k}" onclick="setRecurringGroupBy('${jsq(k)}')">${label}</button>`
   ).join('');
 }
 
@@ -25736,7 +25759,7 @@ function renderRecurringClientsCol(wsClients) {
     const avatar = c.avatar
       ? `<div class="rec-client-card-avatar" style="background-image:url('${c.avatar}')"></div>`
       : `<div class="rec-client-card-avatar" style="background:${hexDim(c.color || '#7A00FF')};color:${c.color || '#7A00FF'}">${esc((c.name || '?').charAt(0).toUpperCase())}</div>`;
-    return `<div class="rec-client-card ${isSel ? 'is-selected' : ''}" onclick="setRecurringClient('${c.id}')">
+    return `<div class="rec-client-card ${isSel ? 'is-selected' : ''}" onclick="setRecurringClient('${jsq(c.id)}')">
       ${avatar}
       <div class="rec-client-card-body">
         <div class="rec-client-card-name">${esc(c.name)}</div>
@@ -25847,7 +25870,7 @@ function renderRecurringClientTopGroup(client, wsRecurrings, ym) {
     ${groupSpecs.map(spec => renderRecurringGroup(spec, clientItems, ym, 'project', client)).join('')}
   </div>`;
   return `<div class="rec-client-top ${isCollapsed ? 'is-collapsed' : ''}" data-collapse-key="${esc(groupKey)}">
-    <div class="rec-client-top-head" onclick="toggleRecGroup('${esc(groupKey)}')">
+    <div class="rec-client-top-head" onclick="toggleRecGroup('${jsq(groupKey)}')">
       ${avatar}
       <div class="rec-client-header-name">${esc(client.name)}</div>
       <div class="rec-status-counts">
@@ -26001,7 +26024,7 @@ function renderRecurringGroup(spec, clientRecurrings, ym, groupBy, client) {
   const addCtxJson = JSON.stringify(addCtx).replace(/'/g, "&#39;");
 
   return `<div class="rec-group ${isCollapsed ? 'is-collapsed' : ''}" data-collapse-key="${esc(groupKey)}">
-    <div class="rec-group-head" onclick="toggleRecGroup('${esc(groupKey)}')">
+    <div class="rec-group-head" onclick="toggleRecGroup('${jsq(groupKey)}')">
       <i data-lucide="chevron-down" class="ic-sm rec-chevron"></i>
       <div class="rec-group-title">${esc(spec.label)}</div>
       <div class="rec-status-counts" style="gap:14px">
@@ -26039,10 +26062,10 @@ function renderRecurringSublist({ key, title, icon, items, ym, groupBy, emptyLab
   const itemsHtml = items.map(r => renderRecurringItem(r, ym, groupBy)).join('')
     || `<div class="rec-sublist-empty">${esc(emptyLabel)}</div>`;
   const deleteHtml = canDelete && listaId
-    ? `<button type="button" class="rec-sublist-delete" title="Excluir lista (itens ficam sem lista)" onclick="event.stopPropagation();confirmDeleteLista('${esc(listaId)}', '${esc(title)}')"><i data-lucide="trash-2" class="ic-xs"></i></button>`
+    ? `<button type="button" class="rec-sublist-delete" title="Excluir lista (itens ficam sem lista)" onclick="event.stopPropagation();confirmDeleteLista('${jsq(listaId)}', '${jsq(title)}')"><i data-lucide="trash-2" class="ic-xs"></i></button>`
     : '';
   return `<div class="rec-sublist ${isCollapsed ? 'is-collapsed' : ''}" data-collapse-key="${esc(key)}">
-    <div class="rec-sublist-head" onclick="toggleRecGroup('${esc(key)}')">
+    <div class="rec-sublist-head" onclick="toggleRecGroup('${jsq(key)}')">
       <i data-lucide="chevron-down" class="ic-xs rec-chevron-sm"></i>
       <span style="flex:1">${esc(title)}</span>
       ${deleteHtml}
@@ -26092,10 +26115,10 @@ function renderTodoTasksSublistsForGroup(spec, client) {
     // com applicationId de verdade (não pro balde legacy).
     const isLegacy = String(g.key).startsWith('legacy:');
     const deleteBtn = !isLegacy
-      ? `<button type="button" class="rec-sublist-delete" title="Excluir esta aplicação (tarefas + demandas geradas). Não afeta o template da lista." onclick="event.stopPropagation();confirmDeleteApplication('${esc(g.key)}')"><i data-lucide="trash-2" class="ic-xs"></i></button>`
+      ? `<button type="button" class="rec-sublist-delete" title="Excluir esta aplicação (tarefas + demandas geradas). Não afeta o template da lista." onclick="event.stopPropagation();confirmDeleteApplication('${jsq(g.key)}')"><i data-lucide="trash-2" class="ic-xs"></i></button>`
       : '';
     return `<div class="rec-sublist ${isCollapsed ? 'is-collapsed' : ''}" data-collapse-key="${esc(sublistKey)}">
-      <div class="rec-sublist-head" onclick="toggleRecGroup('${esc(sublistKey)}')">
+      <div class="rec-sublist-head" onclick="toggleRecGroup('${jsq(sublistKey)}')">
         <i data-lucide="chevron-down" class="ic-xs rec-chevron-sm"></i>
         <span style="flex:1">${esc(g.title)}</span>
         ${deleteBtn}
@@ -26152,8 +26175,8 @@ function _todoTaskRowHTML(t) {
   const d = _taskLinkedDemand(t);
   const done = !!(d && isDone(d));
   const clickAttr = d
-    ? `onclick="showDetail('${esc(d.id)}')"`
-    : `onclick="openNewDemandFromTask('${esc(t.id)}')"`;
+    ? `onclick="showDetail('${jsq(d.id)}')"`
+    : `onclick="openNewDemandFromTask('${jsq(t.id)}')"`;
 
   // Meta: sempre mostra o TIPO da task (se existir). Executor/prazo/etapa só
   // aparecem quando a demanda já foi gerada.
@@ -26185,12 +26208,12 @@ function _todoTaskRowHTML(t) {
   // Ações: sem demanda → CTA "Gerar"; com demanda → ícone "abrir" estilo trash.
   let actionsHtml;
   if (!d) {
-    actionsHtml = `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation();openNewDemandFromTask('${esc(t.id)}')" title="Gerar demanda a partir desta tarefa"><i data-lucide="plus" class="ic-xs"></i> Gerar demanda</button>`;
+    actionsHtml = `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation();openNewDemandFromTask('${jsq(t.id)}')" title="Gerar demanda a partir desta tarefa"><i data-lucide="plus" class="ic-xs"></i> Gerar demanda</button>`;
   } else {
-    actionsHtml = `<button class="detail-icon-btn" onclick="event.stopPropagation();showDetail('${esc(d.id)}')" title="Abrir demanda"><i data-lucide="external-link" class="ic-sm"></i></button>`;
+    actionsHtml = `<button class="detail-icon-btn" onclick="event.stopPropagation();showDetail('${jsq(d.id)}')" title="Abrir demanda"><i data-lucide="external-link" class="ic-sm"></i></button>`;
   }
   const removeBtn = !d
-    ? `<button class="detail-icon-btn danger" title="Remover tarefa" onclick="event.stopPropagation();confirmDeleteTask('${esc(t.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>`
+    ? `<button class="detail-icon-btn danger" title="Remover tarefa" onclick="event.stopPropagation();confirmDeleteTask('${jsq(t.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>`
     : '';
 
   return `<div class="rec-todo-row ${done ? 'is-done' : ''} is-clickable" ${clickAttr}>
@@ -26260,9 +26283,9 @@ function renderRecurringItem(r, ym, groupBy) {
     <div class="rec-status-pill ${statusClass}">${esc(statusLabel)}</div>
     <div class="rec-item-actions">
       <button class="rec-action-btn" title="Gerar / abrir demanda do mês" onclick="event.stopPropagation();${checkOnClick}" ${inactive ? 'disabled' : ''}><i data-lucide="zap" class="ic-sm"></i></button>
-      <button class="rec-action-btn" title="Editar" onclick="event.stopPropagation();editRecurringSmart('${r.id}')"><i data-lucide="edit-3" class="ic-sm"></i></button>
-      <button class="rec-action-btn" title="${r.active === false ? 'Reativar' : 'Desativar'}" onclick="event.stopPropagation();toggleRecurringActive('${r.id}')"><i data-lucide="${r.active === false ? 'circle-check' : 'x'}" class="ic-sm"></i></button>
-      <button class="rec-action-btn danger" title="Excluir" onclick="event.stopPropagation();confirmDeleteRecurring('${r.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
+      <button class="rec-action-btn" title="Editar" onclick="event.stopPropagation();editRecurringSmart('${jsq(r.id)}')"><i data-lucide="edit-3" class="ic-sm"></i></button>
+      <button class="rec-action-btn" title="${r.active === false ? 'Reativar' : 'Desativar'}" onclick="event.stopPropagation();toggleRecurringActive('${jsq(r.id)}')"><i data-lucide="${r.active === false ? 'circle-check' : 'x'}" class="ic-sm"></i></button>
+      <button class="rec-action-btn danger" title="Excluir" onclick="event.stopPropagation();confirmDeleteRecurring('${jsq(r.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
     </div>
   </div>`;
 }
@@ -26422,7 +26445,7 @@ function renderPersonaFlowCard(f) {
   } else {
     iconHtml = `<div class="wizard-card-avatar" style="background-image:url('${f.icon}');background-size:cover;background-position:center"></div>`;
   }
-  return `<div class="wizard-card ${isSel ? 'is-selected' : ''}" onclick="personaPickFlow('${f.id}')" ondblclick="personaPickFlow('${f.id}');personaGoTo(2)">
+  return `<div class="wizard-card ${isSel ? 'is-selected' : ''}" onclick="personaPickFlow('${jsq(f.id)}')" ondblclick="personaPickFlow('${jsq(f.id)}');personaGoTo(2)">
     ${iconHtml}
     <div class="wizard-card-name">${esc(f.name)}</div>
   </div>`;
@@ -26651,7 +26674,7 @@ function renderNdlFlowCard(f) {
   else if (typeof f.icon === 'string' && f.icon.startsWith('lucide:'))
     iconHtml = `<div class="wizard-card-avatar wizard-card-avatar--icon"><i data-lucide="${esc(f.icon.slice(7))}" class="ic-md"></i></div>`;
   else iconHtml = `<div class="wizard-card-avatar" style="background-image:url('${f.icon}');background-size:cover;background-position:center"></div>`;
-  return `<div class="wizard-card ${isSel ? 'is-selected' : ''}" onclick="ndlPickFlow('${f.id}')" ondblclick="ndlPickFlow('${f.id}');ndlGoTo(2)">
+  return `<div class="wizard-card ${isSel ? 'is-selected' : ''}" onclick="ndlPickFlow('${jsq(f.id)}')" ondblclick="ndlPickFlow('${jsq(f.id)}');ndlGoTo(2)">
     ${iconHtml}<div class="wizard-card-name">${esc(f.name)}</div>
   </div>`;
 }
@@ -26941,19 +26964,19 @@ function renderListaCard(lista, client, project, items) {
   const addCtxJson = JSON.stringify(addCtx).replace(/'/g, "&#39;");
 
   return `<div class="lista-card ${isCollapsed ? 'is-collapsed' : ''}" data-lista-id="${esc(lista.id)}">
-    <div class="lista-card-head" onclick="toggleListaCard('${esc(lista.id)}')">
+    <div class="lista-card-head" onclick="toggleListaCard('${jsq(lista.id)}')">
       <i data-lucide="chevron-down" class="ic-sm lista-chevron"></i>
       <div class="lista-card-title">${esc(lista.name)}</div>
       ${contextHtml}
       <span class="pill pill-muted" style="font-size:9px" title="Lista do modelo antigo (com recurrings). Novas listas usam o modelo to-do.">Legado</span>
       <div class="lista-card-actions">
-        <button class="rec-action-btn" title="Duplicar lista (adiciona &quot; - Cópia&quot;)" onclick="event.stopPropagation();duplicateLista('${esc(lista.id)}')"><i data-lucide="copy" class="ic-sm"></i></button>
-        <button class="rec-action-btn danger" title="Excluir lista" onclick="event.stopPropagation();confirmDeleteListaFromTab('${esc(lista.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
+        <button class="rec-action-btn" title="Duplicar lista (adiciona &quot; - Cópia&quot;)" onclick="event.stopPropagation();duplicateLista('${jsq(lista.id)}')"><i data-lucide="copy" class="ic-sm"></i></button>
+        <button class="rec-action-btn danger" title="Excluir lista" onclick="event.stopPropagation();confirmDeleteListaFromTab('${jsq(lista.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
       </div>
     </div>
     <div class="lista-card-body">
       ${itemsHtml}
-      <button type="button" class="lista-add-demand" onclick="openNovaDemandaListaModal('${esc(lista.id)}')">
+      <button type="button" class="lista-add-demand" onclick="openNovaDemandaListaModal('${jsq(lista.id)}')">
         <span class="lista-add-demand-icon"><i data-lucide="plus" class="ic-xs"></i></span>
         <span>Adicionar demanda a lista</span>
       </button>
@@ -26981,16 +27004,16 @@ function renderListaCardTodo(lista) {
     ? `<span class="pill" style="font-size:9px;background:var(--accent-dim);color:var(--accent-text)" title="Projetos que já receberam essa lista">${appliedCount} aplicação${appliedCount === 1 ? '' : 'es'}</span>`
     : '';
   return `<div class="lista-card ${isCollapsed ? 'is-collapsed' : ''}" data-lista-id="${esc(lista.id)}">
-    <div class="lista-card-head" onclick="toggleListaCard('${esc(lista.id)}')">
+    <div class="lista-card-head" onclick="toggleListaCard('${jsq(lista.id)}')">
       <i data-lucide="chevron-down" class="ic-sm lista-chevron"></i>
       <div class="lista-card-title">${esc(lista.name)}</div>
       <span class="lista-card-context">${items.length} tarefa${items.length === 1 ? '' : 's'}</span>
       ${appliedChip}
       <div class="lista-card-actions">
-        <button class="rec-action-btn" title="Editar lista" onclick="event.stopPropagation();openEditListaModal('${esc(lista.id)}')"><i data-lucide="edit-3" class="ic-sm"></i></button>
-        <button class="rec-action-btn" title="Aplicar a um projeto" onclick="event.stopPropagation();openApplyListaToProjectModal('${esc(lista.id)}')"><i data-lucide="send" class="ic-sm"></i></button>
-        <button class="rec-action-btn" title="Duplicar lista (adiciona &quot; - Cópia&quot;)" onclick="event.stopPropagation();duplicateLista('${esc(lista.id)}')"><i data-lucide="copy" class="ic-sm"></i></button>
-        <button class="rec-action-btn danger" title="Excluir lista" onclick="event.stopPropagation();confirmDeleteListaFromTab('${esc(lista.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
+        <button class="rec-action-btn" title="Editar lista" onclick="event.stopPropagation();openEditListaModal('${jsq(lista.id)}')"><i data-lucide="edit-3" class="ic-sm"></i></button>
+        <button class="rec-action-btn" title="Aplicar a um projeto" onclick="event.stopPropagation();openApplyListaToProjectModal('${jsq(lista.id)}')"><i data-lucide="send" class="ic-sm"></i></button>
+        <button class="rec-action-btn" title="Duplicar lista (adiciona &quot; - Cópia&quot;)" onclick="event.stopPropagation();duplicateLista('${jsq(lista.id)}')"><i data-lucide="copy" class="ic-sm"></i></button>
+        <button class="rec-action-btn danger" title="Excluir lista" onclick="event.stopPropagation();confirmDeleteListaFromTab('${jsq(lista.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
       </div>
     </div>
     <div class="lista-card-body">
@@ -27020,8 +27043,8 @@ function renderListaItem(r) {
       ${metaChips.length ? `<div class="lista-item-meta">${metaChips.join('')}</div>` : ''}
     </div>
     <div class="lista-item-actions">
-      <button class="rec-action-btn" title="Editar" onclick="event.stopPropagation();editRecurringSmart('${r.id}')"><i data-lucide="edit-3" class="ic-sm"></i></button>
-      <button class="rec-action-btn danger" title="Remover da lista" onclick="event.stopPropagation();confirmDeleteRecurring('${r.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
+      <button class="rec-action-btn" title="Editar" onclick="event.stopPropagation();editRecurringSmart('${jsq(r.id)}')"><i data-lucide="edit-3" class="ic-sm"></i></button>
+      <button class="rec-action-btn danger" title="Remover da lista" onclick="event.stopPropagation();confirmDeleteRecurring('${jsq(r.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
     </div>
   </div>`;
 }
@@ -27623,7 +27646,7 @@ function filterAdicionarListaOptions() {
       : recurrings.filter(r => r.listaId === l.id).length;
     const noun = isTodo ? 'tarefa' : 'demanda';
     const isSelected = _selectedListaIdInAdd === l.id;
-    return `<div class="al-option ${isSelected ? 'is-selected' : ''}" onclick="selectListaInAddModal('${l.id}')">
+    return `<div class="al-option ${isSelected ? 'is-selected' : ''}" onclick="selectListaInAddModal('${jsq(l.id)}')">
       <div class="al-option-title">${esc(l.name)}</div>
       <div class="al-option-sub">${esc(scope)} · ${itemCount} ${noun}${itemCount === 1 ? '' : 's'}</div>
     </div>`;
@@ -27838,8 +27861,8 @@ function renderTemplates() {
       <td class="mc-dim ${t.estimatedHours ? '' : 'is-blank'}"><span class="mlbl">Horas</span>${t.estimatedHours ? fmtHours(t.estimatedHours) : '—'}</td>
       <td class="mc-act">
         <div class="row-actions">
-          <button class="detail-icon-btn" title="Criar demanda a partir deste template" onclick="useTemplate('${t.id}')"><i data-lucide="plus" class="ic-sm"></i></button>
-          <button class="detail-icon-btn danger" title="Excluir" onclick="confirmDeleteTemplate('${t.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
+          <button class="detail-icon-btn" title="Criar demanda a partir deste template" onclick="useTemplate('${jsq(t.id)}')"><i data-lucide="plus" class="ic-sm"></i></button>
+          <button class="detail-icon-btn danger" title="Excluir" onclick="confirmDeleteTemplate('${jsq(t.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
         </div>
       </td>
     </tr>`;
@@ -27887,9 +27910,9 @@ function renderForms() {
         <td class="mc-dim ${creator ? '' : 'is-blank'}"><span class="mlbl">Criado por</span>${creator ? esc(creator.name) : '<span style="color:var(--text-muted)">—</span>'}</td>
         <td class="mc-act">
           <div class="row-actions">
-            ${canEdit ? `<button class="detail-icon-btn" title="Editar" onclick="openFormEditor('${t.id}')"><i data-lucide="pencil" class="ic-sm"></i></button>` : ''}
-            ${canEdit ? `<button class="detail-icon-btn" title="Duplicar" onclick="duplicateFormTemplate('${t.id}')"><i data-lucide="copy" class="ic-sm"></i></button>` : ''}
-            ${canEdit ? `<button class="detail-icon-btn danger" title="Excluir" onclick="confirmDeleteFormTemplate('${t.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>` : ''}
+            ${canEdit ? `<button class="detail-icon-btn" title="Editar" onclick="openFormEditor('${jsq(t.id)}')"><i data-lucide="pencil" class="ic-sm"></i></button>` : ''}
+            ${canEdit ? `<button class="detail-icon-btn" title="Duplicar" onclick="duplicateFormTemplate('${jsq(t.id)}')"><i data-lucide="copy" class="ic-sm"></i></button>` : ''}
+            ${canEdit ? `<button class="detail-icon-btn danger" title="Excluir" onclick="confirmDeleteFormTemplate('${jsq(t.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>` : ''}
           </div>
         </td>
       </tr>`;
@@ -27936,30 +27959,30 @@ function _feRenderFields() {
         <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.4px">Opções</div>
         ${(f.options || []).map((o, oi) => `
           <div class="fe-option-row" draggable="true" data-oi="${oi}"
-               ondragstart="_feOptDragStart(event, '${f.id}', ${oi})"
+               ondragstart="_feOptDragStart(event, '${jsq(f.id)}', ${oi})"
                ondragover="_feOptDragOver(event)"
                ondragleave="_feOptDragLeave(event)"
-               ondrop="_feOptDrop(event, '${f.id}', ${oi})"
+               ondrop="_feOptDrop(event, '${jsq(f.id)}', ${oi})"
                ondragend="_feOptDragEnd(event)">
             <span class="fe-option-drag" title="Arraste pra reordenar"><i data-lucide="grip-vertical" class="ic-sm"></i></span>
-            <input class="form-control" placeholder="Opção" value="${esc(o.label)}" oninput="feUpdateOption('${f.id}', ${oi}, this.value)">
-            <button type="button" class="detail-icon-btn danger" title="Remover opção" onclick="feRemoveOption('${f.id}', ${oi})"><i data-lucide="x" class="ic-sm"></i></button>
+            <input class="form-control" placeholder="Opção" value="${esc(o.label)}" oninput="feUpdateOption('${jsq(f.id)}', ${oi}, this.value)">
+            <button type="button" class="detail-icon-btn danger" title="Remover opção" onclick="feRemoveOption('${jsq(f.id)}', ${oi})"><i data-lucide="x" class="ic-sm"></i></button>
           </div>
         `).join('')}
-        <button type="button" class="btn btn-ghost btn-sm" style="align-self:flex-start" onclick="feAddOption('${f.id}')"><i data-lucide="plus" class="ic-sm"></i> Adicionar opção</button>
+        <button type="button" class="btn btn-ghost btn-sm" style="align-self:flex-start" onclick="feAddOption('${jsq(f.id)}')"><i data-lucide="plus" class="ic-sm"></i> Adicionar opção</button>
       </div>
     ` : '';
     return `<div class="fe-field-row" data-field-id="${f.id}">
       <div class="fe-drag" title="Arraste ou use as setas pra reordenar"><i data-lucide="grip-vertical" class="ic-sm"></i></div>
-      <input class="form-control" placeholder="Rótulo do campo" value="${esc(f.label)}" oninput="feUpdateField('${f.id}', 'label', this.value)">
-      <select class="form-control" onchange="feUpdateField('${f.id}', 'type', this.value)">
+      <input class="form-control" placeholder="Rótulo do campo" value="${esc(f.label)}" oninput="feUpdateField('${jsq(f.id)}', 'label', this.value)">
+      <select class="form-control" onchange="feUpdateField('${jsq(f.id)}', 'type', this.value)">
         ${Object.entries(FORM_FIELD_TYPE_LABELS).map(([v, lbl]) => `<option value="${v}" ${f.type === v ? 'selected' : ''}>${lbl}</option>`).join('')}
       </select>
-      <label class="fe-req"><input type="checkbox" ${f.required ? 'checked' : ''} onchange="feUpdateField('${f.id}', 'required', this.checked)"> Obrigatório</label>
+      <label class="fe-req"><input type="checkbox" ${f.required ? 'checked' : ''} onchange="feUpdateField('${jsq(f.id)}', 'required', this.checked)"> Obrigatório</label>
       <div class="fe-actions">
-        <button type="button" class="detail-icon-btn" title="Subir" ${idx === 0 ? 'disabled' : ''} onclick="feMoveField('${f.id}', -1)"><i data-lucide="arrow-up" class="ic-sm"></i></button>
-        <button type="button" class="detail-icon-btn" title="Descer" ${idx === _feFields.length - 1 ? 'disabled' : ''} onclick="feMoveField('${f.id}', 1)"><i data-lucide="arrow-down" class="ic-sm"></i></button>
-        <button type="button" class="detail-icon-btn danger" title="Remover campo" onclick="feRemoveField('${f.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
+        <button type="button" class="detail-icon-btn" title="Subir" ${idx === 0 ? 'disabled' : ''} onclick="feMoveField('${jsq(f.id)}', -1)"><i data-lucide="arrow-up" class="ic-sm"></i></button>
+        <button type="button" class="detail-icon-btn" title="Descer" ${idx === _feFields.length - 1 ? 'disabled' : ''} onclick="feMoveField('${jsq(f.id)}', 1)"><i data-lucide="arrow-down" class="ic-sm"></i></button>
+        <button type="button" class="detail-icon-btn danger" title="Remover campo" onclick="feRemoveField('${jsq(f.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
       </div>
       ${optionsHtml}
     </div>`;
@@ -28144,7 +28167,7 @@ function _renderFormsTab(d) {
   // Universal: qualquer template pode ser preenchido (não escopa por squad).
   const canPreencher = (formTemplates || []).length > 0;
   const actions = `<div class="fr-tab-actions">
-    <button class="btn btn-primary btn-sm" onclick="openFormPicker('${d.id}')" ${canPreencher ? '' : 'disabled title="Nenhum formulário criado ainda"'}><i data-lucide="plus" class="ic-sm"></i> Preencher formulário</button>
+    <button class="btn btn-primary btn-sm" onclick="openFormPicker('${jsq(d.id)}')" ${canPreencher ? '' : 'disabled title="Nenhum formulário criado ainda"'}><i data-lucide="plus" class="ic-sm"></i> Preencher formulário</button>
   </div>`;
   if (!list.length) {
     host.innerHTML = actions + `<div class="fr-empty">${canPreencher ? 'Nenhum formulário preenchido ainda. Clique em "Preencher formulário" acima pra começar.' : 'Nenhum formulário criado ainda. Peça pro admin criar um em <strong>Formulários</strong>.'}</div>`;
@@ -28159,7 +28182,7 @@ function _renderFormsTab(d) {
           ${avatarHTML(u, 'avatar avatar-sm')}
           <div class="fr-card-name">${esc(t?.name || 'Formulário excluído')}<div class="fr-card-meta">${esc(u?.name || '—')} · ${fmtDateTime(r.submittedAt)}</div></div>
           <div class="fr-card-actions">
-            ${canDel ? `<button class="detail-icon-btn danger" title="Excluir resposta" onclick="confirmDeleteFormResponse('${r.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>` : ''}
+            ${canDel ? `<button class="detail-icon-btn danger" title="Excluir resposta" onclick="confirmDeleteFormResponse('${jsq(r.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>` : ''}
           </div>
         </div>
         <dl class="fr-values">${valuesHtml}</dl>
@@ -28218,7 +28241,7 @@ function renderFormPickerList() {
     return;
   }
   host.innerHTML = list.map(t => `
-    <button type="button" class="fp-item" onclick="pickFormTemplate('${t.id}')">
+    <button type="button" class="fp-item" onclick="pickFormTemplate('${jsq(t.id)}')">
       <div class="fp-item-name">${esc(t.name)}</div>
       ${t.description ? `<div class="fp-item-desc">${esc(t.description)}</div>` : ''}
       <div class="fp-item-meta">${(t.fields || []).length} campo(s)</div>
@@ -28253,17 +28276,17 @@ function _renderFillFields(t) {
     const req = f.required ? '<span class="ff-field-required">*</span>' : '';
     let input = '';
     if (f.type === 'text') {
-      input = `<input class="form-control" data-field-id="${f.id}" oninput="_ffSetValue('${f.id}', this.value)">`;
+      input = `<input class="form-control" data-field-id="${f.id}" oninput="_ffSetValue('${jsq(f.id)}', this.value)">`;
     } else if (f.type === 'number') {
-      input = `<input type="number" class="form-control" data-field-id="${f.id}" oninput="_ffSetValue('${f.id}', this.value)">`;
+      input = `<input type="number" class="form-control" data-field-id="${f.id}" oninput="_ffSetValue('${jsq(f.id)}', this.value)">`;
     } else if (f.type === 'select') {
-      input = `<select class="form-control" data-field-id="${f.id}" onchange="_ffSetValue('${f.id}', this.value)">
+      input = `<select class="form-control" data-field-id="${f.id}" onchange="_ffSetValue('${jsq(f.id)}', this.value)">
         <option value="">— Selecione —</option>
         ${(f.options || []).map(o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('')}
       </select>`;
     } else if (f.type === 'multiselect') {
       input = `<div class="ff-multi-list">
-        ${(f.options || []).map(o => `<label class="ff-multi-item"><input type="checkbox" value="${esc(o.value)}" onchange="_ffToggleMulti('${f.id}', this.value, this.checked)"> ${esc(o.label)}</label>`).join('')}
+        ${(f.options || []).map(o => `<label class="ff-multi-item"><input type="checkbox" value="${esc(o.value)}" onchange="_ffToggleMulti('${jsq(f.id)}', this.value, this.checked)"> ${esc(o.label)}</label>`).join('')}
       </div>`;
     }
     return `<div class="ff-field">
@@ -28742,7 +28765,7 @@ function _renderDashboardsGrid() {
     const wcount = (d.widgets || []).length;
     const forms = _dvTemplatesOf(d).map(t => t.name);
     const desc = (d.description || '').trim();
-    return `<div class="dashboards-card" onclick="openDashboardView('${d.id}')">
+    return `<div class="dashboards-card" onclick="openDashboardView('${jsq(d.id)}')">
       <div class="dashboards-card-head">
         <div class="dashboards-card-icon"><i data-lucide="layout-dashboard" class="ic-sm"></i></div>
         <div class="dashboards-card-name">${esc(d.name)}</div>
@@ -28829,10 +28852,10 @@ function _dvRenderFilters(d) {
     const def = dvDim(k);
     const tName = multiT && def.templateId ? ` <span class="dv-chip-note">${esc(formTemplateById(def.templateId)?.name || '')}</span>` : '';
     return `<span class="dv-chip ${vals.length ? 'is-active' : ''}">
-      <button type="button" class="dv-chip-btn" id="dvchip-${esc(k.replace(':', '-'))}" onclick="dvOpenDimPicker(this, '${esc(k)}')">
+      <button type="button" class="dv-chip-btn" id="dvchip-${esc(k.replace(':', '-'))}" onclick="dvOpenDimPicker(this, '${jsq(k)}')">
         <i data-lucide="${def.icon || 'list'}" class="ic-xs"></i>${chipLabel(k, vals)}${tName}<i data-lucide="chevron-down" class="ic-xs dv-chip-caret"></i>
       </button>
-      ${vals.length ? `<button type="button" class="dv-chip-x" onclick="dvClearDim('${esc(k)}')" aria-label="Limpar ${esc(def.label)}"><i data-lucide="x" class="ic-xs"></i></button>` : ''}
+      ${vals.length ? `<button type="button" class="dv-chip-x" onclick="dvClearDim('${jsq(k)}')" aria-label="Limpar ${esc(def.label)}"><i data-lucide="x" class="ic-xs"></i></button>` : ''}
     </span>`;
   }).join('');
   const periodActive = _dvView.period !== 'all';
@@ -28909,9 +28932,9 @@ function dvOpenDimPicker(anchor, key) {
   const def = dvDim(key);
   if (!d || !def) return;
   const el = _dvOpenPopover(anchor, `<div class="dv-pop-head">${esc(def.label)}</div>
-    <div class="dv-pop-search"><i data-lucide="search" class="ic-xs"></i><input type="text" placeholder="Buscar…" oninput="_dvRenderDimList('${esc(key)}', this.value)"></div>
+    <div class="dv-pop-search"><i data-lucide="search" class="ic-xs"></i><input type="text" placeholder="Buscar…" oninput="_dvRenderDimList('${jsq(key)}', this.value)"></div>
     <div class="dv-pop-list" id="dv-dim-list"></div>
-    <div class="dv-pop-foot"><button type="button" class="dv-link" onclick="dvClearDim('${esc(key)}'); _dvRenderDimList('${esc(key)}')">Limpar</button><button type="button" class="btn btn-ghost btn-sm" onclick="_dvClosePopover()">Fechar</button></div>`,
+    <div class="dv-pop-foot"><button type="button" class="dv-link" onclick="dvClearDim('${jsq(key)}'); _dvRenderDimList('${jsq(key)}')">Limpar</button><button type="button" class="btn btn-ghost btn-sm" onclick="_dvClosePopover()">Fechar</button></div>`,
     { width: 300 });
   if (!el) return;
   _dvRenderDimList(key);
@@ -28937,7 +28960,7 @@ function _dvRenderDimList(key, q) {
     .concat(counts.has(DV_NONE) ? [DV_NONE] : [])
     .filter(v => !nq || norm(dvValueLabel(key, v)).includes(nq));
   list.innerHTML = vals.length ? vals.map(v => `<label class="dv-opt ${sel.has(v) ? 'is-on' : ''}">
-      <input type="checkbox" ${sel.has(v) ? 'checked' : ''} onchange="dvToggleDimValue('${esc(key)}', ${esc(JSON.stringify(v))}); _dvRenderDimList('${esc(key)}')">
+      <input type="checkbox" ${sel.has(v) ? 'checked' : ''} onchange="dvToggleDimValue('${jsq(key)}', ${esc(JSON.stringify(v))}); _dvRenderDimList('${jsq(key)}')">
       <span class="dv-opt-label">${esc(dvValueLabel(key, v))}</span>
       <span class="dv-opt-count">${counts.get(v)}</span>
     </label>`).join('') : '<div class="dv-pop-empty">Nada encontrado.</div>';
@@ -28948,7 +28971,7 @@ function dvOpenMoreFilters(anchor) {
   let more = [];
   try { more = JSON.parse(host?.dataset.more || '[]'); } catch {}
   _dvOpenPopover(anchor, `<div class="dv-pop-head">Filtrar por</div><div class="dv-pop-list">
-    ${more.map(k => { const def = dvDim(k); return def ? `<button type="button" class="dv-menu-item" onclick="dvStartFilter('${esc(k)}')"><i data-lucide="${def.icon || 'list'}" class="ic-sm"></i>${esc(def.label)}</button>` : ''; }).join('')}
+    ${more.map(k => { const def = dvDim(k); return def ? `<button type="button" class="dv-menu-item" onclick="dvStartFilter('${jsq(k)}')"><i data-lucide="${def.icon || 'list'}" class="ic-sm"></i>${esc(def.label)}</button>` : ''; }).join('')}
   </div>`, { width: 260 });
 }
 // Escolheu uma dimensão em "+ Filtro": vira chip e abre o seletor dela.
@@ -28971,7 +28994,7 @@ function _dvRenderPeriodBody() {
   const v = _dvView;
   body.innerHTML = `<div class="dv-pop-head">Período</div>
     <div class="dv-pop-list dv-pop-list--flat">
-      ${DV_PERIODS.map(p => `<button type="button" class="dv-menu-item ${v.period === p.key ? 'is-on' : ''}" onclick="dvSetView({ period: '${p.key}' }); _dvCalInit(); _dvRenderPeriodBody()">
+      ${DV_PERIODS.map(p => `<button type="button" class="dv-menu-item ${v.period === p.key ? 'is-on' : ''}" onclick="dvSetView({ period: '${jsq(p.key)}' }); _dvCalInit(); _dvRenderPeriodBody()">
         <span>${esc(p.label)}</span>${v.period === p.key ? '<i data-lucide="check" class="ic-sm"></i>' : ''}</button>`).join('')}
     </div>
     <div class="dv-pop-section">
@@ -28981,7 +29004,7 @@ function _dvRenderPeriodBody() {
     <div class="dv-pop-section">
       <div class="dv-pop-label">Data considerada</div>
       <div class="dv-seg" role="group" aria-label="Data considerada">
-        ${DV_DATE_FIELDS.map(f => `<button type="button" class="${v.dateField === f.key ? 'is-on' : ''}" onclick="dvSetView({ dateField: '${f.key}' }); _dvRenderPeriodBody()">${esc(f.label)}</button>`).join('')}
+        ${DV_DATE_FIELDS.map(f => `<button type="button" class="${v.dateField === f.key ? 'is-on' : ''}" onclick="dvSetView({ dateField: '${jsq(f.key)}' }); _dvRenderPeriodBody()">${esc(f.label)}</button>`).join('')}
       </div>
     </div>
     <label class="dv-pop-toggle">
@@ -29018,8 +29041,8 @@ function _dvRenderViewsBody() {
   body.innerHTML = `<div class="dv-pop-head">Visões salvas</div>
     <div class="dv-pop-list">
       ${list.length ? list.map(v => `<div class="dv-view-row">
-        <button type="button" class="dv-menu-item" onclick="dvApplySavedView('${esc(v.id)}')"><i data-lucide="bookmark" class="ic-sm"></i>${esc(v.name)}</button>
-        <button type="button" class="dv-view-del" onclick="dvDeleteSavedView('${esc(v.id)}')" aria-label="Excluir visão ${esc(v.name)}"><i data-lucide="x" class="ic-xs"></i></button>
+        <button type="button" class="dv-menu-item" onclick="dvApplySavedView('${jsq(v.id)}')"><i data-lucide="bookmark" class="ic-sm"></i>${esc(v.name)}</button>
+        <button type="button" class="dv-view-del" onclick="dvDeleteSavedView('${jsq(v.id)}')" aria-label="Excluir visão ${esc(v.name)}"><i data-lucide="x" class="ic-xs"></i></button>
       </div>`).join('') : '<div class="dv-pop-empty">Salve os filtros que você usa sempre para voltar a eles num clique.</div>'}
     </div>
     <form class="dv-pop-section dv-view-new" onsubmit="event.preventDefault(); dvSaveCurrentView(this.nome.value)">
@@ -29137,19 +29160,19 @@ function _dvRenderWidgets(d) {
   const ordered = [..._dvItems].sort((a, b) => a.y - b.y || a.x - b.x).map(it => byId.get(it.id));
   grid.innerHTML = ordered.map(w => {
     const actions = editing ? `<div class="dw-widget-header-actions">
-      <button class="detail-icon-btn" title="Editar widget" onclick="event.stopPropagation();openWidgetConfig('${d.id}','${w.id}')"><i data-lucide="pencil" class="ic-sm"></i></button>
-      <button class="detail-icon-btn danger" title="Remover widget" onclick="event.stopPropagation();confirmDeleteWidget('${d.id}','${w.id}')"><i data-lucide="x" class="ic-sm"></i></button>
+      <button class="detail-icon-btn" title="Editar widget" onclick="event.stopPropagation();openWidgetConfig('${jsq(d.id)}','${jsq(w.id)}')"><i data-lucide="pencil" class="ic-sm"></i></button>
+      <button class="detail-icon-btn danger" title="Remover widget" onclick="event.stopPropagation();confirmDeleteWidget('${jsq(d.id)}','${jsq(w.id)}')"><i data-lucide="x" class="ic-sm"></i></button>
     </div>` : '';
     const handles = editing ? `
-      <span class="dv-rh dv-rh-e" onpointerdown="_dvStartResize(event,'${w.id}','e')" aria-hidden="true"></span>
-      <span class="dv-rh dv-rh-s" onpointerdown="_dvStartResize(event,'${w.id}','s')" aria-hidden="true"></span>
-      <span class="dv-rh dv-rh-se" onpointerdown="_dvStartResize(event,'${w.id}','se')" aria-hidden="true"></span>` : '';
+      <span class="dv-rh dv-rh-e" onpointerdown="_dvStartResize(event,'${jsq(w.id)}','e')" aria-hidden="true"></span>
+      <span class="dv-rh dv-rh-s" onpointerdown="_dvStartResize(event,'${jsq(w.id)}','s')" aria-hidden="true"></span>
+      <span class="dv-rh dv-rh-se" onpointerdown="_dvStartResize(event,'${jsq(w.id)}','se')" aria-hidden="true"></span>` : '';
     const editAttrs = editing
-      ? ` tabindex="0" role="group" aria-label="${esc(w.title || dvAutoTitle(w))}. Setas movem; Shift + setas redimensionam." onpointerdown="_dvStartDrag(event,'${w.id}')" onkeydown="_dvKeyLayout(event,'${w.id}')"`
+      ? ` tabindex="0" role="group" aria-label="${esc(w.title || dvAutoTitle(w))}. Setas movem; Shift + setas redimensionam." onpointerdown="_dvStartDrag(event,'${jsq(w.id)}')" onkeydown="_dvKeyLayout(event,'${jsq(w.id)}')"`
       : '';
     return `<div class="dw-widget dv-card dv-card--${w.viz}" data-widget-id="${w.id}"${editAttrs}>
       ${actions}${dvRenderWidgetInner(w, d)}${handles}</div>`;
-  }).join('') + (editing ? `<button type="button" class="dv-add" onclick="openWidgetConfig('${d.id}', null)"><i data-lucide="plus" class="ic-sm"></i> Adicionar widget</button>` : '');
+  }).join('') + (editing ? `<button type="button" class="dv-add" onclick="openWidgetConfig('${jsq(d.id)}', null)"><i data-lucide="plus" class="ic-sm"></i> Adicionar widget</button>` : '');
   grid.classList.add('no-anim'); // primeira colocação sem deslizar
   _dvApply(grid, _dvItems);
   void grid.offsetWidth;
@@ -29330,7 +29353,7 @@ function _dvBar(w, recs, head, subParts) {
     body = `<div class="dv-hbars">${cats.map((c, ci) => {
       const canClick = clickable && c !== DV_OTHER;
       return `<div class="dv-hbar-row ${canClick ? 'is-clickable' : ''} ${selected.has(c) ? 'is-selected' : ''}" data-tip="${tipFor(ci)}"
-        ${canClick ? `onclick="dvToggleDimValue('${esc(w.groupBy)}', ${esc(JSON.stringify(c))})" role="button" tabindex="0" onkeydown="if(event.key==='Enter')this.click()"` : ''}>
+        ${canClick ? `onclick="dvToggleDimValue('${jsq(w.groupBy)}', ${esc(JSON.stringify(c))})" role="button" tabindex="0" onkeydown="if(event.key==='Enter')this.click()"` : ''}>
         <span class="dv-hbar-label" title="${esc(labels[ci])}">${esc(labels[ci])}</span>
         <span class="dv-hbar-bars">${series.map((s, si) => {
           const v = vals[ci][si];
@@ -29346,7 +29369,7 @@ function _dvBar(w, recs, head, subParts) {
       <div class="dv-vbars-cols">${cats.map((c, ci) => {
         const canClick = clickable && c !== DV_OTHER;
         return `<div class="dv-vcol ${canClick ? 'is-clickable' : ''} ${selected.has(c) ? 'is-selected' : ''}" data-tip="${tipFor(ci)}"
-          ${canClick ? `onclick="dvToggleDimValue('${esc(w.groupBy)}', ${esc(JSON.stringify(c))})" role="button" tabindex="0" onkeydown="if(event.key==='Enter')this.click()"` : ''}>
+          ${canClick ? `onclick="dvToggleDimValue('${jsq(w.groupBy)}', ${esc(JSON.stringify(c))})" role="button" tabindex="0" onkeydown="if(event.key==='Enter')this.click()"` : ''}>
           <div class="dv-vcol-bars">${series.map((s, si) => {
             const v = vals[ci][si];
             const pct = v == null ? 0 : Math.max(0, (v / max) * 100);
@@ -29478,7 +29501,7 @@ function _dvTable(w, recs, head, subParts) {
       <thead><tr><th>${esc(dvDim(w.groupBy)?.label || '')}</th>${series.map(s => `<th class="num">${pivot ? `<span class="dv-th-key" style="background:${s.color}"></span>` : ''}${esc(s.name)}</th>`).join('')}${pivot ? '<th class="num">Total</th>' : ''}</tr></thead>
       <tbody>${rows.map(r => {
         const canClick = clickable && r.c !== DV_OTHER;
-        return `<tr class="${canClick ? 'is-clickable' : ''} ${selected.has(r.c) ? 'is-selected' : ''}" ${canClick ? `onclick="dvToggleDimValue('${esc(w.groupBy)}', ${esc(JSON.stringify(r.c))})"` : ''}>
+        return `<tr class="${canClick ? 'is-clickable' : ''} ${selected.has(r.c) ? 'is-selected' : ''}" ${canClick ? `onclick="dvToggleDimValue('${jsq(w.groupBy)}', ${esc(JSON.stringify(r.c))})"` : ''}>
           <td class="dv-td-label">${esc(dvValueLabel(w.groupBy, r.c))}</td>
           ${r.vals.map(v => `<td class="num" ${heat(v)}>${dvFmt(v)}</td>`).join('')}
           ${pivot ? `<td class="num dv-td-total">${dvFmt(r.total)}</td>` : ''}
@@ -29535,11 +29558,11 @@ function _renderDashRecords(d) {
         const u = userById(r.submittedBy);
         return `<tr><td class="rec-date">${_fmtRecordDate(r.submittedAt)}</td>
           <td><span class="rec-user">${avatarHTML(u, 'avatar avatar-xs')} ${esc(u?.name || '—')}</span></td>
-          <td class="rec-demand">${dm ? `<a href="${esc(orgUrl(demandPath(dm.id)))}" onclick="event.preventDefault();showDetail('${dm.id}')">${esc(dm.name)}</a>` : '<span class="dv-muted">—</span>'}</td>
+          <td class="rec-demand">${dm ? `<a href="${esc(orgUrl(demandPath(dm.id)))}" onclick="event.preventDefault();showDetail('${jsq(dm.id)}')">${esc(dm.name)}</a>` : '<span class="dv-muted">—</span>'}</td>
           ${(t.fields || []).map(f => `<td>${fmtVal(f, r.values?.[f.id])}</td>`).join('')}</tr>`;
       }).join('')}</tbody>
     </table></div>`).join('');
-  host.innerHTML = `<button type="button" class="dw-records-head" onclick="_toggleDashRecords('${d.id}')" aria-expanded="${isOpen}">
+  host.innerHTML = `<button type="button" class="dw-records-head" onclick="_toggleDashRecords('${jsq(d.id)}')" aria-expanded="${isOpen}">
       <i data-lucide="table" class="ic-sm"></i><span>Respostas</span><span class="dw-records-count">${total}</span>
       <i data-lucide="chevron-down" class="ic-sm dw-records-caret"></i>
     </button>
@@ -29827,7 +29850,7 @@ function _dvEdRenderForm() {
     <div class="dv-ed-field">
       <span class="form-label">Formato</span>
       <div class="dv-viz-pick" role="radiogroup" aria-label="Formato">
-        ${DV_VIZ_META.map(v => `<button type="button" role="radio" aria-checked="${w.viz === v.key}" class="dv-viz-opt ${w.viz === v.key ? 'is-on' : ''}" onclick="_dvEdSetViz('${v.key}')">
+        ${DV_VIZ_META.map(v => `<button type="button" role="radio" aria-checked="${w.viz === v.key}" class="dv-viz-opt ${w.viz === v.key ? 'is-on' : ''}" onclick="_dvEdSetViz('${jsq(v.key)}')">
           <i data-lucide="${v.icon}" class="ic-sm"></i><b>${v.label}</b><small>${v.hint}</small></button>`).join('')}
       </div>
     </div>
@@ -29969,7 +29992,7 @@ function _dvDeRenderFixed() {
     const def = dvDim(k);
     if (!def) return '';
     const vals = _dvDe.fixed[k] || [];
-    return `<span class="dv-chip ${vals.length ? 'is-active' : ''}"><button type="button" class="dv-chip-btn" id="defix-${esc(k.replace(':', '-'))}" onclick="_dvDeOpenFixed(this, '${esc(k)}')">
+    return `<span class="dv-chip ${vals.length ? 'is-active' : ''}"><button type="button" class="dv-chip-btn" id="defix-${esc(k.replace(':', '-'))}" onclick="_dvDeOpenFixed(this, '${jsq(k)}')">
       <i data-lucide="${def.icon || 'list'}" class="ic-xs"></i>${esc(def.label)}${vals.length ? `: <b>${esc(vals.length === 1 ? dvValueLabel(k, vals[0]) : vals.length + ' selecionados')}</b>` : ''}<i data-lucide="chevron-down" class="ic-xs dv-chip-caret"></i></button></span>`;
   }).join('')}</div>`;
   paintIcons(host);
@@ -29985,7 +30008,7 @@ function _dvDeOpenFixed(anchor, key) {
   all.delete(DV_NONE);
   const render = () => {
     const sel = new Set(_dvDe.fixed[key] || []);
-    return _dvValueOrder(key, all).map(v => `<label class="dv-opt ${sel.has(v) ? 'is-on' : ''}"><input type="checkbox" ${sel.has(v) ? 'checked' : ''} onchange="_dvDeToggleFixed('${esc(key)}', ${esc(JSON.stringify(v))})"><span class="dv-opt-label">${esc(dvValueLabel(key, v))}</span></label>`).join('') || '<div class="dv-pop-empty">Sem valores ainda.</div>';
+    return _dvValueOrder(key, all).map(v => `<label class="dv-opt ${sel.has(v) ? 'is-on' : ''}"><input type="checkbox" ${sel.has(v) ? 'checked' : ''} onchange="_dvDeToggleFixed('${jsq(key)}', ${esc(JSON.stringify(v))})"><span class="dv-opt-label">${esc(dvValueLabel(key, v))}</span></label>`).join('') || '<div class="dv-pop-empty">Sem valores ainda.</div>';
   };
   const el = _dvOpenPopover(anchor, `<div class="dv-pop-head">${esc(def.label)} (fixo)</div><div class="dv-pop-list" id="de-fixed-list">${render()}</div>`, { width: 280 });
   if (el) el.style.zIndex = 10002;
@@ -31438,8 +31461,8 @@ async function renderDiscordChannelsList() {
       <td><div class="dc-event-badges">${eventBadges}${moreEvents}</div></td>
       <td>${statusBadge}</td>
       <td class="dc-row-actions">
-        <button class="dc-icon-btn" onclick="openDiscordChannelModal('${b.id}')" title="Editar"><i data-lucide="pencil"></i></button>
-        <button class="dc-icon-btn dc-icon-btn--danger" onclick="deleteDiscordChannel('${b.id}')" title="Remover"><i data-lucide="trash-2"></i></button>
+        <button class="dc-icon-btn" onclick="openDiscordChannelModal('${jsq(b.id)}')" title="Editar"><i data-lucide="pencil"></i></button>
+        <button class="dc-icon-btn dc-icon-btn--danger" onclick="deleteDiscordChannel('${jsq(b.id)}')" title="Remover"><i data-lucide="trash-2"></i></button>
       </td>
     </tr>`;
   }).join('');
@@ -31550,7 +31573,7 @@ async function deleteDiscordChannel(id) {
   const client = clients.find(c => c.id === bind.clientId);
   const ok = await showConfirm({
     title: 'Remover canal Discord?',
-    message: `Notificações do cliente ${client?.name || '—'} vão parar de chegar no canal #${bind.channelName || bind.channelId}.`,
+    message: `Notificações do cliente ${esc(client?.name || '—')} vão parar de chegar no canal #${esc(bind.channelName || bind.channelId)}.`,
     okLabel: 'Remover',
     danger: true,
   });
@@ -31868,7 +31891,7 @@ function renderNotifList() {
   $('notif-list').innerHTML = list.map(n => {
     const unclicked = _notifWasUnread.has(n.id);
     return `
-    <div class="notif-item ${unclicked ? 'unread' : 'read'}" onclick="openNotif('${n.id}', '${n.demandId || ''}')" title="${esc(fmtDateTime(n.createdAt))}">
+    <div class="notif-item ${unclicked ? 'unread' : 'read'}" onclick="openNotif('${jsq(n.id)}', '${jsq(n.demandId || '')}')" title="${esc(fmtDateTime(n.createdAt))}">
       ${unclicked ? '<div class="notif-dot-wrap"><span class="notif-dot"></span></div>' : ''}
       ${notifAvatarHTML(n)}
       <div class="notif-body">
@@ -32330,7 +32353,7 @@ function renderClients() {
     const statusBadge = c.active === false
       ? '<span class="client-card-status client-card-status--archived">Arquivado</span>'
       : '<span class="client-card-status client-card-status--active">Ativo</span>';
-    return `<div class="flow-card client-card ${c.active === false ? 'is-archived' : ''}" onclick="openClient('${c.id}')">
+    return `<div class="flow-card client-card ${c.active === false ? 'is-archived' : ''}" onclick="openClient('${jsq(c.id)}')">
       ${avatarHtml}
       <div class="flow-card-name">${esc(c.name)}</div>
       ${wsPill}
@@ -32460,11 +32483,11 @@ function renderModelCard(t) {
 
   const projectsGrid = projCount
     ? `<div class="model-projects-grid">${projs.map((p, pi) => `
-        <div class="model-project-pill" onclick="renameTemplateProject('${t.id}', ${pi})" title="${esc(p.name)}">
+        <div class="model-project-pill" onclick="renameTemplateProject('${jsq(t.id)}', ${pi})" title="${esc(p.name)}">
           <span class="model-project-pill-name">${esc(p.name)}</span>
           <span class="model-project-pill-actions">
-            <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); renameTemplateProject('${t.id}', ${pi})" title="Renomear projeto"><i data-lucide="pencil" class="ic-sm"></i></button>
-            <button class="btn btn-ghost btn-sm bulk-danger" onclick="event.stopPropagation(); confirmDeleteTemplateProject('${t.id}', ${pi})" title="Excluir projeto"><i data-lucide="trash-2" class="ic-sm"></i></button>
+            <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); renameTemplateProject('${jsq(t.id)}', ${pi})" title="Renomear projeto"><i data-lucide="pencil" class="ic-sm"></i></button>
+            <button class="btn btn-ghost btn-sm bulk-danger" onclick="event.stopPropagation(); confirmDeleteTemplateProject('${jsq(t.id)}', ${pi})" title="Excluir projeto"><i data-lucide="trash-2" class="ic-sm"></i></button>
           </span>
         </div>`).join('')}</div>`
     : '<div class="hours-empty" style="text-align:left;padding:6px 0">Nenhum projeto ainda.</div>';
@@ -32502,13 +32525,13 @@ function renderModelCard(t) {
   const filterBar = flatFlows.length ? `<div class="model-flow-filters" onclick="event.stopPropagation()">
     <div class="filter-input-wrap" style="flex:1 1 200px;max-width:260px">
       <i data-lucide="search" class="filter-input-icon ic-sm"></i>
-      <input class="filter-input filter-input--with-icon" placeholder="Buscar fluxo…" value="${esc(mff.search)}" oninput="onModelFlowSearch('${t.id}', this.value)">
+      <input class="filter-input filter-input--with-icon" placeholder="Buscar fluxo…" value="${esc(mff.search)}" oninput="onModelFlowSearch('${jsq(t.id)}', this.value)">
     </div>
-    <select class="filter-select" onchange="onModelFlowType('${t.id}', this.value)">
+    <select class="filter-select" onchange="onModelFlowType('${jsq(t.id)}', this.value)">
       <option value="">Todos os tipos</option>
       ${availableTypes.map(tp => `<option value="${esc(tp)}" ${tp === mff.type ? 'selected' : ''}>${esc(tp)}</option>`).join('')}
     </select>
-    <select class="filter-select" onchange="onModelFlowSort('${t.id}', this.value)" title="Ordenar por">
+    <select class="filter-select" onchange="onModelFlowSort('${jsq(t.id)}', this.value)" title="Ordenar por">
       <option value="name" ${mff.sort === 'name' ? 'selected' : ''}>Nome (A-Z)</option>
       <option value="type" ${mff.sort === 'type' ? 'selected' : ''}>Tipo (A-Z)</option>
       <option value="updated" ${mff.sort === 'updated' ? 'selected' : ''}>Última modificação</option>
@@ -32517,7 +32540,7 @@ function renderModelCard(t) {
   const flowsGrid = flatFlows.length
     ? (filteredFlows.length
       ? `<div class="model-flows-grid">${filteredFlows.map(({ f, p, pi, fi }) => `
-          <div class="model-flow-card" onclick="openTemplateFlowModal('${t.id}', ${pi}, ${fi})">
+          <div class="model-flow-card" onclick="openTemplateFlowModal('${jsq(t.id)}', ${pi}, ${fi})">
             ${projCount > 1 ? `<span class="model-flow-card-proj">${esc(p.name)}</span>` : ''}
             <span class="model-flow-icon" style="background:${modelFlowIconBg(p.color || t.color)}">
               ${renderModelFlowIconInner(f.icon)}
@@ -32525,9 +32548,9 @@ function renderModelCard(t) {
             <span class="model-flow-card-name">${esc(f.name || 'Fluxo sem nome')}</span>
             ${f.demandType ? `<span class="model-flow-card-type">${esc(f.demandType)}</span>` : ''}
             <span class="model-flow-card-actions">
-              <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); duplicateTemplateFlow('${t.id}', ${pi}, ${fi})"><i data-lucide="copy" class="ic-sm"></i></button>
-              <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); openTemplateFlowModal('${t.id}', ${pi}, ${fi})"><i data-lucide="pencil" class="ic-sm"></i></button>
-              <button class="btn btn-ghost btn-sm bulk-danger" onclick="event.stopPropagation(); confirmDeleteTemplateFlow('${t.id}', ${pi}, ${fi})"><i data-lucide="trash-2" class="ic-sm"></i></button>
+              <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); duplicateTemplateFlow('${jsq(t.id)}', ${pi}, ${fi})"><i data-lucide="copy" class="ic-sm"></i></button>
+              <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); openTemplateFlowModal('${jsq(t.id)}', ${pi}, ${fi})"><i data-lucide="pencil" class="ic-sm"></i></button>
+              <button class="btn btn-ghost btn-sm bulk-danger" onclick="event.stopPropagation(); confirmDeleteTemplateFlow('${jsq(t.id)}', ${pi}, ${fi})"><i data-lucide="trash-2" class="ic-sm"></i></button>
             </span>
           </div>`).join('')}</div>`
       : '<div class="hours-empty" style="text-align:left;padding:6px 0">Nenhum fluxo bate com o filtro.</div>')
@@ -32536,15 +32559,15 @@ function renderModelCard(t) {
   const projPickerBtn = projCount === 0
     ? `<button class="btn btn-ghost btn-sm" onclick="toast('Adicione um projeto antes de criar um fluxo.', 'warn')" title="Adicione um projeto primeiro"><i data-lucide="plus" class="ic-sm"></i> Novo Fluxo</button>`
     : projCount === 1
-      ? `<button class="btn btn-ghost btn-sm" onclick="openTemplateFlowModal('${t.id}', 0, null)"><i data-lucide="plus" class="ic-sm"></i> Novo Fluxo</button>`
-      : `<button class="btn btn-ghost btn-sm" onclick="openProjectPicker(event, '${t.id}')"><i data-lucide="plus" class="ic-sm"></i> Novo Fluxo</button>`;
+      ? `<button class="btn btn-ghost btn-sm" onclick="openTemplateFlowModal('${jsq(t.id)}', 0, null)"><i data-lucide="plus" class="ic-sm"></i> Novo Fluxo</button>`
+      : `<button class="btn btn-ghost btn-sm" onclick="openProjectPicker(event, '${jsq(t.id)}')"><i data-lucide="plus" class="ic-sm"></i> Novo Fluxo</button>`;
 
   const body = isOpen ? `
     <div class="model-card-body">
       <div class="model-section">
         <div class="model-section-head">
           <span class="model-section-label">PROJETOS</span>
-          <button class="btn btn-ghost btn-sm" onclick="addTemplateProject('${t.id}')"><i data-lucide="folder-plus" class="ic-sm"></i> Novo Projeto</button>
+          <button class="btn btn-ghost btn-sm" onclick="addTemplateProject('${jsq(t.id)}')"><i data-lucide="folder-plus" class="ic-sm"></i> Novo Projeto</button>
         </div>
         ${projectsGrid}
       </div>
@@ -32560,7 +32583,7 @@ function renderModelCard(t) {
 
   const chevronIc = isOpen ? 'chevron-down' : 'chevron-left';
   return `<div class="model-card ${isOpen ? 'is-open' : ''}" data-model-id="${t.id}">
-    <div class="model-card-head" onclick="toggleModelExpanded('${t.id}')">
+    <div class="model-card-head" onclick="toggleModelExpanded('${jsq(t.id)}')">
       <span class="model-card-chevron"><i data-lucide="${chevronIc}" class="ic-sm"></i></span>
       <div class="model-card-title">
         <strong>${esc(t.name)}</strong>
@@ -32568,8 +32591,8 @@ function renderModelCard(t) {
         ${derivados > 0 ? `<span class="model-card-badge model-card-badge-derivados">${derivados} CLIENTE${derivados === 1 ? '' : 'S'} VINCULADO${derivados === 1 ? '' : 'S'}</span>` : ''}
       </div>
       <div class="model-card-actions" onclick="event.stopPropagation()">
-        <button class="btn btn-ghost btn-sm" onclick="openModelEditName('${t.id}')" title="Renomear modelo"><i data-lucide="pencil" class="ic-sm"></i></button>
-        <button class="btn btn-ghost btn-sm bulk-danger" onclick="confirmDeleteModel('${t.id}')" title="Excluir modelo"><i data-lucide="trash-2" class="ic-sm"></i></button>
+        <button class="btn btn-ghost btn-sm" onclick="openModelEditName('${jsq(t.id)}')" title="Renomear modelo"><i data-lucide="pencil" class="ic-sm"></i></button>
+        <button class="btn btn-ghost btn-sm bulk-danger" onclick="confirmDeleteModel('${jsq(t.id)}')" title="Excluir modelo"><i data-lucide="trash-2" class="ic-sm"></i></button>
       </div>
     </div>
     ${body}
@@ -32582,7 +32605,7 @@ function renderModelFlowIconInner(icon) {
     return `<i data-lucide="${esc(icon.slice(7))}"></i>`;
   }
   if (typeof icon === 'string' && (icon.startsWith('/uploads/') || icon.startsWith('data:image/'))) {
-    return `<span class="model-flow-icon-img" style="background-image:url('${esc(icon)}');background-size:cover;background-position:center"></span>`;
+    return `<span class="model-flow-icon-img" style="background-image:url('${cssu(icon)}');background-size:cover;background-position:center"></span>`;
   }
   return `<i data-lucide="workflow"></i>`;
 }
@@ -32839,7 +32862,7 @@ function renderTflStages() {
          ondragover="tflStageDragOver(event,${i})" ondragleave="tflStageDragLeave(event)"
          ondrop="tflStageDrop(event,${i})" ondragend="tflStageDragEnd()">
       <div class="tfl-stage-grip" draggable="true" ondragstart="tflStageDragStart(event,${i})" title="Arraste para reordenar"><i data-lucide="grip-vertical" class="ic-sm"></i></div>
-      <button type="button" class="color-swatch-trigger tfl-stage-color" style="background:${esc(color)}" onclick="openColorPicker(this, (c) => { tflSetStage(${i}, 'color', c); this.style.background = c; }, '${esc(color)}')" title="Cor da etapa"></button>
+      <button type="button" class="color-swatch-trigger tfl-stage-color" style="background:${esc(color)}" onclick="openColorPicker(this, (c) => { tflSetStage(${i}, 'color', c); this.style.background = c; }, '${jsq(color)}')" title="Cor da etapa"></button>
       <input type="text" class="wizard-cust-name stage-name-input" placeholder="Nome da etapa" autocomplete="off" value="${esc(s.label || '')}" oninput="tflSetStage(${i}, 'label', this.value)" data-color-fn="tflStagePresetColor" data-done-fn="tflStagePresetDone" data-color-arg="${i}">
       <div class="wizard-cust-days-inline" title="Prazo da etapa (em dias)">
         <input type="number" class="wizard-cust-days" min="0" step="1" placeholder="—" value="${s.deadlineDays ?? ''}" oninput="tflSetStage(${i}, 'deadlineDays', this.value === '' ? null : Number(this.value))">
@@ -33184,8 +33207,8 @@ function renderAttGallery(ctx) {
   const preview = _attGalApply(items, previewSt).slice(0, ATT_GAL_PREVIEW_MAX);
   const remaining = items.length - preview.length;
   const goCall = ctx === 'client'
-    ? `goClientGallery('${esc(currentClientId)}')`
-    : `goProjectGallery('${esc(currentProjectId)}')`;
+    ? `goClientGallery('${jsq(currentClientId)}')`
+    : `goProjectGallery('${jsq(currentProjectId)}')`;
   wrap.innerHTML = `
     <div class="att-gal-preview-head">
       <div class="att-gal-preview-count">${items.length} ite${items.length === 1 ? 'm' : 'ns'} · mais recentes primeiro</div>
@@ -33288,7 +33311,7 @@ function _renderGalleryPageInner() {
     { k: 'type',  label: 'Tipo' },
   ];
   $('gallery-page-sort-btns').innerHTML = sortOptions.map(o =>
-    `<button type="button" class="att-gal-sort-btn ${st.sort === o.k ? 'is-active' : ''}" onclick="galleryPageSetSort('${o.k}')">${o.label}</button>`
+    `<button type="button" class="att-gal-sort-btn ${st.sort === o.k ? 'is-active' : ''}" onclick="galleryPageSetSort('${jsq(o.k)}')">${o.label}</button>`
   ).join('');
   // Direction icon
   const dirBtn = $('gallery-page-dir-btn');
@@ -33310,7 +33333,7 @@ function _renderGalleryPageInner() {
   $('gallery-page-chips').innerHTML = _attGalKindLabels.map(({ k, label }) => {
     const n = counts[k] || 0;
     if (k && n === 0) return '';
-    return `<button type="button" class="att-gal-chip ${k === st.kind ? 'is-active' : ''}" onclick="galleryPagePickKind('${k}')">${esc(label)}<span class="att-gal-chip-count">${n}</span></button>`;
+    return `<button type="button" class="att-gal-chip ${k === st.kind ? 'is-active' : ''}" onclick="galleryPagePickKind('${jsq(k)}')">${esc(label)}<span class="att-gal-chip-count">${n}</span></button>`;
   }).join('');
   // Corpo — tabela estilo Windows Explorer OU grade com capa
   const body = $('gallery-page-body');
@@ -33338,7 +33361,7 @@ function _galleryPageTableHtml(items, st) {
     const dirIco = isSorted
       ? `<i data-lucide="${st.dir === 'asc' ? 'arrow-up' : 'arrow-down'}" class="ic-xs"></i>`
       : '';
-    return `<th class="${c.className} ${isSorted ? 'is-sorted' : ''}" onclick="galleryPageSetSort('${c.k}')">${esc(c.label)} ${dirIco}</th>`;
+    return `<th class="${c.className} ${isSorted ? 'is-sorted' : ''}" onclick="galleryPageSetSort('${jsq(c.k)}')">${esc(c.label)} ${dirIco}</th>`;
   }).join('');
   const rowsHtml = items.map(a => _galleryPageRowHtml(a)).join('');
   return `<div class="gal-explorer-wrap">
@@ -33356,18 +33379,18 @@ function _galleryPageRowHtml(a) {
   const srcEsc = esc(src);
   const previewable = kind !== 'other' && kind !== 'link';
   const openCall = kind === 'link'
-    ? `window.open('${esc(normalizeUrl(a.url || a.name))}', '_blank')`
+    ? `window.open('${jsq(safeUrl(a.url || a.name))}', '_blank')`
     : previewable
-      ? `openAttPreview('${srcEsc}', '${esc(a.type || '')}', '${esc(a.name || '')}')`
-      : `window.open('${srcEsc}', '_blank')`;
-  const openDemandCall = `event.stopPropagation();showDetail('${esc(a.demandId)}')`;
+      ? `openAttPreview('${jsq(src)}', '${jsq(a.type || '')}', '${jsq(a.name || '')}')`
+      : `window.open('${jsq(src)}', '_blank')`;
+  const openDemandCall = `event.stopPropagation();showDetail('${jsq(a.demandId)}')`;
   const size = attSizeBytes(a);
   const dateLbl = a.addedAt ? fmtDate(a.addedAt) : '—';
   const kindLbl = (_attGalKindLabels.find(x => x.k === kind)?.label) || kind || '—';
   const vis = attFileVisual(a);
   const iconOnly = `<i data-lucide="${vis.icon}" class="ic-sm gal-row-ico"></i>`;
   const thumb = kind === 'image' && src
-    ? `<span class="gal-row-thumb" style="background-image:url('${srcEsc}')"></span>`
+    ? `<span class="gal-row-thumb" style="background-image:url('${cssu(src)}')"></span>`
     : `<span class="gal-row-thumb gal-row-thumb--icon ft-${vis.tone}">${iconOnly}</span>`;
   return `<tr class="gal-explorer-row" onclick="${openCall}">
     <td class="gal-col-name">
@@ -33619,7 +33642,7 @@ function _renderGlobalGalleryInner() {
     { k: 'client', label: 'Cliente' },
   ];
   $('global-gallery-sort-btns').innerHTML = sortOptions.map(o =>
-    `<button type="button" class="att-gal-sort-btn ${st.sort === o.k ? 'is-active' : ''}" onclick="globalGallerySetSort('${o.k}')">${o.label}</button>`
+    `<button type="button" class="att-gal-sort-btn ${st.sort === o.k ? 'is-active' : ''}" onclick="globalGallerySetSort('${jsq(o.k)}')">${o.label}</button>`
   ).join('');
   const dirBtn = $('global-gallery-dir-btn');
   if (dirBtn) {
@@ -33642,7 +33665,7 @@ function _renderGlobalGalleryInner() {
   $('global-gallery-chips').innerHTML = _attGalKindLabels.map(({ k, label }) => {
     const n = counts[k] || 0;
     if (k && n === 0) return '';
-    return `<button type="button" class="att-gal-chip ${k === st.kind ? 'is-active' : ''}" onclick="globalGalleryPickKind('${k}')">${esc(label)}<span class="att-gal-chip-count">${n}</span></button>`;
+    return `<button type="button" class="att-gal-chip ${k === st.kind ? 'is-active' : ''}" onclick="globalGalleryPickKind('${jsq(k)}')">${esc(label)}<span class="att-gal-chip-count">${n}</span></button>`;
   }).join('');
   // Body
   const body = $('global-gallery-body');
@@ -33670,7 +33693,7 @@ function _globalGalleryTableHtml(items) {
     const dirIco = isSorted
       ? `<i data-lucide="${st.dir === 'asc' ? 'arrow-up' : 'arrow-down'}" class="ic-xs"></i>`
       : '';
-    return `<th class="${c.className} ${isSorted ? 'is-sorted' : ''}" onclick="globalGallerySetSort('${c.k}')">${esc(c.label)} ${dirIco}</th>`;
+    return `<th class="${c.className} ${isSorted ? 'is-sorted' : ''}" onclick="globalGallerySetSort('${jsq(c.k)}')">${esc(c.label)} ${dirIco}</th>`;
   }).join('');
   const rowsHtml = items.map(a => _globalGalleryRowHtml(a)).join('');
   return `<div class="gal-explorer-wrap">
@@ -33689,18 +33712,18 @@ function _globalGalleryRowHtml(a) {
   const srcEsc = esc(src);
   const previewable = kind !== 'other' && kind !== 'link';
   const openCall = kind === 'link'
-    ? `window.open('${esc(normalizeUrl(a.url || a.name))}', '_blank')`
+    ? `window.open('${jsq(safeUrl(a.url || a.name))}', '_blank')`
     : previewable
-      ? `openAttPreview('${srcEsc}', '${esc(a.type || '')}', '${esc(a.name || '')}')`
-      : `window.open('${srcEsc}', '_blank')`;
-  const openDemandCall = `event.stopPropagation();showDetail('${esc(a.demandId)}')`;
+      ? `openAttPreview('${jsq(src)}', '${jsq(a.type || '')}', '${jsq(a.name || '')}')`
+      : `window.open('${jsq(src)}', '_blank')`;
+  const openDemandCall = `event.stopPropagation();showDetail('${jsq(a.demandId)}')`;
   const size = attSizeBytes(a);
   const dateLbl = a.addedAt ? fmtDate(a.addedAt) : '—';
   const kindLbl = (_attGalKindLabels.find(x => x.k === kind)?.label) || kind || '—';
   const vis = attFileVisual(a);
   const iconOnly = `<i data-lucide="${vis.icon}" class="ic-sm gal-row-ico"></i>`;
   const thumb = kind === 'image' && src
-    ? `<span class="gal-row-thumb" style="background-image:url('${srcEsc}')"></span>`
+    ? `<span class="gal-row-thumb" style="background-image:url('${cssu(src)}')"></span>`
     : `<span class="gal-row-thumb gal-row-thumb--icon ft-${vis.tone}">${iconOnly}</span>`;
   return `<tr class="gal-explorer-row" onclick="${openCall}">
     <td class="gal-col-name">
@@ -33724,17 +33747,17 @@ function _globalGalleryTileHtml(a) {
   const srcEsc = esc(src);
   const previewable = kind !== 'other' && kind !== 'link';
   const openCall = kind === 'link'
-    ? `window.open('${esc(normalizeUrl(a.url || a.name))}', '_blank')`
+    ? `window.open('${jsq(safeUrl(a.url || a.name))}', '_blank')`
     : previewable
-      ? `openAttPreview('${srcEsc}', '${esc(a.type || '')}', '${esc(a.name || '')}')`
-      : `window.open('${srcEsc}', '_blank')`;
-  const openDemandCall = `event.stopPropagation();showDetail('${esc(a.demandId)}')`;
+      ? `openAttPreview('${jsq(src)}', '${jsq(a.type || '')}', '${jsq(a.name || '')}')`
+      : `window.open('${jsq(src)}', '_blank')`;
+  const openDemandCall = `event.stopPropagation();showDetail('${jsq(a.demandId)}')`;
   const coverKind = _attCoverKind(a);
   const ext = attExtOf(a);
   const vis = attFileVisual(a);
   const extBadge = ext ? `<span class="att-gal-ext-badge ft-${vis.tone}">${esc(ext)}</span>` : '';
   const thumb = kind === 'image' && src
-    ? `<div class="att-gal-thumb att-gal-thumb-image" style="background-image:url('${srcEsc}')">${extBadge}</div>`
+    ? `<div class="att-gal-thumb att-gal-thumb-image" style="background-image:url('${cssu(src)}')">${extBadge}</div>`
     : kind === 'link'
       ? `<div class="att-gal-thumb att-gal-thumb-icon att-link-thumb">${linkThumbInner(normalizeUrl(a.url || a.name))}${extBadge}</div>`
       : `<div class="att-gal-thumb att-gal-thumb-icon ft-${vis.tone}"><i data-lucide="${vis.icon}"></i>${extBadge}</div>`;
@@ -33812,12 +33835,12 @@ function _renderGGMulti(kind, items) {
   menu.innerHTML = sorted.map(o => {
     const on = set.has(o.id);
     return `<label class="filter-multi-item">
-      <input type="checkbox" ${on ? 'checked' : ''} onchange="ggToggleMultiItem('${esc(kind)}', '${esc(o.id)}', this.checked)">
+      <input type="checkbox" ${on ? 'checked' : ''} onchange="ggToggleMultiItem('${jsq(kind)}', '${jsq(o.id)}', this.checked)">
       <span class="filter-multi-item-dot" style="background:${esc(o.color)}"></span>
       <span class="filter-multi-item-lbl">${esc(o.name)}</span>
       <span class="filter-multi-item-count">${o.n}</span>
     </label>`;
-  }).join('') + (set.size ? `<button type="button" class="filter-multi-clear" onclick="ggClearMulti('${esc(kind)}')">Limpar seleção</button>` : '');
+  }).join('') + (set.size ? `<button type="button" class="filter-multi-clear" onclick="ggClearMulti('${jsq(kind)}')">Limpar seleção</button>` : '');
 }
 function ggToggleMulti(ev, kind) {
   ev?.stopPropagation();
@@ -34018,11 +34041,11 @@ function attGalTileHtml(a, view = 'grid') {
   const srcEsc = esc(src);
   const previewable = kind !== 'other' && kind !== 'link';
   const openCall = kind === 'link'
-    ? `window.open('${esc(normalizeUrl(a.url || a.name))}', '_blank')`
+    ? `window.open('${jsq(safeUrl(a.url || a.name))}', '_blank')`
     : previewable
-      ? `openAttPreview('${srcEsc}', '${esc(a.type || '')}', '${esc(a.name || '')}')`
-      : `window.open('${srcEsc}', '_blank')`;
-  const openDemandCall = `event.stopPropagation();closeAttGalleryFull();showDetail('${esc(a.demandId)}')`;
+      ? `openAttPreview('${jsq(src)}', '${jsq(a.type || '')}', '${jsq(a.name || '')}')`
+      : `window.open('${jsq(src)}', '_blank')`;
+  const openDemandCall = `event.stopPropagation();closeAttGalleryFull();showDetail('${jsq(a.demandId)}')`;
   const size = attSizeBytes(a);
   const dateLbl = a.addedAt ? fmtDate(a.addedAt) : '';
   const kindLbl = (_attGalKindLabels.find(x => x.k === kind)?.label) || kind;
@@ -34031,7 +34054,7 @@ function attGalTileHtml(a, view = 'grid') {
   const extBadge = ext ? `<span class="att-gal-ext-badge ft-${vis.tone}">${esc(ext)}</span>` : '';
   if (view === 'list') {
     const thumb = kind === 'image' && src
-      ? `<div class="att-gal-list-thumb att-gal-thumb-image" style="background-image:url('${srcEsc}')"></div>`
+      ? `<div class="att-gal-list-thumb att-gal-thumb-image" style="background-image:url('${cssu(src)}')"></div>`
       : kind === 'link'
         ? `<div class="att-gal-list-thumb att-gal-thumb-icon att-link-thumb att-link-thumb-sm">${linkThumbInner(normalizeUrl(a.url || a.name))}</div>`
         : `<div class="att-gal-list-thumb att-gal-thumb-icon ft-${vis.tone}"><i data-lucide="${vis.icon}"></i></div>`;
@@ -34052,7 +34075,7 @@ function attGalTileHtml(a, view = 'grid') {
   // grid (padrão)
   const coverKind = _attCoverKind(a); // 'pdf' | 'doc' | null
   const thumb = kind === 'image' && src
-    ? `<div class="att-gal-thumb att-gal-thumb-image" style="background-image:url('${srcEsc}')">${extBadge}</div>`
+    ? `<div class="att-gal-thumb att-gal-thumb-image" style="background-image:url('${cssu(src)}')">${extBadge}</div>`
     : kind === 'link'
       ? `<div class="att-gal-thumb att-gal-thumb-icon att-link-thumb">${linkThumbInner(normalizeUrl(a.url || a.name))}${extBadge}</div>`
       : `<div class="att-gal-thumb att-gal-thumb-icon ft-${vis.tone}"><i data-lucide="${vis.icon}"></i>${extBadge}</div>`;
@@ -34077,7 +34100,7 @@ function renderInfoLink(raw, title, emptyLabel) {
   const label = (title && String(title).trim())
     ? String(title).trim()
     : url.replace(/^https?:\/\//i, '').replace(/\/$/, '');
-  return `<a class="client-info-link" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(url)}">
+  return `<a class="client-info-link" href="${esc(safeUrl(url))}" target="_blank" rel="noopener" title="${esc(url)}">
     <i data-lucide="external-link" class="ic-sm"></i>
     <span class="client-info-link-label">${esc(label)}</span>
   </a>`;
@@ -34115,7 +34138,7 @@ function renderClientDetail(id) {
                <text x="24" y="24" text-anchor="middle" dominant-baseline="central" font-family="inherit" font-weight="700" font-size="22" fill="currentColor">${esc(pLetter)}</text>
              </svg>
            </div>`;
-      return `<div class="flow-card" onclick="openProjectDetail('${p.id}')">
+      return `<div class="flow-card" onclick="openProjectDetail('${jsq(p.id)}')">
         ${avatar}
         <div class="flow-card-name">${esc(p.name)}</div>
         <div class="flow-card-sub">${esc(statusLabel)}</div>
@@ -34222,7 +34245,7 @@ function ctpRenderPresets(kind) {
   const wrap = $(`ctp-${kind}-presets`); if (!wrap) return;
   const [cur] = _CTP[kind].get();
   wrap.innerHTML = CTP_PRESETS.map(([v, l]) =>
-    `<button type="button" class="pfp-preset-btn ${v === cur ? 'active' : ''}" onclick="ctpPick('${kind}', '${v}')">${esc(l)}</button>`
+    `<button type="button" class="pfp-preset-btn ${v === cur ? 'active' : ''}" onclick="ctpPick('${jsq(kind)}', '${jsq(v)}')">${esc(l)}</button>`
   ).join('');
 }
 function ctpPick(kind, p) {
@@ -34307,12 +34330,10 @@ function _matrixRow(area, cargo, candidates, entity, handlerName, entityId) {
   const previewAvatar = curUser
     ? avatarHTML(curUser, 'avatar avatar-sm')
     : `<div class="avatar avatar-sm" style="background:var(--surface-2);color:var(--text-muted);display:flex;align-items:center;justify-content:center"><i data-lucide="user" class="ic-xs"></i></div>`;
-  const areaEsc = area.replace(/'/g, "\\'");
-  const cargoEsc = cargo.replace(/'/g, "\\'");
   return `<div class="rca-row">
     <div class="rca-cargo">${cargo ? esc(cargo).toUpperCase() : '<span style="color:var(--text-muted);font-weight:400">Sem cargo</span>'}</div>
     <div class="rca-avatar">${previewAvatar}</div>
-    <select class="form-control rca-select" onchange="${handlerName}('${entityId}', '${areaEsc}', '${cargoEsc}', this.value)">${opts}</select>
+    <select class="form-control rca-select" onchange="${handlerName}('${jsq(entityId)}', '${jsq(area)}', '${jsq(cargo)}', this.value)">${opts}</select>
   </div>`;
 }
 async function setClientRoleCargoAssignment(clientId, area, cargo, userId) {
@@ -34529,7 +34550,7 @@ function renderProjectDetail(id) {
                <text x="10" y="10" text-anchor="middle" dominant-baseline="central" font-family="inherit" font-weight="700" font-size="10" fill="currentColor">${esc(cLetter)}</text>
              </svg>
            </span>`;
-      clientPart = `<a class="detail-title-parent" href="#" onclick="event.preventDefault(); openClient('${c.id}')" title="Voltar para ${esc(c.name)}">
+      clientPart = `<a class="detail-title-parent" href="#" onclick="event.preventDefault(); openClient('${jsq(c.id)}')" title="Voltar para ${esc(c.name)}">
         ${cAvatar}
         <span class="detail-title-parent-name">${esc(c.name)}</span>
       </a>`;
@@ -35979,13 +36000,13 @@ function renderClientPublicLinksList() {
       </div>
       <div class="share-link-url" onclick="this.querySelector('input').select()">
         <input type="text" readonly value="${esc(url)}">
-        <button class="share-link-copy" title="Copiar" onclick="event.stopPropagation();copyClientPublicLink('${esc(url)}', this)"><i data-lucide="copy" class="ic-sm"></i></button>
+        <button class="share-link-copy" title="Copiar" onclick="event.stopPropagation();copyClientPublicLink('${jsq(url)}', this)"><i data-lucide="copy" class="ic-sm"></i></button>
       </div>
       <div class="share-link-footer">
         <span class="share-link-meta">Criado em ${esc(created)}</span>
         <div class="share-link-actions">
-          <button class="share-link-icon-btn" title="${l.active ? 'Pausar' : 'Reativar'}" onclick="toggleClientPublicLink('${esc(l.id)}', ${!l.active})"><i data-lucide="${l.active ? 'pause' : 'play'}" class="ic-sm"></i></button>
-          <button class="share-link-icon-btn share-link-icon-btn--danger" title="Revogar" onclick="revokeClientPublicLink('${esc(l.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
+          <button class="share-link-icon-btn" title="${l.active ? 'Pausar' : 'Reativar'}" onclick="toggleClientPublicLink('${jsq(l.id)}', ${!l.active})"><i data-lucide="${l.active ? 'pause' : 'play'}" class="ic-sm"></i></button>
+          <button class="share-link-icon-btn share-link-icon-btn--danger" title="Revogar" onclick="revokeClientPublicLink('${jsq(l.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
         </div>
       </div>
     </div>`;
@@ -36612,12 +36633,12 @@ function _aglDayParts(userId, ymd, gcals) {
         <span class="agl-body"><span class="agl-title">${esc(it.title)}</span>${it.meta ? `<span class="agl-meta">${esc(it.meta)}</span>` : ''}</span>
       </button>`).join('');
   const dues = due.map(d => `
-      <button type="button" class="agl-due" onclick="showDetail('${d.id}')">
+      <button type="button" class="agl-due" onclick="showDetail('${jsq(d.id)}')">
         <i data-lucide="flag" class="ic-xs"></i><span>${esc(d.name)}</span>
       </button>`).join('');
   const body = `${rows || (dues ? '' : '<div class="agl-empty">Nada agendado.</div>')}
       ${dues ? `<div class="agl-dues"><div class="agl-dues-lbl">Prazos do dia</div>${dues}</div>` : ''}
-      ${canEdit ? `<button type="button" class="agl-add" onclick="openScheduleModal(null, { userId: '${userId}', date: '${ymd}' })"><i data-lucide="plus" class="ic-xs"></i> Agendar</button>` : ''}`;
+      ${canEdit ? `<button type="button" class="agl-add" onclick="openScheduleModal(null, { userId: '${jsq(userId)}', date: '${jsq(ymd)}' })"><i data-lucide="plus" class="ic-xs"></i> Agendar</button>` : ''}`;
   return { body, mins };
 }
 function _aglMount(wrap, html, gcals) {
@@ -37827,7 +37848,7 @@ function renderScheduleKindChips() {
   const wrap = $('sch-kind-chips');
   if (!wrap) return;
   wrap.innerHTML = SCHEDULE_KINDS.map(k => `
-    <button type="button" class="sch-kind-chip ${k.k === _scheduleKind ? 'is-active' : ''}" data-kind="${k.k}" onclick="pickScheduleKind('${k.k}')" style="--kind-color:${k.color}">
+    <button type="button" class="sch-kind-chip ${k.k === _scheduleKind ? 'is-active' : ''}" data-kind="${k.k}" onclick="pickScheduleKind('${jsq(k.k)}')" style="--kind-color:${k.color}">
       <i data-lucide="${k.icon}" class="ic-sm"></i>
       <span>${esc(k.label)}</span>
     </button>`).join('');
@@ -38391,7 +38412,7 @@ function renderWizardCustomization() {
       return `<option value="${u.id}" ${respValue === u.id ? 'selected' : ''} ${isDefault ? 'data-default="1"' : ''}>${esc(u.name)}</option>`;
     }).join('');
     const removeBtn = isAddition
-      ? `<button type="button" class="wizard-cust-remove" title="Remover etapa" onclick="wizardCustRemoveAddition('${stageId}')"><i data-lucide="trash-2" class="ic-md"></i></button>`
+      ? `<button type="button" class="wizard-cust-remove" title="Remover etapa" onclick="wizardCustRemoveAddition('${jsq(stageId)}')"><i data-lucide="trash-2" class="ic-md"></i></button>`
       : '<span class="wizard-cust-remove-placeholder"></span>';
     const endDate = dateByStageId[stageId] || '';
     // Data considerada "customizada" quando o usuário setou âncora explícita.
@@ -38406,13 +38427,13 @@ function renderWizardCustomization() {
     const computedDays = endDate ? _daysDiffBusiness(prevEnd, endDate) : (days ?? null);
     return `<div class="wizard-cust-row-v2 ${skipped ? 'is-skipped' : ''} ${isAddition ? 'is-added' : ''}" draggable="true" data-stage-id="${stageId}">
       <span class="wizard-cust-drag" title="Arraste pra reordenar"><i data-lucide="grip-vertical" class="ic-md"></i></span>
-      <button type="button" class="color-swatch-trigger wizard-cust-color-lg" style="background:${esc(color)}" onclick="openColorPicker(this, (c) => { wizardCustSetColor('${stageId}', c); this.style.background = c; }, '${esc(color)}')" title="Cor da etapa"></button>
-      <input type="text" class="wizard-cust-name stage-name-input" value="${esc(label)}" placeholder="Nome da etapa" autocomplete="off" oninput="wizardCustSetLabel('${stageId}', this.value)" data-color-fn="wizardStagePresetColor" data-done-fn="wizardStagePresetDone" data-color-arg="${stageId}">
-      ${done ? `<div class="stage-done-noowner is-compact wizard-cust-resp" title="A etapa de conclusão encerra a demanda: não tem executor."><i data-lucide="flag" class="ic-sm"></i>Sem executor</div>` : `<select class="wizard-cust-resp" data-cdrop-icon="user" data-default-value="${esc(defaultUserId || '')}" onchange="wizardCustSetResp('${stageId}', this.value)">${roleOpts}</select>`}
-      <input type="date" class="wizard-cust-date ${hasDateAnchor ? 'is-customized' : ''}" data-fdp-display="short" data-fdp-no-weekend="1" value="${endDate}" onchange="wizardCustSetDate('${stageId}', this.value)">
+      <button type="button" class="color-swatch-trigger wizard-cust-color-lg" style="background:${esc(color)}" onclick="openColorPicker(this, (c) => { wizardCustSetColor('${jsq(stageId)}', c); this.style.background = c; }, '${jsq(color)}')" title="Cor da etapa"></button>
+      <input type="text" class="wizard-cust-name stage-name-input" value="${esc(label)}" placeholder="Nome da etapa" autocomplete="off" oninput="wizardCustSetLabel('${jsq(stageId)}', this.value)" data-color-fn="wizardStagePresetColor" data-done-fn="wizardStagePresetDone" data-color-arg="${stageId}">
+      ${done ? `<div class="stage-done-noowner is-compact wizard-cust-resp" title="A etapa de conclusão encerra a demanda: não tem executor."><i data-lucide="flag" class="ic-sm"></i>Sem executor</div>` : `<select class="wizard-cust-resp" data-cdrop-icon="user" data-default-value="${esc(defaultUserId || '')}" onchange="wizardCustSetResp('${jsq(stageId)}', this.value)">${roleOpts}</select>`}
+      <input type="date" class="wizard-cust-date ${hasDateAnchor ? 'is-customized' : ''}" data-fdp-display="short" data-fdp-no-weekend="1" value="${endDate}" onchange="wizardCustSetDate('${jsq(stageId)}', this.value)">
       <span class="wizard-cust-days-plain" title="Prazo calculado a partir das datas — herdado do fluxo. Edite a data pra alterar.">${(computedDays ?? '—') + 'd'}</span>
-      <button type="button" class="cust-icon-toggle cust-toggle-done ${done ? 'on' : ''}" title="${done ? 'Etapa final — conclui a demanda' : 'Marcar como etapa final (conclui a demanda)'}" onclick="wizardCustSetDone('${stageId}', ${!done})"><i data-lucide="flag" class="ic-md"></i></button>
-      <button type="button" class="cust-icon-toggle cust-toggle-active ${!skipped ? 'on' : ''}" title="${skipped ? 'Etapa pulada — clique pra ativar' : 'Etapa ativa — clique pra pular'}" onclick="wizardCustToggleSkip('${stageId}', ${skipped})"><i data-lucide="${skipped ? 'eye-off' : 'eye'}" class="ic-md"></i></button>
+      <button type="button" class="cust-icon-toggle cust-toggle-done ${done ? 'on' : ''}" title="${done ? 'Etapa final — conclui a demanda' : 'Marcar como etapa final (conclui a demanda)'}" onclick="wizardCustSetDone('${jsq(stageId)}', ${!done})"><i data-lucide="flag" class="ic-md"></i></button>
+      <button type="button" class="cust-icon-toggle cust-toggle-active ${!skipped ? 'on' : ''}" title="${skipped ? 'Etapa pulada — clique pra ativar' : 'Etapa ativa — clique pra pular'}" onclick="wizardCustToggleSkip('${jsq(stageId)}', ${skipped})"><i data-lucide="${skipped ? 'eye-off' : 'eye'}" class="ic-md"></i></button>
       ${removeBtn}
     </div>`;
   };
@@ -39510,12 +39531,12 @@ function _similarSuggestion(title) {
   if (!found.length || wizardState.similarDismissed === key) return null;
   const lines = found.map(d => {
     const status = d.completedAt ? `concluída ${fmtRelativeTime(d.completedAt)}` : `em andamento · ${esc(stageOf(d)?.label || '')}`;
-    return `<button type="button" class="flow-suggest-link" onclick="openSimilarDemand('${d.id}')">${esc(d.name)}</button> · ${esc(projectById(d.projectId)?.name || '')} · ${status}`;
+    return `<button type="button" class="flow-suggest-link" onclick="openSimilarDemand('${jsq(d.id)}')">${esc(d.name)}</button> · ${esc(projectById(d.projectId)?.name || '')} · ${status}`;
   }).join('<br>');
   return {
     key: 'sim:' + key,
     html: _suggestBox('is-info', 'copy', found.length > 1 ? 'Já existem demandas parecidas neste cliente' : 'Já existe uma demanda parecida neste cliente', lines,
-      `<button type="button" class="btn btn-ghost btn-sm" onclick="dismissSimilarDemands('${key}')">Ignorar</button>`),
+      `<button type="button" class="btn btn-ghost btn-sm" onclick="dismissSimilarDemands('${jsq(key)}')">Ignorar</button>`),
   };
 }
 
@@ -39538,8 +39559,8 @@ function _flowSuggestion(title) {
     html: _suggestBox('', 'sparkles',
       `Esse título parece <strong>${esc(sug.name)}</strong>${cur ? ` — você escolheu <strong>${esc(cur.name)}</strong>` : ''}`,
       `Se alguma etapa de ${esc(sug.name)} não for necessária, dá pra desativá-la no passo Customizar etapas.`,
-      `<button type="button" class="btn btn-ghost btn-sm" onclick="dismissFlowSuggestion('${sug.id}')">Manter</button>
-       <button type="button" class="btn btn-primary btn-sm" onclick="applyFlowSuggestion('${sug.id}')">Trocar fluxo</button>`),
+      `<button type="button" class="btn btn-ghost btn-sm" onclick="dismissFlowSuggestion('${jsq(sug.id)}')">Manter</button>
+       <button type="button" class="btn btn-primary btn-sm" onclick="applyFlowSuggestion('${jsq(sug.id)}')">Trocar fluxo</button>`),
   };
 }
 
@@ -39666,13 +39687,13 @@ async function renderTrash() {
   body.innerHTML = groups.filter(g => g.items.length).map(g => `
     <div class="trash-group${_trashCollapsed.has(g.type) ? ' collapsed' : ''}" data-type="${g.type}">
       <div class="trash-group-head">
-        <button type="button" class="trash-group-toggle" onclick="toggleTrashGroup('${g.type}')" title="Compactar / expandir">
+        <button type="button" class="trash-group-toggle" onclick="toggleTrashGroup('${jsq(g.type)}')" title="Compactar / expandir">
           <i data-lucide="chevron-down" class="ic-sm trash-chevron"></i>
           <i data-lucide="${g.icon}" class="ic-sm"></i>
           <span>${g.label}</span>
           <span class="trash-count">${g.items.length}</span>
         </button>
-        <button type="button" class="btn btn-ghost btn-sm trash-clear-btn" onclick="clearTrashGroup('${g.type}','${esc(g.label)}')" title="Limpar toda a lista">
+        <button type="button" class="btn btn-ghost btn-sm trash-clear-btn" onclick="clearTrashGroup('${jsq(g.type)}','${jsq(g.label)}')" title="Limpar toda a lista">
           <i data-lucide="trash-2" class="ic-sm"></i> Limpar
         </button>
       </div>
@@ -39699,8 +39720,8 @@ function trashRowHTML(type, it) {
     </div>
     <div class="trash-item-purge${left.soon ? ' soon' : ''}" title="Removido definitivamente após 30 dias">${left.label}</div>
     <div class="trash-item-actions">
-      <button class="btn btn-ghost btn-sm" onclick="restoreTrashItem('${type}','${esc(it.id)}')">Restaurar</button>
-      <button class="btn btn-ghost btn-sm trash-purge-btn" title="Excluir definitivamente" onclick="purgeTrashItem('${type}','${esc(it.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
+      <button class="btn btn-ghost btn-sm" onclick="restoreTrashItem('${jsq(type)}','${jsq(it.id)}')">Restaurar</button>
+      <button class="btn btn-ghost btn-sm trash-purge-btn" title="Excluir definitivamente" onclick="purgeTrashItem('${jsq(type)}','${jsq(it.id)}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
     </div>
   </div>`;
 }
@@ -39933,7 +39954,7 @@ async function refreshWebauthnCredsUI() {
             <div class="pw-cred-meta">${typeLabel} · cadastrado em ${fmtAuditWhen(c.createdAt)}${c.lastUsedAt ? ' · último uso ' + fmtAuditWhen(c.lastUsedAt) : ''}</div>
           </div>
         </div>
-        <button class="pw-icon-btn danger" onclick="removeWebauthnCred('${esc(c.credentialID).replace(/'/g,"&#39;")}')" title="Remover"><i data-lucide="trash-2" class="ic-xs"></i></button>
+        <button class="pw-icon-btn danger" onclick="removeWebauthnCred('${jsq(c.credentialID)}')" title="Remover"><i data-lucide="trash-2" class="ic-xs"></i></button>
       </div>`;
   }).join('');
   paintIcons();
@@ -40111,7 +40132,7 @@ function renderPasswordsTable() {
         <i data-lucide="lock" class="ic-md"></i>
         <div class="pw-folder-locked-title">${esc(curFolder.name)} está travada</div>
         <div class="pw-folder-locked-sub">Autentique com sua senha da conta pra ver as ${curFolder.entryCount || 0} entrada${curFolder.entryCount === 1 ? '' : 's'}.</div>
-        <button class="btn btn-primary" onclick="openFolderUnlockModal('${curFolder.id}')"><i data-lucide="unlock" class="ic-sm"></i> Abrir pasta</button>
+        <button class="btn btn-primary" onclick="openFolderUnlockModal('${jsq(curFolder.id)}')"><i data-lucide="unlock" class="ic-sm"></i> Abrir pasta</button>
       </div>
     </td></tr>`;
     paintIcons();
@@ -40134,7 +40155,7 @@ function renderPasswordsTable() {
     const revealed = pwState.revealed[p.id];
     const pwCell = revealed
       ? `<span class="pw-value pw-value--shown" title="${esc(revealed.pw)}">${esc(revealed.pw)}</span>
-         <button class="pw-icon-btn" onclick="copyPwValue('${p.id}')" title="Copiar senha"><i data-lucide="copy" class="ic-sm"></i></button>`
+         <button class="pw-icon-btn" onclick="copyPwValue('${jsq(p.id)}')" title="Copiar senha"><i data-lucide="copy" class="ic-sm"></i></button>`
       : `<span class="pw-value">••••••••</span>`;
     const emailEsc = esc(p.email || '');
     const usernameEsc = esc(p.username || '');
@@ -40146,17 +40167,17 @@ function renderPasswordsTable() {
     return `
       <tr class="pw-main-row ${p.description ? 'has-desc' : ''}">
         <td class="pw-td-name mcol-name" title="${esc(p.name)}"><strong>${esc(p.name)}</strong></td>
-        <td class="pw-td-link ${p.link ? '' : 'is-blank'}"><span class="mlbl">Link</span>${p.link ? `<a href="${esc(p.link)}" target="_blank" rel="noopener" class="pw-link" title="${esc(p.link)}">${esc(_pwShortLink(p.link))}</a>` : '—'}</td>
+        <td class="pw-td-link ${p.link ? '' : 'is-blank'}"><span class="mlbl">Link</span>${p.link ? `<a href="${esc(safeUrl(p.link))}" target="_blank" rel="noopener" class="pw-link" title="${esc(p.link)}">${esc(_pwShortLink(p.link))}</a>` : '—'}</td>
         <td class="pw-td-single ${emailEsc ? '' : 'is-blank'}" title="${emailEsc}"><span class="mlbl">Email</span>${emailEsc || '—'}</td>
-        <td class="pw-td-single ${p.username ? '' : 'is-blank'}"><span class="mlbl">Usuário</span>${p.username ? `<span class="pw-mono" title="${usernameEsc}">${usernameEsc}</span> <button class="pw-icon-btn" onclick="copyToClipboard('${usernameEsc.replace(/'/g,"&#39;")}', 'Usuário')" title="Copiar"><i data-lucide="copy" class="ic-sm"></i></button>` : '—'}</td>
+        <td class="pw-td-single ${p.username ? '' : 'is-blank'}"><span class="mlbl">Usuário</span>${p.username ? `<span class="pw-mono" title="${usernameEsc}">${usernameEsc}</span> <button class="pw-icon-btn" onclick="copyToClipboard('${jsq(p.username)}', 'Usuário')" title="Copiar"><i data-lucide="copy" class="ic-sm"></i></button>` : '—'}</td>
         <td class="pw-cell pw-td-single"><span class="mlbl">Senha</span>${pwCell}</td>
         <td class="mc-act">
           <div class="pw-row-actions">
-            <button class="pw-icon-btn" onclick="togglePwReveal('${p.id}')" title="${revealed ? 'Ocultar' : 'Mostrar'} senha">
+            <button class="pw-icon-btn" onclick="togglePwReveal('${jsq(p.id)}')" title="${revealed ? 'Ocultar' : 'Mostrar'} senha">
               <i data-lucide="${revealed ? 'eye-off' : 'eye'}" class="ic-sm"></i>
             </button>
-            <button class="pw-icon-btn" onclick="openPwWizard('${p.id}')" title="Editar"><i data-lucide="pencil" class="ic-sm"></i></button>
-            <button class="pw-icon-btn danger" onclick="deletePwEntry('${p.id}')" title="Excluir"><i data-lucide="trash-2" class="ic-sm"></i></button>
+            <button class="pw-icon-btn" onclick="openPwWizard('${jsq(p.id)}')" title="Editar"><i data-lucide="pencil" class="ic-sm"></i></button>
+            <button class="pw-icon-btn danger" onclick="deletePwEntry('${jsq(p.id)}')" title="Excluir"><i data-lucide="trash-2" class="ic-sm"></i></button>
           </div>
         </td>
       </tr>
@@ -40182,11 +40203,11 @@ function renderPwFolders() {
   const folderItems = folders.map(f => {
     const isActive = sel === f.id;
     const isUnlocked = !!f.unlocked;
-    return `<button type="button" class="pw-folder-item ${isActive ? 'is-active' : ''} ${isUnlocked ? 'is-unlocked' : 'is-locked'}" data-folder-id="${f.id}" onclick="selectPwFolder('${f.id}')">
+    return `<button type="button" class="pw-folder-item ${isActive ? 'is-active' : ''} ${isUnlocked ? 'is-unlocked' : 'is-locked'}" data-folder-id="${f.id}" onclick="selectPwFolder('${jsq(f.id)}')">
       <i data-lucide="${isUnlocked ? 'folder-open' : 'lock'}" class="ic-sm"></i>
       <span class="pw-folder-name" title="${esc(f.name)}">${esc(f.name)}</span>
       <span class="pw-folder-count">${f.entryCount ?? 0}</span>
-      ${f.canEdit ? `<button type="button" class="pw-folder-menu-btn" title="Editar pasta" onclick="event.stopPropagation(); openPwFolderEditor('${f.id}')"><i data-lucide="more-horizontal" class="ic-xs"></i></button>` : ''}
+      ${f.canEdit ? `<button type="button" class="pw-folder-menu-btn" title="Editar pasta" onclick="event.stopPropagation(); openPwFolderEditor('${jsq(f.id)}')"><i data-lucide="more-horizontal" class="ic-xs"></i></button>` : ''}
     </button>`;
   }).join('');
   el.innerHTML = `
@@ -40653,10 +40674,10 @@ function renderKbGrid() {
     const tagsHtml = (p.tags || []).slice(0, 4).map(t => `<span class="kb-tag">${esc(t)}</span>`).join('');
     const contribs = (p.contributorIds || []).length;
     const cover = p.coverImage
-      ? `<div class="kb-card-cover" style="background-image:url('${esc(p.coverImage)}')"></div>`
+      ? `<div class="kb-card-cover" style="background-image:url('${cssu(p.coverImage)}')"></div>`
       : `<div class="kb-card-cover kb-card-cover--empty"><i data-lucide="file-text" class="ic-md"></i></div>`;
     return `
-      <button type="button" class="kb-card ${p.coverImage ? 'kb-card--has-cover' : ''}" onclick="openPostDetail('${p.id}')">
+      <button type="button" class="kb-card ${p.coverImage ? 'kb-card--has-cover' : ''}" onclick="openPostDetail('${jsq(p.id)}')">
         ${cover}
         <div class="kb-card-body">
           <div class="kb-card-head">
@@ -40686,7 +40707,7 @@ function renderKbTagChips() {
     `<button type="button" class="kb-chip ${activeTags.size === 0 ? 'is-active' : ''}" onclick="clearKbTagFilter()">Todas</button>` +
     tags.map(([t, n]) => {
       const isOn = activeTags.has(t);
-      return `<button type="button" class="kb-chip ${isOn ? 'is-active' : ''}" onclick="toggleKbTagFilter('${esc(t).replace(/'/g,"&#39;")}')">${esc(t)} <span class="kb-chip-count">${n}</span></button>`;
+      return `<button type="button" class="kb-chip ${isOn ? 'is-active' : ''}" onclick="toggleKbTagFilter('${jsq(t)}')">${esc(t)} <span class="kb-chip-count">${n}</span></button>`;
     }).join('');
 }
 /* Toggle multi-select: adiciona/remove a tag do filtro ativo. AND entre elas. */
@@ -40735,8 +40756,8 @@ async function openPostDetail(id, fromRoute) {
     <div class="kb-detail-head">
       <button type="button" class="btn btn-ghost btn-sm" onclick="backToKbGrid()"><i data-lucide="arrow-left" class="ic-sm"></i> Voltar</button>
       <div class="kb-detail-actions">
-        ${canEdit ? `<button type="button" class="btn btn-ghost btn-sm" onclick="openPostEditor('${p.id}')"><i data-lucide="pencil" class="ic-sm"></i> Editar</button>` : ''}
-        ${isAuthorOrPriv ? `<button type="button" class="btn btn-ghost btn-sm" onclick="deletePost('${p.id}')"><i data-lucide="trash-2" class="ic-sm"></i> Excluir</button>` : ''}
+        ${canEdit ? `<button type="button" class="btn btn-ghost btn-sm" onclick="openPostEditor('${jsq(p.id)}')"><i data-lucide="pencil" class="ic-sm"></i> Editar</button>` : ''}
+        ${isAuthorOrPriv ? `<button type="button" class="btn btn-ghost btn-sm" onclick="deletePost('${jsq(p.id)}')"><i data-lucide="trash-2" class="ic-sm"></i> Excluir</button>` : ''}
       </div>
     </div>
     ${p.coverImage ? `<div class="kb-detail-cover"><img src="${esc(p.coverImage)}" alt="Capa do post"></div>` : ''}
@@ -40942,7 +40963,7 @@ function _removePostTag(t) {
 function renderPostTagList() {
   const wrap = $('post-tag-list'); if (!wrap) return;
   wrap.innerHTML = (kbState.editingTags || []).map(t => `
-    <span class="post-tag-chip">${esc(t)}<button type="button" class="post-tag-remove" onclick="_removePostTag('${esc(t).replace(/'/g,"&#39;")}')" title="Remover">×</button></span>
+    <span class="post-tag-chip">${esc(t)}<button type="button" class="post-tag-remove" onclick="_removePostTag('${jsq(t)}')" title="Remover">×</button></span>
   `).join('');
 }
 
