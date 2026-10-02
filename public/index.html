@@ -1302,7 +1302,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                       <button type="button" class="mth-prio-sort" onclick="sortList('priority')" title="Ordenar por prioridade"><i data-lucide="flag" class="ic-xs"></i></button>
                       <span class="mth-sort" onclick="sortList('name')">Demanda <i data-lucide="chevrons-up-down" class="ic-xs"></i></span>
                     </th>
-                    <th style="cursor:pointer" onclick="sortList('project')">Projeto <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                    <th class="mcol-project" style="cursor:pointer" onclick="sortList('project')">Projeto <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                     <th style="cursor:pointer" onclick="sortList('client')">Cliente <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                     <th style="cursor:pointer" onclick="sortList('status')">Etapa <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                     <th style="cursor:pointer" onclick="sortList('owner')">Responsável <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
@@ -1663,8 +1663,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
     <!-- ── TEMPLATES ── -->
     <div class="page" id="page-templates">
       <div class="page-body">
-        <div class="table-wrap table-scroll">
-          <table>
+        <div class="table-wrap table-scroll mcard-wrap">
+          <table class="mcard">
             <thead>
               <tr>
                 <th style="cursor:pointer" onclick="sortTplBy('name')">Template <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
@@ -2634,8 +2634,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
         <div class="section-head" style="justify-content:flex-end">
           <button class="btn btn-primary btn-sm admin-only full-admin-only" onclick="openWsModal()">+ Nova Equipe</button>
         </div>
-        <div class="table-wrap table-scroll">
-          <table>
+        <div class="table-wrap table-scroll mcard-wrap">
+          <table class="mcard">
             <thead>
               <tr>
                 <th style="cursor:pointer" onclick="sortWsBy('name')">Equipe <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
@@ -2837,8 +2837,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                 <button class="btn btn-primary btn-sm" onclick="openPwWizard(null)"><i data-lucide="plus" class="ic-sm"></i> Nova entrada</button>
               </div>
             </div>
-            <div class="table-wrap table-scroll">
-              <table>
+            <div class="table-wrap table-scroll mcard-wrap">
+              <table class="mcard">
                 <thead>
                   <tr>
                     <th>Nome</th>
@@ -4985,7 +4985,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20261001nd1" defer></script>
+<script src="/js/boot.js?v=20261002resp2" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

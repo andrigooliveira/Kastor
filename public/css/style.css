@@ -1323,7 +1323,9 @@ body::before {
 
 /* ── MAIN ── */
 .main {
-  margin-left: var(--sidebar-w); flex: 1;
+  /* min-width:0 — sem isso, conteúdo largo (agenda, tabelas) estica o .main
+     além da tela em tablet/notebook pequeno e a página inteira rola de lado. */
+  margin-left: var(--sidebar-w); flex: 1; min-width: 0;
   display: flex; flex-direction: column; min-height: 100vh;
   /* Acompanha a transição da largura da sidebar pra não ter descolamento
      entre o edge direita do sidebar e a coluna do conteúdo principal. */
@@ -14077,12 +14079,12 @@ tr.demand-row:hover {
 /* Split de pastas: sidebar esquerda + tabela direita. */
 .pw-split {
   display: grid;
-  grid-template-columns: minmax(200px, 240px) 1fr;
+  grid-template-columns: minmax(200px, 240px) minmax(0, 1fr);
   gap: 20px;
   align-items: start;
 }
 @media (max-width: 900px) {
-  .pw-split { grid-template-columns: 1fr; }
+  .pw-split { grid-template-columns: minmax(0, 1fr); }
   .pw-folders { display: flex; flex-wrap: wrap; gap: 6px; }
   .pw-folder-section-title { display: none; }
 }
@@ -20578,6 +20580,7 @@ body.dv-resizing[data-dv-resize="se"] * { cursor: nwse-resize !important; }
   .main { padding-bottom: calc(var(--mnav-h) + var(--mnav-safe) + 84px); }
   /* No detalhe da demanda a barra dá lugar às ações da demanda */
   body.is-detail .mnav, body.is-detail .mnav-fab { display: none; }
+  body.no-fab .mnav-fab { display: none; }
   body.is-detail .main { padding-bottom: calc(76px + var(--mnav-safe)); }
   /* Tela cheia (404/login) e modal aberto: sem barra */
   body.is-fullpage .mnav, body.is-fullpage .mnav-fab { display: none; }
@@ -21084,4 +21087,84 @@ body.dv-resizing[data-dv-resize="se"] * { cursor: nwse-resize !important; }
   #demand-modal.dw-short #save-as-template-btn { display: none !important; }
   #demand-modal.dw-short .demand-wizard-footer { flex-wrap: nowrap; }
   #demand-modal.dw-short #f-owner-select * { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+}
+
+/* MOBILE v2 — revisão de responsividade (auditoria em 360/412px). */
+@media (max-width: 760px) {
+  /* Cartão de demanda: nome do responsável longo não invade o prazo. */
+  .mine-table-v2.mdt tr.mrow[data-prio] > td.mcol-owner { overflow: hidden; }
+  .mine-table-v2.mdt .mowner { display: flex; max-width: 100%; }
+
+  /* Demandas Recorrentes: filtro de equipe ocupa a linha em vez de sair da tela. */
+  #page-recurringDemands .section-head { flex-wrap: wrap; }
+  .rd-filter { flex: 1 1 100%; min-width: 0; }
+  .rd-filter .filter-cdrop, .rd-filter .form-control { flex: 1 1 auto; min-width: 0 !important; width: auto; }
+
+  /* Editar acesso rápido: texto em cima, botões embaixo. */
+  .st-head { flex-wrap: wrap; }
+  .st-intro { flex: 1 1 100%; }
+
+  /* Capacidade: a linha da meta quebra em vez de cortar. */
+  .cap-kpi { min-width: 0; max-width: 100%; }
+  .cap-kpi-main { flex-wrap: wrap; row-gap: 2px; }
+  .cap-kpi-sub { white-space: normal; }
+
+  /* Ritmo: sem a margem lateral extra; indicadores em 2×2. */
+  .rhythm-header-v2, .rhythm-filter-bar, .rhythm-stack-v2 { margin-left: 0; margin-right: 0; }
+  .rhythm-filter-bar { padding-left: 0; padding-right: 0; }
+  .rhy-kpi-line { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 0; }
+  .rhy-kpi { padding: 0 10px; min-width: 0; }
+  .rhy-kpi:nth-child(odd) { border-left: 0 !important; padding-left: 0; }
+  .rhy-kpi-label { white-space: normal; }
+
+  /* Relatórios: indicadores em 2×2; tabela de etapas em cartões. */
+  .rep-kpi-line { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 0; }
+  .rep-kpi { padding: 2px 12px; }
+  .rep-kpi:nth-child(odd) { border-left: 0 !important; padding-left: 0; }
+  table.mcard tr > td.mc-wide { flex: 1 1 100%; }
+  .rep-stage-table.mcard .rep-time-bar { margin-top: 4px; }
+  .rep-split { grid-template-columns: minmax(0, 1fr) !important; }
+
+  /* Listas de tarefas: clientes numa faixa que rola de lado, não numa caixa cortada. */
+  .rec-layout { grid-template-columns: minmax(0, 1fr) !important; min-height: 0; }
+  .rec-clients-col {
+    flex-direction: row; overflow-x: auto; overflow-y: hidden; max-height: none !important;
+    padding: 12px 16px; gap: 8px; scrollbar-width: none;
+  }
+  .rec-clients-col > * { flex: 0 0 auto; margin: 0 !important; }
+  .rec-clients-col .rec-client-card { max-width: 220px; }
+  .rec-clients-col .rec-clients-all { display: flex; align-items: center; }
+  .rec-content-col { padding: 16px; }
+
+  /* Botão só com ícone (⚙ do cliente/projeto) não pode ser espremido. */
+  .filters-bar > .btn-icon-only { width: 36px !important; min-width: 36px; height: 36px; padding: 0 !important; justify-content: center; }
+  #clients-view-detail > .filters-bar > *, #projects-view-detail > .filters-bar > * { order: 1; }
+  #clients-view-detail > .filters-bar > :first-child, #projects-view-detail > .filters-bar > :first-child { order: -2; }
+  #clients-view-detail > .filters-bar > .btn-icon-only, #projects-view-detail > .filters-bar > .btn-icon-only { order: -1; }
+
+  /* Performance: filtros na largura do cartão. */
+  .perf-controls, .perf-control { width: 100%; }
+  .perf-control .filter-cdrop { width: 100%; }
+}
+
+/* Tablet (761–880px): a barra lateral vira gaveta, então a página da demanda
+   (fixa) começa na borda — antes sobrava uma faixa vazia do tamanho da barra. */
+@media (min-width: 761px) and (max-width: 880px) {
+  #page-demand-detail.active, body.sidebar-collapsed #page-demand-detail.active { left: 0; }
+}
+
+/* Tablet/notebook pequeno: a faixa Prioridade · Prazo · Entrou · Criada ·
+   Concluída quebrava torta (segunda linha recuada). Vira grade de colunas iguais. */
+@media (min-width: 761px) and (max-width: 1280px) {
+  .dd-ribbon { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 12px 16px; }
+  .dd-ribbon-item, .dd-ribbon-item:first-child { padding: 0; border-left: 0 !important; }
+}
+
+/* Tablet/notebook pequeno (761–1100px): a lista de Demandas não cabia e o
+   Prazo ficava escondido à direita. Some a coluna Projeto (o cliente fica). */
+@media (min-width: 761px) and (max-width: 1100px) {
+  .mine-table-v2.is-demands .mcol-project { display: none; }
+}
+@media (min-width: 761px) and (max-width: 880px) {
+  .table-wrap table.mcard { min-width: 0; }
 }

@@ -7908,7 +7908,7 @@ function renderOrgPage() {
     const ppl = active.filter(u => u.orgRole === 'owner' || u.orgRole === 'admin' || (u.workspaces || []).includes(w.id)).length;
     const cl = clients.filter(c => c.workspaceId === w.id && c.active !== false && !c.deletedAt).length;
     const open = demands.filter(x => x.workspaceId === w.id && !x.completedAt && !x.deletedAt).length;
-    return `<tr><td><span class="pill-dot" style="background:${esc(w.color || '#7A00FF')};margin-right:8px"></span>${esc(w.name)}</td><td class="num">${ppl}</td><td class="num">${cl}</td><td class="num">${open}</td></tr>`;
+    return `<tr><td class="mcol-name"><span class="pill-dot" style="background:${esc(w.color || '#7A00FF')};margin-right:8px"></span>${esc(w.name)}</td><td class="num mc-dim"><span class="mlbl">Pessoas</span>${ppl}</td><td class="num mc-dim"><span class="mlbl">Clientes</span>${cl}</td><td class="num mc-dim"><span class="mlbl">Demandas abertas</span>${open}</td></tr>`;
   }).join('');
 
   host.innerHTML = `<div class="orgp">
@@ -7975,7 +7975,7 @@ function renderOrgPage() {
       <section class="orgp-card" id="orgp-squads">
         ${head('Equipes', 'Cada equipe tem seus clientes, projetos, fluxos e demandas. Quem vê cada equipe é definido em Pessoas.',
           admin ? `<div class="orgp-head-actions"><button class="btn btn-ghost btn-sm" onclick="goPage('workspaces')">Gerenciar equipes</button></div>` : '')}
-        ${squadRows ? `<div class="table-wrap"><table class="orgp-table">
+        ${squadRows ? `<div class="table-wrap mcard-wrap"><table class="orgp-table mcard">
           <thead><tr><th>Equipe</th><th class="num">Pessoas</th><th class="num">Clientes</th><th class="num">Demandas abertas</th></tr></thead>
           <tbody>${squadRows}</tbody></table></div>` : `<p class="orgp-empty">Nenhuma equipe ainda.</p>`}
       </section>` : ''}
@@ -8543,7 +8543,11 @@ function syncBottomNav(target) {
     if (on) n.setAttribute('aria-current', 'page'); else n.removeAttribute('aria-current');
   });
   document.body.classList.toggle('is-detail', target === 'demand-detail');
+  // O + (Nova demanda) só nas telas de trabalho; em formulários e configurações
+  // ele cobria campos e botões no canto da tela.
+  document.body.classList.toggle('no-fab', !FAB_PAGES.has(target));
 }
+const FAB_PAGES = new Set(['dashboard', 'mine', 'list', 'agenda', 'clients']);
 
 /* "Mais": o que não está no acesso rápido, numa lista ao lado da barra
    (um clique só). No celular a lista abre por cima da própria gaveta. */
@@ -13198,13 +13202,13 @@ function buildReportsHTML(data) {
         <div class="mname"><span class="rep-stage-dot" style="background:${esc(s.stageColor || '#7A00FF')}"></span>${esc(s.stageName)}</div>
         <div class="mname-sub">${esc(s.flowName || '—')}</div>
       </td>
-      <td class="rep-col-time">
-        <div class="rep-time-val">${esc(fmtDur(s.avgHours))}</div>
+      <td class="rep-col-time mc-wide">
+        <div class="rep-time-val"><span class="mlbl">Tempo médio</span>${esc(fmtDur(s.avgHours))}</div>
         <div class="rep-time-bar"><span class="rep-time-bar-fill" style="width:${pct}%;background:${barColor}"></span></div>
       </td>
-      <td class="rep-col-num"><span class="rep-num">${s.samples}</span></td>
-      <td class="rep-col-num"><span class="rep-num${(s.reworkCount || 0) > 0 ? ' rep-num--warn' : ''}">${s.reworkCount || 0}</span></td>
-      <td class="rep-col-score">
+      <td class="rep-col-num mc-dim"><span class="mlbl">Passagens</span><span class="rep-num">${s.samples}</span></td>
+      <td class="rep-col-num mc-dim"><span class="mlbl">Retrabalho</span><span class="rep-num${(s.reworkCount || 0) > 0 ? ' rep-num--warn' : ''}">${s.reworkCount || 0}</span></td>
+      <td class="rep-col-score mc-act">
         <span class="rep-score rep-score--${scoreClass}">${s._score}</span>
       </td>
     </tr>`;
@@ -13321,8 +13325,8 @@ function buildReportsHTML(data) {
         <span class="rep-section-title">Gargalos por etapa</span>
         <span class="rep-section-hint">Ordenado por score (tempo médio × frequência). Etapas com mesmo nome vêm agrupadas.</span>
       </div>
-      <div class="table-wrap mine-table-wrap rep-stage-table-wrap">
-        <table class="mine-table-v2 rep-stage-table">
+      <div class="table-wrap mine-table-wrap rep-stage-table-wrap mcard-wrap">
+        <table class="mine-table-v2 rep-stage-table mcard">
           <thead>
             <tr>
               <th class="rep-th-name">Etapa</th>
@@ -24500,11 +24504,11 @@ function renderWorkspaces() {
           <button class="detail-icon-btn danger" title="Excluir" onclick="deleteWs('${w.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
         </div>` : '';
     return `<tr class="row-hover-actions">
-      <td><span class="pill" style="color:${w.color || '#7A00FF'};background:${hexDim(w.color)}"><span class="pill-dot" style="background:${w.color || '#7A00FF'}"></span>${esc(w.name)}</span></td>
-      <td>${nClients}</td>
-      <td>${nProj}</td>
-      <td>${nUsers}</td>
-      <td>${actions}</td>
+      <td class="mcol-name"><span class="pill" style="color:${w.color || '#7A00FF'};background:${hexDim(w.color)}"><span class="pill-dot" style="background:${w.color || '#7A00FF'}"></span>${esc(w.name)}</span></td>
+      <td class="mc-dim"><span class="mlbl">Clientes</span>${nClients}</td>
+      <td class="mc-dim"><span class="mlbl">Projetos</span>${nProj}</td>
+      <td class="mc-dim"><span class="mlbl">Membros</span>${nUsers}</td>
+      <td class="mc-act">${actions}</td>
     </tr>`;
   }).join('');
 }
@@ -27828,11 +27832,11 @@ function renderTemplates() {
     const p = t.projectId ? projectById(t.projectId) : null;
     const f = t.flowId ? flowById(t.flowId) : null;
     return `<tr class="row-hover-actions">
-      <td><strong>${esc(t.name)}</strong>${t.description ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px">${esc(t.description.slice(0, 80))}${t.description.length > 80 ? '…' : ''}</div>` : ''}</td>
-      <td>${p ? esc(p.name) : '<span style="color:var(--text-muted)">— Qualquer —</span>'}</td>
-      <td>${f ? esc(f.name) : '<span style="color:var(--text-muted)">— Qualquer —</span>'}</td>
-      <td>${t.estimatedHours ? fmtHours(t.estimatedHours) : '—'}</td>
-      <td>
+      <td class="mcol-name"><strong>${esc(t.name)}</strong>${t.description ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px">${esc(t.description.slice(0, 80))}${t.description.length > 80 ? '…' : ''}</div>` : ''}</td>
+      <td class="mc-dim"><span class="mlbl">Projeto</span>${p ? esc(p.name) : '<span style="color:var(--text-muted)">— Qualquer —</span>'}</td>
+      <td class="mc-dim"><span class="mlbl">Fluxo</span>${f ? esc(f.name) : '<span style="color:var(--text-muted)">— Qualquer —</span>'}</td>
+      <td class="mc-dim ${t.estimatedHours ? '' : 'is-blank'}"><span class="mlbl">Horas</span>${t.estimatedHours ? fmtHours(t.estimatedHours) : '—'}</td>
+      <td class="mc-act">
         <div class="row-actions">
           <button class="detail-icon-btn" title="Criar demanda a partir deste template" onclick="useTemplate('${t.id}')"><i data-lucide="plus" class="ic-sm"></i></button>
           <button class="detail-icon-btn danger" title="Excluir" onclick="confirmDeleteTemplate('${t.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>
@@ -40141,12 +40145,12 @@ function renderPasswordsTable() {
       : '';
     return `
       <tr class="pw-main-row ${p.description ? 'has-desc' : ''}">
-        <td class="pw-td-name" title="${esc(p.name)}"><strong>${esc(p.name)}</strong></td>
-        <td class="pw-td-link">${p.link ? `<a href="${esc(p.link)}" target="_blank" rel="noopener" class="pw-link" title="${esc(p.link)}">${esc(_pwShortLink(p.link))}</a>` : '—'}</td>
-        <td class="pw-td-single" title="${emailEsc}">${emailEsc || '—'}</td>
-        <td class="pw-td-single">${p.username ? `<span class="pw-mono" title="${usernameEsc}">${usernameEsc}</span> <button class="pw-icon-btn" onclick="copyToClipboard('${usernameEsc.replace(/'/g,"&#39;")}', 'Usuário')" title="Copiar"><i data-lucide="copy" class="ic-sm"></i></button>` : '—'}</td>
-        <td class="pw-cell pw-td-single">${pwCell}</td>
-        <td>
+        <td class="pw-td-name mcol-name" title="${esc(p.name)}"><strong>${esc(p.name)}</strong></td>
+        <td class="pw-td-link ${p.link ? '' : 'is-blank'}"><span class="mlbl">Link</span>${p.link ? `<a href="${esc(p.link)}" target="_blank" rel="noopener" class="pw-link" title="${esc(p.link)}">${esc(_pwShortLink(p.link))}</a>` : '—'}</td>
+        <td class="pw-td-single ${emailEsc ? '' : 'is-blank'}" title="${emailEsc}"><span class="mlbl">Email</span>${emailEsc || '—'}</td>
+        <td class="pw-td-single ${p.username ? '' : 'is-blank'}"><span class="mlbl">Usuário</span>${p.username ? `<span class="pw-mono" title="${usernameEsc}">${usernameEsc}</span> <button class="pw-icon-btn" onclick="copyToClipboard('${usernameEsc.replace(/'/g,"&#39;")}', 'Usuário')" title="Copiar"><i data-lucide="copy" class="ic-sm"></i></button>` : '—'}</td>
+        <td class="pw-cell pw-td-single"><span class="mlbl">Senha</span>${pwCell}</td>
+        <td class="mc-act">
           <div class="pw-row-actions">
             <button class="pw-icon-btn" onclick="togglePwReveal('${p.id}')" title="${revealed ? 'Ocultar' : 'Mostrar'} senha">
               <i data-lucide="${revealed ? 'eye-off' : 'eye'}" class="ic-sm"></i>
