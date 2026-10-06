@@ -247,6 +247,7 @@ function pageUrlFor(page)  {
   if (page === 'profile') return '/profile' + _optSuffix(() => _profileSection !== 'account' ? '/' + _profileSection : '');
   if (page === 'integrations') return '/integrations' + _optSuffix(() => '/' + _integrationsTab);
   if (page === 'passwords') return '/passwords' + _optSuffix(() => pwState.selectedFolderId && pwState.selectedFolderId !== '__all__' ? '/folders/' + pwState.selectedFolderId : '');
+  if (page === 'org') return '/organization' + _optSuffix(() => _orgTab && _orgTab !== 'overview' ? '/' + ORG_TAB_PATHS[_orgTab] : '');
   // 404: preserva a URL digitada (não canoniza pra /home).
   if (page === 'notfound') return appPath();
   return PAGE_TO_PATH[page] || '/home';
@@ -294,7 +295,11 @@ function parseRoute(path) {
       const aba = new URLSearchParams(location.search).get('aba'); // formato antigo (?aba=)
       return { page: 'profile', section: PROFILE_SECTIONS.includes(aba) ? aba : 'account' };
     }
-    if ((mm = p.match(/^\/organization\/([a-z-]+)$/)) && ORG_SECTION_PATHS[mm[1]]) return { page: 'org', section: mm[1] };
+    if ((mm = p.match(/^\/organization\/([a-z-]+)$/)) && ORG_TAB_BY_PATH[mm[1]]) return { page: 'org', orgTab: ORG_TAB_BY_PATH[mm[1]] };
+    // Seções das configurações (links antigos /organization/plan etc.) abrem a aba Configurações.
+    if ((mm = p.match(/^\/organization\/([a-z-]+)$/)) && ORG_SECTION_PATHS[mm[1]]) return { page: 'org', orgTab: 'settings', section: mm[1] };
+    if (p === '/organization')            return { page: 'org', orgTab: 'overview' };
+    if (p === '/goals')                   return { page: 'org', orgTab: 'goals' };
     if (p === '/organizacao')             return { page: 'org', legacy: true }; // nome antigo
     if ((mm = p.match(/^\/integrations\/(discord|webhooks)$/))) return { page: 'integrations', tab: mm[1] };
     if ((mm = p.match(/^\/passwords\/folders\/([^/]+)$/))) return { page: 'passwords', folderId: mm[1] };
@@ -493,6 +498,7 @@ function applyRoute() {
 /* Estado de aba/visão que o render da página lê — setado antes de desenhar. */
 function _applyRouteStateBeforeRender(r) {
   if (r.page === 'profile' && r.section) _profileSection = r.section;
+  if (r.page === 'org' && r.orgTab) _orgTab = r.orgTab;
   if (r.page === 'supportTicket' && r.ticket && _sup.ticketNumber !== r.ticket) { _sup.ticketNumber = r.ticket; _sup.ticket = null; }
   if (r.page === 'integrations' && r.tab) _integrationsTab = r.tab;
   if (r.page === 'analytics' && r.capView) capacityView = r.capView;
@@ -570,6 +576,10 @@ window.addEventListener('popstate', applyRoute);
    de antes (replaceState). Modais de confirmação (confirm, prompt, pickers,
    excluir cliente/projeto, escopo de exclusão) ficam de fora de propósito. */
 const ORG_SECTION_PATHS = { plan: 'plano', general: 'geral', people: 'pessoas', teams: 'squads', schedule: 'jornada', integrations: 'integracoes', data: 'dados', danger: 'perigo' };
+// Abas da página Organização (renderOrgPage) e o pedaço do caminho de cada uma.
+const ORG_TAB_PATHS = { overview: 'overview', finance: 'finance', goals: 'goals', settings: 'settings' };
+const ORG_TAB_BY_PATH = Object.fromEntries(Object.entries(ORG_TAB_PATHS).map(([k, v]) => [v, k]));
+let _orgTab = null;
 const _routeQuery = (obj) => {
   const sp = new URLSearchParams();
   Object.entries(obj || {}).forEach(([k, v]) => { if (v != null && v !== '') sp.set(k, v); });
@@ -5950,7 +5960,7 @@ function renderOrgSwitch() {
       </div>
     </div>
     <div class="orgmenu-group">
-      ${me.isOwner ? action('settings-2', 'Configurações da organização', "_closeOrgMenu();goPage('org')") : ''}
+      ${me.isOwner ? action('settings-2', 'Configurações da organização', "_closeOrgMenu();setOrgTab('settings')") : ''}
       ${me.isOwner ? action('credit-card', 'Plano e pagamento', "_closeOrgMenu();goPage('billing')") : ''}
       ${me.isAdmin ? action('users', 'Pessoas e permissões', "_closeOrgMenu();goPage('users')") : ''}
       ${_canInvite() ? action('user-plus', 'Convidar pessoas', "_closeOrgMenu();goPage('users');setTimeout(openInviteModal,150)") : ''}
@@ -5977,7 +5987,7 @@ async function switchOrg(id) {
     location.href = '/' + id + '/home';
   } catch (e) { toast(e.message, 'error'); }
 }
-function openOrgSettings() { _closeOrgMenu(); if (me?.isOwner) goPage('org'); }
+function openOrgSettings() { _closeOrgMenu(); if (me?.isOwner) setOrgTab('settings'); }
 
 /* ─── PÁGINA: PLANO E PAGAMENTO (/billing) ───
    Planos com preço (mensal/anual), situação da assinatura, uso e faturas.
@@ -7867,8 +7877,643 @@ async function saveOrgLocale() {
     renderOrgPage();
   } catch (e) { toast(e.message, 'error'); }
 }
+/* ── PÁGINA ORGANIZAÇÃO ──
+   Abas: Visão geral (pessoas, clientes, faturamento e objetivos num relance),
+   Financeiro (faturamento lançado mês a mês, crescimento e contrato de cada
+   cliente), Objetivos (metas da organização e das equipes) e Configurações
+   (_renderOrgSettings). Dono, admins e mods veem tudo; o resto do time vê só
+   os Objetivos; as Configurações seguem só do dono. */
+const ORG_TABS = [
+  { id: 'overview', label: 'Visão geral',   icon: 'layout-grid' },
+  { id: 'finance',  label: 'Financeiro',    icon: 'wallet' },
+  { id: 'goals',    label: 'Objetivos',     icon: 'target' },
+  { id: 'settings', label: 'Configurações', icon: 'settings-2' },
+];
+function _orgTabsAllowed() {
+  const staff = !!(me && (me.isAdmin || me.isModerator));
+  return ORG_TABS.filter(t => t.id === 'goals' || (t.id === 'settings' ? !!me?.isOwner : staff));
+}
+function setOrgTab(id) {
+  if (!_orgTabsAllowed().some(t => t.id === id)) return;
+  const changed = _orgTab !== id;
+  _orgTab = id;
+  if (currentPage !== 'org') { goPage('org'); return; }
+  renderOrgPage();
+  navReplace(pageUrlFor('org'));
+  if (changed) $('org-page-body')?.scrollTo({ top: 0 });
+}
+let _orgRenderPending = false;
 function renderOrgPage() {
   const host = $('org-page-body');
+  if (!host || !me?.org) return;
+  // Re-render (tempo real) enquanto alguém digita num campo do painel perderia o que foi digitado.
+  const ae = document.activeElement;
+  if (_orgTab !== 'settings' && ae && host.contains(ae) && /^(INPUT|TEXTAREA)$/.test(ae.tagName)) {
+    if (!_orgRenderPending) {
+      _orgRenderPending = true;
+      ae.addEventListener('blur', () => { _orgRenderPending = false; setTimeout(() => { if (currentPage === 'org') renderOrgPage(); }, 0); }, { once: true });
+    }
+    return;
+  }
+  const tabs = _orgTabsAllowed();
+  if (!tabs.some(t => t.id === _orgTab)) _orgTab = tabs[0].id;
+  const org = me.org;
+  const squads = workspaces.length;
+  host.innerHTML = `<div class="orgh">
+    <header class="orgh-head">
+      <div class="orgh-id">
+        ${_orgTile(org, 'orgh-tile')}
+        <div class="orgh-id-text">
+          <h1 class="orgh-name">${esc(org.name)}</h1>
+          <p class="orgh-sub">${esc(ORG_ROLE_LABEL[org.role] || '')}${squads ? ` · ${squads} ${squads === 1 ? 'equipe' : 'equipes'}` : ''}</p>
+        </div>
+      </div>
+      ${tabs.length > 1 ? `<nav class="orgh-tabs" role="tablist" aria-label="Seções da organização">
+        ${tabs.map(t => `<button type="button" role="tab" class="orgh-tab${t.id === _orgTab ? ' is-active' : ''}" aria-selected="${t.id === _orgTab}" onclick="setOrgTab('${t.id}')"><i data-lucide="${t.icon}" class="ic-sm"></i><span>${t.label}</span></button>`).join('')}
+      </nav>` : ''}
+    </header>
+    <div class="orgh-panel" id="orgh-panel"></div>
+  </div>`;
+  paintIcons(host);
+  renderOrgPanel();
+}
+function renderOrgPanel() {
+  const panel = $('orgh-panel');
+  if (!panel) return;
+  const again = () => { if (currentPage === 'org') renderOrgPanel(); };
+  const fail = e => { panel.innerHTML = `<div class="orgh-empty orgh-empty--sm"><div class="orgh-empty-title">Não deu para carregar</div><p class="orgh-empty-sub">${esc(e.message || '')}</p></div>`; };
+  if (_orgTab === 'settings') { _renderOrgSettings(panel); return; }
+  if (_orgTab === 'goals') {
+    panel.innerHTML = _orgGoalsHTML();
+    paintIcons(panel);
+    if (!goals) ensureGoalsLoaded().then(again).catch(fail);
+    return;
+  }
+  if (_orgTab === 'finance') {
+    panel.innerHTML = _finance ? _orgFinanceHTML() : `<div class="orgh-loading">Carregando o financeiro…</div>`;
+    paintIcons(panel);
+    if (_finance) _finDrawCharts(panel);
+    else loadFinance().then(again).catch(fail);
+    return;
+  }
+  panel.innerHTML = _orgOverviewHTML();
+  paintIcons(panel);
+  _finDrawCharts(panel);
+  // Pessoas e clientes mudam fora daqui: recarrega ao entrar (no máx. a cada 30s).
+  const stale = !_orgOverview || Date.now() - _orgOverview._at > 30000;
+  const loads = [];
+  if (stale && !_orgOverviewLoading) {
+    _orgOverviewLoading = true;
+    loads.push(api('/org/overview').then(v => { _orgOverview = { ...v, _at: Date.now() }; }).finally(() => { _orgOverviewLoading = false; }));
+  }
+  if (!_finance) loads.push(loadFinance());
+  if (!goals) loads.push(ensureGoalsLoaded());
+  if (loads.length) Promise.all(loads).then(again).catch(fail);
+}
+// Redesenha os gráficos quando a largura muda (sidebar recolhida, janela).
+window.addEventListener('resize', debounce(() => {
+  if (currentPage === 'org' && (_orgTab === 'finance' || _orgTab === 'overview')) _finDrawCharts($('orgh-panel'));
+}, 150));
+
+/* ── Financeiro: dados e formatação ──
+   Receita recorrente = soma do valor mensal dos contratos ativos. O servidor
+   guarda um retrato por mês (snapshots); mês sem retrato repete o anterior,
+   já que contrato não some de um mês pro outro. */
+let _finance = null, _financeLoading = null, _orgOverview = null, _orgOverviewLoading = false;
+let _finRange = 12;   // 6 | 12 | 'all'
+let _finScope = '';   // '' = organização | workspaceId (gráfico do Financeiro)
+function loadFinance() {
+  if (!_financeLoading) {
+    _financeLoading = api('/finance').then(v => { _finance = v; return v; }).finally(() => { _financeLoading = null; });
+  }
+  return _financeLoading;
+}
+const _EURO = new Set(['PT', 'ES', 'FR', 'DE', 'IT', 'NL', 'BE', 'IE', 'AT', 'FI', 'GR', 'LU', 'SK', 'SI', 'EE', 'LV', 'LT', 'MT', 'CY', 'HR']);
+function orgCurrency() {
+  const c = String(me?.org?.country || 'BR').toUpperCase();
+  return c === 'BR' ? 'BRL' : _EURO.has(c) ? 'EUR' : c === 'GB' ? 'GBP' : 'USD';
+}
+function fmtMoney(v, cents) {
+  return new Intl.NumberFormat(LOCALE, { style: 'currency', currency: orgCurrency(), minimumFractionDigits: cents ? 2 : 0, maximumFractionDigits: cents ? 2 : 0 }).format(v || 0);
+}
+function fmtMoneyCompact(v) {
+  return new Intl.NumberFormat(LOCALE, { style: 'currency', currency: orgCurrency(), notation: 'compact', maximumFractionDigits: Math.abs(v) >= 1000 ? 1 : 0 }).format(v || 0);
+}
+function fmtPctSigned(v) {
+  if (v == null || !isFinite(v)) return '—';
+  const s = Math.abs(v).toLocaleString(LOCALE, { maximumFractionDigits: 1 });
+  return (v > 0 ? '+' : v < 0 ? '−' : '') + s + '%';
+}
+// Aceita "1.500,50", "1,500.50", "1500.5" — só números.
+function parseMoneyInput(s) {
+  let t = String(s || '').replace(/[^\d.,-]/g, '');
+  if (!t) return null;
+  const lc = t.lastIndexOf(','), ld = t.lastIndexOf('.');
+  if (lc >= 0 && ld >= 0) t = lc > ld ? t.replace(/\./g, '').replace(',', '.') : t.replace(/,/g, '');
+  else if (lc >= 0) t = /,\d{3}$/.test(t) && t.split(',').length > 2 ? t.replace(/,/g, '') : t.replace(/\./g, '').replace(',', '.');
+  else if (ld >= 0 && /^\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, '');
+  const n = Number(t);
+  return isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : NaN;
+}
+const _moneyInputValue = v => v == null ? '' : Number(v).toLocaleString(LOCALE, { minimumFractionDigits: v % 1 ? 2 : 0, maximumFractionDigits: 2 });
+function _ymNow() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; }
+function ymAdd(ym, n) {
+  const [y, m] = ym.split('-').map(Number);
+  const d = new Date(y, m - 1 + n, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+function finYmLabel(ym, style) {
+  const [y, m] = ym.split('-').map(Number);
+  const d = new Date(y, m - 1, 1);
+  if (style === 'long') return d.toLocaleDateString(LOCALE, { month: 'long', year: 'numeric' });
+  if (style === 'month') return d.toLocaleDateString(LOCALE, { month: 'long' });
+  return d.toLocaleDateString(LOCALE, { month: 'short' }).replace('.', '') + (style === 'year' ? ' ' + String(y).slice(2) : '');
+}
+const _finWsName = id => (_finance?.workspaces || []).find(w => w.id === id)?.name || wsById(id)?.name || 'Equipe';
+const _finWsColor = id => (_finance?.workspaces || []).find(w => w.id === id)?.color || wsById(id)?.color || 'var(--text-muted)';
+// Receita de hoje (organização ou equipe).
+function _finNow(scope) {
+  const c = _finance?.contracted;
+  return c ? (scope ? c.bySquad?.[scope] || 0 : c.total || 0) : 0;
+}
+// Receita de um mês passado: o último retrato até aquele mês (null antes do primeiro).
+function _finAt(ym, scope) {
+  if (ym >= _ymNow()) return _finNow(scope);
+  let v = null;
+  for (const s of _finance?.snapshots || []) {
+    if (s.month > ym) break;
+    v = scope ? s.bySquad?.[scope] || 0 : s.total;
+  }
+  return v;
+}
+function _finSeries(range, scope) {
+  const cur = _ymNow();
+  const first = (_finance?.snapshots || [])[0]?.month || cur;
+  let start = range === 'all' ? first : ymAdd(cur, -(range - 1));
+  if (range === 'all' && start > ymAdd(cur, -5)) start = ymAdd(cur, -5); // ao menos 6 meses no eixo
+  const out = [];
+  let prev = null;
+  for (let ym = start; ym <= cur; ym = ymAdd(ym, 1)) {
+    const v = _finAt(ym, scope);
+    out.push({ ym, amount: v, growth: v != null && prev != null && prev > 0 ? (v - prev) / prev * 100 : null });
+    prev = v;
+  }
+  return out;
+}
+function _finDeltaChip(g, vsYm) {
+  if (g == null) return '';
+  const dir = g > 0.05 ? 'up' : g < -0.05 ? 'down' : 'flat';
+  return `<span class="fin-delta is-${dir}"><i data-lucide="${dir === 'down' ? 'trending-down' : 'trending-up'}" class="ic-xs"></i>${fmtPctSigned(g)}<span class="fin-delta-vs">vs ${esc(finYmLabel(vsYm, 'month'))}</span></span>`;
+}
+
+/* ── Metas de faturamento ──
+   Situação: atingida (a receita chegou no alvo), não atingida (o prazo passou
+   sem chegar), em risco (o caminho entre o ponto de partida e o alvo andou bem
+   menos que o tempo que já passou) ou no prazo. Depois do prazo vale a receita
+   do mês do prazo. */
+const REV_STATUS = {
+  ok:      { label: 'No prazo',     icon: 'circle-dot' },
+  risk:    { label: 'Em risco',     icon: 'circle-alert' },
+  reached: { label: 'Atingida',     icon: 'check' },
+  missed:  { label: 'Não atingida', icon: 'triangle-alert' },
+};
+function revGoalInfo(g) {
+  const today = todayStr();
+  const ended = g.dueDate < today;
+  const current = ended ? (_finAt(g.dueDate.slice(0, 7), g.workspaceId) ?? 0) : _finNow(g.workspaceId);
+  const base = Math.min(g.baseline || 0, g.target);
+  const start = Date.parse(String(g.createdAt || '').slice(0, 10) + 'T00:00:00');
+  const end = Date.parse(g.dueDate + 'T23:59:59');
+  const elapsed = start && end > start ? Math.min(1, Math.max(0, (Date.now() - start) / (end - start))) : 1;
+  const expected = base + (g.target - base) * elapsed;
+  const gap = g.target > base ? (current - base) / (g.target - base) : 1;
+  const status = current >= g.target ? 'reached' : ended ? 'missed' : gap * 100 < elapsed * 100 - 20 ? 'risk' : 'ok';
+  const [ty, tm] = today.split('-').map(Number), [dy, dm] = g.dueDate.split('-').map(Number);
+  const monthsLeft = Math.max(0, (dy - ty) * 12 + (dm - tm));
+  const remaining = Math.max(0, g.target - current);
+  return {
+    ended, current, status, remaining, monthsLeft,
+    pct: Math.round(current / g.target * 100),
+    expected, expectedPct: Math.min(100, expected / g.target * 100),
+    perMonth: monthsLeft > 0 ? remaining / monthsLeft : remaining,
+  };
+}
+const _revStatusBadge = st => `<span class="og-status is-${st === 'reached' ? 'done' : st === 'missed' ? 'late' : st}"><i data-lucide="${REV_STATUS[st].icon}" class="ic-xs"></i>${REV_STATUS[st].label}</span>`;
+const _revGoalTitle = g => g.title || `Receita de ${fmtMoney(g.target)} por mês`;
+const _revScopeHTML = g => `<span class="fg-scope">${g.workspaceId ? `<span class="og-scope-dot" style="background:${esc(_finWsColor(g.workspaceId))}"></span>${esc(_finWsName(g.workspaceId))}` : '<i data-lucide="building-2" class="ic-xs"></i>Organização'}</span>`;
+function _revGoalHTML(g) {
+  const i = revGoalInfo(g);
+  const canEdit = !!_finance?.canEdit;
+  const months = i.monthsLeft === 0 ? 'este mês' : i.monthsLeft === 1 ? 'falta 1 mês' : `faltam ${i.monthsLeft} meses`;
+  const foot = i.status === 'reached'
+    ? (i.current > g.target ? `${fmtMoney(i.current - g.target)} acima da meta` : 'Na meta')
+    : i.ended ? `Ficaram faltando ${fmtMoney(i.remaining)} por mês`
+    : `Faltam ${fmtMoney(i.remaining)} por mês${i.monthsLeft > 1 ? ` · crescer cerca de ${fmtMoney(i.perMonth)} por mês até o prazo` : ''}`;
+  return `<article class="fg is-${i.status}">
+    <header class="fg-head">
+      <div class="fg-titles">${_revScopeHTML(g)}<h3 class="fg-title">${esc(_revGoalTitle(g))}</h3></div>
+      <div class="fg-side">${_revStatusBadge(i.status)}${canEdit ? `<button type="button" class="og-icon-btn" onclick="openRevGoalModal('${g.id}')" title="Editar meta" aria-label="Editar meta"><i data-lucide="pencil" class="ic-sm"></i></button>` : ''}</div>
+    </header>
+    <div class="fg-figs">
+      <span class="fg-now">${esc(fmtMoney(i.current))}</span>
+      <span class="fg-of">de ${esc(fmtMoney(g.target))} por mês</span>
+      <span class="fg-pct">${i.pct}%</span>
+    </div>
+    <div class="fg-bar" role="img" aria-label="${i.pct}% da meta">
+      <span class="fg-fill" style="width:${Math.min(100, i.pct)}%"></span>
+      ${!i.ended && i.status !== 'reached' && i.expectedPct > 0 ? `<span class="fg-mark" style="left:${i.expectedPct.toFixed(1)}%" title="Onde a receita deveria estar hoje: ${esc(fmtMoney(i.expected))}"></span>` : ''}
+    </div>
+    <div class="fg-foot">
+      <span>${i.ended ? `Prazo encerrado em ${fmtDate(g.dueDate)}` : `Até ${fmtDate(g.dueDate)} · ${months}`}</span>
+      <span class="fg-foot-main">${esc(foot)}</span>
+      <span class="fg-base">Começou em ${esc(fmtMoney(g.baseline || 0))}</span>
+    </div>
+  </article>`;
+}
+
+/* ── Gráficos (SVG desenhado na largura real do contêiner) ──
+   Linha: receita recorrente (linha + área a 10%) com a meta como linha de
+   referência. Colunas: crescimento mês a mês em %, a partir do zero (para
+   cima = cresceu). Passar o mouse mostra o mês. */
+const _finChartData = new Map();
+// Passo "redondo" (1, 2, 2,5, 5 × 10ⁿ) para `parts` faixas cobrindo v.
+function _niceStep(v, parts) {
+  const raw = v / parts;
+  if (!(raw > 0)) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(raw)));
+  const f = raw / p;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p;
+}
+const _niceMax = (v, parts = 4) => { const s = _niceStep(v, parts); return Math.max(s, Math.ceil(v / s) * s); };
+function _finChartSlot(id, kind, series, opts) {
+  _finChartData.set(id, { kind, series, opts: opts || {} });
+  return `<div class="fin-chart" id="${id}" style="height:${(opts && opts.height) || 240}px"></div>`;
+}
+function _finDrawCharts(root) {
+  if (!root) return;
+  root.querySelectorAll('.fin-chart').forEach(el => {
+    const d = _finChartData.get(el.id);
+    if (!d) return;
+    el.innerHTML = d.kind === 'growth' ? _finGrowthSVG(el, d.series) : _finLineSVG(el, d.series, d.opts);
+    _finBindHover(el, d);
+  });
+}
+const _barPath = (x, w, yBase, yTip) => {
+  const h = Math.abs(yBase - yTip), r = Math.min(4, h, w / 2);
+  if (h < 0.5) return '';
+  return yTip < yBase
+    ? `M${x},${yBase}V${yTip + r}Q${x},${yTip} ${x + r},${yTip}H${x + w - r}Q${x + w},${yTip} ${x + w},${yTip + r}V${yBase}Z`
+    : `M${x},${yBase}V${yTip - r}Q${x},${yTip} ${x + r},${yTip}H${x + w - r}Q${x + w},${yTip} ${x + w},${yTip - r}V${yBase}Z`;
+};
+function _finGeom(el, series, padL) {
+  const W = Math.max(260, el.clientWidth || 600), H = el.clientHeight || 240;
+  const pad = { l: padL, r: 16, t: 14, b: 26 };
+  const iw = W - pad.l - pad.r, ih = H - pad.t - pad.b, n = series.length;
+  const band = iw / n;
+  const x = i => pad.l + band * i + band / 2;
+  // Rótulos do eixo X: no máximo um a cada ~56px.
+  const step = Math.max(1, Math.ceil(n / Math.max(1, Math.floor(iw / 56))));
+  const xLabels = series.map((s, i) => ((n - 1 - i) % step === 0)
+    ? `<text class="fin-ax" x="${x(i)}" y="${H - 8}" text-anchor="middle">${esc(finYmLabel(s.ym, s.ym.endsWith('-01') || i === 0 ? 'year' : 'short'))}</text>` : '').join('');
+  return { W, H, pad, iw, ih, n, band, x, xLabels };
+}
+function _finLineSVG(el, series, opts) {
+  const targets = opts.targets || [];
+  const vals = series.map(s => s.amount).filter(v => v != null);
+  if (!vals.some(v => v > 0)) return `<div class="fin-chart-empty">Sem contratos neste período.</div>`;
+  const top = Math.max(...vals, ...targets.map(t => t.value)) * 1.05;
+  const step = _niceStep(top, 4);
+  const max = Math.max(step, Math.ceil(top / step) * step);
+  const ticks = [];
+  for (let t = 0; t <= max + step / 2; t += step) ticks.push(t);
+  const padL = Math.max(...ticks.map(t => fmtMoneyCompact(t).length)) * 6.4 + 14;
+  const g = _finGeom(el, series, padL);
+  const y = v => g.pad.t + g.ih - (v / max) * g.ih;
+  const grid = ticks.map(t => `<line class="fin-grid" x1="${g.pad.l}" x2="${g.W - g.pad.r}" y1="${y(t)}" y2="${y(t)}"/><text class="fin-ax" x="${g.pad.l - 8}" y="${y(t) + 4}" text-anchor="end">${esc(fmtMoneyCompact(t))}</text>`).join('');
+  // Metas: linha de referência com o valor na ponta.
+  const tg = targets.map(t => `<line class="fin-target" x1="${g.pad.l}" x2="${g.W - g.pad.r}" y1="${y(t.value)}" y2="${y(t.value)}"/>
+    <text class="fin-target-label" x="${g.pad.l + 6}" y="${y(t.value) - 6}">${esc(t.label)}</text>`).join('');
+  const segs = [];
+  let cur = [];
+  series.forEach((s, i) => { if (s.amount != null) cur.push([g.x(i), y(s.amount), i]); else if (cur.length) { segs.push(cur); cur = []; } });
+  if (cur.length) segs.push(cur);
+  const line = pts => 'M' + pts.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join('L');
+  const base = y(0);
+  const area = segs.filter(s => s.length > 1).map(s => `<path class="fin-area" d="${line(s)}L${s[s.length - 1][0].toFixed(1)},${base}L${s[0][0].toFixed(1)},${base}Z"/>`).join('');
+  const lines = segs.map(s => s.length > 1 ? `<path class="fin-line fin-line--billed" d="${line(s)}"/>` : '').join('');
+  const last = segs.length ? segs[segs.length - 1].slice(-1)[0] : null;
+  const dots = segs.filter(s => s.length === 1).map(s => s[0]);
+  if (last && !dots.includes(last)) dots.push(last);
+  const dotSvg = dots.map(p => `<circle class="fin-dot fin-dot--billed" cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="4"/>`).join('');
+  const endLabel = last ? `<text class="fin-endlabel" x="${Math.min(last[0], g.W - g.pad.r - 4)}" y="${last[1] - 10}" text-anchor="${last[0] > g.W - 70 ? 'end' : 'middle'}">${esc(fmtMoneyCompact(series[last[2]].amount))}</text>` : '';
+  return `<svg width="${g.W}" height="${g.H}" viewBox="0 0 ${g.W} ${g.H}" role="img" aria-label="Receita recorrente mês a mês">
+    ${grid}${tg}${area}${lines}${dotSvg}${endLabel}${g.xLabels}
+    <line class="fin-cross" x1="0" x2="0" y1="${g.pad.t}" y2="${base}" visibility="hidden"/>
+  </svg><div class="fin-tip" hidden></div>`;
+}
+function _finGrowthSVG(el, series) {
+  const vals = series.map(s => s.growth).filter(v => v != null);
+  if (!vals.length) return `<div class="fin-chart-empty">O crescimento aparece a partir do segundo mês com contratos.</div>`;
+  const hi = _niceMax(Math.max(0, ...vals) * 1.15 || 1, 2), lo = Math.min(0, ...vals) < 0 ? -_niceMax(-Math.min(...vals) * 1.15, 2) : 0;
+  const g = _finGeom(el, series, 46);
+  const y = v => g.pad.t + (hi - v) / (hi - lo) * g.ih;
+  const y0 = y(0);
+  const ticks = lo < 0 ? [hi, 0, lo] : [hi, hi / 2, 0];
+  const grid = ticks.map(t => `<line class="fin-grid${t === 0 ? ' fin-grid--zero' : ''}" x1="${g.pad.l}" x2="${g.W - g.pad.r}" y1="${y(t)}" y2="${y(t)}"/><text class="fin-ax" x="${g.pad.l - 8}" y="${y(t) + 4}" text-anchor="end">${esc(fmtPctSigned(t).replace('+', ''))}</text>`).join('');
+  const bw = Math.min(24, g.band * 0.62);
+  let lastI = -1;
+  series.forEach((s, i) => { if (s.growth != null) lastI = i; });
+  const bars = series.map((s, i) => s.growth == null ? '' : `<path class="fin-bar ${s.growth < 0 ? 'is-down' : 'is-up'}" data-i="${i}" d="${_barPath(g.x(i) - bw / 2, bw, y0, y(s.growth))}"/>`).join('');
+  const last = series[lastI];
+  const lbl = last ? `<text class="fin-endlabel" x="${g.x(lastI)}" y="${last.growth < 0 ? y(last.growth) + 15 : y(last.growth) - 7}" text-anchor="middle">${esc(fmtPctSigned(last.growth))}</text>` : '';
+  return `<svg width="${g.W}" height="${g.H}" viewBox="0 0 ${g.W} ${g.H}" role="img" aria-label="Crescimento mês a mês">
+    ${grid}${bars}${lbl}${g.xLabels}
+    <line class="fin-cross" x1="0" x2="0" y1="${g.pad.t}" y2="${g.H - g.pad.b}" visibility="hidden"/>
+  </svg><div class="fin-tip" hidden></div>`;
+}
+function _finBindHover(el, d) {
+  const svg = el.querySelector('svg');
+  if (!svg) return;
+  const tip = el.querySelector('.fin-tip'), cross = svg.querySelector('.fin-cross');
+  const n = d.series.length;
+  const W = Number(svg.getAttribute('width'));
+  const padL = Number(svg.querySelector('.fin-grid')?.getAttribute('x1') || 0);
+  const band = (W - padL - 16) / n;
+  const hide = () => { tip.hidden = true; cross.setAttribute('visibility', 'hidden'); el.querySelectorAll('.fin-bar.is-hot').forEach(b => b.classList.remove('is-hot')); };
+  el.onmouseleave = hide;
+  el.onmousemove = ev => {
+    const r = svg.getBoundingClientRect();
+    const i = Math.floor((ev.clientX - r.left - padL) / band);
+    if (i < 0 || i >= n) { hide(); return; }
+    const s = d.series[i];
+    const cx = padL + band * i + band / 2;
+    cross.setAttribute('x1', cx); cross.setAttribute('x2', cx); cross.setAttribute('visibility', 'visible');
+    el.querySelectorAll('.fin-bar').forEach(b => b.classList.toggle('is-hot', Number(b.dataset.i) === i));
+    const money = v => v == null ? 'sem contratos' : fmtMoney(v, v % 1 !== 0);
+    const row = (k, label, v) => `<div class="fin-tip-row"><span class="fin-key fin-key--${k}"></span><span>${label}</span><b>${v}</b></div>`;
+    tip.innerHTML = `<div class="fin-tip-title">${esc(finYmLabel(s.ym, 'long'))}</div>`
+      + (d.kind === 'growth'
+        ? row('billed', 'Crescimento', s.growth == null ? '—' : fmtPctSigned(s.growth)) + row('none', 'Receita recorrente', money(s.amount))
+        : row('billed', 'Receita recorrente', money(s.amount))
+          + (s.growth != null ? `<div class="fin-tip-foot">${fmtPctSigned(s.growth)} vs ${esc(finYmLabel(ymAdd(s.ym, -1), 'month'))}</div>` : ''));
+    tip.hidden = false;
+    const tw = tip.offsetWidth;
+    tip.style.left = Math.max(0, Math.min(el.clientWidth - tw, cx + (cx + 14 + tw > el.clientWidth ? -tw - 14 : 14))) + 'px';
+    tip.style.top = '8px';
+  };
+}
+// Metas ainda abertas de um escopo, como linhas de referência do gráfico.
+const _finTargetsFor = scope => (_finance?.goals || [])
+  .filter(g => (g.workspaceId || '') === (scope || '') && g.dueDate >= todayStr())
+  .map(g => ({ value: g.target, label: `Meta ${fmtMoneyCompact(g.target)} até ${fmtDateShort(g.dueDate)}` }));
+
+/* ── Aba Visão geral ── */
+function _orgOverviewHTML() {
+  const ov = _orgOverview;
+  const tile = (label, value, sub, icon, extra) => `<div class="ov-tile">
+      <div class="ov-tile-head"><span class="ov-tile-label">${label}</span><i data-lucide="${icon}" class="ov-tile-ic"></i></div>
+      <div class="ov-tile-value">${value}</div>
+      <div class="ov-tile-sub">${sub || ''}</div>${extra || ''}
+    </div>`;
+  const skel = '<span class="ov-skel"></span>';
+  const canEdit = !!_finance?.canEdit;
+  const toFinance = (then) => `setOrgTab('finance')${then ? `;setTimeout(()=>${then},60)` : ''}`;
+  // Pessoas
+  const roleBits = ov ? [['admin', 'admin', 'admins'], ['mod', 'mod', 'mods'], ['equipe', 'membro', 'membros'], ['free', 'freelancer', 'freelancers']]
+    .map(([k, one, many]) => { const n = ov.users.byRole[k] + (k === 'admin' ? ov.users.byRole.owner : 0); return n ? `<span>${n} ${n === 1 ? one : many}</span>` : ''; }).filter(Boolean).join(' · ') : '';
+  const people = tile('Pessoas ativas', ov ? ov.users.active : skel,
+    ov ? `${ov.users.seen7d} ${ov.users.seen7d === 1 ? 'usou' : 'usaram'} o reWork nos últimos 7 dias` : '', 'users',
+    roleBits ? `<div class="ov-tile-foot">${roleBits}</div>` : '');
+  // Clientes
+  const withClients = ov ? ov.clients.bySquad.filter(s => s.clients).length : 0;
+  const clientsT = tile('Clientes ativos', ov ? ov.clients.total : skel,
+    ov ? (ov.clients.total ? `em ${withClients} ${withClients === 1 ? 'equipe' : 'equipes'}` : 'Nenhum cliente cadastrado') : '', 'briefcase');
+  // Receita recorrente + a meta da organização que vence primeiro
+  const nowTotal = _finNow('');
+  const prevYm = ymAdd(_ymNow(), -1);
+  const prevTotal = _finance ? _finAt(prevYm, '') : null;
+  const growthNow = prevTotal > 0 ? (nowTotal - prevTotal) / prevTotal * 100 : null;
+  const orgGoal = (_finance?.goals || []).filter(g => !g.workspaceId && g.dueDate >= todayStr()).sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0];
+  const goalFoot = orgGoal ? (() => { const i = revGoalInfo(orgGoal); return `<div class="ov-tile-foot ov-goal-foot"><span class="ov-goal-bar"><span style="width:${Math.min(100, i.pct)}%"></span></span>${i.pct}% da meta de ${esc(fmtMoneyCompact(orgGoal.target))}</div>`; })() : '';
+  const revenue = !_finance ? tile('Receita recorrente', skel, '', 'wallet')
+    : nowTotal ? tile('Receita recorrente', esc(fmtMoney(nowTotal)), _finDeltaChip(growthNow, prevYm) || 'por mês, somando os contratos', 'wallet', goalFoot)
+    : tile('Receita recorrente', '—', canEdit ? `<button type="button" class="og-link" onclick="${toFinance("document.getElementById('fin-fees')?.scrollIntoView({behavior:'smooth'})")}">Cadastrar contratos</button>` : 'Nenhum contrato cadastrado', 'wallet');
+  // Objetivos
+  const open = (goals || []).filter(g => goalStatus(g) !== 'done');
+  const late = open.filter(g => goalStatus(g) === 'late').length, risk = open.filter(g => goalStatus(g) === 'risk').length;
+  const goalsT = tile('Objetivos em andamento', goals ? open.length : skel,
+    goals ? (late || risk ? [late ? `<span class="ov-bad">${late} ${late === 1 ? 'atrasado' : 'atrasados'}</span>` : '', risk ? `<span class="ov-warn">${risk} em risco</span>` : ''].filter(Boolean).join(' · ') : (open.length ? 'Tudo no prazo' : 'Nenhum em andamento')) : '', 'target');
+  // Gráfico: receita dos últimos 12 meses com as metas da organização
+  const series = _finance ? _finSeries(12, '') : [];
+  const hasFin = series.some(s => s.amount);
+  const growthCard = `<section class="orgh-card ov-growth">
+      <header class="orgh-card-head">
+        <div><h2 class="orgh-card-title">Receita recorrente nos últimos 12 meses</h2>
+        <p class="orgh-card-hint">Soma dos contratos ativos em cada mês${orgGoal ? ', com a meta da organização' : ''}.</p></div>
+        <button type="button" class="og-link" onclick="setOrgTab('finance')">Abrir financeiro <i data-lucide="arrow-right" class="ic-xs"></i></button>
+      </header>
+      ${!_finance ? '<div class="ov-chart-skel"></div>' : hasFin ? _finChartSlot('ov-chart', 'line', series, { height: 210, targets: _finTargetsFor('') })
+        : `<div class="orgh-empty orgh-empty--sm"><p class="orgh-empty-sub">${canEdit ? 'Cadastre o valor mensal do contrato de cada cliente no Financeiro para acompanhar a receita e as metas aqui.' : 'Quando a administração cadastrar os contratos dos clientes, a receita aparece aqui.'}</p>
+          ${canEdit ? `<button class="btn btn-primary btn-sm" onclick="${toFinance()}"><i data-lucide="wallet" class="ic-sm"></i> Abrir financeiro</button>` : ''}</div>`}
+    </section>`;
+  // Clientes por equipe
+  const sq = ov ? ov.clients.bySquad.slice().sort((a, b) => b.clients - a.clients || norm(a.name).localeCompare(norm(b.name))) : [];
+  const maxC = Math.max(1, ...sq.map(s => s.clients));
+  const clientsCard = `<section class="orgh-card ov-squads">
+      <header class="orgh-card-head"><div><h2 class="orgh-card-title">Clientes por equipe</h2>
+      <p class="orgh-card-hint">Clientes ativos e quantas pessoas veem cada equipe.</p></div></header>
+      ${!ov ? '<div class="ov-chart-skel ov-chart-skel--sm"></div>' : !sq.length ? '<p class="orgh-empty-sub">Nenhuma equipe ainda.</p>'
+        : `<ul class="ov-bars">${sq.map(s => `<li class="ov-bar-row" title="${esc(s.name)}: ${s.clients} ${s.clients === 1 ? 'cliente' : 'clientes'}, ${s.people} ${s.people === 1 ? 'pessoa' : 'pessoas'}">
+            <span class="ov-bar-name"><span class="og-scope-dot" style="background:${esc(s.color || 'var(--text-muted)')}"></span><span class="ov-bar-label">${esc(s.name)}</span></span>
+            <span class="ov-bar-track"><span class="ov-bar-fill" style="width:${s.clients ? Math.max(2, s.clients / maxC * 100) : 0}%"></span><span class="ov-bar-val">${s.clients}</span></span>
+            <span class="ov-bar-people">${s.people} ${s.people === 1 ? 'pessoa' : 'pessoas'}</span>
+          </li>`).join('')}</ul>`}
+    </section>`;
+  // Objetivos com prazo mais perto
+  const soon = open.slice().sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate))).slice(0, 4);
+  const goalsCard = `<section class="orgh-card ov-goals">
+      <header class="orgh-card-head"><div><h2 class="orgh-card-title">Objetivos com prazo mais perto</h2></div>
+        <button type="button" class="og-link" onclick="setOrgTab('goals')">Ver todos <i data-lucide="arrow-right" class="ic-xs"></i></button></header>
+      ${!goals ? '<div class="ov-chart-skel ov-chart-skel--sm"></div>' : soon.length ? `<div class="og-compact-list">${soon.map(_goalCompactHTML).join('')}</div>`
+        : `<p class="orgh-empty-sub">Nenhum objetivo em andamento.${_goalCanManage() ? ` <button type="button" class="og-link" onclick="setOrgTab('goals');setTimeout(()=>openGoalModal(),60)">Criar objetivo</button>` : ''}</p>`}
+    </section>`;
+  return `<div class="ov">
+    <div class="ov-tiles">${people}${clientsT}${revenue}${goalsT}</div>
+    <div class="ov-grid">${growthCard}${clientsCard}</div>
+    ${goalsCard}
+  </div>`;
+}
+
+/* ── Aba Financeiro ── */
+function setFinRange(r) { _finRange = r; renderOrgPanel(); }
+function onFinScopeChange() { _finScope = $('fin-scope')?.value || ''; renderOrgPanel(); }
+function _orgFinanceHTML() {
+  const f = _finance;
+  const canEdit = !!f.canEdit;
+  if (_finScope && !f.workspaces.some(w => w.id === _finScope)) _finScope = '';
+  const nowTotal = _finNow('');
+  const prevYm = ymAdd(_ymNow(), -1);
+  const prevTotal = _finAt(prevYm, '');
+  const growthNow = prevTotal > 0 ? (nowTotal - prevTotal) / prevTotal * 100 : null;
+  const orgSeries = _finSeries(12, '');
+  const growths = orgSeries.map(s => s.growth).filter(v => v != null).slice(-6);
+  const avgG = growths.length ? growths.reduce((s, v) => s + v, 0) / growths.length : null;
+  const withFee = (f.clientFees || []).filter(x => x.amount > 0 && f.clients.some(c => c.id === x.clientId)).length;
+  const stat = (label, value, hint) => `<div class="fin-stat"><div class="fin-stat-label">${label}</div><div class="fin-stat-value">${value}</div>${hint ? `<div class="fin-stat-hint">${hint}</div>` : ''}</div>`;
+  const hero = `<section class="orgh-card fin-hero">
+      <div class="fin-hero-main">
+        <div class="fin-kicker">Receita recorrente hoje</div>
+        <div class="fin-hero-value">${esc(fmtMoney(nowTotal))}<span class="fin-hero-unit">/mês</span></div>
+        <div class="fin-hero-delta">${nowTotal ? (_finDeltaChip(growthNow, prevYm) || '<span class="fin-muted">Soma dos contratos ativos</span>')
+          : `<span class="fin-muted">${canEdit ? 'Cadastre o valor mensal de cada cliente em Contratos por cliente, mais abaixo.' : 'Nenhum contrato cadastrado ainda.'}</span>`}</div>
+      </div>
+      <div class="fin-stats">
+        ${stat('Crescimento médio', avgG == null ? '—' : esc(fmtPctSigned(avgG)), growths.length > 1 ? `por mês, nos últimos ${growths.length} meses` : growths.length ? 'só um mês para comparar' : 'precisa de 2 meses com contratos')}
+        ${stat('Clientes com contrato', `${withFee} de ${f.clients.length}`, withFee < f.clients.length ? `${f.clients.length - withFee} sem valor cadastrado` : 'todos com valor')}
+        ${stat('Valor médio por cliente', withFee ? esc(fmtMoney(nowTotal / withFee)) : '—', 'por mês')}
+      </div>
+    </section>`;
+  // Metas: abertas primeiro (prazo mais perto), depois as encerradas.
+  const today = todayStr();
+  const goalsList = (f.goals || []).slice().sort((a, b) => ((a.dueDate < today) - (b.dueDate < today)) || (a.dueDate < today ? b.dueDate.localeCompare(a.dueDate) : a.dueDate.localeCompare(b.dueDate)));
+  const goalsCard = `<section class="orgh-card fin-goals">
+      <header class="orgh-card-head"><div><h2 class="orgh-card-title">Metas de faturamento</h2>
+        <p class="orgh-card-hint">A receita mensal que a organização ou uma equipe quer atingir, e até quando. O progresso sai sozinho da soma dos contratos.</p></div>
+        ${canEdit ? `<button class="btn btn-primary btn-sm" onclick="openRevGoalModal()"><i data-lucide="plus" class="ic-sm"></i> Nova meta</button>` : ''}</header>
+      ${goalsList.length ? `<div class="fg-list">${goalsList.map(_revGoalHTML).join('')}</div>`
+        : `<div class="orgh-empty orgh-empty--sm">
+            <span class="orgh-empty-icon"><i data-lucide="target"></i></span>
+            <div class="orgh-empty-title">Nenhuma meta de faturamento</div>
+            <p class="orgh-empty-sub">${canEdit ? 'Defina a receita mensal a que a organização, ou uma equipe, quer chegar. Ex.: R$ 80 mil por mês até dezembro.' : 'Só administradores criam metas de faturamento.'}</p>
+            ${canEdit ? `<button class="btn btn-primary btn-sm" onclick="openRevGoalModal()"><i data-lucide="plus" class="ic-sm"></i> Criar a primeira meta</button>` : ''}
+          </div>`}
+    </section>`;
+  // Gráfico do escopo escolhido
+  const series = _finSeries(_finRange, _finScope);
+  const ranges = [[6, '6 meses'], [12, '12 meses'], ['all', 'Tudo']];
+  const ws = f.workspaces.slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  const controls = `<div class="fin-chart-ctl">
+      <select class="form-control fin-scope" id="fin-scope" onchange="onFinScopeChange()" aria-label="Escopo do gráfico">
+        <option value="">Organização inteira</option>
+        ${ws.map(w => `<option value="${w.id}"${_finScope === w.id ? ' selected' : ''}>${esc(w.name)}</option>`).join('')}
+      </select>
+      <div class="filter-toggle fin-range" role="tablist" aria-label="Período">${ranges.map(([v, l]) =>
+        `<button type="button" class="filter-toggle-btn${_finRange === v ? ' is-active' : ''}" onclick="setFinRange(${typeof v === 'number' ? v : `'${v}'`})">${l}</button>`).join('')}</div>
+    </div>`;
+  const chart = `<section class="orgh-card">
+      <header class="orgh-card-head"><div><h2 class="orgh-card-title">Receita recorrente mês a mês</h2>
+        <p class="orgh-card-hint">Soma dos contratos ativos em cada mês. Mês sem mudança repete o valor do anterior.</p></div>${controls}</header>
+      ${_finChartSlot('fin-chart-main', 'line', series, { height: 260, targets: _finTargetsFor(_finScope) })}
+    </section>`;
+  const growth = `<section class="orgh-card">
+      <header class="orgh-card-head"><div><h2 class="orgh-card-title">Taxa de crescimento</h2>
+        <p class="orgh-card-hint">Quanto a receita recorrente${_finScope ? ' da equipe' : ''} subiu ou caiu em relação ao mês anterior.</p></div></header>
+      ${_finChartSlot('fin-chart-growth', 'growth', series, { height: 200 })}
+    </section>`;
+  return `<div class="fin">${hero}${goalsCard}${chart}<div class="fin-cols">${growth}${_finFeesHTML()}</div></div>`;
+}
+// Contratos por cliente, agrupados por equipe.
+function _finFeesHTML() {
+  const f = _finance, canEdit = !!f.canEdit;
+  const fee = id => (f.clientFees.find(x => x.clientId === id) || {}).amount ?? null;
+  const groups = f.workspaces.slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)))
+    .map(w => ({ w, list: f.clients.filter(c => c.workspaceId === w.id).sort((a, b) => norm(a.name).localeCompare(norm(b.name))) }))
+    .filter(gr => gr.list.length);
+  const body = groups.map(({ w, list }) => `<div class="fin-fee-group" data-group>
+      <div class="fin-fee-group-head"><span class="og-scope-dot" style="background:${esc(w.color || 'var(--text-muted)')}"></span><span>${esc(w.name)}</span><b>${esc(fmtMoney(f.contracted?.bySquad?.[w.id] || 0))}</b></div>
+      ${list.map(c => `<div class="fin-fee-row" data-name="${esc(norm(c.name))}">
+        <span class="fin-fee-name">${esc(c.name)}</span>
+        ${canEdit ? `<label class="fin-fee-input-wrap"><span class="fin-fee-cur">${esc(_currencySymbol())}</span><input class="form-control fin-fee-input" inputmode="decimal" placeholder="0" value="${esc(_moneyInputValue(fee(c.id)))}" aria-label="Valor mensal do contrato de ${esc(c.name)}" data-client="${c.id}" data-prev="${esc(String(fee(c.id) ?? ''))}" onchange="saveClientFee(this)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"></label>`
+          : `<span class="fin-fee-val">${fee(c.id) == null ? '<span class="fin-muted">—</span>' : esc(fmtMoney(fee(c.id)))}</span>`}
+      </div>`).join('')}
+    </div>`).join('');
+  return `<section class="orgh-card fin-fees" id="fin-fees">
+      <header class="orgh-card-head"><div><h2 class="orgh-card-title">Contratos por cliente</h2>
+        <p class="orgh-card-hint">Valor mensal de cada cliente ativo. É daqui que saem a receita e o progresso das metas. Só a gestão vê.</p></div>
+        <div class="fin-fees-total"><span>Total</span><b>${esc(fmtMoney(f.contracted?.total || 0))}</b></div></header>
+      ${groups.length ? `<div class="filter-input-wrap fin-fee-search"><i data-lucide="search" class="filter-input-icon ic-sm"></i>
+        <input class="filter-input filter-input--with-icon" placeholder="Buscar cliente…" oninput="filterFinFees(this.value)" aria-label="Buscar cliente"></div>
+        <div class="fin-fee-list" id="fin-fee-list">${body}</div>` : '<p class="orgh-empty-sub">Nenhum cliente ativo.</p>'}
+    </section>`;
+}
+function _currencySymbol() {
+  try { return new Intl.NumberFormat(LOCALE, { style: 'currency', currency: orgCurrency() }).formatToParts(0).find(p => p.type === 'currency')?.value || '$'; } catch { return '$'; }
+}
+function filterFinFees(q) {
+  const t = norm(q || '');
+  document.querySelectorAll('#fin-fee-list [data-group]').forEach(gr => {
+    let any = false;
+    gr.querySelectorAll('.fin-fee-row').forEach(r => { const ok = !t || r.dataset.name.includes(t); r.hidden = !ok; any = any || ok; });
+    gr.hidden = !any;
+  });
+}
+async function saveClientFee(input) {
+  const v = parseMoneyInput(input.value);
+  if (Number.isNaN(v)) { toast('Valor inválido. Use só números, como 1.500,00', 'error'); input.value = _moneyInputValue(input.dataset.prev ? Number(input.dataset.prev) : null); return; }
+  const prev = input.dataset.prev === '' ? null : Number(input.dataset.prev);
+  if ((v || null) === (prev || null)) { input.value = _moneyInputValue(v); return; }
+  try {
+    _finance = await api('/finance/client-fees/' + input.dataset.client, 'PUT', { amount: v });
+    input.dataset.prev = v == null ? '' : String(v);
+    input.value = _moneyInputValue(v);
+    toast('Contrato salvo.', 'success');
+    renderOrgPanel();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+/* Modal: criar/editar meta de faturamento. */
+let _revGoalEditId = null;
+function openRevGoalModal(id) {
+  if (!_finance?.canEdit) return;
+  const g = id ? (_finance.goals || []).find(x => x.id === id) : null;
+  _revGoalEditId = g ? g.id : null;
+  $('fin-goal-title').textContent = g ? 'Editar meta de faturamento' : 'Nova meta de faturamento';
+  $('fin-g-name').value = g?.title || '';
+  $('fin-g-target').value = g ? _moneyInputValue(g.target) : '';
+  $('fin-g-due').value = g?.dueDate || `${new Date().getFullYear()}-12-31`;
+  const ws = _finance.workspaces.slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  $('fin-g-scope').innerHTML = `<option value="">Organização inteira</option>` + ws.map(w => `<option value="${w.id}">Equipe ${esc(w.name)}</option>`).join('');
+  $('fin-g-scope').value = g ? (g.workspaceId || '') : (_finScope || '');
+  applyFilterDropdown('fin-g-scope');
+  $('fin-g-delete').style.display = g ? '' : 'none';
+  _revGoalScopeSync();
+  openModal('fin-goal-modal');
+}
+function _revGoalScopeSync() {
+  const scope = $('fin-g-scope').value || '';
+  const now = _finNow(scope);
+  $('fin-g-now').innerHTML = `Hoje ${scope ? 'a equipe recebe' : 'a organização recebe'} <b>${esc(fmtMoney(now))}</b> por mês em contratos.`;
+}
+async function saveRevGoal(ev) {
+  const target = parseMoneyInput($('fin-g-target').value);
+  const dueDate = $('fin-g-due').value;
+  if (target == null || Number.isNaN(target) || !(target > 0)) { toast('Informe a receita mensal que a meta quer atingir', 'error'); $('fin-g-target').focus(); return; }
+  if (!dueDate) { toast('Defina o prazo da meta', 'error'); $('fin-g-due').focus(); return; }
+  if (!_revGoalEditId && dueDate < todayStr()) { toast('O prazo precisa ser hoje ou depois', 'error'); $('fin-g-due').focus(); return; }
+  const body = { title: $('fin-g-name').value.trim(), target, dueDate, workspaceId: $('fin-g-scope').value || null };
+  await withLoading(ev, async () => {
+    try {
+      _finance = _revGoalEditId ? await api('/finance/goals/' + _revGoalEditId, 'PUT', body) : await api('/finance/goals', 'POST', body);
+      closeModal('fin-goal-modal');
+      toast(_revGoalEditId ? 'Meta salva.' : 'Meta criada.', 'success');
+      renderOrgPanel();
+    } catch (e) { toast(e.message, 'error'); }
+  });
+}
+async function deleteRevGoal() {
+  const g = (_finance?.goals || []).find(x => x.id === _revGoalEditId);
+  if (!g) return;
+  const ok = await showConfirm({ title: 'Excluir meta', message: `<strong>${esc(_revGoalTitle(g))}</strong> sai do financeiro e do gráfico.`, okLabel: 'Excluir meta', danger: true });
+  if (!ok) return;
+  try {
+    _finance = await api('/finance/goals/' + g.id, 'DELETE');
+    closeModal('fin-goal-modal');
+    toast('Meta excluída.', 'success');
+    renderOrgPanel();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function _renderOrgSettings(host) {
   if (!host || !me?.org) return;
   if (!_orgDraft || _orgDraft.orgId !== me.org.id) _orgDraft = { ..._orgFreshDraft(), orgId: me.org.id };
   const org = me.org, d = _orgDraft;
@@ -8435,6 +9080,7 @@ const NAV_CATALOG = [
   { page: 'dashboards', label: 'Dashboards', icon: 'layout-dashboard', sec: 'insight', cls: 'freelancer-hide', desc: 'Painéis sobre as respostas dos formulários.' },
   { page: 'analytics', label: 'Análises', icon: 'chart-column', sec: 'insight', cls: 'freelancer-hide', desc: 'Capacidade, ritmo e relatórios.' },
   { page: 'performance', label: 'Performance', icon: 'trending-up', sec: 'insight', cls: 'freelancer-hide', desc: 'Entregas e prazos por pessoa e área.' },
+  { page: 'org', label: 'Organização', icon: 'building-2', sec: 'insight', cls: 'freelancer-hide', desc: 'Pessoas, clientes, faturamento e objetivos da organização.' },
   { page: 'gallery', label: 'Galeria', icon: 'images', sec: 'content', cls: 'freelancer-hide', desc: 'Imagens e arquivos das demandas, por cliente.' },
   { page: 'kb', label: 'Base de conhecimento', icon: 'book-open', sec: 'content', cls: 'freelancer-hide', desc: 'Artigos e processos da equipe.' },
   { page: 'flows', label: 'Fluxos de Demanda', icon: 'workflow', sec: 'ops', cls: 'freelancer-hide', desc: 'Etapas, responsáveis e prazos de cada tipo de demanda.' },
@@ -8449,7 +9095,7 @@ const NAV_CATALOG = [
   { page: 'trash', label: 'Lixeira', icon: 'trash-2', sec: 'admin', cls: 'admin-only', desc: 'Itens apagados, para restaurar.' },
   { page: 'devtools', label: 'Dev Tools', icon: 'code-xml', sec: 'admin', cls: 'admin-only full-admin-only', desc: 'Rotas ocultas e atalhos técnicos.' },
 ];
-const NAV_DEFAULT = ['dashboard', 'mine', 'list', 'agenda', 'clients', 'dashboards', 'analytics', 'performance', 'gallery', 'kb'];
+const NAV_DEFAULT = ['dashboard', 'mine', 'list', 'agenda', 'clients', 'dashboards', 'analytics', 'performance', 'org', 'gallery', 'kb'];
 const NAV_DOCS = { page: 'help', label: 'Documentação', icon: 'circle-help', cls: 'freelancer-hide' };
 // Páginas sem item próprio que "pertencem" a outro item.
 const SB_PARENT = { projects: 'clients', clientsModels: 'flows' };
@@ -8812,6 +9458,7 @@ function markPageEntering(el) {
 const TAB_IND_SETS = [
   { item: '.dash-tab',            kind: 'line', inset: 10 },
   { item: '.an-tab',              kind: 'line' },
+  { item: '.orgh-tab',            kind: 'line' },
   { item: '.detail-tab',          kind: 'line' },
   { item: '.rec-tab',             kind: 'line', thick: 3 },
   { item: '.integrations-tab',    kind: 'line' },
@@ -9365,7 +10012,7 @@ function renderCurrent() {
       break;
     }
     case 'workspaces': renderWorkspaces(); break;
-    case 'org': if (me?.isOwner) renderOrgPage(); else goPage('dashboard'); break;
+    case 'org': if (me && !me.isFreelancer) renderOrgPage(); else goPage('dashboard'); break;
     case 'billing': renderBilling(); break;
     case 'billingCheckout': renderBillingCheckout(); break;
     case 'support': renderSupport(); break;
@@ -18836,6 +19483,354 @@ async function endRecurring(id) {
   } catch (e) {
     toast('Falha ao encerrar: ' + (e.message || 'erro'), 'error');
   }
+}
+
+/* ── TELA: OBJETIVOS ──
+   Objetivo da organização (workspaceId null) ou de uma equipe, com prazo e
+   metas feito/não feito. Carregam ao abrir a página (GET /goals) e seguem
+   atualizados pelo SSE 'goal'. Admin/mod criam e editam; a meta pode ser
+   marcada pela gestão ou pelo responsável dela. */
+let goals = null;            // null = ainda não carregou
+let _goalsLoading = null;
+let _goalStatusFilter = 'open';  // open | done | all
+let _goalScopeFilter = '';       // '' (tudo) | org | workspaceId
+let _goalEditId = null;
+function ensureGoalsLoaded() {
+  if (goals) return Promise.resolve(goals);
+  if (!_goalsLoading) {
+    _goalsLoading = api('/goals')
+      .then(v => { goals = Array.isArray(v) ? v : []; return goals; })
+      .finally(() => { _goalsLoading = null; });
+  }
+  return _goalsLoading;
+}
+function _goalCanManage(g) {
+  if (!me || !(me.isAdmin || me.isModerator)) return false;
+  return !g || !g.workspaceId || workspaces.some(w => w.id === g.workspaceId);
+}
+function _goalCanToggle(g, m) { return _goalCanManage(g) || (!!m.ownerId && m.ownerId === me?.id); }
+function goalProgress(g) {
+  const metas = g.metas || [];
+  const done = metas.filter(m => m.done).length;
+  return { total: metas.length, done, pct: metas.length ? Math.round(done / metas.length * 100) : 0, complete: metas.length > 0 && done === metas.length };
+}
+function _goalDaysLeft(due) {
+  return Math.round((Date.parse(due + 'T00:00:00') - Date.parse(todayStr() + 'T00:00:00')) / 86400000);
+}
+function _goalIsLate(g) { return !!g.dueDate && !goalProgress(g).complete && g.dueDate < todayStr(); }
+/* Situação: concluído, atrasado, em risco (faltam até 7 dias com menos de 70%
+   feito, ou o progresso ficou bem atrás do tempo que já passou desde a
+   criação), no prazo, ou sem metas. */
+function goalStatus(g) {
+  const p = goalProgress(g);
+  if (p.complete) return 'done';
+  if (_goalIsLate(g)) return 'late';
+  if (!p.total) return 'empty';
+  const start = Date.parse(String(g.createdAt || '').slice(0, 10) + 'T00:00:00');
+  const end = Date.parse(g.dueDate + 'T23:59:59');
+  const elapsed = start && end > start ? Math.min(1, Math.max(0, (Date.now() - start) / (end - start))) : 0;
+  if ((_goalDaysLeft(g.dueDate) <= 7 && p.pct < 70) || p.pct < elapsed * 100 - 25) return 'risk';
+  return 'ok';
+}
+const GOAL_STATUS = {
+  ok:    { label: 'No prazo',  icon: 'circle-dot' },
+  risk:  { label: 'Em risco',  icon: 'circle-alert' },
+  late:  { label: 'Atrasado',  icon: 'triangle-alert' },
+  done:  { label: 'Concluído', icon: 'check' },
+  empty: { label: 'Sem metas', icon: 'circle-dashed' },
+};
+function _goalScopeLabel(g) {
+  if (!g.workspaceId) return { name: 'Organização', color: '' };
+  const w = wsById(g.workspaceId);
+  return { name: w ? w.name : 'Equipe', color: w?.color || 'var(--text-muted)' };
+}
+const _goalStatusBadge = st => `<span class="og-status is-${st}"><i data-lucide="${GOAL_STATUS[st].icon}" class="ic-xs"></i>${GOAL_STATUS[st].label}</span>`;
+// Chip de prazo: vencido = vermelho, hoje = laranja, até 7 dias = âmbar.
+function _goalDueChip(due, finished, short) {
+  if (!due) return '';
+  if (finished) return `<span class="og-due">${short ? fmtDateShort(due) : fmtDate(due)}</span>`;
+  const days = _goalDaysLeft(due);
+  let cls = '', label = short ? fmtDateShort(due) : `Até ${fmtDate(due)}`, icon = 'calendar';
+  if (days < 0) { cls = 'is-late'; icon = 'triangle-alert'; label = short ? fmtDateShort(due) : `Venceu em ${fmtDate(due)}`; }
+  else if (days === 0) { cls = 'is-today'; icon = 'clock'; label = 'Vence hoje'; }
+  else if (days <= 7) { cls = 'is-soon'; if (!short) label = days === 1 ? 'Vence amanhã' : `Faltam ${days} dias`; }
+  return `<span class="og-due ${cls}"><i data-lucide="${icon}" class="ic-xs"></i>${esc(label)}</span>`;
+}
+function _goalRing(pct, st, size) {
+  const r = 15, c = 2 * Math.PI * r;
+  return `<span class="og-ring is-${st}${size === 'sm' ? ' og-ring--sm' : ''}" aria-hidden="true">
+    <svg viewBox="0 0 36 36"><circle class="og-ring-track" cx="18" cy="18" r="${r}"/>${pct > 0 ? `<circle class="og-ring-fill" cx="18" cy="18" r="${r}" stroke-dasharray="${c.toFixed(2)}" stroke-dashoffset="${(c * (1 - pct / 100)).toFixed(2)}"/>` : ''}</svg>
+    <span class="og-ring-pct">${st === 'done' ? '<i data-lucide="check" class="ic-xs"></i>' : pct}</span>
+  </span>`;
+}
+// Avatares dos responsáveis pelas metas (até 3 + contagem).
+function _goalOwnersStack(g) {
+  const ids = [...new Set((g.metas || []).map(m => m.ownerId).filter(Boolean))];
+  const ppl = ids.map(userById).filter(Boolean);
+  if (!ppl.length) return '';
+  return `<span class="og-owners" title="${esc(ppl.map(u => u.name).join(', '))}">${ppl.slice(0, 3).map(u => avatarHTML(u, 'avatar og-owner-av')).join('')}${ppl.length > 3 ? `<span class="og-owner-more">+${ppl.length - 3}</span>` : ''}</span>`;
+}
+function setGoalStatusFilter(s) { _goalStatusFilter = s; renderGoals(); }
+function onGoalScopeFilterChange() { _goalScopeFilter = $('goal-scope-filter')?.value || ''; renderGoals(); }
+// Toda mudança nos objetivos redesenha só o painel da página Organização.
+function renderGoals() { if (currentPage === 'org') renderOrgPanel(); }
+// Aberto por padrão o que está em andamento; concluído começa fechado.
+const _goalOpenState = {};
+function _goalIsOpen(g) { return g.id in _goalOpenState ? _goalOpenState[g.id] : goalStatus(g) !== 'done'; }
+function toggleGoalOpen(id) {
+  const g = (goals || []).find(x => x.id === id);
+  if (!g) return;
+  _goalOpenState[id] = !_goalIsOpen(g);
+  renderGoals();
+}
+function _goalMetaHTML(g, m) {
+  const owner = m.ownerId ? userById(m.ownerId) : null;
+  const can = _goalCanToggle(g, m);
+  const by = m.done && m.doneBy ? userById(m.doneBy) : null;
+  return `<li class="og-meta${m.done ? ' is-done' : ''}">
+    <button type="button" class="og-check" ${can ? `onclick="toggleGoalMeta('${g.id}', '${m.id}', ${!m.done})"` : 'disabled'}
+      title="${can ? (m.done ? 'Desmarcar' : 'Marcar como feita') : 'Só a gestão e o responsável marcam esta meta'}" aria-pressed="${m.done}" aria-label="${esc(m.title)}">
+      <i data-lucide="check" class="ic-xs"></i>
+    </button>
+    <span class="og-meta-title">${esc(m.title)}</span>
+    <span class="og-meta-side">
+      ${m.done && by ? `<span class="og-meta-by">por ${esc(by.name.split(' ')[0])} · ${esc(fmtDateShort(_ymdLocal(new Date(m.doneAt))))}</span>` : ''}
+      ${m.dueDate && !m.done ? _goalDueChip(m.dueDate, false, true) : ''}
+      ${owner ? `<span class="og-meta-owner" title="Responsável: ${esc(owner.name)}">${avatarHTML(owner, 'avatar og-owner-av')}</span>` : ''}
+    </span>
+  </li>`;
+}
+function _goalItemHTML(g) {
+  const p = goalProgress(g);
+  const st = goalStatus(g);
+  const open = _goalIsOpen(g);
+  const manage = _goalCanManage(g);
+  return `<article class="og-goal is-${st}${open ? ' is-open' : ''}">
+    <div class="og-goal-head" role="button" tabindex="0" aria-expanded="${open}" onclick="toggleGoalOpen('${g.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleGoalOpen('${g.id}')}">
+      ${_goalRing(p.pct, st)}
+      <div class="og-goal-main">
+        <h3 class="og-goal-title">${esc(g.title)}</h3>
+        <div class="og-goal-line">
+          <span>${p.total ? `${p.done} de ${p.total} ${p.total === 1 ? 'meta' : 'metas'}` : 'Sem metas ainda'}</span>
+          ${st === 'done' ? `<span class="og-dot" aria-hidden="true"></span><span class="og-due">Prazo ${fmtDate(g.dueDate)}</span>` : `<span class="og-dot" aria-hidden="true"></span>${_goalDueChip(g.dueDate, false)}`}
+        </div>
+      </div>
+      <div class="og-goal-side">
+        ${_goalStatusBadge(st)}
+        ${_goalOwnersStack(g)}
+        ${manage ? `<button type="button" class="og-icon-btn" onclick="event.stopPropagation();openGoalModal('${g.id}')" title="Editar objetivo" aria-label="Editar objetivo"><i data-lucide="pencil" class="ic-sm"></i></button>` : ''}
+        <i data-lucide="chevron-down" class="og-chevron"></i>
+      </div>
+    </div>
+    ${open ? `<div class="og-goal-body">
+      ${g.description ? `<p class="og-goal-desc">${esc(g.description)}</p>` : ''}
+      ${p.total ? `<ul class="og-metas">${(g.metas || []).map(m => _goalMetaHTML(g, m)).join('')}</ul>`
+        : `<p class="og-empty-metas">Nenhuma meta neste objetivo.${manage ? ` <button type="button" class="og-link" onclick="openGoalModal('${g.id}')">Adicionar metas</button>` : ''}</p>`}
+    </div>` : ''}
+  </article>`;
+}
+// Linha curta (Visão geral): clicar leva pra aba Objetivos.
+function _goalCompactHTML(g) {
+  const p = goalProgress(g), st = goalStatus(g), scope = _goalScopeLabel(g);
+  return `<button type="button" class="og-compact" onclick="setOrgTab('goals')">
+    ${_goalRing(p.pct, st, 'sm')}
+    <span class="og-compact-main">
+      <span class="og-compact-title">${esc(g.title)}</span>
+      <span class="og-compact-scope">${g.workspaceId ? `<span class="og-scope-dot" style="background:${esc(scope.color)}"></span>` : '<i data-lucide="building-2" class="ic-xs"></i>'}${esc(scope.name)}</span>
+    </span>
+    ${_goalStatusBadge(st)}
+    ${_goalDueChip(g.dueDate, st === 'done', true)}
+  </button>`;
+}
+function _orgGoalsHTML() {
+  const canNew = _goalCanManage();
+  const ws = workspaces.slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  if (!goals) return `<div class="orgh-loading">Carregando objetivos…</div>`;
+  let scoped = goals;
+  if (_goalScopeFilter === 'org') scoped = scoped.filter(g => !g.workspaceId);
+  else if (_goalScopeFilter) scoped = scoped.filter(g => g.workspaceId === _goalScopeFilter);
+  const byStatus = s => scoped.filter(g => goalStatus(g) === s).length;
+  const openList = scoped.filter(g => goalStatus(g) !== 'done');
+  const avg = openList.length ? Math.round(openList.reduce((s, g) => s + goalProgress(g).pct, 0) / openList.length) : null;
+  const filters = goals.length ? `<div class="filter-toggle" role="tablist" aria-label="Situação">
+        ${[['open', 'Em andamento', openList.length], ['done', 'Concluídos', byStatus('done')], ['all', 'Todos', scoped.length]].map(([k, l, n]) =>
+          `<button type="button" class="filter-toggle-btn${_goalStatusFilter === k ? ' is-active' : ''}" onclick="setGoalStatusFilter('${k}')">${l} <span class="og-count">${n}</span></button>`).join('')}
+      </div>` : '<span></span>';
+  const toolbar = `<div class="og-toolbar">
+      ${filters}
+      <div class="og-toolbar-right">
+        <select class="form-control og-scope-filter" id="goal-scope-filter" onchange="onGoalScopeFilterChange()" aria-label="Escopo">
+          <option value="">Organização e equipes</option>
+          <option value="org"${_goalScopeFilter === 'org' ? ' selected' : ''}>Só da organização</option>
+          ${ws.map(w => `<option value="${w.id}"${_goalScopeFilter === w.id ? ' selected' : ''}>${esc(w.name)}</option>`).join('')}
+        </select>
+        ${canNew ? `<button class="btn btn-primary btn-sm" onclick="openGoalModal()"><i data-lucide="plus" class="ic-sm"></i> Novo objetivo</button>` : ''}
+      </div>
+    </div>`;
+  if (!goals.length) {
+    return toolbar + `<div class="orgh-empty">
+      <span class="orgh-empty-icon"><i data-lucide="target"></i></span>
+      <div class="orgh-empty-title">Nenhum objetivo ainda</div>
+      <p class="orgh-empty-sub">${canNew ? 'Defina um objetivo com prazo e quebre em metas, cada uma com um responsável. Dá para fazer para a organização inteira ou para uma equipe.' : 'Quando a gestão definir objetivos para a organização ou para a sua equipe, eles aparecem aqui.'}</p>
+      ${canNew ? `<button class="btn btn-primary btn-sm" onclick="openGoalModal()"><i data-lucide="plus" class="ic-sm"></i> Criar o primeiro objetivo</button>` : ''}
+    </div>`;
+  }
+  const figs = `<div class="og-figs">
+      <div class="og-fig"><span class="og-fig-v">${openList.length}</span><span class="og-fig-l">em andamento</span></div>
+      <div class="og-fig${byStatus('risk') ? ' is-risk' : ''}"><span class="og-fig-v">${byStatus('risk')}</span><span class="og-fig-l"><i data-lucide="circle-alert" class="ic-xs"></i>em risco</span></div>
+      <div class="og-fig${byStatus('late') ? ' is-late' : ''}"><span class="og-fig-v">${byStatus('late')}</span><span class="og-fig-l"><i data-lucide="triangle-alert" class="ic-xs"></i>${byStatus('late') === 1 ? 'atrasado' : 'atrasados'}</span></div>
+      <div class="og-fig"><span class="og-fig-v">${avg === null ? '—' : avg + '%'}</span><span class="og-fig-l">progresso médio</span></div>
+    </div>`;
+  let list = _goalStatusFilter === 'open' ? openList
+    : _goalStatusFilter === 'done' ? scoped.filter(g => goalStatus(g) === 'done') : scoped.slice();
+  // Em andamento: o prazo mais perto primeiro. Concluídos: o mais recente primeiro.
+  const dir = _goalStatusFilter === 'done' ? -1 : 1;
+  list = list.slice().sort((a, b) => dir * String(a.dueDate || '').localeCompare(String(b.dueDate || '')) || norm(a.title).localeCompare(norm(b.title)));
+  if (!list.length) {
+    return toolbar + figs + `<div class="orgh-empty orgh-empty--sm">
+      <div class="orgh-empty-title">${_goalStatusFilter === 'done' ? 'Nenhum objetivo concluído aqui' : 'Nada em andamento aqui'}</div>
+      <p class="orgh-empty-sub">Troque o filtro para ver os outros objetivos.</p></div>`;
+  }
+  // Agrupa: organização primeiro, depois cada equipe por nome.
+  const groups = [{ id: '', name: 'Organização', items: list.filter(g => !g.workspaceId) }]
+    .concat(ws.map(w => ({ id: w.id, name: w.name, color: w.color, items: list.filter(g => g.workspaceId === w.id) })))
+    .filter(gr => gr.items.length);
+  return toolbar + figs + groups.map(gr => `<section class="og-group">
+      <header class="og-group-head">
+        ${gr.id ? `<span class="og-scope-dot" style="background:${esc(gr.color || 'var(--text-muted)')}"></span>` : '<i data-lucide="building-2" class="ic-sm"></i>'}
+        <h2 class="og-group-title">${esc(gr.name)}</h2>
+        <span class="og-group-count">${gr.items.length}</span>
+      </header>
+      <div class="og-goals">${gr.items.map(_goalItemHTML).join('')}</div>
+    </section>`).join('');
+}
+async function toggleGoalMeta(goalId, metaId, done) {
+  const g = (goals || []).find(x => x.id === goalId);
+  const m = g && (g.metas || []).find(x => x.id === metaId);
+  if (!m) return;
+  const before = { done: m.done, doneAt: m.doneAt, doneBy: m.doneBy };
+  Object.assign(m, { done, doneAt: done ? new Date().toISOString() : null, doneBy: done ? me.id : null });
+  renderGoals();
+  try {
+    const upd = await api(`/goals/${goalId}/metas/${metaId}`, 'PUT', { done });
+    const i = goals.findIndex(x => x.id === goalId);
+    if (i >= 0) goals[i] = upd;
+    if (done && goalProgress(upd).complete) toast(`Objetivo concluído: ${upd.title}`, 'success');
+  } catch (e) {
+    Object.assign(m, before);
+    toast(e.message, 'error');
+  }
+  renderGoals();
+}
+
+/* Modal do objetivo. Metas em linhas editáveis; o responsável sai das pessoas
+   que enxergam o objetivo (a equipe escolhida, ou a organização toda). */
+function _goalOwnerOptions(wsId) {
+  return (users || [])
+    .filter(u => u.active !== false && !u.isFreelancer && (!wsId || u.isAdmin || (u.workspaces || []).includes(wsId)))
+    .sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+}
+function _goalMetaRowHTML(m, wsId) {
+  const opts = _goalOwnerOptions(wsId);
+  return `<div class="goal-meta-row" data-meta-id="${esc(m.id || '')}">
+    <input class="form-control goal-meta-title" maxlength="200" placeholder="Ex.: Fechar 5 contratos novos" value="${esc(m.title || '')}" aria-label="Título da meta">
+    <select class="form-control goal-meta-owner" data-cdrop-icon="user" aria-label="Responsável">
+      <option value="">Sem responsável</option>
+      ${opts.map(u => `<option value="${u.id}"${u.id === m.ownerId ? ' selected' : ''}>${esc(u.name)}</option>`).join('')}
+    </select>
+    <input class="form-control goal-meta-due" type="date" value="${esc(m.dueDate || '')}" aria-label="Prazo da meta (opcional)" title="Prazo da meta (opcional)">
+    <button type="button" class="btn btn-ghost btn-sm goal-meta-del" onclick="removeGoalMetaRow(this)" title="Remover meta" aria-label="Remover meta"><i data-lucide="x" class="ic-sm"></i></button>
+  </div>`;
+}
+function _readGoalMetaRows() {
+  return [...document.querySelectorAll('#goal-metas-list .goal-meta-row')].map(r => ({
+    id: r.dataset.metaId || null,
+    title: r.querySelector('.goal-meta-title').value.trim(),
+    ownerId: r.querySelector('.goal-meta-owner').value || null,
+    dueDate: r.querySelector('.goal-meta-due').value || null,
+  }));
+}
+function _renderGoalMetaRows(metas) {
+  const wsId = $('goal-scope').value || null;
+  $('goal-metas-list').innerHTML = metas.map(m => _goalMetaRowHTML(m, wsId)).join('');
+  paintIcons($('goal-metas-list'));
+}
+function addGoalMetaRow() {
+  const list = $('goal-metas-list');
+  list.insertAdjacentHTML('beforeend', _goalMetaRowHTML({}, $('goal-scope').value || null));
+  paintIcons(list);
+  list.lastElementChild.querySelector('.goal-meta-title').focus();
+}
+function removeGoalMetaRow(btn) { btn.closest('.goal-meta-row')?.remove(); }
+// Trocou o escopo: responsáveis que não enxergam o novo escopo saem da meta.
+function onGoalScopeChange() {
+  const wsId = $('goal-scope').value || null;
+  const ok = new Set(_goalOwnerOptions(wsId).map(u => u.id));
+  _renderGoalMetaRows(_readGoalMetaRows().map(m => ({ ...m, ownerId: ok.has(m.ownerId) ? m.ownerId : null })));
+}
+async function openGoalModal(id) {
+  if (!_goalCanManage()) return;
+  if (id) await ensureGoalsLoaded().catch(() => {});
+  const g = id ? (goals || []).find(x => x.id === id) : null;
+  if (id && !g) { toast('Objetivo não encontrado', 'error'); return; }
+  _goalEditId = g ? g.id : null;
+  $('goal-modal-title').textContent = g ? 'Editar objetivo' : 'Novo objetivo';
+  $('goal-title').value = g?.title || '';
+  $('goal-desc').value = g?.description || '';
+  $('goal-due').value = g?.dueDate || '';
+  // Moderador não cria objetivo pra equipe de que não faz parte (o server barra igual).
+  const ws = workspaces.slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  const scope = $('goal-scope');
+  scope.innerHTML = `<option value="">Organização inteira</option>` + ws.map(w => `<option value="${w.id}">Equipe ${esc(w.name)}</option>`).join('');
+  scope.value = g ? (g.workspaceId || '') : (_goalScopeFilter !== 'org' ? _goalScopeFilter : '');
+  applyFilterDropdown('goal-scope');
+  _renderGoalMetaRows(g ? g.metas : [{}]);
+  $('goal-delete-btn').style.display = g ? '' : 'none';
+  openModal('goal-modal');
+}
+async function saveGoal(ev) {
+  const title = $('goal-title').value.trim();
+  const dueDate = $('goal-due').value;
+  if (!title) { toast('Dê um nome ao objetivo', 'error'); $('goal-title').focus(); return; }
+  if (!dueDate) { toast('Defina o prazo do objetivo', 'error'); $('goal-due').focus(); return; }
+  const metas = _readGoalMetaRows().filter(m => m.title);
+  const tooLate = metas.find(m => m.dueDate && m.dueDate > dueDate);
+  if (tooLate) { toast(`A meta "${tooLate.title}" tem prazo depois do prazo do objetivo`, 'error'); return; }
+  const body = { title, dueDate, description: $('goal-desc').value.trim(), workspaceId: $('goal-scope').value || null, metas };
+  await withLoading(ev, async () => {
+    try {
+      const saved = _goalEditId ? await api('/goals/' + _goalEditId, 'PUT', body) : await api('/goals', 'POST', body);
+      await ensureGoalsLoaded().catch(() => {});
+      if (goals) {
+        const i = goals.findIndex(x => x.id === saved.id);
+        if (i >= 0) goals[i] = saved; else goals.push(saved);
+      }
+      closeModal('goal-modal');
+      toast(_goalEditId ? 'Objetivo salvo.' : 'Objetivo criado.', 'success');
+      if (!_goalEditId && _goalStatusFilter === 'done') _goalStatusFilter = 'open';
+      _goalOpenState[saved.id] = true;
+      if (currentPage === 'org' && _orgTab === 'goals') renderGoals();
+      else { _orgTab = 'goals'; goPage('org'); }
+    } catch (e) { toast(e.message, 'error'); }
+  });
+}
+async function deleteGoal() {
+  const g = (goals || []).find(x => x.id === _goalEditId);
+  if (!g) return;
+  const ok = await showConfirm({
+    title: 'Excluir objetivo',
+    message: `<strong>${esc(g.title)}</strong> e as metas dele somem para todo mundo. Não dá para desfazer.`,
+    okLabel: 'Excluir objetivo',
+    danger: true
+  });
+  if (!ok) return;
+  try {
+    await api('/goals/' + g.id, 'DELETE');
+    goals = goals.filter(x => x.id !== g.id);
+    closeModal('goal-modal');
+    toast('Objetivo excluído.', 'success');
+    renderGoals();
+  } catch (e) { toast(e.message, 'error'); }
 }
 
 async function editEstimatedInline() {
@@ -38008,6 +39003,10 @@ const SSE_ENTITY_MAP = {
   formTemplate: { get: () => formTemplates, set: v => { formTemplates = v; if (currentPage === 'forms') renderForms(); }, path: () => null, listPath: '/form-templates' },
   formResponse: { get: () => formResponses, set: v => { formResponses = v; if (currentPage === 'demand-detail') renderDetail(); else if (currentPage === 'forms') renderForms(); else if (currentPage === 'dashboards') renderDashboards(); }, path: () => null, listPath: '/form-responses' },
   dashboard:    { get: () => dashboards,    set: v => { dashboards = v;    if (currentPage === 'dashboards') renderDashboards(); }, path: () => null, listPath: '/dashboards' },
+  // Objetivos carregam só ao abrir a página; antes disso não há o que atualizar.
+  goal:         { get: () => goals || [],   set: v => { if (goals) goals = v; }, path: id => goals ? '/goals/' + id : null, listPath: '/goals' },
+  // Financeiro (só a gestão recebe): um documento só, sempre recarregado inteiro.
+  finance:      { get: () => [],            set: v => { if (_finance && v && !Array.isArray(v)) _finance = v; }, path: () => null, listPath: '/finance' },
 };
 
 function startRealtimeSync() {

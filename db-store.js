@@ -44,7 +44,13 @@ const ENTITY_TYPES = [
   // (nível de permissão, squads, área e cargo naquela organização).
   'organizations', 'memberships',
   // Suporte (support.js): chamados abertos no app e respondidos no console.
-  'supportTickets'
+  'supportTickets',
+  // Objetivos e metas, da organização (orgId) ou de uma equipe (workspaceId).
+  'goals',
+  // Financeiro da organização (orgId): valor mensal do contrato de cada cliente
+  // (fora do cliente, que chega pra todo o time), retrato mensal da soma dos
+  // contratos e metas de receita mensal da organização ou de uma equipe.
+  'clientFees', 'contractSnapshots', 'revenueGoals'
 ];
 
 function createStore(config = {}) {

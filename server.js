@@ -11373,6 +11373,288 @@ app.post('/api/tasks/:id/link-demand', requireAuth, (req, res) => {
   res.json(t);
 });
 
+/* ── OBJETIVOS E METAS ──
+   goal = { id, orgId, workspaceId (null = organização inteira), title,
+   description, dueDate (YYYY-MM-DD), metas: [{ id, title, ownerId, dueDate,
+   done, doneAt, doneBy }], createdBy, createdAt, updatedAt }.
+   Ver: todo mundo da organização vê os objetivos dela; os de equipe, quem é da
+   equipe. Freelancer não vê nenhum.
+   Criar/editar/excluir: admin ou moderador (o moderador só nas equipes dele).
+   Marcar meta como feita: quem edita o objetivo ou o responsável pela meta. */
+const GOAL_MAX_METAS = 50;
+const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
+function canSeeGoal(user, g) {
+  if (!user || !g || user.isFreelancer) return false;
+  if (g.workspaceId) return canAccessWs(user, g.workspaceId);
+  return !!g.orgId && g.orgId === tenancy.currentOrgId();
+}
+function canManageGoal(user, g) {
+  return !!(user && (user.isAdmin || user.isModerator)) && canSeeGoal(user, g);
+}
+// Responsável precisa enxergar o objetivo — senão não conseguiria marcar a meta.
+function goalOwnerOk(userId, workspaceId) {
+  const u = db.users.find(x => x.id === userId);
+  if (!u || u.active === false || u.isFreelancer) return false;
+  return workspaceId ? canAccessWs(u, workspaceId) : true;
+}
+function sanitizeGoalBody(b, cur) {
+  const title = String(b.title ?? cur?.title ?? '').trim().slice(0, 200);
+  if (!title) return { error: 'Dê um nome ao objetivo' };
+  const description = String(b.description ?? cur?.description ?? '').trim().slice(0, 2000);
+  const dueDate = String(b.dueDate ?? cur?.dueDate ?? '');
+  if (!YMD_RE.test(dueDate)) return { error: 'Defina o prazo do objetivo' };
+  const workspaceId = b.workspaceId !== undefined ? (b.workspaceId || null) : (cur ? cur.workspaceId : null);
+  if (workspaceId && !db.workspaces.some(w => w.id === workspaceId)) return { error: 'Equipe não encontrada' };
+  const raw = Array.isArray(b.metas) ? b.metas : (cur?.metas || []);
+  if (raw.length > GOAL_MAX_METAS) return { error: `No máximo ${GOAL_MAX_METAS} metas por objetivo` };
+  // Feito/não feito não muda pela edição — só pela rota da meta.
+  const prev = new Map((cur?.metas || []).map(m => [m.id, m]));
+  const metas = [];
+  for (const m of raw) {
+    const mt = String(m?.title || '').trim().slice(0, 200);
+    if (!mt) continue;
+    const md = YMD_RE.test(String(m.dueDate || '')) ? m.dueDate : null;
+    if (md && md > dueDate) return { error: `A meta "${mt}" tem prazo depois do prazo do objetivo` };
+    const old = prev.get(m.id);
+    metas.push({
+      id: old ? old.id : uid(), title: mt,
+      ownerId: m.ownerId && goalOwnerOk(m.ownerId, workspaceId) ? m.ownerId : null,
+      dueDate: md,
+      done: !!old?.done, doneAt: old?.doneAt || null, doneBy: old?.doneBy || null
+    });
+  }
+  return { title, description, dueDate, workspaceId, metas };
+}
+function emitGoal(req, g, op) {
+  broadcastChange('goal', op, { id: g.id, workspaceId: g.workspaceId || null, byUserId: req.user.id });
+}
+
+app.get('/api/goals', requireAuth, (req, res) => {
+  res.json((db.goals || []).filter(g => canSeeGoal(req.user, g)));
+});
+app.get('/api/goals/:id', requireAuth, (req, res) => {
+  const g = (db.goals || []).find(x => x.id === req.params.id);
+  if (!canSeeGoal(req.user, g)) return res.status(404).json({ error: 'Objetivo não encontrado' });
+  res.json(g);
+});
+app.post('/api/goals', requireAuth, modOrAdmin, (req, res) => {
+  const fields = sanitizeGoalBody(req.body || {});
+  if (fields.error) return res.status(400).json({ error: fields.error });
+  const g = { id: uid(), orgId: tenancy.currentOrgId(), ...fields, createdBy: req.user.id, createdAt: nowISO(), updatedAt: nowISO() };
+  if (!canManageGoal(req.user, g)) return res.status(403).json({ error: 'Sem acesso a essa equipe' });
+  db.goals.push(g);
+  saveEntity('goals', g);
+  emitGoal(req, g, 'create');
+  res.status(201).json(g);
+});
+app.put('/api/goals/:id', requireAuth, modOrAdmin, (req, res) => {
+  const g = (db.goals || []).find(x => x.id === req.params.id);
+  if (!canManageGoal(req.user, g)) return res.status(404).json({ error: 'Objetivo não encontrado' });
+  const fields = sanitizeGoalBody(req.body || {}, g);
+  if (fields.error) return res.status(400).json({ error: fields.error });
+  if (!canManageGoal(req.user, { ...g, ...fields })) return res.status(403).json({ error: 'Sem acesso a essa equipe' });
+  const prevWs = g.workspaceId;
+  Object.assign(g, fields, { updatedAt: nowISO() });
+  saveEntity('goals', g);
+  // Trocou de equipe: quem era só da equipe antiga precisa tirar o objetivo da tela.
+  if (prevWs && prevWs !== g.workspaceId) broadcastChange('goal', 'delete', { id: g.id, workspaceId: prevWs, byUserId: req.user.id });
+  emitGoal(req, g, 'update');
+  res.json(g);
+});
+app.delete('/api/goals/:id', requireAuth, modOrAdmin, (req, res) => {
+  const g = (db.goals || []).find(x => x.id === req.params.id);
+  if (!canManageGoal(req.user, g)) return res.status(404).json({ error: 'Objetivo não encontrado' });
+  db.goals = db.goals.filter(x => x.id !== g.id);
+  removeEntity('goals', g.id);
+  emitGoal(req, g, 'delete');
+  res.json({ ok: true });
+});
+app.put('/api/goals/:id/metas/:metaId', requireAuth, (req, res) => {
+  const g = (db.goals || []).find(x => x.id === req.params.id);
+  if (!canSeeGoal(req.user, g)) return res.status(404).json({ error: 'Objetivo não encontrado' });
+  const m = (g.metas || []).find(x => x.id === req.params.metaId);
+  if (!m) return res.status(404).json({ error: 'Meta não encontrada' });
+  if (!canManageGoal(req.user, g) && m.ownerId !== req.user.id) return res.status(403).json({ error: 'Só a gestão e o responsável pela meta podem marcá-la' });
+  const done = !!(req.body && req.body.done);
+  if (m.done !== done) {
+    m.done = done;
+    m.doneAt = done ? nowISO() : null;
+    m.doneBy = done ? req.user.id : null;
+    g.updatedAt = nowISO();
+    saveEntity('goals', g);
+    emitGoal(req, g, 'update');
+  }
+  res.json(g);
+});
+
+/* ── FINANCEIRO DA ORGANIZAÇÃO ──
+   A receita recorrente é a soma do valor mensal do contrato dos clientes
+   ativos (clientFee). As metas de faturamento dizem a que receita mensal a
+   organização ou uma equipe quer chegar, e até quando.
+   clientFee        = { id, orgId, clientId, amount, updatedBy, updatedAt }
+   contractSnapshot = { id, orgId, month 'YYYY-MM', total, bySquad { wsId: valor }, updatedAt }
+                      retrato do mês, refeito sempre que um contrato muda ou alguém
+                      abre o financeiro/a visão geral; mês sem retrato herda o anterior.
+   revenueGoal      = { id, orgId, workspaceId (null = organização), title, target,
+                        dueDate 'YYYY-MM-DD', baseline (receita no dia da criação),
+                        createdBy, createdAt, updatedAt }
+   Ver: dono, admins e moderadores. Criar/editar: dono e admins. */
+const MONEY_MAX = 1e12;
+const YMD_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const round2 = n => Math.round(n * 100) / 100;
+// null = vazio; NaN = inválido.
+function moneyOf(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = round2(Number(v));
+  return Number.isFinite(n) && n >= 0 && n <= MONEY_MAX ? n : NaN;
+}
+function currentYm() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+function contractedNow() {
+  const active = new Map(db.clients.filter(c => notDeleted(c) && c.active !== false).map(c => [c.id, c]));
+  let total = 0;
+  const bySquad = {};
+  for (const f of db.clientFees || []) {
+    const c = active.get(f.clientId);
+    if (!c || !(f.amount > 0)) continue;
+    total += f.amount;
+    bySquad[c.workspaceId] = round2((bySquad[c.workspaceId] || 0) + f.amount);
+  }
+  return { total: round2(total), bySquad };
+}
+const contractedFor = (now, wsId) => (wsId ? now.bySquad[wsId] || 0 : now.total);
+function snapshotContracted() {
+  const ym = currentYm();
+  const now = contractedNow();
+  let s = db.contractSnapshots.find(x => x.month === ym);
+  if (s && s.total === now.total && JSON.stringify(s.bySquad || {}) === JSON.stringify(now.bySquad)) return;
+  if (!s) {
+    // Sem contrato nenhum e sem histórico: nada a guardar ainda.
+    if (!now.total && !db.contractSnapshots.length) return;
+    s = { id: uid(), orgId: tenancy.currentOrgId(), month: ym };
+    db.contractSnapshots.push(s);
+  }
+  Object.assign(s, { total: now.total, bySquad: now.bySquad, updatedAt: nowISO() });
+  saveEntity('contractSnapshots', s);
+}
+function financePayload(user) {
+  return {
+    canEdit: !!user.isAdmin,
+    snapshots: db.contractSnapshots.slice().sort((a, b) => a.month.localeCompare(b.month))
+      .map(s => ({ month: s.month, total: s.total, bySquad: s.bySquad || {} })),
+    goals: db.revenueGoals.slice().sort((a, b) => a.dueDate.localeCompare(b.dueDate)),
+    clientFees: (db.clientFees || []).map(f => ({ clientId: f.clientId, amount: f.amount })),
+    // Todos os clientes ativos da organização — o moderador vê o financeiro
+    // inteiro, inclusive de equipes de que não faz parte.
+    clients: db.clients.filter(c => notDeleted(c) && c.active !== false).map(c => ({ id: c.id, name: c.name, workspaceId: c.workspaceId })),
+    workspaces: db.workspaces.map(w => ({ id: w.id, name: w.name, color: w.color || null })),
+    contracted: contractedNow(),
+  };
+}
+// Só a gestão recebe o aviso — pro resto do time a rota responderia 403.
+function emitFinance(req) {
+  const line = `data: ${JSON.stringify({ entity: 'finance', op: 'update', ts: Date.now() })}\n\n`;
+  for (const [userId, conns] of sseClients) {
+    if (userId === req.user.id) continue;
+    const u = db.users.find(x => x.id === userId);
+    if (!u || !(u.isAdmin || u.isModerator)) continue;
+    for (const r of conns) { try { r.write(line); } catch {} }
+  }
+}
+function sanitizeRevenueGoal(b, cur) {
+  const target = moneyOf(b.target ?? cur?.target);
+  if (target === null || Number.isNaN(target) || !(target > 0)) return { error: 'Informe a receita mensal que a meta quer atingir' };
+  const dueDate = String(b.dueDate ?? cur?.dueDate ?? '');
+  if (!YMD_ONLY_RE.test(dueDate)) return { error: 'Defina o prazo da meta' };
+  const workspaceId = b.workspaceId !== undefined ? (b.workspaceId || null) : (cur ? cur.workspaceId : null);
+  if (workspaceId && !db.workspaces.some(w => w.id === workspaceId)) return { error: 'Equipe não encontrada' };
+  return { title: String(b.title ?? cur?.title ?? '').trim().slice(0, 120), target, dueDate, workspaceId };
+}
+
+app.get('/api/finance', requireAuth, modOrAdmin, (req, res) => {
+  snapshotContracted();
+  res.json(financePayload(req.user));
+});
+app.put('/api/finance/client-fees/:clientId', requireAuth, adminOnly, (req, res) => {
+  const c = db.clients.find(x => x.id === req.params.clientId && notDeleted(x));
+  if (!c) return res.status(404).json({ error: 'Cliente não encontrado' });
+  const amount = moneyOf(req.body?.amount);
+  if (Number.isNaN(amount)) return res.status(400).json({ error: 'Valor do contrato inválido' });
+  const f = db.clientFees.find(x => x.clientId === c.id);
+  if (!amount) {
+    if (f) { db.clientFees = db.clientFees.filter(x => x.id !== f.id); removeEntity('clientFees', f.id); }
+  } else if (f) {
+    Object.assign(f, { amount, updatedBy: req.user.id, updatedAt: nowISO() });
+    saveEntity('clientFees', f);
+  } else {
+    const nf = { id: uid(), orgId: tenancy.currentOrgId(), clientId: c.id, amount, updatedBy: req.user.id, updatedAt: nowISO() };
+    db.clientFees.push(nf);
+    saveEntity('clientFees', nf);
+  }
+  snapshotContracted();
+  emitFinance(req);
+  res.json(financePayload(req.user));
+});
+app.post('/api/finance/goals', requireAuth, adminOnly, (req, res) => {
+  const fields = sanitizeRevenueGoal(req.body || {});
+  if (fields.error) return res.status(400).json({ error: fields.error });
+  const g = {
+    id: uid(), orgId: tenancy.currentOrgId(), ...fields,
+    baseline: contractedFor(contractedNow(), fields.workspaceId),
+    createdBy: req.user.id, createdAt: nowISO(), updatedAt: nowISO(),
+  };
+  db.revenueGoals.push(g);
+  saveEntity('revenueGoals', g);
+  snapshotContracted();
+  emitFinance(req);
+  res.status(201).json(financePayload(req.user));
+});
+app.put('/api/finance/goals/:id', requireAuth, adminOnly, (req, res) => {
+  const g = db.revenueGoals.find(x => x.id === req.params.id);
+  if (!g) return res.status(404).json({ error: 'Meta não encontrada' });
+  const fields = sanitizeRevenueGoal(req.body || {}, g);
+  if (fields.error) return res.status(400).json({ error: fields.error });
+  // Trocou de equipe: o ponto de partida passa a ser a receita da equipe nova hoje.
+  if (fields.workspaceId !== g.workspaceId) fields.baseline = contractedFor(contractedNow(), fields.workspaceId);
+  Object.assign(g, fields, { updatedAt: nowISO() });
+  saveEntity('revenueGoals', g);
+  emitFinance(req);
+  res.json(financePayload(req.user));
+});
+app.delete('/api/finance/goals/:id', requireAuth, adminOnly, (req, res) => {
+  const g = db.revenueGoals.find(x => x.id === req.params.id);
+  if (!g) return res.status(404).json({ error: 'Meta não encontrada' });
+  db.revenueGoals = db.revenueGoals.filter(x => x.id !== g.id);
+  removeEntity('revenueGoals', g.id);
+  emitFinance(req);
+  res.json(financePayload(req.user));
+});
+
+/* Visão geral da organização: pessoas e clientes de todas as equipes
+   (o moderador também vê as equipes de que não faz parte). */
+app.get('/api/org/overview', requireAuth, modOrAdmin, (req, res) => {
+  snapshotContracted();
+  const members = db.users.filter(u => u.active !== false);
+  const weekAgo = Date.now() - 7 * 86400000;
+  const seenAt = u => (typeof u.lastSeen === 'number' ? u.lastSeen : Date.parse(u.lastSeen || '')) || 0;
+  const byRole = { owner: 0, admin: 0, mod: 0, equipe: 0, free: 0 };
+  for (const u of members) if (byRole[u.orgRole] !== undefined) byRole[u.orgRole]++;
+  const activeClients = db.clients.filter(c => notDeleted(c) && c.active !== false);
+  res.json({
+    users: { active: members.length, seen7d: members.filter(u => seenAt(u) >= weekAgo).length, byRole },
+    clients: {
+      total: activeClients.length,
+      bySquad: db.workspaces.map(w => ({
+        id: w.id, name: w.name, color: w.color || null,
+        clients: activeClients.filter(c => c.workspaceId === w.id).length,
+        people: members.filter(u => u.orgRole === 'owner' || u.orgRole === 'admin' || (u.workspaces || []).includes(w.id)).length,
+      })),
+    },
+  });
+});
+
 /* ── WEBHOOKS ── */
 // Webhooks são universais (valem pra todos os squads) — lista todos. Gate
 // mod/admin: são só esses perfis que gerenciam a tela, e a lista expõe URLs.

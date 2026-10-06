@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <!-- Idioma: roda antes de tudo (carrega o dicionário quando não é português). -->
-<script src="/js/i18n.js?v=20260926f1"></script>
+<script src="/js/i18n.js?v=20261006fin2"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>reWork</title>
 <link rel="icon" type="image/png" href="/favicon.png">
@@ -4726,6 +4726,82 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
   </div>
 </div>
 
+<!-- MODAL: META DE FATURAMENTO (Organização › Financeiro, admin) — openRevGoalModal() -->
+<div class="modal-overlay" id="fin-goal-modal">
+  <div class="modal modal-md">
+    <div class="modal-header">
+      <div class="modal-title" id="fin-goal-title">Nova meta de faturamento</div>
+      <button class="modal-close" onclick="closeModal('fin-goal-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label" for="fin-g-target">Receita mensal a atingir *</label>
+          <input class="form-control" id="fin-g-target" inputmode="decimal" placeholder="Ex.: 80.000">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="fin-g-due">Prazo *</label>
+          <input class="form-control" id="fin-g-due" type="date">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="fin-g-scope">Para quem *</label>
+          <select class="form-control" id="fin-g-scope" onchange="_revGoalScopeSync()"></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="fin-g-name">Nome <span class="fin-muted">(opcional)</span></label>
+          <input class="form-control" id="fin-g-name" maxlength="120" placeholder="Ex.: Meta de receita 2026">
+        </div>
+        <div class="form-group full fin-g-now" id="fin-g-now"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger" id="fin-g-delete" style="display:none;margin-right:auto" onclick="deleteRevGoal()">Excluir</button>
+      <button class="btn btn-ghost" onclick="closeModal('fin-goal-modal')">Cancelar</button>
+      <button class="btn btn-confirm" onclick="saveRevGoal(event)">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: OBJETIVO (admin/mod) — metas editadas em linha (goal-metas-list) -->
+<div class="modal-overlay" id="goal-modal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title" id="goal-modal-title">Novo objetivo</div>
+      <button class="modal-close" onclick="closeModal('goal-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group full">
+          <label class="form-label" for="goal-title">Objetivo *</label>
+          <input class="form-control" id="goal-title" maxlength="200" placeholder="Ex.: Dobrar a base de clientes recorrentes">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="goal-scope">Para quem *</label>
+          <select class="form-control" id="goal-scope" onchange="onGoalScopeChange()"></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="goal-due">Prazo *</label>
+          <input class="form-control" id="goal-due" type="date">
+        </div>
+        <div class="form-group full">
+          <label class="form-label" for="goal-desc">Descrição</label>
+          <textarea class="form-control" id="goal-desc" rows="3" maxlength="2000" placeholder="Por que esse objetivo importa e como saber que deu certo."></textarea>
+        </div>
+        <div class="form-group full">
+          <label class="form-label">Metas</label>
+          <div class="goal-metas-edit" id="goal-metas-list"></div>
+          <button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="addGoalMetaRow()"><i data-lucide="plus" class="ic-sm"></i> Adicionar meta</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger" id="goal-delete-btn" style="display:none;margin-right:auto" onclick="deleteGoal()">Excluir</button>
+      <button class="btn btn-ghost" onclick="closeModal('goal-modal')">Cancelar</button>
+      <button class="btn btn-confirm" id="goal-save-btn" onclick="saveGoal(event)">Salvar</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL: USUÁRIO (ADMIN) -->
 <div class="modal-overlay" id="user-modal">
   <div class="modal modal-lg um-modal">
@@ -4985,7 +5061,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20261002resp2" defer></script>
+<script src="/js/boot.js?v=20261006fin2" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
