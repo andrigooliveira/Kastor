@@ -810,6 +810,71 @@ test('Exclusão definitiva: admin exclui em Usuários e a pessoa exclui a própr
   assert.equal(mrows.rowCount, 0, 'vínculos apagados do banco');
 });
 
+test('Perfil: "Esqueci minha senha" manda o link pro e-mail da conta, e a exclusão avisa por e-mail', async () => {
+  const admin = await loginCookie('admin', 'admin123');
+  const boot = (await req('/api/bootstrap', { headers: { Cookie: admin } })).body;
+  // Sem e-mail na conta não há pra onde mandar
+  const semMail = await call('POST', '/api/users', admin, { username: 'reset.sem.mail', password: 'senha-de-teste-1', name: 'Sem Mail', workspaces: [boot.workspaces[0].id] });
+  assert.equal(semMail.status, 201, JSON.stringify(semMail.body));
+  const semMailCookie = await loginCookie('reset.sem.mail', 'senha-de-teste-1');
+  const none = await call('POST', '/api/me/password-reset', semMailCookie, {});
+  assert.equal(none.status, 400);
+  assert.equal(none.body.code, 'no_email');
+  assert.equal((await call('DELETE', '/api/users/' + semMail.body.id, admin, { password: 'admin123' })).status, 200);
+  assert.equal((await req('/api/me/password-reset', { method: 'POST' })).status, 401, 'só logado');
+
+  // Contas criadas por convite na Beta: o e-mail já entra confirmado.
+  const betaWs = (await req('/api/bootstrap', { headers: { Cookie: betaCookie } })).body.workspaces[0].id;
+  const entrar = async (email, username) => {
+    const inv = await call('POST', '/api/invites', betaCookie, { email, kind: 'equipe', workspaces: [betaWs] });
+    assert.equal(inv.status, 201, JSON.stringify(inv.body));
+    const acc = await postJson(`/api/invites/public/${inv.body.link.split('/convite/')[1]}/accept`, { name: 'Pessoa ' + username, username, password: 'senha-de-teste-1', acceptTerms: true });
+    assert.equal(acc.status, 201, JSON.stringify(acc.body));
+    return (acc.headers.get('set-cookie') || '').split(';')[0];
+  };
+  const c1 = await entrar('reset.um@exemplo.com', 'reset.um');
+  const c2 = await entrar('reset.dois@exemplo.com', 'reset.dois');
+  const id1 = (await req('/api/me', { headers: { Cookie: c1 } })).body.id;
+
+  const outbox = [];
+  app._test.setMailTransport({ sendMail: async (m) => { outbox.push(m); } });
+  const para = (email, re) => outbox.filter(m => String(m.to).includes(email) && re.test(m.subject));
+  try {
+    // Esqueci minha senha, de dentro do perfil
+    const r = await call('POST', '/api/me/password-reset', c1, {});
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.email, 'reset.um@exemplo.com');
+    await flushed();
+    const [mail] = para('reset.um@exemplo.com', /Redefinir sua senha/);
+    assert.ok(mail, 'e-mail de redefinição enviado pro endereço da conta');
+    assert.equal(outbox.filter(m => /Redefinir sua senha/.test(m.subject)).length, 1, 'só pra ela');
+    const token = (String(mail.text).match(/\/reset\/([a-f0-9]+)/) || [])[1];
+    assert.ok(token);
+    const rp = await postJson('/api/reset-password', { token, newPassword: 'senha-nova-pelo-link-1' }, { headers: { 'X-Forwarded-For': '10.9.9.3' } });
+    assert.equal(rp.status, 200, JSON.stringify(rp.body));
+    assert.equal((await req('/api/me', { headers: { Cookie: c1 } })).status, 401, 'senha nova encerra as sessões');
+
+    // Admin exclui: a pessoa é avisada
+    const del = await call('DELETE', '/api/users/' + id1, betaCookie, { password: 'senha-da-bia-1' });
+    assert.equal(del.status, 200, JSON.stringify(del.body));
+    assert.equal(del.body.accountDeleted, true);
+    await flushed();
+    const [byAdmin] = para('reset.um@exemplo.com', /Sua conta foi excluída/);
+    assert.ok(byAdmin, 'aviso de exclusão pelo admin');
+    assert.match(byAdmin.text, /administrador da organização Beta/);
+
+    // A própria pessoa exclui: também recebe o aviso
+    const bye = await call('DELETE', '/api/me', c2, { password: 'senha-de-teste-1', confirm: 'reset.dois' });
+    assert.equal(bye.status, 200, JSON.stringify(bye.body));
+    await flushed();
+    const [self] = para('reset.dois@exemplo.com', /Sua conta foi excluída/);
+    assert.ok(self, 'aviso de exclusão da própria conta');
+    assert.match(self.text, /como você pediu/);
+  } finally {
+    app._test.setMailTransport(undefined);
+  }
+});
+
 test('Permissões: equipe só exclui o que criou; moderador exclui do squad', async () => {
   const admin = await loginCookie('admin', 'admin123');
   await call('POST', '/api/orgs/switch', admin, { orgId: (await req('/api/me', { headers: { Cookie: admin } })).body.orgs.find(o => o.name === 'WSI').id });

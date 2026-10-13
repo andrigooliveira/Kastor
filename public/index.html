@@ -3444,6 +3444,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                   <div class="form-group full">
                     <label class="form-label" for="profile-f-pass-current">Senha atual</label>
                     <input class="form-control" id="profile-f-pass-current" type="password" autocomplete="current-password">
+                    <div class="profile-hint">Não lembra a senha atual? Enviamos um link para o e-mail da sua conta.</div>
                   </div>
                   <div class="form-group">
                     <label class="form-label" for="profile-f-pass-new">Nova senha</label>
@@ -3457,6 +3458,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                   </div>
                 </div>
                 <div class="profile-block-actions">
+                  <button class="btn btn-ghost" type="button" onclick="sendMyPasswordReset()">Esqueci minha senha</button>
                   <button class="btn btn-confirm" onclick="changePassword()">Trocar senha</button>
                 </div>
               </div>

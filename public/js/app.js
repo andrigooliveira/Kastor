@@ -33093,6 +33093,20 @@ async function changePassword() {
     toast('Senha trocada');
   } catch (e) { fail(e.message); }
 }
+/* Esqueci minha senha, de dentro do perfil: o link vai pro e-mail da conta. */
+async function sendMyPasswordReset() {
+  if (!me.email) { toast('Sua conta não tem e-mail vinculado. Adicione um em Perfil › Conta para receber o link.', 'error'); return; }
+  const ok = await showConfirm({
+    title: 'Esqueci minha senha',
+    message: `<span>Vamos enviar um link para redefinir a senha para</span> <strong>${esc(me.email)}</strong>.<br><span>O link vale por 1 hora. Ao criar a senha nova, você entra de novo em todos os aparelhos.</span>`,
+    okLabel: 'Enviar o link'
+  });
+  if (!ok) return;
+  try {
+    const r = await api('/me/password-reset', 'POST', {});
+    toast(`${T('Enviamos o link para redefinir a senha para')} ${r.email || me.email}.`);
+  } catch (e) { if (!e._apiSilent) toast(e.message, 'error'); }
+}
 // Recorta a imagem no centro e reduz pra 160×160 (JPEG): foto de perfil.
 function _squareAvatarData(file, size = 160) {
   return new Promise((resolve, reject) => {

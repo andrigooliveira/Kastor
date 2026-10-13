@@ -435,6 +435,31 @@ ${button(baseUrl, t('Abrir o reWork'))}`;
   return { subject, html, text };
 }
 
+/* Aviso: conta excluída (pela própria pessoa ou por um admin) ou, pra quem
+   está em mais de uma organização, vínculo com uma delas removido
+   (accountKept). Já aconteceu: não leva botão. */
+function accountDeleted({ name, byAdmin, accountKept, org, baseUrl }) {
+  const who = strong(firstName(name));
+  const subject = accountKept ? t('[reWork] Você saiu da organização {0}', org) : t('[reWork] Sua conta foi excluída');
+  const what = accountKept
+    ? t('Olá, {0}. Um administrador removeu você da organização {1} no reWork. A sua conta continua valendo nas outras organizações de que você faz parte.', who, strong(org))
+    : byAdmin
+      ? t('Olá, {0}. Um administrador da organização {1} excluiu a sua conta no reWork. Não dá mais para entrar com ela.', who, strong(org))
+      : t('Olá, {0}. A sua conta no reWork foi excluída, como você pediu. Não dá mais para entrar com ela.', who);
+  const content = `${chip(t('Conta'), 'neutro')}
+${headline(accountKept ? t('Você saiu da organização') : t('Sua conta foi excluída'))}
+${paragraph(what)}
+${paragraph(t('O que você fez (demandas, comentários, horas) continua no histórico da organização.'))}
+${note(byAdmin ? t('Se você acha que foi um engano, fale com a coordenação da sua equipe.') : t('Se não foi você, fale com a coordenação da sua equipe o quanto antes.'))}`;
+  const html = layout({ subject, preheader: accountKept ? t('Sua conta continua nas outras organizações.') : t('Não dá mais para entrar com esta conta.'), content, baseUrl, footer: t('Aviso de segurança da sua conta no reWork.') });
+  const text = accountKept
+    ? t('Olá {0}, um administrador removeu você da organização {1} no reWork. A sua conta continua valendo nas outras organizações.', name, org)
+    : byAdmin
+      ? t('Olá {0}, um administrador da organização {1} excluiu a sua conta no reWork.', name, org)
+      : t('Olá {0}, a sua conta no reWork foi excluída, como você pediu. Se não foi você, fale com a coordenação da sua equipe.', name);
+  return { subject, html, text };
+}
+
 /* Aviso pro endereço ANTIGO quando alguém pede a troca (segurança). */
 function emailChangeNotice({ name, newEmail, baseUrl }) {
   const subject = t('[reWork] Pedido para trocar o e-mail da sua conta');
@@ -626,6 +651,7 @@ function previewSamples(baseUrl, me) {
     { key: 'email_confirm', label: 'Confirmar e-mail', build: () => emailConfirm({ name, email: 'andrigo@exemplo.com', link: `${url}/confirmar-email/exemplo-de-token-0000`, baseUrl: url }) },
     { key: 'email_change', label: 'Confirmar e-mail novo (troca)', build: () => emailConfirm({ name, email: 'novo@exemplo.com', link: `${url}/confirmar-email/exemplo-de-token-0000`, baseUrl: url, isChange: true }) },
     { key: 'email_change_notice', label: 'Aviso de troca de e-mail (endereço antigo)', build: () => emailChangeNotice({ name, newEmail: 'novo@exemplo.com', baseUrl: url }) },
+    { key: 'account_deleted', label: 'Conta excluída', build: () => accountDeleted({ name, byAdmin: true, org: 'WSI', baseUrl: url }) },
     { key: 'invite', label: 'Convite para a equipe', build: () => invite({ name: 'Carla Menezes', inviter: name, access: 'Membro', squads: ['Imob', 'Performance'], link: `${url}/convite/exemplo-de-token-0000`, expiresAt: new Date(Date.now() + 7 * 864e5).toISOString(), baseUrl: url }) },
     { key: 'access_received', label: 'Lista de espera: pedido recebido', build: () => accessRequestReceived({ name: 'Paula Reis', company: 'Agência Norte', baseUrl: url }) },
     { key: 'access_new', label: 'Lista de espera: aviso ao console', build: () => accessRequestNew({ request: { name: 'Paula Reis', email: 'paula@agencianorte.com', company: 'Agência Norte', teamSize: '6-15', role: 'Diretora de operações', message: 'Hoje controlamos tudo em planilha e queremos organizar as demandas por cliente.' }, consoleUrl: `${url}/console/lista-de-espera`, baseUrl: url }) },
@@ -670,4 +696,4 @@ ${button(link, closed ? t('Ver o chamado') : t('Responder'))}`;
   return { subject, html, text };
 }
 
-module.exports = { withLang, supportToStaff, supportToCustomer, escHtml, layout, notification, digest, heldSummary, resetPassword, emailConfirm, emailChangeNotice, loginCode, twoFactorNotice, invite, accessRequestReceived, accessRequestNew, consoleAdminInvite, consoleResetPassword, consoleRecoveryNotice, testEmail, previewSamples };
+module.exports = { withLang, supportToStaff, supportToCustomer, escHtml, layout, notification, digest, heldSummary, resetPassword, emailConfirm, emailChangeNotice, loginCode, twoFactorNotice, accountDeleted, invite, accessRequestReceived, accessRequestNew, consoleAdminInvite, consoleResetPassword, consoleRecoveryNotice, testEmail, previewSamples };

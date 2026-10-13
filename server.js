@@ -3013,6 +3013,11 @@ app.post('/api/forgot-password', rateLimitPwReset, async (req, res) => {
   );
   // Resposta uniforme — não revela se o e-mail está cadastrado.
   if (!user) return res.json({ ok: true });
+  await sendPasswordReset(req, user);
+  res.json({ ok: true });
+});
+/* Link de redefinição (1h, uso único) pro e-mail da conta. */
+async function sendPasswordReset(req, user) {
   const token = crypto.randomBytes(24).toString('hex');
   const expiresAt = Date.now() + 60 * 60 * 1000; // 1 hora
   await store.insertReset({ token, userId: user.id, expiresAt, used: false, createdAt: nowISO() });
@@ -3020,7 +3025,19 @@ app.post('/api/forgot-password', rateLimitPwReset, async (req, res) => {
   const link = `${baseUrl}/reset/${token}`;
   const { subject, html, text } = mailIn(userLang(user), () => emailTpl.resetPassword({ name: user.name, link, baseUrl }));
   setImmediate(() => sendEmail(user.email, subject, html, text));
-  res.json({ ok: true });
+}
+/* "Esqueci minha senha" de dentro do perfil (Segurança): quem está logado e
+   não lembra a senha atual recebe o mesmo link, no e-mail da conta. */
+const rateLimitMyPwReset = makeRateLimit(new Map(), 5, 'envios', req => 'u:' + (req.user?.id || clientIp(req)), 60 * 60 * 1000);
+app.post('/api/me/password-reset', requireAuth, rateLimitMyPwReset, async (req, res) => {
+  const u = req.user;
+  if (!u.email) return res.status(400).json({ error: 'Sua conta não tem e-mail vinculado. Adicione um em Perfil › Conta para receber o link.', code: 'no_email' });
+  if (!mailEnabled()) {
+    return res.status(503).json({ error: 'O servidor não tem SMTP configurado para enviar e-mails. Fale com a coordenação para que ela te ajude a redefinir a senha.' });
+  }
+  await store.cleanupResets();
+  await sendPasswordReset(req, u);
+  res.json({ ok: true, email: u.email });
 });
 app.post('/api/reset-password', rateLimitPwReset, async (req, res) => {
   const { token, newPassword } = req.body || {};
@@ -5641,6 +5658,14 @@ function detachUserFromOrg(u, orgId, actorId) {
   if (u.lastOrgId === orgId) u.lastOrgId = null;
   return true;
 }
+/* Aviso por e-mail pra quem foi excluído. Monta antes de apagar (o idioma vem
+   da conta) e manda depois. accountKept = só saiu desta organização. */
+function accountDeletedNotice(req, u, { byAdmin, accountKept, org }) {
+  if (!u.email || !mailEnabled()) return;
+  const to = u.email, lang = userLang(u);
+  const m = mailIn(lang, () => emailTpl.accountDeleted({ name: u.name, byAdmin, accountKept, org: org ? org.name : null, baseUrl: appBaseUrl(req) }));
+  setImmediate(() => sendEmail(to, m.subject, m.html, m.text, { lang }));
+}
 /* Apaga a conta: cadastro, senha, sessões, chaves de acesso, sino e agenda
    do Google. Só depois de sair de todas as organizações. */
 function deleteAccount(u) {
@@ -5663,9 +5688,10 @@ app.delete('/api/users/:id', requireAuth, adminOnly, rateLimitAccountDelete, (re
   if (u.isOwner) return res.status(400).json({ error: 'Transfira a organização para outra pessoa antes de excluir o dono.' });
   if (!checkOwnPassword(req.user, (req.body || {}).password)) return res.status(400).json({ error: 'Senha incorreta.', field: 'password' });
   const name = u.name;
-  detachUserFromOrg(u, req.org.id, req.user.id);
   // Quem também está em outra organização continua com a conta lá.
-  const accountDeleted = !tenancy.membershipsOf(u.id).length;
+  const accountDeleted = !tenancy.membershipsOf(u.id).some(m => m.orgId !== req.org.id);
+  accountDeletedNotice(req, u, { byAdmin: true, accountKept: !accountDeleted, org: req.org });
+  detachUserFromOrg(u, req.org.id, req.user.id);
   if (accountDeleted) deleteAccount(u); else saveEntity('users', u);
   console.log(`  [usuários] "${name}" excluído(a) de "${req.org.name}" por ${req.user.username}${accountDeleted ? ' (conta apagada)' : ''}`);
   res.json({ ok: true, accountDeleted });
@@ -5686,6 +5712,7 @@ app.delete('/api/me', requireAuth, rateLimitAccountDelete, (req, res) => {
       code: 'org_owner'
     });
   }
+  accountDeletedNotice(req, u, { byAdmin: false, accountKept: false });
   for (const m of tenancy.membershipsOf(u.id).slice()) detachUserFromOrg(u, m.orgId, u.id);
   deleteAccount(u);
   console.log(`  [usuários] "${u.username}" excluiu a própria conta`);
