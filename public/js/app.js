@@ -158,6 +158,7 @@ const PAGE_TO_PATH = {
   dashboards:   '/dashboard',
   performance:  '/performance',
   gallery:      '/gallery',
+  prototypes:   '/prototypes',
   menu:         '/menu'
   // Kastor Docs (writer) NÃO tá aqui — é uma página standalone servida em /writer
   // por um HTML próprio (public/writer.html). Não passa pelo SPA principal.
@@ -7073,6 +7074,336 @@ async function closeSupportTicket() {
   catch (e) { toast(e.message, 'error'); }
 }
 
+/* ─── PROTÓTIPOS (/prototypes) ───
+   Sites estáticos pra aprovação: a pessoa sobe a pasta do site (ou um .zip),
+   o reWork serve em /p/<token> e o link externo vale por até
+   limits.linkMaxDays dias. O navegador lê a pasta e manda arquivo por arquivo
+   (o servidor nunca recebe zip). Servidor: prototypes.js.
+   Mesma linguagem do Quadro da equipe (/users): cabeçalho de dossiê com
+   contadores, seção com tabela mine-v2, ações rápidas em .icon-btn e o resto
+   no menu (⋯). O formulário mora no #proto-modal; _proto.form guarda o estado
+   e _protoFormPaint() repinta o corpo a partir dele. */
+let _proto = { items: null, limits: null, canShare: true, form: null, busy: false };
+const PROTO_JUNK = /(^|\/)(\.[^/]*|__MACOSX|node_modules|Thumbs\.db|desktop\.ini)(\/|$)/i;
+const _protoExt = (p) => (String(p).match(/\.([a-z0-9]+)$/i) || [])[1]?.toLowerCase() || '';
+const _protoWhen = (iso) => { const d = new Date(iso), p = n => String(n).padStart(2, '0'); return `dia ${p(d.getDate())}/${p(d.getMonth() + 1)} às ${p(d.getHours())}:${p(d.getMinutes())}`; };
+const _protoById = (id) => (_proto.items || []).find(p => p.id === id) || null;
+const _protoCount = (n) => `${n} ${n === 1 ? 'arquivo' : 'arquivos'}`;
+
+async function _protoLoad() {
+  const r = await api('/prototypes');
+  _proto.items = r.items || [];
+  _proto.limits = r.limits || {};
+  _proto.canShare = r.canShare !== false;
+}
+async function renderPrototypes() {
+  const host = $('proto-list');
+  if (!host) return;
+  if (!_proto.items) host.innerHTML = `<div class="table-wrap mine-table-wrap mcard-wrap"><table class="mine-table-v2 mcard"><tbody>${skeletonTableRows(6, 3)}</tbody></table></div>`;
+  try { await _protoLoad(); }
+  catch (e) { host.innerHTML = emptyState('Não foi possível carregar os protótipos', e.message, 'alert-circle'); return; }
+  _protoPaint();
+}
+function _protoPaint() {
+  const host = $('proto-list');
+  if (!host) return;
+  const maxDays = (_proto.limits || {}).linkMaxDays || 7;
+  const items = (_proto.items || []).filter(p => !activeWs || p.workspaceId === activeWs);
+  const counter = $('proto-header-counter');
+  if (counter) {
+    const live = items.filter(p => p.link && p.link.active).length;
+    const bytes = items.reduce((n, p) => n + (p.bytes || 0), 0);
+    counter.textContent = items.length
+      ? [`${items.length} ${items.length === 1 ? 'protótipo' : 'protótipos'}`, `${live} com link ativo`, bytes ? fmtBytes(bytes) : ''].filter(Boolean).join(' · ')
+      : 'Sites para o cliente aprovar por um link.';
+  }
+  const hint = $('proto-section-hint');
+  if (hint) hint.textContent = _proto.canShare
+    ? `O link externo vale por até ${maxDays} dias. Depois disso, só a equipe logada vê a prévia.`
+    : 'No período de teste a prévia abre só para quem está logado. O link externo entra junto com um plano.';
+  if (!items.length) {
+    host.innerHTML = emptyState('Nenhum protótipo ainda', 'Suba a pasta de um site e mande o link para o cliente abrir no navegador, sem conta e sem baixar nada.', 'folder', { label: 'Novo protótipo', onclick: 'openProtoForm()', icon: 'plus' });
+    paintIcons(host);
+    return;
+  }
+  host.innerHTML = `<div class="table-wrap mine-table-wrap mcard-wrap">
+    <table class="mine-table-v2 mcard proto-table">
+      <thead><tr>
+        <th>Protótipo</th>
+        <th>Cliente</th>
+        <th>Arquivos</th>
+        <th>Link externo</th>
+        <th>Atualizado</th>
+        <th class="proto-col-actions"></th>
+      </tr></thead>
+      <tbody>${items.map(_protoRowHTML).join('')}</tbody>
+    </table>
+  </div>`;
+  paintIcons(host);
+}
+function _protoRowHTML(p) {
+  const c = p.clientId ? clientById(p.clientId) : null;
+  const active = !!(p.link && p.link.active);
+  const link = !p.hasFiles ? '<span class="pill pill-late">Sem arquivos</span>'
+    : active ? `<span class="pill pill-success">Ativo</span><span class="proto-until">até ${_protoWhen(p.link.expiresAt)}</span>`
+    : p.link ? '<span class="pill proto-pill-warn">Expirado</span>'
+    : '<span class="pill pill-muted">Só a equipe</span>';
+  const days = [1, 3, 7].filter(d => d <= ((_proto.limits || {}).linkMaxDays || 7));
+  const canLink = p.hasFiles && _proto.canShare;
+  const quick = [
+    p.hasFiles ? `<a class="icon-btn" href="${esc(p.url)}" target="_blank" rel="noopener" title="Abrir prévia" aria-label="Abrir prévia"><i data-lucide="external-link" class="ic-sm"></i></a>` : '',
+    active ? `<button type="button" class="icon-btn" title="Copiar link" aria-label="Copiar link" onclick="copyProtoLink('${p.id}')"><i data-lucide="copy" class="ic-sm"></i></button>`
+      : canLink ? `<button type="button" class="icon-btn" title="Gerar link" aria-label="Gerar link" onclick="setProtoLink('${p.id}', ${days[days.length - 1]})"><i data-lucide="link" class="ic-sm"></i></button>` : '',
+    p.hasFiles ? `<button type="button" class="icon-btn" title="Baixar arquivos" aria-label="Baixar arquivos" onclick="downloadProto('${p.id}')"><i data-lucide="download" class="ic-sm"></i></button>` : ''
+  ].join('');
+  const kebab = _usKebabMenu('proto-' + p.id, [
+    { icon: 'pencil', label: p.hasFiles ? 'Editar' : 'Enviar arquivos', onclick: `openProtoForm('${p.id}')` },
+    ...(canLink ? days.map(d => ({ icon: active ? 'refresh-cw' : 'link', label: `Link por ${d} ${d === 1 ? 'dia' : 'dias'}`, onclick: `setProtoLink('${p.id}', ${d})` })) : []),
+    p.link ? { icon: 'unlink', label: 'Desativar link', danger: true, onclick: `revokeProtoLink('${p.id}')` } : null,
+    { icon: 'trash-2', label: 'Excluir', danger: true, onclick: `deleteProto('${p.id}')` }
+  ].filter(Boolean));
+  return `<tr class="mrow">
+    <td class="mcol-name"><div class="proto-name">${esc(p.name)}</div>${p.entry ? `<div class="proto-entry">${esc(p.entry)}</div>` : ''}</td>
+    <td class="${c ? '' : 'is-blank'}"><span class="mlbl">Cliente</span>${c ? esc(c.name) : '—'}</td>
+    <td class="proto-num${p.hasFiles ? '' : ' is-blank'}"><span class="mlbl">Arquivos</span>${p.hasFiles ? `${_protoCount(p.fileCount)} · ${fmtBytes(p.bytes)}` : '—'}</td>
+    <td><span class="mlbl">Link externo</span><span class="proto-link">${link}</span></td>
+    <td class="proto-when"><span class="mlbl">Atualizado</span>${esc(fmtRelativeTime(p.updatedAt))}</td>
+    <td class="proto-col-actions mc-act"><div class="proto-acts">${quick}${kebab}</div></td>
+  </tr>`;
+}
+
+/* Formulário (modal) */
+function _protoFormPaint() {
+  const body = $('proto-modal-body');
+  const f = _proto.form;
+  if (!body || !f) return;
+  const list = (clients || []).filter(c => !c.deletedAt && (!activeWs || c.workspaceId === activeWs)).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const size = f.files.reduce((n, x) => n + x.file.size, 0);
+  const picked = f.files.length
+    ? `<div class="proto-picked"><i data-lucide="folder-check" class="ic-sm"></i><span>${_protoCount(f.files.length)} · ${fmtBytes(size)}</span><button type="button" class="proto-picked-clear" onclick="_protoClearFiles()">Trocar</button></div>`
+    : '';
+  const off = _proto.busy ? ' disabled' : '';
+  body.innerHTML = `<div class="form-grid">
+      <div class="form-group">
+        <label class="form-label" for="proto-name">Nome *</label>
+        <input class="form-control" id="proto-name" maxlength="80" placeholder="Ex.: Landing page de lançamento" value="${esc(f.name)}" oninput="_proto.form.name=this.value"${off}>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="proto-client">Cliente</label>
+        <select class="form-control" id="proto-client" onchange="_proto.form.clientId=this.value||null"${off}>
+          <option value="">Sem cliente</option>
+          ${list.map(c => `<option value="${c.id}"${c.id === f.clientId ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}
+        </select>
+      </div>
+      ${f.pages.length > 1 && !f.files.length ? `<div class="form-group full">
+        <label class="form-label" for="proto-entry">Página inicial</label>
+        <select class="form-control" id="proto-entry" onchange="_proto.form.entry=this.value"${off}>
+          ${f.pages.map(pg => `<option value="${esc(pg)}"${pg === f.entry ? ' selected' : ''}>${esc(pg)}</option>`).join('')}
+        </select>
+      </div>` : ''}
+      <div class="form-group full">
+        <span class="form-label">Arquivos do site${f.hasFiles ? '<span class="form-label-hint">os atuais continuam se você não escolher outros</span>' : ' *'}</span>
+        ${picked || `<div class="proto-drop" ondragover="event.preventDefault();this.classList.add('is-over')" ondragleave="this.classList.remove('is-over')" ondrop="_protoDrop(event)">
+          <span class="proto-drop-ic"><i data-lucide="folder-up"></i></span>
+          <span class="proto-drop-text"><b>Arraste a pasta do site para cá</b><span>HTML, CSS, JS, imagens e fontes. Também aceita um .zip.</span></span>
+          <span class="proto-drop-btns">
+            <label class="btn btn-ghost btn-sm"><input type="file" webkitdirectory multiple hidden onchange="_protoPick(this)"${off}><i data-lucide="folder-open" class="ic-xs"></i> Escolher pasta</label>
+            <label class="btn btn-ghost btn-sm"><input type="file" multiple hidden onchange="_protoPick(this)"${off}><i data-lucide="file-archive" class="ic-xs"></i> Arquivos ou .zip</label>
+          </span>
+        </div>`}
+        ${f.warn.map(w => `<p class="proto-warn"><i data-lucide="triangle-alert" class="ic-xs"></i><span>${esc(w)}</span></p>`).join('')}
+        ${f.error ? `<p class="proto-error" role="alert"><i data-lucide="circle-alert" class="ic-xs"></i><span>${esc(f.error)}</span></p>` : ''}
+      </div>
+    </div>`;
+  $('proto-modal-title').textContent = f.id ? 'Editar protótipo' : 'Novo protótipo';
+  const save = $('proto-save');
+  save.textContent = f.progress || (f.id ? 'Salvar' : 'Criar protótipo');
+  save.disabled = _proto.busy;
+  $('proto-cancel').disabled = _proto.busy;
+  paintIcons(body);
+}
+function openProtoForm(id) {
+  if (_proto.busy) return;
+  const p = id ? _protoById(id) : null;
+  _proto.form = { id: p ? p.id : null, name: p ? p.name : '', clientId: p ? p.clientId : null, entry: p ? p.entry : null, pages: p ? p.pages : [], hasFiles: !!(p && p.hasFiles), files: [], warn: [], error: '', progress: null };
+  _protoFormPaint();
+  openModal('proto-modal');
+}
+function closeProtoForm() {
+  if (_proto.busy) return;
+  _proto.form = null;
+  closeModal('proto-modal');
+}
+function _protoClearFiles() {
+  if (_proto.busy || !_proto.form) return;
+  _proto.form.files = []; _proto.form.warn = []; _proto.form.error = '';
+  _protoFormPaint();
+}
+async function _protoPick(input) {
+  const picked = [...input.files].map(file => ({ path: file.webkitRelativePath || file.name, file }));
+  input.value = '';
+  await _protoSetFiles(picked);
+}
+async function _protoDrop(ev) {
+  ev.preventDefault();
+  ev.currentTarget.classList.remove('is-over');
+  if (_proto.busy) return;
+  // webkitGetAsEntry só vale durante o evento: pega tudo antes do primeiro await.
+  const entries = [...(ev.dataTransfer.items || [])].map(it => it.webkitGetAsEntry && it.webkitGetAsEntry()).filter(Boolean);
+  const out = [];
+  const walk = async (entry, prefix) => {
+    if (entry.isFile) { out.push({ path: prefix + entry.name, file: await new Promise((res, rej) => entry.file(res, rej)) }); return; }
+    const reader = entry.createReader();
+    for (;;) {
+      const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+      if (!batch.length) break;
+      for (const e of batch) await walk(e, prefix + entry.name + '/');
+    }
+  };
+  try { for (const e of entries) await walk(e, ''); }
+  catch { toast('Não foi possível ler a pasta. Use o botão Escolher pasta.', 'error'); return; }
+  await _protoSetFiles(out);
+}
+/* Limpa a lista escolhida (lixo do sistema, pasta-mãe, tipos fora de site) e
+   confere os limites antes de mandar qualquer coisa. */
+async function _protoSetFiles(picked) {
+  const f = _proto.form;
+  if (!f || !picked.length) return;
+  const L = _proto.limits || {};
+  const fail = (msg) => { f.files = []; f.warn = []; f.error = msg; _protoFormPaint(); };
+  let list = picked;
+  if (list.length === 1 && /\.zip$/i.test(list[0].path)) {
+    try {
+      const JSZip = await _ensureJSZip();
+      const zip = await JSZip.loadAsync(list[0].file);
+      list = [];
+      for (const e of Object.values(zip.files)) if (!e.dir) list.push({ path: e.name, file: await e.async('blob') });
+    } catch { return fail('Não foi possível abrir o .zip.'); }
+  }
+  list = list.map(x => ({ path: String(x.path).replace(/\\/g, '/').replace(/^\/+/, ''), file: x.file })).filter(x => !PROTO_JUNK.test(x.path));
+  // Tudo dentro de uma pasta só (escolher pasta, a maioria dos zips): tira esse nível.
+  const tops = new Set(list.map(x => x.path.includes('/') ? x.path.split('/')[0] : ''));
+  const top = tops.size === 1 && !tops.has('') ? [...tops][0] : '';
+  if (top) list = list.map(x => ({ path: x.path.slice(top.length + 1), file: x.file }));
+  const types = new Set(L.types || []);
+  const skipped = list.filter(x => !types.has(_protoExt(x.path)));
+  list = list.filter(x => types.has(_protoExt(x.path)));
+  if (!list.some(x => /\.html?$/i.test(x.path))) return fail('Não achei nenhum arquivo .html. Escolha a pasta onde está o index.html do site.');
+  if (L.maxFiles && list.length > L.maxFiles) return fail(`A pasta tem ${list.length} arquivos de site. Um protótipo pode ter até ${L.maxFiles}.`);
+  const big = list.find(x => L.fileBytes && x.file.size > L.fileBytes);
+  if (big) return fail(`${big.path} tem ${fmtBytes(big.file.size)}. O limite por arquivo é ${fmtBytes(L.fileBytes)}.`);
+  const total = list.reduce((n, x) => n + x.file.size, 0);
+  if (L.projectBytes && total > L.projectBytes) return fail(`A pasta tem ${fmtBytes(total)}. Um protótipo pode ter até ${fmtBytes(L.projectBytes)}.`);
+  const warn = [];
+  if (skipped.length) warn.push(`${skipped.length} ${skipped.length === 1 ? 'arquivo ficou' : 'arquivos ficaram'} de fora por não ${skipped.length === 1 ? 'ser' : 'serem'} de site: ${skipped.slice(0, 3).map(x => x.path).join(', ')}${skipped.length > 3 ? '…' : ''}`);
+  // Caminho absoluto ("/css/x.css") aponta pra raiz do reWork, não pra pasta do protótipo.
+  const abs = [];
+  for (const x of list) {
+    if (!/\.(html?|css)$/i.test(x.path) || x.file.size > 2 * 1024 * 1024) continue;
+    if (/(?:src|href|poster)\s*=\s*["']\/(?!\/)|url\(\s*["']?\/(?!\/)/i.test(await x.file.text())) abs.push(x.path);
+  }
+  if (abs.length) warn.push(`Caminhos que começam com "/" não carregam no protótipo (em ${abs.slice(0, 3).join(', ')}${abs.length > 3 ? '…' : ''}). Troque por caminhos relativos, como "css/style.css".`);
+  if (_proto.form !== f) return;
+  f.files = list; f.warn = warn; f.error = '';
+  if (!f.name.trim() && top) f.name = top.slice(0, 80);
+  _protoFormPaint();
+}
+function _protoBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1] || '');
+    r.onerror = () => reject(new Error('Não foi possível ler um dos arquivos.'));
+    r.readAsDataURL(blob);
+  });
+}
+async function saveProto() {
+  const f = _proto.form;
+  if (!f || _proto.busy) return;
+  const name = f.name.trim();
+  if (name.length < 2) { f.error = 'Dê um nome ao protótipo.'; _protoFormPaint(); $('proto-name')?.focus(); return; }
+  if (!f.id && !f.files.length) { f.error = 'Escolha a pasta do site.'; _protoFormPaint(); return; }
+  const isNew = !f.id;
+  const step = (t) => { f.progress = t; const b = $('proto-save'); if (b) b.textContent = t; };
+  _proto.busy = true; f.error = ''; f.progress = 'Salvando…';
+  _protoFormPaint();
+  try {
+    const p = f.id
+      ? await api('/prototypes/' + f.id, 'PUT', { name, clientId: f.clientId, ...(f.entry && !f.files.length ? { entry: f.entry } : {}) })
+      : await api('/prototypes', 'POST', { name, clientId: f.clientId, workspaceId: activeWs || (workspaces[0] || {}).id });
+    f.id = p.id; // se o envio falhar, tentar de novo não cria outro
+    if (f.files.length) {
+      const { uploadId } = await api(`/prototypes/${p.id}/upload`, 'POST', {});
+      for (let i = 0; i < f.files.length; i++) {
+        step(`Enviando ${i + 1} de ${f.files.length}…`);
+        await api(`/prototypes/${p.id}/upload/${uploadId}/file`, 'POST', { path: f.files[i].path, data: await _protoBase64(f.files[i].file) });
+      }
+      step('Publicando…');
+      await api(`/prototypes/${p.id}/upload/${uploadId}/finish`, 'POST', {});
+    }
+    _proto.busy = false; _proto.form = null;
+    closeModal('proto-modal');
+    await _protoLoad();
+    _protoPaint();
+    toast(isNew ? 'Protótipo criado. Gere o link para compartilhar.' : 'Protótipo atualizado.', 'success');
+  } catch (e) {
+    _proto.busy = false; f.progress = null; f.error = e.message;
+    try { await _protoLoad(); } catch {}
+    _protoPaint();
+    _protoFormPaint();
+  }
+}
+function _protoReplace(p) {
+  const i = (_proto.items || []).findIndex(x => x.id === p.id);
+  if (i >= 0) _proto.items[i] = p;
+  _protoPaint();
+}
+async function setProtoLink(id, days) {
+  try {
+    const p = await api(`/prototypes/${id}/link`, 'POST', { days });
+    _protoReplace(p);
+    const until = _protoWhen(p.link.expiresAt);
+    try { await navigator.clipboard.writeText(p.url); toast(`Link copiado. Vale até ${until}.`, 'success'); }
+    catch { toast(`Link gerado. Vale até ${until}.`, 'success'); }
+  } catch (e) { toast(e.message, 'error'); }
+}
+function copyProtoLink(id) {
+  const p = _protoById(id);
+  if (p) copyToClipboard(p.url, 'Link');
+}
+/* Um arquivo só vem como ele é; mais de um, num .zip (o servidor decide). */
+async function downloadProto(id) {
+  try {
+    const res = await fetch(`/api/prototypes/${id}/download`, { credentials: 'same-origin', headers: _orgId ? { 'X-Org-Id': _orgId } : {} });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Erro ${res.status}`);
+    const name = (/filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '') || [])[1] || 'prototipo.zip';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(await res.blob());
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  } catch (e) { toast(e.message, 'error'); }
+}
+async function revokeProtoLink(id) {
+  const ok = await showConfirm({ title: 'Desativar link', message: 'O endereço atual deixa de funcionar na hora. Para compartilhar de novo, gere outro link.', okLabel: 'Desativar', danger: true });
+  if (!ok) return;
+  try { _protoReplace(await api(`/prototypes/${id}/link`, 'DELETE')); toast('Link desativado.', 'success'); }
+  catch (e) { toast(e.message, 'error'); }
+}
+async function deleteProto(id) {
+  const p = _protoById(id);
+  if (!p) return;
+  const ok = await showConfirm({ title: 'Excluir protótipo', message: `<b>${esc(p.name)}</b> e os arquivos dele serão apagados. O link deixa de funcionar.`, okLabel: 'Excluir', danger: true });
+  if (!ok) return;
+  try {
+    await api('/prototypes/' + id, 'DELETE');
+    _proto.items = _proto.items.filter(x => x.id !== id);
+    _protoPaint();
+    toast('Protótipo excluído.', 'success');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
 /* ─── PÁGINA: CONFIGURAÇÕES DA ORGANIZAÇÃO (/organizacao) ───
    Seções por papel: todo mundo vê Geral e Jornada; admin/moderador veem
    Pessoas, Equipes e Integrações; admin exporta os dados; o dono muda nome e
@@ -9083,6 +9414,7 @@ const NAV_CATALOG = [
   { page: 'org', label: 'Organização', icon: 'building-2', sec: 'insight', cls: 'freelancer-hide', desc: 'Pessoas, clientes, faturamento e objetivos da organização.' },
   { page: 'gallery', label: 'Galeria', icon: 'images', sec: 'content', cls: 'freelancer-hide', desc: 'Imagens e arquivos das demandas, por cliente.' },
   { page: 'kb', label: 'Base de conhecimento', icon: 'book-open', sec: 'content', cls: 'freelancer-hide', desc: 'Artigos e processos da equipe.' },
+  { page: 'prototypes', label: 'Protótipos', icon: 'app-window', sec: 'content', cls: 'freelancer-hide', desc: 'Sites para o cliente aprovar por um link.' },
   { page: 'flows', label: 'Fluxos de Demanda', icon: 'workflow', sec: 'ops', cls: 'freelancer-hide', desc: 'Etapas, responsáveis e prazos de cada tipo de demanda.' },
   { page: 'forms', label: 'Formulários', icon: 'clipboard-list', sec: 'ops', cls: 'freelancer-hide', desc: 'Formulários de pedido e as respostas recebidas.' },
   { page: 'templates', label: 'Templates', icon: 'files', sec: 'ops', cls: 'freelancer-hide', desc: 'Modelos prontos para abrir demandas mais rápido.' },
@@ -9427,7 +9759,7 @@ const PAGE_TITLES = {
   trash: 'Lixeira', recurringDemands: 'Demandas Recorrentes',
   devtools: 'Dev Tools', passwords: 'Cofre de Senhas', kb: 'Base de conhecimento',
   forms: 'Formulários', dashboards: 'Dashboards', performance: 'Performance', menu: 'Editar acesso rápido',
-  'post-editor': 'Editor de post', 'demand-detail': 'Demanda', billing: 'Plano e pagamento', billingCheckout: 'Assinatura', support: 'Suporte', supportNew: 'Abrir chamado', supportTicket: 'Chamado',
+  'post-editor': 'Editor de post', 'demand-detail': 'Demanda', billing: 'Plano e pagamento', billingCheckout: 'Assinatura', support: 'Suporte', supportNew: 'Abrir chamado', supportTicket: 'Chamado', prototypes: 'Protótipos',
   notfound: 'Página não encontrada'
 };
 /* Render da 404 — popula o path digitado e pinta ícones do botão. */
@@ -10018,6 +10350,7 @@ function renderCurrent() {
     case 'support': renderSupport(); break;
     case 'supportNew': renderSupportNew(); break;
     case 'supportTicket': renderSupportTicket(); break;
+    case 'prototypes': renderPrototypes(); break;
     case 'users':      renderUsers(); break;
     case 'trash':      renderTrash(); break;
     case 'recurringDemands': renderRecurringDemands(); break;

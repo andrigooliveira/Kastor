@@ -50,7 +50,10 @@ const ENTITY_TYPES = [
   // Financeiro da organização (orgId): valor mensal do contrato de cada cliente
   // (fora do cliente, que chega pra todo o time), retrato mensal da soma dos
   // contratos e metas de receita mensal da organização ou de uma equipe.
-  'clientFees', 'contractSnapshots', 'revenueGoals'
+  'clientFees', 'contractSnapshots', 'revenueGoals',
+  // Protótipos (prototypes.js): sites estáticos pra aprovação, com link
+  // externo de prazo curto. Os arquivos ficam em DATA_DIR/prototypes.
+  'prototypes'
 ];
 
 function createStore(config = {}) {

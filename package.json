@@ -11,7 +11,7 @@
     "build:writer": "node scripts/build-writer.js",
     "build:writer:dev": "node scripts/build-writer.js --dev",
     "build:prod": "node scripts/build-writer.js && node build-prod.js",
-    "test": "node --test tests/smoke.test.js"
+    "test": "node --test tests/smoke.test.js tests/prototypes.test.js"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.3.2",

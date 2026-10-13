@@ -136,6 +136,7 @@ async function loadDB() {
   // pra arquivos em data/uploads. Idempotente — não toca quem já está em URL.
   extractInlineBase64();
   backfillAttachmentSizes();
+  if (prototypesApi) prototypesApi.cleanOrphans();
   await loadAdminDiscordDefaults(); // carrega defaults de DM do Discord (KV)
   await seedDemandTypes(); // popula a biblioteca de tipos a partir dos fluxos (1x)
   // Migração de folders legados do cofre — cria entidades a partir do campo
@@ -1925,6 +1926,15 @@ app.use((req, res, next) => {
   }
   next();
 });
+/* Página isolada (CSP sandbox, como a prévia de um protótipo) assina as
+   chamadas com `Origin: null`. Nenhuma tela do app faz isso — mutação na API
+   vinda de lá é recusada, mesmo que um dia o cookie a acompanhe. */
+app.use((req, res, next) => {
+  if (req.headers.origin === 'null' && req.path.startsWith('/api/') && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    return res.status(403).json({ error: 'Origem não permitida' });
+  }
+  next();
+});
 
 // Limite generoso só onde realmente há upload (anexos/avatares); resto é 200kb.
 // 210mb comporta arquivos até ~150MB depois do overhead do base64 (~33%) + metadados.
@@ -1940,7 +1950,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use((req, res, next) => {
-  const isUpload = /^\/api\/(support\/tickets(\/[^/]+\/messages)?|uploads|demands(\/[^/]+(\/comment)?)?$|me$|users(\/[^/]+)?$|projects(\/[^/]+)?$|writer\/import$)/.test(req.path);
+  const isUpload = /^\/api\/(support\/tickets(\/[^/]+\/messages)?|prototypes\/[^/]+\/upload\/[^/]+\/file$|uploads|demands(\/[^/]+(\/comment)?)?$|me$|users(\/[^/]+)?$|projects(\/[^/]+)?$|writer\/import$)/.test(req.path);
   return (isUpload ? jsonLg : jsonSm)(req, res, next);
 });
 /* Static do SPA — política de cache diferenciada:
@@ -5975,7 +5985,13 @@ function orgStorageAll(force) {
   _orgStorage = { at: Date.now(), byOrg };
   return byOrg;
 }
-const orgStorage = (orgId) => orgStorageAll().get(orgId) || { bytes: 0, files: 0 };
+let prototypesApi = null; // prototypes.js (sites pra aprovação) — montado junto do suporte
+// Anexos + arquivos dos protótipos (que não passam por /uploads).
+const orgStorage = (orgId) => {
+  const st = orgStorageAll().get(orgId) || { bytes: 0, files: 0 };
+  const pr = prototypesApi ? prototypesApi.orgUsage(orgId) : null;
+  return pr ? { bytes: st.bytes + pr.bytes, files: st.files + pr.files } : st;
+};
 // Upload recém-feito ainda não está em nenhum item: soma na hora pro limite valer.
 function noteOrgUpload(orgId, bytes) {
   const byOrg = orgStorageAll();
@@ -6021,6 +6037,7 @@ function purgeOrg(org) {
     try { json = JSON.stringify(u); } catch {}
     for (const m of json.matchAll(UPLOAD_REF_RE)) keep.add(m[1]);
   }
+  if (prototypesApi) prototypesApi.purgeOrg(orgId);
   // Calcula tudo antes de remover: é o squad que diz a organização de cada item.
   const doomed = [];
   for (const t of ENTITY_TYPES) {
@@ -6414,6 +6431,14 @@ billingApi = require('./billing')(app, {
   getDb: () => rawDb, store, auth, saveEntity, nowISO, requireAuth,
   plans: PLANS, plansApi, orgPlan, orgUsage, appBaseUrl, sendEmail, mailEnabled, emailTpl,
   requireConsole: consoleApi.requireConsole, audit: consoleApi.audit
+});
+prototypesApi = require('./prototypes')(app, {
+  getDb: () => rawDb, dataDir: DATA_DIR, saveEntity, removeEntity, uid, nowISO, requireAuth, blockFreelancer, canAccessWs,
+  tenancy, orgPlan, storageLimitError, fmtBytes, clientIp, appBaseUrl,
+  sessionUser: (req) => {
+    const s = auth.sessionForToken(parseCookies(req)[SESSION_COOKIE] || null);
+    return (s && allUsers().find(u => u.id === s.userId)) || null;
+  }
 });
 require('./plans').setupPlanRoutes(app, { plans: plansApi, requireConsole: consoleApi.requireConsole, audit: consoleApi.audit, getDb: () => rawDb, saveEntity });
 

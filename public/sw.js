@@ -114,6 +114,10 @@ self.addEventListener('fetch', event => {
   // Conteúdo de usuário autenticado: passa direto, sem cachear no SW.
   if (url.pathname.startsWith('/uploads/')) return;
 
+  // Prévia de protótipo (/p/<token>): página de fora do app. Passa direto —
+  // senão a navegação gravaria a prévia no lugar do shell offline.
+  if (url.pathname.startsWith('/p/')) return;
+
   // Navegação (documento HTML) → network-first, fallback pro shell cacheado.
   if (req.mode === 'navigate') {
     event.respondWith(

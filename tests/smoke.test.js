@@ -1436,6 +1436,74 @@ test('Suporte: abrir chamado com anexo, console responde, cliente vê e responde
   assert.equal((await req('/api/support/tickets/' + c2.body.number, { headers: { Cookie: betaCookie } })).status, 404);
 });
 
+/* O módulo em si (isolamento, prazo, token) é coberto em prototypes.test.js;
+   aqui vai a ligação com o servidor: sessão, organização, plano e espaço. */
+test('Protótipos: equipe envia, plano libera o link, prévia sai isolada e fora da sessão', async () => {
+  const b64 = (s) => Buffer.from(s).toString('base64');
+  const putPlan = (body) => call('PUT', `/api/console/orgs/${betaOrgId}/plan`, consoleCookie, body);
+  const usedBytes = async () => (await req('/api/console/orgs', { headers: { Cookie: consoleCookie } })).body.items.find(o => o.id === betaOrgId).usage.storage.bytes;
+  assert.equal((await req('/api/prototypes')).status, 401);
+  const wsId = (await req('/api/bootstrap', { headers: { Cookie: betaCookie } })).body.workspaces[0].id;
+  const before = await usedBytes();
+
+  const created = await call('POST', '/api/prototypes', betaCookie, { name: 'LP de teste', workspaceId: wsId });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const id = created.body.id;
+  const up = (await call('POST', `/api/prototypes/${id}/upload`, betaCookie, {})).body.uploadId;
+  const html = '<!doctype html><link rel="stylesheet" href="css/style.css"><h1>Oi</h1>';
+  // 300 KB: só passa porque a rota de envio usa o limite grande do JSON.
+  const css = 'body{margin:0}' + ' '.repeat(300 * 1024);
+  assert.equal((await call('POST', `/api/prototypes/${id}/upload/${up}/file`, betaCookie, { path: 'index.html', data: b64(html) })).status, 200);
+  assert.equal((await call('POST', `/api/prototypes/${id}/upload/${up}/file`, betaCookie, { path: 'css/style.css', data: b64(css) })).status, 200);
+  const done = await call('POST', `/api/prototypes/${id}/upload/${up}/finish`, betaCookie, {});
+  assert.equal(done.status, 200, JSON.stringify(done.body));
+  assert.equal(await usedBytes(), before + html.length + css.length, 'o peso conta no armazenamento do plano');
+  const url = new URL(done.body.url).pathname;
+
+  // A WSI não enxerga o protótipo da Beta.
+  const wsi = await req('/api/prototypes', { headers: { Cookie: 'kastor_session=' + LEGACY_TOKEN } });
+  if (wsi.status === 200) assert.ok(!wsi.body.items.some(p => p.id === id));
+
+  // Sem link: de fora não abre (e não cai no SPA); logada, a equipe vê.
+  const outside = await fetch(baseUrl + url);
+  assert.equal(outside.status, 410);
+  assert.ok(!(await outside.text()).includes('id="app"'));
+  const inside = await fetch(baseUrl + url, { headers: { Cookie: betaCookie } });
+  assert.equal(inside.status, 200);
+  const src = /<iframe src="([^"]+)"/.exec(await inside.text())[1];
+  const file = await fetch(baseUrl + src);
+  assert.equal(file.status, 200);
+  assert.match(file.headers.get('content-security-policy'), /^sandbox allow-scripts/);
+  assert.ok(!file.headers.get('content-security-policy').includes('allow-same-origin'));
+
+  // Plano de teste não gera link externo; plano pago gera, com teto de 7 dias.
+  assert.equal((await call('POST', `/api/prototypes/${id}/link`, betaCookie, { days: 7 })).body.code, 'plan');
+  try {
+    await putPlan({ planId: 'agencia' });
+    const link = await call('POST', `/api/prototypes/${id}/link`, betaCookie, { days: 30 });
+    assert.equal(link.status, 200, JSON.stringify(link.body));
+    assert.ok(Date.parse(link.body.link.expiresAt) - Date.now() <= 7 * 864e5);
+    const shell = await fetch(baseUrl + url);
+    assert.equal(shell.status, 200);
+    assert.match(await shell.text(), /Este link expira/);
+    const pub = await fetch(`${baseUrl}${url}/f/css/style.css`);
+    assert.equal(pub.status, 200);
+    assert.match(pub.headers.get('content-security-policy'), /^sandbox allow-scripts/);
+    assert.ok(pub.headers.get('content-type').startsWith('text/css'));
+  } finally {
+    await putPlan({ planId: 'teste', trialDays: 3 });
+  }
+
+  // Página isolada assina com Origin: null — a API recusa mutação vinda de lá.
+  const forged = await req('/api/org', { method: 'PUT', headers: { ...J(betaCookie), Origin: 'null' }, body: JSON.stringify({ name: 'Invadida' }) });
+  assert.equal(forged.status, 403);
+  assert.equal((await req('/api/me', { headers: { Cookie: betaCookie, Origin: 'null' } })).status, 200, 'leitura não é afetada');
+
+  assert.equal((await call('DELETE', `/api/prototypes/${id}`, betaCookie)).status, 200);
+  assert.equal(await usedBytes(), before);
+  assert.equal((await fetch(baseUrl + url)).status, 404);
+});
+
 test('Organização excluída: some na hora, fica 30 dias, restaura e apaga de vez', async () => {
   const H = { headers: { Cookie: consoleCookie } };
   const wsi = (await req('/api/console/orgs', H)).body.items.find(o => o.name === 'WSI');

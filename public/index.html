@@ -2669,6 +2669,28 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
     <div class="page" id="page-supportNew"><div class="page-body" id="support-new-body"></div></div>
     <div class="page" id="page-supportTicket"><div class="page-body" id="support-ticket-body"></div></div>
 
+    <!-- ── PROTÓTIPOS (/prototypes) — renderPrototypes() ── -->
+    <div class="page" id="page-prototypes">
+      <div class="page-body us-dossier">
+        <div class="us-header">
+          <div class="us-header-block">
+            <h2 class="capacity-title">Protótipos</h2>
+            <div class="capacity-subtitle" id="proto-header-counter">Sites para o cliente aprovar por um link.</div>
+          </div>
+          <div class="us-header-actions">
+            <button class="btn btn-primary btn-sm" onclick="openProtoForm()"><i data-lucide="plus" class="ic-sm"></i> Novo protótipo</button>
+          </div>
+        </div>
+        <div class="us-section">
+          <div class="us-section-head">
+            <span class="us-section-title">Publicados</span>
+            <span class="us-section-hint" id="proto-section-hint"></span>
+          </div>
+          <div id="proto-list"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- ── ASSINATURA (/billing/checkout) — renderBillingCheckout() ── -->
     <div class="page" id="page-billingCheckout">
       <div class="page-body" id="billing-checkout-body"></div>
@@ -5009,6 +5031,21 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       </div>
     </div>
     <div class="modal-footer" id="elm-foot"></div>
+  </div>
+</div>
+
+<!-- MODAL: PROTÓTIPO (/prototypes) — openProtoForm(); o corpo vem de _protoFormPaint() -->
+<div class="modal-overlay" id="proto-modal">
+  <div class="modal modal-md" data-no-outside-close="1">
+    <div class="modal-header">
+      <div class="modal-title" id="proto-modal-title">Novo protótipo</div>
+      <button class="modal-close" onclick="closeProtoForm()"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body" id="proto-modal-body"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="proto-cancel" onclick="closeProtoForm()">Cancelar</button>
+      <button class="btn btn-confirm" id="proto-save" onclick="saveProto()">Criar protótipo</button>
+    </div>
   </div>
 </div>
 
