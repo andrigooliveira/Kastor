@@ -20860,8 +20860,19 @@ body.dv-resizing[data-dv-resize="se"] * { cursor: nwse-resize !important; }
 .proto-pill-warn { background: var(--warn-dim); color: var(--warn); }
 .proto-col-actions { width: 1%; text-align: right; white-space: nowrap; }
 .proto-acts { display: inline-flex; align-items: center; justify-content: flex-end; gap: 4px; }
-.proto-acts .icon-btn { text-decoration: none; flex: none; }
+/* Ações da linha sem borda, iguais ao botão do menu (⋯) ao lado. */
+.proto-acts .icon-btn { width: 28px; height: 28px; flex: none; border-color: transparent; color: var(--text-muted); text-decoration: none; }
+.proto-acts .icon-btn:hover { background: var(--surface-2); border-color: transparent; color: var(--text); }
 .proto-acts .icon-btn:focus-visible { outline: none; border-color: var(--border-active); box-shadow: var(--shadow-focus); }
+.proto-filters { margin-bottom: 0; flex-wrap: wrap; }
+.proto-status .filter-toggle-btn { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+@media (max-width: 900px) {
+  .proto-status .filter-toggle-btn { padding: 0 10px; }
+  .proto-status .filter-toggle-btn span { display: none; }
+}
+.proto-filters[hidden], .proto-filters [hidden] { display: none; }
+.proto-ws { font-family: 'Geist', sans-serif; }
+.proto-table .cell-user { white-space: nowrap; }
 .proto-acts .icon-btn:active { transform: scale(.96); }
 
 .proto-drop { display: flex; align-items: center; gap: 14px; padding: 16px; border-radius: var(--radius-md); background: var(--surface-2); border: 1px dashed var(--border); transition: border-color var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out); }

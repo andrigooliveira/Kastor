@@ -165,7 +165,7 @@ module.exports = function setupPrototypes(app, deps) {
       fileCount: files.length, bytes: p.bytes || 0, hasFiles: !!p.version,
       url: publicUrl(req, p),
       link: p.link ? { active: linkActive(p), expiresAt: p.link.expiresAt } : null,
-      createdAt: p.createdAt, updatedAt: p.updatedAt
+      createdBy: p.createdBy || null, createdAt: p.createdAt, updatedAt: p.updatedAt
     };
   }
 

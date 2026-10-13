@@ -2681,6 +2681,21 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <button class="btn btn-primary btn-sm" onclick="openProtoForm()"><i data-lucide="plus" class="ic-sm"></i> Novo protótipo</button>
           </div>
         </div>
+        <!-- Filtros: equipe, cliente e situação do link — _protoPaint() preenche as opções -->
+        <div class="filters-bar proto-filters" id="proto-filters" hidden>
+          <!-- Equipe: ponto com a cor da equipe (aplicado em _protoPaintFilters). Cliente: foto dele. -->
+          <select class="filter-select" id="proto-f-ws" aria-label="Equipe" data-no-cdrop onchange="_protoSetFilter('ws', this.value)"></select>
+          <select class="filter-select" id="proto-f-client" aria-label="Cliente" data-cdrop-icon="client" onchange="_protoSetFilter('client', this.value)"></select>
+          <div class="filter-toggle proto-status" id="proto-f-status" role="tablist" aria-label="Situação">
+            <button type="button" class="filter-toggle-btn is-active" data-status="" title="Todos" onclick="_protoSetFilter('status', '')"><i data-lucide="layout-list" class="ic-xs"></i><span>Todos</span></button>
+            <button type="button" class="filter-toggle-btn" data-status="active" title="Link ativo" onclick="_protoSetFilter('status', 'active')"><i data-lucide="link" class="ic-xs"></i><span>Ativo</span></button>
+            <button type="button" class="filter-toggle-btn" data-status="expired" title="Link expirado" onclick="_protoSetFilter('status', 'expired')"><i data-lucide="timer-off" class="ic-xs"></i><span>Expirado</span></button>
+            <button type="button" class="filter-toggle-btn" data-status="team" title="Só a equipe" onclick="_protoSetFilter('status', 'team')"><i data-lucide="lock" class="ic-xs"></i><span>Só a equipe</span></button>
+            <button type="button" class="filter-toggle-btn" data-status="empty" title="Sem arquivos" onclick="_protoSetFilter('status', 'empty')"><i data-lucide="file-x" class="ic-xs"></i><span>Sem arquivos</span></button>
+          </div>
+          <button type="button" class="btn btn-ghost btn-sm" id="proto-f-clear" onclick="_protoClearFilters()" hidden>Limpar</button>
+        </div>
+
         <div class="us-section">
           <div class="us-section-head">
             <span class="us-section-title">Publicados</span>

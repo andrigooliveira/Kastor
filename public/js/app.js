@@ -7083,7 +7083,18 @@ async function closeSupportTicket() {
    contadores, seção com tabela mine-v2, ações rápidas em .icon-btn e o resto
    no menu (⋯). O formulário mora no #proto-modal; _proto.form guarda o estado
    e _protoFormPaint() repinta o corpo a partir dele. */
-let _proto = { items: null, limits: null, canShare: true, form: null, busy: false };
+let _proto = { items: null, limits: null, canShare: true, form: null, busy: false, filter: null, sortKey: 'created', sortAsc: false };
+/* Colunas ordenáveis (cabeçalho igual ao de /demands: .is-sorted + direção). */
+const PROTO_SORTS = {
+  name: (p) => norm(p.name),
+  client: (p) => norm((p.clientId && clientById(p.clientId)?.name) || '\uffff'),
+  files: (p) => p.bytes || 0,
+  status: (p) => String(['active', 'expired', 'team', 'empty'].indexOf(_protoStatus(p))) + (p.link && p.link.active ? p.link.expiresAt : ''),
+  author: (p) => norm((p.createdBy && userById(p.createdBy)?.name) || '\uffff'),
+  created: (p) => String(p.createdAt)
+};
+/* Situação do link, a mesma que a coluna mostra (e o filtro usa). */
+const _protoStatus = (p) => !p.hasFiles ? 'empty' : p.link ? (p.link.active ? 'active' : 'expired') : 'team';
 const PROTO_JUNK = /(^|\/)(\.[^/]*|__MACOSX|node_modules|Thumbs\.db|desktop\.ini)(\/|$)/i;
 const _protoExt = (p) => (String(p).match(/\.([a-z0-9]+)$/i) || [])[1]?.toLowerCase() || '';
 const _protoWhen = (iso) => { const d = new Date(iso), p = n => String(n).padStart(2, '0'); return `dia ${p(d.getDate())}/${p(d.getMonth() + 1)} às ${p(d.getHours())}:${p(d.getMinutes())}`; };
@@ -7099,7 +7110,7 @@ async function _protoLoad() {
 async function renderPrototypes() {
   const host = $('proto-list');
   if (!host) return;
-  if (!_proto.items) host.innerHTML = `<div class="table-wrap mine-table-wrap mcard-wrap"><table class="mine-table-v2 mcard"><tbody>${skeletonTableRows(6, 3)}</tbody></table></div>`;
+  if (!_proto.items) host.innerHTML = `<div class="table-wrap mine-table-wrap mcard-wrap"><table class="mine-table-v2 mcard"><tbody>${skeletonTableRows(7, 3)}</tbody></table></div>`;
   try { await _protoLoad(); }
   catch (e) { host.innerHTML = emptyState('Não foi possível carregar os protótipos', e.message, 'alert-circle'); return; }
   _protoPaint();
@@ -7108,7 +7119,21 @@ function _protoPaint() {
   const host = $('proto-list');
   if (!host) return;
   const maxDays = (_proto.limits || {}).linkMaxDays || 7;
-  const items = (_proto.items || []).filter(p => !activeWs || p.workspaceId === activeWs);
+  const all = _proto.items || [];
+  // A equipe começa na equipe ativa da barra lateral; os outros filtros, em "todos".
+  if (!_proto.filter) _proto.filter = { ws: activeWs || '', client: '', status: '' };
+  const flt = _proto.filter;
+  if (flt.ws && flt.ws !== activeWs && !all.some(p => p.workspaceId === flt.ws)) flt.ws = '';
+  if (flt.client && flt.client !== '__none__' && !all.some(p => p.clientId === flt.client)) flt.client = '';
+  const inWs = all.filter(p => !flt.ws || p.workspaceId === flt.ws);
+  const items = inWs.filter(p => (!flt.client || (flt.client === '__none__' ? !p.clientId : p.clientId === flt.client)) && (!flt.status || _protoStatus(p) === flt.status))
+    .sort((a, b) => {
+      const get = PROTO_SORTS[_proto.sortKey] || PROTO_SORTS.created;
+      const va = get(a), vb = get(b);
+      return (va < vb ? -1 : va > vb ? 1 : String(a.createdAt).localeCompare(String(b.createdAt))) * (_proto.sortAsc ? 1 : -1);
+    });
+  const th = (key, label) => `<th class="${_proto.sortKey === key ? `is-sorted ${_proto.sortAsc ? 'is-sort-asc' : 'is-sort-desc'}` : ''}" style="cursor:pointer" onclick="_protoSortBy('${key}')">${label} <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>`;
+  _protoPaintFilters(all, inWs);
   const counter = $('proto-header-counter');
   if (counter) {
     const live = items.filter(p => p.link && p.link.active).length;
@@ -7121,6 +7146,10 @@ function _protoPaint() {
   if (hint) hint.textContent = _proto.canShare
     ? `O link externo vale por até ${maxDays} dias. Depois disso, só a equipe logada vê a prévia.`
     : 'No período de teste a prévia abre só para quem está logado. O link externo entra junto com um plano.';
+  if (!items.length && inWs.length) {
+    host.innerHTML = `<div class="table-wrap mine-table-wrap mcard-wrap"><table class="mine-table-v2 mcard"><tbody><tr><td colspan="7">${emptyMini('Nenhum protótipo com esses filtros.')}</td></tr></tbody></table></div>`;
+    return;
+  }
   if (!items.length) {
     host.innerHTML = emptyState('Nenhum protótipo ainda', 'Suba a pasta de um site e mande o link para o cliente abrir no navegador, sem conta e sem baixar nada.', 'folder', { label: 'Novo protótipo', onclick: 'openProtoForm()', icon: 'plus' });
     paintIcons(host);
@@ -7129,11 +7158,12 @@ function _protoPaint() {
   host.innerHTML = `<div class="table-wrap mine-table-wrap mcard-wrap">
     <table class="mine-table-v2 mcard proto-table">
       <thead><tr>
-        <th>Protótipo</th>
-        <th>Cliente</th>
-        <th>Arquivos</th>
-        <th>Link externo</th>
-        <th>Atualizado</th>
+        ${th('name', 'Protótipo')}
+        ${th('client', 'Cliente')}
+        ${th('files', 'Arquivos')}
+        ${th('status', 'Link externo')}
+        ${th('author', 'Criado por')}
+        ${th('created', 'Adicionado')}
         <th class="proto-col-actions"></th>
       </tr></thead>
       <tbody>${items.map(_protoRowHTML).join('')}</tbody>
@@ -7141,8 +7171,47 @@ function _protoPaint() {
   </div>`;
   paintIcons(host);
 }
+/* Opções dos filtros: só equipes e clientes que têm protótipo (mais a equipe ativa). */
+function _protoPaintFilters(all, inWs) {
+  const bar = $('proto-filters');
+  if (!bar) return;
+  const flt = _proto.filter;
+  bar.hidden = !all.length;
+  const byName = (a, b) => String(a.name).localeCompare(String(b.name));
+  const wsIds = new Set(all.map(p => p.workspaceId));
+  if (activeWs) wsIds.add(activeWs);
+  const wsList = [...wsIds].map(wsById).filter(Boolean).sort(byName);
+  $('proto-f-ws').innerHTML = '<option value="">Todas as equipes</option>' + wsList.map(w => `<option value="${w.id}"${w.id === flt.ws ? ' selected' : ''}>${esc(w.name)}</option>`).join('');
+  applyFilterDropdown('proto-f-ws', { dotMap: Object.fromEntries(wsList.map(w => [w.id, w.color || 'var(--accent)'])) });
+  const clientList = [...new Set(inWs.map(p => p.clientId).filter(Boolean))].map(clientById).filter(Boolean).sort(byName);
+  $('proto-f-client').innerHTML = '<option value="">Cliente</option>' + clientList.map(c => `<option value="${c.id}"${c.id === flt.client ? ' selected' : ''}>${esc(c.name)}</option>`).join('')
+    + (inWs.some(p => !p.clientId) ? `<option value="__none__"${flt.client === '__none__' ? ' selected' : ''}>Sem cliente</option>` : '');
+  $('proto-f-status').querySelectorAll('.filter-toggle-btn').forEach(b => {
+    const on = b.dataset.status === flt.status;
+    b.classList.toggle('is-active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  paintIcons(bar);
+  $('proto-f-clear').hidden = !(flt.client || flt.status || flt.ws !== (activeWs || ''));
+}
+function _protoSetFilter(key, value) {
+  _proto.filter[key] = value;
+  if (key === 'ws') _proto.filter.client = '';
+  _protoPaint();
+}
+function _protoClearFilters() {
+  _proto.filter = null;
+  _protoPaint();
+}
+function _protoSortBy(key) {
+  if (_proto.sortKey === key) _proto.sortAsc = !_proto.sortAsc;
+  else { _proto.sortKey = key; _proto.sortAsc = key !== 'created' && key !== 'files'; }
+  _protoPaint();
+}
 function _protoRowHTML(p) {
   const c = p.clientId ? clientById(p.clientId) : null;
+  const author = p.createdBy ? userById(p.createdBy) : null;
+  const ws = !_proto.filter.ws ? wsById(p.workspaceId) : null;
   const active = !!(p.link && p.link.active);
   const link = !p.hasFiles ? '<span class="pill pill-late">Sem arquivos</span>'
     : active ? `<span class="pill pill-success">Ativo</span><span class="proto-until">até ${_protoWhen(p.link.expiresAt)}</span>`
@@ -7163,11 +7232,12 @@ function _protoRowHTML(p) {
     { icon: 'trash-2', label: 'Excluir', danger: true, onclick: `deleteProto('${p.id}')` }
   ].filter(Boolean));
   return `<tr class="mrow">
-    <td class="mcol-name"><div class="proto-name">${esc(p.name)}</div>${p.entry ? `<div class="proto-entry">${esc(p.entry)}</div>` : ''}</td>
-    <td class="${c ? '' : 'is-blank'}"><span class="mlbl">Cliente</span>${c ? esc(c.name) : '—'}</td>
+    <td class="mcol-name"><div class="proto-name">${esc(p.name)}</div>${p.entry || ws ? `<div class="proto-entry">${[p.entry && esc(p.entry), ws && `<span class="proto-ws">${esc(ws.name)}</span>`].filter(Boolean).join(' · ')}</div>` : ''}</td>
+    <td class="${c ? '' : 'is-blank'}"><span class="mlbl">Cliente</span>${c ? `<span class="cell-user">${clientAvatarHTML(c)} ${esc(c.name)}</span>` : '—'}</td>
     <td class="proto-num${p.hasFiles ? '' : ' is-blank'}"><span class="mlbl">Arquivos</span>${p.hasFiles ? `${_protoCount(p.fileCount)} · ${fmtBytes(p.bytes)}` : '—'}</td>
     <td><span class="mlbl">Link externo</span><span class="proto-link">${link}</span></td>
-    <td class="proto-when"><span class="mlbl">Atualizado</span>${esc(fmtRelativeTime(p.updatedAt))}</td>
+    <td class="${author ? '' : 'is-blank'}"><span class="mlbl">Criado por</span>${author ? cellUser(author) : '—'}</td>
+    <td class="proto-when" title="Atualizado ${esc(fmtRelativeTime(p.updatedAt))}"><span class="mlbl">Adicionado</span>${esc(fmtDateTime(p.createdAt))}</td>
     <td class="proto-col-actions mc-act"><div class="proto-acts">${quick}${kebab}</div></td>
   </tr>`;
 }
@@ -7177,7 +7247,8 @@ function _protoFormPaint() {
   const body = $('proto-modal-body');
   const f = _proto.form;
   if (!body || !f) return;
-  const list = (clients || []).filter(c => !c.deletedAt && (!activeWs || c.workspaceId === activeWs)).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const formWs = (_proto.filter && _proto.filter.ws) || activeWs;
+  const list = (clients || []).filter(c => !c.deletedAt && (!formWs || c.workspaceId === formWs)).sort((a, b) => String(a.name).localeCompare(String(b.name)));
   const size = f.files.reduce((n, x) => n + x.file.size, 0);
   const picked = f.files.length
     ? `<div class="proto-picked"><i data-lucide="folder-check" class="ic-sm"></i><span>${_protoCount(f.files.length)} · ${fmtBytes(size)}</span><button type="button" class="proto-picked-clear" onclick="_protoClearFiles()">Trocar</button></div>`
@@ -7329,7 +7400,7 @@ async function saveProto() {
   try {
     const p = f.id
       ? await api('/prototypes/' + f.id, 'PUT', { name, clientId: f.clientId, ...(f.entry && !f.files.length ? { entry: f.entry } : {}) })
-      : await api('/prototypes', 'POST', { name, clientId: f.clientId, workspaceId: activeWs || (workspaces[0] || {}).id });
+      : await api('/prototypes', 'POST', { name, clientId: f.clientId, workspaceId: (_proto.filter && _proto.filter.ws) || activeWs || (workspaces[0] || {}).id });
     f.id = p.id; // se o envio falhar, tentar de novo não cria outro
     if (f.files.length) {
       const { uploadId } = await api(`/prototypes/${p.id}/upload`, 'POST', {});
