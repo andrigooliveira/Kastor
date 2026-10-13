@@ -66,6 +66,7 @@ let consoleApi = null; // platform-console.js (montado mais abaixo)
 const tenancy = createTenancy({ getRaw: () => rawDb, onMemberChange: (m) => saveEntity('memberships', m) });
 const db = tenancy.db;
 let _dirtyEntities = new Map(); // key: `${type}|${id}` → { type, entity|id, op: 'upsert'|'remove' }
+const _deletedUserIds = new Set(); // contas apagadas neste processo (ver deleteAccount)
 
 function defaultDB() {
   const obj = { notifications: [] };
@@ -239,6 +240,8 @@ let _flowLearnCache = new Map(); // orgId → { terms, computedAt }
 function markDirty(type, entityOrId, op = 'upsert') {
   const id = (op === 'remove') ? entityOrId : (entityOrId && entityOrId.id);
   if (!id) return;
+  // Conta apagada não volta pro banco por uma gravação que ficou pra trás.
+  if (type === 'users' && op === 'upsert' && _deletedUserIds.has(id)) return;
   _dirtyEntities.set(`${type}|${id}`, { type, op, entity: op === 'upsert' ? entityOrId : null, id });
   if (FLOW_LEARN_SOURCE_TYPES.has(type)) _flowLearnCache.clear();
 }
@@ -1100,6 +1103,7 @@ const FREELANCER_ALLOWED_MUTATIONS = [
   { m: 'POST',   re: /^\/api\/demands\/[^/]+\/watch$/ },
   { m: 'POST',   re: /^\/api\/demands\/[^/]+\/unwatch$/ },
   { m: 'PUT',    re: /^\/api\/me$/ },
+  { m: 'DELETE', re: /^\/api\/me$/ },
   { m: 'POST',   re: /^\/api\/me(\/.*)?$/ },
   { m: 'POST',   re: /^\/api\/logout$/ },
   { m: 'POST',   re: /^\/api\/orgs\/switch$/ },
@@ -5549,6 +5553,144 @@ app.post('/api/users/:id/2fa/reset', requireAuth, adminOnly, (req, res) => {
   saveEntity('users', u);
   twoFactorNotice(req, u, false, 'totp');
   res.json(publicUser(u));
+});
+
+/* ── EXCLUSÃO DEFINITIVA ──
+   Diferente de desativar, não tem volta. Dois caminhos:
+     - o admin exclui alguém em Usuários: a pessoa sai DESTA organização; a
+       conta só é apagada se ela não fizer parte de mais nenhuma;
+     - a própria pessoa exclui a conta no perfil: sai de todas as organizações
+       e a conta é apagada.
+   O dono não é excluído: antes transfere a organização. O que a pessoa fez
+   (demandas criadas, comentários, horas, histórico) fica; o que estava COM ela
+   é solto pra alguém assumir: responsável de demanda aberta, etapas de fluxo,
+   padrões de cliente/projeto, modelos, recorrências, metas e observação. */
+const rateLimitAccountDelete = makeRateLimit(new Map(), 30, 'tentativas', req => 'u:' + (req.user?.id || clientIp(req)), 10 * 60 * 1000);
+
+function detachUserFromOrg(u, orgId, actorId) {
+  const m = tenancy.memberIn(u.id, orgId);
+  if (!m) return false;
+  const id = u.id;
+  const scrubAssignments = (ra) => {
+    let hit = false;
+    if (!ra || typeof ra !== 'object') return hit;
+    for (const area of Object.keys(ra)) {
+      const v = ra[area];
+      if (v === id) { delete ra[area]; hit = true; }
+      else if (v && typeof v === 'object') {
+        for (const cargo of Object.keys(v)) if (v[cargo] === id) { delete v[cargo]; hit = true; }
+      }
+    }
+    return hit;
+  };
+  tenancy.run(orgId, () => {
+    for (const d of (db.demands || [])) {
+      let touched = false;
+      if (Array.isArray(d.watchers) && d.watchers.includes(id)) { d.watchers = d.watchers.filter(x => x !== id); touched = true; }
+      // Demanda concluída guarda quem fez; só as abertas perdem o responsável.
+      if (!d.completedAt) {
+        if (d.ownerId === id) {
+          d.ownerId = null;
+          addHistory(d, actorId, 'owner_changed', { fromId: id, toId: null });
+          touched = true;
+        }
+        // Sem a chave, a etapa volta a seguir o responsável padrão do fluxo.
+        if (d.stageResponsibles && typeof d.stageResponsibles === 'object') {
+          for (const k of Object.keys(d.stageResponsibles)) if (d.stageResponsibles[k] === id) { delete d.stageResponsibles[k]; touched = true; }
+        }
+        for (const s of (d.stageAdditions || [])) if (s && s.responsibleId === id) { s.responsibleId = null; touched = true; }
+        for (const it of (d.checklist || [])) if (it && !it.done && it.ownerId === id) { it.ownerId = null; touched = true; }
+      }
+      if (touched) saveEntity('demands', d);
+    }
+    for (const f of (db.flows || [])) {
+      let touched = false;
+      for (const s of (f.stages || [])) if (s && s.responsibleId === id) { s.responsibleId = null; touched = true; }
+      if (touched) saveEntity('flows', f);
+    }
+    for (const t of ['clients', 'projects']) {
+      for (const e of (db[t] || [])) if (scrubAssignments(e.roleAssignments)) saveEntity(t, e);
+    }
+    for (const t of ['templates', 'recurrings']) {
+      for (const e of (db[t] || [])) if (e.ownerId === id) { e.ownerId = null; saveEntity(t, e); }
+    }
+    for (const g of (db.goals || [])) {
+      let touched = false;
+      for (const meta of (g.metas || [])) if (meta && meta.ownerId === id) { meta.ownerId = null; touched = true; }
+      if (touched) saveEntity('goals', g);
+    }
+    // Acessos nominais: a pasta do cofre e o documento continuam com o admin.
+    for (const f of (db.passwordFolders || [])) {
+      if (Array.isArray(f.memberIds) && f.memberIds.includes(id)) { f.memberIds = f.memberIds.filter(x => x !== id); saveEntity('passwordFolders', f); }
+    }
+    for (const doc of (db.writerDocuments || [])) {
+      if (Array.isArray(doc.permissions) && doc.permissions.some(p => p.userId === id)) {
+        doc.permissions = doc.permissions.filter(p => p.userId !== id);
+        saveEntity('writerDocuments', doc);
+      }
+    }
+    // Quem tinha a pessoa como substituta nas férias fica sem substituto.
+    for (const other of db.users) {
+      if (other.id !== id && other.away && other.away.substituteId === id) { other.away.substituteId = null; saveEntity('users', other); }
+    }
+  });
+  rawDb.memberships = rawDb.memberships.filter(x => x !== m);
+  removeEntity('memberships', m.id);
+  const org = tenancy.orgById(orgId);
+  if (org && org.ownerId === id) { org.ownerId = null; markDirty('organizations', org, 'upsert'); }
+  if (u.lastOrgId === orgId) u.lastOrgId = null;
+  return true;
+}
+/* Apaga a conta: cadastro, senha, sessões, chaves de acesso, sino e agenda
+   do Google. Só depois de sair de todas as organizações. */
+function deleteAccount(u) {
+  const id = u.id;
+  _deletedUserIds.add(id);
+  rawDb.users = rawDb.users.filter(x => x !== u);
+  removeEntity('users', id);
+  auth.removeCredentials(id);
+  try { auth.webauthnRemoveAll(id); } catch {}
+  store.deleteAllNotificationsFor(id).catch(() => {});
+  for (const ev of (rawDb.googleEvents || []).filter(e => e.userId === id)) removeEntity('googleEvents', ev.id);
+  rawDb.googleEvents = (rawDb.googleEvents || []).filter(e => e.userId !== id);
+  if (u.googleTokens) googleCal.revokeTokens(u.googleTokens).catch(() => {});
+}
+
+app.delete('/api/users/:id', requireAuth, adminOnly, rateLimitAccountDelete, (req, res) => {
+  const u = db.users.find(x => x.id === req.params.id);
+  if (!u) return res.status(404).json({ error: 'Usuário não encontrado' });
+  if (u.id === req.user.id) return res.status(400).json({ error: 'Para excluir a sua própria conta, use Perfil › Segurança.' });
+  if (u.isOwner) return res.status(400).json({ error: 'Transfira a organização para outra pessoa antes de excluir o dono.' });
+  if (!checkOwnPassword(req.user, (req.body || {}).password)) return res.status(400).json({ error: 'Senha incorreta.', field: 'password' });
+  const name = u.name;
+  detachUserFromOrg(u, req.org.id, req.user.id);
+  // Quem também está em outra organização continua com a conta lá.
+  const accountDeleted = !tenancy.membershipsOf(u.id).length;
+  if (accountDeleted) deleteAccount(u); else saveEntity('users', u);
+  console.log(`  [usuários] "${name}" excluído(a) de "${req.org.name}" por ${req.user.username}${accountDeleted ? ' (conta apagada)' : ''}`);
+  res.json({ ok: true, accountDeleted });
+});
+
+app.delete('/api/me', requireAuth, rateLimitAccountDelete, (req, res) => {
+  const u = req.user;
+  const { password, confirm } = req.body || {};
+  if (String(confirm || '').trim().toLowerCase() !== String(u.username || '').toLowerCase()) {
+    return res.status(400).json({ error: 'Digite o seu nome de usuário para confirmar.', field: 'confirm' });
+  }
+  if (!checkOwnPassword(u, password)) return res.status(400).json({ error: 'Senha incorreta.', field: 'password' });
+  const owned = tenancy.membershipsOf(u.id).filter(m => m.role === 'owner')
+    .map(m => tenancy.orgById(m.orgId)).filter(o => o && !o.deletedAt);
+  if (owned.length) {
+    return res.status(409).json({
+      error: `Você é dono(a) de ${owned.map(o => o.name).join(', ')}. Transfira a organização para outra pessoa (Organização › Zona de perigo) antes de excluir a conta.`,
+      code: 'org_owner'
+    });
+  }
+  for (const m of tenancy.membershipsOf(u.id).slice()) detachUserFromOrg(u, m.orgId, u.id);
+  deleteAccount(u);
+  console.log(`  [usuários] "${u.username}" excluiu a própria conta`);
+  res.set('Set-Cookie', clearSessionCookie());
+  res.json({ ok: true });
 });
 
 /* ── CONVITES ──

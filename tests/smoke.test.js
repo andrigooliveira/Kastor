@@ -738,6 +738,78 @@ test('Organizações: conta existente entra numa segunda organização e troca e
   assert.equal((await call('PUT', '/api/users/' + wsiAdminInBeta.id, betaCookie, { password: 'senha-nova-123' })).status, 403);
 });
 
+test('Exclusão definitiva: admin exclui em Usuários e a pessoa exclui a própria conta', async () => {
+  const admin = await loginCookie('admin', 'admin123');
+  const boot = (await req('/api/bootstrap', { headers: { Cookie: admin } })).body;
+  const ws = boot.workspaces[0].id;
+  const novo = async (username, extra = {}) => {
+    const r = await call('POST', '/api/users', admin, { username, password: 'senha-de-teste-1', name: 'Pessoa ' + username, workspaces: [ws], ...extra });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    return r.body;
+  };
+  const listed = async (cookie, id) => (await req('/api/users', { headers: { Cookie: cookie } })).body.some(u => u.id === id);
+
+  // 1) Admin exclui alguém que só existe nesta organização: a conta some.
+  const a = await novo('apagar.um');
+  const d = await call('POST', '/api/demands', admin, { name: 'Demanda de quem vai sair', projectId: boot.projects[0].id, flowId: boot.flows[0].id, ownerId: a.id });
+  assert.equal(d.status, 201, JSON.stringify(d.body));
+  assert.equal(d.body.ownerId, a.id);
+  assert.equal((await call('DELETE', '/api/users/' + a.id, admin, {})).status, 400, 'pede a senha do admin');
+  assert.equal((await call('DELETE', '/api/users/' + a.id, admin, { password: 'errada' })).status, 400);
+  assert.equal(await listed(admin, a.id), true, 'senha errada não exclui');
+  const del = await call('DELETE', '/api/users/' + a.id, admin, { password: 'admin123' });
+  assert.equal(del.status, 200, JSON.stringify(del.body));
+  assert.equal(del.body.accountDeleted, true);
+  assert.equal(await listed(admin, a.id), false);
+  assert.equal((await postJson('/api/login', { username: 'apagar.um', password: 'senha-de-teste-1' }, { headers: { 'X-Forwarded-For': '10.9.9.1' } })).status, 401);
+  assert.equal((await call('GET', '/api/demands/' + d.body.id, admin)).body.ownerId, null, 'demanda aberta fica sem responsável');
+  assert.equal((await call('DELETE', '/api/users/' + a.id, admin, { password: 'admin123' })).status, 404);
+  await flushed();
+  const again = await novo('apagar.um'); // o nome de usuário fica livre
+  assert.equal((await call('DELETE', '/api/users/' + again.id, admin, { password: 'admin123' })).status, 200);
+
+  // 2) Dono e a própria conta não saem por aqui.
+  const me = (await req('/api/me', { headers: { Cookie: admin } })).body;
+  assert.equal((await call('DELETE', '/api/users/' + me.id, admin, { password: 'admin123' })).status, 400);
+  const own = await call('DELETE', '/api/me', admin, { password: 'admin123', confirm: 'admin' });
+  assert.equal(own.status, 409, 'dono transfere a organização antes');
+  assert.equal(own.body.code, 'org_owner');
+  // Só administrador exclui
+  const b = await novo('apagar.dois', { email: 'apagar.dois@exemplo.com' });
+  const bCookie = await loginCookie('apagar.dois', 'senha-de-teste-1');
+  assert.equal((await call('DELETE', '/api/users/' + me.id, bCookie, { password: 'senha-de-teste-1' })).status, 403);
+
+  // 3) Quem também está em outra organização só perde o vínculo com esta.
+  const betaBoot = (await req('/api/bootstrap', { headers: { Cookie: betaCookie } })).body;
+  const inv = await call('POST', '/api/invites', betaCookie, { email: 'apagar.dois@exemplo.com', kind: 'equipe', workspaces: [betaBoot.workspaces[0].id] });
+  assert.equal(inv.status, 201, JSON.stringify(inv.body));
+  const j = await postJson(`/api/invites/public/${inv.body.link.split('/convite/')[1]}/join`, { password: 'senha-de-teste-1', acceptTerms: true });
+  assert.equal(j.status, 201, JSON.stringify(j.body));
+  const del2 = await call('DELETE', '/api/users/' + b.id, admin, { password: 'admin123' });
+  assert.equal(del2.status, 200, JSON.stringify(del2.body));
+  assert.equal(del2.body.accountDeleted, false);
+  assert.equal(await listed(admin, b.id), false, 'saiu da WSI');
+  assert.equal(await listed(betaCookie, b.id), true, 'continua na Beta');
+  const bMe = (await req('/api/me', { headers: { Cookie: bCookie } })).body;
+  assert.equal(bMe.org.name, 'Beta');
+  assert.equal(bMe.orgs.length, 1);
+
+  // 4) A própria pessoa exclui a conta: nome de usuário + senha.
+  assert.equal((await call('DELETE', '/api/me', bCookie, { password: 'senha-de-teste-1', confirm: 'outro.nome' })).status, 400);
+  assert.equal((await call('DELETE', '/api/me', bCookie, { password: 'errada', confirm: 'apagar.dois' })).status, 400);
+  const bye = await call('DELETE', '/api/me', bCookie, { password: 'senha-de-teste-1', confirm: 'apagar.dois' });
+  assert.equal(bye.status, 200, JSON.stringify(bye.body));
+  assert.equal((await req('/api/me', { headers: { Cookie: bCookie } })).status, 401, 'sessão cai');
+  assert.equal(await listed(betaCookie, b.id), false);
+  assert.equal((await postJson('/api/login', { username: 'apagar.dois', password: 'senha-de-teste-1' }, { headers: { 'X-Forwarded-For': '10.9.9.2' } })).status, 401);
+  // Depois de reiniciar o servidor a conta não pode voltar: confere no banco.
+  await flushed();
+  const rows = await _cleanupPool.query("SELECT id FROM entities WHERE type = 'users' AND id = ANY($1)", [[a.id, again.id, b.id]]);
+  assert.equal(rows.rowCount, 0, 'contas apagadas do banco');
+  const mrows = await _cleanupPool.query("SELECT id FROM entities WHERE type = 'memberships' AND data->>'userId' = ANY($1)", [[a.id, again.id, b.id]]);
+  assert.equal(mrows.rowCount, 0, 'vínculos apagados do banco');
+});
+
 test('Permissões: equipe só exclui o que criou; moderador exclui do squad', async () => {
   const admin = await loginCookie('admin', 'admin123');
   await call('POST', '/api/orgs/switch', admin, { orgId: (await req('/api/me', { headers: { Cookie: admin } })).body.orgs.find(o => o.name === 'WSI').id });

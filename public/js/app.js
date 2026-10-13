@@ -26007,7 +26007,8 @@ function renderUsers() {
       { icon: 'pencil', label: 'Editar', onclick: `openUserModal('${u.id}')` },
       (u.id !== me.id && !u.isOwner ? (u.active !== false
         ? { icon: 'user-x', label: 'Desativar', danger: true, onclick: `toggleUser('${u.id}')` }
-        : { icon: 'user-check', label: 'Reativar', onclick: `toggleUser('${u.id}')` }) : null)
+        : { icon: 'user-check', label: 'Reativar', onclick: `toggleUser('${u.id}')` }) : null),
+      (u.id !== me.id && !u.isOwner ? { icon: 'trash-2', label: 'Excluir', danger: true, onclick: `openDeleteAccount('${u.id}')` } : null)
     ].filter(Boolean)) : '';
     return `<tr class="mrow" style="${u.active === false ? 'opacity:.55' : ''}">
       <td class="mcol-name">${cellUser(u)}</td>
@@ -31790,6 +31791,86 @@ async function toggleUser(id) {
     await refreshData();
     loadInvites(true); // lugares do plano mudaram
   } catch (e) { toast(e.message, 'error'); }
+}
+
+/* Exclusão definitiva. Com id: o admin exclui alguém em Usuários. Sem id: a
+   pessoa exclui a própria conta (Perfil › Segurança) e, além da senha, digita
+   o nome de usuário. */
+let _delAcctUserId = null;
+function openDeleteAccount(userId) {
+  const self = !userId;
+  const target = self ? me : userById(userId);
+  if (!target) return;
+  _delAcctUserId = userId || null;
+  let p = $('delacct-modal');
+  if (!p) {
+    p = document.createElement('div');
+    p.id = 'delacct-modal';
+    p.className = 'modal-overlay';
+    p.innerHTML = `<div class="modal modal-sm modal-danger" data-no-outside-close="1">
+      <div class="modal-header"><div class="modal-title" id="delacct-title"></div><button class="modal-close" onclick="closeModal('delacct-modal')"><i data-lucide="x" class="ic-sm"></i></button></div>
+      <div class="modal-body">
+        <div id="delacct-message" style="font-size:13px;color:var(--text-dim);line-height:1.55;margin-bottom:14px"></div>
+        <div class="form-group" id="delacct-confirm-group" style="margin-bottom:12px">
+          <label class="form-label" for="delacct-confirm">Digite o seu nome de usuário para confirmar</label>
+          <input class="form-control" id="delacct-confirm" type="text" autocomplete="off" autocapitalize="none" spellcheck="false">
+        </div>
+        <div class="form-group" id="delacct-pass-group">
+          <label class="form-label" for="delacct-pass">Sua senha</label>
+          <input class="form-control" id="delacct-pass" type="password" autocomplete="current-password">
+        </div>
+        <div class="profile-field-error" id="delacct-error" hidden></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal('delacct-modal')">Cancelar</button>
+        <button class="btn btn-danger" id="delacct-go" onclick="confirmDeleteAccount()">Excluir em definitivo</button>
+      </div>
+    </div>`;
+    document.body.appendChild(p);
+    p.querySelectorAll('input').forEach(inp => { inp.onkeydown = ev => { if (ev.key === 'Enter') confirmDeleteAccount(); }; });
+  }
+  $('delacct-title').textContent = self ? 'Excluir minha conta' : 'Excluir usuário';
+  $('delacct-message').innerHTML = self
+    ? `<p>Sua conta, sua senha e seus acessos são apagados, e você sai de todas as organizações. <strong>Não dá para desfazer.</strong></p>
+       <p style="margin-top:8px">O que você fez (demandas, comentários, horas) continua no histórico; as demandas abertas que estavam com você ficam sem responsável.</p>`
+    : `<p><strong>${esc(target.name)}</strong> <span>sai da organização e não entra mais.</span> <strong>Não dá para desfazer.</strong></p>
+       <p style="margin-top:8px">O que a pessoa fez (demandas, comentários, horas) continua no histórico; as demandas abertas que estavam com ela ficam sem responsável.</p>
+       <p style="margin-top:8px">Para só bloquear o acesso, use Desativar.</p>`;
+  $('delacct-confirm-group').hidden = !self;
+  $('delacct-confirm').value = '';
+  $('delacct-confirm').placeholder = self ? me.username : '';
+  $('delacct-pass-group').hidden = me.hasPassword === false;
+  $('delacct-pass').value = '';
+  $('delacct-error').hidden = true;
+  $('delacct-go').disabled = false;
+  openModal('delacct-modal');
+}
+async function confirmDeleteAccount() {
+  const self = !_delAcctUserId;
+  const err = (msg, focusId) => { const el = $('delacct-error'); el.textContent = msg; el.hidden = false; $(focusId)?.focus(); };
+  const confirm = $('delacct-confirm').value.trim();
+  const password = $('delacct-pass').value;
+  if (self && confirm.toLowerCase() !== String(me.username).toLowerCase()) return err('Digite o seu nome de usuário para confirmar.', 'delacct-confirm');
+  if (me.hasPassword !== false && !password) return err('Digite sua senha para confirmar.', 'delacct-pass');
+  const btn = $('delacct-go');
+  btn.disabled = true;
+  try {
+    if (self) {
+      await api('/me', 'DELETE', { password, confirm });
+      closeModal('delacct-modal');
+      forceLogout();
+      toast('Sua conta foi excluída.', 'warn');
+      return;
+    }
+    await api('/users/' + _delAcctUserId, 'DELETE', { password });
+    closeModal('delacct-modal');
+    toast('Usuário excluído.', 'warn');
+    await refreshData();
+    loadInvites(true); // lugares do plano mudaram
+  } catch (e) {
+    btn.disabled = false;
+    if (!e._apiSilent) err(e.message, 'delacct-pass');
+  }
 }
 
 /* ─── PERFIL ─── */
