@@ -1402,13 +1402,16 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               <span class="mine-agenda-title">Minha Agenda</span>
             </button>
             <div class="agenda-week-nav">
-              <button class="btn btn-ghost btn-sm" onclick="agendaPrevWeek()" title="Semana anterior"><i data-lucide="chevron-left" class="ic-sm"></i></button>
+              <button class="btn btn-ghost btn-sm" onclick="agendaPrevWeek()" title="Anterior"><i data-lucide="chevron-left" class="ic-sm"></i></button>
               <button type="button" class="agenda-week-label agdp-trigger" id="mine-agenda-week-label" onclick="agdpToggle('mine-week', event)" title="Escolher data">—</button>
-              <button class="btn btn-ghost btn-sm" onclick="agendaNextWeek()" title="Próxima semana"><i data-lucide="chevron-right" class="ic-sm"></i></button>
+              <button class="btn btn-ghost btn-sm" onclick="agendaNextWeek()" title="Próximo"><i data-lucide="chevron-right" class="ic-sm"></i></button>
               <button class="btn btn-ghost btn-sm" onclick="agendaThisWeek()">Hoje</button>
               <div class="agenda-view-toggle agenda-view-toggle-v2" style="margin-left:8px">
-                <button class="btn btn-ghost btn-sm agenda-view-btn active" data-view="2" onclick="setAgendaView(2)">2 semanas</button>
-                <button class="btn btn-ghost btn-sm agenda-view-btn" data-view="1" onclick="setAgendaView(1)">1 semana</button>
+                <button class="btn btn-ghost btn-sm agenda-view-btn" data-view="day" onclick="setAgendaView('day')">Dia</button>
+                <button class="btn btn-ghost btn-sm agenda-view-btn" data-view="1" onclick="setAgendaView(1)">Semana</button>
+                <button class="btn btn-ghost btn-sm agenda-view-btn active" data-view="2" onclick="setAgendaView(2)">Quinzena</button>
+                <button class="btn btn-ghost btn-sm agenda-view-btn" data-view="month" onclick="setAgendaView('month')">Mês</button>
+                <button class="btn btn-ghost btn-sm agenda-view-btn" data-view="year" onclick="setAgendaView('year')">Ano</button>
               </div>
             </div>
           </div>
@@ -1638,9 +1641,9 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <button class="btn btn-ghost btn-sm" onclick="openAgendaTeamPicker()"><i data-lucide="users" class="ic-sm"></i> <span id="agenda-team-btn-lbl">Escolher pessoas</span></button>
           </div>
           <div class="agenda-week-nav" id="agenda-nav-week">
-            <button class="btn btn-ghost btn-sm" onclick="agendaPrevWeek()" title="Semana anterior"><i data-lucide="chevron-left" class="ic-sm"></i></button>
+            <button class="btn btn-ghost btn-sm" onclick="agendaPrevWeek()" title="Anterior"><i data-lucide="chevron-left" class="ic-sm"></i></button>
             <button type="button" class="agenda-week-label agdp-trigger" id="agenda-week-label" onclick="agdpToggle('week', event)" title="Escolher data">—</button>
-            <button class="btn btn-ghost btn-sm" onclick="agendaNextWeek()" title="Próxima semana"><i data-lucide="chevron-right" class="ic-sm"></i></button>
+            <button class="btn btn-ghost btn-sm" onclick="agendaNextWeek()" title="Próximo"><i data-lucide="chevron-right" class="ic-sm"></i></button>
             <button class="btn btn-ghost btn-sm" onclick="agendaThisWeek()">Hoje</button>
           </div>
           <div class="agenda-week-nav" id="agenda-nav-day" style="display:none">
@@ -1651,8 +1654,11 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           </div>
           <div class="agenda-spacer"></div>
           <div class="agenda-view-toggle agenda-view-toggle-v2" id="agenda-view-toggle-weeks">
-            <button class="btn btn-ghost btn-sm agenda-view-btn active" data-view="2" onclick="setAgendaView(2)">2 semanas</button>
-            <button class="btn btn-ghost btn-sm agenda-view-btn" data-view="1" onclick="setAgendaView(1)">1 semana</button>
+            <button class="btn btn-ghost btn-sm agenda-view-btn" data-view="day" onclick="setAgendaView('day')">Dia</button>
+            <button class="btn btn-ghost btn-sm agenda-view-btn" data-view="1" onclick="setAgendaView(1)">Semana</button>
+            <button class="btn btn-ghost btn-sm agenda-view-btn active" data-view="2" onclick="setAgendaView(2)">Quinzena</button>
+            <button class="btn btn-ghost btn-sm agenda-view-btn" data-view="month" onclick="setAgendaView('month')">Mês</button>
+            <button class="btn btn-ghost btn-sm agenda-view-btn" data-view="year" onclick="setAgendaView('year')">Ano</button>
           </div>
         </div>
         <div class="agenda-hint">Arraste num horário vazio pra criar · num bloco pra mover · na borda inferior pra redimensionar · clique pra abrir a demanda.</div>

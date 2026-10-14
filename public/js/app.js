@@ -244,7 +244,7 @@ function pageUrlFor(page)  {
   // Páginas com aba/visão: o caminho carrega a opção atual.
   if (page === 'dashboard') return '/home' + _optSuffix(() => _dashNextTab !== 'forecast' ? '/' + _dashNextTab : '');
   if (page === 'list') return '/demands' + _optSuffix(() => listView === 'kanban' ? (kanbanMode === 'stage' ? '/kanban/stages' : '/kanban') : listView === 'cal' ? '/calendar' : '');
-  if (page === 'agenda') return '/agenda' + _optSuffix(() => agendaMode === 'team' ? '/team' : agendaWeeks === 1 ? '/week' : '/two-weeks');
+  if (page === 'agenda') return '/agenda' + _optSuffix(() => agendaMode === 'team' ? '/team' : agendaView !== 'week' ? '/' + agendaView : agendaWeeks === 1 ? '/week' : '/two-weeks');
   if (page === 'profile') return '/profile' + _optSuffix(() => _profileSection !== 'account' ? '/' + _profileSection : '');
   if (page === 'integrations') return '/integrations' + _optSuffix(() => '/' + _integrationsTab);
   if (page === 'passwords') return '/passwords' + _optSuffix(() => pwState.selectedFolderId && pwState.selectedFolderId !== '__all__' ? '/folders/' + pwState.selectedFolderId : '');
@@ -290,6 +290,9 @@ function parseRoute(path) {
     if (p === '/demands/calendar')        return { page: 'list', listView: 'cal' };
     if (p === '/agenda/week')             return { page: 'agenda', agendaMode: 'individual', agendaWeeks: 1 };
     if (p === '/agenda/two-weeks')        return { page: 'agenda', agendaMode: 'individual', agendaWeeks: 2 };
+    if (p === '/agenda/day')              return { page: 'agenda', agendaMode: 'individual', agendaWeeks: 'day' };
+    if (p === '/agenda/month')            return { page: 'agenda', agendaMode: 'individual', agendaWeeks: 'month' };
+    if (p === '/agenda/year')             return { page: 'agenda', agendaMode: 'individual', agendaWeeks: 'year' };
     if (p === '/agenda/team')             return { page: 'agenda', agendaMode: 'team' };
     if ((mm = p.match(/^\/profile\/([a-z-]+)$/)) && PROFILE_SECTIONS.includes(mm[1])) return { page: 'profile', section: mm[1] };
     if (p === '/profile') {
@@ -12306,15 +12309,23 @@ function _agdpPosition(pop, anchor) {
 // faixa visível, e passar o mouse mostra a faixa que o clique vai abrir.
 function agdpRender() {
   const total = 7 * (agendaWeeks || 2);
+  // Individual/embed: a faixa acompanha a visão (dia, semana(s), mês ou ano).
+  const view = _agdpAnchor === 'day' ? 'team' : agendaView;
   const band = d => {
+    if (view === 'month') return [agendaYmd(new Date(d.getFullYear(), d.getMonth(), 1)), agendaYmd(new Date(d.getFullYear(), d.getMonth() + 1, 0))];
+    if (view === 'year') return [agendaYmd(new Date(d.getFullYear(), 0, 1)), agendaYmd(new Date(d.getFullYear(), 11, 31))];
     const ws = agendaWeekStartFor(d);
     const end = new Date(ws); end.setDate(end.getDate() + total - 1);
     return [agendaYmd(ws), agendaYmd(end)];
   };
   let from, to;
-  if (_agdpAnchor === 'day') from = to = agendaYmd(agendaTeamDate || new Date());
+  if (view === 'team') from = to = agendaYmd(agendaTeamDate || new Date());
+  else if (view === 'day') from = to = agendaYmd(agendaDayStart());
+  else if (view === 'month') [from, to] = band(agendaMonthStart());
+  else if (view === 'year') [from, to] = band(new Date(agendaYearStart(), 0, 1));
   else [from, to] = band(_agdpAnchor === 'mine-week' ? new Date() : (agendaWeekStart || new Date()));
-  rcMount('agdp-rc', { mode: _agdpAnchor === 'day' ? 'day' : 'week', from, to, month: from,
+  const single = view === 'team' || view === 'day';
+  rcMount('agdp-rc', { mode: single ? 'day' : 'week', from, to, month: view === 'year' ? agendaYmd(new Date()) : from,
     previewFor: iso => band(new Date(iso + 'T00:00:00')), onPick: agdpPickDay });
 }
 function agdpNav(delta) { rcNav('agdp-rc', delta); }
@@ -12326,6 +12337,9 @@ function agdpPickDay(iso) {
   } else {
     // Individual / embed: pula pra semana que contém o dia clicado (âncora = segunda).
     agendaWeekStart = agendaWeekStartFor(d);
+    agendaDayRef = d;
+    agendaMonthRef = new Date(d.getFullYear(), d.getMonth(), 1);
+    agendaYearRef = d.getFullYear();
   }
   agdpClose();
   renderAgenda();
@@ -37635,6 +37649,12 @@ let _agendaDrag = null;           // estado interno de drag
 let agendaMode = 'individual';    // 'individual' | 'team'
 let agendaTeamUsers = [];         // userIds selecionados no modo Time
 let agendaTeamDate = null;        // Date do dia visualizado no modo Time
+// Visão do Individual e do embed de Minhas Demandas (estilo Google Agenda):
+// 'day' | 'week' (1 ou 2 semanas, ver agendaWeeks) | 'month' | 'year'.
+let agendaView = 'week';
+let agendaDayRef = null;          // dia visualizado na visão Dia
+let agendaMonthRef = null;        // dia 1 do mês visualizado
+let agendaYearRef = null;         // ano visualizado na visão Ano
 
 function agendaWeekStartFor(d) {
   const x = new Date(d);
@@ -37659,23 +37679,78 @@ function agendaInit() {
   if (!agendaUserId) agendaUserId = me?.id || null;
   if (!agendaWeekStart) agendaWeekStart = agendaWeekStartFor(new Date());
 }
-function agendaPrevWeek() {
-  agendaWeekStart.setDate(agendaWeekStart.getDate() - 7);
-  renderAgenda();
-}
-function agendaNextWeek() {
-  agendaWeekStart.setDate(agendaWeekStart.getDate() + 7);
+// ‹ › andam um período da visão atual.
+function agendaPrevWeek() { agendaShift(-1); }
+function agendaNextWeek() { agendaShift(1); }
+function agendaShift(dir) {
+  agendaInit();
+  if (agendaView === 'day') {
+    const d = new Date(agendaDayStart()); d.setDate(d.getDate() + dir); agendaDayRef = d;
+  } else if (agendaView === 'month') {
+    const m = agendaMonthStart(); agendaMonthRef = new Date(m.getFullYear(), m.getMonth() + dir, 1);
+  } else if (agendaView === 'year') {
+    agendaYearRef = agendaYearStart() + dir;
+  } else {
+    agendaWeekStart.setDate(agendaWeekStart.getDate() + 7 * dir);
+  }
   renderAgenda();
 }
 function agendaThisWeek() {
   agendaWeekStart = agendaWeekStartFor(new Date());
+  agendaDayRef = agendaMonthRef = agendaYearRef = null;
   renderAgenda();
 }
+function agendaDayStart() {
+  if (!agendaDayRef) { agendaDayRef = new Date(); agendaDayRef.setHours(0, 0, 0, 0); }
+  return agendaDayRef;
+}
+function agendaMonthStart() {
+  if (!agendaMonthRef) { const t = new Date(); agendaMonthRef = new Date(t.getFullYear(), t.getMonth(), 1); }
+  return agendaMonthRef;
+}
+function agendaYearStart() {
+  if (!agendaYearRef) agendaYearRef = new Date().getFullYear();
+  return agendaYearRef;
+}
+/* Data de referência da visão atual — ao trocar de visão, a nova abre em
+   volta dela (o mês da semana que estava na tela, o ano do mês etc.). Quando
+   o período visível contém hoje, a referência é hoje. */
+function _agendaFocusDate() {
+  agendaInit();
+  const t = new Date(); t.setHours(0, 0, 0, 0);
+  const within = (a, b) => t >= a && t <= b;
+  if (agendaView === 'day') return new Date(agendaDayStart());
+  if (agendaView === 'month') {
+    const m = agendaMonthStart();
+    return within(m, new Date(m.getFullYear(), m.getMonth() + 1, 0)) ? t : new Date(m);
+  }
+  if (agendaView === 'year') {
+    const y = agendaYearStart();
+    return t.getFullYear() === y ? t : new Date(y, 0, 1);
+  }
+  const end = new Date(agendaWeekStart); end.setDate(end.getDate() + 7 * agendaWeeks - 1);
+  return within(agendaWeekStart, end) ? t : new Date(agendaWeekStart);
+}
 function setAgendaView(n) {
-  agendaWeeks = n === 1 ? 1 : 2;
-  document.querySelectorAll('.agenda-view-btn').forEach(b => b.classList.toggle('active', Number(b.dataset.view) === agendaWeeks));
+  const focus = _agendaFocusDate();
+  if (n === 'day' || n === 'month' || n === 'year') agendaView = n;
+  else { agendaView = 'week'; agendaWeeks = Number(n) === 1 ? 1 : 2; }
+  if (agendaView === 'day') agendaDayRef = focus;
+  else if (agendaView === 'month') agendaMonthRef = new Date(focus.getFullYear(), focus.getMonth(), 1);
+  else if (agendaView === 'year') agendaYearRef = focus.getFullYear();
+  else {
+    // A semana só mostra seg–sex: foco no fim de semana abre a semana seguinte.
+    const dow = focus.getDay();
+    if (dow === 0 || dow === 6) focus.setDate(focus.getDate() + (dow === 6 ? 2 : 1));
+    agendaWeekStart = agendaWeekStartFor(focus);
+  }
+  _agendaSyncViewBtns();
   renderAgenda();
   if (currentPage === 'agenda') navPush(pageUrlFor('agenda'));
+}
+function _agendaSyncViewBtns() {
+  const cur = agendaView === 'week' ? String(agendaWeeks) : agendaView;
+  document.querySelectorAll('.agenda-view-btn[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === cur));
 }
 function onAgendaUserChange() {
   agendaUserId = $('agenda-user').value || null;
@@ -37753,6 +37828,10 @@ function agendaDays() {
   if (agendaMode === 'team') {
     return agendaTeamDate ? [new Date(agendaTeamDate)] : [new Date()];
   }
+  if (agendaView === 'day') return [new Date(agendaDayStart())];
+  if (agendaView === 'month') return agendaMonthDays();
+  // Ano: só as pontas (o lazy-load de blocos usa o primeiro e o último dia).
+  if (agendaView === 'year') { const y = agendaYearStart(); return [new Date(y, 0, 1), new Date(y, 11, 31)]; }
   const days = [];
   const totalDays = 7 * agendaWeeks;
   const base = new Date(agendaWeekStart);
@@ -37999,6 +38078,7 @@ async function ensureSchedulesLoaded(fromYmd, toYmd) {
 
 function renderAgenda() {
   agendaInit();
+  _agendaSyncViewBtns(); // os seletores das duas telas sempre batem com o estado
   // Dispara lazy-load se a semana visualizada está fora do range em cache.
   // Fire-and-forget: quando terminar, ensureSchedulesLoaded re-renderiza.
   if (agendaMode !== 'team') {
@@ -38041,16 +38121,28 @@ function renderAgendaInto(wrapId, weekLabelId, userId) {
   // de Minhas Demandas), mesmo a escondida — cada uma custa centenas de células.
   const page = wrap.closest('.page');
   if (page && !page.classList.contains('active')) return;
-  wrap.classList.remove('is-list'); // buildAgendaList liga de novo no celular
+  wrap.classList.remove('is-list', 'is-month', 'is-year'); // buildAgendaList / Month / Year ligam de novo
   // Modo Time só na página standalone (não em Minhas Demandas embed).
   const isStandalone = (wrapId === 'agenda-grid-wrap');
   const useTeam = isStandalone && agendaMode === 'team';
+  const view = useTeam ? 'team' : agendaView;
+  _agendaSyncHint(wrap, view);
+  const lbl = document.getElementById(weekLabelId);
+  if (view === 'month' || view === 'year') {
+    const ms = agendaMonthStart();
+    if (lbl) lbl.textContent = view === 'year' ? String(agendaYearStart()) : monthYear(ms.getMonth(), ms.getFullYear());
+    if (!userId) { wrap.innerHTML = '<div class="agenda-empty">Sem usuário pra exibir.</div>'; return; }
+    if (view === 'year') buildAgendaYear(wrap, userId, agendaYearStart());
+    else buildAgendaMonth(wrap, userId, ms);
+    return;
+  }
   const days = useTeam ? [new Date(agendaTeamDate || new Date())] : agendaDays();
   const first = days[0], last = days[days.length - 1];
-  const wkLabel = document.getElementById(weekLabelId);
-  if (wkLabel && first && last && !useTeam) {
+  if (lbl && first && last && view === 'day') {
+    lbl.textContent = first.toLocaleDateString(LOCALE, { weekday: 'short', day: '2-digit', month: 'long' }).replace('.', '');
+  } else if (lbl && first && last && !useTeam) {
     const fmt = (d) => d.toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit' });
-    wkLabel.textContent = `${fmt(first)} → ${fmt(last)}`;
+    lbl.textContent = `${fmt(first)} → ${fmt(last)}`;
   }
   if (useTeam) {
     if (!agendaTeamUsers.length) {
@@ -38162,6 +38254,322 @@ function buildAgendaTeamList(wrap, day) {
     </section>`).join('');
   _aglMount(wrap, html, gcals);
 }
+/* ─── AGENDA: VISÃO DE MÊS ───
+   Grade de 7 colunas (dom → sáb) no estilo do Google Agenda, com tudo da pessoa
+   no dia: eventos de dia inteiro, prazos das demandas, blocos agendados e
+   reuniões do Google, em ordem de horário. Cabem 3 por dia; o resto vai pro
+   "+N mais", que abre o dia completo num popover. Clicar no vazio agenda um
+   bloco naquele dia, clicar no número abre o dia, e dá pra arrastar um
+   bloco pra outro dia (mantém o horário). No celular a célula vira só pontos
+   e tocar no dia abre o popover. */
+const AGM_MAX_ITEMS = 3;
+const AGM_WEEKDAYS = IS_PT ? ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'] : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+let _agmItems = {};   // id → item renderizado (pro clique/arraste achar o alvo)
+// Semanas inteiras (dom → sáb) que cobrem o mês (o visualizado, ou o de ms).
+function agendaMonthDays(ms) {
+  ms = ms || agendaMonthStart();
+  const start = new Date(ms); start.setDate(1 - ms.getDay());
+  const end = new Date(ms.getFullYear(), ms.getMonth() + 1, 0);
+  end.setDate(end.getDate() + (6 - end.getDay()));
+  const out = [];
+  for (const d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) out.push(new Date(d));
+  return out;
+}
+// Troca o texto de ajuda do painel conforme a visão (guarda o da semana no dataset).
+function _agendaSyncHint(wrap, view) {
+  const hint = wrap.parentElement && wrap.parentElement.querySelector('.agenda-hint');
+  if (!hint) return;
+  if (hint.dataset.weekText == null) hint.dataset.weekText = hint.textContent;
+  hint.textContent = view === 'month'
+    ? 'Clique num dia vazio pra agendar · arraste um bloco pra outro dia · clique no número pra abrir o dia.'
+    : view === 'year'
+    ? 'Clique num dia pra ver o que tem nele · clique no nome do mês pra abrir o mês.'
+    : hint.dataset.weekText;
+}
+// Tudo de uma pessoa num dia, já ordenado: dia inteiro → prazos → horários.
+function _agmDayItems(userId, ymd) {
+  const canEdit = !!(me && (me.isAdmin || userId === me.id));
+  const items = [];
+  (googleEventsForUser[userId] || []).forEach(ev => {
+    if (!ev || !ev.start || ev.selfResponseStatus === 'declined') return;
+    if (ev.allDay) {
+      // Fim do dia inteiro no Google é exclusivo: [start, end).
+      const s = String(ev.start).slice(0, 10), e = String(ev.end || ev.start).slice(0, 10);
+      if (!(ymd >= s && (ymd < e || ymd === s))) return;
+      const summary = ev.summary || '(Sem título)';
+      items.push({ id: 'g:' + ev.id + ':' + ymd, kind: 'google', allDay: true, start: -1, color: '#0b57d0', title: summary,
+        gcal: { id: ev.id, allDay: true, startMin: 0, endMin: 0, summary, htmlLink: ev.htmlLink || null, meeting: ev.meeting || null } });
+      return;
+    }
+    const g = googleEventToBlock(ev, ymd);
+    if (!g) return;
+    items.push({ id: 'g:' + g.id, kind: 'google', start: g.startMin, end: g.endMin, color: g.backgroundColor, title: g.summary,
+      outline: ev.selfResponseStatus === 'needsAction', gcal: g });
+  });
+  demands.filter(d => d.ownerId === userId && !d.deletedAt && !isDone(d) && effDue(d) === ymd).forEach(d => {
+    const s = stageOf(d);
+    items.push({ id: 'd:' + d.id, kind: 'due', start: -0.5, color: s?.color || '#7A00FF', title: d.name, late: isLate(d), demandId: d.id,
+      meta: s?.label || '' });
+  });
+  schedules.filter(s => s.userId === userId && s.date === ymd).forEach(s => {
+    const isFree = !s.demandId;
+    const d = isFree ? null : demandById(s.demandId);
+    const p = d ? projectById(d.projectId) : null;
+    const k = isFree ? scheduleKindOf(s.kind) : null;
+    items.push({ id: 's:' + s.id, kind: 'block', scheduleId: s.id, start: s.startMin, end: s.endMin, demandId: d ? d.id : null,
+      color: isFree ? (s.color || k.color || '#7A00FF') : (s.stageColorSnapshot || p?.color || '#7A00FF'),
+      title: isFree ? (s.title || k.label) : (d ? d.name : '(demanda removida)'),
+      meta: isFree ? k.label : (p?.name || ''), draggable: canEdit, editable: canEdit && isFree });
+  });
+  return items.sort((a, b) => a.start - b.start || String(a.title).localeCompare(String(b.title)));
+}
+function _agmItemHtml(it) {
+  _agmItems[it.id] = it;
+  const cls = ['agm-ev', 'is-' + it.kind];
+  if (it.allDay) cls.push('is-allday');
+  if (it.outline) cls.push('is-needs-response');
+  if (it.late) cls.push('is-late');
+  const tip = it.allDay ? it.title
+    : it.kind === 'due' ? `Prazo: ${it.title}${it.meta ? ' · ' + it.meta : ''}`
+    : `${_aglHm(it.start)}–${_aglHm(it.end)} · ${it.title}${it.meta ? ' · ' + it.meta : ''}`;
+  const lead = it.allDay ? '' : it.kind === 'due'
+    ? '<i data-lucide="flag" class="agm-ev-flag"></i>'
+    : `<span class="agm-ev-dot"></span><span class="agm-ev-time">${_aglHm(it.start)}</span>`;
+  return `<button type="button" class="${cls.join(' ')}" style="--ev-color:${esc(it.color)}" data-agm="${esc(it.id)}"${it.draggable ? ' draggable="true"' : ''} title="${esc(tip)}">${lead}<span class="agm-ev-title">${esc(it.title)}</span></button>`;
+}
+function buildAgendaMonth(wrap, userId, monthStart) {
+  _agmItems = {};
+  const canEdit = !!(me && (me.isAdmin || userId === me.id));
+  const days = agendaMonthDays();
+  const todayYmd = agendaYmd(new Date());
+  const m = monthStart.getMonth();
+  const mobile = isMobileLayout();
+  const head = AGM_WEEKDAYS.map((w, i) => `<div class="agm-head${i === 0 || i === 6 ? ' is-weekend' : ''}">${w}</div>`).join('');
+  const cells = days.map(day => {
+    const ymd = agendaYmd(day);
+    const items = _agmDayItems(userId, ymd);
+    const dow = day.getDay();
+    const mins = items.filter(it => it.kind === 'block').reduce((s, it) => s + (it.end - it.start), 0);
+    const num = day.getDate() === 1 ? `${day.getDate()} ${MONTHS_SHORT[day.getMonth()].toLowerCase()}` : day.getDate();
+    const cls = ['agm-day'];
+    if (day.getMonth() !== m) cls.push('is-out');
+    if (ymd === todayYmd) cls.push('is-today');
+    if (dow === 0 || dow === 6) cls.push('is-weekend');
+    if (ymd < todayYmd) cls.push('is-past');
+    let body;
+    if (mobile) {
+      body = items.length ? `<div class="agm-dots">${items.slice(0, 4).map(it => `<span style="--ev-color:${esc(it.color)}"></span>`).join('')}${items.length > 4 ? '<em>+</em>' : ''}</div>` : '';
+    } else {
+      // Com mais de 3, a 3ª linha vira o "+N mais" (a altura da célula não muda).
+      const max = items.length > AGM_MAX_ITEMS ? AGM_MAX_ITEMS - 1 : AGM_MAX_ITEMS;
+      body = items.slice(0, max).map(_agmItemHtml).join('')
+        + (items.length > max ? `<button type="button" class="agm-more" data-agm-more="${ymd}">+${items.length - max} mais</button>` : '');
+    }
+    return `<div class="${cls.join(' ')}" data-ymd="${ymd}">
+        <div class="agm-day-top">
+          <button type="button" class="agm-num" data-agm-week="${ymd}" title="Abrir o dia">${num}</button>
+          ${mins && !mobile ? `<span class="agm-hours" title="Horas agendadas">${fmtHm(mins / 60)}</span>` : ''}
+        </div>
+        <div class="agm-evs">${body}</div>
+      </div>`;
+  }).join('');
+  wrap.classList.add('is-month');
+  wrap.innerHTML = `<div class="agm${canEdit ? ' can-add' : ''}"><div class="agm-heads">${head}</div><div class="agm-grid">${cells}</div></div>`;
+  _agmWire(wrap.querySelector('.agm'), userId, canEdit, mobile);
+  paintIcons(wrap);
+}
+function _agmOpenItem(it) {
+  if (!it) return;
+  if (it.kind === 'google') return openGoogleEventDetail(it.gcal);
+  if (it.demandId) return showDetail(it.demandId);
+  if (it.editable) return openScheduleModal(it.scheduleId);
+}
+function _agmWire(root, userId, canEdit, mobile) {
+  if (!root) return;
+  root.addEventListener('click', e => {
+    const ev = e.target.closest('[data-agm]');
+    if (ev) { e.stopPropagation(); agmClosePopover(); _agmOpenItem(_agmItems[ev.dataset.agm]); return; }
+    const cell = e.target.closest('.agm-day');
+    if (!cell) return;
+    const wk = e.target.closest('[data-agm-week]');
+    if (wk && !mobile) { agmGoDay(wk.dataset.agmWeek); return; }
+    const more = e.target.closest('[data-agm-more]');
+    if (more || mobile) { e.stopPropagation(); agmOpenPopover(userId, cell.dataset.ymd, cell); return; }
+    if (canEdit) openScheduleModal(null, { userId, date: cell.dataset.ymd });
+  });
+  if (!canEdit || mobile) return;
+  // Arrastar bloco pra outro dia: mesmo horário, só troca a data.
+  let dragId = null;
+  const clearDrop = () => root.querySelectorAll('.agm-day.is-drop').forEach(c => c.classList.remove('is-drop'));
+  root.addEventListener('dragstart', e => {
+    const ev = e.target.closest('[data-agm][draggable="true"]');
+    if (!ev) return;
+    dragId = ev.dataset.agm;
+    ev.classList.add('is-dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', dragId); } catch {}
+  });
+  root.addEventListener('dragend', e => {
+    e.target.closest?.('[data-agm]')?.classList.remove('is-dragging');
+    clearDrop();
+    dragId = null;
+  });
+  root.addEventListener('dragover', e => {
+    const cell = dragId && e.target.closest('.agm-day');
+    if (!cell) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (!cell.classList.contains('is-drop')) { clearDrop(); cell.classList.add('is-drop'); }
+  });
+  root.addEventListener('drop', async e => {
+    const cell = e.target.closest('.agm-day');
+    const it = dragId && _agmItems[dragId];
+    if (!cell || !it) return;
+    e.preventDefault();
+    clearDrop();
+    const date = cell.dataset.ymd;
+    const s = schedules.find(x => x.id === it.scheduleId);
+    if (!s || s.date === date) return;
+    const prev = s.date;
+    s.date = date; // otimista — a grade já mostra no lugar novo
+    renderAgenda();
+    try {
+      await api('/schedules/' + it.scheduleId, 'PUT', { date, startMin: s.startMin, endMin: s.endMin });
+      schedules = await api('/schedules'); // fonte da verdade é o backend
+      renderAgenda();
+    } catch (err) {
+      s.date = prev;
+      toast(err.message || 'Erro ao mover o bloco', 'error');
+      renderAgenda();
+    }
+  });
+}
+function agmGoDay(ymd) {
+  agendaView = 'day';
+  agendaDayRef = new Date(ymd + 'T00:00:00');
+  setAgendaView('day');
+}
+/* Popover do dia: a lista completa, com horário e detalhe, + "Agendar". */
+function agmOpenPopover(userId, ymd, cell) {
+  agmClosePopover();
+  const day = new Date(ymd + 'T00:00:00');
+  const items = _agmDayItems(userId, ymd);
+  const canEdit = !!(me && (me.isAdmin || userId === me.id));
+  const rows = items.map(it => {
+    _agmItems[it.id] = it;
+    const when = it.allDay ? 'Dia todo' : it.kind === 'due' ? 'Prazo' : `${_aglHm(it.start)}<small>${_aglHm(it.end)}</small>`;
+    const meta = it.kind === 'google' ? 'Google Agenda' : it.kind === 'due' ? (it.late ? 'Atrasada' : it.meta) : it.meta;
+    return `<button type="button" class="agm-pop-item is-${it.kind}${it.late ? ' is-late' : ''}" style="--ev-color:${esc(it.color)}" data-agm="${esc(it.id)}">
+        <span class="agm-pop-time">${when}</span>
+        <span class="agm-pop-body"><span class="agm-pop-title">${esc(it.title)}</span>${meta ? `<span class="agm-pop-meta">${esc(meta)}</span>` : ''}</span>
+      </button>`;
+  }).join('');
+  const pop = document.createElement('div');
+  pop.id = 'agm-popover';
+  pop.className = 'agm-popover';
+  pop.innerHTML = `
+    <div class="agm-pop-head">
+      <span class="agm-pop-dow">${esc(day.toLocaleDateString(LOCALE, { weekday: 'long' }).replace('-feira', ''))}</span>
+      <span class="agm-pop-date${ymd === agendaYmd(new Date()) ? ' is-today' : ''}">${day.getDate()}</span>
+      <button type="button" class="agm-pop-close" aria-label="Fechar" onclick="agmClosePopover()"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="agm-pop-list">${rows || '<div class="agm-pop-empty">Nada nesse dia.</div>'}</div>
+    <div class="agm-pop-foot">
+      <button type="button" class="btn btn-ghost btn-sm" onclick="agmClosePopover(); agmGoDay('${ymd}')"><i data-lucide="calendar-days" class="ic-xs"></i> Ver dia</button>
+      ${canEdit ? `<button type="button" class="btn btn-primary btn-sm" onclick="agmClosePopover(); openScheduleModal(null, { userId: '${esc(userId)}', date: '${ymd}' })"><i data-lucide="plus" class="ic-xs"></i> Agendar</button>` : ''}
+    </div>`;
+  pop.addEventListener('click', e => {
+    e.stopPropagation();
+    const ev = e.target.closest('[data-agm]');
+    if (ev) { const it = _agmItems[ev.dataset.agm]; agmClosePopover(); _agmOpenItem(it); }
+  });
+  document.body.appendChild(pop);
+  paintIcons(pop);
+  // Abre por cima da célula do dia (como o Google), travado dentro da tela.
+  const r = cell.getBoundingClientRect();
+  const w = pop.offsetWidth, h = pop.offsetHeight;
+  pop.style.left = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - 8)) + 'px';
+  pop.style.top = Math.max(8, Math.min(r.top - 6, window.innerHeight - h - 8)) + 'px';
+  requestAnimationFrame(() => pop.classList.add('open'));
+}
+function agmClosePopover() {
+  document.getElementById('agm-popover')?.remove();
+}
+document.addEventListener('click', e => {
+  const pop = document.getElementById('agm-popover');
+  if (pop && !pop.contains(e.target)) agmClosePopover();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') agmClosePopover(); });
+window.addEventListener('scroll', agmClosePopover, { passive: true });
+
+/* ─── AGENDA: VISÃO DE ANO ───
+   12 mini-meses (como o Google Agenda). Dia com coisa marcada ganha fundo roxo
+   mais forte conforme a quantidade (blocos, reuniões do Google e prazos);
+   prazo atrasado ganha anel vermelho. Clicar no dia abre o popover do dia,
+   clicar no nome do mês abre o mês. */
+const AGY_WEEKDAYS = IS_PT ? ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'] : ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+// ymd → { n, late } numa passada só (contar dia a dia seria 365 × tudo).
+function _agyIndex(userId, year) {
+  const idx = {};
+  const from = `${year}-01-01`, to = `${year}-12-31`;
+  const bump = (ymd, late) => {
+    if (ymd < from || ymd > to) return;
+    const e = idx[ymd] || (idx[ymd] = { n: 0, late: false });
+    e.n++; if (late) e.late = true;
+  };
+  schedules.forEach(s => { if (s.userId === userId) bump(s.date); });
+  demands.forEach(d => { if (d.ownerId === userId && !d.deletedAt && !isDone(d) && effDue(d)) bump(effDue(d), isLate(d)); });
+  (googleEventsForUser[userId] || []).forEach(ev => {
+    if (!ev || !ev.start || ev.selfResponseStatus === 'declined') return;
+    const s = String(ev.start).slice(0, 10);
+    if (!ev.allDay) return bump(s);
+    // Dia inteiro: [start, end) — conta em cada dia coberto.
+    const e = String(ev.end || ev.start).slice(0, 10);
+    const d = new Date(s + 'T00:00:00');
+    do { bump(agendaYmd(d)); d.setDate(d.getDate() + 1); } while (agendaYmd(d) < e);
+  });
+  return idx;
+}
+function buildAgendaYear(wrap, userId, year) {
+  const idx = _agyIndex(userId, year);
+  const todayYmd = agendaYmd(new Date());
+  const heads = AGY_WEEKDAYS.map(w => `<span>${w}</span>`).join('');
+  const months = Array.from({ length: 12 }, (_, m) => {
+    const ms = new Date(year, m, 1);
+    const days = agendaMonthDays(ms);
+    while (days.length < 42) { const d = new Date(days[days.length - 1]); d.setDate(d.getDate() + 1); days.push(d); }
+    const cells = days.map(day => {
+      const ymd = agendaYmd(day);
+      if (day.getMonth() !== m) return `<span class="agy-day is-out">${day.getDate()}</span>`;
+      const e = idx[ymd];
+      const cls = ['agy-day'];
+      if (ymd === todayYmd) cls.push('is-today');
+      if (e) cls.push('lv-' + Math.min(3, e.n));
+      if (e && e.late) cls.push('is-late');
+      const tip = e ? `${e.n} ${e.n === 1 ? 'item' : 'itens'}${e.late ? ' · prazo atrasado' : ''}` : '';
+      return `<button type="button" class="${cls.join(' ')}" data-agy="${ymd}"${tip ? ` title="${tip}"` : ''}>${day.getDate()}</button>`;
+    }).join('');
+    const isCur = year === new Date().getFullYear() && m === new Date().getMonth();
+    return `<section class="agy-month${isCur ? ' is-current' : ''}">
+        <button type="button" class="agy-title" data-agy-month="${m}">${esc(MONTHS[m])}</button>
+        <div class="agy-grid">${heads}${cells}</div>
+      </section>`;
+  }).join('');
+  wrap.classList.add('is-year');
+  wrap.innerHTML = `<div class="agy">${months}</div>`;
+  wrap.firstChild.addEventListener('click', e => {
+    const mo = e.target.closest('[data-agy-month]');
+    if (mo) {
+      agendaView = 'month'; // a referência do setAgendaView vira o mês clicado
+      agendaMonthRef = new Date(year, +mo.dataset.agyMonth, 1);
+      setAgendaView('month');
+      return;
+    }
+    const d = e.target.closest('[data-agy]');
+    if (d) { e.stopPropagation(); agmOpenPopover(userId, d.dataset.agy, d); }
+  });
+}
+
 /* ─── GESTOS NO CELULAR (≤760px) ───
    · Puxar pra atualizar: no topo de Início, Minhas, Demandas e Agenda.
    · Deslizar da borda esquerda pra voltar: no detalhe da demanda (o iPhone
@@ -38792,7 +39200,7 @@ function openGoogleEventDetail(gb) {
   const startMM = String(gb.startMin % 60).padStart(2, '0');
   const endHH = String(Math.floor(gb.endMin / 60)).padStart(2, '0');
   const endMM = String(gb.endMin % 60).padStart(2, '0');
-  const timeLabel = `${startHH}:${startMM} — ${endHH}:${endMM}`;
+  const timeLabel = gb.allDay ? 'Dia inteiro' : `${startHH}:${startMM} — ${endHH}:${endMM}`;
   let modal = document.getElementById('gcal-event-modal');
   if (!modal) {
     modal = document.createElement('div');
