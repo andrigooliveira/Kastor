@@ -2145,7 +2145,82 @@ app.post('/api/uploads', (req, res, next) => requireAuth(req, res, next), rateLi
 // mime type incomum (ex.: pptx = application/vnd.openxmlformats-...), alguns
 // browsers/plugins tentam abrir inline e re-interpretam o binário. Forçando
 // attachment + Content-Type explícito, o download vem 1:1 com o disco.
-app.use('/uploads', requireAuth, (req, res, next) => {
+/* Versões reduzidas de imagens: `/uploads/<arquivo>?w=480` devolve um WebP de
+   até 480px (lado maior), gerado na 1ª vez e guardado em DATA_DIR/thumbs/<w>/.
+   Os cards de anexo, a galeria e o preview usam isso; o original continua
+   intocado e é o que o "Baixar" entrega. Larguras fixas (o pedido é arredondado
+   pra cima) pra não virar um gerador de N variantes. Qualquer falha (sharp
+   ausente, arquivo estranho) cai no original — miniatura nunca quebra a tela.
+   Fica fora de uploads/ de propósito: não conta na cota de armazenamento da
+   organização e pode ser apagada à vontade (regenera sob demanda). */
+const THUMBS_DIR = path.join(DATA_DIR, 'thumbs');
+const THUMB_WIDTHS = [480, 1024, 2048];
+const THUMB_EXT = new Set(['jpg', 'jpeg', 'png', 'webp']);
+let _sharp;
+try { _sharp = require('sharp'); _sharp.cache(false); _sharp.concurrency(1); }
+catch (e) { _sharp = null; console.warn('[thumbs] sharp indisponível, imagens saem no tamanho original:', e.message); }
+const _thumbJobs = new Map(); // dest → Promise (dois pedidos simultâneos geram uma vez só)
+function _makeThumb(src, dest, width) {
+  if (_thumbJobs.has(dest)) return _thumbJobs.get(dest);
+  const tmp = dest + '.' + process.pid + '.tmp';
+  const job = (async () => {
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    await _sharp(src, { failOn: 'none', limitInputPixels: 268402689 })
+      .rotate() // respeita a orientação EXIF (fotos de celular/drone)
+      .resize({ width, height: width, fit: 'inside', withoutEnlargement: true })
+      .webp({ quality: 78 })
+      .toFile(tmp);
+    fs.renameSync(tmp, dest);
+  })().finally(() => { _thumbJobs.delete(dest); try { fs.unlinkSync(tmp); } catch {} });
+  _thumbJobs.set(dest, job);
+  return job;
+}
+async function serveUploadThumb(req, res, next) {
+  if (!_sharp || !req.query.w || req.query.dl === '1') return next();
+  let name;
+  try { name = path.basename(decodeURIComponent(req.path)); } catch { return next(); }
+  const ext = path.extname(name).slice(1).toLowerCase();
+  if (!name || name.startsWith('.') || !THUMB_EXT.has(ext)) return next();
+  const asked = parseInt(req.query.w, 10) || 0;
+  const width = THUMB_WIDTHS.find(w => w >= asked) || THUMB_WIDTHS[THUMB_WIDTHS.length - 1];
+  const src = path.join(UPLOADS_DIR, name);
+  let srcStat;
+  try { srcStat = fs.statSync(src); } catch { return next(); } // some → fluxo normal (lixeira/404)
+  const dest = path.join(THUMBS_DIR, String(width), name + '.webp');
+  try {
+    let st = null;
+    try { st = fs.statSync(dest); } catch {}
+    if (!st || st.mtimeMs < srcStat.mtimeMs) { await _makeThumb(src, dest, width); st = fs.statSync(dest); }
+    // Imagem já pequena: a "miniatura" sairia maior que o original.
+    if (st.size >= srcStat.size) return next();
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Type', 'image/webp');
+    // Nome do upload tem id único (o conteúdo nunca muda) → cache longo no
+    // browser; `private` mantém o anexo autenticado fora do cache do Cloudflare.
+    res.setHeader('Cache-Control', 'private, max-age=2592000, immutable');
+    res.sendFile(dest, err => { if (err && !res.headersSent) next(); });
+  } catch (e) {
+    console.warn(`[thumbs] ${name} @${width}: ${e.message}`);
+    next();
+  }
+}
+// Apaga miniaturas cujo original saiu de uploads/ (GC, exclusão de organização).
+function pruneUploadThumbs() {
+  let removed = 0;
+  for (const w of THUMB_WIDTHS) {
+    const dir = path.join(THUMBS_DIR, String(w));
+    let files = [];
+    try { files = fs.readdirSync(dir); } catch { continue; }
+    for (const f of files) {
+      const orig = f.replace(/\.webp$/, '');
+      if (f.endsWith('.webp') && fs.existsSync(path.join(UPLOADS_DIR, orig))) continue;
+      try { fs.unlinkSync(path.join(dir, f)); removed++; } catch {}
+    }
+  }
+  return removed;
+}
+
+app.use('/uploads', requireAuth, serveUploadThumb, (req, res, next) => {
   const fileExt = path.extname(req.path).slice(1).toLowerCase();
   res.setHeader('X-Content-Type-Options', 'nosniff');
   if (!INLINE_SAFE_EXT.has(fileExt)) {
@@ -13179,8 +13254,9 @@ function runUploadsGc() {
       if (stat.isFile() && now - stat.mtimeMs > UPLOADS_TRASH_KEEP_MS) { fs.unlinkSync(full); purged++; }
     } catch {}
   }
-  if (moved || restored || purged) {
-    console.log(`  [uploads-gc] ${moved} órfão(s) na lixeira, ${restored} restaurado(s), ${purged} apagado(s) após 30 dias`);
+  const thumbs = pruneUploadThumbs();
+  if (moved || restored || purged || thumbs) {
+    console.log(`  [uploads-gc] ${moved} órfão(s) na lixeira, ${restored} restaurado(s), ${purged} apagado(s) após 30 dias, ${thumbs} miniatura(s) removida(s)`);
   }
 }
 /* Diagnóstico no boot: referências a /uploads cujo arquivo não existe no disco

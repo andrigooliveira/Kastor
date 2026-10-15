@@ -18227,7 +18227,7 @@ function renderDetail() {
     }
     const atts = (c.attachments || []).map(a => {
       if (a.type && a.type.startsWith('image/')) {
-        return `<div class="comment-img-wrap"><img class="comment-img" loading="lazy" decoding="async" src="${a.data}" alt="${esc(a.name)}"></div>`;
+        return `<div class="comment-img-wrap"><img class="comment-img" loading="lazy" decoding="async" src="${esc(attThumbUrl(a.data, 640))}" alt="${esc(a.name)}"></div>`;
       }
       return `<a class="comment-file" href="${esc(attDownloadUrl(a.data, a.name))}" ${attDownloadAttrs(a.data, a.name)} download="${esc(a.name)}" title="Baixar ${esc(a.name)}"><i data-lucide="paperclip" class="ic-sm"></i> ${esc(a.name)}</a>`;
     }).join('');
@@ -20671,6 +20671,14 @@ function attIcon(kind) {
      como inline e corrompam o binário (bug reportado antes desta função existir).
    - `data:` URIs → passa direto (browser lida sozinho).
    - URLs externas → passa direto (não temos controle dos headers). */
+/* Versão reduzida (WebP) de uma imagem de /uploads pra exibir na tela — o
+   server gera e guarda (ver serveUploadThumb). `w` é a largura desejada em px;
+   o server arredonda pra 480/1024/2048. Outros tipos/URLs voltam intactos. */
+function attThumbUrl(src, w) {
+  const s = String(src || '');
+  if (!s.startsWith('/uploads/') || s.includes('?') || !/\.(jpe?g|png|webp)$/i.test(s)) return s;
+  return `${s}?w=${w}`;
+}
 function attDownloadUrl(src, name) {
   const s = String(src || '');
   if (!s.startsWith('/uploads/')) return s;
@@ -20837,7 +20845,7 @@ function renderDemandAttList(list, withDelete) {
     const size = attSizeBytes(a);
     const meta = [ext ? ext.toUpperCase() : '', size ? fmtBytes(size) : '', date].filter(Boolean).map(esc).join(' · ');
     const thumb = kind === 'image' && rawSrc
-      ? `<div class="att-gal-thumb att-gal-thumb-image" style="background-image:url('${src}')">`
+      ? `<div class="att-gal-thumb att-gal-thumb-image" style="background-image:url('${esc(attThumbUrl(rawSrc, 480))}')">`
       : `<div class="att-gal-thumb att-gal-thumb-icon ft-${vis.tone}"><i data-lucide="${vis.icon}"></i>`;
     const coverAttrs = _attCoverKind(a)
       ? `data-cover-key="${esc(_attCoverKey(a))}" data-att-id="${esc(a.id || '')}" data-att-size="${esc(String(a.size || 0))}" data-att-src="${src}" data-att-type="${esc(a.type || '')}" data-att-name="${esc(a.name || '')}"`
@@ -21872,7 +21880,7 @@ function openAttPreview(src, type, name, opts) {
     <div class="att-preview-loading-label">Preparando visualização…</div>
   </div>`;
   if (kind === 'image') {
-    el.innerHTML = header + `<div class="att-preview-body" id="att-preview-body"><img src="${src}" alt="${esc(name)}" class="att-preview-image" data-zoom-target="1"></div>`;
+    el.innerHTML = header + `<div class="att-preview-body" id="att-preview-body"><img src="${esc(attThumbUrl(src, 2048))}" alt="${esc(name)}" class="att-preview-image" data-zoom-target="1"></div>`;
   } else if (kind === 'video') {
     el.innerHTML = header + `<div class="att-preview-body"><video src="${src}" controls class="att-preview-video"></video></div>`;
   } else if (kind === 'audio') {
@@ -24317,7 +24325,9 @@ const RICH_IMG_VIEW_SELECTOR = '.chat-comment-text img, .comment-text img, .deta
 const RICH_IMG_MIN_WIDTH = 48;
 
 function _richImageFile(img) {
-  const src = img.currentSrc || img.src;
+  let src = img.currentSrc || img.src;
+  // Upload próprio: o preview/download partem do ORIGINAL (sem ?w= da miniatura).
+  try { const u = new URL(src, location.href); if (u.origin === location.origin && u.pathname.startsWith('/uploads/')) src = u.pathname; } catch {}
   const file = decodeURIComponent(String(src).split('?')[0].split('/').pop() || '');
   let ext = ((/\.([a-z0-9]{2,5})$/i.exec(file) || [])[1] || 'png').toLowerCase();
   if (ext === 'jpg') ext = 'jpeg';
@@ -35278,7 +35288,7 @@ function _globalGalleryTileHtml(a) {
   const vis = attFileVisual(a);
   const extBadge = ext ? `<span class="att-gal-ext-badge ft-${vis.tone}">${esc(ext)}</span>` : '';
   const thumb = kind === 'image' && src
-    ? `<div class="att-gal-thumb att-gal-thumb-image" style="background-image:url('${srcEsc}')">${extBadge}</div>`
+    ? `<div class="att-gal-thumb att-gal-thumb-image" style="background-image:url('${esc(attThumbUrl(src, 480))}')">${extBadge}</div>`
     : kind === 'link'
       ? `<div class="att-gal-thumb att-gal-thumb-icon att-link-thumb">${linkThumbInner(normalizeUrl(a.url || a.name))}${extBadge}</div>`
       : `<div class="att-gal-thumb att-gal-thumb-icon ft-${vis.tone}"><i data-lucide="${vis.icon}"></i>${extBadge}</div>`;
@@ -35575,7 +35585,7 @@ function attGalTileHtml(a, view = 'grid') {
   const extBadge = ext ? `<span class="att-gal-ext-badge ft-${vis.tone}">${esc(ext)}</span>` : '';
   if (view === 'list') {
     const thumb = kind === 'image' && src
-      ? `<div class="att-gal-list-thumb att-gal-thumb-image" style="background-image:url('${srcEsc}')"></div>`
+      ? `<div class="att-gal-list-thumb att-gal-thumb-image" style="background-image:url('${esc(attThumbUrl(src, 480))}')"></div>`
       : kind === 'link'
         ? `<div class="att-gal-list-thumb att-gal-thumb-icon att-link-thumb att-link-thumb-sm">${linkThumbInner(normalizeUrl(a.url || a.name))}</div>`
         : `<div class="att-gal-list-thumb att-gal-thumb-icon ft-${vis.tone}"><i data-lucide="${vis.icon}"></i></div>`;
@@ -35596,7 +35606,7 @@ function attGalTileHtml(a, view = 'grid') {
   // grid (padrão)
   const coverKind = _attCoverKind(a); // 'pdf' | 'doc' | null
   const thumb = kind === 'image' && src
-    ? `<div class="att-gal-thumb att-gal-thumb-image" style="background-image:url('${srcEsc}')">${extBadge}</div>`
+    ? `<div class="att-gal-thumb att-gal-thumb-image" style="background-image:url('${esc(attThumbUrl(src, 480))}')">${extBadge}</div>`
     : kind === 'link'
       ? `<div class="att-gal-thumb att-gal-thumb-icon att-link-thumb">${linkThumbInner(normalizeUrl(a.url || a.name))}${extBadge}</div>`
       : `<div class="att-gal-thumb att-gal-thumb-icon ft-${vis.tone}"><i data-lucide="${vis.icon}"></i>${extBadge}</div>`;
