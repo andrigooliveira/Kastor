@@ -7250,8 +7250,8 @@ function _protoFormPaint() {
   const body = $('proto-modal-body');
   const f = _proto.form;
   if (!body || !f) return;
-  const formWs = (_proto.filter && _proto.filter.ws) || activeWs;
-  const list = (clients || []).filter(c => !c.deletedAt && (!formWs || c.workspaceId === formWs)).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const wsList = _protoFormTeams();
+  const list = (clients || []).filter(c => !c.deletedAt && (!f.workspaceId || c.workspaceId === f.workspaceId)).sort((a, b) => String(a.name).localeCompare(String(b.name)));
   const size = f.files.reduce((n, x) => n + x.file.size, 0);
   const picked = f.files.length
     ? `<div class="proto-picked"><i data-lucide="folder-check" class="ic-sm"></i><span>${_protoCount(f.files.length)} · ${fmtBytes(size)}</span><button type="button" class="proto-picked-clear" onclick="_protoClearFiles()">Trocar</button></div>`
@@ -7262,6 +7262,12 @@ function _protoFormPaint() {
         <label class="form-label" for="proto-name">Nome *</label>
         <input class="form-control" id="proto-name" maxlength="80" placeholder="Ex.: Landing page de lançamento" value="${esc(f.name)}" oninput="_proto.form.name=this.value"${off}>
       </div>
+      ${wsList.length > 1 ? `<div class="form-group">
+        <label class="form-label" for="proto-ws">Equipe</label>
+        <select class="form-control" id="proto-ws" onchange="_protoSetFormTeam(this.value)"${off}>
+          ${wsList.map(w => `<option value="${w.id}"${w.id === f.workspaceId ? ' selected' : ''}>${esc(w.name)}</option>`).join('')}
+        </select>
+      </div>` : ''}
       <div class="form-group">
         <label class="form-label" for="proto-client">Cliente</label>
         <select class="form-control" id="proto-client" onchange="_proto.form.clientId=this.value||null"${off}>
@@ -7269,7 +7275,7 @@ function _protoFormPaint() {
           ${list.map(c => `<option value="${c.id}"${c.id === f.clientId ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}
         </select>
       </div>
-      ${f.pages.length > 1 && !f.files.length ? `<div class="form-group full">
+      ${f.pages.length > 1 && !f.files.length ? `<div class="form-group${wsList.length > 1 ? '' : ' full'}">
         <label class="form-label" for="proto-entry">Página inicial</label>
         <select class="form-control" id="proto-entry" onchange="_proto.form.entry=this.value"${off}>
           ${f.pages.map(pg => `<option value="${esc(pg)}"${pg === f.entry ? ' selected' : ''}>${esc(pg)}</option>`).join('')}
@@ -7299,9 +7305,25 @@ function _protoFormPaint() {
 function openProtoForm(id) {
   if (_proto.busy) return;
   const p = id ? _protoById(id) : null;
-  _proto.form = { id: p ? p.id : null, name: p ? p.name : '', clientId: p ? p.clientId : null, entry: p ? p.entry : null, pages: p ? p.pages : [], hasFiles: !!(p && p.hasFiles), files: [], warn: [], error: '', progress: null };
+  const teams = _protoFormTeams();
+  const startWs = p ? p.workspaceId : [(_proto.filter && _proto.filter.ws), activeWs].find(id => id && teams.some(w => w.id === id)) || (teams[0] || {}).id || activeWs;
+  _proto.form = { id: p ? p.id : null, name: p ? p.name : '', workspaceId: startWs, fromWs: p ? p.workspaceId : null, clientId: p ? p.clientId : null, entry: p ? p.entry : null, pages: p ? p.pages : [], hasFiles: !!(p && p.hasFiles), files: [], warn: [], error: '', progress: null };
   _protoFormPaint();
   openModal('proto-modal');
+}
+/* Equipes em que a pessoa pode pôr um protótipo (as mesmas que o servidor aceita). */
+function _protoFormTeams() {
+  return (workspaces || []).filter(w => me && (me.isAdmin || (me.workspaces || []).includes(w.id)))
+    .slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+}
+/* Trocou a equipe: cliente de outra equipe não vale mais (os clientes são por equipe). */
+function _protoSetFormTeam(wsId) {
+  const f = _proto.form;
+  if (!f) return;
+  f.workspaceId = wsId;
+  const c = f.clientId ? clientById(f.clientId) : null;
+  if (c && c.workspaceId !== wsId) f.clientId = null;
+  _protoFormPaint();
 }
 function closeProtoForm() {
   if (_proto.busy) return;
@@ -7402,8 +7424,8 @@ async function saveProto() {
   _protoFormPaint();
   try {
     const p = f.id
-      ? await api('/prototypes/' + f.id, 'PUT', { name, clientId: f.clientId, ...(f.entry && !f.files.length ? { entry: f.entry } : {}) })
-      : await api('/prototypes', 'POST', { name, clientId: f.clientId, workspaceId: (_proto.filter && _proto.filter.ws) || activeWs || (workspaces[0] || {}).id });
+      ? await api('/prototypes/' + f.id, 'PUT', { name, clientId: f.clientId, workspaceId: f.workspaceId, ...(f.entry && !f.files.length ? { entry: f.entry } : {}) })
+      : await api('/prototypes', 'POST', { name, clientId: f.clientId, workspaceId: f.workspaceId });
     f.id = p.id; // se o envio falhar, tentar de novo não cria outro
     if (f.files.length) {
       const { uploadId } = await api(`/prototypes/${p.id}/upload`, 'POST', {});
@@ -7418,7 +7440,8 @@ async function saveProto() {
     closeModal('proto-modal');
     await _protoLoad();
     _protoPaint();
-    toast(isNew ? 'Protótipo criado. Gere o link para compartilhar.' : 'Protótipo atualizado.', 'success');
+    const moved = !isNew && f.fromWs && f.workspaceId !== f.fromWs ? wsById(f.workspaceId) : null;
+    toast(isNew ? 'Protótipo criado. Gere o link para compartilhar.' : moved ? `Protótipo movido para a equipe ${moved.name}.` : 'Protótipo atualizado.', 'success');
   } catch (e) {
     _proto.busy = false; f.progress = null; f.error = e.message;
     try { await _protoLoad(); } catch {}

@@ -218,6 +218,12 @@ module.exports = function setupPrototypes(app, deps) {
       if (!f) return res.status(400).json({ error: 'Página inicial inválida.', field: 'entry' });
       p.entry = f.path;
     }
+    // Trocar de equipe: só pra uma em que a pessoa também tem acesso.
+    if (b.workspaceId !== undefined && b.workspaceId !== p.workspaceId) {
+      const workspaceId = String(b.workspaceId || '');
+      if (!canAccessWs(req.user, workspaceId)) return res.status(400).json({ error: 'Escolha uma equipe em que você tem acesso.', field: 'workspaceId' });
+      p.workspaceId = workspaceId;
+    }
     p.name = meta.name; p.clientId = meta.clientId; p.updatedAt = nowISO();
     saveEntity('prototypes', p);
     res.json(view(req, p));

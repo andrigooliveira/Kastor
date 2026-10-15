@@ -30,7 +30,7 @@ test.before(async () => {
     uid: () => crypto.randomBytes(6).toString('hex'), nowISO: () => new Date().toISOString(),
     requireAuth: (req, res, next) => { req.user = user; req.org = { id: 'org_a' }; next(); },
     blockFreelancer: (req, res, next) => next(),
-    canAccessWs: (u, ws) => ws === 'ws1',
+    canAccessWs: (u, ws) => ws === 'ws1' || ws === 'ws2',
     sessionUser: (req) => (/sess=1/.test(req.headers.cookie || '') ? user : null),
     tenancy: { run: (orgId, fn) => fn(), orgActive: () => true, orgOf: (type, e) => e.orgId },
     orgPlan: () => ({ trial: state.trial, fileBytes: 25 * 1024 * 1024 }),
@@ -103,6 +103,17 @@ test('Sem link externo: de fora não abre; a equipe vê por chave temporária', 
   assert.equal(file.status, 200);
   assert.match(csp(file), /^sandbox allow-scripts/);
   assert.equal((await call('GET', src.replace(/-[a-f0-9]{4}/, '-0000'))).status, 410, 'chave adulterada');
+});
+
+test('Trocar de equipe: só pra uma com acesso', async () => {
+  const bad = await call('PUT', `/api/prototypes/${proto.id}`, { workspaceId: 'outra-equipe' });
+  assert.equal(bad.status, 400);
+  assert.equal(bad.body.field, 'workspaceId');
+  const moved = await call('PUT', `/api/prototypes/${proto.id}`, { workspaceId: 'ws2' });
+  assert.equal(moved.status, 200);
+  assert.equal(moved.body.workspaceId, 'ws2');
+  assert.equal(moved.body.name, 'LP de teste', 'o resto não muda');
+  assert.equal((await call('PUT', `/api/prototypes/${proto.id}`, { workspaceId: 'ws1' })).body.workspaceId, 'ws1');
 });
 
 test('Link externo: teto de dias, plano de teste fica de fora', async () => {
