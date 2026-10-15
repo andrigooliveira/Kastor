@@ -20687,6 +20687,21 @@ function attDownloadUrl(src, name) {
 async function attClickDownload(ev, src, name) {
   try { ev.preventDefault(); } catch {}
   const url = attDownloadUrl(src, name);
+  // /uploads: o server já responde `attachment` com o nome original, então o
+  // link nativo baixa direto. Nada de fetch→blob aqui: esperar o arquivo
+  // inteiro antes do click faz o gesto do usuário expirar em anexos grandes
+  // (fotos de 7 MB atrás do Cloudflare) e o Chrome descarta o download em
+  // silêncio quando "downloads automáticos" está bloqueado pro site.
+  if (String(src || '').startsWith('/uploads/')) {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name || 'arquivo';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { try { document.body.removeChild(a); } catch {} }, 1500);
+    return false;
+  }
   try {
     const resp = await fetch(url, { credentials: 'same-origin' });
     if (!resp.ok) {
@@ -20727,8 +20742,7 @@ function attClickDownloadFromEl(ev, el) {
 }
 window.attClickDownloadFromEl = attClickDownloadFromEl;
 /* Gera os atributos HTML pra transformar um <a> em download via fetch→blob.
-   - `/uploads/xxx` → adiciona data-dl-* + onclick (fetch→blob→click sintético,
-     imune a interpretação inline pelo browser ou header wrangling do proxy)
+   - `/uploads/xxx` → nenhum: link nativo pro `?dl=1` (server manda attachment)
    - `data:` URIs → só onclick (o data URI enorme já tá no href do próprio <a>,
      então o handler lê dali via `this.href`). Isso corrige anexos antigos que
      ficaram presos como base64 na DB (browser trunca data URI grande no download
@@ -20736,9 +20750,8 @@ window.attClickDownloadFromEl = attClickDownloadFromEl;
 function attDownloadAttrs(rawSrc, name) {
   const s = String(rawSrc || '');
   const nameAttr = `data-dl-name="${esc(name || '')}"`;
-  if (s.startsWith('/uploads/')) {
-    return `data-dl-src="${esc(s)}" ${nameAttr} onclick="return attClickDownloadFromEl(event, this)"`;
-  }
+  // `/uploads/xxx` não precisa de handler: o href já é a URL `?dl=1` e o
+  // `download=` do próprio <a> resolve (ver attClickDownload).
   if (s.startsWith('data:')) {
     // Sem data-dl-src (evita duplicar o base64 gigante). O handler pega do href.
     return `${nameAttr} data-dl-from-href="1" onclick="return attClickDownloadFromEl(event, this)"`;
