@@ -781,6 +781,19 @@ const MODAL_ROUTES = {
     path: () => '/profile/account/email' + (_elmMode && _elmMode !== 'link' ? _routeQuery({ mode: _elmMode }) : ''),
     open: () => { setProfileSection('account', { keepUrl: true }); openEmailLinkModal(_routeParam('mode') || undefined); }
   },
+  'qr-scan-modal': {
+    match: /^\/profile\/devices\/scan$/, page: 'profile',
+    path: () => '/profile/devices/scan',
+    open: () => { setProfileSection('devices', { keepUrl: true }); openQrScanner(); }
+  },
+  // Link do QR Code de login (lido por qualquer leitor). Aberto pelo leitor
+  // do app, não mexe na URL; fechar volta para Perfil › Dispositivos.
+  'qr-approve-modal': {
+    match: /^\/qr\/([A-Za-z0-9_-]{10,64})$/, page: 'profile',
+    path: () => null,
+    parent: () => '/profile/devices',
+    open: (token) => { setProfileSection('devices', { keepUrl: true }); openQrApprove(token); }
+  },
   'twofa-modal': {
     match: /^\/profile\/security\/two-factor\/(app|email|disable|recovery-codes)$/, page: 'profile',
     path: () => {
@@ -4799,6 +4812,8 @@ async function enterApp() {
     applyRoute();
     consumePushAction();
   }
+  consumePendingQr();
+  sendDeviceHints();
   // Primeira tela depois do login entra com a mesma cascata da navegação.
   markPageEntering(document.querySelector('.page.active'));
   maybeShowWelcomeBanner();
@@ -8082,6 +8097,345 @@ async function unlinkGoogleLogin() {
 }
 window.linkGoogleLogin = linkGoogleLogin;
 window.unlinkGoogleLogin = unlinkGoogleLogin;
+
+/* ── Dispositivos (Perfil › Dispositivos) ──
+   Sessões abertas da conta (aparelho, IP, cidade do IP) com Desconectar. No
+   celular, o leitor de QR Code libera o login num computador: o código da
+   tela de login leva a /qr/<token>, que abre a confirmação aqui (o mesmo
+   link funciona lido pela câmera do celular ou qualquer outro leitor). */
+const DV_VIA = { password: 'Entrou com senha', discord: 'Entrou com Discord', google: 'Entrou com Google', invite: 'Entrou pelo convite', qr: 'Entrou com QR Code' };
+let _dvList = null;
+const dvIcon = (s) => s.type === 'mobile' ? 'smartphone' : s.type === 'tablet' ? 'tablet' : 'laptop';
+function dvName(s) {
+  const dev = s.device || s.os;
+  if (s.browser && dev) return `${s.browser} no ${dev}`;
+  return s.browser || dev || 'Dispositivo desconhecido';
+}
+function dvPlace(loc) {
+  if (!loc) return '';
+  if (loc.local) return 'Rede local';
+  return [loc.city, loc.region && loc.region !== loc.city ? loc.region : null, loc.country].filter(Boolean).join(', ');
+}
+// Leitor só no celular/tablet: no computador quem lê é o celular.
+function dvCanScan() {
+  return isMobileLayout() || !!(window.matchMedia && matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 820);
+}
+function renderProfileDevicesQr() {
+  const box = $('profile-devices-qr');
+  if (!box) return;
+  const scan = dvCanScan();
+  box.innerHTML = `<div class="tf-opt dv-qr">
+      <span class="tf-opt-ic"><i data-lucide="scan-qr-code"></i></span>
+      <div class="tf-opt-info"><div class="tf-opt-title">Conectar com QR Code</div>
+        <div class="tf-opt-sub">${scan
+          ? 'Entre no reWork num computador sem digitar a senha: na tela de login dele, clique em <b>Entrar usando QR Code</b> e leia o código com este celular.'
+          : 'Para entrar num computador sem digitar a senha, clique em <b>Entrar usando QR Code</b> na tela de login e leia o código com o reWork aberto no celular, em Perfil › Dispositivos.'}</div></div>
+      ${scan ? '<div class="tf-opt-actions"><button class="btn btn-confirm btn-sm" onclick="openQrScanner()"><i data-lucide="camera" class="ic-sm"></i> Ler QR Code</button></div>' : ''}
+    </div>`;
+  paintIcons(box);
+}
+async function renderProfileDevices() {
+  renderProfileDevicesQr();
+  const box = $('profile-devices-list');
+  if (!box) return;
+  if (!_dvList) box.innerHTML = '<div class="profile-skel"></div>';
+  let list;
+  try { list = _dvList = (await api('/me/sessions')).sessions || []; }
+  catch (e) { box.innerHTML = `<div class="profile-hint">${esc(e.message || 'Não foi possível carregar os dispositivos.')}</div>`; return; }
+  box.innerHTML = list.map(s => {
+    const meta = [dvPlace(s.loc), s.ip].filter(Boolean).map(esc).join(' · ');
+    const when = s.current ? '<span class="dv-now">Este dispositivo</span>' : esc(`Ativo ${fmtRelativeTime(s.lastSeenAt)}`);
+    return `<div class="tf-opt dv-item${s.current ? ' is-on' : ''}">
+        <span class="tf-opt-ic"><i data-lucide="${dvIcon(s)}"></i></span>
+        <div class="tf-opt-info">
+          <div class="tf-opt-title"><span>${esc(dvName(s))}</span></div>
+          <div class="tf-opt-sub">${meta || 'Local desconhecido'}</div>
+          <div class="tf-opt-sub dv-when">${when}${DV_VIA[s.via] ? ` · <span>${DV_VIA[s.via]}</span>` : ''}</div>
+        </div>
+        ${s.current ? '' : `<div class="tf-opt-actions"><button class="btn btn-ghost btn-sm" onclick="revokeDevice('${esc(s.id)}')">Desconectar</button></div>`}
+      </div>`;
+  }).join('') || '<div class="profile-hint">Nenhum dispositivo conectado.</div>';
+  const others = list.filter(s => !s.current).length;
+  $('profile-devices-actions').hidden = !others;
+  $('profile-devices-count').textContent = others === 1 ? '1 outro dispositivo conectado' : `${others} outros dispositivos conectados`;
+  paintIcons(box);
+}
+async function revokeDevice(id) {
+  const s = (_dvList || []).find(x => x.id === id);
+  const ok = await showConfirm({
+    title: 'Desconectar dispositivo',
+    message: `${s ? dvName(s) : 'Esse dispositivo'} vai sair da sua conta e precisará entrar de novo. Continuar?`,
+    okLabel: 'Desconectar',
+    danger: true
+  });
+  if (!ok) return;
+  try { await api('/me/sessions/' + encodeURIComponent(id) + '/revoke', 'POST'); toast('Dispositivo desconectado.', 'warn'); }
+  catch (e) { toast(e.message, 'error'); }
+  renderProfileDevices();
+}
+async function revokeOtherDevices() {
+  const ok = await showConfirm({
+    title: 'Desconectar os outros dispositivos',
+    message: 'Todos os outros aparelhos saem da sua conta. Este continua conectado. Continuar?',
+    okLabel: 'Desconectar todos',
+    danger: true
+  });
+  if (!ok) return;
+  try {
+    const r = await api('/me/sessions/revoke-others', 'POST');
+    toast(r.revoked === 1 ? '1 dispositivo desconectado.' : `${r.revoked} dispositivos desconectados.`, 'warn');
+  } catch (e) { toast(e.message, 'error'); }
+  renderProfileDevices();
+}
+// Modelo do aparelho (Android) e versão do Windows: o navegador só conta pelas
+// Client Hints. Manda uma vez por aba para a sessão ficar com o nome certo.
+function sendDeviceHints() {
+  try { if (sessionStorage.getItem('rw-dev-hints')) return; sessionStorage.setItem('rw-dev-hints', '1'); } catch { return; }
+  if (typeof window.rwDeviceHints !== 'function') return;
+  window.rwDeviceHints().then(h => {
+    if (h && (h.model || h.platformVersion)) api('/me/device', 'POST', h).catch(() => {});
+  });
+}
+/* Link do QR aberto deslogado (boot.js guardou): depois do login, confirma aqui. */
+function consumePendingQr() {
+  let p = null;
+  try { p = JSON.parse(sessionStorage.getItem('rw-qr-pending') || 'null'); sessionStorage.removeItem('rw-qr-pending'); } catch {}
+  if (!p || !p.token || Date.now() - (p.at || 0) > 3 * 60 * 1000) return;
+  if (/^\/qr\//.test(appPath())) return; // a própria rota já abre
+  goPage('profile');
+  setProfileSection('devices');
+  openQrApprove(p.token);
+}
+
+/* Leitor: câmera traseira + BarcodeDetector (Chrome/Android); sem ele
+   (Safari/iPhone), o jsQR, carregado só quando precisa. */
+let _qrs = null; // { stream, timer, decode, busy, done, lastBad }
+let _jsQrLoading = null;
+function loadJsQr() {
+  if (window.jsQR) return Promise.resolve(window.jsQR);
+  return _jsQrLoading || (_jsQrLoading = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = '/vendor/jsqr.min.js';
+    s.onload = () => resolve(window.jsQR);
+    s.onerror = () => { _jsQrLoading = null; reject(new Error('Não foi possível carregar o leitor.')); };
+    document.head.appendChild(s);
+  }));
+}
+async function qrDecoder() {
+  if ('BarcodeDetector' in window) {
+    try {
+      const formats = BarcodeDetector.getSupportedFormats ? await BarcodeDetector.getSupportedFormats() : ['qr_code'];
+      if (formats.includes('qr_code')) {
+        const det = new BarcodeDetector({ formats: ['qr_code'] });
+        return async (src) => { const r = await det.detect(src); return r && r[0] ? r[0].rawValue : null; };
+      }
+    } catch {}
+  }
+  const jsQR = await loadJsQr();
+  const cv = document.createElement('canvas');
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+  return async (src) => {
+    const w = src.videoWidth || src.naturalWidth || src.width, h = src.videoHeight || src.naturalHeight || src.height;
+    if (!w || !h) return null;
+    const k = Math.min(1, 800 / Math.max(w, h));
+    cv.width = Math.round(w * k); cv.height = Math.round(h * k);
+    ctx.drawImage(src, 0, 0, cv.width, cv.height);
+    const img = ctx.getImageData(0, 0, cv.width, cv.height);
+    const r = jsQR(img.data, img.width, img.height, { inversionAttempts: 'attemptBoth' });
+    return r ? r.data : null;
+  };
+}
+function qrsStatus(text, kind) {
+  const el = $('qrs-status');
+  if (!el) return;
+  el.textContent = text || '';
+  el.classList.toggle('is-err', kind === 'err');
+}
+function qrsMsg(text) {
+  const el = $('qrs-msg');
+  if (!el) return;
+  el.textContent = text || '';
+  el.hidden = !text;
+}
+// Aceita o link do QR do reWork (com ou sem a organização no caminho).
+function qrTokenFromText(txt) {
+  try {
+    const u = new URL(String(txt || '').trim(), location.origin);
+    const m = u.pathname.match(/^(?:\/org_[A-Za-z0-9_-]+)?\/qr\/([A-Za-z0-9_-]{10,64})\/?$/);
+    return m ? m[1] : null;
+  } catch { return null; }
+}
+function qrsHandle(txt) {
+  const token = qrTokenFromText(txt);
+  if (!token) {
+    if (_qrs) _qrs.lastBad = Date.now();
+    qrsStatus('Esse QR Code não é de login do reWork. Leia o código da tela de login do computador.', 'err');
+    return false;
+  }
+  if (navigator.vibrate) try { navigator.vibrate(40); } catch {}
+  closeQrScanner();
+  openQrApprove(token);
+  return true;
+}
+async function openQrScanner() {
+  closeQrScanner();
+  const s = _qrs = { done: false };
+  qrsMsg('');
+  qrsStatus('Abrindo a câmera…');
+  openModal('qr-scan-modal');
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    qrsStatus('');
+    qrsMsg('Este navegador não abre a câmera aqui. Use “Ler de uma foto” ou aponte a câmera do celular para o código.');
+    return;
+  }
+  try {
+    const [stream, decode] = await Promise.all([
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false }),
+      qrDecoder()
+    ]);
+    if (_qrs !== s || s.done) { stream.getTracks().forEach(t => t.stop()); return; }
+    s.stream = stream; s.decode = decode;
+    const v = $('qrs-video');
+    v.srcObject = stream;
+    await v.play().catch(() => {});
+    qrsStatus('Aponte para o QR Code na tela do computador.');
+    const step = async () => {
+      if (_qrs !== s || s.done) return;
+      // Fechado pelo "voltar" do celular (o roteador fecha o modal): desliga a câmera.
+      if (!$('qr-scan-modal').classList.contains('open')) { closeQrScanner(); return; }
+      if (v.readyState >= 2 && !s.busy) {
+        s.busy = true;
+        try {
+          const txt = await s.decode(v);
+          if (txt && qrsHandle(txt)) return;
+        } catch {}
+        s.busy = false;
+        if (s.lastBad && Date.now() - s.lastBad > 3000) { s.lastBad = 0; qrsStatus('Aponte para o QR Code na tela do computador.'); }
+      }
+      s.timer = setTimeout(step, 160);
+    };
+    step();
+  } catch (e) {
+    if (_qrs !== s) return;
+    qrsStatus('');
+    qrsMsg(e && e.name === 'NotAllowedError'
+      ? 'Sem permissão para usar a câmera. Libere o acesso nas configurações do navegador ou use “Ler de uma foto”.'
+      : 'Não foi possível abrir a câmera. Use “Ler de uma foto” ou aponte a câmera do celular para o código.');
+  }
+}
+function closeQrScanner() {
+  const s = _qrs;
+  _qrs = null;
+  if (s) {
+    s.done = true;
+    clearTimeout(s.timer);
+    if (s.stream) s.stream.getTracks().forEach(t => t.stop());
+  }
+  const v = $('qrs-video');
+  if (v) v.srcObject = null;
+  if ($('qr-scan-modal')?.classList.contains('open')) closeModal('qr-scan-modal');
+}
+async function qrScanFromFile(ev) {
+  const f = ev.target.files && ev.target.files[0];
+  ev.target.value = '';
+  if (!f) return;
+  qrsStatus('Lendo a foto…');
+  const url = URL.createObjectURL(f);
+  try {
+    const img = new Image();
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+    const decode = (_qrs && _qrs.decode) || await qrDecoder();
+    const txt = await decode(img);
+    if (!txt) { qrsStatus('Não achamos um QR Code nessa foto. Tente de novo, com o código inteiro e nítido.', 'err'); return; }
+    qrsHandle(txt);
+  } catch {
+    qrsStatus('Não foi possível ler essa foto.', 'err');
+  } finally { URL.revokeObjectURL(url); }
+}
+
+/* Confirmação: mostra de onde veio o pedido (aparelho, cidade, IP) antes de
+   liberar. Nada é liberado só por abrir o link. */
+let _qra = null; // { token, state: loading|ask|busy|done|denied|error, req, error, twoFactor }
+async function openQrApprove(token) {
+  const q = _qra = { token, state: 'loading' };
+  qraRender();
+  openModal('qr-approve-modal');
+  try {
+    const r = await api('/me/qr-login/' + encodeURIComponent(token));
+    if (_qra !== q) return;
+    q.req = r.request; q.state = 'ask';
+  } catch (e) {
+    if (_qra !== q) return;
+    q.state = 'error'; q.error = e.message;
+  }
+  qraRender();
+}
+function qraRender() {
+  const q = _qra, body = $('qra-body'), foot = $('qra-foot');
+  if (!q || !body) return;
+  const close = (label) => `<button class="btn btn-ghost" onclick="closeQrApprove()">${label}</button>`;
+  const result = (icon, kind, title, text) => `<div class="qra-result qra-result--${kind}"><span class="qra-result-ic"><i data-lucide="${icon}"></i></span><div class="qra-result-title">${title}</div><p class="tf-lead">${text}</p></div>`;
+  if (q.state === 'loading') {
+    body.innerHTML = '<div class="profile-skel"></div><div class="profile-skel" style="margin-top:10px;width:70%"></div>';
+    foot.innerHTML = close('Cancelar');
+  } else if (q.state === 'error') {
+    body.innerHTML = result('circle-x', 'err', 'Não deu para usar este código', esc(q.error || 'Este QR Code expirou ou já foi usado. Gere outro no computador.'));
+    foot.innerHTML = `${close('Fechar')}${dvCanScan() ? '<button class="btn btn-confirm" onclick="closeQrApprove();openQrScanner()">Ler outro código</button>' : ''}`;
+  } else if (q.state === 'done') {
+    body.innerHTML = result('circle-check', 'ok', 'Acesso liberado', q.twoFactor
+      ? 'Para concluir, digite no computador o código do seu app autenticador.'
+      : 'O computador já está entrando na sua conta. Ele vai aparecer na lista de dispositivos.');
+    foot.innerHTML = '<button class="btn btn-confirm" onclick="closeQrApprove()">Concluir</button>';
+  } else if (q.state === 'denied') {
+    body.innerHTML = result('shield-check', 'muted', 'Acesso recusado', 'Ninguém entrou na sua conta. Se não foi você quem pediu, vale trocar a sua senha.');
+    foot.innerHTML = close('Fechar');
+  } else {
+    const r = q.req || {};
+    const place = dvPlace(r.loc);
+    body.innerHTML = `<p class="tf-lead">Alguém pediu para entrar na sua conta <b>${esc((me && me.name) || '')}</b> pelo QR Code:</p>
+      <div class="qra-dev">
+        <span class="tf-opt-ic"><i data-lucide="${dvIcon(r)}"></i></span>
+        <div class="tf-opt-info">
+          <div class="tf-opt-title"><span>${esc(dvName(r))}</span></div>
+          <div class="tf-opt-sub">${[place, r.ip].filter(Boolean).map(esc).join(' · ') || 'Local desconhecido'}</div>
+          <div class="tf-opt-sub">${esc(`Pedido ${fmtRelativeTime(r.createdAt)}`)}</div>
+        </div>
+      </div>
+      <div class="qra-warn"><i data-lucide="shield-alert"></i><span>Só permita se foi você quem abriu esse código, num computador à sua frente. Quem entrar terá acesso à sua conta.</span></div>`;
+    const busy = q.state === 'busy';
+    foot.innerHTML = `<button class="btn btn-ghost" onclick="qraDecide(false)"${busy ? ' disabled' : ''}>Recusar</button>
+      <button class="btn btn-confirm" onclick="qraDecide(true)"${busy ? ' disabled' : ''}>${busy ? 'Liberando…' : 'Permitir acesso'}</button>`;
+  }
+  paintIcons(body); paintIcons(foot);
+}
+async function qraDecide(allow) {
+  const q = _qra;
+  if (!q || q.state !== 'ask') return;
+  q.state = 'busy';
+  qraRender();
+  try {
+    const r = await api('/me/qr-login/' + encodeURIComponent(q.token) + (allow ? '/approve' : '/deny'), 'POST');
+    if (_qra !== q) return;
+    q.state = allow ? 'done' : 'denied';
+    q.twoFactor = !!r.twoFactor;
+    if (allow && currentPage === 'profile') setTimeout(() => { if (_profileSection === 'devices') renderProfileDevices(); }, 3000);
+  } catch (e) {
+    if (_qra !== q) return;
+    q.state = 'error'; q.error = e.message;
+  }
+  qraRender();
+}
+function closeQrApprove() {
+  _qra = null;
+  if ($('qr-approve-modal')?.classList.contains('open')) closeModal('qr-approve-modal');
+}
+window.revokeDevice = revokeDevice;
+window.revokeOtherDevices = revokeOtherDevices;
+window.openQrScanner = openQrScanner;
+window.closeQrScanner = closeQrScanner;
+window.qrScanFromFile = qrScanFromFile;
+window.closeQrApprove = closeQrApprove;
+window.qraDecide = qraDecide;
 function close2faModal() {
   // Com códigos de recuperação na tela, só fecha depois de marcar que guardou.
   if (_tf && _tf.step === 'codes' && !_tf.saved) { toast('Guarde os códigos e marque a confirmação antes de fechar.', 'error'); return; }
@@ -31974,7 +32328,7 @@ function renderProfile() {
 }
 /* Navegação entre seções do perfil. A aba vai pro caminho (/profile/<aba>)
    pra dar F5 e compartilhar ("Perfil › Notificações") sem se perder. */
-const PROFILE_SECTIONS = ['account', 'away', 'notifications', 'appearance', 'integrations', 'security', 'help'];
+const PROFILE_SECTIONS = ['account', 'away', 'notifications', 'appearance', 'integrations', 'security', 'devices', 'help'];
 let _profileSection = 'account';
 function setProfileSection(name, opts = {}) {
   if (!PROFILE_SECTIONS.includes(name)) name = 'account';
@@ -31988,6 +32342,7 @@ function setProfileSection(name, opts = {}) {
   document.querySelectorAll('#page-profile .profile-section').forEach(sec => {
     sec.hidden = sec.dataset.section !== name;
   });
+  if (name === 'devices') renderProfileDevices();
   if (currentPage === 'profile' && !opts.keepUrl) navReplace(pageUrlFor('profile'));
   if (changed && !opts.keepUrl) document.getElementById('page-profile')?.scrollIntoView({ block: 'start' });
 }

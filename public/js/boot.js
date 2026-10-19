@@ -512,6 +512,7 @@
     _l2 = { ...info, recovery: false };
     const ls = $('login-screen'); if (ls) ls.classList.add('is-visible');
     $('login-main').hidden = true;
+    $('login-qr').hidden = true;
     $('login-2fa').hidden = false;
     renderLogin2fa();
     hideBootLoading();
@@ -601,6 +602,109 @@
   window.resendLogin2fa = resendLogin2fa;
   window.toggleLogin2faRecovery = toggleLogin2faRecovery;
   window.cancelLogin2fa = cancelLogin2fa;
+
+  // ── Entrar usando QR Code (computador) ────────────────────────────────
+  // Pede um código de uso único (2 min), mostra o QR e consulta a cada 2s.
+  // O celular logado lê e confirma; aí este computador entra. Com app
+  // autenticador na conta, ainda pede o código do app (showLogin2fa).
+  let _lq = null; // { token, pollKey, exp, timer, tick, status }
+  async function deviceHints() {
+    try {
+      const uad = navigator.userAgentData;
+      if (!uad || !uad.getHighEntropyValues) return {};
+      const h = await uad.getHighEntropyValues(['model', 'platformVersion']);
+      return { model: h.model || undefined, platformVersion: h.platformVersion || undefined };
+    } catch { return {}; }
+  }
+  window.rwDeviceHints = deviceHints;
+  function lqStop() {
+    if (!_lq) return;
+    clearTimeout(_lq.timer); clearInterval(_lq.tick);
+    _lq = null;
+  }
+  function lqOver(html) {
+    const over = $('lq-over'), code = $('lq-code');
+    over.innerHTML = html || '';
+    over.hidden = !html;
+    code.classList.toggle('is-dim', !!html);
+  }
+  function lqStatus(text, kind) {
+    const el = $('lq-status');
+    el.textContent = text || '';
+    el.classList.toggle('is-ok', kind === 'ok');
+    el.classList.toggle('is-err', kind === 'err');
+  }
+  function lqExpired(msg) {
+    lqStop();
+    lqOver('<span></span><button type="button" onclick="openLoginQr()">Gerar outro código</button>');
+    $('lq-over').querySelector('span').textContent = msg || 'O código expirou.';
+    lqStatus('');
+  }
+  async function openLoginQr() {
+    lqStop();
+    $('login-main').hidden = true;
+    $('login-2fa').hidden = true;
+    $('login-qr').hidden = false;
+    $('lq-svg').innerHTML = '';
+    lqOver('<div class="lq-spin" aria-hidden="true"></div>');
+    lqStatus('');
+    const me = _lq = { status: 'pending' };
+    try {
+      const r = await api('/login/qr', 'POST', await deviceHints());
+      if (_lq !== me) return; // fechou ou pediu outro no meio
+      Object.assign(me, { token: r.token, pollKey: r.pollKey, exp: Date.now() + (r.ttlMs || 120000) });
+      $('lq-svg').innerHTML = r.svg;
+      lqOver('');
+      const left = () => Math.max(0, Math.ceil((me.exp - Date.now()) / 1000));
+      const showLeft = () => { if (me.status === 'pending') lqStatus(`O código vale por mais ${left()}s.`); };
+      showLeft();
+      me.tick = setInterval(() => { if (left() <= 0) return lqExpired(); showLeft(); }, 1000);
+      me.timer = setTimeout(lqPoll, 2000);
+    } catch (e) {
+      if (_lq !== me) return;
+      lqExpired(e.message || 'Não foi possível gerar o código.');
+    }
+  }
+  async function lqPoll() {
+    const me = _lq;
+    if (!me || !me.token || $('login-qr').hidden) return;
+    let r;
+    try {
+      r = await api('/login/qr/poll', 'POST', { token: me.token, pollKey: me.pollKey });
+    } catch (e) {
+      if (_lq !== me) return;
+      if (e.status === 410) return lqExpired();
+      if (e.status === 403) return lqExpired(e.message);
+      if (e.status && e.status !== 429) return lqExpired(e.message);
+      me.timer = setTimeout(lqPoll, 4000); // sem rede / limite: tenta de novo
+      return;
+    }
+    if (_lq !== me) return;
+    if (r.status === 'scanned' && me.status !== 'scanned') {
+      me.status = 'scanned';
+      lqOver('<div class="lq-spin" aria-hidden="true"></div><span>Código lido. Confirme o acesso no celular.</span>');
+      lqStatus('');
+    }
+    if (r.status === 'denied') return lqExpired('O acesso foi recusado no celular.');
+    if (r.status === 'approved') {
+      lqStop();
+      if (r.twoFactor) { showLogin2fa(r.twoFactor); return; }
+      lqOver('<span>Acesso liberado. Entrando…</span>');
+      lqStatus('');
+      showBootLoading(1200);
+      history.replaceState(null, '', '/');
+      await enterAfterAuth(r.user);
+      return;
+    }
+    me.timer = setTimeout(lqPoll, 2000);
+  }
+  function closeLoginQr() {
+    lqStop();
+    $('login-qr').hidden = true;
+    $('login-main').hidden = false;
+  }
+  window.openLoginQr = openLoginQr;
+  window.closeLoginQr = closeLoginQr;
 
   // ── E-mail obrigatório (depois do prazo) ─────────────────────────────
   // Conta sem e-mail confirmado entra, mas só vê esta tela — o app nem
@@ -725,6 +829,12 @@
 
     handleDiscordCallbackQuery();
 
+    // Link do QR Code (/qr/<token>) lido por um leitor qualquer: o app abre a
+    // confirmação. Deslogado, guarda o código para depois do login (inclusive
+    // por Discord/Google, que voltam para a raiz).
+    const qrMatch = location.pathname.match(/^\/qr\/([A-Za-z0-9_-]{10,64})$/);
+    if (qrMatch) { try { sessionStorage.setItem('rw-qr-pending', JSON.stringify({ token: qrMatch[1], at: Date.now() })); } catch {} }
+
     // Tenta /api/me — se ok, já carrega o app com o user pré-carregado.
     // O overlay de loading fica visível o tempo todo (default do HTML) e o
     // app.js chama hideBootLoading() quando termina enterApp — evita flash
@@ -736,6 +846,10 @@
       // Deslogado — revela a tela de login e some com o overlay.
       showLoginScreen();
       showGoogleLoginErrorOnLogin();
+      if (qrMatch) {
+        const le = $('login-error');
+        if (le) { le.textContent = 'Entre na sua conta neste aparelho para liberar o acesso no outro computador.'; le.classList.add('is-ok'); }
+      }
       if (emailNotice) {
         const le = $('login-error');
         if (le) { le.textContent = emailNotice.text; le.classList.toggle('is-ok', !!emailNotice.ok); }

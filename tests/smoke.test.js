@@ -141,7 +141,7 @@ test('Headers de segurança presentes em todas as respostas', async () => {
   // Referrer policy
   assert.equal(r.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
   // Permissions
-  assert.match(r.headers.get('permissions-policy') || '', /camera=\(\)/);
+  assert.match(r.headers.get('permissions-policy') || '', /camera=\(self\)/);
 });
 
 test('GET /api/inexistente devolve 404 JSON (não HTML do SPA)', async () => {
@@ -249,6 +249,77 @@ test('Migração: sessão antiga do auth.enc continua valendo', async () => {
   const me = await req('/api/me', { headers: { Cookie: 'kastor_session=' + LEGACY_TOKEN } });
   assert.equal(me.status, 200);
   assert.equal(me.body.username, 'admin');
+});
+
+test('Dispositivos e login com QR Code', async () => {
+  const UA_PHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+  const UA_PC = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+  const ck = (r) => (r.headers.get('set-cookie') || '').split(';')[0];
+  const as = (cookie, ua) => ({ Cookie: cookie, 'User-Agent': ua, 'Content-Type': 'application/json' });
+  const lg = await postJson('/api/login', { username: 'admin', password: 'admin123' }, { headers: { 'User-Agent': UA_PHONE } });
+  assert.equal(lg.status, 200);
+  const phone = ck(lg);
+  let list = await req('/api/me/sessions', { headers: as(phone, UA_PHONE) });
+  assert.equal(list.status, 200);
+  const mine = list.body.sessions.find(s => s.current);
+  assert.equal(mine.device, 'iPhone');
+  assert.equal(mine.browser, 'Safari');
+  assert.equal(mine.via, 'password');
+  assert.ok(!/tokenHash|"ua"/.test(JSON.stringify(list.body)), 'sem hash do token nem UA cru');
+
+  // Computador pede o código; só ele tem a chave de consulta.
+  const start = await req('/api/login/qr', { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': UA_PC }, body: JSON.stringify({ platformVersion: '15.0.0' }) });
+  assert.equal(start.status, 200, JSON.stringify(start.body));
+  assert.match(start.body.svg, /<svg/);
+  assert.match(start.body.url, /\/qr\/[A-Za-z0-9_-]+$/);
+  const { token, pollKey } = start.body;
+  const poll = (key = pollKey) => req('/api/login/qr/poll', { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': UA_PC }, body: JSON.stringify({ token, pollKey: key }) });
+  assert.equal((await poll()).body.status, 'pending');
+  assert.equal((await poll('chave-errada')).status, 410);
+  assert.equal((await req('/api/me/qr-login/' + token)).status, 401, 'confirmar exige estar logado');
+
+  // Celular lê: vê de onde veio o pedido; o computador fica sabendo que foi lido.
+  const seen = await req('/api/me/qr-login/' + token, { headers: as(phone, UA_PHONE) });
+  assert.equal(seen.status, 200, JSON.stringify(seen.body));
+  assert.equal(seen.body.request.device, 'Windows 11');
+  assert.equal(seen.body.request.browser, 'Chrome');
+  assert.equal((await poll()).body.status, 'scanned');
+  const p1 = await poll();
+  assert.ok(!ck(p1), 'sem sessão antes de confirmar');
+
+  const ap = await req(`/api/me/qr-login/${token}/approve`, { method: 'POST', headers: as(phone, UA_PHONE) });
+  assert.equal(ap.status, 200, JSON.stringify(ap.body));
+  const done = await poll();
+  assert.equal(done.body.status, 'approved', JSON.stringify(done.body));
+  const pc = ck(done);
+  assert.ok(pc, 'computador recebe a sessão');
+  assert.equal((await poll()).status, 410, 'uso único');
+  assert.equal((await req(`/api/me/qr-login/${token}/approve`, { method: 'POST', headers: as(phone, UA_PHONE) })).status, 410);
+  assert.equal((await req('/api/me', { headers: as(pc, UA_PC) })).body.username, 'admin');
+
+  // Aparece na lista do celular; desconectar derruba a sessão do computador.
+  list = await req('/api/me/sessions', { headers: as(phone, UA_PHONE) });
+  const pcRow = list.body.sessions.find(s => s.via === 'qr' && !s.current);
+  assert.ok(pcRow, JSON.stringify(list.body));
+  assert.equal(pcRow.device, 'Windows 11');
+  assert.equal((await req(`/api/me/sessions/${mine.id}/revoke`, { method: 'POST', headers: as(phone, UA_PHONE) })).status, 400, 'a atual sai pelo Sair');
+  assert.equal((await req(`/api/me/sessions/${pcRow.id}/revoke`, { method: 'POST', headers: as(phone, UA_PHONE) })).status, 200);
+  assert.equal((await req('/api/me', { headers: as(pc, UA_PC) })).status, 401);
+
+  // Recusado no celular: o computador fica sabendo e não entra.
+  const s2 = (await postJson('/api/login/qr', {})).body;
+  assert.equal((await req(`/api/me/qr-login/${s2.token}/deny`, { method: 'POST', headers: as(phone, UA_PHONE) })).status, 200);
+  const d2 = await postJson('/api/login/qr/poll', { token: s2.token, pollKey: s2.pollKey });
+  assert.equal(d2.body.status, 'denied');
+  assert.ok(!ck(d2));
+
+  // Desconectar os outros: fica só este.
+  await loginCookie('admin', 'admin123');
+  const ro = await req('/api/me/sessions/revoke-others', { method: 'POST', headers: as(phone, UA_PHONE) });
+  assert.equal(ro.status, 200);
+  assert.ok(ro.body.revoked >= 1);
+  list = await req('/api/me/sessions', { headers: as(phone, UA_PHONE) });
+  assert.deepEqual(list.body.sessions.map(s => s.current), [true]);
 });
 
 test('Sessões e senhas ficam no Postgres, sem o token em texto', async () => {
@@ -1126,6 +1197,13 @@ test('Duas etapas: código por e-mail obrigatório, app autenticador e recupera�
     assert.equal((await postJson('/api/login/2fa', { ticket: lg.body.twoFactor.ticket, code: totpAt(secret, s0) })).status, 400, 'código reusado');
     ok = await postJson('/api/login/2fa', { ticket: lg.body.twoFactor.ticket, code: totpAt(secret, s0 + 1) });
     assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    // QR Code com app autenticador: o celular libera, mas o computador ainda pede o código do app
+    const qr = (await postJson('/api/login/qr', {})).body;
+    assert.equal((await call('POST', `/api/me/qr-login/${qr.token}/approve`, cookieOf(ok))).body.twoFactor, true);
+    const qp = await postJson('/api/login/qr/poll', { token: qr.token, pollKey: qr.pollKey });
+    assert.equal(qp.body.status, 'approved');
+    assert.equal(qp.body.twoFactor && qp.body.twoFactor.method, 'totp');
+    assert.ok(!cookieOf(qp), 'sem sessão antes do código do app');
     // Código de recuperação vale uma vez só
     lg = await login('sem.email');
     ok = await postJson('/api/login/2fa', { ticket: lg.body.twoFactor.ticket, code: rc[0], recovery: true });

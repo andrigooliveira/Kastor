@@ -3238,6 +3238,47 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 .um-2fa { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); }
 .um-2fa[hidden] { display: none; }
 .um-2fa-ic { color: var(--success); display: inline-flex; }
+
+/* Perfil › Dispositivos */
+.dv-item .tf-opt-title span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dv-when { margin-top: 1px; }
+.dv-now { color: var(--success); font-weight: 600; }
+.dv-qr .tf-opt-ic { background: var(--accent-dim); color: var(--accent-text); }
+@media (max-width: 760px) {
+  .dv-item { align-items: flex-start; flex-wrap: wrap; }
+  .dv-item .tf-opt-actions { width: 100%; padding-left: 50px; justify-content: flex-start; }
+  .dv-qr { flex-wrap: wrap; }
+  .dv-qr .tf-opt-actions { width: 100%; }
+  .dv-qr .tf-opt-actions .btn { width: 100%; justify-content: center; }
+}
+
+/* Leitor de QR Code */
+.qrs-view { position: relative; width: 100%; aspect-ratio: 1 / 1; max-height: 62vh; margin: 0 auto; border-radius: 14px; overflow: hidden; background: #000; }
+.qrs-view video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.qrs-frame { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
+.qrs-frame span { width: 64%; aspect-ratio: 1 / 1; border-radius: 18px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, .38); outline: 2px solid rgba(255, 255, 255, .9); outline-offset: -2px; }
+.qrs-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; font-size: 13px; line-height: 1.55; color: #fff; background: rgba(0, 0, 0, .78); }
+.qrs-msg[hidden] { display: none; }
+.qrs-status { min-height: 20px; margin: 12px 0 0; font-size: 13px; line-height: 1.5; color: var(--text-dim); text-align: center; }
+.qrs-status.is-err { color: var(--danger); }
+.qrs-alt { display: flex; justify-content: center; margin-top: 10px; }
+.qrs-alt label { cursor: pointer; }
+@media (max-width: 760px) {
+  #qr-scan-modal .qrs-modal { max-width: none; width: 100%; height: 100%; max-height: none; border-radius: 0; display: flex; flex-direction: column; }
+  #qr-scan-modal .modal-body { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+}
+
+/* Confirmar acesso por QR Code */
+.qra-dev { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 12px; background: var(--surface-2); }
+.qra-warn { display: flex; gap: 10px; align-items: flex-start; margin-top: 14px; padding: 10px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.5; color: var(--warn); background: color-mix(in srgb, var(--warn, #F59E0B) 9%, transparent); }
+.qra-warn svg { width: 16px; height: 16px; flex-shrink: 0; margin-top: 1px; }
+.qra-result { text-align: center; padding: 6px 0 2px; }
+.qra-result-ic { width: 48px; height: 48px; border-radius: 14px; display: inline-grid; place-items: center; margin-bottom: 10px; background: var(--surface-2); color: var(--text-dim); }
+.qra-result-ic svg { width: 24px; height: 24px; }
+.qra-result--ok .qra-result-ic { background: color-mix(in oklab, var(--success) 14%, transparent); color: var(--success); }
+.qra-result--err .qra-result-ic { background: color-mix(in oklab, var(--danger) 12%, transparent); color: var(--danger); }
+.qra-result-title { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+.qra-result .tf-lead { margin: 0; }
 .um-2fa-text { flex: 1; min-width: 0; font-size: 12.5px; color: var(--text-dim); }
 @media (max-width: 560px) { .tf-opt { flex-wrap: wrap; } .tf-opt-actions { width: 100%; justify-content: flex-start; padding-left: 50px; } }
 

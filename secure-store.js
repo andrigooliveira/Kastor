@@ -287,6 +287,12 @@ function setSessionData(token, patch) {
   s.data = { ...(s.data || {}), ...patch };
   persist('dados da sessão', b => b.authUpsertSession(s));
 }
+function setSessionDataByHash(h, patch) {
+  const s = sessions.get(h);
+  if (!s) return;
+  s.data = { ...(s.data || {}), ...patch };
+  persist('dados da sessão', b => b.authUpsertSession(s));
+}
 function listSessions(userId) {
   const now = Date.now();
   return [...sessions.values()]
@@ -313,6 +319,13 @@ function removeToken(token) {
   const h = hashToken(token);
   sessions.delete(h);
   persist('encerrar sessão', b => b.authDeleteSession(h));
+}
+/* Encerra uma sessão pelo hash (Perfil › Dispositivos → Desconectar). */
+function removeSessionByHash(h) {
+  if (!h || !sessions.has(h)) return false;
+  sessions.delete(h);
+  persist('encerrar sessão', b => b.authDeleteSession(h));
+  return true;
 }
 /* Encerra todas as sessões da pessoa (menos, opcionalmente, a atual). */
 function dropTokensFor(userId, exceptToken) {
@@ -399,8 +412,8 @@ function webauthnRemoveAll(userId) {
 module.exports = {
   init, flush,
   setPassword, verifyPassword, hasPassword, removeCredentials, importLegacyCredential,
-  addToken, userIdForToken, sessionForToken, setSessionData, listSessions, lastSeenByUser, activeSessionCount,
-  removeToken, dropTokensFor, importLegacyToken, hashToken,
+  addToken, userIdForToken, sessionForToken, setSessionData, setSessionDataByHash, listSessions, lastSeenByUser, activeSessionCount,
+  removeToken, removeSessionByHash, dropTokensFor, importLegacyToken, hashToken,
   encryptString, decryptString,
   webauthnList, webauthnAdd, webauthnFind, webauthnUpdateCounter, webauthnRemove, webauthnRemoveAll,
   _store: () => store,

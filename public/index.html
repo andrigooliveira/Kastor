@@ -199,6 +199,28 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 .btn-google-oauth img{flex:0 0 auto}
 .login-box.login-box--bare .btn-google-oauth{margin-top:10px}
 .btn-google-oauth[hidden]{display:none}
+/* Entrar usando QR Code (só no computador): link discreto + painel com o código. */
+.login-qr-link{display:flex;align-items:center;justify-content:center;gap:6px;margin:14px auto 0;color:#737373;font-size:12.5px;text-decoration:none;transition:color .12s var(--ease-out)}
+.login-qr-link:hover{color:#5E00CC}
+.login-qr-link svg{width:14px;height:14px}
+@media (max-width:760px),(pointer:coarse) and (max-width:1024px){.login-qr-link{display:none}}
+.lq-wrap{display:flex;flex-direction:column;align-items:center;text-align:center}
+.lq-code{position:relative;width:212px;height:212px;margin:6px 0 14px;padding:14px;background:#fff;border:1px solid #e5e5e5;border-radius:14px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.lq-code svg{display:block;width:100%;height:100%}
+.lq-code.is-dim svg{opacity:.08;filter:blur(2px)}
+.lq-code-over{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:18px;font-size:13px;color:#111;line-height:1.45}
+.lq-code-over[hidden]{display:none}
+.login-box .lq-code-over button{width:auto;padding:9px 16px;font-size:13px}
+.lq-spin{width:22px;height:22px;border-radius:50%;border:2.5px solid #e5e5e5;border-top-color:var(--accent);animation:lqspin .8s linear infinite}
+@keyframes lqspin{to{transform:rotate(360deg)}}
+.lq-steps{list-style:none;counter-reset:lq;margin:0 0 6px;padding:0;text-align:left;font-size:13px;line-height:1.5;color:#4a4a4a;width:100%}
+.lq-steps li{counter-increment:lq;display:flex;gap:10px;margin:0 0 8px}
+.lq-steps li::before{content:counter(lq);flex:0 0 20px;height:20px;border-radius:50%;background:#f1e8ff;color:#5E00CC;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:1px}
+.lq-steps b{color:#111;font-weight:600}
+.lq-status{min-height:20px;font-size:12.5px;color:#737373;margin:4px 0 0}
+.lq-status.is-ok{color:#15803d}
+.lq-status.is-err{color:var(--danger)}
+@media (prefers-reduced-motion:reduce){.lq-spin{animation:none}}
 /* ".login-box button" (roxo) vencia as cores de marca: reforça Discord e Google. */
 .login-box .btn-discord-oauth{background:#5865F2;color:#fff;box-shadow:0 1px 2px rgba(88,101,242,.22),inset 0 1px 0 rgba(255,255,255,.14)}
 .login-box .btn-discord-oauth:hover{filter:brightness(1.08);box-shadow:0 4px 12px rgba(88,101,242,.36),inset 0 1px 0 rgba(255,255,255,.18)}
@@ -377,6 +399,27 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
         </div>
       </div>
 
+      <!-- Entrar usando QR Code: código de uso único para ler com o celular (boot.js) -->
+      <div id="login-qr" hidden>
+        <div class="lq-wrap">
+          <div class="l2-kicker">Entrar usando QR Code</div>
+          <div class="invite-title">Leia com o seu celular</div>
+          <div class="lq-code" id="lq-code" aria-live="polite">
+            <div id="lq-svg" role="img" aria-label="QR Code de acesso"></div>
+            <div class="lq-code-over" id="lq-over" hidden></div>
+          </div>
+          <ol class="lq-steps">
+            <li><span>Abra o reWork no celular, já com a sua conta.</span></li>
+            <li><span>Vá em <b>Perfil › Dispositivos › Conectar com QR Code</b>, ou aponte a câmera do celular para o código.</span></li>
+            <li><span>Confirme o acesso no celular.</span></li>
+          </ol>
+          <div class="lq-status" id="lq-status" role="status"></div>
+          <div class="l2-links">
+            <a href="#" class="l2-back" onclick="event.preventDefault();closeLoginQr()">Voltar</a>
+          </div>
+        </div>
+      </div>
+
       <div id="login-main">
       <input type="text" id="login-username" placeholder="E-mail ou usuário" autocomplete="username" onkeydown="if(event.key==='Enter'){event.preventDefault();$('login-password').focus();}">
       <input type="password" id="login-password" placeholder="Senha" autocomplete="current-password" onkeydown="if(event.key==='Enter'){event.preventDefault();doLogin();}">
@@ -397,6 +440,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
         Entrar com Google
       </button>
     </div>
+      <a href="#" class="login-qr-link" onclick="event.preventDefault();openLoginQr()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 20h4v-3"/></svg>Entrar usando QR Code</a>
       <div class="login-hint">Recebeu um convite? Abra o link do e-mail para criar sua conta.<br>Quer o reWork na sua equipe? <a href="/acesso">Peça acesso</a></div>
       </div>
     </div>
@@ -3141,6 +3185,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <div class="profile-nav-group">Conexões e acesso</div>
             <button class="profile-nav-item" data-section="integrations" onclick="setProfileSection('integrations')"><i data-lucide="plug" class="ic-sm"></i> Integrações</button>
             <button class="profile-nav-item" data-section="security" onclick="setProfileSection('security')"><i data-lucide="shield" class="ic-sm"></i> Segurança</button>
+            <button class="profile-nav-item" data-section="devices" onclick="setProfileSection('devices')"><i data-lucide="monitor-smartphone" class="ic-sm"></i> Dispositivos</button>
             <button class="profile-nav-item" data-section="help" onclick="setProfileSection('help')"><i data-lucide="life-buoy" class="ic-sm"></i> Ajuda</button>
           </nav>
 
@@ -3484,6 +3529,25 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                     <div class="profile-row-sub">Apaga a sua conta e tira você de todas as organizações. Não dá para desfazer.</div>
                   </div>
                   <button class="btn btn-danger" onclick="openDeleteAccount()"><i data-lucide="trash-2" class="ic-sm"></i> Excluir conta</button>
+                </div>
+              </div>
+            </section>
+
+            <!-- ─── DISPOSITIVOS ───
+                 Sessões abertas (aparelho, IP, cidade) + leitor do QR Code
+                 para entrar num computador (só no celular). -->
+            <section class="profile-section" data-section="devices" hidden>
+              <header class="profile-section-head">
+                <h2 class="profile-section-title">Dispositivos</h2>
+                <p class="profile-section-sub">Onde a sua conta está conectada agora. Se não reconhecer algum, desconecte e troque a sua senha.</p>
+              </header>
+              <div class="profile-card-block" id="profile-devices-qr"></div>
+              <div class="profile-card-block">
+                <div class="profile-block-title">Conectados agora</div>
+                <div id="profile-devices-list"><div class="profile-skel"></div></div>
+                <div class="profile-block-actions" id="profile-devices-actions" hidden>
+                  <span class="profile-dirty-note" id="profile-devices-count"></span>
+                  <button class="btn btn-ghost" onclick="revokeOtherDevices()"><i data-lucide="log-out" class="ic-sm"></i> Desconectar os outros</button>
                 </div>
               </div>
             </section>
@@ -5032,6 +5096,42 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
     </div>
     <div class="modal-body" id="tf-body"></div>
     <div class="modal-footer" id="tf-foot"></div>
+  </div>
+</div>
+
+<!-- Leitor de QR Code (Perfil › Dispositivos, no celular) — openQrScanner() -->
+<div class="modal-overlay" id="qr-scan-modal">
+  <div class="modal modal-sm qrs-modal" data-no-outside-close="1">
+    <div class="modal-header">
+      <div class="modal-title">Conectar com QR Code</div>
+      <button class="modal-close" onclick="closeQrScanner()" aria-label="Fechar"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body">
+      <p class="tf-lead">No computador, clique em <b>Entrar usando QR Code</b> na tela de login e aponte a câmera para o código.</p>
+      <div class="qrs-view" id="qrs-view">
+        <video id="qrs-video" playsinline muted autoplay></video>
+        <div class="qrs-frame" aria-hidden="true"><span></span></div>
+        <div class="qrs-msg" id="qrs-msg" hidden></div>
+      </div>
+      <div class="qrs-status" id="qrs-status" role="status"></div>
+      <div class="qrs-alt">
+        <label class="btn btn-ghost btn-sm"><i data-lucide="image" class="ic-sm"></i> Ler de uma foto
+          <input type="file" accept="image/*" capture="environment" hidden onchange="qrScanFromFile(event)">
+        </label>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Confirmar acesso pedido por QR Code — openQrApprove(token) -->
+<div class="modal-overlay" id="qr-approve-modal">
+  <div class="modal modal-sm" data-no-outside-close="1">
+    <div class="modal-header">
+      <div class="modal-title">Entrar em outro dispositivo?</div>
+      <button class="modal-close" onclick="closeQrApprove()" aria-label="Fechar"><i data-lucide="x" class="ic-sm"></i></button>
+    </div>
+    <div class="modal-body" id="qra-body"></div>
+    <div class="modal-footer" id="qra-foot"></div>
   </div>
 </div>
 

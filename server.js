@@ -43,6 +43,8 @@ const discordOAuth = require('./discord-oauth');
 const googleLogin = require('./google-login');
 const emailTpl   = require('./email-templates');
 const i18n       = require('./public/js/i18n.js'); // idiomas: país/idioma da organização, idioma da pessoa
+const devices    = require('./devices');             // Perfil › Dispositivos: nome do aparelho e local do IP
+const QRCode     = require('qrcode');
 
 const PORT    = process.env.PORT || 3000;
 // KASTOR_DATA_DIR sobrescreve o diretório de uploads e do auth.enc.
@@ -712,14 +714,18 @@ function suggestUsername(email, name) {
   while (usernameTaken(cand)) cand = `${base}${++i}`;
   return cand;
 }
-/* Metadados da sessão (lista de sessões ativas / auditoria). */
-function sessionMeta(req) {
-  return { ip: clientIp(req), ua: String(req.headers['user-agent'] || '').slice(0, 200) };
+/* Metadados da sessão (Perfil › Dispositivos / auditoria). `via` = como
+   entrou: password, discord, google, invite, qr. */
+function sessionMeta(req, via) {
+  return { ip: clientIp(req), ua: String(req.headers['user-agent'] || '').slice(0, 200), via: via || null };
 }
-/* Abre a sessão (cookie httpOnly) e devolve o token. */
-function startSession(req, res, user) {
-  const token = auth.addToken(user.id, sessionMeta(req));
+/* Abre a sessão (cookie httpOnly) e devolve o token. A localização do IP
+   chega depois (consulta externa), sem segurar o login. */
+function startSession(req, res, user, via) {
+  const meta = sessionMeta(req, via);
+  const token = auth.addToken(user.id, meta);
   res.set('Set-Cookie', buildSessionCookie(token, { secure: isHttpsRequest(req) }));
+  devices.locate(meta.ip).then(loc => { if (loc) auth.setSessionData(token, { loc }); }).catch(() => {});
   return token;
 }
 /* Registra o IP no histórico do usuário (auditoria). Guarda os últimos 20. */
@@ -1065,6 +1071,12 @@ function requireAuth(req, res, next) {
   let m = (wanted && ms.find(x => x.orgId === wanted)) || ms.find(x => x.orgId === sessOrg) || tenancy.primaryMembership(user);
   if (!m || m.active === false) m = ms[0];
   if (!sessOrg || (!wanted && sessOrg !== m.orgId)) auth.setSessionData(token, { orgId: m.orgId });
+  // IP mudou (rede móvel, outra Wi-Fi): atualiza o IP e a localização da sessão.
+  const ip = clientIp(req);
+  if (session.data && session.data.ip !== ip) {
+    auth.setSessionData(token, { ip, loc: null });
+    devices.locate(ip).then(loc => { if (loc && auth.sessionForToken(token)?.data?.ip === ip) auth.setSessionData(token, { loc }); }).catch(() => {});
+  }
   tenancy.run(m.orgId, () => {
     // Freelancer: bloqueia globalmente mutações fora da whitelist. Endpoints
     // permitidos ainda aplicam checks internos (freelancerHasDemandAccess,
@@ -1899,8 +1911,9 @@ app.use((req, res, next) => {
   // (que estava aqui antes) bloqueava tudo. `strict-origin-when-cross-origin`
   // é o default moderno dos browsers e não vaza URL específica.
   res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-  // Bloqueia APIs sensíveis que não usamos
-  res.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+  // Bloqueia APIs sensíveis que não usamos. Câmera só no próprio site: leitor
+  // de QR Code (Perfil › Dispositivos › Conectar com QR Code).
+  res.set('Permissions-Policy', 'camera=(self), microphone=(), geolocation=(), payment=()');
   // CSP: inline necessário pelo onclick=, fontes Google, imagens data:.
   // `frame-src` explícito com os providers da Base de Conhecimento — sem isso
   // o browser bloqueia YouTube/Loom/Figma/etc. antes mesmo de fazer o request.
@@ -2528,7 +2541,7 @@ app.post('/api/login', async (req, res) => {
   recordLoginIp(user, ip);
   // Cookie httpOnly: JS no browser não consegue ler — protege contra XSS.
   // O `token` no body é mantido por compat (clientes antigos podiam usar Bearer).
-  const token = startSession(req, res, user);
+  const token = startSession(req, res, user, 'password');
   res.json({ token, user: publicUser(user, { self: true }) });
 });
 
@@ -2640,7 +2653,7 @@ app.post('/api/login/2fa', rateLimitTwoFa, (req, res) => {
   _twoFaTickets.delete(ticket);
   saveEntity('users', user); // passo do app / código de recuperação usado
   recordLoginIp(user, clientIp(req));
-  const token = startSession(req, res, user);
+  const token = startSession(req, res, user, rec.via || 'password');
   res.json({ token, user: publicUser(user, { self: true }), usedRecovery: ok === 'recovery' });
 });
 app.post('/api/login/2fa/resend', rateLimitTwoFa, async (req, res) => {
@@ -2661,6 +2674,157 @@ app.post('/api/login/2fa/resend', rateLimitTwoFa, async (req, res) => {
   if (!sent || !sent.sent) return res.status(502).json({ error: 'Não conseguimos mandar o código agora. Tente de novo em alguns minutos.' });
   rec.sends++; rec.lastSentAt = Date.now();
   res.json({ ok: true, expiresAt: new Date(rec.exp).toISOString() });
+});
+
+/* ─── DISPOSITIVOS (Perfil › Dispositivos) ───
+   Cada sessão aberta é um dispositivo: nome do aparelho (User-Agent + Client
+   Hints que o próprio app manda), IP, cidade do IP e como entrou. A pessoa
+   desconecta um por um ou todos os outros de uma vez. Sessões do console da
+   plataforma não aparecem. O id público é derivado do hash do token (o hash
+   em si não sai do servidor). */
+const sessionPublicId = (tokenHash) => totp.sha256('sid:' + tokenHash).slice(0, 20);
+function publicSession(s, currentHash) {
+  const d = s.data || {};
+  return {
+    id: sessionPublicId(s.tokenHash),
+    current: s.tokenHash === currentHash,
+    ...devices.describe(d.ua, d.hints),
+    ip: d.ip ? devices.normIp(d.ip) : null,
+    loc: d.loc || null,
+    via: d.via || null,
+    createdAt: new Date(s.createdAt).toISOString(),
+    lastSeenAt: new Date(s.lastSeenAt || s.createdAt).toISOString()
+  };
+}
+const userSessions = (userId) => auth.listSessions(userId).filter(s => !(s.data && s.data.scope === 'console'));
+app.get('/api/me/sessions', requireAuth, async (req, res) => {
+  const list = userSessions(req.user.id);
+  // Localização que ainda não chegou: espera um pouco (o resto vem no próximo F5).
+  await Promise.all(list.filter(s => s.data && s.data.ip && !s.data.loc).map(async s => {
+    const loc = await devices.locateWithin(s.data.ip, 1500);
+    if (loc) auth.setSessionDataByHash(s.tokenHash, { loc });
+  }));
+  const cur = auth.hashToken(req.token);
+  res.json({ sessions: list.map(s => publicSession(s, cur)) });
+});
+/* Nome do aparelho: o navegador conta o modelo (Android) e a versão do
+   sistema (Windows 11) pelas Client Hints — o app manda uma vez por sessão. */
+app.post('/api/me/device', requireAuth, (req, res) => {
+  const b = req.body || {};
+  const hints = {};
+  if (b.model) hints.model = String(b.model).slice(0, 60);
+  if (b.platformVersion) hints.platformVersion = String(b.platformVersion).slice(0, 20);
+  auth.setSessionData(req.token, { hints });
+  res.json({ ok: true });
+});
+app.post('/api/me/sessions/revoke-others', requireAuth, (req, res) => {
+  const cur = auth.hashToken(req.token);
+  let n = 0;
+  for (const s of userSessions(req.user.id)) if (s.tokenHash !== cur && auth.removeSessionByHash(s.tokenHash)) n++;
+  res.json({ ok: true, revoked: n });
+});
+app.post('/api/me/sessions/:id/revoke', requireAuth, (req, res) => {
+  const s = userSessions(req.user.id).find(x => sessionPublicId(x.tokenHash) === String(req.params.id));
+  if (!s) return res.status(404).json({ error: 'Este dispositivo já foi desconectado.' });
+  if (s.tokenHash === auth.hashToken(req.token)) return res.status(400).json({ error: 'Para sair deste dispositivo, use Sair da conta.' });
+  auth.removeSessionByHash(s.tokenHash);
+  res.json({ ok: true });
+});
+
+/* ─── ENTRAR COM QR CODE ───
+   1) O computador (deslogado) pede um código: POST /api/login/qr. Volta o QR
+      (SVG) com o link /qr/<token> e uma chave de consulta que só ele tem.
+   2) O celular, já logado, lê o QR — no leitor do app (Perfil › Dispositivos)
+      ou em qualquer leitor, que abre o link no app. Vê de onde veio o pedido
+      (aparelho, IP, cidade) e confirma: POST /api/me/qr-login/<token>/approve.
+   3) O computador consulta (POST /api/login/qr/poll) e, aprovado, entra. Com
+      app autenticador ativo na conta, ainda passa pelo código do app; o código
+      por e-mail não é pedido (o celular com a conta aberta faz esse papel).
+   Uso único, 2 minutos, em memória (como os tickets da verificação). */
+const QR_LOGIN_TTL_MS = 2 * 60 * 1000;
+const _qrLogins = new Map(); // token → { pollHash, exp, status, userId, ip, ua, hints, loc }
+setInterval(() => { const t = Date.now(); for (const [k, v] of _qrLogins) if (v.exp + 60000 < t) _qrLogins.delete(k); }, 60 * 1000).unref();
+const rateLimitQrStart = makeRateLimit(new Map(), 10, 'códigos pedidos');
+const rateLimitQrPoll = makeRateLimit(new Map(), 120, 'consultas');
+const rateLimitQrApprove = makeRateLimit(new Map(), 20, 'tentativas', req => 'u:' + (req.user?.id || clientIp(req)));
+function qrDesktopPublic(rec) {
+  return {
+    ...devices.describe(rec.ua, rec.hints),
+    ip: devices.normIp(rec.ip), loc: rec.loc || null,
+    createdAt: new Date(rec.createdAt).toISOString(), expiresAt: new Date(rec.exp).toISOString()
+  };
+}
+app.post('/api/login/qr', rateLimitQrStart, async (req, res) => {
+  const b = req.body || {};
+  const token = crypto.randomBytes(18).toString('base64url');
+  const pollKey = crypto.randomBytes(24).toString('base64url');
+  const hints = {};
+  if (b.model) hints.model = String(b.model).slice(0, 60);
+  if (b.platformVersion) hints.platformVersion = String(b.platformVersion).slice(0, 20);
+  const now = Date.now();
+  const rec = {
+    pollHash: totp.sha256('qrp:' + pollKey), createdAt: now, exp: now + QR_LOGIN_TTL_MS, status: 'pending', userId: null,
+    ip: clientIp(req), ua: String(req.headers['user-agent'] || '').slice(0, 200), hints, loc: null
+  };
+  _qrLogins.set(token, rec);
+  devices.locate(rec.ip).then(loc => { rec.loc = loc; }).catch(() => {});
+  const url = `${appBaseUrl(req)}/qr/${token}`;
+  let svg;
+  try { svg = await QRCode.toString(url, { type: 'svg', margin: 0, errorCorrectionLevel: 'M', color: { dark: '#111111', light: '#ffffff' } }); }
+  catch { _qrLogins.delete(token); return res.status(500).json({ error: 'Não foi possível gerar o QR Code. Tente de novo.' }); }
+  res.json({ token, pollKey, url, svg, expiresAt: new Date(rec.exp).toISOString(), ttlMs: QR_LOGIN_TTL_MS });
+});
+app.post('/api/login/qr/poll', rateLimitQrPoll, async (req, res) => {
+  const { token, pollKey } = req.body || {};
+  const rec = _qrLogins.get(String(token || ''));
+  if (!rec || !pollKey || !totp.safeEqual(rec.pollHash, totp.sha256('qrp:' + String(pollKey)))) return res.status(410).json({ status: 'expired' });
+  if (rec.status === 'denied') { _qrLogins.delete(token); return res.json({ status: 'denied' }); }
+  if (rec.status !== 'approved') {
+    if (rec.exp <= Date.now()) { _qrLogins.delete(token); return res.status(410).json({ status: 'expired' }); }
+    return res.json({ status: rec.status, expiresAt: new Date(rec.exp).toISOString() });
+  }
+  // Aprovado: uso único, daqui em diante o código não vale mais.
+  _qrLogins.delete(token);
+  const user = allUsers().find(u => u.id === rec.userId);
+  if (!user || user.active === false || !tenancy.activeMemberships(user.id).length) return res.status(403).json({ status: 'denied', error: 'Esta conta não pode entrar agora.' });
+  if (twoFactorMethodOf(user) === 'totp') {
+    const t = await startTwoFactorTicket(req, user, 'qr');
+    if (t.error) return res.status(t.status || 500).json({ error: t.error });
+    return res.json({ status: 'approved', twoFactor: t.public });
+  }
+  recordLoginIp(user, clientIp(req));
+  const sess = startSession(req, res, user, 'qr');
+  if (rec.hints && (rec.hints.model || rec.hints.platformVersion)) auth.setSessionData(sess, { hints: rec.hints });
+  res.json({ status: 'approved', user: publicUser(user, { self: true }) });
+});
+/* Celular: o que foi lido. Só mostra (e marca como lido); confirmar é outro passo. */
+function qrRecordFor(req, res) {
+  const rec = _qrLogins.get(String(req.params.token || ''));
+  if (!rec || rec.exp <= Date.now() || rec.status === 'denied' || rec.status === 'approved') {
+    res.status(410).json({ error: 'Este QR Code expirou ou já foi usado. Gere outro no computador.', code: 'expired' });
+    return null;
+  }
+  return rec;
+}
+app.get('/api/me/qr-login/:token', requireAuth, rateLimitQrApprove, async (req, res) => {
+  const rec = qrRecordFor(req, res);
+  if (!rec) return;
+  if (rec.status === 'pending') rec.status = 'scanned';
+  if (!rec.loc) rec.loc = await devices.locateWithin(rec.ip, 1500) || null;
+  res.json({ request: qrDesktopPublic(rec) });
+});
+app.post('/api/me/qr-login/:token/approve', requireAuth, rateLimitQrApprove, (req, res) => {
+  const rec = qrRecordFor(req, res);
+  if (!rec) return;
+  rec.status = 'approved';
+  rec.userId = req.user.id;
+  res.json({ ok: true, twoFactor: twoFactorMethodOf(req.user) === 'totp' });
+});
+app.post('/api/me/qr-login/:token/deny', requireAuth, rateLimitQrApprove, (req, res) => {
+  const rec = qrRecordFor(req, res);
+  if (!rec) return;
+  rec.status = 'denied';
+  res.json({ ok: true });
 });
 
 /* Ativar / desativar no perfil. Sempre pede a senha (se a conta tem uma). */
@@ -2942,7 +3106,7 @@ app.get('/api/auth/discord/callback', async (req, res) => {
   // Entrar pelo Discord não pede o código da verificação em duas etapas: a
   // conta do Discord já é o segundo fator (decisão de produto).
   recordLoginIp(user, clientIp(req));
-  startSession(req, res, user);
+  startSession(req, res, user, 'discord');
   return res.redirect('/?discord=logged-in');
 });
 
@@ -3052,7 +3216,7 @@ app.get('/api/auth/google/callback', async (req, res) => {
   // Como no Discord, entrar pelo Google não pede o código da verificação em
   // duas etapas: a própria conta Google faz esse papel.
   recordLoginIp(user, clientIp(req));
-  startSession(req, res, user);
+  startSession(req, res, user, 'google');
   return res.redirect('/?google-login=logged-in');
 });
 
@@ -6045,7 +6209,7 @@ function joinFromInvite(req, res, inv, user, opts = {}) {
   saveEntity('invites', inv);
   if (!opts.noSession) {
     recordLoginIp(user, clientIp(req));
-    const token = startSession(req, res, user);
+    const token = startSession(req, res, user, 'invite');
     auth.setSessionData(token, { orgId: inv.orgId });
   }
   // Avisa quem convidou (só no sino), dentro da organização do convite.
