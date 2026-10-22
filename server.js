@@ -783,13 +783,14 @@ const EMAIL_EVENT_LABELS = {
   assigned:       'Atribuído como responsável',
   stage_assigned: 'Responsável por etapa (auto-atribuição)',
   mention:        'Mencionado em comentário',
+  thread_reply:   'Resposta numa thread em que participei',
   watch_stage:    'Movimento de etapa em demanda que observo',
   watch_comment:  'Novo comentário em demanda que observo',
   daily_digest:   'Resumo diário das minhas demandas',
   reminder:       'Lembretes que eu agendei',
 };
 function defaultEmailPrefs() {
-  return { assigned: true, stage_assigned: true, mention: true, watch_stage: true, watch_comment: true, daily_digest: true, reminder: true };
+  return { assigned: true, stage_assigned: true, mention: true, thread_reply: true, watch_stage: true, watch_comment: true, daily_digest: true, reminder: true };
 }
 
 /* ── DISCORD DM PREFS ──
@@ -803,6 +804,7 @@ const DISCORD_EVENT_LABELS = {
   assigned:       'Atribuído como responsável',
   stage_assigned: 'Responsável por etapa (auto-atribuição)',
   mention:        'Mencionado em comentário',
+  thread_reply:   'Resposta numa thread em que participei',
   watch_stage:    'Movimento de etapa em demanda que observo',
   watch_comment:  'Novo comentário em demanda que observo',
   daily_digest:   'Resumo diário das minhas demandas',
@@ -812,7 +814,7 @@ const DISCORD_EVENT_LABELS = {
 // pra aparecer na UI de prefs e ser consultado por effectiveDiscordPref no
 // runDailyBotDMDigest. notify() nunca é invocado com type='daily_digest'.
 const DISCORD_HARDCODED_DEFAULTS = {
-  assigned: false, stage_assigned: false, mention: true, watch_stage: false, watch_comment: false, daily_digest: true,
+  assigned: false, stage_assigned: false, mention: true, thread_reply: true, watch_stage: false, watch_comment: false, daily_digest: true,
   reminder: true, // a pessoa agendou pra ser lembrada — faz sentido chegar onde ela está
 };
 let _adminDiscordDefaultsCache = null;
@@ -957,7 +959,7 @@ function buildDiscordDMForNotification(type, ctx) {
   const projSub = project ? `${project.name}${project.client ? ' · ' + project.client : ''}` : null;
   const triggerName = trigger ? trigger.name : null;
   const clip = (s, n) => { s = String(s || '').replace(/<[^>]+>/g,'').trim(); return s.length > n ? s.slice(0, n-1) + '…' : s; };
-  const COLORS = { assigned: 0x7A00FF, stage_assigned: 0x2b7fff, mention: 0xF5A718, watch_stage: 0xa1a1a1, watch_comment: 0xa1a1a1, reminder: 0xF5A718 };
+  const COLORS = { assigned: 0x7A00FF, stage_assigned: 0x2b7fff, mention: 0xF5A718, thread_reply: 0xF5A718, watch_stage: 0xa1a1a1, watch_comment: 0xa1a1a1, reminder: 0xF5A718 };
   let title, description = '';
   switch (type) {
     case 'assigned':
@@ -971,6 +973,10 @@ function buildDiscordDMForNotification(type, ctx) {
     case 'mention':
       title = `💬 Mencionado em: ${demand.name}`;
       description = `${triggerName ? `**${triggerName}** mencionou você:\n` : ''}> ${clip(commentText, 300)}`;
+      break;
+    case 'thread_reply':
+      title = `↩️ Nova resposta em: ${demand.name}`;
+      description = `${triggerName ? `**${triggerName}** respondeu numa thread em que você participa:\n` : ''}> ${clip(commentText, 300)}`;
       break;
     case 'watch_stage':
       title = `👀 Etapa avançou: ${demand.name}`;
@@ -1207,7 +1213,7 @@ function activeStatus(u, now = Date.now()) {
 }
 function isFocused(u) { const st = activeStatus(u); return !!(st && st.kind === 'focus'); }
 const HELD_MAX = 60;
-const HELD_LABELS = { assigned: 'Você é o responsável', stage_assigned: 'Nova etapa pra você', mention: 'Menção',
+const HELD_LABELS = { assigned: 'Você é o responsável', stage_assigned: 'Nova etapa pra você', mention: 'Menção', thread_reply: 'Resposta na thread',
   watch_stage: 'Etapa avançou', watch_comment: 'Novo comentário', reminder: 'Lembrete', reaction: 'Reação', time_gap: 'Sem apontamento' };
 function holdNotification(user, type, data, triggerUserId, baseUrl) {
   if (!Array.isArray(user.heldNotifs)) user.heldNotifs = [];
@@ -1388,6 +1394,7 @@ function pushContentFor(n, lang) {
     case 'assigned':       return { title: dn, body: `${who} assigned this demand to you${n.stageName ? ' at ' + n.stageName : ''}` };
     case 'stage_assigned': return { title: dn, body: `Moved to ${n.stageName || 'the next stage'} and is now yours` };
     case 'mention':        return { title: `${who} mentioned you`, body: c ? `${dn}: ${c}` : dn };
+    case 'thread_reply':   return { title: `${who} replied to a thread`, body: c ? `${dn}: ${c}` : dn };
     case 'reaction':       return { title: `${who} reacted ${n.emoji || ''} to your comment`.trim(), body: c ? `${dn}: ${c}` : dn };
     case 'reminder':       return { title: `Reminder: ${dn}`, body: c || 'Tap to open the demand' };
     case 'watch_stage':    return { title: dn, body: `Moved to ${n.stageName || 'another stage'}` };
@@ -1402,6 +1409,7 @@ function pushContentFor(n, lang) {
     case 'assigned':       return { title: dn, body: `${who} atribuiu esta demanda para você${n.stageName ? ' na etapa ' + n.stageName : ''}` };
     case 'stage_assigned': return { title: dn, body: `Avançou para ${n.stageName || 'a próxima etapa'} e agora está com você` };
     case 'mention':        return { title: `${who} mencionou você`, body: c ? `${dn}: ${c}` : dn };
+    case 'thread_reply':   return { title: `${who} respondeu numa thread`, body: c ? `${dn}: ${c}` : dn };
     case 'reaction':       return { title: `${who} reagiu ${n.emoji || ''} ao seu comentário`.trim(), body: c ? `${dn}: ${c}` : dn };
     case 'reminder':       return { title: `Lembrete: ${dn}`, body: c || 'Toque para abrir a demanda' };
     case 'watch_stage':    return { title: dn, body: `Mudou para ${n.stageName || 'outra etapa'}` };
@@ -1421,11 +1429,11 @@ function pushActionsFor(n, lang) {
   const en = lang === 'en';
   const open = { action: 'open', title: en ? 'Open' : 'Abrir' };
   if (n.type === 'assigned' || n.type === 'stage_assigned') return [{ action: 'next', title: en ? 'Advance stage' : 'Avançar etapa' }, open];
-  if (['mention', 'watch_comment', 'reaction', 'watch_stage', 'reminder'].includes(n.type)) return [open, { action: 'read', title: en ? 'Mark as read' : 'Marcar como lida' }];
+  if (['mention', 'thread_reply', 'watch_comment', 'reaction', 'watch_stage', 'reminder'].includes(n.type)) return [open, { action: 'read', title: en ? 'Mark as read' : 'Marcar como lida' }];
   return [];
 }
 // Tipos que a pessoa liga/desliga no Perfil (coluna Push); o resto sempre vai.
-const PUSH_PREF_KEYS = ['mention', 'assigned', 'stage_assigned', 'reminder', 'watch_stage', 'watch_comment'];
+const PUSH_PREF_KEYS = ['mention', 'thread_reply', 'assigned', 'stage_assigned', 'reminder', 'watch_stage', 'watch_comment'];
 function sendPushFor(user, n) {
   const subs = Array.isArray(user.pushSubs) ? user.pushSubs : [];
   if (!subs.length || isAway(user) || isFocused(user)) return;
@@ -1577,9 +1585,9 @@ function buildDiscordPayload(event, ctx) {
       description = `Agora: **${priorityName(d.priority)}**`;
       break;
     case 'comment.added':
-      title = `💬 Novo comentário em: ${d.name}`;
+      title = ctx.comment?.parentId ? `↩️ Nova resposta em: ${d.name}` : `💬 Novo comentário em: ${d.name}`;
       description = (ctx.comment?.text || '').slice(0, 400) || '_(comentário vazio)_';
-      if (u) description = `**${u.name}** comentou:\n${description}`;
+      if (u) description = `**${u.name}** ${ctx.comment?.parentId ? 'respondeu' : 'comentou'}:\n${description}`;
       break;
     case 'comment.mention':
       title = `📣 Menção em: ${d.name}`;
@@ -8877,6 +8885,22 @@ function sanitizeCommentHtml(input) {
   // Remove tags órfãs deixadas pelo passo anterior.
   return html.trim();
 }
+// Tira espaços e linhas em branco do FIM do comentário: Enter/espaço sobrando,
+// <br> soltos, &nbsp; e blocos vazios (<div><br></div>, <p></p>) — inclusive
+// os que ficam dentro do último bloco ("texto<br></div>").
+const _TRAIL_BLANK_RE = /(?:\s|&nbsp;|&#160;| |<br\s*\/?>|<(div|p)>(?:\s|&nbsp;|&#160;| |<br\s*\/?>)*<\/\1>)+$/i;
+const _TRAIL_IN_BLOCK_RE = /(?:\s|&nbsp;|&#160;| |<br\s*\/?>)+((?:<\/[a-z0-9]+>)+)$/i;
+function trimTrailingBlankHtml(html) {
+  // Só o fim interessa: trabalhar nos últimos 4 KB evita regex lenta em texto enorme.
+  const all = String(html || '');
+  const cut = Math.max(0, all.length - 4096);
+  let s = all.slice(cut), prev;
+  do {
+    prev = s;
+    s = s.replace(_TRAIL_BLANK_RE, '').replace(_TRAIL_IN_BLOCK_RE, '$1');
+  } while (s !== prev);
+  return all.slice(0, cut) + s;
+}
 function _sanitizeCommentAttrs(tag, raw) {
   const allowed = COMMENT_HTML_ATTR_ALLOWLIST[tag];
   if (!allowed) return '';
@@ -10731,13 +10755,19 @@ function extractMentions(plain, d) {
   }
   return { mentions: [...ids], roleMentions };
 }
+// Quem já escreveu na thread (raiz + respostas), em ordem de chegada.
+function threadParticipants(d, rootId) {
+  return [...new Set((d.comments || [])
+    .filter(x => x.id === rootId || x.parentId === rootId)
+    .map(x => x.userId).filter(Boolean))];
+}
 
 app.post('/api/demands/:id/comment', requireAuth, (req, res) => {
   const d = getDemand(req, res); if (!d) return;
   const format = req.body?.format === 'html' ? 'html' : 'text';
   const rawText = String((req.body && req.body.text) || '');
   const text = format === 'html'
-    ? sanitizeCommentHtml(rawText)
+    ? trimTrailingBlankHtml(sanitizeCommentHtml(rawText))
     : rawText.trim().slice(0, 10000);
   // Recusa em vez de cortar: antes o 11º anexo em diante sumia sem aviso.
   if (Array.isArray(req.body?.attachments) && req.body.attachments.length > 10) return res.status(400).json({ error: 'Máximo de 10 anexos por comentário.' });
@@ -10747,20 +10777,39 @@ app.post('/api/demands/:id/comment', requireAuth, (req, res) => {
   if (!plain.trim() && !attachments.length && !/\<img\b/i.test(text)) {
     return res.status(400).json({ error: 'Escreva algo ou anexe um arquivo' });
   }
+  // Thread: resposta sempre pendura na raiz (um nível só). Responder uma
+  // resposta cai na mesma thread.
+  // replyTo guarda a quem a resposta foi direcionada (raiz ou outra resposta).
+  let root = null, target = null;
+  if (req.body?.parentId) {
+    target = d.comments.find(x => x.id === req.body.parentId);
+    root = target && (target.parentId ? d.comments.find(x => x.id === target.parentId) : target);
+    if (!root) return res.status(404).json({ error: 'O comentário que você está respondendo não existe mais' });
+  }
   // extrai menções (@usuario e @area) válidas dentro do workspace
   const { mentions, roleMentions } = extractMentions(plain, d);
   const c = { id: uid(), userId: req.user.id, text, format, mentions, attachments, reactions: {}, createdAt: nowISO(), editedAt: null };
+  if (root) { c.parentId = root.id; c.replyTo = target.id; }
   if (roleMentions.length) c.roleMentions = roleMentions;
   d.comments.push(c);
-  addHistory(d, req.user.id, 'comment_added', { commentId: c.id, preview: plain.slice(0, 80) });
+  addHistory(d, req.user.id, 'comment_added', { commentId: c.id, preview: plain.slice(0, 80), ...(root ? { reply: true } : {}) });
   // Notifica cada usuário mencionado
   const _mentionsBaseUrl = appBaseUrl(req);
   mentions.forEach(mid => {
     notify(mid, 'mention', { demandId: d.id, demandName: d.name, commentText: plain.slice(0, 120) }, req.user.id, _mentionsBaseUrl);
   });
-  // Watchers recebem notificação de novo comentário — sem duplicar quem já foi mencionado.
+  // Resposta: avisa todo mundo que já participou da thread (autor da raiz +
+  // quem respondeu), sem duplicar menção.
+  const alreadyNotified = new Set(mentions);
+  if (root) {
+    for (const pid of threadParticipants(d, root.id)) {
+      if (pid === req.user.id || alreadyNotified.has(pid)) continue;
+      alreadyNotified.add(pid);
+      notify(pid, 'thread_reply', { demandId: d.id, demandName: d.name, commentText: plain.slice(0, 120) }, req.user.id, _mentionsBaseUrl);
+    }
+  }
+  // Watchers recebem notificação de novo comentário — sem duplicar quem já foi avisado.
   if (Array.isArray(d.watchers) && d.watchers.length) {
-    const alreadyNotified = new Set(mentions);
     for (const uid of d.watchers) {
       if (uid === req.user.id || uid === d.ownerId || alreadyNotified.has(uid)) continue;
       notify(uid, 'watch_comment', { demandId: d.id, demandName: d.name, commentText: plain.slice(0, 120) }, req.user.id, _mentionsBaseUrl);
@@ -10789,13 +10838,14 @@ app.put('/api/demands/:id/comment/:cid', requireAuth, (req, res) => {
   const d = getDemand(req, res); if (!d) return;
   const c = d.comments.find(x => x.id === req.params.cid);
   if (!c) return res.status(404).json({ error: 'Comentário não encontrado' });
+  if (c.deleted) return res.status(400).json({ error: 'Este comentário foi removido' });
   if (c.userId !== req.user.id && !req.user.isAdmin) {
     return res.status(403).json({ error: 'Você só pode editar seus próprios comentários' });
   }
   const format = req.body?.format === 'html' ? 'html' : (c.format === 'html' ? 'html' : 'text');
   const rawText = String((req.body && req.body.text) || '');
   const text = format === 'html'
-    ? sanitizeCommentHtml(rawText)
+    ? trimTrailingBlankHtml(sanitizeCommentHtml(rawText))
     : rawText.trim().slice(0, 10000);
   if (Array.isArray(req.body?.attachments) && req.body.attachments.length > 10) return res.status(400).json({ error: 'Máximo de 10 anexos por comentário.' });
   const attachments = req.body?.attachments !== undefined
@@ -10822,11 +10872,23 @@ app.put('/api/demands/:id/comment/:cid', requireAuth, (req, res) => {
 app.delete('/api/demands/:id/comment/:cid', requireAuth, (req, res) => {
   const d = getDemand(req, res); if (!d) return;
   const c = d.comments.find(x => x.id === req.params.cid);
-  if (c && c.userId !== req.user.id && !req.user.isAdmin) {
+  const byMod = !!c && c.userId !== req.user.id;
+  if (byMod && !req.user.isAdmin && !req.user.isModerator) {
     return res.status(403).json({ error: 'Você só pode remover seus próprios comentários' });
   }
-  if (c) addHistory(d, req.user.id, 'comment_removed', { commentId: c.id });
-  d.comments = d.comments.filter(x => x.id !== req.params.cid);
+  if (c && !c.deleted) addHistory(d, req.user.id, 'comment_removed', { commentId: c.id });
+  if (c && !c.parentId && d.comments.some(x => x.parentId === c.id)) {
+    // Raiz com respostas: vira placeholder pra thread não perder o contexto.
+    Object.assign(c, { text: '', mentions: [], attachments: [], reactions: {}, deleted: true, deletedBy: byMod ? 'moderator' : 'author', deletedAt: nowISO() });
+    delete c.roleMentions;
+  } else {
+    d.comments = d.comments.filter(x => x.id !== req.params.cid);
+    // Última resposta de uma raiz já removida: a thread some junto.
+    const root = c && c.parentId && d.comments.find(x => x.id === c.parentId);
+    if (root && root.deleted && !d.comments.some(x => x.parentId === root.id)) {
+      d.comments = d.comments.filter(x => x.id !== root.id);
+    }
+  }
   saveEntity('demands', d);
   emitDemand(req, d);
   res.json(d);
@@ -10844,6 +10906,7 @@ app.post('/api/demands/:id/comment/:cid/react', requireAuth, (req, res) => {
   const d = getDemand(req, res); if (!d) return;
   const c = d.comments.find(x => x.id === req.params.cid);
   if (!c) return res.status(404).json({ error: 'Comentário não encontrado' });
+  if (c.deleted) return res.status(400).json({ error: 'Este comentário foi removido' });
   const emoji = String((req.body && req.body.emoji) || '');
   if (!isReactionEmoji(emoji)) return res.status(400).json({ error: 'Emoji inválido' });
   if (!c.reactions || typeof c.reactions !== 'object') c.reactions = {};
@@ -13866,7 +13929,7 @@ function _godmodeStatsFor(userId) {
     }
     if (Array.isArray(d.comments)) {
       for (const c of d.comments) {
-        if (c.userId !== userId) continue;
+        if (c.userId !== userId || c.deleted) continue;
         const ts = Date.parse(c.createdAt || c.at || 0);
         if (ts > monthAgo) commentsThisMonth++;
       }
@@ -13907,7 +13970,7 @@ function _godmodeRecentActivity(userId, limit = 40) {
       events.push({ at: h.at, kind: 'history', action: h.action, details: h.details, demandId: d.id, demandName: dLabel });
     }
     for (const c of (d.comments || [])) {
-      if (c.userId !== userId) continue;
+      if (c.userId !== userId || c.deleted) continue;
       const at = c.createdAt || c.at;
       if (!at) continue;
       const raw = String(c.text || c.body || '');

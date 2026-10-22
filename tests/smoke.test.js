@@ -976,6 +976,55 @@ test('Permissões: equipe só exclui o que criou; moderador exclui do squad', as
   assert.equal((await call('PUT', '/api/users/' + ownerId, a2, { isAdmin: false })).status, 403);
 });
 
+test('Comentários em thread: resposta, aviso pra quem participou e placeholder', async () => {
+  const admin = await loginCookie('admin', 'admin123');
+  const eq = await loginCookie('pessoa.equipe', 'senha-forte-1');
+  const mod = await loginCookie('pessoa.mod', 'senha-forte-1');
+  const boot = (await req('/api/bootstrap', { headers: { Cookie: admin } })).body;
+  const dem = await call('POST', '/api/demands', admin, { name: 'Demanda com thread', projectId: boot.projects[0].id, flowId: boot.flows[0].id });
+  assert.equal(dem.status, 201, JSON.stringify(dem.body));
+  const url = '/api/demands/' + dem.body.id + '/comment';
+  const root = (await call('POST', url, eq, { text: 'Raiz da thread' })).body.comments.at(-1);
+  // Resposta à raiz e resposta a uma resposta caem na mesma thread
+  let r = await call('POST', url, admin, { text: 'Primeira resposta', parentId: root.id });
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+  const reply1 = r.body.comments.at(-1);
+  assert.equal(reply1.parentId, root.id);
+  r = await call('POST', url, mod, { text: 'Resposta da resposta', parentId: reply1.id });
+  assert.equal(r.body.comments.at(-1).parentId, root.id, 'um nível só');
+  assert.equal(r.body.comments.at(-1).replyTo, reply1.id, 'guarda a quem respondeu');
+  assert.equal((await call('POST', url, admin, { text: 'x', parentId: 'nao-existe' })).status, 404);
+  // Espaço/Enter sobrando no fim some ao salvar
+  r = await call('POST', url, admin, { format: 'html', text: '<div>Oi&nbsp;<br></div><div><br></div><div><br></div> ', parentId: root.id });
+  assert.equal(r.body.comments.at(-1).text, '<div>Oi</div>');
+  // Quem participou (autor da raiz) recebe o aviso da resposta
+  let notifs = [];
+  for (let i = 0; i < 20 && !notifs.some(n => n.type === 'thread_reply'); i++) {
+    await new Promise(ok => setTimeout(ok, 50));
+    notifs = (await req('/api/notifications', { headers: { Cookie: eq } })).body;
+  }
+  assert.ok(notifs.some(n => n.type === 'thread_reply' && n.demandId === dem.body.id), 'autor da raiz é avisado');
+  // Moderador apaga a raiz com respostas: vira placeholder, respostas ficam
+  r = await call('DELETE', url + '/' + root.id, mod);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const ph = r.body.comments.find(c => c.id === root.id);
+  assert.ok(ph && ph.deleted, 'raiz vira placeholder');
+  assert.equal(ph.deletedBy, 'moderator');
+  assert.equal(ph.text, '');
+  assert.equal(r.body.comments.filter(c => c.parentId === root.id).length, 3);
+  assert.equal((await call('POST', url + '/' + root.id + '/react', admin, { emoji: '👍' })).status, 400, 'placeholder não recebe reação');
+  // Saindo a última resposta, a thread removida some junto
+  const ids = r.body.comments.filter(c => c.parentId === root.id).map(c => c.id);
+  for (const id of ids.slice(0, -1)) await call('DELETE', url + '/' + id, admin);
+  r = await call('DELETE', url + '/' + ids.at(-1), mod);
+  assert.equal(r.body.comments.length, 0);
+  // Autor apagando a própria raiz com resposta: placeholder "pelo autor"
+  const own = (await call('POST', url, eq, { text: 'Outra raiz' })).body.comments.at(-1);
+  await call('POST', url, admin, { text: 'Resposta', parentId: own.id });
+  r = await call('DELETE', url + '/' + own.id, eq);
+  assert.equal(r.body.comments.find(c => c.id === own.id).deletedBy, 'author');
+});
+
 test('Organização: ajustes, exportação e quem pode mudar', async () => {
   const admin = await loginCookie('admin', 'admin123');
   const me = (await req('/api/me', { headers: { Cookie: admin } })).body;

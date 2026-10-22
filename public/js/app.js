@@ -7564,72 +7564,6 @@ function _emailDeadlineLabel() {
   const dm = d.toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit' });
   return `${wd}, ${dm}, às ${String(d.getHours()).padStart(2, '0')}h${String(d.getMinutes()).padStart(2, '0')}`;
 }
-function renderEmailLinkCard() {
-  const el = $('dash-email');
-  if (!el) return;
-  const st = _emailState();
-  if (!st || st === 'ok') { el.hidden = true; el.innerHTML = ''; return; }
-  const late = !!me.emailRequired;
-  const ms = Date.parse(me.emailDeadline) - Date.now();
-  const soon = !late && ms < 2 * 864e5;
-  const pend = me.pendingEmail;
-  // Passos: 1 informar/enviar · 2 abrir o link · pronto
-  const step = st === 'pending' ? 2 : 1;
-  const stepHTML = (n, label) => {
-    const cls = n < step ? 'is-done' : n === step ? 'is-active' : '';
-    return `<li class="dash-email-step ${cls}"><span class="dash-email-step-n">${n < step ? '<i data-lucide="check"></i>' : n}</span>${label}</li>`;
-  };
-  const cfg = {
-    missing: {
-      icon: 'mail-plus',
-      title: 'Vincule um e-mail à sua conta',
-      sub: 'Obrigatório para todas as contas do reWork. Com ele você também entra pelo e-mail e recupera a senha sozinho.',
-      first: 'Informar o e-mail',
-      actions: `<button class="btn btn-primary" onclick="openEmailLinkModal()">Vincular e-mail<i data-lucide="arrow-right" class="ic-sm"></i></button>`
-    },
-    unconfirmed: {
-      icon: 'mail',
-      title: 'Confirme o seu e-mail',
-      sub: `<b>${esc(me.email)}</b> está na sua conta, mas ainda não foi confirmado.`,
-      first: 'Enviar o link',
-      actions: `<button class="btn btn-primary" onclick="sendEmailConfirmNow(this)"><i data-lucide="send" class="ic-sm"></i>Enviar link de confirmação</button>
-        <button class="dash-email-link" onclick="openEmailLinkModal('change')">Usar outro e-mail</button>`
-    },
-    pending: {
-      icon: 'mail-check',
-      title: 'Agora é só abrir o link',
-      sub: `Enviamos para <b>${esc(pend ? pend.email : '')}</b>. O link vale 24 horas; se não chegou, veja no spam.`,
-      first: 'Enviar o link',
-      actions: `<button class="btn btn-ghost" onclick="${pend && me.email && pend.email === me.email ? 'sendEmailConfirmNow(this)' : "openEmailLinkModal('resend')"}"><i data-lucide="rotate-cw" class="ic-sm"></i>Reenviar</button>
-        <button class="dash-email-link" onclick="openEmailLinkModal('change')">Usar outro e-mail</button>`
-    }
-  }[st];
-  // Contagem: dias (ou horas no último dia) até o prazo.
-  let num, unit;
-  if (late) { num = 'Encerrado'; unit = ''; }
-  else if (ms >= 864e5) { num = Math.ceil(ms / 864e5); unit = num === 1 ? 'dia' : 'dias'; }
-  else { num = Math.max(1, Math.ceil(ms / 36e5)); unit = num === 1 ? 'hora' : 'horas'; }
-  el.className = 'dash-email' + (late ? ' is-late' : soon ? ' is-soon' : '');
-  el.innerHTML = `
-    <div class="dash-email-body">
-      <span class="dash-email-ic"><i data-lucide="${cfg.icon}"></i></span>
-      <div class="dash-email-main">
-        <div class="dash-email-title">${cfg.title}</div>
-        <p class="dash-email-sub">${cfg.sub}</p>
-        <ol class="dash-email-steps" aria-label="Passos">
-          ${stepHTML(1, cfg.first)}<li class="dash-email-step-sep" aria-hidden="true"></li>${stepHTML(2, 'Abrir o link no e-mail')}<li class="dash-email-step-sep" aria-hidden="true"></li>${stepHTML(3, 'Pronto')}
-        </ol>
-        <div class="dash-email-actions">${cfg.actions}</div>
-      </div>
-    </div>
-    <div class="dash-email-clock" role="note">
-      <div class="dash-email-clock-num">${num}${unit ? `<span class="dash-email-clock-unit">${unit}</span>` : ''}</div>
-      <div class="dash-email-clock-when">${late ? 'O prazo acabou' : `Até ${esc(_emailDeadlineLabel())}`}</div>
-      <div class="dash-email-clock-note">${late ? 'Confirme para liberar o acesso.' : 'Depois disso, o acesso fica restrito até confirmar.'}</div>
-    </div>`;
-  el.hidden = false;
-  paintIcons();
-}
 function renderProfileEmail() {
   const box = $('profile-email-box');
   if (!box || !me) return;
@@ -7691,7 +7625,6 @@ function closeEmailLinkModal(force) {
 }
 function _emailApplyUser(user) {
   if (user) me = { ...me, ...user };
-  renderEmailLinkCard();
   renderProfileEmail();
 }
 function _elmShowSent(addr) {
@@ -10994,7 +10927,6 @@ function renderDashboard() {
   // Dashboard individualizado: sempre no escopo do usuário logado.
   if (!me?.id) return;
   renderDashGreeting();
-  renderEmailLinkCard();
   renderDashUpdates();
   renderPwaInstall();
   renderPushPrompt();
@@ -18424,6 +18356,8 @@ function renderDetailPresence(users) {
    dispara. Default = 'comments'. */
 let detailActiveTab = 'comments';
 let detailCommentSort = 'newest'; // 'newest' | 'oldest'
+let commentReplyTo = null;            // { demandId, rootId, targetId } enquanto responde uma thread
+const _threadFold = new Map();        // rootId → true (recolhida) / false (aberta), escolhido pela pessoa
 // Estado colapsado da coluna direita (comentários/tabs) — persiste.
 // Colapse do painel direito é temporário — sem persistência. Sempre inicia expandido.
 let detailRightCollapsed = false;
@@ -18555,13 +18489,41 @@ function renderDetail() {
     </div>`;
   }).join('');
 
-  // Comentários
-  // Aplica ordenação atual (toggle no cabeçalho da tab Comentários).
-  const _sortedComments = (d.comments || []).slice().sort((a, b) => {
-    const A = a.createdAt || '', B = b.createdAt || '';
-    return detailCommentSort === 'newest' ? B.localeCompare(A) : A.localeCompare(B);
-  });
-  const comments = _sortedComments.map(c => {
+  // Comentários em threads: cada raiz (sem parentId) abre uma thread e as
+  // respostas ficam embaixo, sempre da mais antiga pra mais nova. A ordem das
+  // threads segue o toggle do cabeçalho, pela data da raiz — resposta nova
+  // não reordena a lista.
+  const _allComments = d.comments || [];
+  const _commentIds = new Set(_allComments.map(c => c.id));
+  const _byDate = (a, b) => (a.createdAt || '').localeCompare(b.createdAt || '');
+  const _roots = _allComments.filter(c => !c.parentId || !_commentIds.has(c.parentId)).sort((a, b) =>
+    detailCommentSort === 'newest' ? _byDate(b, a) : _byDate(a, b));
+  if (commentReplyTo && (commentReplyTo.demandId !== d.id || !_commentIds.has(commentReplyTo.rootId))) commentReplyTo = null;
+  const replyRootId = commentReplyTo ? commentReplyTo.rootId : null;
+  // Layout estilo fórum: cabeçalho enxuto (avatar · nome · tempo · menu),
+  // texto e uma barra de ações embaixo (reações + Responder). As linhas que
+  // ligam a raiz às respostas são desenhadas no CSS (.chat-thread).
+  // Resposta mostra a quem foi direcionada (respostas antigas, sem replyTo,
+  // apontam pra raiz). Clique leva até o comentário original.
+  const _replyToTag = c => {
+    if (!c.parentId) return '';
+    const t = _allComments.find(x => x.id === (c.replyTo || c.parentId));
+    if (!t) return '';
+    const name = t.deleted ? 'comentário removido' : (userById(t.userId)?.name || '—');
+    const plain = t.deleted ? '' : (t.format === 'html' ? _stripHtml(t.text || '') : String(t.text || '')).replace(/\s+/g, ' ').trim();
+    return `<button type="button" class="chat-comment-replyto" onclick="flashComment('${t.id}')" title="${esc(plain.slice(0, 140) || name)}"><i data-lucide="corner-down-right" class="ic-xs"></i><span>${esc(name)}</span></button>`;
+  };
+  const _replyBtn = c => `<button type="button" class="chat-comment-reply" onclick="startReplyComment('${c.id}')"><i data-lucide="message-square-reply" class="ic-xs"></i> Responder</button>`;
+  const _renderComment = c => {
+    if (c.deleted) {
+      return `<div class="chat-comment is-deleted" id="comment-${c.id}" data-ts="${esc(c.createdAt || '')}">
+        <div class="chat-comment-head">
+          <span class="chat-comment-removed-av"><i data-lucide="message-square-off" class="ic-xs"></i></span>
+          <span class="chat-comment-removed">${c.deletedBy === 'moderator' ? 'Comentário removido por um moderador' : 'Comentário removido pelo autor'}</span>
+        </div>
+        <div class="chat-comment-bar">${_replyBtn(c)}</div>
+      </div>`;
+    }
     const u = userById(c.userId);
     const canEdit = c.userId === me.id;
     // Moderador tem poder de moderação — pode excluir comentário de qualquer um.
@@ -18570,7 +18532,8 @@ function renderDetail() {
     if (c.format === 'html') {
       // Servidor já sanitizou. Envolve menções + auto-linkify URLs soltas
       // (URL colada como texto vira <a> — preserva <a> já existentes).
-      text = linkifyHtmlPreserveAnchors(renderMentionsInHtml(c.text || ''));
+      // Comentário antigo pode ter Enter/espaço sobrando no fim: some na exibição.
+      text = linkifyHtmlPreserveAnchors(renderMentionsInHtml(trimTrailingBlankHtml(c.text || '')));
     } else {
       // Legacy: texto puro escapado, markdown-lite + linkify.
       text = esc(c.text).replace(/@([a-zA-Z0-9._-]+)/g, (m, uname) => {
@@ -18585,23 +18548,13 @@ function renderDetail() {
       }
       return `<a class="comment-file" href="${esc(attDownloadUrl(a.data, a.name))}" ${attDownloadAttrs(a.data, a.name)} download="${esc(a.name)}" title="Baixar ${esc(a.name)}"><i data-lucide="paperclip" class="ic-sm"></i> ${esc(a.name)}</a>`;
     }).join('');
-    // Header (avatar + nome + ações) numa LINHA horizontal centralizada.
-    // Corpo (texto/anexos) numa linha abaixo com padding-left pra alinhar
-    // com o nome (não com o avatar).
     return `<div class="chat-comment" id="comment-${c.id}" data-ts="${esc(c.createdAt || '')}">
       <div class="chat-comment-head">
         ${avatarHTML(u, 'avatar avatar-sm')}
         <span class="chat-comment-author">${esc(u?.name || '—')}</span>
+        ${_replyToTag(c)}
+        <span class="chat-comment-time" title="${esc(fmtDateTime(c.createdAt))}">· ${esc(fmtRelativeTime(c.createdAt))}${c.editedAt ? ' · editado' : ''}</span>
         <div class="chat-comment-actions">
-          ${renderReactions(c)}
-          <div class="chat-reaction-wrap">
-            <div class="chat-reaction-picker" id="reaction-picker-${c.id}">
-              ${reactionPickerEmojis().map(e => `<button type="button" class="chat-reaction-opt" onclick="toggleReaction('${c.id}', '${e}'); closeReactionPickers()">${e}</button>`).join('')}
-              <button type="button" class="chat-reaction-opt chat-reaction-more" title="Outro emoji" onclick="openReactionEmojiPicker('${c.id}', this, event)"><i data-lucide="plus" class="ic-xs"></i></button>
-            </div>
-            <button class="chat-comment-act" title="Reagir" onclick="toggleChatReactionPicker('${c.id}', event)"><i data-lucide="smile" class="ic-xs"></i></button>
-          </div>
-          <span class="chat-comment-time">${fmtDateTime(c.createdAt)}${c.editedAt ? ' · editado' : ''}</span>
           ${(canEdit || canDel) ? `<div class="chat-comment-menu-wrap">
             <button class="chat-comment-act" title="Mais" onclick="toggleCommentMenu('${c.id}', event)"><i data-lucide="more-horizontal" class="ic-xs"></i></button>
             <div class="chat-comment-menu" id="comment-menu-${c.id}">
@@ -18615,8 +18568,19 @@ function renderDetail() {
         ${text ? `<div class="chat-comment-text">${text}</div>` : ''}
         ${atts ? `<div class="chat-comment-attachments">${atts}</div>` : ''}
       </div>
+      <div class="chat-comment-bar">
+        ${renderReactions(c)}
+        <div class="chat-reaction-wrap">
+          <div class="chat-reaction-picker" id="reaction-picker-${c.id}">
+            ${reactionPickerEmojis().map(e => `<button type="button" class="chat-reaction-opt" onclick="toggleReaction('${c.id}', '${e}'); closeReactionPickers()">${e}</button>`).join('')}
+            <button type="button" class="chat-reaction-opt chat-reaction-more" title="Outro emoji" onclick="openReactionEmojiPicker('${c.id}', this, event)"><i data-lucide="plus" class="ic-xs"></i></button>
+          </div>
+          <button class="chat-comment-act" title="Reagir" onclick="toggleChatReactionPicker('${c.id}', event)"><i data-lucide="smile-plus" class="ic-xs"></i></button>
+        </div>
+        ${_replyBtn(c)}
+      </div>
     </div>`;
-  }).join('');
+  };
 
   const totalHours = (d.timeEntries || []).reduce((a,e) => a + (Number(e.hours) || 0), 0);
   const watching = Array.isArray(d.watchers) && d.watchers.includes(me?.id);
@@ -18637,6 +18601,100 @@ function renderDetail() {
       if (html) localStorage.setItem(_DRAFT_KEY(detailId), html);
     }
   } catch {}
+
+  // Editor de comentário: fica no topo (thread nova) ou dentro da thread que
+  // está sendo respondida — mesmos ids, então menções, rascunho, anexos e
+  // atalhos funcionam igual nos dois lugares.
+  const composeHtml = `<div class="chat-compose-wrap${replyRootId ? ' is-reply' : ''}">
+              ${avatarHTML(me, 'avatar avatar-sm chat-compose-avatar')}
+              <div class="chat-compose${replyRootId ? ' is-active' : ''}" id="chat-compose">
+                ${replyRootId ? (() => {
+                  const r = _allComments.find(x => x.id === commentReplyTo.targetId) || _allComments.find(x => x.id === replyRootId);
+                  const who = r && !r.deleted ? (userById(r.userId)?.name || '—') : 'comentário removido';
+                  return `<div class="chat-compose-replying"><i data-lucide="corner-down-right" class="ic-xs"></i>
+                    <span>${T('Respondendo a {0}', `<strong>${esc(who)}</strong>`)}</span>
+                    <button type="button" class="chat-compose-replying-x" title="Novo comentário em vez de responder" onclick="cancelReplyComment()"><i data-lucide="x" class="ic-xs"></i></button>
+                  </div>`;
+                })() : ''}
+                <div class="chat-compose-toolbar">
+                  <button type="button" class="chat-tool" title="Negrito (Ctrl+B)" onmousedown="event.preventDefault()" onclick="execCommentCmd('bold')"><i data-lucide="bold" class="ic-xs"></i></button>
+                  <button type="button" class="chat-tool" title="Itálico" onmousedown="event.preventDefault()" onclick="execCommentCmd('italic')"><i data-lucide="italic" class="ic-xs"></i></button>
+                  <button type="button" class="chat-tool" title="Sublinhado" onmousedown="event.preventDefault()" onclick="execCommentCmd('underline')"><i data-lucide="underline" class="ic-xs"></i></button>
+                  <button type="button" class="chat-tool" title="Tachado" onmousedown="event.preventDefault()" onclick="execCommentCmd('strikeThrough')"><i data-lucide="strikethrough" class="ic-xs"></i></button>
+                  <span class="chat-tool-sep"></span>
+                  <button type="button" class="chat-tool" title="Lista numerada" onmousedown="event.preventDefault()" onclick="execCommentCmd('insertOrderedList')"><i data-lucide="list-ordered" class="ic-xs"></i></button>
+                  <button type="button" class="chat-tool" title="Lista com marcadores" onmousedown="event.preventDefault()" onclick="execCommentCmd('insertUnorderedList')"><i data-lucide="list" class="ic-xs"></i></button>
+                  <button type="button" class="chat-tool" title="Checklist" onmousedown="event.preventDefault()" onclick="execCommentCmd('insertUnorderedList')"><i data-lucide="list-checks" class="ic-xs"></i></button>
+                  <span class="chat-tool-sep"></span>
+                  <button type="button" class="chat-tool" title="Citação" onmousedown="event.preventDefault()" onclick="execCommentCmd('formatBlock','BLOCKQUOTE')"><i data-lucide="quote" class="ic-xs"></i></button>
+                  <span class="chat-tool-sep"></span>
+                  <input type="file" id="comment-img-input" accept="image/*" multiple style="display:none" onchange="handleCommentImages(event)">
+                  <button type="button" class="chat-tool" title="Imagem" onmousedown="event.preventDefault()" onclick="$('comment-img-input').click()"><i data-lucide="image" class="ic-xs"></i></button>
+                </div>
+                <div class="chat-compose-input comment-input comment-input-ce is-empty" id="comment-input"
+                     contenteditable="true" role="textbox" aria-multiline="true"
+                     data-placeholder="${replyRootId ? 'Escreva uma resposta' : 'Adicione um comentário'}"
+                     onfocus="document.getElementById('chat-compose').classList.add('is-active'); ensureCommentPhrases()"
+                     onblur="hideCommentGhost()"
+                     oninput="mentionWatchCE(this); quickReplyWatch(this); draftSaveCommentCE(this); refreshToolbarState(); syncCommentEmptyState(this); _ghostDismissed = false; updateCommentGhost(this)"
+                     onkeydown="if (!commentGhostKeys(event) && !quickReplyKeys(event)) mentionKeys(event)"
+                     onkeyup="refreshToolbarState(); if (/^(Arrow|Home|End)/.test(event.key)) updateCommentGhost(this)"
+                     onmouseup="refreshToolbarState(); updateCommentGhost(this)"></div>
+                ${editorResizeGrip('comment-input')}
+                <div class="chat-compose-foot">
+                  <div class="chat-compose-foot-left">
+                    <input type="file" id="comment-file-input" multiple style="display:none" onchange="handleCommentFiles(event)">
+                    <button class="chat-compose-icon" onclick="$('comment-file-input').click()" title="Anexar arquivo"><i data-lucide="paperclip" class="ic-xs"></i></button>
+                    <input type="file" id="comment-img-input-2" accept="image/*" multiple style="display:none" onchange="handleCommentImages(event)">
+                    <button class="chat-compose-icon" onclick="$('comment-img-input-2').click()" title="Imagem"><i data-lucide="image" class="ic-xs"></i></button>
+                    <button class="chat-compose-icon" onmousedown="event.preventDefault()" onclick="toggleQuickReplies(event)" title="Respostas prontas (ou digite /)"><i data-lucide="message-square-text" class="ic-xs"></i></button>
+                  </div>
+                  <div class="chat-compose-foot-right">
+                    <button class="btn btn-ghost btn-sm" onclick="cancelCommentCompose()">Cancelar</button>
+                    <button class="btn btn-confirm btn-sm" onclick="sendComment()">${replyRootId ? 'Responder' : 'Salvar'}</button>
+                  </div>
+                </div>
+                <div class="mention-pop" id="mention-pop"></div>
+                <div class="qr-pop" id="qr-pop" hidden></div>
+                <div class="comment-pending-files" id="comment-pending-files"></div>
+              </div>
+            </div>
+`;
+  // Thread = raiz + respostas. Clicar na linha da thread (como no YouTube)
+  // recolhe as respostas num resumo (avatares + quantas + quando foi a última). Thread
+  // longa já abre recolhida; a escolha da pessoa vale até sair da demanda.
+  const THREAD_AUTO_FOLD = 4;
+  const threadsHtml = _roots.map(root => {
+    const replies = _allComments.filter(c => c.parentId === root.id).sort(_byDate);
+    const replying = replyRootId === root.id;
+    const fold = _threadFold.has(root.id) ? _threadFold.get(root.id) : replies.length > THREAD_AUTO_FOLD;
+    const collapsed = !replying && fold && replies.length > 0;
+    const open = replies.length || replying;
+    let summary = '';
+    if (collapsed) {
+      const people = [...new Set(replies.map(c => c.userId))].slice(0, 3).map(userById);
+      const last = replies[replies.length - 1];
+      summary = `<div class="chat-thread-folded-row"><button type="button" class="chat-thread-folded" onclick="toggleCommentThread('${root.id}')" aria-expanded="false">
+        <span class="chat-thread-folded-avs">${people.map(u => avatarHTML(u, 'avatar avatar-sm').replace(/data-user-id="[^"]+"/, '')).join('')}</span>
+        <span class="chat-thread-folded-n">${replies.length === 1 ? '1 resposta' : T('{0} respostas', replies.length)}</span>
+        <span class="chat-thread-folded-when">· ${(() => { const rel = fmtRelativeTime(last.createdAt); return rel === 'agora' ? 'agora mesmo' : 'última ' + esc(rel); })()}</span>
+        <i data-lucide="chevron-down" class="ic-xs"></i>
+      </button></div>`;
+    }
+    // Faixa clicável sobre a linha; recolhida, o resumo em pílula abre de volta.
+    const rail = replies.length && !replying && !collapsed
+      ? `<button type="button" class="chat-thread-rail" onclick="toggleCommentThread('${root.id}')" title="Recolher respostas" aria-label="Recolher respostas"></button>`
+      : '';
+    return `<div class="chat-thread${open ? ' has-replies' : ''}${collapsed ? ' is-folded' : ''}${replying ? ' is-replying' : ''}" id="thread-${root.id}">
+      ${rail}
+      ${_renderComment(root)}
+      ${open ? `<div class="chat-thread-replies">
+        ${collapsed ? summary : replies.map(_renderComment).join('')}
+        ${replying ? composeHtml : ''}
+      </div>` : ''}
+    </div>`;
+  }).join('');
+
 
   $('detail-content').innerHTML = `
     <div class="detail-content detail-content-v2" id="detail-split-root">
@@ -18776,53 +18834,10 @@ function renderDetail() {
         <div class="detail-tab-content">
           <!-- Comentários -->
           <div class="detail-tab-pane" id="tab-pane-comments" style="${activeTab === 'comments' ? '' : 'display:none'}">
-            <div class="chat-compose-wrap">
-              ${avatarHTML(me, 'avatar avatar-sm chat-compose-avatar')}
-              <div class="chat-compose" id="chat-compose">
-                <div class="chat-compose-toolbar">
-                  <button type="button" class="chat-tool" title="Negrito (Ctrl+B)" onmousedown="event.preventDefault()" onclick="execCommentCmd('bold')"><i data-lucide="bold" class="ic-xs"></i></button>
-                  <button type="button" class="chat-tool" title="Itálico" onmousedown="event.preventDefault()" onclick="execCommentCmd('italic')"><i data-lucide="italic" class="ic-xs"></i></button>
-                  <button type="button" class="chat-tool" title="Sublinhado" onmousedown="event.preventDefault()" onclick="execCommentCmd('underline')"><i data-lucide="underline" class="ic-xs"></i></button>
-                  <button type="button" class="chat-tool" title="Tachado" onmousedown="event.preventDefault()" onclick="execCommentCmd('strikeThrough')"><i data-lucide="strikethrough" class="ic-xs"></i></button>
-                  <span class="chat-tool-sep"></span>
-                  <button type="button" class="chat-tool" title="Lista numerada" onmousedown="event.preventDefault()" onclick="execCommentCmd('insertOrderedList')"><i data-lucide="list-ordered" class="ic-xs"></i></button>
-                  <button type="button" class="chat-tool" title="Lista com marcadores" onmousedown="event.preventDefault()" onclick="execCommentCmd('insertUnorderedList')"><i data-lucide="list" class="ic-xs"></i></button>
-                  <button type="button" class="chat-tool" title="Checklist" onmousedown="event.preventDefault()" onclick="execCommentCmd('insertUnorderedList')"><i data-lucide="list-checks" class="ic-xs"></i></button>
-                  <span class="chat-tool-sep"></span>
-                  <button type="button" class="chat-tool" title="Citação" onmousedown="event.preventDefault()" onclick="execCommentCmd('formatBlock','BLOCKQUOTE')"><i data-lucide="quote" class="ic-xs"></i></button>
-                  <span class="chat-tool-sep"></span>
-                  <input type="file" id="comment-img-input" accept="image/*" multiple style="display:none" onchange="handleCommentImages(event)">
-                  <button type="button" class="chat-tool" title="Imagem" onmousedown="event.preventDefault()" onclick="$('comment-img-input').click()"><i data-lucide="image" class="ic-xs"></i></button>
-                </div>
-                <div class="chat-compose-input comment-input comment-input-ce is-empty" id="comment-input"
-                     contenteditable="true" role="textbox" aria-multiline="true"
-                     data-placeholder="Adicione um comentário"
-                     onfocus="document.getElementById('chat-compose').classList.add('is-active'); ensureCommentPhrases()"
-                     onblur="hideCommentGhost()"
-                     oninput="mentionWatchCE(this); quickReplyWatch(this); draftSaveCommentCE(this); refreshToolbarState(); syncCommentEmptyState(this); _ghostDismissed = false; updateCommentGhost(this)"
-                     onkeydown="if (!commentGhostKeys(event) && !quickReplyKeys(event)) mentionKeys(event)"
-                     onkeyup="refreshToolbarState(); if (/^(Arrow|Home|End)/.test(event.key)) updateCommentGhost(this)"
-                     onmouseup="refreshToolbarState(); updateCommentGhost(this)"></div>
-                ${editorResizeGrip('comment-input')}
-                <div class="chat-compose-foot">
-                  <div class="chat-compose-foot-left">
-                    <input type="file" id="comment-file-input" multiple style="display:none" onchange="handleCommentFiles(event)">
-                    <button class="chat-compose-icon" onclick="$('comment-file-input').click()" title="Anexar arquivo"><i data-lucide="paperclip" class="ic-xs"></i></button>
-                    <input type="file" id="comment-img-input-2" accept="image/*" multiple style="display:none" onchange="handleCommentImages(event)">
-                    <button class="chat-compose-icon" onclick="$('comment-img-input-2').click()" title="Imagem"><i data-lucide="image" class="ic-xs"></i></button>
-                    <button class="chat-compose-icon" onmousedown="event.preventDefault()" onclick="toggleQuickReplies(event)" title="Respostas prontas (ou digite /)"><i data-lucide="message-square-text" class="ic-xs"></i></button>
-                  </div>
-                  <div class="chat-compose-foot-right">
-                    <button class="btn btn-ghost btn-sm" onclick="cancelCommentCompose()">Cancelar</button>
-                    <button class="btn btn-confirm btn-sm" onclick="sendComment()">Salvar</button>
-                  </div>
-                </div>
-                <div class="mention-pop" id="mention-pop"></div>
-                <div class="qr-pop" id="qr-pop" hidden></div>
-                <div class="comment-pending-files" id="comment-pending-files"></div>
-              </div>
-            </div>
-            <div class="chat-list">${comments || '<div class="hours-empty" style="text-align:left;margin-top:16px">Nenhum comentário ainda. Use @ para marcar alguém.</div>'}</div>
+            ${replyRootId ? `<button type="button" class="chat-compose-stub" onclick="cancelReplyComment()">
+              ${avatarHTML(me, 'avatar avatar-sm chat-compose-avatar')}<span>Adicione um comentário</span>
+            </button>` : composeHtml}
+            <div class="chat-list">${threadsHtml || '<div class="hours-empty" style="text-align:left;margin-top:16px">Nenhum comentário ainda. Use @ para marcar alguém.</div>'}</div>
           </div>
 
           <!-- Checklist -->
@@ -20701,7 +20716,7 @@ function describeHistory(h, d) {
     case 'stage_changed':      return `avançou da etapa <strong>${esc(stageLabel(dt.fromId))}</strong> para <strong>${esc(stageLabel(dt.toId))}</strong>`;
     case 'attachment_added':   return `anexou ${dt.kind === 'link' ? 'um link' : 'um arquivo'}: <strong>${esc(dt.name || '')}</strong>`;
     case 'attachment_removed': return `removeu o anexo <strong>${esc(dt.name || '')}</strong>`;
-    case 'comment_added':      return `comentou${dt.preview ? ': <em>"' + esc(dt.preview) + (dt.preview.length >= 80 ? '…' : '') + '"</em>' : ''}`;
+    case 'comment_added':      return `${dt.reply ? 'respondeu um comentário' : 'comentou'}${dt.preview ? ': <em>"' + esc(dt.preview) + (dt.preview.length >= 80 ? '…' : '') + '"</em>' : ''}`;
     case 'comment_edited':     return `editou um comentário`;
     case 'comment_removed':    return `removeu um comentário`;
     case 'time_added':         return `apontou <strong>${esc(fmtHours(dt.hours))}</strong> de trabalho${dt.stageId ? ' em <strong>' + esc(stageLabel(dt.stageId)) + '</strong>' : ''}`;
@@ -20931,9 +20946,13 @@ async function confirmDeleteCurrentDemand() {
   } catch (e) { toast(e.message, 'error'); }
 }
 async function confirmDeleteComment(cid) {
+  const d = demandById(detailId);
+  const hasReplies = (d?.comments || []).some(x => x.parentId === cid);
   const ok = await showConfirm({
     title: 'Excluir comentário',
-    message: 'Esta ação não pode ser desfeita. Deseja remover este comentário?',
+    message: hasReplies
+      ? 'Esta ação não pode ser desfeita. O comentário sai, mas as respostas continuam na thread com um aviso de removido.'
+      : 'Esta ação não pode ser desfeita. Deseja remover este comentário?',
     okLabel: 'Excluir',
     danger: true
   });
@@ -22841,6 +22860,8 @@ function _applyMentionSeen() {
     const el = document.getElementById('comment-' + c.id);
     if (!el) return;
     el.querySelector('.cm-seen')?.remove();
+    // Só quem marcou acompanha se a pessoa marcada já viu.
+    if (c.userId !== me.id) return;
     const ids = (c.mentions || []).filter(id => id !== c.userId && id !== me.id);
     if (!ids.length) return;
     const at = Date.parse(c.createdAt) || 0;
@@ -22964,11 +22985,11 @@ function openPendingMention(key) {
     const el = document.getElementById('comment-' + m.commentId);
     if (!el && ++tries < 20) return setTimeout(go, 200);
     if (el) {
-      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      el.classList.add('is-flash');
-      setTimeout(() => el.classList.remove('is-flash'), 2200);
-    }
-    document.getElementById('comment-input')?.focus();
+      startReplyComment(m.commentId); // re-renderiza e rola até o editor da thread
+      const fresh = document.getElementById('comment-' + m.commentId);
+      fresh?.classList.add('is-flash');
+      setTimeout(() => fresh?.classList.remove('is-flash'), 2200);
+    } else document.getElementById('comment-input')?.focus();
   };
   setTimeout(go, 300);
 }
@@ -23937,13 +23958,75 @@ document.addEventListener('click', ev => {
   if (!ev.target.closest('.stages-edit-menu-wrap')) closeStageMenus();
 }, true);
 
+/* ── THREADS DE COMENTÁRIO ──
+   "Responder" leva o editor (o mesmo, com os mesmos ids) pra dentro da
+   thread; o texto já digitado vai junto via rascunho. Cancelar ou enviar
+   devolve o editor pro topo. Estado em commentReplyTo/_threadFold. */
+function startReplyComment(cid) {
+  const d = demandById(detailId);
+  const c = d && (d.comments || []).find(x => x.id === cid);
+  if (!c) return;
+  commentReplyTo = { demandId: d.id, rootId: c.parentId || c.id, targetId: c.id };
+  _moveCommentEditor();
+}
+function cancelReplyComment() {
+  if (!commentReplyTo) return;
+  commentReplyTo = null;
+  _moveCommentEditor();
+}
+// Recolhe/abre as respostas sem a thread pular de lugar na tela.
+function toggleCommentThread(rootId) {
+  const el = document.getElementById('thread-' + rootId);
+  const before = el ? el.getBoundingClientRect().top : null;
+  _threadFold.set(rootId, !el?.classList.contains('is-folded'));
+  renderDetail();
+  const after = document.getElementById('thread-' + rootId);
+  if (after && before != null) {
+    let sc = after.parentElement;
+    while (sc && !/(auto|scroll)/.test(getComputedStyle(sc).overflowY)) sc = sc.parentElement;
+    if (sc) sc.scrollTop += after.getBoundingClientRect().top - before;
+  }
+}
+// "↪ Fulano" numa resposta: leva até o comentário respondido e pisca.
+function flashComment(cid) {
+  const d = demandById(detailId);
+  const c = d && (d.comments || []).find(x => x.id === cid);
+  if (!c) return;
+  const rootId = c.parentId || c.id;
+  if (c.parentId && document.getElementById('thread-' + rootId)?.classList.contains('is-folded')) {
+    _threadFold.set(rootId, false);
+    renderDetail();
+  }
+  const el = document.getElementById('comment-' + cid);
+  if (!el) return;
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  el.classList.remove('is-flash'); void el.offsetWidth; el.classList.add('is-flash');
+  setTimeout(() => el.classList.remove('is-flash'), 2200);
+}
+function _moveCommentEditor() {
+  _composeWasFocused = false;
+  renderDetail();
+  renderPendingFiles();
+  const el = $('comment-input');
+  if (!el) return;
+  el.closest('.chat-compose-wrap')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  try {
+    el.focus({ preventScroll: true });
+    const range = document.createRange();
+    range.selectNodeContents(el); range.collapse(false);
+    const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+  } catch {}
+}
 /* Colapsa o compose e limpa o rascunho — chamado pelo "Cancelar". */
 function cancelCommentCompose() {
   const inp = document.getElementById('comment-input');
   if (inp) { inp.innerHTML = ''; syncCommentEmptyState?.(inp); }
   document.getElementById('chat-compose')?.classList.remove('is-active');
   document.getElementById('comment-pending-files').innerHTML = '';
-  try { draftSaveCommentCE?.(inp); } catch {}
+  pendingAttachments = [];
+  clearTimeout(_draftSaveTimer);
+  if (detailId) draftClearComment(detailId);
+  if (commentReplyTo) { commentReplyTo = null; renderDetail(); }
 }
 async function sendComment() {
   const el = $('comment-input');
@@ -23952,13 +24035,18 @@ async function sendComment() {
   const plain = _commentInputPlain(el);
   const hasImg = /<img\b/i.test(html);
   if (!plain.trim() && !pendingAttachments.length && !hasImg) return;
+  // Manda o comentário alvo; o servidor pendura na raiz e guarda o alvo em replyTo.
+  const parentId = commentReplyTo && commentReplyTo.demandId === detailId ? (commentReplyTo.targetId || commentReplyTo.rootId) : null;
   try {
     const upd = await api('/demands/' + detailId + '/comment', 'POST', {
       text: html,
       format: 'html',
-      attachments: pendingAttachments
+      attachments: pendingAttachments,
+      ...(parentId ? { parentId } : {})
     });
     pendingAttachments = [];
+    commentReplyTo = null;
+    clearTimeout(_draftSaveTimer);
     hideCommentGhost();
     ensureCommentPhrases(true);
     _clearNewSince();
@@ -24026,7 +24114,21 @@ function _commentInputHtml(el) {
   // Chrome enche o editor de <br> quando vazio — trata como vazio.
   const stripped = html.replace(/<br\s*\/?>/gi, '').replace(/&nbsp;/gi, ' ').replace(/<[^>]+>/g, '').trim();
   if (!stripped && !/<img\b/i.test(html)) return '';
-  return html.trim();
+  return trimTrailingBlankHtml(html.trim());
+}
+// Mesmo corte do servidor (trimTrailingBlankHtml em server.js): espaço, Enter,
+// <br> e blocos vazios no fim do comentário.
+function trimTrailingBlankHtml(html) {
+  const blank = /(?:\s|&nbsp;|&#160;|<br\s*\/?>|<(div|p)>(?:\s|&nbsp;|&#160;|<br\s*\/?>)*<\/\1>)+$/i;
+  const inBlock = /(?:\s|&nbsp;|&#160;|<br\s*\/?>)+((?:<\/[a-z0-9]+>)+)$/i;
+  const all = String(html || '');
+  const cut = Math.max(0, all.length - 4096);
+  let s = all.slice(cut), prev;
+  do {
+    prev = s;
+    s = s.replace(blank, '').replace(inBlock, '$1');
+  } while (s !== prev);
+  return all.slice(0, cut) + s;
 }
 function _commentInputPlain(el) {
   return (el.innerText || el.textContent || '').trim();
@@ -32991,6 +33093,7 @@ async function renderDiscordPrefsUI() {
 const PROFILE_NOTIF_EVENTS = [
   { group: 'Com você', items: [
     { key: 'mention', title: 'Menções', sub: 'Alguém te marcou com @, direto ou pela sua área.' },
+    { key: 'thread_reply', title: 'Respostas nas suas threads', sub: 'Alguém respondeu um comentário em que você participou.' },
     { key: 'assigned', title: 'Você virou responsável', sub: 'Alguém te escolheu para tocar uma demanda.' },
     { key: 'stage_assigned', title: 'Uma etapa chegou para você', sub: 'A demanda avançou para uma etapa que é sua.' },
     { key: 'reminder', title: 'Lembretes', sub: 'Os que você agendou com Lembrar depois.' },
@@ -33057,7 +33160,7 @@ async function renderProfileNotifications() {
 
   const cols = 2 + (dc ? 1 : 0);
   // Push: vale pra todos os aparelhos onde a pessoa ativou (contagem vem do /me).
-  const PUSH_KEYS = new Set(['mention', 'assigned', 'stage_assigned', 'reminder', 'watch_stage', 'watch_comment']);
+  const PUSH_KEYS = new Set(['mention', 'thread_reply', 'assigned', 'stage_assigned', 'reminder', 'watch_stage', 'watch_comment']);
   const pprefs = me.pushPrefs || {};
   const pushOn = (me.pushDevices || 0) > 0;
   const sw = (on, disabled, handler, label) => `<label class="profile-switch" aria-label="${esc(label)}">
@@ -33700,6 +33803,9 @@ function notifMessage(n) {
       return `A demanda <strong>${esc(n.demandName)}</strong> avançou para a etapa <strong>${esc(n.stageName || '—')}</strong> e foi atribuída a você`;
     case 'mention':
       return `<strong>${esc(fromName)}</strong> mencionou você em <strong>${esc(n.demandName)}</strong>` +
+        (n.commentText ? `<div class="notif-comment">${esc(n.commentText)}</div>` : '');
+    case 'thread_reply':
+      return `<strong>${esc(fromName)}</strong> respondeu uma thread em que você participa em <strong>${esc(n.demandName)}</strong>` +
         (n.commentText ? `<div class="notif-comment">${esc(n.commentText)}</div>` : '');
     case 'reaction':
       return `<strong>${esc(fromName)}</strong> reagiu ${esc(n.emoji || '')} ao seu comentário em <strong>${esc(n.demandName)}</strong>` +

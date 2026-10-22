@@ -4882,68 +4882,6 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 .dash-greeting-sub b { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
 .dash-greeting-sep { color: var(--hairline); margin: 0 4px; }
 /* Novidades resumidas no Início (abaixo da saudação) — renderDashUpdates(). */
-/* Início › vínculo de e-mail (obrigatório até o prazo; não fecha).
-   Esquerda: o que fazer + passos; direita: contagem até o prazo. */
-.dash-email {
-  position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto;
-  margin: 0 0 24px; border: 1px solid var(--hairline); border-radius: 16px;
-  background: var(--surface-2); overflow: hidden;
-  animation: greetingIn .6s .04s cubic-bezier(.16,1,.3,1) both;
-}
-.dash-email[hidden] { display: none; }
-.dash-email::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 3px; background: var(--accent); }
-.dash-email.is-soon::before { background: var(--warn); }
-.dash-email.is-late::before { background: var(--danger); }
-.dash-email-body { display: flex; gap: 16px; padding: 20px 22px 20px 24px; min-width: 0; }
-.dash-email-ic {
-  width: 40px; height: 40px; border-radius: 12px; flex-shrink: 0; display: grid; place-items: center;
-  background: var(--accent-dim); color: var(--accent-text);
-}
-.dash-email-ic svg { width: 20px; height: 20px; }
-.dash-email-main { min-width: 0; flex: 1; }
-.dash-email-title { font-size: 17px; font-weight: 700; letter-spacing: -0.015em; color: var(--text); line-height: 1.3; }
-.dash-email-sub { margin: 4px 0 0; font-size: 13.5px; line-height: 1.55; color: var(--text-dim); max-width: 70ch; }
-.dash-email-sub b { color: var(--text); font-weight: 600; overflow-wrap: anywhere; }
-.dash-email-steps { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 16px 0 18px; padding: 0; list-style: none; }
-.dash-email-step { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 500; color: var(--text-muted); white-space: nowrap; }
-.dash-email-step-n {
-  width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; flex-shrink: 0;
-  border: 1px solid var(--hairline-strong); font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums;
-}
-.dash-email-step-n svg { width: 12px; height: 12px; }
-.dash-email-step.is-active { color: var(--text); }
-.dash-email-step.is-active .dash-email-step-n { background: var(--accent); border-color: var(--accent); color: #fff; }
-.dash-email-step.is-done .dash-email-step-n { background: var(--success-dim); border-color: transparent; color: var(--success); }
-.dash-email-step-sep { width: 22px; height: 1px; background: var(--hairline-strong); flex-shrink: 0; }
-.dash-email-actions { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-.dash-email-actions .btn { gap: 6px; }
-.dash-email-link {
-  border: 0; background: none; padding: 0; font: inherit; font-size: 13px; color: var(--text-dim); cursor: pointer;
-  text-decoration: underline; text-decoration-color: var(--hairline-strong); text-underline-offset: 3px;
-}
-.dash-email-link:hover { color: var(--text); text-decoration-color: currentColor; }
-.dash-email-clock {
-  min-width: 190px; padding: 20px 24px; display: flex; flex-direction: column; justify-content: center;
-  border-left: 1px solid var(--hairline); background: color-mix(in oklab, var(--accent) 5%, transparent);
-}
-.dash-email-clock-num { font-size: 36px; font-weight: 700; letter-spacing: -0.04em; line-height: 1; color: var(--text); font-variant-numeric: tabular-nums; }
-.dash-email-clock-unit { margin-left: 6px; font-size: 14px; font-weight: 600; letter-spacing: 0; color: var(--text-dim); }
-.dash-email-clock-when { margin-top: 10px; font-size: 12.5px; font-weight: 600; color: var(--text); }
-.dash-email-clock-note { margin-top: 2px; font-size: 12px; line-height: 1.45; color: var(--text-muted); }
-.dash-email.is-soon .dash-email-clock { background: color-mix(in oklab, var(--warn) 7%, transparent); }
-.dash-email.is-soon .dash-email-clock-num { color: var(--warn); }
-.dash-email.is-late .dash-email-clock-num { color: var(--danger); font-size: 22px; letter-spacing: -0.02em; }
-@media (max-width: 860px) {
-  .dash-email { grid-template-columns: minmax(0, 1fr); }
-  .dash-email-clock { border-left: 0; border-top: 1px solid var(--hairline); flex-direction: row; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; padding: 14px 22px 14px 24px; min-width: 0; }
-  .dash-email-clock-num { font-size: 24px; }
-  .dash-email-clock-when, .dash-email-clock-note { margin-top: 0; }
-}
-@media (max-width: 520px) {
-  .dash-email-body { flex-direction: column; gap: 12px; }
-  .dash-email-step-sep { display: none; }
-}
-
 .us-email { margin-top: 2px; font-size: 11.5px; color: var(--text-muted); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .us-email.is-missing { display: inline-flex; align-items: center; gap: 4px; color: var(--warn); font-weight: 550; }
 .us-email.is-missing svg { width: 12px; height: 12px; }
@@ -7722,6 +7660,114 @@ body.is-fullpage #page-notfound.active {
 }
 .chat-comment:first-child { border-top: 0; padding-top: 4px; }
 .chat-comment .avatar-sm { flex-shrink: 0; }
+/* Threads estilo fórum: a linha sai de baixo do avatar da raiz e desce
+   pelas respostas; cada resposta entra com um cotovelo que encosta no avatar, na altura do centro dele. Avatar 22px,
+   gap 8px → texto em 30px. Sem divisória: as threads se separam pelo espaço.
+   Espaço entre itens da thread é sempre padding (margem quebraria a linha).
+   Cor da linha opaca: os traços se sobrepõem nas junções e uma cor
+   translúcida deixaria esses pontos mais escuros. */
+.chat-thread { --thread-line: color-mix(in oklab, var(--text-muted) 38%, var(--bg)); position: relative; margin-top: 30px; }
+.chat-thread:first-child { margin-top: 0; }
+.chat-thread .chat-comment { padding: 4px 0 2px; border-top: 0; }
+.chat-thread .chat-comment-head { gap: 8px; }
+.chat-thread .chat-comment-author { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-thread .chat-comment-time { margin-left: -4px; flex-shrink: 0; }
+.chat-thread .chat-comment-body { padding-left: 30px; }
+.chat-thread.has-replies > .chat-comment::after {
+  content: ''; position: absolute; left: 10px; top: 30px; bottom: 0;
+  width: 2px; border-radius: 1px; background: var(--thread-line); transition: background .15s;
+}
+/* Clicar na linha recolhe (como no YouTube): faixa invisível sobre a linha,
+   do avatar da raiz até o fim da thread. Passar o mouse acende a thread toda. */
+.chat-thread:has(> .chat-thread-rail:hover), .chat-thread:has(> .chat-thread-rail:focus-visible) { --thread-line: var(--accent); }
+.chat-thread-rail {
+  position: absolute; z-index: 1; left: 1px; width: 20px; top: 30px; bottom: 0;
+  padding: 0; border: 0; background: none; cursor: pointer;
+}
+.chat-thread-rail:focus-visible { outline: none; }
+.chat-thread-replies { margin-left: 10px; display: flex; flex-direction: column; }
+.chat-thread-replies > * { position: relative; padding-left: 20px; --elbow-y: 24px; }
+.chat-thread-replies > .chat-comment { padding: 10px 0 2px 20px; }
+.chat-thread-replies > *::before {
+  content: ''; position: absolute; left: 0; top: 0; width: 20px; height: var(--elbow-y);
+  border-left: 2px solid var(--thread-line); border-bottom: 2px solid var(--thread-line);
+  border-bottom-left-radius: 12px; box-sizing: border-box; transition: border-color .15s;
+}
+.chat-thread-replies > *:not(:last-child)::after {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--thread-line); transition: background .15s;
+}
+.chat-thread-replies > .chat-compose-wrap { margin: 0; padding-top: 8px; padding-bottom: 4px; --elbow-y: 26px; }
+/* Recolhida: resumo em pílula (quem respondeu + quantas + quando). */
+.chat-thread-folded-row { padding-top: 8px; --elbow-y: 24px; }
+.chat-thread-folded {
+  display: inline-flex; align-items: center; gap: 8px; max-width: 100%;
+  height: 30px; padding: 0 10px 0 4px; border: 1px solid var(--hairline); border-radius: 999px;
+  background: var(--surface); color: var(--text-dim); font: inherit; font-size: 12.5px; cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.chat-thread-folded:hover { border-color: var(--accent); background: var(--surface-2); }
+.chat-thread-folded-avs { display: inline-flex; }
+.chat-thread-folded-avs .avatar { box-shadow: 0 0 0 2px var(--surface) !important; }
+.chat-thread-folded-avs .avatar + .avatar { margin-left: -6px; }
+.chat-thread-folded-n { color: var(--text); font-weight: 600; white-space: nowrap; }
+.chat-thread-folded-when { color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-thread-folded svg { color: var(--text-muted); flex-shrink: 0; }
+/* "↪ Fulano": a quem a resposta foi direcionada. */
+.chat-comment-replyto {
+  display: inline-flex; align-items: center; gap: 3px; min-width: 0; max-width: 45%;
+  margin-left: -2px; padding: 1px 5px; border: 0; border-radius: var(--radius-sm);
+  background: none; color: var(--text-muted); font: inherit; font-size: 12px; font-weight: 500; cursor: pointer;
+}
+.chat-comment-replyto span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-comment-replyto svg { flex-shrink: 0; }
+.chat-comment-replyto:hover { color: var(--accent-text); background: var(--surface-2); }
+/* Barra de ações embaixo do texto: reações + reagir + Responder. */
+.chat-comment-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 2px;
+  padding-left: 24px; margin-top: 2px; min-height: 28px;
+}
+.chat-comment-bar .reaction-chip { margin-right: 2px; }
+.chat-comment-bar .chat-reaction-picker { right: auto; left: calc(100% + 4px); }
+.chat-comment-reply {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 8px; border: 0; border-radius: 999px;
+  background: none; color: var(--text-muted); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.chat-comment-reply:hover { color: var(--text); background: var(--surface-2); }
+.chat-comment:has(.chat-compose-editing) .chat-comment-bar { display: none; }
+@media (hover: hover) {
+  .chat-thread .chat-comment-actions { opacity: 0; transition: opacity .12s; }
+  .chat-thread .chat-comment:hover > .chat-comment-head .chat-comment-actions,
+  .chat-thread .chat-comment-actions:focus-within,
+  .chat-thread .chat-comment-actions:has(.chat-comment-menu.open) { opacity: 1; }
+}
+.chat-comment-removed-av {
+  width: 22px; height: 22px; flex-shrink: 0; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface-2); color: var(--text-muted);
+}
+.chat-comment-removed { font-size: 13px; font-style: italic; color: var(--text-muted); }
+.chat-compose-replying {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 8px 7px 12px; border-bottom: 1px solid var(--hairline);
+  font-size: 12.5px; color: var(--text-dim);
+}
+.chat-compose-replying strong { color: var(--text); font-weight: 600; }
+.chat-compose-replying span { flex: 1; min-width: 0; }
+.chat-compose-replying-x {
+  display: inline-flex; padding: 4px; border: 0; border-radius: var(--radius-sm);
+  background: none; color: var(--text-muted); cursor: pointer;
+}
+.chat-compose-replying-x:hover { color: var(--text); background: var(--surface-2); }
+.chat-compose-stub {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  margin-bottom: 20px; padding: 0; border: 0; background: none; font: inherit; cursor: text; text-align: left;
+}
+.chat-compose-stub > span {
+  flex: 1; padding: 10px 12px; border: 1px solid var(--hairline); border-radius: 10px;
+  font-size: 13.5px; color: var(--text-muted);
+}
+.chat-compose-stub:hover > span { border-color: var(--hairline-strong); }
 .chat-comment-body {
   padding-left: 42px;  /* alinha texto com o nome (avatar 32 + gap 10) */
   display: flex; flex-direction: column; gap: 4px;

@@ -229,6 +229,13 @@ function notification(type, ctx) {
       extra = commentBlock(who, commentText);
       preheader = String(commentText || '').slice(0, 120);
       break;
+    case 'thread_reply':
+      subject = t('[reWork] Nova resposta em: {0}', demand.name);
+      tag = t('Resposta'); title = who ? t('{0} respondeu numa thread sua', escHtml(who)) : t('Nova resposta numa thread sua');
+      lead = t('Você participa desta conversa.');
+      extra = commentBlock(who, commentText);
+      preheader = `${who ? who + ': ' : ''}${String(commentText || '').slice(0, 120)}`;
+      break;
     case 'watch_stage':
       subject = t('[reWork] Etapa avançou (você observa): {0}', demand.name);
       tag = t('Observando'); tone = 'neutro'; title = t('Uma demanda que você observa avançou');
@@ -622,6 +629,7 @@ function previewSamples(baseUrl, me) {
     { key: 'assigned', label: 'Atribuído como responsável', build: () => notification('assigned', { ...ctx, ...st('Criação', '#7A00FF') }) },
     { key: 'stage_assigned', label: 'Nova etapa pra você', build: () => notification('stage_assigned', { ...ctx, ...st('Revisão de texto', '#f5a718') }) },
     { key: 'mention', label: 'Menção em comentário', build: () => notification('mention', { ...ctx, ...st('Criação', '#7A00FF'), commentText: '@' + name.split(' ')[0] + ' ' + comment }) },
+    { key: 'thread_reply', label: 'Resposta numa thread', build: () => notification('thread_reply', { ...ctx, ...st('Criação', '#7A00FF'), commentText: comment }) },
     { key: 'watch_stage', label: 'Etapa avançou (observando)', build: () => notification('watch_stage', { ...ctx, ...st('Aprovação do cliente', '#16a34a') }) },
     { key: 'watch_comment', label: 'Novo comentário (observando)', build: () => notification('watch_comment', { ...ctx, ...st('Criação', '#7A00FF'), commentText: comment }) },
     { key: 'reminder', label: 'Lembrete com observação', build: () => notification('reminder', { ...ctx, ...st('Veiculação', '#e7000b'), trigger: null, commentText: 'Cobrar retorno do cliente sobre a dobra de depoimentos' }) },
