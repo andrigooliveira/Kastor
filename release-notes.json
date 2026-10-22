@@ -1,5 +1,16 @@
 [
   {
+    "id": "2026-10-22-entregas",
+    "date": "2026-10-22",
+    "title": "Calendário das suas entregas no Início",
+    "highlights": [
+      "No Início, embaixo da Agenda, o novo bloco Entregas mostra o calendário do mês com quantas etapas você entregou em cada dia. Quanto mais forte o verde, mais entregas.",
+      "Cada quadrado tem o número do dia, com as colunas de segunda a domingo, para ficar fácil saber que dia é qual. O dia de hoje aparece contornado.",
+      "Use as setas para ver os meses anteriores. O histórico vem desde o começo do uso, então os meses passados já aparecem preenchidos.",
+      "Clique num dia para ver o que foi entregue: a demanda, a etapa e se foi no prazo ou com quantos dias de atraso."
+    ]
+  },
+  {
     "id": "2026-10-22-analises",
     "date": "2026-10-22",
     "highlight": true,

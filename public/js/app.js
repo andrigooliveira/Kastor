@@ -11103,6 +11103,7 @@ function renderDashboard() {
   renderDashFocus(mineActive);
   renderDashHoursToday();
   renderDashForecast();
+  renderDashDeliveries();
   renderDashActivityFeed(mineActive);
   renderDashBlocked(mineActive);
   renderDashMentions();
@@ -11685,6 +11686,105 @@ function renderDashForecast() {
       <div class="dash-fc-cap">${cap}</div>
     </div>`;
   }).join('');
+}
+/* ─── Entregas (Início, embaixo da Agenda) ───
+   Etapas que a pessoa entregou por dia: passagem do stageHistory numa etapa
+   dela (não a de conclusão) que terminou naquele dia. Em vez da grade corrida
+   do GitHub, o calendário do mês (seg→dom, número do dia em cada quadrado),
+   pra ficar óbvio que dia é qual; as setas andam de mês em mês. */
+let _dashDelivOffset = 0;   // 0 = mês atual; -1 = mês passado…
+let _dashDelivByDay = null; // ymd → [{ d, stage, due }] pro modal do dia
+function dashDelivNav(step) {
+  _dashDelivOffset = Math.min(0, _dashDelivOffset + step);
+  renderDashDeliveries();
+}
+function _dashDeliveriesMap() {
+  const meId = me?.id;
+  const map = new Map();
+  dashScopedDemands().forEach(d => {
+    if (d.deletedAt) return;
+    const flow = flowById(d.flowId);
+    const sh = d.stageHistory || [];
+    sh.forEach((p, i) => {
+      const st = flow?.stages.find(x => x.id === p.stageId);
+      if (!st || st.done) return;
+      const owner = resolveStageOwnerId(d, st) || (i === sh.length - 1 ? d.ownerId : null);
+      if (owner !== meId) return;
+      const end = p.leftAt || (i === sh.length - 1 && d.completedAt) || null;
+      if (!end) return;
+      const y = _ymdLocal(new Date(end));
+      if (!map.has(y)) map.set(y, []);
+      map.get(y).push({ d, stage: st.label || '—', due: p.dueDate || null });
+    });
+  });
+  return map;
+}
+const _dashDelivLevel = n => n <= 0 ? 0 : n === 1 ? 1 : n <= 3 ? 2 : n <= 6 ? 3 : 4;
+function renderDashDeliveries() {
+  const el = $('dash-deliveries');
+  if (!el || !me?.id) return;
+  const map = _dashDeliveriesMap();
+  _dashDelivByDay = map;
+  const today = todayStr();
+  const now = new Date();
+  const m = new Date(now.getFullYear(), now.getMonth() + _dashDelivOffset, 1);
+  const pad = n => String(n).padStart(2, '0');
+  // Iniciais dos dias a partir de uma segunda qualquer (05/01/2026), no idioma da tela.
+  const wd = [...Array(7)].map((_, i) => new Date(2026, 0, 5 + i).toLocaleDateString(LOCALE, { weekday: 'short' }).replace('.', ''));
+  {
+    const y = m.getFullYear(), mo = m.getMonth();
+    const nDays = new Date(y, mo + 1, 0).getDate();
+    const lead = (m.getDay() + 6) % 7; // segunda = 0
+    let cells = '<span class="dlv-c is-blank"></span>'.repeat(lead);
+    let mTotal = 0;
+    for (let day = 1; day <= nDays; day++) {
+      const k = `${y}-${pad(mo + 1)}-${pad(day)}`;
+      const n = (map.get(k) || []).length;
+      mTotal += n;
+      const dow = new Date(y, mo, day).getDay();
+      const cls = ['dlv-c', `l${_dashDelivLevel(n)}`, dow === 0 || dow === 6 ? 'is-wk' : '', k === today ? 'is-today' : '', k > today ? 'is-fut' : ''].filter(Boolean).join(' ');
+      const tip = `${fmtDM(day, mo + 1)} · ${n} ${n === 1 ? 'etapa entregue' : 'etapas entregues'}`;
+      cells += `<span class="${cls}" title="${tip}"${n ? ` onclick="openDashDeliveries('${k}')"` : ''}>${day}</span>`;
+    }
+    const name = m.toLocaleDateString(LOCALE, { month: 'long', year: 'numeric' });
+    const sub = $('dash-deliv-sub');
+    if (sub) sub.textContent = mTotal ? `${mTotal} ${mTotal === 1 ? 'etapa entregue' : 'etapas entregues'} no mês` : 'nenhuma etapa entregue no mês';
+    el.innerHTML = `<div class="dlv-m">
+      <div class="dlv-mh">
+        <button type="button" class="dlv-btn" onclick="dashDelivNav(-1)" title="Mês anterior"><i data-lucide="chevron-left" class="ic-xs"></i></button>
+        <span class="dlv-name">${esc(name.charAt(0).toUpperCase() + name.slice(1))}</span>
+        <button type="button" class="dlv-btn" onclick="dashDelivNav(1)" title="Próximo mês"${_dashDelivOffset === 0 ? ' disabled' : ''}><i data-lucide="chevron-right" class="ic-xs"></i></button>
+        ${_dashDelivOffset ? `<button type="button" class="dlv-now" onclick="dashDelivNav(${-_dashDelivOffset})">Mês atual</button>` : ''}
+        <span class="dlv-sp"></span>
+        <div class="dlv-legend">Menos ${[0, 1, 2, 3, 4].map(l => `<span class="dlv-c l${l}"></span>`).join('')} Mais</div>
+      </div>
+      <div class="dlv-g dlv-wd">${wd.map(w => `<span>${esc(w)}</span>`).join('')}</div>
+      <div class="dlv-g">${cells}</div>
+    </div>`;
+  }
+  paintIcons(el);
+}
+function openDashDeliveries(ymd) {
+  const items = (_dashDelivByDay && _dashDelivByDay.get(ymd)) || [];
+  if (!items.length) return;
+  const label = new Date(ymd + 'T12:00:00').toLocaleDateString(LOCALE, { weekday: 'long', day: '2-digit', month: '2-digit' }).replace('-feira', '');
+  const dd = (a, b) => Math.round((new Date(a + 'T12:00:00') - new Date(b + 'T12:00:00')) / 864e5);
+  const rows = items.slice().sort((a, b) => norm(a.d.name).localeCompare(norm(b.d.name))).map(it => {
+    const p = projectById(it.d.projectId);
+    const late = it.due && ymd > it.due ? dd(ymd, it.due) : 0;
+    const sit = !it.due ? '<span class="fc-td-past">sem prazo</span>'
+      : late ? `<span class="fc-td-late">${late} dia${late === 1 ? '' : 's'} de atraso</span>`
+      : '<span class="fc-td-past">no prazo</span>';
+    return `<tr onclick="closeModal('dash-more-modal'); showDetail('${esc(it.d.id)}')">
+      <td class="fc-td-name">${esc(it.d.name)}${p ? `<div class="fc-td-sub">${esc(p.name)}</div>` : ''}</td>
+      <td>${esc(it.stage)}</td>
+      <td style="text-align:center">${sit}</td>
+    </tr>`;
+  }).join('');
+  openDashMore(`Entregas — ${label}`, `<table class="forecast-table">
+    <thead><tr><th>Demanda</th><th>Etapa entregue</th><th style="text-align:center">Situação</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`);
 }
 // Modal com a lista de demandas previstas pra um dia do quadro.
 function openForecastDay(ymdStr) {

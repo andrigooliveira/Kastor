@@ -6225,5 +6225,20 @@
 "{0} entregue com atraso": "{0} delivered late",
 "{0} entregues com atraso": "{0} delivered late",
 "ainda em aberto · {0} dia de atraso": "still open · {0} day late",
-"ainda em aberto · {0} dias de atraso": "still open · {0} days late"
+"ainda em aberto · {0} dias de atraso": "still open · {0} days late",
+"Entregas": "Deliveries",
+"{0} etapa entregue em 3 meses": "{0} stage delivered in 3 months",
+"{0} etapas entregues em 3 meses": "{0} stages delivered in 3 months",
+"nenhuma etapa entregue em 3 meses": "no stages delivered in 3 months",
+"{0} · {1} etapa entregue": "{0} · {1} stage delivered",
+"{0} · {1} etapas entregues": "{0} · {1} stages delivered",
+"3 meses antes": "3 months earlier",
+"3 meses depois": "3 months later",
+"Menos": "Less",
+"Entregas — {0}": "Deliveries — {0}",
+"Etapa entregue": "Stage delivered",
+"{0} etapa entregue no mês": "{0} stage delivered this month",
+"{0} etapas entregues no mês": "{0} stages delivered this month",
+"nenhuma etapa entregue no mês": "no stages delivered this month",
+"Mês atual": "Current month"
 });
