@@ -5232,7 +5232,7 @@ const TOUR_STEPS = [
     target: '#an-tab-rhythm',
     position: 'auto',
     title: 'Análises — Ritmo',
-    body: 'Burndown semanal por equipe. A linha ideal segue os prazos combinados — se a linha real fica acima dela, a equipe está atrasada. Leitura assertiva do ritmo da semana.'
+    body: 'Os prazos que vencem na semana, por equipe: quanto foi entregue em dia, com atraso e o que venceu e segue aberto. Clique numa equipe pra ver as demandas.'
   },
   // 13. Clientes
   {
@@ -10400,7 +10400,7 @@ const DEVTOOLS_GROUPS = [
     hint: 'A entrada no menu abre a aba default — links diretos fixam a aba.',
     links: [
       { label: 'Análises · Capacidade',    path: '/analytics/capacity', icon: 'gauge',       desc: 'Aba de capacidade da página Análises.' },
-      { label: 'Análises · Ritmo',         path: '/analytics/rhythm',   icon: 'activity',    desc: 'Burndown por equipe e resumo semanal.' },
+      { label: 'Análises · Ritmo',         path: '/analytics/rhythm',   icon: 'activity',    desc: 'Prazos da semana por equipe e resumo.' },
       { label: 'Análises · Relatórios',    path: '/analytics/reports',  icon: 'file-bar-chart', desc: 'Aba de relatórios da página Análises.' },
       { label: 'Recorrentes · Demandas',   path: '/recurring/demands',  icon: 'refresh-ccw', desc: 'Aba de demandas recorrentes.' },
       { label: 'Recorrentes · Listas',     path: '/recurring/lists',    icon: 'list-checks', desc: 'Aba de listas recorrentes.' },
@@ -11184,9 +11184,9 @@ function _dashMyDemands() {
   });
 }
 /* Toggle Previstas/Prazos do bloco "Demandas previstas". */
-let _dashForecastMode = 'previstas'; // 'previstas' | 'prazos'
+let _dashForecastMode = 'prazos'; // 'prazos' (padrão) | 'previstas'
 function setDashForecastMode(m) {
-  const next = (m === 'prazos') ? 'prazos' : 'previstas';
+  const next = (m === 'previstas') ? 'previstas' : 'prazos';
   if (next === _dashForecastMode) return;
   _dashForecastMode = next;
   document.querySelectorAll('#dash-forecast-toggle .dash-toggle-btn').forEach(btn => {
@@ -11503,14 +11503,14 @@ function forecastAddDays(ymdStr, days) {
   if (dow === 0) base.setDate(base.getDate() + 1);
   return base.toISOString().slice(0, 10);
 }
-// Os próximos 14 dias ÚTEIS (pula fim de semana), a partir de hoje.
+// Duas linhas: seg→sex da semana atual (os dias que já passaram ficam, com o
+// histórico) e seg→sex da próxima. Vira a semana na segunda.
 function dashForecastDays() {
+  const mon = new Date(); mon.setHours(0,0,0,0);
+  mon.setDate(mon.getDate() - (mon.getDay() + 6) % 7);
   const days = [];
-  const d = new Date(); d.setHours(0,0,0,0);
-  while (days.length < 14) {
-    const dow = d.getDay();
-    if (dow !== 0 && dow !== 6) days.push(new Date(d));
-    d.setDate(d.getDate() + 1);
+  for (const w of [0, 7]) for (let i = 0; i < 5; i++) {
+    const d = new Date(mon); d.setDate(mon.getDate() + w + i); days.push(d);
   }
   return days;
 }
@@ -11527,7 +11527,8 @@ function forecastLevel(n) {
      (o atraso empurra a previsão pra frente).
    - Soma o SLA (deadlineDays) só das etapas ENTRE a atual e a do user — entrega
      antecipada não adianta a previsão (SLAs independentes). */
-// Chegada por usuário numa passada só: userId -> { ymd, stageLabel, remaining }
+// Chegada por usuário numa passada só: userId -> { ymd, stageLabel, remaining,
+// target, targetColor } (stageLabel = etapa atual; target = etapa que chega à pessoa)
 // pra a PRIMEIRA etapa futura que cada pessoa é dona. Base do quadro do dashboard
 // (1 user) E do mapa de prazos em modo "previstas" (todos os users de uma vez).
 function forecastArrivalsByUser(d) {
@@ -11547,7 +11548,7 @@ function forecastArrivalsByUser(d) {
   for (let i = curIdx + 1; i < stages.length; i++) {
     const owner = resolveStageOwnerId(d, stages[i]);
     if (owner && !out.has(owner)) {
-      out.set(owner, { ymd: cursor, stageLabel: curLabel, remaining: i - curIdx });
+      out.set(owner, { ymd: cursor, stageLabel: curLabel, remaining: i - curIdx, target: stages[i].label || '—', targetColor: stages[i].color || '' });
     }
     cursor = forecastAddDays(cursor, stages[i].deadlineDays || 0);
   }
@@ -11565,20 +11566,59 @@ function renderDashForecast() {
   if (!meId) return;
   const mode = _dashForecastMode;
   const days = dashForecastDays();
-  const ymd = (d) => d.toISOString().slice(0, 10);
-  const byDay = new Map(days.map(d => [ymd(d), []]));
+  const keys = days.map(d => _ymdLocal(d));
+  const byDay = new Map(keys.map(k => [k, []]));
   _forecastByDay = byDay;
+  const todayK = todayStr();
+  // Hoje no fim de semana não tem célula: o que é "pra agora" cai no próximo dia útil do quadro.
+  const nowK = keys.find(k => k >= todayK) || null;
+
+  // Histórico (dias até hoje): o que de fato aconteceu, lido do stageHistory.
+  // Só etapas que são da pessoa (dono da etapa) e que não são de conclusão.
+  const histFrom = keys[0], histTo = todayK;
+  dashScopedDemands().forEach(d => {
+    if (d.deletedAt) return;
+    const flow = flowById(d.flowId);
+    const sh = d.stageHistory || [];
+    const doneY = d.completedAt ? _ymdLocal(new Date(d.completedAt)) : null;
+    sh.forEach((p, i) => {
+      const st = flow?.stages.find(x => x.id === p.stageId);
+      if (!st || st.done) return;
+      // Dono da passagem: o responsável da etapa; sem ele, na etapa atual vale o dono da demanda.
+      const owner = resolveStageOwnerId(d, st) || (i === sh.length - 1 ? d.ownerId : null);
+      if (owner !== meId) return;
+      if (mode === 'prazos') {
+        // Todo prazo de etapa que venceu num dia que já passou fica nesse dia,
+        // com o que aconteceu: entregue no prazo, com atraso, ou ainda aberto.
+        // O que segue aberto TAMBÉM conta hoje (é trabalho pra agora, abaixo).
+        if (!p.dueDate || p.dueDate < histFrom || p.dueDate >= todayK) return;
+        const leftY = p.leftAt ? _ymdLocal(new Date(p.leftAt)) : (i === sh.length - 1 && doneY) || null;
+        const past = !leftY ? 'open' : leftY <= p.dueDate ? 'ok' : 'late';
+        byDay.get(p.dueDate)?.push({ d, stageLabel: st.label || '—', remaining: 1, due: p.dueDate, past, leftY });
+      } else {
+        // Chegou na etapa da pessoa naquele dia.
+        if (!p.enteredAt) return;
+        const inY = _ymdLocal(new Date(p.enteredAt));
+        if (inY < histFrom || inY > histTo) return;
+        byDay.get(inY)?.push({ d, stageLabel: st.label || '—', remaining: 0, past: 'arrived' });
+      }
+    });
+  });
+
   if (mode === 'prazos') {
     // Prazos: minhas demandas em aberto agrupadas pelo prazo efetivo (etapa atual).
+    // Atrasada entra no dia de hoje: é trabalho pra agora, não pro dia que venceu.
+    const nowBucket = nowK ? byDay.get(nowK) : null;
     _dashMyDemands().forEach(d => {
       if (isDone(d)) return;
       const due = effDue(d);
       if (!due) return;
-      const bucket = byDay.get(due);
+      const late = isLate(d);
+      const bucket = late ? nowBucket : byDay.get(due);
       if (!bucket) return;
       const stages = activeStagesOf(d);
       const cur = stages.find(s => s.id === d.status);
-      bucket.push({ d, stageLabel: cur?.label || '—', remaining: 1 });
+      bucket.push({ d, stageLabel: cur?.label || '—', remaining: 1, due, late });
     });
   } else {
     // Previstas: quando a demanda vai CHEGAR na etapa do usuário (via SLA).
@@ -11587,35 +11627,62 @@ function renderDashForecast() {
       const fc = forecastArrivalFor(d, meId);
       if (!fc) return;
       const bucket = byDay.get(fc.ymd);
-      if (!bucket) return; // fora da janela de 14 dias úteis → não mostra
+      if (!bucket) return; // fora das duas semanas → não mostra
       bucket.push({ d, stageLabel: fc.stageLabel, remaining: fc.remaining });
     });
   }
-  const total = [...byDay.values()].reduce((s, a) => s + a.length, 0);
+
+  const all = [...byDay.values()].flat();
+  const ahead = all.filter(x => !x.past).length;
   if (sub) {
     if (mode === 'prazos') {
-      sub.textContent = total
-        ? `${total} demanda${total === 1 ? '' : 's'} sua${total === 1 ? '' : 's'} com prazo nos próximos 14 dias úteis`
-        : 'Nenhuma demanda sua com prazo nos próximos 14 dias úteis';
+      const nLate = all.filter(x => x.late).length;
+      sub.textContent = ahead
+        ? `${ahead} demanda${ahead === 1 ? '' : 's'} sua${ahead === 1 ? '' : 's'} com prazo nesta semana e na próxima${nLate ? ` (${nLate} atrasada${nLate === 1 ? '' : 's'}, contando hoje)` : ''}`
+        : 'Nenhuma demanda sua com prazo nesta semana e na próxima';
     } else {
-      sub.textContent = total
-        ? `${total} demanda${total === 1 ? '' : 's'} prevista${total === 1 ? '' : 's'} chegando pra você nos próximos 14 dias úteis`
-        : 'Nenhuma demanda prevista pra chegar pra você nos próximos 14 dias úteis';
+      sub.textContent = ahead
+        ? `${ahead} demanda${ahead === 1 ? '' : 's'} prevista${ahead === 1 ? '' : 's'} chegando pra você nesta semana e na próxima`
+        : 'Nenhuma demanda prevista pra chegar pra você nesta semana e na próxima';
     }
   }
 
-  const todayK = todayStr();
-  el.innerHTML = days.map((dt) => {
-    const k = ymd(dt);
-    const n = byDay.get(k).length;
+  el.innerHTML = days.map((dt, i) => {
+    const k = keys[i];
+    const list = byDay.get(k);
+    const n = list.length;
+    const nLate = list.filter(x => x.late).length;
+    const nPast = list.filter(x => x.past).length;
     const lvl = forecastLevel(n);
     const isToday = k === todayK;
+    const isPast = k < todayK;
     const wd = dt.toLocaleDateString(LOCALE, { weekday: 'short' }).replace('.', '').toUpperCase();
-    return `<div class="dash-forecast-cell fc-${lvl} ${isToday ? 'is-today' : ''} ${n ? '' : 'is-empty'}"
-                 ${n ? `onclick="openForecastDay('${k}')"` : ''}>
-      <div class="dash-forecast-day">${isToday ? 'HOJE' : esc(wd)}</div>
-      <div class="dash-forecast-date">${fmtDM(dt.getDate(), dt.getMonth() + 1)}</div>
-      <div class="dash-forecast-count">${n || ''}</div>
+    const tip = [
+      nLate ? `${nLate} atrasada${nLate === 1 ? '' : 's'}` : '',
+      n - nLate - nPast ? `${n - nLate - nPast} ${mode === 'prazos' ? 'com prazo' : 'prevista' + (n - nLate - nPast === 1 ? '' : 's')}` : '',
+      ...(mode === 'prazos'
+        ? [['ok', 'entregue no prazo', 'entregues no prazo'], ['late', 'entregue com atraso', 'entregues com atraso'], ['open', 'ainda em aberto', 'ainda em aberto']]
+            .map(([s, one, many]) => { const c = list.filter(x => x.past === s).length; return c ? `${c} ${c === 1 ? one : many}` : ''; })
+        : [nPast ? `${nPast} ${nPast === 1 ? 'chegou' : 'chegaram'}` : '']),
+    ].filter(Boolean).join(' + ');
+    // Legenda embaixo do número: o que pesa mais no dia (atrasada > o que já
+    // aconteceu > prazo/prevista). A linha existe mesmo vazia: a célula não muda de tamanho.
+    const nAhead = n - nLate - nPast;
+    const nOpen = list.filter(x => x.past === 'open').length;
+    const cap = nLate ? `${nLate} atrasada${nLate === 1 ? '' : 's'}`
+      : nOpen ? `${nOpen} ainda em aberto`
+      : nPast && !nAhead ? (mode === 'prazos' ? `entregue${nPast === 1 ? '' : 's'}` : (nPast === 1 ? 'chegou' : 'chegaram'))
+      : n ? (mode === 'prazos' ? (n === 1 ? 'prazo' : 'prazos') : (n === 1 ? 'prevista' : 'previstas'))
+      : '';
+    const week = i === 0 ? '<div class="dash-fc-week">Esta semana</div>' : i === 5 ? '<div class="dash-fc-week">Próxima semana</div>' : '';
+    return `${week}<div class="dash-forecast-cell fc-${lvl} ${isToday ? 'is-today' : ''} ${isPast ? 'is-past' : ''} ${n ? '' : 'is-empty'} ${nLate ? 'has-late' : ''}"
+                 ${tip ? `title="${tip}"` : ''} ${n ? `onclick="openForecastDay('${k}')"` : ''}>
+      <div class="dash-fc-top">
+        <span class="dash-forecast-day">${isToday ? 'Hoje' : esc(wd)}</span>
+        <span class="dash-forecast-date">${fmtDM(dt.getDate(), dt.getMonth() + 1)}</span>
+      </div>
+      <div class="dash-forecast-count">${n || '–'}</div>
+      <div class="dash-fc-cap">${cap}</div>
     </div>`;
   }).join('');
 }
@@ -11627,24 +11694,41 @@ function openForecastDay(ymdStr) {
   const dt = new Date(ymdStr + 'T12:00:00');
   const label = dt.toLocaleDateString(LOCALE, { weekday: 'long', day: '2-digit', month: '2-digit' }).replace('-feira', '');
   const titleEl = $('forecast-modal-title');
-  if (titleEl) titleEl.textContent = 'Demandas previstas — ' + label;
+  const prazos = _dashForecastMode === 'prazos';
+  if (titleEl) titleEl.textContent = (prazos ? 'Prazos — ' : 'Demandas previstas — ') + label;
+  const today = todayStr();
   const rows = items.slice()
-    .sort((a, b) => (a.remaining - b.remaining) || norm(a.d.name).localeCompare(norm(b.d.name)))
+    .sort(prazos
+      ? (a, b) => (!!b.late - !!a.late) || (!!a.past - !!b.past) || (a.due || '').localeCompare(b.due || '') || norm(a.d.name).localeCompare(norm(b.d.name))
+      : (a, b) => (!!a.past - !!b.past) || (a.remaining - b.remaining) || norm(a.d.name).localeCompare(norm(b.d.name)))
     .map(it => {
       const d = it.d;
       const p = projectById(d.projectId);
+      // Terceira coluna: atrasada (há quanto), no prazo, ou o que já aconteceu
+      // nos dias passados (entregue no prazo / com atraso, chegou).
+      const dd = (a, b) => Math.round((new Date(a + 'T12:00:00') - new Date(b + 'T12:00:00')) / 864e5);
+      const lateDays = it.late ? dd(today, it.due) : 0;
+      const pastLate = it.past === 'late' ? dd(it.leftY, it.due) : 0;
+      const openDays = it.past === 'open' ? dd(today, it.due) : 0;
+      const third = it.past === 'arrived' ? '<span class="fc-td-past">chegou</span>'
+        : it.past === 'open' ? `<span class="fc-td-late">ainda em aberto · ${openDays} dia${openDays === 1 ? '' : 's'} de atraso</span>`
+        : it.past === 'ok' ? '<span class="fc-td-past">entregue no prazo</span>'
+        : it.past === 'late' ? `<span class="fc-td-past">entregue com ${pastLate} dia${pastLate === 1 ? '' : 's'} de atraso</span>`
+        : !prazos ? it.remaining
+        : it.late ? `<span class="fc-td-late">${lateDays} dia${lateDays === 1 ? '' : 's'} de atraso</span>`
+        : 'no prazo';
       return `<tr onclick="closeModal('forecast-modal'); showDetail('${esc(d.id)}')">
         <td class="fc-td-name">${esc(d.name)}${p ? `<div class="fc-td-sub" style="font-size:11px;font-weight:400">${esc(p.name)}</div>` : ''}</td>
         <td>${esc(it.stageLabel)}</td>
-        <td style="text-align:center">${it.remaining}</td>
+        <td style="text-align:center">${third}</td>
       </tr>`;
     }).join('');
   const body = $('forecast-modal-body');
   if (body) body.innerHTML = `
     <table class="forecast-table">
       <thead><tr>
-        <th>Demanda</th><th>Etapa atual</th>
-        <th style="text-align:center">Etapas restantes</th>
+        <th>Demanda</th><th>Etapa</th>
+        <th style="text-align:center">${prazos ? 'Situação' : 'Etapas restantes'}</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
@@ -12295,30 +12379,13 @@ function exportDemandsCsv() {
   toast(`${list.length} demanda${list.length === 1 ? '' : 's'} exportada${list.length === 1 ? '' : 's'}.`);
 }
 
-/* Exporta a visão atual de Capacidade (Equipe / Projeto / Cliente).
-   Extrai as métricas direto do DOM renderizado (classes .capacity-row,
-   .capacity-user-name, .capacity-stat) — garante que o CSV bate 1-pra-1
-   com o que o usuário vê. Cada .capacity-stat gera 2 colunas (valor + label). */
+/* Exporta a visão atual de Capacidade (Pessoas / Projetos / Clientes): a
+   tabela que está na tela — renderCapacityTeam/Aggregate guardam os dados em
+   _capExport ao desenhar, então o CSV bate 1-pra-1 com o que o usuário vê. */
 function exportCapacityCsv() {
-  const rowEls = document.querySelectorAll('#capacity-list .capacity-row');
-  if (!rowEls.length) { toast('Não há dados de capacidade pra exportar.', 'warn'); return; }
-  // Descobre quais métricas existem no primeiro row pra montar o header
-  const firstStats = rowEls[0].querySelectorAll('.capacity-stat');
-  const statLabels = [...firstStats].map(s => s.querySelector('.capacity-stat-label')?.textContent.trim() || 'métrica');
-  const isTeam = capacityView === 'team';
-  const nameCol = isTeam ? 'Usuário' : (capacityView === 'project' ? 'Projeto' : 'Cliente');
-  const subCol = isTeam ? 'Área' : 'Detalhe';
-  const headers = [nameCol, subCol, ...statLabels];
-  if (isTeam) headers.push('Utilização');
-  const rows = [];
-  rowEls.forEach(row => {
-    const name = row.querySelector('.capacity-user-name')?.textContent.trim() || '';
-    const sub = row.querySelector('.capacity-user-role')?.textContent.trim() || '';
-    const stats = [...row.querySelectorAll('.capacity-stat')].map(s => s.querySelector('.capacity-stat-value')?.textContent.trim() || '');
-    const util = row.querySelector('.capacity-bar-label')?.childNodes[0]?.textContent.trim() || '';
-    rows.push(isTeam ? [name, sub, ...stats, util] : [name, sub, ...stats]);
-  });
-  const ymd = new Date().toISOString().slice(0, 10);
+  if (!_capExport || !_capExport.rows.length) { toast('Não há dados de capacidade pra exportar.', 'warn'); return; }
+  const { headers, rows } = _capExport;
+  const ymd = todayStr();
   const label = { team: 'equipe', project: 'projetos', client: 'clientes' }[capacityView] || 'capacidade';
   downloadCsv(headers, rows, `rework-capacidade-${label}-${ymd}.csv`);
   toast(`${rows.length} linha${rows.length === 1 ? '' : 's'} exportada${rows.length === 1 ? '' : 's'}.`);
@@ -14654,6 +14721,58 @@ function setCapacityView(v) {
   if (currentPage === 'analytics') navPush(pageUrlFor('analytics'));
 }
 
+/* ─── ANÁLISES: peças comuns às três abas ───
+   Seletor de equipes (botão + lista num popover, no lugar da fileira de chips
+   que quebrava a barra de filtros) e a faixa de 4 números. Cada aba guarda o
+   próprio estado das equipes; aqui é só desenho e abre/fecha. */
+let _anSquadOpen = null; // id do host com a lista aberta
+function anSquadPickerHTML(hostId, list, selected, opts) {
+  const on = list.filter(w => selected.has(w.id));
+  const label = !on.length ? opts.emptyLabel : on.length === 1 ? on[0].name : `${on.length} equipes`;
+  const dots = (on.length ? on : list).slice(0, 5)
+    .map(w => `<span style="background:${esc(w.color || 'var(--accent)')}"></span>`).join('');
+  const items = list.map(w => `<button type="button" class="an-squad-item${selected.has(w.id) ? ' is-on' : ''}" onclick="${opts.toggleFn}('${esc(w.id)}')">
+      <span class="an-squad-check"><i data-lucide="check" class="ic-xs"></i></span>
+      <span class="an-squad-dot" style="background:${esc(w.color || 'var(--accent)')}"></span>${esc(w.name)}
+    </button>`).join('');
+  return `<button type="button" class="an-f${on.length ? ' is-set' : ''}" onclick="anSquadToggle(event, '${hostId}')" aria-haspopup="listbox" aria-expanded="${_anSquadOpen === hostId}">
+      <span class="an-f-key">Equipes</span><span class="an-f-val">${esc(label)}</span><span class="an-f-dots">${dots}</span>
+      <i data-lucide="chevron-down" class="ic-xs"></i>
+    </button>
+    <div class="an-squad-pop${_anSquadOpen === hostId ? ' open' : ''}" onclick="event.stopPropagation()">
+      ${items}
+      <div class="an-squad-foot"><span>${esc(opts.hint || '')}</span>${on.length ? `<button type="button" class="an-squad-clear" onclick="${opts.clearFn}()">Limpar</button>` : ''}</div>
+    </div>`;
+}
+function anSquadToggle(evt, hostId) {
+  if (evt) evt.stopPropagation();
+  _anSquadOpen = _anSquadOpen === hostId ? null : hostId;
+  document.querySelectorAll('.an-squads').forEach(h => {
+    const open = h.id === _anSquadOpen;
+    h.querySelector('.an-squad-pop')?.classList.toggle('open', open);
+    h.querySelector('.an-f')?.setAttribute('aria-expanded', String(open));
+  });
+}
+document.addEventListener('click', (e) => {
+  if (!_anSquadOpen) return;
+  if (e.target.closest && e.target.closest('#' + _anSquadOpen)) return;
+  anSquadToggle(null, _anSquadOpen);
+});
+document.addEventListener('keydown', (e) => { if (_anSquadOpen && e.key === 'Escape') anSquadToggle(null, _anSquadOpen); });
+
+/* items = [{ label, value, unit?, sub?, tone?: 'bad'|'good'|'warn', meter?: 0..100, meterHi? }] */
+function anKpisHTML(items) {
+  return `<div class="an-kpis${items.length === 3 ? ' is-3' : ''}">${items.map(k => `
+    <div class="an-kpi"${k.title ? ` title="${esc(k.title)}"` : ''}>
+      <div class="an-lbl">${esc(k.label)}</div>
+      <div class="an-kpi-v${k.tone ? ' is-' + k.tone : ''}">${esc(String(k.value))}${k.unit ? `<small>${esc(k.unit)}</small>` : ''}</div>
+      ${k.sub ? `<div class="an-kpi-s">${esc(k.sub)}</div>` : ''}
+      ${k.meter != null ? `<div class="an-meter"><span class="${k.meterHi ? 'is-hi' : ''}" style="width:${Math.max(0, Math.min(100, k.meter))}%"></span></div>` : ''}
+    </div>`).join('')}</div>`;
+}
+const _anPlural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+const _anDM = ymd => ymd ? fmtDM(+ymd.slice(8, 10), +ymd.slice(5, 7)) : '—';
+
 /* ─── RELATÓRIOS / SLA ───
    Consome /api/reports/sla (tempo médio por etapa, lead time, pontualidade,
    retrabalho, mais lentas). O backend já calcula tudo a partir do stageHistory de
@@ -14666,8 +14785,10 @@ function fmtDur(hours) {
   if (h <= 0) return '—';
   if (h < 1) return Math.max(1, Math.round(h * 60)) + 'min';
   if (h < 24) { const v = Math.round(h * 10) / 10; return (Number.isInteger(v) ? v : v.toFixed(1).replace('.', ',')) + 'h'; }
-  const days = Math.floor(h / 24);
-  const rem = Math.round(h - days * 24);
+  // Arredonda as horas antes de separar em dias (senão 11d 23,6h vira "11d 24h").
+  const total = Math.round(h);
+  const days = Math.floor(total / 24);
+  const rem = total - days * 24;
   return rem ? `${days}d ${rem}h` : `${days}d`;
 }
 
@@ -14704,18 +14825,15 @@ function populateReportFilters(firstEnter) {
   fillSelect(pSel, accProjects.map(p => ({ value: p.id, label: p.name })), pValid ? pPrev : '', 'Todos os projetos');
 }
 
-// Chips de squad (workspaces) — multi-select estilo Usuários. Estado vive no
-// hidden #reports-ws como CSV (persistência via FILTER_KEYS continua igual).
+// Seletor de squads (workspaces), multi. Estado vive no hidden #reports-ws como
+// CSV (persistência via FILTER_KEYS continua igual).
 function renderReportSquadChips(accessibleWs, wsSet) {
   const host = $('reports-squad-filter'); if (!host) return;
-  const chips = accessibleWs.map(w => {
-    const on = wsSet.has(w.id);
-    return `<button type="button" class="uws-chip${on ? ' is-active' : ''}" onclick="toggleReportSquad('${esc(w.id)}')">
-      <span class="uws-chip-dot" style="background:${esc(w.color || 'var(--accent)')}"></span>${esc(w.name)}
-    </button>`;
-  }).join('');
-  const clear = wsSet.size ? `<button type="button" class="uws-clear" onclick="clearReportSquads()">Limpar</button>` : '';
-  host.innerHTML = chips + clear;
+  if (accessibleWs.length <= 1) { host.innerHTML = ''; return; }
+  host.innerHTML = anSquadPickerHTML('reports-squad-filter', accessibleWs, wsSet, {
+    emptyLabel: 'Todas', hint: 'Vazio = todas as equipes',
+    toggleFn: 'toggleReportSquad', clearFn: 'clearReportSquads',
+  });
 }
 function toggleReportSquad(id) {
   const inp = $('reports-ws'); if (!inp) return;
@@ -14831,7 +14949,9 @@ async function renderReports() {
   saveFilters('reports');
 
   const seq = ++_reportsReqSeq;
-  host.innerHTML = '<div class="rep-loading">Carregando métricas…</div>';
+  // Troca de filtro: mantém o conteúdo anterior apagado em vez de piscar a tela.
+  if (host.querySelector('.an-kpis')) host.classList.add('is-loading');
+  else host.innerHTML = '<div class="rep-loading">Carregando métricas…</div>';
 
   let data;
   try {
@@ -14846,11 +14966,13 @@ async function renderReports() {
     data = await api('/reports/sla?' + qs.toString());
   } catch (err) {
     if (seq !== _reportsReqSeq || currentPage !== 'analytics' || _anTab !== 'reports') return;
+    host.classList.remove('is-loading');
     host.innerHTML = `<div class="rep-error">${esc(err.message || 'Erro ao carregar métricas.')}</div>`;
     return;
   }
   if (seq !== _reportsReqSeq || currentPage !== 'analytics' || _anTab !== 'reports') return; // resposta obsoleta — usuário já saiu/trocou
 
+  host.classList.remove('is-loading');
   host.innerHTML = buildReportsHTML(data);
   paintIcons();
 }
@@ -14858,200 +14980,106 @@ async function renderReports() {
 function buildReportsHTML(data) {
   const t = data.totals || {};
 
-  // ── Linha KPI tipográfica (padrão da /capacity — sem cards) ──
-  const punctualPct = t.completedCount ? Math.round(t.punctualityRate) : null;
+  // ── Faixa de números ──
+  // punctualityBase = concluídas que tinham prazo; sem nenhuma, não há o que medir.
+  const punctualPct = t.completedCount && (t.punctualityBase == null || t.punctualityBase > 0) ? Math.round(t.punctualityRate) : null;
   const reworkPct = t.demandsTotal ? Math.round(t.reworkRate) : null;
-  const punctualColor = punctualPct == null ? 'default'
-    : punctualPct >= 80 ? 'good'
-    : punctualPct >= 50 ? 'warn' : 'bad';
-  const reworkColor = reworkPct == null ? 'default'
-    : reworkPct > 25 ? 'bad' : 'default';
-  const kpisLine = `<div class="rep-kpi-line">
-    <div class="rep-kpi">
-      <div class="rep-kpi-label">Lead time médio</div>
-      <div class="rep-kpi-val">${t.completedCount ? esc(fmtDur(t.avgTotalHours)) : '—'}</div>
-      <div class="rep-kpi-sub">criação → conclusão</div>
-    </div>
-    <div class="rep-kpi">
-      <div class="rep-kpi-label">Pontualidade</div>
-      <div class="rep-kpi-val rep-kpi-val--${punctualColor}">${punctualPct == null ? '—' : punctualPct + '%'}</div>
-      <div class="rep-kpi-sub">concluídas no prazo</div>
-    </div>
-    <div class="rep-kpi">
-      <div class="rep-kpi-label">Retrabalho</div>
-      <div class="rep-kpi-val rep-kpi-val--${reworkColor}">${reworkPct == null ? '—' : reworkPct + '%'}</div>
-      <div class="rep-kpi-sub">${t.reworkedCount || 0} voltaram de etapa</div>
-    </div>
-    <div class="rep-kpi">
-      <div class="rep-kpi-label">Concluídas</div>
-      <div class="rep-kpi-val">${t.completedCount || 0}</div>
-      <div class="rep-kpi-sub">de ${t.demandsTotal || 0} no período</div>
-    </div>
-  </div>`;
+  const kpis = anKpisHTML([
+    { label: 'Lead time médio', value: t.completedCount ? fmtDur(t.avgTotalHours) : '—', sub: 'da criação à conclusão' },
+    { label: 'Pontualidade', value: punctualPct == null ? '—' : punctualPct + '%',
+      sub: t.punctualityBase ? `de ${_anPlural(t.punctualityBase, 'concluída', 'concluídas')} com prazo` : 'concluídas até o prazo',
+      tone: punctualPct == null ? '' : punctualPct >= 80 ? 'good' : punctualPct >= 50 ? 'warn' : 'bad',
+      meter: punctualPct == null ? null : punctualPct },
+    { label: 'Retrabalho', value: reworkPct == null ? '—' : reworkPct + '%', tone: reworkPct > 25 ? 'bad' : '',
+      sub: `${t.reworkedCount || 0} de ${t.demandsTotal || 0} voltaram de etapa` },
+    { label: 'Concluídas', value: t.completedCount || 0, sub: `de ${t.demandsTotal || 0} no período` },
+  ]);
 
-  // ── Tabela de etapas (mine-table-v2 aesthetic) com Score de gargalo ──
-  const stages = (data.stageStats || []).filter(s => s.samples > 0);
-  const maxStage = stages.length ? Math.max(...stages.map(s => s.avgHours)) : 0;
-  // Score de gargalo = (avgHours normalizado 0-1) × (samples normalizado 0-1),
-  // depois × 100. Etapas que somam LENTIDÃO com FREQUÊNCIA sobem mais. Ordena
-  // desc (pior primeiro) — a leitura fica "onde tá o gargalo agora?".
-  const maxSamples = stages.length ? Math.max(...stages.map(s => s.samples || 0)) : 0;
-  const stagesRanked = stages.map(s => {
-    const norm = maxStage ? (s.avgHours / maxStage) : 0;
-    const freq = maxSamples ? (s.samples / maxSamples) : 0;
-    const score = Math.round((0.7 * norm + 0.3 * freq) * 100);
-    return { ...s, _score: score };
-  }).sort((a, b) => b._score - a._score);
-  const stageRows = stagesRanked.length ? stagesRanked.map(s => {
-    const pct = maxStage ? Math.max(3, (s.avgHours / maxStage) * 100) : 0;
-    const barColor = s.stageColor || 'var(--accent)';
-    const scoreClass = s._score >= 70 ? 'critical'
-      : s._score >= 40 ? 'warn' : 'ok';
-    return `<tr class="mrow rep-stage-row">
-      <td class="mcol-name rep-stage-name">
-        <div class="mname"><span class="rep-stage-dot" style="background:${esc(s.stageColor || '#7A00FF')}"></span>${esc(s.stageName)}</div>
-        <div class="mname-sub">${esc(s.flowName || '—')}</div>
-      </td>
-      <td class="rep-col-time mc-wide">
-        <div class="rep-time-val"><span class="mlbl">Tempo médio</span>${esc(fmtDur(s.avgHours))}</div>
-        <div class="rep-time-bar"><span class="rep-time-bar-fill" style="width:${pct}%;background:${barColor}"></span></div>
-      </td>
-      <td class="rep-col-num mc-dim"><span class="mlbl">Passagens</span><span class="rep-num">${s.samples}</span></td>
-      <td class="rep-col-num mc-dim"><span class="mlbl">Retrabalho</span><span class="rep-num${(s.reworkCount || 0) > 0 ? ' rep-num--warn' : ''}">${s.reworkCount || 0}</span></td>
-      <td class="rep-col-score mc-act">
-        <span class="rep-score rep-score--${scoreClass}">${s._score}</span>
-      </td>
+  // ── Gargalos por etapa ──
+  // Score = 0.7 × lentidão + 0.3 × frequência (normalizados), × 100. Pior primeiro.
+  // Etapa de conclusão fica fora (é onde a demanda termina, não onde espera) e
+  // etapa removida vai pro fim, apagada e sem score.
+  const all = (data.stageStats || []).filter(s => s.samples > 0);
+  const ranked = all.filter(s => !s.done && !s.removed);
+  const removed = all.filter(s => !s.done && s.removed);
+  const finals = all.filter(s => s.done);
+  const maxStage = Math.max(0, ...ranked.map(s => s.avgHours), ...removed.map(s => s.avgHours));
+  const maxSamples = Math.max(0, ...ranked.map(s => s.samples || 0));
+  const scored = ranked.map(s => ({
+    ...s,
+    _score: Math.round((0.7 * (maxStage ? s.avgHours / maxStage : 0) + 0.3 * (maxSamples ? s.samples / maxSamples : 0)) * 100),
+  })).sort((a, b) => b._score - a._score);
+  const stageRow = (s, dim) => `<tr${dim ? ' class="is-dim"' : ''}>
+      <td><div class="an-who"><span class="an-dot" style="background:${dim ? 'var(--surface-3)' : esc(s.stageColor || 'var(--accent)')}"></span><div style="min-width:0"><span class="an-who-name">${esc(s.stageName)}</span><span class="an-who-sub">${esc(s.flowName || '—')}</span></div></div></td>
+      <td><div class="an-bar is-lead"><div class="an-bar-v">${esc(fmtDur(s.avgHours))}</div><div class="an-bar-track"><span style="width:${maxStage ? Math.max(2, (s.avgHours / maxStage) * 100) : 0}%"></span></div></div></td>
+      <td class="is-r is-num">${s.samples}</td>
+      <td class="is-r is-num${s.reworkCount ? ' is-warn' : ' is-zero'}">${s.reworkCount || 0}</td>
+      <td class="is-r">${dim ? '<span class="an-card-hint">—</span>' : `<span class="rep3-score is-${s._score >= 70 ? 'bad' : s._score >= 40 ? 'warn' : 'ok'}">${s._score}</span>`}</td>
     </tr>`;
-  }).join('') : `<tr><td colspan="5" class="rep-empty">Sem histórico de etapas no período.</td></tr>`;
+  const stageRows = scored.length || removed.length
+    ? scored.map(s => stageRow(s, false)).join('') + removed.map(s => stageRow(s, true)).join('')
+    : `<tr><td colspan="5"><div class="an-empty-line" style="padding:0">Sem histórico de etapas no período.</div></td></tr>`;
+  const note = [
+    finals.length ? `${finals.map(s => `"${s.stageName}"`).join(', ')} não ${finals.length === 1 ? 'entra' : 'entram'} no ranking: é onde a demanda termina, não onde espera.` : '',
+    removed.length ? 'Etapas que não existem mais no fluxo aparecem apagadas no fim.' : '',
+  ].filter(Boolean).join(' ');
+  const stagesCard = `<div class="an-card">
+    <div class="an-card-h"><h3>Gargalos por etapa</h3><span class="an-card-hint">tempo médio × passagens · pior primeiro · etapas com o mesmo nome somadas</span></div>
+    <div class="an-table-wrap"><table class="an-table">
+      <thead><tr>
+        <th>Etapa</th><th>Tempo médio</th>
+        <th class="is-r" title="Quantas vezes demandas passaram por essa etapa no período">Passagens</th>
+        <th class="is-r" title="Demandas que entraram mais de uma vez nessa etapa">Retrabalho</th>
+        <th class="is-r" title="Score de gargalo: 70% lentidão, 30% frequência. Quanto maior, mais crítica.">Gargalo</th>
+      </tr></thead>
+      <tbody>${stageRows}</tbody>
+    </table></div>
+    ${note ? `<div class="an-card-note">${esc(note)}</div>` : ''}
+  </div>`;
 
-  // ── Demandas mais lentas (criação → conclusão) ──
-  const slowest = data.slowest || [];
-  const slowRows = slowest.length ? slowest.map(d => `
-    <button type="button" class="rep-slow-row" onclick="showDetail('${esc(d.id)}')">
-      <span class="rep-slow-name">${esc(d.name)}</span>
-      <span class="rep-slow-proj">${esc(d.projectName || '—')}</span>
-      <span class="rep-slow-dur">${fmtDur(d.hours)}</span>
-    </button>`).join('') : emptyMini('Nenhuma demanda concluída no período.');
-
-  // ── Tempo médio por tipo de demanda ──
+  // ── Barras horizontais (tipo e cliente). Sem dado, o bloco vira uma linha. ──
+  const empty = (txt, icon) => `<div class="an-empty-line"><i data-lucide="${icon}"></i>${esc(txt)}</div>`;
+  const hbars = (items, valueOf, labelOf, fmt, subOf) => {
+    const max = Math.max(0, ...items.map(valueOf));
+    return `<div class="rep3-bars">${items.map(x => `<div class="rep3-hb">
+      <span class="rep3-hb-name" title="${esc(labelOf(x))}">${esc(labelOf(x))}${subOf ? ` <em>· ${esc(subOf(x))}</em>` : ''}</span>
+      <div class="an-bar-track"><span style="width:${max ? Math.max(2, (valueOf(x) / max) * 100) : 0}%"></span></div>
+      <b>${esc(fmt(valueOf(x)))}</b>
+    </div>`).join('')}</div>`;
+  };
   const types = data.typeStats || [];
-  const maxType = types.length ? Math.max(...types.map(x => x.avgHours)) : 0;
-  const typeRows = types.length ? types.map((x, i) => {
-    const pct = maxType ? Math.max(3, (x.avgHours / maxType) * 100) : 0;
-    const color = CAP_SPARK_PALETTE[i % CAP_SPARK_PALETTE.length];
-    return `<div class="rep-bar-row">
-      <div class="rep-bar-head">
-        <span class="rep-bar-name">${esc(x.type)} <span class="rep-muted">· ${x.count}</span></span>
-        <span class="rep-bar-val">${fmtDur(x.avgHours)}</span>
-      </div>
-      <div class="rep-bar-track"><div class="rep-bar-fill" style="width:${pct}%;background:${color}"></div></div>
-    </div>`;
-  }).join('') : emptyMini('Nenhuma demanda concluída no período.');
-
-  // ── Esforço apontado (horas lançadas pelos usuários) — distinto do calendário ──
-  const effort = data.effort || {};
-  const effStages = effort.byStage || [];
-  const maxEffStage = effStages.length ? Math.max(...effStages.map(s => s.avgHours)) : 0;
-  const effStageBars = effStages.length ? effStages.map(s => {
-    const pct = maxEffStage ? Math.max(3, (s.avgHours / maxEffStage) * 100) : 0;
-    return `<div class="rep-bar-row">
-      <div class="rep-bar-head">
-        <span class="rep-bar-name">${esc(s.stageName)}</span>
-        <span class="rep-bar-val">${fmtHours(s.avgHours)}<span class="rep-muted"> · ${fmtHours(s.hours)} tot.</span></span>
-      </div>
-      <div class="rep-bar-track"><div class="rep-bar-fill" style="width:${pct}%;background:${s.stageColor || 'var(--accent)'}"></div></div>
-      <div class="rep-bar-sub">${esc(s.flowName || '—')} · ${s.demands} ${s.demands === 1 ? 'demanda' : 'demandas'}</div>
-    </div>`;
-  }).join('') : emptyMini('Nenhuma hora apontada no período.');
-
-  const effUsers = effort.byUser || [];
-  const maxEffUser = effUsers.length ? Math.max(...effUsers.map(u => u.hours)) : 0;
-  const effUserRows = effUsers.length ? effUsers.map((u, i) => {
-    const pct = maxEffUser ? Math.max(3, (u.hours / maxEffUser) * 100) : 0;
-    const color = CAP_SPARK_PALETTE[i % CAP_SPARK_PALETTE.length];
-    return `<div class="rep-bar-row">
-      <div class="rep-bar-head">
-        <span class="rep-bar-name">${esc(u.name)}</span>
-        <span class="rep-bar-val">${fmtHours(u.hours)}<span class="rep-muted"> · ${u.entries} ${u.entries === 1 ? 'lançamento' : 'lançamentos'}</span></span>
-      </div>
-      <div class="rep-bar-track"><div class="rep-bar-fill" style="width:${pct}%;background:${color}"></div></div>
-    </div>`;
-  }).join('') : emptyMini('Nenhuma hora apontada no período.');
-
-  // ── Horas apontadas por cliente ──
-  const effClients = effort.byClient || [];
-  const maxEffClient = effClients.length ? Math.max(...effClients.map(c => c.hours)) : 0;
-  const effClientRows = effClients.length ? effClients.map((c, i) => {
-    const pct = maxEffClient ? Math.max(3, (c.hours / maxEffClient) * 100) : 0;
-    const color = CAP_SPARK_PALETTE[i % CAP_SPARK_PALETTE.length];
-    return `<div class="rep-bar-row">
-      <div class="rep-bar-head">
-        <span class="rep-bar-name">${esc(c.name)}</span>
-        <span class="rep-bar-val">${fmtHours(c.hours)}<span class="rep-muted"> · ${c.demands} ${c.demands === 1 ? 'demanda' : 'demandas'}</span></span>
-      </div>
-      <div class="rep-bar-track"><div class="rep-bar-fill" style="width:${pct}%;background:${color}"></div></div>
-    </div>`;
-  }).join('') : emptyMini('Nenhuma hora apontada no período.');
-
-  const effHeader = effort.demandsWithLog ? `<div class="rep-effort-stats">
-      <span><strong>${fmtHours(effort.totalHours)}</strong> apontadas</span>
-      <span><strong>${effort.demandsWithLog}</strong> ${effort.demandsWithLog === 1 ? 'demanda' : 'demandas'}</span>
-      <span>média <strong>${fmtHours(effort.avgPerDemand)}</strong>/demanda</span>
-    </div>` : '';
-
-  // Bloco secundário: Demandas mais lentas (mantido pra drill-down do gargalo).
-  const slowestBlock = `<div class="rep-section">
-    <div class="rep-section-head">
-      <span class="rep-section-title">Demandas mais lentas</span>
-      <span class="rep-section-hint">Da criação até a conclusão — clique pra abrir.</span>
-    </div>
-    <div class="rep-slow-list">${slowRows}</div>
+  const effClients = (data.effort || {}).byClient || [];
+  const typeCard = `<div class="an-card">
+    <div class="an-card-h"><h3>Tempo médio por tipo</h3><span class="an-card-hint">da criação à conclusão</span></div>
+    ${types.length ? hbars(types, x => x.avgHours, x => x.type, fmtDur, x => x.count) : empty('Nenhuma demanda concluída no período.', 'inbox')}
+  </div>`;
+  const clientCard = `<div class="an-card">
+    <div class="an-card-h"><h3>Horas por cliente</h3><span class="an-card-hint">apontadas no período</span></div>
+    ${effClients.length ? hbars(effClients.slice(0, 10), x => x.hours, x => x.name, fmtHours, x => _anPlural(x.demands, 'demanda', 'demandas')) : empty('Nenhuma hora apontada no período.', 'clock')}
   </div>`;
 
-  // ── Grid inferior: Tempo médio por tipo + Horas apontadas por cliente ──
-  //    Mesma linguagem visual das outras seções (title com barra roxa + hint),
-  //    sem card box: dois blocos lado a lado num grid.
-  const secondaryGrid = `<div class="rep-split">
-    <div class="rep-section rep-section--half">
-      <div class="rep-section-head">
-        <span class="rep-section-title">Tempo médio por tipo</span>
-        <span class="rep-section-hint">Da criação à conclusão, por tipo de demanda.</span>
-      </div>
-      <div class="rep-bars">${typeRows}</div>
-    </div>
-    <div class="rep-section rep-section--half">
-      <div class="rep-section-head">
-        <span class="rep-section-title">Horas apontadas por cliente</span>
-        <span class="rep-section-hint">Total lançado em demandas de cada cliente no período.</span>
-      </div>
-      <div class="rep-bars">${effClientRows}</div>
-    </div>
+  // ── Demandas mais lentas (drill-down do gargalo) ──
+  const slowest = data.slowest || [];
+  const slowCard = `<div class="an-card">
+    <div class="an-card-h"><h3>Demandas mais lentas</h3><span class="an-card-hint">da criação à conclusão · clique para abrir</span></div>
+    ${slowest.length ? `<div class="an-table-wrap"><table class="an-table">
+      <thead><tr><th>Demanda</th><th class="an-hide-sm">Cliente</th><th class="an-hide-sm">Onde mais esperou</th><th class="is-r">Lead time</th><th class="is-r">Prazo</th></tr></thead>
+      <tbody>${slowest.map(d => {
+        const doneY = d.completedAt ? _ymdLocal(new Date(d.completedAt)) : null;
+        const lateDays = d.deadline && doneY && doneY > d.deadline
+          ? Math.round((new Date(doneY + 'T12:00:00') - new Date(d.deadline + 'T12:00:00')) / 864e5) : 0;
+        return `<tr class="is-click" onclick="showDetail('${esc(d.id)}')">
+          <td><div style="min-width:0"><span class="an-who-name">${esc(d.name)}</span><span class="an-who-sub">${esc(d.projectName || '—')}</span></div></td>
+          <td class="an-hide-sm an-card-hint">${esc(d.clientName || '—')}</td>
+          <td class="an-hide-sm an-card-hint">${d.longestStage ? `${esc(d.longestStage.name)} · ${esc(fmtDur(d.longestStage.hours))}` : '—'}</td>
+          <td class="is-r is-num"><b>${esc(fmtDur(d.hours))}</b></td>
+          <td class="is-r">${!d.deadline ? '<span class="an-card-hint">sem prazo</span>' : lateDays ? `<span class="is-bad">+${lateDays}d</span>` : '<span class="an-card-hint">no prazo</span>'}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table></div>` : empty('Nenhuma demanda concluída no período.', 'inbox')}
   </div>`;
 
-  return `
-    ${kpisLine}
-    <div class="rep-section">
-      <div class="rep-section-head">
-        <span class="rep-section-title">Gargalos por etapa</span>
-        <span class="rep-section-hint">Ordenado por score (tempo médio × frequência). Etapas com mesmo nome vêm agrupadas.</span>
-      </div>
-      <div class="table-wrap mine-table-wrap rep-stage-table-wrap mcard-wrap">
-        <table class="mine-table-v2 rep-stage-table mcard">
-          <thead>
-            <tr>
-              <th class="rep-th-name">Etapa</th>
-              <th class="rep-th-time">Tempo médio</th>
-              <th class="rep-th-num" title="Quantas demandas passaram por essa etapa no período">Passagens</th>
-              <th class="rep-th-num" title="Quantas vezes uma demanda voltou pra essa etapa">Retrabalho</th>
-              <th class="rep-th-score" title="Score de gargalo — quanto maior, mais crítica a etapa">Score gargalo</th>
-            </tr>
-          </thead>
-          <tbody>${stageRows}</tbody>
-        </table>
-      </div>
-    </div>
-    ${secondaryGrid}
-    ${slowestBlock}`;
+  return kpis + stagesCard + `<div class="an-grid2">${typeCard}${clientCard}</div>` + slowCard;
 }
 
 /* ─── PÁGINA ANÁLISES — abas Capacidade | Relatórios ───
@@ -15086,15 +15114,13 @@ function renderAnalytics() {
   renderAnalyticsActive();
 }
 
-/* ─── RITMO ─── burndown semanal por squad + resumo textual.
+/* ─── RITMO ─── os prazos que vencem na semana, por equipe + resumo textual.
    Tudo deriva do cache local de demandas — nenhuma request extra. Fonte de verdade:
-     - abertura: d.createdAt
+     - prazo   : d.deadline (prazo final da demanda, 'YYYY-MM-DD')
      - entrega : d.completedAt
+     - abertura: d.createdAt (só pro "entrou × saiu")
      - equipe   : d.workspaceId
-     - prazo   : d.deadline (pra contar atrasadas)
-   Semana útil é seg→sex (5 dias), referência = seleção do dropdown (0=atual, -1=passada).
-   O range de agregação vai até domingo pra contabilizar entregas de fim de semana,
-   mas o gráfico plota apenas os 5 dias úteis. */
+   A semana vai de segunda a domingo; referência = seleção do picker (0=atual, -1=passada). */
 function _rhythmWeekBounds(offset) {
   const now = new Date();
   const dow = (now.getDay() + 6) % 7; // seg=0..dom=6
@@ -15114,465 +15140,82 @@ function _rhythmDemandsForSquad(wsId) {
   return demands.filter(d => d.workspaceId === wsId && !d.deletedAt);
 }
 
-/* Snapshot de "abertas ao fim do dia D": criadas até D E (não concluídas OU concluídas depois de D). */
-function _rhythmOpenAt(list, endOfDay) {
-  let n = 0;
-  for (const d of list) {
-    const created = d.createdAt ? new Date(d.createdAt) : null;
-    if (!created || created > endOfDay) continue;
-    if (d.completedAt && new Date(d.completedAt) <= endOfDay) continue;
-    n++;
-  }
-  return n;
-}
-
-/* Ideal driven by deadlines: cada demanda "no escopo da semana" (aberta na segunda
-   ou criada durante a semana) deveria estar concluída até seu deadline. Ao fim do
-   dia D, o ideal conta quantas demandas *deveriam* seguir abertas — as com
-   deadline > D. Deadline ausente = tratado como sexta 23:59 (default útil).
-   Deadline anterior à segunda = deveria estar fechada já na segunda (herdada). */
-function _rhythmInScope(list, monday, sunday) {
-  return list.filter(d => {
-    const created = d.createdAt ? new Date(d.createdAt) : null;
-    if (!created || created > sunday) return false;
-    const completed = d.completedAt ? new Date(d.completedAt) : null;
-    const openAtMondayStart = created < monday && (!completed || completed >= monday);
-    const createdDuringWeek = created >= monday && created <= sunday;
-    return openAtMondayStart || createdDuringWeek;
+/* Prazos de etapa de uma demanda: cada passagem do stageHistory guarda o
+   prazo daquela etapa (dueDate). A passagem foi "entregue" quando a demanda
+   saiu da etapa (leftAt) ou foi concluída nela. Etapa de conclusão não conta:
+   é o fim do caminho, não um compromisso. Sem histórico com prazo, cai no
+   prazo final da demanda (d.deadline). */
+function _rhythmCommitments(d) {
+  const flow = flowById(d.flowId);
+  const sh = d.stageHistory || [];
+  const doneY = d.completedAt ? _ymdLocal(new Date(d.completedAt)) : null;
+  const out = [];
+  sh.forEach((p, i) => {
+    if (!p.dueDate) return;
+    const st = flow?.stages.find(x => x.id === p.stageId);
+    if (st?.done) return;
+    const last = i === sh.length - 1;
+    const leftY = p.leftAt ? _ymdLocal(new Date(p.leftAt)) : (last && doneY) || null;
+    out.push({ d, due: p.dueDate, leftY, stage: st?.label || '' });
   });
-}
-function _rhythmIdealAt(inScope, endOfDay, fridayEOD) {
-  let n = 0;
-  for (const d of inScope) {
-    const created = new Date(d.createdAt);
-    if (created > endOfDay) continue; // ainda não existe naquele dia
-    const dl = d.deadline ? new Date(d.deadline) : fridayEOD;
-    if (dl > endOfDay) n++;
-  }
-  return n;
+  if (!out.length && d.deadline) out.push({ d, due: d.deadline, leftY: doneY || (isDone(d) ? d.deadline : null), stage: '' });
+  return out;
 }
 
-function _rhythmBuildSeries(list, monday, sunday) {
-  // Seg (0) → Sex (4), 5 pontos.
-  const days = [];
-  for (let i = 0; i < 5; i++) {
-    const eod = new Date(monday);
-    eod.setDate(monday.getDate() + i);
-    eod.setHours(23, 59, 59, 999);
-    days.push(eod);
-  }
-  const fridayEOD = days[4];
-  const start = _rhythmOpenAt(list, new Date(monday.getTime() - 1)); // domingo 23:59 (véspera)
-  const real = days.map(eod => _rhythmOpenAt(list, eod));
-  const inScope = _rhythmInScope(list, monday, sunday);
-  const ideal = days.map(eod => _rhythmIdealAt(inScope, eod, fridayEOD));
-  return { start, real, ideal, days };
-}
-
-function _rhythmSummary(list, monday, sunday) {
-  let delivered = 0, created = 0, overdue = 0, open = 0;
-  const now = new Date();
+/* Os prazos de etapa que vencem numa semana. Cada um cai em UM balde:
+     ok    entregue até o prazo
+     late  entregue depois do prazo
+     open  prazo passou e a demanda segue na etapa
+     todo  ainda dentro do prazo
+   Mais o fluxo da semana: quantas demandas entraram (criadas) e saíram (concluídas). */
+function _rhythmWeekStats(list, monday, sunday) {
+  const monY = _ymdLocal(monday), sunY = _ymdLocal(sunday), today = todayStr();
+  const s = { ok: 0, late: 0, open: 0, todo: 0, total: 0, inn: 0, out: 0, overdue: [], lateDone: [] };
   for (const d of list) {
-    const compl = d.completedAt ? new Date(d.completedAt) : null;
-    const cr = d.createdAt ? new Date(d.createdAt) : null;
-    if (compl && compl >= monday && compl <= sunday) delivered++;
-    if (cr && cr >= monday && cr <= sunday) created++;
-    if (!compl) {
-      open++;
-      if (d.deadline) {
-        const dl = new Date(d.deadline);
-        if (dl < now) overdue++;
-      }
+    const cY = d.createdAt ? _ymdLocal(new Date(d.createdAt)) : null;
+    const doneY = d.completedAt ? _ymdLocal(new Date(d.completedAt)) : null;
+    if (cY && cY >= monY && cY <= sunY) s.inn++;
+    if (doneY && doneY >= monY && doneY <= sunY) s.out++;
+    for (const c of _rhythmCommitments(d)) {
+      if (c.due < monY || c.due > sunY) continue;
+      s.total++;
+      if (c.leftY) {
+        if (c.leftY <= c.due) s.ok++;
+        else { s.late++; s.lateDone.push(c); }
+      } else if (c.due < today) { s.open++; s.overdue.push(c); }
+      else s.todo++;
     }
   }
-  return { delivered, created, overdue, open };
+  // "No prazo" só conta o que já venceu ou foi entregue (o que ainda vai vencer não pesa).
+  const settled = s.ok + s.late + s.open;
+  s.pctOk = settled ? Math.round(s.ok / settled * 100) : null;
+  return s;
 }
 
-/* SVG mini burndown. `series.start` = abertas no fim de domingo (véspera).
-   Se a equipe começou a semana com 0 aberto e não abriu nada, mostra placeholder. */
-/* Render do gráfico:
-   - SVG (100% × 200px, preserveAspectRatio=none) desenha SÓ as linhas/dots
-     que usam vector-effect=non-scaling-stroke pra não deformar visualmente.
-   - Y-tick labels, DOW labels e zonas de hover são elementos HTML absolutos
-     por cima do SVG. Assim textos NÃO esticam com o gráfico. */
-function _rhythmSvg(series) {
-  const w = 800, h = 200, padL = 18, padR = 18, padT = 20, padB = 32;
-  const iw = w - padL - padR, ih = h - padT - padB;
-  const N = 5, LAST = N - 1;
-  const peak = Math.max(series.start, ...series.real, ...series.ideal);
-  const maxY = Math.max(1, peak);
-  if (peak <= 0) {
-    return `<div class="rhythm-chart-inner rhythm-chart-inner--empty">
-      <div class="rhythm-chart-empty">Sem demandas nesta semana</div>
-    </div>`;
-  }
-  const xOf = i => padL + (i / LAST) * iw;
-  const yOf = v => padT + (1 - v / maxY) * ih;
-  const xPct = i => (xOf(i) / w) * 100;
-  const yPct = v => (yOf(v) / h) * 100;
-
-  const idealPts = series.ideal.map((v, i) => `${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`);
-  const realPts = series.real.map((v, i) => `${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`);
-
-  const yValues = [0, Math.round(maxY / 2), maxY].filter((v, i, arr) => arr.indexOf(v) === i);
-  const yGrid = yValues.map(v =>
-    `<line x1="0" x2="${w}" y1="${yOf(v).toFixed(1)}" y2="${yOf(v).toFixed(1)}" class="rhythm-svg-grid" vector-effect="non-scaling-stroke"/>`
-  ).join('');
-  const realDots = series.real.map((v, i) =>
-    `<path d="M ${xOf(i).toFixed(1)} ${yOf(v).toFixed(1)} L ${xOf(i).toFixed(1)} ${yOf(v).toFixed(1)}" class="rhythm-svg-dot" vector-effect="non-scaling-stroke"/>`
-  ).join('');
-
-  const dow = ['Seg','Ter','Qua','Qui','Sex'];
-  const yLabelsHtml = yValues.map(v =>
-    `<span class="rhythm-y-label" style="top:${yPct(v).toFixed(2)}%">${v}</span>`
-  ).join('');
-  const xLabelsHtml = dow.map((d, i) =>
-    `<span class="rhythm-x-label" style="left:${xPct(i).toFixed(2)}%">${d}</span>`
-  ).join('');
-
-  // Zonas de hover: uma faixa vertical por dia, com dataset carregando o
-  // texto que o tooltip vai exibir. Um handler único em .rhythm-chart-inner
-  // pega mouseover/mouseleave e move a tooltip via data-attrs.
-  const bandW = 100 / N;
-  const hoversHtml = dow.map((d, i) => {
-    const real = series.real[i];
-    const idealVal = series.ideal[i];
-    const dateStr = series.days[i]
-      ? series.days[i].toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit' })
-      : '';
-    const label = `${d} ${dateStr}`;
-    return `<div class="rhythm-x-hover"
-      style="left:${(i * bandW).toFixed(2)}%;width:${bandW.toFixed(2)}%"
-      data-day="${label}"
-      data-real="${real}"
-      data-ideal="${idealVal}"
-      data-xpct="${xPct(i).toFixed(2)}"
-      data-ypct="${yPct(real).toFixed(2)}"></div>`;
-  }).join('');
-
-  return `<div class="rhythm-chart-inner" onmousemove="_rhythmTip(event)" onmouseleave="_rhythmTipHide(event)">
-    <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" class="rhythm-svg" role="img">
-      ${yGrid}
-      <polyline points="${idealPts.join(' ')}" class="rhythm-svg-ideal" vector-effect="non-scaling-stroke"/>
-      <polyline points="${realPts.join(' ')}" class="rhythm-svg-real" vector-effect="non-scaling-stroke"/>
-      ${realDots}
-    </svg>
-    <div class="rhythm-y-labels">${yLabelsHtml}</div>
-    <div class="rhythm-x-labels">${xLabelsHtml}</div>
-    <div class="rhythm-x-hovers">${hoversHtml}</div>
-    <div class="rhythm-tooltip" hidden></div>
-  </div>`;
+/* Situação da equipe na semana, a partir dos baldes. */
+function _rhythmStatus(s) {
+  if (!s.total) return { kind: 'none', label: 'Sem prazos', tone: 'neu' };
+  if (s.open / s.total >= 0.2) return { kind: 'late', label: 'Atrasada', tone: 'bad' };
+  if (s.open > 0 || s.late / s.total >= 0.2) return { kind: 'warn', label: 'Atenção', tone: 'warn' };
+  return { kind: 'ok', label: 'No ritmo', tone: 'ok' };
 }
+const _RHY_ORDER = { late: 0, warn: 1, ok: 2, none: 3 };
 
-/* Move e preenche a tooltip. `hover` = zona vertical do dia sob o cursor.
-   Posicionamento: acima do dot real, centralizado, com clamp nas bordas. */
-function _rhythmTip(ev) {
-  const inner = ev.currentTarget;
-  const hover = ev.target.closest('.rhythm-x-hover');
-  const tip = inner.querySelector('.rhythm-tooltip');
-  if (!hover || !tip) { if (tip) tip.hidden = true; return; }
-  const day = hover.dataset.day || '';
-  const real = hover.dataset.real || '0';
-  const ideal = hover.dataset.ideal || '0';
-  const diff = Number(real) - Number(ideal);
-  let diffTxt;
-  if (diff > 0) diffTxt = `<span class="rhythm-tip-diff rhythm-tip-diff--bad">+${diff} vs. ideal</span>`;
-  else if (diff < 0) diffTxt = `<span class="rhythm-tip-diff rhythm-tip-diff--good">${diff} vs. ideal</span>`;
-  else diffTxt = `<span class="rhythm-tip-diff">no ritmo</span>`;
-  tip.innerHTML = `<div class="rhythm-tip-day">${day}</div>
-    <div class="rhythm-tip-row"><b>${real}</b> em aberto</div>
-    <div class="rhythm-tip-row rhythm-tip-row--muted">ideal: ${ideal}</div>
-    <div class="rhythm-tip-row">${diffTxt}</div>`;
-  tip.hidden = false;
-  // Posição: usa xpct do dot real e ypct do dot real, com deslocamento.
-  const xpct = parseFloat(hover.dataset.xpct) || 0;
-  const ypct = parseFloat(hover.dataset.ypct) || 0;
-  tip.style.left = xpct + '%';
-  tip.style.top = ypct + '%';
-}
-function _rhythmTipHide(ev) {
-  const tip = ev.currentTarget.querySelector('.rhythm-tooltip');
-  if (tip) tip.hidden = true;
-}
-
-/* Avalia o ritmo do squad e devolve um objeto pronto pra UI:
-   { kind: 'atrasado'|'no-ritmo'|'adiantado'|'sem-mov',
-     label: 'Atrasado' | 'No ritmo' | 'Adiantado' | 'Sem movimentação',
-     detail: string curta explicando ('5 demandas além do previsto'),
-     text: linha copiável pra Slack/reunião } */
-function _rhythmAnalyze(wsName, summary, series) {
-  // Semana útil = 5 dias (índices 0..4). Se hoje for sáb/dom, usa sexta como referência.
-  const dayIdx = Math.min(4, Math.max(0, Math.floor((Date.now() - series.days[0].getTime()) / 86400000)));
-  const idealNow = series.ideal[dayIdx];
-  const realNow = series.real[dayIdx];
-  const diff = realNow - idealNow;
-
-  let kind, label, detail;
-  if (series.start === 0 && summary.created === 0) {
-    kind = 'sem-mov';
-    label = 'Sem movimentação';
-    detail = 'nenhuma demanda ativa nesta semana';
-  } else if (diff > 0.5) {
-    const n = Math.round(diff);
-    kind = 'atrasado';
-    label = 'Atrasado';
-    detail = `${n} demanda${n === 1 ? '' : 's'} passaram do prazo e seguem em aberto`;
-  } else if (diff < -0.5) {
-    const n = Math.round(-diff);
-    kind = 'adiantado';
-    label = 'Adiantado';
-    detail = `${n} demanda${n === 1 ? '' : 's'} entregue${n === 1 ? '' : 's'} antes do prazo — dá pra puxar da semana que vem`;
-  } else {
-    kind = 'no-ritmo';
-    label = 'No ritmo';
-    detail = 'entregas acompanhando os prazos combinados';
-  }
-
-  const text =
-    `Equipe ${wsName} — ${label.toLowerCase()}${kind !== 'sem-mov' ? ` (${detail})` : ''}. ` +
-    `Entregou ${summary.delivered}, ${summary.overdue} atrasada${summary.overdue === 1 ? '' : 's'}, ${summary.open} em aberto` +
-    `${summary.created ? `, ${summary.created} nova${summary.created === 1 ? '' : 's'} na semana` : ''}.`;
-
-  return { kind, label, detail, text };
-}
-
-function _rhythmCopySummary(btn, text) {
-  try {
-    navigator.clipboard.writeText(text);
-    const original = btn.innerHTML;
-    btn.innerHTML = '<i data-lucide="check"></i>';
-    btn.classList.add('is-copied');
-    if (window.lucide) lucide.createIcons();
-    setTimeout(() => { btn.innerHTML = original; btn.classList.remove('is-copied'); if (window.lucide) lucide.createIcons(); }, 1500);
-  } catch {}
-}
-
-function _renderRhythmCard(ws, monday, sunday) {
-  const ds = _rhythmDemandsForSquad(ws.id);
-  const series = _rhythmBuildSeries(ds, monday, sunday);
-  const summary = _rhythmSummary(ds, monday, sunday);
-  const svg = _rhythmSvg(series);
-  const info = _rhythmAnalyze(ws.name, summary, series);
-  const textEsc = info.text.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-  return `<div class="rhythm-card" data-status="${info.kind}">
-    <div class="rhythm-card-head">
-      <div class="rhythm-card-title" style="--sq-color:${esc(ws.color || '#7c3aed')}">
-        <span class="rhythm-card-dot"></span>${esc(ws.name)}
-      </div>
-      <span class="rhythm-status-pill rhythm-status-pill--${info.kind}">${esc(info.label)}</span>
-    </div>
-    <div class="rhythm-card-chart">${svg}</div>
-    <div class="rhythm-card-foot">
-      <div class="rhythm-card-info">
-        <div class="rhythm-card-detail">${esc(info.detail)}</div>
-        <div class="rhythm-card-stats">
-          <span class="rhythm-stat"><b>${summary.delivered}</b> entregues</span>
-          <span class="rhythm-stat"><b>${summary.overdue}</b> atrasadas</span>
-          <span class="rhythm-stat"><b>${summary.open}</b> em aberto</span>
-        </div>
-      </div>
-      <button class="rhythm-copy-btn" onclick="_rhythmCopySummary(this, '${textEsc}')" title="Copiar resumo pra Slack / reunião" aria-label="Copiar resumo">
-        <i data-lucide="copy"></i>
-      </button>
-    </div>
-  </div>`;
-}
-
-/* Modo combinado: 1 card com N linhas coloridas (uma por squad).
-   Cada equipe usa sua cor própria. Tooltip separa por equipe no hover do dia. */
-function _renderRhythmCombined(monday, sunday) {
-  const list = _rhythmAccessibleWs().filter(w => _rhythmSquadFilter.has(w.id));
-  const perSquad = list.map(ws => {
-    const ds = _rhythmDemandsForSquad(ws.id);
-    return {
-      ws,
-      color: ws.color || '#7c3aed',
-      series: _rhythmBuildSeries(ds, monday, sunday),
-      summary: _rhythmSummary(ds, monday, sunday)
-    };
-  });
-
-  const totalDelivered = perSquad.reduce((s, x) => s + x.summary.delivered, 0);
-  const totalOverdue = perSquad.reduce((s, x) => s + x.summary.overdue, 0);
-  const totalOpen = perSquad.reduce((s, x) => s + x.summary.open, 0);
-
-  const svg = _rhythmCombinedSvg(perSquad);
-  const legend = perSquad.map(p =>
-    `<span class="rhythm-legend-item"><span class="rhythm-legend-line" style="background:${esc(p.color)}"></span>${esc(p.ws.name)}</span>`
-  ).join('');
-
-  return `<div class="rhythm-card rhythm-card--combined">
-    <div class="rhythm-card-head">
-      <div class="rhythm-card-title">Comparativo · ${list.length} equipes</div>
-      <div class="rhythm-legend rhythm-legend--inline">${legend}</div>
-    </div>
-    <div class="rhythm-card-chart">${svg}</div>
-    <div class="rhythm-card-foot">
-      <div class="rhythm-card-info">
-        <div class="rhythm-card-stats">
-          <span class="rhythm-stat"><b>${totalDelivered}</b> entregues</span>
-          <span class="rhythm-stat"><b>${totalOverdue}</b> atrasadas</span>
-          <span class="rhythm-stat"><b>${totalOpen}</b> em aberto</span>
-        </div>
-      </div>
-    </div>
-  </div>`;
-}
-
-/* SVG combinado — N linhas reais coloridas + 1 linha ideal cinza (soma).
-   Reaproveita a mesma projeção do _rhythmSvg pra manter comportamento consistente. */
-function _rhythmCombinedSvg(perSquad) {
-  const w = 800, h = 200, padL = 18, padR = 18, padT = 20, padB = 32;
-  const iw = w - padL - padR, ih = h - padT - padB;
-  const N = 5, LAST = N - 1;
-  const perDayReal = Array.from({length: N}, (_, i) =>
-    perSquad.reduce((s, p) => s + (p.series.real[i] || 0), 0)
-  );
-  const perDayIdeal = Array.from({length: N}, (_, i) =>
-    perSquad.reduce((s, p) => s + (p.series.ideal[i] || 0), 0)
-  );
-  const maxAcross = Math.max(
-    ...perSquad.map(p => Math.max(p.series.start, ...p.series.real, ...p.series.ideal)),
-    ...perDayReal, ...perDayIdeal
-  );
-  const maxY = Math.max(1, maxAcross);
-  if (maxAcross <= 0) {
-    return `<div class="rhythm-chart-inner rhythm-chart-inner--empty">
-      <div class="rhythm-chart-empty">Sem demandas nesta semana</div>
-    </div>`;
-  }
-  const xOf = i => padL + (i / LAST) * iw;
-  const yOf = v => padT + (1 - v / maxY) * ih;
-  const xPct = i => (xOf(i) / w) * 100;
-  const yPct = v => (yOf(v) / h) * 100;
-
-  const yValues = [0, Math.round(maxY / 2), maxY].filter((v, i, arr) => arr.indexOf(v) === i);
-  const yGrid = yValues.map(v =>
-    `<line x1="0" x2="${w}" y1="${yOf(v).toFixed(1)}" y2="${yOf(v).toFixed(1)}" class="rhythm-svg-grid" vector-effect="non-scaling-stroke"/>`
-  ).join('');
-
-  // Linha ideal AGREGADA (soma dos ideais de cada squad por dia).
-  const idealPts = perDayIdeal.map((v, i) => `${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`);
-
-  // Uma polyline+dots por squad, com sua cor.
-  const squadLines = perSquad.map(p => {
-    const pts = p.series.real.map((v, i) => `${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`).join(' ');
-    const dots = p.series.real.map((v, i) =>
-      `<path d="M ${xOf(i).toFixed(1)} ${yOf(v).toFixed(1)} L ${xOf(i).toFixed(1)} ${yOf(v).toFixed(1)}" stroke="${esc(p.color)}" stroke-width="8" stroke-linecap="round" fill="none" vector-effect="non-scaling-stroke"/>`
-    ).join('');
-    return `<polyline points="${pts}" fill="none" stroke="${esc(p.color)}" stroke-width="2.5" vector-effect="non-scaling-stroke"/>${dots}`;
-  }).join('');
-
-  const dow = ['Seg','Ter','Qua','Qui','Sex'];
-  const yLabelsHtml = yValues.map(v =>
-    `<span class="rhythm-y-label" style="top:${yPct(v).toFixed(2)}%">${v}</span>`
-  ).join('');
-  const xLabelsHtml = dow.map((d, i) =>
-    `<span class="rhythm-x-label" style="left:${xPct(i).toFixed(2)}%">${d}</span>`
-  ).join('');
-
-  // Hovers combinados: cada faixa de dia carrega array JSON com breakdown por squad.
-  const bandW = 100 / N;
-  const hoversHtml = dow.map((d, i) => {
-    const dateStr = perSquad[0]?.series.days[i]
-      ? perSquad[0].series.days[i].toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit' })
-      : '';
-    const breakdown = perSquad.map(p => ({
-      name: p.ws.name,
-      color: p.color,
-      real: p.series.real[i],
-      ideal: p.series.ideal[i]
-    }));
-    // Encode como JSON no data-attr — parser dentro do _rhythmTipCombined.
-    const dataStr = esc(JSON.stringify(breakdown));
-    const idealTotal = perDayIdeal[i];
-    const realTotal = perDayReal[i];
-    return `<div class="rhythm-x-hover"
-      style="left:${(i * bandW).toFixed(2)}%;width:${bandW.toFixed(2)}%"
-      data-day="${esc(d + ' ' + dateStr)}"
-      data-breakdown="${dataStr}"
-      data-real-total="${realTotal}"
-      data-ideal-total="${idealTotal}"
-      data-xpct="${xPct(i).toFixed(2)}"
-      data-ypct="${yPct(realTotal).toFixed(2)}"></div>`;
-  }).join('');
-
-  return `<div class="rhythm-chart-inner" onmousemove="_rhythmTipCombined(event)" onmouseleave="_rhythmTipHide(event)">
-    <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" class="rhythm-svg" role="img">
-      ${yGrid}
-      <polyline points="${idealPts.join(' ')}" class="rhythm-svg-ideal" vector-effect="non-scaling-stroke"/>
-      ${squadLines}
-    </svg>
-    <div class="rhythm-y-labels">${yLabelsHtml}</div>
-    <div class="rhythm-x-labels">${xLabelsHtml}</div>
-    <div class="rhythm-x-hovers">${hoversHtml}</div>
-    <div class="rhythm-tooltip" hidden></div>
-  </div>`;
-}
-
-/* Tooltip do modo combinado: mostra breakdown por squad + totais. */
-function _rhythmTipCombined(ev) {
-  const inner = ev.currentTarget;
-  const hover = ev.target.closest('.rhythm-x-hover');
-  const tip = inner.querySelector('.rhythm-tooltip');
-  if (!hover || !tip) { if (tip) tip.hidden = true; return; }
-  const day = hover.dataset.day || '';
-  const realTotal = hover.dataset.realTotal || '0';
-  const idealTotal = hover.dataset.idealTotal || '0';
-  let breakdown = [];
-  try { breakdown = JSON.parse(hover.dataset.breakdown || '[]'); } catch {}
-  // Cada squad ganha o mesmo bloco do modo individual (em aberto / ideal / vs.),
-  // separados por divisória. Header do dia aparece uma vez no topo.
-  const blocks = breakdown.map(b => {
-    const diff = b.real - b.ideal;
-    let diffTxt;
-    if (diff > 0) diffTxt = `<span class="rhythm-tip-diff rhythm-tip-diff--bad">+${diff} vs. ideal</span>`;
-    else if (diff < 0) diffTxt = `<span class="rhythm-tip-diff rhythm-tip-diff--good">${diff} vs. ideal</span>`;
-    else diffTxt = `<span class="rhythm-tip-diff">no ritmo</span>`;
-    return `<div class="rhythm-tip-squad-block">
-      <div class="rhythm-tip-squad-name">
-        <span class="rhythm-tip-squad-dot" style="background:${esc(b.color)}"></span>${esc(b.name)}
-      </div>
-      <div class="rhythm-tip-row"><b>${b.real}</b> em aberto</div>
-      <div class="rhythm-tip-row rhythm-tip-row--muted">ideal: ${b.ideal}</div>
-      <div class="rhythm-tip-row">${diffTxt}</div>
-    </div>`;
-  }).join('<div class="rhythm-tip-sep"></div>');
-  tip.innerHTML = `<div class="rhythm-tip-day">${day}</div>
-    ${blocks}
-    <div class="rhythm-tip-sep"></div>
-    <div class="rhythm-tip-total">Total: <b>${realTotal}</b> · ideal ${idealTotal}</div>`;
-  tip.hidden = false;
-  const xpct = parseFloat(hover.dataset.xpct) || 0;
-  const ypct = parseFloat(hover.dataset.ypct) || 0;
-  tip.style.left = xpct + '%';
-  tip.style.top = ypct + '%';
-}
-
-/* Filtro de squads (idêntico à Capacidade). Estado em memória; sem hidden input
-   porque não persistimos entre navegações — a URL de aba já resolve retomada. */
+/* ─── Filtro de squads do Ritmo (multi) ───
+   Vazio = todas as equipes acessíveis. */
 let _rhythmSquadFilter = new Set();
+const _rhythmOpen = new Set(); // equipes com a lista de vencidas aberta
 function _rhythmAccessibleWs() {
-  const allowedIds = new Set(me?.isAdmin ? workspaces.map(w => w.id) : (me?.workspaces || []));
-  return workspaces
-    .filter(w => allowedIds.has(w.id))
-    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt-BR', { sensitivity: 'base' }));
+  return (workspaces || []).filter(w => me.isAdmin || (me.workspaces || []).includes(w.id));
 }
 function _renderRhythmSquadFilter() {
   const host = $('rhythm-squad-filter'); if (!host) return;
   const list = _rhythmAccessibleWs();
   if (list.length <= 1) { host.innerHTML = ''; return; }
-  const chips = list.map(w => {
-    const on = _rhythmSquadFilter.has(w.id);
-    return `<button type="button" class="uws-chip${on ? ' is-active' : ''}" onclick="toggleRhythmSquad('${esc(w.id)}')">
-      <span class="uws-chip-dot" style="background:${esc(w.color || 'var(--accent)')}"></span>${esc(w.name)}
-    </button>`;
-  }).join('');
-  const clear = _rhythmSquadFilter.size ? `<button type="button" class="uws-clear" onclick="clearRhythmSquadFilter()">Limpar</button>` : '';
-  const hint = _rhythmSquadFilter.size >= 2
-    ? '<span class="uws-hint">Combinado num gráfico</span>'
-    : '<span class="uws-hint">Vazio = todos separados</span>';
-  host.innerHTML = `<span class="uws-label">Equipes</span>${chips}${clear}${hint}`;
+  host.innerHTML = anSquadPickerHTML('rhythm-squad-filter', list, _rhythmSquadFilter, {
+    emptyLabel: 'Todas', hint: 'Vazio = todas as equipes',
+    toggleFn: 'toggleRhythmSquad', clearFn: 'clearRhythmSquadFilter',
+  });
 }
 function toggleRhythmSquad(id) {
   if (_rhythmSquadFilter.has(id)) _rhythmSquadFilter.delete(id);
@@ -15583,6 +15226,22 @@ function clearRhythmSquadFilter() {
   _rhythmSquadFilter.clear();
   renderRhythm();
 }
+function rhythmToggleRow(id) {
+  if (_rhythmOpen.has(id)) _rhythmOpen.delete(id); else _rhythmOpen.add(id);
+  renderRhythm();
+}
+
+let _rhythmSummaryText = '';
+function rhythmCopySummary(btn) {
+  if (!_rhythmSummaryText) { toast('Nada pra copiar nesta semana.', 'warn'); return; }
+  try {
+    navigator.clipboard.writeText(_rhythmSummaryText);
+    btn.classList.add('is-done');
+    const span = btn.querySelector('span'); const prev = span ? span.textContent : '';
+    if (span) span.textContent = 'Copiado';
+    setTimeout(() => { btn.classList.remove('is-done'); if (span) span.textContent = prev; }, 1500);
+  } catch { toast('Não deu pra copiar.', 'warn'); }
+}
 
 function renderRhythm() {
   const body = $('rhythm-body');
@@ -15590,218 +15249,106 @@ function renderRhythm() {
   const sel = $('rhythm-week');
   const offset = sel ? parseInt(sel.value, 10) || 0 : 0;
   rhyUpdateLabel();
-  const { monday, friday, sunday } = _rhythmWeekBounds(offset);
-
+  const { monday, sunday } = _rhythmWeekBounds(offset);
   _renderRhythmSquadFilter();
 
+  const rangeLabel = $('rhythm-week-range');
+  if (rangeLabel) rangeLabel.textContent = `· ${fmtDM(monday.getDate(), monday.getMonth() + 1)} → ${fmtDM(sunday.getDate(), sunday.getMonth() + 1)}`;
+
   const all = _rhythmAccessibleWs();
-  if (!all.length) { body.innerHTML = '<div class="empty-state">Sem equipes acessíveis.</div>'; return; }
+  if (!all.length) { body.innerHTML = emptyState('Sem equipes acessíveis', '', 'users'); _rhythmSummaryText = ''; return; }
+  const list = _rhythmSquadFilter.size ? all.filter(w => _rhythmSquadFilter.has(w.id)) : all;
+  if (!list.length) { body.innerHTML = emptyState('Nenhuma equipe na seleção', '', 'users'); _rhythmSummaryText = ''; return; }
 
-  const fmtDate = d => d.toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit' });
-  const rangeLabel = document.getElementById('rhythm-week-range');
-  if (rangeLabel) rangeLabel.textContent = `${fmtDate(monday)} → ${fmtDate(friday)}`;
-
-  // Filtra squads: se há seleção, respeita; sem seleção, todos acessíveis.
-  const list = _rhythmSquadFilter.size
-    ? all.filter(w => _rhythmSquadFilter.has(w.id))
-    : all;
-  if (!list.length) {
-    body.innerHTML = '<div class="empty-state">Nenhuma equipe na seleção.</div>';
-    return;
-  }
-
-  // Por squad: 2 cards lado a lado — meta+KPIs à esquerda, burndown à direita.
-  const rowsHtml = list.map(ws => {
+  // Últimas 6 semanas (a selecionada é a última) pra tendência de % no prazo.
+  const weeks = [-5, -4, -3, -2, -1, 0].map(k => _rhythmWeekBounds(offset + k));
+  const rows = list.map(ws => {
     const ds = _rhythmDemandsForSquad(ws.id);
-    const series = _rhythmBuildSeries(ds, monday, sunday);
-    const summary = _rhythmSummary(ds, monday, sunday);
-    const info = _rhythmAnalyze(ws.name, summary, series);
-    // Delta = quanto o real do último dia útil difere do ideal desse dia.
-    const N = 5;
-    const realLast = series.real[N - 1] || 0;
-    const idealLast = series.ideal[N - 1] || 0;
-    const delta = realLast - idealLast;
-    const deltaLabel = delta === 0 ? '0'
-      : delta > 0 ? `+${delta}`
-      : `${delta}`;
-    const chart = _rhythmMidSvg(series, info.kind);
-    return `<div class="rhythm-squad-row" data-status="${esc(info.kind)}">
-      <div class="rhy-meta-card">
-        <div class="rhy-meta-head">
-          <span class="rhy-squad">
-            <span class="rhy-squad-dot" style="background:${esc(ws.color || '#7A00FF')}"></span>
-            ${esc(ws.name)}
-          </span>
-        </div>
-        <div class="rhy-meta-detail">${esc(info.detail)}</div>
-        <div class="rhy-kpi-line">
-          <span class="rhy-kpi">
-            <span class="rhy-kpi-label">Entregues</span>
-            <span class="rhy-kpi-value">${summary.delivered}</span>
-          </span>
-          <span class="rhy-kpi">
-            <span class="rhy-kpi-label">Atrasadas</span>
-            <span class="rhy-kpi-value${summary.overdue > 0 ? ' rhy-kpi-value--danger' : ''}">${summary.overdue}</span>
-          </span>
-          <span class="rhy-kpi">
-            <span class="rhy-kpi-label">Em aberto</span>
-            <span class="rhy-kpi-value">${summary.open}</span>
-          </span>
-          <span class="rhy-kpi rhy-kpi--delta">
-            <span class="rhy-kpi-label" title="Real − ideal no fim da semana">Δ ideal</span>
-            <span class="rhy-delta rhy-delta--${delta > 0 ? 'up' : delta < 0 ? 'down' : 'even'}">${esc(deltaLabel)}</span>
-          </span>
-        </div>
+    const s = _rhythmWeekStats(ds, monday, sunday);
+    const hist = weeks.map(w => _rhythmWeekStats(ds, w.monday, w.sunday).pctOk);
+    return { ws, s, hist, st: _rhythmStatus(s) };
+  }).sort((a, b) => (_RHY_ORDER[a.st.kind] - _RHY_ORDER[b.st.kind]) || (b.s.open - a.s.open) || a.ws.name.localeCompare(b.ws.name));
+
+  const sum = k => rows.reduce((t, r) => t + r.s[k], 0);
+  const T = { total: sum('total'), ok: sum('ok'), late: sum('late'), open: sum('open'), inn: sum('inn'), out: sum('out') };
+  const settled = T.ok + T.late + T.open;
+  const net = T.inn - T.out;
+  const withDeadlines = rows.filter(r => r.s.total).length;
+  const kpis = anKpisHTML([
+    { label: 'Prazos na semana', value: T.total, sub: T.total ? `em ${_anPlural(withDeadlines, 'equipe', 'equipes')}` : 'nenhuma demanda vence na semana' },
+    { label: 'Entregues no prazo', value: T.ok, unit: settled ? `· ${Math.round(T.ok / settled * 100)}%` : '',
+      sub: T.late ? `+ ${T.late} ${T.late === 1 ? 'entregue' : 'entregues'} com atraso` : 'nenhuma entrega atrasada',
+      title: 'Percentual sobre o que já venceu ou foi entregue.' },
+    { label: 'Vencidas em aberto', value: T.open, tone: T.open ? 'bad' : '', sub: T.open ? 'passaram do prazo e seguem abertas' : 'nada vencido em aberto' },
+    { label: 'Entrou × saiu', value: (net > 0 ? '+' : '') + net,
+      sub: `${T.inn} ${T.inn === 1 ? 'nova' : 'novas'}, ${T.out} ${T.out === 1 ? 'concluída' : 'concluídas'}${net > 0 ? ': a fila cresceu' : net < 0 ? ': a fila diminuiu' : ''}` },
+  ]);
+
+  const pct = (v, t) => t ? (v / t) * 100 : 0;
+  const rowHtml = ({ ws, s, hist, st }) => {
+    const canOpen = s.overdue.length + s.lateDone.length > 0;
+    const open = canOpen && _rhythmOpen.has(ws.id);
+    const bar = s.total ? `<div class="rhy3-bar" title="${s.ok} no prazo · ${s.late} com atraso · ${s.open} vencidas em aberto · ${s.todo} ainda vão vencer">
+        <span class="rhy3-ok" style="width:${pct(s.ok, s.total)}%"></span><span class="rhy3-late" style="width:${pct(s.late, s.total)}%"></span><span class="rhy3-open" style="width:${pct(s.open, s.total)}%"></span><span class="rhy3-todo" style="width:${pct(s.todo, s.total)}%"></span>
       </div>
-      <div class="rhy-chart-card">
-        <div class="rhy-chart-head">
-          <span class="rhy-chart-title">Burndown · ${esc(info.label)}</span>
-          <span class="rhy-chart-legend">
-            <span class="rhy-legend-item"><span class="rhy-legend-line rhy-legend-line--real" style="background:${esc(_rhythmStatusColor(info.kind))}"></span>Real</span>
-            <span class="rhy-legend-item"><span class="rhy-legend-line rhy-legend-line--ideal"></span>Ideal</span>
-          </span>
-        </div>
-        <div class="rhy-chart-body">${chart}</div>
-      </div>
-    </div>`;
-  }).join('');
+      <div class="rhy3-bar-l"><span><b>${s.total}</b> ${s.total === 1 ? 'prazo' : 'prazos'}</span><span>${s.ok + s.late} ${s.ok + s.late === 1 ? 'entregue' : 'entregues'}</span>${s.todo ? `<span>${s.todo} ainda ${s.todo === 1 ? 'vai' : 'vão'} vencer</span>` : ''}</div>`
+      : '<span class="an-card-hint">nenhum prazo nesta semana</span>';
+    const trend = hist.map((h, i) => h == null
+      ? `<span class="is-none" title="sem prazos"></span>`
+      : `<span class="${i === hist.length - 1 ? 'is-cur' : ''}" style="height:${Math.max(2, (h / 100) * 24)}px" title="${h}% no prazo"></span>`).join('');
+    const netW = s.inn - s.out;
+    const head = `<tr class="${canOpen ? 'is-click' : ''}${open ? ' is-open' : ''}"${canOpen ? ` onclick="rhythmToggleRow('${esc(ws.id)}')"` : ''}>
+      <td><div class="an-who"><span class="an-dot" style="background:${esc(ws.color || 'var(--accent)')}"></span><span class="an-who-name">${esc(ws.name)}</span></div></td>
+      <td>${bar}</td>
+      <td class="is-r is-num${s.pctOk == null ? ' is-zero' : ''}">${s.pctOk == null ? '—' : s.pctOk + '%'}</td>
+      <td class="is-r is-num${s.open ? ' is-bad' : ' is-zero'}">${s.open}</td>
+      <td class="is-r an-hide-sm"><span class="rhy3-flow" title="${s.inn} criadas · ${s.out} concluídas na semana">${s.inn || s.out ? `<span class="is-io">${s.inn} → ${s.out}</span>${netW > 0 ? '+' : ''}${netW}` : '<span class="is-io">—</span>'}</span></td>
+      <td class="an-hide-sm"><div class="rhy3-trend" title="% entregue no prazo, semana a semana">${trend}</div></td>
+      <td><span class="an-chip is-${st.tone}">${st.label}</span></td>
+      <td class="is-r">${canOpen ? '<span class="an-chev"><i data-lucide="chevron-right"></i></span>' : ''}</td>
+    </tr>`;
+    if (!open) return head;
+    const line = (c, late) => {
+      const owner = userById(c.d.ownerId);
+      const p = projectById(c.d.projectId);
+      return `<div class="an-drill-row" onclick="showDetail('${esc(c.d.id)}')">
+        <span class="an-drill-name">${esc(c.d.name)}</span>
+        <span class="is-muted">${esc(c.stage || p?.client || p?.name || '—')}</span>
+        <span class="is-muted">${esc(owner?.name || 'Sem responsável')}</span>
+        <span class="${late ? 'is-bad' : 'is-ok'}">${late ? 'venceu ' + _anDM(c.due) : `prazo ${_anDM(c.due)}, saiu ${_anDM(c.leftY)}`}</span>
+      </div>`;
+    };
+    const byDue = (a, b) => a.due.localeCompare(b.due);
+    const blocks = [
+      s.overdue.length ? `<div class="an-lbl">Vencidas em aberto</div>${s.overdue.slice().sort(byDue).map(c => line(c, true)).join('')}` : '',
+      s.lateDone.length ? `<div class="an-lbl" style="margin-top:var(--space-3)">Entregues com atraso</div>${s.lateDone.slice().sort(byDue).map(c => line(c, false)).join('')}` : '',
+    ].join('');
+    return head + `<tr class="an-drill"><td colspan="8"><div class="an-drill-in">${blocks}</div></td></tr>`;
+  };
 
-  body.innerHTML = `<div class="rhythm-stack-v2">${rowsHtml}</div>`;
-  if (window.lucide) lucide.createIcons();
-}
-
-/* Cor semantica pro real do burndown, coerente com a status pill. */
-function _rhythmStatusColor(kind) {
-  if (kind === 'atrasado')  return '#EF4444';
-  if (kind === 'adiantado') return '#22c55e';
-  if (kind === 'no-ritmo')  return '#a78bfa';
-  return 'rgba(255,255,255,0.4)';
-}
-
-/* Chart burndown médio (por squad, dentro do card à direita). O SVG é
-   estirado pra ocupar TODA a extensão do container (preserveAspectRatio=none)
-   com strokes non-scaling; labels e dots ficam em HTML absolute sobreposto,
-   assim texto não distorce quando o card muda de largura. */
-function _rhythmMidSvg(series, statusKind) {
-  // Área SVG em coordenadas 0..100 no eixo X e 0..100 no Y. Percentages
-  // uniformes deixam o SVG cobrir width/height do container inteiro.
-  const N = 5, LAST = N - 1;
-  const dayLabels = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex'];
-  const maxV = Math.max(1, ...series.real, ...series.ideal);
-  const niceTop = Math.max(1, Math.ceil(maxV));
-  // Paddings percentuais pra respirar (inset pra evitar clip nos limites).
-  const xPct = i => 3 + (i / LAST) * 94;   // 3%..97% de X
-  const yPct = v => 92 - (v / niceTop) * 84; // 92% (base) → 8% (topo)
-  const idealPts = series.ideal.map((v, i) => `${xPct(i).toFixed(2)},${yPct(v).toFixed(2)}`).join(' ');
-  const realPts  = series.real.map((v, i) => `${xPct(i).toFixed(2)},${yPct(v).toFixed(2)}`).join(' ');
-  const realColor = _rhythmStatusColor(statusKind);
-  const yTicks = [0, Math.round(niceTop / 2), niceTop];
-  const yGridLines = yTicks.map(v => `
-    <line x1="0" x2="100" y1="${yPct(v).toFixed(2)}" y2="${yPct(v).toFixed(2)}"
-          stroke="rgba(255,255,255,0.05)" stroke-width="1" vector-effect="non-scaling-stroke"/>
-  `).join('');
-  const yLabelsHtml = yTicks.map(v => `
-    <span class="rhy-mid-ylab" style="top:${yPct(v).toFixed(2)}%">${v}</span>
-  `).join('');
-  const xLabelsHtml = dayLabels.map((d, i) => `
-    <span class="rhy-mid-xlab" style="left:${xPct(i).toFixed(2)}%">${d}</span>
-  `).join('');
-  const realDots = series.real.map((v, i) => `
-    <span class="rhy-mid-dot" style="left:${xPct(i).toFixed(2)}%;top:${yPct(v).toFixed(2)}%;background:${realColor}"></span>
-  `).join('');
-  // Zonas invisíveis por dia — cobrem uma faixa vertical inteira e ativam
-  // o tooltip com Real/Ideal do dia. Também mostram uma linha-guia vertical.
-  const hoverZones = series.real.map((_, i) => {
-    const half = 100 / (LAST * 2);
-    const start = Math.max(0, xPct(i) - half);
-    const width = (i === 0 || i === LAST) ? half + 1 : half * 2;
-    return `<span class="rhy-mid-zone"
-        style="left:${start.toFixed(2)}%;width:${width.toFixed(2)}%"
-        data-day="${esc(dayLabels[i])}"
-        data-real="${series.real[i]}"
-        data-ideal="${series.ideal[i]}"
-        data-xpct="${xPct(i).toFixed(2)}"
-        onmousemove="_rhyMidTipShow(event, this)"
-        onmouseleave="_rhyMidTipHide(event, this)"></span>`;
-  }).join('');
-  return `<div class="rhy-mid-wrap">
-    <svg viewBox="0 0 100 100" preserveAspectRatio="none" class="rhy-mid-svg" role="img">
-      ${yGridLines}
-      <polyline points="${idealPts}" fill="none" stroke="rgba(255,255,255,0.35)"
-                stroke-width="1.2" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>
-      <polyline points="${realPts}" fill="none" stroke="${realColor}"
-                stroke-width="2" stroke-linejoin="round" stroke-linecap="round"
-                vector-effect="non-scaling-stroke"/>
-    </svg>
-    <div class="rhy-mid-ylabs">${yLabelsHtml}</div>
-    <div class="rhy-mid-xlabs">${xLabelsHtml}</div>
-    <div class="rhy-mid-dots">${realDots}</div>
-    <div class="rhy-mid-guide" hidden></div>
-    <div class="rhy-mid-tip" hidden></div>
-    <div class="rhy-mid-hover">${hoverZones}</div>
+  const legend = `<div class="an-legend"><span><i class="rhy3-ok"></i>No prazo</span><span><i class="rhy3-late"></i>Com atraso</span><span><i class="rhy3-open"></i>Vencida em aberto</span><span><i class="rhy3-todo"></i>Ainda vai vencer</span></div>`;
+  body.innerHTML = kpis + `<div class="an-card">
+    <div class="an-card-h"><h3>Por equipe</h3><span class="an-card-hint">piores primeiro · clique para ver o que atrasou</span><span class="an-card-sp"></span>${legend}</div>
+    <div class="an-table-wrap"><table class="an-table">
+      <thead><tr>
+        <th>Equipe</th><th>Prazos da semana</th>
+        <th class="is-r" title="Entregues no prazo sobre o que já venceu ou foi entregue">No prazo</th>
+        <th class="is-r" title="Prazo passou e a demanda segue aberta">Vencidas</th>
+        <th class="is-r an-hide-sm" title="Demandas criadas → concluídas na semana">Entrou × saiu</th>
+        <th class="an-hide-sm">Últimas 6 semanas</th>
+        <th>Situação</th><th></th>
+      </tr></thead>
+      <tbody>${rows.map(rowHtml).join('')}</tbody>
+    </table></div>
+    <div class="an-card-note">Conta os prazos de etapa que vencem na semana: a etapa foi entregue quando a demanda saiu dela. Atrasada: 20% ou mais dos prazos venceram e seguem abertos. Atenção: algum vencido em aberto, ou 20% ou mais entregues com atraso.</div>
   </div>`;
-}
 
-/* Tooltip do burndown — atualiza posição/conteúdo pelo dia sob o mouse.
-   Cálculos consideram o padding-left do .rhy-mid-wrap (22px reservados
-   pros labels do eixo Y). */
-function _rhyMidTipShow(ev, zone) {
-  const wrap = zone.closest('.rhy-mid-wrap'); if (!wrap) return;
-  const tip = wrap.querySelector('.rhy-mid-tip');
-  const guide = wrap.querySelector('.rhy-mid-guide');
-  const day = zone.dataset.day || '';
-  const real = zone.dataset.real || '0';
-  const ideal = zone.dataset.ideal || '0';
-  const xPct = parseFloat(zone.dataset.xpct) || 50;
-  const PAD_L = 22; // = padding-left do .rhy-mid-wrap em px
-  const rectWrap = wrap.getBoundingClientRect();
-  const innerW = Math.max(1, rectWrap.width - PAD_L);
-  const guideX = PAD_L + (xPct / 100) * innerW;
-  if (guide) {
-    guide.hidden = false;
-    guide.style.left = guideX + 'px';
-  }
-  if (tip) {
-    tip.innerHTML = `<div class="rhy-mid-tip-day">${day}</div>
-      <div class="rhy-mid-tip-row"><span class="rhy-mid-tip-dot rhy-mid-tip-dot--real"></span>Real <b>${real}</b></div>
-      <div class="rhy-mid-tip-row"><span class="rhy-mid-tip-dot rhy-mid-tip-dot--ideal"></span>Ideal <b>${ideal}</b></div>`;
-    tip.hidden = false;
-    // Alinha centro do tooltip pelo dia, mas segura nas bordas do wrap.
-    const tipWidth = tip.offsetWidth || 100;
-    let leftPx = guideX - tipWidth / 2;
-    if (leftPx < 4) leftPx = 4;
-    if (leftPx + tipWidth > rectWrap.width - 4) leftPx = rectWrap.width - tipWidth - 4;
-    tip.style.left = leftPx + 'px';
-    tip.style.top = '6px';
-  }
-}
-function _rhyMidTipHide(ev, zone) {
-  const wrap = zone.closest('.rhy-mid-wrap'); if (!wrap) return;
-  const tip = wrap.querySelector('.rhy-mid-tip');
-  const guide = wrap.querySelector('.rhy-mid-guide');
-  if (tip) tip.hidden = true;
-  if (guide) guide.hidden = true;
-}
-window._rhyMidTipShow = _rhyMidTipShow;
-window._rhyMidTipHide = _rhyMidTipHide;
-
-/* Sparkline mini pro burndown na linha da tabela. 60×16, sem eixos, sem
-   grid — só duas linhas: real (colorido por status) e ideal (tracejado). */
-function _rhythmSparkSvg(series, statusKind) {
-  const w = 60, h = 16, N = 5, LAST = N - 1;
-  const maxV = Math.max(1, ...series.real, ...series.ideal);
-  const xOf = i => (i / LAST) * w;
-  const yOf = v => h - (v / maxV) * h;
-  const idealPts = series.ideal.map((v, i) => `${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`).join(' ');
-  const realPts  = series.real.map((v, i) => `${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`).join(' ');
-  const realColor = statusKind === 'atrasado' ? '#EF4444'
-                  : statusKind === 'adiantado' ? '#22c55e'
-                  : statusKind === 'no-ritmo' ? '#a78bfa'
-                  : 'rgba(255,255,255,0.4)';
-  return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" class="rhy-spark">
-    <polyline points="${idealPts}" fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="1" stroke-dasharray="2 2"/>
-    <polyline points="${realPts}" fill="none" stroke="${realColor}" stroke-width="1.5" stroke-linecap="round"/>
-  </svg>`;
+  // Resumo pra colar no Slack / reunião.
+  const wk = `${fmtDM(monday.getDate(), monday.getMonth() + 1)} a ${fmtDM(sunday.getDate(), sunday.getMonth() + 1)}`;
+  _rhythmSummaryText = [`Ritmo da semana ${wk}: ${T.ok} de ${T.total} prazos entregues no prazo, ${T.late} com atraso, ${T.open} vencidas em aberto.`]
+    .concat(rows.filter(r => r.s.total).map(({ ws, s, st }) =>
+      `• ${ws.name} (${st.label.toLowerCase()}): ${s.ok}/${s.total} no prazo${s.late ? `, ${s.late} com atraso` : ''}${s.open ? `, ${s.open} ${s.open === 1 ? 'vencida' : 'vencidas'} em aberto` : ''}${s.todo ? `, ${s.todo} ainda ${s.todo === 1 ? 'vai' : 'vão'} vencer` : ''}.`))
+    .join('\n');
 }
 
 /* ───────────────────────────────────────────────────────────────
@@ -17168,15 +16715,10 @@ function renderCapSquadFilter() {
   const accessibleWs = (workspaces || []).filter(w => me.isAdmin || (me.workspaces || []).includes(w.id));
   // Com 1 workspace só, o filtro não tem o que filtrar — esconde.
   if (accessibleWs.length <= 1) { host.innerHTML = ''; return; }
-  const chips = accessibleWs.map(w => {
-    const on = capSquadFilter.has(w.id);
-    return `<button type="button" class="uws-chip${on ? ' is-active' : ''}" onclick="toggleCapSquad('${esc(w.id)}')">
-      <span class="uws-chip-dot" style="background:${esc(w.color || 'var(--accent)')}"></span>${esc(w.name)}
-    </button>`;
-  }).join('');
-  const clear = capSquadFilter.size ? `<button type="button" class="uws-clear" onclick="clearCapSquadFilter()">Limpar</button>` : '';
-  const hint = capSquadFilter.size ? '' : `<span class="uws-hint">Vazio = workspace atual</span>`;
-  host.innerHTML = `<span class="uws-label">Equipes</span>${chips}${clear}${hint}`;
+  host.innerHTML = anSquadPickerHTML('capacity-squad-filter', accessibleWs, capSquadFilter, {
+    emptyLabel: wsById(activeWs)?.name || 'Equipe atual', hint: 'Vazio = equipe atual',
+    toggleFn: 'toggleCapSquad', clearFn: 'clearCapSquadFilter',
+  });
 }
 function toggleCapSquad(id) {
   if (capSquadFilter.has(id)) capSquadFilter.delete(id); else capSquadFilter.add(id);
@@ -17221,14 +16763,14 @@ function renderCapacity() {
 
   // Esconde o cabeçalho ("Capacidade da Equipe") com base no modo
   const heading = $('capacity-heading');
-  if (heading) heading.textContent = capacityView === 'team' ? 'Capacidade da Equipe' : (capacityView === 'project' ? 'Horas por Projeto' : 'Horas por Cliente');
+  if (heading) heading.textContent = capacityView === 'team' ? 'Capacidade da equipe' : (capacityView === 'project' ? 'Horas por projeto' : 'Horas por cliente');
 
   const hint = $('capacity-hint');
   if (hint) hint.textContent = capacityView === 'team'
-    ? 'Distribuição de demandas em aberto por responsável — carga baseada em atribuições e horas apontadas.'
+    ? 'Quem tem espaço e quem está carregado: horas apontadas, demandas em aberto e prazos de cada pessoa.'
     : (capacityView === 'project'
-        ? 'Total de horas apontadas em cada projeto no período.'
-        : 'Total de horas apontadas em cada cliente no período.');
+        ? 'Onde o time gastou as horas apontadas no período, por projeto.'
+        : 'Onde o time gastou as horas apontadas no período, por cliente.');
 
   saveFilters('capacity');
   if (capacityView === 'team') return renderCapacityTeam(startYmd, endYmd, businessDays, capacityHours, logStartYmd, logEndYmd);
@@ -17236,276 +16778,115 @@ function renderCapacity() {
   return renderCapacityAggregate('client', startYmd, endYmd, businessDays, capacityHours);
 }
 
-/* Heatmap pessoa × dia: nº de demandas em aberto com prazo em cada dia da janela.
-   Mostra onde a pressão de prazo se concentra por pessoa. Usa ymd LOCAL pra bater
-   com o formato de deadline ('YYYY-MM-DD') sem deslocar por fuso. */
-// Toggle do mapa de prazos: 'prazos' (prazo efetivo por dia) | 'previstas'
-// (quando a demanda deve CHEGAR na etapa da pessoa, via SLA das etapas).
+/* Coluna "Prazos" da tabela de pessoas: 'prazos' (prazo efetivo por dia) |
+   'previstas' (quando a demanda deve CHEGAR na etapa da pessoa, via SLA das etapas). */
 let _capHeatMode = 'prazos';
 function setCapHeatMode(m) {
   _capHeatMode = (m === 'previstas') ? 'previstas' : 'prazos';
   renderCapacity();
 }
-function capacityHeatmapHTML(rows, startYmd, endYmd) {
-  const mode = _capHeatMode === 'previstas' ? 'previstas' : 'prazos';
-  const ymdOf = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
-  const days = [];
-  let cur = new Date(startYmd + 'T00:00:00');
+/* Ordem da tabela de pessoas e se o grupo "sem horas e sem demandas" está aberto. */
+let _capSort = 'load';
+let _capShowIdle = false;
+function capSetSort(k) { _capSort = k; renderCapacity(); }
+function capShowIdle() { _capShowIdle = true; renderCapacity(); }
+
+/* Dias de uma janela [a, b] em ymd LOCAL (bate com deadline 'YYYY-MM-DD' sem fuso). */
+const _CAP_WD = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+function _capDays(startYmd, endYmd) {
+  const out = [];
+  const cur = new Date(startYmd + 'T00:00:00');
   const end = new Date(endYmd + 'T00:00:00');
-  let guard = 0;
-  while (cur <= end && guard < 62) { days.push(new Date(cur)); cur.setDate(cur.getDate() + 1); guard++; }
-  const todayYmd = todayStr();
-  const WD = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S']; // dom..sáb
-  // Cor da célula = nº de demandas NAQUELE dia (por pessoa). Faixas:
-  // 0 sem cor · 1–3 verde · 4–6 amarelo · 7–10 laranja · >10 vermelho.
-  const loadLevel = n => n === 0 ? 0 : n <= 3 ? 1 : n <= 6 ? 2 : n <= 10 ? 3 : 4;
-  // Modo "previstas": agrega, numa passada, a chegada prevista por (usuário, dia)
-  // de TODAS as demandas do workspace (não só as que a pessoa já é dona hoje).
-  let arrivalsByUserDay = null;
-  if (mode === 'previstas') {
-    arrivalsByUserDay = new Map();
-    const winStart = ymdOf(days[0]);
-    const winEnd = ymdOf(days[days.length - 1]);
-    capScopeDemands().forEach(d => {
-      forecastArrivalsByUser(d).forEach((info, uid) => {
-        if (info.ymd < winStart || info.ymd > winEnd) return;
-        let m = arrivalsByUserDay.get(uid);
-        if (!m) { m = new Map(); arrivalsByUserDay.set(uid, m); }
-        m.set(info.ymd, (m.get(info.ymd) || 0) + 1);
-      });
-    });
+  for (let guard = 0; cur <= end && guard < 400; guard++) {
+    out.push({ ymd: _ymdLocal(cur), dow: cur.getDay(), date: cur.getDate(), month: cur.getMonth() + 1 });
+    cur.setDate(cur.getDate() + 1);
   }
-  const grid = rows.map(r => ({
-    u: r.u,
-    counts: days.map(day => {
-      const dk = ymdOf(day);
-      if (mode === 'previstas') return (arrivalsByUserDay.get(r.u.id) && arrivalsByUserDay.get(r.u.id).get(dk)) || 0;
-      return r.userDemands.filter(dm => effDue(dm) === dk).length;
-    })
-  }));
-  const total = grid.reduce((s, g) => s + g.counts.reduce((a, b) => a + b, 0), 0);
-  const colHead = days.map(day => {
-    const dow = day.getDay(), weekend = dow === 0 || dow === 6, isToday = ymdOf(day) === todayYmd;
-    return `<div class="cap-heat-colhead ${weekend ? 'is-weekend' : ''} ${isToday ? 'is-today' : ''}">
-      <span class="cap-heat-dow">${WD[dow]}</span><span class="cap-heat-dom">${day.getDate()}</span></div>`;
-  }).join('');
-  const body = grid.map(g => {
-    const cells = g.counts.map((n, i) => {
-      const day = days[i], dow = day.getDay(), weekend = dow === 0 || dow === 6, isToday = ymdOf(day) === todayYmd;
-      const fill = n > 0 ? `load-${loadLevel(n)}` : '';
-      return `<div class="cap-heat-cell ${fill} ${weekend ? 'is-weekend' : ''} ${isToday ? 'is-today' : ''}">${n || ''}</div>`;
-    }).join('');
-    return `
-    <div class="cap-heat-row">
-      <div class="cap-heat-user">${avatarHTML(g.u, 'avatar avatar-xs')}<span>${esc(g.u.name.split(' ')[0])}</span></div>
-      <div class="cap-heat-cells">${cells}</div>
-    </div>`;
-  }).join('');
-  const title = mode === 'previstas' ? 'Demandas previstas por pessoa' : 'Prazos por pessoa';
-  // Em "previstas" a MESMA demanda pode cair em várias pessoas/dias — então
-  // contamos chegadas previstas (ocorrências no mapa), não demandas distintas.
-  const sub = mode === 'previstas'
-    ? `${total} chegada${total === 1 ? '' : 's'} prevista${total === 1 ? '' : 's'} na janela`
-    : `${total} demanda${total === 1 ? '' : 's'} com prazo na janela`;
-  return `<div class="cap-heat">
-    <div class="cap-heat-head-row">
-      <div class="cap-heat-head-left">
-        <div class="cap-heat-title">${title}</div>
-        <div class="cap-heat-sub">${sub}</div>
-      </div>
-      <div class="seg cap-heat-toggle">
-        <button type="button" class="seg-btn cap-heat-toggle-btn ${mode === 'prazos' ? 'is-active' : ''}" onclick="setCapHeatMode('prazos')">Prazos</button>
-        <button type="button" class="seg-btn cap-heat-toggle-btn ${mode === 'previstas' ? 'is-active' : ''}" onclick="setCapHeatMode('previstas')">Previstas</button>
-      </div>
-    </div>
-    <div class="cap-heat-grid">
-      <div class="cap-heat-row cap-heat-headrow"><div class="cap-heat-user"></div><div class="cap-heat-cells">${colHead}</div></div>
-      ${body}
-    </div>
-  </div>`;
+  return out;
+}
+const _capEntryDay = e => ((e.start || e.createdAt || '') + '').slice(0, 10);
+
+/* Cor de cada série (pessoa, projeto ou cliente) pelo total no período: as 10
+   maiores ganham --series-1..10, o resto vira "Outros" (--series-other).
+   whoByDay = por dia, [{ key, name, h }]. Devolve key → cor. */
+const CAP_SERIES_MAX = 10;
+function _capSeriesColors(whoByDay) {
+  const tot = new Map();
+  whoByDay.forEach(list => list.forEach(x => tot.set(x.key, (tot.get(x.key) || 0) + x.h)));
+  const ranked = [...tot.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  return new Map(ranked.map((k, i) => [k, i < CAP_SERIES_MAX ? `var(--series-${i + 1})` : 'var(--series-other)']));
 }
 
-/* Sparkline multi-linha de horas apontadas por dia (uma linha por usuário).
-   - preserveAspectRatio=none só afeta os paths (com non-scaling-stroke).
-   - Markers da bolinha são HTML absolutos, sem distorção.
-   - Y-axis com múltiplos labels (0 → yMax) posicionados por % em HTML.
-   - Tooltip mostra dot colorido + nome + horas, ordenado por horas do dia. */
-const CAP_SPARK_PALETTE = ['#7A00FF','#3b82f6','#10b981','#f59e0b','#ef4444','#ec4899','#06b6d4','#8b5cf6','#f97316','#14b8a6'];
-function _capSparklineHtml(logStartYmd, logEndYmd) {
-  const days = [];
-  const cur = new Date(logStartYmd + 'T00:00:00');
-  const end = new Date(logEndYmd + 'T00:00:00');
-  let guardIter = 0;
-  while (cur <= end && guardIter < 400) { days.push(new Date(cur)); cur.setDate(cur.getDate() + 1); guardIter++; }
-  if (!days.length) return '';
-  const ymdOf = dt => `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
-  const validDays = new Set(days.map(ymdOf));
-  // Agrega horas por (usuário, dia).
-  const byUserDay = new Map();
-  capScopeDemands().forEach(dem => {
-    (dem.timeEntries || []).forEach(e => {
-      const when = ((e.start || e.createdAt || '') + '').slice(0, 10);
-      if (!validDays.has(when) || !e.userId) return;
-      let m = byUserDay.get(e.userId);
-      if (!m) { m = new Map(); byUserDay.set(e.userId, m); }
-      m.set(when, (m.get(when) || 0) + (Number(e.hours) || 0));
-    });
-  });
-  if (!byUserDay.size) {
-    return `<div class="cap-spark">
-      <div class="cap-spark-head">
-        <div class="cap-spark-title">Horas apontadas por dia</div>
-      </div>
-      <div class="cap-spark-empty">Sem apontamentos no período.</div>
+/* Gráfico de horas por dia. Altura fixa: com 5 ou 60 pessoas ocupa o mesmo
+   espaço. Cada barra empilha as séries (cor por pessoa/projeto) na proporção
+   das horas do dia; passar o mouse mostra quem apontou quanto. */
+let _capChart = null; // { days, totals, whoByDay, colorOf } do gráfico na tela, pro tooltip
+function _capHoursChartHTML(days, totals, whoByDay, colorOf) {
+  _capChart = { days, totals, whoByDay, colorOf };
+  const rank = new Map([...colorOf.keys()].map((k, i) => [k, i]));
+  const max = Math.max(0, ...totals);
+  // Escala "redonda" pra os rótulos do eixo saírem inteiros.
+  const step = max <= 4 ? 1 : max <= 10 ? 2 : max <= 20 ? 5 : max <= 50 ? 10 : max <= 100 ? 20 : 50;
+  const top = Math.max(step * 2, Math.ceil((max * 1.15) / step) * step);
+  const ticks = [top, top / 2, 0];
+  const today = todayStr();
+  const n = days.length;
+  const gap = n <= 7 ? 'var(--space-3)' : n <= 14 ? 'var(--space-1-5)' : 'var(--space-0-5)';
+  const every = n <= 14 ? 1 : n <= 31 ? 3 : 7;
+  const cols = days.map((d, i) => {
+    const v = totals[i];
+    // Fatias na mesma ordem todo dia (maior série embaixo); "Outros" somados no topo.
+    const parts = (whoByDay[i] || []).slice().sort((a, b) => rank.get(a.key) - rank.get(b.key));
+    const main = parts.filter(x => rank.get(x.key) < CAP_SERIES_MAX);
+    const rest = parts.filter(x => rank.get(x.key) >= CAP_SERIES_MAX).reduce((s, x) => s + x.h, 0);
+    const segs = main.map(x => ({ h: x.h, c: colorOf.get(x.key) })).concat(rest ? [{ h: rest, c: 'var(--series-other)' }] : []);
+    const cls = ['cap3-col', d.dow === 0 || d.dow === 6 ? 'is-weekend' : '', d.ymd === today ? 'is-today' : '', d.ymd > today ? 'is-future' : ''].join(' ');
+    return `<div class="${cls}" onmouseenter="capChartTip(this, ${i})" onmouseleave="capChartTipHide()">
+      <div class="cap3-b" style="height:${top ? (v / top) * 100 : 0}%">${v > 0 && n <= 14 ? `<em>${fmtHours(v)}</em>` : ''}${segs.map(s => `<span style="height:${(s.h / v) * 100}%;background:${s.c}"></span>`).join('')}</div>
     </div>`;
-  }
-  // Top-N usuários por horas totais no período; usa a paleta pra dar cor.
-  const MAX_SERIES = 10;
-  const userTotals = [...byUserDay.entries()].map(([uid, m]) => ({
-    uid, total: [...m.values()].reduce((s, v) => s + v, 0)
-  })).filter(u => u.total > 0).sort((a, b) => b.total - a.total);
-  const series = userTotals.slice(0, MAX_SERIES).map((u, i) => {
-    const user = userById(u.uid);
-    const m = byUserDay.get(u.uid);
-    return {
-      user, color: CAP_SPARK_PALETTE[i % CAP_SPARK_PALETTE.length],
-      values: days.map(dt => m.get(ymdOf(dt)) || 0),
-      total: u.total,
-    };
-  }).filter(s => s.user);
-  const totalAll = userTotals.reduce((s, u) => s + u.total, 0);
-
-  const W = 1000, H = 300;
-  const rawMax = Math.max(1, ...series.flatMap(s => s.values));
-  const yMax = Math.max(1, Math.ceil(rawMax * 1.15));
-  const xAt = i => days.length <= 1 ? W / 2 : i * W / (days.length - 1);
-  const yAt = v => H - (v / yMax) * H;
-  // Uma path por série (linha por usuário). Sem áreas — polui com N linhas.
-  const pathParts = series.map(s => {
-    const pts = s.values.map((v, i) => [xAt(i), yAt(v)]);
-    const path = 'M ' + pts.map(p => `${p[0]} ${p[1]}`).join(' L ');
-    return `<path d="${path}" fill="none" stroke="${s.color}" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" opacity="0.9"/>`;
   }).join('');
-  // Gridlines em 5 níveis (0, 25%, 50%, 75%, 100%).
-  const gridLevels = [0, 0.25, 0.5, 0.75, 1];
-  const gridEls = gridLevels.map(f => {
-    const y = yAt(yMax * f);
-    return `<line x1="0" x2="${W}" y1="${y}" y2="${y}" stroke="var(--border)" stroke-width="1" stroke-dasharray="2 3" opacity="0.4" vector-effect="non-scaling-stroke"/>`;
+  const xs = days.map((d, i) => {
+    const show = i % every === 0 || d.ymd === today;
+    const txt = !show ? '' : n <= 7 ? `${_CAP_WD[d.dow]} ${d.date}` : String(d.date);
+    return `<span class="${d.ymd === today ? 'is-today' : ''}">${txt}</span>`;
   }).join('');
-  const guide = `<line id="cap-spark-guide" x1="0" y1="0" x2="0" y2="${H}" stroke="rgba(${accentRgb()},0.5)" stroke-width="1" stroke-dasharray="2 3" vector-effect="non-scaling-stroke" style="opacity:0;pointer-events:none"/>`;
-  // Y-axis labels (HTML) — do topo (yMax) até 0.
-  const yLabelsHtml = gridLevels.slice().reverse().map(f => {
-    const v = yMax * f;
-    const label = Number.isInteger(v) ? String(v) : v.toFixed(1);
-    const topPct = (1 - f) * 100;
-    return `<span class="cap-spark-ylabel" style="top:${topPct}%">${label}h</span>`;
-  }).join('');
-  // X-axis labels (HTML).
-  const idxsToLabel = days.length <= 4 ? days.map((_, i) => i) : [0, Math.floor(days.length / 3), Math.floor(days.length * 2 / 3), days.length - 1];
-  const xLabelsHtml = idxsToLabel.map(i => {
-    const dt = days[i];
-    const pct = days.length <= 1 ? 50 : (i * 100 / (days.length - 1));
-    const lbl = fmtDM(dt.getDate(), dt.getMonth() + 1);
-    let align = 'center';
-    if (i === 0) align = 'left';
-    else if (i === days.length - 1) align = 'right';
-    return `<span class="cap-spark-xlabel is-${align}" style="left:${pct}%">${lbl}</span>`;
-  }).join('');
-  // Markers HTML (um por série) — posicionados por % no hover, sem distorção.
-  const markersHtml = series.map((s, i) =>
-    `<div class="cap-spark-mk" data-idx="${i}" style="background:${s.color}"></div>`
-  ).join('');
-  _pendingCapSparkline = { days, series, xAt, yAt, W, H, yMax };
-  return `<div class="cap-spark">
-    <div class="cap-spark-head">
-      <div class="cap-spark-title">Horas apontadas por dia</div>
-      <div class="cap-spark-sub">${fmtHours(totalAll)} no período · ${series.length} pessoa${series.length === 1 ? '' : 's'}</div>
+  return `<div class="cap3-chart" style="--cap3-gap:${gap}">
+    <div class="cap3-ax">${ticks.map(t => `<span style="top:${100 - (t / top) * 100}%">${fmtHours(t)}</span>`).join('')}</div>
+    <div class="cap3-plot">
+      ${ticks.slice(0, 2).map(t => `<div class="cap3-grid" style="bottom:${(t / top) * 100}%"></div>`).join('')}
+      ${cols}
     </div>
-    <div class="chart-hover-host cap-spark-host" id="cap-spark-host">
-      <div class="cap-spark-yaxis">${yLabelsHtml}</div>
-      <div class="cap-spark-plot" id="cap-spark-plot">
-        <svg viewBox="0 0 ${W} ${H}" class="cap-spark-svg" preserveAspectRatio="none">
-          ${gridEls}
-          ${pathParts}
-          ${guide}
-        </svg>
-        <div class="cap-spark-markers" id="cap-spark-markers">${markersHtml}</div>
-      </div>
-      <div class="cap-spark-xaxis">${xLabelsHtml}</div>
-      <div class="chart-tooltip" id="cap-spark-tip"></div>
-    </div>
+    <div class="cap3-x">${xs}</div>
+    <div class="chart-tooltip cap3-tip" id="cap3-tip"></div>
   </div>`;
 }
-let _pendingCapSparkline = null;
-function _wireCapSparkline() {
-  const cfg = _pendingCapSparkline;
-  _pendingCapSparkline = null;
-  if (!cfg) return;
-  const host = document.getElementById('cap-spark-host');
-  const plot = document.getElementById('cap-spark-plot');
-  const svg = plot?.querySelector('.cap-spark-svg');
-  const tip = document.getElementById('cap-spark-tip');
-  const gd = document.getElementById('cap-spark-guide');
-  const markers = [...(document.getElementById('cap-spark-markers')?.children || [])];
-  if (!host || !plot || !svg) return;
-  const { days, series, xAt, yAt, W, H } = cfg;
-  let lastIdx = -1;
-  plot.addEventListener('mousemove', e => {
-    const rect = plot.getBoundingClientRect();
-    const hostRect = host.getBoundingClientRect();
-    if (!rect.width) return;
-    const svgX = ((e.clientX - rect.left) * W / rect.width);
-    let best = 0, bd = Infinity;
-    for (let i = 0; i < days.length; i++) {
-      const dx = Math.abs(xAt(i) - svgX);
-      if (dx < bd) { bd = dx; best = i; }
-    }
-    if (best === lastIdx) return;
-    lastIdx = best;
-    const dt = days[best];
-    const xPct = (xAt(best) / W) * 100;
-    if (gd) { gd.setAttribute('x1', xAt(best)); gd.setAttribute('x2', xAt(best)); gd.style.opacity = '1'; }
-    // Markers HTML por série — % dentro do .cap-spark-plot.
-    series.forEach((s, i) => {
-      const mk = markers[i];
-      if (!mk) return;
-      const v = s.values[best];
-      if (v <= 0) { mk.style.opacity = '0'; return; }
-      mk.style.left = xPct + '%';
-      mk.style.top = ((yAt(v) / H) * 100) + '%';
-      mk.style.opacity = '1';
-    });
-    // Tooltip: dot colorido + nome + horas, ordenado por horas do dia.
-    const contribs = series
-      .map(s => ({ user: s.user, color: s.color, hrs: s.values[best] }))
-      .filter(c => c.hrs > 0)
-      .sort((a, b) => b.hrs - a.hrs);
-    const total = contribs.reduce((s, c) => s + c.hrs, 0);
-    const dateLabel = dt.toLocaleDateString(LOCALE, { weekday: 'short', day: '2-digit', month: '2-digit' }).replace(/\.$/, '');
-    const lines = contribs.length
-      ? contribs.slice(0, 8).map(c =>
-          `<div class="chart-tip-row"><span class="chart-tip-dot" style="background:${c.color}"></span><span class="chart-tip-label">${esc(c.user.name.split(' ')[0])}</span><span class="chart-tip-value">${fmtHours(c.hrs)}</span></div>`
-        ).join('') + (contribs.length > 8 ? `<div class="chart-tip-row" style="opacity:.7"><span class="chart-tip-label">+${contribs.length - 8} outros</span></div>` : '')
-      : '<div class="chart-tip-row" style="opacity:.7"><span class="chart-tip-label">Sem apontamentos</span></div>';
-    if (tip) {
-      tip.innerHTML = `<div class="chart-tip-head">${esc(dateLabel)} · ${fmtHours(total)}</div>${lines}`;
-      const cursorLocalX = (rect.left - hostRect.left) + xPct * rect.width / 100;
-      const tipW = tip.offsetWidth || 180;
-      let left = cursorLocalX + 8;
-      if (left + tipW > hostRect.width - 4) left = cursorLocalX - tipW - 8;
-      if (left < 4) left = 4;
-      tip.style.left = left + 'px';
-      tip.style.top = '4px';
-      tip.style.opacity = '1';
-    }
-  });
-  plot.addEventListener('mouseleave', () => {
-    lastIdx = -1;
-    if (tip) tip.style.opacity = '0';
-    if (gd) gd.style.opacity = '0';
-    markers.forEach(m => m && (m.style.opacity = '0'));
-  });
+function capChartTip(col, i) {
+  const tip = $('cap3-tip'), c = _capChart;
+  if (!tip || !c) return;
+  const d = c.days[i], total = c.totals[i];
+  const list = c.whoByDay[i] || [];
+  const MAX = 12;
+  const rows = list.slice(0, MAX).map(x => `<div class="chart-tip-row">
+      <span class="chart-tip-dot" style="background:${c.colorOf.get(x.key)}"></span>
+      <span class="chart-tip-label">${esc(x.name)}${x.sub ? `<small>${esc(x.sub)}</small>` : ''}</span>
+      <span class="chart-tip-value">${fmtHours(x.h)}</span>
+      <span class="cap3-tip-pct">${total ? Math.round(x.h / total * 100) : 0}%</span>
+    </div>`).join('');
+  const more = list.length > MAX
+    ? `<div class="chart-tip-row"><span class="chart-tip-dot" style="background:var(--series-other)"></span><span class="chart-tip-label">+${list.length - MAX} outros</span><span class="chart-tip-value">${fmtHours(list.slice(MAX).reduce((s, x) => s + x.h, 0))}</span><span class="cap3-tip-pct"></span></div>`
+    : '';
+  tip.innerHTML = `<div class="chart-tip-head">${_CAP_WD[d.dow]} ${fmtDM(d.date, d.month)} · ${fmtHours(total)}</div>`
+    + (list.length ? rows + more : '<div class="chart-tip-row"><span class="chart-tip-label">Ninguém apontou horas</span></div>');
+  // Ao lado da coluna, virando pra esquerda quando não cabe à direita.
+  const host = col.closest('.cap3-chart');
+  const hr = host.getBoundingClientRect(), cr = col.getBoundingClientRect();
+  tip.style.opacity = '1';
+  const w = tip.offsetWidth;
+  let left = cr.right - hr.left + 8;
+  if (left + w > hr.width - 4) left = cr.left - hr.left - w - 8;
+  tip.style.left = Math.max(4, left) + 'px';
+  tip.style.top = '8px';
 }
+function capChartTipHide() { const tip = $('cap3-tip'); if (tip) tip.style.opacity = '0'; }
 
 /* State pra linhas expandidas (ID do usuário → true).
    Sobrevive a re-renders; limpo quando muda escopo se ficar órfão. */
@@ -17517,157 +16898,240 @@ function capToggleRow(uid) {
 }
 /* Rótulos de status humanos, alinhados ao CSS. */
 const CAP_STATUS_LABELS = {
-  low:      { label: 'Folga',       hint: '< 40% da capacidade' },
-  medium:   { label: 'Saudável',    hint: '40 – 74% da capacidade' },
-  high:     { label: 'Alta carga',  hint: '75 – 99% da capacidade' },
-  overload: { label: 'Sobrecarga',  hint: '≥ 100% da capacidade' }
+  low:      { label: 'Folga',       hint: '< 40% da capacidade',   tone: 'neu' },
+  medium:   { label: 'Saudável',    hint: '40 – 74% da capacidade', tone: 'ok' },
+  high:     { label: 'Alta carga',  hint: '75 – 99% da capacidade', tone: 'warn' },
+  overload: { label: 'Sobrecarga',  hint: '≥ 100% da capacidade',   tone: 'bad' }
 };
+/* Última tabela desenhada, pro Exportar (CSV) sair igual ao que está na tela. */
+let _capExport = null;
 
 function renderCapacityTeam(startYmd, endYmd, businessDays, capacityHours, logStartYmd, logEndYmd) {
   const wsdemands = capScopeDemands().filter(d => !isDone(d));
   const wsusers = capScopeUsers();
+  const logDays = _capDays(logStartYmd, logEndYmd);
+  const dueDays = _capDays(startYmd, endYmd);
+  const logIdx = new Map(logDays.map((d, i) => [d.ymd, i]));
+  const dueIdx = new Map(dueDays.map((d, i) => [d.ymd, i]));
+  const today = todayStr();
 
-  const inLookback = (e) => {
-    const when = ((e.start || e.createdAt || '') + '').slice(0,10);
-    return when >= logStartYmd && when <= logEndYmd;
-  };
+  // Horas por (pessoa, dia) numa passada só. A carga é da pessoa, então conta
+  // apontamento em qualquer equipe (igual era antes).
+  const hoursBy = new Map();
+  demands.forEach(d => (d.timeEntries || []).forEach(e => {
+    const i = logIdx.get(_capEntryDay(e));
+    if (i == null || !e.userId) return;
+    let arr = hoursBy.get(e.userId);
+    if (!arr) { arr = new Array(logDays.length).fill(0); hoursBy.set(e.userId, arr); }
+    arr[i] += Number(e.hours) || 0;
+  }));
+  // Modo "previstas": chegada prevista por (pessoa, dia) de todas as demandas do escopo.
+  // arrivalList guarda as demandas de cada pessoa pra lista ao abrir a linha.
+  let arrivals = null, arrivalList = null;
+  if (_capHeatMode === 'previstas') {
+    arrivals = new Map();
+    arrivalList = new Map();
+    capScopeDemands().forEach(d => forecastArrivalsByUser(d).forEach((info, uid) => {
+      const i = dueIdx.get(info.ymd);
+      if (i == null) return;
+      let arr = arrivals.get(uid);
+      if (!arr) { arr = new Array(dueDays.length).fill(0); arrivals.set(uid, arr); }
+      arr[i]++;
+      if (!arrivalList.has(uid)) arrivalList.set(uid, []);
+      arrivalList.get(uid).push({ d, ...info });
+    }));
+  }
 
   const rows = wsusers.map(u => {
     const userDemands = wsdemands.filter(d => d.ownerId === u.id);
-    const inPeriod = userDemands.filter(d => {
-      const due = effDue(d);
-      return due && due >= startYmd && due <= endYmd;
-    });
     const lateCount = userDemands.filter(d => isLate(d)).length;
-    const hoursLogged = demands.reduce((s, d) => {
-      return s + (d.timeEntries || [])
-        .filter(e => e.userId === u.id && inLookback(e))
-        .reduce((a, e) => a + (Number(e.hours) || 0), 0);
-    }, 0);
+    const hoursByDay = hoursBy.get(u.id) || new Array(logDays.length).fill(0);
+    const hoursLogged = hoursByDay.reduce((a, b) => a + b, 0);
+    let dueCounts;
+    // dueLate = quantas da célula já estão atrasadas. Atrasada conta no dia de
+    // hoje (é trabalho pra agora), não no dia em que venceu.
+    const dueLate = new Array(dueDays.length).fill(0);
+    if (arrivals) dueCounts = arrivals.get(u.id) || new Array(dueDays.length).fill(0);
+    else {
+      dueCounts = new Array(dueDays.length).fill(0);
+      const todayI = dueIdx.get(today);
+      userDemands.forEach(d => {
+        const late = isLate(d);
+        const i = late && todayI != null ? todayI : dueIdx.get(effDue(d));
+        if (i == null) return;
+        dueCounts[i]++;
+        if (late) dueLate[i]++;
+      });
+    }
     const pct = capacityHours > 0 ? Math.min(150, Math.round(hoursLogged / capacityHours * 100)) : 0;
     const status = pct >= 100 ? 'overload' : pct >= 75 ? 'high' : pct >= 40 ? 'medium' : 'low';
-    return { u, userDemands, inPeriod, lateCount, hoursLogged, pct, status };
-  }).sort((a, b) => {
-    if (b.hoursLogged !== a.hoursLogged) return b.hoursLogged - a.hoursLogged;
-    return norm(a.u.name).localeCompare(norm(b.u.name));
+    const idle = hoursLogged === 0 && userDemands.length === 0 && dueCounts.every(c => !c);
+    return { u, userDemands, lateCount, hoursByDay, hoursLogged, dueCounts, dueLate, pct, status, idle };
   });
+  const byName = (a, b) => norm(a.u.name).localeCompare(norm(b.u.name));
+  const sorters = {
+    load: (a, b) => (b.hoursLogged - a.hoursLogged) || (b.userDemands.length - a.userDemands.length) || byName(a, b),
+    late: (a, b) => (b.lateCount - a.lateCount) || (b.userDemands.length - a.userDemands.length) || byName(a, b),
+    open: (a, b) => (b.userDemands.length - a.userDemands.length) || byName(a, b),
+    name: byName,
+  };
+  rows.sort(sorters[_capSort] || sorters.load);
 
-  // KPI extras: quanto do time está em sobrecarga, quantas atrasadas totais.
+  if (!rows.length) {
+    $('capacity-list').innerHTML = emptyState('Sem usuários ativos', 'Cadastre usuários e atribua-os a esta equipe.', 'users');
+    _capExport = null;
+    return;
+  }
+
+  // ── Números do topo ──
   const totalHoursLogged = rows.reduce((s, r) => s + r.hoursLogged, 0);
   const totalCapacityHours = capacityHours * rows.length;
-  const teamPct = totalCapacityHours > 0 ? Math.min(150, Math.round(totalHoursLogged / totalCapacityHours * 100)) : 0;
+  const teamPct = totalCapacityHours > 0 ? Math.round(totalHoursLogged / totalCapacityHours * 100) : 0;
   const overloadCount = rows.filter(r => r.status === 'overload').length;
+  const totalOpen = rows.reduce((s, r) => s + r.userDemands.length, 0);
   const totalLate = rows.reduce((s, r) => s + r.lateCount, 0);
+  const peopleLate = rows.filter(r => r.lateCount > 0).length;
+  const logRange = `${fmtDM(logDays[0].date, logDays[0].month)} → ${fmtDM(logDays[logDays.length - 1].date, logDays[logDays.length - 1].month)}`;
+  const kpis = anKpisHTML([
+    { label: 'Capacidade', value: fmtHours(totalCapacityHours), title: 'Dias úteis × jornada da organização, por pessoa.',
+      sub: `${_anPlural(rows.length, 'pessoa', 'pessoas')} · ${_anPlural(businessDays, 'dia útil', 'dias úteis')}` },
+    { label: 'Apontado', value: fmtHours(totalHoursLogged), unit: `· ${teamPct}%`, title: 'Horas apontadas no período, sobre a capacidade.',
+      sub: overloadCount ? `${_anPlural(overloadCount, 'pessoa', 'pessoas')} em sobrecarga` : logRange,
+      meter: teamPct, meterHi: teamPct >= 100 },
+    { label: 'Em aberto', value: totalOpen, sub: 'demandas com responsável' },
+    { label: 'Atrasadas', value: totalLate, tone: totalLate ? 'bad' : '',
+      sub: totalLate ? `com ${_anPlural(peopleLate, 'pessoa', 'pessoas')}` : 'nenhuma com prazo vencido' },
+  ]);
 
-  const summaryHtml = `
-    <div class="capacity-summary">
-      <div class="cap-kpi is-primary" data-tooltip="Meta = dias úteis × 8h por pessoa. Base pra calcular %.">
-        <div class="cap-kpi-icon"><i data-lucide="target" class="ic-sm"></i></div>
-        <div class="cap-kpi-main">
-          <div class="cap-kpi-label">Meta do time no período</div>
-          <div class="cap-kpi-value">${totalCapacityHours}h</div>
-          <div class="cap-kpi-sub">${rows.length} pessoa${rows.length === 1 ? '' : 's'} × ${businessDays} dia${businessDays === 1 ? '' : 's'} útil × 8h</div>
-        </div>
-      </div>
-      <div class="cap-kpi is-info" data-tooltip="Horas apontadas no período. % é sobre a meta ao lado.">
-        <div class="cap-kpi-icon"><i data-lucide="timer" class="ic-sm"></i></div>
-        <div class="cap-kpi-main">
-          <div class="cap-kpi-label">Realizado</div>
-          <div class="cap-kpi-value">${fmtHours(totalHoursLogged)} <span class="cap-kpi-pct is-${teamPct >= 100 ? 'overload' : teamPct >= 75 ? 'high' : teamPct >= 40 ? 'medium' : 'low'}">· ${teamPct}%</span></div>
-          <div class="cap-kpi-progress"><span class="cap-kpi-progress-fill is-${teamPct >= 100 ? 'overload' : teamPct >= 75 ? 'high' : teamPct >= 40 ? 'medium' : 'low'}" style="width:${Math.min(100, teamPct)}%"></span></div>
-        </div>
-      </div>
-      <div class="cap-kpi ${overloadCount > 0 || totalLate > 0 ? 'is-danger' : 'is-team'}" data-tooltip="Pessoas ≥100% de carga + demandas com prazo já vencido.">
-        <div class="cap-kpi-icon"><i data-lucide="${overloadCount > 0 || totalLate > 0 ? 'alert-triangle' : 'check-circle-2'}" class="ic-sm"></i></div>
-        <div class="cap-kpi-main">
-          <div class="cap-kpi-label">Alertas</div>
-          <div class="cap-kpi-value">${overloadCount + totalLate}</div>
-          <div class="cap-kpi-sub">${overloadCount} em sobrecarga · ${totalLate} atrasada${totalLate === 1 ? '' : 's'}</div>
-        </div>
-      </div>
-    </div>`;
+  // ── Gráfico do time ──
+  const teamByDay = logDays.map((_, i) => rows.reduce((s, r) => s + r.hoursByDay[i], 0));
+  const whoByDay = logDays.map((_, i) => rows
+    .filter(r => r.hoursByDay[i] > 0)
+    .map(r => ({ key: r.u.id, name: r.u.name, h: r.hoursByDay[i] }))
+    .sort((a, b) => b.h - a.h));
+  const colorOf = _capSeriesColors(whoByDay);
+  const chartCard = `<div class="an-card">
+    <div class="an-card-h"><h3>Horas apontadas por dia</h3>
+      <span class="an-card-hint">${totalHoursLogged ? `time inteiro · ${fmtHours(totalHoursLogged)} de ${logRange} · cada cor é uma pessoa` : 'ninguém apontou horas no período'}</span></div>
+    ${_capHoursChartHTML(logDays, teamByDay, whoByDay, colorOf)}
+  </div>`;
 
-  const rowsHtml = rows.map(r => {
+  // ── Tabela de pessoas ──
+  const dlSize = dueDays.length > 14 ? ' is-dense' : dueDays.length > 7 ? ' is-mid' : '';
+  const dueHint = `${fmtDM(dueDays[0].date, dueDays[0].month)} → ${fmtDM(dueDays[dueDays.length - 1].date, dueDays[dueDays.length - 1].month)}`;
+  const personRow = r => {
     const info = CAP_STATUS_LABELS[r.status] || CAP_STATUS_LABELS.medium;
     const expanded = _capExpanded.has(r.u.id);
-    const barFillPct = Math.min(100, r.pct);
-    const overflowPct = r.pct > 100 ? Math.min(100, r.pct - 100) : 0;
-    // Lista de demandas em aberto pra breakdown expandido — ordenada por prazo asc (late first).
+    // Mesma cor da pessoa no gráfico de cima: a tabela serve de legenda.
+    const color = colorOf.get(r.u.id);
+    const days = r.hoursByDay.map((h, i) => {
+      const d = logDays[i];
+      const wk = d.dow === 0 || d.dow === 6;
+      return `<span class="${h ? '' : 'is-zero'}${wk ? ' is-weekend' : ''}" style="height:${Math.max(2, Math.min(24, (h / 8) * 24))}px${h && color ? `;background:${color}` : ''}" title="${_CAP_WD[d.dow]} ${fmtDM(d.date, d.month)} · ${fmtHours(h)}"></span>`;
+    }).join('');
+    const dl = r.dueCounts.map((c, i) => {
+      const d = dueDays[i];
+      const nLate = r.dueLate[i], nDue = c - nLate;
+      const cls = [c ? (nLate ? 'is-late' : 'is-on') : '', d.ymd === today ? 'is-today' : '', d.dow === 0 || d.dow === 6 ? 'is-weekend' : ''].join(' ');
+      const what = arrivals ? `${c} ${c === 1 ? 'prevista' : 'previstas'}`
+        : [nLate ? `${nLate} ${nLate === 1 ? 'atrasada' : 'atrasadas'}` : '', nDue || !nLate ? `${nDue} ${nDue === 1 ? 'prazo' : 'prazos'}` : ''].filter(Boolean).join(' + ');
+      return `<span class="${cls}" title="${_CAP_WD[d.dow]} ${fmtDM(d.date, d.month)} · ${what}">${c || ''}</span>`;
+    }).join('');
+    const barCls = r.pct >= 100 ? 'is-over' : r.pct >= 75 ? 'is-hi' : '';
+    const head = `<tr class="is-click${expanded ? ' is-open' : ''}" onclick="capToggleRow('${esc(r.u.id)}')">
+      <td><div class="an-who">${avatarHTML(r.u, 'avatar')}<div style="min-width:0"><span class="an-who-name">${esc(r.u.name)}</span><span class="an-who-sub">${esc(r.u.role || r.u.email || '—')}</span></div></div></td>
+      <td><div class="an-bar" title="${r.pct}% de ${fmtHours(capacityHours)}"><div class="an-bar-track"><span class="${barCls}" style="width:${Math.min(100, r.pct)}%"></span></div><div class="an-bar-v">${fmtHours(r.hoursLogged)}<em>${r.pct}%</em></div></div></td>
+      <td class="an-hide-sm"><div class="cap3-days">${days}</div></td>
+      <td class="an-hide-sm"><div class="cap3-dl${dlSize}">${dl}</div></td>
+      <td class="is-r is-num${r.userDemands.length ? '' : ' is-zero'}">${r.userDemands.length}</td>
+      <td class="is-r is-num${r.lateCount ? ' is-bad' : ' is-zero'}">${r.lateCount}</td>
+      <td title="${esc(info.hint)}"><span class="an-chip is-${info.tone}">${info.label}</span></td>
+      <td class="is-r"><span class="an-chev"><i data-lucide="chevron-right"></i></span></td>
+    </tr>`;
+    if (!expanded) return head;
+    if (arrivals) {
+      // Previstas: o que deve chegar na pessoa no período, pela ordem de chegada.
+      const list = (arrivalList.get(r.u.id) || []).slice().sort((a, b) => a.ymd.localeCompare(b.ymd));
+      const body = list.length ? `<div class="an-drill-row is-5 is-head">
+          <span>Demanda</span><span>Cliente · projeto</span><span>Chega em</span><span>Faltam</span><span>Previsão</span>
+        </div>` + list.map(a => {
+        const p = projectById(a.d.projectId);
+        const client = p?.client || clientById(p?.clientId)?.name || '';
+        return `<div class="an-drill-row is-5" onclick="showDetail('${esc(a.d.id)}')">
+          <span class="an-drill-name">${esc(a.d.name)}</span>
+          <span class="is-muted" title="${esc([client, p?.name].filter(Boolean).join(' · '))}">${esc(client || '—')}${p?.name ? ' · ' + esc(p.name) : ''}</span>
+          <span class="an-drill-name" title="Hoje em: ${esc(a.stageLabel)}"><span class="an-dot" style="background:${esc(a.targetColor || 'var(--accent)')}"></span>${esc(a.target)}</span>
+          <span class="is-muted">${a.remaining === 1 ? 'próxima etapa' : `${a.remaining} etapas`}</span>
+          <span class="is-ok">${_CAP_WD[new Date(a.ymd + 'T12:00:00').getDay()]} ${_anDM(a.ymd)}</span>
+        </div>`;
+      }).join('') : `<div class="an-drill-row" style="cursor:default"><span class="is-muted">Nada previsto pra chegar no período.</span></div>`;
+      return head + `<tr class="an-drill"><td colspan="8"><div class="an-drill-in"><div class="an-lbl">${_anPlural(list.length, 'demanda prevista', 'demandas previstas')} · ${dueHint}</div>${body}</div></td></tr>`;
+    }
     const dList = r.userDemands.slice().sort((a, b) => {
       const la = isLate(a), lb = isLate(b);
       if (la !== lb) return la ? -1 : 1;
-      const da = effDue(a) || '9999';
-      const db = effDue(b) || '9999';
-      return da.localeCompare(db);
+      return (effDue(a) || '9999').localeCompare(effDue(b) || '9999');
     });
-    return `<div class="cap-row ${r.status} ${expanded ? 'is-expanded' : ''}" data-uid="${esc(r.u.id)}">
-      <button type="button" class="cap-row-head" onclick="capToggleRow('${esc(r.u.id)}')" aria-expanded="${expanded}">
-        <div class="cap-row-user">
-          ${avatarHTML(r.u, 'avatar cap-row-avatar')}
-          <div class="cap-row-user-info">
-            <div class="cap-row-name">${esc(r.u.name)}</div>
-            <div class="cap-row-role">${esc(r.u.role || r.u.email || '—')}</div>
-          </div>
-        </div>
-        <div class="cap-row-load">
-          <div class="cap-row-load-head">
-            <span class="cap-load-value">${fmtHours(r.hoursLogged)}</span>
-            <span class="cap-load-pct">${r.pct}%</span>
-            <span class="cap-load-status is-${r.status}">${info.label}</span>
-          </div>
-          <div class="cap-row-bar-track" title="${r.pct}% de ${capacityHours}h">
-            <span class="cap-row-bar-fill is-${r.status}" style="width:${barFillPct}%"></span>
-            ${overflowPct > 0 ? `<span class="cap-row-bar-over" style="width:${overflowPct}%"></span>` : ''}
-          </div>
-        </div>
-        <div class="cap-row-stats">
-          <span class="cap-stat-chip" title="Demandas em aberto atribuídas">
-            <i data-lucide="inbox" class="ic-xs"></i>
-            <span class="cap-stat-num">${r.userDemands.length}</span>
-            <span class="cap-stat-lbl">em aberto</span>
-          </span>
-          <span class="cap-stat-chip ${r.lateCount > 0 ? 'is-late' : ''}" title="Demandas com prazo vencido">
-            <i data-lucide="alert-triangle" class="ic-xs"></i>
-            <span class="cap-stat-num">${r.lateCount}</span>
-            <span class="cap-stat-lbl">atrasadas</span>
-          </span>
-        </div>
-        <div class="cap-row-chev"><i data-lucide="chevron-down" class="ic-sm"></i></div>
-      </button>
-      ${expanded ? `<div class="cap-row-body">
-        ${dList.length ? `
-          <div class="cap-row-body-title">${dList.length} demanda${dList.length === 1 ? '' : 's'} em aberto</div>
-          <div class="cap-row-demands">
-            ${dList.map(d => {
-              const p = projectById(d.projectId);
-              const s = stageOf(d);
-              const due = effDue(d);
-              const late = isLate(d);
-              return `<a class="cap-demand" onclick="showDetail('${esc(d.id)}'); event.stopPropagation()">
-                <span class="cap-demand-stage" style="background:${esc(s?.color || 'var(--accent)')}"></span>
-                <span class="cap-demand-name">${esc(d.name)}</span>
-                <span class="cap-demand-project">${esc(p?.name || '—')}${p?.client ? ' · ' + esc(p.client) : ''}</span>
-                <span class="cap-demand-due ${late ? 'is-late' : ''}">${due ? fmtDate(due) : '—'}</span>
-              </a>`;
-            }).join('')}
-          </div>
-        ` : `<div class="cap-row-body-empty">Sem demandas em aberto no escopo atual.</div>`}
-      </div>` : ''}
-    </div>`;
-  }).join('');
-
-  $('capacity-list').innerHTML = `
-    ${summaryHtml}
-    ${rows.length ? capacityHeatmapHTML(rows, startYmd, endYmd) : ''}
-    <div class="capacity-body">
-      <div class="capacity-rows cap-rows">
-      ${rowsHtml}
+    // Mesmas 5 colunas da lista de Previstas, pra trocar de modo sem a tabela mudar de cara.
+    const dayDiff = ymd => Math.round((new Date(ymd + 'T12:00:00') - new Date(today + 'T12:00:00')) / 864e5);
+    const rowOf = d => {
+      const p = projectById(d.projectId), s = stageOf(d), due = effDue(d), late = isLate(d);
+      const client = p?.client || clientById(p?.clientId)?.name || '';
+      const diff = due ? dayDiff(due) : null;
+      const when = diff == null ? 'sem prazo' : diff < 0 ? `${-diff} ${diff === -1 ? 'dia' : 'dias'} de atraso` : diff === 0 ? 'vence hoje' : `em ${diff} ${diff === 1 ? 'dia' : 'dias'}`;
+      return `<div class="an-drill-row is-5" onclick="showDetail('${esc(d.id)}')">
+        <span class="an-drill-name">${esc(d.name)}</span>
+        <span class="is-muted" title="${esc([client, p?.name].filter(Boolean).join(' · '))}">${esc(client || '—')}${p?.name ? ' · ' + esc(p.name) : ''}</span>
+        <span class="an-drill-name"><span class="an-dot" style="background:${esc(s?.color || 'var(--accent)')}"></span>${esc(s?.label || '—')}</span>
+        <span class="${late ? 'is-bad' : 'is-muted'}">${when}</span>
+        <span class="${late ? 'is-bad' : 'is-ok'}">${due ? `${_CAP_WD[new Date(due + 'T12:00:00').getDay()]} ${_anDM(due)}` : '—'}</span>
+      </div>`;
+    };
+    // Grupos que batem com os números da linha: Atrasadas (coluna), prazos no
+    // período (as células) e o resto. A soma é o "Em aberto".
+    const groups = [
+      [dueIdx.has(today) ? `Atrasadas · contam no dia de hoje` : `Atrasadas`, dList.filter(d => isLate(d))],
+      [`Vencem no período · ${dueHint}`, dList.filter(d => !isLate(d) && dueIdx.has(effDue(d)))],
+      [`Depois do período ou sem prazo`, dList.filter(d => !isLate(d) && !dueIdx.has(effDue(d)))],
+    ].filter(([, list]) => list.length);
+    const body = dList.length ? `<div class="an-drill-row is-5 is-head">
+        <span>Demanda</span><span>Cliente · projeto</span><span>Etapa atual</span><span>Situação</span><span>Prazo</span>
+      </div>` + groups.map(([label, list]) => `<div class="an-drill-group">${esc(label)} · ${list.length}</div>${list.map(rowOf).join('')}`).join('')
+      : `<div class="an-drill-row" style="cursor:default"><span class="is-muted">Sem demandas em aberto no escopo atual.</span></div>`;
+    return head + `<tr class="an-drill"><td colspan="8"><div class="an-drill-in"><div class="an-lbl">${_anPlural(dList.length, 'demanda em aberto', 'demandas em aberto')}</div>${body}</div></td></tr>`;
+  };
+  const active = rows.filter(r => !r.idle);
+  const idle = rows.filter(r => r.idle);
+  const showIdle = _capShowIdle || !active.length;
+  const idleRow = idle.length && !showIdle ? `<tr class="cap3-fold" onclick="capShowIdle()"><td colspan="8"><div class="an-who">
+      <span class="cap3-fold-ico">+${idle.length}</span>${_anPlural(idle.length, 'pessoa', 'pessoas')} sem horas, demandas ou prazos no período · mostrar</div></td></tr>` : '';
+  const th = (key, label, cls = '') => `<th class="is-sortable${_capSort === key ? ' is-sorted' : ''}${cls ? ' ' + cls : ''}" onclick="capSetSort('${key}')">${label}</th>`;
+  const tableCard = `<div class="an-card">
+    <div class="an-card-h"><h3>Pessoas</h3>
+      <span class="an-card-hint">${_capSort === 'late' ? 'mais atrasadas primeiro' : _capSort === 'name' ? 'por nome' : _capSort === 'open' ? 'mais demandas primeiro' : 'mais carregadas primeiro'} · clique para ver as demandas</span>
+      <span class="an-card-sp"></span>
+      <div class="seg" title="O que a coluna de dias mostra">
+        <button type="button" class="seg-btn ${_capHeatMode === 'prazos' ? 'is-active' : ''}" onclick="setCapHeatMode('prazos')">Prazos</button>
+        <button type="button" class="seg-btn ${_capHeatMode === 'previstas' ? 'is-active' : ''}" onclick="setCapHeatMode('previstas')">Previstas</button>
       </div>
-      <div class="capacity-side">${_capSparklineHtml(logStartYmd, logEndYmd)}</div>
     </div>
-  `;
-  if (!rows.length) $('capacity-list').innerHTML = emptyState('Sem usuários ativos', 'Cadastre usuários e atribua-os a esta equipe.', 'users');
-  _wireCapSparkline();
+    <div class="an-table-wrap"><table class="an-table">
+      <thead><tr>
+        ${th('name', 'Pessoa')}${th('load', 'Carga')}
+        <th class="an-hide-sm" title="Horas apontadas por dia, ${logRange}">Horas por dia</th>
+        <th class="an-hide-sm" title="${arrivals ? 'Quando as demandas devem chegar na etapa da pessoa' : 'Prazos das demandas em aberto (as atrasadas contam no dia de hoje)'}, ${dueHint}">${arrivals ? 'Previstas' : 'Prazos'} · ${dueHint}</th>
+        ${th('open', 'Em aberto', 'is-r')}${th('late', 'Atrasadas', 'is-r')}
+        <th title="Horas apontadas sobre a capacidade da pessoa">Ocupação</th><th></th>
+      </tr></thead>
+      <tbody>${active.map(personRow).join('')}${showIdle ? idle.map(personRow).join('') : idleRow}</tbody>
+    </table></div>
+  </div>`;
+
+  _capExport = {
+    headers: ['Pessoa', 'Área', 'Horas apontadas', 'Carga (%)', 'Ocupação', 'Em aberto', 'Atrasadas', arrivals ? 'Previstas no período' : 'Prazos no período'],
+    rows: rows.map(r => [r.u.name, r.u.role || '', String(Math.round(r.hoursLogged * 10) / 10).replace('.', ','), r.pct, (CAP_STATUS_LABELS[r.status] || {}).label || '', r.userDemands.length, r.lateCount, r.dueCounts.reduce((a, b) => a + b, 0)]),
+  };
+  $('capacity-list').innerHTML = kpis + chartCard + tableCard;
 }
 
 function renderCapacityAggregate(kind, startYmd, endYmd, businessDays, capacityHours) {
@@ -17676,137 +17140,102 @@ function renderCapacityAggregate(kind, startYmd, endYmd, businessDays, capacityH
   // Janela retroativa de apontamentos = mesma janela de horas do capResolveWindow
   // (últimos N / mês corrente / range custom travado em hoje).
   const { logStart, logEnd } = capResolveWindow();
-  const backStartYmd = logStart.toISOString().slice(0,10);
-  const todayYmd = logEnd.toISOString().slice(0,10);
+  const backStartYmd = _ymdLocal(logStart);
+  const todayYmd = _ymdLocal(logEnd);
+  const days = _capDays(backStartYmd, todayYmd);
+  const dayIdx = new Map(days.map((d, i) => [d.ymd, i]));
+  const isProject = kind === 'project';
 
   // Junta todos os apontamentos de demandas do escopo (squads selecionados ou ws ativo)
-  const wsdemands = capScopeDemands();
   const allEntries = [];
-  wsdemands.forEach(d => {
+  capScopeDemands().forEach(d => {
     (d.timeEntries || []).forEach(e => {
-      const ymd = (e.createdAt || '').slice(0, 10);
-      if (ymd >= backStartYmd && ymd <= todayYmd) allEntries.push({ d, e });
+      const ymd = _capEntryDay(e);
+      if (dayIdx.has(ymd)) allEntries.push({ d, e, ymd });
     });
   });
 
   // Agrupa por projeto ou por cliente
   const groups = new Map();
-  allEntries.forEach(({ d, e }) => {
+  const byDay = new Array(days.length).fill(0);
+  const whoByDayMap = days.map(() => new Map());
+  allEntries.forEach(({ d, e, ymd }) => {
     const proj = projectById(d.projectId);
-    let key, label, sub, projects;
-    if (kind === 'project') {
+    const h = Number(e.hours) || 0;
+    const i = dayIdx.get(ymd);
+    byDay[i] += h;
+    let key, label, sub;
+    if (isProject) {
       key = proj?.id || '__none__';
       label = proj?.name || '— Sem projeto —';
-      sub = proj?.client || '';
-      projects = proj ? [proj] : [];
+      sub = proj?.client || clientById(proj?.clientId)?.name || '';
     } else {
       // por cliente — se projeto sem cliente, agrupa em "Sem cliente"
       key = (proj?.client || '__none__').toLowerCase();
       label = proj?.client || '— Sem cliente —';
       sub = '';
-      projects = capScopeProjects().filter(p => (p.client || '').toLowerCase() === key);
     }
-    const cur = groups.get(key) || {
-      key, label, sub, projects, color: proj?.color || '#7A00FF',
-      hours: 0, demands: new Set(), users: new Set(), entries: 0
-    };
-    cur.hours += Number(e.hours) || 0;
+    // Chave = id do projeto (ou cliente): projetos de clientes diferentes podem
+    // ter o mesmo nome ("Geral"), então o tooltip mostra o cliente embaixo.
+    const slot = whoByDayMap[i].get(key) || { name: label, sub, h: 0 };
+    slot.h += h;
+    whoByDayMap[i].set(key, slot);
+    const cur = groups.get(key) || { key, label, sub, color: proj?.color || 'var(--accent)', hours: 0, demands: new Set(), users: new Set() };
+    cur.hours += h;
     cur.demands.add(d.id);
     if (e.userId) cur.users.add(e.userId);
-    cur.entries++;
-    if (kind === 'client') cur.projects = projects;
     groups.set(key, cur);
   });
 
   const rows = [...groups.values()].sort((a, b) => b.hours - a.hours);
   const totalHours = rows.reduce((s, r) => s + r.hours, 0);
   const maxHours = Math.max(1, ...rows.map(r => r.hours));
-
-  // KPI destaque: quanto tempo em média por demanda? Top-1 concentração?
   const uniqueUsers = new Set();
   allEntries.forEach(({ e }) => e.userId && uniqueUsers.add(e.userId));
   const topShare = totalHours > 0 && rows[0] ? Math.round(rows[0].hours / totalHours * 100) : 0;
+  const noun = isProject ? ['projeto', 'projetos'] : ['cliente', 'clientes'];
 
-  const summary = `
-    <div class="capacity-summary">
-      <div class="cap-kpi is-primary" data-tooltip="Soma de horas apontadas em todas as demandas do escopo, no período selecionado.">
-        <div class="cap-kpi-icon"><i data-lucide="timer" class="ic-sm"></i></div>
-        <div class="cap-kpi-main">
-          <div class="cap-kpi-label">Total apontado</div>
-          <div class="cap-kpi-value">${fmtHours(totalHours)}</div>
-          <div class="cap-kpi-sub">${allEntries.length} apontamento${allEntries.length === 1 ? '' : 's'} · ${uniqueUsers.size} pessoa${uniqueUsers.size === 1 ? '' : 's'}</div>
-        </div>
-      </div>
-      <div class="cap-kpi is-info" data-tooltip="${kind === 'project' ? 'Quantos projetos receberam horas no período.' : 'Quantos clientes receberam horas no período.'}">
-        <div class="cap-kpi-icon"><i data-lucide="${kind === 'project' ? 'folder' : 'briefcase'}" class="ic-sm"></i></div>
-        <div class="cap-kpi-main">
-          <div class="cap-kpi-label">${kind === 'project' ? 'Projetos ativos' : 'Clientes ativos'}</div>
-          <div class="cap-kpi-value">${rows.length}</div>
-          <div class="cap-kpi-sub">${capSquadFilter.size ? `em ${capSquadFilter.size} equipe${capSquadFilter.size === 1 ? '' : 's'}` : `na equipe ${esc(wsById(activeWs)?.name || '')}`}</div>
-        </div>
-      </div>
-      <div class="cap-kpi is-team" data-tooltip="${kind === 'project' ? 'Projeto' : 'Cliente'} que mais concentrou horas — indica onde o esforço se acumulou.">
-        <div class="cap-kpi-icon"><i data-lucide="award" class="ic-sm"></i></div>
-        <div class="cap-kpi-main">
-          <div class="cap-kpi-label">Maior consumidor</div>
-          <div class="cap-kpi-value">${rows[0] ? esc(rows[0].label) : '—'}</div>
-          <div class="cap-kpi-sub">${rows[0] ? `${fmtHours(rows[0].hours)} · ${topShare}% do total` : 'sem dados'}</div>
-        </div>
-      </div>
-    </div>`;
+  const kpis = anKpisHTML([
+    { label: 'Total apontado', value: fmtHours(totalHours),
+      sub: `${_anPlural(allEntries.length, 'apontamento', 'apontamentos')} · ${_anPlural(uniqueUsers.size, 'pessoa', 'pessoas')}` },
+    { label: isProject ? 'Projetos com horas' : 'Clientes com horas', value: rows.length,
+      sub: capSquadFilter.size ? `em ${_anPlural(capSquadFilter.size, 'equipe', 'equipes')}` : `na equipe ${wsById(activeWs)?.name || ''}` },
+    { label: 'Maior consumidor', value: rows[0] ? rows[0].label : '—',
+      sub: rows[0] ? `${fmtHours(rows[0].hours)} · ${topShare}% do total` : 'sem dados' },
+  ]);
+  const whoByDay = whoByDayMap.map(m => [...m.entries()].map(([key, s]) => ({ key, name: s.name, sub: s.sub, h: s.h })).sort((a, b) => b.h - a.h));
+  const colorOf = _capSeriesColors(whoByDay);
+  const chartCard = `<div class="an-card">
+    <div class="an-card-h"><h3>Horas apontadas por dia</h3><span class="an-card-hint">${_anPlural(rows.length, noun[0], noun[1])} · ${fmtHours(totalHours)} no período · cada cor é ${isProject ? 'um projeto' : 'um cliente'}</span></div>
+    ${_capHoursChartHTML(days, byDay, whoByDay, colorOf)}
+  </div>`;
+
+  _capExport = rows.length ? {
+    headers: [isProject ? 'Projeto' : 'Cliente', 'Detalhe', 'Horas apontadas', '% do total', 'Demandas', 'Pessoas'],
+    rows: rows.map(r => [r.label, r.sub, String(Math.round(r.hours * 10) / 10).replace('.', ','), totalHours ? Math.round(r.hours / totalHours * 100) : 0, r.demands.size, r.users.size]),
+  } : null;
 
   if (!rows.length) {
-    $('capacity-list').innerHTML = summary + emptyState(
-      kind === 'project' ? 'Sem horas apontadas em projetos no período' : 'Sem horas apontadas em clientes no período',
-      'Os apontamentos das demandas aparecerão aqui quando registrados.'
-    );
+    $('capacity-list').innerHTML = kpis + `<div class="an-card"><div class="an-card-h"><h3>${isProject ? 'Projetos' : 'Clientes'}</h3></div>
+      <div class="an-empty-line"><i data-lucide="clock"></i>Nenhuma hora apontada em ${noun[1]} no período.</div></div>`;
     return;
   }
-
-  $('capacity-list').innerHTML = summary + `
-    <div class="capacity-body">
-      <div class="capacity-rows cap-rows">
-      ${rows.map(r => {
+  const tableCard = `<div class="an-card">
+    <div class="an-card-h"><h3>${isProject ? 'Projetos' : 'Clientes'}</h3><span class="an-card-hint">mais horas primeiro</span></div>
+    <div class="an-table-wrap"><table class="an-table">
+      <thead><tr><th>${isProject ? 'Projeto' : 'Cliente'}</th><th>Horas</th><th class="is-r">Demandas</th><th class="is-r">Pessoas</th></tr></thead>
+      <tbody>${rows.map(r => {
         const share = totalHours > 0 ? Math.round(r.hours / totalHours * 100) : 0;
-        return `<div class="cap-row cap-row-agg" style="--row-accent:${esc(r.color)}" title="${esc(r.label)} · ${fmtHours(r.hours)} apontadas · ${r.demands.size} demandas · ${share}% do total">
-          <div class="cap-row-head" style="cursor:default">
-            <div class="cap-row-user">
-              <span class="cap-agg-dot" style="background:${esc(r.color)}"></span>
-              <div class="cap-row-user-info">
-                <div class="cap-row-name">${esc(r.label)}</div>
-                ${r.sub ? `<div class="cap-row-role">${esc(r.sub)}</div>` : ''}
-              </div>
-            </div>
-            <div class="cap-row-load">
-              <div class="cap-row-load-head">
-                <span class="cap-load-value">${fmtHours(r.hours)}</span>
-                <span class="cap-load-pct">${share}%</span>
-                <span class="cap-load-status is-share">do total</span>
-              </div>
-              <div class="cap-row-bar-track">
-                <span class="cap-row-bar-fill" style="width:${share}%; background:${esc(r.color)}"></span>
-              </div>
-            </div>
-            <div class="cap-row-stats">
-              <span class="cap-stat-chip" title="Demandas que receberam apontamento">
-                <i data-lucide="inbox" class="ic-xs"></i>
-                <span class="cap-stat-num">${r.demands.size}</span>
-                <span class="cap-stat-lbl">demandas</span>
-              </span>
-              <span class="cap-stat-chip" title="Pessoas apontando neste ${kind === 'project' ? 'projeto' : 'cliente'}">
-                <i data-lucide="users" class="ic-xs"></i>
-                <span class="cap-stat-num">${r.users.size}</span>
-                <span class="cap-stat-lbl">pessoas</span>
-              </span>
-            </div>
-          </div>
-        </div>`;
-      }).join('')}
-      </div>
-      <div class="capacity-side">${_capSparklineHtml(backStartYmd, todayYmd)}</div>
-    </div>
-  `;
-  _wireCapSparkline();
+        return `<tr>
+          <td><div class="an-who"><span class="an-dot" style="background:${colorOf.get(r.key) || esc(r.color)}"></span><div style="min-width:0"><span class="an-who-name">${esc(r.label)}</span>${r.sub ? `<span class="an-who-sub">${esc(r.sub)}</span>` : ''}</div></div></td>
+          <td><div class="an-bar"><div class="an-bar-track"><span style="width:${(r.hours / maxHours) * 100}%"></span></div><div class="an-bar-v">${fmtHours(r.hours)}<em>${share}%</em></div></div></td>
+          <td class="is-r is-num">${r.demands.size}</td>
+          <td class="is-r is-num">${r.users.size}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table></div>
+  </div>`;
+  $('capacity-list').innerHTML = kpis + chartCard + tableCard;
 }
 
 function renderCalendar(which) {

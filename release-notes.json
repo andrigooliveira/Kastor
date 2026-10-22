@@ -1,5 +1,157 @@
 [
   {
+    "id": "2026-10-22-analises",
+    "date": "2026-10-22",
+    "highlight": true,
+    "title": "Análises mais fáceis de ler e Ritmo refeito",
+    "highlights": [
+      "As três abas de Análises (Capacidade, Ritmo e Relatórios) agora seguem a mesma ordem: filtros numa linha só, quatro números no topo e as tabelas embaixo. As equipes são escolhidas numa lista, em vez de uma fileira de botões.",
+      "Em Capacidade, o gráfico de horas por dia tem sempre o mesmo tamanho e cada pessoa (ou projeto, ou cliente) ganha uma cor. Passe o mouse num dia para ver quem apontou quanto.",
+      "Todas as pessoas ficam numa tabela com carga, horas por dia, prazos e atrasadas. Clique numa pessoa para ver as demandas dela. Em Previstas, a lista mostra o que vai chegar: etapa, cliente, projeto, quantas etapas faltam e a data.",
+      "Demandas atrasadas passam a contar no dia de hoje, em vermelho, em vez de sumirem do quadro. O botão Exportar da Capacidade voltou a funcionar.",
+      "O Ritmo foi refeito: mostra, por equipe, os prazos de etapa que vencem na semana, quanto foi entregue no prazo, com atraso e o que venceu e segue aberto, com a tendência das últimas 6 semanas. Clique na equipe para ver o que atrasou.",
+      "Em Relatórios, retrabalho por etapa e pontualidade mostram os números certos, a etapa Concluída sai do ranking de gargalos e as demandas mais lentas mostram o cliente e a etapa onde mais esperaram.",
+      "No Início, o quadro Próximos dias abre em Prazos e mostra de segunda a sexta desta semana e da próxima. Os dias que já passaram ficam com o histórico do que venceu ou chegou, e os cards não mudam mais de tamanho."
+    ]
+  },
+  {
+    "id": "2026-10-22-lista-atalhos",
+    "date": "2026-10-22",
+    "highlight": true,
+    "title": "Listas mais informativas e navegação pelo teclado",
+    "highlights": [
+      "Em Demandas, Kanban e Minhas Demandas, cada demanda mostra quantos comentários e arquivos tem, e um ponto avisa o que mudou desde a sua última visita.",
+      "Pare o mouse sobre uma demanda para ver etapa, responsável, prazo e o último comentário sem precisar abrir.",
+      "Use J e K para andar pela lista e Enter para abrir. Dentro da demanda, J e K passam para a próxima ou a anterior sem voltar para a lista.",
+      "Ao voltar para a lista, ela continua na mesma rolagem, com a última demanda que você abriu marcada. Listas longas ganharam o botão de voltar ao topo.",
+      "Passe o mouse sobre datas como \"há 2 dias\" para ver a data e o horário exatos. A aba do navegador mostra o nome da tela ou da demanda aberta."
+    ]
+  },
+  {
+    "id": "2026-10-22-topo-menu-conta",
+    "date": "2026-10-22",
+    "title": "Topo novo e menu da conta",
+    "highlights": [
+      "O topo da tela foi refeito: reWork Hub, densidade, notificações, Nova demanda e o seu avatar ficam juntos no canto direito.",
+      "Clique no seu avatar para abrir o menu da conta: status, Configurações, Novidades, Documentação, Ajuda e a troca entre tema claro e escuro.",
+      "No menu da conta, as setas do teclado escolhem a opção e a tecla S abre o status. O status também pode ser trocado pela paleta de comandos.",
+      "A página aberta agora fica numa camada com cantos arredondados, separada do menu lateral e do topo."
+    ]
+  },
+  {
+    "id": "2026-10-21-comentarios-threads",
+    "date": "2026-10-21",
+    "highlight": true,
+    "title": "Respostas em conversa nos comentários",
+    "highlights": [
+      "Agora dá para responder a um comentário específico. As respostas ficam agrupadas embaixo dele, ligadas por uma linha, como num fórum.",
+      "Todo comentário tem Responder e reações logo abaixo. Uma resposta mostra a quem respondeu, e um clique leva até o comentário original.",
+      "Clique na linha da conversa para recolher. Recolhida, ela mostra quem participou, quantas respostas tem e o horário da última. Conversas com mais de 4 respostas já abrem recolhidas.",
+      "Quem participou de uma conversa é avisado quando chega resposta nova, no sino, por e-mail, no Discord e no celular. Dá para desligar em Perfil › Notificações.",
+      "Moderadores podem excluir comentários de outras pessoas. Um comentário excluído que tinha respostas deixa um aviso no lugar, para a conversa não perder o sentido.",
+      "\"Visto por\" agora aparece só para quem fez a menção."
+    ]
+  },
+  {
+    "id": "2026-10-19-login-qr-dispositivos",
+    "date": "2026-10-19",
+    "title": "Entrar com QR Code e controle dos seus aparelhos",
+    "highlights": [
+      "Na tela de login do computador, escolha Entrar usando QR Code e leia o código com o celular em que você já está conectado. O código vale por 2 minutos e só uma vez.",
+      "Se você usa app autenticador, o computador ainda pede o código dele depois da leitura.",
+      "Nova aba Perfil › Dispositivos: veja onde a sua conta está aberta, com o nome do aparelho, a cidade aproximada e como foi o login. Desconecte um aparelho ou todos os outros de uma vez."
+    ]
+  },
+  {
+    "id": "2026-10-15-anexos-prototipos",
+    "date": "2026-10-15",
+    "title": "Imagens que abrem mais rápido e protótipos entre equipes",
+    "highlights": [
+      "Anexos, galeria e imagens nos comentários carregam bem mais rápido: o reWork mostra uma versão reduzida da foto. O botão Baixar continua entregando o arquivo original.",
+      "Corrigido o download de anexos que, em alguns casos, não começava.",
+      "Protótipos podem ser movidos para outra equipe ao criar ou editar, entre as equipes a que você tem acesso."
+    ]
+  },
+  {
+    "id": "2026-10-14-agenda-visoes",
+    "date": "2026-10-14",
+    "highlight": true,
+    "title": "Agenda por dia, semana, quinzena, mês ou ano",
+    "highlights": [
+      "A Agenda e a Minha Agenda ganharam um seletor de visão: Dia, Semana, Quinzena, Mês e Ano.",
+      "No Mês aparecem prazos, blocos agendados, eventos de dia inteiro e reuniões do Google. Clique num dia vazio para agendar e arraste um bloco para mudar o dia sem perder o horário.",
+      "No Ano, cada dia fica mais forte conforme a quantidade de compromissos, e prazos atrasados ganham um anel. Clique num dia para ver o que tem nele ou no nome do mês para abri-lo.",
+      "Trocar de visão mantém a data em que você estava, e as setas avançam ou voltam um período inteiro."
+    ]
+  },
+  {
+    "id": "2026-10-13-prototipos",
+    "date": "2026-10-13",
+    "title": "Protótipos: sites para o cliente aprovar",
+    "highlights": [
+      "Nova tela Protótipos: envie a pasta de um site ou um arquivo .zip e o reWork gera um link para o cliente ver a prévia no navegador.",
+      "O link para quem está fora vale no máximo 7 dias. Depois disso, só a equipe conectada continua vendo. Uma faixa no topo da prévia mostra até quando o link vale.",
+      "Filtre por equipe, cliente e situação do link, ordene por qualquer coluna e veja quem criou cada protótipo.",
+      "Os arquivos dos protótipos contam no armazenamento do plano. No período de teste não é possível gerar link externo."
+    ]
+  },
+  {
+    "id": "2026-10-13-conta",
+    "date": "2026-10-13",
+    "title": "Excluir conta e recuperar a senha pelo perfil",
+    "highlights": [
+      "Em Perfil › Segurança, Esqueci minha senha manda um link para redefinir a senha no e-mail da conta. O link vale por 1 hora.",
+      "Também em Perfil › Segurança, você pode excluir a sua conta. Quem é dono de uma organização precisa transferi-la antes.",
+      "Admins podem excluir uma pessoa em Usuários, no menu ⋯. Ela sai da organização, e a conta só é apagada se não fizer parte de outra.",
+      "O que a pessoa fez continua no histórico. Demandas, etapas e metas que estavam com ela ficam sem responsável, e ela recebe um aviso por e-mail."
+    ]
+  },
+  {
+    "id": "2026-10-06-organizacao",
+    "date": "2026-10-06",
+    "highlight": true,
+    "title": "Página Organização com financeiro e objetivos",
+    "highlights": [
+      "A página Organização foi dividida em abas: Visão geral, Financeiro, Objetivos e Configurações.",
+      "Visão geral: quantas pessoas estão ativas e quem usou nos últimos 7 dias, clientes por equipe, receita recorrente e os objetivos com prazo mais perto.",
+      "Financeiro: a receita recorrente é a soma do contrato mensal de cada cliente ativo. Crie metas de faturamento para a organização ou para uma equipe e acompanhe mês a mês num gráfico com a linha da meta.",
+      "Objetivos: defina objetivos com prazo e metas de feito ou não feito. Cada responsável marca a própria meta.",
+      "Dono, admins e moderadores veem tudo. O valor do contrato não aparece na página do cliente, e o resto do time vê só os Objetivos."
+    ]
+  },
+  {
+    "id": "2026-10-01-celular",
+    "date": "2026-10-01",
+    "highlight": true,
+    "title": "reWork no celular, agora como app",
+    "highlights": [
+      "Nova versão para celular: barra de navegação embaixo (Início, Minhas, Demandas, Agenda e Mais), demandas em cartões e a página da demanda em uma coluna, com a troca de etapa sempre à mão.",
+      "Instale o reWork na tela inicial: no Android pelo cartão no Início, no iPhone em Compartilhar › Adicionar à Tela de Início.",
+      "Notificações no celular e no navegador: ative em Perfil › Notificações › Notificações neste aparelho e escolha quais avisos chegam por lá. Pela própria notificação dá para abrir a demanda, avançar a etapa ou marcar como lida.",
+      "Gestos: puxe a tela para atualizar, deslize da borda esquerda para voltar e deslize um cartão para apontar tempo ou avançar a etapa.",
+      "Sem internet, o app abre com os últimos dados salvos e avisa que está offline.",
+      "Nova demanda mais curta no celular: escolhas óbvias são puladas e o formulário mostra só o essencial. O resto fica em Mais opções.",
+      "A presença virou uma bolinha no canto do avatar: verde online, amarela ausente, e um celular verde quando a pessoa está conectada só pelo celular.",
+      "Todas as telas foram revisadas do celular ao notebook: telas administrativas viram cartões, nada mais rola para o lado e a Agenda do time vira uma lista por pessoa."
+    ]
+  },
+  {
+    "id": "2026-09-26-plano-suporte",
+    "date": "2026-09-26",
+    "hideFor": [
+      "freelancer"
+    ],
+    "title": "Plano e pagamento, e suporte dentro do reWork",
+    "highlights": [
+      "Nova página Plano e pagamento: veja o plano atual, a próxima cobrança, o uso e a forma de pagamento, e assine ou troque de plano. O anual sai com 2 meses grátis.",
+      "Pague com cartão, Pix, boleto ou Pix Automático. A forma atual aparece na página e pode ser trocada a qualquer momento.",
+      "O teste grátis passou para 30 dias, e o dono já pode escolher o plano nos primeiros passos. Assinar durante o teste libera o plano, e a primeira cobrança é no fim do teste.",
+      "Precisa de mais? Na página de planos, Falar com a equipe pede um plano Enterprise.",
+      "Suporte no menu lateral: abra um chamado com prints ou PDF, acompanhe a conversa e receba a resposta no sino e por e-mail. Você também pode excluir um chamado seu.",
+      "O nível de acesso Equipe passou a se chamar Membro, para não confundir com as equipes."
+    ]
+  },
+  {
     "id": "2026-09-24-rework-docs-beta",
     "date": "2026-09-24",
     "kind": "launch",

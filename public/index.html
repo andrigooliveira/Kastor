@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <!-- Idioma: roda antes de tudo (carrega o dicionário quando não é português). -->
-<script src="/js/i18n.js?v=20261022sig8"></script>
+<script src="/js/i18n.js?v=20261022an23"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>reWork</title>
 <link rel="icon" type="image/png" href="/favicon.png">
@@ -1071,7 +1071,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <header class="dash-col-head dash-col-head--tabs">
               <h2 class="dash-col-heading" id="dash-next-heading">Próximos dias</h2>
               <nav class="tabs dash-tabs" role="tablist" aria-label="Visões dos próximos dias">
-                <button type="button" class="tab dash-tab is-active" role="tab" aria-selected="true" data-tab="forecast" onclick="setDashNextTab('forecast')">Previstas</button>
+                <button type="button" class="tab dash-tab is-active" role="tab" aria-selected="true" data-tab="forecast" onclick="setDashNextTab('forecast')">Agenda</button>
                 <button type="button" class="tab dash-tab" role="tab" aria-selected="false" data-tab="radar" onclick="setDashNextTab('radar')">Radar</button>
                 <button type="button" class="tab dash-tab" role="tab" aria-selected="false" data-tab="activity" onclick="setDashNextTab('activity')">Atividade</button>
               </nav>
@@ -1080,8 +1080,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <div class="dash-flow">
               <div class="dash-tab-panel is-active" data-panel="forecast" role="tabpanel">
                 <div class="seg dash-forecast-toggle-row" id="dash-forecast-toggle">
-                  <button type="button" class="seg-btn dash-toggle-btn is-active" onclick="setDashForecastMode('previstas')" data-mode="previstas">Previstas</button>
-                  <button type="button" class="seg-btn dash-toggle-btn" onclick="setDashForecastMode('prazos')" data-mode="prazos">Prazos</button>
+                  <button type="button" class="seg-btn dash-toggle-btn is-active" onclick="setDashForecastMode('prazos')" data-mode="prazos">Prazos</button>
+                  <button type="button" class="seg-btn dash-toggle-btn" onclick="setDashForecastMode('previstas')" data-mode="previstas">Previstas</button>
                 </div>
                 <div class="dash-forecast-grid" id="dash-forecast"></div>
                 <div class="dash-subblock">
@@ -1488,7 +1488,10 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       </div>
     </div>
 
-    <!-- ── ANÁLISES (Capacidade + Relatórios em abas) ── -->
+    <!-- ── ANÁLISES (Capacidade · Ritmo · Relatórios em abas) ──
+         As três abas seguem a mesma ordem: cabeçalho (.an-head), filtros numa
+         linha só (.an-filters), faixa de 4 números (.an-kpis, montada no JS) e
+         as tabelas em cartões (.an-card). -->
     <div class="page" id="page-analytics">
       <div class="tabs an-tabs">
         <button class="tab an-tab is-active" data-tab="capacity" onclick="setAnalyticsTab('capacity')">Capacidade</button>
@@ -1496,138 +1499,118 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
         <button class="tab an-tab" data-tab="reports" onclick="setAnalyticsTab('reports')">Relatórios</button>
       </div>
       <div class="page-body">
-        <!-- Aba CAPACIDADE — layout unificado v2:
-             Linha 1 ("capa"):  título + subtitle + toggle da visão à direita.
-             Linha 2 ("filtros"): equipes + período + export numa fileira só.
-             Isso reduz a fricção de "onde fica cada filtro?". -->
-        <div id="an-tab-capacity" class="an-tab-panel">
-          <div class="capacity-hero">
-            <div class="capacity-hero-main">
-              <h2 class="capacity-title" id="capacity-heading">Capacidade da Equipe</h2>
-              <div class="capacity-subtitle" id="capacity-hint">Distribuição de demandas em aberto por responsável — carga baseada em atribuições e horas apontadas.</div>
+        <!-- Aba CAPACIDADE -->
+        <div id="an-tab-capacity" class="an-tab-panel an-panel">
+          <div class="an-head">
+            <div class="an-head-main">
+              <h2 class="an-title" id="capacity-heading">Capacidade da equipe</h2>
+              <p class="an-sub" id="capacity-hint">Quem tem espaço e quem está carregado no período.</p>
             </div>
             <div class="seg capacity-view-toggle" role="tablist" aria-label="Trocar visão">
-              <button class="seg-btn capacity-view-btn is-active" id="capacity-view-team" onclick="setCapacityView('team')"><i data-lucide="users" class="ic-sm"></i> Equipe</button>
-              <button class="seg-btn capacity-view-btn" id="capacity-view-project" onclick="setCapacityView('project')"><i data-lucide="folder" class="ic-sm"></i> Projeto</button>
-              <button class="seg-btn capacity-view-btn" id="capacity-view-client" onclick="setCapacityView('client')"><i data-lucide="briefcase" class="ic-sm"></i> Cliente</button>
+              <button class="seg-btn capacity-view-btn is-active" id="capacity-view-team" onclick="setCapacityView('team')"><i data-lucide="users" class="ic-sm"></i> Pessoas</button>
+              <button class="seg-btn capacity-view-btn" id="capacity-view-project" onclick="setCapacityView('project')"><i data-lucide="folder" class="ic-sm"></i> Projetos</button>
+              <button class="seg-btn capacity-view-btn" id="capacity-view-client" onclick="setCapacityView('client')"><i data-lucide="briefcase" class="ic-sm"></i> Clientes</button>
             </div>
           </div>
-          <div class="capacity-filterbar">
-            <div class="capacity-filterbar-group">
-              <span class="capacity-filterbar-label"><i data-lucide="users" class="ic-xs"></i> Equipes</span>
-              <div class="uws-filter capacity-squad-filter-inline" id="capacity-squad-filter"></div>
-              <input type="hidden" id="capacity-squads" value="">
-            </div>
-            <div class="capacity-filterbar-group">
-              <span class="capacity-filterbar-label"><i data-lucide="calendar-range" class="ic-xs"></i> Período</span>
-              <!-- Período: mesma pfp de Demandas, instância isolada (cap-pfp-*). -->
-              <div class="filter-period-picker">
-                <button type="button" class="filter-period-trigger" id="cap-pfp-trigger" onclick="capPfpToggle(event)">
-                  <span id="cap-pfp-label">Próximos 7 dias</span>
-                  <i data-lucide="chevron-down" class="ic-xs"></i>
-                </button>
-                <div class="pfp-popover" id="cap-pfp-popover" onclick="event.stopPropagation()">
-                  <div class="pfp-presets" id="cap-pfp-presets"></div>
-                  <div class="pfp-cal"><div id="cap-rc"></div></div>
-                  <div class="pfp-footer">
-                    <button type="button" class="pfp-footer-btn" onclick="capPfpResetDefault()">Padrão</button>
-                    <button type="button" class="pfp-footer-btn" onclick="capPfpToday()">Hoje</button>
-                  </div>
+          <div class="an-filters">
+            <div class="an-squads" id="capacity-squad-filter"></div>
+            <input type="hidden" id="capacity-squads" value="">
+            <!-- Período: mesma pfp de Demandas, instância isolada (cap-pfp-*). -->
+            <div class="filter-period-picker">
+              <button type="button" class="filter-period-trigger" id="cap-pfp-trigger" onclick="capPfpToggle(event)">
+                <span class="an-f-key">Período</span>
+                <span class="an-f-val" id="cap-pfp-label">Próximos 7 dias</span>
+                <i data-lucide="chevron-down" class="ic-xs"></i>
+              </button>
+              <div class="pfp-popover" id="cap-pfp-popover" onclick="event.stopPropagation()">
+                <div class="pfp-presets" id="cap-pfp-presets"></div>
+                <div class="pfp-cal"><div id="cap-rc"></div></div>
+                <div class="pfp-footer">
+                  <button type="button" class="pfp-footer-btn" onclick="capPfpResetDefault()">Padrão</button>
+                  <button type="button" class="pfp-footer-btn" onclick="capPfpToday()">Hoje</button>
                 </div>
               </div>
-              <input type="hidden" id="capacity-period" value="7">
-              <input type="hidden" id="capacity-period-start" value="">
-              <input type="hidden" id="capacity-period-end" value="">
             </div>
-            <div class="capacity-filterbar-spacer"></div>
-            <button class="capacity-export-btn" onclick="exportCapacityCsv()" title="Exportar visão atual em CSV">
-              <i data-lucide="download" class="ic-sm"></i>
-              <span>Exportar</span>
+            <input type="hidden" id="capacity-period" value="7">
+            <input type="hidden" id="capacity-period-start" value="">
+            <input type="hidden" id="capacity-period-end" value="">
+            <span class="an-filters-sp"></span>
+            <button type="button" class="an-action" onclick="exportCapacityCsv()" title="Exportar visão atual em CSV">
+              <i data-lucide="download" class="ic-xs"></i><span>Exportar</span>
             </button>
           </div>
           <div id="capacity-list"></div>
         </div>
-        <!-- Aba RITMO — auditoria por squad (tabela + sparkline burndown mini). -->
-        <div id="an-tab-rhythm" class="an-tab-panel" style="display:none">
-          <div class="rhythm-header rhythm-header-v2">
-            <div class="rhythm-header-main">
-              <h2 class="rhythm-title">Ritmo por equipe</h2>
-              <div class="rhythm-subtitle">Diagnóstico semanal de gargalos — quem tá no ritmo, quem tá devendo.</div>
-            </div>
-            <div class="rhythm-header-actions">
-              <!-- Semana: atalhos + calendário em modo semana (rhy-*, calendário rc). -->
-              <div class="filter-period-picker">
-                <button type="button" class="filter-period-trigger" id="rhy-trigger" onclick="rhyToggle(event)" aria-haspopup="dialog">
-                  <span id="rhy-label">Semana atual</span>
-                  <i data-lucide="chevron-down" class="ic-xs"></i>
-                </button>
-                <div class="pfp-popover" id="rhy-popover" onclick="event.stopPropagation()">
-                  <div class="pfp-presets" id="rhy-presets"></div>
-                  <div class="pfp-cal"><div id="rhy-rc"></div></div>
-                  <div class="pfp-footer">
-                    <span></span>
-                    <button type="button" class="pfp-footer-btn" onclick="rcToday('rhy-rc')">Hoje</button>
-                  </div>
-                </div>
-              </div>
-              <input type="hidden" id="rhythm-week" value="0">
+        <!-- Aba RITMO — prazos que vencem na semana, por equipe. -->
+        <div id="an-tab-rhythm" class="an-tab-panel an-panel" style="display:none">
+          <div class="an-head">
+            <div class="an-head-main">
+              <h2 class="an-title">Ritmo das equipes</h2>
+              <p class="an-sub">Os prazos de etapa que vencem na semana: quanto foi entregue em dia e o que ficou para trás.</p>
             </div>
           </div>
-          <div class="rhythm-filter-bar">
-            <div class="uws-filter rhythm-squad-filter-inline" id="rhythm-squad-filter"></div>
-            <span class="rhythm-week-range" id="rhythm-week-range"></span>
+          <div class="an-filters">
+            <div class="an-squads" id="rhythm-squad-filter"></div>
+            <!-- Semana: atalhos + calendário em modo semana (rhy-*, calendário rc). -->
+            <div class="filter-period-picker">
+              <button type="button" class="filter-period-trigger" id="rhy-trigger" onclick="rhyToggle(event)" aria-haspopup="dialog">
+                <span class="an-f-key">Semana</span>
+                <span class="an-f-val" id="rhy-label">Semana atual</span>
+                <span class="an-f-hint" id="rhythm-week-range"></span>
+                <i data-lucide="chevron-down" class="ic-xs"></i>
+              </button>
+              <div class="pfp-popover" id="rhy-popover" onclick="event.stopPropagation()">
+                <div class="pfp-presets" id="rhy-presets"></div>
+                <div class="pfp-cal"><div id="rhy-rc"></div></div>
+                <div class="pfp-footer">
+                  <span></span>
+                  <button type="button" class="pfp-footer-btn" onclick="rcToday('rhy-rc')">Hoje</button>
+                </div>
+              </div>
+            </div>
+            <input type="hidden" id="rhythm-week" value="0">
+            <span class="an-filters-sp"></span>
+            <button type="button" class="an-action" id="rhythm-copy" onclick="rhythmCopySummary(this)" title="Copiar o resumo da semana pra Slack ou reunião">
+              <i data-lucide="copy" class="ic-xs"></i><span>Copiar resumo</span>
+            </button>
           </div>
           <div id="rhythm-body"></div>
         </div>
-        <!-- Aba RELATÓRIOS / SLA — v2:
-             Hero + filterbar unificado (padrão da capacidade), cards com hover
-             refinado e tooltip nos hints. -->
-        <div id="an-tab-reports" class="an-tab-panel" style="display:none">
-          <div class="capacity-hero">
-            <div class="capacity-hero-main">
-              <h2 class="capacity-title">Diagnóstico por etapa</h2>
-              <div class="capacity-subtitle">Ranking de gargalos e demandas lentas no período.</div>
+        <!-- Aba RELATÓRIOS — gargalos por etapa e demandas lentas. -->
+        <div id="an-tab-reports" class="an-tab-panel an-panel" style="display:none">
+          <div class="an-head">
+            <div class="an-head-main">
+              <h2 class="an-title">Diagnóstico por etapa</h2>
+              <p class="an-sub">Onde as demandas ficam paradas e quais demoraram mais no período.</p>
             </div>
           </div>
-          <div class="capacity-filterbar rep-filterbar">
-            <div class="capacity-filterbar-group">
-              <span class="capacity-filterbar-label"><i data-lucide="users" class="ic-xs"></i> Equipes</span>
-              <div class="rep-squads" id="reports-squad-filter"></div>
-              <input type="hidden" id="reports-ws" value="">
-            </div>
-            <div class="capacity-filterbar-group">
-              <span class="capacity-filterbar-label"><i data-lucide="briefcase" class="ic-xs"></i> Cliente</span>
-              <select id="reports-client" onchange="renderReports()"></select>
-            </div>
-            <div class="capacity-filterbar-group">
-              <span class="capacity-filterbar-label"><i data-lucide="folder" class="ic-xs"></i> Projeto</span>
-              <select id="reports-project" onchange="renderReports()"></select>
-            </div>
-            <div class="capacity-filterbar-group">
-              <span class="capacity-filterbar-label"><i data-lucide="calendar-range" class="ic-xs"></i> Período</span>
-              <!-- Período: atalhos + intervalo no calendário (rep-pfp-*, calendário rc). -->
-              <div class="filter-period-picker">
-                <button type="button" class="filter-period-trigger" id="rep-pfp-trigger" onclick="repPfpToggle(event)">
-                  <span id="rep-pfp-label">Últimos 90 dias</span>
-                  <i data-lucide="chevron-down" class="ic-xs"></i>
-                </button>
-                <div class="pfp-popover" id="rep-pfp-popover" onclick="event.stopPropagation()">
-                  <div class="pfp-presets" id="rep-pfp-presets"></div>
-                  <div class="pfp-cal"><div id="rep-rc"></div></div>
-                  <div class="pfp-footer">
-                    <button type="button" class="pfp-footer-btn" onclick="repPfpReset()">Padrão</button>
-                    <button type="button" class="pfp-footer-btn" onclick="rcToday('rep-rc')">Hoje</button>
-                  </div>
+          <div class="an-filters">
+            <div class="an-squads" id="reports-squad-filter"></div>
+            <input type="hidden" id="reports-ws" value="">
+            <select id="reports-client" onchange="renderReports()"></select>
+            <select id="reports-project" onchange="renderReports()"></select>
+            <!-- Período: atalhos + intervalo no calendário (rep-pfp-*, calendário rc). -->
+            <div class="filter-period-picker">
+              <button type="button" class="filter-period-trigger" id="rep-pfp-trigger" onclick="repPfpToggle(event)">
+                <span class="an-f-key">Período</span>
+                <span class="an-f-val" id="rep-pfp-label">Últimos 90 dias</span>
+                <i data-lucide="chevron-down" class="ic-xs"></i>
+              </button>
+              <div class="pfp-popover" id="rep-pfp-popover" onclick="event.stopPropagation()">
+                <div class="pfp-presets" id="rep-pfp-presets"></div>
+                <div class="pfp-cal"><div id="rep-rc"></div></div>
+                <div class="pfp-footer">
+                  <button type="button" class="pfp-footer-btn" onclick="repPfpReset()">Padrão</button>
+                  <button type="button" class="pfp-footer-btn" onclick="rcToday('rep-rc')">Hoje</button>
                 </div>
               </div>
-              <input type="hidden" id="reports-period" value="90">
-              <input type="hidden" id="reports-period-start" value="">
-              <input type="hidden" id="reports-period-end" value="">
             </div>
-            <div class="capacity-filterbar-spacer"></div>
-            <button class="capacity-export-btn" onclick="clearReportFilters()" title="Limpar filtros">
-              <i data-lucide="brush-cleaning" class="ic-sm"></i>
-              <span>Limpar</span>
+            <input type="hidden" id="reports-period" value="90">
+            <input type="hidden" id="reports-period-start" value="">
+            <input type="hidden" id="reports-period-end" value="">
+            <span class="an-filters-sp"></span>
+            <button type="button" class="an-action" onclick="clearReportFilters()" title="Limpar filtros">
+              <i data-lucide="x" class="ic-xs"></i><span>Limpar filtros</span>
             </button>
           </div>
           <div id="reports-body"></div>
@@ -5251,7 +5234,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20261022sig8" defer></script>
+<script src="/js/boot.js?v=20261022an23" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

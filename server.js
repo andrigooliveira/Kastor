@@ -13138,9 +13138,22 @@ app.get('/api/reports/sla', requireAuth, rateLimitReport, (req, res) => {
   const totalHours = completed.map(d => (new Date(d.completedAt) - new Date(d.createdAt)) / 3600000);
   const avgTotal = totalHours.length ? totalHours.reduce((a,b)=>a+b,0) / totalHours.length : 0;
 
-  // Taxa de pontualidade: % concluídas dentro do deadline
-  const withDeadline = completed.filter(d => d.deadline);
-  const onTime = withDeadline.filter(d => d.completedAt.slice(0,10) <= d.deadline);
+  // Taxa de pontualidade: % concluídas dentro do prazo. Prazo = deadline da
+  // demanda; sem ele, o prazo da última etapa antes da conclusão (a maioria das
+  // equipes só usa prazo por etapa, e sem isso a taxa saía 0%).
+  const finalDue = d => {
+    if (d.deadline) return d.deadline;
+    const flow = db.flows.find(f => f.id === d.flowId);
+    const sh = d.stageHistory || [];
+    for (let i = sh.length - 1; i >= 0; i--) {
+      if (!sh[i].dueDate) continue;
+      if (flow?.stages.find(x => x.id === sh[i].stageId)?.done) continue;
+      return sh[i].dueDate;
+    }
+    return null;
+  };
+  const withDeadline = completed.filter(d => finalDue(d));
+  const onTime = withDeadline.filter(d => d.completedAt.slice(0,10) <= finalDue(d));
   const punctualityRate = withDeadline.length ? (onTime.length / withDeadline.length) * 100 : 0;
 
   // Taxa de retrabalho: demandas onde stageHistory teve etapa visitada mais de 1x (voltou)
@@ -13156,10 +13169,17 @@ app.get('/api/reports/sla', requireAuth, rateLimitReport, (req, res) => {
   // que sejam ids diferentes em fluxos/clientes distintos. Ex.: "Aprovação" no
   // fluxo A e no fluxo B viram uma barra só.
   const _normStageKey = (label) => String(label || '').trim().toLowerCase();
-  const stageTimings = {}; // { normKey: { stageName, flowNames:Set, samples:[hours], stageColor } }
+  const stageTimings = {}; // { normKey: { stageName, flowNames:Set, samples:[hours], stageColor, done, removed } }
+  const reworkByStage = {}; // normKey -> nº de demandas que entraram mais de uma vez na etapa
   demands.forEach(d => {
     const flow = db.flows.find(f => f.id === d.flowId);
     const sh = d.stageHistory || [];
+    const visits = {};
+    sh.forEach(s => {
+      const k = _normStageKey(flow?.stages.find(x => x.id === s.stageId)?.label || '(etapa removida)');
+      visits[k] = (visits[k] || 0) + 1;
+    });
+    Object.entries(visits).forEach(([k, n]) => { if (n > 1) reworkByStage[k] = (reworkByStage[k] || 0) + 1; });
     sh.forEach((s, i) => {
       if (!s.enteredAt) return;
       const endTs = s.leftAt || (i === sh.length - 1 && d.completedAt) || null;
@@ -13171,12 +13191,18 @@ app.get('/api/reports/sla', requireAuth, rateLimitReport, (req, res) => {
       const key = _normStageKey(label);
       if (!stageTimings[key]) {
         stageTimings[key] = {
+          key,
           stageName: label,
           stageColor: stage?.color || '#7A00FF',
           flowNames: new Set(),
-          samples: []
+          samples: [],
+          // done: etapa de conclusão em algum fluxo (fim do caminho, não espera);
+          // removed: a etapa não existe mais no fluxo.
+          done: !!stage?.done,
+          removed: !stage
         };
       }
+      if (stage?.done) stageTimings[key].done = true;
       if (flow?.name) stageTimings[key].flowNames.add(flow.name);
       stageTimings[key].samples.push(hours);
     });
@@ -13186,7 +13212,10 @@ app.get('/api/reports/sla', requireAuth, rateLimitReport, (req, res) => {
     stageColor: s.stageColor,
     flowName: _summarizeFlowNames(s.flowNames),
     avgHours: s.samples.reduce((a,b)=>a+b,0) / s.samples.length,
-    samples: s.samples.length
+    samples: s.samples.length,
+    reworkCount: reworkByStage[s.key] || 0,
+    done: s.done,
+    removed: s.removed
   })).sort((a,b) => b.avgHours - a.avgHours);
 
   // Tempo médio por tipo de demanda
@@ -13208,11 +13237,26 @@ app.get('/api/reports/sla', requireAuth, rateLimitReport, (req, res) => {
   const slowest = completed
     .map(d => {
       const project = db.projects.find(p => p.id === d.projectId);
+      const client = project ? db.clients.find(c => c.id === project.clientId) : null;
+      const flow = db.flows.find(f => f.id === d.flowId);
+      // Etapa onde a demanda passou mais tempo (somando as passagens).
+      const perStage = {};
+      (d.stageHistory || []).forEach((s, i, sh) => {
+        const endTs = s.leftAt || (i === sh.length - 1 && d.completedAt) || null;
+        if (!s.enteredAt || !endTs) return;
+        if (flow?.stages.find(x => x.id === s.stageId)?.done) return; // etapa de conclusão não é espera
+        const h = (new Date(endTs) - new Date(s.enteredAt)) / 3600000;
+        if (h > 0) perStage[s.stageId] = (perStage[s.stageId] || 0) + h;
+      });
+      const [longId, longH] = Object.entries(perStage).sort((a, b) => b[1] - a[1])[0] || [];
       return {
         id: d.id, name: d.name,
         projectName: project?.name || '—',
+        clientName: client?.name || project?.client || '',
         hours: (new Date(d.completedAt) - new Date(d.createdAt)) / 3600000,
-        completedAt: d.completedAt
+        completedAt: d.completedAt,
+        deadline: finalDue(d),
+        longestStage: longId ? { name: flow?.stages.find(x => x.id === longId)?.label || '(etapa removida)', hours: longH } : null
       };
     })
     .sort((a,b) => b.hours - a.hours)
@@ -13284,6 +13328,7 @@ app.get('/api/reports/sla', requireAuth, rateLimitReport, (req, res) => {
       completedCount: completed.length,
       avgTotalHours: avgTotal,
       punctualityRate,
+      punctualityBase: withDeadline.length,
       reworkRate,
       reworkedCount: reworked.length,
     },
