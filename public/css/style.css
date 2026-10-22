@@ -810,6 +810,7 @@ body.user-freelancer .freelancer-hide { display: none !important; }
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
   --sidebar-w: 236px;
+  --topbar-h: 48px;   /* altura fixa do topbar; o que encosta nele (detalhe da demanda, docs) usa este token */
   --sidebar-w-collapsed: 64px;
 
   /* ─── ESCALAS (design system, fase 1) ───
@@ -1410,7 +1411,7 @@ body::before {
   transition: margin-left .22s var(--ease-out);
 }
 .topbar {
-  padding: var(--space-2) var(--space-6);
+  height: var(--topbar-h); padding: 0 var(--space-6);
   background: var(--chrome-bg);
   display: flex; align-items: center; justify-content: space-between;
   position: sticky; top: 0; z-index: 80;
@@ -6365,7 +6366,7 @@ body:has(#page-demand-detail.active) #toast-container { bottom: 96px; }
    Left = --sidebar-w porque a sidebar é fixed também. */
 #page-demand-detail.active {
   position: fixed;
-  top: 65px;
+  top: var(--topbar-h);
   left: var(--sidebar-w);
   right: 0;
   bottom: 0;
@@ -10931,7 +10932,7 @@ kbd {
   body.menu-open .menu-backdrop { display: block; opacity: 1; }
   .main { margin-left: 0 !important; }
   /* Topbar mais compacto */
-  .topbar { padding: 10px 14px; gap: 10px; }
+  .topbar { padding: 0 14px; gap: 10px; }
   .topbar-title { font-size: 15px; }
   /* Bell + nova demanda: nova demanda fica só com ícone (texto cabe muito mal) */
   .topbar-actions .btn-primary { padding-left: 12px; padding-right: 12px; }
@@ -14087,7 +14088,7 @@ tr.demand-row:hover {
 #page-post-editor { padding: 0; background: var(--bg); }
 .post-editor-page {
   display: flex; flex-direction: column;
-  min-height: calc(100vh - 65px);
+  min-height: calc(100vh - var(--topbar-h));
   max-width: 100%;
 }
 /* Topbar sticky com Voltar/Preview/Salvar */
@@ -14310,7 +14311,7 @@ tr.demand-row:hover {
 .docs-container {
   display: block;
   width: 100%;
-  height: calc(100vh - 65px);   /* 65px = topbar do app */
+  height: calc(100vh - var(--topbar-h));
   overflow-y: auto;
   overflow-x: hidden;
   background: transparent;
@@ -18332,7 +18333,7 @@ input[type="checkbox"]:checked {
 /* Editor: layout full-page */
 .writer-editor-view {
   display: flex; flex-direction: column;
-  height: calc(100vh - var(--topbar-h, 0px));
+  height: 100vh;   /* writer.html é página própria, sem o topbar do app */
   min-height: 500px;
   background: var(--bg);
 }
@@ -20864,7 +20865,8 @@ body.dv-resizing[data-dv-resize="se"] * { cursor: nwse-resize !important; }
 
   /* ── Topo: título da página no lugar do hambúrguer e do "+" ── */
   .menu-toggle { display: none !important; }
-  .topbar { padding: 10px 16px; gap: 8px; min-height: 56px; }
+  :root { --topbar-h: 56px; }
+  .topbar { padding: 0 16px; gap: 8px; }
   .topbar-title { display: block !important; font-size: 17px; font-weight: 700; letter-spacing: -.01em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
   .topbar-actions { gap: 6px; }
   .topbar-actions #btn-new-demand { display: none; }
