@@ -3723,6 +3723,9 @@ app.get('/api/admin/email-preview/:key', requireAuth, (req, res) => {
   const html = sample.build().html;
   res.type('html').send(scheme ? html.replace('<html', `<html data-rw-scheme="${scheme}"`) : html);
 });
+// Catálogo do design system (design-system.html), mesmo esquema da prévia de
+// movimento: style.css real + funções do app.js recortadas pelo nome.
+require('./design-catalog')(app, { requireAuth });
 // Prévia do sistema de movimento (motion-preview.html). Lido do disco a cada
 // request e com o style.css sem cache: editou o CSS, F5 mostra o novo.
 app.get('/api/admin/motion-preview', requireAuth, (req, res) => {

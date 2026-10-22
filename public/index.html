@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <!-- Idioma: roda antes de tudo (carrega o dicionário quando não é português). -->
-<script src="/js/i18n.js?v=20261021forum7"></script>
+<script src="/js/i18n.js?v=20261022ds2"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>reWork</title>
 <link rel="icon" type="image/png" href="/favicon.png">
@@ -1047,18 +1047,18 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           <section class="dash-col dash-col--next" aria-labelledby="dash-next-heading">
             <header class="dash-col-head dash-col-head--tabs">
               <h2 class="dash-col-heading" id="dash-next-heading">Próximos dias</h2>
-              <nav class="dash-tabs" role="tablist" aria-label="Visões dos próximos dias">
-                <button type="button" class="dash-tab is-active" role="tab" aria-selected="true" data-tab="forecast" onclick="setDashNextTab('forecast')">Previstas</button>
-                <button type="button" class="dash-tab" role="tab" aria-selected="false" data-tab="radar" onclick="setDashNextTab('radar')">Radar</button>
-                <button type="button" class="dash-tab" role="tab" aria-selected="false" data-tab="activity" onclick="setDashNextTab('activity')">Atividade</button>
+              <nav class="tabs dash-tabs" role="tablist" aria-label="Visões dos próximos dias">
+                <button type="button" class="tab dash-tab is-active" role="tab" aria-selected="true" data-tab="forecast" onclick="setDashNextTab('forecast')">Previstas</button>
+                <button type="button" class="tab dash-tab" role="tab" aria-selected="false" data-tab="radar" onclick="setDashNextTab('radar')">Radar</button>
+                <button type="button" class="tab dash-tab" role="tab" aria-selected="false" data-tab="activity" onclick="setDashNextTab('activity')">Atividade</button>
               </nav>
             </header>
 
             <div class="dash-flow">
               <div class="dash-tab-panel is-active" data-panel="forecast" role="tabpanel">
-                <div class="dash-forecast-toggle-row" id="dash-forecast-toggle">
-                  <button type="button" class="dash-toggle-btn is-active" onclick="setDashForecastMode('previstas')" data-mode="previstas">Previstas</button>
-                  <button type="button" class="dash-toggle-btn" onclick="setDashForecastMode('prazos')" data-mode="prazos">Prazos</button>
+                <div class="seg dash-forecast-toggle-row" id="dash-forecast-toggle">
+                  <button type="button" class="seg-btn dash-toggle-btn is-active" onclick="setDashForecastMode('previstas')" data-mode="previstas">Previstas</button>
+                  <button type="button" class="seg-btn dash-toggle-btn" onclick="setDashForecastMode('prazos')" data-mode="prazos">Prazos</button>
                 </div>
                 <div class="dash-forecast-grid" id="dash-forecast"></div>
                 <div class="dash-subblock">
@@ -1448,12 +1448,12 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               <button type="button" class="agenda-week-label agdp-trigger" id="mine-agenda-week-label" onclick="agdpToggle('mine-week', event)" title="Escolher data">—</button>
               <button class="btn btn-ghost btn-sm" onclick="agendaNextWeek()" title="Próximo"><i data-lucide="chevron-right" class="ic-sm"></i></button>
               <button class="btn btn-ghost btn-sm" onclick="agendaThisWeek()">Hoje</button>
-              <div class="agenda-view-toggle agenda-view-toggle-v2" style="margin-left:8px">
-                <button class="btn btn-ghost btn-sm agenda-view-btn" data-view="day" onclick="setAgendaView('day')">Dia</button>
-                <button class="btn btn-ghost btn-sm agenda-view-btn" data-view="1" onclick="setAgendaView(1)">Semana</button>
-                <button class="btn btn-ghost btn-sm agenda-view-btn active" data-view="2" onclick="setAgendaView(2)">Quinzena</button>
-                <button class="btn btn-ghost btn-sm agenda-view-btn" data-view="month" onclick="setAgendaView('month')">Mês</button>
-                <button class="btn btn-ghost btn-sm agenda-view-btn" data-view="year" onclick="setAgendaView('year')">Ano</button>
+              <div class="seg agenda-view-toggle" style="margin-left:8px">
+                <button class="seg-btn agenda-view-btn" data-view="day" onclick="setAgendaView('day')">Dia</button>
+                <button class="seg-btn agenda-view-btn" data-view="1" onclick="setAgendaView(1)">Semana</button>
+                <button class="seg-btn agenda-view-btn is-active" data-view="2" onclick="setAgendaView(2)">Quinzena</button>
+                <button class="seg-btn agenda-view-btn" data-view="month" onclick="setAgendaView('month')">Mês</button>
+                <button class="seg-btn agenda-view-btn" data-view="year" onclick="setAgendaView('year')">Ano</button>
               </div>
             </div>
           </div>
@@ -1467,10 +1467,10 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
     <!-- ── ANÁLISES (Capacidade + Relatórios em abas) ── -->
     <div class="page" id="page-analytics">
-      <div class="an-tabs">
-        <button class="an-tab is-active" data-tab="capacity" onclick="setAnalyticsTab('capacity')">CAPACIDADE</button>
-        <button class="an-tab" data-tab="rhythm" onclick="setAnalyticsTab('rhythm')">RITMO</button>
-        <button class="an-tab" data-tab="reports" onclick="setAnalyticsTab('reports')">RELATÓRIOS</button>
+      <div class="tabs an-tabs">
+        <button class="tab an-tab is-active" data-tab="capacity" onclick="setAnalyticsTab('capacity')">Capacidade</button>
+        <button class="tab an-tab" data-tab="rhythm" onclick="setAnalyticsTab('rhythm')">Ritmo</button>
+        <button class="tab an-tab" data-tab="reports" onclick="setAnalyticsTab('reports')">Relatórios</button>
       </div>
       <div class="page-body">
         <!-- Aba CAPACIDADE — layout unificado v2:
@@ -1483,10 +1483,10 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               <h2 class="capacity-title" id="capacity-heading">Capacidade da Equipe</h2>
               <div class="capacity-subtitle" id="capacity-hint">Distribuição de demandas em aberto por responsável — carga baseada em atribuições e horas apontadas.</div>
             </div>
-            <div class="capacity-view-toggle" role="tablist" aria-label="Trocar visão">
-              <button class="capacity-view-btn is-active" id="capacity-view-team" onclick="setCapacityView('team')"><i data-lucide="users" class="ic-sm"></i> Equipe</button>
-              <button class="capacity-view-btn" id="capacity-view-project" onclick="setCapacityView('project')"><i data-lucide="folder" class="ic-sm"></i> Projeto</button>
-              <button class="capacity-view-btn" id="capacity-view-client" onclick="setCapacityView('client')"><i data-lucide="briefcase" class="ic-sm"></i> Cliente</button>
+            <div class="seg capacity-view-toggle" role="tablist" aria-label="Trocar visão">
+              <button class="seg-btn capacity-view-btn is-active" id="capacity-view-team" onclick="setCapacityView('team')"><i data-lucide="users" class="ic-sm"></i> Equipe</button>
+              <button class="seg-btn capacity-view-btn" id="capacity-view-project" onclick="setCapacityView('project')"><i data-lucide="folder" class="ic-sm"></i> Projeto</button>
+              <button class="seg-btn capacity-view-btn" id="capacity-view-client" onclick="setCapacityView('client')"><i data-lucide="briefcase" class="ic-sm"></i> Cliente</button>
             </div>
           </div>
           <div class="capacity-filterbar">
@@ -1672,9 +1672,9 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       <div class="page-body mine-agenda-v2 is-standalone">
         <div class="agenda-toolbar">
           <!-- Modo Individual (1 user, N semanas) ↔ Time (N users, 1 dia) -->
-          <div class="agenda-mode-toggle agenda-view-toggle-v2">
-            <button class="btn btn-ghost btn-sm agenda-mode-btn agenda-view-btn active" data-mode="individual" onclick="setAgendaMode('individual')" title="Um usuário, semana toda"><i data-lucide="user" class="ic-sm"></i> Individual</button>
-            <button class="btn btn-ghost btn-sm agenda-mode-btn agenda-view-btn" data-mode="team" onclick="setAgendaMode('team')" title="Vários usuários, um dia"><i data-lucide="users" class="ic-sm"></i> Time</button>
+          <div class="seg agenda-mode-toggle">
+            <button class="seg-btn agenda-mode-btn agenda-view-btn is-active" data-mode="individual" onclick="setAgendaMode('individual')" title="Um usuário, semana toda"><i data-lucide="user" class="ic-sm"></i> Individual</button>
+            <button class="seg-btn agenda-mode-btn agenda-view-btn" data-mode="team" onclick="setAgendaMode('team')" title="Vários usuários, um dia"><i data-lucide="users" class="ic-sm"></i> Time</button>
           </div>
           <div class="agenda-user-pick" id="agenda-user-pick-single">
             <select class="form-control" id="agenda-user" onchange="onAgendaUserChange()"></select>
@@ -1695,12 +1695,12 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <button class="btn btn-ghost btn-sm" onclick="agendaTodayDay()">Hoje</button>
           </div>
           <div class="agenda-spacer"></div>
-          <div class="agenda-view-toggle agenda-view-toggle-v2" id="agenda-view-toggle-weeks">
-            <button class="btn btn-ghost btn-sm agenda-view-btn" data-view="day" onclick="setAgendaView('day')">Dia</button>
-            <button class="btn btn-ghost btn-sm agenda-view-btn" data-view="1" onclick="setAgendaView(1)">Semana</button>
-            <button class="btn btn-ghost btn-sm agenda-view-btn active" data-view="2" onclick="setAgendaView(2)">Quinzena</button>
-            <button class="btn btn-ghost btn-sm agenda-view-btn" data-view="month" onclick="setAgendaView('month')">Mês</button>
-            <button class="btn btn-ghost btn-sm agenda-view-btn" data-view="year" onclick="setAgendaView('year')">Ano</button>
+          <div class="seg agenda-view-toggle" id="agenda-view-toggle-weeks">
+            <button class="seg-btn agenda-view-btn" data-view="day" onclick="setAgendaView('day')">Dia</button>
+            <button class="seg-btn agenda-view-btn" data-view="1" onclick="setAgendaView(1)">Semana</button>
+            <button class="seg-btn agenda-view-btn is-active" data-view="2" onclick="setAgendaView(2)">Quinzena</button>
+            <button class="seg-btn agenda-view-btn" data-view="month" onclick="setAgendaView('month')">Mês</button>
+            <button class="seg-btn agenda-view-btn" data-view="year" onclick="setAgendaView('year')">Ano</button>
           </div>
         </div>
         <div class="agenda-hint">Arraste num horário vazio pra criar · num bloco pra mover · na borda inferior pra redimensionar · clique pra abrir a demanda.</div>
@@ -1857,9 +1857,9 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <span class="post-editor-dirty-badge" id="post-editor-dirty" style="display:none">Não salvo</span>
           </div>
           <div class="post-editor-topbar-right">
-            <div class="post-editor-mode-toggle" role="tablist" aria-label="Modo do editor">
-              <button type="button" role="tab" class="post-editor-mode-btn is-active" data-mode="edit" onclick="setPostEditorMode('edit')"><i data-lucide="pencil" class="ic-xs"></i> Editar</button>
-              <button type="button" role="tab" class="post-editor-mode-btn" data-mode="preview" onclick="setPostEditorMode('preview')"><i data-lucide="eye" class="ic-xs"></i> Visualizar</button>
+            <div class="seg post-editor-mode-toggle" role="tablist" aria-label="Modo do editor">
+              <button type="button" role="tab" class="seg-btn post-editor-mode-btn is-active" data-mode="edit" onclick="setPostEditorMode('edit')"><i data-lucide="pencil" class="ic-xs"></i> Editar</button>
+              <button type="button" role="tab" class="seg-btn post-editor-mode-btn" data-mode="preview" onclick="setPostEditorMode('preview')"><i data-lucide="eye" class="ic-xs"></i> Visualizar</button>
             </div>
             <button type="button" class="btn btn-ghost btn-sm" onclick="cancelPostEditor()">Cancelar</button>
             <button type="button" class="btn btn-confirm btn-sm" onclick="submitPostEditor()"><i data-lucide="save" class="ic-sm"></i> Salvar</button>
@@ -1955,9 +1955,9 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
     <!-- ── RECORRENTES (demandas mensais) ── -->
     <div class="page" id="page-recurring">
       <!-- Tabs no topo (DEMANDAS ativo, LISTAS placeholder) -->
-      <div class="rec-tabs">
-        <button class="rec-tab is-active" data-tab="demandas" onclick="setRecurringTab('demandas')">DEMANDAS</button>
-        <button class="rec-tab" data-tab="listas" onclick="setRecurringTab('listas')">LISTAS</button>
+      <div class="tabs rec-tabs">
+        <button class="tab rec-tab is-active" data-tab="demandas" onclick="setRecurringTab('demandas')">Demandas</button>
+        <button class="tab rec-tab" data-tab="listas" onclick="setRecurringTab('listas')">Listas</button>
       </div>
       <!-- Layout 2-col: lista de clientes (esquerda) + conteúdo do cliente selecionado (direita) -->
       <div class="rec-layout">
@@ -2011,11 +2011,11 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       <div class="page-body">
         <!-- Tabs: alterna entre Webhooks (saída simples via URL) e Discord Bot
              (canal privado com DM + resolver nome). Cada aba tem sua UI própria. -->
-        <div class="integrations-tabs" role="tablist" style="display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:18px">
-          <button type="button" class="integrations-tab is-active" data-int-tab="discord" onclick="setIntegrationsTab('discord')" role="tab">
+        <div class="tabs integrations-tabs" role="tablist" style="display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:18px">
+          <button type="button" class="tab integrations-tab is-active" data-int-tab="discord" onclick="setIntegrationsTab('discord')" role="tab">
             <img src="/discord.svg" width="16" height="16" alt="" aria-hidden="true" style="vertical-align:middle;margin-right:6px">Discord Bot
           </button>
-          <button type="button" class="integrations-tab" data-int-tab="webhooks" onclick="setIntegrationsTab('webhooks')" role="tab">
+          <button type="button" class="tab integrations-tab" data-int-tab="webhooks" onclick="setIntegrationsTab('webhooks')" role="tab">
             <i data-lucide="webhook" class="ic-sm"></i> Webhooks
           </button>
         </div>
@@ -2028,9 +2028,9 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               <input class="filter-input filter-input--with-icon" id="wh-f-search" placeholder="Buscar integração…" oninput="renderIntegrations()">
             </div>
             <select class="filter-select" id="wh-f-squad" onchange="onIntegrationsSquadChange()"><option value="">Todas as equipes</option></select>
-            <div class="filter-toggle" id="wh-scope-toggle" role="tablist">
-              <button type="button" class="filter-toggle-btn is-active" data-scope="user" onclick="setIntegrationsScope('user')">Usuário</button>
-              <button type="button" class="filter-toggle-btn" data-scope="client" onclick="setIntegrationsScope('client')">Cliente</button>
+            <div class="seg filter-toggle" id="wh-scope-toggle" role="tablist">
+              <button type="button" class="seg-btn filter-toggle-btn is-active" data-scope="user" onclick="setIntegrationsScope('user')">Usuário</button>
+              <button type="button" class="seg-btn filter-toggle-btn" data-scope="client" onclick="setIntegrationsScope('client')">Cliente</button>
             </div>
             <select class="filter-select" id="wh-f-target" onchange="renderIntegrations()"><option value="">Todos os usuários</option></select>
             <select class="filter-select" id="wh-f-client" onchange="onIntegrationsClientChange()" style="display:none"><option value="">Todos os clientes</option></select>
@@ -2138,7 +2138,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               <i data-lucide="arrow-down" class="ic-sm"></i>
             </button>
           </div>
-          <div class="att-gal-view-toggle" id="global-gallery-view-toggle"></div>
+          <div class="seg att-gal-view-toggle" id="global-gallery-view-toggle"></div>
         </div>
         <div class="gallery-page-chips" id="global-gallery-chips"></div>
         <div class="gallery-page-body" id="global-gallery-body"></div>
@@ -2378,7 +2378,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                 <i data-lucide="arrow-down" class="ic-sm"></i>
               </button>
             </div>
-            <div class="att-gal-view-toggle" id="gallery-page-view-toggle"></div>
+            <div class="seg att-gal-view-toggle" id="gallery-page-view-toggle"></div>
           </div>
           <div class="gallery-page-chips" id="gallery-page-chips"></div>
           <div class="gallery-page-body" id="gallery-page-body"></div>
@@ -2658,10 +2658,10 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                   </div>
                 </div>
                 <div class="flow-inline-foot">
-                  <label class="flow-apply-toggle" id="fl-apply-toggle-wrap">
+                  <label class="switch flow-apply-toggle" id="fl-apply-toggle-wrap">
                     <input type="checkbox" id="fl-apply-all">
-                    <span class="flow-toggle-track"><span class="flow-toggle-thumb"></span></span>
-                    <span class="flow-toggle-label">Aplicar a todos os projetos</span>
+                    <span class="switch-track" aria-hidden="true"></span>
+                    <span class="switch-label">Aplicar a todos os projetos</span>
                   </label>
                   <div class="flow-inline-foot-right">
                     <button class="btn btn-ghost" onclick="closeFlowInlineEditor()">Cancelar</button>
@@ -2734,12 +2734,12 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           <!-- Equipe: ponto com a cor da equipe (aplicado em _protoPaintFilters). Cliente: foto dele. -->
           <select class="filter-select" id="proto-f-ws" aria-label="Equipe" data-no-cdrop onchange="_protoSetFilter('ws', this.value)"></select>
           <select class="filter-select" id="proto-f-client" aria-label="Cliente" data-cdrop-icon="client" onchange="_protoSetFilter('client', this.value)"></select>
-          <div class="filter-toggle proto-status" id="proto-f-status" role="tablist" aria-label="Situação">
-            <button type="button" class="filter-toggle-btn is-active" data-status="" title="Todos" onclick="_protoSetFilter('status', '')"><i data-lucide="layout-list" class="ic-xs"></i><span>Todos</span></button>
-            <button type="button" class="filter-toggle-btn" data-status="active" title="Link ativo" onclick="_protoSetFilter('status', 'active')"><i data-lucide="link" class="ic-xs"></i><span>Ativo</span></button>
-            <button type="button" class="filter-toggle-btn" data-status="expired" title="Link expirado" onclick="_protoSetFilter('status', 'expired')"><i data-lucide="timer-off" class="ic-xs"></i><span>Expirado</span></button>
-            <button type="button" class="filter-toggle-btn" data-status="team" title="Só a equipe" onclick="_protoSetFilter('status', 'team')"><i data-lucide="lock" class="ic-xs"></i><span>Só a equipe</span></button>
-            <button type="button" class="filter-toggle-btn" data-status="empty" title="Sem arquivos" onclick="_protoSetFilter('status', 'empty')"><i data-lucide="file-x" class="ic-xs"></i><span>Sem arquivos</span></button>
+          <div class="seg filter-toggle proto-status" id="proto-f-status" role="tablist" aria-label="Situação">
+            <button type="button" class="seg-btn filter-toggle-btn is-active" data-status="" title="Todos" onclick="_protoSetFilter('status', '')"><i data-lucide="layout-list" class="ic-xs"></i><span>Todos</span></button>
+            <button type="button" class="seg-btn filter-toggle-btn" data-status="active" title="Link ativo" onclick="_protoSetFilter('status', 'active')"><i data-lucide="link" class="ic-xs"></i><span>Ativo</span></button>
+            <button type="button" class="seg-btn filter-toggle-btn" data-status="expired" title="Link expirado" onclick="_protoSetFilter('status', 'expired')"><i data-lucide="timer-off" class="ic-xs"></i><span>Expirado</span></button>
+            <button type="button" class="seg-btn filter-toggle-btn" data-status="team" title="Só a equipe" onclick="_protoSetFilter('status', 'team')"><i data-lucide="lock" class="ic-xs"></i><span>Só a equipe</span></button>
+            <button type="button" class="seg-btn filter-toggle-btn" data-status="empty" title="Sem arquivos" onclick="_protoSetFilter('status', 'empty')"><i data-lucide="file-x" class="ic-xs"></i><span>Sem arquivos</span></button>
           </div>
           <button type="button" class="btn btn-ghost btn-sm" id="proto-f-clear" onclick="_protoClearFilters()" hidden>Limpar</button>
         </div>
@@ -3402,9 +3402,9 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                     <div class="profile-row-title">Menu lateral recolhido</div>
                     <div class="profile-row-sub">Mais espaço para listas e quadros. Dá para abrir a qualquer momento.</div>
                   </div>
-                  <label class="profile-switch" aria-label="Menu lateral recolhido">
+                  <label class="switch" aria-label="Menu lateral recolhido">
                     <input type="checkbox" id="profile-sidebar-collapsed" onchange="setProfileSidebarCollapsed(this.checked)">
-                    <span class="profile-switch-track"><span class="profile-switch-thumb"></span></span>
+                    <span class="switch-track" aria-hidden="true"></span>
                   </label>
                 </div>
               </div>
@@ -3736,14 +3736,14 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
         <!-- RECORRÊNCIA — gera cópias automáticas desta demanda no tempo. -->
         <div class="form-group full dw-extra">
           <div class="rec-card" id="f-rec-card">
-            <label class="rec-head">
+            <label class="switch rec-head">
               <span class="rec-head-icon"><i data-lucide="repeat"></i></span>
               <span class="rec-head-text">
                 <span class="rec-head-title">Demanda recorrente</span>
                 <span class="rec-head-sub">Repete no tempo — o sistema cria uma nova demanda idêntica a cada rotação</span>
               </span>
               <input type="checkbox" id="f-rec-enabled" onchange="onRecToggle()">
-              <span class="rec-switch" aria-hidden="true"></span>
+              <span class="switch-track" aria-hidden="true"></span>
             </label>
             <div id="f-rec-config" class="rec-config" style="display:none">
               <div class="rec-field">
@@ -4071,9 +4071,9 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       <div class="form-grid">
         <!-- Toggle Demanda / Livre (bloqueio sem demanda: reunião, foco, off, etc) -->
         <div class="form-group full">
-          <div class="sch-mode-toggle" id="sch-mode-toggle" role="tablist">
-            <button type="button" class="sch-mode-btn is-active" id="sch-mode-demand" onclick="setScheduleMode('demand')">Demanda</button>
-            <button type="button" class="sch-mode-btn" id="sch-mode-free" onclick="setScheduleMode('free')">Livre</button>
+          <div class="seg sch-mode-toggle" id="sch-mode-toggle" role="tablist">
+            <button type="button" class="seg-btn sch-mode-btn is-active" id="sch-mode-demand" onclick="setScheduleMode('demand')">Demanda</button>
+            <button type="button" class="seg-btn sch-mode-btn" id="sch-mode-free" onclick="setScheduleMode('free')">Livre</button>
           </div>
         </div>
         <div class="form-group full" id="sch-demand-row">
@@ -4262,10 +4262,10 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
         </div>
         <div class="form-group">
           <label class="form-label">Status</label>
-          <label class="flow-apply-toggle" style="height:40px">
+          <label class="switch flow-apply-toggle" style="height:40px">
             <input type="checkbox" id="rec-active" checked>
-            <span class="flow-toggle-track"><span class="flow-toggle-thumb"></span></span>
-            <span class="flow-toggle-label">Ativo (aparece na lista de geração mensal)</span>
+            <span class="switch-track" aria-hidden="true"></span>
+            <span class="switch-label">Ativo (aparece na lista de geração mensal)</span>
           </label>
         </div>
         <div class="form-group full">
@@ -5228,7 +5228,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20261021forum7" defer></script>
+<script src="/js/boot.js?v=20261022ds2" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

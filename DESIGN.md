@@ -21,9 +21,14 @@ colors:
   text-baixa-diurno: "#6b6b74"
   hairline-noturno: "rgba(255,255,255,0.06)"
   hairline-diurno: "rgba(30,30,60,0.06)"
-  sinal-sucesso: "#16a34a"
-  sinal-aviso: "#b57100"
-  sinal-perigo: "#e7000b"
+  sinal-sucesso: "#3ce3a0"
+  sinal-sucesso-diurno: "#147a3a"
+  sinal-aviso: "#f5a718"
+  sinal-aviso-diurno: "#9a5f00"
+  sinal-perigo: "#ff6467"
+  sinal-perigo-diurno: "#c8000a"
+  sinal-sucesso-fill: "#15803d"
+  sinal-perigo-fill: "#dc2626"
   analitico-sky: "#2b7fff"
   analitico-cobalto: "#1447e6"
 typography:
@@ -64,11 +69,36 @@ typography:
 rounded:
   xs: "4px"
   sm: "6px"
-  md: "10px"
-  lg: "12px"
-  xl: "14px"
-  2xl: "18px"
+  default: "10px"
+  md: "12px"
+  lg: "14px"
+  xl: "18px"
   pill: "999px"
+  circle: "50%"
+spacing:
+  0-5: "2px"
+  1: "4px"
+  1-5: "6px"
+  2: "8px"
+  2-5: "10px"
+  3: "12px"
+  4: "16px"
+  5: "20px"
+  6: "24px"
+  8: "32px"
+  10: "40px"
+  12: "48px"
+  16: "64px"
+fontSize:
+  2xs: "10px"
+  xs: "11px"
+  sm: "12px"
+  base: "13px"
+  md: "15px"
+  lg: "18px"
+  xl: "22px"
+  2xl: "28px"
+  display: "clamp(1.75rem, 3vw, 2.25rem)"
 components:
   button-primary:
     backgroundColor: "{colors.roxo-studio}"
@@ -150,9 +180,14 @@ Paleta dark-first construída sobre 4 cinzas carbono empilhados + roxo brand com
 - **Hairline Diurno** (`rgba(30,30,60,0.06)`): divisor com tint frio.
 
 ### Operational Signals
-- **Sinal Sucesso** (`#16a34a`): entregas concluídas, prazo confortável, conexão real-time OK.
-- **Sinal Aviso** (`#b57100`): atenção requerida, prazo apertado, etapa parada.
-- **Sinal Perigo** (`#e7000b`): destrutivo (deletar), demanda vencida, erro. Sempre pareado com confirmação — nunca destrói sem perguntar.
+- **Sinal Sucesso** (`--success`; escuro `#3ce3a0`, claro `#147a3a`): entregas concluídas, prazo confortável, conexão real-time OK.
+- **Sinal Aviso** (`--warn`; escuro `#f5a718`, claro `#9a5f00`): atenção requerida, prazo apertado, etapa parada.
+- **Sinal Perigo** (`--danger`; escuro `#ff6467`, claro `#c8000a`): destrutivo (deletar), demanda vencida, erro. Sempre pareado com confirmação — nunca destrói sem perguntar.
+- **Texto × preenchimento.** `--success`/`--warn`/`--danger` são cor de **texto e ícone**: passam AA sobre `--bg`, `--surface` e `--surface-2` nos dois temas. Fundo sólido com texto branco (botão, badge, chip cheio, check marcado) usa **`--danger-fill`** (`#dc2626`) ou **`--success-fill`** (`#15803d`), iguais nos dois temas, com texto `--on-accent`. Fundo suave continua `--*-dim`.
+
+### Prioridade e tons
+- **Prioridade** (`--prio-1` Imediato `#EF4444` · `--prio-2` Alta `#FB7415` · `--prio-3` Média `#FACC15` · `--prio-4` Baixa `#60A5FA`): só na bolinha/pílula de prioridade. `PRIORITIES` no `app.js` espelha esses valores para gráficos e PDFs, que não leem CSS.
+- **Tons de widget/relatório** (`--tone-violet` = `--accent`, `--tone-pink`, `--tone-teal`, `--tone-clay`, com variante mais escura no claro): identificam o assunto de um card (faixa no topo + chip do ícone). São categóricos de propósito, fora de verde, vermelho, amarelo (sinais) e azul (gráficos). Quando o card **é** um sinal (Paradas, Radar de atraso, Lentidão), ele usa o sinal (`--danger`, `--warn`), não um tom.
 
 ### Analytical
 - **Analítico Sky** (`#2b7fff`), **Analítico Cobalto** (`#1447e6`): usados exclusivamente em charts e visualizações de dados. **Não** entram em botões, hover, ou qualquer elemento interativo — o azul é sagrado dos charts pra o cérebro do gestor não confundir "está clicável" com "é um data point".
@@ -193,7 +228,7 @@ Densidade média-alta na main app (Demandas, Detail): as informações são tabu
 
 **Grid de widgets do dashboard:** grid CSS de 2 colunas em desktop (~600px cada), 1 coluna em mobile. Widgets pequenos (2 tone-cores) se juntam em row de 2. Widgets grandes (feed, radar) ocupam linha inteira.
 
-**Spacing rhythm:** múltiplos de 4px (4, 8, 12, 16, 20, 24, 32, 40). Padrão de card = 16-20px de padding interno, 8-12px entre elementos internos, 24px entre widgets. Não há token nomeado pra spacing — CSS usa valores literais e a convenção é a doutrina.
+**Spacing rhythm:** escala `--space-*` (ver "Escalas e validação"), base 4px com meios-passos de 2px. Padrão de card = `--space-4`/`--space-5` de padding interno, `--space-2`/`--space-3` entre elementos internos, `--space-6` entre widgets.
 
 **Breakpoints:** móvel < 640px, tablet 640–1024px, desktop > 1024px. A maior parte da app assume desktop e usa media queries só pra quebrar o sidebar e reduzir densidade.
 
@@ -218,15 +253,16 @@ Light theme reduz as sombras pra ~40% da intensidade e adiciona tint frio (`rgba
 
 ## Shapes
 
-Sistema de raios em 7 passos, todos múltiplos aproximados de 4px, escalados pra caber o gesto certo em cada tamanho.
+Sistema de raios em 6 passos + pill + círculo, escalados pra caber o gesto certo em cada tamanho. Os nomes são os tokens do `style.css`.
 
-- **xs (4px):** ícones em chip pequenos, pill de tag numérica.
-- **sm (6px):** botões padrão, inputs, checkbox. O default.
-- **md (10px):** cards de widget do dashboard, dropdown.
-- **lg (12px):** cards do Detail (`.detail-stage-card`), modal padrão.
-- **xl (14px):** modal grande, gallery card, hero card do Hub.
-- **2xl (18px):** raro — usado em cards de destaque hero.
-- **pill (999px):** chips de status, badges, avatar, botão de ação com ícone único.
+- **`--radius-xs` (4px):** ícones em chip pequenos, pill de tag numérica.
+- **`--radius-sm` (6px):** botões padrão, inputs, checkbox. O default de controle.
+- **`--radius` (10px):** cards de widget do dashboard, dropdown.
+- **`--radius-md` (12px):** cards do Detail (`.detail-stage-card`), modal padrão.
+- **`--radius-lg` (14px):** modal grande, gallery card, hero card do Hub.
+- **`--radius-xl` (18px):** raro — usado em cards de destaque hero.
+- **`--radius-pill` (999px):** chips de status, badges, botão de ação com ícone único.
+- **`--radius-circle` (50%):** avatar, bolinha de status.
 
 Bordas são raras. Onde existem, usam `--border` (dim de `--surface-3`) e são de 1px. Estados focused/active usam `--border-active` (`rgba(122,0,255,0.55)`) — nunca `--accent` puro, que é reservado pra fills.
 
@@ -240,9 +276,26 @@ Bordas são raras. Onde existem, usam `--border` (dim de `--surface-3`) e são d
 - **Shape:** raio pequeno (`--radius-sm`, 6px), padding `8px 16px`, font size 13px, weight 600.
 - **Primary (`.btn-primary`):** fundo `--accent` (`#7A00FF`), texto branco, sombra sutil (`0 1px 2px rgba(122,0,255,0.20)`) + inset highlight de 1px branco no topo pra dar dimensionalidade. Hover: `brightness(1.08)`. Ativo em ≤2 CTAs por tela.
 - **Ghost (`.btn-ghost`):** transparente com borda `--border`, texto `--text-dim`. Hover: fundo `--surface-2` + borda `--border-active`. É o botão default pra ações secundárias.
-- **Danger (`.btn-danger`):** transparente com borda `--danger-dim`, texto `--danger`. Hover: fundo `--danger-dim`. Sempre confirma antes de executar.
+- **Danger (`.btn-danger`):** hoje vale a regra cheia (`--danger-fill` + texto `--on-accent`); existe uma regra antiga de contorno mais acima no CSS que perde. Ver "Divergências" no catálogo. Sempre confirma antes de executar.
+- **Confirm (`.btn-confirm`):** `--success-fill` + texto `--on-accent`, pra OK/Salvar/Concluir.
 - **Sm modifier (`.btn-sm`):** padding `6px 11px`, font `11px`. Usado em toolbars densas.
+- **Desabilitado:** global pra qualquer `.btn` (`:disabled` ou `aria-disabled="true"`): opacidade .45, `cursor: not-allowed`, sem sombra, filtro nem deslocamento, inclusive no hover. Não crie regra de desabilitado por tela.
 - **Transição:** `transform` sob `--ease-spring`, tudo mais sob `--ease-out`. Botão primary tem um `::after` com radial gradient branco pra brilho sutil.
+
+### Interruptor (`.switch`)
+
+Um só pra plataforma. `<label class="switch"><input type="checkbox"><span class="switch-track" aria-hidden="true"></span></label>`.
+
+- **Tamanho:** 36×20 (thumb 16). `.switch--sm` 32×18 (thumb 14) em lista densa (Editar acesso rápido, dias da semana).
+- **Texto ao lado:** `<span class="switch-label">` dentro do mesmo label; o texto todo é clicável. Um cabeçalho inteiro pode ser o label (`.switch.rec-head`), desde que o `input` venha logo antes do `.switch-track`.
+- **Estados:** ligado = trilho `--accent`; hover = anel `--ring-hairline-strong`; foco = `--shadow-focus`; desabilitado = trilho com opacidade .4 e `cursor: not-allowed`.
+
+### Abas (`.tab`) e segmentados (`.seg-btn`)
+
+- **Aba** troca a vista inteira (Comentários / Checklist; Capacidade / Ritmo). Container `.tabs` (hairline de base), item `.tab`: 13px peso 500 em `--text-muted`; ativa em `--text` peso 600 com linha de 2px `--accent`. Texto em caixa normal, nunca uppercase.
+- **Segmentado** filtra dentro da vista (30 dias / 90 dias; Previstas / Prazos). Container `.seg` (`--surface-2`, raio `--radius-sm`, 2px de respiro), item `.seg-btn` (28px de altura, 12px peso 600); ativo com fundo `--surface`, texto `--text` e `--shadow-xs`.
+- **Marcador:** `initTabIndicators()` desliza a linha/fundo até o item ativo pra todo `.tab` e `.seg-btn`. Aba nova só usa a classe; não entra em lista nem ganha estilo próprio de ativo.
+- A classe antiga de cada tela (`.detail-tab`, `.filter-toggle-btn`…) fica no markup só como gancho de JS e de layout.
 
 ### Chips / Status Pills
 
@@ -291,12 +344,47 @@ Uma escala só, definida no bloco "SISTEMA DE MOVIMENTO (v2)" no fim do `style.c
 - **Loops:** só pra estado vivo de verdade (timer rodando, skeleton). Nada pulsando pra chamar atenção.
 - **Saídas:** toasts recolhem com `dismissToast()`; modais encolhem pra .985 com fade.
 - **Tema:** troca vira cross-fade via View Transitions.
-- **Abas e segmentados:** um marcador por grupo desliza até a aba ativa (`initTabIndicators()`, lista em `TAB_IND_SETS`). Aba nova entra na lista, não ganha estilo próprio de ativo.
+- **Abas e segmentados:** um marcador por grupo desliza até o item ativo (`initTabIndicators()`), pra todo `.tab` e `.seg-btn`. Aba nova usa a classe e não ganha estilo próprio de ativo.
 - **Números e barras:** contam do zero e crescem só na entrada da página (`animateCounters()`).
 - **Conclusão:** demanda que cai numa etapa de conclusão (qualquer caminho) mostra o toast `celebrate` e o confete sai dele (`celebrateCompletion()`). Único momento com confete: comemoração que vira rotina perde a graça.
 - **Comentário novo:** sobe com fundo roxo que se apaga (`.chat-comment.is-arriving`).
 - **Prévia:** `/api/admin/motion-preview` (só admin) mostra tudo isso com o `style.css` real, em claro/escuro e câmera lenta.
 - **`prefers-reduced-motion`:** desliga tudo.
+
+## Escalas e validação
+
+Os tokens moram no `:root` de `public/css/style.css` (bloco "ESCALAS"). Código novo usa o token; literal fora da escala não entra mais.
+
+| Escala | Tokens | Regra do teste |
+|---|---|---|
+| Espaço | `--space-0-5` 2 · `-1` 4 · `-1-5` 6 · `-2` 8 · `-2-5` 10 · `-3` 12 · `-4` 16 · `-5` 20 · `-6` 24 · `-8` 32 · `-10` 40 · `-12` 48 · `-16` 64 | `padding`/`margin`/`gap` só com valores da escala (literal na escala passa; 0 e 1px também) |
+| Tamanho de fonte | `--fs-2xs` 10 · `-xs` 11 · `-sm` 12 · `-base` 13 · `-md` 15 · `-lg` 18 · `-xl` 22 · `-2xl` 28 · `-display` | todo `font-size` em px/rem conta; use o token (`em`/`%` passam) |
+| Peso | `--fw-regular` 400 · `-medium` 500 · `-semibold` 600 · `-bold` 700 | 550, 650, 800, 900 contam |
+| Entrelinha / tracking | `--lh-none` · `-tight` · `-snug` · `-normal`; `--ls-tight` · `-snug` · `-label` | ainda não verificado |
+| Raio | `--radius-*` (seção Shapes) | todo raio literal ≠ 0 conta |
+| Sombra | `--shadow-xs…xl`, `--shadow-focus`, `--ring-hairline`, `--ring-hairline-strong`, `--ring-active`, `--ring-halo` | `box-shadow` só com `var()`/`none` |
+| Cor | semânticas (`--surface*`, `--text*`, `--accent*`, `--success`/`--warn`/`--danger`, `--on-accent`, `--scrim`, `--chart-*`) | hex, `rgb()`, `hsl()`, `white`/`black` contam, inclusive no fallback de `var(--x, #fff)`. `rgba(var(--accent-rgb), a)` passa |
+| `!important` | — | conta por propriedade |
+
+**A catraca.** `scripts/design-tokens.js` conta cada valor fora do sistema, por arquivo (`style.css`, `console.css`, `docs-editor.css`, `legal.css`; e cor/`font-size` em `app.js`, `console.js`, `boot.js`, `index.html`). `tests/design-tokens.test.js` (dentro de `npm test`) compara com `tests/design-tokens.baseline.json`:
+
+- valor que aparece mais vezes que no baseline, ou valor novo → **falha**, com arquivo e linhas;
+- valor que diminuiu → também falha, pedindo `node scripts/design-tokens.js --update` pra apertar o baseline. Assim a folga não fica guardada pra próxima regressão;
+- `--update` recusa gravar se algo piorou (só com `--allow-increase`, que precisa de justificativa no PR).
+
+`npm run design:check` mostra o placar; `-- --top 10` lista os valores mais frequentes de cada regra.
+
+**O catálogo.** `/api/admin/design-system` (só admin; `design-system.html` + `design-catalog.js`) é a documentação viva. Carrega o `style.css` real e monta os componentes com as funções reais do `app.js` (`emptyState`, `kpiTiles`, `avatarHTML`, `toast`…), recortadas pelo nome a cada request. Funciona também com o `app.js` minificado de produção, e o teste acusa se uma delas sumir. Tem:
+
+- tokens lidos do tema ativo, com troca de claro/escuro e de tema de cor;
+- contraste WCAG de cada texto sobre cada superfície, calculado ao vivo;
+- matriz de estados por componente (padrão, hover, foco, pressionado, desabilitado, inválido). Hover, foco e pressionado são forçados copiando as regras `:hover`/`:focus`/`:active` do `style.css` para classes, sem CSS paralelo;
+- auditoria do estilo **computado**: cada exemplo mostra quantos valores fogem das escalas, e "Marcar fora da escala" contorna os elementos. Pega o que a catraca do CSS não vê, como style inline montado no `app.js`;
+- a lista de divergências conhecidas, que ainda esperam decisão.
+
+Componente novo entra no catálogo junto com a tela que o usa. Se ele tiver helper no `app.js`, o nome do helper entra em `CATALOG_HELPERS`.
+
+**Migração.** Ao mexer numa tela, troque os literais dela pelos tokens: 14px de espaço → `--space-3` ou `--space-4`; 12.5/13.5px de fonte → `--fs-sm`/`--fs-base`; 8px de raio → `--radius-sm` ou `--radius`; 550/650 → 500/600. Essas trocas mudam o visual em 1–2px e são esperadas.
 
 ## Do's and Don'ts
 

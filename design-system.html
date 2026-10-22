@@ -1,0 +1,610 @@
+<!doctype html>
+<!-- Catálogo do design system. Servido (só admin) em /api/admin/design-system
+     por design-catalog.js. Carrega o style.css REAL e monta os componentes com
+     as funções REAIS do app.js (injetadas no lugar de __APP_HELPERS__): o que
+     aparece aqui é o que roda na plataforma. Estados de hover/foco/pressionado
+     são forçados copiando as regras :hover/:focus/:active do style.css para
+     classes .ds-hover/.ds-focus/.ds-press — nada de CSS paralelo.
+     O chrome da página usa só tokens, como qualquer tela nova deveria. -->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Design system · reWork</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="stylesheet" href="/css/fonts.css?v=1">
+<link rel="stylesheet" href="/css/style.css?t=__TS__">
+<script>
+  // Mesmo tema da plataforma antes de pintar (evita o flash).
+  try { if (localStorage.getItem('kastor-theme') === 'light') document.documentElement.setAttribute('data-theme', 'light'); } catch {}
+</script>
+<style>
+  html, body { height: auto !important; overflow: auto !important; }
+  body::before { display: none; }
+  body { background: var(--bg); color: var(--text); font-size: var(--fs-base); }
+
+  .ds-top {
+    position: sticky; top: 0; z-index: 50;
+    display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center;
+    padding: var(--space-3) var(--space-6); background: var(--bg); border-bottom: 1px solid var(--hairline);
+  }
+  .ds-top h1 { font-size: var(--fs-md); font-weight: var(--fw-bold); margin: 0; letter-spacing: var(--ls-snug); }
+  .ds-top small { color: var(--text-muted); font-size: var(--fs-sm); margin-right: auto; }
+  .ds-top a { color: var(--accent-text); font-size: var(--fs-sm); text-decoration: none; }
+  .ds-seg { display: inline-flex; padding: var(--space-0-5); gap: var(--space-0-5); background: var(--surface-2); border-radius: var(--radius-sm); }
+  .ds-seg button {
+    border: 0; background: transparent; color: var(--text-muted); font: inherit; font-size: var(--fs-sm); font-weight: var(--fw-semibold);
+    padding: var(--space-1-5) var(--space-2-5); border-radius: var(--radius-xs); cursor: pointer;
+  }
+  .ds-seg button.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow-xs); }
+  .ds-audit-total { font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--text-dim); }
+
+  .ds-layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: var(--space-8); max-width: 1320px; margin: 0 auto; padding: var(--space-6) var(--space-6) var(--space-16); }
+  .ds-toc { position: sticky; top: 72px; align-self: start; display: flex; flex-direction: column; gap: var(--space-0-5); }
+  .ds-toc b { font-size: var(--fs-2xs); font-weight: var(--fw-bold); letter-spacing: var(--ls-label); text-transform: uppercase; color: var(--text-muted); margin: var(--space-4) 0 var(--space-1); }
+  .ds-toc a { color: var(--text-dim); text-decoration: none; font-size: var(--fs-base); padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); }
+  .ds-toc a:hover { background: var(--surface-2); color: var(--text); }
+  @media (max-width: 1000px) { .ds-layout { grid-template-columns: minmax(0, 1fr); padding: var(--space-4); } .ds-toc { display: none; } }
+
+  .ds-section { margin-bottom: var(--space-12); scroll-margin-top: 72px; }
+  .ds-section > h2 { font-size: var(--fs-xl); font-weight: var(--fw-bold); letter-spacing: var(--ls-tight); margin: 0 0 var(--space-1); }
+  .ds-section > p { color: var(--text-dim); margin: 0 0 var(--space-4); max-width: 72ch; line-height: var(--lh-normal); }
+  .ds-eyebrow { font-size: var(--fs-2xs); font-weight: var(--fw-bold); letter-spacing: var(--ls-label); text-transform: uppercase; color: var(--accent-text); margin: var(--space-10) 0 var(--space-2); }
+
+  .ds-spec { background: var(--surface); border-radius: var(--radius-lg); padding: var(--space-4) var(--space-5); margin-bottom: var(--space-4); }
+  .ds-spec-head { display: flex; align-items: flex-start; gap: var(--space-3); margin-bottom: var(--space-4); }
+  .ds-spec-head > div { flex: 1; min-width: 0; }
+  .ds-spec-head strong { display: block; font-size: var(--fs-md); font-weight: var(--fw-semibold); }
+  .ds-spec-head p { margin: var(--space-1) 0 0; color: var(--text-dim); line-height: var(--lh-normal); }
+  .ds-src { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: var(--fs-xs); color: var(--text-muted); margin-top: var(--space-1-5); display: block; }
+  .ds-chip {
+    flex-shrink: 0; border: 0; cursor: pointer; font: inherit; font-size: var(--fs-xs); font-weight: var(--fw-semibold);
+    padding: var(--space-1) var(--space-2-5); border-radius: var(--radius-pill);
+  }
+  .ds-chip.ok { background: var(--success-dim); color: var(--success); }
+  .ds-chip.bad { background: var(--warn-dim); color: var(--warn); }
+  .ds-chip.fail { background: var(--danger-dim); color: var(--danger); }
+  .ds-issues { display: none; margin: 0 0 var(--space-4); padding: var(--space-2) var(--space-3); background: var(--surface-2); border-radius: var(--radius-sm); font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: var(--fs-xs); color: var(--text-dim); line-height: var(--lh-normal); }
+  .ds-spec.show-issues .ds-issues { display: block; }
+  .ds-spec.show-issues .ds-off, body.ds-audit .ds-off { outline: 1px dashed var(--warn); outline-offset: 2px; }
+
+  /* Matriz de estados */
+  .ds-matrix { display: grid; grid-template-columns: 140px repeat(var(--cols, 5), minmax(0, 1fr)); gap: var(--space-3) var(--space-4); align-items: center; overflow-x: auto; }
+  .ds-matrix > .ds-col { font-size: var(--fs-2xs); font-weight: var(--fw-bold); letter-spacing: var(--ls-label); text-transform: uppercase; color: var(--text-muted); }
+  .ds-matrix > .ds-row { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: var(--fs-xs); color: var(--text-dim); }
+  .ds-cell { min-width: 0; display: flex; align-items: center; }
+  .ds-row-wide { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; }
+  .ds-stage { position: relative; transform: translateZ(0); overflow: hidden; background: var(--bg); border-radius: var(--radius); }
+
+  /* Fundamentos */
+  .ds-swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: var(--space-3); }
+  .ds-swatch { display: flex; gap: var(--space-2-5); align-items: center; min-width: 0; }
+  .ds-swatch i { width: 40px; height: 40px; border-radius: var(--radius-sm); flex-shrink: 0; box-shadow: var(--ring-hairline-strong); }
+  .ds-swatch div { min-width: 0; }
+  .ds-swatch b, .ds-mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: var(--fs-xs); font-weight: var(--fw-medium); }
+  .ds-swatch b { display: block; color: var(--text); }
+  .ds-swatch span { display: block; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: var(--fs-2xs); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .ds-table { width: 100%; border-collapse: collapse; }
+  .ds-table th { text-align: left; font-size: var(--fs-2xs); font-weight: var(--fw-bold); letter-spacing: var(--ls-label); text-transform: uppercase; color: var(--text-muted); padding: var(--space-2); }
+  .ds-table td { padding: var(--space-2); border-top: 1px solid var(--hairline); vertical-align: middle; }
+  .ds-ratio { display: inline-flex; align-items: center; gap: var(--space-2); }
+  .ds-sample { display: inline-block; padding: var(--space-1) var(--space-2); border-radius: var(--radius-xs); font-weight: var(--fw-semibold); }
+
+  .ds-type-row { display: grid; grid-template-columns: 160px 1fr; gap: var(--space-4); align-items: baseline; padding: var(--space-2) 0; border-top: 1px solid var(--hairline); }
+  .ds-type-row:first-child { border-top: 0; }
+  .ds-bar-row { display: grid; grid-template-columns: 160px 1fr; gap: var(--space-4); align-items: center; padding: var(--space-1) 0; }
+  .ds-bar { height: 12px; background: var(--accent); border-radius: var(--radius-xs); }
+  .ds-boxes { display: flex; flex-wrap: wrap; gap: var(--space-5); }
+  .ds-box { display: flex; flex-direction: column; gap: var(--space-2); align-items: center; }
+  .ds-box i { width: 72px; height: 72px; background: var(--surface-3); display: block; }
+  .ds-box.sh i { background: var(--surface); width: 112px; }
+  .ds-box-stage { background: var(--bg); border-radius: var(--radius); padding: var(--space-6); }
+
+  .ds-debt { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--space-3); }
+  .ds-debt article { background: var(--surface); border-radius: var(--radius-lg); padding: var(--space-4); }
+  .ds-debt h3 { font-size: var(--fs-base); font-weight: var(--fw-semibold); margin: var(--space-2) 0 var(--space-1); }
+  .ds-debt p { color: var(--text-dim); margin: 0; line-height: var(--lh-normal); }
+  .ds-error { background: var(--danger-dim); color: var(--danger); padding: var(--space-3) var(--space-4); border-radius: var(--radius-sm); margin-bottom: var(--space-4); }
+</style>
+</head>
+<body>
+<header class="ds-top">
+  <h1>Design system</h1>
+  <small>style.css e funções do app.js reais. Editou, é só dar F5.</small>
+  <a href="/api/admin/motion-preview">Animações →</a>
+  <div class="ds-seg" id="ds-theme"><button data-v="light">Claro</button><button data-v="dark">Escuro</button></div>
+  <div class="ds-seg" id="ds-accent">
+    <button data-v="">Roxo</button><button data-v="azul">Azul</button><button data-v="ciano">Ciano</button>
+    <button data-v="rosa">Rosa</button><button data-v="laranja">Laranja</button><button data-v="grafite">Grafite</button>
+  </div>
+  <span class="ds-audit-total" id="ds-audit-total"></span>
+  <div class="ds-seg" id="ds-audit"><button data-v="off" class="on">Sem marcação</button><button data-v="on">Marcar fora da escala</button></div>
+</header>
+
+<div class="ds-layout">
+  <nav class="ds-toc" id="ds-toc"></nav>
+  <main id="ds-main">
+    <div id="ds-errors"></div>
+
+    <div class="ds-eyebrow">Fundamentos</div>
+    <section class="ds-section" id="cores" data-toc="Cores">
+      <h2>Cores</h2>
+      <p>Valores lidos do tema ativo. Troque claro/escuro e o tema de cor no topo: tudo aqui recalcula.</p>
+      <div id="ds-colors"></div>
+    </section>
+
+    <section class="ds-section" id="contraste" data-toc="Contraste">
+      <h2>Contraste</h2>
+      <p>Cada cor de texto sobre cada superfície, calculado ao vivo (WCAG 2.1). AA pede 4,5:1 para texto normal e 3:1 para texto grande (≥ 18px, ou ≥ 14px em negrito) e ícones. A regra do sistema: texto AA sobre --bg, --surface e --surface-2; --surface-3 é hover e trilho, não fundo de leitura.</p>
+      <div class="ds-spec"><div id="ds-contrast"></div></div>
+    </section>
+
+    <section class="ds-section" id="tipo" data-toc="Tipografia">
+      <h2>Tipografia</h2>
+      <p>Geist para tudo, JetBrains Mono para IDs, horários e números tabulares. O token tem o nome do papel, não do valor.</p>
+      <div class="ds-spec" id="ds-type"></div>
+    </section>
+
+    <section class="ds-section" id="espaco" data-toc="Espaço">
+      <h2>Espaço</h2>
+      <p>Base 4px, com meios-passos de 2px para UI densa. <code class="ds-mono">padding</code>, <code class="ds-mono">margin</code> e <code class="ds-mono">gap</code> só com estes valores.</p>
+      <div class="ds-spec" id="ds-space"></div>
+    </section>
+
+    <section class="ds-section" id="raio" data-toc="Raio">
+      <h2>Raio</h2>
+      <p>O raio segue o gesto: controle pequeno com raio pequeno; área grande com raio maior.</p>
+      <div class="ds-spec"><div class="ds-boxes" id="ds-radius"></div></div>
+    </section>
+
+    <section class="ds-section" id="sombra" data-toc="Sombra e anéis">
+      <h2>Sombra e anéis</h2>
+      <p>Superfície em repouso é plana; sombra só responde a estado (hover, foco) ou elevação (popover, modal). Anel é <code class="ds-mono">box-shadow</code> usado como borda.</p>
+      <div class="ds-spec"><div class="ds-box-stage"><div class="ds-boxes" id="ds-shadow"></div></div></div>
+    </section>
+
+    <div class="ds-eyebrow">Componentes</div>
+    <div id="ds-components"></div>
+
+    <div class="ds-eyebrow">Dívida</div>
+    <section class="ds-section" id="divergencias" data-toc="Divergências">
+      <h2>Divergências conhecidas</h2>
+      <p>O que o catálogo expôs e ainda precisa de decisão. Cada item sai daqui quando a tela consolidada entrar e o baseline da catraca cair.</p>
+      <div class="ds-debt" id="ds-debt"></div>
+    </section>
+  </main>
+</div>
+
+<script src="/vendor/lucide.min.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const MISSING_HELPERS = "__MISSING_HELPERS__";
+</script>
+<script>
+/*__APP_HELPERS__*/
+</script>
+<script>
+(function () {
+  const root = document.documentElement;
+  const css = (name) => getComputedStyle(root).getPropertyValue(name).trim();
+  const h = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  if (Array.isArray(MISSING_HELPERS) && MISSING_HELPERS.length) {
+    $('ds-errors').innerHTML = `<div class="ds-error">Funções do app.js não encontradas: ${MISSING_HELPERS.map(h).join(', ')}. Os componentes que dependem delas não aparecem.</div>`;
+  }
+  const has = (fn) => typeof window[fn] === 'function';
+
+  /* ── Estados forçados ──
+     Copia toda regra do style.css com :hover/:focus/:active trocando o
+     pseudo por classe. Assim .btn-primary.ds-hover pinta exatamente como
+     .btn-primary:hover, sem duplicar CSS. */
+  function buildForcedStates() {
+    const sheet = [...document.styleSheets].find((s) => s.href && s.href.includes('/css/style.css'));
+    if (!sheet) return;
+    const swap = (sel) => sel
+      .replace(/:focus-visible/g, '.ds-focus').replace(/:focus-within/g, '.ds-focus').replace(/:focus\b/g, '.ds-focus')
+      .replace(/:hover/g, '.ds-hover').replace(/:active\b/g, '.ds-press');
+    const walk = (rules) => {
+      let out = '';
+      for (const r of rules) {
+        if (r.selectorText && /:(hover|focus|active)\b/.test(r.selectorText)) {
+          const sels = r.selectorText.split(/,(?![^(]*\))/).filter((s) => /:(hover|focus|active)\b/.test(s)).map(swap);
+          out += `${sels.join(',')}{${r.style.cssText}}\n`;
+        } else if (r.cssRules && r.conditionText !== undefined) {
+          const inner = walk(r.cssRules);
+          if (inner) out += `${r.constructor.name === 'CSSSupportsRule' ? '@supports' : '@media'} ${r.conditionText}{${inner}}\n`;
+        }
+      }
+      return out;
+    };
+    const style = document.createElement('style');
+    style.textContent = walk(sheet.cssRules);
+    document.head.appendChild(style);
+  }
+
+  /* ── Fundamentos ── */
+  const COLOR_GROUPS = [
+    ['Superfícies', ['--bg', '--surface', '--surface-2', '--surface-3', '--border', '--hairline', '--hairline-strong', '--scrim']],
+    ['Texto', ['--text', '--text-dim', '--text-muted', '--on-accent']],
+    ['Marca', ['--accent', '--accent-text', '--accent-dim', '--border-active']],
+    ['Sinais', ['--success', '--success-dim', '--success-fill', '--warn', '--warn-dim', '--danger', '--danger-dim', '--danger-fill']],
+    ['Prioridade', ['--prio-1', '--prio-2', '--prio-3', '--prio-4']],
+    ['Tons de widget (categóricos)', ['--tone-violet', '--tone-pink', '--tone-teal', '--tone-clay']],
+    ['Dados (só gráficos)', ['--chart-1', '--chart-2', '--chart-3', '--chart-4', '--chart-5']]
+  ];
+  function renderColors() {
+    $('ds-colors').innerHTML = COLOR_GROUPS.map(([g, names]) => `
+      <div class="ds-spec"><div class="ds-spec-head"><div><strong>${g}</strong></div></div>
+        <div class="ds-swatches">${names.map((n) => `
+          <div class="ds-swatch"><i style="background:var(${n})"></i><div><b>${n}</b><span>${h(css(n))}</span></div></div>`).join('')}
+        </div></div>`).join('');
+  }
+
+  // Cor computada → [r,g,b,a]. Aceita rgb(), rgba() e color(srgb …).
+  const probe = document.createElement('div');
+  probe.style.display = 'none';
+  document.body.appendChild(probe);
+  function rgba(cssValue) {
+    probe.style.color = '';
+    probe.style.color = cssValue;
+    const c = getComputedStyle(probe).color;
+    let m = c.match(/rgba?\(([^)]+)\)/);
+    if (m) { const p = m[1].split(/[\s,/]+/).filter(Boolean).map(Number); return [p[0], p[1], p[2], p[3] ?? 1]; }
+    m = c.match(/color\(srgb ([^)]+)\)/);
+    if (m) { const p = m[1].split(/[\s/]+/).filter(Boolean).map(Number); return [p[0] * 255, p[1] * 255, p[2] * 255, p[3] ?? 1]; }
+    return null;
+  }
+  const over = (fg, bg) => fg[3] >= 1 ? fg : [0, 1, 2].map((i) => fg[i] * fg[3] + bg[i] * (1 - fg[3])).concat(1);
+  const lum = (c) => {
+    const [r, g, b] = c.slice(0, 3).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  function ratio(fgVar, bgVar) {
+    const base = rgba('var(--bg)');
+    const bgRaw = rgba(`var(${bgVar})`), fgRaw = rgba(`var(${fgVar})`);
+    if (!base || !bgRaw || !fgRaw) return null;
+    const bg = over(bgRaw, base), fg = over(fgRaw, bg);
+    const [a, b] = [lum(fg), lum(bg)].sort((x, y) => y - x);
+    return (a + 0.05) / (b + 0.05);
+  }
+  const verdict = (r) => r == null ? ['—', ''] : r >= 4.5 ? ['AA', 'ok'] : r >= 3 ? ['AA grande', 'bad'] : ['Falha', 'fail'];
+  const TEXTS = ['--text', '--text-dim', '--text-muted', '--accent-text', '--success', '--warn', '--danger'];
+  const SURFACES = ['--bg', '--surface', '--surface-2', '--surface-3'];
+  const FILLS = [['--on-accent', '--accent'], ['--on-accent', '--danger-fill'], ['--on-accent', '--success-fill'], ['--accent-text', '--accent-dim']];
+  function renderContrast() {
+    const cell = (fg, bg) => {
+      const r = ratio(fg, bg), [label, cls] = verdict(r);
+      return `<td><span class="ds-ratio"><span class="ds-sample" style="color:var(${fg});background:var(${bg})">Aa</span>
+        <span class="ds-mono">${r ? r.toFixed(2) : '—'}</span><span class="ds-chip ${cls}">${label}</span></span></td>`;
+    };
+    $('ds-contrast').innerHTML = `
+      <table class="ds-table"><thead><tr><th>Texto \\ fundo</th>${SURFACES.map((s) => `<th>${s}</th>`).join('')}</tr></thead>
+      <tbody>${TEXTS.map((t) => `<tr><td class="ds-mono">${t}</td>${SURFACES.map((s) => cell(t, s)).join('')}</tr>`).join('')}</tbody></table>
+      <table class="ds-table" style="margin-top:var(--space-5)"><thead><tr><th>Preenchimento</th><th>Contraste</th></tr></thead>
+      <tbody>${FILLS.map(([f, b]) => `<tr><td class="ds-mono">${f} sobre ${b}</td>${cell(f, b)}</tr>`).join('')}</tbody></table>`;
+  }
+
+  const FS = [
+    ['--fs-2xs', 'Label uppercase, contador', 'ETAPA ATUAL'],
+    ['--fs-xs', 'Metadata, botão sm, chip', 'Atualizado há 3 min'],
+    ['--fs-sm', 'Texto secundário, célula de tabela', 'Cliente Acme · Projeto Verão'],
+    ['--fs-base', 'Corpo: descrição, comentário, input', 'Briefing aprovado pelo cliente, seguimos para a produção.'],
+    ['--fs-md', 'Title: card interno, nome de cliente', 'Campanha de lançamento'],
+    ['--fs-lg', 'Headline: widget, modal', 'Meu foco de hoje'],
+    ['--fs-xl', 'Título de página', 'Minhas Demandas'],
+    ['--fs-2xl', 'KPI grande', '128 h'],
+    ['--fs-display', 'Saudação, hero', 'Boa tarde!']
+  ];
+  function renderType() {
+    const rows = FS.map(([t, role, sample]) => `
+      <div class="ds-type-row"><div><b class="ds-mono">${t}</b><span class="ds-src">${h(css(t))} · ${role}</span></div>
+        <div style="font-size:var(${t});${t === '--fs-2xs' ? 'font-weight:var(--fw-bold);letter-spacing:var(--ls-label);text-transform:uppercase' : ''}${['--fs-lg', '--fs-xl', '--fs-2xl', '--fs-display'].includes(t) ? 'font-weight:var(--fw-bold);letter-spacing:var(--ls-tight);line-height:var(--lh-tight)' : ''}">${sample}</div></div>`).join('');
+    const weights = ['--fw-regular', '--fw-medium', '--fw-semibold', '--fw-bold'].map((w) =>
+      `<div class="ds-type-row"><div><b class="ds-mono">${w}</b><span class="ds-src">${css(w)}</span></div><div style="font-size:var(--fs-md);font-weight:var(${w})">Responsável pela etapa</div></div>`).join('');
+    $('ds-type').innerHTML = rows + weights;
+  }
+
+  const SPACE = ['0-5', '1', '1-5', '2', '2-5', '3', '4', '5', '6', '8', '10', '12', '16'];
+  const renderSpace = () => { $('ds-space').innerHTML = SPACE.map((s) => `
+    <div class="ds-bar-row"><div><b class="ds-mono">--space-${s}</b> <span class="ds-src" style="display:inline">${css('--space-' + s)}</span></div>
+      <div class="ds-bar" style="width:var(--space-${s})"></div></div>`).join(''); };
+
+  const RADII = ['--radius-xs', '--radius-sm', '--radius', '--radius-md', '--radius-lg', '--radius-xl', '--radius-pill', '--radius-circle'];
+  const renderRadius = () => { $('ds-radius').innerHTML = RADII.map((r) => `
+    <div class="ds-box"><i style="border-radius:var(${r})"></i><b class="ds-mono">${r}</b><span class="ds-src">${css(r)}</span></div>`).join(''); };
+
+  const SHADOWS = ['--shadow-xs', '--shadow-sm', '--shadow-md', '--shadow-lg', '--shadow-xl', '--shadow-focus', '--ring-hairline', '--ring-hairline-strong', '--ring-active', '--ring-halo'];
+  const renderShadow = () => { $('ds-shadow').innerHTML = SHADOWS.map((s) => `
+    <div class="ds-box sh"><i style="box-shadow:var(${s});border-radius:var(--radius)"></i><b class="ds-mono">${s}</b></div>`).join(''); };
+
+  /* ── Componentes ──
+     {{s}} recebe as classes de estado; {{d}} o atributo disabled. */
+  const STATES = [['Padrão', '', ''], ['Hover', 'ds-hover', ''], ['Foco', 'ds-focus', ''], ['Pressionado', 'ds-hover ds-press', ''], ['Desabilitado', '', 'disabled']];
+  const fill = (tpl, s, d) => tpl.replace(/\{\{s\}\}/g, s).replace(/\{\{d\}\}/g, d);
+  function matrix(rows, states = STATES) {
+    return `<div class="ds-matrix" style="--cols:${states.length}"><div></div>${states.map(([l]) => `<div class="ds-col">${l}</div>`).join('')}
+      ${rows.map(([label, tpl]) => `<div class="ds-row">${label}</div>${states.map(([, s, d]) => `<div class="ds-cell">${fill(tpl, s, d)}</div>`).join('')}`).join('')}</div>`;
+  }
+  const spec = (id, title, desc, src, body) => `
+    <section class="ds-section" id="${id}" data-toc="${title}">
+      <div class="ds-spec" data-spec>
+        <div class="ds-spec-head"><div><strong>${title}</strong><p>${desc}</p><span class="ds-src">${src}</span></div>
+          <button type="button" class="ds-chip" data-audit-chip></button></div>
+        <div class="ds-issues"></div>
+        <div data-spec-body>${body}</div>
+      </div>
+    </section>`;
+
+  const people = [
+    { id: 'u1', name: 'Ana Souza', lastSeen: new Date().toISOString() },
+    { id: 'u2', name: 'Bruno Lima', lastSeen: new Date(Date.now() - 12 * 60000).toISOString() },
+    { id: 'u3', name: 'Carla Dias', status: { kind: 'focus' } },
+    { id: 'u4', name: 'Diego Reis' },
+    { id: 'u5', name: 'Elisa Prado' }
+  ];
+  const STAGE_COLORS = [['Briefing', '#7A00FF'], ['Produção', '#2b7fff'], ['Revisão', '#f5a718'], ['Aprovada', '#16a34a']];
+
+  function renderComponents() {
+    const out = [];
+    out.push(spec('botoes', 'Botões', 'Primário em no máximo 2 CTAs por tela. Ghost é o padrão para ação secundária. Danger sempre confirma antes.',
+      'style.css · .btn .btn-primary .btn-ghost .btn-danger .btn-secondary .btn-confirm .btn-sm', matrix([
+        ['.btn-primary', '<button class="btn btn-primary {{s}}" {{d}}>Salvar</button>'],
+        ['.btn-ghost', '<button class="btn btn-ghost {{s}}" {{d}}>Cancelar</button>'],
+        ['.btn-danger', '<button class="btn btn-danger {{s}}" {{d}}>Excluir</button>'],
+        ['.btn-secondary', '<button class="btn btn-secondary {{s}}" {{d}}>Duplicar</button>'],
+        ['.btn-confirm', '<button class="btn btn-confirm {{s}}" {{d}}>OK</button>'],
+        ['.btn-primary.btn-sm', '<button class="btn btn-primary btn-sm {{s}}" {{d}}>Nova demanda</button>'],
+        ['.btn-ghost.btn-sm', '<button class="btn btn-ghost btn-sm {{s}}" {{d}}><i data-lucide="filter" class="ic-sm"></i> Filtros</button>']
+      ])));
+
+    out.push(spec('campos', 'Campos', 'Foco é o anel roxo (--shadow-focus). Erro usa aria-invalid="true" e mensagem abaixo.',
+      'style.css · .form-control · .form-control[aria-invalid]', matrix([
+        ['input', '<input class="form-control {{s}}" {{d}} value="Campanha de verão">'],
+        ['input vazio', '<input class="form-control {{s}}" {{d}} placeholder="Nome do cliente">'],
+        ['select', '<select class="form-control {{s}}" {{d}}><option>Prioridade alta</option></select>'],
+        ['textarea', '<textarea class="form-control {{s}}" {{d}} rows="2">Briefing do cliente</textarea>']
+      // "Inválido" fecha o class="" e abre aria-invalid no mesmo {{s}}.
+      ], [...STATES.filter(([l]) => l !== 'Pressionado'), ['Inválido', '" aria-invalid="true', '']])));
+
+    const sw = (cls, on, d, s, label = '') => `<label class="switch ${cls} ${s.includes('hover') ? 'ds-hover' : ''}"><input type="checkbox" class="${s.includes('focus') ? 'ds-focus' : ''}" ${on ? 'checked' : ''} ${d}><span class="switch-track" aria-hidden="true"></span>${label ? `<span class="switch-label">${label}</span>` : ''}</label>`;
+    const swStates = [['Desligado', 0, '', ''], ['Ligado', 1, '', ''], ['Hover', 0, '', 'hover'], ['Foco', 1, '', 'focus'], ['Desabilitado', 1, 'disabled', '']];
+    const swRow = (label, cls, text) => `<div class="ds-row">${label}</div>${swStates.map(([, on, d, s]) => `<div class="ds-cell">${sw(cls, on, d, s, text)}</div>`).join('')}`;
+    out.push(spec('switches', 'Interruptor', 'Liga/desliga com efeito imediato. Padrão 36×20; <code class="ds-mono">switch--sm</code> (32×18) em lista densa. Com texto ao lado, use <code class="ds-mono">.switch-label</code> dentro do label: o texto todo fica clicável.',
+      'style.css · .switch · .switch--sm · .switch-track · .switch-label',
+      `<div class="ds-matrix" style="--cols:5"><div></div>${swStates.map(([l]) => `<div class="ds-col">${l}</div>`).join('')}
+        ${swRow('.switch', '')}${swRow('.switch--sm', 'switch--sm')}${swRow('+ .switch-label', '', 'Aplicar a todos')}</div>`));
+
+    out.push(spec('abas', 'Abas e segmentados', 'Aba (.tab) troca a vista: ativa com texto neutro e linha roxa. Segmentado (.seg-btn) filtra dentro dela: ativo com fundo --surface. No app, um marcador desliza até o item ativo (initTabIndicators); aqui aparece o estado estático.',
+      'style.css · .tabs > .tab · .seg > .seg-btn', `
+      <div class="ds-matrix" style="--cols:1"><div></div><div class="ds-col">Exemplos</div>
+        <div class="ds-row">.tabs > .tab</div><div class="ds-cell"><div class="tabs" role="tablist" style="width:100%">
+          <button class="tab is-active">Comentários</button><button class="tab ds-hover">Checklist (hover)</button><button class="tab ds-focus">Horas (foco)</button><button class="tab">Etapas</button></div></div>
+        <div class="ds-row">.tab com ícone</div><div class="ds-cell"><div class="tabs" role="tablist" style="width:100%">
+          <button class="tab is-active"><i data-lucide="users"></i><span>Pessoas</span></button>
+          <button class="tab"><i data-lucide="layers"></i><span>Squads</span></button>
+          <button class="tab"><i data-lucide="shield"></i><span>Segurança</span></button></div></div>
+        <div class="ds-row">.seg > .seg-btn</div><div class="ds-cell"><div class="seg" role="tablist">
+          <button type="button" class="seg-btn is-active">30 dias</button><button type="button" class="seg-btn ds-hover">90 dias (hover)</button><button type="button" class="seg-btn ds-focus">12 meses (foco)</button></div></div>
+      </div>`));
+
+    const pills = has('priorityPill') ? [1, 2, 3, 4].map((v) => priorityPill(v)).join('') : '';
+    const stagePills = has('hexDim') ? STAGE_COLORS.map(([l, c]) => `<span class="pill" style="color:${c};background:${hexDim(c)}"><span class="pill-dot" style="background:${c}"></span>${l}</span>`).join('') : '';
+    out.push(spec('pilulas', 'Pílulas', 'Rótulo de status, papel ou prioridade. Não é interativa: filtro clicável é segmentado.',
+      'app.js · priorityPill() · statusPill() · style.css .pill-*', `
+      <div class="ds-matrix" style="--cols:1"><div></div><div class="ds-col">Exemplos</div>
+        <div class="ds-row">priorityPill()</div><div class="ds-cell ds-row-wide">${pills}</div>
+        <div class="ds-row">etapa (hexDim)</div><div class="ds-cell ds-row-wide">${stagePills}</div>
+        <div class="ds-row">.pill-*</div><div class="ds-cell ds-row-wide">
+          <span class="pill pill-success">Concluída</span><span class="pill pill-late">Em atraso</span><span class="pill pill-muted">—</span>
+          <span class="pill pill-admin">Admin</span><span class="pill pill-owner">Dono</span><span class="pill pill-moderator">Moderador</span><span class="pill pill-freelancer">Freelancer</span></div>
+      </div>`));
+
+    if (has('avatarHTML')) {
+      const sizes = ['avatar avatar-xs', 'avatar avatar-sm', 'avatar', 'avatar avatar-lg', 'avatar avatar-xl'];
+      const stack = `<span class="avatar-stack">${people.slice(0, 3).map((u, i) => `<span class="avatar-stack-item" style="z-index:${10 - i}">${avatarHTML(u, 'avatar avatar-stack-avatar')}</span>`).join('')}<span class="avatar-stack-item avatar-stack-more">+2</span></span>`;
+      out.push(spec('avatares', 'Avatares', 'Iniciais sobre gradiente estável por pessoa. Bolinha de presença (online / ausente) e selo de status pessoal.',
+        'app.js · avatarHTML() · presenceClassFor() · statusOf()', `
+        <div class="ds-matrix" style="--cols:1"><div></div><div class="ds-col">Exemplos</div>
+          <div class="ds-row">tamanhos</div><div class="ds-cell ds-row-wide">${sizes.map((c) => avatarHTML(people[3], c)).join('')}</div>
+          <div class="ds-row">presença</div><div class="ds-cell ds-row-wide">${avatarHTML(people[0])} online ${avatarHTML(people[1])} ausente ${avatarHTML(people[2])} focado</div>
+          <div class="ds-row">pilha</div><div class="ds-cell">${stack}</div>
+        </div>`));
+    }
+
+    if (has('kpiTiles')) {
+      out.push(spec('kpis', 'KPI', 'Número com rótulo. O tom colore ícone e valor; o número usa tabular-nums.',
+        'app.js · kpiTiles()', `<div class="kpi-tiles">${kpiTiles([
+          { label: 'Em andamento', value: 24, icon: 'activity' },
+          { label: 'Concluídas no mês', value: 61, sub: '+12% vs. mês passado', tone: 'success', icon: 'check-circle' },
+          { label: 'Vencem hoje', value: 5, tone: 'warn', icon: 'clock' },
+          { label: 'Em atraso', value: 3, tone: 'danger', icon: 'alert-triangle' }
+        ])}</div>`));
+    }
+
+    const widget = (tone, icon, title, s) => `<div class="dash-widget dash-tone-${tone} ${s}" style="animation:none">
+      <div class="dash-widget-head"><div class="dash-widget-title"><span class="dash-widget-icon"><i data-lucide="${icon}"></i></span>${title}</div></div>
+      <div class="dash-widget-sub">Conteúdo do widget</div></div>`;
+    out.push(spec('widgets', 'Card de widget', 'Faixa de cor no topo e ícone tingido pelo tema do widget. Sobe no hover.',
+      'style.css · .dash-widget · .dash-tone-*', matrix([
+        ['focus', widget('focus', 'target', 'Meu foco de hoje', '{{s}}')],
+        ['forecast', widget('forecast', 'calendar', 'Previstas', '{{s}}')],
+        ['activity', widget('activity', 'activity', 'Atividade', '{{s}}')]
+      ], STATES.slice(0, 2))));
+
+    const navItem = (icon, label, s) => `<nav class="sb-nav" style="position:static;width:220px"><a class="sb-item ${s}" href="#" onclick="return false"><i data-lucide="${icon}" class="sb-ic"></i><span class="sb-label">${label}</span></a></nav>`;
+    out.push(spec('navegacao', 'Item da barra lateral', 'Ativo: fundo roxo dim, barra de 3px à esquerda, texto e ícone em roxo.',
+      'app.js · _sbItemHTML() · style.css .sb-item', matrix([
+        ['.sb-item', navItem('inbox', 'Minhas Demandas', '{{s}}')]
+      ], [['Padrão', '', ''], ['Hover', 'ds-hover', ''], ['Foco', 'ds-focus', ''], ['Ativo', 'active', '']])));
+
+    if (has('emptyState')) {
+      out.push(spec('vazios', 'Estados vazios e carregamento', 'emptyState() para página ou lista inteira; emptyMini() para widget e coluna; skeleton enquanto carrega.',
+        'app.js · emptyState() · emptyMini() · skeletonMetrics()', `
+        <div class="ds-matrix" style="--cols:1"><div></div><div class="ds-col">Exemplos</div>
+          <div class="ds-row">emptyState()</div><div class="ds-cell" style="display:block">${emptyState('Nada com você agora', 'Quando uma etapa for atribuída a você, ela aparece aqui.', 'default', { label: 'Nova demanda', icon: 'plus', onclick: '' })}</div>
+          <div class="ds-row">emptyMini()</div><div class="ds-cell" style="display:block">${emptyMini('Sem atividade nesta semana')}</div>
+          <div class="ds-row">skeletonMetrics()</div><div class="ds-cell" style="display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-3);width:100%">${skeletonMetrics(3)}</div>
+        </div>`));
+    }
+
+    if (has('toast')) {
+      out.push(spec('toasts', 'Toasts', 'Confirmação curta no canto. Sucesso desenha o check; com ação dura 6s; passar o mouse pausa.',
+        'app.js · toast() · dismissToast()', `
+        <div class="ds-row-wide" id="ds-toast-static" style="align-items:flex-start;margin-bottom:var(--space-4)"></div>
+        <div class="ds-row-wide" style="margin-bottom:var(--space-3)">
+          <button class="btn btn-ghost btn-sm" data-toast="success">Disparar sucesso</button>
+          <button class="btn btn-ghost btn-sm" data-toast="error">Erro</button>
+          <button class="btn btn-ghost btn-sm" data-toast="warn">Aviso</button>
+          <button class="btn btn-ghost btn-sm" data-toast="info">Info</button>
+          <button class="btn btn-ghost btn-sm" data-toast="celebrate">Comemoração</button>
+          <button class="btn btn-ghost btn-sm" data-toast="action">Com ação</button>
+        </div>
+        <div class="ds-stage" style="height:260px"><div id="toast-container"></div></div>`));
+    }
+
+    out.push(spec('modal', 'Modal', 'Cabeçalho com título e fechar, corpo, rodapé com a ação principal à direita.',
+      'index.html · .modal-overlay.open > .modal.modal-md', `
+      <div class="ds-stage" style="height:340px"><div class="modal-overlay open" style="position:absolute">
+        <div class="modal modal-md">
+          <div class="modal-header"><div class="modal-title"><i data-lucide="sparkles" class="ic-sm"></i> O que mudou</div>
+            <button class="modal-close"><i data-lucide="x" class="ic-sm"></i></button></div>
+          <div class="modal-body"><p>Confira o que mudou desde a sua última visita.</p></div>
+          <div class="modal-footer"><button class="btn btn-ghost">Depois</button><button class="btn btn-primary">Ok, entendi</button></div>
+        </div></div></div>`));
+
+    $('ds-components').innerHTML = out.join('');
+  }
+
+  function renderToasts() {
+    const box = $('ds-toast-static');
+    if (!box || !has('toast')) return;
+    box.innerHTML = '';
+    const make = (type, msg, action) => {
+      toast(msg, type, action);
+      const t = $('toast-container').lastElementChild;
+      if (!t) return;
+      const copy = t.cloneNode(true);
+      copy.style.animation = 'none';
+      copy.classList.remove('is-leaving');
+      box.appendChild(copy);
+      t.remove();
+    };
+    make('success', 'Demanda salva');
+    make('error', 'Não foi possível salvar');
+    make('warn', 'Prazo da etapa vence hoje');
+    make('info', 'Nova versão disponível');
+    make('celebrate', { title: 'Demanda concluída!', sub: 'Campanha de verão' });
+    make('success', 'Demanda arquivada', { label: 'Desfazer', fn() {} });
+    document.querySelectorAll('[data-toast]').forEach((b) => b.onclick = () => {
+      const k = b.dataset.toast;
+      if (k === 'action') toast('Demanda arquivada', 'success', { label: 'Desfazer', fn() {} });
+      else if (k === 'celebrate') toast({ title: 'Demanda concluída!', sub: 'Campanha de verão' }, 'celebrate');
+      else toast({ success: 'Demanda salva', error: 'Não foi possível salvar', warn: 'Prazo da etapa vence hoje', info: 'Nova versão disponível' }[k], k);
+    });
+  }
+
+  const DEBT = [
+    ['Componente', '.btn-danger definido duas vezes', 'A primeira regra é contorno (transparente + borda), a segunda, ~11 mil linhas abaixo, é cheia (--danger-fill). Vale a segunda. O DESIGN.md descreve a primeira. Decidir qual é o perigo padrão.'],
+    ['Regra', 'Card de widget com borda', '.dash-widget usa --surface-2 + borda --hairline, contra a Tonal Layer Rule do DESIGN.md (hierarquia por tom, não por borda).'],
+    ['Cor', 'Pílulas de papel com hex fixo', '.pill-moderator (#0b57d0) e .pill-freelancer (#0d9488) não mudam com o tema; statePill() monta cor com style inline.'],
+    ['Cor', 'Prioridade fora dos tokens nos gráficos', 'priorityPill() já usa --prio-*; o donut de prioridade, a legenda e os PDFs ainda leem o hex de PRIORITIES (espelho dos tokens, por não lerem CSS).'],
+    ['Contraste', '--text-muted e sinais sobre --surface-3', '--surface-3 é hover e trilho; texto em cima dele fica entre 3:1 e 4,5:1. A regra adotada: texto AA sobre --bg, --surface e --surface-2.']
+  ];
+  const renderDebt = () => { $('ds-debt').innerHTML = DEBT.map(([k, t, d]) => `<article><span class="pill pill-muted">${k}</span><h3>${t}</h3><p>${d}</p></article>`).join(''); };
+
+  /* ── Auditoria ──
+     Lê o estilo COMPUTADO de cada elemento dos exemplos e marca o que foge
+     das escalas. Pega o que a catraca do CSS não vê: regra herdada, style
+     inline montado no app.js, valor que só aparece num estado. */
+  const SCALE = {
+    fs: [10, 11, 12, 13, 15, 18, 22, 28],
+    fw: [400, 500, 600, 700],
+    radius: [0, 4, 6, 10, 12, 14, 18],
+    space: [0, 1, 2, 4, 6, 8, 10, 12, 16, 20, 24, 32, 40, 48, 64]
+  };
+  const px = (v) => parseFloat(v);
+  const near = (v, list) => list.some((x) => Math.abs(x - v) < 0.26);
+  const ownText = (el) => [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
+  const nameOf = (el) => el.tagName.toLowerCase() + (el.classList.length ? '.' + [...el.classList].filter((c) => !c.startsWith('ds-')).slice(0, 2).join('.') : '');
+  function auditSpec(specEl) {
+    const issues = [];
+    specEl.querySelectorAll('[data-spec-body] *').forEach((el) => {
+      el.classList.remove('ds-off');
+      if (el.closest('svg') || el.tagName === 'svg') return;
+      const cs = getComputedStyle(el);
+      if (cs.display === 'none') return;
+      const found = [];
+      if (ownText(el)) {
+        if (!near(px(cs.fontSize), SCALE.fs)) found.push(`font-size ${cs.fontSize}`);
+        if (!SCALE.fw.includes(Number(cs.fontWeight))) found.push(`font-weight ${cs.fontWeight}`);
+      }
+      for (const side of ['Top', 'Right', 'Bottom', 'Left']) {
+        const p = cs['padding' + side];
+        if (!near(px(p), SCALE.space)) { found.push(`padding ${cs.padding}`); break; }
+      }
+      for (const c of ['borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomRightRadius', 'borderBottomLeftRadius']) {
+        const r = cs[c];
+        if (r.endsWith('%') ? r !== '50%' : (px(r) < 999 && !near(px(r), SCALE.radius))) { found.push(`radius ${cs.borderRadius}`); break; }
+      }
+      if (/flex|grid/.test(cs.display) && cs.columnGap !== 'normal' && !near(px(cs.columnGap), SCALE.space)) found.push(`gap ${cs.columnGap}`);
+      if (found.length) { el.classList.add('ds-off'); issues.push(`${nameOf(el)} — ${found.join(', ')}`); }
+    });
+    const uniq = [...new Set(issues)];
+    const chip = specEl.querySelector('[data-audit-chip]');
+    chip.className = 'ds-chip ' + (uniq.length ? 'bad' : 'ok');
+    chip.textContent = uniq.length ? `${uniq.length} fora da escala` : 'Na escala';
+    specEl.querySelector('.ds-issues').innerHTML = uniq.map(h).join('<br>');
+    return uniq.length;
+  }
+  function auditAll() {
+    let total = 0, specs = 0;
+    document.querySelectorAll('[data-spec]').forEach((s) => { const n = auditSpec(s); total += n; if (n) specs++; });
+    $('ds-audit-total').textContent = `${total} valores fora da escala em ${specs} componentes`;
+  }
+
+  function renderToc() {
+    const items = [...document.querySelectorAll('[data-toc]')];
+    const fundIdx = items.findIndex((s) => s.id === 'botoes');
+    $('ds-toc').innerHTML = items.map((s, i) => (i === 0 ? '<b>Fundamentos</b>' : i === fundIdx ? '<b>Componentes</b>' : s.id === 'divergencias' ? '<b>Dívida</b>' : '')
+      + `<a href="#${s.id}">${s.dataset.toc}</a>`).join('');
+  }
+
+  function paint() {
+    renderColors(); renderContrast(); renderType(); renderSpace(); renderRadius(); renderShadow();
+    if (window.lucide) lucide.createIcons();
+    // espera fontes e ícones antes de medir
+    (document.fonts ? document.fonts.ready : Promise.resolve()).then(() => requestAnimationFrame(auditAll));
+  }
+
+  /* ── Controles do topo ── */
+  function seg(id, current, onPick) {
+    const el = $(id);
+    const mark = (v) => el.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === v));
+    mark(current);
+    el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; mark(b.dataset.v); onPick(b.dataset.v); });
+  }
+  seg('ds-theme', root.getAttribute('data-theme') === 'light' ? 'light' : 'dark', (v) => {
+    if (v === 'light') root.setAttribute('data-theme', 'light'); else root.removeAttribute('data-theme');
+    paint();
+  });
+  seg('ds-accent', root.getAttribute('data-accent') || '', (v) => {
+    if (v) root.setAttribute('data-accent', v); else root.removeAttribute('data-accent');
+    paint();
+  });
+  seg('ds-audit', 'off', (v) => document.body.classList.toggle('ds-audit', v === 'on'));
+  document.addEventListener('click', (e) => {
+    const chip = e.target.closest('[data-audit-chip]');
+    if (chip) chip.closest('[data-spec]').classList.toggle('show-issues');
+  });
+
+  buildForcedStates();
+  renderComponents();
+  renderDebt();
+  renderToc();
+  renderToasts();
+  paint();
+})();
+</script>
+</body>
+</html>

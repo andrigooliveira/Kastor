@@ -1057,6 +1057,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
 /* ─── Prioridade ─── */
+// color espelha --prio-1..4 do style.css (gráficos e PDF não leem CSS).
 const PRIORITIES = [
   { value: 1, label: 'Imediato', color: '#EF4444' }, // vermelho
   { value: 2, label: 'Alta',     color: '#FB7415' }, // laranja
@@ -1067,7 +1068,7 @@ function priorityLabel(v) { return (PRIORITIES.find(p => p.value === v) || PRIOR
 function priorityColor(v) { return (PRIORITIES.find(p => p.value === v) || PRIORITIES[2]).color; }
 function priorityPill(v) {
   const p = PRIORITIES.find(x => x.value === v) || PRIORITIES[2];
-  return `<span class="prio-pill" style="--prio:${p.color}"><span class="prio-dot"></span>${p.label}</span>`;
+  return `<span class="prio-pill" style="--prio:var(--prio-${p.value})"><span class="prio-dot"></span>${p.label}</span>`;
 }
 /* Ordena opções de um select alfabeticamente (preserva primeira opção como placeholder) */
 function sortSelectAlpha(sel) {
@@ -8643,8 +8644,8 @@ function renderOrgPage() {
           <p class="orgh-sub">${esc(ORG_ROLE_LABEL[org.role] || '')}${squads ? ` · ${squads} ${squads === 1 ? 'equipe' : 'equipes'}` : ''}</p>
         </div>
       </div>
-      ${tabs.length > 1 ? `<nav class="orgh-tabs" role="tablist" aria-label="Seções da organização">
-        ${tabs.map(t => `<button type="button" role="tab" class="orgh-tab${t.id === _orgTab ? ' is-active' : ''}" aria-selected="${t.id === _orgTab}" onclick="setOrgTab('${t.id}')"><i data-lucide="${t.icon}" class="ic-sm"></i><span>${t.label}</span></button>`).join('')}
+      ${tabs.length > 1 ? `<nav class="tabs orgh-tabs" role="tablist" aria-label="Seções da organização">
+        ${tabs.map(t => `<button type="button" role="tab" class="tab orgh-tab${t.id === _orgTab ? ' is-active' : ''}" aria-selected="${t.id === _orgTab}" onclick="setOrgTab('${t.id}')"><i data-lucide="${t.icon}" class="ic-sm"></i><span>${t.label}</span></button>`).join('')}
       </nav>` : ''}
     </header>
     <div class="orgh-panel" id="orgh-panel"></div>
@@ -9112,8 +9113,8 @@ function _orgFinanceHTML() {
         <option value="">Organização inteira</option>
         ${ws.map(w => `<option value="${w.id}"${_finScope === w.id ? ' selected' : ''}>${esc(w.name)}</option>`).join('')}
       </select>
-      <div class="filter-toggle fin-range" role="tablist" aria-label="Período">${ranges.map(([v, l]) =>
-        `<button type="button" class="filter-toggle-btn${_finRange === v ? ' is-active' : ''}" onclick="setFinRange(${typeof v === 'number' ? v : `'${v}'`})">${l}</button>`).join('')}</div>
+      <div class="seg filter-toggle fin-range" role="tablist" aria-label="Período">${ranges.map(([v, l]) =>
+        `<button type="button" class="seg-btn filter-toggle-btn${_finRange === v ? ' is-active' : ''}" onclick="setFinRange(${typeof v === 'number' ? v : `'${v}'`})">${l}</button>`).join('')}</div>
     </div>`;
   const chart = `<section class="orgh-card">
       <header class="orgh-card-head"><div><h2 class="orgh-card-title">Receita recorrente mês a mês</h2>
@@ -9325,9 +9326,9 @@ function _renderOrgSettings(host) {
             <div class="orgp-setting-title">Moderadores podem convidar pessoas</div>
             <div class="orgp-setting-hint">Só como Membro ou Freelancer, e só nas equipes deles. Desligado, apenas administradores convidam.</div>
           </div>
-          <label class="orgp-switch${admin ? '' : ' is-readonly'}">
+          <label class="switch">
             <input type="checkbox" ${st.modsCanInvite !== false ? 'checked' : ''} ${admin ? '' : 'disabled'} onchange="saveOrgSetting({ modsCanInvite: this.checked })">
-            <span class="orgp-switch-track" aria-hidden="true"></span>
+            <span class="switch-track" aria-hidden="true"></span>
           </label>
         </div>
       </section>
@@ -9342,9 +9343,9 @@ function _renderOrgSettings(host) {
 
       <section class="orgp-card" id="orgp-jornada">
         ${head('Jornada de trabalho', 'Base da meta de horas no Início, da capacidade da equipe em Análises e do horário do Fechamento do dia.')}
-        <div class="orgp-seg" role="tablist" aria-label="Tipo de jornada">
-          <button type="button" role="tab" class="orgp-seg-btn${d.schedMode === 'simple' ? ' is-active' : ''}" aria-selected="${d.schedMode === 'simple'}" onclick="_orgDraft.schedMode='simple';renderOrgPage()">Simples</button>
-          <button type="button" role="tab" class="orgp-seg-btn${d.schedMode === 'custom' ? ' is-active' : ''}" aria-selected="${d.schedMode === 'custom'}" onclick="_orgDraft.schedMode='custom';renderOrgPage()">Personalizada</button>
+        <div class="seg orgp-seg" role="tablist" aria-label="Tipo de jornada">
+          <button type="button" role="tab" class="seg-btn orgp-seg-btn${d.schedMode === 'simple' ? ' is-active' : ''}" aria-selected="${d.schedMode === 'simple'}" onclick="_orgDraft.schedMode='simple';renderOrgPage()">Simples</button>
+          <button type="button" role="tab" class="seg-btn orgp-seg-btn${d.schedMode === 'custom' ? ' is-active' : ''}" aria-selected="${d.schedMode === 'custom'}" onclick="_orgDraft.schedMode='custom';renderOrgPage()">Personalizada</button>
         </div>
         ${d.schedMode === 'simple' ? `
         <div class="orgp-setting">
@@ -9363,9 +9364,9 @@ function _renderOrgSettings(host) {
           ${d.week.map((w, i) => {
             const name = ORG_WEEKDAYS.find(x => x[0] === w.day)[2];
             return `<div class="orgp-weekrow${w.on ? '' : ' is-off'}" role="row">
-              <label class="orgp-switch orgp-switch--sm" title="${w.on ? 'Dia de trabalho' : 'Folga'}">
+              <label class="switch switch--sm" title="${w.on ? 'Dia de trabalho' : 'Folga'}">
                 <input type="checkbox" ${w.on ? 'checked' : ''} aria-label="${name}: dia de trabalho" onchange="_orgWeekSet(${i}, 'on', this.checked)">
-                <span class="orgp-switch-track" aria-hidden="true"></span>
+                <span class="switch-track" aria-hidden="true"></span>
               </label>
               <span class="orgp-weekday" role="rowheader">${name}</span>
               ${w.on ? `
@@ -10043,9 +10044,9 @@ function renderMenuPage() {
               <span class="st-ic"><i data-lucide="${it.icon}"></i></span>
               <span class="st-text"><span class="st-label">${esc(it.label)}</span><span class="st-desc">${esc(it.desc || '')}</span></span>
             </a>
-            <label class="nm-switch st-switch" data-rx-tip="${on ? 'No acesso rápido' : 'Em Mais'}">
+            <label class="switch switch--sm st-switch" data-rx-tip="${on ? 'No acesso rápido' : 'Em Mais'}">
               <input type="checkbox" ${on ? 'checked' : ''} onchange="toggleNavMenuItem('${it.page}', this.checked)" aria-label="Mostrar ${esc(it.label)} no acesso rápido">
-              <span class="nm-track" aria-hidden="true"></span>
+              <span class="switch-track" aria-hidden="true"></span>
             </label>
           </div>`;
         }).join('')}
@@ -10171,16 +10172,11 @@ function markPageEntering(el) {
    MutationObserver percebe troca de .is-active (ou o grupo sendo recriado)
    e reposiciona no próximo frame. Se o grupo é recriado via innerHTML, o
    marcador novo nasce na posição antiga (memória por grupo) e desliza. */
+// Um padrão de aba e um de segmentado (DESIGN.md): aba nova usa .tab ou
+// .seg-btn e ganha o marcador sem entrar nesta lista.
 const TAB_IND_SETS = [
-  { item: '.dash-tab',            kind: 'line', inset: 10 },
-  { item: '.an-tab',              kind: 'line' },
-  { item: '.orgh-tab',            kind: 'line' },
-  { item: '.detail-tab',          kind: 'line' },
-  { item: '.rec-tab',             kind: 'line', thick: 3 },
-  { item: '.integrations-tab',    kind: 'line' },
-  { item: '.dash-toggle-btn',     kind: 'pill' },
-  { item: '.cap-heat-toggle-btn', kind: 'pill' },
-  { item: '.filter-toggle-btn',   kind: 'pill' },
+  { item: '.tab',     kind: 'line' },
+  { item: '.seg-btn', kind: 'pill' },
 ];
 const _tabIndMemory = new Map();
 let _tabIndRO = null;
@@ -16977,9 +16973,9 @@ function capacityHeatmapHTML(rows, startYmd, endYmd) {
         <div class="cap-heat-title">${title}</div>
         <div class="cap-heat-sub">${sub}</div>
       </div>
-      <div class="cap-heat-toggle">
-        <button type="button" class="cap-heat-toggle-btn ${mode === 'prazos' ? 'is-active' : ''}" onclick="setCapHeatMode('prazos')">Prazos</button>
-        <button type="button" class="cap-heat-toggle-btn ${mode === 'previstas' ? 'is-active' : ''}" onclick="setCapHeatMode('previstas')">Previstas</button>
+      <div class="seg cap-heat-toggle">
+        <button type="button" class="seg-btn cap-heat-toggle-btn ${mode === 'prazos' ? 'is-active' : ''}" onclick="setCapHeatMode('prazos')">Prazos</button>
+        <button type="button" class="seg-btn cap-heat-toggle-btn ${mode === 'previstas' ? 'is-active' : ''}" onclick="setCapHeatMode('previstas')">Previstas</button>
       </div>
     </div>
     <div class="cap-heat-grid">
@@ -18821,12 +18817,12 @@ function renderDetail() {
           </div>
         </div>
 
-        <div class="detail-tabs">
-          <button class="detail-tab ${activeTab === 'comments' ? 'is-active' : ''}" onclick="setDemandDetailTab('comments')">Comentários</button>
-          <button class="detail-tab ${activeTab === 'checklist' ? 'is-active' : ''}" onclick="setDemandDetailTab('checklist')">Checklist</button>
-          <button class="detail-tab ${activeTab === 'forms' ? 'is-active' : ''}" onclick="setDemandDetailTab('forms')">Formulários${_formsResponseCountForDemand(d.id) ? ` <span class="detail-tab-badge">${_formsResponseCountForDemand(d.id)}</span>` : ''}</button>
-          <button class="detail-tab ${activeTab === 'activity' ? 'is-active' : ''}" onclick="setDemandDetailTab('activity')">Atividade</button>
-          <button class="detail-tab ${activeTab === 'stages' ? 'is-active' : ''} ${hasCustomization ? 'has-mark' : ''}" onclick="setDemandDetailTab('stages')">Etapas</button>
+        <div class="tabs detail-tabs">
+          <button class="tab detail-tab ${activeTab === 'comments' ? 'is-active' : ''}" onclick="setDemandDetailTab('comments')">Comentários</button>
+          <button class="tab detail-tab ${activeTab === 'checklist' ? 'is-active' : ''}" onclick="setDemandDetailTab('checklist')">Checklist</button>
+          <button class="tab detail-tab ${activeTab === 'forms' ? 'is-active' : ''}" onclick="setDemandDetailTab('forms')">Formulários${_formsResponseCountForDemand(d.id) ? ` <span class="detail-tab-badge">${_formsResponseCountForDemand(d.id)}</span>` : ''}</button>
+          <button class="tab detail-tab ${activeTab === 'activity' ? 'is-active' : ''}" onclick="setDemandDetailTab('activity')">Atividade</button>
+          <button class="tab detail-tab ${activeTab === 'stages' ? 'is-active' : ''} ${hasCustomization ? 'has-mark' : ''}" onclick="setDemandDetailTab('stages')">Etapas</button>
           <div class="detail-tabs-spacer"></div>
           <button class="detail-tab-tool detail-tab-sort" id="detail-tab-sort" title="${_commentSortLabel()} · clique pra inverter" onclick="toggleCommentSort()" style="${activeTab === 'comments' ? '' : 'display:none'}" data-ktip="${_commentSortLabel()}"><i data-lucide="${_commentSortIcon()}" class="ic-sm"></i> <span class="detail-tab-tool-label" id="detail-sort-label">${_commentSortLabel()}</span></button>
         </div>
@@ -20462,9 +20458,9 @@ function _orgGoalsHTML() {
   const byStatus = s => scoped.filter(g => goalStatus(g) === s).length;
   const openList = scoped.filter(g => goalStatus(g) !== 'done');
   const avg = openList.length ? Math.round(openList.reduce((s, g) => s + goalProgress(g).pct, 0) / openList.length) : null;
-  const filters = goals.length ? `<div class="filter-toggle" role="tablist" aria-label="Situação">
+  const filters = goals.length ? `<div class="seg filter-toggle" role="tablist" aria-label="Situação">
         ${[['open', 'Em andamento', openList.length], ['done', 'Concluídos', byStatus('done')], ['all', 'Todos', scoped.length]].map(([k, l, n]) =>
-          `<button type="button" class="filter-toggle-btn${_goalStatusFilter === k ? ' is-active' : ''}" onclick="setGoalStatusFilter('${k}')">${l} <span class="og-count">${n}</span></button>`).join('')}
+          `<button type="button" class="seg-btn filter-toggle-btn${_goalStatusFilter === k ? ' is-active' : ''}" onclick="setGoalStatusFilter('${k}')">${l} <span class="og-count">${n}</span></button>`).join('')}
       </div>` : '<span></span>';
   const toolbar = `<div class="og-toolbar">
       ${filters}
@@ -33163,9 +33159,9 @@ async function renderProfileNotifications() {
   const PUSH_KEYS = new Set(['mention', 'thread_reply', 'assigned', 'stage_assigned', 'reminder', 'watch_stage', 'watch_comment']);
   const pprefs = me.pushPrefs || {};
   const pushOn = (me.pushDevices || 0) > 0;
-  const sw = (on, disabled, handler, label) => `<label class="profile-switch" aria-label="${esc(label)}">
+  const sw = (on, disabled, handler, label) => `<label class="switch" aria-label="${esc(label)}">
       <input type="checkbox" ${on ? 'checked' : ''} ${disabled ? 'disabled' : ''} onchange="${handler}">
-      <span class="profile-switch-track"><span class="profile-switch-thumb"></span></span>
+      <span class="switch-track" aria-hidden="true"></span>
     </label>`;
   const eprefs = me.emailPrefs || {};
   const rows = PROFILE_NOTIF_EVENTS.map(g => `
@@ -35313,10 +35309,10 @@ function _renderGalleryPageInner() {
   }
   // View toggle
   $('gallery-page-view-toggle').innerHTML = `
-    <button type="button" class="att-gal-view-btn ${st.view === 'grid' ? 'is-active' : ''}" onclick="galleryPageSetView('grid')" title="Grade com capa">
+    <button type="button" class="seg-btn att-gal-view-btn ${st.view === 'grid' ? 'is-active' : ''}" onclick="galleryPageSetView('grid')" title="Grade com capa">
       <i data-lucide="layout-grid" class="ic-sm"></i>
     </button>
-    <button type="button" class="att-gal-view-btn ${st.view === 'list' ? 'is-active' : ''}" onclick="galleryPageSetView('list')" title="Lista (tabela)">
+    <button type="button" class="seg-btn att-gal-view-btn ${st.view === 'list' ? 'is-active' : ''}" onclick="galleryPageSetView('list')" title="Lista (tabela)">
       <i data-lucide="table-2" class="ic-sm"></i>
     </button>`;
   // Chips por tipo com contagem
@@ -35642,10 +35638,10 @@ function _renderGlobalGalleryInner() {
     dirBtn.innerHTML = `<i data-lucide="${st.dir === 'asc' ? 'arrow-up' : 'arrow-down'}" class="ic-sm"></i>`;
   }
   $('global-gallery-view-toggle').innerHTML = `
-    <button type="button" class="att-gal-view-btn ${st.view === 'grid' ? 'is-active' : ''}" onclick="globalGallerySetView('grid')" title="Grade com capa">
+    <button type="button" class="seg-btn att-gal-view-btn ${st.view === 'grid' ? 'is-active' : ''}" onclick="globalGallerySetView('grid')" title="Grade com capa">
       <i data-lucide="layout-grid" class="ic-sm"></i>
     </button>
-    <button type="button" class="att-gal-view-btn ${st.view === 'list' ? 'is-active' : ''}" onclick="globalGallerySetView('list')" title="Lista (tabela)">
+    <button type="button" class="seg-btn att-gal-view-btn ${st.view === 'list' ? 'is-active' : ''}" onclick="globalGallerySetView('list')" title="Lista (tabela)">
       <i data-lucide="table-2" class="ic-sm"></i>
     </button>`;
   // Multi-select popovers (cliente + squad) — labels refletem qtd selecionada.
@@ -38257,7 +38253,7 @@ function setAgendaView(n) {
 }
 function _agendaSyncViewBtns() {
   const cur = agendaView === 'week' ? String(agendaWeeks) : agendaView;
-  document.querySelectorAll('.agenda-view-btn[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === cur));
+  document.querySelectorAll('.agenda-view-btn[data-view]').forEach(b => b.classList.toggle('is-active', b.dataset.view === cur));
 }
 function onAgendaUserChange() {
   agendaUserId = $('agenda-user').value || null;
@@ -38271,7 +38267,7 @@ function setAgendaMode(mode) {
     if (me?.id) agendaTeamUsers = [me.id];
   }
   if (agendaMode === 'team' && !agendaTeamDate) agendaTeamDate = new Date();
-  document.querySelectorAll('.agenda-mode-btn').forEach(b => { const on = b.dataset.mode === agendaMode; b.classList.toggle('is-active', on); b.classList.toggle('active', on); });
+  document.querySelectorAll('.agenda-mode-btn').forEach(b => { const on = b.dataset.mode === agendaMode; b.classList.toggle('is-active', on); });
   const single = $('agenda-user-pick-single');
   const team = $('agenda-user-pick-team');
   const navW = $('agenda-nav-week');
@@ -40220,8 +40216,6 @@ function setScheduleMode(mode) {
   _scheduleMode = mode === 'free' ? 'free' : 'demand';
   $('sch-mode-demand')?.classList.toggle('is-active', _scheduleMode === 'demand');
   $('sch-mode-free')?.classList.toggle('is-active', _scheduleMode === 'free');
-  // Posiciona o thumb deslizante do toggle (anima via CSS).
-  $('sch-mode-toggle')?.classList.toggle('mode-free', _scheduleMode === 'free');
   const demandRow = $('sch-demand-row');
   const titleRow  = $('sch-title-row');
   const kindRow   = $('sch-kind-row');
