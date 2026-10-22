@@ -89,10 +89,33 @@ async function exchangeCodeForProfile(code) {
   };
 }
 
+/* Baixa a foto da conta Google como data URI (pra virar avatar no reWork).
+   Só aceita o host de imagens do Google e imagem de até 2MB; troca o
+   sufixo de tamanho (=s96-c) por 256px. Qualquer falha devolve null — a
+   foto é cortesia, nunca trava o login. */
+const PICTURE_HOST = /(^|\.)googleusercontent\.com$/i;
+async function fetchPictureDataUri(url) {
+  try {
+    const u = new URL(String(url || ''));
+    if (u.protocol !== 'https:' || !PICTURE_HOST.test(u.hostname)) return null;
+    const sized = u.toString().replace(/=s\d+(-c)?$/, '=s256-c');
+    const r = await fetch(sized, { signal: AbortSignal.timeout(5000) });
+    if (!r.ok || !PICTURE_HOST.test(new URL(r.url).hostname)) return null;
+    const mime = String(r.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    if (!/^image\/(png|jpeg|gif|webp)$/.test(mime)) return null;
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (!buf.length || buf.length > 2 * 1024 * 1024) return null;
+    return `data:${mime};base64,${buf.toString('base64')}`;
+  } catch {
+    return null;
+  }
+}
+
 module.exports = {
   isConfigured,
   makeState,
   popState,
   getAuthUrl,
-  exchangeCodeForProfile
+  exchangeCodeForProfile,
+  fetchPictureDataUri
 };

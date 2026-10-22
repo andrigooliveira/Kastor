@@ -1,5 +1,15 @@
 [
   {
+    "id": "2026-10-22-foto-do-google",
+    "date": "2026-10-22",
+    "title": "Foto de perfil vinda da sua conta Google",
+    "highlights": [
+      "Na primeira vez que você entra com o Google, ou vincula a conta em Perfil › Segurança, o reWork usa a foto da sua conta Google como foto de perfil.",
+      "Se você já tinha colocado uma foto no reWork, ela continua a mesma.",
+      "Você pode trocar ou remover a foto quando quiser no seu Perfil. Os próximos logins pelo Google não mexem mais nela."
+    ]
+  },
+  {
     "id": "2026-10-22-aviso-nova-versao",
     "date": "2026-10-22",
     "title": "Aviso de nova versão no mesmo estilo dos outros avisos",

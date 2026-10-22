@@ -3176,6 +3176,20 @@ function googleLoginOwner(sub) {
   return db.users.find(u => u.googleLogin && u.googleLogin.sub === sub) || null;
 }
 
+/* Quem ainda não tem foto ganha a da conta Google. Uma tentativa só por
+   vínculo (pictureTried): se depois a pessoa remover ou trocar a foto, o
+   próximo login pelo Google não passa por cima. */
+async function adoptGooglePicture(user, picture) {
+  if (!user.googleLogin || user.googleLogin.pictureTried) return;
+  user.googleLogin.pictureTried = true;
+  if (!user.avatar && picture) {
+    const dataUri = await googleLogin.fetchPictureDataUri(picture);
+    const saved = dataUri && saveUploadFromDataUri(dataUri, user.username + '-avatar');
+    if (saved && !user.avatar) user.avatar = saved.url;
+  }
+  saveEntity('users', user);
+}
+
 app.get('/api/auth/google/callback', async (req, res) => {
   const { code, state, error } = req.query;
   const entry = state ? googleLogin.popState(String(state)) : null;
@@ -3201,6 +3215,7 @@ app.get('/api/auth/google/callback', async (req, res) => {
     if (owner && owner.id !== user.id) return fail('already-linked');
     user.googleLogin = { sub: profile.sub, email: profile.email, linkedAt: nowISO() };
     saveEntity('users', user);
+    await adoptGooglePicture(user, profile.picture);
     return res.redirect('/profile?aba=security&google-login=linked');
   }
 
@@ -3223,6 +3238,7 @@ app.get('/api/auth/google/callback', async (req, res) => {
   }
   // Como no Discord, entrar pelo Google não pede o código da verificação em
   // duas etapas: a própria conta Google faz esse papel.
+  await adoptGooglePicture(user, profile.picture);
   recordLoginIp(user, clientIp(req));
   startSession(req, res, user, 'google');
   return res.redirect('/?google-login=logged-in');
