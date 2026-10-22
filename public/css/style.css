@@ -2195,8 +2195,8 @@ tr:hover td { background: var(--surface-2); }
 
 .mine-table-v2 .mmuted { color: var(--text-dim); font-size: 12px; }
 
-/* ── Sinais na lista: progresso na etapa, contadores e novidade ── */
-.mstage-cell { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 4px; max-width: 100%; }
+/* ── Sinais na lista: contadores e novidade ── */
+.mstage-cell { display: inline-flex; max-width: 100%; }
 /* Etapa numa linha só, como o nome: cortada com "…" no espaço da coluna (a
    prévia do hover mostra a etapa inteira). Só no desktop: no celular a linha
    vira cartão e a etapa tem a largura dela. */
@@ -2204,10 +2204,6 @@ tr:hover td { background: var(--surface-2); }
   .mine-table-v2 .mrow > td.mcol-stage:has(> .mstage-cell) { width: 16%; max-width: 0; }
   .mine-table-v2 .mstage-cell .mstage { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
-.stage-track { display: inline-flex; gap: 2px; width: 72px; height: 3px; flex-shrink: 0; }
-.stage-track > span { flex: 1; border-radius: var(--radius-pill); background: var(--hairline-strong); }
-.stage-track > .is-done { background: color-mix(in srgb, var(--stage-color) 50%, transparent); }
-.stage-track > .is-cur { background: var(--stage-color); }
 .dsig { display: inline-flex; align-items: center; gap: var(--space-2); flex-shrink: 0; color: var(--text-muted); font-size: var(--fs-xs); font-weight: 500; font-variant-numeric: tabular-nums; }
 .dsig-item { display: inline-flex; align-items: center; gap: var(--space-1); }
 .dsig-item svg { width: 12px; height: 12px; }

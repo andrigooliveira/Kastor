@@ -13555,19 +13555,6 @@ function demandSignalsHTML(d) {
     ? `<span class="dsig-item" title="${n} ${n === 1 ? one : many}"><i data-lucide="${icon}"></i>${n}</span>` : '';
   return `<span class="dsig">${bit('message-square', m.comments, 'comentário', 'comentários')}${bit('paperclip', m.files, 'arquivo', 'arquivos')}</span>`;
 }
-/* Progresso nas etapas de trabalho (as finais, Concluída/Cancelada, não contam):
-   um segmento por etapa. */
-function stageTrackHTML(d) {
-  const work = activeStagesOf(d).filter(s => !s.done);
-  if (work.length < 2) return '';
-  const cur = stageOf(d);
-  const i = cur?.done ? work.length : work.findIndex(s => s.id === d.status);
-  if (i < 0) return '';
-  const title = i >= work.length ? `Todas as ${work.length} etapas feitas` : `Etapa ${i + 1} de ${work.length}`;
-  const color = cur?.color || 'var(--accent)';
-  const inner = work.map((s, k) => `<span class="${k < i ? 'is-done' : k === i ? 'is-cur' : ''}"></span>`).join('');
-  return `<span class="stage-track" style="--stage-color:${esc(color)}" title="${esc(title)}" aria-label="${esc(title)}">${inner}</span>`;
-}
 
 /* Prévia ao parar o mouse numa demanda da lista, do Kanban ou de Minhas
    Demandas: etapa, responsável, prazo e o último comentário, sem abrir. */
@@ -13607,7 +13594,6 @@ function _demandPeekHTML(d) {
     <div class="peek-row">
       ${priorityPill(d.priority)}
       ${st ? `<span class="peek-stage" style="--stage-color:${esc(st.color || 'var(--accent)')}">${esc(st.label)}</span>` : ''}
-      ${stageTrackHTML(d)}
     </div>
     <div class="peek-row peek-meta">
       ${owner ? `<span class="peek-owner">${avatarHTML(owner, 'avatar avatar-xs')}${esc(owner.name)}</span>` : '<span>Sem responsável</span>'}
@@ -13836,7 +13822,7 @@ function renderList() {
     }
     const barFill = u === 'overdue' ? 100 : u === 'today' ? 85 : u === 'soon' ? 65 : due ? 30 : 0;
     const stageCell = stage
-      ? `<div class="mstage-cell"><span class="mstage" style="--stage-color:${stageColor}">${esc(stage.label)}</span>${stageTrackHTML(d)}</div>`
+      ? `<div class="mstage-cell"><span class="mstage" style="--stage-color:${stageColor}">${esc(stage.label)}</span></div>`
       : '<span class="mmuted">—</span>';
     const dueCell = due
       ? `<div class="mdue">
@@ -14217,7 +14203,7 @@ function kanbanCard(d) {
       </div>
       <div class="kanban-card-name">${newsDotHTML(d)}${esc(d.name)}</div>
       <div class="kanban-card-meta">${esc(p?.name || '—')}${p?.client ? ` · ${esc(p.client)}` : ''}</div>
-      ${(() => { const t = stageTrackHTML(d), g = demandSignalsHTML(d); return t || g ? `<div class="kanban-card-signals">${t}${g}</div>` : ''; })()}
+      ${(() => { const g = demandSignalsHTML(d); return g ? `<div class="kanban-card-signals">${g}</div>` : ''; })()}
       <div class="kanban-card-foot">
         ${ownerBlock}
         ${dueBlock}
@@ -14536,7 +14522,7 @@ function renderMine() {
       ? `<span class="msquad"><span class="msquad-dot" style="background:${wsColor}"></span>${esc(ws.name)}</span>`
       : '<span class="mmuted">—</span>';
     const stageCell = stage
-      ? `<div class="mstage-cell"><span class="mstage" style="--stage-color:${stageColor}">${esc(stage.label)}</span>${stageTrackHTML(d)}</div>`
+      ? `<div class="mstage-cell"><span class="mstage" style="--stage-color:${stageColor}">${esc(stage.label)}</span></div>`
       : '<span class="mmuted">—</span>';
     // Barra sparkline de prazo: 0..1 de saturação. Overdue=100% vermelho, today=~85% laranja, soon=~65% amber, none=~30% verde.
     const barFill = u === 'overdue' ? 100 : u === 'today' ? 85 : u === 'soon' ? 65 : due ? 30 : 0;
