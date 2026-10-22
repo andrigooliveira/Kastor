@@ -785,6 +785,7 @@ body.user-freelancer .freelancer-hide { display: none !important; }
   --radius-lg: 14px;
   --radius-xl: 18px;
   --radius-pill: 999px;
+  --radius-layer: 16px;   /* canto da camada de conteúdo sobre a moldura */
 
   /* Sombras suaves multi-camada (estilo iOS/macOS) */
   --shadow-xs: 0 1px 2px rgba(0,0,0,0.18);
@@ -884,8 +885,7 @@ body.user-freelancer .freelancer-hide { display: none !important; }
   --ring-hairline: inset 0 0 0 1px var(--hairline);
   --ring-hairline-strong: inset 0 0 0 1px var(--hairline-strong);
   --ring-active: inset 0 0 0 1px var(--border-active);
-  --ring-halo: 0 0 0 2px var(--surface);  /* separa avatares empilhados */
-}
+  --ring-halo: 0 0 0 2px var(--surface);  /* separa avatares empilhados */}
 
 /* Light mode — sombras suaves com leve tint frio pra dar profundidade */
 :root[data-theme="light"] {
@@ -1371,7 +1371,7 @@ body::before {
 .sidebar {
   width: var(--sidebar-w);
   background: var(--chrome-bg);
-  border-right: 1px solid var(--hairline);
+  border-right: 0;   /* a camada de conteúdo (canto de 16px) já separa */
   display: flex; flex-direction: column;
   position: fixed; top: 0; left: 0; bottom: 0; z-index: 100;
   transform: translateZ(0);
@@ -1404,14 +1404,14 @@ body::before {
      além da tela em tablet/notebook pequeno e a página inteira rola de lado. */
   margin-left: var(--sidebar-w); flex: 1; min-width: 0;
   display: flex; flex-direction: column; min-height: 100vh;
+  background: var(--chrome-bg);   /* moldura; a página ativa é a camada por cima */
   /* Acompanha a transição da largura da sidebar pra não ter descolamento
      entre o edge direita do sidebar e a coluna do conteúdo principal. */
   transition: margin-left .22s var(--ease-out);
 }
 .topbar {
-  padding: 14px 28px;
+  padding: var(--space-2) var(--space-6);
   background: var(--chrome-bg);
-  border-bottom: 1px solid var(--hairline);
   display: flex; align-items: center; justify-content: space-between;
   position: sticky; top: 0; z-index: 80;
   transform: translateZ(0);
@@ -1430,7 +1430,74 @@ body::before {
 .topbar-back:hover { border-color: var(--accent); color: var(--accent-text); }
 /* Ícone dentro do menu dropdown (14px) — usado nos itens de "Editar/Excluir". */
 .ic-menu, i.ic-menu, svg.ic-menu { width: 14px !important; height: 14px !important; flex-shrink: 0; }
-.topbar-actions { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.topbar-actions { display: flex; align-items: center; gap: var(--space-6); margin-left: auto; }
+/* Densidade + notificações: botões de 32px com contorno, juntos. */
+.topbar-tools { display: flex; align-items: center; gap: var(--space-2); }
+.topbar .topbar-tools .btn-ghost {
+  width: 32px; height: 32px; padding: 0; border-radius: var(--radius-xs);
+  background: transparent; border: 1px solid var(--hairline-strong); color: var(--text-dim);
+}
+.topbar .topbar-tools .btn-ghost:hover { background: var(--surface-2); border-color: var(--hairline-strong); color: var(--text); }
+.topbar .topbar-tools .btn-ghost svg { width: 16px; height: 16px; }
+#btn-new-demand { height: 32px; padding-block: 0; }
+
+/* Avatar da conta (abre o menu da conta). Anel = presença ou status. */
+.topbar-user {
+  display: inline-grid; place-items: center; padding: 0; border: 0; background: none;
+  border-radius: var(--radius-pill); cursor: pointer; position: relative;
+}
+.topbar-user:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+.topbar-user .avatar,
+.user-menu-head .avatar { outline: 1px solid var(--ring-c, transparent); }
+.topbar-user .avatar::after,
+.user-menu-head .avatar::after { display: none; }
+.presence-online { --ring-c: var(--success); }
+.presence-away { --ring-c: var(--warn); }
+.has-status { --ring-c: var(--st-c); }
+.topbar-user-dot {
+  position: absolute; top: 0; right: 0; width: 10px; height: 10px; border-radius: var(--radius-circle);
+  background: var(--accent); box-shadow: var(--ring-halo); pointer-events: none;
+}
+
+/* Menu da conta — mesmo padrão do flyout do "Mais" (.sb-flyout):
+   240px, respiro de 6px, itens de 32px, separador fino entre os grupos. */
+.user-menu {
+  position: fixed; z-index: 320; width: min(240px, calc(100vw - 16px)); padding: var(--space-1-5);
+  display: flex; flex-direction: column;
+  background: var(--surface); border-radius: var(--radius);
+  box-shadow: var(--ring-hairline-strong), var(--shadow-xl);
+  animation: user-menu-in var(--dur-2) var(--ease-out);
+}
+@keyframes user-menu-in { from { opacity: 0; transform: translateY(-4px); } }
+@media (prefers-reduced-motion: reduce) { .user-menu { animation: none; } }
+.user-menu[hidden] { display: none; }
+.user-menu-head {
+  display: flex; align-items: center; gap: var(--space-2-5); width: 100%; padding: var(--space-1-5) var(--space-2-5);
+  border: 0; border-radius: var(--radius-sm); background: transparent; color: inherit;
+  font-family: inherit; text-align: left; cursor: pointer;
+  transition: background var(--dur-1) var(--ease-out);
+}
+.user-menu-head:hover { background: var(--surface-2); }
+.user-menu-head:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+.user-menu-head .avatar { width: 32px; height: 32px; }
+.user-menu-who { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.user-menu-name { font-size: var(--fs-base); font-weight: var(--fw-semibold); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-menu-status { font-size: var(--fs-xs); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-menu-status[hidden] { display: none; }
+.user-menu-dot { flex-shrink: 0; width: 12px; height: 12px; border-radius: var(--radius-circle); background: var(--ring-c, var(--text-muted)); }
+.user-menu-sep { height: 1px; margin: var(--space-1-5) 0; background: var(--hairline); }
+.user-menu-list { display: flex; flex-direction: column; }
+.user-menu-item {
+  position: relative; display: flex; align-items: center; gap: var(--space-2-5); height: 32px; padding: 0 var(--space-2-5);
+  border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-dim);
+  font-family: inherit; font-size: var(--fs-base); font-weight: var(--fw-medium); text-align: left; text-decoration: none; cursor: pointer;
+  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+}
+.user-menu-item:hover, .user-menu-item:focus-visible { background: var(--surface-2); color: var(--text); outline: none; }
+.user-menu-item svg { width: 16px; height: 16px; flex-shrink: 0; color: var(--text-muted); }
+.user-menu-item .sb-news-dot { position: static; margin-left: auto; }
+.user-menu .seg { display: flex; }
+.user-menu .seg-btn { flex: 1; }
 .btn {
   padding: 8px 16px; border-radius: var(--radius-sm); font-family: inherit;
   font-size: 13px; font-weight: 600; cursor: pointer; border: none;
@@ -1479,7 +1546,9 @@ body::before {
 
 /* ── PAGE CONTENT ── */
 .page { display: none; flex: 1; overflow: hidden; }
-.page.active { display: flex; flex-direction: column; }
+/* A página ativa é a camada de conteúdo: fundo próprio e canto sobre a moldura. */
+.page.active { display: flex; flex-direction: column; background: var(--background); border-top-left-radius: var(--radius-layer); }
+@media (max-width: 880px) { .page.active { border-top-left-radius: 0; } }
 .page-body { padding: 24px 28px; flex: 1; overflow-y: auto; overflow-x: hidden; }
 
 /* ── DASHBOARD ── */
@@ -1565,9 +1634,8 @@ body.density-compact .table-wrap table td { font-size: 12px; }
    do grupo de utilitários (menu, notificações, Nova Demanda). */
 .topbar-app-btn {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 36px; height: 36px;
+  width: 32px; height: 32px;
   padding: 0;
-  margin-right: 14px;                /* respiro extra separando do resto */
   border-radius: 0;
   border: 0 !important;
   background: transparent !important;
@@ -14293,6 +14361,33 @@ tr.demand-row:hover {
 .dt-card-arrow { flex-shrink: 0; color: var(--text-muted); align-self: center; }
 .dt-card:hover .dt-card-arrow { color: var(--accent); }
 
+/* Documentação do design system (DESIGN.md renderizado no Dev Tools) */
+.dt-doc-toc { display: flex; flex-wrap: wrap; gap: var(--space-1-5); margin-bottom: var(--space-6); }
+.dt-doc-toc button {
+  height: 28px; padding: 0 var(--space-3); border: 1px solid var(--hairline); border-radius: var(--radius-pill);
+  background: var(--surface); color: var(--text-dim); font-family: inherit; font-size: var(--fs-sm); cursor: pointer;
+  transition: border-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+}
+.dt-doc-toc button:hover { border-color: var(--border-active); color: var(--text); }
+.dt-doc-toc button:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+.ds-doc { max-width: 80ch; font-size: var(--fs-base); line-height: var(--lh-normal); color: var(--text-dim); }
+.ds-doc h2 {
+  margin: var(--space-10) 0 var(--space-3); padding-top: var(--space-6); border-top: 1px solid var(--hairline);
+  font-size: var(--fs-xl); font-weight: var(--fw-bold); letter-spacing: var(--ls-snug); color: var(--text);
+  scroll-margin-top: var(--space-6);
+}
+.ds-doc h2:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+.ds-doc h3 { margin: var(--space-6) 0 var(--space-2); font-size: var(--fs-md); font-weight: var(--fw-semibold); color: var(--text); scroll-margin-top: var(--space-6); }
+.ds-doc p { margin: 0 0 var(--space-3); }
+.ds-doc ul, .ds-doc ol { margin: 0 0 var(--space-3); padding-left: var(--space-5); }
+.ds-doc li + li { margin-top: var(--space-1); }
+.ds-doc strong { color: var(--text); }
+.ds-doc a { color: var(--accent-text); }
+.ds-doc-table { margin: 0 0 var(--space-4); overflow-x: auto; border: 1px solid var(--hairline); border-radius: var(--radius-sm); }
+.ds-doc-table table { min-width: 560px; }
+.ds-doc-table th { font-size: var(--fs-sm); text-transform: none; letter-spacing: 0; color: var(--text); }
+.ds-doc-table td { font-size: var(--fs-sm); vertical-align: top; line-height: var(--lh-normal); }
+
 /* ─── COFRE DE SENHAS ─── */
 .pw-locked { display: flex; align-items: center; justify-content: center; padding: 40px 20px; min-height: 60vh; }
 .pw-locked-card {
@@ -16389,21 +16484,9 @@ input[type="checkbox"]:checked {
   100% { transform: scale(1); }
 }
 
-/* ── Topbar: elevação sutil ao scrollar (adiciona .is-scrolled via JS se
-     quiser; enquanto isso, apenas garantimos que a linha inferior tenha
-     um leve gradient em vez de border seca) ── */
+/* Topbar sem linha embaixo: a camada de conteúdo (canto de 16px) já separa. */
 .topbar {
   position: relative;
-}
-.topbar::after {
-  content: '';
-  position: absolute; left: 0; right: 0; bottom: -1px; height: 1px;
-  background: linear-gradient(to right,
-    transparent 0%,
-    var(--hairline-strong) 20%,
-    var(--hairline-strong) 80%,
-    transparent 100%);
-  pointer-events: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -16440,17 +16523,6 @@ input[type="checkbox"]:checked {
     0 1px 0 rgba(255, 255, 255, 0.9) inset;
 }
 
-/* Sidebar em light: leve borda direita pra separar do main com off-white */
-:root[data-theme="light"] .sidebar {
-  border-right: 1px solid rgba(30, 30, 60, 0.05);
-}
-
-/* Topbar em light: mesmo tratamento — apoia no fundo branco do card behind */
-:root[data-theme="light"] .topbar {
-  background: rgba(255, 255, 255, 0.6);
-  backdrop-filter: saturate(180%) blur(12px);
-  -webkit-backdrop-filter: saturate(180%) blur(12px);
-}
 
 /* Sem aurora no light — usuário achou que criava um fade estranho no topo */
 :root[data-theme="light"] body::before { display: none; }
@@ -19167,11 +19239,7 @@ tr.demand-row:hover { transform: none; }
 .status-chip:hover { border-color: var(--border-active); background: var(--accent-dim); }
 .status-custom { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0 26px; }
 .status-custom .form-control { flex: 1 1 100%; min-width: 0; height: 32px; font-size: 12.5px; }
-.status-custom .status-dur { flex: 1; }
-.status-dur {
-  height: 32px; border: 1px solid var(--hairline); background: var(--surface-2); color: var(--text);
-  border-radius: var(--radius-sm); font: 500 12px inherit; font-family: inherit; padding: 0 6px;
-}
+.status-custom .status-dur { flex: 1; }   /* select.form-control: seta e foco do DS */
 
 /* Horário do resumo */
 .digest-hour { width: 96px; flex-shrink: 0; }

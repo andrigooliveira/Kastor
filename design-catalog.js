@@ -167,6 +167,16 @@ module.exports = function designCatalog(app, { requireAuth }) {
         .replace('"__MISSING_HELPERS__"', () => JSON.stringify(helpers.missing)));
     });
   });
+
+  // DESIGN.md sem o frontmatter (os tokens em YAML), pra tela Dev Tools.
+  app.get('/api/admin/design-doc', requireAuth, (req, res) => {
+    if (!req.user.isAdmin) return res.status(403).json({ error: 'Apenas administradores.' });
+    fs.readFile(path.join(__dirname, 'DESIGN.md'), 'utf8', (err, md) => {
+      if (err) return res.status(500).json({ error: err.message });
+      const body = md.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '');
+      res.set('Cache-Control', 'no-store').json({ markdown: body });
+    });
+  });
 };
 module.exports.extractDecl = extractDecl;
 module.exports.catalogHelpers = catalogHelpers;

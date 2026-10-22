@@ -3199,7 +3199,8 @@ const AVATAR_MENU_SUPPRESSORS = [
   '.picker-list',            // pickers de bulk actions (owner, stage, priority)
   '.owner-picker-list',      // picker de responsável (bulk)
   '.select-menu',            // menus de select genéricos
-  '.sidebar-user',           // avatar do próprio usuário na sidebar já tem menu próprio
+  '.topbar-user',            // avatar da conta no topbar já abre o menu da conta
+  '.user-menu',              // e o avatar dentro dele também
   '.owner-picker',           // TRIGGER do change-owner no detalhe da demanda
   '.mention-pop',            // autocomplete de @menção em comentários
   '.chat-compose-wrap',      // avatar do próprio usuário no editor de comentário
@@ -5245,12 +5246,12 @@ const TOUR_STEPS = [
     title: 'Notificações em tempo real',
     body: 'Menções, mudanças de etapa, atribuições e prazos chegam aqui ao vivo. O badge some quando você abre — as não clicadas seguem com fundo destacado até você entrar em cada uma.'
   },
-  // 16. Perfil (sidebar)
+  // 16. Conta (avatar no topbar)
   {
-    target: '.sidebar-user',
-    position: 'right',
-    title: 'Seu perfil',
-    body: 'Este bloco no rodapé da sidebar é o atalho pro seu perfil. Vamos entrar rapidamente pra você conhecer o que fica lá dentro.'
+    target: '#topbar-user',
+    position: 'bottom',
+    title: 'Sua conta',
+    body: 'Sua foto no canto abre o menu da conta: status, configurações, novidades, ajuda e o tema claro ou escuro. Vamos entrar rapidamente nas configurações pra você conhecer o que fica lá dentro.'
   },
   // 17. Perfil - navegação (abas)
   {
@@ -5589,6 +5590,7 @@ async function renderSidebarNewsDot() {
   const d = $('sb-news-dot');
   if (d) d.hidden = !on;
   $('sb-news')?.classList.toggle('has-dot', on);
+  syncUserMenuDot();
 }
 async function openSidebarNews() {
   closeSidebar();
@@ -6855,6 +6857,7 @@ function _supSetDot(n) {
   _sup.unread = n;
   const dot = $('support-dot');
   if (dot) dot.hidden = !n;
+  syncUserMenuDot();
 }
 async function refreshSupportDot() {
   try { await _supLoadList(); } catch {}
@@ -9673,17 +9676,22 @@ function switchWorkspace(id) {
 
 /* ─── NAVEGAÇÃO ─── */
 function renderSidebarUser() {
-  // Mostra apenas o primeiro nome — sidebar compacta com o restante do design.
-  const firstName = (me.name || '').split(/\s+/)[0] || me.name || '';
-  $('sidebar-uname').textContent = firstName;
-  // Mantém o id="sidebar-avatar" depois da substituição — regex pega qualquer
-  // combinação de classes (avatar, avatar presence-online, etc) pra não quebrar
-  // se avatarHTML virar a incluir mais classes (ex.: anel de presença).
-  const av = $('sidebar-avatar');
-  if (av) av.outerHTML = avatarHTML(me, 'avatar').replace(/class="([^"]+)"/, 'class="$1" id="sidebar-avatar"');
-  const stEl = $('sidebar-ustatus');
+  // A conta mora no avatar do topbar e no menu da conta (nome completo lá).
+  const nameEl = $('user-menu-name');
+  if (nameEl) nameEl.textContent = me.name || me.username || '';
+  // Mantém o id depois da substituição — regex pega qualquer combinação de
+  // classes (avatar, presence-online, has-status…) que define o anel.
+  for (const id of ['topbar-avatar', 'user-menu-avatar']) {
+    const av = $(id);
+    if (av) av.outerHTML = avatarHTML(me, 'avatar').replace(/class="([^"]+)"/, `class="$1" id="${id}"`);
+  }
+  const stEl = $('user-menu-status');
   const st = statusOf(me);
   if (stEl) { stEl.hidden = !st; stEl.textContent = st ? statusLabel(st) : ''; stEl.title = st ? statusLabel(st) : ''; }
+  // A bolinha do menu pega a cor do anel do avatar (presença ou status).
+  const dot = $('user-menu-dot');
+  const ring = $('user-menu-avatar');
+  if (dot && ring) dot.className = 'user-menu-dot ' + [...ring.classList].filter(c => /^(presence-|has-status|status-)/.test(c)).join(' ');
   // Status com prazo: re-renderiza quando expirar (o selo e o texto somem sozinhos).
   clearTimeout(renderSidebarUser._t);
   if (st && st.until) renderSidebarUser._t = setTimeout(renderSidebarUser, Math.max(1000, Date.parse(st.until) - Date.now() + 500));
@@ -9699,7 +9707,49 @@ function renderSidebarUser() {
   if (navKey !== renderSidebarUser._nav) { renderSidebarUser._nav = navKey; renderSidebarNav(); }
 }
 
-/* Menu de status (clique no seu nome na barra lateral). */
+/* Menu da conta (avatar no topbar): status, configurações, novidades,
+   documentação, ajuda e tema. Fica no index.html; aqui só abre e posiciona. */
+function toggleUserMenu(ev) {
+  ev?.stopPropagation();
+  const menu = $('user-menu');
+  if (!menu) return;
+  if (!menu.hidden) { closeUserMenu(); return; }
+  closeStatusMenu();
+  syncUserMenu();
+  menu.hidden = false;
+  const r = $('topbar-user').getBoundingClientRect();
+  menu.style.top = (r.bottom + 8) + 'px';
+  menu.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
+  $('topbar-user').setAttribute('aria-expanded', 'true');
+  paintIcons(menu);
+  setTimeout(() => {
+    document.addEventListener('mousedown', _userMenuOutside, true);
+    document.addEventListener('keydown', _userMenuKey, true);
+  }, 0);
+}
+function _userMenuOutside(e) { if (!e.target.closest('#user-menu, #topbar-user, #status-menu')) closeUserMenu(); }
+function _userMenuKey(e) { if (e.key === 'Escape' && !document.getElementById('status-menu')) { closeUserMenu(); $('topbar-user')?.focus(); } }
+function closeUserMenu() {
+  const menu = $('user-menu');
+  if (menu) menu.hidden = true;
+  $('topbar-user')?.setAttribute('aria-expanded', 'false');
+  document.removeEventListener('mousedown', _userMenuOutside, true);
+  document.removeEventListener('keydown', _userMenuKey, true);
+}
+// theme vem do clique: applyTheme troca o data-theme numa transição assíncrona,
+// então ler o atributo logo depois ainda devolve o tema antigo.
+function syncUserMenu(theme) {
+  theme = theme || (document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark');
+  document.querySelectorAll('#user-menu-theme .seg-btn').forEach(b => b.classList.toggle('is-active', b.dataset.themeOpt === theme));
+}
+// Ponto no avatar quando há novidade ou resposta do suporte não vista.
+function syncUserMenuDot() {
+  const on = ['sb-news-dot', 'support-dot'].some(id => { const d = $(id); return d && !d.hidden; });
+  const dot = $('topbar-user-dot');
+  if (dot) dot.hidden = !on;
+}
+
+/* Menu de status (bolinha ao lado do nome, no menu da conta). */
 function _statusUntil(minutes) {
   if (minutes === 'today') { const t = new Date(); t.setHours(23, 59, 0, 0); return t.toISOString(); }
   return minutes ? new Date(Date.now() + minutes * 60000).toISOString() : null;
@@ -9732,7 +9782,7 @@ function toggleStatusMenu(ev) {
       <div class="status-opt-head status-custom"><i data-lucide="message-circle" class="ic-sm"></i><div><b>Outro</b></div></div>
       <form class="status-custom" onsubmit="event.preventDefault(); setMyStatus('custom', this.dur.value === 'none' ? null : (this.dur.value === 'today' ? 'today' : Number(this.dur.value)), this.txt.value)">
         <input class="form-control" name="txt" maxlength="60" placeholder="Ex.: Gravando no estúdio" required>
-        <select class="status-dur" name="dur" aria-label="Duração">
+        <select class="form-control status-dur" name="dur" aria-label="Duração">
           <option value="60">1h</option><option value="120">2h</option><option value="240">4h</option>
           <option value="today" selected>Hoje</option><option value="none">Sem prazo</option>
         </select>
@@ -9740,16 +9790,18 @@ function toggleStatusMenu(ev) {
       </form>
     </div>`;
   document.body.appendChild(menu);
-  const r = document.getElementById('sidebar-user').getBoundingClientRect();
-  menu.style.left = Math.max(8, r.left) + 'px';
-  menu.style.bottom = (window.innerHeight - r.top + 8) + 'px';
+  // Abre logo abaixo do menu da conta, alinhado pela direita com ele.
+  const anchor = document.getElementById('user-menu-head') || document.getElementById('topbar-user');
+  const r = anchor.getBoundingClientRect();
+  menu.style.top = (r.bottom + 8) + 'px';
+  menu.style.left = Math.max(8, Math.min(window.innerWidth - menu.offsetWidth - 8, r.right - menu.offsetWidth)) + 'px';
   paintIcons(menu);
   setTimeout(() => {
     document.addEventListener('mousedown', _statusMenuOutside, true);
     document.addEventListener('keydown', _statusMenuKey, true);
   }, 0);
 }
-function _statusMenuOutside(e) { if (!e.target.closest('#status-menu, #sidebar-user')) closeStatusMenu(); }
+function _statusMenuOutside(e) { if (!e.target.closest('#status-menu, #user-menu-head')) closeStatusMenu(); }
 function _statusMenuKey(e) { if (e.key === 'Escape') closeStatusMenu(); }
 function closeStatusMenu() {
   document.getElementById('status-menu')?.remove();
@@ -9850,25 +9902,8 @@ function renderSidebarNav() {
         <i data-lucide="plus" class="sb-ic"></i><span class="sb-label">Mais</span><i data-lucide="chevron-right" class="sb-more-caret"></i></button></div>`
     : '';
   closeSbMore();
-  nav.innerHTML = blocks.map(b => `<div class="sb-group">${b.items.map(_sbItemHTML).join('')}</div>`).join('') + more
-    + `<div class="sb-group sb-group--bottom">
-        <div class="sb-bottom-row">
-          <button type="button" class="sb-icon-btn sb-news" id="sb-news" onclick="openSidebarNews()" data-label="Novidades" aria-label="Novidades" title="Novidades">
-            <i data-lucide="sparkles"></i><span class="sb-news-dot" id="sb-news-dot" hidden></span></button>
-          <a class="sb-icon-btn sb-docs ${NAV_DOCS.cls}" id="sb-docs" href="${orgUrl(PAGE_TO_PATH[NAV_DOCS.page] || '/help')}" aria-label="${NAV_DOCS.label}" title="${NAV_DOCS.label}" data-label="${NAV_DOCS.label}"
-            onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); goPage('${NAV_DOCS.page}'); closeSidebar()">
-            <i data-lucide="${NAV_DOCS.icon}"></i>
-          </a>
-          <a class="sb-icon-btn sb-support" id="sb-support" href="${orgUrl('/support')}" aria-label="Suporte" title="Suporte" data-label="Suporte"
-            onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); openSupport(); closeSidebar()">
-            <i data-lucide="life-buoy"></i><span class="sb-news-dot" id="support-dot"${(() => { try { return _sup.unread ? '' : ' hidden'; } catch { return ' hidden'; } })()}></span>
-          </a>
-          <a class="sb-icon-btn sb-gear" id="sb-gear" href="${orgUrl('/profile')}" aria-label="Configurações" title="Configurações" data-label="Configurações"
-            onclick="if(event.metaKey||event.ctrlKey||event.shiftKey)return; event.preventDefault(); goPage('profile'); closeSidebar()">
-            <i data-lucide="settings"></i>
-          </a>
-        </div>
-      </div>`;
+  // Novidades, documentação, suporte e configurações ficam no menu da conta (topbar).
+  nav.innerHTML = blocks.map(b => `<div class="sb-group">${b.items.map(_sbItemHTML).join('')}</div>`).join('') + more;
   paintIcons(nav);
   syncSidebarActive(currentPage);
   renderNavCounts();
@@ -10302,6 +10337,14 @@ document.addEventListener('keydown', e => {
    applyRoute (link direto) quando a rota carrega um modal ou sub-view. */
 const DEVTOOLS_GROUPS = [
   {
+    title: 'Design system',
+    hint: 'Páginas fora do app, só pra admin. Abrem numa aba nova. A documentação completa está no fim desta tela.',
+    links: [
+      { label: 'Catálogo vivo',  href: '/api/admin/design-system', icon: 'palette',  desc: 'Tokens, contraste e componentes em todos os estados, com o style.css e o app.js reais. Claro e escuro.' },
+      { label: 'Animações',      href: '/api/admin/motion-preview', icon: 'sparkles', desc: 'Prévia das curvas e durações de movimento do app.' },
+    ]
+  },
+  {
     title: 'Páginas ocultas',
     hint: 'Existem no roteador mas não têm entrada no menu lateral.',
     links: [
@@ -10353,19 +10396,100 @@ function renderDevTools() {
       </div>
       <div class="dt-grid">
         ${g.links.map(l => `
-          <a class="dt-card" href="${esc(orgUrl(l.path))}" onclick="devToolsOpen(event, '${esc(l.path)}')">
+          <a class="dt-card" ${l.href
+            ? `href="${esc(l.href)}" target="_blank" rel="noopener"`
+            : `href="${esc(orgUrl(l.path))}" onclick="devToolsOpen(event, '${esc(l.path)}')"`}>
             <div class="dt-card-icon"><i data-lucide="${esc(l.icon || 'link')}" class="ic-sm"></i></div>
             <div class="dt-card-body">
               <div class="dt-card-label">${esc(l.label)}</div>
-              <div class="dt-card-path">${esc(l.path)}</div>
+              <div class="dt-card-path">${esc(l.href || l.path)}</div>
               ${l.desc ? `<div class="dt-card-desc">${esc(l.desc)}</div>` : ''}
             </div>
-            <div class="dt-card-arrow"><i data-lucide="arrow-up-right" class="ic-xs"></i></div>
+            <div class="dt-card-arrow"><i data-lucide="${l.href ? 'external-link' : 'arrow-up-right'}" class="ic-xs"></i></div>
           </a>`).join('')}
       </div>
     </div>
-  `).join('');
+  `).join('') + `
+    <div class="dt-group" id="dt-design-doc">
+      <div class="dt-group-head">
+        <div class="dt-group-title">Documentação do design system</div>
+        <div class="dt-group-hint">DESIGN.md do repositório, a fonte da verdade. Mudou o arquivo, esta tela acompanha no próximo deploy.</div>
+      </div>
+      <div id="dt-design-doc-body"><div class="skeleton skeleton-line" style="width:60%"></div></div>
+    </div>`;
   paintIcons();
+  renderDesignDoc();
+}
+
+/* Documentação do design system (DESIGN.md) dentro do Dev Tools. Carrega uma
+   vez por sessão; o índice rola até a seção sem mexer na rota. */
+let _designDocMd = null;
+async function renderDesignDoc() {
+  const el = $('dt-design-doc-body');
+  if (!el) return;
+  if (_designDocMd == null) {
+    try { _designDocMd = (await api('/admin/design-doc')).markdown || ''; }
+    catch (e) { el.innerHTML = `<div class="dt-group-hint">Não consegui carregar o DESIGN.md (${esc(e.message || 'erro')}). Tente recarregar a página.</div>`; return; }
+  }
+  const { html, toc } = designDocHtml(_designDocMd);
+  el.innerHTML = `
+    <nav class="dt-doc-toc" aria-label="Seções da documentação">
+      ${toc.map(t => `<button type="button" onclick="designDocJump('${t.id}')">${esc(t.text)}</button>`).join('')}
+    </nav>
+    <article class="ds-doc">${html}</article>`;
+}
+// Leva até a seção sem mexer na rota (um #hash viraria navegação no roteador).
+function designDocJump(id) {
+  document.getElementById(id)?.scrollIntoView({ block: 'start' });
+}
+// Markdown do DESIGN.md → HTML: títulos, parágrafos, listas, tabelas e o
+// inline do mdApply (código, negrito, itálico, links).
+function designDocHtml(md) {
+  const inline = t => mdApply(linkifyEscaped(esc(t)));
+  const cells = l => l.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+  const out = [], toc = [];
+  let para = [], list = null, table = null;
+  const flush = () => {
+    if (para.length) { out.push(`<p>${inline(para.join(' '))}</p>`); para = []; }
+    if (list) { out.push(`<${list.tag}>${list.items.map(i => `<li>${inline(i)}</li>`).join('')}</${list.tag}>`); list = null; }
+    if (table) {
+      const [head, ...rows] = table;
+      out.push(`<div class="ds-doc-table"><table><thead><tr>${head.map(c => `<th>${inline(c)}</th>`).join('')}</tr></thead>`
+        + `<tbody>${rows.map(r => `<tr>${r.map(c => `<td>${inline(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`);
+      table = null;
+    }
+  };
+  for (const line of md.replace(/\r/g, '').split('\n')) {
+    let m;
+    if (!line.trim()) { flush(); continue; }
+    if ((m = line.match(/^(#{1,3})\s+(.+)$/))) {
+      flush();
+      if (m[1].length === 1) continue;   // título do arquivo: a tela já tem o seu
+      const text = m[2].replace(/[`*]/g, '');
+      const id = 'dsdoc-' + text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      if (m[1].length === 2) toc.push({ id, text });
+      out.push(`<h${m[1].length} id="${id}">${inline(m[2])}</h${m[1].length}>`);
+      continue;
+    }
+    if (/^\s*\|/.test(line)) {
+      if (!table) { flush(); table = []; }
+      if (!/^\s*\|[\s|:-]+\|\s*$/.test(line)) table.push(cells(line));
+      continue;
+    }
+    const li = line.match(/^\s*(?:([-*])|(\d+)\.)\s+(.*)$/);
+    if (li) {
+      const tag = li[1] ? 'ul' : 'ol';
+      if (para.length || table || (list && list.tag !== tag)) flush();
+      if (!list) list = { tag, items: [] };
+      list.items.push(li[3]);
+      continue;
+    }
+    if (list && /^\s{2,}\S/.test(line)) { list.items[list.items.length - 1] += ' ' + line.trim(); continue; }
+    if (list || table) flush();
+    para.push(line.trim());
+  }
+  flush();
+  return { html: out.join(''), toc };
 }
 /* Cli-side navigation dos cards. Usa history.pushState + applyRoute pra
    respeitar o SPA (sem full reload). Ctrl/⌘/middle-click deixam o browser
