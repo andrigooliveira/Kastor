@@ -4339,7 +4339,33 @@ app.get('/api/workspaces', requireAuth, (req, res) => {
    quando o user abre a demanda (showDetail → refreshDetailDemand). */
 function stripDemandForList(d) {
   const { description, comments, attachments, briefing, history, ...rest } = d;
-  return { ...rest, lastOwnerId: lastOwnerIdOf(d) };
+  return { ...rest, lastOwnerId: lastOwnerIdOf(d), listMeta: demandListMeta(d) };
+}
+
+/* Resumo do que a lista mostra sem abrir a demanda: contagem de comentários
+   e arquivos, o último comentário (prévia no hover) e a última atividade de
+   alguém (ponto de novidade). Espelhado no cliente (demandListMeta no app.js)
+   pra quando a demanda chega completa pelo SSE. */
+const LIST_ACTIVITY_ACTIONS = new Set(['comment_added', 'attachment_added', 'stage_changed']);
+function demandListMeta(d) {
+  const comments = (Array.isArray(d.comments) ? d.comments : []).filter(c => !c.deleted);
+  const files = (Array.isArray(d.attachments) ? d.attachments.length : 0)
+    + comments.reduce((n, c) => n + (Array.isArray(c.attachments) ? c.attachments.length : 0), 0);
+  const last = comments[comments.length - 1];
+  const h = Array.isArray(d.history) ? d.history : [];
+  let activity = null;
+  for (let i = h.length - 1; i >= 0; i--) {
+    if (LIST_ACTIVITY_ACTIONS.has(h[i].action)) { activity = { at: h[i].at, by: h[i].userId }; break; }
+  }
+  return {
+    comments: comments.length,
+    files,
+    lastComment: last ? {
+      userId: last.userId, at: last.createdAt,
+      text: (last.format === 'html' ? stripHtmlToText(last.text || '') : String(last.text || '')).replace(/\s+/g, ' ').trim().slice(0, 160),
+    } : null,
+    activity,
+  };
 }
 
 /* Etapa final (Concluída/Cancelada) limpa o ownerId, mas listas e exportação
@@ -5605,6 +5631,8 @@ app.get('/api/bootstrap', requireAuth, (req, res) => {
     // Stripped: description/comments/attachments/briefing/history só chegam
     // quando o user abre a demanda (~70% menor no wire, escala melhor).
     demands:         visibleDemands.map(stripDemandForList),
+    // Quando a pessoa abriu cada demanda por último: a lista marca o que mudou depois.
+    demandSeen:      (u.demandSeen && typeof u.demandSeen === 'object') ? u.demandSeen : {},
     roles:           db.roles,
     templates:       (db.templates || []).filter(inWs),
     // Schedules: só 4 semanas ao redor de hoje (2 anteriores incluindo semana

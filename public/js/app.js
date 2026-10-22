@@ -2318,6 +2318,10 @@ const KB_SHORTCUTS = [
   { keys: ['?'],       label: 'Mostrar atalhos' },
   { keys: ['/'],       label: 'Focar na busca' },
   { keys: ['n'],       label: 'Nova demanda' },
+  { keys: ['s'],       label: 'Mudar meu status' },
+  { keys: ['j'],       label: 'Próxima demanda (lista ou detalhe)' },
+  { keys: ['k'],       label: 'Demanda anterior (lista ou detalhe)' },
+  { keys: ['Enter'],   label: 'Abrir a demanda marcada na lista' },
   { keys: ['g', 'd'],  label: 'Ir para Início' },
   { keys: ['g', 'l'],  label: 'Ir para Demandas' },
   { keys: ['g', 'm'],  label: 'Ir para Minhas Demandas' },
@@ -2376,6 +2380,11 @@ function initKeyboardShortcuts() {
     if (k === '?') { e.preventDefault(); showShortcutsHelp(); }
     else if (k === '/') { e.preventDefault(); const s = $('search-input'); if (s) s.focus(); }
     else if (k === 'n') { e.preventDefault(); if (typeof openNewDemand === 'function') openNewDemand(); }
+    else if (k === 's' && !_gPressed) { e.preventDefault(); closeUserMenu(); toggleStatusMenu(); }
+    else if ((k === 'j' || k === 'k') && !_gPressed && !document.querySelector('.modal-overlay.open')) {
+      if (kbMoveDemand(k === 'j' ? 1 : -1)) e.preventDefault();
+    }
+    else if (k === 'Enter' && !t.closest?.('button, a, summary, [role="button"], [role="menuitem"]') && kbOpenCursor()) e.preventDefault();
     else if (k === 'g') { _gPressed = true; setTimeout(() => { _gPressed = false; }, 800); }
     else if (_gPressed) {
       const go = { d: 'dashboard', l: 'list', m: 'mine', c: 'analytics', p: 'projects' }[k];
@@ -2665,7 +2674,11 @@ function _cmdkActions() {
     { id: 'new-demand', icon: 'plus', label: 'Nova demanda', hint: 'N', run: () => openNewDemand() },
     { id: 'new-client', icon: 'building-2', label: 'Novo cliente', staff: true, run: () => openClientModal(null) },
     { id: 'new-lista', icon: 'list-checks', label: 'Nova lista recorrente', staff: true, run: () => openNovaListaModal() },
-    { id: 'status', icon: 'headphones', label: 'Mudar meu status', run: () => toggleStatusMenu() },
+    { id: 'status', icon: 'headphones', label: 'Mudar meu status', hint: 'S', run: () => toggleStatusMenu() },
+    { id: 'st-focus', icon: 'headphones', label: 'Status: Focado por 1h', run: () => setMyStatus('focus', 60) },
+    { id: 'st-focus-day', icon: 'headphones', label: 'Status: Focado até o fim do dia', run: () => setMyStatus('focus', 'today') },
+    { id: 'st-meeting', icon: 'video', label: 'Status: Em reunião por 1h', run: () => setMyStatus('meeting', 60) },
+    ...(me && statusOf(me) ? [{ id: 'st-clear', icon: 'circle-x', label: 'Limpar meu status', run: () => setMyStatus(null) }] : []),
     { id: 'profile', icon: 'user-cog', label: 'Configurações (meu perfil)', run: () => goPage('profile') },
     { id: 'quick', icon: 'sliders-horizontal', label: 'Editar acesso rápido', staff: true, run: () => goPage('menu') },
     { id: 'theme', icon: 'sun-moon', label: 'Alternar tema claro/escuro', run: () => toggleTheme() },
@@ -5784,6 +5797,7 @@ async function loadAll() {
     formTemplates   = b.formTemplates   || [];
     formResponses   = b.formResponses   || [];
     dashboards      = b.dashboards      || [];
+    _demandSeen     = b.demandSeen      || {};
     // Server só manda schedules dos últimos 14 dias + próximos 14 dias
     // (~4 semanas). Se agenda navegar pra fora, lazy fetch (ver ensureSchedulesLoaded).
     if (b._scheduleRange) _scheduleRangeLoaded = { ...b._scheduleRange };
@@ -6827,7 +6841,6 @@ const SUP_CATEGORY_HINT = {
 };
 const SUP_CATEGORY_ICON = { duvida: 'circle-help', problema: 'bug', cobranca: 'credit-card', conta: 'key-round', sugestao: 'lightbulb', outro: 'message-circle' };
 const _supPill = (status) => { const [l, t] = SUP_STATUS[status] || [status, '']; return `<span class="bil-pill ${t}">${l}</span>`; };
-const _supWhen = (iso) => fmtRelativeTime(iso);
 
 /* Botão do topo: guarda de onde a pessoa veio (vai junto no chamado). */
 function openSupport() {
@@ -6880,7 +6893,7 @@ async function renderSupport() {
         <span class="sup-row-title">${t.unread ? '<span class="sup-unread-dot" aria-label="Resposta nova"></span>' : ''}${esc(t.subject)}</span>
         <span class="sup-row-sub">#${t.number} · ${esc(t.categoryLabel)} · ${t.lastFrom === 'staff' ? 'Equipe reWork' : 'Você'}: ${esc(t.preview)}</span>
       </span>
-      <span class="sup-row-side">${_supPill(t.status)}<span class="sup-row-when">${esc(_supWhen(t.updatedAt))}</span></span>
+      <span class="sup-row-side">${_supPill(t.status)}<span class="sup-row-when">${relTimeHTML(t.updatedAt)}</span></span>
     </a>`;
   host.innerHTML = `<div class="sup">
     <header class="bil-head">
@@ -7034,7 +7047,7 @@ async function renderSupportTicket() {
   host.innerHTML = `<div class="sup sup--ticket">
     ${_supBack('Suporte', "goPage('support')")}
     <header class="sup-ticket-head">
-      <div class="sup-ticket-kicker">#${t.number} · ${esc(t.categoryLabel)} · aberto ${esc(_supWhen(t.createdAt))}</div>
+      <div class="sup-ticket-kicker">#${t.number} · ${esc(t.categoryLabel)} · aberto ${relTimeHTML(t.createdAt)}</div>
       <h1 class="bil-title">${esc(t.subject)}</h1>
       <div class="bil-pills">${_supPill(t.status)}</div>
     </header>
@@ -8081,7 +8094,7 @@ async function renderProfileDevices() {
   catch (e) { box.innerHTML = `<div class="profile-hint">${esc(e.message || 'Não foi possível carregar os dispositivos.')}</div>`; return; }
   box.innerHTML = list.map(s => {
     const meta = [dvPlace(s.loc), s.ip].filter(Boolean).map(esc).join(' · ');
-    const when = s.current ? '<span class="dv-now">Este dispositivo</span>' : esc(`Ativo ${fmtRelativeTime(s.lastSeenAt)}`);
+    const when = s.current ? '<span class="dv-now">Este dispositivo</span>' : `Ativo ${relTimeHTML(s.lastSeenAt)}`;
     return `<div class="tf-opt dv-item${s.current ? ' is-on' : ''}">
         <span class="tf-opt-ic"><i data-lucide="${dvIcon(s)}"></i></span>
         <div class="tf-opt-info">
@@ -9722,13 +9735,28 @@ function toggleUserMenu(ev) {
   menu.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
   $('topbar-user').setAttribute('aria-expanded', 'true');
   paintIcons(menu);
+  // Aberto pelo teclado (Enter/Espaço dão detail 0): foco no primeiro item, pras setas andarem.
+  if (ev && ev.detail === 0) _userMenuItems()[0]?.focus();
   setTimeout(() => {
     document.addEventListener('mousedown', _userMenuOutside, true);
     document.addEventListener('keydown', _userMenuKey, true);
   }, 0);
 }
+function _userMenuItems() { return [...document.querySelectorAll('#user-menu button, #user-menu a')].filter(b => b.offsetParent); }
 function _userMenuOutside(e) { if (!e.target.closest('#user-menu, #topbar-user, #status-menu')) closeUserMenu(); }
-function _userMenuKey(e) { if (e.key === 'Escape' && !document.getElementById('status-menu')) { closeUserMenu(); $('topbar-user')?.focus(); } }
+function _userMenuKey(e) {
+  if (document.getElementById('status-menu')) return; // o menu de status cuida das próprias teclas
+  if (e.key === 'Escape') { closeUserMenu(); $('topbar-user')?.focus(); return; }
+  const step = { ArrowDown: 1, ArrowUp: -1 }[e.key];
+  if (!step && e.key !== 'Home' && e.key !== 'End') return;
+  const items = _userMenuItems();
+  if (!items.length) return;
+  e.preventDefault();
+  const i = items.indexOf(document.activeElement);
+  const to = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1
+    : i < 0 ? (step > 0 ? 0 : items.length - 1) : (i + step + items.length) % items.length;
+  items[to].focus();
+}
 function closeUserMenu() {
   const menu = $('user-menu');
   if (menu) menu.hidden = true;
@@ -9790,19 +9818,29 @@ function toggleStatusMenu(ev) {
       </form>
     </div>`;
   document.body.appendChild(menu);
-  // Abre logo abaixo do menu da conta, alinhado pela direita com ele.
-  const anchor = document.getElementById('user-menu-head') || document.getElementById('topbar-user');
+  // Abre logo abaixo do menu da conta, alinhado pela direita com ele. Aberto
+  // sozinho (atalho S, paleta), o menu da conta está fechado: ancora no avatar.
+  const head = document.getElementById('user-menu-head');
+  const anchor = head && head.offsetParent ? head : document.getElementById('topbar-user');
   const r = anchor.getBoundingClientRect();
   menu.style.top = (r.bottom + 8) + 'px';
   menu.style.left = Math.max(8, Math.min(window.innerWidth - menu.offsetWidth - 8, r.right - menu.offsetWidth)) + 'px';
   paintIcons(menu);
+  // Pelo teclado (atalho, paleta, Enter no nome): foco na primeira opção.
+  if (!ev || ev.detail === 0) menu.querySelector('.status-chip')?.focus();
   setTimeout(() => {
     document.addEventListener('mousedown', _statusMenuOutside, true);
     document.addEventListener('keydown', _statusMenuKey, true);
   }, 0);
 }
 function _statusMenuOutside(e) { if (!e.target.closest('#status-menu, #user-menu-head')) closeStatusMenu(); }
-function _statusMenuKey(e) { if (e.key === 'Escape') closeStatusMenu(); }
+function _statusMenuKey(e) {
+  if (e.key !== 'Escape') return;
+  const inside = document.getElementById('status-menu')?.contains(document.activeElement);
+  closeStatusMenu();
+  // Devolve o foco pra quem abriu: o nome no menu da conta, ou o avatar.
+  if (inside) { const head = $('user-menu-head'); (head && head.offsetParent ? head : $('topbar-user'))?.focus(); }
+}
 function closeStatusMenu() {
   document.getElementById('status-menu')?.remove();
   document.removeEventListener('mousedown', _statusMenuOutside, true);
@@ -10275,6 +10313,7 @@ function initTabIndicators() {
 }
 function goPage(page) {
   hideTooltip();
+  if (typeof hideDemandPeek === 'function') hideDemandPeek();
   // Freelancer só navega em Minhas Demandas, no próprio perfil e no detalhe
   // de uma demanda. Qualquer outra URL cai em 'mine' — evita telas quebradas
   // por dados filtrados (clientes/projetos/fluxos vêm reduzidos do backend).
@@ -10300,6 +10339,7 @@ function goPage(page) {
   // 404 renderiza fullpage — esconde sidebar + topbar via body class.
   document.body.classList.toggle('is-fullpage', page === 'notfound');
   $('topbar-title').textContent = PAGE_TITLES[page] || '';
+  setDocTitle(page === 'demand-detail' ? demandById(detailId)?.name || PAGE_TITLES[page] : PAGE_TITLES[page]);
   // Saiu do detalhe pela navegação: oferece apontar o tempo que ficou nele.
   if (prevPage === 'demand-detail' && page !== 'demand-detail' && detailId) maybeSuggestTime(detailId);
   if (page !== 'demand-detail') { const mn = document.getElementById('topbar-mine-nav'); if (mn) { mn.hidden = true; mn.innerHTML = ''; } }
@@ -10307,6 +10347,8 @@ function goPage(page) {
   const backBtn = document.getElementById('topbar-back');
   if (backBtn) backBtn.style.display = page === 'demand-detail' ? '' : 'none';
   renderCurrent();
+  // Voltou do detalhe pra tela de onde abriu: mesma rolagem, última demanda marcada.
+  if (prevPage === 'demand-detail' && _listReturn?.page === page) _restoreListReturn();
   // Mudou de página → descarta filtros da anterior na URL (semântica é por-página).
   // Mesma página (renderCurrent voltando) → preserva a query pra não perder o estado.
   navPush(pageUrlFor(page), { keepSearch: prevPage === page });
@@ -11409,7 +11451,7 @@ function _dashActivityRowHtml({ d, h }) {
     ${avatarHTML(u, 'avatar avatar-xs')}
     <div class="dash-activity-body">
       <div class="dash-activity-desc"><strong>${esc(u?.name || 'Alguém')}</strong> ${desc}</div>
-      <div class="dash-activity-meta"><em>${esc(d.name)}</em> · ${_fmtRelTime(h.at)}</div>
+      <div class="dash-activity-meta"><em>${esc(d.name)}</em> · ${relTimeHTML(h.at, _fmtRelTime(h.at))}</div>
     </div>
   </div>`;
 }
@@ -13466,6 +13508,193 @@ function _demandParticipantIds(d) {
   return set;
 }
 
+/* ── SINAIS NA LISTA ──
+   O que dá pra ver sem abrir a demanda: comentários e arquivos, o progresso
+   nas etapas e um ponto quando outra pessoa mexeu desde a sua última visita.
+   A lista leve (bootstrap) já traz listMeta do servidor; a demanda completa
+   (SSE, detalhe) é resumida aqui com a mesma regra do demandListMeta do server.js. */
+let _demandSeen = {}; // { demandId: iso } — quando abri cada demanda por último
+const _LIST_ACTIVITY = new Set(['comment_added', 'attachment_added', 'stage_changed']);
+function _plainComment(c) {
+  if (c.format !== 'html') return String(c.text || '');
+  // DOMParser não carrega imagens do HTML (innerHTML num div carregaria).
+  return new DOMParser().parseFromString(c.text || '', 'text/html').body.textContent || '';
+}
+// withText: só a prévia precisa do texto do último comentário (e ele custa um parse).
+function demandListMeta(d, withText) {
+  if (!Array.isArray(d.comments)) return d.listMeta || null;
+  const comments = d.comments.filter(c => !c.deleted);
+  const files = (Array.isArray(d.attachments) ? d.attachments.length : 0)
+    + comments.reduce((n, c) => n + (Array.isArray(c.attachments) ? c.attachments.length : 0), 0);
+  const last = comments[comments.length - 1];
+  const h = Array.isArray(d.history) ? d.history : [];
+  let activity = null;
+  for (let i = h.length - 1; i >= 0; i--) {
+    if (_LIST_ACTIVITY.has(h[i].action)) { activity = { at: h[i].at, by: h[i].userId }; break; }
+  }
+  return {
+    comments: comments.length, files, activity,
+    lastComment: last ? {
+      userId: last.userId, at: last.createdAt,
+      text: withText ? _plainComment(last).replace(/\s+/g, ' ').trim().slice(0, 160) : '',
+    } : null,
+  };
+}
+// Só marca o que mudou DEPOIS de uma visita: demanda nunca aberta não acende.
+function demandHasNews(d) {
+  const a = demandListMeta(d)?.activity, seen = _demandSeen[d.id];
+  return !!(a && seen && me && a.by !== me.id && Date.parse(a.at) > Date.parse(seen));
+}
+function newsDotHTML(d) {
+  return demandHasNews(d) ? '<span class="news-dot" title="Novidade desde a sua última visita" aria-label="Novidade"></span>' : '';
+}
+function demandSignalsHTML(d) {
+  const m = demandListMeta(d);
+  if (!m || (!m.comments && !m.files)) return '';
+  const bit = (icon, n, one, many) => n
+    ? `<span class="dsig-item" title="${n} ${n === 1 ? one : many}"><i data-lucide="${icon}"></i>${n}</span>` : '';
+  return `<span class="dsig">${bit('message-square', m.comments, 'comentário', 'comentários')}${bit('paperclip', m.files, 'arquivo', 'arquivos')}</span>`;
+}
+/* Progresso nas etapas de trabalho (as finais, Concluída/Cancelada, não contam):
+   um segmento por etapa. */
+function stageTrackHTML(d) {
+  const work = activeStagesOf(d).filter(s => !s.done);
+  if (work.length < 2) return '';
+  const cur = stageOf(d);
+  const i = cur?.done ? work.length : work.findIndex(s => s.id === d.status);
+  if (i < 0) return '';
+  const title = i >= work.length ? `Todas as ${work.length} etapas feitas` : `Etapa ${i + 1} de ${work.length}`;
+  const color = cur?.color || 'var(--accent)';
+  const inner = work.map((s, k) => `<span class="${k < i ? 'is-done' : k === i ? 'is-cur' : ''}"></span>`).join('');
+  return `<span class="stage-track" style="--stage-color:${esc(color)}" title="${esc(title)}" aria-label="${esc(title)}">${inner}</span>`;
+}
+
+/* Prévia ao parar o mouse numa demanda da lista, do Kanban ou de Minhas
+   Demandas: etapa, responsável, prazo e o último comentário, sem abrir. */
+const _PEEK_SEL = '#page-list [data-demand-id], #page-mine [data-demand-id]';
+let _peekTimer = null, _peekRow = null, _peekLeaveTimer = null, _peekWatch = null;
+function _peekEl() {
+  let el = document.getElementById('demand-peek');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'demand-peek';
+    el.className = 'demand-peek';
+    el.setAttribute('role', 'tooltip');
+    el.hidden = true;
+    document.body.appendChild(el);
+  }
+  return el;
+}
+function hideDemandPeek() {
+  clearTimeout(_peekTimer);
+  clearTimeout(_peekLeaveTimer); _peekLeaveTimer = null;
+  clearInterval(_peekWatch); _peekWatch = null;
+  _peekRow = null;
+  const el = document.getElementById('demand-peek');
+  if (el) el.hidden = true;
+}
+function _demandPeekHTML(d) {
+  const p = projectById(d.projectId);
+  const st = stageOf(d);
+  const owner = userById(d.ownerId || d.lastOwnerId);
+  const m = demandListMeta(d, true);
+  const lc = m?.lastComment;
+  const author = lc && userById(lc.userId);
+  const where = [p?.client, p?.name].filter(Boolean).map(esc).join(' · ');
+  return `
+    <div class="peek-name">${newsDotHTML(d)}${esc(d.name)}</div>
+    ${where ? `<div class="peek-sub">${where}</div>` : ''}
+    <div class="peek-row">
+      ${priorityPill(d.priority)}
+      ${st ? `<span class="peek-stage" style="--stage-color:${esc(st.color || 'var(--accent)')}">${esc(st.label)}</span>` : ''}
+      ${stageTrackHTML(d)}
+    </div>
+    <div class="peek-row peek-meta">
+      ${owner ? `<span class="peek-owner">${avatarHTML(owner, 'avatar avatar-xs')}${esc(owner.name)}</span>` : '<span>Sem responsável</span>'}
+      ${d.deadline ? `<span>Prazo ${esc(fmtDateShort(d.deadline))}</span>` : ''}
+      ${demandSignalsHTML(d)}
+    </div>
+    ${lc ? `<div class="peek-comment">
+      <div class="peek-comment-head">${author ? avatarHTML(author, 'avatar avatar-xs') : ''}<b>${esc(author?.name || 'Alguém')}</b>${relTimeHTML(lc.at)}</div>
+      ${lc.text ? `<div class="peek-comment-text">${esc(lc.text)}</div>` : '<div class="peek-comment-text is-empty">Só arquivo ou imagem.</div>'}
+    </div>` : '<div class="peek-comment is-empty">Sem comentários ainda.</div>'}`;
+}
+function showDemandPeek(row) {
+  const d = row.isConnected && demandById(row.dataset.demandId);
+  if (!d) return;
+  const el = _peekEl();
+  el.innerHTML = _demandPeekHTML(d);
+  el.hidden = false;
+  paintIcons(el);
+  // Abaixo da linha, alinhada pelo começo dela; sem espaço embaixo, vai pra cima.
+  const r = row.getBoundingClientRect();
+  const w = el.offsetWidth, h = el.offsetHeight;
+  const below = r.bottom + 6 + h <= window.innerHeight - 8;
+  el.style.top = Math.max(8, below ? r.bottom + 6 : r.top - 6 - h) + 'px';
+  el.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, r.left + 24)) + 'px';
+  // Rede de segurança: enquanto aberta, confere o :hover da linha a cada 100ms.
+  // Não depende de mouseout/mousemove, que se perdem quando a lista redesenha.
+  clearInterval(_peekWatch);
+  _peekWatch = setInterval(() => {
+    const cur = _peekRow;
+    if (cur && cur.isConnected && cur.matches(':hover')) _peekStay(); else _peekLeave();
+  }, 100);
+}
+// Saiu da linha: fecha em 200ms (voltar nesse meio tempo cancela).
+function _peekLeave() {
+  if (!_peekLeaveTimer) _peekLeaveTimer = setTimeout(hideDemandPeek, 200);
+}
+function _peekStay() {
+  clearTimeout(_peekLeaveTimer);
+  _peekLeaveTimer = null;
+}
+if (window.matchMedia?.('(hover: hover) and (pointer: fine)').matches) {
+  document.addEventListener('mouseover', e => {
+    const row = e.target.closest?.(_PEEK_SEL);
+    // Botões e checkboxes da linha têm o próprio hover: a prévia não atrapalha.
+    if (!row || e.target.closest('button, input, a')) { if (!row && _peekRow) _peekLeave(); return; }
+    if (row === _peekRow) { _peekStay(); return; }
+    hideDemandPeek();
+    _peekRow = row;
+    _peekTimer = setTimeout(() => { if (_peekRow === row && row.isConnected && row.matches(':hover')) showDemandPeek(row); }, 450);
+  });
+  // mouseout não chega sempre (a lista redesenha sob o mouse, a linha sai do DOM):
+  // a cada movimento confere se o ponteiro ainda está na linha da prévia.
+  document.addEventListener('mousemove', e => {
+    if (!_peekRow) return;
+    if (_peekRow.isConnected && _peekRow.contains(e.target)) _peekStay(); else _peekLeave();
+  }, { passive: true });
+  document.documentElement.addEventListener('mouseleave', hideDemandPeek);
+  window.addEventListener('blur', hideDemandPeek);
+  document.addEventListener('visibilitychange', hideDemandPeek);
+  ['mousedown', 'keydown', 'dragstart', 'wheel'].forEach(t => document.addEventListener(t, hideDemandPeek, true));
+  window.addEventListener('scroll', hideDemandPeek, { capture: true, passive: true });
+}
+
+/* Botão "voltar ao topo": aparece depois de rolar uma tela e meia. */
+function _syncBackToTop() {
+  let btn = document.getElementById('back-to-top');
+  const on = window.scrollY > window.innerHeight * 1.5 && currentPage !== 'demand-detail';
+  if (!btn) {
+    if (!on) return;
+    btn = document.createElement('button');
+    btn.id = 'back-to-top';
+    btn.type = 'button';
+    btn.className = 'back-to-top';
+    btn.title = 'Voltar ao topo';
+    btn.setAttribute('aria-label', 'Voltar ao topo');
+    btn.innerHTML = '<i data-lucide="arrow-up"></i>';
+    btn.onclick = () => window.scrollTo({ top: 0, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    document.body.appendChild(btn);
+    paintIcons(btn);
+  }
+  btn.classList.toggle('is-on', on);
+}
+window.addEventListener('scroll', () => {
+  if (_syncBackToTop._raf) return;
+  _syncBackToTop._raf = requestAnimationFrame(() => { _syncBackToTop._raf = 0; _syncBackToTop(); });
+}, { passive: true });
+
 function renderList() {
   // Aplica filtros salvos da sessão anterior ANTES de capturar o valor atual
   // (o rebuild dos options abaixo respeita o value setado aqui via prevUser).
@@ -13607,7 +13836,7 @@ function renderList() {
     }
     const barFill = u === 'overdue' ? 100 : u === 'today' ? 85 : u === 'soon' ? 65 : due ? 30 : 0;
     const stageCell = stage
-      ? `<span class="mstage" style="--stage-color:${stageColor}">${esc(stage.label)}</span>`
+      ? `<div class="mstage-cell"><span class="mstage" style="--stage-color:${stageColor}">${esc(stage.label)}</span>${stageTrackHTML(d)}</div>`
       : '<span class="mmuted">—</span>';
     const dueCell = due
       ? `<div class="mdue">
@@ -13623,10 +13852,10 @@ function renderList() {
     const doneTd = isDone
       ? `<td class="mcol-done">${d.completedAt ? `<span class="mdue-date">${esc(fmtDateShort(d.completedAt))}</span>` : '<span class="mmuted">—</span>'}</td>`
       : '';
-    return `<tr class="mrow demand-row ${sel ? 'selected' : ''}" data-prio="${prio.value}" data-due="${u}" data-demand-id="${d.id}"${sectionAttr} onclick="onDemandRowClick(event, '${d.id}')" title="Prioridade: ${esc(prio.label)}">
+    return `<tr class="mrow demand-row ${sel ? 'selected' : ''}" data-prio="${prio.value}" data-due="${u}" data-demand-id="${d.id}"${sectionAttr} onclick="onDemandRowClick(event, '${d.id}')">
       <td class="col-bulk-check mcol-bulk"><input type="checkbox" class="bulk-check-row" ${sel ? 'checked' : ''} onclick="event.stopPropagation();toggleDemandSelection('${d.id}', this.checked)"></td>
       <td class="mcol-name col-demand-name">
-        <div class="mname">${esc(d.name)}</div>
+        <div class="mname-row"><div class="mname">${newsDotHTML(d)}${esc(d.name)}</div>${demandSignalsHTML(d)}</div>
       </td>
       <td class="mcol-project col-truncate" title="${esc(p?.name || '')}">${p ? esc(p.name) : '—'}</td>
       <td class="mcol-client col-truncate" title="${esc(p?.client || '')}">${esc(p?.client || '—')}</td>
@@ -13986,8 +14215,9 @@ function kanbanCard(d) {
           <i data-lucide="link-2" class="ic-xs"></i>
         </button>
       </div>
-      <div class="kanban-card-name">${esc(d.name)}</div>
+      <div class="kanban-card-name">${newsDotHTML(d)}${esc(d.name)}</div>
       <div class="kanban-card-meta">${esc(p?.name || '—')}${p?.client ? ` · ${esc(p.client)}` : ''}</div>
+      ${(() => { const t = stageTrackHTML(d), g = demandSignalsHTML(d); return t || g ? `<div class="kanban-card-signals">${t}${g}</div>` : ''; })()}
       <div class="kanban-card-foot">
         ${ownerBlock}
         ${dueBlock}
@@ -14306,7 +14536,7 @@ function renderMine() {
       ? `<span class="msquad"><span class="msquad-dot" style="background:${wsColor}"></span>${esc(ws.name)}</span>`
       : '<span class="mmuted">—</span>';
     const stageCell = stage
-      ? `<span class="mstage" style="--stage-color:${stageColor}">${esc(stage.label)}</span>`
+      ? `<div class="mstage-cell"><span class="mstage" style="--stage-color:${stageColor}">${esc(stage.label)}</span>${stageTrackHTML(d)}</div>`
       : '<span class="mmuted">—</span>';
     // Barra sparkline de prazo: 0..1 de saturação. Overdue=100% vermelho, today=~85% laranja, soon=~65% amber, none=~30% verde.
     const barFill = u === 'overdue' ? 100 : u === 'today' ? 85 : u === 'soon' ? 65 : due ? 30 : 0;
@@ -14328,10 +14558,10 @@ function renderMine() {
            <div class="mdue-bar"><span class="mdue-bar-fill" style="width:${barFill}%"></span></div>
          </div>`
       : '<span class="mmuted">—</span>';
-    return `<tr class="mrow" data-prio="${prio.value}" data-due="${u}" onclick="showDetail('${d.id}')" title="Prioridade: ${esc(prio.label)}">
+    return `<tr class="mrow" data-prio="${prio.value}" data-due="${u}" data-demand-id="${d.id}" onclick="showDetail('${d.id}')">
       <td class="mcol-name">
         <div class="mname-row">
-          <div class="mname">${esc(d.name)}</div>
+          <div class="mname">${newsDotHTML(d)}${esc(d.name)}</div>${demandSignalsHTML(d)}
           <button type="button" class="mrow-copy" title="Copiar link" aria-label="Copiar link" onclick="copyDemandLink('${d.id}', event)">
             <i data-lucide="link-2" class="ic-xs"></i>
           </button>
@@ -18191,8 +18421,10 @@ function editCurrentDemand() {
 /* ─── PÁGINA: DETALHE DA DEMANDA ─── (era um modal). Agora é uma rota
    dedicada — permite Ctrl+click pra nova aba, foco melhor, e Voltar do
    browser volta pra origem naturalmente. */
-function showDetail(id) {
+function showDetail(id, opts) {
   cmdkTrack('d:' + id);
+  if (currentPage !== 'demand-detail') _rememberListOrigin(id);
+  else if (_listReturn) _listReturn.id = id;
   if (detailId && detailId !== id) maybeSuggestTime(detailId);
   // Draft do editor de etapas é por-demanda — se muda a demanda, invalida o draft
   // anterior (senão o Etapas tab renderiza vazio porque a ordem tem IDs de outra).
@@ -18211,7 +18443,8 @@ function showDetail(id) {
     navPush(targetPath, { keepSearch: false });
     goPage('demand-detail');
   } else {
-    navPush(targetPath, { keepSearch: false });
+    // j/k e as setas ‹ › trocam no lugar: Voltar sai pra lista, não refaz o caminho demanda a demanda.
+    (opts?.replace ? navReplace : navPush)(targetPath, { keepSearch: false });
     renderDetail();
   }
   draftRestoreComment();
@@ -18797,7 +19030,7 @@ function renderDetail() {
       summary = `<div class="chat-thread-folded-row"><button type="button" class="chat-thread-folded" onclick="toggleCommentThread('${root.id}')" aria-expanded="false">
         <span class="chat-thread-folded-avs">${people.map(u => avatarHTML(u, 'avatar avatar-sm').replace(/data-user-id="[^"]+"/, '')).join('')}</span>
         <span class="chat-thread-folded-n">${replies.length === 1 ? '1 resposta' : T('{0} respostas', replies.length)}</span>
-        <span class="chat-thread-folded-when">· ${(() => { const rel = fmtRelativeTime(last.createdAt); return rel === 'agora' ? 'agora mesmo' : 'última ' + esc(rel); })()}</span>
+        <span class="chat-thread-folded-when">· ${(() => { const rel = fmtRelativeTime(last.createdAt); return relTimeHTML(last.createdAt, rel === 'agora' ? 'agora mesmo' : 'última ' + rel); })()}</span>
         <i data-lucide="chevron-down" class="ic-xs"></i>
       </button></div>`;
     }
@@ -19045,24 +19278,105 @@ function renderDetail() {
   _applyMentionSeen();
   _flagArrivingComments();
   renderMineNav();
+  if (currentPage === 'demand-detail') setDocTitle(demandById(detailId)?.name || PAGE_TITLES['demand-detail']);
 }
-/* Setas ‹ › no topo do detalhe: anda pelas minhas demandas na ordem da tabela
-   de Minhas Demandas. Some quando a demanda aberta não está na minha lista. */
+/* Setas ‹ › no topo do detalhe (e j/k): anda na ordem da tela de onde a demanda
+   foi aberta (Demandas, Kanban, Minhas Demandas, como estava filtrada). Aberta
+   de outro lugar, usa a ordem de Minhas Demandas. Some quando a demanda não está
+   em nenhuma das duas. */
 function renderMineNav() {
   const el = document.getElementById('topbar-mine-nav');
   if (!el) return;
-  const ids = currentPage === 'demand-detail' && detailId && me ? mineOrderIds() : [];
+  const ids = currentPage === 'demand-detail' && detailId && me ? _detailNavIds() : [];
   const i = ids.indexOf(detailId);
   if (i < 0 || ids.length < 2) { el.hidden = true; el.innerHTML = ''; return; }
   const prev = demandById(ids[i - 1]), next = demandById(ids[i + 1]);
-  const btn = (d, dir, icon) => d
-    ? `<button type="button" class="topbar-mine-btn" onclick="showDetail('${d.id}')" title="${dir}: ${esc(d.name)}" aria-label="${dir}"><i data-lucide="${icon}" class="ic-sm"></i></button>`
+  const btn = (d, dir, icon, key) => d
+    ? `<button type="button" class="topbar-mine-btn" onclick="_detailGo('${d.id}')" title="${dir}: ${esc(d.name)} (${key})" aria-label="${dir}"><i data-lucide="${icon}" class="ic-sm"></i></button>`
     : `<button type="button" class="topbar-mine-btn" disabled aria-label="${dir}"><i data-lucide="${icon}" class="ic-sm"></i></button>`;
+  const where = _detailSeq && _detailSeq.ids === ids ? PAGE_TITLES[_detailSeq.page] : PAGE_TITLES.mine;
   el.hidden = false;
-  el.innerHTML = btn(prev, 'Anterior', 'chevron-left')
-    + `<span class="topbar-mine-pos" title="Posição em Minhas Demandas">${T('{0} de {1}', i + 1, ids.length)}</span>`
-    + btn(next, 'Próxima', 'chevron-right');
+  el.innerHTML = btn(prev, 'Anterior', 'chevron-left', 'K')
+    + `<span class="topbar-mine-pos" title="Posição em ${esc(where)}">${T('{0} de {1}', i + 1, ids.length)}</span>`
+    + btn(next, 'Próxima', 'chevron-right', 'J');
   paintIcons(el);
+}
+
+/* ── Demandas pelo teclado (j/k/Enter) ──
+   Na lista (Demandas, Kanban, Minhas Demandas), j/k marca a demanda seguinte ou
+   anterior e Enter abre. Ao abrir, guarda a ordem da tela (_detailSeq) pro j/k do
+   detalhe e a rolagem (_listReturn) pra voltar no mesmo ponto, com a última
+   demanda vista marcada. */
+let _detailSeq = null;   // { ids, page }
+let _listReturn = null;  // { page, y, id }
+function _kbDemandEls() {
+  const page = document.getElementById('page-' + currentPage);
+  return page ? [...page.querySelectorAll('[data-demand-id]')].filter(el => el.offsetParent) : [];
+}
+function _kbSetCursor(el) {
+  document.querySelectorAll('.kb-cursor').forEach(x => x.classList.remove('kb-cursor'));
+  if (!el) return;
+  el.classList.add('kb-cursor');
+  el.scrollIntoView({ block: 'nearest' });
+}
+function _detailNavIds() {
+  return _detailSeq && _detailSeq.ids.includes(detailId) ? _detailSeq.ids : mineOrderIds();
+}
+function _rememberListOrigin(id) {
+  const ids = [...new Set(_kbDemandEls().map(el => el.dataset.demandId))];
+  _detailSeq = ids.length > 1 && ids.includes(id) ? { ids, page: currentPage } : null;
+  _listReturn = { page: currentPage, y: window.scrollY, id };
+}
+function _restoreListReturn() {
+  const ret = _listReturn;
+  _listReturn = null;
+  // Depois do render da lista (setTimeout, não rAF: rAF para em aba de fundo).
+  setTimeout(() => {
+    window.scrollTo({ top: ret.y, behavior: 'instant' });
+    _kbSetCursor(_kbDemandEls().find(el => el.dataset.demandId === ret.id));
+  }, 50);
+}
+// Troca de demanda no detalhe sem perder edição pendente sem querer.
+function _detailGo(id) {
+  if (typeof hasUnsavedDetailEdits === 'function' && hasUnsavedDetailEdits()) {
+    showConfirm({
+      title: 'Descartar alterações?',
+      message: 'Você tem alterações pendentes não confirmadas. Se trocar de demanda agora, elas serão perdidas.',
+      okLabel: 'Descartar e trocar',
+      danger: true
+    }).then(ok => { if (ok) { if (typeof discardDetailEdits === 'function') discardDetailEdits(); showDetail(id, { replace: true }); } });
+    return;
+  }
+  showDetail(id, { replace: true });
+}
+function kbMoveDemand(step) {
+  if (currentPage === 'demand-detail') {
+    if (!detailId || !me) return false;
+    const ids = _detailNavIds(), i = ids.indexOf(detailId), to = ids[i + step];
+    if (i < 0 || !to) return false;
+    _detailGo(to);
+    return true;
+  }
+  const els = _kbDemandEls();
+  if (!els.length) return false;
+  const i = els.findIndex(el => el.classList.contains('kb-cursor'));
+  const to = i < 0 ? (step > 0 ? 0 : els.length - 1) : Math.max(0, Math.min(els.length - 1, i + step));
+  _kbSetCursor(els[to]);
+  return true;
+}
+function kbOpenCursor() {
+  if (currentPage === 'demand-detail') return false;
+  const el = _kbDemandEls().find(x => x.classList.contains('kb-cursor'));
+  if (!el) return false;
+  showDetail(el.dataset.demandId);
+  return true;
+}
+
+/* Título da aba: "Tela · reWork" (ou o nome da demanda aberta). Mantém o
+   "(3) " das notificações não lidas que renderNotifBadge põe na frente. */
+function setDocTitle(label) {
+  const unread = (document.title.match(/^\(\d+\+?\)\s*/) || [''])[0];
+  document.title = unread + (label ? label + ' · ' : '') + 'reWork';
 }
 /* Comentário que acabou de chegar (meu ou de outra pessoa via SSE) entra
    com destaque. Compara com os ids do render anterior da MESMA demanda e
@@ -22947,6 +23261,7 @@ setInterval(() => {
 let _detailPrevSeen = null; // { id, prev, dismissed }
 async function _markDemandSeen(id) {
   try {
+    _demandSeen[id] = new Date().toISOString(); // apaga o ponto de novidade na lista já
     const { prev } = await api('/demands/' + id + '/seen', 'POST');
     if (detailId !== id) return;
     _detailPrevSeen = { id, prev, dismissed: false };
@@ -23035,7 +23350,7 @@ function _applyNewSinceMarks() {
   box.id = 'dd-news';
   box.className = 'dd-news';
   box.innerHTML = `<i data-lucide="sparkles" class="ic-sm"></i>
-    <span class="dd-news-text">Desde sua última visita (${esc(fmtRelativeTime(s.prev))}): ${parts.join(' · ')}</span>
+    <span class="dd-news-text">Desde sua última visita (${relTimeHTML(s.prev)}): ${parts.join(' · ')}</span>
     <button type="button" class="qr-del dd-news-close" title="Dispensar" onclick="_dismissNewSince()"><i data-lucide="x" class="ic-xs"></i></button>`;
   ribbon.insertAdjacentElement('afterend', box);
   paintIcons(box);
@@ -23082,7 +23397,7 @@ function _dashMentionRowHtml(m) {
     <div class="dash-mention-av">${avatarHTML(u, 'avatar avatar-sm').replace(/data-user-id="[^"]+"/, '')}</div>
     <div class="dash-blocked-body">
       <div class="dash-blocked-name">${esc(u?.name || '—')}${via}<span class="dash-mention-text"> — ${esc(m.preview || 'anexo')}</span></div>
-      <div class="dash-blocked-meta">${esc(m.demandName)}${m.client ? ' · ' + esc(m.client) : ''} · ${esc(fmtRelativeTime(m.createdAt))}</div>
+      <div class="dash-blocked-meta">${esc(m.demandName)}${m.client ? ' · ' + esc(m.client) : ''} · ${relTimeHTML(m.createdAt)}</div>
     </div>
     <button type="button" class="btn btn-ghost btn-sm dash-gap-btn" onclick="event.stopPropagation(); openPendingMention('${esc(m.key)}')">Responder</button>
     <button type="button" class="qr-del dash-gap-dismiss" title="Não precisa responder" onclick="event.stopPropagation(); dismissPendingMention('${esc(m.key)}')"><i data-lucide="x" class="ic-xs"></i></button>
@@ -23151,7 +23466,7 @@ function _dashTimeGapRowHtml(g) {
     <div class="dash-gap-icon"><i data-lucide="clock-alert" class="ic-sm"></i></div>
     <div class="dash-blocked-body">
       <div class="dash-blocked-name">${esc(g.demandName)}</div>
-      <div class="dash-blocked-meta">${esc(g.stageLabel)} · entregue ${esc(fmtRelativeTime(g.deliveredAt))}${g.client ? ' · ' + esc(g.client) : ''}</div>
+      <div class="dash-blocked-meta">${esc(g.stageLabel)} · entregue ${relTimeHTML(g.deliveredAt)}${g.client ? ' · ' + esc(g.client) : ''}</div>
     </div>
     <button type="button" class="btn btn-ghost btn-sm dash-gap-btn" onclick="event.stopPropagation(); apontarTimeGap('${esc(g.key)}')">Apontar</button>
     <button type="button" class="qr-del dash-gap-dismiss" title="Não precisa apontar" onclick="event.stopPropagation(); dismissTimeGap('${esc(g.key)}')"><i data-lucide="x" class="ic-xs"></i></button>
@@ -32320,8 +32635,8 @@ function renderInvites() {
       : (inv.workspaces || []).map(id => wsById(id)).filter(Boolean).map(w => `<span class="pill pill-muted" style="font-size:10px">${esc(w.name)}</span>`).join(' ') || '—';
     const by = inv.invitedByName ? ` por ${esc(String(inv.invitedByName).split(' ')[0])}` : '';
     const sent = inv.lastSentAt
-      ? `Enviado ${fmtRelativeTime(inv.lastSentAt)}${by}`
-      : `Criado ${fmtRelativeTime(inv.createdAt)}${by} <span class="inv-nomail">· e-mail não enviado</span>`;
+      ? `Enviado ${relTimeHTML(inv.lastSentAt)}${by}`
+      : `Criado ${relTimeHTML(inv.createdAt)}${by} <span class="inv-nomail">· e-mail não enviado</span>`;
     const status = expired
       ? '<span class="inv-status is-expired">Vencido</span>'
       : `<span class="inv-status">${days <= 1 ? 'Vence hoje' : `Vence em ${days} dias`}</span>`;
@@ -33903,7 +34218,7 @@ async function renderLinkedDocs(kind, id) {
       <span class="linked-doc-title">${esc(d.title || 'Sem título')}</span>
       ${proj ? `<span class="linked-doc-meta">${esc(proj.name)}</span>` : ''}
       ${ap ? `<span class="linked-doc-badge ${ap[1]}">${ap[0]}</span>` : ''}
-      <span class="linked-doc-date">${esc(fmtRelativeTime(d.updatedAt))}</span>
+      <span class="linked-doc-date">${relTimeHTML(d.updatedAt)}</span>
     </a>`;
   }).join('');
 }
@@ -33974,6 +34289,12 @@ function notifAvatarHTML(n) {
      1-11 meses → "X meses"
      ≥1 ano → "X anos"
    Corners: valor futuro cai em "agora" (relógio dessincronizado). */
+/* Tempo relativo ("há 3 dias") com a data e hora exatas no hover. text troca o
+   texto padrão (fmtRelativeTime) quando a tela usa outro formato. */
+function relTimeHTML(iso, text) {
+  if (!iso) return esc(text || '');
+  return `<time datetime="${esc(iso)}" title="${esc(fmtDateTime(iso))}">${esc(text ?? fmtRelativeTime(iso))}</time>`;
+}
 function fmtRelativeTime(iso) {
   if (!iso) return '';
   const diffSec = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
@@ -33994,6 +34315,9 @@ function fmtRelativeTime(iso) {
 
 function renderNotifList() {
   const list = notifications.slice(0, 50);
+  // Sem notificação, as ações do topo não têm o que fazer: somem.
+  const acts = document.querySelector('#notif-panel .notif-panel-actions');
+  if (acts) acts.hidden = !list.length;
   if (!list.length) {
     $('notif-list').innerHTML = '<div class="notif-empty">Nenhuma notificação por enquanto.</div>';
     return;
@@ -34008,7 +34332,7 @@ function renderNotifList() {
       ${notifAvatarHTML(n)}
       <div class="notif-body">
         <div class="notif-text">${notifMessage(n)}</div>
-        <div class="notif-time">${fmtRelativeTime(n.createdAt)}</div>
+        <div class="notif-time">${relTimeHTML(n.createdAt)}</div>
       </div>
     </div>`;
   }).join('');
@@ -42221,7 +42545,7 @@ function trashRowHTML(type, it) {
   if (it.clientName) ctxBits.push(esc(it.clientName));
   if (it.projectName) ctxBits.push(esc(it.projectName));
   if (it.workspaceName) ctxBits.push(esc(it.workspaceName));
-  const meta = [`Excluído ${fmtRelativeTime(it.deletedAt)}${who}`].concat(ctxBits).join(' · ');
+  const meta = [`Excluído ${relTimeHTML(it.deletedAt)}${who}`].concat(ctxBits).join(' · ');
   const left = trashTimeLeft(it.purgeAt);
   return `<div class="trash-item">
     <div class="trash-item-main">

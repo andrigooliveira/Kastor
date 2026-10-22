@@ -6026,5 +6026,15 @@
 "Este dispositivo já foi desconectado.": "This device was already disconnected.",
 "Para sair deste dispositivo, use Sair da conta.": "To sign out of this device, use Sign out.",
 "Não foi possível gerar o QR Code. Tente de novo.": "Couldn't create the QR code. Try again.",
-"Esta conta não pode entrar agora.": "This account can't sign in right now."
+"Esta conta não pode entrar agora.": "This account can't sign in right now.",
+"Próxima demanda (lista ou detalhe)": "Next task (list or detail)",
+"Demanda anterior (lista ou detalhe)": "Previous task (list or detail)",
+"Abrir a demanda marcada na lista": "Open the highlighted task",
+"Status: Focado por 1h": "Status: Focused for 1h",
+"Status: Focado até o fim do dia": "Status: Focused until end of day",
+"Status: Em reunião por 1h": "Status: In a meeting for 1h",
+"Limpar meu status": "Clear my status",
+"Você tem alterações pendentes não confirmadas. Se trocar de demanda agora, elas serão perdidas.": "You have unconfirmed pending changes. If you switch tasks now, they'll be lost.",
+"Descartar e trocar": "Discard and switch",
+"Posição em {0}": "Position in {0}"
 });
