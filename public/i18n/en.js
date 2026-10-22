@@ -861,7 +861,7 @@
 "Modo escuro": "Dark mode",
 "Densidade: compacta (clique p/ confortável)": "Density: compact (click for comfortable)",
 "Densidade: confortável (clique p/ compacta)": "Density: comfortable (click for compact)",
-"Nova versão disponível.": "New version available.",
+"Nova versão disponível": "New version available",
 "Recarregue pra aplicar as atualizações.": "Reload to apply the updates.",
 "Recarregar": "Reload",
 "Dispensar": "Dismiss",

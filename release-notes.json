@@ -1,5 +1,14 @@
 [
   {
+    "id": "2026-10-22-aviso-nova-versao",
+    "date": "2026-10-22",
+    "title": "Aviso de nova versão no mesmo estilo dos outros avisos",
+    "highlights": [
+      "Quando sai uma atualização do reWork, o aviso no canto da tela agora tem a mesma cara das outras notificações, com o ícone de informação e o botão Recarregar.",
+      "O aviso continua na tela até você recarregar ou fechar no X, para não perder a atualização."
+    ]
+  },
+  {
     "id": "2026-10-22-entregas",
     "date": "2026-10-22",
     "title": "Calendário das suas entregas no Início",

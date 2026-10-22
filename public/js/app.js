@@ -2245,9 +2245,10 @@ const TOAST_ICONS = {
   warn:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>',
   info:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>',
 };
-function toast(msg, type = 'success', action = null) {
+// opts.persistent: não some sozinho (sem timer nem barra) e ganha um X pra dispensar.
+function toast(msg, type = 'success', action = null, opts = {}) {
   const t = document.createElement('div');
-  t.className = 'toast toast-' + type;
+  t.className = 'toast toast-' + type + (opts.persistent ? ' toast-persistent' : '');
   // Success ganha o disco com checkmark que se desenha (SVG path com dasharray).
   // Os demais tipos ganham um ícone estático colorido conforme a severidade.
   if (type === 'success' || type === 'celebrate') {
@@ -2285,6 +2286,18 @@ function toast(msg, type = 'success', action = null) {
       dismissToast(t);
     });
     t.appendChild(btn);
+  }
+  if (opts.persistent) {
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'toast-close';
+    close.title = 'Dispensar';
+    close.setAttribute('aria-label', 'Dispensar');
+    close.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+    close.addEventListener('click', e => { e.stopPropagation(); dismissToast(t); });
+    t.appendChild(close);
+    $('toast-container').appendChild(t);
+    return t;
   }
   // Sincroniza a barra de progresso da base do toast com o timeout real.
   const durationMs = hasAction ? 6000 : type === 'celebrate' ? 5000 : 3500;
@@ -4577,15 +4590,8 @@ async function _checkBuildVersion() {
 function _showUpdateBanner() {
   if (_updateBannerShown) return;
   _updateBannerShown = true;
-  const el = document.createElement('div');
-  el.className = 'app-update-banner';
-  el.innerHTML = `
-    <span><strong>Nova versão disponível.</strong> Recarregue pra aplicar as atualizações.</span>
-    <button type="button" class="btn btn-primary btn-sm" onclick="location.reload(true)">Recarregar</button>
-    <button type="button" class="app-update-close" title="Dispensar" onclick="this.parentElement.remove()"><i data-lucide="x" class="ic-sm"></i></button>
-  `;
-  document.body.appendChild(el);
-  if (window.lucide?.createIcons) lucide.createIcons();
+  toast({ title: 'Nova versão disponível', sub: 'Recarregue pra aplicar as atualizações.' }, 'info',
+    { label: 'Recarregar', fn() { location.reload(); } }, { persistent: true });
 }
 
 async function boot() {
