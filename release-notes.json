@@ -9,6 +9,7 @@
       "O prazo da etapa mostra a distância de hoje (\"há 2 dias\" em vermelho, \"hoje\", \"em 3 dias\"), e o tempo na etapa aparece ao lado de \"Etapa 1 de 6\".",
       "Os apontamentos ficaram mais curtos (\"hoje, 10:07–12:07\") e, quando mais de uma pessoa apontou, aparece o total de cada uma.",
       "O briefing virou o botão \"Abrir briefing\", com o site de onde ele vem, e a aba Checklist mostra o progresso (por exemplo, 1/4).",
+      "Links anexados mostram o nome da pasta, do arquivo ou da página no lugar do endereço, quando o link é público. Para links privados do Google Drive, passe o mouse no card e use o lápis para dar um nome.",
       "No celular, a página não rola mais para os lados."
     ]
   },

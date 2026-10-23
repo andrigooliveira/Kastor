@@ -9600,6 +9600,7 @@ app.post('/api/demands', requireAuth, (req, res) => {
   }));
   broadcastChange('demand', 'create', { id: d.id, workspaceId: d.workspaceId, byUserId: req.user.id });
   res.status(201).json(d);
+  resolveLinkNames(d.id);
 });
 
 function getDemand(req, res) {
@@ -9822,6 +9823,7 @@ app.put('/api/demands/:id', requireAuth, (req, res) => {
   }
   broadcastChange('demand', 'update', { id: d.id, workspaceId: d.workspaceId, byUserId: req.user.id });
   res.json(d);
+  if (b.attachments !== undefined) resolveLinkNames(d.id);
 });
 
 /* ── AVISOS DE MUDANÇA DE ETAPA COM ESPERA ──
@@ -9873,6 +9875,79 @@ function fireStageNotify(demandId, entry) {
   if (ownerChanged) fireWebhook('demand.stage_assigned', ctx);
 }
 
+/* Nome de anexo de link: ao anexar, o nome é a própria URL. Em segundo plano o
+   servidor abre a página e troca pelo título (og:title ou <title>) — pasta do
+   Drive, planilha, doc. Arquivo privado do Google cai no login e fica com a URL;
+   aí a pessoa renomeia no card. Redirect é seguido à mão pra checar cada host
+   (SSRF), e só lê o começo do HTML. */
+const LINK_TITLE_SUFFIX_RE = /\s+[-–—|]\s+(Google (Drive|Docs|Documentos|Sheets|Planilhas|Slides|Apresentações|Forms|Formulários)|YouTube|Figma|Notion|Miro|Canva)\s*$/i;
+const _linkTitleCache = new Map(); // url → { title, at }
+function _linkNameIsUrl(a) {
+  return a.kind === 'link' && (a.name === a.url || normalizeUrlSrv(a.name) === a.url);
+}
+async function fetchLinkTitle(rawUrl) {
+  const hit = _linkTitleCache.get(rawUrl);
+  if (hit && Date.now() - hit.at < 6 * 3600 * 1000) return hit.title;
+  let title = null;
+  try {
+    let url = rawUrl, r = null;
+    for (let hop = 0; hop < 4; hop++) {
+      if (!isSafeWebhookUrl(url)) return null;
+      r = await fetchWithTimeout(url, { redirect: 'manual', headers: { 'User-Agent': 'Mozilla/5.0 (reWork link preview)', 'Accept-Language': 'pt-BR,pt;q=0.9' } }, 6000);
+      if (r.status < 300 || r.status >= 400) break;
+      const loc = r.headers.get('location');
+      r = null;
+      if (!loc) break;
+      url = new URL(loc, url).href;
+    }
+    const host = r ? new URL(url).hostname : '';
+    if (r && r.ok && /text\/html/i.test(r.headers.get('content-type') || '') && host !== 'accounts.google.com') {
+      const html = (await r.text()).slice(0, 400000);
+      const og = /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']*)["']/i.exec(html)
+        || /<meta[^>]+content=["']([^"']*)["'][^>]+property=["']og:title["']/i.exec(html);
+      const tag = /<title[^>]*>([^<]*)<\/title>/i.exec(html);
+      const raw = _decodeHtmlEntities((og && og[1]) || (tag && tag[1]) || '').replace(/\s+/g, ' ').trim();
+      const clean = raw.replace(LINK_TITLE_SUFFIX_RE, '').trim();
+      if (clean && !/^(google (drive|docs)|sign in|fazer login|error \d+|meet google drive)/i.test(clean)) title = clean.slice(0, 200);
+    }
+  } catch { title = null; }
+  _linkTitleCache.set(rawUrl, { title, at: Date.now() });
+  return title;
+}
+async function resolveLinkNames(demandId) {
+  const pending = (db.demands.find(x => x.id === demandId)?.attachments || []).filter(_linkNameIsUrl);
+  if (!pending.length) return;
+  const titles = await Promise.all(pending.map(a => fetchLinkTitle(a.url)));
+  // Relê a demanda: pode ter mudado (ou o anexo sumido/renomeado) durante o fetch.
+  const d = db.demands.find(x => x.id === demandId);
+  if (!d) return;
+  let changed = false;
+  pending.forEach((p, i) => {
+    const a = (d.attachments || []).find(x => x.id === p.id);
+    if (a && titles[i] && _linkNameIsUrl(a)) { a.name = titles[i]; changed = true; }
+  });
+  if (!changed) return;
+  saveEntity('demands', d);
+  broadcastChange('demand', 'update', { id: d.id, workspaceId: d.workspaceId });
+}
+// Links anexados antes disto: o card pede uma vez ao abrir a demanda.
+app.post('/api/demands/:id/attachments/resolve-names', requireAuth, async (req, res) => {
+  const d = getDemand(req, res); if (!d) return;
+  await resolveLinkNames(d.id);
+  res.json(db.demands.find(x => x.id === d.id) || d);
+});
+app.patch('/api/demands/:id/attachments/:attId', requireAuth, (req, res) => {
+  const d = getDemand(req, res); if (!d) return;
+  if (req.user.isFreelancer) return res.status(403).json({ error: 'Freelancers não podem alterar anexos' });
+  const att = (d.attachments || []).find(a => a.id === req.params.attId);
+  if (!att) return res.status(404).json({ error: 'Anexo não encontrado' });
+  const name = String(req.body?.name || '').trim().slice(0, 200);
+  att.name = name || (att.kind === 'link' ? att.url : att.name);
+  saveEntity('demands', d);
+  broadcastChange('demand', 'update', { id: d.id, workspaceId: d.workspaceId, byUserId: req.user.id });
+  res.json(d);
+});
+
 /* Anexos um a um. O PUT acima troca a lista INTEIRA pela que o cliente mandou —
    se duas pessoas anexam juntas (ou uma tela está desatualizada), o anexo da
    outra some. Aqui o servidor só acrescenta/remove o item pedido sobre a lista
@@ -9893,6 +9968,7 @@ app.post('/api/demands/:id/attachments', requireAuth, (req, res) => {
   saveEntity('demands', d);
   broadcastChange('demand', 'update', { id: d.id, workspaceId: d.workspaceId, byUserId: req.user.id });
   res.json(d);
+  if (added.some(_linkNameIsUrl)) resolveLinkNames(d.id);
 });
 app.delete('/api/demands/:id/attachments/:attId', requireAuth, (req, res) => {
   const d = getDemand(req, res); if (!d) return;

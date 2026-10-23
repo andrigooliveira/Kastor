@@ -21941,6 +21941,7 @@ function linkThumbInner(url) {
    observer da Galeria (_wireAttCovers) quando o card entra na tela. */
 function renderDemandAttList(list, withDelete) {
   if (!list || !list.length) return '<div class="hours-empty" style="text-align:left">Nenhum arquivo anexado.</div>';
+  if (withDelete) _resolveOldLinkNames(detailId, list);
   const cards = list.map(a => {
     const removeCall = withDelete ? `removeDetailAttachment('${esc(a.id)}')` : `removeFormAttachment('${esc(a.id)}', 'f-attachments-list')`;
     const removeBtn = `<button type="button" class="att-card-act danger" title="Remover" onclick="${removeCall}"><i data-lucide="x" class="ic-sm"></i></button>`;
@@ -21956,7 +21957,7 @@ function renderDemandAttList(list, withDelete) {
       try { host = new URL(url).hostname.replace(/^www\./, ''); } catch {}
       return `<div class="att-gal-tile att-card" data-id="${esc(a.id)}" title="${esc(a.name || a.url)}" onclick="window.open('${esc(url)}', '_blank', 'noopener')">
         <div class="att-gal-thumb att-gal-thumb-icon att-link-thumb">${linkThumbInner(url)}
-          <div ${actionsAttrs}>${removeBtn}</div>
+          <div ${actionsAttrs}>${withDelete ? `<button type="button" class="att-card-act" title="Renomear" onclick="renameDetailAttachment('${esc(a.id)}')"><i data-lucide="pencil" class="ic-sm"></i></button>` : ''}${removeBtn}</div>
         </div>
         <div class="att-gal-tile-body">
           <div class="att-gal-tile-name">${esc(a.name || a.url)}</div>
@@ -23257,6 +23258,28 @@ async function addDetailAttachmentLink() {
     const upd = await api('/demands/' + d.id + '/attachments', 'POST', { attachment: newAtt });
     patchDemand(upd);
     toast('Link adicionado!');
+    renderDetail();
+  } catch (e) { toast(e.message, 'error'); }
+}
+/* Link ainda com a URL no lugar do nome (anexado antes do servidor buscar o
+   título da página): pede uma vez por demanda na sessão. O servidor avisa por
+   SSE quando trocar o nome, e o detalhe repinta sozinho. */
+const _linkNamesAsked = new Set();
+function _resolveOldLinkNames(demandId, list) {
+  if (!demandId || _linkNamesAsked.has(demandId)) return;
+  const urlNamed = list.some(a => a.kind === 'link' && normalizeUrl(a.name || '') === normalizeUrl(a.url || ''));
+  if (!urlNamed) return;
+  _linkNamesAsked.add(demandId);
+  api('/demands/' + demandId + '/attachments/resolve-names', 'POST').catch(() => {});
+}
+async function renameDetailAttachment(id) {
+  const d = demandById(detailId); if (!d) return;
+  const att = (d.attachments || []).find(a => a.id === id); if (!att) return;
+  const name = await showPrompt({ title: 'Renomear anexo', message: 'Nome exibido no card:', defaultValue: att.name || '', placeholder: att.url || '' });
+  if (name == null || name.trim() === (att.name || '')) return;
+  try {
+    const upd = await api('/demands/' + d.id + '/attachments/' + encodeURIComponent(id), 'PATCH', { name: name.trim() });
+    patchDemand(upd);
     renderDetail();
   } catch (e) { toast(e.message, 'error'); }
 }
