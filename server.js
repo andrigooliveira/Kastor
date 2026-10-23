@@ -1319,6 +1319,7 @@ function notify(targetUserId, type, data, triggerUserId, baseUrl) {
     fromUser: triggerUserId || null,
     stageName: data.stageName || null,
     commentText: data.commentText || null,
+    ...(data.commentId ? { commentId: data.commentId } : {}),
     ...(data.emoji ? { emoji: data.emoji } : {}),
     read: false, createdAt: nowISO()
   };
@@ -10962,7 +10963,7 @@ app.post('/api/demands/:id/comment', requireAuth, (req, res) => {
   // Notifica cada usuário mencionado
   const _mentionsBaseUrl = appBaseUrl(req);
   mentions.forEach(mid => {
-    notify(mid, 'mention', { demandId: d.id, demandName: d.name, commentText: plain.slice(0, 120) }, req.user.id, _mentionsBaseUrl);
+    notify(mid, 'mention', { demandId: d.id, demandName: d.name, commentId: c.id, commentText: plain.slice(0, 120) }, req.user.id, _mentionsBaseUrl);
   });
   // Resposta: avisa todo mundo que já participou da thread (autor da raiz +
   // quem respondeu), sem duplicar menção.
@@ -10971,14 +10972,14 @@ app.post('/api/demands/:id/comment', requireAuth, (req, res) => {
     for (const pid of threadParticipants(d, root.id)) {
       if (pid === req.user.id || alreadyNotified.has(pid)) continue;
       alreadyNotified.add(pid);
-      notify(pid, 'thread_reply', { demandId: d.id, demandName: d.name, commentText: plain.slice(0, 120) }, req.user.id, _mentionsBaseUrl);
+      notify(pid, 'thread_reply', { demandId: d.id, demandName: d.name, commentId: c.id, commentText: plain.slice(0, 120) }, req.user.id, _mentionsBaseUrl);
     }
   }
   // Watchers recebem notificação de novo comentário — sem duplicar quem já foi avisado.
   if (Array.isArray(d.watchers) && d.watchers.length) {
     for (const uid of d.watchers) {
       if (uid === req.user.id || uid === d.ownerId || alreadyNotified.has(uid)) continue;
-      notify(uid, 'watch_comment', { demandId: d.id, demandName: d.name, commentText: plain.slice(0, 120) }, req.user.id, _mentionsBaseUrl);
+      notify(uid, 'watch_comment', { demandId: d.id, demandName: d.name, commentId: c.id, commentText: plain.slice(0, 120) }, req.user.id, _mentionsBaseUrl);
     }
   }
   saveEntity('demands', d);
@@ -11043,6 +11044,15 @@ app.delete('/api/demands/:id/comment/:cid', requireAuth, (req, res) => {
     return res.status(403).json({ error: 'Você só pode remover seus próprios comentários' });
   }
   if (c && !c.deleted) addHistory(d, req.user.id, 'comment_removed', { commentId: c.id });
+  // Notificações do comentário saem do sino junto com ele. O texto vai antes
+  // de ser apagado: é por ele que as notificações antigas (sem commentId) casam.
+  if (c && !c.deleted) {
+    const raw = c.format === 'html' ? stripHtmlToText(c.text) : String(c.text || '');
+    const texts = [raw.slice(0, 120), raw.replace(/\s+/g, ' ').trim().slice(0, 140)];
+    store.deleteNotificationsForComments(d.id, [c.id], texts)
+      .then(ids => ids.forEach(id => broadcastToUser(id, 'notification', 'delete')))
+      .catch(err => console.error('[comment] limpar notificações:', err.message));
+  }
   if (c && !c.parentId && d.comments.some(x => x.parentId === c.id)) {
     // Raiz com respostas: vira placeholder pra thread não perder o contexto.
     Object.assign(c, { text: '', mentions: [], attachments: [], reactions: {}, deleted: true, deletedBy: byMod ? 'moderator' : 'author', deletedAt: nowISO() });
@@ -11091,7 +11101,7 @@ app.post('/api/demands/:id/comment/:cid/react', requireAuth, (req, res) => {
     if (Date.now() - last > REACTION_NOTIFY_COOLDOWN_MS) {
       _reactionNotified.set(key, Date.now());
       const plain = (c.format === 'html' ? stripHtmlToText(c.text) : String(c.text || '')).replace(/\s+/g, ' ').trim();
-      notify(c.userId, 'reaction', { demandId: d.id, demandName: d.name, emoji, commentText: plain.slice(0, 140) }, req.user.id, appBaseUrl(req));
+      notify(c.userId, 'reaction', { demandId: d.id, demandName: d.name, emoji, commentId: c.id, commentText: plain.slice(0, 140) }, req.user.id, appBaseUrl(req));
     }
   }
   res.json(d);

@@ -353,6 +353,22 @@ function createStore(config = {}) {
   async function deleteNotificationsForOrg(orgId) {
     await pool.query("DELETE FROM notifications WHERE data->>'orgId' = $1", [orgId]);
   }
+  // Comentário excluído: some com as notificações que nasceram dele. As antigas
+  // (de antes do commentId) casam pela demanda + tipo + trecho do texto.
+  // Retorna os donos afetados, pra atualizar o sino deles na hora.
+  async function deleteNotificationsForComments(demandId, commentIds, legacyTexts = []) {
+    if (!commentIds.length) return [];
+    const r = await pool.query(
+      `DELETE FROM notifications
+       WHERE data->>'commentId' = ANY($1::text[])
+          OR (data->>'commentId' IS NULL AND data->>'demandId' = $2
+              AND data->>'type' IN ('mention', 'thread_reply', 'watch_comment', 'reaction')
+              AND data->>'commentText' = ANY($3::text[]))
+       RETURNING user_id`,
+      [commentIds, demandId, legacyTexts.filter(Boolean)]
+    );
+    return [...new Set(r.rows.map(row => row.user_id))];
+  }
   async function trimNotificationsFor(userId, keep) {
     // Mantém as `keep` notificações mais recentes, apaga o resto.
     await pool.query(
@@ -565,7 +581,7 @@ function createStore(config = {}) {
     upsert, upsertMany, remove, get, listByType, listByWorkspace,
     loadAllToCache, applyBatch,
     insertNotification, listNotificationsFor, markNotificationRead, markNotificationReadIfOwner,
-    markAllNotificationsReadFor, deleteAllNotificationsFor, deleteNotificationsForOrg, trimNotificationsFor,
+    markAllNotificationsReadFor, deleteAllNotificationsFor, deleteNotificationsForOrg, deleteNotificationsForComments, trimNotificationsFor,
     insertReset, getReset, markResetUsed, cleanupResets,
     getKv, setKv,
     authLoadAll, authUpsertCredential, authDeleteCredential,

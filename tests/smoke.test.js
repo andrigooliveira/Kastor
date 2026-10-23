@@ -1032,6 +1032,24 @@ test('Comentários em thread: resposta, aviso pra quem participou e placeholder'
   assert.equal(r.body.comments.find(c => c.id === own.id).deletedBy, 'author');
 });
 
+test('Comentário excluído leva a notificação junto', async () => {
+  const admin = await loginCookie('admin', 'admin123');
+  const eq = await loginCookie('pessoa.equipe', 'senha-forte-1');
+  const boot = (await req('/api/bootstrap', { headers: { Cookie: admin } })).body;
+  const dem = await call('POST', '/api/demands', admin, { name: 'Demanda notif some', projectId: boot.projects[0].id, flowId: boot.flows[0].id });
+  const url = '/api/demands/' + dem.body.id + '/comment';
+  const root = (await call('POST', url, eq, { text: 'Raiz pra notificar' })).body.comments.at(-1);
+  const reply = (await call('POST', url, admin, { text: 'Resposta que vai sumir', parentId: root.id })).body.comments.at(-1);
+  const mine = () => req('/api/notifications', { headers: { Cookie: eq } }).then(r => r.body.filter(n => n.demandId === dem.body.id));
+  let notifs = [];
+  for (let i = 0; i < 20 && !notifs.length; i++) { await new Promise(ok => setTimeout(ok, 50)); notifs = await mine(); }
+  assert.equal(notifs.length, 1);
+  assert.equal(notifs[0].commentId, reply.id, 'notificação guarda o comentário');
+  assert.equal((await call('DELETE', url + '/' + reply.id, admin)).status, 200);
+  for (let i = 0; i < 20 && notifs.length; i++) { await new Promise(ok => setTimeout(ok, 50)); notifs = await mine(); }
+  assert.equal(notifs.length, 0, 'notificação some com o comentário');
+});
+
 test('Organização: ajustes, exportação e quem pode mudar', async () => {
   const admin = await loginCookie('admin', 'admin123');
   const me = (await req('/api/me', { headers: { Cookie: admin } })).body;

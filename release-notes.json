@@ -1,5 +1,14 @@
 [
   {
+    "id": "2026-10-22-notificacao-de-comentario-apagado",
+    "date": "2026-10-22",
+    "title": "Comentário apagado leva a notificação junto",
+    "highlights": [
+      "Quando alguém apaga um comentário, as notificações que ele gerou (menção, resposta na conversa, comentário em demanda que você acompanha e reação) somem do sino de quem recebeu.",
+      "O sino atualiza na hora, sem precisar recarregar a página."
+    ]
+  },
+  {
     "id": "2026-10-22-clientes-performance-dashboards-usuarios",
     "date": "2026-10-22",
     "title": "Clientes, Performance, Dashboards e Usuários mais fáceis de ler",
