@@ -2431,7 +2431,12 @@ let _godmodeOpen = false;
 let _godmodeRefreshTimer = null;
 let _godmodeSelectedId = null;
 let _godmodeOverview = null;
+let _godmodeLoadError = null;
 let _godmodeSearch = '';
+let _godmodeFilter = 'all';                         // all | online | viewing | inactive
+let _godmodeSort = { key: 'activeDemands', dir: -1 }; // tabela "Equipe" da visão geral
+let _godmodeDemTab = 'assigned';                    // assigned | watched | created
+let _godmodeActAll = false;
 
 async function openGodmode() {
   if (_godmodeOpen) return;
@@ -2450,9 +2455,18 @@ async function openGodmode() {
     searchEl.value = _godmodeSearch = '';
     searchEl.oninput = () => { _godmodeSearch = (searchEl.value || '').toLowerCase().trim(); _godmodeRenderList(); };
   }
+  _godmodeFilter = 'all';
+  _godmodeSelectedId = null;
+  // Sem dados ainda: esqueleto na lista e na visão geral, em vez de painel em branco.
+  _godmodeOverview = null;
+  _godmodeLoadError = null;
+  _godmodeRenderHeader();
+  _godmodeRenderFilters();
+  _godmodeRenderList();
+  _godmodeRenderOverview();
   await godmodeRefresh();
   // Auto-refresh de overview a cada 10s enquanto aberto.
-  _godmodeRefreshTimer = setInterval(godmodeRefresh, 10000);
+  if (_godmodeOpen) _godmodeRefreshTimer = setInterval(godmodeRefresh, 10000);
 }
 
 function closeGodmode() {
@@ -2469,65 +2483,174 @@ function closeGodmode() {
   document.removeEventListener('keydown', _godmodeOnKey, true);
   if (_godmodeRefreshTimer) { clearInterval(_godmodeRefreshTimer); _godmodeRefreshTimer = null; }
   _godmodeSelectedId = null;
+  _godmodeSetDetailMode(false);
 }
 
 function _godmodeBackdropClick(ev) {
   if (ev.target && ev.target.id === 'godmode-overlay') closeGodmode();
 }
 function _godmodeOnKey(ev) {
-  if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); closeGodmode(); }
+  if (ev.key !== 'Escape') return;
+  ev.preventDefault(); ev.stopPropagation();
+  // Esc volta do detalhe pra visão geral; na visão geral, fecha.
+  if (_godmodeSelectedId || document.querySelector('#godmode-overlay .gm-body.is-detail')) godmodeBackToOverview();
+  else closeGodmode();
 }
 
 async function godmodeRefresh() {
+  const btn = document.getElementById('gm-refresh-btn');
+  if (btn) btn.classList.add('is-spinning');
   try {
     const r = await api('/admin/godmode/overview');
+    if (!_godmodeOpen) return;
     _godmodeOverview = r;
+    _godmodeLoadError = null;
     _godmodeRenderHeader();
+    _godmodeRenderFilters();
     _godmodeRenderList();
     // Se um user está selecionado, refetch detail também (silencioso).
     if (_godmodeSelectedId) godmodeSelectUser(_godmodeSelectedId, true);
+    else _godmodeRenderOverview();
   } catch (e) {
-    // Fail silencioso — 403 pra não-admin, network drop, etc. Fecha painel.
-    if (e && e._apiKind === 'server' && String(e.message || '').match(/administra/i)) closeGodmode();
+    // 403 pra não-admin fecha o painel; outras falhas aparecem no cabeçalho
+    // (e na lista, se ainda não carregou nada).
+    if (e && e._apiKind === 'server' && String(e.message || '').match(/administra/i)) { closeGodmode(); return; }
+    _godmodeLoadError = (e && e.message) || 'Falha ao carregar';
+    _godmodeRenderHeader();
+    if (!_godmodeOverview) { _godmodeRenderList(); _godmodeRenderOverview(); }
+  } finally {
+    if (btn) btn.classList.remove('is-spinning');
   }
+}
+
+function _godmodeSetDetailMode(on) {
+  const body = document.querySelector('#godmode-overlay .gm-body');
+  if (body) body.classList.toggle('is-detail', !!on);
+}
+
+function _gmRole(u) {
+  return u.isAdmin ? 'Admin' : (u.isModerator ? 'Moderador' : (u.isFreelancer ? 'Freelancer' : (u.role || 'Membro')));
+}
+// Avatar sem o mini-card de contato e sem o ponto de presença por lastSeen:
+// aqui o ponto é o do Godmode (conexão SSE aberta agora).
+function _gmAvatar(u, online, cls = 'avatar') {
+  const html = avatarHTML(u, cls).replace(/ data-user-id="[^"]+"/, '').replace(/ presence-[a-z]+/g, '');
+  return `<span class="gm-ava">${html}<span class="gm-ava-dot${online ? ' is-online' : ''}"></span></span>`;
+}
+function _gmNum(n) {
+  const v = Number(n) || 0;
+  return String(Math.round(v * 10) / 10).replace('.', ',');
 }
 
 function _godmodeRenderHeader() {
   const el = document.getElementById('gm-header-meta');
-  if (!el || !_godmodeOverview) return;
-  const t = _godmodeOverview.totals;
-  el.innerHTML = `<span>${t.online} online</span><span class="gm-header-dot">·</span><span>${t.inDemand} em demanda</span><span class="gm-header-dot">·</span><span>${t.users} total</span>`;
+  if (!el) return;
+  if (_godmodeLoadError) {
+    el.innerHTML = `<span class="gm-live is-error"><i data-lucide="wifi-off" class="gm-ic-xs"></i>Sem conexão${_godmodeOverview ? ' · mostrando os últimos dados' : ''}</span>`;
+    paintIcons(el);
+    return;
+  }
+  if (!_godmodeOverview) { el.innerHTML = '<span class="gm-live">Carregando…</span>'; return; }
+  const at = new Date(_godmodeOverview.generatedAt);
+  const hhmm = Number.isFinite(at.getTime()) ? at.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+  el.innerHTML = `<span class="gm-live is-live" title="Atualiza sozinho a cada 10s"><span class="gm-live-dot"></span>Ao vivo</span>${hhmm ? `<span class="gm-header-time">atualizado às ${esc(hhmm)}</span>` : ''}`;
+}
+
+function _godmodeCounts() {
+  const us = _godmodeOverview ? _godmodeOverview.users : [];
+  return {
+    all: us.length,
+    online: us.filter(u => u.online).length,
+    viewing: us.filter(u => u.viewing).length,
+    inactive: us.filter(u => u.active === false).length
+  };
+}
+const GM_FILTERS = [['all', 'Todos'], ['online', 'Online'], ['viewing', 'Em demanda'], ['inactive', 'Inativos']];
+function _godmodeRenderFilters() {
+  const el = document.getElementById('gm-filters');
+  if (!el) return;
+  const c = _godmodeCounts();
+  el.innerHTML = GM_FILTERS
+    .filter(([k]) => k !== 'inactive' || c.inactive || _godmodeFilter === 'inactive')
+    .map(([k, label]) => `<button type="button" class="gm-chip${_godmodeFilter === k ? ' is-active' : ''}" aria-pressed="${_godmodeFilter === k}" onclick="godmodeSetFilter('${k}')">${label}<span class="gm-chip-n">${_godmodeOverview ? c[k] : '–'}</span></button>`)
+    .join('');
+}
+function godmodeSetFilter(k) {
+  _godmodeFilter = k;
+  _godmodeRenderFilters();
+  _godmodeRenderList();
+}
+function godmodeClearFilters() {
+  const searchEl = document.getElementById('gm-search');
+  if (searchEl) searchEl.value = '';
+  _godmodeSearch = '';
+  godmodeSetFilter('all');
+}
+
+function _godmodeFilteredUsers() {
+  const q = _godmodeSearch;
+  return _godmodeOverview.users.filter(u => {
+    if (_godmodeFilter === 'online' && !u.online) return false;
+    if (_godmodeFilter === 'viewing' && !u.viewing) return false;
+    if (_godmodeFilter === 'inactive' && u.active !== false) return false;
+    if (!q) return true;
+    return [u.name, u.username, u.email, u.role].some(v => (v || '').toLowerCase().includes(q));
+  });
 }
 
 function _godmodeRenderList() {
   const el = document.getElementById('gm-userlist');
-  if (!el || !_godmodeOverview) return;
-  const q = _godmodeSearch;
-  const filtered = _godmodeOverview.users.filter(u => {
-    if (!q) return true;
-    return (u.name || '').toLowerCase().includes(q)
-        || (u.username || '').toLowerCase().includes(q)
-        || (u.email || '').toLowerCase().includes(q)
-        || (u.role || '').toLowerCase().includes(q);
-  });
-  el.innerHTML = filtered.map(u => {
-    const activeCls = u.id === _godmodeSelectedId ? ' is-active' : '';
-    const dotCls = u.online ? 'gm-dot gm-dot--online' : 'gm-dot gm-dot--offline';
-    const rolePart = u.isAdmin ? 'Admin' : (u.isModerator ? 'Moderador' : (u.isFreelancer ? 'Freelancer' : (u.role || 'Membro')));
-    const viewing = u.viewing
-      ? `<div class="gm-user-view">olhando <strong>${esc(u.viewing.demandName)}</strong></div>`
-      : (u.online ? '<div class="gm-user-view gm-user-view--muted">online, sem demanda aberta</div>' : `<div class="gm-user-view gm-user-view--muted">visto ${u.lastSeen ? _gmTimeAgo(u.lastSeen) : 'nunca'}</div>`);
-    return `<button type="button" class="gm-user${activeCls}" onclick="godmodeSelectUser('${esc(u.id)}')">
-      <span class="${dotCls}"></span>
-      <span class="gm-user-avatar">${avatarHTML(u, 'avatar avatar-sm').replace(/data-user-id="[^"]+"/, '')}</span>
-      <span class="gm-user-body">
-        <span class="gm-user-name">${esc(u.name)}${u.tabCount > 1 ? ` <span class="gm-user-tabs" title="${u.tabCount} abas">·${u.tabCount}</span>` : ''}</span>
-        <span class="gm-user-role">${esc(rolePart)}${u.active === false ? ' · <span class="gm-user-inactive">inativo</span>' : ''}</span>
-        ${viewing}
-      </span>
-    </button>`;
-  }).join('') || '<div class="gm-empty">Ninguém bate esse filtro.</div>';
-  paintIcons();
+  if (!el) return;
+  if (!_godmodeOverview) {
+    el.innerHTML = _godmodeLoadError
+      ? `<div class="gm-state"><i data-lucide="wifi-off"></i><p>Não deu pra carregar os usuários.</p><span>${esc(_godmodeLoadError)}</span><button type="button" class="gm-btn" onclick="godmodeRefresh()">Tentar de novo</button></div>`
+      : Array.from({ length: 7 }, () => '<div class="gm-user gm-user--skel" aria-hidden="true"><span class="gm-skel gm-skel--ava"></span><span class="gm-user-body"><span class="gm-skel" style="width:62%"></span><span class="gm-skel" style="width:38%"></span></span></div>').join('');
+    paintIcons(el);
+    return;
+  }
+  const list = _godmodeFilteredUsers();
+  if (!list.length) {
+    el.innerHTML = `<div class="gm-state"><i data-lucide="search-x"></i><p>Ninguém bate esse filtro.</p><button type="button" class="gm-btn" onclick="godmodeClearFilters()">Limpar filtro</button></div>`;
+    paintIcons(el);
+    return;
+  }
+  const online = list.filter(u => u.online);
+  const offline = list.filter(u => !u.online);
+  const group = (title, arr) => arr.length
+    ? `<div class="gm-group-label">${title}<span>${arr.length}</span></div>${arr.map(_godmodeUserRow).join('')}`
+    : '';
+  // No celular a visão geral não cabe ao lado da lista: vira uma entrada no topo.
+  const ovBtn = `<button type="button" class="gm-ov-entry" onclick="godmodeShowOverview()"><i data-lucide="layout-dashboard" class="ic-sm"></i><span>Visão geral da equipe</span><i data-lucide="chevron-right" class="ic-sm"></i></button>`;
+  el.innerHTML = ovBtn + group('Online agora', online) + group('Offline', offline);
+  paintIcons(el);
+}
+function godmodeShowOverview() {
+  _godmodeSelectedId = null;
+  _godmodeRenderList();
+  _godmodeRenderOverview();
+  _godmodeSetDetailMode(true);
+  const main = document.getElementById('gm-main');
+  if (main) main.scrollTop = 0;
+}
+
+function _godmodeUserRow(u) {
+  const s = u.stats || {};
+  const isSel = u.id === _godmodeSelectedId;
+  let sub;
+  if (u.viewing) sub = `<span class="gm-user-sub is-viewing" title="Olhando ${esc(u.viewing.demandName)}"><i data-lucide="eye" class="gm-ic-xs"></i><span>${esc(u.viewing.demandName)}</span></span>`;
+  else if (u.online) sub = `<span class="gm-user-sub">${esc(_gmRole(u))} · online${u.tabCount > 1 ? ` em ${u.tabCount} abas` : ''}</span>`;
+  else sub = `<span class="gm-user-sub">${esc(_gmRole(u))} · visto ${u.lastSeen ? _gmTimeAgo(u.lastSeen) : 'nunca'}</span>`;
+  return `<button type="button" class="gm-user${isSel ? ' is-active' : ''}${u.active === false ? ' is-inactive' : ''}" aria-current="${isSel}" onclick="godmodeSelectUser('${esc(u.id)}')">
+    ${_gmAvatar(u, u.online)}
+    <span class="gm-user-body">
+      <span class="gm-user-name"><span>${esc(u.name)}</span>${u.active === false ? '<span class="gm-tag gm-tag--danger">inativo</span>' : ''}</span>
+      ${sub}
+    </span>
+    <span class="gm-user-meta" title="${s.activeDemands || 0} demandas ativas · ${_gmNum(s.hoursThisWeek)}h apontadas nos últimos 7 dias">
+      <span class="gm-user-meta-n">${s.activeDemands || 0}</span>
+      <span class="gm-user-meta-l">ativas</span>
+    </span>
+  </button>`;
 }
 
 function _gmTimeAgo(iso) {
@@ -2547,29 +2670,172 @@ function _gmTimeAgo(iso) {
 function _gmFmtCycle(ms) {
   if (ms == null || !Number.isFinite(ms) || ms < 0) return '—';
   const hours = ms / (1000 * 60 * 60);
-  if (hours < 48) return (Math.round(hours * 10) / 10) + 'h';
-  const days = hours / 24;
-  return (Math.round(days * 10) / 10) + 'd';
+  if (hours < 48) return _gmNum(hours) + 'h';
+  return _gmNum(hours / 24) + 'd';
+}
+function _gmLateCls(pct) {
+  if (pct == null) return '';
+  return pct >= 50 ? ' is-bad' : (pct >= 25 ? ' is-warn' : '');
+}
+
+/* ── Visão geral (nenhum usuário selecionado) ── */
+const GM_COLS = [
+  { key: 'name', label: 'Pessoa' },
+  { key: 'activeDemands', label: 'Ativas', num: true, title: 'Demandas ativas sob responsabilidade' },
+  { key: 'latePercent', label: 'Atraso', num: true, title: 'Demandas com prazo que atrasaram ou estão vencidas' },
+  { key: 'hoursThisWeek', label: 'Apontadas', num: true, opt2: true, title: 'Horas apontadas nos últimos 7 dias' },
+  { key: 'activeHoursThisWeek', label: 'No app', num: true, opt: true, title: 'Horas com o app aberto nos últimos 7 dias' },
+  { key: 'activityThisWeek', label: 'Ações', num: true, opt: true, title: 'Ações em demandas nos últimos 7 dias' },
+  { key: 'lastSeen', label: 'Visto', title: 'Última vez visto' },
+];
+function godmodeSortBy(key) {
+  if (_godmodeSort.key === key) _godmodeSort.dir *= -1;
+  else _godmodeSort = { key, dir: key === 'name' ? 1 : -1 };
+  _godmodeRenderOverview();
+}
+function _godmodeSortedUsers() {
+  const { key, dir } = _godmodeSort;
+  const val = u => {
+    if (key === 'name') return (u.name || '').toLowerCase();
+    if (key === 'lastSeen') return u.online ? Infinity : (u.lastSeen ? Date.parse(u.lastSeen) : -Infinity);
+    const v = u.stats ? u.stats[key] : null;
+    return v == null ? null : Number(v);
+  };
+  return _godmodeOverview.users.slice().sort((a, b) => {
+    const va = val(a), vb = val(b);
+    if (va === vb) return (a.name || '').localeCompare(b.name || '', 'pt-BR');
+    if (va == null) return 1;   // sem dado vai pro fim nos dois sentidos
+    if (vb == null) return -1;
+    if (typeof va === 'string') return va.localeCompare(vb, 'pt-BR') * dir;
+    return (va < vb ? -1 : 1) * dir;
+  });
+}
+
+function _godmodeRenderOverview() {
+  const el = document.getElementById('gm-main');
+  if (!el) return;
+  _godmodeSetDetailMode(false);
+  if (!_godmodeOverview) {
+    el.innerHTML = _godmodeLoadError
+      ? '<div class="gm-state gm-state--main"><i data-lucide="wifi-off"></i><p>Sem dados por enquanto.</p><span>O painel tenta de novo sozinho a cada 10 segundos.</span></div>'
+      : '<div class="gm-ov" aria-hidden="true"><div class="gm-kpis">' + '<div class="gm-kpi"><span class="gm-skel" style="width:40%;height:20px"></span><span class="gm-skel" style="width:70%"></span></div>'.repeat(4) + '</div><div class="gm-card"><span class="gm-skel" style="width:30%"></span><span class="gm-skel" style="width:80%;margin-top:14px"></span><span class="gm-skel" style="width:65%;margin-top:10px"></span></div></div>';
+    paintIcons(el);
+    return;
+  }
+  const us = _godmodeOverview.users;
+  const c = _godmodeCounts();
+  const sum = k => us.reduce((a, u) => a + (Number(u.stats && u.stats[k]) || 0), 0);
+  const lateUsers = us.filter(u => u.stats && u.stats.lateCount > 0).length;
+  const kpi = (num, label, hint) => `<div class="gm-kpi"><span class="gm-kpi-num">${num}</span><span class="gm-kpi-lbl">${label}</span>${hint ? `<span class="gm-kpi-hint">${hint}</span>` : ''}</div>`;
+
+  const now = us.filter(u => u.online).sort((a, b) => (b.viewing ? 1 : 0) - (a.viewing ? 1 : 0));
+  const nowHtml = now.length
+    ? `<ul class="gm-now">${now.map(u => `<li class="gm-now-row">
+        <button type="button" class="gm-now-who" onclick="godmodeSelectUser('${esc(u.id)}')">${_gmAvatar(u, true)}<span>${esc(u.name)}</span></button>
+        ${u.viewing
+          ? `<span class="gm-now-what"><i data-lucide="eye" class="gm-ic-xs"></i><button type="button" class="gm-jump" onclick="closeGodmode(); showDetail('${esc(u.viewing.demandId)}')">${esc(u.viewing.demandName)}</button></span><span class="gm-now-since">${_gmTimeAgo(u.viewing.since)}</span>`
+          : `<span class="gm-now-what is-muted">sem demanda aberta${u.tabCount > 1 ? ` · ${u.tabCount} abas` : ''}</span><span class="gm-now-since"></span>`}
+      </li>`).join('')}</ul>`
+    : '<p class="gm-muted-line">Ninguém online agora.</p>';
+
+  const sortIc = k => _godmodeSort.key === k ? `<i data-lucide="${_godmodeSort.dir > 0 ? 'arrow-up' : 'arrow-down'}" class="gm-ic-xs"></i>` : '';
+  const head = GM_COLS.map(col => `<th class="${col.num ? 'is-num' : ''}${col.opt ? ' gm-col-opt' : ''}${col.opt2 ? ' gm-col-opt2' : ''}" aria-sort="${_godmodeSort.key === col.key ? (_godmodeSort.dir > 0 ? 'ascending' : 'descending') : 'none'}"><button type="button" onclick="godmodeSortBy('${col.key}')"${col.title ? ` title="${esc(col.title)}"` : ''}>${col.label}${sortIc(col.key)}</button></th>`).join('');
+  const rows = _godmodeSortedUsers().map(u => {
+    const s = u.stats || {};
+    return `<tr onclick="godmodeSelectUser('${esc(u.id)}')"${u.active === false ? ' class="is-inactive"' : ''}>
+      <td><span class="gm-tbl-who">${_gmAvatar(u, u.online)}<span class="gm-tbl-name"><span>${esc(u.name)}</span><small>${esc(_gmRole(u))}</small></span></span></td>
+      <td class="is-num">${s.activeDemands || 0}</td>
+      <td class="is-num${_gmLateCls(s.latePercent)}" title="${s.deadlineCount ? `${s.lateCount} de ${s.deadlineCount} com prazo` : 'Sem demandas com prazo'}">${s.latePercent == null ? '—' : s.latePercent + '%'}</td>
+      <td class="is-num gm-col-opt2">${_gmNum(s.hoursThisWeek)}h</td>
+      <td class="is-num gm-col-opt">${_gmNum(s.activeHoursThisWeek)}h</td>
+      <td class="is-num gm-col-opt">${s.activityThisWeek || 0}</td>
+      <td class="gm-tbl-seen">${u.online ? '<span class="gm-online-txt">agora</span>' : (u.lastSeen ? _gmTimeAgo(u.lastSeen).replace(/^há /, '') : 'nunca')}</td>
+    </tr>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="gm-ov">
+      <div class="gm-detail-bar gm-mobile-only"><button type="button" class="gm-back" onclick="godmodeBackToOverview()"><i data-lucide="chevron-left" class="ic-sm"></i>Pessoas</button></div>
+      <div class="gm-kpis">
+        ${kpi(`${c.online}<small>/${c.all}</small>`, 'Online agora', c.viewing ? `${c.viewing} em demanda` : '')}
+        ${kpi(sum('activeDemands'), 'Demandas ativas', lateUsers ? `${lateUsers} ${lateUsers > 1 ? 'pessoas' : 'pessoa'} com atraso` : 'Ninguém com atraso')}
+        ${kpi(_gmNum(sum('hoursThisWeek')) + 'h', 'Apontadas em 7 dias', `${_gmNum(sum('activeHoursThisWeek'))}h com o app aberto`)}
+        ${kpi(sum('doneThisWeek'), 'Concluídas em 7 dias', `${sum('createdThisMonth')} criadas em 30 dias`)}
+      </div>
+      <section class="gm-card">
+        <div class="gm-card-title">Agora<span>${now.length}</span></div>
+        ${nowHtml}
+      </section>
+      <section class="gm-card gm-card--table">
+        <div class="gm-card-title">Equipe<span>${us.length}</span><em>Clique numa pessoa pra ver o detalhe</em></div>
+        <div class="gm-tbl-wrap"><table class="gm-tbl"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>
+      </section>
+    </div>`;
+  paintIcons(el);
+}
+
+/* ── Detalhe de um usuário ── */
+function godmodeBackToOverview() {
+  _godmodeSelectedId = null;
+  _godmodeRenderList();
+  _godmodeRenderOverview();
+  const main = document.getElementById('gm-main');
+  if (main) main.scrollTop = 0;
+}
+function godmodeSetDemTab(tab) {
+  _godmodeDemTab = tab;
+  document.querySelectorAll('#gm-main [data-gm-tab]').forEach(b => {
+    const on = b.dataset.gmTab === tab;
+    b.classList.toggle('is-active', on);
+    b.setAttribute('aria-selected', on);
+  });
+  document.querySelectorAll('#gm-main [data-gm-pane]').forEach(p => { p.hidden = p.dataset.gmPane !== tab; });
+}
+function godmodeToggleActivity() {
+  _godmodeActAll = !_godmodeActAll;
+  const box = document.querySelector('#gm-main .gm-timeline');
+  if (box) box.classList.toggle('is-all', _godmodeActAll);
+  const btn = document.getElementById('gm-act-more');
+  if (btn) btn.textContent = _godmodeActAll ? 'Mostrar menos' : btn.dataset.more;
 }
 
 async function godmodeSelectUser(userId, silent) {
+  const changed = userId !== _godmodeSelectedId;
   _godmodeSelectedId = userId;
-  if (!silent) _godmodeRenderList(); // repinta active
+  if (changed) { _godmodeDemTab = 'assigned'; _godmodeActAll = false; }
+  if (!silent) {
+    _godmodeRenderList(); // repinta active
+    _godmodeSetDetailMode(true);
+    if (changed) {
+      const main = document.getElementById('gm-main');
+      const u = _godmodeOverview && _godmodeOverview.users.find(x => x.id === userId);
+      if (main) {
+        main.scrollTop = 0;
+        main.innerHTML = `<div class="gm-detail">${_godmodeDetailBar()}${u ? `<header class="gm-detail-head">${_gmAvatar(u, u.online, 'avatar avatar-lg')}<div class="gm-detail-heading"><div class="gm-detail-name">${esc(u.name)}</div><div class="gm-detail-sub">Carregando…</div></div></header>` : ''}</div>`;
+        paintIcons(main);
+      }
+    }
+  }
   try {
     const d = await api('/admin/godmode/user/' + userId);
+    if (!_godmodeOpen || _godmodeSelectedId !== userId) return;
     _godmodeRenderDetail(d);
   } catch (e) {
     if (!silent) toast(e.message || 'Falha ao carregar detalhes', 'error');
   }
 }
 
+function _godmodeDetailBar() {
+  return `<div class="gm-detail-bar"><button type="button" class="gm-back" onclick="godmodeBackToOverview()" title="Voltar (Esc)"><i data-lucide="chevron-left" class="ic-sm"></i><span class="gm-desktop-only">Visão geral</span><span class="gm-mobile-only">Pessoas</span></button></div>`;
+}
+
 function _godmodeRenderDetail(d) {
   const el = document.getElementById('gm-main');
   if (!el || !d) return;
+  _godmodeSetDetailMode(true);
   const u = d.user;
   const p = d.presence;
   const s = d.stats;
-  const rolePart = u.isAdmin ? 'Admin' : (u.isModerator ? 'Moderador' : (u.isFreelancer ? 'Freelancer' : (u.role || 'Membro')));
   const contactRow = (label, value, href) => value
     ? `<div class="gm-contact-row"><span class="gm-contact-label">${esc(label)}</span>${href ? `<a class="gm-contact-value" href="${esc(href)}">${esc(value)}</a>` : `<span class="gm-contact-value">${esc(value)}</span>`}</div>`
     : '';
@@ -2577,69 +2843,127 @@ function _godmodeRenderDetail(d) {
     const w = (typeof workspaces !== 'undefined' && Array.isArray(workspaces)) ? workspaces.find(x => x.id === id) : null;
     return w ? w.name : id;
   });
-  const activityHtml = (d.recentActivity || []).map(ev => {
-    const time = _gmTimeAgo(ev.at);
-    let label = '';
-    if (ev.kind === 'comment') label = `comentou em <strong>${esc(ev.demandName)}</strong>${ev.preview ? `<span class="gm-act-preview">"${esc(ev.preview)}"</span>` : ''}`;
-    else if (ev.kind === 'time') label = `apontou <strong>${Number(ev.hours) || 0}h</strong> em <strong>${esc(ev.demandName)}</strong>${ev.note ? `<span class="gm-act-preview">"${esc(ev.note)}"</span>` : ''}`;
-    else label = `${esc(ev.action || 'ação')} em <strong>${esc(ev.demandName)}</strong>`;
-    return `<div class="gm-act-item">
-      <span class="gm-act-time">${esc(time)}</span>
-      <span class="gm-act-body">${label}</span>
-    </div>`;
-  }).join('') || '<div class="gm-empty">Sem atividade registrada.</div>';
-  const assignedHtml = (d.assignedDemands || []).length
-    ? `<ul class="gm-list">${d.assignedDemands.map(x => `<li class="gm-list-item"><button class="gm-jump" onclick="closeGodmode(); showDetail('${esc(x.id)}')">${esc(x.name)}</button>${x.deadline ? `<span class="gm-list-meta">prazo ${esc(fmtDate(x.deadline))}</span>` : ''}</li>`).join('')}</ul>`
-    : '<div class="gm-empty">Nenhuma demanda ativa atribuída.</div>';
-  el.innerHTML = `
-    <div class="gm-detail">
-      <div class="gm-detail-head">
-        ${avatarHTML(u, 'avatar avatar-lg').replace(/data-user-id="[^"]+"/, '')}
-        <div class="gm-detail-heading">
-          <div class="gm-detail-name">${esc(u.name)} <span class="gm-detail-user">@${esc(u.username)}</span></div>
-          <div class="gm-detail-sub">${esc(rolePart)} · ${wsNames.length ? esc(wsNames.join(', ')) : 'sem equipe'}${u.active === false ? ' · <span class="gm-user-inactive">inativo</span>' : ''}</div>
-          <div class="gm-detail-state">
-            <span class="gm-dot ${p.online ? 'gm-dot--online' : 'gm-dot--offline'}"></span>
-            ${p.online ? `${p.tabCount} ${p.tabCount > 1 ? 'abas abertas' : 'aba aberta'}` : `offline · visto ${_gmTimeAgo(u.lastSeen)}`}
-            ${p.viewing ? ` · olhando <button class="gm-jump" onclick="closeGodmode(); showDetail('${esc(p.viewing.demandId)}')">${esc(p.viewing.demandName)}</button> desde ${_gmTimeAgo(p.viewing.since)}` : ''}
-          </div>
-        </div>
-      </div>
 
-      <div class="gm-stats">
-        <div class="gm-stat"><span class="gm-stat-num">${s.activeDemands}</span><span class="gm-stat-lbl">Demandas ativas</span></div>
-        <div class="gm-stat"><span class="gm-stat-num">${s.hoursThisWeek}h</span><span class="gm-stat-lbl">Horas apontadas / semana</span></div>
-        <div class="gm-stat"><span class="gm-stat-num">${s.activeHoursThisWeek}h</span><span class="gm-stat-lbl">Horas ativo / semana</span></div>
-        <div class="gm-stat"><span class="gm-stat-num">${s.commentsThisMonth}</span><span class="gm-stat-lbl">Comentários / mês</span></div>
-        <div class="gm-stat"><span class="gm-stat-num">${s.activityThisWeek}</span><span class="gm-stat-lbl">Ações / semana</span></div>
-        <div class="gm-stat"><span class="gm-stat-num">${s.doneThisWeek}</span><span class="gm-stat-lbl">Concluídas / semana</span></div>
-        <div class="gm-stat"><span class="gm-stat-num">${s.createdThisMonth}</span><span class="gm-stat-lbl">Criadas / mês</span></div>
-        <div class="gm-stat"><span class="gm-stat-num">${_gmFmtCycle(s.avgCycleMs)}</span><span class="gm-stat-lbl">Tempo médio / demanda${s.cycleSampleCount ? ` (n=${s.cycleSampleCount})` : ''}</span></div>
-        <div class="gm-stat"><span class="gm-stat-num">${s.latePercent == null ? '—' : s.latePercent + '%'}</span><span class="gm-stat-lbl">Atraso${s.deadlineCount ? ` (${s.lateCount}/${s.deadlineCount})` : ''}</span></div>
-      </div>
+  const presence = p.online
+    ? `<div class="gm-presence is-online"><span class="gm-live-dot"></span><span>Online agora${p.tabCount > 1 ? ` em ${p.tabCount} abas` : ''}${p.viewing ? ` · olhando <button type="button" class="gm-jump" onclick="closeGodmode(); showDetail('${esc(p.viewing.demandId)}')">${esc(p.viewing.demandName)}</button> ${_gmTimeAgo(p.viewing.since)}` : ' · sem demanda aberta'}</span></div>`
+    : `<div class="gm-presence"><span class="gm-ava-dot"></span><span>Offline · visto ${u.lastSeen ? _gmTimeAgo(u.lastSeen) : 'nunca'}</span></div>`;
 
-      <div class="gm-cols">
-        <section class="gm-col">
-          <div class="gm-col-title">Contato</div>
-          ${contactRow('E-mail', u.email, u.email ? 'mailto:' + u.email : null)}
-          ${contactRow('Telefone', u.phone, u.phone ? 'tel:' + String(u.phone).replace(/[^\d+]/g,'') : null)}
-          ${contactRow('Discord', u.discord || u.discordId, null)}
-          ${contactRow('Google Calendar', u.googleConnected ? 'Conectado' : null, null)}
-          ${contactRow('IPs de acesso conhecidos', u.knownIpCount ? String(u.knownIpCount) : null, null)}
-          ${contactRow('Cadastrado em', u.createdAt ? fmtDateTime(u.createdAt) : null, null)}
-        </section>
-        <section class="gm-col">
-          <div class="gm-col-title">Demandas atribuídas (${(d.assignedDemands || []).length})</div>
-          ${assignedHtml}
-        </section>
-      </div>
-
-      <section class="gm-activity">
-        <div class="gm-col-title">Atividade recente</div>
-        ${activityHtml}
+  const metric = (num, label, cls = '') => `<div class="gm-metric${cls}"><span class="gm-metric-num">${num}</span><span class="gm-metric-lbl">${label}</span></div>`;
+  const groups = `
+    <div class="gm-metric-groups">
+      <section class="gm-mgroup">
+        <div class="gm-mgroup-title"><i data-lucide="layers" class="gm-ic-xs"></i>Carga</div>
+        ${metric(s.activeDemands, 'demandas ativas')}
+        ${metric(s.doneThisWeek, 'concluídas em 7 dias')}
+        ${metric(s.createdThisMonth, 'criadas em 30 dias')}
+      </section>
+      <section class="gm-mgroup">
+        <div class="gm-mgroup-title"><i data-lucide="clock" class="gm-ic-xs"></i>Tempo</div>
+        ${metric(_gmNum(s.hoursThisWeek) + 'h', 'apontadas em 7 dias')}
+        ${metric(_gmNum(s.activeHoursThisWeek) + 'h', 'com o app aberto em 7 dias')}
+        ${metric(_gmFmtCycle(s.avgCycleMs), `por demanda, em média${s.cycleSampleCount ? ` (${s.cycleSampleCount} concluídas)` : ''}`)}
+      </section>
+      <section class="gm-mgroup">
+        <div class="gm-mgroup-title"><i data-lucide="calendar-clock" class="gm-ic-xs"></i>Prazo e ritmo</div>
+        ${metric(s.latePercent == null ? '—' : s.latePercent + '%', s.deadlineCount ? `com atraso (${s.lateCount} de ${s.deadlineCount})` : 'com atraso (sem prazos)', _gmLateCls(s.latePercent))}
+        ${metric(s.commentsThisMonth, 'comentários em 30 dias')}
+        ${metric(s.activityThisWeek, 'ações em 7 dias')}
       </section>
     </div>`;
-  paintIcons();
+
+  // Demandas: atribuídas (prazo mais perto primeiro), acompanhando, criadas.
+  const today = new Date().toISOString().slice(0, 10);
+  const dueOf = x => (x.stageDueDate || x.deadline || '').slice(0, 10);
+  const assigned = (d.assignedDemands || []).slice().sort((a, b) => (dueOf(a) || '9999') < (dueOf(b) || '9999') ? -1 : 1);
+  const jump = x => `<button type="button" class="gm-jump gm-jump--row" onclick="closeGodmode(); showDetail('${esc(x.id)}')">${esc(x.name || '(sem título)')}</button>`;
+  const listOr = (arr, row, empty) => arr.length ? `<ul class="gm-list">${arr.map(row).join('')}</ul>` : `<p class="gm-muted-line">${empty}</p>`;
+  const panes = {
+    assigned: listOr(assigned, x => {
+      const due = dueOf(x);
+      const late = due && due < today;
+      return `<li class="gm-list-item">${jump(x)}${due ? `<span class="gm-list-meta${late ? ' is-bad' : ''}">${late ? 'venceu ' : 'prazo '}${esc(fmtDate(due))}</span>` : '<span class="gm-list-meta">sem prazo</span>'}</li>`;
+    }, 'Nenhuma demanda ativa atribuída.'),
+    watched: listOr(d.watchedDemands || [], x => `<li class="gm-list-item">${jump(x)}</li>`, 'Não acompanha nenhuma demanda.'),
+    created: listOr(d.createdRecent || [], x => `<li class="gm-list-item">${jump(x)}${x.createdAt ? `<span class="gm-list-meta">${esc(_gmTimeAgo(x.createdAt))}</span>` : ''}</li>`, 'Não criou demandas.')
+  };
+  const tabs = [['assigned', 'Atribuídas', assigned.length], ['watched', 'Acompanhando', (d.watchedDemands || []).length], ['created', 'Criadas', (d.createdRecent || []).length]];
+  const demandsCard = `
+    <section class="gm-card">
+      <div class="gm-tabs" role="tablist">${tabs.map(([k, label, n]) => `<button type="button" role="tab" class="gm-tab${_godmodeDemTab === k ? ' is-active' : ''}" aria-selected="${_godmodeDemTab === k}" data-gm-tab="${k}" onclick="godmodeSetDemTab('${k}')">${label}<span>${n}</span></button>`).join('')}</div>
+      ${tabs.map(([k]) => `<div data-gm-pane="${k}"${_godmodeDemTab === k ? '' : ' hidden'}>${panes[k]}</div>`).join('')}
+    </section>`;
+
+  const accountCard = `
+    <section class="gm-card">
+      <div class="gm-card-title">Conta</div>
+      ${contactRow('E-mail', u.email, u.email ? 'mailto:' + u.email : null)}
+      ${contactRow('Telefone', u.phone, u.phone ? 'tel:' + String(u.phone).replace(/[^\d+]/g, '') : null)}
+      ${contactRow('Discord', u.discord || u.discordId, null)}
+      ${contactRow('Equipes', wsNames.length ? wsNames.join(', ') : 'Nenhuma', null)}
+      ${contactRow('Google Agenda', u.googleConnected ? 'Conectado' : 'Não conectado', null)}
+      ${contactRow('IPs conhecidos', String(u.knownIpCount || 0), null)}
+      ${contactRow('Cadastro', u.createdAt ? fmtDateTime(u.createdAt) : null, null)}
+    </section>`;
+
+  // Atividade agrupada por dia.
+  const events = d.recentActivity || [];
+  const dayLabel = iso => {
+    const dt = new Date(iso);
+    if (!Number.isFinite(dt.getTime())) return '—';
+    const k = dt.toDateString();
+    if (k === new Date().toDateString()) return 'Hoje';
+    if (k === new Date(Date.now() - 864e5).toDateString()) return 'Ontem';
+    return dt.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' });
+  };
+  const ICON = { comment: 'message-square', time: 'timer', history: 'pencil' };
+  let lastDay = null;
+  const actHtml = events.map((ev, i) => {
+    const day = dayLabel(ev.at);
+    const dayHead = day !== lastDay ? `<div class="gm-tl-day${i >= 12 ? ' gm-tl-extra' : ''}">${esc(day)}</div>` : '';
+    lastDay = day;
+    let label = '';
+    if (ev.kind === 'comment') label = `Comentou em <strong>${esc(ev.demandName)}</strong>${ev.preview ? `<span class="gm-act-preview">${esc(ev.preview)}</span>` : ''}`;
+    else if (ev.kind === 'time') label = `Apontou <strong>${_gmNum(ev.hours)}h</strong> em <strong>${esc(ev.demandName)}</strong>${ev.note ? `<span class="gm-act-preview">${esc(ev.note)}</span>` : ''}`;
+    else {
+      // Mesmo texto do histórico da demanda ("avançou da etapa X para Y"…).
+      let desc = '';
+      try { desc = describeHistory({ action: ev.action, details: ev.details, userId: _godmodeSelectedId }, demandById(ev.demandId) || { name: ev.demandName }); } catch { desc = esc(ev.action || 'ação'); }
+      desc = desc.charAt(0).toUpperCase() + desc.slice(1);
+      label = ev.action === 'created' ? desc : `${desc} <span class="gm-act-in">em <strong>${esc(ev.demandName)}</strong></span>`;
+    }
+    const dt = new Date(ev.at);
+    const hhmm = Number.isFinite(dt.getTime()) ? dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
+    return `${dayHead}<div class="gm-tl-item${i >= 12 ? ' gm-tl-extra' : ''}">
+      <span class="gm-tl-ic gm-tl-ic--${ev.kind}"><i data-lucide="${ICON[ev.kind] || 'activity'}" class="gm-ic-xs"></i></span>
+      <span class="gm-act-body">${label}</span>
+      <time class="gm-act-time" datetime="${esc(ev.at || '')}" title="${esc(ev.at ? fmtDateTime(ev.at) : '')}">${esc(hhmm)}</time>
+    </div>`;
+  }).join('');
+  const activityCard = `
+    <section class="gm-card">
+      <div class="gm-card-title">Atividade recente<span>${events.length}</span></div>
+      ${events.length ? `<div class="gm-timeline${_godmodeActAll ? ' is-all' : ''}">${actHtml}</div>` : '<p class="gm-muted-line">Sem atividade registrada.</p>'}
+      ${events.length > 12 ? `<button type="button" class="gm-btn gm-btn--ghost" id="gm-act-more" data-more="Mostrar mais ${events.length - 12}" onclick="godmodeToggleActivity()">${_godmodeActAll ? 'Mostrar menos' : `Mostrar mais ${events.length - 12}`}</button>` : ''}
+    </section>`;
+
+  const prevScroll = el.scrollTop;
+  el.innerHTML = `
+    <div class="gm-detail">
+      ${_godmodeDetailBar()}
+      <header class="gm-detail-head">
+        ${_gmAvatar(u, p.online, 'avatar avatar-lg')}
+        <div class="gm-detail-heading">
+          <div class="gm-detail-name">${esc(u.name)}${u.username ? ` <span class="gm-detail-user">@${esc(u.username)}</span>` : ''}${u.active === false ? '<span class="gm-tag gm-tag--danger">inativo</span>' : ''}</div>
+          <div class="gm-detail-sub">${esc(_gmRole(u))}${wsNames.length ? ' · ' + esc(wsNames.join(', ')) : ''}</div>
+        </div>
+      </header>
+      ${presence}
+      ${groups}
+      <div class="gm-cols">${demandsCard}${accountCard}</div>
+      ${activityCard}
+    </div>`;
+  el.scrollTop = prevScroll; // refresh silencioso não pula pro topo
+  paintIcons(el);
 }
 
 /* ─── BUSCA (Ctrl K) ───
@@ -15847,8 +16171,11 @@ function _perfPopulateSquads() {
 function _perfPopulateCampaigns(rows) {
   const sel = $('perf-campaign');
   if (!sel) return;
+  // Sem cliente o filtro de campanha some (não fica um campo desabilitado ocupando espaço).
+  const wrap = $('perf-campaign-wrap');
+  if (wrap) wrap.hidden = !_perfState.clientId;
   if (!_perfState.clientId) {
-    sel.innerHTML = '<option value="">— Selecione um cliente primeiro</option>';
+    sel.innerHTML = '<option value="">Todas as campanhas</option>';
     sel.disabled = true;
     _perfState.campaign = '';
     _perfSaveClient();
@@ -15862,7 +16189,7 @@ function _perfPopulateCampaigns(rows) {
   const selected = stillValid ? prev : '';
   _perfState.campaign = selected;
   _perfSaveClient();
-  const allOpt = `<option value="" ${!selected ? 'selected' : ''}>— Todas as campanhas</option>`;
+  const allOpt = `<option value="" ${!selected ? 'selected' : ''}>Todas as campanhas</option>`;
   sel.innerHTML = allOpt + distinct.map(c => `<option value="${esc(c)}" ${c === selected ? 'selected' : ''}>${esc(c)}</option>`).join('');
   applyFilterDropdown('perf-campaign');
 }
@@ -15888,7 +16215,7 @@ function _perfPopulatePlatforms(rows) {
   const selected = stillValid ? prev : '';
   _perfState.platform = selected;
   _perfSaveClient();
-  const allOpt = `<option value="" ${!selected ? 'selected' : ''}>— Todas as plataformas</option>`;
+  const allOpt = `<option value="" ${!selected ? 'selected' : ''}>Todas as plataformas</option>`;
   sel.innerHTML = allOpt + distinct.map(p => `<option value="${esc(p)}" ${p === selected ? 'selected' : ''}>${esc(p)}</option>`).join('');
   applyFilterDropdown('perf-platform');
 }
@@ -15917,7 +16244,7 @@ function _perfPopulateClients(overrideId) {
   const selected = stillValid ? prev : '';
   _perfState.clientId = selected;
   _perfSaveClient();
-  const allOpt = `<option value="" ${!selected ? 'selected' : ''}>— Todos os clientes da equipe</option>`;
+  const allOpt = `<option value="" ${!selected ? 'selected' : ''}>Todos os clientes</option>`;
   sel.innerHTML = allOpt + accessible.map(c => `<option value="${esc(c.id)}" ${c.id === selected ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
   applyFilterDropdown('perf-client', { clientIcon: true });
 }
@@ -15947,9 +16274,11 @@ async function renderPerformance() {
   const nameEl = $('perf-client-name');
   if (nameEl) {
     if (client) nameEl.textContent = client.name;
-    else if (ws) nameEl.textContent = `Equipe ${ws.name} — todos os clientes`;
+    else if (ws) nameEl.textContent = 'Todos os clientes';
     else nameEl.textContent = 'Selecione uma equipe';
   }
+  const subEl = $('perf-scope-sub');
+  if (subEl) subEl.textContent = ws ? `Mídia e leads · equipe ${ws.name}` : 'Mídia e geração de leads';
   // Config: só faz sentido pra admin E com cliente específico selecionado
   // (o token é único, mas o clientId no exemplo depende do cliente).
   const cfgBtn = $('perf-config-btn');
@@ -15998,7 +16327,7 @@ async function renderPerformance() {
     _perfUpdateTimestamp(_perfState.updatedAt);
     if (!curRows.length) {
       if (client) body.innerHTML = _perfRenderEmptyOrConfig(client);
-      else body.innerHTML = `<div class="perf-empty"><i data-lucide="inbox" class="ic-lg"></i><div>Sem dados nesse período${plat ? ` pra plataforma ${esc(plat)}` : ` pra ${esc(ws?.name || 'essa equipe')}`}.</div><div class="perf-empty-hint">${plat ? 'Ajuste o filtro de plataforma ou o período.' : 'Nenhum cliente da equipe recebeu snapshots no intervalo.'}</div></div>`;
+      else body.innerHTML = _perfTeamEmpty(ws, plat);
       if (window.lucide?.createIcons) lucide.createIcons();
       return;
     }
@@ -16008,6 +16337,37 @@ async function renderPerformance() {
     if (window.lucide?.createIcons) lucide.createIcons();
   }
 }
+/* Escolhe um cliente a partir do corpo da página (vazio da equipe, ranking por cliente). */
+function _perfPickClient(id) {
+  const sel = $('perf-client');
+  if (!sel) return;
+  sel.value = id;
+  _perfState.platform = '';
+  _perfState.campaign = '';
+  renderPerformance();
+  window.scrollTo?.({ top: 0, behavior: 'smooth' });
+}
+/* Equipe sem dados no período: diz por quê e oferece os clientes da equipe
+   (escolhendo um, admin/moderador vê o passo a passo do webhook). */
+function _perfTeamEmpty(ws, plat) {
+  if (plat) {
+    return `<div class="perf-empty"><i data-lucide="inbox" class="ic-lg"></i>
+      <div class="perf-empty-title">Sem dados de ${esc(plat)} nesse período</div>
+      <div class="perf-empty-hint">Troque a plataforma ou aumente o período.</div></div>`;
+  }
+  const list = (clients || []).filter(c => c.active !== false && c.workspaceId === ws?.id)
+    .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  const staff = me?.isAdmin || me?.isModerator;
+  const chips = list.length
+    ? `<div class="perf-empty-chips">${list.slice(0, 12).map(c => `<button type="button" class="perf-chip" onclick="_perfPickClient('${esc(c.id)}')">${clientAvatarHTML(c, 'avatar avatar-xs')}<span>${esc(c.name)}</span></button>`).join('')}${list.length > 12 ? `<span class="perf-empty-more">+${list.length - 12}</span>` : ''}</div>`
+    : '';
+  return `<div class="perf-empty">
+    <i data-lucide="bar-chart-3" class="ic-lg"></i>
+    <div class="perf-empty-title">Nenhum cliente da equipe ${esc(ws?.name || '')} mandou dados nesse período</div>
+    <div class="perf-empty-hint">Os números chegam por webhook (n8n), um envio por dia por campanha.${list.length ? (staff ? ' Escolha um cliente pra ver como configurar o envio dele.' : ' Escolha um cliente pra ver o histórico dele.') : ' A equipe ainda não tem clientes ativos.'}</div>
+    ${chips}
+  </div>`;
+}
 function _perfUpdateTimestamp(date) {
   const el = $('perf-updated-at');
   if (!el) return;
@@ -16015,7 +16375,8 @@ function _perfUpdateTimestamp(date) {
   const hh = String(date.getHours()).padStart(2, '0');
   const mm = String(date.getMinutes()).padStart(2, '0');
   const ss = String(date.getSeconds()).padStart(2, '0');
-  el.textContent = `Atualizado às ${hh}:${mm}:${ss}`;
+  el.textContent = `atualizado às ${hh}:${mm}`;
+  el.title = `Atualizado às ${hh}:${mm}:${ss}`;
 }
 /* Empty state / config panel. Admin ou moderador vê instruções + token;
    demais vêem só mensagem de "sem dados". */
@@ -16359,8 +16720,12 @@ function _perfRender(host, curRows, prevRows) {
   const series = _perfSeriesByDate(curRows);
   // renderPerformance já trata caso curRows.length === 0 (mostra config ou empty).
   // Este render é chamado só quando há dados.
+  // Visão da equipe inteira: ranking por cliente antes dos gráficos por campanha.
+  const byClient = !_perfState.clientId ? _perfRenderByClient(curRows, prevRows) : '';
   host.innerHTML = `
     <div class="perf-kpi-line">${_perfRenderKpis(cur, prev)}</div>
+    ${_perfRenderAlerts(curRows)}
+    ${byClient}
     <div class="perf-sections-grid">
       <div class="perf-section">
         <div class="perf-section-head">
@@ -16391,7 +16756,6 @@ function _perfRender(host, curRows, prevRows) {
         <div class="perf-section-body">${_perfRenderTimeSeries(series)}</div>
       </div>
     </div>
-    ${_perfRenderAlerts(curRows)}
     <div class="perf-section perf-section--table">
       <div class="perf-section-head">
         <span class="perf-section-title">Resumo detalhado por campanha</span>
@@ -16412,25 +16776,77 @@ function _perfRenderKpis(cur, prev) {
     { icon: 'target',    label: 'Taxa de Conversão',   value: _perfFmtPct(cur.conv),         raw: cur.conv,         prev: prev.conv,         fmt: v => _perfFmtPct(v),        pp: true }
   ];
   return kpis.map(k => {
-    const hasPrev = prev && (Number(k.prev) || 0) > 0;
-    const diff = (Number(k.raw) || 0) - (Number(k.prev) || 0);
-    // Direção do delta — invertida pra métricas onde "menos é melhor" (CPL).
-    const rawDir = Math.abs(diff) < 1e-9 ? 'flat' : (diff > 0 ? 'up' : 'down');
-    const good = k.invert ? (rawDir === 'down') : (rawDir === 'up');
-    const dir = rawDir === 'flat' ? 'flat' : (good ? 'up' : 'down');
-    const arrow = dir === 'up' ? '↑' : dir === 'down' ? '↓' : '·';
-    const deltaTxt = hasPrev ? `${arrow} ${k.fmt(Math.abs(diff))}` : '—';
+    const d = _perfDelta(k.raw, k.prev, { invert: k.invert, pp: k.pp });
+    const title = d.has ? `Período anterior: ${k.fmt(Number(k.prev) || 0)}` : 'Sem dados no período anterior';
     return `
-      <div class="perf-kpi-item">
+      <div class="perf-kpi-item" title="${esc(title)}">
         <div class="perf-kpi-label">${esc(k.label)}</div>
         <div class="perf-kpi-value">${k.value}</div>
-        <div class="perf-kpi-delta perf-kpi-delta-${dir}">
-          <span class="perf-kpi-delta-value">${deltaTxt}</span>
+        <div class="perf-kpi-delta perf-kpi-delta-${d.tone}">
+          <span class="perf-kpi-delta-value">${d.text}</span>
           <span class="perf-kpi-delta-caption">vs anterior</span>
         </div>
       </div>
     `;
   }).join('');
+}
+/* Variação contra o período anterior. A seta mostra a direção do número
+   (subiu/caiu); a cor mostra se isso é bom (verde) ou ruim (vermelho) —
+   em CPL, cair é bom. pp: métrica já em % → diferença em pontos (p.p.). */
+function _perfDelta(cur, prev, { invert = false, pp = false } = {}) {
+  const c = Number(cur) || 0, p = Number(prev) || 0;
+  if (p <= 0) return { has: false, text: '—', tone: 'flat' };
+  const diff = pp ? c - p : ((c - p) / p) * 100;
+  if (Math.abs(diff) < (pp ? 0.05 : 0.5)) return { has: true, text: '= estável', tone: 'flat' };
+  const up = diff > 0;
+  const good = invert ? !up : up;
+  const num = Math.abs(diff).toLocaleString(LOCALE, { maximumFractionDigits: 1 });
+  return { has: true, text: `${up ? '↑' : '↓'} ${num}${pp ? ' p.p.' : '%'}`, tone: good ? 'up' : 'down' };
+}
+/* Ranking por cliente (visão da equipe): investimento, leads, CPL e variação
+   de leads, com os alertas críticos de cada um. Clicar abre o cliente. */
+function _perfRenderByClient(curRows, prevRows) {
+  const group = rows => {
+    const m = new Map();
+    for (const r of rows) {
+      let g = m.get(r.clientId);
+      if (!g) { g = { spend: 0, leads: 0, rows: [] }; m.set(r.clientId, g); }
+      g.spend += r.spend || 0; g.leads += r.leads || 0; g.rows.push(r);
+    }
+    return m;
+  };
+  const cur = group(curRows), prev = group(prevRows);
+  if (cur.size < 2) return '';
+  const totalSpend = curRows.reduce((s, r) => s + (r.spend || 0), 0);
+  const list = [...cur.entries()].map(([id, g]) => {
+    const p = prev.get(id) || { spend: 0, leads: 0 };
+    const crit = _perfCollectAlerts(g.rows).filter(a => /[🔻⚠️❗📉]/.test(a.alertStatus || '')).length;
+    return { id, c: clientById(id), spend: g.spend, leads: g.leads, cpl: g.leads > 0 ? g.spend / g.leads : 0, prevLeads: p.leads, prevCpl: p.leads > 0 ? p.spend / p.leads : 0, crit };
+  }).sort((a, b) => b.spend - a.spend);
+  const rows = list.map(x => {
+    const dl = _perfDelta(x.leads, x.prevLeads);
+    const dc = _perfDelta(x.cpl, x.prevCpl, { invert: true });
+    const share = totalSpend > 0 ? (x.spend / totalSpend) * 100 : 0;
+    return `<tr onclick="_perfPickClient('${esc(x.id)}')">
+      <td><span class="perf-bc-who">${clientAvatarHTML(x.c, 'avatar avatar-xs')}<span>${esc(x.c?.name || 'Cliente removido')}</span>${x.crit ? `<span class="perf-bc-alert" title="${x.crit} ${x.crit === 1 ? 'campanha precisa' : 'campanhas precisam'} de atenção"><i data-lucide="alert-triangle" class="ic-xs"></i>${x.crit}</span>` : ''}</span></td>
+      <td class="perf-bc-num"><span class="perf-bc-spend">${_perfFmtBRL(x.spend)}</span><span class="perf-bc-bar"><span style="width:${share.toFixed(1)}%"></span></span></td>
+      <td class="perf-bc-num">${_perfFmtInt(x.leads)} <span class="perf-bc-d perf-kpi-delta-${dl.tone}">${dl.text}</span></td>
+      <td class="perf-bc-num">${x.leads ? _perfFmtBRLexact(x.cpl) : '—'} <span class="perf-bc-d perf-kpi-delta-${dc.tone}">${dc.text}</span></td>
+    </tr>`;
+  }).join('');
+  return `
+    <div class="perf-section perf-section--byclient">
+      <div class="perf-section-head">
+        <span class="perf-section-title">Por cliente</span>
+        <span class="perf-section-hint">Ordenado por investimento · clique pra abrir o cliente.</span>
+      </div>
+      <div class="perf-table-wrap">
+        <table class="perf-bc-table">
+          <thead><tr><th>Cliente</th><th class="perf-bc-num">Investimento</th><th class="perf-bc-num">Leads</th><th class="perf-bc-num">CPL</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
 }
 /* Bar chart horizontal — usado por "Leads por campanha" e "CPL por campanha".
    showShare: se true, mostra % ao lado do valor. Truncated a top 8 campanhas
@@ -16862,7 +17278,7 @@ function _perfPlatLogo(platform) {
 function _perfCollectAlerts(rowsIn) {
   const latest = new Map();
   for (const r of rowsIn) {
-    const key = `${r.platform}::${r.campaign}`;
+    const key = `${r.clientId}::${r.platform}::${r.campaign}`;
     latest.set(key, r); // sobrescreve — fica com o último (mais recente) por chave
   }
   return Array.from(latest.values())
@@ -16878,18 +17294,21 @@ function _perfRenderAlerts(rowsIn) {
   if (!alerts.length) return '';
   const critCount = alerts.filter(a => /[🔻⚠️❗📉]/.test(a.alertStatus || '')).length;
   const openAttr = critCount > 0 ? 'open' : '';
+  // Com crítico, a lista mostra só quem precisa de atenção; as demais viram uma linha.
+  const okCount = alerts.length - critCount;
+  const shown = critCount ? alerts.filter(a => /[🔻⚠️❗📉]/.test(a.alertStatus || '')) : alerts;
   return `
-    <details class="perf-section perf-section--alerts" ${openAttr}>
+    <details class="perf-section perf-section--alerts${critCount ? ' has-crit' : ''}" ${openAttr}>
       <summary class="perf-section-head perf-alerts-summary">
         <span class="perf-section-title perf-alerts-summary-label">
           <i data-lucide="chevron-right" class="ic-sm perf-alerts-chevron"></i>
-          Alertas por campanha
+          ${critCount ? `${critCount} ${critCount === 1 ? 'campanha precisa' : 'campanhas precisam'} de atenção` : 'Alertas: tudo dentro da meta'}
         </span>
-        <span class="perf-alerts-count ${critCount === 0 ? 'is-ok' : ''}">${alerts.length}</span>
+        <span class="perf-alerts-count ${critCount === 0 ? 'is-ok' : ''}" title="${critCount} críticos de ${alerts.length} campanhas">${critCount || alerts.length}</span>
       </summary>
       <div class="perf-section-body">
         <div class="perf-alerts">
-          ${alerts.map(a => {
+          ${shown.map(a => {
             const critical = /[🔻⚠️❗📉]/.test(a.alertStatus || '');
             return `
               <div class="perf-alert ${critical ? 'is-critical' : 'is-ok'}">
@@ -16899,6 +17318,7 @@ function _perfRenderAlerts(rowsIn) {
                 <div class="perf-alert-body">
                   <div class="perf-alert-camp">
                     ${_perfPlatLogo(a.platform)}
+                    ${!_perfState.clientId && a.clientId ? `<span class="perf-alert-client">${esc(clientById(a.clientId)?.name || '')}</span>` : ''}
                     <span title="${esc(a.campaign)}">${esc(a.campaign)}</span>
                   </div>
                   <div class="perf-alert-msg">${_perfFormatAlertText(a.alertAnalysis)}</div>
@@ -16906,6 +17326,7 @@ function _perfRenderAlerts(rowsIn) {
               </div>
             `;
           }).join('')}
+          ${critCount && okCount ? `<div class="perf-alerts-more">+ ${okCount} ${okCount === 1 ? 'campanha dentro' : 'campanhas dentro'} da meta</div>` : ''}
         </div>
       </div>
     </details>
@@ -26596,22 +27017,96 @@ async function deleteWs(id) {
   } catch (e) { toast(e.message, 'error'); }
 }
 
-/* ─── USUÁRIOS (admin) ─── */
+/* ─── USUÁRIOS (admin) ───
+   Abas (Pessoas · Convites · Áreas e cargos), faixa de pendências clicável
+   (sem e-mail, sem equipe, sem acesso há 30 dias, convites vencidos), busca
+   e filtro de permissão. */
+let usersTab = 'people';
+let usersPermFilter = 'all';   // all | admin | mod | member | free
+let usersIssueFilter = '';     // '' | email | noteam | never | idle
+const US_IDLE_DAYS = 30;
+const US_PERM = [['all', 'Todos'], ['admin', 'Admins'], ['mod', 'Moderadores'], ['member', 'Membros'], ['free', 'Freelancers']];
+const US_ISSUE_LABEL = { email: 'sem e-mail confirmado', noteam: 'sem equipe', never: 'que nunca entraram', idle: `sem acessar há mais de ${US_IDLE_DAYS} dias` };
+
+function setUsersTab(tab) {
+  const invTab = $('us-tab-invites');
+  if (tab === 'invites' && invTab?.hidden) tab = 'people';
+  usersTab = tab;
+  document.querySelectorAll('#page-users [data-us-tab]').forEach(b => {
+    const on = b.dataset.usTab === tab;
+    b.classList.toggle('is-active', on);
+    b.setAttribute('aria-selected', on);
+  });
+  document.querySelectorAll('#page-users [data-us-pane]').forEach(p => { p.hidden = p.dataset.usPane !== tab; });
+}
+function setUsersPermFilter(k) { usersPermFilter = k; renderUsers(); }
+function setUsersIssueFilter(k) {
+  usersIssueFilter = usersIssueFilter === k ? '' : k;
+  setUsersTab('people');
+  renderUsers();
+}
+function clearUsersFilters() {
+  const s = $('users-search'); if (s) s.value = '';
+  usersPermFilter = 'all';
+  usersIssueFilter = '';
+  usersWsFilter.clear();
+  renderUsers();
+}
+function _usPermOf(u) {
+  return u.isOwner || u.isAdmin ? 'admin' : u.isModerator ? 'mod' : u.isFreelancer ? 'free' : 'member';
+}
+function _usIdle(u) {
+  if (!u.lastSeen) return false;
+  return Date.now() - Date.parse(u.lastSeen) > US_IDLE_DAYS * 864e5;
+}
+function _usHasIssue(u, k) {
+  if (u.active === false) return false;
+  if (k === 'email') return !u.emailVerified;
+  if (k === 'noteam') return !u.isAdmin && !(u.workspaces || []).length;
+  if (k === 'never') return !u.lastSeen;
+  if (k === 'idle') return _usIdle(u);
+  return false;
+}
+function _usSeen(u) {
+  if (!u.lastSeen) return '<span class="us-seen is-never">Nunca entrou</span>';
+  const pres = presenceClassFor(u);
+  if (pres.includes('presence-online')) return '<span class="us-seen is-online">Online agora</span>';
+  return `<span class="us-seen${_usIdle(u) ? ' is-idle' : ''}">${relTimeHTML(u.lastSeen)}</span>`;
+}
+
+/* Faixa de pendências: só pra quem administra. Cada item filtra a lista (ou abre Convites). */
+function _renderUsersAttention(activeUsers) {
+  const el = $('users-attention');
+  if (!el) return;
+  if (!me?.isAdmin && !me?.isModerator) { el.hidden = true; return; }
+  const items = [];
+  for (const k of ['email', 'noteam', 'never', 'idle']) {
+    const n = activeUsers.filter(u => _usHasIssue(u, k)).length;
+    if (n) items.push(`<button type="button" class="us-att-item${usersIssueFilter === k ? ' is-active' : ''}" onclick="setUsersIssueFilter('${k}')"><b>${n}</b> ${n === 1 ? 'pessoa' : 'pessoas'} ${US_ISSUE_LABEL[k]}</button>`);
+  }
+  const expired = (invites || []).filter(i => i.status === 'expired').length;
+  if (expired) items.push(`<button type="button" class="us-att-item" onclick="setUsersTab('invites')"><b>${expired}</b> ${expired === 1 ? 'convite vencido' : 'convites vencidos'}</button>`);
+  if (!items.length) { el.hidden = true; return; }
+  el.hidden = false;
+  el.innerHTML = `<i data-lucide="alert-circle" class="ic-sm us-att-ic"></i><span class="us-att-label">Pendências</span>${items.join('')}`;
+  paintIcons(el);
+}
+
 function renderUsers() {
   loadInvites();
   const activeUsers = users.filter(u => u.active !== false);
   const archivedUsers = users.filter(u => u.active === false);
+  const permRank = u => u.isOwner ? 0 : u.isAdmin ? 1 : (u.isModerator ? 2 : (u.isFreelancer ? 4 : 3));
   const displayList = (showArchivedUsers ? users : activeUsers).slice().sort((a, b) => {
     let va, vb;
-    if (userSortKey === 'name')     { va = norm(a.name); vb = norm(b.name); }
-    else if (userSortKey === 'username') { va = norm(a.username); vb = norm(b.username); }
-    else if (userSortKey === 'role')     { va = norm(a.role || ''); vb = norm(b.role || ''); }
-    else if (userSortKey === 'position') { va = norm(a.position || ''); vb = norm(b.position || ''); }
-    else if (userSortKey === 'ws')       { va = (a.workspaces || []).length; vb = (b.workspaces || []).length; }
-    else if (userSortKey === 'admin')    { const rank = u => u.isOwner ? 0 : u.isAdmin ? 1 : (u.isModerator ? 2 : (u.isFreelancer ? 4 : 3)); va = rank(a); vb = rank(b); }
-    else if (userSortKey === 'active')   { va = a.active !== false ? 0 : 1; vb = b.active !== false ? 0 : 1; }
+    if (userSortKey === 'name')      { va = norm(a.name); vb = norm(b.name); }
+    else if (userSortKey === 'role') { va = norm((a.role || '~') + ' ' + (a.position || '')); vb = norm((b.role || '~') + ' ' + (b.position || '')); }
+    else if (userSortKey === 'ws')   { va = a.isAdmin ? 999 : (a.workspaces || []).length; vb = b.isAdmin ? 999 : (b.workspaces || []).length; }
+    else if (userSortKey === 'admin') { va = permRank(a); vb = permRank(b); }
+    else if (userSortKey === 'seen') { va = a.lastSeen ? Date.parse(a.lastSeen) : 0; vb = b.lastSeen ? Date.parse(b.lastSeen) : 0; }
     else { va = norm(a.name); vb = norm(b.name); }
-    return (va < vb ? -1 : va > vb ? 1 : 0) * userSortDir;
+    if (va === vb) return norm(a.name).localeCompare(norm(b.name));
+    return (va < vb ? -1 : 1) * userSortDir;
   });
 
   $('user-archive-toggle').textContent = showArchivedUsers ? 'Ocultar desativados' : `Ver desativados (${archivedUsers.length})`;
@@ -26620,34 +27115,51 @@ function renderUsers() {
   // Contadores no header do dossiê (N ativos · N desativados)
   const headerCounter = $('users-header-counter');
   if (headerCounter) {
-    const parts = [`${activeUsers.length} ativos`];
-    if (archivedUsers.length) parts.push(`${archivedUsers.length} desativados`);
-    // Prazo do e-mail: quantas pessoas ativas ainda não confirmaram.
-    const noMail = activeUsers.filter(u => !u.emailVerified).length;
-    if (noMail) parts.push(`${noMail} sem e-mail confirmado`);
-    parts.push(`${roles.length} áreas`);
-    parts.push(`${(positions || []).length} cargos`);
+    const parts = [`${activeUsers.length} ${activeUsers.length === 1 ? 'pessoa ativa' : 'pessoas ativas'}`];
+    if (archivedUsers.length) parts.push(`${archivedUsers.length} ${archivedUsers.length === 1 ? 'desativada' : 'desativadas'}`);
     headerCounter.textContent = parts.join(' · ');
   }
+  const nPeople = $('us-tab-n-people'); if (nPeople) nPeople.textContent = activeUsers.length;
+  const nTax = $('us-tab-n-taxonomy'); if (nTax) nTax.textContent = roles.length + (positions || []).length;
 
+  _renderUsersAttention(activeUsers);
   renderUsersWsFilter();
-  // Filtro por workspace (multi-seleção). Nenhum selecionado = todos. Admins entram
-  // em QUALQUER filtro — transitam todos os workspaces, sem workspace definido.
-  const filteredList = displayList.filter(u => {
-    if (!usersWsFilter.size) return true;
-    if (u.isAdmin) return true;
-    return (u.workspaces || []).some(id => usersWsFilter.has(id));
+
+  // Filtros: busca, permissão, pendência e equipes (admins entram em qualquer equipe).
+  const q = norm(($('users-search')?.value || '').trim());
+  const base = displayList.filter(u => {
+    if (q && ![u.name, u.username, u.email].some(v => norm(v || '').includes(q))) return false;
+    if (usersIssueFilter && !_usHasIssue(u, usersIssueFilter)) return false;
+    if (usersWsFilter.size && !u.isAdmin && !(u.workspaces || []).some(id => usersWsFilter.has(id))) return false;
+    return true;
+  });
+  const permCount = k => k === 'all' ? base.length : base.filter(u => _usPermOf(u) === k).length;
+  const permHost = $('users-perm-filter');
+  if (permHost) {
+    permHost.innerHTML = US_PERM
+      .filter(([k]) => k === 'all' || permCount(k) || usersPermFilter === k)
+      .map(([k, label]) => `<button type="button" class="us-perm-chip${usersPermFilter === k ? ' is-active' : ''}" aria-pressed="${usersPermFilter === k}" onclick="setUsersPermFilter('${k}')">${label}<span>${permCount(k)}</span></button>`)
+      .join('');
+  }
+  const filteredList = base.filter(u => usersPermFilter === 'all' || _usPermOf(u) === usersPermFilter);
+
+  document.querySelectorAll('#page-users [data-us-sort]').forEach(th => {
+    const on = th.dataset.usSort === userSortKey;
+    th.classList.toggle('is-sorted', on);
+    th.setAttribute('aria-sort', on ? (userSortDir > 0 ? 'ascending' : 'descending') : 'none');
   });
 
   if (!filteredList.length) {
-    $('users-table-body').innerHTML = `<tr><td colspan="8">${emptyMini('Nenhum usuário nos workspaces selecionados.')}</td></tr>`;
+    const why = usersIssueFilter ? `Ninguém nessa pendência (${US_ISSUE_LABEL[usersIssueFilter]}) com esses filtros.` : 'Ninguém bate com a busca e os filtros.';
+    $('users-table-body').innerHTML = `<tr><td colspan="6"><div class="us-empty">${esc(why)} <button type="button" class="uws-clear" onclick="clearUsersFilters()">Limpar filtros</button></div></td></tr>`;
     renderRoles(); renderPositions();
+    setUsersTab(usersTab);
     return;
   }
   $('users-table-body').innerHTML = filteredList.map(u => {
     const wsNames = u.isAdmin
-      ? '<span style="color:var(--text-muted);font-size:12px">Todos (admin)</span>'
-      : (u.workspaces || []).map(id => wsById(id)).filter(Boolean).map(w => `<span class="pill pill-muted" style="font-size:10px">${esc(w.name)}</span>`).join(' ') || '—';
+      ? '<span class="us-allws">Todas (admin)</span>'
+      : (u.workspaces || []).map(id => wsById(id)).filter(Boolean).map(w => `<span class="us-ws"><span class="uws-chip-dot" style="background:${esc(w.color || 'var(--accent)')}"></span>${esc(w.name)}</span>`).join('') || '<span class="us-noteam">Sem equipe</span>';
     const kebab = me.isAdmin && (!u.isOwner || me.isOwner) ? _usKebabMenu('user-' + u.id, [
       { icon: 'pencil', label: 'Editar', onclick: `openUserModal('${u.id}')` },
       (u.id !== me.id && !u.isOwner ? (u.active !== false
@@ -26655,29 +27167,35 @@ function renderUsers() {
         : { icon: 'user-check', label: 'Reativar', onclick: `toggleUser('${u.id}')` }) : null),
       (u.id !== me.id && !u.isOwner ? { icon: 'trash-2', label: 'Excluir', danger: true, onclick: `openDeleteAccount('${u.id}')` } : null)
     ].filter(Boolean)) : '';
-    return `<tr class="mrow" style="${u.active === false ? 'opacity:.55' : ''}">
-      <td class="mcol-name">${cellUser(u)}</td>
-      <td style="color:var(--text-dim)">${esc(u.username)}${u.emailVerified
-        ? `<div class="us-email" title="E-mail confirmado">${esc(u.email)}</div>`
-        : `<div class="us-email is-missing" title="${u.email ? 'A pessoa ainda não confirmou o e-mail' : 'A pessoa ainda não vinculou um e-mail'}"><i data-lucide="mail-warning" class="ic-xs"></i>${u.email ? 'Não confirmado' : 'Sem e-mail'}</div>`}</td>
-      <td class="${u.role ? '' : 'is-blank'}"><span class="mlbl">Área</span>${esc(u.role || '—')}</td>
-      <td class="${u.position ? '' : 'is-blank'}"><span class="mlbl">Cargo</span>${esc(u.position || '—')}</td>
-      <td class="mc-ws">${wsNames}</td>
-      <td>${u.isOwner
-        ? '<span class="pill pill-owner">Dono</span>'
-        : u.isAdmin
-        ? '<span class="pill pill-admin">Admin</span>'
-        : (u.isModerator
-          ? '<span class="pill pill-moderator">Moderador</span>'
-          : (u.isFreelancer
-            ? '<span class="pill pill-freelancer">Freelancer</span>'
-            : '<span class="pill pill-muted">Membro</span>'))}</td>
-      <td class="${u.active !== false ? 'is-blank' : ''}">${u.active !== false ? '<span class="pill pill-success">Ativo</span>' : '<span class="pill pill-muted">Desativado</span>'}</td>
+    const mail = u.emailVerified
+      ? `<span class="us-mail" title="E-mail confirmado">${esc(u.email)}</span>`
+      : `<span class="us-mail is-missing" title="${u.email ? 'A pessoa ainda não confirmou o e-mail' : 'A pessoa ainda não vinculou um e-mail'}"><i data-lucide="mail-warning" class="ic-xs"></i>${u.email ? 'E-mail não confirmado' : 'Sem e-mail'}</span>`;
+    const perm = u.isOwner ? '<span class="pill pill-owner">Dono</span>'
+      : u.isAdmin ? '<span class="pill pill-admin">Admin</span>'
+      : u.isModerator ? '<span class="pill pill-moderator">Moderador</span>'
+      : u.isFreelancer ? '<span class="pill pill-freelancer">Freelancer</span>'
+      : '<span class="pill pill-muted">Membro</span>';
+    const roleTxt = [u.role, u.position].filter(Boolean).map(esc).join(' · ');
+    return `<tr class="mrow${u.active === false ? ' is-archived' : ''}">
+      <td class="mcol-name">
+        <div class="us-person">
+          ${avatarHTML(u)}
+          <div class="us-person-text">
+            <div class="us-person-name">${esc(u.name)}${u.id === me.id ? '<span class="us-you">você</span>' : ''}${u.active === false ? '<span class="us-tag">Desativado</span>' : ''}</div>
+            <div class="us-person-sub"><span>@${esc(u.username)}</span><span class="us-dot">·</span>${mail}</div>
+          </div>
+        </div>
+      </td>
+      <td class="${roleTxt ? '' : 'is-blank'}"><span class="mlbl">Área · cargo</span>${roleTxt || '—'}</td>
+      <td class="mc-ws"><span class="mlbl">Equipes</span><span class="us-ws-list">${wsNames}</span></td>
+      <td><span class="mlbl">Permissão</span>${perm}</td>
+      <td><span class="mlbl">Último acesso</span>${_usSeen(u)}</td>
       <td class="us-col-kebab">${kebab}</td>
     </tr>`;
   }).join('');
   renderRoles();
   renderPositions();
+  setUsersTab(usersTab);
 }
 function renderUsersWsFilter() {
   const host = $('users-ws-filter');
@@ -26685,10 +27203,10 @@ function renderUsersWsFilter() {
   const accessible = (workspaces || [])
     .filter(w => me.isAdmin || (me.workspaces || []).includes(w.id))
     .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-  if (!accessible.length) { host.innerHTML = ''; return; }
+  if (accessible.length < 2) { host.innerHTML = ''; return; }
   const chips = accessible.map(w => {
     const on = usersWsFilter.has(w.id);
-    return `<button class="uws-chip${on ? ' is-active' : ''}" onclick="toggleUsersWsFilter('${esc(w.id)}')">
+    return `<button class="uws-chip${on ? ' is-active' : ''}" onclick="toggleUsersWsFilter('${esc(w.id)}')" aria-pressed="${on}">
       <span class="uws-chip-dot" style="background:${esc(w.color || 'var(--accent)')}"></span>${esc(w.name)}
     </button>`;
   }).join('');
@@ -26710,7 +27228,7 @@ function toggleArchivedUsers() {
 }
 function sortUsersBy(key) {
   if (userSortKey === key) userSortDir *= -1;
-  else { userSortKey = key; userSortDir = 1; }
+  else { userSortKey = key; userSortDir = key === 'seen' ? -1 : 1; }
   renderUsers();
 }
 function renderRoles() {
@@ -30650,7 +31168,7 @@ function dvPeriodLabel(view = _dvView) {
    opts.skipDim: ignora uma dimensão (contagem das opções no seletor).
    opts.previous: usa o período anterior (comparação). */
 function dvRecords(dash, templateId, opts = {}) {
-  const view = _dvView;
+  const view = opts.view || _dvView;
   const dims = {};
   const fixed = dash?.fixedFilters?.dims || {};
   for (const k in fixed) if (fixed[k]?.length) dims[k] = fixed[k];
@@ -30768,35 +31286,95 @@ function renderDashboards() {
   }
   if (window.lucide?.createIcons) lucide.createIcons();
 }
+/* Movimento de um dashboard pra lista: respostas que ele enxerga (só com os
+   filtros fixos dele), a última e quantas por dia nos últimos 30 dias. */
+function _dashListStats(d) {
+  const view = _dvEmptyView();
+  const days = 30;
+  const day0 = new Date(); day0.setHours(0, 0, 0, 0);
+  const start = day0.getTime() - (days - 1) * 864e5;
+  const perDay = new Array(days).fill(0);
+  let total = 0, last = 0;
+  for (const t of _dvTemplatesOf(d)) {
+    for (const rec of dvRecords(d, t.id, { view })) {
+      total++;
+      const ts = _dvTs(rec, 'submitted');
+      if (ts == null) continue;
+      if (ts > last) last = ts;
+      if (ts >= start) perDay[Math.min(days - 1, Math.floor((ts - start) / 864e5))]++;
+    }
+  }
+  return { total, last, perDay, last30: perDay.reduce((a, b) => a + b, 0) };
+}
+function _dashSpark(perDay) {
+  const max = Math.max(1, ...perDay);
+  const W = 200, H = 32, n = perDay.length;
+  const pts = perDay.map((v, i) => [(i / (n - 1)) * W, H - 2 - (v / max) * (H - 6)]);
+  const line = pts.map(p => p.map(x => x.toFixed(1)).join(',')).join(' ');
+  return `<svg class="dash-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+    <polygon points="0,${H} ${line} ${W},${H}" class="dash-spark-area"/>
+    <polyline points="${line}" class="dash-spark-line" vector-effect="non-scaling-stroke"/>
+  </svg>`;
+}
+function _dashAgo(ts) {
+  const days = Math.floor((Date.now() - ts) / 864e5);
+  if (days <= 0) return 'hoje';
+  if (days === 1) return 'ontem';
+  if (days < 30) return `há ${days} dias`;
+  return 'em ' + fmtDate(new Date(ts).toISOString());
+}
+function clearDashboardsSearch() {
+  const s = document.getElementById('dashboards-search');
+  if (s) s.value = '';
+  _renderDashboardsGrid();
+  paintIcons();
+}
 function _renderDashboardsGrid() {
   const host = document.getElementById('dashboards-cards');
   if (!host) return;
-  const q = norm(document.getElementById('dashboards-search')?.value || '');
-  const list = (dashboards || [])
-    .filter(d => !q || norm(d.name).includes(q) || norm(d.description || '').includes(q))
+  const raw = (document.getElementById('dashboards-search')?.value || '').trim();
+  const q = norm(raw);
+  const all = dashboards || [];
+  const list = all
+    .filter(d => !q || norm(d.name).includes(q) || norm(d.description || '').includes(q) || _dvTemplatesOf(d).some(t => norm(t.name).includes(q)))
     .sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  const countEl = document.getElementById('dashboards-count');
+  if (countEl) countEl.textContent = all.length ? (q ? `${list.length} de ${all.length}` : `${all.length} ${all.length === 1 ? 'dashboard' : 'dashboards'}`) : '';
   if (!list.length) {
-    host.innerHTML = emptyState(
-      q ? 'Nenhum dashboard bate com a busca' : 'Nenhum dashboard criado ainda',
-      canEditDashboards() ? 'Clique em "Novo dashboard" para montar um painel a partir de um formulário.' : 'Peça a um admin ou moderador para criar um.',
-      'default'
-    );
+    const canEdit = canEditDashboards();
+    let html;
+    if (q) html = emptyState('Nada encontrado', `Nenhum dashboard com “${raw}”.`, 'search', { label: 'Limpar busca', onclick: 'clearDashboardsSearch()', variant: 'ghost' });
+    else if (!canEdit) html = emptyState('Nenhum dashboard ainda', 'Dashboards mostram as respostas dos formulários em números e gráficos. Peça a um admin ou moderador pra criar um.', 'default');
+    else if (!(formTemplates || []).length) html = emptyState('Crie um formulário primeiro', 'Dashboards mostram as respostas de um formulário em números e gráficos. Monte o formulário e volte aqui.', 'default', { label: 'Ir para Formulários', onclick: "goPage('forms')", icon: 'clipboard-list' });
+    else html = emptyState('Nenhum dashboard ainda', 'Escolha um formulário e o reWork já sugere números, gráfico no tempo e tabela por cliente.', 'default', { label: 'Novo dashboard', onclick: 'openDashboardEditor(null)', icon: 'plus' });
+    host.innerHTML = `<div class="dash-empty">${html}</div>`;
     return;
   }
   host.innerHTML = list.map(d => {
+    const s = _dashListStats(d);
     const wcount = (d.widgets || []).length;
     const forms = _dvTemplatesOf(d).map(t => t.name);
     const desc = (d.description || '').trim();
-    return `<div class="dashboards-card" onclick="openDashboardView('${d.id}')">
-      <div class="dashboards-card-head">
-        <div class="dashboards-card-icon"><i data-lucide="layout-dashboard" class="ic-sm"></i></div>
-        <div class="dashboards-card-name">${esc(d.name)}</div>
+    const nFixed = Object.values(d.fixedFilters?.dims || {}).filter(v => v?.length).length;
+    return `<div class="dash-card" role="link" tabindex="0" onclick="openDashboardView('${d.id}')" onkeydown="if(event.key==='Enter'){openDashboardView('${d.id}')}">
+      <div class="dash-card-head">
+        <span class="dash-card-icon"><i data-lucide="layout-dashboard" class="ic-sm"></i></span>
+        <div class="dash-card-title">
+          <div class="dash-card-name">${esc(d.name)}</div>
+          <div class="dash-card-src" title="${esc(forms.join(', '))}">${forms.length ? `<i data-lucide="clipboard-list" class="ic-xs"></i>${esc(forms.join(', '))}` : 'Sem formulário'}${nFixed ? ` · ${nFixed} ${nFixed === 1 ? 'filtro fixo' : 'filtros fixos'}` : ''}</div>
+        </div>
+        <i data-lucide="arrow-up-right" class="ic-sm dash-card-go"></i>
       </div>
-      <div class="dashboards-card-desc">${desc ? esc(desc) : '<span class="dashboards-card-desc-empty">Sem descrição</span>'}</div>
-      <div class="dashboards-card-foot">
-        ${forms.length ? `<span class="dashboards-card-chip"><i data-lucide="clipboard-list" class="ic-xs"></i>${esc(forms.join(', '))}</span>` : ''}
-        <span class="dashboards-card-chip"><i data-lucide="component" class="ic-xs"></i>${wcount} ${wcount === 1 ? 'widget' : 'widgets'}</span>
-        <span class="dashboards-card-open"><i data-lucide="arrow-up-right" class="ic-sm"></i></span>
+      ${desc ? `<div class="dash-card-desc">${esc(desc)}</div>` : ''}
+      <div class="dash-card-activity">
+        ${s.total
+          ? `<div class="dash-card-spark" title="${s.last30} ${s.last30 === 1 ? 'resposta' : 'respostas'} nos últimos 30 dias">${_dashSpark(s.perDay)}</div>`
+          : '<div class="dash-card-noresp">Nenhuma resposta ainda</div>'}
+      </div>
+      <div class="dash-card-foot">
+        <span><b>${s.total.toLocaleString(LOCALE)}</b> ${s.total === 1 ? 'resposta' : 'respostas'}</span>
+        ${s.last ? `<span>última ${_dashAgo(s.last)}</span>` : ''}
+        <span class="dash-card-widgets">${wcount} ${wcount === 1 ? 'widget' : 'widgets'}</span>
       </div>
     </div>`;
   }).join('');
@@ -32315,9 +32893,22 @@ function renderInvites() {
   renderUserSeats();
   const sec = $('invites-section');
   if (!sec) return;
-  if ((!me?.isAdmin && !me?.isModerator) || !invites.length) { sec.hidden = true; return; }
+  const invTab = $('us-tab-invites');
+  const hasInvites = (me?.isAdmin || me?.isModerator) && invites.length;
+  if (invTab) invTab.hidden = !hasInvites;
+  if (!hasInvites) {
+    sec.hidden = true;
+    if (usersTab === 'invites') setUsersTab('people');
+    return;
+  }
   sec.hidden = false;
+  const nExpired = invites.filter(i => i.status === 'expired').length;
+  const nTab = $('us-tab-n-invites');
+  if (nTab) { nTab.textContent = invites.length; nTab.classList.toggle('is-warn', nExpired > 0); }
   $('invites-count').textContent = invites.length;
+  // A faixa de pendências conta convites vencidos: repinta quando a lista chega.
+  _renderUsersAttention(users.filter(u => u.active !== false));
+  setUsersTab(usersTab);
   $('invites-hint').textContent = invitesEmailEnabled
     ? 'Aguardando a pessoa aceitar. Cada link vale por 7 dias.'
     : 'O envio de e-mail não está configurado no servidor: copie o link e mande para a pessoa.';
@@ -34403,6 +34994,79 @@ function setClientStatusFilter(s) {
   renderClients();
 }
 
+/* Ordem da lista: name | open (mais demandas abertas) | late (mais atrasos) | recent. */
+let clientSort = (() => { try { return localStorage.getItem('rw-client-sort') || 'name'; } catch { return 'name'; } })();
+function setClientSort(v) {
+  clientSort = v || 'name';
+  try { localStorage.setItem('rw-client-sort', clientSort); } catch {}
+  renderClients();
+}
+function clientsShowAllWs() {
+  const sel = $('client-f-ws');
+  if (sel) { sel.value = ''; applyFilterDropdown('client-f-ws'); }
+  renderClients();
+}
+function clientsClearFilters() {
+  const s = $('client-search');
+  if (s) s.value = '';
+  clientsShowAllWs();
+  setClientStatusFilter('all');
+}
+
+/* Números de cada cliente pra lista: demandas abertas/atrasadas, horas
+   apontadas nos últimos 30 dias, última movimentação e quem cuida dele. */
+function clientListStats() {
+  const projClient = new Map(projects.map(p => [p.id, p.clientId]));
+  const since30 = _ymdLocal(new Date(Date.now() - 29 * 864e5));
+  const stats = new Map();
+  const get = id => {
+    let s = stats.get(id);
+    if (!s) { s = { open: 0, late: 0, hours30: 0, lastAt: 0, projects: 0 }; stats.set(id, s); }
+    return s;
+  };
+  for (const p of projects) if (p.clientId) get(p.clientId).projects++;
+  for (const d of demands) {
+    if (d.deletedAt) continue;
+    const cid = projClient.get(d.projectId);
+    if (!cid) continue;
+    const s = get(cid);
+    if (!isDone(d)) { s.open++; if (isLate(d)) s.late++; }
+    for (const iso of [d.createdAt, d.completedAt, d.stageEnteredAt]) {
+      const t = iso ? Date.parse(iso) : 0;
+      if (t > s.lastAt) s.lastAt = t;
+    }
+    for (const t of (d.timeEntries || [])) {
+      const day = String(t.date || t.createdAt || '').slice(0, 10);
+      if (day && day >= since30) s.hours30 += Number(t.hours) || 0;
+      const ts = Date.parse(t.createdAt || (t.date ? t.date + 'T12:00:00' : '')) || 0;
+      if (ts > s.lastAt) s.lastAt = ts;
+    }
+  }
+  return id => stats.get(id) || { open: 0, late: 0, hours30: 0, lastAt: 0, projects: 0 };
+}
+// Pessoas atribuídas ao cliente (roleAssignments: { área: userId | { cargo: userId } }).
+function clientPeople(c) {
+  const ids = new Set();
+  for (const v of Object.values(c.roleAssignments || {})) {
+    if (typeof v === 'string') ids.add(v);
+    else if (v && typeof v === 'object') Object.values(v).forEach(x => { if (typeof x === 'string') ids.add(x); });
+  }
+  return [...ids].map(userById).filter(u => u && u.active !== false);
+}
+function _clAgo(ts) {
+  if (!ts) return '';
+  const days = Math.floor((Date.now() - ts) / 864e5);
+  if (days <= 0) return 'mexeu hoje';
+  if (days === 1) return 'mexeu ontem';
+  if (days < 30) return `mexeu há ${days} dias`;
+  const m = Math.floor(days / 30);
+  return m < 12 ? `mexeu há ${m} ${m > 1 ? 'meses' : 'mês'}` : 'parado há mais de 1 ano';
+}
+function _clHours(h) {
+  const v = Math.round(h * 10) / 10;
+  return String(v).replace('.', ',') + 'h';
+}
+
 function renderClients() {
   // Reseta pra view de grid. currentClientId já é tratado pelo dispatcher
   // em renderCurrent('clients'). hideAllDetailViews cobre TODAS as views
@@ -34421,6 +35085,14 @@ function renderClients() {
     if ([...fwSel.options].some(o => o.value === prev)) fwSel.value = prev;
     applyFilterDropdown('client-f-ws');
   }
+  const sortSel = $('client-sort');
+  if (sortSel) {
+    // "Nome" é o padrão (value vazio): o seletor só fica destacado quando a ordem muda.
+    const v = clientSort === 'name' ? '' : clientSort;
+    if ([...sortSel.options].some(o => o.value === v)) sortSel.value = v;
+    else { clientSort = 'name'; sortSel.value = ''; }
+    applyFilterDropdown('client-sort', { leadingIcon: 'arrow-up-down' });
+  }
 
   // Restaura filtros persistidos (search + workspace). Só roda na 1ª pintura
   // após entrar na página — em renders subsequentes, valores atuais prevalecem.
@@ -34432,62 +35104,118 @@ function renderClients() {
     applyFilterDropdown('client-f-ws');
   }
 
-  // Filtra
+  // Filtra em etapas pra saber, no vazio, o que escondeu os clientes.
   const q = norm(($('client-search').value || '').trim());
   const fw = fwSel ? fwSel.value : '';
-  let list = clients.filter(c => {
-    if (me.isAdmin === false && !(me.workspaces || []).includes(c.workspaceId)) return false;
-    if (q && !norm(c.name).includes(q)) return false;
-    if (fw && c.workspaceId !== fw) return false;
+  const visible = clients.filter(c => !(me.isAdmin === false && !(me.workspaces || []).includes(c.workspaceId)));
+  const bySearch = visible.filter(c => !q || norm(c.name).includes(q) || norm(c.segment || '').includes(q));
+  const byWs = bySearch.filter(c => !fw || c.workspaceId === fw);
+  const counts = {
+    all: byWs.length,
+    active: byWs.filter(c => c.active !== false).length,
+    archived: byWs.filter(c => c.active === false).length
+  };
+  document.querySelectorAll('[data-cl-count]').forEach(el => { el.textContent = counts[el.dataset.clCount]; });
+  let list = byWs.filter(c => {
     if (clientStatusFilter === 'active' && c.active === false) return false;
     if (clientStatusFilter === 'archived' && c.active !== false) return false;
     return true;
   });
 
-  // Sort: ativos primeiro, depois alfabético
+  const statOf = clientListStats();
+  const byName = (a, b) => norm(a.name).localeCompare(norm(b.name));
+  // Ativos sempre antes dos arquivados; dentro de cada grupo, a ordem escolhida.
+  const KEY = { open: c => statOf(c.id).open, late: c => statOf(c.id).late * 1000 + statOf(c.id).open, recent: c => statOf(c.id).lastAt };
   list.sort((a, b) => {
     const aa = a.active !== false, ba = b.active !== false;
     if (aa !== ba) return aa ? -1 : 1;
-    return norm(a.name).localeCompare(norm(b.name));
+    const k = KEY[clientSort];
+    if (k) { const diff = k(b) - k(a); if (diff) return diff; }
+    return byName(a, b);
   });
 
   saveFilters('clients');
 
+  // Resumo da carteira filtrada (ignora arquivados nas contas de trabalho).
+  const summary = $('clients-summary');
   const grid = $('clients-grid');
+  const activeList = list.filter(c => c.active !== false);
+  const totOpen = activeList.reduce((n, c) => n + statOf(c.id).open, 0);
+  const lateClients = activeList.filter(c => statOf(c.id).late > 0);
+  const totLate = lateClients.reduce((n, c) => n + statOf(c.id).late, 0);
+  if (summary) {
+    summary.innerHTML = list.length
+      ? `<span><strong>${list.length}</strong> ${list.length === 1 ? 'cliente' : 'clientes'}</span>
+         <span class="cl-summary-dot">·</span><span><strong>${totOpen}</strong> ${totOpen === 1 ? 'demanda aberta' : 'demandas abertas'}</span>
+         ${totLate ? `<span class="cl-summary-dot">·</span><button type="button" class="cl-summary-late" onclick="setClientSort('late')" title="Ordenar por atrasos"><i data-lucide="alert-triangle" class="ic-xs"></i>${totLate} ${totLate === 1 ? 'atrasada' : 'atrasadas'} em ${lateClients.length} ${lateClients.length === 1 ? 'cliente' : 'clientes'}</button>` : ''}`
+      : '';
+  }
+
   if (!list.length) {
-    grid.innerHTML = emptyState('Nenhum cliente encontrado', 'Crie seu primeiro cliente clicando em "Novo Cliente".', 'users');
+    let html;
+    const wsName = fw ? (wsById(fw)?.name || 'esta equipe') : '';
+    const elsewhere = fw ? bySearch.filter(c => c.workspaceId !== fw).length : 0;
+    if (!visible.length) {
+      html = emptyState('Nenhum cliente ainda', 'Cadastre o primeiro cliente pra organizar projetos e demandas por ele.', 'users', { label: 'Novo cliente', onclick: 'openClientModal()', icon: 'plus' });
+    } else if (byWs.length && clientStatusFilter !== 'all') {
+      html = emptyState(clientStatusFilter === 'archived' ? 'Nenhum cliente arquivado' : 'Nenhum cliente ativo', `${byWs.length} ${byWs.length === 1 ? 'cliente fica' : 'clientes ficam'} em “${clientStatusFilter === 'archived' ? 'Ativos' : 'Arquivados'}”.`, 'users', { label: 'Ver todos', onclick: "setClientStatusFilter('all')", variant: 'ghost' });
+    } else if (fw && elsewhere) {
+      html = emptyState(`Nenhum cliente em ${wsName}`, `${elsewhere} ${elsewhere === 1 ? 'cliente está' : 'clientes estão'} em outras equipes.`, 'users', { label: 'Ver todas as equipes', onclick: 'clientsShowAllWs()', variant: 'ghost' });
+    } else if (q) {
+      html = emptyState('Nada encontrado', `Nenhum cliente com “${($('client-search').value || '').trim()}”${wsName ? ' em ' + wsName : ''}.`, 'search', { label: 'Limpar filtros', onclick: 'clientsClearFilters()', variant: 'ghost' });
+    } else {
+      html = emptyState(`Nenhum cliente em ${wsName || 'esta equipe'}`, 'Cadastre um cliente nesta equipe pra começar.', 'users', { label: 'Novo cliente', onclick: 'openClientModal()', icon: 'plus' });
+    }
+    grid.innerHTML = `<div class="cl-empty">${html}</div>`;
     paintIcons();
     return;
   }
 
+  const showWs = !fw && workspaces.length > 1;
   grid.innerHTML = list.map(c => {
+    const s = statOf(c.id);
     const color = c.color || '#7A00FF';
-    let avatarHtml;
-    if (c.avatar) {
-      avatarHtml = `<div class="client-card-avatar" style="background-image:url('${c.avatar}');background-size:cover;background-position:center"></div>`;
-    } else {
-      // Letra como SVG — text-anchor+dominant-baseline garantem centralização
-      // pixel-perfect independente de fonte/altura de linha do container.
-      const letter = (c.name || 'C').charAt(0).toUpperCase();
-      avatarHtml = `<div class="client-card-avatar client-card-avatar--letter" style="background:${hexDim(color)};color:${color}">
-        <svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <text x="24" y="24" text-anchor="middle" dominant-baseline="central" font-family="inherit" font-weight="700" font-size="22" fill="currentColor">${esc(letter)}</text>
-        </svg>
-      </div>`;
-    }
+    const avatarHtml = c.avatar
+      ? `<div class="client-card-avatar cl-avatar" style="background-image:url('${c.avatar}');background-size:cover;background-position:center"></div>`
+      : `<div class="client-card-avatar client-card-avatar--letter cl-avatar" style="background:${hexDim(color)};color:${color}">
+          <svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <text x="24" y="24" text-anchor="middle" dominant-baseline="central" font-family="inherit" font-weight="700" font-size="22" fill="currentColor">${esc((c.name || 'C').charAt(0).toUpperCase())}</text>
+          </svg>
+        </div>`;
     const ws = wsById(c.workspaceId);
-    const wsColor = ws?.color || '#7A00FF';
-    const wsPill = ws
-      ? `<span class="client-card-squad" style="--squad-color:${wsColor}">${esc(ws.name)}</span>`
-      : '<span class="client-card-squad client-card-squad--muted">—</span>';
-    const statusBadge = c.active === false
-      ? '<span class="client-card-status client-card-status--archived">Arquivado</span>'
-      : '<span class="client-card-status client-card-status--active">Ativo</span>';
-    return `<div class="flow-card client-card ${c.active === false ? 'is-archived' : ''}" onclick="openClient('${c.id}')">
-      ${avatarHtml}
-      <div class="flow-card-name">${esc(c.name)}</div>
-      ${wsPill}
-      ${statusBadge}
+    const subParts = [];
+    if (showWs && ws) subParts.push(`<span class="cl-ws"><span class="cl-ws-dot" style="background:${esc(ws.color || '#7A00FF')}"></span>${esc(ws.name)}</span>`);
+    if (c.segment) subParts.push(`<span>${esc(c.segment)}</span>`);
+    if (!subParts.length) subParts.push(`<span>${s.projects} ${s.projects === 1 ? 'projeto' : 'projetos'}</span>`);
+    const people = clientPeople(c);
+    const MAX = 4;
+    const peopleHtml = people.length
+      ? `<span class="avatar-stack" title="${esc(people.map(u => u.name).join(', '))}">
+          ${people.slice(0, MAX).map((u, i) => `<span class="avatar-stack-item" style="z-index:${10 - i}">${avatarHTML(u, 'avatar avatar-stack-avatar').replace(/ data-user-id="[^"]+"/, '')}</span>`).join('')}
+          ${people.length > MAX ? `<span class="avatar-stack-more">+${people.length - MAX}</span>` : ''}
+        </span>`
+      : '<span class="cl-foot-muted">Sem responsáveis</span>';
+    const metrics = s.open || s.late || s.hours30
+      ? `<div class="cl-metrics">
+          <div class="cl-metric"><span class="cl-metric-n">${s.open}</span><span class="cl-metric-l">${s.open === 1 ? 'aberta' : 'abertas'}</span></div>
+          <div class="cl-metric${s.late ? ' is-late' : ''}"><span class="cl-metric-n">${s.late}</span><span class="cl-metric-l">${s.late === 1 ? 'atrasada' : 'atrasadas'}</span></div>
+          <div class="cl-metric"><span class="cl-metric-n">${_clHours(s.hours30)}</span><span class="cl-metric-l">em 30 dias</span></div>
+        </div>`
+      : `<div class="cl-metrics cl-metrics--empty">Nenhuma demanda aberta</div>`;
+    const archived = c.active === false;
+    return `<div class="cl-card${archived ? ' is-archived' : ''}" role="link" tabindex="0" onclick="openClient('${c.id}')" onkeydown="if(event.key==='Enter'){openClient('${c.id}')}">
+      <div class="cl-head">
+        ${avatarHtml}
+        <div class="cl-title">
+          <div class="cl-name">${esc(c.name)}${archived ? '<span class="cl-tag">Arquivado</span>' : ''}</div>
+          <div class="cl-sub">${subParts.join('<span class="cl-sub-sep">·</span>')}</div>
+        </div>
+      </div>
+      ${metrics}
+      <div class="cl-foot">
+        ${peopleHtml}
+        <span class="cl-foot-muted">${esc(_clAgo(s.lastAt))}</span>
+      </div>
     </div>`;
   }).join('');
   paintIcons();

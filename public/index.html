@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <!-- Idioma: roda antes de tudo (carrega o dicionário quando não é português). -->
-<script src="/js/i18n.js?v=20261022an25"></script>
+<script src="/js/i18n.js?v=20261022us3"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>reWork</title>
 <link rel="icon" type="image/png" href="/favicon.png">
@@ -1626,29 +1626,30 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
     <div class="page" id="page-performance">
       <div class="page-body">
         <div class="perf-toolbar">
-          <div class="perf-title-block">
-            <div class="perf-title" id="perf-client-name">Selecione um cliente</div>
-            <div class="perf-subtitle">Visão consolidada de mídia e geração de leads</div>
+          <div class="perf-head">
+            <div class="perf-title-block">
+              <div class="perf-title" id="perf-client-name">Selecione um cliente</div>
+              <div class="perf-subtitle"><span id="perf-scope-sub">Mídia e geração de leads</span><span class="perf-updated-at" id="perf-updated-at"></span></div>
+            </div>
+            <div class="perf-head-actions">
+              <button class="perf-icon-btn" onclick="renderPerformance()" title="Atualizar dados" aria-label="Atualizar"><i data-lucide="refresh-cw" class="ic-md"></i></button>
+              <button class="perf-icon-btn" id="perf-config-btn" onclick="togglePerfConfig()" title="Configurar webhook" aria-label="Configurar webhook" style="display:none"><i data-lucide="settings" class="ic-md"></i></button>
+            </div>
           </div>
           <div class="perf-controls">
             <div class="perf-control">
-              <label class="filter-label">Equipe</label>
-              <select class="filter-select" id="perf-squad" onchange="_perfOnSquadChange()"></select>
+              <select class="filter-select" id="perf-squad" onchange="_perfOnSquadChange()" aria-label="Equipe"></select>
             </div>
             <div class="perf-control">
-              <label class="filter-label">Cliente</label>
-              <select class="filter-select" id="perf-client" onchange="renderPerformance()" disabled></select>
+              <select class="filter-select" id="perf-client" onchange="renderPerformance()" disabled aria-label="Cliente"></select>
             </div>
             <div class="perf-control">
-              <label class="filter-label">Plataforma</label>
-              <select class="filter-select" id="perf-platform" onchange="renderPerformance()" disabled></select>
+              <select class="filter-select" id="perf-platform" onchange="renderPerformance()" disabled aria-label="Plataforma"></select>
             </div>
-            <div class="perf-control">
-              <label class="filter-label">Campanha</label>
-              <select class="filter-select" id="perf-campaign" onchange="renderPerformance()" disabled></select>
+            <div class="perf-control" id="perf-campaign-wrap">
+              <select class="filter-select" id="perf-campaign" onchange="renderPerformance()" disabled aria-label="Campanha"></select>
             </div>
-            <div class="perf-control">
-              <label class="filter-label">Período</label>
+            <div class="perf-control perf-control--period">
               <!-- Período: atalhos + intervalo no calendário (perf-pfp-*, calendário rc). -->
               <div class="filter-period-picker">
                 <button type="button" class="filter-period-trigger" id="perf-pfp-trigger" onclick="perfPfpToggle(event)" aria-haspopup="dialog">
@@ -1668,10 +1669,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               <input type="hidden" id="perf-start" value="">
               <input type="hidden" id="perf-end" value="">
             </div>
-            <button class="perf-icon-btn" onclick="renderPerformance()" title="Atualizar dados" aria-label="Atualizar"><i data-lucide="refresh-cw" class="ic-md"></i></button>
-            <button class="perf-icon-btn" id="perf-config-btn" onclick="togglePerfConfig()" title="Configurar webhook" aria-label="Configurar webhook" style="display:none"><i data-lucide="settings" class="ic-md"></i></button>
           </div>
-          <div class="perf-updated-row"><div class="perf-updated-at" id="perf-updated-at"></div></div>
         </div>
         <div id="perf-body"></div>
       </div>
@@ -1798,8 +1796,9 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           <div class="dashboards-searchbar">
             <div class="filter-input-wrap">
               <i data-lucide="search" class="filter-input-icon ic-sm"></i>
-              <input class="filter-input filter-input--with-icon" id="dashboards-search" placeholder="Buscar dashboard…" oninput="renderDashboards()">
+              <input class="filter-input filter-input--with-icon" id="dashboards-search" placeholder="Buscar dashboard ou formulário…" oninput="renderDashboards()" aria-label="Buscar dashboard">
             </div>
+            <span class="dashboards-count" id="dashboards-count"></span>
             <button class="btn btn-primary admin-only" onclick="openDashboardEditor(null)">
               <i data-lucide="plus" class="ic-sm"></i> Novo dashboard
             </button>
@@ -2163,24 +2162,30 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
         <!-- VIEW A: grid de clientes -->
         <div id="clients-view-grid">
-          <div class="filters-bar" style="margin-bottom:18px">
+          <div class="filters-bar cl-toolbar">
             <div class="filter-input-wrap">
               <i data-lucide="search" class="filter-input-icon ic-sm"></i>
-              <input class="filter-input filter-input--with-icon" id="client-search" placeholder="Buscar cliente…" oninput="renderClients()">
+              <input class="filter-input filter-input--with-icon" id="client-search" placeholder="Buscar cliente…" oninput="renderClients()" aria-label="Buscar cliente">
             </div>
-            <select class="filter-select" id="client-f-ws" onchange="renderClients()"><option value="">Todas as equipes</option></select>
-            <div class="filter-group-label">
-              <span class="filter-group-label-text">Situação</span>
-              <div class="client-status-toggle">
-                <button class="btn btn-ghost btn-sm client-status-btn active" data-status="all" onclick="setClientStatusFilter('all')">Todos</button>
-                <button class="btn btn-ghost btn-sm client-status-btn" data-status="active" onclick="setClientStatusFilter('active')">Ativos</button>
-                <button class="btn btn-ghost btn-sm client-status-btn" data-status="archived" onclick="setClientStatusFilter('archived')">Arquivados</button>
-              </div>
+            <select class="filter-select" id="client-f-ws" onchange="renderClients()" aria-label="Equipe"><option value="">Todas as equipes</option></select>
+            <div class="client-status-toggle" role="group" aria-label="Situação">
+              <button class="btn btn-ghost btn-sm client-status-btn active" data-status="all" onclick="setClientStatusFilter('all')">Todos<span class="cl-count" data-cl-count="all"></span></button>
+              <button class="btn btn-ghost btn-sm client-status-btn" data-status="active" onclick="setClientStatusFilter('active')">Ativos<span class="cl-count" data-cl-count="active"></span></button>
+              <button class="btn btn-ghost btn-sm client-status-btn" data-status="archived" onclick="setClientStatusFilter('archived')">Arquivados<span class="cl-count" data-cl-count="archived"></span></button>
             </div>
-            <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="goPage('clientsModels')"><i data-lucide="layers" class="ic-sm"></i> Modelos</button>
-            <button class="btn btn-primary btn-sm" onclick="openClientModal()"><i data-lucide="plus" class="ic-sm"></i> Novo Cliente</button>
+            <select class="filter-select" id="client-sort" onchange="setClientSort(this.value)" aria-label="Ordenar">
+              <option value="">Ordem: nome</option>
+              <option value="open">Ordem: mais demandas</option>
+              <option value="late">Ordem: mais atrasos</option>
+              <option value="recent">Ordem: movimento recente</option>
+            </select>
+            <div class="cl-toolbar-right">
+              <button class="btn btn-ghost btn-sm" onclick="goPage('clientsModels')"><i data-lucide="layers" class="ic-sm"></i> Modelos</button>
+              <button class="btn btn-primary btn-sm" onclick="openClientModal()"><i data-lucide="plus" class="ic-sm"></i> Novo cliente</button>
+            </div>
           </div>
-          <div class="flow-grid" id="clients-grid"></div>
+          <div class="cl-summary" id="clients-summary"></div>
+          <div class="cl-grid" id="clients-grid"></div>
         </div>
 
         <!-- VIEW C: modelos (client templates) — CRUD de modelos e fluxos que replicam. -->
@@ -2786,9 +2791,27 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           </div>
         </div>
 
+        <!-- Abas: uma parte da equipe por vez (antes era tudo empilhado). -->
+        <div class="us-tabs" role="tablist" aria-label="Partes do quadro da equipe">
+          <button type="button" class="us-tab is-active" role="tab" data-us-tab="people" onclick="setUsersTab('people')">Pessoas<span class="us-tab-n" id="us-tab-n-people"></span></button>
+          <button type="button" class="us-tab" role="tab" data-us-tab="invites" id="us-tab-invites" onclick="setUsersTab('invites')" hidden>Convites<span class="us-tab-n" id="us-tab-n-invites"></span></button>
+          <button type="button" class="us-tab" role="tab" data-us-tab="taxonomy" onclick="setUsersTab('taxonomy')">Áreas e cargos<span class="us-tab-n" id="us-tab-n-taxonomy"></span></button>
+        </div>
+
+        <div class="us-pane" data-us-pane="people">
+        <div class="us-attention" id="users-attention" hidden></div>
+        <div class="us-toolbar">
+          <div class="filter-input-wrap">
+            <i data-lucide="search" class="filter-input-icon ic-sm"></i>
+            <input class="filter-input filter-input--with-icon" id="users-search" placeholder="Buscar por nome, usuário ou e-mail…" oninput="renderUsers()" aria-label="Buscar pessoa">
+          </div>
+          <div class="us-perm-chips" id="users-perm-filter" role="group" aria-label="Permissão"></div>
+        </div>
         <div class="uws-filter" id="users-ws-filter"></div>
+        </div>
 
         <!-- Convites pendentes/vencidos — renderInvites() (só admin, some quando vazio) -->
+        <div class="us-pane" data-us-pane="invites" hidden>
         <div class="us-section" id="invites-section" hidden>
           <div class="us-section-head">
             <span class="us-section-title">Convites <span class="inv-count" id="invites-count"></span></span>
@@ -2810,24 +2833,20 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             </table>
           </div>
         </div>
+        </div>
 
-        <!-- Section: tabela mine-v2 do quadro -->
+        <!-- Pessoas: tabela mine-v2 do quadro -->
+        <div class="us-pane" data-us-pane="people">
         <div class="us-section">
-          <div class="us-section-head">
-            <span class="us-section-title">Pessoas</span>
-            <span class="us-section-hint" id="users-section-hint">Ordenado por nome. Clique no cabeçalho pra reordenar.</span>
-          </div>
           <div class="table-wrap mine-table-wrap mcard-wrap">
-            <table class="mine-table-v2 mcard">
+            <table class="mine-table-v2 mcard us-people-table">
               <thead>
                 <tr>
-                  <th class="mth-sort" onclick="sortUsersBy('name')">Nome <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                  <th class="mth-sort" onclick="sortUsersBy('username')">Usuário <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                  <th class="mth-sort" onclick="sortUsersBy('role')">Área <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                  <th class="mth-sort" onclick="sortUsersBy('position')">Cargo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                  <th class="mth-sort" onclick="sortUsersBy('ws')">Equipes <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                  <th class="mth-sort" onclick="sortUsersBy('admin')">Permissão <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                  <th class="mth-sort" onclick="sortUsersBy('active')">Situação <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                  <th class="mth-sort" data-us-sort="name" onclick="sortUsersBy('name')">Pessoa <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                  <th class="mth-sort" data-us-sort="role" onclick="sortUsersBy('role')">Área · cargo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                  <th class="mth-sort" data-us-sort="ws" onclick="sortUsersBy('ws')">Equipes <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                  <th class="mth-sort" data-us-sort="admin" onclick="sortUsersBy('admin')">Permissão <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                  <th class="mth-sort" data-us-sort="seen" onclick="sortUsersBy('seen')">Último acesso <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   <th class="us-col-kebab"></th>
                 </tr>
               </thead>
@@ -2835,8 +2854,10 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             </table>
           </div>
         </div>
+        </div>
 
         <!-- Taxonomia: Áreas + Cargos lado a lado em grid hairline-separated. -->
+        <div class="us-pane" data-us-pane="taxonomy" hidden>
         <div class="us-taxonomy-grid">
           <div class="us-section">
             <div class="us-section-head">
@@ -2876,6 +2897,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               </table>
             </div>
           </div>
+        </div>
         </div>
       </div>
     </div>
@@ -5220,27 +5242,29 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       </div>
       <div class="gm-header-meta" id="gm-header-meta"></div>
       <div class="gm-header-actions">
-        <button type="button" class="gm-header-btn" onclick="godmodeRefresh()" title="Atualizar agora"><i data-lucide="refresh-cw" class="ic-sm"></i></button>
-        <button type="button" class="gm-header-btn" onclick="closeGodmode()" title="Fechar (Esc)"><i data-lucide="x" class="ic-sm"></i></button>
+        <button type="button" class="gm-header-btn" id="gm-refresh-btn" onclick="godmodeRefresh()" title="Atualizar agora" aria-label="Atualizar agora"><i data-lucide="refresh-cw" class="ic-sm"></i></button>
+        <button type="button" class="gm-header-btn" onclick="closeGodmode()" title="Fechar (Esc)" aria-label="Fechar"><i data-lucide="x" class="ic-sm"></i></button>
       </div>
     </div>
     <div class="gm-body">
       <aside class="gm-side">
         <div class="gm-filter">
-          <input type="search" id="gm-search" class="gm-search-input" placeholder="Filtrar usuários...">
+          <label class="gm-search">
+            <i data-lucide="search" class="ic-sm"></i>
+            <input type="search" id="gm-search" class="gm-search-input" placeholder="Buscar por nome, e-mail ou cargo" aria-label="Buscar usuários" autocomplete="off">
+          </label>
+          <div class="gm-chips" id="gm-filters" role="group" aria-label="Filtrar usuários"></div>
         </div>
         <div class="gm-userlist" id="gm-userlist"></div>
       </aside>
-      <main class="gm-main" id="gm-main">
-        <div class="gm-empty">Selecione um usuário à esquerda pra ver detalhes.</div>
-      </main>
+      <main class="gm-main" id="gm-main"></main>
     </div>
   </div>
 </div>
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20261022an25" defer></script>
+<script src="/js/boot.js?v=20261022us3" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

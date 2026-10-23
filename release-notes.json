@@ -1,5 +1,23 @@
 [
   {
+    "id": "2026-10-22-clientes-performance-dashboards-usuarios",
+    "date": "2026-10-22",
+    "title": "Clientes, Performance, Dashboards e Usuários mais fáceis de ler",
+    "hideFor": [
+      "freelancer"
+    ],
+    "highlights": [
+      "Em Clientes, cada cartão mostra as demandas abertas e atrasadas, as horas apontadas nos últimos 30 dias, quem cuida do cliente e quando ele teve movimento pela última vez. Dá para ordenar por nome, mais demandas, mais atrasos ou movimento recente.",
+      "Em Clientes, quando a lista fica vazia o reWork diz o motivo: por exemplo, que os clientes estão em outra equipe, com um botão para ver todas.",
+      "Em Performance, os filtros ficaram numa faixa só e as campanhas que precisam de atenção aparecem logo abaixo dos números principais.",
+      "Em Performance, a seta de cada número mostra se ele subiu ou caiu, e a cor mostra se isso é bom ou ruim. No CPL, cair é verde. A variação aparece em porcentagem.",
+      "Em Performance, com todos os clientes da equipe selecionados, a nova lista Por cliente mostra investimento, leads e CPL de cada um. Clique numa linha para abrir o cliente.",
+      "Em Dashboards, cada cartão mostra quantas respostas o painel tem, quando chegou a última e um gráfico pequeno dos últimos 30 dias.",
+      "Em Usuários, a tela foi dividida em Pessoas, Convites e Áreas e cargos. Uma faixa de pendências mostra quem está sem e-mail confirmado, sem equipe ou que nunca entrou. Clique para filtrar.",
+      "Em Usuários, a lista ganhou busca, filtro por permissão e a coluna Último acesso."
+    ]
+  },
+  {
     "id": "2026-10-22-troca-de-email-segura",
     "date": "2026-10-22",
     "title": "Trocar o e-mail ficou mais seguro",

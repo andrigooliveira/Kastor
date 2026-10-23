@@ -758,6 +758,13 @@ test('Organizações: nada da WSI aparece na Beta (e vice-versa)', async () => {
   const users = (await req('/api/users', { headers: { Cookie: betaCookie } })).body;
   assert.equal(users.length, 1);
   assert.equal((await req('/api/demands', { headers: { Cookie: betaCookie } })).body.length, 0);
+  // Godmode da Beta só enxerga a Beta
+  const gm = await call('GET', '/api/admin/godmode/overview', betaCookie);
+  assert.equal(gm.status, 200, JSON.stringify(gm.body));
+  assert.deepEqual(gm.body.users.map(u => u.username), ['bia.souza']);
+  assert.equal((await call('GET', '/api/admin/godmode/user/' + wsiAdminId, betaCookie)).status, 404);
+  const gmWsi = (await call('GET', '/api/admin/godmode/overview', admin)).body;
+  assert.ok(!gmWsi.users.some(u => u.username === 'bia.souza'));
 
   // A WSI também não vê a Beta
   const again = (await req('/api/bootstrap', { headers: { Cookie: admin } })).body;

@@ -14082,11 +14082,15 @@ app.delete('/api/presence/:kind/:id', requireAuth, (req, res) => {
    demanda). publicUser() já filtra googleTokens/knownIps. */
 function _godmodeReversePresence() {
   // Se um user aparece em várias entradas do presenceMap (múltiplas abas),
-  // vence a de heartbeat mais recente.
+  // vence a de heartbeat mais recente. presenceMap é global: só conta demanda
+  // da organização ativa (db.demands já vem filtrado), senão quem está em duas
+  // organizações apareceria "em demanda" olhando algo da outra.
   const out = new Map();
+  const orgDemandIds = new Set(db.demands.map(d => d.id));
   for (const [key, set] of presenceMap) {
     if (!key.startsWith('demand:')) continue;
     const demandId = key.slice(7);
+    if (!orgDemandIds.has(demandId)) continue;
     for (const [uid, meta] of set) {
       const cur = out.get(uid);
       if (!cur || meta.ts > cur.since) out.set(uid, { demandId, since: meta.ts });
