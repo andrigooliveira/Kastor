@@ -2335,7 +2335,7 @@ tr:hover td { background: var(--surface-2); }
    ═══════════════════════════════════════════════════════════════════════════ */
 .mine-agenda-v2 { margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--hairline); }
 /* Standalone (/agenda) — sem divisor superior, começa do topo da página. */
-.mine-agenda-v2.is-standalone { margin-top: 0; padding-top: 0; border-top: 0; }
+.mine-agenda-v2.is-standalone { margin-top: 0; padding-top: 20px; border-top: 0; }
 .mine-agenda-v2.is-standalone .agenda-toolbar {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   margin-bottom: 14px;
@@ -21436,3 +21436,259 @@ tr.is-open .an-chev { transform: rotate(90deg); }
   .dlv-legend { display: none; }
   .dlv-c { height: 26px; }
 }
+
+/* ═══ Agenda — redesign (out/2026) ═══
+   Grade mais calma: só hora e meia hora marcadas, coluna de hoje tingida,
+   cabeçalho com número do dia grande + barrinha de carga, blocos em cartão
+   suave (cor da etapa como faixa à esquerda, texto legível nos dois temas). */
+.mine-agenda-v2 .agenda-toolbar { gap: 12px; }
+.mine-agenda-v2 .agenda-mode-toggle { margin-right: 0; }
+.mine-agenda-v2 .agenda-week-nav { gap: 6px; }
+.mine-agenda-v2 .agenda-week-label { min-width: 0; padding: 4px 8px; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mine-agenda-v2 #agenda-user-pick-single .filter-cdrop.filtering .filter-cdrop-trigger,
+:root[data-theme="light"] .mine-agenda-v2 #agenda-user-pick-single .filter-cdrop.filtering .filter-cdrop-trigger {
+  border-color: var(--hairline); background: var(--surface); color: var(--text);
+}
+.mine-agenda-v2 .agenda-hint.is-tip {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; margin: 0; border-radius: var(--radius-sm);
+  color: var(--text-muted); cursor: help;
+}
+.mine-agenda-v2 .agenda-hint.is-tip:hover,
+.mine-agenda-v2 .agenda-hint.is-tip:focus-visible { color: var(--text); background: var(--surface-2); outline: none; }
+.mine-agenda-v2 .agenda-hint.is-tip::after {
+  content: attr(data-tip);
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 40;
+  width: 260px; padding: 9px 11px; border-radius: var(--radius-sm);
+  background: var(--surface); border: 1px solid var(--hairline);
+  box-shadow: 0 8px 24px rgba(0,0,0,.18);
+  color: var(--text-dim); font-size: 12px; line-height: 1.5; white-space: normal;
+  opacity: 0; transform: translateY(-2px); pointer-events: none;
+  transition: opacity .12s, transform .12s;
+}
+.mine-agenda-v2 .agenda-hint.is-tip:hover::after,
+.mine-agenda-v2 .agenda-hint.is-tip:focus-visible::after { opacity: 1; transform: none; }
+
+/* Moldura */
+.mine-agenda-v2 .agenda-grid {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+}
+.mine-agenda-v2 .agenda-cell { border-right-color: var(--hairline); }
+.mine-agenda-v2 .agenda-col {
+  background-color: var(--surface);
+  background-image:
+    repeating-linear-gradient(to bottom, rgba(255,255,255,0.075) 0, rgba(255,255,255,0.075) 1px, transparent 1px, transparent 88px),
+    repeating-linear-gradient(to bottom, rgba(255,255,255,0.03) 0, rgba(255,255,255,0.03) 1px, transparent 1px, transparent 44px);
+}
+:root[data-theme="light"] .mine-agenda-v2 .agenda-col {
+  background-image:
+    repeating-linear-gradient(to bottom, rgba(0,0,0,0.075) 0, rgba(0,0,0,0.075) 1px, transparent 1px, transparent 88px),
+    repeating-linear-gradient(to bottom, rgba(0,0,0,0.03) 0, rgba(0,0,0,0.03) 1px, transparent 1px, transparent 44px);
+}
+.mine-agenda-v2 .agenda-col.is-weekend { background-color: color-mix(in srgb, var(--surface-2) 55%, var(--surface)); }
+.mine-agenda-v2 .agenda-col.is-today { background-color: color-mix(in srgb, var(--accent) 4%, var(--surface)); }
+.mine-agenda-v2 .agenda-cell.is-week-gap { background: var(--surface-2); border-right-color: var(--hairline); }
+
+/* Coluna de horas: rótulo alinhado na linha da hora, sem fundo nem mono */
+.mine-agenda-v2 .agenda-cell.is-time {
+  background: var(--surface);
+  border-bottom: 0; border-right-color: var(--hairline);
+  padding: 0 8px 0 4px;
+  font-family: inherit; font-size: 10.5px; font-weight: 500;
+  color: var(--text-muted); font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.mine-agenda-v2 .agenda-cell.is-time { padding-top: 4px; }
+.mine-agenda-v2 .agenda-corner { background: var(--surface); border-bottom: 1px solid var(--hairline); }
+
+/* Cabeçalho do dia */
+.mine-agenda-v2 .agenda-cell.is-day-header {
+  background: var(--surface);
+  color: var(--text-dim);
+  text-transform: none; letter-spacing: 0;
+  padding: 8px; gap: 6px;
+  align-items: stretch;
+  border-bottom: 1px solid var(--hairline);
+}
+.mine-agenda-v2 .agenda-cell.is-day-header.is-weekend .day-name,
+.mine-agenda-v2 .agenda-cell.is-day-header.is-weekend .day-num { color: var(--text-muted); }
+.mine-agenda-v2 .day-line { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.mine-agenda-v2 .day-name { font-size: 12px; font-weight: 500; color: var(--text-dim); text-transform: capitalize; }
+.mine-agenda-v2 .day-num {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 26px; height: 26px; padding: 0 4px; border-radius: 999px;
+  font-size: 15px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums;
+}
+.mine-agenda-v2 .agenda-cell.is-day-header.is-today { background: color-mix(in srgb, var(--accent) 4%, var(--surface)); }
+.mine-agenda-v2 .agenda-cell.is-day-header.is-today .day-name { color: var(--accent-text); }
+.mine-agenda-v2 .agenda-cell.is-day-header.is-today .day-num { background: var(--accent); color: #fff; }
+.mine-agenda-v2 .day-load { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.mine-agenda-v2 .day-load-bar {
+  flex: 1; height: 3px; border-radius: 2px; overflow: hidden;
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
+}
+.mine-agenda-v2 .day-load-bar i { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
+.mine-agenda-v2 .day-load.high .day-load-bar i { background: var(--warn, #F59E0B); }
+.mine-agenda-v2 .day-load.over .day-load-bar i { background: var(--danger); }
+.mine-agenda-v2 .agenda-cell.is-day-header .day-cap {
+  flex: none; margin: 0; font-size: 10.5px; font-weight: 500;
+  color: var(--text-muted); font-variant-numeric: tabular-nums;
+}
+.mine-agenda-v2 .agenda-cell.is-day-header .day-cap.high { color: var(--warn, #F59E0B); }
+.mine-agenda-v2 .agenda-cell.is-day-header .day-cap.over { color: var(--danger); }
+/* Modo Time: avatar + nome em cima, carga embaixo */
+.mine-agenda-v2 .agenda-cell.is-user-header {
+  display: grid !important; grid-template-columns: auto minmax(0, 1fr); align-items: center;
+  column-gap: 8px; row-gap: 6px; padding: 8px 10px;
+}
+.mine-agenda-v2 .agenda-cell.is-user-header .day-load { grid-column: 1 / -1; }
+.mine-agenda-v2 .agenda-cell.is-user-header,
+.mine-agenda-v2 .agenda-cell.is-user-header.is-today { background: var(--surface); text-align: left; }
+.mine-agenda-v2 .agenda-user-head-name { font-size: 13px; font-weight: 600; text-transform: none; }
+
+/* Blocos — cartão preenchido na cor da etapa, texto branco. Os do Google
+   seguem o estilo próprio (azul / contorno de "sem resposta" e "recusada"). */
+.mine-agenda-v2 .agenda-block:not(.agenda-block--google),
+:root[data-theme="light"] .mine-agenda-v2 .agenda-block:not(.agenda-block--google) {
+  --bc: var(--block-color, var(--accent));
+  margin: 1px 3px 1px 2px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 0;
+  color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.08);
+  gap: 1px;
+}
+.mine-agenda-v2 .agenda-block:not(.agenda-block--google) { background: color-mix(in srgb, var(--bc) 82%, var(--surface)) !important; }
+:root[data-theme="light"] .mine-agenda-v2 .agenda-block:not(.agenda-block--google) {
+  background: color-mix(in srgb, var(--bc) 90%, #fff) !important;
+  box-shadow: 0 1px 2px rgba(0,0,0,.08);
+}
+.mine-agenda-v2 .agenda-block:not(.agenda-block--google):hover,
+:root[data-theme="light"] .mine-agenda-v2 .agenda-block:not(.agenda-block--google):hover {
+  background: var(--bc) !important;
+  box-shadow: 0 6px 16px rgba(0,0,0,.22);
+}
+.mine-agenda-v2 .agenda-block-name,
+:root[data-theme="light"] .mine-agenda-v2 .agenda-block-name {
+  font-size: 12px; font-weight: 600; line-height: 1.3; color: #fff;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.mine-agenda-v2 .agenda-block-project,
+:root[data-theme="light"] .mine-agenda-v2 .agenda-block-project {
+  font-size: 11px; color: rgba(255,255,255,.85); opacity: 1;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mine-agenda-v2 .agenda-block-time {
+  font-size: 10.5px; color: rgba(255,255,255,.72); font-variant-numeric: tabular-nums; line-height: 1.3;
+}
+.mine-agenda-v2 .agenda-block.is-short { padding-top: 3px; padding-bottom: 3px; }
+.mine-agenda-v2 .agenda-block.is-short .agenda-block-name { -webkit-line-clamp: 1; font-size: 11.5px; }
+.mine-agenda-v2 .agenda-block.is-short .agenda-block-project,
+.mine-agenda-v2 .agenda-block.is-short .agenda-block-time { display: none; }
+.mine-agenda-v2 .agenda-block.is-laned .agenda-block-time { display: none; }
+.mine-agenda-v2 .agenda-block-free-icon,
+:root[data-theme="light"] .mine-agenda-v2 .agenda-block-free-icon { color: #fff; margin-right: 5px; }
+/* Bloco livre: mesma cor com listras discretas pra diferenciar de demanda */
+.mine-agenda-v2 .agenda-block.agenda-block--free:not(.agenda-block--google),
+:root[data-theme="light"] .mine-agenda-v2 .agenda-block.agenda-block--free:not(.agenda-block--google) {
+  background-image: repeating-linear-gradient(135deg, rgba(255,255,255,.10) 0 6px, transparent 6px 12px) !important;
+}
+.mine-agenda-v2 .agenda-block--google .agenda-block-name { color: inherit; }
+/* Atrasada: mantém a cor da etapa; ponto vermelho com anel branco antes do nome */
+.mine-agenda-v2 .agenda-block-late {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--danger); margin: 0 6px 1px 0; vertical-align: middle;
+  box-shadow: 0 0 0 2px #fff;
+}
+/* Ações e alça de redimensionar */
+.mine-agenda-v2 .agenda-block-actions { top: 4px; right: 4px; }
+.mine-agenda-v2 .agenda-block-action,
+:root[data-theme="light"] .mine-agenda-v2 .agenda-block-action,
+:root[data-theme="light"] .mine-agenda-v2 .agenda-block:hover .agenda-block-action {
+  color: #fff; background: rgba(0,0,0,.22); border-radius: 4px;
+}
+.mine-agenda-v2 .agenda-block-action svg { width: 12px !important; height: 12px !important; }
+.mine-agenda-v2 .agenda-block .agenda-block-action:hover,
+:root[data-theme="light"] .mine-agenda-v2 .agenda-block:hover .agenda-block-action:hover { color: #fff; background: rgba(0,0,0,.4); }
+.mine-agenda-v2 .agenda-block .agenda-block-action.danger:hover,
+:root[data-theme="light"] .mine-agenda-v2 .agenda-block:hover .agenda-block-action.danger:hover { color: #fff; background: var(--danger); }
+.mine-agenda-v2 .agenda-block-resize { background: none; height: 8px; }
+.mine-agenda-v2 .agenda-block-resize::after { background: rgba(255,255,255,.7); height: 3px; width: 22px; bottom: 2px; }
+.mine-agenda-v2 .agenda-block-resize:hover::after { background: #fff; width: 30px; }
+.mine-agenda-v2 .agenda-block.agenda-block-ghost {
+  outline: 1.5px dashed rgba(255,255,255,.9); outline-offset: -3px;
+  box-shadow: 0 10px 28px rgba(0,0,0,.25);
+}
+/* Linha do agora: mais fina, na cor de perigo do DS */
+.mine-agenda-v2 .agenda-now-line::before { height: 1.5px; background: var(--danger); box-shadow: none; }
+.mine-agenda-v2 .agenda-now-line::after { width: 8px; height: 8px; left: -4px; top: calc(var(--now-y, 0) - 3px); background: var(--danger); box-shadow: 0 0 0 2px var(--surface); }
+
+/* Mês: cabeçalho no mesmo tom da grade de horários */
+.mine-agenda-v2 .agm-head {
+  font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none;
+  color: var(--text-dim); padding: 10px 10px 8px;
+}
+.mine-agenda-v2 .agm-head.is-weekend { color: var(--text-muted); }
+.mine-agenda-v2 .agm-day.is-today { background: color-mix(in srgb, var(--accent) 4%, var(--surface)); }
+.mine-agenda-v2 .agm-hours { background: transparent; padding: 0 4px; font-weight: 500; }
+
+/* ═══ Modais da Agenda — padrão ent-modal (out/2026) ═══ */
+.ent-modal.sch-modal { max-width: 500px; }
+#schedule-modal .modal-body { min-height: 0; gap: 16px; }
+#schedule-modal .form-group { margin: 0; }
+#schedule-modal .form-label { margin-bottom: 6px; }
+.sch-mode-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.sch-label-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.sch-label-row .form-label { margin-bottom: 6px; }
+.sch-duration { font-size: 12px; font-weight: 500; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.sch-duration.is-bad { color: var(--danger); }
+.sch-when-row { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 8px; }
+.sch-when-row .form-control { min-width: 0; font-variant-numeric: tabular-nums; }
+.sch-when-sep { color: var(--text-muted); }
+#schedule-modal .sch-kind-chip { padding: 7px 12px; }
+@media (max-width: 600px) {
+  .sch-when-row { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); }
+  .sch-when-row .sch-date { grid-column: 1 / -1; }
+}
+
+/* Escolher pessoas (modo Time) */
+.ent-modal.agtp-modal { max-width: 440px; }
+.agtp-modal .modal-body { gap: 12px; }
+.agtp-modal .ent-input-icon > svg { width: 14px; height: 14px; }
+.agtp-modal .agenda-team-picker-list {
+  gap: 2px; max-height: min(360px, 52vh); margin: 0 -6px; padding: 0 2px;
+}
+.agtp-modal .agenda-team-picker-item { position: relative; gap: 10px; padding: 7px 8px; }
+.agtp-modal .agenda-team-picker-item input { position: absolute; opacity: 0; pointer-events: none; }
+.agtp-modal .agenda-team-picker-item .avatar { width: 28px !important; height: 28px !important; font-size: 11px !important; }
+.agtp-name { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.agtp-name > span { font-size: 13px; font-weight: 500; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agtp-name em { font-style: normal; color: var(--text-muted); font-weight: 400; }
+.agtp-name small { font-size: 11.5px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agtp-check {
+  flex: none; width: 18px; height: 18px; border-radius: 5px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1.5px solid var(--border, var(--hairline)); color: transparent;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.agtp-check svg { width: 12px !important; height: 12px !important; stroke-width: 3; opacity: 0; color: #fff; }
+.agenda-team-picker-item:has(input:checked) .agtp-check svg { opacity: 1; }
+.agenda-team-picker-item:has(input:checked) { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.agenda-team-picker-item:has(input:checked) .agtp-check { background: var(--accent); border-color: var(--accent); color: #fff; }
+.agenda-team-picker-item:has(input:focus-visible) { box-shadow: var(--shadow-focus); }
+.agenda-team-picker-item.is-off { opacity: .45; cursor: not-allowed; }
+.agenda-team-picker-item.is-off:hover { background: transparent; }
+.agtp-count { font-size: 12.5px; font-weight: 500; color: var(--text-dim); font-variant-numeric: tabular-nums; padding: 0 4px; }
+.agtp-count.is-full { color: var(--accent-text); }
+/* Hora com o mesmo fundo dos outros campos do light (a regra global não inclui time). */
+:root[data-theme="light"] #schedule-modal input[type="time"].form-control { background: #f5f5f8; border-color: transparent; }
+:root[data-theme="light"] #schedule-modal input[type="time"].form-control:focus { background: #fff; border-color: var(--accent); }
+#sch-recur-row.is-locked .filter-cdrop,
+#sch-recur-row.is-locked select { display: none !important; }
+@media (max-width: 760px) { .mine-agenda-v2 .agenda-hint.is-tip { display: none; } }
+:root[data-theme="light"] .mine-agenda-v2 .agenda-cell.is-day-header.is-today { background: color-mix(in srgb, var(--accent) 4%, var(--surface)); }
+:root[data-theme="light"] .mine-agenda-v2 .agenda-cell.is-user-header.is-today,
+.mine-agenda-v2 .agenda-cell.is-day-header.is-user-header.is-today { background: var(--surface); }

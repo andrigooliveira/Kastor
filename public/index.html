@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <!-- Idioma: roda antes de tudo (carrega o dicionário quando não é português). -->
-<script src="/js/i18n.js?v=20261023dm3"></script>
+<script src="/js/i18n.js?v=20261023ag10"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>reWork</title>
 <link rel="icon" type="image/png" href="/favicon.png">
@@ -1479,8 +1479,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               <button class="btn btn-ghost btn-sm" onclick="agendaThisWeek()">Hoje</button>
               <div class="seg agenda-view-toggle" style="margin-left:8px">
                 <button class="seg-btn agenda-view-btn" data-view="day" onclick="setAgendaView('day')">Dia</button>
-                <button class="seg-btn agenda-view-btn" data-view="1" onclick="setAgendaView(1)">Semana</button>
-                <button class="seg-btn agenda-view-btn is-active" data-view="2" onclick="setAgendaView(2)">Quinzena</button>
+                <button class="seg-btn agenda-view-btn is-active" data-view="1" onclick="setAgendaView(1)">Semana</button>
+                <button class="seg-btn agenda-view-btn" data-view="2" onclick="setAgendaView(2)">Quinzena</button>
                 <button class="seg-btn agenda-view-btn" data-view="month" onclick="setAgendaView('month')">Mês</button>
                 <button class="seg-btn agenda-view-btn" data-view="year" onclick="setAgendaView('year')">Ano</button>
               </div>
@@ -1705,15 +1705,15 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <button class="btn btn-ghost btn-sm" onclick="agendaTodayDay()">Hoje</button>
           </div>
           <div class="agenda-spacer"></div>
+          <span class="agenda-hint is-tip" tabindex="0" role="note" data-tip="Arraste num horário vazio pra criar · num bloco pra mover · na borda inferior pra redimensionar · clique pra abrir a demanda." aria-label="Arraste num horário vazio pra criar · num bloco pra mover · na borda inferior pra redimensionar · clique pra abrir a demanda."><i data-lucide="circle-help" class="ic-sm"></i></span>
           <div class="seg agenda-view-toggle" id="agenda-view-toggle-weeks">
             <button class="seg-btn agenda-view-btn" data-view="day" onclick="setAgendaView('day')">Dia</button>
-            <button class="seg-btn agenda-view-btn" data-view="1" onclick="setAgendaView(1)">Semana</button>
-            <button class="seg-btn agenda-view-btn is-active" data-view="2" onclick="setAgendaView(2)">Quinzena</button>
+            <button class="seg-btn agenda-view-btn is-active" data-view="1" onclick="setAgendaView(1)">Semana</button>
+            <button class="seg-btn agenda-view-btn" data-view="2" onclick="setAgendaView(2)">Quinzena</button>
             <button class="seg-btn agenda-view-btn" data-view="month" onclick="setAgendaView('month')">Mês</button>
             <button class="seg-btn agenda-view-btn" data-view="year" onclick="setAgendaView('year')">Ano</button>
           </div>
         </div>
-        <div class="agenda-hint">Arraste num horário vazio pra criar · num bloco pra mover · na borda inferior pra redimensionar · clique pra abrir a demanda.</div>
         <div class="agenda-grid-wrap" id="agenda-grid-wrap"></div>
       </div>
     </div>
@@ -4089,77 +4089,87 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 <!-- ── MODAL: AGENDAR DEMANDA (bloco da agenda) ── -->
 <!-- Picker de usuários pro modo Time da agenda. -->
 <div class="modal-overlay" id="agenda-team-picker-modal">
-  <div class="modal modal-sm">
+  <div class="modal modal-sm ent-modal agtp-modal">
     <div class="modal-header">
-      <div class="modal-title">Escolher pessoas</div>
-      <button class="modal-close" onclick="closeModal('agenda-team-picker-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+      <div class="ent-modal-titles">
+        <div class="modal-title">Escolher pessoas</div>
+        <div class="ent-modal-sub">Até 6 pessoas lado a lado no mesmo dia.</div>
+      </div>
+      <button class="modal-close" onclick="closeModal('agenda-team-picker-modal')" aria-label="Fechar"><i data-lucide="x" class="ic-sm"></i></button>
     </div>
     <div class="modal-body">
+      <div class="ent-input-icon">
+        <i data-lucide="search" class="ic-sm"></i>
+        <input class="form-control" id="agenda-team-picker-search" type="search" placeholder="Buscar pessoa" autocomplete="off" oninput="filterAgendaTeamPicker(this.value)">
+      </div>
       <div id="agenda-team-picker-list" class="agenda-team-picker-list"></div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:10px">Máximo 6 pessoas por vez pra caber na tela.</div>
     </div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal('agenda-team-picker-modal')">Cancelar</button>
-      <button class="btn btn-confirm" onclick="saveAgendaTeamPicker()">Aplicar</button>
+    <div class="modal-footer ent-foot">
+      <div class="ent-foot-left">
+        <span class="agtp-count" id="agenda-team-picker-count"></span>
+        <button type="button" class="ent-danger ent-quiet" id="agenda-team-picker-clear" onclick="clearAgendaTeamPicker()">Limpar</button>
+      </div>
+      <div class="ent-foot-right">
+        <button class="btn btn-ghost" onclick="closeModal('agenda-team-picker-modal')">Cancelar</button>
+        <button class="btn btn-confirm" onclick="saveAgendaTeamPicker()">Aplicar</button>
+      </div>
     </div>
   </div>
 </div>
 
 <div class="modal-overlay" id="schedule-modal">
-  <div class="modal modal-sm">
+  <div class="modal modal-sm ent-modal sch-modal">
     <div class="modal-header">
-      <div class="modal-title" id="schedule-modal-title">Agendar bloco</div>
-      <button class="modal-close" onclick="closeModal('schedule-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+      <div class="ent-modal-titles">
+        <div class="modal-title" id="schedule-modal-title">Agendar bloco</div>
+        <div class="ent-modal-sub" id="sch-when"></div>
+      </div>
+      <button class="modal-close" onclick="closeModal('schedule-modal')" aria-label="Fechar"><i data-lucide="x" class="ic-sm"></i></button>
     </div>
     <div class="modal-body">
-      <div class="form-grid">
-        <!-- Toggle Demanda / Livre (bloqueio sem demanda: reunião, foco, off, etc) -->
-        <div class="form-group full">
-          <div class="seg sch-mode-toggle" id="sch-mode-toggle" role="tablist">
-            <button type="button" class="seg-btn sch-mode-btn is-active" id="sch-mode-demand" onclick="setScheduleMode('demand')">Demanda</button>
-            <button type="button" class="seg-btn sch-mode-btn" id="sch-mode-free" onclick="setScheduleMode('free')">Livre</button>
-          </div>
+      <!-- Toggle Demanda / Livre (bloqueio sem demanda: reunião, foco, off, etc) -->
+      <div class="seg sch-mode-toggle" id="sch-mode-toggle" role="tablist">
+        <button type="button" class="seg-btn sch-mode-btn is-active" id="sch-mode-demand" onclick="setScheduleMode('demand')"><i data-lucide="list-checks" class="ic-sm"></i> Demanda</button>
+        <button type="button" class="seg-btn sch-mode-btn" id="sch-mode-free" onclick="setScheduleMode('free')"><i data-lucide="calendar-clock" class="ic-sm"></i> Bloco livre</button>
+      </div>
+      <div class="form-group" id="sch-demand-row">
+        <div class="sch-label-row">
+          <label class="form-label" for="sch-demand">Demanda</label>
+          <button type="button" class="ent-link" id="sch-open-demand" onclick="openScheduleDemand()" style="display:none">Abrir demanda</button>
         </div>
-        <div class="form-group full" id="sch-demand-row">
-          <label class="form-label">Demanda</label>
-          <select class="form-control" id="sch-demand"></select>
+        <select class="form-control" id="sch-demand" onchange="onScheduleDemandPick()"></select>
+      </div>
+      <div class="form-group" id="sch-title-row" style="display:none">
+        <label class="form-label" for="sch-title">Título</label>
+        <input class="form-control" id="sch-title" type="text" maxlength="200" placeholder="Ex.: Reunião de equipe, Foco, Almoço…">
+      </div>
+      <div class="form-group" id="sch-kind-row" style="display:none">
+        <label class="form-label">Tipo</label>
+        <div class="sch-kind-chips" id="sch-kind-chips"></div>
+      </div>
+      <div class="form-group">
+        <div class="sch-label-row">
+          <label class="form-label" for="sch-date">Quando</label>
+          <span class="sch-duration" id="sch-duration"></span>
         </div>
-        <div class="form-group full" id="sch-title-row" style="display:none">
-          <label class="form-label">Título</label>
-          <input class="form-control" id="sch-title" type="text" maxlength="200" placeholder="Ex.: Reunião de equipe, Foco, Almoço…">
+        <div class="sch-when-row">
+          <input class="form-control sch-date" id="sch-date" type="date" aria-label="Data">
+          <input class="form-control" id="sch-start" type="time" step="900" aria-label="Início" oninput="updateScheduleDuration()">
+          <span class="sch-when-sep" aria-hidden="true">–</span>
+          <input class="form-control" id="sch-end" type="time" step="900" aria-label="Fim" oninput="updateScheduleDuration()">
         </div>
-        <div class="form-group full" id="sch-kind-row" style="display:none">
-          <label class="form-label">Tipo</label>
-          <div class="sch-kind-chips" id="sch-kind-chips"></div>
-        </div>
-        <div class="form-group full" id="sch-recur-row" style="display:none">
-          <label class="form-label">Repetir</label>
-          <select class="form-control" id="sch-recur" onchange="onScheduleRecurPick(this.value)"></select>
-          <div id="sch-recur-info" class="sch-recur-info" style="display:none"></div>
-        </div>
-        <div class="form-group full">
-          <label class="form-label">Quem</label>
-          <div id="sch-when" style="font-size:13px;color:var(--text-dim)"></div>
-        </div>
-        <div class="form-group">
-          <label class="form-label" data-en="Start">Início</label>
-          <input class="form-control" id="sch-start" type="time" step="900">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Fim</label>
-          <input class="form-control" id="sch-end" type="time" step="900">
-        </div>
-        <div class="form-group full">
-          <label class="form-label">Data</label>
-          <input class="form-control" id="sch-date" type="date">
-        </div>
+      </div>
+      <div class="form-group" id="sch-recur-row" style="display:none">
+        <label class="form-label" for="sch-recur">Repetir</label>
+        <select class="form-control" id="sch-recur" onchange="onScheduleRecurPick(this.value)"></select>
+        <div id="sch-recur-info" class="sch-recur-info" style="display:none"></div>
       </div>
     </div>
-    <div class="modal-footer client-modal-foot">
-      <div class="client-modal-foot-left">
-        <button class="btn btn-danger btn-sm" id="sch-delete-btn" style="display:none" onclick="deleteScheduleFromModal()">Excluir</button>
+    <div class="modal-footer ent-foot">
+      <div class="ent-foot-left">
+        <button type="button" class="ent-danger" id="sch-delete-btn" style="display:none" onclick="deleteScheduleFromModal()"><i data-lucide="trash-2" class="ic-sm"></i> Excluir</button>
       </div>
-      <div class="client-modal-foot-right">
+      <div class="ent-foot-right">
         <button class="btn btn-ghost" onclick="closeModal('schedule-modal')">Cancelar</button>
         <button class="btn btn-confirm" onclick="saveSchedule()">Salvar</button>
       </div>
@@ -5275,7 +5285,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20261023dm3" defer></script>
+<script src="/js/boot.js?v=20261023ag10" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

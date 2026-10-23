@@ -39267,7 +39267,10 @@ function agendaMinFromY(colCell, clientY) {
 let agendaUserId = null;          // usuário filtrado (default = me)
 let agendaWeekStart = null;       // segunda da semana atual visualizada
 // Em mobile começa em 1 semana (2 não cabe nem com column shrink); desktop mantém 2.
-let agendaWeeks = (typeof window !== 'undefined' && window.innerWidth < 640) ? 1 : 2;
+// Visão escolhida fica salva no navegador; sem escolha, abre na Semana.
+const AGENDA_VIEW_KEY = 'kastor-agenda-view';
+const _agendaSavedView = (() => { try { return localStorage.getItem(AGENDA_VIEW_KEY); } catch { return null; } })();
+let agendaWeeks = _agendaSavedView === '2' ? 2 : 1;
 let editingScheduleId = null;     // id do bloco sendo editado no modal
 let _agendaDrag = null;           // estado interno de drag
 // Modo Individual (1 user, N semanas) vs Time (M users, 1 dia).
@@ -39276,7 +39279,7 @@ let agendaTeamUsers = [];         // userIds selecionados no modo Time
 let agendaTeamDate = null;        // Date do dia visualizado no modo Time
 // Visão do Individual e do embed de Minhas Demandas (estilo Google Agenda):
 // 'day' | 'week' (1 ou 2 semanas, ver agendaWeeks) | 'month' | 'year'.
-let agendaView = 'week';
+let agendaView = ['day', 'month', 'year'].includes(_agendaSavedView) ? _agendaSavedView : 'week';
 let agendaDayRef = null;          // dia visualizado na visão Dia
 let agendaMonthRef = null;        // dia 1 do mês visualizado
 let agendaYearRef = null;         // ano visualizado na visão Ano
@@ -39303,6 +39306,7 @@ function agendaHHMMtoMins(s) {
 function agendaInit() {
   if (!agendaUserId) agendaUserId = me?.id || null;
   if (!agendaWeekStart) agendaWeekStart = agendaWeekStartFor(new Date());
+  _agendaSyncViewBtns();
 }
 // ‹ › andam um período da visão atual.
 function agendaPrevWeek() { agendaShift(-1); }
@@ -39360,6 +39364,7 @@ function setAgendaView(n) {
   const focus = _agendaFocusDate();
   if (n === 'day' || n === 'month' || n === 'year') agendaView = n;
   else { agendaView = 'week'; agendaWeeks = Number(n) === 1 ? 1 : 2; }
+  try { localStorage.setItem(AGENDA_VIEW_KEY, agendaView === 'week' ? String(agendaWeeks) : agendaView); } catch {}
   if (agendaView === 'day') agendaDayRef = focus;
   else if (agendaView === 'month') agendaMonthRef = new Date(focus.getFullYear(), focus.getMonth(), 1);
   else if (agendaView === 'year') agendaYearRef = focus.getFullYear();
@@ -39422,24 +39427,58 @@ function agendaNextDay() {
 }
 function agendaTodayDay() { agendaTeamDate = new Date(); renderAgenda(); }
 
+const AGENDA_TEAM_MAX = 6;
 function openAgendaTeamPicker() {
   const wrap = $('agenda-team-picker-list');
   const wsU = wsUsers().filter(u => u.active !== false)
     .slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-  wrap.innerHTML = wsU.map(u => `
-    <label class="agenda-team-picker-item">
-      <input type="checkbox" data-uid="${esc(u.id)}" ${agendaTeamUsers.includes(u.id) ? 'checked' : ''}>
+  wrap.innerHTML = wsU.map(u => {
+    const sub = [u.position, u.role].filter(Boolean).join(' · ');
+    return `
+    <label class="agenda-team-picker-item" data-q="${esc(norm(u.name + ' ' + sub))}">
+      <input type="checkbox" data-uid="${esc(u.id)}" ${agendaTeamUsers.includes(u.id) ? 'checked' : ''} onchange="_agtpSync()">
       ${avatarHTML(u, 'avatar avatar-sm')}
-      <span>${esc(u.name)}${u.id === me?.id ? ' (você)' : ''}</span>
-    </label>`).join('');
+      <span class="agtp-name"><span>${esc(u.name)}${u.id === me?.id ? ' <em>(você)</em>' : ''}</span>${sub ? `<small>${esc(sub)}</small>` : ''}</span>
+      <span class="agtp-check" aria-hidden="true"><i data-lucide="check" class="ic-xs"></i></span>
+    </label>`;
+  }).join('');
+  const search = $('agenda-team-picker-search');
+  if (search) search.value = '';
+  _agtpSync();
+  paintIcons(wrap);
   openModal('agenda-team-picker-modal');
+}
+// Contador "N de 6" + trava as demais caixas quando chega no limite.
+function _agtpSync() {
+  const boxes = [...document.querySelectorAll('#agenda-team-picker-list input[data-uid]')];
+  const n = boxes.filter(b => b.checked).length;
+  boxes.forEach(b => {
+    b.disabled = !b.checked && n >= AGENDA_TEAM_MAX;
+    b.closest('.agenda-team-picker-item')?.classList.toggle('is-off', b.disabled);
+  });
+  const cnt = $('agenda-team-picker-count');
+  if (cnt) {
+    cnt.textContent = `${n} de ${AGENDA_TEAM_MAX}`;
+    cnt.classList.toggle('is-full', n >= AGENDA_TEAM_MAX);
+  }
+  const clr = $('agenda-team-picker-clear');
+  if (clr) clr.style.display = n ? '' : 'none';
+}
+function filterAgendaTeamPicker(q) {
+  const k = norm(q || '').trim();
+  document.querySelectorAll('#agenda-team-picker-list .agenda-team-picker-item')
+    .forEach(it => { it.style.display = !k || it.dataset.q.includes(k) ? '' : 'none'; });
+}
+function clearAgendaTeamPicker() {
+  document.querySelectorAll('#agenda-team-picker-list input[data-uid]').forEach(b => { b.checked = false; });
+  _agtpSync();
 }
 function saveAgendaTeamPicker() {
   const wrap = $('agenda-team-picker-list');
   const boxes = wrap.querySelectorAll('input[type="checkbox"][data-uid]');
   const picked = [...boxes].filter(b => b.checked).map(b => b.dataset.uid);
   if (!picked.length) { toast('Escolha pelo menos uma pessoa.', 'warn'); return; }
-  if (picked.length > 6) { toast('Máximo 6 pessoas por vez.', 'warn'); return; }
+  if (picked.length > AGENDA_TEAM_MAX) { toast(`Máximo ${AGENDA_TEAM_MAX} pessoas por vez.`, 'warn'); return; }
   agendaTeamUsers = picked;
   updateAgendaTeamBtnLabel();
   closeModal('agenda-team-picker-modal');
@@ -39888,28 +39927,38 @@ function buildAgendaTeamList(wrap, day) {
    bloco pra outro dia (mantém o horário). No celular a célula vira só pontos
    e tocar no dia abre o popover. */
 const AGM_MAX_ITEMS = 3;
-const AGM_WEEKDAYS = IS_PT ? ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'] : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+// Semana começa na segunda, igual à grade de horários.
+const AGM_WEEKDAYS = IS_PT ? ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'] : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 let _agmItems = {};   // id → item renderizado (pro clique/arraste achar o alvo)
 // Semanas inteiras (dom → sáb) que cobrem o mês (o visualizado, ou o de ms).
 function agendaMonthDays(ms) {
   ms = ms || agendaMonthStart();
-  const start = new Date(ms); start.setDate(1 - ms.getDay());
+  const start = new Date(ms); start.setDate(1 - (ms.getDay() + 6) % 7);
   const end = new Date(ms.getFullYear(), ms.getMonth() + 1, 0);
-  end.setDate(end.getDate() + (6 - end.getDay()));
+  end.setDate(end.getDate() + (7 - end.getDay()) % 7);
   const out = [];
   for (const d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) out.push(new Date(d));
   return out;
 }
 // Troca o texto de ajuda do painel conforme a visão (guarda o da semana no dataset).
+// Carga do dia no cabeçalho: barrinha + horas ("4,5h"); tooltip com a capacidade.
+function _agendaLoadHTML(hours, cap, cls) {
+  const pct = Math.min(100, Math.round(hours / cap * 100));
+  const lbl = `${hours.toFixed(1).replace('.', ',')}h`;
+  return `<span class="day-load ${cls}" title="${lbl} de ${cap}h agendadas"><span class="day-load-bar"><i style="width:${pct}%"></i></span><span class="day-cap ${cls}">${hours ? lbl : '—'}</span></span>`;
+}
 function _agendaSyncHint(wrap, view) {
   const hint = wrap.parentElement && wrap.parentElement.querySelector('.agenda-hint');
   if (!hint) return;
-  if (hint.dataset.weekText == null) hint.dataset.weekText = hint.textContent;
-  hint.textContent = view === 'month'
+  if (hint.dataset.weekText == null) hint.dataset.weekText = hint.dataset.tip || hint.textContent;
+  hint.dataset.tip = view === 'month'
     ? 'Clique num dia vazio pra agendar · arraste um bloco pra outro dia · clique no número pra abrir o dia.'
     : view === 'year'
     ? 'Clique num dia pra ver o que tem nele · clique no nome do mês pra abrir o mês.'
     : hint.dataset.weekText;
+  // Na /agenda a dica é o "?" da barra (tooltip); no painel de Minhas Demandas é texto.
+  if (hint.classList.contains('is-tip')) hint.setAttribute('aria-label', hint.dataset.tip);
+  else hint.textContent = hint.dataset.tip;
 }
 // Tudo de uma pessoa num dia, já ordenado: dia inteiro → prazos → horários.
 function _agmDayItems(userId, ymd) {
@@ -39969,7 +40018,7 @@ function buildAgendaMonth(wrap, userId, monthStart) {
   const todayYmd = agendaYmd(new Date());
   const m = monthStart.getMonth();
   const mobile = isMobileLayout();
-  const head = AGM_WEEKDAYS.map((w, i) => `<div class="agm-head${i === 0 || i === 6 ? ' is-weekend' : ''}">${w}</div>`).join('');
+  const head = AGM_WEEKDAYS.map((w, i) => `<div class="agm-head${i >= 5 ? ' is-weekend' : ''}">${w}</div>`).join('');
   const cells = days.map(day => {
     const ymd = agendaYmd(day);
     const items = _agmDayItems(userId, ymd);
@@ -40132,7 +40181,7 @@ window.addEventListener('scroll', agmClosePopover, { passive: true });
    mais forte conforme a quantidade (blocos, reuniões do Google e prazos);
    prazo atrasado ganha anel vermelho. Clicar no dia abre o popover do dia,
    clicar no nome do mês abre o mês. */
-const AGY_WEEKDAYS = IS_PT ? ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'] : ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+const AGY_WEEKDAYS = IS_PT ? ['S', 'T', 'Q', 'Q', 'S', 'S', 'D'] : ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 // ymd → { n, late } numa passada só (contar dia a dia seria 365 × tudo).
 function _agyIndex(userId, year) {
   const idx = {};
@@ -40454,12 +40503,13 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
       let capClass = '';
       if (dayHours > capacityH) capClass = 'over';
       else if (dayHours > capacityH * 0.85) capClass = 'high';
-      const capLabel = `${dayHours.toFixed(1).replace('.', ',')}h / ${capacityH}h`;
       head.classList.add('is-user-header');
-      head.innerHTML = `${avatarHTML(u, 'avatar avatar-sm')}<span class="agenda-user-head-name">${esc(u.name)}</span><span class="day-cap ${capClass}">${esc(capLabel)}</span>`;
+      head.innerHTML = `${avatarHTML(u, 'avatar avatar-sm')}<span class="agenda-user-head-name">${esc(u.name)}</span>${_agendaLoadHTML(dayHours, capacityH, capClass)}`;
     } else {
-      const dayName = d.toLocaleDateString(LOCALE, { weekday: 'short' }).replace('.', '').toUpperCase();
+      const dayName = d.toLocaleDateString(LOCALE, { weekday: 'short' }).replace('.', '');
       const dayDate = d.toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit' });
+      const dow = d.getDay();
+      if (dow === 0 || dow === 6) head.classList.add('is-weekend');
       const schedMin = schedules
         .filter(s => s.userId === agendaUserIdLocal && s.date === c._ymd)
         .filter(s => s.demandId || s.kind === 'meeting')
@@ -40470,8 +40520,8 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
       let capClass = '';
       if (dayHours > capacityH) capClass = 'over';
       else if (dayHours > capacityH * 0.85) capClass = 'high';
-      const capLabel = `${dayHours.toFixed(1).replace('.', ',')}h / ${capacityH}h`;
-      head.innerHTML = `<span>${esc(dayName)}</span><span class="day-date">${esc(dayDate)}</span><span class="day-cap ${capClass}">${esc(capLabel)}</span>`;
+      head.title = dayDate;
+      head.innerHTML = `<span class="day-line"><span class="day-name">${esc(dayName)}</span><span class="day-num">${d.getDate()}</span></span>${_agendaLoadHTML(dayHours, capacityH, capClass)}`;
     }
     head.style.gridRow = '1 / 2';
     head.style.gridColumn = `${c.gridCol} / ${c.gridCol + 1}`;
@@ -40505,6 +40555,8 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
       col.className = 'agenda-cell agenda-col';
       col.dataset.date = c._ymd;
       if (c.type === 'user') col.dataset.userId = c.user.id;
+      else if (c.day && (c.day.getDay() === 0 || c.day.getDay() === 6)) col.classList.add('is-weekend');
+      if (c._ymd === todayYmd && c.type !== 'user') col.classList.add('is-today');
     }
     grid.appendChild(col);
   });
@@ -40585,12 +40637,12 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
     //  - Livre: s.color explícita (do save) → cor do kind → accent
     //  - Vinculado atrasado (mesma pessoa): vermelho
     //  - Vinculado normal: stageColorSnapshot → cor do projeto → fallback
-    let color;
+    let color, isBlockLate = false;
     if (isFree) {
       color = s.color || kindMeta.color || '#7A00FF';
     } else {
-      const isBlockLate = demand && !isDone(demand) && isLate(demand) && demand.ownerId === s.userId;
-      color = isBlockLate ? '#EF4444' : (s.stageColorSnapshot || project?.color || '#7A00FF');
+      isBlockLate = !!(demand && !isDone(demand) && isLate(demand) && demand.ownerId === s.userId);
+      color = s.stageColorSnapshot || project?.color || '#7A00FF';
     }
     const layout = dayLayouts[schedKey(s)];
     const myCol = layout ? layout.assign['sched:' + s.id] : 0;
@@ -40599,13 +40651,13 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
     block.className = 'agenda-block';
     if (totalCols > 1) block.classList.add('is-laned');
     if (isFree) block.classList.add('agenda-block--free');
+    if (isBlockLate) block.classList.add('is-late');
+    if (s.endMin - s.startMin <= 30) block.classList.add('is-short');
     block.dataset.scheduleId = s.id;
     block.style.gridRow = `${startRow + 2} / ${endRow + 2}`;
     block.style.gridColumn = `${dayCol.gridCol} / ${dayCol.gridCol + 1}`;
     if (totalCols > 1) block.style.cssText += laneStyle(myCol, totalCols);
     block.style.setProperty('--block-color', color);
-    block.style.background = `color-mix(in srgb, ${color} 22%, transparent)`;
-    block.style.borderLeftColor = color;
     const canEdit = !!(me && (me.isAdmin || s.userId === me.id));
     const actions = canEdit ? `
       <div class="agenda-block-actions">
@@ -40620,14 +40672,16 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
       const projName = project ? project.name : '';
       const clientName = client ? client.name : '';
       const demandName = demand ? demand.name : '(demanda removida)';
-      nameHtml = `<div class="agenda-block-name">${esc(demandName)}</div>`;
+      nameHtml = `<div class="agenda-block-name">${isBlockLate ? '<span class="agenda-block-late" title="Demanda atrasada"></span>' : ''}${esc(demandName)}</div>`;
       const meta = [clientName, projName].filter(Boolean).join(' · ');
       metaHtml = meta ? `<div class="agenda-block-project">${esc(meta)}</div>` : '';
     }
+    const timeHtml = `<div class="agenda-block-time">${agendaMinsToHHMM(s.startMin)}–${agendaMinsToHHMM(s.endMin)}</div>`;
     block.innerHTML = `
       ${actions}
       ${nameHtml}
       ${metaHtml}
+      ${timeHtml}
       ${canEdit ? '<div class="agenda-block-resize" data-resize="1"></div>' : ''}`;
     block.addEventListener('mousedown', (e) => {
       if (e.target.closest('[data-action]')) return;
@@ -41345,7 +41399,13 @@ function setScheduleMode(mode) {
   if (demandRow) demandRow.style.display = _scheduleMode === 'demand' ? '' : 'none';
   if (titleRow)  titleRow.style.display  = _scheduleMode === 'free'   ? '' : 'none';
   if (kindRow)   kindRow.style.display   = _scheduleMode === 'free'   ? '' : 'none';
-  if (recurRow)  recurRow.style.display  = _scheduleMode === 'free'   ? '' : 'none';
+  // Editando bloco avulso não vira série: "Repetir" só aparece em criação ou
+  // quando o bloco já é de uma série (aí mostra só o aviso, sem o seletor).
+  const editing = editingScheduleId ? schedules.find(x => x.id === editingScheduleId) : null;
+  if (recurRow) {
+    recurRow.style.display = _scheduleMode === 'free' && (!editing || editing.recurrenceGroupId) ? '' : 'none';
+    recurRow.classList.toggle('is-locked', !!editing);
+  }
   if (_scheduleMode === 'free') renderScheduleKindChips();
 }
 function renderScheduleKindChips() {
@@ -41413,9 +41473,11 @@ function openScheduleModal(id, preset) {
   $('sch-date').value = date;
   $('sch-start').value = agendaMinsToHHMM(startMin);
   $('sch-end').value = agendaMinsToHHMM(endMin);
-  // "Quem" — texto amigável do responsável pelo bloco
-  const userName = userById(s ? s.userId : (preset?.userId || agendaUserId))?.name || '—';
-  $('sch-when').textContent = `Para ${userName}`;
+  // Subtítulo: pra quem é o bloco e em que dia (atualiza ao trocar a data).
+  _scheduleForName = userById(s ? s.userId : (preset?.userId || agendaUserId))?.name || '—';
+  _updateScheduleWhen();
+  updateScheduleDuration();
+  onScheduleDemandPick();
   // Recorrência: só faz sentido em criação nova de bloco livre. Em edição,
   // esconde o select e mostra info se esse bloco faz parte de série.
   _scheduleRecurrence = null;
@@ -41440,6 +41502,7 @@ function openScheduleModal(id, preset) {
   const dateInp = $('sch-date');
   if (dateInp && !dateInp._recurBound) {
     dateInp.addEventListener('change', () => {
+      _updateScheduleWhen();
       _populateScheduleRecur(dateInp.value);
       // Se estava em uma opção baseada em dow, invalida (o dia da semana mudou).
       const sel = $('sch-recur'); if (sel) sel.value = 'none';
@@ -41450,6 +41513,33 @@ function openScheduleModal(id, preset) {
   }
   $('sch-delete-btn').style.display = s ? '' : 'none';
   openModal('schedule-modal');
+}
+let _scheduleForName = '';
+function _updateScheduleWhen() {
+  const el = $('sch-when');
+  if (!el) return;
+  const v = $('sch-date')?.value;
+  const d = v ? new Date(v + 'T12:00:00') : null;
+  const day = d && !isNaN(d) ? d.toLocaleDateString(LOCALE, { weekday: 'short', day: '2-digit', month: '2-digit' }).replace('.', '') : '';
+  el.textContent = [`Para ${_scheduleForName}`, day].filter(Boolean).join(' · ');
+}
+function updateScheduleDuration() {
+  const el = $('sch-duration');
+  if (!el) return;
+  const a = $('sch-start')?.value, b = $('sch-end')?.value;
+  const mins = a && b ? agendaHHMMtoMins(b) - agendaHHMMtoMins(a) : 0;
+  el.classList.toggle('is-bad', !!(a && b) && mins <= 0);
+  el.textContent = !a || !b ? '' : mins <= 0 ? 'Fim antes do início' : fmtHm(mins / 60);
+}
+function onScheduleDemandPick() {
+  const btn = $('sch-open-demand');
+  if (btn) btn.style.display = $('sch-demand')?.value ? '' : 'none';
+}
+function openScheduleDemand() {
+  const id = $('sch-demand')?.value;
+  if (!id) return;
+  closeModal('schedule-modal');
+  showDetail(id);
 }
 function _recurrenceHumanLabel(pattern) {
   return {

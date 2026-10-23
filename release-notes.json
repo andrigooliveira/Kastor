@@ -1,5 +1,19 @@
 [
   {
+    "id": "2026-10-23-agenda",
+    "date": "2026-10-23",
+    "title": "Agenda com visual novo",
+    "highlights": [
+      "A agenda abre na visão Semana e passa a lembrar a última visão que você escolheu (Dia, Semana, Quinzena, Mês ou Ano).",
+      "O cabeçalho de cada dia mostra o número em destaque e uma barrinha com as horas agendadas, que fica amarela perto de 8h e vermelha quando passa.",
+      "Os blocos mostram o horário quando têm espaço. Demanda atrasada mantém a cor da etapa e ganha um ponto vermelho antes do nome.",
+      "O Mês e o Ano começam na segunda-feira, como a semana.",
+      "Ao agendar um bloco, data, início e fim ficam numa linha só, com a duração calculada. Dá para abrir a demanda direto do agendamento.",
+      "No modo Time, a escolha de pessoas tem busca e mostra quantas já estão selecionadas, de até 6.",
+      "As dicas de como arrastar ficam no ícone de ponto de interrogação, no topo da agenda."
+    ]
+  },
+  {
     "id": "2026-10-23-detalhe-da-demanda",
     "date": "2026-10-23",
     "title": "Detalhe da demanda mais fácil de ler",
