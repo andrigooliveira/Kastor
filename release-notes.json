@@ -1,5 +1,44 @@
 [
   {
+    "id": "2026-10-23-detalhe-da-demanda",
+    "date": "2026-10-23",
+    "title": "Detalhe da demanda mais fácil de ler",
+    "highlights": [
+      "A Atividade saiu das abas e virou o ícone de histórico no topo, ao lado do lembrete. Clique para ver tudo o que aconteceu na demanda.",
+      "No caminho do topo, clique no cliente, no projeto ou no fluxo para abrir a página deles. A equipe do menu lateral muda junto para a equipe do item.",
+      "O prazo da etapa mostra a distância de hoje (\"há 2 dias\" em vermelho, \"hoje\", \"em 3 dias\"), e o tempo na etapa aparece ao lado de \"Etapa 1 de 6\".",
+      "Os apontamentos ficaram mais curtos (\"hoje, 10:07–12:07\") e, quando mais de uma pessoa apontou, aparece o total de cada uma.",
+      "O briefing virou o botão \"Abrir briefing\", com o site de onde ele vem, e a aba Checklist mostra o progresso (por exemplo, 1/4).",
+      "No celular, a página não rola mais para os lados."
+    ]
+  },
+  {
+    "id": "2026-10-23-demandas-prazos",
+    "date": "2026-10-23",
+    "title": "Demandas: os mesmos grupos de prazo em todo lugar",
+    "highlights": [
+      "Em Demandas (lista e quadro) e em Minhas Demandas, os grupos agora são os mesmos: Atrasadas, Hoje, Esta semana (até domingo), Depois e Sem prazo, com as datas no cabeçalho.",
+      "No topo da lista de Demandas e de Minhas Demandas, um resumo mostra quantas há em cada grupo. Clique para ver só aquele grupo.",
+      "Na lista, demandas de prioridade Alta e Imediata ganham um selo ao lado do nome.",
+      "No quadro, o cartão mostra o título primeiro. O tempo na etapa só aparece quando a demanda está parada há mais de 2 dias, em vermelho a partir de 5.",
+      "Em Minhas Demandas, a coluna Equipe só aparece quando suas demandas são de mais de uma equipe."
+    ]
+  },
+  {
+    "id": "2026-10-23-clientes-projetos-usuarios",
+    "date": "2026-10-23",
+    "title": "Clientes e Projetos com as demandas em aberto",
+    "hideFor": [
+      "freelancer"
+    ],
+    "highlights": [
+      "Na página do cliente e na do projeto, a nova lista Demandas em aberto mostra o que está andando, com etapa, responsável e prazo. Clique para abrir a demanda.",
+      "Os projetos do cliente aparecem em cartões com as demandas abertas, atrasadas e as horas dos últimos 30 dias. Para criar um projeto, use o cartão \"Novo projeto\" no fim da lista.",
+      "O cadastro de cliente e de projeto foi reorganizado: o avatar mostra a inicial na cor escolhida enquanto você digita, a equipe aparece com a cor dela, e o rodapé tem a situação (Ativo ou Arquivado) à esquerda.",
+      "Em Usuários, Área e Cargo agora são colunas separadas, e dá para ordenar por cada uma."
+    ]
+  },
+  {
     "id": "2026-10-22-notificacao-de-comentario-apagado",
     "date": "2026-10-22",
     "title": "Comentário apagado leva a notificação junto",

@@ -1294,6 +1294,35 @@ function _ymdLocal(dateObj) {
 }
 function effDue(d)  { return d.stageDueDate || d.deadline || null; }
 function isLate(d)  { const due = effDue(d); return !!due && !isDone(d) && due < todayStr(); }
+/* Grupos de prazo — os mesmos em Demandas (lista e quadro) e Minhas Demandas.
+   "Esta semana" vai até domingo; "Depois", de segunda em diante. */
+const DUE_GROUPS = [
+  { key: 'atrasadas', label: 'Atrasadas',   cls: 'mgroup--late',  color: '#EF5050' },
+  { key: 'hoje',      label: 'Hoje',        cls: 'mgroup--today', color: '#FB7415' },
+  { key: 'semana',    label: 'Esta semana', cls: 'mgroup--week',  color: '#F5A718' },
+  { key: 'depois',    label: 'Depois',      cls: 'mgroup--later', color: '#64748B' },
+  { key: 'semprazo',  label: 'Sem prazo',   cls: 'mgroup--nodue', color: '#94A3B8' },
+];
+function dueWeekEnd() {
+  const now = new Date(todayStr() + 'T00:00:00');
+  const end = new Date(now); end.setDate(end.getDate() + (7 - now.getDay()) % 7);
+  return end;
+}
+function dueGroupOf(d, weekEndYmd) {
+  const due = effDue(d);
+  if (!due) return 'semprazo';
+  const day = due.slice(0, 10), today = todayStr();
+  if (day < today) return 'atrasadas';
+  if (day === today) return 'hoje';
+  return day <= (weekEndYmd || _ymdLocal(dueWeekEnd())) ? 'semana' : 'depois';
+}
+// Datas nos cabeçalhos: "até dom, 26/10" e "a partir de seg, 27/10".
+function dueGroupHints() {
+  const end = dueWeekEnd();
+  const next = new Date(end); next.setDate(next.getDate() + 1);
+  const wd = x => x.toLocaleDateString(LOCALE, { weekday: 'short', day: '2-digit', month: '2-digit' }).replace('.', '');
+  return { semana: `até ${wd(end)}`, depois: `a partir de ${wd(next)}` };
+}
 function wasLate(d) { return isDone(d) && d.deadline && d.completedAt && d.completedAt.slice(0,10) > d.deadline; }
 /* Urgência de prazo: 'overdue' (vencida) | 'today' (vence hoje) | 'soon' (≤2 dias)
    | 'none'. Demandas concluídas ou sem prazo nunca têm urgência. */
@@ -1511,21 +1540,35 @@ function demandCrumbItemsHTML(client, project, flow, fallback = {}) {
     return `<span class="dd-crumb-avatar" style="background:${hexDim(c)};color:${c}">${esc((name || '?').charAt(0).toUpperCase())}</span>`;
   };
   const iconAv = name => `<span class="dd-crumb-avatar dd-crumb-avatar--icon"><i data-lucide="${esc(name)}" class="ic-xs"></i></span>`;
-  const item = (av, name) => `<span class="dd-crumb-item">${av}<span>${esc(name)}</span></span>`;
+  // fallback.links: cada item vira link pra página dele (cliente, projeto, fluxo).
+  const item = (av, name, path, title, wsId) => path
+    ? `<a class="dd-crumb-item dd-crumb-link" href="${esc(orgUrl(path))}" title="${esc(title)}" onclick="event.preventDefault(); _crumbGo('${esc(path)}', '${esc(wsId || '')}')">${av}<span>${esc(name)}</span></a>`
+    : `<span class="dd-crumb-item">${av}<span>${esc(name)}</span></span>`;
+  const links = !!fallback.links;
   const cname = client?.name || fallback.clientName || '';
   const pname = project?.name || fallback.projectName || '';
   const fname = flow?.name || fallback.flowName || '';
   const parts = [];
-  if (cname) parts.push(item(client?.avatar ? imgAv(client.avatar) : letterAv(cname, client?.color), cname));
-  if (pname) parts.push(item(project?.avatar ? imgAv(project.avatar) : letterAv(pname, project?.color), pname));
+  if (cname) parts.push(item(client?.avatar ? imgAv(client.avatar) : letterAv(cname, client?.color), cname,
+    links && client?.id ? clientPath(client.id) : null, 'Abrir o cliente', client?.workspaceId));
+  if (pname) parts.push(item(project?.avatar ? imgAv(project.avatar) : letterAv(pname, project?.color), pname,
+    links && project?.id ? projectPath(project.id) : null, 'Abrir o projeto', project?.workspaceId || client?.workspaceId));
   if (fname) {
     const icon = flow?.icon;
     const av = !icon ? iconAv('workflow')
       : String(icon).startsWith('lucide:') ? iconAv(icon.slice(7))
       : imgAv(icon);
-    parts.push(item(av, fname));
+    const fPath = links && flow?.id ? (flow.clientId && clientById(flow.clientId) ? flowPath(flow.clientId, flow) : '/flows/' + flow.id) : null;
+    parts.push(item(av, fname, fPath, 'Abrir o fluxo', flow?.workspaceId));
   }
   return parts.join('<i data-lucide="chevron-right" class="ic-xs"></i>');
+}
+/* Clique num item do caminho da demanda: troca pra equipe do item (cliente,
+   projeto ou fluxo) e vai pela rota, como um link normal. */
+function _crumbGo(path, wsId) {
+  if (wsId && wsId !== activeWs && wsById(wsId) && (me.isAdmin || (me.workspaces || []).includes(wsId))) switchWorkspace(wsId);
+  navPush(path, { keepSearch: false });
+  applyRoute();
 }
 function clientAvatarHTML(c, cls = 'avatar') {
   if (!c) return `<div class="${cls}">?</div>`;
@@ -2037,6 +2080,70 @@ function renderDetailKpis(elId, projectIds) {
     { label: 'entregues no mês', value: doneMonth.length, icon: 'check-circle-2', tone: 'success' },
   ]);
   paintIcons();
+}
+
+/* Demandas em aberto de um cliente/projeto (detalhes de Cliente e Projeto):
+   prazo mais perto primeiro, com etapa, responsável e atraso. Mostra 8 e
+   expande no "Mostrar todas". opts.showProject: coluna do projeto (cliente). */
+const _entDemandsAll = new Set();
+function toggleEntityDemands(elId) {
+  if (_entDemandsAll.has(elId)) _entDemandsAll.delete(elId); else _entDemandsAll.add(elId);
+  if (elId === 'client-detail-demands' && currentClientId) renderClientDetail(currentClientId);
+  if (elId === 'project-detail-demands' && currentProjectId) renderProjectDetail(currentProjectId);
+}
+function renderEntityOpenDemands(elId, projectIds, opts = {}) {
+  const host = $(elId); if (!host) return;
+  const ids = new Set(projectIds);
+  const list = (demands || [])
+    .filter(d => !d.deletedAt && ids.has(d.projectId) && !isDone(d))
+    .sort((a, b) => (effDue(a) || '9999').localeCompare(effDue(b) || '9999') || norm(a.name).localeCompare(norm(b.name)));
+  const countEl = $(elId + '-count');
+  if (countEl) countEl.textContent = list.length ? String(list.length) : '';
+  if (!list.length) {
+    host.innerHTML = '<div class="client-info-empty ed-empty">Nenhuma demanda em aberto.</div>';
+    return;
+  }
+  const MAX = 8;
+  const all = _entDemandsAll.has(elId);
+  const shown = all ? list : list.slice(0, MAX);
+  const today = todayStr();
+  const rows = shown.map(d => {
+    const st = stageOf(d);
+    const owner = userById(d.ownerId);
+    const p = projectById(d.projectId);
+    const due = effDue(d);
+    let dueHtml = '<span class="ed-due is-none">Sem prazo</span>';
+    if (due) {
+      const days = Math.round((Date.parse(due.slice(0, 10) + 'T00:00:00') - Date.parse(today + 'T00:00:00')) / 864e5);
+      const rel = days < 0 ? `há ${-days}d` : days === 0 ? 'hoje' : days <= 2 ? `em ${days}d` : '';
+      const cls = days < 0 ? ' is-late' : days <= 2 ? ' is-soon' : '';
+      dueHtml = `<span class="ed-due${cls}">${esc(fmtDateShort(due))}${rel ? `<small>${esc(rel)}</small>` : ''}</span>`;
+    }
+    return `<button type="button" class="ed-row" data-demand-id="${d.id}" onclick="showDetail('${d.id}')">
+      <span class="ed-name">${esc(d.name)}</span>
+      ${opts.showProject ? `<span class="ed-proj">${esc(p?.name || '—')}</span>` : ''}
+      <span class="ed-stage">${st ? `<span class="ed-stage-dot" style="background:${esc(st.color || '#7A00FF')}"></span>${esc(st.label)}` : '—'}</span>
+      <span class="ed-owner" title="${esc(owner?.name || 'Sem responsável')}">${owner ? avatarHTML(owner, 'avatar avatar-xs').replace(/ data-user-id="[^"]+"/, '') : '<span class="ed-owner-none">—</span>'}</span>
+      ${dueHtml}
+    </button>`;
+  }).join('');
+  host.innerHTML = `<div class="ed-list${opts.showProject ? ' has-proj' : ''}">${rows}</div>
+    ${list.length > MAX ? `<button type="button" class="ed-more" onclick="toggleEntityDemands('${elId}')">${all ? 'Mostrar menos' : `Mostrar todas (${list.length})`}</button>` : ''}`;
+}
+/* Números de um projeto pros cartões do detalhe do cliente. */
+function _projectCardStats(pid) {
+  const since30 = _ymdLocal(new Date(Date.now() - 29 * 864e5));
+  const s = { open: 0, late: 0, hours30: 0, lastAt: 0 };
+  for (const d of demands || []) {
+    if (d.deletedAt || d.projectId !== pid) continue;
+    if (!isDone(d)) { s.open++; if (isLate(d)) s.late++; }
+    for (const iso of [d.createdAt, d.completedAt, d.stageEnteredAt]) { const t = iso ? Date.parse(iso) : 0; if (t > s.lastAt) s.lastAt = t; }
+    for (const t of d.timeEntries || []) {
+      const day = String(t.date || t.createdAt || '').slice(0, 10);
+      if (day && day >= since30) s.hours30 += Number(t.hours) || 0;
+    }
+  }
+  return s;
 }
 
 // ─── SKELETONS ───
@@ -4454,6 +4561,7 @@ function attemptCloseModal(id) {
 /* ── Sair da página de detalhe da demanda ─── volta pra rota anterior
    (list/dashboard/mine), respeitando drafts não salvos. */
 function closeDemandDetail() {
+  _closeActivityMenu();
   const finish = () => {
     stopDetailPoll();
     maybeSuggestTime(detailId);
@@ -14467,6 +14575,7 @@ function renderList() {
   const openList = isDoneOnly ? [] : list.filter(d => !isDone(d));
   const doneList = isDoneOnly ? list : list.filter(d => isDone(d));
   const mainList = isDoneOnly ? doneList : openList;
+  _renderListSummary(isDoneOnly || !_listGrouping ? [] : mainList);
 
   const renderRow = (d, sectionKey, isDoneTable) => {
     const p = projectById(d.projectId);
@@ -14511,10 +14620,10 @@ function renderList() {
     return `<tr class="mrow demand-row ${sel ? 'selected' : ''}" data-prio="${prio.value}" data-due="${u}" data-demand-id="${d.id}"${sectionAttr} onclick="onDemandRowClick(event, '${d.id}')">
       <td class="col-bulk-check mcol-bulk"><input type="checkbox" class="bulk-check-row" ${sel ? 'checked' : ''} onclick="event.stopPropagation();toggleDemandSelection('${d.id}', this.checked)"></td>
       <td class="mcol-name col-demand-name">
-        <div class="mname-row"><div class="mname">${newsDotHTML(d)}${esc(d.name)}</div>${demandSignalsHTML(d)}</div>
+        <div class="mname-row"><div class="mname">${newsDotHTML(d)}${esc(d.name)}</div>${(d.priority === 1 || d.priority === 2) && isDoneTable !== true ? `<span class="mprio mprio--${d.priority}" title="Prioridade ${esc(priorityLabel(d.priority))}">${esc(priorityLabel(d.priority))}</span>` : ''}${demandSignalsHTML(d)}</div>
       </td>
       <td class="mcol-project col-truncate" title="${esc(p?.name || '')}">${p ? esc(p.name) : '—'}</td>
-      <td class="mcol-client col-truncate" title="${esc(p?.client || '')}">${esc(p?.client || '—')}</td>
+      <td class="mcol-client col-truncate" title="${esc(p?.client || '')}">${esc(p?.client || '—')}${p?.name ? `<span class="mcol-proj-inline"> · ${esc(p.name)}</span>` : ''}</td>
       <td class="mcol-stage">${stageCell}</td>
       ${ownerTd}
       <td class="mcol-due">${dueCell}</td>
@@ -14532,28 +14641,12 @@ function renderList() {
     // Flat: sem headers de agrupamento (toggle off) OU filtro Concluídas.
     bodyEl.innerHTML = mainList.map(d => renderRow(d, null, isDoneOnly)).join('');
   } else {
-    const today = todayStr();
-    const now = new Date(today + 'T00:00:00');
-    const daysUntilSunday = (7 - now.getDay()) % 7;
-    const endOfWeek = new Date(now); endOfWeek.setDate(endOfWeek.getDate() + daysUntilSunday);
-    const endOfWeekYmd = endOfWeek.toISOString().slice(0, 10);
-    const buckets = { atrasadas: [], hoje: [], semana: [], proximos: [], sem: [] };
-    for (const d of mainList) {
-      const due = effDue(d);
-      if (!due) { buckets.sem.push(d); continue; }
-      if (due < today) buckets.atrasadas.push(d);
-      else if (due === today) buckets.hoje.push(d);
-      else if (due <= endOfWeekYmd) buckets.semana.push(d);
-      else buckets.proximos.push(d);
-    }
-    const sections = [
-      { key: 'atrasadas', label: 'Atrasadas',     cls: 'mgroup--late'  },
-      { key: 'hoje',      label: 'Hoje',          cls: 'mgroup--today' },
-      { key: 'semana',    label: 'Essa semana',   cls: 'mgroup--week'  },
-      { key: 'proximos',  label: 'Próximos dias', cls: 'mgroup--later' },
-      { key: 'sem',       label: 'Sem prazo',     cls: 'mgroup--none'  },
-    ];
-    bodyEl.innerHTML = sections.map(sec => {
+    // Mesmos grupos de prazo do quadro e de Minhas Demandas (dueGroupOf).
+    const weekEndYmd = _ymdLocal(dueWeekEnd());
+    const buckets = Object.fromEntries(DUE_GROUPS.map(g => [g.key, []]));
+    for (const d of mainList) buckets[dueGroupOf(d, weekEndYmd)].push(d);
+    const hints = dueGroupHints();
+    bodyEl.innerHTML = DUE_GROUPS.filter(sec => !_listGroupFilter || sec.key === _listGroupFilter).map(sec => {
       const items = buckets[sec.key];
       if (!items.length) return '';
       const collapsed = _listCollapsedSections.has(sec.key);
@@ -14565,6 +14658,7 @@ function renderList() {
             <span class="mgroup-bar"></span>
             <span class="mgroup-lbl">${esc(sec.label)}</span>
             <span class="mgroup-count">${items.length}</span>
+            ${hints[sec.key] ? `<span class="mgroup-hint">${esc(hints[sec.key])}</span>` : ''}
           </div>
         </td>
       </tr>`;
@@ -14599,6 +14693,31 @@ function renderList() {
   _applyBulkMode();
   refreshBulkBar();
   saveFilters('list');
+}
+/* Resumo por prazo no topo de Demandas (lista): quantas em cada grupo;
+   clicar mostra só aquele grupo. Some sem agrupamento ou em "Concluídas". */
+let _listGroupFilter = '';
+function setListGroupFilter(k) {
+  _listGroupFilter = _listGroupFilter === k ? '' : k;
+  renderList();
+}
+function _renderListSummary(list) {
+  const el = $('list-summary');
+  if (!el) return;
+  if (!list.length) {
+    _listGroupFilter = '';
+    el.hidden = true; el.innerHTML = '';
+    return;
+  }
+  const weekEndYmd = _ymdLocal(dueWeekEnd());
+  const counts = Object.fromEntries(DUE_GROUPS.map(g => [g.key, 0]));
+  for (const d of list) counts[dueGroupOf(d, weekEndYmd)]++;
+  if (_listGroupFilter && !counts[_listGroupFilter]) _listGroupFilter = '';
+  el.hidden = false;
+  el.innerHTML = `<div class="mine-sum-chips" role="group" aria-label="Filtrar por prazo">
+    <button type="button" class="mine-sum-chip${!_listGroupFilter ? ' is-active' : ''}" aria-pressed="${!_listGroupFilter}" onclick="setListGroupFilter('')">Todas<span>${list.length}</span></button>
+    ${DUE_GROUPS.filter(g => counts[g.key]).map(g => `<button type="button" class="mine-sum-chip mine-sum-chip--${g.key}${_listGroupFilter === g.key ? ' is-active' : ''}" aria-pressed="${_listGroupFilter === g.key}" onclick="setListGroupFilter('${g.key}')">${esc(g.label)}<span>${counts[g.key]}</span></button>`).join('')}
+  </div>`;
 }
 /* Colapsa/expande a tabela de "Concluídas" na aba Demandas. Persiste em localStorage. */
 function toggleDoneTable() {
@@ -14661,13 +14780,15 @@ function _syncListGroupingBtn() {
 }
 
 /* Estado das seções colapsadas em /demands. Persiste em localStorage — cada key
-   corresponde a um bucket (atrasadas/hoje/semana/proximos/sem). Ao clicar no
-   header, alterna e re-renderiza (mais simples que manipular o DOM à mão e
-   mantém a zebra alternada consistente com o novo conjunto visível). */
+   corresponde a um grupo de DUE_GROUPS (atrasadas/hoje/semana/depois/semprazo).
+   Ao clicar no header, alterna e re-renderiza (mais simples que manipular o
+   DOM à mão e mantém a zebra alternada consistente com o novo conjunto visível). */
 let _listCollapsedSections = new Set();
 try {
   const raw = localStorage.getItem('kastor-list-collapsed');
-  if (raw) _listCollapsedSections = new Set(JSON.parse(raw));
+  // Chaves antigas (proximos/sem) viram as novas.
+  const OLD = { proximos: 'depois', sem: 'semprazo' };
+  if (raw) _listCollapsedSections = new Set(JSON.parse(raw).map(k => OLD[k] || k));
 } catch {}
 function toggleListSection(key) {
   if (_listCollapsedSections.has(key)) _listCollapsedSections.delete(key);
@@ -14698,22 +14819,11 @@ function kanbanSort(a, b) {
    — resolve o problema de dezenas de colunas duplicadas quando há muitos fluxos.
    'stage' = board por etapa (mescla etapas homônimas entre fluxos). */
 let kanbanMode = localStorage.getItem('kastor-kanban-mode') || 'attention';
-const ATTENTION_BUCKETS = [
-  { key: 'overdue', label: 'Atrasadas',       color: '#EF5050', hint: 'prazo vencido' },
-  { key: 'today',   label: 'Vencem hoje',     color: '#FB7415', hint: 'prazo é hoje' },
-  { key: 'week',    label: 'Próximos 7 dias', color: '#F5A718', hint: 'vencem na semana' },
-  { key: 'later',   label: 'Mais pra frente', color: '#64748B', hint: 'prazo distante' },
-  { key: 'nodue',   label: 'Sem prazo',       color: '#94A3B8', hint: 'sem deadline definido' },
-];
-function attentionBucketOf(d) {
-  const due = effDue(d);
-  if (!due) return 'nodue';
-  const today = todayStr();
-  if (due < today) return 'overdue';
-  if (due === today) return 'today';
-  const days = Math.round((Date.parse(due.slice(0, 10) + 'T00:00:00') - Date.parse(today + 'T00:00:00')) / 86400000);
-  return days <= 7 ? 'week' : 'later';
-}
+// Colunas do modo Atenção = grupos de prazo (DUE_GROUPS), os mesmos da lista.
+const _ATTN_KEY = { atrasadas: 'overdue', hoje: 'today', semana: 'week', depois: 'later', semprazo: 'nodue' };
+const _ATTN_HINT = { overdue: 'prazo vencido', today: 'prazo é hoje', week: 'vencem até domingo', later: 'vencem da próxima semana em diante', nodue: 'sem prazo definido' };
+const ATTENTION_BUCKETS = DUE_GROUPS.map(g => ({ key: _ATTN_KEY[g.key], label: g.label, color: g.color, hint: _ATTN_HINT[_ATTN_KEY[g.key]] }));
+function attentionBucketOf(d) { return _ATTN_KEY[dueGroupOf(d)]; }
 function setKanbanMode(m) {
   kanbanMode = (m === 'stage') ? 'stage' : 'attention';
   localStorage.setItem('kastor-kanban-mode', kanbanMode);
@@ -14866,20 +14976,30 @@ function kanbanCard(d) {
     : '';
   return `
     <div class="kanban-card" draggable="true" data-demand-id="${d.id}" style="--card-stage:${esc(stageColor)}" onclick="showDetail('${d.id}')">
-      <div class="kanban-card-top">${priorityPill(d.priority)}${statusPill(d)}${stageAgeChip(d)}
+      <div class="kanban-card-head">
+        <div class="kanban-card-name">${newsDotHTML(d)}${esc(d.name)}</div>
         <button type="button" class="kanban-card-copy" title="Copiar link" aria-label="Copiar link" onclick="copyDemandLink('${d.id}', event)">
           <i data-lucide="link-2" class="ic-xs"></i>
         </button>
       </div>
-      <div class="kanban-card-name">${newsDotHTML(d)}${esc(d.name)}</div>
       <div class="kanban-card-meta">${esc(p?.name || '—')}${p?.client ? ` · ${esc(p.client)}` : ''}</div>
       ${(() => { const g = demandSignalsHTML(d); return g ? `<div class="kanban-card-signals">${g}</div>` : ''; })()}
+      <div class="kanban-card-top">${priorityPill(d.priority)}${statusPill(d)}${_kanbanStaleChip(d)}</div>
       <div class="kanban-card-foot">
         ${ownerBlock}
         ${dueBlock}
       </div>
     </div>
   `;
+}
+
+/* Tempo na etapa no cartão do quadro: só quando a demanda está parada há mais
+   de 2 dias (antes aparecia sempre, até "há 1min"); vermelho a partir de 5. */
+function _kanbanStaleChip(d) {
+  if (!d.stageEnteredAt || isDone(d)) return '';
+  const days = Math.floor((Date.now() - Date.parse(d.stageEnteredAt)) / 864e5);
+  if (!(days > 2)) return '';
+  return `<span class="stage-age${days >= 5 ? ' is-late' : ''}" title="Tempo nesta etapa">parada há ${days}d</span>`;
 }
 
 /* ─── KANBAN: DRAG & DROP com reorder + placeholder ─── */
@@ -15137,12 +15257,14 @@ function myDemands() {
 /* Ordem de Minhas Demandas: só o que está em aberto, em 4 seções por prazo
    e, dentro de cada uma, a ordenação escolhida na tabela. Usada pela tabela
    e pelas setas ‹ › do detalhe (renderMineNav), pra andarem na mesma ordem. */
-const MINE_SECTIONS = [
-  { key: 'atrasadas', label: 'Atrasadas',    cls: 'mgroup--late' },
-  { key: 'hoje',      label: 'Hoje',         cls: 'mgroup--today' },
-  { key: 'semana',    label: 'Essa semana',  cls: 'mgroup--week' },
-  { key: 'proximos',  label: 'Próximos dias', cls: 'mgroup--later' }
-];
+// Mesmos grupos de prazo de Demandas (DUE_GROUPS).
+const MINE_SECTIONS = DUE_GROUPS.map(g => ({ ...g, short: g.label }));
+// Filtro do resumo no topo: '' = todas as seções; senão a key de uma seção.
+let mineBucketFilter = '';
+function setMineBucketFilter(k) {
+  mineBucketFilter = mineBucketFilter === k ? '' : k;
+  renderMine();
+}
 function mineSortedBuckets() {
   const list = myDemands().filter(d => !isDone(d)).sort((a,b) => {
     let va, vb;
@@ -15155,29 +15277,37 @@ function mineSortedBuckets() {
     else                                   { va = effDue(a) || '9999'; vb = effDue(b) || '9999'; }
     return (va < vb ? -1 : va > vb ? 1 : 0) * (mineSortAsc ? 1 : -1);
   });
-  const today = todayStr();
-  const now = new Date(today + 'T00:00:00');
-  // Fim da semana atual = próximo domingo (getDay 0=dom, 6=sab). "essa semana" = hoje..domingo.
-  const daysUntilSunday = (7 - now.getDay()) % 7;
-  const endOfWeek = new Date(now); endOfWeek.setDate(endOfWeek.getDate() + daysUntilSunday);
-  const endOfWeekYmd = endOfWeek.toISOString().slice(0, 10);
-  const buckets = { atrasadas: [], hoje: [], semana: [], proximos: [] };
-  for (const d of list) {
-    const due = effDue(d);
-    if (!due) { buckets.proximos.push(d); continue; }
-    if (due < today) buckets.atrasadas.push(d);
-    else if (due === today) buckets.hoje.push(d);
-    else if (due <= endOfWeekYmd) buckets.semana.push(d);
-    else buckets.proximos.push(d);
-  }
+  const weekEndYmd = _ymdLocal(dueWeekEnd());
+  const buckets = Object.fromEntries(DUE_GROUPS.map(g => [g.key, []]));
+  for (const d of list) buckets[dueGroupOf(d, weekEndYmd)].push(d);
   return { list, buckets };
 }
 function mineOrderIds() {
   const { buckets } = mineSortedBuckets();
-  return MINE_SECTIONS.flatMap(sec => buckets[sec.key].map(d => d.id));
+  return MINE_SECTIONS.filter(sec => !mineBucketFilter || sec.key === mineBucketFilter).flatMap(sec => buckets[sec.key].map(d => d.id));
+}
+/* Resumo no topo: quantas em cada seção (clicar filtra) e as concluídas na semana. */
+function _renderMineSummary(list, buckets) {
+  const el = $('mine-summary');
+  if (!el) return;
+  if (!list.length) { el.innerHTML = ''; el.hidden = true; return; }
+  el.hidden = false;
+  const weekAgo = Date.now() - 7 * 864e5;
+  const doneWeek = myDemands().filter(d => isDone(d) && d.completedAt && Date.parse(d.completedAt) > weekAgo).length;
+  const chips = [`<button type="button" class="mine-sum-chip${!mineBucketFilter ? ' is-active' : ''}" aria-pressed="${!mineBucketFilter}" onclick="setMineBucketFilter('')">Todas<span>${list.length}</span></button>`]
+    .concat(MINE_SECTIONS.filter(sec => buckets[sec.key].length || mineBucketFilter === sec.key).map(sec =>
+      `<button type="button" class="mine-sum-chip mine-sum-chip--${sec.key}${mineBucketFilter === sec.key ? ' is-active' : ''}" aria-pressed="${mineBucketFilter === sec.key}" onclick="setMineBucketFilter('${sec.key}')">${esc(sec.short)}<span>${buckets[sec.key].length}</span></button>`));
+  el.innerHTML = `<div class="mine-sum-chips" role="group" aria-label="Filtrar por prazo">${chips.join('')}</div>
+    ${doneWeek ? `<span class="mine-sum-done"><i data-lucide="check-circle-2" class="ic-xs"></i>${doneWeek} ${doneWeek === 1 ? 'concluída' : 'concluídas'} nos últimos 7 dias</span>` : ''}`;
 }
 function renderMine() {
   const { list, buckets } = mineSortedBuckets();
+  if (mineBucketFilter && !buckets[mineBucketFilter]?.length) mineBucketFilter = '';
+  _renderMineSummary(list, buckets);
+  // Coluna Equipe só quando há demandas de mais de uma equipe.
+  const multiWs = new Set(list.map(d => d.workspaceId)).size > 1;
+  document.querySelector('#page-mine table.mine-table-v2')?.classList.toggle('mine-one-ws', !multiWs);
+  const SEC_HINT = dueGroupHints();
 
   const renderMineRow = (d) => {
     const p = projectById(d.projectId);
@@ -15224,7 +15354,7 @@ function renderMine() {
         </div>
       </td>
       <td class="mcol-squad">${wsCell}</td>
-      <td class="mcol-client col-truncate" title="${esc(p?.client || '')}">${esc(p?.client || '—')}</td>
+      <td class="mcol-client col-truncate" title="${esc(p?.client || '')}">${esc(p?.client || '—')}${p?.name ? `<span class="mcol-proj-inline"> · ${esc(p.name)}</span>` : ''}</td>
       <td class="mcol-project col-truncate" title="${esc(p?.name || '')}">${esc(p?.name || '—')}</td>
       <td class="mcol-stage">${stageCell}</td>
       <td class="mcol-due">${dueCell}</td>
@@ -15233,10 +15363,16 @@ function renderMine() {
 
   const body = $('mine-table-body');
   if (!list.length) {
-    body.innerHTML = `<tr><td colspan="6">${emptyState('Nada com você agora', 'Quando uma etapa for atribuída a você, ela aparece aqui.', 'inbox')}</td></tr>`;
+    // Vazio compacto: a agenda logo abaixo continua à vista.
+    const weekAgo = Date.now() - 7 * 864e5;
+    const doneWeek = myDemands().filter(d => isDone(d) && d.completedAt && Date.parse(d.completedAt) > weekAgo).length;
+    body.innerHTML = `<tr class="mine-empty-row"><td colspan="6"><div class="mine-empty">
+      <i data-lucide="inbox" class="ic-sm"></i>
+      <div><b>Nada com você agora.</b> Quando uma etapa for atribuída a você, ela aparece aqui.${doneWeek ? ` Você concluiu ${doneWeek} ${doneWeek === 1 ? 'demanda' : 'demandas'} nos últimos 7 dias.` : ''}</div>
+    </div></td></tr>`;
   } else {
-    // 4 seções por urgência de prazo. Cada seção mantém a ordenação corrente.
-    body.innerHTML = MINE_SECTIONS.map(sec => {
+    // Seções por urgência de prazo. Cada seção mantém a ordenação corrente.
+    body.innerHTML = MINE_SECTIONS.filter(sec => !mineBucketFilter || sec.key === mineBucketFilter).map(sec => {
       const items = buckets[sec.key];
       if (!items.length) return '';
       return `<tr class="mgroup ${sec.cls}"><td colspan="6">
@@ -15244,6 +15380,7 @@ function renderMine() {
             <span class="mgroup-bar"></span>
             <span class="mgroup-lbl">${esc(sec.label)}</span>
             <span class="mgroup-count">${items.length}</span>
+            ${SEC_HINT[sec.key] ? `<span class="mgroup-hint">${esc(SEC_HINT[sec.key])}</span>` : ''}
           </div>
         </td></tr>` +
         items.map(renderMineRow).join('');
@@ -18538,6 +18675,7 @@ function editCurrentDemand() {
    browser volta pra origem naturalmente. */
 function showDetail(id, opts) {
   cmdkTrack('d:' + id);
+  if (id !== detailId) _closeActivityMenu();
   if (currentPage !== 'demand-detail') _rememberListOrigin(id);
   else if (_listReturn) _listReturn.id = id;
   if (detailId && detailId !== id) maybeSuggestTime(detailId);
@@ -18872,13 +19010,18 @@ function applyDetailRightCollapsed() {
   }
 }
 function setDemandDetailTab(name) {
+  // Atividade saiu das abas e virou menu no topo (link antigo /atividade abre o menu).
+  if (name === 'activity') {
+    name = 'comments';
+    setTimeout(() => { const b = document.getElementById('detail-activity-btn'); if (b) openActivityMenu(b); }, 0);
+  }
   detailActiveTab = name;
   // Update classes das abas
   document.querySelectorAll('.detail-tab').forEach(b => b.classList.remove('is-active'));
   const btn = document.querySelector(`.detail-tab[onclick*="'${name}'"]`);
   if (btn) btn.classList.add('is-active');
   // Show/hide panes
-  ['comments','checklist','forms','activity','stages'].forEach(k => {
+  ['comments','checklist','forms','stages'].forEach(k => {
     const el = document.getElementById('tab-pane-' + k);
     if (el) el.style.display = k === name ? '' : 'none';
   });
@@ -18886,7 +19029,6 @@ function setDemandDetailTab(name) {
   const sortBtn = document.getElementById('detail-tab-sort');
   if (sortBtn) sortBtn.style.display = name === 'comments' ? '' : 'none';
   const d = demandById(detailId);
-  if (name === 'activity') _renderActivityTab(d);
   if (name === 'stages')   _renderStagesTab(d);
   if (name === 'forms')    _renderFormsTab(d);
   if (currentPage === 'demand-detail' && detailId) navPush(pageUrlFor('demand-detail'), { keepSearch: false });
@@ -18909,9 +19051,11 @@ function renderDetail() {
   const stepCount = active.length;
   const cur = idx >= 0 ? active[idx] : null;
   const nextStage = idx >= 0 ? active[idx + 1] : null;
+  // Há quanto tempo está na etapa atual (sai da faixa de datas e vem pra cá).
+  const stageSince = d.stageEnteredAt && !cur?.done ? `<span class="dd-stage-since" title="Entrou na etapa em ${esc(fmtDateTime(d.stageEnteredAt))}"> · nesta etapa ${esc(fmtRelativeTime(d.stageEnteredAt))}</span>` : '';
   const pipeline = flow && stepCount ? `
     <div class="dd-stage" style="--stage-c:${esc(cur?.color || '#7A00FF')}">
-      <div class="dd-stage-kicker">Etapa ${idx >= 0 ? `${idx + 1} de ${stepCount}` : `de ${stepCount}`}</div>
+      <div class="dd-stage-kicker">Etapa ${idx >= 0 ? `${idx + 1} de ${stepCount}` : `de ${stepCount}`}${stageSince}</div>
       <div class="dd-stage-head">
         <div class="dd-stage-name">
           <span class="dd-stage-dot"></span>
@@ -18928,23 +19072,39 @@ function renderDetail() {
       </div>
     </div>` : '';
 
-  // Apontamentos de horas
-  const timeRows = (d.timeEntries || []).slice().reverse().map(e => {
+  // Apontamentos de horas: "hoje, 09:00–11:00". A etapa só aparece quando os
+  // apontamentos são de mais de uma etapa (senão repete a mesma em toda linha).
+  const _entries = d.timeEntries || [];
+  const _multiStage = new Set(_entries.map(e => e.stageId).filter(Boolean)).size > 1;
+  const _hm = iso => { const t = new Date(iso); return Number.isFinite(t.getTime()) ? t.toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' }) : ''; };
+  const _dayLabel = iso => {
+    const t = new Date(iso); if (!Number.isFinite(t.getTime())) return '';
+    const k = _ymdLocal(t), today = todayStr();
+    if (k === today) return 'hoje';
+    if (k === _ymdLocal(new Date(Date.now() - 864e5))) return 'ontem';
+    return fmtDateShort(k);
+  };
+  const _apptWhen = e => {
+    if (!e.start) return e.date ? fmtDateShort(e.date) : '';
+    const day = _dayLabel(e.start);
+    const sameDay = e.end && _ymdLocal(new Date(e.start)) === _ymdLocal(new Date(e.end));
+    return `${day}, ${_hm(e.start)}${e.end ? `–${sameDay ? _hm(e.end) : _dayLabel(e.end) + ' ' + _hm(e.end)}` : ''}`;
+  };
+  const timeRows = _entries.slice().reverse().map(e => {
     const u = userById(e.userId);
     const f2 = flowById(d.flowId);
     const st = f2 ? f2.stages.find(x => x.id === e.stageId) : null;
     const canEdit = e.userId === me.id;
     const canDel = e.userId === me.id || me.isAdmin;
+    const when = _apptWhen(e);
     return `<div class="appt-row" id="appt-${e.id}">
       ${avatarHTML(u)}
-      <span class="appt-name">${esc(u?.name || '—')}</span>
-      <span class="appt-hours">${fmtHours(e.hours)}</span>
-      <span class="appt-time-range">
-        <span class="appt-range">${e.start ? fmtDateTime(e.start) : '—'}</span>
-        <i data-lucide="chevron-right" class="appt-arrow"></i>
-        <span class="appt-range">${e.end ? fmtDateTime(e.end) : '—'}</span>
+      <span class="appt-main">
+        <span class="appt-name">${esc(u?.name || '—')}</span>
+        <span class="appt-time-range" title="${esc([e.start ? fmtDateTime(e.start) : '', e.end ? fmtDateTime(e.end) : ''].filter(Boolean).join(' → '))}">${esc(when)}${e.note ? ` · <span class="appt-note">${esc(e.note)}</span>` : ''}</span>
       </span>
-      ${st ? `<span class="pill" style="color:${st.color};background:${hexDim(st.color)};font-size:10px">${esc(st.label)}</span>` : ''}
+      ${_multiStage && st ? `<span class="pill appt-stage" style="color:${st.color};background:${hexDim(st.color)}">${esc(st.label)}</span>` : ''}
+      <span class="appt-hours">${fmtHours(e.hours)}</span>
       <div class="appt-actions">
         ${(canEdit || canDel) ? `<div class="chat-comment-menu-wrap appt-menu-wrap">
           <button class="chat-comment-act" title="Mais" onclick="toggleApptMenu('${e.id}', event)"><i data-lucide="more-horizontal" class="ic-xs"></i></button>
@@ -19051,6 +19211,25 @@ function renderDetail() {
   };
 
   const totalHours = (d.timeEntries || []).reduce((a,e) => a + (Number(e.hours) || 0), 0);
+  // Resumo por pessoa quando mais de uma apontou.
+  const _byPerson = new Map();
+  for (const e of _entries) _byPerson.set(e.userId, (_byPerson.get(e.userId) || 0) + (Number(e.hours) || 0));
+  const apptSummary = _byPerson.size > 1
+    ? `<div class="appt-summary">${[..._byPerson.entries()].sort((a, b) => b[1] - a[1]).map(([uid, h]) => `<span class="appt-summary-item">${avatarHTML(userById(uid), 'avatar avatar-xs')}${esc((userById(uid)?.name || '—').split(' ')[0])} <b>${fmtHours(h)}</b></span>`).join('')}</div>`
+    : '';
+  // Prazo da etapa com distância de hoje ("há 2 dias" em vermelho).
+  const stageDueHtml = (() => {
+    if (!d.stageDueDate) return '<span class="dd-ribbon-muted">—</span>';
+    const due = d.stageDueDate.slice(0, 10);
+    const days = Math.round((Date.parse(due + 'T00:00:00') - Date.parse(todayStr() + 'T00:00:00')) / 864e5);
+    const open = !isDone(d);
+    const rel = !open ? '' : days < 0 ? `há ${-days} ${days === -1 ? 'dia' : 'dias'}` : days === 0 ? 'hoje' : days === 1 ? 'amanhã' : `em ${days} dias`;
+    const cls = !open ? '' : days < 0 ? ' is-late' : days <= 1 ? ' is-soon' : '';
+    return `<span class="dd-due${cls}">${esc(fmtDate(due))}${rel ? `<span class="dd-due-rel">${esc(rel)}</span>` : ''}</span>`;
+  })();
+  const checklistItems = d.checklist || [];
+  const checklistDone = checklistItems.filter(i => i.done).length;
+  const briefingHost = (() => { try { return new URL(normalizeUrl(d.briefing)).hostname.replace(/^www\./, ''); } catch { return ''; } })();
   const watching = Array.isArray(d.watchers) && d.watchers.includes(me?.id);
   const watchCnt = (d.watchers || []).length;
   const clientName = p?.client || '';
@@ -19191,7 +19370,7 @@ function renderDetail() {
               return ws ? `<span class="pill detail-breadcrumb-squad" style="color:${ws.color || '#7A00FF'};background:${hexDim(ws.color)}"><span class="pill-dot" style="background:${ws.color || '#7A00FF'}"></span>${esc(ws.name)}</span>` : '';
             })()}
             ${demandCrumbItemsHTML(p ? clients.find(c => c.id === p.clientId) : null, p, flow,
-              { clientName, projectName: projName, flowName })}
+              { clientName, projectName: projName, flowName, links: true })}
           </div>
         </div>
 
@@ -19211,20 +19390,16 @@ function renderDetail() {
           </div>
           ${stage ? `<div class="dd-ribbon-item">
             <div class="dd-ribbon-label">Prazo da etapa</div>
-            <div class="dd-ribbon-value">${d.stageDueDate ? fmtDate(d.stageDueDate) : '<span class="dd-ribbon-muted">—</span>'}</div>
+            <div class="dd-ribbon-value">${stageDueHtml}</div>
           </div>` : ''}
           <div class="dd-ribbon-item">
-            <div class="dd-ribbon-label">Entrou na etapa</div>
-            <div class="dd-ribbon-value">${fmtDateTime(d.stageEnteredAt)}</div>
-          </div>
-          <div class="dd-ribbon-item">
             <div class="dd-ribbon-label">Criada em</div>
-            <div class="dd-ribbon-value">${fmtDateTime(d.createdAt)}</div>
+            <div class="dd-ribbon-value" title="${esc(fmtDateTime(d.createdAt))}">${fmtDate(d.createdAt)}</div>
           </div>
-          <div class="dd-ribbon-item">
+          ${d.completedAt ? `<div class="dd-ribbon-item">
             <div class="dd-ribbon-label">Concluída em</div>
-            <div class="dd-ribbon-value">${d.completedAt ? fmtDate(d.completedAt) : '<span class="dd-ribbon-muted">—</span>'}</div>
-          </div>
+            <div class="dd-ribbon-value">${fmtDate(d.completedAt)}</div>
+          </div>` : ''}
         </div>
 
         <!-- Section: Briefing / Descrição -->
@@ -19240,7 +19415,7 @@ function renderDetail() {
               : '<div class="dd-empty">Sem descrição cadastrada.</div>'}
           </div>
           <div id="detail-briefing-view" class="detail-briefing-slot dd-briefing-slot">
-            ${d.briefing ? `<a class="detail-briefing-link" href="${esc(normalizeUrl(d.briefing))}" target="_blank" rel="noopener noreferrer">${esc(d.briefing)}</a>` : '<span class="dd-empty">Sem briefing cadastrado.</span>'}
+            ${d.briefing ? `<a class="detail-briefing-link dd-briefing-chip" href="${esc(normalizeUrl(d.briefing))}" target="_blank" rel="noopener noreferrer" title="${esc(d.briefing)}"><i data-lucide="file-text" class="ic-sm"></i><span>Abrir briefing</span>${briefingHost ? `<span class="dd-briefing-host">${esc(briefingHost)}</span>` : ''}<i data-lucide="arrow-up-right" class="ic-xs"></i></a>` : '<span class="dd-empty">Sem briefing cadastrado.</span>'}
           </div>
         </div>
 
@@ -19264,6 +19439,7 @@ function renderDetail() {
           <div class="dd-section-head">
             <span class="dd-section-title">Apontamentos${totalHours > 0 ? ` <span class="dd-section-count">· ${fmtHours(totalHours)}</span>` : ''}</span>
           </div>
+          ${apptSummary}
           <div class="time-list">${timeRows || '<div class="dd-empty">Nenhuma hora apontada ainda.</div>'}</div>
         </div>
 
@@ -19283,6 +19459,7 @@ function renderDetail() {
           </div>
           <div class="detail-actions-right">
             ${renderWatcherStack(d)}
+            <button class="detail-icon-btn" id="detail-activity-btn" title="Atividade" aria-label="Atividade" aria-haspopup="dialog" onclick="openActivityMenu(this)"><i data-lucide="history" class="ic-sm"></i></button>
             ${(() => { const rs = _remindersFor(d.id); return `<button class="detail-icon-btn ${rs.length ? 'on' : ''}" id="detail-remind-btn" title="${rs.length ? esc('Lembrete ' + _fmtRemindWhen(rs[0].at)) : 'Lembrar depois'}" onclick="openRemindMenu(this)"><i data-lucide="alarm-clock-plus" class="ic-sm"></i></button>`; })()}
             <button class="detail-icon-btn ${watching ? 'on' : ''}" title="${watching ? 'Observando · clique pra parar' : 'Observar esta demanda'}" onclick="toggleWatchCurrent()"><i data-lucide="eye" class="ic-sm"></i></button>
             <button class="detail-icon-btn danger" title="Excluir demanda" onclick="confirmDeleteCurrentDemand()"><i data-lucide="trash-2" class="ic-sm"></i></button>
@@ -19291,9 +19468,8 @@ function renderDetail() {
 
         <div class="tabs detail-tabs">
           <button class="tab detail-tab ${activeTab === 'comments' ? 'is-active' : ''}" onclick="setDemandDetailTab('comments')">Comentários</button>
-          <button class="tab detail-tab ${activeTab === 'checklist' ? 'is-active' : ''}" onclick="setDemandDetailTab('checklist')">Checklist</button>
+          <button class="tab detail-tab ${activeTab === 'checklist' ? 'is-active' : ''}" onclick="setDemandDetailTab('checklist')">Checklist${checklistItems.length ? ` <span class="detail-tab-badge${checklistDone === checklistItems.length ? ' is-done' : ''}">${checklistDone}/${checklistItems.length}</span>` : ''}</button>
           <button class="tab detail-tab ${activeTab === 'forms' ? 'is-active' : ''}" onclick="setDemandDetailTab('forms')">Formulários${_formsResponseCountForDemand(d.id) ? ` <span class="detail-tab-badge">${_formsResponseCountForDemand(d.id)}</span>` : ''}</button>
-          <button class="tab detail-tab ${activeTab === 'activity' ? 'is-active' : ''}" onclick="setDemandDetailTab('activity')">Atividade</button>
           <button class="tab detail-tab ${activeTab === 'stages' ? 'is-active' : ''} ${hasCustomization ? 'has-mark' : ''}" onclick="setDemandDetailTab('stages')">Etapas</button>
           <div class="detail-tabs-spacer"></div>
           <button class="detail-tab-tool detail-tab-sort" id="detail-tab-sort" title="${_commentSortLabel()} · clique pra inverter" onclick="toggleCommentSort()" style="${activeTab === 'comments' ? '' : 'display:none'}" data-ktip="${_commentSortLabel()}"><i data-lucide="${_commentSortIcon()}" class="ic-sm"></i> <span class="detail-tab-tool-label" id="detail-sort-label">${_commentSortLabel()}</span></button>
@@ -19313,11 +19489,6 @@ function renderDetail() {
             ${renderChecklist(d)}
           </div>
 
-          <!-- Atividade (histórico) -->
-          <div class="detail-tab-pane" id="tab-pane-activity" style="${activeTab === 'activity' ? '' : 'display:none'}">
-            <div id="tab-activity-body"></div>
-          </div>
-
           <!-- Formulários (respostas anexadas à demanda) -->
           <div class="detail-tab-pane" id="tab-pane-forms" style="${activeTab === 'forms' ? '' : 'display:none'}">
             <div id="tab-forms-body"></div>
@@ -19334,7 +19505,9 @@ function renderDetail() {
           <button class="detail-footer-nav" ${idx <= 0 ? 'disabled' : ''} onclick="moveStage(-1)" title="Etapa anterior"><i data-lucide="chevron-left" class="ic-sm"></i></button>
           <div id="detail-stage-picker" class="detail-footer-stage-picker"></div>
           <input type="date" class="detail-footer-due" id="detail-stage-due" value="${d.stageDueDate || ''}" onchange="markDetailDirty('stageDue'); commitDetailEdits()" title="Prazo da etapa atual">
-          <button class="detail-footer-nav primary" ${!flow || idx < 0 || idx >= active.length - 1 ? 'disabled' : ''} onclick="moveStage(1)" title="Avançar etapa"><i data-lucide="chevron-right" class="ic-sm"></i></button>
+          ${nextStage && flow
+            ? `<button class="detail-footer-nav primary" onclick="moveStage(1)" title="${nextStage.done ? 'Concluir a demanda' : 'Avançar para ' + esc(nextStage.label)}" aria-label="${nextStage.done ? 'Concluir a demanda' : 'Avançar para ' + esc(nextStage.label)}"><i data-lucide="${nextStage.done ? 'check' : 'chevron-right'}" class="ic-sm"></i></button>`
+            : `<button class="detail-footer-nav primary" disabled title="${cur?.done ? 'Demanda concluída' : 'Última etapa'}"><i data-lucide="${cur?.done ? 'check' : 'chevron-right'}" class="ic-sm"></i></button>`}
         </div>
       </div>
     </div>`;
@@ -19344,8 +19517,9 @@ function renderDetail() {
   const legacyFooter = document.getElementById('detail-footer');
   if (legacyFooter) { legacyFooter.innerHTML = ''; legacyFooter.hidden = true; }
 
-  // Renderiza a subview ativa (Atividade/Etapas/Formulários) — comentários e checklist já vêm inline.
-  if (activeTab === 'activity') _renderActivityTab(d);
+  // Renderiza a subview ativa (Etapas/Formulários) — comentários e checklist já vêm inline.
+  // Atividade agora é um menu no topo: se estava aberto, atualiza.
+  if (document.getElementById('activity-menu')) _renderActivityTab(d);
   if (activeTab === 'stages')   _renderStagesTab(d);
   if (activeTab === 'forms')    _renderFormsTab(d);
 
@@ -21327,9 +21501,47 @@ function describeHistory(h, d) {
 function renderDetailHistory(d) { _renderActivityTab(d); }
 /* Renderiza o histórico DENTRO do painel da tab Atividade (sem trocar toda a
    página). Mesmo layout que a antiga sub-view "histórico". */
+/* Atividade da demanda: menu ancorado no ícone de histórico do topo do detalhe
+   (antes era uma aba). Fecha com clique fora, Esc ou trocando de demanda. */
+function openActivityMenu(anchor) {
+  if (document.getElementById('activity-menu')) { _closeActivityMenu(); return; }
+  const d = demandById(detailId);
+  if (!d || !anchor) return;
+  const menu = document.createElement('div');
+  menu.className = 'advance-menu activity-menu';
+  menu.id = 'activity-menu';
+  menu.setAttribute('role', 'dialog');
+  menu.setAttribute('aria-label', 'Atividade da demanda');
+  menu.innerHTML = `<div class="activity-menu-head"><i data-lucide="history" class="ic-sm"></i><span>Atividade</span><span class="activity-menu-n">${(d.history || []).length || ''}</span></div>
+    <div class="activity-menu-body" id="activity-menu-body"></div>`;
+  document.body.appendChild(menu);
+  anchor.classList.add('on');
+  _renderActivityTab(d);
+  // Alinha pela direita do ícone, mas nunca sai da tela (no celular o ícone fica no meio).
+  const r = anchor.getBoundingClientRect();
+  const w = menu.offsetWidth;
+  menu.style.left = Math.min(window.innerWidth - w - 8, Math.max(8, r.right - w)) + 'px';
+  menu.style.top = (r.bottom + 6) + 'px';
+  menu.style.maxHeight = Math.max(240, window.innerHeight - r.bottom - 24) + 'px';
+  setTimeout(() => {
+    document.addEventListener('mousedown', _activityMenuOutside, true);
+    document.addEventListener('keydown', _activityMenuKey, true);
+    window.addEventListener('resize', _closeActivityMenu);
+  });
+}
+function _activityMenuOutside(e) { if (!e.target.closest('#activity-menu, #detail-activity-btn')) _closeActivityMenu(); }
+function _activityMenuKey(e) { if (e.key === 'Escape') { e.stopPropagation(); _closeActivityMenu(); } }
+function _closeActivityMenu() {
+  document.getElementById('activity-menu')?.remove();
+  document.getElementById('detail-activity-btn')?.classList.remove('on');
+  document.removeEventListener('mousedown', _activityMenuOutside, true);
+  document.removeEventListener('keydown', _activityMenuKey, true);
+  window.removeEventListener('resize', _closeActivityMenu);
+}
 function _renderActivityTab(d) {
-  const body = document.getElementById('tab-activity-body');
+  const body = document.getElementById('activity-menu-body');
   if (!body || !d) return;
+  document.getElementById('detail-activity-btn')?.classList.add('on');
   const history = (d.history || []).slice().reverse();
   body.innerHTML = history.length
     ? `<div class="history-list">${history.map(h => {
@@ -25831,8 +26043,10 @@ function handleProjectAvatar(ev) {
 let projectModalClientId = null; // cliente associado nesta abertura do modal
 async function openProjectModal(id, presetClientId) {
   editingProjectId = id || null;
-  $('project-modal-title').textContent = id ? 'Editar Projeto' : 'Novo Projeto';
+  $('project-modal-title').textContent = id ? 'Editar projeto' : 'Novo projeto';
   const p = id ? projectById(id) : null;
+  const pSave = $('p-save-btn');
+  if (pSave) pSave.textContent = id ? 'Salvar alterações' : 'Criar projeto';
 
   // Cliente obrigatório: vem do projeto em edição ou do preset (tela do cliente).
   // Sem qualquer contexto, redireciona pra Clientes em vez de abrir sem destino.
@@ -25854,6 +26068,8 @@ async function openProjectModal(id, presetClientId) {
     }
   }
 
+  const pSub = $('project-modal-sub');
+  if (pSub) pSub.textContent = 'Cliente: ' + (clientById(projectModalClientId)?.name || '—');
   $('p-name').value = p?.name || '';
   setColorValue('p-color', p?.color || '#7A00FF');
   $('p-drive-files').value = p?.driveFiles || '';
@@ -25875,26 +26091,30 @@ async function openProjectModal(id, presetClientId) {
   navPush(id ? (projectPath(id) + '/edit') : '/projects/new');
 }
 
-function refreshProjectAvatarPreview() {
-  const el = $('p-avatar-preview');
+/* Avatar dos modais de Cliente/Projeto: a foto, ou a inicial do nome na cor
+   escolhida (como vai aparecer nas listas). Atualiza ao digitar e ao trocar a cor. */
+function _entAvatarPreview(prefix, data) {
+  const el = $(prefix + '-avatar-preview');
   if (!el) return;
-  if (projAvatarData) {
-    el.style.backgroundImage = `url('${projAvatarData}')`;
-    el.style.backgroundSize = 'cover';
-    el.style.backgroundPosition = 'center';
+  const name = ($(prefix + '-name')?.value || '').trim();
+  const color = $(prefix + '-color')?.value || '#7A00FF';
+  if (data) {
+    el.style.background = `url('${data}') center/cover no-repeat`;
+    el.style.color = '';
     el.innerHTML = '';
-    el.style.background = `url('${projAvatarData}') center/cover no-repeat`;
     el.classList.remove('is-empty');
-    $('p-avatar-remove').style.display = '';
   } else {
-    el.style.backgroundImage = '';
-    el.style.background = '';
-    el.classList.add('is-empty');
-    el.innerHTML = '<i data-lucide="image" class="avatar-preview-icon"></i><span class="avatar-preview-hint">Sem foto</span>';
-    if (window.lucide?.createIcons) lucide.createIcons();
-    $('p-avatar-remove').style.display = 'none';
+    el.style.background = hexDim(color);
+    el.style.color = color;
+    el.classList.toggle('is-empty', !name);
+    el.innerHTML = name ? esc(name.charAt(0).toUpperCase()) : '<i data-lucide="image-plus" class="ic-sm"></i>';
+    if (!name) paintIcons(el);
   }
+  const rm = $(prefix + '-avatar-remove'); if (rm) rm.style.display = data ? '' : 'none';
+  const pick = $(prefix + '-avatar-pick'); if (pick) pick.textContent = data ? 'Trocar foto' : 'Enviar foto';
+  const hint = $(prefix + '-avatar-hint'); if (hint) hint.hidden = !!data;
 }
+function refreshProjectAvatarPreview() { _entAvatarPreview('p', projAvatarData); }
 
 let projectModalStatusActive = true;
 function setProjectModalStatus(active) {
@@ -27100,7 +27320,12 @@ function renderUsers() {
   const displayList = (showArchivedUsers ? users : activeUsers).slice().sort((a, b) => {
     let va, vb;
     if (userSortKey === 'name')      { va = norm(a.name); vb = norm(b.name); }
-    else if (userSortKey === 'role') { va = norm((a.role || '~') + ' ' + (a.position || '')); vb = norm((b.role || '~') + ' ' + (b.position || '')); }
+    // Vazio vai pro fim nas duas direções (não fica no topo ao inverter).
+    else if (userSortKey === 'role' || userSortKey === 'position') {
+      const fa = a[userSortKey] || '', fb = b[userSortKey] || '';
+      if (!fa !== !fb) return fa ? -1 : 1;
+      va = norm(fa); vb = norm(fb);
+    }
     else if (userSortKey === 'ws')   { va = a.isAdmin ? 999 : (a.workspaces || []).length; vb = b.isAdmin ? 999 : (b.workspaces || []).length; }
     else if (userSortKey === 'admin') { va = permRank(a); vb = permRank(b); }
     else if (userSortKey === 'seen') { va = a.lastSeen ? Date.parse(a.lastSeen) : 0; vb = b.lastSeen ? Date.parse(b.lastSeen) : 0; }
@@ -27151,7 +27376,7 @@ function renderUsers() {
 
   if (!filteredList.length) {
     const why = usersIssueFilter ? `Ninguém nessa pendência (${US_ISSUE_LABEL[usersIssueFilter]}) com esses filtros.` : 'Ninguém bate com a busca e os filtros.';
-    $('users-table-body').innerHTML = `<tr><td colspan="6"><div class="us-empty">${esc(why)} <button type="button" class="uws-clear" onclick="clearUsersFilters()">Limpar filtros</button></div></td></tr>`;
+    $('users-table-body').innerHTML = `<tr><td colspan="7"><div class="us-empty">${esc(why)} <button type="button" class="uws-clear" onclick="clearUsersFilters()">Limpar filtros</button></div></td></tr>`;
     renderRoles(); renderPositions();
     setUsersTab(usersTab);
     return;
@@ -27175,7 +27400,6 @@ function renderUsers() {
       : u.isModerator ? '<span class="pill pill-moderator">Moderador</span>'
       : u.isFreelancer ? '<span class="pill pill-freelancer">Freelancer</span>'
       : '<span class="pill pill-muted">Membro</span>';
-    const roleTxt = [u.role, u.position].filter(Boolean).map(esc).join(' · ');
     return `<tr class="mrow${u.active === false ? ' is-archived' : ''}">
       <td class="mcol-name">
         <div class="us-person">
@@ -27186,7 +27410,8 @@ function renderUsers() {
           </div>
         </div>
       </td>
-      <td class="${roleTxt ? '' : 'is-blank'}"><span class="mlbl">Área · cargo</span>${roleTxt || '—'}</td>
+      <td class="${u.role ? '' : 'is-blank'}"><span class="mlbl">Área</span>${esc(u.role || '—')}</td>
+      <td class="${u.position ? '' : 'is-blank'}"><span class="mlbl">Cargo</span>${esc(u.position || '—')}</td>
       <td class="mc-ws"><span class="mlbl">Equipes</span><span class="us-ws-list">${wsNames}</span></td>
       <td><span class="mlbl">Permissão</span>${perm}</td>
       <td><span class="mlbl">Último acesso</span>${_usSeen(u)}</td>
@@ -36968,40 +37193,53 @@ function renderClientDetail(id) {
   const c = clientById(id);
   if (!c) return;
 
-  // Título de identificação — nome do cliente em destaque.
+  // Título de identificação — avatar, nome e, embaixo, equipe · segmento.
   const bc = $('client-detail-breadcrumb');
   if (bc) {
     bc.classList.add('detail-title');
-    bc.innerHTML = `<span class="detail-title-name">${esc(c.name)}</span>`;
+    const ws = wsById(c.workspaceId);
+    const sub = [
+      ws ? `<span class="cd-sub-ws"><span class="cl-ws-dot" style="background:${esc(ws.color || '#7A00FF')}"></span>${esc(ws.name)}</span>` : '',
+      c.segment ? `<span>${esc(c.segment)}</span>` : '',
+      c.active === false ? '<span class="cl-tag">Arquivado</span>' : ''
+    ].filter(Boolean).join('<span class="cd-sub-sep">·</span>');
+    bc.innerHTML = `<div class="cd-head">${clientAvatarHTML(c, 'cd-head-avatar')}<div class="cd-head-text">
+      <span class="detail-title-name">${esc(c.name)}</span>${sub ? `<div class="cd-sub">${sub}</div>` : ''}</div></div>`;
   }
 
   // KPIs — demandas de todos os projetos deste cliente
   renderDetailKpis('client-detail-kpis', projects.filter(p => p.clientId === id).map(p => p.id));
+  // DEMANDAS EM ABERTO — o que está andando agora neste cliente
+  renderEntityOpenDemands('client-detail-demands', projects.filter(p => p.clientId === id).map(p => p.id), { showProject: true });
 
-  // PROJETOS
-  const projs = projects.filter(p => p.clientId === id);
+  // PROJETOS — cartões com abertas, atrasadas, horas em 30 dias e último movimento
+  const projs = projects.filter(p => p.clientId === id)
+    .sort((a, b) => (a.active === false) - (b.active === false) || norm(a.name).localeCompare(norm(b.name)));
   const projGrid = $('client-detail-projects');
+  const newProjCard = `<button type="button" class="cl-card cd-proj-new" onclick="openProjectModalForCurrentClient()"><i data-lucide="plus" class="ic-sm"></i><span>Novo projeto</span></button>`;
   if (!projs.length) {
-    projGrid.innerHTML = `<div style="grid-column:1/-1">${emptyState('Nenhum projeto', 'Crie o primeiro projeto deste cliente.', 'inbox')}</div>`;
+    projGrid.innerHTML = `<div class="client-info-empty cd-proj-empty">Nenhum projeto ainda. Crie o primeiro pra organizar as demandas deste cliente.</div>${newProjCard}`;
   } else {
     projGrid.innerHTML = projs.map(p => {
-      const statusLabel = p.active === false ? 'Arquivado' : 'Ativo';
-      const statusClass = p.active === false ? 'client-card-status--archived' : 'client-card-status--active';
-      const pColor = p.color || '#7A00FF';
-      const pLetter = (p.name || 'P').charAt(0).toUpperCase();
-      const avatar = p.avatar
-        ? `<div class="client-card-avatar" style="background-image:url('${p.avatar}');background-size:cover;background-position:center"></div>`
-        : `<div class="client-card-avatar client-card-avatar--letter" style="background:${hexDim(pColor)};color:${pColor}">
-             <svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-               <text x="24" y="24" text-anchor="middle" dominant-baseline="central" font-family="inherit" font-weight="700" font-size="22" fill="currentColor">${esc(pLetter)}</text>
-             </svg>
-           </div>`;
-      return `<div class="flow-card" onclick="openProjectDetail('${p.id}')">
-        ${avatar}
-        <div class="flow-card-name">${esc(p.name)}</div>
-        <div class="flow-card-sub">${esc(statusLabel)}</div>
+      const s = _projectCardStats(p.id);
+      const archived = p.active === false;
+      return `<div class="cl-card${archived ? ' is-archived' : ''}" role="link" tabindex="0" onclick="openProjectDetail('${p.id}')" onkeydown="if(event.key==='Enter'){openProjectDetail('${p.id}')}">
+        <div class="cl-head">
+          ${clientAvatarHTML(p, 'cd-proj-avatar')}
+          <div class="cl-title">
+            <div class="cl-name">${esc(p.name)}${archived ? '<span class="cl-tag">Arquivado</span>' : ''}</div>
+            <div class="cl-sub"><span>${esc(_clAgo(s.lastAt) || 'sem movimento ainda')}</span></div>
+          </div>
+        </div>
+        ${s.open || s.hours30
+          ? `<div class="cl-metrics">
+              <div class="cl-metric"><span class="cl-metric-n">${s.open}</span><span class="cl-metric-l">${s.open === 1 ? 'aberta' : 'abertas'}</span></div>
+              <div class="cl-metric${s.late ? ' is-late' : ''}"><span class="cl-metric-n">${s.late}</span><span class="cl-metric-l">${s.late === 1 ? 'atrasada' : 'atrasadas'}</span></div>
+              <div class="cl-metric"><span class="cl-metric-n">${_clHours(s.hours30)}</span><span class="cl-metric-l">em 30 dias</span></div>
+            </div>`
+          : '<div class="cl-metrics cl-metrics--empty">Nenhuma demanda aberta</div>'}
       </div>`;
-    }).join('');
+    }).join('') + newProjCard;
   }
 
   // SOBRE — descrição (guidelines), link do drive (driveFiles), ativos (brandAssets).
@@ -37417,11 +37655,13 @@ function renderProjectDetail(id) {
     } else {
       clientPart = `<span class="detail-title-parent detail-title-parent--muted">Sem cliente</span>`;
     }
-    bc.innerHTML = `${clientPart}<span class="detail-title-name">${esc(p.name)}</span>`;
+    bc.innerHTML = `${clientPart}<span class="detail-title-name">${esc(p.name)}</span>${p.active === false ? '<span class="cl-tag cd-title-tag">Arquivado</span>' : ''}`;
   }
 
   // KPIs — demandas deste projeto
   renderDetailKpis('project-detail-kpis', [id]);
+  // DEMANDAS EM ABERTO deste projeto
+  renderEntityOpenDemands('project-detail-demands', [id]);
 
   // SOBRE
   const descEl = $('project-detail-description');
@@ -38644,7 +38884,11 @@ function openClientModal(id) {
   editingClientId = id || null;
   const c = id ? clientById(id) : null;
   const isNew = !c;
-  $('client-modal-title').textContent = isNew ? 'Novo Cliente' : 'Editar Cliente';
+  $('client-modal-title').textContent = isNew ? 'Novo cliente' : 'Editar cliente';
+  const cSub = $('client-modal-sub');
+  if (cSub) cSub.textContent = isNew ? 'Os projetos e as demandas ficam organizados dentro do cliente.' : (c.name || '');
+  const cSave = $('c-save-btn');
+  if (cSave) cSave.textContent = isNew ? 'Criar cliente' : 'Salvar alterações';
   $('c-name').value = c?.name || '';
   $('c-segment').value = c?.segment || '';
   $('c-drive-files').value = c?.driveFiles || '';
@@ -38657,6 +38901,8 @@ function openClientModal(id) {
   wsSel.innerHTML = accessibleWs.map(w =>
     `<option value="${w.id}" ${(c ? c.workspaceId : activeWs) === w.id ? 'selected' : ''}>${esc(w.name)}</option>`
   ).join('');
+  // Bolinha da cor de cada equipe no seletor (igual ao resto do app).
+  applyFilterDropdown('c-workspace', { dotMap: Object.fromEntries(accessibleWs.map(w => [w.id, w.color || '#7A00FF'])) });
   // Avatar
   clientAvatarData = c?.avatar || null;
   refreshClientAvatarPreview();
@@ -38703,24 +38949,7 @@ function openClientModal(id) {
 function openClientModalEdit() {
   if (currentClientId) openClientModal(currentClientId);
 }
-function refreshClientAvatarPreview() {
-  const el = $('c-avatar-preview');
-  if (!el) return;
-  if (clientAvatarData) {
-    el.style.backgroundImage = `url('${clientAvatarData}')`;
-    el.style.backgroundSize = 'cover';
-    el.style.backgroundPosition = 'center';
-    el.innerHTML = '';
-    el.classList.remove('is-empty');
-    $('c-avatar-remove').style.display = '';
-  } else {
-    el.style.backgroundImage = '';
-    el.classList.add('is-empty');
-    el.innerHTML = '<i data-lucide="image" class="avatar-preview-icon"></i><span class="avatar-preview-hint">Sem foto</span>';
-    if (window.lucide?.createIcons) lucide.createIcons();
-    $('c-avatar-remove').style.display = 'none';
-  }
-}
+function refreshClientAvatarPreview() { _entAvatarPreview('c', clientAvatarData); }
 function handleClientAvatarUpload(ev) {
   const file = ev.target.files && ev.target.files[0];
   if (!file) return;

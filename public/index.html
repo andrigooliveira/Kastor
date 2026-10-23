@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <!-- Idioma: roda antes de tudo (carrega o dicionário quando não é português). -->
-<script src="/js/i18n.js?v=20261022us3"></script>
+<script src="/js/i18n.js?v=20261023dm3"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>reWork</title>
 <link rel="icon" type="image/png" href="/favicon.png">
@@ -1362,6 +1362,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
         <div class="list-views-container">
           <div id="list-table-view">
+            <div class="mine-summary list-summary" id="list-summary" hidden></div>
             <div class="table-wrap table-scroll mine-table-wrap mdt-wrap">
               <table class="mine-table-v2 mdt is-demands">
                 <thead>
@@ -1444,6 +1445,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
     <div class="page" id="page-mine">
       <div class="page-body">
         <div id="mine-view-list">
+          <div class="mine-summary" id="mine-summary" hidden></div>
           <div class="table-wrap table-scroll mine-table-wrap mdt-wrap">
             <table class="mine-table-v2 mdt">
               <thead>
@@ -2211,16 +2213,20 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <div style="flex:1"></div>
             <button class="btn btn-ghost btn-sm" onclick="openClientReport()"><i data-lucide="file-text" class="ic-sm"></i> Relatório mensal</button>
             <button class="btn btn-ghost btn-sm" onclick="openClientPublicLinksModalFromDetail()"><i data-lucide="link" class="ic-sm"></i> Compartilhamento</button>
-            <button class="btn btn-primary btn-sm" id="client-detail-new-project" onclick="openProjectModalForCurrentClient()"><i data-lucide="plus" class="ic-sm"></i> Novo Projeto</button>
             <button class="btn btn-ghost btn-icon-only" title="Editar cliente" onclick="openClientModalEdit()"><i data-lucide="settings" class="ic-sm"></i></button>
           </div>
           <div class="section-title" id="client-detail-breadcrumb" style="margin-bottom:18px"></div>
 
           <div class="kpi-tiles" id="client-detail-kpis" style="margin-bottom:28px"></div>
 
+          <div class="client-detail-section cd-demands-sec">
+            <div class="cd-sec-head"><div class="client-detail-section-label">DEMANDAS EM ABERTO</div><span class="cd-sec-count" id="client-detail-demands-count"></span></div>
+            <div id="client-detail-demands"></div>
+          </div>
+
           <div class="client-detail-section">
             <div class="client-detail-section-label">PROJETOS</div>
-            <div class="flow-grid" id="client-detail-projects"></div>
+            <div class="cl-grid cd-proj-grid" id="client-detail-projects"></div>
           </div>
 
           <div class="client-detail-section" style="margin-top:32px">
@@ -2301,6 +2307,11 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           <div class="section-title" id="project-detail-breadcrumb" style="margin-bottom:18px"></div>
 
           <div class="kpi-tiles" id="project-detail-kpis" style="margin-bottom:28px"></div>
+
+          <div class="client-detail-section cd-demands-sec">
+            <div class="cd-sec-head"><div class="client-detail-section-label">DEMANDAS EM ABERTO</div><span class="cd-sec-count" id="project-detail-demands-count"></span></div>
+            <div id="project-detail-demands"></div>
+          </div>
 
           <div class="client-detail-section">
             <div class="client-detail-section-label">SOBRE</div>
@@ -2843,7 +2854,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               <thead>
                 <tr>
                   <th class="mth-sort" data-us-sort="name" onclick="sortUsersBy('name')">Pessoa <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
-                  <th class="mth-sort" data-us-sort="role" onclick="sortUsersBy('role')">Área · cargo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                  <th class="mth-sort" data-us-sort="role" onclick="sortUsersBy('role')">Área <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
+                  <th class="mth-sort" data-us-sort="position" onclick="sortUsersBy('position')">Cargo <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   <th class="mth-sort" data-us-sort="ws" onclick="sortUsersBy('ws')">Equipes <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   <th class="mth-sort" data-us-sort="admin" onclick="sortUsersBy('admin')">Permissão <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
                   <th class="mth-sort" data-us-sort="seen" onclick="sortUsersBy('seen')">Último acesso <i data-lucide="chevrons-up-down" class="ic-xs"></i></th>
@@ -3926,10 +3938,13 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 <!-- MODAL: PROJETO -->
 <!-- ── MODAL: NOVO / EDITAR CLIENTE ── -->
 <div class="modal-overlay" id="client-modal">
-  <div class="modal modal-lg">
+  <div class="modal modal-lg ent-modal">
     <div class="modal-header">
-      <div class="modal-title" id="client-modal-title">Novo Cliente</div>
-      <button class="modal-close" onclick="closeModal('client-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+      <div class="ent-modal-titles">
+        <div class="modal-title" id="client-modal-title">Novo cliente</div>
+        <div class="ent-modal-sub" id="client-modal-sub"></div>
+      </div>
+      <button class="modal-close" onclick="closeModal('client-modal')" aria-label="Fechar"><i data-lucide="x" class="ic-sm"></i></button>
     </div>
     <div class="modal-body">
       <!-- Onboarding: aparece SÓ no modo Novo Cliente, esconde no Editar -->
@@ -3937,69 +3952,66 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
         <div class="client-template-bar-icon"><i data-lucide="sparkles" class="ic-sm"></i></div>
         <div class="client-template-bar-text">
           <div class="client-template-bar-title">Começar a partir de um modelo</div>
-          <div class="client-template-bar-sub">Cria projetos e fluxos prontos junto com o cliente — 1 clique.</div>
+          <div class="client-template-bar-sub">Cria os projetos e fluxos do modelo junto com o cliente.</div>
         </div>
         <select class="form-control" id="c-template" style="max-width:280px"></select>
       </div>
-      <div class="client-modal-grid">
-        <!-- Coluna esquerda: avatar grande -->
-        <div class="client-avatar-col">
-          <div class="client-avatar-big" id="c-avatar-preview"></div>
-          <input type="file" id="c-avatar-input" accept="image/*" style="display:none" onchange="handleClientAvatarUpload(event)">
-          <button type="button" class="btn btn-ghost btn-sm" onclick="$('c-avatar-input').click()" style="margin-top:10px;width:100%">Trocar foto</button>
-          <button type="button" class="btn btn-ghost btn-sm" id="c-avatar-remove" onclick="removeClientAvatar()" style="display:none;margin-top:6px;width:100%">Remover foto</button>
-        </div>
-        <!-- Coluna direita: campos principais -->
-        <div class="client-fields-col">
-          <div class="form-group">
-            <label class="form-label">Nome do cliente</label>
-            <input class="form-control" id="c-name" placeholder="Ex: BRZ Empreendimentos" autocomplete="off">
+
+      <!-- Identidade: avatar (foto ou inicial na cor) + nome + cor -->
+      <div class="ent-identity">
+        <button type="button" class="ent-avatar" id="c-avatar-preview" onclick="$('c-avatar-input').click()" title="Enviar foto" aria-label="Enviar foto"></button>
+        <input type="file" id="c-avatar-input" accept="image/*" style="display:none" onchange="handleClientAvatarUpload(event)">
+        <div class="ent-identity-main">
+          <label class="form-label" for="c-name">Nome do cliente</label>
+          <div class="ent-name-row">
+            <input class="form-control ent-name" id="c-name" placeholder="Ex: BRZ Empreendimentos" autocomplete="off" oninput="refreshClientAvatarPreview()">
+            <button type="button" class="color-swatch-trigger ent-color" data-color-input="c-color" style="background:#7A00FF" onclick="openColorPickerForInput(this, 'c-color')" title="Cor de identificação" aria-label="Cor de identificação"></button>
+            <input id="c-color" type="color" value="#7A00FF" style="display:none" oninput="refreshClientAvatarPreview()">
           </div>
-          <div class="form-group">
-            <label class="form-label">Equipe</label>
-            <select class="form-control" id="c-workspace"></select>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Cor de identificação</label>
-            <button type="button" class="color-swatch-trigger" data-color-input="c-color" style="background:#7A00FF" onclick="openColorPickerForInput(this, 'c-color')" title="Escolher cor"></button>
-            <input id="c-color" type="color" value="#7A00FF" style="display:none">
+          <div class="ent-avatar-actions">
+            <button type="button" class="ent-link" onclick="$('c-avatar-input').click()" id="c-avatar-pick">Enviar foto</button>
+            <button type="button" class="ent-link" id="c-avatar-remove" onclick="removeClientAvatar()" style="display:none">Remover foto</button>
+            <span class="ent-hint" id="c-avatar-hint">Sem foto, aparece a inicial na cor escolhida.</span>
           </div>
         </div>
       </div>
 
-      <div class="form-grid" style="margin-top:18px">
-        <div class="form-group full">
-          <label class="form-label">Segmento</label>
-          <input class="form-control" id="c-segment" placeholder="Ex: Imobiliário, Saúde, Educação..." list="client-segments-datalist">
+      <div class="ent-grid">
+        <div class="form-group">
+          <label class="form-label" for="c-workspace">Equipe</label>
+          <select class="form-control" id="c-workspace" data-no-cdrop></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="c-segment">Segmento</label>
+          <input class="form-control" id="c-segment" placeholder="Ex: Imobiliário, Saúde, Educação" list="client-segments-datalist">
           <datalist id="client-segments-datalist"></datalist>
         </div>
         <div class="form-group">
-          <label class="form-label">Arquivos do projeto</label>
-          <input class="form-control" id="c-drive-files" type="url" placeholder="Link do Drive / Notion / etc">
+          <label class="form-label" for="c-drive-files">Pasta de arquivos</label>
+          <div class="ent-input-icon"><i data-lucide="folder" class="ic-sm"></i><input class="form-control" id="c-drive-files" type="url" placeholder="Link do Drive, Notion…"></div>
         </div>
         <div class="form-group">
-          <label class="form-label">Ativos da marca</label>
-          <input class="form-control" id="c-brand-assets" type="url" placeholder="Link do Drive / Figma / etc">
+          <label class="form-label" for="c-brand-assets">Ativos da marca</label>
+          <div class="ent-input-icon"><i data-lucide="palette" class="ic-sm"></i><input class="form-control" id="c-brand-assets" type="url" placeholder="Link do Drive, Figma…"></div>
         </div>
-        <div class="form-group full">
-          <label class="form-label">Diretrizes e restrições</label>
-          <textarea class="form-control" id="c-guidelines" rows="4" placeholder="Anote tudo o que o time precisa saber sobre o cliente: tom de voz, restrições legais, marcas que não podem aparecer, etc."></textarea>
+        <div class="form-group ent-full">
+          <label class="form-label" for="c-guidelines">Diretrizes e restrições</label>
+          <textarea class="form-control" id="c-guidelines" rows="4" placeholder="O que o time precisa saber sobre o cliente: tom de voz, restrições legais, marcas que não podem aparecer…"></textarea>
         </div>
       </div>
     </div>
-    <div class="modal-footer client-modal-foot">
-      <div class="client-modal-foot-left" id="c-foot-left">
-        <button class="btn btn-ghost btn-sm client-modal-delete" id="c-delete-btn" onclick="openClientDeleteConfirm()" style="display:none">Excluir Cliente</button>
-        <div class="client-status-group" id="c-status-group" style="display:none">
-          <span style="font-size:12px;color:var(--text-muted)">Estado</span>
-          <button class="btn btn-ghost btn-sm client-status-pick" data-val="active" onclick="setClientModalStatus(true)">Ativo</button>
-          <button class="btn btn-ghost btn-sm client-status-pick" data-val="archived" onclick="setClientModalStatus(false)">Desativado</button>
+    <div class="modal-footer ent-foot">
+      <div class="ent-foot-left" id="c-foot-left">
+        <div class="ent-status client-status-group" id="c-status-group" style="display:none" role="group" aria-label="Situação">
+          <button type="button" class="client-status-pick" data-val="active" onclick="setClientModalStatus(true)">Ativo</button>
+          <button type="button" class="client-status-pick" data-val="archived" onclick="setClientModalStatus(false)">Arquivado</button>
         </div>
+        <button type="button" class="ent-danger ent-quiet" id="c-save-template-btn" onclick="openSaveClientTemplate()" style="display:none" title="Salvar este cliente como modelo reutilizável (projetos + fluxos)"><i data-lucide="bookmark" class="ic-sm"></i><span class="ent-hide-sm"> Salvar como modelo</span></button>
+        <button type="button" class="ent-danger client-modal-delete" id="c-delete-btn" onclick="openClientDeleteConfirm()" style="display:none"><i data-lucide="trash-2" class="ic-sm"></i> Excluir</button>
       </div>
-      <div class="client-modal-foot-right">
-        <button class="btn btn-ghost btn-sm" id="c-save-template-btn" onclick="openSaveClientTemplate()" style="display:none" title="Salvar este cliente como modelo reutilizável (projetos + fluxos)"><i data-lucide="bookmark" class="ic-sm"></i> Salvar como modelo</button>
+      <div class="ent-foot-right">
         <button class="btn btn-ghost" onclick="closeModal('client-modal')">Cancelar</button>
-        <button class="btn btn-confirm" onclick="saveClient()">Salvar Cliente</button>
+        <button class="btn btn-confirm" id="c-save-btn" onclick="saveClient()">Salvar</button>
       </div>
     </div>
   </div>
@@ -4156,61 +4168,60 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 </div>
 
 <div class="modal-overlay" id="project-modal">
-  <div class="modal modal-lg">
+  <div class="modal modal-lg ent-modal">
     <div class="modal-header">
-      <div class="modal-title" id="project-modal-title">Novo Projeto</div>
-      <button class="modal-close" onclick="closeModal('project-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+      <div class="ent-modal-titles">
+        <div class="modal-title" id="project-modal-title">Novo projeto</div>
+        <div class="ent-modal-sub" id="project-modal-sub"></div>
+      </div>
+      <button class="modal-close" onclick="closeModal('project-modal')" aria-label="Fechar"><i data-lucide="x" class="ic-sm"></i></button>
     </div>
     <div class="modal-body">
-      <div class="client-modal-grid">
-        <!-- Coluna esquerda: avatar grande -->
-        <div class="client-avatar-col">
-          <div class="client-avatar-big" id="p-avatar-preview" style="cursor:pointer" onclick="$('p-avatar-input').click()" title="Clique para alterar a imagem"></div>
-          <input type="file" id="p-avatar-input" accept="image/*" style="display:none" onchange="handleProjectAvatar(event)">
-          <button type="button" class="btn btn-ghost btn-sm" onclick="$('p-avatar-input').click()" style="margin-top:10px;width:100%">Trocar foto</button>
-          <button type="button" class="btn btn-ghost btn-sm" id="p-avatar-remove" onclick="removeProjectAvatar()" style="display:none;margin-top:6px;width:100%">Remover foto</button>
-        </div>
-        <!-- Coluna direita: campos principais -->
-        <div class="client-fields-col">
-          <div class="form-group">
-            <label class="form-label">Nome do projeto</label>
-            <input class="form-control" id="p-name" placeholder="Ex: Campanha Verão 2026" autocomplete="off">
+      <!-- Identidade: avatar (foto ou inicial na cor) + nome + cor -->
+      <div class="ent-identity">
+        <button type="button" class="ent-avatar" id="p-avatar-preview" onclick="$('p-avatar-input').click()" title="Enviar foto" aria-label="Enviar foto"></button>
+        <input type="file" id="p-avatar-input" accept="image/*" style="display:none" onchange="handleProjectAvatar(event)">
+        <div class="ent-identity-main">
+          <label class="form-label" for="p-name">Nome do projeto</label>
+          <div class="ent-name-row">
+            <input class="form-control ent-name" id="p-name" placeholder="Ex: Campanha Verão 2026" autocomplete="off" oninput="refreshProjectAvatarPreview()">
+            <button type="button" class="color-swatch-trigger ent-color" data-color-input="p-color" style="background:#7A00FF" onclick="openColorPickerForInput(this, 'p-color')" title="Cor de identificação" aria-label="Cor de identificação"></button>
+            <input id="p-color" type="color" value="#7A00FF" style="display:none" oninput="refreshProjectAvatarPreview()">
           </div>
-          <div class="form-group">
-            <label class="form-label">Cor de identificação</label>
-            <button type="button" class="color-swatch-trigger" data-color-input="p-color" style="background:#7A00FF" onclick="openColorPickerForInput(this, 'p-color')" title="Escolher cor"></button>
-            <input id="p-color" type="color" value="#7A00FF" style="display:none">
+          <div class="ent-avatar-actions">
+            <button type="button" class="ent-link" onclick="$('p-avatar-input').click()" id="p-avatar-pick">Enviar foto</button>
+            <button type="button" class="ent-link" id="p-avatar-remove" onclick="removeProjectAvatar()" style="display:none">Remover foto</button>
+            <span class="ent-hint" id="p-avatar-hint">Sem foto, aparece a inicial na cor escolhida.</span>
           </div>
         </div>
       </div>
 
-      <div class="form-grid" style="margin-top:18px">
+      <div class="ent-grid">
         <div class="form-group">
-          <label class="form-label">Arquivos do projeto</label>
-          <input class="form-control" id="p-drive-files" type="url" placeholder="Link do Drive / Notion / etc">
+          <label class="form-label" for="p-drive-files">Pasta de arquivos</label>
+          <div class="ent-input-icon"><i data-lucide="folder" class="ic-sm"></i><input class="form-control" id="p-drive-files" type="url" placeholder="Link do Drive, Notion…"></div>
         </div>
         <div class="form-group">
-          <label class="form-label">Ativos da marca</label>
-          <input class="form-control" id="p-brand-assets" type="url" placeholder="Link do Drive / Figma / etc">
+          <label class="form-label" for="p-brand-assets">Ativos da marca</label>
+          <div class="ent-input-icon"><i data-lucide="palette" class="ic-sm"></i><input class="form-control" id="p-brand-assets" type="url" placeholder="Link do Drive, Figma…"></div>
         </div>
-        <div class="form-group full">
-          <label class="form-label">Diretrizes e restrições</label>
-          <textarea class="form-control" id="p-guidelines" rows="4" placeholder="Anote o que o time precisa saber sobre este projeto: prazos especiais, formatos preferidos, restrições específicas, etc."></textarea>
+        <div class="form-group ent-full">
+          <label class="form-label" for="p-guidelines">Diretrizes e restrições</label>
+          <textarea class="form-control" id="p-guidelines" rows="4" placeholder="O que o time precisa saber sobre este projeto: prazos especiais, formatos preferidos, restrições…"></textarea>
         </div>
       </div>
     </div>
-    <div class="modal-footer client-modal-foot">
-      <div class="client-modal-foot-left" id="p-foot-left">
-        <button class="btn btn-ghost btn-sm client-modal-delete" id="p-delete-btn" onclick="openProjectDeleteConfirm()" style="display:none">Excluir Projeto</button>
-        <div class="client-status-group" id="p-status-group" style="display:none">
-          <span style="font-size:12px;color:var(--text-muted)">Estado</span>
-          <button class="btn btn-ghost btn-sm client-status-pick" data-pval="active" onclick="setProjectModalStatus(true)">Ativo</button>
-          <button class="btn btn-ghost btn-sm client-status-pick" data-pval="archived" onclick="setProjectModalStatus(false)">Desativado</button>
+    <div class="modal-footer ent-foot">
+      <div class="ent-foot-left" id="p-foot-left">
+        <div class="ent-status client-status-group" id="p-status-group" style="display:none" role="group" aria-label="Situação">
+          <button type="button" class="client-status-pick" data-pval="active" onclick="setProjectModalStatus(true)">Ativo</button>
+          <button type="button" class="client-status-pick" data-pval="archived" onclick="setProjectModalStatus(false)">Arquivado</button>
         </div>
+        <button type="button" class="ent-danger client-modal-delete" id="p-delete-btn" onclick="openProjectDeleteConfirm()" style="display:none"><i data-lucide="trash-2" class="ic-sm"></i> Excluir</button>
       </div>
-      <div class="client-modal-foot-right">
+      <div class="ent-foot-right">
         <button class="btn btn-ghost" onclick="closeModal('project-modal')">Cancelar</button>
-        <button class="btn btn-confirm" onclick="saveProject()">Salvar Projeto</button>
+        <button class="btn btn-confirm" id="p-save-btn" onclick="saveProject()">Salvar</button>
       </div>
     </div>
   </div>
@@ -5264,7 +5275,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20261022us3" defer></script>
+<script src="/js/boot.js?v=20261023dm3" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
