@@ -1,5 +1,17 @@
 [
   {
+    "id": "2026-10-22-troca-de-email-segura",
+    "date": "2026-10-22",
+    "title": "Trocar o e-mail ficou mais seguro",
+    "highlights": [
+      "Em Perfil › Conta, Trocar e-mail agora vai por etapas: a sua senha, um código enviado para o e-mail atual e, se você usa o app autenticador, o código do app.",
+      "Depois você digita o e-mail novo duas vezes, confirma a senha de novo e digita o código que mandamos para o endereço novo. A troca acontece na hora, sem precisar abrir link.",
+      "Uma barra no topo mostra em que etapa você está e quantas faltam.",
+      "Qualquer código ou senha errada cancela a troca e nada é alterado: é só começar de novo. Os dois e-mails diferentes só mostram o aviso para você corrigir.",
+      "Se clicar fora da janela no meio da troca, o reWork pergunta antes de cancelar. Quando a troca termina, avisamos o endereço antigo."
+    ]
+  },
+  {
     "id": "2026-10-22-foto-do-google",
     "date": "2026-10-22",
     "title": "Foto de perfil vinda da sua conta Google",

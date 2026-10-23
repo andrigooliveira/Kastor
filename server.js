@@ -3333,6 +3333,8 @@ app.post('/api/me/email', requireAuth, rateLimitEmailLink, async (req, res) => {
   const next = normEmail(email);
   const current = normEmail(u.email);
   if (next === current && emailLinked(u)) return res.status(400).json({ error: 'Esse já é o e-mail confirmado da sua conta.', field: 'email' });
+  // Trocar um e-mail já confirmado só pelo fluxo com códigos (/api/me/email/change/*).
+  if (emailLinked(u)) return res.status(400).json({ error: 'Para trocar um e-mail confirmado, use "Trocar e-mail" no perfil.', code: 'use_change_flow' });
   const isChange = !!current && next !== current;
   // Confirmar o próprio e-mail atual dispensa a senha; vincular/trocar, não.
   // Conta sem senha (entra só pelo Discord): a sessão já é a prova de quem é.
@@ -3347,13 +3349,130 @@ app.post('/api/me/email', requireAuth, rateLimitEmailLink, async (req, res) => {
   const baseUrl = appBaseUrl(req);
   const mail = mailIn(userLang(u), () => emailTpl.emailConfirm({ name: u.name, email: next, link: `${baseUrl}/confirmar-email/${token}`, baseUrl, isChange }));
   const sent = await sendEmail(next, mail.subject, mail.html, mail.text);
-  // Troca de um e-mail já confirmado: avisa o endereço antigo.
-  if (isChange && emailLinked(u)) {
-    const n = mailIn(userLang(u), () => emailTpl.emailChangeNotice({ name: u.name, newEmail: next, baseUrl }));
-    setImmediate(() => sendEmail(u.email, n.subject, n.html, n.text));
-  }
   if (!sent || !sent.sent) return res.status(502).json({ error: 'Não conseguimos enviar o e-mail agora. Tente de novo em alguns minutos.' });
   res.json({ ok: true, user: publicUser(u, { self: true }) });
+});
+/* ─── TROCA DE E-MAIL CONFIRMADO ───
+   Etapas, nesta ordem, conferidas no servidor (o ticket guarda em qual a
+   pessoa está): senha atual → código mandado pro e-mail atual → código do
+   app autenticador (se a conta tiver) → e-mail novo duas vezes → senha de
+   novo → código mandado pro e-mail novo, que conclui a troca na hora.
+   Qualquer erro cancela (o ticket some e é preciso recomeçar); só o e-mail
+   novo (formato, os dois campos diferentes, já usado) volta pra corrigir.
+   Conta sem senha (só Discord) pula as duas etapas de senha. */
+const EMAIL_CHG_TTL_MS = 15 * 60 * 1000;
+const _emailChanges = new Map(); // ticket → { userId, step, codeHash, exp, sends, lastSentAt, next }
+setInterval(() => { const t = Date.now(); for (const [k, v] of _emailChanges) if (v.exp < t) _emailChanges.delete(k); }, 60 * 1000).unref();
+const rateLimitEmailChange = makeRateLimit(new Map(), 30, 'tentativas', req => 'u:' + (req.user?.id || clientIp(req)), 60 * 60 * 1000);
+function emailChgCancel(res, ticket, error, status = 400) {
+  _emailChanges.delete(ticket);
+  return res.status(status).json({ error, code: 'cancelled' });
+}
+/* Ticket válido, desta pessoa e na etapa certa; senão cancela. */
+function emailChgTicket(req, res, steps) {
+  const ticket = String((req.body || {}).ticket || '');
+  const rec = _emailChanges.get(ticket);
+  if (!rec || rec.userId !== req.user.id || rec.exp <= Date.now()) { emailChgCancel(res, ticket, 'O tempo para trocar o e-mail acabou.', 410); return null; }
+  if (!steps.includes(rec.step)) { emailChgCancel(res, ticket, 'As etapas saíram de ordem.'); return null; }
+  return { ticket, rec };
+}
+async function sendEmailChangeCode(req, u, to, code, toNew) {
+  const m = mailIn(userLang(u), () => emailTpl.emailChangeCode({ name: u.name, code, toNew, baseUrl: appBaseUrl(req), ip: clientIp(req) }));
+  const sent = await sendEmail(to, m.subject, m.html, m.text);
+  return !!(sent && sent.sent);
+}
+app.post('/api/me/email/change/start', requireAuth, rateLimitEmailChange, async (req, res) => {
+  const u = req.user;
+  if (!emailLinked(u)) return res.status(400).json({ error: 'Confirme o e-mail atual antes de trocar.' });
+  if (!mailEnabled()) return res.status(503).json({ error: 'O envio de e-mails não está ativo no servidor. Fale com um administrador.' });
+  for (const [k, v] of _emailChanges) if (v.userId === u.id) _emailChanges.delete(k);
+  if (!checkOwnPassword(u, (req.body || {}).password)) return emailChgCancel(res, '', 'Senha incorreta.');
+  const ticket = crypto.randomBytes(24).toString('base64url');
+  const code = emailCode();
+  if (!await sendEmailChangeCode(req, u, u.email, code, false)) return res.status(502).json({ error: 'Não conseguimos mandar o código agora. Tente de novo em alguns minutos.' });
+  const rec = { userId: u.id, step: 'code', codeHash: codeHash(ticket, code), exp: Date.now() + EMAIL_CHG_TTL_MS, sends: 1, lastSentAt: Date.now(), next: null };
+  _emailChanges.set(ticket, rec);
+  res.json({ ticket, step: rec.step, emailHint: maskEmail(u.email), totp: twoFactorMethodOf(u) === 'totp' });
+});
+// Reenvia o código da etapa atual (e-mail atual ou e-mail novo).
+app.post('/api/me/email/change/resend', requireAuth, rateLimitEmailChange, async (req, res) => {
+  const t = emailChgTicket(req, res, ['code', 'newcode']);
+  if (!t) return;
+  const wait = t.rec.lastSentAt + TWOFA_RESEND_COOLDOWN_MS - Date.now();
+  if (wait > 0) return res.status(429).json({ error: `Aguarde ${Math.ceil(wait / 1000)}s para pedir outro código.`, retryAfter: Math.ceil(wait / 1000) });
+  if (t.rec.sends >= 6) return emailChgCancel(res, t.ticket, 'Muitos códigos pedidos.');
+  const toNew = t.rec.step === 'newcode';
+  const code = emailCode();
+  t.rec.codeHash = codeHash(t.ticket, code);
+  if (!await sendEmailChangeCode(req, req.user, toNew ? t.rec.next : req.user.email, code, toNew)) return res.status(502).json({ error: 'Não conseguimos mandar o código agora. Tente de novo em alguns minutos.' });
+  t.rec.sends++; t.rec.lastSentAt = Date.now();
+  res.json({ ok: true });
+});
+app.post('/api/me/email/change/code', requireAuth, rateLimitEmailChange, (req, res) => {
+  const t = emailChgTicket(req, res, ['code']);
+  if (!t) return;
+  if (!totp.safeEqual(t.rec.codeHash, codeHash(t.ticket, (req.body || {}).code))) return emailChgCancel(res, t.ticket, 'Código do e-mail incorreto.');
+  t.rec.step = twoFactorMethodOf(req.user) === 'totp' ? 'totp' : 'email';
+  res.json({ ok: true, step: t.rec.step });
+});
+app.post('/api/me/email/change/totp', requireAuth, rateLimitEmailChange, (req, res) => {
+  const t = emailChgTicket(req, res, ['totp']);
+  if (!t) return;
+  const u = req.user;
+  const ok = twoFactorMethodOf(u) === 'totp' && checkTwoFactorCode(u, { method: 'totp' }, t.ticket, (req.body || {}).code, false);
+  if (!ok) return emailChgCancel(res, t.ticket, 'Código do app autenticador incorreto.');
+  saveEntity('users', u); // passo do app usado (não vale de novo)
+  t.rec.step = 'email';
+  res.json({ ok: true, step: t.rec.step });
+});
+app.post('/api/me/email/change/email', requireAuth, rateLimitEmailChange, (req, res) => {
+  const t = emailChgTicket(req, res, ['email']);
+  if (!t) return;
+  const u = req.user;
+  const { email, confirm } = req.body || {};
+  // Aqui o erro só volta pra corrigir: não cancela.
+  if (!isValidEmail(email)) return res.status(400).json({ error: 'Confira o e-mail. Ele precisa ter o formato nome@empresa.com.', field: 'email' });
+  if (normEmail(email) !== normEmail(confirm)) return res.status(400).json({ error: 'Os dois e-mails estão diferentes. Digite o mesmo endereço nos dois campos.', field: 'confirm' });
+  const next = normEmail(email);
+  if (next === normEmail(u.email)) return res.status(400).json({ error: 'Esse já é o e-mail da sua conta. Digite um endereço novo.', field: 'email' });
+  if (userByEmail(next, u.id)) return res.status(409).json({ error: 'Esse e-mail já está em outra conta do reWork. Use outro ou peça ajuda ao suporte.', field: 'email' });
+  t.rec.next = next;
+  t.rec.step = 'password';
+  res.json({ ok: true, step: t.rec.step });
+});
+app.post('/api/me/email/change/password', requireAuth, rateLimitEmailChange, async (req, res) => {
+  const t = emailChgTicket(req, res, ['password']);
+  if (!t) return;
+  const u = req.user;
+  if (!checkOwnPassword(u, (req.body || {}).password)) return emailChgCancel(res, t.ticket, 'Senha incorreta.');
+  const code = emailCode();
+  if (!await sendEmailChangeCode(req, u, t.rec.next, code, true)) return res.status(502).json({ error: 'Não conseguimos mandar o código para o e-mail novo. Tente de novo em alguns minutos.' });
+  Object.assign(t.rec, { step: 'newcode', codeHash: codeHash(t.ticket, code), sends: t.rec.sends + 1, lastSentAt: Date.now() });
+  res.json({ ok: true, step: t.rec.step, email: t.rec.next });
+});
+app.post('/api/me/email/change/confirm', requireAuth, rateLimitEmailChange, (req, res) => {
+  const t = emailChgTicket(req, res, ['newcode']);
+  if (!t) return;
+  const u = req.user;
+  if (!totp.safeEqual(t.rec.codeHash, codeHash(t.ticket, (req.body || {}).code))) return emailChgCancel(res, t.ticket, 'Código do e-mail novo incorreto.');
+  const next = t.rec.next;
+  if (userByEmail(next, u.id)) return emailChgCancel(res, t.ticket, 'Esse e-mail acabou de ser vinculado a outra conta.', 409);
+  _emailChanges.delete(t.ticket);
+  const old = u.email;
+  u.email = next;
+  u.emailVerifiedAt = nowISO();
+  delete u.emailChange;
+  saveEntity('users', u);
+  // Avisa o endereço antigo.
+  const n = mailIn(userLang(u), () => emailTpl.emailChangeNotice({ name: u.name, newEmail: next, baseUrl: appBaseUrl(req) }));
+  setImmediate(() => sendEmail(old, n.subject, n.html, n.text));
+  res.json({ ok: true, email: next, user: publicUser(u, { self: true }) });
+});
+app.post('/api/me/email/change/cancel', requireAuth, (req, res) => {
+  const ticket = String((req.body || {}).ticket || '');
+  const rec = _emailChanges.get(ticket);
+  if (rec && rec.userId === req.user.id) _emailChanges.delete(ticket);
+  res.json({ ok: true });
 });
 app.post('/api/me/email/cancel', requireAuth, (req, res) => {
   if (req.user.emailChange) { delete req.user.emailChange; saveEntity('users', req.user); }

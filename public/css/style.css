@@ -4386,6 +4386,33 @@ select.wizard-cust-resp:focus { padding-right: 28px; background-position: right 
 .elm-sent-title { font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
 .elm-sent-text { margin: 0; font-size: 13px; line-height: 1.6; color: var(--text-dim); }
 .elm-sent-text b { color: var(--text); overflow-wrap: anywhere; }
+.elm-modal { max-width: 440px; }
+.elm-modal #elm-form .form-group + .form-group { margin-top: var(--space-4); }
+.elm-modal .login-error:empty { min-height: 0; margin: 0; }
+/* Troca de e-mail em etapas: barra de progresso, ícone + título por etapa */
+.ec-progress { display: flex; gap: var(--space-1); margin-bottom: var(--space-5); }
+.ec-progress span { flex: 1; height: 4px; border-radius: var(--radius-pill); background: var(--surface-3); transition: background .25s var(--ease-out); }
+.ec-progress span.is-done { background: var(--accent); }
+.ec-progress span.is-now { background: color-mix(in oklab, var(--accent) 45%, var(--surface-3)); }
+.ec-head { display: flex; gap: var(--space-3); align-items: flex-start; margin-bottom: var(--space-5); }
+.ec-ic { width: 40px; height: 40px; border-radius: var(--radius-md); flex-shrink: 0; display: grid; place-items: center; background: var(--accent-dim); color: var(--accent-text); }
+.ec-ic svg { width: 20px; height: 20px; }
+.ec-ic.is-ok { background: color-mix(in oklab, var(--success) 14%, transparent); color: var(--success); }
+.ec-ic.is-bad { background: color-mix(in oklab, var(--danger) 12%, transparent); color: var(--danger); }
+.ec-count { font-size: var(--fs-xs); font-weight: 600; color: var(--text-muted); margin-bottom: 2px; }
+.ec-title { font-size: var(--fs-md); font-weight: 700; color: var(--text); letter-spacing: -0.01em; }
+.ec-lead { margin: 4px 0 0; font-size: var(--fs-base); line-height: 1.55; color: var(--text-dim); }
+.ec-lead b { color: var(--text); overflow-wrap: anywhere; }
+.ec-fields { display: flex; flex-direction: column; gap: var(--space-4); }
+.ec .login-error { margin: 12px 0 0; }
+.ec-resend { margin-top: var(--space-3); font-size: var(--fs-sm); color: var(--text-muted); text-align: center; }
+.ec-resend a { color: var(--accent-text); font-weight: 600; text-decoration: none; }
+.ec-resend a:hover { text-decoration: underline; }
+.ec-resend a[aria-disabled="true"] { color: var(--text-muted); pointer-events: none; font-weight: 500; }
+.ec-end { text-align: center; padding: 6px 0 2px; }
+.ec-end .ec-ic { width: 48px; height: 48px; border-radius: var(--radius-lg); margin: 0 auto 12px; }
+.ec-end .ec-ic svg { width: 24px; height: 24px; }
+.ec-end .ec-lead { margin-top: 6px; }
 
 .dash-updates {
   position: relative;

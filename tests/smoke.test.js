@@ -1164,16 +1164,34 @@ test('E-mail: vincular pede senha e link, e passado o prazo a conta sem e-mail s
     assert.equal((await req('/api/bootstrap', { headers: { Cookie: c } })).status, 200, 'e a ler');
     assert.equal((await call('PUT', '/api/me', c, { email: 'x@exemplo.com' })).status, 400, 'não troca digitando');
     await loginCookie('sem.email@exemplo.com', 'senha-forte-1');
-    // Trocar: link pro novo e aviso pro antigo; cancelar invalida o link
-    outbox.length = 0;
-    r = await call('POST', '/api/me/email', c, { email: 'novo.email@exemplo.com', password: 'senha-forte-1' });
-    assert.equal(r.status, 200, JSON.stringify(r.body));
-    await flushed();
-    assert.deepEqual(outbox.map(m => m.to).sort(), ['novo.email@exemplo.com', 'sem.email@exemplo.com']);
-    const t2 = tokenOf(outbox.find(m => m.to === 'novo.email@exemplo.com'));
-    assert.equal((await call('POST', '/api/me/email/cancel', c, {})).body.user.pendingEmail, null);
-    assert.equal((await postJson('/api/email/confirm', { token: t2 })).status, 410);
-    assert.equal((await req('/api/me', { headers: { Cookie: c } })).body.email, 'sem.email@exemplo.com');
+    // Trocar e-mail confirmado: só pelas etapas (senha → código no atual →
+    // e-mail novo 2x → senha → código no novo). Erro cancela; e-mails
+    // diferentes só voltam pra corrigir.
+    assert.equal((await call('POST', '/api/me/email', c, { email: 'novo.email@exemplo.com', password: 'senha-forte-1' })).body.code, 'use_change_flow');
+    const codeTo = (to) => (String(([...outbox].reverse().find(m => m.to === to) || {}).text).match(/(\d{6})/) || [])[1];
+    const chg = (step, body) => call('POST', '/api/me/email/change/' + step, c, body);
+    assert.equal((await chg('start', { password: 'errada' })).body.code, 'cancelled');
+    let tk = (await chg('start', { password: 'senha-forte-1' })).body.ticket;
+    const wrong = codeTo('sem.email@exemplo.com') === '000000' ? '111111' : '000000';
+    assert.equal((await chg('code', { ticket: tk, code: wrong })).body.code, 'cancelled');
+    assert.equal((await chg('code', { ticket: tk, code: codeTo('sem.email@exemplo.com') })).status, 410, 'ticket cancelado não volta');
+    async function changeEmail(from, to) {
+      outbox.length = 0;
+      const t = (await chg('start', { password: 'senha-forte-1' })).body.ticket;
+      assert.equal((await chg('code', { ticket: t, code: codeTo(from) })).body.step, 'email');
+      const diff = await chg('email', { ticket: t, email: to, confirm: 'x' + to });
+      assert.equal(diff.status, 400); assert.equal(diff.body.field, 'confirm'); assert.ok(!diff.body.code, 'não cancela');
+      assert.equal((await chg('email', { ticket: t, email: to, confirm: to })).body.step, 'password');
+      assert.equal((await chg('password', { ticket: t, password: 'senha-forte-1' })).body.step, 'newcode');
+      const done = await chg('confirm', { ticket: t, code: codeTo(to) });
+      assert.equal(done.status, 200, JSON.stringify(done.body));
+      assert.equal(done.body.user.email, to);
+      await flushed();
+      assert.ok(outbox.some(m => m.to === from && /foi trocado/.test(m.subject)), 'aviso pro antigo');
+    }
+    await changeEmail('sem.email@exemplo.com', 'novo.email@exemplo.com');
+    assert.equal((await req('/api/me', { headers: { Cookie: c } })).body.email, 'novo.email@exemplo.com');
+    await changeEmail('novo.email@exemplo.com', 'sem.email@exemplo.com');
     // Confirmar o e-mail que já está na conta dispensa a senha
     outbox.length = 0;
     assert.equal((await call('POST', '/api/me/email', c3, { email: 'com.email@exemplo.com' })).status, 200);

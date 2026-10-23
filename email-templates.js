@@ -467,16 +467,35 @@ ${note(byAdmin ? t('Se você acha que foi um engano, fale com a coordenação da
   return { subject, html, text };
 }
 
-/* Aviso pro endereço ANTIGO quando alguém pede a troca (segurança). */
-function emailChangeNotice({ name, newEmail, baseUrl }) {
-  const subject = t('[reWork] Pedido para trocar o e-mail da sua conta');
+/* Código da troca de e-mail: vai pro endereço atual (2ª etapa) e depois pro
+   novo (última etapa, confirma que o endereço é da pessoa). */
+function emailChangeCode({ name, code, toNew, baseUrl, ip }) {
+  const subject = t('[reWork] Código para trocar o e-mail: {0}', code);
   const content = `${chip(t('Segurança'), 'neutro')}
-${headline(t('Pedido para trocar o seu e-mail'))}
-${paragraph(t('Olá, {0}. Alguém com a sua senha pediu para trocar o e-mail da sua conta no reWork para {1}. A troca só acontece quando o link enviado para o endereço novo for aberto.', strong(firstName(name)), strong(newEmail)))}
-${paragraph(t('Se foi você, não precisa fazer nada. Se não foi, entre no reWork, cancele a troca no seu perfil e troque a sua senha.'))}
+${headline(toNew ? t('Confirme o seu e-mail novo') : t('Código para trocar o e-mail'))}
+${paragraph(toNew
+    ? t('Olá, {0}. Digite este código no reWork para terminar de trocar o e-mail da sua conta para este endereço:', strong(firstName(name)))
+    : t('Olá, {0}. Alguém com a sua senha começou a trocar o e-mail da sua conta no reWork. Para continuar, digite este código:', strong(firstName(name))))}
+<div class="rw-text" style="margin:22px 0 4px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:34px;font-weight:700;letter-spacing:.3em;color:${T.text}">${escHtml(code)}</div>
+<p class="rw-baixa" style="margin:18px 0 0;font-size:12px;line-height:1.6;color:${T.baixa}">${ip
+    ? t('O código vale por {0}. Pedido feito do endereço {1}. Se não foi você, não passe o código para ninguém e troque a sua senha.', `<strong>${t('15 minutos')}</strong>`, escHtml(ip))
+    : t('O código vale por {0}. Se não foi você, não passe o código para ninguém e troque a sua senha.', `<strong>${t('15 minutos')}</strong>`)}</p>`;
+  const html = layout({ subject, preheader: t('Código: {0} · vale 15 minutos.', code), content, baseUrl, footer: t('Aviso de segurança da sua conta no reWork.') });
+  const text = `${t('Código para trocar o e-mail da sua conta no reWork: {0}', code)}
+
+${t('Vale por 15 minutos. Se não foi você, troque a sua senha.')}`;
+  return { subject, html, text };
+}
+/* Aviso pro endereço ANTIGO quando o e-mail da conta é trocado (segurança). */
+function emailChangeNotice({ name, newEmail, baseUrl }) {
+  const subject = t('[reWork] O e-mail da sua conta foi trocado');
+  const content = `${chip(t('Segurança'), 'neutro')}
+${headline(t('O seu e-mail foi trocado'))}
+${paragraph(t('Olá, {0}. O e-mail da sua conta no reWork agora é {1}. A troca foi confirmada com a sua senha e com códigos enviados para este endereço e para o novo.', strong(firstName(name)), strong(newEmail)))}
+${paragraph(t('Se não foi você, fale com a coordenação da sua equipe ou com o suporte do reWork o quanto antes.'))}
 ${button(baseUrl, t('Abrir o reWork'))}`;
-  const html = layout({ subject, preheader: t('Troca para {0} aguardando confirmação.', newEmail), content, baseUrl, footer: t('Aviso de segurança da sua conta no reWork.') });
-  const text = t('Olá {0}, pediram para trocar o e-mail da sua conta no reWork para {1}. Se não foi você, entre no reWork, cancele a troca no perfil e troque a senha.', name, newEmail);
+  const html = layout({ subject, preheader: t('Agora o e-mail da conta é {0}.', newEmail), content, baseUrl, footer: t('Aviso de segurança da sua conta no reWork.') });
+  const text = t('Olá {0}, o e-mail da sua conta no reWork foi trocado para {1}. Se não foi você, fale com a coordenação ou com o suporte.', name, newEmail);
   return { subject, html, text };
 }
 
@@ -658,6 +677,7 @@ function previewSamples(baseUrl, me) {
     { key: 'twofa_on', label: 'Verificação em duas etapas ativada', build: () => twoFactorNotice({ name, enabled: true, method: 'totp', baseUrl: url }) },
     { key: 'email_confirm', label: 'Confirmar e-mail', build: () => emailConfirm({ name, email: 'andrigo@exemplo.com', link: `${url}/confirmar-email/exemplo-de-token-0000`, baseUrl: url }) },
     { key: 'email_change', label: 'Confirmar e-mail novo (troca)', build: () => emailConfirm({ name, email: 'novo@exemplo.com', link: `${url}/confirmar-email/exemplo-de-token-0000`, baseUrl: url, isChange: true }) },
+    { key: 'email_change_code', label: 'Código da troca de e-mail', build: () => emailChangeCode({ name, code: '482913', toNew: false, baseUrl: url, ip: '200.150.10.4' }) },
     { key: 'email_change_notice', label: 'Aviso de troca de e-mail (endereço antigo)', build: () => emailChangeNotice({ name, newEmail: 'novo@exemplo.com', baseUrl: url }) },
     { key: 'account_deleted', label: 'Conta excluída', build: () => accountDeleted({ name, byAdmin: true, org: 'WSI', baseUrl: url }) },
     { key: 'invite', label: 'Convite para a equipe', build: () => invite({ name: 'Carla Menezes', inviter: name, access: 'Membro', squads: ['Imob', 'Performance'], link: `${url}/convite/exemplo-de-token-0000`, expiresAt: new Date(Date.now() + 7 * 864e5).toISOString(), baseUrl: url }) },
@@ -704,4 +724,4 @@ ${button(link, closed ? t('Ver o chamado') : t('Responder'))}`;
   return { subject, html, text };
 }
 
-module.exports = { withLang, supportToStaff, supportToCustomer, escHtml, layout, notification, digest, heldSummary, resetPassword, emailConfirm, emailChangeNotice, loginCode, twoFactorNotice, accountDeleted, invite, accessRequestReceived, accessRequestNew, consoleAdminInvite, consoleResetPassword, consoleRecoveryNotice, testEmail, previewSamples };
+module.exports = { withLang, supportToStaff, supportToCustomer, escHtml, layout, notification, digest, heldSummary, resetPassword, emailConfirm, emailChangeCode, emailChangeNotice, loginCode, twoFactorNotice, accountDeleted, invite, accessRequestReceived, accessRequestNew, consoleAdminInvite, consoleResetPassword, consoleRecoveryNotice, testEmail, previewSamples };

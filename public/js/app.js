@@ -1032,6 +1032,7 @@ async function api(path, method = 'GET', body) {
   }
   if (!res.ok) {
     const e = new Error(data.error || `Erro ${res.status}`);
+    e.code = data.code; e.field = data.field;
     e._apiKind = 'server';
     if (res.status === 403 && data.code === 'email_required' && !window.__emailGateReload) { window.__emailGateReload = true; setTimeout(() => location.reload(), 300); }
     throw e;
@@ -4152,6 +4153,7 @@ document.addEventListener('click', ev => {
   const overlay = ev.target.closest('.modal-overlay');
   if (!overlay || !overlay.classList.contains('open')) return;
   if (ev.target !== overlay) return; // clicou no fundo, não no conteúdo
+  if (overlay.id === 'email-link-modal' && _ec) return _ecAskCancel(); // troca de e-mail em etapas
   const inner = overlay.querySelector('.modal');
   if (inner && inner.dataset.noOutsideClose === '1') return;
   // demand-modal: se está na etapa Customizar ou depois, pede confirmação antes de fechar.
@@ -4165,6 +4167,7 @@ document.addEventListener('keydown', ev => {
   if (ev.key !== 'Escape') return;
   const open = [...document.querySelectorAll('.modal-overlay.open')].pop();
   if (!open) return;
+  if (open.id === 'email-link-modal' && _ec) return _ecAskCancel();
   const inner = open.querySelector('.modal');
   if (inner && inner.dataset.noOutsideClose === '1') return;
   if (open.id === 'demand-modal' && _wizardShouldConfirmClose()) {
@@ -7612,6 +7615,9 @@ function openEmailLinkModal(mode) {
   if (!me) return;
   const st = _emailState();
   _elmMode = mode || (st === 'missing' ? 'link' : st === 'ok' ? 'change' : 'confirm');
+  if (_elmMode === 'change' && st === 'ok') return _ecOpen();
+  _ec = null;
+  $('elm-chg').hidden = true;
   const locked = !!me.emailRequired && st !== 'ok';
   $('elm-title').textContent = _elmMode === 'change' ? 'Trocar e-mail' : _elmMode === 'resend' ? 'Reenviar o link' : 'Vincular e-mail';
   $('elm-intro').innerHTML = _elmMode === 'change'
@@ -7644,8 +7650,175 @@ function _elmFoot(which) {
 }
 function closeEmailLinkModal(force) {
   if (!force && me && me.emailRequired && _emailState() === 'missing') return; // prazo vencido: precisa vincular
+  if (_ec) _ecAbort();
   closeModal('email-link-modal');
 }
+
+/* ── Troca de e-mail confirmado, em etapas ──
+   senha → código no e-mail atual → app autenticador (se tiver) → e-mail novo
+   duas vezes → senha → código no e-mail novo. O servidor guarda a etapa num
+   ticket; qualquer erro cancela (code 'cancelled') e mostra a tela de troca
+   cancelada. Só o e-mail novo volta pra corrigir. Clicar fora ou Esc no meio
+   da troca pergunta antes de cancelar. Conta sem senha pula as senhas. */
+let _ec = null; // { step, steps, ticket, emailHint, next, busy, resendAt, error }
+const EC_STEPS = {
+  pass:    { ic: 'lock-keyhole', title: 'Confirme que é você', btn: 'Enviar código' },
+  code:    { ic: 'mail', title: 'Código no seu e-mail', btn: 'Continuar' },
+  totp:    { ic: 'smartphone', title: 'Código do app autenticador', btn: 'Continuar' },
+  email:   { ic: 'at-sign', title: 'Novo e-mail', btn: 'Continuar' },
+  pass2:   { ic: 'key-round', title: 'Digite a senha de novo', btn: 'Enviar código' },
+  newcode: { ic: 'mail-check', title: 'Confirme o e-mail novo', btn: 'Trocar e-mail' }
+};
+function _ecSteps(totp) {
+  const pw = me.hasPassword !== false;
+  return [pw && 'pass', 'code', totp && 'totp', 'email', pw && 'pass2', 'newcode'].filter(Boolean);
+}
+function _ecOpen() {
+  _ec = { steps: _ecSteps(me.twoFactor?.method === 'totp'), step: null, ticket: null, error: '' };
+  _ec.step = _ec.steps[0];
+  $('elm-title').textContent = 'Trocar e-mail';
+  $('elm-form').hidden = true;
+  $('elm-sent').hidden = true;
+  $('elm-chg').hidden = false;
+  $('elm-close').hidden = false;
+  openModal('email-link-modal');
+  // Sem senha, a primeira etapa já é mandar o código.
+  if (_ec.step === 'code') { _ecRender(); return _ecStart(''); }
+  _ecRender();
+}
+const _ecInProgress = () => !!_ec && _ec.step !== 'done' && _ec.step !== 'cancelled' && (_ec.ticket || _ec.step !== _ec.steps[0]);
+function _ecAbort() {
+  if (_ec && _ec.ticket && _ec.step !== 'done') api('/me/email/change/cancel', 'POST', { ticket: _ec.ticket }).catch(() => {});
+  _ec = null;
+}
+// Clique fora / Esc: no meio da troca, confirma antes de cancelar.
+async function _ecAskCancel() {
+  if (!_ecInProgress()) return closeEmailLinkModal();
+  const ok = await showConfirm({ title: 'Cancelar a troca de e-mail?', message: 'O que você já confirmou se perde. Para trocar o e-mail depois, é preciso começar de novo.', okLabel: 'Cancelar troca', cancelLabel: 'Continuar trocando', danger: true });
+  if (ok) closeEmailLinkModal();
+}
+function _ecField(id, label, attrs) {
+  return `<div class="form-group"><label class="form-label" for="${id}">${label}</label><input class="form-control" id="${id}" ${attrs} onkeydown="if(event.key==='Enter'){event.preventDefault();_ecNext()}"></div>`;
+}
+const _ecCodeInput = (label) => `<input class="form-control tf-code" id="ec-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" aria-label="${label}" onkeydown="if(event.key==='Enter'){event.preventDefault();_ecNext()}">`;
+function _ecRender() {
+  const e = _ec;
+  if (!e) return;
+  const box = $('elm-chg'), foot = $('elm-foot');
+  if (e.step === 'done' || e.step === 'cancelled') {
+    const ok = e.step === 'done';
+    box.innerHTML = `<div class="ec-end">
+      <span class="ec-ic ${ok ? 'is-ok' : 'is-bad'}"><i data-lucide="${ok ? 'circle-check' : 'shield-x'}"></i></span>
+      <div class="ec-title">${ok ? 'E-mail trocado' : 'Troca cancelada'}</div>
+      <p class="ec-lead">${ok ? `Agora o e-mail da sua conta é <b>${esc(e.next)}</b>. Avisamos o endereço antigo.` : `<span>${esc(e.error)}</span> Por segurança, nada foi alterado. Para trocar o e-mail, comece de novo.`}</p>
+    </div>`;
+    foot.innerHTML = ok
+      ? `<button class="btn btn-confirm" type="button" onclick="closeEmailLinkModal(true)">Concluir</button>`
+      : `<button class="btn btn-ghost" type="button" onclick="closeEmailLinkModal(true)">Fechar</button><button class="btn btn-confirm" type="button" onclick="_ecOpen()">Começar de novo</button>`;
+    paintIcons();
+    return;
+  }
+  const s = EC_STEPS[e.step];
+  const i = e.steps.indexOf(e.step);
+  const lead = {
+    pass: 'Para trocar o e-mail, primeiro a sua senha atual. Depois mandamos um código para o seu e-mail.',
+    code: `Mandamos um código de 6 dígitos para <b>${esc(e.emailHint || me.email || '')}</b>.`,
+    totp: 'Abra o app autenticador no celular e digite o código do reWork.',
+    email: 'Digite o endereço novo duas vezes, para evitar erro de digitação.',
+    pass2: `Para mandar o código para <b>${esc(e.next || '')}</b>, confirme com a sua senha.`,
+    newcode: `Mandamos um código para <b>${esc(e.next || '')}</b>. Digite aqui para concluir a troca.`
+  }[e.step];
+  let fields = '';
+  if (e.step === 'pass' || e.step === 'pass2') fields = _ecField('ec-pass', 'Senha do reWork', 'type="password" autocomplete="current-password"');
+  else if (e.step === 'email') fields = _ecField('ec-email', 'E-mail novo', 'type="email" autocomplete="email" spellcheck="false" placeholder="nome@empresa.com"')
+    + _ecField('ec-email2', 'Repita o e-mail novo', 'type="email" autocomplete="off" spellcheck="false" placeholder="nome@empresa.com" onpaste="return false"');
+  else fields = _ecCodeInput(s.title);
+  const resend = e.step === 'code' || e.step === 'newcode'
+    ? `<div class="ec-resend">Não chegou? Veja no spam ou <a href="#" id="ec-resend" onclick="event.preventDefault();_ecResend()">reenviar o código</a></div>` : '';
+  box.innerHTML = `
+    <div class="ec-progress" aria-hidden="true">${e.steps.map((_, k) => `<span class="${k < i ? 'is-done' : k === i ? 'is-now' : ''}"></span>`).join('')}</div>
+    <div class="ec-head">
+      <span class="ec-ic"><i data-lucide="${s.ic}"></i></span>
+      <div><div class="ec-count">Etapa ${i + 1} de ${e.steps.length}</div><div class="ec-title">${s.title}</div><p class="ec-lead">${lead}</p></div>
+    </div>
+    <div class="ec-fields">${fields}</div>${resend}
+    <div class="login-error" id="ec-error" role="alert"></div>`;
+  foot.innerHTML = `<button class="btn btn-ghost" type="button" onclick="closeEmailLinkModal()">Cancelar</button><button class="btn btn-confirm" type="button" id="ec-go" onclick="_ecNext()">${s.btn}</button>`;
+  paintIcons();
+  setTimeout(() => { const f = box.querySelector('input'); if (f) f.focus(); }, 60);
+}
+function _ecError(msg, fieldId) {
+  const el = $('ec-error');
+  if (el) el.textContent = msg;
+  if (fieldId && $(fieldId)) $(fieldId).focus();
+}
+async function _ecStart(password) {
+  const r = await api('/me/email/change/start', 'POST', { password });
+  Object.assign(_ec, { ticket: r.ticket, emailHint: r.emailHint, steps: _ecSteps(r.totp), step: 'code' });
+  _ecRender();
+}
+async function _ecNext() {
+  const e = _ec;
+  if (!e || e.busy) return;
+  _ecError('');
+  const val = (id) => ($(id) ? $(id).value : '');
+  const code = val('ec-code').replace(/\D/g, '');
+  // Validação local: só o que dá pra corrigir na hora, sem chamar o servidor.
+  if ((e.step === 'pass' || e.step === 'pass2') && !val('ec-pass')) return _ecError('Digite a sua senha.', 'ec-pass');
+  if (['code', 'totp', 'newcode'].includes(e.step) && code.length !== 6) return _ecError('Digite os 6 números do código.', 'ec-code');
+  if (e.step === 'email') {
+    const a = val('ec-email').trim(), b = val('ec-email2').trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a)) return _ecError('Confira o e-mail. Ele precisa ter o formato nome@empresa.com.', 'ec-email');
+    if (a.toLowerCase() !== b.toLowerCase()) return _ecError('Os dois e-mails estão diferentes. Digite o mesmo endereço nos dois campos.', 'ec-email2');
+  }
+  e.busy = true;
+  const btn = $('ec-go');
+  if (btn) { btn.disabled = true; btn.textContent = 'Conferindo…'; }
+  try {
+    const t = e.ticket;
+    if (e.step === 'pass') return await _ecStart(val('ec-pass'));
+    if (e.step === 'code') { const r = await api('/me/email/change/code', 'POST', { ticket: t, code }); e.step = r.step; }
+    else if (e.step === 'totp') { const r = await api('/me/email/change/totp', 'POST', { ticket: t, code }); e.step = r.step; }
+    else if (e.step === 'email') {
+      const r = await api('/me/email/change/email', 'POST', { ticket: t, email: val('ec-email').trim(), confirm: val('ec-email2').trim() });
+      e.next = val('ec-email').trim().toLowerCase();
+      // Conta sem senha: o e-mail novo já leva direto ao código.
+      if (r.step === 'password' && !e.steps.includes('pass2')) { const p = await api('/me/email/change/password', 'POST', { ticket: t }); e.step = 'newcode'; e.next = p.email; }
+      else e.step = 'pass2';
+    }
+    else if (e.step === 'pass2') { const r = await api('/me/email/change/password', 'POST', { ticket: t, password: val('ec-pass') }); e.next = r.email; e.step = 'newcode'; }
+    else if (e.step === 'newcode') {
+      const r = await api('/me/email/change/confirm', 'POST', { ticket: t, code });
+      e.next = r.email; e.step = 'done';
+      _emailApplyUser(r.user);
+    }
+    _ecRender();
+  } catch (err) {
+    if (err.code === 'cancelled') { e.step = 'cancelled'; e.error = err.message; e.ticket = null; return _ecRender(); }
+    _ecError(err.message, err.field === 'confirm' ? 'ec-email2' : err.field === 'email' ? 'ec-email' : null);
+  } finally {
+    e.busy = false;
+    const b = $('ec-go');
+    if (b && EC_STEPS[e.step]) { b.disabled = false; b.textContent = EC_STEPS[e.step].btn; }
+  }
+}
+async function _ecResend() {
+  const a = $('ec-resend');
+  if (!_ec || !a || a.getAttribute('aria-disabled') === 'true') return;
+  a.setAttribute('aria-disabled', 'true');
+  try {
+    await api('/me/email/change/resend', 'POST', { ticket: _ec.ticket });
+    a.textContent = 'código reenviado';
+    setTimeout(() => { if (a.isConnected) { a.textContent = 'reenviar o código'; a.removeAttribute('aria-disabled'); } }, 30000);
+  } catch (err) {
+    if (err.code === 'cancelled') { Object.assign(_ec, { step: 'cancelled', error: err.message, ticket: null }); return _ecRender(); }
+    _ecError(err.message);
+    a.removeAttribute('aria-disabled');
+  }
+}
+window._ecNext = _ecNext;
+window._ecOpen = _ecOpen;
+window._ecResend = _ecResend;
 function _emailApplyUser(user) {
   if (user) me = { ...me, ...user };
   renderProfileEmail();

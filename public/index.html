@@ -5145,7 +5145,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- Vincular / confirmar / trocar e-mail — openEmailLinkModal() -->
 <div class="modal-overlay" id="email-link-modal">
-  <div class="modal modal-sm" data-no-outside-close="1">
+  <div class="modal modal-sm elm-modal" data-no-outside-close="1">
     <div class="modal-header">
       <div class="modal-title" id="elm-title">Vincular e-mail</div>
       <button class="modal-close" id="elm-close" onclick="closeEmailLinkModal()" aria-label="Fechar"><i data-lucide="x" class="ic-sm"></i></button>
@@ -5164,6 +5164,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
         </div>
         <div class="login-error" id="elm-error" role="alert"></div>
       </form>
+      <!-- Troca de e-mail confirmado, em etapas — _ecRender() -->
+      <div class="ec" id="elm-chg" hidden></div>
       <div class="elm-sent" id="elm-sent" hidden>
         <span class="elm-sent-ic"><i data-lucide="mail-check"></i></span>
         <div class="elm-sent-title">Enviamos o link</div>
