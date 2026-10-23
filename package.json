@@ -12,7 +12,8 @@
     "build:writer:dev": "node scripts/build-writer.js --dev",
     "build:prod": "node scripts/build-writer.js && node build-prod.js",
     "test": "node --test tests/smoke.test.js tests/prototypes.test.js tests/design-tokens.test.js",
-    "design:check": "node scripts/design-tokens.js"
+    "design:check": "node scripts/design-tokens.js",
+    "notes:pending": "node scripts/release-notes-pending.js"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.3.2",

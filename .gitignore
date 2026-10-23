@@ -28,7 +28,9 @@ public/js/app.min.js.map
 Thumbs.db
 .vscode/
 .idea/
-.claude/
+.claude/*
+!.claude/settings.json
+!.claude/skills/
 *.swp
 *.swo
 
