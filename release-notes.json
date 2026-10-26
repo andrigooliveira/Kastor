@@ -1,5 +1,19 @@
 [
   {
+    "id": "2026-10-26-agenda-jornada",
+    "date": "2026-10-26",
+    "title": "Agenda segue a jornada de trabalho",
+    "highlights": [
+      "A semana da agenda agora vai de segunda a domingo. Na visão Quinzena, a divisória entre as semanas fica depois do domingo.",
+      "Os horários fora da jornada de cada dia ficam listrados. Se na sexta a jornada termina às 16h, só a sexta fica listrada das 16h em diante.",
+      "Dias de folga ficam listrados inteiros, e o cabeçalho do dia mostra \"Folga\".",
+      "Não dá para criar um bloco arrastando na parte listrada. Blocos que já estavam ali continuam aparecendo e abrem normalmente.",
+      "A barrinha de horas no cabeçalho de cada dia usa as horas da jornada daquele dia, em vez de 8h fixas.",
+      "Se a jornada começa antes das 9h ou termina depois das 18h, a agenda mostra esses horários também.",
+      "O nome dos blocos ocupa no máximo duas linhas. Se for maior, termina com reticências."
+    ]
+  },
+  {
     "id": "2026-10-26-historico-notificacoes",
     "date": "2026-10-26",
     "title": "Histórico de notificações",

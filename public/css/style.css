@@ -8490,7 +8490,7 @@ i[data-lucide]:not([class*=ic-]) { width: 16px; height: 16px; stroke-width: 2; }
   position: relative; z-index: 1;
   cursor: not-allowed;
   background-color: color-mix(in srgb, var(--surface-2) 70%, transparent);
-  background-image: repeating-linear-gradient(135deg, rgba(255,255,255,0.05) 0 1px, transparent 1px 9px);
+  background-image: repeating-linear-gradient(135deg, rgba(255,255,255,0.08) 0 1px, transparent 1px 8px);
   border-right: 1px solid var(--hairline);
 }
 :root[data-theme="light"] .agenda-offhours {
@@ -21607,7 +21607,16 @@ tr.is-open .an-chev { transform: rotate(90deg); }
 .mine-agenda-v2 .agenda-block-name,
 :root[data-theme="light"] .mine-agenda-v2 .agenda-block-name {
   font-size: 12px; font-weight: 600; line-height: 1.3; color: #fff;
-  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+/* Título em no máximo 2 linhas, reticências no fim da segunda. Livre e Google
+   usam flex no nome (ícone + texto): o livre volta pro box com o ícone inline;
+   no Google o corte vai no texto, ao lado dos ícones. */
+.mine-agenda-v2 .agenda-block--free .agenda-block-name { display: -webkit-box; }
+.mine-agenda-v2 .agenda-block--free .agenda-block-free-icon { display: inline-block; vertical-align: -2px; width: 12px; height: 12px; }
+.mine-agenda-v2 .agenda-block--google .agenda-block-name { align-items: flex-start; }
+.mine-agenda-v2 .agenda-block--google .agenda-block-name > span {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-width: 0;
 }
 .mine-agenda-v2 .agenda-block-project,
 :root[data-theme="light"] .mine-agenda-v2 .agenda-block-project {
