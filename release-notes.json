@@ -15,6 +15,7 @@
     "title": "Entregas contam só o que você passou",
     "highlights": [
       "No Início, o bloco Entregas agora conta só as etapas que você mesmo passou para a próxima. Se outra pessoa avançou uma demanda em que você era responsável, ela não aparece mais como entrega sua.",
+      "Também só entram as etapas em que você era o responsável. Se você avançou a etapa de outra pessoa, ela não conta como entrega sua.",
       "A conta vem do histórico de atividade da demanda, então o dia de cada entrega é o dia em que você clicou para avançar."
     ]
   },
