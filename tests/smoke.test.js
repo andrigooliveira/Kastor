@@ -816,6 +816,43 @@ test('Organizações: conta existente entra numa segunda organização e troca e
   assert.equal((await call('PUT', '/api/users/' + wsiAdminInBeta.id, betaCookie, { password: 'senha-nova-123' })).status, 403);
 });
 
+test('Perfil: dados da conta valem em toda organização; produtividade só na atual', async () => {
+  const admin = await loginCookie('admin', 'admin123');
+  const wsi = (await req('/api/me', { headers: { Cookie: admin } })).body;
+  const betaId = wsi.orgs.find(o => o.name === 'Beta').id;
+  const wsiHdr = { 'X-Org-Id': wsi.orgs.find(o => o.name === 'WSI').id };
+  const get = (p, cookie, headers = {}) => req(p, { headers: { Cookie: cookie, ...wsiHdr, ...headers } });
+  const t = await req('/api/demands/' + wsiDemandId + '/time', {
+    method: 'POST', headers: { Cookie: admin, 'Content-Type': 'application/json', ...wsiHdr }, body: JSON.stringify({ hours: 2.5 })
+  });
+  assert.equal(t.status, 201, JSON.stringify(t.body));
+  const put = await req('/api/me', { method: 'PUT', headers: { Cookie: admin, 'Content-Type': 'application/json', ...wsiHdr }, body: JSON.stringify({ bio: 'Cuido da operação', location: 'Curitiba' }) });
+  assert.equal(put.status, 200, JSON.stringify(put.body));
+
+  const range = `from=${encodeURIComponent(new Date(Date.now() - 864e5).toISOString())}&to=${encodeURIComponent(new Date(Date.now() + 6e4).toISOString())}`;
+  const inWsi = await get(`/api/users/${wsi.id}/profile?${range}`, admin);
+  assert.equal(inWsi.status, 200, JSON.stringify(inWsi.body));
+  assert.equal(inWsi.body.hours.reduce((s, h) => s + h.hours, 0), 2.5);
+  assert.equal(inWsi.body.types.reduce((s, x) => s + x.count, 0), 1);
+
+  // Na Beta o mesmo perfil, sem nada da produtividade da WSI — para ele e para a dona da Beta.
+  const inBeta = await get(`/api/users/${wsi.id}/profile?${range}`, admin, { 'X-Org-Id': betaId });
+  assert.equal(inBeta.status, 200);
+  assert.deepEqual([inBeta.body.hours, inBeta.body.deliveries, inBeta.body.types], [[], [], []]);
+  const byOwner = await req(`/api/users/${wsi.id}/profile?${range}`, { headers: { Cookie: betaCookie } });
+  assert.equal(byOwner.status, 200);
+  assert.equal(byOwner.body.hours.length, 0);
+  assert.ok(!JSON.stringify(byOwner.body).includes('Demanda secreta'));
+  const seenInBeta = (await req('/api/users', { headers: { Cookie: betaCookie } })).body.find(u => u.id === wsi.id);
+  assert.equal(seenInBeta.bio, 'Cuido da operação');
+  assert.equal(seenInBeta.location, 'Curitiba');
+
+  // Quem não é da organização e período inválido.
+  const betaOwner = (await req('/api/me', { headers: { Cookie: betaCookie } })).body;
+  assert.equal((await get(`/api/users/${betaOwner.id}/profile?${range}`, admin)).status, 404);
+  assert.equal((await get(`/api/users/${wsi.id}/profile?from=2020-01-01&to=2026-01-01`, admin)).status, 400);
+});
+
 test('Exclusão definitiva: admin exclui em Usuários e a pessoa exclui a própria conta', async () => {
   const admin = await loginCookie('admin', 'admin123');
   const boot = (await req('/api/bootstrap', { headers: { Cookie: admin } })).body;

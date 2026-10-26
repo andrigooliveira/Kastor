@@ -1,5 +1,20 @@
 [
   {
+    "id": "2026-10-26-perfil-da-pessoa",
+    "date": "2026-10-26",
+    "title": "Perfil de cada pessoa, com produtividade",
+    "highlight": true,
+    "highlights": [
+      "Cada pessoa agora tem um perfil próprio. Abra pelo menu da sua foto, em \"Meu perfil\", pelo \"Ver perfil\" do cartão de contato ou buscando o nome no Ctrl+K.",
+      "O perfil mostra foto, nome, cargo, área, contatos, status e há quanto tempo a pessoa está na organização. A capa e os detalhes usam a cor de destaque que ela escolheu em Aparência.",
+      "Em Produtividade, todos da organização veem as horas apontadas, as etapas entregues, quantas saíram no prazo e as demandas em que a pessoa trabalhou, com filtro de 7 dias, 30 dias, 90 dias, 12 meses ou datas escolhidas.",
+      "O gráfico de Apontamentos mostra as horas ao longo do período. Passe o mouse para ver cada dia, semana ou mês.",
+      "Tipos de demanda mostra em quais tipos a pessoa mais trabalhou, e o calendário de Entregas mostra o que ela entregou em cada dia do mês.",
+      "Os números contam só a organização em que você está. Foto, nome, contato e o novo campo \"Sobre\" valem em todas as organizações da pessoa.",
+      "Os dados da conta (foto, nome, usuário, contato, \"Sobre\" e localização) saíram das Configurações: edite em \"Editar perfil\", no seu perfil. As Configurações agora abrem em Notificações."
+    ]
+  },
+  {
     "id": "2026-10-26-agenda-domingo-grifado",
     "date": "2026-10-26",
     "title": "Agenda: semana no domingo e horário listrado liberado",

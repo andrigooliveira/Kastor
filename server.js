@@ -3519,7 +3519,7 @@ app.get('/api/me', requireAuth, (req, res) => {
 });
 
 app.put('/api/me', requireAuth, (req, res) => {
-  const { name, role, avatar, currentPassword, newPassword, username, discordId, email, emailPrefs, pushPrefs, discord, phone, discordPrefs, quickReplies, accentTheme, away, status, digestSchedule, navMenu, lang } = req.body || {};
+  const { name, role, avatar, currentPassword, newPassword, username, discordId, email, emailPrefs, pushPrefs, discord, phone, bio, location, discordPrefs, quickReplies, accentTheme, away, status, digestSchedule, navMenu, lang } = req.body || {};
   const u = req.user;
   if (typeof name === 'string' && name.trim()) u.name = name.trim();
   if (typeof role === 'string') u.role = role.trim();
@@ -3534,6 +3534,15 @@ app.put('/api/me', requireAuth, (req, res) => {
   if (phone !== undefined) {
     const raw = (phone === null ? '' : String(phone)).trim().slice(0, 30);
     u.phone = raw || null;
+  }
+  // Sobre e localização: da conta, aparecem no perfil em todas as organizações.
+  if (bio !== undefined) {
+    const raw = (bio === null ? '' : String(bio)).replace(/\r\n?/g, '\n').trim().slice(0, 400);
+    u.bio = raw || null;
+  }
+  if (location !== undefined) {
+    const raw = (location === null ? '' : String(location)).trim().slice(0, 60);
+    u.location = raw || null;
   }
   if (discordId !== undefined) {
     if (discordId === null || discordId === '') {
@@ -5873,6 +5882,67 @@ function visibleUsersFor(user) {
   return db.users.filter(u => ids.has(u.id));
 }
 app.get('/api/users', requireAuth, (req, res) => res.json(visibleUsersFor(req.user).map(u => publicUser(u))));
+
+/* Perfil de uma pessoa: produtividade aberta a todos da organização, mesmo de
+   demandas de equipes que quem olha não acessa. Só conta a organização ativa
+   (db.demands já vem filtrado pelo contexto); o perfil em si (nome, foto, sobre)
+   é da conta e vale igual em todas. Demanda que quem olha não acessa entra nos
+   números, mas sem nome nem link.
+   ?from&to (ISO): período. Volta as entregas (etapas que a pessoa passou sendo
+   a responsável), os apontamentos e as demandas por tipo; o dia de cada item
+   o cliente tira do `at`, no fuso de quem olha. */
+app.get('/api/users/:id/profile', requireAuth, (req, res) => {
+  const target = visibleUsersFor(req.user).find(u => u.id === req.params.id);
+  if (!target) return res.status(404).json({ error: 'Pessoa não encontrada nesta organização' });
+  const from = Date.parse(req.query.from) || 0;
+  const to = Date.parse(req.query.to) || Date.now();
+  if (to < from || to - from > 400 * 864e5) return res.status(400).json({ error: 'Período inválido' });
+  const inRange = iso => { const t = Date.parse(iso); return t >= from && t <= to; };
+  const viewerSees = d => canAccessWs(req.user, d.workspaceId) && (!req.user.isFreelancer || freelancerHasDemandAccess(req.user, d));
+  const deliveries = [], hours = [];
+  const typeByDemand = new Map(); // demandId → tipo, das demandas em que a pessoa entregou ou apontou
+  for (const d of db.demands) {
+    if (!notDeleted(d)) continue;
+    const flow = db.flows.find(f => f.id === d.flowId);
+    const type = (flow && String(flow.demandType || '').trim()) || '';
+    const seen = viewerSees(d);
+    const project = seen ? db.projects.find(p => p.id === d.projectId) : null;
+    const ref = seen ? { demandId: d.id, demandName: d.name, projectName: project ? project.name : '' } : { demandId: null, demandName: null, projectName: '' };
+    for (const mv of stageMovesOf(d)) {
+      if (mv.by !== target.id || !mv.at || !inRange(mv.at)) continue;
+      const st = stageByIdForDemand(flow, d, mv.fromId);
+      if (!st || st.done) continue;
+      const owner = mv.owner !== undefined ? mv.owner : stageResponsibleOf(d, flow, mv.fromId);
+      if (owner !== target.id) continue;
+      // Prazo da passagem: o do stageHistory dessa etapa que fechou mais perto.
+      const t = Date.parse(mv.at);
+      let due = null, best = Infinity;
+      for (const p of d.stageHistory || []) {
+        if (p.stageId !== st.id || !p.leftAt) continue;
+        const diff = Math.abs(Date.parse(p.leftAt) - t);
+        if (diff < best) { best = diff; due = p.dueDate || null; }
+      }
+      deliveries.push({ at: mv.at, stage: stageLabelIn(flow, d, st.id), due, ...ref });
+      typeByDemand.set(d.id, type);
+    }
+    for (const e of d.timeEntries || []) {
+      if (e.userId !== target.id) continue;
+      const at = e.start || e.createdAt;
+      if (!at || !inRange(at)) continue;
+      hours.push({ at, hours: Number(e.hours) || 0 });
+      typeByDemand.set(d.id, type);
+    }
+  }
+  const types = new Map();
+  for (const t of typeByDemand.values()) types.set(t, (types.get(t) || 0) + 1);
+  const m = tenancy.memberIn(target.id, req.org.id);
+  res.json({
+    memberSince: (m && m.createdAt) || target.createdAt || null,
+    deliveries,
+    hours,
+    types: [...types.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count)
+  });
+});
 
 app.post('/api/users', requireAuth, adminOnly, (req, res) => {
   const { username, password, name, role, position, isAdmin, isModerator, isFreelancer, workspaces, discordId, email } = req.body || {};

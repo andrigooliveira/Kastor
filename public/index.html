@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <!-- Idioma: roda antes de tudo (carrega o dicionário quando não é português). -->
-<script src="/js/i18n.js?v=20261026ag5"></script>
+<script src="/js/i18n.js?v=20261026pk1"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>reWork</title>
 <link rel="icon" type="image/png" href="/favicon.png">
@@ -768,6 +768,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       </button>
       <div class="user-menu-sep" role="separator"></div>
       <div class="user-menu-list">
+        <button type="button" class="user-menu-item" role="menuitem" onclick="closeUserMenu(); openMyProfile()"><i data-lucide="user"></i><span>Meu perfil</span></button>
         <button type="button" class="user-menu-item" role="menuitem" onclick="closeUserMenu(); goPage('profile')"><i data-lucide="settings"></i><span>Configurações</span></button>
         <button type="button" class="user-menu-item" role="menuitem" id="sb-news" onclick="closeUserMenu(); openSidebarNews()"><i data-lucide="sparkles"></i><span>Novidades</span><span class="sb-news-dot" id="sb-news-dot" hidden></span></button>
         <button type="button" class="user-menu-item freelancer-hide" role="menuitem" onclick="closeUserMenu(); goPage('help')"><i data-lucide="circle-help"></i><span>Documentação</span></button>
@@ -3212,6 +3213,147 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       </div>
     </div>
 
+    <!-- ── PERFIL DA PESSOA (/people/<usuario>) ──
+         Cartão de quem é a pessoa (dados da conta, iguais em toda organização)
+         + produtividade só da organização ativa, aberta a todos dela. No próprio
+         perfil, "Editar perfil" abre os campos da conta (eram a aba Conta das
+         Configurações). -->
+    <div class="page" id="page-person">
+      <div class="page-body">
+        <div class="person-wrap">
+          <section class="person-hero" id="person-hero"></section>
+
+          <section class="person-edit" id="person-edit" hidden>
+            <header class="person-edit-head">
+              <h2 class="profile-section-title">Editar perfil</h2>
+              <button type="button" class="btn btn-ghost btn-sm" onclick="togglePersonEdit(false)">Fechar</button>
+            </header>
+            <div class="profile-card-block">
+              <div class="profile-photo-row">
+                <div class="profile-photo-av">
+                  <span id="profile-avatar"></span>
+                  <input type="file" id="avatar-file" accept="image/*" hidden onchange="handleAvatarUpload(event)">
+                </div>
+                <div class="profile-photo-info">
+                  <div class="profile-row-title">Foto</div>
+                  <div class="profile-row-sub">Aparece nos comentários, nas demandas e no cartão de contato.</div>
+                  <div class="profile-photo-actions">
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('avatar-file').click()"><i data-lucide="upload" class="ic-sm"></i> Enviar foto</button>
+                    <button type="button" class="btn btn-ghost btn-sm" id="avatar-remove-btn" hidden onclick="removeAvatar()">Remover</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="profile-card-block" id="profile-account-form" oninput="profileAccountDirty()" onchange="profileAccountDirty()">
+              <div class="profile-block-title">Identificação</div>
+              <div class="form-grid">
+                <div class="form-group">
+                  <label class="form-label" for="profile-f-name">Nome de exibição</label>
+                  <input class="form-control" id="profile-f-name" autocomplete="name">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="profile-f-role">Área</label>
+                  <select class="form-control" id="profile-f-role"></select>
+                </div>
+                <div class="form-group full">
+                  <label class="form-label" for="profile-f-username">Nome de usuário</label>
+                  <input class="form-control" id="profile-f-username" autocomplete="username" spellcheck="false">
+                  <div class="profile-hint">Usado para entrar e para te mencionar (@usuario). Precisa ser único.</div>
+                </div>
+              </div>
+
+              <div class="profile-block-title profile-block-title--spaced">Contato</div>
+              <div class="form-grid">
+                <div class="form-group full">
+                  <div class="form-label">E-mail</div>
+                  <div class="profile-email" id="profile-email-box"></div>
+                  <div class="profile-hint">Serve para entrar, recuperar a senha e receber os avisos que você escolher em Notificações. Para trocar, pedimos a sua senha e confirmamos pelo próprio e-mail.</div>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="profile-f-phone">Telefone</label>
+                  <input class="form-control" id="profile-f-phone" type="tel" autocomplete="tel">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="profile-f-discord">Nome no Discord</label>
+                  <input class="form-control" id="profile-f-discord" spellcheck="false">
+                </div>
+              </div>
+              <div class="profile-hint">Telefone e nome no Discord aparecem no seu cartão de contato, quando alguém clica na sua foto.</div>
+
+              <div class="profile-block-title profile-block-title--spaced">Sobre</div>
+              <div class="form-grid">
+                <div class="form-group full">
+                  <label class="form-label" for="profile-f-bio">Sobre você</label>
+                  <textarea class="form-control" id="profile-f-bio" rows="3" maxlength="400" placeholder="O que você faz no time, no que é bom, como prefere receber pedidos…"></textarea>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="profile-f-location">Localização</label>
+                  <input class="form-control" id="profile-f-location" maxlength="60" placeholder="Ex.: São Paulo, SP">
+                </div>
+              </div>
+              <div class="profile-hint">Foto, nome, contato e o "Sobre" são da sua conta: aparecem iguais em todas as organizações em que você está. Área é desta organização.</div>
+
+              <div class="profile-block-actions">
+                <span class="profile-dirty-note" id="profile-account-dirty" hidden>Alterações não salvas</span>
+                <button class="btn btn-ghost" id="profile-account-cancel" hidden onclick="renderProfileAccount()">Descartar</button>
+                <button class="btn btn-confirm" id="profile-account-save" onclick="saveProfile()" disabled>Salvar</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- Mesmo desenho do Início: duas colunas sem cartão, separadas por
+               linha fina. Produtividade (com o período) à esquerda, Entregas à direita. -->
+          <div class="dash-split person-split" id="person-split">
+            <section class="dash-col dash-col--now" aria-labelledby="person-stats-title">
+              <header class="dash-col-head dash-col-head--tabs">
+                <h2 class="dash-col-heading" id="person-stats-title">Produtividade</h2>
+                <nav class="tabs dash-tabs" id="person-period-seg" role="tablist" aria-label="Período">
+                  <button type="button" class="tab" data-p="7d" onclick="setPersonPeriod('7d')">7 dias</button>
+                  <button type="button" class="tab is-active" data-p="30d" onclick="setPersonPeriod('30d')">30 dias</button>
+                  <button type="button" class="tab" data-p="90d" onclick="setPersonPeriod('90d')">90 dias</button>
+                  <button type="button" class="tab" data-p="12m" onclick="setPersonPeriod('12m')">12 meses</button>
+                  <button type="button" class="tab" data-p="custom" onclick="setPersonPeriod('custom')"><i data-lucide="calendar-range"></i>Período</button>
+                </nav>
+              </header>
+              <div class="dash-flow">
+                <div class="person-period-custom" id="person-period-custom" hidden>
+                  <input type="date" class="form-control" id="person-from" aria-label="De" onchange="loadPersonStats()">
+                  <span>até</span>
+                  <input type="date" class="form-control" id="person-to" aria-label="Até" onchange="loadPersonStats()">
+                </div>
+                <div class="person-kpis" id="person-kpis"></div>
+                <div class="dash-section">
+                  <div class="dash-section-head">
+                    <h3 class="dash-section-title">Apontamentos</h3>
+                    <span class="person-card-sub" id="person-hours-sub"></span>
+                  </div>
+                  <div id="person-hours-chart"></div>
+                </div>
+                <div class="dash-section">
+                  <div class="dash-section-head">
+                    <h3 class="dash-section-title">Tipos de demanda</h3>
+                    <span class="person-card-sub" id="person-types-sub"></span>
+                  </div>
+                  <div id="person-types"></div>
+                </div>
+              </div>
+            </section>
+
+            <section class="dash-col dash-col--next" aria-labelledby="person-deliv-title">
+              <header class="dash-col-head">
+                <h2 class="dash-col-heading" id="person-deliv-title">Entregas</h2>
+                <div class="person-card-sub" id="person-deliv-sub"></div>
+              </header>
+              <div class="dash-flow">
+                <div id="person-deliveries"></div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- ── PERFIL ──
          Nav lateral agrupada (Pessoal, Preferências, Conexões) + uma seção por vez.
          Dados de contato (e-mail inclusive) moram em Conta; Notificações só
@@ -3220,19 +3362,18 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
       <div class="page-body">
         <div class="profile-split">
           <nav class="profile-nav" role="tablist" aria-label="Configurações do perfil">
-            <div class="profile-nav-id">
+            <a class="profile-nav-id" id="profile-nav-id" href="#" onclick="event.preventDefault();openMyProfile(true)" title="Abrir meu perfil para editar foto, nome e contato">
               <span id="profile-nav-avatar"></span>
               <div class="profile-nav-id-text">
                 <div class="profile-nav-id-name" id="profile-name-display">-</div>
                 <div class="profile-nav-id-meta"><span id="profile-username-display">-</span></div>
+                <div class="profile-nav-id-link">Editar meu perfil <i data-lucide="arrow-right" class="ic-xs"></i></div>
               </div>
-            </div>
-            <div class="profile-nav-group">Pessoal</div>
-            <button class="profile-nav-item is-active" data-section="account" onclick="setProfileSection('account')"><i data-lucide="user" class="ic-sm"></i> Conta</button>
-            <button class="profile-nav-item" data-section="away" onclick="setProfileSection('away')"><i data-lucide="plane" class="ic-sm"></i> Ausência</button>
+            </a>
             <div class="profile-nav-group">Preferências</div>
-            <button class="profile-nav-item" data-section="notifications" onclick="setProfileSection('notifications')"><i data-lucide="bell" class="ic-sm"></i> Notificações</button>
+            <button class="profile-nav-item is-active" data-section="notifications" onclick="setProfileSection('notifications')"><i data-lucide="bell" class="ic-sm"></i> Notificações</button>
             <button class="profile-nav-item" data-section="appearance" onclick="setProfileSection('appearance')"><i data-lucide="palette" class="ic-sm"></i> Aparência</button>
+            <button class="profile-nav-item" data-section="away" onclick="setProfileSection('away')"><i data-lucide="plane" class="ic-sm"></i> Ausência</button>
             <div class="profile-nav-group">Conexões e acesso</div>
             <button class="profile-nav-item" data-section="integrations" onclick="setProfileSection('integrations')"><i data-lucide="plug" class="ic-sm"></i> Integrações</button>
             <button class="profile-nav-item" data-section="security" onclick="setProfileSection('security')"><i data-lucide="shield" class="ic-sm"></i> Segurança</button>
@@ -3241,74 +3382,6 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           </nav>
 
           <div class="profile-content">
-            <!-- ─── CONTA ─── -->
-            <section class="profile-section" data-section="account">
-              <header class="profile-section-head">
-                <h2 class="profile-section-title">Conta</h2>
-                <p class="profile-section-sub">Como você aparece para o time e como falam com você.</p>
-              </header>
-
-              <div class="profile-card-block">
-                <div class="profile-photo-row">
-                  <div class="profile-photo-av">
-                    <span id="profile-avatar"></span>
-                    <input type="file" id="avatar-file" accept="image/*" hidden onchange="handleAvatarUpload(event)">
-                  </div>
-                  <div class="profile-photo-info">
-                    <div class="profile-row-title">Foto</div>
-                    <div class="profile-row-sub">Aparece nos comentários, nas demandas e no cartão de contato.</div>
-                    <div class="profile-photo-actions">
-                      <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('avatar-file').click()"><i data-lucide="upload" class="ic-sm"></i> Enviar foto</button>
-                      <button type="button" class="btn btn-ghost btn-sm" id="avatar-remove-btn" hidden onclick="removeAvatar()">Remover</button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="profile-card-block" id="profile-account-form" oninput="profileAccountDirty()" onchange="profileAccountDirty()">
-                <div class="profile-block-title">Identificação</div>
-                <div class="form-grid">
-                  <div class="form-group">
-                    <label class="form-label" for="profile-f-name">Nome de exibição</label>
-                    <input class="form-control" id="profile-f-name" autocomplete="name">
-                  </div>
-                  <div class="form-group">
-                    <label class="form-label" for="profile-f-role">Área</label>
-                    <select class="form-control" id="profile-f-role"></select>
-                  </div>
-                  <div class="form-group full">
-                    <label class="form-label" for="profile-f-username">Nome de usuário</label>
-                    <input class="form-control" id="profile-f-username" autocomplete="username" spellcheck="false">
-                    <div class="profile-hint">Usado para entrar e para te mencionar (@usuario). Precisa ser único.</div>
-                  </div>
-                </div>
-
-                <div class="profile-block-title profile-block-title--spaced">Contato</div>
-                <div class="form-grid">
-                  <div class="form-group full">
-                    <div class="form-label">E-mail</div>
-                    <div class="profile-email" id="profile-email-box"></div>
-                    <div class="profile-hint">Serve para entrar, recuperar a senha e receber os avisos que você escolher em Notificações. Para trocar, pedimos a sua senha e confirmamos pelo próprio e-mail.</div>
-                  </div>
-                  <div class="form-group">
-                    <label class="form-label" for="profile-f-phone">Telefone</label>
-                    <input class="form-control" id="profile-f-phone" type="tel" autocomplete="tel">
-                  </div>
-                  <div class="form-group">
-                    <label class="form-label" for="profile-f-discord">Nome no Discord</label>
-                    <input class="form-control" id="profile-f-discord" spellcheck="false">
-                  </div>
-                </div>
-                <div class="profile-hint">Telefone e nome no Discord aparecem no seu cartão de contato, quando alguém clica na sua foto.</div>
-
-                <div class="profile-block-actions">
-                  <span class="profile-dirty-note" id="profile-account-dirty" hidden>Alterações não salvas</span>
-                  <button class="btn btn-ghost" id="profile-account-cancel" hidden onclick="renderProfile()">Descartar</button>
-                  <button class="btn btn-confirm" id="profile-account-save" onclick="saveProfile()" disabled>Salvar</button>
-                </div>
-              </div>
-            </section>
-
             <!-- ─── AUSÊNCIA ─── -->
             <section class="profile-section" data-section="away" hidden>
               <header class="profile-section-head">
@@ -5294,7 +5367,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20261026ag5" defer></script>
+<script src="/js/boot.js?v=20261026pk1" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

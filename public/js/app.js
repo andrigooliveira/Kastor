@@ -246,7 +246,8 @@ function pageUrlFor(page)  {
   if (page === 'dashboard') return '/home' + _optSuffix(() => _dashNextTab !== 'forecast' ? '/' + _dashNextTab : '');
   if (page === 'list') return '/demands' + _optSuffix(() => listView === 'kanban' ? (kanbanMode === 'stage' ? '/kanban/stages' : '/kanban') : listView === 'cal' ? '/calendar' : '');
   if (page === 'agenda') return '/agenda' + _optSuffix(() => agendaMode === 'team' ? '/team' : agendaView !== 'week' ? '/' + agendaView : agendaWeeks === 1 ? '/week' : '/two-weeks');
-  if (page === 'profile') return '/profile' + _optSuffix(() => _profileSection !== 'account' ? '/' + _profileSection : '');
+  if (page === 'profile') return '/profile' + _optSuffix(() => _profileSection !== 'notifications' ? '/' + _profileSection : '');
+  if (page === 'person') return '/people/' + _optSuffix(() => (userById(_personId) || me).username);
   if (page === 'integrations') return '/integrations' + _optSuffix(() => '/' + _integrationsTab);
   if (page === 'passwords') return '/passwords' + _optSuffix(() => pwState.selectedFolderId && pwState.selectedFolderId !== '__all__' ? '/folders/' + pwState.selectedFolderId : '');
   if (page === 'org') return '/organization' + _optSuffix(() => _orgTab && _orgTab !== 'overview' ? '/' + ORG_TAB_PATHS[_orgTab] : '');
@@ -295,10 +296,14 @@ function parseRoute(path) {
     if (p === '/agenda/month')            return { page: 'agenda', agendaMode: 'individual', agendaWeeks: 'month' };
     if (p === '/agenda/year')             return { page: 'agenda', agendaMode: 'individual', agendaWeeks: 'year' };
     if (p === '/agenda/team')             return { page: 'agenda', agendaMode: 'team' };
+    if ((mm = p.match(/^\/people\/([a-z0-9._-]+)$/))) return { page: 'person', username: mm[1] };
+    // A aba Conta virou o perfil da pessoa (links antigos abrem o próprio, editando).
+    if (p === '/profile/account') return { page: 'person', username: null, edit: true };
     if ((mm = p.match(/^\/profile\/([a-z-]+)$/)) && PROFILE_SECTIONS.includes(mm[1])) return { page: 'profile', section: mm[1] };
     if (p === '/profile') {
       const aba = new URLSearchParams(location.search).get('aba'); // formato antigo (?aba=)
-      return { page: 'profile', section: PROFILE_SECTIONS.includes(aba) ? aba : 'account' };
+      if (aba === 'account') return { page: 'person', username: null, edit: true };
+      return { page: 'profile', section: PROFILE_SECTIONS.includes(aba) ? aba : 'notifications' };
     }
     if ((mm = p.match(/^\/organization\/([a-z-]+)$/)) && ORG_TAB_BY_PATH[mm[1]]) return { page: 'org', orgTab: ORG_TAB_BY_PATH[mm[1]] };
     // Seções das configurações (links antigos /organization/plan etc.) abrem a aba Configurações.
@@ -503,6 +508,13 @@ function applyRoute() {
 /* Estado de aba/visão que o render da página lê — setado antes de desenhar. */
 function _applyRouteStateBeforeRender(r) {
   if (r.page === 'profile' && r.section) _profileSection = r.section;
+  if (r.page === 'person') {
+    const u = r.username ? (users || []).find(x => x.username === r.username) : null;
+    const id = u ? u.id : (r.username && r.username !== me?.username ? '?' + r.username : me?.id);
+    if (id !== _personId) { _personDelivOffset = 0; _personDelivByDay = null; }
+    _personId = id;
+    _personEdit = !!r.edit;
+  }
   if (r.page === 'org' && r.orgTab) _orgTab = r.orgTab;
   if (r.page === 'supportTicket' && r.ticket && _sup.ticketNumber !== r.ticket) { _sup.ticketNumber = r.ticket; _sup.ticket = null; }
   if (r.page === 'integrations' && r.tab) _integrationsTab = r.tab;
@@ -535,6 +547,7 @@ function _applyRouteOptions(r) {
 }
 function _canonicalizeUrlFromRoute(r) {
   if (r && r.legacy && r.page === 'org') { history.replaceState(null, '', orgUrl('/organization') + location.search + location.hash); return; }
+  if (r && r.page === 'person' && !r.username && !r.modalRoute) { history.replaceState(null, '', orgUrl(pageUrlFor('person'))); return; }
   if (!r || !r.id) return;
   let canonical = null;
   if (r.modal === 'detail' || (r.modal === 'demand' && r.op === 'edit')) {
@@ -778,9 +791,10 @@ const MODAL_ROUTES = {
   },
   /* Perfil */
   'email-link-modal': {
-    match: /^\/profile\/account\/email$/, page: 'profile',
+    match: /^\/profile\/account\/email$/, page: 'person',
     path: () => '/profile/account/email' + (_elmMode && _elmMode !== 'link' ? _routeQuery({ mode: _elmMode }) : ''),
-    open: () => { setProfileSection('account', { keepUrl: true }); openEmailLinkModal(_routeParam('mode') || undefined); }
+    parent: () => '/people/' + me.username,
+    open: () => { togglePersonEdit(true); openEmailLinkModal(_routeParam('mode') || undefined); }
   },
   'qr-scan-modal': {
     match: /^\/profile\/devices\/scan$/, page: 'profile',
@@ -3125,7 +3139,8 @@ function _cmdkActions() {
     { id: 'st-focus-day', icon: 'headphones', label: 'Status: Focado até o fim do dia', run: () => setMyStatus('focus', 'today') },
     { id: 'st-meeting', icon: 'video', label: 'Status: Em reunião por 1h', run: () => setMyStatus('meeting', 60) },
     ...(me && statusOf(me) ? [{ id: 'st-clear', icon: 'circle-x', label: 'Limpar meu status', run: () => setMyStatus(null) }] : []),
-    { id: 'profile', icon: 'user-cog', label: 'Configurações (meu perfil)', run: () => goPage('profile') },
+    { id: 'my-profile', icon: 'user', label: 'Meu perfil', run: () => openMyProfile() },
+    { id: 'profile', icon: 'user-cog', label: 'Configurações', run: () => goPage('profile') },
     { id: 'quick', icon: 'sliders-horizontal', label: 'Editar acesso rápido', staff: true, run: () => goPage('menu') },
     { id: 'theme', icon: 'sun-moon', label: 'Alternar tema claro/escuro', run: () => toggleTheme() },
     { id: 'sidebar', icon: 'panel-left', label: 'Recolher/expandir menu lateral', run: () => toggleSidebarCollapse() },
@@ -3135,7 +3150,7 @@ function _cmdkActions() {
 }
 function _cmdkPages() {
   const extra = [
-    { page: 'profile', label: 'Meu perfil', icon: 'user-cog' },
+    { page: 'profile', label: 'Configurações', icon: 'user-cog' },
     { page: 'help', label: 'Documentação', icon: 'circle-help', cls: 'freelancer-hide' },
     { page: 'analytics', tab: 'capacity', label: 'Análises · Capacidade', icon: 'gauge', cls: 'freelancer-hide' },
     { page: 'analytics', tab: 'rhythm', label: 'Análises · Ritmo', icon: 'activity', cls: 'freelancer-hide' },
@@ -3160,7 +3175,7 @@ function _cmdkBuildIndex() {
       sub: [clientById(p?.clientId)?.name, p?.name].filter(Boolean).join(' · '), run: () => showDetail(d.id) });
   });
   (users || []).filter(u => u.active !== false && !u.deletedAt).forEach(u => add({ key: 'u:' + u.id, kind: 'user', icon: 'user', label: u.name,
-    sub: u.role || (u.username ? '@' + u.username : ''), run: () => { if (me?.isAdmin) openUserModal(u.id); else goPage('users'); } }));
+    sub: u.role || (u.username ? '@' + u.username : ''), run: () => openPersonProfile(u.id) }));
   _cmdkPages().forEach(add);
   _cmdkActions().forEach(add);
   return out;
@@ -3738,8 +3753,9 @@ function openUserMiniCard(userId, anchorEl) {
     <div class="user-mini-card-head">
       ${bigAvatar}
       <div class="user-mini-card-heading">
-        <div class="user-mini-card-name">${esc(u.name || '—')}</div>
+        <a class="user-mini-card-name" href="${esc(orgUrl('/people/' + u.username))}" onclick="event.preventDefault();openPersonProfile('${esc(u.id)}')">${esc(u.name || '—')}</a>
         <div class="user-mini-card-role">${metaLine}</div>
+        <a class="user-mini-card-link" href="${esc(orgUrl('/people/' + u.username))}" onclick="event.preventDefault();openPersonProfile('${esc(u.id)}')">${u.id === me.id ? 'Ver meu perfil' : 'Ver perfil'}</a>
         ${statusOf(u) ? `<div class="user-mini-card-status status-${statusOf(u).kind}"><i data-lucide="${STATUS_META[statusOf(u).kind].icon}" class="ic-xs"></i> ${esc(statusLabel(statusOf(u)))}</div>` : ''}
         ${awayState(u) ? `<div class="user-mini-card-away"><i data-lucide="plane" class="ic-xs"></i> ${esc(awayLabel(u))}${awayState(u).sub ? ` · quem cobre: ${esc(awayState(u).sub.name.split(' ')[0])}` : ''}</div>` : ''}
       </div>
@@ -5710,7 +5726,7 @@ const TOUR_STEPS = [
   },
   // 17. Perfil - navegação (abas)
   {
-    action: () => { goPage('profile'); setTimeout(() => setProfileSection('account'), 100); },
+    action: () => { goPage('profile'); setTimeout(() => setProfileSection('notifications'), 100); },
     waitMs: 700,
     target: '.profile-nav',
     position: 'bottom',
@@ -10836,7 +10852,7 @@ function applySidebarCollapseInit() {
 const PAGE_TITLES = {
   dashboard: 'Início', list: 'Demandas', mine: 'Minhas Demandas',
   clients: 'Clientes', projects: 'Projetos', flows: 'Fluxos de Demanda',
-  workspaces: 'Equipes', users: 'Usuários', profile: 'Meu Perfil', org: 'Organização',
+  workspaces: 'Equipes', users: 'Usuários', profile: 'Configurações', person: 'Perfil', org: 'Organização',
   analytics: 'Análises', templates: 'Templates', integrations: 'Integrações', agenda: 'Agenda',
   recurring: 'Listas de tarefas', gallery: 'Galeria', help: 'Documentação', clientsModels: 'Modelos de Cliente',
   trash: 'Lixeira', notifications: 'Notificações', recurringDemands: 'Demandas Recorrentes',
@@ -10943,7 +10959,7 @@ function goPage(page) {
   // de uma demanda. Qualquer outra URL cai em 'mine' — evita telas quebradas
   // por dados filtrados (clientes/projetos/fluxos vêm reduzidos do backend).
   if (me?.isFreelancer) {
-    const FREE_ALLOWED = new Set(['mine', 'profile', 'notifications', 'demand-detail', 'support', 'supportNew', 'supportTicket']);
+    const FREE_ALLOWED = new Set(['mine', 'profile', 'person', 'notifications', 'demand-detail', 'support', 'supportNew', 'supportTicket']);
     if (!FREE_ALLOWED.has(page)) page = 'mine';
   }
   // Sair da página de Fluxos zera a subview de cliente. Ficar nela (ou entrar
@@ -11527,6 +11543,7 @@ function renderCurrent() {
     case 'notifications': renderNotificationsPage(); break;
     case 'recurringDemands': renderRecurringDemands(); break;
     case 'profile':    renderProfile(); break;
+    case 'person':     renderPerson(); break;
   }
   renderNavCounts();
   // Escopa a pintura de ícones na página ativa em vez do documento inteiro.
@@ -11545,7 +11562,9 @@ function fillRoleSelect(selId, currentValue) {
   const sel = $(selId);
   const sorted = roles.slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
   sel.innerHTML = '<option value="">— Sem área —</option>' +
-    sorted.map(r => `<option value="${esc(r.name)}" ${r.name === currentValue ? 'selected' : ''}>${esc(r.name)}</option>`).join('');
+    sorted.map(r => `<option value="${esc(r.name)}" ${r.name === currentValue ? 'selected' : ''}>${esc(r.name)}</option>`).join('') +
+    // Área que saiu da lista (renomeada/excluída) continua aparecendo, senão salvar apagaria.
+    (currentValue && !sorted.some(r => r.name === currentValue) ? `<option value="${esc(currentValue)}" selected>${esc(currentValue)}</option>` : '');
 }
 function fillPositionSelect(selId, currentValue) {
   const sel = $(selId);
@@ -12370,48 +12389,55 @@ function _stageMovesOf(d) {
   return out;
 }
 const _dashDelivLevel = n => n <= 0 ? 0 : n === 1 ? 1 : n <= 3 ? 2 : n <= 6 ? 3 : 4;
+/* Calendário do mês de Entregas (Início e perfil da pessoa). map: ymd → itens;
+   offset: meses a partir do atual (≤ 0); navFn/openFn: nomes das funções
+   globais que andam de mês e abrem o dia. Volta o HTML e o resumo do mês. */
+function deliveriesCalendarHTML(map, offset, navFn, openFn) {
+  const today = todayStr();
+  const now = new Date();
+  const m = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+  const pad = n => String(n).padStart(2, '0');
+  // Iniciais dos dias a partir de um domingo qualquer (04/01/2026), no idioma da tela.
+  const wd = [...Array(7)].map((_, i) => new Date(2026, 0, 4 + i).toLocaleDateString(LOCALE, { weekday: 'short' }).replace('.', ''));
+  const y = m.getFullYear(), mo = m.getMonth();
+  const nDays = new Date(y, mo + 1, 0).getDate();
+  const lead = m.getDay(); // domingo = 0
+  let cells = '<span class="dlv-c is-blank"></span>'.repeat(lead);
+  let mTotal = 0;
+  for (let day = 1; day <= nDays; day++) {
+    const k = `${y}-${pad(mo + 1)}-${pad(day)}`;
+    const n = (map.get(k) || []).length;
+    mTotal += n;
+    const dow = new Date(y, mo, day).getDay();
+    const cls = ['dlv-c', `l${_dashDelivLevel(n)}`, dow === 0 || dow === 6 ? 'is-wk' : '', k === today ? 'is-today' : '', k > today ? 'is-fut' : ''].filter(Boolean).join(' ');
+    const tip = `${fmtDM(day, mo + 1)} · ${n} ${n === 1 ? 'etapa entregue' : 'etapas entregues'}`;
+    cells += `<span class="${cls}" title="${tip}"${n ? ` onclick="${openFn}('${k}')"` : ''}>${day}</span>`;
+  }
+  const name = m.toLocaleDateString(LOCALE, { month: 'long', year: 'numeric' });
+  const html = `<div class="dlv-m">
+    <div class="dlv-mh">
+      <button type="button" class="dlv-btn" onclick="${navFn}(-1)" title="Mês anterior"><i data-lucide="chevron-left" class="ic-xs"></i></button>
+      <span class="dlv-name">${esc(name.charAt(0).toUpperCase() + name.slice(1))}</span>
+      <button type="button" class="dlv-btn" onclick="${navFn}(1)" title="Próximo mês"${offset === 0 ? ' disabled' : ''}><i data-lucide="chevron-right" class="ic-xs"></i></button>
+      ${offset ? `<button type="button" class="dlv-now" onclick="${navFn}(${-offset})">Mês atual</button>` : ''}
+      <span class="dlv-sp"></span>
+      <div class="dlv-legend">Menos ${[0, 1, 2, 3, 4].map(l => `<span class="dlv-c l${l}"></span>`).join('')} Mais</div>
+    </div>
+    <div class="dlv-g dlv-wd">${wd.map(w => `<span>${esc(w)}</span>`).join('')}</div>
+    <div class="dlv-g">${cells}</div>
+  </div>`;
+  const sub = mTotal ? `${mTotal} ${mTotal === 1 ? 'etapa entregue' : 'etapas entregues'} no mês` : 'nenhuma etapa entregue no mês';
+  return { html, sub, total: mTotal };
+}
 function renderDashDeliveries() {
   const el = $('dash-deliveries');
   if (!el || !me?.id) return;
   const map = _dashDeliveriesMap();
   _dashDelivByDay = map;
-  const today = todayStr();
-  const now = new Date();
-  const m = new Date(now.getFullYear(), now.getMonth() + _dashDelivOffset, 1);
-  const pad = n => String(n).padStart(2, '0');
-  // Iniciais dos dias a partir de um domingo qualquer (04/01/2026), no idioma da tela.
-  const wd = [...Array(7)].map((_, i) => new Date(2026, 0, 4 + i).toLocaleDateString(LOCALE, { weekday: 'short' }).replace('.', ''));
-  {
-    const y = m.getFullYear(), mo = m.getMonth();
-    const nDays = new Date(y, mo + 1, 0).getDate();
-    const lead = m.getDay(); // domingo = 0
-    let cells = '<span class="dlv-c is-blank"></span>'.repeat(lead);
-    let mTotal = 0;
-    for (let day = 1; day <= nDays; day++) {
-      const k = `${y}-${pad(mo + 1)}-${pad(day)}`;
-      const n = (map.get(k) || []).length;
-      mTotal += n;
-      const dow = new Date(y, mo, day).getDay();
-      const cls = ['dlv-c', `l${_dashDelivLevel(n)}`, dow === 0 || dow === 6 ? 'is-wk' : '', k === today ? 'is-today' : '', k > today ? 'is-fut' : ''].filter(Boolean).join(' ');
-      const tip = `${fmtDM(day, mo + 1)} · ${n} ${n === 1 ? 'etapa entregue' : 'etapas entregues'}`;
-      cells += `<span class="${cls}" title="${tip}"${n ? ` onclick="openDashDeliveries('${k}')"` : ''}>${day}</span>`;
-    }
-    const name = m.toLocaleDateString(LOCALE, { month: 'long', year: 'numeric' });
-    const sub = $('dash-deliv-sub');
-    if (sub) sub.textContent = mTotal ? `${mTotal} ${mTotal === 1 ? 'etapa entregue' : 'etapas entregues'} no mês` : 'nenhuma etapa entregue no mês';
-    el.innerHTML = `<div class="dlv-m">
-      <div class="dlv-mh">
-        <button type="button" class="dlv-btn" onclick="dashDelivNav(-1)" title="Mês anterior"><i data-lucide="chevron-left" class="ic-xs"></i></button>
-        <span class="dlv-name">${esc(name.charAt(0).toUpperCase() + name.slice(1))}</span>
-        <button type="button" class="dlv-btn" onclick="dashDelivNav(1)" title="Próximo mês"${_dashDelivOffset === 0 ? ' disabled' : ''}><i data-lucide="chevron-right" class="ic-xs"></i></button>
-        ${_dashDelivOffset ? `<button type="button" class="dlv-now" onclick="dashDelivNav(${-_dashDelivOffset})">Mês atual</button>` : ''}
-        <span class="dlv-sp"></span>
-        <div class="dlv-legend">Menos ${[0, 1, 2, 3, 4].map(l => `<span class="dlv-c l${l}"></span>`).join('')} Mais</div>
-      </div>
-      <div class="dlv-g dlv-wd">${wd.map(w => `<span>${esc(w)}</span>`).join('')}</div>
-      <div class="dlv-g">${cells}</div>
-    </div>`;
-  }
+  const cal = deliveriesCalendarHTML(map, _dashDelivOffset, 'dashDelivNav', 'openDashDeliveries');
+  const sub = $('dash-deliv-sub');
+  if (sub) sub.textContent = cal.sub;
+  el.innerHTML = cal.html;
   paintIcons(el);
 }
 function openDashDeliveries(ymd) {
@@ -33396,6 +33422,380 @@ async function confirmDeleteAccount() {
   }
 }
 
+/* ─── PERFIL DA PESSOA (/people/<usuario>) ───
+   Quem é a pessoa (dados da conta: iguais em todas as organizações) e a
+   produtividade dela só na organização ativa, aberta a todos da organização
+   (GET /api/users/:id/profile). No próprio perfil, "Editar perfil" mostra os
+   campos da conta, que eram a aba Conta das Configurações. */
+let _personId = null;     // pessoa aberta; '?usuario' quando o link não achou ninguém
+let _personEdit = false;  // abre já editando (links antigos da aba Conta)
+let _personPeriod = '30d';
+let _personDelivOffset = 0;
+let _personDelivByDay = null;
+let _personSeq = 0;       // descarta respostas de um pedido anterior (troca rápida de período/pessoa)
+let _personDelivSeq = 0;
+// Fatias da rosca de tipos: cores da paleta do app (azul, verde, âmbar, rosa, teal, lilás, vermelho).
+const PERSON_TYPE_COLORS = [13, 10, 6, 3, 11, 2, 5].map(i => COLOR_PALETTE[i]);
+
+function openPersonProfile(userId) {
+  if (typeof closeUserMiniCard === 'function') closeUserMiniCard();
+  if (_personId !== userId) { _personDelivOffset = 0; _personDelivByDay = null; }
+  _personId = userId;
+  _personEdit = false;
+  goPage('person');
+}
+function openMyProfile(edit) {
+  if (_personId !== me.id) { _personDelivOffset = 0; _personDelivByDay = null; }
+  _personId = me.id;
+  _personEdit = !!edit;
+  goPage('person');
+}
+function _personUser() {
+  if (!_personId || _personId === me?.id) return me;
+  return userById(_personId);
+}
+function togglePersonEdit(on) {
+  if (_personId !== me.id) { openMyProfile(on); return; }
+  _personEdit = on;
+  const box = $('person-edit');
+  if (!box) return;
+  box.hidden = !on;
+  if (on) {
+    renderProfileAccount();
+    paintIcons(box);
+    box.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }
+  const btn = $('person-edit-btn');
+  if (btn) btn.hidden = on;
+}
+
+function renderPerson() {
+  const u = _personUser();
+  const hero = $('person-hero');
+  const split = $('person-split');
+  if (!u) {
+    hero.innerHTML = emptyState('Pessoa não encontrada', 'Ela não faz parte desta organização ou o link está errado.', 'default', { label: 'Ver meu perfil', onclick: 'openMyProfile()', variant: 'ghost' });
+    split.hidden = true;
+    $('page-person').style.removeProperty('--cover');
+    $('person-edit').hidden = true;
+    paintIcons(hero);
+    return;
+  }
+  const self = u.id === me.id;
+  split.hidden = false;
+  $('topbar-title').textContent = self ? 'Meu perfil' : 'Perfil';
+  setDocTitle(u.name || 'Perfil');
+
+  const position = (u.position || '').trim();
+  const area = (u.role || '').trim();
+  const meta = [position, area].filter(Boolean).map(esc).join(' <span class="person-sep">·</span> ');
+  const st = statusOf(u), away = awayState(u);
+  const contact = [
+    u.email ? { icon: 'mail', text: u.email, href: 'mailto:' + u.email } : null,
+    u.phone ? { icon: 'phone', text: u.phone, href: 'tel:' + u.phone.replace(/[^\d+]/g, '') } : null,
+    u.discord ? { icon: 'message-circle', text: u.discord } : null,
+    u.location ? { icon: 'map-pin', text: u.location } : null,
+  ].filter(Boolean).map(c => c.href
+    ? `<a class="person-chip" href="${esc(c.href)}"><i data-lucide="${c.icon}" class="ic-xs"></i>${esc(c.text)}</a>`
+    : `<span class="person-chip"><i data-lucide="${c.icon}" class="ic-xs"></i>${esc(c.text)}</span>`).join('');
+  // Capa e foto na cor do tema que a PESSOA escolheu (Aparência), não no de quem olha.
+  const theme = ACCENT_THEMES.find(t => t.id === (u.accentTheme || '')) || ACCENT_THEMES[0];
+  $('page-person').style.setProperty('--cover', theme.swatch);
+  hero.innerHTML = `
+    <div class="person-cover">
+      ${self ? `<button type="button" class="person-cover-btn" id="person-edit-btn" onclick="togglePersonEdit(true)"${_personEdit ? ' hidden' : ''}><i data-lucide="pencil" class="ic-sm"></i> Editar perfil</button>` : ''}
+    </div>
+    <div class="person-head">
+      <div class="person-av">${avatarHTML(u, 'avatar').replace(/data-user-id="[^"]+"/, '')}</div>
+      <div class="person-id">
+        <h1 class="person-name">${esc(u.name || '—')}</h1>
+        <div class="person-meta">${u.username ? '@' + esc(u.username) : ''}${meta ? ' <span class="person-sep">·</span> ' + meta : ''}<span class="person-since" id="person-since"></span></div>
+      </div>
+    </div>
+    <div class="person-about">
+      ${st || away ? `<div class="person-states">
+        ${st ? `<span class="user-mini-card-status status-${st.kind}"><i data-lucide="${STATUS_META[st.kind].icon}" class="ic-xs"></i> ${esc(statusLabel(st))}</span>` : ''}
+        ${away ? `<span class="user-mini-card-away"><i data-lucide="plane" class="ic-xs"></i> ${esc(awayLabel(u))}${away.sub ? ` · quem cobre: ${esc(away.sub.name.split(' ')[0])}` : ''}</span>` : ''}
+      </div>` : ''}
+      ${u.bio ? `<p class="person-bio">${esc(u.bio)}</p>`
+        : self ? `<p class="person-bio is-empty">Conte para o time o que você faz e como prefere receber pedidos. <a href="#" onclick="event.preventDefault();goProfileField('profile-f-bio')">Escrever</a></p>` : ''}
+      ${contact ? `<div class="person-chips">${contact}</div>` : ''}
+    </div>`;
+  paintIcons(hero);
+
+  $('person-edit').hidden = !(self && _personEdit);
+  if (self && _personEdit) { renderProfileAccount(); paintIcons($('person-edit')); }
+
+  _syncPersonPeriodUI();
+  loadPersonStats();
+  loadPersonDeliveries();
+}
+
+/* Período: 7/30/90 dias, 12 meses ou datas escolhidas. Volta o intervalo
+   (início do primeiro dia → agora/fim do último) e o tamanho de cada barra. */
+function setPersonPeriod(p) {
+  _personPeriod = p;
+  if (p === 'custom' && !$('person-from').value) {
+    const r = _personRange('30d');
+    $('person-from').value = _ymdLocal(r.from);
+    $('person-to').value = todayStr();
+  }
+  _syncPersonPeriodUI();
+  loadPersonStats();
+}
+function _syncPersonPeriodUI() {
+  document.querySelectorAll('#person-period-seg .tab').forEach(b => { const on = b.dataset.p === _personPeriod; b.classList.toggle('is-active', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
+  $('person-period-custom').hidden = _personPeriod !== 'custom';
+}
+function _personRange(p) {
+  const now = new Date();
+  const day0 = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+  const back = (n) => { const x = day0(now); x.setDate(x.getDate() - n); return x; };
+  if (p === '7d') return { from: back(6), to: now, unit: 'day' };
+  if (p === '30d') return { from: back(29), to: now, unit: 'day' };
+  if (p === '90d') return { from: back(89), to: now, unit: 'week' };
+  if (p === '12m') return { from: new Date(now.getFullYear(), now.getMonth() - 11, 1), to: now, unit: 'month' };
+  // Personalizado: até 366 dias; datas trocadas se invertem.
+  let a = $('person-from').value, b = $('person-to').value || todayStr();
+  if (!a) return _personRange('30d');
+  if (a > b) [a, b] = [b, a];
+  const from = new Date(a + 'T00:00:00'), to = new Date(b + 'T23:59:59.999');
+  const days = Math.round((to - from) / 864e5);
+  if (days > 366) from.setTime(to.getTime() - 366 * 864e5);
+  return { from, to, unit: days <= 45 ? 'day' : days <= 190 ? 'week' : 'month' };
+}
+
+async function loadPersonStats() {
+  const u = _personUser();
+  if (!u) return;
+  const seq = ++_personSeq;
+  const range = _personRange(_personPeriod);
+  ['person-kpis', 'person-hours-chart', 'person-types'].forEach(id => { $(id).classList.add('is-loading'); });
+  let data;
+  try {
+    data = await api(`/users/${u.id}/profile?from=${encodeURIComponent(range.from.toISOString())}&to=${encodeURIComponent(range.to.toISOString())}`);
+  } catch (e) {
+    if (seq !== _personSeq) return;
+    $('person-hours-chart').innerHTML = emptyMini(e.message || 'Não foi possível carregar.');
+    ['person-kpis', 'person-hours-chart', 'person-types'].forEach(id => $(id).classList.remove('is-loading'));
+    return;
+  }
+  if (seq !== _personSeq || currentPage !== 'person') return;
+  ['person-kpis', 'person-hours-chart', 'person-types'].forEach(id => $(id).classList.remove('is-loading'));
+  const since = $('person-since');
+  if (since && data.memberSince) {
+    const d = new Date(data.memberSince);
+    since.textContent = `na organização desde ${d.toLocaleDateString(LOCALE, { month: 'long', year: 'numeric' })}`;
+  }
+  _renderPersonKpis(data);
+  _renderPersonHours(data.hours, range);
+  _renderPersonTypes(data.types);
+}
+
+function _renderPersonKpis(data) {
+  const hours = data.hours.reduce((s, h) => s + h.hours, 0);
+  const dl = data.deliveries;
+  const withDue = dl.filter(x => x.due);
+  const onTime = withDue.filter(x => _ymdLocal(new Date(x.at)) <= x.due).length;
+  const demandsN = data.types.reduce((s, t) => s + t.count, 0);
+  const pct = withDue.length ? Math.round(onTime / withDue.length * 100) : null;
+  const stat = (value, label, sub, tone) => `<div class="pk${tone ? ' pk--' + tone : ''}">
+    <div class="pk-value">${esc(String(value))}</div>
+    <div class="pk-label">${esc(label)}</div>
+    ${sub ? `<div class="pk-sub">${esc(sub)}</div>` : ''}
+  </div>`;
+  $('person-kpis').innerHTML =
+    stat(fmtHours(hours), 'horas apontadas') +
+    stat(dl.length, dl.length === 1 ? 'etapa entregue' : 'etapas entregues') +
+    stat(pct === null ? '—' : pct + '%', 'no prazo', withDue.length ? `${onTime} de ${withDue.length} com prazo` : 'nenhuma com prazo', pct === null ? '' : pct >= 80 ? 'ok' : pct < 60 ? 'warn' : '') +
+    stat(demandsN, demandsN === 1 ? 'demanda' : 'demandas', 'em que entregou ou apontou');
+  animateCounters($('person-kpis'));
+}
+
+/* Apontamentos: linha do tempo por dia, semana (começa no domingo, como a
+   Agenda) ou mês. A linha e a área esticam com a largura (SVG sem proporção
+   fixa, traço sem distorcer); eixos, pontos e o tooltip são HTML por cima,
+   posicionados em %. */
+function _renderPersonHours(entries, range) {
+  const el = $('person-hours-chart');
+  const pad = n => String(n).padStart(2, '0');
+  const keyOf = (d) => {
+    if (range.unit === 'month') return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+    if (range.unit === 'week') { const x = new Date(d); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - x.getDay()); return _ymdLocal(x); }
+    return _ymdLocal(d);
+  };
+  const buckets = [];
+  const cur = new Date(range.from); cur.setHours(0, 0, 0, 0);
+  if (range.unit === 'week') cur.setDate(cur.getDate() - cur.getDay());
+  if (range.unit === 'month') cur.setDate(1);
+  while (cur <= range.to) {
+    buckets.push({ key: keyOf(cur), date: new Date(cur), hours: 0 });
+    if (range.unit === 'day') cur.setDate(cur.getDate() + 1);
+    else if (range.unit === 'week') cur.setDate(cur.getDate() + 7);
+    else cur.setMonth(cur.getMonth() + 1);
+  }
+  const byKey = new Map(buckets.map(b => [b.key, b]));
+  let total = 0;
+  entries.forEach(e => {
+    const b = byKey.get(keyOf(new Date(e.at)));
+    if (b) { b.hours += e.hours; total += e.hours; }
+  });
+  const unitTxt = { day: 'por dia', week: 'por semana', month: 'por mês' }[range.unit];
+  $('person-hours-sub').textContent = `${fmtHours(total)} ${unitTxt === 'por dia' ? 'no período' : 'no período, ' + unitTxt}`;
+  if (!total) { el.innerHTML = emptyMini('Nenhum apontamento no período.'); return; }
+  const max = Math.max(...buckets.map(b => b.hours));
+  const step = max <= 4 ? 1 : max <= 8 ? 2 : max <= 20 ? 5 : max <= 40 ? 10 : max <= 100 ? 25 : Math.ceil(max / 4 / 50) * 50;
+  const top = Math.ceil(max / step) * step;
+  const grid = [];
+  for (let v = 0; v <= top; v += step) grid.push(v);
+  const label = (b) => range.unit === 'month'
+    ? b.date.toLocaleDateString(LOCALE, { month: 'short' }).replace('.', '')
+    : fmtDM(b.date.getDate(), b.date.getMonth() + 1);
+  const tip = (b) => {
+    const when = range.unit === 'month' ? b.date.toLocaleDateString(LOCALE, { month: 'long', year: 'numeric' })
+      : range.unit === 'week' ? 'Semana de ' + fmtDM(b.date.getDate(), b.date.getMonth() + 1)
+      : b.date.toLocaleDateString(LOCALE, { weekday: 'short', day: '2-digit', month: '2-digit' });
+    return `${when} · ${fmtHours(b.hours)}`;
+  };
+  const n = buckets.length;
+  const every = Math.max(1, Math.ceil(n / 8));
+  const xPct = i => n === 1 ? 50 : i / (n - 1) * 100;
+  const yPct = v => 100 - v / top * 100;
+  // SVG em 0..1000 × 0..100: a linha passa por todos os buckets, inclusive os zerados.
+  const pts = buckets.map((bk, i) => [xPct(i) * 10, yPct(bk.hours)]);
+  const line = 'M ' + pts.map(p => p[0].toFixed(1) + ' ' + p[1].toFixed(2)).join(' L ');
+  const area = line + ` L ${pts[n - 1][0].toFixed(1)} 100 L ${pts[0][0].toFixed(1)} 100 Z`;
+  const dots = buckets.map((bk, i) => bk.hours
+    ? `<span class="pl-dot" style="left:${xPct(i)}%;top:${yPct(bk.hours)}%"></span>` : '').join('');
+  const xs = buckets.map((bk, i) => i % every === 0
+    ? `<span class="pl-x" style="left:${xPct(i)}%">${esc(label(bk))}</span>` : '').join('');
+  el.innerHTML = `<div class="pc-chart pl-chart">
+    <div class="pc-y">${grid.slice().reverse().map(v => `<span>${v}h</span>`).join('')}</div>
+    <div class="pc-plot">
+      <div class="pc-grid">${grid.map(() => '<span></span>').join('')}</div>
+      <div class="pl-area">
+        <svg viewBox="0 0 1000 100" preserveAspectRatio="none" aria-hidden="true">
+          <defs><linearGradient id="pl-fill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" style="stop-color:var(--cover-hi);stop-opacity:.34"/>
+            <stop offset="1" style="stop-color:var(--cover-hi);stop-opacity:0"/>
+          </linearGradient></defs>
+          <path d="${area}" fill="url(#pl-fill)"/>
+          <path d="${line}" class="pl-line" fill="none" vector-effect="non-scaling-stroke"/>
+        </svg>
+        ${dots}
+        <span class="pl-guide" hidden></span>
+        <span class="pl-dot pl-dot--hover" hidden></span>
+        <div class="chart-tooltip pl-tip"></div>
+      </div>
+      <div class="pl-xs">${xs}</div>
+    </div>
+  </div>`;
+  // Hover: o bucket mais perto do mouse ganha guia, ponto e tooltip.
+  const plot = el.querySelector('.pl-area');
+  const guide = plot.querySelector('.pl-guide'), hot = plot.querySelector('.pl-dot--hover'), tipEl = plot.querySelector('.pl-tip');
+  plot.addEventListener('mousemove', ev => {
+    const r = plot.getBoundingClientRect();
+    const i = Math.max(0, Math.min(n - 1, Math.round((ev.clientX - r.left) / r.width * (n - 1))));
+    const bk = buckets[i];
+    guide.hidden = hot.hidden = false;
+    guide.style.left = hot.style.left = xPct(i) + '%';
+    hot.style.top = yPct(bk.hours) + '%';
+    tipEl.innerHTML = `<div class="chart-tip-head">${esc(tip(bk).split(' · ')[0])}</div><b>${esc(fmtHours(bk.hours))}</b> apontadas`;
+    tipEl.style.opacity = '1';
+    const left = xPct(i) / 100 * r.width;
+    tipEl.style.left = Math.min(Math.max(0, left - tipEl.offsetWidth / 2), r.width - tipEl.offsetWidth) + 'px';
+    tipEl.style.top = Math.max(0, yPct(bk.hours) / 100 * r.height - tipEl.offsetHeight - 12) + 'px';
+  });
+  plot.addEventListener('mouseleave', () => { guide.hidden = hot.hidden = true; tipEl.style.opacity = '0'; });
+}
+
+/* Tipos de demanda (rosca): demandas em que a pessoa entregou ou apontou no
+   período, pelo tipo do fluxo. Até 7 fatias; o resto vira "Outros". */
+function _renderPersonTypes(types) {
+  const el = $('person-types');
+  const total = types.reduce((s, t) => s + t.count, 0);
+  $('person-types-sub').textContent = total ? `${total} ${total === 1 ? 'demanda' : 'demandas'}` : '';
+  if (!total) { el.innerHTML = emptyMini('Nenhuma demanda no período.'); return; }
+  const named = types.map(t => ({ label: t.name || 'Sem tipo', value: t.count }));
+  let segs = named.slice(0, PERSON_TYPE_COLORS.length);
+  const rest = named.slice(PERSON_TYPE_COLORS.length).reduce((s, t) => s + t.value, 0);
+  segs = segs.map((s, i) => ({ ...s, color: PERSON_TYPE_COLORS[i] }));
+  if (rest) segs.push({ label: 'Outros', value: rest, color: COLOR_PALETTE[0] });
+  const legend = segs.map(s => {
+    const pct = Math.round(s.value / total * 100);
+    return `<li class="pt-item" data-tooltip="${esc(s.label)} · ${s.value} · ${pct}%">
+      <span class="prio-bar-dot" style="background:${s.color}"></span>
+      <span class="pt-label">${esc(s.label)}</span>
+      <span class="pt-value">${s.value}</span>
+      <span class="pt-pct">${pct}%</span>
+    </li>`;
+  }).join('');
+  el.innerHTML = `<div class="pt-wrap">
+    ${donutSVG(segs, { size: 148, thickness: 22, centerValue: total, centerSub: total === 1 ? 'demanda' : 'demandas' })}
+    <ul class="pt-legend">${legend}</ul>
+  </div>`;
+}
+
+/* Entregas: o mesmo calendário do Início, com as entregas da pessoa no mês. */
+function personDelivNav(step) {
+  _personDelivOffset = Math.min(0, _personDelivOffset + step);
+  loadPersonDeliveries();
+}
+async function loadPersonDeliveries() {
+  const u = _personUser();
+  const el = $('person-deliveries');
+  if (!u || !el) return;
+  const seq = ++_personDelivSeq;
+  const now = new Date();
+  const from = new Date(now.getFullYear(), now.getMonth() + _personDelivOffset, 1);
+  const to = new Date(now.getFullYear(), now.getMonth() + _personDelivOffset + 1, 0, 23, 59, 59, 999);
+  // Mostra o mês vazio na hora (setas respondem) e preenche quando chegar.
+  if (!_personDelivByDay) el.innerHTML = deliveriesCalendarHTML(new Map(), _personDelivOffset, 'personDelivNav', 'openPersonDeliveries').html;
+  el.classList.add('is-loading');
+  let data;
+  try { data = await api(`/users/${u.id}/profile?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`); }
+  catch (e) { if (seq === _personDelivSeq) { el.classList.remove('is-loading'); toast(e.message, 'error'); } return; }
+  if (seq !== _personDelivSeq) return;
+  const map = new Map();
+  data.deliveries.forEach(x => {
+    const k = _ymdLocal(new Date(x.at));
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(x);
+  });
+  _personDelivByDay = map;
+  const cal = deliveriesCalendarHTML(map, _personDelivOffset, 'personDelivNav', 'openPersonDeliveries');
+  $('person-deliv-sub').textContent = cal.sub;
+  el.innerHTML = cal.html;
+  el.classList.remove('is-loading');
+  paintIcons(el);
+}
+function openPersonDeliveries(ymd) {
+  const items = (_personDelivByDay && _personDelivByDay.get(ymd)) || [];
+  if (!items.length) return;
+  const u = _personUser();
+  const label = new Date(ymd + 'T12:00:00').toLocaleDateString(LOCALE, { weekday: 'long', day: '2-digit', month: '2-digit' }).replace('-feira', '');
+  const dd = (a, b) => Math.round((new Date(a + 'T12:00:00') - new Date(b + 'T12:00:00')) / 864e5);
+  const rows = items.slice().sort((a, b) => norm(a.demandName || '~').localeCompare(norm(b.demandName || '~'))).map(it => {
+    const late = it.due && ymd > it.due ? dd(ymd, it.due) : 0;
+    const sit = !it.due ? '<span class="fc-td-past">sem prazo</span>'
+      : late ? `<span class="fc-td-late">${late} dia${late === 1 ? '' : 's'} de atraso</span>`
+      : '<span class="fc-td-past">no prazo</span>';
+    // Demanda de equipe que quem olha não acessa: conta, mas sem nome nem link.
+    const name = it.demandId
+      ? `${esc(it.demandName)}${it.projectName ? `<div class="fc-td-sub">${esc(it.projectName)}</div>` : ''}`
+      : '<span class="fc-td-past">Demanda de outra equipe</span>';
+    return `<tr${it.demandId ? ` onclick="closeModal('dash-more-modal'); showDetail('${esc(it.demandId)}')"` : ' class="is-locked"'}>
+      <td class="fc-td-name">${name}</td>
+      <td>${esc(it.stage)}</td>
+      <td style="text-align:center">${sit}</td>
+    </tr>`;
+  }).join('');
+  openDashMore(`Entregas de ${(u?.name || '').split(' ')[0]} — ${label}`, `<table class="forecast-table">
+    <thead><tr><th>Demanda</th><th>Etapa entregue</th><th style="text-align:center">Situação</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`);
+}
+
 /* ─── PERFIL ─── */
 function renderProfile() {
   $('profile-name-display').textContent = me.name;
@@ -33403,21 +33803,9 @@ function renderProfile() {
   const noCard = html => html.replace(/data-user-id="[^"]+"/, ''); // o próprio avatar não abre o cartão
   const navAv = $('profile-nav-avatar');
   if (navAv) navAv.innerHTML = noCard(avatarHTML(me, 'avatar'));
-  const profAv = $('profile-avatar');
-  if (profAv) profAv.innerHTML = noCard(avatarHTML(me, 'avatar'));
-  $('avatar-remove-btn').hidden = !me.avatar;
-  // Conta
-  $('profile-f-name').value = me.name || '';
-  $('profile-f-username').value = me.username || '';
-  renderProfileEmail();
   renderProfile2fa();
   renderProfileGoogleLogin();
-  $('profile-f-phone').value = me.phone || '';
-  $('profile-f-discord').value = me.discord || '';
   $('profile-f-discord-id').value = me.discordId || '';
-  fillRoleSelect('profile-f-role', me.role || '');
-  _profileAccountBase = _profileAccountSnapshot();
-  profileAccountDirty();
   syncProfileAppearanceUI();
   renderGoogleCalendarPanel();
   handleGoogleCallbackToast();
@@ -33437,10 +33825,10 @@ function renderProfile() {
 }
 /* Navegação entre seções do perfil. A aba vai pro caminho (/profile/<aba>)
    pra dar F5 e compartilhar ("Perfil › Notificações") sem se perder. */
-const PROFILE_SECTIONS = ['account', 'away', 'notifications', 'appearance', 'integrations', 'security', 'devices', 'help'];
-let _profileSection = 'account';
+const PROFILE_SECTIONS = ['notifications', 'appearance', 'away', 'integrations', 'security', 'devices', 'help'];
+let _profileSection = 'notifications';
 function setProfileSection(name, opts = {}) {
-  if (!PROFILE_SECTIONS.includes(name)) name = 'account';
+  if (!PROFILE_SECTIONS.includes(name)) name = 'notifications';
   const changed = name !== _profileSection;
   _profileSection = name;
   document.querySelectorAll('#page-profile .profile-nav-item').forEach(b => {
@@ -33455,20 +33843,45 @@ function setProfileSection(name, opts = {}) {
   if (currentPage === 'profile' && !opts.keepUrl) navReplace(pageUrlFor('profile'));
   if (changed && !opts.keepUrl) document.getElementById('page-profile')?.scrollIntoView({ block: 'start' });
 }
-// Leva até um campo da Conta (ex.: "Adicionar e-mail" na aba Notificações).
+// Leva até um campo da conta, no próprio perfil (ex.: "Adicionar e-mail").
 function goProfileField(id) {
-  setProfileSection('account');
-  const el = $(id);
-  if (!el) return;
-  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  setTimeout(() => { el.focus(); el.select?.(); }, 250);
+  openMyProfile(true);
+  setTimeout(() => {
+    const el = $(id);
+    if (!el) return;
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    setTimeout(() => { el.focus(); el.select?.(); }, 250);
+  }, 60);
 }
 
-/* Conta: um formulário só (identificação + contato), com aviso de alteração
-   pendente e Salvar habilitado só quando algo mudou. */
+/* Conta (no próprio perfil, em "Editar perfil"): um formulário só
+   (identificação + contato + sobre), com aviso de alteração pendente e
+   Salvar habilitado só quando algo mudou. */
 let _profileAccountBase = '';
+const PROFILE_ACCOUNT_FIELDS = ['name', 'role', 'username', 'phone', 'discord', 'bio', 'location'];
 function _profileAccountSnapshot() {
-  return JSON.stringify(['name', 'role', 'username', 'phone', 'discord'].map(k => ($('profile-f-' + k)?.value || '').trim()));
+  return JSON.stringify(PROFILE_ACCOUNT_FIELDS.map(k => ($('profile-f-' + k)?.value || '').trim()));
+}
+function renderProfileAccount() {
+  const profAv = $('profile-avatar');
+  if (profAv) profAv.innerHTML = avatarHTML(me, 'avatar').replace(/data-user-id="[^"]+"/, '');
+  $('avatar-remove-btn').hidden = !me.avatar;
+  $('profile-f-name').value = me.name || '';
+  $('profile-f-username').value = me.username || '';
+  $('profile-f-phone').value = me.phone || '';
+  $('profile-f-discord').value = me.discord || '';
+  $('profile-f-bio').value = me.bio || '';
+  $('profile-f-location').value = me.location || '';
+  fillRoleSelect('profile-f-role', me.role || '');
+  renderProfileEmail();
+  _profileAccountBase = _profileAccountSnapshot();
+  profileAccountDirty();
+}
+// Depois de mudar a conta (foto, nome…): redesenha a tela onde a pessoa está.
+function _afterAccountChange() {
+  renderSidebarUser();
+  if (currentPage === 'person') renderPerson();
+  else if (currentPage === 'profile') renderProfile();
 }
 function profileAccountDirty() {
   const dirty = _profileAccountSnapshot() !== _profileAccountBase;
@@ -34008,16 +34421,19 @@ async function saveProfile() {
   const btn = $('profile-account-save');
   if (btn) btn.disabled = true;
   try {
-    me = await api('/me', 'PUT', {
+    // O PUT devolve a pessoa sem os dados da organização (me.org…): mescla.
+    me = { ...me, ...(await api('/me', 'PUT', {
       name: $('profile-f-name').value,
       role: $('profile-f-role').value,
       username: $('profile-f-username').value,
       phone: $('profile-f-phone').value,
       discord: $('profile-f-discord').value,
-    });
-    toast('Conta atualizada');
-    renderSidebarUser(); renderProfile();
+      bio: $('profile-f-bio').value,
+      location: $('profile-f-location').value,
+    })) };
+    toast('Perfil atualizado');
     await refreshData();
+    _afterAccountChange();
   } catch (e) {
     toast(e.message, 'error');
     profileAccountDirty();
@@ -34656,16 +35072,16 @@ async function handleAvatarUpload(ev) {
   ev.target.value = '';
   if (!file) return;
   try {
-    me = await api('/me', 'PUT', { avatar: await _squareAvatarData(file) });
+    me = { ...me, ...(await api('/me', 'PUT', { avatar: await _squareAvatarData(file) })) };
     toast('Foto de perfil atualizada!');
-    renderSidebarUser(); renderProfile();
+    _afterAccountChange();
   } catch (e2) { toast(e2.message, 'error'); }
 }
 async function removeAvatar() {
   try {
-    me = await api('/me', 'PUT', { avatar: null });
+    me = { ...me, ...(await api('/me', 'PUT', { avatar: null })) };
     toast('Foto removida.', 'warn');
-    renderSidebarUser(); renderProfile();
+    _afterAccountChange();
   } catch (e) { toast(e.message, 'error'); }
 }
 
