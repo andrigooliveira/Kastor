@@ -37,3 +37,9 @@ Thumbs.db
 # Tests temporários
 coverage/
 .nyc_output/
+
+# Ferramentas de design/IA e rascunhos locais (não fazem parte do app)
+.impeccable/
+.agents/
+skills-lock.json
+BRIEFING-DEPLOY.*
