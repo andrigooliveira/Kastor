@@ -12299,8 +12299,9 @@ function renderDashForecast() {
   }).join('');
 }
 /* ─── Entregas (Início, embaixo da Agenda) ───
-   Etapas que a pessoa entregou por dia: passagem do stageHistory numa etapa
-   dela (não a de conclusão) que terminou naquele dia. Em vez da grade corrida
+   Etapas que a pessoa entregou por dia: registro 'stage_changed' do histórico
+   de atividade feito por ela, saindo de uma etapa que não é a de conclusão.
+   Quem é responsável pela etapa não conta — só quem passou. Em vez da grade corrida
    do GitHub, o calendário do mês (seg→dom, número do dia em cada quadrado),
    pra ficar óbvio que dia é qual; as setas andam de mês em mês. */
 let _dashDelivOffset = 0;   // 0 = mês atual; -1 = mês passado…
@@ -12316,16 +12317,25 @@ function _dashDeliveriesMap() {
     if (d.deletedAt) return;
     const flow = flowById(d.flowId);
     const sh = d.stageHistory || [];
-    sh.forEach((p, i) => {
-      const st = flow?.stages.find(x => x.id === p.stageId);
+    // Demanda completa (detalhe/SSE) traz o history; a da lista, o resumo stageMoves.
+    const moves = Array.isArray(d.history)
+      ? d.history.filter(h => h.action === 'stage_changed' && h.details?.fromId).map(h => ({ fromId: h.details.fromId, by: h.userId, at: h.at }))
+      : (d.stageMoves || []);
+    moves.forEach(h => {
+      if (h.by !== meId || !h.at) return;
+      const st = flow?.stages.find(x => x.id === h.fromId) || (d.stageAdditions || []).find(x => x.id === h.fromId);
       if (!st || st.done) return;
-      const owner = resolveStageOwnerId(d, st) || (i === sh.length - 1 ? d.ownerId : null);
-      if (owner !== meId) return;
-      const end = p.leftAt || (i === sh.length - 1 && d.completedAt) || null;
-      if (!end) return;
-      const y = _ymdLocal(new Date(end));
+      // Prazo da passagem: a do stageHistory dessa etapa que fechou mais perto do registro.
+      const t = new Date(h.at).getTime();
+      let pass = null, best = Infinity;
+      sh.forEach(p => {
+        if (p.stageId !== st.id || !p.leftAt) return;
+        const diff = Math.abs(new Date(p.leftAt).getTime() - t);
+        if (diff < best) { best = diff; pass = p; }
+      });
+      const y = _ymdLocal(new Date(h.at));
       if (!map.has(y)) map.set(y, []);
-      map.get(y).push({ d, stage: st.label || '—', due: p.dueDate || null });
+      map.get(y).push({ d, stage: st.label || '—', due: pass?.dueDate || null });
     });
   });
   return map;

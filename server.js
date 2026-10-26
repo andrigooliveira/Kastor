@@ -4475,7 +4475,15 @@ app.get('/api/workspaces', requireAuth, (req, res) => {
    quando o user abre a demanda (showDetail → refreshDetailDemand). */
 function stripDemandForList(d) {
   const { description, comments, attachments, briefing, history, ...rest } = d;
-  return { ...rest, lastOwnerId: lastOwnerIdOf(d), listMeta: demandListMeta(d) };
+  return { ...rest, lastOwnerId: lastOwnerIdOf(d), listMeta: demandListMeta(d), stageMoves: stageMovesOf(d) };
+}
+
+/* Quem passou cada etapa, tirado do histórico de atividade — o widget de
+   Entregas do Início só conta o que a própria pessoa passou. */
+function stageMovesOf(d) {
+  return (Array.isArray(d.history) ? d.history : [])
+    .filter(h => h.action === 'stage_changed' && h.details?.fromId)
+    .map(h => ({ fromId: h.details.fromId, by: h.userId, at: h.at }));
 }
 
 /* Resumo do que a lista mostra sem abrir a demanda: contagem de comentários

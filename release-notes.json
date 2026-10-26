@@ -1,5 +1,14 @@
 [
   {
+    "id": "2026-10-26-entregas-quem-passou",
+    "date": "2026-10-26",
+    "title": "Entregas contam só o que você passou",
+    "highlights": [
+      "No Início, o bloco Entregas agora conta só as etapas que você mesmo passou para a próxima. Se outra pessoa avançou uma demanda em que você era responsável, ela não aparece mais como entrega sua.",
+      "A conta vem do histórico de atividade da demanda, então o dia de cada entrega é o dia em que você clicou para avançar."
+    ]
+  },
+  {
     "id": "2026-10-23-agenda",
     "date": "2026-10-23",
     "title": "Agenda com visual novo",
