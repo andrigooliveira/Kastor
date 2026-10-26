@@ -1,5 +1,15 @@
 [
   {
+    "id": "2026-10-26-historico-notificacoes",
+    "date": "2026-10-26",
+    "title": "Histórico de notificações",
+    "highlights": [
+      "No sino, as ações viraram ícones: o check marca tudo como lido e a lixeira limpa a lista. Passe o mouse para ver o nome de cada um.",
+      "No fim do sino, \"Ver todas as notificações\" abre a nova tela Notificações, com tudo o que você recebeu, separado por dia.",
+      "Limpar o sino não apaga mais nada: as notificações saem de lá, mas continuam no histórico. Clique em qualquer uma para abrir a demanda, como no sino."
+    ]
+  },
+  {
     "id": "2026-10-26-entregas-quem-passou",
     "date": "2026-10-26",
     "title": "Entregas contam só o que você passou",

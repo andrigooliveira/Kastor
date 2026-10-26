@@ -5760,8 +5760,29 @@ body:has(#page-demand-detail.active) #toast-container { bottom: 96px; }
 }
 .notif-panel-actions { display: flex; gap: 4px; flex-shrink: 0; }
 .notif-panel-actions .btn { white-space: nowrap; }
+.notif-act-btn { width: 30px; height: 30px; padding: 0; justify-content: center; }
+.notif-act-btn svg { width: 16px; height: 16px; }
 .notif-clear-btn { color: var(--danger); }
 .notif-clear-btn:hover { background: rgba(239,80,80,0.12); }
+/* Rodapé do sino: leva pro histórico completo. */
+.notif-panel-footer {
+  display: block; padding: 11px 18px; border-top: 1px solid var(--border);
+  text-align: center; font-size: 13px; font-weight: 600; color: var(--accent-text);
+  text-decoration: none; flex-shrink: 0;
+}
+.notif-panel-footer:hover { background: var(--surface-2); text-decoration: underline; }
+/* Tela Notificações (histórico completo) */
+.notif-history { max-width: 760px; display: flex; flex-direction: column; gap: 20px; }
+.notif-history-day-label {
+  font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-muted); margin: 0 0 8px;
+}
+.notif-history-list {
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: var(--radius); overflow: hidden;
+}
+.notif-history-list .notif-item + .notif-item { border-top: 1px solid var(--hairline); }
+.notif-history-list .notif-comment { white-space: normal; }
 .notif-panel-title { font-size: 14px; font-weight: 700; }
 .notif-list { overflow-y: auto; flex: 1; padding: 4px 0; }
 .notif-item {
@@ -8462,6 +8483,18 @@ i[data-lucide]:not([class*=ic-]) { width: 16px; height: 16px; stroke-width: 2; }
     repeating-linear-gradient(to bottom, rgba(0,0,0,0.16) 0, rgba(0,0,0,0.16) 1px, transparent 1px, transparent 88px),
     repeating-linear-gradient(to bottom, rgba(0,0,0,0.07) 0, rgba(0,0,0,0.07) 1px, transparent 1px, transparent 44px),
     repeating-linear-gradient(to bottom, rgba(0,0,0,0.04) 0, rgba(0,0,0,0.04) 1px, transparent 1px, transparent 22px);
+}
+/* Fora da jornada da organização (antes do início, depois do término ou
+   folga): listrado por cima da coluna — não dá pra criar bloco ali. */
+.agenda-offhours {
+  position: relative; z-index: 1;
+  cursor: not-allowed;
+  background-color: color-mix(in srgb, var(--surface-2) 70%, transparent);
+  background-image: repeating-linear-gradient(135deg, rgba(255,255,255,0.05) 0 1px, transparent 1px 9px);
+  border-right: 1px solid var(--hairline);
+}
+:root[data-theme="light"] .agenda-offhours {
+  background-image: repeating-linear-gradient(135deg, rgba(0,0,0,0.06) 0 1px, transparent 1px 9px);
 }
 .agenda-cell.is-day-header {
   background: var(--surface-2); color: var(--text); font-weight: 600;

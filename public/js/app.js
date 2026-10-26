@@ -149,6 +149,7 @@ const PAGE_TO_PATH = {
   profile:      '/profile',
   help:         '/help',
   trash:        '/trash',
+  notifications: '/notifications',
   recurringDemands: '/recurring-demands',
   clientsModels: '/clients/models',
   devtools:     '/devtools',
@@ -6291,6 +6292,7 @@ async function fetchNotifications() {
     if (!n.read && !_notifWasUnread.has(n.id)) _notifWasUnread.add(n.id);
   });
   renderNotifBadge();
+  if (currentPage === 'notifications') renderNotificationsPage();
 }
 function startNotifPoll() {
   clearInterval(notifPollTimer);
@@ -6335,6 +6337,18 @@ function orgWeek() {
   return [1, 2, 3, 4, 5, 6, 0].map(day => ({ day, on: day >= 1 && day <= 5, hours: day >= 1 && day <= 5 ? h : 0 }));
 }
 function orgHoursFor(dow) { const d = orgWeek().find(x => x.day === dow); return d && d.on ? (Number(d.hours) || 0) : 0; }
+/* Horário de trabalho de um dia da semana em minutos ({ start, end }), ou
+   null na folga. A jornada simples não tem horário: começa às 9h e soma 1h
+   de almoço a partir de 6h (8h → 09:00–18:00). Usado pra grifar a agenda. */
+function orgWorkWindow(dow) {
+  const d = orgWeek().find(x => x.day === dow);
+  if (!d || !d.on) return null;
+  const a = _hhmmMins(d.start), b = _hhmmMins(d.end);
+  if (Number.isFinite(a) && Number.isFinite(b) && b > a) return { start: a, end: b };
+  const h = Number(d.hours) || 0;
+  if (!h) return null;
+  return { start: 9 * 60, end: Math.min(24 * 60, 9 * 60 + Math.round(h * 60) + (h >= 6 ? 60 : 0)) };
+}
 function orgWorkdays() { return orgWeek().filter(d => d.on).map(d => d.day); }
 function orgWeeklyHours() { return orgWeek().reduce((a, d) => a + (d.on ? (Number(d.hours) || 0) : 0), 0); }
 function orgClosingHour(dow = new Date().getDay()) {
@@ -10825,7 +10839,7 @@ const PAGE_TITLES = {
   workspaces: 'Equipes', users: 'Usuários', profile: 'Meu Perfil', org: 'Organização',
   analytics: 'Análises', templates: 'Templates', integrations: 'Integrações', agenda: 'Agenda',
   recurring: 'Listas de tarefas', gallery: 'Galeria', help: 'Documentação', clientsModels: 'Modelos de Cliente',
-  trash: 'Lixeira', recurringDemands: 'Demandas Recorrentes',
+  trash: 'Lixeira', notifications: 'Notificações', recurringDemands: 'Demandas Recorrentes',
   devtools: 'Dev Tools', passwords: 'Cofre de Senhas', kb: 'Base de conhecimento',
   forms: 'Formulários', dashboards: 'Dashboards', performance: 'Performance', menu: 'Editar acesso rápido',
   'post-editor': 'Editor de post', 'demand-detail': 'Demanda', billing: 'Plano e pagamento', billingCheckout: 'Assinatura', support: 'Suporte', supportNew: 'Abrir chamado', supportTicket: 'Chamado', prototypes: 'Protótipos',
@@ -10929,7 +10943,7 @@ function goPage(page) {
   // de uma demanda. Qualquer outra URL cai em 'mine' — evita telas quebradas
   // por dados filtrados (clientes/projetos/fluxos vêm reduzidos do backend).
   if (me?.isFreelancer) {
-    const FREE_ALLOWED = new Set(['mine', 'profile', 'demand-detail', 'support', 'supportNew', 'supportTicket']);
+    const FREE_ALLOWED = new Set(['mine', 'profile', 'notifications', 'demand-detail', 'support', 'supportNew', 'supportTicket']);
     if (!FREE_ALLOWED.has(page)) page = 'mine';
   }
   // Sair da página de Fluxos zera a subview de cliente. Ficar nela (ou entrar
@@ -11510,6 +11524,7 @@ function renderCurrent() {
     case 'prototypes': renderPrototypes(); break;
     case 'users':      renderUsers(); break;
     case 'trash':      renderTrash(); break;
+    case 'notifications': renderNotificationsPage(); break;
     case 'recurringDemands': renderRecurringDemands(); break;
     case 'profile':    renderProfile(); break;
   }
@@ -12318,13 +12333,14 @@ function _dashDeliveriesMap() {
     const flow = flowById(d.flowId);
     const sh = d.stageHistory || [];
     // Demanda completa (detalhe/SSE) traz o history; a da lista, o resumo stageMoves.
-    const moves = Array.isArray(d.history)
-      ? d.history.filter(h => h.action === 'stage_changed' && h.details?.fromId).map(h => ({ fromId: h.details.fromId, by: h.userId, at: h.at }))
-      : (d.stageMoves || []);
+    const moves = Array.isArray(d.history) ? _stageMovesOf(d) : (d.stageMoves || []);
     moves.forEach(h => {
       if (h.by !== meId || !h.at) return;
       const st = flow?.stages.find(x => x.id === h.fromId) || (d.stageAdditions || []).find(x => x.id === h.fromId);
       if (!st || st.done) return;
+      // Só conta se a pessoa era a responsável pela etapa quando passou.
+      const owner = h.owner !== undefined ? h.owner : resolveStageOwnerId(d, st);
+      if (owner !== meId) return;
       // Prazo da passagem: a do stageHistory dessa etapa que fechou mais perto do registro.
       const t = new Date(h.at).getTime();
       let pass = null, best = Infinity;
@@ -12339,6 +12355,19 @@ function _dashDeliveriesMap() {
     });
   });
   return map;
+}
+// Espelho do stageMovesOf do server.js: quem passou cada etapa e quem era o responsável.
+function _stageMovesOf(d) {
+  const h = d.history || [];
+  const firstOwnerEv = h.find(x => /^owner_/.test(x.action) && x.details);
+  let owner = firstOwnerEv && firstOwnerEv.action !== 'owner_set' ? (firstOwnerEv.details.fromId ?? undefined) : undefined;
+  const out = [];
+  h.forEach(x => {
+    if (x.action === 'owner_set' && x.details) owner = x.details.ownerId ?? null;
+    else if (/^owner_/.test(x.action) && x.details) owner = x.details.toId ?? null;
+    else if (x.action === 'stage_changed' && x.details?.fromId) out.push({ fromId: x.details.fromId, by: x.userId, at: x.at, owner });
+  });
+  return out;
 }
 const _dashDelivLevel = n => n <= 0 ? 0 : n === 1 ? 1 : n <= 3 ? 2 : n <= 6 ? 3 : 4;
 function renderDashDeliveries() {
@@ -34882,7 +34911,7 @@ function renderNotifList() {
 }
 
 async function openNotif(notifId, demandId) {
-  const n = notifications.find(x => x.id === notifId);
+  const n = notifications.find(x => x.id === notifId) || _notifHistory.find(x => x.id === notifId);
   // Click consome o visual (tira purple bg + dot do item).
   _notifWasUnread.delete(notifId);
   // Fallback pro caso raro do click acontecer sem o painel ter aberto antes
@@ -34946,6 +34975,61 @@ async function clearAllNotifications() {
     renderNotifList();
     toast('Notificações limpas.');
   } catch (e) { toast(e.message, 'error'); }
+}
+
+/* Tela Notificações: histórico completo do usuário, inclusive o que foi limpo
+   do sino (limpar só dispensa de lá). Agrupado por dia. */
+let _notifHistory = [];
+async function renderNotificationsPage() {
+  const body = $('notifications-body');
+  if (!body) return;
+  if (!_notifHistory.length) body.innerHTML = '<div class="trash-loading">Carregando…</div>';
+  try { _notifHistory = await api('/notifications?all=1'); }
+  catch (e) {
+    body.innerHTML = `<div class="trash-empty"><div class="trash-empty-title">Não foi possível carregar.</div><div class="trash-empty-sub">${esc(e.message || '')}</div></div>`;
+    return;
+  }
+  if (currentPage !== 'notifications') return;
+  if (!_notifHistory.length) {
+    body.innerHTML = `<div class="trash-empty">
+      <div class="trash-empty-icon"><i data-lucide="bell"></i></div>
+      <div class="trash-empty-title">Nenhuma notificação ainda</div>
+      <div class="trash-empty-sub">Atribuições, menções e respostas aparecem aqui, mesmo depois de limpas do sino.</div>
+    </div>`;
+    paintIcons(body);
+    return;
+  }
+  const dayKey = iso => new Date(iso).toDateString();
+  const today = new Date().toDateString();
+  const yesterday = new Date(Date.now() - 864e5).toDateString();
+  const dayLabel = iso => {
+    const k = dayKey(iso);
+    if (k === today) return 'Hoje';
+    if (k === yesterday) return 'Ontem';
+    const d = new Date(iso);
+    return d.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', ...(d.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : {}) });
+  };
+  const groups = [];
+  for (const n of _notifHistory) {
+    const k = dayKey(n.createdAt);
+    if (groups.at(-1)?.key !== k) groups.push({ key: k, label: dayLabel(n.createdAt), items: [] });
+    groups.at(-1).items.push(n);
+  }
+  body.innerHTML = `<div class="notif-history">${groups.map(g => `
+    <section class="notif-history-day">
+      <h3 class="notif-history-day-label">${esc(g.label)}</h3>
+      <div class="notif-history-list">${g.items.map(n => `
+        <div class="notif-item ${n.read ? 'read' : 'unread'}" onclick="openNotif('${n.id}', '${n.demandId || ''}')">
+          ${n.read ? '' : '<div class="notif-dot-wrap"><span class="notif-dot"></span></div>'}
+          ${notifAvatarHTML(n)}
+          <div class="notif-body">
+            <div class="notif-text">${notifMessage(n)}</div>
+            <div class="notif-time">${relTimeHTML(n.createdAt)}</div>
+          </div>
+        </div>`).join('')}
+      </div>
+    </section>`).join('')}
+  </div>`;
 }
 
 // Fecha o painel ao clicar fora
@@ -39259,12 +39343,25 @@ function openProjectModalForCurrentClient() {
    Planejamento semanal por usuário. Bloco = (userId, demandId, date,
    startMin, endMin). Grid renderizado como CSS Grid + blocos absolutos
    posicionados nas colunas de dia via `grid-column`. */
-const AGENDA_DAY_START_MIN = 9 * 60;   // 09:00
-const AGENDA_DAY_END_MIN   = 18 * 60;  // 18:00
+// Faixa visível da grade: 09:00–18:00, esticada pra caber a jornada da
+// organização (ex.: quem começa às 8h ganha a linha das 8h). Ver _agendaSyncRange.
+let AGENDA_DAY_START_MIN = 9 * 60;
+let AGENDA_DAY_END_MIN   = 18 * 60;
 const AGENDA_SLOT_MIN      = 15;       // 15min por linha (granularidade fina)
 const AGENDA_SLOT_PX       = 22;       // px por slot — tabela alta o suficiente sem virar 2 telas
-const AGENDA_LUNCH_MIN     = 12 * 60;  // 12:00–13:00 destacado
-const AGENDA_ROWS = Math.ceil((AGENDA_DAY_END_MIN - AGENDA_DAY_START_MIN) / AGENDA_SLOT_MIN);
+let AGENDA_ROWS = Math.ceil((AGENDA_DAY_END_MIN - AGENDA_DAY_START_MIN) / AGENDA_SLOT_MIN);
+function _agendaSyncRange() {
+  let start = 9 * 60, end = 18 * 60;
+  for (let dow = 0; dow < 7; dow++) {
+    const w = orgWorkWindow(dow);
+    if (!w) continue;
+    start = Math.min(start, Math.floor(w.start / 60) * 60);
+    end = Math.max(end, Math.ceil(w.end / 60) * 60);
+  }
+  AGENDA_DAY_START_MIN = start;
+  AGENDA_DAY_END_MIN = Math.min(24 * 60, end);
+  AGENDA_ROWS = Math.ceil((AGENDA_DAY_END_MIN - AGENDA_DAY_START_MIN) / AGENDA_SLOT_MIN);
+}
 // Minuto (arredondado ao slot) sob o cursor, dada a célula-coluna e o clientY.
 // As colunas agora são UMA célula que cobre o dia inteiro (sem célula por slot),
 // então o slot vem da posição vertical do mouse dentro da coluna.
@@ -39378,12 +39475,7 @@ function setAgendaView(n) {
   if (agendaView === 'day') agendaDayRef = focus;
   else if (agendaView === 'month') agendaMonthRef = new Date(focus.getFullYear(), focus.getMonth(), 1);
   else if (agendaView === 'year') agendaYearRef = focus.getFullYear();
-  else {
-    // A semana só mostra seg–sex: foco no fim de semana abre a semana seguinte.
-    const dow = focus.getDay();
-    if (dow === 0 || dow === 6) focus.setDate(focus.getDate() + (dow === 6 ? 2 : 1));
-    agendaWeekStart = agendaWeekStartFor(focus);
-  }
+  else agendaWeekStart = agendaWeekStartFor(focus);
   _agendaSyncViewBtns();
   renderAgenda();
   if (currentPage === 'agenda') navPush(pageUrlFor('agenda'));
@@ -39495,8 +39587,8 @@ function saveAgendaTeamPicker() {
   renderAgenda();
 }
 
-/* Lista de dias úteis (seg-sex) no período visualizado.
-   Modo Time: só 1 dia (agendaTeamDate), todos os dias da semana. */
+/* Dias do período visualizado (seg–dom; a folga aparece grifada na grade).
+   Modo Time: só 1 dia (agendaTeamDate). */
 function agendaDays() {
   agendaInit();
   if (agendaMode === 'team') {
@@ -39512,8 +39604,6 @@ function agendaDays() {
   for (let i = 0; i < totalDays; i++) {
     const d = new Date(base);
     d.setDate(base.getDate() + i);
-    const dow = d.getDay();
-    if (dow === 0 || dow === 6) continue;
     days.push(d);
   }
   return days;
@@ -39530,7 +39620,8 @@ function agendaColumnsLayout() {
   // visível de uma vez sem precisar rolar (5 dias em ~375px fica utilizável).
   const isNarrow = window.innerWidth < 640;
   const timeColW = isNarrow ? '44px' : '60px';
-  const dayColMin = isNarrow ? '70px' : '110px';
+  // 2 semanas = 14 dias: coluna mais estreita pra caber sem rolar tanto.
+  const dayColMin = isNarrow ? '70px' : (agendaWeeks === 2 ? '76px' : '110px');
   const userColMin = isNarrow ? '90px' : '130px';
   const cols = [];
   const tmpl = [timeColW]; // coluna de tempo (HORÁRIO)
@@ -39548,8 +39639,8 @@ function agendaColumnsLayout() {
   }
   const days = agendaDays();
   days.forEach((d, i) => {
-    // Antes do 6º dia (segunda da semana 2) insere a divisória
-    if (agendaWeeks === 2 && i === 5) {
+    // Antes do 8º dia (segunda da semana 2) insere a divisória
+    if (agendaWeeks === 2 && i === 7) {
       cols.push({ type: 'gap', gridCol });
       tmpl.push('14px');
       gridCol++;
@@ -39752,6 +39843,7 @@ async function ensureSchedulesLoaded(fromYmd, toYmd) {
 
 function renderAgenda() {
   agendaInit();
+  _agendaSyncRange(); // a jornada pode ter mudado desde o último render
   _agendaSyncViewBtns(); // os seletores das duas telas sempre batem com o estado
   // Dispara lazy-load se a semana visualizada está fora do range em cache.
   // Fire-and-forget: quando terminar, ensureSchedulesLoaded re-renderiza.
@@ -39952,10 +40044,18 @@ function agendaMonthDays(ms) {
 }
 // Troca o texto de ajuda do painel conforme a visão (guarda o da semana no dataset).
 // Carga do dia no cabeçalho: barrinha + horas ("4,5h"); tooltip com a capacidade.
+// cap 0 = folga na jornada: sem horas mostra "Folga"; com horas, conta como acima.
 function _agendaLoadHTML(hours, cap, cls) {
-  const pct = Math.min(100, Math.round(hours / cap * 100));
+  const pct = cap ? Math.min(100, Math.round(hours / cap * 100)) : (hours ? 100 : 0);
   const lbl = `${hours.toFixed(1).replace('.', ',')}h`;
-  return `<span class="day-load ${cls}" title="${lbl} de ${cap}h agendadas"><span class="day-load-bar"><i style="width:${pct}%"></i></span><span class="day-cap ${cls}">${hours ? lbl : '—'}</span></span>`;
+  const title = cap ? `${lbl} de ${_goalH(cap)}h agendadas` : `${lbl} agendadas · folga na jornada`;
+  return `<span class="day-load ${cls}" title="${title}"><span class="day-load-bar"><i style="width:${pct}%"></i></span><span class="day-cap ${cls}">${hours ? lbl : (cap ? '—' : 'Folga')}</span></span>`;
+}
+// Capacidade do dia pela jornada da organização + classe de carga.
+function _agendaCap(day, hours) {
+  const cap = orgHoursFor(day.getDay());
+  const cls = !cap ? (hours ? 'over' : '') : hours > cap ? 'over' : hours > cap * 0.85 ? 'high' : '';
+  return { cap, cls };
 }
 function _agendaSyncHint(wrap, view) {
   const hint = wrap.parentElement && wrap.parentElement.querySelector('.agenda-hint');
@@ -40509,12 +40609,9 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
         .reduce((sum, s) => sum + (s.endMin - s.startMin), 0);
       const dayMin = schedMin + dayGoogleMinutes(u.id, c._ymd);
       const dayHours = dayMin / 60;
-      const capacityH = 8;
-      let capClass = '';
-      if (dayHours > capacityH) capClass = 'over';
-      else if (dayHours > capacityH * 0.85) capClass = 'high';
+      const { cap, cls } = _agendaCap(d, dayHours);
       head.classList.add('is-user-header');
-      head.innerHTML = `${avatarHTML(u, 'avatar avatar-sm')}<span class="agenda-user-head-name">${esc(u.name)}</span>${_agendaLoadHTML(dayHours, capacityH, capClass)}`;
+      head.innerHTML = `${avatarHTML(u, 'avatar avatar-sm')}<span class="agenda-user-head-name">${esc(u.name)}</span>${_agendaLoadHTML(dayHours, cap, cls)}`;
     } else {
       const dayName = d.toLocaleDateString(LOCALE, { weekday: 'short' }).replace('.', '');
       const dayDate = d.toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit' });
@@ -40526,12 +40623,9 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
         .reduce((sum, s) => sum + (s.endMin - s.startMin), 0);
       const dayMin = schedMin + dayGoogleMinutes(agendaUserIdLocal, c._ymd);
       const dayHours = dayMin / 60;
-      const capacityH = 8;
-      let capClass = '';
-      if (dayHours > capacityH) capClass = 'over';
-      else if (dayHours > capacityH * 0.85) capClass = 'high';
+      const { cap, cls } = _agendaCap(d, dayHours);
       head.title = dayDate;
-      head.innerHTML = `<span class="day-line"><span class="day-name">${esc(dayName)}</span><span class="day-num">${d.getDate()}</span></span>${_agendaLoadHTML(dayHours, capacityH, capClass)}`;
+      head.innerHTML = `<span class="day-line"><span class="day-name">${esc(dayName)}</span><span class="day-num">${d.getDate()}</span></span>${_agendaLoadHTML(dayHours, cap, cls)}`;
     }
     head.style.gridRow = '1 / 2';
     head.style.gridColumn = `${c.gridCol} / ${c.gridCol + 1}`;
@@ -40569,6 +40663,25 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
       if (c._ymd === todayYmd && c.type !== 'user') col.classList.add('is-today');
     }
     grid.appendChild(col);
+  });
+
+  // Fora da jornada (antes do início, depois do término ou o dia todo na
+  // folga): faixa grifada por cima da coluna. Fica fora da .agenda-col, então
+  // arrastar ali não cria bloco; blocos que já existem continuam por cima.
+  const offRow = (min) => Math.round((min - AGENDA_DAY_START_MIN) / AGENDA_SLOT_MIN);
+  dayCols.forEach(c => {
+    const w = orgWorkWindow(c.day.getDay());
+    const spans = !w ? [[0, rows]] : [[0, offRow(w.start)], [offRow(w.end), rows]];
+    spans.forEach(([a, b]) => {
+      a = Math.max(0, a); b = Math.min(rows, b);
+      if (b <= a) return;
+      const off = document.createElement('div');
+      off.className = 'agenda-offhours';
+      off.style.gridRow = `${a + 2} / ${b + 2}`;
+      off.style.gridColumn = `${c.gridCol} / ${c.gridCol + 1}`;
+      off.title = w ? 'Fora da jornada' : 'Folga na jornada';
+      grid.appendChild(off);
+    });
   });
 
   // Blocos por cima. Antes de renderizar, computamos o "lane layout" por dia

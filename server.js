@@ -4478,12 +4478,23 @@ function stripDemandForList(d) {
   return { ...rest, lastOwnerId: lastOwnerIdOf(d), listMeta: demandListMeta(d), stageMoves: stageMovesOf(d) };
 }
 
-/* Quem passou cada etapa, tirado do histórico de atividade — o widget de
-   Entregas do Início só conta o que a própria pessoa passou. */
+/* Quem passou cada etapa e quem era o responsável nela, tirado do histórico de
+   atividade — o widget de Entregas do Início só conta o que a própria pessoa
+   passou numa etapa dela. O responsável sai do replay dos eventos owner_*
+   anteriores ao stage_changed (o auto-assign da etapa nova vem logo depois).
+   Espelhado no cliente (_stageMovesOf no app.js). */
 function stageMovesOf(d) {
-  return (Array.isArray(d.history) ? d.history : [])
-    .filter(h => h.action === 'stage_changed' && h.details?.fromId)
-    .map(h => ({ fromId: h.details.fromId, by: h.userId, at: h.at }));
+  const h = Array.isArray(d.history) ? d.history : [];
+  // Sem owner_set (histórico cortado pelo cap): o fromId da primeira troca é o dono de antes.
+  const firstOwnerEv = h.find(x => /^owner_/.test(x.action) && x.details);
+  let owner = firstOwnerEv && firstOwnerEv.action !== 'owner_set' ? (firstOwnerEv.details.fromId ?? undefined) : undefined;
+  const out = [];
+  h.forEach(x => {
+    if (x.action === 'owner_set' && x.details) owner = x.details.ownerId ?? null;
+    else if (/^owner_/.test(x.action) && x.details) owner = x.details.toId ?? null;
+    else if (x.action === 'stage_changed' && x.details?.fromId) out.push({ fromId: x.details.fromId, by: x.userId, at: x.at, owner: owner === undefined ? undefined : owner });
+  });
+  return out;
 }
 
 /* Resumo do que a lista mostra sem abrir a demanda: contagem de comentários
@@ -13579,7 +13590,9 @@ app.get('/api/reports/sla', requireAuth, rateLimitReport, (req, res) => {
 // Persistência direto no Postgres (tabela dedicada, INDEX(user_id, created_at)).
 app.get('/api/notifications', requireAuth, async (req, res) => {
   try {
-    const list = await store.listNotificationsFor(req.user.id, 100);
+    // ?all=1 → histórico completo (inclui as já dispensadas do sino).
+    const all = req.query.all === '1';
+    const list = await store.listNotificationsFor(req.user.id, all ? NOTIFICATIONS_MAX_PER_USER : 100, { includeDismissed: all });
     res.json(list.filter(n => !n.orgId || n.orgId === req.org.id));
   } catch (e) { res.status(500).json({ error: 'Erro ao carregar notificações' }); }
 });
@@ -13601,11 +13614,11 @@ app.put('/api/notifications/read-all', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao marcar notificações' }); }
 });
 
-/* Apaga TODAS as notificações do usuário. Sem undo — quem clica em "Limpar
-   notificações" tá dizendo que já leu/resolveu tudo e não quer mais o barulho. */
+/* "Limpar notificações" do sino: dispensa todas (somem do painel e viram lidas),
+   mas continuam no histórico completo (GET ?all=1). */
 app.delete('/api/notifications', requireAuth, async (req, res) => {
   try {
-    await store.deleteAllNotificationsFor(req.user.id);
+    await store.dismissAllNotificationsFor(req.user.id);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: 'Erro ao limpar notificações' }); }
 });

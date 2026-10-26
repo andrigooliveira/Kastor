@@ -97,6 +97,9 @@ function createStore(config = {}) {
         ON notifications (user_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_notif_user_read
         ON notifications (user_id, is_read);
+      -- "Limpar" no sino só dispensa: a notificação some do painel e continua
+      -- no histórico completo (tela Notificações).
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS dismissed BOOLEAN NOT NULL DEFAULT FALSE;
 
       CREATE TABLE IF NOT EXISTS password_resets (
         token       TEXT   PRIMARY KEY,
@@ -312,15 +315,18 @@ function createStore(config = {}) {
       [n.id, n.userId, JSON.stringify(n), !!n.read, Date.parse(n.createdAt) || Date.now()]
     );
   }
-  async function listNotificationsFor(userId, limit = 100) {
+  // Sem includeDismissed: só o que ainda está no sino. Com: histórico completo.
+  async function listNotificationsFor(userId, limit = 100, { includeDismissed = false } = {}) {
     const r = await pool.query(
-      `SELECT id, data, is_read FROM notifications
-       WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`,
+      `SELECT id, data, is_read, dismissed FROM notifications
+       WHERE user_id = $1 ${includeDismissed ? '' : 'AND NOT dismissed'}
+       ORDER BY created_at DESC LIMIT $2`,
       [userId, limit]
     );
     return r.rows.map(row => {
       const obj = row.data;
       obj.read = !!row.is_read;
+      obj.dismissed = !!row.dismissed;
       return obj;
     });
   }
@@ -345,6 +351,9 @@ function createStore(config = {}) {
   }
   async function markAllNotificationsReadFor(userId) {
     await pool.query('UPDATE notifications SET is_read = TRUE WHERE user_id = $1', [userId]);
+  }
+  async function dismissAllNotificationsFor(userId) {
+    await pool.query('UPDATE notifications SET dismissed = TRUE, is_read = TRUE WHERE user_id = $1 AND NOT dismissed', [userId]);
   }
   async function deleteAllNotificationsFor(userId) {
     await pool.query('DELETE FROM notifications WHERE user_id = $1', [userId]);
@@ -581,7 +590,7 @@ function createStore(config = {}) {
     upsert, upsertMany, remove, get, listByType, listByWorkspace,
     loadAllToCache, applyBatch,
     insertNotification, listNotificationsFor, markNotificationRead, markNotificationReadIfOwner,
-    markAllNotificationsReadFor, deleteAllNotificationsFor, deleteNotificationsForOrg, deleteNotificationsForComments, trimNotificationsFor,
+    markAllNotificationsReadFor, dismissAllNotificationsFor, deleteAllNotificationsFor, deleteNotificationsForOrg, deleteNotificationsForComments, trimNotificationsFor,
     insertReset, getReset, markResetUsed, cleanupResets,
     getKv, setKv,
     authLoadAll, authUpsertCredential, authDeleteCredential,
