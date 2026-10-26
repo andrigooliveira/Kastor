@@ -12379,12 +12379,12 @@ function renderDashDeliveries() {
   const now = new Date();
   const m = new Date(now.getFullYear(), now.getMonth() + _dashDelivOffset, 1);
   const pad = n => String(n).padStart(2, '0');
-  // Iniciais dos dias a partir de uma segunda qualquer (05/01/2026), no idioma da tela.
-  const wd = [...Array(7)].map((_, i) => new Date(2026, 0, 5 + i).toLocaleDateString(LOCALE, { weekday: 'short' }).replace('.', ''));
+  // Iniciais dos dias a partir de um domingo qualquer (04/01/2026), no idioma da tela.
+  const wd = [...Array(7)].map((_, i) => new Date(2026, 0, 4 + i).toLocaleDateString(LOCALE, { weekday: 'short' }).replace('.', ''));
   {
     const y = m.getFullYear(), mo = m.getMonth();
     const nDays = new Date(y, mo + 1, 0).getDate();
-    const lead = (m.getDay() + 6) % 7; // segunda = 0
+    const lead = m.getDay(); // domingo = 0
     let cells = '<span class="dlv-c is-blank"></span>'.repeat(lead);
     let mTotal = 0;
     for (let day = 1; day <= nDays; day++) {
@@ -39343,21 +39343,23 @@ function openProjectModalForCurrentClient() {
    Planejamento semanal por usuário. Bloco = (userId, demandId, date,
    startMin, endMin). Grid renderizado como CSS Grid + blocos absolutos
    posicionados nas colunas de dia via `grid-column`. */
-// Faixa visível da grade: 09:00–18:00, esticada pra caber a jornada da
-// organização (ex.: quem começa às 8h ganha a linha das 8h). Ver _agendaSyncRange.
+// Faixa visível da grade: do primeiro início ao último término da jornada da
+// organização, no slot de 15min (expediente até 18h30 → grade até 18h30).
+// Sem jornada definida, 09:00–18:00. Ver _agendaSyncRange.
 let AGENDA_DAY_START_MIN = 9 * 60;
 let AGENDA_DAY_END_MIN   = 18 * 60;
 const AGENDA_SLOT_MIN      = 15;       // 15min por linha (granularidade fina)
 const AGENDA_SLOT_PX       = 22;       // px por slot — tabela alta o suficiente sem virar 2 telas
 let AGENDA_ROWS = Math.ceil((AGENDA_DAY_END_MIN - AGENDA_DAY_START_MIN) / AGENDA_SLOT_MIN);
 function _agendaSyncRange() {
-  let start = 9 * 60, end = 18 * 60;
+  let start = Infinity, end = -Infinity;
   for (let dow = 0; dow < 7; dow++) {
     const w = orgWorkWindow(dow);
     if (!w) continue;
-    start = Math.min(start, Math.floor(w.start / 60) * 60);
-    end = Math.max(end, Math.ceil(w.end / 60) * 60);
+    start = Math.min(start, Math.floor(w.start / AGENDA_SLOT_MIN) * AGENDA_SLOT_MIN);
+    end = Math.max(end, Math.ceil(w.end / AGENDA_SLOT_MIN) * AGENDA_SLOT_MIN);
   }
+  if (!(end > start)) { start = 9 * 60; end = 18 * 60; }
   AGENDA_DAY_START_MIN = start;
   AGENDA_DAY_END_MIN = Math.min(24 * 60, end);
   AGENDA_ROWS = Math.ceil((AGENDA_DAY_END_MIN - AGENDA_DAY_START_MIN) / AGENDA_SLOT_MIN);
@@ -39372,7 +39374,7 @@ function agendaMinFromY(colCell, clientY) {
   return AGENDA_DAY_START_MIN + slot * AGENDA_SLOT_MIN;
 }
 let agendaUserId = null;          // usuário filtrado (default = me)
-let agendaWeekStart = null;       // segunda da semana atual visualizada
+let agendaWeekStart = null;       // domingo da semana atual visualizada
 // Em mobile começa em 1 semana (2 não cabe nem com column shrink); desktop mantém 2.
 // Visão escolhida fica salva no navegador; sem escolha, abre na Semana.
 const AGENDA_VIEW_KEY = 'kastor-agenda-view';
@@ -39394,9 +39396,7 @@ let agendaYearRef = null;         // ano visualizado na visão Ano
 function agendaWeekStartFor(d) {
   const x = new Date(d);
   x.setHours(0,0,0,0);
-  const dow = x.getDay(); // 0=dom, 1=seg...
-  const diff = (dow === 0 ? -6 : 1 - dow);
-  x.setDate(x.getDate() + diff);
+  x.setDate(x.getDate() - x.getDay()); // semana começa no domingo
   return x;
 }
 function agendaYmd(d) {
@@ -39639,7 +39639,7 @@ function agendaColumnsLayout() {
   }
   const days = agendaDays();
   days.forEach((d, i) => {
-    // Antes do 8º dia (segunda da semana 2) insere a divisória
+    // Antes do 8º dia (domingo da semana 2) insere a divisória
     if (agendaWeeks === 2 && i === 7) {
       cols.push({ type: 'gap', gridCol });
       tmpl.push('14px');
@@ -40029,15 +40029,15 @@ function buildAgendaTeamList(wrap, day) {
    bloco pra outro dia (mantém o horário). No celular a célula vira só pontos
    e tocar no dia abre o popover. */
 const AGM_MAX_ITEMS = 3;
-// Semana começa na segunda, igual à grade de horários.
-const AGM_WEEKDAYS = IS_PT ? ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'] : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+// Semana começa no domingo, igual à grade de horários.
+const AGM_WEEKDAYS = IS_PT ? ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'] : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 let _agmItems = {};   // id → item renderizado (pro clique/arraste achar o alvo)
 // Semanas inteiras (dom → sáb) que cobrem o mês (o visualizado, ou o de ms).
 function agendaMonthDays(ms) {
   ms = ms || agendaMonthStart();
-  const start = new Date(ms); start.setDate(1 - (ms.getDay() + 6) % 7);
+  const start = new Date(ms); start.setDate(1 - ms.getDay());
   const end = new Date(ms.getFullYear(), ms.getMonth() + 1, 0);
-  end.setDate(end.getDate() + (7 - end.getDay()) % 7);
+  end.setDate(end.getDate() + 6 - end.getDay());
   const out = [];
   for (const d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) out.push(new Date(d));
   return out;
@@ -40128,7 +40128,7 @@ function buildAgendaMonth(wrap, userId, monthStart) {
   const todayYmd = agendaYmd(new Date());
   const m = monthStart.getMonth();
   const mobile = isMobileLayout();
-  const head = AGM_WEEKDAYS.map((w, i) => `<div class="agm-head${i >= 5 ? ' is-weekend' : ''}">${w}</div>`).join('');
+  const head = AGM_WEEKDAYS.map((w, i) => `<div class="agm-head${i === 0 || i === 6 ? ' is-weekend' : ''}">${w}</div>`).join('');
   const cells = days.map(day => {
     const ymd = agendaYmd(day);
     const items = _agmDayItems(userId, ymd);
@@ -40291,7 +40291,7 @@ window.addEventListener('scroll', agmClosePopover, { passive: true });
    mais forte conforme a quantidade (blocos, reuniões do Google e prazos);
    prazo atrasado ganha anel vermelho. Clicar no dia abre o popover do dia,
    clicar no nome do mês abre o mês. */
-const AGY_WEEKDAYS = IS_PT ? ['S', 'T', 'Q', 'Q', 'S', 'S', 'D'] : ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+const AGY_WEEKDAYS = IS_PT ? ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'] : ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 // ymd → { n, late } numa passada só (contar dia a dia seria 365 × tudo).
 function _agyIndex(userId, year) {
   const idx = {};
@@ -40633,10 +40633,12 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
   });
 
   // Coluna de horários: UMA célula por HORA (span de 4 slots), não 1 por slot de
-  // 15min — o rótulo só aparecia no :00 mesmo.
-  for (let min = AGENDA_DAY_START_MIN; min < AGENDA_DAY_END_MIN; min += 60) {
+  // 15min — o rótulo só aparecia no :00 mesmo. Início quebrado (ex.: 8h30) ganha
+  // uma célula curta até a próxima hora cheia; o fim quebrado, idem no final.
+  for (let min = AGENDA_DAY_START_MIN; min < AGENDA_DAY_END_MIN; min = (Math.floor(min / 60) + 1) * 60) {
     const rowIdx = Math.floor((min - AGENDA_DAY_START_MIN) / AGENDA_SLOT_MIN) + 2;
-    const span = Math.min(60, AGENDA_DAY_END_MIN - min) / AGENDA_SLOT_MIN;
+    const next = Math.min((Math.floor(min / 60) + 1) * 60, AGENDA_DAY_END_MIN);
+    const span = (next - min) / AGENDA_SLOT_MIN;
     const t = document.createElement('div');
     t.className = 'agenda-cell is-time';
     t.textContent = agendaMinsToHHMM(min);
@@ -40649,9 +40651,12 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
   // linhas de 15/30/60min viram gradiente CSS (.agenda-col) — antes eram ~250
   // células individuais (cada uma com borda/fundo/relative), o que dominava o
   // "presentation delay". O minuto do drag é calculado pelo Y do mouse.
+  // Início quebrado: desloca o gradiente pra linha da hora cair no :00.
+  const hourShiftPx = ((AGENDA_DAY_START_MIN % 60) / AGENDA_SLOT_MIN) * AGENDA_SLOT_PX;
   layout.cols.forEach(c => {
     const col = document.createElement('div');
     col.style.gridRow = `2 / ${rows + 2}`;
+    if (hourShiftPx) col.style.backgroundPositionY = `-${hourShiftPx}px`;
     col.style.gridColumn = `${c.gridCol} / ${c.gridCol + 1}`;
     if (c.type === 'gap') {
       col.className = 'agenda-cell is-week-gap';
@@ -40666,8 +40671,8 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
   });
 
   // Fora da jornada (antes do início, depois do término ou o dia todo na
-  // folga): faixa grifada por cima da coluna. Fica fora da .agenda-col, então
-  // arrastar ali não cria bloco; blocos que já existem continuam por cima.
+  // folga): faixa grifada por cima da coluna, só de orientação. Não captura o
+  // mouse (pointer-events: none), então dá pra criar e soltar blocos ali.
   const offRow = (min) => Math.round((min - AGENDA_DAY_START_MIN) / AGENDA_SLOT_MIN);
   dayCols.forEach(c => {
     const w = orgWorkWindow(c.day.getDay());

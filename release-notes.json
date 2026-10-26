@@ -1,5 +1,17 @@
 [
   {
+    "id": "2026-10-26-agenda-domingo-grifado",
+    "date": "2026-10-26",
+    "title": "Agenda: semana no domingo e horário listrado liberado",
+    "highlights": [
+      "A semana da agenda agora começa no domingo, nas visões Semana, Quinzena, Mês e Ano.",
+      "No Início, o calendário de Entregas também começa no domingo.",
+      "A parte listrada, fora da jornada ou na folga, virou só uma orientação: dá para criar um bloco clicando ou arrastando ali, e também soltar um bloco nela.",
+      "A agenda termina no horário em que a jornada acaba. Se o expediente vai até 18h30, a grade para em 18h30, sem a meia hora a mais listrada.",
+      "O mesmo vale para o começo: uma jornada que começa às 8h30 abre a agenda em 8h30."
+    ]
+  },
+  {
     "id": "2026-10-26-agenda-jornada",
     "date": "2026-10-26",
     "title": "Agenda segue a jornada de trabalho",

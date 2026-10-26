@@ -8485,10 +8485,11 @@ i[data-lucide]:not([class*=ic-]) { width: 16px; height: 16px; stroke-width: 2; }
     repeating-linear-gradient(to bottom, rgba(0,0,0,0.04) 0, rgba(0,0,0,0.04) 1px, transparent 1px, transparent 22px);
 }
 /* Fora da jornada da organização (antes do início, depois do término ou
-   folga): listrado por cima da coluna — não dá pra criar bloco ali. */
+   folga): listrado por cima da coluna, só de orientação — o mouse passa
+   direto pra coluna, então dá pra agendar ali como em qualquer horário. */
 .agenda-offhours {
   position: relative; z-index: 1;
-  cursor: not-allowed;
+  pointer-events: none;
   background-color: color-mix(in srgb, var(--surface-2) 70%, transparent);
   background-image: repeating-linear-gradient(135deg, rgba(255,255,255,0.08) 0 1px, transparent 1px 8px);
   border-right: 1px solid var(--hairline);
