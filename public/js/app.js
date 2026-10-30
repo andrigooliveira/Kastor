@@ -23061,7 +23061,12 @@ function openAttPreview(src, type, name, opts) {
     el = document.createElement('div');
     el.id = 'att-preview-modal';
     el.className = 'att-preview-overlay';
-    el.addEventListener('click', ev => { if (ev.target === el) closeAttPreview(); });
+    // O corpo ocupa a tela toda — fecha em qualquer clique que não caia no
+    // conteúdo em si (mídia, página, slide, cabeçalho ou aviso de erro).
+    el.addEventListener('click', ev => {
+      if (ev.target.closest('.att-preview-head, img, video, audio, canvas, .att-preview-pdf-page, .kastor-pptx-slide-wrap, .docx-wrapper > section, .att-preview-unsupported, .att-preview-spinner, .att-preview-loading-label')) return;
+      closeAttPreview();
+    });
     document.body.appendChild(el);
     document.addEventListener('keydown', ev => {
       if (ev.key === 'Escape' && el.classList.contains('open')) closeAttPreview();
