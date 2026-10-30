@@ -21691,10 +21691,18 @@ tr.is-open .an-chev { transform: rotate(90deg); }
 .sch-when-row { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 8px; }
 .sch-when-row .form-control { min-width: 0; font-variant-numeric: tabular-nums; }
 .sch-when-sep { color: var(--text-muted); }
+/* Período em vários dias: duas linhas (início / fim), cada uma data + hora. */
+.sch-when-row #sch-end-date { display: none; }
+.sch-when-row.is-multiday { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); }
+.sch-when-row.is-multiday .sch-when-sep { display: none; }
+.sch-when-row.is-multiday #sch-end-date { display: block; }
+.sch-multiday-toggle { margin-top: 8px; align-self: flex-start; }
 #schedule-modal .sch-kind-chip { padding: 7px 12px; }
 @media (max-width: 600px) {
   .sch-when-row { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); }
   .sch-when-row .sch-date { grid-column: 1 / -1; }
+  .sch-when-row.is-multiday { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); }
+  .sch-when-row.is-multiday .sch-date { grid-column: auto; }
 }
 
 /* Escolher pessoas (modo Time) */

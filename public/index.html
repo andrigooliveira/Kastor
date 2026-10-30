@@ -4234,12 +4234,14 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           <label class="form-label" for="sch-date">Quando</label>
           <span class="sch-duration" id="sch-duration"></span>
         </div>
-        <div class="sch-when-row">
+        <div class="sch-when-row" id="sch-when-row">
           <input class="form-control sch-date" id="sch-date" type="date" aria-label="Data">
           <input class="form-control" id="sch-start" type="time" step="900" aria-label="Início" oninput="updateScheduleDuration()">
           <span class="sch-when-sep" aria-hidden="true">–</span>
+          <input class="form-control sch-date" id="sch-end-date" type="date" aria-label="Data final" oninput="updateScheduleDuration()">
           <input class="form-control" id="sch-end" type="time" step="900" aria-label="Fim" oninput="updateScheduleDuration()">
         </div>
+        <button type="button" class="ent-link sch-multiday-toggle" id="sch-multiday-toggle" onclick="toggleScheduleMultiday()"></button>
       </div>
       <div class="form-group" id="sch-recur-row" style="display:none">
         <label class="form-label" for="sch-recur">Repetir</label>

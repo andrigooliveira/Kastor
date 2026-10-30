@@ -1,5 +1,15 @@
 [
   {
+    "id": "2026-10-30-bloco-varios-dias",
+    "date": "2026-10-30",
+    "title": "Blocos da agenda em vários dias",
+    "highlights": [
+      "Um bloco livre agora pode começar num dia e terminar em outro, como \"Ausente das 13h de 21/10 às 15h de 22/10\". No modal do bloco, clique em \"Termina em outro dia\" e escolha a data e a hora do fim.",
+      "Na agenda, o período aparece em cada dia que ele ocupa, e todos os pedaços mostram o início e o fim completos.",
+      "Clicar em qualquer dia do período abre o período inteiro para editar. Excluir remove todos os dias de uma vez."
+    ]
+  },
+  {
     "id": "2026-10-30-preview-fecha-fora",
     "date": "2026-10-30",
     "title": "Pré-visualização fecha com um clique fora",

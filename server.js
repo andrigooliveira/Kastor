@@ -11366,6 +11366,32 @@ function sanitizeScheduleBody(b) {
   if (!date || startMin === null || endMin === null || endMin <= startMin) return null;
   return { date, startMin, endMin };
 }
+// Período que atravessa dias (ex.: ausente das 13h de 21/10 às 15h de 22/10).
+// Vira um bloco por dia — 1º dia do início até 24h, dias do meio inteiros,
+// último dia de 0h até o fim — todos com o mesmo spanGroupId e com o período
+// completo (spanStart*/spanEnd*) pra exibir/editar como um evento só.
+const SCHEDULE_SPAN_MAX_DAYS = 62;
+function sanitizeScheduleSpan(b) {
+  const date = String(b.date || '').match(/^\d{4}-\d{2}-\d{2}$/) ? b.date : null;
+  const endDate = String(b.endDate || '').match(/^\d{4}-\d{2}-\d{2}$/) ? b.endDate : null;
+  if (!date || !endDate || endDate <= date) return null;
+  const startMin = Number.isInteger(Number(b.startMin)) ? Math.max(0, Math.min(1439, Number(b.startMin))) : null;
+  const endMin = Number.isInteger(Number(b.endMin)) ? Math.max(0, Math.min(1440, Number(b.endMin))) : null;
+  if (startMin === null || endMin === null) return { error: 'Horários inválidos.' };
+  const segs = [];
+  const d = new Date(date + 'T12:00:00Z');
+  for (let ymd = date; ymd <= endDate; d.setUTCDate(d.getUTCDate() + 1), ymd = d.toISOString().slice(0, 10)) {
+    const s = ymd === date ? startMin : 0;
+    const e = ymd === endDate ? endMin : 1440;
+    if (e > s) segs.push({ date: ymd, startMin: s, endMin: e });
+    if (segs.length > SCHEDULE_SPAN_MAX_DAYS) return { error: 'Período longo demais (máx. ' + SCHEDULE_SPAN_MAX_DAYS + ' dias).' };
+  }
+  if (!segs.length) return { error: 'Fim precisa ser depois do início.' };
+  return { segs, span: { spanStartDate: date, spanStartMin: startMin, spanEndDate: endDate, spanEndMin: endMin } };
+}
+function clearScheduleSpan(s) {
+  delete s.spanGroupId; delete s.spanStartDate; delete s.spanStartMin; delete s.spanEndDate; delete s.spanEndMin;
+}
 app.get('/api/schedules', requireAuth, (req, res) => {
   const ids = wsIdsFor(req.user);
   const userId = req.query.userId || null;
@@ -11538,7 +11564,7 @@ app.post('/api/schedules', requireAuth, (req, res) => {
   }
   const user = db.users.find(u => u.id === userId);
   if (!user) return res.status(400).json({ error: 'Usuário inválido' });
-  const fields = sanitizeScheduleBody(b);
+  const fields = sanitizeScheduleBody(b) || (!b.demandId && sanitizeScheduleSpan(b) ? { date: b.date } : null);
   if (!fields) return res.status(400).json({ error: 'Data e horários inválidos (endMin deve ser > startMin).' });
 
   // Duas variantes: bloco VINCULADO A DEMANDA (com demandId) ou LIVRE (com title).
@@ -11552,6 +11578,21 @@ app.post('/api/schedules', requireAuth, (req, res) => {
     if (!wsId || !canAccessWs(req.user, wsId)) {
       return res.status(400).json({ error: 'Equipe inválida pro bloco livre.' });
     }
+    const span = sanitizeScheduleSpan(b);
+    if (span?.error) return res.status(400).json({ error: span.error });
+    if (span && span.segs.length > 1) {
+      const spanGroupId = uid();
+      const created = span.segs.map(seg => ({
+        id: uid(), workspaceId: wsId, userId, demandId: null,
+        title: free.title, kind: free.kind, color: free.color,
+        ...seg, stageColorSnapshot: null, spanGroupId, ...span.span,
+        createdAt: nowISO(), createdBy: req.user.id
+      }));
+      created.forEach(one => { db.schedules.push(one); saveEntity('schedules', one); });
+      broadcastChange('schedule', 'bulk', { workspaceId: wsId, byUserId: req.user.id });
+      return res.status(201).json(created[0]);
+    }
+    if (span) Object.assign(fields, span.segs[0]); // ex.: 22h de hoje → 0h de amanhã
     // Recorrência opcional: expande em N cópias, todas com o mesmo recurrenceGroupId
     // pra permitir edição/exclusão em série depois.
     const rec = sanitizeRecurrence(b.recurrence);
@@ -11650,6 +11691,35 @@ app.put('/api/schedules/:id', requireAuth, (req, res) => {
     s.stageColorSnapshot = null;
     if (b.workspaceId && canAccessWs(req.user, b.workspaceId)) s.workspaceId = b.workspaceId;
   }
+  // Período multi-dia: com endDate, o pedido descreve o período inteiro —
+  // remove os outros dias do grupo e recria a partir deste bloco.
+  if (b.endDate !== undefined && (s.spanGroupId || (b.endDate && b.endDate !== (b.date || s.date)))) {
+    const span = !s.demandId ? sanitizeScheduleSpan({ date: b.date || s.date, endDate: b.endDate,
+      startMin: b.startMin !== undefined ? b.startMin : s.startMin, endMin: b.endMin !== undefined ? b.endMin : s.endMin }) : null;
+    if (span?.error) return res.status(400).json({ error: span.error });
+    const single = span ? null : sanitizeScheduleBody({ date: b.date || s.date,
+      startMin: b.startMin !== undefined ? b.startMin : s.startMin, endMin: b.endMin !== undefined ? b.endMin : s.endMin });
+    if (!span && !single) return res.status(400).json({ error: 'Data ou horários inválidos.' });
+    if (s.spanGroupId) {
+      const others = db.schedules.filter(x => x.spanGroupId === s.spanGroupId && x.id !== s.id);
+      const ids = new Set(others.map(x => x.id));
+      db.schedules = db.schedules.filter(x => !ids.has(x.id));
+      others.forEach(x => removeEntity('schedules', x.id));
+    }
+    const segs = span ? span.segs : [single];
+    Object.assign(s, segs[0]);
+    if (segs.length > 1) {
+      s.spanGroupId = s.spanGroupId || uid();
+      Object.assign(s, span.span);
+      segs.slice(1).forEach(seg => {
+        const one = { ...s, ...seg, id: uid(), createdAt: nowISO(), createdBy: req.user.id };
+        db.schedules.push(one); saveEntity('schedules', one);
+      });
+    } else clearScheduleSpan(s);
+    saveEntity('schedules', s);
+    broadcastChange('schedule', 'bulk', { workspaceId: s.workspaceId, byUserId: req.user.id });
+    return res.json(s);
+  }
   // Aceita mudança parcial (apenas data, só horário, etc) — só re-valida se vier
   if (b.date || b.startMin !== undefined || b.endMin !== undefined) {
     const merged = sanitizeScheduleBody({
@@ -11678,6 +11748,14 @@ app.delete('/api/schedules/:id', requireAuth, (req, res) => {
     const doomed = db.schedules.filter(x =>
       x.recurrenceGroupId === gid && canEditSchedule(req.user, x) &&
       (cutoff ? x.date >= cutoff : true));
+    const ids = new Set(doomed.map(x => x.id));
+    db.schedules = db.schedules.filter(x => !ids.has(x.id));
+    doomed.forEach(x => removeEntity('schedules', x.id));
+    broadcastChange('schedule', 'bulk', { workspaceId: wsId, byUserId: req.user.id });
+    return res.json({ ok: true, deleted: doomed.length });
+  }
+  if (s.spanGroupId) {
+    const doomed = db.schedules.filter(x => x.spanGroupId === s.spanGroupId && canEditSchedule(req.user, x));
     const ids = new Set(doomed.map(x => x.id));
     db.schedules = db.schedules.filter(x => !ids.has(x.id));
     doomed.forEach(x => removeEntity('schedules', x.id));

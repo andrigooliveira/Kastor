@@ -40543,7 +40543,7 @@ function _agmDayItems(userId, ymd) {
     items.push({ id: 's:' + s.id, kind: 'block', scheduleId: s.id, start: s.startMin, end: s.endMin, demandId: d ? d.id : null,
       color: isFree ? (s.color || k.color || '#7A00FF') : (s.stageColorSnapshot || p?.color || '#7A00FF'),
       title: isFree ? (s.title || k.label) : (d ? d.name : '(demanda removida)'),
-      meta: isFree ? k.label : (p?.name || ''), draggable: canEdit, editable: canEdit && isFree });
+      meta: isFree ? k.label : (p?.name || ''), draggable: canEdit && !s.spanGroupId, editable: canEdit && isFree });
   });
   return items.sort((a, b) => a.start - b.start || String(a.title).localeCompare(String(b.title)));
 }
@@ -41244,16 +41244,17 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
       const meta = [clientName, projName].filter(Boolean).join(' · ');
       metaHtml = meta ? `<div class="agenda-block-project">${esc(meta)}</div>` : '';
     }
-    const timeHtml = `<div class="agenda-block-time">${agendaMinsToHHMM(s.startMin)}–${agendaMinsToHHMM(s.endMin)}</div>`;
+    const timeHtml = `<div class="agenda-block-time">${s.spanGroupId ? esc(scheduleSpanLabel(s)) : `${agendaMinsToHHMM(s.startMin)}–${agendaMinsToHHMM(s.endMin)}`}</div>`;
     block.innerHTML = `
       ${actions}
       ${nameHtml}
       ${metaHtml}
       ${timeHtml}
-      ${canEdit ? '<div class="agenda-block-resize" data-resize="1"></div>' : ''}`;
+      ${canEdit && !s.spanGroupId ? '<div class="agenda-block-resize" data-resize="1"></div>' : ''}`;
+    if (s.spanGroupId) block.title = scheduleSpanLabel(s);
     block.addEventListener('mousedown', (e) => {
       if (e.target.closest('[data-action]')) return;
-      onAgendaBlockMouseDown(e, s, canEdit);
+      onAgendaBlockMouseDown(e, s, canEdit && !s.spanGroupId); // período se edita pelo modal
     });
     block.addEventListener('click', (e) => {
       const actionBtn = e.target.closest('[data-action]');
@@ -41730,6 +41731,12 @@ async function onAgendaBlockUp() {
   }
 }
 
+/* Rótulo do período inteiro de um bloco multi-dia: "21/10 13:00 → 22/10 15:00". */
+function scheduleSpanLabel(s) {
+  const dm = ymd => { const [, m, d] = ymd.split('-'); return `${d}/${m}`; };
+  return `${dm(s.spanStartDate)} ${agendaMinsToHHMM(s.spanStartMin)} → ${dm(s.spanEndDate)} ${agendaMinsToHHMM(s.spanEndMin)}`;
+}
+
 /* ── Modal de agendar/editar bloco ── */
 let _schedulePresetUserId = null; // userId do contexto de criação
 // Estado da recorrência escolhida no modal atual. null = "não se repete".
@@ -41971,10 +41978,44 @@ function setScheduleMode(mode) {
   // quando o bloco já é de uma série (aí mostra só o aviso, sem o seletor).
   const editing = editingScheduleId ? schedules.find(x => x.id === editingScheduleId) : null;
   if (recurRow) {
-    recurRow.style.display = _scheduleMode === 'free' && (!editing || editing.recurrenceGroupId) ? '' : 'none';
+    recurRow.style.display = _scheduleMode === 'free' && !_scheduleMultiday && (!editing || editing.recurrenceGroupId) ? '' : 'none';
     recurRow.classList.toggle('is-locked', !!editing);
   }
+  if (_scheduleMode !== 'free' && _scheduleMultiday) setScheduleMultiday(false);
+  _syncScheduleMultidayToggle();
   if (_scheduleMode === 'free') renderScheduleKindChips();
+}
+/* Período em vários dias (só bloco livre): ex. ausente das 13h de 21/10 às 15h
+   de 22/10. O servidor quebra em um bloco por dia, ligados por spanGroupId. */
+let _scheduleMultiday = false;
+function setScheduleMultiday(on) {
+  _scheduleMultiday = !!on;
+  $('sch-when-row')?.classList.toggle('is-multiday', _scheduleMultiday);
+  const endDate = $('sch-end-date');
+  if (endDate) {
+    const start = $('sch-date')?.value || '';
+    if (!_scheduleMultiday) endDate.value = start;
+    else if (!endDate.value || endDate.value <= start) {
+      const d = new Date((start || agendaYmd(new Date())) + 'T12:00:00');
+      d.setDate(d.getDate() + 1);
+      endDate.value = agendaYmd(d);
+    }
+    endDate.min = start;
+  }
+  // Período não vira série: esconde "Repetir" enquanto for multi-dia.
+  const recurRow = $('sch-recur-row');
+  const editing = editingScheduleId ? schedules.find(x => x.id === editingScheduleId) : null;
+  if (recurRow) recurRow.style.display = _scheduleMode === 'free' && !_scheduleMultiday && (!editing || editing.recurrenceGroupId) ? '' : 'none';
+  if (_scheduleMultiday) { _scheduleRecurrence = null; const sel = $('sch-recur'); if (sel) sel.value = 'none'; _updateScheduleRecurInfo(); }
+  _syncScheduleMultidayToggle();
+  updateScheduleDuration();
+}
+function toggleScheduleMultiday() { setScheduleMultiday(!_scheduleMultiday); }
+function _syncScheduleMultidayToggle() {
+  const btn = $('sch-multiday-toggle');
+  if (!btn) return;
+  btn.style.display = _scheduleMode === 'free' ? '' : 'none';
+  btn.textContent = _scheduleMultiday ? 'Terminar no mesmo dia' : 'Termina em outro dia';
 }
 function renderScheduleKindChips() {
   const wrap = $('sch-kind-chips');
@@ -42035,12 +42076,15 @@ function openScheduleModal(id, preset) {
       return `<option value="${d.id}" ${d.id === currentDemandId ? 'selected' : ''}>${esc(lbl)}</option>`;
     }).join('');
   }
-  const date = (s ? s.date : preset?.date) || agendaYmd(new Date());
-  const startMin = s ? s.startMin : (preset?.startMin || AGENDA_DAY_START_MIN);
-  const endMin = s ? s.endMin : (preset?.endMin || (startMin + 60));
+  const span = s && s.spanGroupId ? s : null; // bloco de um período: edita o período inteiro
+  const date = (span ? span.spanStartDate : s ? s.date : preset?.date) || agendaYmd(new Date());
+  const startMin = span ? span.spanStartMin : s ? s.startMin : (preset?.startMin || AGENDA_DAY_START_MIN);
+  const endMin = span ? span.spanEndMin : s ? s.endMin : (preset?.endMin || (startMin + 60));
   $('sch-date').value = date;
   $('sch-start').value = agendaMinsToHHMM(startMin);
   $('sch-end').value = agendaMinsToHHMM(endMin);
+  $('sch-end-date').value = span ? span.spanEndDate : date;
+  setScheduleMultiday(!!span);
   // Subtítulo: pra quem é o bloco e em que dia (atualiza ao trocar a data).
   _scheduleForName = userById(s ? s.userId : (preset?.userId || agendaUserId))?.name || '—';
   _updateScheduleWhen();
@@ -42070,6 +42114,12 @@ function openScheduleModal(id, preset) {
   const dateInp = $('sch-date');
   if (dateInp && !dateInp._recurBound) {
     dateInp.addEventListener('change', () => {
+      const endDate = $('sch-end-date');
+      if (endDate) {
+        endDate.min = dateInp.value;
+        if (!_scheduleMultiday || endDate.value < dateInp.value) endDate.value = dateInp.value;
+      }
+      updateScheduleDuration();
       _updateScheduleWhen();
       _populateScheduleRecur(dateInp.value);
       // Se estava em uma opção baseada em dow, invalida (o dia da semana mudou).
@@ -42088,14 +42138,20 @@ function _updateScheduleWhen() {
   if (!el) return;
   const v = $('sch-date')?.value;
   const d = v ? new Date(v + 'T12:00:00') : null;
-  const day = d && !isNaN(d) ? d.toLocaleDateString(LOCALE, { weekday: 'short', day: '2-digit', month: '2-digit' }).replace('.', '') : '';
+  const fmt = x => x && !isNaN(x) ? x.toLocaleDateString(LOCALE, { weekday: 'short', day: '2-digit', month: '2-digit' }).replace('.', '') : '';
+  let day = fmt(d);
+  const ve = $('sch-end-date')?.value;
+  if (_scheduleMultiday && ve && ve !== v) day = `${day} → ${fmt(new Date(ve + 'T12:00:00'))}`;
   el.textContent = [`Para ${_scheduleForName}`, day].filter(Boolean).join(' · ');
 }
 function updateScheduleDuration() {
   const el = $('sch-duration');
   if (!el) return;
   const a = $('sch-start')?.value, b = $('sch-end')?.value;
-  const mins = a && b ? agendaHHMMtoMins(b) - agendaHHMMtoMins(a) : 0;
+  let mins = a && b ? agendaHHMMtoMins(b) - agendaHHMMtoMins(a) : 0;
+  const da = $('sch-date')?.value, db = $('sch-end-date')?.value;
+  if (_scheduleMultiday && da && db) mins += Math.round((new Date(db + 'T12:00:00') - new Date(da + 'T12:00:00')) / 86400000) * 1440;
+  _updateScheduleWhen();
   el.classList.toggle('is-bad', !!(a && b) && mins <= 0);
   el.textContent = !a || !b ? '' : mins <= 0 ? 'Fim antes do início' : fmtHm(mins / 60);
 }
@@ -42122,8 +42178,10 @@ async function saveSchedule() {
   const date = $('sch-date').value;
   const startMin = agendaHHMMtoMins($('sch-start').value);
   const endMin = agendaHHMMtoMins($('sch-end').value);
-  if (endMin <= startMin) { toast('Horário final precisa ser depois do início.', 'error'); return; }
-  const payload = { date, startMin, endMin };
+  const multiday = _scheduleMode === 'free' && _scheduleMultiday;
+  const endDate = multiday ? ($('sch-end-date').value || date) : date;
+  if (endDate < date || (endDate === date && endMin <= startMin)) { toast('O fim precisa ser depois do início.', 'error'); return; }
+  const payload = { date, startMin, endMin, endDate };
   if (_scheduleMode === 'free') {
     const title = ($('sch-title').value || '').trim();
     if (!title) { toast('Informe um título pro bloco livre.', 'error'); return; }
