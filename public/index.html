@@ -1430,9 +1430,9 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
           <div id="list-kanban-view" style="display:none">
             <div class="kanban-toolbar">
-              <div class="client-status-toggle kanban-mode-toggle">
-                <button type="button" class="btn btn-ghost btn-sm client-status-btn" data-kmode="attention" onclick="setKanbanMode('attention')">Atenção</button>
-                <button type="button" class="btn btn-ghost btn-sm client-status-btn" data-kmode="stage" onclick="setKanbanMode('stage')">Etapas</button>
+              <div class="seg client-status-toggle kanban-mode-toggle">
+                <button type="button" class="seg-btn client-status-btn" data-kmode="attention" onclick="setKanbanMode('attention')">Atenção</button>
+                <button type="button" class="seg-btn client-status-btn" data-kmode="stage" onclick="setKanbanMode('stage')">Etapas</button>
               </div>
               <div class="kanban-toolbar-hint" id="kanban-mode-hint"></div>
             </div>
@@ -1545,7 +1545,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <input type="hidden" id="capacity-period-start" value="">
             <input type="hidden" id="capacity-period-end" value="">
             <span class="an-filters-sp"></span>
-            <button type="button" class="an-action" onclick="exportCapacityCsv()" title="Exportar visão atual em CSV">
+            <button type="button" class="btn btn-ghost btn-sm an-action" onclick="exportCapacityCsv()" title="Exportar visão atual em CSV">
               <i data-lucide="download" class="ic-xs"></i><span>Exportar</span>
             </button>
           </div>
@@ -1580,7 +1580,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             </div>
             <input type="hidden" id="rhythm-week" value="0">
             <span class="an-filters-sp"></span>
-            <button type="button" class="an-action" id="rhythm-copy" onclick="rhythmCopySummary(this)" title="Copiar o resumo da semana pra Slack ou reunião">
+            <button type="button" class="btn btn-ghost btn-sm an-action" id="rhythm-copy" onclick="rhythmCopySummary(this)" title="Copiar o resumo da semana pra Slack ou reunião">
               <i data-lucide="copy" class="ic-xs"></i><span>Copiar resumo</span>
             </button>
           </div>
@@ -1619,7 +1619,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <input type="hidden" id="reports-period-start" value="">
             <input type="hidden" id="reports-period-end" value="">
             <span class="an-filters-sp"></span>
-            <button type="button" class="an-action" onclick="clearReportFilters()" title="Limpar filtros">
+            <button type="button" class="btn btn-ghost btn-sm an-action" onclick="clearReportFilters()" title="Limpar filtros">
               <i data-lucide="x" class="ic-xs"></i><span>Limpar filtros</span>
             </button>
           </div>
@@ -2149,8 +2149,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           </div>
           <div class="att-gal-sort-group">
             <span class="att-gal-sort-label">Ordenar por</span>
-            <div class="att-gal-sort-btns" id="global-gallery-sort-btns"></div>
-            <button type="button" class="att-gal-dir-btn" id="global-gallery-dir-btn" onclick="globalGalleryToggleDir()" title="Direção">
+            <div class="seg att-gal-sort-btns" id="global-gallery-sort-btns"></div>
+            <button type="button" class="btn btn-ghost btn-icon-only att-gal-dir-btn" id="global-gallery-dir-btn" onclick="globalGalleryToggleDir()" title="Direção">
               <i data-lucide="arrow-down" class="ic-sm"></i>
             </button>
           </div>
@@ -2175,10 +2175,10 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
               <input class="filter-input filter-input--with-icon" id="client-search" placeholder="Buscar cliente…" oninput="renderClients()" aria-label="Buscar cliente">
             </div>
             <select class="filter-select" id="client-f-ws" onchange="renderClients()" aria-label="Equipe"><option value="">Todas as equipes</option></select>
-            <div class="client-status-toggle" role="group" aria-label="Situação">
-              <button class="btn btn-ghost btn-sm client-status-btn active" data-status="all" onclick="setClientStatusFilter('all')">Todos<span class="cl-count" data-cl-count="all"></span></button>
-              <button class="btn btn-ghost btn-sm client-status-btn" data-status="active" onclick="setClientStatusFilter('active')">Ativos<span class="cl-count" data-cl-count="active"></span></button>
-              <button class="btn btn-ghost btn-sm client-status-btn" data-status="archived" onclick="setClientStatusFilter('archived')">Arquivados<span class="cl-count" data-cl-count="archived"></span></button>
+            <div class="seg client-status-toggle" role="group" aria-label="Situação">
+              <button class="seg-btn client-status-btn is-active" data-status="all" onclick="setClientStatusFilter('all')">Todos<span class="cl-count" data-cl-count="all"></span></button>
+              <button class="seg-btn client-status-btn" data-status="active" onclick="setClientStatusFilter('active')">Ativos<span class="cl-count" data-cl-count="active"></span></button>
+              <button class="seg-btn client-status-btn" data-status="archived" onclick="setClientStatusFilter('archived')">Arquivados<span class="cl-count" data-cl-count="archived"></span></button>
             </div>
             <select class="filter-select" id="client-sort" onchange="setClientSort(this.value)" aria-label="Ordenar">
               <option value="">Ordem: nome</option>
@@ -2404,8 +2404,8 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             </div>
             <div class="att-gal-sort-group">
               <span class="att-gal-sort-label">Ordenar por</span>
-              <div class="att-gal-sort-btns" id="gallery-page-sort-btns"></div>
-              <button type="button" class="att-gal-dir-btn" id="gallery-page-dir-btn" onclick="galleryPageToggleDir()" title="Direção">
+              <div class="seg att-gal-sort-btns" id="gallery-page-sort-btns"></div>
+              <button type="button" class="btn btn-ghost btn-icon-only att-gal-dir-btn" id="gallery-page-dir-btn" onclick="galleryPageToggleDir()" title="Direção">
                 <i data-lucide="arrow-down" class="ic-sm"></i>
               </button>
             </div>
@@ -2606,9 +2606,11 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <select class="filter-select" id="flow-detail-type" onchange="renderClientFlows(currentClientView)"><option value="">Todos os tipos</option></select>
             <div class="filter-group-label">
               <span class="filter-group-label-text">Ordenar</span>
-              <button class="btn btn-ghost btn-sm flow-sort-btn" data-sort="name" onclick="setClientFlowSort('name')">Nome</button>
-              <button class="btn btn-ghost btn-sm flow-sort-btn" data-sort="type" onclick="setClientFlowSort('type')">Tipo</button>
-              <button class="btn btn-ghost btn-sm flow-sort-btn" data-sort="modified" onclick="setClientFlowSort('modified')">Modificação</button>
+              <div class="seg">
+                <button type="button" class="seg-btn flow-sort-btn is-active" data-sort="name" onclick="setClientFlowSort('name')">Nome</button>
+                <button type="button" class="seg-btn flow-sort-btn" data-sort="type" onclick="setClientFlowSort('type')">Tipo</button>
+                <button type="button" class="seg-btn flow-sort-btn" data-sort="modified" onclick="setClientFlowSort('modified')">Modificação</button>
+              </div>
             </div>
             <button class="btn btn-primary btn-sm admin-only" style="margin-left:auto" onclick="openFlowModalForClient(currentClientView)"><i data-lucide="plus" class="ic-sm"></i> Novo Fluxo</button>
           </div>
@@ -2821,7 +2823,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <i data-lucide="search" class="filter-input-icon ic-sm"></i>
             <input class="filter-input filter-input--with-icon" id="users-search" placeholder="Buscar por nome, usuário ou e-mail…" oninput="renderUsers()" aria-label="Buscar pessoa">
           </div>
-          <div class="us-perm-chips" id="users-perm-filter" role="group" aria-label="Permissão"></div>
+          <div class="seg us-perm-chips" id="users-perm-filter" role="group" aria-label="Permissão"></div>
         </div>
         <div class="uws-filter" id="users-ws-filter"></div>
         </div>

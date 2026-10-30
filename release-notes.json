@@ -1,5 +1,14 @@
 [
   {
+    "id": "2026-10-30-barras-filtro",
+    "date": "2026-10-30",
+    "title": "Barras de filtro com o mesmo visual",
+    "highlights": [
+      "Clientes, Projetos, Fluxos, Dashboards, Formulários, Base de conhecimento, Senhas, Protótipos, Usuários, Análises, Performance e Galeria agora usam a mesma barra de filtros de Demandas: um cartão com todos os campos e botões na mesma altura. Os botões da barra, como \"Nova pasta\" e \"Novo dashboard\", têm o mesmo tamanho de texto do \"Nova demanda\" do topo.",
+      "As escolhas entre opções (Todos/Ativos/Arquivados em Clientes, Atenção/Etapas no kanban, ordenação em Fluxos e na Galeria, permissões em Usuários) viraram o mesmo seletor segmentado usado no resto da plataforma."
+    ]
+  },
+  {
     "id": "2026-10-30-agenda-barra",
     "date": "2026-10-30",
     "title": "Barra da agenda mais organizada",

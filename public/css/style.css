@@ -996,10 +996,6 @@ body.user-freelancer .freelancer-hide { display: none !important; }
 
 /* Toggle de view (1 semana / 2 semanas), chart toggle dots, etc — pílulas
    suaves em vez do cinza-escuro herdado */
-:root[data-theme="light"] .client-status-toggle {
-  background: #FFFFFF;
-  border: 1px solid rgba(0,0,0,0.10);
-}
 
 /* Tabelas — fundo do thead um pouco mais quente (era invisível) */
 :root[data-theme="light"] .table-wrap { background: #FFFFFF; border: 1px solid rgba(0,0,0,0.08); }
@@ -2701,31 +2697,25 @@ tr:hover td { background: var(--surface-2); }
 .filters-bar .filter-input-wrap { flex: 1 1 180px; min-width: 140px; max-width: 260px; }
 .filters-bar .filter-input,
 .filters-bar .filter-input-wrap .filter-input--with-icon {
-  height: 34px; font-size: 12px; padding: 0 10px;
+  height: 32px; font-size: 12px; padding: 0 10px;
 }
 .filters-bar .filter-input-wrap .filter-input--with-icon { padding-left: 42px; }
 .filters-bar .filter-input-icon { left: 12px; }
 .filters-bar .filter-cdrop { min-width: 0; flex-shrink: 1; }
 .filters-bar .filter-cdrop-trigger {
-  height: 34px; min-width: 110px; padding: 0 10px 0 12px; font-size: 12px; gap: 6px;
+  height: 32px; min-width: 110px; padding: 0 10px 0 12px; font-size: 12px; gap: 6px;
 }
 .filters-bar .filter-cdrop-avatar { width: 18px !important; height: 18px !important; font-size: 8px !important; }
 /* Native <select> raw (quando não passa por applyFilterDropdown) — mesma altura. */
 .filters-bar .filter-select,
 .filters-bar .filter-select:hover,
 .filters-bar .filter-select:focus {
-  height: 34px; font-size: 12px; padding: 0 28px 0 10px;
+  height: 32px; font-size: 12px; padding: 0 28px 0 10px;
   background-position: right 8px center;
   background-repeat: no-repeat;
 }
 .filters-bar .filter-period-trigger {
-  height: 34px; min-width: 110px; padding: 0 10px 0 12px; font-size: 12px; gap: 6px;
-}
-.filters-bar .demand-status-toggle,
-.filters-bar .client-status-toggle { padding: 2px; }
-.filters-bar .demand-status-toggle .client-status-btn,
-.filters-bar .client-status-toggle .client-status-btn {
-  height: 28px; padding: 0 10px !important; font-size: 11.5px !important; line-height: 1;
+  height: 32px; min-width: 110px; padding: 0 10px 0 12px; font-size: 12px; gap: 6px;
 }
 .filters-bar .list-view-toggle { flex-shrink: 0; }
 .filters-bar .list-view-toggle .btn { height: 32px; width: 32px; padding: 0; }
@@ -2904,8 +2894,8 @@ tr:hover td { background: var(--surface-2); }
 
 .filter-label { font-size: 10px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; display: block; margin-bottom: 6px; }
 .filter-group { display: flex; flex-direction: column; }
-.filters-bar .btn { height: 36px; padding: 0 12px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
-.filters-bar .btn-icon-only { width: 36px; padding: 0; }
+.filters-bar .btn { height: 32px; padding: 0 12px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.filters-bar .btn-icon-only { width: 32px; padding: 0; }
 
 /* ── Filter custom dropdown padronizado ── */
 .filter-native-hidden { display: none !important; }
@@ -6336,16 +6326,7 @@ body.is-resizing-detail * { cursor: col-resize !important; user-select: none !im
 
 .us-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .us-toolbar .filter-input-wrap { flex: 0 1 320px; min-width: 0; }
-.us-perm-chips { display: flex; flex-wrap: wrap; gap: 4px; }
-.us-perm-chip {
-  display: inline-flex; align-items: center; gap: 6px;
-  height: 28px; padding: 0 10px; border-radius: var(--radius-pill);
-  border: 1px solid var(--hairline); background: transparent;
-  font: inherit; font-size: 12.5px; font-weight: 500; color: var(--text-dim); cursor: pointer;
-}
 .us-perm-chip span { font-size: 11px; opacity: .7; font-variant-numeric: tabular-nums; }
-.us-perm-chip:hover { background: var(--surface-2); color: var(--text); }
-.us-perm-chip.is-active { background: var(--text); border-color: var(--text); color: var(--bg); }
 .us-pane .uws-filter { margin-bottom: 0; }
 
 /* Linha da pessoa: nome, @usuário e e-mail juntos. */
@@ -9045,7 +9026,7 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   height: 48px; border-radius: 10px;
   background: var(--surface);
   padding: 0 14px;
-  font-size: 13px;
+  font-size: var(--fs-base);
 }
 .detail-footer .form-control.footer-date:focus {
   outline: none; border-color: var(--border-active);
@@ -10532,10 +10513,6 @@ kbd {
   transition: opacity .12s var(--ease-out);
 }
 .flow-card:hover .flow-card-actions { opacity: 1; }
-.flow-sort-btn.active {
-  background: var(--accent-dim);
-  color: var(--accent-text);
-}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    FLUXOS DE DEMANDA — polish visual coerente com o resto.
@@ -10572,37 +10549,6 @@ kbd {
 }
 #flow-clients-grid .flow-card-sub {
   font-size: 11px; color: var(--text-dim); margin-top: -2px;
-}
-
-/* Toolbar de filtros no detalhe — Ordenar como pill segmentada. */
-#flows-view-detail .filter-group-label {
-  display: inline-flex; align-items: center; gap: 3px;
-  padding: 3px;
-  background: var(--surface-3);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-}
-#flows-view-detail .filter-group-label-text {
-  font-size: 11px !important;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-dim) !important;
-  font-weight: 500;
-  padding: 0 8px 0 6px;
-}
-#flows-view-detail .flow-sort-btn {
-  background: transparent !important;
-  border: 0 !important;
-  color: var(--text-dim) !important;
-  font-weight: 500 !important;
-  box-shadow: none !important;
-  font-size: 11px !important;
-  padding: 4px 10px !important;
-}
-#flows-view-detail .flow-sort-btn.active {
-  background: var(--surface) !important;
-  color: var(--text) !important;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.18) !important;
 }
 
 /* ─── FLOWS SPLIT VIEW — lista de fluxos à esquerda + editor inline à direita ─── */
@@ -10991,24 +10937,6 @@ kbd {
   color: #6b7280;
 }
 
-/* Toggle de Situação (Todos / Ativos / Arquivados) */
-.client-status-toggle {
-  display: inline-flex;
-  background: var(--surface-2);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  padding: 2px;
-  gap: 2px;
-}
-.client-status-btn { font-size: 12px !important; padding: 5px 12px !important; border-radius: 5px !important; }
-/* Active preenchido de roxo (accent) — deixa claro qual filtro está selecionado. */
-.client-status-btn.active {
-  background: var(--accent) !important;
-  color: #fff !important;
-  border-color: transparent !important;
-  box-shadow: 0 1px 2px rgba(var(--accent-rgb),0.20);
-}
-.client-status-btn.active:hover { filter: brightness(1.08); }
 .cl-count { margin-left: 6px; font-size: 11px; opacity: .7; font-variant-numeric: tabular-nums; }
 .cl-count:empty { display: none; }
 
@@ -15199,7 +15127,6 @@ tr.demand-row {
   cursor: not-allowed;
 }
 /* Período (perf-pfp): abre alinhado à direita */
-.perf-control .filter-period-trigger { height: 36px; }
 #perf-pfp-popover, #rhy-popover { left: auto; right: 0; }
 /* Botões-ícone dos filtros (atualizar, config). Sem label, sem borda, só
    um hover discreto pra afirmar clicabilidade. 16×16 no ícone. */
@@ -16398,37 +16325,34 @@ input[type="checkbox"]:checked {
    DEMANDAS v2 — hero, filterbar em container, rows polidas
    ══════════════════════════════════════════════════════════════════════════ */
 
-/* Filters-bar da /demandas (e /mine, /agenda) vira um "chip container"
-   com fundo próprio, borda hairline e cantos arredondados — bate com o
-   padrão visual da capacity/reports/dashboards. */
-#page-list .filters-bar,
-#page-mine .filters-bar {
+/* Toda .filters-bar vira um "chip container" com fundo próprio, borda
+   hairline e cantos arredondados (Demandas, Minhas demandas, Clientes,
+   Projetos, Fluxos, Senhas…). As barras com classe própria seguem o mesmo
+   padrão no bloco "BARRAS DE FILTRO" no fim do arquivo. */
+#app .filters-bar {
   padding: 6px 10px;
   background: var(--surface);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
   margin-bottom: 14px;
-  box-shadow: 0 1px 2px rgba(30, 30, 60, 0.04);
+  box-shadow: var(--shadow-xs);
 }
 
 /* Search input dentro do card — fundo branco (surface) + border hairline */
-#page-list .filters-bar .filter-input-wrap,
-#page-mine .filters-bar .filter-input-wrap {
+#app .filters-bar .filter-input-wrap {
   flex: 1 1 200px;
   max-width: 280px;
 }
-#page-list .filters-bar .filter-input,
-#page-mine .filters-bar .filter-input {
+#app .filters-bar .filter-input {
   background: var(--surface);
   border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-sm);
   height: 32px;
 }
-#page-list .filters-bar .filter-input:hover,
-#page-mine .filters-bar .filter-input:hover {
+#app .filters-bar .filter-input:hover {
   border-color: var(--text-muted);
 }
-#page-list .filters-bar .filter-input:focus,
-#page-mine .filters-bar .filter-input:focus {
+#app .filters-bar .filter-input:focus {
   background: var(--surface);
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 15%, transparent);
@@ -16436,55 +16360,42 @@ input[type="checkbox"]:checked {
 
 /* Filter-cdrop trigger + multi-trigger + period trigger dentro da filters-bar
    uniformizados em 32px — fundo branco (surface) com border hairline detalhada */
-#page-list .filters-bar .filter-cdrop-trigger,
-#page-list .filters-bar .filter-multi-trigger,
-#page-list .filters-bar .filter-period-trigger,
-#page-mine .filters-bar .filter-cdrop-trigger,
-#page-mine .filters-bar .filter-multi-trigger,
-#page-mine .filters-bar .filter-period-trigger {
+#app .filters-bar .filter-cdrop-trigger,
+#app .filters-bar .filter-multi-trigger,
+#app .filters-bar .filter-period-trigger {
   height: 32px;
   background: var(--surface);
   border: 1px solid var(--hairline-strong);
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   padding: 0 10px;
   min-width: 0;
 }
-#page-list .filters-bar .filter-cdrop-trigger:hover,
-#page-list .filters-bar .filter-multi-trigger:hover,
-#page-list .filters-bar .filter-period-trigger:hover,
-#page-mine .filters-bar .filter-cdrop-trigger:hover,
-#page-mine .filters-bar .filter-multi-trigger:hover,
-#page-mine .filters-bar .filter-period-trigger:hover {
+#app .filters-bar .filter-cdrop-trigger:hover,
+#app .filters-bar .filter-multi-trigger:hover,
+#app .filters-bar .filter-period-trigger:hover {
   background: var(--surface);
   border-color: var(--text-muted);
 }
-#page-list .filters-bar .filter-cdrop.filtering .filter-cdrop-trigger,
-#page-list .filters-bar .filter-period-trigger.filtering,
-#page-list .filters-bar .filter-multi-trigger.filtering,
-#page-mine .filters-bar .filter-cdrop.filtering .filter-cdrop-trigger,
-#page-mine .filters-bar .filter-period-trigger.filtering,
-#page-mine .filters-bar .filter-multi-trigger.filtering {
+#app .filters-bar .filter-cdrop.filtering .filter-cdrop-trigger,
+#app .filters-bar .filter-period-trigger.filtering,
+#app .filters-bar .filter-multi-trigger.filtering {
   border-color: var(--accent);
   background: color-mix(in oklab, var(--accent) 6%, var(--surface));
   color: var(--accent-text);
 }
 
 /* Botões icon-only (filtro avançado, kebab) padronizados em 32px */
-#page-list .filters-bar > .advanced-filters-wrap .advanced-filters-btn,
-#page-list .filters-bar > .list-view-menu-wrap .list-view-menu-btn,
-#page-mine .filters-bar > .advanced-filters-wrap .advanced-filters-btn,
-#page-mine .filters-bar > .list-view-menu-wrap .list-view-menu-btn {
+#app .filters-bar > .advanced-filters-wrap .advanced-filters-btn,
+#app .filters-bar > .list-view-menu-wrap .list-view-menu-btn {
   height: 32px;
   width: 32px;
   padding: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   border: 1px solid var(--hairline-strong);
 }
-#page-list .filters-bar > .advanced-filters-wrap .advanced-filters-btn:hover,
-#page-list .filters-bar > .list-view-menu-wrap .list-view-menu-btn:hover,
-#page-mine .filters-bar > .advanced-filters-wrap .advanced-filters-btn:hover,
-#page-mine .filters-bar > .list-view-menu-wrap .list-view-menu-btn:hover {
+#app .filters-bar > .advanced-filters-wrap .advanced-filters-btn:hover,
+#app .filters-bar > .list-view-menu-wrap .list-view-menu-btn:hover {
   border-color: var(--text-muted);
 }
 
@@ -16493,51 +16404,43 @@ input[type="checkbox"]:checked {
    trigger inteiro com a cor do status pra dar sinal visual imediato de filtro
    ativo — precisa vencer o override neutro acima (spec 1-2-0) por isso as
    regras variant vêm scoped nos mesmos ids. */
-#page-list .filters-bar .demand-status-drop-btn,
-#page-mine .filters-bar .demand-status-drop-btn {
+#app .filters-bar .demand-status-drop-btn {
   height: 32px;
   padding: 0 12px;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   border: 1px solid var(--hairline-strong);
   gap: 6px;
 }
-#page-list .filters-bar .demand-status-drop-btn:hover,
-#page-mine .filters-bar .demand-status-drop-btn:hover {
+#app .filters-bar .demand-status-drop-btn:hover {
   border-color: var(--text-muted);
 }
-#page-list .filters-bar .demand-status-drop-btn.is-status-open,
-#page-mine .filters-bar .demand-status-drop-btn.is-status-open {
+#app .filters-bar .demand-status-drop-btn.is-status-open {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
 }
-#page-list .filters-bar .demand-status-drop-btn.is-status-open:hover,
-#page-mine .filters-bar .demand-status-drop-btn.is-status-open:hover {
+#app .filters-bar .demand-status-drop-btn.is-status-open:hover {
   background: var(--accent-hover, var(--accent));
   border-color: var(--accent-hover, var(--accent));
   color: #fff;
 }
-#page-list .filters-bar .demand-status-drop-btn.is-status-late,
-#page-mine .filters-bar .demand-status-drop-btn.is-status-late {
+#app .filters-bar .demand-status-drop-btn.is-status-late {
   background: var(--danger-fill);
   border-color: var(--danger-fill);
   color: var(--on-accent);
 }
-#page-list .filters-bar .demand-status-drop-btn.is-status-late:hover,
-#page-mine .filters-bar .demand-status-drop-btn.is-status-late:hover {
+#app .filters-bar .demand-status-drop-btn.is-status-late:hover {
   background: color-mix(in srgb, var(--danger-fill) 88%, #000);
   border-color: color-mix(in srgb, var(--danger-fill) 88%, #000);
   color: #fff;
 }
-#page-list .filters-bar .demand-status-drop-btn.is-status-done,
-#page-mine .filters-bar .demand-status-drop-btn.is-status-done {
+#app .filters-bar .demand-status-drop-btn.is-status-done {
   background: var(--success-fill);
   border-color: var(--success-fill);
   color: var(--on-accent);
 }
-#page-list .filters-bar .demand-status-drop-btn.is-status-done:hover,
-#page-mine .filters-bar .demand-status-drop-btn.is-status-done:hover {
+#app .filters-bar .demand-status-drop-btn.is-status-done:hover {
   background: color-mix(in srgb, var(--success-fill) 88%, #000);
   border-color: color-mix(in srgb, var(--success-fill) 88%, #000);
   color: #fff;
@@ -16548,7 +16451,7 @@ input[type="checkbox"]:checked {
   height: 32px;
   width: 32px;
   padding: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   border: 1px solid var(--hairline-strong);
   color: var(--text-dim);
@@ -16647,12 +16550,6 @@ input[type="checkbox"]:checked {
   margin-bottom: 10px;
   box-shadow: 0 1px 2px rgba(30, 30, 60, 0.04);
   gap: 12px;
-}
-.kanban-mode-toggle .client-status-btn {
-  height: 26px;
-  padding: 0 12px;
-  font-size: 12px;
-  border-radius: 6px;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -17014,51 +16911,7 @@ input[type="checkbox"]:checked {
 .att-gal-sort-group {
   display: inline-flex; align-items: center; gap: 6px;
 }
-.att-gal-sort-label {
-  font-size: 10.5px; font-weight: 700;
-  text-transform: uppercase; letter-spacing: .05em;
-  color: var(--text-muted);
-  margin-right: 4px;
-}
-.att-gal-sort-btns {
-  display: inline-flex;
-  background: var(--surface-2);
-  border: 1px solid var(--hairline);
-  border-radius: 8px;
-  padding: 3px;
-  gap: 2px;
-}
-.att-gal-sort-btn {
-  height: 26px;
-  padding: 0 12px;
-  background: transparent;
-  border: 0;
-  border-radius: 5px;
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-dim);
-  cursor: pointer;
-  transition: background .15s var(--ease-out), color .15s var(--ease-out);
-}
-.att-gal-sort-btn:hover { color: var(--text); background: color-mix(in oklab, var(--accent) 6%, transparent); }
-.att-gal-sort-btn.is-active {
-  background: var(--surface);
-  color: var(--accent-text);
-  font-weight: 600;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-}
-.att-gal-dir-btn {
-  height: 30px; width: 30px;
-  display: inline-flex; align-items: center; justify-content: center;
-  background: var(--surface-2);
-  border: 1px solid var(--hairline);
-  border-radius: 8px;
-  color: var(--text-dim);
-  cursor: pointer;
-  transition: background .15s var(--ease-out), color .15s var(--ease-out);
-}
-.att-gal-dir-btn:hover { background: var(--surface-3); color: var(--accent-text); }
+.att-gal-sort-label { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
 .att-gal-dir-btn svg { width: 14px !important; height: 14px !important; }
 
 /* View toggle (grid/list) */
@@ -21182,12 +21035,6 @@ button.agy-day[class*="lv-"]:hover { background: color-mix(in srgb, var(--accent
 .an-f-dots { display: inline-flex; padding-left: var(--space-0-5); }
 .an-f-dots span { width: 8px; height: 8px; border-radius: var(--radius-circle); margin-left: -2px; box-shadow: var(--ring-halo); }
 
-.an-action {
-  display: inline-flex; align-items: center; gap: var(--space-1-5);
-  height: 32px; padding: 0 var(--space-2-5); border: 0; border-radius: var(--radius-sm);
-  background: none; color: var(--text-dim); font: inherit; font-size: var(--fs-sm); cursor: pointer;
-}
-.an-action:hover { background: var(--surface-2); color: var(--text); }
 .an-action.is-done { color: var(--success); }
 
 /* Seletor de equipes (popover com a lista) */
@@ -21490,7 +21337,7 @@ tr.is-open .an-chev { transform: rotate(90deg); }
 .mine-agenda-v2 .mine-agenda-head-v2 > .agenda-week-nav {
   gap: 6px; padding: 6px 10px; margin-bottom: 14px;
   background: var(--surface); border: 1px solid var(--hairline);
-  border-radius: var(--radius-md); box-shadow: 0 1px 2px rgba(30, 30, 60, 0.04);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-xs);
 }
 .mine-agenda-v2 .mine-agenda-head-v2 > .agenda-week-nav { flex: 1 1 100%; flex-wrap: wrap; margin-bottom: 0; }
 .mine-agenda-v2 .mine-agenda-head-v2 > .agenda-week-nav > .agenda-view-toggle { margin-left: auto !important; }
@@ -21499,9 +21346,11 @@ tr.is-open .an-chev { transform: rotate(90deg); }
 .mine-agenda-v2 .mine-agenda-head-v2 .btn-ghost,
 .mine-agenda-v2 .agenda-week-label.agdp-trigger,
 .mine-agenda-v2.is-standalone .agenda-user-pick .filter-cdrop-trigger {
-  height: 32px; padding: 0 10px; border-radius: 7px;
+  height: 32px; padding: 0 10px; border-radius: var(--radius-sm);
   background: var(--surface); border: 1px solid var(--hairline-strong);
 }
+.mine-agenda-v2 .agenda-toolbar .btn-ghost,
+.mine-agenda-v2 .mine-agenda-head-v2 .btn-ghost { font-size: var(--fs-base); }
 .mine-agenda-v2 .agenda-toolbar .btn-ghost:hover,
 .mine-agenda-v2 .mine-agenda-head-v2 .btn-ghost:hover,
 .mine-agenda-v2 .agenda-week-label.agdp-trigger:hover,
@@ -21966,3 +21815,65 @@ a.user-mini-card-name:hover { text-decoration: underline; text-underline-offset:
   .person-name { font-size: 26px; }
   .person-about { padding: var(--space-3) var(--space-2) 0; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   BARRAS DE FILTRO — um padrão só
+   Cartão: --surface, borda --hairline, --radius-md, 6px 10px de respiro.
+   Controles: 32px, fundo --surface, borda --hairline-strong, --radius-sm; com
+   filtro aplicado a borda vira --accent. Botão de texto igual ao "Nova
+   demanda" do topo (13px). Escolha entre opções é .seg (28px
+   + 2px de respiro = 32px). A .filters-bar ganha o cartão no bloco
+   "DEMANDAS v2"; aqui entram as barras com classe própria e os botões.
+   ══════════════════════════════════════════════════════════════════════════ */
+#app .an-filters,
+#app .perf-controls,
+#app .us-toolbar,
+#app .gallery-page-toolbar,
+#app .dashboards-searchbar {
+  padding: 6px 10px;
+  gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-xs);
+}
+#app :is(.an-filters, .perf-controls, .us-toolbar, .gallery-page-toolbar, .dashboards-searchbar) .filter-input {
+  height: 32px;
+  font-size: 12px;
+  background: var(--surface);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-sm);
+}
+#app :is(.an-filters, .perf-controls, .us-toolbar, .gallery-page-toolbar, .dashboards-searchbar) .filter-input:hover { border-color: var(--text-muted); }
+#app :is(.an-filters, .perf-controls, .us-toolbar, .gallery-page-toolbar, .dashboards-searchbar) .filter-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 15%, transparent);
+}
+#app :is(.filters-bar, .an-filters, .perf-controls, .us-toolbar, .gallery-page-toolbar, .dashboards-searchbar) :is(.filter-select, .filter-cdrop-trigger, .filter-multi-trigger, .filter-period-trigger, .an-f) {
+  height: 32px;
+  font-size: 12px;
+  background-color: var(--surface);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-sm);
+}
+#app :is(.filters-bar, .an-filters, .perf-controls, .us-toolbar, .gallery-page-toolbar, .dashboards-searchbar) :is(.filter-select, .filter-cdrop-trigger, .filter-multi-trigger, .filter-period-trigger, .an-f):hover {
+  background-color: var(--surface);
+  border-color: var(--text-muted);
+}
+#app :is(.filters-bar, .an-filters, .perf-controls, .us-toolbar, .gallery-page-toolbar, .dashboards-searchbar) :is(.filter-cdrop.filtering .filter-cdrop-trigger, .filter-period-trigger.filtering, .filter-multi-trigger.filtering, .an-f.is-set) {
+  border-color: var(--accent);
+  background-color: color-mix(in oklab, var(--accent) 6%, var(--surface));
+  color: var(--accent-text);
+}
+#app :is(.filters-bar, .an-filters, .perf-controls, .us-toolbar, .gallery-page-toolbar, .dashboards-searchbar) .btn {
+  height: 32px;
+  padding: 0 14px;
+  font-size: 13px;
+  border-radius: var(--radius-sm);
+}
+#app :is(.filters-bar, .an-filters, .perf-controls, .us-toolbar, .gallery-page-toolbar, .dashboards-searchbar) .btn-icon-only { width: 32px; padding: 0; }
+#app :is(.filters-bar, .an-filters, .perf-controls, .us-toolbar, .gallery-page-toolbar, .dashboards-searchbar) .btn-ghost {
+  background: var(--surface);
+  border-color: var(--hairline-strong);
+}
+#app :is(.filters-bar, .an-filters, .perf-controls, .us-toolbar, .gallery-page-toolbar, .dashboards-searchbar) .btn-ghost:hover { border-color: var(--text-muted); }

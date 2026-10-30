@@ -14917,7 +14917,7 @@ function setKanbanMode(m) {
 }
 function syncKanbanModeToggle() {
   document.querySelectorAll('.kanban-mode-toggle .client-status-btn[data-kmode]')
-    .forEach(b => b.classList.toggle('active', b.dataset.kmode === kanbanMode));
+    .forEach(b => b.classList.toggle('is-active', b.dataset.kmode === kanbanMode));
   const hint = $('kanban-mode-hint');
   if (hint) hint.textContent = kanbanMode === 'attention'
     ? 'Cards organizados por urgência de prazo — não por etapa. Clique pra abrir e avançar.'
@@ -26472,7 +26472,7 @@ function closeClientFlows() {
 function setClientFlowSort(key) {
   if (clientFlowSortKey === key) clientFlowSortDir *= -1;
   else { clientFlowSortKey = key; clientFlowSortDir = 1; }
-  document.querySelectorAll('.flow-sort-btn').forEach(b => b.classList.toggle('active', b.dataset.sort === key));
+  document.querySelectorAll('.flow-sort-btn').forEach(b => b.classList.toggle('is-active', b.dataset.sort === key));
   renderClientFlows(currentClientView);
 }
 
@@ -27476,7 +27476,7 @@ function renderUsers() {
   if (permHost) {
     permHost.innerHTML = US_PERM
       .filter(([k]) => k === 'all' || permCount(k) || usersPermFilter === k)
-      .map(([k, label]) => `<button type="button" class="us-perm-chip${usersPermFilter === k ? ' is-active' : ''}" aria-pressed="${usersPermFilter === k}" onclick="setUsersPermFilter('${k}')">${label}<span>${permCount(k)}</span></button>`)
+      .map(([k, label]) => `<button type="button" class="seg-btn us-perm-chip${usersPermFilter === k ? ' is-active' : ''}" aria-pressed="${usersPermFilter === k}" onclick="setUsersPermFilter('${k}')">${label}<span>${permCount(k)}</span></button>`)
       .join('');
   }
   const filteredList = base.filter(u => usersPermFilter === 'all' || _usPermOf(u) === usersPermFilter);
@@ -35773,7 +35773,7 @@ let currentProjectPeriod = '90';
 
 function setClientStatusFilter(s) {
   clientStatusFilter = s;
-  document.querySelectorAll('.client-status-btn').forEach(b => b.classList.toggle('active', b.dataset.status === s));
+  document.querySelectorAll('.client-status-btn[data-status]').forEach(b => b.classList.toggle('is-active', b.dataset.status === s));
   renderClients();
 }
 
@@ -36952,7 +36952,7 @@ function _renderGalleryPageInner() {
     { k: 'type',  label: 'Tipo' },
   ];
   $('gallery-page-sort-btns').innerHTML = sortOptions.map(o =>
-    `<button type="button" class="att-gal-sort-btn ${st.sort === o.k ? 'is-active' : ''}" onclick="galleryPageSetSort('${o.k}')">${o.label}</button>`
+    `<button type="button" class="seg-btn att-gal-sort-btn ${st.sort === o.k ? 'is-active' : ''}" onclick="galleryPageSetSort('${o.k}')">${o.label}</button>`
   ).join('');
   // Direction icon
   const dirBtn = $('gallery-page-dir-btn');
@@ -37283,7 +37283,7 @@ function _renderGlobalGalleryInner() {
     { k: 'client', label: 'Cliente' },
   ];
   $('global-gallery-sort-btns').innerHTML = sortOptions.map(o =>
-    `<button type="button" class="att-gal-sort-btn ${st.sort === o.k ? 'is-active' : ''}" onclick="globalGallerySetSort('${o.k}')">${o.label}</button>`
+    `<button type="button" class="seg-btn att-gal-sort-btn ${st.sort === o.k ? 'is-active' : ''}" onclick="globalGallerySetSort('${o.k}')">${o.label}</button>`
   ).join('');
   const dirBtn = $('global-gallery-dir-btn');
   if (dirBtn) {
