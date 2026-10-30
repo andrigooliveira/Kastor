@@ -2344,6 +2344,10 @@ tr:hover td { background: var(--surface-2); }
 .mine-agenda-v2.is-standalone .agenda-user-pick select.form-control {
   min-width: 200px; height: 32px; font-size: 12px;
 }
+/* O select vira .filter-cdrop (40px por padrão): mesma altura do .seg ao lado. */
+.mine-agenda-v2.is-standalone .agenda-user-pick .filter-cdrop-trigger {
+  height: 32px; min-width: 180px; padding: 0 10px 0 12px; font-size: 12px; gap: 6px;
+}
 .mine-agenda-v2 .mine-agenda-head-v2 {
   display: flex; align-items: center; justify-content: space-between;
   gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
@@ -21478,10 +21482,42 @@ tr.is-open .an-chev { transform: rotate(90deg); }
 .mine-agenda-v2 .agenda-toolbar { gap: 12px; }
 .mine-agenda-v2 .agenda-mode-toggle { margin-right: 0; }
 .mine-agenda-v2 .agenda-week-nav { gap: 6px; }
-.mine-agenda-v2 .agenda-week-label { min-width: 0; padding: 4px 8px; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mine-agenda-v2 .agenda-week-label { min-width: 0; padding: 4px 8px; font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Barra da agenda no mesmo cartão da .filters-bar de Demandas: fundo surface,
+   borda hairline, controles de 32px com borda hairline-strong e raio 7px.
+   Vale pra /agenda (.agenda-toolbar) e pra Minha Agenda (linha de navegação). */
+.mine-agenda-v2.is-standalone .agenda-toolbar,
+.mine-agenda-v2 .mine-agenda-head-v2 > .agenda-week-nav {
+  gap: 6px; padding: 6px 10px; margin-bottom: 14px;
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: var(--radius-md); box-shadow: 0 1px 2px rgba(30, 30, 60, 0.04);
+}
+.mine-agenda-v2 .mine-agenda-head-v2 > .agenda-week-nav { flex: 1 1 100%; flex-wrap: wrap; margin-bottom: 0; }
+.mine-agenda-v2 .mine-agenda-head-v2 > .agenda-week-nav > .agenda-view-toggle { margin-left: auto !important; }
+.mine-agenda-v2 .agenda-toolbar .agenda-week-nav { gap: 6px; }
+.mine-agenda-v2 .agenda-toolbar .btn-ghost,
+.mine-agenda-v2 .mine-agenda-head-v2 .btn-ghost,
+.mine-agenda-v2 .agenda-week-label.agdp-trigger,
+.mine-agenda-v2.is-standalone .agenda-user-pick .filter-cdrop-trigger {
+  height: 32px; padding: 0 10px; border-radius: 7px;
+  background: var(--surface); border: 1px solid var(--hairline-strong);
+}
+.mine-agenda-v2 .agenda-toolbar .btn-ghost:hover,
+.mine-agenda-v2 .mine-agenda-head-v2 .btn-ghost:hover,
+.mine-agenda-v2 .agenda-week-label.agdp-trigger:hover,
+.mine-agenda-v2.is-standalone .agenda-user-pick .filter-cdrop-trigger:hover {
+  background: var(--surface); border-color: var(--text-muted);
+}
+.mine-agenda-v2 .agenda-week-label.agdp-trigger.is-open { border-color: var(--accent); }
+.mine-agenda-v2 .agenda-week-label.agdp-trigger { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.agenda-week-arrow { width: 13px; height: 13px; color: var(--text-muted); flex-shrink: 0; }
+/* Botões só com ícone (setas, sincronizar da Minha Agenda) ficam quadrados. */
+.mine-agenda-v2 .agenda-week-nav > .btn-ghost:has(> svg:only-child),
+.mine-agenda-v2 .mine-agenda-head-v2 .agenda-sync-btn { width: 32px; padding: 0; justify-content: center; }
+.mine-agenda-v2 .agenda-toolbar .agenda-hint.is-tip { width: 32px; height: 32px; }
 .mine-agenda-v2 #agenda-user-pick-single .filter-cdrop.filtering .filter-cdrop-trigger,
 :root[data-theme="light"] .mine-agenda-v2 #agenda-user-pick-single .filter-cdrop.filtering .filter-cdrop-trigger {
-  border-color: var(--hairline); background: var(--surface); color: var(--text);
+  border-color: var(--hairline-strong); background: var(--surface); color: var(--text);
 }
 .mine-agenda-v2 .agenda-hint.is-tip {
   position: relative; display: inline-flex; align-items: center; justify-content: center;

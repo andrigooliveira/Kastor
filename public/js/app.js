@@ -40079,13 +40079,8 @@ function agendaColumnsLayout() {
     return { cols, gridTemplate: tmpl.join(' '), days: [new Date(day)] };
   }
   const days = agendaDays();
+  // Quinzena: os 14 dias seguem corridos, sem coluna separando as semanas.
   days.forEach((d, i) => {
-    // Antes do 8º dia (domingo da semana 2) insere a divisória
-    if (agendaWeeks === 2 && i === 7) {
-      cols.push({ type: 'gap', gridCol });
-      tmpl.push('14px');
-      gridCol++;
-    }
     cols.push({ type: 'day', day: d, dayIdx: i, gridCol });
     tmpl.push(`minmax(${dayColMin}, 1fr)`);
     gridCol++;
@@ -40395,7 +40390,8 @@ function renderAgendaInto(wrapId, weekLabelId, userId) {
     lbl.textContent = first.toLocaleDateString(LOCALE, { weekday: 'short', day: '2-digit', month: 'long' }).replace('.', '');
   } else if (lbl && first && last && !useTeam) {
     const fmt = (d) => d.toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit' });
-    lbl.textContent = `${fmt(first)} → ${fmt(last)}`;
+    lbl.innerHTML = `${esc(fmt(first))}<i data-lucide="arrow-right" class="ic-xs agenda-week-arrow" aria-label="até"></i>${esc(fmt(last))}`;
+    paintIcons(lbl);
   }
   if (useTeam) {
     if (!agendaTeamUsers.length) {

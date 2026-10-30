@@ -1,5 +1,15 @@
 [
   {
+    "id": "2026-10-30-agenda-barra",
+    "date": "2026-10-30",
+    "title": "Barra da agenda mais organizada",
+    "highlights": [
+      "Na Agenda e na Minha Agenda, os controles do topo ficam num cartão igual ao da barra de filtros de Demandas, todos com a mesma altura.",
+      "O período da semana usa o mesmo tamanho de texto dos outros controles, com um ícone de seta entre as datas.",
+      "Na visão Quinzena, os 14 dias aparecem corridos, sem a faixa que separava as duas semanas."
+    ]
+  },
+  {
     "id": "2026-10-30-agenda-sincronizar",
     "date": "2026-10-30",
     "title": "Botão Sincronizar na agenda",
