@@ -10988,6 +10988,7 @@ function goPage(page) {
   const backBtn = document.getElementById('topbar-back');
   if (backBtn) backBtn.style.display = page === 'demand-detail' ? '' : 'none';
   renderCurrent();
+  if (page === 'agenda' || page === 'mine') maybeAutoSyncAgenda();
   // Voltou do detalhe pra tela de onde abriu: mesma rolagem, última demanda marcada.
   if (prevPage === 'demand-detail' && _listReturn?.page === page) _restoreListReturn();
   // Mudou de página → descarta filtros da anterior na URL (semântica é por-página).
@@ -40121,6 +40122,52 @@ async function refreshGoogleEventsForUser(userId) {
   })();
   _googleEventsFetchInFlight[userId] = p;
   return p;
+}
+
+/* ── Sincronizar agenda ──
+   Puxa o Google do próprio usuário (se conectado), recarrega os blocos do
+   período já em cache e os eventos Google de quem está na tela. Roda pelo
+   botão "Sincronizar" e sozinho ao abrir uma tela com agenda (no máx. 1x/min,
+   pra navegar entre telas não virar uma rajada de syncs). */
+const AGENDA_AUTO_SYNC_MIN_MS = 60 * 1000;
+let _agendaSyncAt = 0;
+let _agendaSyncing = null;
+function maybeAutoSyncAgenda() {
+  if (!me || Date.now() - _agendaSyncAt < AGENDA_AUTO_SYNC_MIN_MS) return;
+  syncAgendaNow(true);
+}
+async function syncAgendaNow(silent) {
+  if (_agendaSyncing) return _agendaSyncing;
+  _paintAgendaSyncBtns(true);
+  _agendaSyncing = (async () => {
+    let gErr = null;
+    if (me?.googleConnected) {
+      try {
+        const r = await api('/google/sync', 'POST');
+        if (r?.errors?.length) gErr = r.errors.length + ' calendário(s) com erro';
+      } catch (e) { gErr = e.message; }
+    }
+    // Troca só o período em cache — o que está fora dele segue como está.
+    const range = _scheduleRangeLoaded;
+    const fresh = await api(range ? `/schedules?from=${range.from}&to=${range.to}` : '/schedules');
+    schedules = range ? schedules.filter(s => s.date < range.from || s.date > range.to).concat(fresh) : fresh;
+    googleEventsForUser = {}; // renderAgenda refaz o fetch de quem está na tela
+    _agendaSyncAt = Date.now();
+    if (currentPage === 'agenda' || currentPage === 'mine') renderAgenda();
+    if (!silent) toast(gErr ? 'Agenda atualizada, mas o Google Agenda falhou: ' + gErr : 'Agenda atualizada.', gErr ? 'warn' : undefined);
+  })();
+  try { await _agendaSyncing; }
+  catch (e) { if (!silent) toast('Erro ao sincronizar: ' + e.message, 'error'); }
+  finally { _agendaSyncing = null; _paintAgendaSyncBtns(false); }
+}
+function _paintAgendaSyncBtns(busy) {
+  const when = _agendaSyncAt ? new Date(_agendaSyncAt).toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' }) : '';
+  document.querySelectorAll('.agenda-sync-btn').forEach(b => {
+    b.classList.toggle('is-spinning', busy);
+    b.title = busy ? 'Sincronizando…' : when ? `Sincronizar agenda · atualizada às ${when}` : 'Sincronizar agenda';
+    const lbl = b.querySelector('.agenda-sync-lbl');
+    if (lbl) lbl.textContent = busy ? 'Sincronizando…' : 'Sincronizar';
+  });
 }
 
 // Converte evento Google (start/end ISO) pro shape de bloco da agenda.

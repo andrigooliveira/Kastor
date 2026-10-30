@@ -1,5 +1,15 @@
 [
   {
+    "id": "2026-10-30-agenda-sincronizar",
+    "date": "2026-10-30",
+    "title": "Botão Sincronizar na agenda",
+    "highlights": [
+      "A Agenda e a Minha Agenda, em Minhas Demandas, ganharam um botão Sincronizar. Ele busca de novo os blocos de todo mundo e, se você conectou o Google Agenda, puxa os seus eventos de lá na hora.",
+      "Ao abrir uma tela com agenda, a sincronização acontece sozinha. Blocos criados, mudados ou excluídos em outro computador ou por outra pessoa já aparecem atualizados.",
+      "Passe o mouse no botão para ver a hora da última atualização. O ícone gira enquanto sincroniza."
+    ]
+  },
+  {
     "id": "2026-10-30-bloco-varios-dias",
     "date": "2026-10-30",
     "title": "Blocos da agenda em vários dias",

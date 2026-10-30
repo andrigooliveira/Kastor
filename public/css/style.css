@@ -21684,6 +21684,9 @@ tr.is-open .an-chev { transform: rotate(90deg); }
 #schedule-modal .form-group { margin: 0; }
 #schedule-modal .form-label { margin-bottom: 6px; }
 .sch-mode-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+/* Botão Sincronizar da agenda: o ícone gira enquanto atualiza. */
+.agenda-sync-btn.is-spinning svg { animation: chipSpin .8s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .agenda-sync-btn.is-spinning svg { animation: none; } }
 .sch-label-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .sch-label-row .form-label { margin-bottom: 6px; }
 .sch-duration { font-size: 12px; font-weight: 500; color: var(--text-muted); font-variant-numeric: tabular-nums; }

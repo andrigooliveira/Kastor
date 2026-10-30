@@ -1487,6 +1487,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                 <button class="seg-btn agenda-view-btn" data-view="month" onclick="setAgendaView('month')">Mês</button>
                 <button class="seg-btn agenda-view-btn" data-view="year" onclick="setAgendaView('year')">Ano</button>
               </div>
+              <button type="button" class="btn btn-ghost btn-sm agenda-sync-btn" onclick="syncAgendaNow()" title="Sincronizar agenda" aria-label="Sincronizar agenda"><i data-lucide="refresh-cw" class="ic-sm"></i></button>
             </div>
           </div>
           <div class="mine-agenda-body">
@@ -1708,6 +1709,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
             <button class="btn btn-ghost btn-sm" onclick="agendaTodayDay()">Hoje</button>
           </div>
           <div class="agenda-spacer"></div>
+          <button type="button" class="btn btn-ghost btn-sm agenda-sync-btn" onclick="syncAgendaNow()" title="Sincronizar agenda"><i data-lucide="refresh-cw" class="ic-sm"></i> <span class="agenda-sync-lbl">Sincronizar</span></button>
           <span class="agenda-hint is-tip" tabindex="0" role="note" data-tip="Arraste num horário vazio pra criar · num bloco pra mover · na borda inferior pra redimensionar · clique pra abrir a demanda." aria-label="Arraste num horário vazio pra criar · num bloco pra mover · na borda inferior pra redimensionar · clique pra abrir a demanda."><i data-lucide="circle-help" class="ic-sm"></i></span>
           <div class="seg agenda-view-toggle" id="agenda-view-toggle-weeks">
             <button class="seg-btn agenda-view-btn" data-view="day" onclick="setAgendaView('day')">Dia</button>
