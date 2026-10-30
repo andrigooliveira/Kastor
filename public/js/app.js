@@ -12227,6 +12227,7 @@ function renderDashForecast() {
     const flow = flowById(d.flowId);
     const sh = d.stageHistory || [];
     const doneY = d.completedAt ? _ymdLocal(new Date(d.completedAt)) : null;
+    const moves = mode === 'prazos' ? (Array.isArray(d.history) ? _stageMovesOf(d) : (d.stageMoves || [])) : null;
     sh.forEach((p, i) => {
       const st = flow?.stages.find(x => x.id === p.stageId);
       if (!st || st.done) return;
@@ -12234,6 +12235,12 @@ function renderDashForecast() {
       const owner = resolveStageOwnerId(d, st) || (i === sh.length - 1 ? d.ownerId : null);
       if (owner !== meId) return;
       if (mode === 'prazos') {
+        // Etapa que já saiu só conta se a própria pessoa passou e era a responsável
+        // naquele momento — a que outra pessoa pulou não é entrega dela.
+        if (p.leftAt) {
+          const mv = _passageMove(p, moves);
+          if (!mv || mv.by !== meId || (mv.owner !== undefined ? mv.owner : owner) !== meId) return;
+        }
         // Todo prazo de etapa que venceu num dia que já passou fica nesse dia,
         // com o que aconteceu: entregue no prazo, com atraso, ou ainda aberto.
         // O que segue aberto TAMBÉM conta hoje (é trabalho pra agora, abaixo).
@@ -12387,6 +12394,18 @@ function _stageMovesOf(d) {
     else if (x.action === 'stage_changed' && x.details?.fromId) out.push({ fromId: x.details.fromId, by: x.userId, at: x.at, owner });
   });
   return out;
+}
+// O registro de passagem (stageMoves) que fechou essa passagem do stageHistory:
+// mesma etapa de origem, horário mais perto do leftAt (os dois saem do mesmo PUT).
+function _passageMove(p, moves) {
+  const t = new Date(p.leftAt).getTime();
+  let best = null, diff = 60e3;
+  (moves || []).forEach(m => {
+    if (m.fromId !== p.stageId || !m.at) return;
+    const x = Math.abs(new Date(m.at).getTime() - t);
+    if (x <= diff) { diff = x; best = m; }
+  });
+  return best;
 }
 const _dashDelivLevel = n => n <= 0 ? 0 : n === 1 ? 1 : n <= 3 ? 2 : n <= 6 ? 3 : 4;
 /* Calendário do mês de Entregas (Início e perfil da pessoa). map: ymd → itens;
