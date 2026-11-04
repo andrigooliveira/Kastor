@@ -1,5 +1,16 @@
 [
   {
+    "id": "2026-11-03-docs-inicio",
+    "date": "2026-11-03",
+    "title": "Nova tela inicial do Docs",
+    "highlights": [
+      "A tela inicial do Docs agora tem a mesma cara da plataforma: topbar com notificações, menu de apps e sua foto, e a barra de filtros igual à de Demandas.",
+      "Filtre os documentos por cliente, projeto e situação da aprovação (aguardando, aprovado ou com ajustes pedidos). Cada card mostra o selo da aprovação e o cliente vinculado.",
+      "Marque documentos com a estrela pra eles ficarem fixos na seção Favoritos, no topo.",
+      "Documentos excluídos vão pra Lixeira, de onde dá pra restaurar com tudo o que tinham. Também dá pra mandar pra Lixeira direto do card, pelo menu de \"mais ações\"."
+    ]
+  },
+  {
     "id": "2026-11-03-menu-apps",
     "date": "2026-11-03",
     "title": "Menu de apps no topo",

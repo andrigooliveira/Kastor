@@ -5071,6 +5071,12 @@ function writerCanWrite(user, doc)  {
   return r && WRITER_ROLE_RANK[r] >= WRITER_ROLE_RANK.editor;
 }
 function writerCanShare(user, doc)  { return _writerRoleOf(user, doc) === 'owner'; }
+/* Lixeira: quem editava o doc antes de excluir pode vê-lo e restaurá-lo. */
+function _writerCanManageTrash(user, doc) {
+  if (!doc || !doc.deletedAt || user.isFreelancer) return false;
+  const r = _writerRoleOf(user, doc);
+  return !!r && WRITER_ROLE_RANK[r] >= WRITER_ROLE_RANK.editor;
+}
 
 /* Preview curto (~180 chars) extraído do PM JSON — usado em thumbnails/lists. */
 function _writerContentPreview(content) {
@@ -5128,6 +5134,9 @@ function stripWriterDoc(doc, { includeContent = false, user = null } = {}) {
     // Formato: 'pageless' (bloco contínuo, padrão) ou 'pages' (folhas A4)
     layout: doc.layout === 'pages' ? 'pages' : 'pageless',
     publicShareEnabled: !!doc.publicShareEnabled,
+    // Favorito é por pessoa: a lista guarda quem marcou a estrela.
+    favorite: !!(user && Array.isArray(doc.favoritedBy) && doc.favoritedBy.includes(user.id)),
+    deletedAt: doc.deletedAt || null,
     // Ajuda o cliente a decidir se abre em read-only, esconde botões, etc.
     myRole: user ? _writerRoleOf(user, doc) : null,
     // Preview do texto (linha) — fallback quando o thumbHTML tá vazio
@@ -5193,8 +5202,12 @@ app.get('/api/writer', requireAuth, (req, res) => {
   // Lista qualquer doc onde o user tem role (workspace-editor implícito OU
   // permission explícita — cobre também docs restritos compartilhados de
   // outros squads).
-  const { clientId, projectId, lite } = req.query;
-  let docs = (db.writerDocuments || []).filter(d => !d.deletedAt && writerCanRead(u, d));
+  const { clientId, projectId, lite, trash } = req.query;
+  // trash=1: a Lixeira — excluídos que o usuário pode restaurar. Rascunhos
+  // vazios descartados sozinhos pelo editor (discarded) não aparecem.
+  let docs = trash === '1'
+    ? (db.writerDocuments || []).filter(d => d.deletedAt && !d.discarded && _writerCanManageTrash(u, d))
+    : (db.writerDocuments || []).filter(d => !d.deletedAt && writerCanRead(u, d));
   if (clientId) docs = docs.filter(d => d.clientId === clientId);
   if (projectId) docs = docs.filter(d => d.projectId === projectId);
   // lite=1: sem prévia/miniatura (listas dentro da plataforma)
@@ -5740,8 +5753,31 @@ app.delete('/api/writer/:id', requireAuth, (req, res) => {
   if (!writerCanWrite(req.user, doc)) return res.status(404).json({ error: 'Documento não encontrado' });
   doc.deletedAt = nowISO();
   doc.deletedBy = req.user.id;
+  // ?discard=1: rascunho vazio que o editor apaga sozinho — não vai pra Lixeira.
+  if (req.query.discard === '1') doc.discarded = true;
   saveEntity('writerDocuments', doc);
   res.json({ ok: true });
+});
+
+// POST /api/writer/:id/restore — tira da Lixeira
+app.post('/api/writer/:id/restore', requireAuth, (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  if (!_writerCanManageTrash(req.user, doc) || doc.discarded) return res.status(404).json({ error: 'Documento não encontrado' });
+  doc.deletedAt = null;
+  doc.deletedBy = null;
+  saveEntity('writerDocuments', doc);
+  res.json(stripWriterDoc(doc, { user: req.user }));
+});
+
+// POST /api/writer/:id/favorite { favorite: bool } — estrela pessoal
+app.post('/api/writer/:id/favorite', requireAuth, express.json({ limit: '4kb' }), (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  if (!writerCanRead(req.user, doc)) return res.status(404).json({ error: 'Documento não encontrado' });
+  const set = new Set(Array.isArray(doc.favoritedBy) ? doc.favoritedBy : []);
+  if (req.body?.favorite) set.add(req.user.id); else set.delete(req.user.id);
+  doc.favoritedBy = [...set];
+  saveEntity('writerDocuments', doc);
+  res.json({ favorite: set.has(req.user.id) });
 });
 
 /* Bootstrap consolidado: retorna em UMA resposta o que o cliente pedia em

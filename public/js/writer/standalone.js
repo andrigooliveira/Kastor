@@ -133,6 +133,7 @@
       teardownEditor();
       app.className = 'kd-app is-list';
       await loadList();
+      populateLinkFilters();
       renderList();
       // /hub/docs?novo=1 (botão "Novo documento" do Hub) → já abre os modelos
       const qs = new URLSearchParams(location.search);
@@ -184,22 +185,29 @@
       KD.usersById = new Map(list.map(u => [u.id, u]));
     } catch (e) { KD.usersById = new Map(); }
 
-    // Preenche user chip (usa display name, não username — igual o Hub)
-    const avatar = $('kd-user-avatar');
-    const uName = $('kd-user-name');
+    // Avatar da topbar e do menu da conta (nome de exibição, não o username)
     if (KD.me) {
       const displayName = KD.me.name || KD.me.username || 'Usuário';
-      uName.textContent = displayName;
-      if (KD.me.avatar) {
-        const img = document.createElement('img');
-        img.src = KD.me.avatar; img.alt = '';
-        avatar.innerHTML = ''; avatar.appendChild(img);
-      } else {
-        avatar.textContent = displayName.charAt(0).toUpperCase();
-      }
-      const chip = $('kd-user-chip');
-      if (chip) chip.title = displayName;
+      $('kd-user-name').textContent = displayName;
+      $('kd-user-sub').textContent = KD.me.email || KD.me.username || '';
+      // Mesmo desenho do avatarHTML da plataforma: foto da conta como fundo;
+      // sem foto, inicial sobre o degradê da pessoa.
+      const photo = KD.me.avatar || KD.usersById?.get(KD.me.id)?.avatar || '';
+      ['kd-user-avatar', 'kd-user-menu-avatar'].forEach(id => {
+        const el = $(id); if (!el) return;
+        el.innerHTML = '';
+        if (photo) {
+          el.textContent = '';
+          el.style.cssText = 'background-image:url("' + String(photo).replace(/"/g, '%22') + '");background-size:cover;background-position:center';
+        } else {
+          el.textContent = displayName.trim().charAt(0).toUpperCase();
+          el.style.cssText = 'background:' + _kdAvatarGradient(KD.me.id || KD.me.username || displayName) + ';color:#fff;border:0;box-shadow:inset 0 0 0 1px rgba(255,255,255,0.08)';
+        }
+      });
+      $('topbar-user').title = displayName;
     }
+    // Sino: mesmo painel de notificações da plataforma
+    kdNotifInit();
 
     // Pinta filtro de squad (hidden, mas usado internamente pelo createDoc)
     populateWsFilter();
@@ -236,7 +244,8 @@
         </div>`).join('');
     }
     try {
-      KD.docsList = await api('/writer');
+      const [docs] = await Promise.all([api('/writer'), loadTrash()]);
+      KD.docsList = docs;
     } catch (e) {
       KD.docsList = [];
       toast(e.message || 'Falha ao carregar documentos.', 'error');
@@ -259,150 +268,504 @@
   }
   window.__kdSyncBrandLogo = syncBrandLogo;
 
-  // ── Toolbar de recentes (owner filter / view toggle / sort menu) ───────
-  // Preferências persistidas via localStorage, mesmo namespace do Hub.
+  // ── Barra de filtros (dono, cliente, projeto, aprovação, ordem, visão) ──
+  // Preferências de ordem/visão/dono persistem no localStorage (namespace antigo do Hub).
   function readPref(k, def) { try { return localStorage.getItem('kastor-hub-' + k) || def; } catch { return def; } }
   function savePref(k, v) { try { localStorage.setItem('kastor-hub-' + k, v); } catch {} }
   KD.owner = readPref('owner', 'mine');
   KD.sort  = readPref('sort',  'updated');
   KD.view  = readPref('view',  'grid');
+  KD.filters = { client: '', project: '', status: '' };
+  KD.trashMode = false;
+  KD.trashList = [];
+
+  const R_ = () => KD.refData || {};
+  const clientName  = (id) => (R_().clients  || []).find(c => c.id === id)?.name || '';
+  const projectName = (id) => (R_().projects || []).find(p => p.id === id)?.name || '';
 
   function initRecentToolbar() {
-    applyOwnerTabs(); applyViewIcon();
-    markSelectedInMenu('kd-recent-sort-menu', 'sort', KD.sort);
+    applyOwnerSeg(); applyViewSeg();
+    $('kd-f-sort').value = KD.sort;
     $('kd-owner-tabs').addEventListener('click', (e) => {
       const b = e.target.closest('[data-owner]'); if (!b) return;
       KD.owner = b.dataset.owner; savePref('owner', KD.owner);
-      applyOwnerTabs(); renderList();
+      applyOwnerSeg(); renderList();
     });
-    $('kd-recent-sort-menu').addEventListener('click', (e) => {
-      const b = e.target.closest('button[data-sort]'); if (!b) return;
-      KD.sort = b.dataset.sort; savePref('sort', KD.sort);
-      markSelectedInMenu('kd-recent-sort-menu', 'sort', KD.sort);
-      $('kd-recent-sort-menu').hidden = true;
-      renderList();
+    $('kd-view-seg').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-view]'); if (!b) return;
+      KD.view = b.dataset.view; savePref('view', KD.view);
+      applyViewSeg();
     });
-    document.addEventListener('click', (e) => {
-      if (e.target.closest('.kd-recent-menu')) return;
-      const m = $('kd-recent-sort-menu'); if (m) m.hidden = true;
+    $('kd-f-sort').addEventListener('change', (e) => { KD.sort = e.target.value; savePref('sort', KD.sort); renderList(); });
+    $('kd-f-client').addEventListener('change', (e) => {
+      KD.filters.client = e.target.value;
+      // Projeto de outro cliente deixa de valer
+      if (KD.filters.project && KD.filters.client) {
+        const p = (R_().projects || []).find(x => x.id === KD.filters.project);
+        if (p && p.clientId !== KD.filters.client) KD.filters.project = '';
+      }
+      populateLinkFilters(); renderList();
     });
+    $('kd-f-project').addEventListener('change', (e) => { KD.filters.project = e.target.value; renderList(); });
+    $('kd-f-status').addEventListener('change', (e) => { KD.filters.status = e.target.value; renderList(); });
+    // Delegação: abrir, estrela, menu e restaurar valem pras duas grades.
+    ['kd-grid', 'kd-fav-grid'].forEach(id => $(id).addEventListener('click', onGridClick));
   }
-  function applyOwnerTabs() {
+  function applyOwnerSeg() {
     document.querySelectorAll('#kd-owner-tabs [data-owner]').forEach(b => {
       const on = b.dataset.owner === KD.owner;
       b.classList.toggle('is-active', on);
-      b.setAttribute('aria-selected', on ? 'true' : 'false');
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
   }
-  const KD_ICON_LIST = '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>';
-  const KD_ICON_GRID = '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>';
-  function applyViewIcon() {
-    const grid = $('kd-grid');
-    const btn = $('kd-recent-view-btn');
-    const ic = $('kd-recent-view-icon');
-    if (!grid || !btn || !ic) return;
+  function applyViewSeg() {
     const isList = KD.view === 'list';
-    grid.classList.toggle('is-list', isList);
-    btn.title = isList ? 'Ver em grade' : 'Ver em lista';
-    ['fill:none', 'stroke:currentColor', 'stroke-width:2', 'stroke-linecap:round', 'stroke-linejoin:round']
-      .forEach(kv => { const [k, v] = kv.split(':'); ic.setAttribute(k, v); });
-    ic.innerHTML = isList ? KD_ICON_GRID : KD_ICON_LIST;
+    ['kd-grid', 'kd-fav-grid'].forEach(id => $(id)?.classList.toggle('is-list', isList));
+    document.querySelectorAll('#kd-view-seg [data-view]').forEach(b => {
+      const on = b.dataset.view === KD.view;
+      b.classList.toggle('is-active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
     requestAnimationFrame(() => window.__kdRescaleThumbs?.());
   }
-  function markSelectedInMenu(menuId, key, val) {
-    const menu = $(menuId); if (!menu) return;
-    menu.querySelectorAll('button').forEach(b => b.classList.toggle('is-selected', b.dataset[key] === val));
+  /* Cliente/projeto: só os que têm documento (na vista atual), em ordem alfabética. */
+  function populateLinkFilters() {
+    const src = KD.trashMode ? KD.trashList : KD.docsList;
+    const byName = (a, b) => a.name.localeCompare(b.name, LOCALE);
+    const cIds = new Set(src.map(d => d.clientId).filter(Boolean));
+    if (KD.filters.client) cIds.add(KD.filters.client);
+    const clients = [...cIds].map(id => ({ id, name: clientName(id) || 'Cliente removido' })).sort(byName);
+    const pIds = new Set(src.filter(d => !KD.filters.client || d.clientId === KD.filters.client).map(d => d.projectId).filter(Boolean));
+    if (KD.filters.project) pIds.add(KD.filters.project);
+    const projects = [...pIds].map(id => ({ id, name: projectName(id) || 'Projeto removido' })).sort(byName);
+    const fill = (sel, first, items, val) => {
+      sel.innerHTML = `<option value="">${esc(first)}</option>` + items.map(i => `<option value="${esc(i.id)}">${esc(i.name)}</option>`).join('');
+      sel.value = val || '';
+    };
+    fill($('kd-f-client'), 'Todos os clientes', clients, KD.filters.client);
+    fill($('kd-f-project'), 'Todos os projetos', projects, KD.filters.project);
+    $('kd-f-client').hidden = !clients.length;
+    // Projeto só depois de escolher o cliente (a barra não comporta tudo).
+    $('kd-f-project').hidden = !KD.filters.client || !projects.length;
+    // Filtro "ativo" ganha o contorno roxo do DS
+    $('kd-f-client').classList.toggle('filtering', !!KD.filters.client);
+    $('kd-f-project').classList.toggle('filtering', !!KD.filters.project);
+    $('kd-f-status').classList.toggle('filtering', !!KD.filters.status);
   }
-  window.kdRecentToggleMenu = function (which, ev) {
-    ev && ev.stopPropagation();
-    const m = $('kd-recent-sort-menu'); if (m) m.hidden = !m.hidden;
-  };
-  window.kdRecentToggleView = function () {
-    KD.view = KD.view === 'grid' ? 'list' : 'grid';
-    savePref('view', KD.view);
-    applyViewIcon();
-  };
 
-  function renderList() {
-    const grid = $('kd-grid');
-    if (!grid) return;
+  // ── Notificações (mesmo sino da plataforma) ──────────────────────────
+  // Texto, avatar, "não clicada" e ações são os do app.js (notifMessage,
+  // notifAvatarHTML, toggleNotifPanel). Sem SSE aqui: o servidor limita as
+  // conexões ao vivo por pessoa e uma guia do Docs derrubaria a da plataforma.
+  // Em vez disso, busca a cada 45s com a guia visível, ao voltar pra guia e
+  // ao abrir o sino.
+  const KDN = { list: [], wasUnread: new Set(), timer: null };
+  const userOf = (id) => (id && KD.usersById && KD.usersById.get(id)) || null;
+
+  function _kdAvatarHTML(u, cls) {
+    if (u && u.avatar) return `<div class="${cls}" style="background-image:url('${esc(u.avatar)}');background-size:cover;background-position:center"></div>`;
+    const initial = u ? String(u.name || u.username || '?').trim().charAt(0).toUpperCase() : '?';
+    const seed = u ? (u.id || u.username || u.name || '?') : '?';
+    return `<div class="${cls}" style="background:${_kdAvatarGradient(seed)};color:#fff;border:0;box-shadow:inset 0 0 0 1px rgba(255,255,255,0.08)">${esc(initial)}</div>`;
+  }
+  function notifMessage(n) {
+    const from = userOf(n.fromUser);
+    const fromName = from ? from.name : 'Alguém';
+    const comment = n.commentText ? `<div class="notif-comment">${esc(n.commentText)}</div>` : '';
+    switch (n.type) {
+      case 'assigned':
+        return `<strong>${esc(fromName)}</strong> atribuiu a demanda <strong>${esc(n.demandName)}</strong> para você${n.stageName ? ' na etapa ' + esc(n.stageName) : ''}`;
+      case 'stage_assigned':
+        return `A demanda <strong>${esc(n.demandName)}</strong> avançou para a etapa <strong>${esc(n.stageName || '—')}</strong> e foi atribuída a você`;
+      case 'mention':
+        return `<strong>${esc(fromName)}</strong> mencionou você em <strong>${esc(n.demandName)}</strong>` + comment;
+      case 'thread_reply':
+        return `<strong>${esc(fromName)}</strong> respondeu uma thread em que você participa em <strong>${esc(n.demandName)}</strong>` + comment;
+      case 'reaction':
+        return `<strong>${esc(fromName)}</strong> reagiu ${esc(n.emoji || '')} ao seu comentário em <strong>${esc(n.demandName)}</strong>` + comment;
+      case 'reminder':
+        return `Lembrete: <strong>${esc(n.demandName)}</strong>` + comment;
+      case 'time_gap':
+        return `<strong>Apontamento pendente</strong><div class="notif-comment">${esc(n.commentText || '')}</div>`;
+      case 'invite_accepted':
+        return `<strong>${esc(from ? from.name : (n.demandName || 'Alguém'))}</strong> aceitou o convite e entrou no reWork`;
+      case 'doc_approved':
+        return `<strong>${esc(n.fromName || 'O cliente')}</strong> aprovou o documento <strong>${esc(n.docTitle || n.demandName)}</strong>` + comment;
+      case 'support_reply':
+        return `<strong>Equipe reWork</strong> respondeu seu chamado <strong>#${esc(n.ticketNumber || '')} · ${esc(n.demandName)}</strong>` + comment;
+      case 'doc_changes':
+        return `<strong>${esc(n.fromName || 'O cliente')}</strong> pediu ajustes no documento <strong>${esc(n.docTitle || n.demandName)}</strong>` + comment;
+      default:
+        return `Notificação sobre <strong>${esc(n.demandName)}</strong>`;
+    }
+  }
+  function notifAvatarHTML(n) {
+    const isSystem = n.type === 'stage_assigned' || !n.fromUser;
+    const from = !isSystem && userOf(n.fromUser);
+    if (from) return _kdAvatarHTML(from, 'avatar notif-avatar');
+    return `<span class="avatar notif-avatar notif-avatar-system" style="background-image:url('/rework.jpg')"></span>`;
+  }
+  function fmtRelativeTime(iso) {
+    if (!iso) return '';
+    const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+    if (s < 60) return 'agora';
+    const min = Math.floor(s / 60);
+    if (min < 60) return `há ${min} ${min === 1 ? 'minuto' : 'minutos'}`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return `há ${hr} ${hr === 1 ? 'hora' : 'horas'}`;
+    const day = Math.floor(hr / 24);
+    if (day < 7) return `há ${day} ${day === 1 ? 'dia' : 'dias'}`;
+    const week = Math.floor(day / 7);
+    if (week < 4) return `há ${week} ${week === 1 ? 'semana' : 'semanas'}`;
+    const month = Math.floor(day / 30);
+    if (month < 12) return `há ${month} ${month === 1 ? 'mês' : 'meses'}`;
+    const year = Math.floor(day / 365);
+    return `há ${year} ${year === 1 ? 'ano' : 'anos'}`;
+  }
+  function fmtDateTime(iso) {
+    try { return new Date(iso).toLocaleString(LOCALE, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+    catch { return ''; }
+  }
+
+  function renderNotifBadge() {
+    const badge = $('kd-notif-badge'); if (!badge) return;
+    const n = KDN.list.filter(x => !x.read).length;
+    badge.textContent = n > 99 ? '99+' : String(n);
+    badge.hidden = !n;
+    badge.classList.toggle('has-unread', n > 0);
+  }
+  function renderNotifList() {
+    const list = KDN.list.slice(0, 50);
+    $('kd-notif-actions').hidden = !list.length;
+    if (!list.length) { $('notif-list').innerHTML = '<div class="notif-empty">Nenhuma notificação por enquanto.</div>'; return; }
+    $('notif-list').innerHTML = list.map(n => {
+      const unclicked = KDN.wasUnread.has(n.id);
+      return `<div class="notif-item ${unclicked ? 'unread' : 'read'}" data-notif="${esc(n.id)}" title="${esc(fmtDateTime(n.createdAt))}">
+        ${unclicked ? '<div class="notif-dot-wrap"><span class="notif-dot"></span></div>' : ''}
+        ${notifAvatarHTML(n)}
+        <div class="notif-body">
+          <div class="notif-text">${notifMessage(n)}</div>
+          <div class="notif-time"><time datetime="${esc(n.createdAt || '')}">${esc(fmtRelativeTime(n.createdAt))}</time></div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+  async function fetchNotifications(force) {
+    if (document.hidden && !force) return;   // guia escondida: o poll espera
+    try { KDN.list = await api('/notifications'); } catch { return; }
+    const ids = new Set(KDN.list.map(n => n.id));
+    for (const id of KDN.wasUnread) if (!ids.has(id)) KDN.wasUnread.delete(id);
+    KDN.list.forEach(n => { if (!n.read) KDN.wasUnread.add(n.id); });
+    const open = $('notif-panel').classList.contains('open');
+    // Chegou com o painel aberto: já foi vista, então conta como lida.
+    if (open && KDN.list.some(n => !n.read)) {
+      KDN.list.forEach(n => { n.read = true; });
+      api('/notifications/read-all', 'PUT').catch(() => {});
+    }
+    renderNotifBadge();
+    if (open) renderNotifList();
+  }
+  function closeNotifPanel() {
+    $('notif-panel')?.classList.remove('open');
+    $('kd-notif-bell')?.setAttribute('aria-expanded', 'false');
+  }
+  window.kdToggleNotifPanel = function (ev) {
+    ev && ev.stopPropagation();
+    const panel = $('notif-panel');
+    const willOpen = !panel.classList.contains('open');
+    kdCloseMenus();
+    if (!willOpen) return;
+    panel.classList.add('open');
+    $('kd-notif-bell').setAttribute('aria-expanded', 'true');
+    // Abriu = tudo lido pro contador; o destaque do item fica até o clique.
+    let marked = Promise.resolve();
+    if (KDN.list.some(n => !n.read)) {
+      KDN.list.forEach(n => { n.read = true; });
+      marked = api('/notifications/read-all', 'PUT').catch(() => {});
+      renderNotifBadge();
+    }
+    renderNotifList();
+    // Atualiza depois de gravar a leitura (senão a lista volta com "não lida").
+    marked.then(() => fetchNotifications(true));
+  };
+  window.kdNotifMarkAllRead = async function () {
+    try {
+      await api('/notifications/read-all', 'PUT');
+      KDN.list.forEach(n => { n.read = true; });
+      KDN.wasUnread.clear();
+      renderNotifBadge(); renderNotifList();
+    } catch (e) { toast(e.message, 'error'); }
+  };
+  window.kdNotifClearAll = async function () {
+    if (!KDN.list.length) { toast('Nada pra limpar.'); return; }
+    try {
+      await api('/notifications', 'DELETE');
+      KDN.list = []; KDN.wasUnread.clear();
+      renderNotifBadge(); renderNotifList();
+      toast('Notificações limpas.');
+    } catch (e) { toast(e.message, 'error'); }
+  };
+  /* Clique: documento abre aqui mesmo no Docs; o resto abre na plataforma
+     (nova guia), no mesmo lugar que o sino de lá levaria. */
+  function openNotif(id) {
+    const n = KDN.list.find(x => x.id === id); if (!n) return;
+    KDN.wasUnread.delete(id);
+    if (!n.read) { n.read = true; api('/notifications/' + id + '/read', 'PUT').catch(() => {}); renderNotifBadge(); }
+    closeNotifPanel();
+    if (n.docId) { history.pushState({}, '', '/hub/docs/' + encodeURIComponent(n.docId)); route(); return; }
+    const url = n.type === 'invite_accepted' ? '/users'
+      : (n.type === 'time_gap' || n.type === 'support_reply') ? '/dashboard'
+      : n.demandId ? '/demands/' + encodeURIComponent(n.demandId)
+      : '/notifications';
+    window.open(url, '_blank', 'noopener');
+  }
+  function kdNotifInit() {
+    $('notif-list').addEventListener('click', (e) => {
+      const item = e.target.closest('[data-notif]');
+      if (item) openNotif(item.dataset.notif);
+    });
+    fetchNotifications(true);
+    clearInterval(KDN.timer);
+    KDN.timer = setInterval(fetchNotifications, 45000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) fetchNotifications(); });
+  }
+
+  // ── Lixeira ──────────────────────────────────────────────────────────
+  async function loadTrash() {
+    try { KD.trashList = await api('/writer?trash=1'); } catch { KD.trashList = []; }
+    syncTrashCount();
+  }
+  function syncTrashCount() {
+    const el = $('kd-trash-count'); if (!el) return;
+    el.textContent = KD.trashList.length;
+    el.hidden = !KD.trashList.length;
+  }
+  window.kdToggleTrash = async function (on) {
+    KD.trashMode = typeof on === 'boolean' ? on : !KD.trashMode;
+    const btn = $('kd-trash-btn');
+    btn.classList.toggle('active', KD.trashMode);
+    btn.setAttribute('aria-pressed', KD.trashMode ? 'true' : 'false');
+    $('kd-trash-note').hidden = !KD.trashMode;
+    $('kd-owner-tabs').hidden = KD.trashMode;
+    $('kd-f-sort').hidden = KD.trashMode;   // a Lixeira ordena pela exclusão
+    if (KD.trashMode) await loadTrash();
+    populateLinkFilters(); renderList();
+  };
+  async function restoreDoc(id) {
+    try {
+      const doc = await api('/writer/' + id + '/restore', 'POST');
+      KD.trashList = KD.trashList.filter(d => d.id !== id);
+      KD.docsList.unshift(doc);
+      syncTrashCount(); populateLinkFilters(); renderList();
+      toast('Documento restaurado.');
+    } catch (e) { toast(e.message || 'Não deu pra restaurar.', 'error'); }
+  }
+  async function trashDoc(id) {
+    const d = KD.docsList.find(x => x.id === id); if (!d) return;
+    try {
+      await api('/writer/' + id, 'DELETE');
+      KD.docsList = KD.docsList.filter(x => x.id !== id);
+      KD.trashList.unshift({ ...d, deletedAt: new Date().toISOString() });
+      syncTrashCount(); populateLinkFilters(); renderList();
+      toast('Movido pra Lixeira.');
+    } catch (e) { toast(e.message || 'Não deu pra excluir.', 'error'); }
+  }
+
+  // ── Favoritos ────────────────────────────────────────────────────────
+  async function toggleFavorite(id) {
+    const d = KD.docsList.find(x => x.id === id); if (!d) return;
+    const next = !d.favorite;
+    d.favorite = next; renderList();   // otimista
+    try { await api('/writer/' + id + '/favorite', 'POST', { favorite: next }); }
+    catch (e) { d.favorite = !next; renderList(); toast(e.message || 'Não deu pra favoritar.', 'error'); }
+  }
+
+  // ── Menus da topbar e do card (um aberto por vez) ─────────────────────
+  const MENUS = { apps: ['apps-menu', 'topbar-apps'], user: ['user-menu', 'topbar-user'] };
+  function placeUnder(menu, anchor) {
+    const r = anchor.getBoundingClientRect();
+    menu.style.top = (r.bottom + 8) + 'px';
+    menu.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
+    menu.style.left = 'auto';
+  }
+  function kdCloseMenus() {
+    Object.values(MENUS).forEach(([m, b]) => { $(m).hidden = true; $(b).setAttribute('aria-expanded', 'false'); });
+    closeNotifPanel();
+    const cm = $('kd-card-menu');
+    if (cm && !cm.hidden) { cm.hidden = true; document.querySelector('.kd-card-act[aria-expanded="true"]')?.setAttribute('aria-expanded', 'false'); }
+  }
+  window.kdCloseMenus = kdCloseMenus;
+  window.kdToggleMenu = function (which, ev) {
+    ev && ev.stopPropagation();
+    const [mId, bId] = MENUS[which];
+    const wasOpen = !$(mId).hidden;
+    kdCloseMenus();
+    if (wasOpen) return;
+    const menu = $(mId), btn = $(bId);
+    menu.hidden = false; placeUnder(menu, btn);
+    btn.setAttribute('aria-expanded', 'true');
+    if (ev && ev.detail === 0) menu.querySelector('a[href], button')?.focus();
+  };
+  document.addEventListener('mousedown', (e) => {
+    if (e.target.closest('#apps-menu, #user-menu, #kd-card-menu, #topbar-apps, #topbar-user, .notif-wrap, .kd-card-act[data-act="menu"]')) return;
+    kdCloseMenus();
+  }, true);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') kdCloseMenus(); });
+  window.addEventListener('resize', kdCloseMenus);
+
+  const IC_STAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4l-5.9 3.1 1.2-6.5-4.8-4.6 6.6-.9z"/></svg>';
+  const IC_DOTS = '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>';
+  const IC = {
+    open: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>',
+    star: IC_STAR,
+    trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>'
+  };
+  function openCardMenu(btn, d) {
+    const menu = $('kd-card-menu');
+    const wasOpen = !menu.hidden && btn.getAttribute('aria-expanded') === 'true';
+    kdCloseMenus();
+    if (wasOpen) return;
+    const canTrash = d.myRole === 'owner' || d.myRole === 'editor';
+    menu.innerHTML = `<div class="user-menu-list">
+      <a class="user-menu-item" role="menuitem" href="/hub/docs/${esc(docSlug(d))}" target="_blank" rel="noopener">${IC.open}<span>Abrir em nova guia</span></a>
+      <button type="button" class="user-menu-item" role="menuitem" data-menu-act="fav">${IC.star}<span>${d.favorite ? 'Tirar dos favoritos' : 'Adicionar aos favoritos'}</span></button>
+      ${canTrash ? `<div class="user-menu-sep"></div>
+      <button type="button" class="user-menu-item kd-menu-danger" role="menuitem" data-menu-act="trash">${IC.trash}<span>Mover pra Lixeira</span></button>` : ''}
+    </div>`;
+    menu.onclick = (e) => {
+      const a = e.target.closest('[data-menu-act], a'); if (!a) return;
+      kdCloseMenus();
+      if (a.dataset.menuAct === 'fav') toggleFavorite(d.id);
+      if (a.dataset.menuAct === 'trash') trashDoc(d.id);
+    };
+    menu.hidden = false; placeUnder(menu, btn);
+    btn.setAttribute('aria-expanded', 'true');
+  }
+
+  function onGridClick(e) {
+    const card = e.target.closest('.kd-recent-card'); if (!card) return;
+    const id = card.dataset.id;
+    const act = e.target.closest('[data-act]');
+    if (act) {
+      e.preventDefault(); e.stopPropagation();
+      if (act.dataset.act === 'fav') toggleFavorite(id);
+      if (act.dataset.act === 'restore') restoreDoc(id);
+      if (act.dataset.act === 'menu') { const d = KD.docsList.find(x => x.id === id); if (d) openCardMenu(act, d); }
+      return;
+    }
+    const link = e.target.closest('.kd-card-link');
+    if (!link || e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
+    e.preventDefault();
+    const d = KD.docsList.find(x => x.id === id);
+    if (d) goEditor(d);
+  }
+
+  // ── Render ───────────────────────────────────────────────────────────
+  const APPROVAL = {
+    pending:  { cls: 'pill-warn',    short: 'Aguardando', full: 'Aguardando aprovação do cliente' },
+    approved: { cls: 'pill-success', short: 'Aprovado',   full: 'Aprovado pelo cliente' },
+    changes:  { cls: 'pill-late',    short: 'Ajustes',    full: 'Cliente pediu ajustes' }
+  };
+  const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+  // Card externo tem <a>: links do conteúdo viram <span> na miniatura.
+  const stripAnchors = (html) => String(html || '').replace(/<a\b[^>]*>/gi, '<span>').replace(/<\/a>/gi, '</span>');
+  const THUMB_REF_WIDTH = 620;
+
+  function filtered(src) {
     const myId = KD.me && KD.me.id;
-    let list = KD.docsList.slice();
-    if (KD.owner === 'mine')   list = list.filter(d => d.ownerId === myId);
-    if (KD.owner === 'shared') list = list.filter(d => d.ownerId !== myId);
-    // Filtro por busca (título) — case-insensitive, sem acento.
+    const f = KD.filters;
+    let list = src.slice();
+    if (!KD.trashMode) {
+      if (KD.owner === 'mine')   list = list.filter(d => d.ownerId === myId);
+      if (KD.owner === 'shared') list = list.filter(d => d.ownerId !== myId);
+    }
+    if (f.client)  list = list.filter(d => d.clientId === f.client);
+    if (f.project) list = list.filter(d => d.projectId === f.project);
+    if (f.status === 'none') list = list.filter(d => !d.approval);
+    else if (f.status) list = list.filter(d => d.approval && d.approval.status === f.status);
     if (KD.searchQuery) {
-      const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
       const q = norm(KD.searchQuery);
       if (q) list = list.filter(d => norm(d.title).includes(q));
     }
     list.sort((a, b) => {
-      if (KD.sort === 'title')   return (a.title || '').localeCompare(b.title || '');
+      if (KD.trashMode)          return (b.deletedAt || '').localeCompare(a.deletedAt || '');
+      if (KD.sort === 'title')   return (a.title || '').localeCompare(b.title || '', LOCALE);
       if (KD.sort === 'created') return (b.createdAt || '').localeCompare(a.createdAt || '');
       return (b.updatedAt || '').localeCompare(a.updatedAt || '');
     });
+    return list;
+  }
 
-    if (!list.length) {
-      const msg = KD.searchQuery
-        ? 'Nenhum documento com “' + esc(KD.searchQuery) + '” no título.'
-        : (KD.owner === 'mine'
-          ? 'Você ainda não criou nenhum documento.'
-          : KD.owner === 'shared'
-            ? 'Ninguém compartilhou documentos com você ainda.'
-            : 'Nenhum documento por aqui ainda.');
-      const cta = !KD.searchQuery && KD.owner !== 'shared'
-        ? '<button type="button" class="btn btn-primary btn-sm" onclick="_kdOpenTemplatesModal()">Criar o primeiro</button>' : '';
-      grid.innerHTML = `<div class="kd-recent-empty">${msg}${cta}</div>`;
-      return;
-    }
-
-    const MAX_TITLE = 42;
-    const THUMB_REF_WIDTH = 620;
-    // Card externo é <a> (via wrap p/ acessibilidade), então <a> aninhados
-    // do PM (link marks) precisam virar <span> ou o browser fecha o wrapper
-    // e o card vira só bg. Server já sanitiza; client garante fallback.
-    const stripAnchors = (html) => String(html || '')
-      .replace(/<a\b[^>]*>/gi, '<span>').replace(/<\/a>/gi, '</span>');
-    const trunc = (t) => {
-      const s = String(t || 'Sem título');
-      return s.length > MAX_TITLE ? s.slice(0, MAX_TITLE - 1).trimEnd() + '…' : s;
-    };
-
-    grid.innerHTML = list.slice(0, 60).map(d => {
-      const fullTitle = String(d.title || 'Sem título');
-      const thumb = stripAnchors(d.thumbHTML || '');
-      const thumbClass = thumb ? 'kd-recent-card-thumb' : 'kd-recent-card-thumb is-empty';
-      const slug = docSlug(d);
-      return `<a class="kd-recent-card" href="/hub/docs/${esc(slug)}" data-id="${esc(d.id)}" title="${esc(fullTitle)}">
-        <div class="${thumbClass}" aria-hidden="true">
+  function cardHTML(d) {
+    const fullTitle = String(d.title || 'Sem título');
+    const thumb = stripAnchors(d.thumbHTML || '');
+    const link = [clientName(d.clientId), projectName(d.projectId)].filter(Boolean).join(' · ');
+    const when = KD.trashMode ? 'Excluído ' + fmtDate(d.deletedAt).toLowerCase() : fmtDate(d.updatedAt || d.createdAt);
+    const meta = [when, link].filter(Boolean).join(' · ');
+    const ap = d.approval && APPROVAL[d.approval.status];
+    const pill = ap ? `<span class="pill kd-card-pill ${ap.cls}" title="${esc(ap.full)}">${esc(ap.short)}</span>` : '';
+    const inner = `
+        <div class="${thumb ? 'kd-recent-card-thumb' : 'kd-recent-card-thumb is-empty'}" aria-hidden="true">
           ${thumb ? `<div class="kd-recent-card-thumb-page">${thumb}</div>` : ''}
         </div>
         <div class="kd-recent-card-footer">
           <span class="kd-recent-card-app-inline"><img src="/reworkdocs_icone.svg" alt=""></span>
           <span class="kd-recent-card-text">
             <span class="kd-recent-card-title">${esc(fullTitle)}</span>
-            <span class="kd-recent-card-meta-date">${esc(fmtDate(d.updatedAt || d.createdAt))}</span>
+            <span class="kd-recent-card-meta">${esc(meta)}</span>
           </span>
-        </div>
-      </a>`;
-    }).join('');
+          ${pill}
+        </div>`;
+    if (KD.trashMode) {
+      return `<div class="kd-recent-card is-trashed" data-id="${esc(d.id)}" title="${esc(fullTitle)}"><div class="kd-card-link">${inner}</div>
+        <div class="kd-card-actions"><button type="button" class="btn btn-ghost btn-sm kd-restore-btn" data-act="restore">Restaurar</button></div></div>`;
+    }
+    return `<div class="kd-recent-card" data-id="${esc(d.id)}">
+      <a class="kd-card-link" href="/hub/docs/${esc(docSlug(d))}" title="${esc(fullTitle)}">${inner}</a>
+      <div class="kd-card-actions">
+        <button type="button" class="kd-card-act kd-star${d.favorite ? ' is-on' : ''}" data-act="fav" aria-pressed="${d.favorite ? 'true' : 'false'}" title="${d.favorite ? 'Tirar dos favoritos' : 'Adicionar aos favoritos'}" aria-label="Favorito">${IC_STAR}</button>
+        <button type="button" class="kd-card-act" data-act="menu" aria-haspopup="menu" aria-expanded="false" title="Mais ações" aria-label="Mais ações">${IC_DOTS}</button>
+      </div>
+    </div>`;
+  }
 
-    // Click → abre editor
-    grid.querySelectorAll('.kd-recent-card').forEach(c => {
-      c.addEventListener('click', (e) => {
-        if (e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
-        e.preventDefault();
-        const d = KD.docsList.find(x => x.id === c.dataset.id);
-        if (d) goEditor(d);
-      });
-    });
+  function renderList() {
+    const grid = $('kd-grid');
+    if (!grid) return;
+    kdCloseMenus();
+    const list = filtered(KD.trashMode ? KD.trashList : KD.docsList);
+    const anyFilter = !!(KD.searchQuery || KD.filters.client || KD.filters.project || KD.filters.status);
 
-    // Recalibra o transform:scale dos thumbs pra caber na largura do card
+    // Favoritos: seção própria no topo (fora da Lixeira). Os favoritos saem
+    // da lista de baixo pra não aparecerem duas vezes.
+    const favs = KD.trashMode ? [] : list.filter(d => d.favorite);
+    const rest = KD.trashMode ? list : list.filter(d => !d.favorite);
+    $('kd-fav-section').hidden = !favs.length;
+    $('kd-fav-grid').innerHTML = favs.map(cardHTML).join('');
+    $('kd-main-title').textContent = KD.trashMode ? 'Lixeira' : (favs.length ? 'Outros documentos' : 'Documentos');
+    // Só favoritos batem com os filtros: a seção de baixo some.
+    grid.closest('.kd-section').hidden = !KD.trashMode && favs.length > 0 && !rest.length;
+
+    if (!rest.length && !favs.length) {
+      const msg = KD.trashMode
+        ? (anyFilter ? 'Nada na Lixeira com esses filtros.' : 'A Lixeira está vazia.')
+        : anyFilter
+          ? 'Nenhum documento com esses filtros.'
+          : KD.owner === 'mine' ? 'Você ainda não criou nenhum documento.'
+          : KD.owner === 'shared' ? 'Ninguém compartilhou documentos com você ainda.'
+          : 'Nenhum documento por aqui ainda.';
+      const cta = !KD.trashMode && !anyFilter && KD.owner !== 'shared'
+        ? '<button type="button" class="btn btn-primary btn-sm" onclick="_kdOpenTemplatesModal()">Criar o primeiro</button>' : '';
+      grid.innerHTML = `<div class="kd-recent-empty">${esc(msg)}${cta}</div>`;
+      return;
+    }
+    grid.innerHTML = rest.slice(0, 120).map(cardHTML).join('');
+
+    // Recalibra o transform:scale das miniaturas pra caber na largura do card
     const rescaleThumbs = () => {
-      grid.querySelectorAll('.kd-recent-card-thumb').forEach(t => {
+      document.querySelectorAll('.kd-recent-card-thumb').forEach(t => {
         const page = t.querySelector('.kd-recent-card-thumb-page');
-        if (!page) return;
-        page.style.transform = 'scale(' + (t.clientWidth / THUMB_REF_WIDTH) + ')';
+        if (page) page.style.transform = 'scale(' + (t.clientWidth / THUMB_REF_WIDTH) + ')';
       });
     };
     window.__kdRescaleThumbs = rescaleThumbs;
@@ -411,10 +774,7 @@
     if (!window.__kdThumbResizeBound) {
       window.__kdThumbResizeBound = true;
       let raf;
-      window.addEventListener('resize', () => {
-        cancelAnimationFrame(raf);
-        raf = requestAnimationFrame(rescaleThumbs);
-      });
+      window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(rescaleThumbs); });
     }
   }
   window.kdRenderList = renderList;
@@ -801,7 +1161,9 @@
     'linear-gradient(135deg, #44BCD8 0%, #0277B6 100%)', 'linear-gradient(135deg, #6FA8DC 0%, #1A5490 100%)',
     'linear-gradient(135deg, #4A6FE3 0%, #2E3B8E 100%)', 'linear-gradient(135deg, #7A6BE8 0%, #3F2DA5 100%)',
     'linear-gradient(135deg, #9C6FE8 0%, #6128D7 100%)', 'linear-gradient(135deg, #C77DFF 0%, #7A00FF 100%)',
-    'linear-gradient(135deg, #E6A0E0 0%, #A93FA8 100%)', 'linear-gradient(135deg, #F472B6 0%, #BE185D 100%)'
+    'linear-gradient(135deg, #E6A0E0 0%, #A93FA8 100%)', 'linear-gradient(135deg, #F472B6 0%, #BE185D 100%)',
+    // Mesma lista (e ordem) do AVATAR_GRADIENTS do app.js: a cor de cada pessoa bate com a da plataforma.
+    'linear-gradient(135deg, #FB7185 0%, #9F1239 100%)', 'linear-gradient(135deg, #94A3B8 0%, #475569 100%)'
   ];
   function _kdAvatarGradient(seed) {
     const key = String(seed || '?');
@@ -853,7 +1215,7 @@
     const doc = KD.currentDoc;
     if (!doc) return;
     try {
-      await api('/writer/' + doc.id, 'DELETE');
+      await api('/writer/' + doc.id + '?discard=1', 'DELETE');
       KD.docsList = KD.docsList.filter(d => d.id !== doc.id);
     } catch {}
   }
@@ -4356,7 +4718,7 @@
     if (_kdCurrentDocIsUntouched()) {
       try {
         // fetch keepalive é a forma correta pra DELETE em beforeunload
-        fetch('/api/writer/' + KD.currentDoc.id, {
+        fetch('/api/writer/' + KD.currentDoc.id + '?discard=1', {
           method: 'DELETE', credentials: 'same-origin', keepalive: true
         });
       } catch {}

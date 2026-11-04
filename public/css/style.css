@@ -1406,16 +1406,20 @@ body::before {
 /* Ícone dentro do menu dropdown (14px) — usado nos itens de "Editar/Excluir". */
 .ic-menu, i.ic-menu, svg.ic-menu { width: 14px !important; height: 14px !important; flex-shrink: 0; }
 .topbar-actions { display: flex; align-items: center; gap: var(--space-6); margin-left: auto; }
-/* Densidade + notificações: botões de 32px com contorno, juntos. */
+/* Densidade/importar + notificações: botões de ícone do DS, 32px com contorno, juntos. */
 .topbar-tools { display: flex; align-items: center; gap: var(--space-2); }
 /* Só os botões de ícone da barra: o painel de notificações mora aqui dentro
    e os botões de texto dele não podem virar quadrados de 32px. */
 .topbar .topbar-tools > .btn-ghost, .topbar .notif-wrap > .btn-ghost {
   width: 32px; height: 32px; padding: 0; border-radius: var(--radius-xs);
+  display: inline-flex; align-items: center; justify-content: center;
   background: transparent; border: 1px solid var(--hairline-strong); color: var(--text-dim);
 }
 .topbar .topbar-tools > .btn-ghost:hover, .topbar .notif-wrap > .btn-ghost:hover { background: var(--surface-2); border-color: var(--hairline-strong); color: var(--text); }
 .topbar .topbar-tools > .btn-ghost svg, .topbar .notif-wrap > .btn-ghost svg { width: 16px; height: 16px; }
+/* Contador do sino no canto do contorno, sem cobrir o ícone; o anel usa a
+   cor da topbar pra recortar o número do fundo. */
+.topbar .notif-wrap .notif-badge { top: -6px; right: -6px; min-width: 16px; height: 16px; font-size: 9.5px; box-shadow: 0 0 0 2px var(--chrome-bg); }
 #btn-new-demand { height: 32px; padding-block: 0; }
 
 /* Avatar da conta (abre o menu da conta). Anel = presença ou status. */

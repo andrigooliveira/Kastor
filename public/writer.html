@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8">
-  <script src="/js/i18n.js?v=20260926i2"></script>
+  <script src="/js/i18n.js?v=20261103docs13"></script>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#7A00FF">
   <title>reWork Docs</title>
@@ -26,7 +26,7 @@
        + classes writer-* num CSS menor. -->
   <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/css/fonts.css?v=1">
-  <link rel="stylesheet" href="/css/style.css?v=20260924docs1">
+  <link rel="stylesheet" href="/css/style.css?v=20261103docs13">
 
   <style>
     /* Reset do body pra editor standalone — sem margin, cor da plataforma. */
@@ -42,34 +42,53 @@
     .kd-app.is-editor .kd-list-shell { display: none; }
 
     /* ── Home do Docs (/hub/docs) ──
-       Mesma linguagem do Hub e da plataforma: topbar .topbar, título grande
-       da Início, abas com sublinhado roxo, botões .btn e cards de borda fina. */
+       A casca é #app.active: topbar, .filters-bar, .seg, .btn e menus vêm do DS
+       da plataforma (style.css). Aqui fica só o que é do Docs: camada, cards,
+       seções e o estado da Lixeira. */
     .kd-list-shell {
-      flex: 1; display: flex; flex-direction: column; min-height: 0;
-      font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      flex: 1; flex-direction: column; min-height: 0;
+      background: var(--chrome-bg);
     }
+    /* #app.active ganha do .kd-app.is-editor por especificidade: reforça. */
+    .kd-app.is-editor #app.kd-list-shell { display: none; }
     .kd-list-shell a.btn { text-decoration: none; }
-    .kd-list-topbar { gap: 4px; flex-shrink: 0; }
-    .kd-list-topbar .topbar-back { margin-right: 14px; text-decoration: none; }
-    /* Marca: ícone do app + nome em texto (o wordmark em SVG tem traço fino
-       demais e borra no tamanho da topbar). */
+    .kd-list-topbar { flex-shrink: 0; }
     .kd-brand { display: inline-flex; align-items: center; gap: 10px; color: var(--text); text-decoration: none; }
-    .kd-brand img { display: block; width: 28px; height: 28px; }
-    .kd-brand span { font-size: 17px; font-weight: 700; letter-spacing: -0.015em; }
-    .kd-tb-icon { width: 36px; height: 36px; padding: 0; justify-content: center; }
-    .kd-user-chip {
-      display: flex; align-items: center; gap: 9px;
-      padding-left: 12px; margin-left: 2px;
-      border-left: 1px solid var(--hairline);
-      font-size: 13px; font-weight: 600; color: var(--text);
+    .kd-brand img { display: block; width: 24px; height: 24px; }
+    .kd-list-topbar .notif-bell { text-decoration: none; }
+    .kd-new-doc { height: 32px; padding-block: 0; }
+    .kd-user-head { cursor: default; }
+    .kd-user-head:hover { background: transparent; }
+    .kd-card-menu { width: 220px; }
+    .kd-menu-danger, .kd-menu-danger svg { color: var(--danger) !important; }
+
+    /* Camada de conteúdo: mesmo fundo e canto das páginas da plataforma. */
+    .kd-list-layer {
+      flex: 1; min-height: 0; display: flex; flex-direction: column;
+      background: var(--background);
+      border-radius: var(--radius-layer) var(--radius-layer) 0 0;
     }
-    .kd-user-avatar {
-      width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
-      background: var(--accent); color: #fff;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 12px; font-weight: 700; overflow: hidden;
+    .kd-list-body { flex: 1; overflow-y: auto; padding: 24px 28px 56px; }
+    .kd-list-inner { max-width: 1280px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
+    .kd-filters { margin-bottom: 0 !important; }
+    .kd-filters .filter-select { max-width: 180px; min-width: 0; }
+    .kd-filters .filter-input-wrap { flex: 1 1 220px; min-width: 160px; }
+    .kd-filters-right { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-shrink: 0; }
+    .kd-trash-btn.active { background: var(--accent-dim) !important; color: var(--accent-text); border-color: transparent !important; }
+    .kd-count {
+      min-width: 18px; height: 18px; padding: 0 5px; border-radius: var(--radius-pill);
+      background: var(--surface-3); color: var(--text-dim);
+      font-size: 10.5px; font-weight: 700; display: inline-grid; place-items: center; font-variant-numeric: tabular-nums;
     }
-    .kd-user-avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .kd-trash-note {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+      padding: 10px 14px; border-radius: var(--radius-md);
+      background: var(--surface); box-shadow: var(--ring-hairline);
+      font-size: 13px; color: var(--text-dim);
+    }
+    .kd-section { display: flex; flex-direction: column; }
+    .kd-section-title { font-size: 15px; margin-bottom: 12px; }
+
     /* Botão de ícone dos modais/painéis do editor (compartilhar, comentários) */
     .kd-icon-btn {
       width: 34px; height: 34px; border-radius: 8px;
@@ -79,69 +98,23 @@
     }
     .kd-icon-btn:hover { background: color-mix(in oklab, var(--text) 6%, transparent); color: var(--text); border-color: var(--hairline); }
 
-    .kd-list-body { flex: 1; overflow-y: auto; padding: 28px 28px 56px; }
-    .kd-list-inner { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; }
-    .kd-list-title { margin: 0; }
-
-    /* Cabeçalho da lista: abas à esquerda, busca/ordem/visão à direita */
-    .kd-recent-toolbar {
-      display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap;
-      border-bottom: 1px solid var(--hairline);
-      margin-bottom: 16px;
-    }
-    .kd-recent-toolbar .dash-tabs { margin-bottom: -1px; }
-    .kd-recent-toolbar .dash-tab.is-active::after { bottom: -1px; }
-    .kd-recent-toolbar .dash-tab { padding: 10px 10px 12px; }
-    .kd-recent-toolbar-actions { display: flex; align-items: center; gap: 6px; position: relative; padding-bottom: 8px; }
-    .kd-recent-toolbar-actions .kd-tb-icon { width: 32px; height: 32px; }
-    .kd-search {
-      display: flex; align-items: center; gap: 8px;
-      height: 32px; width: 240px; padding: 0 10px;
-      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
-      color: var(--text-muted);
-      transition: border-color .15s var(--ease-out), box-shadow .15s var(--ease-out);
-    }
-    .kd-search:focus-within { border-color: var(--accent); box-shadow: var(--shadow-focus); }
-    .kd-search input {
-      flex: 1; min-width: 0; border: 0; outline: none; background: transparent;
-      font-family: inherit; font-size: 13px; color: var(--text);
-    }
-    .kd-search input::placeholder { color: var(--text-muted); }
-    .kd-recent-menu {
-      position: absolute; top: calc(100% - 2px); right: 38px; z-index: 20;
-      min-width: 200px; padding: 4px;
-      display: flex; flex-direction: column;
-      background: var(--surface);
-      border: 1px solid var(--hairline-strong);
-      border-radius: var(--radius);
-      box-shadow: 0 16px 40px -12px rgba(0,0,0,.28);
-    }
-    .kd-recent-menu button {
-      text-align: left; padding: 8px 10px;
-      background: transparent; border: 0; border-radius: var(--radius-sm);
-      font-family: inherit; font-size: 13px; color: var(--text); cursor: pointer;
-    }
-    .kd-recent-menu button:hover { background: var(--surface-2); }
-    .kd-recent-menu button.is-selected { background: var(--accent-dim); color: var(--accent-text); font-weight: 600; }
-
-    /* Grade de documentos (igual ao Hub) */
-    .kd-recent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
+    /* ── Cards ── */
+    .kd-recent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
     .kd-recent-card {
       position: relative; display: flex; flex-direction: column; overflow: hidden;
       background: var(--surface);
-      border: 1px solid var(--hairline);
+      box-shadow: var(--ring-hairline), var(--shadow-xs);
       border-radius: var(--radius-md);
-      color: inherit; text-decoration: none; cursor: pointer;
-      transition: border-color .15s var(--ease-out), box-shadow .15s var(--ease-out), transform .12s var(--ease-out);
+      transition: box-shadow var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out);
     }
     .kd-recent-card:hover {
-      border-color: color-mix(in oklab, var(--accent) 45%, var(--hairline));
-      box-shadow: 0 8px 22px -14px color-mix(in oklab, var(--accent) 45%, transparent);
+      box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 45%, var(--hairline)), 0 8px 22px -14px color-mix(in oklab, var(--accent) 45%, transparent);
       transform: translateY(-1px);
     }
-    .kd-recent-card:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+    .kd-card-link { display: flex; flex-direction: column; flex: 1; min-width: 0; color: inherit; text-decoration: none; border-radius: inherit; }
+    .kd-card-link:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
     .kd-recent-card-thumb {
-      position: relative; aspect-ratio: 4 / 3.6; overflow: hidden;
+      position: relative; aspect-ratio: 4 / 3.4; overflow: hidden;
       background: #fff; border-bottom: 1px solid var(--hairline);
     }
     .kd-recent-card-thumb-page {
@@ -178,22 +151,58 @@
     .kd-recent-card-footer { display: flex; align-items: center; gap: 10px; padding: 10px 12px; min-width: 0; }
     .kd-recent-card-app-inline { width: 18px; height: 18px; flex-shrink: 0; display: block; }
     .kd-recent-card-app-inline img { width: 100%; height: 100%; display: block; }
-    .kd-recent-card-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+    .kd-recent-card-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
     .kd-recent-card-title { font-size: 13px; font-weight: 600; line-height: 1.3; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .kd-recent-card-meta-date { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .kd-recent-card-meta { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 
-    /* Lista: linhas com divisória, como na Início */
-    .kd-recent-grid.is-list { display: flex; flex-direction: column; gap: 0; }
+    /* Selo de aprovação: sobre a miniatura na grade, no fim da linha na lista. */
+    .kd-card-pill { padding: 2px 8px; font-size: 10.5px; flex-shrink: 0; }
+    .kd-recent-grid:not(.is-list) .kd-card-pill { position: absolute; top: 10px; left: 10px; z-index: 1; box-shadow: var(--shadow-xs); }
+    .pill-warn { background: var(--warn-dim); color: var(--warn); }
+    .kd-recent-grid:not(.is-list) .kd-card-pill.pill-warn { background: color-mix(in oklab, var(--warn) 16%, #fff); }
+    .kd-recent-grid:not(.is-list) .kd-card-pill.pill-success { background: color-mix(in oklab, var(--success) 16%, #fff); }
+    .kd-recent-grid:not(.is-list) .kd-card-pill.pill-late { background: color-mix(in oklab, var(--danger) 14%, #fff); }
+
+    /* Ações do card: estrela e "mais". Na grade ficam sobre a miniatura. */
+    .kd-card-actions { display: flex; align-items: center; gap: 4px; }
+    .kd-recent-grid:not(.is-list) .kd-card-actions { position: absolute; top: 8px; right: 8px; z-index: 2; }
+    .kd-card-act {
+      width: 28px; height: 28px; display: inline-grid; place-items: center; padding: 0;
+      border: 0; border-radius: var(--radius-sm); cursor: pointer;
+      background: var(--surface); color: var(--text-dim); box-shadow: var(--ring-hairline), var(--shadow-xs);
+      opacity: 0; transition: opacity var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out);
+    }
+    .kd-card-act svg { width: 15px; height: 15px; }
+    .kd-card-act:hover { color: var(--text); background: var(--surface-2); }
+    .kd-card-act:focus-visible { opacity: 1; outline: none; box-shadow: var(--shadow-focus); }
+    .kd-recent-card:hover .kd-card-act, .kd-card-act[aria-expanded="true"] { opacity: 1; }
+    .kd-card-act.kd-star.is-on { opacity: 1; color: #f5a524; }
+    .kd-card-act.kd-star.is-on svg { fill: currentColor; }
+    @media (hover: none) { .kd-card-act { opacity: 1; } }
+
+    /* Lixeira: card sem link e com botão Restaurar. */
+    .kd-recent-card.is-trashed .kd-recent-card-thumb { filter: grayscale(1); opacity: .6; }
+    .kd-recent-card.is-trashed:hover { transform: none; }
+    .kd-restore-btn { flex-shrink: 0; height: 28px; box-shadow: var(--shadow-xs); }
+
+    /* ── Lista: linhas com divisória dentro de um cartão ── */
+    .kd-recent-grid.is-list {
+      display: flex; flex-direction: column; gap: 0;
+      background: var(--surface); border-radius: var(--radius-md); box-shadow: var(--ring-hairline), var(--shadow-xs);
+      overflow: hidden;
+    }
     .kd-recent-grid.is-list .kd-recent-card {
-      flex-direction: row; border: 0; border-radius: 0; background: transparent;
-      border-bottom: 1px solid var(--hairline);
+      flex-direction: row; align-items: center; border-radius: 0; background: transparent; box-shadow: none;
+      border-bottom: 1px solid var(--hairline); padding-right: 10px;
     }
     .kd-recent-grid.is-list .kd-recent-card:last-child { border-bottom: 0; }
     .kd-recent-grid.is-list .kd-recent-card:hover { transform: none; box-shadow: none; background: var(--surface-2); }
     .kd-recent-grid.is-list .kd-recent-card-thumb { display: none; }
-    .kd-recent-grid.is-list .kd-recent-card-footer { flex: 1; padding: 11px 8px; }
-    .kd-recent-grid.is-list .kd-recent-card-text { flex-direction: row; align-items: baseline; justify-content: space-between; gap: 16px; }
-    .kd-recent-grid.is-list .kd-recent-card-title { font-size: 13.5px; font-weight: 500; }
+    .kd-recent-grid.is-list .kd-card-link { flex-direction: row; }
+    .kd-recent-grid.is-list .kd-recent-card-footer { flex: 1; padding: 11px 12px; }
+    .kd-recent-grid.is-list .kd-recent-card-text { flex-direction: row; align-items: baseline; gap: 16px; }
+    .kd-recent-grid.is-list .kd-recent-card-title { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 500; }
+    .kd-recent-grid.is-list .kd-recent-card-meta { flex: 0 1 auto; max-width: 45%; }
 
     .kd-recent-empty {
       grid-column: 1 / -1;
@@ -202,16 +211,17 @@
       font-size: 13px; color: var(--text-muted);
       border: 1px dashed var(--hairline-strong); border-radius: var(--radius-md);
     }
-    .kd-recent-empty .btn { text-decoration: none; }
+    .kd-recent-grid.is-list .kd-recent-empty { border: 0; }
 
+    @media (max-width: 880px) {
+      .kd-list-layer { border-radius: 0; }
+      .kd-filters-right { margin-left: 0; }
+    }
     @media (max-width: 640px) {
-      .kd-list-topbar { padding: 12px 16px; }
-      .kd-user-name, .kd-tb-label { display: none; }
-      .kd-tb-btn { width: 36px; height: 36px; padding: 0; justify-content: center; }
-      .kd-list-body { padding: 20px 16px 40px; }
-      .kd-recent-toolbar { align-items: stretch; }
-      .kd-recent-toolbar-actions { width: 100%; }
-      .kd-search { flex: 1; width: auto; }
+      .kd-list-topbar { padding: 0 16px; }
+      .kd-new-doc span { display: none; }
+      .kd-new-doc { width: 32px; padding: 0; justify-content: center; }
+      .kd-list-body { padding: 16px 16px 40px; }
       .kd-recent-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
     }
 
@@ -2110,71 +2120,159 @@
   </div>
 
   <div id="kd-app" class="kd-app" hidden>
-    <!-- Shell da LISTA (mostra em /writer sem doc slug) -->
-    <div class="kd-list-shell">
+    <!-- Shell da LISTA (/hub/docs). id="app" class="active" de propósito: a casca
+         herda as regras do DS escritas pra plataforma (#app .filters-bar, .seg,
+         botões da topbar…) e acompanha o que mudar lá. -->
+    <div class="kd-list-shell active" id="app">
       <header class="topbar kd-list-topbar">
-        <a class="topbar-back" href="/dashboard" title="Voltar pra plataforma" aria-label="Voltar pra plataforma">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-        </a>
         <a class="kd-brand" href="/hub/docs" aria-label="reWork Docs">
-          <img src="/reworkdocs_icone.svg" alt="">
-          <span>Docs</span>
+          <img src="/reworkdocs_icone.svg" alt="" width="24" height="24">
+          <span class="topbar-title">Docs</span>
         </a>
         <div class="topbar-actions">
-          <button type="button" class="btn btn-ghost kd-tb-icon" onclick="kdToggleTheme()" title="Alternar tema" aria-label="Alternar tema">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
-          </button>
-          <button type="button" class="btn btn-ghost kd-tb-btn" onclick="_kdImportPickFile()" title="Importar DOCX, PDF, TXT, MD ou HTML">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            <span class="kd-tb-label">Importar</span>
-          </button>
-          <button type="button" class="btn btn-primary kd-tb-btn" onclick="_kdOpenTemplatesModal()" title="Novo documento">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-            <span class="kd-tb-label">Novo documento</span>
-          </button>
-          <div class="kd-user-chip" id="kd-user-chip" title="—">
-            <div class="kd-user-avatar" id="kd-user-avatar">?</div>
-            <span class="kd-user-name" id="kd-user-name">—</span>
+          <div class="topbar-tools">
+            <button type="button" class="btn btn-ghost" onclick="_kdImportPickFile()" title="Importar DOCX, PDF, TXT, MD ou HTML" aria-label="Importar documento">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m17 8-5-5-5 5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></svg>
+            </button>
+            <!-- Notificações: mesmo painel do sino da plataforma (CSS do style.css). -->
+            <div class="notif-wrap">
+              <button type="button" class="btn btn-ghost notif-bell" id="kd-notif-bell" onclick="kdToggleNotifPanel(event)" title="Notificações" aria-label="Notificações" aria-haspopup="dialog" aria-expanded="false" aria-controls="notif-panel">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>
+                <span class="notif-badge" id="kd-notif-badge" hidden>0</span>
+              </button>
+              <div class="notif-panel" id="notif-panel">
+                <div class="notif-panel-header">
+                  <span class="notif-panel-title">Notificações</span>
+                  <div class="notif-panel-actions" id="kd-notif-actions">
+                    <button type="button" class="btn btn-ghost btn-sm notif-act-btn" onclick="kdNotifMarkAllRead()" title="Marcar como lido" aria-label="Marcar como lido"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/></svg></button>
+                    <button type="button" class="btn btn-ghost btn-sm notif-act-btn notif-clear-btn" onclick="kdNotifClearAll()" title="Limpar notificações" aria-label="Limpar notificações"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg></button>
+                  </div>
+                </div>
+                <div class="notif-list" id="notif-list"></div>
+                <!-- Histórico completo (inclui o que foi limpo daqui) fica na plataforma. -->
+                <a class="notif-panel-footer" href="/notifications" target="_blank" rel="noopener">Ver todas as notificações</a>
+              </div>
+            </div>
           </div>
+          <button type="button" class="btn btn-primary kd-new-doc" onclick="_kdOpenTemplatesModal()">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            <span>Novo documento</span>
+          </button>
+          <button type="button" class="topbar-apps-btn" id="topbar-apps" onclick="kdToggleMenu('apps', event)" title="Apps do reWork" aria-label="Apps do reWork" aria-haspopup="menu" aria-expanded="false" aria-controls="apps-menu">
+            <img src="/reworkhub_simbol.svg" alt="" width="22" height="22">
+          </button>
+          <button type="button" class="topbar-user" id="topbar-user" onclick="kdToggleMenu('user', event)" aria-label="Sua conta" aria-haspopup="menu" aria-expanded="false" aria-controls="user-menu">
+            <div class="avatar" id="kd-user-avatar">?</div>
+          </button>
         </div>
       </header>
 
-      <div class="kd-list-body">
-        <!-- Filtro de squad em estado escondido — o botão de criar precisa
-             saber qual squad usar. Mantemos o <select> pra reaproveitar a
-             lógica existente sem quebrar. -->
-        <select id="kd-f-ws" hidden onchange="kdRenderList()"></select>
+      <!-- Menu de apps: os outros apps (o Docs, onde a pessoa já está, não entra) -->
+      <div class="apps-menu" id="apps-menu" role="menu" aria-label="Apps do reWork" hidden>
+        <div class="apps-menu-grid">
+          <a class="apps-menu-item" role="menuitem" title="reWork" href="/dashboard">
+            <img src="/rework_icone.svg" alt="">
+            <span>reWork</span>
+          </a>
+          <span class="apps-menu-item is-soon" role="menuitem" aria-disabled="true" title="Presentations">
+            <img src="/reworkpresentations_icone.svg" alt="">
+            <span>Presentations</span>
+          </span>
+          <span class="apps-menu-item is-soon" role="menuitem" aria-disabled="true" title="Marketing Intelligence">
+            <img src="/reworkmarketingintelligence_icone.svg" alt="">
+            <span>Marketing Intelligence</span>
+          </span>
+        </div>
+      </div>
 
-        <div class="kd-list-inner">
-          <h1 class="dash-greeting kd-list-title"><span class="dash-greeting-msg">Documentos</span></h1>
+      <!-- Menu da conta (avatar) -->
+      <div class="user-menu" id="user-menu" role="menu" aria-label="Sua conta" hidden>
+        <div class="user-menu-head kd-user-head">
+          <div class="avatar" id="kd-user-menu-avatar">?</div>
+          <div class="user-menu-who">
+            <span class="user-menu-name" id="kd-user-name">—</span>
+            <span class="user-menu-status" id="kd-user-sub"></span>
+          </div>
+        </div>
+        <div class="user-menu-sep"></div>
+        <div class="user-menu-list">
+          <a class="user-menu-item" role="menuitem" href="/dashboard">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+            <span>Ir pra plataforma</span>
+          </a>
+          <button type="button" class="user-menu-item" role="menuitem" onclick="kdToggleTheme()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+            <span>Alternar tema</span>
+          </button>
+        </div>
+      </div>
 
-          <section>
-            <div class="kd-recent-toolbar">
-              <div class="dash-tabs" role="tablist" id="kd-owner-tabs">
-                <button type="button" class="dash-tab" role="tab" data-owner="mine">Meus</button>
-                <button type="button" class="dash-tab" role="tab" data-owner="shared">Compartilhados comigo</button>
-                <button type="button" class="dash-tab" role="tab" data-owner="any">Todos</button>
+      <!-- Menu "mais ações" de um card (posicionado pelo JS) -->
+      <div class="user-menu kd-card-menu" id="kd-card-menu" role="menu" hidden></div>
+
+      <!-- Camada de conteúdo arredondada, igual às páginas da plataforma -->
+      <div class="kd-list-layer">
+        <div class="kd-list-body">
+          <!-- Squad padrão pra criar documento (lógica antiga; fica escondido). -->
+          <select id="kd-f-ws" hidden></select>
+
+          <div class="kd-list-inner">
+            <div class="filters-bar kd-filters">
+              <div class="filter-input-wrap">
+                <svg class="filter-input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input type="search" class="filter-input filter-input--with-icon" id="kd-recent-search-input" placeholder="Buscar documentos…" aria-label="Buscar documentos" oninput="kdRecentSearchInput(this.value)" onkeydown="if(event.key==='Escape'){this.value='';kdRecentSearchInput('')}">
               </div>
-              <div class="kd-recent-toolbar-actions">
-                <label class="kd-search">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                  <input type="search" id="kd-recent-search-input" placeholder="Buscar documentos" aria-label="Buscar documentos" oninput="kdRecentSearchInput(this.value)" onkeydown="if(event.key==='Escape'){this.value='';kdRecentSearchInput('')}">
-                </label>
-                <button type="button" class="btn btn-ghost kd-tb-icon" onclick="kdRecentToggleMenu('sort', event)" title="Ordenar" aria-label="Ordenar">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5h4M11 9h7M11 13h10M3 17l3 3 3-3M6 20V4"/></svg>
-                </button>
-                <div class="kd-recent-menu" id="kd-recent-sort-menu" hidden>
-                  <button type="button" data-sort="updated">Última modificação</button>
-                  <button type="button" data-sort="created">Data de criação</button>
-                  <button type="button" data-sort="title">Nome (A-Z)</button>
+              <div class="seg" role="group" aria-label="De quem" id="kd-owner-tabs">
+                <button type="button" class="seg-btn" data-owner="mine">Meus</button>
+                <button type="button" class="seg-btn" data-owner="shared">Compartilhados</button>
+                <button type="button" class="seg-btn" data-owner="any">Todos</button>
+              </div>
+              <select class="filter-select" id="kd-f-client" aria-label="Cliente"><option value="">Todos os clientes</option></select>
+              <select class="filter-select" id="kd-f-project" aria-label="Projeto"><option value="">Todos os projetos</option></select>
+              <select class="filter-select" id="kd-f-status" aria-label="Aprovação">
+                <option value="">Qualquer aprovação</option>
+                <option value="none">Sem pedido de aprovação</option>
+                <option value="pending">Aguardando aprovação</option>
+                <option value="approved">Aprovados</option>
+                <option value="changes">Com ajustes pedidos</option>
+              </select>
+              <select class="filter-select" id="kd-f-sort" aria-label="Ordenar">
+                <option value="updated">Ordem: modificação</option>
+                <option value="created">Ordem: criação</option>
+                <option value="title">Ordem: nome</option>
+              </select>
+              <div class="kd-filters-right">
+                <div class="seg" role="group" aria-label="Visualização" id="kd-view-seg">
+                  <button type="button" class="seg-btn" data-view="grid" title="Ver em grade" aria-label="Ver em grade">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+                  </button>
+                  <button type="button" class="seg-btn" data-view="list" title="Ver em lista" aria-label="Ver em lista">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                  </button>
                 </div>
-                <button type="button" class="btn btn-ghost kd-tb-icon" id="kd-recent-view-btn" onclick="kdRecentToggleView()" title="Ver em lista" aria-label="Alternar visualização">
-                  <svg id="kd-recent-view-icon" width="15" height="15" viewBox="0 0 24 24"></svg>
+                <button type="button" class="btn btn-ghost kd-trash-btn" id="kd-trash-btn" onclick="kdToggleTrash()" aria-pressed="false">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                  <span>Lixeira</span>
+                  <span class="kd-count" id="kd-trash-count" hidden></span>
                 </button>
               </div>
             </div>
-            <div class="kd-recent-grid" id="kd-grid"></div>
-          </section>
+
+            <!-- Aviso da Lixeira (só no modo Lixeira) -->
+            <div class="kd-trash-note" id="kd-trash-note" hidden>
+              <span>Documentos excluídos ficam aqui. Restaure pra que voltem pra lista com tudo o que tinham.</span>
+              <button type="button" class="btn btn-ghost btn-sm" onclick="kdToggleTrash(false)">Voltar pros documentos</button>
+            </div>
+
+            <section class="kd-section" id="kd-fav-section" hidden>
+              <h2 class="dash-col-heading kd-section-title">Favoritos</h2>
+              <div class="kd-recent-grid" id="kd-fav-grid"></div>
+            </section>
+            <section class="kd-section">
+              <h2 class="dash-col-heading kd-section-title" id="kd-main-title">Documentos</h2>
+              <div class="kd-recent-grid" id="kd-grid"></div>
+            </section>
+          </div>
         </div>
       </div>
     </div>
@@ -2444,7 +2542,7 @@
 
   <div id="kd-toast" class="kd-toast"></div>
 
-  <script src="/js/writer/standalone.js?v=20260926i2"></script>
+  <script src="/js/writer/standalone.js?v=20261103docs13"></script>
   <script src="/js/writer/editor-ui.js?v=20260926i2"></script>
 </body>
 </html>
