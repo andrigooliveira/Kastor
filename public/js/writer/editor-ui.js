@@ -98,6 +98,8 @@
     cut: P('<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/>'),
     paste: P('<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/>'),
     selectAll: P('<path d="M5 3a2 2 0 0 0-2 2M19 3a2 2 0 0 1 2 2M21 19a2 2 0 0 1-2 2M5 21a2 2 0 0 1-2-2M9 3h1M9 21h1M14 3h1M14 21h1M3 9v1M21 9v1M3 14v1M21 14v1"/>'),
+    zoom: P('<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>'),
+    pageSetup: P('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/>'),
     pages: P('<rect x="5" y="2" width="14" height="9" rx="1"/><rect x="5" y="13" width="14" height="9" rx="1"/>'),
     ruler: P('<path d="M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.41 2.41 0 0 1 0-3.4l2.6-2.6a2.41 2.41 0 0 1 3.4 0Z"/><path d="m14.5 12.5 2-2M11.5 9.5l2-2M8.5 6.5l2-2M17.5 15.5l2-2"/>'),
     outline: P('<line x1="8" y1="6" x2="21" y2="6"/><line x1="11" y1="12" x2="21" y2="12"/><line x1="14" y1="18" x2="21" y2="18"/><circle cx="4" cy="6" r="1"/><circle cx="7" cy="12" r="1"/><circle cx="10" cy="18" r="1"/>'),
@@ -227,6 +229,8 @@
     ['"Roboto", sans-serif', 'Roboto'],
     ['"Open Sans", sans-serif', 'Open Sans']
   ];
+  // Fontes do documento (Google/arquivo) entram depois das padrão
+  const allFonts = () => [...FONTS, ...(ui().docFonts?.() || [])];
   const STYLES = [
     { key: 'p',  label: 'Texto normal', kbd: 'Mod+Alt+0', css: 'font-size:13px' },
     { key: 'h1', label: 'Título 1', kbd: 'Mod+Alt+1', css: 'font-size:20px;font-weight:700' },
@@ -332,6 +336,11 @@
         ${tbBtn('clear', I.clear, 'Limpar formatação (Mod+\\)')}
       </div>
       <div class="kd-tb-spacer"></div>
+      <div class="kd-tb-size kd-tb-zoom" title="Zoom" role="group" aria-label="Zoom">
+        <button type="button" class="kd-tb-size-btn" onclick="kdZoomStep(-1)" title="Diminuir zoom" aria-label="Diminuir zoom">−</button>
+        <button type="button" class="kd-tb-zoom-val" id="kd-zoom-val" onclick="kdZoomSet(1)" title="Voltar pra 100%">100%</button>
+        <button type="button" class="kd-tb-size-btn" onclick="kdZoomStep(1)" title="Aumentar zoom" aria-label="Aumentar zoom">+</button>
+      </div>${SEP}
       <div class="kd-tb-group">
         ${tbBtn('find', I.search, 'Buscar e substituir (Mod+H)')}
       </div>`;
@@ -383,9 +392,17 @@
       case 'comment': return ui().comment?.();
       case 'find': return findPanel.open(true);
       case 'styleMenu':
-        return openMenu(btn, STYLES.map(s => ({ label: s.label, labelStyle: s.css, kbd: s.kbd, checked: cur.style() === s.key, run: () => setStyle(s.key) })), { className: 'kd-pop--styles' });
+        return openMenu(btn, [
+          ...STYLES.map(s => ({ label: s.label, labelStyle: s.css, kbd: s.kbd, checked: cur.style() === s.key, run: () => setStyle(s.key) })),
+        ], { className: 'kd-pop--styles' });
       case 'fontMenu':
-        return openMenu(btn, FONTS.map(([v, l]) => ({ label: l, labelStyle: v ? 'font-family:' + v : '', checked: cur.font() === v, run: () => setFont(v) })), { className: 'kd-pop--fonts' });
+        return openMenu(btn, [
+          ...FONTS.map(([v, l]) => ({ label: l, labelStyle: v ? 'font-family:' + v : '', checked: cur.font() === v, run: () => setFont(v) })),
+          ...((ui().docFonts?.() || []).length ? [{ header: 'Deste documento' }] : []),
+          ...(ui().docFonts?.() || []).map(([v, l]) => ({ label: l, labelStyle: 'font-family:' + v, checked: cur.font() === v, run: () => setFont(v) })),
+          { divider: true },
+          { label: 'Adicionar fontes…', icon: I.plus, run: () => ui().fonts?.() }
+        ], { className: 'kd-pop--fonts' });
       case 'moreText':
         return openMenu(btn, textMoreItems());
       case 'alignMenu':
@@ -463,7 +480,7 @@
     tb.querySelectorAll('[data-node]').forEach(b => b.classList.toggle('is-active', e.isActive(b.dataset.node)));
     const st = STYLES.find(s => s.key === cur.style());
     tb.querySelector('[data-label="style"]').textContent = st ? st.label : 'Texto normal';
-    const f = FONTS.find(([v]) => v === cur.font());
+    const f = allFonts().find(([v]) => v === cur.font());
     tb.querySelector('[data-label="font"]').textContent = f ? f[1] : (cur.font().split(',')[0].replace(/"/g, '') || 'Padrão');
     const al = cur.align();
     tb.querySelector('[data-label="align"]').innerHTML = { left: I.alignL, center: I.alignC, right: I.alignR, justify: I.alignJ }[al];
@@ -1074,6 +1091,7 @@
         { label: 'Histórico de versões', icon: I.history, run: A('historico') },
         editable && { label: 'Salvar versão com nome', icon: I.save, kbd: 'Mod+S', run: A('salvar-versao') },
         { divider: true },
+        { label: 'Configurar página…', icon: I.pageSetup, run: () => ui().pageSetup?.() },
         { label: 'Imprimir', icon: I.print, kbd: 'Mod+P', run: A('imprimir') },
         window.KD?.myRole === 'owner' && { divider: true },
         window.KD?.myRole === 'owner' && { label: 'Mover para a lixeira', icon: I.trash, danger: true, run: A('lixeira') }
@@ -1095,10 +1113,16 @@
       case 'ver': return [
         { header: 'Formato do documento' },
         { label: 'Sem páginas', icon: I.list, checked: (ui().layout?.() || 'pageless') !== 'pages', disabled: !editable, run: () => ui().setLayout?.('pageless') },
-        { label: 'Páginas (A4)', icon: I.pages, checked: ui().layout?.() === 'pages', disabled: !editable, run: () => ui().setLayout?.('pages') },
+        { label: 'Páginas', icon: I.pages, checked: ui().layout?.() === 'pages', disabled: !editable, run: () => ui().setLayout?.('pages') },
         { divider: true },
         { label: 'Mostrar régua', icon: I.ruler, checked: viewPrefs.ruler, run: () => toggleView('ruler') },
         { label: 'Mostrar índice', icon: I.outline, checked: viewPrefs.outline, run: () => toggleView('outline') },
+        { label: 'Zoom', icon: I.zoom, children: [
+          { label: 'Aumentar', run: () => ui().zoomStep?.(1) },
+          { label: 'Diminuir', run: () => ui().zoomStep?.(-1) },
+          { divider: true },
+          ...[0.5, 0.75, 1, 1.25, 1.5, 2].map(z => ({ label: Math.round(z * 100) + '%', checked: (ui().zoom?.() || 1) === z, run: () => ui().setZoom?.(z) }))
+        ] },
         { divider: true },
         { label: document.fullscreenElement ? 'Sair da tela cheia' : 'Tela cheia', icon: I.expand, run: () => {
           if (document.fullscreenElement) document.exitFullscreen?.(); else document.documentElement.requestFullscreen?.();
@@ -1118,6 +1142,7 @@
         { divider: true },
         { label: 'Linha divisória', icon: I.hr, disabled: !editable, run: () => c().setHorizontalRule().run() },
         { label: 'Quebra de página', icon: I.page, kbd: 'Mod+Enter', disabled: !editable, run: () => c().setPageBreak().run() },
+        { label: 'Sumário', icon: I.outline, disabled: !editable, run: () => c().insertToc().run() },
         { label: 'Caixa de destaque', icon: I.callout, disabled: !editable, children: [
           { label: 'Nota', run: () => c().setCallout({ variant: 'info' }).run() },
           { label: 'Dica', run: () => c().setCallout({ variant: 'tip' }).run() },
@@ -1132,6 +1157,8 @@
         { label: 'Bloco de código', icon: I.code, disabled: !editable, run: () => c().toggleCodeBlock().run() }
       ];
       case 'formatar': return [
+        { label: 'Fontes do documento…', icon: I.plus, run: () => ui().fonts?.() },
+        { divider: true },
         { label: 'Texto', icon: I.bold, disabled: !editable, children: [
           { label: 'Negrito', icon: I.bold, kbd: 'Mod+B', checked: !!e?.isActive('bold'), run: () => c().toggleBold().run() },
           { label: 'Itálico', icon: I.italic, kbd: 'Mod+I', checked: !!e?.isActive('italic'), run: () => c().toggleItalic().run() },
@@ -1225,7 +1252,7 @@
     const groups = [
       ['Texto', [['Negrito', 'Mod+B'], ['Itálico', 'Mod+I'], ['Sublinhado', 'Mod+U'], ['Tachado', 'Mod+Shift+S'], ['Código', 'Mod+E'], ['Sobrescrito', 'Mod+.'], ['Subscrito', 'Mod+,'], ['Limpar formatação', 'Mod+\\'], ['Link', 'Mod+K']]],
       ['Parágrafo', [['Texto normal', 'Mod+Alt+0'], ['Título 1 a 4', 'Mod+Alt+1…4'], ['Lista numerada', 'Mod+Shift+7'], ['Lista com marcadores', 'Mod+Shift+8'], ['Lista de tarefas', 'Mod+Shift+9'], ['Alinhar à esquerda / centro', 'Mod+Shift+L / E'], ['Alinhar à direita / justificar', 'Mod+Shift+R / J']]],
-      ['Documento', [['Comandos e blocos', '/'], ['Demanda, cliente ou projeto', '#'], ['Mencionar pessoa', '@'], ['Quebra de página', 'Mod+Enter'], ['Buscar', 'Mod+F'], ['Buscar e substituir', 'Mod+H'], ['Comentar seleção', 'Mod+Alt+M'], ['Salvar versão', 'Mod+S'], ['Contagem de palavras', 'Mod+Shift+C']]],
+      ['Documento', [['Comandos e blocos', '/'], ['Demanda, cliente ou projeto', '#'], ['Mencionar pessoa', '@'], ['Quebra de página', 'Mod+Enter'], ['Buscar', 'Mod+F'], ['Buscar e substituir', 'Mod+H'], ['Comentar seleção', 'Mod+Alt+M'], ['Salvar versão', 'Mod+S'], ['Contagem de palavras', 'Mod+Shift+C'], ['Aumentar / diminuir zoom', 'Mod++ / Mod+-'], ['Zoom em 100%', 'Mod+0']]],
       ['Atalhos de escrita', [['Título 1, 2, 3', '# ## ###'], ['Lista', '- ou *'], ['Lista numerada', '1.'], ['Tarefa', '[ ]'], ['Citação', '>'], ['Linha divisória', '---'], ['Negrito / itálico', '**texto** / *texto*']]]
     ];
     dialog('Atalhos do teclado', `<div class="kd-keys">${groups.map(([g, list]) => `

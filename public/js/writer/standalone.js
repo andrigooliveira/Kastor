@@ -96,7 +96,7 @@
     if (bundlePromise) return bundlePromise;
     bundlePromise = new Promise((resolve, reject) => {
       const s = document.createElement('script');
-      s.src = '/vendor/writer.bundle.js?v=20260926i2';
+      s.src = '/vendor/writer.bundle.js?v=20261103ed1';
       s.async = true;
       s.onload = () => window.KastorWriter ? resolve(window.KastorWriter) : reject(new Error('bundle sem KastorWriter'));
       s.onerror = () => reject(new Error('Falha ao carregar o editor.'));
@@ -125,13 +125,16 @@
     const app = $('kd-app');
     if (r.view === 'public') {
       app.className = 'kd-app is-editor is-public';
+      kdMountGlobals();
       await openPublicViewer(r.token);
     } else if (r.view === 'editor') {
       app.className = 'kd-app is-editor';
+      kdMountGlobals();
       if (!KD.currentDoc || KD.currentDoc.id !== r.id) await openEditor(r.id);
     } else {
       teardownEditor();
       app.className = 'kd-app is-list';
+      kdMountGlobals();
       await loadList();
       populateLinkFilters();
       renderList();
@@ -1258,6 +1261,10 @@
       KD.editor = editor.editor || editor;
       _kdOutlineRefresh();
       _kdApplyLayout();
+      _kdApplyPageSetup();
+      _kdApplyDocTypography();
+      _kdApplyZoom();
+      _kdSyncFavBtn();
       setStatus('saved', 'Documento público (leitura)');
     } catch (e) {
       $('writer-editor-mount').innerHTML =
@@ -1406,6 +1413,11 @@
       // Índice do doc: 1º render após o editor montar
       _kdOutlineRefresh();
       _kdApplyLayout();
+      // Página do documento (tamanho, margens, cabeçalho/rodapé), zoom e estrela
+      _kdApplyPageSetup();
+      _kdApplyDocTypography();
+      _kdApplyZoom();
+      _kdSyncFavBtn();
       _kdRulerRefresh();
       // Carrega threads + renderiza balões flutuantes (não depende do painel)
       kdCommentsLoad();
@@ -1945,8 +1957,11 @@
   }
 
   // ── Régua horizontal ─────────────────────────────────────────────
-  const KD_PAPER_MM = 210;
-  const KD_MARGIN_MM = 25.4;
+  // Largura da folha e margens (mm): vêm da configuração de página do
+  // documento (_kdApplyPageSetup); estes são os valores padrão (A4).
+  let KD_PAPER_MM = 210;
+  let KD_MARGIN_MM = 25.4;      // esquerda
+  let KD_MARGIN_R_MM = 25.4;    // direita
   const KD_RULER_SNAP_MM = 5;   // snap fixo em 5mm
 
   /* Mede a largura da scrollbar vertical do browser e expõe em --kd-sbw.
@@ -1989,10 +2004,12 @@
     ruler.innerHTML = '';
     // Traços e números num SVG só (nítido em qualquer zoom)
     const W = KD_PAPER_MM;
-    const K = 96 / 25.4;                            // px por mm (CSS)
+    // px por mm (CSS). Com zoom a régua fica mais larga junto com a folha,
+    // mas traços e números continuam do mesmo tamanho.
+    const K = 96 / 25.4 * (KD.zoom || 1);
     let marks = '';
     // Posições contadas a partir da margem esquerda (0 = início do texto)
-    for (let rel = -25; rel <= W - KD_MARGIN_MM + 0.01; rel += 2.5) {
+    for (let rel = -Math.floor(KD_MARGIN_MM / 2.5) * 2.5; rel <= W - KD_MARGIN_MM + 0.01; rel += 2.5) {
       const mm = rel + KD_MARGIN_MM;
       if (mm < 1 || mm > W - 1) continue;
       const x = (mm * K).toFixed(1);
@@ -2059,7 +2076,7 @@
     const l = Number(a.indentLeft || 0), r = Number(a.indentRight || 0), f = Number(a.firstLineIndent || 0);
     const firstOk = !!node && (node.type.name === 'paragraph' || node.type.name === 'heading');
     _kdRulerPlace('left', KD_MARGIN_MM + l);
-    _kdRulerPlace('right', KD_PAPER_MM - KD_MARGIN_MM - r);
+    _kdRulerPlace('right', KD_PAPER_MM - KD_MARGIN_R_MM - r);
     _kdRulerPlace('first', KD_MARGIN_MM + l + f);
     ruler._first.hidden = !firstOk;
     ruler.classList.toggle('is-disabled', !node);
@@ -2108,7 +2125,7 @@
         // pra os valores saírem redondos: 0,5 cm, 1 cm, 1,25 cm…
         const snapFrom = (base) => base + Math.round((raw - base) / step) * step;
         let mm = side === 'first' ? snapFrom(startLeft)
-               : side === 'right' ? KD_PAPER_MM - KD_MARGIN_MM - Math.round((KD_PAPER_MM - KD_MARGIN_MM - raw) / step) * step
+               : side === 'right' ? KD_PAPER_MM - KD_MARGIN_R_MM - Math.round((KD_PAPER_MM - KD_MARGIN_R_MM - raw) / step) * step
                : snapFrom(KD_MARGIN_MM);
         let patch, shown;
         if (side === 'left') {
@@ -2117,9 +2134,9 @@
           shown = mm - KD_MARGIN_MM;
           _kdRulerPlace('first', mm + startFirstRel);   // a 1ª linha acompanha
         } else if (side === 'right') {
-          mm = Math.min(KD_PAPER_MM - KD_MARGIN_MM, Math.max(mm, startLeft + 20));
-          patch = { indentRight: +(KD_PAPER_MM - KD_MARGIN_MM - mm).toFixed(1) };
-          shown = KD_PAPER_MM - KD_MARGIN_MM - mm;
+          mm = Math.min(KD_PAPER_MM - KD_MARGIN_R_MM, Math.max(mm, startLeft + 20));
+          patch = { indentRight: +(KD_PAPER_MM - KD_MARGIN_R_MM - mm).toFixed(1) };
+          shown = KD_PAPER_MM - KD_MARGIN_R_MM - mm;
         } else {
           mm = Math.max(startLeft, Math.min(mm, startRight - 20));
           patch = { firstLineIndent: +(mm - startLeft).toFixed(1) };
@@ -4321,6 +4338,7 @@
       l.style.top = ((k + 1) * H + k * G + G / 2) + 'px';
     });
     paper.classList.add('has-sheets');
+    _kdDrawBands();
   }
   async function _kdSetLayout(mode) {
     const doc = KD.currentDoc;
@@ -4339,6 +4357,514 @@
   window.addEventListener('beforeprint', () => { KD.editor?.commands.setPagesEnabled(false); });
   window.addEventListener('afterprint', () => _kdApplyLayout());
   window.__kdRepaginate = () => KD.editor?.commands.repaginate();
+
+  // ── Configuração de página (tamanho, orientação, margens, cabeçalho/rodapé)
+  // É do documento (todo mundo vê igual). Aplica na folha (variáveis CSS),
+  // na paginação (altura da folha), na régua e na impressão (@page).
+  const KD_PAGE_SIZES = { a4: { label: 'A4 (21 × 29,7 cm)', w: 210, h: 297 }, letter: { label: 'Carta (21,6 × 27,9 cm)', w: 215.9, h: 279.4 } };
+  const KD_MARGIN_PRESETS = {
+    normal:  { label: 'Normal',  m: { top: 25.4, right: 25.4, bottom: 25.4, left: 25.4 } },
+    narrow:  { label: 'Estreita', m: { top: 12.7, right: 12.7, bottom: 12.7, left: 12.7 } },
+    wide:    { label: 'Larga',   m: { top: 25.4, right: 50.8, bottom: 25.4, left: 50.8 } }
+  };
+  function _kdPageSetup(doc) {
+    const r = (doc && doc.pageSetup) || {};
+    const m = r.margins || {};
+    const n = (v) => (Number.isFinite(Number(v)) ? Number(v) : 25.4);
+    return {
+      size: KD_PAGE_SIZES[r.size] ? r.size : 'a4',
+      orientation: r.orientation === 'landscape' ? 'landscape' : 'portrait',
+      margins: { top: n(m.top), right: n(m.right), bottom: n(m.bottom), left: n(m.left) },
+      header: r.header || '', footer: r.footer || '',
+      pageNumbers: ['center', 'right'].includes(r.pageNumbers) ? r.pageNumbers : 'none'
+    };
+  }
+  function _kdPageDims(ps) {
+    const s = KD_PAGE_SIZES[ps.size];
+    return ps.orientation === 'landscape' ? [s.h, s.w] : [s.w, s.h];
+  }
+  const _cssStr = (t) => '"' + String(t).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+  function _kdApplyPageSetup() {
+    const view = $('writer-editor-view');
+    if (!view) return;
+    const ps = _kdPageSetup(KD.currentDoc);
+    const [w, h] = _kdPageDims(ps);
+    const m = ps.margins;
+    view.style.setProperty('--kd-pw', w + 'mm');
+    view.style.setProperty('--kd-ph', h + 'mm');
+    view.style.setProperty('--kd-mt', m.top + 'mm');
+    view.style.setProperty('--kd-mr', m.right + 'mm');
+    view.style.setProperty('--kd-mb', m.bottom + 'mm');
+    view.style.setProperty('--kd-ml', m.left + 'mm');
+    // Paginação: altura da folha em px CSS
+    const st = KD.editor && KD.editor.storage && KD.editor.storage.kdPages;
+    if (st) st.pageHeight = h * 96 / 25.4;
+    // Régua: largura e margens novas (redesenha a escala)
+    KD_PAPER_MM = w; KD_MARGIN_MM = m.left; KD_MARGIN_R_MM = m.right;
+    const ruler = $('kd-ruler');
+    if (ruler) { ruler._kdInit = false; _kdRulerInit(); }
+    _kdRulerRefresh();
+    // Impressão: @page com tamanho, margens e as faixas de cabeçalho/rodapé
+    let style = $('kd-print-page');
+    if (!style) { style = document.createElement('style'); style.id = 'kd-print-page'; document.head.appendChild(style); }
+    const box = (content) => `{ content: ${content}; font-family: Inter, Arial, sans-serif; font-size: 9pt; color: #80868b; }`;
+    let bands = '';
+    if (ps.header) bands += `@top-left ${box(_cssStr(ps.header))}`;
+    if (ps.footer) bands += '@bottom-left ' + box(_cssStr(ps.footer));
+    if (ps.pageNumbers === 'center') bands += `@bottom-center ${box('counter(page)')}`;
+    if (ps.pageNumbers === 'right') bands += `@bottom-right ${box('counter(page)')}`;
+    style.textContent = `@media print { @page { size: ${w}mm ${h}mm; margin: ${m.top}mm ${m.right}mm ${m.bottom}mm ${m.left}mm; ${bands} } }`;
+    KD.editor?.commands.repaginate?.();
+    _kdDrawBands();
+    _kdFitScrollX();
+  }
+  /* Faixas de cabeçalho/rodapé dentro de cada folha (só no formato Páginas) */
+  function _kdDrawBands() {
+    const ps = _kdPageSetup(KD.currentDoc);
+    const sheets = [...document.querySelectorAll('.writer-editor-paper .kd-page-sheet')];
+    sheets.forEach((sh, i) => {
+      sh.querySelectorAll('.kd-sheet-band').forEach(b => b.remove());
+      const num = ps.pageNumbers !== 'none' ? `<span class="kd-band-num">${i + 1}</span>` : '';
+      if (ps.header) sh.insertAdjacentHTML('beforeend', `<div class="kd-sheet-band is-head"><span class="kd-band-text">${esc(ps.header)}</span></div>`);
+      if (ps.footer || num) {
+        const center = ps.pageNumbers === 'center';
+        const text = ps.footer ? `<span class="kd-band-text">${esc(ps.footer)}</span>` : (center ? '' : '<span class="kd-band-text"></span>');
+        sh.insertAdjacentHTML('beforeend', `<div class="kd-sheet-band is-foot${center ? ' is-center' : ''}">${text}${center && ps.footer && num ? '<span>·</span>' : ''}${num}</div>`);
+      }
+    });
+  }
+  async function _kdSavePageSetup(ps) {
+    const doc = KD.currentDoc; if (!doc) return;
+    const prev = doc.pageSetup;
+    doc.pageSetup = ps;
+    _kdApplyPageSetup();
+    try {
+      const saved = await api('/writer/' + doc.id, 'PATCH', { pageSetup: ps });
+      doc.pageSetup = saved.pageSetup || ps;
+      _kdApplyPageSetup();
+      _kdApplyDocTypography();
+    } catch (e) {
+      doc.pageSetup = prev; _kdApplyPageSetup();
+      toast(e.message || 'Não foi possível salvar a configuração da página.', 'error');
+    }
+  }
+  /* Diálogo Arquivo › Configurar página */
+  function kdPageSetupOpen() {
+    const doc = KD.currentDoc; if (!doc) return;
+    const canEdit = ['owner', 'editor'].includes(KD.myRole);
+    const ps = _kdPageSetup(doc);
+    const mm = (v) => String(+(v / 10).toFixed(2)).replace('.', ',');     // mm → "2,54" (cm)
+    const bd = document.createElement('div');
+    bd.className = 'kd-dialog-backdrop';
+    bd.innerHTML = `<div class="kd-dialog" role="dialog" aria-modal="true" aria-label="Configurar página" style="width:min(520px,100%)">
+      <div class="kd-dialog-head"><div class="kd-dialog-title">Configurar página</div></div>
+      <form class="kd-dialog-body kd-dform">
+        <div class="kd-dform-row">
+          <label class="kd-dform-field"><span>Tamanho</span><select name="size">${Object.entries(KD_PAGE_SIZES).map(([k, v]) => `<option value="${k}"${ps.size === k ? ' selected' : ''}>${esc(v.label)}</option>`).join('')}</select></label>
+          <div class="kd-dform-field"><span>Orientação</span>
+            <div class="seg" role="group" aria-label="Orientação" data-orient>
+              <button type="button" class="seg-btn${ps.orientation === 'portrait' ? ' is-active' : ''}" data-o="portrait">Retrato</button>
+              <button type="button" class="seg-btn${ps.orientation === 'landscape' ? ' is-active' : ''}" data-o="landscape">Paisagem</button>
+            </div>
+          </div>
+        </div>
+        <div class="kd-dform-field"><span>Margens (cm)</span>
+          <div class="kd-ps-presets">${Object.entries(KD_MARGIN_PRESETS).map(([k, v]) => `<button type="button" class="btn btn-ghost btn-sm" data-preset="${k}">${esc(v.label)}</button>`).join('')}</div>
+          <div class="kd-ps-grid">
+            ${[['top', 'Superior'], ['bottom', 'Inferior'], ['left', 'Esquerda'], ['right', 'Direita']].map(([k, l]) =>
+              `<label class="kd-dform-field"><span>${l}</span><input type="number" name="m-${k}" min="0.5" max="6" step="any" value="${mm(ps.margins[k]).replace(',', '.')}"></label>`).join('')}
+          </div>
+        </div>
+        <label class="kd-dform-field"><span>Cabeçalho</span><input type="text" name="header" maxlength="200" placeholder="Ex.: nome do cliente ou do projeto" value="${esc(ps.header)}"></label>
+        <label class="kd-dform-field"><span>Rodapé</span><input type="text" name="footer" maxlength="200" placeholder="Ex.: Confidencial" value="${esc(ps.footer)}"></label>
+        <label class="kd-dform-field"><span>Número da página</span><select name="pageNumbers">
+          <option value="none"${ps.pageNumbers === 'none' ? ' selected' : ''}>Sem numeração</option>
+          <option value="center"${ps.pageNumbers === 'center' ? ' selected' : ''}>No rodapé, ao centro</option>
+          <option value="right"${ps.pageNumbers === 'right' ? ' selected' : ''}>No rodapé, à direita</option>
+        </select></label>
+        <p style="margin:0;font-size:12px;color:var(--text-muted)">Cabeçalho, rodapé e numeração aparecem no formato Páginas, na impressão e no PDF.</p>
+        <div class="kd-dform-actions">
+          <button type="button" class="btn btn-ghost" data-x>Cancelar</button>
+          <button type="submit" class="btn btn-primary"${canEdit ? '' : ' disabled'}>Aplicar</button>
+        </div>
+      </form></div>`;
+    document.body.appendChild(bd);
+    const form = bd.querySelector('form');
+    let orientation = ps.orientation;
+    const close = () => { bd.remove(); document.removeEventListener('keydown', onKey, true); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    document.addEventListener('keydown', onKey, true);
+    bd.addEventListener('click', (ev) => {
+      if (ev.target === bd || ev.target.closest('[data-x]')) return close();
+      const o = ev.target.closest('[data-o]');
+      if (o) {
+        orientation = o.dataset.o;
+        bd.querySelectorAll('[data-o]').forEach(b => b.classList.toggle('is-active', b === o));
+      }
+      const pr = ev.target.closest('[data-preset]');
+      if (pr) {
+        const m = KD_MARGIN_PRESETS[pr.dataset.preset].m;
+        ['top', 'right', 'bottom', 'left'].forEach(k => { form['m-' + k].value = String(+(m[k] / 10).toFixed(2)); });
+      }
+    });
+    if (!canEdit) form.querySelectorAll('input, select, [data-o], [data-preset]').forEach(el => { el.disabled = true; });
+    form.addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      if (!canEdit) return;
+      const cm = (k) => { const v = parseFloat(String(form['m-' + k].value).replace(',', '.')); return Number.isFinite(v) ? Math.min(6, Math.max(0.5, v)) * 10 : 25.4; };
+      _kdSavePageSetup({
+        size: form.size.value, orientation,
+        margins: { top: cm('top'), right: cm('right'), bottom: cm('bottom'), left: cm('left') },
+        header: form.header.value.trim(), footer: form.footer.value.trim(), pageNumbers: form.pageNumbers.value
+      });
+      close();
+    });
+    form.size.focus();
+  }
+  window.kdPageSetupOpen = kdPageSetupOpen;
+
+  // ── Zoom da folha (por pessoa, guardado no navegador) ─────────────────
+  const KD_ZOOMS = [0.5, 0.67, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+  KD.zoom = (() => { const z = parseFloat(readPref('zoom', '1')); return KD_ZOOMS.includes(z) ? z : 1; })();
+  function _kdApplyZoom() {
+    const z = KD.zoom;
+    const paper = document.querySelector('.writer-editor-paper');
+    if (paper) paper.style.zoom = z === 1 ? '' : String(z);
+    // Régua e balões não recebem zoom: só acompanham a largura da folha
+    $('writer-editor-view')?.style.setProperty('--kd-z', String(z));
+    const ruler = $('kd-ruler');
+    if (ruler) { ruler.style.zoom = ''; ruler._kdInit = false; _kdRulerInit(); }
+    const lbl = $('kd-zoom-val'); if (lbl) lbl.textContent = Math.round(z * 100) + '%';
+    _kdFitScrollX();
+    KD.editor?.commands.repaginate?.();
+    _kdRulerRefresh();
+    if (typeof _kdRenderCommentBubbles === 'function') _kdRenderCommentBubbles();
+  }
+  /* Rolagem horizontal só quando a folha não cabe (paisagem, zoom alto).
+     Fora disso os balões de comentário que passam da borda não criam barra. */
+  function _kdFitScrollX() {
+    const sc = document.querySelector('.writer-editor-scroll');
+    const paper = document.querySelector('.writer-editor-paper');
+    if (!sc || !paper) return;
+    const w = paper.getBoundingClientRect().width;
+    sc.style.overflowX = w > sc.clientWidth - 8 ? 'auto' : 'hidden';
+  }
+  window.addEventListener('resize', () => { if (KD.editor) _kdFitScrollX(); });
+  /* Ctrl + / Ctrl − / Ctrl 0 e Ctrl + rolagem: no editor, mexem no zoom da
+     folha em vez do zoom do navegador (que aumentaria a interface toda). */
+  const _kdEditorOpen = () => !!KD.editor && $('kd-app')?.classList.contains('is-editor') && !$('kd-app').classList.contains('is-public');
+  document.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || !_kdEditorOpen()) return;
+    const k = e.key;
+    let dir = null;
+    if (k === '+' || k === '=' || e.code === 'NumpadAdd') dir = 1;
+    else if (k === '-' || k === '_' || e.code === 'NumpadSubtract') dir = -1;
+    else if (k === '0' || e.code === 'Numpad0') dir = 0;
+    if (dir === null) return;
+    e.preventDefault();
+    if (dir === 0) window.kdZoomSet(1); else window.kdZoomStep(dir);
+  }, true);
+  let _kdWheelAt = 0;
+  document.addEventListener('wheel', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || !_kdEditorOpen()) return;
+    e.preventDefault();
+    // Um passo por "clique" da rodinha; trackpad (pinça) manda vários eventos seguidos
+    const now = Date.now();
+    if (now - _kdWheelAt < 90) return;
+    _kdWheelAt = now;
+    window.kdZoomStep(e.deltaY < 0 ? 1 : -1);
+  }, { passive: false });
+  window.kdZoomSet = function (z) {
+    KD.zoom = KD_ZOOMS.includes(z) ? z : 1;
+    savePref('zoom', String(KD.zoom));
+    _kdApplyZoom();
+  };
+  window.kdZoomStep = function (dir) {
+    const i = KD_ZOOMS.indexOf(KD.zoom);
+    window.kdZoomSet(KD_ZOOMS[Math.min(KD_ZOOMS.length - 1, Math.max(0, (i < 0 ? 4 : i) + dir))]);
+  };
+
+  // ── Favorito do documento aberto (mesma estrela da lista) ─────────────
+  function _kdSyncFavBtn() {
+    const b = $('kd-fav-btn'); if (!b) return;
+    const on = !!KD.currentDoc?.favorite;
+    b.classList.toggle('is-on', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    b.title = on ? 'Tirar dos favoritos' : 'Adicionar aos favoritos';
+  }
+  window.kdToggleFavoriteCurrent = async function () {
+    const doc = KD.currentDoc; if (!doc) return;
+    const next = !doc.favorite;
+    doc.favorite = next; _kdSyncFavBtn();
+    const inList = KD.docsList.find(d => d.id === doc.id); if (inList) inList.favorite = next;
+    try { await api('/writer/' + doc.id + '/favorite', 'POST', { favorite: next }); toast(next ? 'Adicionado aos favoritos.' : 'Tirado dos favoritos.'); }
+    catch (e) { doc.favorite = !next; if (inList) inList.favorite = !next; _kdSyncFavBtn(); toast(e.message || 'Não deu pra favoritar.', 'error'); }
+  };
+
+  // ── Sino, apps e avatar acompanham a tela (lista ou editor) ───────────
+  /* São os mesmos elementos nas duas telas (um painel de notificações, um
+     menu de apps, um menu da conta): só mudam de lugar. */
+  function kdMountGlobals() {
+    const app = $('kd-app');
+    const inEditor = app.classList.contains('is-editor') && !app.classList.contains('is-public');
+    const notif = document.querySelector('.notif-wrap');
+    const apps = $('topbar-apps'), user = $('topbar-user');
+    if (!notif || !apps || !user) return;
+    kdCloseMenus();
+    if (inEditor) {
+      $('kd-ed-tools')?.appendChild(notif);
+      const actions = document.querySelector('#writer-editor-view .writer-topbar-actions');
+      if (actions) { actions.appendChild(apps); actions.appendChild(user); }
+    } else {
+      document.querySelector('.kd-list-topbar .topbar-tools')?.appendChild(notif);
+      const actions = document.querySelector('.kd-list-topbar .topbar-actions');
+      if (actions) { actions.appendChild(apps); actions.appendChild(user); }
+    }
+  }
+
+  // ── Fontes próprias do documento ──────────────────────────────────────
+  /* Do Google Fonts (o servidor baixa e guarda) ou arquivo enviado. Valem
+     no editor, no link público e na impressão. */
+  const KD_WEIGHTS = [[300, 'Leve'], [400, 'Normal'], [500, 'Médio'], [600, 'Seminegrito'], [700, 'Negrito'], [800, 'Extranegrito']];
+  const _kdFontValue = (family) => `"${family}", sans-serif`;
+  function _kdDocFonts() { return (KD.currentDoc && KD.currentDoc.fonts) || []; }
+  function _kdApplyDocTypography() {
+    let fontsEl = $('kd-doc-fonts');
+    if (!fontsEl) { fontsEl = document.createElement('style'); fontsEl.id = 'kd-doc-fonts'; document.head.appendChild(fontsEl); }
+    fontsEl.textContent = _kdDocFonts().map(f => f.css).join('\n');
+    // Fonte nova pode mudar a altura das linhas: a paginação mede de novo
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => KD.editor?.commands.repaginate?.());
+    KD.editor?.commands.repaginate?.();
+  }
+  const _kdCanEditDoc = () => ['owner', 'editor'].includes(KD.myRole);
+
+
+  /* Diálogo: fontes do documento — catálogo do Google Fonts (busca, categoria,
+     ordem e prévia de cada fonte) ou envio de arquivo. */
+  const KD_FONT_CATS = [['', 'Todas'], ['sans', 'Sem serifa'], ['serif', 'Serifa'], ['display', 'Display'], ['hand', 'Manuscrita'], ['mono', 'Monoespaçada']];
+  const KD_FONT_CAT_LABEL = Object.fromEntries(KD_FONT_CATS.filter(([k]) => k));
+  const KD_FONT_PAGE = 60;
+  const _kdPreviewLoaded = new Set();
+  async function _kdFontCatalog() {
+    if (!KD._fontCatalog) KD._fontCatalog = api('/fonts/google').catch(e => { KD._fontCatalog = null; throw e; });
+    return KD._fontCatalog;
+  }
+  function kdFontsOpen(startTab) {
+    const doc = KD.currentDoc; if (!doc) return;
+    const canEdit = _kdCanEditDoc();
+    const st = { tab: startTab === 'upload' ? 'upload' : 'google', q: '', cat: '', sort: 'pop', shown: KD_FONT_PAGE, list: [], filtered: [] };
+    const bd = document.createElement('div');
+    bd.className = 'kd-dialog-backdrop';
+    bd.innerHTML = `<div class="kd-dialog kd-fp" role="dialog" aria-modal="true" aria-label="Fontes do documento">
+      <div class="kd-dialog-head">
+        <div class="kd-dialog-title">Fontes do documento</div>
+        <button type="button" class="kd-icon-btn" data-x title="Fechar" aria-label="Fechar"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+      </div>
+      <div class="kd-fp-body">
+        <div class="kd-fp-inuse" data-inuse></div>
+        <div class="seg kd-fp-tabs" role="tablist" aria-label="Origem">
+          <button type="button" class="seg-btn" data-tab="google">Google Fonts</button>
+          <button type="button" class="seg-btn" data-tab="upload">Enviar arquivo</button>
+        </div>
+        <div class="kd-fp-pane" data-pane="google">
+          <div class="kd-fp-bar">
+            <div class="filter-input-wrap kd-fp-search">
+              <svg class="filter-input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input type="search" class="filter-input filter-input--with-icon" data-q placeholder="Buscar fonte…" aria-label="Buscar fonte" autocomplete="off">
+            </div>
+            <select class="filter-select" data-sort aria-label="Ordenar">
+              <option value="pop">Mais usadas</option>
+              <option value="trend">Em alta</option>
+              <option value="new">Mais novas</option>
+              <option value="az">Nome (A–Z)</option>
+            </select>
+          </div>
+          <div class="seg kd-fp-cats" role="group" aria-label="Categoria">${KD_FONT_CATS.map(([k, l]) => `<button type="button" class="seg-btn" data-cat="${k}">${l}</button>`).join('')}</div>
+          <div class="kd-fp-list" data-list role="list"><div class="kd-fp-empty">Carregando fontes…</div></div>
+          <div class="kd-fp-count" data-count></div>
+        </div>
+        <div class="kd-fp-pane" data-pane="upload" hidden>
+          <form class="kd-dform kd-fonts-add" data-upload>
+            <div class="kd-fonts-upload">
+              <input type="file" name="file" accept=".woff2,.woff,.ttf,.otf" required>
+              <input type="text" name="family" maxlength="60" placeholder="Nome da fonte" required>
+              <select name="weight">${KD_WEIGHTS.map(([w, l]) => `<option value="${w}"${w === 400 ? ' selected' : ''}>${l}</option>`).join('')}</select>
+              <label class="kd-fonts-italic"><input type="checkbox" name="italic"> Itálico</label>
+              <button type="submit" class="btn btn-primary">Enviar</button>
+            </div>
+            <p class="kd-ts-hint">.woff2, .woff, .ttf ou .otf, até 5 MB. Pra ter negrito de verdade, envie também o arquivo do peso Negrito com o mesmo nome.</p>
+          </form>
+        </div>
+      </div>
+      <div class="kd-fp-foot">
+        <span class="kd-ts-hint">As fontes ficam guardadas no reWork: quem abrir o documento não precisa ter nada instalado.</span>
+        <button type="button" class="btn btn-primary" data-x>Concluir</button>
+      </div>
+    </div>`;
+    document.body.appendChild(bd);
+    const $q = (sel) => bd.querySelector(sel);
+    const listEl = $q('[data-list]');
+    const close = () => { io.disconnect(); bd.remove(); document.removeEventListener('keydown', onKey, true); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    document.addEventListener('keydown', onKey, true);
+
+    const inDoc = () => new Set(_kdDocFonts().map(f => f.family.toLowerCase()));
+    // ── Fontes já no documento (chips com remover)
+    const paintInUse = () => {
+      const fonts = _kdDocFonts();
+      $q('[data-inuse]').innerHTML = fonts.length
+        ? `<span class="kd-fp-inuse-label">No documento</span>` + fonts.map(f => `<span class="kd-fp-chip" style="font-family:${esc(_kdFontValue(f.family))}">${esc(f.family)}${canEdit ? `<button type="button" data-del="${esc(f.id)}" title="Tirar do documento" aria-label="Tirar ${esc(f.family)} do documento">×</button>` : ''}</span>`).join('')
+        : `<span class="kd-ts-hint">Nenhuma fonte própria ainda. Escolha no Google Fonts ou envie um arquivo; elas aparecem no seletor de fonte.</span>`;
+    };
+    const setFonts = (fonts) => { doc.fonts = fonts; _kdApplyDocTypography(); paintInUse(); paintStates(); };
+
+    // ── Prévias: só das fontes que aparecem na lista (em lotes)
+    let previewStyle = $('kd-fp-previews');
+    if (!previewStyle) { previewStyle = document.createElement('style'); previewStyle.id = 'kd-fp-previews'; document.head.appendChild(previewStyle); }
+    const want = new Set();
+    let pvTimer = null;
+    const flushPreviews = async () => {
+      const fams = [...want].filter(f => !_kdPreviewLoaded.has(f)).slice(0, 40);
+      fams.forEach(f => want.delete(f));
+      if (want.size) { clearTimeout(pvTimer); pvTimer = setTimeout(flushPreviews, 150); }   // o resto vai no próximo lote
+      if (!fams.length) return;
+      fams.forEach(f => _kdPreviewLoaded.add(f));
+      try {
+        const r = await api('/fonts/google/previews', 'POST', { families: fams });
+        previewStyle.textContent += Object.values(r.css || {}).join('\n') + '\n';
+      } catch { fams.forEach(f => _kdPreviewLoaded.delete(f)); }
+    };
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach(en => { if (en.isIntersecting) { want.add(en.target.dataset.fam); io.unobserve(en.target); } });
+      clearTimeout(pvTimer); pvTimer = setTimeout(flushPreviews, 120);
+    }, { root: listEl, rootMargin: '200px 0px' });
+
+    // ── Lista
+    const norm = (t) => String(t).toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+    const applyFilter = () => {
+      const q = norm(st.q.trim());
+      let l = st.list.filter(f => (!st.cat || f.c === st.cat) && (!q || norm(f.f).includes(q)));
+      if (st.sort === 'trend') l = l.slice().sort((a, b) => a.t - b.t);
+      else if (st.sort === 'new') l = l.slice().sort((a, b) => String(b.d).localeCompare(String(a.d)));
+      else if (st.sort === 'az') l = l.slice().sort((a, b) => a.f.localeCompare(b.f));
+      st.filtered = l; st.shown = KD_FONT_PAGE;
+      listEl.scrollTop = 0;
+      renderList();
+    };
+    // A linha inteira é o botão: clicar adiciona a fonte ao documento
+    const rowHTML = (f, have) => `<div class="kd-fp-row${have ? ' is-in' : ''}" role="button" tabindex="0" data-fam="${esc(f.f)}"${have ? ' aria-disabled="true"' : ''} title="${have ? 'Já está no documento' : 'Adicionar ao documento'}">
+        <div class="kd-fp-info">
+          <span class="kd-fp-name" style="font-family:'kdpv ${esc(f.f)}', '${esc(f.f)}', var(--font-sans, sans-serif)">${esc(f.f)}</span>
+          <span class="kd-fp-meta">${esc(KD_FONT_CAT_LABEL[f.c] || '')} · ${f.w.length} ${f.w.length === 1 ? 'peso' : 'pesos'}${f.i ? ' · itálico' : ''}</span>
+        </div>
+        ${have ? `<span class="kd-fp-have"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>No documento</span>`
+               : `<span class="kd-fp-add" aria-hidden="true">Adicionando…</span>`}
+      </div>`;
+    const renderList = () => {
+      const have = inDoc();
+      const slice = st.filtered.slice(0, st.shown);
+      listEl.innerHTML = slice.length ? slice.map(f => rowHTML(f, have.has(f.f.toLowerCase()))).join('')
+        : `<div class="kd-fp-empty">${st.list.length ? 'Nenhuma fonte com esse nome nessa categoria.' : 'Carregando fontes…'}</div>`;
+      listEl.querySelectorAll('.kd-fp-row').forEach(r => { if (!_kdPreviewLoaded.has(r.dataset.fam)) io.observe(r); });
+      $q('[data-count]').textContent = st.list.length ? `${st.filtered.length.toLocaleString(LOCALE)} ${st.filtered.length === 1 ? 'fonte' : 'fontes'}` : '';
+    };
+    const paintStates = () => {
+      const have = inDoc();
+      listEl.querySelectorAll('.kd-fp-row').forEach(r => {
+        const on = have.has(r.dataset.fam.toLowerCase());
+        const isOn = !!r.querySelector('.kd-fp-have');
+        if (on !== isOn) {
+          const f = st.list.find(x => x.f === r.dataset.fam);
+          if (f) {
+            r.insertAdjacentHTML('afterend', rowHTML(f, on));
+            const nr = r.nextElementSibling; r.remove();
+            if (!_kdPreviewLoaded.has(f.f)) io.observe(nr);   // a linha nova também ganha prévia
+          }
+        }
+      });
+    };
+    // Mais itens ao chegar perto do fim
+    listEl.addEventListener('scroll', () => {
+      if (st.shown >= st.filtered.length) return;
+      if (listEl.scrollTop + listEl.clientHeight > listEl.scrollHeight - 300) {
+        const from = st.shown; st.shown += KD_FONT_PAGE;
+        const have = inDoc();
+        listEl.insertAdjacentHTML('beforeend', st.filtered.slice(from, st.shown).map(f => rowHTML(f, have.has(f.f.toLowerCase()))).join(''));
+        listEl.querySelectorAll('.kd-fp-row').forEach((r, i) => { if (i >= from && !_kdPreviewLoaded.has(r.dataset.fam)) io.observe(r); });
+      }
+    });
+
+    // ── Controles
+    const setTab = (t) => {
+      st.tab = t;
+      bd.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('is-active', b.dataset.tab === t));
+      bd.querySelectorAll('[data-pane]').forEach(p => { p.hidden = p.dataset.pane !== t; });
+      if (t === 'google') $q('[data-q]').focus();
+    };
+    const setCat = (c) => { st.cat = c; bd.querySelectorAll('[data-cat]').forEach(b => b.classList.toggle('is-active', b.dataset.cat === c)); applyFilter(); };
+    let qTimer = null;
+    $q('[data-q]').addEventListener('input', (e) => { clearTimeout(qTimer); qTimer = setTimeout(() => { st.q = e.target.value; applyFilter(); }, 120); });
+    $q('[data-sort]').addEventListener('change', (e) => { st.sort = e.target.value; applyFilter(); });
+    bd.addEventListener('click', async (ev) => {
+      if (ev.target === bd || ev.target.closest('[data-x]')) return close();
+      const tab = ev.target.closest('[data-tab]'); if (tab) return setTab(tab.dataset.tab);
+      const cat = ev.target.closest('[data-cat]'); if (cat) return setCat(cat.dataset.cat);
+      const del = ev.target.closest('[data-del]');
+      if (del && canEdit) {
+        try { const r = await api('/writer/' + doc.id + '/fonts/' + del.dataset.del, 'DELETE'); setFonts(r.fonts || []); }
+        catch (e) { toast(e.message || 'Não deu pra tirar a fonte.', 'error'); }
+        return;
+      }
+      const row = ev.target.closest('.kd-fp-row');
+      if (row) addRow(row);
+    });
+    listEl.addEventListener('keydown', (e) => {
+      if ((e.key === 'Enter' || e.key === ' ') && e.target.classList.contains('kd-fp-row')) { e.preventDefault(); addRow(e.target); }
+    });
+    async function addRow(row) {
+      if (!canEdit || row.classList.contains('is-in') || row.classList.contains('is-busy')) return;
+      const fam = row.dataset.fam;
+      row.classList.add('is-busy');
+      try {
+        const r = await api('/writer/' + doc.id + '/fonts', 'POST', { google: fam });
+        setFonts(r.fonts || []); toast(`${fam} adicionada ao documento.`);
+      } catch (e) {
+        row.classList.remove('is-busy');
+        toast(e.message || 'Não deu pra adicionar a fonte.', 'error');
+      }
+    }
+
+    // ── Envio de arquivo
+    const uForm = $q('[data-upload]');
+    const busy = (on) => uForm.querySelectorAll('button, input, select').forEach(el => { el.disabled = on || !canEdit; });
+    busy(false);
+    uForm.file.addEventListener('change', () => {
+      const f = uForm.file.files[0];
+      if (f && !uForm.family.value) uForm.family.value = f.name.replace(/\.[^.]+$/, '').replace(/[-_](regular|bold|italic|light|medium|semibold|black|\d+)$/i, '').replace(/[-_]+/g, ' ').trim();
+    });
+    uForm.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const f = uForm.file.files[0]; if (!f) return;
+      if (f.size > 5 * 1024 * 1024) { toast('Arquivo maior que 5 MB.', 'error'); return; }
+      busy(true);
+      try {
+        const data = await new Promise((ok, fail) => { const rd = new FileReader(); rd.onload = () => ok(rd.result); rd.onerror = fail; rd.readAsDataURL(f); });
+        const r = await api('/writer/' + doc.id + '/fonts', 'POST', {
+          upload: { name: f.name, data }, family: uForm.family.value.trim(),
+          weight: Number(uForm.weight.value), italic: uForm.italic.checked
+        });
+        setFonts(r.fonts || []); uForm.reset(); toast('Fonte enviada.');
+      } catch (e) { toast(e.message || 'Não deu pra enviar a fonte.', 'error'); }
+      busy(false);
+    });
+
+    paintInUse();
+    setCat('');
+    setTab(st.tab);
+    _kdFontCatalog().then(list => { st.list = list; applyFilter(); })
+      .catch(e => { listEl.innerHTML = `<div class="kd-fp-empty">${esc(e.message || 'Não deu pra carregar a lista do Google Fonts.')} Você ainda pode enviar um arquivo de fonte.</div>`; });
+  }
+  window.kdFontsOpen = kdFontsOpen;
 
   // ── Índice (outline) — H1/H2/H3 do doc ────────────────────────────────
   // Painel lateral direito. Refresh throttled em cada onUpdate do editor,
@@ -4631,7 +5157,13 @@
     requestApproval: () => _kdApprovalRequest(),
     repaginate: () => { KD.editor?.commands.repaginate(); _kdRulerRefresh(); },
     layout: () => _kdLayoutOf(KD.currentDoc),
-    setLayout: (m) => _kdSetLayout(m)
+    setLayout: (m) => _kdSetLayout(m),
+    pageSetup: () => kdPageSetupOpen(),
+    fonts: () => kdFontsOpen(),
+    docFonts: () => _kdDocFonts().map(f => [_kdFontValue(f.family), f.family]),
+    zoom: () => KD.zoom,
+    setZoom: (z) => window.kdZoomSet(z),
+    zoomStep: (d) => window.kdZoomStep(d)
   };
   // Atalhos dos comandos "/" que precisam de coisas daqui
   window.kdEditorHooks = {

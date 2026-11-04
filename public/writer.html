@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8">
-  <script src="/js/i18n.js?v=20261103docs13"></script>
+  <script src="/js/i18n.js?v=20261104fp6"></script>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#7A00FF">
   <title>reWork Docs</title>
@@ -26,7 +26,7 @@
        + classes writer-* num CSS menor. -->
   <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/css/fonts.css?v=1">
-  <link rel="stylesheet" href="/css/style.css?v=20261103docs13">
+  <link rel="stylesheet" href="/css/style.css?v=20261104fp6">
 
   <style>
     /* Reset do body pra editor standalone — sem margin, cor da plataforma. */
@@ -504,25 +504,6 @@
       50%      { opacity: 1; }
     }
 
-    /* Footer com word count + reading time + hint de atalhos */
-    .kd-editor-footer {
-      flex-shrink: 0;
-      display: flex; align-items: center; gap: 8px;
-      padding: 6px 20px;
-      border-top: 1px solid var(--hairline);
-      background: var(--surface);
-      font-size: 11.5px;
-      color: var(--text-2);
-    }
-    .kd-editor-footer-sep { opacity: .5; }
-    .kd-editor-footer-hint {
-      display: inline-flex; align-items: center; gap: 5px;
-      padding: 3px 8px;
-      border-radius: 4px;
-      background: color-mix(in oklab, var(--text) 4%, transparent);
-      cursor: help;
-    }
-    .kd-editor-footer-hint svg { flex-shrink: 0; }
 
     /* Banner de role quando o user não é editor */
     .kd-role-banner {
@@ -1328,6 +1309,15 @@
       border-radius: 0 6px 6px 0;
       display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
     }
+    /* Trecho comentado: no máximo 2 linhas com "…". O corte do overflow é na
+       borda do padding, então com padding embaixo o começo da 3ª linha
+       aparecia ali. O respiro de baixo vira borda transparente (o fundo
+       amarelo cobre a borda), e o texto é cortado logo depois da 2ª linha. */
+    #kd-comments-panel .kd-comment-quote, .kd-comment-bubble .kd-comment-quote {
+      display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+      overflow: hidden; line-height: 1.45;
+      padding-bottom: 0; border-bottom: 6px solid transparent;
+    }
     .kd-comment-msg { display: flex; gap: 8px; }
     .kd-comment-avatar {
       width: 26px; height: 26px; border-radius: 50%;
@@ -2108,9 +2098,202 @@
       font-weight: 600; font-size: 14px;
       text-decoration: none;
     }
+
+    /* ── Editor no DS ──
+       Igual às páginas da plataforma: cabeçalho e rodapé na moldura
+       (--chrome-bg), área do documento na camada arredondada (--background).
+       #writer-editor-view no seletor: ganha do docs-editor.css (vem depois). */
+    #writer-editor-view { background: var(--chrome-bg); }
+    #writer-editor-view .kd-editor-header { background: var(--chrome-bg); border-bottom: 1px solid var(--hairline); }
+    /* Área do documento sem canto arredondado; o índice fica separado só
+       por uma linha. */
+    #writer-editor-view .writer-editor-wrap { background: var(--background); border-radius: 0; }
+    #writer-editor-view .kd-outline-panel { background: transparent; border-right: 1px solid var(--hairline); }
+    /* O brilho roxo de fundo da plataforma (body::before) aparecia atrás do
+       índice transparente: no Docs ele não entra. */
+    body::before { display: none !important; }
+    #writer-editor-view .writer-editor-scroll { background: transparent; }
+    /* Barra de ferramentas: cartão como a barra de filtros */
+    #writer-editor-view .writer-editor-toolbar {
+      margin: 2px 16px 12px; padding: 4px 6px;
+      background: var(--surface); border-radius: var(--radius-md);
+      box-shadow: var(--ring-hairline), var(--shadow-xs);
+    }
+    #writer-editor-view .writer-editor-topbar { padding: 10px 24px 6px 16px; }
+    #writer-editor-view .writer-topbar-actions { gap: var(--space-6); }
+    #writer-editor-view .writer-topbar-actions .kd-topbar-share-btn { height: 32px; padding: 0 14px; }
+    #writer-editor-view .kd-topbar-comments-badge {
+      top: -6px; right: -6px; min-width: 16px; height: 16px; line-height: 16px;
+      box-shadow: 0 0 0 2px var(--chrome-bg);
+    }
+    .kd-fav-btn.is-on { color: #f5a524 !important; }
+    .kd-fav-btn.is-on svg { fill: currentColor; }
+
+    /* Zoom na barra de ferramentas: mesmo formato do tamanho da fonte (− valor +) */
+    .kd-tb-zoom-val {
+      min-width: 46px; height: 26px; padding: 0 4px;
+      border: 1px solid var(--hairline-strong); border-radius: var(--radius-sm);
+      background: var(--surface); color: var(--text);
+      font-family: inherit; font-size: 12.5px; font-weight: 500; font-variant-numeric: tabular-nums; cursor: pointer;
+    }
+    .kd-tb-zoom-val:hover { border-color: var(--text-muted); }
+    @media (max-width: 900px) { .kd-tb-zoom { display: none; } }
+
+    /* ── Configuração de página ──
+       Largura, altura e margens vêm do documento (variáveis setadas por
+       _kdApplyPageSetup). Sem elas, A4 com margens de 25,4 mm. */
+    #writer-editor-view .writer-editor-paper {
+      width: var(--kd-pw, 210mm);
+      --page-h: var(--kd-ph, 297mm);
+      padding: var(--kd-mt, 25.4mm) var(--kd-mr, 25.4mm) var(--kd-mb, 25.4mm) var(--kd-ml, 25.4mm);
+    }
+    #writer-editor-view.is-pageless .writer-editor-paper { padding-bottom: 120px; }
+    /* A folha nunca encolhe (paisagem é mais larga que a área): a área rola
+       na horizontal, e "safe" faz começar da esquerda em vez de cortar. */
+    #writer-editor-view .writer-editor-paper { flex-shrink: 0; }
+    #writer-editor-view .writer-editor-scroll { justify-content: safe center; }
+    #writer-editor-view .kd-ruler-bar { justify-content: safe center; }
+    /* Régua e balões acompanham a largura da folha com zoom (--kd-z), sem crescer */
+    #writer-editor-view .kd-ruler { width: calc(var(--kd-pw, 210mm) * var(--kd-z, 1)); }
+    #writer-editor-view .kd-ruler-margin.is-l { width: calc(var(--kd-ml, 25.4mm) * var(--kd-z, 1)); }
+    #writer-editor-view .kd-ruler-margin.is-r { width: calc(var(--kd-mr, 25.4mm) * var(--kd-z, 1)); }
+    #writer-editor-view .kd-comment-bubbles { left: calc(50% + var(--kd-pw, 210mm) * var(--kd-z, 1) / 2 + 16px); }
+    @media (max-width: 900px) {
+      #writer-editor-view.is-pageless .writer-editor-paper { width: 100%; padding: 28px 20px 80px; }
+    }
+    /* Cabeçalho, rodapé e número da página: desenhados em cada folha */
+    .kd-sheet-band {
+      position: absolute; left: var(--kd-ml, 25.4mm); right: var(--kd-mr, 25.4mm);
+      display: flex; align-items: center; gap: 12px;
+      font: 400 9pt/1.3 'Inter', -apple-system, sans-serif; color: #80868b;
+      white-space: nowrap; overflow: hidden;
+    }
+    .kd-sheet-band.is-head { top: calc(var(--kd-mt, 25.4mm) / 2); transform: translateY(-50%); }
+    .kd-sheet-band.is-foot { bottom: calc(var(--kd-mb, 25.4mm) / 2); transform: translateY(50%); }
+    .kd-sheet-band .kd-band-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .kd-sheet-band.is-center { justify-content: center; text-align: center; }
+    .kd-sheet-band.is-center .kd-band-text { flex: 0 1 auto; }
+    .kd-sheet-band .kd-band-num { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+
+    /* Diálogo "Configurar página" */
+    .kd-ps-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+    .kd-ps-grid input { width: 100%; }
+    .kd-ps-presets { display: flex; gap: 6px; flex-wrap: wrap; }
+    .kd-dform select {
+      height: 34px; padding: 0 10px; border-radius: var(--radius-sm);
+      border: 1px solid var(--hairline-strong); background: var(--surface); color: var(--text);
+      font-family: inherit; font-size: 13px;
+    }
+    .kd-dform input[type="number"] {
+      height: 34px; padding: 0 10px; border-radius: var(--radius-sm);
+      border: 1px solid var(--hairline-strong); background: var(--surface); color: var(--text);
+      font-family: inherit; font-size: 13px; font-variant-numeric: tabular-nums;
+    }
+    .kd-dform select:focus, .kd-dform input[type="number"]:focus { outline: none; border-color: var(--accent); box-shadow: var(--shadow-focus); }
+
+    /* Diálogo de fontes do documento */
+    .kd-ts-hint { margin: 0; font-size: 12px; color: var(--text-muted); line-height: 1.45; }
+    .kd-fonts-add { display: flex; flex-direction: column; gap: 6px; }
+    .kd-fonts-upload { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; align-items: center; }
+    .kd-fonts-upload input[type="file"] { grid-column: 1 / -1; font-size: 12.5px; color: var(--text-dim); }
+    .kd-fonts-upload input[type="file"]::file-selector-button {
+      height: 30px; margin-right: 10px; padding: 0 12px; border-radius: var(--radius-sm);
+      border: 1px solid var(--hairline-strong); background: var(--surface); color: var(--text);
+      font: 600 12.5px inherit; font-family: inherit; cursor: pointer;
+    }
+    .kd-fonts-upload input[type="file"]::file-selector-button:hover { background: var(--surface-2); }
+    .kd-fonts-italic { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-dim); }
+    .kd-fonts-upload .btn { justify-self: end; }
+
+    /* Seletor de fontes (catálogo do Google Fonts + envio de arquivo) */
+    .kd-dialog.kd-fp {
+      max-width: 760px; height: min(680px, calc(100vh - 48px)); max-height: none; overflow: hidden;
+      display: flex; flex-direction: column;
+    }
+    .kd-fp-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 4px 20px 0; }
+    .kd-fp-inuse { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+    .kd-fp-inuse-label { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); margin-right: 4px; }
+    .kd-fp-chip {
+      display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 4px 0 10px;
+      border-radius: var(--radius-pill); background: var(--surface-2); box-shadow: var(--ring-hairline);
+      font-size: 14px; color: var(--text);
+    }
+    .kd-fp-chip button {
+      width: 20px; height: 20px; border: 0; border-radius: 50%; background: transparent; color: var(--text-muted);
+      font: 600 15px/1 'Geist', sans-serif; cursor: pointer;
+    }
+    .kd-fp-chip button:hover { background: var(--surface-3); color: var(--text); }
+    .kd-fp-tabs { align-self: flex-start; }
+    .kd-fp-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+    .kd-fp-pane[hidden] { display: none; }
+    .kd-fp-bar { display: flex; gap: 8px; }
+    .kd-fp-search { flex: 1; min-width: 0; }
+    .kd-fp-search .filter-input { width: 100%; height: 34px; }
+    .kd-fp-bar .filter-select { height: 34px; }
+    .kd-fp-cats { align-self: flex-start; flex-wrap: wrap; }
+    .kd-fp-list {
+      flex: 1; min-height: 0; overflow-y: auto;
+      border-radius: var(--radius-md); box-shadow: var(--ring-hairline);
+    }
+    .kd-fp-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 16px; min-height: 64px; }
+    .kd-fp-row + .kd-fp-row { border-top: 1px solid var(--hairline); }
+    .kd-fp-row { cursor: pointer; transition: background var(--dur-1) var(--ease-out); }
+    .kd-fp-row:hover { background: var(--surface-2); }
+    .kd-fp-row:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
+    .kd-fp-row.is-in { cursor: default; }
+    .kd-fp-row.is-in:hover { background: transparent; }
+    .kd-fp-row.is-busy { cursor: progress; opacity: .7; }
+    /* Sem botão: a linha toda é o clique; "Adicionando…" só enquanto baixa */
+    .kd-fp-add { flex-shrink: 0; font-size: 12px; font-weight: 600; color: var(--accent-text); opacity: 0; transition: opacity var(--dur-1) var(--ease-out); }
+    .kd-fp-row.is-busy .kd-fp-add { opacity: 1; }
+    .kd-fp-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+    .kd-fp-name { font-size: 24px; line-height: 1.25; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .kd-fp-meta { font-size: 11.5px; color: var(--text-muted); }
+    .kd-fp-have { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; color: var(--success); white-space: nowrap; }
+    .kd-fp-empty { padding: 32px 16px; text-align: center; font-size: 13px; color: var(--text-muted); }
+    .kd-fp-count { font-size: 11.5px; color: var(--text-muted); min-height: 14px; }
+    .kd-fp-foot { display: flex; align-items: center; gap: 8px; padding: 12px 20px 16px; border-top: 1px solid var(--hairline); margin-top: 12px; }
+    .kd-fp-foot .kd-ts-hint { flex: 1; min-width: 0; }
+    @media (max-width: 640px) { .kd-fp-foot .kd-ts-hint { display: none; } .kd-fp-name { font-size: 20px; } }
+
+    /* ── Sumário (bloco no documento; cores de papel em qualquer tema) ── */
+    #writer-editor-mount .kd-toc {
+      margin: 10px 0 18px; padding: 14px 18px;
+      border: 1px solid #e3e5e8; border-radius: 8px; background: #fafbfc;
+      user-select: none; cursor: default;
+    }
+    #writer-editor-mount .kd-toc.ProseMirror-selectednode { outline: 2px solid var(--accent); outline-offset: 2px; }
+    #writer-editor-mount .kd-toc-title { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #5f6368; margin-bottom: 8px; }
+    #writer-editor-mount .kd-toc-empty { font-size: 13px; color: #80868b; }
+    #writer-editor-mount .kd-toc-item {
+      display: block; padding: 3px 0; color: #202124 !important; text-decoration: none !important;
+      font-size: 14px; line-height: 1.4; cursor: pointer;
+    }
+    #writer-editor-mount .kd-toc-item:hover { color: #1a56db !important; text-decoration: underline !important; }
+    #writer-editor-mount .kd-toc-l1 { font-weight: 600; }
+    #writer-editor-mount .kd-toc-l2 { padding-left: 18px; }
+    #writer-editor-mount .kd-toc-l3 { padding-left: 36px; font-size: 13px; color: #3c4043 !important; }
+
+    /* ── Impressão: só a folha. Tamanho, margens, cabeçalho, rodapé e número
+       da página vêm do @page que _kdApplyPageSetup escreve (#kd-print-page). */
+    @media print {
+      html, body { background: #fff !important; height: auto !important; }
+      #app.kd-list-shell, .kd-editor-header, .kd-outline-panel, .kd-ruler-bar,
+      .kd-comments-panel, .kd-comment-bubbles, .kd-presence-stack, .apps-menu, .user-menu, .kd-toast { display: none !important; }
+      #kd-app, #writer-editor-view, .writer-editor-wrap, .writer-editor-center, .writer-editor-scroll {
+        display: block !important; height: auto !important; overflow: visible !important;
+        background: #fff !important; border-radius: 0 !important; padding: 0 !important;
+      }
+      #writer-editor-view .writer-editor-paper {
+        width: auto !important; min-height: 0 !important; padding: 0 !important; margin: 0 !important;
+        box-shadow: none !important; border-radius: 0 !important; zoom: 1 !important;
+      }
+      .kd-page-sheet, .kd-page-label { display: none !important; }
+      #writer-editor-mount .kd-toc { break-inside: avoid; }
+    }
   </style>
   <!-- Editor (cabeçalho, barra, menus, painéis) — depois do <style> inline pra ter precedência -->
-  <link rel="stylesheet" href="/css/docs-editor.css?v=20260926i2">
+  <link rel="stylesheet" href="/css/docs-editor.css?v=20261104fp6">
 </head>
 <body>
 
@@ -2166,49 +2349,6 @@
           </button>
         </div>
       </header>
-
-      <!-- Menu de apps: os outros apps (o Docs, onde a pessoa já está, não entra) -->
-      <div class="apps-menu" id="apps-menu" role="menu" aria-label="Apps do reWork" hidden>
-        <div class="apps-menu-grid">
-          <a class="apps-menu-item" role="menuitem" title="reWork" href="/dashboard">
-            <img src="/rework_icone.svg" alt="">
-            <span>reWork</span>
-          </a>
-          <span class="apps-menu-item is-soon" role="menuitem" aria-disabled="true" title="Presentations">
-            <img src="/reworkpresentations_icone.svg" alt="">
-            <span>Presentations</span>
-          </span>
-          <span class="apps-menu-item is-soon" role="menuitem" aria-disabled="true" title="Marketing Intelligence">
-            <img src="/reworkmarketingintelligence_icone.svg" alt="">
-            <span>Marketing Intelligence</span>
-          </span>
-        </div>
-      </div>
-
-      <!-- Menu da conta (avatar) -->
-      <div class="user-menu" id="user-menu" role="menu" aria-label="Sua conta" hidden>
-        <div class="user-menu-head kd-user-head">
-          <div class="avatar" id="kd-user-menu-avatar">?</div>
-          <div class="user-menu-who">
-            <span class="user-menu-name" id="kd-user-name">—</span>
-            <span class="user-menu-status" id="kd-user-sub"></span>
-          </div>
-        </div>
-        <div class="user-menu-sep"></div>
-        <div class="user-menu-list">
-          <a class="user-menu-item" role="menuitem" href="/dashboard">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
-            <span>Ir pra plataforma</span>
-          </a>
-          <button type="button" class="user-menu-item" role="menuitem" onclick="kdToggleTheme()">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
-            <span>Alternar tema</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- Menu "mais ações" de um card (posicionado pelo JS) -->
-      <div class="user-menu kd-card-menu" id="kd-card-menu" role="menu" hidden></div>
 
       <!-- Camada de conteúdo arredondada, igual às páginas da plataforma -->
       <div class="kd-list-layer">
@@ -2277,6 +2417,50 @@
       </div>
     </div>
 
+    <!-- Menus fixos compartilhados pela lista e pelo editor -->
+      <!-- Menu de apps: os outros apps (o Docs, onde a pessoa já está, não entra) -->
+      <div class="apps-menu" id="apps-menu" role="menu" aria-label="Apps do reWork" hidden>
+        <div class="apps-menu-grid">
+          <a class="apps-menu-item" role="menuitem" title="reWork" href="/dashboard">
+            <img src="/rework_icone.svg" alt="">
+            <span>reWork</span>
+          </a>
+          <span class="apps-menu-item is-soon" role="menuitem" aria-disabled="true" title="Presentations">
+            <img src="/reworkpresentations_icone.svg" alt="">
+            <span>Presentations</span>
+          </span>
+          <span class="apps-menu-item is-soon" role="menuitem" aria-disabled="true" title="Marketing Intelligence">
+            <img src="/reworkmarketingintelligence_icone.svg" alt="">
+            <span>Marketing Intelligence</span>
+          </span>
+        </div>
+      </div>
+
+      <!-- Menu da conta (avatar) -->
+      <div class="user-menu" id="user-menu" role="menu" aria-label="Sua conta" hidden>
+        <div class="user-menu-head kd-user-head">
+          <div class="avatar" id="kd-user-menu-avatar">?</div>
+          <div class="user-menu-who">
+            <span class="user-menu-name" id="kd-user-name">—</span>
+            <span class="user-menu-status" id="kd-user-sub"></span>
+          </div>
+        </div>
+        <div class="user-menu-sep"></div>
+        <div class="user-menu-list">
+          <a class="user-menu-item" role="menuitem" href="/dashboard">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+            <span>Ir pra plataforma</span>
+          </a>
+          <button type="button" class="user-menu-item" role="menuitem" onclick="kdToggleTheme()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+            <span>Alternar tema</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Menu "mais ações" de um card (posicionado pelo JS) -->
+      <div class="user-menu kd-card-menu" id="kd-card-menu" role="menu" hidden></div>
+
     <!-- Shell do EDITOR (mostra em /writer/<slug>) — reusa .writer-editor-view do style.css -->
     <div class="page-body writer-editor-view is-pageless" id="writer-editor-view">
       <!-- Header agrupado (topbar + menubar) com fade roxo compartilhado -->
@@ -2307,19 +2491,24 @@
               <button type="button" class="kd-menubar-item" data-menu="ferramentas">Ferramentas</button>
             </nav>
           </div>
+          <!-- Ações: mesmo padrão da topbar da lista. O sino, o menu de apps e o
+               avatar são os mesmos elementos da lista: kdMountGlobals() os move
+               pra cá quando o editor abre. -->
           <div class="writer-topbar-actions">
-            <button type="button" class="btn btn-ghost kd-ed-icon kd-topbar-comments-btn" id="kd-topbar-comments-btn" onclick="kdCommentsPanelToggle()" title="Comentários" aria-label="Comentários">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-              <span class="kd-topbar-comments-badge" id="kd-topbar-comments-badge" hidden>0</span>
-            </button>
-            <button type="button" class="btn btn-ghost kd-ed-icon" onclick="kdHistoryOpen()" title="Histórico de versões" aria-label="Histórico de versões">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
-            </button>
-            <button type="button" class="btn btn-ghost kd-ed-icon" onclick="kdToggleTheme()" title="Alternar tema" aria-label="Alternar tema">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
-            </button>
+            <div class="topbar-tools" id="kd-ed-tools">
+              <button type="button" class="btn btn-ghost kd-fav-btn" id="kd-fav-btn" onclick="kdToggleFavoriteCurrent()" title="Adicionar aos favoritos" aria-label="Favorito" aria-pressed="false">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"/></svg>
+              </button>
+              <button type="button" class="btn btn-ghost kd-topbar-comments-btn" id="kd-topbar-comments-btn" onclick="kdCommentsPanelToggle()" title="Comentários" aria-label="Comentários">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
+                <span class="kd-topbar-comments-badge" id="kd-topbar-comments-badge" hidden>0</span>
+              </button>
+              <button type="button" class="btn btn-ghost" onclick="kdHistoryOpen()" title="Histórico de versões" aria-label="Histórico de versões">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+              </button>
+            </div>
             <button type="button" class="btn btn-primary kd-topbar-share-btn" onclick="kdShareOpen()" title="Compartilhar">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
               <span>Compartilhar</span>
             </button>
           </div>
@@ -2380,16 +2569,6 @@
       </div>
 
       <!-- Footer sticky com contagem de palavras + tempo de leitura -->
-      <div class="kd-editor-footer">
-        <span id="kd-word-count">—</span>
-        <span class="kd-editor-footer-sep">·</span>
-        <span id="kd-read-time">—</span>
-        <div style="flex:1"></div>
-        <span class="kd-editor-footer-hint" title="Ctrl+S salvar versão · Ctrl+K link · Ctrl+/ comentar">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h12"/></svg>
-          Atalhos
-        </span>
-      </div>
     </div>
   </div>
 
@@ -2542,7 +2721,7 @@
 
   <div id="kd-toast" class="kd-toast"></div>
 
-  <script src="/js/writer/standalone.js?v=20261103docs13"></script>
-  <script src="/js/writer/editor-ui.js?v=20260926i2"></script>
+  <script src="/js/writer/standalone.js?v=20261104fp6"></script>
+  <script src="/js/writer/editor-ui.js?v=20261104fp6"></script>
 </body>
 </html>

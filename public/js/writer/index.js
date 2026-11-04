@@ -104,6 +104,7 @@ function kdExtensions(opts = {}) {
     KdSuperscript,
     KdPages,
     KdPageBreak,
+    KdToc,
     KdSearch,
     TaskList.configure({ HTMLAttributes: { class: 'kd-task-list' } }),
     TaskItem.configure({ nested: true, HTMLAttributes: { class: 'kd-task-item' } }),
@@ -609,6 +610,93 @@ const KdPageBreak = Node.create({
   }
 });
 
+/* ── Sumário ─────────────────────────────────────────────────────────────
+   Bloco atômico sem conteúdo próprio: a lista é montada na hora a partir
+   dos títulos (H1–H3) do documento e se atualiza sozinha a cada edição.
+   Clicar num item leva até a seção. No PDF/Word o servidor monta a mesma
+   lista (pmJsonToFragment, tipo kdToc). */
+function _kdTocItems(doc) {
+  const items = [];
+  doc.descendants((n, pos) => {
+    if (n.type.name === 'heading') {
+      if (n.attrs.level <= 3) items.push({ level: n.attrs.level, text: n.textContent.trim(), pos });
+      return false;
+    }
+    return true;
+  });
+  return items;
+}
+const KdToc = Node.create({
+  name: 'kdToc',
+  group: 'block',
+  atom: true,
+  selectable: true,
+  draggable: false,
+  parseHTML() { return [{ tag: 'div[data-kd-toc]' }]; },
+  renderHTML({ HTMLAttributes }) { return ['div', mergeAttributes(HTMLAttributes, { 'data-kd-toc': 'true', class: 'kd-toc' })]; },
+  addCommands() {
+    return { insertToc: () => ({ chain }) => chain().insertContent([{ type: this.name }, { type: 'paragraph' }]).run() };
+  },
+  addNodeView() {
+    return ({ editor }) => {
+      const dom = document.createElement('div');
+      dom.className = 'kd-toc';
+      dom.setAttribute('data-kd-toc', 'true');
+      dom.contentEditable = 'false';
+      let sig = null;
+      const render = () => {
+        const items = _kdTocItems(editor.state.doc);
+        const next = JSON.stringify(items.map(i => [i.level, i.text]));
+        if (next === sig) return;          // nada mudou nos títulos
+        sig = next;
+        dom.innerHTML = '';
+        const head = document.createElement('div');
+        head.className = 'kd-toc-title';
+        head.textContent = 'Sumário';
+        dom.appendChild(head);
+        if (!items.length) {
+          const empty = document.createElement('div');
+          empty.className = 'kd-toc-empty';
+          empty.textContent = 'Adicione títulos (Título 1, 2 ou 3) pra montar o sumário.';
+          dom.appendChild(empty);
+        }
+        items.forEach((it, idx) => {
+          const a = document.createElement('a');
+          a.className = 'kd-toc-item kd-toc-l' + it.level;
+          a.href = '#';
+          a.dataset.idx = String(idx);
+          a.textContent = it.text || 'Sem título';
+          dom.appendChild(a);
+        });
+        // A altura do bloco mudou: a paginação mede de novo
+        editor.storage.kdPages && editor.storage.kdPages._pager && editor.storage.kdPages._pager.schedule(0);
+      };
+      const onClick = (e) => {
+        const a = e.target.closest('.kd-toc-item');
+        if (!a) return;
+        e.preventDefault(); e.stopPropagation();
+        const it = _kdTocItems(editor.state.doc)[Number(a.dataset.idx)];
+        if (!it) return;
+        const el = editor.view.nodeDOM(it.pos);
+        if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        try { editor.commands.setTextSelection(it.pos + 1); } catch (_) {}
+      };
+      dom.addEventListener('mousedown', onClick);
+      dom.addEventListener('click', (e) => { if (e.target.closest('.kd-toc-item')) e.preventDefault(); });
+      let t = null;
+      const onUpdate = () => { clearTimeout(t); t = setTimeout(render, 120); };
+      editor.on('update', onUpdate);
+      render();
+      return {
+        dom,
+        ignoreMutation: () => true,
+        stopEvent: (e) => !!(e.target && e.target.closest && e.target.closest('.kd-toc-item')),
+        destroy() { clearTimeout(t); editor.off('update', onUpdate); }
+      };
+    };
+  }
+});
+
 /* ── Buscar e substituir ─────────────────────────────────────────────────
    Guarda o termo no storage da extensão e pinta os resultados com
    decorações (não mexe no documento). Busca dentro de cada bloco de texto,
@@ -1049,6 +1137,7 @@ const KdSlashCommands = [
   { group: 'Inserir', key: 'date', title: 'Data de hoje', desc: 'Insere a data atual',             keywords: ['data','hoje','dia'],             icon: KD_SLASH_ICONS.date, run: (ed, r) => ed.chain().focus().deleteRange(r).insertContent(new Date().toLocaleDateString(LOCALE, { day: '2-digit', month: 'long', year: 'numeric' }) + ' ').run() },
   { group: 'Inserir', key: 'hr', title: 'Linha divisória', desc: 'Separa seções',                  keywords: ['hr','divisor','divisoria','separador','linha'], icon: KD_SLASH_ICONS.hr, run: (ed, r) => ed.chain().focus().deleteRange(r).setHorizontalRule().run() },
   { group: 'Inserir', key: 'pagebreak', title: 'Quebra de página', desc: 'Continua na próxima folha', keywords: ['quebra','pagina','page','break'], icon: KD_SLASH_ICONS.page, run: (ed, r) => ed.chain().focus().deleteRange(r).setPageBreak().run() },
+  { group: 'Inserir', key: 'toc', title: 'Sumário', desc: 'Lista os títulos com link pra cada seção', keywords: ['sumario','indice','toc','conteudo'], icon: _SI('<line x1="8" y1="6" x2="21" y2="6"/><line x1="11" y1="12" x2="21" y2="12"/><line x1="11" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="4" y2="6"/><line x1="6" y1="12" x2="7" y2="12"/><line x1="6" y1="18" x2="7" y2="18"/>'), run: (ed, r) => ed.chain().focus().deleteRange(r).insertToc().run() },
   { group: 'Blocos', key: 'quote', title: 'Citação',      desc: 'Destaca uma fala ou trecho',      keywords: ['quote','citacao','blockquote'],  icon: KD_SLASH_ICONS.quote, run: (ed, r) => ed.chain().focus().deleteRange(r).toggleBlockquote().run() },
   { group: 'Blocos', key: 'callout-info', title: 'Nota', desc: 'Caixa de informação',              keywords: ['nota','info','callout','caixa'], icon: KD_SLASH_ICONS.info, run: (ed, r) => ed.chain().focus().deleteRange(r).setCallout({ variant: 'info' }).run() },
   { group: 'Blocos', key: 'callout-tip', title: 'Dica',   desc: 'Sugestão ou boa prática',         keywords: ['dica','tip','callout'],          icon: KD_SLASH_ICONS.tip, run: (ed, r) => ed.chain().focus().deleteRange(r).setCallout({ variant: 'tip' }).run() },
@@ -1370,7 +1459,18 @@ class KdPager {
       st.pages = pages;
     }
   }
+  /* Zoom da folha (style.zoom no .writer-editor-paper): as medidas da
+     paginação são em px sem zoom (altura da folha, margens). Tira o zoom só
+     durante a medição — roda num microtask, antes do navegador pintar, então
+     não pisca — e devolve no fim. */
   run() {
+    const paper = this.view.dom.closest && this.view.dom.closest('.writer-editor-paper');
+    const z = paper && paper.style.zoom;
+    if (!z || z === '1') return this._run();
+    paper.style.zoom = '1';
+    try { this._run(); } finally { paper.style.zoom = z; }
+  }
+  _run() {
     this.scheduled = false;
     const view = this.view, storage = this.storage;
     if (view.isDestroyed) return;

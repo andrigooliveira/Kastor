@@ -4707,9 +4707,11 @@ function pmJsonToText(n) {
   const isBlock = ['paragraph','heading','listItem','blockquote','codeBlock','tableRow'].includes(n.type);
   return isBlock ? kids + '\n' : kids;
 }
-function pmJsonToFragment(n) {
+/* ctx (opcional, só na exportação): { headings: [{ id, level, text }], hi }
+   — os títulos ganham id e o bloco de Sumário vira a lista com links. */
+function pmJsonToFragment(n, ctx) {
   if (!n) return '';
-  if (Array.isArray(n)) return n.map(pmJsonToFragment).join('');
+  if (Array.isArray(n)) return n.map(x => pmJsonToFragment(x, ctx)).join('');
   if (n.type === 'text') {
     let t = _serverEscHtml(n.text || '');
     for (const m of (n.marks || [])) {
@@ -4722,12 +4724,25 @@ function pmJsonToFragment(n) {
     }
     return t;
   }
-  const kids = pmJsonToFragment(n.content || []);
+  const kids = pmJsonToFragment(n.content || [], ctx);
   const alignAttr = n.attrs?.textAlign ? ` style="text-align:${_serverEscHtml(n.attrs.textAlign)}"` : '';
   switch (n.type) {
     case 'doc':          return kids;
     case 'paragraph':    return `<p${alignAttr}>${kids || '&nbsp;'}</p>`;
-    case 'heading':      { const lvl = Math.min(6, Math.max(1, Number(n.attrs?.level || 1))); return `<h${lvl}${alignAttr}>${kids}</h${lvl}>`; }
+    case 'heading':      {
+      const lvl = Math.min(6, Math.max(1, Number(n.attrs?.level || 1)));
+      const id = ctx && lvl <= 3 ? ` id="sec-${ctx.hi++}"` : '';
+      return `<h${lvl}${id}${alignAttr}>${kids}</h${lvl}>`;
+    }
+    // Quebra de página: o que vem depois começa na folha seguinte
+    case 'kdPageBreak':  return '<p style="page-break-before:always;margin:0"></p>';
+    // Sumário: lista dos títulos (H1–H3) com link pra cada seção
+    case 'kdToc': {
+      const hs = (ctx && ctx.headings) || [];
+      if (!hs.length) return '';
+      return `<div class="toc"><p class="toc-title"><strong>Sumário</strong></p>` +
+        hs.map(h => `<p class="toc-l${h.level}"><a href="#${h.id}">${_serverEscHtml(h.text)}</a></p>`).join('') + '</div>';
+    }
     case 'bulletList':   return `<ul>${kids}</ul>`;
     case 'orderedList':  return `<ol>${kids}</ol>`;
     case 'listItem':     return `<li>${kids}</li>`;
@@ -4762,11 +4777,43 @@ function pmJsonToFragment(n) {
 }
 function pmJsonToPortableHtml(doc, meta = {}) {
   const title = meta.title || 'Documento';
-  const body = pmJsonToFragment(doc);
+  // Títulos (H1–H3) na ordem, pro Sumário e pros ids das seções
+  const headings = [];
+  (function walk(n) {
+    if (!n) return;
+    if (n.type === 'heading' && Number(n.attrs?.level || 1) <= 3) {
+      headings.push({ id: 'sec-' + headings.length, level: Number(n.attrs?.level || 1), text: pmJsonToText(n).trim() || 'Sem título' });
+    }
+    (n.content || []).forEach(walk);
+  })(doc);
+  const body = pmJsonToFragment(doc, { headings, hi: 0 });
+  // Página: tamanho, orientação e margens do documento. Cabeçalho/rodapé no
+  // formato que o LibreOffice lê do HTML (div title="header"/"footer"; o
+  // número da página é o campo <sdfield type=PAGE>).
+  const ps = _writerPageSetup(meta.pageSetup);
+  const [pw, ph] = _writerPageDims(ps);
+  const mg = ps.margins;
+  const pageNo = '<sdfield type=PAGE subtype=RANDOM format=PAGE>1</sdfield>';
+  const band = (text, withNo) => {
+    const t = text ? _serverEscHtml(text) : '';
+    if (!withNo) return t;
+    if (ps.pageNumbers === 'center') return t ? `${t} · ${pageNo}` : pageNo;
+    return t ? `${t}<span style="float:right">${pageNo}</span>` : `<span style="float:right">${pageNo}</span>`;
+  };
+  // Só na conversão pro LibreOffice (PDF/Word); no HTML baixado ficariam soltos.
+  // A numeração sai no rodapé.
+  const headerHtml = meta.office && ps.header ? `<div title="header"><p style="font-size:9pt;color:#666;margin:0">${band(ps.header, false)}</p></div>` : '';
+  const footerInner = band(ps.footer, ps.pageNumbers !== 'none');
+  const footerHtml = meta.office && footerInner ? `<div title="footer"><p style="font-size:9pt;color:#666;margin:0;text-align:${ps.pageNumbers === 'center' ? 'center' : 'left'}">${footerInner}</p></div>` : '';
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>${_serverEscHtml(title)}</title>
 <style>
-  @page { size: A4; margin: 20mm 22mm; }
+  @page { size: ${pw}mm ${ph}mm; margin: ${mg.top}mm ${mg.right}mm ${mg.bottom}mm ${mg.left}mm; }
+  .toc { margin: 6pt 0 14pt; }
+  .toc p { margin: 2pt 0; }
+  .toc .toc-l2 { padding-left: 14pt; }
+  .toc .toc-l3 { padding-left: 28pt; }
+  .toc a { color: #1a1a1a; text-decoration: none; }
   body { font-family: "Liberation Sans", "DejaVu Sans", Arial, sans-serif; font-size: 11pt; line-height: 1.5; color: #1a1a1a; }
   h1 { font-size: 22pt; font-weight: 700; margin: 18pt 0 8pt; }
   h2 { font-size: 16pt; font-weight: 700; margin: 14pt 0 6pt; }
@@ -4785,7 +4832,7 @@ function pmJsonToPortableHtml(doc, meta = {}) {
   th { background: #f0f0f0; font-weight: 700; }
   img { max-width: 100%; height: auto; }
 </style>
-</head><body>
+</head><body>${headerHtml}${footerHtml}
 ${body}
 </body></html>`;
 }
@@ -4808,13 +4855,13 @@ app.get('/api/writer/:id/export', requireAuth, async (req, res) => {
       return res.send(txt);
     }
     if (format === 'html') {
-      const html = pmJsonToPortableHtml(doc.content || {}, { title: doc.title });
+      const html = pmJsonToPortableHtml(doc.content || {}, { title: doc.title, pageSetup: doc.pageSetup });
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       return res.send(html);
     }
     // pdf / docx via LibreOffice
-    const html = pmJsonToPortableHtml(doc.content || {}, { title: doc.title });
+    const html = pmJsonToPortableHtml(doc.content || {}, { title: doc.title, pageSetup: doc.pageSetup, office: true });
     const outPath = await convertHtmlWithSoffice(html, format);
     const mime = format === 'pdf' ? 'application/pdf'
                 : format === 'docx' ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
@@ -5114,6 +5161,146 @@ function _writerContentThumb(content) {
   const subset = { type: 'doc', content: nodes.map(sanitize) };
   return pmJsonToFragment(subset);
 }
+/* Configuração de página do documento, sempre normalizada (valores fora da
+   faixa voltam pro padrão). Margens em mm. pageNumbers: none | center | right. */
+const WRITER_PAGE_SIZES = { a4: [210, 297], letter: [215.9, 279.4] };
+function _writerPageSetup(raw) {
+  const r = raw && typeof raw === 'object' ? raw : {};
+  const num = (v, def) => { const n = Number(v); return Number.isFinite(n) ? Math.min(60, Math.max(5, Math.round(n * 10) / 10)) : def; };
+  const m = r.margins && typeof r.margins === 'object' ? r.margins : {};
+  const txt = (v) => (typeof v === 'string' ? v.replace(/[\r\n]+/g, ' ').slice(0, 200) : '');
+  return {
+    size: WRITER_PAGE_SIZES[r.size] ? r.size : 'a4',
+    orientation: r.orientation === 'landscape' ? 'landscape' : 'portrait',
+    margins: { top: num(m.top, 25.4), right: num(m.right, 25.4), bottom: num(m.bottom, 25.4), left: num(m.left, 25.4) },
+    header: txt(r.header),
+    footer: txt(r.footer),
+    pageNumbers: ['center', 'right'].includes(r.pageNumbers) ? r.pageNumbers : 'none'
+  };
+}
+/* Fontes do documento: [{ id, family, source: 'google'|'upload', css }].
+   Os arquivos ficam em DATA_DIR/docfonts (servidos em /docfonts/<sha1>.<ext>,
+   sem login: o link público do documento também precisa deles). */
+const DOCFONTS_DIR = path.join(DATA_DIR, 'docfonts');
+const DOCFONT_MIME = { woff2: 'font/woff2', woff: 'font/woff', ttf: 'font/ttf', otf: 'font/otf' };
+const WRITER_MAX_FONTS = 12;
+function _writerFonts(raw) {
+  return (Array.isArray(raw) ? raw : []).filter(f => f && f.id && f.family && typeof f.css === 'string')
+    .map(f => ({ id: f.id, family: f.family, source: f.source === 'upload' ? 'upload' : 'google', css: f.css }));
+}
+function _saveDocFont(buf, ext) {
+  const name = crypto.createHash('sha1').update(buf).digest('hex') + '.' + ext;
+  fs.mkdirSync(DOCFONTS_DIR, { recursive: true });
+  const dest = path.join(DOCFONTS_DIR, name);
+  if (!fs.existsSync(dest)) fs.writeFileSync(dest, buf);
+  return '/docfonts/' + name;
+}
+/* Baixa uma família do Google Fonts (só os subconjuntos latinos) e guarda os
+   arquivos aqui: o navegador de quem abre o documento nunca fala com o Google
+   (e a CSP continua só com 'self'). */
+async function _fetchGoogleFont(family) {
+  const fam = String(family || '').trim().replace(/\s+/g, ' ');
+  if (!/^[A-Za-z0-9 ]{2,60}$/.test(fam)) throw new Error('Nome de fonte inválido. Use o nome como aparece no Google Fonts (ex.: Roboto Slab).');
+  const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
+  const base = 'https://fonts.googleapis.com/css2?family=' + encodeURIComponent(fam).replace(/%20/g, '+');
+  // Nem toda família tem todos os pesos/itálico: tenta do mais completo ao básico
+  const specs = [':ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400;1,700', ':wght@300;400;500;600;700;800', ':wght@400;700', ''];
+  let css = null;
+  for (const spec of specs) {
+    const r = await fetch(base + spec + '&display=swap', { headers: { 'User-Agent': UA } });
+    if (r.ok) { css = await r.text(); break; }
+  }
+  if (!css) throw new Error(`"${fam}" não foi encontrada no Google Fonts.`);
+  const blocks = [...css.matchAll(/\/\*\s*([\w-]+)\s*\*\/\s*(@font-face\s*\{[^}]*\})/g)]
+    .filter(m => m[1] === 'latin' || m[1] === 'latin-ext').map(m => m[2]);
+  if (!blocks.length) throw new Error(`"${fam}" não tem os caracteres latinos no Google Fonts.`);
+  const out = [];
+  for (const b of blocks) {
+    const m = b.match(/url\((https:\/\/fonts\.gstatic\.com\/[^)]+)\)/);
+    if (!m) continue;
+    const r = await fetch(m[1], { headers: { 'User-Agent': UA } });
+    if (!r.ok) throw new Error('Não deu pra baixar os arquivos da fonte.');
+    const ext = (m[1].match(/\.(woff2|woff|ttf|otf)(\?|$)/) || [, 'woff2'])[1];
+    const local = _saveDocFont(Buffer.from(await r.arrayBuffer()), ext);
+    out.push(b.replace(m[1], local));
+  }
+  return { family: fam, css: out.join('\n') };
+}
+
+/* Catálogo do Google Fonts pro seletor do Docs. Vem da lista que o próprio
+   site fonts.google.com usa (sem chave; não é API oficial). Fica em memória e
+   em disco e atualiza no máximo 1x por dia: se o Google mudar ou cair, o
+   seletor segue com a última cópia boa. */
+const FONT_CATALOG_FILE = path.join(DATA_DIR, 'fontcache', 'google-catalog.json');
+const FONT_CATALOG_TTL = 24 * 3600 * 1000;
+let _fontCatalog = null;          // { at, list }
+let _fontCatalogJob = null;
+async function _loadFontCatalog() {
+  if (!_fontCatalog) {
+    try { _fontCatalog = JSON.parse(fs.readFileSync(FONT_CATALOG_FILE, 'utf8')); } catch { _fontCatalog = null; }
+  }
+  const fresh = _fontCatalog && Date.now() - _fontCatalog.at < FONT_CATALOG_TTL;
+  if (fresh) return _fontCatalog.list;
+  if (!_fontCatalogJob) {
+    _fontCatalogJob = (async () => {
+      const r = await fetch('https://fonts.google.com/metadata/fonts', { headers: { 'User-Agent': 'Mozilla/5.0 Chrome/130' } });
+      if (!r.ok) throw new Error('catálogo ' + r.status);
+      const j = JSON.parse((await r.text()).replace(/^\)\]\}'\s*/, ''));
+      const CAT = { 'Sans Serif': 'sans', 'Serif': 'serif', 'Display': 'display', 'Handwriting': 'hand', 'Monospace': 'mono' };
+      const list = (j.familyMetadataList || [])
+        // Só famílias feitas pra escrita latina (Noto Sans JP também tem latim,
+        // mas não é fonte pra texto em português)
+        .filter(f => f.family && (f.subsets || []).includes('latin') && CAT[f.category] && (!f.primaryScript || f.primaryScript === 'Latn'))
+        .map(f => {
+          const keys = Object.keys(f.fonts || {});
+          return {
+            f: f.family, c: CAT[f.category], p: f.popularity || 9999,
+            t: f.trending || 9999, d: f.dateAdded || '',
+            w: [...new Set(keys.map(k => parseInt(k, 10)).filter(Boolean))].sort((a, b) => a - b),
+            i: keys.some(k => k.endsWith('i'))
+          };
+        })
+        .sort((a, b) => a.p - b.p);
+      if (list.length < 100) throw new Error('catálogo veio vazio');
+      _fontCatalog = { at: Date.now(), list };
+      try { fs.mkdirSync(path.dirname(FONT_CATALOG_FILE), { recursive: true }); fs.writeFileSync(FONT_CATALOG_FILE, JSON.stringify(_fontCatalog)); } catch {}
+      return list;
+    })().finally(() => { _fontCatalogJob = null; });
+  }
+  try { return await _fontCatalogJob; }
+  catch (e) {
+    console.warn('[fonts] catálogo do Google indisponível:', e.message);
+    if (_fontCatalog) return _fontCatalog.list;   // cópia antiga é melhor que nada
+    throw new Error('Não deu pra carregar a lista do Google Fonts agora.');
+  }
+}
+/* Prévia: só as letras do texto pedido (o nome da fonte, em geral), via
+   ?text= do Google — poucos KB. O arquivo fica em /docfonts como as outras. */
+const _fontPreviewCache = new Map();     // "família|texto" → css
+async function _fontPreviewCss(family, text) {
+  const key = family + '|' + text;
+  if (_fontPreviewCache.has(key)) return _fontPreviewCache.get(key);
+  const url = 'https://fonts.googleapis.com/css2?family=' + encodeURIComponent(family).replace(/%20/g, '+') + '&text=' + encodeURIComponent(text);
+  const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
+  const r = await fetch(url, { headers: { 'User-Agent': UA } });
+  if (!r.ok) throw new Error('prévia ' + r.status);
+  const css = await r.text();
+  const m = css.match(/url\((https:\/\/fonts\.gstatic\.com\/[^)]+)\)/);
+  if (!m) throw new Error('prévia sem arquivo');
+  const f = await fetch(m[1], { headers: { 'User-Agent': UA } });
+  if (!f.ok) throw new Error('prévia ' + f.status);
+  const local = _saveDocFont(Buffer.from(await f.arrayBuffer()), 'woff2');
+  // Nome próprio pra prévia não brigar com a fonte de verdade (que tem todas as letras)
+  const out = `@font-face { font-family: "kdpv ${family}"; src: url(${local}) format("woff2"); font-display: block; }`;
+  if (_fontPreviewCache.size > 4000) _fontPreviewCache.clear();
+  _fontPreviewCache.set(key, out);
+  return out;
+}
+function _writerPageDims(ps) {
+  const [w, h] = WRITER_PAGE_SIZES[ps.size] || WRITER_PAGE_SIZES.a4;
+  return ps.orientation === 'landscape' ? [h, w] : [w, h];
+}
+
 function stripWriterDoc(doc, { includeContent = false, user = null } = {}) {
   if (!doc) return null;
   const out = {
@@ -5133,6 +5320,9 @@ function stripWriterDoc(doc, { includeContent = false, user = null } = {}) {
     approval: doc.approval || null,
     // Formato: 'pageless' (bloco contínuo, padrão) ou 'pages' (folhas A4)
     layout: doc.layout === 'pages' ? 'pages' : 'pageless',
+    // Tamanho, orientação, margens, cabeçalho/rodapé e numeração
+    pageSetup: _writerPageSetup(doc.pageSetup),
+    fonts: _writerFonts(doc.fonts),
     publicShareEnabled: !!doc.publicShareEnabled,
     // Favorito é por pessoa: a lista guarda quem marcou a estrela.
     favorite: !!(user && Array.isArray(doc.favoritedBy) && doc.favoritedBy.includes(user.id)),
@@ -5266,6 +5456,7 @@ app.patch('/api/writer/:id', requireAuth, express.json({ limit: '512kb' }), (req
   }
   if (typeof req.body?.archived === 'boolean') doc.archived = req.body.archived;
   if (req.body?.layout === 'pages' || req.body?.layout === 'pageless') doc.layout = req.body.layout;
+  if (req.body && typeof req.body.pageSetup === 'object') doc.pageSetup = _writerPageSetup(req.body.pageSetup);
   if (req.body && ('clientId' in req.body || 'projectId' in req.body)) {
     const link = _writerLinkFrom(req.user, req.body);
     if (link.error) return res.status(400).json({ error: link.error });
@@ -5467,6 +5658,8 @@ app.get('/api/writer/public/:token', (req, res) => {
     myRole: 'viewer',
     isPublic: true,
     layout: doc.layout === 'pages' ? 'pages' : 'pageless',
+    pageSetup: _writerPageSetup(doc.pageSetup),
+    fonts: _writerFonts(doc.fonts),
     approval: doc.approval ? {
       status: doc.approval.status, decidedAt: doc.approval.decidedAt || null,
       decidedBy: doc.approval.decidedBy || null, comment: doc.approval.comment || null
@@ -5767,6 +5960,95 @@ app.post('/api/writer/:id/restore', requireAuth, (req, res) => {
   doc.deletedBy = null;
   saveEntity('writerDocuments', doc);
   res.json(stripWriterDoc(doc, { user: req.user }));
+});
+
+// POST /api/writer/:id/fonts — adiciona uma fonte ao documento.
+//   { google: 'Roboto Slab' }  → baixa do Google Fonts e guarda aqui
+//   { upload: { name, data }, family, weight, italic } → arquivo .woff2/.woff/.ttf/.otf
+// Mesma família enviada de novo (outro peso) entra na mesma fonte.
+app.post('/api/writer/:id/fonts', requireAuth, express.json({ limit: '8mb' }), async (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  if (!writerCanWrite(req.user, doc)) return res.status(404).json({ error: 'Documento não encontrado' });
+  const fonts = _writerFonts(doc.fonts);
+  try {
+    let entry;
+    if (req.body?.google) {
+      const g = await _fetchGoogleFont(req.body.google);
+      if (fonts.some(f => f.family.toLowerCase() === g.family.toLowerCase())) return res.status(409).json({ error: 'Essa fonte já está no documento.' });
+      entry = { id: uid(), family: g.family, source: 'google', css: g.css };
+    } else if (req.body?.upload) {
+      const { name, data } = req.body.upload;
+      const ext = String(name || '').toLowerCase().split('.').pop();
+      if (!DOCFONT_MIME[ext]) return res.status(400).json({ error: 'Envie um arquivo de fonte .woff2, .woff, .ttf ou .otf.' });
+      const b64 = String(data || '').split(',').pop();
+      const buf = Buffer.from(b64, 'base64');
+      if (!buf.length || buf.length > 5 * 1024 * 1024) return res.status(400).json({ error: 'Arquivo de fonte vazio ou maior que 5 MB.' });
+      const family = String(req.body.family || '').trim().replace(/\s+/g, ' ');
+      if (!/^[\p{L}\p{N} _-]{1,60}$/u.test(family)) return res.status(400).json({ error: 'Dê um nome à fonte (letras, números, espaço ou hífen).' });
+      const weight = [100, 200, 300, 400, 500, 600, 700, 800, 900].includes(Number(req.body.weight)) ? Number(req.body.weight) : 400;
+      const style = req.body.italic ? 'italic' : 'normal';
+      const fmt = { woff2: 'woff2', woff: 'woff', ttf: 'truetype', otf: 'opentype' }[ext];
+      const url = _saveDocFont(buf, ext);
+      const face = `@font-face { font-family: "${family}"; src: url(${url}) format("${fmt}"); font-weight: ${weight}; font-style: ${style}; font-display: swap; }`;
+      const same = fonts.find(f => f.source === 'upload' && f.family.toLowerCase() === family.toLowerCase());
+      if (same) { same.css += '\n' + face; entry = same; }
+      else entry = { id: uid(), family, source: 'upload', css: face };
+    } else {
+      return res.status(400).json({ error: 'Informe a fonte do Google ou o arquivo.' });
+    }
+    const next = fonts.some(f => f.id === entry.id) ? fonts : [...fonts, entry];
+    if (next.length > WRITER_MAX_FONTS) return res.status(400).json({ error: `Cada documento aceita até ${WRITER_MAX_FONTS} fontes.` });
+    doc.fonts = next;
+    doc.updatedAt = nowISO();
+    saveEntity('writerDocuments', doc);
+    res.json({ fonts: _writerFonts(doc.fonts) });
+  } catch (e) {
+    res.status(400).json({ error: e.message || 'Não deu pra adicionar a fonte.' });
+  }
+});
+// GET /api/fonts/google — catálogo pro seletor (família, categoria, popularidade…)
+app.get('/api/fonts/google', requireAuth, async (req, res) => {
+  try {
+    const list = await _loadFontCatalog();
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.json(list);
+  } catch (e) { res.status(503).json({ error: e.message }); }
+});
+// POST /api/fonts/google/previews { families: [...] } — prévias de até 40
+// famílias de uma vez (as que estão na tela). Devolve { css: { família: css } }.
+app.post('/api/fonts/google/previews', requireAuth, express.json({ limit: '32kb' }), async (req, res) => {
+  let list;
+  try { list = await _loadFontCatalog(); } catch (e) { return res.status(503).json({ error: e.message }); }
+  const known = new Set(list.map(f => f.f));
+  const fams = [...new Set((Array.isArray(req.body?.families) ? req.body.families : []).map(String))].filter(f => known.has(f)).slice(0, 40);
+  const out = {};
+  let next = 0;
+  const worker = async () => {
+    while (next < fams.length) {
+      const fam = fams[next++];
+      try { out[fam] = await _fontPreviewCss(fam, fam); } catch { /* sem prévia: o nome sai na fonte padrão */ }
+    }
+  };
+  await Promise.all(Array.from({ length: 6 }, worker));
+  res.json({ css: out });
+});
+// DELETE /api/writer/:id/fonts/:fid — tira a fonte do documento (os arquivos
+// ficam: outro documento pode usar o mesmo, pelo hash)
+app.delete('/api/writer/:id/fonts/:fid', requireAuth, (req, res) => {
+  const doc = (db.writerDocuments || []).find(d => d.id === req.params.id);
+  if (!writerCanWrite(req.user, doc)) return res.status(404).json({ error: 'Documento não encontrado' });
+  doc.fonts = _writerFonts(doc.fonts).filter(f => f.id !== req.params.fid);
+  doc.updatedAt = nowISO();
+  saveEntity('writerDocuments', doc);
+  res.json({ fonts: doc.fonts });
+});
+// Arquivos das fontes dos documentos (nome = sha1 do conteúdo: não muda nunca)
+app.get(/^\/docfonts\/([a-f0-9]{40})\.(woff2|woff|ttf|otf)$/, (req, res) => {
+  const file = path.join(DOCFONTS_DIR, req.params[0] + '.' + req.params[1]);
+  if (!fs.existsSync(file)) return res.status(404).end();
+  res.setHeader('Content-Type', DOCFONT_MIME[req.params[1]]);
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  fs.createReadStream(file).pipe(res);
 });
 
 // POST /api/writer/:id/favorite { favorite: bool } — estrela pessoal

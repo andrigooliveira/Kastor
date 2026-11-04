@@ -1,5 +1,17 @@
 [
   {
+    "id": "2026-11-03-docs-editor",
+    "date": "2026-11-03",
+    "title": "Editor do Docs com página configurável, sumário e fontes",
+    "highlights": [
+      "O editor do Docs ganhou a cara da plataforma: notificações, menu de apps e sua foto no topo, e o documento numa área própria, como as outras telas.",
+      "Em Arquivo › Configurar página você escolhe o tamanho (A4 ou Carta), retrato ou paisagem, as margens e adiciona cabeçalho, rodapé e número da página. Tudo isso aparece nas folhas, na impressão e no PDF.",
+      "Insira um Sumário pelo menu Inserir ou digitando /sumario: ele lista os títulos com link pra cada seção e se atualiza sozinho.",
+      "Zoom da folha na barra de ferramentas, em Ver › Zoom ou com Ctrl + / Ctrl − / Ctrl + rolagem do mouse, e a estrela de favorito no topo do documento. A quebra de página agora também vale no PDF e no Word.",
+      "Em Formatar › Fontes do documento você escolhe entre as fontes do Google Fonts, com busca, categorias e a prévia de cada uma, ou envia o arquivo da fonte. Elas aparecem no seletor de fonte e valem pra quem abrir o documento."
+    ]
+  },
+  {
     "id": "2026-11-03-docs-inicio",
     "date": "2026-11-03",
     "title": "Nova tela inicial do Docs",
