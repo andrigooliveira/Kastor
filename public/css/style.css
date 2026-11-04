@@ -1606,37 +1606,38 @@ body.density-compact .table-wrap table td { font-size: 12px; }
   width: 36px; height: 36px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
 }
-/* App-launcher do reWork Hub no topbar — só o símbolo, mesma altura dos
-   demais botões (36px) e com respiro extra à direita pra separar visualmente
-   do grupo de utilitários (menu, notificações, Nova Demanda). */
-.topbar-app-btn {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 32px; height: 32px;
-  padding: 0;
-  border-radius: 0;
-  border: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  transition: transform .12s, opacity .15s;
-  cursor: pointer;
-  text-decoration: none !important;
-  opacity: .9;
+/* Botão de apps (ao lado do avatar) — abre o .apps-menu em grade.
+   Quadrado 36x36 como os outros da topbar, mas sem borda. */
+.topbar-apps-btn {
+  display: inline-grid; place-items: center; width: 36px; height: 36px; padding: 0;
+  border: 0; border-radius: var(--radius-sm); background: transparent; cursor: pointer;
+  transition: background var(--dur-1) var(--ease-out);
 }
-.topbar-app-btn:hover {
-  opacity: 1;
-  transform: scale(1.08);
-  background: transparent !important;
+.topbar-apps-btn:hover, .topbar-apps-btn[aria-expanded="true"] { background: var(--surface-2); }
+.topbar-apps-btn:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+.topbar-apps-btn img { display: block; width: 22px; height: 22px; }
+.apps-menu {
+  position: fixed; z-index: 320; width: min(296px, calc(100vw - 16px)); padding: var(--space-2);
+  background: var(--surface); border-radius: var(--radius);
+  box-shadow: var(--ring-hairline-strong), var(--shadow-xl);
+  animation: user-menu-in var(--dur-2) var(--ease-out);
 }
-.topbar-app-btn img { display: block; }
-/* Estado desativado: cinza, sem hover, cursor "not-allowed". Usado enquanto
-   o Hub tá em manutenção — o ícone continua visível pra sinalizar que existe. */
-.topbar-app-btn.is-disabled {
-  cursor: not-allowed;
-  opacity: .45;
-  pointer-events: none;
-  filter: grayscale(1);
+@media (prefers-reduced-motion: reduce) { .apps-menu { animation: none; } }
+.apps-menu[hidden] { display: none; }
+.apps-menu-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-1); }
+.apps-menu-item {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; padding: var(--space-2-5) var(--space-1);
+  border-radius: var(--radius-sm); color: var(--text); text-decoration: none; text-align: center;
+  font-size: var(--fs-sm); font-weight: var(--fw-medium); line-height: 1.2;
+  transition: background var(--dur-1) var(--ease-out);
 }
-.topbar-app-btn.is-disabled img { opacity: .8; }
+.apps-menu-item img { width: 44px; height: 44px; display: block; border-radius: 12px; }
+a.apps-menu-item:hover, a.apps-menu-item:focus-visible { background: var(--surface-2); outline: none; }
+/* Nome do app sempre em uma linha; o que passar vira "…" (nome completo no title). */
+.apps-menu-item > span { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.apps-menu-item.is-soon { cursor: not-allowed; }
+.apps-menu-item.is-soon img { filter: grayscale(1); opacity: .45; }
+.apps-menu-item.is-soon span { color: var(--text-muted); }
 .density-toggle.active { color: var(--accent-text); background: var(--accent-dim); }
 tr:first-child td { border-top: none; }
 tr:hover td { background: var(--surface-2); }

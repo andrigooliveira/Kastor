@@ -66,7 +66,7 @@ function rewriteCacheBusters(buildSha) {
   }
   // Outras páginas carregam o i18n.js (e, por ele, o dicionário /i18n/<idioma>.js
   // com a mesma versão): o cache-buster acompanha o deploy.
-  for (const page of ['acesso.html', 'console.html', 'hub.html', 'writer.html', 'public-client.html']) {
+  for (const page of ['acesso.html', 'console.html','writer.html', 'public-client.html']) {
     const pagePath = path.join(__dirname, 'public', page);
     if (!fs.existsSync(pagePath)) continue;
     const orig = fs.readFileSync(pagePath, 'utf8');

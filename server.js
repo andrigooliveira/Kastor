@@ -14575,11 +14575,6 @@ app.all(/^\/api\/.*/, (req, res) => {
 app.get(/^\/public\/client\/[a-f0-9]{48}$/i, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'public-client.html'));
 });
-// reWork Hub — home standalone dos subprodutos (Docs, Presentations, etc).
-// Portal separado da plataforma principal, acessado pelo ícone do topbar.
-app.get(/^\/hub\/?$/, (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'hub.html'));
-});
 
 // reWork Docs — página standalone, INDEPENDENTE da plataforma (abre em outra
 // guia, tem shell próprio, sem sidebar/topbar do app). A auth ainda é checada

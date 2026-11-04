@@ -1,5 +1,14 @@
 [
   {
+    "id": "2026-11-03-menu-apps",
+    "date": "2026-11-03",
+    "title": "Menu de apps no topo",
+    "highlights": [
+      "O símbolo do reWork Hub agora fica ao lado da sua foto, no canto superior direito. Clicando nele abre um menu com os apps do reWork, como o Docs, sem sair da tela em que você está.",
+      "A página separada do Hub foi removida: o Docs abre direto pelo menu, numa nova guia."
+    ]
+  },
+  {
     "id": "2026-10-30-barras-filtro",
     "date": "2026-10-30",
     "title": "Barras de filtro com o mesmo visual",

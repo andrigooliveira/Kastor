@@ -41,7 +41,7 @@ Diferente de Trello/Asana/Monday (boards genéricos), o reWork trata cada demand
 - **Recorrentes** — demandas mensais geradas a partir de moldes; **Listas de tarefas** — templates aplicáveis a projetos com snapshot isolado.
 - **Galeria** — todos os anexos de todas as demandas acessíveis num explorer, com viewer nativo (PDF via pdf.js, DOCX via mammoth, PPTX renderer custom, imagens/vídeos inline).
 - **reWork Docs** — editor colaborativo tipo Google Docs (TipTap + Yjs + WebSocket), com comentários ancorados, versões automáticas, permissões finas, templates de briefing/SOW/relatório/ata/one-pager, import DOCX/TXT via LibreOffice server-side.
-- **reWork Hub** — portal com grid dos subprodutos (Docs por enquanto; Presentations planejado).
+- **Menu de apps** — símbolo do Hub na topbar, à esquerda do avatar; abre uma grade estilo Google com os subprodutos (Docs; Presentations planejado). A antiga página /hub foi removida.
 - **Command palette** (Ctrl+K) buscando clientes, demandas, projetos, listas, usuários.
 - **Real-time via SSE** — mudanças de outros usuários refletem sem F5.
 - **Notificações** por email (SMTP) e Discord (webhooks por-workspace com persona custom por cliente).

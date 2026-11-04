@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <!-- Idioma: roda antes de tudo (carrega o dicionário quando não é português). -->
-<script src="/js/i18n.js?v=20261026pk1"></script>
+<script src="/js/i18n.js?v=20261103apps3"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>reWork</title>
 <link rel="icon" type="image/png" href="/favicon.png">
@@ -716,11 +716,6 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           <button type="button" class="topbar-timer-btn is-primary" onclick="apontarFromTopbar()" title="Apontar horas"><i data-lucide="check" class="ic-sm" width="16" height="16"></i></button>
           <button type="button" class="topbar-timer-btn is-danger" onclick="discardTopbarTimer()" title="Descartar"><i data-lucide="x" class="ic-sm" width="16" height="16"></i></button>
         </div>
-        <!-- Acesso rápido pro reWork Hub (portal com Docs e outros subprodutos).
-             Abre em nova guia — os subprodutos vivem em rotas standalone. -->
-        <a class="topbar-app-btn freelancer-hide" href="/hub" target="_blank" rel="noopener" title="Abrir reWork Hub">
-          <img src="/reworkhub_simbol.svg" alt="reWork Hub" width="32" height="32">
-        </a>
         <div class="topbar-tools">
         <button class="btn btn-ghost density-toggle" id="density-toggle-btn" onclick="toggleDensity()" title="Densidade da tabela"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="2.6" width="12" height="2.4" rx="1.2" fill="currentColor"/><rect x="2" y="6.8" width="12" height="2.4" rx="1.2" fill="currentColor"/><rect x="2" y="11" width="12" height="2.4" rx="1.2" fill="currentColor"/></svg></button>
         <div class="notif-wrap">
@@ -746,11 +741,34 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
           <span>Nova demanda</span>
         </button>
+        <!-- Apps do reWork (Docs, Presentations…): menu em grade estilo Google.
+             Os apps abrem em nova guia — vivem em rotas standalone (/hub/docs). -->
+        <button type="button" class="topbar-apps-btn freelancer-hide" id="topbar-apps" onclick="toggleAppsMenu(event)" title="Apps do reWork" aria-label="Apps do reWork" aria-haspopup="menu" aria-expanded="false" aria-controls="apps-menu">
+          <img src="/reworkhub_simbol.svg" alt="" width="22" height="22">
+        </button>
         <!-- Conta: abre o menu da conta (toggleUserMenu). Anel = presença/status. -->
         <button type="button" class="topbar-user" id="topbar-user" onclick="toggleUserMenu(event)" aria-label="Sua conta" aria-haspopup="menu" aria-expanded="false" aria-controls="user-menu" data-avatar-no-menu>
           <div class="avatar" id="topbar-avatar">A</div>
           <span class="topbar-user-dot" id="topbar-user-dot" hidden></span>
         </button>
+      </div>
+    </div>
+
+    <!-- Menu de apps (botão ao lado do avatar). -->
+    <div class="apps-menu" id="apps-menu" role="menu" aria-label="Apps do reWork" hidden>
+      <div class="apps-menu-grid">
+        <a class="apps-menu-item" role="menuitem" title="Docs" href="/hub/docs" target="_blank" rel="noopener" onclick="closeAppsMenu()">
+          <img src="/reworkdocs_icone.svg" alt="">
+          <span>Docs</span>
+        </a>
+        <span class="apps-menu-item is-soon" role="menuitem" aria-disabled="true" title="Presentations">
+          <img src="/reworkpresentations_icone.svg" alt="">
+          <span>Presentations</span>
+        </span>
+        <span class="apps-menu-item is-soon" role="menuitem" aria-disabled="true" title="Marketing Intelligence">
+          <img src="/reworkmarketingintelligence_icone.svg" alt="">
+          <span>Marketing Intelligence</span>
+        </span>
       </div>
     </div>
 
@@ -5373,7 +5391,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20261026pk1" defer></script>
+<script src="/js/boot.js?v=20261103apps3" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

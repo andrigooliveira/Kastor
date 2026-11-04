@@ -10361,6 +10361,35 @@ function renderSidebarUser() {
   if (navKey !== renderSidebarUser._nav) { renderSidebarUser._nav = navKey; renderSidebarNav(); }
 }
 
+/* Menu de apps (estilo Google): grade com os subprodutos do reWork, aberta
+   pelo símbolo do Hub ao lado do avatar. Mesmo esquema do menu da conta. */
+function toggleAppsMenu(ev) {
+  ev?.stopPropagation();
+  const menu = $('apps-menu'), btn = $('topbar-apps');
+  if (!menu || !btn) return;
+  if (!menu.hidden) { closeAppsMenu(); return; }
+  closeUserMenu();
+  menu.hidden = false;
+  const r = btn.getBoundingClientRect();
+  menu.style.top = (r.bottom + 8) + 'px';
+  menu.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
+  btn.setAttribute('aria-expanded', 'true');
+  if (ev && ev.detail === 0) menu.querySelector('a.apps-menu-item')?.focus();
+  setTimeout(() => {
+    document.addEventListener('mousedown', _appsMenuOutside, true);
+    document.addEventListener('keydown', _appsMenuKey, true);
+  }, 0);
+}
+function _appsMenuOutside(e) { if (!e.target.closest('#apps-menu, #topbar-apps')) closeAppsMenu(); }
+function _appsMenuKey(e) { if (e.key === 'Escape') { closeAppsMenu(); $('topbar-apps')?.focus(); } }
+function closeAppsMenu() {
+  const menu = $('apps-menu');
+  if (menu) menu.hidden = true;
+  $('topbar-apps')?.setAttribute('aria-expanded', 'false');
+  document.removeEventListener('mousedown', _appsMenuOutside, true);
+  document.removeEventListener('keydown', _appsMenuKey, true);
+}
+
 /* Menu da conta (avatar no topbar): status, configurações, novidades,
    documentação, ajuda e tema. Fica no index.html; aqui só abre e posiciona. */
 function toggleUserMenu(ev) {
@@ -10368,6 +10397,7 @@ function toggleUserMenu(ev) {
   const menu = $('user-menu');
   if (!menu) return;
   if (!menu.hidden) { closeUserMenu(); return; }
+  closeAppsMenu();
   closeStatusMenu();
   syncUserMenu();
   menu.hidden = false;

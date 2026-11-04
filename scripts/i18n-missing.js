@@ -25,7 +25,7 @@ catch (e) { console.error('Instale antes: npm i --no-save acorn acorn-walk parse
 const ROOT = path.join(__dirname, '..');
 const JS_FILES = ['public/js/app.js', 'public/js/boot.js', 'public/js/acesso.js', 'public/js/writer/editor-ui.js', 'public/js/writer/index.js',
   'public/js/writer/standalone.js', 'server.js', 'email-templates.js', 'billing.js', 'support.js', 'docs-rt.js', 'google-cal.js', 'google-login.js', 'discord-oauth.js'];
-const HTML_FILES = ['public/index.html', 'public/writer.html', 'public/hub.html', 'public/acesso.html', 'public/public-client.html'];
+const HTML_FILES = ['public/index.html', 'public/writer.html','public/acesso.html', 'public/public-client.html'];
 
 const HOLE = '\u0001';
 const MAXV = 48;
