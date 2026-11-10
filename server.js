@@ -7841,6 +7841,26 @@ app.post('/api/form-responses', requireAuth, (req, res) => {
   const { values, missingRequired, errors } = sanitizeResponseValues(template, b.values);
   if (missingRequired.length) return res.status(400).json({ error: `Campos obrigatórios: ${missingRequired.join(', ')}` });
   if (errors.length) return res.status(400).json({ error: errors[0] });
+  // Formulário preenchido numa demanda vira apontamento: `time` traz a duração
+  // (mesmas regras do POST /time) e a resposta fica ligada à entrada de horas.
+  let hours = 0;
+  if (b.time) {
+    if (!demandId) return res.status(400).json({ error: 'Apontamento só vale em formulário de demanda' });
+    hours = Math.round(Number(b.time.hours) * 100) / 100;
+    if (!(hours > 0)) return res.status(400).json({ error: 'Informe o tempo gasto' });
+  }
+  // `attachTimeEntryId`: formulário preenchido ao editar um apontamento que
+  // já existe — liga a resposta nele (e atualiza o tempo, se veio `time`).
+  let attach = null;
+  if (b.attachTimeEntryId) {
+    if (!demandId) return res.status(400).json({ error: 'Apontamento só vale em formulário de demanda' });
+    const dd = (db.demands || []).find(x => x.id === demandId);
+    attach = (dd.timeEntries || []).find(x => x.id === b.attachTimeEntryId);
+    if (!attach) return res.status(404).json({ error: 'Apontamento não encontrado' });
+    if (attach.userId !== req.user.id && !req.user.isAdmin && !req.user.isModerator) return res.status(403).json({ error: 'Você só pode editar seus próprios apontamentos' });
+    const prev = attach.formResponseId && (db.formResponses || []).find(x => x.id === attach.formResponseId && notDeleted(x));
+    if (prev) return res.status(400).json({ error: 'Este apontamento já tem um formulário' });
+  }
   const r = {
     id: uid(),
     workspaceId,
@@ -7850,11 +7870,73 @@ app.post('/api/form-responses', requireAuth, (req, res) => {
     submittedBy: req.user.id,
     submittedAt: nowISO()
   };
+  let d = null;
+  if (attach) {
+    d = (db.demands || []).find(x => x.id === demandId);
+    if (b.time) {
+      const oldHours = attach.hours;
+      attach.hours = hours;
+      attach.start = b.time.start || null;
+      attach.end = b.time.end || null;
+      attach.editedAt = nowISO();
+      addHistory(d, req.user.id, 'time_edited', { hours: attach.hours, oldHours, stageId: attach.stageId });
+    }
+    attach.formResponseId = r.id;
+    r.timeEntryId = attach.id;
+  } else if (b.time) {
+    d = (db.demands || []).find(x => x.id === demandId);
+    if (!Array.isArray(d.timeEntries)) d.timeEntries = [];
+    const entry = {
+      id: uid(), userId: req.user.id, stageId: b.time.stageId || d.status,
+      hours, start: b.time.start || null, end: b.time.end || null,
+      note: '', formResponseId: r.id, createdAt: nowISO()
+    };
+    d.timeEntries.push(entry);
+    r.timeEntryId = entry.id;
+    addHistory(d, req.user.id, 'time_added', { hours: entry.hours, stageId: entry.stageId, form: template.name });
+  }
   if (!Array.isArray(db.formResponses)) db.formResponses = [];
   db.formResponses.push(r);
   saveEntity('formResponses', r);
+  if (d) { saveEntity('demands', d); emitDemand(req, d); }
   broadcastChange('formResponse', 'create', { id: r.id, workspaceId: r.workspaceId, demandId: r.demandId, byUserId: req.user.id });
-  res.status(201).json(r);
+  res.status(201).json(d ? { ...r, demand: d } : r);
+});
+
+// Editar respostas (pelo painel do apontamento). `time` atualiza a entrada de
+// horas ligada na mesma chamada, com as regras do PUT /time.
+app.put('/api/form-responses/:id', requireAuth, (req, res) => {
+  const r = (db.formResponses || []).find(x => x.id === req.params.id && notDeleted(x));
+  if (!r || !canAccessWs(req.user, r.workspaceId)) return res.status(404).json({ error: 'Resposta não encontrada' });
+  if (r.submittedBy !== req.user.id && !req.user.isAdmin && !req.user.isModerator) return res.status(403).json({ error: 'Sem permissão pra editar esta resposta' });
+  const template = (db.formTemplates || []).find(t => t.id === r.templateId && notDeleted(t));
+  if (!template) return res.status(400).json({ error: 'O formulário desta resposta foi excluído' });
+  const b = req.body || {};
+  const { values, missingRequired, errors } = sanitizeResponseValues(template, b.values);
+  if (missingRequired.length) return res.status(400).json({ error: `Campos obrigatórios: ${missingRequired.join(', ')}` });
+  if (errors.length) return res.status(400).json({ error: errors[0] });
+  let d = null, e = null;
+  if (b.time && r.timeEntryId && r.demandId) {
+    d = (db.demands || []).find(x => x.id === r.demandId);
+    e = d && (d.timeEntries || []).find(x => x.id === r.timeEntryId);
+    const hours = Math.round(Number(b.time.hours) * 100) / 100;
+    if (e && !(hours > 0)) return res.status(400).json({ error: 'Informe o tempo gasto' });
+    if (e) {
+      const oldHours = e.hours;
+      e.hours = hours;
+      e.start = b.time.start || null;
+      e.end = b.time.end || null;
+      e.editedAt = nowISO();
+      addHistory(d, req.user.id, 'time_edited', { hours: e.hours, oldHours, stageId: e.stageId });
+    } else d = null;
+  }
+  r.values = values;
+  r.editedAt = nowISO();
+  r.editedBy = req.user.id;
+  saveEntity('formResponses', r);
+  if (d) { saveEntity('demands', d); emitDemand(req, d); }
+  broadcastChange('formResponse', 'update', { id: r.id, workspaceId: r.workspaceId, demandId: r.demandId, byUserId: req.user.id });
+  res.json(d ? { ...r, demand: d } : r);
 });
 
 app.delete('/api/form-responses/:id', requireAuth, (req, res) => {
@@ -7862,8 +7944,20 @@ app.delete('/api/form-responses/:id', requireAuth, (req, res) => {
   if (!r || !canAccessWs(req.user, r.workspaceId)) return res.status(404).json({ error: 'Resposta não encontrada' });
   if (r.submittedBy !== req.user.id && !req.user.isAdmin) return res.status(403).json({ error: 'Sem permissão pra excluir esta resposta' });
   softDelete('formResponses', r, req.user.id);
+  // Resposta e apontamento são a mesma coisa: some um, some o outro.
+  let d = null;
+  if (r.timeEntryId && r.demandId) {
+    d = (db.demands || []).find(x => x.id === r.demandId);
+    const e = d && (d.timeEntries || []).find(x => x.id === r.timeEntryId);
+    if (e) {
+      addHistory(d, req.user.id, 'time_removed', { hours: e.hours, stageId: e.stageId });
+      d.timeEntries = d.timeEntries.filter(x => x.id !== e.id);
+      saveEntity('demands', d);
+      emitDemand(req, d);
+    } else d = null;
+  }
   broadcastChange('formResponse', 'delete', { id: r.id, workspaceId: r.workspaceId, demandId: r.demandId, byUserId: req.user.id });
-  res.json({ ok: true });
+  res.json(d ? { ok: true, demand: d } : { ok: true });
 });
 
 /* ── DASHBOARDS ──
@@ -11074,6 +11168,12 @@ app.delete('/api/demands/:id/time/:entryId', requireAuth, (req, res) => {
   d.timeEntries = d.timeEntries.filter(x => x.id !== req.params.entryId);
   saveEntity('demands', d);
   emitDemand(req, d);
+  // Apontamento de formulário: a resposta vai junto.
+  const fr = e?.formResponseId && (db.formResponses || []).find(x => x.id === e.formResponseId && notDeleted(x));
+  if (fr) {
+    softDelete('formResponses', fr, req.user.id);
+    broadcastChange('formResponse', 'delete', { id: fr.id, workspaceId: fr.workspaceId, demandId: fr.demandId, byUserId: req.user.id });
+  }
   res.json(d);
 });
 

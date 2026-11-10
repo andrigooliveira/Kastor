@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <!-- Idioma: roda antes de tudo (carrega o dicionário quando não é português). -->
-<script src="/js/i18n.js?v=20261103ed1"></script>
+<script src="/js/i18n.js?v=20261110ff6"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>reWork</title>
 <link rel="icon" type="image/png" href="/favicon.png">
@@ -3958,13 +3958,16 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- MODAL: REGISTRAR TEMPO — apontamento de horas da demanda aberta.
      Substitui o antigo rodapé do detail modal (que foi removido no redesign). -->
-<div class="modal-overlay" id="time-modal">
-  <div class="modal modal-sm">
+<div class="modal-overlay is-drawer" id="time-modal">
+  <div class="modal modal-drawer" role="dialog" aria-labelledby="time-modal-title">
     <div class="modal-header">
-      <div class="modal-title">Registrar tempo</div>
-      <button class="modal-close" onclick="closeModal('time-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+      <div class="ff-head">
+        <div class="modal-title" id="time-modal-title">Registrar tempo</div>
+        <div class="ff-sub" id="time-modal-sub"></div>
+      </div>
+      <button class="modal-close" onclick="closeModal('time-modal')" aria-label="Fechar"><i data-lucide="x" class="ic-sm"></i></button>
     </div>
-    <div class="modal-body">
+    <div class="modal-body ff-body">
       <div class="time-advance-hint" id="time-advance-hint" hidden></div>
       <!-- Início | Término -->
       <div class="time-row time-row-2col">
@@ -3998,8 +4001,18 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
         <button type="button" class="time-chip" onclick="setTimeDuration(0, 30)">30m</button>
         <button type="button" class="time-chip" onclick="setTimeDuration(0, 15)">15m</button>
       </div>
+      <!-- Formulário opcional: escolhido, os campos aparecem embaixo e o
+           Registrar grava tempo + respostas juntos. -->
+      <div class="time-form-wrap" id="time-form-wrap" hidden>
+        <label class="time-col-title" for="time-form-select">Formulário</label>
+        <select class="form-control" id="time-form-select" onchange="onTimeFormChange(this.value)"></select>
+      </div>
+      <div class="time-form-panel" id="time-form-panel" hidden>
+        <div class="ff-description" id="time-form-desc" hidden></div>
+        <div id="time-form-fields"></div>
+      </div>
     </div>
-    <div class="modal-footer">
+    <div class="ff-foot ff-foot--row">
       <button class="btn btn-ghost" onclick="closeModal('time-modal')">Cancelar</button>
       <button class="btn btn-primary" onclick="addTimeEntry()"><i data-lucide="check" class="ic-sm"></i> <span id="time-submit-label">Registrar</span></button>
     </div>
@@ -5391,7 +5404,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20261103ed1" defer></script>
+<script src="/js/boot.js?v=20261110ff6" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">
@@ -5540,23 +5553,6 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
     </div>
   </div>
 
-  <!-- ── FORMULÁRIO — picker de template (usado ao "Preencher formulário") ── -->
-  <div class="modal-overlay" id="form-picker-modal">
-    <div class="modal modal-md">
-      <div class="modal-header">
-        <div class="modal-title">Escolha um formulário</div>
-        <button class="modal-close" onclick="closeModal('form-picker-modal')"><i data-lucide="x" class="ic-sm"></i></button>
-      </div>
-      <div class="modal-body">
-        <div class="filter-input-wrap" style="margin-bottom:12px">
-          <i data-lucide="search" class="filter-input-icon ic-sm"></i>
-          <input class="filter-input filter-input--with-icon" id="fp-search" placeholder="Buscar formulário…" oninput="renderFormPickerList()">
-        </div>
-        <div id="fp-list" class="fp-list"></div>
-      </div>
-    </div>
-  </div>
-
   <!-- ── DASHBOARD — editor simples (só nome/descrição; widgets moraram no canvas) ── -->
   <div class="modal-overlay" id="dashboard-editor-modal">
     <div class="modal modal-md">
@@ -5618,19 +5614,29 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
     </div>
   </div>
 
-  <div class="modal-overlay" id="form-fill-modal">
-    <div class="modal modal-md">
+  <!-- ── FORMULÁRIO — painel lateral: ver as respostas de um apontamento, ou
+       preencher fora de demanda (/forms/:id/fill). Na demanda, o formulário
+       é preenchido dentro do Registrar tempo (#time-modal). ── -->
+  <div class="modal-overlay is-drawer" id="form-fill-modal">
+    <div class="modal modal-drawer" role="dialog" aria-labelledby="ff-title">
       <div class="modal-header">
-        <div class="modal-title" id="ff-title">Preencher formulário</div>
-        <button class="modal-close" onclick="closeModal('form-fill-modal')"><i data-lucide="x" class="ic-sm"></i></button>
+        <div class="ff-head">
+          <div class="modal-title" id="ff-title">Preencher formulário</div>
+          <div class="ff-sub" id="ff-sub" hidden></div>
+        </div>
+        <button class="modal-close" onclick="closeModal('form-fill-modal')" aria-label="Fechar"><i data-lucide="x" class="ic-sm"></i></button>
       </div>
-      <div class="modal-body">
-        <div id="ff-description" style="font-size:12px;color:var(--text-muted);margin-bottom:12px"></div>
+      <div class="modal-body ff-body">
+        <div class="ff-description" id="ff-description" hidden></div>
         <div id="ff-fields"></div>
       </div>
-      <div class="modal-footer">
-        <button class="btn btn-ghost" onclick="closeModal('form-fill-modal')">Cancelar</button>
-        <button class="btn btn-confirm" onclick="submitFormResponse()">Enviar</button>
+      <div class="ff-foot">
+        <div class="ff-actions">
+          <button class="btn btn-ghost ff-del" id="ff-view-del" hidden onclick="deleteViewedFormResponse()"><i data-lucide="trash-2" class="ic-sm"></i> Excluir</button>
+          <span class="ff-actions-spacer"></span>
+          <button class="btn btn-ghost" id="ff-cancel" onclick="closeModal('form-fill-modal')">Cancelar</button>
+          <button class="btn btn-confirm" id="ff-submit" onclick="submitFormResponse()">Enviar</button>
+        </div>
       </div>
     </div>
   </div>

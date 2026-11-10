@@ -657,7 +657,7 @@ const MODAL_ROUTES = {
   'saved-filters-modal': { match: /^\/demands\/saved-filters$/, page: 'list', path: () => '/demands/saved-filters', open: () => openManageSavedFiltersModal() },
   'time-modal': {
     match: /^\/demands\/([^/]+)\/time\/new$/, page: 'demand-detail',
-    path: () => detailId && currentPage === 'demand-detail' ? demandPath(detailId) + '/time/new' : null,
+    path: () => detailId && currentPage === 'demand-detail' && !_tmEditId && _tmDemandId === detailId ? demandPath(detailId) + '/time/new' : null,
     open: (seg) => { _openDemandFromRoute(extractRouteId(seg)); openRegisterTimeModal(); }
   },
   'form-picker-modal': {
@@ -665,15 +665,15 @@ const MODAL_ROUTES = {
     path: () => _fpDemandId ? demandPath(_fpDemandId) + '/forms/new' : null,
     open: (seg) => { const id = extractRouteId(seg); _openDemandFromRoute(id); openFormPicker(id); }
   },
+  'time-modal-form': {
+    // Registrar tempo já com um formulário escolhido (link antigo de "preencher formulário").
+    match: /^\/demands\/([^/]+)\/forms\/([^/]+)$/, page: 'demand-detail', path: () => null,
+    open: (seg, tid) => { const id = extractRouteId(seg); _openDemandFromRoute(id); openFormPicker(id, tid); }
+  },
   'form-fill-modal': {
-    match: /^\/(?:demands\/([^/]+)\/forms\/([^/]+)|forms\/([^/]+)\/fill)$/, page: (m) => m[1] ? 'demand-detail' : 'forms',
-    path: () => !_ffTemplateId ? null : _ffDemandId ? demandPath(_ffDemandId) + '/forms/' + _ffTemplateId : '/forms/' + _ffTemplateId + '/fill',
-    open: (seg, tid, tidAlone) => {
-      if (!seg) return openFormFill(tidAlone, null);
-      const id = extractRouteId(seg);
-      _openDemandFromRoute(id);
-      openFormFill(tid, id);
-    }
+    match: /^\/forms\/([^/]+)\/fill$/, page: 'forms',
+    path: () => (!_ffTemplateId || _ffViewId || _ffDemandId) ? null : '/forms/' + _ffTemplateId + '/fill',
+    open: (tid) => openFormFill(tid, null)
   },
   /* Clientes e modelos */
   'client-public-links-modal': {
@@ -19130,13 +19130,14 @@ function setDemandDetailTab(name) {
     name = 'comments';
     setTimeout(() => { const b = document.getElementById('detail-activity-btn'); if (b) openActivityMenu(b); }, 0);
   }
+  if (name === 'forms') name = 'comments'; // aba saiu: formulários viraram apontamentos
   detailActiveTab = name;
   // Update classes das abas
   document.querySelectorAll('.detail-tab').forEach(b => b.classList.remove('is-active'));
   const btn = document.querySelector(`.detail-tab[onclick*="'${name}'"]`);
   if (btn) btn.classList.add('is-active');
   // Show/hide panes
-  ['comments','checklist','forms','stages'].forEach(k => {
+  ['comments','checklist','stages'].forEach(k => {
     const el = document.getElementById('tab-pane-' + k);
     if (el) el.style.display = k === name ? '' : 'none';
   });
@@ -19145,7 +19146,6 @@ function setDemandDetailTab(name) {
   if (sortBtn) sortBtn.style.display = name === 'comments' ? '' : 'none';
   const d = demandById(detailId);
   if (name === 'stages')   _renderStagesTab(d);
-  if (name === 'forms')    _renderFormsTab(d);
   if (currentPage === 'demand-detail' && detailId) navPush(pageUrlFor('demand-detail'), { keepSearch: false });
   paintIcons();
 }
@@ -19212,11 +19212,13 @@ function renderDetail() {
     const canEdit = e.userId === me.id;
     const canDel = e.userId === me.id || me.isAdmin;
     const when = _apptWhen(e);
-    return `<div class="appt-row" id="appt-${e.id}">
+    const fr = e.formResponseId ? (formResponses || []).find(x => x.id === e.formResponseId) : null;
+    return `<div class="appt-row${fr ? ' appt-row--form' : ''}" id="appt-${e.id}">
       ${avatarHTML(u)}
       <span class="appt-main">
         <span class="appt-name">${esc(u?.name || '—')}</span>
         <span class="appt-time-range" title="${esc([e.start ? fmtDateTime(e.start) : '', e.end ? fmtDateTime(e.end) : ''].filter(Boolean).join(' → '))}">${esc(when)}${e.note ? ` · <span class="appt-note">${esc(e.note)}</span>` : ''}</span>
+        ${fr ? _apptFormChip(fr) : ''}
       </span>
       ${_multiStage && st ? `<span class="pill appt-stage" style="color:${st.color};background:${hexDim(st.color)}">${esc(st.label)}</span>` : ''}
       <span class="appt-hours">${fmtHours(e.hours)}</span>
@@ -19555,7 +19557,7 @@ function renderDetail() {
             <span class="dd-section-title">Apontamentos${totalHours > 0 ? ` <span class="dd-section-count">· ${fmtHours(totalHours)}</span>` : ''}</span>
           </div>
           ${apptSummary}
-          <div class="time-list">${timeRows || '<div class="dd-empty">Nenhuma hora apontada ainda.</div>'}</div>
+          <div class="time-list">${(timeRows + _legacyFormRowsHtml(d)) || '<div class="dd-empty">Nenhuma hora apontada ainda.</div>'}</div>
         </div>
 
         ${d.recurrence?.enabled ? `<div class="dd-recurrence-note">
@@ -19568,7 +19570,7 @@ function renderDetail() {
       <div class="detail-col detail-col-right">
         <div class="detail-actions-bar">
           <div class="detail-actions-left">
-            <button class="detail-action-link" onclick="openRegisterTimeModal()"><i data-lucide="clock" class="ic-sm"></i> Registrar tempo</button>
+            <button class="detail-action-link" id="detail-time-btn" onclick="openRegisterTimeModal()"><i data-lucide="clock" class="ic-sm"></i> Registrar tempo</button>
             <button class="detail-action-link" onclick="toggleTimer()" id="detail-timer-toggle"><i data-lucide="play" class="ic-sm"></i> <span id="detail-timer-label">Iniciar temporizador</span></button>
             <span class="detail-timer-display" id="timer-display" style="display:none"><span id="timer-clock">00:00:00</span></span>
           </div>
@@ -19584,7 +19586,6 @@ function renderDetail() {
         <div class="tabs detail-tabs">
           <button class="tab detail-tab ${activeTab === 'comments' ? 'is-active' : ''}" onclick="setDemandDetailTab('comments')">Comentários</button>
           <button class="tab detail-tab ${activeTab === 'checklist' ? 'is-active' : ''}" onclick="setDemandDetailTab('checklist')">Checklist${checklistItems.length ? ` <span class="detail-tab-badge${checklistDone === checklistItems.length ? ' is-done' : ''}">${checklistDone}/${checklistItems.length}</span>` : ''}</button>
-          <button class="tab detail-tab ${activeTab === 'forms' ? 'is-active' : ''}" onclick="setDemandDetailTab('forms')">Formulários${_formsResponseCountForDemand(d.id) ? ` <span class="detail-tab-badge">${_formsResponseCountForDemand(d.id)}</span>` : ''}</button>
           <button class="tab detail-tab ${activeTab === 'stages' ? 'is-active' : ''} ${hasCustomization ? 'has-mark' : ''}" onclick="setDemandDetailTab('stages')">Etapas</button>
           <div class="detail-tabs-spacer"></div>
           <button class="detail-tab-tool detail-tab-sort" id="detail-tab-sort" title="${_commentSortLabel()} · clique pra inverter" onclick="toggleCommentSort()" style="${activeTab === 'comments' ? '' : 'display:none'}" data-ktip="${_commentSortLabel()}"><i data-lucide="${_commentSortIcon()}" class="ic-sm"></i> <span class="detail-tab-tool-label" id="detail-sort-label">${_commentSortLabel()}</span></button>
@@ -19602,11 +19603,6 @@ function renderDetail() {
           <!-- Checklist -->
           <div class="detail-tab-pane" id="tab-pane-checklist" style="${activeTab === 'checklist' ? '' : 'display:none'}">
             ${renderChecklist(d)}
-          </div>
-
-          <!-- Formulários (respostas anexadas à demanda) -->
-          <div class="detail-tab-pane" id="tab-pane-forms" style="${activeTab === 'forms' ? '' : 'display:none'}">
-            <div id="tab-forms-body"></div>
           </div>
 
           <!-- Etapas (customizar) -->
@@ -19636,7 +19632,6 @@ function renderDetail() {
   // Atividade agora é um menu no topo: se estava aberto, atualiza.
   if (document.getElementById('activity-menu')) _renderActivityTab(d);
   if (activeTab === 'stages')   _renderStagesTab(d);
-  if (activeTab === 'forms')    _renderFormsTab(d);
 
   // Owner picker (custom dropdown com avatar)
   buildOwnerPicker(d, owner);
@@ -21557,7 +21552,7 @@ function describeHistory(h, d) {
     case 'comment_added':      return `${dt.reply ? 'respondeu um comentário' : 'comentou'}${dt.preview ? ': <em>"' + esc(dt.preview) + (dt.preview.length >= 80 ? '…' : '') + '"</em>' : ''}`;
     case 'comment_edited':     return `editou um comentário`;
     case 'comment_removed':    return `removeu um comentário`;
-    case 'time_added':         return `apontou <strong>${esc(fmtHours(dt.hours))}</strong> de trabalho${dt.stageId ? ' em <strong>' + esc(stageLabel(dt.stageId)) + '</strong>' : ''}`;
+    case 'time_added':         return `apontou <strong>${esc(fmtHours(dt.hours))}</strong> de trabalho${dt.stageId ? ' em <strong>' + esc(stageLabel(dt.stageId)) + '</strong>' : ''}${dt.form ? ' com o formulário <strong>' + esc(dt.form) + '</strong>' : ''}`;
     case 'time_edited':        return `editou apontamento (agora <strong>${esc(fmtHours(dt.hours))}</strong>)`;
     case 'time_removed':       return `removeu um apontamento de <strong>${esc(fmtHours(dt.hours))}</strong>`;
     case 'estimated_hours_changed': return `alterou a estimativa de horas${dt.to ? ' para <strong>' + esc(fmtHours(dt.to)) + '</strong>' : ' (removida)'}`;
@@ -21835,9 +21830,13 @@ async function confirmDeleteComment(cid) {
   if (ok) deleteComment(cid);
 }
 async function confirmDeleteTimeEntry(eid) {
+  const e = (demandById(detailId)?.timeEntries || []).find(x => x.id === eid);
+  const fr = e?.formResponseId ? (formResponses || []).find(x => x.id === e.formResponseId) : null;
   const ok = await showConfirm({
     title: 'Excluir apontamento',
-    message: 'Tem certeza que deseja remover este apontamento de horas?',
+    message: fr
+      ? `Remover este apontamento? As respostas do formulário <strong>${esc(formTemplateById(fr.templateId)?.name || 'formulário')}</strong> saem junto.`
+      : 'Tem certeza que deseja remover este apontamento de horas?',
     okLabel: 'Excluir',
     danger: true
   });
@@ -24143,38 +24142,13 @@ async function apontarFromTopbar() {
   // deixar apontamentos com poucos segundos passarem como 0.01h, e o toast
   // "sem tempo" era enganoso — agora a mensagem é direta.
   if (ms < 60000) { toast('Não é possível apontar menos de 1 minuto.', 'warn'); return; }
-  const hours = Math.round((ms / 3600000) * 100) / 100;
-  if (!(hours > 0)) { toast('Não é possível apontar menos de 1 minuto.', 'warn'); return; }
   const crossedDay = t.startedAt && new Date(t.startedAt).toDateString() !== new Date().toDateString();
-  if (ms >= TIMER_LONG_RUN_MS || crossedDay) {
-    const ok = await showConfirm({
-      title: `Apontar ${_fmtDurationShort(ms)}?`,
-      message: `O timer de <strong>${esc(d.name)}</strong> ficou ligado por ${_fmtDurationShort(ms)}${crossedDay ? ', começando em outro dia' : ''}. Se ele ficou ligado sem querer, cancele e use <em>Registrar tempo</em> na demanda pra ajustar.`,
-      okLabel: 'Apontar mesmo assim',
-      kind: 'warn'
-    });
-    if (!ok) return;
-  }
-  // Formata como `YYYY-MM-DDTHH:mm` no fuso LOCAL — toISOString() converte pra
-  // UTC e distorce o horário exibido depois (usuário em BRT via 13h em vez de 10h).
-  const toLocalMinute = date => {
-    const dt = date instanceof Date ? date : new Date(date);
-    const off = dt.getTimezoneOffset();
-    return new Date(dt.getTime() - off * 60000).toISOString().slice(0, 16);
-  };
-  const startIso = t.startedAt ? toLocalMinute(t.startedAt) : null;
-  const endIso = toLocalMinute(new Date());
-  try {
-    const upd = await api('/demands/' + d.id + '/time', 'POST', { hours, start: startIso, end: endIso });
-    patchDemand(upd);
-    _activeConsume(d.id);
-    resetTimer(d.id);
-    activeTimerId = null;
-    saveActiveTimer();
-    renderTopbarTimer();
-    if (detailId === d.id) renderDetail();
-    toast(`Apontadas ${hours.toFixed(2).replace('.', ',')}h em "${d.name}".`);
-  } catch (e) { toast(e.message, 'error'); }
+  // Confirma no painel do Registrar tempo, já com o tempo do timer (dá pra
+  // ajustar e preencher formulário). Ficou ligado demais: aviso no topo.
+  const timerNote = (ms >= TIMER_LONG_RUN_MS || crossedDay)
+    ? `O timer ficou ligado por <strong>${esc(_fmtDurationShort(ms))}</strong>${crossedDay ? ', começando em outro dia' : ''}. Confira o tempo antes de registrar.`
+    : null;
+  openRegisterTimeModal({ demandId: d.id, timerNote });
 }
 async function discardTopbarTimer() {
   if (!activeTimerId) return;
@@ -24328,7 +24302,7 @@ function toggleTimer() {
     // Se o modal de Registrar Tempo estiver aberto, propaga os valores pros
     // novos campos (data + hora separadas + horas/minutos).
     const modalOpen = document.getElementById('time-modal')?.classList.contains('open');
-    if (modalOpen && typeof _prefillTimeModal === 'function') _prefillTimeModal();
+    if (modalOpen && !_tmEditId && typeof _prefillTimeModal === 'function') _prefillTimeModal();
     hideTimerCheck();
     toast('Cronômetro pausado · ' + formatTimerClock(t.accumulatedMs));
   } else {
@@ -24380,17 +24354,20 @@ function toIsoDateTime(v) {
 // Etapa específica do apontamento (vindo de "Sem apontamento" no Início);
 // null = etapa atual da demanda, como sempre.
 let _timeForStage = null;
+// Demanda do painel: a aberta na tela, ou a do timer do topo (opts.demandId).
+let _tmDemandId = null;
 function openRegisterTimeModal(opts) {
+  _tmDemandId = opts?.demandId || detailId;
   // Aberto pelo botão "Registrar tempo" normal: descarta avanço pendente.
   if (!opts?.advanceAfter) _pendingAdvance = null;
   _timeForStage = opts?.forStage || null;
   const hint = $('time-advance-hint');
-  const pending = _pendingAdvance && _pendingAdvance.demandId === detailId;
+  const pending = _pendingAdvance && _pendingAdvance.demandId === _tmDemandId;
   if (hint && _timeForStage) {
     hint.hidden = false;
     hint.innerHTML = `Apontamento na etapa <strong>${esc(_timeForStage.label)}</strong>, que você já entregou.`;
   } else if (hint) {
-    const d = pending ? demandById(detailId) : null;
+    const d = pending ? demandById(_tmDemandId) : null;
     const flow = d ? flowById(d.flowId) : null;
     const active = flow ? activeStagesOf(d, flow) : [];
     const next = pending && _pendingAdvance.stageId
@@ -24399,17 +24376,34 @@ function openRegisterTimeModal(opts) {
     hint.hidden = !next;
     hint.innerHTML = next ? `Ao registrar, a demanda avança para <strong>${esc(next.label)}</strong>.` : '';
   }
-  $('time-submit-label').textContent = pending ? 'Registrar e avançar' : 'Registrar';
+  // Editar apontamento: mesmo painel, já preenchido (ver startEditTimeEntry).
+  _tmEditId = opts?.editEntryId || null;
+  const editing = _tmEditId ? (demandById(_tmDemandId)?.timeEntries || []).find(x => x.id === _tmEditId) : null;
+  if (!editing) _tmEditId = null;
+  if (editing && hint) { hint.hidden = true; hint.innerHTML = ''; }
+  // Vindo do ok do timer: avisa se ficou ligado tempo demais ou virou o dia.
+  if (opts?.timerNote && hint && !editing) { hint.hidden = false; hint.innerHTML = opts.timerNote; }
+  $('time-modal-title').textContent = editing ? 'Editar apontamento' : 'Registrar tempo';
+  $('time-submit-label').textContent = editing ? 'Salvar' : pending ? 'Registrar e avançar' : 'Registrar';
+  const sub = $('time-modal-sub');
+  if (sub) sub.textContent = demandById(_tmDemandId)?.name || '';
+  _resetTimeForm();
+  const fr = editing?.formResponseId ? (formResponses || []).find(x => x.id === editing.formResponseId) : null;
+  const ft = fr ? formTemplateById(fr.templateId) : null;
+  // Na edição o formulário não troca: some o seletor (sem formulário) ou trava nele.
+  if (ft) { onTimeFormChange(ft.id); _fillFormValues(ft, fr.values); }
+  $('time-form-wrap').classList.toggle('is-locked', !!ft);
   openModal('time-modal');
-  setTimeout(() => { _prefillTimeModal(); }, 60);
+  setTimeout(() => { if (editing) _prefillTimeFromEntry(editing); else _prefillTimeModal(); }, 60);
 }
-function _prefillTimeModal() {
+function _prefillTimeModal(p = 'time') {
   // Se houver timer rodando/pausado pra essa demanda, começa por ele.
-  const t = detailId ? getTimer(detailId) : null;
+  const tid = _tmDemandId || detailId;
+  const t = tid ? getTimer(tid) : null;
   let startDt, endDt, hours = 0, minutes = 0;
   if (t && t.startedAt) {
     startDt = new Date(t.startedAt);
-    const elapsedMs = (t.accumulatedMs || 0) + (t.running ? (Date.now() - (t.lastResume || t.startedAt)) : 0);
+    const elapsedMs = timerElapsedMs(t);
     endDt = new Date(startDt.getTime() + elapsedMs);
     const totalMin = Math.round(elapsedMs / 60000);
     hours = Math.floor(totalMin / 60);
@@ -24418,12 +24412,12 @@ function _prefillTimeModal() {
     endDt = new Date();
     startDt = new Date(endDt.getTime());
   }
-  $('time-start-date').value = _fmtDateInput(startDt);
-  $('time-start-time').value = _fmtTimeInput(startDt);
-  $('time-end-date').value   = _fmtDateInput(endDt);
-  $('time-end-time').value   = _fmtTimeInput(endDt);
-  $('time-hours').value   = hours ? String(hours) : '';
-  $('time-minutes').value = minutes ? String(minutes) : '';
+  $(p + '-start-date').value = _fmtDateInput(startDt);
+  $(p + '-start-time').value = _fmtTimeInput(startDt);
+  $(p + '-end-date').value   = _fmtDateInput(endDt);
+  $(p + '-end-time').value   = _fmtTimeInput(endDt);
+  $(p + '-hours').value   = hours ? String(hours) : '';
+  $(p + '-minutes').value = minutes ? String(minutes) : '';
   if (typeof fdpConvertAll === 'function') fdpConvertAll();
 }
 function _fmtDateInput(dt) {
@@ -24444,54 +24438,54 @@ function _composeDateTime(dateStr, timeStr) {
   return isNaN(dt.getTime()) ? null : dt;
 }
 /* Recalcula duração a partir de início/término. */
-function _recalcTimeDurationFromRange() {
-  const s = _composeDateTime($('time-start-date').value, $('time-start-time').value);
-  const e = _composeDateTime($('time-end-date').value,   $('time-end-time').value);
+function _recalcTimeDurationFromRange(p = 'time') {
+  const s = _composeDateTime($(p + '-start-date').value, $(p + '-start-time').value);
+  const e = _composeDateTime($(p + '-end-date').value,   $(p + '-end-time').value);
   if (!s || !e) return;
   const diffMs = e.getTime() - s.getTime();
-  if (diffMs <= 0) { $('time-hours').value = ''; $('time-minutes').value = ''; return; }
+  if (diffMs <= 0) { $(p + '-hours').value = ''; $(p + '-minutes').value = ''; return; }
   const totalMin = Math.round(diffMs / 60000);
-  $('time-hours').value   = String(Math.floor(totalMin / 60));
-  $('time-minutes').value = String(totalMin % 60);
+  $(p + '-hours').value   = String(Math.floor(totalMin / 60));
+  $(p + '-minutes').value = String(totalMin % 60);
 }
 /* Recalcula início a partir de término - duração (término é âncora
    quando o usuário edita horas/minutos direto). */
-function _recalcTimeStartFromDuration() {
-  const e = _composeDateTime($('time-end-date').value, $('time-end-time').value);
+function _recalcTimeStartFromDuration(p = 'time') {
+  const e = _composeDateTime($(p + '-end-date').value, $(p + '-end-time').value);
   if (!e) return;
-  const h = Number($('time-hours').value) || 0;
-  const m = Number($('time-minutes').value) || 0;
+  const h = Number($(p + '-hours').value) || 0;
+  const m = Number($(p + '-minutes').value) || 0;
   const s = new Date(e.getTime() - (h * 60 + m) * 60000);
-  $('time-start-date').value = _fmtDateInput(s);
-  $('time-start-time').value = _fmtTimeInput(s);
+  $(p + '-start-date').value = _fmtDateInput(s);
+  $(p + '-start-time').value = _fmtTimeInput(s);
 }
 /* Normaliza minutos: se > 59, transfere excesso pra horas. */
-function _normalizeHoursMinutes() {
-  let h = Number($('time-hours').value) || 0;
-  let m = Number($('time-minutes').value) || 0;
+function _normalizeHoursMinutes(p = 'time') {
+  let h = Number($(p + '-hours').value) || 0;
+  let m = Number($(p + '-minutes').value) || 0;
   if (m > 59) {
     h += Math.floor(m / 60);
     m = m % 60;
   }
   if (h < 0) h = 0;
   if (m < 0) m = 0;
-  $('time-hours').value   = h ? String(h) : '';
-  $('time-minutes').value = m ? String(m) : '';
+  $(p + '-hours').value   = h ? String(h) : '';
+  $(p + '-minutes').value = m ? String(m) : '';
 }
-function onTimeStartChange() { _recalcTimeDurationFromRange(); }
-function onTimeEndChange()   { _recalcTimeDurationFromRange(); }
-function onTimeDurationChange() {
-  _normalizeHoursMinutes();
-  _recalcTimeStartFromDuration();
+function onTimeStartChange(p) { _recalcTimeDurationFromRange(p); }
+function onTimeEndChange(p)   { _recalcTimeDurationFromRange(p); }
+function onTimeDurationChange(p) {
+  _normalizeHoursMinutes(p);
+  _recalcTimeStartFromDuration(p);
 }
 /* Chip de duração — seta horas/minutos e recalcula início (término âncora). */
-function setTimeDuration(h, m) {
-  $('time-hours').value   = h ? String(h) : '';
-  $('time-minutes').value = m ? String(m) : '';
-  _recalcTimeStartFromDuration();
+function setTimeDuration(h, m, p = 'time') {
+  $(p + '-hours').value   = h ? String(h) : '';
+  $(p + '-minutes').value = m ? String(m) : '';
+  _recalcTimeStartFromDuration(p);
 }
 async function addTimeEntry() {
-  const d = demandById(detailId); if (!d) return;
+  const d = demandById(_tmDemandId || detailId); if (!d) return;
   const startDt = _composeDateTime($('time-start-date').value, $('time-start-time').value);
   const endDt   = _composeDateTime($('time-end-date').value,   $('time-end-time').value);
   // Bloqueia apontamento impossível: término anterior ao início.
@@ -24511,76 +24505,107 @@ async function addTimeEntry() {
   const start = startDt ? startDt.toISOString() : null;
   const end   = endDt   ? endDt.toISOString()   : null;
   try {
+    if (_tmEditId) {
+      if (!(await _saveEditFromPanel(d, { hours, start, end }))) return;
+      _tmEditId = null;
+      _timeGapsCache = null;
+      toast('Apontamento atualizado!');
+      closeModal('time-modal');
+      if (detailId === d.id) renderDetail();
+      return;
+    }
     const forStage = _timeForStage && _timeForStage.demandId === d.id ? _timeForStage : null;
-    const upd = await api('/demands/' + d.id + '/time', 'POST', { hours, start, end, ...(forStage ? { stageId: forStage.id } : {}) });
-    patchDemand(upd);
+    const withForm = !!_tmFormId;
+    if (withForm) {
+      // Tempo + formulário numa chamada só; obrigatório faltando para aqui.
+      if (!(await _submitTimeWithForm(d, { hours, start, end }, forStage))) return;
+    } else {
+      const upd = await api('/demands/' + d.id + '/time', 'POST', { hours, start, end, ...(forStage ? { stageId: forStage.id } : {}) });
+      patchDemand(upd);
+    }
     _activeConsume(d.id);
     _timeForStage = null;
     _timeGapsCache = null; // o apontamento pode ter fechado uma pendência do Início
     if (!forStage) resetTimer(d.id);
-    toast('Horas apontadas!');
+    toast(withForm ? 'Horas e formulário registrados!' : 'Horas apontadas!');
     closeModal('time-modal');
     const p = _pendingAdvance;
     _pendingAdvance = null;
     if (p && p.demandId === d.id) await _moveStageNow(p.demandId, p.dir, p.stageId);
-    else renderDetail();
+    else if (detailId === d.id) renderDetail();
   } catch (e) { toast(e.message, 'error'); }
 }
 async function deleteTimeEntry(entryId) {
   try {
+    const e = (demandById(detailId)?.timeEntries || []).find(x => x.id === entryId);
     const upd = await api('/demands/' + detailId + '/time/' + entryId, 'DELETE');
+    if (e?.formResponseId) formResponses = (formResponses || []).filter(x => x.id !== e.formResponseId);
     patchDemand(upd);
     renderDetail();
   } catch (e) { toast(e.message, 'error'); }
 }
 
+/* "Editar" de um apontamento abre o painel do Registrar tempo inteiro, já
+   preenchido: tempo no topo e, se o apontamento veio de formulário, as
+   respostas embaixo (o formulário fica travado — trocar seria outra resposta). */
 function startEditTimeEntry(eid) {
   const d = demandById(detailId); if (!d) return;
-  const e = (d.timeEntries || []).find(x => x.id === eid); if (!e) return;
-  const el = document.getElementById('appt-' + eid); if (!el) return;
-  const toLocal = iso => {
-    if (!iso) return '';
-    const dt = new Date(iso);
-    const off = dt.getTimezoneOffset();
-    return new Date(dt.getTime() - off * 60000).toISOString().slice(0,16);
-  };
-  el.outerHTML = `<div class="appt-row appt-edit" id="appt-${eid}">
-    <div class="form-group" style="margin:0;flex:1;min-width:120px">
-      <label class="form-label">Horas</label>
-      <input class="form-control" id="ae-hours" type="number" min="0" step="0.25" value="${e.hours}">
-    </div>
-    <div class="form-group" style="margin:0;flex:2;min-width:160px">
-      <label class="form-label" data-en="Start">Início</label>
-      <input class="form-control" id="ae-start" type="datetime-local" value="${toLocal(e.start)}">
-    </div>
-    <div class="form-group" style="margin:0;flex:2;min-width:160px">
-      <label class="form-label">Término</label>
-      <input class="form-control" id="ae-end" type="datetime-local" value="${toLocal(e.end)}">
-    </div>
-    <div style="display:flex;gap:6px;align-items:end;padding-bottom:4px">
-      <button class="btn btn-ghost btn-sm" onclick="renderDetail()">Cancelar</button>
-      <button class="btn btn-confirm btn-sm" onclick="saveEditTimeEntry('${eid}')">Salvar</button>
-    </div>
-  </div>`;
-  paintIcons();
-  if (typeof fdpConvertAll === 'function') fdpConvertAll();
-  $('ae-hours').focus();
+  if (!(d.timeEntries || []).some(x => x.id === eid)) return;
+  openRegisterTimeModal({ editEntryId: eid });
 }
-async function saveEditTimeEntry(eid) {
-  let hours = Number($('ae-hours').value);
-  const start = toIsoDateTime($('ae-start').value);
-  const end = toIsoDateTime($('ae-end').value);
-  if (!(hours > 0) && start && end) {
-    const diff = (new Date(end) - new Date(start)) / 3600000;
-    if (diff > 0) hours = Math.round(diff * 100) / 100;
+function _prefillTimeFromEntry(e) {
+  const s = e.start ? new Date(e.start) : null;
+  const en = e.end ? new Date(e.end) : null;
+  const totalMin = Math.round((Number(e.hours) || 0) * 60);
+  $('time-start-date').value = s ? _fmtDateInput(s) : '';
+  $('time-start-time').value = s ? _fmtTimeInput(s) : '';
+  $('time-end-date').value   = en ? _fmtDateInput(en) : '';
+  $('time-end-time').value   = en ? _fmtTimeInput(en) : '';
+  $('time-hours').value   = Math.floor(totalMin / 60) ? String(Math.floor(totalMin / 60)) : '';
+  $('time-minutes').value = totalMin % 60 ? String(totalMin % 60) : '';
+  if (typeof fdpConvertAll === 'function') fdpConvertAll();
+}
+// Põe as respostas salvas nos campos do formulário aberto no painel.
+function _fillFormValues(t, values) {
+  _ffValues = {};
+  for (const f of (t.fields || [])) {
+    const v = values?.[f.id];
+    if (v == null || v === '') continue;
+    _ffValues[f.id] = f.type === 'multiselect' ? (Array.isArray(v) ? [...v] : [v]) : v;
+    if (f.type === 'multiselect') {
+      const arr = _ffValues[f.id];
+      document.querySelectorAll(`#time-form-fields [data-ff="${f.id}"] input[type="checkbox"]`).forEach(cb => { cb.checked = arr.includes(cb.value); });
+      continue;
+    }
+    const el = document.getElementById('ff-in-' + f.id);
+    if (!el) continue;
+    el.value = String(v);
+    if (f.type === 'select' && typeof applyFilterDropdown === 'function' && el.nextElementSibling?.classList.contains('filter-cdrop')) applyFilterDropdown(el.id);
   }
-  if (!(hours > 0)) { toast('Informe as horas ou início/término válidos.', 'error'); return; }
-  try {
-    const upd = await api('/demands/' + detailId + '/time/' + eid, 'PUT', { hours, start, end });
+}
+async function _saveEditFromPanel(d, time) {
+  const e = (d.timeEntries || []).find(x => x.id === _tmEditId);
+  if (!e) { toast('Apontamento não encontrado', 'error'); return false; }
+  const fr = e.formResponseId ? (formResponses || []).find(x => x.id === e.formResponseId) : null;
+  const t = fr ? formTemplateById(fr.templateId) : null;
+  if (fr && t) {
+    if (!_ffCheckRequired(t, 'time-form-fields')) return false;
+    const upd = await api('/form-responses/' + fr.id, 'PUT', { values: _ffValues, time });
+    const dem = upd.demand; delete upd.demand;
+    formResponses = formResponses.map(x => x.id === fr.id ? upd : x);
+    if (dem) patchDemand(dem);
+  } else if (_tmFormId) {
+    const nt = formTemplateById(_tmFormId);
+    if (!nt || !_ffCheckRequired(nt, 'time-form-fields')) return false;
+    const created = await api('/form-responses', 'POST', { templateId: nt.id, demandId: d.id, values: _ffValues, time, attachTimeEntryId: e.id });
+    const dem = created.demand; delete created.demand;
+    formResponses.push(created);
+    if (dem) patchDemand(dem);
+  } else {
+    const upd = await api('/demands/' + d.id + '/time/' + e.id, 'PUT', time);
     patchDemand(upd);
-    toast('Apontamento atualizado!');
-    renderDetail();
-  } catch (e) { toast(e.message, 'error'); }
+  }
+  return true;
 }
 
 /* ── AUSÊNCIA (férias, folga) ──
@@ -31058,46 +31083,232 @@ async function duplicateFormTemplate(id) {
     toast(e.message || 'Erro ao duplicar', 'error');
   }
 }
-/* ── FORMULÁRIOS na demanda (fase 3) ──
-   Aba "Formulários" no detalhe da demanda: lista as respostas anexadas
-   (`formResponse.demandId === d.id`) e permite preencher novas via picker. */
+/* ── FORMULÁRIOS na demanda ──
+   Formulário preenchido numa demanda é um apontamento: sai do menu do
+   "Registrar tempo", abre no painel lateral (#form-fill-modal, variante
+   drawer) com o tempo gasto no rodapé, e o envio cria a resposta e a entrada
+   de horas juntas (formResponse.timeEntryId ↔ timeEntry.formResponseId).
+   Na lista de Apontamentos aparece só um resumo; o clique abre as respostas
+   no mesmo painel. Respostas antigas (sem apontamento) aparecem lá também. */
 function _formsResponseCountForDemand(demandId) {
   if (!demandId) return 0;
   return (formResponses || []).filter(r => r.demandId === demandId).length;
 }
-function _renderFormsTab(d) {
-  if (!d) return;
-  const host = document.getElementById('tab-forms-body');
-  if (!host) return;
+// Linha-resumo do formulário dentro de um apontamento (ou de uma resposta antiga).
+function _apptFormChip(r) {
+  if (!r) return '';
+  const t = formTemplateById(r.templateId);
+  return `<button type="button" class="appt-form" onclick="openFormResponseView('${r.id}')" title="Ver respostas">
+    <i data-lucide="clipboard-list" class="ic-xs"></i><span class="appt-form-name">${esc(t?.name || 'Formulário excluído')}</span>
+  </button>`;
+}
+// Respostas da demanda que não têm apontamento (criadas antes da ligação).
+function _legacyFormRowsHtml(d) {
   const list = (formResponses || [])
-    .filter(r => r.demandId === d.id)
+    .filter(r => r.demandId === d.id && !r.timeEntryId)
     .sort((a, b) => (b.submittedAt || '').localeCompare(a.submittedAt || ''));
-  // Universal: qualquer template pode ser preenchido (não escopa por squad).
-  const canPreencher = (formTemplates || []).length > 0;
-  const actions = `<div class="fr-tab-actions">
-    <button class="btn btn-primary btn-sm" onclick="openFormPicker('${d.id}')" ${canPreencher ? '' : 'disabled title="Nenhum formulário criado ainda"'}><i data-lucide="plus" class="ic-sm"></i> Preencher formulário</button>
-  </div>`;
-  if (!list.length) {
-    host.innerHTML = actions + `<div class="fr-empty">${canPreencher ? 'Nenhum formulário preenchido ainda. Clique em "Preencher formulário" acima pra começar.' : 'Nenhum formulário criado ainda. Peça pro admin criar um em <strong>Formulários</strong>.'}</div>`;
-  } else {
-    host.innerHTML = actions + '<div class="fr-list">' + list.map(r => {
-      const t = formTemplateById(r.templateId);
-      const u = userById(r.submittedBy);
-      const canDel = r.submittedBy === me.id || me.isAdmin;
-      const valuesHtml = t ? _renderResponseValues(t, r) : '<em style="color:var(--text-muted)">Formulário original foi excluído — dados preservados abaixo.</em><br>' + _renderResponseValuesRaw(r);
-      return `<div class="fr-card">
-        <div class="fr-card-head">
-          ${avatarHTML(u, 'avatar avatar-sm')}
-          <div class="fr-card-name">${esc(t?.name || 'Formulário excluído')}<div class="fr-card-meta">${esc(u?.name || '—')} · ${fmtDateTime(r.submittedAt)}</div></div>
-          <div class="fr-card-actions">
-            ${canDel ? `<button class="detail-icon-btn danger" title="Excluir resposta" onclick="confirmDeleteFormResponse('${r.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>` : ''}
-          </div>
-        </div>
-        <dl class="fr-values">${valuesHtml}</dl>
+  return list.map(r => {
+    const u = userById(r.submittedBy);
+    return `<div class="appt-row appt-row--form-only">
+      ${avatarHTML(u)}
+      <span class="appt-main">
+        <span class="appt-name">${esc(u?.name || '—')}</span>
+        <span class="appt-time-range" title="${esc(fmtDateTime(r.submittedAt))}">${esc(fmtDateShort(String(r.submittedAt || '').slice(0, 10)))} · sem tempo</span>
+        ${_apptFormChip(r)}
+      </span>
+      <span class="appt-hours appt-hours--none">—</span>
+      <div class="appt-actions"></div>
+    </div>`;
+  }).join('');
+}
+
+/* ── Formulário dentro do "Registrar tempo" ──
+   O modal ganha um seletor "Formulário (opcional)". Escolhido um, o painel
+   #time-form-panel abre ao lado do modal com os campos; o "Registrar" grava
+   tempo + respostas numa chamada só (POST /form-responses com `time`). */
+let _tmFormId = null; // template escolhido no modal (null = só o tempo)
+let _tmEditId = null; // apontamento sendo editado no painel (null = novo)
+function _renderTimeFormSelect() {
+  const wrap = $('time-form-wrap');
+  if (!wrap) return;
+  const list = (formTemplates || []).slice().sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
+  wrap.hidden = !list.length;
+  $('time-form-select').innerHTML = '<option value="">Nenhum formulário selecionado</option>' +
+    list.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('');
+}
+function onTimeFormChange(id) {
+  const t = id ? formTemplateById(id) : null;
+  _tmFormId = t ? t.id : null;
+  _ffValues = {};
+  const panel = $('time-form-panel');
+  $('time-modal').classList.toggle('has-form', !!t);
+  if (!t) { panel.hidden = true; $('time-form-fields').innerHTML = ''; return; }
+  if ($('time-form-select').value !== t.id) { $('time-form-select').value = t.id; _syncTimeFormSelect(); }
+  const desc = $('time-form-desc');
+  desc.textContent = t.description || '';
+  desc.hidden = !t.description;
+  _renderFillFields(t, 'time-form-fields');
+  panel.hidden = false;
+  paintIcons(panel);
+  // Leva o começo do formulário pra vista (o tempo continua logo acima).
+  setTimeout(() => panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 30);
+}
+function _resetTimeForm() {
+  _renderTimeFormSelect();
+  if ($('time-form-select')) { $('time-form-select').value = ''; _syncTimeFormSelect(); }
+  onTimeFormChange(null);
+}
+// O select vira dropdown do app (auto-cdrop); valor setado por código precisa
+// refazer o botão visível.
+function _syncTimeFormSelect() {
+  if (typeof applyFilterDropdown === 'function' && $('time-form-select')?.nextElementSibling?.classList.contains('filter-cdrop')) applyFilterDropdown('time-form-select');
+}
+// Valida os obrigatórios do formulário aberto em `hostId`; marca e rola até o 1º.
+function _ffCheckRequired(t, hostId) {
+  const host = document.getElementById(hostId);
+  host.querySelectorAll('.ff-field.is-missing').forEach(el => el.classList.remove('is-missing'));
+  const missing = (t.fields || []).filter(f => {
+    if (!f.required) return false;
+    const v = _ffValues[f.id];
+    return v == null || String(v).trim() === '' || (Array.isArray(v) && !v.length);
+  });
+  if (!missing.length) return true;
+  missing.forEach(f => host.querySelector(`[data-ff="${f.id}"]`)?.classList.add('is-missing'));
+  host.querySelector(`[data-ff="${missing[0].id}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  toast(missing.length === 1 ? `Preencha "${missing[0].label}".` : `Faltam ${missing.length} campos obrigatórios.`, 'warn');
+  return false;
+}
+// Envio do modal com formulário: mesmo fim do addTimeEntry.
+async function _submitTimeWithForm(d, time, forStage) {
+  const t = formTemplateById(_tmFormId);
+  if (!t || !_ffCheckRequired(t, 'time-form-fields')) return false;
+  const created = await api('/form-responses', 'POST', {
+    templateId: t.id, demandId: d.id, values: _ffValues,
+    time: { ...time, ...(forStage ? { stageId: forStage.id } : {}) }
+  });
+  const upd = created.demand; delete created.demand;
+  formResponses.push(created);
+  if (upd) patchDemand(upd);
+  return true;
+}
+// Link antigo (/demands/:id/forms/:tid ou /forms/new) abre o Registrar tempo.
+function openFormPicker(demandId, templateId) {
+  setTimeout(() => {
+    if (detailId !== demandId) return;
+    openRegisterTimeModal();
+    if (templateId) setTimeout(() => onTimeFormChange(templateId), 0);
+  }, 0);
+}
+
+/* ── Painel lateral #form-fill-modal: ver as respostas de um apontamento, ou
+   preencher fora de demanda (/forms/:id/fill). Na demanda, quem preenche é o
+   próprio painel do Registrar tempo. ── */
+let _ffTemplateId = null;
+let _ffDemandId = null;
+let _ffValues = {};
+let _ffViewId = null; // resposta aberta em modo leitura
+function _ffSetMode(view) {
+  document.getElementById('form-fill-modal').classList.toggle('is-view', !!view);
+  document.getElementById('ff-submit').hidden = !!view;
+  document.getElementById('ff-cancel').textContent = view ? 'Fechar' : 'Cancelar';
+}
+function openFormFill(templateId, demandId) {
+  // Em demanda o formulário vai junto com o tempo, no Registrar tempo.
+  if (demandId) return openFormPicker(demandId, templateId);
+  const t = formTemplateById(templateId);
+  if (!t) { toast('Formulário não encontrado', 'error'); return; }
+  _ffTemplateId = templateId;
+  _ffDemandId = null;
+  _ffValues = {};
+  _ffViewId = null;
+  document.getElementById('ff-title').textContent = t.name;
+  document.getElementById('ff-sub').hidden = true;
+  const descEl = document.getElementById('ff-description');
+  descEl.textContent = t.description || '';
+  descEl.hidden = !t.description;
+  document.getElementById('ff-view-del').hidden = true;
+  _renderFillFields(t, 'ff-fields');
+  _ffSetMode(false);
+  openModal('form-fill-modal');
+}
+function openFormResponseView(responseId) {
+  const r = (formResponses || []).find(x => x.id === responseId);
+  if (!r) { toast('Resposta não encontrada', 'error'); return; }
+  const t = formTemplateById(r.templateId);
+  const u = userById(r.submittedBy);
+  const e = r.timeEntryId ? (demandById(r.demandId)?.timeEntries || []).find(x => x.id === r.timeEntryId) : null;
+  _ffViewId = r.id;
+  _ffTemplateId = r.templateId;
+  _ffDemandId = r.demandId || null;
+  document.getElementById('ff-title').textContent = t?.name || 'Formulário excluído';
+  const sub = document.getElementById('ff-sub');
+  sub.textContent = [u?.name || '—', fmtDateTime(r.submittedAt), e ? fmtHours(e.hours) : ''].filter(Boolean).join(' · ');
+  sub.hidden = false;
+  document.getElementById('ff-description').hidden = true;
+  document.getElementById('ff-fields').innerHTML = `<dl class="fr-values">${t ? _renderResponseValues(t, r) : _renderResponseValuesRaw(r)}</dl>`;
+  document.getElementById('ff-view-del').hidden = !(r.submittedBy === me.id || me.isAdmin);
+  _ffSetMode(true);
+  openModal('form-fill-modal');
+}
+// Campos do template em `hostId` (#ff-fields ou #time-form-fields). Só um dos
+// dois tem campos por vez: o outro é limpo pra não duplicar ids.
+function _renderFillFields(t, hostId) {
+  const other = document.getElementById(hostId === 'ff-fields' ? 'time-form-fields' : 'ff-fields');
+  if (other && other.querySelector('.ff-field')) other.innerHTML = '';
+  const host = document.getElementById(hostId);
+  host.innerHTML = (t.fields || []).map(f => {
+    const req = f.required ? '<span class="ff-field-required">*</span>' : '';
+    const fid = 'ff-in-' + f.id;
+    let input = '';
+    if (f.type === 'text') {
+      input = `<input class="form-control" id="${fid}" data-field-id="${f.id}" oninput="_ffSetValue('${f.id}', this.value)">`;
+    } else if (f.type === 'number') {
+      input = `<input type="number" class="form-control" id="${fid}" data-field-id="${f.id}" oninput="_ffSetValue('${f.id}', this.value)">`;
+    } else if (f.type === 'select') {
+      input = `<select class="form-control" id="${fid}" data-field-id="${f.id}" onchange="_ffSetValue('${f.id}', this.value)">
+        <option value="">— Selecione —</option>
+        ${(f.options || []).map(o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('')}
+      </select>`;
+    } else if (f.type === 'multiselect') {
+      input = `<div class="ff-multi-list" data-field-id="${f.id}">
+        ${(f.options || []).map(o => `<label class="ff-multi-item"><input type="checkbox" value="${esc(o.value)}" onchange="_ffToggleMulti('${f.id}', this.value, this.checked)"> ${esc(o.label)}</label>`).join('')}
       </div>`;
-    }).join('') + '</div>';
-  }
+    }
+    return `<div class="ff-field" data-ff="${f.id}">
+      <label class="ff-field-label" for="${fid}">${esc(f.label)}${req}</label>
+      ${input}
+    </div>`;
+  }).join('');
   if (window.lucide?.createIcons) lucide.createIcons();
+}
+function _ffSetValue(fieldId, val) {
+  _ffValues[fieldId] = val;
+  document.querySelector(`.ff-field[data-ff="${fieldId}"]`)?.classList.remove('is-missing');
+}
+function _ffToggleMulti(fieldId, val, on) {
+  const cur = Array.isArray(_ffValues[fieldId]) ? _ffValues[fieldId] : [];
+  const set = new Set(cur);
+  if (on) set.add(val); else set.delete(val);
+  _ffValues[fieldId] = [...set];
+  document.querySelector(`.ff-field[data-ff="${fieldId}"]`)?.classList.remove('is-missing');
+}
+let _ffSending = false;
+async function submitFormResponse() {
+  const t = formTemplateById(_ffTemplateId);
+  if (!t || _ffSending || !_ffCheckRequired(t, 'ff-fields')) return;
+  _ffSending = true;
+  try {
+    const created = await api('/form-responses', 'POST', { templateId: _ffTemplateId, demandId: null, values: _ffValues });
+    formResponses.push(created);
+    closeModal('form-fill-modal');
+    toast('Formulário enviado', 'success');
+    if (currentPage === 'forms') renderForms();
+  } catch (e) {
+    toast(e.message || 'Erro ao enviar formulário', 'error');
+  } finally { _ffSending = false; }
+}
+function deleteViewedFormResponse() {
+  if (_ffViewId) confirmDeleteFormResponse(_ffViewId);
 }
 function _renderResponseValues(template, response) {
   return (template.fields || []).map(f => {
@@ -31127,126 +31338,22 @@ function _renderResponseValuesRaw(response) {
     return `<dt>${esc(k)}</dt><dd>${esc(String(val))}</dd>`;
   }).join('');
 }
-
-/* ── PICKER de template (modal form-picker-modal) ── */
-let _fpDemandId = null;
-function openFormPicker(demandId) {
-  _fpDemandId = demandId || null;
-  document.getElementById('fp-search').value = '';
-  renderFormPickerList();
-  openModal('form-picker-modal');
-}
-function renderFormPickerList() {
-  const host = document.getElementById('fp-list');
-  if (!host) return;
-  const q = norm(document.getElementById('fp-search')?.value || '');
-  // Universal: qualquer template pode ser preenchido pra qualquer demanda.
-  const list = (formTemplates || [])
-    .filter(t => !q || norm(t.name).includes(q) || norm(t.description || '').includes(q))
-    .sort((a, b) => norm(a.name).localeCompare(norm(b.name)));
-  if (!list.length) {
-    host.innerHTML = `<div class="fr-empty">${q ? 'Nenhum formulário bate com a busca.' : 'Nenhum formulário criado ainda.'}</div>`;
-    return;
-  }
-  host.innerHTML = list.map(t => `
-    <button type="button" class="fp-item" onclick="pickFormTemplate('${t.id}')">
-      <div class="fp-item-name">${esc(t.name)}</div>
-      ${t.description ? `<div class="fp-item-desc">${esc(t.description)}</div>` : ''}
-      <div class="fp-item-meta">${(t.fields || []).length} campo(s)</div>
-    </button>
-  `).join('');
-}
-function pickFormTemplate(templateId) {
-  closeModal('form-picker-modal');
-  openFormFill(templateId, _fpDemandId);
-}
-
-/* ── FILL: modal de preenchimento (renderiza fields do template) ── */
-let _ffTemplateId = null;
-let _ffDemandId = null;
-let _ffValues = {};
-function openFormFill(templateId, demandId) {
-  const t = formTemplateById(templateId);
-  if (!t) { toast('Formulário não encontrado', 'error'); return; }
-  _ffTemplateId = templateId;
-  _ffDemandId = demandId || null;
-  _ffValues = {};
-  document.getElementById('ff-title').textContent = t.name;
-  const descEl = document.getElementById('ff-description');
-  descEl.textContent = t.description || '';
-  descEl.style.display = t.description ? '' : 'none';
-  _renderFillFields(t);
-  openModal('form-fill-modal');
-}
-function _renderFillFields(t) {
-  const host = document.getElementById('ff-fields');
-  host.innerHTML = (t.fields || []).map(f => {
-    const req = f.required ? '<span class="ff-field-required">*</span>' : '';
-    let input = '';
-    if (f.type === 'text') {
-      input = `<input class="form-control" data-field-id="${f.id}" oninput="_ffSetValue('${f.id}', this.value)">`;
-    } else if (f.type === 'number') {
-      input = `<input type="number" class="form-control" data-field-id="${f.id}" oninput="_ffSetValue('${f.id}', this.value)">`;
-    } else if (f.type === 'select') {
-      input = `<select class="form-control" data-field-id="${f.id}" onchange="_ffSetValue('${f.id}', this.value)">
-        <option value="">— Selecione —</option>
-        ${(f.options || []).map(o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('')}
-      </select>`;
-    } else if (f.type === 'multiselect') {
-      input = `<div class="ff-multi-list">
-        ${(f.options || []).map(o => `<label class="ff-multi-item"><input type="checkbox" value="${esc(o.value)}" onchange="_ffToggleMulti('${f.id}', this.value, this.checked)"> ${esc(o.label)}</label>`).join('')}
-      </div>`;
-    }
-    return `<div class="ff-field">
-      <label class="ff-field-label">${esc(f.label)}${req}</label>
-      ${input}
-    </div>`;
-  }).join('');
-  if (window.lucide?.createIcons) lucide.createIcons();
-}
-function _ffSetValue(fieldId, val) {
-  _ffValues[fieldId] = val;
-}
-function _ffToggleMulti(fieldId, val, on) {
-  const cur = Array.isArray(_ffValues[fieldId]) ? _ffValues[fieldId] : [];
-  const set = new Set(cur);
-  if (on) set.add(val); else set.delete(val);
-  _ffValues[fieldId] = [...set];
-}
-async function submitFormResponse() {
-  const t = formTemplateById(_ffTemplateId);
-  if (!t) return;
-  try {
-    const created = await api('/form-responses', 'POST', {
-      templateId: _ffTemplateId,
-      demandId: _ffDemandId,
-      values: _ffValues
-    });
-    formResponses.push(created);
-    closeModal('form-fill-modal');
-    toast('Formulário enviado', 'success');
-    // Re-renderiza a aba (badge + lista atualizam) se ainda estamos no detalhe.
-    if (currentPage === 'demand-detail' && detailId === _ffDemandId) {
-      renderDetail();
-    }
-  } catch (e) {
-    toast(e.message || 'Erro ao enviar formulário', 'error');
-  }
-}
 async function confirmDeleteFormResponse(id) {
   const r = (formResponses || []).find(x => x.id === id);
   if (!r) return;
   const t = formTemplateById(r.templateId);
   const ok = await showConfirm({
     title: 'Excluir resposta',
-    message: `Excluir esta resposta do formulário <strong>${esc(t?.name || 'formulário')}</strong>?`,
+    message: `Excluir esta resposta do formulário <strong>${esc(t?.name || 'formulário')}</strong>?${r.timeEntryId ? ' O apontamento de horas sai junto.' : ''}`,
     okLabel: 'Excluir',
     danger: true
   });
   if (!ok) return;
   try {
-    await api('/form-responses/' + id, 'DELETE');
+    const res = await api('/form-responses/' + id, 'DELETE');
     formResponses = formResponses.filter(x => x.id !== id);
+    if (res?.demand) patchDemand(res.demand);
+    if (_ffViewId === id && document.getElementById('form-fill-modal')?.classList.contains('open')) closeModal('form-fill-modal');
     toast('Resposta excluída', 'success');
     if (currentPage === 'demand-detail' && detailId === r.demandId) {
       renderDetail();

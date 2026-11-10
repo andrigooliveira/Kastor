@@ -21883,3 +21883,66 @@ a.user-mini-card-name:hover { text-decoration: underline; text-underline-offset:
   border-color: var(--hairline-strong);
 }
 #app :is(.filters-bar, .an-filters, .perf-controls, .us-toolbar, .gallery-page-toolbar, .dashboards-searchbar) .btn-ghost:hover { border-color: var(--text-muted); }
+
+/* ═══ FORMULÁRIO COMO APONTAMENTO ═══
+   Registrar tempo vira painel lateral (#time-modal.is-drawer): o tempo no
+   topo, o seletor de formulário embaixo e, escolhido um, os campos logo
+   abaixo. #form-fill-modal usa o mesmo painel pra ver respostas. Resumo do
+   formulário na lista de Apontamentos. */
+.modal-drawer [hidden] { display: none !important; }
+/* Rodapé do Registrar tempo: Cancelar 30%, Registrar 70%. */
+#time-modal .ff-foot.ff-foot--row { display: grid; grid-template-columns: 3fr 7fr; gap: 10px; }
+#time-modal .ff-foot--row .btn { width: 100%; justify-content: center; }
+.time-form-wrap { display: flex; flex-direction: column; gap: 6px; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--hairline); }
+.time-form-panel { margin-top: 16px; }
+/* Editando apontamento de formulário: o formulário não troca. */
+.time-form-wrap.is-locked .filter-cdrop { pointer-events: none; opacity: .7; }
+.time-form-wrap.is-locked .filter-cdrop-trigger svg { display: none; }
+#time-modal .time-advance-hint { margin-bottom: 14px; }
+
+/* Painel lateral: mesmo overlay dos modais, encostado à direita e sem blur
+   forte (a demanda continua visível atrás). */
+.modal-overlay.is-drawer { justify-content: flex-end; align-items: stretch; padding: 0; backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(0,0,0,.28); }
+:root[data-theme="light"] .modal-overlay.is-drawer { background: rgba(15,15,35,.14); }
+.modal.modal-drawer {
+  display: flex; flex-direction: column;
+  width: min(480px, 100vw); max-width: none; height: 100%; max-height: none;
+  overflow: hidden; border-radius: var(--radius-lg) 0 0 var(--radius-lg); border-right: 0;
+  transform: translateX(32px); opacity: 0;
+}
+.modal-overlay.is-drawer.open .modal-drawer { transform: none; opacity: 1; }
+.modal-overlay.is-drawer:not(.open) .modal-drawer { transform: translateX(32px); }
+.modal-drawer::before { display: none; }
+.modal-drawer .modal-header { padding: 18px 22px 14px; flex-shrink: 0; }
+.ff-head { min-width: 0; flex: 1; }
+.ff-head .modal-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ff-sub { margin-top: 3px; font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ff-body { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 22px; }
+.ff-description { font-size: 12.5px; color: var(--text-muted); margin-bottom: 16px; line-height: 1.5; white-space: pre-line; }
+.ff-field.is-missing .ff-field-label { color: var(--danger); }
+.ff-field.is-missing .form-control, .ff-field.is-missing .ff-multi-list { border-color: var(--danger); }
+.ff-foot { flex-shrink: 0; border-top: 1px solid var(--hairline); padding: 12px 22px 16px; background: var(--surface); display: flex; flex-direction: column; gap: 10px; }
+.ff-actions { display: flex; align-items: center; gap: 8px; }
+.ff-actions-spacer { flex: 1; }
+.ff-del { color: var(--danger); }
+.ff-del:hover { background: var(--danger-dim); color: var(--danger); }
+#form-fill-modal.is-view .ff-body .fr-values { font-size: 13px; }
+@media (max-width: 760px) {
+  .modal.modal-drawer { width: 100vw; border-radius: 0; }
+}
+
+/* Resumo do formulário dentro do apontamento: uma linha, nunca o conteúdo. */
+.appt-form {
+  display: inline-flex; align-items: center; gap: 5px; align-self: flex-start;
+  max-width: 100%; margin-top: 3px; padding: 2px 8px 2px 6px;
+  border: 1px solid var(--hairline); border-radius: var(--radius-pill);
+  background: var(--surface-2); color: var(--text-dim);
+  font-family: inherit; font-size: 11.5px; font-weight: 500; line-height: 1.4; cursor: pointer;
+  transition: border-color .12s, color .12s;
+}
+.appt-form:hover { border-color: var(--accent); color: var(--accent-text); }
+.appt-form svg { flex-shrink: 0; }
+.appt-form-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.time-list .appt-row--form, .time-list .appt-row--form-only { align-items: flex-start; }
+.time-list .appt-row--form .appt-hours, .time-list .appt-row--form-only .appt-hours { padding-top: 2px; }
+.appt-hours--none { color: var(--text-muted) !important; font-weight: 500 !important; }

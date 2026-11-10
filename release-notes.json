@@ -1,5 +1,17 @@
 [
   {
+    "id": "2026-11-10-formularios-no-apontamento",
+    "date": "2026-11-10",
+    "title": "Formulários dentro do Registrar tempo",
+    "highlights": [
+      "Registrar tempo agora abre um painel ao lado da demanda: o tempo fica no topo e, logo abaixo, você escolhe um formulário. Os campos aparecem no mesmo painel e um único Registrar grava as horas e as respostas.",
+      "Em Apontamentos, o formulário aparece só como uma etiqueta com o nome dele. Clique nela pra ver as respostas, sem formulários grandes ocupando a lista.",
+      "Editar um apontamento abre o mesmo painel já preenchido, com o tempo e as respostas. Se o apontamento ainda não tem formulário, dá pra escolher um e preencher ali.",
+      "O botão de confirmar do timer, no topo da tela, também abre esse painel com o tempo do timer. Dá pra conferir, ajustar e preencher um formulário antes de registrar.",
+      "A aba Formulários da demanda saiu: as respostas agora ficam junto dos apontamentos. Excluir um apontamento exclui também as respostas dele."
+    ]
+  },
+  {
     "id": "2026-11-03-docs-editor",
     "date": "2026-11-03",
     "title": "Editor do Docs com página configurável, sumário e fontes",
