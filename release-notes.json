@@ -1,5 +1,24 @@
 [
   {
+    "id": "2026-11-13-briefing-de-criativo",
+    "date": "2026-11-13",
+    "title": "Briefing de criativo dentro da demanda",
+    "highlight": true,
+    "highlights": [
+      "Na demanda, em Briefing e descrição, o botão Criar briefing de criativo abre um formulário em outra guia, já com o cliente, o nome da demanda, o prazo e o pedido do cliente preenchidos.",
+      "Um briefing reúne várias peças: estático, carrossel, story, banner, e-mail e WhatsApp. No carrossel, você escolhe quantas telas e escreve a copy de cada uma. Legenda, palavras obrigatórias e proibidas, oferta e texto legal valem para o carrossel inteiro.",
+      "Cada texto tem o botão Criação sugere, para quando a criação deve escrever. As escolhas são botões que acendem, e a prévia ao lado mostra o documento do jeito que ele sai no Word.",
+      "Qualquer pessoa da demanda pode preencher, e o briefing salva sozinho. Se duas pessoas editarem ao mesmo tempo, o reWork avisa antes de uma apagar a alteração da outra. Freelancers só visualizam.",
+      "Quando o briefing está pronto, o cartão na demanda ganha o botão Exportar, com Word (.docx) e o arquivo para o Agente de Criação.",
+      "No editor de fluxos, o novo botão de etapa de briefing destaca o Preencher briefing para o responsável daquela etapa e avisa se alguém avançar com o briefing ainda em rascunho.",
+      "No cadastro do cliente, o novo campo Sigla entra no nome dos arquivos das peças, como [VISS] [11] Campanha.",
+      "Moderadores e admins podem ligar o repositório do Agente de Criação: os campos de cada cliente, os avisos e as palavras proibidas passam a vir de lá e se atualizam sozinhos."
+    ],
+    "hideFor": [
+      "freelancer"
+    ]
+  },
+  {
     "id": "2026-11-10-formularios-no-apontamento",
     "date": "2026-11-10",
     "title": "Formulários dentro do Registrar tempo",

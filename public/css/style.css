@@ -21947,3 +21947,22 @@ a.user-mini-card-name:hover { text-decoration: underline; text-underline-offset:
 .time-list .appt-row--form, .time-list .appt-row--form-only { align-items: flex-start; }
 .time-list .appt-row--form .appt-hours, .time-list .appt-row--form-only .appt-hours { padding-top: 2px; }
 .appt-hours--none { color: var(--text-muted) !important; font-weight: 500 !important; }
+
+/* ── Briefing de criativo: cartão na demanda e etapa de briefing no fluxo ── */
+.dd-brief-card { display: flex; align-items: center; gap: 12px; padding: 12px 14px; margin: 10px 0 8px; border: 1px solid var(--hairline); border-radius: var(--radius); background: var(--surface-2); }
+.dd-brief-card.is-stage { border-color: color-mix(in srgb, var(--accent) 45%, var(--hairline)); background: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
+.dd-brief-card.is-ready .dd-brief-ic { background: var(--success-dim); color: var(--success); }
+.dd-brief-ic { width: 34px; height: 34px; border-radius: var(--radius-sm); display: grid; place-items: center; background: var(--accent-dim); color: var(--accent-text, var(--accent)); flex-shrink: 0; }
+.dd-brief-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.dd-brief-txt strong { font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dd-brief-txt small { font-size: 12px; color: var(--text-muted); }
+.dd-brief-status { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: var(--radius-pill); background: var(--surface-3); color: var(--text-muted); }
+.dd-brief-card.is-ready .dd-brief-status { background: var(--success-dim); color: var(--success); }
+.dd-brief-card .btn { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; flex-shrink: 0; }
+.dd-brief-add { display: inline-flex; align-items: center; gap: 6px; margin: 10px 0 6px; padding: 6px 10px; border: 1px dashed var(--hairline-strong); border-radius: var(--radius-sm); background: none; color: var(--text-muted); font: inherit; font-size: 13px; cursor: pointer; }
+.dd-brief-add:hover { color: var(--accent); border-color: var(--accent); }
+.cust-toggle-brief.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.form-hint { font-size: 12px; color: var(--text-muted); margin-top: 5px; }
+.brief-export-menu .stages-edit-menu-item { align-items: flex-start; }
+.brief-export-txt { display: flex; flex-direction: column; gap: 1px; text-align: left; }
+.brief-export-txt small { font-size: 11.5px; color: var(--text-muted); font-weight: 400; }

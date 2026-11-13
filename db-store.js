@@ -53,7 +53,10 @@ const ENTITY_TYPES = [
   'clientFees', 'contractSnapshots', 'revenueGoals',
   // Protótipos (prototypes.js): sites estáticos pra aprovação, com link
   // externo de prazo curto. Os arquivos ficam em DATA_DIR/prototypes.
-  'prototypes'
+  'prototypes',
+  // Briefing de criativo (um por demanda): { id, demandId, workspaceId,
+  // status, version, data (ver public/js/briefing-schema.js), ... }.
+  'briefings'
 ];
 
 function createStore(config = {}) {

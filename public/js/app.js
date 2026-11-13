@@ -1134,6 +1134,118 @@ function wsDemands()  { return demands.filter(d => d.workspaceId === activeWs); 
 function wsUsers()    { return users.filter(u => u.active !== false && (u.isAdmin || (u.workspaces || []).includes(activeWs))); }
 function clientById(id) { return clients.find(c => c.id === id) || null; }
 
+/* ── Briefing de criativo (página /hub/briefing/<id>) ──
+   Qualquer pessoa que vê a demanda abre o briefing; quem edita a demanda
+   preenche (freelancer só vê). A etapa marcada como "Etapa de briefing" só
+   destaca o cartão e avisa ao sair dela sem o briefing pronto. */
+function briefingUrl(id) { return '/hub/briefing/' + id + (_orgId ? '?org=' + encodeURIComponent(_orgId) : ''); }
+function briefingCardHtml(d) {
+  const ref = d.briefingRef;
+  const st = stageOf(d);
+  const isStage = !!(st && st.briefing);
+  const mineStage = isStage && effectiveOwnerOf(d)?.id === me?.id;
+  if (ref) {
+    const ready = ref.status === 'pronto';
+    const who = ref.updatedBy ? userById(ref.updatedBy) : null;
+    const parts = [`${ref.pieces} ${ref.pieces === 1 ? 'peça' : 'peças'}`];
+    if (ref.screens > ref.pieces) parts.push(`${ref.screens} telas`);
+    return `<div class="dd-brief-card ${ready ? 'is-ready' : ''} ${isStage && !ready ? 'is-stage' : ''}">
+      <span class="dd-brief-ic"><i data-lucide="clipboard-list" class="ic-sm"></i></span>
+      <div class="dd-brief-txt"><strong>Briefing de criativo <span class="dd-brief-status">${ready ? 'Pronto' : 'Rascunho'}</span></strong>
+        <small>${esc(parts.join(' · '))}${who ? ` · editado por ${esc(who.name.split(' ')[0])} ${esc(fmtRelativeTime(ref.updatedAt))}` : ''}</small></div>
+      ${ready ? `<button type="button" class="btn btn-sm btn-ghost dd-brief-export" onclick="openBriefingExportMenu(this, '${esc(ref.id)}')"><i data-lucide="download" class="ic-xs"></i>Exportar<i data-lucide="chevron-down" class="ic-xs"></i></button>` : ''}
+      <a class="btn btn-sm ${isStage && !ready ? 'btn-primary' : 'btn-ghost'}" href="${esc(briefingUrl(ref.id))}" target="_blank" rel="noopener">${me?.isFreelancer ? 'Ver' : (ready ? 'Abrir' : 'Continuar')}<i data-lucide="arrow-up-right" class="ic-xs"></i></a>
+    </div>`;
+  }
+  if (me?.isFreelancer) return '';
+  if (isStage) {
+    return `<div class="dd-brief-card is-stage">
+      <span class="dd-brief-ic"><i data-lucide="clipboard-pen" class="ic-sm"></i></span>
+      <div class="dd-brief-txt"><strong>${mineStage ? 'Sua vez: preencher o briefing' : 'Esta etapa é de briefing'}</strong>
+        <small>Campanha, peças, textos e imagens num formulário só. Qualquer pessoa da demanda pode preencher.</small></div>
+      <button class="btn btn-sm btn-primary" onclick="openDemandBriefing('${d.id}')">Preencher briefing</button>
+    </div>`;
+  }
+  return `<button type="button" class="dd-brief-add" onclick="openDemandBriefing('${d.id}')"><i data-lucide="clipboard-plus" class="ic-sm"></i>Criar briefing de criativo</button>`;
+}
+/* Exportar do cartão (briefing pronto): as mesmas opções do editor. */
+function openBriefingExportMenu(anchor, briefingId) {
+  _closeBriefingExportMenu();
+  const menu = document.createElement('div');
+  menu.className = 'advance-menu brief-export-menu';
+  menu.id = 'brief-export-menu';
+  menu.setAttribute('role', 'menu');
+  menu.innerHTML = `
+    <button type="button" class="stages-edit-menu-item" role="menuitem" onclick="exportBriefing('${esc(briefingId)}', 'docx')"><i data-lucide="file-text" class="ic-menu"></i><span class="brief-export-txt"><strong>Word (.docx)</strong><small>Para mandar por e-mail</small></span></button>
+    <button type="button" class="stages-edit-menu-item" role="menuitem" onclick="exportBriefing('${esc(briefingId)}', 'json')"><i data-lucide="braces" class="ic-menu"></i><span class="brief-export-txt"><strong>Para o Agente de Criação</strong><small>Arquivo .json que o agente lê</small></span></button>`;
+  document.body.appendChild(menu);
+  paintIcons();
+  const r = anchor.getBoundingClientRect();
+  menu.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
+  menu.style.top = (r.bottom + 6) + 'px';
+  setTimeout(() => {
+    document.addEventListener('mousedown', _briefExportOutside, true);
+    document.addEventListener('keydown', _briefExportKey, true);
+    window.addEventListener('resize', _closeBriefingExportMenu);
+  });
+}
+function _briefExportOutside(e) { if (!e.target.closest('#brief-export-menu')) _closeBriefingExportMenu(); }
+function _briefExportKey(e) { if (e.key === 'Escape') { e.stopPropagation(); _closeBriefingExportMenu(); } }
+function _closeBriefingExportMenu() {
+  document.getElementById('brief-export-menu')?.remove();
+  document.removeEventListener('mousedown', _briefExportOutside, true);
+  document.removeEventListener('keydown', _briefExportKey, true);
+  window.removeEventListener('resize', _closeBriefingExportMenu);
+}
+async function exportBriefing(briefingId, fmt) {
+  _closeBriefingExportMenu();
+  toast(fmt === 'docx' ? 'Gerando o Word…' : 'Gerando o arquivo…', 'info');
+  try {
+    const res = await fetch('/api/briefings/' + encodeURIComponent(briefingId) + '/export?format=' + fmt, {
+      credentials: 'same-origin', headers: _orgId ? { 'X-Org-Id': _orgId } : {}
+    });
+    if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || 'Falha ao exportar'); }
+    const blob = await res.blob();
+    const m = /filename\*=UTF-8''([^;]+)/.exec(res.headers.get('Content-Disposition') || '');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = m ? decodeURIComponent(m[1]) : 'briefing.' + fmt;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  } catch (e) {
+    toast(e.message || 'Falha ao exportar', 'error');
+  }
+}
+async function openDemandBriefing(demandId) {
+  // Abre a guia já (bloqueador de pop-up) e aponta depois de criar.
+  const w = window.open('about:blank', '_blank');
+  try {
+    const b = await api('/briefings', 'POST', { demandId });
+    const d = demandById(demandId);
+    if (d && !d.briefingRef) { d.briefingRef = { id: b.id, status: b.status, pieces: 0, screens: 0, updatedAt: b.updatedAt, updatedBy: me?.id }; if (detailId === demandId) renderDetail(); }
+    if (w) w.location.href = briefingUrl(b.id); else location.href = briefingUrl(b.id);
+  } catch (e) {
+    if (w) w.close();
+    toast(e.message || 'Não foi possível criar o briefing', 'error');
+  }
+}
+/* Aviso (não bloqueia) ao avançar de uma etapa de briefing sem o briefing pronto. */
+async function briefingStageGateOk(d, targetStageId) {
+  const st = stageOf(d);
+  if (!st || !st.briefing) return true;
+  if (d.briefingRef && d.briefingRef.status === 'pronto') return true;
+  const flow = flowById(d.flowId);
+  const active = flow ? activeStagesOf(d, flow) : [];
+  if (targetStageId && active.findIndex(s => s.id === targetStageId) <= active.findIndex(s => s.id === d.status)) return true;
+  return showConfirm({
+    title: d.briefingRef ? 'O briefing ainda é rascunho' : 'Esta demanda ainda não tem briefing',
+    message: d.briefingRef
+      ? 'A etapa atual é de briefing, mas ele não foi marcado como <strong>pronto</strong>. Avançar mesmo assim?'
+      : 'A etapa atual é de briefing, mas ninguém preencheu o briefing de criativo. Avançar mesmo assim?',
+    okLabel: 'Avançar mesmo assim'
+  });
+}
+
 function stageOf(d) {
   const f = flowById(d.flowId);
   if (!f) return null;
@@ -15288,6 +15400,7 @@ async function moveDemandToStage(demandId, stageLabel, targetIndex) {
     return;
   }
   if (target.id === d.status) return;
+  if (!(await briefingStageGateOk(d, target.id))) { renderKanban(); return; }
 
   // Calcula nova posição (kanbanOrder) se o usuário soltou em local específico.
   let newOrder = null;
@@ -19531,6 +19644,7 @@ function renderDetail() {
               ? `<div class="detail-description md-body ${isHtmlContent(d.description) ? 'is-html' : ''}">${isHtmlContent(d.description) ? linkifyHtmlPreserveAnchors(d.description) : mdRender(d.description)}</div>`
               : '<div class="dd-empty">Sem descrição cadastrada.</div>'}
           </div>
+          ${briefingCardHtml(d)}
           <div id="detail-briefing-view" class="detail-briefing-slot dd-briefing-slot">
             ${d.briefing ? `<a class="detail-briefing-link dd-briefing-chip" href="${esc(normalizeUrl(d.briefing))}" target="_blank" rel="noopener noreferrer" title="${esc(d.briefing)}"><i data-lucide="file-text" class="ic-sm"></i><span>Abrir briefing</span>${briefingHost ? `<span class="dd-briefing-host">${esc(briefingHost)}</span>` : ''}<i data-lucide="arrow-up-right" class="ic-xs"></i></a>` : '<span class="dd-empty">Sem briefing cadastrado.</span>'}
           </div>
@@ -19881,6 +19995,7 @@ async function pickStage(stageId, ev) {
    pra celebrar a conclusão depois de salvar. */
 async function _setStageNow(demandId, stageId) {
   const d = demandById(demandId); if (!d) return;
+  if (!(await briefingStageGateOk(d, stageId))) return;
   const flow = flowById(d.flowId);
   const active = flow ? activeStagesOf(d, flow) : [];
   const newStage = active.find(s => s.id === stageId);
@@ -21543,6 +21658,9 @@ function describeHistory(h, d) {
     case 'project_changed':    return `alterou o projeto da demanda`;
     case 'description_changed':return `alterou a descrição`;
     case 'briefing_changed':   return `alterou o link do briefing`;
+    case 'briefing_created':   return `criou o briefing de criativo`;
+    case 'briefing_ready':     return `marcou o briefing de criativo como <strong>pronto</strong>`;
+    case 'briefing_reopened':  return `voltou o briefing de criativo para rascunho`;
     case 'deadline_changed':   return `alterou o prazo final${dt.to ? ' para <strong>' + esc(fmtDate(dt.to)) + '</strong>' : ' (removido)'}`;
     case 'stage_due_changed':  return `alterou o prazo da etapa${dt.to ? ' para <strong>' + esc(fmtDate(dt.to)) + '</strong>' : ' (removido)'}`;
     case 'flow_changed':       return `alterou o fluxo da demanda`;
@@ -23592,6 +23710,7 @@ async function _moveStageNow(demandId, dir, stageId) {
   const idx = active.findIndex(s => s.id === d.status);
   const next = active[idx + dir];
   if (!next) return;
+  if (dir > 0 && !(await briefingStageGateOk(d, next.id))) return;
   try {
     const upd = await api('/demands/' + d.id, 'PUT', { status: next.id });
     patchDemand(upd);
@@ -27143,6 +27262,7 @@ function renderStageRows() {
         <input class="form-control" type="number" min="1" placeholder="—" value="${s.deadlineDays || ''}" oninput="stageRows[${i}].deadlineDays=this.value?Number(this.value):null">
         <span class="stage-days-unit">d</span>
       </div>
+      ${s.done ? '' : `<button type="button" class="cust-icon-toggle cust-toggle-brief ${s.briefing ? 'on' : ''}" title="${s.briefing ? 'Etapa de briefing: destaca o "Preencher briefing" na demanda' : 'Marcar como etapa de briefing'}" onclick="toggleStageBriefing(${i})"><i data-lucide="clipboard-list" class="ic-sm"></i></button>`}
       <button type="button" class="cust-icon-toggle cust-toggle-done ${s.done ? 'on' : ''}" title="${s.done ? 'Etapa final — conclui a demanda' : 'Marcar como etapa final (conclui a demanda)'}" onclick="toggleStageDone(${i})"><i data-lucide="flag" class="ic-sm"></i></button>
       <div class="stage-actions">
         <button type="button" class="icon-btn" title="Duplicar etapa" onclick="duplicateStageRow(${i})"><i data-lucide="copy" class="ic-sm"></i></button>
@@ -27217,6 +27337,12 @@ function setStageResponsible(i, value) {
   renderStageRows();
 }
 
+function toggleStageBriefing(i) {
+  if (!stageRows[i] || stageRows[i].done) return;
+  stageRows[i].briefing = !stageRows[i].briefing;
+  flowModalDirty = true;
+  renderStageRows();
+}
 function toggleStageDone(i) {
   if (!stageRows[i]) return;
   stageRows[i].done = !stageRows[i].done;
@@ -39586,6 +39712,7 @@ function openClientModal(id) {
   if (cSave) cSave.textContent = isNew ? 'Criar cliente' : 'Salvar alterações';
   $('c-name').value = c?.name || '';
   $('c-segment').value = c?.segment || '';
+  if ($('c-sigla')) $('c-sigla').value = c?.sigla || '';
   $('c-drive-files').value = c?.driveFiles || '';
   $('c-brand-assets').value = c?.brandAssets || '';
   $('c-guidelines').value = c?.guidelines || '';
@@ -39691,6 +39818,7 @@ async function saveClient() {
     workspaceId: $('c-workspace').value,
     color: $('c-color').value,
     segment: $('c-segment').value,
+    sigla: $('c-sigla') ? $('c-sigla').value : undefined,
     driveFiles: $('c-drive-files').value,
     brandAssets: $('c-brand-assets').value,
     guidelines: $('c-guidelines').value,

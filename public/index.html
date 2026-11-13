@@ -4104,6 +4104,11 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
           <datalist id="client-segments-datalist"></datalist>
         </div>
         <div class="form-group">
+          <label class="form-label" for="c-sigla">Sigla</label>
+          <input class="form-control" id="c-sigla" maxlength="10" placeholder="Ex: VISS, BRZ, MRV" style="text-transform:uppercase">
+          <div class="form-hint">Vai no nome dos arquivos do briefing de criativo: [VISS] [11] Campanha.</div>
+        </div>
+        <div class="form-group">
           <label class="form-label" for="c-drive-files">Pasta de arquivos</label>
           <div class="ent-input-icon"><i data-lucide="folder" class="ic-sm"></i><input class="form-control" id="c-drive-files" type="url" placeholder="Link do Drive, Notion…"></div>
         </div>
@@ -5404,7 +5409,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20261110ff7" defer></script>
+<script src="/js/boot.js?v=20261113bf2" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

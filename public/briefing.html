@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#7A00FF">
+  <title>Briefing · reWork</title>
+  <link rel="icon" href="/rework_icone.svg" type="image/svg+xml">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('kastor-theme');
+        if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+      } catch (_) {}
+    })();
+  </script>
+  <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/css/fonts.css?v=1">
+  <link rel="stylesheet" href="/css/style.css?v=20261104fp6">
+  <link rel="stylesheet" href="/css/briefing.css?v=5">
+</head>
+<body class="bf-body">
+  <div class="bf-app" id="bf-app">
+    <header class="bf-top">
+      <a class="bf-back" id="bf-back" href="/" title="Voltar para a demanda"><i data-lucide="arrow-left" class="ic-sm"></i><span id="bf-back-label">Demanda</span></a>
+      <div class="bf-top-title">
+        <span class="bf-top-kicker">Briefing</span>
+        <strong id="bf-title">Carregando…</strong>
+      </div>
+      <span class="bf-status" id="bf-status" hidden></span>
+      <span class="bf-save" id="bf-save"></span>
+      <div class="bf-top-actions">
+        <button type="button" class="btn btn-ghost btn-sm" id="bf-preview-btn"><i data-lucide="panel-right" class="ic-sm"></i><span>Prévia</span></button>
+        <div class="bf-menu-wrap">
+          <button type="button" class="btn btn-ghost btn-sm" id="bf-export-btn"><i data-lucide="download" class="ic-sm"></i><span>Exportar</span></button>
+          <div class="bf-menu" id="bf-export-menu" hidden>
+            <button type="button" data-fmt="docx"><i data-lucide="file-text" class="ic-sm"></i><span><strong>Word (.docx)</strong><small>Para mandar por e-mail</small></span></button>
+            <button type="button" data-fmt="json"><i data-lucide="braces" class="ic-sm"></i><span><strong>Para o Agente de Criação</strong><small>Arquivo .json que o agente lê</small></span></button>
+          </div>
+        </div>
+        <button type="button" class="btn btn-primary btn-sm" id="bf-ready-btn" hidden><i data-lucide="check" class="ic-sm"></i><span>Marcar como pronto</span></button>
+      </div>
+    </header>
+    <div class="bf-banner" id="bf-banner" hidden></div>
+    <div class="bf-grid" id="bf-grid">
+      <nav class="bf-nav" id="bf-nav"></nav>
+      <main class="bf-main" id="bf-main"><div class="bf-loading">Carregando briefing…</div></main>
+      <aside class="bf-preview" id="bf-preview" hidden>
+        <div class="bf-preview-head"><span>Prévia do documento</span><small>É assim que sai no Word</small></div>
+        <iframe id="bf-preview-frame" title="Prévia do briefing"></iframe>
+      </aside>
+    </div>
+  </div>
+  <div class="bf-modal-back" id="bf-modal" hidden></div>
+  <div class="bf-toast" id="bf-toast" hidden></div>
+  <script src="/vendor/lucide.min.js"></script>
+  <script src="/js/briefing-schema.js?v=5"></script>
+  <script src="/js/briefing.js?v=5"></script>
+</body>
+</html>

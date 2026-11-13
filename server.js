@@ -8183,6 +8183,8 @@ function buildClientPayload(body, base) {
   if (typeof body.name === 'string' && body.name.trim()) c.name = body.name.trim();
   if (typeof body.color === 'string' && body.color.trim()) c.color = body.color;
   if (typeof body.segment === 'string') c.segment = body.segment.trim();
+  // Sigla: vai no nome dos arquivos do briefing ([VISS] [11] …)
+  if (typeof body.sigla === 'string') c.sigla = body.sigla.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10);
   if (typeof body.driveFiles === 'string') c.driveFiles = normalizeUrlSrv(body.driveFiles);
   if (typeof body.brandAssets === 'string') c.brandAssets = normalizeUrlSrv(body.brandAssets);
   if (typeof body.guidelines === 'string') c.guidelines = body.guidelines;
@@ -9195,7 +9197,10 @@ function sanitizeStages(stages) {
     // Cargo (opcional) — combinado com responsibleRole vira o par (área × cargo)
     // usado pra resolver via client.roleAssignments[area][cargo].
     responsiblePosition: s.responsiblePosition ? String(s.responsiblePosition).trim() : null,
-    deadlineDays: Number(s.deadlineDays) > 0 ? Math.round(Number(s.deadlineDays)) : null
+    deadlineDays: Number(s.deadlineDays) > 0 ? Math.round(Number(s.deadlineDays)) : null,
+    // Etapa de briefing: destaca o "Preencher briefing" pro responsável e
+    // avisa ao sair dela sem o briefing pronto. Não restringe quem preenche.
+    briefing: !!s.briefing && !s.done
   })).filter(s => s.label);
   if (clean.length < 2) return null;
   if (!clean.some(s => s.done)) clean[clean.length - 1].done = true;
@@ -14980,6 +14985,310 @@ app.get('/api/admin/godmode/user/:id', requireAuth, adminOnly, (req, res) => {
     watchedDemands: watched,
     createdRecent
   });
+});
+
+/* ── Briefing de criativo ──
+   Um briefing por demanda. O formulário (campos, tipos de peça, conferência,
+   JSON do agente e HTML do documento) vem de public/js/briefing-schema.js,
+   o mesmo arquivo que a página usa. Quem vê a demanda vê o briefing; quem
+   edita a demanda edita o briefing (freelancer só vê: o requireAuth já barra
+   as escritas dele). A demanda guarda um resumo (d.briefingRef) pro cartão. */
+const BriefingSchema = require('./public/js/briefing-schema.js');
+function _briefingDemand(req, b) {
+  const d = db.demands.find(x => x.id === b.demandId && notDeleted(x));
+  return d && canAccessDemand(req.user, d) ? d : null;
+}
+/* ── Campos do Agente de Criação (GitHub) ──
+   Cada organização pode ligar o repositório do agente: o reWork lê
+   <pasta>/<cliente>/briefing.json e usa os campos "Só do cliente", o aviso,
+   as palavras proibidas padrão e os tamanhos de cada cliente. A lista de
+   clientes continua vindo do reWork; o arquivo casa pela sigla (ou nome).
+   Token só de leitura, cifrado (auth.encryptString). Atualiza sozinho quando
+   a última leitura tem mais de 1 h (ao abrir um briefing) ou pelo botão. Se a
+   leitura falhar, fica a última versão boa. */
+const BRIEFING_AGENT_TTL_MS = 60 * 60 * 1000;
+const _briefingAgentSyncing = new Map();
+function _briefingAgentCfg(org) { return (org && org.briefingAgent) || null; }
+function _briefingAgentPublic(org) {
+  const c = _briefingAgentCfg(org);
+  if (!c) return { connected: false };
+  return {
+    connected: !!(c.repo && c.tokenEnc), repo: c.repo || '', branch: c.branch || 'main', path: c.path || 'base/clientes',
+    hasToken: !!c.tokenEnc, syncedAt: c.syncedAt || null, commit: c.commit || null, error: c.error || null,
+    clients: Object.values(c.blocks || {}).map(b => ({ sigla: b.sigla, nome: b.nome })).sort((a, b) => a.sigla.localeCompare(b.sigla))
+  };
+}
+// Valida um briefing.json do agente. Devolve o bloco limpo ou null.
+const _BA_TYPES = new Set(['text', 'textarea', 'single', 'url', 'date']);
+function _briefingAgentBlock(raw, dir) {
+  if (!raw || typeof raw !== 'object') return null;
+  const sigla = String(raw.sigla || dir || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10);
+  if (!sigla) return null;
+  const str = (v, n) => (v == null ? '' : String(v)).slice(0, n || 300);
+  const campos = (Array.isArray(raw.campos) ? raw.campos : []).slice(0, 40).map(c => {
+    if (!c || !c.key || !c.label) return null;
+    const type = _BA_TYPES.has(c.type) ? c.type : 'text';
+    const out = { key: str(c.key, 60).replace(/[^a-zA-Z0-9_]/g, ''), label: str(c.label, 120), type };
+    if (!out.key) return null;
+    if (c.required) out.required = true;
+    if (c.placeholder) out.placeholder = str(c.placeholder, 200);
+    if (c.hint) out.hint = str(c.hint, 300);
+    if (type === 'single') {
+      out.options = (Array.isArray(c.options) ? c.options : []).slice(0, 30).map(o => str(o, 120)).filter(Boolean);
+      if (!out.options.length) return null;
+      if (c.other) out.other = true;
+    }
+    if (c.showIf && typeof c.showIf === 'object' && c.showIf.campo) {
+      out.showIf = { campo: str(c.showIf.campo, 60) };
+      if (c.showIf.igual != null) out.showIf.igual = str(c.showIf.igual, 120);
+      else if (c.showIf.contem != null) out.showIf.contem = str(c.showIf.contem, 120);
+    }
+    return out;
+  }).filter(Boolean);
+  const tamanhos = {};
+  if (raw.tamanhos && typeof raw.tamanhos === 'object') for (const [k, v] of Object.entries(raw.tamanhos).slice(0, 20)) tamanhos[str(k, 20)] = str(v, 40);
+  return {
+    sigla, nome: str(raw.nome || sigla, 120), aviso: raw.aviso ? str(raw.aviso, 500) : null,
+    proibidas_padrao: (Array.isArray(raw.proibidas_padrao) ? raw.proibidas_padrao : []).slice(0, 30).map(x => str(x, 80)).filter(Boolean),
+    tamanhos, campos, pasta: dir
+  };
+}
+// Lê o repositório (API do GitHub). fetchImpl é injetável pros testes.
+async function syncBriefingAgent(org, fetchImpl) {
+  const c = _briefingAgentCfg(org);
+  if (!c || !c.repo || !c.tokenEnc) throw new Error('Repositório do agente não configurado.');
+  let token = null;
+  try { token = auth.decryptString(c.tokenEnc); } catch {}
+  if (!token) throw new Error('Não foi possível ler o token salvo. Salve o token de novo.');
+  const doFetch = fetchImpl || fetch;
+  const api = 'https://api.github.com/repos/' + c.repo;
+  const headers = { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json', 'User-Agent': 'reWork-briefing', 'X-GitHub-Api-Version': '2022-11-28' };
+  const getJson = async url => {
+    const r = await doFetch(url, { headers });
+    if (r.status === 404) return null;
+    if (r.status === 401 || r.status === 403) throw new Error('O GitHub recusou o token (' + r.status + '). Confira se ele tem leitura de "Contents" neste repositório.');
+    if (!r.ok) throw new Error('GitHub respondeu ' + r.status + '.');
+    return r.json();
+  };
+  const branch = c.branch || 'main';
+  const base = (c.path || 'base/clientes').replace(/^\/+|\/+$/g, '');
+  const commit = await getJson(`${api}/commits/${encodeURIComponent(branch)}`);
+  if (!commit || !commit.sha) throw new Error(`Não achei o repositório "${c.repo}" ou o branch "${branch}".`);
+  const listing = await getJson(`${api}/contents/${base.split('/').map(encodeURIComponent).join('/')}?ref=${commit.sha}`);
+  if (!Array.isArray(listing)) throw new Error(`Não achei a pasta "${base}" no repositório.`);
+  const blocks = {};
+  const errors = [];
+  for (const it of listing.filter(x => x.type === 'dir' && !x.name.startsWith('_') && !x.name.startsWith('.')).slice(0, 80)) {
+    const fileUrl = `${api}/contents/${base.split('/').map(encodeURIComponent).join('/')}/${encodeURIComponent(it.name)}/briefing.json?ref=${commit.sha}`;
+    const meta = await getJson(fileUrl);
+    if (!meta || !meta.content) continue; // cliente sem briefing.json
+    let raw;
+    try { raw = JSON.parse(Buffer.from(meta.content, 'base64').toString('utf8')); }
+    catch { errors.push(`${it.name}/briefing.json não é um JSON válido`); continue; }
+    const blk = _briefingAgentBlock(raw, it.name);
+    if (blk) blocks[blk.sigla] = blk; else errors.push(`${it.name}/briefing.json sem sigla`);
+  }
+  c.blocks = blocks;
+  c.commit = commit.sha.slice(0, 7);
+  c.syncedAt = nowISO();
+  c.error = errors.length ? errors.join(' · ') : null;
+  org.updatedAt = nowISO();
+  saveEntity('organizations', org);
+  return c;
+}
+function _briefingAgentSyncSafe(org) {
+  if (_briefingAgentSyncing.has(org.id)) return _briefingAgentSyncing.get(org.id);
+  const p = syncBriefingAgent(org).catch(e => {
+    const c = _briefingAgentCfg(org);
+    if (c) { c.error = e.message; c.checkedAt = nowISO(); saveEntity('organizations', org); }
+    throw e;
+  }).finally(() => _briefingAgentSyncing.delete(org.id));
+  _briefingAgentSyncing.set(org.id, p);
+  return p;
+}
+// Blocos pra usar agora (null = sem agente ligado → campos embutidos).
+function _briefingAgentBlocks(org) {
+  const c = _briefingAgentCfg(org);
+  if (!c || !c.repo || !c.tokenEnc) return null;
+  const last = Date.parse(c.checkedAt || c.syncedAt || 0) || 0;
+  if (Date.now() - last > BRIEFING_AGENT_TTL_MS) { c.checkedAt = nowISO(); _briefingAgentSyncSafe(org).catch(() => {}); }
+  return c.blocks || null;
+}
+app.get('/api/org/briefing-agent', requireAuth, modOrAdmin, (req, res) => res.json(_briefingAgentPublic(req.org)));
+app.put('/api/org/briefing-agent', requireAuth, modOrAdmin, async (req, res) => {
+  const b = req.body || {};
+  const repo = String(b.repo || '').trim().replace(/^https?:\/\/github\.com\//i, '').replace(/\.git$/i, '').replace(/\/+$/, '');
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return res.status(400).json({ error: 'Informe o repositório como dono/nome (ex.: wsicriacao/agente-criacao).' });
+  const prev = _briefingAgentCfg(req.org) || {};
+  const cfg = {
+    ...prev, repo,
+    branch: String(b.branch || 'main').trim().slice(0, 100) || 'main',
+    path: String(b.path || 'base/clientes').trim().replace(/^\/+|\/+$/g, '').slice(0, 200) || 'base/clientes'
+  };
+  if (typeof b.token === 'string' && b.token.trim()) cfg.tokenEnc = auth.encryptString(b.token.trim());
+  if (!cfg.tokenEnc) return res.status(400).json({ error: 'Cole o token do GitHub.' });
+  if (prev.repo !== cfg.repo) { cfg.blocks = null; cfg.commit = null; cfg.syncedAt = null; }
+  req.org.briefingAgent = cfg;
+  saveEntity('organizations', req.org);
+  try { await _briefingAgentSyncSafe(req.org); } catch (e) { return res.status(400).json({ error: e.message, agent: _briefingAgentPublic(req.org) }); }
+  res.json(_briefingAgentPublic(req.org));
+});
+app.post('/api/org/briefing-agent/sync', requireAuth, modOrAdmin, async (req, res) => {
+  try { await _briefingAgentSyncSafe(req.org); res.json(_briefingAgentPublic(req.org)); }
+  catch (e) { res.status(400).json({ error: e.message, agent: _briefingAgentPublic(req.org) }); }
+});
+app.delete('/api/org/briefing-agent', requireAuth, modOrAdmin, (req, res) => {
+  delete req.org.briefingAgent;
+  saveEntity('organizations', req.org);
+  res.json({ connected: false });
+});
+
+function _briefingClient(b) {
+  const id = b && b.data && b.data.clienteId;
+  return id ? db.clients.find(c => c.id === id) || null : null;
+}
+function _briefingSummary(b) {
+  const pecas = (b.data && b.data.pecas) || [];
+  return {
+    id: b.id, status: b.status, pieces: pecas.length,
+    screens: pecas.reduce((n, p) => n + ((p.telas || []).length), 0),
+    updatedAt: b.updatedAt, updatedBy: b.updatedBy
+  };
+}
+function _briefingPublic(b, req) {
+  const d = db.demands.find(x => x.id === b.demandId);
+  const u = id => { const x = id && allUsers().find(y => y.id === id); return x ? { id: x.id, name: x.name } : null; };
+  return {
+    id: b.id, demandId: b.demandId, workspaceId: b.workspaceId, status: b.status, version: b.version,
+    data: b.data, createdAt: b.createdAt, updatedAt: b.updatedAt,
+    createdBy: u(b.createdBy), updatedBy: u(b.updatedBy), readyBy: u(b.readyBy), readyAt: b.readyAt || null,
+    demand: d ? { id: d.id, name: d.name, path: typeof _demandPathFor === 'function' ? _demandPathFor(d.id) : null } : null,
+    canEdit: !req.user.isFreelancer
+  };
+}
+function _briefingSyncDemand(b, d, userId) {
+  d.briefingRef = _briefingSummary(b);
+  saveEntity('demands', d);
+  broadcastChange('demand', 'update', { id: d.id, workspaceId: d.workspaceId, byUserId: userId });
+}
+// Clientes da equipe da demanda (lista do formulário).
+app.get('/api/briefings/:id/clients', requireAuth, (req, res) => {
+  const b = (db.briefings || []).find(x => x.id === req.params.id);
+  if (!b || !_briefingDemand(req, b)) return res.status(404).json({ error: 'Briefing não encontrado' });
+  const list = db.clients.filter(c => c.workspaceId === b.workspaceId && notDeleted(c) && c.active !== false)
+    .map(c => ({ id: c.id, name: c.name, sigla: c.sigla || '', color: c.color || null, avatar: c.avatar || null }))
+    .sort((a, b2) => a.name.localeCompare(b2.name, 'pt-BR'));
+  const ag = _briefingAgentCfg(req.org);
+  res.json({
+    clients: list,
+    blocks: _briefingAgentBlocks(req.org),
+    agent: ag && ag.repo ? { repo: ag.repo, syncedAt: ag.syncedAt || null, commit: ag.commit || null, error: ag.error || null } : null,
+    canManageAgent: !!(req.user.isAdmin || req.user.isModerator)
+  });
+});
+// Cria o briefing da demanda (ou devolve o que já existe), já preenchido
+// com o que a demanda sabe: cliente, nome, prazo e o pedido.
+app.post('/api/briefings', requireAuth, (req, res) => {
+  const d = db.demands.find(x => x.id === String((req.body || {}).demandId || '') && notDeleted(x));
+  if (!d || !canAccessDemand(req.user, d)) return res.status(404).json({ error: 'Demanda não encontrada' });
+  if (!Array.isArray(db.briefings)) db.briefings = [];
+  const existing = db.briefings.find(x => x.demandId === d.id && notDeleted(x));
+  if (existing) return res.json(_briefingPublic(existing, req));
+  const proj = d.projectId ? db.projects.find(p => p.id === d.projectId) : null;
+  const deadline = d.deadline ? String(d.deadline).slice(0, 10) : '';
+  const now = nowISO();
+  const b = {
+    id: uid(), demandId: d.id, workspaceId: d.workspaceId, status: 'rascunho', version: 1,
+    data: BriefingSchema.newBriefing({
+      clienteId: (proj && proj.clientId) || null,
+      campanha: String(d.name || '').replace(/[\/\\:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120),
+      mes: deadline ? String(Number(deadline.slice(5, 7))) : String(new Date().getMonth() + 1),
+      prazo: deadline,
+      pedidoOriginal: d.description ? stripHtmlToText(d.description).slice(0, 8000) : ''
+    }),
+    createdBy: req.user.id, updatedBy: req.user.id, createdAt: now, updatedAt: now
+  };
+  db.briefings.push(b);
+  saveEntity('briefings', b);
+  addHistory(d, req.user.id, 'briefing_created', { briefingId: b.id });
+  _briefingSyncDemand(b, d, req.user.id);
+  res.status(201).json(_briefingPublic(b, req));
+});
+app.get('/api/briefings/:id', requireAuth, (req, res) => {
+  const b = (db.briefings || []).find(x => x.id === req.params.id && notDeleted(x));
+  if (!b || !_briefingDemand(req, b)) return res.status(404).json({ error: 'Briefing não encontrado' });
+  res.json(_briefingPublic(b, req));
+});
+// Salvamento automático. baseVersion evita uma pessoa apagar a edição da
+// outra: se alguém salvou antes, devolve 409 com a versão atual.
+app.put('/api/briefings/:id', requireAuth, express.json({ limit: '2mb' }), (req, res) => {
+  const b = (db.briefings || []).find(x => x.id === req.params.id && notDeleted(x));
+  const d = b && _briefingDemand(req, b);
+  if (!b || !d) return res.status(404).json({ error: 'Briefing não encontrado' });
+  const body = req.body || {};
+  if (body.baseVersion != null && Number(body.baseVersion) !== b.version) {
+    return res.status(409).json({ error: 'Outra pessoa alterou este briefing.', code: 'conflict', current: _briefingPublic(b, req) });
+  }
+  if (body.data && typeof body.data === 'object' && Array.isArray(body.data.pecas)) {
+    if (body.data.pecas.length > 60) return res.status(400).json({ error: 'No máximo 60 peças por briefing.' });
+    b.data = body.data;
+  }
+  if (body.status === 'pronto' || body.status === 'rascunho') {
+    if (body.status !== b.status) {
+      b.status = body.status;
+      if (b.status === 'pronto') { b.readyBy = req.user.id; b.readyAt = nowISO(); }
+      addHistory(d, req.user.id, b.status === 'pronto' ? 'briefing_ready' : 'briefing_reopened', { briefingId: b.id });
+    }
+  }
+  b.version += 1;
+  b.updatedBy = req.user.id;
+  b.updatedAt = nowISO();
+  saveEntity('briefings', b);
+  _briefingSyncDemand(b, d, req.user.id);
+  res.json(_briefingPublic(b, req));
+});
+// GET /api/briefings/:id/export?format=json|html|docx|pdf
+app.get('/api/briefings/:id/export', requireAuth, async (req, res) => {
+  const b = (db.briefings || []).find(x => x.id === req.params.id && notDeleted(x));
+  const d = b && _briefingDemand(req, b);
+  if (!b || !d) return res.status(404).json({ error: 'Briefing não encontrado' });
+  const format = String(req.query.format || 'json').toLowerCase();
+  const client = _briefingClient(b);
+  const ctx = { client, blocks: _briefingAgentBlocks(req.org), baseUrl: appBaseUrl(req), origem: { sistema: 'reWork', briefingId: b.id, demandaId: d.id, demanda: d.name, status: b.status, atualizado_em: b.updatedAt } };
+  const sigla = BriefingSchema.clientSigla(client);
+  const baseName = (`Briefing ${sigla ? '[' + sigla + '] ' : ''}${b.data.campanha || d.name || ''}`).replace(/[\/\\:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 100) || 'Briefing';
+  const disp = ext => `attachment; filename="${baseName.replace(/[^\x20-\x7e]/g, '_')}.${ext}"; filename*=UTF-8''${encodeURIComponent(baseName + '.' + ext)}`;
+  try {
+    if (format === 'json') {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Content-Disposition', disp('json'));
+      return res.send(JSON.stringify(BriefingSchema.toAgentJson(b.data, ctx), null, 2));
+    }
+    // Imagens enviadas no reWork: o LibreOffice lê do disco (file://).
+    const imgSrc = u => {
+      if (typeof u === 'string' && u.startsWith('/uploads/')) {
+        const local = path.join(__dirname, 'public', u.split('?')[0]);
+        if (fs.existsSync(local)) return 'file://' + local.replace(/\\/g, '/');
+      }
+      return u;
+    };
+    if (format === 'html') {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.send(BriefingSchema.toHtml(b.data, ctx));
+    }
+    if (format !== 'docx' && format !== 'pdf') return res.status(400).json({ error: 'Formato inválido: ' + format });
+    const outPath = await convertHtmlWithSoffice(BriefingSchema.toHtml(b.data, ctx, { office: true, imgSrc }), format);
+    res.setHeader('Content-Type', format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', disp(format));
+    fs.createReadStream(outPath).pipe(res);
+  } catch (e) {
+    console.error('[briefings/export]', e.message);
+    res.status(500).json({ error: /LibreOffice não encontrado/.test(e.message) ? 'O conversor de Word não está disponível neste servidor.' : (e.message || 'Falha ao exportar') });
+  }
+});
+// Página do briefing (abre em outra guia, shell próprio; auth via /api).
+app.get(/^\/hub\/briefing\/[a-zA-Z0-9]+\/?$/, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'briefing.html'));
 });
 
 /* ── FALLBACK ── */
