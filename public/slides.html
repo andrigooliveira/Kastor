@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#7A00FF">
+  <title>reWork Presentations</title>
+  <link rel="icon" href="/reworkpresentations_icone.svg" type="image/svg+xml">
+  <!-- Tema salvo antes de pintar (evita piscar claro↔escuro). Mesma chave da plataforma. -->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('kastor-theme');
+        if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+      } catch (_) {}
+    })();
+  </script>
+  <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/css/fonts.css?v=1">
+  <link rel="stylesheet" href="/css/style.css?v=20261104fp6">
+  <link rel="stylesheet" href="/css/slides.css?v=20261116s17">
+</head>
+<body>
+  <div id="sl-boot" class="sl-boot">
+    <div class="sl-spinner"></div>
+    <span>Carregando reWork Presentations…</span>
+  </div>
+
+  <div id="sl-auth" class="sl-auth" hidden>
+    <img src="/reworkpresentations_icone.svg" width="48" height="48" alt="">
+    <h2>Entre pra continuar</h2>
+    <p>Você precisa estar conectado ao reWork pra abrir as apresentações.</p>
+    <a class="btn btn-primary" href="/">Ir pra tela de entrada</a>
+  </div>
+
+  <div id="sl-app" class="sl-app" hidden>
+    <!-- Lista. id="app" class="active" de propósito: a casca herda as regras do
+         DS escritas pra plataforma (#app .filters-bar, .seg, botões da topbar). -->
+    <div class="sl-home active" id="app">
+      <header class="topbar sl-home-top">
+        <a class="sl-brand" href="/hub/presentations" aria-label="reWork Presentations">
+          <img src="/reworkpresentations_icone.svg" alt="" width="24" height="24">
+          <span class="topbar-title">Presentations</span>
+        </a>
+        <div class="topbar-actions">
+          <button type="button" class="btn btn-ghost sl-figma-btn" id="sl-figma-btn" title="Trazer uma apresentação do Figma">
+            <img src="/figma.svg" alt="" width="10" height="15">
+            <span>Importar do Figma</span>
+          </button>
+          <button type="button" class="btn btn-primary sl-new-btn" id="sl-new-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+            <span>Nova apresentação</span>
+          </button>
+          <button type="button" class="topbar-apps-btn" id="sl-apps" title="Apps do reWork" aria-label="Apps do reWork" aria-haspopup="menu">
+            <img src="/reworkhub_simbol.svg" alt="" width="22" height="22">
+          </button>
+          <button type="button" class="topbar-user sl-user" id="sl-user" aria-label="Sua conta" aria-haspopup="menu"></button>
+        </div>
+      </header>
+
+      <div class="sl-home-layer">
+        <div class="sl-home-body" id="sl-home">
+          <div class="sl-home-inner">
+            <div class="filters-bar sl-filters">
+              <div class="filter-input-wrap">
+                <svg class="filter-input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input type="search" class="filter-input filter-input--with-icon" id="sl-search" placeholder="Buscar apresentações…" aria-label="Buscar apresentações">
+              </div>
+              <select class="filter-select" id="sl-f-client" aria-label="Cliente"></select>
+              <select class="filter-select" id="sl-f-project" aria-label="Projeto"></select>
+              <select class="filter-select" id="sl-f-sort" aria-label="Ordenar">
+                <option value="updated">Ordem: modificação</option>
+                <option value="created">Ordem: criação</option>
+                <option value="title">Ordem: nome</option>
+              </select>
+              <div class="sl-filters-right">
+                <button type="button" class="btn btn-ghost sl-trash-btn" id="sl-trash-btn" aria-pressed="false">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                  <span>Lixeira</span>
+                  <span class="sl-count" id="sl-trash-count" hidden></span>
+                </button>
+              </div>
+            </div>
+
+            <div class="sl-trash-note" id="sl-trash-note" hidden>
+              <span>Apresentações excluídas ficam aqui. Restaure pra que voltem pra lista do squad com tudo o que tinham.</span>
+            </div>
+
+            <section class="sl-section" id="sl-fav-section" hidden>
+              <h2 class="dash-col-heading sl-section-title">Favoritas</h2>
+              <div class="sl-grid" id="sl-fav-grid"></div>
+            </section>
+            <section class="sl-section">
+              <h2 class="dash-col-heading sl-section-title" id="sl-main-title">Apresentações</h2>
+              <div class="sl-grid" id="sl-grid"></div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Editor -->
+    <div class="sl-editor" id="sl-editor"></div>
+
+    <!-- Link público -->
+    <div class="sl-public" id="sl-public"></div>
+  </div>
+
+  <script src="/vendor/slides.bundle.js?v=20261116s18"></script>
+</body>
+</html>

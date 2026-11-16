@@ -1,5 +1,58 @@
 [
   {
+    "id": "2026-11-16-rework-presentations-beta",
+    "date": "2026-11-16",
+    "kind": "launch",
+    "hideFor": [
+      "freelancer"
+    ],
+    "title": "Conheça o reWork Presentations",
+    "launch": {
+      "kicker": "Novo no reWork",
+      "badge": "Beta",
+      "icon": "/reworkpresentations_icone.svg",
+      "tagline": "Apresentações feitas dentro da plataforma. Planos de campanha, relatórios e propostas ficam junto dos clientes, e o squad monta os slides junto, ao mesmo tempo.",
+      "note": "Estamos em beta: o Presentations vai receber ajustes nas próximas semanas. Para abrir, use o ícone do reWork Hub no topo da tela.",
+      "cta": {
+        "label": "Abrir o reWork Presentations",
+        "href": "/hub/presentations"
+      },
+      "features": [
+        {
+          "icon": "users",
+          "title": "Edite junto com o squad",
+          "text": "Várias pessoas no mesmo deck. Você vê quem está em cada slide e o que cada um selecionou."
+        },
+        {
+          "icon": "layout-template",
+          "title": "Comece de um modelo",
+          "text": "Apresentação de campanha, relatório mensal ou em branco. Cada slide novo pode partir de um layout pronto."
+        },
+        {
+          "icon": "move",
+          "title": "Monte do seu jeito",
+          "text": "Texto, imagem e formas soltos no slide, no tamanho que você quiser: 16:9, quadrado, stories, A4 ou em px. Réguas, guias e grade de colunas ajudam a alinhar, e o painel de camadas renomeia, oculta, trava e reordena."
+        },
+        {
+          "icon": "palette",
+          "title": "Tema da apresentação",
+          "text": "Escolha fundo, cor de destaque e fonte uma vez, e o deck inteiro acompanha. Dá pra usar fontes do Google Fonts ou enviar o arquivo da fonte da marca."
+        },
+        {
+          "icon": "figma",
+          "title": "Traga do Figma",
+          "text": "Conecte sua conta do Figma, cole o link e escolha os quadros. Textos, formas, degradês e sombras chegam editáveis, vetores continuam vetores e as camadas, grupos e fontes vêm junto."
+        },
+        {
+          "icon": "presentation",
+          "title": "Apresente e compartilhe",
+          "text": "Modo tela cheia com notas do apresentador, link público para o cliente ver sem login e download em PDF ou PowerPoint."
+        }
+      ]
+    },
+    "highlights": []
+  },
+  {
     "id": "2026-11-13-briefing-de-criativo",
     "date": "2026-11-13",
     "title": "Briefing de criativo dentro da demanda",

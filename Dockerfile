@@ -55,6 +55,8 @@ COPY . .
 # minify porque gera public/vendor/writer.bundle.js. É o único bundle que
 # temos: o resto (app.js) é single-file legado que só passa por minify.
 RUN node scripts/build-writer.js
+# Mesmo esquema pro reWork Presentations (Yjs + editor de slides).
+RUN node scripts/build-slides.js
 
 # Minifica app.js e style.css IN-PLACE via esbuild (source original
 # permanece no git, só a imagem Docker fica com o minified). Em conjunto

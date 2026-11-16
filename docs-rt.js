@@ -41,12 +41,14 @@ let Y, syncProtocol, awarenessProtocol, encoding, decoding;
 const MSG_SYNC = 0;
 const MSG_AWARENESS = 1;
 
-/* Rooms ativas: docId → Room */
+/* Rooms ativas: "<tipo>:<id>" → Room. O tipo é "docs" (reWork Docs) ou
+   "decks" (reWork Presentations); cada tipo tem seus próprios callbacks. */
 const rooms = new Map();
 
 class Room {
   constructor(docId, opts) {
     this.docId = docId;
+    this.key = opts.key || docId;
     this.doc = new Y.Doc();
     this.awareness = new awarenessProtocol.Awareness(this.doc);
     this.awareness.setLocalState(null);
@@ -146,7 +148,7 @@ class Room {
       // Room fica em memória por 60s pra reconexões rápidas não perderem estado
       setTimeout(() => {
         if (this.conns.size === 0) {
-          rooms.delete(this.docId);
+          rooms.delete(this.key);
         }
       }, 60000);
     }
@@ -204,17 +206,24 @@ async function setup(httpServer, opts = {}) {
     // async (docId) => Uint8Array|null — carrega snapshot Yjs prévio
     loadInitialState,
     // (docId, updateBytes) => void — persiste (chamado com throttle)
-    onPersist
+    onPersist,
+    // Outros tipos de sala: { decks: { canAccess, loadInitialState, onPersist } }.
+    // loadInitialState(id, Y) recebe o Yjs pra poder montar o estado inicial.
+    kinds: extraKinds = {}
   } = opts;
+  const kinds = { docs: { canAccess, loadInitialState, onPersist }, ...extraKinds };
+  const kindRe = new RegExp('^\\/rt\\/(' + Object.keys(kinds).join('|') + ')\\/([a-f0-9-]+)$', 'i');
 
   const wss = new WebSocketServer({ noServer: true });
 
-  // Upgrade handler no HTTP server. Rota: /rt/docs/<docId>
+  // Upgrade handler no HTTP server. Rotas: /rt/docs/<docId>, /rt/decks/<deckId>
   httpServer.on('upgrade', async (req, socket, head) => {
     const u = url.parse(req.url, true);
-    const m = u.pathname && u.pathname.match(/^\/rt\/docs\/([a-f0-9-]+)$/i);
+    const m = u.pathname && u.pathname.match(kindRe);
     if (!m) return; // deixa outros handlers (SSE não usa WS, então tudo bem)
-    const docId = m[1];
+    const kind = m[1].toLowerCase();
+    const docId = m[2];
+    const h = kinds[kind];
 
     let userId = null;
     try { userId = authenticate(req); } catch { userId = null; }
@@ -223,7 +232,7 @@ async function setup(httpServer, opts = {}) {
       return;
     }
     let allowed = false;
-    try { allowed = await canAccess(docId, userId); } catch { allowed = false; }
+    try { allowed = await h.canAccess(docId, userId); } catch { allowed = false; }
     if (!allowed) {
       socket.destroy();
       return;
@@ -232,21 +241,23 @@ async function setup(httpServer, opts = {}) {
     wss.handleUpgrade(req, socket, head, (ws) => {
       ws._userId = userId;
       ws._connId = Math.random().toString(36).slice(2);
-      wss.emit('connection', ws, req, docId);
+      wss.emit('connection', ws, req, docId, kind);
     });
   });
 
-  wss.on('connection', async (ws, req, docId) => {
-    let room = rooms.get(docId);
+  wss.on('connection', async (ws, req, docId, kind) => {
+    const h = kinds[kind];
+    const key = kind === 'docs' ? docId : kind + ':' + docId;
+    let room = rooms.get(key);
     if (!room) {
-      room = new Room(docId, { onPersist });
-      rooms.set(docId, room);
+      room = new Room(docId, { onPersist: h.onPersist, key });
+      rooms.set(key, room);
       // Reidrata do snapshot persistido. Quem conectar enquanto isso espera
       // (room.ready): senão sincroniza com a sala vazia, o cliente semeia o
       // conteúdo de novo e ele duplica quando o snapshot chega.
       room.ready = (async () => {
         try {
-          const initial = await loadInitialState(docId);
+          const initial = await h.loadInitialState(docId, Y);
           if (initial && initial.byteLength > 0) Y.applyUpdate(room.doc, initial);
           else room.fresh = true;   // nunca salvo: primeira persistência sai rápido
         } catch (e) {

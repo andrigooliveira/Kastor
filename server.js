@@ -635,8 +635,10 @@ function publicUser(u, opts) {
   // quickReplies (respostas prontas) e navMenu (menu lateral personalizado) são
   // pessoais: só voltam pro próprio usuário.
   // reminders/demandSeen/timeGapDismissed: estado pessoal com rota própria.
-  const { googleTokens, googleSyncTokens, pushSubs, knownIps, releaseNotesSeenIds, quickReplies, reminders, demandSeen, timeGapDismissed, mentionDismissed, heldNotifs, navMenu, emailChange, twoFactor, twoFactorSetup, onboardingPendingAt, googleLogin: gLogin, ...rest } = u;
+  // figma: token pessoal do Figma (criptografado) — nunca sai do servidor.
+  const { googleTokens, googleSyncTokens, pushSubs, knownIps, releaseNotesSeenIds, quickReplies, reminders, demandSeen, timeGapDismissed, mentionDismissed, heldNotifs, navMenu, emailChange, twoFactor, twoFactorSetup, onboardingPendingAt, googleLogin: gLogin, figma, ...rest } = u;
   rest.googleConnected = !!googleTokens;
+  rest.figmaConnected = !!(figma && figma.tokenEnc);
   rest.twoFactorMethod = twoFactorMethodOf(u);
   rest.emailVerified = !!(u.email && u.emailVerifiedAt);
   rest.pushDevices = Array.isArray(pushSubs) ? pushSubs.length : 0; // só a contagem, nunca as inscrições
@@ -1976,7 +1978,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use((req, res, next) => {
-  const isUpload = /^\/api\/(support\/tickets(\/[^/]+\/messages)?|prototypes\/[^/]+\/upload\/[^/]+\/file$|uploads|demands(\/[^/]+(\/comment)?)?$|me$|users(\/[^/]+)?$|projects(\/[^/]+)?$|writer\/import$)/.test(req.path);
+  const isUpload = /^\/api\/(support\/tickets(\/[^/]+\/messages)?|prototypes\/[^/]+\/upload\/[^/]+\/file$|uploads|demands(\/[^/]+(\/comment)?)?$|me$|users(\/[^/]+)?$|projects(\/[^/]+)?$|writer\/import$|decks\/[^/]+\/(content|fonts)$)/.test(req.path);
   return (isUpload ? jsonLg : jsonSm)(req, res, next);
 });
 /* Static do SPA — política de cache diferenciada:
@@ -6976,6 +6978,7 @@ function orgStorageAll(force) {
   return byOrg;
 }
 let prototypesApi = null; // prototypes.js (sites pra aprovação) — montado junto do suporte
+let decksApi = null;      // decks.js (reWork Presentations)
 // Anexos + arquivos dos protótipos (que não passam por /uploads).
 const orgStorage = (orgId) => {
   const st = orgStorageAll().get(orgId) || { bytes: 0, files: 0 };
@@ -7429,6 +7432,20 @@ prototypesApi = require('./prototypes')(app, {
     const s = auth.sessionForToken(parseCookies(req)[SESSION_COOKIE] || null);
     return (s && allUsers().find(u => u.id === s.userId)) || null;
   }
+});
+// reWork Presentations (decks.js) — API /api/decks e sala /rt/decks/<id>
+decksApi = require('./decks')(app, {
+  getDb: () => db, getRawDb: () => rawDb, saveEntity, uid, nowISO, requireAuth, canAccessWs,
+  tenancy, orgPlan, uploadsDir: UPLOADS_DIR,
+  // Fontes: mesmo esquema do Docs (Google baixado e guardado aqui, arquivos em /docfonts)
+  fonts: { fetchGoogle: _fetchGoogleFont, save: _saveDocFont, mime: DOCFONT_MIME },
+  userAllowed: (user) => !(emailEnforced() && !emailLinked(user))
+});
+// Importar do Figma (figma.js) — token pessoal criptografado na conta de cada um
+require('./figma')(app, {
+  getDb: () => db, requireAuth, auth, saveEntity, uid, nowISO, saveUploadFromDataUri,
+  fonts: { fetchGoogle: _fetchGoogleFont },
+  registerImport: decksApi.registerImport
 });
 require('./plans').setupPlanRoutes(app, { plans: plansApi, requireConsole: consoleApi.requireConsole, audit: consoleApi.audit, getDb: () => rawDb, saveEntity });
 
@@ -15316,6 +15333,13 @@ app.get(/^\/public\/client\/[a-f0-9]{48}$/i, (req, res) => {
 app.get(/^\/hub\/docs(?:\/(?:public\/[a-zA-Z0-9]+|[a-zA-Z0-9-]+))?\/?$/, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'writer.html'));
 });
+// reWork Presentations — página standalone, como o Docs.
+// /hub/presentations               → lista
+// /hub/presentations/<slug>        → editor
+// /hub/presentations/public/<tok>  → apresentação pública (sem login)
+app.get(/^\/hub\/presentations(?:\/(?:public\/[a-zA-Z0-9]+|[a-zA-Z0-9-]+))?\/?$/, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'slides.html'));
+});
 // Redirect legado — links antigos pra /docs continuam funcionando.
 app.get(/^\/docs(\/(?:public\/[a-zA-Z0-9]+|[a-zA-Z0-9-]+))?\/?$/, (req, res) => {
   res.redirect(301, '/hub/docs' + (req.params[0] || ''));
@@ -15378,7 +15402,9 @@ if (require.main === module) {
           doc.yState = Buffer.from(updateBytes).toString('base64');
           doc.updatedAt = nowISO();
           saveEntity('writerDocuments', doc);
-        }
+        },
+        // reWork Presentations: /rt/decks/<id>
+        kinds: decksApi ? { decks: decksApi.rt } : {}
       });
       console.log('  Kastor Docs realtime  →  ws://localhost:' + PORT + '/rt/docs/<id>');
     } catch (e) {

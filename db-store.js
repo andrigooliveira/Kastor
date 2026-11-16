@@ -56,7 +56,11 @@ const ENTITY_TYPES = [
   'prototypes',
   // Briefing de criativo (um por demanda): { id, demandId, workspaceId,
   // status, version, data (ver public/js/briefing-schema.js), ... }.
-  'briefings'
+  'briefings',
+  // reWork Presentations (decks.js): { id, workspaceId, clientId, projectId,
+  // title, ownerId, theme, slides[] (JSON pra lista/link público/PDF),
+  // yState (Yjs em base64, fonte de verdade da edição em tempo real), ... }.
+  'decks'
 ];
 
 function createStore(config = {}) {
