@@ -127,6 +127,8 @@ test('figma: rotas com o Figma simulado', async () => {
     }
     if ((opts.headers || {})['X-Figma-Token'] !== 'figd_token_valido_123456789') return json({ status: 403 }, 403);
     if (u.endsWith('/me')) return json({ handle: 'teste', email: 't@x.com' });
+    // Arquivo que o Figma recusa, com o motivo no corpo
+    if (u.includes('/files/NEGADO123456?')) return json({ status: 403, err: 'Invalid scope(s): file_content:read. This endpoint requires the file_content:read scope' }, 403);
     if (/\/files\/KEY1234567890\?depth=4$/.test(u)) return json({ name: 'Deck do Figma', document: { children: [{ name: 'P1', children: [frame('1:1', 'Capa'), frame('1:2', 'Fim')] }] } });
     if (u.includes('/images/KEY1234567890?ids=')) {
       const ids = decodeURIComponent(u.match(/ids=([^&]+)/)[1]).split(',');
@@ -187,6 +189,11 @@ test('figma: rotas com o Figma simulado', async () => {
     assert.strictEqual(data.fonts[0].family, 'Montserrat');
     // Mesma imagem de preenchimento nos dois quadros: baixa e guarda uma vez só
     assert.strictEqual(uploads.filter(n => n.startsWith('Foto')).length, 1);
+    // O motivo que o Figma dá aparece na mensagem
+    const neg = await call('/frames', 'POST', { url: 'https://www.figma.com/deck/NEGADO123456/x' });
+    assert.strictEqual(neg.status, 403);
+    assert.match(neg.body.error, /current_user:read e file_content:read/);
+    assert.match(neg.body.error, /Figma: "Invalid scope/);
     const off = await call('/token', 'DELETE');
     assert.deepStrictEqual(off.body, { connected: false });
     assert.ok(!user.figma);

@@ -337,11 +337,20 @@ module.exports = function setupFigma(app, deps) {
     let r;
     try { r = await doFetch(API + p, { headers: { 'X-Figma-Token': token }, signal: AbortSignal.timeout(60000) }); }
     catch (e) { throw fail('Não deu pra falar com o Figma agora. Tente de novo em instantes.', 502); }
-    if (r.status === 403 || r.status === 401) throw fail('O Figma recusou o acesso. Confira se o token tem permissão de leitura de arquivos e se a sua conta abre esse arquivo.', 403);
-    if (r.status === 404) throw fail('Arquivo não encontrado no Figma. Confira o link.', 404);
+    if (r.ok) return r.json();
+    // O Figma explica o motivo no corpo ({ status, err } ou { message }): mostra junto
+    let why = '';
+    try { const b = await r.json(); why = String(b.err || b.message || b.error || '').slice(0, 300); } catch {}
+    const tail = why ? ` (Figma: "${why}")` : '';
+    if (r.status === 403 || r.status === 401) {
+      if (/scope/i.test(why)) throw fail('O token não tem a permissão necessária. Gere um token novo marcando current_user:read e file_content:read.' + tail, 403);
+      if (/file type|not supported|slides|editor/i.test(why)) throw fail('O Figma não libera esse tipo de arquivo pela API.' + tail, 403);
+      throw fail('O Figma recusou o acesso. Confira se o token tem file_content:read e se a sua conta abre esse arquivo.' + tail, 403);
+    }
+    if (r.status === 404) throw fail('Arquivo não encontrado no Figma. Confira o link.' + tail, 404);
     if (r.status === 429) throw fail('O Figma pediu pra esperar um pouco (limite de uso). Tente de novo em um minuto.', 429);
-    if (!r.ok) throw fail('O Figma respondeu com erro ' + r.status + '.', 502);
-    return r.json();
+    if (r.status === 400) throw fail('O Figma não aceitou o pedido.' + tail, 400);
+    throw fail('O Figma respondeu com erro ' + r.status + '.' + tail, 502);
   }
   /* Renders do Figma em lotes: { nodeId: url } */
   async function renderUrls(token, key, ids, scale, format = 'png') {
@@ -381,7 +390,8 @@ module.exports = function setupFigma(app, deps) {
       saveEntity('users', u);
       res.json({ connected: true, handle: u.figma.handle, email: u.figma.email, savedAt: u.figma.savedAt });
     } catch (e) {
-      res.status(e.status === 403 ? 400 : (e.status || 400)).json({ error: e.status === 403 ? 'Token recusado pelo Figma. Confira se copiou inteiro e se ele ainda vale.' : e.message });
+      const scopeErr = e.status === 403 && /permissão necessária/.test(e.message);
+      res.status(e.status === 403 ? 400 : (e.status || 400)).json({ error: e.status === 403 && !scopeErr ? 'Token recusado pelo Figma. Confira se copiou inteiro e se ele ainda vale.' : e.message });
     }
   });
   app.delete('/api/figma/token', requireAuth, noFreelancer, (req, res) => {

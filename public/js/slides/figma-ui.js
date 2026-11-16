@@ -35,7 +35,7 @@ export async function openFigmaImport({ intoDeck = null, presetUrl = '' } = {}) 
       <section class="sl-fg-sec sl-fg-token">
         <ol class="sl-fg-steps">
           <li>No Figma, clique no seu nome › <b>Configurações</b> › <b>Segurança</b> › <b>Tokens de acesso pessoal</b> › <b>Gerar novo token</b>.</li>
-          <li>Em permissões, marque <b>File content: Read only</b> (o resto pode ficar sem acesso).</li>
+          <li>Em <b>Scopes</b>, marque <code>current_user:read</code> e <code>file_content:read</code> (o resto pode ficar desmarcado).</li>
           <li>Copie o token (começa com <code>figd_</code>) e cole aqui. <a href="${HELP_URL}" target="_blank" rel="noopener">Ajuda do Figma</a></li>
         </ol>
         <div class="sl-fg-row">
@@ -80,7 +80,7 @@ export async function openFigmaImport({ intoDeck = null, presetUrl = '' } = {}) 
           <button type="button" class="seg-btn${st.mode === 'image' ? ' is-active' : ''}" data-mode="image">Imagem fiel</button>
         </div>
         <p class="sl-fg-hint">${st.mode === 'editable'
-          ? 'Textos e formas viram camadas que dá pra editar; as camadas do Figma mantêm o nome e os grupos. Vetores, degradês, sombras e máscaras viram imagem. Fontes do Google Fonts entram sozinhas.'
+          ? 'Cada coisa vem como é no Figma: textos (com trechos em negrito, cores e espaçamento), formas, degradês, sombras e rotação ficam editáveis; vetores continuam vetores (SVG, nítidos em qualquer zoom); imagens vêm no arquivo original. As camadas mantêm o nome e os grupos, e as fontes do Google Fonts entram sozinhas. O que não tem equivalente (máscara, desfoque, tracejado) também vem em SVG.'
           : 'Cada quadro vira uma imagem do slide inteiro, igualzinho ao Figma, mas sem editar o conteúdo.'}</p>
       </div>
       ${intoDeck ? `<p class="sl-fg-hint">Os slides entram no fim da apresentação aberta, no tamanho dela.</p>` : `
