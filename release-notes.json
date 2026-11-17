@@ -1,5 +1,14 @@
 [
   {
+    "id": "2026-11-17-prototipos-arquivos-maiores",
+    "date": "2026-11-17",
+    "title": "Protótipos com arquivos maiores",
+    "highlights": [
+      "Em Protótipos, cada arquivo do site pode ter até 150 MB. Antes o limite era 25 MB.",
+      "Cada protótipo pode ter até 500 MB no total, somando todos os arquivos."
+    ]
+  },
+  {
     "id": "2026-11-16-rework-presentations-beta",
     "date": "2026-11-16",
     "kind": "launch",
