@@ -1,5 +1,20 @@
 [
   {
+    "id": "2026-11-17-briefing-importar-excluir",
+    "date": "2026-11-17",
+    "title": "Briefing de criativo: importar, excluir e Word novo",
+    "highlights": [
+      "No briefing, o botão Importar traz um briefing pronto de um arquivo .json ou .docx, seja do reWork ou do Agente de Criação. Antes de trocar, aparece um resumo com o cliente, a campanha e as peças.",
+      "Agora dá para excluir o briefing: pela lixeira no topo do briefing ou no cartão da demanda. Depois, dá para criar outro do zero ou importar um arquivo.",
+      "Os campos do cliente passaram para cada peça, no card Sobre a peça. Um mesmo set pode ter uma peça SBPE e outra MCMV, ou uma Legacy e outra institucional.",
+      "Cada peça ganhou o campo Orientação para a criação, para explicar a ideia, a composição e o que destacar.",
+      "O Word do briefing tem um layout novo: faixas por seção, tabelas com o nome do campo à esquerda e miniatura das imagens. A prévia ao lado do formulário mostra o mesmo layout."
+    ],
+    "hideFor": [
+      "freelancer"
+    ]
+  },
+  {
     "id": "2026-11-17-prototipos-arquivos-maiores",
     "date": "2026-11-17",
     "title": "Protótipos com arquivos maiores",

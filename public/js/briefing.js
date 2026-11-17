@@ -76,7 +76,7 @@
       <button class="btn btn-sm btn-primary" id="bf-take-theirs">Carregar a versão de ${esc(who.split(' ')[0])}</button>
       <button class="btn btn-sm btn-ghost" id="bf-keep-mine">Manter a minha</button>`;
     b.hidden = false; icons();
-    $('bf-take-theirs').onclick = () => { S.rec = S.conflict; S.data = S.conflict.data; S.conflict = null; renderBanner(); renderAll(); setSave('Atualizado'); };
+    $('bf-take-theirs').onclick = () => { S.rec = S.conflict; S.data = BS.normalize(S.conflict.data); S.conflict = null; renderBanner(); renderAll(); setSave('Atualizado'); };
     $('bf-keep-mine').onclick = () => { S.rec.version = S.conflict.version; S.conflict = null; renderBanner(); save(); };
   }
 
@@ -94,6 +94,8 @@
     st.classList.toggle('is-ready', rec.status === 'pronto');
     const rb = $('bf-ready-btn');
     rb.hidden = !canEdit();
+    $('bf-import-btn').hidden = !canEdit();
+    $('bf-delete-btn').hidden = !canEdit();
     rb.className = 'btn btn-sm ' + (rec.status === 'pronto' ? 'btn-ghost' : 'btn-primary');
     rb.innerHTML = rec.status === 'pronto' ? '<i data-lucide="rotate-ccw" class="ic-sm"></i><span>Voltar para rascunho</span>' : '<i data-lucide="check" class="ic-sm"></i><span>Marcar como pronto</span>';
     if (!canEdit()) setSave('Somente leitura');
@@ -212,7 +214,7 @@
         const search = S.clients.length > 10 ? `<input class="form-control bf-search" placeholder="Buscar cliente" value="${esc(S.clientQuery)}" data-b="${bind(() => S.clientQuery, v => { S.clientQuery = v; })}" data-rerender="1">` : '';
         const c = client();
         const hint = c && !c.sigla ? `Sigla usada no nome dos arquivos: ${BS.clientSigla(c)} (dá para definir no cadastro do cliente).` : '';
-        return fieldWrap(f, search + chipsSingle(list.map(x => ({ value: x.id, label: x.name, swatch: x.color, small: x.sigla || '' })), get, v => { if ((v || null) !== get()) S.data.camposCliente = {}; set(v || null); }), hint);
+        return fieldWrap(f, search + chipsSingle(list.map(x => ({ value: x.id, label: x.name, swatch: x.color, small: x.sigla || '' })), get, v => { if ((v || null) !== get()) S.data.pecas.forEach(p => { p.camposCliente = {}; }); set(v || null); }), hint);
       }
     }
     return '';
@@ -223,7 +225,7 @@
     const d = S.data;
     let h = `<div class="bf-page"><div class="bf-page-head"><span class="bf-head-ic"><i data-lucide="megaphone"></i></span><h1>Campanha</h1></div>`;
     for (const g of BS.CAMPAIGN_GROUPS) {
-      if (g.id === 'referencias') h += renderClientBlock();
+      if (g.id === 'referencias') h += renderClientNote();
       h += `<section class="bf-card" id="sec-${g.id}"><h2 class="bf-card-title">${esc(g.label)}</h2>`;
       for (const f of g.fields) {
         if (!BS.visible(f, d)) continue;
@@ -240,16 +242,23 @@
     }
     return h + '</div>';
   }
-  function renderClientBlock() {
+  // Na campanha fica só o aviso do cliente; os campos dele são de cada peça.
+  function renderClientNote() {
     const block = BS.clientBlock(client(), S.blocks);
-    if (!block) return '';
-    const cc = S.data.camposCliente || (S.data.camposCliente = {});
-    let h = `<section class="bf-card" id="sec-cliente"><h2 class="bf-card-title"><i data-lucide="building-2" class="ic-sm"></i>Só do cliente · ${esc(client().name)}${block.origem === 'agente' ? '<span class="bf-card-origin"><i data-lucide="git-branch" class="ic-xs"></i>do Agente de Criação</span>' : ''}</h2>`;
-    if (block.note) h += `<div class="bf-card-note">${esc(block.note)}</div>`;
-    for (const f of block.fields) {
+    if (!block || !block.note) return '';
+    return `<div class="bf-card-note" style="margin:0 0 14px"><strong>${esc(client().name)}:</strong> ${esc(block.note)}</div>`;
+  }
+  /* Card "Sobre a peça": campos do cliente (BRZ: SBPE ou MCMV; VISS:
+     Legacy ou institucional…) e a orientação para a criação. */
+  function renderPieceAbout(p) {
+    const block = BS.clientBlock(client(), S.blocks);
+    const cc = p.camposCliente || (p.camposCliente = {});
+    let h = `<section class="bf-card" id="sec-sobre"><h2 class="bf-card-title">Sobre a peça${block ? `<span class="bf-card-origin"><i data-lucide="building-2" class="ic-xs"></i>Campos de ${esc(client().name)}${block.origem === 'agente' ? ' · do Agente de Criação' : ''}</span>` : ''}</h2>`;
+    if (block) for (const f of block.fields) {
       if (!BS.visible(f, cc)) continue;
       h += renderGenericField(f, cc);
     }
+    h += fieldWrap({ label: 'Orientação para a criação' }, textArea(() => p.orientacao, v => { p.orientacao = v; }, { placeholder: 'Como a peça deve ser: ideia, composição, o que destacar, referência a seguir', rows: 3 }));
     return h + '</section>';
   }
 
@@ -261,6 +270,8 @@
         const p = BS.newPiece(t.id);
         const blk = BS.clientBlock(client(), S.blocks);
         if (blk && blk.proibidas && blk.proibidas.length) p.proibidas = blk.proibidas.slice();
+        const prev = S.data.pecas[S.data.pecas.length - 1];
+        if (prev && prev.camposCliente) p.camposCliente = JSON.parse(JSON.stringify(prev.camposCliente));
         S.data.pecas.push(p); S.sel = p.id; S.adding = false; S.telaIdx[p.id] = 0; changed({ full: true });
       })}"><span class="bf-type-ic"><i data-lucide="${t.icon}"></i></span><strong>${esc(t.label)}</strong><small>${esc(t.desc)}</small></button>`;
     }
@@ -296,6 +307,7 @@
     h += chipsMulti(t.formats.map(f => ({ value: f, label: BS.FORMATS[f].label, small: BS.formatSize(f, c, S.blocks) })), () => p.formatos, v => { p.formatos = v; });
     if (p.formatos.length > 1) h += `<div class="bf-hint">O primeiro marcado (${esc(p.formatos[0])}) é o principal.</div>`;
     h += '</section>';
+    h += renderPieceAbout(p);
 
     // Telas (no carrossel/story, o que é geral vem antes delas)
     const multi = t.telas.max > 1;
@@ -531,6 +543,8 @@
     });
     document.addEventListener('dragend', () => { dragId = null; document.querySelectorAll('.is-drop,.is-over').forEach(x => x.classList.remove('is-drop', 'is-over')); });
 
+    $('bf-import-btn').onclick = pickImport;
+    $('bf-delete-btn').onclick = deleteBriefing;
     $('bf-preview-btn').onclick = () => { S.preview = !S.preview; try { localStorage.setItem('bf-preview', S.preview ? '1' : '0'); } catch (_) {} renderPreview(); };
     $('bf-export-btn').onclick = e => { e.stopPropagation(); $('bf-export-menu').hidden = !$('bf-export-menu').hidden; };
     $('bf-export-menu').onclick = e => { const b = e.target.closest('[data-fmt]'); if (b) { $('bf-export-menu').hidden = true; doExport(b.dataset.fmt); } };
@@ -545,7 +559,7 @@
       await flushSave(); await save({ status: 'pronto' });
       toast('Briefing pronto');
     };
-    window.addEventListener('beforeunload', e => { if (S.saveTimer && $('bf-save').textContent !== 'Salvo') { flushSave(); e.preventDefault(); e.returnValue = ''; } });
+    window.addEventListener('beforeunload', e => { if (!S.deleted && S.saveTimer && $('bf-save').textContent !== 'Salvo') { flushSave(); e.preventDefault(); e.returnValue = ''; } });
   }
   async function flushSave() { if (S.saveTimer) { clearTimeout(S.saveTimer); S.saveTimer = null; } }
 
@@ -627,12 +641,72 @@
     setTimeout(() => $('ag-token') && $('ag-token').focus(), 50);
   }
 
+  /* ── Importar (JSON ou Word) ── */
+  let jszipP = null;
+  function loadJSZip() {
+    if (window.JSZip) return Promise.resolve(window.JSZip);
+    return jszipP || (jszipP = new Promise((ok, ko) => {
+      const sc = document.createElement('script'); sc.src = '/vendor/jszip.min.js';
+      sc.onload = () => ok(window.JSZip); sc.onerror = () => ko(new Error('Não foi possível ler o Word.'));
+      document.head.appendChild(sc);
+    }));
+  }
+  function pickImport() {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = '.json,.docx,application/json,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    inp.onchange = () => inp.files[0] && importFile(inp.files[0]);
+    inp.click();
+  }
+  async function importFile(file) {
+    try {
+      const ctx = { clients: S.clients, blocks: S.blocks };
+      let r;
+      if (/\.json$/i.test(file.name) || file.type === 'application/json') {
+        let j;
+        try { j = JSON.parse(await file.text()); } catch { throw new Error('O arquivo .json está com erro de formato.'); }
+        r = BS.fromAgentJson(j, ctx);
+      } else if (/\.docx$/i.test(file.name)) {
+        const JSZip = await loadJSZip();
+        const zip = await JSZip.loadAsync(await file.arrayBuffer());
+        const doc = zip.file('word/document.xml');
+        if (!doc) throw new Error('Este arquivo não é um Word (.docx) válido.');
+        r = BS.fromDocxXml(await doc.async('string'), ctx);
+      } else throw new Error('Use um arquivo .json ou .docx.');
+      const cl = S.clients.find(c => c.id === r.data.clienteId);
+      const nP = r.data.pecas.length;
+      const resumo = [
+        `Cliente: ${cl ? cl.name : 'não encontrado'}`,
+        `Campanha: ${r.data.campanha || '(sem nome)'}`,
+        `${nP} ${nP === 1 ? 'peça' : 'peças'}: ${r.data.pecas.map(p => BS.pieceType(p.tipo).label).join(', ') || 'nenhuma'}`
+      ].concat(r.warnings.map(w => '⚠ ' + w));
+      const has = S.data.pecas.length || S.data.campanha;
+      const ok = await confirmBox(has ? 'Substituir o briefing pelo arquivo?' : 'Importar este briefing?',
+        has ? 'O conteúdo atual deste briefing será trocado pelo do arquivo.' : file.name, has ? 'Substituir' : 'Importar', resumo);
+      if (!ok) return;
+      S.data = r.data; S.sel = 'campanha'; S.adding = false; S.telaIdx = {};
+      changed({ full: true }); renderAll();
+      toast('Briefing importado' + (r.warnings.length ? ': confira os avisos' : ''));
+    } catch (e) { toast(e.message || 'Não foi possível importar', true); }
+  }
+  /* ── Excluir o briefing ── */
+  async function deleteBriefing() {
+    const ok = await confirmBox('Excluir este briefing?', 'Ele sai da demanda. Se precisar depois, dá para criar outro do zero ou importar um arquivo.', 'Excluir briefing');
+    if (!ok) return;
+    try {
+      clearTimeout(S.saveTimer); S.saveTimer = null;
+      await api('/briefings/' + S.rec.id, 'DELETE');
+      S.deleted = true;
+      toast('Briefing excluído');
+      setTimeout(() => { location.href = $('bf-back').href; }, 600);
+    } catch (e) { toast(e.message || 'Não foi possível excluir', true); }
+  }
+
   /* ── Início ── */
   async function boot() {
     if (!BID) { $('bf-main').innerHTML = '<div class="bf-loading">Briefing não encontrado.</div>'; return; }
     try {
       const [rec, cl] = await Promise.all([api('/briefings/' + BID), api('/briefings/' + BID + '/clients')]);
-      S.rec = rec; S.data = rec.data; applyClients(cl);
+      S.rec = rec; S.data = BS.normalize(rec.data); applyClients(cl);
       try { S.preview = localStorage.getItem('bf-preview') === '1'; } catch (_) {}
       if (S.data.pecas.length && new URLSearchParams(location.search).get('peca')) S.sel = new URLSearchParams(location.search).get('peca');
       wire(); renderAll();

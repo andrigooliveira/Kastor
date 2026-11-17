@@ -15011,6 +15011,7 @@ app.get('/api/admin/godmode/user/:id', requireAuth, adminOnly, (req, res) => {
    edita a demanda edita o briefing (freelancer só vê: o requireAuth já barra
    as escritas dele). A demanda guarda um resumo (d.briefingRef) pro cartão. */
 const BriefingSchema = require('./public/js/briefing-schema.js');
+const { briefingToDocx } = require('./briefing-docx.js');
 function _briefingDemand(req, b) {
   const d = db.demands.find(x => x.id === b.demandId && notDeleted(x));
   return d && canAccessDemand(req.user, d) ? d : null;
@@ -15177,7 +15178,7 @@ function _briefingPublic(b, req) {
   const u = id => { const x = id && allUsers().find(y => y.id === id); return x ? { id: x.id, name: x.name } : null; };
   return {
     id: b.id, demandId: b.demandId, workspaceId: b.workspaceId, status: b.status, version: b.version,
-    data: b.data, createdAt: b.createdAt, updatedAt: b.updatedAt,
+    data: BriefingSchema.normalize(b.data), createdAt: b.createdAt, updatedAt: b.updatedAt,
     createdBy: u(b.createdBy), updatedBy: u(b.updatedBy), readyBy: u(b.readyBy), readyAt: b.readyAt || null,
     demand: d ? { id: d.id, name: d.name, path: typeof _demandPathFor === 'function' ? _demandPathFor(d.id) : null } : null,
     canEdit: !req.user.isFreelancer
@@ -15264,6 +15265,19 @@ app.put('/api/briefings/:id', requireAuth, express.json({ limit: '2mb' }), (req,
   _briefingSyncDemand(b, d, req.user.id);
   res.json(_briefingPublic(b, req));
 });
+// Excluir: some da demanda (fica guardado como excluído, como o resto do reWork).
+app.delete('/api/briefings/:id', requireAuth, (req, res) => {
+  const b = (db.briefings || []).find(x => x.id === req.params.id && notDeleted(x));
+  const d = b && _briefingDemand(req, b);
+  if (!b || !d) return res.status(404).json({ error: 'Briefing não encontrado' });
+  b.deletedAt = nowISO(); b.deletedBy = req.user.id;
+  saveEntity('briefings', b);
+  d.briefingRef = null;
+  addHistory(d, req.user.id, 'briefing_deleted', { briefingId: b.id });
+  saveEntity('demands', d);
+  broadcastChange('demand', 'update', { id: d.id, workspaceId: d.workspaceId, byUserId: req.user.id });
+  res.json({ ok: true, demandId: d.id });
+});
 // GET /api/briefings/:id/export?format=json|html|docx|pdf
 app.get('/api/briefings/:id/export', requireAuth, async (req, res) => {
   const b = (db.briefings || []).find(x => x.id === req.params.id && notDeleted(x));
@@ -15271,7 +15285,8 @@ app.get('/api/briefings/:id/export', requireAuth, async (req, res) => {
   if (!b || !d) return res.status(404).json({ error: 'Briefing não encontrado' });
   const format = String(req.query.format || 'json').toLowerCase();
   const client = _briefingClient(b);
-  const ctx = { client, blocks: _briefingAgentBlocks(req.org), baseUrl: appBaseUrl(req), origem: { sistema: 'reWork', briefingId: b.id, demandaId: d.id, demanda: d.name, status: b.status, atualizado_em: b.updatedAt } };
+  BriefingSchema.normalize(b.data);
+  const ctx = { client, blocks: _briefingAgentBlocks(req.org), orgName: (req.org && req.org.name) || '', status: b.status, baseUrl: appBaseUrl(req), origem: { sistema: 'reWork', briefingId: b.id, demandaId: d.id, demanda: d.name, status: b.status, atualizado_em: b.updatedAt } };
   const sigla = BriefingSchema.clientSigla(client);
   const baseName = (`Briefing ${sigla ? '[' + sigla + '] ' : ''}${b.data.campanha || d.name || ''}`).replace(/[\/\\:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 100) || 'Briefing';
   const disp = ext => `attachment; filename="${baseName.replace(/[^\x20-\x7e]/g, '_')}.${ext}"; filename*=UTF-8''${encodeURIComponent(baseName + '.' + ext)}`;
@@ -15284,7 +15299,7 @@ app.get('/api/briefings/:id/export', requireAuth, async (req, res) => {
     // Imagens enviadas no reWork: o LibreOffice lê do disco (file://).
     const imgSrc = u => {
       if (typeof u === 'string' && u.startsWith('/uploads/')) {
-        const local = path.join(__dirname, 'public', u.split('?')[0]);
+        const local = path.join(UPLOADS_DIR, path.basename(u.split('?')[0]));
         if (fs.existsSync(local)) return 'file://' + local.replace(/\\/g, '/');
       }
       return u;
@@ -15293,7 +15308,14 @@ app.get('/api/briefings/:id/export', requireAuth, async (req, res) => {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       return res.send(BriefingSchema.toHtml(b.data, ctx));
     }
-    if (format !== 'docx' && format !== 'pdf') return res.status(400).json({ error: 'Formato inválido: ' + format });
+    if (format === 'docx') {
+      // Word montado direto (layout do Agente de Criação), sem LibreOffice
+      const buf = await briefingToDocx(b.data, { ...ctx, uploadsDir: UPLOADS_DIR });
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+      res.setHeader('Content-Disposition', disp('docx'));
+      return res.send(buf);
+    }
+    if (format !== 'pdf') return res.status(400).json({ error: 'Formato inválido: ' + format });
     const outPath = await convertHtmlWithSoffice(BriefingSchema.toHtml(b.data, ctx, { office: true, imgSrc }), format);
     res.setHeader('Content-Type', format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     res.setHeader('Content-Disposition', disp(format));

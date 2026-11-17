@@ -1155,6 +1155,7 @@ function briefingCardHtml(d) {
         <small>${esc(parts.join(' · '))}${who ? ` · editado por ${esc(who.name.split(' ')[0])} ${esc(fmtRelativeTime(ref.updatedAt))}` : ''}</small></div>
       ${ready ? `<button type="button" class="btn btn-sm btn-ghost dd-brief-export" onclick="openBriefingExportMenu(this, '${esc(ref.id)}')"><i data-lucide="download" class="ic-xs"></i>Exportar<i data-lucide="chevron-down" class="ic-xs"></i></button>` : ''}
       <a class="btn btn-sm ${isStage && !ready ? 'btn-primary' : 'btn-ghost'}" href="${esc(briefingUrl(ref.id))}" target="_blank" rel="noopener">${me?.isFreelancer ? 'Ver' : (ready ? 'Abrir' : 'Continuar')}<i data-lucide="arrow-up-right" class="ic-xs"></i></a>
+      ${me?.isFreelancer ? '' : `<button type="button" class="dd-icon-btn dd-brief-del" title="Excluir briefing" onclick="deleteDemandBriefing('${d.id}')"><i data-lucide="trash-2" class="ic-sm"></i></button>`}
     </div>`;
   }
   if (me?.isFreelancer) return '';
@@ -1214,6 +1215,24 @@ async function exportBriefing(briefingId, fmt) {
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   } catch (e) {
     toast(e.message || 'Falha ao exportar', 'error');
+  }
+}
+async function deleteDemandBriefing(demandId) {
+  const d = demandById(demandId);
+  if (!d || !d.briefingRef) return;
+  const ok = await showConfirm({
+    title: 'Excluir o briefing de criativo?',
+    message: 'Ele sai desta demanda. Se precisar depois, dá para criar outro do zero ou importar um arquivo.',
+    okLabel: 'Excluir', danger: true
+  });
+  if (!ok) return;
+  try {
+    await api('/briefings/' + d.briefingRef.id, 'DELETE');
+    d.briefingRef = null;
+    if (detailId === demandId) renderDetail();
+    toast('Briefing excluído.', 'success');
+  } catch (e) {
+    toast(e.message || 'Não foi possível excluir', 'error');
   }
 }
 async function openDemandBriefing(demandId) {
@@ -21661,6 +21680,7 @@ function describeHistory(h, d) {
     case 'briefing_created':   return `criou o briefing de criativo`;
     case 'briefing_ready':     return `marcou o briefing de criativo como <strong>pronto</strong>`;
     case 'briefing_reopened':  return `voltou o briefing de criativo para rascunho`;
+    case 'briefing_deleted':   return `excluiu o briefing de criativo`;
     case 'deadline_changed':   return `alterou o prazo final${dt.to ? ' para <strong>' + esc(fmtDate(dt.to)) + '</strong>' : ' (removido)'}`;
     case 'stage_due_changed':  return `alterou o prazo da etapa${dt.to ? ' para <strong>' + esc(fmtDate(dt.to)) + '</strong>' : ' (removido)'}`;
     case 'flow_changed':       return `alterou o fluxo da demanda`;

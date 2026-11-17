@@ -17,7 +17,7 @@
   <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/css/fonts.css?v=1">
   <link rel="stylesheet" href="/css/style.css?v=20261104fp6">
-  <link rel="stylesheet" href="/css/briefing.css?v=5">
+  <link rel="stylesheet" href="/css/briefing.css?v=7">
 </head>
 <body class="bf-body">
   <div class="bf-app" id="bf-app">
@@ -30,6 +30,7 @@
       <span class="bf-status" id="bf-status" hidden></span>
       <span class="bf-save" id="bf-save"></span>
       <div class="bf-top-actions">
+        <button type="button" class="btn btn-ghost btn-sm" id="bf-import-btn" title="Trazer um briefing de um arquivo .json ou .docx (do reWork ou do Agente de Criação)" hidden><i data-lucide="upload" class="ic-sm"></i><span>Importar</span></button>
         <button type="button" class="btn btn-ghost btn-sm" id="bf-preview-btn"><i data-lucide="panel-right" class="ic-sm"></i><span>Prévia</span></button>
         <div class="bf-menu-wrap">
           <button type="button" class="btn btn-ghost btn-sm" id="bf-export-btn"><i data-lucide="download" class="ic-sm"></i><span>Exportar</span></button>
@@ -39,6 +40,7 @@
           </div>
         </div>
         <button type="button" class="btn btn-primary btn-sm" id="bf-ready-btn" hidden><i data-lucide="check" class="ic-sm"></i><span>Marcar como pronto</span></button>
+        <button type="button" class="bf-icon-btn is-danger" id="bf-delete-btn" title="Excluir briefing" hidden><i data-lucide="trash-2" class="ic-sm"></i></button>
       </div>
     </header>
     <div class="bf-banner" id="bf-banner" hidden></div>
@@ -54,7 +56,7 @@
   <div class="bf-modal-back" id="bf-modal" hidden></div>
   <div class="bf-toast" id="bf-toast" hidden></div>
   <script src="/vendor/lucide.min.js"></script>
-  <script src="/js/briefing-schema.js?v=5"></script>
-  <script src="/js/briefing.js?v=5"></script>
+  <script src="/js/briefing-schema.js?v=8"></script>
+  <script src="/js/briefing.js?v=7"></script>
 </body>
 </html>
