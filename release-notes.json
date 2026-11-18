@@ -1,5 +1,17 @@
 [
   {
+    "id": "2026-11-18-editor-fluxo-etapas",
+    "date": "2026-11-18",
+    "title": "Editor de fluxo: etapas em uma linha só",
+    "highlights": [
+      "No editor de fluxo, cada etapa voltou a caber em uma linha: duplicar e excluir ficam ao lado do prazo e da bandeira de conclusão.",
+      "Saiu o botão de marcar etapa de briefing, que ficava ao lado da bandeira."
+    ],
+    "hideFor": [
+      "freelancer"
+    ]
+  },
+  {
     "id": "2026-11-18-modelos-aplicar-fluxos",
     "date": "2026-11-18",
     "title": "Modelos de cliente: aplicar fluxos atualizados",

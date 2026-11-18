@@ -21984,7 +21984,6 @@ a.user-mini-card-name:hover { text-decoration: underline; text-underline-offset:
 .dd-brief-card .btn { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; flex-shrink: 0; }
 .dd-brief-add { display: inline-flex; align-items: center; gap: 6px; margin: 10px 0 6px; padding: 6px 10px; border: 1px dashed var(--hairline-strong); border-radius: var(--radius-sm); background: none; color: var(--text-muted); font: inherit; font-size: 13px; cursor: pointer; }
 .dd-brief-add:hover { color: var(--accent); border-color: var(--accent); }
-.cust-toggle-brief.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .form-hint { font-size: 12px; color: var(--text-muted); margin-top: 5px; }
 .brief-export-menu .stages-edit-menu-item { align-items: flex-start; }
 .brief-export-txt { display: flex; flex-direction: column; gap: 1px; text-align: left; }

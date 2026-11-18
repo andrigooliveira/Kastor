@@ -27282,7 +27282,6 @@ function renderStageRows() {
         <input class="form-control" type="number" min="1" placeholder="—" value="${s.deadlineDays || ''}" oninput="stageRows[${i}].deadlineDays=this.value?Number(this.value):null">
         <span class="stage-days-unit">d</span>
       </div>
-      ${s.done ? '' : `<button type="button" class="cust-icon-toggle cust-toggle-brief ${s.briefing ? 'on' : ''}" title="${s.briefing ? 'Etapa de briefing: destaca o "Preencher briefing" na demanda' : 'Marcar como etapa de briefing'}" onclick="toggleStageBriefing(${i})"><i data-lucide="clipboard-list" class="ic-sm"></i></button>`}
       <button type="button" class="cust-icon-toggle cust-toggle-done ${s.done ? 'on' : ''}" title="${s.done ? 'Etapa final — conclui a demanda' : 'Marcar como etapa final (conclui a demanda)'}" onclick="toggleStageDone(${i})"><i data-lucide="flag" class="ic-sm"></i></button>
       <div class="stage-actions">
         <button type="button" class="icon-btn" title="Duplicar etapa" onclick="duplicateStageRow(${i})"><i data-lucide="copy" class="ic-sm"></i></button>
@@ -27357,12 +27356,6 @@ function setStageResponsible(i, value) {
   renderStageRows();
 }
 
-function toggleStageBriefing(i) {
-  if (!stageRows[i] || stageRows[i].done) return;
-  stageRows[i].briefing = !stageRows[i].briefing;
-  flowModalDirty = true;
-  renderStageRows();
-}
 function toggleStageDone(i) {
   if (!stageRows[i]) return;
   stageRows[i].done = !stageRows[i].done;
