@@ -8614,6 +8614,7 @@ app.post('/api/client-templates/:id/projects/:pIdx/flows', requireAuth, (req, re
   // Fluxo do modelo: área/responsibleRole é decisão de cliente (matriz Área×Cargo)
   // — modelo só guarda a forma. Icon persiste (lucide/URL/data URI extraído).
   const ftpl = {
+    id: uid(), // vínculo estável com os fluxos dos clientes (sincronização)
     name,
     icon: sanitizeFlowIcon(b.icon, name),
     demandType: String(b.demandType || ''),
@@ -8649,6 +8650,7 @@ app.post('/api/client-templates/:id/projects/:pIdx/flows', requireAuth, (req, re
       defaultChecklist: (ftpl.defaultChecklist || []).map(it => ({ text: it.text })),
       // Regenera stages com IDs novos por instância.
       stages: ftpl.stages.map(s => ({ ...s, id: uid() })),
+      fromTemplateFlowId: ftpl.id,
       createdAt: nowISO()
     };
     db.flows.push(flow);
@@ -8673,6 +8675,9 @@ app.put('/api/client-templates/:id/projects/:pIdx/flows/:fIdx', requireAuth, (re
   const ftpl = ptpl?.flows?.[fIdx];
   if (!ftpl) return res.status(400).json({ error: 'Fluxo inválido.' });
   const b = req.body || {};
+  // Amarra os fluxos dos clientes pelo NOME ATUAL antes de um possível rename —
+  // senão a sincronização perderia o rastro depois de renomear no modelo.
+  _linkClientFlowsToTplFlow(t, ftpl);
   if (typeof b.name === 'string' && b.name.trim()) ftpl.name = b.name.trim().slice(0, 120);
   if (typeof b.demandType === 'string')      { ftpl.demandType = b.demandType.trim().slice(0, 60); ensureDemandTypeExists(ftpl.demandType); }
   if (typeof b.defaultDescription === 'string') ftpl.defaultDescription = sanitizeCommentHtml(b.defaultDescription);
@@ -8691,6 +8696,165 @@ app.put('/api/client-templates/:id/projects/:pIdx/flows/:fIdx', requireAuth, (re
   saveEntity('clientTemplates', t);
   res.json(t);
 });
+
+/* ── SINCRONIZAR FLUXO DO MODELO NOS CLIENTES ──
+   Edição do modelo não propaga sozinha; o usuário aplica fluxo a fluxo, depois
+   de ver a lista de clientes afetados. Vínculo: flow.fromTemplateFlowId ===
+   ftpl.id (ftpl.id é gerado sob demanda). Fluxos antigos, sem vínculo, são
+   achados pelo nome do fluxo dentro do cliente e amarrados na primeira vez. */
+function _ensureTplFlowId(t, ftpl) {
+  if (!ftpl.id) { ftpl.id = uid(); saveEntity('clientTemplates', t); }
+  return ftpl.id;
+}
+function _linkClientFlowsToTplFlow(t, ftpl) {
+  const id = _ensureTplFlowId(t, ftpl);
+  const out = [];
+  const linked = db.clients.filter(c => c.fromClientTemplateId === t.id && notDeleted(c));
+  for (const client of linked) {
+    const own = db.flows.filter(f => f.clientId === client.id && notDeleted(f));
+    let flow = own.find(f => f.fromTemplateFlowId === id);
+    if (!flow) {
+      const nm = (ftpl.name || '').trim().toLowerCase();
+      flow = own.find(f => !f.fromTemplateFlowId && (f.name || '').trim().toLowerCase() === nm);
+      if (flow) { flow.fromTemplateFlowId = id; saveEntity('flows', flow); }
+    }
+    out.push({ client, flow: flow || null });
+  }
+  return out;
+}
+// Funde as etapas do modelo nas do fluxo do cliente. Etapas casadas por nome
+// mantêm o id (demandas ficam onde estão) e a área/responsável do cliente;
+// nome/cor/prazo/final vêm do modelo. Etapas que sumiram têm as demandas
+// levadas pra etapa na mesma posição do fluxo novo (nunca uma etapa final).
+function _mergeTplStages(clientStages, tplStages) {
+  const pool = (clientStages || []).slice();
+  const merged = (tplStages || []).map(ts => {
+    const key = (ts.label || '').trim().toLowerCase();
+    const i = pool.findIndex(cs => (cs.label || '').trim().toLowerCase() === key);
+    const cs = i >= 0 ? pool.splice(i, 1)[0] : null;
+    return {
+      ...(cs || {}),
+      id: cs ? cs.id : uid(),
+      label: ts.label, color: ts.color, done: !!ts.done,
+      deadlineDays: ts.deadlineDays || null
+    };
+  });
+  const clean = sanitizeStages(merged);
+  if (!clean) return null;
+  const remap = {};
+  const oldIdx = new Map((clientStages || []).map((s, k) => [s.id, k]));
+  const lastOpen = [...clean].reverse().find(s => !s.done) || clean[0];
+  for (const gone of pool) {
+    let target = clean[Math.min(oldIdx.get(gone.id) ?? 0, clean.length - 1)];
+    if (target.done) target = lastOpen;
+    remap[gone.id] = target;
+  }
+  return { stages: clean, remap, removed: pool.map(s => s.label) };
+}
+function _tplFlowSyncPlan(req, t, ftpl) {
+  const pairs = _linkClientFlowsToTplFlow(t, ftpl);
+  const targets = [], missing = [];
+  for (const { client, flow } of pairs) {
+    if (!canAccessWs(req.user, client.workspaceId)) continue;
+    const ws = (db.workspaces || []).find(w => w.id === client.workspaceId);
+    if (!flow) { missing.push({ clientId: client.id, clientName: client.name, workspaceName: ws?.name || '' }); continue; }
+    const m = _mergeTplStages(flow.stages, ftpl.stages);
+    const moved = m ? db.demands.filter(d => d.flowId === flow.id && notDeleted(d) && m.remap[d.status]).length : 0;
+    targets.push({
+      clientId: client.id, clientName: client.name, workspaceName: ws?.name || '',
+      flowId: flow.id, flowName: flow.name,
+      removedStages: m ? m.removed : [], demandsToMove: moved,
+      syncedAt: flow.templateSyncedAt || null
+    });
+  }
+  targets.sort((a, b) => (a.clientName || '').localeCompare(b.clientName || '', 'pt-BR'));
+  missing.sort((a, b) => (a.clientName || '').localeCompare(b.clientName || '', 'pt-BR'));
+  return { flowName: ftpl.name, targets, missing };
+}
+function _tplFlowFromParams(req, res) {
+  const t = db.clientTemplates.find(x => x.id === req.params.id && notDeleted(x));
+  if (!t) { res.status(404).json({ error: 'Modelo não encontrado.' }); return null; }
+  const ftpl = t.projects?.[parseInt(req.params.pIdx, 10)]?.flows?.[parseInt(req.params.fIdx, 10)];
+  if (!ftpl) { res.status(400).json({ error: 'Fluxo inválido.' }); return null; }
+  return { t, ftpl };
+}
+app.get('/api/client-templates/:id/projects/:pIdx/flows/:fIdx/sync-preview', requireAuth, modOrAdmin, (req, res) => {
+  const hit = _tplFlowFromParams(req, res); if (!hit) return;
+  res.json(_tplFlowSyncPlan(req, hit.t, hit.ftpl));
+});
+app.post('/api/client-templates/:id/projects/:pIdx/flows/:fIdx/sync', requireAuth, modOrAdmin, (req, res) => {
+  const hit = _tplFlowFromParams(req, res); if (!hit) return;
+  const { t, ftpl } = hit;
+  const plan = _tplFlowSyncPlan(req, t, ftpl);
+  // Opcional: restringe a uma lista de clientes (a confirmação mostra todos).
+  const only = Array.isArray(req.body?.clientIds) ? new Set(req.body.clientIds) : null;
+  const r = _applyTplFlowSync(req, ftpl, plan, only);
+  res.json({ ...r, skipped: plan.missing.length });
+});
+
+/* Todos os fluxos do modelo de uma vez — mesma regra do fluxo a fluxo.
+   A prévia devolve um plano por fluxo; a tela agrupa por cliente. */
+function _allTplFlows(t) {
+  const out = [];
+  (t.projects || []).forEach((p, pIdx) => (p.flows || []).forEach((ftpl, fIdx) => out.push({ ftpl, pIdx, fIdx })));
+  return out;
+}
+app.get('/api/client-templates/:id/sync-preview', requireAuth, modOrAdmin, (req, res) => {
+  const t = db.clientTemplates.find(x => x.id === req.params.id && notDeleted(x));
+  if (!t) return res.status(404).json({ error: 'Modelo não encontrado.' });
+  res.json({ flows: _allTplFlows(t).map(({ ftpl, pIdx, fIdx }) => ({ pIdx, fIdx, ..._tplFlowSyncPlan(req, t, ftpl) })) });
+});
+app.post('/api/client-templates/:id/sync', requireAuth, modOrAdmin, (req, res) => {
+  const t = db.clientTemplates.find(x => x.id === req.params.id && notDeleted(x));
+  if (!t) return res.status(404).json({ error: 'Modelo não encontrado.' });
+  const only = Array.isArray(req.body?.clientIds) ? new Set(req.body.clientIds) : null;
+  let flowsUpdated = 0, demandsMoved = 0;
+  const touchedClients = new Set();
+  for (const { ftpl } of _allTplFlows(t)) {
+    const plan = _tplFlowSyncPlan(req, t, ftpl);
+    const r = _applyTplFlowSync(req, ftpl, plan, only);
+    flowsUpdated += r.updated; demandsMoved += r.demandsMoved;
+    r.clientIds.forEach(id => touchedClients.add(id));
+  }
+  res.json({ flowsUpdated, demandsMoved, clients: touchedClients.size });
+});
+
+function _applyTplFlowSync(req, ftpl, plan, only) {
+  let updated = 0, moved = 0;
+  const clientIds = [];
+  for (const tg of plan.targets) {
+    if (only && !only.has(tg.clientId)) continue;
+    const f = db.flows.find(x => x.id === tg.flowId);
+    if (!f) continue;
+    const m = _mergeTplStages(f.stages, ftpl.stages);
+    if (!m) continue;
+    f.name = ftpl.name;
+    f.icon = ftpl.icon || null;
+    f.demandType = ftpl.demandType || '';
+    f.defaultDescription = ftpl.defaultDescription || '';
+    f.defaultChecklist = (ftpl.defaultChecklist || []).map(it => ({ text: it.text }));
+    f.stages = m.stages;
+    f.fromTemplateFlowId = ftpl.id;
+    f.templateSyncedAt = nowISO();
+    saveEntity('flows', f);
+    db.demands.forEach(d => {
+      const target = d.flowId === f.id && m.remap[d.status];
+      if (!target) return;
+      d.status = target.id;
+      d.completedAt = null;
+      d.stageEnteredAt = nowISO();
+      d.stageDueDate = resolveStageDueDate(target, d, today());
+      saveEntity('demands', d);
+      broadcastChange('demand', 'update', { id: d.id, workspaceId: d.workspaceId, byUserId: req.user.id });
+      moved++;
+    });
+    updated++;
+    clientIds.push(tg.clientId);
+    broadcastChange('flow', 'update', { id: f.id, workspaceId: f.workspaceId, byUserId: req.user.id });
+  }
+  ensureDemandTypeExists(ftpl.demandType);
+  return { updated, demandsMoved: moved, clientIds };
+}
 
 /* Duplica um fluxo dentro do MESMO projeto do modelo. Copia name + " - Cópia",
    icon, demandType, stages, description e checklist. Não replica em clientes
@@ -8810,6 +8974,7 @@ app.post('/api/clients/from-template', requireAuth, (req, res) => {
         // na criação inicial (só a replicação incremental copiava). Iguala aqui.
         defaultDescription: ftpl.defaultDescription || '',
         defaultChecklist: (ftpl.defaultChecklist || []).map(it => ({ text: it.text })),
+        fromTemplateFlowId: _ensureTplFlowId(tpl, ftpl),
         stages, createdAt: nowISO()
       };
       db.flows.push(flow);

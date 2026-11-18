@@ -342,6 +342,7 @@ body.user-freelancer .freelancer-hide { display: none !important; }
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 12px;
 }
+.model-section-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .model-section-label {
   font-size: 11px; letter-spacing: 0.1em; font-weight: 700;
   color: var(--text-muted);
@@ -425,6 +426,9 @@ body.user-freelancer .freelancer-hide { display: none !important; }
   border-radius: 12px;
   display: flex; align-items: center; justify-content: center;
   margin-bottom: 10px;
+  /* Fundo fixo no tom da accent — antes tingia com a cor do projeto e
+     ficava amarelo/marrom atrás do ícone azul. */
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent);
   overflow: hidden;
 }
@@ -460,6 +464,25 @@ body.user-freelancer .freelancer-hide { display: none !important; }
   border: 1px solid var(--hairline);
 }
 .model-flow-card-actions .btn:hover { background: var(--surface-2); }
+/* Confirmação de "Aplicar nos clientes" — lista dos clientes afetados. */
+.tpl-sync-list {
+  list-style: none; margin: 0; padding: 4px;
+  max-height: 240px; overflow-y: auto;
+  border: 1px solid var(--hairline); border-radius: 8px;
+  background: var(--surface-2);
+  text-align: left;
+}
+.tpl-sync-item {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 6px 8px; border-radius: 6px;
+}
+.tpl-sync-item + .tpl-sync-item { border-top: 1px solid var(--hairline); }
+.tpl-sync-name { font-size: 13px; font-weight: 500; color: var(--text); }
+.tpl-sync-ws { font-weight: 400; color: var(--text-muted); }
+.tpl-sync-note { font-size: 12px; color: var(--text-muted); }
+.tpl-sync-note.is-warn { color: var(--warn, #F59E0B); }
+.tpl-sync-foot { margin: 10px 0 0; font-size: 12px; color: var(--text-muted); text-align: left; }
+
 .model-flow-card-proj {
   position: absolute; left: 8px; top: 8px;
   font-size: 10px; color: var(--text-muted);

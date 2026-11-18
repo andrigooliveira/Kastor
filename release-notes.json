@@ -1,5 +1,20 @@
 [
   {
+    "id": "2026-11-18-modelos-aplicar-fluxos",
+    "date": "2026-11-18",
+    "title": "Modelos de cliente: aplicar fluxos atualizados",
+    "highlights": [
+      "Em Clientes › Modelos, depois de editar um fluxo do modelo, dá para levar a nova versão aos clientes criados a partir dele. Passe o mouse no card do fluxo e clique em Aplicar nos clientes vinculados.",
+      "O botão Aplicar todos nos clientes, na seção Fluxos, atualiza todos os fluxos do modelo de uma vez.",
+      "Antes de aplicar, uma confirmação mostra quais clientes vão mudar, as etapas que saem e as demandas que vão trocar de etapa.",
+      "Etapas com o mesmo nome continuam com as demandas e com a área e o responsável definidos no cliente. Demandas de uma etapa removida vão para a etapa equivalente, nunca para a de conclusão.",
+      "Os ícones dos fluxos do modelo voltaram para a cor da plataforma, sem o fundo amarelado."
+    ],
+    "hideFor": [
+      "freelancer"
+    ]
+  },
+  {
     "id": "2026-11-17-briefing-importar-excluir",
     "date": "2026-11-17",
     "title": "Briefing de criativo: importar, excluir e Word novo",

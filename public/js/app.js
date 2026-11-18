@@ -36466,13 +36466,14 @@ function renderModelCard(t) {
       ? `<div class="model-flows-grid">${filteredFlows.map(({ f, p, pi, fi }) => `
           <div class="model-flow-card" onclick="openTemplateFlowModal('${t.id}', ${pi}, ${fi})">
             ${projCount > 1 ? `<span class="model-flow-card-proj">${esc(p.name)}</span>` : ''}
-            <span class="model-flow-icon" style="background:${modelFlowIconBg(p.color || t.color)}">
+            <span class="model-flow-icon">
               ${renderModelFlowIconInner(f.icon)}
             </span>
             <span class="model-flow-card-name">${esc(f.name || 'Fluxo sem nome')}</span>
             ${f.demandType ? `<span class="model-flow-card-type">${esc(f.demandType)}</span>` : ''}
             <span class="model-flow-card-actions">
-              <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); duplicateTemplateFlow('${t.id}', ${pi}, ${fi})"><i data-lucide="copy" class="ic-sm"></i></button>
+              ${derivados > 0 ? `<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); syncTemplateFlow('${t.id}', ${pi}, ${fi})" title="Aplicar nos clientes vinculados"><i data-lucide="refresh-cw" class="ic-sm"></i></button>` : ''}
+              <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); duplicateTemplateFlow('${t.id}', ${pi}, ${fi})" title="Duplicar"><i data-lucide="copy" class="ic-sm"></i></button>
               <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); openTemplateFlowModal('${t.id}', ${pi}, ${fi})"><i data-lucide="pencil" class="ic-sm"></i></button>
               <button class="btn btn-ghost btn-sm bulk-danger" onclick="event.stopPropagation(); confirmDeleteTemplateFlow('${t.id}', ${pi}, ${fi})"><i data-lucide="trash-2" class="ic-sm"></i></button>
             </span>
@@ -36498,7 +36499,10 @@ function renderModelCard(t) {
       <div class="model-section">
         <div class="model-section-head">
           <span class="model-section-label">FLUXOS</span>
-          ${projPickerBtn}
+          <span class="model-section-actions">
+            ${derivados > 0 && flatFlows.length ? `<button class="btn btn-ghost btn-sm" onclick="syncAllTemplateFlows('${t.id}')" title="Aplicar a versão atual de todos os fluxos nos clientes vinculados"><i data-lucide="refresh-cw" class="ic-sm"></i> Aplicar todos nos clientes</button>` : ''}
+            ${projPickerBtn}
+          </span>
         </div>
         ${filterBar}
         ${flowsGrid}
@@ -36534,6 +36538,109 @@ function renderModelFlowIconInner(icon) {
   return `<i data-lucide="workflow"></i>`;
 }
 
+/* Aplica o fluxo do modelo (como está agora) nos fluxos correspondentes dos
+   clientes vinculados. Busca a prévia no server e confirma listando quem muda,
+   etapas removidas e demandas que vão trocar de etapa. */
+async function syncTemplateFlow(tplId, pIdx, fIdx) {
+  const t = clientTemplates.find(x => x.id === tplId);
+  const flow = t?.projects?.[pIdx]?.flows?.[fIdx];
+  if (!flow) return;
+  const base = `/client-templates/${tplId}/projects/${pIdx}/flows/${fIdx}`;
+  let plan;
+  try { plan = await api(base + '/sync-preview'); }
+  catch (e) { toast(e.message, 'error'); return; }
+  const tg = plan.targets || [], miss = plan.missing || [];
+  if (!tg.length) {
+    toast(miss.length
+      ? `Nenhum cliente vinculado tem o fluxo "${flow.name}" — nada a atualizar.`
+      : 'Nenhum cliente vinculado a este modelo.', 'warn');
+    return;
+  }
+  const showWs = new Set(tg.map(x => x.workspaceName)).size > 1;
+  const rows = tg.map(x => {
+    const notes = [];
+    if (x.flowName && x.flowName !== flow.name) notes.push(`hoje "${esc(x.flowName)}"`);
+    if (x.removedStages.length) notes.push(`${x.removedStages.length === 1 ? 'sai' : 'saem'}: ${x.removedStages.map(esc).join(', ')}`);
+    if (x.demandsToMove) notes.push(`${x.demandsToMove} demanda${x.demandsToMove === 1 ? '' : 's'} muda${x.demandsToMove === 1 ? '' : 'm'} de etapa`);
+    return `<li class="tpl-sync-item">
+      <span class="tpl-sync-name">${esc(x.clientName)}${showWs && x.workspaceName ? ` <span class="tpl-sync-ws">· ${esc(x.workspaceName)}</span>` : ''}</span>
+      ${notes.length ? `<span class="tpl-sync-note${x.demandsToMove ? ' is-warn' : ''}">${notes.join(' · ')}</span>` : ''}
+    </li>`;
+  }).join('');
+  const moved = tg.reduce((s, x) => s + x.demandsToMove, 0);
+  const msg = `
+    <p style="margin:0 0 10px">O fluxo <strong>${esc(flow.name)}</strong> será sobrescrito com a versão do modelo (nome, ícone, tipo, etapas, descrição e checklist padrão) em <strong>${tg.length} cliente${tg.length === 1 ? '' : 's'}</strong>:</p>
+    <ul class="tpl-sync-list">${rows}</ul>
+    <p class="tpl-sync-foot">Etapas com o mesmo nome mantêm as demandas e a área/responsável definidos no cliente.${moved ? ` <strong>${moved} demanda${moved === 1 ? '' : 's'}</strong> em etapas removidas ${moved === 1 ? 'vai' : 'vão'} pra etapa equivalente.` : ''}${miss.length ? `<br>Sem esse fluxo (ignorado${miss.length === 1 ? '' : 's'}): ${miss.map(m => esc(m.clientName)).join(', ')}.` : ''}</p>`;
+  const ok = await showConfirm({
+    title: 'Aplicar fluxo nos clientes?',
+    message: msg,
+    okLabel: `Aplicar em ${tg.length} cliente${tg.length === 1 ? '' : 's'}`,
+    kind: moved ? 'warn' : 'info'
+  });
+  if (!ok) return;
+  try {
+    const r = await api(base + '/sync', 'POST', { clientIds: tg.map(x => x.clientId) });
+    flows = await api('/flows');
+    toast(`Fluxo "${flow.name}" aplicado em ${r.updated} cliente${r.updated === 1 ? '' : 's'}.`);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+/* Mesma coisa do syncTemplateFlow, mas pra TODOS os fluxos do modelo de uma vez.
+   A confirmação agrupa por cliente: quantos fluxos mudam em cada um e os
+   avisos (etapas que saem, demandas que trocam de etapa). */
+async function syncAllTemplateFlows(tplId) {
+  const t = clientTemplates.find(x => x.id === tplId);
+  if (!t) return;
+  let prev;
+  try { prev = await api(`/client-templates/${tplId}/sync-preview`); }
+  catch (e) { toast(e.message, 'error'); return; }
+  const byClient = new Map();
+  const missingFlows = new Map(); // nome do cliente -> fluxos que ele não tem
+  for (const pf of (prev.flows || [])) {
+    for (const x of pf.targets) {
+      if (!byClient.has(x.clientId)) byClient.set(x.clientId, { name: x.clientName, ws: x.workspaceName, flows: 0, notes: [], moved: 0 });
+      const c = byClient.get(x.clientId);
+      c.flows++;
+      c.moved += x.demandsToMove;
+      const bits = [];
+      if (x.removedStages.length) bits.push(`${x.removedStages.length === 1 ? 'sai' : 'saem'} ${x.removedStages.map(esc).join(', ')}`);
+      if (x.demandsToMove) bits.push(`${x.demandsToMove} demanda${x.demandsToMove === 1 ? '' : 's'} muda${x.demandsToMove === 1 ? '' : 'm'} de etapa`);
+      if (bits.length) c.notes.push(`<strong>${esc(pf.flowName)}</strong>: ${bits.join(', ')}`);
+    }
+    for (const m of pf.missing) {
+      if (!missingFlows.has(m.clientName)) missingFlows.set(m.clientName, []);
+      missingFlows.get(m.clientName).push(pf.flowName);
+    }
+  }
+  const list = [...byClient.values()].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt-BR'));
+  if (!list.length) { toast('Nenhum cliente vinculado tem fluxos deste modelo — nada a atualizar.', 'warn'); return; }
+  const totalFlows = list.reduce((s, c) => s + c.flows, 0);
+  const moved = list.reduce((s, c) => s + c.moved, 0);
+  const showWs = new Set(list.map(c => c.ws)).size > 1;
+  const rows = list.map(c => `<li class="tpl-sync-item">
+      <span class="tpl-sync-name">${esc(c.name)}${showWs && c.ws ? ` <span class="tpl-sync-ws">· ${esc(c.ws)}</span>` : ''} <span class="tpl-sync-ws">· ${c.flows} fluxo${c.flows === 1 ? '' : 's'}</span></span>
+      ${c.notes.map(n => `<span class="tpl-sync-note${/demanda/.test(n) ? ' is-warn' : ''}">${n}</span>`).join('')}
+    </li>`).join('');
+  const missTxt = [...missingFlows.entries()].map(([cn, fl]) => `${esc(cn)} (${fl.map(esc).join(', ')})`).join('; ');
+  const msg = `
+    <p style="margin:0 0 10px">Todos os fluxos de <strong>${esc(t.name)}</strong> serão sobrescritos com a versão do modelo (nome, ícone, tipo, etapas, descrição e checklist padrão) — <strong>${totalFlows} fluxo${totalFlows === 1 ? '' : 's'}</strong> em <strong>${list.length} cliente${list.length === 1 ? '' : 's'}</strong>:</p>
+    <ul class="tpl-sync-list">${rows}</ul>
+    <p class="tpl-sync-foot">Etapas com o mesmo nome mantêm as demandas e a área/responsável definidos no cliente.${moved ? ` <strong>${moved} demanda${moved === 1 ? '' : 's'}</strong> em etapas removidas ${moved === 1 ? 'vai' : 'vão'} pra etapa equivalente.` : ''}${missTxt ? `<br>Fluxos que o cliente não tem ficam de fora: ${missTxt}.` : ''}</p>`;
+  const ok = await showConfirm({
+    title: 'Aplicar todos os fluxos nos clientes?',
+    message: msg,
+    okLabel: `Aplicar em ${list.length} cliente${list.length === 1 ? '' : 's'}`,
+    kind: moved ? 'warn' : 'info'
+  });
+  if (!ok) return;
+  try {
+    const r = await api(`/client-templates/${tplId}/sync`, 'POST', { clientIds: [...byClient.keys()] });
+    flows = await api('/flows');
+    toast(`${r.flowsUpdated} fluxo${r.flowsUpdated === 1 ? '' : 's'} atualizado${r.flowsUpdated === 1 ? '' : 's'} em ${r.clients} cliente${r.clients === 1 ? '' : 's'}.`);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
 async function duplicateTemplateFlow(tplId, pIdx, fIdx) {
   const t = clientTemplates.find(x => x.id === tplId);
   const flow = t?.projects?.[pIdx]?.flows?.[fIdx];
@@ -36544,17 +36651,6 @@ async function duplicateTemplateFlow(tplId, pIdx, fIdx) {
     renderClientsModels();
     toast(`Fluxo duplicado: "${flow.name} - Cópia".`);
   } catch (e) { toast(e.message, 'error'); }
-}
-
-/* Fundo do ícone do card de fluxo — tinta suave da cor do projeto/modelo.
-   Aceita hex #RRGGBB; qualquer outra coisa cai no tom padrão da accent. */
-function modelFlowIconBg(color) {
-  const hex = /^#[0-9a-f]{6}$/i.test(color || '') ? color : null;
-  if (!hex) return 'var(--accent-soft)';
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return `rgba(${r}, ${g}, ${b}, 0.14)`;
 }
 
 /* Menu flutuante pra escolher em qual projeto criar o fluxo — só usado quando
@@ -36908,7 +37004,7 @@ async function tflSave() {
     } else {
       const upd = await api(`/client-templates/${tplId}/projects/${pIdx}/flows/${fIdx}`, 'PUT', payload);
       Object.assign(t, upd);
-      toast('Fluxo atualizado. Clientes existentes NÃO recebem essa alteração — só fluxos novos são replicados.');
+      toast('Fluxo atualizado no modelo. Pra levar aos clientes, use "Aplicar nos clientes" (⟳) no card.');
     }
     closeModal('template-flow-modal');
     renderClientsModels();
