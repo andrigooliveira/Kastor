@@ -75,7 +75,7 @@ async function valor(v, uploadsDir) {
 
 /* ctx: o mesmo da prévia ({ client, blocks, orgName, status }) + uploadsDir. */
 async function briefingToDocx(data, ctx) {
-  const { blocks, set } = BriefingSchema.docModel(data, ctx);
+  const { blocks, set } = BriefingSchema.useCatalog(ctx.catalog, () => BriefingSchema.docModel(data, ctx));
   const corpo = [];
   for (const bl of blocks) {
     if (bl.type === 'title') {

@@ -22,7 +22,7 @@
   const VERSION = 1;
 
   /* ── Formatos ── */
-  const FORMATS = {
+  const DEFAULT_FORMATS = {
     '1x1':     { label: 'Quadrado (1x1)',          size: '1080×1080' },
     '4x5':     { label: 'Feed vertical (4x5)',     size: '1080×1350' },
     '9x16':    { label: 'Story (9x16)',            size: '1080×1920' },
@@ -45,7 +45,7 @@
 
   /* ── Tipos de peça ──
      fields: campos extras no nível da peça. telas: mínimo, máximo e padrão. */
-  const PIECE_TYPES = [
+  const DEFAULT_PIECE_TYPES = [
     { id: 'estatico',  label: 'Estático',  icon: 'image',              desc: 'Post ou anúncio de uma tela',
       formats: ['1x1', '4x5', '9x16', '16x9', '1.91x1'], defaultFormats: ['1x1'], telas: { min: 1, max: 1, def: 1 }, fields: ['legenda'] },
     { id: 'carrossel', label: 'Carrossel', icon: 'gallery-horizontal', desc: 'Várias telas em sequência',
@@ -59,7 +59,52 @@
     { id: 'whatsapp',  label: 'WhatsApp',  icon: 'message-circle',     desc: 'Imagem de disparo',
       formats: ['disparo'], defaultFormats: ['disparo'], telas: { min: 1, max: 1, def: 1 }, fields: ['mensagem'] }
   ];
-  const pieceType = id => PIECE_TYPES.find(t => t.id === id) || PIECE_TYPES[0];
+  /* Catálogo ativo: formatos e tipos de peça vindos do Agente de Criação
+     (base/agencia/formatos.json). Sem ele, valem os de cima.
+     Navegador: setCatalog uma vez. Servidor (várias organizações): useCatalog
+     em volta de cada chamada (tudo síncrono). */
+  let ACTIVE = null;
+  const FMT = () => (ACTIVE && ACTIVE.formats) || DEFAULT_FORMATS;
+  const TYPES = () => (ACTIVE && ACTIVE.types) || DEFAULT_PIECE_TYPES;
+  function setCatalog(c) { ACTIVE = c && c.formats && c.types ? c : null; }
+  function useCatalog(c, fn) { const prev = ACTIVE; setCatalog(c); try { return fn(); } finally { ACTIVE = prev; } }
+  const pieceType = id => TYPES().find(t => t.id === id) || DEFAULT_PIECE_TYPES.find(t => t.id === id) || TYPES()[0];
+  const fmtInfo = k => FMT()[k] || DEFAULT_FORMATS[k] || { label: k, size: '' };
+  /* formatos.json do agente → catálogo. Valida tudo: o que vier errado fica
+     de fora (e entra em errors); sem formato ou tipo válido, devolve null. */
+  function catalogFromAgent(raw) {
+    const errors = [];
+    if (!raw || typeof raw !== 'object') return { catalog: null, errors: ['formatos.json vazio ou inválido'] };
+    const str = (v, n) => (v == null ? '' : String(v)).trim().slice(0, n || 120);
+    const formats = {};
+    (Array.isArray(raw.formatos) ? raw.formatos : []).slice(0, 80).forEach((x, i) => {
+      const key = str(x && x.chave, 30).replace(/[\/:*?"<>|]/g, '');
+      if (!key) { errors.push(`formato ${i + 1} sem chave`); return; }
+      formats[key] = { label: str(x.nome, 80) || key, size: str(x.tamanho, 60), uso: str(x.uso, 160) || null, area: str(x.area_segura, 200) || null };
+    });
+    const KNOWN = Object.keys(PIECE_EXTRA_FIELDS);
+    const types = [];
+    (Array.isArray(raw.tipos_de_peca) ? raw.tipos_de_peca : []).slice(0, 30).forEach((x, i) => {
+      const id = str(x && x.id, 30).replace(/[^a-z0-9_-]/gi, '');
+      if (!id) { errors.push(`tipo de peça ${i + 1} sem id`); return; }
+      const fm = (Array.isArray(x.formatos) ? x.formatos : []).map(k => str(k, 30)).filter(k => formats[k]);
+      const missing = (Array.isArray(x.formatos) ? x.formatos : []).filter(k => !formats[str(k, 30)]);
+      if (missing.length) errors.push(`${id}: formato ${missing.join(', ')} não está na lista de formatos`);
+      if (!fm.length) { errors.push(`${id}: nenhum formato válido`); return; }
+      const def = (Array.isArray(x.padrao) ? x.padrao : []).map(k => str(k, 30)).filter(k => fm.includes(k));
+      const tl = x.telas || {};
+      const min = Math.max(1, Math.min(20, Number(tl.min) || 1));
+      const max = Math.max(min, Math.min(20, Number(tl.max) || min));
+      const d = Math.max(min, Math.min(max, Number(tl.padrao) || min));
+      types.push({
+        id, label: str(x.nome, 60) || id, icon: str(x.icone, 40).replace(/[^a-z0-9-]/g, '') || 'image', desc: str(x.descricao, 120),
+        formats: fm, defaultFormats: def.length ? def : [fm[0]], telas: { min, max, def: d },
+        fields: (Array.isArray(x.campos) ? x.campos : []).filter(c => KNOWN.includes(c))
+      });
+    });
+    if (!Object.keys(formats).length || !types.length) return { catalog: null, errors: errors.concat('formatos.json sem formatos ou tipos de peça válidos') };
+    return { catalog: { formats, types }, errors };
+  }
 
   /* Campos extras da peça (os ids de PIECE_TYPES[].fields). */
   const PIECE_EXTRA_FIELDS = {
@@ -178,7 +223,7 @@
   }
   function formatSize(fmt, client, blocks) {
     const b = clientBlock(client, blocks);
-    return (b && b.tamanhos && b.tamanhos[fmt]) || (FORMATS[fmt] && FORMATS[fmt].size) || '';
+    return (b && b.tamanhos && b.tamanhos[fmt]) || fmtInfo(fmt).size || '';
   }
 
   /* ── Criação ── */
@@ -564,7 +609,7 @@
   function parseFormats(v) {
     const raw = Array.isArray(v) ? v.join(',') : String(v || '');
     const out = [];
-    const keys = Object.keys(FORMATS).sort((a, b) => b.length - a.length);
+    const keys = Object.keys(FMT()).sort((a, b) => b.length - a.length);
     raw.split(/,(?![^(]*\))/).forEach(part => {
       const p = part.trim().toLowerCase();
       if (!p) return;
@@ -579,7 +624,7 @@
   }
   function guessType(p) {
     const t = lc(p.tipo || '');
-    if (PIECE_TYPES.some(x => lc(x.label) === t || x.id === t)) return PIECE_TYPES.find(x => lc(x.label) === t || x.id === t).id;
+    if (TYPES().some(x => lc(x.label) === t || x.id === t)) return TYPES().find(x => lc(x.label) === t || x.id === t).id;
     const fm = parseFormats(p.formatos);
     if (/carrossel/.test(t) || (Array.isArray(p.cards) && p.cards.length) || Number(p.quantos_cards) > 1) return 'carrossel';
     if (/e-?mail/.test(t) || p.email) return 'email';
@@ -862,7 +907,7 @@
           piece = { numero: '', tipo: '', formatos: '', imagens: [], cards: [], telas: [], campos_cliente: {}, _extra: [] };
           // a última parte pode ser a lista de formatos ("1x1, 9x16")
           if (rest.length && parseFormats(rest[rest.length - 1]).length) piece.formatos = rest.pop();
-          if (rest[0] && PIECE_TYPES.some(x => lc(x.label) === lc(rest[0]))) { piece.tipo = rest.shift(); }
+          if (rest[0] && TYPES().some(x => lc(x.label) === lc(rest[0]))) { piece.tipo = rest.shift(); }
           if (rest.length) piece.nome = rest.join(' · ');
           j.pecas.push(piece); tela = null; img = null; sec = 'peca';
         } else if (kind === 'tela') {
@@ -902,7 +947,7 @@
   }
 
   return {
-    VERSION, FORMATS, PIECE_TYPES, PIECE_EXTRA_FIELDS, CAMPAIGN_GROUPS, CLIENT_BLOCKS, IMAGE_TYPES, IMAGE_USES, MONTHS,
+    VERSION, FORMATS: DEFAULT_FORMATS, PIECE_TYPES: DEFAULT_PIECE_TYPES, formats: FMT, pieceTypes: TYPES, fmtInfo, setCatalog, useCatalog, catalogFromAgent, PIECE_EXTRA_FIELDS, CAMPAIGN_GROUPS, CLIENT_BLOCKS, IMAGE_TYPES, IMAGE_USES, MONTHS,
     pieceType, clientSigla, clientBlock, visible, formatSize, newBriefing, newPiece, newTela, syncCtas, telaLabel, pieceTitle,
     check, toAgentJson, toHtml, docModel, isoToBr, copyFilled, normalize, fromAgentJson, fromDocxXml, docxXmlToItems, itemsToAgentJson
   };

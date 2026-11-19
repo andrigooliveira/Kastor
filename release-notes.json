@@ -1,5 +1,18 @@
 [
   {
+    "id": "2026-11-19-briefing-formatos-do-agente",
+    "date": "2026-11-19",
+    "title": "Formatos do briefing vindos do Agente de Criação",
+    "highlights": [
+      "Com o Agente de Criação ligado, os formatos e os tipos de peça do briefing vêm da lista do agente. Um formato novo cadastrado lá aparece sozinho no formulário, no Word e no arquivo para o agente.",
+      "Passe o mouse num formato para ver onde ele é usado e a área segura da arte.",
+      "O rodapé do briefing mostra quantos clientes e formatos vieram do agente e quando foi a última atualização."
+    ],
+    "hideFor": [
+      "freelancer"
+    ]
+  },
+  {
     "id": "2026-11-18-editor-fluxo-etapas",
     "date": "2026-11-18",
     "title": "Editor de fluxo: etapas em uma linha só",

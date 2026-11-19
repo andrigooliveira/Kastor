@@ -166,7 +166,7 @@
     let h = '<div class="bf-chips">';
     for (const o of options) {
       const on = get().includes(o.value);
-      h += `<button type="button" class="bf-chip ${on ? 'is-on' : ''}" data-a="${act(() => {
+      h += `<button type="button" class="bf-chip ${on ? 'is-on' : ''}"${o.title ? ` title="${esc(o.title)}"` : ''} data-a="${act(() => {
         const cur = get().slice();
         const i = cur.indexOf(o.value);
         if (i >= 0) cur.splice(i, 1); else cur.push(o.value);
@@ -265,7 +265,7 @@
   /* ── Escolha do tipo de peça ── */
   function renderAddPiece() {
     let h = `<div class="bf-page"><div class="bf-page-head"><span class="bf-head-ic"><i data-lucide="plus"></i></span><h1>Que peça você quer adicionar?</h1></div><div class="bf-types">`;
-    for (const t of BS.PIECE_TYPES) {
+    for (const t of BS.pieceTypes()) {
       h += `<button class="bf-type" data-a="${act(() => {
         const p = BS.newPiece(t.id);
         const blk = BS.clientBlock(client(), S.blocks);
@@ -304,7 +304,7 @@
 
     // Formatos
     h += `<section class="bf-card"><h2 class="bf-card-title">Formatos</h2>`;
-    h += chipsMulti(t.formats.map(f => ({ value: f, label: BS.FORMATS[f].label, small: BS.formatSize(f, c, S.blocks) })), () => p.formatos, v => { p.formatos = v; });
+    h += chipsMulti(t.formats.map(f => ({ value: f, label: BS.fmtInfo(f).label, small: BS.formatSize(f, c, S.blocks), title: [BS.fmtInfo(f).uso, BS.fmtInfo(f).area && 'Área segura: ' + BS.fmtInfo(f).area].filter(Boolean).join(' · ') })), () => p.formatos, v => { p.formatos = v; });
     if (p.formatos.length > 1) h += `<div class="bf-hint">O primeiro marcado (${esc(p.formatos[0])}) é o principal.</div>`;
     h += '</section>';
     h += renderPieceAbout(p);
@@ -583,6 +583,7 @@
   /* ── Agente de Criação (campos por cliente vindos do GitHub) ── */
   function applyClients(cl) {
     S.clients = cl.clients || []; S.blocks = cl.blocks || null; S.agent = cl.agent || null; S.canManageAgent = !!cl.canManageAgent;
+    BS.setCatalog(cl.catalog || null);
   }
   async function reloadClients() { applyClients(await api('/briefings/' + BID + '/clients')); renderAll(); }
   function relTime(iso) {
@@ -599,7 +600,7 @@
     const n = S.blocks ? Object.keys(S.blocks).length : 0;
     return `<div class="bf-agent ${S.agent.error ? 'has-error' : ''}" title="${esc(S.agent.repo + (S.agent.commit ? ' @ ' + S.agent.commit : ''))}">
       <i data-lucide="${S.agent.error ? 'triangle-alert' : 'git-branch'}" class="ic-xs"></i>
-      <span>Agente de Criação · ${n} ${n === 1 ? 'cliente' : 'clientes'} · ${esc(relTime(S.agent.syncedAt))}</span>
+      <span>Agente de Criação · ${n} ${n === 1 ? 'cliente' : 'clientes'}${S.agent.formats ? ' · ' + S.agent.formats + ' formatos' : ''} · ${esc(relTime(S.agent.syncedAt))}</span>
       ${S.canManageAgent ? `<button class="bf-icon-btn" title="Atualizar agora" data-a="${act(syncAgent)}"><i data-lucide="refresh-cw" class="ic-xs"></i></button><button class="bf-icon-btn" title="Configurar" data-a="${act(openAgentConfig)}"><i data-lucide="settings-2" class="ic-xs"></i></button>` : ''}
     </div>${S.agent.error ? `<div class="bf-agent-err">${esc(S.agent.error)}</div>` : ''}`;
   }

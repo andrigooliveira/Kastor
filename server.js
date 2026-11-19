@@ -15198,6 +15198,7 @@ function _briefingAgentPublic(org) {
   return {
     connected: !!(c.repo && c.tokenEnc), repo: c.repo || '', branch: c.branch || 'main', path: c.path || 'base/clientes',
     hasToken: !!c.tokenEnc, syncedAt: c.syncedAt || null, commit: c.commit || null, error: c.error || null,
+    formats: c.catalog ? Object.keys(c.catalog.formats).length : 0,
     clients: Object.values(c.blocks || {}).map(b => ({ sigla: b.sigla, nome: b.nome })).sort((a, b) => a.sigla.localeCompare(b.sigla))
   };
 }
@@ -15271,6 +15272,15 @@ async function syncBriefingAgent(org, fetchImpl) {
     const blk = _briefingAgentBlock(raw, it.name);
     if (blk) blocks[blk.sigla] = blk; else errors.push(`${it.name}/briefing.json sem sigla`);
   }
+  // Formatos e tipos de peça (base/agencia/formatos.json, ou o caminho salvo)
+  const fp = (c.formatsPath || 'base/agencia/formatos.json').replace(/^\/+/, '');
+  const fmeta = await getJson(`${api}/contents/${fp.split('/').map(encodeURIComponent).join('/')}?ref=${commit.sha}`);
+  c.catalog = null;
+  if (fmeta && fmeta.content) {
+    let raw = null;
+    try { raw = JSON.parse(Buffer.from(fmeta.content, 'base64').toString('utf8')); } catch { errors.push(fp + ' não é um JSON válido'); }
+    if (raw) { const r = BriefingSchema.catalogFromAgent(raw); c.catalog = r.catalog; errors.push(...r.errors.map(x => fp + ': ' + x)); }
+  }
   c.blocks = blocks;
   c.commit = commit.sha.slice(0, 7);
   c.syncedAt = nowISO();
@@ -15290,6 +15300,10 @@ function _briefingAgentSyncSafe(org) {
   return p;
 }
 // Blocos pra usar agora (null = sem agente ligado → campos embutidos).
+function _briefingAgentCatalog(org) {
+  const c = _briefingAgentCfg(org);
+  return c && c.repo && c.tokenEnc ? (c.catalog || null) : null;
+}
 function _briefingAgentBlocks(org) {
   const c = _briefingAgentCfg(org);
   if (!c || !c.repo || !c.tokenEnc) return null;
@@ -15365,7 +15379,8 @@ app.get('/api/briefings/:id/clients', requireAuth, (req, res) => {
   res.json({
     clients: list,
     blocks: _briefingAgentBlocks(req.org),
-    agent: ag && ag.repo ? { repo: ag.repo, syncedAt: ag.syncedAt || null, commit: ag.commit || null, error: ag.error || null } : null,
+    catalog: _briefingAgentCatalog(req.org),
+    agent: ag && ag.repo ? { repo: ag.repo, syncedAt: ag.syncedAt || null, commit: ag.commit || null, error: ag.error || null, formats: ag.catalog ? Object.keys(ag.catalog.formats).length : 0 } : null,
     canManageAgent: !!(req.user.isAdmin || req.user.isModerator)
   });
 });
@@ -15451,7 +15466,7 @@ app.get('/api/briefings/:id/export', requireAuth, async (req, res) => {
   const format = String(req.query.format || 'json').toLowerCase();
   const client = _briefingClient(b);
   BriefingSchema.normalize(b.data);
-  const ctx = { client, blocks: _briefingAgentBlocks(req.org), orgName: (req.org && req.org.name) || '', status: b.status, baseUrl: appBaseUrl(req), origem: { sistema: 'reWork', briefingId: b.id, demandaId: d.id, demanda: d.name, status: b.status, atualizado_em: b.updatedAt } };
+  const ctx = { client, blocks: _briefingAgentBlocks(req.org), catalog: _briefingAgentCatalog(req.org), orgName: (req.org && req.org.name) || '', status: b.status, baseUrl: appBaseUrl(req), origem: { sistema: 'reWork', briefingId: b.id, demandaId: d.id, demanda: d.name, status: b.status, atualizado_em: b.updatedAt } };
   const sigla = BriefingSchema.clientSigla(client);
   const baseName = (`Briefing ${sigla ? '[' + sigla + '] ' : ''}${b.data.campanha || d.name || ''}`).replace(/[\/\\:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 100) || 'Briefing';
   const disp = ext => `attachment; filename="${baseName.replace(/[^\x20-\x7e]/g, '_')}.${ext}"; filename*=UTF-8''${encodeURIComponent(baseName + '.' + ext)}`;
@@ -15459,7 +15474,7 @@ app.get('/api/briefings/:id/export', requireAuth, async (req, res) => {
     if (format === 'json') {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.setHeader('Content-Disposition', disp('json'));
-      return res.send(JSON.stringify(BriefingSchema.toAgentJson(b.data, ctx), null, 2));
+      return res.send(JSON.stringify(BriefingSchema.useCatalog(ctx.catalog, () => BriefingSchema.toAgentJson(b.data, ctx)), null, 2));
     }
     // Imagens enviadas no reWork: o LibreOffice lê do disco (file://).
     const imgSrc = u => {
@@ -15471,7 +15486,7 @@ app.get('/api/briefings/:id/export', requireAuth, async (req, res) => {
     };
     if (format === 'html') {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      return res.send(BriefingSchema.toHtml(b.data, ctx));
+      return res.send(BriefingSchema.useCatalog(ctx.catalog, () => BriefingSchema.toHtml(b.data, ctx)));
     }
     if (format === 'docx') {
       // Word montado direto (layout do Agente de Criação), sem LibreOffice
@@ -15481,7 +15496,7 @@ app.get('/api/briefings/:id/export', requireAuth, async (req, res) => {
       return res.send(buf);
     }
     if (format !== 'pdf') return res.status(400).json({ error: 'Formato inválido: ' + format });
-    const outPath = await convertHtmlWithSoffice(BriefingSchema.toHtml(b.data, ctx, { office: true, imgSrc }), format);
+    const outPath = await convertHtmlWithSoffice(BriefingSchema.useCatalog(ctx.catalog, () => BriefingSchema.toHtml(b.data, ctx, { office: true, imgSrc })), format);
     res.setHeader('Content-Type', format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     res.setHeader('Content-Disposition', disp(format));
     fs.createReadStream(outPath).pipe(res);
