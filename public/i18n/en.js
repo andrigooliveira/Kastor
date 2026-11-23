@@ -6420,5 +6420,8 @@
 "Se não foi você, fale com a coordenação da sua equipe ou com o suporte do reWork o quanto antes.": "If it wasn't you, contact your team's coordinators or reWork support as soon as possible.",
 "Agora o e-mail da conta é {0}.": "The account email is now {0}.",
 "Olá {0}, o e-mail da sua conta no reWork foi trocado para {1}. Se não foi você, fale com a coordenação ou com o suporte.": "Hi {0}, your reWork account email was changed to {1}. If it wasn't you, contact your coordinators or support.",
-"Código da troca de e-mail": "Email change code"
+"Código da troca de e-mail": "Email change code",
+"Ver menos": "See less",
+"{0} apontamento": "{0} entry",
+"{0} apontamentos": "{0} entries"
 });

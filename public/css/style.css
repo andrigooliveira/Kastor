@@ -7975,6 +7975,20 @@ body.is-fullpage #page-notfound.active {
   padding: 12px 4px; margin: 0;
 }
 .appt-row:first-child { border-top: 0; padding-top: 6px; }
+/* Total por pessoa, em cima da lista de recentes. */
+.appt-people { display: flex; flex-direction: column; margin-bottom: 14px; }
+.appt-person { display: flex; align-items: center; gap: 10px; padding: 8px 4px; min-width: 0; }
+.appt-person > .avatar { flex-shrink: 0; }
+.appt-person .appt-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.appt-person .appt-name { font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.appt-person .appt-time-range { font-size: 12px; color: var(--text-muted); }
+.appt-person .appt-hours { color: var(--accent-text); font-weight: 700; font-size: 14px; flex-shrink: 0; }
+.appt-sub-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); padding: 0 4px 2px; }
+.appt-more { display: contents; }
+.appt-more[hidden] { display: none; }
+.appt-more > .appt-row:first-child { border-top: 1px solid var(--hairline); padding-top: 12px; }
+.appt-more-btn { align-self: flex-start; background: none; border: 0; padding: 8px 4px 0; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--accent-text); cursor: pointer; }
+.appt-more-btn:hover { text-decoration: underline; }
 .appt-row .appt-name { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; min-width: 130px; }
 .appt-row .appt-hours { color: var(--accent-text); font-weight: 700; font-size: 13px; min-width: 56px; }
 .appt-row .appt-time-range { display: flex; align-items: center; gap: 6px; flex: 1; justify-content: flex-start; min-width: 0; overflow: hidden; }

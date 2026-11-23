@@ -1,5 +1,15 @@
 [
   {
+    "id": "2026-11-23-apontamentos-total-por-pessoa",
+    "date": "2026-11-23",
+    "title": "Apontamentos: total por pessoa e lista mais curta",
+    "highlights": [
+      "No detalhe da demanda, a seção Apontamentos mostra no topo o total de horas de cada pessoa, com foto, nome e quantos apontamentos ela fez.",
+      "Embaixo, em Recentes, aparecem só os 4 últimos apontamentos.",
+      "Clique em Ver mais para abrir o restante e em Ver menos para fechar de novo."
+    ]
+  },
+  {
     "id": "2026-11-19-briefing-formatos-do-agente",
     "date": "2026-11-19",
     "title": "Formatos do briefing vindos do Agente de Criação",

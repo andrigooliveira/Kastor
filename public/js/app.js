@@ -19337,7 +19337,7 @@ function renderDetail() {
     const sameDay = e.end && _ymdLocal(new Date(e.start)) === _ymdLocal(new Date(e.end));
     return `${day}, ${_hm(e.start)}${e.end ? `–${sameDay ? _hm(e.end) : _dayLabel(e.end) + ' ' + _hm(e.end)}` : ''}`;
   };
-  const timeRows = _entries.slice().reverse().map(e => {
+  const _timeRowList = _entries.slice().reverse().map(e => {
     const u = userById(e.userId);
     const f2 = flowById(d.flowId);
     const st = f2 ? f2.stages.find(x => x.id === e.stageId) : null;
@@ -19364,7 +19364,14 @@ function renderDetail() {
         </div>` : ''}
       </div>
     </div>`;
-  }).join('');
+  }).concat(_legacyFormRows(d));
+  // Só os 4 mais recentes ficam à mostra; o resto abre no "Ver mais".
+  const APPT_VISIBLE = 4;
+  const _apptMoreCount = Math.max(0, _timeRowList.length - APPT_VISIBLE);
+  const _apptOpen = _apptExpandedFor === d.id;
+  const timeRows = _timeRowList.slice(0, APPT_VISIBLE).join('')
+    + (_apptMoreCount ? `<div class="appt-more"${_apptOpen ? '' : ' hidden'}>${_timeRowList.slice(APPT_VISIBLE).join('')}</div>
+      <button type="button" class="appt-more-btn" onclick="toggleApptMore('${d.id}', this)" data-more="${_apptMoreCount}">${_apptOpen ? 'Ver menos' : `Ver mais (${_apptMoreCount})`}</button>` : '');
 
   // Comentários em threads: cada raiz (sem parentId) abre uma thread e as
   // respostas ficam embaixo, sempre da mais antiga pra mais nova. A ordem das
@@ -19460,11 +19467,26 @@ function renderDetail() {
   };
 
   const totalHours = (d.timeEntries || []).reduce((a,e) => a + (Number(e.hours) || 0), 0);
-  // Resumo por pessoa quando mais de uma apontou.
+  // Total por pessoa (em cima), recentes embaixo.
   const _byPerson = new Map();
-  for (const e of _entries) _byPerson.set(e.userId, (_byPerson.get(e.userId) || 0) + (Number(e.hours) || 0));
-  const apptSummary = _byPerson.size > 1
-    ? `<div class="appt-summary">${[..._byPerson.entries()].sort((a, b) => b[1] - a[1]).map(([uid, h]) => `<span class="appt-summary-item">${avatarHTML(userById(uid), 'avatar avatar-xs')}${esc((userById(uid)?.name || '—').split(' ')[0])} <b>${fmtHours(h)}</b></span>`).join('')}</div>`
+  for (const e of _entries) {
+    const p = _byPerson.get(e.userId) || { h: 0, n: 0 };
+    p.h += Number(e.hours) || 0; p.n++;
+    _byPerson.set(e.userId, p);
+  }
+  const apptSummary = _byPerson.size
+    ? `<div class="appt-people">${[..._byPerson.entries()].sort((a, b) => b[1].h - a[1].h).map(([uid, p]) => {
+        const u = userById(uid);
+        return `<div class="appt-person">
+          ${avatarHTML(u)}
+          <span class="appt-main">
+            <span class="appt-name">${esc(u?.name || '—')}</span>
+            <span class="appt-time-range">${p.n} ${p.n === 1 ? 'apontamento' : 'apontamentos'}</span>
+          </span>
+          <span class="appt-hours">${fmtHours(p.h)}</span>
+        </div>`;
+      }).join('')}</div>
+      <div class="appt-sub-title">Recentes</div>`
     : '';
   // Prazo da etapa com distância de hoje ("há 2 dias" em vermelho).
   const stageDueHtml = (() => {
@@ -19690,7 +19712,7 @@ function renderDetail() {
             <span class="dd-section-title">Apontamentos${totalHours > 0 ? ` <span class="dd-section-count">· ${fmtHours(totalHours)}</span>` : ''}</span>
           </div>
           ${apptSummary}
-          <div class="time-list">${(timeRows + _legacyFormRowsHtml(d)) || '<div class="dd-empty">Nenhuma hora apontada ainda.</div>'}</div>
+          <div class="time-list">${timeRows || '<div class="dd-empty">Nenhuma hora apontada ainda.</div>'}</div>
         </div>
 
         ${d.recurrence?.enabled ? `<div class="dd-recurrence-note">
@@ -24687,6 +24709,17 @@ async function deleteTimeEntry(entryId) {
 /* "Editar" de um apontamento abre o painel do Registrar tempo inteiro, já
    preenchido: tempo no topo e, se o apontamento veio de formulário, as
    respostas embaixo (o formulário fica travado — trocar seria outra resposta). */
+// "Ver mais" dos apontamentos: lembra qual demanda está aberta pra não fechar
+// a cada re-render (editar/excluir um apontamento).
+let _apptExpandedFor = null;
+function toggleApptMore(demandId, btn) {
+  const more = btn.previousElementSibling;
+  const open = more.hidden;
+  more.hidden = !open;
+  _apptExpandedFor = open ? demandId : null;
+  btn.textContent = open ? 'Ver menos' : `Ver mais (${btn.dataset.more})`;
+  if (open && window.lucide) lucide.createIcons();
+}
 function startEditTimeEntry(eid) {
   const d = demandById(detailId); if (!d) return;
   if (!(d.timeEntries || []).some(x => x.id === eid)) return;
@@ -31242,7 +31275,7 @@ function _apptFormChip(r) {
   </button>`;
 }
 // Respostas da demanda que não têm apontamento (criadas antes da ligação).
-function _legacyFormRowsHtml(d) {
+function _legacyFormRows(d) {
   const list = (formResponses || [])
     .filter(r => r.demandId === d.id && !r.timeEntryId)
     .sort((a, b) => (b.submittedAt || '').localeCompare(a.submittedAt || ''));
@@ -31258,7 +31291,7 @@ function _legacyFormRowsHtml(d) {
       <span class="appt-hours appt-hours--none">—</span>
       <div class="appt-actions"></div>
     </div>`;
-  }).join('');
+  });
 }
 
 /* ── Formulário dentro do "Registrar tempo" ──
