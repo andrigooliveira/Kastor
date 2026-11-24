@@ -373,8 +373,7 @@
     h += `<div class="bf-row">${tagsField('Palavras que precisam aparecer', p.obrigatorias, 'Ex.: Hortolândia')}${tagsField('Palavras ou assuntos proibidos', p.proibidas, 'Ex.: renda')}</div>`;
     h += fieldWrap({ label: 'Observação para a criação' }, textArea(() => p.obs, v => { p.obs = v; }, { placeholder: 'Algo mais que a criação precisa saber sobre esta peça', rows: 2 }));
     h += '</section>';
-    // Carrossel/story: o geral vem antes das telas. E-mail (blocos): os blocos vêm primeiro.
-    const generalFirst = multi && U.s !== 'bloco';
+    const generalFirst = false; // telas/blocos primeiro, depois o que vale para todas
     return hHead + (generalFirst ? h + hTelas : hTelas + h) + '</div>';
   }
 

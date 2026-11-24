@@ -26,6 +26,7 @@
     '1x1':     { label: 'Quadrado (1x1)',          size: '1080×1080' },
     '4x5':     { label: 'Feed vertical (4x5)',     size: '1080×1350' },
     '9x16':    { label: 'Story (9x16)',            size: '1080×1920' },
+    'reels':   { label: 'Reels (9x16)',            size: '1080×1920' },
     '16x9':    { label: 'Horizontal (16x9)',       size: '1920×1080' },
     '1.91x1':  { label: 'Horizontal / link (1.91x1)', size: '1200×628' },
     'email':   { label: 'E-mail',                  size: '600 px de largura' },
@@ -38,23 +39,22 @@
     '320x50':  { label: '320×50',                  size: '320×50' }
   };
   // Exceções de tamanho por cliente (sigla).
-  const FORMAT_SIZE_BY_CLIENT = {
-    VISS: { '1.91x1': '1080×566' },
-    MRV:  { '1.91x1': '1080×566' }
-  };
+  const FORMAT_SIZE_BY_CLIENT = {};
 
   /* ── Tipos de peça ──
      fields: campos extras no nível da peça. telas: mínimo, máximo e padrão. */
   const DEFAULT_PIECE_TYPES = [
     { id: 'estatico',  label: 'Estático',  icon: 'image',              desc: 'Post ou anúncio de uma tela',
-      formats: ['1x1', '4x5', '9x16', '16x9', '1.91x1'], defaultFormats: ['1x1'], telas: { min: 1, max: 1, def: 1 }, fields: ['legenda'] },
+      formats: ['1x1', '4x5', '9x16', 'reels', '16x9', '1.91x1'], defaultFormats: ['1x1'], telas: { min: 1, max: 1, def: 1 }, fields: ['legenda'] },
     { id: 'carrossel', label: 'Carrossel', icon: 'gallery-horizontal', desc: 'Várias telas em sequência',
       formats: ['1x1', '4x5'], defaultFormats: ['4x5'], telas: { min: 2, max: 10, def: 3 }, fields: ['legenda'] },
     { id: 'story',     label: 'Story',     icon: 'smartphone',         desc: 'Uma ou mais telas verticais',
       formats: ['9x16'], defaultFormats: ['9x16'], telas: { min: 1, max: 10, def: 1 }, fields: [] },
+    { id: 'reels',     label: 'Reels',     icon: 'clapperboard',       desc: 'Capa ou arte vertical para Reels',
+      formats: ['reels'], defaultFormats: ['reels'], telas: { min: 1, max: 10, def: 1 }, fields: ['legenda'] },
     { id: 'banner',    label: 'Banner',    icon: 'panels-top-left',    desc: 'Display em vários tamanhos',
       formats: ['300x250', '728x90', '160x600', '300x600', '970x250', '320x50', '1.91x1'], defaultFormats: ['300x250', '728x90'], telas: { min: 1, max: 1, def: 1 }, fields: [] },
-    { id: 'email',     label: 'E-mail',    icon: 'mail',               desc: 'E-mail marketing',
+    { id: 'email',     label: 'E-mail',    icon: 'mail',               desc: 'E-mail marketing, dividido em blocos',
       formats: ['email'], defaultFormats: ['email'], telas: { min: 1, max: 12, def: 1 }, unit: { s: 'bloco', p: 'blocos', g: 'm' }, fields: ['assunto', 'preCabecalho'] },
     { id: 'whatsapp',  label: 'WhatsApp',  icon: 'message-circle',     desc: 'Imagem de disparo',
       formats: ['disparo'], defaultFormats: ['disparo'], telas: { min: 1, max: 1, def: 1 }, fields: ['mensagem'] }
@@ -513,6 +513,7 @@
         return r;
       };
       if (!multi) rows.push(...telaRows(p.telas[0], true));
+      const head = rows.length;
       if (t.fields.includes('assunto')) rows.push(['Assunto do e-mail', copy(p.assunto)]);
       if (t.fields.includes('preCabecalho')) rows.push(['Pré-cabeçalho', val(p.preCabecalho)]);
       if (t.fields.includes('mensagem')) rows.push(['Mensagem do disparo', copy(p.mensagem)]);
@@ -525,18 +526,30 @@
       rows.push(['Palavras que precisam aparecer', val(p.obrigatorias.join(', '))]);
       rows.push(['Palavras ou assuntos proibidos', val(p.proibidas.join(', '))]);
       if (opt(p.obs)) rows.push(['Observação', val(p.obs)]);
-      blocks.push({ type: 'rows', rows });
-      if (!multi) imageBlocks(p.telas[0].imagens);
-      if (t.fields.includes('legenda') && copyFilled(p.legenda)) {
-        blocks.push({ type: 'sub', text: 'Legenda do post' });
-        blocks.push({ type: 'rows', rows: [['Legenda', copy(p.legenda)]] });
+      const legenda = () => {
+        if (t.fields.includes('legenda') && copyFilled(p.legenda)) {
+          blocks.push({ type: 'sub', text: 'Legenda do post' });
+          blocks.push({ type: 'rows', rows: [['Legenda', copy(p.legenda)]] });
+        }
+      };
+      if (!multi) {
+        blocks.push({ type: 'rows', rows });
+        imageBlocks(p.telas[0].imagens);
+        legenda();
+      } else {
+        // Várias telas/blocos: dados da peça, cada tela, e por fim o que vale para todas
+        const u = unitOf(p);
+        blocks.push({ type: 'rows', rows: rows.slice(0, head) });
+        p.telas.forEach((tl, ti) => {
+          const lbl = telaLabel(p, ti);
+          blocks.push({ type: 'sub', text: lbl });
+          blocks.push({ type: 'rows', rows: telaRows(tl, ti === p.telas.length - 1) });
+          imageBlocks(tl.imagens, lbl);
+        });
+        blocks.push({ type: 'sub', text: (u.g === 'f' ? 'Vale para todas as ' : 'Vale para todos os ') + u.p });
+        blocks.push({ type: 'rows', rows: rows.slice(head) });
+        legenda();
       }
-      if (multi) p.telas.forEach((tl, ti) => {
-        const lbl = telaLabel(p, ti);
-        blocks.push({ type: 'sub', text: lbl });
-        blocks.push({ type: 'rows', rows: telaRows(tl, ti === p.telas.length - 1) });
-        imageBlocks(tl.imagens, lbl);
-      });
     });
 
     blocks.push({ type: 'band', text: `${n++}. Referências e observações` });
