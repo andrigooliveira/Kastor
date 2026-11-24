@@ -30287,6 +30287,319 @@ async function saveNovaLista() {
   } catch (e) { toast(e.message, 'error'); }
 }
 
+/* ─── Importar lista por planilha ─────────────────────────────────────────
+   Botão "Importar" na aba Listas abre um menu com:
+   • Baixar modelo → .xlsx gerado no navegador (JSZip) com 3 abas: Tarefas
+     (colunas Lista | Descrição da lista | Tarefa | Tipo de demanda, com
+     dropdown de tipos), Instruções e Tipos de demanda (os da biblioteca).
+   • Importar planilha → lê .xlsx ou .csv. Uma lista no arquivo abre o modal
+     "Nova lista" já preenchido pra revisar; várias listas são criadas de uma
+     vez após confirmação. Tudo usa o POST /listas existente (kind='todo'). */
+const LISTA_IMPORT_MAX_ROWS = 2000;
+
+function toggleListasImportMenu(ev) {
+  ev?.stopPropagation();
+  const menu = $('listas-import-menu'); if (!menu) return;
+  const willOpen = !menu.classList.contains('open');
+  _closeOtherPopovers();
+  menu.classList.toggle('open', willOpen);
+  $('listas-import-trigger')?.setAttribute('aria-expanded', String(willOpen));
+}
+function closeListasImportMenu() {
+  $('listas-import-menu')?.classList.remove('open');
+  $('listas-import-trigger')?.setAttribute('aria-expanded', 'false');
+}
+document.addEventListener('click', () => closeListasImportMenu());
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeListasImportMenu(); });
+
+function listaImportPickFile() {
+  closeListasImportMenu();
+  const inp = $('listas-import-file'); if (!inp) return;
+  inp.value = '';
+  inp.click();
+}
+
+// ── Modelo .xlsx ──
+function _xlsxEsc(s) {
+  return String(s ?? '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function _xlsxCol(i) { let s = ''; i++; while (i > 0) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; }
+// rows: array de arrays de { v, s } (s = índice de estilo) ou strings.
+function _xlsxSheet(rows, { widths = [], freeze = false, validation = null } = {}) {
+  const cols = widths.length ? `<cols>${widths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols>` : '';
+  const view = freeze
+    ? '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A2" sqref="A2"/></sheetView></sheetViews>'
+    : '<sheetViews><sheetView workbookViewId="0"/></sheetViews>';
+  const data = rows.map((r, ri) => `<row r="${ri + 1}">${r.map((c, ci) => {
+    const cell = (c && typeof c === 'object') ? c : { v: c };
+    if (cell.v === '' || cell.v == null) return cell.s ? `<c r="${_xlsxCol(ci)}${ri + 1}" s="${cell.s}"/>` : '';
+    return `<c r="${_xlsxCol(ci)}${ri + 1}" t="inlineStr"${cell.s ? ` s="${cell.s}"` : ''}><is><t xml:space="preserve">${_xlsxEsc(cell.v)}</t></is></c>`;
+  }).join('')}</row>`).join('');
+  const dv = validation
+    ? `<dataValidations count="1"><dataValidation type="list" allowBlank="1" showErrorMessage="1" errorStyle="warning" errorTitle="Tipo não encontrado" error="Esse tipo não está na biblioteca. A tarefa será importada sem tipo." sqref="${validation.sqref}"><formula1>${_xlsxEsc(validation.formula)}</formula1></dataValidation></dataValidations>`
+    : '';
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">${view}<sheetFormatPr defaultRowHeight="18"/>${cols}<sheetData>${data}</sheetData>${dv}</worksheet>`;
+}
+
+async function listaImportDownloadTemplate() {
+  closeListasImportMenu();
+  let JSZip;
+  try { JSZip = await _ensureJSZip(); } catch { return toast('Não consegui gerar o modelo agora. Tente de novo.', 'error'); }
+  const types = (Array.isArray(demandTypes) ? demandTypes : [])
+    .map(dt => String(dt?.name || '').trim()).filter(Boolean)
+    .sort((a, b) => norm(a).localeCompare(norm(b)));
+  const H = 1, WRAP = 2, TITLE = 3, MUTED = 4;
+  // Exemplos sem tipo: os tipos variam por organização e um par aleatório
+  // (tarefa × tipo) confundiria mais que ajudaria. O dropdown já mostra as opções.
+  const tarefas = [
+    [{ v: 'Lista', s: H }, { v: 'Descrição da lista', s: H }, { v: 'Tarefa', s: H }, { v: 'Tipo de demanda', s: H }],
+    ['Onboarding de cliente', 'Checklist padrão pra todo cliente novo', 'Reunião de kickoff', ''],
+  ];
+  const instr = [
+    [{ v: 'Como preencher o modelo de lista', s: TITLE }],
+    [''],
+    [{ v: 'Cada linha da aba "Tarefas" é uma tarefa. Apague a linha de exemplo e escreva as suas.', s: WRAP }],
+    [''],
+    [{ v: 'Colunas', s: H }],
+    [{ v: 'Lista (obrigatório) — nome da lista. Linhas com o mesmo nome viram uma lista só. Se deixar em branco, a tarefa entra na lista da linha de cima.', s: WRAP }],
+    [{ v: 'Descrição da lista (opcional) — do que se trata a lista. Basta preencher na primeira linha dela.', s: WRAP }],
+    [{ v: 'Tarefa (obrigatório) — nome da tarefa, até 200 caracteres. Linhas sem tarefa são ignoradas.', s: WRAP }],
+    [{ v: 'Tipo de demanda (opcional) — escolha um tipo da lista suspensa (os mesmos da aba "Tipos de demanda"). Ele pré-seleciona o fluxo ao gerar a demanda. Em branco, a tarefa entra sem tipo e o fluxo é escolhido na hora de gerar a demanda. Tipo que não existir no reWork é ignorado.', s: WRAP }],
+    [''],
+    [{ v: 'Importando', s: H }],
+    [{ v: 'No reWork, vá em Listas → Importar → Importar planilha e escolha este arquivo (.xlsx) ou um .csv com as mesmas colunas.', s: WRAP }],
+    [{ v: 'Se o arquivo tiver uma lista só, ela abre pra você revisar antes de salvar. Com várias listas, o reWork mostra um resumo e cria todas de uma vez.', s: WRAP }],
+    [{ v: 'Clientes e projetos não entram aqui: a lista é aplicada num projeto depois, pela própria tela de Listas.', s: MUTED }],
+  ];
+  const tipos = [[{ v: 'Tipos de demanda', s: H }], ...types.map(t => [t])];
+  if (!types.length) tipos.push([{ v: 'Nenhum tipo cadastrado na biblioteca ainda.', s: MUTED }]);
+
+  const sheets = [
+    { name: 'Tarefas', xml: _xlsxSheet(tarefas, { widths: [32, 44, 48, 30], freeze: true,
+      validation: types.length ? { sqref: `D2:D${LISTA_IMPORT_MAX_ROWS + 1}`, formula: `'Tipos de demanda'!$A$2:$A$${types.length + 1}` } : null }) },
+    { name: 'Instruções', xml: _xlsxSheet(instr, { widths: [110] }) },
+    { name: 'Tipos de demanda', xml: _xlsxSheet(tipos, { widths: [40], freeze: true }) },
+  ];
+  // Sem entradas de pasta no zip: o Excel é chato com elas.
+  const zip = new JSZip();
+  const _file = zip.file.bind(zip);
+  zip.file = (name, data) => _file(name, data, { createFolders: false });
+  zip.file('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}</Types>`);
+  zip.file('_rels/.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`);
+  zip.file('xl/workbook.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView activeTab="0"/></bookViews><sheets>${sheets.map((s, i) => `<sheet name="${_xlsxEsc(s.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets></workbook>`);
+  zip.file('xl/_rels/workbook.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`);
+  // Estilos: 0 normal · 1 cabeçalho (negrito, fundo cinza) · 2 quebra de linha · 3 título · 4 cinza
+  zip.file('xl/styles.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="4"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="14"/><name val="Calibri"/></font><font><sz val="11"/><color rgb="FF808080"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE8EAF0"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf><xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`);
+  sheets.forEach((s, i) => zip.file(`xl/worksheets/sheet${i + 1}.xml`, s.xml));
+  const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'rework-modelo-lista.xlsx';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// ── Leitura de planilha → matriz de strings ──
+async function _readXlsxRows(file) {
+  const JSZip = await _ensureJSZip();
+  const zip = await JSZip.loadAsync(file);
+  const parse = async (path) => {
+    const f = zip.file(path); if (!f) return null;
+    return new DOMParser().parseFromString(await f.async('string'), 'application/xml');
+  };
+  const tags = (node, name) => Array.from(node.getElementsByTagNameNS('*', name));
+  const wb = await parse('xl/workbook.xml');
+  if (!wb) throw new Error('Arquivo .xlsx inválido');
+  const rels = await parse('xl/_rels/workbook.xml.rels');
+  const relMap = {};
+  if (rels) tags(rels, 'Relationship').forEach(r => { relMap[r.getAttribute('Id')] = r.getAttribute('Target'); });
+  const sheetEls = tags(wb, 'sheet');
+  if (!sheetEls.length) throw new Error('A planilha não tem abas');
+  const relId = el => { for (const a of Array.from(el.attributes)) if (a.localName === 'id' && /relationships/.test(a.namespaceURI || '')) return a.value; return el.getAttribute('r:id'); };
+  // Aba "Tarefas" se existir (modelo); senão a primeira.
+  const chosen = sheetEls.find(el => norm(el.getAttribute('name')).trim() === 'tarefas') || sheetEls[0];
+  let target = relMap[relId(chosen)] || 'worksheets/sheet1.xml';
+  target = target.startsWith('/') ? target.slice(1) : ('xl/' + target.replace(/^\.\//, ''));
+  const sheet = await parse(target);
+  if (!sheet) throw new Error('Não consegui ler a aba da planilha');
+  const shared = [];
+  const ss = await parse('xl/sharedStrings.xml');
+  if (ss) tags(ss, 'si').forEach(si => {
+    // Concatena só os <t> de texto (ignora <rPh> — guia fonética do Excel).
+    shared.push(tags(si, 't').filter(t => t.parentNode?.localName !== 'rPh').map(t => t.textContent).join(''));
+  });
+  const colIdx = ref => { const m = /^([A-Z]+)/.exec(ref || ''); if (!m) return -1; let n = 0; for (const ch of m[1]) n = n * 26 + (ch.charCodeAt(0) - 64); return n - 1; };
+  const rows = [];
+  tags(sheet, 'row').forEach((rowEl, i) => {
+    const rIdx = (parseInt(rowEl.getAttribute('r'), 10) || (i + 1)) - 1;
+    if (rIdx > LISTA_IMPORT_MAX_ROWS + 20) return;
+    const row = [];
+    tags(rowEl, 'c').forEach((c, ci) => {
+      const t = c.getAttribute('t');
+      const idx = c.getAttribute('r') ? colIdx(c.getAttribute('r')) : ci;
+      if (idx < 0 || idx > 50) return;
+      let val = '';
+      if (t === 'inlineStr') val = tags(c, 't').map(x => x.textContent).join('');
+      else {
+        const v = tags(c, 'v')[0]?.textContent ?? '';
+        val = t === 's' ? (shared[parseInt(v, 10)] ?? '') : v;
+      }
+      row[idx] = val;
+    });
+    rows[rIdx] = row;
+  });
+  return Array.from(rows, r => Array.from(r || [], v => String(v ?? '')));
+}
+
+async function _readCsvRows(file) {
+  const buf = await file.arrayBuffer();
+  let text = new TextDecoder('utf-8').decode(buf);
+  // Excel no Windows salva CSV em ANSI — se o UTF-8 quebrou acento, relê em 1252.
+  if (text.includes('�')) { try { text = new TextDecoder('windows-1252').decode(buf); } catch {} }
+  text = text.replace(/^﻿/, '');
+  const firstLine = text.split(/\r?\n/, 1)[0] || '';
+  const sep = [';', ',', '\t'].reduce((best, s) => firstLine.split(s).length > firstLine.split(best).length ? s : best, ';');
+  const rows = []; let row = [], cell = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) {
+      if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; }
+      else cell += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === sep) { row.push(cell); cell = ''; }
+    else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      row.push(cell); rows.push(row); row = []; cell = '';
+      if (rows.length > LISTA_IMPORT_MAX_ROWS + 20) break;
+    } else cell += ch;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows;
+}
+
+// Matriz → [{ name, description, items: [{ name, demandType }] }] + avisos.
+function _listaImportParse(rows) {
+  const clean = rows.map(r => (r || []).map(v => String(v ?? '').replace(/\s+/g, ' ').trim()));
+  // Acha a linha de cabeçalho (até a 10ª) pela coluna "Tarefa".
+  let hIdx = -1, col = null;
+  for (let i = 0; i < Math.min(clean.length, 10); i++) {
+    const h = clean[i].map(v => norm(v));
+    const task = h.findIndex(v => v === 'tarefa' || v === 'tarefas' || v === 'nome da tarefa' || v === 'item');
+    if (task >= 0) {
+      hIdx = i;
+      col = {
+        task,
+        list: h.findIndex(v => v === 'lista' || v === 'nome da lista'),
+        desc: h.findIndex(v => v.startsWith('descri')),
+        type: h.findIndex(v => v.includes('tipo')),
+      };
+      break;
+    }
+  }
+  if (!col) {
+    // Sem cabeçalho reconhecível: aceita uma coluna só com os nomes das tarefas.
+    const used = Math.max(0, ...clean.map(r => r.filter(Boolean).length));
+    if (used !== 1) return { error: 'Não encontrei a coluna "Tarefa". Use o modelo (Importar → Baixar modelo).' };
+    col = { task: clean.find(r => r.some(Boolean)).findIndex(Boolean), list: -1, desc: -1, type: -1 };
+  }
+  const typeByNorm = new Map((Array.isArray(demandTypes) ? demandTypes : []).map(dt => [norm(dt?.name).trim(), dt.name]));
+  const lists = []; const byKey = new Map(); const unknownTypes = new Set();
+  let current = '', truncated = 0, total = 0;
+  for (const r of clean.slice(hIdx + 1)) {
+    const listName = col.list >= 0 ? (r[col.list] || '') : '';
+    if (listName) current = listName;
+    const taskName = r[col.task] || '';
+    const desc = col.desc >= 0 ? (r[col.desc] || '') : '';
+    const key = norm(current).trim();
+    let l = byKey.get(key);
+    if (!l && (taskName || desc)) { l = { name: current.slice(0, 200), description: '', items: [] }; byKey.set(key, l); lists.push(l); }
+    if (!l) continue;
+    if (desc && !l.description) l.description = desc;
+    if (!taskName) continue;
+    if (total >= LISTA_IMPORT_MAX_ROWS) { truncated++; continue; }
+    let demandType = null;
+    const rawType = col.type >= 0 ? (r[col.type] || '') : '';
+    if (rawType) {
+      demandType = typeByNorm.get(norm(rawType).trim()) || null;
+      if (!demandType) unknownTypes.add(rawType);
+    }
+    l.items.push({ id: null, name: taskName.slice(0, 200), demandType });
+    total++;
+  }
+  const out = lists.filter(l => l.items.length);
+  if (!out.length) return { error: 'A planilha não tem nenhuma tarefa preenchida.' };
+  return { lists: out, total, unknownTypes: [...unknownTypes], truncated };
+}
+
+async function listaImportHandleFile(ev) {
+  const file = ev?.target?.files?.[0];
+  if (ev?.target) ev.target.value = '';
+  if (!file) return;
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  if (ext === 'xls') return toast('Formato .xls antigo não é suportado. No Excel, salve como .xlsx e importe de novo.', 'error');
+  if (ext !== 'xlsx' && ext !== 'csv') return toast('Envie uma planilha .xlsx ou .csv', 'error');
+  if (file.size > 5 * 1024 * 1024) return toast('Planilha muito grande (máx. 5 MB)', 'error');
+  let parsed;
+  try {
+    const rows = ext === 'csv' ? await _readCsvRows(file) : await _readXlsxRows(file);
+    parsed = _listaImportParse(rows);
+  } catch (e) {
+    return toast('Não consegui ler a planilha: ' + (e?.message || 'arquivo inválido'), 'error');
+  }
+  if (parsed.error) return toast(parsed.error, 'error');
+  const { lists, unknownTypes, truncated } = parsed;
+  const warnings = [];
+  if (unknownTypes.length) warnings.push(`Tipo${unknownTypes.length === 1 ? '' : 's'} não encontrado${unknownTypes.length === 1 ? '' : 's'} (ficaram sem tipo): ${unknownTypes.slice(0, 5).join(', ')}${unknownTypes.length > 5 ? '…' : ''}`);
+  if (truncated) warnings.push(`${truncated} tarefa${truncated === 1 ? '' : 's'} além do limite de ${LISTA_IMPORT_MAX_ROWS} foram ignoradas`);
+
+  // Uma lista: abre o modal preenchido pra revisar antes de criar.
+  if (lists.length === 1) {
+    const l = lists[0];
+    openNovaListaModal();
+    $('nova-lista-title').textContent = 'Importar lista';
+    $('nl-name').value = l.name || file.name.replace(/\.(xlsx|csv)$/i, '');
+    $('nl-desc').value = l.description || '';
+    _nlItemsDraft = l.items.map(it => ({ ...it }));
+    renderNlItems();
+    toast(`${l.items.length} tarefa${l.items.length === 1 ? '' : 's'} importada${l.items.length === 1 ? '' : 's'}. Revise e clique em Criar lista.`, 'success');
+    warnings.forEach(w => toast(w, 'warn'));
+    return;
+  }
+
+  // Várias listas: resumo + confirmação, depois cria todas.
+  const unnamed = lists.filter(l => !l.name).length;
+  const summary = lists.slice(0, 8).map(l => `<li><strong>${esc(l.name || 'Sem nome')}</strong> — ${l.items.length} tarefa${l.items.length === 1 ? '' : 's'}</li>`).join('')
+    + (lists.length > 8 ? `<li>…e mais ${lists.length - 8}</li>` : '');
+  const ok = await showConfirm({
+    title: `Criar ${lists.length} listas?`,
+    message: `<div style="text-align:left">A planilha tem ${lists.length} listas com ${parsed.total} tarefas no total:<ul style="margin:8px 0 0;padding-left:18px">${summary}</ul>`
+      + (unnamed ? `<p style="margin:10px 0 0">Tarefas sem nome de lista entram em "Lista importada".</p>` : '')
+      + (warnings.length ? `<p style="margin:10px 0 0">${warnings.map(esc).join('<br>')}</p>` : '')
+      + `</div>`,
+    okLabel: `Criar ${lists.length} listas`,
+    kind: 'info',
+  });
+  if (!ok) return;
+  let created = 0;
+  const failed = [];
+  for (const l of lists) {
+    try {
+      await api('/listas', 'POST', { name: l.name || 'Lista importada', description: l.description || '', workspaceId: activeWs, kind: 'todo', items: l.items });
+      created++;
+    } catch (e) { failed.push(l.name || 'Lista importada'); }
+  }
+  await refreshData();
+  if (created) toast(`${created} lista${created === 1 ? '' : 's'} criada${created === 1 ? '' : 's'}!`, 'success');
+  if (failed.length) toast(`Não deu pra criar: ${failed.join(', ')}`, 'error');
+}
+
 async function confirmDeleteListaFromTab(id) {
   const lista = listas.find(l => l.id === id);
   if (!lista) return;

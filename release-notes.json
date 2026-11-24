@@ -1,5 +1,20 @@
 [
   {
+    "id": "2026-11-24-listas-importar-planilha",
+    "date": "2026-11-24",
+    "title": "Listas de tarefas: importar de uma planilha",
+    "highlights": [
+      "Em Listas de tarefas › Listas, o novo botão Importar cria listas a partir de uma planilha do Excel (.xlsx) ou de um arquivo .csv.",
+      "Em Importar › Baixar modelo, você baixa a planilha pronta, com as colunas Lista, Descrição da lista, Tarefa e Tipo de demanda e uma linha de exemplo.",
+      "A coluna Tipo de demanda tem uma lista suspensa com os tipos cadastrados no reWork. Se ficar em branco, a tarefa entra sem tipo e o fluxo é escolhido ao gerar a demanda.",
+      "Se a planilha tiver uma lista só, ela abre já preenchida para você revisar antes de criar.",
+      "Com várias listas no mesmo arquivo, o reWork mostra um resumo e cria todas de uma vez."
+    ],
+    "hideFor": [
+      "freelancer"
+    ]
+  },
+  {
     "id": "2026-11-23-apontamentos-total-por-pessoa",
     "date": "2026-11-23",
     "title": "Apontamentos: total por pessoa e lista mais curta",

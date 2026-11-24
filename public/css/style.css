@@ -12259,6 +12259,29 @@ button.is-loading::after {
 .rec-groupby-btn:hover { color: var(--text); }
 .rec-groupby-btn.is-active { background: var(--accent); color: #fff; }
 
+/* Aba Listas — botão "Importar" com menu (subir planilha / baixar modelo) */
+.listas-import-wrap { position: relative; }
+.listas-import-wrap .btn .ic-xs { margin-left: 2px; color: var(--text-muted); }
+.listas-import-menu {
+  position: absolute; top: calc(100% + 6px); right: 0;
+  min-width: 200px; padding: 6px;
+  display: none; flex-direction: column; gap: 2px;
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 10px;
+  box-shadow: var(--shadow-md);
+  z-index: 300;
+}
+.listas-import-menu.open { display: flex; }
+.listas-import-opt {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border: 0; border-radius: 7px;
+  background: transparent; color: var(--text);
+  font-size: 13px; font-weight: 500;
+  text-align: left; cursor: pointer; white-space: nowrap;
+  transition: background .12s;
+}
+.listas-import-opt:hover, .listas-import-opt:focus-visible { background: var(--surface-2); outline: none; }
+.listas-import-opt > .ic-sm, .listas-import-opt > svg { color: var(--text-muted); flex-shrink: 0; }
+
 /* Header do cliente com contadores de status */
 .rec-client-header {
   display: flex; align-items: center; gap: 14px;

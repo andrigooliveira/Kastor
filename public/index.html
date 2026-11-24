@@ -2027,7 +2027,24 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
                 <button class="rec-groupby-btn" data-listas-groupby="role" onclick="setListasGroupBy('role')">Área</button>
                 <button class="rec-groupby-btn" data-listas-groupby="owner" onclick="setListasGroupBy('owner')">Responsável</button>
               </div>
-              <button class="btn btn-primary" onclick="openNovaListaModal()" style="margin-left:auto"><i data-lucide="plus" class="ic-sm"></i> Nova lista</button>
+              <!-- Importar: menu com "subir planilha" e "baixar modelo" (listaImport*). -->
+              <div class="listas-import-wrap" style="margin-left:auto">
+                <button type="button" class="btn btn-ghost" id="listas-import-trigger" onclick="toggleListasImportMenu(event)" aria-haspopup="menu" aria-expanded="false">
+                  <i data-lucide="file-spreadsheet" class="ic-sm"></i> Importar <i data-lucide="chevron-down" class="ic-xs"></i>
+                </button>
+                <div class="listas-import-menu" id="listas-import-menu" role="menu" onclick="event.stopPropagation()">
+                  <button type="button" class="listas-import-opt" role="menuitem" onclick="listaImportPickFile()">
+                    <i data-lucide="upload" class="ic-sm"></i>
+                    <span>Importar planilha</span>
+                  </button>
+                  <button type="button" class="listas-import-opt" role="menuitem" onclick="listaImportDownloadTemplate()">
+                    <i data-lucide="download" class="ic-sm"></i>
+                    <span>Baixar modelo</span>
+                  </button>
+                </div>
+                <input type="file" id="listas-import-file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none" onchange="listaImportHandleFile(event)">
+              </div>
+              <button class="btn btn-primary" onclick="openNovaListaModal()"><i data-lucide="plus" class="ic-sm"></i> Nova lista</button>
             </div>
             <div id="listas-content-body"></div>
           </div>
@@ -5409,7 +5426,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20261123ap2" defer></script>
+<script src="/js/boot.js?v=20261124li5" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

@@ -6423,5 +6423,8 @@
 "Código da troca de e-mail": "Email change code",
 "Ver menos": "See less",
 "{0} apontamento": "{0} entry",
-"{0} apontamentos": "{0} entries"
+"{0} apontamentos": "{0} entries",
+"Importar planilha": "Import spreadsheet",
+"Baixar modelo": "Download template",
+"Importar lista": "Import list"
 });
