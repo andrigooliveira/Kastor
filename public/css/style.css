@@ -22027,3 +22027,28 @@ a.user-mini-card-name:hover { text-decoration: underline; text-underline-offset:
 .brief-export-txt small { font-size: 11.5px; color: var(--text-muted); font-weight: 400; }
 .dd-brief-card .dd-brief-del { flex-shrink: 0; }
 .dd-brief-card .dd-brief-del:hover { color: var(--danger); }
+
+/* Várias respostas num apontamento: acordeão. Cada seção mostra nº,
+   formulário e resumo; só a aberta tem seletor e campos. Recolhida com
+   obrigatório vazio ganha borda e aviso em vermelho. */
+.time-form-acc { display: flex; flex-direction: column; gap: 8px; }
+.tfa-item { border: 1px solid var(--hairline); border-radius: 12px; background: var(--surface-2); overflow: hidden; }
+.tfa-item.is-open { background: transparent; border-color: var(--border, var(--hairline)); }
+.tfa-item.is-missing { border-color: var(--danger); }
+.tfa-bar { display: flex; align-items: center; }
+.tfa-head { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 10px 6px 10px 12px; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.tfa-num { flex: none; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 650; background: var(--accent); color: #fff; }
+.tfa-item.is-missing .tfa-num { background: var(--danger); }
+.tfa-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.tfa-name { font-size: 11px; color: var(--text-muted); }
+.tfa-sum { font-size: 13px; font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tfa-miss { flex: none; display: inline-flex; align-items: center; gap: 4px; max-width: 45%; font-size: 11.5px; font-weight: 600; color: var(--danger); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tfa-chev { flex: none; color: var(--text-muted); transition: transform .15s; }
+.tfa-item.is-open .tfa-chev { transform: rotate(180deg); }
+.tfa-del { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; margin-right: 6px; border-radius: 8px; border: 0; background: none; color: var(--text-muted); cursor: pointer; }
+.tfa-del:hover { background: var(--danger-dim); color: var(--danger); }
+.tfa-body { padding: 2px 12px 4px; }
+.tfa-body .time-form-panel { margin-top: 14px; }
+.time-form-more { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; padding: 6px 0; border: 0; background: none; color: var(--accent); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.time-form-more:hover { text-decoration: underline; }
+.appt-forms { display: flex; flex-wrap: wrap; gap: 4px; }

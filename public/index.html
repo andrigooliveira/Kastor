@@ -4022,12 +4022,18 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
            Registrar grava tempo + respostas juntos. -->
       <div class="time-form-wrap" id="time-form-wrap" hidden>
         <label class="time-col-title" for="time-form-select">Formulário</label>
-        <select class="form-control" id="time-form-select" onchange="onTimeFormChange(this.value)"></select>
+        <!-- Várias respostas no apontamento (1 e-mail + 1 disparo…): acordeão,
+             com o seletor e os campos dentro da seção aberta. -->
+        <div class="time-form-acc" id="time-form-queue" hidden></div>
+        <div class="time-form-pick" id="time-form-pick">
+          <select class="form-control" id="time-form-select" onchange="onTimeFormChange(this.value)"></select>
+        </div>
       </div>
       <div class="time-form-panel" id="time-form-panel" hidden>
         <div class="ff-description" id="time-form-desc" hidden></div>
         <div id="time-form-fields"></div>
       </div>
+      <button type="button" class="time-form-more" id="time-form-more" onclick="tmAddAnother()" hidden><i data-lucide="plus" class="ic-xs"></i> Preencher outro</button>
     </div>
     <div class="ff-foot ff-foot--row">
       <button class="btn btn-ghost" onclick="closeModal('time-modal')">Cancelar</button>
@@ -5426,7 +5432,7 @@ html:has(#app-loading-screen:not(.is-hidden)) body{overflow:hidden!important}
 
 <!-- boot.js decide se carrega o app.js pesado (só após /me OK ou login).
      Deslogados nunca pagam o custo de parse do app.js. -->
-<script src="/js/boot.js?v=20261124li5" defer></script>
+<script src="/js/boot.js?v=20261124mf3" defer></script>
   <!-- ── MODAL DE WEBHOOK ── -->
   <div class="modal-overlay" id="webhook-modal">
     <div class="modal modal-md">

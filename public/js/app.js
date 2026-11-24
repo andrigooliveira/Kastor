@@ -19344,13 +19344,14 @@ function renderDetail() {
     const canEdit = e.userId === me.id;
     const canDel = e.userId === me.id || me.isAdmin;
     const when = _apptWhen(e);
-    const fr = e.formResponseId ? (formResponses || []).find(x => x.id === e.formResponseId) : null;
+    const frs = _entryResponses(e);
+    const fr = frs[0] || null;
     return `<div class="appt-row${fr ? ' appt-row--form' : ''}" id="appt-${e.id}">
       ${avatarHTML(u)}
       <span class="appt-main">
         <span class="appt-name">${esc(u?.name || '—')}</span>
         <span class="appt-time-range" title="${esc([e.start ? fmtDateTime(e.start) : '', e.end ? fmtDateTime(e.end) : ''].filter(Boolean).join(' → '))}">${esc(when)}${e.note ? ` · <span class="appt-note">${esc(e.note)}</span>` : ''}</span>
-        ${fr ? _apptFormChip(fr) : ''}
+        ${frs.length > 1 ? `<span class="appt-forms">${frs.map(r => _apptFormChip(r, true)).join('')}</span>` : fr ? _apptFormChip(fr) : ''}
       </span>
       ${_multiStage && st ? `<span class="pill appt-stage" style="color:${st.color};background:${hexDim(st.color)}">${esc(st.label)}</span>` : ''}
       <span class="appt-hours">${fmtHours(e.hours)}</span>
@@ -21991,10 +21992,13 @@ async function confirmDeleteComment(cid) {
 }
 async function confirmDeleteTimeEntry(eid) {
   const e = (demandById(detailId)?.timeEntries || []).find(x => x.id === eid);
-  const fr = e?.formResponseId ? (formResponses || []).find(x => x.id === e.formResponseId) : null;
+  const frs = e ? _entryResponses(e) : [];
+  const fr = frs[0];
   const ok = await showConfirm({
     title: 'Excluir apontamento',
-    message: fr
+    message: frs.length > 1
+      ? `Remover este apontamento? As <strong>${frs.length} respostas</strong> de formulário saem junto.`
+      : fr
       ? `Remover este apontamento? As respostas do formulário <strong>${esc(formTemplateById(fr.templateId)?.name || 'formulário')}</strong> saem junto.`
       : 'Tem certeza que deseja remover este apontamento de horas?',
     okLabel: 'Excluir',
@@ -24549,11 +24553,13 @@ function openRegisterTimeModal(opts) {
   const sub = $('time-modal-sub');
   if (sub) sub.textContent = demandById(_tmDemandId)?.name || '';
   _resetTimeForm();
-  const fr = editing?.formResponseId ? (formResponses || []).find(x => x.id === editing.formResponseId) : null;
-  const ft = fr ? formTemplateById(fr.templateId) : null;
-  // Na edição o formulário não troca: some o seletor (sem formulário) ou trava nele.
-  if (ft) { onTimeFormChange(ft.id); _fillFormValues(ft, fr.values); }
-  $('time-form-wrap').classList.toggle('is-locked', !!ft);
+  // Na edição: cada resposta do apontamento vira uma seção do acordeão; a
+  // última abre (formulário travado nela, que já existe).
+  const frs = editing ? _entryResponses(editing).filter(r => formTemplateById(r.templateId)) : [];
+  _tmItems = frs.map(r => ({ key: r.id, id: r.id, templateId: r.templateId, values: { ...(r.values || {}) } }));
+  const last = _tmItems[_tmItems.length - 1];
+  if (last) { _tmOpenKey = last.key; _tmLoadFields(last.templateId, last.values); }
+  _tmSyncFormUI();
   openModal('time-modal');
   setTimeout(() => { if (editing) _prefillTimeFromEntry(editing); else _prefillTimeModal(); }, 60);
 }
@@ -24676,7 +24682,7 @@ async function addTimeEntry() {
       return;
     }
     const forStage = _timeForStage && _timeForStage.demandId === d.id ? _timeForStage : null;
-    const withForm = !!_tmFormId;
+    const withForm = _tmItems.some(it => it.templateId);
     if (withForm) {
       // Tempo + formulário numa chamada só; obrigatório faltando para aqui.
       if (!(await _submitTimeWithForm(d, { hours, start, end }, forStage))) return;
@@ -24699,8 +24705,9 @@ async function addTimeEntry() {
 async function deleteTimeEntry(entryId) {
   try {
     const e = (demandById(detailId)?.timeEntries || []).find(x => x.id === entryId);
+    const gone = new Set(e ? _entryResponses(e).map(r => r.id) : []);
     const upd = await api('/demands/' + detailId + '/time/' + entryId, 'DELETE');
-    if (e?.formResponseId) formResponses = (formResponses || []).filter(x => x.id !== e.formResponseId);
+    if (gone.size) formResponses = (formResponses || []).filter(x => !gone.has(x.id));
     patchDemand(upd);
     renderDetail();
   } catch (e) { toast(e.message, 'error'); }
@@ -24758,24 +24765,28 @@ function _fillFormValues(t, values) {
 async function _saveEditFromPanel(d, time) {
   const e = (d.timeEntries || []).find(x => x.id === _tmEditId);
   if (!e) { toast('Apontamento não encontrado', 'error'); return false; }
-  const fr = e.formResponseId ? (formResponses || []).find(x => x.id === e.formResponseId) : null;
-  const t = fr ? formTemplateById(fr.templateId) : null;
-  if (fr && t) {
-    if (!_ffCheckRequired(t, 'time-form-fields')) return false;
-    const upd = await api('/form-responses/' + fr.id, 'PUT', { values: _ffValues, time });
-    const dem = upd.demand; delete upd.demand;
-    formResponses = formResponses.map(x => x.id === fr.id ? upd : x);
-    if (dem) patchDemand(dem);
-  } else if (_tmFormId) {
-    const nt = formTemplateById(_tmFormId);
-    if (!nt || !_ffCheckRequired(nt, 'time-form-fields')) return false;
-    const created = await api('/form-responses', 'POST', { templateId: nt.id, demandId: d.id, values: _ffValues, time, attachTimeEntryId: e.id });
-    const dem = created.demand; delete created.demand;
-    formResponses.push(created);
-    if (dem) patchDemand(dem);
-  } else {
-    const upd = await api('/demands/' + d.id + '/time/' + e.id, 'PUT', time);
-    patchDemand(upd);
+  const items = _tmCollect();
+  if (!items) return false;
+  // Tempo primeiro; depois cada resposta: as existentes atualizam, as novas
+  // entram no apontamento e as tiradas do painel saem (o tempo fica).
+  patchDemand(await api('/demands/' + d.id + '/time/' + e.id, 'PUT', time));
+  for (const it of items.filter(x => x.id)) {
+    const upd = await api('/form-responses/' + it.id, 'PUT', { values: it.values });
+    delete upd.demand;
+    formResponses = formResponses.map(x => x.id === it.id ? upd : x);
+  }
+  const fresh = items.filter(x => !x.id);
+  if (fresh.length) {
+    const created = await api('/form-responses', 'POST', {
+      templateId: fresh[0].templateId, demandId: d.id, values: fresh[0].values,
+      attachTimeEntryId: e.id, more: fresh.slice(1).map(x => ({ templateId: x.templateId, values: x.values }))
+    });
+    _tmTakeCreated(created);
+  }
+  for (const id of _tmRemovedIds) {
+    const res = await api('/form-responses/' + id + '?keepEntry=1', 'DELETE');
+    formResponses = formResponses.filter(x => x.id !== id);
+    if (res?.demand) patchDemand(res.demand);
   }
   return true;
 }
@@ -31575,16 +31586,25 @@ async function duplicateFormTemplate(id) {
    de horas juntas (formResponse.timeEntryId ↔ timeEntry.formResponseId).
    Na lista de Apontamentos aparece só um resumo; o clique abre as respostas
    no mesmo painel. Respostas antigas (sem apontamento) aparecem lá também. */
+// Respostas ligadas a um apontamento (pode ter várias: 1 e-mail + 1 disparo).
+function _entryResponses(e) {
+  if (!e) return [];
+  return (formResponses || [])
+    .filter(r => r.timeEntryId === e.id || r.id === e.formResponseId)
+    .sort((a, b) => (a.submittedAt || '').localeCompare(b.submittedAt || '') || (a.id === e.formResponseId ? -1 : b.id === e.formResponseId ? 1 : 0));
+}
 function _formsResponseCountForDemand(demandId) {
   if (!demandId) return 0;
   return (formResponses || []).filter(r => r.demandId === demandId).length;
 }
 // Linha-resumo do formulário dentro de um apontamento (ou de uma resposta antiga).
-function _apptFormChip(r) {
+// `detail`: vários no mesmo apontamento — o 1º valor ("Disparo") diferencia.
+function _apptFormChip(r, detail) {
   if (!r) return '';
   const t = formTemplateById(r.templateId);
+  const extra = detail === true && t ? _frSummary(t, r.values).split(' · ')[0] : '';
   return `<button type="button" class="appt-form" onclick="openFormResponseView('${r.id}')" title="Ver respostas">
-    <i data-lucide="clipboard-list" class="ic-xs"></i><span class="appt-form-name">${esc(t?.name || 'Formulário excluído')}</span>
+    <i data-lucide="clipboard-list" class="ic-xs"></i><span class="appt-form-name">${esc(t?.name || 'Formulário excluído')}${extra ? ` · ${esc(extra)}` : ''}</span>
   </button>`;
 }
 // Respostas da demanda que não têm apontamento (criadas antes da ligação).
@@ -31613,6 +31633,180 @@ function _legacyFormRows(d) {
    tempo + respostas numa chamada só (POST /form-responses com `time`). */
 let _tmFormId = null; // template escolhido no modal (null = só o tempo)
 let _tmEditId = null; // apontamento sendo editado no painel (null = novo)
+// Várias respostas no mesmo apontamento (1 e-mail + 1 disparo…), em acordeão:
+// _tmItems = [{key, id?, templateId, values}], só a aberta (_tmOpenKey) mostra
+// os campos — os valores dela vivem em _ffValues/_tmFormId até recolher.
+// Recolhida com obrigatório vazio fica sinalizada. _tmRemovedIds: existentes
+// tiradas na edição.
+let _tmItems = [];
+let _tmOpenKey = null;
+let _tmRemovedIds = [];
+let _tmKeySeq = 0;
+const _ffHasAny = v => Object.values(v || {}).some(x => x != null && String(x).trim() !== '' && !(Array.isArray(x) && !x.length));
+const _tmOpen = () => _tmItems.find(x => x.key === _tmOpenKey) || null;
+// Resumo curto de uma resposta: "Disparo · Peças 1 · Artes 1".
+function _frSummary(t, values) {
+  const parts = [];
+  for (const f of (t?.fields || [])) {
+    const v = values?.[f.id];
+    if (v == null || v === '' || (Array.isArray(v) && !v.length)) continue;
+    const lab = val => (f.options || []).find(o => o.value === val)?.label || val;
+    if (f.type === 'select') parts.push(lab(v));
+    else if (f.type === 'multiselect') parts.push((Array.isArray(v) ? v : [v]).map(lab).join(', '));
+    else if (f.type === 'number') parts.push(`${f.label} ${v}`);
+    else parts.push(String(v).slice(0, 40));
+    if (parts.length >= 4) break;
+  }
+  return parts.join(' · ');
+}
+// Obrigatórios vazios de uma resposta (labels).
+function _tmMissing(it) {
+  const t = formTemplateById(it.templateId);
+  return (t?.fields || []).filter(f => {
+    if (!f.required) return false;
+    const v = it.values?.[f.id];
+    return v == null || String(v).trim() === '' || (Array.isArray(v) && !v.length);
+  }).map(f => f.label);
+}
+// Guarda o que está nos campos na resposta aberta.
+function _tmStash() {
+  const it = _tmOpen();
+  if (it) { it.templateId = _tmFormId; it.values = { ..._ffValues }; }
+}
+function _tmHeadHTML(it, i) {
+  const t = formTemplateById(it.templateId);
+  const open = it.key === _tmOpenKey;
+  const sum = _frSummary(t, it.values);
+  const miss = open ? [] : _tmMissing(it);
+  const missTxt = miss.length ? (miss.length > 2 ? `Faltam ${miss.length} campos` : `Falta: ${miss.join(', ')}`) : '';
+  return `<button type="button" class="tfa-head" onclick="tmOpenItem('${it.key}')" aria-expanded="${open}">
+      <span class="tfa-num">${i + 1}</span>
+      <span class="tfa-text">
+        <span class="tfa-name">${esc(t?.name || 'Formulário')}</span>
+        <span class="tfa-sum">${esc(sum || 'Não preenchido')}</span>
+      </span>
+      ${missTxt ? `<span class="tfa-miss"><i data-lucide="alert-circle" class="ic-xs"></i>${esc(missTxt)}</span>` : ''}
+      <i data-lucide="chevron-down" class="ic-xs tfa-chev"></i>
+    </button>
+    <button type="button" class="tfa-del" onclick="tmRemoveItem('${it.key}')" title="Remover esta resposta"><i data-lucide="trash-2" class="ic-xs"></i></button>`;
+}
+function _tmSyncFormUI() {
+  const wrap = $('time-form-wrap'), acc = $('time-form-queue'), pick = $('time-form-pick'), panel = $('time-form-panel');
+  if (!wrap || !acc) return;
+  const multi = _tmItems.length > 1;
+  // Uma resposta só: seletor e campos soltos, como sempre. Duas ou mais:
+  // acordeão, com seletor e campos dentro da aberta.
+  if (multi) {
+    acc.hidden = false;
+    acc.innerHTML = _tmItems.map((it, i) => {
+      const open = it.key === _tmOpenKey;
+      const miss = !open && _tmMissing(it).length;
+      return `<div class="tfa-item${open ? ' is-open' : ''}${miss ? ' is-missing' : ''}" data-key="${it.key}">
+        <div class="tfa-bar">${_tmHeadHTML(it, i)}</div>
+        ${open ? '<div class="tfa-body"></div>' : ''}
+      </div>`;
+    }).join('');
+    const body = acc.querySelector('.tfa-item.is-open .tfa-body');
+    if (body) { body.appendChild(pick); body.appendChild(panel); }
+    paintIcons(acc);
+  } else {
+    acc.hidden = true;
+    acc.innerHTML = '';
+    if (pick.parentElement !== wrap) wrap.appendChild(pick);
+    if (panel.previousElementSibling !== wrap) wrap.after(panel);
+  }
+  const more = $('time-form-more');
+  if (more) more.hidden = !_tmFormId;
+  // Resposta que já existe não troca de formulário (seria outra resposta).
+  wrap.classList.toggle('is-locked', !!_tmOpen()?.id);
+}
+// Só o cabeçalho da aberta, enquanto digita (resumo ao vivo).
+function _tmRefreshHead() {
+  const it = _tmOpen();
+  if (!it || _tmItems.length < 2) return;
+  _tmStash();
+  const bar = document.querySelector(`#time-form-queue .tfa-item[data-key="${it.key}"] .tfa-bar`);
+  if (bar) { bar.innerHTML = _tmHeadHTML(it, _tmItems.indexOf(it)); paintIcons(bar); }
+}
+// Abre os campos de uma resposta no painel (sem mexer na lista).
+function _tmLoadFields(templateId, values) {
+  const t = templateId ? formTemplateById(templateId) : null;
+  _tmFormId = t ? t.id : null;
+  _ffValues = {};
+  const panel = $('time-form-panel');
+  $('time-modal').classList.toggle('has-form', !!t);
+  if ($('time-form-select').value !== (t ? t.id : '')) { $('time-form-select').value = t ? t.id : ''; _syncTimeFormSelect(); }
+  if (!t) { panel.hidden = true; $('time-form-fields').innerHTML = ''; return; }
+  const desc = $('time-form-desc');
+  desc.textContent = t.description || '';
+  desc.hidden = !t.description;
+  _renderFillFields(t, 'time-form-fields');
+  if (values) _fillFormValues(t, values);
+  panel.hidden = false;
+  paintIcons(panel);
+}
+// Recolhe a aberta (sinalizada se incompleta) e abre uma nova, já no mesmo
+// formulário. Não bloqueia: o Registrar é que cobra os obrigatórios.
+function tmAddAnother() {
+  if (!_tmFormId) return;
+  _tmStash();
+  const it = { key: 'n' + (++_tmKeySeq), id: null, templateId: _tmFormId, values: {} };
+  _tmItems.push(it);
+  _tmOpenKey = it.key;
+  _tmLoadFields(it.templateId);
+  _tmSyncFormUI();
+  setTimeout(() => {
+    document.querySelector(`#time-form-queue .tfa-item[data-key="${it.key}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    $('time-form-fields')?.querySelector('input, select')?.focus();
+  }, 60);
+}
+function tmOpenItem(key) {
+  if (key === _tmOpenKey) return;
+  const it = _tmItems.find(x => x.key === key);
+  if (!it) return;
+  _tmStash();
+  _tmOpenKey = key;
+  _tmLoadFields(it.templateId, it.values);
+  _tmSyncFormUI();
+  // Reabrindo uma incompleta: marca os campos que faltam.
+  if (_ffHasAny(it.values) && _tmMissing(it).length) _ffMarkMissing(formTemplateById(it.templateId), 'time-form-fields');
+}
+function tmRemoveItem(key) {
+  const it = _tmItems.find(x => x.key === key);
+  if (!it) return;
+  _tmStash();
+  if (it.id) _tmRemovedIds.push(it.id);
+  const i = _tmItems.indexOf(it);
+  _tmItems.splice(i, 1);
+  if (_tmOpenKey === key) {
+    const next = _tmItems[Math.min(i, _tmItems.length - 1)] || null;
+    _tmOpenKey = next ? next.key : null;
+    _tmLoadFields(next?.templateId || null, next?.values);
+  }
+  _tmSyncFormUI();
+}
+// Todas as respostas do painel. Nova totalmente vazia (com outras junto) é
+// descartada; a 1ª com obrigatório vazio abre e trava o envio (null).
+function _tmCollect() {
+  _tmStash();
+  let items = _tmItems.filter(it => it.templateId && formTemplateById(it.templateId));
+  if (items.length > 1) items = items.filter(it => it.id || _ffHasAny(it.values));
+  const bad = items.find(it => _tmMissing(it).length);
+  if (bad) {
+    if (bad.key !== _tmOpenKey) tmOpenItem(bad.key);
+    const others = items.filter(it => it !== bad && _tmMissing(it).length).length;
+    _ffCheckRequired(formTemplateById(bad.templateId), 'time-form-fields');
+    if (others) toast(`Mais ${others} resposta${others > 1 ? 's' : ''} com campo sem preencher.`, 'warn');
+    return null;
+  }
+  return items.map(it => ({ id: it.id || null, templateId: it.templateId, values: it.values }));
+}
+function _tmTakeCreated(created) {
+  const dem = created.demand; delete created.demand;
+  const more = created.more || []; delete created.more;
+  formResponses.push(created, ...more);
+  if (dem) patchDemand(dem);
+}
 function _renderTimeFormSelect() {
   const wrap = $('time-form-wrap');
   if (!wrap) return;
@@ -31621,32 +31815,45 @@ function _renderTimeFormSelect() {
   $('time-form-select').innerHTML = '<option value="">Nenhum formulário selecionado</option>' +
     list.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('');
 }
+// Troca de formulário no seletor: vale pra resposta aberta (ou cria a 1ª).
 function onTimeFormChange(id) {
   const t = id ? formTemplateById(id) : null;
-  _tmFormId = t ? t.id : null;
-  _ffValues = {};
-  const panel = $('time-form-panel');
-  $('time-modal').classList.toggle('has-form', !!t);
-  if (!t) { panel.hidden = true; $('time-form-fields').innerHTML = ''; return; }
-  if ($('time-form-select').value !== t.id) { $('time-form-select').value = t.id; _syncTimeFormSelect(); }
-  const desc = $('time-form-desc');
-  desc.textContent = t.description || '';
-  desc.hidden = !t.description;
-  _renderFillFields(t, 'time-form-fields');
-  panel.hidden = false;
-  paintIcons(panel);
+  let it = _tmOpen();
+  if (t && !it) { it = { key: 'n' + (++_tmKeySeq), id: null, templateId: t.id, values: {} }; _tmItems.push(it); _tmOpenKey = it.key; }
+  if (!t && it && !it.id) {
+    // "Nenhum formulário": tira a resposta aberta (se for nova).
+    _tmItems = _tmItems.filter(x => x !== it);
+    const next = _tmItems[_tmItems.length - 1] || null;
+    _tmOpenKey = next ? next.key : null;
+    _tmLoadFields(next?.templateId || null, next?.values);
+    _tmSyncFormUI();
+    return;
+  }
+  if (it) { it.templateId = t ? t.id : null; it.values = {}; }
+  _tmLoadFields(t ? t.id : null);
+  _tmSyncFormUI();
   // Leva o começo do formulário pra vista (o tempo continua logo acima).
-  setTimeout(() => panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 30);
+  if (t) setTimeout(() => $('time-form-panel').scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 30);
 }
 function _resetTimeForm() {
+  _tmItems = []; _tmRemovedIds = []; _tmOpenKey = null;
   _renderTimeFormSelect();
-  if ($('time-form-select')) { $('time-form-select').value = ''; _syncTimeFormSelect(); }
-  onTimeFormChange(null);
+  _tmLoadFields(null);
+  _tmSyncFormUI();
 }
 // O select vira dropdown do app (auto-cdrop); valor setado por código precisa
 // refazer o botão visível.
 function _syncTimeFormSelect() {
   if (typeof applyFilterDropdown === 'function' && $('time-form-select')?.nextElementSibling?.classList.contains('filter-cdrop')) applyFilterDropdown('time-form-select');
+}
+// Só marca os obrigatórios vazios (sem aviso nem rolagem).
+function _ffMarkMissing(t, hostId) {
+  const host = document.getElementById(hostId);
+  for (const f of (t?.fields || [])) {
+    if (!f.required) continue;
+    const v = _ffValues[f.id];
+    if (v == null || String(v).trim() === '' || (Array.isArray(v) && !v.length)) host.querySelector(`[data-ff="${f.id}"]`)?.classList.add('is-missing');
+  }
 }
 // Valida os obrigatórios do formulário aberto em `hostId`; marca e rola até o 1º.
 function _ffCheckRequired(t, hostId) {
@@ -31665,15 +31872,14 @@ function _ffCheckRequired(t, hostId) {
 }
 // Envio do modal com formulário: mesmo fim do addTimeEntry.
 async function _submitTimeWithForm(d, time, forStage) {
-  const t = formTemplateById(_tmFormId);
-  if (!t || !_ffCheckRequired(t, 'time-form-fields')) return false;
+  const items = _tmCollect();
+  if (!items || !items.length) return false;
   const created = await api('/form-responses', 'POST', {
-    templateId: t.id, demandId: d.id, values: _ffValues,
+    templateId: items[0].templateId, demandId: d.id, values: items[0].values,
+    more: items.slice(1).map(x => ({ templateId: x.templateId, values: x.values })),
     time: { ...time, ...(forStage ? { stageId: forStage.id } : {}) }
   });
-  const upd = created.demand; delete created.demand;
-  formResponses.push(created);
-  if (upd) patchDemand(upd);
+  _tmTakeCreated(created);
   return true;
 }
 // Link antigo (/demands/:id/forms/:tid ou /forms/new) abre o Registrar tempo.
@@ -31769,6 +31975,7 @@ function _renderFillFields(t, hostId) {
 function _ffSetValue(fieldId, val) {
   _ffValues[fieldId] = val;
   document.querySelector(`.ff-field[data-ff="${fieldId}"]`)?.classList.remove('is-missing');
+  if (document.querySelector(`#time-form-fields [data-ff="${fieldId}"]`)) _tmRefreshHead();
 }
 function _ffToggleMulti(fieldId, val, on) {
   const cur = Array.isArray(_ffValues[fieldId]) ? _ffValues[fieldId] : [];
@@ -31776,6 +31983,7 @@ function _ffToggleMulti(fieldId, val, on) {
   if (on) set.add(val); else set.delete(val);
   _ffValues[fieldId] = [...set];
   document.querySelector(`.ff-field[data-ff="${fieldId}"]`)?.classList.remove('is-missing');
+  if (document.querySelector(`#time-form-fields [data-ff="${fieldId}"]`)) _tmRefreshHead();
 }
 let _ffSending = false;
 async function submitFormResponse() {

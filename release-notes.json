@@ -1,5 +1,16 @@
 [
   {
+    "id": "2026-11-24-varios-formularios-no-apontamento",
+    "date": "2026-11-24",
+    "title": "Vários formulários no mesmo apontamento",
+    "highlights": [
+      "No Registrar tempo, depois de preencher o formulário, use Preencher outro para registrar mais uma entrega no mesmo apontamento (por exemplo, 1 e-mail e 1 disparo em 30 minutos).",
+      "As respostas aparecem em seções que abrem e fecham: clique numa delas para ver ou corrigir os campos.",
+      "Seção com campo obrigatório vazio fica marcada em vermelho, e o Registrar abre a primeira que falta completar.",
+      "Na lista de Apontamentos, cada resposta aparece com o formulário e o material, e editar o apontamento traz todas elas."
+    ]
+  },
+  {
     "id": "2026-11-24-briefing-email-em-blocos",
     "date": "2026-11-24",
     "title": "E-mail em blocos no briefing",

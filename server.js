@@ -7858,6 +7858,20 @@ app.post('/api/form-responses', requireAuth, (req, res) => {
   const { values, missingRequired, errors } = sanitizeResponseValues(template, b.values);
   if (missingRequired.length) return res.status(400).json({ error: `Campos obrigatórios: ${missingRequired.join(', ')}` });
   if (errors.length) return res.status(400).json({ error: errors[0] });
+  // `more`: outras respostas no MESMO apontamento (ex.: 1 e-mail + 1 disparo
+  // em 30 min). Tudo validado antes de gravar qualquer coisa.
+  const more = [];
+  if (Array.isArray(b.more) && b.more.length) {
+    if (!demandId || (!b.time && !b.attachTimeEntryId)) return res.status(400).json({ error: 'Várias respostas só valem num apontamento' });
+    for (const m of b.more.slice(0, 50)) {
+      const mt = (db.formTemplates || []).find(t => t.id === m?.templateId && notDeleted(t));
+      if (!mt) return res.status(404).json({ error: 'Formulário não encontrado' });
+      const sv = sanitizeResponseValues(mt, m.values);
+      if (sv.missingRequired.length) return res.status(400).json({ error: `Campos obrigatórios (${mt.name}): ${sv.missingRequired.join(', ')}` });
+      if (sv.errors.length) return res.status(400).json({ error: sv.errors[0] });
+      more.push({ template: mt, values: sv.values });
+    }
+  }
   // Formulário preenchido numa demanda vira apontamento: `time` traz a duração
   // (mesmas regras do POST /time) e a resposta fica ligada à entrada de horas.
   let hours = 0;
@@ -7875,8 +7889,7 @@ app.post('/api/form-responses', requireAuth, (req, res) => {
     attach = (dd.timeEntries || []).find(x => x.id === b.attachTimeEntryId);
     if (!attach) return res.status(404).json({ error: 'Apontamento não encontrado' });
     if (attach.userId !== req.user.id && !req.user.isAdmin && !req.user.isModerator) return res.status(403).json({ error: 'Você só pode editar seus próprios apontamentos' });
-    const prev = attach.formResponseId && (db.formResponses || []).find(x => x.id === attach.formResponseId && notDeleted(x));
-    if (prev) return res.status(400).json({ error: 'Este apontamento já tem um formulário' });
+    // Um apontamento pode ter várias respostas: as novas só se somam.
   }
   const r = {
     id: uid(),
@@ -7898,7 +7911,8 @@ app.post('/api/form-responses', requireAuth, (req, res) => {
       attach.editedAt = nowISO();
       addHistory(d, req.user.id, 'time_edited', { hours: attach.hours, oldHours, stageId: attach.stageId });
     }
-    attach.formResponseId = r.id;
+    const prev = attach.formResponseId && (db.formResponses || []).find(x => x.id === attach.formResponseId && notDeleted(x));
+    if (!prev) attach.formResponseId = r.id;
     r.timeEntryId = attach.id;
   } else if (b.time) {
     d = (db.demands || []).find(x => x.id === demandId);
@@ -7913,11 +7927,19 @@ app.post('/api/form-responses', requireAuth, (req, res) => {
     addHistory(d, req.user.id, 'time_added', { hours: entry.hours, stageId: entry.stageId, form: template.name });
   }
   if (!Array.isArray(db.formResponses)) db.formResponses = [];
-  db.formResponses.push(r);
-  saveEntity('formResponses', r);
+  const extra = more.map(m => ({
+    id: uid(), workspaceId, templateId: m.template.id, demandId, values: m.values,
+    timeEntryId: r.timeEntryId, submittedBy: req.user.id, submittedAt: r.submittedAt
+  }));
+  for (const x of [r, ...extra]) {
+    db.formResponses.push(x);
+    saveEntity('formResponses', x);
+    broadcastChange('formResponse', 'create', { id: x.id, workspaceId: x.workspaceId, demandId: x.demandId, byUserId: req.user.id });
+  }
   if (d) { saveEntity('demands', d); emitDemand(req, d); }
-  broadcastChange('formResponse', 'create', { id: r.id, workspaceId: r.workspaceId, demandId: r.demandId, byUserId: req.user.id });
-  res.status(201).json(d ? { ...r, demand: d } : r);
+  const out = d ? { ...r, demand: d } : { ...r };
+  if (extra.length) out.more = extra;
+  res.status(201).json(out);
 });
 
 // Editar respostas (pelo painel do apontamento). `time` atualiza a entrada de
@@ -7961,12 +7983,19 @@ app.delete('/api/form-responses/:id', requireAuth, (req, res) => {
   if (!r || !canAccessWs(req.user, r.workspaceId)) return res.status(404).json({ error: 'Resposta não encontrada' });
   if (r.submittedBy !== req.user.id && !req.user.isAdmin) return res.status(403).json({ error: 'Sem permissão pra excluir esta resposta' });
   softDelete('formResponses', r, req.user.id);
-  // Resposta e apontamento são a mesma coisa: some um, some o outro.
+  // Última resposta do apontamento: some uma, some o outro (a não ser com
+  // ?keepEntry=1, quando o painel de edição tira o formulário e mantém o
+  // tempo). Com outras respostas no mesmo apontamento, ele fica.
   let d = null;
   if (r.timeEntryId && r.demandId) {
     d = (db.demands || []).find(x => x.id === r.demandId);
     const e = d && (d.timeEntries || []).find(x => x.id === r.timeEntryId);
-    if (e) {
+    const siblings = e ? (db.formResponses || []).filter(x => x.timeEntryId === e.id && x.id !== r.id && notDeleted(x)) : [];
+    if (e && (siblings.length || req.query.keepEntry === '1')) {
+      if (e.formResponseId === r.id) e.formResponseId = siblings[0]?.id || null;
+      saveEntity('demands', d);
+      emitDemand(req, d);
+    } else if (e) {
       addHistory(d, req.user.id, 'time_removed', { hours: e.hours, stageId: e.stageId });
       d.timeEntries = d.timeEntries.filter(x => x.id !== e.id);
       saveEntity('demands', d);
@@ -11355,9 +11384,9 @@ app.delete('/api/demands/:id/time/:entryId', requireAuth, (req, res) => {
   d.timeEntries = d.timeEntries.filter(x => x.id !== req.params.entryId);
   saveEntity('demands', d);
   emitDemand(req, d);
-  // Apontamento de formulário: a resposta vai junto.
-  const fr = e?.formResponseId && (db.formResponses || []).find(x => x.id === e.formResponseId && notDeleted(x));
-  if (fr) {
+  // Apontamento de formulário: as respostas vão junto (pode ter várias).
+  const frs = e ? (db.formResponses || []).filter(x => notDeleted(x) && (x.id === e.formResponseId || (x.timeEntryId === e.id && x.demandId === d.id))) : [];
+  for (const fr of frs) {
     softDelete('formResponses', fr, req.user.id);
     broadcastChange('formResponse', 'delete', { id: fr.id, workspaceId: fr.workspaceId, demandId: fr.demandId, byUserId: req.user.id });
   }
