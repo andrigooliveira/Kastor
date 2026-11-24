@@ -105,7 +105,7 @@
   /* ── Navegação lateral ── */
   function pieceSummary(p) {
     const n = p.telas.length;
-    return [p.formatos.join(', ') || 'sem formato', n > 1 ? n + ' telas' : ''].filter(Boolean).join(' · ');
+    return [p.formatos.join(', ') || 'sem formato', n > 1 ? n + ' ' + BS.unitOf(p).p : ''].filter(Boolean).join(' · ');
   }
   function renderNav() {
     const chk = BS.check(S.data, { client: client(), blocks: S.blocks });
@@ -312,13 +312,15 @@
     // Telas (no carrossel/story, o que é geral vem antes delas)
     const multi = t.telas.max > 1;
     const hHead = h; h = '';
-    h += `<section class="bf-card"><h2 class="bf-card-title">${n > 1 || t.telas.max > 1 ? 'Telas e textos' : 'Textos e imagem'}</h2>`;
+    const U = BS.unitOf(p);
+    const Ucap = U.p.charAt(0).toUpperCase() + U.p.slice(1);
+    h += `<section class="bf-card"><h2 class="bf-card-title">${n > 1 || t.telas.max > 1 ? Ucap + ' e textos' : 'Textos e imagem'}</h2>`;
     if (t.telas.max > 1) {
-      h += `<div class="bf-screens-bar"><span class="bf-label" style="margin:0">Quantas telas</span>
+      h += `<div class="bf-screens-bar"><span class="bf-label" style="margin:0">${U.g === 'f' ? 'Quantas' : 'Quantos'} ${U.p}</span>
         <span class="bf-stepper"><button type="button" ${n <= t.telas.min ? 'disabled' : ''} data-a="${act(async () => {
           const last = p.telas[n - 1];
           const hasContent = (last.titulo.texto || last.apoio.texto || last.informacoes || last.imagens.length);
-          if (hasContent && !(await confirmBox('Remover a última tela?', 'Ela já tem texto ou imagem.', 'Remover'))) return;
+          if (hasContent && !(await confirmBox(U.g === 'f' ? `Remover a última ${U.s}?` : `Remover o último ${U.s}?`, `${U.g === 'f' ? 'Ela' : 'Ele'} já tem texto ou imagem.`, 'Remover'))) return;
           p.telas.pop(); BS.syncCtas(p); changed({ full: true }); renderAll();
         })}">−</button><span>${n}</span><button type="button" ${n >= t.telas.max ? 'disabled' : ''} data-a="${act(() => {
           const prevLast = p.telas[n - 1];
@@ -338,8 +340,8 @@
         const prev = p.telas[ti - 1];
         const keep = tela.id;
         const cp = JSON.parse(JSON.stringify(prev)); cp.id = keep;
-        p.telas[ti] = cp; changed({ full: true }); toast('Copiado da tela anterior');
-      })}"><i data-lucide="copy-plus" class="ic-xs"></i>Repetir o conteúdo da tela anterior</button>`;
+        p.telas[ti] = cp; changed({ full: true }); toast(`Copiado ${U.g === 'f' ? 'da' : 'do'} ${U.s} anterior`);
+      })}"><i data-lucide="copy-plus" class="ic-xs"></i>Repetir o conteúdo ${U.g === 'f' ? 'da' : 'do'} ${U.s} anterior</button>`;
     }
     h += copyField('Título', tela.titulo, { required: true, placeholder: 'Ex.: SEU NOVO ENDEREÇO EM HORTOLÂNDIA' });
     h += copyField('Texto de apoio', tela.apoio, { placeholder: 'Opcional', multiline: true, allowNone: true });
@@ -351,7 +353,7 @@
 
     // Detalhes da peça (valem para todas as telas)
     h += multi
-      ? `<section class="bf-card"><h2 class="bf-card-title">Vale para todas as telas</h2><p class="bf-exact"><i data-lucide="layers" class="ic-xs"></i>Legenda, palavras, oferta e texto legal são do ${esc(t.label.toLowerCase())} inteiro, não de cada tela.</p>`
+      ? `<section class="bf-card"><h2 class="bf-card-title">${U.g === 'f' ? 'Vale para todas as' : 'Vale para todos os'} ${U.p}</h2><p class="bf-exact"><i data-lucide="layers" class="ic-xs"></i>${t.fields.includes('legenda') ? 'Legenda, palavras' : t.fields.includes('assunto') ? 'Assunto, palavras' : 'Palavras'}, oferta e texto legal são do ${esc(t.label.toLowerCase())} inteiro, não de cada ${U.s}.</p>`
       : `<section class="bf-card"><h2 class="bf-card-title">Detalhes da peça</h2>`;
     for (const fid of t.fields) {
       const def = BS.PIECE_EXTRA_FIELDS[fid];

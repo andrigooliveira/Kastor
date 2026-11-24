@@ -55,7 +55,7 @@
     { id: 'banner',    label: 'Banner',    icon: 'panels-top-left',    desc: 'Display em vários tamanhos',
       formats: ['300x250', '728x90', '160x600', '300x600', '970x250', '320x50', '1.91x1'], defaultFormats: ['300x250', '728x90'], telas: { min: 1, max: 1, def: 1 }, fields: [] },
     { id: 'email',     label: 'E-mail',    icon: 'mail',               desc: 'E-mail marketing',
-      formats: ['email'], defaultFormats: ['email'], telas: { min: 1, max: 1, def: 1 }, fields: ['assunto', 'preCabecalho'] },
+      formats: ['email'], defaultFormats: ['email'], telas: { min: 1, max: 12, def: 1 }, unit: { s: 'bloco', p: 'blocos', g: 'm' }, fields: ['assunto', 'preCabecalho'] },
     { id: 'whatsapp',  label: 'WhatsApp',  icon: 'message-circle',     desc: 'Imagem de disparo',
       formats: ['disparo'], defaultFormats: ['disparo'], telas: { min: 1, max: 1, def: 1 }, fields: ['mensagem'] }
   ];
@@ -70,6 +70,16 @@
   function useCatalog(c, fn) { const prev = ACTIVE; setCatalog(c); try { return fn(); } finally { ACTIVE = prev; } }
   const pieceType = id => TYPES().find(t => t.id === id) || DEFAULT_PIECE_TYPES.find(t => t.id === id) || TYPES()[0];
   const fmtInfo = k => FMT()[k] || DEFAULT_FORMATS[k] || { label: k, size: '' };
+  /* Como se chama cada parte da peça: tela (carrossel, story) ou bloco (e-mail).
+     g = gênero, pra concordar ("Quantas telas" / "Quantos blocos"). */
+  const TELA_UNIT = { s: 'tela', p: 'telas', g: 'f' };
+  function unitOf(pOrType) {
+    const t = typeof pOrType === 'string' ? pieceType(pOrType) : (pOrType && pOrType.telas && !Array.isArray(pOrType.telas) ? pOrType : pieceType(pOrType && pOrType.tipo));
+    if (t && t.unit && t.unit.s) return t.unit;
+    if (t && t.id === 'email') return { s: 'bloco', p: 'blocos', g: 'm' };
+    return TELA_UNIT;
+  }
+  const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
   /* formatos.json do agente → catálogo. Valida tudo: o que vier errado fica
      de fora (e entra em errors); sem formato ou tipo válido, devolve null. */
   function catalogFromAgent(raw) {
@@ -96,9 +106,11 @@
       const min = Math.max(1, Math.min(20, Number(tl.min) || 1));
       const max = Math.max(min, Math.min(20, Number(tl.max) || min));
       const d = Math.max(min, Math.min(max, Number(tl.padrao) || min));
+      const us = str(tl.nome, 20).toLowerCase();
+      const unit = us ? { s: us, p: str(tl.nome_plural, 24).toLowerCase() || us + 's', g: /^(f|m)$/.test(tl.genero) ? tl.genero : (/a$/.test(us) ? 'f' : 'm') } : (id === 'email' ? { s: 'bloco', p: 'blocos', g: 'm' } : null);
       types.push({
         id, label: str(x.nome, 60) || id, icon: str(x.icone, 40).replace(/[^a-z0-9-]/g, '') || 'image', desc: str(x.descricao, 120),
-        formats: fm, defaultFormats: def.length ? def : [fm[0]], telas: { min, max, def: d },
+        formats: fm, defaultFormats: def.length ? def : [fm[0]], telas: { min, max, def: d }, unit,
         fields: (Array.isArray(x.campos) ? x.campos : []).filter(c => KNOWN.includes(c))
       });
     });
@@ -277,9 +289,10 @@
   }
   function telaLabel(p, i) {
     const n = p.telas.length;
-    if (n === 1) return 'Tela única';
+    const u = unitOf(p);
+    if (n === 1) return cap(u.s) + (u.g === 'f' ? ' única' : ' único');
     if (p.tipo === 'carrossel') return i === 0 ? 'Capa' : (i === n - 1 ? `Tela ${i + 1} · fechamento` : `Tela ${i + 1}`);
-    return `Tela ${i + 1}`;
+    return `${cap(u.s)} ${i + 1}`;
   }
   function pieceTitle(p, i) {
     const t = pieceType(p.tipo);
@@ -380,6 +393,7 @@
           tipo: t.label,
           nome: nn(p.nome),
           formatos: p.formatos.slice(),
+          unidade: unitOf(p).s,
           campos_cliente: perPiece[pi],
           orientacao: nn(p.orientacao),
           tamanhos: Object.fromEntries(p.formatos.map(f => [f, formatSize(f, client, ctx.blocks)])),
@@ -481,7 +495,7 @@
         ['Tipo de peça', val(t.label)],
         ['Formatos', val(p.formatos.map(f => `${f} (${formatSize(f, client, ctx.blocks)})`).join(', '))]
       ];
-      if (multi) rows.push([p.tipo === 'carrossel' ? 'Quantos cards' : 'Telas', val(String(p.telas.length))]);
+      if (multi) { const u = unitOf(p); rows.push([p.tipo === 'carrossel' ? 'Quantos cards' : (u.g === 'f' ? 'Quantas ' : 'Quantos ') + u.p, val(String(p.telas.length))]); }
       if (block) for (const f of block.fields) {
         const cc = p.camposCliente || {};
         if (!visible(f, cc)) continue;
@@ -735,6 +749,8 @@
       };
       if (Array.isArray(p.telas) && p.telas.length) {
         piece.telas = p.telas.map(mkTela);
+      } else if (tid === 'email' && Array.isArray((p.email && p.email.blocos) || p.blocos) && ((p.email && p.email.blocos) || p.blocos).length) {
+        piece.telas = ((p.email && p.email.blocos) || p.blocos).map(bl => mkTela({ titulo: bl.titulo, apoio: bl.texto != null ? bl.texto : bl.corpo, informacoes: bl.informacoes, cta: bl.cta != null ? bl.cta : bl.botao, imagens: bl.imagens }));
       } else if (Array.isArray(p.cards) && p.cards.length && tid === 'carrossel') {
         piece.telas = p.cards.map(c => mkTela({ titulo: c.titulo, apoio: c.texto, informacoes: c.informacoes, imagens: c.imagens }));
         const first = piece.telas[0], last = piece.telas[piece.telas.length - 1];
@@ -744,12 +760,12 @@
       } else {
         const src = Object.assign({}, p);
         if (p.email) { src.titulo = p.titulo || p.email.titulo; src.apoio = p.apoio || p.email.corpo; src.cta = p.cta || p.email.botao; }
-        const n = tid === 'carrossel' ? Math.max(t.telas.min, Math.min(t.telas.max, Number(p.quantos_cards) || t.telas.def)) : 1;
+        const n = t.telas.max > 1 ? Math.max(t.telas.min, Math.min(t.telas.max, Number(p.quantos_cards || p.quantos_blocos) || t.telas.def)) : 1;
         piece.telas = [mkTela(src)];
         for (let i = 1; i < n; i++) piece.telas.push(newTela());
         if (n > 1) { piece.telas[n - 1].cta = piece.telas[0].cta; piece.telas[0].cta = emptyCopy(); }
       }
-      if (piece.telas.length > t.telas.max) { warnings.push(`${name}: ${t.label} aceita até ${t.telas.max} telas; as demais ficaram de fora.`); piece.telas = piece.telas.slice(0, t.telas.max); }
+      if (piece.telas.length > t.telas.max) { warnings.push(`${name}: ${t.label} aceita até ${t.telas.max} ${unitOf(t).p}; os demais ficaram de fora.`); piece.telas = piece.telas.slice(0, t.telas.max); }
       while (piece.telas.length < t.telas.min) piece.telas.push(newTela());
       syncCtas(piece);
       // O que não tem campo próprio vai para a observação da peça
@@ -826,7 +842,7 @@
     [/^an[uú]ncio meta$/, 'meta'],
     [/^an[uú]ncio google$/, 'google'],
     [/^notas da copy$/, 'notas'],
-    [/^(capa|tela \d+|tela [uú]nica)/, 'tela']
+    [/^(capa|tela \d+|tela [uú]nica|bloco \d+|bloco [uú]nico)/, 'tela']
   ];
   function itemsToAgentJson(items) {
     const j = { versao: 1, cliente: null, campos_cliente: {}, referencias: {}, pecas: [] };
@@ -875,7 +891,7 @@
       }
       if (telaKeys[k]) { const tg = target(); tg[telaKeys[k]] = telaKeys[k] === 'informacoes' ? v.map(x => x.replace(/^[•\-–]\s*/, '')) : one; return true; }
       const pk = {
-        'tipo de peca': 'tipo', 'formatos': 'formatos', 'quantos cards': 'quantos_cards', 'telas': 'quantos_cards',
+        'tipo de peca': 'tipo', 'formatos': 'formatos', 'quantos cards': 'quantos_cards', 'telas': 'quantos_cards', 'quantas telas': 'quantos_cards', 'quantos blocos': 'quantos_cards',
         'oferta / condicao': 'oferta', 'validade da oferta': 'validade', 'texto legal': 'legal',
         'palavras que precisam aparecer': 'obrigatorias', 'precisa aparecer': 'obrigatorias',
         'palavras ou assuntos proibidos': 'proibidas', 'proibido': 'proibidas', 'observacao': 'observacao',
@@ -948,7 +964,7 @@
 
   return {
     VERSION, FORMATS: DEFAULT_FORMATS, PIECE_TYPES: DEFAULT_PIECE_TYPES, formats: FMT, pieceTypes: TYPES, fmtInfo, setCatalog, useCatalog, catalogFromAgent, PIECE_EXTRA_FIELDS, CAMPAIGN_GROUPS, CLIENT_BLOCKS, IMAGE_TYPES, IMAGE_USES, MONTHS,
-    pieceType, clientSigla, clientBlock, visible, formatSize, newBriefing, newPiece, newTela, syncCtas, telaLabel, pieceTitle,
+    pieceType, unitOf, clientSigla, clientBlock, visible, formatSize, newBriefing, newPiece, newTela, syncCtas, telaLabel, pieceTitle,
     check, toAgentJson, toHtml, docModel, isoToBr, copyFilled, normalize, fromAgentJson, fromDocxXml, docxXmlToItems, itemsToAgentJson
   };
 });

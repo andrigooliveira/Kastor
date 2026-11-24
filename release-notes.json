@@ -1,5 +1,18 @@
 [
   {
+    "id": "2026-11-24-briefing-email-em-blocos",
+    "date": "2026-11-24",
+    "title": "E-mail em blocos no briefing",
+    "highlights": [
+      "Na peça de e-mail, escolha quantos blocos ele tem, como as telas do carrossel. Cada bloco tem o próprio título, texto, informações, botão e imagens.",
+      "Assunto, pré-cabeçalho, oferta e texto legal continuam valendo para o e-mail inteiro.",
+      "O Word e o arquivo para o Agente de Criação saem com os blocos em ordem, e a importação também entende briefings de e-mail em blocos."
+    ],
+    "hideFor": [
+      "freelancer"
+    ]
+  },
+  {
     "id": "2026-11-24-listas-importar-planilha",
     "date": "2026-11-24",
     "title": "Listas de tarefas: importar de uma planilha",
