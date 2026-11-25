@@ -11989,10 +11989,17 @@ app.delete('/api/demands/:id/checklist/:itemId', requireAuth, (req, res) => {
 /* ── AGENDA / SCHEDULES ──
    Bloco = (userId, demandId, date YYYY-MM-DD, startMin, endMin).
    Minutos a partir da meia-noite — sem fuso horário, simples e robusto.
-   Permissão: dono OU admin pode criar/editar/excluir; visualização é livre
-   pra qualquer autenticado dentro do workspace. */
+   Permissão: o próprio usuário OU alguém estritamente acima dele na hierarquia
+   (Dono > Admin > Moderador > Membro); visualização é livre pra qualquer
+   autenticado dentro do workspace. */
 function getSchedule(id) { return db.schedules.find(s => s.id === id); }
-function canEditSchedule(user, s) { return user.isAdmin || s.userId === user.id; }
+function canEditSchedule(user, s) {
+  if (!user || !s) return false;
+  if (tenancy.roleRank(user) <= tenancy.ROLE_RANK.free) return false;
+  if (s.userId === user.id) return true;
+  const target = db.users.find(u => u.id === s.userId);
+  return target ? tenancy.canManageSchedule(user, target) : !!user.isAdmin;
+}
 function sanitizeScheduleBody(b) {
   const date = String(b.date || '').match(/^\d{4}-\d{2}-\d{2}$/) ? b.date : null;
   const startMin = Number.isInteger(Number(b.startMin)) ? Math.max(0, Math.min(1439, Number(b.startMin))) : null;
@@ -12193,11 +12200,11 @@ function _nthWeekdayOfMonth(year, month, dow, nth) {
 app.post('/api/schedules', requireAuth, (req, res) => {
   const b = req.body || {};
   const userId = b.userId || req.user.id;
-  if (userId !== req.user.id && !req.user.isAdmin) {
-    return res.status(403).json({ error: 'Só admins podem agendar pra outros usuários.' });
-  }
   const user = db.users.find(u => u.id === userId);
   if (!user) return res.status(400).json({ error: 'Usuário inválido' });
+  if (!tenancy.canManageSchedule(req.user, user)) {
+    return res.status(403).json({ error: 'Sem permissão para agendar na agenda deste usuário.' });
+  }
   const fields = sanitizeScheduleBody(b) || (!b.demandId && sanitizeScheduleSpan(b) ? { date: b.date } : null);
   if (!fields) return res.status(400).json({ error: 'Data e horários inválidos (endMin deve ser > startMin).' });
 
@@ -12301,12 +12308,13 @@ app.post('/api/schedules', requireAuth, (req, res) => {
 app.put('/api/schedules/:id', requireAuth, (req, res) => {
   const s = getSchedule(req.params.id);
   if (!s || !canAccessWs(req.user, s.workspaceId)) return res.status(404).json({ error: 'Agendamento não encontrado' });
-  if (!canEditSchedule(req.user, s)) return res.status(403).json({ error: 'Você só edita os próprios agendamentos.' });
+  if (!canEditSchedule(req.user, s)) return res.status(403).json({ error: 'Sem permissão para editar este agendamento.' });
   const b = req.body || {};
   // Troca demanda ou converte livre → demanda
   if (b.demandId && b.demandId !== s.demandId) {
     const d = db.demands.find(x => x.id === b.demandId);
     if (!d) return res.status(400).json({ error: 'Demanda inválida' });
+    if (!canAccessWs(req.user, d.workspaceId)) return res.status(403).json({ error: 'Sem acesso ao workspace da demanda' });
     s.demandId = d.id;
     s.workspaceId = d.workspaceId;
     // Ao virar bloco vinculado, limpa campos exclusivos de livre.
@@ -12370,8 +12378,8 @@ app.put('/api/schedules/:id', requireAuth, (req, res) => {
 });
 app.delete('/api/schedules/:id', requireAuth, (req, res) => {
   const s = getSchedule(req.params.id);
-  if (!s) return res.status(404).json({ error: 'Agendamento não encontrado' });
-  if (!canEditSchedule(req.user, s)) return res.status(403).json({ error: 'Você só remove os próprios agendamentos.' });
+  if (!s || !canAccessWs(req.user, s.workspaceId)) return res.status(404).json({ error: 'Agendamento não encontrado' });
+  if (!canEditSchedule(req.user, s)) return res.status(403).json({ error: 'Sem permissão para excluir este agendamento.' });
   const wsId = s.workspaceId;
   const scope = String(req.query.scope || 'one');
   // scope=series: exclui todos os blocos com mesmo recurrenceGroupId; futuros:
@@ -12380,7 +12388,7 @@ app.delete('/api/schedules/:id', requireAuth, (req, res) => {
     const gid = s.recurrenceGroupId;
     const cutoff = scope === 'future' ? s.date : null;
     const doomed = db.schedules.filter(x =>
-      x.recurrenceGroupId === gid && canEditSchedule(req.user, x) &&
+      x.recurrenceGroupId === gid && canAccessWs(req.user, x.workspaceId) && canEditSchedule(req.user, x) &&
       (cutoff ? x.date >= cutoff : true));
     const ids = new Set(doomed.map(x => x.id));
     db.schedules = db.schedules.filter(x => !ids.has(x.id));
@@ -12389,7 +12397,7 @@ app.delete('/api/schedules/:id', requireAuth, (req, res) => {
     return res.json({ ok: true, deleted: doomed.length });
   }
   if (s.spanGroupId) {
-    const doomed = db.schedules.filter(x => x.spanGroupId === s.spanGroupId && canEditSchedule(req.user, x));
+    const doomed = db.schedules.filter(x => x.spanGroupId === s.spanGroupId && canAccessWs(req.user, x.workspaceId) && canEditSchedule(req.user, x));
     const ids = new Set(doomed.map(x => x.id));
     db.schedules = db.schedules.filter(x => !ids.has(x.id));
     doomed.forEach(x => removeEntity('schedules', x.id));

@@ -40779,6 +40779,25 @@ function agendaHHMMtoMins(s) {
   const [h, m] = (s || '').split(':').map(Number);
   return (h || 0) * 60 + (m || 0);
 }
+const SCHEDULE_ROLE_RANK = { owner: 4, admin: 3, mod: 2, equipe: 1, free: 0 };
+function scheduleRoleRank(u) {
+  if (!u) return -1;
+  if (u.orgRole && SCHEDULE_ROLE_RANK[u.orgRole] !== undefined) return SCHEDULE_ROLE_RANK[u.orgRole];
+  if (u.isOwner) return SCHEDULE_ROLE_RANK.owner;
+  if (u.isAdmin) return SCHEDULE_ROLE_RANK.admin;
+  if (u.isModerator) return SCHEDULE_ROLE_RANK.mod;
+  if (u.isFreelancer) return SCHEDULE_ROLE_RANK.free;
+  return SCHEDULE_ROLE_RANK.equipe;
+}
+function canEditUserSchedule(targetUserId) {
+  if (!me || !targetUserId) return false;
+  const myRank = scheduleRoleRank(me);
+  if (myRank <= SCHEDULE_ROLE_RANK.free) return false;
+  if (targetUserId === me.id) return true;
+  if (myRank <= SCHEDULE_ROLE_RANK.equipe) return false;
+  const target = userById(targetUserId);
+  return target ? myRank > scheduleRoleRank(target) : !!me.isAdmin;
+}
 function agendaInit() {
   if (!agendaUserId) agendaUserId = me?.id || null;
   if (!agendaWeekStart) agendaWeekStart = agendaWeekStartFor(new Date());
@@ -41347,7 +41366,7 @@ function _aglHm(m) { return `${String(Math.floor(m / 60)).padStart(2, '0')}:${St
 /* Blocos (agendados + Google) e prazos de uma pessoa num dia, já em HTML.
    gcals acumula os eventos do Google pra ligar o clique depois. */
 function _aglDayParts(userId, ymd, gcals) {
-  const canEdit = !!(me && (me.isAdmin || userId === me.id));
+  const canEdit = canEditUserSchedule(userId);
   const items = [];
   schedules.filter(s => s.userId === userId && s.date === ymd).forEach(s => {
     const isFree = !s.demandId;
@@ -41483,7 +41502,7 @@ function _agendaSyncHint(wrap, view) {
 }
 // Tudo de uma pessoa num dia, já ordenado: dia inteiro → prazos → horários.
 function _agmDayItems(userId, ymd) {
-  const canEdit = !!(me && (me.isAdmin || userId === me.id));
+  const canEdit = canEditUserSchedule(userId);
   const items = [];
   (googleEventsForUser[userId] || []).forEach(ev => {
     if (!ev || !ev.start || ev.selfResponseStatus === 'declined') return;
@@ -41534,7 +41553,7 @@ function _agmItemHtml(it) {
 }
 function buildAgendaMonth(wrap, userId, monthStart) {
   _agmItems = {};
-  const canEdit = !!(me && (me.isAdmin || userId === me.id));
+  const canEdit = canEditUserSchedule(userId);
   const days = agendaMonthDays();
   const todayYmd = agendaYmd(new Date());
   const m = monthStart.getMonth();
@@ -41649,7 +41668,7 @@ function agmOpenPopover(userId, ymd, cell) {
   agmClosePopover();
   const day = new Date(ymd + 'T00:00:00');
   const items = _agmDayItems(userId, ymd);
-  const canEdit = !!(me && (me.isAdmin || userId === me.id));
+  const canEdit = canEditUserSchedule(userId);
   const rows = items.map(it => {
     _agmItems[it.id] = it;
     const when = it.allDay ? 'Dia todo' : it.kind === 'due' ? 'Prazo' : `${_aglHm(it.start)}<small>${_aglHm(it.end)}</small>`;
@@ -42197,7 +42216,7 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
     block.style.gridColumn = `${dayCol.gridCol} / ${dayCol.gridCol + 1}`;
     if (totalCols > 1) block.style.cssText += laneStyle(myCol, totalCols);
     block.style.setProperty('--block-color', color);
-    const canEdit = !!(me && (me.isAdmin || s.userId === me.id));
+    const canEdit = canEditUserSchedule(s.userId);
     const actions = canEdit ? `
       <div class="agenda-block-actions">
         <button class="agenda-block-action" title="Editar" data-action="edit"><i data-lucide="pencil" class="ic-xs"></i></button>
@@ -42237,7 +42256,7 @@ function buildAgendaGrid(wrap, agendaUserIdLocal, days, opts) {
       }
       if (!_agendaDrag || !_agendaDrag.moved) {
         if (demand) showDetail(demand.id);
-        else if (isFree) openScheduleModal(s.id); // clique em bloco livre abre edição
+        else if (isFree && canEdit) openScheduleModal(s.id); // clique em bloco livre abre edição
       }
     });
     grid.appendChild(block);
@@ -42559,7 +42578,7 @@ function onAgendaCellMouseDown(e) {
   const grid = cell.closest('.agenda-grid');
   // Célula do modo Time carrega userId próprio; individual pega do grid.
   const targetUserId = cell.dataset.userId || grid?.dataset.userId || agendaUserId;
-  if (me && !me.isAdmin && targetUserId !== me.id) return;
+  if (!canEditUserSchedule(targetUserId)) return;
   e.preventDefault();
   const date = cell.dataset.date;
   const startMin = agendaMinFromY(cell, e.clientY);
@@ -43004,10 +43023,15 @@ function pickScheduleKind(k) {
 }
 
 function openScheduleModal(id, preset) {
+  const s = id ? schedules.find(x => x.id === id) : null;
+  const ownerUid = s ? s.userId : (preset?.userId || agendaUserId || me?.id);
+  if (!canEditUserSchedule(ownerUid)) {
+    toast('Sem permissão para alterar a agenda deste usuário.', 'warn');
+    return;
+  }
   editingScheduleId = id || null;
   _scheduleRoutePreset = id ? null : (preset || null);
   _schedulePresetUserId = preset?.userId || null;
-  const s = id ? schedules.find(x => x.id === id) : null;
   $('schedule-modal-title').textContent = s ? 'Editar bloco' : 'Agendar bloco';
   // Detecta modo: bloco existente sem demandId → free; caso contrário demand.
   const startMode = (s && !s.demandId) ? 'free' : 'demand';
@@ -43020,7 +43044,6 @@ function openScheduleModal(id, preset) {
   // a esse user. A label ganha o nome do workspace pra distinguir quando o
   // usuário tem demandas em mais de um.
   const sel = $('sch-demand');
-  const ownerUid = s ? s.userId : (preset?.userId || agendaUserId);
   let list = demands
     .filter(d => !d.deletedAt)
     .filter(d => d.ownerId === ownerUid)
@@ -43057,7 +43080,7 @@ function openScheduleModal(id, preset) {
   $('sch-end-date').value = span ? span.spanEndDate : date;
   setScheduleMultiday(!!span);
   // Subtítulo: pra quem é o bloco e em que dia (atualiza ao trocar a data).
-  _scheduleForName = userById(s ? s.userId : (preset?.userId || agendaUserId))?.name || '—';
+  _scheduleForName = userById(ownerUid)?.name || '—';
   _updateScheduleWhen();
   updateScheduleDuration();
   onScheduleDemandPick();
@@ -43174,7 +43197,7 @@ async function saveSchedule() {
   }
   // Pra criar (não-edição), respeita o usuário do contexto: o `_schedulePresetUserId`
   // é setado pelo openScheduleModal a partir do preset (drag em qualquer instância).
-  if (!editingScheduleId) payload.userId = _schedulePresetUserId || agendaUserId;
+  if (!editingScheduleId) payload.userId = _schedulePresetUserId || agendaUserId || me?.id;
   try {
     if (editingScheduleId) {
       await api('/schedules/' + editingScheduleId, 'PUT', payload);

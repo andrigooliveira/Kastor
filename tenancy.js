@@ -28,6 +28,29 @@
 const { AsyncLocalStorage } = require('async_hooks');
 
 const ROLES = ['owner', 'admin', 'mod', 'equipe', 'free'];
+const ROLE_RANK = { owner: 4, admin: 3, mod: 2, equipe: 1, free: 0 };
+
+function roleRank(u) {
+  if (!u) return -1;
+  if (u.orgRole && ROLE_RANK[u.orgRole] !== undefined) return ROLE_RANK[u.orgRole];
+  if (u.isOwner) return ROLE_RANK.owner;
+  if (u.isAdmin) return ROLE_RANK.admin;
+  if (u.isModerator) return ROLE_RANK.mod;
+  if (u.isFreelancer) return ROLE_RANK.free;
+  return ROLE_RANK.equipe;
+}
+
+/* Permissão de alteração na agenda: cada usuário altera a própria agenda
+   (exceto freelancer) e a de quem está estritamente abaixo na hierarquia
+   Dono > Admin > Moderador > Membro. */
+function canManageSchedule(actor, target) {
+  if (!actor || !target) return false;
+  const ar = roleRank(actor);
+  if (ar <= ROLE_RANK.free) return false;
+  if (actor.id && actor.id === target.id) return true;
+  if (ar <= ROLE_RANK.equipe) return false;
+  return ar > roleRank(target);
+}
 // Tipos que NÃO passam pelo filtro de organização.
 const UNSCOPED = new Set(['organizations', 'platformAdmins', 'accessRequests', 'platformAudit', 'googleEvents', 'notifications']);
 // Campos do usuário que passam a morar no vínculo.
@@ -232,10 +255,10 @@ function createTenancy({ getRaw, onMemberChange }) {
   }
 
   return {
-    ctx, run, currentOrgId, db, ROLES, UNSCOPED, MEMBER_FIELDS,
+    ctx, run, currentOrgId, db, ROLES, ROLE_RANK, roleRank, canManageSchedule, UNSCOPED, MEMBER_FIELDS,
     wsOrgId, orgOf, belongs, memberIn, membershipsOf, activeMemberships, primaryMembership, memberFor,
     orgById, orgActive, attachUser
   };
 }
 
-module.exports = { createTenancy, ROLES };
+module.exports = { createTenancy, ROLES, ROLE_RANK, roleRank, canManageSchedule };

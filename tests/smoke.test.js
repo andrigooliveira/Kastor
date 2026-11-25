@@ -1983,6 +1983,70 @@ test('Entrar com Google e com Discord: vincula pelo e-mail confirmado e não ped
   }
 });
 
+test('Agenda: permissão hierárquica Dono > Admin > Moderador > Membro', async () => {
+  const owner = await loginCookie('admin', 'admin123');
+  const meOwner = (await req('/api/me', { headers: { Cookie: owner } })).body;
+  const wsiOrg = meOwner.orgs.find(o => o.name === 'WSI');
+  await call('POST', '/api/orgs/switch', owner, { orgId: wsiOrg.id });
+
+  const admin2 = await loginCookie('outro.admin', 'senha-forte-1');
+  const mod = await loginCookie('pessoa.mod', 'senha-forte-1');
+  const eq = await loginCookie('pessoa.equipe', 'senha-forte-1');
+  const boot = (await req('/api/bootstrap', { headers: { Cookie: owner } })).body;
+  const wsId = boot.projects[0].workspaceId;
+  const byUser = (uname) => boot.users.find(u => u.username === uname);
+  const uOwner = byUser('admin');
+  const uAdmin2 = byUser('outro.admin');
+  const uMod = byUser('pessoa.mod');
+  const uEq = byUser('pessoa.equipe');
+
+  const mk = (cookie, targetUserId, title) => call('POST', '/api/schedules', cookie, {
+    userId: targetUserId, workspaceId: wsId, demandId: null,
+    title, kind: 'meeting', date: '2026-11-26', startMin: 540, endMin: 600
+  });
+
+  // Dono agenda para si, Admin, Moderador e Membro
+  const sOwner = await mk(owner, uOwner.id, 'Bloco dono');
+  assert.equal(sOwner.status, 201);
+  const sAdminByOwner = await mk(owner, uAdmin2.id, 'Bloco admin');
+  assert.equal(sAdminByOwner.status, 201);
+  const sModByOwner = await mk(owner, uMod.id, 'Bloco mod');
+  assert.equal(sModByOwner.status, 201);
+
+  // Admin não cria na agenda do Dono, nem edita/remove bloco do Dono
+  assert.equal((await mk(admin2, uOwner.id, 'Bloqueado')).status, 403);
+  assert.equal((await call('PUT', '/api/schedules/' + sOwner.body.id, admin2, { title: 'X' })).status, 403);
+  assert.equal((await call('DELETE', '/api/schedules/' + sOwner.body.id, admin2)).status, 403);
+
+  // Admin cria/edita/remove na agenda do Moderador e do Membro
+  const sMod = await mk(admin2, uMod.id, 'Para mod');
+  assert.equal(sMod.status, 201);
+  assert.equal((await call('PUT', '/api/schedules/' + sMod.body.id, admin2, { title: 'Editado' })).status, 200);
+  assert.equal((await call('DELETE', '/api/schedules/' + sMod.body.id, admin2)).status, 200);
+
+  // Moderador não agenda para Dono nem Admin, mas agenda/edita/remove para Membro e para si
+  assert.equal((await mk(mod, uOwner.id, 'Bloqueado')).status, 403);
+  assert.equal((await mk(mod, uAdmin2.id, 'Bloqueado')).status, 403);
+  const sEqByMod = await mk(mod, uEq.id, 'Para membro');
+  assert.equal(sEqByMod.status, 201);
+  assert.equal((await call('PUT', '/api/schedules/' + sEqByMod.body.id, mod, { title: 'Mod editou' })).status, 200);
+  assert.equal((await call('DELETE', '/api/schedules/' + sEqByMod.body.id, mod)).status, 200);
+  const sModOwn = await mk(mod, uMod.id, 'Próprio mod');
+  assert.equal(sModOwn.status, 201);
+
+  // Membro agenda para si, mas não edita/remove nem cria para Moderador/Admin/Dono
+  const sEqOwn = await mk(eq, uEq.id, 'Próprio membro');
+  assert.equal(sEqOwn.status, 201);
+  assert.equal((await mk(eq, uMod.id, 'Bloqueado')).status, 403);
+  assert.equal((await call('PUT', '/api/schedules/' + sModOwn.body.id, eq, { title: 'X' })).status, 403);
+  assert.equal((await call('DELETE', '/api/schedules/' + sModOwn.body.id, eq)).status, 403);
+
+  // Limpeza
+  for (const b of [sOwner.body, sAdminByOwner.body, sModByOwner.body, sModOwn.body, sEqOwn.body]) {
+    await call('DELETE', '/api/schedules/' + b.id, owner);
+  }
+});
+
 test('Rate limit: 6ª tentativa errada seguida devolve 429', async () => {
   for (let i = 0; i < 5; i++) {
     await postJson('/api/login', { username: 'admin', password: 'errada-' + i });
